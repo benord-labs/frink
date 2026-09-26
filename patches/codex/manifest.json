@@ -1,0 +1,11 @@
+{
+  "upstream": "https://github.com/openai/codex",
+  "version": "rust-v0.155.1",
+  "tagObject": "4e21628f9ec9ee656650cd2b62ef92225725b5ac",
+  "commit": "be2951ea34f0d295ed0becf97079f92fa5f6950e",
+  "sourceArchiveSha256": "b9e18d40d322586913e94d6747f3f934922c4f5130eb5a349ba019c57b83dad8",
+  "normalizedCargoLockSha256": "df88a71b82843c6f092610fb07589f7a40032ddc25f50718354546ca541eb9b7",
+  "rust": "1.95.0",
+  "patch": "frink-host-tool-permission-v1.patch",
+  "patchSha256": "0ef3a323e435ad3868d7942ed387b77a07a59a6e8551392bd995f7171fd3eab2"
+}

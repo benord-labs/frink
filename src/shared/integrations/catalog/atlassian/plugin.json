@@ -1,0 +1,70 @@
+{
+  "name": "atlassian",
+  "mcpServers": {
+    "atlassian": {
+      "type": "http",
+      "auth": {
+        "kind": "frink_client"
+      },
+      "url": "https://mcp.atlassian.com/v1/mcp"
+    }
+  },
+  "frink": {
+    "keywords": [
+      "jira",
+      "confluence",
+      "issues",
+      "wiki"
+    ],
+    "actions": [
+      {
+        "id": "atlassian.search_jira_issues",
+        "label": "Search Jira issues",
+        "icon": "search",
+        "description": "Finds Jira issues matching the JQL query you supply.",
+        "server": "atlassian",
+        "tool": "searchJiraIssuesUsingJql"
+      },
+      {
+        "id": "atlassian.get_jira_issue",
+        "label": "Read a Jira issue",
+        "icon": "file-text",
+        "description": "Reads one Jira issue in full, with its fields and comments.",
+        "server": "atlassian",
+        "tool": "getJiraIssue"
+      },
+      {
+        "id": "atlassian.create_jira_issue",
+        "label": "Create a Jira issue",
+        "icon": "package",
+        "description": "Opens a new issue in the Jira project you name.",
+        "server": "atlassian",
+        "tool": "createJiraIssue"
+      },
+      {
+        "id": "atlassian.comment_on_jira_issue",
+        "label": "Comment on a Jira issue",
+        "icon": "message-square",
+        "description": "Adds or edits a comment on one Jira issue.",
+        "server": "atlassian",
+        "tool": "addOrEditJiraIssueComment"
+      },
+      {
+        "id": "atlassian.search_confluence",
+        "label": "Search Confluence",
+        "icon": "layers",
+        "description": "Finds Confluence pages matching what you are looking for.",
+        "server": "atlassian",
+        "tool": "searchConfluence"
+      },
+      {
+        "id": "atlassian.read_confluence_page",
+        "label": "Read a Confluence page",
+        "icon": "clipboard",
+        "description": "Reads one Confluence page's content.",
+        "server": "atlassian",
+        "tool": "getConfluenceContent"
+      }
+    ]
+  }
+}

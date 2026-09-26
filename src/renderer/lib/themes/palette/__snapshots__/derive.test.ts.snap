@@ -1,0 +1,231 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`derivePalette > 'amber dark' > matches the pinned palette 1`] = `
+{
+  "accent": "#ffc799",
+  "accentForeground": "#101010",
+  "background": "#101010",
+  "border": "#3c3c3c",
+  "destructive": "#f87171",
+  "destructiveForeground": "#101010",
+  "field": "#282828",
+  "highlightForeground": "#e8e8e8",
+  "highlightSurface": "#2d2d2d",
+  "input": "#3c3c3c",
+  "muted": "#282828",
+  "mutedText": "#969696",
+  "overlay": "#282828",
+  "sidebar": "#171717",
+  "subtleForeground": "#e8e8e8",
+  "subtleSurface": "#373737",
+  "surface": "#212121",
+  "text": "#e8e8e8",
+}
+`;
+
+exports[`derivePalette > 'amber light' > matches the pinned palette 1`] = `
+{
+  "accent": "#9a5b13",
+  "accentForeground": "#fcfcfb",
+  "background": "#fcfcfb",
+  "border": "#e1e1e0",
+  "destructive": "#dc2626",
+  "destructiveForeground": "#fcfcfb",
+  "field": "#f1f1f0",
+  "highlightForeground": "#090909",
+  "highlightSurface": "#f1f1f0",
+  "input": "#e1e1e0",
+  "muted": "#f1f1f0",
+  "mutedText": "#6a6a6a",
+  "overlay": "#fcfcfb",
+  "sidebar": "#f7f7f6",
+  "subtleForeground": "#090909",
+  "subtleSurface": "#f1f1f0",
+  "surface": "#fcfcfb",
+  "text": "#090909",
+}
+`;
+
+exports[`derivePalette > 'clay dark' > matches the pinned palette 1`] = `
+{
+  "accent": "#d97857",
+  "accentForeground": "#262624",
+  "background": "#262624",
+  "border": "#555553",
+  "destructive": "#f7a1a1",
+  "destructiveForeground": "#262624",
+  "field": "#40403e",
+  "highlightForeground": "#e8e8e5",
+  "highlightSurface": "#464643",
+  "input": "#555553",
+  "muted": "#40403e",
+  "mutedText": "#b5b5b2",
+  "overlay": "#40403e",
+  "sidebar": "#2d2d2b",
+  "subtleForeground": "#e8e8e5",
+  "subtleSurface": "#50504e",
+  "surface": "#393937",
+  "text": "#e8e8e5",
+}
+`;
+
+exports[`derivePalette > 'clay light' > matches the pinned palette 1`] = `
+{
+  "accent": "#b05230",
+  "accentForeground": "#faf9f5",
+  "background": "#faf9f5",
+  "border": "#dfdedb",
+  "destructive": "#db2526",
+  "destructiveForeground": "#faf9f5",
+  "field": "#efeeea",
+  "highlightForeground": "#0a0907",
+  "highlightSurface": "#efeeea",
+  "input": "#dfdedb",
+  "muted": "#efeeea",
+  "mutedText": "#6a6966",
+  "overlay": "#faf9f5",
+  "sidebar": "#f5f4f0",
+  "subtleForeground": "#0a0907",
+  "subtleSurface": "#efeeea",
+  "surface": "#faf9f5",
+  "text": "#0a0907",
+}
+`;
+
+exports[`derivePalette > 'moss dark' > matches the pinned palette 1`] = `
+{
+  "accent": "#4d9375",
+  "accentForeground": "#121212",
+  "background": "#121212",
+  "border": "#3e3e3e",
+  "destructive": "#f7a1a1",
+  "destructiveForeground": "#121212",
+  "field": "#2a2a2a",
+  "highlightForeground": "#dbd7ca",
+  "highlightSurface": "#2f2f2f",
+  "input": "#3e3e3e",
+  "muted": "#2a2a2a",
+  "mutedText": "#9a988f",
+  "overlay": "#2a2a2a",
+  "sidebar": "#191919",
+  "subtleForeground": "#dbd7ca",
+  "subtleSurface": "#393939",
+  "surface": "#232323",
+  "text": "#dbd7ca",
+}
+`;
+
+exports[`derivePalette > 'moss light' > matches the pinned palette 1`] = `
+{
+  "accent": "#1e754f",
+  "accentForeground": "#ffffff",
+  "background": "#ffffff",
+  "border": "#e4e4e4",
+  "destructive": "#dc2626",
+  "destructiveForeground": "#ffffff",
+  "field": "#f4f4f4",
+  "highlightForeground": "#393a34",
+  "highlightSurface": "#f4f4f4",
+  "input": "#e4e4e4",
+  "muted": "#f4f4f4",
+  "mutedText": "#6c6d69",
+  "overlay": "#ffffff",
+  "sidebar": "#fafafa",
+  "subtleForeground": "#393a34",
+  "subtleSurface": "#f4f4f4",
+  "surface": "#ffffff",
+  "text": "#393a34",
+}
+`;
+
+exports[`derivePalette > 'sprinkles dark' > matches the pinned palette 1`] = `
+{
+  "accent": "#ff8cc6",
+  "accentForeground": "#1c1519",
+  "background": "#1c1519",
+  "border": "#4a4246",
+  "destructive": "#f87171",
+  "destructiveForeground": "#1c1519",
+  "field": "#352d32",
+  "highlightForeground": "#efe4ea",
+  "highlightSurface": "#3b3337",
+  "input": "#4a4246",
+  "muted": "#352d32",
+  "mutedText": "#a69ca1",
+  "overlay": "#352d32",
+  "sidebar": "#231c20",
+  "subtleForeground": "#efe4ea",
+  "subtleSurface": "#453c41",
+  "surface": "#2e272b",
+  "text": "#efe4ea",
+}
+`;
+
+exports[`derivePalette > 'sprinkles light' > matches the pinned palette 1`] = `
+{
+  "accent": "#bc2b72",
+  "accentForeground": "#fff7fa",
+  "background": "#fff7fa",
+  "border": "#e4dddf",
+  "destructive": "#db2526",
+  "destructiveForeground": "#fff7fa",
+  "field": "#f4ecef",
+  "highlightForeground": "#0c0809",
+  "highlightSurface": "#f4ecef",
+  "input": "#e4dddf",
+  "muted": "#f4ecef",
+  "mutedText": "#6e6769",
+  "overlay": "#fff7fa",
+  "sidebar": "#faf2f5",
+  "subtleForeground": "#0c0809",
+  "subtleSurface": "#f4ecef",
+  "surface": "#fff7fa",
+  "text": "#0c0809",
+}
+`;
+
+exports[`derivePalette > 'tide dark' > matches the pinned palette 1`] = `
+{
+  "accent": "#86b3c2",
+  "accentForeground": "#1f1f1f",
+  "background": "#1f1f1f",
+  "border": "#4d4d4d",
+  "destructive": "#f7a1a1",
+  "destructiveForeground": "#1f1f1f",
+  "field": "#383838",
+  "highlightForeground": "#e8e8e8",
+  "highlightSurface": "#3e3e3e",
+  "input": "#4d4d4d",
+  "muted": "#383838",
+  "mutedText": "#aaaaaa",
+  "overlay": "#383838",
+  "sidebar": "#262626",
+  "subtleForeground": "#e8e8e8",
+  "subtleSurface": "#484848",
+  "surface": "#323232",
+  "text": "#e8e8e8",
+}
+`;
+
+exports[`derivePalette > 'tide light' > matches the pinned palette 1`] = `
+{
+  "accent": "#2b6878",
+  "accentForeground": "#ffffff",
+  "background": "#ffffff",
+  "border": "#e4e4e4",
+  "destructive": "#dc2626",
+  "destructiveForeground": "#ffffff",
+  "field": "#f4f4f4",
+  "highlightForeground": "#090909",
+  "highlightSurface": "#f4f4f4",
+  "input": "#e4e4e4",
+  "muted": "#f4f4f4",
+  "mutedText": "#6c6c6c",
+  "overlay": "#ffffff",
+  "sidebar": "#fafafa",
+  "subtleForeground": "#090909",
+  "subtleSurface": "#f4f4f4",
+  "surface": "#ffffff",
+  "text": "#090909",
+}
+`;

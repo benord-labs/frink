@@ -1,0 +1,7 @@
+[install]
+# Block packages published less than 7 days ago to mitigate supply-chain attacks.
+# Value in seconds. 604800 = 7 days.
+minimumReleaseAge = 604800
+# Our own first-party design-system package — consume new releases immediately. The
+# age gate exists for untrusted third-party supply-chain risk, not our own registry.
+minimumReleaseAgeExcludes = ["@benord-labs/frink-primitives"]

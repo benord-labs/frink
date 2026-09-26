@@ -1,0 +1,80 @@
+{
+  "name": "ashby",
+  "displayName": "Ashby",
+  "description": "Candidates, interviews and pipeline",
+  "longDescription": "Ask your chats to search candidates, prep an interview and move pipeline tasks along.",
+  "mcpServers": {
+    "ashby": {
+      "type": "http",
+      "auth": {
+        "kind": "frink_client"
+      },
+      "url": "https://mcp.ashbyhq.com/mcp/v1"
+    }
+  },
+  "frink": {
+    "keywords": [
+      "recruiting",
+      "hiring",
+      "ats",
+      "candidates"
+    ],
+    "beforeYouConnect": [
+      "An Ashby Org Admin has to switch on the MCP Server toggle under Admin → Organization Setup → Opt-In Features before anyone can connect.",
+      "Your own Ashby account needs Elevated Access permissions to sign in."
+    ],
+    "source": {
+      "repo": "cursor/plugins",
+      "commit": "4612556",
+      "path": "third_party/ashby",
+      "license": "MIT",
+      "official": {
+        "url": "https://docs.ashbyhq.com/ashby-mcp-server-beta",
+        "kind": "documentation"
+      }
+    },
+    "actions": [
+      {
+        "id": "ashby.search_records",
+        "label": "Search Ashby records",
+        "icon": "search",
+        "description": "Finds candidates, jobs and other Ashby records by name.",
+        "server": "ashby",
+        "tool": "search_records_by_name"
+      },
+      {
+        "id": "ashby.get_candidate",
+        "label": "Read an Ashby candidate",
+        "icon": "file-text",
+        "description": "Reads one candidate in full, with their applications and notes.",
+        "server": "ashby",
+        "tool": "get_candidate"
+      },
+      {
+        "id": "ashby.list_upcoming_interviews",
+        "label": "List upcoming Ashby interviews",
+        "icon": "calendar",
+        "description": "Lists the interviews scheduled next, with who is attending.",
+        "server": "ashby",
+        "tool": "get_upcoming_interviews"
+      },
+      {
+        "id": "ashby.get_job_pipeline",
+        "label": "Read an Ashby job pipeline",
+        "icon": "layers",
+        "description": "Reads where every candidate sits in one job's hiring stages.",
+        "server": "ashby",
+        "tool": "get_job_pipeline"
+      },
+      {
+        "id": "ashby.add_candidate_note",
+        "label": "Add a note to a candidate",
+        "icon": "message-square",
+        "description": "Writes a note onto one Ashby candidate.",
+        "server": "ashby",
+        "tool": "add_note_to_candidate"
+      }
+    ],
+    "status": "coming_soon"
+  }
+}

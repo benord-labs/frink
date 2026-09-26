@@ -1,0 +1,32 @@
+{
+  "name": "zoom",
+  "displayName": "Zoom",
+  "description": "Meetings, transcripts and Zoom Docs",
+  "longDescription": "Ask your chats what was said in a meeting, pull the transcript and work with your Zoom Docs.",
+  "mcpServers": {
+    "zoom": {
+      "type": "http",
+      "auth": {
+        "kind": "pending"
+      },
+      "url": "https://mcp.zoom.us/mcp/zoom/streamable"
+    }
+  },
+  "frink": {
+    "keywords": [
+      "meetings",
+      "video",
+      "transcripts"
+    ],
+    "source": {
+      "repo": "cursor/plugins",
+      "commit": "4612556",
+      "path": "third_party/zoom",
+      "license": "MIT",
+      "official": {
+        "url": "https://github.com/zoom/zoom-plugin-claude",
+        "kind": "plugin"
+      }
+    }
+  }
+}

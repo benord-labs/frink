@@ -1,0 +1,56 @@
+{
+  "id": "44e3c8b2-91d7-4ad0-a3f8-2b71e54c92f1",
+  "changed_at": "2026-05-13T11:47:36.205Z",
+  "version": "v1",
+  "primary_id": 4821,
+  "member_id": "6126f7a4-d1e2-4b3a-9c2f-7d8e1c4b5a90",
+  "actions": [
+    {
+      "id": 4821,
+      "entity_type": "story",
+      "action": "update",
+      "name": "[platform] Add Postgres connection pool warm-up",
+      "story_type": "feature",
+      "app_url": "https://app.shortcut.com/slice/story/4821",
+      "changes": {
+        "workflow_state_id": {
+          "old": 500000010,
+          "new": 500000012
+        },
+        "started": {
+          "old": false,
+          "new": true
+        },
+        "started_at": {
+          "old": null,
+          "new": "2026-05-13T11:47:36.000Z"
+        }
+      }
+    }
+  ],
+  "references": [
+    {
+      "id": 4821,
+      "entity_type": "story",
+      "name": "[platform] Add Postgres connection pool warm-up",
+      "app_url": "https://app.shortcut.com/slice/story/4821"
+    },
+    {
+      "id": 500000010,
+      "entity_type": "workflow-state",
+      "name": "Ready for Dev",
+      "type": "unstarted"
+    },
+    {
+      "id": 500000012,
+      "entity_type": "workflow-state",
+      "name": "In Development",
+      "type": "started"
+    },
+    {
+      "id": "6126f7a4-d1e2-4b3a-9c2f-7d8e1c4b5a90",
+      "entity_type": "member",
+      "name": "Benji Norval"
+    }
+  ]
+}

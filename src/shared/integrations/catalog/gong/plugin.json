@@ -1,0 +1,32 @@
+{
+  "name": "gong",
+  "displayName": "Gong",
+  "description": "Call briefs, deals and account summaries",
+  "longDescription": "Ask your chats for the brief on a call, a deal or an account from your Gong workspace.",
+  "mcpServers": {
+    "gong": {
+      "type": "http",
+      "auth": {
+        "kind": "pending"
+      },
+      "url": "https://mcp.gong.io/mcp"
+    }
+  },
+  "frink": {
+    "keywords": [
+      "sales",
+      "calls",
+      "revenue"
+    ],
+    "source": {
+      "repo": "cursor/plugins",
+      "commit": "4612556",
+      "path": "third_party/gong",
+      "license": "MIT",
+      "official": {
+        "url": "https://help.gong.io/docs/about-gong-mcp-server",
+        "kind": "documentation"
+      }
+    }
+  }
+}

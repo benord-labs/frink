@@ -1,0 +1,67 @@
+{
+  "name": "linear",
+  "mcpServers": {
+    "linear": {
+      "type": "http",
+      "auth": {
+        "kind": "frink_client"
+      },
+      "url": "https://mcp.linear.app/mcp"
+    }
+  },
+  "frink": {
+    "beforeYouConnect": [
+      "You need to be an admin of your Linear workspace: only an admin can add the webhook you will paste Frink's address into."
+    ],
+    "actions": [
+      {
+        "id": "linear.list_issues",
+        "label": "Find Linear issues",
+        "icon": "search",
+        "description": "Lists issues in your workspace, filtered by team, state, assignee or text.",
+        "server": "linear",
+        "tool": "list_issues"
+      },
+      {
+        "id": "linear.get_issue",
+        "label": "Get a Linear issue",
+        "icon": "file-text",
+        "description": "Reads one issue by ID, with its description, state, assignee and attachments.",
+        "server": "linear",
+        "tool": "get_issue"
+      },
+      {
+        "id": "linear.save_issue",
+        "label": "Create or update a Linear issue",
+        "icon": "clipboard",
+        "description": "Creates a new issue, or updates the issue whose ID you give.",
+        "server": "linear",
+        "tool": "save_issue"
+      },
+      {
+        "id": "linear.list_comments",
+        "label": "List comments on a Linear issue",
+        "icon": "message-square",
+        "description": "Lists the comments on an issue, project or document.",
+        "server": "linear",
+        "tool": "list_comments"
+      },
+      {
+        "id": "linear.save_comment",
+        "label": "Comment on a Linear issue",
+        "icon": "message-square",
+        "description": "Adds a comment to an issue, project or document.",
+        "server": "linear",
+        "tool": "save_comment"
+      },
+      {
+        "id": "linear.list_projects",
+        "label": "List Linear projects",
+        "icon": "folder",
+        "description": "Lists the projects in your workspace.",
+        "server": "linear",
+        "tool": "list_projects"
+      }
+    ]
+  }
+}

@@ -1,0 +1,73 @@
+{
+  "name": "posthog",
+  "mcpServers": {
+    "posthog": {
+      "type": "http",
+      "auth": {
+        "kind": "frink_client"
+      },
+      "url": "https://mcp.posthog.com/mcp"
+    }
+  },
+  "frink": {
+    "keywords": ["analytics", "feature flags", "product", "funnels"],
+    "beforeYouConnect": [
+      "Sign in with the PostHog account that holds the project you want Frink to watch: PostHog sends Frink to whichever region, US or EU, that account lives in."
+    ],
+    "flowHeaders": {
+      "posthog": {
+        "x-posthog-mcp-mode": "tools"
+      }
+    },
+    "actions": [
+      {
+        "id": "posthog.list_feature_flags",
+        "label": "List PostHog feature flags",
+        "icon": "zap",
+        "description": "Lists the project's feature flags and whether each is on.",
+        "server": "posthog",
+        "tool": "feature-flag-get-all"
+      },
+      {
+        "id": "posthog.list_dashboards",
+        "label": "List PostHog dashboards",
+        "icon": "layers",
+        "description": "Lists the project's dashboards, with optional search and pinned filters.",
+        "server": "posthog",
+        "tool": "dashboards-get-all"
+      },
+      {
+        "id": "posthog.list_experiments",
+        "label": "List PostHog experiments",
+        "icon": "activity",
+        "description": "Lists the project's A/B experiments and their state.",
+        "server": "posthog",
+        "tool": "experiment-list"
+      },
+      {
+        "id": "posthog.list_errors",
+        "label": "List PostHog errors",
+        "icon": "bell",
+        "description": "Lists error tracking issues, newest and most frequent first.",
+        "server": "posthog",
+        "tool": "query-error-tracking-issues-list"
+      },
+      {
+        "id": "posthog.list_surveys",
+        "label": "List PostHog surveys",
+        "icon": "clipboard",
+        "description": "Lists the project's surveys, with optional search.",
+        "server": "posthog",
+        "tool": "surveys-get-all"
+      },
+      {
+        "id": "posthog.search_docs",
+        "label": "Search PostHog docs",
+        "icon": "search",
+        "description": "Searches the PostHog documentation for a question.",
+        "server": "posthog",
+        "tool": "docs-search"
+      }
+    ]
+  }
+}

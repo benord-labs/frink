@@ -1,0 +1,46 @@
+{
+  "generatedAt": "content-17e827f59380",
+  "version": "content-17e827f59380",
+  "files": {
+    "SKILL.md": {
+      "sha256": "698d0452b24391ed432b7ee3c747c786c5da2c632eeb7ad49552bd4611e385f9",
+      "bytes": 4521
+    },
+    "references/batching.md": {
+      "sha256": "d77dc9bf32fc316e2c7da6127dc96043708b1d04906b1936b163c5871d297bc6",
+      "bytes": 5787
+    },
+    "references/blocks-actions.md": {
+      "sha256": "8ebb6c410845424933adfe6244b0f31f5ef7aa469886ac0f147114f4e9287db0",
+      "bytes": 7748
+    },
+    "references/blocks-logic.md": {
+      "sha256": "5a6df43a7f4df990dbec79d47f66a4159909cb0768e5a89d35a9a98f7a2afffb",
+      "bytes": 4995
+    },
+    "references/blocks-triggers.md": {
+      "sha256": "4f86f49ddceaeaae9077c324908b313dcb70087d0df802b4c8a59f6c3a13100e",
+      "bytes": 4468
+    },
+    "references/custom-nodes.md": {
+      "sha256": "b1fd69e4458dd80ff6e47a27777e001a3440bbe31f71f10603a3a2711fdd94cd",
+      "bytes": 5688
+    },
+    "references/examples.md": {
+      "sha256": "662c87d3b90b9e239f1a5ee80f4dba1060dc401c5f9af3cdb3ec9c5b872c8916",
+      "bytes": 5618
+    },
+    "references/inspecting-runs.md": {
+      "sha256": "f0b8d9f7ded5ce67e8f389dbd4882255e56ace3541596e9c4cceed3158e2ce79",
+      "bytes": 2508
+    },
+    "references/template-variables.md": {
+      "sha256": "5858f649f509eb1e2855f02207ac9ec77b753ecb9b06360cbae31fadeea72c15",
+      "bytes": 3373
+    },
+    "references/webhook-aliases.md": {
+      "sha256": "ff03d7f28e3097b56c60f5de5fc0613cceef90815d8c8462566af01d480ed482",
+      "bytes": 1763
+    }
+  }
+}

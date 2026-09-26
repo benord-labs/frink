@@ -1,0 +1,59 @@
+{
+  "name": "vercel",
+  "mcpServers": {
+    "vercel": {
+      "type": "http",
+      "auth": {
+        "kind": "frink_client"
+      },
+      "url": "https://mcp.vercel.com"
+    }
+  },
+  "frink": {
+    "keywords": ["deployments", "hosting", "frontend"],
+    "actions": [
+      {
+        "id": "vercel.list_projects",
+        "label": "List projects",
+        "description": "Lists projects in a Vercel team.",
+        "server": "vercel",
+        "tool": "list_projects"
+      },
+      {
+        "id": "vercel.get_project",
+        "label": "Get project",
+        "description": "Gets a project and its configuration.",
+        "server": "vercel",
+        "tool": "get_project"
+      },
+      {
+        "id": "vercel.list_deployments",
+        "label": "List deployments",
+        "description": "Lists deployments for a project.",
+        "server": "vercel",
+        "tool": "list_deployments"
+      },
+      {
+        "id": "vercel.get_deployment",
+        "label": "Get deployment",
+        "description": "Gets the status and details of a deployment.",
+        "server": "vercel",
+        "tool": "get_deployment"
+      },
+      {
+        "id": "vercel.get_deployment_build_logs",
+        "label": "Get build logs",
+        "description": "Gets build logs to investigate a deployment.",
+        "server": "vercel",
+        "tool": "get_deployment_build_logs"
+      },
+      {
+        "id": "vercel.get_runtime_logs",
+        "label": "Get runtime logs",
+        "description": "Gets runtime logs for a project or deployment.",
+        "server": "vercel",
+        "tool": "get_runtime_logs"
+      }
+    ]
+  }
+}

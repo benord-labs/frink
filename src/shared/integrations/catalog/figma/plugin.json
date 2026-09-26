@@ -1,0 +1,22 @@
+{
+  "name": "figma",
+  "displayName": "Figma",
+  "description": "Files and components from your designs",
+  "longDescription": "Ask your chats to read the frames, components and tokens in the Figma files you sign in to.",
+  "mcpServers": {
+    "figma": {
+      "type": "http",
+      "auth": {
+        "kind": "pending"
+      },
+      "url": "https://mcp.figma.com/mcp"
+    }
+  },
+  "frink": {
+    "keywords": [
+      "design",
+      "ui",
+      "prototype"
+    ]
+  }
+}

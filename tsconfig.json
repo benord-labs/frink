@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM"],
+    "jsx": "react-jsx",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "outDir": "./dist",
+    "rootDir": ".",
+    "types": ["vitest/globals", "@testing-library/jest-dom"],
+    // Cached type-check state. Repo-relative so each ship worktree keeps its own;
+    // .gitignore already covers `.cache`.
+    "incremental": true,
+    "tsBuildInfoFile": "./.cache/ts.tsbuildinfo",
+    "paths": {
+      "@/*": ["./src/renderer/*"]
+    }
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "release", "**/*.sync.test.ts"]
+}

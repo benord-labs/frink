@@ -1,0 +1,1 @@
+CREATE INDEX `projects_name_idx` ON `projects` (`name`);

@@ -1,0 +1,20 @@
+{
+  "event": {
+    "uuid": "0192b1f4-6c2a-7c1e-9a3b-8d2f1e4c5a6b",
+    "event": "checkout_completed",
+    "distinct_id": "user_42",
+    "properties": {
+      "plan": "pro",
+      "$current_url": "https://app.example.com/checkout",
+      "$browser": "Chrome"
+    },
+    "timestamp": "2026-09-07T10:15:30.000Z",
+    "url": "https://us.posthog.com/project/1/events/0192b1f4-6c2a-7c1e-9a3b-8d2f1e4c5a6b"
+  },
+  "person": {
+    "id": "018f2a9c-1234-7abc-8def-0123456789ab",
+    "name": "ada@example.com",
+    "url": "https://us.posthog.com/project/1/person/user_42",
+    "properties": { "email": "ada@example.com" }
+  }
+}

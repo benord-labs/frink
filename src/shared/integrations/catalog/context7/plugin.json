@@ -1,0 +1,41 @@
+{
+  "name": "context7",
+  "displayName": "Context7",
+  "description": "Up-to-date library docs for your code",
+  "longDescription": "Ask your chats to check a library's current docs before writing against it, so examples match the version you use.",
+  "mcpServers": {
+    "context7": {
+      "type": "http",
+      "auth": {
+        "kind": "frink_client"
+      },
+      "url": "https://mcp.context7.com/mcp"
+    }
+  },
+  "frink": {
+    "keywords": [
+      "docs",
+      "documentation",
+      "libraries",
+      "api"
+    ],
+    "actions": [
+      {
+        "id": "context7.resolve_library_id",
+        "label": "Find a library on Context7",
+        "icon": "search",
+        "description": "Turns a package or framework name into the id the docs lookup needs.",
+        "server": "context7",
+        "tool": "resolve-library-id"
+      },
+      {
+        "id": "context7.query_docs",
+        "label": "Look up library docs",
+        "icon": "file-text",
+        "description": "Fetches up-to-date documentation and code examples for one library.",
+        "server": "context7",
+        "tool": "query-docs"
+      }
+    ]
+  }
+}

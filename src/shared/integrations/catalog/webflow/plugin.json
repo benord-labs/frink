@@ -1,0 +1,137 @@
+{
+  "name": "webflow",
+  "mcpServers": {
+    "webflow": {
+      "type": "http",
+      "auth": {
+        "kind": "frink_client"
+      },
+      "url": "https://mcp.webflow.com/mcp"
+    }
+  },
+  "frink": {
+    "keywords": ["website", "cms", "design"],
+    "actions": [
+      {
+        "id": "webflow.list_sites",
+        "label": "List Webflow sites",
+        "description": "Lists the sites available to the connected Webflow account.",
+        "icon": "globe",
+        "server": "webflow",
+        "tool": "data_sites_tool",
+        "preset": {
+          "inputPath": ["actions", 0, "list_sites"],
+          "fixedArgs": {
+            "actions": [
+              {
+                "label": "list_sites",
+                "list_sites": {}
+              }
+            ],
+            "context": "Frink reads authorized Webflow content so the configured automation can inspect site information and use the results in subsequent steps."
+          }
+        }
+      },
+      {
+        "id": "webflow.get_site",
+        "label": "Get a Webflow site",
+        "description": "Reads a site’s details, domains and locales by its ID.",
+        "icon": "globe",
+        "server": "webflow",
+        "tool": "data_sites_tool",
+        "preset": {
+          "inputPath": ["actions", 0, "get_site"],
+          "fixedArgs": {
+            "actions": [
+              {
+                "label": "get_site",
+                "get_site": {}
+              }
+            ],
+            "context": "Frink reads authorized Webflow content so the configured automation can inspect site information and use the results in subsequent steps."
+          }
+        }
+      },
+      {
+        "id": "webflow.list_pages",
+        "label": "List Webflow pages",
+        "description": "Lists a site’s pages, with optional locale and pagination settings.",
+        "icon": "file-text",
+        "server": "webflow",
+        "tool": "data_pages_tool",
+        "preset": {
+          "inputPath": ["actions", 0, "list_pages"],
+          "fixedArgs": {
+            "actions": [
+              {
+                "label": "list_pages",
+                "list_pages": {}
+              }
+            ],
+            "context": "Frink reads authorized Webflow content so the configured automation can inspect site information and use the results in subsequent steps."
+          }
+        }
+      },
+      {
+        "id": "webflow.get_page_content",
+        "label": "Read a Webflow page",
+        "description": "Reads a page’s content structure for its primary or selected locale.",
+        "icon": "file-text",
+        "server": "webflow",
+        "tool": "data_localization_tool",
+        "preset": {
+          "inputPath": ["actions", 0, "get_page_content"],
+          "fixedArgs": {
+            "actions": [
+              {
+                "label": "get_page_content",
+                "get_page_content": {}
+              }
+            ],
+            "context": "Frink reads authorized Webflow content so the configured automation can inspect site information and use the results in subsequent steps."
+          }
+        }
+      },
+      {
+        "id": "webflow.list_collections",
+        "label": "List Webflow collections",
+        "description": "Lists a site’s CMS collections with their IDs, names and schemas.",
+        "icon": "database",
+        "server": "webflow",
+        "tool": "data_cms_tool",
+        "preset": {
+          "inputPath": ["actions", 0, "get_collection_list"],
+          "fixedArgs": {
+            "actions": [
+              {
+                "label": "get_collection_list",
+                "get_collection_list": {}
+              }
+            ],
+            "context": "Frink reads authorized Webflow content so the configured automation can inspect site information and use the results in subsequent steps."
+          }
+        }
+      },
+      {
+        "id": "webflow.list_items",
+        "label": "List Webflow CMS items",
+        "description": "Lists items in a collection, with optional filters, sorting and pagination.",
+        "icon": "database",
+        "server": "webflow",
+        "tool": "data_cms_tool",
+        "preset": {
+          "inputPath": ["actions", 0, "list_collection_items"],
+          "fixedArgs": {
+            "actions": [
+              {
+                "label": "list_collection_items",
+                "list_collection_items": {}
+              }
+            ],
+            "context": "Frink reads authorized Webflow content so the configured automation can inspect site information and use the results in subsequent steps."
+          }
+        }
+      }
+    ]
+  }
+}

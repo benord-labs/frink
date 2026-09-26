@@ -1,0 +1,88 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`shortcutExtractor.buildEventData > builds event data for story.assigned 1`] = `
+{
+  "epicId": null,
+  "eventType": "story_assigned",
+  "externalUserId": "0a7e3d92-5b4c-4f1a-8b21-3d6f9c2e1a55",
+  "labels": [],
+  "newStatus": null,
+  "new_status": null,
+  "oldStatus": null,
+  "old_status": null,
+  "ownerIds": [
+    "6126f7a4-d1e2-4b3a-9c2f-7d8e1c4b5a90",
+  ],
+  "owner_ids": [
+    "6126f7a4-d1e2-4b3a-9c2f-7d8e1c4b5a90",
+  ],
+  "projectId": null,
+  "projectName": null,
+  "provider": "shortcut",
+  "storyId": 4821,
+  "storyName": "[platform] Add Postgres connection pool warm-up",
+  "storyType": "feature",
+  "storyUrl": "https://app.shortcut.com/slice/story/4821",
+}
+`;
+
+exports[`shortcutExtractor.buildEventData > builds event data for story.created 1`] = `
+{
+  "epicId": "1042",
+  "eventType": "story_created",
+  "externalUserId": "6126f7a4-d1e2-4b3a-9c2f-7d8e1c4b5a90",
+  "labels": [
+    "performance",
+    "backend",
+  ],
+  "newStatus": null,
+  "new_status": null,
+  "oldStatus": null,
+  "old_status": null,
+  "ownerIds": [
+    "6126f7a4-d1e2-4b3a-9c2f-7d8e1c4b5a90",
+  ],
+  "owner_ids": [
+    "6126f7a4-d1e2-4b3a-9c2f-7d8e1c4b5a90",
+  ],
+  "projectId": "311",
+  "projectName": "Platform",
+  "provider": "shortcut",
+  "storyId": 4821,
+  "storyName": "[platform] Add Postgres connection pool warm-up",
+  "storyType": "feature",
+  "storyUrl": "https://app.shortcut.com/slice/story/4821",
+}
+`;
+
+exports[`shortcutExtractor.buildEventData > builds event data for story.moved 1`] = `
+{
+  "epicId": null,
+  "eventType": "story_moved",
+  "externalUserId": "6126f7a4-d1e2-4b3a-9c2f-7d8e1c4b5a90",
+  "labels": [],
+  "newStatus": "In Development",
+  "new_status": "In Development",
+  "oldStatus": "Ready for Dev",
+  "old_status": "Ready for Dev",
+  "ownerIds": [],
+  "owner_ids": [],
+  "projectId": null,
+  "projectName": null,
+  "provider": "shortcut",
+  "storyId": 4821,
+  "storyName": "[platform] Add Postgres connection pool warm-up",
+  "storyType": "feature",
+  "storyUrl": "https://app.shortcut.com/slice/story/4821",
+}
+`;
+
+exports[`shortcutExtractor.detectEventType > maps story.assigned to a stable event type 1`] = `"story_assigned"`;
+
+exports[`shortcutExtractor.detectEventType > maps story.created to a stable event type 1`] = `"story_created"`;
+
+exports[`shortcutExtractor.detectEventType > maps story.moved to a stable event type 1`] = `"story_moved"`;
+
+exports[`shortcutExtractor.detectEventType > maps story.unassigned to a stable event type 1`] = `null`;
+
+exports[`shortcutExtractor.detectEventType > maps story.updated to a stable event type 1`] = `null`;

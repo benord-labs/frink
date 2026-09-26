@@ -1,0 +1,103 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`linearExtractor > comment_created > buildEventData 1`] = `
+{
+  "actorId": "b5ea5f1f-8adc-4f52-b4bd-ab4e84cf51ba",
+  "commentBody": "Reproduced on staging — the second drain lands ~40ms after the first.",
+  "eventType": "issue_commented",
+  "externalUserId": "b5ea5f1f-8adc-4f52-b4bd-ab4e84cf51ba",
+  "identifier": null,
+  "issueId": "9cfb482a-81e3-4154-b5b9-2c805e70a02d",
+  "labelIds": [],
+  "organizationId": "dc844923-f9a4-40a3-825c-dea7747e57d6",
+  "ownerIds": [],
+  "owner_ids": [],
+  "previousAssigneeId": null,
+  "priorityLabel": null,
+  "provider": "linear",
+  "stateId": null,
+  "teamId": null,
+  "title": null,
+  "url": "https://linear.app/acme/issue/ENG-412/retry-queue#comment-2174add1",
+}
+`;
+
+exports[`linearExtractor > issue_assigned > buildEventData 1`] = `
+{
+  "actorId": "b5ea5f1f-8adc-4f52-b4bd-ab4e84cf51ba",
+  "commentBody": null,
+  "eventType": "issue_assigned",
+  "externalUserId": "b5ea5f1f-8adc-4f52-b4bd-ab4e84cf51ba",
+  "identifier": "ENG-412",
+  "issueId": "9cfb482a-81e3-4154-b5b9-2c805e70a02d",
+  "labelIds": [
+    "c1a2b3c4-d5e6-4f70-8899-aabbccddeeff",
+  ],
+  "organizationId": "dc844923-f9a4-40a3-825c-dea7747e57d6",
+  "ownerIds": [
+    "aacdca22-6266-4c0a-ab3c-8fa70a26765c",
+  ],
+  "owner_ids": [
+    "aacdca22-6266-4c0a-ab3c-8fa70a26765c",
+  ],
+  "previousAssigneeId": null,
+  "priorityLabel": "High",
+  "provider": "linear",
+  "stateId": "b3d5f6e0-1c2a-4d8e-9f00-a1b2c3d4e5f6",
+  "teamId": "72b2a2dc-6f4f-4423-9d34-24b5bd10634a",
+  "title": "Retry queue drains twice on reconnect",
+  "url": "https://linear.app/acme/issue/ENG-412/retry-queue-drains-twice-on-reconnect",
+}
+`;
+
+exports[`linearExtractor > issue_created > buildEventData 1`] = `
+{
+  "actorId": "b5ea5f1f-8adc-4f52-b4bd-ab4e84cf51ba",
+  "commentBody": null,
+  "eventType": "issue_created",
+  "externalUserId": "b5ea5f1f-8adc-4f52-b4bd-ab4e84cf51ba",
+  "identifier": "ENG-412",
+  "issueId": "9cfb482a-81e3-4154-b5b9-2c805e70a02d",
+  "labelIds": [
+    "c1a2b3c4-d5e6-4f70-8899-aabbccddeeff",
+  ],
+  "organizationId": "dc844923-f9a4-40a3-825c-dea7747e57d6",
+  "ownerIds": [],
+  "owner_ids": [],
+  "previousAssigneeId": null,
+  "priorityLabel": "High",
+  "provider": "linear",
+  "stateId": "b3d5f6e0-1c2a-4d8e-9f00-a1b2c3d4e5f6",
+  "teamId": "72b2a2dc-6f4f-4423-9d34-24b5bd10634a",
+  "title": "Retry queue drains twice on reconnect",
+  "url": "https://linear.app/acme/issue/ENG-412/retry-queue-drains-twice-on-reconnect",
+}
+`;
+
+exports[`linearExtractor > issue_status_changed > buildEventData 1`] = `
+{
+  "actorId": "aacdca22-6266-4c0a-ab3c-8fa70a26765c",
+  "commentBody": null,
+  "eventType": "issue_status_changed",
+  "externalUserId": "aacdca22-6266-4c0a-ab3c-8fa70a26765c",
+  "identifier": "ENG-412",
+  "issueId": "9cfb482a-81e3-4154-b5b9-2c805e70a02d",
+  "labelIds": [
+    "c1a2b3c4-d5e6-4f70-8899-aabbccddeeff",
+  ],
+  "organizationId": "dc844923-f9a4-40a3-825c-dea7747e57d6",
+  "ownerIds": [
+    "aacdca22-6266-4c0a-ab3c-8fa70a26765c",
+  ],
+  "owner_ids": [
+    "aacdca22-6266-4c0a-ab3c-8fa70a26765c",
+  ],
+  "previousAssigneeId": null,
+  "priorityLabel": "High",
+  "provider": "linear",
+  "stateId": "77aa11bb-22cc-4dd3-8ee4-99ff00112233",
+  "teamId": "72b2a2dc-6f4f-4423-9d34-24b5bd10634a",
+  "title": "Retry queue drains twice on reconnect",
+  "url": "https://linear.app/acme/issue/ENG-412/retry-queue-drains-twice-on-reconnect",
+}
+`;

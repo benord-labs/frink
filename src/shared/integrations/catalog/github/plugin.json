@@ -1,0 +1,78 @@
+{
+  "name": "github",
+  "displayName": "GitHub",
+  "description": "Repositories, issues and pull requests",
+  "longDescription": "Ask your chats about the repositories you work in: read issues and pull requests, open the files behind them, and comment back — all through a token you create in GitHub.",
+  "mcpServers": {
+    "github": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "auth": {
+        "kind": "user_token",
+        "setupUrl": "https://github.com/settings/personal-access-tokens/new",
+        "validation": {
+          "url": "https://api.github.com/user"
+        }
+      }
+    }
+  },
+  "frink": {
+    "source": {
+      "repo": "cursor/plugins",
+      "commit": "4612556",
+      "path": "third_party/github",
+      "license": "MIT",
+      "official": {
+        "url": "https://github.com/github/github-mcp-server/tree/main/agent-plugin",
+        "kind": "plugin"
+      }
+    },
+    "beforeYouConnect": [
+      "GitHub asks you to paste a personal access token rather than sign you in, so make the token first.",
+      "A fine-grained token limited to the repositories you want Frink to work in is enough.",
+      "Tick Metadata, which every fine-grained token needs, plus Contents, Issues and Pull requests on those repositories."
+    ],
+    "actions": [
+      {
+        "id": "github.search_issues",
+        "label": "Search GitHub issues",
+        "icon": "search",
+        "description": "Finds issues across the repositories you can see.",
+        "server": "github",
+        "tool": "search_issues"
+      },
+      {
+        "id": "github.read_issue",
+        "label": "Read a GitHub issue",
+        "icon": "file-text",
+        "description": "Reads one issue by number, with its comments and labels.",
+        "server": "github",
+        "tool": "issue_read"
+      },
+      {
+        "id": "github.list_pull_requests",
+        "label": "List GitHub pull requests",
+        "icon": "git-branch",
+        "description": "Lists a repository's pull requests, open or closed.",
+        "server": "github",
+        "tool": "list_pull_requests"
+      },
+      {
+        "id": "github.read_file",
+        "label": "Read a file on GitHub",
+        "icon": "file-code",
+        "description": "Reads a file or folder from a branch of a repository.",
+        "server": "github",
+        "tool": "get_file_contents"
+      },
+      {
+        "id": "github.comment_on_issue",
+        "label": "Comment on a GitHub issue",
+        "icon": "message-square",
+        "description": "Posts a comment on an issue or pull request.",
+        "server": "github",
+        "tool": "add_issue_comment"
+      }
+    ]
+  }
+}

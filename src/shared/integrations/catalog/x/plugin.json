@@ -1,0 +1,33 @@
+{
+  "name": "x",
+  "displayName": "X",
+  "description": "Posts, timelines, trends and bookmarks",
+  "longDescription": "Ask your chats what is being said on X, read a timeline and manage your bookmarks.",
+  "mcpServers": {
+    "x": {
+      "type": "http",
+      "auth": {
+        "kind": "pending"
+      },
+      "url": "https://api.x.com/mcp"
+    }
+  },
+  "frink": {
+    "keywords": [
+      "twitter",
+      "social",
+      "posts",
+      "trends"
+    ],
+    "source": {
+      "repo": "cursor/plugins",
+      "commit": "4612556",
+      "path": "third_party/x",
+      "license": "MIT",
+      "official": {
+        "url": "https://docs.x.com/tools/mcp",
+        "kind": "documentation"
+      }
+    }
+  }
+}

@@ -1,0 +1,67 @@
+{
+  "name": "circleback",
+  "displayName": "Circleback",
+  "description": "Meeting notes, transcripts and actions",
+  "longDescription": "Ask your chats what was said and decided in your meetings, and which action items are still open.",
+  "mcpServers": {
+    "circleback": {
+      "type": "http",
+      "auth": {
+        "kind": "frink_client"
+      },
+      "url": "https://circleback.ai/api/mcp"
+    }
+  },
+  "frink": {
+    "keywords": [
+      "meetings",
+      "transcripts",
+      "notes"
+    ],
+    "source": {
+      "repo": "cursor/plugins",
+      "commit": "4612556",
+      "path": "third_party/circleback",
+      "license": "MIT",
+      "official": {
+        "url": "https://support.circleback.ai/en/articles/13249081-circleback-mcp",
+        "kind": "documentation"
+      }
+    },
+    "actions": [
+      {
+        "id": "circleback.search_meetings",
+        "label": "Search Circleback meetings",
+        "icon": "search",
+        "description": "Finds meetings by keyword, date, attendee or tag.",
+        "server": "circleback",
+        "tool": "SearchMeetings"
+      },
+      {
+        "id": "circleback.read_meeting",
+        "label": "Read a Circleback meeting",
+        "icon": "file-text",
+        "description": "Reads one meeting's notes and summary.",
+        "server": "circleback",
+        "tool": "ReadMeetings"
+      },
+      {
+        "id": "circleback.search_action_items",
+        "label": "Search Circleback action items",
+        "icon": "check-circle",
+        "description": "Finds the action items captured across your meetings.",
+        "server": "circleback",
+        "tool": "SearchActionItems"
+      },
+      {
+        "id": "circleback.search_transcripts",
+        "label": "Search Circleback transcripts",
+        "icon": "inbox",
+        "description": "Searches what was actually said across your meeting transcripts.",
+        "server": "circleback",
+        "tool": "SearchTranscripts"
+      }
+    ],
+    "status": "coming_soon"
+  }
+}

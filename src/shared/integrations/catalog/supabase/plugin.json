@@ -1,0 +1,20 @@
+{
+  "name": "supabase",
+  "mcpServers": {
+    "supabase": {
+      "type": "http",
+      "auth": {
+        "kind": "pending"
+      },
+      "url": "https://mcp.supabase.com/mcp"
+    }
+  },
+  "frink": {
+    "keywords": [
+      "postgres",
+      "database",
+      "auth",
+      "storage"
+    ]
+  }
+}

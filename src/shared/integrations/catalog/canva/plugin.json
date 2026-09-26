@@ -1,0 +1,65 @@
+{
+  "name": "canva",
+  "displayName": "Canva",
+  "description": "Designs from your Canva account",
+  "longDescription": "Ask your chats to find, describe and organise the designs in the Canva account you sign in to.",
+  "mcpServers": {
+    "canva": {
+      "type": "http",
+      "auth": {
+        "kind": "frink_client"
+      },
+      "url": "https://mcp.canva.com/mcp"
+    }
+  },
+  "frink": {
+    "keywords": [
+      "design",
+      "graphics",
+      "presentations"
+    ],
+    "actions": [
+      {
+        "id": "canva.search_designs",
+        "label": "Search Canva designs",
+        "icon": "search",
+        "description": "Finds designs in your Canva account by name or keyword.",
+        "server": "canva",
+        "tool": "search-designs"
+      },
+      {
+        "id": "canva.get_design",
+        "label": "Read a Canva design",
+        "icon": "file-text",
+        "description": "Reads one design's title, pages and thumbnail.",
+        "server": "canva",
+        "tool": "get-design"
+      },
+      {
+        "id": "canva.get_design_content",
+        "label": "Read a Canva design's text",
+        "icon": "clipboard",
+        "description": "Reads the text and elements inside one design.",
+        "server": "canva",
+        "tool": "get-design-content"
+      },
+      {
+        "id": "canva.export_design",
+        "label": "Export a Canva design",
+        "icon": "package",
+        "description": "Exports a design as a PDF, image or video file.",
+        "server": "canva",
+        "tool": "export-design"
+      },
+      {
+        "id": "canva.comment_on_design",
+        "label": "Comment on a Canva design",
+        "icon": "message-square",
+        "description": "Leaves a comment on one design for your team.",
+        "server": "canva",
+        "tool": "comment-on-design"
+      }
+    ],
+    "status": "coming_soon"
+  }
+}

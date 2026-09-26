@@ -1,0 +1,24 @@
+{
+  "action": "create",
+  "type": "Comment",
+  "actor": {
+    "id": "b5ea5f1f-8adc-4f52-b4bd-ab4e84cf51ba",
+    "type": "user",
+    "name": "Jane Doe"
+  },
+  "createdAt": "2026-08-22T16:40:00.000Z",
+  "data": {
+    "id": "2174add1-f7c8-44e3-bbf3-2d60b5ea8bc9",
+    "body": "Reproduced on staging \u2014 the second drain lands ~40ms after the first.",
+    "edited": false,
+    "issueId": "9cfb482a-81e3-4154-b5b9-2c805e70a02d",
+    "userId": "b5ea5f1f-8adc-4f52-b4bd-ab4e84cf51ba",
+    "createdAt": "2026-08-22T16:40:00.000Z",
+    "updatedAt": "2026-08-22T16:40:00.000Z",
+    "archivedAt": null
+  },
+  "url": "https://linear.app/acme/issue/ENG-412/retry-queue#comment-2174add1",
+  "organizationId": "dc844923-f9a4-40a3-825c-dea7747e57d6",
+  "webhookTimestamp": 1755880800000,
+  "webhookId": "000042e3-d123-4980-b49f-8e140eef9329"
+}

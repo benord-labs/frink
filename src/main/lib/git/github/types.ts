@@ -1,0 +1,79 @@
+import { z } from 'zod';
+
+// Zod schemas for gh CLI output validation
+const GHCheckContextSchema = z.object({
+  name: z.string().optional(),
+  context: z.string().optional(), // StatusContext uses 'context' instead of 'name'
+  state: z.enum(['SUCCESS', 'FAILURE', 'PENDING', 'ERROR']).optional(),
+  status: z.string().optional(), // CheckRun status: COMPLETED, IN_PROGRESS, etc.
+  conclusion: z
+    .enum([
+      'SUCCESS',
+      'FAILURE',
+      'CANCELLED',
+      'SKIPPED',
+      'TIMED_OUT',
+      'ACTION_REQUIRED',
+      'NEUTRAL',
+      '', // Can be empty string when in progress
+    ])
+    .optional(),
+  detailsUrl: z.string().optional(),
+  targetUrl: z.string().optional(), // StatusContext uses 'targetUrl' instead of 'detailsUrl'
+  startedAt: z.string().optional(),
+  completedAt: z.string().optional(),
+  workflowName: z.string().optional(),
+});
+
+export const GHPRResponseSchema = z.object({
+  number: z.number(),
+  title: z.string(),
+  url: z.string(),
+  state: z.enum(['OPEN', 'CLOSED', 'MERGED']),
+  isDraft: z.boolean(),
+  mergedAt: z.string().nullable(),
+  additions: z.number(),
+  deletions: z.number(),
+  reviewDecision: z.enum(['APPROVED', 'CHANGES_REQUESTED', 'REVIEW_REQUIRED', '']).nullable(),
+  // statusCheckRollup is an array directly, not { contexts: [...] }
+  statusCheckRollup: z.array(GHCheckContextSchema).nullable(),
+  // Mergeability status from GitHub
+  mergeable: z.enum(['MERGEABLE', 'CONFLICTING', 'UNKNOWN']).optional(),
+});
+
+export const GHRepoResponseSchema = z.object({
+  url: z.string(),
+});
+
+export type GHPRResponse = z.infer<typeof GHPRResponseSchema>;
+
+/** Single CI/CD check item */
+export type CheckItem = {
+  name: string;
+  status: 'success' | 'failure' | 'pending' | 'skipped' | 'cancelled';
+  url?: string;
+};
+
+/** PR mergeability status */
+type MergeableStatus = 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN';
+
+/** GitHub PR and branch status */
+export type GitHubStatus = {
+  pr: {
+    number: number;
+    title: string;
+    url: string;
+    state: 'open' | 'draft' | 'merged' | 'closed';
+    mergedAt?: number;
+    additions: number;
+    deletions: number;
+    reviewDecision: 'approved' | 'changes_requested' | 'pending';
+    checksStatus: 'success' | 'failure' | 'pending' | 'none';
+    checks: CheckItem[];
+    /** Whether the PR can be cleanly merged */
+    mergeable?: MergeableStatus;
+  } | null;
+  repoUrl: string;
+  branchExistsOnRemote: boolean;
+  lastRefreshed: number;
+};

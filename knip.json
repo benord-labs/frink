@@ -1,0 +1,34 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "workspaces": {
+    ".": {
+      "entry": [
+        "electron.vite.config.ts",
+        "src/main/index.ts",
+        "src/preload/index.ts",
+        "src/renderer/main.tsx",
+        "scripts/{dev,skills,testing}/*.{js,mjs,ts}",
+        "scripts/binaries/*.mjs",
+        "scripts/perf/*.mjs",
+        "scripts/publish/*.mjs",
+        "scripts/plugin-catalog/generate.ts"
+      ],
+      "project": ["src/**/*.{ts,tsx}"],
+      "ignoreDependencies": [
+        "babel-plugin-react-compiler",
+        "vscode-languageserver-protocol",
+        "vscode-langservers-extracted",
+        "typescript-language-server",
+        "pyright",
+        "path-browserify",
+        "@tailwindcss/typography",
+        "tw-animate-css"
+      ]
+    },
+    "relay": {
+      "entry": ["src/index.ts"],
+      "project": ["src/**/*.ts"]
+    }
+  },
+  "ignoreBinaries": ["lsof", "ps", "security", "secret-tool"]
+}

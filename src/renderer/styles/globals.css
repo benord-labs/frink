@@ -1,0 +1,1219 @@
+@import './agents-styles.css' layer(base);
+
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import '@benord-labs/frink-primitives/styles/theme.css';
+@import '@benord-labs/frink-primitives/styles/components.css';
+
+@plugin '@tailwindcss/typography';
+
+@source "../../../node_modules/streamdown/dist/*.js";
+@source "../../../node_modules/@benord-labs/frink-primitives/src";
+
+@custom-variant dark (&:is(.dark *));
+/* Inside a sticky element with container-type: scroll-state, while it is stuck to the top. */
+@custom-variant stuck (@container scroll-state(stuck: top));
+
+@theme {
+  --breakpoint-min-420: 420px;
+
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+
+  --color-tl-background: hsl(var(--tl-background));
+  --color-input-background: hsl(var(--input-background));
+
+  --color-status-online: hsl(var(--status-online));
+  --color-status-online-foreground: hsl(var(--status-online-foreground));
+
+  --color-status-warning: hsl(var(--status-warning));
+
+  --color-status-offline: hsl(var(--status-offline));
+
+  --color-plan-mode: hsl(var(--plan-mode));
+  --color-plan-mode-foreground: hsl(var(--plan-mode-foreground));
+  --color-debug-mode: hsl(var(--debug-mode));
+  --color-debug-mode-foreground: hsl(var(--debug-mode-foreground));
+
+  --color-pane-accent: hsl(var(--pane-accent));
+  --color-pane-accent-foreground: hsl(var(--pane-accent-foreground));
+
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+
+  --animate-pane-swap: pane-swap 300ms ease-out;
+
+  @keyframes pane-swap {
+    0% {
+      transform: scale(0.97);
+      opacity: 0.6;
+    }
+    50% {
+      transform: scale(1.02);
+      opacity: 1;
+    }
+    100% {
+      transform: scale(1);
+      opacity: 1;
+    }
+  }
+}
+
+/*
+  The default border color has changed to `currentcolor` in Tailwind CSS v4,
+  so we've added these compatibility styles to make sure everything still
+  looks the same as it did with Tailwind CSS v3.
+
+  If we ever want to remove these styles, we need to add an explicit border
+  color utility to any element that depends on these defaults.
+*/
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+}
+
+@utility text-warning {
+  color: hsl(var(--status-warning-foreground));
+}
+
+@utility text-warning-soft {
+  color: hsl(var(--status-warning-foreground-soft));
+}
+
+/* @benord-labs/frink-primitives leaves use `text-muted` for muted TEXT, but frink's
+   --color-muted is a SURFACE (bg-muted, ~278 uses) and frink never uses bare `text-muted`
+   (it uses text-muted-foreground). Point the text-muted utility at frink's muted-foreground
+   so package placeholders/labels are legible in both themes — bg-muted keeps --color-muted. */
+@utility text-muted {
+  color: hsl(var(--muted-foreground));
+}
+
+@utility flow-template-var-mark--valid {
+  /**
+   * Flow editor: `{{variable}}` mirror highlights in TemplateHighlightContainer, backed by
+   * --primary, --status-warning, --destructive and --flow-template-undeclared-msg. Keep those
+   * aligned with the Frink light/dark tokens below when tuning the palette.
+   */
+  border-radius: 0.125rem;
+  color: transparent;
+  background-color: hsl(var(--primary) / 0.14);
+  box-shadow: 0 0 0 1px hsl(var(--primary) / 0.22);
+}
+
+@utility flow-template-var-mark--dynamic {
+  border-radius: 0.125rem;
+  color: transparent;
+  background-color: hsl(var(--status-warning) / 0.22);
+  box-shadow: 0 0 0 1px hsl(var(--status-warning) / 0.38);
+}
+
+@utility flow-template-var-mark--undeclared {
+  border-radius: 0.125rem;
+  color: transparent;
+  background-color: hsl(var(--destructive) / 0.16);
+  box-shadow: 0 0 0 1px hsl(var(--destructive) / 0.32);
+}
+
+@utility flow-template-var-msg--undeclared {
+  font-size: 0.75rem;
+  line-height: 1rem;
+  color: hsl(var(--flow-template-undeclared-msg));
+}
+
+@layer utilities {
+  @font-face {
+    font-family: 'Playwrite NO';
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url('../assets/fonts/playwrite-no.woff2') format('woff2');
+  }
+
+  .font-playwrite {
+    font-family: 'Playwrite NO', cursive;
+  }
+
+  @font-face {
+    font-family: 'Press Start 2P';
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url('../assets/fonts/press-start-2p.woff2') format('woff2');
+  }
+
+  .font-arcade {
+    font-family: 'Press Start 2P', monospace;
+  }
+}
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 0 0% 4%;
+    --card: 0 0% 98%;
+    --card-foreground: 0 0% 4%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 4%;
+    --primary: 262 83% 58%;
+    /* #7C3AED brand violet (darker shade of the dark-mode #A78BFA) */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 5% 96%;
+    --secondary-foreground: 240 6% 10%;
+    --muted: 240 5% 96%;
+    --muted-foreground: 240 4% 44%;
+    --accent: 240 5% 96%;
+    --accent-foreground: 0 0% 4%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 6% 90%;
+    --input: 240 6% 90%;
+    --input-background: 0 0% 98%;
+    --ring: 262 83% 58%;
+    /* Same as primary - violet focus ring */
+    --selection: 262 83% 58% / 20%;
+    /* Text selection background - primary at 20% */
+    --radius: 0.5rem;
+    /* Split-pane outer corners; SplitPane widens this on windowed macOS. */
+    --pane-outer-radius: 0.75rem;
+    /* Plan Mode Colors */
+    --plan-mode: 33 83% 67%;
+    --plan-mode-foreground: 0 0% 8%;
+    /* Debug Mode Colors */
+    --debug-mode: 0 72% 62%;
+    --debug-mode-foreground: 0 0% 100%;
+    /* Timeline/Content background */
+    --tl-background: 0 0% 98%;
+    /* Status (used in .dark; fallback for light) */
+    --status-online: 140 75% 73%;
+    /* Text on solid status-online fills (permission CTAs, etc.) */
+    --status-online-foreground: 0 0% 8%;
+    /* Status-online as standalone TEXT/ICON (WCAG AA): 6.65:1 on white. Bright --status-online
+       stays for dots/fills. Mirrors --status-warning-foreground; the -foreground slot is taken
+       by on-fill text (pane-colors solid-green CTAs), hence -text. */
+    --status-online-text: 140 60% 26%;
+    --status-warning: 48 96% 77%;
+    --status-warning-foreground: 32 95% 30%;
+    --status-warning-foreground-soft: 32 70% 38%;
+    /* Solid amber fill for white text (count badges) — theme-invariant, same value in .dark:
+       5.02:1 with white. --status-warning-foreground isn't safe here (its dark value is bright,
+       meant for standalone text on a dark bg, not a fill under white text). */
+    --status-warning-solid: 26 90% 37%;
+    /* Flow template undeclared helper text: AA normal text on light --background */
+    --flow-template-undeclared-msg: 0 72% 32%;
+    --status-offline: 0 0% 42%;
+    /* Split pane accent (cyan) - distinct from primary/plan-mode/status */
+    --pane-accent: 187 92% 69%;
+    /* Text on solid pane-accent fills (permission CTAs, etc.) */
+    --pane-accent-foreground: 0 0% 8%;
+
+    /**
+     * Agents chat column (.chat-canvas-atmosphere): gradient-only depth.
+     * Primary and floor stops match the marketing palette; the white sheens are fixed.
+     */
+    --chat-atmosphere-primary-stop: 0.028;
+    /* Marketing light secondary (#65D992). Kept separate from UI --secondary. */
+    --chat-atmosphere-floor: 101 217 146;
+    --chat-atmosphere-depth-stop: 0.012;
+    --chat-atmosphere-head-wash: 0.035;
+
+    /* The glass material at the default Transparency step (Standard); ThemeEffects writes the
+       user's step inline (lib/themes/palette/glass.ts). */
+    --glass-opacity: 70%;
+    --glass-filter: blur(8px) saturate(1.6);
+    --glass-rim: 0.65;
+    --glass-sheen: 0.24;
+    --glass-tint: 0.08;
+    --glass-ink: 15%;
+  }
+
+  .dark {
+    /* Elevation System - Level 0 (Base) to Level 3 (Highest) */
+    --background: 0 0% 2%;
+    /* #050505 - Level 0: Main content, base layer */
+    --card: 0 0% 4%;
+    /* #0A0A0A - Level 1: Cards, sidebar, panels */
+    --popover: 0 0% 10%;
+    /* #1A1A1A - Level 3: Overlays, dropdowns */
+    --tl-background: 0 0% 4%;
+    /* #0A0A0A - Level 1: Sidebar, panels */
+    --input-background: 0 0% 10%;
+    /* #1A1A1A - Level 3: Input fields */
+
+    /* Text Hierarchy - High to Low Emphasis */
+    --foreground: 0 0% 91%;
+    /* #E8E8E8 - Primary text (16:1 contrast AAA) */
+    --foreground-secondary: 0 0% 72%;
+    /* #B8B8B8 - Secondary text (9:1 contrast AAA) */
+    --muted-foreground: 0 0% 55%;
+    /* #8C8C8C - Muted text (5.4:1 contrast AA) */
+    --card-foreground: 0 0% 91%;
+    --popover-foreground: 0 0% 91%;
+
+    /* Borders & Dividers - WCAG AA Compliant */
+    --border: 0 0% 18%;
+    /* #2E2E2E - Primary borders (3.5:1 contrast) */
+    --border-subtle: 0 0% 13.7%;
+    /* #232323 - Subtle dividers */
+    --input: 0 0% 18%;
+    /* Match border for input fields */
+
+    /* Interactive Colors */
+    --primary: 255 92% 76%;
+    /* ≈ #A78BFA - Pastel purple brand */
+    --primary-foreground: 0 0% 4%;
+    /* #0A0A0A - Text on primary */
+    --secondary: 0 0% 16%;
+    /* #292929 */
+    --secondary-foreground: 0 0% 91%;
+    --accent: 0 0% 10%;
+    /* #1A1A1A - Hover states */
+    --accent-foreground: 0 0% 91%;
+    --destructive: 0 94% 82%;
+    /* ≈ #FCA5A5 - Pastel red */
+    --destructive-foreground: 0 0% 3.9%;
+    --ring: 255 92% 76%;
+    /* Primary color for focus rings */
+    --selection: 255 92% 76% / 25%;
+    /* Text selection - primary at 25% */
+
+    --muted: 0 0% 4%;
+    /* #0A0A0A - Soft fill */
+    
+    /* Plan Mode Colors */
+    --plan-mode: 33 83% 67%;
+    --plan-mode-foreground: 0 0% 8%;
+    /* Debug Mode Colors */
+    --debug-mode: 0 72% 62%;
+    --debug-mode-foreground: 0 0% 100%;
+
+    /* Status (design system: $status-online, $status-warning, $status-offline) */
+    --status-online: 140 75% 73%;
+    /* #86EFAC - Online, success */
+    --status-online-foreground: 0 0% 8%;
+    /* Text/icon-safe green: same as --status-online (13.98:1 on --background, 12.29:1 on --card) */
+    --status-online-text: 140 75% 73%;
+    --status-warning: 48 96% 77%;
+    /* #FDE68A - Warning, needs attention */
+    --status-warning-foreground: 43 96% 72%;
+    --status-warning-foreground-soft: 43 70% 64%;
+    /* Solid amber fill for white text (count badges) — theme-invariant, same as light value */
+    --status-warning-solid: 26 90% 37%;
+    /* Undeclared template helper copy: AA normal text on dark --background */
+    --flow-template-undeclared-msg: 0 62% 72%;
+    --status-offline: 0 0% 42%;
+    /* #6B6B6B - Offline, inactive */
+
+    /* Split pane accent (cyan) - distinct from primary/plan-mode/status */
+    --pane-accent: 187 92% 69%;
+    /* #67E8F9 */
+    --pane-accent-foreground: 0 0% 8%;
+
+    --chat-atmosphere-primary-stop: 0.06;
+    /* Marketing dark secondary (#7DF0A8), not the neutral UI --secondary token. */
+    --chat-atmosphere-floor: 125 240 168;
+    --chat-atmosphere-depth-stop: 0.03;
+    --chat-atmosphere-head-wash: 0.04;
+
+    --glass-rim: 0.19;
+    --glass-sheen: 0.05;
+    --glass-tint: 0.13;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings:
+      "rlig" 1,
+      "calt" 1;
+  }
+}
+
+/* @benord-labs/frink-primitives theme is imported at the top (light :root + dark
+   .dark). Its :root/.dark also define --primary/--secondary/--muted/--border/--ring —
+   names that COLLIDE with frink's own palette (frink: muted=surface, secondary=gray;
+   package: muted=text, secondary=green). Re-assert frink's values here (unlayered, so
+   they win the package's unlayered :root) to keep frink's app look unchanged. The
+   package still supplies its NON-colliding tokens (--field/--ink/--surface/--rim/
+   --danger/--primary-fg/…). Retire a line here per-token as frink adopts the package
+   palette wholesale (the A1 re-skin). Decision: docs/decisions/design-system-adoption.md. */
+:root {
+  --primary: 262 83% 58%;
+  --secondary: 240 5% 96%;
+  --muted: 240 5% 96%;
+  --border: 240 6% 90%;
+  --ring: 262 83% 58%;
+}
+.dark {
+  --primary: 255 92% 76%;
+  --secondary: 0 0% 16%;
+  --muted: 0 0% 4%;
+  --border: 0 0% 18%;
+  --ring: 255 92% 76%;
+}
+
+/* @benord-labs/frink-primitives tokens follow frink's THEME system. A non-stock theme
+   (lib/themes/palette/apply.ts) sets the semantic vars below inline on :root, so
+   deriving the package's tokens from them makes the primitives re-skin with every
+   theme — not just the default light/dark. The package consumes --X as a full colour
+   (`--color-X: var(--X)`), and frink's vars are HSL triplets, so we wrap in hsl(). The
+   primary Button glow (--glow-primary-from/to, package v0.5.2+) is derived too, so it
+   tracks the theme's primary instead of the package's brand violet; --primary-fg then
+   follows --primary-foreground for legible text on the tinted fill. --danger-fg stays
+   static — glow-rim-danger has no fill (transparent), so its text is theme-agnostic. */
+:root {
+  --field: hsl(var(--input-background));
+  --field-border: hsl(var(--input));
+  --ink: hsl(var(--foreground));
+  --muted-fg: hsl(var(--muted-foreground));
+  --dim: hsl(var(--muted-foreground));
+  --danger: hsl(var(--destructive));
+  --bg: hsl(var(--background));
+  --surface: hsl(var(--background));
+  --elevated: hsl(var(--card));
+  --raised: hsl(var(--popover));
+  --rim: hsl(var(--border));
+  --hairline: hsl(var(--border));
+  --hairline-strong: hsl(var(--border));
+  /* --hover-overlay intentionally NOT set here: inherit the primitives theme.css default
+     (subtle ~5% overlay). Overriding it to hsl(var(--accent)) painted every ghost/secondary
+     button a solid grey on hover. */
+  /* Frink's app default button shape is a SOFT rounded rectangle (marketing stays pill).
+     Override the package's --btn-radius-base (default: pill) + --btn-radius-md so every no-`shape`
+     button gets frink's app radius with one token, and an explicit shape="md" matches it. MATCH the
+     still-large local shadcn kit (src/renderer/components/ui/**, ~47 components on --radius-md=6px):
+     the token only reshapes primitives <Button>, not the shadcn dropdown/menu/dialog controls, so a
+     radius far from --radius-md makes Buttons pop oddly against them. Decision: button-shape-per-consumer-default. */
+  --btn-radius-base: var(--radius-md);
+  --btn-radius-md: var(--radius-md);
+  /* Frink's field is a dense 36px control (the deleted local input's h-9 + py-2), not the
+     package's taller intrinsic marketing field. This pair re-scales every <Input> that does
+     not pass `size`; call sites pass size="xs|sm|md|lg" only for denser or larger chrome.
+     --field-radius is deliberately NOT overridden: the package's 10px already matches the
+     local Select (components/ui/select.tsx) and the shared overlay chrome
+     (lib/overlay-styles.ts), so inheriting it converges the field family instead of pinning
+     it to the old input's 8px. Decision: design-system-adoption. */
+  --field-height-base: 2.25rem;
+  --field-pad-y-base: 0.5rem;
+  /* Primary Button glow tracks the active theme's primary (a subtle top-sheen via
+     the base); text follows the theme's own button.foreground. */
+  --glow-primary-from: color-mix(in oklab, hsl(var(--primary)) 78%, white);
+  --glow-primary-to: hsl(var(--primary));
+  --primary-fg: hsl(var(--primary-foreground));
+}
+
+/* The OS asks for solid surfaces: !important beats the inline glass vars ThemeEffects writes,
+   and those the Fine-tune specimen sets on itself. */
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  :root,
+  [data-glass-specimen] {
+    --glass-opacity: 100% !important;
+    --glass-filter: none !important;
+    --glass-rim: 0 !important;
+    --glass-sheen: 0 !important;
+    --glass-tint: 0 !important;
+    --glass-ink: 0% !important;
+  }
+}
+
+/* The glass material in the card tone: panels (via .unified-sidebar-glass), cards and chat
+   surfaces. Overlays wear it in the popover tone (lib/overlay-styles.ts). */
+@utility glass-card {
+  background-color: hsl(var(--card) / var(--glass-opacity));
+  @apply glass-lit;
+}
+
+/* glass-card plus the blur, for surfaces content scrolls behind: bubbles, the composer and the
+   cards in its slot. Panels and cards stay unblurred: over the static background a blur changes
+   nothing, and it would make each one the containing block of its fixed children (drag previews). */
+@utility glass-float {
+  @apply glass-card;
+  backdrop-filter: var(--glass-filter);
+}
+
+/* Marks each surface that can hold the chat composer's slot. A stacked card sitting on one squares
+   its top corners, so the two read as one object. A utility, so it beats `rounded-*`. */
+@utility composer-slot-surface {
+  [data-chat-dock] > :has([data-stacked-card]) + * & {
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+  }
+}
+
+/* Frink Glass lights: a 1px rim lit like the chat atmosphere (white top-left, a faint primary
+   glint bottom-right) and a faint top-left sheen. Redeclared on the specimen so the Fine-tune
+   preview derives them from its own level. */
+:root,
+[data-glass-specimen] {
+  --glass-rim-shadow:
+    inset 1px 1px 0 0 rgb(255 255 255 / var(--glass-rim)),
+    inset -1px -1px 0 0
+      color-mix(in srgb, var(--color-primary) calc(var(--glass-tint) * 100%), transparent);
+  --glass-sheen-image: radial-gradient(
+    130% 90% at 0% 0%,
+    rgb(255 255 255 / var(--glass-sheen)),
+    transparent 56%
+  );
+}
+
+/* Clearer glass lowers text contrast, so secondary ink moves toward primary ink. Resolved on :root
+   from root @theme colours, never from a portal's nested .dark. */
+:root {
+  --glass-muted-ink: color-mix(
+    in oklab,
+    var(--color-muted-foreground),
+    var(--color-foreground) var(--glass-ink)
+  );
+  --glass-destructive-ink: color-mix(
+    in oklab,
+    var(--color-destructive),
+    var(--color-foreground) calc(var(--glass-ink) / 2)
+  );
+}
+
+/* Frink Glass, on every glass surface: the rim and sheen above, and it re-inks text by overriding
+   --color-muted-foreground (and the primitives' --muted-fg) and --color-destructive for its whole
+   subtree. The rim rides Tailwind's shadow stack, so shadow-* and ring-* compose with it (guarded
+   in built-css.test.ts); a surface's own shadow belongs in --tw-shadow, never box-shadow. */
+@utility glass-lit {
+  --color-muted-foreground: var(--glass-muted-ink);
+  --muted-fg: var(--glass-muted-ink);
+  --color-destructive: var(--glass-destructive-ink);
+  --tw-inset-shadow: var(--glass-rim-shadow);
+  box-shadow:
+    var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow),
+    var(--tw-ring-shadow), var(--tw-shadow);
+  background-image: var(--glass-sheen-image);
+}
+
+/* Held on <html> for a frame around theme switches so no colour transition animates them. */
+html.theme-switching *,
+html.theme-switching *::before,
+html.theme-switching *::after {
+  transition: none !important;
+}
+
+/* A native range input drawn like components/ui/slider.tsx: a pill track under a white thumb.
+   The component fills the track between --range-from and --range-to (0%–100%, from ≤ to). */
+.range-slider {
+  --range-from: 0%;
+  --range-to: 0%;
+  --range-thumb-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  appearance: none;
+  height: 1.75rem;
+  background: transparent;
+}
+
+.range-slider::-webkit-slider-runnable-track {
+  height: 1.5rem;
+  border-radius: 9999px;
+  background:
+    linear-gradient(
+      to right,
+      transparent var(--range-from),
+      hsl(var(--primary)) var(--range-from) var(--range-to),
+      transparent var(--range-to)
+    ),
+    hsl(var(--foreground) / 0.1);
+}
+
+.range-slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 1.75rem;
+  height: 1.75rem;
+  margin-top: -0.125rem;
+  border-radius: 9999px;
+  background: white;
+  box-shadow: var(--range-thumb-shadow);
+  transition: transform 150ms;
+}
+
+.range-slider:enabled:hover::-webkit-slider-thumb {
+  transform: scale(1.1);
+}
+
+.range-slider:enabled:active::-webkit-slider-thumb {
+  transform: scale(0.95);
+}
+
+.range-slider:focus-visible {
+  outline: none;
+}
+
+.range-slider:focus-visible::-webkit-slider-thumb {
+  box-shadow:
+    var(--range-thumb-shadow),
+    0 0 0 4px hsl(var(--foreground) / 0.15);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .range-slider::-webkit-slider-thumb {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .range-slider {
+    appearance: auto;
+  }
+
+  .range-slider::-webkit-slider-runnable-track,
+  .range-slider::-webkit-slider-thumb {
+    all: revert;
+  }
+}
+
+/* Discrete theme and mode picks crossfade through document.startViewTransition. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 200ms;
+}
+
+/* Search highlight styles */
+.search-highlight {
+  background-color: rgb(250 204 21 / 0.35) !important;
+  color: inherit !important;
+  border-radius: 2px;
+}
+
+.search-highlight-current {
+  background-color: rgb(250 204 21 / 0.85) !important;
+  color: hsl(0 0% 5%) !important;
+}
+
+/* Monaco local diff markers (working tree vs HEAD), glyph margin lane only */
+
+.monaco-editor .frink-diff-glyphbar-added,
+.monaco-editor .frink-diff-glyphbar-modified,
+.monaco-editor .frink-diff-glyphbar-deleted {
+  width: 100%;
+  height: 100%;
+  background-repeat: no-repeat;
+  background-position: left center;
+  background-size: 3px 100%;
+}
+
+.monaco-editor .frink-diff-glyphbar-added {
+  background-image: linear-gradient(rgb(21 128 61 / 0.98), rgb(21 128 61 / 0.98));
+  background-size: 4px 100%;
+}
+
+.monaco-editor .frink-diff-glyphbar-modified {
+  background-image: linear-gradient(rgb(59 130 246 / 0.95), rgb(59 130 246 / 0.95));
+  background-size: 2px 100%;
+}
+
+.monaco-editor .frink-diff-glyphbar-deleted {
+  background-image: repeating-linear-gradient(
+    to bottom,
+    rgb(220 38 38 / 0.92) 0 2px,
+    transparent 2px 4px
+  );
+  background-size: 3px 100%;
+}
+
+/* Monaco inline diff line backgrounds (enhanced diff mode) */
+
+.monaco-editor .frink-diff-line-added {
+  background: rgb(34 197 94 / 0.08);
+}
+
+.monaco-editor .frink-diff-line-modified {
+  background: rgb(59 130 246 / 0.08);
+}
+
+.monaco-editor .frink-diff-line-deleted {
+  background: rgb(239 68 68 / 0.08);
+}
+
+:is(.dark) .monaco-editor .frink-diff-line-added {
+  background: rgb(34 197 94 / 0.12);
+}
+
+:is(.dark) .monaco-editor .frink-diff-line-modified {
+  background: rgb(59 130 246 / 0.12);
+}
+
+:is(.dark) .monaco-editor .frink-diff-line-deleted {
+  background: rgb(239 68 68 / 0.12);
+}
+
+/* Monaco inline diff token-level highlights */
+
+.monaco-editor .frink-inline-token-modified {
+  background: rgb(59 130 246 / 0.22);
+  border-radius: 2px;
+}
+
+:is(.dark) .monaco-editor .frink-inline-token-modified {
+  background: rgb(59 130 246 / 0.3);
+}
+
+/* Monaco inline diff deleted line view zones */
+
+.frink-inline-deleted-zone {
+  background: rgb(239 68 68 / 0.08);
+  overflow: hidden;
+}
+
+.frink-inline-deleted-pre {
+  opacity: 0.85;
+  background: transparent;
+  overflow: hidden;
+}
+
+:is(.dark) .frink-inline-deleted-zone {
+  background: rgb(239 68 68 / 0.14);
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.3);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.5);
+}
+
+/* Disable text selection on UI elements */
+.no-select {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Hide scrollbar but keep scroll functionality */
+.scrollbar-hide {
+  -ms-overflow-style: none; /* IE and Edge */
+  scrollbar-width: none; /* Firefox */
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Opera */
+}
+
+/* Drag region for window */
+.drag-region {
+  -webkit-app-region: drag;
+}
+
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* Chroma gradient animation for special keywords */
+@keyframes chroma-slide {
+  0% {
+    background-position: 100% 0;
+  }
+  40% {
+    background-position: 0% 0;
+  }
+  45% {
+    background-position: 0% 0;
+  }
+  46% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: 100% 0;
+  }
+}
+
+.chroma-text {
+  background-image: linear-gradient(
+    90deg,
+    #0a0a0a 0%,
+    #0a0a0a 30%,
+    #6366f1 42%,
+    #8b5cf6 50%,
+    #a855f7 58%,
+    #0a0a0a 70%,
+    #0a0a0a 100%
+  );
+  background-size: 300% 100%;
+  background-position: 100% 0;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+.chroma-text-animate {
+  animation: chroma-slide 2s ease-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chroma-text-animate {
+    animation: none !important;
+  }
+}
+
+/* Dark theme chroma colors */
+.dark .chroma-text {
+  background-image: linear-gradient(
+    90deg,
+    #fafafa 0%,
+    #fafafa 30%,
+    #818cf8 42%,
+    #a78bfa 50%,
+    #c084fc 58%,
+    #fafafa 70%,
+    #fafafa 100%
+  );
+}
+
+/* Command input highlight - inline text highlighter effect for command-sourced text */
+.command-input-highlight {
+  background-color: hsl(var(--primary) / 0.12);
+  border-radius: 3px;
+  padding: 1px 2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+/* Subtle command name prefix shown via ::before (doesn't affect textContent serialization) */
+.command-input-highlight::before {
+  content: '/' attr(data-command-highlight) ' ';
+  font-size: 0.6875rem;
+  font-weight: 600;
+  opacity: 0.5;
+}
+
+
+/* Sonner Toast Styling - Google-style layout */
+:root [data-sonner-toaster][data-sonner-theme] {
+  /* Toasts are overlays: they take the glass material in the popover tone. Sonner injects its
+     own [data-sonner-theme] palette after this sheet, so :root is what outranks it. */
+  --normal-bg: hsl(var(--popover) / var(--glass-opacity));
+  --normal-text: hsl(var(--popover-foreground));
+  --normal-border: hsl(var(--border) / var(--glass-opacity));
+  --border-radius: var(--radius);
+  /* Override rich colors - all toasts should be neutral */
+  --success-bg: var(--normal-bg);
+  --success-border: var(--normal-border);
+  --success-text: hsl(var(--popover-foreground));
+  --info-bg: var(--normal-bg);
+  --info-border: var(--normal-border);
+  --info-text: hsl(var(--popover-foreground));
+  --warning-bg: var(--normal-bg);
+  --warning-border: var(--normal-border);
+  --warning-text: hsl(var(--popover-foreground));
+  --error-bg: var(--normal-bg);
+  --error-border: var(--normal-border);
+  --error-text: hsl(var(--popover-foreground));
+}
+
+[data-sonner-toast][data-styled="true"] {
+  backdrop-filter: var(--glass-filter);
+  padding: 12px 16px;
+  padding-right: 32px;
+  gap: 8px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+/* Frink Glass on toasts (they take no class); :root outranks the sheet Sonner injects later. */
+:root [data-sonner-toast][data-styled="true"] {
+  background-image: var(--glass-sheen-image);
+  box-shadow: var(--glass-rim-shadow), 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+:root [data-sonner-toast][data-styled="true"]:focus-visible {
+  box-shadow: var(--glass-rim-shadow), 0 4px 12px rgba(0, 0, 0, 0.15), 0 0 0 2px var(--color-ring);
+}
+
+/* Icon on the left */
+[data-sonner-toast] [data-icon] {
+  margin-top: 1px;
+  color: var(--glass-muted-ink);
+  width: 16px;
+  height: 16px;
+}
+
+[data-sonner-toast] [data-icon] svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Loading spinner - match icon size */
+[data-sonner-toast] .sonner-loading-wrapper {
+  --size: 16px;
+}
+
+[data-sonner-toast] .sonner-loading-bar {
+  background: hsl(var(--muted-foreground));
+}
+
+/* Content wrapper - take remaining space */
+[data-sonner-toast] [data-content] {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Title styling */
+[data-sonner-toast] [data-title] {
+  font-weight: 500;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+/* Description styling */
+[data-sonner-toast] [data-description] {
+  color: var(--glass-muted-ink);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+/* Action & cancel buttons - row at the bottom right */
+[data-sonner-toast][data-styled="true"] [data-button] {
+  position: static;
+  background: transparent !important;
+  color: hsl(var(--foreground)) !important;
+  font-weight: 500;
+  font-size: 13px;
+  padding: 4px 12px;
+  height: auto;
+  border: 1px solid hsl(var(--border)) !important;
+  border-radius: 6px;
+  margin: 0 !important;
+  transition: background-color 150ms ease-out, transform 150ms ease-out;
+}
+
+[data-sonner-toast][data-styled="true"] [data-button]:hover {
+  background: hsl(var(--foreground) / 0.1) !important;
+}
+
+[data-sonner-toast][data-styled="true"] [data-button]:active {
+  transform: scale(0.97);
+}
+
+/* Button row container */
+[data-sonner-toast][data-styled="true"]:has([data-button]) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+[data-sonner-toast][data-styled="true"]:has([data-button]) [data-content] {
+  width: 100%;
+}
+
+[data-sonner-toast][data-styled="true"]:has([data-button]) [data-button] {
+  margin-left: auto !important;
+}
+
+/* Close button - inside toast, top right corner */
+[data-sonner-toast] [data-close-button] {
+  position: absolute !important;
+  top: 8px !important;
+  right: 8px !important;
+  left: unset !important;
+  transform: none !important;
+  background: transparent !important;
+  border: none !important;
+  border-radius: 4px !important;
+  color: var(--glass-muted-ink);
+  width: 20px;
+  height: 20px;
+}
+
+[data-sonner-toast] [data-close-button]:hover {
+  color: hsl(var(--foreground));
+  background: hsl(var(--accent)) !important;
+}
+
+/* Touch target expansion to 44px (WCAG AAA) via invisible pseudo-element */
+.touch-target-h7 { @apply relative before:absolute before:-inset-2 before:content-['']; }
+.touch-target-h6 { @apply relative before:absolute before:inset-[-10px] before:content-['']; }
+.touch-target-h5 { @apply relative before:absolute before:-inset-3 before:content-['']; }
+
+/* ========================================
+   Easter egg animations
+   ======================================== */
+
+/* --- Sprite effects --- */
+
+@keyframes ee-sprite-enter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes ee-tip-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(4px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+.ee-sprite-enter {
+  animation: ee-sprite-enter 0.4s ease-out;
+}
+
+.ee-tip {
+  background: hsl(var(--popover));
+  border: 2px solid hsl(var(--border));
+  padding: 6px 12px;
+  border-radius: 2px;
+  box-shadow: 3px 3px 0 0 hsl(var(--border) / 0.3);
+  animation: ee-tip-in 0.3s ease-out both;
+  image-rendering: pixelated;
+}
+
+.ee-tip::after {
+  content: '';
+  position: absolute;
+  bottom: -6px;
+  left: 50%;
+  margin-left: -4px;
+  width: 8px;
+  height: 6px;
+  background: hsl(var(--popover));
+  border-left: 2px solid hsl(var(--border));
+  border-right: 2px solid hsl(var(--border));
+  border-bottom: 2px solid hsl(var(--border));
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
+}
+
+@keyframes ee-tip-swap {
+  0% { opacity: 1; transform: translateX(-50%) translateY(0); }
+  40% { opacity: 0; transform: translateX(-50%) translateY(-4px); }
+  60% { opacity: 0; transform: translateX(-50%) translateY(4px); }
+  100% { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+.ee-tip-swap {
+  animation: ee-tip-swap 0.4s ease-in-out;
+}
+
+@keyframes ee-curtain-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.ee-curtain {
+  animation: ee-curtain-in 0.6s ease-out;
+}
+
+/* --- Fury effects --- */
+
+/*
+ * Tints the existing sprite to a fiery red without needing a new sprite sheet.
+ * The hue/saturate combo plus drop-shadow gives the cartoon "RED + glow" feel.
+ */
+.ee-fury-tint {
+  filter: hue-rotate(-50deg) saturate(2.5) brightness(0.95)
+    drop-shadow(0 0 4px hsl(0, 100%, 55%));
+  animation: ee-fury-pulse 0.45s ease-in-out infinite;
+}
+
+@keyframes ee-fury-pulse {
+  0%, 100% {
+    filter: hue-rotate(-50deg) saturate(2.5) brightness(0.95)
+      drop-shadow(0 0 4px hsl(0, 100%, 55%));
+  }
+  50% {
+    filter: hue-rotate(-60deg) saturate(3.2) brightness(1.05)
+      drop-shadow(0 0 10px hsl(0, 100%, 60%));
+  }
+}
+
+.ee-fury-shake {
+  /* Subtle horizontal jitter so he looks furious even while standing still. */
+  animation: ee-fury-jitter 0.18s ease-in-out infinite;
+}
+
+@keyframes ee-fury-jitter {
+  0%, 100% { translate: 0 0; }
+  25% { translate: -2px 1px; }
+  50% { translate: 2px -1px; }
+  75% { translate: -1px 2px; }
+}
+
+/* Smoke puffs — three layers, staggered, rising from the head. */
+.ee-fury-puff {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  top: -10px;
+  border-radius: 50%;
+  background: rgba(180, 180, 180, 0.55);
+  filter: blur(3px);
+  opacity: 0;
+  pointer-events: none;
+  animation: ee-fury-puff-rise 1.6s ease-out infinite;
+}
+
+.ee-fury-puff-a {
+  left: 18px;
+  animation-delay: 0s;
+}
+
+.ee-fury-puff-b {
+  left: 36px;
+  animation-delay: 0.4s;
+  width: 11px;
+  height: 11px;
+}
+
+.ee-fury-puff-c {
+  left: 50px;
+  animation-delay: 0.8s;
+  width: 16px;
+  height: 16px;
+}
+
+@keyframes ee-fury-puff-rise {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0) scale(0.6);
+  }
+  20% {
+    opacity: 0.7;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-8px, -50px) scale(1.6);
+  }
+}
+
+/* --- DVD bounce screensaver --- */
+
+@keyframes ee-dvd-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes ee-dvd-corner-flash {
+  0% { opacity: 0; }
+  10% { opacity: 0.4; }
+  20% { opacity: 0.1; }
+  30% { opacity: 0.3; }
+  100% { opacity: 0; }
+}
+
+.ee-dvd-fade-in {
+  animation: ee-dvd-fade-in 0.8s ease-out;
+}
+
+.ee-dvd-corner-flash {
+  background: white;
+  animation: ee-dvd-corner-flash 1.2s ease-out forwards;
+}
+
+/* --- Frink Arcade (Konami) --- */
+
+.ee-arcade {
+  color: hsl(var(--primary));
+  animation: ee-arcade-on 0.45s ease-out both;
+}
+
+@keyframes ee-arcade-on {
+  0% { opacity: 0; transform: scaleY(0.02); filter: brightness(3); }
+  60% { opacity: 1; transform: scaleY(1.02); filter: brightness(1.6); }
+  100% { opacity: 1; transform: none; filter: none; }
+}
+
+.ee-arcade-scanlines {
+  background: repeating-linear-gradient(to bottom, rgb(0 0 0 / 0.22) 0 1px, transparent 1px 3px);
+  animation: ee-arcade-flicker 0.12s steps(2) infinite;
+}
+
+@keyframes ee-arcade-flicker {
+  50% { opacity: 0.85; }
+}
+
+.ee-arcade-glass {
+  background: radial-gradient(ellipse at center, rgb(0 0 0 / 0.55), rgb(0 0 0 / 0.8));
+}
+
+.ee-arcade-bezel {
+  border-radius: 28px;
+  box-shadow: inset 0 0 0 10px rgb(0 0 0 / 0.85), inset 0 0 140px 30px rgb(0 0 0 / 0.6);
+}
+
+.ee-arcade-glow {
+  text-shadow: 0 0 8px hsl(var(--primary) / 0.8), 3px 3px 0 rgb(0 0 0 / 0.6);
+}
+
+.ee-arcade-blink {
+  animation: ee-arcade-blink 1s steps(1) infinite;
+}
+
+@keyframes ee-arcade-blink {
+  50% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ee-arcade,
+  .ee-arcade-scanlines,
+  .ee-arcade-blink,
+  .ee-fury-tint,
+  .ee-fury-shake,
+  .ee-sprite-enter,
+  .ee-tip,
+  .ee-tip-swap,
+  .ee-curtain,
+  .ee-dvd-fade-in,
+  .ee-dvd-corner-flash {
+    animation: none !important;
+    filter: none !important;
+  }
+}
+
+/* Terminal link popup */
+.xterm-link-popup {
+  font-family: var(--font-geist-mono), "Geist Mono", ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: hsl(var(--popover));
+  border: 1px solid hsl(var(--border));
+  color: hsl(var(--popover-foreground));
+  position: absolute;
+  z-index: 1000;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  pointer-events: auto;
+}

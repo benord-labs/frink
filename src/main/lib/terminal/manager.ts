@@ -1,0 +1,338 @@
+import { EventEmitter } from 'node:events';
+import { SHELL_CRASH_THRESHOLD_MS } from './env';
+import { portManager } from './port-manager';
+import { createSession, setupInitialCommands } from './session';
+import type { CreateSessionParams, SessionResult, TerminalSession } from './types';
+
+export class TerminalManager extends EventEmitter {
+  private sessions = new Map<string, TerminalSession>();
+  private pendingSessions = new Map<string, Promise<SessionResult>>();
+
+  async createOrAttach(params: CreateSessionParams): Promise<SessionResult> {
+    const { paneId, cols, rows } = params;
+
+    // Deduplicate concurrent calls (prevents race in React Strict Mode)
+    const pending = this.pendingSessions.get(paneId);
+    if (pending) {
+      return pending;
+    }
+
+    // Return existing session if alive
+    const existing = this.sessions.get(paneId);
+    if (existing?.isAlive) {
+      existing.lastActive = Date.now();
+      if (cols !== undefined && rows !== undefined) {
+        this.resize({ paneId, cols, rows });
+      }
+      return {
+        isNew: false,
+        serializedState: existing.serializedState || '',
+      };
+    }
+
+    // Create new session
+    const creationPromise = this.doCreateSession(params);
+    this.pendingSessions.set(paneId, creationPromise);
+
+    try {
+      return await creationPromise;
+    } finally {
+      this.pendingSessions.delete(paneId);
+    }
+  }
+
+  private async doCreateSession(
+    params: CreateSessionParams & { useFallbackShell?: boolean },
+  ): Promise<SessionResult> {
+    const { paneId, workspaceId, initialCommands } = params;
+
+    // Create the session
+    const session = await createSession(params, (id, data) => {
+      this.emit(`data:${id}`, data);
+    });
+
+    // Set up initial commands (only for new sessions)
+    setupInitialCommands(session, initialCommands);
+
+    // Set up exit handler with fallback logic
+    this.setupExitHandler(session, params);
+
+    this.sessions.set(paneId, session);
+    portManager.registerSession(session, workspaceId || '');
+
+    return {
+      isNew: true,
+      serializedState: '',
+    };
+  }
+
+  private setupExitHandler(
+    session: TerminalSession,
+    params: CreateSessionParams & { useFallbackShell?: boolean },
+  ): void {
+    const { paneId } = params;
+
+    session.exitDisposable = session.pty.onExit(async ({ exitCode, signal }) => {
+      // Flush any buffered data before emitting exit
+      session.batcher.dispose();
+      session.isAlive = false;
+
+      // Check if shell crashed quickly - try fallback
+      const sessionDuration = Date.now() - session.startTime;
+      const crashedQuickly = sessionDuration < SHELL_CRASH_THRESHOLD_MS && exitCode !== 0;
+
+      if (crashedQuickly && !session.usedFallback) {
+        this.sessions.delete(paneId);
+
+        try {
+          await this.doCreateSession({
+            ...params,
+            useFallbackShell: true,
+          });
+          return; // Recovered - don't emit exit
+        } catch (_fallbackError) {}
+      }
+
+      // Unregister from port manager (also removes detected ports)
+      portManager.unregisterSession(paneId);
+
+      this.emit(`exit:${paneId}`, exitCode, signal);
+
+      // Clean up session after delay
+      const timeout = setTimeout(() => {
+        this.sessions.delete(paneId);
+      }, 5000);
+      timeout.unref();
+    });
+  }
+
+  write(params: { paneId: string; data: string }): void {
+    const { paneId, data } = params;
+    const session = this.sessions.get(paneId);
+
+    if (!session?.isAlive) {
+      throw new Error(`Terminal session ${paneId} not found or not alive`);
+    }
+
+    session.pty.write(data);
+    session.lastActive = Date.now();
+  }
+
+  resize(params: { paneId: string; cols: number; rows: number }): void {
+    const { paneId, cols, rows } = params;
+
+    // Validate geometry: cols and rows must be positive integers
+    if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols <= 0 || rows <= 0) {
+      return;
+    }
+
+    const session = this.sessions.get(paneId);
+
+    if (!session?.isAlive) {
+      return;
+    }
+
+    try {
+      session.pty.resize(cols, rows);
+      session.cols = cols;
+      session.rows = rows;
+      session.lastActive = Date.now();
+    } catch (_error) {}
+  }
+
+  signal(params: { paneId: string; signal?: string }): void {
+    const { paneId, signal = 'SIGTERM' } = params;
+    const session = this.sessions.get(paneId);
+
+    if (!session?.isAlive) {
+      return;
+    }
+
+    session.pty.kill(signal);
+    session.lastActive = Date.now();
+  }
+
+  async kill(params: { paneId: string }): Promise<void> {
+    const { paneId } = params;
+    const session = this.sessions.get(paneId);
+
+    if (!session) {
+      return;
+    }
+
+    if (session.isAlive) {
+      session.dataDisposable.dispose();
+      session.exitDisposable?.dispose();
+      session.initCommandDisposable?.dispose();
+      session.batcher.dispose();
+      session.pty.kill();
+    } else {
+      this.sessions.delete(paneId);
+    }
+  }
+
+  detach(params: { paneId: string; serializedState?: string }): void {
+    const { paneId, serializedState } = params;
+    const session = this.sessions.get(paneId);
+
+    if (!session) {
+      return;
+    }
+
+    if (serializedState) {
+      session.serializedState = serializedState;
+    }
+    session.lastActive = Date.now();
+  }
+
+  clearScrollback(params: { paneId: string }): void {
+    const { paneId } = params;
+    const session = this.sessions.get(paneId);
+
+    if (!session) {
+      return;
+    }
+
+    session.serializedState = '';
+    session.lastActive = Date.now();
+  }
+
+  getSession(paneId: string): { isAlive: boolean; cwd: string; lastActive: number } | null {
+    const session = this.sessions.get(paneId);
+    if (!session) {
+      return null;
+    }
+
+    return {
+      isAlive: session.isAlive,
+      cwd: session.cwd,
+      lastActive: session.lastActive,
+    };
+  }
+
+  async killByWorkspaceId(workspaceId: string): Promise<{ killed: number; failed: number }> {
+    const sessionsToKill = Array.from(this.sessions.entries()).filter(
+      ([, session]) => session.workspaceId === workspaceId,
+    );
+
+    if (sessionsToKill.length === 0) {
+      return { killed: 0, failed: 0 };
+    }
+
+    const results = await Promise.all(
+      sessionsToKill.map(([paneId, session]) => this.killSessionWithTimeout(paneId, session)),
+    );
+
+    const killed = results.filter(Boolean).length;
+    return { killed, failed: results.length - killed };
+  }
+
+  private async killSessionWithTimeout(paneId: string, session: TerminalSession): Promise<boolean> {
+    if (!session.isAlive) {
+      this.sessions.delete(paneId);
+      return true;
+    }
+
+    return new Promise<boolean>((resolve) => {
+      let resolved: boolean = false;
+      let sigtermTimeout: ReturnType<typeof setTimeout> | undefined;
+      let sigkillTimeout: ReturnType<typeof setTimeout> | undefined;
+
+      const cleanup = (success: boolean) => {
+        if (resolved) return;
+        resolved = true;
+        this.off(`exit:${paneId}`, exitHandler);
+        if (sigtermTimeout) clearTimeout(sigtermTimeout);
+        if (sigkillTimeout) clearTimeout(sigkillTimeout);
+        resolve(success);
+      };
+
+      const exitHandler = () => cleanup(true);
+      this.once(`exit:${paneId}`, exitHandler);
+
+      // Escalate to SIGKILL after 2s
+      sigtermTimeout = setTimeout(() => {
+        if (resolved || !session.isAlive) return;
+
+        try {
+          session.pty.kill('SIGKILL');
+        } catch (_error) {}
+
+        // Force cleanup after another 500ms
+        sigkillTimeout = setTimeout(() => {
+          if (resolved) return;
+          if (session.isAlive) {
+            session.isAlive = false;
+            this.sessions.delete(paneId);
+          }
+          cleanup(false);
+        }, 500);
+        sigkillTimeout.unref();
+      }, 2000);
+      sigtermTimeout.unref();
+
+      // Dispose TSF handles before sending SIGTERM
+      session.dataDisposable.dispose();
+      session.exitDisposable?.dispose();
+      session.initCommandDisposable?.dispose();
+
+      // Send SIGTERM
+      try {
+        session.pty.kill();
+      } catch (_error) {
+        session.isAlive = false;
+        this.sessions.delete(paneId);
+        cleanup(false);
+      }
+    });
+  }
+
+  getSessionCountByWorkspaceId(workspaceId: string): number {
+    return Array.from(this.sessions.values()).filter(
+      (session) => session.workspaceId === workspaceId && session.isAlive,
+    ).length;
+  }
+
+  /**
+   * Send a newline to all terminals in a workspace to refresh their prompts.
+   * Useful after switching branches to update the branch name in prompts.
+   */
+  refreshPromptsForWorkspace(workspaceId: string): void {
+    for (const [_paneId, session] of this.sessions.entries()) {
+      if (session.workspaceId === workspaceId && session.isAlive) {
+        try {
+          session.pty.write('\n');
+        } catch (_error) {}
+      }
+    }
+  }
+
+  detachAllListeners(): void {
+    for (const event of this.eventNames()) {
+      const name = String(event);
+      if (name.startsWith('data:') || name.startsWith('exit:')) {
+        this.removeAllListeners(event);
+      }
+    }
+  }
+
+  async cleanup(): Promise<void> {
+    for (const [, session] of this.sessions.entries()) {
+      if (session.isAlive) {
+        // Dispose all NAPI ThreadSafeFunction handles before kill to prevent
+        // callbacks firing into a torn-down V8 isolate during shutdown.
+        session.dataDisposable.dispose();
+        session.exitDisposable?.dispose();
+        session.initCommandDisposable?.dispose();
+        session.batcher.dispose();
+        session.pty.kill();
+      }
+    }
+
+    this.sessions.clear();
+    this.removeAllListeners();
+  }
+}
+
+/** Singleton terminal manager instance */
+export const terminalManager = new TerminalManager();

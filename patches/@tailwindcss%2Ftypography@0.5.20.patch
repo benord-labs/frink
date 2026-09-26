@@ -1,0 +1,20 @@
+diff --git a/src/index.js b/src/index.js
+index 6838184592f8b4e94e305bdb057e17e11383f716..58ca3ea812ac13e6ac295489095c440a8d885ded 100644
+--- a/src/index.js
++++ b/src/index.js
+@@ -16,11 +16,13 @@ function inWhere(selector, { className, modifier, prefix }) {
+   // Parse the selector, if every component ends in the same pseudo element(s) then move it to the end
+   let [trailingPseudo, rebuiltSelector] = commonTrailingPseudos(selector)
+ 
++  // `.not-prose` rather than `[class~="not-prose"]`: an attribute selector on `class` followed by
++  // ` *` makes Chromium restyle the whole subtree of ANY element whose class attribute changes.
+   if (trailingPseudo) {
+-    return `:where(${selectorPrefix}${rebuiltSelector}):not(:where([class~="${prefixedNot}"],[class~="${prefixedNot}"] *))${trailingPseudo}`
++    return `:where(${selectorPrefix}${rebuiltSelector}):not(:where(.${prefixedNot},.${prefixedNot} *))${trailingPseudo}`
+   }
+ 
+-  return `:where(${selectorPrefix}${selector}):not(:where([class~="${prefixedNot}"],[class~="${prefixedNot}"] *))`
++  return `:where(${selectorPrefix}${selector}):not(:where(.${prefixedNot},.${prefixedNot} *))`
+ }
+ 
+ function configToCss(config = {}, { target, className, modifier, prefix }) {

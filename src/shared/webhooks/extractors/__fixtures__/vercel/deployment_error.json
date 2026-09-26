@@ -1,0 +1,17 @@
+{
+  "id": "evt_9zK3mQxYb7pL4nRtWv2Cd",
+  "type": "deployment.error",
+  "createdAt": 1789045200000,
+  "region": "iad1",
+  "payload": {
+    "team": { "id": "team_9aB7cD5eF3gH1jK" },
+    "user": { "id": "user_2xQ8vR4tY6uI0oP" },
+    "project": { "id": "prj_7hJ4kL9mN2bV5cX" },
+    "deployment": {
+      "id": "dpl_5tR8yU2iO4pA6sD",
+      "name": "storefront",
+      "url": "storefront-git-main-acme.vercel.app",
+      "meta": { "githubCommitRef": "main", "githubCommitSha": "4b1c9d2" }
+    }
+  }
+}

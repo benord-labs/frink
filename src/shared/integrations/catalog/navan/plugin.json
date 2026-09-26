@@ -1,0 +1,33 @@
+{
+  "name": "navan",
+  "displayName": "Navan",
+  "description": "Expenses, travel and cards",
+  "longDescription": "Ask your chats about your expenses, travel bookings, policies and cards in Navan.",
+  "mcpServers": {
+    "navan": {
+      "type": "http",
+      "auth": {
+        "kind": "frink_client"
+      },
+      "url": "https://mcp.navan.com/mcp"
+    }
+  },
+  "frink": {
+    "keywords": [
+      "expenses",
+      "travel",
+      "finance"
+    ],
+    "source": {
+      "repo": "cursor/plugins",
+      "commit": "4612556",
+      "path": "third_party/navan",
+      "license": "MIT",
+      "official": {
+        "url": "https://developer.navan.com/mcp/",
+        "kind": "documentation"
+      }
+    },
+    "status": "coming_soon"
+  }
+}

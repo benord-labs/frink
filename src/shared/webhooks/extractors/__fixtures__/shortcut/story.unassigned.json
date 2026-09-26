@@ -1,0 +1,36 @@
+{
+  "id": "2f18cab1-7e4f-4c3b-ad5e-4b3c2d9e8f71",
+  "changed_at": "2026-05-13T09:15:11.802Z",
+  "version": "v1",
+  "primary_id": 4821,
+  "member_id": "0a7e3d92-5b4c-4f1a-8b21-3d6f9c2e1a55",
+  "actions": [
+    {
+      "id": 4821,
+      "entity_type": "story",
+      "action": "update",
+      "name": "[platform] Add Postgres connection pool warm-up",
+      "story_type": "feature",
+      "app_url": "https://app.shortcut.com/slice/story/4821",
+      "changes": {
+        "owner_ids": {
+          "adds": [],
+          "removes": ["6126f7a4-d1e2-4b3a-9c2f-7d8e1c4b5a90"]
+        }
+      }
+    }
+  ],
+  "references": [
+    {
+      "id": 4821,
+      "entity_type": "story",
+      "name": "[platform] Add Postgres connection pool warm-up",
+      "app_url": "https://app.shortcut.com/slice/story/4821"
+    },
+    {
+      "id": "6126f7a4-d1e2-4b3a-9c2f-7d8e1c4b5a90",
+      "entity_type": "member",
+      "name": "Benji Norval"
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+# Dependencies
+node_modules
+
+# Build output (electron-vite, QA rig, relay tsc, electron-builder)
+out
+out-qa
+dist
+release
+
+# Downloaded runtime binaries; only resources/custom-nodes/ is tracked
+resources/*
+!resources/custom-nodes/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Caches and tool state
+coverage
+.cache
+projectStructure.cache.json
+.gitnexus
+
+# OS and editor
+.DS_Store
+.idea
+
+# Local agent configuration
+/.claude/
+/.agents/
+/.cursor/
+/.codex/
+/CLAUDE.local.md
+/AGENTS.override.md
+

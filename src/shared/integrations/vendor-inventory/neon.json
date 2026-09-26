@@ -1,0 +1,50 @@
+{
+  "pin": {
+    "marketplace": "claude-plugins-official",
+    "name": "neon",
+    "version": "1.2.0",
+    "gitCommitSha": "2e0da3a1653bcdd227565ac14bb3e9e453a8b854",
+    "sourceRepo": "anthropics/claude-plugins-official",
+    "payloadRepo": "neondatabase/agent-skills",
+    "payloadPath": "plugins/neon-postgres"
+  },
+  "pluginId": "neon@claude-plugins-official",
+  "skills": [
+    {
+      "id": "neon@claude-plugins-official:neon",
+      "name": "neon",
+      "path": "skills/neon"
+    },
+    {
+      "id": "neon@claude-plugins-official:neon-ai-gateway",
+      "name": "neon-ai-gateway",
+      "path": "skills/neon-ai-gateway"
+    },
+    {
+      "id": "neon@claude-plugins-official:neon-functions",
+      "name": "neon-functions",
+      "path": "skills/neon-functions"
+    },
+    {
+      "id": "neon@claude-plugins-official:neon-object-storage",
+      "name": "neon-object-storage",
+      "path": "skills/neon-object-storage"
+    },
+    {
+      "id": "neon@claude-plugins-official:neon-postgres",
+      "name": "neon-postgres",
+      "path": "skills/neon-postgres"
+    },
+    {
+      "id": "neon@claude-plugins-official:neon-postgres-branches",
+      "name": "neon-postgres-branches",
+      "path": "skills/neon-postgres-branches"
+    },
+    {
+      "id": "neon@claude-plugins-official:neon-postgres-egress-optimizer",
+      "name": "neon-postgres-egress-optimizer",
+      "path": "skills/neon-postgres-egress-optimizer"
+    }
+  ],
+  "commands": []
+}

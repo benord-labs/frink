@@ -1,0 +1,33 @@
+{
+  "name": "google-calendar",
+  "displayName": "Google Calendar",
+  "description": "Events and scheduling",
+  "longDescription": "Ask your chats what is on your calendar and to find a time and book it.",
+  "mcpServers": {
+    "google-calendar": {
+      "type": "http",
+      "auth": {
+        "kind": "pending"
+      },
+      "url": "https://calendarmcp.googleapis.com/mcp/v1"
+    }
+  },
+  "frink": {
+    "keywords": [
+      "calendar",
+      "meetings",
+      "scheduling",
+      "google"
+    ],
+    "source": {
+      "repo": "cursor/plugins",
+      "commit": "4612556",
+      "path": "third_party/google-calendar",
+      "license": "MIT",
+      "official": {
+        "url": "https://developers.google.com/workspace/calendar/api/guides/configure-mcp-server",
+        "kind": "documentation"
+      }
+    }
+  }
+}

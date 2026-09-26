@@ -1,0 +1,33 @@
+{
+  "name": "clay",
+  "displayName": "Clay",
+  "description": "People and company enrichment",
+  "longDescription": "Ask your chats to enrich a person or company and run a Clay research agent on it.",
+  "mcpServers": {
+    "clay": {
+      "type": "http",
+      "auth": {
+        "kind": "frink_client"
+      },
+      "url": "https://api.clay.com/v3/mcp"
+    }
+  },
+  "frink": {
+    "keywords": [
+      "enrichment",
+      "research",
+      "sales"
+    ],
+    "source": {
+      "repo": "cursor/plugins",
+      "commit": "4612556",
+      "path": "third_party/clay",
+      "license": "MIT",
+      "official": {
+        "url": "https://github.com/clay-run/agent-plugins/tree/main/clay",
+        "kind": "plugin"
+      }
+    },
+    "status": "coming_soon"
+  }
+}

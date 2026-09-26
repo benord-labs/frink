@@ -1,0 +1,54 @@
+{
+  "pin": {
+    "marketplace": "claude-plugins-official",
+    "name": "sentry",
+    "version": "1.4.0",
+    "gitCommitSha": "73e53541d7af21672e27428c7067f4264b8a3d65",
+    "sourceRepo": "anthropics/claude-plugins-official",
+    "payloadRepo": "getsentry/plugin-claude"
+  },
+  "pluginId": "sentry@claude-plugins-official",
+  "skills": [
+    {
+      "id": "sentry@claude-plugins-official:sentry-create-alert",
+      "name": "sentry-create-alert",
+      "path": "skills/sentry-create-alert"
+    },
+    {
+      "id": "sentry@claude-plugins-official:sentry-debug-issue",
+      "name": "sentry-debug-issue",
+      "path": "skills/sentry-debug-issue"
+    },
+    {
+      "id": "sentry@claude-plugins-official:sentry-fix-stack-traces",
+      "name": "sentry-fix-stack-traces",
+      "path": "skills/sentry-fix-stack-traces"
+    },
+    {
+      "id": "sentry@claude-plugins-official:sentry-get-started",
+      "name": "sentry-get-started",
+      "path": "skills/sentry-get-started"
+    },
+    {
+      "id": "sentry@claude-plugins-official:sentry-instrument",
+      "name": "sentry-instrument",
+      "path": "skills/sentry-instrument"
+    },
+    {
+      "id": "sentry@claude-plugins-official:sentry-otel-exporter-setup",
+      "name": "sentry-otel-exporter-setup",
+      "path": "skills/sentry-otel-exporter-setup"
+    },
+    {
+      "id": "sentry@claude-plugins-official:sentry-setup-releases",
+      "name": "sentry-setup-releases",
+      "path": "skills/sentry-setup-releases"
+    },
+    {
+      "id": "sentry@claude-plugins-official:sentry-snapshots-cocoa",
+      "name": "sentry-snapshots-cocoa",
+      "path": "skills/sentry-snapshots-cocoa"
+    }
+  ],
+  "commands": []
+}

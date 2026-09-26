@@ -1,0 +1,29 @@
+{
+  "pin": {
+    "marketplace": "clickup-plugin-marketplace",
+    "name": "clickup",
+    "version": "1.1.0",
+    "gitCommitSha": "5c5a8337d7c8ccf498c4643028d03f16fc7df9c6",
+    "sourceRepo": "clickup/clickup-plugin",
+    "payloadRepo": "clickup/clickup-plugin"
+  },
+  "pluginId": "clickup@clickup-plugin-marketplace",
+  "skills": [
+    {
+      "id": "clickup@clickup-plugin-marketplace:daily-standup",
+      "name": "daily-standup",
+      "path": "skills/daily-standup"
+    },
+    {
+      "id": "clickup@clickup-plugin-marketplace:repeat-project",
+      "name": "repeat-project",
+      "path": "skills/repeat-project"
+    },
+    {
+      "id": "clickup@clickup-plugin-marketplace:task-decomposition",
+      "name": "task-decomposition",
+      "path": "skills/task-decomposition"
+    }
+  ],
+  "commands": []
+}

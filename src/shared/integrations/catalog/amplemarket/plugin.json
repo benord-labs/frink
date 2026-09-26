@@ -1,0 +1,76 @@
+{
+  "name": "amplemarket",
+  "displayName": "Amplemarket",
+  "description": "Leads, contacts and outreach sequences",
+  "longDescription": "Ask your chats to find people and companies, enrich a lead and start the right sequence from one prompt.",
+  "mcpServers": {
+    "amplemarket": {
+      "type": "http",
+      "auth": {
+        "kind": "frink_client"
+      },
+      "url": "https://mcp.amplemarket.com/mcp"
+    }
+  },
+  "frink": {
+    "keywords": [
+      "sales",
+      "leads",
+      "outreach",
+      "prospecting"
+    ],
+    "source": {
+      "repo": "cursor/plugins",
+      "commit": "4612556",
+      "path": "third_party/amplemarket",
+      "license": "MIT",
+      "official": {
+        "url": "https://github.com/amplemarket/skills",
+        "kind": "plugin"
+      }
+    },
+    "actions": [
+      {
+        "id": "amplemarket.search_people",
+        "label": "Search Amplemarket people",
+        "icon": "search",
+        "description": "Finds people matching the job title, company or seniority you describe.",
+        "server": "amplemarket",
+        "tool": "search_people"
+      },
+      {
+        "id": "amplemarket.search_companies",
+        "label": "Search Amplemarket companies",
+        "icon": "globe",
+        "description": "Finds companies matching the size, industry or location you describe.",
+        "server": "amplemarket",
+        "tool": "search_companies"
+      },
+      {
+        "id": "amplemarket.enrich_person",
+        "label": "Enrich an Amplemarket contact",
+        "icon": "sparkles",
+        "description": "Fills in what Amplemarket knows about one person from their email or profile.",
+        "server": "amplemarket",
+        "tool": "enrich_person"
+      },
+      {
+        "id": "amplemarket.list_sequences",
+        "label": "List Amplemarket sequences",
+        "icon": "layers",
+        "description": "Lists the outreach sequences in your account.",
+        "server": "amplemarket",
+        "tool": "list_sequences"
+      },
+      {
+        "id": "amplemarket.add_leads_to_sequence",
+        "label": "Add leads to a sequence",
+        "icon": "send",
+        "description": "Puts the leads you supply into one Amplemarket sequence.",
+        "server": "amplemarket",
+        "tool": "add_leads_to_sequence"
+      }
+    ],
+    "status": "coming_soon"
+  }
+}

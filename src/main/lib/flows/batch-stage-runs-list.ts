@@ -1,0 +1,107 @@
+/** One stage's batch_stage_runs, paginated, as BatchStageRunRow: start_task fields (merge conflicts),
+ * needs_input (listHumanWaitFlowRunIds) and timestamps from the linked flow_run. */
+
+import { sql as drizzleSql, eq } from 'drizzle-orm';
+import type { BatchStageRunRow } from '../../../shared/types/flow';
+import { getDatabase } from '../db';
+import {
+  listHumanWaitFlowRunIds,
+  listLatestStartTaskRunsByFlowRunIds,
+} from '../db/repos/node-runs';
+import { batchStageRuns, flowRuns, type NodeRun } from '../db/schema';
+
+export type ListBatchStageRunsOptions = {
+  limit?: number;
+  offset?: number;
+};
+
+function stringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value.filter((item): item is string => typeof item === 'string');
+}
+
+/** Converging-merge fields from a start_task's node_output.outputs (camelCase at rest). */
+function convergeMergeFields(outputs: Record<string, unknown>): Partial<BatchStageRunRow> {
+  const fields: Partial<BatchStageRunRow> = {};
+  if (outputs.mergeConflict === true) fields.merge_conflict = true;
+  if (typeof outputs.conflictingBranch === 'string') {
+    fields.conflicting_branch = outputs.conflictingBranch;
+  }
+  const conflictedFiles = stringArray(outputs.conflictedFiles);
+  if (conflictedFiles) fields.conflicted_files = conflictedFiles;
+  const mergedBranches = stringArray(outputs.mergedBranches);
+  if (mergedBranches) fields.merged_branches = mergedBranches;
+  return fields;
+}
+
+/**
+ * Optional BatchStageRunRow fields read from the run's latest start_task node_run.
+ * Both writer paths land the same camelCase keys under node_output.outputs — the
+ * flow-step-executor via structured stdout, the task-executor fallback via
+ * signal-bridge's readConvergeMergeFields copy. The DTO re-emits them snake_case
+ * per the flows IPC casing contract.
+ */
+function startTaskRowFields(run: NodeRun | undefined): Partial<BatchStageRunRow> {
+  if (!run) return {};
+  const outputs = (run.nodeOutput as { outputs?: unknown } | null)?.outputs;
+  const hasOutputs = outputs !== null && typeof outputs === 'object';
+  return {
+    start_task_status: run.status,
+    ...(hasOutputs ? convergeMergeFields(outputs as Record<string, unknown>) : {}),
+  };
+}
+
+export async function listBatchStageRunsForStage(
+  stageId: string,
+  opts: ListBatchStageRunsOptions = {},
+): Promise<{ runs: BatchStageRunRow[]; total: number }> {
+  const db = getDatabase();
+  const limit = opts.limit ?? 50;
+  const offset = opts.offset ?? 0;
+
+  const rows = await db
+    .select({
+      id: batchStageRuns.id,
+      stageId: batchStageRuns.stageId,
+      status: batchStageRuns.status,
+      triggerContext: batchStageRuns.triggerContext,
+      flowRunId: batchStageRuns.flowRunId,
+      flowRunStartedAt: flowRuns.startedAt,
+      flowRunCompletedAt: flowRuns.completedAt,
+    })
+    .from(batchStageRuns)
+    .leftJoin(flowRuns, eq(batchStageRuns.flowRunId, flowRuns.id))
+    .where(eq(batchStageRuns.stageId, stageId))
+    .orderBy(batchStageRuns.createdAt)
+    .limit(limit)
+    .offset(offset);
+
+  const totalRows = await db
+    .select({ c: drizzleSql<number>`count(*)`.as('c') })
+    .from(batchStageRuns)
+    .where(eq(batchStageRuns.stageId, stageId));
+  const total = Number(totalRows[0]?.c ?? 0);
+
+  const flowRunIds = rows
+    .map((r) => r.flowRunId)
+    .filter((id): id is string => typeof id === 'string' && id.length > 0);
+  const startTaskRuns = await listLatestStartTaskRunsByFlowRunIds(db, flowRunIds);
+  const humanWaitRunIds = await listHumanWaitFlowRunIds(db, flowRunIds);
+
+  const runs: BatchStageRunRow[] = rows.map((r) => {
+    const tc = (r.triggerContext as Record<string, unknown> | null) ?? null;
+    const chatId = tc && typeof tc.chatId === 'string' && tc.chatId.length > 0 ? tc.chatId : null;
+    return {
+      id: r.id,
+      stage_id: r.stageId,
+      status: r.status,
+      trigger_context: tc,
+      started_at: r.flowRunStartedAt ? r.flowRunStartedAt.toISOString() : null,
+      completed_at: r.flowRunCompletedAt ? r.flowRunCompletedAt.toISOString() : null,
+      chat_id: chatId,
+      needs_input: r.flowRunId ? humanWaitRunIds.has(r.flowRunId) : false,
+      ...startTaskRowFields(r.flowRunId ? startTaskRuns.get(r.flowRunId) : undefined),
+    };
+  });
+  return { runs, total };
+}

@@ -1,0 +1,33 @@
+{
+  "name": "playwright",
+  "displayName": "Playwright",
+  "description": "A real browser your chats can drive",
+  "longDescription": "Ask your chats to open a page, click through a flow, take a screenshot or run a test in a real browser.",
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@playwright/mcp@latest"
+      ]
+    }
+  },
+  "frink": {
+    "keywords": [
+      "browser",
+      "testing",
+      "automation",
+      "screenshots"
+    ],
+    "source": {
+      "repo": "cursor/plugins",
+      "commit": "4612556",
+      "path": "third_party/playwright",
+      "license": "MIT",
+      "official": {
+        "url": "https://github.com/microsoft/playwright-mcp",
+        "kind": "documentation"
+      }
+    }
+  }
+}

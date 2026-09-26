@@ -1,0 +1,45 @@
+import crypto from 'node:crypto';
+import stableStringify from 'fast-json-stable-stringify';
+
+// Applied live to a running CLI, or only meaningful at spawn, so a change never needs a new CLI.
+const NON_KEY_OPTIONS = new Set(['permissionMode', 'resume', 'hooks', 'canUseTool', 'stderr']);
+
+function digest(value: unknown): string {
+  const json = stableStringify(value ?? null);
+  return crypto.createHash('sha256').update(json).digest('hex').slice(0, 16);
+}
+
+// Each CLI mints its own dynamic-chat channel token: identity, not configuration. The toolset in
+// the same URL still keys the spawn.
+function withoutChannel(mcpServers: Record<string, unknown> | undefined): unknown {
+  const dynamicChat = mcpServers?.frink_dynamic_chat as { url?: string } | undefined;
+  if (!dynamicChat?.url) return mcpServers;
+  const url = dynamicChat.url.replace(/channel=[^&]*/, '');
+  return { ...mcpServers, frink_dynamic_chat: { ...dynamicChat, url } };
+}
+
+/** One digest per spawn option, the resolved MCP servers and the passthrough login (a token keys
+ * through `env`), so a mismatch can name its parts. The staged config's path is per-execute, so it
+ * is left out of `extraArgs`. */
+export function computeClaudeSessionKey(
+  options: object,
+  mcpServers: Record<string, unknown> | undefined,
+  login?: string,
+): Record<string, string> {
+  const keyParts: Record<string, string> = {
+    mcpServers: digest(withoutChannel(mcpServers)),
+    login: digest(login),
+  };
+  for (const [name, value] of Object.entries(options)) {
+    if (NON_KEY_OPTIONS.has(name)) continue;
+    keyParts[name] = digest(
+      name === 'extraArgs' ? { ...(value as object), 'mcp-config': undefined } : value,
+    );
+  }
+  return keyParts;
+}
+
+/** Names of the parts that differ between two keys. Never their values: those carry credentials. */
+export function diffKeyParts(a: Record<string, string>, b: Record<string, string>): string[] {
+  return [...new Set([...Object.keys(a), ...Object.keys(b)])].filter((name) => a[name] !== b[name]);
+}

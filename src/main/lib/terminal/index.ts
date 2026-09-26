@@ -1,0 +1,1 @@
+export { terminalManager } from './manager';

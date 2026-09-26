@@ -1,0 +1,32 @@
+{
+  "name": "docusign",
+  "displayName": "Docusign",
+  "description": "Envelopes, templates and agreements",
+  "longDescription": "Ask your chats where an agreement stands, and prepare envelopes from your templates.",
+  "mcpServers": {
+    "docusign": {
+      "type": "http",
+      "auth": {
+        "kind": "pending"
+      },
+      "url": "https://mcp.docusign.com/mcp"
+    }
+  },
+  "frink": {
+    "keywords": [
+      "esignature",
+      "contracts",
+      "agreements"
+    ],
+    "source": {
+      "repo": "cursor/plugins",
+      "commit": "4612556",
+      "path": "third_party/docusign",
+      "license": "MIT",
+      "official": {
+        "url": "https://developers.docusign.com/platform/mcp-server/",
+        "kind": "documentation"
+      }
+    }
+  }
+}

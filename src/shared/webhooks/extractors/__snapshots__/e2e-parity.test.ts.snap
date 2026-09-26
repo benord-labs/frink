@@ -1,0 +1,366 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`e2e parity: extractors → normalized WebhookEventData > cloudflare/health_check.json 1`] = `
+{
+  "eventData": {
+    "account_id": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+    "alert_correlation_id": "c0ffee00-1234-4abc-9def-0123456789ab",
+    "alert_type": "health_check_status_notification",
+    "data": {
+      "expected_codes": "200",
+      "health_check_name": "api-origin",
+      "reason": "TCP connection failed",
+      "status": "Unhealthy",
+      "time": "2026-09-07T10:15:30Z",
+    },
+    "eventType": "health_check_changed",
+    "externalUserId": "external-user-e2e",
+    "name": "Health Check status alert",
+    "policy_id": "8f7e6d5c4b3a29180f1e2d3c4b5a6978",
+    "provider": "cloudflare",
+    "text": "The health check api-origin changed status to Unhealthy.",
+    "ts": 1789045200,
+  },
+  "eventType": "health_check_changed",
+}
+`;
+
+exports[`e2e parity: extractors → normalized WebhookEventData > linear/comment_created.json 1`] = `
+{
+  "eventData": {
+    "actorId": "b5ea5f1f-8adc-4f52-b4bd-ab4e84cf51ba",
+    "commentBody": "Reproduced on staging — the second drain lands ~40ms after the first.",
+    "eventType": "issue_commented",
+    "externalUserId": "b5ea5f1f-8adc-4f52-b4bd-ab4e84cf51ba",
+    "identifier": null,
+    "issueId": "9cfb482a-81e3-4154-b5b9-2c805e70a02d",
+    "labelIds": [],
+    "organizationId": "dc844923-f9a4-40a3-825c-dea7747e57d6",
+    "ownerIds": [],
+    "owner_ids": [],
+    "previousAssigneeId": null,
+    "priorityLabel": null,
+    "provider": "linear",
+    "stateId": null,
+    "teamId": null,
+    "title": null,
+    "url": "https://linear.app/acme/issue/ENG-412/retry-queue#comment-2174add1",
+  },
+  "eventType": "issue_commented",
+}
+`;
+
+exports[`e2e parity: extractors → normalized WebhookEventData > linear/issue_assigned.json 1`] = `
+{
+  "eventData": {
+    "actorId": "b5ea5f1f-8adc-4f52-b4bd-ab4e84cf51ba",
+    "commentBody": null,
+    "eventType": "issue_assigned",
+    "externalUserId": "b5ea5f1f-8adc-4f52-b4bd-ab4e84cf51ba",
+    "identifier": "ENG-412",
+    "issueId": "9cfb482a-81e3-4154-b5b9-2c805e70a02d",
+    "labelIds": [
+      "c1a2b3c4-d5e6-4f70-8899-aabbccddeeff",
+    ],
+    "organizationId": "dc844923-f9a4-40a3-825c-dea7747e57d6",
+    "ownerIds": [
+      "aacdca22-6266-4c0a-ab3c-8fa70a26765c",
+    ],
+    "owner_ids": [
+      "aacdca22-6266-4c0a-ab3c-8fa70a26765c",
+    ],
+    "previousAssigneeId": null,
+    "priorityLabel": "High",
+    "provider": "linear",
+    "stateId": "b3d5f6e0-1c2a-4d8e-9f00-a1b2c3d4e5f6",
+    "teamId": "72b2a2dc-6f4f-4423-9d34-24b5bd10634a",
+    "title": "Retry queue drains twice on reconnect",
+    "url": "https://linear.app/acme/issue/ENG-412/retry-queue-drains-twice-on-reconnect",
+  },
+  "eventType": "issue_assigned",
+}
+`;
+
+exports[`e2e parity: extractors → normalized WebhookEventData > linear/issue_created.json 1`] = `
+{
+  "eventData": {
+    "actorId": "b5ea5f1f-8adc-4f52-b4bd-ab4e84cf51ba",
+    "commentBody": null,
+    "eventType": "issue_created",
+    "externalUserId": "b5ea5f1f-8adc-4f52-b4bd-ab4e84cf51ba",
+    "identifier": "ENG-412",
+    "issueId": "9cfb482a-81e3-4154-b5b9-2c805e70a02d",
+    "labelIds": [
+      "c1a2b3c4-d5e6-4f70-8899-aabbccddeeff",
+    ],
+    "organizationId": "dc844923-f9a4-40a3-825c-dea7747e57d6",
+    "ownerIds": [],
+    "owner_ids": [],
+    "previousAssigneeId": null,
+    "priorityLabel": "High",
+    "provider": "linear",
+    "stateId": "b3d5f6e0-1c2a-4d8e-9f00-a1b2c3d4e5f6",
+    "teamId": "72b2a2dc-6f4f-4423-9d34-24b5bd10634a",
+    "title": "Retry queue drains twice on reconnect",
+    "url": "https://linear.app/acme/issue/ENG-412/retry-queue-drains-twice-on-reconnect",
+  },
+  "eventType": "issue_created",
+}
+`;
+
+exports[`e2e parity: extractors → normalized WebhookEventData > linear/issue_status_changed.json 1`] = `
+{
+  "eventData": {
+    "actorId": "aacdca22-6266-4c0a-ab3c-8fa70a26765c",
+    "commentBody": null,
+    "eventType": "issue_status_changed",
+    "externalUserId": "aacdca22-6266-4c0a-ab3c-8fa70a26765c",
+    "identifier": "ENG-412",
+    "issueId": "9cfb482a-81e3-4154-b5b9-2c805e70a02d",
+    "labelIds": [
+      "c1a2b3c4-d5e6-4f70-8899-aabbccddeeff",
+    ],
+    "organizationId": "dc844923-f9a4-40a3-825c-dea7747e57d6",
+    "ownerIds": [
+      "aacdca22-6266-4c0a-ab3c-8fa70a26765c",
+    ],
+    "owner_ids": [
+      "aacdca22-6266-4c0a-ab3c-8fa70a26765c",
+    ],
+    "previousAssigneeId": null,
+    "priorityLabel": "High",
+    "provider": "linear",
+    "stateId": "77aa11bb-22cc-4dd3-8ee4-99ff00112233",
+    "teamId": "72b2a2dc-6f4f-4423-9d34-24b5bd10634a",
+    "title": "Retry queue drains twice on reconnect",
+    "url": "https://linear.app/acme/issue/ENG-412/retry-queue-drains-twice-on-reconnect",
+  },
+  "eventType": "issue_status_changed",
+}
+`;
+
+exports[`e2e parity: extractors → normalized WebhookEventData > linear/issue_unassigned.json 1`] = `
+{
+  "eventData": null,
+  "eventType": null,
+}
+`;
+
+exports[`e2e parity: extractors → normalized WebhookEventData > linear/issue_update_noop.json 1`] = `
+{
+  "eventData": null,
+  "eventType": null,
+}
+`;
+
+exports[`e2e parity: extractors → normalized WebhookEventData > posthog/event.json 1`] = `
+{
+  "eventData": {
+    "distinctId": "user_42",
+    "event": "checkout_completed",
+    "eventType": "event_matched",
+    "externalUserId": "external-user-e2e",
+    "person": {
+      "id": "018f2a9c-1234-7abc-8def-0123456789ab",
+      "name": "ada@example.com",
+      "properties": {
+        "email": "ada@example.com",
+      },
+      "url": "https://us.posthog.com/project/1/person/user_42",
+    },
+    "provider": "posthog",
+  },
+  "eventType": "event_matched",
+}
+`;
+
+exports[`e2e parity: extractors → normalized WebhookEventData > posthog/exception.json 1`] = `
+{
+  "eventData": {
+    "distinctId": "user_42",
+    "event": "$exception",
+    "eventType": "error_captured",
+    "externalUserId": "external-user-e2e",
+    "person": {
+      "id": "018f2a9c-1234-7abc-8def-0123456789ab",
+      "name": "ada@example.com",
+      "properties": {
+        "email": "ada@example.com",
+      },
+      "url": "https://us.posthog.com/project/1/person/user_42",
+    },
+    "provider": "posthog",
+  },
+  "eventType": "error_captured",
+}
+`;
+
+exports[`e2e parity: extractors → normalized WebhookEventData > sentry/issue_resolved.json 1`] = `
+{
+  "eventData": {
+    "action": "resolved",
+    "actor": {
+      "id": "1122334",
+      "name": "Ada Lovelace",
+      "type": "user",
+    },
+    "data": {
+      "issue": {
+        "culprit": "src/main/lib/flows/executor.ts",
+        "id": "4507734891",
+        "project": {
+          "id": "4507",
+          "name": "Frink Desktop",
+          "slug": "frink-desktop",
+        },
+        "shortId": "FRINK-9K",
+        "status": "resolved",
+        "title": "TypeError: Cannot read properties of undefined (reading 'id')",
+        "web_url": "https://sentry.io/organizations/frink/issues/4507734891/",
+      },
+    },
+    "eventType": "issue_resolved",
+    "externalUserId": "external-user-e2e",
+    "installation": {
+      "uuid": "0a1b2c3d-4e5f-4a7b-8c9d-0e1f2a3b4c5d",
+    },
+    "provider": "sentry",
+  },
+  "eventType": "issue_resolved",
+}
+`;
+
+exports[`e2e parity: extractors → normalized WebhookEventData > shortcut/story.assigned.json 1`] = `
+{
+  "eventData": {
+    "epicId": null,
+    "eventType": "story_assigned",
+    "externalUserId": "0a7e3d92-5b4c-4f1a-8b21-3d6f9c2e1a55",
+    "labels": [],
+    "newStatus": null,
+    "new_status": null,
+    "oldStatus": null,
+    "old_status": null,
+    "ownerIds": [
+      "6126f7a4-d1e2-4b3a-9c2f-7d8e1c4b5a90",
+    ],
+    "owner_ids": [
+      "6126f7a4-d1e2-4b3a-9c2f-7d8e1c4b5a90",
+    ],
+    "projectId": null,
+    "projectName": null,
+    "provider": "shortcut",
+    "storyId": 4821,
+    "storyName": "[platform] Add Postgres connection pool warm-up",
+    "storyType": "feature",
+    "storyUrl": "https://app.shortcut.com/slice/story/4821",
+  },
+  "eventType": "story_assigned",
+}
+`;
+
+exports[`e2e parity: extractors → normalized WebhookEventData > shortcut/story.created.json 1`] = `
+{
+  "eventData": {
+    "epicId": "1042",
+    "eventType": "story_created",
+    "externalUserId": "6126f7a4-d1e2-4b3a-9c2f-7d8e1c4b5a90",
+    "labels": [
+      "performance",
+      "backend",
+    ],
+    "newStatus": null,
+    "new_status": null,
+    "oldStatus": null,
+    "old_status": null,
+    "ownerIds": [
+      "6126f7a4-d1e2-4b3a-9c2f-7d8e1c4b5a90",
+    ],
+    "owner_ids": [
+      "6126f7a4-d1e2-4b3a-9c2f-7d8e1c4b5a90",
+    ],
+    "projectId": "311",
+    "projectName": "Platform",
+    "provider": "shortcut",
+    "storyId": 4821,
+    "storyName": "[platform] Add Postgres connection pool warm-up",
+    "storyType": "feature",
+    "storyUrl": "https://app.shortcut.com/slice/story/4821",
+  },
+  "eventType": "story_created",
+}
+`;
+
+exports[`e2e parity: extractors → normalized WebhookEventData > shortcut/story.moved.json 1`] = `
+{
+  "eventData": {
+    "epicId": null,
+    "eventType": "story_moved",
+    "externalUserId": "6126f7a4-d1e2-4b3a-9c2f-7d8e1c4b5a90",
+    "labels": [],
+    "newStatus": "In Development",
+    "new_status": "In Development",
+    "oldStatus": "Ready for Dev",
+    "old_status": "Ready for Dev",
+    "ownerIds": [],
+    "owner_ids": [],
+    "projectId": null,
+    "projectName": null,
+    "provider": "shortcut",
+    "storyId": 4821,
+    "storyName": "[platform] Add Postgres connection pool warm-up",
+    "storyType": "feature",
+    "storyUrl": "https://app.shortcut.com/slice/story/4821",
+  },
+  "eventType": "story_moved",
+}
+`;
+
+exports[`e2e parity: extractors → normalized WebhookEventData > shortcut/story.unassigned.json 1`] = `
+{
+  "eventData": null,
+  "eventType": null,
+}
+`;
+
+exports[`e2e parity: extractors → normalized WebhookEventData > shortcut/story.updated.json 1`] = `
+{
+  "eventData": null,
+  "eventType": null,
+}
+`;
+
+exports[`e2e parity: extractors → normalized WebhookEventData > vercel/deployment_error.json 1`] = `
+{
+  "eventData": {
+    "createdAt": 1789045200000,
+    "eventType": "deployment_failed",
+    "externalUserId": "external-user-e2e",
+    "id": "evt_9zK3mQxYb7pL4nRtWv2Cd",
+    "payload": {
+      "deployment": {
+        "id": "dpl_5tR8yU2iO4pA6sD",
+        "meta": {
+          "githubCommitRef": "main",
+          "githubCommitSha": "4b1c9d2",
+        },
+        "name": "storefront",
+        "url": "storefront-git-main-acme.vercel.app",
+      },
+      "project": {
+        "id": "prj_7hJ4kL9mN2bV5cX",
+      },
+      "team": {
+        "id": "team_9aB7cD5eF3gH1jK",
+      },
+      "user": {
+        "id": "user_2xQ8vR4tY6uI0oP",
+      },
+    },
+    "provider": "vercel",
+    "region": "iad1",
+    "type": "deployment.error",
+  },
+  "eventType": "deployment_failed",
+}
+`;

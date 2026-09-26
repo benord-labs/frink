@@ -1,0 +1,32 @@
+{
+  "name": "outreach",
+  "displayName": "Outreach",
+  "description": "Sequences, prospects and Kaia meetings",
+  "longDescription": "Ask your chats what is in your Outreach sequences and what your Kaia meeting notes say.",
+  "mcpServers": {
+    "outreach": {
+      "type": "http",
+      "auth": {
+        "kind": "pending"
+      },
+      "url": "https://api.outreach.io/mcp"
+    }
+  },
+  "frink": {
+    "keywords": [
+      "sales",
+      "sequences",
+      "prospects"
+    ],
+    "source": {
+      "repo": "cursor/plugins",
+      "commit": "4612556",
+      "path": "third_party/outreach",
+      "license": "MIT",
+      "official": {
+        "url": "https://developers.outreach.io/mcp-server",
+        "kind": "documentation"
+      }
+    }
+  }
+}

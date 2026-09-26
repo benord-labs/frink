@@ -1,0 +1,21 @@
+{
+  "event": {
+    "uuid": "0192b1f4-7d3b-7c1e-9a3b-8d2f1e4c5a6c",
+    "event": "$exception",
+    "distinct_id": "user_42",
+    "properties": {
+      "$exception_list": [
+        { "type": "TypeError", "value": "Cannot read properties of undefined (reading 'id')" }
+      ],
+      "$exception_fingerprint": "TypeError:checkout.ts:42"
+    },
+    "timestamp": "2026-09-07T10:16:00.000Z",
+    "url": "https://us.posthog.com/project/1/events/0192b1f4-7d3b-7c1e-9a3b-8d2f1e4c5a6c"
+  },
+  "person": {
+    "id": "018f2a9c-1234-7abc-8def-0123456789ab",
+    "name": "ada@example.com",
+    "url": "https://us.posthog.com/project/1/person/user_42",
+    "properties": { "email": "ada@example.com" }
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "id": "9c2bc31d-2dd4-4eb8-9911-f72c4ea30e2a",
+  "changed_at": "2026-05-12T16:08:55.119Z",
+  "version": "v1",
+  "primary_id": 4821,
+  "member_id": "6126f7a4-d1e2-4b3a-9c2f-7d8e1c4b5a90",
+  "actions": [
+    {
+      "id": 4821,
+      "entity_type": "story",
+      "action": "update",
+      "name": "[platform] Add Postgres connection pool warm-up",
+      "story_type": "feature",
+      "app_url": "https://app.shortcut.com/slice/story/4821",
+      "changes": {
+        "description": {
+          "old": "We're seeing cold-start latency spikes on the first DB call after a deploy. Warm the pool during boot so the first request doesn't pay the connection cost.",
+          "new": "We're seeing cold-start latency spikes on the first DB call after a deploy. Warm the pool during boot so the first request doesn't pay the connection cost.\n\nUpdate: also covering the read-replica connection pool — both should warm in parallel."
+        },
+        "estimate": {
+          "old": null,
+          "new": 3
+        }
+      }
+    }
+  ],
+  "references": [
+    {
+      "id": 4821,
+      "entity_type": "story",
+      "name": "[platform] Add Postgres connection pool warm-up",
+      "app_url": "https://app.shortcut.com/slice/story/4821"
+    },
+    {
+      "id": 500000010,
+      "entity_type": "workflow-state",
+      "name": "Ready for Dev",
+      "type": "unstarted"
+    },
+    {
+      "id": "6126f7a4-d1e2-4b3a-9c2f-7d8e1c4b5a90",
+      "entity_type": "member",
+      "name": "Benji Norval"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "name": "Health Check status alert",
+  "text": "The health check api-origin changed status to Unhealthy.",
+  "data": {
+    "health_check_name": "api-origin",
+    "status": "Unhealthy",
+    "reason": "TCP connection failed",
+    "expected_codes": "200",
+    "time": "2026-09-07T10:15:30Z"
+  },
+  "ts": 1789045200,
+  "account_id": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+  "alert_type": "health_check_status_notification",
+  "policy_id": "8f7e6d5c4b3a29180f1e2d3c4b5a6978",
+  "alert_correlation_id": "c0ffee00-1234-4abc-9def-0123456789ab"
+}

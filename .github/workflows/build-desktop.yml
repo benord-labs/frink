@@ -1,0 +1,290 @@
+name: Build Desktop
+
+# Builds Frink for Windows (windows-2022 → nsis + portable) and Linux (ubuntu-latest →
+# AppImage + deb) via one matrix, and verifies the PACKAGED native modules (better-sqlite3,
+# node-pty) load under Electron's ABI plus that the bundled agent binaries (claude, codex)
+# are present and runnable.
+#
+# Verification-only and additive: no code signing, no R2 upload, no shipping. Installers are
+# uploaded as CI artifacts. windows-2022 is pinned for a deterministic native compile
+# (windows-latest = VS2026 deferred). Decision: docs/decisions/windows-support.md.
+
+on:
+  workflow_dispatch:
+  push:
+    # Release tags are bare semver (0.0.X) — no `v` prefix (matches the existing tag history). Pushing
+    # such a tag turns this verify matrix into a RELEASE: it (signs +) publishes win/linux to R2.
+    tags:
+      - '[0-9]*.[0-9]*.[0-9]*'
+  pull_request:
+    paths:
+      - 'package.json'
+      - 'bun.lock'
+      - 'scripts/binaries/**'
+      - 'patches/codex/**'
+      - 'scripts/skills/build-skill-content.ts'
+      - 'scripts/smoke/smoke-native.cjs'
+      - '.github/workflows/build-desktop.yml'
+
+# A new push to the same PR cancels the in-flight run (stale builds otherwise double-spend the
+# 2x-billed Windows minutes).
+concurrency:
+  group: build-desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege: these jobs only check out + upload an artifact, never write the repo.
+permissions:
+  contents: read
+
+jobs:
+  codex-native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            platformKey: win32-x64
+            cargoTarget: x86_64-pc-windows-msvc
+            testArgs: ''
+          - os: ubuntu-latest
+            platformKey: linux-x64
+            cargoTarget: x86_64-unknown-linux-gnu
+            testArgs: '--test'
+          - os: macos-15
+            platformKey: darwin-arm64
+            cargoTarget: aarch64-apple-darwin
+            testArgs: ''
+          - os: macos-15-intel
+            platformKey: darwin-x64
+            cargoTarget: x86_64-apple-darwin
+            testArgs: ''
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: 1.95.0
+          targets: ${{ matrix.cargoTarget }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .codex-target
+          key: codex-rust-v0.153.3-${{ matrix.platformKey }}-${{ hashFiles('patches/codex/**', 'scripts/binaries/build-codex-frink.mjs') }}
+      - name: Build permission-aware Codex
+        run: node scripts/binaries/build-codex-frink.mjs --target ${{ matrix.platformKey }} ${{ matrix.testArgs }}
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/.codex-target
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frink-codex-${{ matrix.platformKey }}
+          path: resources/bin/${{ matrix.platformKey }}/
+          if-no-files-found: error
+          retention-days: 2
+
+  build:
+    needs: codex-native
+    strategy:
+      # One OS failing must NOT cancel the other leg.
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            platformKey: win32-x64
+            unpacked: win-unpacked
+            binExt: '.exe'
+            pkg: package:win
+            artifactName: frink-windows-installers
+            artifactGlob: release/*.exe
+          - os: ubuntu-latest
+            platformKey: linux-x64
+            unpacked: linux-unpacked
+            binExt: ''
+            pkg: package:linux
+            artifactName: frink-linux-installers
+            artifactGlob: |
+              release/*.AppImage
+              release/*.deb
+    runs-on: ${{ matrix.os }}
+    # Cap a wedged native compile / stuck pty — otherwise it inherits the 360-min default.
+    # 50 covers the real pipeline (~30 min: agent download + from-source native compile +
+    # electron-builder + installer). The smoke has its own 3-min step guard.
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Job only builds + uploads an artifact (never pushes) — don't leave the
+          # checkout token in .git/config for later PR-controlled steps to reach.
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Assert release tag matches package.json version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        # electron-builder names installers + latest*.yml from package.json version, NOT the git tag.
+        # A tag whose name ≠ the version would publish a mislabelled / lagging feed with no other error.
+        run: |
+          PKG="$(node -p "require('./package.json').version")"
+          test "$GITHUB_REF_NAME" = "$PKG" || { echo "::error::tag '$GITHUB_REF_NAME' != package.json version '$PKG' — bump package.json to match the tag"; exit 1; }
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Provision the Electron binary
+        run: bun run electron:download
+        # electron@43 declares no install lifecycle script, so `bun install` above does not fetch the
+        # ~120MB binary — it is downloaded lazily by whichever process first requires electron. The
+        # only such process in this job is the Electron smoke step (`npx electron` → cli.js →
+        # index.js → getElectronPath() → downloadElectron()), where a fetch failure surfaces as a
+        # confusing smoke-test error rather than a failed download. Make it an explicit step (sc-1452).
+
+      - name: Echo node-gyp version
+        shell: bash
+        run: npx --no-install node-gyp -v || echo "node-gyp not directly resolvable (informational)"
+        # Diagnostic only — the from-source native rebuild is the real gate (fails loudly if the
+        # toolchain is missing). frink hoists node-gyp 12.4.
+
+      - name: Download agent binaries
+        run: |
+          bun run claude:download
+        # Codex is a separately cached native source build so packaging cannot substitute stock.
+
+      - name: Download permission-aware Codex artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frink-codex-${{ matrix.platformKey }}
+          path: resources/bin/${{ matrix.platformKey }}/
+
+      - name: Build (electron-vite)
+        # NOT `bun run build` — that script inlines `NODE_OPTIONS='…' electron-vite build` (POSIX sh
+        # prefix), which doesn't carry on Windows. Set the heap bump as step env + call the parts.
+        run: bun run build:skills && bunx electron-vite build
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+          # Upload Sentry source-maps for RELEASE (tag) builds so prod crash traces are real. The vite
+          # plugin no-ops without SENTRY_AUTH_TOKEN, so this is safe before that secret exists; PR runs
+          # skip it (SENTRY_UPLOAD empty).
+          SENTRY_UPLOAD: ${{ startsWith(github.ref, 'refs/tags/') && '1' || '' }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+
+      - name: Package installers
+        shell: bash
+        # On a Windows RELEASE (tag) with Azure Trusted Signing configured, inject azureSignOptions via
+        # `-c` (deep-merges with build.win → keeps target/icon) so the installer is signed. Otherwise
+        # (PR verify, linux, or Azure not yet provisioned) → plain package:* → unsigned, still functional.
+        # electron-builder ^26 self-bootstraps the Azure signing toolchain on the runner + signs every
+        # bundled .exe SERIALLY (a signing queue — no concurrent race); ~20 signings/release is well
+        # under the 5000/mo basic quota. CSC_IDENTITY_AUTO_DISCOVERY=false keeps the legacy signtool off.
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          IS_TAG: ${{ startsWith(github.ref, 'refs/tags/') }}
+          AZ_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          AZ_PROFILE: ${{ vars.AZURE_CERT_PROFILE }}
+          AZ_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          AZ_PUBLISHER: ${{ vars.AZURE_PUBLISHER_NAME }}
+        run: |
+          # Sign ONLY when ALL Azure config is present (4 vars + 3 secrets) — a partially-provisioned
+          # repo must take the unsigned fallback, not run electron-builder with empty azureSignOptions
+          # (which fails the tag build).
+          if [ "${{ matrix.os }}" = "windows-2022" ] && [ "$IS_TAG" = "true" ] \
+            && [ -n "$AZ_ACCOUNT" ] && [ -n "$AZ_PROFILE" ] && [ -n "$AZ_ENDPOINT" ] && [ -n "$AZ_PUBLISHER" ] \
+            && [ -n "$AZURE_TENANT_ID" ] && [ -n "$AZURE_CLIENT_ID" ] && [ -n "$AZURE_CLIENT_SECRET" ]; then
+            echo "Signing Windows build via Azure Trusted Signing ($AZ_ACCOUNT)"
+            bunx electron-builder --win \
+              -c.win.azureSignOptions.codeSigningAccountName="$AZ_ACCOUNT" \
+              -c.win.azureSignOptions.certificateProfileName="$AZ_PROFILE" \
+              -c.win.azureSignOptions.endpoint="$AZ_ENDPOINT" \
+              -c.win.azureSignOptions.publisherName="$AZ_PUBLISHER"
+          else
+            bun run ${{ matrix.pkg }}
+          fi
+
+      - name: Assert packaged native modules exist (catch asarUnpack drift)
+        shell: bash
+        run: |
+          test -d release/${{ matrix.unpacked }}/resources/app.asar.unpacked/node_modules || { echo "::error::packaged app.asar.unpacked/node_modules missing — packaging drift"; exit 1; }
+
+      - name: Smoke — packaged native modules load under Electron ABI
+        timeout-minutes: 3
+        run: npx electron scripts/smoke/smoke-native.cjs
+        env:
+          # Run Electron's bundled Node (Electron ABI) with NO GUI/Chromium — a full GUI Electron
+          # process hangs forever on a headless CI runner (Windows has no interactive desktop, and
+          # we skip Linux's xvfb need entirely by never opening a window).
+          ELECTRON_RUN_AS_NODE: '1'
+          # Pin the packaged root so a missing/empty packaged copy FAILS the smoke rather than
+          # silently falling back to dev node_modules (postinstall already rebuilt that to the
+          # correct ABI) — the fallback would false-green the exact packaging break this catches.
+          FRINK_SMOKE_MODULES_ROOT: release/${{ matrix.unpacked }}/resources/app.asar.unpacked/node_modules
+
+      - name: Smoke — POSIX setup commands run under Git Bash (Windows shell selection)
+        if: matrix.os == 'windows-2022'
+        timeout-minutes: 2
+        run: node scripts/smoke/smoke-command-shell.cjs
+
+      - name: Assert bundled agent binaries
+        shell: bash
+        run: |
+          test -f release/${{ matrix.unpacked }}/resources/bin/claude${{ matrix.binExt }} || { echo "::error::claude binary missing from packaged bin/"; exit 1; }
+          test -f release/${{ matrix.unpacked }}/resources/bin/codex${{ matrix.binExt }} || { echo "::error::codex binary missing from packaged bin/"; exit 1; }
+          # Run both — a present-but-broken binary (wrong arch, truncated, or a libc mismatch for the
+          # codex musl build on a glibc runner) fails here, not in the user's hands.
+          ./release/${{ matrix.unpacked }}/resources/bin/claude${{ matrix.binExt }} --version
+          ./release/${{ matrix.unpacked }}/resources/bin/codex${{ matrix.binExt }} --version
+
+      - name: Assert Linux installers produced
+        if: runner.os == 'Linux'
+        shell: bash
+        # upload-artifact's `if-no-files-found: error` only checks the AGGREGATE of the path
+        # patterns — a vanished .deb would ship undetected if the .AppImage matched. Assert each.
+        run: |
+          ls release/*.AppImage >/dev/null 2>&1 || { echo "::error::no .AppImage produced"; exit 1; }
+          ls release/*.deb >/dev/null 2>&1 || { echo "::error::no .deb produced"; exit 1; }
+
+      - name: Assert Windows installers produced
+        if: runner.os == 'Windows'
+        shell: bash
+        # The upload step (below) is gated off PR runs, so its `if-no-files-found: error` no longer
+        # guards the .exe on PRs — electron-builder could emit win-unpacked + binaries yet fail the
+        # nsis target and go green. Assert the installer explicitly, mirroring the Linux leg above.
+        run: ls release/*.exe >/dev/null 2>&1 || { echo "::error::no .exe produced"; exit 1; }
+
+      - name: Publish to R2
+        # Release tags only, AND only once the R2 creds exist (skip — don't fail — a tag pushed before
+        # secrets are set). Each OS leg uploads its own release/ slice (win → *.exe + latest.yml; linux
+        # → *.AppImage/*.deb + latest-linux.yml) to the shared frink-releases bucket; per-OS feeds, no collision.
+        # All three R2 creds required — upload-to-r2.mjs exits non-zero unless all are set, so a
+        # partial set must skip (not fail) the release job.
+        if: >-
+          startsWith(github.ref, 'refs/tags/')
+          && env.R2_ACCESS_KEY_ID != '' && env.R2_SECRET_ACCESS_KEY != '' && env.R2_ACCOUNT_ID != ''
+        shell: bash
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        run: bun scripts/publish/upload-to-r2.mjs
+
+      - name: Upload installers
+        # PR/verify runs skip the upload — a ~1 GB installer × 2 OS legs persisted for GitHub's
+        # 90-day default is what accumulated 32 GB and tripped the shared Actions+Packages storage
+        # meter (blocking @benord-labs/* publishes). dispatch/tag runs keep a short-lived copy: a
+        # branch build to hand-test, or a backup of the R2 release. retention-days caps even those.
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifactName }}
+          path: ${{ matrix.artifactGlob }}
+          if-no-files-found: error
+          retention-days: 5

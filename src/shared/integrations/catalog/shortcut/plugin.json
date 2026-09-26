@@ -1,0 +1,62 @@
+{
+  "name": "shortcut",
+  "mcpServers": {
+    "shortcut": {
+      "type": "http",
+      "auth": {
+        "kind": "frink_client",
+        "scope": "openid read write"
+      },
+      "url": "https://mcp.shortcut.com/mcp"
+    }
+  },
+  "frink": {
+    "identity": {
+      "server": "shortcut",
+      "tool": "users-get-current",
+      "idPath": "id"
+    },
+    "actions": [
+      {
+        "id": "shortcut.create_story",
+        "label": "Create Shortcut story",
+        "description": "Creates a story in your workspace.",
+        "icon": "package",
+        "server": "shortcut",
+        "tool": "stories-create"
+      },
+      {
+        "id": "shortcut.search_stories",
+        "label": "Search Shortcut stories",
+        "description": "Finds stories matching your search.",
+        "icon": "search",
+        "server": "shortcut",
+        "tool": "stories-search"
+      },
+      {
+        "id": "shortcut.get_story",
+        "label": "Get Shortcut story",
+        "description": "Reads the details of a story.",
+        "icon": "file-text",
+        "server": "shortcut",
+        "tool": "stories-get-by-id"
+      },
+      {
+        "id": "shortcut.update_story",
+        "label": "Update Shortcut story",
+        "description": "Updates a story\u2019s fields.",
+        "icon": "clipboard",
+        "server": "shortcut",
+        "tool": "stories-update"
+      },
+      {
+        "id": "shortcut.create_comment",
+        "label": "Comment on Shortcut story",
+        "description": "Adds a comment to a story.",
+        "icon": "message-square",
+        "server": "shortcut",
+        "tool": "stories-create-comment"
+      }
+    ]
+  }
+}

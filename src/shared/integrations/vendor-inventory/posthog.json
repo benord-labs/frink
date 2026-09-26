@@ -1,0 +1,834 @@
+{
+  "pin": {
+    "marketplace": "claude-plugins-official",
+    "name": "posthog",
+    "version": "1.1.62",
+    "gitCommitSha": "19e4737aa8ab3db315e43f35f796976a1ac37787",
+    "sourceRepo": "anthropics/claude-plugins-official",
+    "payloadRepo": "PostHog/ai-plugin"
+  },
+  "pluginId": "posthog@claude-plugins-official",
+  "skills": [
+    {
+      "id": "posthog@claude-plugins-official:adding-warehouse-person-properties",
+      "name": "adding-warehouse-person-properties",
+      "path": "skills/adding-warehouse-person-properties"
+    },
+    {
+      "id": "posthog@claude-plugins-official:analyzing-expensive-users",
+      "name": "analyzing-expensive-users",
+      "path": "skills/analyzing-expensive-users"
+    },
+    {
+      "id": "posthog@claude-plugins-official:analyzing-experiment-session-replays",
+      "name": "analyzing-experiment-session-replays",
+      "path": "skills/analyzing-experiment-session-replays"
+    },
+    {
+      "id": "posthog@claude-plugins-official:analyzing-task-runs",
+      "name": "analyzing-task-runs",
+      "path": "skills/analyzing-task-runs"
+    },
+    {
+      "id": "posthog@claude-plugins-official:assessing-heatmaps",
+      "name": "assessing-heatmaps",
+      "path": "skills/assessing-heatmaps"
+    },
+    {
+      "id": "posthog@claude-plugins-official:auditing-endpoints",
+      "name": "auditing-endpoints",
+      "path": "skills/auditing-endpoints"
+    },
+    {
+      "id": "posthog@claude-plugins-official:auditing-experiments-flags",
+      "name": "auditing-experiments-flags",
+      "path": "skills/auditing-experiments-flags"
+    },
+    {
+      "id": "posthog@claude-plugins-official:auditing-warehouse-source-health",
+      "name": "auditing-warehouse-source-health",
+      "path": "skills/auditing-warehouse-source-health"
+    },
+    {
+      "id": "posthog@claude-plugins-official:auditing-warehouse-view-health",
+      "name": "auditing-warehouse-view-health",
+      "path": "skills/auditing-warehouse-view-health"
+    },
+    {
+      "id": "posthog@claude-plugins-official:authoring-data-quality-checks",
+      "name": "authoring-data-quality-checks",
+      "path": "skills/authoring-data-quality-checks"
+    },
+    {
+      "id": "posthog@claude-plugins-official:authoring-error-tracking-alerts",
+      "name": "authoring-error-tracking-alerts",
+      "path": "skills/authoring-error-tracking-alerts"
+    },
+    {
+      "id": "posthog@claude-plugins-official:authoring-log-alerts",
+      "name": "authoring-log-alerts",
+      "path": "skills/authoring-log-alerts"
+    },
+    {
+      "id": "posthog@claude-plugins-official:authoring-scouts",
+      "name": "authoring-scouts",
+      "path": "skills/authoring-scouts"
+    },
+    {
+      "id": "posthog@claude-plugins-official:building-a-dashboard",
+      "name": "building-a-dashboard",
+      "path": "skills/building-a-dashboard"
+    },
+    {
+      "id": "posthog@claude-plugins-official:building-canvases",
+      "name": "building-canvases",
+      "path": "skills/building-canvases"
+    },
+    {
+      "id": "posthog@claude-plugins-official:building-html-canvases",
+      "name": "building-html-canvases",
+      "path": "skills/building-html-canvases"
+    },
+    {
+      "id": "posthog@claude-plugins-official:building-react-quill-canvases",
+      "name": "building-react-quill-canvases",
+      "path": "skills/building-react-quill-canvases"
+    },
+    {
+      "id": "posthog@claude-plugins-official:building-workflows",
+      "name": "building-workflows",
+      "path": "skills/building-workflows"
+    },
+    {
+      "id": "posthog@claude-plugins-official:checking-deploy-timing",
+      "name": "checking-deploy-timing",
+      "path": "skills/checking-deploy-timing"
+    },
+    {
+      "id": "posthog@claude-plugins-official:choosing-trend-or-slope-view",
+      "name": "choosing-trend-or-slope-view",
+      "path": "skills/choosing-trend-or-slope-view"
+    },
+    {
+      "id": "posthog@claude-plugins-official:cleaning-up-stale-feature-flags",
+      "name": "cleaning-up-stale-feature-flags",
+      "path": "skills/cleaning-up-stale-feature-flags"
+    },
+    {
+      "id": "posthog@claude-plugins-official:composing-grid-canvases",
+      "name": "composing-grid-canvases",
+      "path": "skills/composing-grid-canvases"
+    },
+    {
+      "id": "posthog@claude-plugins-official:configuring-experiment-analytics",
+      "name": "configuring-experiment-analytics",
+      "path": "skills/configuring-experiment-analytics"
+    },
+    {
+      "id": "posthog@claude-plugins-official:configuring-experiment-rollout",
+      "name": "configuring-experiment-rollout",
+      "path": "skills/configuring-experiment-rollout"
+    },
+    {
+      "id": "posthog@claude-plugins-official:consuming-endpoints-from-client-code",
+      "name": "consuming-endpoints-from-client-code",
+      "path": "skills/consuming-endpoints-from-client-code"
+    },
+    {
+      "id": "posthog@claude-plugins-official:context-layer-consolidation",
+      "name": "context-layer-consolidation",
+      "path": "skills/context-layer-consolidation"
+    },
+    {
+      "id": "posthog@claude-plugins-official:context-layer-dreaming",
+      "name": "context-layer-dreaming",
+      "path": "skills/context-layer-dreaming"
+    },
+    {
+      "id": "posthog@claude-plugins-official:context-layer-health-check",
+      "name": "context-layer-health-check",
+      "path": "skills/context-layer-health-check"
+    },
+    {
+      "id": "posthog@claude-plugins-official:copying-endpoints-across-projects",
+      "name": "copying-endpoints-across-projects",
+      "path": "skills/copying-endpoints-across-projects"
+    },
+    {
+      "id": "posthog@claude-plugins-official:copying-flags-across-projects",
+      "name": "copying-flags-across-projects",
+      "path": "skills/copying-flags-across-projects"
+    },
+    {
+      "id": "posthog@claude-plugins-official:creating-ai-subscription",
+      "name": "creating-ai-subscription",
+      "path": "skills/creating-ai-subscription"
+    },
+    {
+      "id": "posthog@claude-plugins-official:creating-an-endpoint",
+      "name": "creating-an-endpoint",
+      "path": "skills/creating-an-endpoint"
+    },
+    {
+      "id": "posthog@claude-plugins-official:creating-box-plot-insights",
+      "name": "creating-box-plot-insights",
+      "path": "skills/creating-box-plot-insights"
+    },
+    {
+      "id": "posthog@claude-plugins-official:creating-experiments",
+      "name": "creating-experiments",
+      "path": "skills/creating-experiments"
+    },
+    {
+      "id": "posthog@claude-plugins-official:creating-online-evaluations",
+      "name": "creating-online-evaluations",
+      "path": "skills/creating-online-evaluations"
+    },
+    {
+      "id": "posthog@claude-plugins-official:creating-replay-vision-scanners",
+      "name": "creating-replay-vision-scanners",
+      "path": "skills/creating-replay-vision-scanners"
+    },
+    {
+      "id": "posthog@claude-plugins-official:debugging-experiments",
+      "name": "debugging-experiments",
+      "path": "skills/debugging-experiments"
+    },
+    {
+      "id": "posthog@claude-plugins-official:debugging-local-replay",
+      "name": "debugging-local-replay",
+      "path": "skills/debugging-local-replay"
+    },
+    {
+      "id": "posthog@claude-plugins-official:debugging-mcp-analytics",
+      "name": "debugging-mcp-analytics",
+      "path": "skills/debugging-mcp-analytics"
+    },
+    {
+      "id": "posthog@claude-plugins-official:debugging-signals-pipeline",
+      "name": "debugging-signals-pipeline",
+      "path": "skills/debugging-signals-pipeline"
+    },
+    {
+      "id": "posthog@claude-plugins-official:debugging-surveys",
+      "name": "debugging-surveys",
+      "path": "skills/debugging-surveys"
+    },
+    {
+      "id": "posthog@claude-plugins-official:designing-email-templates",
+      "name": "designing-email-templates",
+      "path": "skills/designing-email-templates"
+    },
+    {
+      "id": "posthog@claude-plugins-official:diagnosing-ci-and-merge-bottlenecks",
+      "name": "diagnosing-ci-and-merge-bottlenecks",
+      "path": "skills/diagnosing-ci-and-merge-bottlenecks"
+    },
+    {
+      "id": "posthog@claude-plugins-official:diagnosing-endpoint-performance",
+      "name": "diagnosing-endpoint-performance",
+      "path": "skills/diagnosing-endpoint-performance"
+    },
+    {
+      "id": "posthog@claude-plugins-official:diagnosing-experiment-results",
+      "name": "diagnosing-experiment-results",
+      "path": "skills/diagnosing-experiment-results"
+    },
+    {
+      "id": "posthog@claude-plugins-official:diagnosing-failed-warehouse-syncs",
+      "name": "diagnosing-failed-warehouse-syncs",
+      "path": "skills/diagnosing-failed-warehouse-syncs"
+    },
+    {
+      "id": "posthog@claude-plugins-official:diagnosing-missing-recordings",
+      "name": "diagnosing-missing-recordings",
+      "path": "skills/diagnosing-missing-recordings"
+    },
+    {
+      "id": "posthog@claude-plugins-official:diagnosing-sdk-health",
+      "name": "diagnosing-sdk-health",
+      "path": "skills/diagnosing-sdk-health"
+    },
+    {
+      "id": "posthog@claude-plugins-official:diagnosing-stacktrace-symbolication",
+      "name": "diagnosing-stacktrace-symbolication",
+      "path": "skills/diagnosing-stacktrace-symbolication"
+    },
+    {
+      "id": "posthog@claude-plugins-official:downloading-batch-export-files",
+      "name": "downloading-batch-export-files",
+      "path": "skills/downloading-batch-export-files"
+    },
+    {
+      "id": "posthog@claude-plugins-official:exploring-ai-failures",
+      "name": "exploring-ai-failures",
+      "path": "skills/exploring-ai-failures"
+    },
+    {
+      "id": "posthog@claude-plugins-official:exploring-apm-traces",
+      "name": "exploring-apm-traces",
+      "path": "skills/exploring-apm-traces"
+    },
+    {
+      "id": "posthog@claude-plugins-official:exploring-autocapture-events",
+      "name": "exploring-autocapture-events",
+      "path": "skills/exploring-autocapture-events"
+    },
+    {
+      "id": "posthog@claude-plugins-official:exploring-endpoint-execution-logs",
+      "name": "exploring-endpoint-execution-logs",
+      "path": "skills/exploring-endpoint-execution-logs"
+    },
+    {
+      "id": "posthog@claude-plugins-official:exploring-live-traffic",
+      "name": "exploring-live-traffic",
+      "path": "skills/exploring-live-traffic"
+    },
+    {
+      "id": "posthog@claude-plugins-official:exploring-llm-clusters",
+      "name": "exploring-llm-clusters",
+      "path": "skills/exploring-llm-clusters"
+    },
+    {
+      "id": "posthog@claude-plugins-official:exploring-llm-costs",
+      "name": "exploring-llm-costs",
+      "path": "skills/exploring-llm-costs"
+    },
+    {
+      "id": "posthog@claude-plugins-official:exploring-llm-evaluations",
+      "name": "exploring-llm-evaluations",
+      "path": "skills/exploring-llm-evaluations"
+    },
+    {
+      "id": "posthog@claude-plugins-official:exploring-llm-traces",
+      "name": "exploring-llm-traces",
+      "path": "skills/exploring-llm-traces"
+    },
+    {
+      "id": "posthog@claude-plugins-official:exploring-mcp-intent-clusters",
+      "name": "exploring-mcp-intent-clusters",
+      "path": "skills/exploring-mcp-intent-clusters"
+    },
+    {
+      "id": "posthog@claude-plugins-official:exploring-mcp-sessions",
+      "name": "exploring-mcp-sessions",
+      "path": "skills/exploring-mcp-sessions"
+    },
+    {
+      "id": "posthog@claude-plugins-official:exploring-mcp-tool-original-user-motive",
+      "name": "exploring-mcp-tool-original-user-motive",
+      "path": "skills/exploring-mcp-tool-original-user-motive"
+    },
+    {
+      "id": "posthog@claude-plugins-official:exploring-mcp-tool-quality",
+      "name": "exploring-mcp-tool-quality",
+      "path": "skills/exploring-mcp-tool-quality"
+    },
+    {
+      "id": "posthog@claude-plugins-official:exploring-mcp-tool-usage",
+      "name": "exploring-mcp-tool-usage",
+      "path": "skills/exploring-mcp-tool-usage"
+    },
+    {
+      "id": "posthog@claude-plugins-official:exploring-replay-vision-observations",
+      "name": "exploring-replay-vision-observations",
+      "path": "skills/exploring-replay-vision-observations"
+    },
+    {
+      "id": "posthog@claude-plugins-official:exploring-scouts",
+      "name": "exploring-scouts",
+      "path": "skills/exploring-scouts"
+    },
+    {
+      "id": "posthog@claude-plugins-official:feature-usage-feed",
+      "name": "feature-usage-feed",
+      "path": "skills/feature-usage-feed"
+    },
+    {
+      "id": "posthog@claude-plugins-official:filtering-bot-traffic",
+      "name": "filtering-bot-traffic",
+      "path": "skills/filtering-bot-traffic"
+    },
+    {
+      "id": "posthog@claude-plugins-official:finding-deleted-feature-flags",
+      "name": "finding-deleted-feature-flags",
+      "path": "skills/finding-deleted-feature-flags"
+    },
+    {
+      "id": "posthog@claude-plugins-official:finding-experiments",
+      "name": "finding-experiments",
+      "path": "skills/finding-experiments"
+    },
+    {
+      "id": "posthog@claude-plugins-official:finding-replay-for-issue",
+      "name": "finding-replay-for-issue",
+      "path": "skills/finding-replay-for-issue"
+    },
+    {
+      "id": "posthog@claude-plugins-official:finding-sessions-to-watch",
+      "name": "finding-sessions-to-watch",
+      "path": "skills/finding-sessions-to-watch"
+    },
+    {
+      "id": "posthog@claude-plugins-official:formatting-insight-axes",
+      "name": "formatting-insight-axes",
+      "path": "skills/formatting-insight-axes"
+    },
+    {
+      "id": "posthog@claude-plugins-official:grouping-noisy-errors",
+      "name": "grouping-noisy-errors",
+      "path": "skills/grouping-noisy-errors"
+    },
+    {
+      "id": "posthog@claude-plugins-official:improving-mcp-tools",
+      "name": "improving-mcp-tools",
+      "path": "skills/improving-mcp-tools"
+    },
+    {
+      "id": "posthog@claude-plugins-official:inbox-exploration",
+      "name": "inbox-exploration",
+      "path": "skills/inbox-exploration"
+    },
+    {
+      "id": "posthog@claude-plugins-official:instrument-error-tracking",
+      "name": "instrument-error-tracking",
+      "path": "skills/instrument-error-tracking"
+    },
+    {
+      "id": "posthog@claude-plugins-official:instrument-feature-flags",
+      "name": "instrument-feature-flags",
+      "path": "skills/instrument-feature-flags"
+    },
+    {
+      "id": "posthog@claude-plugins-official:instrument-integration",
+      "name": "instrument-integration",
+      "path": "skills/instrument-integration"
+    },
+    {
+      "id": "posthog@claude-plugins-official:instrument-llm-analytics",
+      "name": "instrument-llm-analytics",
+      "path": "skills/instrument-llm-analytics"
+    },
+    {
+      "id": "posthog@claude-plugins-official:instrument-logs",
+      "name": "instrument-logs",
+      "path": "skills/instrument-logs"
+    },
+    {
+      "id": "posthog@claude-plugins-official:instrument-metrics",
+      "name": "instrument-metrics",
+      "path": "skills/instrument-metrics"
+    },
+    {
+      "id": "posthog@claude-plugins-official:instrument-product-analytics",
+      "name": "instrument-product-analytics",
+      "path": "skills/instrument-product-analytics"
+    },
+    {
+      "id": "posthog@claude-plugins-official:investigate-metric",
+      "name": "investigate-metric",
+      "path": "skills/investigate-metric"
+    },
+    {
+      "id": "posthog@claude-plugins-official:investigating-ci-failures",
+      "name": "investigating-ci-failures",
+      "path": "skills/investigating-ci-failures"
+    },
+    {
+      "id": "posthog@claude-plugins-official:investigating-error-issue",
+      "name": "investigating-error-issue",
+      "path": "skills/investigating-error-issue"
+    },
+    {
+      "id": "posthog@claude-plugins-official:investigating-logs",
+      "name": "investigating-logs",
+      "path": "skills/investigating-logs"
+    },
+    {
+      "id": "posthog@claude-plugins-official:investigating-metric-anomalies",
+      "name": "investigating-metric-anomalies",
+      "path": "skills/investigating-metric-anomalies"
+    },
+    {
+      "id": "posthog@claude-plugins-official:investigating-replay",
+      "name": "investigating-replay",
+      "path": "skills/investigating-replay"
+    },
+    {
+      "id": "posthog@claude-plugins-official:managing-endpoint-versions",
+      "name": "managing-endpoint-versions",
+      "path": "skills/managing-endpoint-versions"
+    },
+    {
+      "id": "posthog@claude-plugins-official:managing-experiment-lifecycle",
+      "name": "managing-experiment-lifecycle",
+      "path": "skills/managing-experiment-lifecycle"
+    },
+    {
+      "id": "posthog@claude-plugins-official:managing-path-cleaning-rules",
+      "name": "managing-path-cleaning-rules",
+      "path": "skills/managing-path-cleaning-rules"
+    },
+    {
+      "id": "posthog@claude-plugins-official:managing-reminders",
+      "name": "managing-reminders",
+      "path": "skills/managing-reminders"
+    },
+    {
+      "id": "posthog@claude-plugins-official:managing-streamlit-apps",
+      "name": "managing-streamlit-apps",
+      "path": "skills/managing-streamlit-apps"
+    },
+    {
+      "id": "posthog@claude-plugins-official:managing-subscriptions",
+      "name": "managing-subscriptions",
+      "path": "skills/managing-subscriptions"
+    },
+    {
+      "id": "posthog@claude-plugins-official:modeling-activation-metrics",
+      "name": "modeling-activation-metrics",
+      "path": "skills/modeling-activation-metrics"
+    },
+    {
+      "id": "posthog@claude-plugins-official:modeling-conversion-metrics",
+      "name": "modeling-conversion-metrics",
+      "path": "skills/modeling-conversion-metrics"
+    },
+    {
+      "id": "posthog@claude-plugins-official:modeling-dimension-tables",
+      "name": "modeling-dimension-tables",
+      "path": "skills/modeling-dimension-tables"
+    },
+    {
+      "id": "posthog@claude-plugins-official:modeling-product-usage-metrics",
+      "name": "modeling-product-usage-metrics",
+      "path": "skills/modeling-product-usage-metrics"
+    },
+    {
+      "id": "posthog@claude-plugins-official:modeling-revenue-metrics",
+      "name": "modeling-revenue-metrics",
+      "path": "skills/modeling-revenue-metrics"
+    },
+    {
+      "id": "posthog@claude-plugins-official:modeling-warehouse-foundations",
+      "name": "modeling-warehouse-foundations",
+      "path": "skills/modeling-warehouse-foundations"
+    },
+    {
+      "id": "posthog@claude-plugins-official:organizing-conversations-code",
+      "name": "organizing-conversations-code",
+      "path": "skills/organizing-conversations-code"
+    },
+    {
+      "id": "posthog@claude-plugins-official:planning-voice-agent-user-interviews",
+      "name": "planning-voice-agent-user-interviews",
+      "path": "skills/planning-voice-agent-user-interviews"
+    },
+    {
+      "id": "posthog@claude-plugins-official:querying-canvas-data",
+      "name": "querying-canvas-data",
+      "path": "skills/querying-canvas-data"
+    },
+    {
+      "id": "posthog@claude-plugins-official:querying-posthog-data",
+      "name": "querying-posthog-data",
+      "path": "skills/querying-posthog-data"
+    },
+    {
+      "id": "posthog@claude-plugins-official:resolving-ingestion-warnings",
+      "name": "resolving-ingestion-warnings",
+      "path": "skills/resolving-ingestion-warnings"
+    },
+    {
+      "id": "posthog@claude-plugins-official:review-hog-authoring",
+      "name": "review-hog-authoring",
+      "path": "skills/review-hog-authoring"
+    },
+    {
+      "id": "posthog@claude-plugins-official:review-hog-blind-spots-general",
+      "name": "review-hog-blind-spots-general",
+      "path": "skills/review-hog-blind-spots-general"
+    },
+    {
+      "id": "posthog@claude-plugins-official:review-hog-perspective-contracts-security",
+      "name": "review-hog-perspective-contracts-security",
+      "path": "skills/review-hog-perspective-contracts-security"
+    },
+    {
+      "id": "posthog@claude-plugins-official:review-hog-perspective-logic-correctness",
+      "name": "review-hog-perspective-logic-correctness",
+      "path": "skills/review-hog-perspective-logic-correctness"
+    },
+    {
+      "id": "posthog@claude-plugins-official:review-hog-perspective-performance-reliability",
+      "name": "review-hog-perspective-performance-reliability",
+      "path": "skills/review-hog-perspective-performance-reliability"
+    },
+    {
+      "id": "posthog@claude-plugins-official:review-hog-resolution-criteria",
+      "name": "review-hog-resolution-criteria",
+      "path": "skills/review-hog-resolution-criteria"
+    },
+    {
+      "id": "posthog@claude-plugins-official:review-hog-validation-criteria",
+      "name": "review-hog-validation-criteria",
+      "path": "skills/review-hog-validation-criteria"
+    },
+    {
+      "id": "posthog@claude-plugins-official:scanning-experiments-with-replay-vision",
+      "name": "scanning-experiments-with-replay-vision",
+      "path": "skills/scanning-experiments-with-replay-vision"
+    },
+    {
+      "id": "posthog@claude-plugins-official:setting-up-a-custom-rest-source",
+      "name": "setting-up-a-custom-rest-source",
+      "path": "skills/setting-up-a-custom-rest-source"
+    },
+    {
+      "id": "posthog@claude-plugins-official:setting-up-a-data-warehouse-source",
+      "name": "setting-up-a-data-warehouse-source",
+      "path": "skills/setting-up-a-data-warehouse-source"
+    },
+    {
+      "id": "posthog@claude-plugins-official:setting-up-data-catalog",
+      "name": "setting-up-data-catalog",
+      "path": "skills/setting-up-data-catalog"
+    },
+    {
+      "id": "posthog@claude-plugins-official:setting-up-support-slack-locally",
+      "name": "setting-up-support-slack-locally",
+      "path": "skills/setting-up-support-slack-locally"
+    },
+    {
+      "id": "posthog@claude-plugins-official:setting-up-warehouse-properties",
+      "name": "setting-up-warehouse-properties",
+      "path": "skills/setting-up-warehouse-properties"
+    },
+    {
+      "id": "posthog@claude-plugins-official:signals",
+      "name": "signals",
+      "path": "skills/signals"
+    },
+    {
+      "id": "posthog@claude-plugins-official:signals-scout-ai-observability",
+      "name": "signals-scout-ai-observability",
+      "path": "skills/signals-scout-ai-observability"
+    },
+    {
+      "id": "posthog@claude-plugins-official:signals-scout-anomaly-detection",
+      "name": "signals-scout-anomaly-detection",
+      "path": "skills/signals-scout-anomaly-detection"
+    },
+    {
+      "id": "posthog@claude-plugins-official:signals-scout-apm",
+      "name": "signals-scout-apm",
+      "path": "skills/signals-scout-apm"
+    },
+    {
+      "id": "posthog@claude-plugins-official:signals-scout-conversations",
+      "name": "signals-scout-conversations",
+      "path": "skills/signals-scout-conversations"
+    },
+    {
+      "id": "posthog@claude-plugins-official:signals-scout-csp-violations",
+      "name": "signals-scout-csp-violations",
+      "path": "skills/signals-scout-csp-violations"
+    },
+    {
+      "id": "posthog@claude-plugins-official:signals-scout-customer-analytics",
+      "name": "signals-scout-customer-analytics",
+      "path": "skills/signals-scout-customer-analytics"
+    },
+    {
+      "id": "posthog@claude-plugins-official:signals-scout-customer-analytics-billing-and-usage",
+      "name": "signals-scout-customer-analytics-billing-and-usage",
+      "path": "skills/signals-scout-customer-analytics-billing-and-usage"
+    },
+    {
+      "id": "posthog@claude-plugins-official:signals-scout-data-pipelines",
+      "name": "signals-scout-data-pipelines",
+      "path": "skills/signals-scout-data-pipelines"
+    },
+    {
+      "id": "posthog@claude-plugins-official:signals-scout-data-warehouse",
+      "name": "signals-scout-data-warehouse",
+      "path": "skills/signals-scout-data-warehouse"
+    },
+    {
+      "id": "posthog@claude-plugins-official:signals-scout-error-tracking",
+      "name": "signals-scout-error-tracking",
+      "path": "skills/signals-scout-error-tracking"
+    },
+    {
+      "id": "posthog@claude-plugins-official:signals-scout-experiments",
+      "name": "signals-scout-experiments",
+      "path": "skills/signals-scout-experiments"
+    },
+    {
+      "id": "posthog@claude-plugins-official:signals-scout-feature-flags",
+      "name": "signals-scout-feature-flags",
+      "path": "skills/signals-scout-feature-flags"
+    },
+    {
+      "id": "posthog@claude-plugins-official:signals-scout-general",
+      "name": "signals-scout-general",
+      "path": "skills/signals-scout-general"
+    },
+    {
+      "id": "posthog@claude-plugins-official:signals-scout-health-checks",
+      "name": "signals-scout-health-checks",
+      "path": "skills/signals-scout-health-checks"
+    },
+    {
+      "id": "posthog@claude-plugins-official:signals-scout-inbox-validation",
+      "name": "signals-scout-inbox-validation",
+      "path": "skills/signals-scout-inbox-validation"
+    },
+    {
+      "id": "posthog@claude-plugins-official:signals-scout-insight-alerts",
+      "name": "signals-scout-insight-alerts",
+      "path": "skills/signals-scout-insight-alerts"
+    },
+    {
+      "id": "posthog@claude-plugins-official:signals-scout-logs",
+      "name": "signals-scout-logs",
+      "path": "skills/signals-scout-logs"
+    },
+    {
+      "id": "posthog@claude-plugins-official:signals-scout-mcp-tool-calls",
+      "name": "signals-scout-mcp-tool-calls",
+      "path": "skills/signals-scout-mcp-tool-calls"
+    },
+    {
+      "id": "posthog@claude-plugins-official:signals-scout-observability-gaps",
+      "name": "signals-scout-observability-gaps",
+      "path": "skills/signals-scout-observability-gaps"
+    },
+    {
+      "id": "posthog@claude-plugins-official:signals-scout-product-analytics",
+      "name": "signals-scout-product-analytics",
+      "path": "skills/signals-scout-product-analytics"
+    },
+    {
+      "id": "posthog@claude-plugins-official:signals-scout-replay-vision",
+      "name": "signals-scout-replay-vision",
+      "path": "skills/signals-scout-replay-vision"
+    },
+    {
+      "id": "posthog@claude-plugins-official:signals-scout-revenue-analytics",
+      "name": "signals-scout-revenue-analytics",
+      "path": "skills/signals-scout-revenue-analytics"
+    },
+    {
+      "id": "posthog@claude-plugins-official:signals-scout-session-replay",
+      "name": "signals-scout-session-replay",
+      "path": "skills/signals-scout-session-replay"
+    },
+    {
+      "id": "posthog@claude-plugins-official:signals-scout-skills-store",
+      "name": "signals-scout-skills-store",
+      "path": "skills/signals-scout-skills-store"
+    },
+    {
+      "id": "posthog@claude-plugins-official:signals-scout-surveys",
+      "name": "signals-scout-surveys",
+      "path": "skills/signals-scout-surveys"
+    },
+    {
+      "id": "posthog@claude-plugins-official:signals-scout-tasks",
+      "name": "signals-scout-tasks",
+      "path": "skills/signals-scout-tasks"
+    },
+    {
+      "id": "posthog@claude-plugins-official:signals-scout-web-analytics",
+      "name": "signals-scout-web-analytics",
+      "path": "skills/signals-scout-web-analytics"
+    },
+    {
+      "id": "posthog@claude-plugins-official:signals-scout-web-vitals",
+      "name": "signals-scout-web-vitals",
+      "path": "skills/signals-scout-web-vitals"
+    },
+    {
+      "id": "posthog@claude-plugins-official:skills-store",
+      "name": "skills-store",
+      "path": "skills/skills-store"
+    },
+    {
+      "id": "posthog@claude-plugins-official:suggesting-data-imports",
+      "name": "suggesting-data-imports",
+      "path": "skills/suggesting-data-imports"
+    },
+    {
+      "id": "posthog@claude-plugins-official:suggesting-path-cleaning-rules",
+      "name": "suggesting-path-cleaning-rules",
+      "path": "skills/suggesting-path-cleaning-rules"
+    },
+    {
+      "id": "posthog@claude-plugins-official:suppressing-noisy-errors",
+      "name": "suppressing-noisy-errors",
+      "path": "skills/suppressing-noisy-errors"
+    },
+    {
+      "id": "posthog@claude-plugins-official:testing-mcp-tools-locally",
+      "name": "testing-mcp-tools-locally",
+      "path": "skills/testing-mcp-tools-locally"
+    },
+    {
+      "id": "posthog@claude-plugins-official:triaging-error-issues",
+      "name": "triaging-error-issues",
+      "path": "skills/triaging-error-issues"
+    },
+    {
+      "id": "posthog@claude-plugins-official:triaging-visual-review-runs",
+      "name": "triaging-visual-review-runs",
+      "path": "skills/triaging-visual-review-runs"
+    },
+    {
+      "id": "posthog@claude-plugins-official:tuning-incremental-sync-config",
+      "name": "tuning-incremental-sync-config",
+      "path": "skills/tuning-incremental-sync-config"
+    },
+    {
+      "id": "posthog@claude-plugins-official:turning-engineering-analytics-into-insights",
+      "name": "turning-engineering-analytics-into-insights",
+      "path": "skills/turning-engineering-analytics-into-insights"
+    },
+    {
+      "id": "posthog@claude-plugins-official:understanding-billing-usage",
+      "name": "understanding-billing-usage",
+      "path": "skills/understanding-billing-usage"
+    },
+    {
+      "id": "posthog@claude-plugins-official:validating-and-publishing-canvases",
+      "name": "validating-and-publishing-canvases",
+      "path": "skills/validating-and-publishing-canvases"
+    },
+    {
+      "id": "posthog@claude-plugins-official:working-with-scouts",
+      "name": "working-with-scouts",
+      "path": "skills/working-with-scouts"
+    },
+    {
+      "id": "posthog@claude-plugins-official:working-with-skills",
+      "name": "working-with-skills",
+      "path": "skills/working-with-skills"
+    },
+    {
+      "id": "posthog@claude-plugins-official:working-with-task-comments",
+      "name": "working-with-task-comments",
+      "path": "skills/working-with-task-comments"
+    },
+    {
+      "id": "posthog@claude-plugins-official:writing-simplified-technical-english",
+      "name": "writing-simplified-technical-english",
+      "path": "skills/writing-simplified-technical-english"
+    },
+    {
+      "id": "posthog@claude-plugins-official:writing-streamlit-apps",
+      "name": "writing-streamlit-apps",
+      "path": "skills/writing-streamlit-apps"
+    }
+  ],
+  "commands": ["llma-cc-ingest", "llma-cc-setup", "llma-cc-status"]
+}

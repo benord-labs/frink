@@ -1,0 +1,45 @@
+{
+  "pin": {
+    "marketplace": "canva-skills",
+    "name": "canva",
+    "version": "1.0.0",
+    "gitCommitSha": "b56291ea0a36d0a941e1478b47959be5f1771dee",
+    "sourceRepo": "canva-sdks/canva-skills",
+    "payloadRepo": "canva-sdks/canva-skills",
+    "payloadPath": "plugins/canva"
+  },
+  "pluginId": "canva@canva-skills",
+  "skills": [
+    {
+      "id": "canva@canva-skills:brand-check",
+      "name": "brand-check",
+      "path": "skills/brand-check"
+    },
+    {
+      "id": "canva@canva-skills:bulk-create",
+      "name": "bulk-create",
+      "path": "skills/bulk-create"
+    },
+    {
+      "id": "canva@canva-skills:edit-design",
+      "name": "edit-design",
+      "path": "skills/edit-design"
+    },
+    {
+      "id": "canva@canva-skills:get-design-feedback",
+      "name": "get-design-feedback",
+      "path": "skills/get-design-feedback"
+    },
+    {
+      "id": "canva@canva-skills:implement-feedback",
+      "name": "implement-feedback",
+      "path": "skills/implement-feedback"
+    },
+    {
+      "id": "canva@canva-skills:resize-for-social-media",
+      "name": "resize-for-social-media",
+      "path": "skills/resize-for-social-media"
+    }
+  ],
+  "commands": []
+}

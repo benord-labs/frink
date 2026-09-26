@@ -1,0 +1,76 @@
+{
+  "name": "intercom",
+  "displayName": "Intercom",
+  "description": "Conversations, contacts and help articles",
+  "longDescription": "Ask your chats what customers are saying in Intercom and to draft the help article that answers them.",
+  "mcpServers": {
+    "intercom": {
+      "type": "http",
+      "auth": {
+        "kind": "frink_client"
+      },
+      "url": "https://mcp.intercom.com/mcp"
+    }
+  },
+  "frink": {
+    "keywords": [
+      "support",
+      "customers",
+      "helpdesk",
+      "chat"
+    ],
+    "source": {
+      "repo": "cursor/plugins",
+      "commit": "4612556",
+      "path": "third_party/intercom",
+      "license": "MIT",
+      "official": {
+        "url": "https://github.com/intercom/claude-plugin-external",
+        "kind": "plugin"
+      }
+    },
+    "actions": [
+      {
+        "id": "intercom.search_conversations",
+        "label": "Search Intercom conversations",
+        "icon": "search",
+        "description": "Finds customer conversations matching what you are looking for.",
+        "server": "intercom",
+        "tool": "search_conversations"
+      },
+      {
+        "id": "intercom.get_conversation",
+        "label": "Read an Intercom conversation",
+        "icon": "message-square",
+        "description": "Reads one conversation and everything said in it.",
+        "server": "intercom",
+        "tool": "get_conversation"
+      },
+      {
+        "id": "intercom.search_contacts",
+        "label": "Search Intercom contacts",
+        "icon": "inbox",
+        "description": "Finds the people and leads in your workspace.",
+        "server": "intercom",
+        "tool": "search_contacts"
+      },
+      {
+        "id": "intercom.search_articles",
+        "label": "Search Intercom help articles",
+        "icon": "file-text",
+        "description": "Finds help centre articles by what they cover.",
+        "server": "intercom",
+        "tool": "search_articles"
+      },
+      {
+        "id": "intercom.add_internal_note",
+        "label": "Add an Intercom internal note",
+        "icon": "clipboard",
+        "description": "Adds a note only your team can see to one conversation.",
+        "server": "intercom",
+        "tool": "add_internal_note"
+      }
+    ],
+    "status": "coming_soon"
+  }
+}

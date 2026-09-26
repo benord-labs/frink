@@ -1,0 +1,389 @@
+{
+  "name": "frink",
+  "version": "0.0.11",
+  "private": true,
+  "description": "Frink - Personal AI coding assistant with trigger-based automation",
+  "license": "MIT",
+  "author": {
+    "name": "Benji Norval"
+  },
+  "main": "out/main/index.js",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "dev": "node ./scripts/binaries/ensure-electron-binary.mjs && node ./scripts/binaries/ensure-codex-binary.mjs && electron-vite dev",
+    "build": "bun run build:skills && NODE_OPTIONS='--max-old-space-size=8192' electron-vite build",
+    "build:skills": "bun run scripts/skills/build-skill-content.ts",
+    "build:skills:check": "bun run scripts/skills/build-skill-content.ts --check",
+    "preview": "electron-vite preview",
+    "package": "electron-builder --dir",
+    "package:mac": "electron-builder --mac",
+    "package:win": "electron-builder --win",
+    "package:linux": "electron-builder --linux",
+    "dist": "electron-builder",
+    "release": "rm -rf release && bun run claude:download && bun run codex:download && SENTRY_UPLOAD=1 bun run build && bun --env-file=.env run package:mac && bun --env-file=.env scripts/publish/upload-to-r2.mjs",
+    "claude:download": "node scripts/binaries/download-claude-binary.mjs",
+    "claude:download:all": "node scripts/binaries/download-claude-binary.mjs --all",
+    "codex:build": "node scripts/binaries/build-codex-frink.mjs",
+    "codex:download": "node scripts/binaries/download-codex-binary.mjs",
+    "electron:download": "node scripts/binaries/ensure-electron-binary.mjs",
+    "kill:worktree-electron": "node scripts/dev/kill-worktree-electron.mjs",
+    "release:dev": "rm -rf release && bun run claude:download && bun run codex:download && bun run build && bun --env-file=.env run package:mac && rm -rf node_modules && bun i",
+    "db:generate": "drizzle-kit generate",
+    "db:push": "drizzle-kit push",
+    "db:studio": "drizzle-kit studio",
+    "pretest": "node ./scripts/dev/ensure-package-deps.mjs",
+    "test": "vitest",
+    "pretest:run": "node ./scripts/dev/ensure-package-deps.mjs",
+    "test:run": "vitest run",
+    "pretest:run:coverage": "node ./scripts/dev/ensure-package-deps.mjs",
+    "test:run:coverage": "vitest run --coverage",
+    "prets:check": "node ./scripts/dev/ensure-package-deps.mjs",
+    "ts:check": "node ./node_modules/@typescript/native/bin/tsc --noEmit && node ./node_modules/@typescript/native/bin/tsc --noEmit -p relay/tsconfig.test.json",
+    "lint:structure": "node --preserve-symlinks node_modules/eslint/bin/eslint.js src relay",
+    "knip": "knip",
+    "knip:fix": "knip --fix",
+    "lint:oxlint": "oxlint --disable-nested-config .",
+    "lint": "bun run format:check && bun run lint:oxlint && bun run lint:structure",
+    "lint:fix": "oxlint --disable-nested-config --fix .",
+    "format": "oxfmt --write '**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts,json,jsonc,css}'",
+    "format:check": "oxfmt --check '**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts,json,jsonc,css}'"
+  },
+  "dependencies": {
+    "@ai-sdk/react": "^3.0.269",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.186",
+    "@anthropic-ai/sdk": "^0.105.0",
+    "@benord-labs/frink-primitives": "^0.10.8",
+    "@dagrejs/dagre": "^2.0.4",
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^8.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
+    "@iconify-icons/logos": "2.0.0",
+    "@iconify-icons/ri": "2.0.0",
+    "@iconify-icons/simple-icons": "2.0.3",
+    "@iconify-icons/vscode-icons": "2.0.4",
+    "@iconify/react": "6.0.2",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@monaco-editor/react": "^4.7.0",
+    "@parcel/watcher": "^2.5.6",
+    "@pierre/diffs": "^1.2.11",
+    "@radix-ui/react-alert-dialog": "^1.1.17",
+    "@radix-ui/react-checkbox": "^1.3.5",
+    "@radix-ui/react-collapsible": "^1.1.14",
+    "@radix-ui/react-compose-refs": "^1.1.3",
+    "@radix-ui/react-context-menu": "^2.3.1",
+    "@radix-ui/react-dialog": "^1.1.17",
+    "@radix-ui/react-dropdown-menu": "^2.1.18",
+    "@radix-ui/react-hover-card": "^1.1.17",
+    "@radix-ui/react-label": "^2.1.10",
+    "@radix-ui/react-popover": "^1.1.17",
+    "@radix-ui/react-select": "^2.3.1",
+    "@radix-ui/react-slider": "^1.4.7",
+    "@radix-ui/react-switch": "^1.3.1",
+    "@radix-ui/react-tabs": "^1.1.15",
+    "@radix-ui/react-tooltip": "^1.2.10",
+    "@react-three/fiber": "^9.6.1",
+    "@sentry/electron": "^7.13.0",
+    "@tanstack/react-query": "^5.101.1",
+    "@tanstack/react-virtual": "^3.14.3",
+    "@trpc/client": "^11.18.0",
+    "@trpc/react-query": "^11.18.0",
+    "@trpc/server": "^11.18.0",
+    "@typescript/ata": "^0.9.8",
+    "@xterm/addon-canvas": "^0.7.0",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-search": "^0.16.0",
+    "@xterm/addon-serialize": "^0.14.0",
+    "@xterm/addon-web-links": "^0.12.0",
+    "@xterm/addon-webgl": "^0.19.0",
+    "@xyflow/react": "^12.11.1",
+    "acorn": "^8.16.0",
+    "ai": "^6.0.266",
+    "async-mutex": "^0.5.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "croner": "^10.0.1",
+    "culori": "^4.0.2",
+    "date-fns": "4.1.0",
+    "diff": "^9.0.0",
+    "drizzle-orm": "^0.45.2",
+    "electron-log": "^5.4.4",
+    "electron-updater": "^6.8.9",
+    "fast-json-stable-stringify": "^2.1.0",
+    "gray-matter": "^4.0.3",
+    "isomorphic-dompurify": "^3.18.0",
+    "jotai": "^2.20.1",
+    "jsonc-parser": "^3.3.1",
+    "lucide-react": "^1.21.0",
+    "mermaid": "^11.15.0",
+    "monaco-editor": "^0.55.1",
+    "monaco-languageclient": "^10.7.0",
+    "motion": "^12.41.0",
+    "next-themes": "^0.4.6",
+    "node-pty": "^1.1.0",
+    "path-browserify": "^1.0.1",
+    "picomatch": "^4.0.4",
+    "pidtree": "^0.6.1",
+    "posthog-js": "^1.393.0",
+    "posthog-node": "^5.38.3",
+    "pyright": "^1.1.410",
+    "react": "^19.2.7",
+    "react-colorful": "^5.8.1",
+    "react-dom": "^19.2.7",
+    "react-zoom-pan-pinch": "^4.0.3",
+    "remark-breaks": "^4.0.0",
+    "remark-gfm": "^4.0.1",
+    "shell-quote": "^1.8.4",
+    "shiki": "4.0.2",
+    "simple-git": "^3.36.0",
+    "smol-toml": "^1.6.1",
+    "socket.io-client": "^4.8.3",
+    "sonner": "^2.0.7",
+    "streamdown": "^2.5.0",
+    "superjson": "^2.2.6",
+    "tailwind-merge": "^3.6.0",
+    "three": "^0.184.0",
+    "trpc-electron": "^0.1.2",
+    "typescript-language-server": "^5.3.0",
+    "unique-names-generator": "^4.7.1",
+    "use-stick-to-bottom": "^1.1.6",
+    "vscode-jsonrpc": "^8.2.1",
+    "vscode-langservers-extracted": "^4.10.0",
+    "vscode-languageclient": "^9.0.1",
+    "vscode-languageserver-protocol": "^3.18.1",
+    "vscode-uri": "^3.1.0",
+    "xterm": "^5.3.0",
+    "zod": "^4.4.3",
+    "zustand": "^5.0.14"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-s3": "^3.1075.0",
+    "@aws-sdk/lib-storage": "^3.1075.0",
+    "@sentry/vite-plugin": "^5.3.0",
+    "@tailwindcss/postcss": "^4.3.1",
+    "@tailwindcss/typography": "^0.5.20",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/bun": "latest",
+    "@types/culori": "^4.0.1",
+    "@types/node": "^24.13.2",
+    "@types/picomatch": "^4.0.3",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@types/shell-quote": "^1.7.5",
+    "@types/three": "^0.184.1",
+    "@typescript-eslint/parser": "^8.62.0",
+    "@typescript/native": "npm:typescript@7.0.2",
+    "@vitejs/plugin-react": "^5.2.0",
+    "@vitest/coverage-v8": "^4.1.9",
+    "babel-plugin-react-compiler": "^1.0.0",
+    "drizzle-kit": "^0.31.10",
+    "electron": "^43.1.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "eslint": "^10.5.0",
+    "eslint-plugin-project-structure": "^3.14.3",
+    "happy-dom": "^20.10.6",
+    "knip": "^6.18.0",
+    "node-abi": "^3.92.0",
+    "oxfmt": "0.63.0",
+    "oxlint": "1.78.0",
+    "postcss": "^8.5.15",
+    "tailwindcss": "^4.3.1",
+    "tw-animate-css": "^1.4.0",
+    "typescript": "^6.0.3",
+    "vite": "^7.3.5",
+    "vitest": "^4.1.9"
+  },
+  "build": {
+    "appId": "dev.frink.app",
+    "productName": "Frink",
+    "npmRebuild": true,
+    "protocols": [
+      {
+        "name": "Frink",
+        "schemes": [
+          "frink"
+        ]
+      }
+    ],
+    "directories": {
+      "buildResources": "build",
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "!**/*.map",
+      "!node_modules/better-sqlite3/**"
+    ],
+    "extraResources": [
+      {
+        "from": "drizzle",
+        "to": "migrations",
+        "filter": [
+          "meta/**",
+          "0000_mixed_blur.sql",
+          "0001_married_reptil.sql",
+          "0002_fancy_blindfold.sql",
+          "0003_crazy_thunderbolts.sql",
+          "0004_melted_prism.sql",
+          "0005_add_subchat_stats.sql",
+          "0006_nullable_project_id.sql",
+          "0007_add_task_id_to_chats.sql",
+          "0014_multi_account_credentials.sql",
+          "0022_add_ai_account_type.sql",
+          "0024_add_chats_worktree_path_index.sql",
+          "0025_account_cloud_sync.sql",
+          "0035_user_scoped_account_indexes.sql",
+          "0036_pending_sync_user_scope.sql",
+          "0047_node_credentials.sql",
+          "0063_credential_source.sql",
+          "0064_chats_local_schema_parity.sql",
+          "0065_local_first_indexes.sql",
+          "0066_project_ai_github_account_routing.sql",
+          "0067_permissions_local_schema.sql",
+          "0068_flows_local_schema.sql",
+          "0069_tasks_local_schema.sql",
+          "0070_triggers_local_schema.sql",
+          "0071_project_agents_local_schema.sql",
+          "0072_drop_user_integrations_unique.sql",
+          "0073_project_is_cross_machine.sql",
+          "0074_v2_permission_rules.sql",
+          "0075_drop_v1_permission_tables.sql",
+          "0076_add_chats_worktree_history.sql",
+          "0077_batch_stage_run_rerun_from_beginning.sql",
+          "0078_project_ai_account_id.sql",
+          "0079_flow_run_admissions.sql",
+          "0080_node_runs_flow_run_status_idx.sql",
+          "0082_plugin_installations.sql",
+          "0083_plugin_connection_lifecycles.sql",
+          "0084_pending_nango_handoffs.sql",
+          "0085_pending_nango_handoff_integration.sql",
+          "0086_pending_nango_handoff_reconnect.sql",
+          "0087_pending_nango_reconnect_intents.sql",
+          "0088_flow_admission_queue_order.sql",
+          "0089_prune_orphaned_flow_tasks.sql",
+          "0091_nango_handoff_linear_provider.sql",
+          "0092_projects_name_idx.sql",
+          "0093_nango_handoff_gmail_provider.sql",
+          "0094_nango_handoff_github_provider.sql",
+          "0095_plugin_node_schemas.sql",
+          "0096_drop_managed_mcp_name.sql",
+          "0097_permission_rules_drop_user_id.sql",
+          "0098_local_rows_drop_user_id.sql",
+          "0099_drop_cursor_credentials.sql",
+          "0100_drop_github_credentials.sql",
+          "0101_local_webhook_ingress.sql",
+          "0102_local_trigger_operation_lease.sql",
+          "0103_drop_pending_nango_handoffs.sql",
+          "0104_sub_chats_activity_index.sql"
+        ]
+      },
+      {
+        "from": "resources/bin/${platform}-${arch}",
+        "to": "bin",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "resources/bin/VERSION",
+        "to": "bin/VERSION"
+      },
+      {
+        "from": "resources/custom-nodes/managed-bootstrap.mjs",
+        "to": "custom-nodes/managed-bootstrap.mjs"
+      },
+      {
+        "from": "assets/skills",
+        "to": "assets/skills",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/node-pty/**/*",
+      "node_modules/@anthropic-ai/claude-agent-sdk/**/*"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": true
+    },
+    "publish": {
+      "provider": "generic",
+      "url": "https://pub-c942ee0fa0a549ef8d66096bd831507b.r2.dev/"
+    },
+    "dmg": {
+      "window": {
+        "width": 540,
+        "height": 380
+      },
+      "contents": [
+        {
+          "x": 140,
+          "y": 150,
+          "type": "file"
+        },
+        {
+          "x": 400,
+          "y": 150,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ],
+      "iconSize": 80
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "build/icon.ico"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "build/icons",
+      "category": "Development",
+      "maintainer": "Benji Norval <noreply@frink.dev>"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico"
+    }
+  },
+  "patchedDependencies": {
+    "@tailwindcss/typography@0.5.20": "patches/@tailwindcss%2Ftypography@0.5.20.patch"
+  }
+}

@@ -1,0 +1,57 @@
+{
+  "name": "notion",
+  "mcpServers": {
+    "notion": {
+      "type": "http",
+      "auth": {
+        "kind": "frink_client"
+      },
+      "url": "https://mcp.notion.com/mcp"
+    }
+  },
+  "frink": {
+    "keywords": ["notes", "wiki", "docs", "database"],
+    "actions": [
+      {
+        "id": "notion.search_pages",
+        "label": "Search Notion",
+        "icon": "search",
+        "description": "Finds pages and databases in your workspace by what you are looking for.",
+        "server": "notion",
+        "tool": "notion-search"
+      },
+      {
+        "id": "notion.read_page",
+        "label": "Read a Notion page",
+        "icon": "file-text",
+        "description": "Fetches a page, database or view by its Notion link.",
+        "server": "notion",
+        "tool": "notion-fetch"
+      },
+      {
+        "id": "notion.list_recent_pages",
+        "label": "List recent Notion pages",
+        "icon": "folder",
+        "description": "Lists the pages you looked at most recently.",
+        "server": "notion",
+        "tool": "notion-list-recent-pages"
+      },
+      {
+        "id": "notion.read_page_comments",
+        "label": "Read a Notion page's comments",
+        "icon": "message-square",
+        "description": "Lists the comments and discussions on one page.",
+        "server": "notion",
+        "tool": "notion-get-comments"
+      },
+      {
+        "id": "notion.query_database",
+        "label": "Query a Notion database",
+        "icon": "database",
+        "description": "Reads rows out of a Notion database, filtered and sorted the way you ask.",
+        "server": "notion",
+        "tool": "notion-query-data-sources"
+      }
+    ]
+  }
+}

@@ -1,0 +1,16 @@
+# Railway deployment configuration for the Frink webhook relay.
+
+[build]
+builder = "RAILPACK"
+# Railway sets npm's `production=true` during build, which would skip the typescript
+# devDependency the `tsc` build step needs; --include=dev forces it back in.
+buildCommand = "npm install --include=dev && rm -rf dist && npm run build"
+
+[deploy]
+startCommand = "npm start"
+healthcheckPath = "/health"
+healthcheckTimeout = 300
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
+
+# Rate limits are counted in this process's memory, so run exactly ONE instance.

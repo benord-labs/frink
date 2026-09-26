@@ -1,0 +1,427 @@
+/* eslint-disable max-lines, max-lines-per-function */
+/**
+ * Presentational flow step card (React Flow custom node).
+ */
+
+import { Button } from '@benord-labs/frink-primitives';
+import { Handle, NodeResizer, NodeToolbar, Position } from '@xyflow/react';
+import { useAtomValue } from 'jotai';
+import { AlertCircle, AlertTriangle, CheckCircle2, Loader2, Trash2, XCircle } from 'lucide-react';
+import { type MouseEvent, type ReactElement, useState } from 'react';
+import { findPluginActionByNodeName } from '../../../../../../shared/integrations/plugin-nodes';
+import { getPluginDefinition } from '../../../../../../shared/integrations/plugins';
+import type { FlowNode as FlowNodeDef } from '../../../../../../shared/lib/validate-flow-graph';
+import type { FlowBlockType } from '../../../../../../shared/types/flow';
+import { BRAND_TILE_RIM_STYLE, ProviderIcon } from '../../../../../components/ProviderIcon';
+import { Tooltip, TooltipContent, TooltipTrigger } from '../../../../../components/ui/tooltip';
+import { ghostExecAtomFamily, ghostRunActiveAtom } from '../../../../../lib/flow-rehearsal';
+import { nodeExecAtomFamily } from '../../../atoms';
+import { LoopIterationBadge } from '../../../LoopIterationBadge';
+import { FLOW_BLOCK_LABELS } from '../../constants';
+import { FlowBlockIcon } from '../../FlowBlockIcon';
+import {
+  type FlowNodeCanvasContext,
+  flowNodeNeedsAttention,
+  flowNodeNeedsProject,
+  flowNodeSummaryLine,
+} from '../../nodeSummary';
+import { FlowStepAddHandle } from '../FlowStepAddHandle';
+import { blockIconSurfaceClass } from '../flowStepNodeStyles';
+
+/** No transform on hover — RF centers handles via `transform`; `scale` overrides it and shifts the hit target. */
+const HANDLE_CLASS =
+  'h-3! w-3! min-h-0! min-w-0! border-2! border-background! shadow-xs! transition-shadow hover:shadow-md! hover:ring-2 hover:ring-primary/35';
+
+type FlowStepNodeViewProps = {
+  node: FlowNodeDef;
+  index: number;
+  isTrigger: boolean;
+  isCondition: boolean;
+  isEnd: boolean;
+  graphLength: number;
+  isSelected: boolean;
+  showAppendStubDefault: boolean;
+  showAppendStubTrue: boolean;
+  showAppendStubFalse: boolean;
+  customBlockIcon?: string;
+  customFlowCanvasContext?: FlowNodeCanvasContext;
+  flowDefaultProjectId?: string;
+  /** Scopes canvas execution overlay to the correct flow. */
+  flowId?: string;
+  /** When true, execution chrome is muted (run history inspection). */
+  canvasHistoricalInspection?: boolean;
+  onSelect: () => void;
+  onDelete: () => void;
+  onRequestAddStep: (sourceHandle: string | undefined) => void;
+  /** Deep-link from the missing-project warning to the flow settings Project field. */
+  onRequestOpenFlowSettings?: () => void;
+  /** When true: hides toolbar + add-step stubs; keeps Handles mounted (opacity-0) for edge anchoring. */
+  readOnly?: boolean;
+  /** Fan Out only: resize floor, so the container can never be shrunk over its children. */
+  fanOutMinSize?: { width: number; height: number };
+};
+
+export function FlowStepNodeView({
+  node,
+  index,
+  isTrigger,
+  isCondition,
+  isEnd,
+  graphLength,
+  isSelected,
+  showAppendStubDefault,
+  showAppendStubTrue,
+  showAppendStubFalse,
+  customBlockIcon,
+  customFlowCanvasContext,
+  flowDefaultProjectId,
+  flowId,
+  canvasHistoricalInspection = false,
+  onSelect,
+  onDelete,
+  onRequestAddStep,
+  onRequestOpenFlowSettings,
+  readOnly = false,
+  fanOutMinSize,
+}: FlowStepNodeViewProps): ReactElement {
+  const [hovered, setHovered] = useState(false);
+  const execKey = flowId ? `${flowId}:${node.id}` : `__none__:${node.id}`;
+  const execState = useAtomValue(nodeExecAtomFamily(execKey));
+  // Ghost Run overlay: while a rehearsal is active, the canvas paints predicted state from a
+  // parallel atom family instead of the live one. When inactive these reads are null and the
+  // node renders byte-for-byte as before.
+  const ghostRunActive = useAtomValue(ghostRunActiveAtom);
+  const ghostState = useAtomValue(ghostExecAtomFamily(execKey));
+  // Live exec state drives the loop-iteration badge (a live-run-only concept). Ghost rehearsals
+  // never carry loop info, so the badge stays a pure live-run signal.
+  const liveExecState = flowId ? execState : null;
+  // While a rehearsal is active the canvas shows the static-analysis verdict from a parallel atom
+  // family; otherwise it shows the live run state. The two are rendered through distinct branches
+  // (different status vocabularies + ghost carries explainable findings).
+  const activeGhost = flowId && ghostRunActive ? ghostState : null;
+  const activeExecState = flowId && !ghostRunActive ? execState : null;
+  const ghostFindings = activeGhost?.findings ?? [];
+
+  // A plugin step's kind IS its provider: the card states "Slack", never the
+  // internal `slack_send_message` node name, and wears the provider's own mark.
+  const pluginStep = findPluginActionByNodeName(node.blockType);
+  const providerId = pluginStep?.pluginId;
+  const typeLabel = pluginStep
+    ? (getPluginDefinition(pluginStep.pluginId)?.name ?? pluginStep.pluginId)
+    : (FLOW_BLOCK_LABELS[node.blockType as FlowBlockType] ?? node.blockType);
+  // An unlabelled plugin step reaches the canvas from every author that is not
+  // the node picker (frink_flows_patch, templates, graphs saved before labelling).
+  // Read-time resolution covers those cohorts; the write-time label is the fast path.
+  const displayLabel = node.label?.trim() || pluginStep?.action.label || typeLabel;
+  const needsAttention = flowNodeNeedsAttention(
+    node,
+    flowDefaultProjectId,
+    customFlowCanvasContext,
+  );
+  const summary = flowNodeSummaryLine(node, flowDefaultProjectId, customFlowCanvasContext);
+  const showToolbar = !readOnly && (hovered || isSelected) && !isTrigger;
+  // Missing project resolves flow-wide (settings default), so the warning deep-links there
+  // instead of sending the user to fix each node individually.
+  const showSetProjectCta =
+    !readOnly &&
+    !activeExecState &&
+    !activeGhost &&
+    onRequestOpenFlowSettings !== undefined &&
+    flowNodeNeedsProject(node, flowDefaultProjectId);
+  const openFlowSettings = (e: MouseEvent) => {
+    e.stopPropagation();
+    onRequestOpenFlowSettings?.();
+  };
+
+  // Ghost paint: a node with no findings stays a neutral "looks ready" ghost; an error finding
+  // paints crimson-ghost, a warn/info finding paints amber-ghost. No findings is the clean default.
+  const ghostClass = activeGhost
+    ? activeGhost.status === 'failed'
+      ? 'flow-node-ghost-failed'
+      : activeGhost.status === 'warn'
+        ? 'flow-node-ghost-warn'
+        : 'flow-node-ghost-clean'
+    : '';
+
+  const liveClass =
+    activeExecState?.status === 'running'
+      ? 'flow-node-running'
+      : activeExecState?.status === 'completed'
+        ? 'flow-node-completed'
+        : activeExecState?.status === 'failed'
+          ? 'flow-node-failed'
+          : activeExecState?.status === 'skipped'
+            ? 'flow-node-skipped'
+            : activeExecState?.status === 'awaiting_input'
+              ? 'flow-node-awaiting-input'
+              : activeExecState?.status === 'blocked'
+                ? 'flow-node-blocked'
+                : '';
+
+  const execClass = activeGhost ? ghostClass : liveClass;
+  const isFanOut = node.blockType === 'fan_out';
+
+  // The single highest-severity node in the rehearsal gets the crimson at-risk halo.
+  const riskClass = activeGhost?.isAtRisk ? 'flow-node-at-risk' : '';
+
+  const historicalChromeClass =
+    canvasHistoricalInspection && activeExecState ? 'flow-node-exec-historical' : '';
+
+  return (
+    <div
+      className={`relative ${isFanOut ? 'flex h-full flex-col items-center rounded-2xl border border-primary/25 bg-primary/5 p-4' : 'pb-10'}`}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      {isFanOut && !readOnly && fanOutMinSize ? (
+        // Every border and corner resizes, like any card; styling lives in flowCanvasChrome.css.
+        <NodeResizer
+          minWidth={fanOutMinSize.width}
+          minHeight={fanOutMinSize.height}
+          lineClassName="flow-fanout-resize-line"
+          handleClassName="flow-fanout-resize-corner"
+        />
+      ) : null}
+
+      <NodeToolbar
+        isVisible={showToolbar}
+        position={Position.Top}
+        align="end"
+        className="flex gap-1 rounded-lg border border-border/50 bg-card p-1 shadow-lg shadow-black/20 ring-1 ring-inset ring-border/40"
+      >
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-8 w-8 text-muted-foreground hover:text-destructive"
+          aria-label="Delete step"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
+          iconOnly
+        >
+          <Trash2 className="h-4 w-4" aria-hidden />
+        </Button>
+      </NodeToolbar>
+
+      {!isTrigger ? (
+        <Handle
+          type="target"
+          position={Position.Top}
+          title="Drag from another step's output to connect"
+          className={`${HANDLE_CLASS} !bg-muted-foreground/90${readOnly ? ' opacity-0! pointer-events-none!' : ''}`}
+        />
+      ) : null}
+
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={onSelect}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onSelect();
+          }
+        }}
+        className={`flow-step-node-card flex w-[320px] cursor-pointer flex-col gap-2 rounded-xl border border-border/45 bg-card p-3 text-card-foreground shadow-[inset_0_1px_0_0_hsl(var(--foreground)/0.06),0_12px_40px_-12px_hsl(var(--background)/0.85)] outline-hidden ring-1 ring-inset ring-border/35 transition-[border-color,box-shadow,background-color] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
+          isSelected
+            ? 'border-primary/45 bg-card shadow-[0_0_0_1px_hsl(var(--primary)/0.38),0_12px_48px_-8px_hsl(var(--primary)/0.18),inset_0_1px_0_0_hsl(var(--foreground)/0.08)] ring-primary/25'
+            : 'hover:border-border/70 hover:bg-card hover:shadow-lg hover:shadow-black/15'
+        } ${execClass} ${riskClass} ${historicalChromeClass}`}
+        aria-pressed={isSelected}
+        aria-label={`Step ${index + 1}: ${displayLabel}`}
+      >
+        <div className="flex items-start gap-3">
+          <div
+            className={`relative flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${providerId ? '' : blockIconSurfaceClass(node.blockType)}`}
+            style={providerId ? BRAND_TILE_RIM_STYLE : undefined}
+          >
+            {providerId ? (
+              <ProviderIcon providerId={providerId} appearance="tile" className="size-[22px]" />
+            ) : (
+              <FlowBlockIcon
+                type={node.blockType}
+                customBlockIcon={customBlockIcon}
+                className="h-5 w-5"
+              />
+            )}
+            {needsAttention && !activeExecState && !activeGhost ? (
+              showSetProjectCta ? (
+                // eslint-disable-next-line no-restricted-syntax -- bespoke 10px warning dot; ui Button sizing/variants fight the absolutely-positioned badge
+                <button
+                  type="button"
+                  onClick={openFlowSettings}
+                  className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 cursor-pointer rounded-full border-2 border-card bg-amber-600 outline-hidden focus-visible:ring-2 focus-visible:ring-ring dark:bg-amber-500"
+                  aria-label="Set flow default project"
+                  title="No project — set the flow default project"
+                />
+              ) : (
+                <span
+                  className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-card bg-amber-600 dark:bg-amber-500"
+                  aria-hidden
+                  title="Incomplete configuration"
+                />
+              )
+            ) : null}
+            {/* Rehearsal finding badge: hover lists this node's findings (why + fix). */}
+            {ghostFindings.length > 0 ? (
+              <Tooltip>
+                {/* Hover-only tooltip; the same why/fix is keyboard-reachable via the findings
+                    panel rows in GhostRunHeaderStrip, so the badge stays a non-interactive img. */}
+                <TooltipTrigger asChild>
+                  <span
+                    role="img"
+                    className={`absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full border-2 border-card ${
+                      activeGhost?.status === 'failed' ? 'bg-destructive' : 'bg-amber-500'
+                    }`}
+                    aria-label={`${ghostFindings.length} rehearsal ${ghostFindings.length === 1 ? 'finding' : 'findings'}`}
+                  >
+                    {activeGhost?.status === 'failed' ? (
+                      <AlertCircle
+                        className="h-2.5 w-2.5 text-destructive-foreground"
+                        aria-hidden
+                      />
+                    ) : (
+                      <AlertTriangle className="h-2.5 w-2.5 text-white" aria-hidden />
+                    )}
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent side="right" className="max-w-xs">
+                  <ul className="space-y-1.5">
+                    {ghostFindings.map((f) => (
+                      <li key={`${f.nodeId}:${f.rule}`} className="text-xs">
+                        <span className="font-medium">{f.why}</span>
+                        <span className="block text-muted-foreground">{f.fix}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </TooltipContent>
+              </Tooltip>
+            ) : null}
+            {activeExecState?.status === 'running' ? (
+              <span
+                className="absolute -right-0.5 -top-0.5 flex h-3 w-3 items-center justify-center rounded-full border-2 border-card bg-primary"
+                aria-hidden
+              >
+                <Loader2 className="h-2 w-2 animate-spin text-primary-foreground" />
+              </span>
+            ) : activeExecState?.status === 'completed' ? (
+              <span
+                className="absolute -right-0.5 -bottom-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full border-2 border-card bg-emerald-500"
+                aria-hidden
+              >
+                <CheckCircle2 className="h-2.5 w-2.5 text-white" />
+              </span>
+            ) : activeExecState?.status === 'failed' ? (
+              <span
+                className="absolute -right-0.5 -bottom-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full border-2 border-card bg-destructive"
+                aria-hidden
+              >
+                <XCircle className="h-2.5 w-2.5 text-destructive-foreground" />
+              </span>
+            ) : null}
+          </div>
+          <div className="min-w-0 flex-1 pt-0.5">
+            <p className="truncate text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              {typeLabel}
+            </p>
+            <p className="truncate text-sm font-semibold leading-tight">{displayLabel}</p>
+            <p className="mt-1 line-clamp-2 text-xs leading-snug text-muted-foreground">
+              {summary}
+            </p>
+            {showSetProjectCta ? (
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={openFlowSettings}
+                className="mt-1 h-auto p-0 text-xs text-amber-700 underline-offset-2 hover:underline focus-visible:underline dark:text-amber-500"
+              >
+                Set flow default project
+              </Button>
+            ) : null}
+          </div>
+          {liveExecState?.loopIteration != null ? (
+            <LoopIterationBadge
+              loopIteration={liveExecState.loopIteration}
+              loopTotalCount={liveExecState.loopTotalCount}
+              variant="canvas"
+            />
+          ) : null}
+        </div>
+      </div>
+
+      {isFanOut ? (
+        <p className="mt-5 text-center text-[10px] font-semibold uppercase tracking-widest text-primary/80">
+          For each item
+        </p>
+      ) : null}
+
+      {isCondition ? (
+        <>
+          <Handle
+            type="source"
+            position={Position.Bottom}
+            id="true"
+            title="Drag to connect the True branch"
+            style={{ left: '35%' }}
+            className={`${HANDLE_CLASS} !bg-emerald-500${readOnly ? ' opacity-0! pointer-events-none!' : ''}`}
+          />
+          <Handle
+            type="source"
+            position={Position.Bottom}
+            id="false"
+            title="Drag to connect the False branch"
+            style={{ left: '65%' }}
+            className={`${HANDLE_CLASS} !bg-rose-500${readOnly ? ' opacity-0! pointer-events-none!' : ''}`}
+          />
+          {!readOnly && (
+            <div className="pointer-events-auto absolute left-0 top-full mt-2 flex w-full justify-between px-8">
+              {showAppendStubTrue ? (
+                <FlowStepAddHandle
+                  graphLength={graphLength}
+                  sourceHandle="true"
+                  onRequestAddStep={onRequestAddStep}
+                />
+              ) : (
+                <span className="w-8 shrink-0" aria-hidden />
+              )}
+              {showAppendStubFalse ? (
+                <FlowStepAddHandle
+                  graphLength={graphLength}
+                  sourceHandle="false"
+                  onRequestAddStep={onRequestAddStep}
+                />
+              ) : (
+                <span className="w-8 shrink-0" aria-hidden />
+              )}
+            </div>
+          )}
+        </>
+      ) : isEnd ? null : (
+        <>
+          <Handle
+            type="source"
+            position={isFanOut ? Position.Top : Position.Bottom}
+            id="out"
+            title="Drag to connect to another step"
+            style={isFanOut ? { top: 136 } : undefined}
+            className={`${HANDLE_CLASS} !bg-primary/80${readOnly ? ' opacity-0! pointer-events-none!' : ''}`}
+          />
+          {!readOnly && showAppendStubDefault ? (
+            <div
+              className={`pointer-events-auto absolute left-1/2 flex -translate-x-1/2 ${isFanOut ? '' : 'top-full mt-2'}`}
+              style={isFanOut ? { top: 144 } : undefined}
+            >
+              <FlowStepAddHandle
+                graphLength={graphLength}
+                sourceHandle={undefined}
+                onRequestAddStep={onRequestAddStep}
+              />
+            </div>
+          ) : null}
+        </>
+      )}
+    </div>
+  );
+}

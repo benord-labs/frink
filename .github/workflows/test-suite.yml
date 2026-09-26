@@ -1,0 +1,138 @@
+name: Full test suite
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - '0.0.9'
+      - '0.0.10'
+  schedule:
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: full-test-suite-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pull-request-suite:
+    if: github.event_name == 'pull_request'
+    name: Full suite (${{ matrix.side }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        side:
+          - base
+          - head
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.side == 'base' && github.event.pull_request.base.sha || github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install root dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run full suite and preserve its report
+        shell: bash
+        run: |
+          set +e
+          bun run test:run --reporter=json --outputFile="$RUNNER_TEMP/vitest.json"
+          STATUS=$?
+          set -e
+          test -f "$RUNNER_TEMP/vitest.json" || {
+            echo "::error::Vitest exited without producing its JSON report"
+            exit 1
+          }
+          printf '%s\n' "$PWD" > "$RUNNER_TEMP/root.txt"
+          printf '%s\n' "$STATUS" > "$RUNNER_TEMP/exit-code.txt"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.side }}-suite-report
+          path: |
+            ${{ runner.temp }}/vitest.json
+            ${{ runner.temp }}/root.txt
+            ${{ runner.temp }}/exit-code.txt
+          if-no-files-found: error
+          retention-days: 5
+
+  compare-pull-request-suite:
+    if: always() && github.event_name == 'pull_request'
+    name: Full suite (new failures)
+    needs:
+      - pull-request-suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: '*-suite-report'
+          path: reports
+
+      - name: Block introduced or changed failures
+        run: |
+          node scripts/testing/compare-vitest-failures.mjs \
+            reports/base-suite-report/vitest.json \
+            "$(cat reports/base-suite-report/root.txt)" \
+            "$(cat reports/base-suite-report/exit-code.txt)" \
+            reports/head-suite-report/vitest.json \
+            "$(cat reports/head-suite-report/root.txt)" \
+            "$(cat reports/head-suite-report/exit-code.txt)"
+
+  deterministic-quality-gates:
+    if: github.event_name == 'pull_request'
+    name: Deterministic quality gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install root dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Structure and import walls
+        run: bun run lint:structure
+
+      - name: Type check
+        run: bun run ts:check
+
+      - name: Unused files, exports and dependencies
+        run: bun run knip
+
+      - name: Generated skill content is up to date
+        run: bun run build:skills:check
+
+  branch-suite:
+    if: github.event_name != 'pull_request'
+    name: Full suite (branch health)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install root dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run full suite
+        run: bun run test:run

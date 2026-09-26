@@ -1,0 +1,22 @@
+{
+  "name": "asana",
+  "displayName": "Asana",
+  "description": "Tasks and projects from your workspace",
+  "longDescription": "Ask your chats what is due, who owns it and what moved this week in the Asana projects you sign in to.",
+  "mcpServers": {
+    "asana": {
+      "type": "http",
+      "auth": {
+        "kind": "pending"
+      },
+      "url": "https://mcp.asana.com/v2/mcp"
+    }
+  },
+  "frink": {
+    "keywords": [
+      "tasks",
+      "projects",
+      "work management"
+    ]
+  }
+}

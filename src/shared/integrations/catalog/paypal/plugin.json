@@ -1,0 +1,61 @@
+{
+  "name": "paypal",
+  "mcpServers": {
+    "paypal": {
+      "type": "http",
+      "auth": {
+        "kind": "frink_client"
+      },
+      "url": "https://mcp.paypal.com/mcp"
+    }
+  },
+  "frink": {
+    "keywords": [
+      "payments",
+      "invoices",
+      "commerce"
+    ],
+    "actions": [
+      {
+        "id": "paypal.list_invoices",
+        "label": "List PayPal invoices",
+        "icon": "clipboard",
+        "description": "Lists the invoices in your PayPal account.",
+        "server": "paypal",
+        "tool": "list_invoices"
+      },
+      {
+        "id": "paypal.get_invoice",
+        "label": "Read a PayPal invoice",
+        "icon": "file-text",
+        "description": "Reads one invoice, its line items and whether it is paid.",
+        "server": "paypal",
+        "tool": "get_invoice"
+      },
+      {
+        "id": "paypal.list_transactions",
+        "label": "List PayPal transactions",
+        "icon": "activity",
+        "description": "Lists the transactions on your account over a date range.",
+        "server": "paypal",
+        "tool": "list_transactions"
+      },
+      {
+        "id": "paypal.create_invoice",
+        "label": "Create a PayPal invoice",
+        "icon": "package",
+        "description": "Drafts a new invoice for the customer and amounts you supply.",
+        "server": "paypal",
+        "tool": "create_invoice"
+      },
+      {
+        "id": "paypal.send_invoice",
+        "label": "Send a PayPal invoice",
+        "icon": "send",
+        "description": "Sends a drafted invoice to its recipient.",
+        "server": "paypal",
+        "tool": "send_invoice"
+      }
+    ]
+  }
+}

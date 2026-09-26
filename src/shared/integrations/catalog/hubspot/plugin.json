@@ -1,0 +1,33 @@
+{
+  "name": "hubspot",
+  "displayName": "HubSpot",
+  "description": "Contacts, companies, deals and tickets",
+  "longDescription": "Ask your chats to look up and update the records in the HubSpot portal you sign in to.",
+  "mcpServers": {
+    "hubspot": {
+      "type": "http",
+      "auth": {
+        "kind": "pending"
+      },
+      "url": "https://mcp.hubspot.com"
+    }
+  },
+  "frink": {
+    "keywords": [
+      "crm",
+      "sales",
+      "marketing",
+      "contacts"
+    ],
+    "source": {
+      "repo": "cursor/plugins",
+      "commit": "4612556",
+      "path": "third_party/hubspot",
+      "license": "MIT",
+      "official": {
+        "url": "https://github.com/HubSpot/hubspot-mcp-plugins/tree/main/HubSpot-Sales",
+        "kind": "plugin"
+      }
+    }
+  }
+}

@@ -1,0 +1,36 @@
+/**
+ * CSS properties copied from a `<textarea>` to a mirror `<div>` for layout parity
+ * (caret positioning, template highlighting). Shared with get-textarea-caret-viewport.
+ */
+export const TEXTAREA_MIRROR_STYLE_KEYS = [
+  'direction',
+  'boxSizing',
+  'width',
+  'height',
+  'overflowX',
+  'overflowY',
+  'borderTopWidth',
+  'borderRightWidth',
+  'borderBottomWidth',
+  'borderLeftWidth',
+  'borderStyle',
+  'paddingTop',
+  'paddingRight',
+  'paddingBottom',
+  'paddingLeft',
+  'fontStyle',
+  'fontVariant',
+  'fontWeight',
+  'fontStretch',
+  'fontSize',
+  'fontSizeAdjust',
+  'lineHeight',
+  'fontFamily',
+  'textAlign',
+  'textTransform',
+  'textIndent',
+  'textDecoration',
+  'letterSpacing',
+  'wordSpacing',
+  'tabSize',
+] as const satisfies readonly (keyof CSSStyleDeclaration)[];

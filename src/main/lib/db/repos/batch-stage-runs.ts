@@ -1,0 +1,111 @@
+import { and, asc, eq, inArray } from 'drizzle-orm';
+import type { getDatabase } from '../index';
+import { type BatchStageRun, batchStageRuns, type NewBatchStageRun } from '../schema';
+
+type Db = ReturnType<typeof getDatabase>;
+
+/**
+ * Cloud-parity vocabulary. Locally there is no queue, so the writer goes
+ * pending → dispatched directly; 'queued' exists for type/renderer parity only.
+ */
+export type BatchStageRunStatus =
+  | 'pending'
+  | 'queued'
+  | 'dispatched'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
+/** Non-terminal statuses — a stage with any of these still has work in flight or waiting. */
+export const ACTIVE_BSR_STATUSES = ['pending', 'queued', 'dispatched'] as const;
+
+export async function createBatchStageRun(db: Db, input: NewBatchStageRun): Promise<BatchStageRun> {
+  const [row] = await db.insert(batchStageRuns).values(input).returning();
+  return row;
+}
+
+export async function listRunsForStage(db: Db, stageId: string): Promise<BatchStageRun[]> {
+  return db
+    .select()
+    .from(batchStageRuns)
+    .where(eq(batchStageRuns.stageId, stageId))
+    .orderBy(asc(batchStageRuns.createdAt));
+}
+
+export async function getBatchStageRun(db: Db, id: string): Promise<BatchStageRun | null> {
+  const [row] = await db.select().from(batchStageRuns).where(eq(batchStageRuns.id, id)).limit(1);
+  return row ?? null;
+}
+
+export async function setStageRunStatus(
+  db: Db,
+  id: string,
+  status: BatchStageRunStatus,
+  flowRunId?: string,
+): Promise<BatchStageRun | null> {
+  const update: Partial<BatchStageRun> = { status };
+  if (flowRunId !== undefined) update.flowRunId = flowRunId;
+  const [row] = await db
+    .update(batchStageRuns)
+    .set(update)
+    .where(eq(batchStageRuns.id, id))
+    .returning();
+  return row ?? null;
+}
+
+/**
+ * Guarded status transition — only applies when the row is currently in one of
+ * `fromStatuses`. Returns null on a lost race (e.g. the run-terminal listener
+ * already settled the row), so callers never downgrade a terminal status.
+ */
+export async function setStageRunStatusIf(
+  db: Db,
+  id: string,
+  fromStatuses: BatchStageRunStatus[],
+  status: BatchStageRunStatus,
+  flowRunId?: string,
+): Promise<BatchStageRun | null> {
+  const update: Partial<BatchStageRun> = { status };
+  if (flowRunId !== undefined) update.flowRunId = flowRunId;
+  const [row] = await db
+    .update(batchStageRuns)
+    .set(update)
+    .where(and(eq(batchStageRuns.id, id), inArray(batchStageRuns.status, fromStatuses)))
+    .returning();
+  return row ?? null;
+}
+
+export async function getStageRunByFlowRunId(
+  db: Db,
+  flowRunId: string,
+): Promise<BatchStageRun | null> {
+  const [row] = await db
+    .select()
+    .from(batchStageRuns)
+    .where(eq(batchStageRuns.flowRunId, flowRunId))
+    .limit(1);
+  return row ?? null;
+}
+
+/** All non-terminal stage runs across every stage — startup recovery sweep input. */
+export async function listActiveStageRuns(db: Db): Promise<BatchStageRun[]> {
+  return db
+    .select()
+    .from(batchStageRuns)
+    .where(inArray(batchStageRuns.status, [...ACTIVE_BSR_STATUSES]));
+}
+
+/** Cancel a stage's not-yet-dispatched runs (cascade-cancel; dispatched runs keep their flow_run). */
+export async function cancelUndispatchedRunsForStage(db: Db, stageId: string): Promise<number> {
+  const rows = await db
+    .update(batchStageRuns)
+    .set({ status: 'cancelled' })
+    .where(
+      and(
+        eq(batchStageRuns.stageId, stageId),
+        inArray(batchStageRuns.status, ['pending', 'queued']),
+      ),
+    )
+    .returning({ id: batchStageRuns.id });
+  return rows.length;
+}

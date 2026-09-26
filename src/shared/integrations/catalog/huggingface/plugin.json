@@ -1,0 +1,42 @@
+{
+  "name": "huggingface",
+  "mcpServers": {
+    "huggingface-skills": {
+      "type": "http",
+      "auth": {
+        "kind": "frink_client",
+        "scope": "openid profile read-mcp read-repos jobs contribute-repos inference-api webhooks"
+      },
+      "url": "https://huggingface.co/mcp?login"
+    }
+  },
+  "frink": {
+    "keywords": ["models", "datasets", "machine learning", "ai"],
+    "actions": [
+      {
+        "id": "huggingface.search_repositories",
+        "label": "Search Hugging Face repositories",
+        "description": "Find models, datasets and Spaces on Hugging Face.",
+        "icon": "search",
+        "server": "huggingface-skills",
+        "tool": "hub_repo_search"
+      },
+      {
+        "id": "huggingface.repository_details",
+        "label": "Get repository details",
+        "description": "Read metadata for a model, dataset or Space.",
+        "icon": "folder",
+        "server": "huggingface-skills",
+        "tool": "hub_repo_details"
+      },
+      {
+        "id": "huggingface.browse_files",
+        "label": "Explore Hugging Face files",
+        "description": "Read and search repository files, documentation and papers.",
+        "icon": "file-text",
+        "server": "huggingface-skills",
+        "tool": "hf_fs"
+      }
+    ]
+  }
+}

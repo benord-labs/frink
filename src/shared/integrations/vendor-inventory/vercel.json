@@ -1,0 +1,190 @@
+{
+  "pin": {
+    "marketplace": "vercel",
+    "name": "vercel",
+    "version": "0.49.0",
+    "gitCommitSha": "dca8da784e876cbb8e81bd98cb5b2b87323449ca",
+    "sourceRepo": "vercel/vercel-plugin",
+    "payloadRepo": "vercel/vercel-plugin",
+    "acquisition": "repository"
+  },
+  "pluginId": "vercel@vercel",
+  "skills": [
+    {
+      "id": "vercel@vercel:access-protected-vercel-deployment",
+      "name": "access-protected-vercel-deployment",
+      "path": "skills/access-protected-vercel-deployment"
+    },
+    {
+      "id": "vercel@vercel:ai-gateway",
+      "name": "ai-gateway",
+      "path": "skills/ai-gateway"
+    },
+    {
+      "id": "vercel@vercel:ai-sdk",
+      "name": "ai-sdk",
+      "path": "skills/ai-sdk"
+    },
+    {
+      "id": "vercel@vercel:auth",
+      "name": "auth",
+      "path": "skills/auth"
+    },
+    {
+      "id": "vercel@vercel:bootstrap",
+      "name": "bootstrap",
+      "path": "skills/bootstrap"
+    },
+    {
+      "id": "vercel@vercel:build-agents",
+      "name": "build-agents",
+      "path": "skills/build-agents"
+    },
+    {
+      "id": "vercel@vercel:cdn-caching",
+      "name": "cdn-caching",
+      "path": "skills/cdn-caching"
+    },
+    {
+      "id": "vercel@vercel:chat-sdk",
+      "name": "chat-sdk",
+      "path": "skills/chat-sdk"
+    },
+    {
+      "id": "vercel@vercel:create-a-backend",
+      "name": "create-a-backend",
+      "path": "skills/create-a-backend"
+    },
+    {
+      "id": "vercel@vercel:deployments-cicd",
+      "name": "deployments-cicd",
+      "path": "skills/deployments-cicd"
+    },
+    {
+      "id": "vercel@vercel:env-vars",
+      "name": "env-vars",
+      "path": "skills/env-vars"
+    },
+    {
+      "id": "vercel@vercel:eve",
+      "name": "eve",
+      "path": "skills/eve"
+    },
+    {
+      "id": "vercel@vercel:flags-sdk",
+      "name": "flags-sdk",
+      "path": "skills/flags-sdk"
+    },
+    {
+      "id": "vercel@vercel:knowledge-update",
+      "name": "knowledge-update",
+      "path": "skills/knowledge-update"
+    },
+    {
+      "id": "vercel@vercel:marketplace",
+      "name": "marketplace",
+      "path": "skills/marketplace"
+    },
+    {
+      "id": "vercel@vercel:microfrontends",
+      "name": "microfrontends",
+      "path": "skills/microfrontends"
+    },
+    {
+      "id": "vercel@vercel:next-cache-components",
+      "name": "next-cache-components",
+      "path": "skills/next-cache-components"
+    },
+    {
+      "id": "vercel@vercel:next-forge",
+      "name": "next-forge",
+      "path": "skills/next-forge"
+    },
+    {
+      "id": "vercel@vercel:next-upgrade",
+      "name": "next-upgrade",
+      "path": "skills/next-upgrade"
+    },
+    {
+      "id": "vercel@vercel:nextjs",
+      "name": "nextjs",
+      "path": "skills/nextjs"
+    },
+    {
+      "id": "vercel@vercel:react-best-practices",
+      "name": "react-best-practices",
+      "path": "skills/react-best-practices"
+    },
+    {
+      "id": "vercel@vercel:routing-middleware",
+      "name": "routing-middleware",
+      "path": "skills/routing-middleware"
+    },
+    {
+      "id": "vercel@vercel:runtime-cache",
+      "name": "runtime-cache",
+      "path": "skills/runtime-cache"
+    },
+    {
+      "id": "vercel@vercel:shadcn",
+      "name": "shadcn",
+      "path": "skills/shadcn"
+    },
+    {
+      "id": "vercel@vercel:turbopack",
+      "name": "turbopack",
+      "path": "skills/turbopack"
+    },
+    {
+      "id": "vercel@vercel:vercel-agent",
+      "name": "vercel-agent",
+      "path": "skills/vercel-agent"
+    },
+    {
+      "id": "vercel@vercel:vercel-cli",
+      "name": "vercel-cli",
+      "path": "skills/vercel-cli"
+    },
+    {
+      "id": "vercel@vercel:vercel-connect",
+      "name": "vercel-connect",
+      "path": "skills/vercel-connect"
+    },
+    {
+      "id": "vercel@vercel:vercel-firewall",
+      "name": "vercel-firewall",
+      "path": "skills/vercel-firewall"
+    },
+    {
+      "id": "vercel@vercel:vercel-functions",
+      "name": "vercel-functions",
+      "path": "skills/vercel-functions"
+    },
+    {
+      "id": "vercel@vercel:vercel-sandbox",
+      "name": "vercel-sandbox",
+      "path": "skills/vercel-sandbox"
+    },
+    {
+      "id": "vercel@vercel:vercel-services",
+      "name": "vercel-services",
+      "path": "skills/vercel-services"
+    },
+    {
+      "id": "vercel@vercel:vercel-storage",
+      "name": "vercel-storage",
+      "path": "skills/vercel-storage"
+    },
+    {
+      "id": "vercel@vercel:verification",
+      "name": "verification",
+      "path": "skills/verification"
+    },
+    {
+      "id": "vercel@vercel:workflow",
+      "name": "workflow",
+      "path": "skills/workflow"
+    }
+  ],
+  "commands": ["bootstrap", "deploy", "env", "status"]
+}

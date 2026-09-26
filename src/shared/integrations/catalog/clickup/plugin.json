@@ -1,0 +1,73 @@
+{
+  "name": "clickup",
+  "mcpServers": {
+    "clickup": {
+      "type": "http",
+      "url": "https://mcp.clickup.com/mcp",
+      "auth": {
+        "kind": "frink_client"
+      }
+    }
+  },
+  "frink": {
+    "keywords": ["tasks", "projects", "standups"],
+    "actions": [
+      {
+        "id": "clickup.search",
+        "label": "Search ClickUp",
+        "description": "Finds tasks, Lists, Folders and Docs in your workspace.",
+        "icon": "search",
+        "server": "clickup",
+        "tool": "clickup_search"
+      },
+      {
+        "id": "clickup.get_task",
+        "label": "Read a ClickUp task",
+        "description": "Reads a task and its details.",
+        "icon": "file-text",
+        "server": "clickup",
+        "tool": "clickup_get_task"
+      },
+      {
+        "id": "clickup.create_task",
+        "label": "Create a ClickUp task",
+        "description": "Creates a task in a List with its description, assignees and due date.",
+        "icon": "file-text",
+        "server": "clickup",
+        "tool": "clickup_create_task"
+      },
+      {
+        "id": "clickup.update_task",
+        "label": "Update a ClickUp task",
+        "description": "Updates a task’s status, description, assignees or due date.",
+        "icon": "wrench",
+        "server": "clickup",
+        "tool": "clickup_update_task"
+      },
+      {
+        "id": "clickup.filter_tasks",
+        "label": "Find ClickUp tasks",
+        "description": "Finds tasks by status, assignee, List, tags or due date.",
+        "icon": "search",
+        "server": "clickup",
+        "tool": "clickup_filter_tasks"
+      },
+      {
+        "id": "clickup.create_task_comment",
+        "label": "Comment on a ClickUp task",
+        "description": "Adds a comment to a task.",
+        "icon": "message-square",
+        "server": "clickup",
+        "tool": "clickup_create_task_comment"
+      },
+      {
+        "id": "clickup.get_task_comments",
+        "label": "Read ClickUp task comments",
+        "description": "Reads comments on a task.",
+        "icon": "message-square",
+        "server": "clickup",
+        "tool": "clickup_get_task_comments"
+      }
+    ]
+  }
+}

@@ -1,0 +1,162 @@
+{
+  "name": "square",
+  "mcpServers": {
+    "square": {
+      "type": "http",
+      "auth": {
+        "kind": "frink_client"
+      },
+      "url": "https://mcp.squareup.com/mcp"
+    }
+  },
+  "frink": {
+    "keywords": ["payments", "pos", "commerce", "orders"],
+    "actions": [
+      {
+        "id": "square.list_locations",
+        "label": "List locations",
+        "description": "Lists business locations in the connected Square account.",
+        "server": "square",
+        "tool": "make_api_request",
+        "preset": {
+          "inputPath": ["request"],
+          "fixedArgs": {
+            "service": "locations",
+            "method": "list",
+            "request": {},
+            "characterization": "List locations in an automated workflow."
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      },
+      {
+        "id": "square.list_payments",
+        "label": "List payments",
+        "description": "Lists payments, optionally filtered by location and time.",
+        "server": "square",
+        "tool": "make_api_request",
+        "preset": {
+          "inputPath": ["request"],
+          "fixedArgs": {
+            "service": "payments",
+            "method": "list",
+            "request": {},
+            "characterization": "List payments in an automated workflow."
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "location_id": {
+                "type": "string",
+                "title": "Location ID"
+              },
+              "begin_time": {
+                "type": "string",
+                "title": "Start time",
+                "description": "An RFC 3339 timestamp."
+              },
+              "end_time": {
+                "type": "string",
+                "title": "End time",
+                "description": "An RFC 3339 timestamp."
+              },
+              "cursor": {
+                "type": "string"
+              },
+              "limit": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "square.get_payment",
+        "label": "Get payment",
+        "description": "Gets a payment by its ID.",
+        "server": "square",
+        "tool": "make_api_request",
+        "preset": {
+          "inputPath": ["request"],
+          "fixedArgs": {
+            "service": "payments",
+            "method": "get",
+            "request": {},
+            "characterization": "Get payment in an automated workflow."
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "payment_id": {
+                "type": "string",
+                "title": "Payment ID"
+              }
+            },
+            "required": ["payment_id"]
+          }
+        }
+      },
+      {
+        "id": "square.get_order",
+        "label": "Get order",
+        "description": "Gets an order by its ID.",
+        "server": "square",
+        "tool": "make_api_request",
+        "preset": {
+          "inputPath": ["request"],
+          "fixedArgs": {
+            "service": "orders",
+            "method": "get",
+            "request": {},
+            "characterization": "Get order in an automated workflow."
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "order_id": {
+                "type": "string",
+                "title": "Order ID"
+              }
+            },
+            "required": ["order_id"]
+          }
+        }
+      },
+      {
+        "id": "square.list_catalog",
+        "label": "List catalog items",
+        "description": "Lists catalog objects such as items, categories and discounts.",
+        "server": "square",
+        "tool": "make_api_request",
+        "preset": {
+          "inputPath": ["request"],
+          "fixedArgs": {
+            "service": "catalog",
+            "method": "list",
+            "request": {},
+            "characterization": "List catalog items in an automated workflow."
+          },
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "types": {
+                "type": "string",
+                "description": "Comma-separated object types, such as ITEM,CATEGORY."
+              },
+              "cursor": {
+                "type": "string"
+              },
+              "catalog_version": {
+                "type": "integer",
+                "title": "Catalog version"
+              }
+            }
+          }
+        }
+      }
+    ]
+  }
+}

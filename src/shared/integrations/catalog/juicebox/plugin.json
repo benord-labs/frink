@@ -1,0 +1,75 @@
+{
+  "name": "juicebox",
+  "displayName": "Juicebox",
+  "description": "Recruiting analytics and shortlists",
+  "longDescription": "Ask your chats for sourcing shortlists and recruiting analytics from your Juicebox account.",
+  "mcpServers": {
+    "juicebox": {
+      "type": "http",
+      "auth": {
+        "kind": "frink_client"
+      },
+      "url": "https://mcp.juicebox.ai/v1"
+    }
+  },
+  "frink": {
+    "keywords": [
+      "recruiting",
+      "sourcing",
+      "talent"
+    ],
+    "source": {
+      "repo": "cursor/plugins",
+      "commit": "4612556",
+      "path": "third_party/juicebox",
+      "license": "MIT",
+      "official": {
+        "url": "https://docs.juicebox.ai/juicebox-mcp",
+        "kind": "documentation"
+      }
+    },
+    "actions": [
+      {
+        "id": "juicebox.get_data",
+        "label": "Run a Juicebox report",
+        "icon": "activity",
+        "description": "Runs a read-only report over your recruiting data.",
+        "server": "juicebox",
+        "tool": "get_data"
+      },
+      {
+        "id": "juicebox.get_schema",
+        "label": "List Juicebox report fields",
+        "icon": "database",
+        "description": "Lists what you can ask a Juicebox report about.",
+        "server": "juicebox",
+        "tool": "get_schema"
+      },
+      {
+        "id": "juicebox.search_shortlist",
+        "label": "Search a Juicebox shortlist",
+        "icon": "search",
+        "description": "Lists the candidates shortlisted on one project.",
+        "server": "juicebox",
+        "tool": "search_shortlist"
+      },
+      {
+        "id": "juicebox.get_candidate_details",
+        "label": "Read a Juicebox candidate",
+        "icon": "file-text",
+        "description": "Reads the full profile of a shortlisted candidate.",
+        "server": "juicebox",
+        "tool": "get_candidate_details"
+      },
+      {
+        "id": "juicebox.get_project",
+        "label": "Read a Juicebox project",
+        "icon": "folder",
+        "description": "Reads one sourcing project and how it is going.",
+        "server": "juicebox",
+        "tool": "get_project"
+      }
+    ],
+    "status": "coming_soon"
+  }
+}

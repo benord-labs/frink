@@ -1,0 +1,8 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# Auto-review PRs that target our version feature branches (e.g. 0.0.9), not just the
+# default branch. `base_branches` is additive (the default branch is always reviewed)
+# and accepts regex. The pattern matches any `<major>.<minor>.<patch>` branch.
+reviews:
+  auto_review:
+    base_branches:
+      - "\\d+\\.\\d+\\.\\d+"

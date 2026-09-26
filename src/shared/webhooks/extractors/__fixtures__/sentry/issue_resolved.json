@@ -1,0 +1,16 @@
+{
+  "action": "resolved",
+  "installation": { "uuid": "0a1b2c3d-4e5f-4a7b-8c9d-0e1f2a3b4c5d" },
+  "actor": { "type": "user", "id": "1122334", "name": "Ada Lovelace" },
+  "data": {
+    "issue": {
+      "id": "4507734891",
+      "shortId": "FRINK-9K",
+      "title": "TypeError: Cannot read properties of undefined (reading 'id')",
+      "culprit": "src/main/lib/flows/executor.ts",
+      "status": "resolved",
+      "project": { "id": "4507", "slug": "frink-desktop", "name": "Frink Desktop" },
+      "web_url": "https://sentry.io/organizations/frink/issues/4507734891/"
+    }
+  }
+}

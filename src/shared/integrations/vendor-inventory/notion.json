@@ -1,0 +1,45 @@
+{
+  "pin": {
+    "marketplace": "claude-plugins-official",
+    "name": "notion",
+    "version": "0.1.0",
+    "gitCommitSha": "9847f2aa1a15f25df35ed1fb7b4557dbb60cd651",
+    "sourceRepo": "anthropics/claude-plugins-official",
+    "payloadRepo": "makenotion/claude-code-notion-plugin"
+  },
+  "pluginId": "notion@claude-plugins-official",
+  "skills": [
+    {
+      "id": "notion@claude-plugins-official:notion/knowledge-capture",
+      "name": "knowledge-capture",
+      "path": "skills/notion/knowledge-capture"
+    },
+    {
+      "id": "notion@claude-plugins-official:notion/meeting-intelligence",
+      "name": "meeting-intelligence",
+      "path": "skills/notion/meeting-intelligence"
+    },
+    {
+      "id": "notion@claude-plugins-official:notion/research-documentation",
+      "name": "research-documentation",
+      "path": "skills/notion/research-documentation"
+    },
+    {
+      "id": "notion@claude-plugins-official:notion/spec-to-implementation",
+      "name": "spec-to-implementation",
+      "path": "skills/notion/spec-to-implementation"
+    }
+  ],
+  "commands": [
+    "create-database-row",
+    "create-page",
+    "create-task",
+    "database-query",
+    "find",
+    "search",
+    "tasks:build",
+    "tasks:explain-diff",
+    "tasks:plan",
+    "tasks:setup"
+  ]
+}

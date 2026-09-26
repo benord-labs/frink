@@ -1,0 +1,43 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "useTabs": false,
+  "tabWidth": 2,
+  "printWidth": 100,
+  "singleQuote": true,
+  "jsxSingleQuote": false,
+  "quoteProps": "as-needed",
+  "trailingComma": "all",
+  "semi": true,
+  "arrowParens": "always",
+  "bracketSameLine": false,
+  "bracketSpacing": true,
+  "sortPackageJson": false,
+  "overrides": [
+    {
+      "files": ["**/*.json", "**/*.jsonc"],
+      "options": {
+        "trailingComma": "none"
+      }
+    }
+  ],
+  "ignorePatterns": [
+    "out",
+    "release",
+    "drizzle",
+    "resources",
+    "**/*.svg",
+    ".claude",
+    ".agents",
+    ".codex",
+    ".cursor",
+    ".frink",
+    "cloned-projects",
+    "mcp",
+    ".devkit",
+    "src/renderer/styles/globals.css",
+    "**/electron.vite.config.*.mjs",
+    "eslint/baselines",
+    "bun.lock",
+    "node_modules"
+  ]
+}

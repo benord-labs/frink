@@ -1,0 +1,223 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["eslint", "typescript", "unicorn", "oxc", "react", "import", "jsx-a11y"],
+  "categories": {
+    "correctness": "deny",
+    "perf": "deny",
+    "suspicious": "deny",
+    "pedantic": "allow",
+    "restriction": "allow",
+    "style": "allow",
+    "nursery": "allow"
+  },
+  "ignorePatterns": [
+    "out",
+    "release",
+    "drizzle",
+    "resources",
+    "**/*.svg",
+    ".claude",
+    ".agents",
+    ".codex",
+    ".cursor",
+    ".frink",
+    "cloned-projects",
+    "mcp",
+    ".devkit",
+    "src/renderer/styles/globals.css",
+    "**/electron.vite.config.*.mjs",
+    "eslint/baselines"
+  ],
+  "rules": {
+    "eslint/no-control-regex": "allow",
+    "eslint/no-debugger": "allow",
+    "eslint/no-await-in-loop": "allow",
+    "eslint/no-console": "warn",
+    "eslint/no-extend-native": "allow",
+    "eslint/no-new": "allow",
+    "eslint/no-shadow": "allow",
+    "eslint/no-underscore-dangle": "allow",
+    "eslint/no-unmodified-loop-condition": "allow",
+    "eslint/no-unsafe-finally": "allow",
+    "eslint/no-unsafe-optional-chaining": "allow",
+    "eslint/no-unused-vars": [
+      "warn",
+      {
+        "args": "all",
+        "argsIgnorePattern": "^_",
+        "caughtErrors": "all",
+        "caughtErrorsIgnorePattern": "^_",
+        "destructuredArrayIgnorePattern": "^_",
+        "ignoreRestSiblings": true,
+        "varsIgnorePattern": "^_"
+      }
+    ],
+    "eslint/preserve-caught-error": "allow",
+    "eslint/require-yield": "allow",
+    "import/default": "allow",
+    "import/no-named-as-default": "allow",
+    "import/no-named-as-default-member": "allow",
+    "import/no-unassigned-import": "allow",
+    "jsx-a11y/click-events-have-key-events": "allow",
+    "jsx-a11y/control-has-associated-label": "allow",
+    "jsx-a11y/heading-has-content": "allow",
+    "jsx-a11y/interactive-supports-focus": "allow",
+    "jsx-a11y/no-autofocus": "allow",
+    "jsx-a11y/no-noninteractive-element-interactions": "allow",
+    "jsx-a11y/no-noninteractive-tabindex": "allow",
+    "jsx-a11y/no-static-element-interactions": "allow",
+    "jsx-a11y/prefer-tag-over-role": "allow",
+    "oxc/no-map-spread": "allow",
+    "oxc/no-accumulating-spread": "allow",
+    "oxc/no-async-endpoint-handlers": "allow",
+    "oxc/only-used-in-recursion": "allow",
+    "react/exhaustive-deps": "allow",
+    "react/iframe-missing-sandbox": "allow",
+    "react/jsx-no-constructed-context-values": "allow",
+    "react/no-array-index-key": "allow",
+    "react/no-did-update-set-state": "allow",
+    "react/no-object-type-as-default-prop": "allow",
+    "react/react-in-jsx-scope": "allow",
+    "react/rules-of-hooks": "deny",
+    "typescript/no-extraneous-class": "allow",
+    "unicorn/consistent-function-scoping": "allow",
+    "unicorn/no-array-reverse": "allow",
+    "unicorn/no-array-sort": "allow",
+    "unicorn/no-empty-file": "allow",
+    "unicorn/no-invalid-fetch-options": "allow",
+    "unicorn/no-new-array": "allow",
+    "unicorn/no-useless-fallback-in-spread": "allow",
+    "unicorn/no-useless-spread": "allow",
+    "unicorn/prefer-add-event-listener": "allow",
+    "unicorn/prefer-array-find": "allow",
+    "unicorn/prefer-set-has": "allow",
+    "unicorn/require-module-specifiers": "allow"
+  },
+  "overrides": [
+    {
+      "files": ["src/renderer/**"],
+      "rules": {
+        "import/no-default-export": "deny",
+        "oxc/no-barrel-file": [
+          "deny",
+          {
+            "threshold": 0
+          }
+        ],
+        "typescript/consistent-type-definitions": ["deny", "type"],
+        "typescript/no-restricted-types": [
+          "deny",
+          {
+            "types": {
+              "React.FC": {
+                "message": "React.FC is discouraged. Type props explicitly and return ReactElement.",
+                "suggest": ["ReactElement"]
+              },
+              "FC": {
+                "message": "FC is discouraged. Type props explicitly and return ReactElement.",
+                "suggest": ["ReactElement"]
+              },
+              "React.FunctionComponent": {
+                "message": "React.FunctionComponent is discouraged. Type props explicitly and return ReactElement.",
+                "suggest": ["ReactElement"]
+              },
+              "FunctionComponent": {
+                "message": "FunctionComponent is discouraged. Type props explicitly and return ReactElement.",
+                "suggest": ["ReactElement"]
+              },
+              "JSX.Element": {
+                "message": "JSX.Element widens props to any. Use ReactElement from 'react' instead.",
+                "suggest": ["ReactElement"]
+              },
+              "React.JSX.Element": {
+                "message": "React.JSX.Element widens props to any. Use ReactElement from 'react' instead.",
+                "suggest": ["ReactElement"]
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/main/**/*.ts"],
+      "rules": {
+        "import/no-default-export": "deny"
+      }
+    },
+    {
+      "files": ["scripts/**/*", "examples/**/*", "relay/**/*"],
+      "rules": {
+        "eslint/no-console": "allow"
+      }
+    },
+    {
+      "files": [
+        "src/main/lib/trpc/routers/chats/**",
+        "src/main/lib/trpc/routers/claude.ts",
+        "src/main/lib/trpc/routers/claude-code.ts",
+        "src/main/lib/trpc/routers/projects.ts",
+        "src/main/lib/trpc/routers/agents.ts",
+        "src/main/lib/trpc/routers/hooks.ts",
+        "src/main/lib/trpc/routers/skills.ts",
+        "src/main/lib/trpc/routers/aggregated-scan.ts",
+        "src/main/lib/trpc/routers/agent-utils.ts",
+        "src/main/lib/trpc/routers/integrations.ts",
+        "src/main/lib/trpc/routers/permissions.ts",
+        "src/main/lib/trpc/routers/worktree-config.ts",
+        "src/main/lib/socket/**",
+        "src/main/lib/mcp/**",
+        "src/main/lib/git/**",
+        "src/main/lib/permissions/**",
+        "src/main/lib/multi-project-prompt.ts",
+        "src/main/lib/task-executor/**"
+      ],
+      "rules": {
+        "eslint/no-restricted-imports": [
+          "deny",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "**/cloud/permissions",
+                  "**/cloud/permissions.js",
+                  "**/cloud/permissions.ts"
+                ],
+                "message": "Use src/main/lib/db/repos/permissions.ts instead. cloud/permissions is deprecated for the local-first migration."
+              },
+              {
+                "group": ["**/cloud-client", "**/cloud-client.js", "**/cloud-client.ts"],
+                "importNamePattern": "(grantPermission|revokePermission|revokePermissionOperation|unblockFileOperation|denyFilePermission|recordPermissionUse|getPermissionsForUser|getPermissionsForGitRemote|getPermissionsForFolder|grantBashPermission|grantBashPermissionWithValidation|denyBashPermission|revokeBashPermission|recordBashPermissionUse|isBashCommandApprovedInDb|isBashCommandDeniedInDb|getBashPermissionsForUser)",
+                "message": "Permissions are local. Use src/main/lib/db/repos/permissions.ts."
+              },
+              {
+                "group": ["**/cloud", "**/cloud/index", "**/cloud/index.ts"],
+                "message": "The cloud/ barrel is banned here so widening it cannot route the deprecated cloud modules around the per-module rules above."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/renderer/features/terminal/terminal-content.tsx"],
+      "rules": {
+        "jsx-a11y/no-noninteractive-tabindex": "allow",
+        "jsx-a11y/prefer-tag-over-role": "allow"
+      }
+    },
+    {
+      "files": ["src/renderer/features/flows/**/*"],
+      "rules": {
+        "eslint/no-console": "allow",
+        "jsx-a11y/click-events-have-key-events": "allow",
+        "jsx-a11y/interactive-supports-focus": "allow",
+        "jsx-a11y/no-interactive-element-to-noninteractive-role": "allow",
+        "jsx-a11y/no-noninteractive-element-interactions": "allow",
+        "jsx-a11y/no-noninteractive-element-to-interactive-role": "allow",
+        "jsx-a11y/no-static-element-interactions": "allow",
+        "jsx-a11y/prefer-tag-over-role": "allow",
+        "react/exhaustive-deps": "allow"
+      }
+    }
+  ]
+}

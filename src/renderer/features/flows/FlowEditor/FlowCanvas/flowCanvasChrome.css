@@ -1,0 +1,54 @@
+/**
+ * Flow canvas chrome: solid nodes + edges on atmosphere + dots (dot colour: Background `color`).
+ */
+
+.flow-canvas-edges.react-flow {
+  --xy-background-color: hsl(var(--background));
+}
+
+/* Edge accent — subtle glow on selection / focus path */
+.flow-canvas-edges .react-flow__edge.selected .react-flow__edge-path {
+  filter: drop-shadow(0 0 4px hsl(var(--primary) / 0.35));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flow-canvas-edges .react-flow__edge.selected .react-flow__edge-path {
+    filter: none;
+  }
+}
+
+/* Marquee rectangle (left-drag) + multi-selection bounding box — RF defaults are near-invisible
+   on the dark atmosphere, so tint them with the primary token. */
+.flow-canvas-edges .react-flow__selection {
+  background: hsl(var(--primary) / 0.08);
+  border: 1px solid hsl(var(--primary) / 0.6);
+}
+
+.flow-canvas-edges .react-flow__nodesselection-rect {
+  background: hsl(var(--primary) / 0.04);
+  border: 1px solid hsl(var(--primary) / 0.35);
+}
+
+/* Fan Out container resizing: the borders themselves are the grab targets. Edges and corners are
+   wide, invisible hit zones that only change the cursor. Selectors repeat RF's own classes to
+   outrank its defaults. */
+.react-flow__resize-control.line.flow-fanout-resize-line {
+  border-width: 0;
+}
+
+.react-flow__resize-control.line.flow-fanout-resize-line.left,
+.react-flow__resize-control.line.flow-fanout-resize-line.right {
+  width: 10px;
+}
+
+.react-flow__resize-control.line.flow-fanout-resize-line.top,
+.react-flow__resize-control.line.flow-fanout-resize-line.bottom {
+  height: 10px;
+}
+
+.react-flow__resize-control.handle.flow-fanout-resize-corner {
+  width: 16px;
+  height: 16px;
+  border: 0;
+  background: transparent;
+}

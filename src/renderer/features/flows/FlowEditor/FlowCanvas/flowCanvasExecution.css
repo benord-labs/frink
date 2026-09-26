@@ -1,0 +1,139 @@
+@keyframes node-exec-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 hsl(var(--primary) / 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 6px hsl(var(--primary) / 0);
+  }
+}
+
+/* Anchor class pairs beat single Tailwind border utilities without !important */
+.flow-step-node-card.flow-node-running {
+  animation: node-exec-pulse 1.5s ease-in-out infinite;
+  /* biome-ignore lint/complexity/noImportantStyles: <Anchor class pairs beat single Tailwind border utilities without !important> */
+  border-color: hsl(var(--primary) / 0.5) !important;
+}
+
+.flow-step-node-card.flow-node-completed {
+  /* biome-ignore lint/complexity/noImportantStyles: <Anchor class pairs beat single Tailwind border utilities without !important> */
+  border-color: hsl(142 71% 45% / 0.5) !important;
+}
+
+.flow-step-node-card.flow-node-failed {
+  /* biome-ignore lint/complexity/noImportantStyles: <Anchor class pairs beat single Tailwind border utilities without !important> */
+  border-color: hsl(var(--destructive) / 0.5) !important;
+}
+
+.flow-node-skipped {
+  opacity: 0.4;
+}
+
+/* Parked (agent awaiting the user / blocked): warning hold — no pulse, the run is waiting, not working. */
+.flow-step-node-card.flow-node-awaiting-input,
+.flow-step-node-card.flow-node-blocked {
+  /* biome-ignore lint/complexity/noImportantStyles: <Anchor class pairs beat single Tailwind border utilities without !important> */
+  border-color: hsl(var(--status-warning) / 0.55) !important;
+  box-shadow: 0 0 0 2px hsl(var(--status-warning) / 0.15);
+}
+
+/* Blocked reads as "stuck", not just "waiting": same amber, dashed edge. */
+.flow-step-node-card.flow-node-blocked {
+  border-style: dashed;
+}
+
+/* Run history inspection: softer borders, no live pulse */
+.flow-step-node-card.flow-node-exec-historical.flow-node-running {
+  animation: none;
+  /* biome-ignore lint/complexity/noImportantStyles: <Anchor class pairs beat single Tailwind border utilities without !important> */
+  border-color: hsl(var(--primary) / 0.28) !important;
+  box-shadow: 0 0 0 2px hsl(var(--primary) / 0.12);
+}
+
+.flow-step-node-card.flow-node-exec-historical.flow-node-completed {
+  /* biome-ignore lint/complexity/noImportantStyles: <Anchor class pairs beat single Tailwind border utilities without !important> */
+  border-color: hsl(142 71% 45% / 0.28) !important;
+}
+
+.flow-step-node-card.flow-node-exec-historical.flow-node-failed {
+  /* biome-ignore lint/complexity/noImportantStyles: <Anchor class pairs beat single Tailwind border utilities without !important> */
+  border-color: hsl(var(--destructive) / 0.28) !important;
+}
+
+.flow-step-node-card.flow-node-exec-historical.flow-node-skipped {
+  opacity: 0.35;
+}
+
+.flow-step-node-card.flow-node-exec-historical.flow-node-awaiting-input,
+.flow-step-node-card.flow-node-exec-historical.flow-node-blocked {
+  /* biome-ignore lint/complexity/noImportantStyles: <Anchor class pairs beat single Tailwind border utilities without !important> */
+  border-color: hsl(var(--status-warning) / 0.28) !important;
+  box-shadow: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flow-step-node-card.flow-node-running {
+    animation: none;
+    box-shadow: 0 0 0 3px hsl(var(--primary) / 0.3);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Ghost Run (Rehearse) overlay — translucent, dashed, no live pulse. Painted only
+ * while a rehearsal is active; these never apply to a real run (separate atom family).
+ * Status is the static-analysis verdict: clean (no findings), warn, or failed (error).
+ * ------------------------------------------------------------------------- */
+.flow-step-node-card.flow-node-ghost-clean {
+  opacity: 0.75;
+  /* biome-ignore lint/complexity/noImportantStyles: <Anchor class pairs beat single Tailwind border utilities without !important> */
+  border-color: hsl(var(--muted-foreground) / 0.25) !important;
+  border-style: dashed;
+}
+
+.flow-step-node-card.flow-node-ghost-warn {
+  opacity: 0.8;
+  /* biome-ignore lint/complexity/noImportantStyles: <Anchor class pairs beat single Tailwind border utilities without !important> */
+  border-color: hsl(38 92% 50% / 0.45) !important;
+  /* biome-ignore lint/complexity/noImportantStyles: <Anchor class pairs beat single Tailwind background utilities without !important> */
+  background-color: hsl(38 92% 50% / 0.05) !important;
+  border-style: dashed;
+}
+
+.flow-step-node-card.flow-node-ghost-failed {
+  opacity: 0.8;
+  /* biome-ignore lint/complexity/noImportantStyles: <Anchor class pairs beat single Tailwind border utilities without !important> */
+  border-color: hsl(var(--destructive) / 0.4) !important;
+  /* biome-ignore lint/complexity/noImportantStyles: <Anchor class pairs beat single Tailwind background utilities without !important> */
+  background-color: hsl(var(--destructive) / 0.05) !important;
+  border-style: dashed;
+}
+
+/* At-risk halo: crimson inset + outer glow on the first predicted failure. */
+.flow-step-node-card.flow-node-at-risk {
+  /* biome-ignore lint/complexity/noImportantStyles: <Anchor class pairs beat single Tailwind border utilities without !important> */
+  border-color: hsl(348 83% 47% / 0.75) !important;
+  box-shadow:
+    inset 0 0 12px hsl(348 83% 47% / 0.3),
+    0 0 10px hsl(348 83% 47% / 0.55);
+  animation: node-at-risk-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes node-at-risk-pulse {
+  0%,
+  100% {
+    box-shadow:
+      inset 0 0 12px hsl(348 83% 47% / 0.3),
+      0 0 8px hsl(348 83% 47% / 0.45);
+  }
+  50% {
+    box-shadow:
+      inset 0 0 14px hsl(348 83% 47% / 0.42),
+      0 0 16px hsl(348 83% 47% / 0.7);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flow-step-node-card.flow-node-at-risk {
+    animation: none;
+  }
+}

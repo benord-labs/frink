@@ -1,0 +1,10 @@
+{
+  // The build config excludes the tests so `dist` carries none of them; this one checks them.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

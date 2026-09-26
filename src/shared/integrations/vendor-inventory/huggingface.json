@@ -1,0 +1,140 @@
+{
+  "pin": {
+    "marketplace": "huggingface-skills",
+    "name": "huggingface-skills",
+    "version": "1.0.27",
+    "gitCommitSha": "97862b0fcc89c850fdd00c82ede1e62d3c930a6d",
+    "sourceRepo": "huggingface/skills",
+    "payloadRepo": "huggingface/skills",
+    "acquisition": "repository"
+  },
+  "pluginId": "huggingface-skills@huggingface-skills",
+  "skills": [
+    {
+      "id": "huggingface-skills@huggingface-skills:hf-cli",
+      "name": "hf-cli",
+      "path": "skills/hf-cli"
+    },
+    {
+      "id": "huggingface-skills@huggingface-skills:hf-cloud-aws-context-discovery",
+      "name": "hf-cloud-aws-context-discovery",
+      "path": "skills/hf-cloud-aws-context-discovery"
+    },
+    {
+      "id": "huggingface-skills@huggingface-skills:hf-cloud-python-env-setup",
+      "name": "hf-cloud-python-env-setup",
+      "path": "skills/hf-cloud-python-env-setup"
+    },
+    {
+      "id": "huggingface-skills@huggingface-skills:hf-cloud-sagemaker-deployment-planner",
+      "name": "hf-cloud-sagemaker-deployment-planner",
+      "path": "skills/hf-cloud-sagemaker-deployment-planner"
+    },
+    {
+      "id": "huggingface-skills@huggingface-skills:hf-cloud-sagemaker-iam-preflight",
+      "name": "hf-cloud-sagemaker-iam-preflight",
+      "path": "skills/hf-cloud-sagemaker-iam-preflight"
+    },
+    {
+      "id": "huggingface-skills@huggingface-skills:hf-cloud-sagemaker-production-defaults",
+      "name": "hf-cloud-sagemaker-production-defaults",
+      "path": "skills/hf-cloud-sagemaker-production-defaults"
+    },
+    {
+      "id": "huggingface-skills@huggingface-skills:hf-cloud-serving-image-selection",
+      "name": "hf-cloud-serving-image-selection",
+      "path": "skills/hf-cloud-serving-image-selection"
+    },
+    {
+      "id": "huggingface-skills@huggingface-skills:hf-mem",
+      "name": "hf-mem",
+      "path": "skills/hf-mem"
+    },
+    {
+      "id": "huggingface-skills@huggingface-skills:huggingface-best",
+      "name": "huggingface-best",
+      "path": "skills/huggingface-best"
+    },
+    {
+      "id": "huggingface-skills@huggingface-skills:huggingface-community-evals",
+      "name": "huggingface-community-evals",
+      "path": "skills/huggingface-community-evals"
+    },
+    {
+      "id": "huggingface-skills@huggingface-skills:huggingface-datasets",
+      "name": "huggingface-datasets",
+      "path": "skills/huggingface-datasets"
+    },
+    {
+      "id": "huggingface-skills@huggingface-skills:huggingface-gradio",
+      "name": "huggingface-gradio",
+      "path": "skills/huggingface-gradio"
+    },
+    {
+      "id": "huggingface-skills@huggingface-skills:huggingface-llm-trainer",
+      "name": "huggingface-llm-trainer",
+      "path": "skills/huggingface-llm-trainer"
+    },
+    {
+      "id": "huggingface-skills@huggingface-skills:huggingface-local-models",
+      "name": "huggingface-local-models",
+      "path": "skills/huggingface-local-models"
+    },
+    {
+      "id": "huggingface-skills@huggingface-skills:huggingface-lora-space-builder",
+      "name": "huggingface-lora-space-builder",
+      "path": "skills/huggingface-lora-space-builder"
+    },
+    {
+      "id": "huggingface-skills@huggingface-skills:huggingface-paper-publisher",
+      "name": "huggingface-paper-publisher",
+      "path": "skills/huggingface-paper-publisher"
+    },
+    {
+      "id": "huggingface-skills@huggingface-skills:huggingface-papers",
+      "name": "huggingface-papers",
+      "path": "skills/huggingface-papers"
+    },
+    {
+      "id": "huggingface-skills@huggingface-skills:huggingface-spaces",
+      "name": "huggingface-spaces",
+      "path": "skills/huggingface-spaces"
+    },
+    {
+      "id": "huggingface-skills@huggingface-skills:huggingface-tool-builder",
+      "name": "huggingface-tool-builder",
+      "path": "skills/huggingface-tool-builder"
+    },
+    {
+      "id": "huggingface-skills@huggingface-skills:huggingface-trackio",
+      "name": "huggingface-trackio",
+      "path": "skills/huggingface-trackio"
+    },
+    {
+      "id": "huggingface-skills@huggingface-skills:huggingface-vision-trainer",
+      "name": "huggingface-vision-trainer",
+      "path": "skills/huggingface-vision-trainer"
+    },
+    {
+      "id": "huggingface-skills@huggingface-skills:huggingface-zerogpu",
+      "name": "huggingface-zerogpu",
+      "path": "skills/huggingface-zerogpu"
+    },
+    {
+      "id": "huggingface-skills@huggingface-skills:train-sentence-transformers",
+      "name": "train-sentence-transformers",
+      "path": "skills/train-sentence-transformers"
+    },
+    {
+      "id": "huggingface-skills@huggingface-skills:transformers-js",
+      "name": "transformers-js",
+      "path": "skills/transformers-js"
+    },
+    {
+      "id": "huggingface-skills@huggingface-skills:trl-training",
+      "name": "trl-training",
+      "path": "skills/trl-training"
+    }
+  ],
+  "commands": []
+}

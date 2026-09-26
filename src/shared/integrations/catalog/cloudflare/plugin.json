@@ -1,0 +1,77 @@
+{
+  "name": "cloudflare",
+  "mcpServers": {
+    "cloudflare": {
+      "type": "http",
+      "auth": {
+        "kind": "frink_client"
+      },
+      "url": "https://bindings.mcp.cloudflare.com/mcp"
+    },
+    "notifications": {
+      "type": "http",
+      "auth": {
+        "kind": "frink_client",
+        "scope": "account-settings.read account-settings.write"
+      },
+      "url": "https://mcp.cloudflare.com/mcp"
+    }
+  },
+  "frink": {
+    "keywords": ["workers", "dns", "edge", "hosting"],
+    "beforeYouConnect": [
+      "You need the Super Administrator or Administrator role on the Cloudflare account.",
+      "Cloudflare offers webhook destinations on paid plans only, so a free account cannot send its notifications to Frink."
+    ],
+    "actions": [
+      {
+        "id": "cloudflare.list_workers",
+        "label": "List Cloudflare Workers",
+        "icon": "server",
+        "description": "Lists every Worker deployed in your Cloudflare account.",
+        "server": "cloudflare",
+        "tool": "workers_list"
+      },
+      {
+        "id": "cloudflare.read_worker_code",
+        "label": "Read a Cloudflare Worker's code",
+        "icon": "file-code",
+        "description": "Fetches the deployed source of one Worker by its script name.",
+        "server": "cloudflare",
+        "tool": "workers_get_worker_code"
+      },
+      {
+        "id": "cloudflare.list_r2_buckets",
+        "label": "List Cloudflare R2 buckets",
+        "icon": "box",
+        "description": "Lists the R2 storage buckets in your account, with optional name filter.",
+        "server": "cloudflare",
+        "tool": "r2_buckets_list"
+      },
+      {
+        "id": "cloudflare.list_d1_databases",
+        "label": "List Cloudflare D1 databases",
+        "icon": "database",
+        "description": "Lists the D1 databases in your account, with optional name filter.",
+        "server": "cloudflare",
+        "tool": "d1_databases_list"
+      },
+      {
+        "id": "cloudflare.list_kv_namespaces",
+        "label": "List Cloudflare KV namespaces",
+        "icon": "layers",
+        "description": "Lists the KV namespaces in your account.",
+        "server": "cloudflare",
+        "tool": "kv_namespaces_list"
+      },
+      {
+        "id": "cloudflare.search_docs",
+        "label": "Search Cloudflare docs",
+        "icon": "search",
+        "description": "Searches the Cloudflare documentation for a question about Workers, R2, D1, KV or any other product.",
+        "server": "cloudflare",
+        "tool": "search_cloudflare_documentation"
+      }
+    ]
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "name": "google-drive",
+  "displayName": "Google Drive",
+  "description": "Files and folders in your Drive",
+  "longDescription": "Ask your chats to search, read, create and share the files in your Google Drive.",
+  "mcpServers": {
+    "google-drive": {
+      "type": "http",
+      "auth": {
+        "kind": "pending"
+      },
+      "url": "https://drivemcp.googleapis.com/mcp/v1"
+    }
+  },
+  "frink": {
+    "keywords": [
+      "files",
+      "documents",
+      "storage",
+      "google"
+    ],
+    "source": {
+      "repo": "cursor/plugins",
+      "commit": "4612556",
+      "path": "third_party/google-drive",
+      "license": "MIT",
+      "official": {
+        "url": "https://developers.google.com/workspace/drive/api/guides/configure-mcp-server",
+        "kind": "documentation"
+      }
+    }
+  }
+}

@@ -1,0 +1,2 @@
+export const MIN_CONCURRENT_RUNS_LIMIT = 1;
+export const MAX_CONCURRENT_RUNS_LIMIT = 20;

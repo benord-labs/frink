@@ -1,0 +1,60 @@
+{
+  "name": "sentry",
+  "mcpServers": {
+    "sentry": {
+      "type": "http",
+      "auth": {
+        "kind": "frink_client"
+      },
+      "url": "https://mcp.sentry.dev/mcp?utm_source=plugin"
+    }
+  },
+  "frink": {
+    "keywords": ["errors", "monitoring", "crash", "tracing"],
+    "beforeYouConnect": [
+      "You need the Owner or Manager role in your Sentry organization: only those roles can edit the integration you will paste Frink's webhook address into."
+    ],
+    "actions": [
+      {
+        "id": "sentry.list_issues",
+        "label": "List Sentry issues",
+        "icon": "bell",
+        "description": "Finds the issues in a Sentry organization \u2014 newest, unresolved, or matching what you describe.",
+        "server": "sentry",
+        "tool": "search_issues"
+      },
+      {
+        "id": "sentry.search_events",
+        "label": "Search Sentry events",
+        "icon": "activity",
+        "description": "Counts and lists the individual error events behind your issues.",
+        "server": "sentry",
+        "tool": "search_events"
+      },
+      {
+        "id": "sentry.list_projects",
+        "label": "List Sentry projects",
+        "icon": "folder",
+        "description": "Lists the projects in a Sentry organization.",
+        "server": "sentry",
+        "tool": "find_projects"
+      },
+      {
+        "id": "sentry.list_organizations",
+        "label": "List Sentry organizations",
+        "icon": "globe",
+        "description": "Lists the Sentry organizations you can see, with the slug other steps need.",
+        "server": "sentry",
+        "tool": "find_organizations"
+      },
+      {
+        "id": "sentry.open_link",
+        "label": "Look up a Sentry link",
+        "icon": "search",
+        "description": "Fetches whatever a Sentry URL points at \u2014 an issue, a project or a release.",
+        "server": "sentry",
+        "tool": "get_sentry_resource"
+      }
+    ]
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "action": "update",
+  "type": "Issue",
+  "actor": {
+    "id": "b5ea5f1f-8adc-4f52-b4bd-ab4e84cf51ba",
+    "type": "user",
+    "name": "Jane Doe"
+  },
+  "createdAt": "2026-08-21T11:04:00.000Z",
+  "data": {
+    "id": "9cfb482a-81e3-4154-b5b9-2c805e70a02d",
+    "identifier": "ENG-412",
+    "title": "Retry queue drains twice on reconnect",
+    "description": "Observed after a socket drop during a long run.",
+    "priorityLabel": "High",
+    "teamId": "72b2a2dc-6f4f-4423-9d34-24b5bd10634a",
+    "assigneeId": "aacdca22-6266-4c0a-ab3c-8fa70a26765c",
+    "stateId": "b3d5f6e0-1c2a-4d8e-9f00-a1b2c3d4e5f6",
+    "labelIds": [
+      "c1a2b3c4-d5e6-4f70-8899-aabbccddeeff"
+    ],
+    "updatedAt": "2026-08-21T11:04:00.000Z",
+    "archivedAt": null
+  },
+  "updatedFrom": {
+    "assigneeId": null,
+    "updatedAt": "2026-08-20T09:00:00.000Z"
+  },
+  "url": "https://linear.app/acme/issue/ENG-412/retry-queue-drains-twice-on-reconnect",
+  "organizationId": "dc844923-f9a4-40a3-825c-dea7747e57d6",
+  "webhookTimestamp": 1755774240000,
+  "webhookId": "000042e3-d123-4980-b49f-8e140eef9329"
+}

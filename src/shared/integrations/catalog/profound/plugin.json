@@ -1,0 +1,75 @@
+{
+  "name": "profound",
+  "displayName": "Profound",
+  "description": "AI visibility, sentiment and citations",
+  "longDescription": "Ask your chats how your brand shows up in AI answers and what is cited about it.",
+  "mcpServers": {
+    "profound": {
+      "type": "http",
+      "auth": {
+        "kind": "frink_client"
+      },
+      "url": "https://mcp.tryprofound.com/mcp"
+    }
+  },
+  "frink": {
+    "keywords": [
+      "marketing",
+      "brand",
+      "ai search"
+    ],
+    "source": {
+      "repo": "cursor/plugins",
+      "commit": "4612556",
+      "path": "third_party/profound",
+      "license": "MIT",
+      "official": {
+        "url": "https://docs.tryprofound.com/mcp/overview",
+        "kind": "documentation"
+      }
+    },
+    "actions": [
+      {
+        "id": "profound.get_visibility_report",
+        "label": "Get a Profound visibility report",
+        "icon": "activity",
+        "description": "Reports how often AI answers mention your brand.",
+        "server": "profound",
+        "tool": "get_visibility_report"
+      },
+      {
+        "id": "profound.get_citations_report",
+        "label": "Get a Profound citations report",
+        "icon": "globe",
+        "description": "Reports which sources AI answers cite about you.",
+        "server": "profound",
+        "tool": "get_citations_report"
+      },
+      {
+        "id": "profound.get_sentiment_report",
+        "label": "Get a Profound sentiment report",
+        "icon": "sparkles",
+        "description": "Reports how positively AI answers describe your brand.",
+        "server": "profound",
+        "tool": "get_sentiment_report"
+      },
+      {
+        "id": "profound.list_prompts",
+        "label": "List Profound prompts",
+        "icon": "clipboard",
+        "description": "Lists the prompts Profound is tracking for you.",
+        "server": "profound",
+        "tool": "list_prompts"
+      },
+      {
+        "id": "profound.get_prompt_answers",
+        "label": "Read Profound prompt answers",
+        "icon": "file-text",
+        "description": "Reads the answers AI models gave to one tracked prompt.",
+        "server": "profound",
+        "tool": "get_prompt_answers"
+      }
+    ],
+    "status": "coming_soon"
+  }
+}

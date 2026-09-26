@@ -1,0 +1,73 @@
+{
+  "name": "neon",
+  "displayName": "Neon",
+  "description": "Projects, branches and SQL on Neon",
+  "longDescription": "Ask your chats to inspect your Neon projects, branch a database and run the query you describe.",
+  "mcpServers": {
+    "neon": {
+      "type": "http",
+      "auth": {
+        "kind": "frink_client"
+      },
+      "url": "https://mcp.neon.tech/mcp"
+    }
+  },
+  "frink": {
+    "keywords": [
+      "postgres",
+      "database",
+      "sql",
+      "branches"
+    ],
+    "actions": [
+      {
+        "id": "neon.list_projects",
+        "label": "List Neon projects",
+        "icon": "folder",
+        "description": "Lists the Neon projects in your account.",
+        "server": "neon",
+        "tool": "list_projects"
+      },
+      {
+        "id": "neon.list_branches",
+        "label": "List Neon branches",
+        "icon": "git-branch",
+        "description": "Lists the branches in one Neon project.",
+        "server": "neon",
+        "tool": "list_branches"
+      },
+      {
+        "id": "neon.list_tables",
+        "label": "List Neon tables",
+        "icon": "database",
+        "description": "Lists the tables in a Neon database.",
+        "server": "neon",
+        "tool": "get_database_tables"
+      },
+      {
+        "id": "neon.describe_table",
+        "label": "Read a Neon table's schema",
+        "icon": "clipboard",
+        "description": "Reads one table's columns and types.",
+        "server": "neon",
+        "tool": "describe_table_schema"
+      },
+      {
+        "id": "neon.run_sql",
+        "label": "Run SQL on Neon",
+        "icon": "terminal",
+        "description": "Runs the SQL you supply against a Neon branch.",
+        "server": "neon",
+        "tool": "run_sql"
+      },
+      {
+        "id": "neon.create_branch",
+        "label": "Create a Neon branch",
+        "icon": "git-branch",
+        "description": "Branches a Neon database so you can work on a copy.",
+        "server": "neon",
+        "tool": "create_branch"
+      }
+    ]
+  }
+}
