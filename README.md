@@ -118,7 +118,7 @@ Bring your own subscription or API key — Frink runs the agent, you keep the ac
 ## Install
 
 - **[Download from frink.dev](https://frink.dev/download)**
-- Or grab a build directly: [macOS Apple Silicon](https://pub-c942ee0fa0a549ef8d66096bd831507b.r2.dev/Frink-0.0.11-arm64.dmg) · [macOS Intel](https://pub-c942ee0fa0a549ef8d66096bd831507b.r2.dev/Frink-0.0.11.dmg)
+- Or grab a build directly: [macOS Apple Silicon](https://pub-c942ee0fa0a549ef8d66096bd831507b.r2.dev/Frink-0.1.0-arm64.dmg) · [macOS Intel](https://pub-c942ee0fa0a549ef8d66096bd831507b.r2.dev/Frink-0.0.11.dmg)
 - Or build from source — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
