@@ -5,7 +5,6 @@ import type { MobilePermission, MobileQuestion } from '../../../../src/shared/ty
 import { useAction } from '../../lib/connection';
 import { Button, Field, Icon, Label, Notice } from '../../ui/primitives';
 import { useTheme } from '../../ui/theme';
-import { glassStyle } from '../../ui/material';
 
 // Reason: Question types and validation remain together for the MVP answer form.
 // fallow-ignore-next-line complexity
@@ -43,20 +42,7 @@ export function QuestionForm({
     if (result) onAnswered();
   }
   return (
-    <View
-      style={{
-        gap: 12,
-        padding: 14,
-        ...glassStyle(t),
-        borderRadius: 12,
-      }}
-    >
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-        <Icon name="chatbubble-ellipses-outline" size={17} color={t.accent} />
-        <Label bold size={14}>
-          Your answer is needed
-        </Label>
-      </View>
+    <View style={{ gap: 16 }}>
       {!prompt.questions.length && (
         <>
           <Label>{prompt.title}</Label>
@@ -75,7 +61,7 @@ export function QuestionForm({
       )}
       {prompt.questions.map((q) => (
         <View key={q.question} style={{ gap: 8 }}>
-          <Label bold size={16}>
+          <Label bold size={17} style={{ lineHeight: 24 }}>
             {q.question}
           </Label>
           {q.multiSelect && (
@@ -84,7 +70,7 @@ export function QuestionForm({
             </Label>
           )}
           {q.options.map(
-            // Reason: Single and multiple choice rendering share the MVP option card.
+            // Reason: Single and multiple choice rendering share the same inline selection row.
             // fallow-ignore-next-line complexity
             (option) => {
               const selected = choices[q.question]?.includes(option.label) ?? false;
@@ -111,20 +97,17 @@ export function QuestionForm({
                     );
                   }}
                   style={({ pressed }) => ({
-                    paddingVertical: 8,
-                    paddingHorizontal: 10,
-                    gap: 11,
+                    paddingVertical: 12,
+                    gap: 12,
                     flexDirection: 'row',
                     alignItems: 'flex-start',
-                    borderRadius: 6,
                     minHeight: 48,
-                    backgroundColor: selected ? t.field : 'transparent',
                     opacity: pressed ? 0.7 : 1,
-                    borderWidth: 1,
-                    borderColor: selected ? t.border : 'transparent',
+                    borderBottomWidth: 1,
+                    borderColor: t.border,
                   })}
                 >
-                  <View style={{ marginTop: 2 }}>
+                  <View style={{ marginTop: 1 }}>
                     <Icon
                       name={
                         q.multiSelect
@@ -174,10 +157,9 @@ export function QuestionForm({
         </View>
       ))}
       {action.error && <Notice error>{action.error}</Notice>}
-      <View style={{ alignItems: 'flex-end' }}>
+      <View style={{ alignItems: 'flex-start' }}>
         <Button
           compact
-          icon="arrow-up"
           onPress={() => void submit()}
           disabled={action.busy || Object.values(answers).some((answer) => !answer)}
         >
@@ -196,7 +178,6 @@ export function PermissionForm({
   onAnswered: () => void;
 }) {
   const action = useAction();
-  const t = useTheme();
   async function respond(approved: boolean) {
     if (
       await action.run({
@@ -210,31 +191,23 @@ export function PermissionForm({
       onAnswered();
   }
   return (
-    <View
-      style={{
-        gap: 14,
-        padding: 16,
-        ...glassStyle(t),
-        borderRadius: 12,
-      }}
-    >
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-        <Icon name="shield-checkmark-outline" size={17} color={t.accent} />
-        <Label size={14} bold>
-          Permission requested
-        </Label>
-      </View>
-      <Label size={19} bold>
+    <View style={{ gap: 16 }}>
+      <Label muted size={13}>
+        Permission requested
+      </Label>
+      <Label size={17} bold style={{ lineHeight: 24 }}>
         {prompt.title}
       </Label>
-      <Label size={14}>{prompt.description}</Label>
+      <Label size={15} style={{ lineHeight: 23 }}>
+        {prompt.description}
+      </Label>
       {action.error && <Notice error>{action.error}</Notice>}
       {prompt.supported ? (
         <View
           style={{
             flexDirection: 'row',
             flexWrap: 'wrap',
-            justifyContent: 'flex-end',
+            justifyContent: 'flex-start',
             gap: 8,
           }}
         >

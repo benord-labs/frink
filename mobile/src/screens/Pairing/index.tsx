@@ -5,7 +5,6 @@ import { pairComputer, parsePairing } from '../../lib/api';
 import { useConnection } from '../../lib/connection';
 import { Button, Field, Icon, Label, Notice, Page } from '../../ui/primitives';
 import { useTheme } from '../../ui/theme';
-import { glassStyle } from '../../ui/material';
 
 // Reason: Scanning, manual pairing, and connection feedback form one MVP flow.
 // fallow-ignore-next-line complexity
@@ -50,82 +49,59 @@ export function Pairing() {
           Open Settings → Mobile in Frink. Enable mobile access, set up the private connection, then
           generate a pairing code.
         </Label>
-        <View
-          style={{
-            ...glassStyle(t),
-            borderRadius: 14,
-            overflow: 'hidden',
-          }}
-        >
-          <View style={{ padding: 18, gap: 18 }}>
-            {scanning ? (
-              <View style={{ gap: 10 }}>
-                <View style={{ borderRadius: 8, overflow: 'hidden' }}>
-                  <CameraView
-                    style={{ height: 230 }}
-                    barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
-                    onBarcodeScanned={({ data }) => {
-                      setCode(data);
-                      setScanning(false);
-                    }}
-                  />
-                </View>
-                <Button compact secondary onPress={() => setScanning(false)}>
-                  Cancel scanning
-                </Button>
+        <View style={{ gap: 20 }}>
+          {scanning ? (
+            <View style={{ gap: 12 }}>
+              <View style={{ borderRadius: 8, overflow: 'hidden' }}>
+                <CameraView
+                  style={{ height: 230 }}
+                  barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+                  onBarcodeScanned={({ data }) => {
+                    setCode(data);
+                    setScanning(false);
+                  }}
+                />
               </View>
-            ) : (
-              <Button compact secondary icon="qr-code-outline" onPress={() => void scan()}>
-                Scan pairing code
+              <Button compact secondary onPress={() => setScanning(false)}>
+                Cancel scanning
               </Button>
-            )}
-            <View style={{ gap: 7 }}>
-              <Label size={13} bold>
-                Or paste your pairing code
-              </Label>
-              <Field
-                accessibilityLabel="Pairing code"
-                placeholder="Paste the code from Frink"
-                value={code}
-                onChangeText={setCode}
-                multiline
-                autoCapitalize="none"
-                autoCorrect={false}
-                style={{ minHeight: 76, fontSize: 14 }}
-              />
             </View>
-            <View style={{ gap: 7 }}>
-              <Label size={13} bold>
-                Device name
-              </Label>
-              <Field
-                accessibilityLabel="Device name"
-                value={name}
-                onChangeText={setName}
-                maxLength={60}
-              />
-            </View>
-            {host && <Notice>Connect to {host}. Only continue if this is your computer.</Notice>}
-            {(error || savedError) && <Notice error>{error || savedError}</Notice>}
-          </View>
-          <View
-            style={{
-              paddingHorizontal: 18,
-              paddingVertical: 13,
-              borderTopWidth: 1,
-              borderColor: t.border,
-              alignItems: 'flex-end',
-            }}
-          >
-            <Button
-              compact
-              icon="arrow-forward"
-              disabled={busy || !host}
-              onPress={() => void pair()}
-            >
-              {busy ? 'Connecting…' : 'Connect to Frink'}
+          ) : (
+            <Button compact secondary icon="qr-code-outline" onPress={() => void scan()}>
+              Scan pairing code
             </Button>
+          )}
+          <View style={{ gap: 8 }}>
+            <Label size={14} bold>
+              Or paste your pairing code
+            </Label>
+            <Field
+              accessibilityLabel="Pairing code"
+              placeholder="Paste the code from Frink"
+              value={code}
+              onChangeText={setCode}
+              multiline
+              autoCapitalize="none"
+              autoCorrect={false}
+              style={{ minHeight: 88, fontSize: 14, lineHeight: 20 }}
+            />
           </View>
+          <View style={{ gap: 8 }}>
+            <Label size={14} bold>
+              Device name
+            </Label>
+            <Field
+              accessibilityLabel="Device name"
+              value={name}
+              onChangeText={setName}
+              maxLength={60}
+            />
+          </View>
+          {host && <Notice>Connect to {host}. Only continue if this is your computer.</Notice>}
+          {(error || savedError) && <Notice error>{error || savedError}</Notice>}
+          <Button compact disabled={busy || !host} onPress={() => void pair()}>
+            {busy ? 'Connecting…' : 'Connect to Frink'}
+          </Button>
         </View>
         <View style={{ flexDirection: 'row', gap: 10, alignItems: 'flex-start' }}>
           <View style={{ paddingTop: 2 }}>

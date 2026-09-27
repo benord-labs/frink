@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Pressable,
   ScrollView,
+  StyleSheet,
   Text,
   TextInput,
   View,
@@ -36,7 +37,7 @@ export function Label({
         {
           color: muted ? t.muted : t.text,
           fontSize: size,
-          fontWeight: bold ? '500' : '400',
+          fontWeight: bold ? '600' : '400',
           lineHeight: Math.round(size * 1.4),
           letterSpacing: size >= 24 ? -0.6 : 0,
         },
@@ -89,16 +90,15 @@ export function Button({
       accessibilityLabel={accessibilityLabel ?? children}
       accessibilityState={{ disabled }}
       disabled={disabled}
-      hitSlop={compact ? 4 : undefined}
       onPress={onPress}
       // Reason: Visual variants combine compact size, tone and pressed/disabled feedback.
       // fallow-ignore-next-line complexity
       style={({ pressed }) => [
         {
-          minHeight: compact ? 36 : 44,
+          minHeight: 44,
           borderRadius: 6,
-          paddingHorizontal: compact ? 12 : 16,
-          paddingVertical: compact ? 7 : 10,
+          paddingHorizontal: 16,
+          paddingVertical: 10,
           flexDirection: 'row',
           gap: 7,
           justifyContent: 'center',
@@ -124,7 +124,8 @@ export function Button({
       )}
       <Text
         style={{
-          fontSize: 14,
+          fontSize: 15,
+          lineHeight: 22,
           fontWeight: '500',
           flexShrink: 1,
           textAlign: 'center',
@@ -144,12 +145,13 @@ export function Field(props: TextInputProps) {
       {...props}
       style={[
         {
-          minHeight: 46,
+          minHeight: 48,
           borderWidth: 1,
           borderColor: t.border,
           borderRadius: 8,
           padding: 12,
           fontSize: 16,
+          lineHeight: 22,
           color: t.text,
           backgroundColor: t.field,
           textAlignVertical: 'top',
@@ -165,11 +167,8 @@ export function Notice({ children, error = false }: { children: ReactNode; error
     <View
       accessibilityLiveRegion="polite"
       style={{
-        padding: 14,
-        borderRadius: 8,
-        backgroundColor: t.field,
         flexDirection: 'row',
-        gap: 10,
+        gap: 8,
         alignItems: 'flex-start',
       }}
     >
@@ -191,7 +190,7 @@ export function Notice({ children, error = false }: { children: ReactNode; error
     </View>
   );
 }
-// Reason: Root and detail screens share the same responsive header and content frame.
+// Reason: Root, setup and detail screens share one content frame without duplicate layouts.
 // fallow-ignore-next-line complexity
 export function Page({
   title,
@@ -199,14 +198,14 @@ export function Page({
   children,
   onBack,
   action,
-  compact = false,
+  root = false,
 }: {
   title: string;
   subtitle?: string;
   children: ReactNode;
   onBack?: () => void;
   action?: ReactNode;
-  compact?: boolean;
+  root?: boolean;
 }) {
   const t = useTheme();
   return (
@@ -214,11 +213,11 @@ export function Page({
       {onBack && (
         <View
           style={{
-            minHeight: 54,
+            minHeight: 56,
             flexDirection: 'row',
             alignItems: 'center',
-            paddingHorizontal: 6,
-            borderBottomWidth: 1,
+            paddingHorizontal: 8,
+            borderBottomWidth: StyleSheet.hairlineWidth,
             borderColor: t.border,
           }}
         >
@@ -228,7 +227,7 @@ export function Page({
             onPress={onBack}
             style={{ width: 44, minHeight: 44, justifyContent: 'center', alignItems: 'center' }}
           >
-            <Icon name="chevron-back" size={23} color={t.text} />
+            <Icon name="chevron-back" size={23} />
           </Pressable>
           <Text
             accessibilityRole="header"
@@ -251,40 +250,32 @@ export function Page({
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{
-          paddingHorizontal: 16,
-          paddingTop: onBack ? 20 : 14,
-          paddingBottom: 24,
-          gap: compact ? 20 : 24,
+          paddingHorizontal: 20,
+          paddingTop: 24,
+          paddingBottom: 20,
+          gap: 24,
         }}
       >
-        {!onBack && (
-          <View
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 12,
-            }}
-          >
-            <View style={{ flex: 1, gap: 4 }}>
-              <Label
-                size={20}
-                bold
-                style={{ fontWeight: '600', lineHeight: 26, letterSpacing: -0.3 }}
-              >
-                {title}
-              </Label>
-              {subtitle && (
-                <Label muted size={14}>
-                  {subtitle}
-                </Label>
-              )}
-            </View>
+        {!onBack && !root && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            <Text
+              accessibilityRole="header"
+              style={{
+                flex: 1,
+                color: t.text,
+                fontSize: 24,
+                lineHeight: 30,
+                fontWeight: '600',
+                letterSpacing: -0.5,
+              }}
+            >
+              {title}
+            </Text>
             {action}
           </View>
         )}
-        {onBack && subtitle && (
-          <Label muted size={14}>
+        {subtitle && (
+          <Label muted size={15}>
             {subtitle}
           </Label>
         )}
@@ -294,91 +285,124 @@ export function Page({
   );
 }
 
-export function Section({ title, children }: { title: string; children: ReactNode }) {
+export function Section({
+  title,
+  count,
+  children,
+}: {
+  title: string;
+  count?: number;
+  children: ReactNode;
+}) {
+  const t = useTheme();
   return (
-    <View style={{ gap: 10 }}>
-      <Label size={13} muted bold>
-        {title}
-      </Label>
-      {children}
+    <View>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingBottom: 8 }}>
+        <Text
+          accessibilityRole="header"
+          style={{ color: t.muted, fontSize: 14, lineHeight: 20, fontWeight: '500' }}
+        >
+          {title}
+        </Text>
+        {count !== undefined && (
+          <Text style={{ color: t.muted, fontSize: 13, lineHeight: 20 }}>{count}</Text>
+        )}
+      </View>
+      <View>{children}</View>
     </View>
   );
 }
-// Reason: The shared MVP row handles optional icon, subtitle, status, and action states.
+
+// One row anatomy for queues, chats, automations and run history.
+// Reason: Optional content and navigation semantics share one consistent mobile list control.
 // fallow-ignore-next-line complexity
 export function Row({
   title,
   subtitle,
   status,
+  metadata,
   onPress,
-  icon = 'chevron-forward',
+  icon = 'chatbubble-outline',
+  accessibilityLabel,
+  testID,
+  separator = false,
+  selected,
 }: {
   title: string;
   subtitle?: string;
   status?: string | null;
+  metadata?: ReactNode;
   onPress?: () => void;
   icon?: ComponentProps<typeof Ionicons>['name'];
+  accessibilityLabel?: string;
+  testID?: string;
+  separator?: boolean;
+  selected?: boolean;
 }) {
   const t = useTheme();
   return (
-    <Pressable
-      accessibilityRole={onPress ? 'button' : undefined}
-      onPress={onPress}
-      disabled={!onPress}
-      style={({ pressed }) => ({
-        minHeight: 64,
-        paddingVertical: 12,
-        borderBottomWidth: 1,
-        borderColor: t.border,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 12,
-        opacity: pressed ? 0.65 : 1,
-      })}
-    >
-      {icon !== 'chevron-forward' && (
-        <View
-          style={{
-            width: 30,
-            height: 30,
-            borderRadius: 7,
-            backgroundColor: t.field,
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          <Icon name={icon} color={t.secondary} size={18} />
+    <View>
+      <Pressable
+        testID={testID}
+        accessibilityRole={selected !== undefined ? 'radio' : onPress ? 'button' : undefined}
+        accessibilityLabel={accessibilityLabel ?? (selected !== undefined ? title : undefined)}
+        aria-checked={selected}
+        onPress={onPress}
+        disabled={!onPress}
+        style={({ pressed }) => ({
+          paddingVertical: 16,
+          flexDirection: 'row',
+          alignItems: 'flex-start',
+          gap: 12,
+          opacity: pressed ? 0.6 : 1,
+        })}
+      >
+        <View style={{ width: 20, height: 22, alignItems: 'center', justifyContent: 'center' }}>
+          <Icon name={icon} color={selected ? t.accent : t.muted} size={20} />
         </View>
-      )}
-      <View style={{ flex: 1, gap: 3 }}>
-        <Label bold size={15}>
-          {title}
-        </Label>
-        {subtitle ? (
-          <Label size={13} muted>
-            {subtitle}
+        <View
+          testID={testID ? `${testID}-body` : undefined}
+          style={{ flex: 1, minWidth: 0, gap: 4 }}
+        >
+          <Label size={16} bold style={{ lineHeight: 22, fontWeight: '500' }}>
+            {title}
           </Label>
-        ) : null}
-        {status && <Status value={status} />}
-      </View>
-      {onPress && <Icon name="chevron-forward" color={t.muted} size={15} />}
-    </Pressable>
+          {!!subtitle && (
+            <Label size={14} muted style={{ lineHeight: 20 }}>
+              {subtitle}
+            </Label>
+          )}
+          {!!status && <Status value={status} />}
+          {metadata}
+        </View>
+        {onPress && selected === undefined && (
+          <View style={{ height: 22, justifyContent: 'center' }}>
+            <Icon name="chevron-forward" color={t.muted} size={16} />
+          </View>
+        )}
+      </Pressable>
+      {separator && (
+        <View
+          style={{ height: StyleSheet.hairlineWidth, marginLeft: 32, backgroundColor: t.border }}
+        />
+      )}
+    </View>
   );
 }
 export function Status({ value }: { value: string }) {
   const t = useTheme();
-  const color = /fail|error|cancel/.test(value)
+  const color = /fail|error/.test(value)
     ? t.danger
     : /await|pause|plan_ready|blocked|attention/.test(value)
       ? t.warning
-      : /running|complete|done/.test(value)
+      : /running/.test(value)
         ? t.success
         : t.muted;
   const label = value.replaceAll('_', ' ').replace(/^\w/, (letter) => letter.toUpperCase());
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, alignSelf: 'flex-start' }}>
       <View style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: color }} />
-      <Text style={{ fontSize: 12, lineHeight: 18, color }}>{label}</Text>
+      <Text style={{ fontSize: 13, lineHeight: 18, color }}>{label}</Text>
     </View>
   );
 }

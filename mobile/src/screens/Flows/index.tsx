@@ -15,7 +15,6 @@ import {
   Status,
 } from '../../ui/primitives';
 import { useTheme } from '../../ui/theme';
-import { glassStyle } from '../../ui/material';
 
 const triggers: Record<string, { label: string; icon: ComponentProps<typeof Icon>['name'] }> = {
   manual_trigger: { label: 'Run manually', icon: 'play-outline' },
@@ -38,7 +37,7 @@ function triggerInfo(trigger: string) {
 export function Flows({ openFlow }: { openFlow: (id: string) => void }) {
   const { data, error, refresh } = useResource({ type: 'flows' });
   return (
-    <Page title="Flows">
+    <Page root title="Flows">
       {error && (
         <View style={{ gap: 12 }}>
           <Notice error>{error}</Notice>
@@ -60,9 +59,10 @@ export function Flows({ openFlow }: { openFlow: (id: string) => void }) {
             return flows.length ? (
               <Section key={String(enabled)} title={enabled ? 'Enabled' : 'Paused automations'}>
                 <View>
-                  {flows.map((flow) => (
+                  {flows.map((flow, index) => (
                     <Row
                       key={flow.id}
+                      separator={index < flows.length - 1}
                       title={flow.name}
                       subtitle={triggerInfo(flow.trigger).label}
                       status={flow.status}
@@ -103,7 +103,7 @@ export function FlowDetail({
     }
   }
   return (
-    <Page compact title={data?.flow.name ?? 'Flow'} onBack={onBack}>
+    <Page title={data?.flow.name ?? 'Flow'} onBack={onBack}>
       {(error || action.error) && <Notice error>{error || action.error}</Notice>}
       {!data ? (
         !error && <Loading />
@@ -117,15 +117,15 @@ export function FlowDetail({
           <View style={{ gap: 16 }}>
             <View
               style={{
-                ...glassStyle(t),
-                borderRadius: 10,
-                padding: 16,
+                paddingVertical: 16,
+                borderBottomWidth: 1,
+                borderColor: t.border,
                 flexDirection: 'row',
                 alignItems: 'center',
-                gap: 13,
+                gap: 12,
               }}
             >
-              <Icon name={triggerInfo(data.flow.trigger).icon} size={21} color={t.secondary} />
+              <Icon name={triggerInfo(data.flow.trigger).icon} size={20} color={t.secondary} />
               <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
                 <Label bold size={15}>
                   Automation enabled
@@ -139,6 +139,7 @@ export function FlowDetail({
                 value={data.flow.enabled}
                 disabled={action.busy}
                 trackColor={{ true: t.accent, false: t.border }}
+                thumbColor={t.onAccent}
                 onValueChange={async (enabled) => {
                   if (await action.run({ type: 'setFlowEnabled', id, enabled })) refresh();
                 }}
@@ -156,9 +157,10 @@ export function FlowDetail({
           <Section title="Recent runs">
             {data.runs.length ? (
               <View>
-                {data.runs.map((run) => (
+                {data.runs.map((run, index) => (
                   <Row
                     key={run.id}
+                    separator={index < data.runs.length - 1}
                     title={
                       run.startedAt ? new Date(run.startedAt).toLocaleString() : 'Waiting to start'
                     }
@@ -198,95 +200,51 @@ function RunStep({
   openChat: (id: string, subChatId?: string) => void;
 }) {
   const t = useTheme();
-  const completed = node.status === 'completed';
   return (
-    <View style={{ flexDirection: 'row', gap: 12 }}>
-      <View style={{ width: 26, alignItems: 'center' }}>
-        <View
-          style={{
-            width: 26,
-            height: 26,
-            borderRadius: 13,
-            borderWidth: 1,
-            borderColor: t.border,
-            backgroundColor: t.field,
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          {completed ? (
-            <Icon name="checkmark" size={15} color={t.success} />
-          ) : (
-            <Label muted size={12} bold>
-              {index + 1}
-            </Label>
+    <View
+      style={{
+        gap: 16,
+        paddingBottom: 16,
+        marginBottom: last ? 0 : 16,
+        borderBottomWidth: last ? 0 : 1,
+        borderColor: t.border,
+      }}
+    >
+      <View style={{ gap: 6 }}>
+        <Label bold size={16}>{`${index + 1}. ${node.label}`}</Label>
+        <Status value={node.status} />
+      </View>
+      {!!node.detail && (
+        <Label size={15} style={{ color: t.secondary, lineHeight: 23 }}>
+          {node.detail}
+        </Label>
+      )}
+      {!!(node.actions.length || node.chatId) && (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+          {node.actions.map((operation) => (
+            <Button
+              key={operation}
+              compact
+              icon={operation === 'approve' ? 'checkmark' : 'play-skip-forward-outline'}
+              secondary={operation !== 'approve'}
+              disabled={busy}
+              onPress={() => resume(node, operation)}
+            >
+              {operation === 'approve' ? 'Approve this step' : 'Skip step'}
+            </Button>
+          ))}
+          {node.chatId && (
+            <Button
+              compact
+              secondary
+              icon="chatbubble-outline"
+              onPress={() => openChat(node.chatId!, node.subChatId ?? undefined)}
+            >
+              Open chat
+            </Button>
           )}
         </View>
-        {!last && (
-          <View
-            style={{ flex: 1, width: 1, backgroundColor: t.border, marginTop: 7, marginBottom: 7 }}
-          />
-        )}
-      </View>
-      <View style={{ flex: 1, minWidth: 0, paddingBottom: last ? 0 : 24, gap: 12 }}>
-        <View style={{ gap: 5, paddingTop: 1 }}>
-          <Label bold size={16}>
-            {node.label}
-          </Label>
-          <Status value={node.status} />
-        </View>
-        {!!node.detail && (
-          <View style={{ borderRadius: 9, ...glassStyle(t), overflow: 'hidden' }}>
-            <View
-              style={{
-                paddingHorizontal: 14,
-                paddingVertical: 11,
-                flexDirection: 'row',
-                gap: 7,
-                alignItems: 'center',
-                borderBottomWidth: 1,
-                borderColor: t.border,
-              }}
-            >
-              <Icon name="document-text-outline" size={16} color={t.muted} />
-              <Label muted size={12}>
-                {node.actions.includes('approve') ? 'Review this step' : 'Step details'}
-              </Label>
-            </View>
-            <View style={{ padding: 14 }}>
-              <Label size={14} style={{ color: t.secondary, lineHeight: 23 }}>
-                {node.detail}
-              </Label>
-            </View>
-          </View>
-        )}
-        {!!(node.actions.length || node.chatId) && (
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-            {node.actions.map((operation) => (
-              <Button
-                key={operation}
-                compact
-                icon={operation === 'approve' ? 'checkmark' : 'play-skip-forward-outline'}
-                secondary={operation !== 'approve'}
-                disabled={busy}
-                onPress={() => resume(node, operation)}
-              >
-                {operation === 'approve' ? 'Approve this step' : 'Skip step'}
-              </Button>
-            ))}
-            {node.chatId && (
-              <Button
-                compact
-                secondary
-                icon="chatbubble-outline"
-                onPress={() => openChat(node.chatId!, node.subChatId ?? undefined)}
-              >
-                Open chat
-              </Button>
-            )}
-          </View>
-        )}
-      </View>
+      )}
     </View>
   );
 }
@@ -305,7 +263,6 @@ export function RunDetail({
   const { data, error, refresh } = useResource({ type: 'run', id });
   const action = useAction();
   const [confirmCancel, setConfirmCancel] = useState(false);
-  const t = useTheme();
   async function resume(node: MobileRunNode, operation: 'approve' | 'skip') {
     if (
       await action.run({
@@ -319,7 +276,7 @@ export function RunDetail({
       refresh();
   }
   return (
-    <Page compact title={data?.flowName ?? 'Flow run'} onBack={onBack}>
+    <Page title={data?.flowName ?? 'Flow run'} onBack={onBack}>
       {(error || action.error) && <Notice error>{error || action.error}</Notice>}
       {!data ? (
         !error && <Loading />
@@ -357,7 +314,7 @@ export function RunDetail({
             )}
           </View>
           {!['completed', 'failed', 'cancelled'].includes(data.status) && (
-            <View style={{ borderTopWidth: 1, borderColor: t.border, paddingTop: 18 }}>
+            <View>
               {confirmCancel ? (
                 <View style={{ gap: 12 }}>
                   <Notice>Stop this Flow and its remaining steps?</Notice>

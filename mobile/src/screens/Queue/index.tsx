@@ -1,8 +1,7 @@
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import type { MobileOverview, MobileQueueItem } from '../../../../src/shared/types/remote/mobile';
 import { useResource } from '../../lib/connection';
-import { glassStyle } from '../../ui/material';
-import { Button, Icon, Label, Loading, Notice, Page, Section, Status } from '../../ui/primitives';
+import { Button, Label, Loading, Notice, Page, Row, Section } from '../../ui/primitives';
 import { useTheme } from '../../ui/theme';
 
 type Props = {
@@ -77,176 +76,102 @@ function openItem(item: Pick<Decision, 'chatId' | 'subChatId' | 'flowRunId'>, ac
   else if (item.flowRunId) actions.openRun(item.flowRunId);
 }
 
+// Reason: One row maps permission, question and review content into the shared list control.
+// fallow-ignore-next-line complexity
+function DecisionRow({
+  item,
+  actions,
+  separator,
+}: {
+  item: Decision;
+  actions: Props;
+  separator: boolean;
+}) {
+  const t = useTheme();
+  const actionable = !!(item.chatId || item.flowRunId);
+  const subtitle = [item.context !== item.title ? item.context : '', item.description]
+    .filter(Boolean)
+    .join('\n');
+  return (
+    <Row
+      title={item.title}
+      separator={separator}
+      subtitle={subtitle}
+      status={actionable ? undefined : item.status}
+      icon={
+        item.key.startsWith('permission:')
+          ? 'shield-checkmark-outline'
+          : item.key.startsWith('question:')
+            ? 'chatbubble-ellipses-outline'
+            : 'document-text-outline'
+      }
+      testID={`queue-row-${item.key}`}
+      accessibilityLabel={actionable ? `${item.action}: ${item.title}` : undefined}
+      onPress={actionable ? () => openItem(item, actions) : undefined}
+      metadata={
+        actionable ? (
+          <Label size={13} style={{ color: t.accent }}>
+            {item.action}
+          </Label>
+        ) : undefined
+      }
+    />
+  );
+}
+
 function QueueSection({
   title,
-  empty,
   items,
   actions,
 }: {
   title: string;
-  empty: string;
   items: MobileQueueItem[];
   actions: Props;
 }) {
-  const t = useTheme();
   return (
-    <Section title={title}>
+    <Section title={title} count={items.length || undefined}>
       {items.length ? (
-        <View>
-          {items.map(
-            // Reason: Each queue row reflects action availability, source, summary and status.
-            // fallow-ignore-next-line complexity
-            (item, index) => {
-              const actionable = !!(item.chatId || item.flowRunId);
-              return (
-                <Pressable
-                  key={item.id}
-                  accessibilityRole={actionable ? 'button' : undefined}
-                  disabled={!actionable}
-                  onPress={() =>
-                    item.flowRunId ? actions.openRun(item.flowRunId) : openItem(item, actions)
-                  }
-                  style={({ pressed }) => ({
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    gap: 12,
-                    paddingVertical: 12,
-                    minHeight: 64,
-                    borderTopWidth: index ? 1 : 0,
-                    borderColor: t.border,
-                    opacity: pressed ? 0.65 : 1,
-                  })}
-                >
-                  <Icon
-                    name={item.flowRunId ? 'git-branch-outline' : 'chatbubble-outline'}
-                    size={18}
-                    color={t.muted}
-                  />
-                  <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
-                    <Label bold size={15}>
-                      {item.title}
-                    </Label>
-                    {!!item.summary && (
-                      <Label muted size={14}>
-                        {item.summary}
-                      </Label>
-                    )}
-                    <Status value={item.status} />
-                  </View>
-                  {actionable && <Icon name="chevron-forward" size={15} color={t.muted} />}
-                </Pressable>
-              );
-            },
-          )}
-        </View>
+        items.map((item, index) => (
+          <Row
+            key={item.id}
+            separator={index < items.length - 1}
+            title={item.title}
+            subtitle={item.summary}
+            status={item.status}
+            icon={item.flowRunId ? 'git-network-outline' : 'chatbubble-outline'}
+            testID={`queue-row-${item.id}`}
+            onPress={
+              item.flowRunId
+                ? () => actions.openRun(item.flowRunId!)
+                : item.chatId
+                  ? () => openItem(item, actions)
+                  : undefined
+            }
+          />
+        ))
       ) : (
         <Label muted size={14}>
-          {empty}
+          No work running right now.
         </Label>
       )}
     </Section>
   );
 }
 
-// Reason: The focused decision conditionally shows context, details and its available action.
-// fallow-ignore-next-line complexity
-function DecisionFocus({ item, actions }: { item: Decision; actions: Props }) {
-  const t = useTheme();
-  const actionable = !!(item.chatId || item.flowRunId);
-  return (
-    <View style={[glassStyle(t), { borderRadius: 12, overflow: 'hidden' }]}>
-      <View style={{ padding: 14, paddingBottom: actionable ? 0 : 14, gap: 8 }}>
-        {!!item.context && item.context !== item.title && (
-          <Label muted size={13}>
-            {item.context}
-          </Label>
-        )}
-        <Label size={16} style={{ lineHeight: 23 }}>
-          {item.title}
-        </Label>
-        {!!item.description && (
-          <Label muted size={14}>
-            {item.description}
-          </Label>
-        )}
-      </View>
-      {actionable && (
-        <View
-          style={{
-            paddingHorizontal: 14,
-            paddingTop: 8,
-            paddingBottom: 10,
-            alignItems: 'flex-end',
-            minHeight: 54,
-            justifyContent: 'center',
-          }}
-        >
-          <Button compact style={{ alignSelf: 'flex-end' }} onPress={() => openItem(item, actions)}>
-            {item.action}
-          </Button>
-        </View>
-      )}
-    </View>
-  );
-}
-
-// Reason: The decision row conditionally shows context, details and a supported navigation action.
-// fallow-ignore-next-line complexity
-function DecisionRow({ item, actions }: { item: Decision; actions: Props }) {
-  const t = useTheme();
-  const actionable = !!(item.chatId || item.flowRunId);
-  return (
-    <Pressable
-      accessibilityRole={actionable ? 'button' : undefined}
-      disabled={!actionable}
-      onPress={() => openItem(item, actions)}
-      style={({ pressed }) => ({
-        minHeight: 64,
-        paddingVertical: 12,
-        borderBottomWidth: 1,
-        borderColor: t.border,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 12,
-        opacity: pressed ? 0.65 : 1,
-      })}
-    >
-      <View style={{ flex: 1, minWidth: 0, gap: 5 }}>
-        <Label bold size={15}>
-          {item.title}
-        </Label>
-        {!!item.context && item.context !== item.title && (
-          <Label muted size={14}>
-            {item.context}
-          </Label>
-        )}
-        {!!item.description && (
-          <Label muted size={13}>
-            {item.description}
-          </Label>
-        )}
-        <Status value={item.status} />
-      </View>
-      {actionable && <Icon name="chevron-forward" size={16} color={t.muted} />}
-    </Pressable>
-  );
-}
-
-// Reason: Queue loading, readiness, decisions and empty states form one bounded mobile screen.
+// Reason: Loading, readiness, attention and activity states belong to the same queue overview.
 // fallow-ignore-next-line complexity
 export function Queue({ openChat, openRun }: Props) {
   const { data, error, refresh } = useResource({ type: 'overview' });
-  const t = useTheme();
   const actions = { openChat, openRun };
   const decisions = data ? collectDecisions(data) : [];
   const running = data?.queue.filter((item) => item.section === 'running') ?? [];
   const inbox = data?.queue.filter((item) => item.section === 'inbox') ?? [];
   return (
-    <Page title="Work queue">
+    <Page title="Work queue" root>
       {error && (
         <View style={{ gap: 12 }}>
           <Notice error>{error}</Notice>
-          <Button compact secondary icon="refresh-outline" onPress={refresh}>
+          <Button compact secondary onPress={refresh}>
             Refresh connection
           </Button>
         </View>
@@ -258,47 +183,24 @@ export function Queue({ openChat, openRun }: Props) {
           {!data.executionReady && (
             <Notice>Keep a Frink window open on your computer to run and resume Flows.</Notice>
           )}
-          {decisions.length ? (
-            <Section title="Needs attention">
-              <DecisionFocus item={decisions[0]} actions={actions} />
-              {decisions.length > 1 && (
-                <View>
-                  {decisions.slice(1).map((item) => (
-                    <DecisionRow key={item.key} item={item} actions={actions} />
-                  ))}
-                </View>
-              )}
-            </Section>
-          ) : (
-            <View
-              style={{ flexDirection: 'row', gap: 11, alignItems: 'center', paddingVertical: 8 }}
-            >
-              <Icon name="checkmark-circle-outline" size={23} color={t.muted} />
-              <View style={{ flex: 1, gap: 4 }}>
-                <Label bold size={16}>
-                  Nothing needs your input
-                </Label>
-                <Label muted size={13}>
-                  Questions and approvals appear here.
-                </Label>
-              </View>
-            </View>
-          )}
-          <QueueSection
-            title="In progress"
-            empty="No work running right now."
-            items={running}
-            actions={actions}
-          />
-          {inbox.length ? (
-            <QueueSection title="Up next" empty="No queued work." items={inbox} actions={actions} />
-          ) : (
-            <View style={{ borderTopWidth: 1, borderColor: t.border, paddingTop: 16 }}>
-              <Label muted size={13}>
-                No queued work.
+          <Section title="Needs attention" count={decisions.length || undefined}>
+            {decisions.length ? (
+              decisions.map((item, index) => (
+                <DecisionRow
+                  key={item.key}
+                  item={item}
+                  actions={actions}
+                  separator={index < decisions.length - 1}
+                />
+              ))
+            ) : (
+              <Label muted size={14}>
+                Nothing needs your input.
               </Label>
-            </View>
-          )}
+            )}
+          </Section>
+          <QueueSection title="In progress" items={running} actions={actions} />
+          {!!inbox.length && <QueueSection title="Up next" items={inbox} actions={actions} />}
         </>
       )}
     </Page>

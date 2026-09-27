@@ -38,6 +38,8 @@ async function connect(
     failed?: boolean;
     active?: boolean;
     crowdedQueue?: boolean;
+    rich?: boolean;
+    pairingScreenshot?: string;
   } = {},
 ) {
   let answered = false;
@@ -177,7 +179,25 @@ async function connect(
             : []),
         ],
       },
-      flows: [flow],
+      flows: options.rich
+        ? [
+            flow,
+            {
+              ...flow,
+              id: 'flow-2',
+              name: 'Review pull requests',
+              trigger: 'webhook_trigger',
+              status: 'running',
+            },
+            {
+              ...flow,
+              id: 'flow-3',
+              name: 'Weekly dependency audit',
+              enabled: false,
+              status: 'completed',
+            },
+          ]
+        : [flow],
       flow: { flow, runs: [{ id: 'run-1', status: 'paused', startedAt: '2026-09-27T08:30:00Z' }] },
       run: {
         id: 'run-1',
@@ -186,6 +206,20 @@ async function connect(
         status: 'paused',
         startedAt: null,
         nodes: [
+          ...(options.rich
+            ? [
+                {
+                  id: 'node-checks',
+                  label: 'Inspect release changes',
+                  status: 'completed',
+                  detail: 'Reviewed the changed files and confirmed the release checks passed.',
+                  actions: [],
+                  actionToken: 'd'.repeat(64),
+                  chatId: chat.id,
+                  subChatId: 'sub-1',
+                },
+              ]
+            : []),
           {
             id: 'node-1',
             label: 'Review the release plan',
@@ -196,9 +230,29 @@ async function connect(
             chatId: chat.id,
             subChatId: 'sub-1',
           },
+          ...(options.rich
+            ? [
+                {
+                  id: 'node-deploy',
+                  label: 'Deploy to staging',
+                  status: 'pending',
+                  detail: '',
+                  actions: [],
+                  actionToken: 'e'.repeat(64),
+                  chatId: null,
+                  subChatId: null,
+                },
+              ]
+            : []),
         ],
       },
-      chats: [chat],
+      chats: options.rich
+        ? [
+            chat,
+            { ...chat, id: 'chat-2', name: 'Investigate the flaky build' },
+            { ...chat, id: 'chat-3', name: 'Improve project onboarding' },
+          ]
+        : [chat],
       chat: {
         chat,
         subChatId: 'sub-1',
@@ -210,6 +264,20 @@ async function connect(
             role: 'assistant',
             text: 'The checks are complete. I need your choice before continuing.',
           },
+          ...(options.rich
+            ? [
+                {
+                  id: 'm-3',
+                  role: 'user',
+                  text: 'Keep production unchanged until the staging smoke tests pass.',
+                },
+                {
+                  id: 'm-4',
+                  role: 'assistant',
+                  text: 'I will deploy to staging first, check the health endpoint and sign-in flow, then ask before promoting the release.',
+                },
+              ]
+            : []),
         ],
         hasMore: false,
         active,
@@ -219,13 +287,20 @@ async function connect(
         questions: answered ? [] : questions,
         permissions,
       },
-      projects: [{ id: 'project-1', name: 'Frink' }],
+      projects: [
+        { id: 'project-1', name: 'Frink' },
+        ...(options.rich ? [{ id: 'project-2', name: 'Documentation site' }] : []),
+      ],
       createChat: { chatId: 'chat-1', subChatId: 'sub-1' },
       startFlow: { id: 'run-1' },
     };
     await route.fulfill({ json: { data: responses[input.type] ?? { ok: true } }, headers });
   });
   await page.goto('/');
+  if (options.pairingScreenshot) {
+    await expect(page.getByRole('textbox', { name: 'Pairing code', exact: true })).toBeVisible();
+    await page.screenshot({ path: options.pairingScreenshot, fullPage: true });
+  }
   await page
     .getByRole('textbox', { name: 'Pairing code', exact: true })
     .fill(JSON.stringify({ version: 1, url: host, code: 'a'.repeat(43) }));
@@ -234,15 +309,46 @@ async function connect(
   return { mutations, resumes, sends: () => sent };
 }
 
+async function expectQueueRowInsets(page: Page) {
+  const rows = page.locator('[data-testid^="queue-row-"]:not([data-testid$="-body"])');
+  const insets = await rows.evaluateAll((elements) =>
+    elements.map((row) => {
+      const body = row.querySelector('[data-testid$="-body"]');
+      if (!body) throw new Error('Queue row has no measurable content body');
+      const rowRect = row.getBoundingClientRect();
+      const bodyRect = body.getBoundingClientRect();
+      const rowStyle = getComputedStyle(row);
+      const bodyStyle = getComputedStyle(body);
+      return {
+        top: bodyRect.top - rowRect.top - parseFloat(rowStyle.borderTopWidth),
+        bottom: rowRect.bottom - bodyRect.bottom - parseFloat(rowStyle.borderBottomWidth),
+        rail: bodyRect.left - rowRect.left,
+        horizontalPadding: parseFloat(rowStyle.paddingLeft) + parseFloat(rowStyle.paddingRight),
+        bodyPadding: parseFloat(bodyStyle.paddingTop) + parseFloat(bodyStyle.paddingBottom),
+      };
+    }),
+  );
+  expect(insets.length).toBeGreaterThan(0);
+  for (const inset of insets) {
+    expect(inset.top).toBeCloseTo(16, 0);
+    expect(inset.bottom).toBeCloseTo(16, 0);
+    expect(inset.rail).toBeCloseTo(32, 0);
+    expect(inset.horizontalPadding).toBe(0);
+    expect(inset.bodyPadding).toBe(0);
+  }
+}
+
 test('phone queue, structured answers, Flow review and chat work without horizontal overflow', async ({
   page,
 }) => {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   const state = await connect(page);
+  await expect(page.getByText('Work queue', { exact: true })).toHaveCount(1);
+  await expectQueueRowInsets(page);
   await page.screenshot({ path: 'test-results/queue-dark.png', fullPage: true });
-  await page.getByRole('button', { name: 'Answer in chat', exact: true }).click();
-  await expect(page.getByText('Your answer is needed', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: /^Answer in chat: / }).click();
+  await expect(page.getByRole('button', { name: 'Send answer', exact: true })).toBeVisible();
   await expect(page.getByRole('tablist')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Connection settings', exact: true })).toHaveCount(
     0,
@@ -251,7 +357,7 @@ test('phone queue, structured answers, Flow review and chat work without horizon
   await expect(page.getByRole('radio').filter({ hasText: 'Staging' })).toBeChecked();
   await page.screenshot({ path: 'test-results/chat-dark.png', fullPage: true });
   await page.getByRole('button', { name: 'Send answer', exact: true }).click();
-  await expect(page.getByText('Your answer is needed', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Send answer', exact: true })).toHaveCount(0);
   expect(state.mutations).toContain('answerQuestion');
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeVisible();
   await page.screenshot({ path: 'test-results/chat-composer-dark.png', fullPage: true });
@@ -316,14 +422,16 @@ test('prose-only parked questions have a working reply form on a small light pho
   await page.setViewportSize({ width: 320, height: 740 });
   await page.emulateMedia({ colorScheme: 'light' });
   const state = await connect(page, { prose: true });
+  await expect(page.getByText('Work queue', { exact: true })).toHaveCount(1);
+  await expectQueueRowInsets(page);
   await page.screenshot({ path: 'test-results/queue-light.png', fullPage: true });
-  await page.getByRole('button', { name: 'Answer in chat', exact: true }).click();
+  await page.getByRole('button', { name: /^Answer in chat: / }).click();
   await page
     .getByRole('textbox', { name: 'Reply to your agent', exact: true })
     .fill('Please run the staging smoke tests next.');
   await page.screenshot({ path: 'test-results/answer-light.png', fullPage: true });
   await page.getByRole('button', { name: 'Send answer', exact: true }).click();
-  await expect(page.getByText('Your answer is needed', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Send answer', exact: true })).toHaveCount(0);
   expect(state.mutations).toEqual(['answerQuestion']);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
@@ -332,10 +440,10 @@ test('prose-only parked questions have a working reply form on a small light pho
 
 test('a lost send response preserves the draft without automatic replay', async ({ page }) => {
   const state = await connect(page, { lostSend: true });
-  await page.getByRole('button', { name: 'Answer in chat', exact: true }).click();
+  await page.getByRole('button', { name: /^Answer in chat: / }).click();
   await page.getByRole('radio').filter({ hasText: 'Staging' }).click();
   await page.getByRole('button', { name: 'Send answer', exact: true }).click();
-  await expect(page.getByText('Your answer is needed', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Send answer', exact: true })).toHaveCount(0);
   await page
     .getByRole('textbox', { name: 'Message', exact: true })
     .fill('Please show me the next task.');
@@ -368,7 +476,7 @@ test('revoking the phone clears the session and returns to pairing', async ({ pa
 
 test('a failed agent response is visible in the conversation', async ({ page }) => {
   await connect(page, { failed: true });
-  await page.getByRole('button', { name: 'Answer in chat', exact: true }).click();
+  await page.getByRole('button', { name: /^Answer in chat: / }).click();
   await expect(
     page.getByText('The response failed. Check Frink on your computer for details.'),
   ).toBeVisible();
@@ -376,7 +484,7 @@ test('a failed agent response is visible in the conversation', async ({ page }) 
 
 test('stopping a response requires confirmation of its active Flow scope', async ({ page }) => {
   const state = await connect(page, { active: true });
-  await page.getByRole('button', { name: 'Answer in chat', exact: true }).click();
+  await page.getByRole('button', { name: /^Answer in chat: / }).click();
   await page.getByRole('button', { name: 'Stop response…', exact: true }).click();
   await expect(page.getByText('Stopping also ends any active Flow in this chat.')).toBeVisible();
   expect(state.mutations).toEqual([]);
@@ -387,7 +495,9 @@ test('stopping a response requires confirmation of its active Flow scope', async
 
   await page.getByRole('button', { name: 'Stop response…', exact: true }).click();
   await page.getByRole('button', { name: 'Confirm stop', exact: true }).click();
-  await expect(page.getByText('Answer above to continue', { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Send answer', exact: true }).first(),
+  ).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Confirm stop', exact: true })).toHaveCount(0);
   expect(state.mutations).toEqual(['stopChat']);
@@ -399,6 +509,8 @@ test('queue keeps independent decisions in one chat reachable on a small light p
   await page.setViewportSize({ width: 320, height: 740 });
   await page.emulateMedia({ colorScheme: 'light' });
   await connect(page, { crowdedQueue: true });
+  await expect(page.getByText('Work queue', { exact: true })).toHaveCount(1);
+  await expectQueueRowInsets(page);
 
   await expect(page.getByText('Which environment should I use?', { exact: true })).toHaveCount(1);
   await expect(page.getByText('Release checks', { exact: true })).toHaveCount(1);
@@ -432,7 +544,9 @@ test('queue keeps independent decisions in one chat reachable on a small light p
     await page.getByRole('button').filter({ hasText: title }).click();
     await chatRequest;
     await expect(page.getByRole('tablist')).toHaveCount(0);
-    await expect(page.getByText('Answer above to continue', { exact: true })).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: 'Send answer', exact: true }).first(),
+    ).toBeVisible();
     await expect(page.getByText(secondaryQuestion, { exact: true })).toBeVisible();
     await expect(page.getByText('Allow access to deployment logs?', { exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Go back', exact: true }).click();
@@ -443,3 +557,80 @@ test('queue keeps independent decisions in one chat reachable on a small light p
     );
   }
 });
+
+for (const colorScheme of ['dark', 'light'] as const) {
+  test(`populated mobile screens remain readable and navigable in ${colorScheme} mode`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.emulateMedia({ colorScheme });
+    await connect(page, {
+      crowdedQueue: true,
+      rich: true,
+      pairingScreenshot: `test-results/pairing-${colorScheme}.png`,
+    });
+    await expect(page.getByText('Work queue', { exact: true })).toHaveCount(1);
+    await expectQueueRowInsets(page);
+    await page.screenshot({
+      path: `test-results/queue-populated-${colorScheme}.png`,
+      fullPage: true,
+    });
+
+    await page.getByRole('tab', { name: 'Flows', exact: true }).click();
+    for (const title of [flow.name, 'Review pull requests', 'Weekly dependency audit'])
+      await expect(page.getByRole('button').filter({ hasText: title })).toBeVisible();
+    await page.screenshot({
+      path: `test-results/flows-populated-${colorScheme}.png`,
+      fullPage: true,
+    });
+    await page.getByRole('button').filter({ hasText: flow.name }).click();
+    await expect(page.getByRole('button', { name: 'Run Flow', exact: true })).toBeVisible();
+    await page.screenshot({ path: `test-results/flow-detail-${colorScheme}.png`, fullPage: true });
+    await page.getByRole('button', { name: 'Run Flow', exact: true }).click();
+    for (const [index, title] of [
+      'Inspect release changes',
+      'Review the release plan',
+      'Deploy to staging',
+    ].entries())
+      await expect(page.getByText(`${index + 1}. ${title}`, { exact: true })).toBeVisible();
+    await page.screenshot({
+      path: `test-results/run-populated-${colorScheme}.png`,
+      fullPage: true,
+    });
+    await page.getByRole('button', { name: 'Go back', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Run Flow', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Go back', exact: true }).click();
+
+    await page.getByRole('tab', { name: 'Chats', exact: true }).click();
+    for (const title of [chat.name, 'Investigate the flaky build', 'Improve project onboarding'])
+      await expect(page.getByRole('button').filter({ hasText: title })).toBeVisible();
+    await page.screenshot({ path: `test-results/chats-${colorScheme}.png`, fullPage: true });
+    await page.getByRole('button', { name: 'New chat', exact: true }).click();
+    await expect(page.getByRole('textbox', { name: 'Chat name', exact: true })).toBeVisible();
+    await page.getByRole('radio', { name: 'Frink', exact: true }).click();
+    await expect(page.getByRole('radio', { name: 'Frink', exact: true })).toBeChecked();
+    await page
+      .getByRole('textbox', { name: 'Chat name', exact: true })
+      .fill('Validate the release');
+    await page.getByRole('textbox', { name: 'Chat name', exact: true }).blur();
+    await expect(page.getByRole('button', { name: 'Create chat', exact: true })).toBeEnabled();
+    await page.screenshot({ path: `test-results/new-chat-${colorScheme}.png`, fullPage: true });
+    await page.getByRole('button', { name: 'Go back', exact: true }).click();
+    await expect(page.getByRole('tab', { name: 'Chats', exact: true })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    await page.getByRole('button').filter({ hasText: chat.name }).click();
+    await expect(
+      page.getByRole('button', { name: 'Send answer', exact: true }).first(),
+    ).toBeVisible();
+    await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toHaveCount(0);
+    await page.screenshot({
+      path: `test-results/chat-populated-${colorScheme}.png`,
+      fullPage: true,
+    });
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+  });
+}

@@ -20,37 +20,14 @@ import { PermissionForm, QuestionForm } from './questions';
 
 // Reason: The MVP chat list keeps loading, empty, and error states together.
 // fallow-ignore-next-line complexity
-export function Chats({
-  openChat,
-  createChat,
-}: {
-  openChat: (id: string) => void;
-  createChat: () => void;
-}) {
+export function Chats({ openChat }: { openChat: (id: string) => void }) {
   const { data, error, refresh } = useResource({ type: 'chats' });
   return (
-    <Page
-      title="Chats"
-      action={
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="New chat"
-          onPress={createChat}
-          style={{
-            minHeight: 44,
-            minWidth: 44,
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          <Icon name="create-outline" />
-        </Pressable>
-      }
-    >
+    <Page root title="Chats">
       {error && (
         <>
           <Notice error>{error}</Notice>
-          <Button secondary onPress={refresh}>
+          <Button compact secondary onPress={refresh}>
             Refresh chats
           </Button>
         </>
@@ -58,14 +35,17 @@ export function Chats({
       {!data ? (
         !error && <Loading />
       ) : data.length ? (
-        data.map((chat) => (
-          <Row
-            key={chat.id}
-            title={chat.name || 'Untitled chat'}
-            onPress={() => openChat(chat.id)}
-            icon="chatbubble-outline"
-          />
-        ))
+        <View>
+          {data.map((chat, index) => (
+            <Row
+              key={chat.id}
+              title={chat.name || 'Untitled chat'}
+              separator={index < data.length - 1}
+              onPress={() => openChat(chat.id)}
+              icon="chatbubble-outline"
+            />
+          ))}
+        </View>
       ) : (
         <Label muted>No conversations yet. Start one with a project on your computer.</Label>
       )}
@@ -86,7 +66,7 @@ export function NewChat({
   const [name, setName] = useState('');
   const action = useAction();
   return (
-    <Page compact title="New chat" onBack={onBack}>
+    <Page title="New chat" onBack={onBack}>
       <Label muted>Choose a project on your computer to start a conversation.</Label>
       {(error || action.error) && <Notice error>{error || action.error}</Notice>}
       <Section title="Choose a project">
@@ -97,7 +77,8 @@ export function NewChat({
             <Row
               key={project.id}
               title={project.name}
-              icon={projectId === project.id ? 'checkmark-circle' : 'ellipse-outline'}
+              selected={projectId === project.id}
+              icon={projectId === project.id ? 'radio-button-on' : 'radio-button-off'}
               onPress={() => setProjectId(project.id)}
             />
           ))
@@ -210,7 +191,7 @@ export function Chat({
       style={{ flex: 1 }}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <Page compact title={data?.chat.name ?? 'Chat'} onBack={onBack}>
+      <Page title={data?.chat.name ?? 'Chat'} onBack={onBack}>
         {(resource.error || action.error || historyError) && (
           <>
             <Notice error>{resource.error || action.error || historyError}</Notice>
@@ -283,10 +264,10 @@ export function Chat({
           </>
         )}
       </Page>
-      {data && (
+      {data && (data.active || (!data.questions.length && !data.permissions.length)) && (
         <View
           style={{
-            paddingHorizontal: 16,
+            paddingHorizontal: 20,
             paddingTop: 10,
             paddingBottom: 12,
             gap: 10,
@@ -324,18 +305,6 @@ export function Chat({
                 Stop response…
               </Button>
             )
-          ) : data.questions.length || data.permissions.length ? (
-            <Text
-              style={{
-                textAlign: 'center',
-                color: t.muted,
-                fontSize: 13,
-                lineHeight: 20,
-                paddingVertical: 3,
-              }}
-            >
-              Answer above to continue
-            </Text>
           ) : (
             <View
               style={{
@@ -413,7 +382,6 @@ export function Chat({
 function Message({ message }: { message: MobileMessage }) {
   const t = useTheme();
   const isUser = message.role === 'user';
-  const name = isUser ? 'You' : message.role === 'assistant' ? 'Frink' : 'System';
   return (
     <View
       style={{
@@ -422,25 +390,11 @@ function Message({ message }: { message: MobileMessage }) {
         gap: 8,
       }}
     >
-      <View
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 6,
-          justifyContent: isUser ? 'flex-end' : 'flex-start',
-        }}
-      >
-        {!isUser && (
-          <Icon
-            name={message.role === 'assistant' ? 'sparkles-outline' : 'information-circle-outline'}
-            size={14}
-            color={t.muted}
-          />
-        )}
-        <Label muted size={12}>
-          {name}
+      {!isUser && (
+        <Label muted size={13}>
+          {message.role === 'assistant' ? 'Frink' : 'System'}
         </Label>
-      </View>
+      )}
       <View
         style={
           isUser
