@@ -42,7 +42,7 @@ function truncateSummary(text: string, maxChars = PLAN_SUMMARY_MAX_CHARS): strin
 }
 
 /** Short preview of the plan for the collapsed card: its body without frontmatter, truncated. */
-export function extractPlanSummary(planText: string): string {
+function extractPlanSummary(planText: string): string {
   return truncateSummary(stripPlanFrontmatter(planText));
 }
 

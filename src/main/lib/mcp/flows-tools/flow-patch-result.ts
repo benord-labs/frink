@@ -150,7 +150,7 @@ function retryOperationIndexes(failed: FailedOp[], skipped: SkippedOp[]): number
  * on every run. Worded by node count, not a per-run total: Start Tasks on exclusive condition
  * branches never both run. Informational only — multiple sessions are sometimes intended.
  */
-export function sessionFootprintNote(graph: FlowGraph): string | null {
+function sessionFootprintNote(graph: FlowGraph): string | null {
   const startTasks = graph.nodes.filter((node) => node.blockType === 'start_task');
   if (startTasks.length < 2) return null;
   const fanOutIds = new Set(

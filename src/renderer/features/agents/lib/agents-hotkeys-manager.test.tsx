@@ -415,7 +415,7 @@ describe('editor tab cycling – global manager and panel fallback', () => {
   });
 
   it('after a rebind, the custom combo cycles once and the old default is inert', async () => {
-    const config = { version: 1, bindings: { 'next-pane-group': 'cmd+alt+l' } };
+    const config: CustomHotkeysConfig = { version: 1, bindings: { 'next-pane-group': 'cmd+alt+l' } };
     const { cycles, press, teardown } = setup(config, true);
     press({ key: '}', code: 'BracketRight', metaKey: true, shiftKey: true });
     await settle();
@@ -428,7 +428,7 @@ describe('editor tab cycling – global manager and panel fallback', () => {
   });
 
   it('an unbound action cycles nowhere', async () => {
-    const config = { version: 1, bindings: { 'next-pane-group': null } };
+    const config: CustomHotkeysConfig = { version: 1, bindings: { 'next-pane-group': null } };
     const { cycles, press, teardown } = setup(config, false);
     press({ key: '}', code: 'BracketRight', ctrlKey: true, shiftKey: true });
     press({ key: '}', code: 'BracketRight', metaKey: true, shiftKey: true });
