@@ -606,6 +606,15 @@ describe('a session idling between turns', () => {
     ['state idle', msg('system', { subtype: 'session_state_changed', state: 'idle' })],
     ['task_progress', msg('system', { subtype: 'task_progress' })],
     ['memory_recall', msg('system', { subtype: 'memory_recall' })],
+    [
+      'a live setter echo',
+      msg('user', {
+        message: {
+          role: 'user',
+          content: '<local-command-stdout>Set model to `claude-opus-4-8`</local-command-stdout>',
+        },
+      }),
+    ],
   ])('stays idle through %s', async (_, frame) => {
     const { ch, session } = idle();
 

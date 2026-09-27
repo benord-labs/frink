@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('../../db', () => ({ getDatabase: vi.fn(() => ({})) }));
 vi.mock('../../db/repos/sub-chats', () => ({ updateSubChatMode: vi.fn(async () => {}) }));
 
+import { computeClaudeSessionKey } from '../execution/claude-session/session-key';
 import {
   adoptedTurnBeforePush,
   armAutoDuringPlan,
@@ -16,21 +17,36 @@ import {
 } from './plan-auto-approve';
 
 /** A session whose `setPermissionMode` the test drives. */
-function session(over: { autoReviewTools?: boolean; reject?: boolean; defer?: boolean } = {}) {
+function session(
+  over: {
+    autoReviewTools?: boolean;
+    reject?: boolean;
+    defer?: boolean;
+    rejectModel?: boolean;
+  } = {},
+) {
   let release: (() => void) | undefined;
   const setPermissionMode = vi.fn(async (_mode: 'auto' | 'default' | 'plan') => {
     if (over.reject) throw new Error('Cannot set permission mode to auto: gate is not enabled');
     if (over.defer) await new Promise<void>((resolve) => (release = resolve));
   });
+  const setModel = vi.fn(async (_model?: string) => {
+    if (over.rejectModel) throw new Error('set_model failed');
+  });
+  const applyFlagSettings = vi.fn(async (_settings: Record<string, unknown>) => {});
   return {
     session: {
-      query: { setPermissionMode },
+      query: { setPermissionMode, setModel, applyFlagSettings },
       currentTurn: { autoReviewTools: over.autoReviewTools ?? false },
     },
     setPermissionMode,
+    setModel,
+    applyFlagSettings,
     release: () => release?.(),
   };
 }
+
+const LIVE = { model: undefined, effort: undefined, ultracode: false };
 
 describe('armAutoReview', () => {
   it('sets the SDK mode BEFORE the abstain flag, never the other way round', async () => {
@@ -308,6 +324,7 @@ describe('adoptedTurnBeforePush', () => {
       signal: new AbortController().signal,
       mode: 'plan',
       nativeAutoReview: false,
+      live: LIVE,
       onTakeover,
     })();
     await Promise.resolve();
@@ -322,7 +339,12 @@ describe('adoptedTurnBeforePush', () => {
 
   it('agent follow-ups restore the ordinary gated (or auto) SDK mode', async () => {
     const { session: s, setPermissionMode } = session();
-    const base = { session: asAdopted(s), turn: turnCtx(), signal: new AbortController().signal };
+    const base = {
+      session: asAdopted(s),
+      turn: turnCtx(),
+      signal: new AbortController().signal,
+      live: LIVE,
+    };
     expect(await adoptedTurnBeforePush({ ...base, mode: 'agent', nativeAutoReview: false })()).toBe(
       true,
     );
@@ -333,26 +355,27 @@ describe('adoptedTurnBeforePush', () => {
     expect(setPermissionMode).toHaveBeenLastCalledWith('auto');
   });
 
-  it('aligns the held session ultracode with the adopting turn, clearing it with null', async () => {
-    const { session: s } = session();
-    const applyFlagSettings = vi.fn(async () => {});
-    Object.assign(s.query, { applyFlagSettings });
+  it('aligns the session ultracode with the turn, clearing it with null', async () => {
+    const { session: s, applyFlagSettings } = session();
     const base = { session: asAdopted(s), turn: turnCtx(), signal: new AbortController().signal };
-    const push = (ultracode?: boolean) =>
-      adoptedTurnBeforePush({ ...base, mode: 'agent', nativeAutoReview: false, ultracode })();
+    const push = (ultracode: boolean) =>
+      adoptedTurnBeforePush({
+        ...base,
+        mode: 'agent',
+        nativeAutoReview: false,
+        live: { ...LIVE, ultracode },
+      })();
 
     expect(await push(false)).toBe(true);
     expect(await push(true)).toBe(true);
-    expect(await push(undefined)).toBe(true);
-    expect(applyFlagSettings.mock.calls).toEqual([[{ ultracode: null }], [{ ultracode: true }]]);
+    const ultra = applyFlagSettings.mock.calls.filter(([arg]) => 'ultracode' in arg);
+    expect(ultra).toEqual([[{ ultracode: null }], [{ ultracode: true }]]);
   });
 
   it('an unavailable ultracode never refuses the takeover', async () => {
-    const { session: s } = session();
-    Object.assign(s.query, {
-      applyFlagSettings: vi.fn(async () => {
-        throw new Error('ultracode_unavailable');
-      }),
+    const { session: s, applyFlagSettings } = session();
+    applyFlagSettings.mockImplementation(async (arg: Record<string, unknown>) => {
+      if ('ultracode' in arg) throw new Error('ultracode_unavailable');
     });
     const push = adoptedTurnBeforePush({
       session: asAdopted(s),
@@ -360,9 +383,96 @@ describe('adoptedTurnBeforePush', () => {
       signal: new AbortController().signal,
       mode: 'agent',
       nativeAutoReview: false,
-      ultracode: true,
+      live: { ...LIVE, ultracode: true },
     });
     expect(await push()).toBe(true);
+  });
+
+  it('sets the turn model and effort on the session before the push', async () => {
+    const { session: s, setModel, applyFlagSettings } = session();
+    const push = adoptedTurnBeforePush({
+      session: asAdopted(s),
+      turn: turnCtx(),
+      signal: new AbortController().signal,
+      mode: 'agent',
+      nativeAutoReview: false,
+      live: { model: 'claude-opus-5-5', effort: 'low', ultracode: false },
+    });
+    expect(await push()).toBe(true);
+    expect(setModel).toHaveBeenCalledWith('claude-opus-5-5');
+    expect(applyFlagSettings).toHaveBeenCalledWith({ effortLevel: 'low' });
+  });
+
+  it('clears the effort to the default and never sets max live', async () => {
+    const { session: s, applyFlagSettings } = session();
+    const base = { session: asAdopted(s), turn: turnCtx(), signal: new AbortController().signal };
+    const push = (effort?: string) =>
+      adoptedTurnBeforePush({
+        ...base,
+        mode: 'agent',
+        nativeAutoReview: false,
+        live: { ...LIVE, effort },
+      })();
+    expect(await push(undefined)).toBe(true);
+    expect(await push('max')).toBe(true);
+    const effort = applyFlagSettings.mock.calls.filter(([arg]) => 'effortLevel' in arg);
+    expect(effort).toEqual([[{ effortLevel: null }]]);
+  });
+
+  it('sets the effort after clearing Ultra, which would otherwise leave the CLI at xhigh', async () => {
+    const { session: s, applyFlagSettings } = session();
+    const push = adoptedTurnBeforePush({
+      session: asAdopted(s),
+      turn: turnCtx(),
+      signal: new AbortController().signal,
+      mode: 'agent',
+      nativeAutoReview: false,
+      live: { model: undefined, effort: 'high', ultracode: false },
+    });
+    expect(await push()).toBe(true);
+    expect(applyFlagSettings.mock.calls).toEqual([
+      [{ ultracode: null }],
+      [{ effortLevel: 'high' }],
+    ]);
+  });
+
+  it('refuses a session spawned on the other side of max effort, which has no live setting', async () => {
+    const { session: s, setModel } = session();
+    const keyed = (effort: string) =>
+      Object.assign(s, { keyParts: computeClaudeSessionKey({ effort }, undefined) });
+    const push = (effort: string) =>
+      adoptedTurnBeforePush({
+        session: asAdopted(s),
+        turn: turnCtx(),
+        signal: new AbortController().signal,
+        mode: 'agent',
+        nativeAutoReview: false,
+        live: { ...LIVE, effort },
+      })();
+
+    keyed('max');
+    expect(await push('low')).toBe(false);
+    keyed('high');
+    expect(await push('max')).toBe(false);
+    expect(setModel).not.toHaveBeenCalled();
+    keyed('max');
+    expect(await push('max')).toBe(true);
+  });
+
+  it('a refused model change reruns the turn fresh', async () => {
+    const { session: s } = session({ rejectModel: true });
+    const onSetterRejected = vi.fn();
+    const push = adoptedTurnBeforePush({
+      session: asAdopted(s),
+      turn: turnCtx(),
+      signal: new AbortController().signal,
+      mode: 'agent',
+      nativeAutoReview: false,
+      live: { ...LIVE, model: 'claude-opus-5-5' },
+      onSetterRejected,
+    });
+    expect(await push()).toBe(false);
+    expect(onSetterRejected).toHaveBeenCalledOnce();
   });
 
   it('a refused reconcile aborts the takeover so the follow-up reruns fresh', async () => {
@@ -375,6 +485,7 @@ describe('adoptedTurnBeforePush', () => {
       signal: new AbortController().signal,
       mode: 'plan',
       nativeAutoReview: false,
+      live: LIVE,
     });
     expect(await push()).toBe(false);
   });
@@ -390,6 +501,7 @@ describe('adoptedTurnBeforePush', () => {
       signal: controller.signal,
       mode: 'agent',
       nativeAutoReview: false,
+      live: LIVE,
     })();
     await Promise.resolve();
     expect(setPermissionMode).toHaveBeenCalledWith('default');
@@ -410,6 +522,7 @@ describe('adoptedTurnBeforePush', () => {
       signal: controller.signal,
       mode: 'agent',
       nativeAutoReview: false,
+      live: LIVE,
       onTakeover,
     });
     expect(await push()).toBe(false);

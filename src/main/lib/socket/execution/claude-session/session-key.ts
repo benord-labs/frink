@@ -2,7 +2,16 @@ import crypto from 'node:crypto';
 import stableStringify from 'fast-json-stable-stringify';
 
 // Applied live to a running CLI, or only meaningful at spawn, so a change never needs a new CLI.
-const NON_KEY_OPTIONS = new Set(['permissionMode', 'resume', 'hooks', 'canUseTool', 'stderr']);
+// `model` and the Ultra `settings` flag are set on a claimed CLI before its turn (plan-auto-approve).
+const NON_KEY_OPTIONS = new Set([
+  'permissionMode',
+  'resume',
+  'hooks',
+  'canUseTool',
+  'stderr',
+  'model',
+  'settings',
+]);
 
 function digest(value: unknown): string {
   const json = stableStringify(value ?? null);
@@ -18,6 +27,11 @@ function withoutChannel(mcpServers: Record<string, unknown> | undefined): unknow
   return { ...mcpServers, frink_dynamic_chat: { ...dynamicChat, url } };
 }
 
+/** Effort is set live too, except `max`: the live setting (`effortLevel`) has no max tier. */
+export function effortKeyPart(effort: unknown): string {
+  return digest(effort === 'max' ? 'max' : null);
+}
+
 /** One digest per spawn option, the resolved MCP servers and the passthrough login (a token keys
  * through `env`), so a mismatch can name its parts. The staged config's path is per-execute, so it
  * is left out of `extraArgs`. */
@@ -29,9 +43,10 @@ export function computeClaudeSessionKey(
   const keyParts: Record<string, string> = {
     mcpServers: digest(withoutChannel(mcpServers)),
     login: digest(login),
+    effort: effortKeyPart((options as { effort?: unknown }).effort),
   };
   for (const [name, value] of Object.entries(options)) {
-    if (NON_KEY_OPTIONS.has(name)) continue;
+    if (NON_KEY_OPTIONS.has(name) || name === 'effort') continue;
     keyParts[name] = digest(
       name === 'extraArgs' ? { ...(value as object), 'mcp-config': undefined } : value,
     );

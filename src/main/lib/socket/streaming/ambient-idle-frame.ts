@@ -30,6 +30,13 @@ export function isAmbientIdleFrame(m: SDKMessage): boolean {
   );
 }
 
+/** The CLI's echo of a live setter: `setModel` answers with a `<local-command-stdout>` user frame
+ * outside any turn. It is neither activity nor part of a reply. */
+export function isSetterEcho(m: SDKMessage): boolean {
+  const content = m.type === 'user' ? m.message?.content : undefined;
+  return typeof content === 'string' && content.startsWith('<local-command-stdout>');
+}
+
 const TURN_FRAME_TYPES = new Set(['assistant', 'user', 'stream_event', 'result']);
 
 /** A frame from an idle session that means the CLI started a turn of its own (a task notification,

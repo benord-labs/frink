@@ -7,6 +7,7 @@
  * else would ever re-arm it: every tool of the implementation half would prompt, on a run nobody is
  * watching. See decision `auto-mode-tool-approval`.
  */
+import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import log from 'electron-log';
 import { supportsNativeAutoReview } from '../../../../shared/lib/models';
 import { type ExecutionSettings, parseClaudeModel } from '../../../../shared/types/execution';
@@ -17,6 +18,7 @@ import { updateSubChatMode } from '../../db/repos/sub-chats';
 import { captureContained } from '../../sentry';
 import type { ClaudeTurnContext } from '../claude-turn-context';
 import { attachTurn } from '../execution/claude-session/attach';
+import { effortKeyPart } from '../execution/claude-session/session-key';
 
 /** Whether the send's Auto consent runs natively on its provider and model (the SDK default model
  * included). The send and the pre-warm share it: it feeds the CLI env their session keys compare. */
@@ -101,8 +103,46 @@ export function denyPlanTransitionInWakeBurst(
 }
 
 type AdoptableSession = {
-  query: { setPermissionMode: (mode: 'auto' | 'default' | 'plan') => Promise<void> };
+  query: Pick<Query, 'setPermissionMode' | 'setModel' | 'applyFlagSettings'>;
+  /** The spawn key; only its `max`-effort part matters here. */
+  keyParts?: Record<string, string>;
 };
+
+/** The turn's live-settable options; model and effort are outside the spawn key. */
+export type LiveTurnSettings = {
+  model: string | undefined;
+  effort: string | undefined;
+  ultracode: boolean;
+};
+
+/**
+ * Set the turn's model and effort on a session it did not spawn. `max` has no live tier and stays
+ * in the spawn key, so it is never set here. False when the CLI refuses: the turn reruns fresh.
+ */
+async function reconcileLiveModelAndEffort(
+  session: AdoptableSession,
+  live: LiveTurnSettings,
+): Promise<boolean> {
+  // `max` cannot be set or unset live, so a held session spawned on the other side of it is refused.
+  const spawnedEffort = session.keyParts?.effort;
+  if (spawnedEffort !== undefined && spawnedEffort !== effortKeyPart(live.effort)) return false;
+  try {
+    await session.query.setModel(live.model);
+    if (live.effort !== 'max') {
+      const effortLevel = (live.effort ?? null) as Parameters<
+        Query['applyFlagSettings']
+      >[0]['effortLevel'];
+      await session.query.applyFlagSettings({ effortLevel });
+    }
+    return true;
+  } catch (err) {
+    log.warn(
+      '[Socket Executor] Could not set model/effort on a live session — starting fresh:',
+      err,
+    );
+    return false;
+  }
+}
 
 /**
  * Align an adopted held session's SDK permission mode with the adopting turn — the mode a FRESH
@@ -139,16 +179,12 @@ type AdoptedSession = AdoptableSession & Parameters<typeof attachTurn>[0];
  * holds it, so without this a follow-up on a lower tier would keep orchestrating. `null` clears the
  * key. Best-effort: a refusal (e.g. `ultracode_unavailable`) is reported, never fails the turn.
  */
-export async function reconcileAdoptedUltracode(
+async function reconcileAdoptedUltracode(
   session: AdoptableSession,
   ultracode: boolean,
 ): Promise<void> {
   try {
-    await (
-      session.query as unknown as {
-        applyFlagSettings: (settings: { ultracode: true | null }) => Promise<void>;
-      }
-    ).applyFlagSettings({ ultracode: ultracode || null });
+    await session.query.applyFlagSettings({ ultracode: ultracode || null });
   } catch (err) {
     log.warn('[Socket Executor] Could not reconcile adopted session ultracode:', err);
     captureContained(err, { surface: 'socket-executor', stage: 'adopted-ultracode-reconcile' });
@@ -171,8 +207,8 @@ export function adoptedTurnBeforePush(params: {
   signal: AbortSignal;
   mode: string;
   nativeAutoReview: boolean;
-  /** The adopting turn's Ultra state, reconciled onto the session when set. */
-  ultracode?: boolean;
+  /** The turn's model, effort and Ultra state, set on the session before the push. */
+  live: LiveTurnSettings;
   /** Runs with the attach: the turn's own session-wide bindings (its MCP channel). */
   onTakeover?: () => void;
   /** A refused reconcile on a turn that was not aborted (an abort closed the query itself). */
@@ -183,9 +219,9 @@ export function adoptedTurnBeforePush(params: {
     if (signal.aborted) return false;
     attachTurn(session, turn, params.onTakeover);
     if (await reconcileAdoptedPermissionMode(session, mode, nativeAutoReview)) {
-      if (params.ultracode !== undefined)
-        await reconcileAdoptedUltracode(session, params.ultracode);
-      return !signal.aborted;
+      // Ultra first: clearing it leaves the CLI at xhigh until an effort is set after it.
+      await reconcileAdoptedUltracode(session, params.live.ultracode);
+      if (await reconcileLiveModelAndEffort(session, params.live)) return !signal.aborted;
     }
     if (!signal.aborted) params.onSetterRejected?.();
     return false;

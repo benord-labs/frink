@@ -1420,7 +1420,11 @@ describe('claude-wake-hold — stand-down policy', () => {
     const setPermissionMode = vi.fn(async (mode: 'auto' | 'default' | 'plan') => {
       events.push(`mode:${mode}`);
     });
-    Object.assign(session.query, { setPermissionMode });
+    Object.assign(session.query, {
+      setPermissionMode,
+      setModel: vi.fn(async () => {}),
+      applyFlagSettings: vi.fn(async () => {}),
+    });
     const originalPush = session.queue.push.bind(session.queue);
     session.queue.push = (m) => {
       events.push('push');
@@ -1439,6 +1443,7 @@ describe('claude-wake-hold — stand-down policy', () => {
         signal: new AbortController().signal,
         mode: 'plan',
         nativeAutoReview: false,
+        live: { model: undefined, effort: undefined, ultracode: false },
       }),
     );
     await new Promise((r) => setTimeout(r, 0));
@@ -1477,6 +1482,7 @@ describe('claude-wake-hold — stand-down policy', () => {
         signal: new AbortController().signal,
         mode: 'plan',
         nativeAutoReview: false,
+        live: { model: undefined, effort: undefined, ultracode: false },
       }),
     );
     ch.emit(resultMsg()); // the burst completes UNKILLED; only then does the reconcile fail

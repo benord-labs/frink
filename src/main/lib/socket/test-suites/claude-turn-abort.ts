@@ -79,6 +79,8 @@ export function mockQuery(
     }),
     interrupt: vi.fn(async () => {}),
     setPermissionMode: vi.fn(async () => {}),
+    setModel: vi.fn(async (_model?: string) => {}),
+    applyFlagSettings: vi.fn(async (_settings: Record<string, unknown>) => {}),
     initializationResult: vi.fn(async () => ({})),
     mcpServerStatus: vi.fn(async (): Promise<McpServerStatus[]> => []),
   };

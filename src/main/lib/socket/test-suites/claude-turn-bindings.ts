@@ -128,6 +128,7 @@ function mockHeldSession(
       return Object.assign(gen, {
         interrupt: vi.fn().mockResolvedValue(undefined),
         setPermissionMode: vi.fn(async () => onTakeover?.()),
+        setModel: vi.fn(async () => {}),
         applyFlagSettings: heldFlagSettings,
       });
     },
@@ -197,7 +198,7 @@ function registerAdoptedCallbackTests(harness: ClaudeTurnBindingHarness): void {
     await harness.handleRemoteExecute({ ...payload, message: 'follow-up on High' });
 
     expect(claudeQueryMock).toHaveBeenCalledOnce();
-    expect(heldFlagSettings.mock.calls).toEqual([[{ ultracode: null }]]);
+    expect(heldFlagSettings.mock.calls).toEqual([[{ ultracode: null }], [{ effortLevel: null }]]);
   });
 
   it('an adopted turn records frink_task_signal on its own task', async () => {

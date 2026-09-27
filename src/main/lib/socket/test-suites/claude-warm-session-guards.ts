@@ -48,19 +48,33 @@ export function registerClaudeWarmSessionGuardTests(harness: WarmSessionGuardHar
       __resetSessionsForTest();
     });
 
-    it('Ultra spawns with the ultracode setting, and toggling it recreates the CLI', async () => {
+    it('Ultra spawns with the ultracode setting, and toggling it applies live on the same CLI', async () => {
       const first = mockQuery(claudeQueryMock, answeringCli());
-      mockQuery(claudeQueryMock, answeringCli());
       const spawned = (call: number) => claudeQueryMock.mock.calls[call]?.[0]?.options;
 
       await send('first', { settings: { effort: 'xhigh', ultra: true } });
       await send('second', { sessionId: 'sess-held', settings: { effort: 'xhigh' } });
 
       expect(spawned(0)?.settings).toEqual({ ultracode: true });
-      expect(spawned(1)?.settings).toBeUndefined();
-      expect(sessionLines('claim')).toEqual(['miss:none', 'miss:key-mismatch:settings']);
-      expect(first.close).toHaveBeenCalledOnce();
-      expect(spawned(1)?.resume).toBe('sess-held');
+      expect(sessionLines('claim')).toEqual(['miss:none', 'hit']);
+      expect(claudeQueryMock).toHaveBeenCalledTimes(1);
+      // Ultra is cleared before the effort is set: clearing it alone leaves the CLI at xhigh.
+      expect(first.applyFlagSettings.mock.calls).toEqual([
+        [{ ultracode: null }],
+        [{ effortLevel: 'xhigh' }],
+      ]);
+    });
+
+    it('a changed model and effort run on the same CLI, set live before the push', async () => {
+      const warm = mockQuery(claudeQueryMock, answeringCli());
+
+      await send('first');
+      await send('second', { sessionId: 'sess-held', settings: { model: 'opus', effort: 'low' } });
+
+      expect(sessionLines('claim')).toEqual(['miss:none', 'hit']);
+      expect(claudeQueryMock).toHaveBeenCalledTimes(1);
+      expect(warm.setModel).toHaveBeenLastCalledWith(expect.stringContaining('opus'));
+      expect(warm.applyFlagSettings).toHaveBeenLastCalledWith({ effortLevel: 'low' });
     });
 
     it('a flow-driven turn never spawns Ultra', async () => {
