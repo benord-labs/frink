@@ -16,6 +16,7 @@ import {
   registerClaudeWarmSessionTests,
   registerCustomNodeTransportTest,
   registerExecutorPermissionTests,
+  registerPermissionDbUnavailableTests,
 } from './test-suites';
 
 // Enable the flag-gated flow and work-queue paths so the dispatch and permission paths run in tests.
@@ -8139,6 +8140,8 @@ describe('validateToolPermission (v2 wrapper)', () => {
       true,
     );
   }
+
+  registerPermissionDbUnavailableTests({ clientPermissionBridge, validateWithNativeReview });
 
   it('returns allow when projectPath is undefined (boot-window contract)', async () => {
     const r = await validateToolPermission('Bash', { command: 'ls' }, undefined, 'c1', 's1');

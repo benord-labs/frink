@@ -6,4 +6,5 @@ export { registerClaudeTurnBindingTests } from './claude-turn-bindings';
 export { registerClaudeWarmSessionTests } from './claude-warm-session';
 export { registerClaudeWarmSessionGuardTests } from './claude-warm-session-guards';
 export { registerExecutorPermissionTests } from './executor-codex-permissions';
+export { registerPermissionDbUnavailableTests } from './executor-permission-db-unavailable';
 export { registerCustomNodeTransportTest } from './executor-custom-node-permissions';

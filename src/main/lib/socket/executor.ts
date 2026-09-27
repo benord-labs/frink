@@ -392,7 +392,16 @@ export async function validateToolPermission(
   // permissionPathOverride is a FILE-level remap (worktree → canonical project
   // FILE path), not a project-root override. PATH tools feed it into the decision
   // input (rule matching against the canonical root); Bash/MCP keep it display-only.
-  const project = await getProjectByPath(getDatabase(), projectPath);
+  //
+  // This read runs before checkPermission's own rule-store guard, so it carries the
+  // same posture: a DB we cannot read denies instead of throwing past the gate.
+  let project: Awaited<ReturnType<typeof getProjectByPath>>;
+  try {
+    project = await getProjectByPath(getDatabase(), projectPath);
+  } catch (err) {
+    log.error('[executor] Could not read project for permission check — denying', err);
+    return { allowed: false, message: formatDenyReason({ kind: 'db:unavailable' }) };
+  }
 
   // Session-dir auto-allow root: THIS chat's CLAUDE_CONFIG_DIR. `check-edit`
   // short-circuits Reads under its allow-listed subtrees (pasted/ + tool-result
@@ -472,14 +481,20 @@ export async function validateToolPermission(
     return { allowed: false, message: 'User denied permission' };
   }
 
-  await persistApprovedRule({
-    db: getDatabase(),
-    projectPath,
-    project: project ?? null,
-    promptResult,
-    isBash,
-    logTag: '[executor]',
-  });
+  // The user approved this call; a failed rule write only means the next call prompts
+  // again, so it must not turn the approval into a deny or a rejected promise.
+  try {
+    await persistApprovedRule({
+      db: getDatabase(),
+      projectPath,
+      project: project ?? null,
+      promptResult,
+      isBash,
+      logTag: '[executor]',
+    });
+  } catch (err) {
+    log.warn('[executor] Could not persist approved rule', err);
+  }
 
   return { allowed: true };
 }
