@@ -82,8 +82,11 @@ describe('detect.ts logging hygiene', () => {
   });
 });
 
-describe('detectClaudeAccount on linux — secret-tool fallback (Bug #4)', () => {
+describe('detectClaudeAccount on linux — credentials file only', () => {
+  // The CLI reads only ~/.claude/.credentials.json on Linux (decisions/claude-credential-
+  // ownership-at-spawn); the fake prints a secret the way the real secret-tool does.
   const originalPlatform = process.platform;
+  const LEAKED = 'sk-ant-oat01-LEAK';
 
   beforeEach(() => {
     Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
@@ -91,65 +94,41 @@ describe('detectClaudeAccount on linux — secret-tool fallback (Bug #4)', () =>
     readFileSyncMock.mockReset();
     execSyncMock.mockReset();
     execFileSyncMock.mockReset();
+    execFileSyncMock.mockImplementation((cmd: string) =>
+      cmd === 'secret-tool' ? `secret = ${LEAKED}\n` : '',
+    );
   });
 
   afterEach(() => {
     Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
   });
 
-  it('falls back to secret-tool when ~/.claude/.credentials.json is missing', () => {
-    // Pre-fix: detectLinux() only checks the file. A user whose Claude CLI uses
-    // libsecret/kwallet exclusively gets "No Claude Code login found" even though
-    // they ARE signed in. Post-fix: when the file is missing, probe secret-tool
-    // and use a `secret-tool://` sourcePath.
-    existsSyncMock.mockImplementation(() => {
-      // ~/.claude/.credentials.json missing, ~/.claude.json (settings) missing
-      return false;
-    });
-    // probeLinuxSecretService uses execFileSync (argv form, no shell) since the
-    // May 2026 RCE-class hardening — both probes share the same call site.
-    execFileSyncMock.mockReturnValue(
-      JSON.stringify({
-        claudeAiOauth: {
-          accessToken: 'sk-ant-oat01-from-secret-tool',
-          refreshToken: 'rt',
-          expiresAt: 1700000000000,
-        },
-      }),
-    );
-
-    const result = detectClaudeAccount();
-
-    expect(result.available).toBe(true);
-    expect(result.sourcePath).toMatch(/^secret-tool:\/\//);
-  });
-
-  it('returns available=false when both file and secret-tool are absent', () => {
+  it('returns available=false with a claude auth login hint when the file is missing, even if the keyring has a login', () => {
     existsSyncMock.mockReturnValue(false);
-    execFileSyncMock.mockImplementation(() => {
-      throw new Error('secret-tool: not found');
-    });
 
     const result = detectClaudeAccount();
 
     expect(result.available).toBe(false);
-    expect(result.hint).toBeTruthy();
+    expect(result.sourcePath).toBeUndefined();
+    expect(result.hint).toMatch(/claude auth login/);
+    expect(result.hint).toContain('~/.claude/.credentials.json');
+    // Don't point users at a store the CLI can't read.
+    expect(result.hint).not.toMatch(/keyring/i);
+    expect(JSON.stringify(result)).not.toContain(LEAKED);
+    expect(execFileSyncMock).not.toHaveBeenCalled();
+    expect(execSyncMock).not.toHaveBeenCalled();
   });
 
-  it('still prefers the file when both file and secret-tool are present', () => {
-    // The file is the canonical source; only fall back to secret-tool when
-    // the file is missing. (Otherwise we could end up with two sourcePaths
-    // for the same logical account.)
+  it('connects via the file:// source without spawning anything when the file exists', () => {
     existsSyncMock.mockImplementation((path: string) => path.endsWith('.credentials.json'));
     readFileSyncMock.mockReturnValue('');
-    execSyncMock.mockReturnValue(
-      JSON.stringify({ claudeAiOauth: { accessToken: 'sk-ant-oat01-secret-tool' } }),
-    );
 
     const result = detectClaudeAccount();
 
     expect(result.available).toBe(true);
-    expect(result.sourcePath).toMatch(/^file:\/\//);
+    expect(result.sourcePath).toBe(_internal.fileUri(_internal.CLAUDE_CONFIG_FILE_LINUX));
+    expect(execFileSyncMock).not.toHaveBeenCalled();
+    expect(execSyncMock).not.toHaveBeenCalled();
   });
 });
 
