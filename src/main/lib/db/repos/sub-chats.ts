@@ -95,11 +95,13 @@ export function safeParseMessages(rowId: string, raw: string): Message[] {
   return [];
 }
 
-/** Read-modify-write over the messages column. `mutate` runs sync in the txn; never await in it. */
+/** Read-modify-write over the messages column. `mutate` runs sync in the txn; never await in it.
+ * `onWrite` fires only when the row was really rewritten (an identical result short-circuits). */
 function withMessagesSync(
   db: Db,
   subChatId: string,
   mutate: (messages: Message[]) => Message[],
+  onWrite?: () => void,
 ): SubChatHydrated | null {
   return db.transaction(() => {
     const row = db.select().from(subChats).where(eq(subChats.id, subChatId)).get() as
@@ -120,6 +122,7 @@ function withMessagesSync(
       })
       .where(eq(subChats.id, subChatId))
       .run();
+    onWrite?.();
 
     return { ...row, messages: next };
   });
@@ -469,15 +472,28 @@ export async function markPlanApproved(
   );
 }
 
+/**
+ * Wholesale transcript replacement from the row as it reads NOW (inside the lock + txn) — a
+ * caller's earlier read would overwrite whatever landed since. `null`/`fresh` writes nothing.
+ */
 export async function updateSubChatMessages(
   db: Db,
   subChatId: string,
-  messages: Message[],
+  transform: (fresh: Message[]) => Message[] | null,
 ): Promise<SubChatHydrated | null> {
   return withSubChatLock(subChatId, async () => {
-    const updated = withMessagesSync(db, subChatId, () => messages);
-    // After the txn (a failed commit throws); identity proves the row was really rewritten.
-    if (updated?.messages === messages) bumpWriteGeneration(subChatId);
+    let wrote = false;
+    const updated = withMessagesSync(
+      db,
+      subChatId,
+      (fresh) => transform(fresh) ?? fresh,
+      () => {
+        wrote = true;
+      },
+    );
+    // After the txn (a failed commit throws). Only a real rewrite fences live streams — bumping on
+    // a no-op would drop every later chunk of an active turn.
+    if (wrote) bumpWriteGeneration(subChatId);
     return updated;
   });
 }

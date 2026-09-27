@@ -32,6 +32,21 @@ vi.mock('../../../../git/stash', () => ({
   applyRollbackStash: (...args: unknown[]) => applyRollbackStashMock(...args),
 }));
 
+// Stand-in for the repo: apply the transform to the row as it reads now (getSubChatById, unless
+// a test sets `freshRowOverride` to simulate a concurrent write).
+let freshRowOverride: { messages: unknown[] } | null | undefined;
+async function applyTransformToFreshRow(
+  db: unknown,
+  subChatId: string,
+  transform: (fresh: unknown[]) => unknown[] | null,
+) {
+  writeOrder.push('messages');
+  const row =
+    freshRowOverride !== undefined ? freshRowOverride : await getSubChatByIdMock(db, subChatId);
+  if (!row) return null;
+  return { ...row, messages: transform(row.messages) ?? row.messages };
+}
+
 /** Clear every repo mock and the write-order log between cases. */
 function resetMocks(): void {
   getSubChatByIdMock.mockReset();
@@ -41,9 +56,10 @@ function resetMocks(): void {
   updateSubChatSessionMock.mockReset();
   clearStreamIdMock.mockReset();
   writeOrder.length = 0;
+  freshRowOverride = undefined;
   // Re-arm the order log after the reset — a test that overrides one of these (e.g. to throw)
   // must not leak its implementation into the next.
-  updateSubChatMessagesMock.mockImplementation(() => void writeOrder.push('messages'));
+  updateSubChatMessagesMock.mockImplementation(applyTransformToFreshRow);
   updateSubChatSessionMock.mockImplementation(() => void writeOrder.push('session'));
   clearStreamIdMock.mockImplementation(() => void writeOrder.push('streamId'));
 }
@@ -78,7 +94,12 @@ describe('subChatRollbackRouter.rollbackToMessage', () => {
 
     expect(result.success).toBe(true);
     expect(updateSubChatMessagesMock).toHaveBeenCalledTimes(1);
-    expect(updateSubChatSessionMock).toHaveBeenCalledWith(expect.anything(), 'sub-1', '', 'rollback');
+    expect(updateSubChatSessionMock).toHaveBeenCalledWith(
+      expect.anything(),
+      'sub-1',
+      '',
+      'rollback',
+    );
     // stream_id must clear too, else an in-flight chunk re-appends the rolled-back message.
     expect(clearStreamIdMock).toHaveBeenCalledWith(expect.anything(), 'sub-1');
   });
@@ -174,7 +195,12 @@ describe('subChatRollbackRouter — persistence ordering under a concurrent stre
 
     // The session was already cleared, so the next prompt starts fresh rather than resuming
     // a session whose transcript we failed to truncate.
-    expect(updateSubChatSessionMock).toHaveBeenCalledWith(expect.anything(), 'sub-1', '', 'rollback');
+    expect(updateSubChatSessionMock).toHaveBeenCalledWith(
+      expect.anything(),
+      'sub-1',
+      '',
+      'rollback',
+    );
     expect(clearStreamIdMock).toHaveBeenCalledWith(expect.anything(), 'sub-1');
   });
 });
@@ -438,5 +464,156 @@ describe('subChatRollbackRouter — userMessageId rollback', () => {
       unknown
     >;
     expect(a2Meta.shouldResume).toBe(true);
+  });
+});
+
+// sc-3290: truncation is computed from the row at write time (after the git await), and two
+// rollbacks of one sub-chat never overlap.
+describe('subChatRollbackRouter — concurrent writers during the git await', () => {
+  beforeEach(resetMocks);
+
+  const transcript = [
+    { id: 'u1', role: 'user', metadata: {} },
+    { id: 'a1', role: 'assistant', metadata: { sdkMessageUuid: 'sdk-1' }, parts: [] },
+    { id: 'u2', role: 'user', metadata: {} },
+    { id: 'a2', role: 'assistant', metadata: { sdkMessageUuid: 'sdk-2' } },
+  ];
+
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  }
+
+  function armGitRollback() {
+    getSubChatByIdMock.mockResolvedValue({ id: 'sub-1', chatId: 'chat-1', messages: transcript });
+    getChatByIdMock.mockResolvedValue({ id: 'chat-1', worktreePath: '/tmp/project' });
+    const git = deferred<{ success: true; checkpointFound: true }>();
+    applyRollbackStashMock.mockReturnValue(git.promise);
+    return git;
+  }
+
+  it('rejects a second rollback of the same sub-chat while the first is mid-git', async () => {
+    const git = armGitRollback();
+
+    const first = callRollback({ subChatId: 'sub-1', userMessageId: 'u2' });
+    await vi.waitFor(() => expect(applyRollbackStashMock).toHaveBeenCalledTimes(1));
+    const second = await callRollback({ subChatId: 'sub-1', sdkMessageUuid: 'sdk-2' });
+
+    expect(second).toEqual({ success: false, error: 'Rollback already in progress' });
+    git.resolve({ success: true, checkpointFound: true });
+    expect((await first).success).toBe(true);
+    expect(applyRollbackStashMock).toHaveBeenCalledTimes(1);
+    expect(updateSubChatMessagesMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows a rollback again once the previous one finished', async () => {
+    getSubChatByIdMock.mockResolvedValue({ id: 'sub-1', chatId: 'chat-1', messages: transcript });
+
+    await callRollback({ subChatId: 'sub-1', userMessageId: 'u2', mode: 'chat' });
+    const again = await callRollback({ subChatId: 'sub-1', userMessageId: 'u2', mode: 'chat' });
+
+    expect(again.success).toBe(true);
+  });
+
+  it('releases the guard when the rollback throws, so the sub-chat is not locked out forever', async () => {
+    getSubChatByIdMock.mockResolvedValue({ id: 'sub-1', chatId: 'chat-1', messages: transcript });
+    clearStreamIdMock.mockImplementationOnce(() => {
+      throw new Error('SQLITE_BUSY');
+    });
+
+    await expect(
+      callRollback({ subChatId: 'sub-1', userMessageId: 'u2', mode: 'chat' }),
+    ).rejects.toThrow('SQLITE_BUSY');
+    const retry = await callRollback({ subChatId: 'sub-1', userMessageId: 'u2', mode: 'chat' });
+
+    expect(retry.success).toBe(true);
+  });
+
+  it('does not block a rollback of a different sub-chat (multi-pane, separate chats)', async () => {
+    const git = armGitRollback();
+
+    const first = callRollback({ subChatId: 'sub-1', userMessageId: 'u2' });
+    await vi.waitFor(() => expect(applyRollbackStashMock).toHaveBeenCalledTimes(1));
+    const other = await callRollback({ subChatId: 'sub-2', userMessageId: 'u2', mode: 'chat' });
+
+    expect(other.success).toBe(true);
+    git.resolve({ success: true, checkpointFound: true });
+    await first;
+  });
+
+  it('returns the fresh truncated transcript, keeping an edit that landed during the git await', async () => {
+    armGitRollback().resolve({ success: true, checkpointFound: true });
+    freshRowOverride = {
+      messages: [
+        transcript[0],
+        { ...transcript[1], parts: [{ type: 'tool-frink-plan', input: { status: 'approved' } }] },
+        transcript[2],
+        transcript[3],
+        { id: 'a3', role: 'assistant', metadata: {} }, // a late stream chunk past the target
+      ],
+    };
+
+    const result = await callRollback({ subChatId: 'sub-1', userMessageId: 'u2' });
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.messages.map((m) => (m as { id: string }).id)).toEqual(['u1', 'a1']);
+    expect((result.messages[1] as { parts: unknown[] }).parts).toEqual([
+      { type: 'tool-frink-plan', input: { status: 'approved' } },
+    ]);
+  });
+
+  it('fails before any teardown write when the target vanished during the git await', async () => {
+    armGitRollback().resolve({ success: true, checkpointFound: true });
+    getSubChatByIdMock
+      .mockResolvedValueOnce({ id: 'sub-1', chatId: 'chat-1', messages: transcript })
+      .mockResolvedValueOnce({ id: 'sub-1', chatId: 'chat-1', messages: transcript.slice(0, 2) });
+
+    const result = await callRollback({ subChatId: 'sub-1', userMessageId: 'u2' });
+
+    expect(result).toEqual({
+      success: false,
+      error: 'Message no longer exists — code may already have been reverted',
+    });
+    // Session and stream_id stay intact alongside the intact transcript — nothing is stranded.
+    expect(writeOrder).toEqual([]);
+  });
+
+  it('fails before any teardown write when the row was deleted during the git await', async () => {
+    armGitRollback().resolve({ success: true, checkpointFound: true });
+    getSubChatByIdMock
+      .mockResolvedValueOnce({ id: 'sub-1', chatId: 'chat-1', messages: transcript })
+      .mockResolvedValueOnce(null);
+
+    const result = await callRollback({ subChatId: 'sub-1', userMessageId: 'u2' });
+
+    expect(result).toEqual({ success: false, error: 'Sub-chat not found' });
+    expect(writeOrder).toEqual([]);
+  });
+
+  it('still refuses the write if the target vanishes after the teardown re-check', async () => {
+    armGitRollback().resolve({ success: true, checkpointFound: true });
+    freshRowOverride = { messages: [transcript[0], transcript[1]] };
+
+    const result = await callRollback({ subChatId: 'sub-1', userMessageId: 'u2' });
+
+    expect(result).toEqual({
+      success: false,
+      error: 'Message no longer exists — code may already have been reverted',
+    });
+    // The teardown writes still ran first, in order; the transcript write was attempted last.
+    expect(writeOrder).toEqual(['streamId', 'session', 'messages']);
+  });
+
+  it('reports not found when the row was deleted during the git await', async () => {
+    armGitRollback().resolve({ success: true, checkpointFound: true });
+    freshRowOverride = null;
+
+    const result = await callRollback({ subChatId: 'sub-1', userMessageId: 'u2' });
+
+    expect(result).toEqual({ success: false, error: 'Sub-chat not found' });
   });
 });
