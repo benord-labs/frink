@@ -3,6 +3,7 @@ import './lib/sentry/init';
 import ReactDOM from 'react-dom/client';
 import { App } from './App';
 import { appStore } from './lib/jotai-store';
+import { startUserTimingBound } from './lib/perf/bound-user-timing';
 import { paintStoredTheme } from './lib/themes/paint-theme';
 import './styles/globals.css';
 import '@/lib/code-editor/monaco/monaco-loader-config';
@@ -37,6 +38,8 @@ window.onerror = (message, source, lineno, colno, error) => {
   }
   return false;
 };
+
+startUserTimingBound();
 
 const rootElement = document.getElementById('root');
 
