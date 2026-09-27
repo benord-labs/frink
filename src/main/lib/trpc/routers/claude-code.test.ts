@@ -162,7 +162,7 @@ vi.mock('../../credentials/detect', () => ({
 vi.mock('../../credentials/source-readers', () => ({
   // Mirror the runtime export so the zod schema in connectClaudePassthrough
   // can read the allowlist (used in the .refine() check).
-  ALLOWED_SOURCE_PATH_SCHEMES: ['darwin-keychain://', 'file://', 'secret-tool://'] as const,
+  ALLOWED_SOURCE_PATH_SCHEMES: ['darwin-keychain://', 'file://'] as const,
   KEYCHAIN_READ_TIMEOUT_MS: 1500,
 }));
 
@@ -641,6 +641,27 @@ describe('claudeCodeRouter connectClaudePassthrough — sourcePath input validat
       }),
     ).rejects.toThrow(/sourcePath must use one of/);
     // Mutation handler should NOT have run.
+    expect(transactionSpy).not.toHaveBeenCalled();
+  });
+
+  it('mirrors the real ALLOWED_SOURCE_PATH_SCHEMES allowlist', async () => {
+    // The zod refine is only as good as this mock: a drifted copy would test the wrong list.
+    const actual = await vi.importActual<typeof import('../../credentials/source-readers')>(
+      '../../credentials/source-readers',
+    );
+    const mocked = await import('../../credentials/source-readers');
+    expect(mocked.ALLOWED_SOURCE_PATH_SCHEMES).toEqual(actual.ALLOWED_SOURCE_PATH_SCHEMES);
+  });
+
+  it('rejects secret-tool:// sourcePath (Linux keyring is not a source the Claude CLI reads)', async () => {
+    const { claudeCodeRouter } = await import('./claude-code');
+    const caller = claudeCodeRouter.createCaller({ getWindow: () => null });
+    await expect(
+      caller.connectClaudePassthrough({
+        accountLabel: 'Personal Claude',
+        sourcePath: 'secret-tool://Claude%20Code/credentials',
+      }),
+    ).rejects.toThrow(/sourcePath must use one of/);
     expect(transactionSpy).not.toHaveBeenCalled();
   });
 

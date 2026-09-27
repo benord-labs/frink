@@ -34,7 +34,7 @@ type DetectClaudeAccountResult = {
 
 const CLAUDE_KEYCHAIN_SERVICE_PREFIX = 'Claude Code';
 const LEGACY_KEYCHAIN_SERVICE = 'Claude Code-credentials';
-const CLAUDE_CONFIG_FILE_LINUX = join(homedir(), '.claude', '.credentials.json');
+export const CLAUDE_CONFIG_FILE_LINUX = join(homedir(), '.claude', '.credentials.json');
 const CLAUDE_CONFIG_FILE_WINDOWS = join(homedir(), '.claude', '.credentials.json');
 const CLAUDE_USER_CONFIG_FILE = join(homedir(), '.claude.json');
 
@@ -45,14 +45,6 @@ const CLAUDE_USER_CONFIG_FILE = join(homedir(), '.claude.json');
  */
 function darwinKeychainUri(serviceName: string): string {
   return `darwin-keychain://${encodeURIComponent(serviceName)}`;
-}
-
-/**
- * URI scheme tag for Linux libsecret entries. Resolved at chat-time by
- * `source-readers.ts` shelling to `secret-tool lookup`.
- */
-function secretToolUri(service: string, account: string): string {
-  return `secret-tool://${encodeURIComponent(service)}/${encodeURIComponent(account)}`;
 }
 
 const FILE_URI_LEADING_SLASH_RE = /^[/]?/;
@@ -210,34 +202,9 @@ function detectMacOS(): DetectClaudeAccountResult {
   };
 }
 
-const LINUX_SECRET_TOOL_SERVICE = 'Claude Code';
-const LINUX_SECRET_TOOL_ACCOUNT = 'credentials';
-
-function probeLinuxSecretService(): boolean {
-  // Returns true when the secret store has a value at this (service, account).
-  // Only used as a fallback when ~/.claude/.credentials.json is missing.
-  //
-  // execFileSync (argv form, no shell) — even though both args are
-  // module-level constants today, the rule in `source-readers.ts:15-22` is
-  // "no shell-string call site in credentials/", and a future caller might
-  // wire in a user-derived value. Pre-commit api-security re-review (May 2026).
-  // stdio: 'ignore' on stderr replaces the previous `2>/dev/null` redirect.
-  try {
-    const result = execFileSync(
-      'secret-tool',
-      ['lookup', 'service', LINUX_SECRET_TOOL_SERVICE, 'account', LINUX_SECRET_TOOL_ACCOUNT],
-      { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] },
-    ).trim();
-    return result.length > 0;
-  } catch {
-    return false;
-  }
-}
-
 function detectLinux(): DetectClaudeAccountResult {
-  // Prefer the file (canonical Claude CLI behavior). Fall back to libsecret
-  // (Bug #4) — some Claude CLI installs store creds exclusively in the
-  // GNOME keyring / kwallet via secret-tool.
+  // The Claude CLI on Linux reads only this file (no libsecret support), so the keyring
+  // is never a usable source: a keyring-only login would connect, then fail at spawn.
   if (existsSync(CLAUDE_CONFIG_FILE_LINUX)) {
     const userConfig = readClaudeUserConfig();
     return {
@@ -248,19 +215,9 @@ function detectLinux(): DetectClaudeAccountResult {
     };
   }
 
-  if (probeLinuxSecretService()) {
-    const userConfig = readClaudeUserConfig();
-    return {
-      available: true,
-      email: userConfig.email,
-      displayName: userConfig.email ?? userConfig.userID ?? 'Claude Code',
-      sourcePath: secretToolUri(LINUX_SECRET_TOOL_SERVICE, LINUX_SECRET_TOOL_ACCOUNT),
-    };
-  }
-
   return {
     available: false,
-    hint: 'No Claude Code login found at ~/.claude/.credentials.json or in the GNOME keyring. Run `claude auth login` and try again.',
+    hint: 'No Claude Code login found at ~/.claude/.credentials.json. Run `claude auth login` and try again.',
   };
 }
 

@@ -1,5 +1,5 @@
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -45,7 +45,15 @@ vi.mock('node:child_process', async () => {
   };
 });
 
-import { probeClaudePassthroughSource } from './source-readers';
+// A throwaway home so the Linux credentials-file probe never touches the real ~/.claude.
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:os')>();
+  const { mkdtempSync: makeTemp } = await vi.importActual<typeof import('node:fs')>('node:fs');
+  const home = makeTemp(`${actual.tmpdir()}/frink-home-`);
+  return { ...actual, homedir: () => home };
+});
+
+import { ALLOWED_SOURCE_PATH_SCHEMES, probeClaudePassthroughSource } from './source-readers';
 
 describe('probeClaudePassthroughSource', () => {
   let tempDir: string;
@@ -227,61 +235,87 @@ describe('probeClaudePassthroughSource — darwin keychain', () => {
   });
 });
 
-describe('probeClaudePassthroughSource — linux secret-tool', () => {
-  // `secret-tool search` exits 0 whether or not anything matched, so the exit code alone
-  // reports a login that isn't there — the probe would say `ok` and the failure would only
-  // surface later as "Not logged in" from the spawned CLI. The attribute listing is the signal.
+describe('probeClaudePassthroughSource — legacy secret-tool:// rows on linux', () => {
+  // Legacy rows are answered by the file the CLI reads, never by secret-tool (which prints
+  // the token). The fake below prints a secret the way the real secret-tool does.
   const originalPlatform = process.platform;
+  const LEAKED = 'sk-ant-oat01-LEAK';
+  const credentialsFile = join(homedir(), '.claude', '.credentials.json');
 
   beforeEach(() => {
     Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+    execFileMock.mockClear();
     execFileSyncMock.mockReset();
+    execFileSyncMock.mockImplementation((cmd: string) =>
+      cmd === 'secret-tool'
+        ? `[/org/freedesktop/secrets/collection/login/1]\nlabel = Claude Code\nsecret = ${LEAKED}\n`
+        : '',
+    );
+    rmSync(join(homedir(), '.claude'), { recursive: true, force: true });
   });
 
   afterEach(() => {
     Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+    rmSync(join(homedir(), '.claude'), { recursive: true, force: true });
   });
 
-  it("returns 'missing' when search exits 0 with EMPTY output", async () => {
-    execFileSyncMock.mockReturnValue('');
+  function writeCredentialsFile(): void {
+    mkdirSync(join(homedir(), '.claude'), { recursive: true });
+    writeFileSync(credentialsFile, '{}');
+  }
+
+  function expectNoChildProcess(): void {
+    expect(execFileMock).not.toHaveBeenCalled();
+    expect(execFileSyncMock).not.toHaveBeenCalled();
+  }
+
+  it('returns ok when ~/.claude/.credentials.json exists, without spawning anything', async () => {
+    writeCredentialsFile();
 
     const result = await probeClaudePassthroughSource('secret-tool://Claude%20Code/credentials');
 
-    expect(result).toMatchObject({ error: 'missing' });
-  });
-
-  it("returns 'missing' when search exits 0 with only whitespace", async () => {
-    execFileSyncMock.mockReturnValue('  \n  ');
-
-    const result = await probeClaudePassthroughSource('secret-tool://Claude%20Code/credentials');
-
-    expect(result).toMatchObject({ error: 'missing' });
-  });
-
-  it('returns ok when search lists a matching attribute set', async () => {
-    execFileSyncMock.mockReturnValue(
-      '[/org/freedesktop/secrets/collection/login/1]\nlabel = Claude',
-    );
-
-    const result = await probeClaudePassthroughSource('secret-tool://Claude%20Code/credentials');
-
-    const [cmd, args] = execFileSyncMock.mock.calls[0] as [string, string[]];
-    expect(cmd).toBe('secret-tool');
-    // `search`, never `lookup` — lookup prints the secret itself.
-    expect(args[0]).toBe('search');
-    expect(args).not.toContain('lookup');
     expect(result).toEqual({ ok: true });
+    expect(JSON.stringify(result)).not.toContain(LEAKED);
+    expectNoChildProcess();
   });
 
-  // A timeout is the daemon being slow or the keyring locked, not a missing login. Reported
-  // as 'missing' it would be persisted as a logout; 'denied' is the transient class.
-  it("returns error: 'denied' (not 'missing') on ETIMEDOUT", async () => {
-    execFileSyncMock.mockImplementation(() => {
-      throw Object.assign(new Error('execFile timeout'), { code: 'ETIMEDOUT' });
-    });
+  // The keyring may still hold a login, but the agent cannot use it: reporting ok here is
+  // exactly the "probe passes, spawn says Not logged in" failure this row type produced.
+  it("returns 'missing' when the credentials file is absent, even if the keyring has a login", async () => {
+    const result = await probeClaudePassthroughSource('secret-tool://Claude%20Code/credentials');
+
+    expect(result).toMatchObject({ error: 'missing' });
+    expectNoChildProcess();
+  });
+
+  // Service/account are never decoded: a URIError would reject past probeLiveLogin.
+  it.each([
+    ['malformed percent-encoding', 'secret-tool://%E0%A4%A/credentials'],
+    ['no service/account separator', 'secret-tool://Claude%20Code'],
+    ['empty remainder', 'secret-tool://'],
+    ['arbitrary service', 'secret-tool://evil/whatever'],
+  ])('resolves by the credentials file for %s', async (_label, sourcePath) => {
+    writeCredentialsFile();
+
+    await expect(probeClaudePassthroughSource(sourcePath)).resolves.toEqual({ ok: true });
+    expectNoChildProcess();
+  });
+
+  it("returns 'missing' on a non-linux host without spawning anything", async () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+    writeCredentialsFile();
 
     const result = await probeClaudePassthroughSource('secret-tool://Claude%20Code/credentials');
 
-    expect(result).toMatchObject({ error: 'denied' });
+    expect(result).toMatchObject({ error: 'missing' });
+    expectNoChildProcess();
+  });
+});
+
+describe('ALLOWED_SOURCE_PATH_SCHEMES', () => {
+  // The connect mutation's zod refine reads this list; secret-tool:// is legacy-only now.
+  it('no longer accepts secret-tool:// for new connects', () => {
+    expect(ALLOWED_SOURCE_PATH_SCHEMES).not.toContain('secret-tool://');
+    expect(ALLOWED_SOURCE_PATH_SCHEMES).toEqual(['darwin-keychain://', 'file://']);
   });
 });

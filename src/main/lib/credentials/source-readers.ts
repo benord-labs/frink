@@ -25,6 +25,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import log from 'electron-log';
 import {
+  CLAUDE_CONFIG_FILE_LINUX,
   isMacOSKeychainAuthorizationError,
   isMacOSKeychainTimeoutError,
   sanitizeError,
@@ -33,7 +34,7 @@ import { CODEX_KEYCHAIN_SERVICE, codexKeyringAccount, resolveCodexHome } from '.
 import { KEYCHAIN_READ_TIMEOUT_MS } from './keychain-shared';
 
 // Promisified, non-blocking. Returning a Promise lets the event loop continue
-// while `security` / `secret-tool` is queued in libuv's process pool, so chat
+// while `security` is queued in libuv's process pool, so chat
 // IPC and SQLite reads on the main thread aren't stalled by a slow keychain.
 const execFileAsync = promisify(execFile);
 
@@ -44,7 +45,8 @@ type ProbeResult = { ok: true } | { error: 'missing' | 'denied' | 'malformed'; d
 
 const DARWIN_KEYCHAIN_SCHEME = 'darwin-keychain://';
 const FILE_SCHEME = 'file://';
-const SECRET_TOOL_SCHEME = 'secret-tool://';
+// Legacy rows only: new connects can't produce it (see ALLOWED_SOURCE_PATH_SCHEMES).
+const LEGACY_SECRET_TOOL_SCHEME = 'secret-tool://';
 
 /**
  * Whitelist of accepted URI schemes for `sourcePath`. Any value persisted to
@@ -54,11 +56,7 @@ const SECRET_TOOL_SCHEME = 'secret-tool://';
  * match this set, otherwise an attacker-controlled value could route to an
  * unintended probe (or a future one).
  */
-export const ALLOWED_SOURCE_PATH_SCHEMES = [
-  DARWIN_KEYCHAIN_SCHEME,
-  FILE_SCHEME,
-  SECRET_TOOL_SCHEME,
-] as const;
+export const ALLOWED_SOURCE_PATH_SCHEMES = [DARWIN_KEYCHAIN_SCHEME, FILE_SCHEME] as const;
 
 /**
  * Public entrypoint. Confirms the source exists, without reading the secret.
@@ -73,8 +71,8 @@ export async function probeClaudePassthroughSource(sourcePath: string): Promise<
   if (sourcePath.startsWith(FILE_SCHEME)) {
     return probeFile(sourcePath);
   }
-  if (sourcePath.startsWith(SECRET_TOOL_SCHEME)) {
-    return probeLinuxSecretTool(sourcePath);
+  if (sourcePath.startsWith(LEGACY_SECRET_TOOL_SCHEME)) {
+    return probeLegacySecretToolRow();
   }
   return { error: 'malformed', detail: `Unsupported source URI scheme: ${sourcePath}` };
 }
@@ -92,42 +90,17 @@ export async function probeCodexPassthroughSource(): Promise<ProbeResult> {
   return probeDarwinKeychainItem(CODEX_KEYCHAIN_SERVICE, codexKeyringAccount(codexHome));
 }
 
-async function probeLinuxSecretTool(sourcePath: string): Promise<ProbeResult> {
+// Pre-sc-3807 keyring row: the CLI reads only the credentials file on Linux, and secret-tool
+// prints the token, so presence is the file (decisions/claude-credential-ownership-at-spawn).
+function probeLegacySecretToolRow(): ProbeResult {
   if (process.platform !== 'linux') {
     return { error: 'missing', detail: 'secret-tool source not available on this OS' };
   }
-  const remainder = sourcePath.slice(SECRET_TOOL_SCHEME.length);
-  const slashIdx = remainder.indexOf('/');
-  if (slashIdx === -1) {
-    return { error: 'malformed', detail: 'secret-tool URI must be service/account' };
-  }
-  const service = decodeURIComponent(remainder.slice(0, slashIdx));
-  const account = decodeURIComponent(remainder.slice(slashIdx + 1));
-  if (!service || !account) {
-    return { error: 'malformed', detail: 'empty secret-tool service or account' };
-  }
-
-  // `search` reports matching attributes; `lookup` would print the secret itself.
-  // execFileAsync passes service/account as argv elements — no shell, no interpolation.
-  let stdout: string;
-  try {
-    ({ stdout } = await execFileAsync(
-      'secret-tool',
-      ['search', 'service', service, 'account', account],
-      { encoding: 'utf-8', timeout: KEYCHAIN_READ_TIMEOUT_MS },
-    ));
-  } catch (error) {
-    if (isMacOSKeychainTimeoutError(error)) {
-      log.warn('[source-readers] secret-tool timed out:', sanitizeError(error));
-      return { error: 'denied', detail: 'secret-tool read timed out' };
-    }
-    log.debug('[source-readers] secret-tool search failed:', sanitizeError(error));
-    return { error: 'missing', detail: 'secret-tool entry not found' };
-  }
-  // `search` exits 0 with EMPTY output when nothing matches — the exit code alone would
-  // report a login that isn't there. The attribute listing, not the status, is the signal.
-  if (!stdout.trim()) {
-    return { error: 'missing', detail: 'secret-tool entry not found' };
+  if (!existsSync(CLAUDE_CONFIG_FILE_LINUX)) {
+    return {
+      error: 'missing',
+      detail: 'Claude CLI on Linux reads only ~/.claude/.credentials.json',
+    };
   }
   return { ok: true };
 }
