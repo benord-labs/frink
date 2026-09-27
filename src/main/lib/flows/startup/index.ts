@@ -27,6 +27,9 @@ export async function runStartupRecoveryAndLoops(): Promise<void> {
     // and restart reaps orphans. See decision `agent-execution-wall-clock`.
     onExecuteRequest((payload) => {
       void handleRemoteExecute(payload).catch((error) => {
+        payload.onExecutionStarted?.(
+          error instanceof Error ? error : new Error('Chat execution failed.'),
+        );
         captureMainException(error, { surface: 'remote-execute-handler' });
       });
     });

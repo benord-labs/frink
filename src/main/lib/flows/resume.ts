@@ -9,7 +9,11 @@
  */
 
 import { TRPCError } from '@trpc/server';
-import { type NodeOutput, RESTART_INTERRUPTION_REASON } from '../../../shared/types/flow';
+import {
+  type NodeOutput,
+  RESTART_INTERRUPTION_REASON,
+  RESUME_ACTIONABLE_NODE_STATUSES,
+} from '../../../shared/types/flow';
 import { getDatabase } from '../db';
 import { getFlowRun, getLatestFlowRunForChat, setFlowRunStatus } from '../db/repos/flow-runs';
 import { getNodeRun, listNodeRunsForFlowRun } from '../db/repos/node-runs';
@@ -356,12 +360,26 @@ export async function resumeFlowRun(
     });
   }
 
+  // Reason: Resume validation and recovery stay together under the Flow cleanup boundary.
+  // fallow-ignore-next-line complexity
   await withFlowResourceCleanup(flowRunId, async () => {
     const resumed = await setFlowRunStatus(db, flowRunId, 'running', {}, 'paused');
     if (!resumed) {
       throw new TRPCError({
         code: 'PRECONDITION_FAILED',
         message: 'Flow run changed while it was being resumed.',
+      });
+    }
+    // A different client may have advanced this node and paused at a later step while the
+    // context was loading. The run CAS alone cannot distinguish those two pauses.
+    const currentNode = await getNodeRun(db, nodeRunId);
+    const allowed: readonly string[] =
+      action === 'approve' ? ['awaiting_input'] : RESUME_ACTIONABLE_NODE_STATUSES;
+    if (!currentNode || !allowed.includes(currentNode.status)) {
+      await setFlowRunStatus(db, flowRunId, 'paused', {}, 'running');
+      throw new TRPCError({
+        code: 'PRECONDITION_FAILED',
+        message: 'This Flow step has already changed.',
       });
     }
     const { hasActiveFlowAdmission } = await import('./admission/runtime');
