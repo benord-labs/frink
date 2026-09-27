@@ -29,6 +29,7 @@ import {
 } from '../db/repos/sub-chats';
 import { consumeDispatchMode, matchDispatchModeForSend } from '../task-executor/dispatch-registry';
 import { runSendSideNaming } from './naming';
+import { withMessageAdmission } from './execution/send-admission';
 import { createLiveStreamTransport } from './streaming/live-stream/transport';
 
 // Socket-specific message types (compatible with but distinct from renderer types)
@@ -44,7 +45,9 @@ type Message = {
   id: string;
   role: 'user' | 'assistant' | 'system';
   parts: MessagePart[];
-  metadata?: AssistantMessageMetadata;
+  metadata?: AssistantMessageMetadata & {
+    answeredQuestions?: Array<{ label: string; answer: string }>;
+  };
 };
 
 // ============ Types ============
@@ -162,6 +165,7 @@ type ExecuteRequestPayload = {
   /** Flow continuation guard — must match active map entry to use continuation task id. */
   expectedFlowTaskId?: string;
   sourceWebContentsId?: number;
+  onExecutionStarted?: (error?: Error) => void;
 };
 
 export type { PermissionRequestPayload, PermissionResponsePayload };
@@ -205,7 +209,49 @@ function notifyListeners<P>(listeners: Set<(payload: P) => void>, payload: P): v
  * Persists the user message (and any plan approval) before dispatching the executor: the writes
  * are awaited so the renderer's read-after-send sees the new row.
  */
-export async function sendMessage(payload: MessageSendPayload): Promise<void> {
+export async function sendMessage(
+  payload: MessageSendPayload,
+  options?: { rejectIfBusy: boolean; beforeSend?: () => Promise<void> },
+): Promise<void> {
+  if (options?.rejectIfBusy && executeRequestListeners.size === 0) {
+    throw new Error('Chat execution is not ready.');
+  }
+  await withMessageAdmission(
+    payload.subChatId,
+    options?.rejectIfBusy ?? false,
+    async (started) => {
+      try {
+        await options?.beforeSend?.();
+        await persistAndDispatchMessage(payload, started, options?.rejectIfBusy);
+      } catch (error) {
+        started(error instanceof Error ? error : new Error('Could not start chat.'));
+        throw error;
+      }
+    },
+    options?.rejectIfBusy
+      ? async () => {
+          const subChat = await getSubChatByIdLocal(getDatabase(), payload.subChatId);
+          return (
+            subChat?.messages.some(
+              (message) =>
+                message !== null &&
+                typeof message === 'object' &&
+                'id' in message &&
+                message.id === payload.userMessage.id,
+            ) ?? false
+          );
+        }
+      : undefined,
+  );
+}
+
+// Reason: Persistence and dispatch share one admission boundary; preserve their ordered writes.
+// fallow-ignore-next-line complexity
+async function persistAndDispatchMessage(
+  payload: MessageSendPayload,
+  onExecutionStarted: (error?: Error) => void,
+  requirePersistence = false,
+): Promise<void> {
   const { chatId, subChatId, dispatchTaskId } = payload;
   const messageText = payload.userMessage.parts?.find((p) => p.type === 'text')?.text ?? '';
   // A machine-dispatched prompt (flow/work-queue task) binds its mode from the dispatching
@@ -233,6 +279,7 @@ export async function sendMessage(payload: MessageSendPayload): Promise<void> {
       });
     } catch (err) {
       log.error('[Socket] Failed to persist user message locally:', err);
+      if (requirePersistence) throw err;
     }
 
     // Fire-and-forget sub-chat + build-project naming (never blocks the send).
@@ -274,6 +321,7 @@ export async function sendMessage(payload: MessageSendPayload): Promise<void> {
     log.warn('[Socket] Local setStreamId failed:', err);
   }
 
+  if (executeRequestListeners.size === 0) throw new Error('Chat execution is not ready.');
   notifyListeners(executeRequestListeners, {
     chatId: payload.chatId,
     subChatId: payload.subChatId,
@@ -291,6 +339,7 @@ export async function sendMessage(payload: MessageSendPayload): Promise<void> {
     navigationSessionId: payload.navigationSessionId,
     expectedFlowTaskId: payload.expectedFlowTaskId,
     sourceWebContentsId: payload.sourceWebContentsId,
+    onExecutionStarted,
   });
 }
 

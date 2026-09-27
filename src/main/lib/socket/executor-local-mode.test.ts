@@ -291,7 +291,11 @@ import {
   getTaskById,
   updateTaskStatus,
 } from '../db/repos/tasks';
-import { isRunRestartInterrupted, resumeInterruptedFlowInPlace } from '../flows/resume';
+import {
+  isRunRestartInterrupted,
+  resumeFlowNodeInPlace,
+  resumeInterruptedFlowInPlace,
+} from '../flows/resume';
 import { getMultiProjectContext } from '../multi-project-prompt';
 import { checkPermission } from '../permissions/v2/check';
 import type { TaskStopHook } from '../task-stop-hook';
@@ -585,7 +589,7 @@ describe('local-only dispatch with unresolved machineId', () => {
     }
   });
 
-  it('does not treat an unaccepted expected task id as Flow provenance', async () => {
+  it('declines an unaccepted expected task id rather than executing it as an ordinary follow-up', async () => {
     vi.mocked(getChatWithProjectAccount).mockResolvedValueOnce({
       chat: { taskId: null },
       account: null,
@@ -601,7 +605,45 @@ describe('local-only dispatch with unresolved machineId', () => {
     });
 
     expect(flowProviderPreflightMocks.registerNodeAbort).not.toHaveBeenCalled();
-    expect(claudeQueryMock).toHaveBeenCalledOnce();
+    expect(claudeQueryMock).not.toHaveBeenCalled();
+    expect(socketClient.sendErrorDirect).toHaveBeenCalledWith(
+      expect.objectContaining({ category: 'FLOW_RUN_ENDED' }),
+    );
+  });
+
+  it('does not resume or mutate a newer driver when a parked reply arrives after Flow advancement', async () => {
+    dbProjectState.updates.length = 0;
+    vi.mocked(getFlowDriveInfoForSubChat).mockResolvedValueOnce({
+      active: true,
+      autoApprovePlan: false,
+      taskId: 'newer-task',
+    });
+    vi.mocked(getTaskById).mockResolvedValue({
+      id: 'newer-task',
+      source: 'flow',
+      status: 'needs_attention',
+      flowRunId: 'flow-run',
+      result: {},
+    } as Awaited<ReturnType<typeof getTaskById>>);
+    const onExecutionStarted = vi.fn();
+    await handleRemoteExecute({
+      ...basePayload,
+      expectedFlowTaskId: 'answered-task',
+      message: 'answer to the earlier question',
+      onExecutionStarted,
+    });
+
+    expect(onExecutionStarted).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ category: 'FLOW_RUN_ENDED' }),
+    );
+    expect(updateTaskStatus).not.toHaveBeenCalled();
+    expect(resumeFlowNodeInPlace).not.toHaveBeenCalled();
+    expect(dbProjectState.updates).toEqual([]);
+    expect(dynamicChatServerMocks.setCurrentExecutionChat).not.toHaveBeenCalled();
+    expect(claudeQueryMock).not.toHaveBeenCalled();
+    expect(socketClient.sendErrorDirect).toHaveBeenCalledWith(
+      expect.objectContaining({ category: 'FLOW_RUN_ENDED' }),
+    );
   });
 
   it('binds the renderer window even with null machine ids (abort-by-webContents reaches the run)', async () => {

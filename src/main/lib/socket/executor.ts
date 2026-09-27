@@ -1,8 +1,6 @@
 /* eslint-disable max-lines, max-lines-per-function */
-/**
- * Runs Claude Code in this process and streams the result to the renderer over IPC. Permission
- * requests round-trip to the renderer (`socket:permission-request`/`-response`) under a timeout.
- */
+// Reason: Dynamic-MCP import cycles predate mobile admission; their edges are unchanged.
+// fallow-ignore-file circular-dependency
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -536,6 +534,8 @@ type ExecuteRequestPayload = {
    * only that window's agents on reload/crash).
    */
   sourceWebContentsId?: number;
+  /** Main-only send admission acknowledgement; never accepted from an IPC/network schema. */
+  onExecutionStarted?: (error?: Error) => void;
 };
 
 /**
@@ -763,6 +763,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
   turn.waitForExecutionSettlement = flowResources.waitUntilSettled;
   /** Retained for provider-neutral teardown duties outside the try block. */
   let executionAbortController: AbortController | null = null;
+  let executionAdmissionAcknowledged = false;
   /** This run's own abort reason. Never read the sub-chat-keyed map directly — see latchAbortReason. */
   let abortReason: () => string | undefined = () => undefined;
   let isFlowExecutionTurn = false;
@@ -859,9 +860,37 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       }
     }
 
+    const chatAccountResult = chatId
+      ? await getChatWithProjectAccount(getDatabase(), chatId).catch(() => null)
+      : null;
+    const { resolveFlowContinuationExecutionTask } = await import('../task-executor');
+    const resolvedContinuation = resolveFlowContinuationExecutionTask({
+      chatId: chatId ?? undefined,
+      chatRowTaskId: chatAccountResult?.chat?.taskId ?? null,
+      expectedFlowTaskId,
+    });
+    taskIdForExecution = resolvedContinuation.taskIdForExecution;
+    flowContinuationClearId = resolvedContinuation.flowContinuationClearId;
+    const armed = await resolveFlowSignalArming(subChatId, taskIdForExecution);
+    if (expectedFlowTaskId && armed.effectiveSignalTaskId !== expectedFlowTaskId) {
+      // Decline stale replies before claiming the chat or parking its successor.
+      const error = Object.assign(new Error('This Flow step changed. Refresh before replying.'), {
+        category: 'FLOW_RUN_ENDED',
+      });
+      executionAdmissionAcknowledged = true;
+      payload.onExecutionStarted?.(error);
+      sendRunErrorDirect({
+        chatId,
+        subChatId,
+        assistantMessageId: msgId,
+        error: error.message,
+        category: error.category,
+      });
+      return;
+    }
+
     log.info(`[Socket Executor] Starting execution for project ${projectId || '(general chat)'}`);
 
-    // 2. Set up abort controller for stop signals (abort any existing execution for this subChat first)
     const existing = getActiveExecution(subChatId);
     if (existing) {
       executionAbortSources.set(subChatId, 'duplicate-request');
@@ -873,14 +902,15 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
     }
     const abortController = new AbortController();
     executionAbortController = abortController;
-    // Drop a dead run's leftover reason (its `finally` may not have run; it already latched its
-    // own) — else the latch below mis-files this run's abort as that one's teardown.
+    // Clear the previous run's reason; its abort handler already latched its own value.
     executionAbortSources.delete(subChatId);
     abortReason = latchAbortReason(abortController.signal, executionAbortSources, subChatId);
     setActiveExecution(subChatId, abortController, localRendererWebContentsId, {
       chatId,
       assistantMessageId: msgId,
     });
+    executionAdmissionAcknowledged = true;
+    payload.onExecutionStarted?.();
     executionStreamEpoch = getExecutionStreamEpoch(subChatId, msgId);
     if (!executionStreamEpoch) throw new Error('Active execution was registered without an epoch');
     recordLiveStreamStart({
@@ -890,23 +920,9 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       streamEpoch: executionStreamEpoch,
     });
 
-    // 3. Resolve chat metadata first, then build multi-project context with explicit current context.
-    const chatAccountResult = chatId
-      ? await getChatWithProjectAccount(getDatabase(), chatId).catch(() => null)
-      : null;
     const workspace = await resolveChatWorkspace(project, chatAccountResult?.chat, mode);
     const { projectPath, permissionProjectPath } = workspace;
-    // 4. Resolve credential from account result
-    const { resolveFlowContinuationExecutionTask } = await import('../task-executor');
-    const resolvedContinuation = resolveFlowContinuationExecutionTask({
-      chatId: chatId ?? undefined,
-      chatRowTaskId: chatAccountResult?.chat?.taskId ?? null,
-      expectedFlowTaskId,
-    });
-    taskIdForExecution = resolvedContinuation.taskIdForExecution;
-    flowContinuationClearId = resolvedContinuation.flowContinuationClearId;
     // Flow-driven execution suppresses in-chat plan Approve; the run panel is the sole surface.
-    const armed = await resolveFlowSignalArming(subChatId, taskIdForExecution);
     const {
       isFlowDrivenExecution,
       flowPlanAutoApprove,
@@ -988,7 +1004,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       }
       linkedTaskPreparedForExecution = true;
     };
-    await flowResources.admit(armed, flowContinuationClearId, abortController, chatId);
+    await flowResources.admit(armed, expectedFlowTaskId ?? null, abortController, chatId);
     let storedCredential = await getDefaultClaudeCodeToken();
 
     const overrideAccount = chatAccountResult?.account;
@@ -2287,6 +2303,9 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       });
     }
   } finally {
+    if (!executionAdmissionAcknowledged) {
+      payload.onExecutionStarted?.(new Error('The chat could not start. Refresh and try again.'));
+    }
     await claudeMcpConfig?.clear();
     const fallbackSignalFailure: { current: { cause: unknown } | null } = { current: null };
     // Typed-reply decline-and-convert: staged BEFORE settle — the run's final activity

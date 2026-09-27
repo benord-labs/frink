@@ -51,14 +51,13 @@ vi.mock('../credentials', () => ({
 }));
 
 import { registerPendingDispatchMode } from '../task-executor/dispatch-registry';
-import {
-  onExecuteRequest,
-  sendMessage,
-} from './client';
+import { onExecuteRequest, sendMessage } from './client';
 
 describe('socket client chat dispatch', () => {
   it('sendMessage notifies local executor listeners', async () => {
-    const listener = vi.fn();
+    const listener = vi.fn((payload: { onExecutionStarted?: () => void }) =>
+      payload.onExecutionStarted?.(),
+    );
     const off = onExecuteRequest(listener);
     try {
       await sendMessage({
@@ -92,7 +91,9 @@ describe('socket client chat dispatch', () => {
 
     it('absent intent → dispatches the row-resolved mode', async () => {
       resolveSendModeMock.mockResolvedValueOnce('plan');
-      const listener = vi.fn();
+      const listener = vi.fn((payload: { onExecutionStarted?: () => void }) =>
+        payload.onExecutionStarted?.(),
+      );
       const off = onExecuteRequest(listener);
       try {
         await sendMessage(basePayload());
@@ -111,7 +112,9 @@ describe('socket client chat dispatch', () => {
     });
 
     it('explicit intent → passed to resolution and dispatched', async () => {
-      const listener = vi.fn();
+      const listener = vi.fn((payload: { onExecutionStarted?: () => void }) =>
+        payload.onExecutionStarted?.(),
+      );
       const off = onExecuteRequest(listener);
       try {
         await sendMessage(basePayload({ mode: 'agent' }));
@@ -127,7 +130,9 @@ describe('socket client chat dispatch', () => {
     // machine-turn amendment).
     it('task-dispatched send → task mode overrides a renderer-carried intent', async () => {
       registerPendingDispatchMode('s-dispatch', 'task-d1', 'plan');
-      const listener = vi.fn();
+      const listener = vi.fn((payload: { onExecutionStarted?: () => void }) =>
+        payload.onExecutionStarted?.(),
+      );
       const off = onExecuteRequest(listener);
       try {
         await sendMessage(
@@ -150,7 +155,9 @@ describe('socket client chat dispatch', () => {
       resolveSendModeMock.mockRejectedValueOnce(new Error('row write failed'));
       await expect(sendMessage(dispatched())).rejects.toThrow(/row write failed/);
 
-      const listener = vi.fn();
+      const listener = vi.fn((payload: { onExecutionStarted?: () => void }) =>
+        payload.onExecutionStarted?.(),
+      );
       const off = onExecuteRequest(listener);
       try {
         await sendMessage(dispatched());
@@ -163,7 +170,9 @@ describe('socket client chat dispatch', () => {
 
     it('user reply on a sub-chat with a dispatch record → intent/row resolution untouched', async () => {
       registerPendingDispatchMode('s-reply', 'task-d3', 'plan');
-      const listener = vi.fn();
+      const listener = vi.fn((payload: { onExecutionStarted?: () => void }) =>
+        payload.onExecutionStarted?.(),
+      );
       const off = onExecuteRequest(listener);
       try {
         await sendMessage(

@@ -94,6 +94,24 @@ describe('resumeFlowRun — admission lease', () => {
     expect(advanceFlowRun).not.toHaveBeenCalled();
   });
 
+  it('rejects a stale node after another client advances and pauses the run elsewhere', async () => {
+    const { flowRunId } = await seedFlowRun(db, GRAPH);
+    await setFlowRunStatus(db, flowRunId, 'paused');
+    const node = await createNodeRun(db, {
+      flowRunId,
+      nodeId: 'a',
+      blockType: 'agent',
+      status: 'awaiting_input',
+    });
+    (loadRunContext as Mock).mockImplementationOnce(async () => {
+      await setNodeRunStatus(db, node.id, 'completed');
+      return { graph: GRAPH };
+    });
+    await expect(resumeFlowRun(flowRunId, 'approve', node.id)).rejects.toThrow('already changed');
+    expect((await getFlowRun(db, flowRunId))?.status).toBe('paused');
+    expect(advanceFlowRun).not.toHaveBeenCalled();
+  });
+
   it('does not resurrect a run cancelled while its admission is being checked', async () => {
     const { flowRunId } = await seedFlowRun(db, GRAPH);
     await setFlowRunStatus(db, flowRunId, 'paused');
