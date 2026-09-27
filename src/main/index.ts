@@ -14,11 +14,9 @@ const PID_REGEX = /-(\d+)$/;
 
 import { initAnalytics, shutdown as shutdownAnalytics, trackAppOpened } from './lib/analytics';
 import {
+  buildUpdateMenuItem,
   checkForUpdates,
-  downloadUpdate,
   initAutoUpdater,
-  installDownloadedUpdate,
-  isUpdateDownloadedPending,
   setupFocusUpdateCheck,
 } from './lib/auto-updater';
 import { getBundledClaudeVersion } from './lib/claude';
@@ -416,26 +414,10 @@ if (gotTheLock) {
           label: app.name,
           submenu: [
             { role: 'about', label: 'About Frink' },
-            {
-              label: updateAvailable ? `Update to v${availableVersion}...` : 'Check for Updates...',
-              click: () => {
-                // Send event to renderer to clear dismiss state
-                const win = getWindow();
-                if (win) {
-                  win.webContents.send('update:manual-check');
-                }
-                // If update is already available, start downloading immediately
-                if (updateAvailable) {
-                  if (isUpdateDownloadedPending()) {
-                    installDownloadedUpdate();
-                  } else {
-                    downloadUpdate();
-                  }
-                } else {
-                  checkForUpdates(true);
-                }
-              },
-            },
+            buildUpdateMenuItem(getWindow, {
+              available: updateAvailable,
+              version: availableVersion,
+            }),
             { type: 'separator' },
             {
               label: isCliInstalled()

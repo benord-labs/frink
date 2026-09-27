@@ -105,5 +105,5 @@ if (failures.length > 0) {
 }
 
 console.log(
-  '[upload-to-r2] Done. Files are live at https://pub-c942ee0fa0a549ef8d66096bd831507b.r2.dev/',
+  `[upload-to-r2] Done. Files are live at ${process.env.MAIN_VITE_UPDATE_FEED_URL?.trim() || 'the bucket public URL'}`,
 );

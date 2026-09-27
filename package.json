@@ -22,7 +22,7 @@
     "package:win": "electron-builder --win",
     "package:linux": "electron-builder --linux",
     "dist": "electron-builder",
-    "release": "rm -rf release && bun run claude:download && bun run codex:download && SENTRY_UPLOAD=1 bun run build && bun --env-file=.env run package:mac && bun --env-file=.env scripts/publish/upload-to-r2.mjs",
+    "release": "bun --env-file=.env scripts/publish/assert-release-env.mjs && rm -rf release && bun run claude:download && bun run codex:download && SENTRY_UPLOAD=1 bun run build && bun --env-file=.env run package:mac && bun --env-file=.env scripts/publish/upload-to-r2.mjs",
     "claude:download": "node scripts/binaries/download-claude-binary.mjs",
     "claude:download:all": "node scripts/binaries/download-claude-binary.mjs --all",
     "codex:build": "node scripts/binaries/build-codex-frink.mjs",

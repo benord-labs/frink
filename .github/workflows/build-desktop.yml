@@ -161,6 +161,22 @@ jobs:
           name: frink-codex-${{ matrix.platformKey }}
           path: resources/bin/${{ matrix.platformKey }}/
 
+      - name: Assert release update feed
+        # A tag build that publishes to R2 is an official release: it must bake in the update feed,
+        # or every user who installs it is stranded with auto-update off (sc-3780). Fork tag builds
+        # without R2 creds skip this, so they build (updater off) instead of failing. Same validator
+        # as `bun run release`, so a quoted or http value fails here, not silently in the app.
+        if: >-
+          startsWith(github.ref, 'refs/tags/')
+          && env.R2_ACCESS_KEY_ID != '' && env.R2_SECRET_ACCESS_KEY != '' && env.R2_ACCOUNT_ID != ''
+        shell: bash
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          MAIN_VITE_UPDATE_FEED_URL: ${{ vars.UPDATE_FEED_URL }}
+        run: bun scripts/publish/assert-release-env.mjs
+
       - name: Build (electron-vite)
         # NOT `bun run build` — that script inlines `NODE_OPTIONS='…' electron-vite build` (POSIX sh
         # prefix), which doesn't carry on Windows. Set the heap bump as step env + call the parts.
@@ -174,6 +190,16 @@ jobs:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+          # Baked in at build time (electron-vite loadEnv reads MAIN_VITE_/VITE_ from the step env).
+          # Official Win/Linux releases match the mac release (docs/decisions/update-feed-ownership.md).
+          # Forks have none of these set: the updater stays off and every telemetry init no-ops.
+          MAIN_VITE_UPDATE_FEED_URL: ${{ vars.UPDATE_FEED_URL }}
+          MAIN_VITE_POSTHOG_KEY: ${{ secrets.MAIN_VITE_POSTHOG_KEY }}
+          MAIN_VITE_POSTHOG_HOST: ${{ vars.MAIN_VITE_POSTHOG_HOST }}
+          VITE_POSTHOG_KEY: ${{ secrets.VITE_POSTHOG_KEY }}
+          VITE_POSTHOG_HOST: ${{ vars.VITE_POSTHOG_HOST }}
+          MAIN_VITE_SENTRY_DSN: ${{ secrets.MAIN_VITE_SENTRY_DSN }}
+          RENDERER_VITE_SENTRY_DSN: ${{ secrets.RENDERER_VITE_SENTRY_DSN }}
 
       - name: Package installers
         shell: bash

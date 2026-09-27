@@ -55,11 +55,24 @@ vi.mock('electron-updater', () => ({
 import { app } from 'electron';
 import log from 'electron-log';
 import {
+  buildUpdateMenuItem,
   checkForUpdates,
   classifyUpdate,
+  downloadUpdate,
   initAutoUpdater,
+  isAutoUpdateEnabled,
   setupFocusUpdateCheck,
 } from './auto-updater';
+
+const FEED = 'https://feed.example/frink/';
+
+// Every suite below runs as an official build unless it stubs the feed away.
+beforeEach(() => {
+  vi.stubEnv('MAIN_VITE_UPDATE_FEED_URL', FEED);
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 /** Mock `app` from vi.mock is a plain object; Electron types mark `isPackaged` readonly. */
 function setAppIsPackaged(value: boolean): void {
@@ -115,14 +128,9 @@ describe('initAutoUpdater', () => {
   it('configures generic feed URL, registers updater listeners, and IPC handlers', async () => {
     await initAutoUpdater(mockGetWindow);
 
-    expect(setFeedURLMock).toHaveBeenCalledWith({
-      provider: 'generic',
-      url: expect.stringContaining('r2.dev'),
-    });
+    expect(setFeedURLMock).toHaveBeenCalledWith({ provider: 'generic', url: FEED });
     expect(autoUpdaterMock.on).toHaveBeenCalled();
-    expect(vi.mocked(log.info)).toHaveBeenCalledWith(
-      expect.stringContaining('Initialized with R2 provider'),
-    );
+    expect(vi.mocked(log.info)).toHaveBeenCalledWith(expect.stringContaining(FEED));
     expect(ipcHandlers.has('update:check')).toBe(true);
     expect(ipcHandlers.has('update:download')).toBe(true);
     expect(ipcHandlers.has('update:install')).toBe(true);
@@ -243,5 +251,146 @@ describe('setupFocusUpdateCheck', () => {
     await focusHandler?.();
     // checkForUpdates will be called (regardless of CDN_BASE outcome)
     // The key guarantee is it does not throw
+  });
+});
+
+describe('update feed not configured (fork / self-built package)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    ipcHandlers.clear();
+    setAppIsPackaged(true);
+    vi.stubEnv('MAIN_VITE_UPDATE_FEED_URL', '');
+  });
+
+  function focusHandlers(): Array<() => unknown> {
+    const onCalls = vi.mocked(app.on).mock.calls as Array<[string, () => unknown]>;
+    return onCalls.filter(([event]) => event === 'browser-window-focus').map(([, cb]) => cb);
+  }
+
+  it('reports the updater as disabled', () => {
+    expect(isAutoUpdateEnabled()).toBe(false);
+  });
+
+  it('never sets a feed URL or wires updater listeners, but still answers IPC', async () => {
+    await initAutoUpdater(mockGetWindow);
+
+    expect(setFeedURLMock).not.toHaveBeenCalled();
+    expect(autoUpdaterMock.on).not.toHaveBeenCalled();
+    expect(vi.mocked(log.info)).toHaveBeenCalledWith(
+      expect.stringContaining('MAIN_VITE_UPDATE_FEED_URL'),
+    );
+    for (const channel of [
+      'update:check',
+      'update:download',
+      'update:install',
+      'update:get-state',
+    ]) {
+      expect(ipcHandlers.has(channel)).toBe(true);
+    }
+  });
+
+  // Without setFeedURL, electron-updater falls back to app-update.yml — generated from
+  // package.json build.publish.url, i.e. the maintainer's feed. Every entry point must refuse.
+  it('forced checkForUpdates (startup and menu path) never reaches electron-updater', async () => {
+    await expect(checkForUpdates(true)).resolves.toBeNull();
+    expect(checkForUpdatesMock).not.toHaveBeenCalled();
+  });
+
+  it('downloadUpdate (menu "Update to…" path) never reaches electron-updater', async () => {
+    await expect(downloadUpdate()).resolves.toBe(false);
+    expect(autoUpdaterMock.downloadUpdate).not.toHaveBeenCalled();
+  });
+
+  it('renderer update:check and update:download IPC resolve without touching the updater', async () => {
+    await initAutoUpdater(mockGetWindow);
+
+    await expect(ipcHandlers.get('update:check')?.({})).resolves.toBeNull();
+    await expect(ipcHandlers.get('update:download')?.({})).resolves.toBe(false);
+    expect(checkForUpdatesMock).not.toHaveBeenCalled();
+    expect(autoUpdaterMock.downloadUpdate).not.toHaveBeenCalled();
+  });
+
+  it('attaches no window-focus check', () => {
+    setupFocusUpdateCheck(mockGetWindow);
+    expect(focusHandlers()).toHaveLength(0);
+  });
+
+  it('treats a non-https feed as unset', async () => {
+    vi.stubEnv('MAIN_VITE_UPDATE_FEED_URL', 'http://feed.example/');
+    expect(isAutoUpdateEnabled()).toBe(false);
+    await initAutoUpdater(mockGetWindow);
+    expect(setFeedURLMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('update feed configured', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setAppIsPackaged(true);
+  });
+
+  it('passes the normalised build-time feed to electron-updater', async () => {
+    vi.stubEnv('MAIN_VITE_UPDATE_FEED_URL', ' https://feed.example/frink \n');
+    expect(isAutoUpdateEnabled()).toBe(true);
+    await initAutoUpdater(mockGetWindow);
+    expect(setFeedURLMock).toHaveBeenCalledWith({ provider: 'generic', url: FEED });
+  });
+
+  it('downloadUpdate reaches electron-updater', async () => {
+    await expect(downloadUpdate()).resolves.toBe(true);
+    expect(autoUpdaterMock.downloadUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it('focus handler performs a real check', async () => {
+    setupFocusUpdateCheck(mockGetWindow);
+    const onCalls = vi.mocked(app.on).mock.calls as Array<[string, () => unknown]>;
+    const handler = onCalls.filter(([event]) => event === 'browser-window-focus').at(-1)?.[1];
+    // A prior test may have stamped lastCheckTime; force a fresh interval window.
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.now() + 120_000);
+    await handler?.();
+    vi.useRealTimers();
+    expect(checkForUpdatesMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('buildUpdateMenuItem', () => {
+  const send = vi.fn();
+  const win = { webContents: { send } } as unknown as Electron.BrowserWindow;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setAppIsPackaged(true);
+  });
+
+  it('is hidden when the build has no update feed (fork / self-built)', () => {
+    vi.stubEnv('MAIN_VITE_UPDATE_FEED_URL', '');
+    expect(buildUpdateMenuItem(() => win, { available: false, version: null }).visible).toBe(false);
+  });
+
+  it('is visible and labelled "Check for Updates..." when a feed is configured', () => {
+    const item = buildUpdateMenuItem(() => win, { available: false, version: null });
+    expect(item.visible).toBe(true);
+    expect(item.label).toBe('Check for Updates...');
+  });
+
+  it('click with no known update forces a check and tells the renderer', async () => {
+    const item = buildUpdateMenuItem(() => win, { available: false, version: null });
+    item.click?.({} as never, undefined, {} as never);
+    expect(send).toHaveBeenCalledWith('update:manual-check');
+    expect(checkForUpdatesMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('click with an update available but not downloaded starts the download', () => {
+    const item = buildUpdateMenuItem(() => win, { available: true, version: '1.0.1' });
+    expect(item.label).toBe('Update to v1.0.1...');
+    item.click?.({} as never, undefined, {} as never);
+    expect(autoUpdaterMock.downloadUpdate).toHaveBeenCalledTimes(1);
+    expect(checkForUpdatesMock).not.toHaveBeenCalled();
+  });
+
+  it('click survives a closed window (no renderer to notify)', () => {
+    const item = buildUpdateMenuItem(() => null, { available: false, version: null });
+    expect(() => item.click?.({} as never, undefined, {} as never)).not.toThrow();
   });
 });
