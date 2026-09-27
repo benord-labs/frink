@@ -10,7 +10,7 @@ import type { ReactElement } from 'react';
 import { flushSync } from 'react-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runLiveAtomFamily, runSettlingAtomFamily } from '@/lib/stores/active-transport-registry';
-import { createQueueItem } from '../lib/queue-utils';
+import { createQueueItem, FLOW_DISPATCH_SOURCE } from '../lib/queue-utils';
 import { useMessageQueueStore } from '../stores/message-queue-store';
 import { useStreamingStatusStore } from '../stores/streaming-status-store';
 import { QUEUE_PROCESS_DELAY_MS, QueueProcessor } from './queue-processor';
@@ -20,6 +20,8 @@ const SUB_CHAT_ID = 'sub-chat-queue-drain';
 const {
   mockAppStoreGet,
   mockAppStoreSet,
+  mockAppStoreSub,
+  atomListeners,
   mockGetChat,
   mockGetParentChatId,
   mockSendMessage,
@@ -29,6 +31,8 @@ const {
 } = vi.hoisted(() => ({
   mockAppStoreGet: vi.fn(),
   mockAppStoreSet: vi.fn(),
+  mockAppStoreSub: vi.fn(),
+  atomListeners: new Map<unknown, Set<() => void>>(),
   mockGetChat: vi.fn(),
   mockGetParentChatId: vi.fn(() => null),
   mockSendMessage: vi.fn(),
@@ -62,7 +66,7 @@ const mockApiUtils = {
 
 vi.mock('../../../lib/analytics', () => ({ trackMessageSent: vi.fn() }));
 vi.mock('../../../lib/jotai-store', () => ({
-  appStore: { get: mockAppStoreGet, set: mockAppStoreSet },
+  appStore: { get: mockAppStoreGet, set: mockAppStoreSet, sub: mockAppStoreSub },
 }));
 vi.mock('sonner', () => ({ toast: { error: vi.fn() } }));
 vi.mock('../../sidebar/unified/sidebar-chat-activity', () => ({
@@ -140,8 +144,17 @@ describe('QueueProcessor — multi-item queue drain', () => {
       if (atomValues.has(atom)) return atomValues.get(atom);
       return String(atom).startsWith('approvedPlanIds:') ? new Set<string>() : undefined;
     });
+    atomListeners.clear();
     mockAppStoreSet.mockImplementation((atom: unknown, value: unknown) => {
       atomValues.set(atom, value);
+      for (const listener of [...(atomListeners.get(atom) ?? [])]) listener();
+    });
+    mockAppStoreSub.mockReset();
+    mockAppStoreSub.mockImplementation((atom: unknown, listener: () => void) => {
+      const listeners = atomListeners.get(atom) ?? new Set<() => void>();
+      listeners.add(listener);
+      atomListeners.set(atom, listeners);
+      return () => listeners.delete(listener);
     });
     mockArmApprovedPlanState.mockReset();
     mockArmApprovedPlanState.mockImplementation((subChatId: string, context: unknown) => {
@@ -450,13 +463,64 @@ describe('QueueProcessor — multi-item queue drain', () => {
     });
     expect(mockSendMessage).not.toHaveBeenCalled();
 
-    // Settle: the live-run lane flips the flag and writes the status store, nothing else.
+    // Settle of an observed run (no local transport): the lane flips the flag and writes status.
     mockAppStoreSet(runLiveAtomFamily(SUB_CHAT_ID), false);
     await act(async () => {
       useStreamingStatusStore.getState().setStatus(SUB_CHAT_ID, 'ready');
       await vi.advanceTimersByTimeAsync(QUEUE_PROCESS_DELAY_MS);
     });
     expect(mockSendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('drains a held flow prompt when main settles a turn this window owns (no status write)', async () => {
+    // A locally owned turn: the settle publish flips runLive and never touches the status store,
+    // so the flag clearing is the only edge that can release the queued item.
+    mockAppStoreSet(runLiveAtomFamily(SUB_CHAT_ID), true);
+    useStreamingStatusStore.getState().setStatus(SUB_CHAT_ID, 'ready');
+    useMessageQueueStore.setState({
+      queues: {
+        [SUB_CHAT_ID]: [
+          { ...createQueueItem('q-flow', 'next node'), source: FLOW_DISPATCH_SOURCE },
+        ],
+      },
+    });
+
+    renderQueueProcessor();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(QUEUE_PROCESS_DELAY_MS * 3);
+    });
+    expect(mockSendMessage).not.toHaveBeenCalled();
+
+    await act(async () => {
+      mockAppStoreSet(runLiveAtomFamily(SUB_CHAT_ID), false);
+      await vi.advanceTimersByTimeAsync(QUEUE_PROCESS_DELAY_MS);
+    });
+    expect(mockSendMessage).toHaveBeenCalledTimes(1);
+    expect(atomListeners.get(runLiveAtomFamily(SUB_CHAT_ID))?.size ?? 0).toBe(0);
+  });
+
+  it('keeps one settle watcher per held sub-chat and drops it on unmount', async () => {
+    mockAppStoreSet(runLiveAtomFamily(SUB_CHAT_ID), true);
+    useStreamingStatusStore.getState().setStatus(SUB_CHAT_ID, 'ready');
+    useMessageQueueStore.setState({
+      queues: { [SUB_CHAT_ID]: [createQueueItem('q-held', 'held')] },
+    });
+
+    const { unmount } = renderQueueProcessor();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(QUEUE_PROCESS_DELAY_MS);
+      useStreamingStatusStore.getState().setStatus(SUB_CHAT_ID, 'ready');
+      await vi.advanceTimersByTimeAsync(QUEUE_PROCESS_DELAY_MS);
+    });
+    expect(atomListeners.get(runLiveAtomFamily(SUB_CHAT_ID))?.size).toBe(1);
+
+    unmount();
+    expect(atomListeners.get(runLiveAtomFamily(SUB_CHAT_ID))?.size).toBe(0);
+    mockAppStoreSet(runLiveAtomFamily(SUB_CHAT_ID), false);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(QUEUE_PROCESS_DELAY_MS * 2);
+    });
+    expect(mockSendMessage).not.toHaveBeenCalled();
   });
 
   describe('a turn queued after this window’s stream closed, while main settles it', () => {
