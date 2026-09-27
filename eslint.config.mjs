@@ -586,7 +586,7 @@ export default [
   // File-size + function-size limits. Source = 500/file + 200/function. Tests =
   // 2000/file (loose). Stub plugins register rule names for legacy inline disables.
   {
-    files: ['src/**/*.{ts,tsx}', 'relay/src/**/*.ts'],
+    files: ['src/**/*.{ts,tsx}', 'relay/src/**/*.ts', 'mobile/**/*.{ts,tsx}'],
     ignores: ['**/*.{test,spec}.{ts,tsx}'],
     languageOptions: {
       parser: tsParser,
@@ -613,7 +613,7 @@ export default [
   {
     // React components (.tsx): large connected render functions are legitimate —
     // per-function cap 300 (file cap stays 500). .ts logic stays 200.
-    files: ['src/**/*.tsx'],
+    files: ['src/**/*.tsx', 'mobile/**/*.tsx'],
     ignores: ['**/*.{test,spec}.tsx'],
     languageOptions: {
       parser: tsParser,

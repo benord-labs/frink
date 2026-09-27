@@ -1,0 +1,7 @@
+import { defineConfig } from 'vitest/config';
+import { fileURLToPath } from 'node:url';
+
+export default defineConfig({
+  resolve: { alias: { zod: fileURLToPath(new URL('./node_modules/zod', import.meta.url)) } },
+  test: { include: ['src/**/*.test.ts'], environment: 'node', maxWorkers: 1 },
+});
