@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 import type { FlowGraph } from '../../../shared/lib/validate-flow-graph';
 import { RESTART_INTERRUPTION_REASON } from '../../../shared/types/flow';
+import type { FlowResumeSnapshot } from '../../../shared/types/flow-run/resume';
 import { getFlowRun, setFlowRunStatus } from '../db/repos/flow-runs';
 import { createNodeRun, getNodeRun, setNodeRunStatus } from '../db/repos/node-runs';
 import {
@@ -75,6 +76,32 @@ describe('resumeFlowRun — admission lease', () => {
     });
   });
 
+  it('refuses snapshot-based retry before changing the paused run', async () => {
+    const { flowRunId } = await seedFlowRun(db, GRAPH);
+    await setFlowRunStatus(db, flowRunId, 'paused');
+    const node = await createNodeRun(db, {
+      flowRunId,
+      nodeId: 'a',
+      blockType: 'agent',
+      status: 'failed',
+    });
+    const snapshot: FlowResumeSnapshot = {
+      status: 'failed',
+      nodeOutput: null,
+      startedAt: null,
+      completedAt: null,
+      attemptIds: [node.id],
+    };
+    await expect(resumeFlowRun(flowRunId, 'retry', node.id, snapshot)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'Retry this step on your computer.',
+    });
+    expect((await getFlowRun(db, flowRunId))?.status).toBe('paused');
+    expect((await getNodeRun(db, node.id))?.status).toBe('failed');
+    expect(loadRunContext).not.toHaveBeenCalled();
+    expect(advanceFlowRun).not.toHaveBeenCalled();
+  });
+
   it('rejects a legacy paused run before mutating it when no active slot exists', async () => {
     const { flowRunId } = await seedFlowRun(db, GRAPH);
     await setFlowRunStatus(db, flowRunId, 'paused');
@@ -110,6 +137,77 @@ describe('resumeFlowRun — admission lease', () => {
     await expect(resumeFlowRun(flowRunId, 'approve', node.id)).rejects.toThrow('already changed');
     expect((await getFlowRun(db, flowRunId))?.status).toBe('paused');
     expect(advanceFlowRun).not.toHaveBeenCalled();
+  });
+
+  it('rejects a changed park on the same node after loading context', async () => {
+    const { flowRunId } = await seedFlowRun(db, GRAPH);
+    await setFlowRunStatus(db, flowRunId, 'paused');
+    const node = await createNodeRun(db, {
+      flowRunId,
+      nodeId: 'a',
+      blockType: 'agent',
+      status: 'awaiting_input',
+    });
+    const snapshot: FlowResumeSnapshot = {
+      status: 'awaiting_input',
+      nodeOutput: null,
+      startedAt: null,
+      completedAt: null,
+      attemptIds: [node.id],
+    };
+    (loadRunContext as Mock).mockImplementationOnce(async () => {
+      await setNodeRunStatus(db, node.id, 'running', { nodeOutput: null });
+      await setNodeRunStatus(db, node.id, 'awaiting_input', {
+        nodeOutput: { signal: 'awaiting_input' },
+      });
+      return { graph: GRAPH };
+    });
+    await expect(resumeFlowRun(flowRunId, 'approve', node.id, snapshot)).rejects.toThrow(
+      'already changed',
+    );
+    expect((await getFlowRun(db, flowRunId))?.status).toBe('paused');
+    expect(advanceFlowRun).not.toHaveBeenCalled();
+  });
+
+  it('reports a stale snapshot refused by the final atomic node write', async () => {
+    const { flowRunId } = await seedFlowRun(db, GRAPH);
+    await setFlowRunStatus(db, flowRunId, 'paused');
+    const node = await createNodeRun(db, {
+      flowRunId,
+      nodeId: 'a',
+      blockType: 'agent',
+      status: 'awaiting_input',
+    });
+    const snapshot: FlowResumeSnapshot = {
+      status: 'awaiting_input',
+      nodeOutput: null,
+      startedAt: null,
+      completedAt: null,
+      attemptIds: [node.id],
+    };
+    holder.hasActiveFlowAdmission.mockResolvedValue(true);
+    (advanceFlowRun as Mock).mockImplementationOnce(
+      async (_run, id, _output, _driver, expected) => {
+        await setNodeRunStatus(db, id, 'awaiting_input', {
+          nodeOutput: { signal: 'awaiting_input' },
+        });
+        return Boolean(
+          await setNodeRunStatus(db, id, 'completed', { expectResumeSnapshot: expected }),
+        );
+      },
+    );
+    await expect(resumeFlowRun(flowRunId, 'approve', node.id, snapshot)).rejects.toThrow(
+      'already changed',
+    );
+    expect(advanceFlowRun).toHaveBeenCalledWith(
+      flowRunId,
+      node.id,
+      expect.anything(),
+      undefined,
+      snapshot,
+    );
+    expect((await getFlowRun(db, flowRunId))?.status).toBe('paused');
+    expect((await getNodeRun(db, node.id))?.status).toBe('awaiting_input');
   });
 
   it('does not resurrect a run cancelled while its admission is being checked', async () => {

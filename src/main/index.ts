@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { app, BrowserWindow, dialog, Menu, shell } from 'electron';
 import log from 'electron-log';
 import { AUTH_SERVER_PORT, IS_DEV, PROTOCOL } from './constants';
-import { configureMainLog } from './lib/diagnostics/main-log';
+import { configureMainLog, getMainLogPath } from './lib/diagnostics/main-log';
 
 configureMainLog();
 
@@ -33,6 +33,7 @@ import { registerAttachmentSchemeAsPrivileged } from './lib/flows/attachments-pr
 import { runStartupRecoveryAndLoops } from './lib/flows/startup';
 import { cleanupGitWatchers } from './lib/git/watcher';
 import { cancelAllPendingOAuth, handleMcpOAuthCallback } from './lib/mcp-auth';
+import { initializeMobileAccess, stopMobileAccess } from './lib/mobile';
 import { shellOpenExternalGuarded } from './lib/open-external-guarded';
 import { setDocsLoader } from './lib/permissions/v2/check';
 import { resolveScopes } from './lib/permissions/v2/scope-resolver';
@@ -77,15 +78,6 @@ assertRigHomeIsolated();
 // URL configuration (exported for use in other modules)
 export function getAppUrl(): string {
   return process.env.ELECTRON_RENDERER_URL || 'http://localhost:3000';
-}
-
-function getMainLogPath(): string {
-  try {
-    const path = log.transports.file.getFile().path;
-    return typeof path === 'string' && path.length > 0 ? path : 'unknown';
-  } catch {
-    return 'unknown';
-  }
 }
 
 // Handle deep link
@@ -608,6 +600,11 @@ if (gotTheLock) {
 
     await runStartupRecoveryAndLoops();
 
+    // Mobile access is opt-in; a port conflict must not prevent local work.
+    await initializeMobileAccess().catch((error: unknown) => {
+      log.warn('[Mobile] Could not restore mobile access:', error);
+    });
+
     // Create main window
     log.info('[Main] Creating main window...');
     createMainWindow();
@@ -751,6 +748,7 @@ if (gotTheLock) {
     try {
       // ── Phase 1: Stop event sources (sync — prevents new work) ──
       stopHeapWatch();
+      await stopMobileAccess();
       cancelAllPendingOAuth();
       getTaskPoller().stop();
       // Held and idle CLI sessions stand down before Phase 2 kills child processes.

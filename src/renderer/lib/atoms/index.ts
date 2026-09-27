@@ -37,6 +37,7 @@ export type SettingsTab =
   | 'permissions'
   | 'appearance'
   | 'preferences'
+  | 'mobile'
   | 'models'
   | 'skills'
   | 'agents'

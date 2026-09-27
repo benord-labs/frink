@@ -12,9 +12,12 @@ import {
   notInArray,
   or,
 } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/sqlite-core';
 import { RESTART_INTERRUPTION_REASON } from '../../../../shared/types/flow';
+import type { FlowResumeSnapshot } from '../../../../shared/types/flow-run/resume';
 import type { getDatabase } from '../index';
-import { flowRuns, type NewNodeRun, type NodeRun, nodeRuns, tasks } from '../schema';
+import { flowRuns, type NewNodeRun, type NodeRun, nodeRuns, subChats, tasks } from '../schema';
+import { latestFlowTaskForSubChatId } from './task-queries/subchat-driver';
 
 type Db = ReturnType<typeof getDatabase>;
 
@@ -45,7 +48,7 @@ export async function listNodeRunsForFlowRun(db: Db, flowRunId: string): Promise
     .select()
     .from(nodeRuns)
     .where(eq(nodeRuns.flowRunId, flowRunId))
-    .orderBy(asc(nodeRuns.createdAt));
+    .orderBy(asc(nodeRuns.createdAt), asc(drizzleSql`rowid`));
 }
 
 /**
@@ -222,6 +225,7 @@ export async function setNodeRunStatus(
     /** Same-statement guard: write only while the DRIVING task is still the exact row the caller
      * read (status + result JSON) — a resumed or re-parked task never gets a stale node. */
     expectDrivingTask?: { id: string; status: string; result: unknown };
+    expectResumeSnapshot?: FlowResumeSnapshot;
   } = {},
 ): Promise<NodeRun | null> {
   const update: Partial<NodeRun> = { status };
@@ -232,6 +236,8 @@ export async function setNodeRunStatus(
   if (patch.expectStatuses) {
     guards.push(inArray(nodeRuns.status, [...patch.expectStatuses]));
   }
+  if (patch.expectResumeSnapshot)
+    guards.push(resumeSnapshotGuard(db, id, patch.expectResumeSnapshot));
   if (patch.expectDrivingTask) {
     const { id: taskId, status: taskStatus, result } = patch.expectDrivingTask;
     const sameRow = and(
@@ -254,6 +260,82 @@ export async function setNodeRunStatus(
     .where(and(...guards))
     .returning();
   return row ?? null;
+}
+
+/** A resume is valid only for the exact park and latest attempt that the user reviewed. */
+function resumeSnapshotGuard(db: Db, id: string, snapshot: FlowResumeSnapshot) {
+  const attempt = alias(nodeRuns, 'resume_attempt');
+  const guards = [
+    drizzleSql`${id} = ${snapshot.attemptIds.at(-1) ?? null}`,
+    eq(nodeRuns.status, snapshot.status),
+    drizzleSql`json(coalesce(${nodeRuns.nodeOutput}, 'null')) IS json(${JSON.stringify(snapshot.nodeOutput ?? null)})`,
+    drizzleSql`${nodeRuns.startedAt} IS ${snapshot.startedAt ? Date.parse(snapshot.startedAt) / 1000 : null}`,
+    drizzleSql`${nodeRuns.completedAt} IS ${snapshot.completedAt ? Date.parse(snapshot.completedAt) / 1000 : null}`,
+    notExists(
+      db
+        .select({ one: drizzleSql`1` })
+        .from(attempt)
+        .where(
+          and(
+            eq(attempt.flowRunId, nodeRuns.flowRunId),
+            eq(attempt.nodeId, nodeRuns.nodeId),
+            drizzleSql`${attempt.laneIndex} IS ${nodeRuns.laneIndex}`,
+            drizzleSql`${attempt.parentFanOutNodeRunId} IS ${nodeRuns.parentFanOutNodeRunId}`,
+            notInArray(attempt.id, snapshot.attemptIds),
+          ),
+        ),
+    ),
+  ];
+  if (snapshot.drivingTask) {
+    const task = snapshot.drivingTask;
+    guards.push(
+      exists(
+        db
+          .select({ one: drizzleSql`1` })
+          .from(tasks)
+          .where(
+            and(
+              eq(tasks.id, task.id),
+              eq(tasks.nodeRunId, id),
+              eq(tasks.status, task.status),
+              snapshot.plan
+                ? eq(tasks.id, latestFlowTaskForSubChatId(db, snapshot.plan.subChatId))
+                : undefined,
+              drizzleSql`json(coalesce(${tasks.result}, 'null')) IS json(${JSON.stringify(task.result ?? null)})`,
+            ),
+          ),
+      ),
+    );
+  }
+  if (snapshot.plan)
+    guards.push(
+      exists(
+        db
+          .select({ one: drizzleSql`1` })
+          .from(subChats)
+          .where(
+            and(
+              eq(subChats.id, snapshot.plan.subChatId),
+              drizzleSql`json(${subChats.messages}) IS json(${JSON.stringify(snapshot.plan.messages)})`,
+            ),
+          ),
+      ),
+    );
+  return and(...guards)!;
+}
+
+export function nodeMatchesResumeSnapshot(
+  db: Db,
+  id: string,
+  snapshot: FlowResumeSnapshot,
+): boolean {
+  return Boolean(
+    db
+      .select({ id: nodeRuns.id })
+      .from(nodeRuns)
+      .where(and(eq(nodeRuns.id, id), resumeSnapshotGuard(db, id, snapshot)))
+      .get(),
+  );
 }
 
 /**

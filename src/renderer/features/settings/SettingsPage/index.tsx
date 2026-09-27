@@ -21,6 +21,7 @@ import {
   Eye,
   Keyboard,
   Settings,
+  Smartphone,
   ToolCase,
 } from 'lucide-react';
 import { useEffect } from 'react';
@@ -30,6 +31,7 @@ import { AgentsCustomAgentsTab } from '../../../components/dialogs/settings-tabs
 import { AgentsHooksTab } from '../../../components/dialogs/settings-tabs/AgentsHooksTab';
 import { AgentsMcpTab } from '../../../components/dialogs/settings-tabs/AgentsMcpTab';
 import { AgentsModelsTab } from '../../../components/dialogs/settings-tabs/AgentsModelsTab';
+import { MobileSettingsTab } from '../../../components/dialogs/settings-tabs/MobileSettingsTab';
 import { AgentsPermissionsTab } from '../../../components/dialogs/settings-tabs/AgentsPermissionsTab';
 import { AgentsSkillsTab } from '../../../components/dialogs/settings-tabs/AgentsSkillsTab';
 import { AgentsUsageTab } from '../../../components/dialogs/settings-tabs/AgentsUsageTab';
@@ -95,6 +97,7 @@ const SETTINGS_NAV_SECTIONS: readonly SettingsNavSection[] = [
       { id: 'usage', label: 'Usage', icon: Gauge },
       { id: 'appearance', label: 'Appearance', icon: Eye },
       { id: 'keyboard', label: 'Shortcuts', icon: Keyboard },
+      { id: 'mobile', label: 'Mobile', icon: Smartphone },
     ],
   },
   {
@@ -289,6 +292,8 @@ export function SettingsPage({ onClose }: Props) {
         return <AgentsKeyboardTab />;
       case 'preferences':
         return <AgentsPreferencesTab />;
+      case 'mobile':
+        return <MobileSettingsTab />;
       case 'debug':
         return <AgentsDebugTab />;
       default:

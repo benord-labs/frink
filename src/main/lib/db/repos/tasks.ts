@@ -17,6 +17,7 @@ import {
   type WorkQueueSection,
 } from './task-queries';
 import { drivingFlowTaskOnSubChat, pausedFlowRun } from './task-queries/run-liveness';
+import { latestFlowTaskForSubChatId } from './task-queries/subchat-driver';
 
 type Db = ReturnType<typeof getDatabase>;
 
@@ -104,15 +105,7 @@ export async function getLatestFlowTaskForSubChat(
   const rows = await db
     .select({ id: tasks.id, status: tasks.status, flowRunId: tasks.flowRunId })
     .from(tasks)
-    .where(
-      and(
-        eq(tasks.source, 'flow'),
-        drizzleSql`json_extract(${tasks.result}, '$.subChatId') = ${subChatId}`,
-      ),
-    )
-    // rowid breaks createdAt ties: an upstream `done` node task and the later `cancelled` driving
-    // task can share a millisecond, and the cancelled one (inserted last) must win.
-    .orderBy(desc(tasks.createdAt), desc(drizzleSql`rowid`))
+    .where(eq(tasks.id, latestFlowTaskForSubChatId(db, subChatId)))
     .limit(1);
   return rows[0] ?? null;
 }

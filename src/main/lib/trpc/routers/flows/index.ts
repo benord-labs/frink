@@ -9,6 +9,7 @@ import {
   flowGraphNodeSchema,
 } from '../../../../../shared/types/flow-graph-schema';
 import { flowSettingsSchema } from '../../../../../shared/types/flow';
+import { flowResumeSnapshotSchema } from '../../../../../shared/types/flow-run/resume';
 import type { BatchRunRow } from '../../../cloud/flows';
 import type {
   BatchStageDetail,
@@ -239,16 +240,15 @@ export const flowsRouter = router({
         runId: z.string().min(1),
         action: z.enum(['approve', 'retry', 'skip']),
         nodeRunId: z.string().min(1),
+        expectedSnapshot: flowResumeSnapshotSchema.optional(),
       }),
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input: { runId, action, nodeRunId, expectedSnapshot } }) => {
       try {
-        await resumeFlowRunLocal(input.runId, input.action, input.nodeRunId);
-        // resumeFlowRunLocal currently throws — defensive return for future impl.
-        const detail = await getFlowRunWithNodeRuns(input.runId);
+        await resumeFlowRunLocal(runId, action, nodeRunId, expectedSnapshot);
+        const detail = await getFlowRunWithNodeRuns(runId);
         if (!detail) throw new TRPCError({ code: 'NOT_FOUND', message: 'Flow run not found' });
-        const db = getDatabase();
-        const version = await getVersion(db, detail.run.flowVersionId);
+        const version = await getVersion(getDatabase(), detail.run.flowVersionId);
         return toDbFlowRunWithNodeRuns(detail.run, detail.nodeRuns, version?.graph ?? null);
       } catch (e) {
         mapEngineError(e);

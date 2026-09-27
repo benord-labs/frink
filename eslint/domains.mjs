@@ -65,6 +65,7 @@ export const MAIN_LIB_DOMAINS = [
   'integrations',
   'language-server',
   'mcp',
+  'mobile',
   'permissions',
   'platform',
   'provider',

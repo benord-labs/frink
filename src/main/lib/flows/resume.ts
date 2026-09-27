@@ -9,6 +9,7 @@
  */
 
 import { TRPCError } from '@trpc/server';
+import type { FlowResumeSnapshot } from '../../../shared/types/flow-run/resume';
 import {
   type NodeOutput,
   RESTART_INTERRUPTION_REASON,
@@ -16,7 +17,11 @@ import {
 } from '../../../shared/types/flow';
 import { getDatabase } from '../db';
 import { getFlowRun, getLatestFlowRunForChat, setFlowRunStatus } from '../db/repos/flow-runs';
-import { getNodeRun, listNodeRunsForFlowRun } from '../db/repos/node-runs';
+import {
+  getNodeRun,
+  listNodeRunsForFlowRun,
+  nodeMatchesResumeSnapshot,
+} from '../db/repos/node-runs';
 import { getSubChatById } from '../db/repos/sub-chats';
 import { parkFlowTaskForSubChat } from '../db/repos';
 import { getLatestFlowTaskForSubChat } from '../db/repos/tasks';
@@ -335,7 +340,14 @@ export async function resumeFlowRun(
   flowRunId: string,
   action: ResumeAction,
   nodeRunId: string,
+  expectedSnapshot?: FlowResumeSnapshot,
 ): Promise<void> {
+  if (expectedSnapshot && action === 'retry') {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'Retry this step on your computer.',
+    });
+  }
   const db = getDatabase();
   const run = await getFlowRun(db, flowRunId);
   if (!run) throw new TRPCError({ code: 'NOT_FOUND', message: 'Flow run not found' });
@@ -348,6 +360,12 @@ export async function resumeFlowRun(
   const nodeRun = await getNodeRun(db, nodeRunId);
   if (!nodeRun || nodeRun.flowRunId !== flowRunId) {
     throw new TRPCError({ code: 'NOT_FOUND', message: 'Node run not found for this flow run' });
+  }
+  if (expectedSnapshot && !nodeMatchesResumeSnapshot(db, nodeRunId, expectedSnapshot)) {
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message: 'This Flow step has already changed.',
+    });
   }
 
   // Load context BEFORE flipping status so a missing flow/version doesn't
@@ -375,7 +393,11 @@ export async function resumeFlowRun(
     const currentNode = await getNodeRun(db, nodeRunId);
     const allowed: readonly string[] =
       action === 'approve' ? ['awaiting_input'] : RESUME_ACTIONABLE_NODE_STATUSES;
-    if (!currentNode || !allowed.includes(currentNode.status)) {
+    if (
+      !currentNode ||
+      !allowed.includes(currentNode.status) ||
+      (expectedSnapshot && !nodeMatchesResumeSnapshot(db, nodeRunId, expectedSnapshot))
+    ) {
       await setFlowRunStatus(db, flowRunId, 'paused', {}, 'running');
       throw new TRPCError({
         code: 'PRECONDITION_FAILED',
@@ -426,7 +448,20 @@ export async function resumeFlowRun(
         artifacts: [],
         durationMs: 0,
       };
-      await advanceFlowRun(flowRunId, nodeRunId, synthetic);
+      const advanced = await advanceFlowRun(
+        flowRunId,
+        nodeRunId,
+        synthetic,
+        undefined,
+        expectedSnapshot,
+      );
+      if (advanced === false) {
+        await setFlowRunStatus(db, flowRunId, 'paused', {}, 'running');
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: 'This Flow step has already changed.',
+        });
+      }
     } finally {
       releaseRegistration();
     }
