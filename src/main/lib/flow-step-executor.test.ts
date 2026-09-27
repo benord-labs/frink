@@ -554,6 +554,50 @@ describe('flow-step-executor', () => {
     );
   });
 
+  it('passes declared credentials to a custom node without leaking host env secrets', async () => {
+    const manifest = {
+      name: 'cred-node',
+      entrypoint: 'run.js',
+      timeout: 30,
+      nodePath: '/home/.frink/nodes/cred-node',
+      credentials: { github: { envVar: 'GITHUB_TOKEN' } },
+      inputs: {},
+    };
+    discoverCustomNodesMock.mockReturnValue({
+      valid: [manifest],
+      manifestWarnings: [],
+      errors: [],
+    });
+    resolveNodeCredentialEnvVarsMock.mockReturnValue({
+      ok: true,
+      envVars: { GITHUB_TOKEN: 'declared-secret' },
+    });
+    vi.stubEnv('FRINK_FAKE_SECRET', 'host-secret');
+    vi.stubEnv('PATH', '/usr/bin:/bin');
+
+    try {
+      const result = await executeFlowStepLocal(
+        {
+          nodeRunId: nid(),
+          flowRunId: 'fr-cred',
+          projectId: 'p1',
+          blockType: 'cred-node',
+          workingDirectory: 'project_root',
+          timeoutMs: 30_000,
+          config: {},
+        },
+        new AbortController().signal,
+      );
+
+      expect(result).toMatchObject({ status: 'completed' });
+      const env = runCustomNodeProcessMock.mock.calls[0]?.[0].env as Record<string, string>;
+      expect(env).toMatchObject({ GITHUB_TOKEN: 'declared-secret', PATH: '/usr/bin:/bin' });
+      expect(env).not.toHaveProperty('FRINK_FAKE_SECRET');
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('holds the node read lease through process completion before an install swap', async () => {
     const manifest = {
       name: 'leased-node',
@@ -776,9 +820,7 @@ describe('flow-step-executor', () => {
   it('flow:cancel-step with unknown nodeRunId does not throw', async () => {
     const driver = makeStepDriver();
 
-    await expect(
-      driver._trigger('cancel', { nodeRunId: 'nr-not-running' }),
-    ).resolves.not.toThrow();
+    await expect(driver._trigger('cancel', { nodeRunId: 'nr-not-running' })).resolves.not.toThrow();
     // No runShellCommand call, no flow:step-result emitted
     expect(runShellCommandMock).not.toHaveBeenCalled();
     expect(driver._emitted).toHaveLength(0);

@@ -93,3 +93,52 @@ describe('terminal env consolidation (SC-84)', () => {
     expect(detectShell).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('buildSafeEnv', () => {
+  it('keeps runtime vars and allowed prefixes but drops secrets and non-string values', async () => {
+    const { buildSafeEnv } = await import('./env');
+    const env = buildSafeEnv(
+      {
+        PATH: '/usr/bin',
+        HOME: '/home/u',
+        LC_ALL: 'en_GB.UTF-8',
+        AGENTS_RUN_ID: 'r1',
+        FRINK_FAKE_SECRET: 'host-secret',
+        ANTHROPIC_API_KEY: 'sk-ant',
+        GITHUB_TOKEN: 'ghp',
+        UNDEFINED_VAR: undefined,
+      },
+      { platform: 'darwin' },
+    );
+
+    expect(env).toEqual({
+      PATH: '/usr/bin',
+      HOME: '/home/u',
+      LC_ALL: 'en_GB.UTF-8',
+      AGENTS_RUN_ID: 'r1',
+    });
+  });
+
+  it('matches Windows keys case-insensitively so cmd.exe keeps Path/SystemRoot/ComSpec', async () => {
+    const { buildSafeEnv } = await import('./env');
+    const env = buildSafeEnv(
+      {
+        Path: 'C:\\Windows\\system32',
+        SystemRoot: 'C:\\Windows',
+        ComSpec: 'C:\\Windows\\system32\\cmd.exe',
+        PATHEXT: '.COM;.EXE;.BAT',
+        FRINK_FAKE_SECRET: 'host-secret',
+      },
+      { platform: 'win32' },
+    );
+
+    expect(Object.keys(env).sort()).toEqual(['ComSpec', 'PATHEXT', 'Path', 'SystemRoot']);
+  });
+
+  it('is case-sensitive on POSIX, so a lower-case lookalike of an allowed key is dropped', async () => {
+    const { buildSafeEnv } = await import('./env');
+    expect(buildSafeEnv({ path: '/tmp/evil', PATH: '/usr/bin' }, { platform: 'linux' })).toEqual({
+      PATH: '/usr/bin',
+    });
+  });
+});

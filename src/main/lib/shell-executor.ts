@@ -16,6 +16,7 @@ import { parseResultRecord, updateTaskStatus as updateTaskStatusLocal } from './
 import type { Task as DbTask } from './db/schema';
 import { validateWorktreeForReuse } from './git/worktree-validation';
 import { resolveCommandShell } from './platform/command-shell';
+import { buildSafeEnv } from './terminal/env';
 
 export const SHELL_TASK_TIMEOUT_MS = 5 * 60 * 1000;
 /** Single maxBuffer for exec (stdout/stderr); matches signal-bridge parse cap for stdout. */
@@ -168,16 +169,14 @@ function resolveCustomNodeBlockType(triggerContext: DbTask['triggerContext']): s
   return blockType;
 }
 
-/**
- * Resolves credential env vars for a custom node task.
- * Returns {} if the task is not a custom node or no credentials are declared.
- * Returns null and logs an error if a required credential is missing (caller should fail the task).
- */
+/** Resolves a custom node task's declared credential env vars; `isCustomNode` is false for run_command. */
 async function resolveCustomNodeCredentialEnvVars(
   triggerContext: DbTask['triggerContext'],
-): Promise<{ ok: true; envVars: NodeJS.ProcessEnv } | { ok: false; error: string }> {
+): Promise<
+  { ok: true; isCustomNode: boolean; envVars: NodeJS.ProcessEnv } | { ok: false; error: string }
+> {
   const blockType = resolveCustomNodeBlockType(triggerContext);
-  if (!blockType) return { ok: true, envVars: {} };
+  if (!blockType) return { ok: true, isCustomNode: false, envVars: {} };
 
   const { valid } = discoverCustomNodes(CUSTOM_NODES_DIR);
   const manifest = valid.find((m) => m.name === blockType);
@@ -187,11 +186,11 @@ async function resolveCustomNodeCredentialEnvVars(
     log.warn(
       `[shell-executor] custom node "${blockType}" not found locally — no credentials injected`,
     );
-    return { ok: true, envVars: {} };
+    return { ok: true, isCustomNode: true, envVars: {} };
   }
 
   if (Object.keys(manifest.credentials).length === 0) {
-    return { ok: true, envVars: {} };
+    return { ok: true, isCustomNode: true, envVars: {} };
   }
 
   const result = resolveNodeCredentialEnvVars(manifest);
@@ -203,7 +202,7 @@ async function resolveCustomNodeCredentialEnvVars(
     };
   }
 
-  return { ok: true, envVars: result.envVars };
+  return { ok: true, isCustomNode: true, envVars: result.envVars };
 }
 
 /** Reads custom node timeout from trigger context _config (seconds → ms), with safe fallback. */
@@ -287,8 +286,11 @@ export async function executeShellTask(task: DbTask): Promise<void> {
     return;
   }
 
-  const credEnv = credResult.envVars;
-  const taskEnv = Object.keys(credEnv).length > 0 ? { ...process.env, ...credEnv } : undefined;
+  // Custom nodes get the allowlisted env plus declared creds only; run_command stays the
+  // documented shell escape hatch and inherits the full env.
+  const taskEnv = credResult.isCustomNode
+    ? { ...buildSafeEnv(process.env), ...credResult.envVars }
+    : undefined;
 
   const executionLeaseId = randomUUID();
   const prevResult = parseResultRecord(task.result);

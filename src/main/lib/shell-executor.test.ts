@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TaskResultRecord } from './db/repos/tasks';
 import type { Task as DbTask } from './db/schema';
 
@@ -557,6 +557,112 @@ describe('executeShellTask', () => {
           subChatId: 'sub-prev',
           shellExecution: true,
           executionLeaseId: expect.any(String),
+        }),
+      }),
+    );
+  });
+});
+
+describe('executeShellTask custom-node env scoping', () => {
+  const CRED_MANIFEST = {
+    name: 'gh-node',
+    credentials: { github: { envVar: 'GITHUB_TOKEN' } },
+  };
+
+  function customNodeTask(blockType: string): DbTask {
+    return shellTask({
+      triggerContext: {
+        _config: { executionMode: 'shell', blockType },
+      } as unknown as DbTask['triggerContext'],
+    });
+  }
+
+  function captureExecEnv(): { env: () => NodeJS.ProcessEnv | undefined; called: () => boolean } {
+    let captured: { env?: NodeJS.ProcessEnv } | undefined;
+    execMock.mockImplementation((_cmd: string, opts: { env?: NodeJS.ProcessEnv }, cb: ExecCb) => {
+      captured = opts;
+      cb(null, '{}', '');
+    });
+    return { env: () => captured?.env, called: () => captured !== undefined };
+  }
+
+  beforeEach(() => {
+    execMock.mockReset();
+    updateTaskStatusMock.mockReset();
+    updateTaskStatusMock.mockResolvedValue(null);
+    getProjectByIdMock.mockResolvedValue({ path: '/repo', id: 'proj-1', name: 'p' });
+    discoverCustomNodesMock.mockClear();
+    discoverCustomNodesMock.mockReturnValue({ valid: [], errors: [] });
+    resolveNodeCredentialEnvVarsMock.mockReturnValue({ ok: true, envVars: {} });
+    vi.stubEnv('FRINK_FAKE_SECRET', 'host-secret');
+    vi.stubEnv('PATH', '/usr/bin:/bin');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('passes declared credentials over the allowlisted env, never the host secret', async () => {
+    discoverCustomNodesMock.mockReturnValue({ valid: [CRED_MANIFEST], errors: [] });
+    resolveNodeCredentialEnvVarsMock.mockReturnValue({
+      ok: true,
+      envVars: { GITHUB_TOKEN: 'declared-secret' },
+    });
+    const exec = captureExecEnv();
+
+    await executeShellTask(customNodeTask('gh-node'));
+
+    expect(exec.env()).toMatchObject({ GITHUB_TOKEN: 'declared-secret', PATH: '/usr/bin:/bin' });
+    expect(exec.env()).not.toHaveProperty('FRINK_FAKE_SECRET');
+  });
+
+  it('scopes the env for a custom node that declares no credentials', async () => {
+    discoverCustomNodesMock.mockReturnValue({
+      valid: [{ name: 'plain-node', credentials: {} }],
+      errors: [],
+    });
+    const exec = captureExecEnv();
+
+    await executeShellTask(customNodeTask('plain-node'));
+
+    expect(exec.env()).toBeDefined();
+    expect(exec.env()).toHaveProperty('PATH', '/usr/bin:/bin');
+    expect(exec.env()).not.toHaveProperty('FRINK_FAKE_SECRET');
+  });
+
+  it('scopes the env for a custom node that is not installed locally', async () => {
+    const exec = captureExecEnv();
+
+    await executeShellTask(customNodeTask('remote-only-node'));
+
+    expect(exec.env()).toBeDefined();
+    expect(exec.env()).not.toHaveProperty('FRINK_FAKE_SECRET');
+  });
+
+  it('leaves run_command on the inherited env (the documented shell escape hatch)', async () => {
+    const exec = captureExecEnv();
+
+    await executeShellTask(shellTask());
+
+    expect(exec.called()).toBe(true);
+    expect(exec.env()).toBeUndefined();
+    expect(discoverCustomNodesMock).not.toHaveBeenCalled();
+  });
+
+  it('fails the task without spawning when a declared credential is missing', async () => {
+    discoverCustomNodesMock.mockReturnValue({ valid: [CRED_MANIFEST], errors: [] });
+    resolveNodeCredentialEnvVarsMock.mockReturnValue({ ok: false, missing: ['github'] });
+
+    await executeShellTask(customNodeTask('gh-node'));
+
+    expect(execMock).not.toHaveBeenCalled();
+    expect(updateTaskStatusMock).toHaveBeenCalledWith(
+      expect.anything(),
+      'task-shell-1',
+      'failed',
+      expect.objectContaining({
+        result: expect.objectContaining({
+          error: expect.stringContaining('missing required credentials: github'),
         }),
       }),
     );
