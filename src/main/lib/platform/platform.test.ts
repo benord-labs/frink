@@ -318,6 +318,10 @@ describe('platform providers', () => {
 
     describe('getEnvironmentConfig', () => {
       it('sets XDG vars under home', () => {
+        // CI runners (e.g. GitHub's ubuntu images) export XDG_CONFIG_HOME
+        vi.stubEnv('XDG_CONFIG_HOME', undefined);
+        vi.stubEnv('XDG_DATA_HOME', undefined);
+        vi.stubEnv('XDG_CACHE_HOME', undefined);
         const config = provider.getEnvironmentConfig();
         expect(config.additionalVars.XDG_CONFIG_HOME).toContain(MOCK_HOME);
         expect(config.additionalVars.XDG_DATA_HOME).toContain(MOCK_HOME);
