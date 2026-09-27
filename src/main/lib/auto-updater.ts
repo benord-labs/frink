@@ -1,6 +1,7 @@
-import { app, type BrowserWindow, ipcMain } from 'electron';
+import { app, type BrowserWindow, ipcMain, type MenuItemConstructorOptions } from 'electron';
 import log from 'electron-log';
 import { autoUpdater, type ProgressInfo, type UpdateInfo } from 'electron-updater';
+import { resolveUpdateFeedUrl } from './update-feed-url';
 
 /**
  * IMPORTANT: Do NOT use lazy/dynamic imports for electron-updater!
@@ -19,6 +20,16 @@ function initAutoUpdaterConfig() {
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.autoRunAppAfterInstall = true;
+}
+
+// Null = no update traffic at all: without setFeedURL electron-updater falls back to app-update.yml
+// (the maintainer's feed from package.json), so every entry point checks this (sc-3780).
+function configuredFeedUrl(): string | null {
+  return resolveUpdateFeedUrl(import.meta.env.MAIN_VITE_UPDATE_FEED_URL);
+}
+
+export function isAutoUpdateEnabled(): boolean {
+  return configuredFeedUrl() !== null;
 }
 
 const LEADING_V_PREFIX = /^v/i;
@@ -83,10 +94,15 @@ export async function initAutoUpdater(getWindow: () => BrowserWindow | null) {
 
   initAutoUpdaterConfig();
 
-  autoUpdater.setFeedURL({
-    provider: 'generic',
-    url: 'https://pub-c942ee0fa0a549ef8d66096bd831507b.r2.dev/',
-  });
+  const feedUrl = configuredFeedUrl();
+  if (!feedUrl) {
+    // IPC stays registered so the renderer's invoke calls resolve instead of rejecting.
+    registerIpcHandlers();
+    log.info('[AutoUpdater] Disabled — MAIN_VITE_UPDATE_FEED_URL not set (fork or self-built)');
+    return;
+  }
+
+  autoUpdater.setFeedURL({ provider: 'generic', url: feedUrl });
 
   autoUpdater.on('checking-for-update', () => {
     log.info('[AutoUpdater] Checking for updates...');
@@ -187,7 +203,7 @@ export async function initAutoUpdater(getWindow: () => BrowserWindow | null) {
 
   registerIpcHandlers();
 
-  log.info('[AutoUpdater] Initialized with R2 provider');
+  log.info(`[AutoUpdater] Initialized with generic feed ${feedUrl}`);
 }
 
 function registerIpcHandlers() {
@@ -196,6 +212,7 @@ function registerIpcHandlers() {
       log.info('[AutoUpdater] Skipping update check in dev mode');
       return null;
     }
+    if (!isAutoUpdateEnabled()) return null;
     try {
       const result = await autoUpdater.checkForUpdates();
       return result?.updateInfo || null;
@@ -206,6 +223,7 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('update:download', async () => {
+    if (!isAutoUpdateEnabled()) return false;
     try {
       await autoUpdater.downloadUpdate();
       return true;
@@ -231,6 +249,7 @@ export async function checkForUpdates(force = false) {
     log.info('[AutoUpdater] Skipping update check in dev mode');
     return Promise.resolve(null);
   }
+  if (!isAutoUpdateEnabled()) return Promise.resolve(null);
 
   const now = Date.now();
   if (!force && now - lastCheckTime < MIN_CHECK_INTERVAL) {
@@ -266,6 +285,7 @@ export async function downloadUpdate() {
     log.info('[AutoUpdater] Skipping download in dev mode');
     return false;
   }
+  if (!isAutoUpdateEnabled()) return false;
 
   try {
     log.info('[AutoUpdater] Starting update download...');
@@ -277,7 +297,33 @@ export async function downloadUpdate() {
   }
 }
 
+/**
+ * The app menu's update item. Hidden in builds without a feed (forks, self-built): there is no
+ * updater to offer, and every action below would no-op anyway.
+ */
+export function buildUpdateMenuItem(
+  getWindow: () => BrowserWindow | null,
+  update: { available: boolean; version: string | null },
+): MenuItemConstructorOptions {
+  return {
+    label: update.available ? `Update to v${update.version}...` : 'Check for Updates...',
+    visible: isAutoUpdateEnabled(),
+    click: () => {
+      // Clears the renderer's dismiss state so the banner shows again.
+      getWindow()?.webContents.send('update:manual-check');
+      if (!update.available) {
+        checkForUpdates(true);
+      } else if (isUpdateDownloadedPending()) {
+        installDownloadedUpdate();
+      } else {
+        downloadUpdate();
+      }
+    },
+  };
+}
+
 export function setupFocusUpdateCheck(_getWindow: () => BrowserWindow | null) {
+  if (!isAutoUpdateEnabled()) return;
   app.on('browser-window-focus', () => {
     log.info('[AutoUpdater] Window focused - checking for updates');
     checkForUpdates();

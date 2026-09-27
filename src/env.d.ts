@@ -7,6 +7,7 @@ declare global {
     readonly MAIN_VITE_SENTRY_DSN?: string;
     readonly MAIN_VITE_POSTHOG_KEY?: string;
     readonly MAIN_VITE_POSTHOG_HOST?: string;
+    readonly MAIN_VITE_UPDATE_FEED_URL?: string;
     // Renderer process (VITE_/RENDERER_VITE_ prefix)
     readonly RENDERER_VITE_SENTRY_DSN?: string;
     readonly VITE_POSTHOG_KEY?: string;
