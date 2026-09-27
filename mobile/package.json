@@ -1,0 +1,35 @@
+{
+  "name": "@frink/mobile",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.ts",
+  "scripts": {
+    "start": "expo start",
+    "ios": "expo run:ios",
+    "web": "expo start --web",
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:ui": "playwright test",
+    "export:ios": "expo export --platform ios",
+    "export:web": "expo export --platform web"
+  },
+  "dependencies": {
+    "@expo/vector-icons": "^15.0.3",
+    "expo": "~57.0.0",
+    "expo-camera": "~57.0.0",
+    "expo-crypto": "~57.0.0",
+    "expo-secure-store": "~57.0.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.86.3",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-web": "^0.21.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@types/react": "~19.2.0",
+    "typescript": "~6.0.3",
+    "vitest": "^4.0.0"
+  }
+}

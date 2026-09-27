@@ -1,0 +1,27 @@
+{
+  "expo": {
+    "name": "Frink",
+    "slug": "frink-mobile",
+    "scheme": "frink-mobile",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "icon": "./assets/icon.png",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.frink.mobile",
+      "infoPlist": { "ITSAppUsesNonExemptEncryption": false }
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Scan the pairing code shown by Frink on your computer.",
+          "recordAudioAndroid": false
+        }
+      ],
+      "expo-secure-store"
+    ],
+    "web": { "bundler": "metro", "favicon": "./assets/icon.png" }
+  }
+}

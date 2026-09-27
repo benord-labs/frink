@@ -1,0 +1,48 @@
+name: Mobile companion
+
+on:
+  pull_request:
+    paths:
+      - 'mobile/**'
+      - 'src/shared/types/remote/mobile.ts'
+      - 'src/shared/types/task-signal.ts'
+      - '.github/workflows/mobile.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'mobile/**'
+      - 'src/shared/types/remote/mobile.ts'
+      - 'src/shared/types/task-signal.ts'
+      - '.github/workflows/mobile.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run check
+      - run: bun run test
+      - run: bunx playwright install --with-deps chromium
+      - run: bun run test:ui
+      - run: bun run export:ios
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: mobile-ui-failure
+          path: mobile/test-results
+          retention-days: 5
