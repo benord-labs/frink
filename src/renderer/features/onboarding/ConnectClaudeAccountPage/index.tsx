@@ -1,8 +1,11 @@
 import claudeLogo from '@iconify-icons/simple-icons/claude';
 import { iconifyComponent } from '@/lib/utils/iconify-component';
-import { useConnectAccountFlow } from '../../hooks/useConnectAccountFlow';
-import { trpc } from '../../lib/trpc';
-import { ConnectAccountShell, connectFlowProps } from './connect-account-shell';
+import {
+  DETECTION_QUERY_OPTIONS,
+  useConnectAccountFlow,
+} from '../../../hooks/useConnectAccountFlow';
+import { trpc } from '../../../lib/trpc';
+import { ConnectAccountShell, connectFlowProps } from '../connect-account-shell';
 
 const ClaudeCodeIcon = iconifyComponent(claudeLogo);
 
@@ -18,9 +21,10 @@ const CLAUDE_AUTH_COMMAND = 'claude auth login';
  *   at spawn time.
  */
 export function ConnectClaudeAccountPage() {
-  const detectionQuery = trpc.claudeCode.detectClaudeAccount.useQuery(undefined, {
-    refetchOnWindowFocus: true,
-  });
+  const detectionQuery = trpc.claudeCode.detectClaudeAccount.useQuery(
+    undefined,
+    DETECTION_QUERY_OPTIONS,
+  );
   const connectMutation = trpc.claudeCode.connectClaudePassthrough.useMutation();
 
   const flow = useConnectAccountFlow({

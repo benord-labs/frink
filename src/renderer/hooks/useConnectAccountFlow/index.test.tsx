@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 
-import { act, renderHook } from '@testing-library/react';
+import { focusManager, QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { createStore, Provider } from 'jotai';
 import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -10,7 +11,7 @@ import {
   type PendingAccountAuthState,
   pendingAccountAuthAtom,
 } from '../../lib/atoms';
-import { useConnectAccountFlow } from '.';
+import { DETECTION_QUERY_OPTIONS, useConnectAccountFlow } from '.';
 
 const listAccountsInvalidate = vi.fn();
 const getResolvedAccountInvalidate = vi.fn();
@@ -239,5 +240,124 @@ describe('useConnectAccountFlow', () => {
     expect(result.current.flowState).toBe('idle');
     expect(result.current.errorMessage).toBeNull();
     expect(result.current.isRefreshing).toBe(false);
+  });
+});
+
+describe('DETECTION_QUERY_OPTIONS.refetchOnWindowFocus', () => {
+  const shouldRefetch = (data?: { available: boolean }) =>
+    DETECTION_QUERY_OPTIONS.refetchOnWindowFocus({ state: { data } });
+
+  it('stops refetching on focus once a login is detected', () => {
+    expect(shouldRefetch({ available: true })).toBe(false);
+  });
+
+  it('keeps refetching on focus while no login is detected', () => {
+    expect(shouldRefetch({ available: false })).toBe(true);
+  });
+
+  it('keeps refetching on focus before the first result lands (or after an IPC error with no data)', () => {
+    expect(shouldRefetch(undefined)).toBe(true);
+  });
+});
+
+/**
+ * Wiring check against a real QueryClient + react-query's focusManager, so a react-query upgrade
+ * that stops honouring the function form (or a caller that spreads the options wrongly) fails here
+ * rather than silently reverting to a keychain read on every window return.
+ */
+describe('DETECTION_QUERY_OPTIONS with a real QueryClient', () => {
+  afterEach(() => {
+    focusManager.setFocused(undefined);
+  });
+
+  function renderDetection(queryFn: () => Promise<{ available: boolean }>) {
+    // staleTime 0 isolates the focus policy from the app's global 5s staleTime; 'all' disables
+    // tracked-prop render skipping so assertions read the latest state.
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: 0, notifyOnChangeProps: 'all' } },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    return renderHook(
+      () => useQuery({ queryKey: ['detect'], queryFn, ...DETECTION_QUERY_OPTIONS }),
+      { wrapper },
+    );
+  }
+
+  // Async act flushes the microtask in which react-query would start a refetch, so a
+  // "not called" assertion right after can't pass just because the fetch hadn't begun yet.
+  const returnToWindow = async () => {
+    await act(async () => {
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+      await Promise.resolve();
+    });
+  };
+
+  it('does not re-run detection on window return once a login is detected', async () => {
+    const queryFn = vi.fn().mockResolvedValue({ available: true });
+    const { result } = renderDetection(queryFn);
+    await waitFor(() => expect(result.current.data).toEqual({ available: true }));
+
+    await returnToWindow();
+    await returnToWindow();
+
+    expect(queryFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-runs detection on window return while no login is detected, then stops once one appears', async () => {
+    // Models `claude auth login` in Terminal: first probe finds nothing, the next finds the login.
+    const queryFn = vi
+      .fn()
+      .mockResolvedValueOnce({ available: false })
+      .mockResolvedValue({ available: true });
+    const { result } = renderDetection(queryFn);
+    await waitFor(() => expect(result.current.data).toEqual({ available: false }));
+
+    await returnToWindow();
+    await waitFor(() => expect(result.current.data).toEqual({ available: true }));
+    expect(queryFn).toHaveBeenCalledTimes(2);
+
+    await returnToWindow();
+    expect(queryFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('resumes refetching on window return after a manual refresh finds the login gone (sign-out)', async () => {
+    const queryFn = vi
+      .fn()
+      .mockResolvedValueOnce({ available: true })
+      .mockResolvedValueOnce({ available: false })
+      .mockResolvedValue({ available: true });
+    const { result } = renderDetection(queryFn);
+    await waitFor(() => expect(result.current.data).toEqual({ available: true }));
+
+    // "Check for Login" → explicit refetch bypasses the focus policy.
+    await act(async () => {
+      await result.current.refetch();
+    });
+    await waitFor(() => expect(result.current.data).toEqual({ available: false }));
+
+    await returnToWindow();
+    await waitFor(() => expect(result.current.data).toEqual({ available: true }));
+    expect(queryFn).toHaveBeenCalledTimes(3);
+  });
+
+  it('keeps the last detected login (and stops focus refetch) when a later manual refresh errors', async () => {
+    const queryFn = vi
+      .fn()
+      .mockResolvedValueOnce({ available: true })
+      .mockRejectedValueOnce(new Error('ipc down'));
+    const { result } = renderDetection(queryFn);
+    await waitFor(() => expect(result.current.data).toEqual({ available: true }));
+
+    await act(async () => {
+      await result.current.refetch();
+    });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.data).toEqual({ available: true });
+
+    await returnToWindow();
+    expect(queryFn).toHaveBeenCalledTimes(2);
   });
 });

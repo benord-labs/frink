@@ -411,7 +411,6 @@ export const rendererStructureBaseline = [
   "features/layout/open-active-file-in-editor.test.ts",
   "features/layout/open-active-file-in-editor.ts",
   "features/onboarding/connect-account-shell.tsx",
-  "features/onboarding/connect-claude-account-page.tsx",
   "features/onboarding/connect-codex-account-page.test.tsx",
   "features/onboarding/connect-codex-account-page.tsx",
   "features/sidebar/inset-glass-sidebar-shell.tsx",
