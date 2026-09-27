@@ -1,4 +1,4 @@
-import { normalizeUserPath, redactString } from './redaction';
+import { normalizeUserPath, scrubText } from './redaction';
 
 // Duck-typed Sentry shapes — kept narrow so this file works with both
 // @sentry/electron and @sentry/node without depending on either package's
@@ -14,6 +14,8 @@ type ExceptionValue = { type?: string; value?: string; stacktrace?: Stacktrace }
 
 export type ScrubbableEvent = {
   message?: string;
+  // Set instead of `message` when the text is Sentry.parameterize'd.
+  logentry?: { message?: string; params?: unknown[] };
   exception?: { values?: ExceptionValue[] };
   extra?: Record<string, unknown>;
   contexts?: Record<string, unknown>;
@@ -70,15 +72,23 @@ function eventTouchesSensitivePath(event: ScrubbableEvent): boolean {
 function scrubExceptionFrames(event: ScrubbableEvent): void {
   const exceptions = event.exception?.values ?? [];
   for (const exc of exceptions) {
-    // Values need the same home-path normalization as frames: fs/shell errors
-    // quote the offending absolute path in their message, so the username
-    // leaks through the value even when every frame is clean.
-    if (exc.value) exc.value = normalizeUserPath(redactString(exc.value));
+    // fs/shell errors quote the offending absolute path, so the value leaks
+    // the username even when every frame is clean.
+    if (exc.value) exc.value = scrubText(exc.value);
     const frames = exc.stacktrace?.frames ?? [];
     for (const frame of frames) {
       if (frame.filename) frame.filename = normalizeUserPath(frame.filename);
       if (frame.abs_path) frame.abs_path = normalizeUserPath(frame.abs_path);
     }
+  }
+}
+
+// Params can be any value; an object may nest a path, so non-strings are
+// reduced to their typeof, as breadcrumb data is.
+function scrubLogEntry(logentry: NonNullable<ScrubbableEvent['logentry']>): void {
+  if (logentry.message) logentry.message = scrubText(logentry.message);
+  if (Array.isArray(logentry.params)) {
+    logentry.params = logentry.params.map((p) => (typeof p === 'string' ? scrubText(p) : typeof p));
   }
 }
 
@@ -93,7 +103,7 @@ export function beforeBreadcrumb<B extends ScrubbableBreadcrumb>(breadcrumb: B):
     }
     breadcrumb.data = safeData;
   }
-  if (breadcrumb.message) breadcrumb.message = redactString(breadcrumb.message);
+  if (breadcrumb.message) breadcrumb.message = scrubText(breadcrumb.message);
 
   return breadcrumb;
 }
@@ -111,7 +121,8 @@ export function beforeSend<E extends ScrubbableEvent>(event: E): E | null {
     delete event.request.headers;
   }
 
-  if (event.message) event.message = redactString(event.message);
+  if (event.message) event.message = scrubText(event.message);
+  if (event.logentry) scrubLogEntry(event.logentry);
   scrubExceptionFrames(event);
 
   if (event.breadcrumbs) {

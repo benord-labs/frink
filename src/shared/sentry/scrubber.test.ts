@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeUserPath, redactString } from './redaction';
+import { normalizeUserPath, redactString, scrubText } from './redaction';
 import {
   beforeBreadcrumb,
   beforeSend,
@@ -29,6 +29,82 @@ describe('normalizeUserPath', () => {
 
   it('replaces Windows user home', () => {
     expect(normalizeUserPath('C:\\Users\\Bob\\App\\baz.ts')).toBe('/home/user\\App\\baz.ts');
+  });
+
+  it('replaces a Windows home with a lowercase drive letter', () => {
+    const out = normalizeUserPath('c:\\Users\\alice\\App\\x.ts');
+    expect(out).toBe('/home/user\\App\\x.ts');
+  });
+
+  it('replaces a JSON-escaped Windows home', () => {
+    // MCP errors often arrive JSON-stringified, doubling every backslash.
+    const out = normalizeUserPath('{"path":"C:\\\\Users\\\\alice\\\\x.ts"}');
+    expect(out).not.toContain('alice');
+  });
+
+  it('replaces a Windows username containing a space', () => {
+    // Windows account names may contain spaces; macOS/Linux short names may not.
+    const out = normalizeUserPath('ENOENT C:\\Users\\Jane Doe\\AppData\\x.js');
+    expect(out).toBe('ENOENT /home/user\\AppData\\x.js');
+  });
+
+  it.each(['Jane Doe+Smith', 'jane,corp', 'jane;x', 'jane=x', 'jane [old]'])(
+    'replaces a Windows profile folder %s containing folder-legal punctuation',
+    (name) => {
+      const out = normalizeUserPath(`ENOENT C:\\Users\\${name}\\x.js`);
+      expect(out).toBe('ENOENT /home/user\\x.js');
+    },
+  );
+
+  it.each([
+    ["cwd 'C:\\Users\\Jane Doe' missing", "cwd '/home/user' missing"],
+    ['cwd "C:\\Users\\Jane Doe" missing', 'cwd "/home/user" missing'],
+    ['cwd `C:\\Users\\Jane Doe` missing', 'cwd `/home/user` missing'],
+    ['(C:\\Users\\Jane Doe)', '(/home/user)'],
+    ['at C:\\Users\\Jane Doe, retrying', 'at /home/user, retrying'],
+    ["'C:\\Users\\O'Brien' gone", "'/home/user' gone"],
+    ['{"cwd":"C:\\\\Users\\\\Jane Doe"}', '{"cwd":"/home/user"}'],
+  ])('replaces a delimited Windows home ending the path: %s', (input, expected) => {
+    expect(normalizeUserPath(input)).toBe(expected);
+  });
+
+  it('does not swallow prose after a Windows home that ends the path', () => {
+    expect(normalizeUserPath('cwd C:\\Users\\alice is missing')).toBe('cwd /home/user is missing');
+  });
+
+  it('replaces every home path in a string, across platforms', () => {
+    const out = normalizeUserPath(
+      'spawn /Users/alice/a.js failed; fallback /home/bob/b.js; C:\\Users\\carol\\c.js',
+    );
+    expect(out).toBe('spawn /home/user/a.js failed; fallback /home/user/b.js; /home/user\\c.js');
+  });
+
+  it('replaces a bare home directory with no trailing path', () => {
+    expect(normalizeUserPath("cwd '/Users/alice' not found")).toBe("cwd '/home/user' not found");
+  });
+
+  it('replaces a home inside a file:// URL', () => {
+    expect(normalizeUserPath('file:///Users/alice/x.js')).toBe('file:///home/user/x.js');
+  });
+
+  it('is idempotent, so double scrubbing a breadcrumb is harmless', () => {
+    const once = normalizeUserPath('/Users/alice/x and C:\\Users\\Jane Doe\\y');
+    expect(normalizeUserPath(once)).toBe(once);
+  });
+});
+
+describe('scrubText', () => {
+  it('normalizes a home path and redacts a token in one pass', () => {
+    const out = scrubText('at /Users/alice/x key=sk-abcdefghijklmnopqrstuvwxyz1234567890');
+    expect(out).toBe('at /home/user/x key=[REDACTED]');
+  });
+
+  it('normalizes a home whose username is long enough to look like a token', () => {
+    expect(scrubText('/Users/abcdefghijklmnopqrstuvwxyz0123456789/f')).toBe('/home/user/f');
+  });
+
+  it('returns empty input unchanged', () => {
+    expect(scrubText('')).toBe('');
   });
 });
 
@@ -132,6 +208,61 @@ describe('beforeSend', () => {
     expect(value).not.toContain('benji');
   });
 
+  it.each([
+    [
+      'macOS',
+      'ENOENT /Users/alice/Desktop/mcp/build/index.js',
+      'ENOENT /home/user/Desktop/mcp/build/index.js',
+    ],
+    ['Linux', 'ENOENT /home/alice/mcp/index.js', 'ENOENT /home/user/mcp/index.js'],
+    ['Windows', 'ENOENT C:\\Users\\alice\\mcp\\index.js', 'ENOENT /home/user\\mcp\\index.js'],
+  ])('normalizes a %s home path in event.message', (_os, input, expected) => {
+    // captureMainMessage lands in event.message, not exception.values.
+    const event: ScrubbableEvent = {
+      message: `MCP stdio transport failure (spawn): ${input}`,
+    };
+    const message = beforeSend(event)?.message;
+    expect(message).toBe(`MCP stdio transport failure (spawn): ${expected}`);
+    expect(message).not.toContain('alice');
+  });
+
+  it('scrubs message, exception value and breadcrumb message identically', () => {
+    // The drift between these fields is what leaked the username; lock parity.
+    const input =
+      "Cannot find module '/Users/alice/x/index.js' token=sk-abcdefghijklmnopqrstuvwxyz1234567890";
+    const event: ScrubbableEvent = {
+      message: input,
+      exception: { values: [{ value: input, stacktrace: { frames: [{ filename: 'src/x.ts' }] } }] },
+      breadcrumbs: [{ category: 'trpc', message: input }],
+    };
+    const out = beforeSend(event);
+    const expected = scrubText(input);
+    expect(expected).not.toContain('alice');
+    expect(expected).toContain('[REDACTED]');
+    expect(out?.message).toBe(expected);
+    expect(out?.exception?.values?.[0]?.value).toBe(expected);
+    expect(out?.breadcrumbs?.[0]?.message).toBe(expected);
+  });
+
+  it('scrubs a parameterized message in event.logentry', () => {
+    // Sentry.parameterize writes logentry and never sets event.message.
+    const event: ScrubbableEvent = {
+      logentry: {
+        message: 'spawn failed at /Users/alice/%s',
+        params: ['/Users/alice/x.js', { cwd: '/Users/alice' }, 7],
+      },
+    };
+    const out = beforeSend(event);
+    expect(out?.logentry?.message).toBe('spawn failed at /home/user/%s');
+    expect(out?.logentry?.params).toEqual(['/home/user/x.js', 'object', 'number']);
+  });
+
+  it('tolerates a logentry without params', () => {
+    const event: ScrubbableEvent = { logentry: { message: '/home/alice/x' } };
+    const out = beforeSend(event);
+    expect(out?.logentry).toEqual({ message: '/home/user/x' });
+  });
+
   it('filters breadcrumbs in passed event', () => {
     const event: ScrubbableEvent = {
       breadcrumbs: [
@@ -172,5 +303,10 @@ describe('beforeBreadcrumb', () => {
     };
     const out = beforeBreadcrumb(b);
     expect(out?.message).toBe('token=[REDACTED]');
+  });
+
+  it('normalizes a home path in the message', () => {
+    const b: ScrubbableBreadcrumb = { category: 'error', message: 'EPERM /home/alice/.config/x' };
+    expect(beforeBreadcrumb(b)?.message).toBe('EPERM /home/user/.config/x');
   });
 });
