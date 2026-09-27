@@ -3,8 +3,9 @@ import { useRef, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import type { MobilePermission, MobileQuestion } from '../../../../src/shared/types/remote/mobile';
 import { useAction } from '../../lib/connection';
-import { Button, Field, Label, Notice } from '../../ui/primitives';
+import { Button, Field, Icon, Label, Notice } from '../../ui/primitives';
 import { useTheme } from '../../ui/theme';
+import { glassStyle } from '../../ui/material';
 
 // Reason: Question types and validation remain together for the MVP answer form.
 // fallow-ignore-next-line complexity
@@ -42,10 +43,20 @@ export function QuestionForm({
     if (result) onAnswered();
   }
   return (
-    <View style={{ gap: 16, paddingVertical: 16 }}>
-      <Label bold size={19}>
-        Your answer is needed
-      </Label>
+    <View
+      style={{
+        gap: 12,
+        padding: 14,
+        ...glassStyle(t),
+        borderRadius: 12,
+      }}
+    >
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <Icon name="chatbubble-ellipses-outline" size={17} color={t.accent} />
+        <Label bold size={14}>
+          Your answer is needed
+        </Label>
+      </View>
       {!prompt.questions.length && (
         <>
           <Label>{prompt.title}</Label>
@@ -63,8 +74,10 @@ export function QuestionForm({
         </>
       )}
       {prompt.questions.map((q) => (
-        <View key={q.question} style={{ gap: 9 }}>
-          <Label bold>{q.question}</Label>
+        <View key={q.question} style={{ gap: 8 }}>
+          <Label bold size={16}>
+            {q.question}
+          </Label>
           {q.multiSelect && (
             <Label size={13} muted>
               Choose any that apply.
@@ -79,10 +92,8 @@ export function QuestionForm({
                 <Pressable
                   key={option.label}
                   accessibilityRole={q.multiSelect ? 'checkbox' : 'radio'}
-                  accessibilityState={{
-                    checked: selected,
-                    disabled: action.busy,
-                  }}
+                  aria-checked={selected}
+                  aria-disabled={action.busy}
                   disabled={action.busy}
                   onPress={() => {
                     requestId.current = Crypto.randomUUID();
@@ -99,31 +110,52 @@ export function QuestionForm({
                       }),
                     );
                   }}
-                  style={{
-                    padding: 14,
-                    gap: 3,
-                    borderRadius: 10,
-                    borderWidth: 1,
-                    borderColor: selected ? t.accent : t.border,
-                    backgroundColor: selected ? t.field : t.surface,
+                  style={({ pressed }) => ({
+                    paddingVertical: 8,
+                    paddingHorizontal: 10,
+                    gap: 11,
+                    flexDirection: 'row',
+                    alignItems: 'flex-start',
+                    borderRadius: 6,
                     minHeight: 48,
-                  }}
+                    backgroundColor: selected ? t.field : 'transparent',
+                    opacity: pressed ? 0.7 : 1,
+                    borderWidth: 1,
+                    borderColor: selected ? t.border : 'transparent',
+                  })}
                 >
-                  <Text
-                    style={{
-                      color: selected ? t.accent : t.text,
-                      fontSize: 16,
-                      fontWeight: '500',
-                    }}
-                  >
-                    {selected ? '✓  ' : ''}
-                    {option.label}
-                  </Text>
-                  {!!option.description && (
-                    <Label size={13} muted>
-                      {option.description}
-                    </Label>
-                  )}
+                  <View style={{ marginTop: 2 }}>
+                    <Icon
+                      name={
+                        q.multiSelect
+                          ? selected
+                            ? 'checkbox'
+                            : 'square-outline'
+                          : selected
+                            ? 'radio-button-on'
+                            : 'radio-button-off'
+                      }
+                      size={20}
+                      color={selected ? t.accent : t.muted}
+                    />
+                  </View>
+                  <View style={{ flex: 1, gap: 3 }}>
+                    <Text
+                      style={{
+                        color: t.text,
+                        fontSize: 15,
+                        lineHeight: 21,
+                        fontWeight: selected ? '600' : '400',
+                      }}
+                    >
+                      {option.label}
+                    </Text>
+                    {!!option.description && (
+                      <Label size={13} muted>
+                        {option.description}
+                      </Label>
+                    )}
+                  </View>
                 </Pressable>
               );
             },
@@ -142,12 +174,16 @@ export function QuestionForm({
         </View>
       ))}
       {action.error && <Notice error>{action.error}</Notice>}
-      <Button
-        onPress={() => void submit()}
-        disabled={action.busy || Object.values(answers).some((answer) => !answer)}
-      >
-        {action.busy ? 'Sending answer…' : 'Send answer'}
-      </Button>
+      <View style={{ alignItems: 'flex-end' }}>
+        <Button
+          compact
+          icon="arrow-up"
+          onPress={() => void submit()}
+          disabled={action.busy || Object.values(answers).some((answer) => !answer)}
+        >
+          {action.busy ? 'Sending answer…' : 'Send answer'}
+        </Button>
+      </View>
     </View>
   );
 }
@@ -160,6 +196,7 @@ export function PermissionForm({
   onAnswered: () => void;
 }) {
   const action = useAction();
+  const t = useTheme();
   async function respond(approved: boolean) {
     if (
       await action.run({
@@ -173,21 +210,41 @@ export function PermissionForm({
       onAnswered();
   }
   return (
-    <View style={{ gap: 12, paddingVertical: 16 }}>
+    <View
+      style={{
+        gap: 14,
+        padding: 16,
+        ...glassStyle(t),
+        borderRadius: 12,
+      }}
+    >
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <Icon name="shield-checkmark-outline" size={17} color={t.accent} />
+        <Label size={14} bold>
+          Permission requested
+        </Label>
+      </View>
       <Label size={19} bold>
         {prompt.title}
       </Label>
       <Label size={14}>{prompt.description}</Label>
       {action.error && <Notice error>{action.error}</Notice>}
       {prompt.supported ? (
-        <>
-          <Button disabled={action.busy} onPress={() => void respond(true)}>
-            Allow once
-          </Button>
-          <Button secondary disabled={action.busy} onPress={() => void respond(false)}>
+        <View
+          style={{
+            flexDirection: 'row',
+            flexWrap: 'wrap',
+            justifyContent: 'flex-end',
+            gap: 8,
+          }}
+        >
+          <Button compact secondary disabled={action.busy} onPress={() => void respond(false)}>
             Deny request
           </Button>
-        </>
+          <Button compact disabled={action.busy} onPress={() => void respond(true)}>
+            Allow once
+          </Button>
+        </View>
       ) : (
         <Notice>Review this request on your computer.</Notice>
       )}

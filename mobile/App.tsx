@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Pressable, StatusBar, Text, View, useColorScheme } from 'react-native';
+import { Image, Pressable, StatusBar, Text, View, useColorScheme } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { ConnectionProvider, useConnection, useResource } from './src/lib/connection';
 import { Chat, Chats, NewChat } from './src/screens/Chat';
@@ -7,7 +7,8 @@ import { FlowDetail, Flows, RunDetail } from './src/screens/Flows';
 import { Pairing } from './src/screens/Pairing';
 import { Queue } from './src/screens/Queue';
 import { Button, Icon, Label, Loading, Notice, Page } from './src/ui/primitives';
-import { useTheme } from './src/ui/theme';
+import { ThemeProvider, useTheme } from './src/ui/theme';
+import { Atmosphere, glassStyle } from './src/ui/material';
 
 type Tab = 'queue' | 'flows' | 'chats';
 type Route =
@@ -23,35 +24,81 @@ function ConnectionDetails({ onBack }: { onBack: () => void }) {
   const { connection, disconnect } = useConnection();
   const status = useResource({ type: 'overview' });
   const [error, setError] = useState<string | null>(null);
+  const t = useTheme();
   return (
-    <Page title="Your computer" onBack={onBack}>
-      <Icon name="laptop-outline" size={40} />
-      <Label size={22} bold>
-        {connection?.machineName}
-      </Label>
-      <Label muted>{connection?.url}</Label>
-      {status.error ? (
-        <Notice error>{status.error}</Notice>
-      ) : status.data ? (
-        <Notice>
-          {status.data.executionReady
-            ? 'Connected. Frink is ready for your work.'
-            : 'Connected. Open a Frink window on your computer before running Flows.'}
-        </Notice>
-      ) : (
-        <Loading />
-      )}
-      <Notice>
-        Keep your computer awake, Frink open and Tailscale connected. The phone controls work on
-        this computer.
-      </Notice>
-      <Label muted>
-        For security, revoke this device in Settings → Mobile on your computer if you no longer use
-        it.
-      </Label>
+    <Page title="Your computer" onBack={onBack} compact>
+      <View
+        style={{
+          ...glassStyle(t),
+          borderRadius: 14,
+          overflow: 'hidden',
+        }}
+      >
+        <View style={{ padding: 18, flexDirection: 'row', gap: 13, alignItems: 'flex-start' }}>
+          <View
+            style={{
+              backgroundColor: t.field,
+              borderRadius: 10,
+              width: 44,
+              height: 44,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <Icon name="laptop-outline" size={24} color={t.secondary} />
+          </View>
+          <View style={{ flex: 1, gap: 5 }}>
+            <Label size={19} bold>
+              {connection?.machineName}
+            </Label>
+            <Label size={13} muted>
+              {connection?.url}
+            </Label>
+          </View>
+        </View>
+        <View style={{ padding: 16, borderTopWidth: 1, borderColor: t.border }}>
+          {status.error ? (
+            <Notice error>{status.error}</Notice>
+          ) : status.data ? (
+            <View style={{ flexDirection: 'row', gap: 9, alignItems: 'flex-start' }}>
+              <View style={{ paddingTop: 1 }}>
+                <Icon
+                  name={
+                    status.data.executionReady
+                      ? 'checkmark-circle-outline'
+                      : 'information-circle-outline'
+                  }
+                  size={19}
+                  color={status.data.executionReady ? t.success : t.secondary}
+                />
+              </View>
+              <Label size={14} style={{ flex: 1 }}>
+                {status.data.executionReady
+                  ? 'Connected. Frink is ready for your work.'
+                  : 'Connected. Open a Frink window on your computer before running Flows.'}
+              </Label>
+            </View>
+          ) : (
+            <Loading />
+          )}
+        </View>
+      </View>
+      <View style={{ gap: 10 }}>
+        <Label size={14}>
+          Keep your computer awake, Frink open and Tailscale connected. The phone controls work on
+          this computer.
+        </Label>
+        <Label muted size={13}>
+          For security, revoke this device in Settings → Mobile on your computer if you no longer
+          use it.
+        </Label>
+      </View>
       {error && <Notice error>{error}</Notice>}
       <Button
+        compact
         secondary
+        destructive
+        icon="log-out-outline"
         onPress={async () => {
           try {
             await disconnect();
@@ -73,62 +120,79 @@ function ConnectionDetails({ onBack }: { onBack: () => void }) {
 function Companion() {
   const { connection, loading } = useConnection();
   const [tab, setTab] = useState<Tab>('queue');
-  const [route, setRoute] = useState<Route>({ type: 'home' });
+  const [history, setHistory] = useState<Route[]>([{ type: 'home' }]);
+  const route = history[history.length - 1];
   const t = useTheme();
   const scheme = useColorScheme();
-  const home = () => setRoute({ type: 'home' });
-  const openChat = (id: string, subChatId?: string) => setRoute({ type: 'chat', id, subChatId });
-  const openRun = (id: string) => setRoute({ type: 'run', id });
+  const home = () => setHistory([{ type: 'home' }]);
+  const back = () => setHistory((current) => (current.length > 1 ? current.slice(0, -1) : current));
+  const navigate = (next: Route) => setHistory((current) => [...current, next]);
+  const openChat = (id: string, subChatId?: string) => {
+    setHistory((current) => [
+      ...current.slice(0, current[current.length - 1].type === 'new-chat' ? -1 : undefined),
+      { type: 'chat', id, subChatId },
+    ]);
+  };
+  const openRun = (id: string) => navigate({ type: 'run', id });
   let content;
   if (loading) content = <Loading />;
   else if (!connection) content = <Pairing />;
-  else if (route.type === 'connection') content = <ConnectionDetails onBack={home} />;
+  else if (route.type === 'connection') content = <ConnectionDetails onBack={back} />;
   else if (route.type === 'flow')
-    content = <FlowDetail key={route.id} id={route.id} onBack={home} openRun={openRun} />;
+    content = <FlowDetail key={route.id} id={route.id} onBack={back} openRun={openRun} />;
   else if (route.type === 'run')
-    content = <RunDetail key={route.id} id={route.id} onBack={home} openChat={openChat} />;
+    content = <RunDetail key={route.id} id={route.id} onBack={back} openChat={openChat} />;
   else if (route.type === 'chat')
     content = (
       <Chat
         key={`${route.id}:${route.subChatId ?? ''}`}
         id={route.id}
         initialSubChatId={route.subChatId}
-        onBack={home}
+        onBack={back}
       />
     );
-  else if (route.type === 'new-chat') content = <NewChat onBack={home} openChat={openChat} />;
-  else if (tab === 'flows') content = <Flows openFlow={(id) => setRoute({ type: 'flow', id })} />;
+  else if (route.type === 'new-chat') content = <NewChat onBack={back} openChat={openChat} />;
+  else if (tab === 'flows') content = <Flows openFlow={(id) => navigate({ type: 'flow', id })} />;
   else if (tab === 'chats')
-    content = <Chats openChat={openChat} createChat={() => setRoute({ type: 'new-chat' })} />;
+    content = <Chats openChat={openChat} createChat={() => navigate({ type: 'new-chat' })} />;
   else content = <Queue openChat={openChat} openRun={openRun} />;
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: t.background }}>
+      <Atmosphere />
       <StatusBar barStyle={scheme === 'light' ? 'dark-content' : 'light-content'} />
-      {connection && (
+      {connection && route.type === 'home' && (
         <View
           style={{
             flexDirection: 'row',
             justifyContent: 'space-between',
             alignItems: 'center',
-            paddingHorizontal: 20,
-            borderBottomWidth: 1,
-            borderColor: t.border,
+            paddingHorizontal: 16,
+            paddingTop: 4,
+            paddingBottom: 4,
           }}
         >
-          <Text style={{ fontSize: 23, fontWeight: '700', color: t.text }}>frink</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+            <Image
+              source={require('./assets/icon.png')}
+              style={{ width: 23, height: 28, tintColor: t.accent }}
+            />
+            <Text style={{ fontSize: 20, fontWeight: '400', letterSpacing: -0.7, color: t.text }}>
+              Frink
+            </Text>
+          </View>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Connection settings"
-            onPress={() => setRoute({ type: 'connection' })}
+            onPress={() => navigate({ type: 'connection' })}
             style={{
-              minHeight: 48,
+              minHeight: 44,
               flexDirection: 'row',
               alignItems: 'center',
               gap: 7,
               maxWidth: '72%',
             }}
           >
-            <Icon name="laptop-outline" size={17} color={t.muted} />
+            <Icon name="laptop-outline" size={15} color={t.muted} />
             <Text numberOfLines={1} style={{ color: t.muted, fontSize: 13 }}>
               {connection.machineName}
             </Text>
@@ -136,19 +200,20 @@ function Companion() {
         </View>
       )}
       <View style={{ flex: 1 }}>{content}</View>
-      {connection && (
+      {connection && route.type === 'home' && (
         <View
           accessibilityRole="tablist"
           style={{
             flexDirection: 'row',
-            borderTopWidth: 1,
-            borderColor: t.border,
-            backgroundColor: t.surface,
+            ...glassStyle(t),
+            borderLeftWidth: 0,
+            borderRightWidth: 0,
+            borderBottomWidth: 0,
           }}
         >
           {(
             [
-              { id: 'queue', name: 'Queue', icon: 'layers-outline' },
+              { id: 'queue', name: 'Queue', icon: 'file-tray-stacked-outline' },
               { id: 'flows', name: 'Flows', icon: 'git-network-outline' },
               { id: 'chats', name: 'Chats', icon: 'chatbubbles-outline' },
             ] as const
@@ -157,7 +222,7 @@ function Companion() {
               key={item.id}
               accessibilityRole="tab"
               accessibilityLabel={item.name}
-              accessibilityState={{ selected: tab === item.id }}
+              aria-selected={tab === item.id}
               onPress={() => {
                 setTab(item.id);
                 home();
@@ -165,12 +230,12 @@ function Companion() {
               style={{
                 flex: 1,
                 alignItems: 'center',
-                gap: 5,
-                paddingVertical: 12,
-                minHeight: 64,
+                gap: 4,
+                paddingVertical: 9,
+                minHeight: 58,
               }}
             >
-              <Icon name={item.icon} color={tab === item.id ? t.accent : t.muted} />
+              <Icon name={item.icon} size={20} color={tab === item.id ? t.accent : t.muted} />
               <Text
                 style={{
                   color: tab === item.id ? t.accent : t.muted,
@@ -196,9 +261,11 @@ function SessionContent() {
 export default function App() {
   return (
     <SafeAreaProvider>
-      <ConnectionProvider>
-        <SessionContent />
-      </ConnectionProvider>
+      <ThemeProvider>
+        <ConnectionProvider>
+          <SessionContent />
+        </ConnectionProvider>
+      </ThemeProvider>
     </SafeAreaProvider>
   );
 }

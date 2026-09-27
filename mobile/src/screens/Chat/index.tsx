@@ -1,10 +1,21 @@
 import * as Crypto from 'expo-crypto';
 import { useEffect, useRef, useState } from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import type { MobileMessage } from '../../../../src/shared/types/remote/mobile';
 import { useAction, useConnection, useResource } from '../../lib/connection';
-import { Button, Field, Label, Loading, Notice, Page, Row, Section } from '../../ui/primitives';
+import {
+  Button,
+  Field,
+  Icon,
+  Label,
+  Loading,
+  Notice,
+  Page,
+  Row,
+  Section,
+} from '../../ui/primitives';
 import { useTheme } from '../../ui/theme';
+import { glassStyle } from '../../ui/material';
 import { PermissionForm, QuestionForm } from './questions';
 
 // Reason: The MVP chat list keeps loading, empty, and error states together.
@@ -18,8 +29,24 @@ export function Chats({
 }) {
   const { data, error, refresh } = useResource({ type: 'chats' });
   return (
-    <Page title="Chats" subtitle="Pick up where you left off.">
-      <Button onPress={createChat}>New chat</Button>
+    <Page
+      title="Chats"
+      action={
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="New chat"
+          onPress={createChat}
+          style={{
+            minHeight: 44,
+            minWidth: 44,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <Icon name="create-outline" />
+        </Pressable>
+      }
+    >
       {error && (
         <>
           <Notice error>{error}</Notice>
@@ -59,8 +86,8 @@ export function NewChat({
   const [name, setName] = useState('');
   const action = useAction();
   return (
-    <Page title="New chat" onBack={onBack}>
-      <Label muted>Use a project and the AI provider configured in Frink on your computer.</Label>
+    <Page compact title="New chat" onBack={onBack}>
+      <Label muted>Choose a project on your computer to start a conversation.</Label>
       {(error || action.error) && <Notice error>{error || action.error}</Notice>}
       <Section title="Choose a project">
         {!projects ? (
@@ -183,7 +210,7 @@ export function Chat({
       style={{ flex: 1 }}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <Page title={data?.chat.name ?? 'Chat'} onBack={onBack}>
+      <Page compact title={data?.chat.name ?? 'Chat'} onBack={onBack}>
         {(resource.error || action.error || historyError) && (
           <>
             <Notice error>{resource.error || action.error || historyError}</Notice>
@@ -231,30 +258,9 @@ export function Chat({
             {!messages.length && (
               <Label muted>Start a conversation. Your agent runs on your computer.</Label>
             )}
-            {messages.map(
-              // Reason: Message roles share one bounded MVP transcript layout.
-              // fallow-ignore-next-line complexity
-              (message) => (
-                <View
-                  key={message.id}
-                  style={{
-                    padding: message.role === 'user' ? 16 : 0,
-                    gap: 8,
-                    backgroundColor: message.role === 'user' ? t.field : 'transparent',
-                    borderRadius: 14,
-                  }}
-                >
-                  <Label size={13} muted>
-                    {message.role === 'user'
-                      ? 'You'
-                      : message.role === 'assistant'
-                        ? 'Frink'
-                        : 'System'}
-                  </Label>
-                  <Label>{message.text || 'Working…'}</Label>
-                </View>
-              ),
-            )}
+            {messages.map((message) => (
+              <Message key={message.id} message={message} />
+            ))}
             {data.questions.map((question) => (
               <QuestionForm key={question.id} prompt={question} onAnswered={resource.refresh} />
             ))}
@@ -267,7 +273,12 @@ export function Chat({
               />
             ))}
             {data.active && (
-              <Notice>Your agent is working. Progress refreshes while this app is open.</Notice>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
+                <Icon name="ellipse" size={6} color={t.accent} />
+                <Label muted size={13}>
+                  Frink is working…
+                </Label>
+              </View>
             )}
           </>
         )}
@@ -275,11 +286,10 @@ export function Chat({
       {data && (
         <View
           style={{
-            padding: 16,
+            paddingHorizontal: 16,
+            paddingTop: 10,
+            paddingBottom: 12,
             gap: 10,
-            borderTopWidth: 1,
-            borderColor: t.border,
-            backgroundColor: t.background,
           }}
         >
           {data.active ? (
@@ -314,8 +324,29 @@ export function Chat({
                 Stop response…
               </Button>
             )
+          ) : data.questions.length || data.permissions.length ? (
+            <Text
+              style={{
+                textAlign: 'center',
+                color: t.muted,
+                fontSize: 13,
+                lineHeight: 20,
+                paddingVertical: 3,
+              }}
+            >
+              Answer above to continue
+            </Text>
           ) : (
-            <>
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'flex-end',
+                gap: 6,
+                padding: 5,
+                ...glassStyle(t),
+                borderRadius: 12,
+              }}
+            >
               <Field
                 accessibilityLabel="Message"
                 placeholder="Message Frink…"
@@ -327,9 +358,25 @@ export function Chat({
                 editable={!action.busy}
                 multiline
                 maxLength={32000}
-                style={{ maxHeight: 150 }}
+                style={{
+                  flex: 1,
+                  maxHeight: 150,
+                  minHeight: 44,
+                  borderWidth: 0,
+                  padding: 10,
+                  backgroundColor: 'transparent',
+                }}
               />
-              <Button
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Send message"
+                accessibilityState={{
+                  disabled:
+                    !draft.trim() ||
+                    action.busy ||
+                    !!data.questions.length ||
+                    !!data.permissions.length,
+                }}
                 disabled={
                   !draft.trim() ||
                   action.busy ||
@@ -337,13 +384,80 @@ export function Chat({
                   !!data.permissions.length
                 }
                 onPress={() => void send()}
+                style={({ pressed }) => ({
+                  width: 44,
+                  height: 44,
+                  borderRadius: 6,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: t.accent,
+                  opacity: !draft.trim() || action.busy ? 0.45 : pressed ? 0.7 : 1,
+                })}
               >
-                {action.busy ? 'Sending…' : 'Send message'}
-              </Button>
-            </>
+                <Icon
+                  name={action.busy ? 'hourglass-outline' : 'arrow-up'}
+                  color={t.onAccent}
+                  size={22}
+                />
+              </Pressable>
+            </View>
           )}
         </View>
       )}
     </KeyboardAvoidingView>
+  );
+}
+
+// Reason: User, assistant and system messages share one role-aware transcript renderer.
+// fallow-ignore-next-line complexity
+function Message({ message }: { message: MobileMessage }) {
+  const t = useTheme();
+  const isUser = message.role === 'user';
+  const name = isUser ? 'You' : message.role === 'assistant' ? 'Frink' : 'System';
+  return (
+    <View
+      style={{
+        alignSelf: isUser ? 'flex-end' : 'stretch',
+        maxWidth: isUser ? '92%' : '100%',
+        gap: 8,
+      }}
+    >
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 6,
+          justifyContent: isUser ? 'flex-end' : 'flex-start',
+        }}
+      >
+        {!isUser && (
+          <Icon
+            name={message.role === 'assistant' ? 'sparkles-outline' : 'information-circle-outline'}
+            size={14}
+            color={t.muted}
+          />
+        )}
+        <Label muted size={12}>
+          {name}
+        </Label>
+      </View>
+      <View
+        style={
+          isUser
+            ? {
+                paddingHorizontal: 14,
+                paddingVertical: 11,
+                ...glassStyle(t),
+                borderRadius: 14,
+                borderTopRightRadius: 4,
+              }
+            : undefined
+        }
+      >
+        <Text selectable style={{ color: t.text, fontSize: 16, lineHeight: 24 }}>
+          {message.text || 'Working…'}
+        </Text>
+      </View>
+    </View>
   );
 }
