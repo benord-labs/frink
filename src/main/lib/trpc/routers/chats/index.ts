@@ -3,7 +3,6 @@ import { commitMessageRouter } from './ai';
 import { archiveRouter } from './archive';
 import { createRouter } from './create';
 import { deleteRouter } from './delete';
-import { exportRouter } from './export';
 import { forkRouter } from './fork';
 import { getRouter } from './get';
 import { diffRouter } from './git/diff';
@@ -63,7 +62,4 @@ export const chatsRouter = router({
 
   // Statistics
   ...planApprovalRouter._def.procedures,
-
-  // Export
-  ...exportRouter._def.procedures,
 });

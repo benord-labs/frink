@@ -63,16 +63,6 @@ export const overlayItem = `${overlayItemBase} ${overlayItemHover} ${overlayItem
 export const overlayItemWithIcon = `${overlayItem} [&_svg]:pointer-events-none [&_svg]:shrink-0`;
 
 // =============================================================================
-// Sub-trigger Styles (for nested menus)
-// =============================================================================
-
-/** Sub-trigger open state */
-const overlaySubTriggerOpen = 'data-[state=open]:bg-accent dark:data-[state=open]:bg-secondary';
-
-/** Combined sub-trigger styles */
-export const overlaySubTrigger = `${overlayItemWithIcon} ${overlaySubTriggerOpen}`;
-
-// =============================================================================
 // Checkbox/Radio Item Styles
 // =============================================================================
 
@@ -88,6 +78,3 @@ export const overlaySeparator = 'my-1 h-px bg-border mx-1';
 
 /** Label styles */
 export const overlayLabel = 'px-2.5 py-1.5 mx-1 text-xs font-medium text-muted-foreground';
-
-/** Chevron icon for sub-menus */
-export const overlayChevron = 'ml-auto h-3.5 w-3.5 text-muted-foreground';

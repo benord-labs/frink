@@ -93,7 +93,7 @@ jobs:
             "$(cat reports/head-suite-report/exit-code.txt)"
 
   deterministic-quality-gates:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     name: Deterministic quality gates
     runs-on: ubuntu-latest
     timeout-minutes: 10

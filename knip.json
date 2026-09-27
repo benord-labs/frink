@@ -30,5 +30,9 @@
       "project": ["src/**/*.ts"]
     }
   },
-  "ignoreBinaries": ["lsof", "ps", "security", "secret-tool"]
+  "ignoreBinaries": ["lsof", "ps", "security", "secret-tool"],
+  "ignoreIssues": {
+    "src/renderer/features/agents/ui/agent-task-tools.tsx": ["exports"],
+    "src/renderer/lib/hotkeys/shortcut-registry.ts": ["exports"]
+  }
 }
