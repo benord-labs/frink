@@ -31,6 +31,8 @@ projectStructure.cache.json
 /.agents/
 /.cursor/
 /.codex/
+/CLAUDE.md
 /CLAUDE.local.md
+/AGENTS.md
 /AGENTS.override.md
 
