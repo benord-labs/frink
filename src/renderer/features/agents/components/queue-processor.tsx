@@ -132,6 +132,21 @@ export function QueueProcessor() {
 
     let checkAllQueues: () => void = () => {};
 
+    // One-shot runLive watchers for sub-chats held on main's liveness gate, keyed by sub-chat.
+    const settleWatchers = new Map<string, () => void>();
+
+    const watchRunSettle = (subChatId: string) => {
+      if (settleWatchers.has(subChatId)) return;
+      const liveAtom = runLiveAtomFamily(subChatId);
+      const unsubscribe = appStore.sub(liveAtom, () => {
+        if (appStore.get(liveAtom)) return;
+        settleWatchers.get(subChatId)?.();
+        settleWatchers.delete(subChatId);
+        if (activeRef.current) checkAllQueues();
+      });
+      settleWatchers.set(subChatId, unsubscribe);
+    };
+
     // Schedule processing for a sub-chat with delay. First-wins: if a timer is already pending
     // for this sub-chat, leave it alone rather than restarting its wait on every store write.
     const scheduleProcessing = (subChatId: string) => {
@@ -165,8 +180,10 @@ export function QueueProcessor() {
       }
 
       // Main's liveness, not the status store (never written for a turn this window owns): a send on
-      // top of a live run makes main abort it. The settle publish writes status → checkAllQueues.
+      // top of a live run makes main abort it. The settle publish skips the status write while this
+      // window owns the transport, so the flag clearing is the only release edge — watch it.
       if (appStore.get(runLiveAtomFamily(subChatId))) {
+        watchRunSettle(subChatId);
         return;
       }
 
@@ -402,6 +419,11 @@ export function QueueProcessor() {
       unsubscribeStatus();
       unsubscribeHydration();
       unsubscribeChatRegistered();
+
+      for (const unsubscribe of settleWatchers.values()) {
+        unsubscribe();
+      }
+      settleWatchers.clear();
 
       // Clear all timers
       for (const timer of timersRef.current.values()) {
