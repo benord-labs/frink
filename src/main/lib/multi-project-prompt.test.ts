@@ -11,8 +11,12 @@ vi.mock('./db/repos/projects', () => ({
   listProjects: (...args: unknown[]) => listProjectsMock(...(args as [])),
 }));
 
+const MCP_URL = 'http://127.0.0.1:12345';
+const getOrStartDynamicChatMcpUrlMock = vi.hoisted(() =>
+  vi.fn(async (): Promise<string | null> => 'http://127.0.0.1:12345'),
+);
 vi.mock('./mcp/dynamic-chat-server', () => ({
-  getOrStartDynamicChatMcpUrl: vi.fn(async () => 'http://127.0.0.1:12345'),
+  getOrStartDynamicChatMcpUrl: getOrStartDynamicChatMcpUrlMock,
 }));
 
 function makeProject(name: string, description: string | null): Project {
@@ -117,20 +121,67 @@ describe('buildMultiProjectToolsBlock', () => {
 describe('getMultiProjectContext', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    getOrStartDynamicChatMcpUrlMock.mockResolvedValue(MCP_URL);
   });
 
-  it('returns empty context when fewer than two local projects exist', async () => {
-    listProjectsMock.mockResolvedValue([makeProject('frontend', 'app')]);
+  // sc-3854: a single-project user needs Frink's MCP (flows, task signal) as much as anyone.
+  it.each([
+    ['no projects', []],
+    ['a single project', [makeProject('frontend', 'app')]],
+  ])('mounts the MCP but omits the multi-project block with %s', async (_name, projects) => {
+    listProjectsMock.mockResolvedValue(projects);
 
     const context = await getMultiProjectContext();
-    expect(context).toEqual({ promptPrefix: '', dynamicChatMcpUrl: null });
+    expect(context).toEqual({ promptPrefix: '', dynamicChatMcpUrl: MCP_URL });
   });
 
-  it('returns empty context when local lookup fails', async () => {
+  it('still mounts the MCP when the local project lookup fails', async () => {
     listProjectsMock.mockRejectedValue(new Error('local lookup failed'));
 
     const context = await getMultiProjectContext();
+    expect(context).toEqual({ promptPrefix: '', dynamicChatMcpUrl: MCP_URL });
+  });
+
+  it('adds the multi-project block at exactly two projects, alongside the MCP', async () => {
+    listProjectsMock.mockResolvedValue([makeProject('frontend', 'app'), makeProject('api', 'api')]);
+
+    const context = await getMultiProjectContext();
+    expect(context.promptPrefix).toContain('<multi_project_tools>');
+    expect(context.dynamicChatMcpUrl).toBe(MCP_URL);
+  });
+
+  it('reports no MCP when its server fails to start, without throwing', async () => {
+    listProjectsMock.mockResolvedValue([makeProject('frontend', 'app')]);
+    getOrStartDynamicChatMcpUrlMock.mockRejectedValueOnce(new Error('EADDRINUSE'));
+
+    const context = await getMultiProjectContext();
     expect(context).toEqual({ promptPrefix: '', dynamicChatMcpUrl: null });
+  });
+
+  it('shares one server start between concurrent chats (a pre-warm racing its send)', async () => {
+    listProjectsMock.mockResolvedValue([makeProject('frontend', 'app')]);
+    let finishStart: (url: string) => void = () => {};
+    getOrStartDynamicChatMcpUrlMock.mockImplementationOnce(
+      () => new Promise((resolve) => (finishStart = resolve)),
+    );
+
+    const pending = Promise.all([getMultiProjectContext(), getMultiProjectContext()]);
+    await vi.waitFor(() => expect(getOrStartDynamicChatMcpUrlMock).toHaveBeenCalled());
+    finishStart(MCP_URL);
+    const [prewarm, send] = await pending;
+
+    expect(getOrStartDynamicChatMcpUrlMock).toHaveBeenCalledTimes(1);
+    expect(prewarm.dynamicChatMcpUrl).toBe(MCP_URL);
+    expect(send.dynamicChatMcpUrl).toBe(MCP_URL);
+  });
+
+  it('retries the start on the next chat after a failed one', async () => {
+    listProjectsMock.mockResolvedValue([makeProject('frontend', 'app')]);
+    getOrStartDynamicChatMcpUrlMock.mockResolvedValueOnce(null);
+
+    expect((await getMultiProjectContext()).dynamicChatMcpUrl).toBeNull();
+    expect((await getMultiProjectContext()).dynamicChatMcpUrl).toBe(MCP_URL);
+    expect(getOrStartDynamicChatMcpUrlMock).toHaveBeenCalledTimes(2);
   });
 
   it('includes current project/worktree context block when provided', async () => {

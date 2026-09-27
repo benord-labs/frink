@@ -1,6 +1,7 @@
 /**
  * Shared prompt and MCP for multi-project tools (searchProjects, fetchAllProjects, requestSwitchProject).
- * Injected when the user has 2+ projects. Used by both Claude and Codex paths in the executor.
+ * The prompt block is injected when the user has 2+ projects; the dynamic-chat MCP (flows, task
+ * signal) is mounted for every chat. Used by both Claude and Codex paths in the executor.
  */
 
 import { dedupeByCodebase } from '../../shared/lib/project-codebase';
@@ -104,12 +105,27 @@ When you need to return to a prior worktree, call frink_navigation_context() fir
 type MultiProjectContext = {
   /** Prompt to prepend when user has 2+ projects (empty string otherwise) */
   promptPrefix: string;
-  /** Dynamic chat MCP URL to add for Claude (null if not applicable or unavailable) */
+  /** Dynamic chat MCP URL, whatever the project count (null only if its server failed to start) */
   dynamicChatMcpUrl: string | null;
 };
 
+let dynamicChatMcpStart: Promise<string | null> | null = null;
+
+/** Every chat mounts the dynamic-chat MCP, so a first chat's pre-warm and send race its lazy start;
+ * share one start (the server singleton does not track an in-flight one) and retry after a failure. */
+function startDynamicChatMcp(): Promise<string | null> {
+  dynamicChatMcpStart ??= import('./mcp/dynamic-chat-server')
+    .then(({ getOrStartDynamicChatMcpUrl }) => getOrStartDynamicChatMcpUrl())
+    .catch(() => null)
+    .finally(() => {
+      dynamicChatMcpStart = null;
+    });
+  return dynamicChatMcpStart;
+}
+
 /**
- * Shared helper for Claude and Codex: prompt block + optional MCP URL when user has multiple projects.
+ * Shared helper for Claude and Codex: the Frink MCP URL for every chat, plus the multi-project
+ * prompt block when the user has 2+ projects.
  */
 export async function getMultiProjectContext(
   currentProject?: CurrentProjectContext,
@@ -121,15 +137,12 @@ export async function getMultiProjectContext(
     // leave projects empty — multi-project block silently disables
   }
 
-  if (projects.length < 2) {
-    return { promptPrefix: '', dynamicChatMcpUrl: null };
-  }
-
-  const { getOrStartDynamicChatMcpUrl } = await import('./mcp/dynamic-chat-server');
-  const dynamicChatUrl = await getOrStartDynamicChatMcpUrl();
-
+  const dynamicChatMcpUrl = await startDynamicChatMcp();
   return {
-    promptPrefix: buildMultiProjectToolsBlockWithCurrentContext(projects, currentProject),
-    dynamicChatMcpUrl: dynamicChatUrl ?? null,
+    promptPrefix:
+      projects.length < 2
+        ? ''
+        : buildMultiProjectToolsBlockWithCurrentContext(projects, currentProject),
+    dynamicChatMcpUrl,
   };
 }

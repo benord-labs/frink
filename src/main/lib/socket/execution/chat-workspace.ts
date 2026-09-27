@@ -38,7 +38,8 @@ export async function resolveChatWorkspace(
         }
       : undefined,
   );
-  // Plan mode always mounts the dynamic-chat MCP; otherwise only a multi-project chat does.
+  // Every chat gets the dynamic-chat MCP from getMultiProjectContext; plan mode, which cannot
+  // proceed without it, retries once if that start failed.
   let dynamicChatMcpUrl = multiProject.dynamicChatMcpUrl;
   if (mode === 'plan' && !dynamicChatMcpUrl) {
     const { getOrStartDynamicChatMcpUrl } = await import('../../mcp/dynamic-chat-server');
