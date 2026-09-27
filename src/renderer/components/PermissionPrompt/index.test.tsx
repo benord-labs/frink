@@ -524,7 +524,7 @@ describe('buildFallbackRule', () => {
   });
 
   it('collapses a multi-line heredoc to its first line (never embeds the body)', () => {
-    // `bash <<EOF` has its base suppressed by BARE_SHELL_PREFIXES, so the prompt
+    // `bash <<EOF` has its base suppressed by EXEC_WRAPPER_COMMANDS, so the prompt
     // falls back here — it must NOT persist the whole body as a dead rule.
     const rule = buildFallbackRule('Bash', 'bash <<EOF\nrm -rf /\nEOF');
     expect(rule).toBe('Bash(bash <<EOF:*)');

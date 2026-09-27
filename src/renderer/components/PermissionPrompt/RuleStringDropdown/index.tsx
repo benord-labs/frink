@@ -16,8 +16,8 @@ type RuleStringDropdownProps = {
 export function buildFallbackRule(tool: string, input: string): string {
   // Multi-line commands (heredocs whose base was suppressed, e.g. `bash <<EOF`)
   // make terrible exact rules — the body changes every run and a mid-string
-  // `:*` corrupts the rule. Collapse to the first line, mirroring Claude Code's
-  // suggestionForExactCommand. Single-line input is unchanged.
+  // `:*` corrupts the rule. Collapse to the first line instead. Single-line
+  // input is unchanged.
   const firstLine = input.includes('\n') ? input.slice(0, input.indexOf('\n')) : input;
   const escaped = escapeRuleContent(firstLine.trim());
   return tool === 'Bash' ? `Bash(${escaped}:*)` : `${tool}(${escaped})`;

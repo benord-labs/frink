@@ -35,6 +35,17 @@ There is no commit hook. CI runs the structure lint, type check, knip, the skill
 and the test suite on every pull request (`.github/workflows/test-suite.yml`); run them locally
 before you push.
 
+## Third-party and proprietary code
+
+- Never copy, vendor, translate line by line, or cite source that is leaked or has no licence
+  allowing reuse. That includes the Claude Code source exposed through an npm source map in March
+  2026. Derive behaviour from public documentation (docs.claude.com, code.claude.com) or from what
+  the released CLI observably does.
+- Code taken from a permissively licensed project keeps its licence notice and gets an entry in
+  `THIRD_PARTY_LICENSES.md`.
+- The same rule binds AI coding agents: do not point an agent at a leaked or unlicensed checkout as
+  reference material.
+
 ## Pull requests
 
 Keep each PR small and single-purpose — under ~500 lines of diff. Out-of-scope work you find along

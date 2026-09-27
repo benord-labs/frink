@@ -1,10 +1,10 @@
-/* eslint-disable max-lines */
 /**
  * Bash parser for v2 permission gating. Pure, no I/O. Never denies syntax:
  * what it cannot analyse is exact-match-only (bash-command-permission-safety-tier).
  */
 
 import { type ParseEntry, parse } from 'shell-quote';
+import { inlineLiteralHeredocSubstitutions } from './heredoc';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -17,7 +17,7 @@ export type SubCommand = {
   tokens: ParseEntry[];
   /** Redirections like `> /dev/null`, `2>&1`, stripped from `tokens`. */
   redirections: string[];
-  /** Leading `KEY=value` SAFE_ENV_VARS assignments, stripped from `tokens`. */
+  /** Leading `KEY=value` assignments of INERT_ENV_ASSIGNMENTS names, stripped from `tokens`. */
   envAssignments: Record<string, string>;
   /**
    * True when shell would expand or eval something — `$1`, `$VAR`, `$(...)`,
@@ -42,12 +42,11 @@ export type Signature = {
 };
 
 // ---------------------------------------------------------------------------
-// SAFE_ENV_VARS
+// INERT_ENV_ASSIGNMENTS
 // ---------------------------------------------------------------------------
 
-// TODO(ticket-14): reconcile with claude-code source bashPermissions.ts:378-430
-// once available locally. Treating ticket spec as authoritative for now.
-export const SAFE_ENV_VARS: ReadonlySet<string> = new Set([
+/** Env vars that tune output, logging or build target only; never code-path vars like `NODE_OPTIONS`. */
+export const INERT_ENV_ASSIGNMENTS: ReadonlySet<string> = new Set([
   'NODE_ENV',
   'RUST_BACKTRACE',
   'RUST_LOG',
@@ -321,131 +320,8 @@ export function exciseHeredocBodies(command: string): string {
 }
 
 /**
- * Opener of a provably-literal heredoc substitution: `$(cat <<'DELIM'` or
- * `$(cat <<\DELIM` (optionally `<<-`). The delimiter MUST be single-quoted or
- * backslash-escaped — that is what makes the body literal text in bash (no
- * expansion, no nested substitution). An unquoted `<<DELIM` never matches.
- * `'+` tolerates doubled quotes (`''EOF''`) some agent toolchains emit.
- */
-const SAFE_HEREDOC_SUB_REGEX = /\$\(cat[ \t]*<<(-?)[ \t]*(?:'+([A-Za-z_]\w*)'+|\\([A-Za-z_]\w*))/g;
-const OPEN_PAREN_AFTER_DELIM_REGEX = /^[ \t]*\)/;
-const HORIZONTAL_WS_ONLY_REGEX = /^[ \t]*$/;
-/**
- * Candidate-opener cap. Real commands carry 1-2 substitutions (commit / pr
- * body); a command with more is pathological, and each candidate costs a
- * line scan to its closer — leave the command exact-match-only instead of
- * burning main-process CPU (the same O(n) discipline as exciseHeredocBodies).
- */
-const MAX_SAFE_HEREDOC_CANDIDATES = 32;
-
-/**
- * Strip `$(cat <<'DELIM' … DELIM\n)` (provably literal body) so the commit idiom
- * yields a reusable `git commit` prefix signature; null when nothing safe matched.
- */
-/**
- * Closing-delimiter matching mirrors bash: the FIRST line equal to the delimiter
- * closes it (`<<-` strips tabs), with `)` trailing that line or alone on the next.
- */
-/**
- * Walk body lines from `bodyStart` via indexOf — no tail copy, so a
- * closer-less opener costs one bounded pass (the same O(n) discipline
- * exciseHeredocBodies documents for its closer scan). The FIRST line starting
- * with the delimiter decides the outcome (bash never skips past an early
- * closer to a later one): inline `EOF)` or `EOF` + `)` leading the next line
- * close the substitution; anything else (trailing content after the
- * delimiter) is not the safe pattern. Returns the index one past the closing
- * `)`, or -1.
- */
-function findSubstitutionEnd(
-  command: string,
-  bodyStart: number,
-  delimiter: string,
-  stripTabs: boolean,
-): number {
-  let lineStart = bodyStart;
-  while (lineStart <= command.length) {
-    let lineEnd = command.indexOf('\n', lineStart);
-    if (lineEnd === -1) lineEnd = command.length;
-    const rawLine = command.slice(lineStart, lineEnd);
-    const line = stripTabs ? rawLine.replace(LEADING_TABS_REGEX, '') : rawLine;
-    if (!line.startsWith(delimiter)) {
-      lineStart = lineEnd + 1;
-      continue;
-    }
-    const afterDelim = line.slice(delimiter.length);
-    if (OPEN_PAREN_AFTER_DELIM_REGEX.test(afterDelim)) {
-      return command.indexOf(')', lineStart) + 1; // inline `EOF)` form
-    }
-    if (afterDelim === '' && lineEnd < command.length) {
-      let nextLineEnd = command.indexOf('\n', lineEnd + 1);
-      if (nextLineEnd === -1) nextLineEnd = command.length;
-      if (OPEN_PAREN_AFTER_DELIM_REGEX.test(command.slice(lineEnd + 1, nextLineEnd))) {
-        return command.indexOf(')', lineEnd + 1) + 1; // `EOF` alone, `)` next line
-      }
-    }
-    return -1;
-  }
-  return -1;
-}
-
-type StripRange = { start: number; end: number };
-
-/**
- * Validate one regex candidate into a strippable range, or null. The opener
- * line must end right after the delimiter — trailing content (e.g.
- * `; rm -rf /`) means this is not the simple safe pattern.
- */
-function matchSafeHeredocRange(command: string, match: RegExpExecArray): StripRange | null {
-  if (match.index > 0 && command[match.index - 1] === '\\') return null; // escaped \$( is literal
-  const delimiter = match[2] || match[3];
-  if (!delimiter) return null;
-  const operatorEnd = match.index + match[0].length;
-  const openLineEnd = command.indexOf('\n', operatorEnd);
-  if (openLineEnd === -1) return null;
-  if (!HORIZONTAL_WS_ONLY_REGEX.test(command.slice(operatorEnd, openLineEnd))) return null;
-  const end = findSubstitutionEnd(command, openLineEnd + 1, delimiter, match[1] === '-');
-  return end === -1 ? null : { start: match.index, end };
-}
-
-/**
- * A range opening inside another means the regex matched literal text inside
- * an outer quoted body — stripping both corrupts indices and can silently
- * drop a suffix.
- */
-function hasNestedRange(ranges: StripRange[]): boolean {
-  return ranges.some((outer) =>
-    ranges.some((inner) => inner !== outer && inner.start > outer.start && inner.start < outer.end),
-  );
-}
-
-export function stripSafeHeredocSubstitutions(command: string): string | null {
-  const ranges: StripRange[] = [];
-  let candidates = 0;
-  for (const match of command.matchAll(SAFE_HEREDOC_SUB_REGEX)) {
-    if (++candidates > MAX_SAFE_HEREDOC_CANDIDATES) return null;
-    const range = matchSafeHeredocRange(command, match);
-    if (range) ranges.push(range);
-  }
-  if (ranges.length === 0) return null;
-  if (hasNestedRange(ranges)) return null; // stays exact-match-only
-
-  // Argument-position guard: with no command word before the first `$(`, the
-  // heredoc body's output IS the command (`$(cat <<'EOF'\nrm -rf ~\nEOF\n)`
-  // executes `rm -rf ~`) — and stripping it would leave zero subcommands,
-  // which checkBash treats as allow. Command-name position stays exact-match-only.
-  // (matchAll yields ascending indices, so ranges[0] is the first.)
-  if (command.slice(0, ranges[0].start).trim().length === 0) return null;
-
-  let result = command;
-  for (let i = ranges.length - 1; i >= 0; i--) {
-    result = result.slice(0, ranges[i].start) + result.slice(ranges[i].end);
-  }
-  return result;
-}
-
-/**
  * Extract leading `KEY=value` env assignments from string tokens, but only
- * for entries in `SAFE_ENV_VARS`. Unsafe `KEY=` tokens are left in place — the
+ * for entries in `INERT_ENV_ASSIGNMENTS`. Unsafe `KEY=` tokens are left in place — the
  * matcher should fail prefix wildcards on them (`isExactMatchOnly`).
  */
 function stripSafeEnvAssignments(tokens: ParseEntry[]): {
@@ -459,7 +335,7 @@ function stripSafeEnvAssignments(tokens: ParseEntry[]): {
     if (typeof t !== 'string') break;
     const m = ENV_TOKEN_REGEX.exec(t);
     if (!m) break;
-    if (!SAFE_ENV_VARS.has(m[1])) break;
+    if (!INERT_ENV_ASSIGNMENTS.has(m[1])) break;
     envAssignments[m[1]] = m[2];
   }
   return { rest: tokens.slice(i), envAssignments };
@@ -518,7 +394,7 @@ export function splitCommand(command: string): SubCommand[] {
   // would consume the body and break range detection. Then excise remaining
   // heredoc bodies: they are opaque stdin, and splitRaw would otherwise
   // mis-split a body containing `;`/`|` into phantom subcommands.
-  const cleaned = stripSafeHeredocSubstitutions(trimmed) ?? trimmed;
+  const cleaned = inlineLiteralHeredocSubstitutions(trimmed) ?? trimmed;
   const rawChunks = splitRaw(exciseHeredocBodies(cleaned));
   const subs: SubCommand[] = [];
   for (const raw of rawChunks) {

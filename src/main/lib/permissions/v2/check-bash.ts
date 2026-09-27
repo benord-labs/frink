@@ -18,8 +18,8 @@ import {
   extractSignature,
   type SubCommand,
   splitCommand,
-  stripSafeHeredocSubstitutions,
 } from './bash-parser';
+import { inlineLiteralHeredocSubstitutions } from './heredoc';
 import { expandTilde } from './check-edit';
 import { combineScopes, evalScope, type ScopedDocs } from './eval-rules';
 import { isSystemDeniedPath } from './system-denied-patterns';
@@ -29,38 +29,45 @@ const SUBCOMMAND_CAP = 50;
 /** v1 wildcard signal — trailing ` *` or `*` on a generated pattern. */
 const V1_WILDCARD_TAIL = /\s*\*$/;
 
-/**
- * Shells and wrappers that exec their arguments, so `Bash(bash:*)` ≈ `Bash(*)`:
- * never SUGGESTED, still hand-writable. Mirrors Claude Code's BARE_SHELL_PREFIXES.
- */
-const BARE_SHELL_PREFIXES = new Set([
-  'sh',
+/** Commands that run their arguments, so `Bash(sudo:*)` ≈ `Bash(*)`: never suggested, still hand-writable. */
+const EXEC_WRAPPER_COMMANDS = new Set([
+  // Shells: `-c` or a script argument runs arbitrary code.
   'bash',
-  'zsh',
-  'fish',
   'csh',
-  'tcsh',
-  'ksh',
   'dash',
+  'fish',
+  'ksh',
+  'sh',
+  'tcsh',
+  'zsh',
   'cmd',
   'powershell',
   'pwsh',
+  // Launchers that run their argument list as a command.
   'env',
-  'xargs',
   'nice',
-  'stdbuf',
   'nohup',
-  'timeout',
+  'stdbuf',
   'time',
-  'sudo',
+  'timeout',
+  'xargs',
+  // Privilege escalation: runs the rest as another user.
   'doas',
   'pkexec',
-  'command',
+  'sudo',
+  // Shell builtins and zsh precommand modifiers that run the next word.
   'builtin',
+  'command',
   'coproc',
-  'noglob',
   'nocorrect',
+  'noglob',
 ]);
+
+/** Match the binary, not its spelling: paths, `.exe`, and case (case-insensitive filesystems). */
+function isExecWrapper(word: string): boolean {
+  const base = word.slice(Math.max(word.lastIndexOf('/'), word.lastIndexOf('\\')) + 1);
+  return EXEC_WRAPPER_COMMANDS.has(base.toLowerCase().replace(/\.exe$/, ''));
+}
 
 /**
  * Bash commands that READ a path argument. If any positional arg matches
@@ -293,7 +300,7 @@ function buildSuggestedRules(signatures: CommandSignature[]): string[] {
     const stripped = p.replace(V1_WILDCARD_TAIL, '').trim();
     if (stripped.length === 0) continue;
     // Never suggest a shell/wrapper base — `Bash(bash:*)` ≈ `Bash(*)`.
-    if (BARE_SHELL_PREFIXES.has(stripped.split(' ')[0])) continue;
+    if (isExecWrapper(stripped.split(' ')[0])) continue;
     rules.push(`Bash(${stripped}:*)`);
   }
   return rules;
@@ -336,7 +343,7 @@ export function checkBash(
       // removed.
       suggestedRules: buildSuggestedRules(
         extractCommandSignatures(
-          exciseHeredocBodies(stripSafeHeredocSubstitutions(input.command) ?? input.command),
+          exciseHeredocBodies(inlineLiteralHeredocSubstitutions(input.command) ?? input.command),
         ),
       ),
     });

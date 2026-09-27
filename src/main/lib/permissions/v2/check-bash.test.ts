@@ -363,8 +363,8 @@ describe('checkBash — bash-Read parity (system-denied paths)', () => {
     'sort ~/.aws/credentials',
     'sha256sum ~/.ssh/id_rsa',
     'nl ~/.ssh/id_rsa',
-    // tac is the command Claude Code's parallel lists left auto-allowed; rev and
-    // base64 are macOS base-install. All emit contents, so all are cat-equivalent.
+    // tac, rev and base64 ship in common base installs (macOS included) and all
+    // emit file contents, so each is cat-equivalent.
     'tac ~/.ssh/id_rsa',
     'rev ~/.ssh/id_rsa',
     'base64 ~/.ssh/id_rsa',
@@ -686,7 +686,7 @@ describe('checkBash — heredoc allow-listing', () => {
 });
 
 describe('checkBash — safe heredoc substitution (commit idiom)', () => {
-  /** Claude Code's canonical multi-line commit idiom (BashTool prompt). */
+  /** The multi-line commit idiom Claude Code agents emit. */
   const CANONICAL_COMMIT = `git commit -m "$(cat <<'EOF'
 fix: subject line
 
@@ -773,6 +773,60 @@ EOF
     expect(r.prompt.suggestedRules?.some((rule) => rule.includes('git commit:*'))).toBe(false);
   });
 
+  it.each([
+    ['; separator', `echo hi; $(cat <<'EOF'\nrm -rf ~\nEOF\n)`],
+    ['&& separator', `echo hi && $(cat <<'EOF'\nrm -rf ~\nEOF\n)`],
+    ['| separator', `echo hi | $(cat <<'EOF'\nrm -rf ~\nEOF\n)`],
+    ['newline separator', `echo hi\n$(cat <<'EOF'\nrm -rf ~\nEOF\n)`],
+    [
+      'safe commit then a command-position substitution',
+      `git commit -m "$(cat <<'A'\nm\nA\n)"; $(cat <<'EOF'\nrm -rf ~\nEOF\n)`,
+    ],
+  ])('SECURITY: heredoc body in command position after %s is never auto-allowed', (_name, cmd) => {
+    const docs = {
+      policy: noRules,
+      project: { ...noRules, allow: ['Bash(echo:*)', 'Bash(git commit:*)'] },
+      user: noRules,
+    };
+    expect(checkBash({ command: cmd }, docs, root).decision).not.toBe('allow');
+  });
+
+  it.each([
+    ['quoted env value', `FOO='x y' "$(cat <<'EOF'\nrm -rf ~\nEOF\n)"`, "Bash(FOO='x y')"],
+    ['case arm', `case x in x) "$(cat <<'EOF'\nrm -rf ~\nEOF\n)" ;; esac`, 'Bash(case:*)'],
+    ['leading redirection', `>/tmp/out "$(cat <<'EOF'\nrm -rf ~\nEOF\n)"`, 'Bash(>/tmp/out)'],
+    [
+      'opener hidden in single quotes',
+      `echo '"$(cat <<'EOF'\nx\nEOF\n)"' ; printf PWNED ; echo '"'`,
+      'Bash(echo:*)',
+    ],
+  ])('SECURITY: %s is never allowed by %s', (_name, cmd, rule) => {
+    const docs = { policy: noRules, project: { ...noRules, allow: [rule] }, user: noRules };
+    expect(checkBash({ command: cmd }, docs, root).decision).not.toBe('allow');
+  });
+
+  it.each([
+    [
+      'argument of a read command',
+      `cat "$(cat <<'EOF'\n/home/user/.ssh/id_rsa\nEOF\n)"`,
+      'Bash(cat:*)',
+    ],
+    [
+      'redirection target',
+      `echo ok > "$(cat <<'EOF'\n/home/user/.ssh/id_rsa\nEOF\n)"`,
+      'Bash(echo:*)',
+    ],
+  ])(
+    'SECURITY: a heredoc body naming a denied path is still path-checked (%s)',
+    (_name, cmd, rule) => {
+      const docs = { policy: noRules, project: { ...noRules, allow: [rule] }, user: noRules };
+      expect(checkBash({ command: cmd }, docs, root)).toMatchObject({
+        decision: 'deny',
+        reason: { kind: 'safety:path' },
+      });
+    },
+  );
+
   it('over-cap compound with a safe heredoc commit still yields clean suggestions', () => {
     const cmd = [...Array(51).fill('true'), `git commit -m "$(cat <<'EOF'\nm\nEOF\n)"`].join(' ; ');
     const r = checkBash({ command: cmd }, EMPTY_DOCS, root);
@@ -784,7 +838,7 @@ EOF
   });
 });
 
-describe('checkBash — BARE_SHELL_PREFIXES suggestion guard', () => {
+describe('checkBash — EXEC_WRAPPER_COMMANDS suggestion guard', () => {
   it('never suggests Bash(bash:*) for bash -c', () => {
     const r = checkBash({ command: 'bash -c "rm -rf /"' }, EMPTY_DOCS, root);
     expect(r.decision).toBe('ask');
@@ -818,6 +872,59 @@ describe('checkBash — BARE_SHELL_PREFIXES suggestion guard', () => {
       const rules = r.prompt.suggestedRules ?? [];
       expect(rules.some((rule) => rule.startsWith(`Bash(${head}`))).toBe(false);
     }
+  });
+});
+
+describe('checkBash — every exec wrapper is guarded (pins the list across a rebuild)', () => {
+  it.each([
+    'sh -c x',
+    'bash -c x',
+    'zsh -c x',
+    'fish -c x',
+    'csh -c x',
+    'tcsh -c x',
+    'ksh -c x',
+    'dash -c x',
+    'cmd /c dir',
+    'powershell -c x',
+    'pwsh -c x',
+    'env FOO=1 x',
+    'xargs rm',
+    'nice rm x',
+    'stdbuf -o0 rm x',
+    'nohup rm x',
+    'timeout 5 rm x',
+    'time rm x',
+    'sudo rm x',
+    'doas rm x',
+    'pkexec rm x',
+    'command rm x',
+    'builtin cd /',
+    'coproc sleep 1',
+    'noglob rm x',
+    'nocorrect rm x',
+  ])('%s → no wrapper-prefix suggestion', (cmd) => {
+    const r = checkBash({ command: cmd }, EMPTY_DOCS, root);
+    expect(r.decision).toBe('ask');
+    if (r.decision !== 'ask') return;
+    expect(r.prompt.suggestedRules ?? []).toEqual([]);
+  });
+
+  // The binary that runs matters, not its spelling (path, `.exe`, case on case-insensitive filesystems).
+  it.each([
+    ['absolute path', '/usr/bin/sudo rm x', 'sudo'],
+    ['relative path', './bin/bash -c x', 'bash'],
+    ['upper case (case-insensitive FS)', 'SUDO rm x', 'sudo'],
+    ['Windows .exe', 'powershell.exe -c x', 'powershell'],
+    ['Git Bash path + mixed case', '/c/Windows/System32/CMD.EXE /c dir', 'cmd'],
+    // Unquoted `\` is a bash escape, so only a QUOTED Windows path keeps its separators.
+    ['quoted Windows path', "'C:\\Windows\\System32\\cmd.exe' /c dir", 'cmd'],
+  ])('%s: never suggests a wrapper-prefix rule', (_name, cmd, wrapper) => {
+    const r = checkBash({ command: cmd }, EMPTY_DOCS, root);
+    expect(r.decision).toBe('ask');
+    if (r.decision !== 'ask') return;
+    const rules = r.prompt.suggestedRules ?? [];
+    expect(rules.filter((rule) => rule.toLowerCase().includes(wrapper))).toEqual([]);
   });
 });
 

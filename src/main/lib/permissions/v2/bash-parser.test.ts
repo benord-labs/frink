@@ -1,12 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import {
-  extractSignature,
-  SAFE_ENV_VARS,
-  splitCommand,
-  stripSafeHeredocSubstitutions,
-} from './bash-parser';
+import { extractSignature, INERT_ENV_ASSIGNMENTS, splitCommand } from './bash-parser';
 
-/** Claude Code's canonical multi-line commit idiom (BashTool prompt). */
+/** The multi-line commit idiom Claude Code agents emit. */
 const CANONICAL_COMMIT = `git commit -m "$(cat <<'EOF'
 fix: subject line
 
@@ -210,111 +205,6 @@ describe('splitCommand — heredoc excision', () => {
   });
 });
 
-describe('stripSafeHeredocSubstitutions', () => {
-  it.each([
-    [
-      'canonical commit; pipe/semicolon tail survives',
-      CANONICAL_COMMIT,
-      'git commit -m "" 2>&1 | tail -25; echo "---exit: $?---"',
-    ],
-    ['inline DELIM) closing form', `git commit -m "$(cat <<'EOF'\nmsg\nEOF)"`, 'git commit -m ""'],
-    [
-      'inline EOF) closer on the FIRST body line (empty body)',
-      `git commit -m "$(cat <<'EOF'\nEOF)"`,
-      'git commit -m ""',
-    ],
-    [
-      '<<- closer with leading tabs',
-      `git commit -m "$(cat <<-'EOF'\n\tmsg\n\tEOF\n)"`,
-      'git commit -m ""',
-    ],
-    [
-      'backslash-escaped delimiter <<\\EOF (quoted-equivalent in bash)',
-      'git commit -m "$(cat <<\\EOF\nmsg\nEOF\n)"',
-      'git commit -m ""',
-    ],
-    [
-      'body with apostrophes and double quotes (common commit prose)',
-      `git commit -m "$(cat <<'EOF'\nfix: don't break "quoted" text\n\nit's fine\nEOF\n)"`,
-      'git commit -m ""',
-    ],
-    [
-      'two sibling substitutions both strip',
-      `gh pr create --title "$(cat <<'A'\nt\nA\n)" --body "$(cat <<'B'\nb\nB\n)"`,
-      'gh pr create --title "" --body ""',
-    ],
-  ])('strips: %s', (_name, cmd, expected) => {
-    expect(stripSafeHeredocSubstitutions(cmd)).toBe(expected);
-  });
-
-  // Every rejected shape falls back to the unstripped command and the `$(`
-  // deny — the conservative direction. SECURITY rows are the shapes where a
-  // wrong strip would launder live shell code into an allow.
-  it.each([
-    [
-      'unquoted delimiter (body would expand, not literal)',
-      'git commit -m "$(cat <<EOF\nmsg\nEOF\n)"',
-    ],
-    ['unterminated heredoc (no closer)', `git commit -m "$(cat <<'EOF'\nmsg msg\n)"`],
-    ['trailing content on the opener line', `git commit -m "$(cat <<'EOF'; rm -rf /\nmsg\nEOF\n)"`],
-    [
-      'SECURITY: command-name position — heredoc body would BE the command',
-      `$(cat <<'EOF'\nrm -rf ~\nEOF\n)`,
-    ],
-    [
-      'SECURITY: command-name position with trailing args',
-      `  $(cat <<'EOF'\nchmod\nEOF\n) 777 /etc/shadow`,
-    ],
-    [
-      'SECURITY: nested matches (stale-index strip corruption guard)',
-      `echo "$(cat <<'A'\n$(cat <<'B'\nx\nB\n)\nA\n)"`,
-    ],
-    ['escaped \\$( opener is not a substitution', `echo "\\$(cat <<'EOF'\nx\nEOF\n)"`],
-    ['plain command', 'npm test'],
-    ['plain heredoc (no substitution)', `cat > f << 'EOF'\nbody\nEOF`],
-    [
-      'SECURITY: body containing a literal delimiter line — bash runs the rest as code',
-      `git commit -m "$(cat <<'EOF'\nfirst\nEOF\nsecond\nEOF\n)"`,
-    ],
-    [
-      'body line that merely STARTS with the delimiter (conservative, CC parity)',
-      `git commit -m "$(cat <<'EOF'\nEOFY report\nEOF\n)"`,
-    ],
-    [
-      'CRLF closer — bash itself does not close on EOF\\r; Windows-authored stays gated',
-      `git commit -m "$(cat <<'EOF'\r\nmsg\r\nEOF\r\n)"`,
-    ],
-    ['opener with no newline after it', `git commit -m "$(cat <<'EOF'`],
-    [
-      'pathological candidate flood (33 > cap) — bounded work, deny path',
-      Array(33).fill(`x "$(cat <<'EOF'`).join('\n'),
-    ],
-  ])('null: %s', (_name, cmd) => {
-    expect(stripSafeHeredocSubstitutions(cmd)).toBeNull();
-  });
-
-  it('SECURITY: FIRST closing line wins — text between it and a later DELIM) survives', () => {
-    // A skip-past-first matcher would swallow `; rm -rf /` inside the stripped
-    // range. Bash closes at the first `EOF`, so the text must survive.
-    const cmd = `echo "$(cat <<'EOF'\nbody\nEOF\n); rm -rf /\nEOF)"`;
-    expect(stripSafeHeredocSubstitutions(cmd)).toContain('rm -rf /');
-  });
-
-  it('SECURITY: partial strip leaves an unmatched live $( in the result', () => {
-    // Second substitution has an unquoted delimiter (live body) — it must
-    // survive the strip so the command stays exact-match-only.
-    const cmd = `git commit -m "$(cat <<'A'\nx\nA\n)" --trailer "$(cat <<B\ny\nB\n)"`;
-    expect(stripSafeHeredocSubstitutions(cmd)).toContain('$(cat <<B');
-  });
-
-  it('repeated calls are deterministic (global-regex lastIndex must never leak state)', () => {
-    const first = stripSafeHeredocSubstitutions(CANONICAL_COMMIT);
-    stripSafeHeredocSubstitutions('npm test'); // interleaved no-match call
-    expect(stripSafeHeredocSubstitutions(CANONICAL_COMMIT)).toBe(first);
-    expect(first).not.toBeNull();
-  });
-});
-
 describe('splitCommand — safe heredoc substitution carve-out', () => {
   it('canonical commit → 3 subs; commit sub has a real `git commit` signature', () => {
     const subs = splitCommand(CANONICAL_COMMIT);
@@ -330,12 +220,9 @@ describe('splitCommand — safe heredoc substitution carve-out', () => {
     expect(extractSignature(subs[2]).isExactMatchOnly).toBe(true);
   });
 
-  it('bare argument-position substitution strips before heredoc-body excision', () => {
-    // Strip must run first: the excise pass would otherwise consume the body
-    // and leave a `$(cat` fragment that is exact-match-only.
+  it('an unquoted (bare) substitution argument is not stripped and stays exact-match-only', () => {
     const subs = splitCommand(`echo prefix $(cat <<'EOF'\nhello\nEOF\n)`);
-    expect(subs).toHaveLength(1);
-    expect(extractSignature(subs[0])).toMatchObject({ base: 'echo', isExactMatchOnly: false });
+    expect(subs.some((sub) => extractSignature(sub).isExactMatchOnly)).toBe(true);
   });
 
   it('command-name-position substitution keeps the $( and stays exact-match-only', () => {
@@ -500,17 +387,17 @@ describe('splitCommand — POSIX single quotes end at the next quote, escaped or
   });
 });
 
-describe('SAFE_ENV_VARS', () => {
+describe('INERT_ENV_ASSIGNMENTS', () => {
   it('contains the documented safe vars', () => {
-    expect(SAFE_ENV_VARS.has('NODE_ENV')).toBe(true);
-    expect(SAFE_ENV_VARS.has('CI')).toBe(true);
-    expect(SAFE_ENV_VARS.has('DEBUG')).toBe(true);
+    expect(INERT_ENV_ASSIGNMENTS.has('NODE_ENV')).toBe(true);
+    expect(INERT_ENV_ASSIGNMENTS.has('CI')).toBe(true);
+    expect(INERT_ENV_ASSIGNMENTS.has('DEBUG')).toBe(true);
   });
 
   it('does NOT contain unsafe vars', () => {
-    expect(SAFE_ENV_VARS.has('PATH')).toBe(false);
-    expect(SAFE_ENV_VARS.has('LD_PRELOAD')).toBe(false);
-    expect(SAFE_ENV_VARS.has('PYTHONPATH')).toBe(false);
-    expect(SAFE_ENV_VARS.has('NODE_OPTIONS')).toBe(false);
+    expect(INERT_ENV_ASSIGNMENTS.has('PATH')).toBe(false);
+    expect(INERT_ENV_ASSIGNMENTS.has('LD_PRELOAD')).toBe(false);
+    expect(INERT_ENV_ASSIGNMENTS.has('PYTHONPATH')).toBe(false);
+    expect(INERT_ENV_ASSIGNMENTS.has('NODE_OPTIONS')).toBe(false);
   });
 });
