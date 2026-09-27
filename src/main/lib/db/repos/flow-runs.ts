@@ -12,6 +12,7 @@ import {
   tasks,
 } from '../schema';
 import type { TaskStatus } from './tasks';
+import { activeFlowRunForSubChatId } from './task-queries/subchat-driver';
 
 type Db = ReturnType<typeof getDatabase>;
 
@@ -255,28 +256,7 @@ export async function getActiveFlowRunForSubChat(
   subChatId: string,
 ): Promise<ActiveFlowRunRef | null> {
   if (!subChatId) return null;
-  // No selectDistinct (unlike the chat-scoped readers): the node_runs × tasks fan-out only duplicates
-  // the SAME run row, and limit(1) after the ordering collapses it.
-  const [row] = await db
-    .select({ id: flowRuns.id })
-    .from(flowRuns)
-    .leftJoin(nodeRuns, eq(nodeRuns.flowRunId, flowRuns.id))
-    .leftJoin(tasks, eq(tasks.flowRunId, flowRuns.id))
-    .where(
-      and(
-        inArray(flowRuns.status, ['pending', 'running', 'paused']),
-        or(
-          sql`json_extract(${flowRuns.triggerContext}, '$.subChatId') = ${subChatId}`,
-          sql`json_extract(${nodeRuns.nodeOutput}, '$.outputs.subChatId') = ${subChatId}`,
-          sql`json_extract(${tasks.result}, '$.subChatId') = ${subChatId}`,
-        ),
-      ),
-    )
-    // rowid breaks createdAt ties, exactly as getLatestFlowTaskForSubChat does: a sub-chat reused
-    // across runs can link two runs stamped in the same millisecond, and the later-inserted one must
-    // win. Qualified — a bare `rowid` is ambiguous across these joins.
-    .orderBy(desc(flowRuns.createdAt), desc(sql`flow_runs.rowid`))
-    .limit(1);
+  const [row] = await activeFlowRunForSubChatId(db, subChatId);
   return row ?? null;
 }
 

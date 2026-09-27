@@ -13,3 +13,13 @@ export function configureMainLog(): void {
 export function mainLogPath(dir: string): string {
   return join(dir, 'main.log');
 }
+
+/** Resolve the actual log location for startup error dialogs, even when logging is unavailable. */
+export function getMainLogPath(): string {
+  try {
+    const path = log.transports.file.getFile().path;
+    return typeof path === 'string' && path.length > 0 ? path : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}

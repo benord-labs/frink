@@ -15,6 +15,7 @@ import { flowsRouter } from './flows';
 import { hooksRouter } from './hooks';
 import { integrationsRouter } from './integrations';
 import { mcpRouter } from './mcp';
+import { mobileRouter } from './mobile';
 import { permissionsRouter } from './permissions';
 import { pluginsRouter } from './plugins';
 import { projectsRouter } from './projects';
@@ -52,6 +53,7 @@ export function createAppRouter(_getWindow: () => BrowserWindow | null) {
     worktreeConfig: worktreeConfigRouter,
     commands: commandsRouter,
     mcp: mcpRouter,
+    mobile: mobileRouter,
     permissions: permissionsRouter,
     plugins: pluginsRouter,
     tasks: tasksRouter,

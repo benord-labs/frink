@@ -10,6 +10,7 @@
 
 import log from 'electron-log';
 import type { NodeOutput } from '../../../shared/types/flow';
+import type { FlowResumeSnapshot } from '../../../shared/types/flow-run/resume';
 import { getDatabase } from '../db';
 import { getFlowRun, setFlowRunStatus } from '../db/repos/flow-runs';
 import { getVersion } from '../db/repos/flow-versions';
@@ -281,6 +282,7 @@ export async function advanceFlowRun(
   /** Watcher-only: the driving-task row the output was derived from. The node write is refused
    * when that exact row is gone (resumed, or resumed and re-parked) — see setNodeRunStatus. */
   drivingTask?: { id: string; status: string; result: unknown },
+  resumeSnapshot?: FlowResumeSnapshot,
 ): Promise<boolean> {
   const db = getDatabase();
   // Never resurrect a terminal run. The task-completion-watcher can fire advanceFlowRun
@@ -305,9 +307,10 @@ export async function advanceFlowRun(
     completedAt: new Date(),
     expectStatuses: ['running', 'awaiting_input', 'blocked'],
     expectDrivingTask: drivingTask,
+    expectResumeSnapshot: resumeSnapshot,
   });
   // False ONLY when a guard was asked for and nothing was written: the caller re-checks its task.
-  if (!updated) return !drivingTask;
+  if (!updated) return !drivingTask && !resumeSnapshot;
 
   const ctx = await loadRunContext(flowRunId);
   if (!ctx) return true;
