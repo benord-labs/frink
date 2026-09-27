@@ -87,6 +87,11 @@ export async function runStartupRecoveryAndLoops(): Promise<void> {
     const { sweepOrphanedAttachments } = await import('../attachments-cleanup');
     await sweepOrphanedAttachments();
   });
+  // Replays `.cursor/cli.json` syncs that failed after a project rule change (sc-3267).
+  void step('permissions cursor sync retry', async () => {
+    const { retryPendingCursorSyncs } = await import('../../permissions/cursor-sync-pending');
+    await retryPendingCursorSyncs(getDatabase());
+  });
   await step('integrations plugin connect unwind', async () => {
     const { unwindUnconnectedInstalls } = await import('../../integrations');
     await unwindUnconnectedInstalls(getDatabase());

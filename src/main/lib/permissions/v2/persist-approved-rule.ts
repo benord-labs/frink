@@ -13,7 +13,7 @@
 import log from 'electron-log';
 import { validateRuleString } from '../../../../shared/lib/validate-rule';
 import type { getDatabase } from '../../db';
-import { addBashRuleToCursorConfig } from '../cursor-config-sync';
+import { syncProjectRuleToCursorDurably } from '../cursor-sync-pending';
 import { addProjectRule, addUserRule } from './store-local';
 import type { RuleType } from './types';
 
@@ -63,7 +63,7 @@ export async function persistApprovedRule(params: {
       await addProjectRule(db, project.id, promptResult.ruleString, ruleType);
       if (isBash) {
         // Cursor config is project-scoped (`<projectPath>/.cursor/cli.json`).
-        await addBashRuleToCursorConfig(projectPath, promptResult.ruleString);
+        await syncProjectRuleToCursorDurably(db, project.id, promptResult.ruleString);
       }
     } catch (err) {
       log.warn(

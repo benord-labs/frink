@@ -81,6 +81,22 @@ async function writeCursorConfig(
   }
 }
 
+// Serialises each cli.json read-modify-write: overlapping grant/revoke calls would
+// otherwise read one snapshot and the last write would resurrect a removed token.
+const pendingWrites = new Map<string, Promise<void>>();
+
+function withConfigLock(projectPath: string, fn: () => Promise<void>): Promise<void> {
+  const key = getCursorConfigPath(projectPath);
+  const prev = pendingWrites.get(key) ?? Promise.resolve();
+  const next = prev.catch(() => {}).then(fn);
+  const tail = next.catch(() => {});
+  pendingWrites.set(key, tail);
+  void tail.then(() => {
+    if (pendingWrites.get(key) === tail) pendingWrites.delete(key);
+  });
+  return next;
+}
+
 /**
  * Translate a v2 rule string to cursor's `Shell(<base>)` token, or null if
  * cursor can't represent the rule without widening.
@@ -109,12 +125,9 @@ async function writeCursorConfig(
  * months without complaint.
  */
 export function ruleStringToCursorToken(rule: string): string | null {
-  // Trust boundary: callers (addBashRuleToCursorConfig from persist-approved-rule
-  // and the tRPC mutations) have already passed `rule` through `validateRuleString`
-  // before this function is reached. Grammar-only `parseRule` here is sufficient
-  // because the semantic check is upstream — adding a second `validateRuleString`
-  // call would be redundant work on every config sync.
-  const parsed = parseRule(rule);
+  // Rules arrive validated or read back from storage, so grammar-only parseRule suffices; trim
+  // like validateRuleString so every rule it accepts maps the same way.
+  const parsed = parseRule(rule.trim());
   if ('error' in parsed) return null;
   if (parsed.tool !== 'Bash') return null;
   if (!parsed.content) return null; // tool-wide
@@ -133,6 +146,25 @@ export function ruleStringToCursorToken(rule: string): string | null {
   return `Shell(${base})`;
 }
 
+async function addToken(projectPath: string, shellToken: string): Promise<void> {
+  const config = await readCursorConfig(projectPath);
+  if (config.permissions.allow.includes(shellToken)) {
+    log.info(`[Cursor Config] Rule already allowed: ${shellToken}`);
+    return;
+  }
+  config.permissions.allow.push(shellToken);
+  await writeCursorConfig(projectPath, config);
+}
+
+async function removeToken(projectPath: string, shellToken: string): Promise<void> {
+  if (!existsSync(getCursorConfigPath(projectPath))) return;
+  const config = await readCursorConfig(projectPath);
+  const next = config.permissions.allow.filter((t) => t !== shellToken);
+  if (next.length === config.permissions.allow.length) return; // no change
+  config.permissions.allow = next;
+  await writeCursorConfig(projectPath, config);
+}
+
 /**
  * Add a Shell(...) entry to .cursor/cli.json derived from a v2 rule string.
  * No-op if the rule has no lossless cursor representation.
@@ -146,15 +178,7 @@ export async function addBashRuleToCursorConfig(
     log.debug(`[Cursor Config] Skipping unmappable rule: ${ruleString}`);
     return;
   }
-
-  const config = await readCursorConfig(projectPath);
-  if (config.permissions.allow.includes(shellToken)) {
-    log.info(`[Cursor Config] Rule already allowed: ${shellToken}`);
-    return;
-  }
-
-  config.permissions.allow.push(shellToken);
-  await writeCursorConfig(projectPath, config);
+  await withConfigLock(projectPath, () => addToken(projectPath, shellToken));
 }
 
 /**
@@ -167,14 +191,22 @@ export async function removeBashRuleFromCursorConfig(
 ): Promise<void> {
   const shellToken = ruleStringToCursorToken(ruleString);
   if (!shellToken) return;
+  await withConfigLock(projectPath, () => removeToken(projectPath, shellToken));
+}
 
-  const configPath = getCursorConfigPath(projectPath);
-  if (!existsSync(configPath)) return;
-
-  const config = await readCursorConfig(projectPath);
-  const next = config.permissions.allow.filter((t) => t !== shellToken);
-  if (next.length === config.permissions.allow.length) return; // no change
-
-  config.permissions.allow = next;
-  await writeCursorConfig(projectPath, config);
+/**
+ * Make the rule's Shell(...) token match `isAllowed()`, evaluated INSIDE the file lock.
+ * Callers mutate the DB first, so the last queued reconcile always sees the final DB state.
+ */
+export async function reconcileBashRuleInCursorConfig(
+  projectPath: string,
+  ruleString: string,
+  isAllowed: () => Promise<boolean>,
+): Promise<void> {
+  const shellToken = ruleStringToCursorToken(ruleString);
+  if (!shellToken) return;
+  await withConfigLock(projectPath, async () => {
+    if (await isAllowed()) await addToken(projectPath, shellToken);
+    else await removeToken(projectPath, shellToken);
+  });
 }

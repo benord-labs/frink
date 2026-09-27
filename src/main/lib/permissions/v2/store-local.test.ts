@@ -7,6 +7,7 @@ import {
   addUserRule,
   getProjectDoc,
   getUserDoc,
+  hasProjectAllowRuleIgnoringPadding,
   removeProjectRule,
   removeUserRule,
 } from './store-local';
@@ -169,5 +170,53 @@ describe('store-local — separation', () => {
     await addProjectRule(db, projectId, 'Bash(git:*)', 'allow');
     expect((await getUserDoc(db)).allow).toEqual(['Bash(npm:*)']);
     expect((await getProjectDoc(db, projectId)).allow).toEqual(['Bash(git:*)']);
+  });
+});
+
+describe('store-local — hasProjectAllowRuleIgnoringPadding (sc-3267)', () => {
+  let db: TestDb;
+  let projectId: string;
+  const has = (rule: string, id = projectId) => hasProjectAllowRuleIgnoringPadding(db, id, rule);
+  beforeEach(async () => {
+    db = freshDb();
+    projectId = await seedProject(db);
+  });
+
+  it('matches an exact allow rule and nothing else', async () => {
+    const other = await seedProject(db, 'other');
+    await addProjectRule(db, projectId, 'Bash(npm:*)', 'allow');
+    await addProjectRule(db, projectId, 'Bash(git:*)', 'deny');
+    expect(await has('Bash(npm:*)')).toBe(true);
+    expect(await has('Bash(git:*)')).toBe(false); // deny does not back an allow token
+    expect(await has('Bash(npm run:*)')).toBe(false);
+    expect(await has('Bash(npm:*)', other)).toBe(false);
+  });
+
+  it.each(['  Bash(npm:*)', 'Bash(npm:*)\t', '\nBash(npm:*)\r\n'])(
+    'treats a stored padded variant %j as backing the canonical rule',
+    async (stored) => {
+      await addProjectRule(db, projectId, stored, 'allow');
+      expect(await has('Bash(npm:*)')).toBe(true);
+      expect(await has(' Bash(npm:*) ')).toBe(true);
+    },
+  );
+
+  it('stays true while another padded variant remains after one is removed', async () => {
+    await addProjectRule(db, projectId, 'Bash(npm:*)', 'allow');
+    await addProjectRule(db, projectId, ' Bash(npm:*) ', 'allow');
+    await removeProjectRule(db, projectId, 'Bash(npm:*)', 'allow');
+    expect(await has('Bash(npm:*)')).toBe(true);
+    await removeProjectRule(db, projectId, ' Bash(npm:*) ', 'allow');
+    expect(await has('Bash(npm:*)')).toBe(false);
+  });
+
+  it('does not treat a rule that merely contains the text as a match', async () => {
+    await addProjectRule(db, projectId, 'Bash(xBash(npm:*))', 'allow');
+    expect(await has('Bash(npm:*)')).toBe(false);
+  });
+
+  it('is false for a blank rule', async () => {
+    await addProjectRule(db, projectId, 'Bash(npm:*)', 'allow');
+    expect(await has('   ')).toBe(false);
   });
 });

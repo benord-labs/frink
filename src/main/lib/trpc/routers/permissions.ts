@@ -8,6 +8,7 @@
 import { z } from 'zod';
 import { validateRuleString } from '../../../../shared/lib/validate-rule';
 import { getDatabase } from '../../db';
+import { syncProjectRuleToCursorDurably } from '../../permissions/cursor-sync-pending';
 import {
   addProjectRule,
   addUserRule,
@@ -22,6 +23,7 @@ import type { PermissionsDoc } from '../../permissions/v2/types';
 import { publicProcedure, router } from '../index';
 
 const RULE_TYPE = z.enum(['allow', 'deny', 'ask']);
+
 type AddRuleResult =
   | { ok: true }
   | { ok: false; error: 'validation' | 'duplicate'; message: string };
@@ -71,12 +73,16 @@ export const permissionsRouter = router({
       if (!validation.ok) {
         return { ok: false, error: 'validation', message: validation.message };
       }
+      const db = getDatabase();
       const { inserted } = await addProjectRule(
-        getDatabase(),
+        db,
         input.projectId,
         input.ruleString,
         input.ruleType,
       );
+      if (input.ruleType === 'allow') {
+        await syncProjectRuleToCursorDurably(db, input.projectId, input.ruleString);
+      }
       if (!inserted) {
         return { ok: false, error: 'duplicate', message: 'Rule already exists' };
       }
@@ -98,7 +104,7 @@ export const permissionsRouter = router({
       return { ok: true };
     }),
 
-  /** Remove a project-tier rule. Idempotent (no-op if not present). */
+  /** Remove a project-tier rule (idempotent); allow rules are also re-synced to `.cursor/cli.json`. */
   removeProjectRule: publicProcedure
     .input(
       z.object({
@@ -108,7 +114,11 @@ export const permissionsRouter = router({
       }),
     )
     .mutation(async ({ input }): Promise<void> => {
-      await removeProjectRule(getDatabase(), input.projectId, input.ruleString, input.ruleType);
+      const db = getDatabase();
+      await removeProjectRule(db, input.projectId, input.ruleString, input.ruleType);
+      if (input.ruleType === 'allow') {
+        await syncProjectRuleToCursorDurably(db, input.projectId, input.ruleString);
+      }
     }),
 
   /** Remove a user-tier rule. Idempotent (no-op if not present). */

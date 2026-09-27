@@ -90,6 +90,30 @@ export async function addProjectRule(
   return { inserted: result.length > 0 };
 }
 
+/**
+ * True when any project allow rule equals `rule` after trimming — validateRuleString accepts padded
+ * rules, so padded variants back the same Cursor token. `instr` narrows candidates in SQL.
+ */
+export async function hasProjectAllowRuleIgnoringPadding(
+  db: Db,
+  projectId: string,
+  rule: string,
+): Promise<boolean> {
+  const canonical = rule.trim();
+  if (!canonical) return false;
+  const rows = await db
+    .select({ ruleString: projectPermissionRules.ruleString })
+    .from(projectPermissionRules)
+    .where(
+      and(
+        eq(projectPermissionRules.projectId, projectId),
+        eq(projectPermissionRules.ruleType, 'allow'),
+        sql`instr(${projectPermissionRules.ruleString}, ${canonical}) > 0`,
+      ),
+    );
+  return rows.some((row) => row.ruleString.trim() === canonical);
+}
+
 export async function removeProjectRule(
   db: Db,
   projectId: string,
