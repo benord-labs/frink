@@ -1,5 +1,8 @@
 // Types
 
+// Matching
+export { type HotkeyEventLike, matchesHotkey } from './match-hotkey';
+
 // Registry
 export {
   ALL_SHORTCUT_ACTIONS,
