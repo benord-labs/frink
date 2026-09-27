@@ -77,9 +77,24 @@ describe('computeClaudeSessionKey', () => {
   it('names each frozen option that changed, including one only one side has', () => {
     const before = computeClaudeSessionKey(options(), servers());
     const after = computeClaudeSessionKey(
-      options({ cwd: '/work/other', model: undefined, betas: ['context-1m'] }),
+      options({ cwd: '/work/other', thinking: { type: 'adaptive' }, betas: ['context-1m'] }),
       servers(),
     );
-    expect(diffKeyParts(before, after).sort()).toEqual(['betas', 'cwd', 'model']);
+    expect(diffKeyParts(before, after).sort()).toEqual(['betas', 'cwd', 'thinking']);
+  });
+
+  it('leaves model, effort and Ultra out of the key: a claim sets them live', () => {
+    const before = computeClaudeSessionKey(options({ effort: 'high' }), servers());
+    const after = computeClaudeSessionKey(
+      options({ model: 'claude-sonnet-5', effort: 'low', settings: { ultracode: true } }),
+      servers(),
+    );
+    expect(diffKeyParts(before, after)).toEqual([]);
+  });
+
+  it('keys max effort, which has no live setting', () => {
+    const high = computeClaudeSessionKey(options({ effort: 'high' }), servers());
+    const max = computeClaudeSessionKey(options({ effort: 'max' }), servers());
+    expect(diffKeyParts(high, max)).toEqual(['effort']);
   });
 });

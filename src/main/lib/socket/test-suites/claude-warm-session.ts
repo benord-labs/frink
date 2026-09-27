@@ -257,8 +257,7 @@ function registerRecreateTests({ claudeQueryMock }: WarmSessionHarness, send: Se
         },
       },
     ],
-    ['model', 'model', { second: () => ({ settings: { model: 'opus' } }) }],
-    ['effort', 'effort', { second: () => ({ settings: { effort: 'high' } }) }],
+    ['max effort', 'effort', { second: () => ({ settings: { effort: 'max' } }) }],
   ])('a changed %s recreates the CLI, resuming the conversation', async (_, part, change) => {
     const first = mockQuery(claudeQueryMock, answeringCli());
     mockQuery(claudeQueryMock, answeringCli());

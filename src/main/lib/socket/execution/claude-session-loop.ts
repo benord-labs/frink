@@ -4,6 +4,7 @@ import {
   isAmbientIdleFrame,
   isAnyResult,
   isIdleActivity,
+  isSetterEcho,
   isTurnBoundary,
   noteSubagentTaskFrame,
 } from '../streaming';
@@ -449,6 +450,7 @@ async function dispatchFrame(session: ClaudeSession, frame: SDKMessage | null): 
     else endTurn(session);
     return;
   }
+  if (isSetterEcho(frame)) return;
   // Every frame is liveness: a single long burst (a wake turn running big tool calls) must keep
   // reading as attended, or the quiet-idle park sweep would park it mid-stream.
   session.lastActiveAt = Date.now();

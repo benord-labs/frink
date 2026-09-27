@@ -171,15 +171,26 @@ function registerHitAndMissTests(
     expect(sessionLines('claim')).toEqual(['hit prewarm']);
   });
 
+  it('a send whose model changed since the pre-warm claims it and sets the model live', async () => {
+    const warm = mockQuery(claudeQueryMock, answeringCli());
+
+    await prewarm();
+    await send('first', { settings: { model: 'opus' } });
+
+    expect(sessionLines('claim')).toEqual(['hit prewarm']);
+    expect(claudeQueryMock).toHaveBeenCalledTimes(1);
+    expect(warm.setModel).toHaveBeenLastCalledWith(expect.stringContaining('opus'));
+  });
+
   it('a send whose settings changed since the pre-warm retires it and spawns cold, resuming', async () => {
     const warm = mockQuery(claudeQueryMock, answeringCli());
     mockQuery(claudeQueryMock, answeringCli());
 
     await prewarm();
-    await send('first', { settings: { model: 'opus' } });
+    await send('first', { settings: { effort: 'max' } });
 
-    expect(sessionLines('claim')).toEqual(['miss:key-mismatch:model prewarm']);
-    expect(sessionLines('retire')).toEqual(['reason=key-mismatch:model prewarm']);
+    expect(sessionLines('claim')).toEqual(['miss:key-mismatch:effort prewarm']);
+    expect(sessionLines('retire')).toEqual(['reason=key-mismatch:effort prewarm']);
     expect(warm.close).toHaveBeenCalledOnce();
     expect(claudeQueryMock).toHaveBeenCalledTimes(2);
     expect(spawnedResume(1)).toBe('sess-held');

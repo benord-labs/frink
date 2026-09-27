@@ -1714,10 +1714,13 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
         signal: abortController.signal,
         mode,
         nativeAutoReview,
-        // Only a held session can disagree: a claimed idle one matched this turn's spawn key.
-        ultracode: adoptedPump
-          ? Boolean((sdkOptions as { settings?: { ultracode?: boolean } }).settings?.ultracode)
-          : undefined,
+        live: {
+          model: sdkOptions.model,
+          effort: (sdkOptions as { effort?: string }).effort,
+          ultracode: Boolean(
+            (sdkOptions as { settings?: { ultracode?: boolean } }).settings?.ultracode,
+          ),
+        },
         onTakeover: () => chatServer.bindChannelExecution(subChatId, executionContextId),
         onSetterRejected: claimed ? () => session.retire('setter-rejected') : undefined,
       });

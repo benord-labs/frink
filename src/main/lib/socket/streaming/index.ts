@@ -4,6 +4,7 @@ export {
   isAmbientIdleFrame,
   isAnyResult,
   isIdleActivity,
+  isSetterEcho,
   isTurnBoundary,
 } from './ambient-idle-frame';
 export { noteSubagentTaskFrame } from './subagent-task-status';
