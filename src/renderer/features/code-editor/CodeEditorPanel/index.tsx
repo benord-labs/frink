@@ -101,8 +101,10 @@ import {
   trackPaneTabAtom,
   updateFileContentAtom,
 } from '@/lib/code-editor/state';
+import { customHotkeysAtom } from '@/lib/atoms';
 import {
   disambiguateProjectPaths,
+  getEditorTabCycleDirection,
   getProjectName,
   groupFilesByProject,
 } from '@/lib/code-editor/tabs';
@@ -110,7 +112,7 @@ import type { ShortcutActionId } from '@/lib/hotkeys';
 import { appStore } from '@/lib/jotai-store';
 import { getPaneColor } from '@/lib/pane-colors';
 import { trpc, trpcClient } from '@/lib/trpc';
-import { cn } from '@/lib/utils';
+import { cn, isMac } from '@/lib/utils';
 
 const MARKDOWN_PREVIEW_DEBOUNCE_MS = 200;
 const MARKDOWN_PREVIEW_MAX_CHARS = 200_000;
@@ -373,6 +375,7 @@ export function CodeEditorPanel() {
   const [layout, setLayout] = useAtom(codeEditorLayoutAtom);
   const [diffModePreference, setDiffModePreference] = useAtom(diffModePreferenceAtom);
   const selectedProject = useAtomValue(selectedProjectAtom);
+  const customHotkeys = useAtomValue(customHotkeysAtom);
   const monacoTheme = useMonacoTheme();
   const utils = trpc.useUtils();
   const clearResolverCacheMutation = trpc.files.clearResolverCache.useMutation();
@@ -1376,7 +1379,7 @@ export function CodeEditorPanel() {
   }, []);
 
   // Handle ESC to close, Cmd+W close tab, Cmd+S save, Cmd+Shift+I diff toggle,
-  // Cmd+Shift+]/[ cycle tab, Cmd+Shift+M maximize; Cmd+Alt+V markdown preview (markdown files)
+  // next/prev editor tab (configured shortcut), Cmd+Shift+M maximize; Cmd+Alt+V markdown preview
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
@@ -1427,22 +1430,15 @@ export function CodeEditorPanel() {
         return;
       }
 
-      // Cmd+Shift+]/[ — next/prev editor tab (fallback when focus is in Monaco)
-      if (mod && e.shiftKey && inPanel) {
-        const isNext = e.key === ']' || e.key === '}' || e.code === 'BracketRight';
-        const isPrev = e.key === '[' || e.key === '{' || e.code === 'BracketLeft';
-        if (isNext) {
-          e.preventDefault();
-          e.stopPropagation();
-          window.dispatchEvent(new CustomEvent('editor:cycle-pane-group', { detail: 1 }));
-          return;
-        }
-        if (isPrev) {
-          e.preventDefault();
-          e.stopPropagation();
-          window.dispatchEvent(new CustomEvent('editor:cycle-pane-group', { detail: -1 }));
-          return;
-        }
+      // Next/prev editor tab — fallback when focus is in Monaco; honours custom keybinds
+      const cycleDirection = inPanel ? getEditorTabCycleDirection(e, customHotkeys, isMac()) : null;
+      if (cycleDirection !== null) {
+        e.preventDefault();
+        e.stopPropagation();
+        window.dispatchEvent(
+          new CustomEvent('editor:cycle-pane-group', { detail: cycleDirection }),
+        );
+        return;
       }
 
       if (isOpen && closesEditorOnEscape(e)) {
@@ -1471,6 +1467,7 @@ export function CodeEditorPanel() {
       activeFile,
       canShowInlineDiff,
       closeFile,
+      customHotkeys,
       handleSave,
       setDiffModePreference,
       setIsMaximized,

@@ -1,7 +1,9 @@
 // @vitest-environment happy-dom
 
-import { cleanup, render } from '@testing-library/react';
+import { cleanup, render, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { getEditorTabCycleDirection } from '@/lib/code-editor/tabs';
+import type { CustomHotkeysConfig } from '@/lib/hotkeys';
 import { matchesHotkey, useAgentsHotkeys } from './agents-hotkeys-manager';
 
 function HotkeysHarness(props: Parameters<typeof useAgentsHotkeys>[0]) {
@@ -341,5 +343,97 @@ describe('matchesHotkey – minus key', () => {
         'cmd+shift+minus',
       ),
     ).toBe(false);
+  });
+});
+
+// =============================================================================
+// Editor tab cycling: global early binding + CodeEditorPanel fallback together
+// =============================================================================
+
+describe('editor tab cycling – global manager and panel fallback', () => {
+  afterEach(() => {
+    cleanup();
+    document.body.innerHTML = '';
+  });
+
+  /**
+   * Mirrors CodeEditorPanel's wiring: a document capture listener that runs after
+   * the manager's window capture listener and only acts on events inside the panel.
+   */
+  function setup(config: CustomHotkeysConfig, isMac: boolean) {
+    const cycles: number[] = [];
+    const onCycle = (e: Event) => cycles.push((e as CustomEvent<number>).detail);
+    window.addEventListener('editor:cycle-pane-group', onCycle);
+
+    render(
+      <>
+        <div data-testid="panel">
+          <textarea data-testid="monaco" />
+        </div>
+        <HotkeysHarness customHotkeysConfig={config} />
+      </>,
+    );
+    const panel = document.querySelector('[data-testid="panel"]')!;
+    const monaco = document.querySelector('[data-testid="monaco"]')!;
+    const fallback = (e: KeyboardEvent) => {
+      if (!panel.contains(e.target as Node)) return;
+      const dir = getEditorTabCycleDirection(e, config, isMac);
+      if (dir === null) return;
+      e.preventDefault();
+      e.stopPropagation();
+      window.dispatchEvent(new CustomEvent('editor:cycle-pane-group', { detail: dir }));
+    };
+    document.addEventListener('keydown', fallback, true);
+
+    const press = (init: KeyboardEventInit) =>
+      monaco.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, ...init }));
+    const teardown = () => {
+      document.removeEventListener('keydown', fallback, true);
+      window.removeEventListener('editor:cycle-pane-group', onCycle);
+    };
+    return { cycles, press, teardown };
+  }
+
+  const settle = () => new Promise((r) => setTimeout(r, 0));
+
+  it('fires exactly once for the macOS default (no double cycle)', async () => {
+    const { cycles, press, teardown } = setup({ version: 1, bindings: {} }, true);
+    press({ key: '}', code: 'BracketRight', metaKey: true, shiftKey: true });
+    await waitFor(() => expect(cycles).toEqual([1]));
+    await settle();
+    expect(cycles).toEqual([1]);
+    teardown();
+  });
+
+  it('fires exactly once for Ctrl+Shift+[ on Windows/Linux via the fallback', async () => {
+    const { cycles, press, teardown } = setup({ version: 1, bindings: {} }, false);
+    press({ key: '{', code: 'BracketLeft', ctrlKey: true, shiftKey: true });
+    await waitFor(() => expect(cycles).toEqual([-1]));
+    await settle();
+    expect(cycles).toEqual([-1]);
+    teardown();
+  });
+
+  it('after a rebind, the custom combo cycles once and the old default is inert', async () => {
+    const config = { version: 1, bindings: { 'next-pane-group': 'cmd+alt+l' } };
+    const { cycles, press, teardown } = setup(config, true);
+    press({ key: '}', code: 'BracketRight', metaKey: true, shiftKey: true });
+    await settle();
+    expect(cycles).toEqual([]);
+    press({ key: '¬', code: 'KeyL', metaKey: true, altKey: true });
+    await waitFor(() => expect(cycles).toEqual([1]));
+    await settle();
+    expect(cycles).toEqual([1]);
+    teardown();
+  });
+
+  it('an unbound action cycles nowhere', async () => {
+    const config = { version: 1, bindings: { 'next-pane-group': null } };
+    const { cycles, press, teardown } = setup(config, false);
+    press({ key: '}', code: 'BracketRight', ctrlKey: true, shiftKey: true });
+    press({ key: '}', code: 'BracketRight', metaKey: true, shiftKey: true });
+    await settle();
+    expect(cycles).toEqual([]);
+    teardown();
   });
 });
