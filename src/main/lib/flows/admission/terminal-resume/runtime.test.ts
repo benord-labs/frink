@@ -130,7 +130,7 @@ describe('terminal Flow resume admission runtime', () => {
     expect(mocks.resumeDispatcher).toHaveBeenCalledOnce();
   });
 
-  it('does not auto-replay a claimed resume, but an explicit retry dispatches once', async () => {
+  it('drops a crash-claimed resume at boot without replaying it; an explicit retry dispatches once', async () => {
     const nodeRunId = persistTerminalResume('claimed-resume');
     const queued = await controller.enqueueTerminalResume({
       flowRunId: 'claimed-resume',
@@ -138,19 +138,172 @@ describe('terminal Flow resume admission runtime', () => {
     });
     await controller.claimEligible();
 
-    await expect(recoverFlowAdmissions()).resolves.toEqual({ queued: 0, ambiguous: 1 });
+    await expect(recoverFlowAdmissions()).resolves.toEqual({ queued: 0, ambiguous: 0 });
+    // A second boot finds nothing left to recover — the drop is not re-counted.
+    await expect(recoverFlowAdmissions()).resolves.toEqual({ queued: 0, ambiguous: 0 });
     expect(mocks.resumeDispatcher).not.toHaveBeenCalled();
+    expect(await controller.getByTicket(queued.admission.ticket)).toMatchObject({
+      state: 'failed',
+      error: expect.stringContaining('restart'),
+    });
+    expect(db.select().from(flowRuns).where(eq(flowRuns.id, 'claimed-resume')).get()?.status).toBe(
+      'failed',
+    );
+
     const recovered = await requestTerminalFlowResume({
       flowRunId: 'claimed-resume',
       nodeRunId,
     });
-    expect(recovered).toMatchObject({ created: false, admission: { state: 'active' } });
+    expect(recovered.created).toBe(true);
+    expect(recovered.admission.ticket).not.toBe(queued.admission.ticket);
     await vi.waitFor(() => expect(mocks.resumeDispatcher).toHaveBeenCalledOnce());
     await requestTerminalFlowResume({ flowRunId: 'claimed-resume', nodeRunId });
     expect(mocks.resumeDispatcher).toHaveBeenCalledOnce();
-    expect(await controller.getByTicket(queued.admission.ticket)).toMatchObject({
-      state: 'active',
+  });
+
+  it.each(['completed', 'cancelled'] as const)(
+    'drops a crash-claimed resume whose run is %s without promoting the run',
+    async (status) => {
+      const flowRunId = `claimed-resume-${status}`;
+      const nodeRunId = persistTerminalResume(flowRunId);
+      db.update(flowRuns).set({ status }).where(eq(flowRuns.id, flowRunId)).run();
+      const queued = await controller.enqueueTerminalResume({ flowRunId, nodeRunId });
+      await controller.claimEligible();
+
+      await expect(recoverFlowAdmissions()).resolves.toEqual({ queued: 0, ambiguous: 0 });
+
+      expect(await controller.getByTicket(queued.admission.ticket)).toMatchObject({
+        state: 'failed',
+      });
+      // A user-cancelled run is never resurrected by the drop.
+      expect(db.select().from(flowRuns).where(eq(flowRuns.id, flowRunId)).get()?.status).toBe(
+        status,
+      );
+      expect(mocks.resumeDispatcher).not.toHaveBeenCalled();
+    },
+  );
+
+  it('admits a Retry of a different node once boot drops the crash-claimed resume', async () => {
+    const nodeRunId = persistTerminalResume('claimed-other-target');
+    db.insert(nodeRuns)
+      .values({
+        id: 'claimed-other-target-second',
+        flowRunId: 'claimed-other-target',
+        nodeId: 'work-2',
+        blockType: 'agent',
+        status: 'failed',
+      })
+      .run();
+    await controller.enqueueTerminalResume({ flowRunId: 'claimed-other-target', nodeRunId });
+    await controller.claimEligible();
+    // Before boot recovery the stranded claim refuses any other target.
+    await expect(
+      requestTerminalFlowResume({
+        flowRunId: 'claimed-other-target',
+        nodeRunId: 'claimed-other-target-second',
+      }),
+    ).rejects.toThrow(/different live admission/);
+
+    await recoverFlowAdmissions();
+    const retried = await requestTerminalFlowResume({
+      flowRunId: 'claimed-other-target',
+      nodeRunId: 'claimed-other-target-second',
     });
+
+    expect(retried.created).toBe(true);
+    await vi.waitFor(() => expect(mocks.resumeDispatcher).toHaveBeenCalledOnce());
+    expect(mocks.resumeDispatcher).toHaveBeenCalledWith(
+      expect.objectContaining({ node_run_id: 'claimed-other-target-second' }),
+    );
+  });
+
+  it('frees the slot a crash-claimed resume held so a queued start dispatches at boot', async () => {
+    const nodeRunId = persistTerminalResume('claimed-slot');
+    await controller.enqueueTerminalResume({ flowRunId: 'claimed-slot', nodeRunId });
+    await controller.claimEligible();
+    const queuedStart = await requestFlowStart(startInput('behind-stranded-resume'));
+    expect(mocks.startDispatcher).not.toHaveBeenCalled();
+
+    await expect(recoverFlowAdmissions()).resolves.toEqual({ queued: 1, ambiguous: 0 });
+
+    await vi.waitFor(() => expect(mocks.startDispatcher).toHaveBeenCalledOnce());
+    expect(mocks.startDispatcher).toHaveBeenCalledWith(queuedStart.run.id);
+    expect(mocks.resumeDispatcher).not.toHaveBeenCalled();
+  });
+
+  it('leaves a claimed resume whose run is no longer terminal ambiguous and untouched', async () => {
+    const nodeRunId = persistTerminalResume('claimed-running');
+    const queued = await controller.enqueueTerminalResume({
+      flowRunId: 'claimed-running',
+      nodeRunId,
+    });
+    await controller.claimEligible();
+    db.update(flowRuns).set({ status: 'running' }).where(eq(flowRuns.id, 'claimed-running')).run();
+
+    await expect(recoverFlowAdmissions()).resolves.toEqual({ queued: 0, ambiguous: 1 });
+
+    expect(await controller.getByTicket(queued.admission.ticket)).toMatchObject({
+      state: 'claimed',
+      error: null,
+    });
+    expect(mocks.resumeDispatcher).not.toHaveBeenCalled();
+  });
+
+  it('advances the recovery cursor past a page made only of dropped resume claims', async () => {
+    maxConcurrentRuns = 2;
+    const first = persistTerminalResume('claimed-page-1');
+    const second = persistTerminalResume('claimed-page-2');
+    const a = await controller.enqueueTerminalResume({
+      flowRunId: 'claimed-page-1',
+      nodeRunId: first,
+    });
+    const b = await controller.enqueueTerminalResume({
+      flowRunId: 'claimed-page-2',
+      nodeRunId: second,
+    });
+    await controller.claimEligible();
+
+    const page1 = await controller.recoverySnapshot(0, 1);
+    expect(page1).toMatchObject({
+      autoDrainable: [],
+      ambiguous: [],
+      nextTicket: a.admission.ticket,
+    });
+    const page2 = await controller.recoverySnapshot(a.admission.ticket, 1);
+    expect(page2).toMatchObject({ autoDrainable: [], ambiguous: [], nextTicket: null });
+    expect(await controller.getByTicket(b.admission.ticket)).toMatchObject({ state: 'failed' });
+  });
+
+  it('drops a crash-claimed batch-member resume without touching its stage run', async () => {
+    const nodeRunId = persistTerminalResume('claimed-member');
+    const queued = await controller.enqueueTerminalResume({
+      flowRunId: 'claimed-member',
+      nodeRunId,
+    });
+    await controller.claimEligible();
+    // The member identity recovery must leave alone: its stage and stage-run rows.
+    db.update(flowRuns).set({ batchId: 'batch-m' }).where(eq(flowRuns.id, 'claimed-member')).run();
+    db.insert(batchStages)
+      .values({ id: 'stage-m', batchId: 'batch-m', stageNumber: 1, status: 'running' })
+      .run();
+    db.insert(batchStageRuns)
+      .values({ id: 'bsr-m', stageId: 'stage-m', flowRunId: 'claimed-member', status: 'failed' })
+      .run();
+
+    await expect(recoverFlowAdmissions()).resolves.toEqual({ queued: 0, ambiguous: 0 });
+
+    expect(await controller.getByTicket(queued.admission.ticket)).toMatchObject({
+      state: 'failed',
+    });
+    expect(
+      db.select().from(batchStageRuns).where(eq(batchStageRuns.id, 'bsr-m')).get(),
+    ).toMatchObject({ status: 'failed' });
+    expect(db.select().from(batchStages).where(eq(batchStages.id, 'stage-m')).get()).toMatchObject({
+      status: 'running',
+    });
+    expect(db.select().from(flowRuns).where(eq(flowRuns.id, 'claimed-member')).get()?.status).toBe(
+      'failed',
+    );
   });
 
   it('carries the continuation flag through the durable intent to the dispatcher (user Retry), and omits it otherwise', async () => {
