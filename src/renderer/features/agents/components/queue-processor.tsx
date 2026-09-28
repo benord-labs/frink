@@ -31,6 +31,17 @@ import { armApprovedPlanState, useAgentSubChatStore } from '../stores/sub-chat-s
 /** Delay between processing queue items (ms). Exported for tests. */
 export const QUEUE_PROCESS_DELAY_MS = 1000;
 
+/** Spacing between the account gate's own fetches per parent: a rejection re-enters the gate via
+ * the cache subscription, so without it a failing lookup would call main back-to-back. */
+export const ACCOUNT_REFETCH_COOLDOWN_MS = 10_000;
+/** Ceiling for the doubling backoff between consecutive failed account fetches for one parent. */
+export const ACCOUNT_REFETCH_MAX_DELAY_MS = 300_000;
+/** How long an account fetch may stay in flight before the gate cancels it and fetches again. */
+export const ACCOUNT_FETCH_TIMEOUT_MS = 30_000;
+
+const accountRetryDelay = (tries: number): number =>
+  Math.min(ACCOUNT_REFETCH_COOLDOWN_MS * 2 ** Math.max(tries - 1, 0), ACCOUNT_REFETCH_MAX_DELAY_MS);
+
 type GenericDesktopListener = (
   channel: string,
   callback: (payload?: unknown) => void,
@@ -70,6 +81,9 @@ export function QueueProcessor() {
   const queryClient = useQueryClient();
   const utils = api.useUtils();
   const trpcUtils = trpc.useUtils();
+  // The queue effect below must not re-subscribe when this identity changes; read it via a ref.
+  const trpcUtilsRef = useRef(trpcUtils);
+  trpcUtilsRef.current = trpcUtils;
 
   // Global execute-complete: refetch chat so UI shows response even when that chat's transport
   // was torn down (e.g. panel closed and reopened). Transport's onExecuteComplete only runs
@@ -134,6 +148,21 @@ export function QueueProcessor() {
 
     // One-shot runLive watchers for sub-chats held on main's liveness gate, keyed by sub-chat.
     const settleWatchers = new Map<string, () => void>();
+
+    // Last time the account gate fetched `getResolvedAccount` itself, keyed by parent chat.
+    const accountFetchAttempts = new Map<string, { at: number; tries: number }>();
+
+    // One delayed re-check per parent whose account fetch is cooling down. Lives in timersRef
+    // (under a prefixed key) so unmount cleanup clears it with the dispatch timers.
+    const scheduleAccountRecheck = (parentChatId: string, delayMs: number) => {
+      const key = `account-refetch:${parentChatId}`;
+      if (timersRef.current.has(key)) return;
+      const timer = setTimeout(() => {
+        timersRef.current.delete(key);
+        if (activeRef.current) checkAllQueues();
+      }, delayMs);
+      timersRef.current.set(key, timer);
+    };
 
     const watchRunSettle = (subChatId: string) => {
       if (settleWatchers.has(subChatId)) return;
@@ -216,16 +245,40 @@ export function QueueProcessor() {
           'query',
         );
         const resolvedState = queryClient.getQueryState(resolvedKey);
-        const fetchingInitial =
-          resolvedState?.fetchStatus === 'fetching' && resolvedState.status !== 'success';
-        if (
-          !resolvedState ||
-          resolvedState.status === 'pending' ||
-          resolvedState.status === 'error' ||
-          fetchingInitial
-        ) {
+        if (resolvedState?.status !== 'success') {
+          const now = Date.now();
+          const attempt = accountFetchAttempts.get(parentChatIdForAccount);
+          if (resolvedState?.fetchStatus === 'fetching') {
+            // Settling re-runs this gate via the cache subscription; one that never settles (a hung
+            // IPC call) is cancelled after the timeout — cancelling rejects even if IPC can't abort.
+            const since = attempt?.at ?? now;
+            if (!attempt) accountFetchAttempts.set(parentChatIdForAccount, { at: now, tries: 0 });
+            if (now - since >= ACCOUNT_FETCH_TIMEOUT_MS) {
+              void queryClient.cancelQueries({ queryKey: resolvedKey });
+            } else {
+              scheduleAccountRecheck(
+                parentChatIdForAccount,
+                ACCOUNT_FETCH_TIMEOUT_MS - (now - since),
+              );
+            }
+            return;
+          }
+          // Absent (GC'd, or not prefetched after a reload) or failed: nothing else fetches it for
+          // an unopened chat, so fetch here, backing off per failure with a re-check armed.
+          const wait = attempt ? accountRetryDelay(attempt.tries) - (now - attempt.at) : 0;
+          if (wait <= 0) {
+            const tries = (attempt?.tries ?? 0) + 1;
+            accountFetchAttempts.set(parentChatIdForAccount, { at: now, tries });
+            void trpcUtilsRef.current.claudeCode.getResolvedAccount
+              .fetch({ chatId: parentChatIdForAccount })
+              .catch(() => {});
+            scheduleAccountRecheck(parentChatIdForAccount, accountRetryDelay(tries));
+          } else {
+            scheduleAccountRecheck(parentChatIdForAccount, wait);
+          }
           return;
         }
+        accountFetchAttempts.delete(parentChatIdForAccount);
       }
 
       // Mark as processing
