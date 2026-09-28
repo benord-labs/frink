@@ -122,7 +122,7 @@ type FlowExecuteStepPayload = {
   branch?: string;
   /**
    * start_task: converging merge — ordered list of dependency branches (most-recently-completed
-   * first, from sc-611 resolveDependencyBranches). When present with 2+ entries, the worktree is
+   * first, from flows/batch/dependency-branches.ts). When present with 2+ entries, the worktree is
    * created from baseBranches[0] and baseBranches[1..n] are merged in sequentially.
    */
   baseBranches?: string[];
