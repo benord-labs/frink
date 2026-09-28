@@ -8,7 +8,7 @@ import { abortActiveExecutionsForSubChats } from '../executor';
 import * as runtimeGate from '../runtime-gate';
 import { mockQuery, never } from './claude-turn-abort';
 import { flowDriven, RUNNING_TASK, TURN_END } from './claude-turn-bindings';
-import { answeringCli } from './claude-warm-session';
+import { answeringCli, replies } from './claude-warm-session';
 import type { ExecutorPermissionHarness } from './executor-codex-permissions';
 
 type WarmSessionGuardHarness = Pick<
@@ -26,11 +26,6 @@ const sessionLines = (kind: 'claim' | 'retire') =>
     .mock.calls.map(([line]) => String(line))
     .filter((line) => line.startsWith(`[Claude Session] ${kind} sub=${payload.subChatId} `))
     .map((line) => line.split(' ').at(-1));
-const replies = () =>
-  vi
-    .mocked(socketClient.sendStreamChunkDirect)
-    .mock.calls.map(([sent]) => (sent.chunk as { delta?: string }).delta)
-    .filter(Boolean);
 
 /** Registers the cases proving a warm Claude session runs a turn under the same guards as a
  * freshly spawned one: the runtime slot, the permission-mode reconcile and credential sweeps. */

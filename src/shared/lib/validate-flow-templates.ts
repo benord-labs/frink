@@ -27,7 +27,7 @@ import {
   TRIGGER_SCHEMAS,
   type TriggerFieldSchema,
 } from './output-schemas';
-import { findQuotedShellTemplateWarnings } from './shell-template/quote-context';
+import { findShellTemplateWarnings, type ShellWarningFields } from './shell-template/warnings';
 import { TEMPLATE_VARIABLE_PATTERN } from './template-constants';
 import type { FlowEdge, FlowGraph, FlowNode } from './validate-flow-graph';
 
@@ -66,12 +66,11 @@ export type ComputeNodeVariablesOptions = {
   webhookProvider?: string;
 };
 
-export type TemplateVariableWarning = {
+export type TemplateVariableWarning = ShellWarningFields & {
   nodeId: string;
   field: string;
   placeholder: string;
   message: string;
-  shellQuoteContext?: 'single' | 'double' | 'uncertain';
 };
 
 // ---------------------------------------------------------------------------
@@ -504,7 +503,7 @@ export function validateFlowTemplateVariables(
   precomputedNodeVariables?: Record<string, NodeVariables>,
 ): TemplateVariableWarning[] {
   const { nodes, edges } = graph;
-  const warnings: TemplateVariableWarning[] = findQuotedShellTemplateWarnings(nodes);
+  const warnings: TemplateVariableWarning[] = findShellTemplateWarnings(nodes);
 
   const { predecessorsOf } = buildAdjacency(edges);
   const triggerType = detectTriggerType(nodes);

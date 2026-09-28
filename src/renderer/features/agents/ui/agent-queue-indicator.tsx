@@ -190,7 +190,16 @@ const QueueItemRow = memo(function QueueItemRow({
           Editing
         </span>
       )}
-      {!isEditing && hasAttachments && (
+      {!isEditing && item.attachmentsLost && (
+        <span
+          role="status"
+          title="Attachments were lost on reload. Edit or remove this message."
+          className="shrink-0 text-[10px] font-medium text-destructive bg-destructive/10 rounded px-1.5 py-0.5"
+        >
+          Attachments lost
+        </span>
+      )}
+      {!isEditing && !item.attachmentsLost && hasAttachments && (
         <span className="shrink-0 text-muted-foreground text-[10px]">
           +{attachmentCount} {attachmentCount === 1 ? 'file' : 'files'}
         </span>
@@ -221,7 +230,7 @@ const QueueItemRow = memo(function QueueItemRow({
             <TooltipContent side="top">{editTooltip}</TooltipContent>
           </Tooltip>
         )}
-        {onSendNow && !isEditing && (
+        {onSendNow && !isEditing && !item.attachmentsLost && (
           <Tooltip>
             <TooltipTrigger asChild>
               <Button

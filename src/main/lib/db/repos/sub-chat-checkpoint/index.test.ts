@@ -12,6 +12,7 @@ import {
 } from '../../transcript-corruption';
 import { __resetSubChatLocks } from '../sub-chat-mutex';
 import {
+  appendUserMessage,
   createSubChat,
   finalizeAssistantMessage,
   getSubChatById,
@@ -112,7 +113,7 @@ describe('upsertAssistantMessage branch selection', () => {
     // queued behind the truncation — which is what stops the message being re-appended later.
     const startedAt = 0;
     const subChatId = await seedRaw(`[${assistant('assistant-1', 'first')}]`, null);
-    await updateSubChatMessages(db, subChatId, []);
+    await updateSubChatMessages(db, subChatId, () => []);
 
     expect(
       await upsertAssistantMessage(db, subChatId, 'assistant-1', [{ type: 'text' }], startedAt),
@@ -128,7 +129,7 @@ describe('upsertAssistantMessage branch selection', () => {
     // that no longer contains the turn it was answering.
     const subChatId = await seedRaw(`[${assistant('assistant-1', 'first')}]`, null);
     const startedAt = 0;
-    await updateSubChatMessages(db, subChatId, []);
+    await updateSubChatMessages(db, subChatId, () => []);
 
     expect(
       await upsertAssistantMessage(db, subChatId, 'assistant-2', [{ type: 'text' }], startedAt),
@@ -138,7 +139,7 @@ describe('upsertAssistantMessage branch selection', () => {
   it('refuses a finalize whose turn was rolled away, instead of appending it back', async () => {
     // finalize APPENDS a message it cannot find, so the terminal write needs the same fence.
     const subChatId = await seedRaw(`[${assistant('assistant-1', 'first')}]`, null);
-    await updateSubChatMessages(db, subChatId, []);
+    await updateSubChatMessages(db, subChatId, () => []);
 
     expect(
       await finalizeAssistantMessage(db, subChatId, 'assistant-1', [{ type: 'text' }], null, {}, 0),
@@ -159,7 +160,7 @@ describe('upsertAssistantMessage branch selection', () => {
     // stop a live run persisting for the rest of its life.
     const subChatId = await seedRaw(`[${assistant('assistant-1', 'first')}]`, null);
     const before = await getSubChatById(db, subChatId);
-    await updateSubChatMessages(db, subChatId, before?.messages ?? []);
+    await updateSubChatMessages(db, subChatId, () => before?.messages ?? []);
 
     expect(
       await upsertAssistantMessage(db, subChatId, 'assistant-1', [{ type: 'text', text: 'on' }], 0),
@@ -170,7 +171,7 @@ describe('upsertAssistantMessage branch selection', () => {
     const subChatId = await seedRaw(`[${assistant('assistant-1', 'first')}]`, null);
     // Both calls queue on the sub-chat mutex in this order; the checkpoint captured its generation
     // before the truncation ran.
-    const truncation = updateSubChatMessages(db, subChatId, []);
+    const truncation = updateSubChatMessages(db, subChatId, () => []);
     const straggler = upsertAssistantMessage(db, subChatId, 'assistant-1', [{ type: 'text' }], 0);
     expect(await straggler).toBe('dropped');
     await truncation;
@@ -179,7 +180,7 @@ describe('upsertAssistantMessage branch selection', () => {
 
   it('drops a queued last-row patch too, not only a new-row append', async () => {
     const subChatId = await seedRaw(`[${assistant('assistant-1', 'first')}]`, null);
-    const truncation = updateSubChatMessages(db, subChatId, [
+    const truncation = updateSubChatMessages(db, subChatId, () => [
       { id: 'assistant-1', role: 'assistant', parts: [{ type: 'text', text: 'kept' }] },
     ]);
     const straggler = upsertAssistantMessage(
@@ -300,10 +301,78 @@ describe('upsertAssistantMessage branch selection', () => {
 
     await Promise.all([
       upsertAssistantMessage(db, subChatId, 'assistant-1', [{ type: 'text', text: 'late' }], 0),
-      updateSubChatMessages(db, subChatId, []),
+      updateSubChatMessages(db, subChatId, () => []),
     ]);
 
     expect((await getSubChatById(db, subChatId))?.messages).toEqual([]);
+  });
+
+  // sc-3290: the replacement is computed from the row as it reads INSIDE the lock, never from a
+  // caller's earlier read — a stale array used to overwrite whatever landed in between.
+  it('hands the transform the row as it reads now, including a write queued ahead of it', async () => {
+    const subChatId = await seedRaw(`[${assistant('assistant-1', 'first')}]`, null);
+    const staleRead = (await getSubChatById(db, subChatId))?.messages ?? [];
+
+    // Both queue on the sub-chat mutex in this order; the append lands between the caller's read
+    // and the replacement.
+    await Promise.all([
+      appendUserMessage(db, subChatId, { id: 'user-2', role: 'user', parts: [] }),
+      updateSubChatMessages(db, subChatId, (fresh) => [
+        ...fresh,
+        { id: 'user-3', role: 'user', parts: [] },
+      ]),
+    ]);
+
+    expect(staleRead.map((m) => m.id)).toEqual(['assistant-1']);
+    const ids = ((await getSubChatById(db, subChatId))?.messages ?? []).map((m) => m.id);
+    expect(ids).toEqual(['assistant-1', 'user-2', 'user-3']);
+  });
+
+  it('writes nothing and leaves a live stream unfenced when the transform returns null', async () => {
+    const subChatId = await seedRaw(`[${assistant('assistant-1', 'first')}]`);
+    const before = await rawMessages(subChatId);
+
+    await updateSubChatMessages(db, subChatId, () => null);
+
+    expect(await rawMessages(subChatId)).toBe(before);
+    expect(
+      await upsertAssistantMessage(db, subChatId, 'assistant-1', [{ type: 'text', text: 'on' }], 0),
+    ).toBe('patched');
+  });
+
+  it('leaves a live stream unfenced when the transform returns the fresh array itself', async () => {
+    // The pitfall the old identity check had: the no-op branch returns the parsed row, so
+    // "returned array === written array" was true without any write and fenced the stream.
+    const subChatId = await seedRaw(`[${assistant('assistant-1', 'first')}]`);
+
+    await updateSubChatMessages(db, subChatId, (fresh) => fresh);
+
+    expect(
+      await upsertAssistantMessage(db, subChatId, 'assistant-1', [{ type: 'text', text: 'on' }], 0),
+    ).toBe('patched');
+  });
+
+  it('returns null without calling the transform when the row does not exist', async () => {
+    const transform = vi.fn(() => []);
+    expect(await updateSubChatMessages(db, 'missing', transform)).toBeNull();
+    expect(transform).not.toHaveBeenCalled();
+  });
+
+  it('rolls back, keeps streams unfenced and frees the lock when the transform throws', async () => {
+    const subChatId = await seedRaw(`[${assistant('assistant-1', 'first')}]`);
+    const before = await rawMessages(subChatId);
+
+    await expect(
+      updateSubChatMessages(db, subChatId, () => {
+        throw new Error('boom');
+      }),
+    ).rejects.toThrow('boom');
+
+    expect(await rawMessages(subChatId)).toBe(before);
+    // The lock was released and the generation untouched: the next writer still gets through.
+    expect(
+      await upsertAssistantMessage(db, subChatId, 'assistant-1', [{ type: 'text', text: 'on' }], 0),
+    ).toBe('patched');
   });
 
   it('keeps two concurrently streaming sub-chats writing to their own rows', async () => {

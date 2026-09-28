@@ -63,6 +63,8 @@ async function copyHooksRunner(
   if (!isPathInside(worktreePath, worktreeHooksPath)) {
     throw new Error(`Refusing to copy git hooks outside the worktree: ${worktreeHooksPath}`);
   }
+  // A missing source runner means git runs no hooks at all, so there is nothing to mirror.
+  if (await isMissing(sourceHooksPath)) return;
 
   const temporaryHooksPath = `${worktreeHooksPath}.frink-${process.pid}-${randomBytes(6).toString('hex')}`;
   try {
@@ -125,6 +127,14 @@ async function readWorktreeHooksOverride(
   )
     .then(({ stdout }) => stdout.trim() || null)
     .catch(() => null);
+}
+
+/** Only ENOENT counts as missing; any other stat error (e.g. EACCES) stays fail-closed. */
+async function isMissing(path: string): Promise<boolean> {
+  return stat(path).then(
+    () => false,
+    (error: NodeJS.ErrnoException) => error.code === 'ENOENT',
+  );
 }
 
 async function pathExists(path: string): Promise<boolean> {

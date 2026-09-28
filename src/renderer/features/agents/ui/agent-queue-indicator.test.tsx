@@ -272,3 +272,35 @@ describe('AgentQueueIndicator — header count', () => {
     expect(onSend).toHaveBeenCalledWith('q1', true);
   });
 });
+
+describe('AgentQueueIndicator — turn restored without its attachments', () => {
+  const lost: AgentQueueItem = {
+    ...baseItem,
+    id: 'lost',
+    message: 'see attached',
+    files: [{ id: 'f', url: '', filename: 'a.txt' }],
+    attachmentsLost: true,
+  };
+
+  it('flags the row instead of claiming it still carries its files', () => {
+    render(<AgentQueueIndicator queue={[lost]} onEditItem={vi.fn()} onRemoveItem={vi.fn()} />);
+
+    expect(screen.getByText(/attachments lost/i)).toHaveAttribute('role', 'status');
+    expect(screen.queryByText(/\+1 file/)).not.toBeInTheDocument();
+  });
+
+  it('offers no Send now on that row but keeps Edit and Remove to resolve it', () => {
+    const { container } = render(
+      <AgentQueueIndicator
+        queue={[lost, { ...baseItem, id: 'ok', message: 'fine' }]}
+        onSendNow={vi.fn()}
+        onEditItem={vi.fn()}
+        onRemoveItem={vi.fn()}
+      />,
+    );
+
+    expect(container.querySelectorAll('button[aria-label="Send now"]').length).toBe(1);
+    const row = screen.getByText('see attached').closest('[class*="border-l-2"]') as HTMLElement;
+    expect(within(row).getAllByRole('button').length).toBeGreaterThanOrEqual(2);
+  });
+});

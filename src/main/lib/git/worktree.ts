@@ -9,14 +9,19 @@ import log from 'electron-log';
 import simpleGit from 'simple-git';
 import { adjectives, animals, uniqueNamesGenerator } from 'unique-names-generator';
 import { computeExponentialBackoffMs } from '../retry-backoff';
-import { captureContained } from '../sentry';
 import { resolveWorktreeBasePath } from '../worktree/base-path-config';
 import {
   isSafeConfiguredWorktreeBasePath,
   normalizeWorktreeBasePath,
 } from '../worktree/base-path-validation';
 import { checkGitLfsAvailable, getGitEnv } from './shell-env';
-import { configureWorktreeHooks, persistFrinkOwnershipFlag } from './worktree/index';
+import {
+  addWorktree,
+  branchExists,
+  configureWorktreeHooks,
+  persistFrinkOwnershipFlag,
+  rollbackCreatedWorktree,
+} from './worktree/index';
 import { awaitWorktreeSetup, detectWorktreeConfig, startWorktreeSetup } from './worktree-config';
 import { generateWorktreeFolderName } from './worktree-naming';
 
@@ -151,11 +156,20 @@ export async function createWorktree(
       }
     }
 
-    await execFileAsync(
-      'git',
-      ['-C', mainRepoPath, 'worktree', 'add', worktreePath, '-b', branch, commitHash],
-      { env, timeout: 120_000 },
-    );
+    const branchPreExisted = await branchExists(mainRepoPath, branch, env);
+    try {
+      await addWorktree(mainRepoPath, worktreePath, branch, commitHash, env);
+    } catch (error) {
+      await rollbackCreatedWorktree(
+        mainRepoPath,
+        worktreePath,
+        branch,
+        commitHash,
+        branchPreExisted,
+        env,
+      );
+      throw error;
+    }
 
     // Git's repository-wide worktree registry has no application owner field. Persist positive,
     // worktree-scoped ownership so boot recovery never mistakes a manual worktree for a Frink one.
@@ -164,7 +178,7 @@ export async function createWorktree(
     try {
       await configureWorktreeHooks(mainRepoPath, worktreePath, env);
     } catch (error) {
-      await rollbackWorktreeAfterHookFailure(mainRepoPath, worktreePath, branch, env);
+      await rollbackCreatedWorktree(mainRepoPath, worktreePath, branch, commitHash, false, env);
       throw error;
     }
   } catch (error) {
@@ -199,35 +213,6 @@ export async function createWorktree(
       );
     }
     throw new Error(`Failed to create worktree: ${errorMessage}`);
-  }
-}
-
-async function rollbackWorktreeAfterHookFailure(
-  mainRepoPath: string,
-  worktreePath: string,
-  branch: string,
-  env: Record<string, string>,
-): Promise<void> {
-  try {
-    await execFileAsync(
-      'git',
-      ['-C', mainRepoPath, 'worktree', 'remove', '--force', worktreePath],
-      { env, timeout: 120_000 },
-    );
-  } catch (error) {
-    log.warn('[createWorktree] Failed to roll back worktree after hook installation failed', {
-      worktreePath,
-      error,
-    });
-    captureContained(error, { surface: 'worktree-hooks', stage: 'creation-rollback' });
-    return;
-  }
-
-  try {
-    await execFileAsync('git', ['-C', mainRepoPath, 'branch', '-D', branch], { env });
-  } catch (error) {
-    log.warn('[createWorktree] Failed to delete branch after worktree rollback', { branch, error });
-    captureContained(error, { surface: 'worktree-hooks', stage: 'branch-rollback' });
   }
 }
 

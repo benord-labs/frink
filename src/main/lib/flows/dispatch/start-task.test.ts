@@ -673,3 +673,51 @@ describe('start_task branch resolution at dispatch', () => {
     expect(h.executeShellStep).not.toHaveBeenCalled();
   });
 });
+
+describe('start_task inherited dependency branches (sc-3845)', () => {
+  const shellInput = () => h.executeShellStep.mock.calls[0]?.[0] as Record<string, unknown>;
+
+  it('forwards injected baseBranches + mergeStrategy so a fan-in stage converges', async () => {
+    await dispatchStartTask(
+      startTaskCtx({
+        triggerContext: {
+          baseBranch: 'dep-b',
+          baseBranches: ['dep-b', 'dep-a'],
+          mergeStrategy: 'most-recent',
+        },
+      }) as never,
+    );
+
+    expect(shellInput()).toMatchObject({
+      baseBranches: ['dep-b', 'dep-a'],
+      mergeStrategy: 'most-recent',
+    });
+  });
+
+  it.each([
+    ['a non-array', 'dep-a'],
+    ['an empty array', []],
+    ['an array with a blank entry', ['dep-a', '  ']],
+    ['an array with a non-string entry', ['dep-a', 7]],
+  ])('does not forward baseBranches that is %s', async (_label, baseBranches) => {
+    await dispatchStartTask(startTaskCtx({ triggerContext: { baseBranches } }) as never);
+
+    expect(shellInput().baseBranches).toBeUndefined();
+  });
+
+  it('keeps forwarding valid baseBranches when mergeStrategy is malformed', async () => {
+    await dispatchStartTask(
+      startTaskCtx({ triggerContext: { baseBranches: ['dep-a'], mergeStrategy: 5 } }) as never,
+    );
+
+    expect(shellInput()).toMatchObject({ baseBranches: ['dep-a'] });
+    expect(shellInput().mergeStrategy).toBeUndefined();
+  });
+
+  it('forwards nothing extra for a root run with no inherited branches', async () => {
+    await dispatchStartTask(startTaskCtx({ triggerContext: { label: 'root' } }) as never);
+
+    expect(shellInput().baseBranches).toBeUndefined();
+    expect(shellInput().mergeStrategy).toBeUndefined();
+  });
+});

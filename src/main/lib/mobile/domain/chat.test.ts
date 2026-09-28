@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MobileApiError } from './errors';
 import { DuplicateMessageError } from '../../socket/execution/send-admission';
+import { SUBAGENT_TEXT_PART_TYPE } from '../../../../shared/subagent-parts';
 import {
   createPendingPermissionRequestBroker,
   listPendingPermissionRequests,
@@ -365,7 +366,9 @@ describe('mobile chat actions', () => {
         ],
         { streams: [], terminals: [] },
       ),
-    ).toEqual([{ id: 'visible', role: 'assistant', text: 'Done' }]);
+    ).toEqual([
+      { id: 'visible', role: 'assistant', text: 'Done', parts: [{ type: 'text', text: 'Done' }] },
+    ]);
   });
 
   it('rejects permissions with stale or mismatched identity and supports only one-time responses', async () => {
@@ -408,7 +411,189 @@ describe('mobile chat actions', () => {
       terminals: [],
     };
     expect(mergeMobileTranscript(history, seed)).toEqual([
-      { id: 'a', role: 'assistant', text: 'Current' },
+      { id: 'a', role: 'assistant', text: 'Current', parts: [{ type: 'text', text: 'Current' }] },
+    ]);
+  });
+
+  it('preserves prose/tool ordering without exposing tool input, output or error payloads', () => {
+    const messages = mergeMobileTranscript(
+      [
+        {
+          id: 'a',
+          role: 'assistant',
+          parts: [
+            { type: 'text', text: '<!--TASK_BUBBLE:{"private":"metadata"}-->Checking' },
+            {
+              type: 'tool-Bash',
+              toolCallId: 'call',
+              state: 'output-available',
+              input: { command: 'secret command' },
+              output: 'secret output',
+            },
+            { type: SUBAGENT_TEXT_PART_TYPE, input: { text: 'Subagent findings' } },
+            {
+              type: 'tool-Read',
+              toolCallId: 'read',
+              state: 'output-error',
+              errorText: 'secret error',
+            },
+            { type: 'text', text: 'Done' },
+          ],
+        },
+      ],
+      { streams: [], terminals: [] },
+    );
+    expect(messages).toEqual([
+      {
+        id: 'a',
+        role: 'assistant',
+        text: 'Checking\nSubagent findings\nDone',
+        parts: [
+          { type: 'text', text: 'Checking' },
+          { type: 'tool', id: 'call', name: 'Bash', state: 'completed' },
+          { type: 'text', text: 'Subagent findings' },
+          { type: 'tool', id: 'read', name: 'Read', state: 'failed' },
+          { type: 'text', text: 'Done' },
+        ],
+      },
+    ]);
+  });
+
+  it('uses each message owning stream when classifying unfinished tools', () => {
+    const parts = [{ type: 'tool-Bash', toolCallId: 'call', state: 'input-available' }];
+    const history = ['past', 'settled', 'failed', 'active', 'held'].map((id) => ({
+      id,
+      role: 'assistant',
+      parts,
+    }));
+    const stream = {
+      chatId: 'chat',
+      subChatId: 'sub',
+      streamEpoch: 'epoch',
+      messageIndex: 1,
+      textOpen: false,
+      observerOwned: true,
+      parts,
+    };
+    const messages = mergeMobileTranscript(history, {
+      streams: [
+        { ...stream, assistantMessageId: 'active', status: 'active' },
+        { ...stream, assistantMessageId: 'held', status: 'held' },
+      ],
+      terminals: [
+        { ...stream, assistantMessageId: 'settled', status: 'settled', durability: 'committed' },
+        { ...stream, assistantMessageId: 'failed', status: 'error', durability: 'non-durable' },
+      ],
+    });
+    expect(messages.map((message) => ({ id: message.id, parts: message.parts }))).toEqual([
+      { id: 'past', parts: [{ type: 'tool', id: 'call', name: 'Bash', state: 'unknown' }] },
+      { id: 'settled', parts: [{ type: 'tool', id: 'call', name: 'Bash', state: 'interrupted' }] },
+      { id: 'failed', parts: [{ type: 'tool', id: 'call', name: 'Bash', state: 'interrupted' }] },
+      { id: 'active', parts: [{ type: 'tool', id: 'call', name: 'Bash', state: 'running' }] },
+      { id: 'held', parts: [{ type: 'tool', id: 'call', name: 'Bash', state: 'unknown' }] },
+    ]);
+  });
+
+  it.each(['tool-Bash', 'tool-Read', 'tool-mcp__frink__example'])(
+    'classifies structured negative results as failed without exposing the output: %s',
+    (type) => {
+      const messages = mergeMobileTranscript(
+        [
+          {
+            id: 'a',
+            role: 'assistant',
+            parts: [
+              {
+                type,
+                toolCallId: 'failed',
+                state: 'output-available',
+                output: { success: false, error: 'private error' },
+              },
+              { type, toolCallId: 'passed', state: 'output-available', output: { success: true } },
+              {
+                type,
+                toolCallId: 'malformed',
+                state: 'output-available',
+                output: { success: 'false' },
+              },
+              { type, toolCallId: 'array', state: 'output-available', output: [false] },
+              {
+                type,
+                toolCallId: 'explicit-error',
+                state: 'output-error',
+                output: { success: true },
+              },
+            ],
+          },
+        ],
+        { streams: [], terminals: [] },
+      );
+      expect(
+        messages[0].parts?.map((part) => (part.type === 'tool' ? part.state : part.type)),
+      ).toEqual(['failed', 'completed', 'completed', 'completed', 'failed']);
+      expect(JSON.stringify(messages)).not.toContain('private error');
+    },
+  );
+
+  it('keeps display metadata out of prose when a marker spans adjacent text parts', () => {
+    const messages = mergeMobileTranscript(
+      [
+        {
+          id: 'a',
+          role: 'assistant',
+          parts: [
+            { type: 'text', text: '<!--TRIGGER_BUBBLE:{"private":' },
+            { type: 'text', text: '"metadata"}-->Visible content' },
+          ],
+        },
+      ],
+      { streams: [], terminals: [] },
+    );
+    expect(messages).toEqual([
+      {
+        id: 'a',
+        role: 'assistant',
+        text: 'Visible content',
+        parts: [{ type: 'text', text: 'Visible content' }],
+      },
+    ]);
+  });
+
+  it('handles malformed parts and retained interruption metadata without inventing running tools', () => {
+    const messages = mergeMobileTranscript(
+      [
+        null,
+        1,
+        { id: 1 },
+        {
+          id: 'a',
+          role: 'assistant',
+          metadata: { interruptedBy: 'app_quit' },
+          parts: [
+            null,
+            1,
+            [],
+            { type: 'text', text: {} },
+            { type: SUBAGENT_TEXT_PART_TYPE, input: null },
+            { type: 'tool-' },
+            { type: 'reasoning', text: 'Private reasoning' },
+            { type: 'tool-Read', state: 'input-streaming' },
+            { type: 'tool-Bash', state: 'unrecognized' },
+          ],
+        },
+      ],
+      { streams: [], terminals: [] },
+    );
+    expect(messages).toEqual([
+      {
+        id: 'a',
+        role: 'assistant',
+        text: '',
+        parts: [
+          { type: 'tool', id: 'a:7', name: 'Read', state: 'interrupted' },
+          { type: 'tool', id: 'a:8', name: 'Bash', state: 'unknown' },
+        ],
+      },
     ]);
   });
 });

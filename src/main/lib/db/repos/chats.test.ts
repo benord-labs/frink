@@ -5,6 +5,7 @@ import { freshDb, type TestDb } from '../test-utils/fresh-db';
 import {
   countChatsByProject,
   getChatWithProjectAccount,
+  hasOtherChatsSharingWorktree,
   listAllArchivedChats,
   pageChatsForProjects,
 } from './chats';
@@ -312,5 +313,50 @@ describe('getChatWithProjectAccount', () => {
     expect(result?.chat.id).toBe('c');
     expect(result?.chat.worktreePath).toBe('/tmp/wt/c');
     expect(result?.chat.taskId).toBe('t1');
+  });
+});
+
+describe('hasOtherChatsSharingWorktree', () => {
+  beforeEach(() => {
+    db = freshDb();
+  });
+
+  it('counts an archived fork as a holder — archive is undoable, so its worktree must survive', async () => {
+    await seed({ id: 'a', worktreePath: '/wt/shared' });
+    await seed({ id: 'b', worktreePath: '/wt/shared', archivedAt: at('2026-01-01T00:00:00.000Z') });
+
+    expect(await hasOtherChatsSharingWorktree(db, 'a', '/wt/shared')).toBe(true);
+  });
+
+  it('counts an active fork as a holder', async () => {
+    await seed({ id: 'a', worktreePath: '/wt/shared' });
+    await seed({ id: 'b', worktreePath: '/wt/shared' });
+
+    expect(await hasOtherChatsSharingWorktree(db, 'a', '/wt/shared')).toBe(true);
+  });
+
+  it('excludes the chat being torn down, so the last holder can still release the worktree', async () => {
+    await seed({ id: 'a', worktreePath: '/wt/shared', archivedAt: at('2026-01-01T00:00:00.000Z') });
+
+    expect(await hasOtherChatsSharingWorktree(db, 'a', '/wt/shared')).toBe(false);
+  });
+
+  it('ignores chats on a different or prefix-similar path', async () => {
+    await seed({ id: 'a', worktreePath: '/wt/shared' });
+    await seed({
+      id: 'b',
+      worktreePath: '/wt/shared-2',
+      archivedAt: at('2026-01-01T00:00:00.000Z'),
+    });
+    await seed({ id: 'c', worktreePath: '/wt/other' });
+
+    expect(await hasOtherChatsSharingWorktree(db, 'a', '/wt/shared')).toBe(false);
+  });
+
+  it('ignores an archived fork whose worktree was already released (worktreePath nulled)', async () => {
+    await seed({ id: 'a', worktreePath: '/wt/shared' });
+    await seed({ id: 'b', worktreePath: null, archivedAt: at('2026-01-01T00:00:00.000Z') });
+
+    expect(await hasOtherChatsSharingWorktree(db, 'a', '/wt/shared')).toBe(false);
   });
 });

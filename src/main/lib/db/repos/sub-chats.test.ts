@@ -198,11 +198,11 @@ describe('messages write short-circuit', () => {
     try {
       const subChat = await createSubChat(db, { chatId: 'chat-revision', messages: '[]' });
       const replacement = [userMessage('replacement')];
-      await updateSubChatMessages(db, subChat.id, replacement);
+      await updateSubChatMessages(db, subChat.id, () => replacement);
       const before = (await getSubChatById(db, subChat.id))?.updatedAt;
       vi.advanceTimersByTime(60_000);
 
-      await updateSubChatMessages(db, subChat.id, replacement);
+      await updateSubChatMessages(db, subChat.id, () => replacement);
       expect((await getSubChatById(db, subChat.id))?.updatedAt).toEqual(before);
     } finally {
       vi.useRealTimers();

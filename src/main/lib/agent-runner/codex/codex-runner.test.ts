@@ -25,10 +25,10 @@ vi.mock('./codex-binary', () => ({
 }));
 vi.mock('./app-server-registry', () => ({
   getCodexAppServer: vi.fn(),
-  disposeCodexAppServer: vi.fn(),
+  disposeCodexAppServerSession: vi.fn(),
 }));
 
-import { disposeCodexAppServer, getCodexAppServer } from './app-server-registry';
+import { disposeCodexAppServerSession, getCodexAppServer } from './app-server-registry';
 import { resolveCodexBinary } from './codex-binary';
 import {
   CODEX_APPROVAL_POLICY,
@@ -784,6 +784,16 @@ describe('runCodexAgent', () => {
     expect(await drain(b)).toContainEqual(closed);
   });
 
+  it('a transport error ends every concurrent turn on the shared client', async () => {
+    // A broken pipe kills the client for every turn on it, not just the last to register.
+    const { fake, a, b } = await twoConcurrentTurns();
+    fake.fireError([new Error('write EPIPE'), undefined, undefined]);
+    const isTransportError = (c: UIMessageChunk) =>
+      c.type === 'error' && c.errorText.includes('transport error: write EPIPE');
+    expect((await drain(a)).some(isTransportError)).toBe(true);
+    expect((await drain(b)).some(isTransportError)).toBe(true);
+  });
+
   it('aborting one turn interrupts only it and leaves the other streaming', async () => {
     const { fake, a, b, acA } = await twoConcurrentTurns();
     acA.abort();
@@ -1250,7 +1260,7 @@ describe('runCodexAgent', () => {
       params: { threadId: 'th1', turnId: 'tn1' },
     });
     // Abort interrupts the turn only — the persistent server stays warm (registry owns teardown).
-    expect(disposeCodexAppServer).not.toHaveBeenCalled();
+    expect(disposeCodexAppServerSession).not.toHaveBeenCalled();
   });
 
   it('ends the turn with an error chunk if the app-server connection closes mid-turn', async () => {
@@ -1429,12 +1439,14 @@ describe('runCodexAgent', () => {
       'multi_agent_v2',
       '--config',
       'mcp_servers.x={}',
+      '--config',
+      'shell_environment_policy.ignore_default_excludes=false',
     ]);
     expect(opts.args).not.toContain('--ignore-user-config');
     expect(opts.args).not.toContain('--skip-git-repo-check');
   });
 
-  it('with no configArgs, spawns only the unrouted-surface disable flags', async () => {
+  it('with no configArgs, spawns only the disable flags and the shell-env scrub', async () => {
     const fake = startedFakeClient();
     const gen = runCodexAgent(params());
     await gen.next();
@@ -1458,6 +1470,8 @@ describe('runCodexAgent', () => {
       'multi_agent',
       '--disable',
       'multi_agent_v2',
+      '--config',
+      'shell_environment_policy.ignore_default_excludes=false',
     ]);
   });
 });

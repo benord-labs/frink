@@ -330,10 +330,10 @@ async function expectQueueRowInsets(page: Page) {
   );
   expect(insets.length).toBeGreaterThan(0);
   for (const inset of insets) {
-    expect(inset.top).toBeCloseTo(16, 0);
-    expect(inset.bottom).toBeCloseTo(16, 0);
-    expect(inset.rail).toBeCloseTo(32, 0);
-    expect(inset.horizontalPadding).toBe(0);
+    expect(inset.top).toBeGreaterThanOrEqual(12);
+    expect(Math.abs(inset.top - inset.bottom)).toBeLessThanOrEqual(1);
+    expect(inset.rail).toBeCloseTo(56, 0);
+    expect(inset.horizontalPadding).toBe(28);
     expect(inset.bodyPadding).toBe(0);
   }
 }
@@ -526,7 +526,9 @@ test('queue keeps independent decisions in one chat reachable on a small light p
   await expect(
     page.getByText('Read the latest deployment logs to verify the release.', { exact: true }),
   ).toBeVisible();
-  await expect(page.getByText('Running', { exact: true })).toBeVisible();
+  await expect(
+    page.getByTestId('queue-row-task-2').getByText('Running', { exact: true }),
+  ).toBeVisible();
   await expect(page.getByText('Waiting for repository indexing', { exact: true })).toBeVisible();
   await expect(
     page.getByRole('button').filter({ hasText: 'Waiting for repository indexing' }),
@@ -535,7 +537,7 @@ test('queue keeps independent decisions in one chat reachable on a small light p
     true,
   );
 
-  for (const title of independentDecisions) {
+  for (const title of independentDecisions.slice(0, -1)) {
     const chatRequest = page.waitForRequest((request) => {
       if (!request.url().endsWith('/api') || request.method() !== 'POST') return false;
       const input = request.postDataJSON();
@@ -547,8 +549,14 @@ test('queue keeps independent decisions in one chat reachable on a small light p
     await expect(
       page.getByRole('button', { name: 'Send answer', exact: true }).first(),
     ).toBeVisible();
-    await expect(page.getByText(secondaryQuestion, { exact: true })).toBeVisible();
-    await expect(page.getByText('Allow access to deployment logs?', { exact: true })).toBeVisible();
+    await expect(
+      page.getByTestId('chat-transcript').getByText(secondaryQuestion, { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page
+        .getByTestId('chat-transcript')
+        .getByText('Allow access to deployment logs?', { exact: true }),
+    ).toBeVisible();
     await page.getByRole('button', { name: 'Go back', exact: true }).click();
     await expect(page.getByText('Work queue', { exact: true })).toBeVisible();
     await expect(page.getByRole('tab', { name: 'Queue', exact: true })).toHaveAttribute(
@@ -556,6 +564,9 @@ test('queue keeps independent decisions in one chat reachable on a small light p
       'true',
     );
   }
+  await page.getByRole('button').filter({ hasText: 'Approve the production rollout plan' }).click();
+  await expect(page.getByText('Review the release plan', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Approve this step', exact: true })).toBeVisible();
 });
 
 for (const colorScheme of ['dark', 'light'] as const) {
@@ -571,8 +582,13 @@ for (const colorScheme of ['dark', 'light'] as const) {
     });
     await expect(page.getByText('Work queue', { exact: true })).toHaveCount(1);
     await expectQueueRowInsets(page);
+    // Two questions, two permissions and one Flow review need a decision.
+    await expect(page.getByTestId('queue-badge')).toHaveText('5');
+    await page.getByRole('tab', { name: 'Flows', exact: true }).click();
+    await expect(page.getByTestId('queue-badge')).toHaveText('5');
+    await page.getByRole('tab', { name: 'Queue', exact: true }).click();
     await page.screenshot({
-      path: `test-results/queue-populated-${colorScheme}.png`,
+      path: `.expo/preview-02/queue-populated-${colorScheme}.png`,
       fullPage: true,
     });
 
@@ -587,12 +603,8 @@ for (const colorScheme of ['dark', 'light'] as const) {
     await expect(page.getByRole('button', { name: 'Run Flow', exact: true })).toBeVisible();
     await page.screenshot({ path: `test-results/flow-detail-${colorScheme}.png`, fullPage: true });
     await page.getByRole('button', { name: 'Run Flow', exact: true }).click();
-    for (const [index, title] of [
-      'Inspect release changes',
-      'Review the release plan',
-      'Deploy to staging',
-    ].entries())
-      await expect(page.getByText(`${index + 1}. ${title}`, { exact: true })).toBeVisible();
+    for (const title of ['Inspect release changes', 'Review the release plan', 'Deploy to staging'])
+      await expect(page.getByText(title, { exact: true })).toBeVisible();
     await page.screenshot({
       path: `test-results/run-populated-${colorScheme}.png`,
       fullPage: true,

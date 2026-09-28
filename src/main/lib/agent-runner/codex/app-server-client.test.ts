@@ -523,6 +523,67 @@ describe('CodexAppServerClient NDJSON framing', () => {
   });
 });
 
+describe('CodexAppServerClient stdin errors (sc-966)', () => {
+  let child: ReturnType<typeof makeFakeChild>;
+  beforeEach(() => {
+    child = makeFakeChild();
+    spawnMock.mockReturnValue(child);
+  });
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const epipe = () => Object.assign(new Error('write EPIPE'), { code: 'EPIPE' });
+
+  it('routes an async stdin EPIPE to onError instead of leaving it unhandled', async () => {
+    // EPIPE arrives as a stream 'error' event, never as a write() throw. Unrouted, it is an
+    // unhandled 'error' (uncaughtException) and the registry never learns the client is dead.
+    answerInitialize(child);
+    const client = new CodexAppServerClient({ binary: 'codex', clientInfo: CLIENT_INFO });
+    await client.start();
+    const errored = vi.fn();
+    client.onError(errored);
+
+    expect(() => child.stdin.emit('error', epipe())).not.toThrow();
+    await flush();
+
+    expect(errored).toHaveBeenCalledOnce();
+    const [payload] = errored.mock.calls[0] as [[Error, unknown, unknown]];
+    expect(payload[0].message).toBe('write EPIPE');
+    client.dispose();
+  });
+
+  it('keeps a late stdin error after dispose() harmless', async () => {
+    // dispose() SIGTERMs the child while a write may still be in flight; its EPIPE lands later.
+    answerInitialize(child);
+    const client = new CodexAppServerClient({ binary: 'codex', clientInfo: CLIENT_INFO });
+    await client.start();
+    const errored = vi.fn();
+    client.onError(errored);
+    client.dispose();
+
+    expect(() => child.stdin.emit('error', epipe())).not.toThrow();
+    await flush();
+    expect(errored).not.toHaveBeenCalled();
+  });
+
+  it('does not throw when stdin breaks during the initialize handshake (child exited at once)', async () => {
+    // A wrong or instantly-crashing binary breaks the pipe before initialize is answered.
+    vi.useFakeTimers();
+    try {
+      const client = new CodexAppServerClient({ binary: 'codex', clientInfo: CLIENT_INFO });
+      const started = client.start();
+      started.catch(() => {});
+      expect(() => child.stdin.emit('error', epipe())).not.toThrow();
+      await vi.advanceTimersByTimeAsync(31_000);
+      await expect(started).rejects.toThrow('did not respond to initialize');
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('CodexAppServerClient lifecycle guards', () => {
   let child: ReturnType<typeof makeFakeChild>;
   beforeEach(() => {

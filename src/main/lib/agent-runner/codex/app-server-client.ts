@@ -124,6 +124,12 @@ class NewlineMessageWriter extends AbstractMessageWriter implements MessageWrite
   end(): void {
     // stdin stays open for the lifetime of the persistent app-server.
   }
+
+  /** Surface an async stream error (e.g. stdin EPIPE) that write() could not catch. */
+  reportStreamError(err: Error): void {
+    this.errorCount++;
+    this.fireError(err, undefined, this.errorCount);
+  }
 }
 
 export type CodexInitializeResult = {
@@ -268,6 +274,12 @@ export class CodexAppServerClient {
 
     const reader = new NewlineMessageReader(child.stdout);
     const writer = new NewlineMessageWriter(child.stdin);
+    // stdin EPIPE arrives async as a stream 'error', not a write() throw — route it to onError.
+    // Never detached: a late EPIPE after dispose() would otherwise be an uncaughtException.
+    child.stdin.on('error', (err) => {
+      log.warn('[Codex app-server] stdin error', err);
+      writer.reportStreamError(err);
+    });
     const connection = createMessageConnection(reader, writer);
     for (const method of [...APPROVAL_REQUEST_METHODS, FRINK_HOST_TOOL_PERMISSION_METHOD]) {
       connection.onRequest(method, (params) => this.dispatchRequest(method, params));

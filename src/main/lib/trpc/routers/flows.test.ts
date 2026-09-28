@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ZodError } from 'zod';
 import { TerminalResumeAdmissionError } from '../../flows/admission/terminal-resume';
 
-
 const createFlowVersionMock = vi.fn();
 const copyFlowMock = vi.fn();
 const createBriefingStashMock = vi.fn();
@@ -32,6 +31,7 @@ const pauseActiveExecutionForSubChatMock = vi.fn();
 const getFlowAdmissionSettingsMock = vi.fn();
 const updateFlowAdmissionSettingsMock = vi.fn();
 const moveQueuedFlowAdmissionMock = vi.fn();
+const kickStalledFlowAdmissionDrainMock = vi.fn();
 const retryTerminalFlowRunMock = vi.fn();
 
 vi.mock('electron', () => ({
@@ -133,6 +133,7 @@ vi.mock('../../flows/admission/runtime', async (importOriginal) => {
     ...actual,
     getFlowAdmissionSettings: (...args: unknown[]) => getFlowAdmissionSettingsMock(...args),
     moveQueuedFlowAdmission: (...args: unknown[]) => moveQueuedFlowAdmissionMock(...args),
+    kickStalledFlowAdmissionDrain: () => kickStalledFlowAdmissionDrainMock(),
     updateFlowAdmissionSettings: (...args: unknown[]) => updateFlowAdmissionSettingsMock(...args),
   };
 });
@@ -202,6 +203,7 @@ describe('flowsRouter (local)', () => {
     getFlowAdmissionSettingsMock.mockReset();
     updateFlowAdmissionSettingsMock.mockReset();
     moveQueuedFlowAdmissionMock.mockReset();
+    kickStalledFlowAdmissionDrainMock.mockReset();
     retryTerminalFlowRunMock.mockReset();
   });
 
@@ -315,6 +317,15 @@ describe('flowsRouter (local)', () => {
   });
 
   describe('Work Queue admissions', () => {
+    it('kicks a stalled drain on every poll without waiting on it', async () => {
+      queuedFlowAdmissionsMock.mockReturnValueOnce([]);
+      const { flowsRouter } = await import('./flows');
+      const caller = flowsRouter.createCaller({ getWindow: () => null });
+
+      await expect(caller.workQueueAdmissions()).resolves.toEqual([]);
+      expect(kickStalledFlowAdmissionDrainMock).toHaveBeenCalledOnce();
+    });
+
     it('returns only the authenticated user projection with the raw Flow DTO contract', async () => {
       queuedFlowAdmissionsMock.mockReturnValueOnce([
         {

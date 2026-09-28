@@ -22,7 +22,8 @@ import {
   setFlowAdmissionLifecycleHooks,
   withFlowResourceCleanup,
 } from './activity';
-import { admissionDrainFrozen, type FlowAdmissionConfigPatch } from './config';
+import type { FlowAdmissionConfigPatch } from './config';
+import { createFlowAdmissionDrainer } from './drain';
 import {
   type AdmissionOutcome,
   outcomeForRunStatus,
@@ -40,8 +41,6 @@ import {
 } from './terminal-resume/resume-store';
 
 let controller: FlowAdmissionController | null = null;
-let drainPromise: Promise<void> | null = null;
-let drainRequested = false;
 let dispatchStartedFlow: ((flowRunId: string) => Promise<void>) | null = null;
 let dispatchResumedFlow: ((intent: TerminalFlowResumeIntent) => Promise<void>) | null = null;
 
@@ -209,33 +208,19 @@ async function dispatchClaim(ticket: number): Promise<void> {
   });
 }
 
-async function drainPasses(): Promise<void> {
-  while (drainRequested) {
-    drainRequested = false;
-    for (;;) {
-      const claimed = await admissionController().claimEligible();
-      for (const failed of claimed.failed) await notifyFailedStartAdmission(failed);
-      for (const admission of claimed.admissions) await dispatchClaim(admission.ticket);
-      if (!claimed.hasMore || claimed.candidatesProcessed === 0) break;
-    }
-  }
-}
+const drainer = createFlowAdmissionDrainer({
+  claimEligible: () => admissionController().claimEligible(),
+  dispatchClaim,
+  notifyFailedStartAdmission,
+});
 
 function drainFlowAdmissions(): Promise<void> {
-  if (admissionDrainFrozen()) return Promise.resolve();
-  drainRequested = true;
-  const previous = drainPromise?.catch(() => undefined) ?? Promise.resolve();
-  const current = previous.then(drainPasses);
-  drainPromise = current;
-  void current
-    .finally(() => {
-      if (drainPromise === current) drainPromise = null;
-    })
-    .catch((error) => {
-      log.error('[FlowAdmission] queue drain failed', { error });
-      captureFlowAdmissionException(error, 'queue-drain');
-    });
-  return current;
+  return drainer.drain();
+}
+
+/** Re-drains a queue whose retries ran out; a no-op otherwise. Safe to call from a poll. */
+export function kickStalledFlowAdmissionDrain(): void {
+  drainer.kickIfStalled();
 }
 
 export type FlowAdmissionSettings = {
@@ -276,7 +261,11 @@ export async function requestFlowStart(
   input: EnqueueFlowStartInput,
 ): Promise<EnqueueFlowStartResult> {
   const result = await admissionController().enqueueStart(input);
-  await drainFlowAdmissions();
+  // The start is durably queued; a drain fault is retried by the drain itself, so failing here
+  // would report a start that is about to run as an error.
+  await drainFlowAdmissions().catch((error) => {
+    log.warn('[FlowAdmission] drain after start failed', { flowRunId: result.run.id, error });
+  });
   const run = await getFlowRun(getDatabase(), result.run.id);
   return { ...result, run: run ?? result.run };
 }
@@ -314,11 +303,9 @@ export async function cancelUndispatchedFlowAdmission(
   );
   if (!cancelled) return false;
   // The cancellation has committed; the drain only re-fills the freed slot. Rejecting here would
-  // report a removal that already happened as a failure, so surface the drain fault in the log and
-  // leave the next drain trigger to re-fill.
+  // report a removal that already happened as a failure; the drain captures and retries itself.
   await drainFlowAdmissions().catch((error) => {
     log.warn('[FlowAdmission] drain after dequeue failed', { flowRunId, error });
-    captureFlowAdmissionException(error, 'drain-after-dequeue');
   });
   return true;
 }
@@ -472,8 +459,7 @@ export async function recoverFlowAdmissions(): Promise<{
 
 export function _setFlowAdmissionControllerForTests(value: FlowAdmissionController | null): void {
   controller = value;
-  drainPromise = null;
-  drainRequested = false;
+  drainer.reset();
 }
 
 const continuationOps = {

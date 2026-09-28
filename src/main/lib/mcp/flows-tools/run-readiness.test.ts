@@ -98,3 +98,34 @@ describe('describeFlowRunBlockers', () => {
     expect(discoverCustomNodes).not.toHaveBeenCalled();
   });
 });
+
+// sc-3166: frink_flows_run refuses an over-cap agent prompt instead of dispatching it to fail.
+describe('describeFlowRunBlockers — agent prose length cap', () => {
+  const agentGraph = (instructions: string): FlowGraph =>
+    ({
+      nodes: [
+        { id: 't', blockType: 'manual_trigger' },
+        { id: 'st', blockType: 'start_task', config: { projectId: 'p1' } },
+        { id: 'a', blockType: 'agent', label: 'Writer', config: { instructions } },
+      ],
+      edges: [
+        { id: 'e1', source: 't', target: 'st' },
+        { id: 'e2', source: 'st', target: 'a' },
+      ],
+    }) as FlowGraph;
+
+  beforeEach(() => {
+    discoverCustomNodes.mockReset();
+    installed({});
+  });
+
+  it('blocks a run whose agent instructions are over the cap', () => {
+    expect(describeFlowRunBlockers(agentGraph('a'.repeat(50_001)))).toBe(
+      'Agent node "Writer" instructions is 50,001 characters; the limit is 50,000',
+    );
+  });
+
+  it('does not block at exactly the cap', () => {
+    expect(describeFlowRunBlockers(agentGraph('a'.repeat(50_000)))).toBeNull();
+  });
+});

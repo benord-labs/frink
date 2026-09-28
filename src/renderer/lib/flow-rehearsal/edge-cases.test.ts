@@ -95,6 +95,44 @@ describe('analyzeFlow — boundary shapes', () => {
     ]);
   });
 
+  it('surfaces a blank-path placeholder with its own rule and the ${var:?} fix (sc-3170)', () => {
+    const graph: FlowGraph = {
+      nodes: [
+        { id: 't', blockType: 'manual_trigger' },
+        { id: 'cmd', blockType: 'run_command', config: { command: 'rm -rf /tmp/{{trigger.dir}}' } },
+      ],
+      edges: [{ id: 'e', source: 't', target: 'cmd' }],
+    };
+    expect(analyzeFlow(graph)).toContainEqual(
+      expect.objectContaining({
+        nodeId: 'cmd',
+        severity: 'warn',
+        rule: 'template.command.{{trigger.dir}}.shell-blank-path',
+        fix: expect.stringContaining('${var:?}'),
+      }),
+    );
+  });
+
+  it('keeps rule ids unique when one placeholder is quoted, in a path, and unresolvable', () => {
+    // Findings render as React lists keyed by `${nodeId}:${rule}`, so a collision is a UI bug.
+    const graph: FlowGraph = {
+      nodes: [
+        { id: 't', blockType: 'manual_trigger' },
+        {
+          id: 'cmd',
+          blockType: 'run_command',
+          config: { command: 'rm -rf "/tmp/{{previous.bad}}"' },
+        },
+      ],
+      edges: [{ id: 'e', source: 't', target: 'cmd' }],
+    };
+    const rules = analyzeFlow(graph)
+      .filter((finding) => finding.rule.includes('{{previous.bad}}'))
+      .map((finding) => finding.rule);
+    expect(rules).toHaveLength(3);
+    expect(new Set(rules).size).toBe(3);
+  });
+
   it('malformed config (null / array / string / non-string command) is treated as empty, not a crash', () => {
     const variants: unknown[] = [
       null,

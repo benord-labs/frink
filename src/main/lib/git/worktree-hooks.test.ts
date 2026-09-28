@@ -23,6 +23,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { canInitGit } from '../test-utils';
 
 import { configureWorktreeHooks, createWorktree, isFrinkManagedWorktree } from './worktree';
+import { addWorktree, rollbackCreatedWorktree } from './worktree/add';
 
 // Real git + multiple createWorktree calls (each spawns a login shell for env) run well
 // past the 5s default once coverage instrumentation is layered on.
@@ -260,6 +261,178 @@ describe.skipIf(!canInitGit)('createWorktree hook wiring (git integration)', () 
     expect(existsSync(wt)).toBe(false);
     expect(git(repo, 'worktree list --porcelain')).not.toContain(wt);
     expect(git(repo, 'branch --list failed-hook-install')).toBe('');
+  });
+
+  describe('post-checkout failures and creation rollback (sc-3833)', () => {
+    const env = process.env as Record<string, string>;
+    const failingPostCheckout = (dir: string, exitCode: number): void => {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'post-checkout'), `#!/usr/bin/env sh\nexit ${exitCode}\n`);
+      chmodSync(join(dir, 'post-checkout'), 0o755);
+    };
+
+    it('keeps a worktree whose husky post-checkout stub fails, as git itself does', async () => {
+      const repo = initRepo();
+      // A committed husky stub whose `h` runner is gone, so every post-checkout exits non-zero.
+      mkdirSync(join(repo, '.husky/_'), { recursive: true });
+      writeFileSync(join(repo, '.husky/_/post-checkout'), RUNNER_STUB);
+      chmodSync(join(repo, '.husky/_/post-checkout'), 0o755);
+      git(repo, 'add .husky/_/post-checkout');
+      git(repo, 'commit -m stub');
+      git(repo, 'config core.hooksPath .husky/_');
+      const probe = join(tmp('frink-wt-hooks-out-'), 'probe');
+      expect(() => git(repo, `worktree add ${probe} -b probe main`)).toThrow();
+      const wt = join(tmp('frink-wt-hooks-out-'), 'wt');
+
+      await createWorktree(repo, 'feat-failing-hook', wt, 'main');
+
+      expect(git(wt, 'rev-parse --symbolic-full-name HEAD')).toBe('refs/heads/feat-failing-hook');
+      expect(git(wt, 'rev-parse HEAD')).toBe(git(repo, 'rev-parse main'));
+      expect(await isFrinkManagedWorktree(wt)).toBe(true);
+    });
+
+    it('tolerates any non-zero hook status from the default .git/hooks, not just 1', async () => {
+      const repo = initRepo();
+      failingPostCheckout(join(repo, git(repo, 'rev-parse --git-path hooks')), 3);
+      const wt = join(tmp('frink-wt-hooks-out-'), 'wt');
+
+      await createWorktree(repo, 'feat-exit-three', wt, 'main');
+
+      expect(git(wt, 'rev-parse --symbolic-full-name HEAD')).toBe('refs/heads/feat-exit-three');
+      expect(await isFrinkManagedWorktree(wt)).toBe(true);
+    });
+
+    it('creates the worktree when core.hooksPath points at a missing runner directory', async () => {
+      const repo = initRepo();
+      git(repo, 'config core.hooksPath .husky/_');
+      const wt = join(tmp('frink-wt-hooks-out-'), 'wt');
+
+      await createWorktree(repo, 'feat-missing-runner', wt, 'main');
+
+      expect(git(wt, 'rev-parse --symbolic-full-name HEAD')).toBe('refs/heads/feat-missing-runner');
+      expect(existsSync(join(wt, '.husky/_'))).toBe(false);
+    });
+
+    it('fails and leaks neither worktree nor branch when the checkout itself fails', async () => {
+      const repo = initRepo();
+      writeFileSync(join(repo, '.gitattributes'), 'README.md filter=broken\n');
+      git(repo, 'add .gitattributes');
+      git(repo, 'commit -m attrs');
+      git(repo, 'config filter.broken.smudge false');
+      git(repo, 'config filter.broken.required true');
+      const wt = join(tmp('frink-wt-hooks-out-'), 'wt');
+
+      await expect(createWorktree(repo, 'feat-broken-checkout', wt, 'main')).rejects.toThrow(
+        'Failed to create worktree',
+      );
+      expect(existsSync(wt)).toBe(false);
+      expect(git(repo, 'branch --list feat-broken-checkout')).toBe('');
+    });
+
+    it('does not keep a worktree when a slow post-checkout hook hits the timeout', async () => {
+      const repo = initRepo();
+      mkdirSync(join(repo, '.slow-hooks'));
+      writeFileSync(join(repo, '.slow-hooks/post-checkout'), '#!/usr/bin/env sh\nsleep 3\n');
+      chmodSync(join(repo, '.slow-hooks/post-checkout'), 0o755);
+      git(repo, `config core.hooksPath ${join(repo, '.slow-hooks')}`);
+      const wt = join(tmp('frink-wt-hooks-out-'), 'wt');
+
+      await expect(
+        addWorktree(repo, wt, 'feat-slow-hook', git(repo, 'rev-parse main'), env, 500),
+      ).rejects.toThrow();
+    });
+
+    it('fails without touching a branch that already exists', async () => {
+      const repo = initRepo();
+      git(repo, 'branch taken main');
+      const before = git(repo, 'rev-parse taken');
+      const wt = join(tmp('frink-wt-hooks-out-'), 'wt');
+
+      await expect(createWorktree(repo, 'taken', wt, 'main')).rejects.toThrow(
+        'Failed to create worktree',
+      );
+      expect(git(repo, 'rev-parse taken')).toBe(before);
+    });
+
+    it('never force-removes another worktree already occupying the target path', async () => {
+      const repo = initRepo();
+      const occupied = join(tmp('frink-wt-hooks-out-'), 'occupied');
+      git(repo, `worktree add ${occupied} -b someone-elses main`);
+      writeFileSync(join(occupied, 'uncommitted.txt'), 'precious\n');
+
+      await expect(createWorktree(repo, 'feat-collides', occupied, 'main')).rejects.toThrow(
+        'Failed to create worktree',
+      );
+
+      expect(readFileSync(join(occupied, 'uncommitted.txt'), 'utf-8')).toBe('precious\n');
+      expect(git(occupied, 'rev-parse --symbolic-full-name HEAD')).toBe('refs/heads/someone-elses');
+      // git created the -b branch before rejecting the path; it must not leak.
+      expect(git(repo, 'branch --list feat-collides')).toBe('');
+    });
+
+    it('keeps a plain non-empty directory at the target path and does not leak the branch', async () => {
+      const repo = initRepo();
+      const occupied = join(tmp('frink-wt-hooks-out-'), 'occupied');
+      mkdirSync(occupied);
+      writeFileSync(join(occupied, 'keep.txt'), 'x\n');
+
+      await expect(createWorktree(repo, 'feat-plain-dir', occupied, 'main')).rejects.toThrow(
+        'Failed to create worktree',
+      );
+
+      expect(existsSync(join(occupied, 'keep.txt'))).toBe(true);
+      expect(git(repo, 'branch --list feat-plain-dir')).toBe('');
+    });
+
+    it('concurrent creates of one branch: the loser never deletes the winner’s branch', async () => {
+      const repo = initRepo();
+      const base = tmp('frink-wt-hooks-out-');
+      const paths = [join(base, 'a'), join(base, 'b'), join(base, 'c')];
+
+      const results = await Promise.allSettled(
+        paths.map((p) => createWorktree(repo, 'feat-raced', p, 'main')),
+      );
+
+      const winners = paths.filter((_, i) => results[i]?.status === 'fulfilled');
+      expect(winners).toHaveLength(1);
+      const winner = winners[0] as string;
+      expect(git(repo, 'branch --list feat-raced')).not.toBe('');
+      expect(git(winner, 'rev-parse --symbolic-full-name HEAD')).toBe('refs/heads/feat-raced');
+      expect(git(winner, 'rev-parse HEAD')).toBe(git(repo, 'rev-parse main'));
+    });
+
+    it('rollback leaves the branch alone once it has moved off the commit Frink created', async () => {
+      const repo = initRepo();
+      const created = git(repo, 'rev-parse main');
+      git(repo, 'branch moved main');
+      git(repo, 'commit --allow-empty -m later');
+      git(repo, 'branch -f moved main');
+      const wt = join(tmp('frink-wt-hooks-out-'), 'never-created');
+
+      await rollbackCreatedWorktree(repo, wt, 'moved', created, false, env);
+
+      expect(git(repo, 'rev-parse moved')).toBe(git(repo, 'rev-parse main'));
+    });
+
+    it('rollback keeps the branch when the worktree holding it cannot be removed', async () => {
+      const repo = initRepo();
+      const wt = join(tmp('frink-wt-hooks-out-'), 'locked');
+      git(repo, `worktree add ${wt} -b feat-locked main`);
+      git(repo, `worktree lock ${wt}`); // a single --force refuses a locked worktree
+
+      await rollbackCreatedWorktree(
+        repo,
+        wt,
+        'feat-locked',
+        git(repo, 'rev-parse main'),
+        false,
+        env,
+      );
+
+      expect(existsSync(wt)).toBe(true);
+      expect(git(repo, 'branch --list feat-locked')).not.toBe('');
+      git(repo, `worktree unlock ${wt}`);
+    });
   });
 
   it('leaves plain .git/hooks (unset hooksPath) untouched — already shared via common dir', async () => {

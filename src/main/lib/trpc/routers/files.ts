@@ -28,6 +28,7 @@ import { captureMainException } from '../../sentry/init';
 // reach any path the user could already open in a terminal. Operations that take a
 // project path plus a relative path still enforce containment within that project.
 import { publicProcedure, router } from '../index';
+import { readEditorTextFile } from './read-text-file-bounded';
 
 // Active copy operations — allows cancellation by operationId
 type ActiveOperation = {
@@ -1103,20 +1104,11 @@ export const filesRouter = router({
     }),
 
   /**
-   * Read file contents from filesystem
+   * Read a text file for the code editor (guards live in readEditorTextFile).
    */
-  readFile: publicProcedure.input(z.object({ filePath: z.string() })).query(async ({ input }) => {
-    const { filePath } = input;
-
-    try {
-      const content = await readFile(filePath, 'utf-8');
-      return content;
-    } catch (error) {
-      throw new Error(
-        `Failed to read file: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      );
-    }
-  }),
+  readFile: publicProcedure
+    .input(z.object({ filePath: z.string() }))
+    .query(({ input }) => readEditorTextFile(input.filePath)),
 
   /**
    * Read image file as base64 data URL for display in the code editor panel.

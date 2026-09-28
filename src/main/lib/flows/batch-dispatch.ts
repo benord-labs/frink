@@ -54,6 +54,7 @@ import {
   TERMINAL_STAGE_STATUSES,
   validateDeclaredTriggerTypes,
 } from './batch-context';
+import { mergeDependencyBranches, resolveDependencyBranches } from './batch';
 import { subscribeFlowEvents } from './events';
 import { startFlowRun } from './start';
 
@@ -90,10 +91,15 @@ async function dispatchPendingStageRun(
   bsr: BatchStageRun,
   stageId: string,
   ctx: BatchCtx,
+  inheritedBranches: string[],
 ): Promise<{ inFlight: number; progressed: number }> {
   const reran = await tryRedispatchExistingRun(db, bsr);
   if (reran !== null) return { inFlight: reran, progressed: 1 };
-  const triggerContext = (bsr.triggerContext as Record<string, unknown> | null) ?? null;
+  // Injected before validation so a declared schema also checks the inherited keys.
+  const triggerContext = mergeDependencyBranches(
+    (bsr.triggerContext as Record<string, unknown> | null) ?? null,
+    inheritedBranches,
+  );
   const typeError = validateDeclaredTriggerTypes(ctx.declaredTriggerSchema, triggerContext);
   if (typeError) {
     await setStageRunStatusIf(db, bsr.id, ['pending'], 'failed');
@@ -146,13 +152,16 @@ async function dispatchStageRuns(
   ctx: BatchCtx,
 ): Promise<{ inFlight: number; progressed: number }> {
   const runs = await listRunsForStage(db, stage.id);
+  const pending = runs.filter((r) => r.status === 'pending');
+  // A running stage's deps are all completed, so their branches are fixed: resolve once per pass.
+  const inheritedBranches = pending.length > 0 ? await resolveDependencyBranches(db, stage) : [];
   let inFlight = 0;
   let progressed = 0;
-  for (const bsr of runs.filter((r) => r.status === 'pending')) {
+  for (const bsr of pending) {
     // Re-read per member, not sliced into one budget: a resume promotion can take a slot in its own
     // transaction while this loop awaits a dispatch, and a stale budget would overshoot the limit.
     if (occupiedStageSlots(db, stage.id) >= ctx.limit) break;
-    const result = await dispatchPendingStageRun(db, bsr, stage.id, ctx);
+    const result = await dispatchPendingStageRun(db, bsr, stage.id, ctx, inheritedBranches);
     inFlight += result.inFlight;
     progressed += result.progressed;
   }

@@ -4,7 +4,7 @@
  */
 
 import log from 'electron-log';
-import { buildOneShotClaudeEnv, getBundledClaudeBinaryPath } from './claude';
+import { buildOneShotClaudeLaunch, getBundledClaudeBinaryPath } from './claude';
 import {
   type CredentialResult,
   getDescriptionCredentialAttempts,
@@ -100,7 +100,7 @@ async function generateProjectDescriptionWithClaudeCredential(
 ): Promise<string | null> {
   if (!isResolvedCredential(credential)) return null;
 
-  const env = buildOneShotClaudeEnv(credential);
+  const launch = buildOneShotClaudeLaunch(credential);
 
   const abortController = new AbortController();
   const timeoutId = setTimeout(() => abortController.abort(), DESCRIBE_TIMEOUT_MS);
@@ -112,7 +112,7 @@ async function generateProjectDescriptionWithClaudeCredential(
       options: {
         abortController,
         cwd: projectPath,
-        env,
+        ...launch,
         // Same binary the executor spawns — and the only one download-claude-binary.mjs
         // asserts CLAUDE_SECURESTORAGE_CONFIG_DIR support on. Without this the SDK picks
         // its own bundled CLI, where the pin above could silently be a no-op.

@@ -105,18 +105,24 @@ jobs:
       - uses: oven-sh/setup-bun@v2
 
       - name: Install root dependencies
+        id: install
         run: bun install --frozen-lockfile
 
+      # Each gate runs even when an earlier gate fails, so one red gate cannot hide another.
       - name: Structure and import walls
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: bun run lint:structure
 
       - name: Type check
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: bun run ts:check
 
       - name: Unused files, exports and dependencies
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: bun run knip
 
       - name: Generated skill content is up to date
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: bun run build:skills:check
 
   branch-suite:

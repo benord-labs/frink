@@ -24,7 +24,7 @@ import {
   _clearActiveExecutionsForTests,
   _registerExecutionForTests,
 } from '../streaming/execution-registry';
-import { answeringCli } from './claude-warm-session';
+import { answeringCli, replies } from './claude-warm-session';
 import { mockQuery, never } from './claude-turn-abort';
 import type { ExecutorPermissionHarness } from './executor-codex-permissions';
 
@@ -43,11 +43,6 @@ const sessionLines = (kind: string, subChatId = payload.subChatId) =>
     .mock.calls.map(([line]) => String(line))
     .filter((line) => line.startsWith(`[Claude Session] ${kind} sub=${subChatId} `))
     .map((line) => line.slice(`[Claude Session] ${kind} sub=${subChatId} `.length));
-const replies = () =>
-  vi
-    .mocked(socketClient.sendStreamChunkDirect)
-    .mock.calls.map(([sent]) => (sent.chunk as { delta?: string }).delta)
-    .filter(Boolean);
 const prewarm = (subChatId = payload.subChatId, mode?: ChatMode) =>
   prewarmClaudeSession({ chatId: payload.chatId, subChatId, mode });
 /** A CLI that idles until closed, as a used session of another chat does. */

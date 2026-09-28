@@ -19,6 +19,7 @@ import {
   flowGraphNodeSchema,
 } from '../../../../shared/types/flow-graph-schema';
 import { isPlainObject } from '../../../../shared/lib/case-converter/is-transformable';
+import { agentProseGraphErrors } from '../../../../shared/lib/flows/agent-prose-limit';
 import type { FlowPatchReasonCode } from '../../../../shared/types/flows/flow-change-presentation';
 
 const MAX_PATCH_OPERATIONS = 50;
@@ -467,8 +468,13 @@ export function applyPatchOperations(graph: FlowGraph, operations: PatchOperatio
 
   // Validate the (possibly partial) graph in save mode
   const validation = validateGraph(next, { mode: 'save' });
-  if (!validation.valid) {
-    const head = `Graph validation failed after applying ${applied.length}/${operations.length} ops: ${validation.errors.join('; ')}`;
+  // Over-cap agent prose would only fail later at dispatch — refuse the patch now (sc-3166).
+  const errors = [
+    ...(validation.valid ? [] : validation.errors),
+    ...agentProseGraphErrors(next.nodes),
+  ];
+  if (errors.length > 0) {
+    const head = `Graph validation failed after applying ${applied.length}/${operations.length} ops: ${errors.join('; ')}`;
     const withWarnings =
       validation.warnings !== undefined && validation.warnings.length > 0
         ? `${head} Warnings: ${validation.warnings.join('; ')}`

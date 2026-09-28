@@ -3,6 +3,7 @@ import os from 'node:os';
 import { stripVTControlCharacters } from 'node:util';
 import { getBundledBinaryPath } from '../agent-runner/bundled-binary';
 import { buildEnvironment, getDefaultShell, isWindows } from '../platform';
+import { buildClaudeCredentialLaunch, type ClaudeCredentialLaunch } from './credential-fd-spawn';
 
 // Cache the shell environment
 let cachedShellEnv: Record<string, string> | null = null;
@@ -14,8 +15,8 @@ const DELIMITER = '_CLAUDE_ENV_DELIMITER_';
 // ANTHROPIC_BASE_URL is kept on purpose, so an existing API-proxy setup keeps working.
 // ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN are NOT stripped here but every Claude spawn path
 // strips them itself before injecting the account it resolved — the executor inline, the one-shot
-// sites via buildOneShotClaudeEnv. Leaving them in the base env would let an exported shell token
-// silently outrank the selected account. Based on PR #29 by @sa4hnd.
+// sites via buildOneShotClaudeLaunch. Leaving them in the base env would let an exported shell
+// token silently outrank the selected account. Based on PR #29 by @sa4hnd.
 const STRIPPED_ENV_KEYS = ['OPENAI_API_KEY', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX'];
 
 // Cache the bundled binary path (only compute once)
@@ -199,33 +200,21 @@ export function buildClaudeEnv(options?: {
   return env;
 }
 
-/**
- * Environment for a ONE-SHOT Claude SDK call — repo description and chat naming, the two spawn
- * sites that bypass the executor. Guarantees two things a bare {@link buildClaudeEnv} cannot:
- *
- * 1. Inherited shell/process `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` are STRIPPED, so an
- *    exported token cannot override the credential the caller selected. A passthrough account
- *    carries no token of its own, which is exactly when a stray shell token would win.
- * 2. `CLAUDE_SECURESTORAGE_CONFIG_DIR` is pinned so the CLI reads the canonical keychain login
- *    and refreshes it itself. See docs/decisions/claude-credential-ownership-at-spawn.md.
- */
-export function buildOneShotClaudeEnv(credential: {
+/** `query()` options for a one-shot Claude call: shell tokens stripped, keychain pinned, the chosen
+ * credential piped. Why: claude-credential-ownership-at-spawn, child-process-env-secrets */
+export function buildOneShotClaudeLaunch(credential: {
   token: string | null;
   isApiKey: boolean;
-}): Record<string, string> {
+}): { env: Record<string, string> } & Pick<ClaudeCredentialLaunch, 'spawnClaudeCodeProcess'> {
   const {
     ANTHROPIC_API_KEY: _shellApiKey,
     CLAUDE_CODE_OAUTH_TOKEN: _shellOauth,
     ...baseEnv
   } = buildClaudeEnv({ enableTasks: false });
+  const { envPatch, spawnClaudeCodeProcess } = buildClaudeCredentialLaunch(credential);
   return {
-    ...baseEnv,
-    CLAUDE_SECURESTORAGE_CONFIG_DIR: '',
-    ...(credential.token
-      ? credential.isApiKey
-        ? { ANTHROPIC_API_KEY: credential.token }
-        : { CLAUDE_CODE_OAUTH_TOKEN: credential.token }
-      : {}),
+    env: { ...baseEnv, CLAUDE_SECURESTORAGE_CONFIG_DIR: '', ...envPatch },
+    ...(spawnClaudeCodeProcess ? { spawnClaudeCodeProcess } : {}),
   };
 }
 

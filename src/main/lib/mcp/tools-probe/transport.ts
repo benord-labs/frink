@@ -12,6 +12,7 @@ import type { RequestOptions } from '@modelcontextprotocol/sdk/shared/protocol.j
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { getClaudeShellEnvironment } from '../../claude/env';
+import { CREDENTIAL_ENV_DENYLIST, omitEnvKeys } from '../../terminal/env';
 
 /**
  * Budgets are per-purpose and SDK-owned (`docs/decisions/mcp-probe-budget.md`). A stdio
@@ -213,19 +214,6 @@ export type McpStdioServerSpec = {
   env?: Record<string, string>;
 };
 
-/**
- * Sensitive env vars to filter out when spawning MCP subprocesses
- */
-const BLOCKED_ENV_VARS = [
-  'ANTHROPIC_API_KEY',
-  'CLAUDE_CODE_OAUTH_TOKEN',
-  'AWS_ACCESS_KEY_ID',
-  'AWS_SECRET_ACCESS_KEY',
-  'AWS_SESSION_TOKEN',
-  'GITHUB_TOKEN',
-  'GH_TOKEN',
-  'OPENAI_API_KEY',
-];
 
 /**
  * Spawn transport for a stdio MCP server, on the user's shell environment so
@@ -234,13 +222,7 @@ const BLOCKED_ENV_VARS = [
  * user-installed tools. Sensitive env vars are filtered out.
  */
 export function createStdioTransport(config: McpStdioServerSpec): StdioClientTransport {
-  const shellEnv = getClaudeShellEnvironment();
-  const safeEnv: Record<string, string> = {};
-  for (const [key, value] of Object.entries(shellEnv)) {
-    if (!BLOCKED_ENV_VARS.includes(key)) {
-      safeEnv[key] = value;
-    }
-  }
+  const safeEnv = omitEnvKeys(getClaudeShellEnvironment(), CREDENTIAL_ENV_DENYLIST);
   return new StdioClientTransport({
     command: config.command,
     args: config.args,

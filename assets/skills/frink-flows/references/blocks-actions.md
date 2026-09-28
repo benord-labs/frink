@@ -37,7 +37,7 @@ Inherits the upstream Start Task; another Agent follows up in the same task.
   mode?: "agent"|"plan"|"debug", autoApprove?: boolean, agentInstructions?: string }
 ```
 
-`model`/`mode` override inherited settings for this node only. Plan mode pauses for approval unless `autoApprove: true`; debug is local-only and pauses for human reproduction. `agentInstructions` (≤5,000 chars) supplies a templated role above the task instructions; the briefing arrives separately in the session system prompt.
+`model`/`mode` override inherited settings for this node only. Plan mode pauses for approval unless `autoApprove: true`; debug is local-only and pauses for human reproduction. `agentInstructions` supplies a templated role above the task instructions; the briefing arrives separately in the session system prompt. `instructions` and `agentInstructions` are each limited to 50,000 characters (trimmed): a patch over the limit is rejected, and one at 40,000 or more returns a warning.
 A leading `/command` in instructions expands at save time. Discover names with `frink_flows_list_catalog({kind:"commands"})`; unknown commands reject the patch, built-ins such as `/plan` stay literal. Expansion sets `instructionsCommandName` automatically; do not set it manually.
 
 | output | type | guaranteed | description |

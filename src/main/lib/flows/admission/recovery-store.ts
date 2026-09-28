@@ -6,12 +6,21 @@ import { getFlowRun } from '../../db/repos/flow-runs';
 import { flowRunAdmissions, flowRuns } from '../../db/schema';
 import { captureFlowAdmissionException } from './activity';
 import type { FlowAdmissionController } from './controller';
-import type { FlowRunAdmission } from './store';
+import { type FlowRunAdmission, transitionAdmission } from './store';
+import { isTerminalResumeStatus } from './terminal-resume/resume-store';
 
 type Db = ReturnType<typeof getDatabase>;
 const DEFAULT_PAGE_SIZE = 100;
 const MAX_PAGE_SIZE = 1_000;
 const LIVE_ADMISSION_SQL = sql`${flowRunAdmissions.state} IN ('queued', 'claimed', 'active', 'releasing')`;
+const LIVE_ADMISSION_STATES = new Set<FlowAdmissionState>([
+  'queued',
+  'claimed',
+  'active',
+  'releasing',
+]);
+const STRANDED_RESUME_ERROR =
+  'Resume claim was interrupted by a restart before dispatch; retry it manually';
 
 export function recoveryAdmissions(
   db: Db,
@@ -23,23 +32,25 @@ export function recoveryAdmissions(
   nextTicket: number | null;
 } {
   const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, Math.trunc(limit)));
+  // One read carries each row's run status, so the per-row recovery decisions below never re-query.
   const rows = db
-    .select()
+    .select({
+      admission: flowRunAdmissions,
+      runStatus: flowRuns.status,
+      runStartedAt: flowRuns.startedAt,
+    })
     .from(flowRunAdmissions)
+    .leftJoin(flowRuns, eq(flowRuns.id, flowRunAdmissions.flowRunId))
     .where(and(LIVE_ADMISSION_SQL, gt(flowRunAdmissions.ticket, afterTicket)))
     .orderBy(asc(flowRunAdmissions.ticket))
     .limit(pageSize + 1)
     .all();
-  const page = rows.slice(0, pageSize).map((row) => {
-    if (row.state !== 'claimed' || row.priorityClass !== 'start' || row.startedAt !== null) {
-      return row;
-    }
-    const run = db
-      .select({ status: flowRuns.status, startedAt: flowRuns.startedAt })
-      .from(flowRuns)
-      .where(eq(flowRuns.id, row.flowRunId))
-      .get();
-    if (run?.status !== 'pending' || run.startedAt !== null) return row;
+  const pageRows = rows.slice(0, pageSize);
+  const page = pageRows.map(({ admission: row, runStatus, runStartedAt }) => {
+    if (row.state !== 'claimed' || row.startedAt !== null) return row;
+    if (row.priorityClass === 'resume') return dropStrandedResumeClaim(db, row, runStatus);
+    if (row.priorityClass !== 'start') return row;
+    if (runStatus !== 'pending' || runStartedAt !== null) return row;
     return (
       db
         .update(flowRunAdmissions)
@@ -51,11 +62,35 @@ export function recoveryAdmissions(
         .get() ?? row
     );
   });
+  const live = page.filter((row) => LIVE_ADMISSION_STATES.has(row.state));
   return {
-    autoDrainable: page.filter((row) => row.state === 'queued'),
-    ambiguous: page.filter((row) => row.state !== 'queued'),
-    nextTicket: rows.length > pageSize ? (page.at(-1)?.ticket ?? null) : null,
+    autoDrainable: live.filter((row) => row.state === 'queued'),
+    ambiguous: live.filter((row) => row.state !== 'queued'),
+    // The cursor walks the rows read, not the rows kept: a page of dropped claims still advances.
+    nextTicket: rows.length > pageSize ? (pageRows.at(-1)?.admission.ticket ?? null) : null,
   };
+}
+
+/** A resume claim whose run is still terminal provably never promoted: promotion and claimed→active
+ * commit in one transaction. Settle it so the slot frees, but never replay it — manual Retry owns it. */
+function dropStrandedResumeClaim(
+  db: Db,
+  row: FlowRunAdmission,
+  runStatus: string | null,
+): FlowRunAdmission {
+  if (!runStatus || !isTerminalResumeStatus(runStatus)) return row;
+  const dropped = transitionAdmission(db, row.ticket, ['claimed'], {
+    state: 'failed',
+    error: STRANDED_RESUME_ERROR,
+    settledAt: new Date(),
+  });
+  if (!dropped) return row;
+  log.info('[FlowAdmission] dropped a resume claim left by a dead process', {
+    ticket: row.ticket,
+    flowRunId: row.flowRunId,
+    runStatus,
+  });
+  return dropped;
 }
 
 export type AdmissionOutcome = Extract<FlowAdmissionState, 'released' | 'failed' | 'cancelled'>;

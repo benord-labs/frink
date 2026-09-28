@@ -20,13 +20,19 @@ import {
   expandSlashCommand,
   SLASH_COMMAND_REGEX,
 } from '../../../../shared/commands/expand-slash-command';
+import {
+  describeAgentProseOverflow,
+  findAgentProseOverflow,
+} from '../../../../shared/lib/flows/agent-prose-limit';
 import type { FlowGraph } from '../../../../shared/lib/validate-flow-graph';
 
 export type CommandExpansionFailure = {
   nodeId: string;
   label: string;
   command: string;
-  reason: 'not_found' | 'empty';
+  reason: 'not_found' | 'empty' | 'too_long';
+  /** too_long only: the length-limit sentence (sc-3166). */
+  detail?: string;
   suggestions: string[];
   available: string[];
 };
@@ -192,6 +198,21 @@ export async function expandAgentCommandsInGraph(
       continue;
     }
 
+    // The patch validated the short `/command`; the expanded body must fit the cap too (sc-3166).
+    const overflow = findAgentProseOverflow({ instructions: result });
+    if (overflow) {
+      failures.push({
+        nodeId: node.id,
+        label: node.label ?? node.id,
+        command,
+        reason: 'too_long',
+        detail: describeAgentProseOverflow(overflow.field, overflow.length),
+        suggestions: [],
+        available: [],
+      });
+      continue;
+    }
+
     node.config = { ...config, instructions: result, instructionsCommandName: command };
     expanded.push({ nodeId: node.id, command });
   }
@@ -202,6 +223,9 @@ export async function expandAgentCommandsInGraph(
 /** Render expansion failures into an agent-actionable error message. */
 export function formatExpansionFailures(failures: CommandExpansionFailure[]): string {
   const lines = failures.map((f) => {
+    if (f.reason === 'too_long') {
+      return `- node "${f.label}" (${f.nodeId}): command "/${f.command}" expands to ${f.detail} — shorten the command's prompt.`;
+    }
     if (f.reason === 'empty') {
       return `- node "${f.label}" (${f.nodeId}): command "/${f.command}" resolves to an empty file.`;
     }

@@ -593,19 +593,24 @@ const DELETABLE_STATUSES: TaskStatus[] = [
   'cancelled',
 ];
 
-export async function cancelTaskDetailed(db: Db, taskId: string): Promise<TaskMutationResult> {
-  // Atomic guard: WHERE includes the status predicate so a concurrent
-  // recovery sweep / poller transitioning the task between read and write
-  // is rejected by the UPDATE not matching, instead of silently overwriting.
-  const updated = await db
-    .update(tasks)
-    .set({ status: 'cancelled', completedAt: new Date(), result: { cancelled: true } })
-    .where(and(eq(tasks.id, taskId), inArray(tasks.status, CANCELLABLE_STATUSES)))
-    .returning();
-  if (updated.length > 0) return { task: updated[0] };
-  const existing = await getTaskById(db, taskId);
-  if (!existing) return { task: null, reason: 'not_found' };
-  return { task: null, reason: 'invalid_state' };
+/** `previous` is the exact row the cancel replaced (read in the same sync transaction). */
+export async function cancelTaskDetailed(
+  db: Db,
+  taskId: string,
+): Promise<TaskMutationResult & { previous?: Task }> {
+  // Status-guarded UPDATE inside one synchronous transaction: nothing (recovery sweep, poller
+  // claim) can transition the row between reading the pre-image and the write.
+  return db.transaction(() => {
+    const previous = db.select().from(tasks).where(eq(tasks.id, taskId)).get() as Task | undefined;
+    if (!previous) return { task: null, reason: 'not_found' as const };
+    const updated = db
+      .update(tasks)
+      .set({ status: 'cancelled', completedAt: new Date(), result: { cancelled: true } })
+      .where(and(eq(tasks.id, taskId), inArray(tasks.status, CANCELLABLE_STATUSES)))
+      .returning()
+      .get() as Task | undefined;
+    return updated ? { task: updated, previous } : { task: null, reason: 'invalid_state' as const };
+  });
 }
 
 export async function cancelAllPendingTasks(db: Db): Promise<{ cancelledCount: number }> {

@@ -3,6 +3,8 @@ import stableStringify from 'fast-json-stable-stringify';
 import { CODEX_TASK_STOP_GUARD_TOOL_NAME } from '../../../mcp/dynamic-chat-tool-catalog';
 
 const BEARER_HEADER = /^Bearer\s+(.+)$/i;
+/** Patched-Codex marker: discard lower-layer `mcp_servers` instead of merging into them. */
+const REPLACE_SENTINEL = '__frink_replace';
 
 type CanonicalMcpServer = {
   url?: unknown;
@@ -86,12 +88,14 @@ export function buildCodexMcpBinding(params: {
   envByServer?: Record<string, Record<string, string>>;
   taskSignalEnabled?: boolean;
 }): CodexMcpBinding {
-  const mcpServers: Record<string, unknown> = { __frink_replace: true };
+  const mcpServers: Record<string, unknown> = { [REPLACE_SENTINEL]: true };
 
   for (const [name, rawServer] of Object.entries(params.canonicalServers) as Array<
     [string, CanonicalMcpServer]
   >) {
     const projectedName = codexServerName(name);
+    // A server under the sentinel's key would overwrite it and leak native MCPs into the thread.
+    if (projectedName === REPLACE_SENTINEL) continue;
     if (typeof rawServer.url === 'string') {
       mcpServers[projectedName] = serializeRemote(projectedName, rawServer);
     } else if (typeof rawServer.command === 'string') {

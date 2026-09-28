@@ -97,6 +97,24 @@ export type MobileFlow = {
   latestRunId: string | null;
   status: string | null;
 };
+/** The current saved definition, independent of any historical run's graph. */
+export type MobileFlowDefinition = {
+  versionNumber: number;
+  nodes: Array<{
+    id: string;
+    label: string;
+    blockType: string;
+    parentId: string | null;
+    instructions: string | null;
+  }>;
+  edges: Array<{
+    id: string;
+    source: string;
+    target: string;
+    label: string | null;
+    sourceHandle: string | null;
+  }>;
+};
 type MobileRunSummary = { id: string; status: string; startedAt: string | null };
 export type MobileRunNode = {
   id: string;
@@ -114,7 +132,20 @@ export type MobileRun = MobileRunSummary & {
   nodes: MobileRunNode[];
 };
 type MobileChat = { id: string; name: string; projectId: string | null };
-export type MobileMessage = { id: string; role: string; text: string };
+export type MobileMessagePart =
+  | { type: 'text'; text: string }
+  | {
+      type: 'tool';
+      id: string;
+      name: string;
+      state: 'running' | 'completed' | 'failed' | 'interrupted' | 'unknown';
+    };
+export type MobileMessage = {
+  id: string;
+  role: string;
+  text: string;
+  parts?: MobileMessagePart[];
+};
 export type MobileChatDetail = {
   chat: MobileChat;
   subChatId: string;
@@ -129,7 +160,7 @@ export type MobileChatDetail = {
 export type MobileResponses = {
   overview: MobileOverview;
   flows: MobileFlow[];
-  flow: { flow: MobileFlow; runs: MobileRunSummary[] };
+  flow: { flow: MobileFlow; runs: MobileRunSummary[]; definition: MobileFlowDefinition | null };
   run: MobileRun;
   startFlow: { id: string };
   setFlowEnabled: { ok: true };

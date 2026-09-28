@@ -5,9 +5,11 @@ import {
   stripHiddenWakeMarker,
 } from '../../../../shared/lib/message-markers/hidden-wake-marker';
 import { stripMessageMarkers } from '../../../../shared/lib/message-markers/strip-message-markers';
+import { SUBAGENT_TEXT_PART_TYPE } from '../../../../shared/subagent-parts';
 import type {
   MobileChatDetail,
   MobileMessage,
+  MobileMessagePart,
   MobileRequest,
 } from '../../../../shared/types/remote/mobile';
 import {
@@ -31,20 +33,73 @@ import {
 } from './context';
 import { mobilePermissions, mobileQuestions } from './questions';
 
-function messageProjection(value: unknown): MobileMessage | null {
+type StreamStatus = 'active' | 'held' | 'settling' | 'settled' | 'error';
+type ToolState = Extract<MobileMessagePart, { type: 'tool' }>['state'];
+
+// An unfinished tool call takes its state from the stream that owns it; any other stream state
+// leaves the outcome genuinely unknown.
+const unfinishedToolStates: Partial<Record<StreamStatus, ToolState>> = {
+  active: 'running',
+  settled: 'interrupted',
+  error: 'interrupted',
+};
+
+function toolState(part: Record<string, unknown>, streamStatus?: StreamStatus): ToolState {
+  if (part.state === 'output-error') return 'failed';
+  if (part.state === 'output-available')
+    return record(part.output).success === false ? 'failed' : 'completed';
+  if (part.state !== 'input-available' && part.state !== 'input-streaming') return 'unknown';
+  return (streamStatus && unfinishedToolStates[streamStatus]) || 'unknown';
+}
+
+function messagePartProjection(
+  value: unknown,
+  id: string,
+  streamStatus?: StreamStatus,
+): MobileMessagePart | null {
+  const part = record(value);
+  if (part.type === 'text' || part.type === SUBAGENT_TEXT_PART_TYPE) {
+    const body = part.type === 'text' ? text(part.text) : text(record(part.input).text);
+    return body ? { type: 'text', text: body } : null;
+  }
+  if (typeof part.type !== 'string' || !part.type.startsWith('tool-')) return null;
+  const name = text(part.toolName, part.type.slice(5)).trim();
+  if (!name) return null;
+  return {
+    type: 'tool',
+    id: text(part.toolCallId).trim() || id,
+    name,
+    state: toolState(part, streamStatus),
+  };
+}
+
+function messageProjection(value: unknown, streamStatus?: StreamStatus): MobileMessage | null {
   const message = record(value);
   if (typeof message.id !== 'string' || typeof message.role !== 'string') return null;
-  const parts = Array.isArray(message.parts) ? message.parts : [];
+  const rawParts = Array.isArray(message.parts) ? message.parts : [];
+  const status = record(message.metadata).interruptedBy ? 'settled' : streamStatus;
+  const parts: MobileMessagePart[] = [];
+  rawParts.forEach((part, index) => {
+    const projected = messagePartProjection(part, `${message.id}:${index}`, status);
+    const previous = parts.at(-1);
+    if (projected?.type === 'text' && previous?.type === 'text') {
+      previous.text += `\n${projected.text}`;
+    } else if (projected) parts.push(projected);
+  });
   const body = parts
-    .map((part) => record(part))
     .filter((part) => part.type === 'text')
-    .map((part) => text(part.text))
+    .map((part) => part.text)
     .join('\n');
   if (message.role === 'user' && isHiddenWakeMessage(body)) return null;
   return {
     id: message.id,
     role: message.role,
     text: stripMessageMarkers(stripHiddenWakeMarker(body)),
+    parts: parts.map((part) =>
+      part.type === 'text'
+        ? { type: 'text', text: stripMessageMarkers(stripHiddenWakeMarker(part.text)) }
+        : part,
+    ),
   };
 }
 
@@ -53,18 +108,23 @@ export function mergeMobileTranscript(
   seed: ReturnType<typeof getLiveStreamSeed>,
 ): MobileMessage[] {
   const messages = new Map<string, MobileMessage>();
+  const statuses = new Map(
+    [...seed.terminals, ...seed.streams].map((stream) => [
+      stream.assistantMessageId,
+      stream.status,
+    ]),
+  );
   for (const raw of history) {
-    const message = messageProjection(raw);
+    const message = messageProjection(raw, statuses.get(text(record(raw).id)));
     if (message) messages.set(message.id, message);
   }
   for (const stream of [...seed.terminals, ...seed.streams]) {
     if (!stream.parts?.length) continue;
     if (stream.status !== 'active' && messages.has(stream.assistantMessageId)) continue;
-    const message = messageProjection({
-      id: stream.assistantMessageId,
-      role: 'assistant',
-      parts: stream.parts,
-    });
+    const message = messageProjection(
+      { id: stream.assistantMessageId, role: 'assistant', parts: stream.parts },
+      stream.status,
+    );
     if (message) messages.set(message.id, message);
   }
   return [...messages.values()];

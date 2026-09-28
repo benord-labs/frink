@@ -77,7 +77,7 @@ export function terminalFlowResumeIntent(value: unknown): TerminalFlowResumeInte
   return value as TerminalFlowResumeIntent;
 }
 
-function isTerminalResumeStatus(status: string): status is TerminalResumeStatus {
+export function isTerminalResumeStatus(status: string): status is TerminalResumeStatus {
   return TERMINAL_RESUME_STATUSES.has(status as FlowRunStatus);
 }
 
