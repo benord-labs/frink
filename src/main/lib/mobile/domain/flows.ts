@@ -23,6 +23,7 @@ import {
 import { subChats, tasks } from '../../db/schema';
 import { flowResumeActionToken, resumeSnapshotForNode } from '../../flows/rerun/resume-snapshot';
 import { MobileApiError, mobileCallers, record, requireExecutionReady, text } from './context';
+import { projectMobileFlowDefinition } from './projections';
 
 function flowProjection(flow: DbFlow): MobileFlow {
   return {
@@ -47,6 +48,7 @@ export async function readMobileFlow(id: string) {
   ]);
   return {
     flow: flowProjection(flow),
+    definition: projectMobileFlowDefinition(flow.graph, flow.version_number),
     runs: runs.map((run) => ({
       id: run.id,
       status: run.status,
