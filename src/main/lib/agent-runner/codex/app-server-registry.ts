@@ -6,8 +6,8 @@
  * cost and lose thread state, so we spawn-on-demand and reuse across turns for
  * the same project + credential. Idle servers are torn down after a TTL so a
  * closed project doesn't hold a process forever, and a server that DIES on its
- * own (crash, OOM, kill) self-evicts via its connection-close signal — otherwise
- * the next turn would be handed a dead client.
+ * own (crash, OOM, kill) or whose pipe breaks (stdin EPIPE, which fires onError
+ * without closing) self-evicts — otherwise the next turn would be handed a dead client.
  *
  * MCP configuration is split between spawn args and request config, while its secret values live
  * only in the child environment. A running process cannot adopt a changed environment, so the key
@@ -25,7 +25,8 @@ type Entry = {
   client: CodexAppServerClient;
   startPromise: Promise<unknown>;
   idleTimer: ReturnType<typeof setTimeout> | null;
-  closeSub: Disposable | null;
+  /** Close + transport-error self-evict subscriptions; disposed before the client. */
+  subs: Disposable[];
 };
 
 const registry = new Map<string, Entry>();
@@ -58,14 +59,14 @@ function keyFor(
 
 function detachEntry(key: string, entry: Entry): void {
   if (entry.idleTimer) clearTimeout(entry.idleTimer);
-  entry.closeSub?.dispose();
-  entry.closeSub = null;
+  for (const sub of entry.subs) sub.dispose();
+  entry.subs = [];
   registry.delete(key);
 }
 
-/** Dispose timer + close-subscription + client, and drop the entry. Idempotent. */
+/** Dispose timer + self-evict subscriptions + client, and drop the entry. Idempotent. */
 function teardownEntry(key: string, entry: Entry): void {
-  // Dispose the close-sub FIRST so client.dispose()'s own close doesn't re-enter here.
+  // Dispose the subs FIRST so client.dispose()'s own close/error doesn't re-enter here.
   detachEntry(key, entry);
   entry.client.dispose();
 }
@@ -126,16 +127,17 @@ export async function getCodexAppServer(
     teardownPrefix(prefixFor(cwd, credentialId, sessionKey));
     const client = new CodexAppServerClient(options);
     const startPromise = client.start();
-    entry = { client, startPromise, idleTimer: null, closeSub: null };
+    entry = { client, startPromise, idleTimer: null, subs: [] };
     registry.set(key, entry);
     try {
       await startPromise;
-      // Self-evict if the process dies on its own — a crash sends no turn/completed,
-      // so without this the next turn would reuse a dead client until the idle TTL.
+      // Self-evict on crash or broken pipe (every onError source is pipe-level, never a blip) —
+      // otherwise the next turn reuses a dead client until the idle TTL.
       const created = entry;
-      entry.closeSub = client.onClose(() => {
+      const evict = () => {
         if (registry.get(key) === created) teardownEntry(key, created);
-      });
+      };
+      entry.subs.push(client.onClose(evict), client.onError(evict));
     } catch (err) {
       // A failed handshake must not leave a dead entry cached.
       client.dispose();
@@ -148,11 +150,6 @@ export async function getCodexAppServer(
 
   scheduleIdleTeardown(key);
   return entry.client;
-}
-
-/** Dispose + drop every server for a project+credential (e.g. after a fatal connection error). */
-export function disposeCodexAppServer(cwd: string, credentialId: string): void {
-  teardownPrefix(projectPrefix(cwd, credentialId));
 }
 
 /**
