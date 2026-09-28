@@ -286,6 +286,86 @@ describe('QueueProcessor — getResolvedAccount gate', () => {
     expect(mockSendMessage).toHaveBeenCalledTimes(1);
   });
 
+  it("times a fresh fetch from when it started, not from the gate's last failed attempt", async () => {
+    const { queryClient, resolvedKey } = setup();
+    const calledAt: number[] = [];
+    mockFetchResolvedAccount.mockImplementation(() => {
+      calledAt.push(Date.now());
+      return rejectInto(queryClient, resolvedKey)();
+    });
+
+    enqueue(SUB_CHAT_ID, 'q-fresh');
+    // Three failures leave a 40s backoff, longer than the in-flight timeout.
+    for (let i = 0; i < 200 && calledAt.length < 3; i++) await tick();
+    expect(calledAt).toHaveLength(3);
+    await tick(calledAt[2] + ACCOUNT_FETCH_TIMEOUT_MS + 5_000 - Date.now());
+    expect(mockFetchResolvedAccount).toHaveBeenCalledTimes(3);
+
+    // Another observer (the user opening the chat) starts a healthy fetch.
+    void queryClient
+      .fetchQuery({ queryKey: resolvedKey, queryFn: () => new Promise(() => {}) })
+      .catch(() => {});
+    await tick(QUEUE_PROCESS_DELAY_MS * 2);
+    expect(queryClient.getQueryState(resolvedKey)?.fetchStatus).toBe('fetching');
+
+    // It is only treated as hung once it has itself been in flight past the timeout.
+    await tick(ACCOUNT_FETCH_TIMEOUT_MS);
+    expect(queryClient.getQueryState(resolvedKey)?.fetchStatus).not.toBe('fetching');
+  });
+
+  it('restarts the hang timeout when one fetch settles and another starts between gate checks', async () => {
+    const { queryClient, resolvedKey } = setup();
+    let rejectA: (error: Error) => void = () => {};
+    void queryClient
+      .fetchQuery({
+        queryKey: resolvedKey,
+        queryFn: () => new Promise((_, reject) => (rejectA = reject)),
+      })
+      .catch(() => {});
+
+    enqueue(SUB_CHAT_ID, 'q-a-then-b');
+    await tick();
+    const firstSeen = Date.now();
+    await tick(ACCOUNT_FETCH_TIMEOUT_MS - 5_000);
+
+    // A settles and B starts in the same tick, before the gate looks again.
+    await act(async () => {
+      rejectA(new Error('ipc down'));
+      // Settle A fully (0ms flushes promises; the gate's next check is QUEUE_PROCESS_DELAY_MS away).
+      await vi.advanceTimersByTimeAsync(0);
+      expect(queryClient.getQueryState(resolvedKey)?.fetchStatus).toBe('idle');
+      void queryClient
+        .fetchQuery({ queryKey: resolvedKey, queryFn: () => new Promise(() => {}) })
+        .catch(() => {});
+    });
+
+    // Past A's timeout window: B has only been in flight ~6s and must survive.
+    await tick(firstSeen + ACCOUNT_FETCH_TIMEOUT_MS + 1_000 - Date.now());
+    expect(queryClient.getQueryState(resolvedKey)?.fetchStatus).toBe('fetching');
+    expect(mockFetchResolvedAccount).not.toHaveBeenCalled();
+  });
+
+  it('still times out a fetch that was already in flight when the processor mounted', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const resolvedKey = getQueryKey(
+      getResolvedAccountProcedure as unknown as Parameters<typeof getQueryKey>[0],
+      { chatId: PARENT_CHAT_ID },
+      'query',
+    );
+    void queryClient
+      .fetchQuery({ queryKey: resolvedKey, queryFn: () => new Promise(() => {}) })
+      .catch(() => {});
+    render(
+      <QueryClientProvider client={queryClient}>
+        <QueueProcessor />
+      </QueryClientProvider>,
+    );
+
+    enqueue(SUB_CHAT_ID, 'q-premount');
+    await tick(ACCOUNT_FETCH_TIMEOUT_MS + QUEUE_PROCESS_DELAY_MS * 4);
+    expect(mockFetchResolvedAccount).toHaveBeenCalledTimes(1);
+  });
+
   it('rate-limits refetches of a failing account: one per cooldown, no send, no hot loop', async () => {
     const { queryClient, resolvedKey } = setup();
     mockFetchResolvedAccount.mockImplementation(rejectInto(queryClient, resolvedKey));

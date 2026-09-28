@@ -1,5 +1,5 @@
 /* eslint-disable max-lines, max-lines-per-function */
-import { useQueryClient } from '@tanstack/react-query';
+import { hashKey, useQueryClient } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import { useEffect, useRef } from 'react';
 import { toast } from 'sonner';
@@ -151,6 +151,9 @@ export function QueueProcessor() {
 
     // Last time the account gate fetched `getResolvedAccount` itself, keyed by parent chat.
     const accountFetchAttempts = new Map<string, { at: number; tries: number }>();
+    // Start time of the current in-flight account fetch (any caller's), keyed by query hash. The
+    // cache subscription stamps it when the fetch starts and clears it the moment it settles.
+    const accountFetchInFlightSince = new Map<string, number>();
 
     // One delayed re-check per parent whose account fetch is cooling down. Lives in timersRef
     // (under a prefixed key) so unmount cleanup clears it with the dispatch timers.
@@ -251,8 +254,9 @@ export function QueueProcessor() {
           if (resolvedState?.fetchStatus === 'fetching') {
             // Settling re-runs this gate via the cache subscription; one that never settles (a hung
             // IPC call) is cancelled after the timeout — cancelling rejects even if IPC can't abort.
-            const since = attempt?.at ?? now;
-            if (!attempt) accountFetchAttempts.set(parentChatIdForAccount, { at: now, tries: 0 });
+            const hash = hashKey(resolvedKey); // A fetch begun before mount was never stamped.
+            const since = accountFetchInFlightSince.get(hash) ?? now;
+            accountFetchInFlightSince.set(hash, since);
             if (now - since >= ACCOUNT_FETCH_TIMEOUT_MS) {
               void queryClient.cancelQueries({ queryKey: resolvedKey });
             } else {
@@ -456,9 +460,14 @@ export function QueueProcessor() {
 
     const unsubCache = queryClient.getQueryCache().subscribe((event) => {
       if (!activeRef.current) return;
+      if (event.type === 'removed') accountFetchInFlightSince.delete(event.query.queryHash);
       if (event.type !== 'updated' && event.type !== 'added') return;
       const keyStr = JSON.stringify(event.query.queryKey);
       if (keyStr.includes('getResolvedAccount')) {
+        const { queryHash, state } = event.query;
+        if (state.fetchStatus !== 'fetching') accountFetchInFlightSince.delete(queryHash);
+        else if (!accountFetchInFlightSince.has(queryHash))
+          accountFetchInFlightSince.set(queryHash, Date.now());
         checkAllQueues();
       }
     });
