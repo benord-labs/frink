@@ -186,6 +186,7 @@ import {
 import { buildFinalPartsForPersist, emitPlanFallbackSends } from './streaming/plan-fallback';
 import { resolvePlanModeChunkSuppression } from './streaming/plan-mode-suppression';
 import { buildWakeHoldIo } from './streaming/wake-hold-io';
+import { storedExecutionSettings } from '../chat-composer';
 
 // Provider session cache: subChatId → sessionId for native resume on follow-up messages.
 // Capped to prevent unbounded growth over long-running sessions.
@@ -577,7 +578,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
     message: rawMessage,
     mode,
     history,
-    settings,
+    settings: requestedSettings,
     assistantMessageId,
     userMessageParts,
     sessionId: persistedSessionId,
@@ -907,6 +908,8 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
     } else {
       log.info(`[Socket Executor] No project-specific account configured, using default`);
     }
+
+    const settings = requestedSettings ?? storedExecutionSettings(chatId, storedCredential?.type);
 
     // Log execution details
     log.info(

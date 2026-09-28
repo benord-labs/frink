@@ -47,11 +47,11 @@ type DesktopBroadcastChannel =
   | 'projects:name-updated'
   | 'socket:wake-hold-changed'
   | 'socket:stream-settled'
-  | 'socket:subagent-task-changed';
+  | 'socket:subagent-task-changed'
+  | 'composer:changed';
 
 type MoveChatRequest = Omit<PendingMoveChatProjection, 'operation'>;
 
-// Expose tRPC IPC bridge for type-safe communication
 exposeElectronTRPC();
 
 // Expose Electron webUtils for drag-and-drop file path resolution (used by file tree and terminal)

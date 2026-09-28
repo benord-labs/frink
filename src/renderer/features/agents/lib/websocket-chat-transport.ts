@@ -13,11 +13,7 @@ import type { ChatTransport, UIMessage, UIMessageChunk } from 'ai';
 import { toast } from 'sonner';
 import type { UIMessageChunk as BaseUIMessageChunk } from '../../../../main/lib/claude/types';
 import { stripMessageMarkers } from '../../../../shared/lib/message-markers/strip-message-markers';
-import {
-  claudeModelRequires1M,
-  getClaudeEffortSettings,
-  getClaudeThinkingBudget,
-} from '../../../../shared/lib/models';
+import { buildExecutionSettings as buildComposerExecutionSettings } from '../../../../shared/lib/execution-settings';
 import { isUserAbortErrorMessage } from '../../../../shared/lib/user-abort-error';
 import { isPlanApprovalTriggerText } from '../../../../shared/types/plan';
 import { normalizeErrorTextPrefix } from '../../../../shared/utils/error-prefixes';
@@ -32,7 +28,7 @@ import {
   pendingAccountAuthAtom,
   sessionInfoAtom,
 } from '../../../lib/atoms';
-import { codexFastModeSetting } from '../../../lib/atoms/codex-fast-mode';
+import { codexFastModeAtomFamily } from '../../../lib/atoms/codex-fast-mode';
 import { appStore } from '../../../lib/jotai-store';
 import {
   activeListeners,
@@ -56,11 +52,7 @@ import {
   retryInFlightAtomFamily,
   taskExecutionErrorAtomFamily,
 } from '../atoms';
-import {
-  type ExecutionAccountKind,
-  resolveExecutionModelCliString,
-  supportsNativeAutoReview,
-} from '../lib/resolve-execution-model-cli';
+import type { ExecutionAccountKind } from '../lib/resolve-execution-model-cli';
 import { createTaskExecutionErrorSignal, isExecutionLevelFailure } from '../main/active-chat/utils';
 import { applyRollbackFilter } from '../stores/message-store';
 import { useStreamingStatusStore } from '../stores/streaming-status-store';
@@ -188,29 +180,16 @@ export function cleanupTransportListeners(subChatId: string, clearInFlight = tru
 
 /** The execution settings a send from this chat carries, read from its settings at call time. */
 function buildExecutionSettings(chatId: string, accountType: ExecutionAccountKind) {
-  const selectedModelId = appStore.get(lastSelectedModelIdAtomFamily(chatId));
-  const isClaude = accountType === 'claude-code';
-  // The thinking budget is Claude-Code-only: Codex carries its own reasoning_effort field.
-  const maxThinkingTokens =
-    isClaude && appStore.get(extendedThinkingEnabledAtom)
-      ? (getClaudeThinkingBudget(selectedModelId) ?? 32_000)
-      : undefined;
-  return {
-    maxThinkingTokens,
-    ...(maxThinkingTokens != null ? getClaudeEffortSettings(selectedModelId) : {}),
-    model: resolveExecutionModelCliString(accountType, selectedModelId),
-    enableTasks: appStore.get(enableTasksAtom),
-    // Enable 1M context beta when a 1M model variant is selected (Claude SDK only)
-    ...(isClaude && claudeModelRequires1M(selectedModelId) && { betas: ['context-1m-2025-08-07'] }),
-    // One Auto value governs every turn in this chat, whoever sent it: a Flow seeds it on dispatch.
-    // Plan mode is NOT excluded — the executor still opens a plan turn in `permissionMode: 'plan'`,
-    // but can only arm the reviewer at plan approval if it knows the chat consented.
-    ...(appStore.get(autoModePerChatAtomFamily(chatId)) &&
-    supportsNativeAutoReview(accountType, selectedModelId)
-      ? { autoReviewTools: true }
-      : {}),
-    ...codexFastModeSetting(chatId, selectedModelId),
-  };
+  return buildComposerExecutionSettings(
+    accountType,
+    {
+      modelId: appStore.get(lastSelectedModelIdAtomFamily(chatId)),
+      autoMode: appStore.get(autoModePerChatAtomFamily(chatId)),
+      codexFastMode: appStore.get(codexFastModeAtomFamily(chatId)) === true,
+      thinkingEnabled: appStore.get(extendedThinkingEnabledAtom),
+    },
+    { enableTasks: appStore.get(enableTasksAtom) },
+  );
 }
 
 /** Start this chat's CLI with what its next send carries (Approve's agent mode if a plan waits). */

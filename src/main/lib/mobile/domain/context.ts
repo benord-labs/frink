@@ -1,5 +1,6 @@
 import { BrowserWindow } from 'electron';
 import { chatsRouter } from '../../trpc/routers/chats';
+import { claudeCodeRouter } from '../../trpc/routers/claude-code';
 import { flowsRouter } from '../../trpc/routers/flows';
 import { socketRouter } from '../../trpc/routers/socket';
 import { tasksRouter } from '../../trpc/routers/tasks';
@@ -9,6 +10,7 @@ export { MobileApiError } from './errors';
 const context = { getWindow: () => null };
 export const mobileCallers = {
   chats: chatsRouter.createCaller(context),
+  claudeCode: claudeCodeRouter.createCaller(context),
   flows: flowsRouter.createCaller(context),
   socket: socketRouter.createCaller(context),
   tasks: tasksRouter.createCaller(context),

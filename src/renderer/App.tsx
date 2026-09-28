@@ -23,6 +23,7 @@ import { useFlowChatReplySync } from './hooks/use-flow-chat-reply-sync';
 import { useFlowExecutionEvents } from './hooks/use-flow-execution-events';
 import { useMcpBackgroundPrefetch } from './hooks/use-mcp-background-prefetch';
 import { useMcpImportInvalidation } from './hooks/use-mcp-import-invalidation';
+import { useComposerSettingsSync } from './hooks/use-composer-settings-sync';
 import { useSubChatModeSync } from './hooks/use-sub-chat-mode-sync';
 import { initAnalytics, shutdown } from './lib/analytics';
 import { pendingAccountAuthAtom } from './lib/atoms';
@@ -198,6 +199,7 @@ function GlobalEventListeners() {
   useFlowExecutionEvents();
   useFlowChatReplySync();
   useSubChatModeSync();
+  useComposerSettingsSync();
   useWakeHoldSync();
   useSubagentTaskSync();
   useMcpBackgroundPrefetch();

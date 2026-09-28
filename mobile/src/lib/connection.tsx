@@ -107,7 +107,11 @@ function failureState(error: unknown) {
 
 // Reason: Foreground polling keeps host identity and stale-response checks together.
 // fallow-ignore-next-line complexity
-export function useResource<T extends MobileRequest>(input: T) {
+export function useResource<T extends MobileRequest>(
+  input: T,
+  // `enabled: false` waits for inputs that aren't known yet; `interval` spaces out costly reads.
+  { enabled = true, interval = 3000 }: { enabled?: boolean; interval?: number } = {},
+) {
   const { connection, request } = useConnection();
   const focused = useContext(ResourceActivity);
   const key = JSON.stringify([connection?.deviceId, connection?.url, input]);
@@ -125,7 +129,7 @@ export function useResource<T extends MobileRequest>(input: T) {
     refreshing?: boolean;
   }>({ key });
   useEffect(() => {
-    if (!focused || !connection) return;
+    if (!focused || !connection || !enabled) return;
     let cancelled = false;
     let pending: AbortController | null = null;
     // Reason: The polling request owns cancellation, visibility, and error state together.
@@ -161,19 +165,19 @@ export function useResource<T extends MobileRequest>(input: T) {
     }
     void refresh(pulled.current);
     pulled.current = false;
-    const interval = setInterval(() => void refresh(), 3000);
+    const timer = setInterval(() => void refresh(), interval);
     const listener = AppState.addEventListener('change', (state) => {
       if (state === 'active') void refresh();
       else pending?.abort();
     });
     return () => {
       cancelled = true;
-      clearInterval(interval);
+      clearInterval(timer);
       listener.remove();
       pending?.abort();
     };
     // The serialized input is the request identity, including host and pagination.
-  }, [key, revision, request, focused]);
+  }, [key, revision, request, focused, enabled, interval]);
   return {
     data: state.key === key ? state.data : undefined,
     error: state.key === key ? state.error : undefined,

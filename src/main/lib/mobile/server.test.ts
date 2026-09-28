@@ -207,3 +207,62 @@ describe('mobile HTTP boundary', () => {
     server = undefined;
   });
 });
+
+describe('mobile attachment uploads', () => {
+  const upload = vi.fn(async () => ({ id: 'att-1', kind: 'image', name: 'photo.png', size: 4 }));
+
+  function send(
+    body: BodyInit,
+    headers: Record<string, string> = {},
+    authorization: string | null = token,
+  ) {
+    return createMobileApp(store, execute, upload).request('/api/attachments', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'image/png',
+        'X-Frink-Chat': 'chat-1',
+        'X-Frink-Sub-Chat': 'sub-1',
+        'X-Frink-Filename': encodeURIComponent('my photo.png'),
+        ...(authorization ? { Authorization: `Bearer ${authorization}` } : {}),
+        ...headers,
+      },
+      body,
+    });
+  }
+
+  beforeEach(() => upload.mockClear());
+
+  it('accepts a raw body and hands the bytes and decoded name to the uploader', async () => {
+    const response = await send(new Uint8Array([0x89, 0x50, 0x4e, 0x47]));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      data: { id: 'att-1', kind: 'image', name: 'photo.png', size: 4 },
+    });
+    expect(upload).toHaveBeenCalledWith({
+      chatId: 'chat-1',
+      subChatId: 'sub-1',
+      name: 'my photo.png',
+      mimeType: 'image/png',
+      bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+    });
+  });
+
+  it('requires the same pairing as the JSON API and still refuses browsers', async () => {
+    expect((await send(new Uint8Array([1]), {}, null)).status).toBe(401);
+    expect((await send(new Uint8Array([1]), {}, 'wrong')).status).toBe(401);
+    expect((await send(new Uint8Array([1]), { Origin: 'https://evil.example' })).status).toBe(403);
+    expect(upload).not.toHaveBeenCalled();
+  });
+
+  it('allows attachment-sized bodies here while the JSON API keeps its small limit', async () => {
+    const big = new Uint8Array(512 * 1024);
+    expect((await send(big)).status).toBe(200);
+    expect((await request({ type: 'overview', padding: 'x'.repeat(200 * 1024) })).status).toBe(413);
+  });
+
+  it('rejects a missing chat header instead of storing an orphan file', async () => {
+    expect((await send(new Uint8Array([1]), { 'X-Frink-Chat': '' })).status).toBe(400);
+    expect(upload).not.toHaveBeenCalled();
+  });
+});

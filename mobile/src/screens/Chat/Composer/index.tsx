@@ -8,9 +8,21 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
-import { Button, GUTTER, Icon, Notice, bareInput } from '../../../ui/primitives';
+import type { MobileChatMode, MobileComposer } from '../../../../../src/shared/types/remote/mobile';
+import { Button, GUTTER, Icon, Notice, Row, Section, bareInput } from '../../../ui/primitives';
 import { useTheme } from '../../../ui/theme';
 import { glassStyle } from '../../../ui/material';
+import { ComposerControls, type ComposerPatch } from './controls';
+import { Sheet } from './sheet';
+import {
+  attachmentsSupported,
+  type ComposerAttachment,
+  type useComposerAttachments,
+} from './use-attachments';
+
+export { useComposerAttachments } from './use-attachments';
+export { useComposerState } from './use-composer-state';
+export type { ComposerPatch } from './controls';
 
 // Pill geometry: a 22pt text line with 12pt above and below makes a 46pt pill. The 32pt action
 // keeps a 7pt margin, so it shares the centre of a single line and stays on the last line as text grows.
@@ -76,6 +88,137 @@ function ComposerAction({
   );
 }
 
+type Attachments = ReturnType<typeof useComposerAttachments>;
+
+// Reason: The button, its sheet and the picker hand-off share one control.
+// fallow-ignore-next-line complexity
+function AttachButton({ attachments, disabled }: { attachments: Attachments; disabled: boolean }) {
+  const t = useTheme();
+  const line = useLine();
+  const [open, setOpen] = useState(false);
+  const pick = (picker: () => Promise<void>) => {
+    setOpen(false);
+    // Let the sheet finish closing before iOS presents the picker over it.
+    setTimeout(() => void picker().catch(() => {}), 350);
+  };
+  return (
+    <>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Attach"
+        accessibilityState={{ disabled: disabled || attachments.full }}
+        disabled={disabled || attachments.full}
+        onPress={() => setOpen(true)}
+        hitSlop={6}
+        style={({ pressed }) => ({
+          width: ACTION,
+          height: ACTION,
+          margin: (line + PAD * 2 - ACTION) / 2,
+          marginRight: 0,
+          borderRadius: ACTION / 2,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: t.fill,
+          opacity: disabled || attachments.full ? 0.4 : pressed ? 0.7 : 1,
+        })}
+      >
+        <Icon name="add" size={20} color={t.secondary} />
+      </Pressable>
+      {open && (
+        <Sheet visible title="Attach" onClose={() => setOpen(false)}>
+          {attachmentsSupported ? (
+            <Section title="Add to your message">
+              <Row
+                title="Photos"
+                subtitle="Images are sent to the model"
+                icon="image-outline"
+                separator
+                onPress={() => pick(attachments.pickPhotos)}
+              />
+              <Row
+                title="Files"
+                subtitle="Saved on your computer for the agent to read"
+                icon="document-attach-outline"
+                onPress={() => pick(attachments.pickFiles)}
+              />
+            </Section>
+          ) : (
+            <Notice>
+              This build of Frink can't attach files yet. Install the latest build on this phone to
+              attach photos and files.
+            </Notice>
+          )}
+        </Sheet>
+      )}
+    </>
+  );
+}
+
+// Reason: Uploading, ready and failed attachments share one chip.
+// fallow-ignore-next-line complexity
+function TrayItem({
+  item,
+  onRemove,
+  onRetry,
+}: {
+  item: ComposerAttachment;
+  onRemove: () => void;
+  onRetry: () => void;
+}) {
+  const t = useTheme();
+  const failed = item.status === 'failed';
+  return (
+    <View
+      testID="composer-attachment"
+      style={{
+        height: 34,
+        maxWidth: 220,
+        paddingLeft: 10,
+        borderRadius: 17,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        backgroundColor: failed ? t.dangerSoft : t.fill,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: failed ? t.danger : t.border,
+      }}
+    >
+      {item.status === 'uploading' ? (
+        <ActivityIndicator size="small" color={t.muted} />
+      ) : (
+        <Icon
+          name={
+            failed ? 'alert-circle' : item.kind === 'image' ? 'image-outline' : 'document-outline'
+          }
+          size={15}
+          color={failed ? t.danger : t.secondary}
+        />
+      )}
+      <Pressable
+        accessibilityRole={failed ? 'button' : undefined}
+        accessibilityLabel={failed ? `Retry ${item.name}. ${item.error ?? ''}` : item.name}
+        disabled={!failed}
+        onPress={onRetry}
+        style={{ flexShrink: 1 }}
+      >
+        <Text numberOfLines={1} style={{ fontSize: 13, color: failed ? t.danger : t.text }}>
+          {failed ? 'Retry · ' : ''}
+          {item.name}
+        </Text>
+      </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Remove ${item.name}`}
+        onPress={onRemove}
+        hitSlop={8}
+        style={({ pressed }) => ({ paddingHorizontal: 8, opacity: pressed ? 0.6 : 1 })}
+      >
+        <Icon name="close" size={15} color={t.muted} />
+      </Pressable>
+    </View>
+  );
+}
+
 // Reason: Idle, sending, working and stop-confirmation states share one fixed composer frame.
 // fallow-ignore-next-line complexity
 export function Composer({
@@ -87,6 +230,11 @@ export function Composer({
   confirmStop,
   setConfirmStop,
   onStop,
+  composer,
+  attachments,
+  onUpdate,
+  onMode,
+  onAccount,
 }: {
   active: boolean;
   busy: boolean;
@@ -96,12 +244,23 @@ export function Composer({
   confirmStop: boolean;
   setConfirmStop: (value: boolean) => void;
   onStop: () => void;
+  /** The chat's composer settings; controls appear once they have loaded. */
+  composer?: MobileComposer;
+  attachments: Attachments;
+  onUpdate: (patch: ComposerPatch) => void;
+  onMode: (mode: MobileChatMode) => void;
+  onAccount: (accountId: string) => void;
 }) {
   const t = useTheme();
   const line = useLine();
   const [contentHeight, setContentHeight] = useState(LINE);
   // A cleared draft collapses at once; web textareas never report a shrinking scroll height.
   const lines = value ? Math.max(1, Math.round(contentHeight / line)) : 1;
+  const canSend =
+    (!!value.trim() || attachments.ids.length > 0) &&
+    !busy &&
+    !attachments.uploading &&
+    !attachments.failed;
   return (
     <View
       style={{
@@ -132,6 +291,27 @@ export function Composer({
           </View>
         </View>
       )}
+      {composer && !active && (
+        <ComposerControls
+          composer={composer}
+          disabled={busy}
+          onUpdate={onUpdate}
+          onMode={onMode}
+          onAccount={onAccount}
+        />
+      )}
+      {!active && attachments.items.length > 0 && (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingHorizontal: 4 }}>
+          {attachments.items.map((item) => (
+            <TrayItem
+              key={item.key}
+              item={item}
+              onRemove={() => attachments.remove(item.key)}
+              onRetry={() => attachments.retry(item.key)}
+            />
+          ))}
+        </View>
+      )}
       <View
         style={{
           flexDirection: 'row',
@@ -141,7 +321,8 @@ export function Composer({
           borderRadius: (line + PAD * 2) / 2,
         }}
       >
-        <View style={{ flex: 1, minWidth: 0, paddingLeft: 18, paddingVertical: PAD }}>
+        {!active && <AttachButton attachments={attachments} disabled={busy} />}
+        <View style={{ flex: 1, minWidth: 0, paddingLeft: active ? 18 : 10, paddingVertical: PAD }}>
           {active ? (
             <View style={{ height: line, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
               <ActivityIndicator size="small" color={t.accent} />
@@ -165,7 +346,9 @@ export function Composer({
               maxLength={32000}
               maxFontSizeMultiplier={MAX_FONT_SCALE}
               scrollEnabled={lines > MAX_LINES}
-              onContentSizeChange={(event) => setContentHeight(event.nativeEvent.contentSize.height)}
+              onContentSizeChange={(event) =>
+                setContentHeight(event.nativeEvent.contentSize.height)
+              }
               style={[
                 {
                   height: Math.min(lines, MAX_LINES) * line,
@@ -190,8 +373,8 @@ export function Composer({
           <ComposerAction
             label="Send message"
             icon="arrow-up"
-            enabled={!!value.trim() && !busy}
-            busy={busy}
+            enabled={canSend}
+            busy={busy || attachments.uploading}
             onPress={onSend}
           />
         )}

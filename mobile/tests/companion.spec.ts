@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { composerFixture } from './fixtures/companion';
 
 const host = 'https://mobile-fixture.example.test';
 const prompt = {
@@ -293,6 +294,7 @@ async function connect(
       ],
       createChat: { chatId: 'chat-1', subChatId: 'sub-1' },
       startFlow: { id: 'run-1' },
+      composer: composerFixture(),
     };
     await route.fulfill({ json: { data: responses[input.type] ?? { ok: true } }, headers });
   });

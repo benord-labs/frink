@@ -12,6 +12,12 @@ import {
   sendMobileMessage,
   stopMobileChat,
 } from './chat';
+import {
+  readMobileComposer,
+  setMobileAccount,
+  setMobileMode,
+  updateMobileComposer,
+} from './composer';
 import { MobileApiError, mobileCallers, requireExecutionReady } from './context';
 import { readMobileFlow, readMobileFlows, readMobileRun, resumeMobileNode } from './flows';
 import { readMobileChats, readMobileOverview, readMobileProjects } from './read';
@@ -44,6 +50,14 @@ async function dispatch(request: MobileRequest): Promise<MobileResponses[MobileR
       return answerMobileQuestion(request);
     case 'respondPermission':
       return respondMobilePermission(request);
+    case 'composer':
+      return readMobileComposer(request);
+    case 'updateComposer':
+      return updateMobileComposer(request);
+    case 'setMode':
+      return setMobileMode(request);
+    case 'setAccount':
+      return setMobileAccount(request);
     case 'resumeNode':
       return resumeMobileNode(request);
     case 'startFlow': {

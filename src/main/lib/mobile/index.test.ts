@@ -12,7 +12,10 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock('electron', () => ({ app: { getPath: () => mocks.directory } }));
 vi.mock('electron-log', () => ({ default: { warn: mocks.warn } }));
-vi.mock('./domain-api', () => ({ executeMobileRequest: mocks.executor }));
+vi.mock('./domain-api', () => ({
+  executeMobileRequest: mocks.executor,
+  storeMobileAttachment: vi.fn(),
+}));
 vi.mock('./server', () => ({ startMobileServer: mocks.start, stopMobileServer: mocks.stop }));
 
 beforeEach(async () => {

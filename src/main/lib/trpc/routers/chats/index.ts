@@ -1,6 +1,7 @@
 import { router } from '../../index';
 import { commitMessageRouter } from './ai';
 import { archiveRouter } from './archive';
+import { composerRouter } from './composer';
 import { createRouter } from './create';
 import { deleteRouter } from './delete';
 import { forkRouter } from './fork';
@@ -40,6 +41,9 @@ export const chatsRouter = router({
   ...deleteRouter._def.procedures,
   ...forkRouter._def.procedures,
   ...pinRouter._def.procedures,
+
+  // Composer settings (model / Auto / Fast / Thinking) shared with every window and the phone
+  ...composerRouter._def.procedures,
 
   // Sub-chat operations
   ...subChatGetRouter._def.procedures,

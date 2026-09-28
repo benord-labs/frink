@@ -5,5 +5,10 @@
     "noEmit": true,
     "paths": { "zod": ["./node_modules/zod"] }
   },
-  "include": ["**/*.ts", "**/*.tsx", "../src/shared/types/remote/mobile.ts"]
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    "../src/shared/types/remote/mobile.ts",
+    "../src/shared/lib/model-picker-label/groups.ts"
+  ]
 }

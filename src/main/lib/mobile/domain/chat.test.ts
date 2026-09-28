@@ -22,6 +22,8 @@ const fixture = vi.hoisted(() => ({
   seed: vi.fn(),
   ready: vi.fn(),
   cancelRun: vi.fn(),
+  attachments: vi.fn(),
+  release: vi.fn(),
 }));
 vi.mock('./context', async () => ({
   MobileApiError: (await import('./errors')).MobileApiError,
@@ -57,6 +59,7 @@ vi.mock('../../socket/streaming/live-stream', () => ({
 vi.mock('../../socket/streaming/execution-registry', () => ({
   getActiveExecution: () => undefined,
 }));
+vi.mock('./attachments', () => ({ resolveMobileAttachments: fixture.attachments }));
 vi.mock('../../db', () => ({ getDatabase: () => ({}) }));
 vi.mock('../../db/repos/projects', () => ({ getProjectById: vi.fn() }));
 import {
@@ -592,6 +595,87 @@ describe('mobile chat actions', () => {
         parts: [
           { type: 'tool', id: 'a:7', name: 'Read', state: 'interrupted' },
           { type: 'tool', id: 'a:8', name: 'Bash', state: 'unknown' },
+        ],
+      },
+    ]);
+  });
+});
+
+describe('mobile attachments', () => {
+  it('sends images as inline image parts and files as path mentions, like a desktop send', async () => {
+    fixture.attachments.mockResolvedValue({
+      imageParts: [{ type: 'file', mimeType: 'image/png', data: 'iVBOR' }],
+      fileMentions: ['@[pasted:120:notes.pdf|/sessions/sub/pasted/abc-notes.pdf]'],
+      release: fixture.release,
+    });
+
+    await sendMobileMessage({
+      ...identity,
+      requestId: 'request',
+      text: 'look at these',
+      attachments: ['img', 'doc'],
+    });
+
+    expect(fixture.attachments).toHaveBeenCalledWith(['img', 'doc'], identity);
+    expect(fixture.send.mock.calls[0][0].userMessage.parts).toEqual([
+      {
+        type: 'text',
+        text: '@[pasted:120:notes.pdf|/sessions/sub/pasted/abc-notes.pdf] look at these',
+      },
+      { type: 'file', mimeType: 'image/png', data: 'iVBOR' },
+    ]);
+    expect(fixture.release).toHaveBeenCalledOnce();
+  });
+
+  it('allows a message that is only attachments, but never an empty one', async () => {
+    fixture.attachments.mockResolvedValue({
+      imageParts: [{ type: 'file', mimeType: 'image/jpeg', data: '/9j/' }],
+      fileMentions: [],
+      release: fixture.release,
+    });
+    await sendMobileMessage({ ...identity, requestId: 'request', text: '', attachments: ['img'] });
+    expect(fixture.send).toHaveBeenCalledOnce();
+
+    await expect(
+      sendMobileMessage({ ...identity, requestId: 'request-2', text: '  ' }),
+    ).rejects.toBeInstanceOf(MobileApiError);
+  });
+
+  it('keeps uploads claimable when the send is refused, so the phone can retry', async () => {
+    fixture.attachments.mockResolvedValue({
+      imageParts: [],
+      fileMentions: ['@[pasted:1:a.txt|/p/a.txt]'],
+      release: fixture.release,
+    });
+    fixture.send.mockRejectedValueOnce(new DuplicateMessageError());
+
+    await expect(
+      sendMobileMessage({ ...identity, requestId: 'request', text: 'hi', attachments: ['doc'] }),
+    ).rejects.toBeInstanceOf(MobileApiError);
+    expect(fixture.release).not.toHaveBeenCalled();
+  });
+
+  it('shows attachments on the phone as chips, never raw tokens or base64', () => {
+    const history = [
+      {
+        id: 'user-1',
+        role: 'user',
+        parts: [
+          { type: 'text', text: '@[pasted:120:notes.pdf|/p/abc-notes.pdf] look at these' },
+          { type: 'file', mimeType: 'image/png', data: 'iVBOR' },
+        ],
+      },
+    ];
+
+    expect(mergeMobileTranscript(history, { streams: [], terminals: [] } as never)).toEqual([
+      {
+        id: 'user-1',
+        role: 'user',
+        text: 'look at these',
+        parts: [
+          { type: 'attachment', kind: 'file', name: 'notes.pdf' },
+          { type: 'text', text: 'look at these' },
+          { type: 'attachment', kind: 'image', name: 'Image' },
         ],
       },
     ]);

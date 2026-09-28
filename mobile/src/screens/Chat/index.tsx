@@ -1,9 +1,6 @@
 import { useEffect, useState } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, Text, View } from 'react-native';
-import type {
-  MobileChatDetail,
-  MobileMessage,
-} from '../../../../src/shared/types/remote/mobile';
+import type { MobileChatDetail, MobileMessage } from '../../../../src/shared/types/remote/mobile';
 import { useAction, useResource } from '../../lib/connection';
 import { useDraft } from '../../lib/drafts';
 import { Button, Icon, Label, Loading, Notice } from '../../ui/primitives';
@@ -11,7 +8,7 @@ import { Page } from '../../ui/page';
 import { Segmented } from '../../ui/segmented';
 import { ResourceStatus } from '../../ui/resource-status';
 import { useTheme } from '../../ui/theme';
-import { Composer } from './Composer';
+import { Composer, useComposerAttachments, useComposerState } from './Composer';
 import { Message } from './Message';
 import { PermissionForm, QuestionForm } from './questions';
 import { useChatHistory } from './use-chat-history';
@@ -144,9 +141,7 @@ function LatestButton({ onPress }: { onPress: () => void }) {
       })}
     >
       <Icon name="arrow-down" size={15} color={t.text} />
-      <Text style={{ fontSize: 14, lineHeight: 18, fontWeight: '600', color: t.text }}>
-        Latest
-      </Text>
+      <Text style={{ fontSize: 14, lineHeight: 18, fontWeight: '600', color: t.text }}>Latest</Text>
     </Pressable>
   );
 }
@@ -184,6 +179,10 @@ export function Chat({
     '',
   );
   const history = useChatHistory(id, data?.messages);
+  const composerTarget = data ? { chatId: id, subChatId: data.subChatId } : null;
+  const composerState = useComposerState(id, data?.subChatId);
+  const { composer } = composerState;
+  const attachments = useComposerAttachments(composerTarget);
   const [confirmStop, setConfirmStop] = useState(false);
   useEffect(() => {
     setConfirmStop(false);
@@ -198,9 +197,11 @@ export function Chat({
       subChatId: data.subChatId,
       text: draft.value,
       requestId: draft.requestId,
+      ...(attachments.ids.length ? { attachments: attachments.ids } : {}),
     });
     if (sent) {
       draft.clear(draft.requestId);
+      attachments.clear();
       scrolling.latest();
       resource.refresh();
     }
@@ -218,7 +219,7 @@ export function Chat({
     setSubChatId(next);
     scrolling.reset();
   }
-  const error = action.error || history.error;
+  const error = action.error || history.error || composerState.error;
   return (
     <KeyboardAvoidingView
       style={{ flex: 1 }}
@@ -259,8 +260,8 @@ export function Chat({
               )}
               {activeDecisionTarget && !targetExists && (
                 <Notice>
-                  This request has already been resolved on your computer. The conversation is up
-                  to date.
+                  This request has already been resolved on your computer. The conversation is up to
+                  date.
                 </Notice>
               )}
               {data.hasMore && !history.done && (
@@ -292,6 +293,11 @@ export function Chat({
           confirmStop={confirmStop}
           setConfirmStop={setConfirmStop}
           onStop={() => void stop()}
+          composer={composer}
+          attachments={attachments}
+          onUpdate={(patch) => composerState.change({ type: 'updateComposer', patch })}
+          onMode={(mode) => composerState.change({ type: 'setMode', mode })}
+          onAccount={(accountId) => composerState.change({ type: 'setAccount', accountId })}
         />
       )}
     </KeyboardAvoidingView>

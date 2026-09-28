@@ -2,7 +2,11 @@
 // fallow-ignore-next-line unresolved-import
 import { z } from 'zod';
 import { MOBILE_API_VERSION, mobilePairingSchema } from '../../../src/shared/types/remote/mobile';
-import type { MobileRequest, MobileResponses } from '../../../src/shared/types/remote/mobile';
+import type {
+  MobileAttachment,
+  MobileRequest,
+  MobileResponses,
+} from '../../../src/shared/types/remote/mobile';
 
 export const connectionSchema = z.object({
   url: mobilePairingSchema.shape.url,
@@ -86,4 +90,53 @@ export async function requestMobile<T extends MobileRequest>(
     signal,
   );
   return result.data;
+}
+
+/** Uploads over a cellular link can be slow; the computer allows up to two minutes. */
+const UPLOAD_TIMEOUT_MS = 90_000;
+
+/**
+ * Sends one picked file as a raw body (no base64), returning the id `sendMessage` references.
+ * `uri` is a local file (native) or blob URL (web); either is read with fetch.
+ */
+export async function uploadAttachment(
+  connection: Connection,
+  target: { chatId: string; subChatId: string },
+  file: { uri: string; name: string; mimeType?: string | null },
+  signal?: AbortSignal,
+): Promise<MobileAttachment> {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  signal?.addEventListener('abort', abort);
+  if (signal?.aborted) controller.abort();
+  const timeout = setTimeout(abort, UPLOAD_TIMEOUT_MS);
+  try {
+    const body = await (await fetch(file.uri)).blob();
+    const response = await fetch(`${connection.url.replace(/\/$/, '')}/api/attachments`, {
+      method: 'POST',
+      redirect: 'error',
+      signal: controller.signal,
+      headers: {
+        'Content-Type': file.mimeType || 'application/octet-stream',
+        Authorization: `Bearer ${connection.token}`,
+        'X-Frink-Chat': target.chatId,
+        'X-Frink-Sub-Chat': target.subChatId,
+        'X-Frink-Filename': encodeURIComponent(file.name),
+      },
+      body,
+    });
+    const result = await response.json();
+    if (!response.ok)
+      throw new ApiError(
+        typeof result.error === 'string' ? result.error : 'Your computer could not save this file.',
+        response.status,
+      );
+    return result.data as MobileAttachment;
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw new ApiError('Could not upload. Check your connection and try again.', 0);
+  } finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener('abort', abort);
+  }
 }

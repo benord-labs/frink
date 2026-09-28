@@ -20,7 +20,12 @@
           "recordAudioAndroid": false
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-image-picker",
+        { "photosPermission": "Attach the photos you choose to your messages to Frink." }
+      ],
+      "expo-document-picker"
     ],
     "web": { "bundler": "metro", "favicon": "./assets/icon.png" }
   }
