@@ -18,7 +18,7 @@ import {
   Pin,
   Trash2,
 } from 'lucide-react';
-import { type MouseEvent, useState } from 'react';
+import { memo, type MouseEvent, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { CompactPaneDigitBadge } from '@/features/agents/ui/split-view-container/pane-number-badge';
 import { useMarkTaskComplete } from '@/hooks/use-mark-task-complete';
 import { getPaneColor } from '@/lib/pane-colors';
@@ -43,6 +43,7 @@ import {
 } from '../constants';
 import type { ChatItem } from '../types';
 import type { ChatReason } from '../utils';
+import { areChatRowMemoEqual } from '../utils/chat-equality';
 
 /**
  * Everything a chat row's wrapper forwards down verbatim. Shared so the draggable wrapper and the
@@ -75,7 +76,34 @@ type ChatListItemProps = ChatRowActions & {
   depth?: number;
 };
 
-export function ChatListItem({
+// Every prop but `chat`/`reason` (compared structurally): a prop missing here is swallowed by the
+// memo, and `satisfies` only catches misspellings. Pinned by the 're-renders when …' tests.
+const CHAT_LIST_ITEM_REF_KEYS = [
+  'isSelected',
+  'isMultiSelected',
+  'onClick',
+  'onRename',
+  'onArchive',
+  'onFork',
+  'onDelete',
+  'onPin',
+  'onOpenInNewPane',
+  'canOpenInNewPane',
+  'splitPaneIndex',
+  'taskStatus',
+  'isPinned',
+  'depth',
+] as const satisfies readonly (keyof ChatListItemProps)[];
+
+function areChatListItemPropsEqual(
+  prev: Readonly<ChatListItemProps>,
+  next: Readonly<ChatListItemProps>,
+): boolean {
+  return areChatRowMemoEqual(prev, next, CHAT_LIST_ITEM_REF_KEYS);
+}
+
+/** A sidebar chat row. Memoized structurally: the task poll and stream ticks re-mint every chat. */
+export const ChatListItem = memo(function ChatListItem({
   chat,
   isSelected,
   isMultiSelected,
@@ -93,10 +121,15 @@ export function ChatListItem({
   isPinned,
   depth = 2,
 }: ChatListItemProps) {
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const markTaskComplete = useMarkTaskComplete();
   const isGeneratingName = !chat.name;
   const displayName = chat.name || 'Generating title…';
+  // Rename wants the whole chat, but handing the memoized menu `chat` would re-render it on every
+  // stream tick. It gets a callback that is stable per handler and reads the latest chat instead.
+  const latestChat = useRef(chat);
+  useLayoutEffect(() => {
+    latestChat.current = chat;
+  });
+  const renameChat = useMemo(() => onRename && (() => onRename(latestChat.current)), [onRename]);
   const hasActions = onRename || onArchive || onFork || onDelete || onPin || onOpenInNewPane;
   const taskPresentation = taskStatus ? SIDEBAR_TASK_PRESENTATION[taskStatus] : null;
   // A flow chat is task-driven the moment its task is linked. `taskStatus` (from the polled tasks
@@ -308,94 +341,138 @@ export function ChatListItem({
 
       {/* Actions menu - visible on hover or when open */}
       {hasActions && (
-        <DropdownMenu open={isMenuOpen} onOpenChange={setIsMenuOpen}>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={(e) => e.stopPropagation()}
-              aria-label="Chat actions"
-              className={cn(
-                'shrink-0 p-1 mr-1 rounded',
-                'opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100',
-                isMenuOpen && 'opacity-100',
-              )}
-            >
-              <MoreHorizontal className="h-3.5 w-3.5" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-40">
-            {/* Hidden when this chat is already shown — in a split pane (splitPaneIndex set) or as
-                the single-view selection (isSelected, the implicit pane-0 occupant) — since opening
-                it again is a no-op. Shown disabled when all panes are full so the limit reads as
-                feedback, not a dead/absent affordance. */}
-            {onOpenInNewPane && splitPaneIndex === undefined && !isSelected && (
-              <>
-                <DropdownMenuItem
-                  onClick={() => onOpenInNewPane(chat.id)}
-                  disabled={!canOpenInNewPane}
-                  // When disabled, name the reason — a greyed item alone tells SR/keyboard users
-                  // the state but not why (all 4 panes in use).
-                  aria-label={canOpenInNewPane ? undefined : 'Open in New Pane (all panes in use)'}
-                >
-                  <Columns2 className="h-4 w-4 mr-2" />
-                  Open in New Pane
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-              </>
-            )}
-            {taskStatus === 'done' && chat.taskId && (
-              <>
-                <DropdownMenuItem
-                  onClick={() => markTaskComplete(chat.taskId as string)}
-                  className="text-[hsl(var(--status-online-text))] focus:text-[hsl(var(--status-online-text))]"
-                >
-                  <Check className="h-4 w-4 mr-2" />
-                  Mark complete
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-              </>
-            )}
-            {onPin && (
-              <>
-                <DropdownMenuItem onClick={() => onPin(chat.id)}>
-                  <Pin className="h-4 w-4 mr-2" />
-                  {isPinned ? 'Unpin chat' : 'Pin chat'}
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-              </>
-            )}
-            {onRename && (
-              <DropdownMenuItem onClick={() => onRename(chat)}>
-                <Pencil className="h-4 w-4 mr-2" />
-                Rename
-              </DropdownMenuItem>
-            )}
-            {(onArchive || onDelete) && onRename && <DropdownMenuSeparator />}
-            {onArchive && (
-              <DropdownMenuItem onClick={() => onArchive(chat.id)}>
-                <Archive className="h-4 w-4 mr-2" />
-                Archive chat
-              </DropdownMenuItem>
-            )}
-            {onFork && (
-              <DropdownMenuItem onClick={() => onFork(chat.id)}>
-                <GitFork className="h-4 w-4 mr-2" />
-                Fork chat
-              </DropdownMenuItem>
-            )}
-            {onDelete && (
-              <DropdownMenuItem
-                onClick={() => onDelete(chat.id)}
-                className="text-destructive focus:text-destructive"
-              >
-                <Trash2 className="h-4 w-4 mr-2" />
-                Delete chat permanently
-              </DropdownMenuItem>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <ChatRowActionsMenu
+          chatId={chat.id}
+          taskId={chat.taskId}
+          isPinned={Boolean(isPinned)}
+          isSelected={isSelected}
+          splitPaneIndex={splitPaneIndex}
+          canOpenInNewPane={canOpenInNewPane}
+          taskStatus={taskStatus}
+          onRename={renameChat}
+          onArchive={onArchive}
+          onFork={onFork}
+          onDelete={onDelete}
+          onPin={onPin}
+          onOpenInNewPane={onOpenInNewPane}
+        />
       )}
     </div>
   );
-}
+}, areChatListItemPropsEqual);
+
+type ChatRowActionsMenuProps = Omit<ChatRowActions, 'reason' | 'onRename'> & {
+  onRename?: () => void;
+  chatId: string;
+  taskId: string | null;
+  isPinned: boolean;
+  isSelected: boolean;
+};
+
+/** The row's "…" menu, memoized on primitives so a streaming row skips its Radix provider subtree.
+ * Root and Trigger stay mounted (keyboard open, focus return); Radix mounts content only when open. */
+const ChatRowActionsMenu = memo(function ChatRowActionsMenu({
+  chatId,
+  taskId,
+  isPinned,
+  isSelected,
+  splitPaneIndex,
+  canOpenInNewPane,
+  taskStatus,
+  onRename,
+  onArchive,
+  onFork,
+  onDelete,
+  onPin,
+  onOpenInNewPane,
+}: ChatRowActionsMenuProps) {
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const markTaskComplete = useMarkTaskComplete();
+  return (
+    <DropdownMenu open={isMenuOpen} onOpenChange={setIsMenuOpen}>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={(e) => e.stopPropagation()}
+          aria-label="Chat actions"
+          className={cn(
+            'shrink-0 p-1 mr-1 rounded',
+            'opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100',
+            isMenuOpen && 'opacity-100',
+          )}
+        >
+          <MoreHorizontal className="h-3.5 w-3.5" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-40">
+        {/* Hidden when the chat is already shown (split pane, or the selection = pane 0); disabled,
+            not hidden, when panes are full so the limit reads as feedback. */}
+        {onOpenInNewPane && splitPaneIndex === undefined && !isSelected && (
+          <>
+            <DropdownMenuItem
+              onClick={() => onOpenInNewPane(chatId)}
+              disabled={!canOpenInNewPane}
+              // When disabled, name the reason — a greyed item alone tells SR/keyboard users
+              // the state but not why (all 4 panes in use).
+              aria-label={canOpenInNewPane ? undefined : 'Open in New Pane (all panes in use)'}
+            >
+              <Columns2 className="h-4 w-4 mr-2" />
+              Open in New Pane
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>
+        )}
+        {taskStatus === 'done' && taskId && (
+          <>
+            <DropdownMenuItem
+              onClick={() => markTaskComplete(taskId as string)}
+              className="text-[hsl(var(--status-online-text))] focus:text-[hsl(var(--status-online-text))]"
+            >
+              <Check className="h-4 w-4 mr-2" />
+              Mark complete
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>
+        )}
+        {onPin && (
+          <>
+            <DropdownMenuItem onClick={() => onPin(chatId)}>
+              <Pin className="h-4 w-4 mr-2" />
+              {isPinned ? 'Unpin chat' : 'Pin chat'}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>
+        )}
+        {onRename && (
+          <DropdownMenuItem onClick={onRename}>
+            <Pencil className="h-4 w-4 mr-2" />
+            Rename
+          </DropdownMenuItem>
+        )}
+        {(onArchive || onDelete) && onRename && <DropdownMenuSeparator />}
+        {onArchive && (
+          <DropdownMenuItem onClick={() => onArchive(chatId)}>
+            <Archive className="h-4 w-4 mr-2" />
+            Archive chat
+          </DropdownMenuItem>
+        )}
+        {onFork && (
+          <DropdownMenuItem onClick={() => onFork(chatId)}>
+            <GitFork className="h-4 w-4 mr-2" />
+            Fork chat
+          </DropdownMenuItem>
+        )}
+        {onDelete && (
+          <DropdownMenuItem
+            onClick={() => onDelete(chatId)}
+            className="text-destructive focus:text-destructive"
+          >
+            <Trash2 className="h-4 w-4 mr-2" />
+            Delete chat permanently
+          </DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+});

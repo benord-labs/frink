@@ -135,6 +135,10 @@ type Props = {
 // Shared move-guard helpers — reused across FileTree and SplitViewContainer
 import { collectMovableItems } from '../utils/move-guards';
 
+/** Module-level: dnd-kit's useSensor memoizes on the options object, so an inline literal rebuilds
+ * DndContext's internal context every render and re-renders every draggable past its memo (sc-2721). */
+const POINTER_SENSOR_OPTIONS = { activationConstraint: { distance: 8 } };
+
 export const FileTree = memo(function FileTree({
   nodes,
   projectPath,
@@ -169,7 +173,7 @@ export const FileTree = memo(function FileTree({
   creatingItemRef.current = creatingItem;
 
   // 8px activation distance to avoid accidental drags on click
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
+  const sensors = useSensors(useSensor(PointerSensor, POINTER_SENSOR_OPTIONS));
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
     const data = event.active.data.current as TreeNodeDragData | undefined;

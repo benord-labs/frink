@@ -22,6 +22,10 @@ import { ChatListItem } from '../ChatListItem';
 import { ChatSelectionDragBadge } from '../ChatSelection';
 import { CodebaseItem } from '../CodebaseItem';
 
+/** Module-level: dnd-kit's useSensor memoizes on the options object, so an inline literal rebuilds
+ * DndContext's internal context every render and re-renders every draggable past its memo (sc-2721). */
+const POINTER_SENSOR_OPTIONS = { activationConstraint: { distance: 8 } };
+
 /** Chat-row action callbacks, bundled so they thread as one prop instead of eight. */
 type ChatRowActions = {
   onChatSelect: (chatId: string) => void;
@@ -101,7 +105,7 @@ function ProjectsTreeComponent({
   ...chatStatusMaps
 }: ProjectsTreeProps): ReactElement {
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(PointerSensor, POINTER_SENSOR_OPTIONS),
     useSensor(KeyboardSensor),
   );
 
