@@ -142,3 +142,46 @@ describe('buildSafeEnv', () => {
     });
   });
 });
+
+describe('omitEnvKeys (child-process secret scrub)', () => {
+  it('drops every denylisted credential, including the Claude fd pointers', async () => {
+    const { CREDENTIAL_ENV_DENYLIST, omitEnvKeys } = await import('./env');
+    const env = Object.fromEntries(CREDENTIAL_ENV_DENYLIST.map((key) => [key, 'secret']));
+
+    const kept = omitEnvKeys({ ...env, PATH: '/usr/bin' }, CREDENTIAL_ENV_DENYLIST, {
+      platform: 'darwin',
+    });
+
+    expect(kept).toEqual({ PATH: '/usr/bin' });
+  });
+
+  it('matches case-insensitively on Windows, where env names are', async () => {
+    const { CREDENTIAL_ENV_DENYLIST, omitEnvKeys } = await import('./env');
+    const env = { Github_Token: 'ghp', anthropic_api_key: 'sk', Path: 'C:\\bin' };
+
+    expect(omitEnvKeys(env, CREDENTIAL_ENV_DENYLIST, { platform: 'win32' })).toEqual({
+      Path: 'C:\\bin',
+    });
+  });
+
+  it('keeps a same-named var with different case on POSIX, where names are case-sensitive', async () => {
+    const { omitEnvKeys } = await import('./env');
+    expect(omitEnvKeys({ github_token: 'x' }, ['GITHUB_TOKEN'], { platform: 'linux' })).toEqual({
+      github_token: 'x',
+    });
+  });
+
+  it('drops non-string values instead of passing `undefined` to a spawn', async () => {
+    const { omitEnvKeys } = await import('./env');
+    expect(omitEnvKeys({ A: 'a', B: undefined }, [], { platform: 'linux' })).toEqual({ A: 'a' });
+  });
+
+  it('buildSafeEnv already excludes the Claude fd pointers a CLI child inherits', async () => {
+    const { buildSafeEnv } = await import('./env');
+    const safe = buildSafeEnv(
+      { PATH: '/usr/bin', CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR: '3', SECRET_X: 's' },
+      { platform: 'darwin' },
+    );
+    expect(safe).toEqual({ PATH: '/usr/bin' });
+  });
+});

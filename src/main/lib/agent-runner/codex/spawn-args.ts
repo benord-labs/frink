@@ -2,7 +2,15 @@ import os from 'node:os';
 import type { ChatMode } from '../../../../shared/types/chat-mode';
 import { getChannelToken, withChannelQuery } from '../../mcp/execution-identity';
 
-/** Disable Codex execution surfaces that do not implement Frink host permission v1. */
+/** Codex shells drop `*KEY*`/`*SECRET*`/`*TOKEN*` vars; last in the args so no override undoes it.
+ * Why: docs/decisions/child-process-env-secrets.md */
+export const CODEX_SHELL_ENV_SCRUB_ARGS = [
+  '--config',
+  'shell_environment_policy.ignore_default_excludes=false',
+] as const;
+
+/** Disable Codex execution surfaces that do not implement Frink host permission v1, and scrub
+ * credentials from the shells Codex spawns. */
 export function buildSpawnArgs(configArgs?: string[]): string[] {
   return [
     '--disable',
@@ -20,6 +28,7 @@ export function buildSpawnArgs(configArgs?: string[]): string[] {
     '--disable',
     'multi_agent_v2',
     ...(configArgs ?? []),
+    ...CODEX_SHELL_ENV_SCRUB_ARGS,
   ];
 }
 

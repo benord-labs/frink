@@ -34,7 +34,7 @@ import {
 } from '../socket/execution/claude-session/session-key';
 import {
   buildClaudeEnv,
-  buildOneShotClaudeEnv,
+  buildOneShotClaudeLaunch,
   clearClaudeEnvCache,
   getBundledClaudeBinaryPath,
   getClaudeShellEnvironment,
@@ -180,11 +180,12 @@ describe('getBundledClaudeBinaryPath', () => {
   });
 });
 
-describe('buildOneShotClaudeEnv', () => {
+describe('buildOneShotClaudeLaunch', () => {
   // Covers the helper DIRECTLY. Callers commonly mock this module, so behaviour asserted only
   // through a consumer proves the mock, not the helper. What must hold: an inherited shell token
   // never survives, and the credential passed in always wins — otherwise a spawn silently
-  // authenticates as an account the user did not choose.
+  // authenticates as an account the user did not choose. And the chosen token never sits in the
+  // env the CLI's Bash commands and MCP servers inherit.
   const originalEnv = { ...process.env };
 
   afterEach(() => {
@@ -198,32 +199,35 @@ describe('buildOneShotClaudeEnv', () => {
     clearClaudeEnvCache();
 
     // Passthrough carries no token of its own — precisely when a stray shell value would win.
-    const env = buildOneShotClaudeEnv({ token: null, isApiKey: false });
+    const launch = buildOneShotClaudeLaunch({ token: null, isApiKey: false });
 
-    expect(env).not.toHaveProperty('CLAUDE_CODE_OAUTH_TOKEN');
-    expect(env).not.toHaveProperty('ANTHROPIC_API_KEY');
+    expect(launch.env).not.toHaveProperty('CLAUDE_CODE_OAUTH_TOKEN');
+    expect(launch.env).not.toHaveProperty('ANTHROPIC_API_KEY');
+    expect(launch.spawnClaudeCodeProcess).toBeUndefined();
   });
 
   it("pins CLAUDE_SECURESTORAGE_CONFIG_DIR to '' so the CLI reads the canonical keychain login", () => {
-    const env = buildOneShotClaudeEnv({ token: null, isApiKey: false });
+    const { env } = buildOneShotClaudeLaunch({ token: null, isApiKey: false });
     // Strict equality: toBeFalsy() would also pass on `undefined`, which is the broken state —
     // the CLI branches on `!== undefined`, so an absent var re-enables the hashed service name.
     expect(env.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe('');
   });
 
-  it('lets the SELECTED credential win over the stripped shell value', () => {
+  it('delivers the SELECTED API key through the fd, not env, and drops the shell value', () => {
     process.env.ANTHROPIC_API_KEY = 'sk-ant-api-from-the-users-shell';
     clearClaudeEnvCache();
 
-    const env = buildOneShotClaudeEnv({ token: 'sk-ant-api-chosen', isApiKey: true });
+    const launch = buildOneShotClaudeLaunch({ token: 'sk-ant-api-chosen', isApiKey: true });
 
-    expect(env.ANTHROPIC_API_KEY).toBe('sk-ant-api-chosen');
-    expect(env).not.toHaveProperty('CLAUDE_CODE_OAUTH_TOKEN');
+    expect(launch.env.CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR).toBe('3');
+    expect(JSON.stringify(launch.env)).not.toContain('sk-ant-api');
+    expect(launch.spawnClaudeCodeProcess).toBeTypeOf('function');
   });
 
-  it('routes a non-api-key credential to CLAUDE_CODE_OAUTH_TOKEN', () => {
-    const env = buildOneShotClaudeEnv({ token: 'sk-ant-oat01-chosen', isApiKey: false });
-    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('sk-ant-oat01-chosen');
-    expect(env).not.toHaveProperty('ANTHROPIC_API_KEY');
+  it('routes a non-api-key credential to the OAuth fd', () => {
+    const { env } = buildOneShotClaudeLaunch({ token: 'sk-ant-oat01-chosen', isApiKey: false });
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR).toBe('3');
+    expect(env).not.toHaveProperty('CLAUDE_CODE_OAUTH_TOKEN');
+    expect(env).not.toHaveProperty('CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR');
   });
 });

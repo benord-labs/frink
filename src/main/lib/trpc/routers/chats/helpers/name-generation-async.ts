@@ -25,7 +25,7 @@ import log from 'electron-log';
 import { stripMessageMarkers } from '../../../../../../shared/lib/message-markers/strip-message-markers';
 import { parseTriggerBubbleMessage } from '../../../../../../shared/lib/trigger-bubble-marker';
 import { BUILD_PROJECT_PLACEHOLDER, isManagedBuildPath } from '../../../../builds-path';
-import { buildOneShotClaudeEnv, getBundledClaudeBinaryPath } from '../../../../claude/env';
+import { buildOneShotClaudeLaunch, getBundledClaudeBinaryPath } from '../../../../claude/env';
 import {
   type CredentialResult,
   getClaudeCodeTokenById,
@@ -226,14 +226,14 @@ async function generateWithClaudeSdk(
 
   try {
     const sdk = await import('@anthropic-ai/claude-agent-sdk');
-    const env = buildOneShotClaudeEnv(credential);
+    const launch = buildOneShotClaudeLaunch(credential);
 
     const stream = sdk.query({
       prompt,
       options: {
         abortController,
         cwd,
-        env,
+        ...launch,
         // Same binary the executor spawns — and the only one download-claude-binary.mjs
         // asserts CLAUDE_SECURESTORAGE_CONFIG_DIR support on. Without this the SDK picks
         // its own bundled CLI, where the pin above could silently be a no-op.

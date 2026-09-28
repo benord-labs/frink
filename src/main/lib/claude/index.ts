@@ -5,7 +5,7 @@ export {
 } from './bundled-claude-version';
 export {
   buildClaudeEnv,
-  buildOneShotClaudeEnv,
+  buildOneShotClaudeLaunch,
   getBundledClaudeBinaryPath,
   getClaudeShellEnvironment,
 } from './env';

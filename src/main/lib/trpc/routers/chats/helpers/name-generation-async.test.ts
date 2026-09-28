@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   getDefaultClaudeCodeToken: vi.fn(),
   getClaudeCodeTokenById: vi.fn(),
   sdkQuery: vi.fn(),
+  fdSpawn: vi.fn(),
   send: vi.fn(),
   captureContained: vi.fn(),
 }));
@@ -44,15 +45,11 @@ vi.mock('../../../../credentials', () => ({
 }));
 vi.mock('../../../../claude/env', () => ({
   buildClaudeEnv: () => ({}),
-  // Mirrors the real helper: strips inherited auth, pins the canonical keychain, then adds
-  // back only the selected credential's token (passthrough contributes none).
-  buildOneShotClaudeEnv: (cred: { token: string | null; isApiKey: boolean }) => ({
-    CLAUDE_SECURESTORAGE_CONFIG_DIR: '',
-    ...(cred.token
-      ? cred.isApiKey
-        ? { ANTHROPIC_API_KEY: cred.token }
-        : { CLAUDE_CODE_OAUTH_TOKEN: cred.token }
-      : {}),
+  // Mirrors the real helper: pins the canonical keychain and hands a token-bearing credential
+  // to the CLI through a pipe (spawnClaudeCodeProcess), never through env.
+  buildOneShotClaudeLaunch: (cred: { token: string | null; isApiKey: boolean }) => ({
+    env: { CLAUDE_SECURESTORAGE_CONFIG_DIR: '' },
+    ...(cred.token ? { spawnClaudeCodeProcess: mocks.fdSpawn } : {}),
   }),
   getBundledClaudeBinaryPath: () => '/bundled/claude',
 }));
@@ -272,6 +269,9 @@ describe('autoNameSubChat', () => {
       preset: 'claude_code',
       excludeDynamicSections: true,
     });
+    // The token rides the pipe spawn; it never lands in the CLI env the model's Bash inherits.
+    expect(opts.spawnClaudeCodeProcess).toBe(mocks.fdSpawn);
+    expect(JSON.stringify(opts.env)).not.toContain('default-token');
   });
 
   it('falls through to deterministic fallback when every AI path fails', async () => {

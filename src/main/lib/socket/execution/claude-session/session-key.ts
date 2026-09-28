@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import stableStringify from 'fast-json-stable-stringify';
+import { spawnCredentialFingerprint } from '../../../claude/credential-fd-spawn';
 
 // Applied live to a running CLI, or only meaningful at spawn, so a change never needs a new CLI.
 // `model` and the Ultra `settings` flag are set on a claimed CLI before its turn (plan-auto-approve).
@@ -11,6 +12,8 @@ const NON_KEY_OPTIONS = new Set([
   'stderr',
   'model',
   'settings',
+  // The credential pipe: keyed by the `credential` part instead, a function has no digest.
+  'spawnClaudeCodeProcess',
 ]);
 
 function digest(value: unknown): string {
@@ -32,17 +35,18 @@ export function effortKeyPart(effort: unknown): string {
   return digest(effort === 'max' ? 'max' : null);
 }
 
-/** One digest per spawn option, the resolved MCP servers and the passthrough login (a token keys
- * through `env`), so a mismatch can name its parts. The staged config's path is per-execute, so it
- * is left out of `extraArgs`. */
+/** One digest per spawn option, MCP servers, login and piped-credential fingerprint, so a mismatch
+ * names its parts. The per-execute staged config path is left out of `extraArgs`. */
 export function computeClaudeSessionKey(
   options: object,
   mcpServers: Record<string, unknown> | undefined,
   login?: string,
 ): Record<string, string> {
+  const pipe = (options as { spawnClaudeCodeProcess?: unknown }).spawnClaudeCodeProcess;
   const keyParts: Record<string, string> = {
     mcpServers: digest(withoutChannel(mcpServers)),
     login: digest(login),
+    credential: digest(spawnCredentialFingerprint(pipe)),
     effort: effortKeyPart((options as { effort?: unknown }).effort),
   };
   for (const [name, value] of Object.entries(options)) {

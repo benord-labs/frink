@@ -30,4 +30,20 @@ describe('buildUsageProbeOptions', () => {
     });
     expect(options.env?.ANTHROPIC_API_KEY).toBeUndefined();
   });
+
+  it('passes a stored token through the pipe spawn, never through env', () => {
+    const withToken = buildUsageProbeOptions(
+      { token: 'sk-ant-oat01-probe', isApiKey: false },
+      '/tmp/frink-usage-probe',
+      new AbortController(),
+    );
+    expect(JSON.stringify(withToken.env)).not.toContain('sk-ant-oat01-probe');
+    if (process.platform !== 'win32') {
+      expect(withToken.spawnClaudeCodeProcess).toBeTypeOf('function');
+    }
+  });
+
+  it('uses the SDK default spawn for a passthrough account', () => {
+    expect(options.spawnClaudeCodeProcess).toBeUndefined();
+  });
 });

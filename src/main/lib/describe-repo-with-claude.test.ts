@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const getDescriptionCredentialAttemptsMock = vi.fn();
 const queryMock = vi.fn();
+const fdSpawn = vi.fn();
 
 vi.mock('./credentials', () => ({
   MAX_DESCRIPTION_ACCOUNT_ATTEMPTS: 3,
@@ -15,15 +16,11 @@ vi.mock('./credentials', () => ({
 
 vi.mock('./claude', () => ({
   buildClaudeEnv: () => ({}),
-  // Mirrors the real helper: strips inherited auth, pins the canonical keychain, then adds
-  // back only the selected credential's token (passthrough contributes none).
-  buildOneShotClaudeEnv: (cred: { token: string | null; isApiKey: boolean }) => ({
-    CLAUDE_SECURESTORAGE_CONFIG_DIR: '',
-    ...(cred.token
-      ? cred.isApiKey
-        ? { ANTHROPIC_API_KEY: cred.token }
-        : { CLAUDE_CODE_OAUTH_TOKEN: cred.token }
-      : {}),
+  // Mirrors the real helper: pins the canonical keychain and hands a token-bearing credential
+  // to the CLI through a pipe (spawnClaudeCodeProcess), never through env.
+  buildOneShotClaudeLaunch: (cred: { token: string | null; isApiKey: boolean }) => ({
+    env: { CLAUDE_SECURESTORAGE_CONFIG_DIR: '' },
+    ...(cred.token ? { spawnClaudeCodeProcess: fdSpawn } : {}),
   }),
   getBundledClaudeBinaryPath: () => '/bundled/claude',
 }));
@@ -110,5 +107,19 @@ describe('generateProjectDescriptionWithClaude', () => {
     expect(result.description).toBe('Claude summary');
     expect(result.attemptsTried).toBe(2);
     expect(queryMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('hands the selected credential to the SDK through the pipe spawn, never through env', async () => {
+    getDescriptionCredentialAttemptsMock.mockReturnValue([
+      { token: 'sk-ant-api-chosen', label: 'Key', isApiKey: true, type: 'claude-code' },
+    ]);
+    queryMock.mockReturnValue(sdkStreamWithText('Claude summary'));
+
+    const { generateProjectDescriptionWithClaude } = await import('./describe-repo-with-claude');
+    await generateProjectDescriptionWithClaude('/tmp/project');
+
+    const options = queryMock.mock.calls[0]?.[0]?.options;
+    expect(options.spawnClaudeCodeProcess).toBe(fdSpawn);
+    expect(JSON.stringify(options.env)).not.toContain('sk-ant-api-chosen');
   });
 });
