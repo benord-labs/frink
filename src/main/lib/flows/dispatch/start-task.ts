@@ -82,6 +82,19 @@ function resolveWorktreeBranch(
       };
 }
 
+const INHERITED_BASES = z.object({
+  baseBranches: z.array(z.string().trim().min(1)).min(1).optional().catch(undefined),
+  mergeStrategy: z.string().optional().catch(undefined),
+});
+
+/** Dependency branches a batch stage inherited (flows/batch/dependency-branches.ts); malformed → ignored. */
+function inheritedBases(
+  triggerContext: Record<string, unknown> | null,
+): z.infer<typeof INHERITED_BASES> {
+  const parsed = INHERITED_BASES.safeParse(triggerContext ?? {});
+  return parsed.success ? parsed.data : {};
+}
+
 export const dispatchStartTask: Dispatcher = async (ctx) => {
   const config = (ctx.node.config ?? {}) as StartTaskConfig;
   const variables = buildVariables({
@@ -118,6 +131,7 @@ export const dispatchStartTask: Dispatcher = async (ctx) => {
           blockType: 'start_task',
           projectId,
           branch,
+          ...inheritedBases(ctx.triggerContext),
         },
         ctx.signal,
         startedAt,

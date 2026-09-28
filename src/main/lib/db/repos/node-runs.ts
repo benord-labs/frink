@@ -119,6 +119,59 @@ export async function listLatestStartTaskRunsByFlowRunIds(
   return latest;
 }
 
+/** Latest COMPLETED start_task per flow_run outside fan-out lanes: an indexed light-column read, then a
+ * PK read of only the winners' output. Newer attempt wins; attempt_number/rowid break ties. */
+export async function listLatestCompletedTopLevelStartTaskRuns(
+  db: Db,
+  flowRunIds: string[],
+): Promise<Map<string, Pick<NodeRun, 'nodeOutput'>>> {
+  if (flowRunIds.length === 0) return new Map();
+  const completed = await db
+    .select({
+      id: nodeRuns.id,
+      flowRunId: nodeRuns.flowRunId,
+      completedAt: nodeRuns.completedAt,
+      attemptNumber: nodeRuns.attemptNumber,
+      seq: drizzleSql<number>`rowid`,
+    })
+    .from(nodeRuns)
+    .where(
+      and(
+        inArray(nodeRuns.flowRunId, flowRunIds),
+        eq(nodeRuns.status, 'completed'),
+        eq(nodeRuns.blockType, 'start_task'),
+        isNull(nodeRuns.laneIndex),
+        isNull(nodeRuns.parentFanOutNodeRunId),
+      ),
+    );
+  const winners = new Map<string, (typeof completed)[number]>();
+  for (const row of completed) {
+    const best = winners.get(row.flowRunId);
+    if (!best || compareAttempts(row, best) > 0) winners.set(row.flowRunId, row);
+  }
+  if (winners.size === 0) return new Map();
+  const outputs = await db
+    .select({ id: nodeRuns.id, nodeOutput: nodeRuns.nodeOutput })
+    .from(nodeRuns)
+    .where(
+      inArray(
+        nodeRuns.id,
+        [...winners.values()].map((w) => w.id),
+      ),
+    );
+  const outputById = new Map(outputs.map((o) => [o.id, o.nodeOutput]));
+  return new Map(
+    [...winners].map(([flowRunId, w]) => [flowRunId, { nodeOutput: outputById.get(w.id) ?? null }]),
+  );
+}
+
+type AttemptOrder = { completedAt: Date | null; attemptNumber: number; seq: number };
+
+function compareAttempts(a: AttemptOrder, b: AttemptOrder): number {
+  const at = (r: AttemptOrder) => r.completedAt?.getTime() ?? -1;
+  return at(a) - at(b) || a.attemptNumber - b.attemptNumber || a.seq - b.seq;
+}
+
 /**
  * The prior completed attempt at this exact (flowRunId, nodeId, lane) — a retry creates a fresh
  * node_run row, so a no-worktree start_task resolves its earlier chat through this.
