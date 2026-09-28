@@ -9,6 +9,7 @@ const fixture = vi.hoisted(() => ({
   db: null as unknown,
   getRun: vi.fn(),
   getFlow: vi.fn(),
+  listRuns: vi.fn(),
   getVersion: vi.fn(),
   resumeRun: vi.fn(),
   getDriving: vi.fn(),
@@ -23,6 +24,7 @@ vi.mock('./context', async () => ({
     flows: {
       getRun: fixture.getRun,
       get: fixture.getFlow,
+      listRuns: fixture.listRuns,
       resumeRun: fixture.resumeRun,
     },
     tasks: {
@@ -42,7 +44,7 @@ vi.mock('../../db/repos/sub-chats', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../db/repos/sub-chats')>()),
   getSubChatById: fixture.getSubChat,
 }));
-import { readMobileRun, resumeMobileNode } from './flows';
+import { readMobileFlow, readMobileRun, resumeMobileNode } from './flows';
 
 const request = {
   type: 'resumeNode' as const,
@@ -111,6 +113,35 @@ beforeEach(() => {
 });
 
 describe('mobile Flow actions', () => {
+  it('reads the current saved definition separately from its historical runs', async () => {
+    fixture.getFlow.mockResolvedValue({
+      id: 'flow',
+      name: 'Updated Flow',
+      is_enabled: true,
+      version_number: 3,
+      graph: {
+        nodes: [
+          { id: 'start', blockType: 'manual_trigger' },
+          { id: 'current', blockType: 'agent', config: { instructions: 'Current instructions' } },
+        ],
+        edges: [{ id: 'next', source: 'start', target: 'current' }],
+      },
+    });
+    fixture.listRuns.mockResolvedValue([
+      { id: 'older-run', status: 'completed', started_at: '2026-09-28T08:00:00Z' },
+    ]);
+    await expect(readMobileFlow('flow')).resolves.toMatchObject({
+      definition: {
+        versionNumber: 3,
+        nodes: [{ id: 'start' }, { id: 'current', instructions: 'Current instructions' }],
+        edges: [{ id: 'next', source: 'start', target: 'current' }],
+      },
+      runs: [{ id: 'older-run', status: 'completed', startedAt: '2026-09-28T08:00:00Z' }],
+    });
+    expect(fixture.getVersion).not.toHaveBeenCalled();
+    expect(fixture.listRuns).toHaveBeenCalledWith({ flowId: 'flow', limit: 30 });
+  });
+
   it('rejects mobile retry requests while accepting approval and skip', () => {
     expect(mobileRequestSchema.safeParse({ ...request, action: 'retry' }).success).toBe(false);
     expect(mobileRequestSchema.safeParse(request).success).toBe(true);
