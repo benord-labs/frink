@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useState } from 'react';
 import { perfMark } from '../lib/perf/marks';
 import { trpc, trpcClient } from '../lib/trpc';
+import { shareEqualDeep } from '../lib/query-keys/structural-sharing';
 
 type TRPCProviderProps = {
   children: React.ReactNode;
@@ -23,6 +24,8 @@ export function TRPCProvider({ children }: TRPCProviderProps) {
           refetchOnWindowFocus: false,
           networkMode: 'always',
           retry: false,
+          // Date-aware, so an identical Date-bearing refetch keeps its reference (sc-2721).
+          structuralSharing: shareEqualDeep,
         },
         mutations: {
           networkMode: 'always',
