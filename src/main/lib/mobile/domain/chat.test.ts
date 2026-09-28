@@ -137,6 +137,22 @@ describe('mobile chat actions', () => {
     expect(fixture.create).toHaveBeenCalledWith(expect.objectContaining({ name: undefined }));
   });
 
+  it('works in the project folder when asked, and in a worktree by default', async () => {
+    fixture.project.mockResolvedValue({ id: 'project' });
+    fixture.create.mockResolvedValue({ id: 'chat', subChats: [{ id: 'sub' }] });
+    const local = mobileRequestSchema.parse({
+      type: 'createChat',
+      projectId: 'project',
+      useWorktree: false,
+    });
+    await createMobileChat(local as Extract<typeof local, { type: 'createChat' }>);
+    expect(fixture.create).toHaveBeenLastCalledWith(
+      expect.objectContaining({ useWorktree: false }),
+    );
+    await createMobileChat({ type: 'createChat', projectId: 'project' });
+    expect(fixture.create).toHaveBeenLastCalledWith(expect.objectContaining({ useWorktree: true }));
+  });
+
   it('shows a safe failure message only for the latest inactive response', async () => {
     const failure = {
       assistantMessageId: 'failed',

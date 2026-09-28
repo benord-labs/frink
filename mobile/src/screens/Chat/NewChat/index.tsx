@@ -6,11 +6,45 @@ import { useDraft } from '../../../lib/drafts';
 import { Button, CardNote, Label, Loading, Notice, Row, Section } from '../../../ui/primitives';
 import { Page } from '../../../ui/page';
 import { SearchField } from '../../../ui/search-field';
+import { Segmented } from '../../../ui/segmented';
 import { Composer } from '../Composer';
 import { recentProjectsFirst } from './recent-projects';
 
 type Project = MobileResponses['projects'][number];
-type Created = { projectId: string; chatId: string; subChatId: string };
+type WorkMode = 'worktree' | 'local';
+/** `key` is project + work mode: a retry reuses the chat only if neither changed. */
+type Created = { key: string; chatId: string; subChatId: string };
+
+// Desktop's own words for its Local / Worktree choice.
+const workModes = {
+  worktree:
+    'Works in a separate copy on its own branch. Your folder stays untouched until you merge.',
+  local: 'Works in your project folder. Changes show up right away.',
+} as const;
+
+function WorkModePicker({
+  value,
+  onChange,
+}: {
+  value: WorkMode;
+  onChange: (mode: WorkMode) => void;
+}) {
+  return (
+    <Section title="Work in" plain>
+      <Segmented
+        items={[
+          { id: 'worktree', label: 'Worktree' },
+          { id: 'local', label: 'Local' },
+        ]}
+        value={value}
+        onChange={onChange}
+      />
+      <Label muted size={13}>
+        {workModes[value]}
+      </Label>
+    </Section>
+  );
+}
 
 const noop = () => {};
 
@@ -79,6 +113,8 @@ export function NewChat({
     projectId: null,
     text: '',
   });
+  // Kept for the rest of the session, so the choice sticks from one new chat to the next.
+  const mode = useDraft<WorkMode>('new-chat-work-mode', 'worktree');
   // A chat created on an earlier attempt whose first message did not send; retrying reuses it.
   const [created, setCreated] = useState<Created | null>(null);
   const [starting, setStarting] = useState(false);
@@ -88,10 +124,15 @@ export function NewChat({
   const picked = ordered?.find((project) => project.id === draft.value.projectId);
   const project = picked ?? ordered?.[0];
   async function chatFor(projectId: string): Promise<Created | undefined> {
-    if (created?.projectId === projectId) return created;
-    const made = await action.run({ type: 'createChat', projectId });
+    const key = `${projectId}:${mode.value}`;
+    if (created?.key === key) return created;
+    const made = await action.run({
+      type: 'createChat',
+      projectId,
+      useWorktree: mode.value === 'worktree',
+    });
     if (!made) return undefined;
-    const chat = { projectId, ...made };
+    const chat = { key, ...made };
     setCreated(chat);
     return chat;
   }
@@ -140,6 +181,7 @@ export function NewChat({
           selected={project?.id ?? null}
           onSelect={(id) => draft.update({ ...draft.value, projectId: id })}
         />
+        <WorkModePicker value={mode.value} onChange={mode.update} />
       </Page>
       <Composer
         active={false}

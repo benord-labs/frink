@@ -33,6 +33,8 @@ export const mobileRequestSchema = z.discriminatedUnion('type', [
     projectId: id,
     // Omitted when the phone starts a chat from its first message; the computer names it from that.
     name: z.string().trim().min(1).max(100).optional(),
+    // False works in the project folder itself, like desktop's Local mode. Older phones omit it.
+    useWorktree: z.boolean().optional(),
   }),
   z.object({
     type: z.literal('sendMessage'),

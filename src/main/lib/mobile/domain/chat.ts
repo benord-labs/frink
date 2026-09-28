@@ -218,7 +218,7 @@ export async function createMobileChat(input: Extract<MobileRequest, { type: 'cr
     projectId: input.projectId,
     name: input.name,
     mode: 'agent',
-    useWorktree: true,
+    useWorktree: input.useWorktree ?? true,
   });
   return { chatId: chat.id, subChatId: chat.subChats[0].id };
 }
