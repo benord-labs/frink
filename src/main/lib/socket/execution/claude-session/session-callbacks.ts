@@ -5,6 +5,7 @@ import { createTaskStopHook, type TaskStopHook } from '../../../task-stop-hook';
 import { turnOwesTerminalSignal } from '../../../trpc/routers/frink-task-signal';
 import {
   hasLatestTaskSignalFor,
+  isTaskSignalDisarmedFor,
   markQuietEndIfUnsignaled,
   recordTaskSignalFromToolCall,
   suppressQuietEndForPlanTurn,
@@ -163,7 +164,9 @@ function createClaudeStopHook(activeTurn: ActiveTurn): TaskStopHook {
         !execution.taskSignalReady ||
         !execution.signalTaskId ||
         !turnOwesTerminalSignal(execution.isPlanMode, execution.flowPlanAutoApprove, turn) ||
-        (await hasLatestTaskSignalFor(execution.executionContextId, turn.planSubmitted))
+        (await hasLatestTaskSignalFor(execution.executionContextId, turn.planSubmitted)) ||
+        // The handler refused a dead target and disarmed the tool — nothing left to chase.
+        (await isTaskSignalDisarmedFor(execution.executionContextId))
       );
     },
     isAborted,

@@ -80,9 +80,10 @@ export async function finalizeFlowSignalBeforeSessionDisposition(
 /**
  * Nothing can consume a signal aimed at this task: the row is gone, its status is terminal-final, or
  * its RUN is terminal. The run check is the one status alone misses — a parked (`needs_attention`)
- * task outlives its run being cancelled, which left the stop hook armed after a Stop.
+ * task outlives its run being cancelled, which left the stop hook armed after a Stop. Also the
+ * `frink_task_signal` handler's call-time check, so the tool refuses exactly what arming disarms.
  */
-async function isSignalTargetDead(task: SignalTaskRow): Promise<boolean> {
+export async function isSignalTargetDead(task: SignalTaskRow): Promise<boolean> {
   if (!task) return true;
   if (isTerminalFinalTaskStatus(task.status)) return true;
   return isFlowRunSignalDead(getDatabase(), task.flowRunId);

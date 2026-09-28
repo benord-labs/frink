@@ -172,6 +172,7 @@ export function registerClaudeTurnBindingTests(harness: ClaudeTurnBindingHarness
         getFlowDriveInfoForSubChat,
         dynamicChatServer.setCurrentExecutionChat,
         dynamicChatServer.getLatestTaskSignal,
+        dynamicChatServer.isTaskSignalDisarmed,
         dynamicChatServer.bindChannelExecution,
       ]) {
         vi.mocked(mock).mockReset();
@@ -362,11 +363,14 @@ function registerStopHookTests(harness: ClaudeTurnBindingHarness): void {
   });
 
   it.each([
-    ['a plain chat never blocks', false, ['allow', 'allow', 'allow']],
-    ['a task chat blocks until its signal lands', true, ['block', 'allow']],
-  ])('fresh Stop: %s', async (_name, taskChat, expected) => {
+    ['a plain chat never blocks', false, ['allow', 'allow', 'allow'], false],
+    ['a task chat blocks until its signal lands', true, ['block', 'allow'], false],
+    // sc-2771: the handler refused a dead target and disarmed the tool — re-asking gets the same no.
+    ['a task chat whose signal target was refused is not chased', true, ['allow'], true],
+  ])('fresh Stop: %s', async (_name, taskChat, expected, disarmed) => {
     const decisions: StopDecision[] = [];
     vi.mocked(dynamicChatServer.getLatestTaskSignal).mockReturnValue(undefined);
+    vi.mocked(dynamicChatServer.isTaskSignalDisarmed).mockReturnValue(disarmed);
     if (taskChat) {
       mcpMounted(true);
       pinTask('task-fresh');

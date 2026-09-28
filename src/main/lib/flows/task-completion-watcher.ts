@@ -42,6 +42,9 @@ const TERMINAL_STATUSES = [
 const advancedTaskIds = new Set<string>();
 /** Tasks already reported as dispatched-but-never-executed this process (warn once each). */
 const reportedNeverExecuted = new Set<string>();
+/** Tasks already reported as terminal-but-unadvanced (node still active) this process. */
+const reportedStranded = new Set<string>();
+const ACTIVE_NODE_RUN_STATUSES = new Set(['running', 'awaiting_input', 'blocked']);
 
 let interval: NodeJS.Timeout | null = null;
 
@@ -242,11 +245,38 @@ async function advanceTerminalTask(db: ReturnType<typeof getDatabase>, task: Tas
     // An identical row means the NODE was already terminal instead — keep the dedup entry.
     const fresh = await getTaskById(db, task.id);
     if (fresh && !sameTaskRow(fresh, task)) advancedTaskIds.delete(task.id);
+    else await reportIfNodeStranded(db, task, nodeRunId);
   } catch (err) {
     captureMainException(err, { surface: 'flow-task-completion-watcher', stage: 'advance' });
     log.warn('[FlowsWatcher] advanceFlowRun threw', { taskId: task.id, flowRunId, nodeRunId, err });
     advancedTaskIds.delete(task.id);
   }
+}
+
+/**
+ * The dedup entry is kept on the premise that the node is already terminal. When it is NOT, the
+ * task will never be retried and its run stalls with no error — say so, once per task.
+ */
+async function reportIfNodeStranded(
+  db: ReturnType<typeof getDatabase>,
+  task: Task,
+  nodeRunId: string,
+): Promise<void> {
+  if (reportedStranded.has(task.id)) return;
+  const { getNodeRun } = await import('../db/repos/node-runs');
+  const node = await getNodeRun(db, nodeRunId);
+  if (!node || !ACTIVE_NODE_RUN_STATUSES.has(node.status)) return;
+  reportedStranded.add(task.id);
+  const context = {
+    taskId: task.id,
+    taskStatus: task.status,
+    flowRunId: task.flowRunId ?? 'unknown',
+    nodeRunId,
+    nodeStatus: node.status,
+  };
+  log.warn('[FlowsWatcher] terminal task did not advance its still-active node', context);
+  const { captureMainMessage } = await import('../sentry/init');
+  captureMainMessage('Flow node stranded behind a terminal task', 'warning', context);
 }
 
 function sameTaskRow(a: Task, b: Task): boolean {
@@ -265,4 +295,5 @@ export function stopTaskCompletionWatcher(): void {
   interval = null;
   advancedTaskIds.clear();
   reportedNeverExecuted.clear();
+  reportedStranded.clear();
 }
