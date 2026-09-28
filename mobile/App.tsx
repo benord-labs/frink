@@ -8,11 +8,7 @@ import {
   View,
   useColorScheme,
 } from 'react-native';
-import {
-  SafeAreaProvider,
-  SafeAreaView,
-  useSafeAreaInsets,
-} from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   NavigationContainer,
   DarkTheme,
@@ -31,6 +27,7 @@ import {
   useConnection,
   useResource,
 } from './src/lib/connection';
+import Constants from 'expo-constants';
 import { DraftProvider } from './src/lib/drafts';
 import { Chat, Chats, NewChat } from './src/screens/Chat';
 import { FlowDetail, Flows, RunDetail } from './src/screens/Flows';
@@ -42,6 +39,19 @@ import { Page } from './src/ui/page';
 import { ThemeProvider, useTheme } from './src/ui/theme';
 import { Atmosphere } from './src/ui/material';
 import { TabBar, type Tab } from './src/ui/tab-bar';
+
+type CodeSource = { branch?: string; commit?: string; checkout?: string };
+
+/** Checkout · branch · commit the running JavaScript came from, when Metro's config knew it. */
+function AppCode() {
+  const source = Constants.expoConfig?.extra?.source as CodeSource | undefined;
+  if (!source?.commit) return null;
+  return (
+    <Label muted size={13} lines={2}>
+      App code: {[source.checkout, source.branch, source.commit].filter(Boolean).join(' · ')}
+    </Label>
+  );
+}
 
 // Reason: Connection status and revocation feedback stay together for the MVP.
 // fallow-ignore-next-line complexity
@@ -102,6 +112,7 @@ function ConnectionDetails({ onBack }: { onBack: () => void }) {
           For security, revoke this device in Settings → Mobile on your computer if you no longer
           use it.
         </Label>
+        <AppCode />
       </View>
       {error && <Notice error>{error}</Notice>}
       <Button
