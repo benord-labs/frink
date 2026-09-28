@@ -272,12 +272,16 @@ async function persistAndDispatchMessage(
   // 'submit-message' appends a fresh user message; 'regenerate-message' replays an existing one.
   if (payload.trigger !== 'regenerate-message') {
     try {
-      await appendUserMessageLocal(getDatabase(), payload.subChatId, {
+      const userMessage = {
         id: payload.userMessage.id,
-        role: 'user',
+        role: 'user' as const,
         parts: payload.userMessage.parts ?? [],
         ...(payload.userMessage.metadata ? { metadata: payload.userMessage.metadata } : {}),
-      });
+      };
+      await appendUserMessageLocal(getDatabase(), payload.subChatId, userMessage);
+      // A phone send has no desktop bubble: announce it before dispatch so it precedes the reply.
+      // The sending window already holds this id and skips it.
+      broadcastToRenderer('socket:message-saved', { chatId, subChatId, message: userMessage });
     } catch (err) {
       log.error('[Socket] Failed to persist user message locally:', err);
       if (requirePersistence) throw err;
@@ -365,8 +369,8 @@ export function sendPermissionResponse(payload: PermissionResponsePayload): void
   broadcastToRenderer('socket:permission-response', payload);
 }
 
-/** Mirror of {@link sendPermissionRequest}: tell the requester's renderer to pop a
- *  timed-out prompt. */
+/** Mirror of {@link sendPermissionRequest}: tell every renderer to pop a prompt that was
+ *  answered elsewhere, timed out, or aborted. */
 export function sendPermissionDismiss(payload: PermissionDismissPayload): void {
   broadcastToRenderer('socket:permission-dismiss', payload);
 }

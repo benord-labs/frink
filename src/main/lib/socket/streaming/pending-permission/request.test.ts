@@ -4,13 +4,20 @@ vi.mock('electron-log', () => ({
   default: { warn: vi.fn() },
 }));
 
-import { createPendingPermissionRequestBroker, listPendingPermissionRequests } from './request';
+import {
+  createPendingPermissionRequestBroker,
+  listPendingPermissionRequests,
+  type PermissionResponse,
+} from './request';
 
 const sendPermissionDismiss = vi.fn();
 const sendPermissionRequest = vi.fn();
+let respond: (response: PermissionResponse) => void = () => {};
 const broker = createPendingPermissionRequestBroker({
   getExecutionSignal: () => undefined,
-  onResponse: vi.fn(),
+  onResponse: (callback) => {
+    respond = callback;
+  },
   sendDismiss: sendPermissionDismiss,
   sendRequest: sendPermissionRequest,
 });
@@ -47,6 +54,28 @@ describe('pending permission request recovery', () => {
     expect(listPendingPermissionRequests()).toEqual([]);
     expect(sendPermissionDismiss).toHaveBeenCalledWith({
       requestId: 'request-1',
+      chatId: 'chat-1',
+      subChatId: 'subchat-1',
+    });
+  });
+
+  // An answer from the phone (or another window) must pop the desktop card too.
+  it('dismisses the prompt everywhere when any source answers it', async () => {
+    const pending = broker.request({
+      chatId: 'chat-1',
+      subChatId: 'subchat-1',
+      requestId: 'request-2',
+      type: 'bash',
+      path: 'echo hello',
+      operation: 'bash',
+    });
+
+    respond({ chatId: 'chat-1', subChatId: 'subchat-1', requestId: 'request-2', approved: true });
+
+    await expect(pending).resolves.toMatchObject({ approved: true });
+    expect(listPendingPermissionRequests()).toEqual([]);
+    expect(sendPermissionDismiss).toHaveBeenCalledWith({
+      requestId: 'request-2',
       chatId: 'chat-1',
       subChatId: 'subchat-1',
     });
