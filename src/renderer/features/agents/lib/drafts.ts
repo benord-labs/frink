@@ -129,9 +129,17 @@ function hasItems(list: unknown[] | undefined): boolean {
   return (list?.length ?? 0) > 0;
 }
 
-function hasDraftContent(draft: DraftContent): boolean {
+/** Whether a draft — stored or restored — holds anything the user could still send. */
+export function hasDraftContent(draft: {
+  text: string | null;
+  images?: unknown[];
+  files?: unknown[];
+  textContexts?: unknown[];
+  pastedTexts?: unknown[];
+  task?: unknown;
+}): boolean {
   const attachments = [draft.images, draft.files, draft.textContexts, draft.pastedTexts];
-  return Boolean(draft.text.trim() || draft.task) || attachments.some(hasItems);
+  return Boolean(draft.text?.trim() || draft.task) || attachments.some(hasItems);
 }
 
 /** Revoke blob URLs associated with a draft item */
@@ -481,6 +489,10 @@ export function replaceDraftText(key: string, text: string, expireStale = false)
   const stamp = expireStale ? readDraftStamp(key) : null;
   if (stamp !== null && Date.now() - stamp > STALE_DRAFT_MS) clearDraft(key);
   commitDraft(key, { ...loadGlobalDrafts()[key], text, updatedAt: Date.now() });
+}
+
+export function writeSubChatDraft(chatId: string, subChatId: string, state: DraftState): void {
+  writeDraft(getSubChatDraftKey(chatId, subChatId), state);
 }
 
 export function saveSubChatDraftText(chatId: string, subChatId: string, text: string): void {
