@@ -17,6 +17,7 @@ const {
   getCloudProjectByIdMock,
   updateChatMock,
   updateTaskStatusMock,
+  getTaskByIdMock,
   createChatMock,
   createSubChatMock,
   getProjectAiAccountMock,
@@ -27,6 +28,7 @@ const {
   getCloudProjectByIdMock: vi.fn(),
   updateChatMock: vi.fn(),
   updateTaskStatusMock: vi.fn(),
+  getTaskByIdMock: vi.fn(),
   createChatMock: vi.fn(),
   createSubChatMock: vi.fn(),
   getProjectAiAccountMock: vi.fn(),
@@ -63,6 +65,7 @@ vi.mock('../db/repos/chats', () => ({ updateChat: updateChatMock, createChat: cr
 vi.mock('../db/repos/tasks', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../db/repos/tasks')>()),
   updateTaskStatus: updateTaskStatusMock,
+  getTaskById: getTaskByIdMock,
 }));
 vi.mock('../db/repos/project-ai-accounts', () => ({
   getProjectAiAccount: getProjectAiAccountMock,
@@ -150,6 +153,7 @@ describe('handleClaimedTask — model forwarding into task:chat-ready', () => {
     createChatMock.mockResolvedValue({ id: 'chat-1' });
     createSubChatMock.mockResolvedValue({ id: 'sub-1' });
     updateTaskStatusMock.mockResolvedValue({ id: 'task-model-1', status: 'running' });
+    getTaskByIdMock.mockResolvedValue({ id: 'task-model-1', status: 'running' });
   });
 
   afterEach(() => {

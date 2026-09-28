@@ -4,11 +4,16 @@ import {
   clearActiveFlowTaskForChatIfMatches,
   consumeDispatchMode,
   getActiveFlowTaskForChat,
+  getDispatchedSubChatForTask,
   matchDispatchModeForSend,
   registerPendingDispatchMode,
   resolveFlowContinuationExecutionTask,
   setActiveFlowTaskForChat,
 } from './dispatch-registry';
+import {
+  _clearActiveExecutionsForTests,
+  _registerExecutionForTests,
+} from '../socket/streaming/execution-registry';
 
 const ACTIVE_FLOW_CHAT_ID = 'active-flow-chat-test-id';
 const ACTIVE_FLOW_CHAT_B = 'active-flow-chat-test-b';
@@ -167,5 +172,47 @@ describe('pendingDispatchMode', () => {
   it('scopes records per sub-chat: a record for A never applies to B', () => {
     registerPendingDispatchMode(SUB_CHAT_A, TASK_ID, 'plan');
     expect(matchDispatchModeForSend(SUB_CHAT_B, TASK_ID)).toBeNull();
+  });
+});
+
+describe('dispatchedSubChatByTask (sc-3263 cancel reach)', () => {
+  it('records the sub-chat a task was dispatched into; a re-dispatch overwrites it', () => {
+    registerPendingDispatchMode('sc-first', 'task-reach-1', 'execute');
+    expect(getDispatchedSubChatForTask('task-reach-1')).toBe('sc-first');
+    registerPendingDispatchMode('sc-second', 'task-reach-1', 'execute');
+    expect(getDispatchedSubChatForTask('task-reach-1')).toBe('sc-second');
+    consumeDispatchMode('sc-first', 'task-reach-1');
+    consumeDispatchMode('sc-second', 'task-reach-1');
+    // Consuming the send-mode binding must not forget where the task's turn runs.
+    expect(getDispatchedSubChatForTask('task-reach-1')).toBe('sc-second');
+  });
+
+  it('returns null for a task that never dispatched', () => {
+    expect(getDispatchedSubChatForTask('task-never')).toBeNull();
+  });
+
+  it('over the soft cap, prunes only settled entries; a live turn is never evicted', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+      registerPendingDispatchMode('sc-live', 'task-live', 'execute');
+      _registerExecutionForTests('sc-live', new AbortController()); // still streaming
+      registerPendingDispatchMode('sc-done', 'task-done', 'execute'); // turn ended, no execution
+      vi.setSystemTime(new Date('2026-01-01T02:00:00Z')); // both settled by age
+      for (let i = 0; i < 500; i += 1) {
+        registerPendingDispatchMode(`sc-cap-${i}`, `task-cap-${i}`, 'execute');
+        consumeDispatchMode(`sc-cap-${i}`, `task-cap-${i}`);
+      }
+      expect(getDispatchedSubChatForTask('task-live')).toBe('sc-live');
+      expect(getDispatchedSubChatForTask('task-done')).toBeNull();
+      // Fresh (unsettled) entries are kept even over the cap: their turn may not have started yet.
+      expect(getDispatchedSubChatForTask('task-cap-0')).toBe('sc-cap-0');
+      expect(getDispatchedSubChatForTask('task-cap-499')).toBe('sc-cap-499');
+    } finally {
+      vi.useRealTimers();
+      _clearActiveExecutionsForTests();
+      consumeDispatchMode('sc-live', 'task-live');
+      consumeDispatchMode('sc-done', 'task-done');
+    }
   });
 });

@@ -48,6 +48,7 @@ import { getProjectAiAccount as getProjectAiAccountLocal } from '../db/repos/pro
 import { getProjectById as getLocalProjectById } from '../db/repos/projects';
 import { createSubChat, getSubChatById, getSubChatForChat } from '../db/repos/sub-chats';
 import {
+  getTaskById,
   parseResultRecord,
   taskResultSchema,
   type TaskResultRecord,
@@ -685,7 +686,7 @@ async function createChatForTask(task: DbTask): Promise<{
     }
   }
 
-  // 5. Update task with chatId/subChatId in result (non-critical - don't fail if this errors)
+  // 5. Stamp chatId/subChatId (non-critical). Guarded so a Cancel landing mid-prep stays cancelled.
   try {
     const updatedTask = await updateTaskStatusLocal(getDatabase(), task.id, 'running', {
       result: {
@@ -702,10 +703,10 @@ async function createChatForTask(task: DbTask): Promise<{
         ...(modelFallbackReason ? { modelFallbackReason } : {}),
       },
       ...(task.executedBy ? { executedBy: task.executedBy } : {}),
+      expectStatuses: ['running'],
     });
     if (!updatedTask) {
-      // biome-ignore lint/suspicious/noConsole: keep visibility for auth/user scope mismatches
-      console.warn('[TaskExecutor] Task status update returned null while setting running state', {
+      log.info('[TaskExecutor] Task left running while being prepared; not dispatching', {
         taskId: task.id,
       });
     }
@@ -1011,6 +1012,8 @@ async function handleClaimedTask(task: DbTask): Promise<void> {
       isRetry,
       isUserRetryClaim,
     } = await createChatForTask(task);
+    // Cancelled while being prepared: there was no session to abort, so don't start one.
+    if ((await getTaskById(getDatabase(), task.id))?.status !== 'running') return;
 
     // Unpark keys on the tasks.retry claim ONLY — a deliberate re-dispatch (isRetry may be true)
     // has already flipped its run back to `running` before dispatch, so unparking would refuse

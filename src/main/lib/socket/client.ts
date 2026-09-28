@@ -28,6 +28,7 @@ import {
   setStreamId as setStreamIdLocal,
 } from '../db/repos/sub-chats';
 import { consumeDispatchMode, matchDispatchModeForSend } from '../task-executor/dispatch-registry';
+import { abortIfTaskNoLongerRunning } from '../tasks/dispatch-cancel-fence';
 import { runSendSideNaming } from './naming';
 import { withMessageAdmission } from './execution/send-admission';
 import { createLiveStreamTransport } from './streaming/live-stream/transport';
@@ -339,7 +340,11 @@ async function persistAndDispatchMessage(
     navigationSessionId: payload.navigationSessionId,
     expectedFlowTaskId: payload.expectedFlowTaskId,
     sourceWebContentsId: payload.sourceWebContentsId,
-    onExecutionStarted,
+    // A dispatched turn re-checks its task once registered, closing the Cancel-before-start gap.
+    onExecutionStarted: (error?: Error) => {
+      onExecutionStarted(error);
+      if (!error && dispatchTaskId) void abortIfTaskNoLongerRunning(dispatchTaskId, subChatId);
+    },
   });
 }
 
