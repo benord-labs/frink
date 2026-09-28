@@ -7394,29 +7394,56 @@ index 9c51958f9..08dea17ab 100644
              }),
          ),
 diff --git a/codex-rs/config/src/merge.rs b/codex-rs/config/src/merge.rs
-index 15fde6a37..7759fcee8 100644
+index 15fde6a..be2dccb 100644
 --- a/codex-rs/config/src/merge.rs
 +++ b/codex-rs/config/src/merge.rs
-@@ -96,6 +96,14 @@ fn merge_toml_values_at_path(base: &mut TomlValue, overlay: &TomlValue, path: &m
-     {
-         normalize_key_aliases(path, base_table);
-         let mut overlay_table = overlay_table.clone();
-+        if matches!(path.as_slice(), [servers] if servers == "mcp_servers")
-+            && matches!(
-+                overlay_table.remove("__frink_replace"),
-+                Some(TomlValue::Boolean(true))
-+            )
-+        {
-+            base_table.clear();
+@@ -72,7 +72,33 @@ pub fn is_structured_feature_path<S: AsRef<str>>(path: &[S]) -> bool {
+         )
+ }
+ 
++/// Frink sends `mcp_servers.__frink_replace = true` to replace (not merge) lower-layer MCP servers.
++/// The sentinel is always stripped; lower layers are discarded only for an exact `true`. Stripping
++/// on insert keeps replace semantics because layers merge low to high into one accumulator, so a
++/// missing `mcp_servers` key means no lower layer defined any server.
++fn strip_frink_mcp_replace(path: &[String], overlay: &TomlValue) -> Option<(TomlValue, bool)> {
++    if !matches!(path, [servers] if servers == "mcp_servers") {
++        return None;
++    }
++    let TomlValue::Table(table) = overlay else {
++        return None;
++    };
++    let mut table = table.clone();
++    let sentinel = table.remove("__frink_replace")?;
++    Some((
++        TomlValue::Table(table),
++        matches!(sentinel, TomlValue::Boolean(true)),
++    ))
++}
++
+ fn merge_toml_values_at_path(base: &mut TomlValue, overlay: &TomlValue, path: &mut Vec<String>) {
++    if let Some((stripped, replace)) = strip_frink_mcp_replace(path, overlay) {
++        if replace {
++            *base = TomlValue::Table(toml::map::Map::new());
 +        }
-         normalize_key_aliases(path, &mut overlay_table);
-         if is_network_domains_path(path) {
-             normalize_network_domain_keys(base_table);
++        merge_toml_values_at_path(base, &stripped, path);
++        return;
++    }
+     replace_shell_environment_policy_filter_representation(base, overlay, path);
+ 
+     if is_structured_feature_path(path) {
+@@ -142,6 +168,7 @@ fn merge_toml_values_at_path(base: &mut TomlValue, overlay: &TomlValue, path: &m
+             if let Some(existing) = base_table.get_mut(&key) {
+                 merge_toml_values_at_path(existing, &value, path);
+             } else {
++                let value = strip_frink_mcp_replace(path, &value).map_or(value, |(value, _)| value);
+                 base_table.insert(key, normalized_with_key_aliases(&value, path));
+             }
+             path.pop();
 diff --git a/codex-rs/config/src/merge_tests.rs b/codex-rs/config/src/merge_tests.rs
-index 024d2639f..584f214eb 100644
+index 024d263..59d85ac 100644
 --- a/codex-rs/config/src/merge_tests.rs
 +++ b/codex-rs/config/src/merge_tests.rs
-@@ -690,3 +690,49 @@ exclude = []
+@@ -690,3 +690,239 @@ exclude = []
          assert_eq!(base, overlay);
      }
  }
@@ -7465,6 +7492,196 @@ index 024d2639f..584f214eb 100644
 +"#,
 +        )
 +    );
++}
++
++#[test]
++fn frink_mcp_replace_on_empty_base_inserts_servers_without_sentinel() {
++    let mut base = parse_toml("");
++    let overlay = parse_toml(
++        r#"
++[mcp_servers]
++__frink_replace = true
++
++[mcp_servers.frink]
++command = "frink"
++"#,
++    );
++
++    merge_toml_values(&mut base, &overlay);
++
++    assert_eq!(
++        base,
++        parse_toml(
++            r#"
++[mcp_servers.frink]
++command = "frink"
++"#,
++        )
++    );
++}
++
++#[test]
++fn frink_mcp_replace_when_base_lacks_mcp_servers_keeps_other_keys() {
++    let mut base = parse_toml(r#"model = "native-model""#);
++    let overlay = parse_toml(
++        r#"
++[mcp_servers]
++__frink_replace = true
++
++[mcp_servers.frink]
++url = "https://frink.example/mcp"
++"#,
++    );
++
++    merge_toml_values(&mut base, &overlay);
++
++    assert_eq!(
++        base,
++        parse_toml(
++            r#"
++model = "native-model"
++
++[mcp_servers.frink]
++url = "https://frink.example/mcp"
++"#,
++        )
++    );
++}
++
++#[test]
++fn frink_mcp_replace_over_non_table_base() {
++    let mut base = parse_toml(r#"mcp_servers = "bogus""#);
++    let overlay = parse_toml(
++        r#"
++[mcp_servers]
++__frink_replace = true
++
++[mcp_servers.frink]
++command = "frink"
++"#,
++    );
++
++    merge_toml_values(&mut base, &overlay);
++
++    assert_eq!(
++        base,
++        parse_toml(
++            r#"
++[mcp_servers.frink]
++command = "frink"
++"#,
++        )
++    );
++}
++
++#[test]
++fn frink_mcp_replace_alone_leaves_an_empty_server_table() {
++    let mut base = parse_toml(
++        r#"
++[mcp_servers.native]
++command = "native"
++"#,
++    );
++    let overlay = parse_toml(
++        r#"
++[mcp_servers]
++__frink_replace = true
++"#,
++    );
++
++    merge_toml_values(&mut base, &overlay);
++
++    assert_eq!(base, parse_toml("[mcp_servers]"));
++}
++
++#[test]
++fn frink_mcp_replace_applied_twice_keeps_only_the_top_layer() {
++    let mut base = parse_toml(
++        r#"
++[mcp_servers.native]
++command = "native"
++"#,
++    );
++    let lower = parse_toml(
++        r#"
++[mcp_servers]
++__frink_replace = true
++
++[mcp_servers.lower]
++command = "lower"
++"#,
++    );
++    let upper = parse_toml(
++        r#"
++[mcp_servers]
++__frink_replace = true
++
++[mcp_servers.upper]
++command = "upper"
++"#,
++    );
++
++    merge_toml_values(&mut base, &lower);
++    merge_toml_values(&mut base, &upper);
++
++    assert_eq!(
++        base,
++        parse_toml(
++            r#"
++[mcp_servers.upper]
++command = "upper"
++"#,
++        )
++    );
++}
++
++#[test]
++fn frink_mcp_non_true_sentinel_is_stripped_without_clearing() {
++    let mut base = parse_toml(
++        r#"
++[mcp_servers.native]
++command = "native"
++"#,
++    );
++    let overlay = parse_toml(
++        r#"
++[mcp_servers]
++__frink_replace = false
++
++[mcp_servers.frink]
++command = "frink"
++"#,
++    );
++
++    merge_toml_values(&mut base, &overlay);
++
++    assert_eq!(
++        base,
++        parse_toml(
++            r#"
++[mcp_servers.native]
++command = "native"
++
++[mcp_servers.frink]
++command = "frink"
++"#,
++        )
++    );
++}
++
++#[test]
++fn frink_mcp_sentinel_under_a_profile_is_left_untouched() {
++    let mut base = parse_toml("");
++    let overlay = parse_toml(
++        r#"
++[profiles.work.mcp_servers]
++__frink_replace = true
++"#,
++    );
++
++    merge_toml_values(&mut base, &overlay);
++
++    assert_eq!(base, overlay);
 +}
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
 index 7177740fe..1b4c6d278 100644
