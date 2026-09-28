@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -13,6 +14,7 @@ import { Button, GUTTER, Icon, Notice, Row, Section, bareInput } from '../../../
 import { useTheme } from '../../../ui/theme';
 import { glassStyle } from '../../../ui/material';
 import { ComposerControls, type ComposerPatch } from './controls';
+import { LINE, messageInputSizing } from './input-sizing';
 import { Sheet } from './sheet';
 import {
   attachmentsSupported,
@@ -26,10 +28,8 @@ export type { ComposerPatch } from './controls';
 
 // Pill geometry: a 22pt text line with 12pt above and below makes a 46pt pill. The 32pt action
 // keeps a 7pt margin, so it shares the centre of a single line and stays on the last line as text grows.
-const LINE = 22;
 const PAD = 12;
 const ACTION = 32;
-const MAX_LINES = 6;
 // iOS scales lineHeight with Dynamic Type, so every height derived from LINE scales with it too.
 const MAX_FONT_SCALE = 1.6;
 
@@ -258,8 +258,7 @@ export function Composer({
   const t = useTheme();
   const line = useLine();
   const [contentHeight, setContentHeight] = useState(LINE);
-  // A cleared draft collapses at once; web textareas never report a shrinking scroll height.
-  const lines = value ? Math.max(1, Math.round(contentHeight / line)) : 1;
+  const sizing = messageInputSizing(Platform.OS === 'web', line, contentHeight, !!value);
   const canSend =
     (!!value.trim() || !!attachments?.ids.length) &&
     !busy &&
@@ -357,20 +356,13 @@ export function Composer({
               multiline
               maxLength={32000}
               maxFontSizeMultiplier={MAX_FONT_SCALE}
-              scrollEnabled={lines > MAX_LINES}
-              onContentSizeChange={(event) =>
-                setContentHeight(event.nativeEvent.contentSize.height)
+              scrollEnabled={sizing.scrollEnabled}
+              onContentSizeChange={
+                sizing.measure
+                  ? (event) => setContentHeight(event.nativeEvent.contentSize.height)
+                  : undefined
               }
-              style={[
-                {
-                  height: Math.min(lines, MAX_LINES) * line,
-                  padding: 0,
-                  fontSize: 16,
-                  lineHeight: LINE,
-                  color: t.text,
-                },
-                bareInput,
-              ]}
+              style={[{ padding: 0, fontSize: 16, color: t.text }, sizing.style, bareInput]}
             />
           )}
         </View>
