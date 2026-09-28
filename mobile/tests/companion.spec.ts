@@ -682,6 +682,15 @@ for (const colorScheme of ['dark', 'light'] as const) {
     await expect(
       page.getByRole('radio', { name: 'Documentation site', exact: true }),
     ).toBeChecked();
+    // A worktree by default, as on desktop; Local works in the project folder instead.
+    await expect(page.getByRole('tab', { name: 'Worktree', exact: true })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    await page.getByRole('tab', { name: 'Local', exact: true }).click();
+    await expect(
+      page.getByText('Works in your project folder. Changes show up right away.'),
+    ).toBeVisible();
     await page.getByRole('textbox', { name: 'Message', exact: true }).fill('Validate the release');
     await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled();
     await page.screenshot({ path: `test-results/new-chat-${colorScheme}.png`, fullPage: true });
@@ -695,7 +704,11 @@ for (const colorScheme of ['dark', 'light'] as const) {
     const created = requestOf('createChat');
     const firstMessage = requestOf('sendMessage');
     await page.getByRole('button', { name: 'Send message', exact: true }).click();
-    expect((await created).postDataJSON()).toEqual({ type: 'createChat', projectId: 'project-2' });
+    expect((await created).postDataJSON()).toEqual({
+      type: 'createChat',
+      projectId: 'project-2',
+      useWorktree: false,
+    });
     expect((await firstMessage).postDataJSON()).toMatchObject({
       type: 'sendMessage',
       chatId: 'chat-1',
