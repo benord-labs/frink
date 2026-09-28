@@ -5,6 +5,7 @@ import { lastActiveTabPerPaneAtom, openFilesAtom } from '@/lib/code-editor/state
 import type { ChatMode } from '../../../../shared/types/chat-mode';
 import type { ApprovedPlanContext } from '../../../../shared/types/plan';
 import {
+  createMainBackedAtomFamily,
   createPersistedAtomFamily,
   createRuntimeAtomFamily,
 } from '../../../lib/atoms/atom-family-factory';
@@ -136,10 +137,11 @@ export const newChatPaneModelMapAtom = atomWithWindowStorage<Record<number, stri
   { getOnInit: true },
 );
 
-// Per-chat model selection (persisted)
-export const lastSelectedModelIdAtomFamily = createPersistedAtomFamily(
+// Per-chat model selection. Main owns it (shared with the phone); this is the window's cache.
+export const lastSelectedModelIdAtomFamily = createMainBackedAtomFamily(
   'agents:lastSelectedModelId:perChat',
   'sonnet',
+  'modelId',
 );
 
 // Global fallback for contexts without a chatId (e.g. NewChatForm)
@@ -159,9 +161,10 @@ export const chatModeAtomFamily = createPersistedAtomFamily<ChatMode>(
  * Per-chat Auto state, persisted and defaulting on. A Flow seeds it on dispatch, so this single
  * value governs every turn in the chat — and, since it is keyed by parent chat id, every sub-chat.
  */
-export const autoModePerChatAtomFamily = createPersistedAtomFamily(
+export const autoModePerChatAtomFamily = createMainBackedAtomFamily(
   'agents:autoModeToolApproval:perChat',
   true,
+  'autoMode',
 );
 
 export const chatModeAtom = atomWithStorage<ChatMode>('agents:chatMode', 'agent', undefined, {

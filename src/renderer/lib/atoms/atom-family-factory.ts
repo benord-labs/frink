@@ -2,6 +2,7 @@ import type { WritableAtom } from 'jotai';
 import { atom } from 'jotai';
 import { atomFamily, atomWithStorage } from 'jotai/utils';
 import { appStore } from '../jotai-store';
+import { type ComposerField, persistComposerChat } from './composer-persistence';
 
 /**
  * A per-key map atom created by the factories below. The per-key atoms handed out by
@@ -131,4 +132,64 @@ export function createPersistedAtomFamily<T>(storageKey: string, defaultValue: T
  */
 export function createRuntimeAtomFamily<T>(defaultValue: T) {
   return mapAtomFamily(atom<Record<string, T>>({}), defaultValue);
+}
+
+/** The cache map behind each main-backed composer field, for echoes and hydration to write. */
+const composerCacheMaps = new Map<
+  ComposerField,
+  WritableAtom<Record<string, unknown>, [Record<string, unknown>], void>
+>();
+
+/** A per-chat composer setting main owns, read from a persisted cache. User writes update it
+ *  optimistically and go to main; echoes use `writeComposerCache`, which never writes back. */
+export function createMainBackedAtomFamily<T>(
+  storageKey: string,
+  defaultValue: T,
+  field: ComposerField,
+) {
+  const storageAtom = atomWithStorage<Record<string, T>>(storageKey, {}, undefined, {
+    getOnInit: true,
+  });
+  composerCacheMaps.set(
+    field,
+    storageAtom as unknown as WritableAtom<
+      Record<string, unknown>,
+      [Record<string, unknown>],
+      void
+    >,
+  );
+  const cache = mapAtomFamily(storageAtom, defaultValue);
+  return registerChatScopedFamily(
+    atomFamily((key: string) =>
+      atom(
+        (get) => get(cache(key)),
+        (get, set, value: T) => {
+          if (Object.is(get(cache(key)), value)) return;
+          set(cache(key), value);
+          persistComposerChat(key, { [field]: value });
+        },
+      ),
+    ),
+  );
+}
+
+/** Mirror main's confirmed values into this window's cache without writing them back. */
+export function writeComposerCache(
+  chatId: string,
+  values: Partial<Record<ComposerField, unknown>>,
+): void {
+  for (const [field, value] of Object.entries(values) as Array<[ComposerField, unknown]>) {
+    const mapAtom = composerCacheMaps.get(field);
+    if (!mapAtom || value === undefined) continue;
+    const current = appStore.get(mapAtom);
+    if (Object.hasOwn(current, chatId) && Object.is(current[chatId], value)) continue;
+    appStore.set(mapAtom, { ...current, [chatId]: value });
+  }
+}
+
+/** This window's cached per-chat values by field (the one-time import reads these). */
+export function readComposerCacheMaps(): Partial<Record<ComposerField, Record<string, unknown>>> {
+  return Object.fromEntries(
+    [...composerCacheMaps].map(([field, mapAtom]) => [field, appStore.get(mapAtom)]),
+  );
 }

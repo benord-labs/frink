@@ -1,5 +1,6 @@
 import { atom } from 'jotai';
-import { atomWithStorage } from 'jotai/utils';
+import { atomWithStorage, RESET } from 'jotai/utils';
+import { persistThinking } from './composer-persistence';
 
 export {
   type ActiveOverlay,
@@ -52,11 +53,22 @@ export const agentsSettingsDialogActiveTabAtom = atom<SettingsTab>('preferences'
 
 // Preferences - Extended Thinking (toggled from the model picker header)
 // When enabled, Claude will use extended thinking for deeper reasoning. Default on for new installs.
-export const extendedThinkingEnabledAtom = atomWithStorage<boolean>(
+// App-wide and owned by main (the phone toggles it too); this storage atom is the window's cache.
+export const extendedThinkingCacheAtom = atomWithStorage<boolean>(
   'preferences:extended-thinking-enabled',
   true,
   undefined,
   { getOnInit: true },
+);
+
+export const extendedThinkingEnabledAtom = atom(
+  (get) => get(extendedThinkingCacheAtom),
+  (get, set, value: boolean | typeof RESET) => {
+    const next = value === RESET ? true : value;
+    if (get(extendedThinkingCacheAtom) === next) return;
+    set(extendedThinkingCacheAtom, next);
+    persistThinking(next);
+  },
 );
 
 /** Hidden model family ids (`familyId`) — chat pickers filter; triggers/flows stay unfiltered. */

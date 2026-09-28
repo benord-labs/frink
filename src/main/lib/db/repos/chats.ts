@@ -453,6 +453,10 @@ export async function forkChatWithSubChats(
         // Forks share the source chat's project visit history so a fork moved A→B→A still
         // auto-restores the original worktree (forks intentionally share worktrees too).
         worktreeHistory: source.worktreeHistory,
+        // A fork keeps driving the same model / Auto / Fast as the chat it came from.
+        composerModelId: source.composerModelId,
+        composerAutoMode: source.composerAutoMode,
+        composerCodexFast: source.composerCodexFast,
       })
       .run();
 

@@ -29,6 +29,9 @@ export function makeLocalChat(overrides: Partial<Chat> = {}): Chat {
     mode: 'agent',
     pinnedAt: null,
     worktreeHistory: null,
+    composerModelId: null,
+    composerAutoMode: null,
+    composerCodexFast: null,
     ...overrides,
   };
 }

@@ -5,7 +5,7 @@ import { Mutex } from 'async-mutex';
 import { app } from 'electron';
 import log from 'electron-log';
 import { MOBILE_PORT } from '../../../shared/types/remote/mobile';
-import { executeMobileRequest } from './domain-api';
+import { executeMobileRequest, storeMobileAttachment } from './domain-api';
 import { MobilePairingStore } from './pairing-store';
 import { startMobileServer, stopMobileServer } from './server';
 
@@ -26,7 +26,12 @@ function getStore(): Promise<MobilePairingStore> {
 async function startServer(store: MobilePairingStore): Promise<void> {
   if (server) return;
   try {
-    server = await startMobileServer(store, executeMobileRequest);
+    server = await startMobileServer(
+      store,
+      executeMobileRequest,
+      MOBILE_PORT,
+      storeMobileAttachment,
+    );
     serverError = null;
   } catch {
     serverError = `Mobile access could not start on port ${MOBILE_PORT}. Close any other Frink instance using it, then try again.`;

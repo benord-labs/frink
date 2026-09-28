@@ -9,6 +9,7 @@ import { useTheme, type Theme } from '../../../ui/theme';
 
 type Part = NonNullable<MobileMessage['parts']>[number];
 type Tool = Extract<Part, { type: 'tool' }>;
+type Attachment = Extract<Part, { type: 'attachment' }>;
 
 const toolStates: Record<Tool['state'], { label: string; icon: IconName }> = {
   failed: { label: 'Failed', icon: 'alert-circle' },
@@ -83,11 +84,7 @@ function Activity({ tools }: { tools: Tool[] }) {
             }}
           >
             <View style={{ paddingTop: 2 }}>
-              <Icon
-                name={toolStates[tool.state].icon}
-                size={16}
-                color={toolColor(t, tool.state)}
-              />
+              <Icon name={toolStates[tool.state].icon} size={16} color={toolColor(t, tool.state)} />
             </View>
             <Text style={{ flex: 1, fontSize: 14, lineHeight: 20, color: t.text }}>
               {tool.name}
@@ -108,7 +105,7 @@ function contentGroups(parts: Part[]) {
     if (part.type === 'tool') {
       if (last?.type === 'tools') last.tools.push(part);
       else groups.push({ type: 'tools', tools: [part] });
-    } else if (part.text) groups.push({ type: 'text', text: part.text });
+    } else if (part.type === 'text' && part.text) groups.push({ type: 'text', text: part.text });
   }
   return groups;
 }
@@ -152,11 +149,51 @@ function CopyAction({ text }: { text: string }) {
   );
 }
 
+/** What was attached to a message; the files themselves stay on the computer. */
+function Attachments({ items, align }: { items: Attachment[]; align: 'flex-start' | 'flex-end' }) {
+  const t = useTheme();
+  if (!items.length) return null;
+  return (
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, justifyContent: align }}>
+      {items.map((item, index) => (
+        <View
+          key={`${item.name}-${index}`}
+          accessibilityLabel={`${item.kind === 'image' ? 'Image' : 'File'}: ${item.name}`}
+          style={{
+            maxWidth: 220,
+            height: 30,
+            paddingHorizontal: 10,
+            borderRadius: 15,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 6,
+            backgroundColor: t.fill,
+            borderWidth: StyleSheet.hairlineWidth,
+            borderColor: t.border,
+          }}
+        >
+          <Icon
+            name={item.kind === 'image' ? 'image-outline' : 'document-attach-outline'}
+            size={14}
+            color={t.secondary}
+          />
+          <Text numberOfLines={1} style={{ flexShrink: 1, fontSize: 13, color: t.secondary }}>
+            {item.name}
+          </Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 // Reason: User bubbles and assistant parts are one message renderer.
 // fallow-ignore-next-line complexity
 export function Message({ message }: { message: MobileMessage }) {
   const t = useTheme();
   const isUser = message.role === 'user';
+  const attachments = (message.parts ?? []).filter(
+    (part): part is Attachment => part.type === 'attachment',
+  );
   const groups = contentGroups(
     message.parts?.length ? message.parts : [{ type: 'text', text: message.text }],
   );
@@ -166,21 +203,24 @@ export function Message({ message }: { message: MobileMessage }) {
     .join('\n\n');
   if (isUser)
     return (
-      <View
-        testID={`message-${message.id}`}
-        style={{
-          alignSelf: 'flex-end',
-          maxWidth: '86%',
-          paddingHorizontal: 14,
-          paddingVertical: 10,
-          borderRadius: 20,
-          borderBottomRightRadius: 6,
-          backgroundColor: t.raised,
-        }}
-      >
-        <Text selectable style={{ color: t.text, fontSize: 16, lineHeight: 22 }}>
-          {text}
-        </Text>
+      <View testID={`message-${message.id}`} style={{ alignItems: 'flex-end', gap: 6 }}>
+        <Attachments items={attachments} align="flex-end" />
+        {!!text && (
+          <View
+            style={{
+              maxWidth: '86%',
+              paddingHorizontal: 14,
+              paddingVertical: 10,
+              borderRadius: 20,
+              borderBottomRightRadius: 6,
+              backgroundColor: t.raised,
+            }}
+          >
+            <Text selectable style={{ color: t.text, fontSize: 16, lineHeight: 22 }}>
+              {text}
+            </Text>
+          </View>
+        )}
       </View>
     );
   return (
@@ -190,6 +230,7 @@ export function Message({ message }: { message: MobileMessage }) {
           System
         </Text>
       )}
+      <Attachments items={attachments} align="flex-start" />
       <View>
         {groups.map((group, index) =>
           group.type === 'tools' ? (

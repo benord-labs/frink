@@ -86,6 +86,10 @@ export const chats = sqliteTable(
     // before (the move-chat collapse would otherwise abandon the original worktree).
     // MACHINE-LOCAL: do not sync to cloud — worktree paths are filesystem-local.
     worktreeHistory: text('worktree_history'),
+    // Composer settings every window and the phone share (NULL = default; see chat-composer).
+    composerModelId: text('composer_model_id'),
+    composerAutoMode: integer('composer_auto_mode', { mode: 'boolean' }),
+    composerCodexFast: integer('composer_codex_fast', { mode: 'boolean' }),
   },
   (table) => [index('chats_worktree_path_idx').on(table.worktreePath)],
 );
@@ -199,12 +203,6 @@ export const backfillProgress = sqliteTable('_backfill_progress', {
   id: text('id').primaryKey(),
   completedAt: integer('completed_at', { mode: 'timestamp' }).notNull(),
 });
-
-// ============ PROJECT PERMISSIONS ============
-// Local-first permission rows (file paths). Mirrors parked Neon migrations
-// v1 `projectPermissions` + `bashPermissions` tables dropped in ticket 14
-// (migration 0075). Replaced by `userPermissionRules` + `projectPermissionRules`
-// below (ticket 06).
 
 // ============ V2 PERMISSION RULES ============
 // Permissions overhaul ticket 06: rule-string storage for the v2 dispatcher.
@@ -669,5 +667,6 @@ export type FlowTriggerBinding = typeof flowTriggerBindings.$inferSelect;
 export type NewFlowTriggerBinding = typeof flowTriggerBindings.$inferInsert;
 export type ProjectAgent = typeof projectAgents.$inferSelect;
 export type NewProjectAgent = typeof projectAgents.$inferInsert;
+export { appPreferences } from './app-preferences';
 export { pluginInstallations } from './plugin-installations';
 export { integrations, integrationWebhooks } from './webhook-ingress';

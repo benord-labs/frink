@@ -32,6 +32,7 @@ import {
   text,
 } from './context';
 import { mobilePermissions, mobileQuestions } from './questions';
+import { resolveMobileAttachments } from './attachments';
 
 type StreamStatus = 'active' | 'held' | 'settling' | 'settled' | 'error';
 type ToolState = Extract<MobileMessagePart, { type: 'tool' }>['state'];
@@ -52,25 +53,61 @@ function toolState(part: Record<string, unknown>, streamStatus?: StreamStatus): 
   return (streamStatus && unfinishedToolStates[streamStatus]) || 'unknown';
 }
 
+// `@[pasted:<size>:<name>|<path>]` — a desktop large paste or a phone file attachment.
+const PASTED_MENTION = /@\[pasted:\d+:([^|\]]*)\|[^\]]*\]\s?/g;
+
+/** Pulls pasted-file mentions out of text so the phone shows them as attachments, not tokens. */
+export function splitPastedMentions(body: string): { text: string; names: string[] } {
+  const names: string[] = [];
+  const text = body.replace(PASTED_MENTION, (_match, name: string) => {
+    names.push(name || 'Attachment');
+    return '';
+  });
+  return { text: text.trim(), names };
+}
+
+function isImagePart(part: Record<string, unknown>): boolean {
+  if (part.type === 'data-image') return true;
+  return (
+    part.type === 'file' && typeof part.mimeType === 'string' && part.mimeType.startsWith('image/')
+  );
+}
+
+/** Text as the phone shows it: pasted-file mentions become attachment chips. */
+function textParts(body: string): MobileMessagePart[] {
+  const { text: remaining, names } = splitPastedMentions(body);
+  const chips = names.map((name) => ({ type: 'attachment', kind: 'file', name }) as const);
+  return remaining ? [...chips, { type: 'text', text: remaining }] : chips;
+}
+
+function toolPart(
+  part: Record<string, unknown>,
+  id: string,
+  streamStatus?: StreamStatus,
+): MobileMessagePart[] {
+  const name = text(part.toolName, String(part.type).slice(5)).trim();
+  if (!name) return [];
+  return [
+    {
+      type: 'tool',
+      id: text(part.toolCallId).trim() || id,
+      name,
+      state: toolState(part, streamStatus),
+    },
+  ];
+}
+
 function messagePartProjection(
   value: unknown,
   id: string,
   streamStatus?: StreamStatus,
-): MobileMessagePart | null {
+): MobileMessagePart[] {
   const part = record(value);
-  if (part.type === 'text' || part.type === SUBAGENT_TEXT_PART_TYPE) {
-    const body = part.type === 'text' ? text(part.text) : text(record(part.input).text);
-    return body ? { type: 'text', text: body } : null;
-  }
-  if (typeof part.type !== 'string' || !part.type.startsWith('tool-')) return null;
-  const name = text(part.toolName, part.type.slice(5)).trim();
-  if (!name) return null;
-  return {
-    type: 'tool',
-    id: text(part.toolCallId).trim() || id,
-    name,
-    state: toolState(part, streamStatus),
-  };
+  if (isImagePart(part)) return [{ type: 'attachment', kind: 'image', name: 'Image' }];
+  if (part.type === 'text') return textParts(text(part.text));
+  if (part.type === SUBAGENT_TEXT_PART_TYPE) return textParts(text(record(part.input).text));
+  if (typeof part.type !== 'string' || !part.type.startsWith('tool-')) return [];
+  return toolPart(part, id, streamStatus);
 }
 
 function messageProjection(value: unknown, streamStatus?: StreamStatus): MobileMessage | null {
@@ -80,11 +117,12 @@ function messageProjection(value: unknown, streamStatus?: StreamStatus): MobileM
   const status = record(message.metadata).interruptedBy ? 'settled' : streamStatus;
   const parts: MobileMessagePart[] = [];
   rawParts.forEach((part, index) => {
-    const projected = messagePartProjection(part, `${message.id}:${index}`, status);
-    const previous = parts.at(-1);
-    if (projected?.type === 'text' && previous?.type === 'text') {
-      previous.text += `\n${projected.text}`;
-    } else if (projected) parts.push(projected);
+    for (const projected of messagePartProjection(part, `${message.id}:${index}`, status)) {
+      const previous = parts.at(-1);
+      if (projected.type === 'text' && previous?.type === 'text') {
+        previous.text += `\n${projected.text}`;
+      } else parts.push(projected);
+    }
   });
   const body = parts
     .filter((part) => part.type === 'text')
@@ -185,7 +223,13 @@ export async function createMobileChat(input: Extract<MobileRequest, { type: 'cr
   return { chatId: chat.id, subChatId: chat.subChats[0].id };
 }
 
-type SendInput = { chatId: string; subChatId: string; requestId: string; text: string };
+type SendInput = {
+  chatId: string;
+  subChatId: string;
+  requestId: string;
+  text: string;
+  attachments?: string[];
+};
 export async function sendMobileMessage(
   input: SendInput,
   extra?: {
@@ -194,8 +238,18 @@ export async function sendMobileMessage(
   },
 ) {
   const message = input.text.replaceAll(HIDDEN_WAKE_MARKER, '').trim();
-  if (!message) throw new MobileApiError(400, 'Write a message before sending.');
+  if (!message && !input.attachments?.length) {
+    throw new MobileApiError(400, 'Write a message before sending.');
+  }
   const { chat } = await requireChat(input.chatId, input.subChatId);
+  const attachments = input.attachments?.length
+    ? await resolveMobileAttachments(input.attachments, {
+        chatId: chat.id,
+        subChatId: input.subChatId,
+      })
+    : null;
+  // Same layout as a desktop send: file mentions lead the text part, images follow it.
+  const mentions = attachments?.fileMentions.join(' ') ?? '';
   const payload: Parameters<typeof sendMessage>[0] = {
     chatId: chat.id,
     subChatId: input.subChatId,
@@ -203,7 +257,10 @@ export async function sendMobileMessage(
     userMessage: {
       id: input.requestId,
       role: 'user',
-      parts: [{ type: 'text', text: message }],
+      parts: [
+        { type: 'text', text: mentions ? `${mentions} ${message}` : message },
+        ...(attachments?.imageParts ?? []),
+      ],
       metadata: extra?.metadata,
     },
     expectedFlowTaskId: extra?.expectedFlowTaskId,
@@ -239,6 +296,7 @@ export async function sendMobileMessage(
       throw new MobileApiError(409, 'This Flow step changed. Refresh the chat before replying.');
     throw error;
   }
+  await attachments?.release();
   return { ok: true as const };
 }
 
