@@ -1,15 +1,7 @@
 /* eslint-disable max-lines, max-lines-per-function */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import {
-  app,
-  BrowserWindow,
-  clipboard,
-  ipcMain,
-  nativeImage,
-  nativeTheme,
-  shell,
-} from 'electron';
+import { app, BrowserWindow, clipboard, ipcMain, nativeImage, nativeTheme, shell } from 'electron';
 import log from 'electron-log';
 import { createIPCHandler, ELECTRON_TRPC_CHANNEL } from 'trpc-electron/main';
 import { isAllowedShellOpenExternalUrl } from '../../shared/shell-external-url';
@@ -19,6 +11,7 @@ import { shellOpenExternalGuarded } from '../lib/open-external-guarded';
 import { createAppRouter } from '../lib/trpc/routers';
 import { registerArtifactPreviewIpc } from '.';
 import { attachAgentAbortOnRendererLifecycle } from './navigation-abort';
+import { attachMainWindowNavigationGuard, resolveRendererEntryUrl } from './navigation-guard';
 import { windowManager } from './window-manager';
 
 // Default zoom factor — the app was designed at this zoom level
@@ -393,6 +386,11 @@ export function createMainWindow(): BrowserWindow {
 
   // Load the renderer. Signing in is a feature of the app, not a precondition for it.
   const devServerUrl = process.env.ELECTRON_RENDERER_URL;
+  const indexHtmlPath = join(__dirname, '../renderer/index.html');
+  attachMainWindowNavigationGuard(
+    window.webContents,
+    resolveRendererEntryUrl(devServerUrl, indexHtmlPath),
+  );
   if (devServerUrl) {
     window.loadURL(devServerUrl);
     // Only open DevTools automatically in development
@@ -400,7 +398,7 @@ export function createMainWindow(): BrowserWindow {
       window.webContents.openDevTools();
     }
   } else {
-    window.loadFile(join(__dirname, '../renderer/index.html'));
+    window.loadFile(indexHtmlPath);
   }
 
   // Ensure traffic lights are visible after page load (covers reload/Cmd+R case)
