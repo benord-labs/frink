@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { TRPCError } from '@trpc/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+const captureContained = vi.hoisted(() => vi.fn());
+vi.mock('../sentry', () => ({ captureContained }));
 import { MobilePairingStore } from './pairing-store';
 import { createMobileApp, startMobileServer, stopMobileServer } from './server';
 
@@ -22,6 +24,7 @@ beforeEach(async () => {
   const { pairing } = await store.pair('https://computer.tailnet.ts.net:8443');
   ({ token, deviceId } = await store.redeem(pairing.code, 'Phone'));
   execute.mockReset();
+  captureContained.mockReset();
   execute.mockResolvedValue({ queue: [] });
 });
 afterEach(async () => {
@@ -120,10 +123,13 @@ describe('mobile HTTP boundary', () => {
     const conflict = await request({ type: 'overview' });
     expect(conflict.status).toBe(409);
     expect(await conflict.json()).toEqual({ error: 'This question was already answered.' });
-    execute.mockRejectedValueOnce(new Error('/private/path secret implementation details'));
+    expect(captureContained).not.toHaveBeenCalled();
+    const fault = new Error('/private/path secret implementation details');
+    execute.mockRejectedValueOnce(fault);
     const failure = await request({ type: 'overview' });
     expect(failure.status).toBe(500);
     expect(await failure.text()).not.toMatch(/private|secret|stack/);
+    expect(captureContained).toHaveBeenCalledWith(fault, { surface: 'mobile-api', stage: '/api' });
   });
 
   it.each(['application/jsonp', 'application/json-seq', 'application/jsonbad'])(

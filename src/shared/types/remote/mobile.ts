@@ -31,7 +31,8 @@ export const mobileRequestSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('createChat'),
     projectId: id,
-    name: z.string().trim().min(1).max(100),
+    // Omitted when the phone starts a chat from its first message; the computer names it from that.
+    name: z.string().trim().min(1).max(100).optional(),
   }),
   z.object({
     type: z.literal('sendMessage'),

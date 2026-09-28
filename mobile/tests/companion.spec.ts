@@ -620,15 +620,35 @@ for (const colorScheme of ['dark', 'light'] as const) {
       await expect(page.getByRole('button').filter({ hasText: title })).toBeVisible();
     await page.screenshot({ path: `test-results/chats-${colorScheme}.png`, fullPage: true });
     await page.getByRole('button', { name: 'New chat', exact: true }).click();
-    await expect(page.getByRole('textbox', { name: 'Chat name', exact: true })).toBeVisible();
-    await page.getByRole('radio', { name: 'Frink', exact: true }).click();
+    // The project of the most recent chat is already chosen, so a first message is all it takes.
     await expect(page.getByRole('radio', { name: 'Frink', exact: true })).toBeChecked();
-    await page
-      .getByRole('textbox', { name: 'Chat name', exact: true })
-      .fill('Validate the release');
-    await page.getByRole('textbox', { name: 'Chat name', exact: true }).blur();
-    await expect(page.getByRole('button', { name: 'Create chat', exact: true })).toBeEnabled();
+    await page.getByRole('radio', { name: 'Documentation site', exact: true }).click();
+    await expect(
+      page.getByRole('radio', { name: 'Documentation site', exact: true }),
+    ).toBeChecked();
+    await page.getByRole('textbox', { name: 'Message', exact: true }).fill('Validate the release');
+    await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled();
     await page.screenshot({ path: `test-results/new-chat-${colorScheme}.png`, fullPage: true });
+    const requestOf = (type: string) =>
+      page.waitForRequest(
+        (request) =>
+          request.url().endsWith('/api') &&
+          request.method() === 'POST' &&
+          request.postDataJSON()?.type === type,
+      );
+    const created = requestOf('createChat');
+    const firstMessage = requestOf('sendMessage');
+    await page.getByRole('button', { name: 'Send message', exact: true }).click();
+    expect((await created).postDataJSON()).toEqual({ type: 'createChat', projectId: 'project-2' });
+    expect((await firstMessage).postDataJSON()).toMatchObject({
+      type: 'sendMessage',
+      chatId: 'chat-1',
+      subChatId: 'sub-1',
+      text: 'Validate the release',
+    });
+    await expect(
+      page.getByText('Check the release and prepare a deployment plan.', { exact: true }),
+    ).toBeVisible();
     await page.getByRole('button', { name: 'Go back', exact: true }).click();
     await expect(page.getByRole('tab', { name: 'Chats', exact: true })).toHaveAttribute(
       'aria-selected',
