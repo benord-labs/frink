@@ -4,7 +4,6 @@ import { withSubChatLock } from '../../../../db/repos/sub-chat-mutex';
 import {
   getSubChatById as getSubChatByIdLocal,
   seedUserMessageIfEmpty as seedUserMessageIfEmptyLocal,
-  updateSubChatMessages as updateSubChatMessagesLocal,
   updateSubChatMode as updateSubChatModeLocal,
   updateSubChatSession as updateSubChatSessionLocal,
 } from '../../../../db/repos/sub-chats';
@@ -25,8 +24,8 @@ const seedUserMessageSchema = z
 
 /**
  * Phase 1 local-first migration: sub-chat updates write to local SQLite directly.
- * The bulk-messages mutation goes through the mutex-protected RMW helper so concurrent
- * streaming chunks don't lose updates.
+ * There is deliberately no wholesale "replace messages" mutation: a renderer-supplied array is a
+ * stale read by the time it lands and would overwrite concurrent stream chunks (sc-3290).
  */
 export const subChatUpdateRouter = router({
   seedUserMessageIfEmpty: publicProcedure
@@ -38,14 +37,6 @@ export const subChatUpdateRouter = router({
         subChat: result.subChat ? mapSubChatResponse(result.subChat) : null,
       };
     }),
-  updateSubChatMessages: publicProcedure
-    .input(z.object({ id: z.string(), messages: z.string() }))
-    .mutation(async ({ input }) => {
-      const messages = JSON.parse(input.messages);
-      const updated = await updateSubChatMessagesLocal(getDatabase(), input.id, messages);
-      return updated ? mapSubChatResponse(updated) : null;
-    }),
-
   updateSubChatSession: publicProcedure
     .input(z.object({ id: z.string(), sessionId: z.string().nullable() }))
     .mutation(async ({ input }) => {
