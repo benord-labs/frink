@@ -224,6 +224,7 @@ function TrayItem({
 export function Composer({
   active,
   busy,
+  ready = true,
   value,
   onChange,
   onSend,
@@ -238,6 +239,8 @@ export function Composer({
 }: {
   active: boolean;
   busy: boolean;
+  /** False while something besides the message is still missing, such as a new chat's project. */
+  ready?: boolean;
   value: string;
   onChange: (text: string) => void;
   onSend: () => void;
@@ -246,7 +249,8 @@ export function Composer({
   onStop: () => void;
   /** The chat's composer settings; controls appear once they have loaded. */
   composer?: MobileComposer;
-  attachments: Attachments;
+  /** Omitted before the conversation exists: uploads belong to a chat, so there is nothing to attach to. */
+  attachments?: Attachments;
   onUpdate: (patch: ComposerPatch) => void;
   onMode: (mode: MobileChatMode) => void;
   onAccount: (accountId: string) => void;
@@ -257,10 +261,11 @@ export function Composer({
   // A cleared draft collapses at once; web textareas never report a shrinking scroll height.
   const lines = value ? Math.max(1, Math.round(contentHeight / line)) : 1;
   const canSend =
-    (!!value.trim() || attachments.ids.length > 0) &&
+    (!!value.trim() || !!attachments?.ids.length) &&
     !busy &&
-    !attachments.uploading &&
-    !attachments.failed;
+    ready &&
+    !attachments?.uploading &&
+    !attachments?.failed;
   return (
     <View
       style={{
@@ -300,7 +305,7 @@ export function Composer({
           onAccount={onAccount}
         />
       )}
-      {!active && attachments.items.length > 0 && (
+      {!active && attachments && attachments.items.length > 0 && (
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingHorizontal: 4 }}>
           {attachments.items.map((item) => (
             <TrayItem
@@ -321,8 +326,15 @@ export function Composer({
           borderRadius: (line + PAD * 2) / 2,
         }}
       >
-        {!active && <AttachButton attachments={attachments} disabled={busy} />}
-        <View style={{ flex: 1, minWidth: 0, paddingLeft: active ? 18 : 10, paddingVertical: PAD }}>
+        {!active && attachments && <AttachButton attachments={attachments} disabled={busy} />}
+        <View
+          style={{
+            flex: 1,
+            minWidth: 0,
+            paddingLeft: active || !attachments ? 18 : 10,
+            paddingVertical: PAD,
+          }}
+        >
           {active ? (
             <View style={{ height: line, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
               <ActivityIndicator size="small" color={t.accent} />
@@ -374,7 +386,7 @@ export function Composer({
             label="Send message"
             icon="arrow-up"
             enabled={canSend}
-            busy={busy || attachments.uploading}
+            busy={busy || !!attachments?.uploading}
             onPress={onSend}
           />
         )}

@@ -7,6 +7,7 @@ import {
 import {
   answerMobileQuestion,
   createMobileChat,
+  deleteMobileChat,
   readMobileChat,
   respondMobilePermission,
   sendMobileMessage,
@@ -21,6 +22,7 @@ import {
 import { MobileApiError, mobileCallers, requireExecutionReady } from './context';
 import { readMobileFlow, readMobileFlows, readMobileRun, resumeMobileNode } from './flows';
 import { readMobileChats, readMobileOverview, readMobileProjects } from './read';
+import { captureContained } from '../../sentry';
 
 // Reason: An exhaustive command switch keeps this transport boundary explicit.
 // fallow-ignore-next-line complexity
@@ -46,6 +48,8 @@ async function dispatch(request: MobileRequest): Promise<MobileResponses[MobileR
       return sendMobileMessage(request);
     case 'stopChat':
       return stopMobileChat(request);
+    case 'deleteChat':
+      return deleteMobileChat(request);
     case 'answerQuestion':
       return answerMobileQuestion(request);
     case 'respondPermission':
@@ -92,6 +96,8 @@ export async function executeMobileRequest(
     if (error instanceof TRPCError && ['CONFLICT', 'PRECONDITION_FAILED'].includes(error.code)) {
       throw new MobileApiError(409, 'This item changed. Refresh and try again.');
     }
+    // The phone only sees this generic message, so the real fault is reported here.
+    captureContained(error, { surface: 'mobile-api', stage: parsed.data.type });
     throw new MobileApiError(500, 'Frink could not complete this request. Try again.');
   }
 }

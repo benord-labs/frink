@@ -31,7 +31,8 @@ export const mobileRequestSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('createChat'),
     projectId: id,
-    name: z.string().trim().min(1).max(100),
+    // Omitted when the phone starts a chat from its first message; the computer names it from that.
+    name: z.string().trim().min(1).max(100).optional(),
   }),
   z.object({
     type: z.literal('sendMessage'),
@@ -61,6 +62,7 @@ export const mobileRequestSchema = z.discriminatedUnion('type', [
   }),
   z.object({ type: z.literal('setAccount'), ...chatIdentity, accountId: id.nullable() }),
   z.object({ type: z.literal('stopChat'), ...chatIdentity }),
+  z.object({ type: z.literal('deleteChat'), chatId: id }),
   z.object({
     type: z.literal('answerQuestion'),
     ...chatIdentity,
@@ -248,6 +250,7 @@ export type MobileResponses = {
   createChat: { chatId: string; subChatId: string };
   sendMessage: { ok: true };
   stopChat: { ok: true };
+  deleteChat: { ok: true };
   answerQuestion: { ok: true };
   respondPermission: { ok: true };
   composer: MobileComposer;

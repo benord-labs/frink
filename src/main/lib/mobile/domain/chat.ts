@@ -223,6 +223,24 @@ export async function createMobileChat(input: Extract<MobileRequest, { type: 'cr
   return { chatId: chat.id, subChatId: chat.subChats[0].id };
 }
 
+/** Permanently deletes an ordinary chat, as desktop's "Delete chat permanently" does. A chat that
+ *  belongs to a task or a running Flow is left to desktop, which asks what to do with that work. */
+export async function deleteMobileChat(input: Extract<MobileRequest, { type: 'deleteChat' }>) {
+  const { chat } = await requireChat(input.chatId);
+  const drivers = await Promise.all(
+    chat.subChats.map((subChat) =>
+      mobileCallers.tasks.getDrivingTaskForSubChat({ subChatId: subChat.id, fallbackTaskId: null }),
+    ),
+  );
+  if (chat.taskId || drivers.some(({ run }) => run))
+    throw new MobileApiError(
+      409,
+      'This chat belongs to a task or Flow. Delete it from Frink on your computer.',
+    );
+  await mobileCallers.chats.delete({ id: chat.id });
+  return { ok: true as const };
+}
+
 type SendInput = {
   chatId: string;
   subChatId: string;

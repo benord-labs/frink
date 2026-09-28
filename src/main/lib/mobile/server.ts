@@ -16,6 +16,7 @@ import {
 } from '../../../shared/types/remote/mobile';
 import type { MobilePairingStore } from './pairing-store';
 import { MobileApiError } from './domain/errors';
+import { captureContained } from '../sentry';
 
 export type MobileExecutor = (request: MobileRequest) => Promise<unknown>;
 export type MobileUploader = (input: {
@@ -158,6 +159,8 @@ export function createMobileApp(
       const status = domainErrorStatus[error.code as keyof typeof domainErrorStatus];
       return context.json({ error: error.message }, status);
     }
+    // The phone only sees a generic message, so this is the one place the real fault is reported.
+    captureContained(error, { surface: 'mobile-api', stage: context.req.path });
     return context.json(
       { error: 'Frink could not complete this request. Try again from the desktop.' },
       500,
