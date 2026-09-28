@@ -11,6 +11,7 @@
  */
 
 import { isCustomNodeBlockType } from '../../../../shared/lib/block-registry';
+import { agentProseGraphErrors } from '../../../../shared/lib/flows/agent-prose-limit';
 import {
   findMissingRequiredCustomNodeInputs,
   type JsonValue,
@@ -58,7 +59,11 @@ function collectMissingCustomNodeInputErrors(graph: FlowGraph): string[] {
 export function describeFlowRunBlockers(graph: FlowGraph): string | null {
   const validation = validateGraph(graph, { mode: 'run' });
   const graphErrors = validation.valid ? [] : validation.errors;
-  const blockers = [...graphErrors, ...collectMissingCustomNodeInputErrors(graph)];
+  const blockers = [
+    ...graphErrors,
+    ...agentProseGraphErrors(graph.nodes),
+    ...collectMissingCustomNodeInputErrors(graph),
+  ];
   if (blockers.length === 0) return null;
 
   // Classify on the VALIDATOR's own errors, never the combined text: node labels and input names are

@@ -43,6 +43,11 @@ import { getEffectiveNodeProjectId } from '../node-project-resolution';
 import { cfg, FieldRow, isProjectRow, type UpstreamContextProps } from '../shared';
 import { TemplateHighlightContainer } from '../shared/TemplateHighlightContainer';
 import { useTextareaSlashDetection } from '../shared/use-textarea-slash-detection';
+import {
+  INSTRUCTIONS_COUNT_ID,
+  InstructionsLengthCounter,
+  useCappedInstructionsPatch,
+} from './InstructionsLengthCounter';
 
 const UNEXPANDED_CMD_RE = /^\/\S+/;
 
@@ -121,9 +126,13 @@ export function AgentConfig({
 
   const projectPath = useProjectPath(effectiveProjectId ?? '');
 
+  const patchInstructionsWithinCap = useCappedInstructionsPatch(instructions, onConfigPatch);
+
   const handleInstructionsChange = useCallback(
-    (value: string) => onConfigPatch({ instructions: value, instructionsCommandName: '' }),
-    [onConfigPatch],
+    (value: string) => {
+      patchInstructionsWithinCap(value, '');
+    },
+    [patchInstructionsWithinCap],
   );
 
   const [activeDescendantId, setActiveDescendantId] = useState<string | undefined>(undefined);
@@ -148,8 +157,7 @@ export function AgentConfig({
       const needsLead = before.length > 0 && !before.endsWith('\n');
       const needsTrail = after.length > 0 && !after.startsWith('\n');
       const insertion = `${needsLead ? sep : ''}${body}${needsTrail ? sep : ''}`;
-      const next = before + insertion + after;
-      onConfigPatch({ instructions: next, instructionsCommandName: '' });
+      if (!patchInstructionsWithinCap(before + insertion + after, '')) return;
       requestAnimationFrame(() => {
         const el = textareaRef.current;
         if (!el) return;
@@ -158,7 +166,7 @@ export function AgentConfig({
         el.setSelectionRange(pos, pos);
       });
     },
-    [instructions, onConfigPatch, textareaRef],
+    [instructions, patchInstructionsWithinCap, textareaRef],
   );
 
   const handleCommandSelect = useCallback(
@@ -173,13 +181,10 @@ export function AgentConfig({
       const { query, slashStart } = slashState;
       const before = instructions.slice(0, slashStart);
       const after = instructions.slice(slashStart + 1 + query.length);
-      onConfigPatch({
-        instructions: before + prompt + after,
-        instructionsCommandName: command.name,
-      });
+      patchInstructionsWithinCap(before + prompt + after, command.name);
       closeSlash();
     },
-    [instructions, slashState, onConfigPatch, closeSlash],
+    [instructions, slashState, patchInstructionsWithinCap, closeSlash],
   );
 
   return (
@@ -291,7 +296,11 @@ export function AgentConfig({
           textareaId="flow-agent-instructions"
           aria-invalid={instErr ? true : undefined}
           aria-describedby={
-            [instErr ? 'flow-agent-instructions-error' : '', 'flow-agent-instructions-hint']
+            [
+              instErr ? 'flow-agent-instructions-error' : '',
+              'flow-agent-instructions-hint',
+              INSTRUCTIONS_COUNT_ID,
+            ]
               .filter(Boolean)
               .join(' ') || undefined
           }
@@ -318,6 +327,7 @@ export function AgentConfig({
             {instErr}
           </p>
         ) : null}
+        <InstructionsLengthCounter instructions={instructions} />
         <p id="flow-agent-instructions-hint" className="text-xs text-muted-foreground">
           Supports {'{{trigger.*}}'}, {'{{previous.*}}'}, and {'{{loop.*}}'} variables. The flow
           briefing reaches every agent automatically (as a system prompt) — no need to reference it

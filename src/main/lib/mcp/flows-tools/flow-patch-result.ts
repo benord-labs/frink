@@ -1,4 +1,5 @@
 import log from 'electron-log';
+import { agentProseGraphWarnings } from '../../../../shared/lib/flows/agent-prose-limit';
 import { type FlowGraph, formatFlowNodeLabel } from '../../../../shared/lib/validate-flow-graph';
 import type { TemplateVariableWarning } from '../../../../shared/lib/validate-flow-templates';
 import type {
@@ -262,9 +263,17 @@ function buildSuccessfulFlowPatchResult(params: BuildFlowPatchResultParams): Mcp
 }
 
 export function buildFlowPatchResult(params: BuildFlowPatchResultParams): McpToolResult {
-  return params.patch.status === 'partial'
-    ? buildPartialFlowPatchResult(params)
-    : buildSuccessfulFlowPatchResult(params);
+  // Near-cap agent prose rides templateWarnings, the one warning channel a saved patch returns.
+  const withProse = {
+    ...params,
+    templateWarnings: [
+      ...params.templateWarnings,
+      ...agentProseGraphWarnings(params.patch.graph.nodes),
+    ],
+  };
+  return withProse.patch.status === 'partial'
+    ? buildPartialFlowPatchResult(withProse)
+    : buildSuccessfulFlowPatchResult(withProse);
 }
 
 export async function rollbackCreatedFlow({

@@ -469,3 +469,31 @@ describe('applyPatchOperations — legacy error messages preserved', () => {
     expect(r.error).toContain('not found');
   });
 });
+
+// sc-3166: over-cap agent prose would only fail at dispatch, so the patch is refused up front.
+describe('applyPatchOperations — agent prose length cap', () => {
+  it('refuses a patch that puts instructions over the cap, naming the field and limit', () => {
+    const r = applyPatchOperations(MIN_VALID_GRAPH, [
+      { op: 'update_node', nodeId: 'n2', config: { instructions: 'a'.repeat(60_000) } },
+    ]);
+    expect(r.status).toBe('failure');
+    if (r.status !== 'failure') return;
+    expect(r.error).toContain('instructions is 60,000 characters; the limit is 50,000');
+  });
+
+  it('refuses an over-cap agentInstructions (Role), which has no editor field to limit it', () => {
+    const r = applyPatchOperations(MIN_VALID_GRAPH, [
+      { op: 'update_node', nodeId: 'n2', config: { agentInstructions: 'r'.repeat(50_001) } },
+    ]);
+    expect(r.status).toBe('failure');
+    if (r.status !== 'failure') return;
+    expect(r.error).toContain('agentInstructions is 50,001');
+  });
+
+  it('saves near-cap instructions (a warning, not a failure)', () => {
+    const r = applyPatchOperations(MIN_VALID_GRAPH, [
+      { op: 'update_node', nodeId: 'n2', config: { instructions: 'a'.repeat(45_000) } },
+    ]);
+    expect(r.status).toBe('success');
+  });
+});
