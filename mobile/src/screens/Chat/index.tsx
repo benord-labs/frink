@@ -3,7 +3,7 @@ import { KeyboardAvoidingView, Platform, Pressable, Text, View } from 'react-nat
 import type { MobileChatDetail, MobileMessage } from '../../../../src/shared/types/remote/mobile';
 import { useAction, useResource } from '../../lib/connection';
 import { useDraft } from '../../lib/drafts';
-import { Button, Icon, Label, Loading, Notice } from '../../ui/primitives';
+import { Button, GUTTER, Icon, Label, Loading, Notice } from '../../ui/primitives';
 import { Page } from '../../ui/page';
 import { Segmented } from '../../ui/segmented';
 import { ResourceStatus } from '../../ui/resource-status';
@@ -146,6 +146,65 @@ function LatestButton({ onPress }: { onPress: () => void }) {
   );
 }
 
+function DeleteButton({ disabled, onPress }: { disabled: boolean; onPress: () => void }) {
+  const t = useTheme();
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel="Delete chat"
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      onPress={onPress}
+      hitSlop={4}
+      style={({ pressed }) => ({
+        width: 44,
+        height: 44,
+        alignItems: 'center',
+        justifyContent: 'center',
+        opacity: disabled ? 0.4 : pressed ? 0.6 : 1,
+      })}
+    >
+      <Icon name="trash-outline" size={20} color={t.secondary} />
+    </Pressable>
+  );
+}
+
+/** Stands in for the composer, so the question sits where the thumb already is. */
+function DeleteConfirm({
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <View
+      style={{
+        maxWidth: 720,
+        width: '100%',
+        alignSelf: 'center',
+        paddingHorizontal: GUTTER,
+        paddingVertical: 12,
+        gap: 12,
+      }}
+    >
+      <Notice>
+        Delete this chat permanently? Its messages and its worktree on your computer are removed.
+      </Notice>
+      <View style={{ flexDirection: 'row', gap: 8 }}>
+        <Button secondary disabled={busy} onPress={onCancel} style={{ flex: 1 }}>
+          Keep chat
+        </Button>
+        <Button secondary destructive disabled={busy} onPress={onConfirm} style={{ flex: 1 }}>
+          {busy ? 'Deleting…' : 'Delete chat'}
+        </Button>
+      </View>
+    </View>
+  );
+}
+
 function targetStillOpen(data: MobileChatDetail | undefined, target: DecisionTarget | undefined) {
   if (!data || !target) return false;
   return target.type === 'question'
@@ -184,6 +243,7 @@ export function Chat({
   const { composer } = composerState;
   const attachments = useComposerAttachments(composerTarget);
   const [confirmStop, setConfirmStop] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   useEffect(() => {
     setConfirmStop(false);
   }, [id, subChatId, data?.subChatId, data?.active]);
@@ -213,6 +273,9 @@ export function Chat({
       resource.refresh();
     }
   }
+  async function remove() {
+    if (await action.run({ type: 'deleteChat', chatId: id })) onBack();
+  }
   function switchConversation(next: string) {
     if (action.busy || next === data?.subChatId) return;
     history.reset();
@@ -230,6 +293,9 @@ export function Chat({
           title={data?.chat.name ?? 'Chat'}
           context={<ChatContext active={!!data?.active} projectName={projectName} />}
           onBack={onBack}
+          action={
+            data && <DeleteButton disabled={action.busy} onPress={() => setConfirmDelete(true)} />
+          }
           scrollRef={scrolling.scrollRef}
           refreshing={resource.refreshing}
           onRefresh={resource.pull}
@@ -283,22 +349,31 @@ export function Chat({
         </Page>
         {scrolling.showLatest && <LatestButton onPress={scrolling.latest} />}
       </View>
-      {data && (data.active || (!data.questions.length && !data.permissions.length)) && (
-        <Composer
-          active={data.active}
+      {confirmDelete ? (
+        <DeleteConfirm
           busy={action.busy}
-          value={draft.value}
-          onChange={draft.update}
-          onSend={() => void send()}
-          confirmStop={confirmStop}
-          setConfirmStop={setConfirmStop}
-          onStop={() => void stop()}
-          composer={composer}
-          attachments={attachments}
-          onUpdate={(patch) => composerState.change({ type: 'updateComposer', patch })}
-          onMode={(mode) => composerState.change({ type: 'setMode', mode })}
-          onAccount={(accountId) => composerState.change({ type: 'setAccount', accountId })}
+          onCancel={() => setConfirmDelete(false)}
+          onConfirm={() => void remove()}
         />
+      ) : (
+        data &&
+        (data.active || (!data.questions.length && !data.permissions.length)) && (
+          <Composer
+            active={data.active}
+            busy={action.busy}
+            value={draft.value}
+            onChange={draft.update}
+            onSend={() => void send()}
+            confirmStop={confirmStop}
+            setConfirmStop={setConfirmStop}
+            onStop={() => void stop()}
+            composer={composer}
+            attachments={attachments}
+            onUpdate={(patch) => composerState.change({ type: 'updateComposer', patch })}
+            onMode={(mode) => composerState.change({ type: 'setMode', mode })}
+            onAccount={(accountId) => composerState.change({ type: 'setAccount', accountId })}
+          />
+        )
       )}
     </KeyboardAvoidingView>
   );

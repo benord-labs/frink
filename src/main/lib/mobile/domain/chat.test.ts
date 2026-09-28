@@ -26,6 +26,7 @@ const fixture = vi.hoisted(() => ({
   release: vi.fn(),
   create: vi.fn(),
   project: vi.fn(),
+  deleteChat: vi.fn(),
 }));
 vi.mock('./context', async () => ({
   MobileApiError: (await import('./errors')).MobileApiError,
@@ -33,7 +34,11 @@ vi.mock('./context', async () => ({
   requireExecutionReady: fixture.ready,
   mobileCallers: {
     tasks: { getDrivingTaskForSubChat: fixture.getDriving },
-    chats: { getSubChatMessages: fixture.history, create: fixture.create },
+    chats: {
+      getSubChatMessages: fixture.history,
+      create: fixture.create,
+      delete: fixture.deleteChat,
+    },
     flows: { cancelRun: fixture.cancelRun },
   },
   record: (value: unknown) => (value && typeof value === 'object' ? value : {}),
@@ -68,6 +73,7 @@ import { mobileRequestSchema } from '../../../../shared/types/remote/mobile';
 import {
   answerMobileQuestion,
   createMobileChat,
+  deleteMobileChat,
   mergeMobileTranscript,
   readMobileChat,
   respondMobilePermission,
@@ -106,6 +112,22 @@ beforeEach(() => {
 });
 
 describe('mobile chat actions', () => {
+  it('deletes an ordinary chat and leaves task and Flow chats to desktop', async () => {
+    const request = { type: 'deleteChat' as const, chatId: 'chat' };
+    await expect(deleteMobileChat(request)).resolves.toEqual({ ok: true });
+    expect(fixture.deleteChat).toHaveBeenCalledWith({ id: 'chat' });
+
+    fixture.deleteChat.mockClear();
+    fixture.getDriving.mockResolvedValueOnce({ task: null, run: { id: 'run' } });
+    await expect(deleteMobileChat(request)).rejects.toMatchObject({ status: 409 });
+    fixture.requireChat.mockResolvedValueOnce({
+      chat: { id: 'chat', projectId: 'project', taskId: 'task', subChats: [{ id: 'sub' }] },
+      subChat: { id: 'sub' },
+    });
+    await expect(deleteMobileChat(request)).rejects.toMatchObject({ status: 409 });
+    expect(fixture.deleteChat).not.toHaveBeenCalled();
+  });
+
   it('starts an unnamed chat so the computer names it from the first message', async () => {
     const request = { type: 'createChat' as const, projectId: 'project' };
     expect(mobileRequestSchema.parse(request)).toEqual(request);

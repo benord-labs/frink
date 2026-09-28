@@ -118,6 +118,7 @@ async function connect(
         'resumeNode',
         'setFlowEnabled',
         'stopChat',
+        'deleteChat',
       ].includes(input.type)
     )
       mutations.push(input.type);
@@ -503,6 +504,29 @@ test('stopping a response requires confirmation of its active Flow scope', async
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Confirm stop', exact: true })).toHaveCount(0);
   expect(state.mutations).toEqual(['stopChat']);
+});
+
+test('deleting a chat asks first, then returns to the list', async ({ page }) => {
+  const state = await connect(page);
+  await page.getByRole('tab', { name: 'Chats', exact: true }).click();
+  await page.getByRole('button').filter({ hasText: chat.name }).click();
+  await page.getByRole('button', { name: 'Delete chat', exact: true }).click();
+  await expect(page.getByText(/Delete this chat permanently\?/)).toBeVisible();
+  await page.getByRole('button', { name: 'Keep chat', exact: true }).click();
+  await expect(page.getByText(/Delete this chat permanently\?/)).toHaveCount(0);
+  expect(state.mutations).toEqual([]);
+
+  await page.getByRole('button', { name: 'Delete chat', exact: true }).click();
+  const deleted = page.waitForRequest(
+    (request) =>
+      request.url().endsWith('/api') &&
+      request.method() === 'POST' &&
+      request.postDataJSON()?.type === 'deleteChat',
+  );
+  await page.getByRole('button', { name: 'Delete chat', exact: true }).last().click();
+  expect((await deleted).postDataJSON()).toEqual({ type: 'deleteChat', chatId: chat.id });
+  await expect(page.getByPlaceholder('Search conversations')).toBeVisible();
+  expect(state.mutations).toEqual(['deleteChat']);
 });
 
 test('queue keeps independent decisions in one chat reachable on a small light phone', async ({

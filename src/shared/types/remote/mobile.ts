@@ -62,6 +62,7 @@ export const mobileRequestSchema = z.discriminatedUnion('type', [
   }),
   z.object({ type: z.literal('setAccount'), ...chatIdentity, accountId: id.nullable() }),
   z.object({ type: z.literal('stopChat'), ...chatIdentity }),
+  z.object({ type: z.literal('deleteChat'), chatId: id }),
   z.object({
     type: z.literal('answerQuestion'),
     ...chatIdentity,
@@ -249,6 +250,7 @@ export type MobileResponses = {
   createChat: { chatId: string; subChatId: string };
   sendMessage: { ok: true };
   stopChat: { ok: true };
+  deleteChat: { ok: true };
   answerQuestion: { ok: true };
   respondPermission: { ok: true };
   composer: MobileComposer;
