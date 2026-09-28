@@ -488,3 +488,45 @@ describe('frink_flows_patch partial receipt — real engine output', () => {
     expect(flowChange.changes[1]?.reasonCode).toBe('cascade-removed');
   });
 });
+
+// sc-3166: templateWarnings is the only warning channel a successfully saved patch returns.
+describe('Flow patch result — agent prose near the length cap', () => {
+  function withInstructions(instructions: string): PersistedPatch {
+    return {
+      ...successPatch(),
+      graph: {
+        ...FINAL_GRAPH,
+        nodes: FINAL_GRAPH.nodes.map((node) =>
+          node.id === 'agent' ? { ...node, config: { instructions } } : node,
+        ),
+      },
+    };
+  }
+
+  it('adds a near-cap warning to a saved patch, after any template warnings', () => {
+    const body = parseResult(resultFor(withInstructions('a'.repeat(45_000)), 4));
+    expect(body.templateWarnings).toEqual([
+      {
+        nodeId: 'agent',
+        field: 'instructions',
+        placeholder: '',
+        message: 'instructions is 45,000 of 50,000 characters — near the agent prompt limit',
+      },
+    ]);
+  });
+
+  it('adds nothing below the warning threshold', () => {
+    const body = parseResult(resultFor(withInstructions('a'.repeat(39_999)), 4));
+    expect(body.templateWarnings).toBeUndefined();
+  });
+
+  it('keeps the warning on a partial patch too', () => {
+    const patch: PersistedPatch = {
+      ...withInstructions('a'.repeat(45_000)),
+      status: 'partial',
+      failed: [{ index: 1, error: 'boom' }],
+    };
+    const body = parseResult(resultFor(patch, 4));
+    expect(JSON.stringify(body.templateWarnings)).toContain('45,000 of 50,000');
+  });
+});

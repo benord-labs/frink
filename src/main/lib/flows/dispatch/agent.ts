@@ -27,6 +27,11 @@
  */
 
 import { eq } from 'drizzle-orm';
+import {
+  describeAgentProseOverflow,
+  findAgentProseOverflow,
+  MAX_AGENT_PROSE_LENGTH,
+} from '../../../../shared/lib/flows/agent-prose-limit';
 import type { ChatMode } from '../../../../shared/types/chat-mode';
 import { getDatabase } from '../../db';
 import { linkChatToTask } from '../../db/repos/chats';
@@ -192,6 +197,31 @@ type AgentWorktreeConfig =
     }
   | { startInWorktree: false };
 
+/** Fail closed rather than hand the agent a sliced prompt (sc-3166). */
+function agentProseError(config: AgentConfig): { type: 'error'; message: string } | undefined {
+  const overflow = findAgentProseOverflow(config);
+  return overflow
+    ? {
+        type: 'error',
+        message: `agent: ${describeAgentProseOverflow(overflow.field, overflow.length)} — shorten it`,
+      }
+    : undefined;
+}
+
+/** Role prefix + instructions rendered trimmed and in full. The cap bounds the authored templates
+ *  (so renderTemplate never slices them); resolved values add to the output unsliced, by design. */
+function renderAgentDescription(
+  config: AgentConfig,
+  instructions: string,
+  vars: ReturnType<typeof buildVariables>,
+): string {
+  const role = config.agentInstructions?.trim();
+  const rolePrefix = role
+    ? `## Role\n\n${renderTemplate(role, vars, MAX_AGENT_PROSE_LENGTH)}\n\n---\n\n`
+    : '';
+  return `${rolePrefix}${renderTemplate(instructions, vars, MAX_AGENT_PROSE_LENGTH)}`;
+}
+
 function resolveAgentWorktreeConfig(stc: StartTaskContext): AgentWorktreeConfig {
   return stc.worktreePath
     ? {
@@ -211,6 +241,8 @@ export const dispatchAgent: Dispatcher = async (ctx) => {
   if (!rawInstructions) {
     return { type: 'error', message: 'agent missing instructions' };
   }
+  const proseError = agentProseError(config);
+  if (proseError) return proseError;
 
   const meta = await loadFlowMeta(ctx.flowRunId);
   if (!meta) return { type: 'error', message: 'agent: flow run / version missing' };
@@ -264,11 +296,7 @@ export const dispatchAgent: Dispatcher = async (ctx) => {
     loopContext: ctx.loopContext,
     flowBriefing: '',
   });
-  const rolePrefix = config.agentInstructions?.trim()
-    ? `## Role\n\n${renderTemplate(config.agentInstructions, instructionVars)}\n\n---\n\n`
-    : '';
-  const renderedInstructions = renderTemplate(rawInstructions, instructionVars);
-  const description = `${rolePrefix}${renderedInstructions}`;
+  const description = renderAgentDescription(config, rawInstructions, instructionVars);
 
   // triggerContext shape mirrors cloud agent dispatch — _config drives the
   // task-executor's chat creation path; _flowOriginId/_flowChainDepth bound

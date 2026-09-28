@@ -198,3 +198,30 @@ describe('formatExpansionFailures', () => {
     expect(msg).toContain('frink_flows_list_catalog');
   });
 });
+
+// sc-3166: the patch validates `/cmd` while short; the expanded body must still respect the cap.
+describe('expandAgentCommandsInGraph — agent prose length cap', () => {
+  it('fails (flow not saved) when a command expands past the cap, naming the limit', async () => {
+    const g = graphWith('/edge-cases');
+    const r = await expandAgentCommandsInGraph(
+      g,
+      deps({ getContent: async () => 'x'.repeat(50_001) }),
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.failures).toMatchObject([{ nodeId: 'ag', command: 'edge-cases', reason: 'too_long' }]);
+    expect(formatExpansionFailures(r.failures)).toContain(
+      'command "/edge-cases" expands to instructions is 50,001 characters; the limit is 50,000',
+    );
+    // The graph keeps the short `/command` text — nothing over the cap is written back.
+    expect(g.nodes[1]?.config?.instructions).toBe('/edge-cases');
+  });
+
+  it('expands a body exactly at the cap', async () => {
+    const r = await expandAgentCommandsInGraph(
+      graphWith('/edge-cases'),
+      deps({ getContent: async () => 'x'.repeat(50_000) }),
+    );
+    expect(r.ok).toBe(true);
+  });
+});
