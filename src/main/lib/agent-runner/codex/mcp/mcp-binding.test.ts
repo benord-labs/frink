@@ -172,6 +172,17 @@ describe('buildCodexMcpBinding', () => {
     );
   });
 
+  it('keeps the replace sentinel when a Frink server is named after it', () => {
+    const binding = buildCodexMcpBinding({
+      canonicalServers: { __frink_replace: { command: 'npx' }, github: { command: 'gh-mcp' } },
+    });
+
+    expect(binding.threadConfig.mcp_servers).toEqual({
+      __frink_replace: true,
+      github: { enabled: true, command: 'gh-mcp' },
+    });
+  });
+
   it('still replaces native MCPs when Frink has no configured servers', () => {
     expect(buildCodexMcpBinding({ canonicalServers: {} }).threadConfig.mcp_servers).toEqual({
       __frink_replace: true,

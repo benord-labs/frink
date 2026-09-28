@@ -3,6 +3,7 @@ import threadItems from '../../patches/codex/thread-item-variants.json';
 import { FRINK_HOST_TOOL_PERMISSION_VERSION } from '../../src/main/lib/agent-runner/codex/codex-host-permissions';
 import {
   assertHandshakeResult,
+  assertMcpReplaceConsumed,
   assertPinnedThreadItems,
   codexVersionStamp,
   normalizeWorkspaceVersions,
@@ -23,7 +24,7 @@ const manifest = {
   normalizedCargoLockSha256: 'df88a71b82843c6f092610fb07589f7a40032ddc25f50718354546ca541eb9b7',
   rust: '1.95.0',
   patch: 'frink-host-tool-permission-v1.patch',
-  patchSha256: '0ef3a323e435ad3868d7942ed387b77a07a59a6e8551392bd995f7171fd3eab2',
+  patchSha256: 'aaca9d04e33b1f6b99b365db9d77632af22fbb3e618900ed419b6f460a5d7a48',
   upstream: 'https://github.com/openai/codex',
 };
 
@@ -77,7 +78,7 @@ describe('permission-aware Codex source build', () => {
 
 describe('codexVersionStamp', () => {
   it('carries the patch identity so a stale bundled binary is detectable at runtime', () => {
-    expect(codexVersionStamp(manifest)).toBe('rust-v0.155.1+frink.0ef3a323e435');
+    expect(codexVersionStamp(manifest)).toBe('rust-v0.155.1+frink.aaca9d04e33b');
     expect(codexVersionStamp({ ...manifest, patchSha256: 'a'.repeat(64) })).toBe(
       'rust-v0.155.1+frink.aaaaaaaaaaaa',
     );
@@ -185,5 +186,23 @@ describe('built-binary handshake', () => {
     expect(() =>
       assertHandshakeResult(manifest, { ...good, userAgent: 'frink-build-check/0.149.0 (Mac OS)' }),
     ).toThrow('expected it to start "frink-build-check/0.155.1 "');
+  });
+});
+
+describe('empty CODEX_HOME MCP replacement', () => {
+  it('accepts an MCP listing that loaded config with the sentinel consumed', () => {
+    expect(() => assertMcpReplaceConsumed('No MCP servers configured yet.\n')).not.toThrow();
+  });
+
+  it('rejects a listing that surfaced the sentinel as a server', () => {
+    expect(() => assertMcpReplaceConsumed('Name             Command\n__frink_replace  -\n')).toThrow(
+      '__frink_replace',
+    );
+  });
+
+  it('rejects a config-load failure reported on stdout', () => {
+    expect(() => assertMcpReplaceConsumed('Error: failed to load configuration')).toThrow(
+      'did not consume',
+    );
   });
 });

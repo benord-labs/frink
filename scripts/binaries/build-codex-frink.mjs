@@ -21,7 +21,7 @@ const EXPECTED_MANIFEST = Object.freeze({
   normalizedCargoLockSha256: 'df88a71b82843c6f092610fb07589f7a40032ddc25f50718354546ca541eb9b7',
   rust: '1.95.0',
   patch: 'frink-host-tool-permission-v1.patch',
-  patchSha256: '0ef3a323e435ad3868d7942ed387b77a07a59a6e8551392bd995f7171fd3eab2',
+  patchSha256: 'aaca9d04e33b1f6b99b365db9d77632af22fbb3e618900ed419b6f460a5d7a48',
 });
 
 const TARGETS = {
@@ -58,6 +58,7 @@ const HANDSHAKE_CLIENT_NAME = 'frink-build-check';
 /** Fixed, never the pin: no manifest value may enter the request the version assertion reads back. */
 const HANDSHAKE_CLIENT_VERSION = '0';
 const HANDSHAKE_TIMEOUT_MS = 60_000;
+const MCP_REPLACE_SENTINEL = '__frink_replace';
 
 export function platformKey(platform = process.platform, arch = process.arch) {
   return `${platform}-${arch}`;
@@ -178,6 +179,8 @@ function runProviderRegressionTests(cargo, rustc, cargoRoot) {
         'codex-core',
         '--package',
         'codex-hooks',
+        '--package',
+        'codex-config',
         filter,
       ],
       {
@@ -268,6 +271,33 @@ function verifyBundledHandshake(manifest, binaryPath, tempRoot) {
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   assertHandshakeResult(manifest, parseInitializeResult(stdout));
+}
+
+/** Rejects a config load that kept Frink's MCP replace sentinel instead of consuming it. */
+export function assertMcpReplaceConsumed(output) {
+  if (output.includes(MCP_REPLACE_SENTINEL) || output.includes('failed to load configuration')) {
+    throw new Error(`Built Codex did not consume ${MCP_REPLACE_SENTINEL}: ${output.trim()}`);
+  }
+}
+
+/**
+ * Frink sends the replace sentinel on every thread; with no user `[mcp_servers]` table the patch
+ * must still strip it, or every turn fails config load (sc-3824). `mcp list` loads the same layer
+ * stack as thread/start, with `-c` as the session layer.
+ */
+function verifyEmptyHomeMcpReplace(binaryPath, tempRoot) {
+  const codexHome = fs.mkdtempSync(path.join(tempRoot, 'mcp-replace-'));
+  const stdout = execFileSync(
+    binaryPath,
+    ['-c', `mcp_servers={${MCP_REPLACE_SENTINEL}=true}`, 'mcp', 'list'],
+    {
+      encoding: 'utf8',
+      timeout: HANDSHAKE_TIMEOUT_MS,
+      env: { ...process.env, CODEX_HOME: codexHome },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
+  assertMcpReplaceConsumed(stdout);
 }
 
 function validateTargetKeys(targetKeys) {
@@ -404,7 +434,10 @@ export async function buildCodexFrink({
         outputRoot,
       });
       // A cross-compiled target cannot run here; its own CI leg handshakes the build it produces.
-      if (key === platformKey()) verifyBundledHandshake(manifest, binaryPath, tempRoot);
+      if (key === platformKey()) {
+        verifyBundledHandshake(manifest, binaryPath, tempRoot);
+        verifyEmptyHomeMcpReplace(binaryPath, tempRoot);
+      }
       return binaryPath;
     });
   } finally {
