@@ -9,7 +9,7 @@
     "icon": "./assets/icon.png",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.frink.mobile",
+      "bundleIdentifier": "dev.frink.mobile",
       "infoPlist": { "ITSAppUsesNonExemptEncryption": false }
     },
     "plugins": [
@@ -25,8 +25,11 @@
         "expo-image-picker",
         { "photosPermission": "Attach the photos you choose to your messages to Frink." }
       ],
-      "expo-document-picker"
+      "expo-document-picker",
+      "expo-font"
     ],
-    "web": { "bundler": "metro", "favicon": "./assets/icon.png" }
+    "web": { "bundler": "metro", "favicon": "./assets/icon.png" },
+    "extra": { "eas": { "projectId": "fea3042a-34ec-46a8-8979-ca5998710dbf" } },
+    "owner": "norvalbv"
   }
 }

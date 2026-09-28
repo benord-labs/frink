@@ -8,10 +8,17 @@ Use Bun and Node 22.12 or newer. From this directory:
 
 ```sh
 bun install --frozen-lockfile
-bun start
 ```
 
-Open the development project in a compatible Expo Go on your iPhone. This app uses Expo SDK 57. For a local native development build, install Xcode and its iOS platform support, then run `bun run ios` (or `bunx expo run:ios --device` for a connected iPhone). Select a development signing team in Xcode when building on a physical device. App Store submission, TestFlight, and a production distribution pipeline are outside this MVP.
+The app uses native modules (Markdown, photo and file pickers), so Expo Go cannot run it. Develop with **Frink Dev**, a development build that installs beside the TestFlight app (bundle `dev.frink.mobile.dev`) and loads JavaScript live from your Mac:
+
+1. Register your iPhone once: `bunx eas-cli device:create`, then open the link on the phone. Turn on Settings → Privacy & Security → Developer Mode.
+2. Build Frink Dev in the cloud: `bunx eas-cli build -p ios --profile development`, then install it from the link EAS prints. Rebuild only when native dependencies, permissions or the app icon change.
+3. Start Metro and open Frink Dev:
+   - Same network: `bun run dev`
+   - Anywhere on your tailnet: `bun run dev:tailnet` (serves Metro privately over Tailscale HTTPS on port 8444)
+
+Saving a file updates the phone in about a second. The TestFlight app is built with `bunx eas-cli build -p ios --profile production`.
 
 Start the desktop app from the repository root with `bun install --frozen-lockfile` and `bun run dev`. Configure an AI provider and a project there before starting a new chat on the phone.
 
