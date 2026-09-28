@@ -5,21 +5,26 @@ const mocks = vi.hoisted(() => ({
   getDatabase: vi.fn(),
   dispatcher: vi.fn(async (_flowRunId: string) => {}),
   emitRunTerminal: vi.fn(),
+  capture: vi.fn(),
 }));
 
 vi.mock('../../db', () => ({ getDatabase: mocks.getDatabase }));
 vi.mock('../event-emit', () => ({
   emitRunTerminal: mocks.emitRunTerminal,
 }));
+vi.mock('../../sentry/init', () => ({ captureMainException: mocks.capture }));
 
 import { flowRunAdmissions, flowRuns, flows, flowVersions, nodeRuns, tasks } from '../../db/schema';
 import { freshDb, type TestDb } from '../../db/test-utils/fresh-db';
 import { beginFlowResourceActivity } from './activity';
+import { FLOW_ADMISSION_DRAIN_RETRY_DELAYS_MS } from './drain';
 import { _resetFlowAdmissionControllerMutexForTests, FlowAdmissionController } from './controller';
 import {
   _setFlowAdmissionControllerForTests,
+  cancelUndispatchedFlowAdmission,
   hasActiveFlowAdmission,
   hasLiveFlowAdmission,
+  kickStalledFlowAdmissionDrain,
   recoverFlowAdmissions,
   registerFlowAdmissionStartDispatcher,
   registerTerminalFlowResumeDispatcher,
@@ -611,5 +616,244 @@ describe('Flow admission runtime recovery', () => {
       }),
     );
     expect(emitCorrective).not.toHaveBeenCalled();
+  });
+});
+
+describe('a failed admission drain (sc-2481)', () => {
+  // Only timers are faked: the drain's own settle handlers run on microtasks, flushed via setImmediate.
+  const flush = async () => {
+    for (let i = 0; i < 5; i += 1) await new Promise((resolve) => setImmediate(resolve));
+  };
+  const drainCaptures = () =>
+    mocks.capture.mock.calls.filter(([, context]) => context?.stage === 'queue-drain');
+  const stateOf = async (flowRunId: string) =>
+    (await controller.getLiveForRun(flowRunId))?.state ?? null;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('admits queued work on the retry after one failed pass, without a restart', async () => {
+    vi.spyOn(controller, 'claimEligible').mockRejectedValueOnce(new Error('database is locked'));
+
+    // The start is durably queued, so a drain fault must not surface as a failed start.
+    const start = await requestFlowStart(startInput('retry-once'));
+    await flush();
+    expect(start.run.status).toBe('pending');
+    expect(await stateOf(start.run.id)).toBe('queued');
+
+    await vi.advanceTimersByTimeAsync(FLOW_ADMISSION_DRAIN_RETRY_DELAYS_MS[0]);
+    await flush();
+
+    expect(await stateOf(start.run.id)).toBe('active');
+    expect(mocks.dispatcher).toHaveBeenCalledOnce();
+    expect(drainCaptures()).toHaveLength(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('dispatches the rest of a claimed batch and re-dispatches the one claim that threw', async () => {
+    maxConcurrentRuns = 2;
+    const first = await controller.enqueueStart(startInput('stranded-a'));
+    const beginDispatch = controller.beginDispatch.bind(controller);
+    vi.spyOn(controller, 'beginDispatch')
+      .mockRejectedValueOnce(new Error('dispatch write failed'))
+      .mockImplementation(beginDispatch);
+
+    const second = await requestFlowStart(startInput('stranded-b'));
+    await flush();
+
+    expect(await stateOf(second.run.id)).toBe('active');
+    expect(await stateOf(first.run.id)).toBe('claimed');
+    expect(mocks.dispatcher).toHaveBeenCalledOnce();
+    expect(mocks.dispatcher).toHaveBeenCalledWith(second.run.id);
+
+    await vi.advanceTimersByTimeAsync(FLOW_ADMISSION_DRAIN_RETRY_DELAYS_MS[0]);
+    await flush();
+
+    expect(await stateOf(first.run.id)).toBe('active');
+    expect(mocks.dispatcher).toHaveBeenCalledTimes(2);
+    expect(mocks.dispatcher).toHaveBeenCalledWith(first.run.id);
+    expect(
+      db.select().from(flowRunAdmissions).where(eq(flowRunAdmissions.state, 'claimed')).all(),
+    ).toEqual([]);
+  });
+
+  it('keeps a claim stranded across a failed re-dispatch and admits it on a later retry', async () => {
+    const beginDispatch = controller.beginDispatch.bind(controller);
+    vi.spyOn(controller, 'beginDispatch')
+      .mockRejectedValueOnce(new Error('dispatch write failed'))
+      .mockRejectedValueOnce(new Error('dispatch write failed again'))
+      .mockImplementation(beginDispatch);
+    const start = await requestFlowStart(startInput('stranded-twice'));
+    await flush();
+
+    await vi.advanceTimersByTimeAsync(FLOW_ADMISSION_DRAIN_RETRY_DELAYS_MS[0]);
+    await flush();
+    expect(await stateOf(start.run.id)).toBe('claimed');
+    expect(mocks.dispatcher).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(FLOW_ADMISSION_DRAIN_RETRY_DELAYS_MS[1]);
+    await flush();
+    expect(await stateOf(start.run.id)).toBe('active');
+    expect(mocks.dispatcher).toHaveBeenCalledOnce();
+    expect(drainCaptures()).toHaveLength(1);
+  });
+
+  it('arms a single retry when overlapping passes fail together', async () => {
+    maxConcurrentRuns = 2;
+    const claim = vi
+      .spyOn(controller, 'claimEligible')
+      .mockRejectedValueOnce(new Error('fault a'))
+      .mockRejectedValueOnce(new Error('fault b'));
+    const starts = await Promise.all([
+      requestFlowStart(startInput('overlap-fail-a')),
+      requestFlowStart(startInput('overlap-fail-b')),
+    ]);
+    await flush();
+    expect(claim).toHaveBeenCalledTimes(2);
+    expect(vi.getTimerCount()).toBe(1);
+    expect(drainCaptures()).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(FLOW_ADMISSION_DRAIN_RETRY_DELAYS_MS[0]);
+    await flush();
+    for (const { run } of starts) expect(await stateOf(run.id)).toBe('active');
+  });
+
+  it('never dispatches a stranded claim the user dequeued before the retry', async () => {
+    maxConcurrentRuns = 2;
+    const first = await controller.enqueueStart(startInput('dequeued-a'));
+    const beginDispatch = controller.beginDispatch.bind(controller);
+    vi.spyOn(controller, 'beginDispatch')
+      .mockRejectedValueOnce(new Error('dispatch write failed'))
+      .mockImplementation(beginDispatch);
+    await requestFlowStart(startInput('dequeued-b'));
+    await flush();
+    expect(await stateOf(first.run.id)).toBe('claimed');
+
+    await expect(cancelUndispatchedFlowAdmission(first.run.id)).resolves.toBe(true);
+    await flush();
+    await vi.advanceTimersByTimeAsync(FLOW_ADMISSION_DRAIN_RETRY_DELAYS_MS.at(-1)! * 2);
+    await flush();
+
+    expect(await stateOf(first.run.id)).toBeNull();
+    expect(mocks.dispatcher).not.toHaveBeenCalledWith(first.run.id);
+    expect(mocks.emitRunTerminal).not.toHaveBeenCalled();
+    // The dequeue's own drain succeeded, which ends the failure episode.
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('stops after the explicit retry bound, captures once, and resumes from a Work Queue kick', async () => {
+    const claim = vi.spyOn(controller, 'claimEligible').mockRejectedValue(new Error('disk full'));
+    const start = await requestFlowStart(startInput('persistent'));
+    await flush();
+    expect(claim).toHaveBeenCalledTimes(1);
+
+    // Boundary: one tick short of the first delay must not retry.
+    await vi.advanceTimersByTimeAsync(FLOW_ADMISSION_DRAIN_RETRY_DELAYS_MS[0] - 1);
+    await flush();
+    expect(claim).toHaveBeenCalledTimes(1);
+
+    for (const delay of FLOW_ADMISSION_DRAIN_RETRY_DELAYS_MS) {
+      await vi.advanceTimersByTimeAsync(delay);
+      await flush();
+    }
+    expect(claim).toHaveBeenCalledTimes(1 + FLOW_ADMISSION_DRAIN_RETRY_DELAYS_MS.length);
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(claim).toHaveBeenCalledTimes(1 + FLOW_ADMISSION_DRAIN_RETRY_DELAYS_MS.length);
+
+    // A 5s Work Queue poll against a still-broken DB must neither re-arm retries nor spam Sentry.
+    kickStalledFlowAdmissionDrain();
+    kickStalledFlowAdmissionDrain();
+    await flush();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(drainCaptures()).toHaveLength(1);
+    expect(await stateOf(start.run.id)).toBe('queued');
+
+    claim.mockRestore();
+    kickStalledFlowAdmissionDrain();
+    await flush();
+    expect(await stateOf(start.run.id)).toBe('active');
+    expect(mocks.dispatcher).toHaveBeenCalledOnce();
+
+    // Recovered: the kick is a no-op again and never drains on its own.
+    const idle = vi.spyOn(controller, 'claimEligible');
+    kickStalledFlowAdmissionDrain();
+    await flush();
+    expect(idle).not.toHaveBeenCalled();
+  });
+
+  it('ends the episode on an unrelated successful drain, so a later fault is captured afresh', async () => {
+    maxConcurrentRuns = 3;
+    const claim = vi.spyOn(controller, 'claimEligible');
+    claim.mockRejectedValueOnce(new Error('first fault'));
+    await requestFlowStart(startInput('episode-a'));
+    await flush();
+    expect(vi.getTimerCount()).toBe(1);
+
+    await requestFlowStart(startInput('episode-b'));
+    await flush();
+    expect(vi.getTimerCount()).toBe(0);
+
+    claim.mockRejectedValueOnce(new Error('second fault'));
+    await requestFlowStart(startInput('episode-c'));
+    await flush();
+    expect(drainCaptures()).toHaveLength(2);
+    expect(vi.getTimerCount()).toBe(1);
+  });
+
+  it('honours a start requested while the failing pass was mid-claim', async () => {
+    maxConcurrentRuns = 2;
+    const claimEligible = controller.claimEligible.bind(controller);
+    let failFirstPass!: (error: Error) => void;
+    vi.spyOn(controller, 'claimEligible')
+      .mockImplementationOnce(
+        () =>
+          new Promise((_, reject) => {
+            failFirstPass = reject;
+          }),
+      )
+      .mockImplementation(claimEligible);
+
+    const firstStart = requestFlowStart(startInput('race-a'));
+    await flush();
+    const secondStart = requestFlowStart(startInput('race-b'));
+    await flush();
+    failFirstPass(new Error('transient'));
+    const [first, second] = await Promise.all([firstStart, secondStart]);
+    await flush();
+
+    // The second request's pass claims both, with no retry needed.
+    expect(await stateOf(first.run.id)).toBe('active');
+    expect(await stateOf(second.run.id)).toBe('active');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('never runs a pending retry after a reset or once the QA freeze is on', async () => {
+    const claim = vi.spyOn(controller, 'claimEligible').mockRejectedValueOnce(new Error('fault'));
+    await requestFlowStart(startInput('frozen-retry'));
+    await flush();
+    expect(vi.getTimerCount()).toBe(1);
+
+    process.env.FRINK_DISABLE_FLOW_ADMISSION_DRAIN = '1';
+    process.env.MAIN_VITE_AUTH_SERVER_PORT = '21399';
+    try {
+      await vi.advanceTimersByTimeAsync(FLOW_ADMISSION_DRAIN_RETRY_DELAYS_MS[0]);
+      await flush();
+      expect(claim).toHaveBeenCalledTimes(1);
+    } finally {
+      delete process.env.FRINK_DISABLE_FLOW_ADMISSION_DRAIN;
+      delete process.env.MAIN_VITE_AUTH_SERVER_PORT;
+    }
+
+    claim.mockRejectedValueOnce(new Error('fault again'));
+    await requestFlowStart(startInput('reset-retry'));
+    await flush();
+    expect(vi.getTimerCount()).toBe(1);
+    _setFlowAdmissionControllerForTests(null);
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
