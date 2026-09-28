@@ -410,6 +410,8 @@ test('phone queue, structured answers, Flow review and chat work without horizon
     page.getByText('Connected. Frink is ready for your work.', { exact: true }),
   ).toBeVisible();
   await expect(page.getByRole('tablist')).toHaveCount(0);
+  // Which checkout, branch and commit the running code came from.
+  await expect(page.getByText(/^App code: .+ · [0-9a-f]{7,}$/)).toBeVisible();
   await page.screenshot({ path: 'test-results/connection-dark.png', fullPage: true });
   await page.getByRole('button', { name: 'Go back', exact: true }).click();
   await expect(page.getByRole('tab', { name: 'Flows', exact: true })).toHaveAttribute(
@@ -506,26 +508,56 @@ test('stopping a response requires confirmation of its active Flow scope', async
   expect(state.mutations).toEqual(['stopChat']);
 });
 
-test('deleting a chat asks first, then returns to the list', async ({ page }) => {
-  const state = await connect(page);
-  await page.getByRole('tab', { name: 'Chats', exact: true }).click();
-  await page.getByRole('button').filter({ hasText: chat.name }).click();
-  await page.getByRole('button', { name: 'Delete chat', exact: true }).click();
-  await expect(page.getByText(/Delete this chat permanently\?/)).toBeVisible();
-  await page.getByRole('button', { name: 'Keep chat', exact: true }).click();
-  await expect(page.getByText(/Delete this chat permanently\?/)).toHaveCount(0);
-  expect(state.mutations).toEqual([]);
-
-  await page.getByRole('button', { name: 'Delete chat', exact: true }).click();
-  const deleted = page.waitForRequest(
+function deleteRequest(page: Page) {
+  return page.waitForRequest(
     (request) =>
       request.url().endsWith('/api') &&
       request.method() === 'POST' &&
       request.postDataJSON()?.type === 'deleteChat',
   );
-  await page.getByRole('button', { name: 'Delete chat', exact: true }).last().click();
+}
+
+test('deleting a chat from its header asks first, then returns to the list', async ({ page }) => {
+  const state = await connect(page);
+  await page.getByRole('tab', { name: 'Chats', exact: true }).click();
+  await page.getByRole('button').filter({ hasText: chat.name }).click();
+  const prompts: string[] = [];
+  page.once('dialog', (dialog) => {
+    prompts.push(dialog.message());
+    void dialog.dismiss();
+  });
+  await page.getByRole('button', { name: 'Delete chat', exact: true }).click();
+  await expect.poll(() => prompts).toEqual([expect.stringContaining(`Delete “${chat.name}”?`)]);
+  expect(state.mutations).toEqual([]);
+
+  page.once('dialog', (dialog) => void dialog.accept());
+  const deleted = deleteRequest(page);
+  await page.getByRole('button', { name: 'Delete chat', exact: true }).click();
   expect((await deleted).postDataJSON()).toEqual({ type: 'deleteChat', chatId: chat.id });
   await expect(page.getByPlaceholder('Search conversations')).toBeVisible();
+  expect(state.mutations).toEqual(['deleteChat']);
+});
+
+test('swiping a chat left in the list reveals Delete', async ({ page }) => {
+  const state = await connect(page);
+  await page.getByRole('tab', { name: 'Chats', exact: true }).click();
+  await expect(page.getByText('Swipe a chat left to delete it.')).toBeVisible();
+  const action = page.getByRole('button', { name: `Delete ${chat.name}`, exact: true });
+  await expect(action).not.toBeInViewport();
+  // The swipe itself: scroll the row's own horizontal scroller by the action's width.
+  // (react-native-web replaces the element's scrollTo with its own, so set scrollLeft.)
+  await action.evaluate((button) => {
+    let node = button.parentElement;
+    while (node && node.scrollWidth <= node.clientWidth) node = node.parentElement;
+    if (node) node.scrollLeft = node.scrollWidth;
+  });
+  await expect(action).toBeInViewport();
+  await page.screenshot({ path: 'test-results/chats-swipe-delete.png' });
+
+  page.once('dialog', (dialog) => void dialog.accept());
+  const deleted = deleteRequest(page);
+  await action.click();
+  expect((await deleted).postDataJSON()).toEqual({ type: 'deleteChat', chatId: chat.id });
   expect(state.mutations).toEqual(['deleteChat']);
 });
 

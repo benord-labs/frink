@@ -20,6 +20,8 @@ The app uses native modules (Markdown, photo and file pickers), so Expo Go canno
 
 Saving a file updates the phone in about a second. The TestFlight app is built with `bunx eas-cli build -p ios --profile production`.
 
+Frink Dev loads from port 8081 by default, so run Metro on 8081 only from the checkout you want on your phone (normally your main checkout). To preview a worktree, start its Metro on another port, such as `bun run dev -- --port 8082`, and enter that address in Frink Dev. **Your computer** in the app shows the checkout, branch and commit the running code came from.
+
 Start the desktop app from the repository root with `bun install --frozen-lockfile` and `bun run dev`. Configure an AI provider and a project there before starting a new chat on the phone.
 
 ## Connect your computer
