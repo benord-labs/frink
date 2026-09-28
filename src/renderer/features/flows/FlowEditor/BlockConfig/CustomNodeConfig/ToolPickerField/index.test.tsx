@@ -12,15 +12,25 @@ const openSettingsTab = vi.hoisted(() => vi.fn());
 vi.mock('../../../../../../hooks/useSettingsNavigation', () => ({
   useSettingsNavigation: () => ({ openSettings: vi.fn(), openSettingsTab }),
 }));
-// happy-dom has no layout, so the virtualizer would render nothing; rows map 1:1 instead.
+// happy-dom has no layout, so the real virtualizer would render nothing. Like the real one, this
+// mounts a fixed window of rows and records the full count it was handed.
+const virtualizer = vi.hoisted(() => ({ window: 20, count: 0 }));
 // oxlint-disable-next-line anti-slop/no-module-mocking
 vi.mock('@tanstack/react-virtual', () => ({
-  useVirtualizer: ({ count }: { count: number }) => ({
-    getVirtualItems: () =>
-      Array.from({ length: count }, (_, index) => ({ index, key: String(index), size: 44, start: index * 44 })),
-    getTotalSize: () => count * 44,
-    measure: vi.fn(),
-  }),
+  useVirtualizer: ({ count }: { count: number }) => {
+    virtualizer.count = count;
+    return {
+      getVirtualItems: () =>
+        Array.from({ length: Math.min(count, virtualizer.window) }, (_, index) => ({
+          index,
+          key: String(index),
+          size: 44,
+          start: index * 44,
+        })),
+      getTotalSize: () => count * 44,
+      measure: vi.fn(),
+    };
+  },
 }));
 // Radix portals the list only once opened; rendering it inline keeps the rows queryable.
 // oxlint-disable-next-line anti-slop/no-module-mocking
@@ -52,23 +62,85 @@ describe('ToolPickerField', () => {
     const onChange = renderPicker({
       ok: true,
       tools: [
-        tool('wipe-project', { title: 'Wipe project', destructive: true }),
-        tool('error-tracking-list', { title: 'List errors', readOnly: true, description: 'Newest first.' }),
+        tool('delete-project', { title: 'Delete project', destructive: true }),
+        tool('error-tracking-list', {
+          title: 'List errors',
+          readOnly: true,
+          description: 'Newest first.',
+        }),
         ...many,
       ],
     });
 
     // The field label names the trigger; its text is the current pick.
     expect(screen.getByRole('button', { name: 'Tool' })).toHaveTextContent('Choose a tool…');
+    // Every tool reaches the list; only the window mounts.
+    expect(virtualizer.count).toBe(1002);
     const options = screen.getAllByRole('option');
-    expect(options).toHaveLength(1002);
+    expect(options).toHaveLength(20);
     expect(options[0]).toHaveAccessibleName('List errors');
     expect(screen.getByText('changes data')).toBeInTheDocument();
 
     await user.type(screen.getByRole('textbox', { name: 'Search tools' }), 'newest');
+    expect(virtualizer.count).toBe(1);
     expect(screen.getAllByRole('option')).toHaveLength(1);
     await user.click(screen.getByRole('option', { name: 'List errors' }));
     expect(onChange).toHaveBeenCalledWith('error-tracking-list');
+  });
+
+  it('matches a search typed loosely or by the raw tool name, and says when nothing matches', async () => {
+    const user = userEvent.setup();
+    renderPicker({
+      ok: true,
+      tools: [
+        tool('error-tracking-list', {
+          title: 'List errors',
+          readOnly: true,
+          description: 'Newest first.',
+        }),
+        tool('a'),
+        tool('b'),
+      ],
+    });
+    const search = screen.getByRole('textbox', { name: 'Search tools' });
+    expect(search).toHaveAttribute('placeholder', 'Search 3 tools…');
+
+    // Surrounding spaces and capitals are what people paste and type.
+    await user.type(search, '  NEWEST  ');
+    expect(screen.getAllByRole('option').map((o) => o.getAttribute('aria-label'))).toEqual([
+      'List errors',
+    ]);
+
+    // The name is searchable even when a title replaces it on screen.
+    await user.clear(search);
+    await user.type(search, 'error-tracking');
+    expect(screen.getAllByRole('option').map((o) => o.getAttribute('aria-label'))).toEqual([
+      'List errors',
+    ]);
+
+    await user.clear(search);
+    await user.type(search, 'zzz');
+    expect(screen.queryByRole('option')).toBeNull();
+    expect(screen.getByText('No tools match.')).toBeInTheDocument();
+  });
+
+  it('clears the search after a pick so the next open lists every tool again', async () => {
+    const user = userEvent.setup();
+    renderPicker({
+      ok: true,
+      tools: [
+        tool('a', { title: 'Tool A' }),
+        tool('b', { title: 'Tool B' }),
+        tool('c', { title: 'Tool C' }),
+      ],
+    });
+    const search = screen.getByRole('textbox', { name: 'Search tools' });
+    await user.type(search, 'tool b');
+    expect(virtualizer.count).toBe(1);
+
+    await user.click(screen.getByRole('option', { name: 'Tool B' }));
+    expect(search).toHaveValue('');
+    expect(virtualizer.count).toBe(3);
   });
 
   it('does not report a change when the current tool is picked again', async () => {
