@@ -101,7 +101,7 @@ export function flowRunState(flow: FlowRunFields, displayStatus: string | null):
     return {
       glyph: 'queued',
       tone: 'quiet',
-      label: 'Waiting for a free slot to run',
+      label: 'Queued to run',
       word: queueLabel(flow),
     };
   }

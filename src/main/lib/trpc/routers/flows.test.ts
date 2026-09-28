@@ -258,6 +258,19 @@ describe('flowsRouter (local)', () => {
   });
 
   describe('admission settings', () => {
+    it.each([true, false])(
+      'maps a pause-only update (%s) without changing capacity',
+      async (paused) => {
+        updateFlowAdmissionSettingsMock.mockResolvedValue({ queue_paused: paused });
+        const { flowsRouter } = await import('./flows');
+        const caller = flowsRouter.createCaller({ getWindow: () => null });
+        await expect(caller.updateAdmissionSettings({ queue_paused: paused })).resolves.toEqual({
+          queue_paused: paused,
+        });
+        expect(updateFlowAdmissionSettingsMock).toHaveBeenCalledWith({ queuePaused: paused });
+      },
+    );
+
     it('preserves snake-case Flow settings and maps mutation input to the controller', async () => {
       const settings = {
         concurrency_limit_enabled: true,

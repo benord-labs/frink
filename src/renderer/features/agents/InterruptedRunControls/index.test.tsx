@@ -143,7 +143,7 @@ describe('InterruptedRunControls', () => {
   it('shows a waiting row with no button while a resume ticket is queued for a slot', () => {
     runData = { runId: 'r1', resumable: true, resumeMode: 'queued' };
     renderRow();
-    expect(screen.getByText(/Waiting for a free slot/)).toBeInTheDocument();
+    expect(screen.getByText(/Queued to resume/)).toBeInTheDocument();
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
 

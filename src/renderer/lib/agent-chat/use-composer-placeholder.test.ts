@@ -44,9 +44,7 @@ describe('useComposerPlaceholder', () => {
   it('queued resume ticket → hint says the step is waiting for a slot', () => {
     runData = { runId: 'r1', resumable: true, resumeMode: 'queued' };
     const { result } = renderHook(() => useComposerPlaceholder('c1', 'sc1', false));
-    expect(result.current).toBe(
-      'Waiting for a free slot to resume this step — it will pick up where it stopped',
-    );
+    expect(result.current).toBe('Queued to resume this step — it will pick up where it stopped');
   });
 
   it('non-resumable mechanism → hint names the re-run button, not typing', () => {

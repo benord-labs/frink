@@ -47,9 +47,7 @@ type InterruptedRunControlsProps = {
 function QueuedResumeRow() {
   return (
     <RunStatusRow dotClassName="bg-[hsl(var(--status-warning))]" label="Flow run interrupted">
-      <span className="px-2 text-xs text-muted-foreground">
-        Waiting for a free slot to resume this step…
-      </span>
+      <span className="px-2 text-xs text-muted-foreground">Queued to resume this step…</span>
     </RunStatusRow>
   );
 }
