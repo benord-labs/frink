@@ -388,6 +388,17 @@ function templateFindings(graph: FlowGraph, nodeById: Map<string, FlowNode>): Re
   for (const w of validateFlowTemplateVariables(graph)) {
     const node = nodeById.get(w.nodeId);
     if (!node) continue;
+    if (w.shellHazard === 'blank-path') {
+      out.push({
+        nodeId: node.id,
+        nodeLabel: formatFlowNodeLabel(node),
+        severity: 'warn',
+        rule: `template.${w.field}.${w.placeholder}.shell-blank-path`,
+        why: w.message,
+        fix: `Assign ${w.placeholder} to a shell variable and reference it as \${var:?} so a blank value stops the command.`,
+      });
+      continue;
+    }
     const isShellQuoteWarning = w.field === 'command' && w.shellQuoteContext !== undefined;
     out.push({
       nodeId: node.id,

@@ -185,6 +185,23 @@ describe('run_command fails closed on an unresolved placeholder', () => {
     expect(res.type).toBe('completed');
     expect(h.executeShellStep).toHaveBeenCalledTimes(1);
   });
+
+  // sc-3170 pins flow-unresolved-placeholder-rendering ruling (3): a PRESENT-but-blank value is not a
+  // runtime failure, even in a path. The guard is the design-time blank-path warning instead.
+  it('still runs a path command whose value is present but blank (design-time warning only)', async () => {
+    // SAFETY: rcCtx supplies every DispatchContext field this dispatcher reads; the override only
+    // swaps in outputs where `dir` is present but empty.
+    const res = await dispatchRunCommand({
+      ...rcCtx({ command: 'rm -rf /tmp/work/{{previous.dir}}' }),
+      previousOutput: { ...CONDITION_PREV, outputs: { dir: '' } },
+    } as never);
+
+    expect(res.type).toBe('completed');
+    expect(h.executeShellStep).toHaveBeenCalledTimes(1);
+    expect(h.executeShellStep.mock.calls[0]?.[0]).toMatchObject({
+      command: "rm -rf /tmp/work/''",
+    });
+  });
 });
 
 describe('run_command guard edge shapes', () => {

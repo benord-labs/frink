@@ -28,7 +28,7 @@ A rendered project resolves by registered id or exact name. Missing, unknown, or
 
 ## Missing values, sizes, shell commands
 
-- Missing keys render empty. Missing values instead fail `start_task.branch`, `projectId`, `run_command.command`, and `http_request.url`. Branch/project/URL also fail on a present-but-blank value; command does not.
+- Missing keys render empty. Missing values instead fail `start_task.branch`, `projectId`, `run_command.command`, and `http_request.url`. Branch/project/URL also fail on a present-but-blank value; command does not. A command placeholder directly beside `/` (`/tmp/work/{{x}}`, `{{x}}/`) gets a design-time advisory instead, because a blank value collapses the path and still runs; guard destructive paths with `v={{x}}; rm -rf "/tmp/work/${v:?}"`.
 - Circular values or serialized values around 50 KB or more remain literal placeholders. Avoid passing large fan-out results through a template; use scalar counts, a single branch result, or inspect the run.
 - Command values are shell-escaped automatically. Leave placeholders bare: `echo prefix {{previous.summary}}`. Quote static text only. Quoted placeholders produce an advisory; unanalyzable shell syntax (substitution, backticks, heredocs, unclosed quotes) is not substituted. Total rendered command length is capped around 256 KB.
 
