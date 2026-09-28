@@ -68,6 +68,47 @@ describe('AgentToolCall', () => {
     expect(TextShimmerMock).not.toHaveBeenCalled();
     expect(screen.getByText('Done')).toBeInTheDocument();
   });
+
+  // Subtitles carry tool metadata (file paths, commands) straight from the agent and are set as
+  // innerHTML without a sandbox, so the span+style allowlist is the only XSS barrier.
+  it('strips scripts, event handlers and links from the subtitle but keeps styled spans', () => {
+    const { container } = render(
+      <AgentToolCall
+        icon={MockIcon}
+        title="Edited"
+        subtitle={
+          'app.ts <span style="color: rgb(34, 197, 94)">+3</span>' +
+          '<img src=x onerror="alert(1)"><script>alert(2)</script>' +
+          '<a href="javascript:alert(3)">x</a><span onclick="alert(4)">y</span>'
+        }
+        isPending={false}
+        isError={false}
+      />,
+    );
+
+    const html = container.innerHTML;
+    expect(html).not.toMatch(/<script|<img|<a |onerror|onclick|javascript:/i);
+    const styled = [...container.querySelectorAll('span[style]')].find(
+      (el) => el.textContent === '+3',
+    );
+    expect(styled).toHaveStyle({ color: 'rgb(34, 197, 94)' });
+    expect(container).toHaveTextContent('app.ts +3xy');
+  });
+
+  it('renders no subtitle element when sanitising leaves nothing', () => {
+    const { container } = render(
+      <AgentToolCall
+        icon={MockIcon}
+        title="Ran"
+        subtitle="<script>alert(1)</script>"
+        isPending={false}
+        isError={false}
+      />,
+    );
+
+    expect(container.innerHTML).not.toMatch(/script/i);
+    expect(screen.getByText('Ran')).toBeInTheDocument();
+  });
 });
 
 describe('AgentToolRegistry tool-planning', () => {
