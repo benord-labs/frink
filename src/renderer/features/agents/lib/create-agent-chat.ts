@@ -55,8 +55,6 @@ export type CreateAgentChatParams = {
   projectPath?: string;
   /** Existing stream id at creation time — pins resume behaviour during active streaming. */
   streamId?: string | null;
-  /** Parent chat's linked task id — forwarded so the executor applies flow-continuation overrides only on match. */
-  expectedFlowTaskId?: string | null;
   /** Execution account resolver, read at SEND time by the transport (never snapshotted). */
   getExecutionAccountType: () => ExecutionAccountKind;
   /** View-only: OS notification on completion when the user isn't viewing. Omit for headless. */
@@ -111,7 +109,6 @@ export function createAgentChat(params: CreateAgentChatParams): Chat<UIMessage> 
     initialMessages,
     projectPath,
     streamId = null,
-    expectedFlowTaskId = null,
     getExecutionAccountType,
     notifyComplete,
     onFinishExtra,
@@ -123,7 +120,6 @@ export function createAgentChat(params: CreateAgentChatParams): Chat<UIMessage> 
     projectId,
     mode,
     getExecutionAccountType,
-    expectedFlowTaskId,
     onExecutionError(errSubChatId: string) {
       appStore.set(executionErrorRollbackSubChatIdAtom, errSubChatId);
     },

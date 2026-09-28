@@ -2175,7 +2175,6 @@ export const ChatView = memo(function ChatView({
         initialMessages: messages,
         projectPath,
         streamId: subChat?.streamId || null,
-        expectedFlowTaskId: agentChat?.taskId ?? null,
         getExecutionAccountType: () => executionAccountTypeRef.current,
         notifyComplete: notifyAgentCompleteForSubChatId,
         onFinishExtra: () => {

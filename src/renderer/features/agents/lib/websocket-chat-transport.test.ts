@@ -423,7 +423,7 @@ describe('websocket-chat-transport', () => {
       delete (window as unknown as Record<string, unknown>).desktopApi;
     });
 
-    it('forwards expectedFlowTaskId on sendMessage when transport config sets it', async () => {
+    it('expects the dispatching task as the Flow step; a user reply expects none', async () => {
       const taskUuid = '550e8400-e29b-41d4-a716-446655440001';
       (window as unknown as Record<string, unknown>).desktopApi = {
         onSocketStreamChunk: vi.fn(() => vi.fn()),
@@ -431,23 +431,23 @@ describe('websocket-chat-transport', () => {
         onSocketError: vi.fn(() => vi.fn()),
         onSocketMessageSaved: vi.fn(() => vi.fn()),
       };
-
       const transport = new WebSocketChatTransport({
         getExecutionAccountType: () => 'claude-code',
         chatId: 'chat-eft',
         subChatId: 'sub-eft',
         projectId: 'proj-1',
         mode: 'agent',
-        expectedFlowTaskId: taskUuid,
       });
-      const stream = await transport.sendMessages(defaultSendMessagesPayload('chat-eft'));
-      await stream.cancel();
+      const lastCall = () => vi.mocked(trpcClient.socket.sendMessage.mutate).mock.calls.at(-1)?.[0];
+      await (await transport.sendMessages(defaultSendMessagesPayload('chat-eft'))).cancel();
+      expect(lastCall()?.expectedFlowTaskId).toBeUndefined();
 
-      const call = vi.mocked(trpcClient.socket.sendMessage.mutate).mock.calls.at(-1)?.[0] as
-        | { expectedFlowTaskId?: string }
-        | undefined;
-      expect(call?.expectedFlowTaskId).toBe(taskUuid);
-
+      const payload = defaultSendMessagesPayload('chat-eft');
+      const messages = [{ ...payload.messages[0], metadata: { dispatchTaskId: taskUuid } }];
+      await (await transport.sendMessages({ ...payload, messages })).cancel();
+      expect(lastCall()).toEqual(
+        expect.objectContaining({ dispatchTaskId: taskUuid, expectedFlowTaskId: taskUuid }),
+      );
       cleanupTransportListeners('sub-eft');
       delete (window as unknown as Record<string, unknown>).desktopApi;
     });
@@ -876,6 +876,28 @@ describe('websocket-chat-transport', () => {
       expect(onExecutionError).not.toHaveBeenCalled();
 
       cleanupTransportListeners(subChatId);
+      delete (window as unknown as Record<string, unknown>).desktopApi;
+    });
+
+    it('a send declined with a server category shows only that category toast', async () => {
+      const { transport } = setupErrorTransport('chat-declined', 'sub-declined');
+      vi.mocked(trpcClient.socket.sendMessage.mutate).mockResolvedValueOnce({
+        success: false,
+        reason: 'This Flow step changed. Refresh before replying.',
+        category: 'FLOW_RUN_ENDED',
+      } as never);
+      await (await transport.sendMessages(defaultSendMessagesPayload('chat-declined'))).cancel();
+      await waitForAsync();
+      // Same title and dedup id as the run error the executor emits for the same decline.
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+        'This flow run has ended',
+        expect.objectContaining({ id: 'flow-run-ended:sub-declined' }),
+      );
+      expect(vi.mocked(toast.error)).not.toHaveBeenCalledWith(
+        'Failed to send message',
+        expect.anything(),
+      );
+      cleanupTransportListeners('sub-declined');
       delete (window as unknown as Record<string, unknown>).desktopApi;
     });
 
