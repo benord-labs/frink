@@ -13,10 +13,7 @@ import { resolveCodexCliModel } from '../../../shared/lib/codex-cli-models';
 import { stripHiddenWakeMarker } from '../../../shared/lib/message-markers/hidden-wake-marker';
 import { stripMessageMarkers } from '../../../shared/lib/message-markers/strip-message-markers';
 import { isUserAbortErrorMessage } from '../../../shared/lib/user-abort-error';
-import {
-  extractCanonicalPlanTextForFilter,
-  filterCanonicalPlanParts,
-} from '../../../shared/plan-parts-filter';
+import { filterCanonicalPlanParts } from '../../../shared/plan-parts-filter';
 import type { ChatMode } from '../../../shared/types/chat-mode';
 import type { ExecutionSettings } from '../../../shared/types/execution';
 import type { PermissionPresentation } from '../../../shared/types/permissions';
@@ -184,10 +181,8 @@ import {
   resolveAutoReviewModes,
   resolvePermissionMode,
 } from './streaming/plan-auto-approve';
-import {
-  resolvePlanModeChunkSuppression,
-  shouldSuppressPlanTextChunk,
-} from './streaming/plan-mode-suppression';
+import { buildFinalPartsForPersist, emitPlanFallbackSends } from './streaming/plan-fallback';
+import { resolvePlanModeChunkSuppression } from './streaming/plan-mode-suppression';
 import { buildWakeHoldIo } from './streaming/wake-hold-io';
 
 // Provider session cache: subChatId → sessionId for native resume on follow-up messages.
@@ -559,145 +554,12 @@ async function getTaskRowForResume(
   return getTaskById(db, targetTaskId);
 }
 
-/**
- * The AI SDK stream reducer rejects a lone `text-delta`, and `text-end` is the checkpoint that
- * carries the `parts` payload to the observer lane — so a notice needs its own start/end wrapper.
- */
-function buildNoticeChunks(text: string): UIMessageChunk[] {
-  const id = crypto.randomUUID();
-  return [
-    { type: 'text-start', id },
-    { type: 'text-delta', id, delta: text },
-    { type: 'text-end', id },
-  ];
-}
-
-export type PlanFallbackSend = {
-  chunk: UIMessageChunk;
-  /** Notice chunks are new and must be appended to the history; replayed prose is already in it. */
-  isNotice: boolean;
-  messageIndex: number;
-};
-
-/**
- * Post-stream sends for a plan turn that produced no reviewable card: the prose hidden live by
- * {@link shouldSuppressPlanTextChunk}, then an optional notice explaining the failure.
- *
- * Plan mode hides prose so it cannot compete with the canonical plan card, but the chunks are still
- * collected and persisted — so a turn that ends without a card must replay them or the live stream
- * stays blank while a reload shows the full text.
- *
- * Indices run from `startIndex` and increase strictly across BOTH groups: the renderer keeps a
- * high-water mark per assistant message and drops any payload at or below it, so a notice numbered
- * from the pre-replay history length would be discarded rather than shown.
- */
-export function buildPlanFallbackSends(
-  collectedChunks: UIMessageChunk[],
-  startIndex: number,
-  noticeText: string | null,
-): PlanFallbackSend[] {
-  const replayed = collectedChunks.filter((c) => shouldSuppressPlanTextChunk(c, true));
-  const notice = noticeText ? buildNoticeChunks(noticeText) : [];
-  return [...replayed, ...notice].map((chunk, i) => ({
-    chunk,
-    isNotice: i >= replayed.length,
-    messageIndex: startIndex + i,
-  }));
-}
-
-/**
- * Deliver {@link buildPlanFallbackSends} through `send`, appending any notice chunks to
- * `collectedChunks` as they go — the replayed prose is already in there, the notice is new.
- *
- * `parts` is cumulative and unchanged across the replay, so it is folded once and refreshed only
- * when a notice is appended. Returns the next free message index so a caller tracking its own
- * counter (the Claude path) stays in step.
- */
-export function emitPlanFallbackSends(
-  collectedChunks: UIMessageChunk[],
-  startIndex: number,
-  noticeText: string | null,
-  send: (item: PlanFallbackSend, parts: MessagePart[]) => void,
-): { nextIndex: number; replayedCount: number } {
-  const sends = buildPlanFallbackSends(collectedChunks, startIndex, noticeText);
-  let parts = buildPartsFromChunks(collectedChunks);
-  let replayedCount = 0;
-  for (const item of sends) {
-    if (item.isNotice) {
-      collectedChunks.push(item.chunk);
-      parts = buildPartsFromChunks(collectedChunks);
-    } else {
-      replayedCount++;
-    }
-    send(item, parts);
-  }
-  return { nextIndex: startIndex + sends.length, replayedCount };
-}
-
-export function extractNativePlanPathFromChunks(chunks: UIMessageChunk[]): string | null {
-  let nativePlanPath: string | null = null;
-  const nonEmptyPath = (value: unknown): string | null =>
-    typeof value === 'string' && value.length > 0 ? value : null;
-  const extractPath = (value: unknown): string | null => {
-    if (!value || typeof value !== 'object') return null;
-    const record = value as Record<string, unknown>;
-    const filePath = nonEmptyPath(record.filePath);
-    if (filePath) return filePath;
-    const planPath = nonEmptyPath(record.planPath);
-    if (planPath) return planPath;
-    const snakeCasePath = nonEmptyPath(record.file_path);
-    if (snakeCasePath) return snakeCasePath;
-    const plan = record.plan;
-    if (!plan || typeof plan !== 'object') return null;
-    const planRecord = plan as Record<string, unknown>;
-    const nestedFilePath = nonEmptyPath(planRecord.filePath);
-    if (nestedFilePath) return nestedFilePath;
-    const nestedPlanPath = nonEmptyPath(planRecord.planPath);
-    if (nestedPlanPath) return nestedPlanPath;
-    const nestedSnakeCasePath = nonEmptyPath(planRecord.plan_path);
-    if (nestedSnakeCasePath) return nestedSnakeCasePath;
-    return null;
-  };
-
-  for (const chunk of chunks) {
-    if (chunk.type !== 'tool-input-available' || !('toolName' in chunk)) {
-      continue;
-    }
-
-    const input = chunk.input as Record<string, unknown> | undefined;
-    if (chunk.toolName === 'PlanWrite') {
-      const pathFromInput = extractPath(input);
-      if (pathFromInput) nativePlanPath = pathFromInput;
-    }
-  }
-
-  for (const chunk of chunks) {
-    if (chunk.type !== 'tool-output-available') continue;
-    const relatedInput = chunks.find(
-      (candidate) =>
-        candidate.type === 'tool-input-available' &&
-        candidate.toolCallId === chunk.toolCallId &&
-        candidate.toolName === 'PlanWrite',
-    );
-    if (!relatedInput) continue;
-    const pathFromOutput = extractPath(chunk.output);
-    if (!nativePlanPath && pathFromOutput) nativePlanPath = pathFromOutput;
-  }
-  return nativePlanPath;
-}
-
-/**
- * Persisted message parts for plan mode: match streamed IPC (dedupe plan markdown + drop native PlanWrite rows).
- */
-function buildFinalPartsForPersist(
-  mode: 'agent' | 'plan' | 'debug',
-  collectedChunks: UIMessageChunk[],
-): MessagePart[] {
-  const raw = buildPartsFromChunks(collectedChunks);
-  if (mode !== 'plan') return raw;
-  const planText = extractCanonicalPlanTextForFilter(raw);
-  return filterCanonicalPlanParts(raw, planText ?? undefined) as MessagePart[];
-}
+export {
+  buildPlanFallbackSends,
+  emitPlanFallbackSends,
+  extractNativePlanPathFromChunks,
+  type PlanFallbackSend,
+} from './streaming/plan-fallback';
 
 /**
  * Handle incoming execution request from another machine.
@@ -1125,8 +987,8 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
             mode,
             undefined,
             navigationSessionId,
-            // Refuses a frink_task_signal call when no live task expects one; the tool list itself
-            // comes from the URL toolset. Re-calls on the same executionId inherit it.
+            // Refuses frink_task_signal when no live task expects one (the tool list comes from the
+            // URL toolset); the handler re-checks `signalTaskId` (last arg) at call time.
             Boolean(signalTaskId),
             agentRuntime,
             // Auto consent snapshot for gateFlowWrite — re-asserted here on EVERY send (never
@@ -1135,6 +997,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
             isFlowExecutionTurn,
             abortController.signal,
             () => agentRuntime === 'claude' && isPlanAutoDenyFloorActive(turn),
+            signalTaskId,
           )
         : undefined;
     // Native Codex/Claude resumes already own the transcript; shipping Frink history duplicates it.

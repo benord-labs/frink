@@ -36,6 +36,9 @@ const state = vi.hoisted(() => {
   return {
     windows,
     ipcHandlers,
+    getTaskById: vi.fn(),
+    getFlowRun: vi.fn(),
+    isSignalTargetDead: vi.fn(),
     getCloudProjectById: vi.fn(),
     getChatById: vi.fn(),
     moveChatToProjectLocal: vi.fn(),
@@ -107,6 +110,17 @@ vi.mock('../cloud-client', () => ({
 vi.mock('../db', () => ({
   getDatabase: vi.fn(() => ({})),
 }));
+
+// The frink_task_signal target check (only runs when a context carries a signalTaskId).
+vi.mock('../db/repos/tasks', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../db/repos/tasks')>()),
+  getTaskById: state.getTaskById,
+}));
+vi.mock('../db/repos/flow-runs', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../db/repos/flow-runs')>()),
+  getFlowRun: state.getFlowRun,
+}));
+vi.mock('../socket/flow-signal', () => ({ isSignalTargetDead: state.isSignalTargetDead }));
 
 vi.mock('../db/repos/chats', async (importOriginal) => {
   // Keep pure helpers (parseWorktreeHistory etc.) real — the MCP handler calls them on the
@@ -332,6 +346,7 @@ const {
   bindChannelExecution,
   callDynamicChatToolByName,
   getLatestTaskSignal,
+  isTaskSignalDisarmed,
   setLatestTaskSignal,
   setCurrentExecutionChat,
   clearCurrentExecutionChat,
@@ -1518,6 +1533,27 @@ describe('dynamic-chat-server frink_task_signal', () => {
         verification: { checks: ['setup'] },
       }),
     );
+  });
+
+  // sc-2771 wiring through the server: the context's signalTaskId reaches the target check, and a
+  // refusal disarms both the tool and the Codex stop guard (Codex has no Stop hook to lean on).
+  it('refuses a dead target registered on the context and releases the Codex stop guard', async () => {
+    state.getTaskById.mockResolvedValue({ id: 'task-1', status: 'cancelled', flowRunId: null });
+    state.isSignalTargetDead.mockResolvedValue(true);
+    const executionId = setCurrentExecutionChat(
+      ...(['chat-target', 'sub-target', '/project', 'agent', undefined, undefined, true] as const),
+      ...(['codex', undefined, true, undefined, undefined, 'task-1'] as const),
+    );
+    const guard = () =>
+      callDynamicChatToolByName('frink_task_stop_guard', { stop_hook_active: false }, executionId, true);
+
+    expect((await guard()).content[0]?.text).toContain('"decision":"block"');
+    const refused = await callDynamicChatToolByName('frink_task_signal', { state: 'done', summary: 'Done' }, executionId);
+
+    expect(refused.isError).toBe(true);
+    expect(state.getTaskById).toHaveBeenCalledWith(expect.anything(), 'task-1');
+    expect(isTaskSignalDisarmed(executionId)).toBe(true);
+    expect((await guard()).content[0]?.text).toBe('{}');
   });
 
   // The AskUserQuestion translate parks a Flow without the agent ever calling frink_task_signal, so

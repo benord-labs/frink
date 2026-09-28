@@ -53,6 +53,7 @@ const dynamicChatServerMocks = vi.hoisted(() => ({
   clearCurrentExecutionChat: vi.fn(),
   getOrStartDynamicChatMcpUrl: vi.fn(async () => 'http://127.0.0.1:9999'),
   getLatestTaskSignal: vi.fn(),
+  isTaskSignalDisarmed: vi.fn(() => false),
 }));
 
 /** Survives `vi.clearAllMocks()` — do not use `onPermissionResponse.mock.calls` (cleared each test). */
@@ -246,13 +247,7 @@ vi.mock('../sentry/init', () => ({
   captureMainException: vi.fn(),
 }));
 
-vi.mock('../mcp/dynamic-chat-server', () => ({
-  bindChannelExecution: dynamicChatServerMocks.bindChannelExecution,
-  setCurrentExecutionChat: dynamicChatServerMocks.setCurrentExecutionChat,
-  clearCurrentExecutionChat: dynamicChatServerMocks.clearCurrentExecutionChat,
-  getOrStartDynamicChatMcpUrl: dynamicChatServerMocks.getOrStartDynamicChatMcpUrl,
-  getLatestTaskSignal: dynamicChatServerMocks.getLatestTaskSignal,
-}));
+vi.mock('../mcp/dynamic-chat-server', () => dynamicChatServerMocks);
 
 const quietMarkerMocks = vi.hoisted(() => ({
   setQuietEndMarker: vi.fn(),

@@ -7,8 +7,12 @@ const mockUpdateTaskStatus = vi.fn();
 const mockUpdateTaskResult = vi.fn();
 const mockBroadcastTaskSignalPersisted = vi.fn();
 const mockCaptureMainException = vi.hoisted(() => vi.fn());
+const mockCaptureMainMessage = vi.hoisted(() => vi.fn());
 
-vi.mock('../../sentry/init', () => ({ captureMainException: mockCaptureMainException }));
+vi.mock('../../sentry/init', () => ({
+  captureMainException: mockCaptureMainException,
+  captureMainMessage: mockCaptureMainMessage,
+}));
 
 vi.mock('../../db', () => ({
   getDatabase: vi.fn(() => ({})),
@@ -90,6 +94,97 @@ describe('finalizeLinkedTaskSignalFromContext', () => {
     mockSetQuietEndMarker.mockResolvedValue({ id: 't1' });
     await expect(finalizeLinkedTaskSignalFromContext(params)).resolves.toBeUndefined();
     expect(mockSetQuietEndMarker).toHaveBeenCalledWith({}, 't1', expect.any(String));
+  });
+
+  describe('a recorded signal the task row refuses (sc-2771)', () => {
+    const done: TaskSignalPayload = {
+      state: 'done',
+      summary: 'Shipped',
+      at: '2026-09-04T10:30:05Z',
+    };
+
+    beforeEach(() => {
+      mockCaptureMainMessage.mockReset();
+      mockUpdateTaskStatus.mockReset();
+      mockGetLatestTaskSignal.mockReturnValue(done);
+      // Already settled: neither the primary CAS nor a park supersede can take the signal.
+      mockGetTaskById.mockReset().mockResolvedValue({
+        id: 't1',
+        status: 'cancelled',
+        flowRunId: 'run-1',
+        result: {},
+      });
+    });
+
+    it('fails a strict (flow) finalization instead of settling it as a success', async () => {
+      await expect(
+        finalizeLinkedTaskSignalFromContext({ ...params, throwOnError: true }),
+      ).rejects.toThrow('Task signal dropped: done on task t1 (status cancelled)');
+      expect(mockUpdateTaskStatus).not.toHaveBeenCalled();
+    });
+
+    it('reports a warning on an ordinary turn and still settles', async () => {
+      await expect(finalizeLinkedTaskSignalFromContext(params)).resolves.toBeUndefined();
+      expect(mockCaptureMainMessage).toHaveBeenCalledWith(
+        'Task signal dropped at turn end',
+        'warning',
+        expect.objectContaining({ taskId: 't1', state: 'done', status: 'cancelled' }),
+      );
+    });
+
+    // A wake-burst settle (or a question park) may already have written this exact signal; the
+    // turn-end re-persist then finds a terminal row and returns false. That is not a drop.
+    it.each([
+      ['done', 'done'],
+      ['needs_attention', 'awaiting_input'],
+    ] as const)(
+      'treats a %s row already carrying this exact signal as applied, not dropped',
+      async (status, state) => {
+        const signal: TaskSignalPayload = {
+          state,
+          summary: 'Same one',
+          at: '2026-09-04T10:30:05Z',
+        };
+        mockGetLatestTaskSignal.mockReturnValue(signal);
+        mockGetTaskById.mockResolvedValue({
+          id: 't1',
+          status,
+          flowRunId: 'run-1',
+          result: { agentSignal: signal },
+        });
+        await expect(
+          finalizeLinkedTaskSignalFromContext({ ...params, throwOnError: true }),
+        ).resolves.toBeUndefined();
+        await expect(finalizeLinkedTaskSignalFromContext(params)).resolves.toBeUndefined();
+        expect(mockCaptureMainMessage).not.toHaveBeenCalled();
+      },
+    );
+
+    it('still reports a drop when the row carries a DIFFERENT (older) signal', async () => {
+      mockGetTaskById.mockResolvedValue({
+        id: 't1',
+        status: 'done',
+        flowRunId: 'run-1',
+        result: { agentSignal: { ...done, at: '2026-09-04T09:37:40Z' } },
+      });
+      await expect(
+        finalizeLinkedTaskSignalFromContext({ ...params, throwOnError: true }),
+      ).rejects.toThrow('Task signal dropped');
+    });
+
+    it('stays quiet when the signal is persisted', async () => {
+      mockGetTaskById.mockResolvedValue({
+        id: 't1',
+        status: 'running',
+        flowRunId: null,
+        result: {},
+      });
+      mockUpdateTaskStatus.mockResolvedValue({ id: 't1' });
+      await expect(
+        finalizeLinkedTaskSignalFromContext({ ...params, throwOnError: true }),
+      ).resolves.toBeUndefined();
+      expect(mockCaptureMainMessage).not.toHaveBeenCalled();
+    });
   });
 
   it('skips the quiet-end marker on a plan-terminal turn', async () => {

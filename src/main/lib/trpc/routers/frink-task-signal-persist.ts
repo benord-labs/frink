@@ -161,7 +161,8 @@ export async function finalizeLinkedTaskSignalFromContext(params: {
           subChatId,
         });
       }
-      await persistLinkedTaskSignal({ taskIdForExecution, signal });
+      const persisted = await persistLinkedTaskSignal({ taskIdForExecution, signal });
+      if (!persisted) await reportDroppedSignal(taskIdForExecution, signal, subChatId, params);
     } else if (shouldMarkQuietEnd && !params.planTerminal && !isAborted()) {
       await markLinkedTaskQuietEnd(taskIdForExecution, isAborted);
     }
@@ -175,6 +176,40 @@ export async function finalizeLinkedTaskSignalFromContext(params: {
     });
     if (params.throwOnError) throw error;
   }
+}
+
+/** A recorded signal the row refused must not vanish (sc-2771): a strict (flow) turn throws into
+ * lease settlement, any other turn warns. An exact re-persist of an applied signal is not a drop. */
+async function reportDroppedSignal(
+  taskId: string,
+  signal: TaskSignalPayload,
+  subChatId: string,
+  params: { throwOnError?: boolean },
+): Promise<void> {
+  const { getDatabase } = await import('../../db');
+  const { getTaskById, parseResultRecord } = await import('../../db/repos/tasks');
+  const fresh = await getTaskById(getDatabase(), taskId);
+  // A wake-burst settle or question park already wrote this exact signal — applied, not dropped.
+  if (fresh && isSameSignal(parseResultRecord(fresh.result).agentSignal, signal)) return;
+  const status = fresh?.status ?? 'missing';
+  const message = `Task signal dropped: ${signal.state} on task ${taskId} (status ${status})`;
+  if (params.throwOnError) throw new Error(message);
+  const { captureMainMessage } = await import('../../sentry/init');
+  captureMainMessage('Task signal dropped at turn end', 'warning', {
+    taskId,
+    subChatId,
+    state: signal.state,
+    status,
+  });
+}
+
+/** Same signal instance: `at` is stamped once per signal, and the stored state is normalized
+ * (`completed` → `done`, see resolveTaskSignalTransition). */
+function isSameSignal(stored: unknown, signal: TaskSignalPayload): boolean {
+  if (typeof stored !== 'object' || stored === null) return false;
+  const { state, at } = stored as { state?: unknown; at?: unknown };
+  const expectedState = signal.state === 'completed' ? 'done' : signal.state;
+  return at === signal.at && state === expectedState;
 }
 
 /**
@@ -266,6 +301,16 @@ export async function hasLatestTaskSignalFor(
   if (!signal) return false;
   // Same carve-out as refusePlanModeTerminalSignal: awaiting_input parks, every other state ends.
   return !requireTerminal || signal.state !== 'awaiting_input';
+}
+
+/** The tool refused a dead target and disarmed itself this turn; the Stop hook treats that as
+ * settled, since chasing the agent only earns the same refusal. */
+export async function isTaskSignalDisarmedFor(
+  executionContextId: string | undefined,
+): Promise<boolean> {
+  // Same lazy load as hasLatestTaskSignalFor: dynamic-chat-server → executor → here is a cycle.
+  const { isTaskSignalDisarmed } = await import('../../mcp/dynamic-chat-server');
+  return isTaskSignalDisarmed(executionContextId);
 }
 
 /**
@@ -361,7 +406,22 @@ export async function recordTaskSignalFromToolCall(params: {
   if (planRefusal) return { behavior: 'deny', message: planRefusal };
 
   try {
-    await recordLinkedTaskSignal({ taskIdForExecution: signalTaskId, signal: parsedSignal });
+    const recorded = await recordLinkedTaskSignal({
+      taskIdForExecution: signalTaskId,
+      signal: parsedSignal,
+    });
+    // Advisory: the tool handler owns the agent-facing answer; the turn-end finalize owns the flip.
+    if (!recorded) {
+      const log = (await import('electron-log')).default;
+      log.warn(
+        '[Socket Executor] Task signal not recorded eagerly; task not in a signalable state',
+        {
+          subChatId,
+          taskId: signalTaskId,
+          state: parsedSignal.state,
+        },
+      );
+    }
   } catch (error) {
     const log = (await import('electron-log')).default;
     log.error('[Socket Executor] Failed to persist task signal from canUseTool', {

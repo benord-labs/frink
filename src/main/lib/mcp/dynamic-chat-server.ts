@@ -14,7 +14,6 @@ import log from 'electron-log';
 import { z } from 'zod';
 import { LAUNCH_FLAGS } from '../../../shared/launch-flags';
 import type { ChatMode } from '../../../shared/types/chat-mode';
-import type { AgentUserQuestion, TaskSignalState } from '../../../shared/types/task-signal';
 import { getDatabase } from '../db';
 import {
   getChatById,
@@ -66,6 +65,7 @@ import {
   createFlowExecutionLiveness,
 } from './flows-tools/permissions';
 import { resolveInitializeProtocolVersion } from './protocol-version';
+import { handleTaskSignalToolCall, type RecordedTaskSignal } from './task-signal-tool';
 import { type McpToolResult, toolResult } from './tool-result';
 
 /**
@@ -102,18 +102,14 @@ type ExecutionContext = {
   subChatId: string;
   projectPath?: string;
   mode: ChatMode;
-  latestTaskSignal?: {
-    state: TaskSignalState;
-    summary: string;
-    details?: string;
-    verification?: Record<string, unknown>;
-    questions?: AgentUserQuestion[];
-    at: string;
-  };
+  latestTaskSignal?: RecordedTaskSignal;
   navigationSessionId?: string;
   /** False when no live task expects a lifecycle signal: refuses `frink_task_signal` calls.
    * Defaults true (fail-open). */
   taskSignalEnabled: boolean;
+  /** The task row an accepted `frink_task_signal` lands on (the executor's `signalTaskId`). Lets
+   * the handler refuse a signal whose target can no longer consume it instead of answering ok. */
+  signalTaskId?: string | null;
   /** A channel resolves only to a context of its token's runtime. */
   runtime?: 'claude' | 'codex';
   /** Per-send Auto consent; never inherited across sends. */
@@ -195,6 +191,7 @@ export function setCurrentExecutionChat(
   isFlowDrivenTurn?: boolean,
   abortSignal?: AbortSignal,
   planAutoDenyFloor?: () => boolean,
+  signalTaskId?: string | null,
 ): string {
   sweepNavigationSessions();
   const resolvedExecutionId = executionId ?? crypto.randomUUID();
@@ -212,6 +209,7 @@ export function setCurrentExecutionChat(
     navigationSessionId: resolvedNavigationSessionId,
     // Inherit across re-calls on the same executionId (mid-turn resume re-registrations).
     taskSignalEnabled: taskSignalEnabled ?? previous?.taskSignalEnabled ?? true,
+    signalTaskId: signalTaskId ?? previous?.signalTaskId ?? null,
     runtime: runtime ?? previous?.runtime,
     // Consent inherits only across SAME-executionId re-registrations (mid-turn env/resume
     // re-calls) — a new execution id starts from the value its registering turn passes.
@@ -236,6 +234,11 @@ export function setCurrentExecutionChat(
 /** Point a sub-chat's channel at the Claude turn that now owns its session. */
 export function bindChannelExecution(subChatId: string, executionId: string | undefined): void {
   if (executionId) subChatToExecutionId.set(subChatId, executionId);
+}
+
+/** `frink_task_signal` is off for this execution (a refused dead target) — the Stop hook stops chasing. */
+export function isTaskSignalDisarmed(executionId?: string): boolean {
+  return getExecutionContext(executionId)?.taskSignalEnabled === false;
 }
 
 export function getLatestTaskSignal(executionId?: string): ExecutionContext['latestTaskSignal'] {
@@ -836,33 +839,7 @@ async function handleToolsCall(
     if (!executionId || !ctx) {
       return toolResult('frink_task_signal requires an active execution context.', true);
     }
-    // Resumed sessions can carry the tool in their transcript even after it is hidden from
-    // tools/list — refuse instead of recording a signal nothing will consume.
-    if (!ctx.taskSignalEnabled) {
-      return toolResult(
-        'No active task expects a lifecycle signal in this chat — the flow/task already completed. Do not call this tool again; just answer the user.',
-        true,
-      );
-    }
-    // Single parse path with the canUseTool persist (parseTaskSignalInput): trims the summary, drops
-    // empty details, and strips `questions` to awaiting_input — so the MCP handler and the canUseTool
-    // record can never disagree on what a valid signal is.
-    const signal = taskSignal.parseTaskSignalInput(a);
-    if (!signal) {
-      return toolResult('Invalid arguments: malformed frink_task_signal payload', true);
-    }
-    // parseTaskSignalInput always stamps `at`; the `??` only satisfies its optional return type.
-    ctx.latestTaskSignal = { ...signal, at: signal.at ?? new Date().toISOString() };
-    return toolResult(
-      JSON.stringify(
-        {
-          ok: true,
-          signal: ctx.latestTaskSignal,
-        },
-        null,
-        2,
-      ),
-    );
+    return handleTaskSignalToolCall(ctx, a);
   }
 
   const flowResult = dispatchFlowToolCall({

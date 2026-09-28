@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getTaskById } from '../../db/repos/tasks';
+import * as dynamicChatServer from '../../mcp/dynamic-chat-server';
 import {
   type ClaudeSession,
   createSession,
@@ -11,6 +12,7 @@ import { createClaudeTurnContext } from '../claude-turn-context';
 import { getPreToolUseHook } from '../test-utils';
 import {
   expireQuestion,
+  flowDriven,
   mcpMounted,
   pinTask,
   runningTask,
@@ -67,6 +69,24 @@ export function registerClaudeSessionCallbackTests(harness: ClaudeSessionCallbac
         { behavior: 'deny', message: expect.stringContaining('No turn is active') },
         {},
       ]);
+    });
+
+    // sc-2771: the signal target check must see the task the flow DRIVES; the pinned first-node
+    // task is terminal, so checking it would refuse every later node's live `done`.
+    it.each([
+      ['the driving flow task, not the pinned one', true, 'task-flow'],
+      ['the pinned task when no flow drives the chat', false, 'task-pinned'],
+    ])('registers %s as the context signal target', async (_name, driven, expected) => {
+      pinTask('task-pinned');
+      if (driven) flowDriven();
+      claudeQueryMock.mockImplementationOnce(async function* () {
+        yield* UNKEPT_TURN_END;
+      });
+
+      await handleRemoteExecute({ ...payload, message: 'ship it' });
+
+      const calls = vi.mocked(dynamicChatServer.setCurrentExecutionChat).mock.calls;
+      expect(calls.at(-1)?.[12]).toBe(expected);
     });
 
     it("a session's callbacks act for it, never a successor under the same chat id", async () => {
