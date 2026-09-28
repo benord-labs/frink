@@ -15,7 +15,6 @@ import { CodexAppServerClient } from './app-server-client';
 import {
   codexAppServerCount,
   disposeAllCodexAppServers,
-  disposeCodexAppServer,
   disposeCodexAppServerSession,
   disposeCodexAppServerSessionAndWait,
   getCodexAppServer,
@@ -31,10 +30,12 @@ const argsFor = (channel: string, toolset = 'agent:signal') => ({
 
 /** Build a fake client constructor; `start` resolves unless `fail` is set. (Must be a
  * regular function — the registry calls it with `new`, which arrow fns reject.)
- * Captures close handlers so a test can simulate the process dying via `fireClose()`. */
+ * Captures close/error handlers so a test can simulate the process dying via `fireClose()` or a
+ * transport failure that leaves the connection open via `fireError()`. */
 function fakeClientImpl(opts: { fail?: boolean } = {}) {
   return function FakeClient() {
     const closeHandlers = new Set<() => void>();
+    const errorHandlers = new Set<(e: unknown) => void>();
     return {
       start: opts.fail
         ? vi.fn().mockRejectedValue(new Error('handshake failed'))
@@ -48,6 +49,14 @@ function fakeClientImpl(opts: { fail?: boolean } = {}) {
       fireClose: () => {
         for (const h of closeHandlers) h();
       },
+      onError: (h: (e: unknown) => void) => {
+        errorHandlers.add(h);
+        return { dispose: () => errorHandlers.delete(h) };
+      },
+      fireError: (e: unknown = [new Error('write EPIPE'), undefined, undefined]) => {
+        for (const h of [...errorHandlers]) h(e);
+      },
+      errorHandlerCount: () => errorHandlers.size,
     };
   };
 }
@@ -207,13 +216,103 @@ describe('getCodexAppServer', () => {
     const a = (await getCodexAppServer('/repo', 'cred1', OPTS)) as unknown as {
       fireClose: () => void;
     };
-    disposeCodexAppServer('/repo', 'cred1'); // drop A
+    a.fireClose(); // A crashes → self-evicts
     const b = await getCodexAppServer('/repo', 'cred1', OPTS); // re-spawn B under same key
     expect(codexAppServerCount()).toBe(1);
 
     a.fireClose(); // A's belated close — must NOT evict B
     expect(codexAppServerCount()).toBe(1);
     expect(await getCodexAppServer('/repo', 'cred1', OPTS)).toBe(b);
+  });
+});
+
+type FakeHandle = {
+  dispose: ReturnType<typeof vi.fn>;
+  fireClose: () => void;
+  fireError: (e?: unknown) => void;
+  errorHandlerCount: () => number;
+};
+
+describe('transport-error eviction (sc-966)', () => {
+  it('evicts a client on a transport error that does not close, so the next turn respawns', async () => {
+    // Broken stdin (EPIPE) fires onError but no close: without eviction the next turn would be
+    // handed the dead client.
+    const a = (await getCodexAppServer('/repo', 'cred1', OPTS)) as unknown as FakeHandle;
+    a.fireError();
+
+    expect(a.dispose).toHaveBeenCalledOnce();
+    expect(codexAppServerCount()).toBe(0);
+    const b = await getCodexAppServer('/repo', 'cred1', OPTS);
+    expect(b).not.toBe(a);
+    expect(CodexAppServerClient).toHaveBeenCalledTimes(2);
+  });
+
+  it('a late error from a replaced client does not evict its replacement', async () => {
+    const a = (await getCodexAppServer('/repo', 'cred1', OPTS)) as unknown as FakeHandle;
+    a.fireClose(); // A dies and self-evicts
+    const b = await getCodexAppServer('/repo', 'cred1', OPTS);
+
+    a.fireError(); // A's belated transport error — must NOT evict B
+    expect(codexAppServerCount()).toBe(1);
+    expect((b as unknown as FakeHandle).dispose).not.toHaveBeenCalled();
+    expect(await getCodexAppServer('/repo', 'cred1', OPTS)).toBe(b);
+  });
+
+  it('an error then the close that usually follows it tears down exactly once', async () => {
+    // Real sequence on a dying child: stdin EPIPE, then stdout end. The second signal must not
+    // re-dispose or evict a server spawned in between.
+    const a = (await getCodexAppServer('/repo', 'cred1', OPTS)) as unknown as FakeHandle;
+    a.fireError();
+    const b = await getCodexAppServer('/repo', 'cred1', OPTS);
+    a.fireClose();
+
+    expect(a.dispose).toHaveBeenCalledOnce();
+    expect(await getCodexAppServer('/repo', 'cred1', OPTS)).toBe(b);
+  });
+
+  it('an error on one sub-chat server leaves its siblings warm', async () => {
+    const a = (await getCodexAppServer(
+      '/repo',
+      'cred1',
+      argsFor('chan-a'),
+      'sub-a',
+    )) as unknown as FakeHandle;
+    const sibling = await getCodexAppServer('/repo', 'cred1', argsFor('chan-b'), 'sub-b');
+
+    a.fireError();
+
+    expect(codexAppServerCount()).toBe(1);
+    expect((sibling as unknown as FakeHandle).dispose).not.toHaveBeenCalled();
+    expect(await getCodexAppServer('/repo', 'cred1', argsFor('chan-b'), 'sub-b')).toBe(sibling);
+  });
+
+  it('drops its error subscription on every teardown path', async () => {
+    const idle = (await getCodexAppServer('/a', 'c', OPTS)) as unknown as FakeHandle;
+    const session = (await getCodexAppServer(
+      '/b',
+      'c',
+      argsFor('chan-a'),
+      'sub-a',
+    )) as unknown as FakeHandle;
+    expect(idle.errorHandlerCount()).toBe(1);
+
+    disposeCodexAppServerSession('/b', 'c', 'sub-a');
+    disposeAllCodexAppServers();
+
+    expect(idle.errorHandlerCount()).toBe(0);
+    expect(session.errorHandlerCount()).toBe(0);
+  });
+
+  it('clears the idle timer on error eviction so the TTL never re-disposes', async () => {
+    vi.useFakeTimers();
+    try {
+      const a = (await getCodexAppServer('/repo', 'cred1', OPTS)) as unknown as FakeHandle;
+      a.fireError();
+      await vi.advanceTimersByTimeAsync(6 * 60 * 1000);
+      expect(a.dispose).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -263,13 +362,6 @@ describe('disposal', () => {
     closeChild();
     await settlement;
     expect(settled).toBe(true);
-  });
-
-  it('disposes and drops a single server', async () => {
-    const client = await getCodexAppServer('/repo', 'cred1', OPTS);
-    disposeCodexAppServer('/repo', 'cred1');
-    expect((client as unknown as { dispose: ReturnType<typeof vi.fn> }).dispose).toHaveBeenCalled();
-    expect(codexAppServerCount()).toBe(0);
   });
 
   it('disposes every server on shutdown', async () => {
