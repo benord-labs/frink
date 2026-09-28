@@ -143,6 +143,7 @@ export const socketRouter = router({
         return {
           success: false as const,
           reason: error instanceof Error ? error.message : 'Failed to send message',
+          category: (error as { category?: string } | null)?.category,
         };
       }
     }),

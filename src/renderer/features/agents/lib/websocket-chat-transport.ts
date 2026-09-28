@@ -99,11 +99,6 @@ type WebSocketChatTransportConfig = {
    * Resolved AI account for this chat/project — read at send time (not ctor snapshot only).
    */
   getExecutionAccountType: () => ExecutionAccountKind;
-  /**
-   * Parent chat's linked task id when known — forwarded so the executor only applies the
-   * flow-continuation in-memory override when it matches (see `expectedFlowTaskId`).
-   */
-  expectedFlowTaskId?: string | null;
   /** When execution fails, call with subChatId so UI can remove the failed send */
   onExecutionError?: (subChatId: string) => void;
   /** When execution completes (e.g. execute:complete), call so UI can refetch chat and show persisted message if stream was missed */
@@ -416,17 +411,17 @@ export class WebSocketChatTransport implements ChatTransport<UIMessage> {
               // Include approved plan context for compression-safe execution handoff.
               approvedPlanContext,
               ...(navigationSessionId ? { navigationSessionId } : {}),
-              ...(typeof this.config.expectedFlowTaskId === 'string' &&
-              this.config.expectedFlowTaskId.length > 0
-                ? { expectedFlowTaskId: this.config.expectedFlowTaskId }
-                : {}),
-              ...(dispatchTaskId ? { dispatchTaskId } : {}),
+              // The dispatching task is also the Flow step this send expects; user replies carry
+              // neither and target whichever step currently drives the sub-chat.
+              ...(dispatchTaskId ? { dispatchTaskId, expectedFlowTaskId: dispatchTaskId } : {}),
             }),
             timeoutPromise,
           ]);
 
           if (sendResult && sendResult.success === false) {
-            throw new Error(sendResult.reason || 'Failed to send message');
+            throw Object.assign(new Error(sendResult.reason || 'Failed to send message'), {
+              category: sendResult.category,
+            });
           }
 
           // Clear timeout if message sent successfully
@@ -458,8 +453,12 @@ export class WebSocketChatTransport implements ChatTransport<UIMessage> {
           const errorMessage = error instanceof Error ? error.message : String(error);
 
           // Determine error category and show appropriate toast
+          const serverCategory = (error as { category?: string } | null)?.category;
           let category = 'UNKNOWN';
-          if (errorMessage === 'MESSAGE_TIMEOUT') {
+          if (serverCategory) {
+            // Shares the run error's toast id, so a declined send shows one toast, not two.
+            category = serverCategory;
+          } else if (errorMessage === 'MESSAGE_TIMEOUT') {
             category = 'MESSAGE_TIMEOUT';
           } else if (
             errorMessage.includes('offline') ||

@@ -447,7 +447,6 @@ export function WorkQueue({
               initialMessages: (parseWorkQueueMessages(subChat.messages) ?? []) as UIMessage[],
               projectPath: chat.project?.path,
               streamId: subChat.streamId ?? null,
-              expectedFlowTaskId: chat.taskId ?? null,
               getExecutionAccountType: () =>
                 utils.claudeCode.getResolvedAccount.getData({ chatId })?.type ?? 'claude-code',
             });

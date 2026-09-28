@@ -830,7 +830,6 @@ describe('WorkQueue mapTask trigger context', () => {
         subChatId: 'subchat-review',
         mode: 'agent',
         initialMessages: reviewedPlanMessages(),
-        expectedFlowTaskId: null,
       }),
     );
     expect(getResolvedAccountFetchMock).toHaveBeenCalledWith({ chatId: 'chat-review-missing' });

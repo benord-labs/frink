@@ -160,9 +160,6 @@ export function useTaskIpcHandler() {
               mode,
               initialMessages,
               projectPath: data.projectPath ?? undefined,
-              // Matches the active flow task registered by handleClaimedTask so the flow-continuation
-              // execution override applies (resolveFlowContinuationExecutionTask).
-              expectedFlowTaskId: data.taskId,
               // Read at SEND time from the resolved-account cache (prefetched below). QueueProcessor's
               // account-gate holds the send until that query succeeds, so this returns the real
               // account — never a premature default.

@@ -263,6 +263,7 @@ export const FlowRunStrip = memo(function FlowRunStrip({
 
 type FlowPausedBarProps = {
   flowRunId: string;
+  subChatId: string;
   /** The paused node's model picker id + mode — the same read-only readout as the running strip. */
   modelId?: string;
   mode?: ChatMode;
@@ -279,6 +280,7 @@ type FlowPausedBarProps = {
 
 export const FlowPausedBar = memo(function FlowPausedBar({
   flowRunId,
+  subChatId,
   modelId,
   mode,
   autoReviewTools,
@@ -295,7 +297,7 @@ export const FlowPausedBar = memo(function FlowPausedBar({
     resumePending,
     start: startResume,
     markStopRequested,
-  } = useFlowResumeLock(flowRunId, isTurnActive);
+  } = useFlowResumeLock(flowRunId, subChatId, isTurnActive);
 
   return (
     <FlowSurfaceCard

@@ -63,6 +63,7 @@ import { buildPermissionDecisionInput } from '../permissions/v2';
 import { checkPermission } from '../permissions/v2/check';
 import { formatDenyReason } from '../permissions/v2/deny-reason-format';
 import { persistApprovedRule } from '../permissions/v2/persist-approved-rule';
+import { captureMainMessage } from '../sentry/init';
 import {
   disposeCleanStreamEnd,
   disposeFlowStreamError,
@@ -740,6 +741,8 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       const error = Object.assign(new Error('This Flow step changed. Refresh before replying.'), {
         category: 'FLOW_RUN_ENDED',
       });
+      // Only dispatches and mobile approvals assert a step; a spike means a sender builds stale ids.
+      captureMainMessage(error.message, 'warning', { surface: 'flow-stale-step-decline' });
       executionAdmissionAcknowledged = true;
       payload.onExecutionStarted?.(error);
       sendRunErrorDirect({

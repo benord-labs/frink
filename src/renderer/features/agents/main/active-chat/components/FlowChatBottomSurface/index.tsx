@@ -130,6 +130,7 @@ export const FlowChatBottomSurface = memo(function FlowChatBottomSurface({
         <FlowPausedBar
           key={bottomSurface.flowRunId}
           flowRunId={bottomSurface.flowRunId}
+          subChatId={subChatId}
           modelId={bottomSurface.modelId}
           mode={bottomSurface.mode}
           autoReviewTools={bottomSurface.autoReviewTools}

@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { createStore, Provider } from 'jotai';
 import { toast } from 'sonner';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { agentChatStore } from '../../../../stores/agent-chat-store';
 import { FlowPausedBar, FlowRunStrip } from './index';
 
 const pauseMutate = vi.fn();
@@ -578,6 +579,7 @@ describe('FlowPausedBar', () => {
     const result = render(
       <FlowPausedBar
         flowRunId={props.flowRunId}
+        subChatId="sub1"
         isTurnActive={props.isTurnActive}
         modelId={props.modelId}
         mode={props.mode}
@@ -594,6 +596,7 @@ describe('FlowPausedBar', () => {
         result.rerender(
           <FlowPausedBar
             flowRunId={next.flowRunId ?? props.flowRunId}
+            subChatId="sub1"
             isTurnActive={next.isTurnActive ?? props.isTurnActive}
             modelId={props.modelId}
             mode={props.mode}
@@ -692,6 +695,24 @@ describe('FlowPausedBar', () => {
     expect(toast.error).toHaveBeenCalledWith('Flow did not resume', {
       description: 'The continuation ended while the flow was still paused. Try again.',
     });
+  });
+
+  it('leaves an errored continuation to its own error toast', () => {
+    type StoredChat = ReturnType<typeof agentChatStore.get>;
+    const getChat = vi
+      .spyOn(agentChatStore, 'get')
+      .mockReturnValue({ status: 'error' } as StoredChat);
+    vi.mocked(toast.error).mockClear();
+    const { rerenderBar } = renderBar();
+    fireEvent.click(screen.getByRole('button', { name: 'Resume' }));
+    // A replacement Chat for the sub-chat must not decide how the sent continuation ended.
+    getChat.mockReturnValue({ status: 'ready' } as StoredChat);
+    rerenderBar({ isTurnActive: true });
+    rerenderBar({ isTurnActive: false });
+
+    expect(screen.getByRole('button', { name: 'Resume' })).toBeEnabled();
+    expect(toast.error).not.toHaveBeenCalledWith('Flow did not resume', expect.anything());
+    getChat.mockRestore();
   });
 
   it('starts a different flow run unlocked', () => {
