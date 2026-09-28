@@ -23,6 +23,7 @@ const getSubChatByIdMock = vi.fn();
 const getSubChatModeMock = vi.fn();
 const carryOnFlowTaskMock = vi.fn();
 const hasActiveFlowAdmissionMock = vi.fn();
+const stopTaskSessionMock = vi.fn();
 class MockApiRequestError extends Error {
   status: number;
 
@@ -44,7 +45,6 @@ vi.mock('electron', () => ({
 vi.mock('../../db', () => ({
   getDatabase: vi.fn(() => ({}) as unknown),
 }));
-
 
 vi.mock('../../db/repos/tasks', () => ({
   deleteTaskDetailed: deleteTaskDetailedMock,
@@ -86,6 +86,10 @@ vi.mock('../../flows/rerun', () => ({
 
 vi.mock('../../flows/admission/runtime', () => ({
   hasActiveFlowAdmission: hasActiveFlowAdmissionMock,
+}));
+
+vi.mock('../../tasks/abort-task-session', () => ({
+  stopTaskSession: stopTaskSessionMock,
 }));
 
 vi.mock('../../task-poller', () => ({
@@ -150,6 +154,7 @@ describe('tasksRouter status schema', () => {
     getSubChatModeMock.mockReset().mockResolvedValue(null);
     carryOnFlowTaskMock.mockReset();
     hasActiveFlowAdmissionMock.mockReset();
+    stopTaskSessionMock.mockReset().mockResolvedValue(undefined);
   });
 
   // The continue path delegates to carryOnFlowTask (its session and Flow-provenance gates live in
@@ -715,6 +720,39 @@ describe('tasksRouter status schema', () => {
     cancelTaskDetailedMock.mockResolvedValueOnce({ task: null, reason: 'invalid_state' });
 
     await expect(caller.cancel(taskId)).rejects.toThrow('cannot be cancelled');
+  });
+
+  it('cancel stops the session of the row the cancel replaced, after the cancel', async () => {
+    const { tasksRouter } = await import('./tasks');
+    const caller = tasksRouter.createCaller({ getWindow: () => null });
+    const previous = { id: 'task-1', status: 'running', result: { subChatId: 'sub-1' } };
+    const after = { id: 'task-1', status: 'cancelled', result: { cancelled: true } };
+    const order: string[] = [];
+    cancelTaskDetailedMock.mockImplementationOnce(async () => {
+      order.push('cancel');
+      return { task: after, previous };
+    });
+    stopTaskSessionMock.mockImplementationOnce(async () => {
+      order.push('stop');
+    });
+
+    await expect(caller.cancel('task-1')).resolves.toEqual(after);
+    expect(order).toEqual(['cancel', 'stop']);
+    expect(stopTaskSessionMock).toHaveBeenCalledWith(previous);
+    // No separate (stale) pre-read: the pre-image comes from the cancel's own transaction.
+    expect(getTaskByIdMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['not_found', 'Task not found'],
+    ['invalid_state', 'cannot be cancelled'],
+  ])('cancel refused (%s) never stops a session', async (reason, message) => {
+    const { tasksRouter } = await import('./tasks');
+    const caller = tasksRouter.createCaller({ getWindow: () => null });
+    cancelTaskDetailedMock.mockResolvedValueOnce({ task: null, reason });
+
+    await expect(caller.cancel('task-1')).rejects.toThrow(message);
+    expect(stopTaskSessionMock).not.toHaveBeenCalled();
   });
 
   it('cancel rethrows non-5xx ApiRequestError', async () => {

@@ -7,6 +7,7 @@
 import log from 'electron-log';
 import { type ResolvedTaskStartMode, toChatMode } from '../../../shared/lib/trigger-rule-config';
 import type { ChatMode } from '../../../shared/types/chat-mode';
+import { getActiveExecution } from '../socket/streaming/execution-registry';
 
 /**
  * chatId → taskId for flow continuation tasks.
@@ -72,6 +73,24 @@ const PENDING_DISPATCH_TTL_MS = 15 * 60 * 1000;
 
 const dispatchKey = (subChatId: string, taskId: string) => `${subChatId}\u0000${taskId}`;
 
+/** taskId → the sub-chat its turn was dispatched into, so a Cancel still reaches a turn whose
+ * `result.subChatId` stamp failed. Past the soft cap, only settled entries (no live turn) prune. */
+const dispatchedSubChatByTask = new Map<string, { subChatId: string; registeredAtMs: number }>();
+const DISPATCHED_SOFT_CAP = 500;
+const DISPATCH_SETTLE_MS = 60_000;
+
+export function getDispatchedSubChatForTask(taskId: string): string | null {
+  return dispatchedSubChatByTask.get(taskId)?.subChatId ?? null;
+}
+
+function pruneSettledDispatches(nowMs: number): void {
+  for (const [taskId, entry] of dispatchedSubChatByTask) {
+    if (dispatchedSubChatByTask.size <= DISPATCHED_SOFT_CAP) return;
+    const settled = nowMs - entry.registeredAtMs > DISPATCH_SETTLE_MS;
+    if (settled && !getActiveExecution(entry.subChatId)) dispatchedSubChatByTask.delete(taskId);
+  }
+}
+
 export function registerPendingDispatchMode(
   subChatId: string,
   taskId: string,
@@ -81,6 +100,10 @@ export function registerPendingDispatchMode(
     mode: toChatMode(startMode),
     registeredAtMs: Date.now(),
   });
+  const nowMs = Date.now();
+  dispatchedSubChatByTask.delete(taskId);
+  dispatchedSubChatByTask.set(taskId, { subChatId, registeredAtMs: nowMs });
+  pruneSettledDispatches(nowMs);
 }
 
 /**
