@@ -9,6 +9,7 @@ import { useTheme } from '../../ui/theme';
 import { ResourceStatus } from '../../ui/resource-status';
 import { SearchField } from '../../ui/search-field';
 import { Markdown } from '../../ui/Markdown';
+import { FlowOutline } from './FlowOutline';
 
 const triggers: Record<string, { label: string; icon: ComponentProps<typeof Icon>['name'] }> = {
   manual_trigger: { label: 'Run manually', icon: 'play-outline' },
@@ -159,6 +160,7 @@ export function FlowDetail({
               {starting ? 'Starting…' : 'Run Flow'}
             </Button>
           </View>
+          <FlowOutline definition={data.definition} />
           <Section title="Recent runs">
             {data.runs.length ? (
               data.runs.map((run, index) => (

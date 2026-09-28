@@ -11,7 +11,7 @@ bun install --frozen-lockfile
 bun start
 ```
 
-Open the development project in a compatible Expo Go on your iPhone. This app uses Expo SDK 57. For a local native development build, install Xcode and its iOS platform support, then run `bun run ios` (or `bunx expo run:ios --device` for a connected iPhone). Select a development signing team in Xcode when building on a physical device. App Store submission, TestFlight, and a production distribution pipeline are outside this MVP.
+This app uses Expo SDK 57 and a native Markdown renderer, so it needs a development build; Expo Go is not sufficient. Install Xcode and its iOS platform support, then run `bun run ios` (or `bunx expo run:ios --device` for a connected iPhone). Select a development signing team in Xcode when building on a physical device. Rebuild the development app when native dependencies change. App Store submission, TestFlight, and a production distribution pipeline are outside this preview.
 
 Start the desktop app from the repository root with `bun install --frozen-lockfile` and `bun run dev`. Configure an AI provider and a project there before starting a new chat on the phone.
 
@@ -34,11 +34,12 @@ This uses **Tailscale Serve** for private HTTPS access. Do not use public Tailsc
 
 ## Use and recovery
 
-- **Queue:** see work needing attention and open its chat or Flow. Answer structured and free-text questions; allow or deny supported pending tool requests.
-- **Flows:** inspect runs and step output, read a plan before approving it, skip supported failed steps, start a run, stop it, or enable/disable its automation. Retry failed steps on desktop.
-- **Chats:** continue conversations, load earlier messages, stop an active response, and start a chat in an existing project using the desktop's configured provider.
+- **Queue:** search work, filter to decisions or running work, and open the exact question or permission needing attention. The Queue tab shows how many decisions are waiting for you, from any tab. Answer structured and free-text questions; allow or deny supported pending tool requests.
+- **Flows:** search automations, read the current definition's steps, branches, loops and instructions, and inspect individual runs separately. Read a plan before approving it, skip supported failed steps, start or stop a run, or enable/disable its automation. Edit the canvas and retry failed steps on desktop.
+- **Chats:** search recent conversations, read formatted replies and code, copy messages, and expand compact tool activity summaries. Load earlier messages without losing your place, return to the latest reply, stop an active response, or start a chat in an existing project using the desktop's configured provider.
+- Pull to refresh lists. Connection failures retain the last loaded content and show when it was updated; retry with the refresh button. Only the visible screen polls while the app is foregrounded.
 - Revoke a phone from desktop Mobile settings. Disabling mobile access revokes all phones. A revoked phone must pair again.
-- Connection errors preserve the current draft. Commands are never automatically retried. After an uncertain response, refresh and check the computer's state before sending again.
+- Unsent messages and question answers survive navigation and connection errors within the current app session. Closing the app or disconnecting clears them. Commands are never automatically retried. After an uncertain response, refresh and check the computer's state before sending again.
 
 The phone credential lives in the iOS Keychain on this device only. Desktop stores credential digests in its private app data. Sharing a pairing code grants control of this Frink instance; treat the code like an invitation to your computer.
 
@@ -58,6 +59,8 @@ The desktop bridge and domain tests are part of the repository-root `bun run tes
 
 ## MVP boundaries
 
-Foreground polling refreshes the queue, runs, and chats. There are no push notifications, offline execution, Flow canvas editing, terminal access, or attachment upload. Complex presentation/consent requests remain on desktop. A sleeping or disconnected computer cannot execute work. Transcripts display text; rich tool cards remain available on desktop.
+Foreground polling refreshes the queue, runs, and chats. There are no push notifications, offline execution, Flow canvas editing, terminal access, or attachment upload. Complex presentation/consent requests remain on desktop. A sleeping or disconnected computer cannot execute work. Transcripts render Markdown and tool names/status, with full tool inputs and outputs available on desktop. Remote images and embedded HTML are not loaded. The Flow outline describes the current definition, not a historical run snapshot. A definition the desktop's own validator rejects (for example an unfinished Flow with no trigger), or one above 2,500 connections or 512 KiB of text, is shown as unavailable and must be reviewed on desktop; it is never partly shown.
+
+Before release, validate on an iPhone: swipe-back navigation, the keyboard and composer on a long conversation, Dynamic Type and VoiceOver, Reduce Motion/Transparency, Markdown selection and code copying, and background/resume while Tailscale reconnects. Browser screenshots and the JavaScript export do not prove these native behaviors.
 
 The mobile implementation and Frink styling are original to this repository. Other applications informed the connection research; their application code and assets were not copied. Package dependencies retain their own licenses.
