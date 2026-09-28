@@ -409,6 +409,20 @@ describe('FlowAdmissionController', () => {
     });
   });
 
+  it('fills 100 slots across bounded claim batches and leaves excess work queued', async () => {
+    const db = freshDb();
+    const ids = Array.from({ length: 101 }, (_, index) => `limited-${index}`);
+    seedRuns(db, ids);
+    const { controller } = controllerWithMutableConfig(db, { maxConcurrentRuns: 100 });
+    await Promise.all(ids.map((id) => enqueueStart(controller, id)));
+
+    for (let batch = 0; batch < 5; batch++) {
+      expect(await claimRows(controller)).toHaveLength(20);
+    }
+    expect(await claimRows(controller)).toEqual([]);
+    expect(await controller.getSnapshot()).toMatchObject({ occupied: 100, counts: { queued: 1 } });
+  });
+
   it('tracks Unlimited work while bounding each claim transaction', async () => {
     const db = freshDb();
     const ids = Array.from({ length: 45 }, (_, index) => `unlimited-${index}`);

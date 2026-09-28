@@ -60,19 +60,19 @@ describe('Flow admission config', () => {
   });
 
   it('persists pause independently of capacity and restores it in a fresh module', async () => {
-    await config.updateFlowAdmissionConfig({ maxConcurrentRuns: 20, queuePaused: true });
+    await config.updateFlowAdmissionConfig({ maxConcurrentRuns: 100, queuePaused: true });
     await config.updateFlowAdmissionConfig({ concurrencyLimitEnabled: false });
     vi.resetModules();
     config = await import('./config');
     await expect(config.readFlowAdmissionConfig()).resolves.toMatchObject({
       queuePaused: true,
-      maxConcurrentRuns: 20,
+      maxConcurrentRuns: 100,
       concurrencyLimitEnabled: false,
     });
     await config.updateFlowAdmissionConfig({ queuePaused: false });
     await expect(config.readFlowAdmissionConfig()).resolves.toMatchObject({
       queuePaused: false,
-      maxConcurrentRuns: 20,
+      maxConcurrentRuns: 100,
       concurrencyLimitEnabled: false,
     });
   });
@@ -110,13 +110,13 @@ describe('Flow admission config', () => {
 
   it('rejects invalid updates instead of persisting unsafe capacity', async () => {
     await expect(config.updateFlowAdmissionConfig({ maxConcurrentRuns: 0 })).rejects.toThrow(
-      /integer from 1 to 20/,
+      /integer from 1 to 100/,
     );
-    await expect(config.updateFlowAdmissionConfig({ maxConcurrentRuns: 21 })).rejects.toThrow(
-      /integer from 1 to 20/,
+    await expect(config.updateFlowAdmissionConfig({ maxConcurrentRuns: 101 })).rejects.toThrow(
+      /integer from 1 to 100/,
     );
     await expect(config.updateFlowAdmissionConfig({ maxConcurrentRuns: 1.5 })).rejects.toThrow(
-      /integer from 1 to 20/,
+      /integer from 1 to 100/,
     );
     await expect(
       config.updateFlowAdmissionConfig({ concurrencyLimitEnabled: 'yes' as unknown as boolean }),

@@ -2,13 +2,16 @@ import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { Mutex } from 'async-mutex';
+import {
+  MAX_CONCURRENT_RUNS_LIMIT as MAX_CONCURRENT_FLOW_RUNS,
+  MIN_CONCURRENT_RUNS_LIMIT as MIN_CONCURRENT_FLOW_RUNS,
+} from '../../../../shared/lib/flow-admission/constants';
 import log from 'electron-log';
 import { ensureDirExistsAsync } from '../../fs-helpers';
 import { frinkUserHome } from '../../platform/frink-home';
 
 export const FLOW_ADMISSION_CONFIG_VERSION = 1;
-export const MIN_CONCURRENT_FLOW_RUNS = 1;
-export const MAX_CONCURRENT_FLOW_RUNS = 20;
+export { MIN_CONCURRENT_FLOW_RUNS, MAX_CONCURRENT_FLOW_RUNS };
 export const DEFAULT_MAX_CONCURRENT_FLOW_RUNS = 4;
 
 export type FlowAdmissionConfig = {
