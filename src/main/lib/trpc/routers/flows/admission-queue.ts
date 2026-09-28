@@ -1,21 +1,27 @@
 import { z } from 'zod';
 import { getDatabase } from '../../../db';
-import { moveQueuedFlowAdmission } from '../../../flows/admission/runtime';
+import {
+  kickStalledFlowAdmissionDrain,
+  moveQueuedFlowAdmission,
+} from '../../../flows/admission/runtime';
 import { queuedAdmissionRun, queuedFlowAdmissions } from '../../../flows/admission/visibility';
 import { cancelFlowRun } from '../../../flows/engine';
 import { publicProcedureRaw } from '../../index';
 
 export function flowAdmissionQueueProcedures() {
   return {
-    workQueueAdmissions: publicProcedureRaw.query(() =>
-      queuedFlowAdmissions(getDatabase()).map((row) => ({
+    workQueueAdmissions: publicProcedureRaw.query(() => {
+      // The Work Queue polls this while open: a queue whose drain retries ran out recovers on the
+      // next tick instead of waiting for a restart. Never awaited, so the read stays fast.
+      kickStalledFlowAdmissionDrain();
+      return queuedFlowAdmissions(getDatabase()).map((row) => ({
         flow_name: row.flowName,
         is_batch_member: row.batchId !== null,
         priority_class: row.priorityClass,
         project_name: row.projectName,
         ticket: row.ticket,
-      })),
-    ),
+      }));
+    }),
     moveWorkQueueAdmission: publicProcedureRaw
       .input(
         z.object({
