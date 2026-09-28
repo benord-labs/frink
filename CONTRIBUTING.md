@@ -19,6 +19,9 @@ bun run dev
 
 `bun install` itself needs no token.
 
+`bun run dev` hot-reloads the renderer and relaunches the app when main-process or preload code
+changes on disk, which ends any chats running in it.
+
 ## Tests
 
 ```bash

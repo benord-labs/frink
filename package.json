@@ -12,7 +12,7 @@
     "node": ">=22.12"
   },
   "scripts": {
-    "dev": "node ./scripts/binaries/ensure-electron-binary.mjs && node ./scripts/binaries/ensure-codex-binary.mjs && electron-vite dev",
+    "dev": "node ./scripts/binaries/ensure-electron-binary.mjs && node ./scripts/binaries/ensure-codex-binary.mjs && electron-vite dev --watch",
     "build": "bun run build:skills && NODE_OPTIONS='--max-old-space-size=8192' electron-vite build",
     "build:skills": "bun run scripts/skills/build-skill-content.ts",
     "build:skills:check": "bun run scripts/skills/build-skill-content.ts --check",
