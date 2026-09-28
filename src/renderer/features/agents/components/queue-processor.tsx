@@ -202,6 +202,12 @@ export function QueueProcessor() {
         return;
       }
 
+      // A turn restored after a reload without its attachments waits for the user: sending the text
+      // alone would silently drop what it referred to.
+      if (queue[0].attachmentsLost) {
+        return;
+      }
+
       // Get the Chat object from agentChatStore
       const chat = agentChatStore.get(subChatId);
       if (!chat) {

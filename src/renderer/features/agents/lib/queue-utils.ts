@@ -106,10 +106,23 @@ export type AgentQueueItem = {
   /** Queued only because main was finalizing a turn whose stream had closed: it goes out the
    * moment main settles, without the spacing between queued turns. */
   sendOnSettle?: true;
+  /** Restored after a reload without an attachment that was only a blob: url; held at the head,
+   * never sent partially (`message-queue-reload-persistence`). */
+  attachmentsLost?: true;
 };
 
 export function isInternalQueueItem(item: AgentQueueItem | undefined): boolean {
   return item?.approvedPlanContext !== undefined;
+}
+
+/** Images to load into the composer when editing a queued turn: a reload-restored image previews
+ * from its inline data, and one with neither url nor data is dropped for the user to re-attach. */
+export function editableQueuedImages(images: QueuedImage[] | undefined): QueuedImage[] {
+  return (images ?? [])
+    .filter((img) => img.url || img.base64Data)
+    .map((img) =>
+      img.url ? img : { ...img, url: `data:${img.mediaType};base64,${img.base64Data}` },
+    );
 }
 
 export function generateQueueId(): string {

@@ -7,6 +7,7 @@ import {
   clearDraftIfUnchanged,
   clearSubChatDraft,
   getSubChatDraftFull,
+  hasDraftContent,
   newChatDraftKey,
   readDraft,
   readDraftStamp,
@@ -421,5 +422,32 @@ describe('drafts store', () => {
       saveSubChatDraftText('chat-1', 'sub-1', '');
       expect(getSubChatDraftFull('chat-1', 'sub-1')).toBeNull();
     });
+  });
+});
+
+describe('hasDraftContent', () => {
+  const empty = {
+    text: null,
+    images: [],
+    files: [],
+    textContexts: [],
+    pastedTexts: [],
+    task: null,
+  };
+
+  it.each([
+    ['an empty draft', empty],
+    ['whitespace-only text', { ...empty, text: '  \n ' }],
+  ])('is false for %s', (_label, draft) => {
+    expect(hasDraftContent(draft)).toBe(false);
+  });
+
+  it.each([
+    ['text', { ...empty, text: 'edited' }],
+    ['only an image', { ...empty, images: [{ id: 'i' } as UploadedImage] }],
+    ['only a file', { ...empty, files: [{ id: 'f' } as never] }],
+    ['only an attached task', { ...empty, task: { id: 't' } as never }],
+  ])('is true for %s', (_label, draft) => {
+    expect(hasDraftContent(draft)).toBe(true);
   });
 });

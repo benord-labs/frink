@@ -35,6 +35,17 @@ export function registerChatScopedFamily<F extends { remove: (key: string) => vo
   return family;
 }
 
+/** Per-chat state held outside jotai (e.g. zustand stores) that must be dropped with the chat. */
+const chatScopedCleanups = new Set<(chatId: string) => void>();
+
+/**
+ * Opt state that does not live in a jotai atom into `cleanupChatScopedState`. The owning module
+ * registers itself, so this lib module never imports a feature.
+ */
+export function registerChatScopedCleanup(cleanup: (chatId: string) => void): void {
+  chatScopedCleanups.add(cleanup);
+}
+
 /**
  * Drop all per-chat state for `chatId`. Call when a chat is archived or permanently
  * deleted, after the chat has been deselected — a component still mounted on that id
@@ -56,6 +67,9 @@ export function cleanupChatScopedState(chatId: string): void {
   }
   for (const family of chatScopedFamilies) {
     family.remove(chatId);
+  }
+  for (const cleanup of chatScopedCleanups) {
+    cleanup(chatId);
   }
 }
 

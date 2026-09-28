@@ -1,8 +1,15 @@
 import { create } from 'zustand';
-import { subscribeWithSelector } from 'zustand/middleware';
+import { createJSONStorage, persist, subscribeWithSelector } from 'zustand/middleware';
 import { isRunSettling } from '../../../lib/agent-chat/steer/run-busy';
+import { registerChatScopedCleanup } from '../../../lib/atoms/atom-family-factory';
+import { approvedPlanContextSchema } from '../../../../shared/types/approved-plan-context-schema';
 import type { AgentQueueItem } from '../lib/queue-utils';
-import { isInternalQueueItem, removeQueueItem } from '../lib/queue-utils';
+import { FLOW_DISPATCH_SOURCE, isInternalQueueItem, removeQueueItem } from '../lib/queue-utils';
+import { agentChatStore, onChatRegistered } from './agent-chat-store';
+
+/** sessionStorage key. Per window, survives a renderer reload, gone on quit — see decision
+ * `message-queue-reload-persistence`. */
+export const MESSAGE_QUEUE_STORAGE_KEY = 'frink:message-queue';
 
 // Empty array constant to avoid creating new arrays on each call
 // Exported for use in selectors to maintain stable reference
@@ -15,6 +22,9 @@ type MessageQueueState = {
   // The original item stays in the queue (with an "Editing…" badge) and is only removed
   // once the edited send succeeds.
   editingItemIds: Record<string, string | null>;
+  // Map: subChatId -> parent chat id, recorded on enqueue so a chat's queues can be pruned when it
+  // is archived or deleted even after a reload, when agentChatStore no longer knows the sub-chat.
+  chatIds: Record<string, string>;
 
   // Actions
   addToQueue: (subChatId: string, item: AgentQueueItem) => void;
@@ -23,7 +33,9 @@ type MessageQueueState = {
   getVisibleQueue: (subChatId: string) => AgentQueueItem[];
   getNextItem: (subChatId: string) => AgentQueueItem | null;
   clearQueue: (subChatId: string) => void;
-  // Returns and removes the item from queue (atomic operation)
+  // Drop every queue (and editing flag) belonging to a parent chat.
+  clearQueuesForChat: (chatId: string) => void;
+  // Returns and removes the item for sending (atomic). Null for a turn held for lost attachments.
   popItem: (subChatId: string, itemId: string) => AgentQueueItem | null;
   // Add item to front of queue (for error recovery)
   prependItem: (subChatId: string, item: AgentQueueItem) => void;
@@ -58,140 +70,353 @@ function visibleQueue(queue: AgentQueueItem[]): AgentQueueItem[] {
   return visible;
 }
 
+/** Record the sub-chat's parent chat, keeping the map reference stable when nothing changes. */
+function withChatId(chatIds: Record<string, string>, subChatId: string): Record<string, string> {
+  const chatId = agentChatStore.getParentChatId(subChatId);
+  if (!chatId || chatIds[subChatId] === chatId) return chatIds;
+  return { ...chatIds, [subChatId]: chatId };
+}
+
+function without<T>(map: Record<string, T>, keys: string[]): Record<string, T> {
+  if (!keys.some((key) => Object.hasOwn(map, key))) return map;
+  const next = { ...map };
+  for (const key of keys) delete next[key];
+  return next;
+}
+
+type PersistedQueueState = Pick<MessageQueueState, 'queues' | 'editingItemIds' | 'chatIds'>;
+
+/** A restored image keeps only its inline data: its blob: url died with the old document. */
+function reviveItem(raw: AgentQueueItem): AgentQueueItem {
+  const { sendOnSettle: _settle, attachmentsLost: _lost, ...item } = raw;
+  const timestamp = new Date(raw.timestamp);
+  const images = item.images?.map((img) => ({ ...img, url: '' }));
+  const lost = (item.files?.length ?? 0) > 0 || (item.images ?? []).some((img) => !img.base64Data);
+  return {
+    ...item,
+    images,
+    timestamp: Number.isNaN(timestamp.getTime()) ? new Date() : timestamp,
+    status: 'pending',
+    ...(lost ? { attachmentsLost: true as const } : {}),
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+const isString = (value: unknown): value is string => typeof value === 'string';
+const isOptional = (value: unknown, check: (v: unknown) => boolean) =>
+  value === undefined || check(value);
+
+const isLineOrSize = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0;
+
+type EntryCheck = (entry: Record<string, unknown>) => boolean;
+
+/** The shape each attachment/context list must have for the send path to consume it unchanged. */
+const LIST_SHAPES: Record<
+  'images' | 'files' | 'textContexts' | 'diffTextContexts' | 'codeSelectionContexts',
+  EntryCheck
+> = {
+  images: (e) =>
+    isString(e.id) &&
+    isString(e.mediaType) &&
+    e.mediaType.startsWith('image/') &&
+    isOptional(e.url, isString) &&
+    isOptional(e.base64Data, isString) &&
+    isOptional(e.filename, isString),
+  files: (e) =>
+    isString(e.id) &&
+    isString(e.filename) &&
+    isString(e.url) &&
+    isOptional(e.mediaType, isString) &&
+    isOptional(e.size, isLineOrSize),
+  textContexts: (e) => isString(e.id) && isString(e.text) && isString(e.sourceMessageId),
+  diffTextContexts: (e) =>
+    isString(e.id) &&
+    isString(e.text) &&
+    isString(e.filePath) &&
+    isOptional(e.lineNumber, isLineOrSize) &&
+    isOptional(e.lineType, (t) => t === 'old' || t === 'new'),
+  codeSelectionContexts: (e) =>
+    isString(e.id) &&
+    isString(e.text) &&
+    isString(e.filePath) &&
+    isString(e.fileName) &&
+    isString(e.language) &&
+    isLineOrSize(e.startLine) &&
+    isLineOrSize(e.endLine),
+};
+
+function isRestorableItem(item: unknown): item is AgentQueueItem {
+  if (!isRecord(item) || !isString(item.id) || !isString(item.message)) return false;
+  if (
+    !isOptional(item.approvedPlanContext, (c) => approvedPlanContextSchema.safeParse(c).success)
+  ) {
+    return false;
+  }
+  if (!isOptional(item.source, (source) => source === FLOW_DISPATCH_SOURCE)) return false;
+  if (!isOptional(item.dispatchTaskId, isString)) return false;
+  return Object.entries(LIST_SHAPES).every(([field, check]) => {
+    const list = item[field];
+    return (
+      list === undefined || (Array.isArray(list) && list.every((e) => isRecord(e) && check(e)))
+    );
+  });
+}
+
+/** Rebuild the queue read back from sessionStorage after a reload; malformed data is dropped, see
+ * `message-queue-reload-persistence` for what each restored field becomes. */
+export function reviveQueueState(persisted: unknown): PersistedQueueState {
+  const source = isRecord(persisted) ? persisted : {};
+  const queues: Record<string, AgentQueueItem[]> = {};
+  for (const [subChatId, queue] of entriesOf(source.queues)) {
+    const items = Array.isArray(queue) ? queue.filter(isRestorableItem) : [];
+    if (items.length > 0) queues[subChatId] = items.map(reviveItem);
+  }
+  const editingItemIds = restoredLinks(source.editingItemIds, (subChatId, itemId) =>
+    queues[subChatId]?.some((item) => item.id === itemId),
+  );
+  const chatIds = restoredLinks(source.chatIds, (subChatId) => subChatId in queues);
+  return { queues, editingItemIds, chatIds };
+}
+
+function entriesOf(value: unknown): [string, unknown][] {
+  return isRecord(value) ? Object.entries(value) : [];
+}
+
+/** A persisted sub-chat -> id map, keeping only string ids that still point at a restored queue. */
+function restoredLinks(
+  value: unknown,
+  stillValid: (subChatId: string, id: string) => boolean | undefined,
+): Record<string, string> {
+  const links: Record<string, string> = {};
+  for (const [subChatId, id] of entriesOf(value)) {
+    if (isString(id) && stillValid(subChatId, id)) links[subChatId] = id;
+  }
+  return links;
+}
+
+function persistedSlice(state: MessageQueueState): PersistedQueueState {
+  const queues: Record<string, AgentQueueItem[]> = {};
+  for (const [subChatId, queue] of Object.entries(state.queues)) {
+    if (queue.length > 0) queues[subChatId] = queue;
+  }
+  const editingItemIds: Record<string, string | null> = {};
+  for (const [subChatId, itemId] of Object.entries(state.editingItemIds)) {
+    if (itemId) editingItemIds[subChatId] = itemId;
+  }
+  const chatIds: Record<string, string> = {};
+  for (const [subChatId, chatId] of Object.entries(state.chatIds)) {
+    if (queues[subChatId]) chatIds[subChatId] = chatId;
+  }
+  return { queues, editingItemIds, chatIds };
+}
+
+let quotaWarned = false;
+
+/** sessionStorage whose writes never throw: a queue too large to persist (big inline images) must
+ * still work in memory, because persist writes synchronously inside every set(). */
+const queueStorage = createJSONStorage<PersistedQueueState>(() => {
+  const storage = sessionStorage;
+  return {
+    getItem: (name) => storage.getItem(name),
+    removeItem: (name) => storage.removeItem(name),
+    setItem: (name, value) => {
+      try {
+        storage.setItem(name, value);
+      } catch (error) {
+        // An older snapshot must not outlive the state it no longer matches: it could restore, and
+        // resend, a turn that was sent since.
+        try {
+          storage.removeItem(name);
+        } catch {
+          // Storage is unusable altogether (e.g. disabled); the queue still works in memory.
+        }
+        if (!quotaWarned) {
+          quotaWarned = true;
+          console.warn(
+            '[message-queue] queue too large to persist; it will not survive a reload',
+            error,
+          );
+        }
+      }
+    },
+  };
+});
+
 export const useMessageQueueStore = create<MessageQueueState>()(
-  subscribeWithSelector((set, get) => ({
-    queues: {},
-    editingItemIds: {},
+  persist(
+    subscribeWithSelector((set, get) => ({
+      queues: {},
+      editingItemIds: {},
+      chatIds: {},
 
-    addToQueue: (subChatId, item) => {
-      set((state) => {
-        const queue = state.queues[subChatId] || [];
-        // An item under edit is about to be replaced by this one, so it is not queued ahead of it.
-        const ahead = queue.some((i) => i.id !== state.editingItemIds[subChatId]);
-        const next = ahead ? item : asHead(subChatId, item);
-        return { queues: { ...state.queues, [subChatId]: [...queue, next] } };
-      });
-    },
+      addToQueue: (subChatId, item) => {
+        set((state) => {
+          const queue = state.queues[subChatId] || [];
+          // An item under edit is about to be replaced by this one, so it is not queued ahead of it.
+          const ahead = queue.some((i) => i.id !== state.editingItemIds[subChatId]);
+          const next = ahead ? item : asHead(subChatId, item);
+          return {
+            queues: { ...state.queues, [subChatId]: [...queue, next] },
+            chatIds: withChatId(state.chatIds, subChatId),
+          };
+        });
+      },
 
-    removeFromQueue: (subChatId, itemId) => {
-      set((state) => {
-        const currentQueue = state.queues[subChatId] || [];
-        if (currentQueue.some((item) => item.id === itemId && isInternalQueueItem(item))) {
-          return state;
-        }
-        return {
+      removeFromQueue: (subChatId, itemId) => {
+        set((state) => {
+          const currentQueue = state.queues[subChatId] || [];
+          if (currentQueue.some((item) => item.id === itemId && isInternalQueueItem(item))) {
+            return state;
+          }
+          return {
+            queues: {
+              ...state.queues,
+              [subChatId]: removeQueueItem(currentQueue, itemId),
+            },
+          };
+        });
+      },
+
+      getQueue: (subChatId) => {
+        return get().queues[subChatId] ?? EMPTY_QUEUE;
+      },
+
+      getVisibleQueue: (subChatId) => visibleQueue(get().queues[subChatId] ?? EMPTY_QUEUE),
+
+      getNextItem: (subChatId) => {
+        const queue = get().queues[subChatId] || [];
+        return queue.find((item) => item.status === 'pending') || null;
+      },
+
+      clearQueue: (subChatId) => {
+        set((state) => ({
+          queues: without(state.queues, [subChatId]),
+          editingItemIds: without(state.editingItemIds, [subChatId]),
+          chatIds: without(state.chatIds, [subChatId]),
+        }));
+      },
+
+      clearQueuesForChat: (chatId) => {
+        set((state) => {
+          const subChatIds = Object.keys(state.chatIds).filter(
+            (id) => state.chatIds[id] === chatId,
+          );
+          if (subChatIds.length === 0) return state;
+          return {
+            queues: without(state.queues, subChatIds),
+            editingItemIds: without(state.editingItemIds, subChatIds),
+            chatIds: without(state.chatIds, subChatIds),
+          };
+        });
+      },
+
+      // Atomic pop: find and remove in single set() call to prevent race conditions
+      popItem: (subChatId, itemId) => {
+        let foundItem: AgentQueueItem | null = null;
+        set((state) => {
+          const currentQueue = state.queues[subChatId] || [];
+          foundItem = currentQueue.find((i) => i.id === itemId && !i.attachmentsLost) || null;
+          if (!foundItem) return state;
+          return {
+            queues: {
+              ...state.queues,
+              [subChatId]: currentQueue.filter((i) => i.id !== itemId),
+            },
+          };
+        });
+        return foundItem;
+      },
+
+      // Add item to front of queue (used for error recovery - requeue failed items)
+      prependItem: (subChatId, item) => {
+        set((state) => ({
           queues: {
             ...state.queues,
-            [subChatId]: removeQueueItem(currentQueue, itemId),
+            [subChatId]: withHead(subChatId, item, state.queues[subChatId] || []),
           },
-        };
-      });
-    },
+          chatIds: withChatId(state.chatIds, subChatId),
+        }));
+      },
 
-    getQueue: (subChatId) => {
-      return get().queues[subChatId] ?? EMPTY_QUEUE;
-    },
+      reorderQueue: (subChatId, fromIndex, toIndex) => {
+        if (fromIndex === toIndex) return;
+        set((state) => {
+          const currentQueue = state.queues[subChatId] || [];
+          if (
+            fromIndex < 0 ||
+            toIndex < 0 ||
+            fromIndex >= currentQueue.length ||
+            toIndex >= currentQueue.length
+          ) {
+            return state;
+          }
+          if (
+            isInternalQueueItem(currentQueue[fromIndex]) ||
+            isInternalQueueItem(currentQueue[toIndex])
+          ) {
+            return state;
+          }
+          const next = currentQueue.slice();
+          const [moved] = next.splice(fromIndex, 1);
+          next.splice(toIndex, 0, moved);
+          return {
+            queues: {
+              ...state.queues,
+              [subChatId]:
+                next[0] === currentQueue[0] ? next : withHead(subChatId, next[0], next.slice(1)),
+            },
+          };
+        });
+      },
 
-    getVisibleQueue: (subChatId) => visibleQueue(get().queues[subChatId] ?? EMPTY_QUEUE),
+      reorderVisibleQueue: (subChatId, fromIndex, toIndex) => {
+        const visible = get().getVisibleQueue(subChatId);
+        const currentQueue = get().queues[subChatId] ?? EMPTY_QUEUE;
+        const fromId = visible[fromIndex]?.id;
+        const toId = visible[toIndex]?.id;
+        if (!fromId || !toId) return;
+        get().reorderQueue(
+          subChatId,
+          currentQueue.findIndex((item) => item.id === fromId),
+          currentQueue.findIndex((item) => item.id === toId),
+        );
+      },
 
-    getNextItem: (subChatId) => {
-      const queue = get().queues[subChatId] || [];
-      return queue.find((item) => item.status === 'pending') || null;
+      setEditingItemId: (subChatId, itemId) => {
+        set((state) => {
+          const item = itemId
+            ? state.queues[subChatId]?.find((candidate) => candidate.id === itemId)
+            : undefined;
+          if (item && isInternalQueueItem(item)) return state;
+          return {
+            editingItemIds: {
+              ...state.editingItemIds,
+              [subChatId]: itemId,
+            },
+          };
+        });
+      },
+    })),
+    {
+      name: MESSAGE_QUEUE_STORAGE_KEY,
+      version: 1,
+      storage: queueStorage,
+      partialize: persistedSlice,
+      merge: (persisted, current) => ({ ...current, ...reviveQueueState(persisted) }),
     },
-
-    clearQueue: (subChatId) => {
-      set((state) => ({
-        queues: {
-          ...state.queues,
-          [subChatId]: [],
-        },
-      }));
-    },
-
-    // Atomic pop: find and remove in single set() call to prevent race conditions
-    popItem: (subChatId, itemId) => {
-      let foundItem: AgentQueueItem | null = null;
-      set((state) => {
-        const currentQueue = state.queues[subChatId] || [];
-        foundItem = currentQueue.find((i) => i.id === itemId) || null;
-        if (!foundItem) return state;
-        return {
-          queues: {
-            ...state.queues,
-            [subChatId]: currentQueue.filter((i) => i.id !== itemId),
-          },
-        };
-      });
-      return foundItem;
-    },
-
-    // Add item to front of queue (used for error recovery - requeue failed items)
-    prependItem: (subChatId, item) => {
-      set((state) => ({
-        queues: {
-          ...state.queues,
-          [subChatId]: withHead(subChatId, item, state.queues[subChatId] || []),
-        },
-      }));
-    },
-
-    reorderQueue: (subChatId, fromIndex, toIndex) => {
-      if (fromIndex === toIndex) return;
-      set((state) => {
-        const currentQueue = state.queues[subChatId] || [];
-        if (
-          fromIndex < 0 ||
-          toIndex < 0 ||
-          fromIndex >= currentQueue.length ||
-          toIndex >= currentQueue.length
-        ) {
-          return state;
-        }
-        if (
-          isInternalQueueItem(currentQueue[fromIndex]) ||
-          isInternalQueueItem(currentQueue[toIndex])
-        ) {
-          return state;
-        }
-        const next = currentQueue.slice();
-        const [moved] = next.splice(fromIndex, 1);
-        next.splice(toIndex, 0, moved);
-        return {
-          queues: {
-            ...state.queues,
-            [subChatId]:
-              next[0] === currentQueue[0] ? next : withHead(subChatId, next[0], next.slice(1)),
-          },
-        };
-      });
-    },
-
-    reorderVisibleQueue: (subChatId, fromIndex, toIndex) => {
-      const visible = get().getVisibleQueue(subChatId);
-      const currentQueue = get().queues[subChatId] ?? EMPTY_QUEUE;
-      const fromId = visible[fromIndex]?.id;
-      const toId = visible[toIndex]?.id;
-      if (!fromId || !toId) return;
-      get().reorderQueue(
-        subChatId,
-        currentQueue.findIndex((item) => item.id === fromId),
-        currentQueue.findIndex((item) => item.id === toId),
-      );
-    },
-
-    setEditingItemId: (subChatId, itemId) => {
-      set((state) => {
-        const item = itemId
-          ? state.queues[subChatId]?.find((candidate) => candidate.id === itemId)
-          : undefined;
-        if (item && isInternalQueueItem(item)) return state;
-        return {
-          editingItemIds: {
-            ...state.editingItemIds,
-            [subChatId]: itemId,
-          },
-        };
-      });
-    },
-  })),
+  ),
 );
+
+registerChatScopedCleanup((chatId) => useMessageQueueStore.getState().clearQueuesForChat(chatId));
+
+// Work Queue plan recovery queues its turn just before registering the Chat; map it on registration.
+onChatRegistered((subChatId) => {
+  useMessageQueueStore.setState((state) => {
+    if (!state.queues[subChatId]?.length) return state;
+    const chatIds = withChatId(state.chatIds, subChatId);
+    return chatIds === state.chatIds ? state : { chatIds };
+  });
+});
