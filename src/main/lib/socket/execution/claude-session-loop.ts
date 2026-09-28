@@ -32,6 +32,7 @@ type TurnSink = TurnTiming & {
   onMessage: (m: SDKMessage) => void | Promise<void>;
   resolve: () => void;
   reject: (err: unknown) => void;
+  onPushed?: () => void; // once, right after the message lands on the CLI input queue
 };
 
 /** Awaited under busy right before a push; false (or a throw) ends the turn unpushed. */
@@ -175,6 +176,7 @@ export function runTurn(
   message: SDKUserMessage,
   onMessage: (m: SDKMessage) => void | Promise<void>,
   beforePush?: BeforePush,
+  onPushed?: () => void,
 ): Promise<void> {
   const loop = session.loop;
   // A drained arming still holds the sink without holding `busy`, so it is checked in its own right.
@@ -192,7 +194,8 @@ export function runTurn(
   }
   takeBusy(session);
   return new Promise<void>((resolve, reject) => {
-    const sink: TurnSink = { onMessage, resolve, reject, path: beforePush ? 'warm' : 'fresh' };
+    const path = beforePush ? 'warm' : 'fresh';
+    const sink: TurnSink = { onMessage, resolve, reject, onPushed, path };
     loop.turn = sink;
     void pushTurn(session, sink, message, beforePush);
   });
@@ -217,6 +220,7 @@ async function pushTurn(
     return;
   }
   sink.pushedAt = Date.now();
+  sink.onPushed?.();
   wakeLoop(session.loop);
 }
 
@@ -250,7 +254,7 @@ export function armIdle(session: ClaudeSession, callbacks: WakePumpCallbacks): W
     takeover: null,
     ended: null,
     resolveDone,
-    startTurn: (message, onMessage, beforePush) =>
+    startTurn: (message, onMessage, beforePush, onPushed) =>
       new Promise<void>((resolve, reject) => {
         if (arming.ended) {
           // Handed over or ended: a push would sit unread. The 'adopt refused' marker is shared
@@ -272,7 +276,15 @@ export function armIdle(session: ClaudeSession, callbacks: WakePumpCallbacks): W
           reject(new Error('armIdle: startTurn already called'));
           return;
         }
-        arming.takeover = { message, onMessage, beforePush, resolve, reject, path: 'adopted' };
+        arming.takeover = {
+          message,
+          onMessage,
+          beforePush,
+          onPushed,
+          resolve,
+          reject,
+          path: 'adopted',
+        };
         // Mid-burst: the push waits for the burst's `result` (the CLI serializes turns anyway —
         // pushing now would only widen the misattribution window). Idle: push immediately so the
         // pending `.next()` resolves from the new turn's frames.
@@ -304,6 +316,7 @@ async function pushTakeover(session: ClaudeSession, arming: IdleArming): Promise
     if (arming.ended) return;
     session.queue.push(takeover.message);
     takeover.pushedAt = Date.now();
+    takeover.onPushed?.();
   } catch (err) {
     endArming(session, { reason: 'turn-error', error: err }, err);
   }

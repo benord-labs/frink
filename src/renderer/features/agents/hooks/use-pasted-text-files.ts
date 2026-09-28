@@ -10,12 +10,15 @@ export type PastedTextFile = {
   createdAt: Date;
 };
 
+/** A chip restored from a draft or a queued item; the queue does not keep `createdAt`. */
+type RestorablePastedText = Omit<PastedTextFile, 'createdAt'> & { createdAt?: Date };
+
 type UsePastedTextFilesReturn = {
   pastedTexts: PastedTextFile[];
   addPastedText: (text: string) => Promise<void>;
   removePastedText: (id: string) => void;
   clearPastedTexts: () => void;
-  setPastedTextsFromDraft: (drafts: PastedTextFile[]) => void;
+  setPastedTextsFromDraft: (drafts: RestorablePastedText[]) => void;
   pastedTextsRef: React.RefObject<PastedTextFile[]>;
 };
 
@@ -48,8 +51,10 @@ export function usePastedTextFiles(subChatId: string): UsePastedTextFilesReturn 
         };
 
         setPastedTexts((prev) => [...prev, newPasted]);
-      } catch (_error) {
-        // Ignore write failures here - message send still works without pasted-file mentions.
+      } catch (error) {
+        // Rethrown so the paste handler can fall back to inline text: the default paste was
+        // cancelled, so swallowing this dropped the pasted text entirely (sc-3666).
+        throw error instanceof Error ? error : new Error('Failed to save pasted text');
       }
     },
     [subChatId, writePastedTextMutation],
@@ -63,8 +68,8 @@ export function usePastedTextFiles(subChatId: string): UsePastedTextFilesReturn 
     setPastedTexts([]);
   }, []);
 
-  const setPastedTextsFromDraft = useCallback((drafts: PastedTextFile[]) => {
-    setPastedTexts(drafts);
+  const setPastedTextsFromDraft = useCallback((drafts: RestorablePastedText[]) => {
+    setPastedTexts(drafts.map((d) => ({ ...d, createdAt: d.createdAt ?? new Date() })));
   }, []);
 
   return {

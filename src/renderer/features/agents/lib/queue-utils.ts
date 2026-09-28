@@ -69,6 +69,15 @@ export type CodeSelectionContext = {
   createdAt: Date;
 };
 
+// Large paste saved to the session's pasted/ dir; drained as a `pasted:` mention.
+type QueuedPastedText = {
+  id: string;
+  filePath: string;
+  filename: string;
+  size: number;
+  preview: string;
+};
+
 type QueuedCodeSelectionContext = {
   id: string;
   text: string;
@@ -95,6 +104,7 @@ export type AgentQueueItem = {
   textContexts?: QueuedTextContext[];
   diffTextContexts?: QueuedDiffTextContext[];
   codeSelectionContexts?: QueuedCodeSelectionContext[];
+  pastedTexts?: QueuedPastedText[];
   timestamp: Date;
   status: 'pending' | 'processing';
   source?: typeof FLOW_DISPATCH_SOURCE;
@@ -124,6 +134,7 @@ export function createQueueItem(
   textContexts?: QueuedTextContext[],
   diffTextContexts?: QueuedDiffTextContext[],
   codeSelectionContexts?: QueuedCodeSelectionContext[],
+  pastedTexts?: QueuedPastedText[],
 ): AgentQueueItem {
   return {
     id,
@@ -135,6 +146,7 @@ export function createQueueItem(
       diffTextContexts && diffTextContexts.length > 0 ? diffTextContexts : undefined,
     codeSelectionContexts:
       codeSelectionContexts && codeSelectionContexts.length > 0 ? codeSelectionContexts : undefined,
+    pastedTexts: pastedTexts && pastedTexts.length > 0 ? pastedTexts : undefined,
     timestamp: new Date(),
     status: 'pending',
   };
@@ -172,6 +184,26 @@ export function toQueuedTextContext(ctx: SelectedTextContext): QueuedTextContext
     id: ctx.id,
     text: ctx.text,
     sourceMessageId: ctx.sourceMessageId,
+  };
+}
+
+export function toQueuedDiffTextContext(ctx: DiffTextContext): QueuedDiffTextContext {
+  return {
+    id: ctx.id,
+    text: ctx.text,
+    filePath: ctx.filePath,
+    lineNumber: ctx.lineNumber,
+    lineType: ctx.lineType,
+  };
+}
+
+export function toQueuedPastedText(pasted: QueuedPastedText): QueuedPastedText {
+  return {
+    id: pasted.id,
+    filePath: pasted.filePath,
+    filename: pasted.filename,
+    size: pasted.size,
+    preview: pasted.preview,
   };
 }
 

@@ -379,8 +379,9 @@ const ChatViewInner = memo(function ChatViewInner({
   });
 
   // Pasted text files (large pasted text saved as files)
+  const pastedFiles = usePastedTextFiles(subChatId);
   const { pastedTexts, addPastedText, removePastedText, clearPastedTexts, pastedTextsRef } =
-    usePastedTextFiles(subChatId);
+    pastedFiles;
 
   // Message queue for sending messages while streaming
   const queue = useMessageQueueStore((s) => s.getVisibleQueue(subChatId));
@@ -1076,6 +1077,7 @@ const ChatViewInner = memo(function ChatViewInner({
       setDiffTextContextsFromDraft(
         (item.diffTextContexts ?? []) as Parameters<typeof setDiffTextContextsFromDraft>[0],
       );
+      pastedFiles.setPastedTextsFromDraft(item.pastedTexts ?? []); // the paste's only carrier
       // Note: codeSelectionContexts are managed via Jotai atom families and aren't restored
       // to the editor in v1. Documented limitation in the plan.
 
@@ -1090,6 +1092,7 @@ const ChatViewInner = memo(function ChatViewInner({
       setFilesFromDraft,
       setTextContextsFromDraft,
       setDiffTextContextsFromDraft,
+      pastedFiles.setPastedTextsFromDraft,
     ],
   );
 

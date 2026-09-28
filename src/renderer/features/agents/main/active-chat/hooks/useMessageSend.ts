@@ -3,6 +3,7 @@ import { useSetAtom } from 'jotai';
 import { useCallback, useEffect, useRef } from 'react';
 import { commandFetcher } from '@/lib/commands/command-fetcher';
 import { expandSlashCommand } from '@/lib/commands/expand-slash-command';
+import { codeSelectionMention, pastedTextMention } from '@/lib/mentions/queued-message-text';
 import { isRunBusy } from '../../../../../lib/agent-chat/steer/run-busy';
 import { isCompactCommand } from '../../../../../../shared/commands/expand-slash-command';
 import { stripHiddenWakeMarker } from '../../../../../../shared/lib/message-markers/hidden-wake-marker';
@@ -25,8 +26,10 @@ import {
   createQueueItem,
   generateQueueId,
   toQueuedCodeSelectionContext,
+  toQueuedDiffTextContext,
   toQueuedFile,
   toQueuedImage,
+  toQueuedPastedText,
   toQueuedTextContext,
 } from '../../../lib/queue-utils';
 import type { AgentsMentionsEditorHandle } from '../../../mentions';
@@ -172,14 +175,20 @@ export function useMessageSend({
         ? [toQueuedCodeSelectionContext(currentCodeSelection)]
         : undefined;
 
+      // Every attachment the direct path would send rides the item: a large paste lives only as a
+      // chip (not editor text), so dropping it here lost the whole message (sc-3666).
+      const queuedDiffTextContexts = (diffTextContextsRef.current ?? []).map(
+        toQueuedDiffTextContext,
+      );
       const item = createQueueItem(
         generateQueueId(),
         inputValue.trim(),
         queuedImages.length > 0 ? queuedImages : undefined,
         queuedFiles.length > 0 ? queuedFiles : undefined,
         queuedTextContexts.length > 0 ? queuedTextContexts : undefined,
-        undefined, // diffTextContexts
+        queuedDiffTextContexts,
         queuedCodeSelections,
+        currentPastedTexts.map(toQueuedPastedText),
       );
       addToQueue(subChatId, item);
 
@@ -190,7 +199,9 @@ export function useMessageSend({
       }
       clearAll();
       clearTextContexts();
+      clearDiffTextContexts();
       clearCodeSelectionContext();
+      clearPastedTexts();
       return;
     }
 
@@ -293,30 +304,14 @@ export function useMessageSend({
       });
 
       // Add code selection as mention token
-      const codeMentions = currentCodeSelection
-        ? [
-            (() => {
-              const preview = currentCodeSelection.preview.replace(
-                MENTION_PREVIEW_SANITIZE_REGEX,
-                '',
-              );
-              const encodedText = utf8ToBase64(currentCodeSelection.text);
-              const safeFileName = encodeURIComponent(currentCodeSelection.fileName);
-              return `@[code:${safeFileName}:${currentCodeSelection.startLine}-${currentCodeSelection.endLine}:${preview}:${encodedText}]`;
-            })(),
-          ]
-        : [];
+      const codeMentions = currentCodeSelection ? [codeSelectionMention(currentCodeSelection)] : [];
 
       // Add active file as context (if not already included via code selection)
       const activeFileMention = shouldIncludeActiveFile
         ? [`@[${MENTION_PREFIXES.FILE}local:${currentActiveFile.path}]`]
         : [];
 
-      const pastedTextMentions = currentPastedTexts.map((pt) => {
-        const safePreview = pt.preview.replace(/[[\]]/g, '');
-        const safePath = pt.filePath.replace(/[[\]]/g, '');
-        return `@[${MENTION_PREFIXES.PASTED}${pt.size}:${safePreview}|${safePath}]`;
-      });
+      const pastedTextMentions = currentPastedTexts.map(pastedTextMention);
 
       mentionPrefix = `${[...quoteMentions, ...diffMentions, ...codeMentions, ...activeFileMention, ...pastedTextMentions].join(' ')} `;
     }

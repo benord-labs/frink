@@ -134,6 +134,7 @@ import {
 import { runTurn as runClaudeTurn } from './execution/claude-session-loop';
 import * as flow from './execution/flow-resource-cleanup';
 import { deliverProviderConfig } from './execution/provider-delivery';
+import { trackUserMessageDelivery } from './execution/claude-session/user-message-delivery';
 
 import {
   applyApprovedPlanContextToPrompt,
@@ -1469,6 +1470,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
     turn.pendingReminders = pendingReminders;
 
     const shouldResumeClaudeSession = Boolean(persistedSessionId);
+    const delivery = trackUserMessageDelivery(subChatId, msgId, () => fullPrompt.length);
     const processClaudeStream = async (
       session: ClaudeSession,
       initialMessage: ReturnType<typeof buildClaudeUserMessage>,
@@ -1755,9 +1757,11 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
         onTakeover: () => chatServer.bindChannelExecution(subChatId, executionContextId),
         onSetterRejected: claimed ? () => session.retire('setter-rejected') : undefined,
       });
+      const warmPush = claimed ? takeover : undefined;
+      const onPushed = delivery.onPushed(adoptedPump !== undefined, claimed);
       const turnDone = adoptedPump
-        ? adoptedPump.startTurn(initialMessage, onSdkMessage, takeover)
-        : runClaudeTurn(session, initialMessage, onSdkMessage, claimed ? takeover : undefined);
+        ? adoptedPump.startTurn(initialMessage, onSdkMessage, takeover, onPushed)
+        : runClaudeTurn(session, initialMessage, onSdkMessage, warmPush, onPushed);
       const unbindTurnAbort = bindTurnAbort(session, abortController.signal);
       await turnDone.finally(unbindTurnAbort);
 
@@ -2171,6 +2175,8 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
         `[Socket Executor] Claude plan mode: stream ended via interrupt throw for ${subChatId}:`,
       );
     }
+    // sc-3666: a turn that settled without its prompt reaching the CLI must not report complete.
+    delivery.assertDelivered(abortController.signal.aborted, shouldResumeClaudeSession);
 
     // 5. Extract metadata from finish chunk if present (use last: failed resume can leave an earlier `finish` before retry succeeds)
     let finishChunk: UIMessageChunk | undefined;

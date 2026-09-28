@@ -10,15 +10,44 @@ type QueuedMessage = {
   message: string;
   textContexts?: Array<{ text: string }>;
   diffTextContexts?: Array<{ text: string; filePath: string; lineNumber?: number }>;
+  codeSelectionContexts?: Array<CodeSelectionMentionSource>;
+  pastedTexts?: Array<PastedTextMentionSource>;
 };
+
+type CodeSelectionMentionSource = {
+  text: string;
+  fileName: string;
+  startLine: number;
+  endLine: number;
+  preview?: string;
+};
+
+type PastedTextMentionSource = { size: number; preview: string; filePath: string };
 
 function preview(text: string): string {
   return text.slice(0, PREVIEW_LENGTH).replace(MENTION_PREVIEW_SANITIZE_REGEX, '');
 }
 
+/** Code-selection token — shared by the direct send and the queue drain so they cannot drift. */
+export function codeSelectionMention(code: CodeSelectionMentionSource): string {
+  const shown = (code.preview ?? code.text.slice(0, PREVIEW_LENGTH)).replace(
+    MENTION_PREVIEW_SANITIZE_REGEX,
+    '',
+  );
+  return `@[code:${encodeURIComponent(code.fileName)}:${code.startLine}-${code.endLine}:${shown}:${encodeForMentionToken(code.text)}]`;
+}
+
+/** Pasted-text token (`pasted:size:preview|path`): `|` separates the path because paths can
+ * contain colons, and brackets are stripped so neither part can close the token early. */
+export function pastedTextMention(pasted: PastedTextMentionSource): string {
+  const safePreview = pasted.preview.replace(/[[\]]/g, '');
+  const safePath = pasted.filePath.replace(/[[\]]/g, '');
+  return `@[${MENTION_PREFIXES.PASTED}${pasted.size}:${safePreview}|${safePath}]`;
+}
+
 /**
- * The text part for a queued message as it drains: attached quote/diff contexts as mention tokens,
- * ahead of the message. `/compact` is exempt — see isCompactCommand.
+ * The text part for a queued message as it drains: attached quote/diff/code/pasted contexts as
+ * mention tokens, ahead of the message (the direct-send order). `/compact` is exempt — see isCompactCommand.
  */
 export function buildQueuedMessageText(item: QueuedMessage): string {
   const message = item.message || '';
@@ -32,6 +61,9 @@ export function buildQueuedMessageText(item: QueuedMessage): string {
       `@[${MENTION_PREFIXES.DIFF}${dtc.filePath}:${dtc.lineNumber || 0}:${preview(dtc.text)}:${encodeForMentionToken(dtc.text)}]`,
   );
 
-  const mentions = [...quoteMentions, ...diffMentions];
-  return mentions.length > 0 ? `${mentions.join(' ')} ${message}` : message;
+  const codeMentions = (item.codeSelectionContexts ?? []).map(codeSelectionMention);
+  const pastedMentions = (item.pastedTexts ?? []).map(pastedTextMention);
+
+  const mentions = [...quoteMentions, ...diffMentions, ...codeMentions, ...pastedMentions];
+  return [...mentions, message].filter(Boolean).join(' ');
 }
