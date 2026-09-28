@@ -139,8 +139,10 @@ export function createPendingPermissionRequestBroker(input: {
     }
   };
 
+  // Dismiss on every answer: the answering window pops its own card, but the phone and
+  // other windows only learn the request is gone from this broadcast.
   input.onResponse((response) => {
-    pendingPermissionRequests.get(response.requestId)?.settle(response, false);
+    pendingPermissionRequests.get(response.requestId)?.settle(response, true);
   });
 
   return { drain, hasPending, request };

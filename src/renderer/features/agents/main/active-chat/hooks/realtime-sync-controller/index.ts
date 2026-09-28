@@ -172,9 +172,10 @@ function useRealtimeStreamHandlers({
     (payload: {
       chatId: string;
       subChatId: string;
-      message: { id: string; role: string; parts: unknown[] };
+      message: { id: string; role: string; parts: unknown[]; metadata?: unknown };
     }) => {
       if (payload.subChatId !== subChatId || payload.message.role !== 'user') return;
+      const { metadata } = payload.message;
       setMessagesRef.current((previous) => {
         if (previous.find((message) => message.id === payload.message.id)) return previous;
         return [
@@ -183,6 +184,7 @@ function useRealtimeStreamHandlers({
             id: payload.message.id,
             role: 'user' as const,
             parts: (payload.message.parts || []).map((part) => part as UIMessage['parts'][0]),
+            ...(metadata ? { metadata } : {}),
           },
         ];
       });
