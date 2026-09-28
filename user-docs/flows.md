@@ -394,7 +394,9 @@ For a concise in-repo reminder (including clearing briefing), see the **Frink Fl
 
 ## Machine-wide Flow concurrency
 
-Frink limits the number of top-level Flow runs using machine resources at once. The limit is enabled by default at **4** and can be changed from **Settings → Preferences → Flows** (valid range: 1–20), or disabled for an explicit **Unlimited** state. The setting is local to this machine. Ordinary chats do not count toward it.
+Frink limits the number of top-level Flow runs using machine resources at once. The limit is enabled by default at **4** and can be changed from **Settings → Preferences → Flows** (valid range: 1–100), or disabled for an explicit **Unlimited** state. The setting is local to this machine. Ordinary chats do not count toward it.
+
+Changes to the limit toggle and maximum stay in the settings panel until you choose **Save**. Choose **Discard** to restore the latest saved settings. The live capacity counts keep refreshing while you edit. Saving changes preserves whether the Work Queue is paused, and disabling the limit keeps your numeric preference for later.
 
 When every slot is occupied, another Flow is accepted as **Queued** and starts automatically when capacity becomes available. Lowering the limit never interrupts active work; Frink drains down to the new maximum. Paused runs and runs waiting for approval or a question continue to hold their slot in this release. A queued run does not satisfy a DAG dependency—the successor remains pending until every predecessor actually completes.
 

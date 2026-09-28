@@ -300,22 +300,22 @@ describe('flowsRouter (local)', () => {
       });
     });
 
-    it('rejects a maximum outside 1–20 before updating config', async () => {
+    it('rejects a maximum outside 1–100 before updating config', async () => {
       const { flowsRouter } = await import('./flows');
       const caller = flowsRouter.createCaller({ getWindow: () => null });
 
-      await expect(caller.updateAdmissionSettings({ max_concurrent_runs: 21 })).rejects.toThrow();
+      await expect(caller.updateAdmissionSettings({ max_concurrent_runs: 101 })).rejects.toThrow();
       expect(updateFlowAdmissionSettingsMock).not.toHaveBeenCalled();
     });
 
-    it('forwards a single-field update without an undefined setting', async () => {
+    it('accepts 100 and forwards only the provided setting', async () => {
       updateFlowAdmissionSettingsMock.mockResolvedValue({});
       const { flowsRouter } = await import('./flows');
       const caller = flowsRouter.createCaller({ getWindow: () => null });
 
-      await caller.updateAdmissionSettings({ max_concurrent_runs: 6 });
+      await caller.updateAdmissionSettings({ max_concurrent_runs: 100 });
 
-      expect(updateFlowAdmissionSettingsMock).toHaveBeenCalledWith({ maxConcurrentRuns: 6 });
+      expect(updateFlowAdmissionSettingsMock).toHaveBeenCalledWith({ maxConcurrentRuns: 100 });
     });
 
     it('rejects an empty update before updating config', async () => {
