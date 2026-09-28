@@ -1,5 +1,6 @@
 import { type RefObject, useCallback } from 'react';
 import type { useAgentsFileUpload } from '../../../../hooks/use-agents-file-upload';
+import type { usePastedTextFiles } from '../../../../hooks/use-pasted-text-files';
 import type { useTextContextSelection } from '../../../../hooks/use-text-context-selection';
 import {
   clearSubChatDraft,
@@ -23,6 +24,11 @@ type TextContexts = Pick<
   | 'clearDiffTextContexts'
   | 'setTextContextsFromDraft'
   | 'setDiffTextContextsFromDraft'
+>;
+
+type Pasted = Pick<
+  ReturnType<typeof usePastedTextFiles>,
+  'clearPastedTexts' | 'setPastedTextsFromDraft'
 >;
 
 /** The composer content an Edit loads. A turn restored after a reload has no files left (the user
@@ -96,6 +102,7 @@ export function useQueueEdit({
   inputHasContent,
   upload,
   textContexts,
+  pasted,
 }: {
   subChatId: string;
   parentChatId: string | null | undefined;
@@ -103,6 +110,8 @@ export function useQueueEdit({
   inputHasContent: boolean;
   upload: Upload;
   textContexts: TextContexts;
+  /** A large paste lives only as a chip, so an edit that dropped it would re-send without it. */
+  pasted?: Pasted;
 }) {
   const setEditingItemId = useMessageQueueStore((s) => s.setEditingItemId);
   const { clearAll, setImagesFromDraft, setFilesFromDraft } = upload;
@@ -112,6 +121,7 @@ export function useQueueEdit({
     setTextContextsFromDraft,
     setDiffTextContextsFromDraft,
   } = textContexts;
+  const { clearPastedTexts, setPastedTextsFromDraft } = pasted ?? {};
 
   const handleAbandonEdit = useCallback(() => {
     const currentEditingId = useMessageQueueStore.getState().editingItemIds[subChatId];
@@ -123,6 +133,7 @@ export function useQueueEdit({
     clearAll();
     clearTextContexts();
     clearDiffTextContexts();
+    clearPastedTexts?.();
   }, [
     subChatId,
     parentChatId,
@@ -131,6 +142,7 @@ export function useQueueEdit({
     clearAll,
     clearTextContexts,
     clearDiffTextContexts,
+    clearPastedTexts,
   ]);
 
   const handleEditFromQueue = useCallback(
@@ -152,6 +164,7 @@ export function useQueueEdit({
       setFilesFromDraft(content.files);
       setTextContextsFromDraft(content.textContexts);
       setDiffTextContextsFromDraft(content.diffTextContexts);
+      setPastedTextsFromDraft?.(item.pastedTexts ?? []);
       if (parentChatId) saveEditDraft(parentChatId, subChatId, item.message, content);
       // codeSelectionContexts live in per-chat Jotai atoms and are not restored to the editor (v1).
       setEditingItemId(subChatId, itemId);
@@ -167,6 +180,7 @@ export function useQueueEdit({
       setFilesFromDraft,
       setTextContextsFromDraft,
       setDiffTextContextsFromDraft,
+      setPastedTextsFromDraft,
     ],
   );
 

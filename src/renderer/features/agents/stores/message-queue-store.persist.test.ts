@@ -339,6 +339,25 @@ describe('reviveQueueState', () => {
     expect(state.queues[SUB_A]?.[0]).toMatchObject(lists);
   });
 
+  // sc-3666: a queued paste's only carrier is its chip; the file lives on disk, so it survives.
+  it('restores a pasted-text chip without marking the turn attachmentsLost', () => {
+    const pastedTexts = [
+      { id: 'p', filePath: '/s/pasted/p.txt', filename: 'p.txt', size: 6000, preview: 'brief' },
+    ];
+    const state = reviveQueueState({ queues: { [SUB_A]: [raw({ pastedTexts })] } });
+
+    expect(state.queues[SUB_A]?.[0]?.pastedTexts).toEqual(pastedTexts);
+    expect(state.queues[SUB_A]?.[0]?.attachmentsLost).toBeUndefined();
+  });
+
+  it('drops an item whose pasted chip is malformed rather than crash the drain on it', () => {
+    const state = reviveQueueState({
+      queues: { [SUB_A]: [raw({ pastedTexts: [{ id: 'p', size: -1 }] as never })] },
+    });
+
+    expect(state.queues[SUB_A] ?? []).toHaveLength(0);
+  });
+
   it('keeps internal recovery turns intact', () => {
     const approvedPlanContext = { planId: 'plan-1', planText: '# Plan' };
     const state = reviveQueueState({ queues: { [SUB_A]: [raw({ approvedPlanContext })] } });

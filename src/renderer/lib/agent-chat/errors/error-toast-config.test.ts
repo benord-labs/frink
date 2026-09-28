@@ -22,3 +22,13 @@ describe('flow-run decline categories', () => {
     expect(shouldPersistChatRetry('SOMETHING_ELSE')).toBe(true);
   });
 });
+
+// sc-3666: main fails a turn whose prompt never reached the agent with this category. It must
+// read as its own toast (not a generic failure) and keep Retry, which is the user's only way to
+// deliver the message they can still see in the transcript.
+describe('MESSAGE_NOT_DELIVERED', () => {
+  it('has its own toast copy and stays retryable', () => {
+    expect(ERROR_TOAST_CONFIG.MESSAGE_NOT_DELIVERED?.title).toBe('Message not delivered');
+    expect(shouldPersistChatRetry('MESSAGE_NOT_DELIVERED')).toBe(true);
+  });
+});

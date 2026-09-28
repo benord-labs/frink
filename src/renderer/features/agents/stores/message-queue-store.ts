@@ -115,7 +115,12 @@ type EntryCheck = (entry: Record<string, unknown>) => boolean;
 
 /** The shape each attachment/context list must have for the send path to consume it unchanged. */
 const LIST_SHAPES: Record<
-  'images' | 'files' | 'textContexts' | 'diffTextContexts' | 'codeSelectionContexts',
+  | 'images'
+  | 'files'
+  | 'textContexts'
+  | 'diffTextContexts'
+  | 'codeSelectionContexts'
+  | 'pastedTexts',
   EntryCheck
 > = {
   images: (e) =>
@@ -146,6 +151,13 @@ const LIST_SHAPES: Record<
     isString(e.language) &&
     isLineOrSize(e.startLine) &&
     isLineOrSize(e.endLine),
+  // A pasted chip points at a file on disk, which survives the reload, so it is not "lost".
+  pastedTexts: (e) =>
+    isString(e.id) &&
+    isString(e.filePath) &&
+    isString(e.filename) &&
+    isString(e.preview) &&
+    isLineOrSize(e.size),
 };
 
 function isRestorableItem(item: unknown): item is AgentQueueItem {

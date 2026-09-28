@@ -75,6 +75,20 @@ function insertTextAtCursor(text: string, editableElement: Element): void {
   }
 }
 
+/** The write is async, so focus may have moved: keep the fallback in the input that was pasted
+ * into rather than wherever the caret now is. */
+function placeCaretAtEndUnlessInside(editableElement: Element): void {
+  const selection = window.getSelection();
+  if (!selection) return;
+  const anchor = selection.rangeCount > 0 ? selection.getRangeAt(0).startContainer : null;
+  if (anchor && editableElement.contains(anchor)) return;
+  const range = document.createRange();
+  range.selectNodeContents(editableElement);
+  range.collapse(false);
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
 /**
  * Handle paste event for contentEditable elements.
  * Extracts images and passes them to handleAddAttachments.
@@ -104,15 +118,24 @@ export function handlePasteEvent(
     if (text) {
       e.preventDefault();
 
+      // Resolved now: React clears `currentTarget` once the handler returns.
+      const target = e.currentTarget as HTMLElement;
+      const editableElement = target.closest('[contenteditable="true"]') || target;
+
       // Large text: save as file attachment instead of pasting inline
       if (text.length > LARGE_PASTE_THRESHOLD && addPastedText) {
-        addPastedText(text);
+        // The default paste is already cancelled, so a failed write must not lose the text
+        // silently (sc-3666): put it inline instead, where the user can see it.
+        addPastedText(text).catch(() => {
+          toast.warning("Couldn't attach the paste as a file", {
+            description: 'It was inserted into the message instead.',
+          });
+          placeCaretAtEndUnlessInside(editableElement);
+          insertTextAtCursor(text, editableElement);
+        });
         return;
       }
 
-      // Get the contentEditable element
-      const target = e.currentTarget as HTMLElement;
-      const editableElement = target.closest('[contenteditable="true"]') || target;
       insertTextAtCursor(text, editableElement);
     }
   }

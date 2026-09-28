@@ -265,6 +265,19 @@ vi.mock('../trpc/routers/agent-utils', () => ({
   getAllAgentsForSdk: vi.fn(() => []),
 }));
 
+/** Pass-through unless a test swaps `runTurn`, to settle a turn without its push (sc-3666). */
+const sessionLoopOverride = vi.hoisted(() => ({
+  runTurn: null as null | ((...args: unknown[]) => Promise<void>),
+}));
+vi.mock('./execution/claude-session-loop', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./execution/claude-session-loop')>();
+  return {
+    ...actual,
+    runTurn: (...args: Parameters<typeof actual.runTurn>) =>
+      sessionLoopOverride.runTurn ? sessionLoopOverride.runTurn(...args) : actual.runTurn(...args),
+  };
+});
+
 vi.mock('./client', () => ({
   broadcastToRenderer: vi.fn(),
   broadcastTaskSignalPersisted: vi.fn(),
@@ -809,5 +822,64 @@ describe('local-only dispatch with unresolved machineId', () => {
     await handleRemoteExecute({ ...basePayload, message: 'answer quietly' });
 
     await expect(quietEndMarkerWritten()).resolves.toBe(true);
+  });
+
+  describe('user-message delivery (sc-3666)', () => {
+    const finishOnly = () =>
+      Object.assign(
+        (async function* () {
+          yield { chunks: [{ type: 'finish' }] as UIMessageChunk[] };
+          yield { type: 'result' };
+        })(),
+        { interrupt: vi.fn() },
+      );
+    const run = async (message: string) => {
+      // An earlier test's completion is deferred a tick; drain it before this run is observed.
+      await new Promise((resolve) => setImmediate(resolve));
+      vi.mocked(socketClient.sendExecuteCompleteDirect).mockClear();
+      try {
+        await handleRemoteExecute({ ...basePayload, message });
+        await new Promise((resolve) => setImmediate(resolve));
+      } finally {
+        sessionLoopOverride.runTurn = null;
+      }
+    };
+    const notDelivered = expect.objectContaining({ category: 'MESSAGE_NOT_DELIVERED' });
+
+    it('fails a turn that settled unpushed instead of reporting it complete', async () => {
+      claudeQueryMock.mockImplementationOnce(finishOnly);
+      sessionLoopOverride.runTurn = async () => {};
+
+      await run('a long requirements brief');
+
+      expect(socketClient.sendErrorDirect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          subChatId: basePayload.subChatId,
+          assistantMessageId: basePayload.assistantMessageId,
+          category: 'MESSAGE_NOT_DELIVERED',
+        }),
+      );
+      expect(socketClient.sendExecuteCompleteDirect).not.toHaveBeenCalled();
+    });
+
+    it('completes normally once the prompt was pushed', async () => {
+      claudeQueryMock.mockImplementationOnce(finishOnly);
+
+      await run('hello');
+
+      expect(socketClient.sendErrorDirect).not.toHaveBeenCalledWith(notDelivered);
+      expect(socketClient.sendExecuteCompleteDirect).toHaveBeenCalled();
+    });
+
+    it('reports no delivery failure when Stop lands before the push', async () => {
+      claudeQueryMock.mockImplementationOnce(finishOnly);
+      sessionLoopOverride.runTurn = async () => {
+        handleRemoteStop({ chatId: basePayload.chatId, subChatId: basePayload.subChatId });
+      };
+
+      await run('stopped before delivery');
+
+      expect(socketClient.sendErrorDirect).not.toHaveBeenCalledWith(notDelivered);
+    });
   });
 });

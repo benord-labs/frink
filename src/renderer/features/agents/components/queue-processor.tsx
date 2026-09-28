@@ -3,6 +3,7 @@ import { hashKey, useQueryClient } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import { useEffect, useRef } from 'react';
 import { toast } from 'sonner';
+import { buildQueuedMessageText } from '@/lib/mentions/queued-message-text';
 import { runLiveAtomFamily } from '@/lib/stores/active-transport-registry';
 import {
   isLiveRunHydrationComplete,
@@ -337,8 +338,18 @@ export function QueueProcessor() {
           })),
         ];
 
-        if (item.message) {
-          parts.push({ type: 'text', text: item.message });
+        // Same serializer as the queue card's Send: attached contexts become mention tokens, so an
+        // item whose content is only a pasted chip or quote still reaches the agent (sc-3666).
+        const text = buildQueuedMessageText(item);
+        if (text.trim()) {
+          parts.push({ type: 'text', text });
+        }
+
+        // Nothing sendable: never dispatch an empty turn (it reads as a delivered message that
+        // carried nothing), and never requeue it — that would retry forever. Say so and move on.
+        if (parts.length === 0) {
+          toast.error('A queued message was empty and was not sent.');
+          return;
         }
 
         // This internal recovery item owns its plan context and mode intent. Arm them only after

@@ -63,6 +63,8 @@ export interface WakePump {
     /** Runs after any burst ends and before pushing the turn, so the executor can safely swap
      * `session.currentTurn`. Return false if asynchronous preparation finds it cancelled. */
     beforePush?: () => boolean | undefined | Promise<boolean | undefined>,
+    /** Fired once when the turn's message actually lands on the CLI input queue. */
+    onPushed?: () => void,
   ) => Promise<void>;
   /** True once the loop exits. An ended pump has no queue reader and cannot be adopted. */
   isEnded: () => boolean;

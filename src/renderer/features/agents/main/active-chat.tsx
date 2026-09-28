@@ -381,8 +381,9 @@ const ChatViewInner = memo(function ChatViewInner({
   });
 
   // Pasted text files (large pasted text saved as files)
+  const pastedFiles = usePastedTextFiles(subChatId);
   const { pastedTexts, addPastedText, removePastedText, clearPastedTexts, pastedTextsRef } =
-    usePastedTextFiles(subChatId);
+    pastedFiles;
 
   // Message queue for sending messages while streaming
   const queue = useMessageQueueStore((s) => s.getVisibleQueue(subChatId));
@@ -1040,6 +1041,7 @@ const ChatViewInner = memo(function ChatViewInner({
       setTextContextsFromDraft,
       setDiffTextContextsFromDraft,
     },
+    pasted: pastedFiles,
   });
 
   const handleReorderQueue = useCallback(

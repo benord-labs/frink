@@ -11,6 +11,7 @@ import { flushSync } from 'react-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runLiveAtomFamily, runSettlingAtomFamily } from '@/lib/stores/active-transport-registry';
 import { createQueueItem, FLOW_DISPATCH_SOURCE } from '../lib/queue-utils';
+import { toast } from 'sonner';
 import { useMessageQueueStore } from '../stores/message-queue-store';
 import { useStreamingStatusStore } from '../stores/streaming-status-store';
 import { QUEUE_PROCESS_DELAY_MS, QueueProcessor } from './queue-processor';
@@ -583,5 +584,96 @@ describe('QueueProcessor — multi-item queue drain', () => {
       await vi.advanceTimersByTimeAsync(1);
     });
     expect(mockSendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  // sc-3666: auto-drain used to send `item.message` raw, silently dropping every structured
+  // attachment — a paste-only item went out as an empty turn.
+  describe('attachment parity (sc-3666)', () => {
+    const textPartOf = (call: unknown[]) =>
+      (call[0] as { parts: Array<{ type: string; text?: string }> }).parts.find(
+        (p) => p.type === 'text',
+      )?.text;
+
+    it('sends quote, diff, code and pasted mentions exactly once, ahead of the message', async () => {
+      const item = createQueueItem(
+        'q-ctx',
+        'do it',
+        undefined,
+        undefined,
+        [{ id: 't', text: 'quoted', sourceMessageId: 'm' }],
+        [{ id: 'd', text: 'diff body', filePath: 'a.ts', lineNumber: 2 }],
+        [
+          {
+            id: 'c',
+            text: 'code()',
+            filePath: '/p/b.ts',
+            fileName: 'b.ts',
+            language: 'ts',
+            startLine: 1,
+            endLine: 2,
+          },
+        ],
+        [{ id: 'p', filePath: '/s/pasted/x.txt', filename: 'x.txt', size: 6000, preview: 'brief' }],
+      );
+      useMessageQueueStore.setState({ queues: { [SUB_CHAT_ID]: [item] } });
+      useStreamingStatusStore.getState().setStatus(SUB_CHAT_ID, 'ready');
+
+      renderQueueProcessor();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(QUEUE_PROCESS_DELAY_MS);
+      });
+
+      const text = textPartOf(mockSendMessage.mock.calls[0]) ?? '';
+      for (const token of [
+        '@[quote:',
+        '@[diff:',
+        '@[code:',
+        '@[pasted:6000:brief|/s/pasted/x.txt]',
+      ]) {
+        expect(text.split(token)).toHaveLength(2);
+      }
+      expect(text.endsWith(' do it')).toBe(true);
+    });
+
+    it('sends a paste-only item as its pasted mention, not an empty turn', async () => {
+      const item = createQueueItem(
+        'q-paste',
+        '',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        [{ id: 'p', filePath: '/s/pasted/y.txt', filename: 'y.txt', size: 9000, preview: 'req' }],
+      );
+      useMessageQueueStore.setState({ queues: { [SUB_CHAT_ID]: [item] } });
+      useStreamingStatusStore.getState().setStatus(SUB_CHAT_ID, 'ready');
+
+      renderQueueProcessor();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(QUEUE_PROCESS_DELAY_MS);
+      });
+
+      expect(textPartOf(mockSendMessage.mock.calls[0])).toBe('@[pasted:9000:req|/s/pasted/y.txt]');
+    });
+
+    it('drops an item with nothing to send (with a toast) and still drains the next one', async () => {
+      useMessageQueueStore.setState({
+        queues: {
+          [SUB_CHAT_ID]: [createQueueItem('q-empty', '   '), createQueueItem('q-b', 'next')],
+        },
+      });
+      useStreamingStatusStore.getState().setStatus(SUB_CHAT_ID, 'ready');
+
+      renderQueueProcessor();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(QUEUE_PROCESS_DELAY_MS * 3);
+      });
+
+      expect(mockSendMessage).toHaveBeenCalledTimes(1);
+      expect(textPartOf(mockSendMessage.mock.calls[0])).toBe('next');
+      expect(vi.mocked(toast.error)).toHaveBeenCalled();
+      expect(useMessageQueueStore.getState().queues[SUB_CHAT_ID] ?? []).toHaveLength(0);
+    });
   });
 });

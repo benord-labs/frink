@@ -50,6 +50,15 @@ describe('isExecutionLevelFailure', () => {
     expect(isExecutionLevelFailure('declined for re-admission', 'FLOW_RUN_RESUMING')).toBe(false);
   });
 
+  it('keeps MESSAGE_NOT_DELIVERED non-execution: nothing ran, so the persisted message stays', () => {
+    expect(
+      isExecutionLevelFailure(
+        'Claude execution failed. Please try again.',
+        'MESSAGE_NOT_DELIVERED',
+      ),
+    ).toBe(false);
+  });
+
   it('keeps FLOW_RUN_ENDED non-execution so the typed message is not rolled back', () => {
     // These are the provider-preflight decline messages stamped with the category in main
     // (flow-resource-cleanup.ts assertFlowProviderEligible); the server persisted the user's

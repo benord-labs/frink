@@ -16,6 +16,7 @@ import {
 } from '@/lib/code-editor/state';
 import { commandFetcher } from '@/lib/commands/command-fetcher';
 import { expandSlashCommand } from '@/lib/commands/expand-slash-command';
+import { pastedTextMention } from '@/lib/mentions/queued-message-text';
 import type { TaskData } from '@/lib/tasks/format-task-message';
 import {
   CLAUDE_CODE_MODELS,
@@ -76,7 +77,6 @@ import {
   AgentsFileMention,
   type AgentsMentionsEditorHandle,
   type FileMentionOption,
-  MENTION_PREFIXES,
   MENTION_PREVIEW_SANITIZE_REGEX,
 } from '../mentions';
 import { ActionsToolbar } from './ActionsToolbar';
@@ -484,13 +484,7 @@ export function NewChatForm({
     // Use "|" as separator since file paths can contain colons.
     let finalMessage: string = message.trim();
     if (pastedTexts.length > 0) {
-      const pastedMentions = pastedTexts
-        .map((pt) => {
-          const safePreview = pt.preview.replace(/[[\]]/g, '');
-          const safePath = pt.filePath.replace(/[[\]]/g, '');
-          return `@[${MENTION_PREFIXES.PASTED}${pt.size}:${safePreview}|${safePath}]`;
-        })
-        .join(' ');
+      const pastedMentions = pastedTexts.map(pastedTextMention).join(' ');
       finalMessage = pastedMentions + (finalMessage ? ` ${finalMessage}` : '');
     }
 
