@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 /* eslint-disable max-lines */
 import '@testing-library/jest-dom/vitest';
+vi.mock('./QueuePauseControl', () => ({ QueuePauseControl: () => null }));
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeAll, describe, expect, it, type Mock, vi } from 'vitest';
 import { useAgentSubChatStore } from '../../agents/stores/sub-chat-store';

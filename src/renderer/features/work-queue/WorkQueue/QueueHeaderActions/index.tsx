@@ -1,6 +1,7 @@
 import { Button } from '@benord-labs/frink-primitives';
 import { ArrowLeft, X } from 'lucide-react';
 import type { ReactElement, RefObject } from 'react';
+import { QueuePauseControl } from '../QueuePauseControl';
 
 type Props = {
   backToOverviewButtonRef: RefObject<HTMLButtonElement | null>;
@@ -125,6 +126,7 @@ export function QueueHeaderActions({
           onReturnToOverview={onReturnToOverview}
         />
       ) : null}
+      <QueuePauseControl />
       <CloseAction onClose={onClose} />
     </div>
   );

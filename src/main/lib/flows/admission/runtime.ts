@@ -224,6 +224,7 @@ export function kickStalledFlowAdmissionDrain(): void {
 }
 
 export type FlowAdmissionSettings = {
+  queue_paused: boolean;
   concurrency_limit_enabled: boolean;
   max_concurrent_runs: number;
   occupied_runs: number;
@@ -234,6 +235,7 @@ export type FlowAdmissionSettings = {
 const toFlowAdmissionSettings = (
   snapshot: Awaited<ReturnType<FlowAdmissionController['getSnapshot']>>,
 ): FlowAdmissionSettings => ({
+  queue_paused: snapshot.config.queuePaused,
   concurrency_limit_enabled: snapshot.config.concurrencyLimitEnabled,
   max_concurrent_runs: snapshot.config.maxConcurrentRuns,
   occupied_runs: snapshot.occupied,

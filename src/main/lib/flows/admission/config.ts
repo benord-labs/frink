@@ -13,12 +13,13 @@ export const DEFAULT_MAX_CONCURRENT_FLOW_RUNS = 4;
 
 export type FlowAdmissionConfig = {
   version: typeof FLOW_ADMISSION_CONFIG_VERSION;
+  queuePaused: boolean;
   concurrencyLimitEnabled: boolean;
   maxConcurrentRuns: number;
 };
 
 export type FlowAdmissionConfigPatch = Partial<
-  Pick<FlowAdmissionConfig, 'concurrencyLimitEnabled' | 'maxConcurrentRuns'>
+  Pick<FlowAdmissionConfig, 'queuePaused' | 'concurrencyLimitEnabled' | 'maxConcurrentRuns'>
 >;
 
 export const FRINK_FLOWS_DIR = path.join(frinkUserHome(), '.frink', 'flows');
@@ -28,15 +29,19 @@ const configMutex = new Mutex();
 
 const freshDefaultConfig = (): FlowAdmissionConfig => ({
   version: FLOW_ADMISSION_CONFIG_VERSION,
+  queuePaused: false,
   concurrencyLimitEnabled: true,
   maxConcurrentRuns: DEFAULT_MAX_CONCURRENT_FLOW_RUNS,
 });
 
-function isValidConfig(value: unknown): value is FlowAdmissionConfig {
+function isValidConfig(
+  value: unknown,
+): value is Omit<FlowAdmissionConfig, 'queuePaused'> & { queuePaused?: boolean } {
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Record<string, unknown>;
   return (
     candidate.version === FLOW_ADMISSION_CONFIG_VERSION &&
+    (candidate.queuePaused === undefined || typeof candidate.queuePaused === 'boolean') &&
     typeof candidate.concurrencyLimitEnabled === 'boolean' &&
     Number.isInteger(candidate.maxConcurrentRuns) &&
     Number(candidate.maxConcurrentRuns) >= MIN_CONCURRENT_FLOW_RUNS &&
@@ -61,7 +66,7 @@ export async function readFlowAdmissionConfig(): Promise<FlowAdmissionConfig> {
   }
   try {
     const parsed: unknown = JSON.parse(raw);
-    if (isValidConfig(parsed)) return parsed;
+    if (isValidConfig(parsed)) return { ...parsed, queuePaused: parsed.queuePaused ?? false };
     log.warn('[flow-admission] Invalid flows config; using enabled/4 defaults');
   } catch {
     log.warn('[flow-admission] Invalid flows config; using enabled/4 defaults');
@@ -70,6 +75,9 @@ export async function readFlowAdmissionConfig(): Promise<FlowAdmissionConfig> {
 }
 
 function validatePatch(patch: FlowAdmissionConfigPatch): void {
+  if (patch.queuePaused !== undefined && typeof patch.queuePaused !== 'boolean') {
+    throw new TypeError('queuePaused must be a boolean');
+  }
   if (
     patch.concurrencyLimitEnabled !== undefined &&
     typeof patch.concurrencyLimitEnabled !== 'boolean'
@@ -112,6 +120,7 @@ export async function updateFlowAdmissionConfig(
     const current = await readFlowAdmissionConfig();
     const updated: FlowAdmissionConfig = {
       version: FLOW_ADMISSION_CONFIG_VERSION,
+      queuePaused: patch.queuePaused ?? current.queuePaused,
       concurrencyLimitEnabled: patch.concurrencyLimitEnabled ?? current.concurrencyLimitEnabled,
       maxConcurrentRuns: patch.maxConcurrentRuns ?? current.maxConcurrentRuns,
     };

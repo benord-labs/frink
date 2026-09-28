@@ -164,9 +164,17 @@ export class FlowAdmissionController {
   }
 
   async beginDispatch(ticket: number, now = new Date()): Promise<FlowRunAdmission | null> {
-    return controllerMutex.runExclusive(() =>
-      this.immediate(() => beginAdmissionDispatch(this.db, ticket, now)),
-    );
+    return controllerMutex.runExclusive(async () => {
+      const config = await this.effectiveConfigLocked();
+      return this.immediate(() => {
+        if (config.queuePaused) {
+          // A pause may arrive after a batch was claimed but before this ticket starts.
+          transitionAdmission(this.db, ticket, ['claimed'], { state: 'queued', claimedAt: null });
+          return null;
+        }
+        return beginAdmissionDispatch(this.db, ticket, now);
+      });
+    });
   }
 
   async beginRelease(ticket: number): Promise<FlowRunAdmission | null> {

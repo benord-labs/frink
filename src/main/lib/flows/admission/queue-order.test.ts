@@ -7,7 +7,12 @@ import { FLOW_ADMISSION_QUEUE_ORDER_BY } from './queue-order';
 import { flowRunAdmissionSnapshotsForRuns, queuedFlowAdmissions } from './visibility';
 
 const GRAPH = { nodes: [], edges: [], settings: {} };
-const CONFIG = { version: 1 as const, concurrencyLimitEnabled: true, maxConcurrentRuns: 10 };
+const CONFIG = {
+  version: 1 as const,
+  queuePaused: false,
+  concurrencyLimitEnabled: true,
+  maxConcurrentRuns: 10,
+};
 
 function seedRun(db: TestDb, id: string, status: 'pending' | 'failed' = 'pending'): void {
   db.insert(flows)

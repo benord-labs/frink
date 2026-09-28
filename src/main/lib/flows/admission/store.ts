@@ -266,7 +266,7 @@ export function claimEligibleAdmissions(
   const capacity = config.concurrencyLimitEnabled
     ? Math.max(0, config.maxConcurrentRuns - occupied)
     : Number.POSITIVE_INFINITY;
-  if (capacity === 0)
+  if (config.queuePaused || capacity === 0)
     return { admissions: [], failed: [], hasMore: hasQueued(), candidatesProcessed: 0 };
 
   const claimLimit = Math.min(MAX_CLAIMS_PER_TRANSACTION, capacity);

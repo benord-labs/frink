@@ -66,6 +66,7 @@ function seedNode(
 function admissionController(db: TestDb): FlowAdmissionController {
   return new FlowAdmissionController(db, async () => ({
     version: 1,
+    queuePaused: false,
     concurrencyLimitEnabled: true,
     maxConcurrentRuns: 1,
   }));

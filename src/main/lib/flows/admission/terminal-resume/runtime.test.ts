@@ -90,6 +90,7 @@ beforeEach(() => {
   mocks.getDatabase.mockReturnValue(db);
   controller = new FlowAdmissionController(db, async () => ({
     version: 1,
+    queuePaused: false,
     concurrencyLimitEnabled: true,
     maxConcurrentRuns,
   }));

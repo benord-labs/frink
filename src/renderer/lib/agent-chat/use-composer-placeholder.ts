@@ -24,7 +24,7 @@ export function useComposerPlaceholder(
   // so the placeholder must not promise it.
   // Queued: a resume ticket (carry-on or Re-run step) already owns the run; no button can help.
   if (data?.resumable && data.resumeMode === 'queued')
-    return 'Waiting for a free slot to resume this step — it will pick up where it stopped';
+    return 'Queued to resume this step — it will pick up where it stopped';
   if (data?.resumable)
     return data.resumeMode === 'session'
       ? 'Type to resume with new instructions — or press Resume to continue as-is'

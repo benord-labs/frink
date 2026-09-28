@@ -15,6 +15,7 @@ type ConfigModule = typeof import('./config');
 let config: ConfigModule;
 const DEFAULT_CONFIG = {
   version: 1,
+  queuePaused: false,
   concurrencyLimitEnabled: true,
   maxConcurrentRuns: 4,
 } as const;
@@ -51,10 +52,60 @@ describe('Flow admission config', () => {
 
     expect(disabled).toEqual({
       version: 1,
+      queuePaused: false,
       concurrencyLimitEnabled: false,
       maxConcurrentRuns: 7,
     });
     await expect(config.readFlowAdmissionConfig()).resolves.toEqual(disabled);
+  });
+
+  it('persists pause independently of capacity and restores it in a fresh module', async () => {
+    await config.updateFlowAdmissionConfig({ maxConcurrentRuns: 20, queuePaused: true });
+    await config.updateFlowAdmissionConfig({ concurrencyLimitEnabled: false });
+    vi.resetModules();
+    config = await import('./config');
+    await expect(config.readFlowAdmissionConfig()).resolves.toMatchObject({
+      queuePaused: true,
+      maxConcurrentRuns: 20,
+      concurrencyLimitEnabled: false,
+    });
+    await config.updateFlowAdmissionConfig({ queuePaused: false });
+    await expect(config.readFlowAdmissionConfig()).resolves.toMatchObject({
+      queuePaused: false,
+      maxConcurrentRuns: 20,
+      concurrencyLimitEnabled: false,
+    });
+  });
+
+  it('defaults an absent pause field without discarding existing preferences', async () => {
+    await fs.mkdir(config.FRINK_FLOWS_DIR, { recursive: true });
+    await fs.writeFile(
+      config.FLOW_ADMISSION_CONFIG_PATH,
+      JSON.stringify({
+        version: 1,
+        concurrencyLimitEnabled: false,
+        maxConcurrentRuns: 12,
+      }),
+    );
+    await expect(config.readFlowAdmissionConfig()).resolves.toEqual({
+      version: 1,
+      queuePaused: false,
+      concurrencyLimitEnabled: false,
+      maxConcurrentRuns: 12,
+    });
+    await fs.writeFile(
+      config.FLOW_ADMISSION_CONFIG_PATH,
+      JSON.stringify({
+        version: 1,
+        queuePaused: 'yes',
+        concurrencyLimitEnabled: false,
+        maxConcurrentRuns: 12,
+      }),
+    );
+    await expect(config.readFlowAdmissionConfig()).resolves.toEqual(DEFAULT_CONFIG);
+    await expect(
+      config.updateFlowAdmissionConfig({ queuePaused: 'yes' as unknown as boolean }),
+    ).rejects.toThrow('queuePaused must be a boolean');
   });
 
   it('rejects invalid updates instead of persisting unsafe capacity', async () => {
@@ -80,6 +131,7 @@ describe('Flow admission config', () => {
 
     await expect(config.readFlowAdmissionConfig()).resolves.toEqual({
       version: 1,
+      queuePaused: false,
       concurrencyLimitEnabled: false,
       maxConcurrentRuns: 9,
     });
