@@ -8,11 +8,11 @@ export function backgroundImage(value: string): ViewStyle {
     : { experimental_backgroundImage: value };
 }
 
-// Frink's Standard glass: 70% surface fill, a white rim and a faint primary glint.
+// Frink's Standard glass: a translucent card fill, a white rim and a faint primary glint.
 // Static surfaces use lighting rather than backdrop blur, as on desktop.
 export function glassStyle(t: Theme): ViewStyle {
   return {
-    backgroundColor: t.surface,
+    backgroundColor: t.card,
     borderWidth: 1,
     borderColor: t.border,
     ...(t.solid
