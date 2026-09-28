@@ -187,6 +187,29 @@ describe('matchesRule — path globs', () => {
   });
 });
 
+describe('matchesRule — search tools (Glob / Grep)', () => {
+  it('Grep(src/**) matches the resolved search root, not the raw pattern', () => {
+    expect(
+      matchesRule('Grep(src/**)', 'Grep', { pattern: 'foo' }, { resolvedPath: 'src/lib' }),
+    ).toBe(true);
+    expect(matchesRule('Grep(src/**)', 'Grep', { pattern: 'foo' }, { resolvedPath: 'lib' })).toBe(
+      false,
+    );
+  });
+
+  it('Glob(/etc/**) matches an absolute outside root', () => {
+    expect(
+      matchesRule('Glob(/etc/**)', 'Glob', { pattern: '*.conf' }, { resolvedPath: '/etc/ssl' }),
+    ).toBe(true);
+  });
+
+  it('a Grep rule never matches a Glob call', () => {
+    expect(matchesRule('Grep(src/**)', 'Glob', { pattern: '*' }, { resolvedPath: 'src/a' })).toBe(
+      false,
+    );
+  });
+});
+
 describe('matchesRule — MCP', () => {
   it('mcp__shortcut__* matches any tool on shortcut server', () => {
     expect(matchesRule('mcp__shortcut__*', 'mcp__shortcut__create_story', {})).toBe(true);

@@ -1,6 +1,6 @@
 import { Button } from '@benord-labs/frink-primitives';
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
-import { PATH_TOOLS, type PromptData } from '../../../../shared/types/permissions';
+import { PATH_TOOLS, type PromptData, SEARCH_TOOLS } from '../../../../shared/types/permissions';
 import type { ApprovalDecision, PermissionRequest } from '../../../hooks/usePermissionPrompts';
 import { cn } from '../../../lib/utils';
 import { DenyReasonBanner } from '../DenyReasonBanner';
@@ -15,6 +15,16 @@ type FourButtonViewProps = {
   primaryCtaClassName?: string;
   paneLinkAccentClass?: string;
 };
+
+// Glob/Grep share the file-op layout: outside roots get Deny / Allow once only.
+const usesFileOpLayout = (tool: string) => PATH_TOOLS.has(tool) || SEARCH_TOOLS.has(tool);
+
+/** Search prompts persist only a rule the dispatcher suggests; it suggests none it would
+ * still prompt past (protected targets, home-spanning roots). */
+function offersFileOpGrant(prompt: PromptData): boolean {
+  if (!usesFileOpLayout(prompt.tool)) return false;
+  return !SEARCH_TOOLS.has(prompt.tool) || (prompt.suggestedRules?.length ?? 0) > 0;
+}
 
 /**
  * Renders the v2 permission prompt. Branches on tool type:
@@ -39,13 +49,13 @@ export const FourButtonView = memo(function FourButtonView({
   paneLinkAccentClass,
 }: FourButtonViewProps) {
   const prompt = request.prompt;
-  const isFileOpTool = PATH_TOOLS.has(prompt.tool);
+  const isFileOpTool = usesFileOpLayout(prompt.tool);
   const isBash = request.operation === 'bash';
   const trimmedProjectName = request.projectName?.trim() ?? '';
   const projectDisplayName = trimmedProjectName ? trimmedProjectName : 'this project';
   const hasProject = !!request.projectPath;
   const isPathInCurrentProject = prompt.pathLocation === 'in-current-project';
-  const canPersistFileOp = isFileOpTool && hasProject && isPathInCurrentProject;
+  const canPersistFileOp = hasProject && isPathInCurrentProject && offersFileOpGrant(prompt);
 
   // For file-op tools the rule is always tool-wide (just `Read`, `Edit`, etc.).
   // For Bash / MCP / other we fall back to the existing dropdown-driven behavior.

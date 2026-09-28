@@ -45,6 +45,10 @@ export const PATH_TOOLS: ReadonlySet<string> = new Set<string>([
   'NotebookEdit',
 ]);
 
+/** Read-only search tools, gated by search root. Kept out of `PATH_TOOLS` so the `file_path`
+ * rewrite skips them; the renderer gives them the file-op layout. */
+export const SEARCH_TOOLS: ReadonlySet<string> = new Set<string>(['Glob', 'Grep']);
+
 /**
  * Classification of the path involved in a file-op permission request, relative
  * to the chat's current project. Drives the prompt UI: in-project paths can be

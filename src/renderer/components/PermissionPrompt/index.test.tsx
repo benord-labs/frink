@@ -501,6 +501,78 @@ describe('PermissionPrompt — file-op flow (ticket 15)', () => {
   });
 });
 
+describe('PermissionPrompt — search tools (Glob / Grep)', () => {
+  function makeSearchRequest(
+    tool: 'Glob' | 'Grep',
+    pathLocation: 'in-current-project' | 'outside',
+  ): PermissionRequest {
+    return {
+      requestId: `${tool.toLowerCase()}-1`,
+      scope: { type: 'folder', folderId: 'frink' },
+      path: '/usr/include',
+      operation: 'read',
+      projectPath: '/proj',
+      projectName: 'frink',
+      isRemote: true,
+      chatId: 'c',
+      subChatId: 's',
+      prompt: {
+        tool,
+        input: { pattern: 'stdio', path: '/usr/include' },
+        reason: 'no-matching-rule',
+        pathLocation,
+        suggestedRules: [],
+      },
+    };
+  }
+
+  it('outside Grep: no persistent grant, no machine option, no blank `Grep()` rule dropdown', () => {
+    const onApprove = vi.fn();
+    render(
+      <PermissionPrompt
+        request={makeSearchRequest('Grep', 'outside')}
+        onApprove={onApprove}
+        onDeny={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: /Allow Grep for/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /On this machine/i })).toBeNull();
+    expect(screen.queryByRole('combobox')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Allow this time/i }));
+    expect(onApprove).toHaveBeenCalledWith('grep-1', {});
+  });
+
+  it('in-project Glob with no suggested rule offers no persistent grant it could not honour', () => {
+    render(
+      <PermissionPrompt
+        request={makeSearchRequest('Glob', 'in-current-project')}
+        onApprove={vi.fn()}
+        onDeny={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: /Allow Glob for frink/i })).toBeNull();
+    expect(screen.getByRole('button', { name: /Allow this time/i })).toBeTruthy();
+  });
+
+  it('a search prompt that does carry a suggested rule offers it for the project', () => {
+    const onApprove = vi.fn();
+    const request = makeSearchRequest('Grep', 'in-current-project');
+    render(
+      <PermissionPrompt
+        request={{ ...request, prompt: { ...request.prompt!, suggestedRules: ['Grep'] } }}
+        onApprove={onApprove}
+        onDeny={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Allow Grep for frink/i }));
+    expect(onApprove).toHaveBeenCalledWith('grep-1', {
+      scope: 'project',
+      ruleString: 'Grep',
+      ruleType: 'allow',
+    });
+  });
+});
+
 describe('buildFallbackRule', () => {
   it('escapes parens so parseRule accepts the rule', () => {
     const rule = buildFallbackRule('Bash', 'node -e "console.log(1)"');

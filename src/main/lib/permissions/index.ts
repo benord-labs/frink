@@ -11,6 +11,7 @@ export {
   getOperationFromToolName,
   isClaudePermissionGatedTool,
   remapPathForPermissionBoundary,
+  resolvePermissionPathOverride,
   resolvePermissionProjectPath,
-  resolveToolPermissionPath,
+  resolveSearchPermissionPath,
 } from './tool-validation';

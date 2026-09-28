@@ -1,5 +1,5 @@
 import type { CanUseTool } from '@anthropic-ai/claude-agent-sdk';
-import { isClaudePermissionGatedTool, resolveToolPermissionPath } from '../../../permissions';
+import { isClaudePermissionGatedTool, resolvePermissionPathOverride } from '../../../permissions';
 import { createSubagentAllowlistHook } from '../../../permissions/subagent-allowlist-hook';
 import { createTaskStopHook, type TaskStopHook } from '../../../task-stop-hook';
 import { turnOwesTerminalSignal } from '../../../trpc/routers/frink-task-signal';
@@ -119,7 +119,7 @@ function createPreToolUseHook(scope: ClaudeSessionScope, activeTurn: ActiveTurn)
       return {};
     }
     if (!isRegisterNodeTransport) {
-      const permissionPathOverride = resolveToolPermissionPath(
+      const permissionPathOverride = await resolvePermissionPathOverride(
         toolName,
         toolInput,
         projectPath,
