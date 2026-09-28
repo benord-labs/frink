@@ -61,7 +61,7 @@ vi.mock('../../../terminal/manager', () => ({
 vi.mock('../../../sentry', () => ({ captureContained: captureContainedMock }));
 vi.mock('../../../db/repos/chats', async (orig) => ({
   ...(await orig<typeof import('../../../db/repos/chats')>()),
-  hasOtherActiveChatsSharingWorktree: siblingMock,
+  hasOtherChatsSharingWorktree: siblingMock,
 }));
 
 import { isTransientWorktreeRemoveError } from '../../../git/worktree';
@@ -182,6 +182,97 @@ describe('tearDownChatWorktree', () => {
     expect(ok).toBe(false);
     expect(siblingMock).not.toHaveBeenCalled();
     expect(removeWorktreeMock).not.toHaveBeenCalled();
+  });
+});
+
+// sc-3292: the REAL sibling query must count an archived fork as a holder — removal is --force and
+// deletes the branch, so a wrong "no siblings" destroys the fork's unpushed work.
+describe('tearDownChatWorktree with the real sibling query', () => {
+  const archived = new Date('2026-01-01T00:00:00.000Z');
+
+  beforeEach(async () => {
+    const actual =
+      await vi.importActual<typeof import('../../../db/repos/chats')>('../../../db/repos/chats');
+    siblingMock.mockImplementation(actual.hasOtherChatsSharingWorktree);
+  });
+
+  it('keeps the worktree when a deleted chat leaves an archived fork behind', async () => {
+    const project = await createProject(db, { name: 'P', path: '/repo' });
+    // chats.delete removes A's row before teardown runs; only archived fork B remains.
+    await createChat(db, {
+      id: 'b',
+      name: 'B',
+      projectId: project.id,
+      worktreePath: '/repo/wt',
+      branch: 'feat',
+      archivedAt: archived,
+    });
+
+    const ok = await tearDownChatWorktree(db, {
+      id: 'a',
+      worktreePath: '/repo/wt',
+      branch: 'feat',
+      projectId: project.id,
+    });
+
+    expect(ok).toBe(false);
+    expect(removeWorktreeMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps the worktree when archiving with deleteWorktree while an archived fork still holds it', async () => {
+    const project = await createProject(db, { name: 'P', path: '/repo' });
+    const ref = { worktreePath: '/repo/wt', branch: 'feat', projectId: project.id };
+    await createChat(db, { id: 'a', name: 'A', ...ref, archivedAt: archived });
+    await createChat(db, { id: 'b', name: 'B', ...ref, archivedAt: archived });
+
+    const ok = await tearDownChatWorktree(db, { id: 'b', ...ref });
+
+    expect(ok).toBe(false);
+    expect(removeWorktreeMock).not.toHaveBeenCalled();
+  });
+
+  it('removes the worktree once the last holder releases it', async () => {
+    const project = await createProject(db, { name: 'P', path: '/repo' });
+    const ref = { worktreePath: '/repo/wt', branch: 'feat', projectId: project.id };
+    await createChat(db, { id: 'b', name: 'B', ...ref, archivedAt: archived });
+
+    const ok = await tearDownChatWorktree(db, { id: 'b', ...ref });
+
+    expect(ok).toBe(true);
+    expect(removeWorktreeMock).toHaveBeenCalledWith('/repo', '/repo/wt', { branch: 'feat' });
+  });
+
+  it('boot recovery keeps a clean, pushed worktree held only by an archived fork', async () => {
+    // Teardown deferred to archived fork B; after a restart B must still own it, else restore
+    // points at a missing directory.
+    const project = await createProject(db, { name: 'P', path: '/repo' });
+    const ref = { worktreePath: '/repo/wt', branch: 'feat', projectId: project.id };
+    await createChat(db, { id: 'b', name: 'B', ...ref, archivedAt: archived });
+    listWorktreesMock.mockResolvedValue([wt('/repo', { isMain: true }), wt('/repo/wt')]);
+
+    const { removed } = await recoverOrphanedWorktrees(db, '');
+
+    expect(removeWorktreeMock).not.toHaveBeenCalled();
+    expect(removed).toBe(0);
+  });
+
+  it('boot filesystem sweep spares a git-forgotten dir an archived fork still references', async () => {
+    const base = mkTmpBase();
+    const dir = mkdirp(base, 'slug', 'wt');
+    const project = await createProject(db, { name: 'P', path: '/repo' });
+    await createChat(db, {
+      id: 'b',
+      name: 'B',
+      projectId: project.id,
+      worktreePath: dir,
+      branch: 'feat',
+      archivedAt: archived,
+    });
+
+    const { orphaned } = await recoverOrphanedWorktrees(db, base);
+
+    expect(orphaned).toBe(0);
+    expect(existsSync(dir)).toBe(true);
   });
 });
 

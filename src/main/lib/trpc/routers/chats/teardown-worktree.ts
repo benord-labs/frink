@@ -9,10 +9,10 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import * as fs from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
-import { eq, isNull } from 'drizzle-orm';
+import { eq, isNotNull } from 'drizzle-orm';
 import log from 'electron-log';
 import type { getDatabase } from '../../../db';
-import { hasOtherActiveChatsSharingWorktree } from '../../../db/repos/chats';
+import { hasOtherChatsSharingWorktree } from '../../../db/repos/chats';
 import { listProjects } from '../../../db/repos/projects';
 import { chats, projects as projectsTable } from '../../../db/schema';
 import { findUnmanagedWorktrees } from './git';
@@ -52,7 +52,7 @@ export async function tearDownChatWorktree(db: Db, chat: ChatWorktreeRef): Promi
 
   let hasSiblings: boolean;
   try {
-    hasSiblings = await hasOtherActiveChatsSharingWorktree(db, chatId, worktreePath);
+    hasSiblings = await hasOtherChatsSharingWorktree(db, chatId, worktreePath);
   } catch (error) {
     log.warn(
       '[tearDownChatWorktree] sibling check failed — skipping removal, boot sweep will reclaim',
@@ -130,7 +130,7 @@ export function hasLiveGitLinkage(dir: string): boolean {
 
 /**
  * Reclaim one candidate `<slug>/<folder>` dir iff it's a git-forgotten orphan. Removed only when no
- * active chat references it, git no longer lists it, and it has no live `.git` linkage. We skip the
+ * chat references it, git no longer lists it, and it has no live `.git` linkage. We skip the
  * uncommitted/unpushed checks the git loop runs — a stub with no live linkage cannot hold
  * recoverable git work, and `hasLiveGitLinkage` already spares anything that could. A locked/
  * unreadable orphan (EBUSY/EACCES — the class removeWorktree retries) is left for the next boot,
@@ -141,7 +141,7 @@ async function reclaimIfOrphan(
   knownGitPaths: Set<string>,
   referenced: Set<string>,
 ): Promise<boolean> {
-  if (referenced.has(worktreeDir)) return false; // a live chat owns it
+  if (referenced.has(worktreeDir)) return false; // a chat (active or archived) owns it
   if (knownGitPaths.has(worktreeDir)) return false; // git still lists it
   if (hasLiveGitLinkage(worktreeDir)) return false; // functional worktree → never destroy
   try {
@@ -191,25 +191,8 @@ export async function sweepOrphanWorktreeDirs(
   return orphaned;
 }
 
-/**
- * Boot-time backstop: reconcile each project's git worktrees against active chats, then sweep the
- * managed worktree base for dirs git has forgotten entirely.
- *  - `git worktree prune` clears stale registrations (dirs already gone). Repo-wide, so this is the
- *    ONLY place we prune (never per-teardown — see pruneWorktrees doc).
- *  - Any Frink-MARKED worktree git still tracks that NO registered project or active
- *    (non-archived) chat references is removed — UNLESS it holds uncommitted/unpushed work (never
- *    destroy that: a paused start_task merge-conflict worktree has no chat row yet but holds the
- *    conflict the user must resolve). Positive worktree-scoped ownership is load-bearing: Git's
- *    registry is repository-global and also lists manual worktrees Frink must never delete. Legacy
- *    Frink worktrees without the marker may leak rather than risk a destructive false positive.
- *    Project roots are protected because Frink itself may be running from a linked worktree.
- *  - `sweepOrphanWorktreeDirs` then reclaims git-forgotten leftover dirs under `worktreeBaseDir`
- *    (the global base, injected by the boot caller so this can never scan an unexpected root under
- *    test). Scope: git-FORGOTTEN orphans under a per-project `worktree-base-path` override are NOT
- *    swept — git-tracked worktrees there are still covered by the git-loop above; reclaiming
- *    forgotten orphans there is a deliberate out-of-scope call (see docs/decisions).
- * Idempotent: a no-op when there's no drift. Run AFTER flow/task recovery so in-flight work settles.
- */
+/** Boot backstop: prune, remove unreferenced Frink-marked clean worktrees, sweep git-forgotten dirs.
+ * Keep-set, dirty/ownership guards and scope: docs/decisions/worktree-orphan-reclamation.md. */
 export async function recoverOrphanedWorktrees(
   db: Db,
   worktreeBaseDir: string,
@@ -223,13 +206,14 @@ export async function recoverOrphanedWorktrees(
     return { pruned: 0, removed: 0, skipped: 0, orphaned: 0 };
   }
 
-  const activeRows = await db
+  // Archived rows count too: archive is undoable and teardown defers to archived holders (sc-3292).
+  const chatRows = await db
     .select({ worktreePath: chats.worktreePath })
     .from(chats)
-    .where(isNull(chats.archivedAt));
+    .where(isNotNull(chats.worktreePath));
   const allProjects = await listProjects(db);
   const referenced = new Set([
-    ...activeRows.map((r) => r.worktreePath).filter((p): p is string => Boolean(p)),
+    ...chatRows.map((r) => r.worktreePath).filter((p): p is string => Boolean(p)),
     ...allProjects.map((project) => project.path).filter((p): p is string => Boolean(p)),
   ]);
 

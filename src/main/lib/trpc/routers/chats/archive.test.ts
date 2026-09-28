@@ -13,7 +13,6 @@ const archiveChatLocalMock = vi.fn();
 const unarchiveChatLocalMock = vi.fn();
 const getChatByIdLocalMock = vi.fn();
 const updateChatLocalMock = vi.fn();
-const hasOtherActiveChatsSharingWorktreeLocalMock = vi.fn();
 const trackWorkspaceArchivedMock = vi.fn();
 const clearCodexSessionMock = vi.fn();
 const killByWorkspaceIdMock = vi.fn();
@@ -26,7 +25,6 @@ vi.mock('../../../db/repos/chats', () => ({
   unarchiveChat: unarchiveChatLocalMock,
   getChatById: getChatByIdLocalMock,
   updateChat: updateChatLocalMock,
-  hasOtherActiveChatsSharingWorktree: hasOtherActiveChatsSharingWorktreeLocalMock,
 }));
 vi.mock('../../../db/repos/sub-chats', () => ({
   // Inline factory so vi.resetAllMocks() in beforeEach can't strip the implementation.

@@ -79,12 +79,9 @@ export async function countChatsByProject(
   return rows.map((r) => ({ projectId: r.projectId, count: Number(r.count) }));
 }
 
-/**
- * True when at least one OTHER non-archived chat (id != excludeChatId) shares the given
- * worktree path. Used by archive flows to decide whether removing the worktree on disk is
- * safe — fork chats share a worktree and the last reference must keep it alive.
- */
-export async function hasOtherActiveChatsSharingWorktree(
+/** True when another chat, ACTIVE OR ARCHIVED (archive is undoable), still references this worktree.
+ * Teardown-safety rationale: docs/decisions/worktree-orphan-reclamation.md (sc-3292). */
+export async function hasOtherChatsSharingWorktree(
   db: Db,
   excludeChatId: string,
   worktreePath: string,
@@ -92,13 +89,7 @@ export async function hasOtherActiveChatsSharingWorktree(
   const [row] = await db
     .select({ count: sql<number>`count(*)` })
     .from(chats)
-    .where(
-      and(
-        eq(chats.worktreePath, worktreePath),
-        isNull(chats.archivedAt),
-        sql`${chats.id} != ${excludeChatId}`,
-      ),
-    );
+    .where(and(eq(chats.worktreePath, worktreePath), sql`${chats.id} != ${excludeChatId}`));
   return Number(row?.count ?? 0) > 0;
 }
 
