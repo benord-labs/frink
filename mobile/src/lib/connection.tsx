@@ -24,6 +24,7 @@ type Session = {
   ) => Promise<MobileResponses[T['type']]>;
 };
 const Context = createContext<Session | null>(null);
+export const ResourceActivity = createContext(true);
 export function ConnectionProvider({ children }: { children: ReactNode }) {
   const [connection, setConnection] = useState<Connection | null>(null);
   const [loading, setLoading] = useState(true);
@@ -96,25 +97,40 @@ export function useConnection() {
   return value;
 }
 
+/** What a failed refresh reports: its message, and the HTTP status (0 = unreachable). */
+function failureState(error: unknown) {
+  return {
+    error: error instanceof Error ? error.message : 'Could not refresh.',
+    errorStatus: error instanceof ApiError ? error.status : undefined,
+  };
+}
+
 // Reason: Foreground polling keeps host identity and stale-response checks together.
 // fallow-ignore-next-line complexity
 export function useResource<T extends MobileRequest>(input: T) {
   const { connection, request } = useConnection();
+  const focused = useContext(ResourceActivity);
   const key = JSON.stringify([connection?.deviceId, connection?.url, input]);
   const currentKey = useRef(key);
   currentKey.current = key;
   const [revision, setRevision] = useState(0);
+  // Only a pull-to-refresh gesture shows the spinner; mounts, focus and command follow-ups stay silent.
+  const pulled = useRef(false);
   const [state, setState] = useState<{
     key: string;
     data?: MobileResponses[T['type']];
     error?: string;
+    errorStatus?: number;
+    updatedAt?: number;
+    refreshing?: boolean;
   }>({ key });
   useEffect(() => {
+    if (!focused || !connection) return;
     let cancelled = false;
     let pending: AbortController | null = null;
     // Reason: The polling request owns cancellation, visibility, and error state together.
     // fallow-ignore-next-line complexity
-    async function refresh() {
+    async function refresh(visible = false) {
       if (
         cancelled ||
         pending ||
@@ -123,21 +139,28 @@ export function useResource<T extends MobileRequest>(input: T) {
       )
         return;
       pending = new AbortController();
+      const controller = pending;
+      if (visible) setState((old) => ({ ...old, refreshing: true }));
       try {
         const data = await request(input, pending.signal);
-        if (!cancelled && currentKey.current === key) setState({ key, data });
-      } catch (error) {
         if (!cancelled && currentKey.current === key)
+          setState({ key, data, updatedAt: Date.now(), refreshing: false });
+      } catch (error) {
+        if (!cancelled && currentKey.current === key && !controller.signal.aborted)
           setState((old) => ({
+            ...(old.key === key ? { data: old.data, updatedAt: old.updatedAt } : {}),
             key,
-            data: old.key === key ? old.data : undefined,
-            error: error instanceof Error ? error.message : 'Could not refresh.',
+            refreshing: false,
+            ...failureState(error),
           }));
       } finally {
         pending = null;
+        if (!cancelled && controller.signal.aborted)
+          setState((old) => ({ ...old, refreshing: false }));
       }
     }
-    void refresh();
+    void refresh(pulled.current);
+    pulled.current = false;
     const interval = setInterval(() => void refresh(), 3000);
     const listener = AppState.addEventListener('change', (state) => {
       if (state === 'active') void refresh();
@@ -150,11 +173,18 @@ export function useResource<T extends MobileRequest>(input: T) {
       pending?.abort();
     };
     // The serialized input is the request identity, including host and pagination.
-  }, [key, revision, request]);
+  }, [key, revision, request, focused]);
   return {
     data: state.key === key ? state.data : undefined,
     error: state.key === key ? state.error : undefined,
+    errorStatus: state.key === key ? state.errorStatus : undefined,
+    updatedAt: state.key === key ? state.updatedAt : undefined,
+    refreshing: focused && state.key === key && !!state.refreshing,
     refresh: () => setRevision((v) => v + 1),
+    pull: () => {
+      pulled.current = true;
+      setRevision((v) => v + 1);
+    },
   };
 }
 

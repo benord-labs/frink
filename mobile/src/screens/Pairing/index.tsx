@@ -3,7 +3,8 @@ import { useState } from 'react';
 import { KeyboardAvoidingView, Platform, View } from 'react-native';
 import { pairComputer, parsePairing } from '../../lib/api';
 import { useConnection } from '../../lib/connection';
-import { Button, Field, Icon, Label, Notice, Page } from '../../ui/primitives';
+import { Button, Field, Icon, Label, Notice, Section } from '../../ui/primitives';
+import { Page } from '../../ui/page';
 import { useTheme } from '../../ui/theme';
 
 // Reason: Scanning, manual pairing, and connection feedback form one MVP flow.
@@ -45,7 +46,7 @@ export function Pairing() {
       style={{ flex: 1 }}
     >
       <Page title="Connect your computer" subtitle="Frink for iPhone">
-        <Label size={14} muted>
+        <Label size={15} muted>
           Open Settings → Mobile in Frink. Enable mobile access, set up the private connection, then
           generate a pairing code.
         </Label>
@@ -62,19 +63,16 @@ export function Pairing() {
                   }}
                 />
               </View>
-              <Button compact secondary onPress={() => setScanning(false)}>
+              <Button secondary onPress={() => setScanning(false)}>
                 Cancel scanning
               </Button>
             </View>
           ) : (
-            <Button compact secondary icon="qr-code-outline" onPress={() => void scan()}>
+            <Button secondary icon="qr-code-outline" onPress={() => void scan()}>
               Scan pairing code
             </Button>
           )}
-          <View style={{ gap: 8 }}>
-            <Label size={14} bold>
-              Or paste your pairing code
-            </Label>
+          <Section title="Or paste your pairing code" plain>
             <Field
               accessibilityLabel="Pairing code"
               placeholder="Paste the code from Frink"
@@ -85,21 +83,18 @@ export function Pairing() {
               autoCorrect={false}
               style={{ minHeight: 88, fontSize: 14, lineHeight: 20 }}
             />
-          </View>
-          <View style={{ gap: 8 }}>
-            <Label size={14} bold>
-              Device name
-            </Label>
+          </Section>
+          <Section title="Device name" plain>
             <Field
               accessibilityLabel="Device name"
               value={name}
               onChangeText={setName}
               maxLength={60}
             />
-          </View>
+          </Section>
           {host && <Notice>Connect to {host}. Only continue if this is your computer.</Notice>}
           {(error || savedError) && <Notice error>{error || savedError}</Notice>}
-          <Button compact disabled={busy || !host} onPress={() => void pair()}>
+          <Button disabled={busy || !host} onPress={() => void pair()}>
             {busy ? 'Connecting…' : 'Connect to Frink'}
           </Button>
         </View>
@@ -107,7 +102,7 @@ export function Pairing() {
           <View style={{ paddingTop: 2 }}>
             <Icon name="lock-closed-outline" size={17} color={t.muted} />
           </View>
-          <Label size={13} muted style={{ flex: 1 }}>
+          <Label size={14} muted style={{ flex: 1 }}>
             Keep Frink open and your computer awake. Both devices need access to the same private
             network, such as Tailscale.
           </Label>

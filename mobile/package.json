@@ -2,6 +2,11 @@
   "name": "@frink/mobile",
   "version": "0.1.0",
   "private": true,
+  "enriched-markdown": {
+    "enableCodeHighlight": false,
+    "enableMath": false,
+    "enableVideo": false
+  },
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
@@ -15,19 +20,27 @@
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
+    "@react-navigation/native": "7.4.1",
+    "@react-navigation/native-stack": "7.19.2",
     "expo": "~57.0.0",
+    "expo-blur": "~57.0.3",
     "expo-camera": "~57.0.0",
+    "expo-clipboard": "~57.0.2",
     "expo-crypto": "~57.0.0",
     "expo-secure-store": "~57.0.0",
+    "mdast-util-from-markdown": "2.0.3",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.3",
+    "react-native-enriched-markdown": "1.0.2",
     "react-native-safe-area-context": "~5.7.0",
+    "react-native-screens": "~4.26.0",
     "react-native-web": "^0.21.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
+    "@types/mdast": "4.0.4",
     "@types/react": "~19.2.0",
     "typescript": "~6.0.3",
     "vitest": "^4.0.0"
