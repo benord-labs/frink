@@ -23,6 +23,22 @@ describe('mobile transcript Markdown boundary', () => {
     expect(result).toContain('[safe][docs]');
   });
   it.each([
+    'x !<b></b>[a](https://example.com/track.png)',
+    '!<!-- -->[a](https://example.com/track.png)',
+    '[x]<i></i>(javascript:alert(1))',
+  ])('does not let removed HTML re-form an image or unsafe link: %s', (source) => {
+    const result = sanitizeMarkdown(source);
+    expect(result).not.toContain('](https://example.com/track.png)');
+    expect(result).not.toContain('](javascript:');
+    expect(sanitizeMarkdown(result)).toBe(result);
+  });
+  it('resolves a repeated reference label to its first definition', () => {
+    const result = sanitizeMarkdown(
+      '[go][d]\n\n[d]: javascript:alert(1)\n[d]: https://ok.example',
+    );
+    expect(result).not.toContain('[go][d]');
+  });
+  it.each([
     'javascript:alert(1)',
     'file:///private/a',
     'frink://execute',

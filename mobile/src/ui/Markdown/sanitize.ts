@@ -39,15 +39,20 @@ function unsafeReplacement(node: Nodes, definitions: Map<string, string>): strin
   return target !== undefined && !safeWebLink(target) ? escapeText(plainText(node)) : undefined;
 }
 
-// Parse with CommonMark's AST so images in fenced code are preserved and nested/reference
-// syntax cannot bypass the no-network-media rule. Native Markdown receives only safe content.
-export function sanitizeMarkdown(markdown: string): string {
+// CommonMark resolves a repeated reference label to its first definition.
+function firstDefinitions(tree: ReturnType<typeof fromMarkdown>) {
+  const definitions = new Map<string, string>();
+  for (const node of tree.children)
+    if (node.type === 'definition' && !definitions.has(node.identifier.toUpperCase()))
+      definitions.set(node.identifier.toUpperCase(), node.url);
+  return definitions;
+}
+
+// One pass over CommonMark's AST: images in fenced code survive, while nested and reference
+// images and unsafe links are replaced by escaped text.
+function sanitizePass(markdown: string): string {
   const tree = fromMarkdown(markdown);
-  const definitions = new Map(
-    tree.children
-      .filter((node) => node.type === 'definition')
-      .map((node) => [node.identifier.toUpperCase(), node.url]),
-  );
+  const definitions = firstDefinitions(tree);
   const replacements: Array<{ start: number; end: number; text: string }> = [];
   function visit(node: Nodes) {
     const replacement = unsafeReplacement(node, definitions);
@@ -65,4 +70,18 @@ export function sanitizeMarkdown(markdown: string): string {
   return replacements
     .sort((a, b) => b.start - a.start)
     .reduce((text, edit) => text.slice(0, edit.start) + edit.text + text.slice(edit.end), markdown);
+}
+
+const MAX_PASSES = 8;
+
+// Removing raw HTML can join its neighbours into new syntax (`!<b></b>[a](url)` becomes an image),
+// so passes repeat until nothing changes. Input that never settles is shown as plain text.
+export function sanitizeMarkdown(markdown: string): string {
+  let current = markdown;
+  for (let pass = 0; pass < MAX_PASSES; pass++) {
+    const next = sanitizePass(current);
+    if (next === current) return current;
+    current = next;
+  }
+  return escapeText(markdown);
 }
