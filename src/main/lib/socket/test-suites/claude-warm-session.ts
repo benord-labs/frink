@@ -66,7 +66,7 @@ const claimLines = () =>
     .mock.calls.map(([line]) => String(line))
     .filter((line) => line.startsWith(`[Claude Session] claim sub=${payload.subChatId} `))
     .map((line) => line.split(' ').at(-1));
-const replies = () =>
+export const replies = () =>
   vi
     .mocked(socketClient.sendStreamChunkDirect)
     .mock.calls.map(([sent]) => (sent.chunk as { delta?: string }).delta)
@@ -220,7 +220,8 @@ function registerRecreateTests({ claudeQueryMock }: WarmSessionHarness, send: Se
     ['cwd', 'cwd', { second: () => void worktree('/tmp/wt-new') }],
     [
       'api-key',
-      'env',
+      // The key rides the fd pipe, not env, so the account change keys through its fingerprint.
+      'credential',
       {
         second: () => {
           vi.mocked(getDefaultClaudeCodeToken).mockResolvedValueOnce({

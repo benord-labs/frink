@@ -12,6 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { findMissingLiterals, REQUIRED_CLAUDE_BINARY_ENV } from './binary-capabilities.mjs';
 import { downloadToFile, fetchUrl, sha256File } from './http-download.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -146,53 +147,33 @@ async function downloadPlatform(version, platformKey, manifest) {
 }
 
 /**
- * Reject (and delete) a binary that cannot honour CLAUDE_SECURESTORAGE_CONFIG_DIR. Shared by the
+ * Reject (and delete) a binary missing an env var Frink's auth model depends on. Shared by the
  * cached and freshly-downloaded paths so a stale cache can never smuggle an unsupported binary in.
  */
 function rejectIfMissingCapability(targetPath) {
-  if (binarySupportsSecureStorageOverride(targetPath)) return true;
-  console.error(`  Missing capability: CLAUDE_SECURESTORAGE_CONFIG_DIR`);
-  console.error(
-    `    Frink spawns agents with an isolated CLAUDE_CONFIG_DIR and relies on this env var`,
-  );
-  console.error(
-    `    to point the CLI at the canonical keychain login so it can refresh its own token.`,
-  );
-  console.error(
-    `    Without it every agent would need a frozen injected token and would 401 the moment`,
-  );
-  console.error(`    anything else on the machine rotates the credential.`);
+  const missing = findMissingLiterals(targetPath, REQUIRED_CLAUDE_BINARY_ENV);
+  if (missing.length === 0) return true;
+  console.error(`  Missing capability: ${missing.join(', ')}`);
+  if (missing.includes('CLAUDE_SECURESTORAGE_CONFIG_DIR')) {
+    console.error(
+      `    Frink spawns agents with an isolated CLAUDE_CONFIG_DIR and relies on this env var`,
+    );
+    console.error(
+      `    to point the CLI at the canonical keychain login so it can refresh its own token.`,
+    );
+    console.error(
+      `    Without it every agent would need a frozen injected token and would 401 the moment`,
+    );
+    console.error(`    anything else on the machine rotates the credential.`);
+  }
+  if (missing.some((name) => name.endsWith('_FILE_DESCRIPTOR'))) {
+    console.error(`    Frink hands stored credentials to the CLI through a pipe (fd 3) so the`);
+    console.error(`    agent's Bash commands and MCP servers never inherit them in their env.`);
+    console.error(`    Without it an api-key or setup-token account cannot authenticate.`);
+  }
   console.error(`    Pin a known-good version with --version= and open an issue.`);
   fs.unlinkSync(targetPath);
   return false;
-}
-
-/**
- * The version is floating (latest, unless --version= is passed), so a new binary could drop
- * the env var frink's auth model depends on. Scan for the literal rather than trusting the
- * version number. Chunked with an overlap so the needle can't straddle a buffer boundary.
- */
-function binarySupportsSecureStorageOverride(binaryPath) {
-  const needle = Buffer.from('CLAUDE_SECURESTORAGE_CONFIG_DIR', 'utf-8');
-  const chunkSize = 8 * 1024 * 1024;
-  const overlap = needle.length - 1;
-  const buffer = Buffer.alloc(chunkSize);
-  const fd = fs.openSync(binaryPath, 'r');
-  try {
-    let position = 0;
-    let carry = Buffer.alloc(0);
-    for (;;) {
-      const bytesRead = fs.readSync(fd, buffer, 0, chunkSize, position);
-      if (bytesRead === 0) return false;
-      if (Buffer.concat([carry, buffer.subarray(0, bytesRead)]).includes(needle)) return true;
-      // Copy, don't alias: `buffer` is reused by the next readSync, so a subarray view
-      // would be overwritten before it is concatenated — defeating the overlap guard.
-      carry = Buffer.from(buffer.subarray(Math.max(0, bytesRead - overlap), bytesRead));
-      position += bytesRead;
-    }
-  } finally {
-    fs.closeSync(fd);
-  }
 }
 
 /**

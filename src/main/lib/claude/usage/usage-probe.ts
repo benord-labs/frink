@@ -5,7 +5,7 @@ import type { Options, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { app } from 'electron';
 import log from 'electron-log';
 import type { CredentialResult } from '../../credentials';
-import { buildOneShotClaudeEnv, getBundledClaudeBinaryPath } from '../env';
+import { buildOneShotClaudeLaunch, getBundledClaudeBinaryPath } from '../env';
 import type { UsageResponseInput } from './rate-limit-store';
 
 const PROBE_TIMEOUT_MS = 30_000;
@@ -25,11 +25,13 @@ export function buildUsageProbeOptions(
   configDir: string,
   abortController: AbortController,
 ): Options {
+  const { env, spawnClaudeCodeProcess } = buildOneShotClaudeLaunch(credential);
   return {
     abortController,
     cwd: configDir,
+    ...(spawnClaudeCodeProcess ? { spawnClaudeCodeProcess } : {}),
     env: {
-      ...buildOneShotClaudeEnv(credential),
+      ...env,
       CLAUDE_CONFIG_DIR: configDir,
       ENABLE_CLAUDEAI_MCP_SERVERS: 'false',
       CLAUDE_CODE_AUTO_CONNECT_IDE: '0',

@@ -274,6 +274,39 @@ function hasAllowedPrefix(key: string, isWindows: boolean): boolean {
   return ALLOWED_PREFIXES.some((prefix) => keyToCheck.startsWith(prefix));
 }
 
+/** Credentials a child started from a FULL env must not inherit ({@link buildSafeEnv} drops them).
+ * Why: docs/decisions/child-process-env-secrets.md */
+export const CREDENTIAL_ENV_DENYLIST = [
+  'ANTHROPIC_API_KEY',
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR',
+  'CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR',
+  'OPENAI_API_KEY',
+  'AWS_ACCESS_KEY_ID',
+  'AWS_SECRET_ACCESS_KEY',
+  'AWS_SESSION_TOKEN',
+  'GITHUB_TOKEN',
+  'GH_TOKEN',
+] as const;
+
+/** `env` without `keys` and without non-string values. Case-insensitive on Windows, where env
+ * names are, so `Github_Token` cannot slip past a `GITHUB_TOKEN` entry. */
+export function omitEnvKeys(
+  env: NodeJS.ProcessEnv | Record<string, string>,
+  keys: readonly string[],
+  options?: { platform?: NodeJS.Platform },
+): Record<string, string> {
+  const isWindows = (options?.platform ?? os.platform()) === 'win32';
+  const blocked = new Set(isWindows ? keys.map((key) => key.toUpperCase()) : keys);
+  const kept: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (typeof value !== 'string') continue;
+    if (blocked.has(isWindows ? key.toUpperCase() : key)) continue;
+    kept[key] = value;
+  }
+  return kept;
+}
+
 /**
  * Build a safe environment by only including allowlisted variables.
  * This prevents app secrets and build-time config from leaking to terminals.

@@ -26,6 +26,7 @@ import { buildCodexDynamicChatMcpUrl } from '../agent-runner/codex/spawn-args';
 import { buildFrinkPlanChunks } from '../agent-runner/plan-document';
 import { createTransformer, getBundledClaudeBinaryPath } from '../claude';
 import { clearPendingApprovals } from '../claude/ask-user-question-approval';
+import { relaunchWithCredential } from '../claude/credential-fd-spawn';
 import { _resetConfigDirStagingForTests } from '../claude/session-config-dir';
 import {
   getClaudeSessionPlansDir,
@@ -2142,12 +2143,8 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
           );
           throw error;
         }
-        const retryEnv: Record<string, string> = { ...sdkOptions.env };
-        delete retryEnv.ANTHROPIC_API_KEY;
-        delete retryEnv.CLAUDE_CODE_OAUTH_TOKEN;
-        if (fresh.isApiKey) retryEnv.ANTHROPIC_API_KEY = fresh.token;
-        else retryEnv.CLAUDE_CODE_OAUTH_TOKEN = fresh.token;
-        retryOptions.env = retryEnv;
+        // A fresh pipe for the new token: the first attempt's spawn closure carries the rejected one.
+        Object.assign(retryOptions, relaunchWithCredential(sdkOptions.env, fresh));
         storedCredential = fresh;
       } else {
         await new Promise((resolve) =>

@@ -1,6 +1,10 @@
 import os from 'node:os';
 import { describe, expect, it } from 'vitest';
-import { buildCodexDynamicChatMcpUrl, buildSpawnArgs } from './spawn-args';
+import {
+  buildCodexDynamicChatMcpUrl,
+  buildSpawnArgs,
+  CODEX_SHELL_ENV_SCRUB_ARGS,
+} from './spawn-args';
 
 const base = {
   baseUrl: 'http://127.0.0.1:3111',
@@ -29,8 +33,23 @@ describe('buildSpawnArgs', () => {
   ];
 
   it('disables every unrouted execution surface before appending config args', () => {
-    expect(buildSpawnArgs(['--config', 'x=1'])).toEqual([...disabledFeatures, '--config', 'x=1']);
-    expect(buildSpawnArgs()).toEqual(disabledFeatures);
+    expect(buildSpawnArgs(['--config', 'x=1'])).toEqual([
+      ...disabledFeatures,
+      '--config',
+      'x=1',
+      ...CODEX_SHELL_ENV_SCRUB_ARGS,
+    ]);
+    expect(buildSpawnArgs()).toEqual([...disabledFeatures, ...CODEX_SHELL_ENV_SCRUB_ARGS]);
+  });
+
+  it('scrubs credentials from Codex shells last, so a caller override cannot re-enable them', () => {
+    const args = buildSpawnArgs([
+      '--config',
+      'shell_environment_policy.ignore_default_excludes=true',
+    ]);
+    const scrub = 'shell_environment_policy.ignore_default_excludes=false';
+    expect(args.at(-1)).toBe(scrub);
+    expect(args.filter((arg) => arg === scrub)).toHaveLength(1);
   });
 
   it('keeps the ordinary shell surfaces enabled while disabling the missing code-mode host', () => {

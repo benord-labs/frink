@@ -3271,10 +3271,9 @@ describe('context isolation edge cases', () => {
       await handleRemoteExecute({ ...basePayload, message: 'turn that 401s then recovers' });
 
       expect(claudeQueryMock).toHaveBeenCalledTimes(2);
-      const retryOptions = claudeQueryMock.mock.calls[1]?.[0]?.options as {
-        env?: Record<string, string>;
-      };
-      expect(retryOptions.env?.ANTHROPIC_API_KEY).toBe('claude-token-fresh');
+      const [first, retry] = [0, 1].map((i) => claudeQueryMock.mock.calls[i]?.[0]?.options);
+      expect(JSON.stringify(retry.env)).not.toContain('claude-token');
+      expect(retry.spawnClaudeCodeProcess).not.toBe(first.spawnClaudeCodeProcess); // fresh pipe
       expect(vi.mocked(parkFlowTaskOnClaudeInterruption)).not.toHaveBeenCalled();
       expect(vi.mocked(socketClient.sendErrorDirect)).not.toHaveBeenCalled();
     });
@@ -3329,8 +3328,8 @@ describe('context isolation edge cases', () => {
 
       await handleRemoteExecute({ ...basePayload, message: 'passthrough spawn' });
 
-      const env = (claudeQueryMock.mock.calls[0]?.[0]?.options as { env?: Record<string, string> })
-        .env;
+      const { env, spawnClaudeCodeProcess } = claudeQueryMock.mock.calls[0]?.[0]?.options;
+      expect(spawnClaudeCodeProcess).toBeUndefined(); // SDK default spawn: no credential pipe
       // Strict equality: toBeFalsy() would also pass on `undefined`, which is the broken state —
       // the CLI branches on `!== undefined`, so an absent var re-enables the hashed service name.
       expect(env?.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe('');
@@ -3338,15 +3337,15 @@ describe('context isolation edge cases', () => {
       expect(env).not.toHaveProperty('ANTHROPIC_API_KEY');
     });
 
-    it('api-key spawns still receive ANTHROPIC_API_KEY', async () => {
+    it('api-key spawns receive the key through the fd pipe, never the env Bash inherits', async () => {
       vi.mocked(getDefaultClaudeCodeToken).mockResolvedValue(claudeCredential);
 
       await handleRemoteExecute({ ...basePayload, message: 'api-key spawn' });
 
-      const env = (claudeQueryMock.mock.calls[0]?.[0]?.options as { env?: Record<string, string> })
-        .env;
-      expect(env?.ANTHROPIC_API_KEY).toBe('claude-token');
-      expect(env?.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe('');
+      const { env, spawnClaudeCodeProcess } = claudeQueryMock.mock.calls[0]?.[0]?.options;
+      expect(env).not.toHaveProperty('ANTHROPIC_API_KEY');
+      expect(env?.CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR).toBe('3');
+      expect(spawnClaudeCodeProcess).toBeTypeOf('function');
     });
 
     it('persists the session id EARLY (first raw SDK frame) so a mid-stream failure stays resumable', async () => {

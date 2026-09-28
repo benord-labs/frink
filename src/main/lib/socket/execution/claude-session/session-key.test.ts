@@ -97,4 +97,32 @@ describe('computeClaudeSessionKey', () => {
     const max = computeClaudeSessionKey(options({ effort: 'max' }), servers());
     expect(diffKeyParts(high, max)).toEqual(['effort']);
   });
+
+  // The token reaches the CLI through a pipe, so env no longer tells two accounts apart. Two panes
+  // on different api-key accounts must never share a warm CLI; one account must keep sharing it.
+  describe('credential fingerprint (fd-delivered token)', () => {
+    const fdOptions = (fingerprint: string) =>
+      options({
+        env: { CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR: '3', CLAUDE_CONFIG_DIR: '/cfg/sub-1' },
+        // A fresh closure per spawn, as buildClaudeCredentialLaunch mints one per launch.
+        spawnClaudeCodeProcess: Object.assign(() => ({}), { credentialFingerprint: fingerprint }),
+      });
+
+    it('separates two accounts of the same type', () => {
+      const a = computeClaudeSessionKey(fdOptions('fp-account-a'), servers());
+      const b = computeClaudeSessionKey(fdOptions('fp-account-b'), servers());
+      expect(diffKeyParts(a, b)).toEqual(['credential']);
+    });
+
+    it('keeps one account on the same key even though each spawn has its own closure', () => {
+      const first = computeClaudeSessionKey(fdOptions('fp-account-a'), servers());
+      const second = computeClaudeSessionKey(fdOptions('fp-account-a'), servers());
+      expect(diffKeyParts(first, second)).toEqual([]);
+    });
+
+    it('never places the fingerprint or a token in the key', () => {
+      const key = computeClaudeSessionKey(fdOptions('fp-account-a'), servers());
+      expect(JSON.stringify(key)).not.toContain('fp-account-a');
+    });
+  });
 });

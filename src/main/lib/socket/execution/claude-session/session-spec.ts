@@ -9,6 +9,7 @@ import type { ExecutionSettings } from '../../../../../shared/types/execution';
 import { parseClaudeModel } from '../../../../../shared/types/execution';
 import { buildDebugModePrompt } from '../../../agent-runner/debug-mode';
 import { buildClaudeEnv, clampEffortForBundledBinary } from '../../../claude';
+import { buildClaudeCredentialLaunch } from '../../../claude/credential-fd-spawn';
 import { buildClaudeSdkThinkingPartial } from '../../../claude/sdk-thinking-options';
 import { stageClaudeConfigDir } from '../../../claude/session-config-dir';
 import type { CredentialResult } from '../../../credentials';
@@ -145,12 +146,13 @@ export async function buildClaudeSessionSpec(inputs: ClaudeSessionSpecInputs) {
   // Frink passes MCPs explicitly via options.mcpServers from ~/.frink/mcp/config.json.
   const isolatedConfigDir = path.join(app.getPath('userData'), 'claude-sessions', subChatId);
 
+  // The stored credential rides a pipe, not the env the CLI's Bash and MCP servers inherit.
+  // Why: docs/decisions/child-process-env-secrets.md
+  const credentialLaunch = buildClaudeCredentialLaunch(storedCredential);
+
   const claudeEnv: Record<string, string> = {
     ...envWithoutAuth,
-    ...(storedCredential.token &&
-      (storedCredential.isApiKey
-        ? { ANTHROPIC_API_KEY: storedCredential.token }
-        : { CLAUDE_CODE_OAUTH_TOKEN: storedCredential.token })),
+    ...credentialLaunch.envPatch,
     CLAUDE_CONFIG_DIR: isolatedConfigDir,
     // Canonical keychain item + shared ~/.claude refresh lock; CLAUDE_CONFIG_DIR stays
     // isolated. EMPTY STRING is load-bearing, and buildClaudeEnv would delete it from
@@ -220,6 +222,9 @@ export async function buildClaudeSessionSpec(inputs: ClaudeSessionSpecInputs) {
     permissionMode: resolvePermissionMode(mode, nativeAutoReview),
     env: claudeEnv,
     pathToClaudeCodeExecutable: inputs.claudeBinaryPath,
+    ...(credentialLaunch.spawnClaudeCodeProcess
+      ? { spawnClaudeCodeProcess: credentialLaunch.spawnClaudeCodeProcess }
+      : {}),
     // Explicit resume is authoritative; SDK declares cwd-wide `continue` mutually exclusive.
     ...(shouldResumeClaudeSession ? { resume: persistedSessionId } : {}),
     // Agent SDK stderr can contain remote MCP credentials. Consume it without retaining or
