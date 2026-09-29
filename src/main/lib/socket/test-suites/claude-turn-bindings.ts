@@ -54,6 +54,7 @@ export const stopInput = (backgroundTasks: BackgroundTaskSummary[] = []): StopHo
 });
 export const toolCall = (toolUseID: string) => ({
   toolUseID,
+  requestId: `req-${toolUseID}`,
   signal: new AbortController().signal,
 });
 /** Asks one AskUserQuestion and lets it expire. Only its own timer is faked, so the park can't stall. */

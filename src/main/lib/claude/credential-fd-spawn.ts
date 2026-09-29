@@ -117,6 +117,9 @@ function spawnWithCredentialPipe(
     get exitCode() {
       return child.exitCode;
     },
+    get signalCode() {
+      return child.signalCode;
+    },
     kill: child.kill.bind(child),
     on: child.on.bind(child),
     once: child.once.bind(child),

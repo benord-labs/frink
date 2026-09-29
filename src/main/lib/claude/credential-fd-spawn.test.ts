@@ -106,6 +106,13 @@ describe('buildClaudeCredentialLaunch', () => {
     expect(result.code).toBe(0);
   });
 
+  posixOnly('reports a signal-killed child as exited, not still running', async () => {
+    const launch = buildClaudeCredentialLaunch({ token: API_KEY, isApiKey: true });
+    const proc = spawnNode(launch, "process.kill(process.pid,'SIGTERM')");
+    await collect(proc);
+    expect(proc.signalCode).toBe('SIGTERM');
+  });
+
   it('reports a missing binary through the process error event instead of throwing', async () => {
     const launch = buildClaudeCredentialLaunch(
       { token: API_KEY, isApiKey: true },
