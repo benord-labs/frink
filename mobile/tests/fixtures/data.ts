@@ -102,7 +102,6 @@ export function overviewFixture(): MobileResponses['overview'] {
     machineName: "Benji's MacBook Pro",
     executionReady: true,
     appVersion: '0.0.13',
-    agents: { running: 0, needsYou: 0 },
     queue: [
       {
         id: 'task-plan',
@@ -185,6 +184,7 @@ export function overviewFixture(): MobileResponses['overview'] {
     ],
     counts: { attention: 3, running: 2, inbox: 1 },
     more: { attention: false, running: false, inbox: false },
+    agents: { running: 2, needsYou: 3 },
     questions: [
       {
         id: 'question-1',

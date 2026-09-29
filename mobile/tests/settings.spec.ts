@@ -82,3 +82,10 @@ test('light appearance', async ({ page }) => {
   await expect(page.getByText('Connected', { exact: true })).toBeVisible();
   await shot(page, 'connected', 'light');
 });
+
+test('the Lock Screen card is offered only in the iPhone app, not in a browser', async ({ page }) => {
+  await openSettings(page);
+  await expect(page.getByText('When a chat finishes')).toBeVisible();
+  await expect(page.getByText('Show on Lock Screen')).toHaveCount(0);
+  await page.screenshot({ path: 'test-results/live-activity-web-hidden-dark.png' });
+});

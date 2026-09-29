@@ -24,7 +24,7 @@ const overview: MobileOverview = {
   machineName: 'Mac',
   executionReady: true,
   appVersion: '0.0.13',
-    agents: { running: 0, needsYou: 0 },
+  agents: { running: 1, needsYou: 2 },
   questions: [
     {
       id: 'q1',
