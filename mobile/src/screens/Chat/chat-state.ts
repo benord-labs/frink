@@ -1,7 +1,7 @@
 import type {
   MobileActivity,
   MobileChatDetail,
-} from '../../../../src/shared/types/remote/mobile';
+} from '@frink/shared/types/remote/mobile';
 
 /**
  * What the composer's trailing button does right now.

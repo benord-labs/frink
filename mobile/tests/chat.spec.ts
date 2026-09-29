@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import type { MobileQuestion } from '../../src/shared/types/remote/mobile';
+import type { MobileQuestion } from '@frink/shared/types/remote/mobile';
 import { openApp } from './fixtures/app';
 import {
   conversation,

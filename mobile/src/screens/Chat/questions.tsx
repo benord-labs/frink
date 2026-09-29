@@ -10,7 +10,7 @@ import {
   SquareCheck,
   type LucideIcon,
 } from 'lucide-react-native';
-import type { MobilePermission, MobileQuestion } from '../../../../src/shared/types/remote/mobile';
+import type { MobilePermission, MobileQuestion } from '@frink/shared/types/remote/mobile';
 import { useAction } from '../../lib/connection';
 import { useDraft } from '../../lib/drafts';
 import { Button, IconButton } from '../../ui/button';

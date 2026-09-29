@@ -1,6 +1,6 @@
 import { useRoute, type RouteProp } from '@react-navigation/native';
 import { ActivityIndicator, RefreshControl, ScrollView, View } from 'react-native';
-import type { MobileFlow } from '../../../../src/shared/types/remote/mobile';
+import type { MobileFlow } from '@frink/shared/types/remote/mobile';
 import { useResource } from '../../lib/connection';
 import { useWindow } from '../../lib/use-window';
 import { useLargeTitle } from '../../navigation/large-title';

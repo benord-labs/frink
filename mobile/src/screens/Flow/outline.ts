@@ -1,6 +1,6 @@
-import { getBlockRegistration } from '../../../../src/shared/lib/block-registry';
-import { findBackEdges } from '../../../../src/shared/lib/flow-graph-cycle';
-import type { MobileFlowDefinition } from '../../../../src/shared/types/remote/mobile';
+import { getBlockRegistration } from '@frink/shared/lib/block-registry';
+import { findBackEdges } from '@frink/shared/lib/flow-graph-cycle';
+import type { MobileFlowDefinition } from '@frink/shared/types/remote/mobile';
 import { humanize } from '../../lib/status';
 
 type Node = MobileFlowDefinition['nodes'][number];

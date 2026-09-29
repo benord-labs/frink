@@ -1,7 +1,7 @@
 import type {
   MobileMessage,
   MobileMessagePart,
-} from '../../../../../src/shared/types/remote/mobile';
+} from '@frink/shared/types/remote/mobile';
 
 export type Tool = Extract<MobileMessagePart, { type: 'tool' }>;
 export type Attachment = Extract<MobileMessagePart, { type: 'attachment' }>;

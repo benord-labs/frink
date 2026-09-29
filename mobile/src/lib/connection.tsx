@@ -9,7 +9,7 @@ import {
 } from 'react';
 import { useIsFocused } from '@react-navigation/native';
 import { AppState } from 'react-native';
-import type { MobileRequest, MobileResponses } from '../../../src/shared/types/remote/mobile';
+import type { MobileRequest, MobileResponses } from '@frink/shared/types/remote/mobile';
 import { ApiError, requestMobile, type Connection } from './api';
 import { readConnection, saveConnection } from './storage';
 

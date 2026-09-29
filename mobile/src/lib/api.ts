@@ -1,12 +1,12 @@
 // Reason: Expo dependencies are installed in mobile; isolated types and iOS export verify this import.
 // fallow-ignore-next-line unresolved-import
 import { z } from 'zod';
-import { MOBILE_API_VERSION, mobilePairingSchema } from '../../../src/shared/types/remote/mobile';
+import { MOBILE_API_VERSION, mobilePairingSchema } from '@frink/shared/types/remote/mobile';
 import type {
   MobileAttachment,
   MobileRequest,
   MobileResponses,
-} from '../../../src/shared/types/remote/mobile';
+} from '@frink/shared/types/remote/mobile';
 
 export const connectionSchema = z.object({
   url: mobilePairingSchema.shape.url,

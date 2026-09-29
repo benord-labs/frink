@@ -1,4 +1,4 @@
-import { MOBILE_API_VERSION } from '../../../../src/shared/types/remote/mobile';
+import { MOBILE_API_VERSION } from '@frink/shared/types/remote/mobile';
 import { ApiError, parsePairing } from '../../lib/api';
 
 export const UPDATE_FRINK = 'Update Frink on your Mac, then make a new code.';

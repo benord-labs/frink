@@ -17,12 +17,12 @@ import {
   findPickerSelection,
   groupPickerModels,
   pickInWindow,
-} from '../../../../../src/shared/lib/model-picker-label/groups';
+} from '@frink/shared/lib/model-picker-label/groups';
 import type {
   MobileChatMode,
   MobileComposer,
   MobilePickerModel,
-} from '../../../../../src/shared/types/remote/mobile';
+} from '@frink/shared/types/remote/mobile';
 import { Segmented } from '../../../ui/segmented';
 import { GUTTER } from '../../../ui/theme';
 import { OptionRow, Sheet, SheetSection, SwitchRow } from './sheet';

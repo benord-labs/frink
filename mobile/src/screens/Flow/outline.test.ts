@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { MobileFlowDefinition } from '../../../../src/shared/types/remote/mobile';
+import type { MobileFlowDefinition } from '@frink/shared/types/remote/mobile';
 import { outlineSteps } from './outline';
 
 const step = (id: string, blockType = 'agent', parentId: string | null = null) => ({

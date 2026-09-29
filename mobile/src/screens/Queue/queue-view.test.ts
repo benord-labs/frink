@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { MobileOverview, MobileQueueItem } from '../../../../src/shared/types/remote/mobile';
+import type { MobileOverview, MobileQueueItem } from '@frink/shared/types/remote/mobile';
 import { expandedLimits, needsYouCount, queueSections } from './queue-view';
 
 const at = (minutes: number) => new Date(Date.UTC(2026, 8, 29, 12, 60 - minutes)).toISOString();

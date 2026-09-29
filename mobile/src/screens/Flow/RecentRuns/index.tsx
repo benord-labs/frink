@@ -1,6 +1,6 @@
 import { Fragment } from 'react';
 import { Pressable, View } from 'react-native';
-import type { MobileFlow, MobileResponses } from '../../../../../src/shared/types/remote/mobile';
+import type { MobileFlow, MobileResponses } from '@frink/shared/types/remote/mobile';
 import { runStatus } from '../../../lib/status';
 import { useRootNavigation } from '../../../navigation/routes';
 import { ListRow, RowSeparator } from '../../../ui/list';

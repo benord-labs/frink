@@ -1,4 +1,4 @@
-import type { MobileActivity } from '../../../../src/shared/types/remote/mobile';
+import type { MobileActivity } from '@frink/shared/types/remote/mobile';
 
 /** Shape-coded, so a state never rests on colour alone (desktop FlowStatusGlyph's set). */
 export type StatusGlyph =

@@ -1,7 +1,7 @@
 import { Fragment, useState } from 'react';
 import { View } from 'react-native';
 import { Check, Folder, SearchX } from 'lucide-react-native';
-import type { MobileProject } from '../../../../src/shared/types/remote/mobile';
+import type { MobileProject } from '@frink/shared/types/remote/mobile';
 import { shortAge } from '../../lib/status';
 import { EmptyState, ListRow, RowSeparator } from '../../ui/list';
 import { SearchField } from '../../ui/search-field';

@@ -3,12 +3,13 @@
   "compilerOptions": {
     "strict": true,
     "noEmit": true,
-    "paths": { "zod": ["./node_modules/zod"] }
+    "paths": {
+      "zod": ["./node_modules/zod"],
+      "@frink/shared/*": ["../src/shared/*"]
+    }
   },
   "include": [
     "**/*.ts",
-    "**/*.tsx",
-    "../src/shared/types/remote/mobile.ts",
-    "../src/shared/lib/model-picker-label/groups.ts"
+    "**/*.tsx"
   ]
 }

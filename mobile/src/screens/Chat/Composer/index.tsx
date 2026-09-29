@@ -13,7 +13,7 @@ import type {
   MobileActivity,
   MobileChatMode,
   MobileComposer,
-} from '../../../../../src/shared/types/remote/mobile';
+} from '@frink/shared/types/remote/mobile';
 import { GlassSurface } from '../../../ui/material';
 import { space, useTheme } from '../../../ui/theme';
 import {

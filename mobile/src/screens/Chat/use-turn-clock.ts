@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { MobileActivity } from '../../../../src/shared/types/remote/mobile';
+import type { MobileActivity } from '@frink/shared/types/remote/mobile';
 import { duration } from '../../lib/status';
 
 /**

@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { ActivityIndicator, Pressable, View } from 'react-native';
 import { ArrowDown, History, MessageSquare } from 'lucide-react-native';
-import type { MobileChatDetail, MobileMessage } from '../../../../src/shared/types/remote/mobile';
+import type { MobileChatDetail, MobileMessage } from '@frink/shared/types/remote/mobile';
 import { EmptyState } from '../../ui/list';
 import { GlassSurface } from '../../ui/material';
 import { Text } from '../../ui/text';

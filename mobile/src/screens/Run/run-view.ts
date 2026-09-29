@@ -1,4 +1,4 @@
-import type { MobileRun, MobileRunNode } from '../../../../src/shared/types/remote/mobile';
+import type { MobileRun, MobileRunNode } from '@frink/shared/types/remote/mobile';
 import { dateBucket, duration, runStatus, type Status, type StatusTone } from '../../lib/status';
 
 const TERMINAL = new Set(['completed', 'succeeded', 'failed', 'cancelled']);
