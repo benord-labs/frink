@@ -350,3 +350,21 @@ export const mobilePairingSchema = z.object({
   }, 'Use the private HTTPS address of your computer.'),
   code: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
 });
+/** The pairing QR is this link, so the iPhone Camera can open Frink straight onto confirming the Mac. */
+export const MOBILE_PAIRING_LINK = 'frink-mobile://pair';
+export function mobilePairingLink({
+  version,
+  url,
+  code,
+}: z.infer<typeof mobilePairingSchema>): string {
+  return `${MOBILE_PAIRING_LINK}?${new URLSearchParams({ url, code, v: String(version) })}`;
+}
+/** The unvalidated fields of a pairing code in either form: the link above, or its JSON. */
+export function mobilePairingFields(text: string): unknown {
+  const link = `${MOBILE_PAIRING_LINK}?`;
+  if (!text.startsWith(link)) return JSON.parse(text);
+  const params = new URLSearchParams(text.slice(link.length));
+  // `v` comes last, so a cut-off link has no version rather than a wrong one.
+  const v = params.get('v');
+  return { version: v ? Number(v) : undefined, url: params.get('url'), code: params.get('code') };
+}

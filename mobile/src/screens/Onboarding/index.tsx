@@ -1,5 +1,5 @@
 import * as Clipboard from 'expo-clipboard';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { KeyboardAvoidingView, Platform, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { pairComputer } from '../../lib/api';
@@ -14,11 +14,14 @@ import { Scanner } from './Scanner';
 type Target = { text: string; host: string; name: string };
 
 /**
- * Pairing, shown whenever no Mac is saved. Connect hands over a code (scan or paste); Confirm names
- * the Mac it points at before anything is sent. Rendered outside navigation, so it owns its insets.
+ * Pairing, shown whenever no Mac is saved or a pairing link opens the app. Connect hands over a
+ * code (scan, paste or link); Confirm names the Mac it points at before anything is sent. Rendered
+ * outside navigation, so it owns its insets.
  */
-export function Onboarding() {
-  const { connect, error: disconnected } = useConnection();
+export function Onboarding({ link, onDone }: { link: string | null; onDone: () => void }) {
+  const { connect, connection, error: disconnected } = useConnection();
+  // Over an existing connection this is a sheet, so it closes rather than steps back.
+  const cancel = connection ? onDone : undefined;
   const insets = useSafeAreaInsets();
   const [code, setCode] = useState('');
   const [pasting, setPasting] = useState(false);
@@ -32,11 +35,18 @@ export function Onboarding() {
   function choose(text: string) {
     const read = readPairing(text);
     if (read.ok) setTarget(read);
+    return read.ok;
   }
   function paste(text: string) {
     setCode(text);
-    choose(text);
+    return choose(text);
   }
+  // A link goes straight to Confirm; a broken one opens the field saying what is wrong.
+  useEffect(() => {
+    if (!link) return;
+    setScanning(false);
+    if (!paste(link)) setPasting(true);
+  }, [link]);
   // A code on the clipboard goes straight to Confirm; anything else opens the field so it can be fixed.
   async function pasteClipboard() {
     const text = await Clipboard.getStringAsync().catch(() => '');
@@ -57,6 +67,7 @@ export function Onboarding() {
     }
     try {
       await connect(next);
+      onDone();
     } catch {
       setFailure('This iPhone couldn’t save the connection. Make a new code on your Mac and try again.');
       setBusy(false);
@@ -66,6 +77,7 @@ export function Onboarding() {
     setTarget(null);
     setFailure(null);
     setCode('');
+    onDone();
   }
 
   return (
@@ -93,11 +105,17 @@ export function Onboarding() {
               host={target.host}
               name={target.name}
               deviceName={deviceName}
+              replacing={
+                connection && new URL(connection.url).hostname !== target.host
+                  ? connection.machineName
+                  : undefined
+              }
               busy={busy}
               failure={failure}
               onDeviceName={setDeviceName}
               onConnect={() => void pair()}
               onBack={restart}
+              onCancel={cancel}
             />
           ) : (
             <ConnectStep
@@ -109,6 +127,7 @@ export function Onboarding() {
               onPaste={() => void pasteClipboard()}
               onScanInstead={() => setPasting(false)}
               onScan={() => setScanning(true)}
+              onCancel={cancel}
             />
           )}
         </ScrollView>

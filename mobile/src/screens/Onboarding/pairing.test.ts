@@ -21,6 +21,10 @@ describe('readPairing', () => {
 
   it('asks for an update when the code comes from another Frink version', () => {
     expect(readPairing(code(1))).toEqual({ ok: false, problem: UPDATE_FRINK });
+    expect(readPairing(`frink-mobile://pair?url=https%3A%2F%2Fmac.test%2F&code=x&v=3`)).toEqual({
+      ok: false,
+      problem: UPDATE_FRINK,
+    });
   });
 
   it('explains a partial or unrelated paste', () => {
@@ -28,6 +32,9 @@ describe('readPairing', () => {
       '{"version":2',
       'hello',
       JSON.stringify({ version: 2, url: 'http://x.test/', code: 'a' }),
+      `frink-mobile://pair?url=https%3A%2F%2Fmac.test%2F&code=${'a'.repeat(20)}`,
+      `frink-mobile://pair?url=https%3A%2F%2Fmac.test%2F&code=${'a'.repeat(43)}&v=`,
+      `frink-mobile://pair?url=https%3A%2F%2Fmac.test%2F&code=${'a'.repeat(43)}&v`,
     ])
       expect(readPairing(text)).toMatchObject({
         ok: false,

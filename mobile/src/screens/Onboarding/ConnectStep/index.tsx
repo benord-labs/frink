@@ -1,6 +1,6 @@
 import { Image, View } from 'react-native';
-import { ClipboardPaste, ScanQrCode, Unplug } from 'lucide-react-native';
-import { Button } from '../../../ui/button';
+import { ClipboardPaste, ScanQrCode, Unplug, X } from 'lucide-react-native';
+import { Button, IconButton } from '../../../ui/button';
 import { Text } from '../../../ui/text';
 import { space, useTheme } from '../../../ui/theme';
 import { Checklist } from '../Checklist';
@@ -22,6 +22,7 @@ export function ConnectStep({
   onPaste,
   onScanInstead,
   onScan,
+  onCancel,
 }: {
   disconnected: string | null;
   pasting: boolean;
@@ -31,10 +32,17 @@ export function ConnectStep({
   onPaste: () => void;
   onScanInstead: () => void;
   onScan: () => void;
+  /** Back to the app, when a pairing link opened this over an existing connection. */
+  onCancel?: () => void;
 }) {
   const t = useTheme();
   return (
     <View style={{ flex: 1, gap: space.xxl }}>
+      {onCancel && (
+        <View style={{ marginLeft: -space.xs }}>
+          <IconButton icon={X} label="Cancel" onPress={onCancel} />
+        </View>
+      )}
       <View style={{ gap: space.lg }}>
         <Image
           source={mark}
