@@ -950,7 +950,7 @@ describe('splitNewestFamilies', () => {
     ]);
     expect(names(splitNewestFamilies(CODEX_MODEL_FAMILIES).newest)).toEqual([
       'GPT-6 Astra',
-      'GPT-6 Sol',
+      'GPT-6.1 Sol',
       'GPT-6 Luna',
       'GPT-5.6 Terra',
       'GPT-5.5',

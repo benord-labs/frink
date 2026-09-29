@@ -30,6 +30,7 @@ describe('CODEX_CLI_MODELS (codex-specific data rules)', () => {
 
   it.each([
     'gpt-6-astra',
+    'gpt-6.1-sol',
     'gpt-6-sol',
     'gpt-6-luna',
     'gpt-5.6-sol',
@@ -59,6 +60,7 @@ describe('CODEX_MODEL_SLUGS', () => {
   it('lists the GPT-6 family first while retaining the GPT-5.x families', () => {
     expect(CODEX_MODEL_SLUGS.map((m) => m.slug)).toEqual([
       'gpt-6-astra',
+      'gpt-6.1-sol',
       'gpt-6-sol',
       'gpt-6-luna',
       'gpt-5.6-sol',
@@ -174,6 +176,7 @@ describe('codexFastTierCredits', () => {
 
   it('returns the disclosed multiplier for every model that advertises the tier', () => {
     expect(codexFastTierCredits('codex-gpt-6-astra-medium')).toBe(2.5);
+    expect(codexFastTierCredits('codex-gpt-6.1-sol-medium')).toBe(2.5);
     expect(codexFastTierCredits('codex-gpt-6-sol-medium')).toBe(2.5);
     expect(codexFastTierCredits('codex-gpt-6-luna-high')).toBe(2.5);
     expect(codexFastTierCredits('codex-gpt-5.6-sol-medium')).toBe(2.5);
@@ -202,6 +205,7 @@ describe('codexFastTierCredits', () => {
     );
     expect(withFast).toEqual([
       'gpt-6-astra',
+      'gpt-6.1-sol',
       'gpt-6-sol',
       'gpt-6-luna',
       'gpt-5.6-sol',

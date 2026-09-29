@@ -597,7 +597,7 @@ frink_flows_patch({
 
 ### Fast mode (Codex)
 
-**Fast mode** asks Codex for its **priority** service tier on this flow's Agent steps. For ChatGPT-authenticated Codex it provides **1.5× model speed** and uses **2.5× ChatGPT credits** on GPT-6 Astra, Sol and Luna, GPT-5.6 and GPT-5.5 or **2× ChatGPT credits** on GPT-5.4. API-key priority pricing is separate and may differ. It is **off** unless you turn it on, and the Settings panel labels speed and credit use separately for the flow's default model.
+**Fast mode** asks Codex for its **priority** service tier on this flow's Agent steps. For ChatGPT-authenticated Codex it provides **1.5× model speed** and uses **2.5× ChatGPT credits** on GPT-6 Astra, Sol and Luna, GPT-6.1 Sol, GPT-5.6 and GPT-5.5 or **2× ChatGPT credits** on GPT-5.4. API-key priority pricing is separate and may differ. It is **off** unless you turn it on, and the Settings panel labels speed and credit use separately for the flow's default model.
 
 It applies only to Codex models that advertise the tier; steps on any other model — including GPT-5.4 Mini and Claude — run normally and are unaffected. Direct command and custom-node steps are unaffected too.
 
