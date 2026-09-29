@@ -114,7 +114,7 @@
     "fast-json-stable-stringify": "^2.1.0",
     "gray-matter": "^4.0.3",
     "hono": "^4.13.8",
-    "isomorphic-dompurify": "^3.23.0",
+    "isomorphic-dompurify": "^4.3.0",
     "jotai": "^2.20.3",
     "jsonc-parser": "^3.3.1",
     "lucide-react": "^1.47.0",
