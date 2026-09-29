@@ -604,6 +604,115 @@ describe('validateGraph — loop-back rules', () => {
     expect(validateGraph(g, { mode: 'run' })).toEqual({ valid: true });
   });
 
+  describe('nodes after a Fan Out need a Start Task outside it (sc-3836)', () => {
+    const START = { projectId: TEST_PROJECT_UUID };
+    // t → [st] → f[st-lane? → a-lane] → after — `outer` / `laneStart` toggle the two start_tasks.
+    function afterFanOut(
+      after: { blockType: string; config?: Record<string, unknown> },
+      opts: { outer: boolean; laneStart: boolean; trigger?: string },
+    ) {
+      const nodes: Record<string, unknown>[] = [
+        { id: 't', blockType: opts.trigger ?? 'manual_trigger' },
+        { id: 'f', blockType: 'fan_out', label: 'Fan Out' },
+        {
+          id: 'a-lane',
+          blockType: 'agent',
+          parentId: 'f',
+          config: { instructions: 'item' },
+        },
+        { id: 'after', label: 'After', ...after },
+      ];
+      const edges = [{ id: 'e-tail', source: 'a-lane', target: 'after' }];
+      if (opts.outer) {
+        nodes.push({ id: 'st', blockType: 'start_task', config: START });
+        edges.push(
+          { id: 'e1', source: 't', target: 'st' },
+          { id: 'e2', source: 'st', target: 'f' },
+        );
+      } else {
+        edges.push({ id: 'e1', source: 't', target: 'f' });
+      }
+      if (opts.laneStart) {
+        nodes.push({
+          id: 'st-lane',
+          blockType: 'start_task',
+          parentId: 'f',
+          config: START,
+        });
+        edges.push(
+          { id: 'e3', source: 'f', target: 'st-lane' },
+          { id: 'e4', source: 'st-lane', target: 'a-lane' },
+        );
+      } else {
+        edges.push({ id: 'e3', source: 'f', target: 'a-lane' });
+      }
+      return { nodes, edges };
+    }
+    const errorsOf = (r: ReturnType<typeof validateGraph>) => (r.valid ? [] : r.errors);
+    const AGENT = { blockType: 'agent', config: { instructions: 'report' } };
+    const REPLY = {
+      blockType: 'chat_reply',
+      config: { messageTemplate: 'done' },
+    };
+
+    it('rejects an agent after the barrier whose only Start Task (and agent) are inside the lane', () => {
+      const r = validateGraph(afterFanOut(AGENT, { outer: false, laneStart: true }), {
+        mode: 'run',
+      });
+      expect(r.valid).toBe(false);
+      expect(errorsOf(r).some((e) => e.includes('"After"') && e.includes('outside'))).toBe(true);
+    });
+
+    it('rejects a chat reply after the barrier whose only Start Task is inside the lane', () => {
+      const r = validateGraph(afterFanOut(REPLY, { outer: false, laneStart: true }), {
+        mode: 'run',
+      });
+      expect(r.valid).toBe(false);
+      expect(errorsOf(r).some((e) => e.includes('"After"') && e.includes('outside'))).toBe(true);
+    });
+
+    it.each([
+      ['agent', AGENT],
+      ['chat reply', REPLY],
+    ])(
+      'accepts a %s after the barrier when an outer Start Task precedes the Fan Out',
+      (_l, after) => {
+        for (const laneStart of [false, true]) {
+          expect(
+            validateGraph(afterFanOut(after, { outer: true, laneStart }), {
+              mode: 'run',
+            }),
+          ).toEqual({ valid: true });
+        }
+      },
+    );
+
+    it('still accepts a lane-only chat reply when a Post-Task trigger supplies the chat', () => {
+      const r = validateGraph(
+        afterFanOut(REPLY, {
+          outer: false,
+          laneStart: true,
+          trigger: 'post_task_trigger',
+        }),
+        { mode: 'run' },
+      );
+      expect(errorsOf(r)).not.toContainEqual(expect.stringContaining('"After"'));
+    });
+
+    it('accepts an agent after the barrier chained from an outer agent', () => {
+      const g = afterFanOut(AGENT, { outer: true, laneStart: false });
+      // st → outer agent → f: the outer agent also satisfies an agent's upstream check.
+      g.nodes.push({
+        id: 'a-outer',
+        blockType: 'agent',
+        config: { instructions: 'prep' },
+      });
+      g.edges = g.edges.map((e) => (e.id === 'e2' ? { ...e, target: 'a-outer' } : e));
+      g.edges.push({ id: 'e2b', source: 'a-outer', target: 'f' });
+      expect(validateGraph(g, { mode: 'run' })).toEqual({ valid: true });
+    });
+  });
+
   it('start_task: accepts empty or whitespace branch as optional when startInWorktree is true', () => {
     for (const branch of ['', '   ', '\t']) {
       const g = {

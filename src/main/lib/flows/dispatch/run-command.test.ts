@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FlowGraph } from '../../../../shared/lib/validate-flow-graph';
+import { createNodeRun } from '../../db/repos/node-runs';
 import { seedCompletedNodeRun, seedFlowRun } from '../../db/test-utils/flow-fixtures';
 import { freshDb, type TestDb } from '../../db/test-utils/fresh-db';
 
@@ -140,6 +141,62 @@ describe('run_command upstream worktree resolution', () => {
     await dispatchRunCommand(rcCtx({ workingDirectory: 'project_root' }) as never);
 
     expect(h.executeShellStep.mock.calls[0][0].triggerWorktreePath).toBeUndefined();
+  });
+});
+
+describe('run_command after a Fan Out (sc-3836)', () => {
+  it('runs in the outer start_task worktree, not the last lane that finished', async () => {
+    const graph: FlowGraph = {
+      nodes: [
+        { id: 'st', blockType: 'start_task', position: { x: 0, y: 0 } },
+        { id: 'fo', blockType: 'fan_out', position: { x: 0, y: 1 } },
+        {
+          id: 'st-lane',
+          blockType: 'start_task',
+          parentId: 'fo',
+          position: { x: 0, y: 2 },
+        },
+        { id: 'rc', blockType: 'run_command', position: { x: 0, y: 3 } },
+      ],
+      edges: [
+        { id: 'e1', source: 'st', target: 'fo' },
+        { id: 'e2', source: 'fo', target: 'st-lane' },
+        { id: 'e3', source: 'st-lane', target: 'rc' },
+      ],
+    };
+    await seedStartTask('/wt/outer');
+    const parent = await createNodeRun(db, {
+      flowRunId,
+      nodeId: 'fo',
+      blockType: 'fan_out',
+      status: 'completed',
+    });
+    for (let lane = 0; lane < 2; lane += 1) {
+      await seedCompletedNodeRun(db, {
+        flowRunId,
+        nodeId: 'st-lane',
+        blockType: 'start_task',
+        outputs: { projectId, chatId: 'c', worktreePath: `/wt/lane-${lane}` },
+        completedAt: new Date(Date.now() + 10_000 + lane * 1000),
+        laneIndex: lane,
+        parentFanOutNodeRunId: parent.id,
+      });
+    }
+    const rcRun = await createNodeRun(db, {
+      flowRunId,
+      nodeId: 'rc',
+      blockType: 'run_command',
+      status: 'running',
+    });
+
+    const res = await dispatchRunCommand({
+      ...rcCtx({ workingDirectory: 'trigger_worktree' }),
+      nodeRunId: rcRun.id,
+      parsedGraph: graph,
+    } as never);
+
+    expect(res.type).toBe('completed');
+    expect(h.executeShellStep.mock.calls[0][0].triggerWorktreePath).toBe('/wt/outer');
   });
 });
 

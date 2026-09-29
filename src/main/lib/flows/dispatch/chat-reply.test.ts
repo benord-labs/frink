@@ -3,6 +3,7 @@ import { LAUNCH_FLAGS } from '../../../../shared/launch-flags';
 import { isHtmlArtifactPart } from '../../../../shared/lib/artifacts/html-artifact';
 import type { FlowGraph } from '../../../../shared/lib/validate-flow-graph';
 import { createChat } from '../../db/repos/chats';
+import { createNodeRun } from '../../db/repos/node-runs';
 import { createSubChat, getSubChatById } from '../../db/repos/sub-chats';
 import { seedCompletedNodeRun, seedFlowRun } from '../../db/test-utils/flow-fixtures';
 import { freshDb, type TestDb } from '../../db/test-utils/fresh-db';
@@ -166,6 +167,83 @@ describe('chat_reply upstream chat resolution', () => {
 
     expect(res.type).toBe('error');
     expect((res as { message: string }).message).toContain('requires chatId');
+  });
+});
+
+// sc-3836: st → fo[st-lane → ag-lane] → cr. The continuation's inputs are the lane tails.
+const AFTER_FAN_OUT_GRAPH: FlowGraph = {
+  nodes: [
+    { id: 'st', blockType: 'start_task', position: { x: 0, y: 0 } },
+    { id: 'fo', blockType: 'fan_out', position: { x: 0, y: 1 } },
+    {
+      id: 'st-lane',
+      blockType: 'start_task',
+      parentId: 'fo',
+      position: { x: 0, y: 2 },
+    },
+    {
+      id: 'ag-lane',
+      blockType: 'agent',
+      parentId: 'fo',
+      position: { x: 0, y: 3 },
+    },
+    { id: 'cr', blockType: 'chat_reply', position: { x: 0, y: 4 } },
+  ],
+  edges: [
+    { id: 'e1', source: 'st', target: 'fo' },
+    { id: 'e2', source: 'fo', target: 'st-lane' },
+    { id: 'e3', source: 'st-lane', target: 'ag-lane' },
+    { id: 'e4', source: 'ag-lane', target: 'cr' },
+  ],
+};
+
+describe('chat_reply after a Fan Out (sc-3836)', () => {
+  it('lands in the outer start_task chat, not the last lane that finished', async () => {
+    const outer = await makeChat();
+    await seedStartTask({ chatId: outer.chatId, subChatId: outer.subChatId });
+    const parent = await createNodeRun(db, {
+      flowRunId,
+      nodeId: 'fo',
+      blockType: 'fan_out',
+      status: 'completed',
+    });
+    for (let lane = 0; lane < 3; lane += 1) {
+      const laneChat = await makeChat();
+      await seedCompletedNodeRun(db, {
+        flowRunId,
+        nodeId: 'st-lane',
+        blockType: 'start_task',
+        outputs: { projectId, ...laneChat },
+        completedAt: new Date(Date.now() + 10_000 + lane * 1000),
+        laneIndex: lane,
+        parentFanOutNodeRunId: parent.id,
+      });
+    }
+    const crRun = await createNodeRun(db, {
+      flowRunId,
+      nodeId: 'cr',
+      blockType: 'chat_reply',
+      status: 'running',
+    });
+
+    const res = await dispatchChatReply(
+      crCtx({
+        nodeRunId: crRun.id,
+        parsedGraph: AFTER_FAN_OUT_GRAPH,
+        // What advance.ts hands the continuation: the Fan Out aggregate, no chatId.
+        previousOutput: {
+          status: 'completed',
+          outputs: { results: [], totalCount: 3, _fanOutState: 'completed' },
+          artifacts: [],
+          durationMs: 0,
+        },
+      }),
+    );
+
+    expect(res.type).toBe('completed');
+    const outputs = (res as { output: { outputs: Record<string, unknown> } }).output.outputs;
+    expect(outputs.chatId).toBe(outer.chatId);
+    expect(outputs.subChatId).toBe(outer.subChatId);
   });
 });
 
