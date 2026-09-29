@@ -2,7 +2,7 @@
 /**
  * Bootstrap gate: put the Electron binary on disk deliberately.
  *
- * electron@43 ships NO install lifecycle script (its package.json has no "scripts" key), so
+ * electron (43+) ships NO install lifecycle script (its package.json has no "scripts" key), so
  * `bun install` legitimately leaves node_modules/electron as a JS shell with no dist/ or path.txt.
  * index.js ends `module.exports = getElectronPath()`, which fetches the ~120MB binary lazily from
  * whichever process first requires electron — and throws "Electron failed to install correctly"
