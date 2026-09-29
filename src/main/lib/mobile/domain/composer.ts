@@ -1,7 +1,7 @@
 /** The phone's composer controls, reading and writing the values main owns through the desktop's
  *  own paths, so each window follows the phone live. */
 import { getAutoModeUnavailableReason } from '../../../../shared/lib/auto-mode-availability';
-import { codexFastTierCredits } from '../../../../shared/lib/codex-cli-models';
+import { codexTierCredits } from '../../../../shared/lib/codex-cli-models';
 import {
   CLAUDE_CODE_MODELS,
   CODEX_MODELS,
@@ -19,7 +19,6 @@ import type {
 } from '../../../../shared/types/remote/mobile';
 import {
   broadcastComposerChange,
-  type ComposerSettingsPatch,
   readComposerSettings,
   setThinkingEnabled,
   updateComposerSettings,
@@ -87,31 +86,24 @@ export async function readMobileComposer(input: ComposerRequest): Promise<Mobile
       isAuthenticated,
     })),
     models: pickerModels(provider),
-    // The phone's API keeps a Fast boolean (installed apps read it); speed is desktop's shape.
-    settings: {
-      modelId,
-      autoMode: stored.autoMode,
-      codexFastMode: stored.codexSpeed === 'fast',
-      thinkingEnabled: stored.thinkingEnabled,
-    },
+    settings: { ...stored, modelId },
     autoUnavailableReason: getAutoModeUnavailableReason({
       accountResolved: true,
       isAuthenticated: account?.isAuthenticated,
       accountType: account?.type === 'codex' ? 'codex' : account ? 'claude-code' : undefined,
       selectedModelId: modelId,
     }),
-    codexFastCredits: provider === 'codex' ? codexFastTierCredits(modelId) : null,
+    codexSpeedCredits: {
+      fast: provider === 'codex' ? codexTierCredits(modelId, 'fast') : null,
+      ultrafast: provider === 'codex' ? codexTierCredits(modelId, 'ultrafast') : null,
+    },
     xhighSupported: xhighSupported(),
   };
 }
 
 export async function updateMobileComposer(input: UpdateComposerRequest): Promise<MobileComposer> {
   const { chat } = await requireChat(input.chatId, input.subChatId);
-  const { thinkingEnabled, codexFastMode, ...rest } = input.patch;
-  const patch: ComposerSettingsPatch = {
-    ...rest,
-    ...(codexFastMode !== undefined ? { codexSpeed: codexFastMode ? 'fast' : 'standard' } : {}),
-  };
+  const { thinkingEnabled, ...patch } = input.patch;
   if (patch.modelId !== undefined && !isKnownModel(patch.modelId)) {
     throw new MobileApiError(400, 'That model is not available.');
   }

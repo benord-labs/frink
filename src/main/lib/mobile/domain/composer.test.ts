@@ -71,7 +71,7 @@ beforeEach(() => {
   fixture.read.mockReturnValue({
     modelId: 'opus-4.8',
     autoMode: true,
-    codexSpeed: 'fast',
+    codexSpeed: 'ultrafast',
     thinkingEnabled: true,
   });
   fixture.update.mockReturnValue({});
@@ -86,9 +86,15 @@ describe('phone composer', () => {
       debugAvailable: true,
       provider: 'claude',
       projectId: 'project',
-      settings: { modelId: 'opus-4.8', autoMode: true, codexFastMode: true, thinkingEnabled: true },
+      // The phone sees the chat's real speed, so an Ultrafast chat never reads as Fast-off.
+      settings: {
+        modelId: 'opus-4.8',
+        autoMode: true,
+        codexSpeed: 'ultrafast',
+        thinkingEnabled: true,
+      },
       autoUnavailableReason: '',
-      codexFastCredits: null,
+      codexSpeedCredits: { fast: null, ultrafast: null },
     });
     expect(composer.models.some((m) => m.id === 'opus-4.8')).toBe(true);
     expect(composer.accounts).toEqual([
@@ -109,6 +115,7 @@ describe('phone composer', () => {
 
     expect(composer.provider).toBe('codex');
     expect(composer.settings.modelId).toBe(CODEX_DEFAULT_MODEL_ID);
+    expect(composer.codexSpeedCredits).toEqual({ fast: 2.5, ultrafast: 8 });
     expect(composer.models.every((m) => m.id !== 'opus-4.8')).toBe(true);
     expect(fixture.update).not.toHaveBeenCalled();
   });
@@ -124,12 +131,9 @@ describe('phone composer', () => {
     expect(fixture.thinking).toHaveBeenCalledWith(false);
   });
 
-  it('maps the phone’s Fast switch onto the chat’s Codex speed', async () => {
-    for (const [codexFastMode, codexSpeed] of [
-      [true, 'fast'],
-      [false, 'standard'],
-    ] as const) {
-      await updateMobileComposer({ type: 'updateComposer', ...identity, patch: { codexFastMode } });
+  it('writes every Codex speed the phone picks', async () => {
+    for (const codexSpeed of ['fast', 'ultrafast', 'standard'] as const) {
+      await updateMobileComposer({ type: 'updateComposer', ...identity, patch: { codexSpeed } });
       expect(fixture.update).toHaveBeenLastCalledWith('chat', { codexSpeed });
     }
   });

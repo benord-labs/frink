@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { CODEX_SPEEDS, type CodexSpeed } from '../execution';
 import type { AgentUserQuestion } from '../task-signal';
 
 const id = z.string().min(1).max(200);
@@ -82,7 +83,7 @@ export const mobileRequestSchema = z.discriminatedUnion('type', [
       .object({
         modelId: id.optional(),
         autoMode: z.boolean().optional(),
-        codexFastMode: z.boolean().optional(),
+        codexSpeed: z.enum(CODEX_SPEEDS).optional(),
         thinkingEnabled: z.boolean().optional(),
       })
       .strict(),
@@ -288,13 +289,13 @@ export type MobileComposer = {
   settings: {
     modelId: string;
     autoMode: boolean;
-    codexFastMode: boolean;
+    codexSpeed: CodexSpeed;
     thinkingEnabled: boolean;
   };
   /** Empty when Auto can be used with this account and model. */
   autoUnavailableReason: string;
-  /** Credit multiplier for Codex Fast on the selected model; null = no Fast tier. */
-  codexFastCredits: number | null;
+  /** Credit multiplier of each paid Codex speed on the selected model; null = not offered. */
+  codexSpeedCredits: Record<Exclude<CodexSpeed, 'standard'>, number | null>;
   /** The bundled Claude CLI accepts the Extra High effort. */
   xhighSupported: boolean;
 };
