@@ -17,6 +17,9 @@ export function Tabs() {
         tabBarActiveTintColor: t.accent,
         // The floating dock shrinks while reading a list and returns on scroll up.
         tabBarMinimizeBehavior: 'onScrollDown',
+        // Native tab screens hide their header unless asked; the large title, search bar and
+        // New chat button all live in it.
+        headerShown: true,
         headerLargeTitleEnabled: true,
         headerTransparent: true,
         headerLargeTitleShadowVisible: false,
