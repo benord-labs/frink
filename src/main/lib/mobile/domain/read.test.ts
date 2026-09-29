@@ -10,6 +10,7 @@ const fixture = vi.hoisted(() => ({
   list: vi.fn(),
   counts: vi.fn(),
   activity: vi.fn(),
+  agents: vi.fn(),
 }));
 vi.mock('electron', () => ({ app: { getVersion: () => '9.9.9' } }));
 vi.mock('../../db', () => ({ getDatabase: () => fixture.db }));
@@ -30,6 +31,11 @@ vi.mock('./questions', () => ({
   mobilePermissions: () => [],
   parkedQuestion: () => null,
 }));
+// The lookup stays real; only the counts are stubbed so each test controls its queries.
+vi.mock('../live-activity/counts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../live-activity/counts')>()),
+  readAgentCounts: fixture.agents,
+}));
 import { readMobileChats, readMobileOverview } from './read';
 
 let db: TestDb;
@@ -41,6 +47,7 @@ beforeEach(() => {
   fixture.list.mockResolvedValue({ items: [], hasMore: false });
   fixture.counts.mockResolvedValue({ review: 0, inbox: 0, running: 0, queued: 0 });
   fixture.activity.mockReturnValue('idle');
+  fixture.agents.mockResolvedValue({ running: 0, needsYou: 0 });
   fixture.questions.mockImplementation(async (chatId: string, subChatId: string) => [
     { id: subChatId, chatId, subChatId },
   ]);
@@ -229,6 +236,14 @@ describe('mobile overview', () => {
     );
     expect(queries).toHaveBeenCalledTimes(1);
     expect(queries.mock.calls[0][0]).not.toContain('messages');
+  });
+
+  it('reports the same agent counts as the Live Activity', async () => {
+    fixture.agents.mockResolvedValue({ running: 3, needsYou: 1 });
+    expect((await readMobileOverview({ limits: { attention: 1 } })).agents).toEqual({
+      running: 3,
+      needsYou: 1,
+    });
   });
 
   it('does not query sub-chats when no questions are pending', async () => {

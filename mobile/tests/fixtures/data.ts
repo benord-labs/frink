@@ -102,6 +102,7 @@ export function overviewFixture(): MobileResponses['overview'] {
     machineName: "Benji's MacBook Pro",
     executionReady: true,
     appVersion: '0.0.13',
+    agents: { running: 0, needsYou: 0 },
     queue: [
       {
         id: 'task-plan',

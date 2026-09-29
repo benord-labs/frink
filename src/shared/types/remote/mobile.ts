@@ -148,6 +148,8 @@ export type MobileQueueItem = {
 };
 export type MobileTaskAction = 'startTask' | 'continueTask' | 'completeTask';
 export type MobileQueueSection = 'attention' | 'inbox' | 'running';
+/** Chats counted once each: needing the user wins over running. */
+export type MobileAgentCounts = { running: number; needsYou: number };
 export type MobileOverview = {
   machineName: string;
   executionReady: boolean;
@@ -159,6 +161,7 @@ export type MobileOverview = {
   more: Record<MobileQueueSection, boolean>;
   questions: MobileQuestion[];
   permissions: MobilePermission[];
+  agents: MobileAgentCounts;
 };
 export type MobileFlow = {
   id: string;

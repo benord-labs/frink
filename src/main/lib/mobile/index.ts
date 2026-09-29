@@ -6,6 +6,7 @@ import { app } from 'electron';
 import log from 'electron-log';
 import { MOBILE_PORT } from '../../../shared/types/remote/mobile';
 import { executeMobileRequest, storeMobileAttachment } from './domain-api';
+import { startMobileLiveActivity } from './live-activity';
 import { startMobileNotifications } from './notifications';
 import { MobilePairingStore } from './pairing-store';
 import { startMobileServer, stopMobileServer } from './server';
@@ -14,6 +15,7 @@ let storePromise: Promise<MobilePairingStore> | null = null;
 let server: Server | null = null;
 let serverError: string | null = null;
 let stopNotifications: (() => void) | null = null;
+let liveActivity: ReturnType<typeof startMobileLiveActivity> | null = null;
 const lifecycle = new Mutex();
 
 function getStore(): Promise<MobilePairingStore> {
@@ -35,6 +37,7 @@ async function startServer(store: MobilePairingStore): Promise<void> {
       storeMobileAttachment,
     );
     stopNotifications = startMobileNotifications(store);
+    liveActivity = startMobileLiveActivity(store);
     serverError = null;
   } catch {
     serverError = `Mobile access could not start on port ${MOBILE_PORT}. Close any other Frink instance using it, then try again.`;
@@ -74,6 +77,8 @@ export async function stopMobileAccess(): Promise<void> {
   await lifecycle.runExclusive(async () => {
     stopNotifications?.();
     stopNotifications = null;
+    liveActivity?.stop();
+    liveActivity = null;
     if (!server) return;
     const current = server;
     server = null;
@@ -88,6 +93,9 @@ export async function stopMobileAccess(): Promise<void> {
 export async function disableMobileAccess() {
   await lifecycle.runExclusive(async () => {
     const store = await getStore();
+    // The sampler ends each card from its own tokens, which the store is about to forget.
+    liveActivity?.stop();
+    liveActivity = null;
     try {
       await store.disable();
     } finally {
@@ -110,6 +118,7 @@ export async function createMobilePairing(url: string) {
 }
 
 export async function revokeMobileDevice(id: string) {
+  liveActivity?.endDevice(id);
   await (await getStore()).revoke(id);
   return mobileAccessStatus();
 }
