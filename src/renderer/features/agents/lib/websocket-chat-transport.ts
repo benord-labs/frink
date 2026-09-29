@@ -28,7 +28,7 @@ import {
   pendingAccountAuthAtom,
   sessionInfoAtom,
 } from '../../../lib/atoms';
-import { codexFastModeAtomFamily } from '../../../lib/atoms/codex-fast-mode';
+import { codexSpeedAtomFamily } from '../../../lib/atoms/codex-speed';
 import { appStore } from '../../../lib/jotai-store';
 import {
   activeListeners,
@@ -180,7 +180,7 @@ function buildExecutionSettings(chatId: string, accountType: ExecutionAccountKin
     {
       modelId: appStore.get(lastSelectedModelIdAtomFamily(chatId)),
       autoMode: appStore.get(autoModePerChatAtomFamily(chatId)),
-      codexFastMode: appStore.get(codexFastModeAtomFamily(chatId)) === true,
+      codexSpeed: appStore.get(codexSpeedAtomFamily(chatId)),
       thinkingEnabled: appStore.get(extendedThinkingEnabledAtom),
     },
     { enableTasks: appStore.get(enableTasksAtom) },

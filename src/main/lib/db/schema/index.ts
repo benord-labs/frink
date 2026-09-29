@@ -1,6 +1,7 @@
 /* eslint-disable max-lines, max-lines-per-function */
 import { relations, sql } from 'drizzle-orm';
 import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { CODEX_SPEEDS } from '../../../../shared/types/execution';
 import { createId } from '../utils';
 import { defineFlowRunAdmissions } from './flow-run-admissions';
 // ============ PROJECTS ============
@@ -89,7 +90,7 @@ export const chats = sqliteTable(
     // Composer settings every window and the phone share (NULL = default; see chat-composer).
     composerModelId: text('composer_model_id'),
     composerAutoMode: integer('composer_auto_mode', { mode: 'boolean' }),
-    composerCodexFast: integer('composer_codex_fast', { mode: 'boolean' }),
+    composerCodexSpeed: text('composer_codex_speed', { enum: CODEX_SPEEDS }),
   },
   (table) => [index('chats_worktree_path_idx').on(table.worktreePath)],
 );

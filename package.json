@@ -278,7 +278,8 @@
           "0102_local_trigger_operation_lease.sql",
           "0103_drop_pending_nango_handoffs.sql",
           "0104_sub_chats_activity_index.sql",
-          "0105_chat_composer_settings.sql"
+          "0105_chat_composer_settings.sql",
+          "0106_chat_composer_codex_speed.sql"
         ]
       },
       {

@@ -6,6 +6,10 @@
 // Execution Settings (shared across socket client/executor)
 // ============================================================================
 
+/** Speed a chat asks Codex for, stored per chat. `resolveCodexCliModel` maps it to the wire tier. */
+export const CODEX_SPEEDS = ['standard', 'fast', 'ultrafast'] as const;
+export type CodexSpeed = (typeof CODEX_SPEEDS)[number];
+
 /**
  * Valid Claude model identifiers for the Claude Code / agent SDK path.
  * Includes short aliases (`haiku` | `sonnet` | `opus`) and version-pinned
@@ -77,13 +81,9 @@ export type ExecutionSettings = {
    * remain active; unsupported providers omit this flag.
    */
   autoReviewTools?: boolean;
-  /**
-   * Codex "Fast mode": request the `priority` service tier. Per-chat and off by default — it bills
-   * a 2-2.5x credit multiplier. A boolean rather than a tier string on purpose: main owns the model
-   * catalog and is the authority on which models advertise the tier, so `resolveCodexCliModel` can
-   * refuse it for a model that has none. Ignored by non-codex runtimes.
-   */
-  codexFastMode?: boolean;
+  /** Codex speed; `resolveCodexCliModel` maps it to the wire tier the model advertises. Ignored by
+   *  non-codex runtimes. Why: docs/decisions/codex-fast-mode-consent.md */
+  codexSpeed?: CodexSpeed;
   /**
    * Ultra effort tier: the Claude CLI's session `ultracode` setting — `xhigh` effort plus standing
    * parallel-agent workflow orchestration. Sent alongside `effort: 'xhigh'`; ignored by non-claude

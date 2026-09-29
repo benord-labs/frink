@@ -3,7 +3,7 @@
 import { createStore } from 'jotai';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CODEX_DEFAULT_MODEL_ID } from '../../../../shared/lib/codex-cli-models';
-import { codexFastModeAtomFamily } from '../../../lib/atoms/codex-fast-mode';
+import { codexSpeedAtomFamily } from '../../../lib/atoms/codex-speed';
 import {
   activeOverlayAtom,
   agentsSettingsDialogOpenAtom,
@@ -66,17 +66,17 @@ describe('seedNewChatNavigation', () => {
   });
 
   it.each([
-    [true, true],
-    [false, false],
-  ])('Codex account %s: staged Fast seeds the chat as %s', (isCodexAccount, seeded) => {
+    [true, 'ultrafast'],
+    [false, 'standard'],
+  ])('Codex account %s: staged Ultrafast seeds the chat as %s', (isCodexAccount, seeded) => {
     const store = freshStore();
 
     seedNewChatNavigation(store.get, store.set, 'chat-fast', {
       isCodexAccount,
-      codexFastEnabled: true,
+      codexSpeed: 'ultrafast',
     });
 
-    expect(store.get(codexFastModeAtomFamily('chat-fast'))).toBe(seeded);
+    expect(store.get(codexSpeedAtomFamily('chat-fast'))).toBe(seeded);
   });
 
   it('includes the first sub-chat id in the just-created set', () => {
@@ -138,18 +138,18 @@ describe('createNewChatStaging', () => {
   it('freezes the staged toggles at capture, so a later flip cannot reach the in-flight chat', () => {
     const staging = createNewChatStaging();
     staging.autoMode.current = true;
-    staging.codexFast.current = true;
+    staging.codexSpeed.current = 'fast';
 
     staging.capture();
-    staging.codexFast.current = false;
+    staging.codexSpeed.current = 'standard';
 
-    expect(staging.pending).toEqual({ autoMode: true, codexFast: true });
+    expect(staging.pending).toEqual({ autoMode: true, codexSpeed: 'fast' });
   });
 
-  it('gives each form its own staging, Auto on and Fast off by default', () => {
+  it('gives each form its own staging, Auto on and standard speed by default', () => {
     const a = createNewChatStaging();
-    a.codexFast.current = true;
-    expect(createNewChatStaging().codexFast.current).toBe(false);
+    a.codexSpeed.current = 'fast';
+    expect(createNewChatStaging().codexSpeed.current).toBe('standard');
     expect(createNewChatStaging().autoMode.current).toBe(true);
   });
 });

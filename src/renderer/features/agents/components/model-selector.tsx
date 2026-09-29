@@ -2,12 +2,12 @@ import claudeLogo from '@iconify-icons/simple-icons/claude';
 import openaiLogo from '@iconify-icons/ri/openai-fill';
 import { iconifyComponent } from '@/lib/utils/iconify-component';
 import { Button } from '@benord-labs/frink-primitives';
-import { codexFastTierCredits } from '../../../../shared/lib/codex-cli-models';
+import { codexTierCredits } from '../../../../shared/lib/codex-cli-models';
 import {
   formatModelPickerLabel,
   formatModelPickerLabelParts,
 } from '../../../../shared/lib/model-picker-label';
-import type { PickerEffortLevel } from '../../../../shared/types/execution';
+import type { CodexSpeed, PickerEffortLevel } from '../../../../shared/types/execution';
 import { ChevronDown } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '../../../components/ui/popover';
 import { trpc } from '../../../lib/trpc';
@@ -61,11 +61,26 @@ type ModelSelectorProps = {
   triggerClassName?: string;
   /** Flow: id on trigger for htmlFor from Label. */
   triggerId?: string;
-  /** Chat: scopes Codex Fast to this chat. Absent on New Chat, which stages Fast via `newChatFastRef`. */
+  /** Chat: scopes Codex speed to this chat. Absent on New Chat, which stages it via `newChatSpeedRef`. */
   chatId?: string;
-  /** New Chat: the form's staged Fast, applied to the chat it creates. */
-  newChatFastRef?: { current: boolean };
+  /** New Chat: the form's staged speed, applied to the chat it creates. */
+  newChatSpeedRef?: { current: CodexSpeed };
 };
+
+/** Codex speed controls, or none for a model without a paid tier (incl. Claude) or with nowhere
+ *  to keep the choice — never a live-but-inert control. Ultrafast is only offered beside Fast. */
+function speedScope(
+  modelId: string | undefined,
+  chatId: string | undefined,
+  newChatSpeedRef: { current: CodexSpeed } | undefined,
+) {
+  const credits = {
+    fast: codexTierCredits(modelId, 'fast'),
+    ultrafast: codexTierCredits(modelId, 'ultrafast'),
+  };
+  if (credits.fast === null || (!chatId && !newChatSpeedRef)) return undefined;
+  return { chatId, newChatSpeedRef, credits };
+}
 
 /** Flow form: middle label must shrink so long model names truncate (min-w-0 + flex-1). */
 const FLOW_FORM_TRIGGER_CLASS =
@@ -143,7 +158,7 @@ export function ModelSelector({
   triggerClassName,
   triggerId,
   chatId,
-  newChatFastRef,
+  newChatSpeedRef,
 }: ModelSelectorProps) {
   const isFlow = mode === 'flow';
   // Grey the Claude Extra High tier when the bundled CLI can't run `--effort xhigh` (< 2.1.173).
@@ -172,10 +187,6 @@ export function ModelSelector({
   const triggerLabel = isFlow
     ? flowTriggerText(selectedModel, staleModelId, flowInheritLabel)
     : chatText.label;
-
-  // `null` for any model without a priority tier (incl. Claude), so Fast is absent rather than
-  // present-but-inert wherever it cannot apply.
-  const fastCredits = codexFastTierCredits(selectedModel?.id);
 
   return (
     <Popover open={isOpen} onOpenChange={onOpenChange}>
@@ -219,11 +230,7 @@ export function ModelSelector({
           onSelect={onModelChange}
           variant={modelVariant}
           hideXhigh={modelVariant === 'claude' && !xhighSupported}
-          fast={
-            !isFlow && fastCredits !== null && (chatId || newChatFastRef)
-              ? { chatId, newChatFastRef, credits: fastCredits }
-              : undefined
-          }
+          speed={isFlow ? undefined : speedScope(selectedModel?.id, chatId, newChatSpeedRef)}
           inherit={
             isFlow
               ? {

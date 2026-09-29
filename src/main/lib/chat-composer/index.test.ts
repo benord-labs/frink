@@ -46,10 +46,10 @@ describe('storedExecutionSettings', () => {
   });
 
   it('resolves for the chat’s provider: Codex gets the raw id and its Fast choice', () => {
-    updateComposerSettings('c1', { modelId: 'codex-gpt-5.6-sol-medium', codexFastMode: true });
+    updateComposerSettings('c1', { modelId: 'codex-gpt-5.6-sol-medium', codexSpeed: 'fast' });
     expect(storedExecutionSettings('c1', 'codex')).toMatchObject({
       model: 'codex-gpt-5.6-sol-medium',
-      codexFastMode: true,
+      codexSpeed: 'fast',
     });
   });
 

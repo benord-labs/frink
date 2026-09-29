@@ -2,6 +2,7 @@
  * The one-time adoption of composer choices a window made before main owned them (they lived only
  * in that window's localStorage). Pure so the sync hook and its tests share it without tRPC.
  */
+import { CODEX_SPEEDS, type CodexSpeed } from '../../../shared/types/execution';
 import { appStore } from '../jotai-store';
 import { readComposerCacheMaps } from './atom-family-factory';
 import type { ComposerPatch } from './composer-persistence';
@@ -28,7 +29,7 @@ export function collectComposerImport(): {
   };
   add('modelId', (v): v is string => typeof v === 'string' && v.length > 0 && v.length <= 200);
   add('autoMode', (v): v is boolean => typeof v === 'boolean');
-  add('codexFastMode', (v): v is boolean => typeof v === 'boolean');
+  add('codexSpeed', (v): v is CodexSpeed => (CODEX_SPEEDS as readonly unknown[]).includes(v));
   const entries = [...byChat].slice(0, IMPORT_LIMIT).map(([chatId, patch]) => ({
     chatId,
     ...patch,

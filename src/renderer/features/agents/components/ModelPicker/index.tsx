@@ -24,7 +24,7 @@ import { extendedThinkingEnabledAtom } from '../../../../lib/atoms';
 import { overlayItem } from '../../../../lib/overlay-styles';
 import { cn } from '../../../../lib/utils';
 import type { ModelItem } from '../model-selector';
-import { type FastScope, ICON_BUTTON_CLASS, ProviderToggle } from './ProviderToggle';
+import { ICON_BUTTON_CLASS, ProviderToggle, type SpeedScope } from './ProviderToggle';
 
 /** Shown when the Extra High stop is dropped — a user-reachable action (packaged users update the app). */
 const XHIGH_HIDDEN_HINT = 'Extra High needs a newer Claude CLI — update Frink to enable it.';
@@ -47,8 +47,8 @@ type Props = {
   variant: 'claude' | 'codex';
   /** Drop the Extra High stop (the bundled Claude CLI cannot run `--effort xhigh`). */
   hideXhigh: boolean;
-  /** Codex Fast: per chat, or staged by New Chat for the chat it creates. Absent without a tier. */
-  fast?: FastScope;
+  /** Codex speed: per chat, or staged by New Chat for the chat it creates. Absent without a tier. */
+  speed?: SpeedScope;
   /** Flow: the "Agent default" row that clears the stored model. */
   inherit?: { label: string; selected: boolean; onSelect: () => void };
   onOpenModelSettings?: () => void;
@@ -63,7 +63,7 @@ export function ModelPicker({
   onSelect,
   variant,
   hideXhigh,
-  fast,
+  speed,
   inherit,
   onOpenModelSettings,
   onClose,
@@ -75,7 +75,7 @@ export function ModelPicker({
     current && tiersOf(current.window).length > 1 ? 'effort' : 'list',
   );
   const paneRef = usePaneFocus(pane);
-  const toggle = <ProviderToggle variant={variant} fast={fast} />;
+  const toggle = <ProviderToggle variant={variant} speed={speed} />;
 
   if (pane === 'effort' && current && selectedModel) {
     const tiers = tiersOf(current.window);

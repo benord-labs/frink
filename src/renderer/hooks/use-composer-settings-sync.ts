@@ -6,10 +6,11 @@ import { registerComposerPersister } from '../lib/atoms/composer-persistence';
 import { extendedThinkingCacheAtom } from '../lib/atoms';
 import { appStore } from '../lib/jotai-store';
 import { isDesktopApp } from '../lib/utils/platform';
+import type { CodexSpeed } from '../../shared/types/execution';
 
 const IMPORTED_KEY = 'agents:composerSettingsImported:v1';
 
-type ChatComposerValues = { modelId: string; autoMode: boolean; codexFastMode: boolean };
+type ChatComposerValues = { modelId: string; autoMode: boolean; codexSpeed: CodexSpeed };
 /** Mirrors main's `ComposerChangedPayload` (the renderer never imports main). */
 type ComposerChange =
   | { kind: 'chat'; chatId: string; settings: ChatComposerValues }

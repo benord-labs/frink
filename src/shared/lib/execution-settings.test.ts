@@ -23,17 +23,17 @@ describe('resolveComposerSettings', () => {
 
   it('keeps stored values, including an explicit off', () => {
     expect(
-      resolveComposerSettings({ modelId: 'opus-4.8', autoMode: false, codexFastMode: true }, false),
+      resolveComposerSettings({ modelId: 'opus-4.8', autoMode: false, codexSpeed: 'fast' }, false),
     ).toEqual({
       modelId: 'opus-4.8',
       autoMode: false,
-      codexFastMode: true,
+      codexSpeed: 'fast',
       thinkingEnabled: false,
     });
   });
 
   it('never defaults Fast on — the tier bills a credit multiplier', () => {
-    expect(resolveComposerSettings({}, true).codexFastMode).toBe(false);
+    expect(resolveComposerSettings({}, true).codexSpeed).toBe('standard');
   });
 });
 
@@ -90,30 +90,30 @@ describe('buildExecutionSettings', () => {
 
   describe('Codex Fast', () => {
     it('sends the flag only when the chat has Fast on', () => {
-      expect(buildExecutionSettings('codex', settings({ modelId: SUPPORTED })).codexFastMode).toBe(
-        false,
+      expect(buildExecutionSettings('codex', settings({ modelId: SUPPORTED })).codexSpeed).toBe(
+        'standard',
       );
       expect(
-        buildExecutionSettings('codex', settings({ modelId: SUPPORTED, codexFastMode: true }))
-          .codexFastMode,
-      ).toBe(true);
+        buildExecutionSettings('codex', settings({ modelId: SUPPORTED, codexSpeed: 'fast' }))
+          .codexSpeed,
+      ).toBe('fast');
     });
 
     it('omits the flag entirely for models with no priority tier', () => {
       // A chat left on Fast then switched to a tier-less model must not ask for a tier at all.
       const sent = buildExecutionSettings(
         'codex',
-        settings({ modelId: NO_TIER, codexFastMode: true }),
+        settings({ modelId: NO_TIER, codexSpeed: 'fast' }),
       );
-      expect(sent).not.toHaveProperty('codexFastMode');
+      expect(sent).not.toHaveProperty('codexSpeed');
     });
 
     it('omits the flag for a stale or cross-provider id instead of snapping to a default', () => {
       // A dropped id resolves to no multiplier, so the request asks for nothing rather than betting
       // the executor's fallback slug happens to be free.
       for (const modelId of ['codex-gpt-5.3-codex-high', 'opus-4.8', 'cursor-codex-5.3-high']) {
-        const sent = buildExecutionSettings('codex', settings({ modelId, codexFastMode: true }));
-        expect(sent).not.toHaveProperty('codexFastMode');
+        const sent = buildExecutionSettings('codex', settings({ modelId, codexSpeed: 'fast' }));
+        expect(sent).not.toHaveProperty('codexSpeed');
       }
     });
   });

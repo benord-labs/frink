@@ -6,6 +6,7 @@ import {
   CODEX_MODEL_SLUGS,
   type CodexReasoningEffort,
   codexFastTierCredits,
+  codexTierCredits,
   resolveCodexCliModel,
 } from './codex-cli-models';
 
@@ -138,32 +139,47 @@ describe('resolveCodexCliModel', () => {
   });
 
   it('requests the priority tier only when Fast is on AND the model advertises it', () => {
-    expect(resolveCodexCliModel('codex-gpt-5.6-sol-high', true).serviceTier).toBe('priority');
-    expect(resolveCodexCliModel('codex-gpt-5.6-sol-high', false).serviceTier).toBeNull();
-    expect(resolveCodexCliModel('codex-gpt-6-luna-high', true)).toEqual({
+    expect(resolveCodexCliModel('codex-gpt-5.6-sol-high', 'fast').serviceTier).toBe('priority');
+    expect(resolveCodexCliModel('codex-gpt-5.6-sol-high', 'standard').serviceTier).toBeNull();
+    expect(resolveCodexCliModel('codex-gpt-6-luna-high', 'fast')).toEqual({
       model: 'gpt-6-luna',
       effort: 'high',
       serviceTier: 'priority',
     });
     // Fast left on while switching to a model with no tier must degrade, not ask for a tier the
     // app-server would strip.
-    expect(resolveCodexCliModel('codex-gpt-5.4-mini-high', true).serviceTier).toBeNull();
+    expect(resolveCodexCliModel('codex-gpt-5.4-mini-high', 'fast').serviceTier).toBeNull();
   });
 
   it('never omits serviceTier — the tier is thread-sticky, so OFF must be an explicit null', () => {
     // Guards the whole feature: an absent key means "leave unchanged" on the app-server, which
     // would keep billing the priority tier after the user switches Fast off.
-    for (const fastMode of [undefined, false, true]) {
-      expect(resolveCodexCliModel('codex-gpt-5.4-mini-low', fastMode)).toHaveProperty(
-        'serviceTier',
-      );
+    for (const speed of [undefined, 'standard', 'fast'] as const) {
+      expect(resolveCodexCliModel('codex-gpt-5.4-mini-low', speed)).toHaveProperty('serviceTier');
     }
   });
 
   it('honours Fast on a stale id by falling back to a model that supports it', () => {
     // The fallback slug (astra) does advertise the tier, so a flow forwarding a dropped id still
     // gets the tier it asked for rather than a silent downgrade.
-    expect(resolveCodexCliModel('codex-gpt-5.3-codex-high', true).serviceTier).toBe('priority');
+    expect(resolveCodexCliModel('codex-gpt-5.3-codex-high', 'fast').serviceTier).toBe('priority');
+  });
+});
+
+describe('Ultrafast', () => {
+  it('is offered on GPT-6 Astra only, at 8x credits', () => {
+    expect(codexTierCredits('codex-gpt-6-astra-high', 'ultrafast')).toBe(8);
+    for (const id of ['codex-gpt-6.1-sol-high', 'codex-gpt-5.6-sol-high', 'opus-4.8', undefined]) {
+      expect(codexTierCredits(id, 'ultrafast'), id).toBeNull();
+    }
+  });
+
+  it('sends the ultrafast tier on Astra and clears the tier on a model without it', () => {
+    expect(resolveCodexCliModel('codex-gpt-6-astra-high', 'ultrafast').serviceTier).toBe(
+      'ultrafast',
+    );
+    // Never silently swaps in Fast: the user chose a speed, not "whatever is paid".
+    expect(resolveCodexCliModel('codex-gpt-6.1-sol-high', 'ultrafast').serviceTier).toBeNull();
   });
 });
 

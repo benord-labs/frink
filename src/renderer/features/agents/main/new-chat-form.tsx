@@ -373,7 +373,7 @@ export function NewChatForm({
         isCodexAccount,
         subChatId: data.subChats?.[0]?.id,
         autoModeEnabled: staging.pending.autoMode,
-        codexFastEnabled: staging.pending.codexFast,
+        codexSpeed: staging.pending.codexSpeed,
       });
 
       // Chat created — keep the scaffolded project and release the send guard.
@@ -852,7 +852,7 @@ export function NewChatForm({
                         onBlur={() => editorHandlers.setIsFocused(false)}
                       >
                         <ActionsToolbar
-                          codexFastRef={staging.codexFast}
+                          codexSpeedRef={staging.codexSpeed}
                           chatMode={chatMode}
                           onModeChange={setChatMode}
                           modeDropdownOpen={modeDropdownOpen}

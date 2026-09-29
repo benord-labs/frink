@@ -71,7 +71,7 @@ function registerCodexBasicPermissionTests({
     await handleRemoteExecute({
       ...basePayload,
       message: 'codex turn with Auto on',
-      settings: { autoReviewTools: true, codexFastMode: true, model: 'codex-gpt-5.6-sol-high' },
+      settings: { autoReviewTools: true, codexSpeed: 'fast', model: 'codex-gpt-5.6-sol-high' },
     });
 
     expect(vi.mocked(runCodexAgent).mock.calls[0]?.[0]).toEqual(

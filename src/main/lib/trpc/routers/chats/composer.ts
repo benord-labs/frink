@@ -1,5 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
+import { CODEX_SPEEDS } from '../../../../../shared/types/execution';
 import {
   importComposerSettings,
   listComposerSettings,
@@ -18,7 +19,7 @@ export const composerPatchSchema = z
   .object({
     modelId: modelId.optional(),
     autoMode: z.boolean().optional(),
-    codexFastMode: z.boolean().optional(),
+    codexSpeed: z.enum(CODEX_SPEEDS).optional(),
   })
   .strict();
 

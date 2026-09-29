@@ -28,7 +28,7 @@ describe('composer settings repo', () => {
     expect(getChatComposerSettings(repoDb(), 'c1')).toEqual({
       modelId: null,
       autoMode: null,
-      codexFastMode: null,
+      codexSpeed: null,
     });
     expect(getChatComposerSettings(repoDb(), 'missing')).toBeNull();
   });
@@ -36,10 +36,10 @@ describe('composer settings repo', () => {
   it('writes only the patched fields and returns the confirmed row', () => {
     seed('c1');
     updateChatComposerSettings(repoDb(), 'c1', { modelId: 'opus-4.8', autoMode: false });
-    expect(updateChatComposerSettings(repoDb(), 'c1', { codexFastMode: true })).toEqual({
+    expect(updateChatComposerSettings(repoDb(), 'c1', { codexSpeed: 'fast' })).toEqual({
       modelId: 'opus-4.8',
       autoMode: false,
-      codexFastMode: true,
+      codexSpeed: 'fast',
     });
   });
 
@@ -71,18 +71,18 @@ describe('composer settings repo', () => {
     seed('c2');
     updateChatComposerSettings(repoDb(), 'c2', { autoMode: false });
     expect(listStoredComposerSettings(repoDb())).toEqual([
-      { chatId: 'c2', modelId: null, autoMode: false, codexFastMode: null },
+      { chatId: 'c2', modelId: null, autoMode: false, codexSpeed: null },
     ]);
   });
 
   it('a fork keeps the source chat composer settings', async () => {
     seed('c1');
-    updateChatComposerSettings(repoDb(), 'c1', { modelId: 'opus-4.8', codexFastMode: true });
+    updateChatComposerSettings(repoDb(), 'c1', { modelId: 'opus-4.8', codexSpeed: 'fast' });
     const { chat } = await forkChatWithSubChats(repoDb(), 'c1');
     expect(getChatComposerSettings(repoDb(), chat.id)).toEqual({
       modelId: 'opus-4.8',
       autoMode: null,
-      codexFastMode: true,
+      codexSpeed: 'fast',
     });
   });
 
