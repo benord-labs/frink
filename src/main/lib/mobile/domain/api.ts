@@ -23,6 +23,7 @@ import { MobileApiError, mobileCallers, requireExecutionReady } from './context'
 import { readMobileFlow, readMobileFlows, readMobileRun, resumeMobileNode } from './flows';
 import { readMobileChats, readMobileOverview, readMobileProjects } from './read';
 import { steerMobileMessage } from './steer';
+import { runMobileTaskAction } from './tasks';
 import { captureContained } from '../../sentry';
 
 // Reason: An exhaustive command switch keeps this transport boundary explicit.
@@ -67,6 +68,10 @@ async function dispatch(request: MobileRequest): Promise<MobileResponses[MobileR
       return setMobileAccount(request);
     case 'resumeNode':
       return resumeMobileNode(request);
+    case 'completeTask':
+    case 'continueTask':
+    case 'startTask':
+      return runMobileTaskAction(request);
     case 'startFlow': {
       requireExecutionReady();
       const run = await mobileCallers.flows.startRun({

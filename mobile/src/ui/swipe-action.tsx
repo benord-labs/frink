@@ -5,24 +5,30 @@ import { Text } from './text';
 import { useTheme } from './theme';
 
 const ACTION_WIDTH = 84;
-// A solid red with a white label in both appearances, like Mail. The theme's `danger` is tuned
-// for text, and in dark mode it is a pale pink that would need a dark label.
-const DESTRUCTIVE_FILL = { light: '#DC2828', dark: '#E5484D' } as const;
+// Solid fills with a white label in both appearances, like Mail. The theme's state colours are
+// tuned for text, and in dark mode they are pale tints that would need a dark label.
+const FILLS = {
+  destructive: { light: '#DC2828', dark: '#E5484D' },
+  confirm: { light: '#15803D', dark: '#15803D' },
+  primary: { light: '#7C3AED', dark: '#7C3AED' },
+} as const;
 
-/** A row that swipes left to reveal one destructive action, like iOS Mail. A horizontal scroll
- *  view does the gesture, so it needs no native gesture library and works in the web preview. */
-export function SwipeAction({
-  children,
-  label,
-  icon: Icon,
-  accessibilityLabel,
-  onPress,
-}: {
-  children: ReactNode;
+export type SwipeActionItem = {
   label: string;
   icon: LucideIcon;
+  fill: keyof typeof FILLS;
   accessibilityLabel: string;
   onPress: () => void;
+};
+
+/** A row that swipes left to reveal its actions, like iOS Mail. A horizontal scroll view does the
+ *  gesture, so it needs no native gesture library and works in the web preview. */
+export function SwipeAction({
+  children,
+  actions,
+}: {
+  children: ReactNode;
+  actions: SwipeActionItem[];
 }) {
   const t = useTheme();
   const scroll = useRef<ScrollView>(null);
@@ -30,7 +36,8 @@ export function SwipeAction({
   const measure = (next: number) => {
     if (next !== width) setWidth(next);
   };
-  // The row needs its own width before it can sit beside the hidden action.
+  if (!actions.length) return children;
+  // The row needs its own width before it can sit beside the hidden actions.
   if (!width)
     return <View onLayout={(event) => measure(event.nativeEvent.layout.width)}>{children}</View>;
   return (
@@ -40,32 +47,40 @@ export function SwipeAction({
         horizontal
         bounces={false}
         showsHorizontalScrollIndicator={false}
-        snapToOffsets={[0, ACTION_WIDTH]}
+        snapToOffsets={[0, ACTION_WIDTH * actions.length]}
         snapToEnd={false}
         decelerationRate="fast"
       >
         <View style={{ width }}>{children}</View>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={accessibilityLabel}
-          onPress={() => {
-            scroll.current?.scrollTo({ x: 0, animated: true });
-            onPress();
-          }}
-          style={({ pressed }) => ({
-            width: ACTION_WIDTH,
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 4,
-            backgroundColor: DESTRUCTIVE_FILL[t.dark ? 'dark' : 'light'],
-            opacity: pressed ? 0.8 : 1,
-          })}
-        >
-          <Icon size={20} color="#FFFFFF" strokeWidth={2.2} />
-          <Text variant="label" style={{ color: '#FFFFFF' }}>
-            {label}
-          </Text>
-        </Pressable>
+        {actions.map(({ label, icon: Icon, fill, accessibilityLabel, onPress }) => (
+          <Pressable
+            key={label}
+            accessibilityRole="button"
+            accessibilityLabel={accessibilityLabel}
+            onPress={() => {
+              scroll.current?.scrollTo({ x: 0, animated: true });
+              onPress();
+            }}
+            style={({ pressed }) => ({
+              width: ACTION_WIDTH,
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 4,
+              paddingHorizontal: 4,
+              backgroundColor: FILLS[fill][t.dark ? 'dark' : 'light'],
+              opacity: pressed ? 0.8 : 1,
+            })}
+          >
+            <Icon size={20} color="#FFFFFF" strokeWidth={2.2} />
+            <Text
+              variant="label"
+              numberOfLines={2}
+              style={{ color: '#FFFFFF', textAlign: 'center' }}
+            >
+              {label}
+            </Text>
+          </Pressable>
+        ))}
       </ScrollView>
     </View>
   );

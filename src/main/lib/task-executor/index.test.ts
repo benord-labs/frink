@@ -195,6 +195,20 @@ describe('resolveTaskExecutionOptions', () => {
 
     expect(() => resolveTaskExecutionOptions(taskWithWaitMode)).toThrow(WAIT_MODE_ERROR_REGEX);
   });
+
+  it('runs a wait-mode task that was explicitly started with a mode', () => {
+    const started: DbTask = {
+      ...baseTask,
+      result: { startMode: 'execute' },
+      triggerContext: { _config: { startMode: 'wait', model: 'sonnet' } },
+    };
+
+    expect(resolveTaskExecutionOptions(started)).toEqual({
+      startMode: 'execute',
+      skipReview: true,
+      configuredModel: 'sonnet',
+    });
+  });
 });
 
 // Blast radius of relaxing isValidTriggerContext: flow-webhook tasks (no legacy rule fields)

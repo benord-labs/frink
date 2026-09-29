@@ -17,7 +17,7 @@ import { confirmChatDeletion } from '../Chat/confirm';
 import { NOT_READY } from '../NewChat/new-chat-options';
 import { ChatRow } from './chat-row';
 import { chatSections } from './chat-sections';
-import { tell } from './tell';
+import { tell } from '../../ui/tell';
 import { useDebounced } from './use-debounced';
 
 // The web preview's tab bar floats over the list; iOS insets for its native tab bar itself.

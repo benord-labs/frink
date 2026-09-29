@@ -53,6 +53,17 @@ describe('Work Queue Overview section filter', () => {
     await expect(getPendingTaskIds(db)).resolves.toEqual([{ id: execute.id }]);
   });
 
+  it('releases a started wait task carried on to pending, for the poller and the Overview alike', async () => {
+    const db = freshDb();
+    const carried = await addTask(db, 'carried-on', { _config: { startMode: 'wait' } });
+    await updateTaskStatus(db, carried.id, 'pending', {
+      result: { startMode: 'execute', retryMode: 'continue' },
+    });
+
+    await expect(listSection(db, 'inbox').then((page) => page.items)).resolves.toEqual([]);
+    await expect(getPendingTaskIds(db)).resolves.toEqual([{ id: carried.id }]);
+  });
+
   it('puts a Flow wait task in Inbox before effective running classification', async () => {
     const db = freshDb();
     const { flowRunId } = await seedFlowRun(db, GRAPH);

@@ -7,5 +7,6 @@ test('the four tabs switch and the Queue tab shows the needs-you badge', async (
     await page.getByTestId(`tab-${tab}`).click();
     await page.screenshot({ path: `test-results/shell-${tab}.png` });
   }
-  await expect(page.getByTestId('tab-queue')).toContainText('4');
+  // Four decisions and attention tasks, plus the finished task.
+  await expect(page.getByTestId('tab-queue')).toContainText('5');
 });

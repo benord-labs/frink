@@ -26,6 +26,10 @@ export const mobileRequestSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('startFlow'), id, requestId: z.uuid() }),
   z.object({ type: z.literal('setFlowEnabled'), id, enabled: z.boolean() }),
   z.object({ type: z.literal('cancelRun'), id }),
+  // A Queue task's row actions, gated on the computer by the desktop Work Queue's own rules.
+  z.object({ type: z.literal('completeTask'), id }),
+  z.object({ type: z.literal('continueTask'), id }),
+  z.object({ type: z.literal('startTask'), id }),
   z.object({
     type: z.literal('resumeNode'),
     runId: id,
@@ -136,7 +140,10 @@ export type MobileQueueItem = {
   projectName: string | null;
   /** Latest of completion, start or creation: when this item last changed state. */
   activityAt: string;
+  /** The row actions the phone may send; a Flow item starts and carries on through its run. */
+  actions: MobileTaskAction[];
 };
+export type MobileTaskAction = 'startTask' | 'continueTask' | 'completeTask';
 export type MobileQueueSection = 'attention' | 'inbox' | 'running';
 export type MobileOverview = {
   machineName: string;
@@ -314,6 +321,9 @@ export type MobileResponses = {
   startFlow: { id: string };
   setFlowEnabled: { ok: true };
   cancelRun: { ok: true };
+  completeTask: { ok: true };
+  continueTask: { ok: true };
+  startTask: { ok: true };
   resumeNode: { ok: true };
   chats: MobilePage<MobileChatSummary>;
   /** Most recently active first. */
