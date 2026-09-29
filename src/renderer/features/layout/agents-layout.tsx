@@ -428,7 +428,9 @@ export function AgentsLayout() {
           inset={viewPolicy.isMainPaneInset && editorYield.inset}
           dock={
             <>
-              <SidePanelDockHost hidden={activeOverlay === 'workqueue'} />
+              <SidePanelDockHost
+                hidden={activeOverlay === 'workqueue' || activeOverlay === 'settings'}
+              />
               <ThemeEditorHost />
             </>
           }
