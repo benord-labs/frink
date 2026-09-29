@@ -260,6 +260,53 @@ describe('attributeTrace edge cases', () => {
   });
 });
 
+describe('attributeTrace around the profiler start', () => {
+  // The profiler starts sampling only once the busy thread yields: its first sample lands at the
+  // end of a task that was already running when recording began.
+  const straddling = [
+    { name: 'thread_name', ph: 'M', pid: 1, tid: 10, ts: 0, args: { name: 'CrRendererMain' } },
+    { name: 'RunTask', ph: 'X', pid: 1, tid: 10, ts: 990_000, dur: 200_000 },
+    { name: 'RunTask', ph: 'X', pid: 1, tid: 10, ts: 2_000_000, dur: 100_000 },
+    { name: 'UpdateLayoutTree', ph: 'X', pid: 1, tid: 10, ts: 2_005_000, dur: 90_000 },
+    { name: 'Layerize', ph: 'X', pid: 1, tid: 10, ts: 2_096_000, dur: 3_000 },
+    // First sample 190ms after the profile starts, then every 10ms.
+    ...profile('0x1', 1, 10, 1_000_000, rendererNodes, [3, ...Array(120).fill(2)], 10_000).map(
+      (e) =>
+        e.name === 'ProfileChunk'
+          ? {
+              ...e,
+              args: {
+                data: {
+                  ...e.args.data,
+                  timeDeltas: [190_000, ...Array(120).fill(10_000)],
+                },
+              },
+            }
+          : e,
+    ),
+  ];
+
+  it('never attributes a task that began before the first sample, and names it instead', () => {
+    const report = attributeTrace(straddling);
+    expect(report?.tasks).toEqual([{ ms: 100, atMs: 0 }]);
+    expect(report?.unsampledMs).toEqual([200]);
+    expect(formatReport(report)).toContain(
+      "Not attributed: 200ms began before the profiler's first sample",
+    );
+  });
+
+  it('reports the rendering steps a task ran, so native style work never reads as starvation', () => {
+    const report = attributeTrace(straddling);
+    expect(report?.longest.renderPhases).toEqual([
+      ['style', 90],
+      ['layerize', 3],
+    ]);
+    const idle = { ...report, longest: { ...report!.longest, sampledMs: 0 } };
+    expect(formatReport(idle)).toContain('rendering: style 90ms, layerize 3ms');
+    expect(formatReport(idle)).not.toContain('starved');
+  });
+});
+
 describe('devToolsPortFile', () => {
   it('follows Electron userData per platform', () => {
     expect(devToolsPortFile({ platform: 'darwin', home: '/Users/b' })).toBe(
