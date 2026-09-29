@@ -465,9 +465,11 @@
 }
 
 /* Marks each surface that can hold the chat composer's slot. A stacked card sitting on one squares
-   its top corners, so the two read as one object. A utility, so it beats `rounded-*`. */
+   its top corners, so the two read as one object. A utility, so it beats `rounded-*`. The cards'
+   column flags itself (StatusAndQueueSection) instead of a `:has()`, which Chromium would re-check
+   across the whole document on every DOM change. */
 @utility composer-slot-surface {
-  [data-chat-dock] > :has([data-stacked-card]) + * & {
+  [data-chat-dock] > [data-stacked-cards] + * & {
     border-top-left-radius: 0;
     border-top-right-radius: 0;
   }

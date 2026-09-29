@@ -26,12 +26,17 @@ vi.mock('../../../ui/agent-queue-indicator', () => ({
   ),
 }));
 
-/** The real card self-nulls once every changed file is committed, even though the parent still sees
- *  a non-empty changedFiles prop. Switchable so that state is reachable from a test. */
-const statusCardRenders = { current: true };
+/** Git reports every changed file committed: the section then shows no status card. Switchable so
+ *  that state is reachable from a test. */
+const allCommitted = { current: false };
+
+vi.mock('../../../../../lib/agent-chat/use-uncommitted-files', () => ({
+  useUncommittedFiles: (changedFiles: SubChatFileChange[]) =>
+    allCommitted.current ? [] : changedFiles,
+}));
 
 vi.mock('../../../ui/sub-chat-status-card', () => ({
-  SubChatStatusCard: () => (statusCardRenders.current ? <div data-testid="status-card" /> : null),
+  SubChatStatusCard: () => <div data-testid="status-card" />,
 }));
 
 const noopAsync = async () => {};
@@ -61,7 +66,7 @@ const changedFile = [
 
 afterEach(() => {
   cleanup();
-  statusCardRenders.current = true;
+  allCommitted.current = false;
 });
 
 describe('StatusAndQueueSection', () => {
@@ -74,16 +79,16 @@ describe('StatusAndQueueSection', () => {
   // The tuck must belong to a card that actually mounted. A status card whose files have all been
   // committed renders nothing, and a -24px pull left behind by it drags the surface below up over
   // the run-status row — hiding the background-wait row's Stop, its only in-app exit.
-  it('contributes no negative margin when the status card self-nulls', () => {
-    statusCardRenders.current = false;
+  it('contributes no negative margin when every changed file is committed', () => {
+    allCommitted.current = true;
     const { container } = render(
       <StatusAndQueueSection {...baseProps()} changedFilesForSubChat={changedFile} />,
     );
     expect(container.querySelector('.-mb-6')).toBeNull();
   });
 
-  it('leaves the queue card as the only stacked card when the status card self-nulls', () => {
-    statusCardRenders.current = false;
+  it('leaves the queue card as the only stacked card when every changed file is committed', () => {
+    allCommitted.current = true;
     const queue: AgentQueueItem[] = [
       { id: 'q1', message: 'hello', timestamp: new Date(), status: 'pending' },
     ];
@@ -92,6 +97,21 @@ describe('StatusAndQueueSection', () => {
     );
     expect(getByTestId('queue-indicator')).toBeInTheDocument();
     expect(container.querySelectorAll('[data-testid]')).toHaveLength(1);
+  });
+
+  // The flag squares the composer surface below (globals.css `composer-slot-surface`).
+  it('flags the stack only while a card shows', () => {
+    const { container, rerender } = render(<StatusAndQueueSection {...baseProps()} />);
+    const stack = container.firstElementChild;
+    expect(stack).not.toHaveAttribute('data-stacked-cards');
+
+    rerender(<StatusAndQueueSection {...baseProps()} changedFilesForSubChat={changedFile} />);
+    expect(stack).toHaveAttribute('data-stacked-cards');
+
+    allCommitted.current = true;
+    rerender(<StatusAndQueueSection {...baseProps()} changedFilesForSubChat={[...changedFile]} />);
+    expect(screen.queryByTestId('status-card')).toBeNull();
+    expect(stack).not.toHaveAttribute('data-stacked-cards');
   });
 
   it('renders stack wrapper when queue has items', () => {

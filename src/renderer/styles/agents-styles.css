@@ -26,12 +26,12 @@
   font-weight: 400;
 }
 
-/* Apply font to all portals, dialogs, popovers on agents pages */
-body:has([data-agents-page]) [data-radix-portal],
-body:has([data-agents-page]) [data-radix-popper-content-wrapper],
-body:has([data-agents-page]) [role='dialog'],
-body:has([data-agents-page]) [data-sonner-toaster],
-body:has([data-agents-page]) [data-sonner-toast] {
+/* Apply font to all portals, dialogs, popovers: they render outside [data-agents-page] */
+[data-radix-portal],
+[data-radix-popper-content-wrapper],
+[role='dialog'],
+[data-sonner-toaster],
+[data-sonner-toast] {
   font-family:
     var(--font-geist-sans),
     system-ui,
