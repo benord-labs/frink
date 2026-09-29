@@ -6,7 +6,6 @@ import log from 'electron-log';
 import { createIPCHandler, ELECTRON_TRPC_CHANNEL } from 'trpc-electron/main';
 import { isAllowedShellOpenExternalUrl } from '../../shared/shell-external-url';
 import { registerGitWatcherIPC } from '../lib/git/watcher';
-import { setupLanguageServerIPC } from '../lib/language-server/transports';
 import { shellOpenExternalGuarded } from '../lib/open-external-guarded';
 import { createAppRouter } from '../lib/trpc/routers';
 import { registerArtifactPreviewIpc } from '.';
@@ -266,7 +265,6 @@ function getPersistedZoomFactor(): number {
 export function createMainWindow(): BrowserWindow {
   // Register IPC handlers before creating window
   registerIpcHandlers(getWindow);
-  setupLanguageServerIPC(getWindow);
 
   // Read Windows frame preference
   const useNativeFrame = getUseNativeFramePreference();

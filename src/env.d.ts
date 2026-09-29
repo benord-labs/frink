@@ -1,4 +1,5 @@
 /// <reference types="vite/client" />
+/// <reference types="./preload/index.d.ts" />
 
 // Extend Vite's ImportMetaEnv with our custom env vars
 declare global {

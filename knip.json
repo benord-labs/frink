@@ -16,10 +16,6 @@
       "project": ["src/**/*.{ts,tsx}"],
       "ignoreDependencies": [
         "babel-plugin-react-compiler",
-        "vscode-languageserver-protocol",
-        "vscode-langservers-extracted",
-        "typescript-language-server",
-        "pyright",
         "path-browserify",
         "@tailwindcss/typography",
         "tw-animate-css"

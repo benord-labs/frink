@@ -781,9 +781,6 @@ if (gotTheLock) {
       // Tear down any warm `codex app-server` processes (persistent across turns).
       (await import('./lib/agent-runner/codex/app-server-registry')).disposeAllCodexAppServers();
 
-      const { cleanupLanguageServers } = await import('./lib/language-server/transports');
-      cleanupLanguageServers();
-
       // ── Phase 3: Close DB and flush analytics ──
       await cleanupGitWatchers();
       // Drain any background rollback-stash promises kicked off by the socket
