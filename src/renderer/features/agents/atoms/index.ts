@@ -10,7 +10,7 @@ import {
   createRuntimeAtomFamily,
 } from '../../../lib/atoms/atom-family-factory';
 import { atomWithWindowStorage } from '../../../lib/window-storage';
-import { splitPaneFileTreesAtom } from '../../files-sidebar/atoms';
+import { splitPaneFileTreesAtom, UNSEEDED_SPLIT_PANE_FILE_TREES } from '../../files-sidebar/atoms';
 
 export { selectedAgentChatIdAtom } from '../../../lib/atoms/agent-navigation-atoms';
 
@@ -858,7 +858,7 @@ const splitViewStorageAtom = atomWithWindowStorage<SplitViewState>(
 /** Persisted split view; reads/writes are normalized (layout vs pane count, ratio length). */
 export const splitViewAtom = atom(
   (get) => normalizeSplitViewState(get(splitViewStorageAtom)),
-  (_get, set, update: SplitViewState | ((prev: SplitViewState) => SplitViewState)) => {
+  (get, set, update: SplitViewState | ((prev: SplitViewState) => SplitViewState)) => {
     set(splitViewStorageAtom, (prev) => {
       const current = normalizeSplitViewState(prev);
       const next = typeof update === 'function' ? update(current) : update;
@@ -873,6 +873,11 @@ export const splitViewAtom = atom(
       }
       return normalized;
     });
+    // Per-pane file trees live for one split session; ending it here (even while Settings hides the
+    // split view) lets the next split seed afresh.
+    if (get(splitViewAtom).chatIds.length < 2) {
+      set(splitPaneFileTreesAtom, UNSEEDED_SPLIT_PANE_FILE_TREES);
+    }
   },
 );
 

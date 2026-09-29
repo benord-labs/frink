@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import type { PaneFileTreeHandle } from '../../../../features/files-sidebar/PaneFileTree';
 import { splitPaneFileTreesAtom } from '../../../files-sidebar/atoms';
+import { splitViewAtom } from '../../atoms';
 import { SplitViewContainer } from './index';
 import type { SplitPaneData } from './types';
 
@@ -371,6 +372,24 @@ describe('SplitViewContainer initial file trees atom', () => {
   it('seeds open file tree indices for all panes with projectPath when initialFileTreeOpen is true', () => {
     renderWithStore(panes, true);
     expect(Array.from(store.get(splitPaneFileTreesAtom)).sort((a, b) => a - b)).toEqual([0, 1]);
+  });
+
+  it('keeps per-pane choices when an overlay remounts the split, and re-seeds after the split closes', () => {
+    const split = { ratios: [0.5, 0.5], activePaneIndex: 0, layout: 'horizontal' as const };
+    store.set(splitViewAtom, { ...split, chatIds: ['chat-1', 'chat-2'] });
+    renderWithStore(panes, true).unmount();
+    store.set(splitPaneFileTreesAtom, new Set([0]));
+
+    // Settings replaces the split view while the split stays active.
+    renderWithStore(panes, true).unmount();
+    expect(Array.from(store.get(splitPaneFileTreesAtom))).toEqual([0]);
+
+    // The split closes while Settings still hides it, then a new split opens.
+    store.set(splitViewAtom, { ...split, chatIds: [] });
+    store.set(splitViewAtom, { ...split, chatIds: ['chat-3', 'chat-4'] });
+    renderWithStore(panes, true);
+    expect(Array.from(store.get(splitPaneFileTreesAtom)).sort((a, b) => a - b)).toEqual([0, 1]);
+    store.set(splitViewAtom, { ...split, chatIds: [] });
   });
 
   it('does not re-seed when panes are empty on first commit then load (documents didInit + omitted panes dep)', async () => {

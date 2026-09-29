@@ -14,7 +14,10 @@ import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { type MoveResult, showMoveToast } from '@/features/files-sidebar/utils/batch-result-toasts';
 import { getFileIconByExtension } from '@/lib/mentions/agents-file-mention-icons';
 import { Folder, GripVertical } from 'lucide-react';
-import { splitPaneFileTreesAtom } from '../../../../features/files-sidebar/atoms';
+import {
+  splitPaneFileTreesAtom,
+  UNSEEDED_SPLIT_PANE_FILE_TREES,
+} from '../../../../features/files-sidebar/atoms';
 import {
   CrossProjectDropDialog,
   type CrossProjectDropInfo,
@@ -138,16 +141,12 @@ export function SplitViewContainer({
 
   // Track which panes have their file tree open (by pane index).
   // Shared via Jotai atom so each pane's chat-header file-tree toggle can flip it too.
-  // Pane 0 inherits the single-pane file sidebar state so it persists across the transition.
   const [openFileTrees, setOpenFileTrees] = useAtom(splitPaneFileTreesAtom);
 
-  // One-time: seed which panes have the file tree open from mount props. `didInit` ensures we do not
-  // re-apply when `panes` is replaced/updated; omitting `panes` from deps keeps that contract explicit.
-  const didInit = useRef(false);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: one-time init; `didInit` guards application; `panes` omitted so pane list updates do not reset open trees.
+  // Seed once per split session: Settings/Flows unmount this view without ending the split.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: once per split session; `panes` omitted so pane list updates never re-seed.
   useEffect(() => {
-    if (didInit.current) return;
-    didInit.current = true;
+    if (jotaiStore.get(splitPaneFileTreesAtom) !== UNSEEDED_SPLIT_PANE_FILE_TREES) return;
     setOpenFileTrees(
       new Set(
         initialFileTreeOpen
@@ -156,13 +155,6 @@ export function SplitViewContainer({
       ),
     );
   }, [initialFileTreeOpen, setOpenFileTrees]);
-
-  // Reset atom when split view unmounts so stale state doesn't leak.
-  useEffect(() => {
-    return () => {
-      setOpenFileTrees(new Set<number>());
-    };
-  }, [setOpenFileTrees]);
 
   const toggleFileTree = useCallback(
     (idx: number) => {

@@ -7,8 +7,11 @@ import {
 
 export type FilesSidebarTab = 'files' | 'search';
 
+// Identity marker for "this split session has not seeded its file trees yet"; never mutated.
+export const UNSEEDED_SPLIT_PANE_FILE_TREES = new Set<number>();
+
 // Which split-pane indices have their file tree open (ephemeral, not persisted)
-export const splitPaneFileTreesAtom = atom<Set<number>>(new Set<number>());
+export const splitPaneFileTreesAtom = atom<Set<number>>(UNSEEDED_SPLIT_PANE_FILE_TREES);
 
 // Files sidebar open state - persisted across sessions
 export const filesSidebarOpenAtom = atomWithStorage<boolean>(
