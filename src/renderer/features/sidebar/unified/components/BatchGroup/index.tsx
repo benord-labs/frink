@@ -231,7 +231,6 @@ function toBatchChatItem(chat: SidebarChatListItem, context: BatchChatItemContex
     isLoading: false,
     hasPendingPlan: false,
     hasPendingQuestion: context.pendingQuestionIds?.has(chat.id) ?? false,
-    isHeld: false,
     isWorktree: !!chat.worktreePath && chat.worktreePath !== projectPath,
     taskId: chat.taskId ?? null,
     batchId: context.batchId,

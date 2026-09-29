@@ -70,10 +70,10 @@ export function useGroupedProjects({
         pinnedAt: chat.pinnedAt,
         projectId: chat.projectId,
         hasUnseenChanges: unseenChanges.has(chat.id),
-        isLoading: loadingChats.has(chat.id),
+        // Waiting on background work still reads as running: the agent will wake and continue.
+        isLoading: loadingChats.has(chat.id) || heldChats.has(chat.id),
         hasPendingPlan: pendingPlans.has(chat.id),
         hasPendingQuestion: pendingQuestions.has(chat.id),
-        isHeld: heldChats.has(chat.id),
         isWorktree: !!chat.worktreePath && chat.worktreePath !== projectPath,
         taskId: chat.taskId,
         batchId: chat.batchId,

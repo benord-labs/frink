@@ -24,7 +24,6 @@ describe('getFolderActiveState', () => {
     isLoading?: boolean;
     hasPendingQuestion?: boolean;
     hasPendingPlan?: boolean;
-    isHeld?: boolean;
     hasUnseenChanges?: boolean;
   };
   const chat = (id: string, flags: ChatFlags = {}) => ({
@@ -32,7 +31,6 @@ describe('getFolderActiveState', () => {
     batchId: null,
     isLoading: false,
     hasPendingQuestion: false,
-    isHeld: false,
     hasPendingPlan: false,
     hasUnseenChanges: false,
     ...flags,
@@ -154,17 +152,6 @@ describe('getFolderActiveState', () => {
       tasks({ a: 'failed' }),
     );
     expect(state).toMatchObject({ label: 'Failed', count: 1 });
-  });
-
-  // A static dot on purpose: the running level pulses, and a long background wait would pulse for hours.
-  it('rolls a background wait up below running and above review', () => {
-    const held = chat('a', { isHeld: true, hasUnseenChanges: true });
-    const state = getFolderActiveState([held, chat('b', { hasUnseenChanges: true })]);
-    expect(state).toMatchObject({ label: 'Background', count: 1 });
-    expect(state?.dotClassName).not.toContain('animate-pulse');
-    expect(getFolderActiveState([held, chat('c', { isLoading: true })])).toMatchObject({
-      label: 'Running',
-    });
   });
 
   it('falls through to the quiet review level for unseen changes', () => {

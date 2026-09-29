@@ -147,7 +147,7 @@ describe('useGroupedProjects', () => {
     expect(generalGroup?.chats[0].taskId).toBeNull();
   });
 
-  it('marks a chat held by any of its sub-chats', () => {
+  it('shows a chat waiting on background work as running', () => {
     getDefaultStore().set(heldSubChatsAtom, new Map([['sub-1', 'chat-held']]));
     const general = (id: string) => ({
       id,
@@ -163,7 +163,7 @@ describe('useGroupedProjects', () => {
     const params = makeParams({ chats: [general('chat-held'), general('chat-idle')] });
 
     const { result } = renderHook(() => useGroupedProjects(params));
-    expect(result.current[0].chats.map((c) => c.isHeld)).toEqual([true, false]);
+    expect(result.current[0].chats.map((c) => c.isLoading)).toEqual([true, false]);
   });
 
   it('marks isWorktree correctly when worktreePath differs from project path', () => {

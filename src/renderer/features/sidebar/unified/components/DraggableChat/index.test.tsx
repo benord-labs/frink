@@ -35,7 +35,6 @@ const chat: ChatItem = {
   isLoading: false,
   hasPendingPlan: false,
   hasPendingQuestion: false,
-  isHeld: false,
   isWorktree: false,
   taskId: null,
   batchId: null,

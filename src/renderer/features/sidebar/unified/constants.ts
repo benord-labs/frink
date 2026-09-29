@@ -161,12 +161,7 @@ export const SIDEBAR_TASK_PRESENTATION: Record<SidebarTaskStatus, SidebarTaskPre
 
 /* ── Regular chat active states ─────────────────────────────────────── */
 
-type ChatActiveState =
-  | 'loading'
-  | 'pendingQuestion'
-  | 'pendingPlan'
-  | 'background'
-  | 'unseenChanges';
+type ChatActiveState = 'loading' | 'pendingQuestion' | 'pendingPlan' | 'unseenChanges';
 
 type ChatStatePresentation = {
   label: string;
@@ -213,16 +208,6 @@ export const CHAT_STATE_PRESENTATION: Record<ChatActiveState, ChatStatePresentat
     dotClassName: 'bg-info-fg',
     showPill: false,
   },
-  // Static on purpose: the agent is idle between wakes, so nothing pulses or claims it is running.
-  background: {
-    label: 'Background',
-    ariaLabel: 'Working in the background',
-    iconClassName: 'text-[hsl(var(--primary))]',
-    textClassName: 'text-[hsl(var(--primary))]',
-    bgClassName: 'bg-[hsl(var(--primary)/0.12)]',
-    dotClassName: 'bg-[hsl(var(--primary))]',
-    showPill: true,
-  },
   unseenChanges: {
     label: 'Updated',
     ariaLabel: 'Has unseen changes',
@@ -255,13 +240,11 @@ export function getChatActiveState(chat: {
   isLoading: boolean;
   hasPendingQuestion: boolean;
   hasPendingPlan: boolean;
-  isHeld: boolean;
   hasUnseenChanges: boolean;
 }): ChatActiveState | null {
   if (chat.hasPendingQuestion) return 'pendingQuestion';
   if (chat.hasPendingPlan) return 'pendingPlan';
   if (chat.isLoading) return 'loading';
-  if (chat.isHeld) return 'background';
   if (chat.hasUnseenChanges) return 'unseenChanges';
   return null;
 }
