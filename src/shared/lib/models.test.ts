@@ -37,6 +37,8 @@ describe('supportsNativeAutoReview', () => {
     'claude-opus-4-8',
     'claude-opus-5',
     'claude-opus-5-5',
+    'sonnet-5.5',
+    'claude-sonnet-5-5',
   ])('supports current Claude model %s', (model) => {
     expect(supportsNativeAutoReview('claude-code', model)).toBe(true);
   });
@@ -517,43 +519,40 @@ describe('Opus 5 catalog (1M-native, High default, full effort ladder)', () => {
   });
 });
 
-describe('Sonnet 5 catalog (1M-native, High default, full effort ladder)', () => {
-  const sonnet5 = () => CLAUDE_CODE_MODELS.filter((m) => m.familyId === 'sonnet-5');
+describe.each([
+  { family: 'sonnet-5', cli: 'claude-sonnet-5' },
+  { family: 'sonnet-5.5', cli: 'claude-sonnet-5-5' },
+])('$family catalog (1M-native, High default, full effort ladder)', ({ family, cli }) => {
+  const rows = () => CLAUDE_CODE_MODELS.filter((m) => m.familyId === family);
 
-  // Sonnet 5 supports the same effort ladder as Opus 4.8 (High default + Low/Medium/Xhigh/Max) per
+  // Sonnet 5+ supports the same effort ladder as Opus 4.8 (High default + Low/Medium/Xhigh/Max) per
   // the effort docs — NOT the Sonnet 4.6 Low/Medium/High set.
   it('exposes one 1M row per effort: High default + low/medium/xhigh/max/ultra (no 200k, no -1m)', () => {
-    expect(sonnet5().map((m) => m.id)).toEqual([
-      'sonnet-5',
-      'sonnet-5-low',
-      'sonnet-5-medium',
-      'sonnet-5-xhigh',
-      'sonnet-5-max',
-      'sonnet-5-ultra',
-    ]);
-    for (const m of sonnet5()) expect(m.contextWindow).toBe('1M context');
+    expect(rows().map((m) => m.id)).toEqual(
+      ['', '-low', '-medium', '-xhigh', '-max', '-ultra'].map((s) => `${family}${s}`),
+    );
+    for (const m of rows()) expect(m.contextWindow).toBe('1M context');
   });
 
   it('labels the bare row High (its default effort), not Medium', () => {
-    expect(CLAUDE_CODE_MODELS.find((m) => m.id === 'sonnet-5')?.variantLabel).toBe('High');
+    expect(CLAUDE_CODE_MODELS.find((m) => m.id === family)?.variantLabel).toBe('High');
   });
 
-  it('pins every variant cliValue to claude-sonnet-5', () => {
-    for (const m of sonnet5()) expect(CLAUDE_MODEL_ID_MAP[m.id], m.id).toBe('claude-sonnet-5');
+  it('pins every variant cliValue to the versioned model id', () => {
+    for (const m of rows()) expect(CLAUDE_MODEL_ID_MAP[m.id], m.id).toBe(cli);
   });
 
   it('resolves effort: bare → high, low/medium/xhigh/max per suffix', () => {
-    expect(getClaudeSdkEffort('sonnet-5')).toBe('high');
-    expect(getClaudeSdkEffort('sonnet-5-low')).toBe('low');
-    expect(getClaudeSdkEffort('sonnet-5-medium')).toBe('medium');
-    expect(getClaudeSdkEffort('sonnet-5-xhigh')).toBe('xhigh');
-    expect(getClaudeSdkEffort('sonnet-5-max')).toBe('max');
+    expect(getClaudeSdkEffort(family)).toBe('high');
+    for (const e of ['low', 'medium', 'xhigh', 'max'] as const) {
+      expect(getClaudeSdkEffort(`${family}-${e}`)).toBe(e);
+    }
   });
 
   // 1M is the default window (no `context-1m-2025-08-07` beta header — like Opus 4.8). A stray
   // -1m variant would wrongly flip claudeModelRequires1M → attach the redundant beta.
   it('is 1M-native: no -1m variant, never requests the 1M context beta', () => {
-    for (const m of sonnet5()) {
+    for (const m of rows()) {
       expect(m.id, `${m.id} must not carry a -1m suffix`).not.toContain('-1m');
       expect(claudeModelRequires1M(m.id), `${m.id} must not request the 1M beta`).toBe(false);
     }
@@ -561,7 +560,7 @@ describe('Sonnet 5 catalog (1M-native, High default, full effort ladder)', () =>
 
   it('surfaces before Sonnet 4.6 (separate family, distinct from the sonnet alias)', () => {
     const ids = CLAUDE_CODE_MODELS.map((m) => m.familyId);
-    expect(ids.indexOf('sonnet-5')).toBeLessThan(ids.indexOf('sonnet'));
+    expect(ids.indexOf(family)).toBeLessThan(ids.indexOf('sonnet'));
   });
 });
 
@@ -574,6 +573,7 @@ describe('claudeModelUsesAdaptiveThinking', () => {
       'claude-opus-5',
       'claude-opus-4-8',
       'claude-opus-4-7',
+      'claude-sonnet-5-5',
       'claude-sonnet-5',
     ]) {
       expect(claudeModelUsesAdaptiveThinking(cli), cli).toBe(true);
@@ -945,7 +945,7 @@ describe('splitNewestFamilies', () => {
     expect(names(splitNewestFamilies(CLAUDE_MODEL_FAMILIES).newest)).toEqual([
       'Fable 5.1',
       'Opus 5.5',
-      'Sonnet 5',
+      'Sonnet 5.5',
       'Haiku 4.5',
     ]);
     expect(names(splitNewestFamilies(CODEX_MODEL_FAMILIES).newest)).toEqual([

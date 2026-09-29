@@ -9,7 +9,7 @@
 /**
  * Valid Claude model identifiers for the Claude Code / agent SDK path.
  * Includes short aliases (`haiku` | `sonnet` | `opus`) and version-pinned
- * Anthropic model IDs — pinning is required for Opus 4.6 / 4.7 / 4.8 / 5 / 5.5 so the SDK's
+ * Anthropic model IDs — pinning is required for Opus 4.6 / 4.7 / 4.8 / 5 / 5.5 and Sonnet 5 / 5.5 so the SDK's
  * baked-in system prompt reflects the correct version.
  * Matches executor gating (`src/main/lib/socket/executor.ts`). UI catalog and
  * thinking variants live in `src/shared/lib/models.ts` (`CLAUDE_CODE_MODELS`).
@@ -25,6 +25,7 @@ const VALID_MODELS = [
   'claude-opus-4-8',
   'claude-opus-4-7',
   'claude-opus-4-6',
+  'claude-sonnet-5-5',
   'claude-sonnet-5',
 ] as const;
 type ClaudeModel = (typeof VALID_MODELS)[number];

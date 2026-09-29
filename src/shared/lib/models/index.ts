@@ -178,7 +178,7 @@ export function isClaudeUltraModel(modelId: string): boolean {
 
 /**
  * Maps picker model id to Claude Agent SDK `effort` (adaptive thinking + Opus 4.7 / 4.8 / 5 tiers).
- * Default tier (no suffix) → `medium`, except Fable 5.1 / Fable 5 / Opus 5 / Opus 4.8 / Sonnet 5 whose default is `high`.
+ * Default tier (no suffix) → `medium`, except Fable 5.1 / Fable 5 / Opus 5 / Opus 4.8 / Sonnet 5.5 / Sonnet 5 whose default is `high`.
  */
 export function getClaudeSdkEffort(modelId: string): ClaudeSdkEffortLevel | undefined {
   if (isClaudeUltraModel(modelId)) return 'xhigh';
@@ -187,12 +187,12 @@ export function getClaudeSdkEffort(modelId: string): ClaudeSdkEffortLevel | unde
   if (modelId.endsWith('-low')) return 'low';
   if (modelId.endsWith('-medium')) return 'medium';
   if (modelId.endsWith('-high')) return 'high';
-  // Fable 5.1 / Fable 5 + Opus 5 + Opus 4.8 + Sonnet 5 default to High effort (bare id, no suffix); others to Medium.
+  // Fable 5.1 / Fable 5 + Opus 5 + Opus 4.8 + Sonnet 5.5 / 5 default to High effort (bare id, no suffix); others to Medium.
   if (modelId.startsWith('fable-5')) return 'high';
   if (modelId.startsWith('opus-5.5')) return 'medium'; // before `opus-5`, which it also prefixes
   if (modelId.startsWith('opus-5')) return 'high';
   if (modelId.startsWith('opus-4.8')) return 'high';
-  if (modelId.startsWith('sonnet-5')) return 'high';
+  if (modelId.startsWith('sonnet-5')) return 'high'; // also covers `sonnet-5.5`
   if (
     modelId.startsWith('opus-4.7') ||
     modelId.startsWith('opus-') ||
