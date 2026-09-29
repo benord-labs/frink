@@ -17,13 +17,18 @@ type AgentSendButtonProps = {
   ariaLabel?: string;
   chatMode?: ChatMode;
   hasContent?: boolean;
+  /** The turn runs on an adopted wake hold, so stopping it also ends its background work. */
+  stopEndsBackgroundWork?: boolean;
 };
 
 type ButtonVisualState = {
   isStreaming: boolean;
   isSubmitting: boolean;
   hasContent: boolean;
+  stopEndsBackgroundWork: boolean;
 };
+
+const STOP_ENDS_BACKGROUND_WORK = 'Stop — also ends the background work';
 
 // Module-level helpers: each chunks independently, isn't reallocated per render,
 // and keeps the component's branch-heavy display logic out of its cognitive budget.
@@ -40,19 +45,27 @@ function getButtonAriaLabel({
   isStreaming,
   isSubmitting,
   hasContent,
+  stopEndsBackgroundWork,
 }: ButtonVisualState & { ariaLabel?: string }) {
   if (ariaLabel) return ariaLabel;
-  if (isStreaming && !hasContent) return 'Stop generation';
+  if (isStreaming && !hasContent) {
+    return stopEndsBackgroundWork ? STOP_ENDS_BACKGROUND_WORK : 'Stop generation';
+  }
   if (isStreaming && hasContent) return 'Add to queue'; // Alt+Enter steers; see the tooltip.
   if (isSubmitting) return 'Generating...';
   return 'Send message';
 }
 
-function getTooltipContent({ isStreaming, isSubmitting, hasContent }: ButtonVisualState) {
+function getTooltipContent({
+  isStreaming,
+  isSubmitting,
+  hasContent,
+  stopEndsBackgroundWork,
+}: ButtonVisualState) {
   if (isStreaming && !hasContent) {
     return (
       <span className="flex items-center gap-1">
-        Stop
+        {stopEndsBackgroundWork ? STOP_ENDS_BACKGROUND_WORK : 'Stop'}
         <Kbd className="ms-0.5">Esc</Kbd>
         <span className="text-muted-foreground/60">or</span>
         <Kbd className="-me-1">Ctrl C</Kbd>
@@ -105,6 +118,7 @@ export function AgentSendButton({
   ariaLabel,
   chatMode = 'agent',
   hasContent = false,
+  stopEndsBackgroundWork = false,
 }: AgentSendButtonProps) {
   const shouldShowQueueArrow = isStreaming && hasContent;
 
@@ -119,7 +133,12 @@ export function AgentSendButton({
   // Streaming owns its own stop affordance, so honour `disabled` only in the plain send state.
   const isDisabled = !isStreaming && disabled;
 
-  const visualState: ButtonVisualState = { isStreaming, isSubmitting, hasContent };
+  const visualState: ButtonVisualState = {
+    isStreaming,
+    isSubmitting,
+    hasContent,
+    stopEndsBackgroundWork,
+  };
 
   const shouldShowGlow = (!isStreaming && !isSubmitting && !disabled) || shouldShowQueueArrow;
 

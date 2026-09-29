@@ -84,7 +84,10 @@ vi.mock('../../../lib/stores/use-wake-hold-sync', () => ({
 }));
 
 import { soundNotificationsEnabledAtom } from '../../../lib/atoms';
-import { wakeHeldAtomFamily } from '../../../lib/stores/active-transport-registry';
+import {
+  wakeHeldAtomFamily,
+  wakeHoldAdoptedAtomFamily,
+} from '../../../lib/stores/active-transport-registry';
 import { agentsSubChatUnseenChangesAtom, loadingSubChatsAtom } from '../atoms';
 import { flowRunIncompleteAtomFamily } from '../stores/message-store';
 import { createAgentChat } from './create-agent-chat';
@@ -172,6 +175,12 @@ describe('onFinish — completion sound seam', () => {
     const { options } = buildChat();
     options.onFinish();
     expect(mocks.clearManuallyAborted).toHaveBeenCalledExactlyOnceWith('sub-1');
+  });
+
+  it('ends the adopted-hold Stop warning with the turn', () => {
+    const { options } = buildChat();
+    options.onFinish();
+    expect(mocks.appStoreSet).toHaveBeenCalledWith(wakeHoldAdoptedAtomFamily('sub-1'), false);
   });
 });
 

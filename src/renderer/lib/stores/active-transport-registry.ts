@@ -90,6 +90,10 @@ export const wakeHeldAtomFamily = atomFamily((_subChatId: string) =>
 export const heldSubChatsAtom = atom<ReadonlyMap<string, string>>(new Map<string, string>());
 export const heldChatIdsAtom = atom((get) => new Set(get(heldSubChatsAtom).values()));
 
+/** True while a follow-up turn runs on an adopted hold, so its Stop also ends the background work.
+ * Set by an 'adopted' retraction; cleared by the sub-chat's next wake-hold frame or turn finish. */
+export const wakeHoldAdoptedAtomFamily = atomFamily((_subChatId: string) => atom<boolean>(false));
+
 /**
  * The fourth liveness state: tool-call ids of background SUBAGENTS currently running, fed by
  * 'socket:subagent-task-changed' (main's task-frame tracker). An async Agent launch resolves its
