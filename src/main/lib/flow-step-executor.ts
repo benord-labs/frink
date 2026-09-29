@@ -184,7 +184,10 @@ async function resolveCwd(
   if (wd === 'trigger_worktree') {
     const worktreePath = payload.triggerWorktreePath;
     if (!worktreePath) {
-      return { ok: false, error: `workingDirectory=trigger_worktree but no triggerWorktreePath provided — ${NO_WORKTREE_CAUSE_HINT}` };
+      return {
+        ok: false,
+        error: `workingDirectory=trigger_worktree but no triggerWorktreePath provided — ${NO_WORKTREE_CAUSE_HINT}`,
+      };
     }
     const validation = await validateWorktreeForReuse(worktreePath);
     if (!validation.valid) {
@@ -196,7 +199,10 @@ async function resolveCwd(
   if (wd === 'custom') {
     const cp = typeof payload.customPath === 'string' ? payload.customPath.trim() : '';
     if (!cp) {
-      return { ok: false, error: `workingDirectory=custom but no customPath provided — if this references {{previous.worktreePath}} or another upstream worktree variable, ${NO_WORKTREE_CAUSE_HINT}` };
+      return {
+        ok: false,
+        error: `workingDirectory=custom but no customPath provided — if this references {{previous.worktreePath}} or another upstream worktree variable, ${NO_WORKTREE_CAUSE_HINT}`,
+      };
     }
     return { ok: true, cwd: cp };
   }

@@ -85,7 +85,11 @@ export async function replaceWakeResumedRow(
 ): Promise<Task | null> {
   const [row] = await db
     .update(tasks)
-    .set({ status: next.status, completedAt: new Date(), result: taskResultSchema.parse(next.result) })
+    .set({
+      status: next.status,
+      completedAt: new Date(),
+      result: taskResultSchema.parse(next.result),
+    })
     .where(
       and(
         eq(tasks.id, taskId),

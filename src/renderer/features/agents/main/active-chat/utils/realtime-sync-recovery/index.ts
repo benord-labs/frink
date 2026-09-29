@@ -139,11 +139,7 @@ export function applyExecuteComplete(
   payload: ExecuteCompletePayload,
   refs: Pick<
     RealtimeSyncRefs,
-    | 'highWaterRef'
-    | 'isActiveRef'
-    | 'reconcilerRef'
-    | 'remoteAssistantIdRef'
-    | 'setMessagesRef'
+    'highWaterRef' | 'isActiveRef' | 'reconcilerRef' | 'remoteAssistantIdRef' | 'setMessagesRef'
   >,
   subChatId: string,
 ): void {
@@ -214,10 +210,7 @@ export function applyExecuteError(
   payload: ExecuteErrorPayload,
   refs: Pick<
     RealtimeSyncRefs,
-    | 'invalidateSubChatMessagesRef'
-    | 'isActiveRef'
-    | 'reconcilerRef'
-    | 'remoteAssistantIdRef'
+    'invalidateSubChatMessagesRef' | 'isActiveRef' | 'reconcilerRef' | 'remoteAssistantIdRef'
   >,
   subChatId: string,
   chatId: string,

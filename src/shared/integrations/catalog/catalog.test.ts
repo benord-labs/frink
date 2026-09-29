@@ -576,4 +576,3 @@ describe('beforeYouConnect', () => {
     expect(PLUGIN_DEFINITIONS.find((d) => d.id === 'linear')?.beforeYouConnect).toHaveLength(1);
   });
 });
-

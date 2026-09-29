@@ -33,9 +33,7 @@ describe('mobile transcript Markdown boundary', () => {
     expect(sanitizeMarkdown(result)).toBe(result);
   });
   it('resolves a repeated reference label to its first definition', () => {
-    const result = sanitizeMarkdown(
-      '[go][d]\n\n[d]: javascript:alert(1)\n[d]: https://ok.example',
-    );
+    const result = sanitizeMarkdown('[go][d]\n\n[d]: javascript:alert(1)\n[d]: https://ok.example');
     expect(result).not.toContain('[go][d]');
   });
   it.each([

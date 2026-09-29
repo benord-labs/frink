@@ -18,9 +18,7 @@
     "teamId": "72b2a2dc-6f4f-4423-9d34-24b5bd10634a",
     "assigneeId": null,
     "stateId": "b3d5f6e0-1c2a-4d8e-9f00-a1b2c3d4e5f6",
-    "labelIds": [
-      "c1a2b3c4-d5e6-4f70-8899-aabbccddeeff"
-    ],
+    "labelIds": ["c1a2b3c4-d5e6-4f70-8899-aabbccddeeff"],
     "createdAt": "2026-08-20T09:00:00.000Z",
     "updatedAt": "2026-08-20T09:00:00.000Z",
     "archivedAt": null

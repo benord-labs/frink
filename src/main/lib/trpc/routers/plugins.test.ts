@@ -23,7 +23,6 @@ const {
   getVendorPluginMcpConsentUrlMock: vi.fn(),
 }));
 
-
 vi.mock('../../db/repos/plugin-installations', () => ({
   listInstallations: listPluginInstallationsForUserMock,
 }));

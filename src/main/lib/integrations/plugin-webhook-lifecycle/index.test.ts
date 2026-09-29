@@ -128,7 +128,9 @@ describe('webhook plugin lifecycle', () => {
     expect(await listWebhookEndpointsForIntegration(db, oldId)).toEqual([]);
 
     await installWebhookPlugin(db, io, PLUGIN);
-    expect(await getConnectionLifecycle(db, oldId)).toMatchObject({ lifecycleState: 'disconnected' });
+    expect(await getConnectionLifecycle(db, oldId)).toMatchObject({
+      lifecycleState: 'disconnected',
+    });
     const [fresh] = await accounts();
     expect(fresh.id).not.toBe(oldId);
   });

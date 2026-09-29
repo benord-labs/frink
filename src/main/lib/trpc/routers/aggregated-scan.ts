@@ -78,9 +78,7 @@ export async function aggregatedScan<T extends ScannedResource>(
       userProjects.map(async (project) => {
         const cliType = cliTypeMap.get(project.id);
         const priorityDirs = [...getIdeDirPriority(cliType), UNIVERSAL_DIR];
-        const projectDirs = priorityDirs.map((d: string) =>
-          path.join(project.path, d, dirSuffix),
-        );
+        const projectDirs = priorityDirs.map((d: string) => path.join(project.path, d, dirSuffix));
 
         const items: { item: T; cliType: typeof cliType }[] = [];
         const dirResults = await Promise.all(

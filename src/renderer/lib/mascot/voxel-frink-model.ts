@@ -10,15 +10,7 @@ export const FRINK_BOX = { width: 160, height: 196 } as const;
 /** The WebGL canvas is far larger than the box and centred on it, so flying cubes never hit an edge. */
 export const FRINK_CANVAS = { width: 480, height: 520 } as const;
 
-export type VoxelPartName =
-  | 'body'
-  | 'head'
-  | 'eyes'
-  | 'armL'
-  | 'armR'
-  | 'legL'
-  | 'legR'
-  | 'chalk';
+export type VoxelPartName = 'body' | 'head' | 'eyes' | 'armL' | 'armR' | 'legL' | 'legR' | 'chalk';
 
 type Voxel = { x: number; y: number; z: number; color: number };
 

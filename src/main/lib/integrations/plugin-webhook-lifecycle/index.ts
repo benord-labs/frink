@@ -154,11 +154,7 @@ export async function uninstallWebhookPlugin(db: Db, pluginId: string) {
 }
 
 /** Account details removes only the selected account; removing the last also removes the plugin. */
-export async function disconnectWebhookConnection(
-  db: Db,
-  pluginId: string,
-  connectionId: string,
-) {
+export async function disconnectWebhookConnection(db: Db, pluginId: string, connectionId: string) {
   requireWebhookProvider(pluginId);
   return withPluginLifecycleOperation(pluginId, async () => {
     const accounts = await localAccounts(db, pluginId);

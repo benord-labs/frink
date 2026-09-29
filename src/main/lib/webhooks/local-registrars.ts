@@ -289,10 +289,7 @@ export function rotateLocalTrigger(
 
 /** Delete the subscription this machine armed, at `armedOn`, the address it was armed on: a
  * registrar that finds its webhook pointed elsewhere refuses it. A refusal is a card line, not a stop. */
-async function deregisterMoved(
-  exchange: Exchange,
-  armedOn: string | null,
-): Promise<string | null> {
+async function deregisterMoved(exchange: Exchange, armedOn: string | null): Promise<string | null> {
   const { io, main, provider, operationId, row } = exchange;
   const renew = () => renewOperation(io.db, row.id, operationId, OPERATION_LEASE_TTL_MS);
   try {

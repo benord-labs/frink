@@ -13,11 +13,7 @@
     }
   },
   "frink": {
-    "keywords": [
-      "esignature",
-      "contracts",
-      "agreements"
-    ],
+    "keywords": ["esignature", "contracts", "agreements"],
     "source": {
       "repo": "cursor/plugins",
       "commit": "4612556",

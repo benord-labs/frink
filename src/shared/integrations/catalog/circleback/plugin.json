@@ -13,11 +13,7 @@
     }
   },
   "frink": {
-    "keywords": [
-      "meetings",
-      "transcripts",
-      "notes"
-    ],
+    "keywords": ["meetings", "transcripts", "notes"],
     "source": {
       "repo": "cursor/plugins",
       "commit": "4612556",

@@ -108,14 +108,12 @@ export const triggerBindingsRouter = router({
       return toRawDbFlowTriggerBinding(row) as unknown as DbFlowTriggerBinding;
     }),
 
-  delete: publicProcedure
-    .input(z.object({ id: z.string().min(1) }))
-    .mutation(async ({ input }) => {
-      const db = getDatabase();
-      const ok = await bindingsRepo.deleteBinding(db, input.id);
-      if (!ok) {
-        throw new TRPCError({ code: 'NOT_FOUND', message: 'Trigger binding not found' });
-      }
-      return { ok: true as const };
-    }),
+  delete: publicProcedure.input(z.object({ id: z.string().min(1) })).mutation(async ({ input }) => {
+    const db = getDatabase();
+    const ok = await bindingsRepo.deleteBinding(db, input.id);
+    if (!ok) {
+      throw new TRPCError({ code: 'NOT_FOUND', message: 'Trigger binding not found' });
+    }
+    return { ok: true as const };
+  }),
 });

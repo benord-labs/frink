@@ -41,11 +41,7 @@ type SummonStageInput = {
 };
 
 /** All the state and effects behind the summon scene; the component only renders it. */
-export function useSummonStage({
-  phase,
-  onProofDone,
-  homeXRatio,
-}: SummonStageInput) {
+export function useSummonStage({ phase, onProofDone, homeXRatio }: SummonStageInput) {
   const reducedMotion = usePrefersReducedMotion();
   const [webgl] = useState(hasWebGl);
   const [layout] = useState(() => computeLayout(homeXRatio));

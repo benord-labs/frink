@@ -14,7 +14,15 @@ import {
   type Tone,
 } from '../../ui/primitives';
 
-function DecisionHeader({ icon, tone, label }: { icon: 'help' | 'shield-checkmark'; tone: Tone; label: string }) {
+function DecisionHeader({
+  icon,
+  tone,
+  label,
+}: {
+  icon: 'help' | 'shield-checkmark';
+  tone: Tone;
+  label: string;
+}) {
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
       <IconTile name={icon} tone={tone} />
@@ -187,30 +195,30 @@ export function QuestionForm({
               overflow: 'hidden',
             }}
           >
-          {q.options.map((option, index) => (
-            <OptionRow
-              key={option.label}
-              option={option}
-              multiSelect={q.multiSelect}
-              first={index === 0}
-              selected={choices[q.question]?.includes(option.label) ?? false}
-              disabled={action.busy}
-              onToggle={(selected) =>
-                draft.update({
-                  ...draft.value,
-                  choices: {
-                    ...choices,
-                    [q.question]: toggleChoice(
-                      choices[q.question] ?? [],
-                      option.label,
-                      q.multiSelect,
-                      selected,
-                    ),
-                  },
-                })
-              }
-            />
-          ))}
+            {q.options.map((option, index) => (
+              <OptionRow
+                key={option.label}
+                option={option}
+                multiSelect={q.multiSelect}
+                first={index === 0}
+                selected={choices[q.question]?.includes(option.label) ?? false}
+                disabled={action.busy}
+                onToggle={(selected) =>
+                  draft.update({
+                    ...draft.value,
+                    choices: {
+                      ...choices,
+                      [q.question]: toggleChoice(
+                        choices[q.question] ?? [],
+                        option.label,
+                        q.multiSelect,
+                        selected,
+                      ),
+                    },
+                  })
+                }
+              />
+            ))}
           </View>
           <Field
             accessibilityLabel={`Custom answer: ${q.question}`}

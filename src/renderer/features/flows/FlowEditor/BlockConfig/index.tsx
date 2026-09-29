@@ -125,11 +125,7 @@ function renderBlockConfigBody(block: FlowBlockType, args: ConfigBodyArgs): Reac
       );
     case 'schedule_trigger':
       return (
-        <ScheduleTriggerConfig
-          node={node}
-          onPatchLabel={patchLabel}
-          onPatchConfig={patchConfig}
-        />
+        <ScheduleTriggerConfig node={node} onPatchLabel={patchLabel} onPatchConfig={patchConfig} />
       );
     case 'start_task':
       return (

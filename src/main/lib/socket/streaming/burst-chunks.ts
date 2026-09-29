@@ -65,7 +65,8 @@ export function burstPlanSubmissionAttempt(
   for (let i = startIndex; i < chunks.length; i++) {
     const chunk = chunks[i];
     if (chunk.type !== 'tool-input-available' || chunk.toolName !== 'ExitPlanMode') continue;
-    if (matchDeniedToolMessage(deniedToolIdsWithMessages, chunk.toolCallId)) return chunk.toolCallId;
+    if (matchDeniedToolMessage(deniedToolIdsWithMessages, chunk.toolCallId))
+      return chunk.toolCallId;
   }
   return null;
 }

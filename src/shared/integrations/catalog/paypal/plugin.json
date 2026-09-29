@@ -10,11 +10,7 @@
     }
   },
   "frink": {
-    "keywords": [
-      "payments",
-      "invoices",
-      "commerce"
-    ],
+    "keywords": ["payments", "invoices", "commerce"],
     "actions": [
       {
         "id": "paypal.list_invoices",

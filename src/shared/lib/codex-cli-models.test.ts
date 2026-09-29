@@ -28,16 +28,20 @@ describe('CODEX_CLI_MODELS (codex-specific data rules)', () => {
     );
   });
 
-  it.each(['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])(
-    '%s exposes every supported picker effort',
-    (slug) => {
-      expect(
-        CODEX_CLI_MODELS.filter((model) => model.cliValue === slug).map(
-          (model) => model.reasoningEffort,
-        ),
-      ).toEqual<CodexReasoningEffort[]>(['low', 'medium', 'high', 'xhigh']);
-    },
-  );
+  it.each([
+    'gpt-6-astra',
+    'gpt-6-sol',
+    'gpt-6-luna',
+    'gpt-5.6-sol',
+    'gpt-5.6-terra',
+    'gpt-5.6-luna',
+  ])('%s exposes every supported picker effort', (slug) => {
+    expect(
+      CODEX_CLI_MODELS.filter((model) => model.cliValue === slug).map(
+        (model) => model.reasoningEffort,
+      ),
+    ).toEqual<CodexReasoningEffort[]>(['low', 'medium', 'high', 'xhigh']);
+  });
 });
 
 describe('CODEX_MODEL_SLUGS', () => {

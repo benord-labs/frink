@@ -67,12 +67,24 @@ describe('QueuedAdmissions', () => {
     const section = screen.getByRole('region', { name: 'Queued to run' });
     expect(within(section).getByRole('heading', { name: 'Resuming' })).toBeInTheDocument();
     expect(within(section).getByRole('heading', { name: 'Starting' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Reorder Resume release, Resuming 1 of 2' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Move Resume release up, Resuming 1 of 2' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Move Resume release down, Resuming 1 of 2' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Reorder Start checks, Starting 1 of 1' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Move Start checks up, Starting 1 of 1' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Move Start checks down, Starting 1 of 1' })).toBeDisabled();
+    expect(
+      screen.getByRole('button', { name: 'Reorder Resume release, Resuming 1 of 2' }),
+    ).toBeEnabled();
+    expect(
+      screen.getByRole('button', { name: 'Move Resume release up, Resuming 1 of 2' }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole('button', { name: 'Move Resume release down, Resuming 1 of 2' }),
+    ).toBeEnabled();
+    expect(
+      screen.getByRole('button', { name: 'Reorder Start checks, Starting 1 of 1' }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole('button', { name: 'Move Start checks up, Starting 1 of 1' }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole('button', { name: 'Move Start checks down, Starting 1 of 1' }),
+    ).toBeDisabled();
     expect(
       within(section)
         .getAllByRole('listitem')
@@ -86,7 +98,9 @@ describe('QueuedAdmissions', () => {
 
   it('requests an arrow move and keeps focus', async () => {
     renderQueue();
-    const moveDown = screen.getByRole('button', { name: 'Move Resume release down, Resuming 1 of 2' });
+    const moveDown = screen.getByRole('button', {
+      name: 'Move Resume release down, Resuming 1 of 2',
+    });
     moveDown.focus();
 
     fireEvent.click(moveDown);
@@ -154,7 +168,10 @@ describe('QueuedAdmissions', () => {
 
   it('keeps the announcement readable after the last row leaves', () => {
     // The live region sits outside the list, which renders nothing once the queue empties.
-    const { container } = renderQueue({ announcement: 'Start checks removed from the queue.', rows: [] });
+    const { container } = renderQueue({
+      announcement: 'Start checks removed from the queue.',
+      rows: [],
+    });
 
     const live = container.querySelector('p[role="status"]');
     expect(live).toHaveTextContent('Start checks removed from the queue.');
@@ -165,9 +182,15 @@ describe('QueuedAdmissions', () => {
   it('locks every row control while a queue mutation is in flight', () => {
     renderQueue({ moving: true });
 
-    expect(screen.getByRole('button', { name: 'Remove Resume release from queue, Resuming 1 of 2' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Reorder Resume release, Resuming 1 of 2' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Move Resume release down, Resuming 1 of 2' })).toBeDisabled();
+    expect(
+      screen.getByRole('button', { name: 'Remove Resume release from queue, Resuming 1 of 2' }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole('button', { name: 'Reorder Resume release, Resuming 1 of 2' }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole('button', { name: 'Move Resume release down, Resuming 1 of 2' }),
+    ).toBeDisabled();
   });
 
   it('offers a retry when queued admissions cannot be loaded', () => {

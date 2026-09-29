@@ -78,7 +78,15 @@ export function Label({
     </Text>
   );
 }
-export function Icon({ name, color, size = 22 }: { name: IconName; color?: string; size?: number }) {
+export function Icon({
+  name,
+  color,
+  size = 22,
+}: {
+  name: IconName;
+  color?: string;
+  size?: number;
+}) {
   const t = useTheme();
   return <Ionicons name={name} size={size} color={color ?? t.text} />;
 }

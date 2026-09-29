@@ -145,7 +145,8 @@ function AdmissionRowActions({
         rowSuffix={rowSuffix}
         disabled={isMoving || !previous}
         onClick={() => {
-          if (previous) void preserveFocus(() => onMove(admission.ticket, previous.ticket, index - 1));
+          if (previous)
+            void preserveFocus(() => onMove(admission.ticket, previous.ticket, index - 1));
         }}
       >
         <ArrowUp className="size-3.5" aria-hidden />
@@ -206,7 +207,6 @@ const SortableAdmission = memo(function SortableAdmission({
     await operation();
     if (focused?.isConnected) focused.focus();
   };
-
 
   return (
     <SortableActivityRow

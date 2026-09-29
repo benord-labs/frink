@@ -10,10 +10,4 @@ import { setSubagentTaskPublisher } from './streaming/subagent-task-status';
 // instead, the publisher stays unset and the lane silently goes dark.
 setSubagentTaskPublisher((payload) => broadcastToRenderer('socket:subagent-task-changed', payload));
 
-export {
-  onExecuteRequest,
-  onStop,
-  sendMessage,
-  sendPermissionResponse,
-  sendStop,
-} from './client';
+export { onExecuteRequest, onStop, sendMessage, sendPermissionResponse, sendStop } from './client';

@@ -10,11 +10,6 @@
     }
   },
   "frink": {
-    "keywords": [
-      "postgres",
-      "database",
-      "auth",
-      "storage"
-    ]
+    "keywords": ["postgres", "database", "auth", "storage"]
   }
 }

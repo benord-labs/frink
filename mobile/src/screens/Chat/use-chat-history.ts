@@ -42,7 +42,12 @@ export function useChatHistory(chatId: string, current: MobileMessage[] | undefi
     if (stale()) return;
     setError(null);
     try {
-      const page = await request({ type: 'chat', id: chatId, subChatId, beforeMessageId: first.id });
+      const page = await request({
+        type: 'chat',
+        id: chatId,
+        subChatId,
+        beforeMessageId: first.id,
+      });
       if (stale()) return;
       setOlder((old) => [...page.messages, ...old]);
       setDone(!page.hasMore);
