@@ -309,7 +309,6 @@ function ToolbarIconButton({
   onClick,
   icon,
   label,
-  shortcut,
   shortcutId,
   disabled,
   className = 'p-1 rounded transition-colors',
@@ -318,7 +317,6 @@ function ToolbarIconButton({
   onClick: () => void;
   icon: React.ReactNode;
   label: string;
-  shortcut?: string;
   shortcutId?: ShortcutActionId;
   disabled?: boolean;
   className?: string;
@@ -352,8 +350,7 @@ function ToolbarIconButton({
         )}
       </TooltipTrigger>
       <TooltipContent side="bottom">
-        {label}{' '}
-        {shortcutId ? <Kbd shortcutId={shortcutId} /> : shortcut ? <Kbd>{shortcut}</Kbd> : null}
+        {label} {shortcutId ? <Kbd shortcutId={shortcutId} /> : null}
       </TooltipContent>
     </Tooltip>
   );
@@ -1849,7 +1846,7 @@ export function CodeEditorPanel() {
                 }}
                 icon={<X className="h-4 w-4 text-muted-foreground" />}
                 label="Close"
-                shortcut="Esc"
+                shortcutId="editor-close-panel"
               />
             </div>
           </div>

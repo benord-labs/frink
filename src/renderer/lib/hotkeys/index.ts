@@ -16,11 +16,10 @@ export {
   hotkeyStringToKeys,
   hotkeyToDisplay,
   isCustomHotkey,
+  keysToAriaLabel,
   keysToDisplayPlatform,
   keysToHotkeyString,
   keyToDisplay,
-  /** @public — consumed by the shortcut a11y work in PR #4. */
-  useResolvedHotkeyDisplay,
 } from './shortcut-registry';
 export type {
   CustomHotkeysConfig,

@@ -1,6 +1,4 @@
 /* eslint-disable max-lines, max-lines-per-function */
-import { useAtomValue } from 'jotai';
-import { customHotkeysAtom } from '../atoms';
 import type {
   CustomHotkeysConfig,
   ShortcutAction,
@@ -752,9 +750,8 @@ export function detectConflicts(
   return conflicts;
 }
 
-/**
- * Display mapping for special keys (Mac — symbols)
- */
+/** Display mapping for special keys (Mac — symbols). The Windows/Linux and screen-reader tables
+ * spread from it, so keys that read the same everywhere (Esc, Tab, arrows) are defined once. */
 const KEY_DISPLAY_MAP: Record<string, string> = {
   cmd: '⌘',
   meta: '⌘',
@@ -779,7 +776,8 @@ const KEY_DISPLAY_MAP: Record<string, string> = {
 };
 
 /**
- * Display mapping for special keys (Windows / Linux — text labels)
+ * Display mapping for special keys (Windows / Linux — text labels).
+ * Overrides only the keys that differ from the Mac glyphs; the spread is intentional.
  */
 const KEY_DISPLAY_MAP_NON_MAC: Record<string, string> = {
   ...KEY_DISPLAY_MAP,
@@ -796,9 +794,22 @@ const KEY_DISPLAY_MAP_NON_MAC: Record<string, string> = {
   minus: '-',
 };
 
+/** Screen-reader labels on macOS: VoiceOver reads only the aria-label, so it must name the Mac key
+ * and keep ⌘ (Command) distinct from ⌃ (Control). Other keys reuse the Windows/Linux words. */
+const KEY_ARIA_MAP_MAC: Record<string, string> = {
+  ...KEY_DISPLAY_MAP_NON_MAC,
+  cmd: 'Command',
+  meta: 'Command',
+  ctrl: 'Control',
+  opt: 'Option',
+  alt: 'Option',
+};
+
 /**
  * Reverse display map: symbol -> internal key name (first-match-wins)
  * e.g., "⌘" -> "cmd", "⇧" -> "shift"
+ * Built from the Mac glyphs only: shortcut search accepts typed or pasted glyphs ("⌘⇧N"),
+ * while Windows/Linux words ("ctrl+shift+n") already parse as internal names.
  */
 const DISPLAY_TO_KEY_MAP: Record<string, string> = {};
 for (const [key, display] of Object.entries(KEY_DISPLAY_MAP)) {
@@ -856,6 +867,7 @@ export function keyToDisplay(key: string): string {
 /**
  * Convert a hotkey string to display format
  * e.g., "cmd+shift+n" -> "⌘⇧N"
+ * Mac glyphs regardless of OS — use keysToDisplayPlatform for UI rendered on every platform.
  */
 export function hotkeyToDisplay(hotkey: string): string {
   return keysToDisplay(hotkey.split('+'));
@@ -864,6 +876,7 @@ export function hotkeyToDisplay(hotkey: string): string {
 /**
  * Convert keys array to display format
  * e.g., ["cmd", "shift", "N"] -> "⌘⇧N"
+ * Mac glyphs regardless of OS — use keysToDisplayPlatform for UI rendered on every platform.
  */
 export function keysToDisplay(keys: string[]): string {
   return keys.map((k) => keyToDisplay(k)).join('');
@@ -880,13 +893,21 @@ function keyToDisplayPlatform(key: string, isMac: boolean): string {
 }
 
 /**
- * Platform-aware keys-to-display.
+ * Platform-aware keys-to-display — the intended way to show a shortcut to the user.
  * Mac: ["cmd","shift","F"] → "⌘⇧F"  (no separator)
  * Non-Mac: ["cmd","shift","F"] → "Ctrl+Shift+F"  (+ separator)
+ * `Kbd` with a `shortcutId` is the canonical renderer and pairs this with keysToAriaLabel.
  */
 export function keysToDisplayPlatform(keys: string[], isMac: boolean): string {
   const parts = keys.map((k) => keyToDisplayPlatform(k, isMac));
   return isMac ? parts.join('') : parts.join('+');
+}
+
+/** Screen-reader text for a shortcut, always words: Mac ["cmd","shift","F"] → "Command+Shift+F";
+ * elsewhere identical to keysToDisplayPlatform ("Ctrl+Shift+F"). */
+export function keysToAriaLabel(keys: string[], isMac: boolean): string {
+  if (!isMac) return keysToDisplayPlatform(keys, false);
+  return keys.map((k) => KEY_ARIA_MAP_MAC[k.toLowerCase()] || k.toUpperCase()).join('+');
 }
 
 /**
@@ -898,14 +919,3 @@ export const CATEGORY_LABELS: Record<ShortcutCategory, string> = {
   agents: 'Agents',
   files: 'File Tree',
 };
-
-/**
- * React hook that resolves and formats a hotkey for display.
- * Returns a display string (e.g. "⌘K") or null if no binding exists.
- */
-export function useResolvedHotkeyDisplay(actionId: ShortcutActionId): string | null {
-  const config = useAtomValue(customHotkeysAtom);
-  const hotkey = getResolvedHotkey(actionId, config);
-  if (!hotkey) return null;
-  return hotkeyToDisplay(hotkey);
-}
