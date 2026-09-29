@@ -101,9 +101,8 @@ export interface ClaudeTurnContext {
   /** A steer was pushed into this turn. One it never read may run as a CLI turn of its own after
    * its result, with no reader, so the session is not kept idle for the next send. */
   steered: boolean;
-  /** When this turn began, for reads that must be scoped to it. The MCP execution context outlives
-   * a turn and never clears its recorded signal, and an adopting turn reuses the ARMING turn's
-   * context — so anything read from there is only THIS turn's if it postdates this stamp. */
+  /** When this turn began. The MCP execution context never clears its recorded signal and its wake
+   * bursts share it, so anything read from there is only THIS turn's if it postdates this stamp. */
   startedAt: string;
   /** This turn took over a wake hold and has not yet logged how it ended (logAdoptedTurnEnd). */
   adoptedHold?: boolean;

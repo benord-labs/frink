@@ -1637,8 +1637,8 @@ describe('claude-wake-hold — a turn that declared its work done', () => {
   });
 
   it('ignores a `done` older than the turn', () => {
-    // The signal slot is per EXECUTION CONTEXT and never cleared, and an adopting turn reuses the
-    // arming turn's context — so without the anchor an earlier turn's verdict would end this one.
+    // The signal slot is per execution context, never cleared, and shared by its wake bursts — so
+    // without the anchor an earlier verdict would end this wait.
     expect(declaresWaitOver(sig('done', '2025-01-01T00:00:00.000Z'), null, TURN_START)).toBe(false);
   });
 
