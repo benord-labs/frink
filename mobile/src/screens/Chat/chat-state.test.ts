@@ -1,25 +1,46 @@
 import { describe, expect, it } from 'vitest';
 import type { MobileChatSummary } from '@frink/shared/types/remote/mobile';
 import {
+  acceptsMessage,
   actionEnabled,
   chatPollInterval,
   composerMode,
 } from './chat-state';
 
 describe('composerMode', () => {
+  const typed = { text: 'Also this', files: 0 };
+  const empty = { text: ' ', files: 0 };
+
   it('sends when idle and ready, and says so when the Mac is not ready', () => {
-    expect(composerMode('idle', true, true)).toBe('send');
-    expect(composerMode('idle', true, false)).toBe('unavailable');
+    expect(composerMode('idle', typed, true, false)).toBe('send');
+    expect(composerMode('idle', typed, false, false)).toBe('unavailable');
   });
 
   it('steers typed text into a running turn and stops it when the box is empty', () => {
-    expect(composerMode('running', true, true)).toBe('steer');
-    expect(composerMode('running', false, true)).toBe('stop');
+    expect(composerMode('running', typed, true, false)).toBe('steer');
+    expect(composerMode('running', { text: '', files: 1 }, true, false)).toBe('stop');
   });
 
-  it('only offers Stop while Frink waits on background work, even with text typed', () => {
-    expect(composerMode('background', true, true)).toBe('stop');
-    expect(composerMode('background', false, true)).toBe('stop');
+  it('sends into a background wait, as desktop does, and stops it when the box is empty', () => {
+    expect(composerMode('background', typed, true, false)).toBe('send');
+    expect(composerMode('background', { text: '', files: 1 }, true, false)).toBe('send');
+    expect(composerMode('background', empty, true, false)).toBe('stop');
+    expect(composerMode('background', typed, false, false)).toBe('stop');
+  });
+
+  it('only offers Stop while a Flow step waits on background work', () => {
+    expect(composerMode('background', typed, true, true)).toBe('stop');
+    expect(composerMode('background', { text: '', files: 1 }, true, true)).toBe('stop');
+  });
+});
+
+describe('acceptsMessage', () => {
+  it('takes files and text when idle or in a plain chat’s background wait, with the Mac ready', () => {
+    expect(acceptsMessage('idle', true, false)).toBe(true);
+    expect(acceptsMessage('background', true, false)).toBe(true);
+    expect(acceptsMessage('background', false, false)).toBe(false);
+    expect(acceptsMessage('background', true, true)).toBe(false);
+    expect(acceptsMessage('running', true, false)).toBe(false);
   });
 });
 

@@ -5,19 +5,37 @@ import type {
 
 /**
  * What the composer's trailing button does right now.
- * - `send` starts a turn; `steer` joins the running one at its next step;
- * - `stop` ends the running turn (empty input) or background work (sending is impossible then);
+ * - `send` starts a turn, or takes over a background wait as a desktop send does;
+ * - `steer` joins the running turn at its next step;
+ * - `stop` ends the running turn, or background work that can't take a message right now;
  * - `unavailable` means the Mac can't run chats, so nothing can be sent.
  */
 export type ComposerMode = 'send' | 'steer' | 'stop' | 'unavailable';
 
+/**
+ * Whether a new message can start a turn: when idle, or by taking over a chat's background wait.
+ * A Flow step's wait belongs to its run, so the Mac refuses messages there until the step ends.
+ */
+export function acceptsMessage(
+  activity: MobileActivity,
+  executionReady: boolean,
+  flowRun: boolean,
+): boolean {
+  return executionReady && (activity === 'idle' || (activity === 'background' && !flowRun));
+}
+
 export function composerMode(
   activity: MobileActivity,
-  hasText: boolean,
+  draft: { text: string; files: number },
   executionReady: boolean,
+  flowRun: boolean,
 ): ComposerMode {
+  const hasText = !!draft.text.trim();
   if (activity === 'running') return hasText ? 'steer' : 'stop';
-  if (activity === 'background') return 'stop';
+  if (activity === 'background')
+    return acceptsMessage(activity, executionReady, flowRun) && (hasText || draft.files > 0)
+      ? 'send'
+      : 'stop';
   return executionReady ? 'send' : 'unavailable';
 }
 
@@ -35,9 +53,16 @@ export function actionEnabled(
   return !!draft.text.trim() || draft.files > 0;
 }
 
-export function composerPlaceholder(activity: MobileActivity, executionReady: boolean): string {
+export function composerPlaceholder(
+  activity: MobileActivity,
+  executionReady: boolean,
+  flowRun: boolean,
+): string {
   if (activity === 'running') return 'Guide Frink while it works';
-  if (activity === 'background') return 'Frink is waiting on background work';
+  if (activity === 'background')
+    return acceptsMessage(activity, executionReady, flowRun)
+      ? 'Message Frink while it waits'
+      : 'Frink is waiting on background work';
   return executionReady ? 'Message Frink' : 'Open Frink on your Mac to chat';
 }
 

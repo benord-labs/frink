@@ -104,7 +104,7 @@ export function useChatActions({
     ? { text: action.error, error: true }
     : undelivered && running
       ? { text: STEER_NOT_DELIVERED }
-      : data?.activity === 'background' && draft.value.trim()
+      : flowRun && data?.activity === 'background' && draft.value.trim()
         ? { text: 'Kept until the background work finishes.' }
         : null;
 

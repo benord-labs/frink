@@ -57,16 +57,48 @@ test.describe('reading a chat', () => {
     await expect(page.getByRole('button', { name: 'Attach', exact: true })).toHaveCount(0);
   });
 
-  test('a chat parked on background work offers Stop and says sending waits', async ({ page }) => {
-    await openApp(page, { data: { chat: conversation({}, 'background') } });
+  test('a message sent during a background wait takes it over, as on desktop', async ({ page }) => {
+    const state = await openApp(page, { data: { chat: conversation({}, 'background') } });
     await openChat(page);
     await expect(page.getByTestId('chat-subtitle')).toHaveText('Chat · frink·Background');
+    await expect(messageBox(page)).toHaveAttribute('placeholder', 'Message Frink while it waits');
+    // Empty, the box stops the work; typing turns Stop into Send beside the same attach button.
+    await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeEnabled();
+    await expect(page.getByRole('button', { name: 'Attach', exact: true })).toBeVisible();
+    await page.screenshot({ path: 'test-results/chat-background-empty-dark.png' });
+    await messageBox(page).fill('Also check the staging logs');
+    await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Attach', exact: true })).toBeVisible();
+    await page.screenshot({ path: 'test-results/chat-background-typed-dark.png' });
+    await page.emulateMedia({ colorScheme: 'light' });
+    await page.screenshot({ path: 'test-results/chat-background-typed-light.png' });
+    state.data.chat = conversation({}, 'running');
+    await send(page).click();
+    await expect
+      .poll(() => requestsOf(state, 'sendMessage'))
+      .toEqual([
+        expect.objectContaining({
+          chatId: 'chat-1',
+          subChatId: 'sub-1',
+          text: 'Also check the staging logs',
+        }),
+      ]);
+    expect(requestsOf(state, 'steerMessage')).toHaveLength(0);
+    await expect(messageBox(page)).toHaveValue('');
+    await expect(page.getByTestId('chat-subtitle')).toHaveText('Chat · frink·Running');
+  });
+
+  test('a Flow step waiting on background work only offers Stop run', async ({ page }) => {
+    await openApp(page, { data: { chat: conversation({ kind: 'flow' }, 'background') } });
+    await openChat(page);
+    await expect(page.getByTestId('chat-subtitle')).toHaveText('Flow · frink·Background');
     await expect(messageBox(page)).toHaveAttribute('placeholder', 'Frink is waiting on background work');
     await messageBox(page).fill('Also check the staging logs');
     await expect(page.getByText('Kept until the background work finishes.')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Stop run', exact: true })).toBeEnabled();
     await expect(send(page)).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeEnabled();
-    await page.screenshot({ path: 'test-results/chat-background-dark.png' });
+    await expect(page.getByRole('button', { name: 'Attach', exact: true })).toHaveCount(0);
+    await page.screenshot({ path: 'test-results/chat-flow-background-dark.png' });
   });
 
   test('a failed response is shown in the conversation', async ({ page }) => {
