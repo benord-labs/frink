@@ -2,7 +2,7 @@ import { useAtomValue } from 'jotai';
 import * as React from 'react';
 import { customHotkeysAtom } from '../../lib/atoms';
 import type { ShortcutActionId } from '../../lib/hotkeys';
-import { getResolvedKeys, getShortcutAction, keysToDisplayPlatform } from '../../lib/hotkeys';
+import { getResolvedKeys, keysToAriaLabel, keysToDisplayPlatform } from '../../lib/hotkeys';
 import { cn } from '../../lib/utils';
 import { isMacOS } from '../../lib/utils/platform';
 import { Command, CornerDownLeft, OptionIcon, ArrowBigUp } from 'lucide-react';
@@ -11,6 +11,9 @@ type KbdProps = React.HTMLAttributes<HTMLElement> & {
   /** When provided, resolves the shortcut display from the registry (platform-aware, respects custom overrides). */
   shortcutId?: ShortcutActionId;
 };
+
+const KBD_CLASS =
+  'pointer-events-none inline-flex items-center gap-0.5 text-xs leading-none font-medium uppercase tracking-wide text-muted-foreground/60';
 
 // Regex pattern for parsing keyboard shortcut symbols - hoisted to module level for performance
 const SHORTCUT_SYMBOL_REGEX = /([⌘⌥⇧⌃↵])/g;
@@ -48,41 +51,42 @@ function renderShortcut(children: React.ReactNode): React.ReactNode {
   return parts;
 }
 
-/** Resolves aria-label from default keys (no atom subscription needed). */
-function getShortcutAriaLabel(shortcutId: ShortcutActionId): string | undefined {
-  const action = getShortcutAction(shortcutId);
-  if (!action) return undefined;
-  // Always use text representation for screen readers (e.g., "Ctrl+Shift+F")
-  return keysToDisplayPlatform(action.defaultKeys, false);
-}
-
 /**
- * Inner component that subscribes to customHotkeysAtom.
- * Only mounted when shortcutId is provided, so Kbd instances without
- * shortcutId avoid the atom subscription entirely.
+ * Registry-backed shortcut hint. Subscribes to customHotkeysAtom so both the visible keys and
+ * the aria-label follow the user's binding; an unbound shortcut renders empty and unlabelled.
  */
-function ShortcutDisplay({ shortcutId }: { shortcutId: ShortcutActionId }) {
+const ShortcutKbd = React.forwardRef<
+  HTMLElement,
+  Omit<KbdProps, 'children' | 'shortcutId'> & { shortcutId: ShortcutActionId }
+>(({ className, shortcutId, ...props }, ref) => {
   const config = useAtomValue(customHotkeysAtom);
   const mac = isMacOS();
   const keys = getResolvedKeys(shortcutId, config);
-  if (!keys || keys.length === 0) return null;
-  const display = keysToDisplayPlatform(keys, mac);
-  return <>{mac ? renderShortcut(display) : display}</>;
-}
+  const hasKeys = keys !== null && keys.length > 0;
+  const display = hasKeys ? keysToDisplayPlatform(keys, mac) : null;
+  return (
+    <kbd
+      ref={ref}
+      aria-label={hasKeys ? keysToAriaLabel(keys, mac) : undefined}
+      className={cn(KBD_CLASS, className)}
+      {...props}
+    >
+      {display !== null && mac ? renderShortcut(display) : display}
+    </kbd>
+  );
+});
+ShortcutKbd.displayName = 'ShortcutKbd';
 
+/** Shortcut hint. With `shortcutId`: the user's binding, ⌘⇧F on Mac / Ctrl+Shift+F elsewhere by
+ * design, aria-label in words (a caller's wins). Without it, `children` render as given. */
 const Kbd = React.forwardRef<HTMLElement, KbdProps>(
   ({ className, children, shortcutId, ...props }, ref) => {
+    if (shortcutId) {
+      return <ShortcutKbd ref={ref} shortcutId={shortcutId} className={className} {...props} />;
+    }
     return (
-      <kbd
-        ref={ref}
-        aria-label={shortcutId ? getShortcutAriaLabel(shortcutId) : undefined}
-        className={cn(
-          'pointer-events-none inline-flex items-center gap-0.5 text-xs leading-none font-medium uppercase tracking-wide text-muted-foreground/60',
-          className,
-        )}
-        {...props}
-      >
-        {shortcutId ? <ShortcutDisplay shortcutId={shortcutId} /> : renderShortcut(children)}
+      <kbd ref={ref} className={cn(KBD_CLASS, className)} {...props}>
+        {renderShortcut(children)}
       </kbd>
     );
   },

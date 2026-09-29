@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { keyToDisplay } from './shortcut-registry';
 
 /**
  * Hook options for hotkey recording
@@ -18,7 +19,10 @@ type UseHotkeyRecorderOptions = {
 type UseHotkeyRecorderResult = {
   /** Currently pressed keys during recording */
   currentKeys: string[];
-  /** Current combination as a display string (e.g., "⌘⇧") */
+  /**
+   * Current combination as a display string (e.g., "⌘⇧"). Uses the registry's Mac glyph
+   * table, so it matches `hotkeyToDisplay` of the recorded hotkey.
+   */
   currentDisplay: string;
   /** Ref to attach to the recording element */
   recorderRef: React.RefObject<HTMLDivElement | null>;
@@ -69,30 +73,6 @@ const KEY_MAP: Record<string, string> = {
 };
 
 /**
- * Display mapping for keys
- */
-const DISPLAY_MAP: Record<string, string> = {
-  cmd: '⌘',
-  ctrl: '⌃',
-  opt: '⌥',
-  shift: '⇧',
-  // biome-ignore lint/style/useNamingConvention: KeyboardEvent.key canonical names
-  Esc: 'Esc',
-  // biome-ignore lint/style/useNamingConvention: KeyboardEvent.key canonical names
-  Enter: '↵',
-  // biome-ignore lint/style/useNamingConvention: KeyboardEvent.key canonical names
-  Backspace: '⌫',
-  // biome-ignore lint/style/useNamingConvention: KeyboardEvent.key canonical names
-  Delete: '⌦',
-  // biome-ignore lint/style/useNamingConvention: KeyboardEvent.key canonical names
-  Tab: 'Tab',
-  // biome-ignore lint/style/useNamingConvention: KeyboardEvent.key canonical names
-  Space: 'Space',
-  plus: '+',
-  minus: '−',
-};
-
-/**
  * Modifiers in display order
  */
 const MODIFIER_ORDER = ['cmd', 'ctrl', 'opt', 'shift'];
@@ -121,13 +101,6 @@ function eventKeyToInternal(e: KeyboardEvent): string {
 }
 
 /**
- * Convert internal key to display format
- */
-function keyToDisplay(key: string): string {
-  return DISPLAY_MAP[key] || key;
-}
-
-/**
  * Build hotkey string from modifiers and key
  */
 function buildHotkeyString(modifiers: Set<string>, key: string | null): string {
@@ -148,9 +121,8 @@ function buildHotkeyString(modifiers: Set<string>, key: string | null): string {
   return parts.join('+');
 }
 
-/**
- * Build display string from modifiers and key
- */
+/** Build display string from modifiers (in MODIFIER_ORDER) and key. The registry's `keyToDisplay`
+ * maps both the recorder's names (`Esc`, `Enter`, …) and its pre-mapped arrow glyphs. */
 function buildDisplayString(modifiers: Set<string>, key: string | null): string {
   const parts: string[] = [];
 

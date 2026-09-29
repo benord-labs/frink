@@ -15,6 +15,7 @@ const {
   hotkeyMatchesQuery,
   hotkeyStringToKeys,
   hotkeyToDisplay,
+  keysToAriaLabel,
   keysToDisplayPlatform,
   keysToHotkeyString,
   normalizeHotkey,
@@ -246,6 +247,33 @@ describe('shortcut-registry', () => {
 
     it('falls back to an upper-cased label for unmapped keys', () => {
       expect(keysToDisplayPlatform(['cmd', 'k'], false)).toBe('Ctrl+K');
+    });
+  });
+
+  // Screen readers read the aria-label, not the glyph icons, so it must name the key the
+  // user actually presses on their OS — ⌘ and ⌃ are different keys on a Mac.
+  describe('keysToAriaLabel', () => {
+    it('names Mac modifiers in words so Cmd and Ctrl stay distinct', () => {
+      expect(keysToAriaLabel(['cmd', 'shift', 'B'], true)).toBe('Command+Shift+B');
+      expect(keysToAriaLabel(['ctrl', 'opt', 'K'], true)).toBe('Control+Option+K');
+      expect(keysToAriaLabel(['meta', 'alt', 'K'], true)).toBe('Command+Option+K');
+    });
+
+    it('matches the visible text form on Windows/Linux', () => {
+      for (const keys of [
+        ['cmd', 'shift', 'B'],
+        ['ctrl', 'opt', 'K'],
+        ['cmd', 'minus'],
+      ]) {
+        expect(keysToAriaLabel(keys, false)).toBe(keysToDisplayPlatform(keys, false));
+      }
+    });
+
+    it('never emits a modifier glyph on either platform', () => {
+      for (const mac of [true, false]) {
+        const label = keysToAriaLabel(['cmd', 'ctrl', 'opt', 'shift', 'enter', 'backspace'], mac);
+        expect(label).not.toMatch(/[⌘⌃⌥⇧↵⌫]/);
+      }
     });
   });
 });
