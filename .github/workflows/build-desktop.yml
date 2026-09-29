@@ -138,7 +138,7 @@ jobs:
 
       - name: Provision the Electron binary
         run: bun run electron:download
-        # electron@43 declares no install lifecycle script, so `bun install` above does not fetch the
+        # electron (43+) declares no install lifecycle script, so `bun install` above does not fetch the
         # ~120MB binary — it is downloaded lazily by whichever process first requires electron. The
         # only such process in this job is the Electron smoke step (`npx electron` → cli.js →
         # index.js → getElectronPath() → downloadElectron()), where a fetch failure surfaces as a
