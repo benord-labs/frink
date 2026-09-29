@@ -35,13 +35,19 @@ vi.mock('./sprite', () => {
 
 const { MascotWalkOn } = await import('./index');
 
+// happy-dom's Web Animations never advance on their own, so an awaited `.finished` hangs the
+// proof forever. Without `animate` the chalkboard resolves each step at once (its no-animation path).
+const { animate } = Element.prototype;
+
 beforeEach(() => {
   vi.useFakeTimers();
   Object.defineProperty(window, 'innerWidth', { value: 1000, writable: true });
+  Object.defineProperty(Element.prototype, 'animate', { value: undefined, configurable: true });
 });
 
 afterEach(() => {
   vi.useRealTimers();
+  Object.defineProperty(Element.prototype, 'animate', { value: animate, configurable: true });
 });
 
 function renderMascot() {
