@@ -392,8 +392,5 @@
   },
   "patchedDependencies": {
     "@tailwindcss/typography@0.5.20": "patches/@tailwindcss%2Ftypography@0.5.20.patch"
-  },
-  "overrides": {
-    "mermaid": "^12.0.0"
   }
 }
