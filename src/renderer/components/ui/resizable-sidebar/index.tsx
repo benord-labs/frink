@@ -38,11 +38,22 @@ function isCompactPanel(panel: HTMLElement): boolean {
 
 /** A split pane shows at most one side panel. In a Compact pane the panel replaces the chat, so
  *  focus follows it in (on open, or when a resize hides the focused chat) and back on close. */
-function showOnePanelPerPane(panel: HTMLElement, close: () => void): () => void {
-  const paneBody = panel.closest('[data-pane-body]');
+/** The panel currently marking each pane body open, so a closing panel never clears its successor. */
+const paneBodyOwners = new WeakMap<HTMLElement, HTMLElement>();
+
+function showOnePanelPerPane(
+  panel: HTMLElement,
+  tier: 'narrow' | 'wide',
+  close: () => void,
+): () => void {
+  const paneBody = panel.closest<HTMLElement>('[data-pane-body]');
   if (!paneBody) return () => {};
   // Read before the style read below, which lets the browser blur the now-hidden chat.
   const returnFocusTo = document.activeElement;
+  // Hides the chat behind a Compact panel (PANE_CHAT_BEHIND_PANEL_CLASS). An attribute, not
+  // `:has()`: Chromium restyles the whole document for a non-subject `:has()` on every DOM change.
+  paneBody.dataset.panePanelOpen = tier;
+  paneBodyOwners.set(paneBody, panel);
   paneBody.dispatchEvent(new CustomEvent(PANE_PANEL_OPEN_EVENT, { detail: panel }));
   if (isCompactPanel(panel) && !panel.contains(returnFocusTo)) focusFirstVisible(panel);
 
@@ -65,6 +76,10 @@ function showOnePanelPerPane(panel: HTMLElement, close: () => void): () => void 
   return () => {
     paneBody.removeEventListener(PANE_PANEL_OPEN_EVENT, closeWhenAnotherOpens);
     paneBody.removeEventListener('focusout', followHiddenFocus);
+    if (paneBodyOwners.get(paneBody) === panel) {
+      paneBodyOwners.delete(paneBody);
+      delete paneBody.dataset.panePanelOpen;
+    }
     if (!(returnFocusTo instanceof HTMLElement) || !paneBody.contains(returnFocusTo)) return;
     // Whatever the tier was on open: the chat may stay hidden until the panel leaves the DOM,
     // so restore on the next frame, and only if focus was lost with the panel.
@@ -145,8 +160,8 @@ export function ResizableSidebar({
   useLayoutEffect(() => {
     const panel = sidebarRef.current;
     if (!isOpen || !panel) return;
-    return showOnePanelPerPane(panel, () => onCloseRef.current?.());
-  }, [isOpen]);
+    return showOnePanelPerPane(panel, paneTier, () => onCloseRef.current?.());
+  }, [isOpen, paneTier]);
 
   useLayoutEffect(() => {
     if (!preserveChildrenWhenClosed || isOpen) return;

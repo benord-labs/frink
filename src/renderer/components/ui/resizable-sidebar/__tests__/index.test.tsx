@@ -113,6 +113,21 @@ describe('ResizableSidebar in a split pane', () => {
     expect(document.querySelectorAll('[data-pane-panel]')).toHaveLength(1);
   });
 
+  it('marks the pane body while a panel is open, and the newest panel owns the mark', () => {
+    const props = { onCloseFiles: vi.fn(), onCloseTerminal: vi.fn() };
+    const { container, rerender } = render(<PanePanels files terminal={false} {...props} />);
+    const paneBody = container.querySelector('[data-pane-body]');
+    expect(paneBody).toHaveAttribute('data-pane-panel-open', 'wide');
+
+    // The terminal opens before the file tree's cleanup runs; that cleanup must not clear its mark.
+    rerender(<PanePanels files terminal {...props} />);
+    rerender(<PanePanels files={false} terminal {...props} />);
+    expect(paneBody).toHaveAttribute('data-pane-panel-open', 'wide');
+
+    rerender(<PanePanels files={false} terminal={false} {...props} />);
+    expect(paneBody).not.toHaveAttribute('data-pane-panel-open');
+  });
+
   it.each([
     [160, 'narrow', '@max-[22.5rem]/pane:absolute'],
     [350, 'wide', '@max-[34.5rem]/pane:absolute'],

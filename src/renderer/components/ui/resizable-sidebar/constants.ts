@@ -29,8 +29,8 @@ export const PANE_WIDE_PANEL_CLASS = [
 ].join(' ');
 /** The chat column while a Compact panel fills its pane: hidden (so unfocusable) but still running. */
 export const PANE_CHAT_BEHIND_PANEL_CLASS = [
-  '@max-[22.5rem]/pane:group-has-[[data-pane-panel]]/pane-body:invisible',
-  '@max-[34.5rem]/pane:group-has-[[data-pane-panel=wide]]/pane-body:invisible',
+  '@max-[22.5rem]/pane:group-data-pane-panel-open/pane-body:invisible',
+  '@max-[34.5rem]/pane:group-data-[pane-panel-open=wide]/pane-body:invisible',
 ].join(' ');
 
 export const UI_TEXT = {

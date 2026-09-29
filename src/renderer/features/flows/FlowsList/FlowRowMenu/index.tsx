@@ -143,7 +143,7 @@ export function FlowRowMenu({ flow, enabled, hasDraft, onDelete }: FlowRowMenuPr
           size="icon"
           iconOnly
           aria-label={`More actions for ${flow.name}`}
-          className="size-7 text-muted-foreground opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-has-focus-visible:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
+          className="size-7 text-muted-foreground opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
         >
           <MoreHorizontal className="size-4" aria-hidden />
         </Button>
