@@ -1,6 +1,16 @@
 import { z } from 'zod';
 import type { PermissionPresentation } from '../../types/permissions';
 
+/** Recursive schemas such as `z.json()` accept cyclic input, which JSON cannot represent. */
+function isSerializable(value: unknown): boolean {
+  try {
+    JSON.stringify(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const permissionPresentationSchema: z.ZodType<PermissionPresentation> = z
   .object({
     type: z.literal('custom-node-registration'),
@@ -39,7 +49,7 @@ const permissionPresentationSchema: z.ZodType<PermissionPresentation> = z
     credentialNames: z.array(z.string()),
     test: z
       .object({
-        config: z.record(z.string(), z.json()),
+        config: z.record(z.string(), z.json()).refine(isSerializable),
         timeoutMs: z.number().int().positive().safe(),
       })
       .strict()
