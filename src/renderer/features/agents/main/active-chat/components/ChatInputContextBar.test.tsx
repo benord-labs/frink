@@ -6,6 +6,7 @@ import type { MouseEvent, ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { stubLayout } from '@/lib/hooks/priority-overflow/layout-stub';
+import { heldSubChatsAtom } from '@/lib/stores/active-transport-registry';
 import { loadingSubChatsAtom } from '../../../atoms';
 import { ChatInputContextBar } from './ChatInputContextBar';
 
@@ -256,6 +257,7 @@ afterEach(() => {
   mockWorktreesError = false;
   mockActiveRunChatIds = [];
   store.set(loadingSubChatsAtom, new Map());
+  store.set(heldSubChatsAtom, new Map());
   deleteMutationMode = 'success';
   lastBranchSelectorProps = undefined;
 });
@@ -778,8 +780,18 @@ describe('ChatInputContextBar', () => {
       expect(await screen.findByTestId('delete-branch-dialog')).toBeInTheDocument();
     });
 
-    it('locks while a sibling sub-chat of the same chat streams', () => {
-      store.set(loadingSubChatsAtom, new Map([['sub-other', 'chat-123']]));
+    it.each([
+      [
+        'a sibling sub-chat streams',
+        () => store.set(loadingSubChatsAtom, new Map([['s', 'chat-123']])),
+      ],
+      [
+        'a sub-chat is wake-held but nothing streams',
+        () => store.set(heldSubChatsAtom, new Map([['s', 'chat-123']])),
+      ],
+    ])('locks while %s', (_, seed) => {
+      mockWorktrees = LINKED_WORKTREES;
+      seed();
       renderBar(
         <ChatInputContextBar
           worktreePath="/tmp/project"
@@ -790,6 +802,7 @@ describe('ChatInputContextBar', () => {
       );
 
       expect(screen.queryByTestId('branch-selector')).toBeNull();
+      expect(screen.queryByTestId('worktree-picker')).toBeNull();
       expect(
         screen.getByLabelText('Branch: main — Locked while this chat has a run in progress.'),
       ).toBeInTheDocument();
