@@ -1,7 +1,10 @@
 import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ZodError } from 'zod';
+import { FlowVersionConflictError } from '../../db/repos/flow-versions';
+import { FlowCopyNoSavedVersionError, FlowCopyNotFoundError } from '../../db/repos/flows';
 import { TerminalResumeAdmissionError } from '../../flows/admission/terminal-resume';
+import { flowsRouter } from './flows';
 
 const createFlowVersionMock = vi.fn();
 const copyFlowMock = vi.fn();
@@ -210,7 +213,6 @@ describe('flowsRouter (local)', () => {
   describe('copy', () => {
     it('copies a flow and returns only the new ID', async () => {
       copyFlowMock.mockResolvedValueOnce({ id: 'flow-copy' });
-      const { flowsRouter } = await import('./flows');
       const caller = flowsRouter.createCaller({ getWindow: () => null });
 
       await expect(caller.copy({ id: 'flow-source' })).resolves.toEqual({ id: 'flow-copy' });
@@ -220,8 +222,6 @@ describe('flowsRouter (local)', () => {
     });
 
     it('maps missing, inactive, and foreign sources to the same NOT_FOUND response', async () => {
-      const { FlowCopyNotFoundError } = await import('../../db/repos/flows');
-      const { flowsRouter } = await import('./flows');
       const caller = flowsRouter.createCaller({ getWindow: () => null });
 
       for (const source of ['missing', 'inactive', 'foreign']) {
@@ -234,9 +234,7 @@ describe('flowsRouter (local)', () => {
     });
 
     it('maps a never-saved source to PRECONDITION_FAILED', async () => {
-      const { FlowCopyNoSavedVersionError } = await import('../../db/repos/flows');
       copyFlowMock.mockRejectedValueOnce(new FlowCopyNoSavedVersionError());
-      const { flowsRouter } = await import('./flows');
       const caller = flowsRouter.createCaller({ getWindow: () => null });
 
       await expect(caller.copy({ id: 'flow-source' })).rejects.toMatchObject({
@@ -247,7 +245,6 @@ describe('flowsRouter (local)', () => {
 
     it('hides unexpected database details behind a generic error', async () => {
       copyFlowMock.mockRejectedValueOnce(new Error('SQLITE_CONSTRAINT secret detail'));
-      const { flowsRouter } = await import('./flows');
       const caller = flowsRouter.createCaller({ getWindow: () => null });
 
       await expect(caller.copy({ id: 'flow-source' })).rejects.toMatchObject({
@@ -262,7 +259,6 @@ describe('flowsRouter (local)', () => {
       'maps a pause-only update (%s) without changing capacity',
       async (paused) => {
         updateFlowAdmissionSettingsMock.mockResolvedValue({ queue_paused: paused });
-        const { flowsRouter } = await import('./flows');
         const caller = flowsRouter.createCaller({ getWindow: () => null });
         await expect(caller.updateAdmissionSettings({ queue_paused: paused })).resolves.toEqual({
           queue_paused: paused,
@@ -284,7 +280,6 @@ describe('flowsRouter (local)', () => {
         ...settings,
         concurrency_limit_enabled: false,
       });
-      const { flowsRouter } = await import('./flows');
       const caller = flowsRouter.createCaller({ getWindow: () => null });
 
       await expect(caller.getAdmissionSettings()).resolves.toEqual(settings);
@@ -301,7 +296,6 @@ describe('flowsRouter (local)', () => {
     });
 
     it('rejects a maximum outside 1–100 before updating config', async () => {
-      const { flowsRouter } = await import('./flows');
       const caller = flowsRouter.createCaller({ getWindow: () => null });
 
       await expect(caller.updateAdmissionSettings({ max_concurrent_runs: 101 })).rejects.toThrow();
@@ -310,7 +304,6 @@ describe('flowsRouter (local)', () => {
 
     it('accepts 100 and forwards only the provided setting', async () => {
       updateFlowAdmissionSettingsMock.mockResolvedValue({});
-      const { flowsRouter } = await import('./flows');
       const caller = flowsRouter.createCaller({ getWindow: () => null });
 
       await caller.updateAdmissionSettings({ max_concurrent_runs: 100 });
@@ -319,7 +312,6 @@ describe('flowsRouter (local)', () => {
     });
 
     it('rejects an empty update before updating config', async () => {
-      const { flowsRouter } = await import('./flows');
       const caller = flowsRouter.createCaller({ getWindow: () => null });
 
       await expect(caller.updateAdmissionSettings({})).rejects.toThrow(
@@ -332,7 +324,6 @@ describe('flowsRouter (local)', () => {
   describe('Work Queue admissions', () => {
     it('kicks a stalled drain on every poll without waiting on it', async () => {
       queuedFlowAdmissionsMock.mockReturnValueOnce([]);
-      const { flowsRouter } = await import('./flows');
       const caller = flowsRouter.createCaller({ getWindow: () => null });
 
       await expect(caller.workQueueAdmissions()).resolves.toEqual([]);
@@ -356,7 +347,6 @@ describe('flowsRouter (local)', () => {
           ticket: 13,
         },
       ]);
-      const { flowsRouter } = await import('./flows');
       const caller = flowsRouter.createCaller({ getWindow: () => null });
 
       await expect(caller.workQueueAdmissions()).resolves.toEqual([
@@ -380,7 +370,6 @@ describe('flowsRouter (local)', () => {
 
     it('validates tickets and passes authenticated ownership to the serialized mutation', async () => {
       moveQueuedFlowAdmissionMock.mockResolvedValueOnce({ status: 'moved' });
-      const { flowsRouter } = await import('./flows');
       const caller = flowsRouter.createCaller({ getWindow: () => null });
 
       await expect(
@@ -395,7 +384,6 @@ describe('flowsRouter (local)', () => {
     it('removes a queued ticket as a dequeue rather than a plain run cancel', async () => {
       queuedAdmissionRunMock.mockReturnValueOnce({ flowRunId: 'run-12' });
       cancelFlowRunMock.mockResolvedValueOnce({ id: 'run-12', status: 'cancelled' });
-      const { flowsRouter } = await import('./flows');
       const caller = flowsRouter.createCaller({ getWindow: () => null });
 
       await expect(caller.cancelWorkQueueAdmission({ ticket: 12 })).resolves.toEqual({
@@ -409,7 +397,6 @@ describe('flowsRouter (local)', () => {
     });
 
     it("reports stale without cancelling when the ticket is no longer this user's queued work", async () => {
-      const { flowsRouter } = await import('./flows');
       const caller = flowsRouter.createCaller({ getWindow: () => null });
 
       await expect(caller.cancelWorkQueueAdmission({ ticket: 12 })).resolves.toEqual({
@@ -421,7 +408,6 @@ describe('flowsRouter (local)', () => {
     it('reports stale when the admission was claimed before the engine could dequeue it', async () => {
       queuedAdmissionRunMock.mockReturnValueOnce({ flowRunId: 'run-12' });
       cancelFlowRunMock.mockResolvedValueOnce(null);
-      const { flowsRouter } = await import('./flows');
       const caller = flowsRouter.createCaller({ getWindow: () => null });
 
       await expect(caller.cancelWorkQueueAdmission({ ticket: 12 })).resolves.toEqual({
@@ -432,8 +418,6 @@ describe('flowsRouter (local)', () => {
 
   describe('saveVersion', () => {
     it('maps FlowVersionConflictError to TRPC CONFLICT', async () => {
-      const { FlowVersionConflictError } = await import('../../db/repos/flow-versions');
-      const { flowsRouter } = await import('./flows');
       createFlowVersionMock.mockRejectedValueOnce(new FlowVersionConflictError('flow-1', 0, 3));
       const caller = flowsRouter.createCaller({ getWindow: () => null });
       await expect(
@@ -452,8 +436,6 @@ describe('flowsRouter (local)', () => {
     });
 
     it('sets TRPCError cause to the FlowVersionConflictError', async () => {
-      const { FlowVersionConflictError } = await import('../../db/repos/flow-versions');
-      const { flowsRouter } = await import('./flows');
       const conflict = new FlowVersionConflictError('flow-1', 0, 3);
       createFlowVersionMock.mockRejectedValueOnce(conflict);
       const caller = flowsRouter.createCaller({ getWindow: () => null });
@@ -472,7 +454,6 @@ describe('flowsRouter (local)', () => {
     });
 
     it('re-throws non-conflict exceptions unchanged', async () => {
-      const { flowsRouter } = await import('./flows');
       createFlowVersionMock.mockRejectedValueOnce(new Error('disk full'));
       const caller = flowsRouter.createCaller({ getWindow: () => null });
       await expect(
@@ -484,7 +465,6 @@ describe('flowsRouter (local)', () => {
     });
 
     it('passes graph settings through to createFlowVersion without stripping', async () => {
-      const { flowsRouter } = await import('./flows');
       const flowId = '550e8400-e29b-41d4-a716-446655440000';
       const projectId = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';
       createFlowVersionMock.mockResolvedValueOnce({
@@ -523,7 +503,6 @@ describe('flowsRouter (local)', () => {
 
   describe('list', () => {
     it('resolves to adapted flow rows when authenticated', async () => {
-      const { flowsRouter } = await import('./flows');
       listFlowsMock.mockResolvedValueOnce([
         {
           id: '550e8400-e29b-41d4-a716-446655440001',
@@ -560,7 +539,6 @@ describe('flowsRouter (local)', () => {
     });
 
     it('enriches each flow with its latest active run (running indicator)', async () => {
-      const { flowsRouter } = await import('./flows');
       const flowId = '550e8400-e29b-41d4-a716-446655440001';
       listFlowsMock.mockResolvedValueOnce([
         {
@@ -616,7 +594,6 @@ describe('flowsRouter (local)', () => {
     });
 
     it('surfaces a queued terminal resume only when no active run exists', async () => {
-      const { flowsRouter } = await import('./flows');
       const flowId = '550e8400-e29b-41d4-a716-446655440001';
       const flowRows = [
         {
@@ -705,7 +682,6 @@ describe('flowsRouter (local)', () => {
           ],
         ]),
       );
-      const { flowsRouter } = await import('./flows');
       const caller = flowsRouter.createCaller({ getWindow: () => null });
 
       await expect(caller.listRuns({ flowId: 'flow-1' })).resolves.toEqual([
@@ -753,7 +729,6 @@ describe('flowsRouter (local)', () => {
           ],
         ]),
       );
-      const { flowsRouter } = await import('./flows');
 
       await expect(
         flowsRouter.createCaller({ getWindow: () => null }).startRun({ flowId: 'flow-1' }),
@@ -795,7 +770,6 @@ describe('flowsRouter (local)', () => {
           ],
         ]),
       );
-      const { flowsRouter } = await import('./flows');
 
       await expect(
         flowsRouter.createCaller({ getWindow: () => null }).startRun({ flowId: 'flow-1' }),
@@ -835,7 +809,6 @@ describe('flowsRouter (local)', () => {
           ],
         ]),
       );
-      const { flowsRouter } = await import('./flows');
 
       await expect(
         flowsRouter.createCaller({ getWindow: () => null }).getRun({ runId: run.id }),
@@ -874,7 +847,6 @@ describe('flowsRouter (local)', () => {
           ],
         ]),
       );
-      const { flowsRouter } = await import('./flows');
 
       await expect(
         flowsRouter.createCaller({ getWindow: () => null }).getRun({ runId: run.id }),
@@ -886,7 +858,6 @@ describe('flowsRouter (local)', () => {
     const flowId = '550e8400-e29b-41d4-a716-446655440000';
 
     it('resolves to adapted flow-with-version when found', async () => {
-      const { flowsRouter } = await import('./flows');
       getFlowByIdMock.mockResolvedValueOnce({
         id: flowId,
         projectId: null,
@@ -916,7 +887,6 @@ describe('flowsRouter (local)', () => {
     });
 
     it('throws NOT_FOUND when the flow does not exist', async () => {
-      const { flowsRouter } = await import('./flows');
       getFlowByIdMock.mockResolvedValueOnce(null);
       const caller = flowsRouter.createCaller({ getWindow: () => null });
       await expect(caller.get({ id: flowId })).rejects.toMatchObject({ code: 'NOT_FOUND' });
@@ -932,7 +902,6 @@ describe('flowsRouter (local)', () => {
     };
 
     it('returns the adapted briefing stash on success', async () => {
-      const { flowsRouter } = await import('./flows');
       createBriefingStashMock.mockResolvedValueOnce({
         id: '550e8400-e29b-41d4-a716-4466554400aa',
         name: 'Epic stash',
@@ -959,7 +928,6 @@ describe('flowsRouter (local)', () => {
     });
 
     it('re-throws repo exceptions', async () => {
-      const { flowsRouter } = await import('./flows');
       createBriefingStashMock.mockRejectedValueOnce(new Error('disk failure'));
       const caller = flowsRouter.createCaller({ getWindow: () => null });
       await expect(caller.createStash(stashInput)).rejects.toThrow('disk failure');
@@ -970,7 +938,6 @@ describe('flowsRouter (local)', () => {
     const runId = '550e8400-e29b-41d4-a716-446655440010';
 
     it('returns the adapted run detail when found', async () => {
-      const { flowsRouter } = await import('./flows');
       cancelFlowRunMock.mockResolvedValueOnce({
         id: runId,
         flowVersionId: '550e8400-e29b-41d4-a716-446655440011',
@@ -989,14 +956,12 @@ describe('flowsRouter (local)', () => {
     });
 
     it('throws NOT_FOUND when run does not exist', async () => {
-      const { flowsRouter } = await import('./flows');
       cancelFlowRunMock.mockResolvedValueOnce(null);
       const caller = flowsRouter.createCaller({ getWindow: () => null });
       await expect(caller.cancelRun({ runId })).rejects.toMatchObject({ code: 'NOT_FOUND' });
     });
 
     it('re-throws engine exceptions', async () => {
-      const { flowsRouter } = await import('./flows');
       cancelFlowRunMock.mockRejectedValueOnce(new Error('engine failure'));
       const caller = flowsRouter.createCaller({ getWindow: () => null });
       await expect(caller.cancelRun({ runId })).rejects.toThrow('engine failure');
@@ -1020,7 +985,6 @@ describe('flowsRouter (local)', () => {
       retryTerminalFlowRunMock.mockRejectedValueOnce(
         new TerminalResumeAdmissionError('resume admission was cancelled'),
       );
-      const { flowsRouter } = await import('./flows');
       const caller = flowsRouter.createCaller({ getWindow: () => null });
 
       await expect(caller.retryRunFromLastNode({ runId })).rejects.toSatisfy((error: unknown) => {
@@ -1038,7 +1002,6 @@ describe('flowsRouter (local)', () => {
       getFlowRunMock.mockResolvedValueOnce({ id: runId, status: 'failed' });
       const fault = new TypeError('unexpected retry bug');
       retryTerminalFlowRunMock.mockRejectedValueOnce(fault);
-      const { flowsRouter } = await import('./flows');
       const caller = flowsRouter.createCaller({ getWindow: () => null });
 
       await expect(caller.retryRunFromLastNode({ runId })).rejects.toSatisfy(
@@ -1064,7 +1027,6 @@ describe('flowsRouter (local)', () => {
         createdAt: new Date('2024-01-01T00:00:00.000Z'),
       });
       retryTerminalFlowRunMock.mockResolvedValueOnce(true);
-      const { flowsRouter } = await import('./flows');
       const caller = flowsRouter.createCaller({ getWindow: () => null });
 
       await expect(caller.retryRunFromLastNode({ runId })).resolves.toEqual({ ok: true });
@@ -1076,7 +1038,6 @@ describe('flowsRouter (local)', () => {
     const subChatId = 'sub-pause-1';
 
     it('parks FIRST, then aborts the in-flight turn (ordering is the split-brain guard)', async () => {
-      const { flowsRouter } = await import('./flows');
       const order: string[] = [];
       parkFlowTaskForSubChatMock.mockImplementationOnce(async () => {
         order.push('park');
@@ -1098,7 +1059,6 @@ describe('flowsRouter (local)', () => {
     });
 
     it('returns paused:false and never aborts when nothing was parked (batch member / no running task)', async () => {
-      const { flowsRouter } = await import('./flows');
       parkFlowTaskForSubChatMock.mockResolvedValueOnce(null);
       const caller = flowsRouter.createCaller({ getWindow: () => null });
 
@@ -1111,13 +1071,11 @@ describe('flowsRouter (local)', () => {
     const projectId = '550e8400-e29b-41d4-a716-446655440099';
 
     it('returns an empty array (cross-machine briefings deferred)', async () => {
-      const { flowsRouter } = await import('./flows');
       const caller = flowsRouter.createCaller({ getWindow: () => null });
       await expect(caller.getBriefings({ projectId })).resolves.toEqual([]);
     });
 
     it('returns an empty array when called with no input', async () => {
-      const { flowsRouter } = await import('./flows');
       const caller = flowsRouter.createCaller({ getWindow: () => null });
       await expect(caller.getBriefings()).resolves.toEqual([]);
     });
@@ -1125,7 +1083,6 @@ describe('flowsRouter (local)', () => {
 
   describe('createBatchPlanTemplate', () => {
     it('rejects when dependsOn references a stageNumber not present in the same stages array', async () => {
-      const { flowsRouter } = await import('./flows');
       const caller = flowsRouter.createCaller({ getWindow: () => null });
       await expect(
         caller.createBatchPlanTemplate({
@@ -1140,7 +1097,6 @@ describe('flowsRouter (local)', () => {
     });
 
     it('calls createBatchPlanTemplate when every dependsOn references an existing stageNumber', async () => {
-      const { flowsRouter } = await import('./flows');
       createBatchPlanTemplateMock.mockResolvedValueOnce({
         id: '550e8400-e29b-41d4-a716-446655440099',
         name: 'DAG',
@@ -1163,7 +1119,6 @@ describe('flowsRouter (local)', () => {
     });
 
     it('rejects duplicate stageNumber values', async () => {
-      const { flowsRouter } = await import('./flows');
       const caller = flowsRouter.createCaller({ getWindow: () => null });
       await expect(
         caller.createBatchPlanTemplate({
@@ -1178,7 +1133,6 @@ describe('flowsRouter (local)', () => {
     });
 
     it('rejects cyclic dependsOn', async () => {
-      const { flowsRouter } = await import('./flows');
       const caller = flowsRouter.createCaller({ getWindow: () => null });
       await expect(
         caller.createBatchPlanTemplate({
@@ -1193,7 +1147,6 @@ describe('flowsRouter (local)', () => {
     });
 
     it('attaches DAG validation failure to stages[N] when validateDag provides invalidIndex', async () => {
-      const { flowsRouter } = await import('./flows');
       const caller = flowsRouter.createCaller({ getWindow: () => null });
       try {
         await caller.createBatchPlanTemplate({
@@ -1214,7 +1167,6 @@ describe('flowsRouter (local)', () => {
     });
 
     it('attaches cyclic DAG failure to stages root path when no specific stage index', async () => {
-      const { flowsRouter } = await import('./flows');
       const caller = flowsRouter.createCaller({ getWindow: () => null });
       try {
         await caller.createBatchPlanTemplate({
@@ -1234,7 +1186,6 @@ describe('flowsRouter (local)', () => {
     });
 
     it('attaches self-dependency failure to stages[0] for a single-stage graph', async () => {
-      const { flowsRouter } = await import('./flows');
       const caller = flowsRouter.createCaller({ getWindow: () => null });
       try {
         await caller.createBatchPlanTemplate({
@@ -1254,7 +1205,6 @@ describe('flowsRouter (local)', () => {
     const RUN_ID = '660e8400-e29b-41d4-a716-446655440002';
 
     it('accepts an empty attachments array', async () => {
-      const { flowsRouter } = await import('./flows');
       updateStageRunLocalMock.mockResolvedValueOnce({ run: { id: RUN_ID, trigger_context: {} } });
       const caller = flowsRouter.createCaller({ getWindow: () => null });
       await caller.updateStageRun({ flowId: FLOW_ID, runId: RUN_ID, attachments: [] });
@@ -1262,7 +1212,6 @@ describe('flowsRouter (local)', () => {
     });
 
     it('accepts a valid attachments array with type string', async () => {
-      const { flowsRouter } = await import('./flows');
       updateStageRunLocalMock.mockResolvedValueOnce({ run: { id: RUN_ID, trigger_context: {} } });
       const caller = flowsRouter.createCaller({ getWindow: () => null });
       await caller.updateStageRun({
@@ -1277,7 +1226,6 @@ describe('flowsRouter (local)', () => {
     });
 
     it('rejects attachments where type is an empty string', async () => {
-      const { flowsRouter } = await import('./flows');
       const caller = flowsRouter.createCaller({ getWindow: () => null });
       try {
         await caller.updateStageRun({
@@ -1293,7 +1241,6 @@ describe('flowsRouter (local)', () => {
     });
 
     it('rejects when url is empty', async () => {
-      const { flowsRouter } = await import('./flows');
       const caller = flowsRouter.createCaller({ getWindow: () => null });
       try {
         await caller.updateStageRun({
@@ -1309,7 +1256,6 @@ describe('flowsRouter (local)', () => {
     });
 
     it('rejects when more than 10 attachments provided', async () => {
-      const { flowsRouter } = await import('./flows');
       const caller = flowsRouter.createCaller({ getWindow: () => null });
       const attachments = Array.from({ length: 11 }, (_, i) => ({
         url: `https://cdn.example.com/img${i}.png`,
@@ -1330,7 +1276,6 @@ describe('flowsRouter (local)', () => {
     const RUN_ID = '550e8400-e29b-41d4-a716-446655440001';
 
     it('returns the upload result on success', async () => {
-      const { flowsRouter } = await import('./flows');
       const uploadResult = {
         url: 'frink-attachment://run/upload.png',
         filename: 'upload.png',
@@ -1356,7 +1301,6 @@ describe('flowsRouter (local)', () => {
     });
 
     it('re-throws upload exceptions', async () => {
-      const { flowsRouter } = await import('./flows');
       uploadAttachmentToStageRunMock.mockRejectedValueOnce(new Error('upload failed'));
       const caller = flowsRouter.createCaller({ getWindow: () => null });
       await expect(
@@ -1375,7 +1319,6 @@ describe('flowsRouter (local)', () => {
     const ATTACHMENT_URL = 'frink-attachment://run-1/file.png';
 
     it('returns { dataUrl } when the resolver succeeds', async () => {
-      const { flowsRouter } = await import('./flows');
       resolveAttachmentToDataUrlMock.mockResolvedValueOnce({
         ok: true,
         dataUrl: 'data:image/png;base64,QQ==',
@@ -1388,7 +1331,6 @@ describe('flowsRouter (local)', () => {
     });
 
     it('throws NOT_FOUND when the resolver reports failure (e.g. unsupported protocol)', async () => {
-      const { flowsRouter } = await import('./flows');
       resolveAttachmentToDataUrlMock.mockResolvedValueOnce({
         ok: false,
         message: 'Unsupported protocol https:',
@@ -1400,7 +1342,6 @@ describe('flowsRouter (local)', () => {
     });
 
     it('propagates errors thrown by the resolver', async () => {
-      const { flowsRouter } = await import('./flows');
       resolveAttachmentToDataUrlMock.mockRejectedValueOnce(new Error('read failed'));
       const caller = flowsRouter.createCaller({ getWindow: () => null });
       await expect(caller.fetchAttachmentDataUrl({ url: ATTACHMENT_URL })).rejects.toThrow(
