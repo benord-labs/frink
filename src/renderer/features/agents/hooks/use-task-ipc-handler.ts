@@ -36,6 +36,9 @@ import { createQueueItem, FLOW_DISPATCH_SOURCE, generateQueueId } from '../lib/q
 import { agentChatStore } from '../stores/agent-chat-store';
 import { useMessageQueueStore } from '../stores/message-queue-store';
 
+/** Delay before re-pulling undelivered dispatches after a failed pull. Exported for tests. */
+export const UNDELIVERED_PULL_RETRY_MS = 2_000;
+
 type MaybeUserMessage = { role?: string; parts?: Array<{ type?: string; text?: string }> };
 
 /**
@@ -90,7 +93,7 @@ export function useTaskIpcHandler() {
   useEffect(() => {
     if (!window.desktopApi?.onTaskChatReady) return;
 
-    const cleanup = window.desktopApi.onTaskChatReady((data) => {
+    const handleChatReady = (data: unknown) => {
       if (!isTaskChatReadyData(data)) return;
 
       const { chatId, subChatId } = data;
@@ -217,8 +220,30 @@ export function useTaskIpcHandler() {
       if (!data.headless) {
         focusAgentChat(chatId);
       }
-    });
+    };
 
-    return cleanup;
+    // Listener first, then pull: `task:chat-ready` is one-shot, so a dispatch that fired before this
+    // mounted (renderer reload, slow lazy layout load) is only reachable through main's record.
+    const cleanup = window.desktopApi.onTaskChatReady(handleChatReady);
+    let unmounted = false;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    // A failed pull is not "nothing pending": retry until main answers.
+    const pullUndelivered = () => {
+      trpcClient.tasks.listUndeliveredDispatches
+        .query()
+        .then((dispatches) => {
+          if (!unmounted) for (const data of dispatches) handleChatReady(data);
+        })
+        .catch(() => {
+          if (!unmounted) retryTimer = setTimeout(pullUndelivered, UNDELIVERED_PULL_RETRY_MS);
+        });
+    };
+    pullUndelivered();
+
+    return () => {
+      unmounted = true;
+      clearTimeout(retryTimer);
+      cleanup();
+    };
   }, [focusAgentChat, store, utils, apiUtils]);
 }

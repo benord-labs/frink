@@ -10,6 +10,7 @@
 
 import { hostname } from 'node:os';
 import { z } from 'zod';
+import type { TaskChatReadyData } from '../../../../shared/types/task-chat-ready';
 import { getDatabase } from '../../db';
 import { getWorkQueueOverviewCounts } from '../../db/repos/task-queries/work-queue-overview-counts';
 import {
@@ -33,6 +34,10 @@ import {
 } from '../../db/repos/tasks';
 import type { Task } from '../../db/schema';
 import type { CarryOnFlowTaskResult } from '../../flows/rerun';
+import {
+  isDispatchPending,
+  listUndeliveredDispatches,
+} from '../../task-executor/dispatch-registry';
 import { getTaskPoller } from '../../task-poller';
 import { stopTaskSession } from '../../tasks/abort-task-session';
 import { publicProcedure, router } from '../index';
@@ -179,6 +184,16 @@ export const tasksRouter = router({
       if (row) rows.push(row);
     }
     return rows;
+  }),
+
+  /** Dispatches a renderer missed while it was not listening; only still-running tasks. */
+  listUndeliveredDispatches: publicProcedure.query(async (): Promise<TaskChatReadyData[]> => {
+    const dispatches = listUndeliveredDispatches();
+    const tasks = await Promise.all(dispatches.map((d) => getTaskById(getDatabase(), d.taskId)));
+    // Re-check after the awaits: a send that landed meanwhile must not be handed out again.
+    return dispatches.filter(
+      (d, i) => tasks[i]?.status === 'running' && isDispatchPending(d.subChatId, d.taskId),
+    );
   }),
 
   updateStatus: publicProcedure

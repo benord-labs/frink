@@ -1046,9 +1046,6 @@ async function handleClaimedTask(task: DbTask): Promise<void> {
       });
     }
 
-    // Bind this prompt's send-time mode to the task, immune to renderer mode-state races.
-    registerPendingDispatchMode(subChatId, task.id, startMode);
-
     // Emit IPC event to renderer to open chat and auto-send
     const payload: TaskChatReadyPayload = {
       chatId,
@@ -1068,6 +1065,9 @@ async function handleClaimedTask(task: DbTask): Promise<void> {
       ...(images && images.length > 0 ? { images } : {}),
       ...(isRetry ? { isRetry: true } : {}),
     };
+
+    // Bind the send-time mode to the task; hold the payload for a renderer that misses the event.
+    registerPendingDispatchMode(subChatId, task.id, startMode, payload);
 
     log.info('[TaskExecutor] dispatching task:chat-ready to renderer', {
       taskId: task.id,

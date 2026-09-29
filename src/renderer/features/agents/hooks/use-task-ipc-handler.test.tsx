@@ -15,7 +15,7 @@ import {
 } from '../atoms';
 import { agentChatStore } from '../stores/agent-chat-store';
 import { useMessageQueueStore } from '../stores/message-queue-store';
-import { useTaskIpcHandler } from './use-task-ipc-handler';
+import { UNDELIVERED_PULL_RETRY_MS, useTaskIpcHandler } from './use-task-ipc-handler';
 
 const {
   createAgentChat,
@@ -23,12 +23,14 @@ const {
   getResolvedAccountData,
   getSubChatMessages,
   invalidateAgentChat,
+  listUndeliveredDispatches,
 } = vi.hoisted(() => ({
   createAgentChat: vi.fn(),
   fetchResolvedAccount: vi.fn(async () => undefined),
   getResolvedAccountData: vi.fn(() => ({ type: 'claude-code' })),
   getSubChatMessages: vi.fn(async () => ({ messages: [], hasMore: false, sessionId: null })),
   invalidateAgentChat: vi.fn(async () => undefined),
+  listUndeliveredDispatches: vi.fn(async (): Promise<unknown[]> => []),
 }));
 
 vi.mock('../lib/create-agent-chat', () => ({ createAgentChat }));
@@ -46,6 +48,7 @@ vi.mock('../../../lib/trpc', () => ({
   },
   trpcClient: {
     chats: { getSubChatMessages: { query: getSubChatMessages } },
+    tasks: { listUndeliveredDispatches: { query: listUndeliveredDispatches } },
   },
 }));
 
@@ -81,6 +84,7 @@ describe('useTaskIpcHandler', () => {
     fetchResolvedAccount.mockClear();
     getSubChatMessages.mockClear();
     invalidateAgentChat.mockClear();
+    listUndeliveredDispatches.mockReset().mockResolvedValue([]);
     getResolvedAccountData.mockReturnValue({ type: 'claude-code' as const });
     // Mirror the real factory: register the Chat in agentChatStore so the handler's
     // `agentChatStore.has(subChatId)` idempotency re-check and message dedup behave realistically.
@@ -133,6 +137,40 @@ describe('useTaskIpcHandler', () => {
     });
     // Prefetch opens QueueProcessor's account-gate for a chat the user never navigated to.
     expect(fetchResolvedAccount).toHaveBeenCalledWith({ chatId: 'chat-1' });
+  });
+
+  it('delivers a dispatch that fired before the listener mounted, once, via the mount pull', async () => {
+    // A renderer reload (or slow lazy layout load) misses the one-shot IPC event; main still holds
+    // the undelivered payload. A live re-fire of the same dispatch must not double-enqueue it.
+    listUndeliveredDispatches.mockResolvedValue([validPayload({ startMode: 'plan' })]);
+    renderHook(() => useTaskIpcHandler(), { wrapper });
+
+    await waitFor(() => {
+      const queue = useMessageQueueStore.getState().getQueue('sub-1');
+      expect(queue.map((item) => item.dispatchTaskId)).toEqual(['task-1']);
+    });
+    expect(jotaiStore.get(chatModeAtomFamily('chat-1'))).toBe('plan');
+
+    act(() => ipcCallback?.(validPayload({ startMode: 'plan' })));
+    await waitFor(() => expect(useMessageQueueStore.getState().getQueue('sub-1')).toHaveLength(1));
+  });
+
+  it('retries a failed mount pull instead of treating it as nothing pending', async () => {
+    vi.useFakeTimers();
+    try {
+      listUndeliveredDispatches
+        .mockRejectedValueOnce(new Error('ipc unavailable'))
+        .mockResolvedValue([validPayload()]);
+      renderHook(() => useTaskIpcHandler(), { wrapper });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(useMessageQueueStore.getState().getQueue('sub-1')).toHaveLength(0);
+
+      await vi.advanceTimersByTimeAsync(UNDELIVERED_PULL_RETRY_MS);
+      expect(listUndeliveredDispatches).toHaveBeenCalledTimes(2);
+      expect(useMessageQueueStore.getState().getQueue('sub-1')).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("seeds the chat's Auto setting from the Flow and tags the prompt flow-dispatched", async () => {
