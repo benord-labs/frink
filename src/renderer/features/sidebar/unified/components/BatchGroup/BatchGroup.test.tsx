@@ -139,6 +139,7 @@ function makeChatItem(overrides: Partial<ChatItem> & { id: string }): ChatItem {
     isLoading: false,
     hasPendingPlan: false,
     hasPendingQuestion: false,
+    isHeld: false,
     isWorktree: false,
     taskId: 'task-1',
     batchId: 'a1b2c3d4-e5f6-4890-8bcd-ef1234567890',

@@ -57,6 +57,7 @@ function makeChat(id: string, name: string, overrides: Partial<ChatItem> = {}): 
     isLoading: false,
     hasPendingPlan: false,
     hasPendingQuestion: false,
+    isHeld: false,
     isWorktree: false,
     taskId: null,
     batchId: null,

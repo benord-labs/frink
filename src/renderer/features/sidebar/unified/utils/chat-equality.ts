@@ -62,6 +62,7 @@ const CHAT_ITEM_SIDEBAR_KEYS = [
   'isLoading',
   'hasPendingPlan',
   'hasPendingQuestion',
+  'isHeld',
   'taskId',
   'batchId',
 ] as const satisfies readonly (keyof ChatItem)[];

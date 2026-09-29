@@ -1,4 +1,9 @@
-import { getChatActiveState, SIDEBAR_TASK_PRESENTATION, type SidebarTaskStatus } from './constants';
+import {
+  CHAT_STATE_PRESENTATION,
+  getChatActiveState,
+  SIDEBAR_TASK_PRESENTATION,
+  type SidebarTaskStatus,
+} from './constants';
 import type { ChatItem, CodebaseGroup } from './types';
 
 export type SidebarChatListItem = {
@@ -240,19 +245,33 @@ export function buildChatReasonMap(tasks: ActiveTaskLite[]): Map<string, ChatRea
 
 type ActiveChat = Pick<
   ChatItem,
-  'id' | 'batchId' | 'isLoading' | 'hasPendingQuestion' | 'hasPendingPlan' | 'hasUnseenChanges'
+  | 'id'
+  | 'batchId'
+  | 'isLoading'
+  | 'hasPendingQuestion'
+  | 'hasPendingPlan'
+  | 'isHeld'
+  | 'hasUnseenChanges'
 >;
 
-type FolderLevel = 'failed' | 'needs' | 'plan' | 'running' | 'review';
+type FolderLevel = 'failed' | 'needs' | 'plan' | 'running' | 'background' | 'review';
 
 /** Most human-actionable first: a collapsed folder shows the first level any of its chats reaches. */
-const FOLDER_LEVEL_ORDER: readonly FolderLevel[] = ['failed', 'needs', 'plan', 'running', 'review'];
+const FOLDER_LEVEL_ORDER: readonly FolderLevel[] = [
+  'failed',
+  'needs',
+  'plan',
+  'running',
+  'background',
+  'review',
+];
 
 const FOLDER_LEVEL_PRESENTATION = {
   failed: SIDEBAR_TASK_PRESENTATION.failed,
   needs: SIDEBAR_TASK_PRESENTATION.needs_attention,
   plan: SIDEBAR_TASK_PRESENTATION.plan_ready,
   running: SIDEBAR_TASK_PRESENTATION.running,
+  background: CHAT_STATE_PRESENTATION.background,
   review: SIDEBAR_TASK_PRESENTATION.done,
 } satisfies Record<FolderLevel, { label: string; dotClassName: string }>;
 
@@ -263,6 +282,7 @@ const UNTASKED_FOLDER_LEVEL = {
   pendingQuestion: 'needs',
   pendingPlan: 'plan',
   loading: 'running',
+  background: 'background',
   unseenChanges: 'review',
 } satisfies Record<ChatActiveState, FolderLevel>;
 
@@ -270,6 +290,7 @@ const TASK_CHAT_MOMENT = {
   pendingQuestion: 'question',
   pendingPlan: 'resting',
   loading: 'stream',
+  background: 'resting',
   unseenChanges: 'resting',
 } satisfies Record<ChatActiveState, TaskChatMoment>;
 
@@ -301,6 +322,7 @@ const IDLE_CHAT = {
   isLoading: false,
   hasPendingQuestion: false,
   hasPendingPlan: false,
+  isHeld: false,
   hasUnseenChanges: false,
 };
 

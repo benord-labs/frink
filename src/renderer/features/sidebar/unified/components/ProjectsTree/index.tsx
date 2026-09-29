@@ -175,6 +175,7 @@ function ProjectsTreeComponent({
                 isLoading: false,
                 hasPendingPlan: false,
                 hasPendingQuestion: false,
+                isHeld: false,
                 isWorktree: activeChat.isWorktree ?? false,
                 taskId: null,
                 batchId: null,

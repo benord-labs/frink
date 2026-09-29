@@ -28,6 +28,7 @@ describe('plan approval presentation', () => {
         isLoading: true,
         hasPendingQuestion: true,
         hasPendingPlan: true,
+        isHeld: true,
         hasUnseenChanges: true,
       }),
     ).toBe('pendingQuestion');
@@ -36,9 +37,16 @@ describe('plan approval presentation', () => {
         isLoading: true,
         hasPendingQuestion: false,
         hasPendingPlan: true,
+        isHeld: true,
         hasUnseenChanges: true,
       }),
     ).toBe('pendingPlan');
+  });
+
+  it('ranks a background wait below a live turn and above unseen changes', () => {
+    const idle = { hasPendingQuestion: false, hasPendingPlan: false, hasUnseenChanges: true };
+    expect(getChatActiveState({ ...idle, isLoading: true, isHeld: true })).toBe('loading');
+    expect(getChatActiveState({ ...idle, isLoading: false, isHeld: true })).toBe('background');
   });
 });
 
@@ -81,6 +89,11 @@ describe('isChatRunning', () => {
 
   it('is false for a non-loading chat state (e.g. awaiting input)', () => {
     expect(isChatRunning('pendingQuestion', 'done')).toBe(false);
+  });
+
+  // Between wakes the agent is idle, so a background wait must not pulse or announce "running".
+  it('is false for a chat waiting on background work', () => {
+    expect(isChatRunning('background', undefined)).toBe(false);
   });
 
   it('is false while a held question waits on the user, even though the task stays running', () => {

@@ -23,6 +23,8 @@ export type ChatItem = {
   isLoading: boolean;
   hasPendingPlan: boolean;
   hasPendingQuestion: boolean;
+  /** Held open between turns, waiting on background work that will wake it again. */
+  isHeld: boolean;
   /** True when the chat is running in an isolated git worktree */
   isWorktree: boolean;
   /** Non-null when this chat was created by an automated task (trigger-based) */

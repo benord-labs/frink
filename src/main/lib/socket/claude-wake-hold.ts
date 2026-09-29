@@ -71,6 +71,7 @@ import { backfillDeniedTools } from './streaming/burst-chunks';
  * whether the session listed `frink_task_signal` (adoptHeldExecution). */
 export type WakeHold = {
   pump: WakePump;
+  chatId: string;
   /** The exact session this hold owns — disposal is identity-guarded on it (ABA: the key can be
    * re-registered to a NEW session while an orphaned hold's async cleanup is still in flight). */
   session: ClaudeSession;
@@ -261,6 +262,7 @@ export function releaseNonFlowClaudeSessions(reason: string): void {
 
 /** Executor-injected adapters — each closes over the executor's typed senders/builders. */
 export interface WakeHoldIo {
+  chatId: string;
   /** Stream one wake-burst chunk with the burst's cumulative parts snapshot. */
   streamChunk: (
     msgId: string,
@@ -439,6 +441,7 @@ export function armWakePump(params: ArmWakePumpParams): WakeHold {
   });
   const hold: WakeHold = {
     pump,
+    chatId: io.chatId,
     session,
     execution: arming.execution,
     setHeld: io.setHeld,
