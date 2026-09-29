@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MobileApiError } from './errors';
-import { DuplicateMessageError } from '../../socket/execution/send-admission';
+import { ChatBusyError, DuplicateMessageError } from '../../socket/execution/send-admission';
 import { SUBAGENT_TEXT_PART_TYPE } from '../../../../shared/subagent-parts';
 import {
   createPendingPermissionRequestBroker,
@@ -27,13 +27,14 @@ const fixture = vi.hoisted(() => ({
   create: vi.fn(),
   project: vi.fn(),
   deleteChat: vi.fn(),
+  startExecution: vi.fn(),
 }));
 vi.mock('./context', async () => ({
   MobileApiError: (await import('./errors')).MobileApiError,
   requireChat: fixture.requireChat,
   requireExecutionReady: fixture.ready,
   mobileCallers: {
-    tasks: { getDrivingTaskForSubChat: fixture.getDriving },
+    tasks: { getDrivingTaskForSubChat: fixture.getDriving, startExecution: fixture.startExecution },
     chats: {
       getSubChatMessages: fixture.history,
       create: fixture.create,
@@ -336,6 +337,22 @@ describe('mobile chat actions', () => {
     expect(fixture.ready).toHaveBeenCalledTimes(2);
   });
 
+  it('starts a reviewed task on plan approval only once the send is admitted', async () => {
+    fixture.getDriving.mockResolvedValue({ task: { id: 'task', status: 'plan_ready' }, run: null });
+    const approval = {
+      mode: 'agent' as const,
+      approvedPlanContext: { planId: 'p', planText: 'x' },
+    };
+    const request = { ...identity, requestId: 'request', text: 'build it' };
+    fixture.send.mockRejectedValueOnce(new ChatBusyError());
+    await expect(sendMobileMessage(request, approval)).rejects.toMatchObject({ status: 409 });
+    fixture.send.mockImplementation(async (_payload, options) => options.beforeSend());
+    await sendMobileMessage(request);
+    expect(fixture.startExecution).not.toHaveBeenCalled();
+    await sendMobileMessage(request, approval);
+    expect(fixture.startExecution).toHaveBeenCalledWith({ taskId: 'task' });
+  });
+
   it.each([
     '',
     ' \n',
@@ -543,6 +560,46 @@ describe('mobile chat actions', () => {
         ],
       },
     ]);
+  });
+
+  it('shows a plan as its markdown once, without its frontmatter or a prose copy', () => {
+    const planText = '---\nname: retry\n---\n## Steps\n1. Retry failed webhooks';
+    const messages = mergeMobileTranscript(
+      [
+        {
+          id: 'a',
+          role: 'assistant',
+          parts: [
+            { type: 'text', text: planText },
+            { type: 'tool-frink-plan', toolCallId: 'p1', input: { planId: 'p1', planText } },
+            { type: 'tool-frink-plan', toolCallId: 'p2', input: { planId: 'p2', planText: ' ' } },
+          ],
+        },
+      ],
+      { streams: [], terminals: [] },
+    );
+    expect(messages[0].parts).toEqual([
+      { type: 'plan', id: 'p1', text: '## Steps\n1. Retry failed webhooks' },
+    ]);
+  });
+
+  it('offers the open plan for approval only while the conversation is idle', async () => {
+    fixture.requireChat.mockResolvedValue({
+      chat: { id: 'chat', projectId: 'project', taskId: null, subChats: [{ id: 'sub' }] },
+      subChat: { id: 'sub', mode: 'plan' },
+    });
+    const plan = {
+      type: 'tool-frink-plan',
+      input: { planId: 'p1', status: 'awaiting_approval', planText: 'Do it' },
+    };
+    fixture.history.mockResolvedValue({
+      messages: [{ id: 'a', role: 'assistant', parts: [plan] }],
+      hasMore: false,
+    });
+    const request = { type: 'chat' as const, id: 'chat', subChatId: 'sub' };
+    await expect(readMobileChat(request)).resolves.toMatchObject({ pendingPlanId: 'p1' });
+    fixture.seed.mockReturnValue({ streams: [{ status: 'active', parts: [] }], terminals: [] });
+    await expect(readMobileChat(request)).resolves.toMatchObject({ pendingPlanId: null });
   });
 
   it('shows a steer as the text the user sent, whatever state its marker is in', () => {

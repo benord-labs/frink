@@ -349,6 +349,7 @@ export function chatFixture(activity: MobileChatDetail['activity'] = 'running'):
     error: null,
     questions: [],
     permissions: [],
+    pendingPlanId: null,
   };
 }
 

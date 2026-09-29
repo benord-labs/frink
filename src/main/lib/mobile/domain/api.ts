@@ -21,6 +21,7 @@ import {
 } from './composer';
 import { MobileApiError, mobileCallers, requireExecutionReady } from './context';
 import { readMobileFlow, readMobileFlows, readMobileRun, resumeMobileNode } from './flows';
+import { approveMobilePlan } from './plan';
 import { readMobileChats, readMobileOverview, readMobileProjects } from './read';
 import { steerMobileMessage } from './steer';
 import { captureContained } from '../../sentry';
@@ -57,6 +58,8 @@ async function dispatch(request: MobileRequest): Promise<MobileResponses[MobileR
       return answerMobileQuestion(request);
     case 'respondPermission':
       return respondMobilePermission(request);
+    case 'approvePlan':
+      return approveMobilePlan(request);
     case 'composer':
       return readMobileComposer(request);
     case 'updateComposer':

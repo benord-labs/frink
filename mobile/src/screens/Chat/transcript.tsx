@@ -89,6 +89,14 @@ export function Transcript({
 }) {
   const empty = !messages.length && !data.questions.length && !data.permissions.length;
   const latestReply = messages.findLast((message) => message.role !== 'user')?.id;
+  const plan = data.pendingPlanId
+    ? {
+        id: data.pendingPlanId,
+        chatId: data.chat.id,
+        subChatId: data.subChatId,
+        onDecided: onAnswered,
+      }
+    : undefined;
   return (
     <View style={{ gap: 28 }}>
       {targetResolved && (
@@ -114,7 +122,7 @@ export function Transcript({
           register={(view) => scrolling.registerMessage(message.id, view)}
           scrolling={scrolling}
         >
-          <Message message={message} latest={message.id === latestReply} />
+          <Message message={message} latest={message.id === latestReply} plan={plan} />
         </Measured>
       ))}
       {data.error && <Note error>{data.error}</Note>}

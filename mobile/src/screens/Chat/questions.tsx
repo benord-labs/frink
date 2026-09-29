@@ -25,17 +25,21 @@ function withAlpha(hex: string, alpha: number): string {
   return `rgba(${value >> 16},${(value >> 8) & 255},${value & 255},${alpha})`;
 }
 
-/** An inline request that waits on the reader: amber rim, amber eyebrow, then the question. */
-function DecisionCard({
+/** An inline request that waits on the reader: amber rim, amber eyebrow, then the question.
+ *  `settled` draws the same card without the amber, for one that no longer waits. */
+export function DecisionCard({
   icon: Icon,
   eyebrow,
+  settled = false,
   children,
 }: {
   icon: LucideIcon;
   eyebrow: string;
+  settled?: boolean;
   children: ReactNode;
 }) {
   const t = useTheme();
+  const tint = settled ? t.muted : t.attention;
   return (
     <View
       style={{
@@ -44,13 +48,13 @@ function DecisionCard({
         gap: space.md,
         borderRadius: radius.lg,
         borderWidth: 1,
-        borderColor: withAlpha(t.attention, t.dark ? 0.32 : 0.3),
+        borderColor: settled ? t.borderSubtle : withAlpha(t.attention, t.dark ? 0.32 : 0.3),
         backgroundColor: t.solidCard,
       }}
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
-        <Icon size={14} color={t.attention} strokeWidth={2.2} />
-        <Text variant="label" color="attention">
+        <Icon size={14} color={tint} strokeWidth={2.2} />
+        <Text variant="label" color={settled ? 'muted' : 'attention'}>
           {eyebrow}
         </Text>
       </View>
@@ -82,7 +86,7 @@ function PromptText({ children }: { children: string }) {
   );
 }
 
-function AnswerField(props: TextInputProps) {
+export function AnswerField(props: TextInputProps) {
   const t = useTheme();
   return (
     <TextInput
@@ -297,7 +301,7 @@ export function QuestionForm({
 }
 
 /** A reply field with the send arrow beside it, as in the message box. */
-function AnswerRow({ children, send }: { children: ReactNode; send: ReactNode }) {
+export function AnswerRow({ children, send }: { children: ReactNode; send: ReactNode }) {
   return (
     <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: space.sm }}>
       {children}

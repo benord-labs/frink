@@ -32,6 +32,18 @@ describe('contentGroups', () => {
     ]);
   });
 
+  it('keeps a plan as its own group, copied after the prose before it', () => {
+    const plan = { type: 'plan', id: 'p1', text: '## Steps' } as const;
+    const groups = contentGroups({
+      id: 'm',
+      role: 'assistant',
+      text: 'Here is the plan.',
+      parts: [{ type: 'text', text: 'Here is the plan.' }, plan],
+    });
+    expect(groups).toEqual([{ type: 'text', text: 'Here is the plan.' }, plan]);
+    expect(copyText(groups)).toBe('Here is the plan.\n\n## Steps');
+  });
+
   it('falls back to the plain text when a message has no parts', () => {
     expect(contentGroups({ id: 'm', role: 'user', text: 'Hi' })).toEqual([
       { type: 'text', text: 'Hi' },

@@ -105,6 +105,8 @@ export const mobileRequestSchema = z.discriminatedUnion('type', [
     requestId: id,
     approved: z.boolean(),
   }),
+  // Desktop's Approve: starts building from the plan awaiting review, which must still be `planId`.
+  z.object({ type: z.literal('approvePlan'), ...chatIdentity, planId: id, requestId: z.uuid() }),
 ]);
 
 export type MobileRequest = z.infer<typeof mobileRequestSchema>;
@@ -229,7 +231,9 @@ export type MobileMessagePart =
     }
   | { type: 'attachment'; kind: 'image' | 'file'; name: string }
   /** A message the user steered into the running turn. */
-  | { type: 'steer'; text: string };
+  | { type: 'steer'; text: string }
+  /** A plan Frink wrote for review, as markdown. */
+  | { type: 'plan'; id: string; text: string };
 export type MobileMessage = {
   id: string;
   role: string;
@@ -301,6 +305,8 @@ export type MobileChatDetail = {
   error: string | null;
   questions: MobileQuestion[];
   permissions: MobilePermission[];
+  /** The plan waiting for Approve or Send back; null once decided, or when a Flow run owns it. */
+  pendingPlanId: string | null;
 };
 export type MobileResponses = {
   overview: MobileOverview;
@@ -327,6 +333,7 @@ export type MobileResponses = {
   deleteChat: { ok: true };
   answerQuestion: { ok: true };
   respondPermission: { ok: true };
+  approvePlan: { ok: true };
   composer: MobileComposer;
   updateComposer: MobileComposer;
   setMode: MobileComposer;

@@ -8,6 +8,7 @@ import { glassLighting } from '../../../ui/material';
 import { Text } from '../../../ui/text';
 import { radius, space, useTheme } from '../../../ui/theme';
 import { Note } from '../note';
+import { PlanCard, type PendingPlan } from '../plan';
 import { attachmentsOf, contentGroups, copyText, type Attachment, type Group } from './parts';
 import { ToolRun } from './tool-run';
 
@@ -144,20 +145,32 @@ function CopyAction({ text }: { text: string }) {
   );
 }
 
-function AssistantGroup({ group }: { group: Group }) {
+function AssistantGroup({ group, plan }: { group: Group; plan?: PendingPlan }) {
   if (group.type === 'tools') return <ToolRun tools={group.tools} />;
   if (group.type === 'steer') return <SteerBubble text={group.text} />;
+  if (group.type === 'plan')
+    return <PlanCard text={group.text} pending={plan?.id === group.id ? plan : undefined} />;
   return <Markdown content={group.text} />;
 }
 
 /** One message. Only the newest reply (`latest`) carries a Copy button, so a long chat isn't a
- *  column of repeated icons; earlier replies stay selectable. */
-export function Message({ message, latest = false }: { message: MobileMessage; latest?: boolean }) {
+ *  column of repeated icons; earlier replies stay selectable. `plan` is the one awaiting review. */
+export function Message({
+  message,
+  latest = false,
+  plan,
+}: {
+  message: MobileMessage;
+  latest?: boolean;
+  plan?: PendingPlan;
+}) {
   const groups = contentGroups(message);
   const attachments = attachmentsOf(message);
   const text = copyText(groups);
-  // Copy sits under the last prose, not after trailing tool steps.
-  const lastText = latest ? groups.findLastIndex((group) => group.type === 'text') : -1;
+  // Copy sits under the last prose or plan, not after trailing tool steps.
+  const lastText = latest
+    ? groups.findLastIndex((group) => group.type === 'text' || group.type === 'plan')
+    : -1;
   if (message.role === 'user')
     return (
       <View testID={`message-${message.id}`} style={{ alignItems: 'flex-end', gap: 6 }}>
@@ -179,7 +192,7 @@ export function Message({ message, latest = false }: { message: MobileMessage; l
       <AttachmentChips items={attachments} end={false} />
       {groups.map((group, index) => (
         <View key={`${group.type}-${index}`} style={{ gap: space.xs }}>
-          <AssistantGroup group={group} />
+          <AssistantGroup group={group} plan={plan} />
           {index === lastText && <CopyAction text={text} />}
         </View>
       ))}

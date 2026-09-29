@@ -5,7 +5,19 @@ import {
   stripHiddenWakeMarker,
 } from '../../../../shared/lib/message-markers/hidden-wake-marker';
 import { stripMessageMarkers } from '../../../../shared/lib/message-markers/strip-message-markers';
+import {
+  extractCanonicalPlanTextForFilter,
+  filterCanonicalPlanParts,
+  type CanonicalPlanPartLike,
+} from '../../../../shared/plan-parts-filter';
 import { SUBAGENT_TEXT_PART_TYPE } from '../../../../shared/subagent-parts';
+import {
+  type ApprovedPlanContext,
+  findApprovablePlan,
+  isFrinkPlanMessagePartType,
+  type PlanMessageLike,
+  stripPlanFrontmatter,
+} from '../../../../shared/types/plan';
 import type {
   MobileActivity,
   MobileChatDetail,
@@ -107,7 +119,13 @@ function messagePartProjection(
   if (isImagePart(part)) return [{ type: 'attachment', kind: 'image', name: 'Image' }];
   if (part.type === 'text') return textParts(text(part.text));
   if (part.type === SUBAGENT_TEXT_PART_TYPE) return textParts(text(record(part.input).text));
-  if (typeof part.type !== 'string' || !part.type.startsWith('tool-')) return [];
+  if (typeof part.type !== 'string') return [];
+  if (isFrinkPlanMessagePartType(part.type)) {
+    const plan = record(part.input);
+    const body = stripPlanFrontmatter(text(plan.planText));
+    return body ? [{ type: 'plan', id: text(plan.planId) || id, text: body }] : [];
+  }
+  if (!part.type.startsWith('tool-')) return [];
   // Keyed on the tool name, not state: the marker's state reads 'unknown' once its stream expires.
   if (part.toolName === 'Steer') {
     const steered = text(record(part.input).text).trim();
@@ -119,7 +137,11 @@ function messagePartProjection(
 function messageProjection(value: unknown, streamStatus?: StreamStatus): MobileMessage | null {
   const message = record(value);
   if (typeof message.id !== 'string' || typeof message.role !== 'string') return null;
-  const rawParts = Array.isArray(message.parts) ? message.parts : [];
+  const raw = (Array.isArray(message.parts) ? message.parts : []).map(
+    record,
+  ) as CanonicalPlanPartLike[];
+  // As desktop shows it: plan markdown the agent also wrote as prose appears once, in the plan.
+  const rawParts = filterCanonicalPlanParts(raw, extractCanonicalPlanTextForFilter(raw));
   const status = record(message.metadata).interruptedBy ? 'settled' : streamStatus;
   const parts: MobileMessagePart[] = [];
   rawParts.forEach((part, index) => {
@@ -204,6 +226,7 @@ export async function readMobileChat(
     history = await mobileCallers.chats.getSubChatMessages(historyInput);
   }
   const activity = subChatActivity(subChat.id);
+  const plan = findApprovablePlan(history.messages as PlanMessageLike[], subChat.mode === 'plan');
   const { task, run } = await mobileCallers.tasks.getDrivingTaskForSubChat({
     subChatId: subChat.id,
     fallbackTaskId: chat.taskId,
@@ -232,6 +255,7 @@ export async function readMobileChat(
     permissions: mobilePermissions().filter(
       (entry) => entry.chatId === chat.id && entry.subChatId === subChat.id,
     ),
+    pendingPlanId: (activity === 'idle' && !input.beforeMessageId && plan?.planId) || null,
   };
 }
 
@@ -277,6 +301,9 @@ export async function sendMobileMessage(
   extra?: {
     expectedFlowTaskId?: string;
     metadata?: { answeredQuestions: Array<{ label: string; answer: string }> };
+    /** A plan approval: the mode it switches to and the plan the turn implements. */
+    mode?: 'agent';
+    approvedPlanContext?: ApprovedPlanContext;
   },
 ) {
   const message = input.text.replaceAll(HIDDEN_WAKE_MARKER, '').trim();
@@ -306,6 +333,8 @@ export async function sendMobileMessage(
       metadata: extra?.metadata,
     },
     expectedFlowTaskId: extra?.expectedFlowTaskId,
+    mode: extra?.mode,
+    approvedPlanContext: extra?.approvedPlanContext,
   };
   try {
     await sendMessage(payload, {
@@ -329,6 +358,9 @@ export async function sendMobileMessage(
           );
         }
         if (task?.flowRunId) payload.expectedFlowTaskId = task.id;
+        // Approving starts a reviewed task, only once the turn is sure to run.
+        if (extra?.approvedPlanContext && task?.status === 'plan_ready')
+          await mobileCallers.tasks.startExecution({ taskId: task.id });
       },
     });
   } catch (error) {
