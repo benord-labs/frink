@@ -17,6 +17,7 @@ import type {
 import { GlassSurface } from '../../../ui/material';
 import { space, useTheme } from '../../../ui/theme';
 import {
+  acceptsMessage,
   actionEnabled,
   composerMode,
   composerPlaceholder,
@@ -127,7 +128,14 @@ export function Composer({
   const line = useLine();
   const [contentHeight, setContentHeight] = useState(LINE);
   const sizing = messageInputSizing(Platform.OS === 'web', line, contentHeight, !!value);
-  const mode = composerMode(activity, !!value.trim(), executionReady);
+  const mode = composerMode(
+    activity,
+    { text: value, files: attachments.items.length },
+    executionReady,
+    flowRun,
+  );
+  // Any message that can start a turn takes files, so Attach stays put as Stop turns into Send.
+  const attachable = acceptsMessage(activity, executionReady, flowRun);
   const enabled =
     !busy &&
     actionEnabled(mode, {
@@ -158,13 +166,13 @@ export function Composer({
           onAccount={onAccount}
         />
       )}
-      {mode === 'send' && <AttachmentTray attachments={attachments} />}
+      {attachable && <AttachmentTray attachments={attachments} />}
       <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: space.sm }}>
-        {mode === 'send' && <AttachButton attachments={attachments} disabled={busy} />}
-        <View style={{ flex: 1, minWidth: 0, paddingLeft: mode === 'send' ? 0 : 4 }}>
+        {attachable && <AttachButton attachments={attachments} disabled={busy} />}
+        <View style={{ flex: 1, minWidth: 0, paddingLeft: attachable ? 0 : 4 }}>
           <TextInput
             accessibilityLabel="Message"
-            placeholder={composerPlaceholder(activity, executionReady)}
+            placeholder={composerPlaceholder(activity, executionReady, flowRun)}
             placeholderTextColor={t.muted}
             selectionColor={t.accent}
             value={value}
