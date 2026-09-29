@@ -73,17 +73,19 @@ function drawDeviceChrome() {
 
 /**
  * Opens the app against a mocked computer. `paired` (default) skips onboarding by seeding this
- * tab's pairing; the clock is frozen at NOW so relative times are stable.
+ * tab's pairing; `path` opens it from a link; the clock is frozen at NOW so relative times are stable.
  */
 export async function openApp(
   page: Page,
   {
     data = {},
     paired = true,
+    path = '/',
     respond,
   }: {
     data?: AppState['data'];
     paired?: boolean;
+    path?: string;
     respond?: AppState['respond'];
   } = {},
 ): Promise<AppState> {
@@ -118,9 +120,12 @@ export async function openApp(
     if (saved) return route.fulfill({ headers, json: { data: saved } });
     return route.fulfill({ headers, json: { data: state.data[input.type] ?? { ok: true } } });
   });
-  await page.goto('/');
+  await page.goto(path);
   return state;
 }
 
 export const pairingCode = () =>
   JSON.stringify({ version: 2, url: fixtureHost, code: 'a'.repeat(43) });
+/** The web preview's stand-in for opening frink-mobile://pair?… from the Camera. */
+export const pairingLinkPath = (url = fixtureHost) =>
+  `/pair?${new URLSearchParams({ url, code: 'a'.repeat(43), v: '2' })}`;

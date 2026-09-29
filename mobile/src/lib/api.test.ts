@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mobilePairingLink } from '@frink/shared/types/remote/mobile';
 import { ApiError, pairComputer, parsePairing, requestMobile } from './api';
 
 const pairing = { version: 2, url: 'https://desktop.example.ts.net:8443', code: 'a'.repeat(43) };
@@ -20,6 +21,18 @@ describe('native mobile boundary', () => {
     'https://host.test?token=secret',
   ])('rejects unsafe pairing origin %s', (url) => {
     expect(() => parsePairing(JSON.stringify({ ...pairing, url }))).toThrow('pairing code');
+  });
+  it('reads the link the Mac shows as well as its JSON', () => {
+    const link = mobilePairingLink({ ...pairing, version: 2 });
+    expect(parsePairing(` ${link}\n`)).toEqual(pairing);
+    expect(parsePairing(JSON.stringify(pairing))).toEqual(pairing);
+  });
+  it.each([
+    ['another scheme', mobilePairingLink({ ...pairing, version: 2 }).replace('frink-mobile', 'https')],
+    ['an http origin', mobilePairingLink({ ...pairing, version: 2, url: 'http://desktop.local' })],
+    ['a bad code', mobilePairingLink({ ...pairing, version: 2, code: 'short' })],
+  ])('rejects a link with %s', (_, link) => {
+    expect(() => parsePairing(link)).toThrow('pairing code');
   });
   it('pairs only against the explicitly supplied origin and checks API compatibility', async () => {
     const fetcher = vi.fn().mockResolvedValue(

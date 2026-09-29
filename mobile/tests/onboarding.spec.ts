@@ -1,5 +1,5 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
-import { fixtureHost, openApp, pairingCode } from './fixtures/app';
+import { fixtureHost, openApp, pairingCode, pairingLinkPath } from './fixtures/app';
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -44,6 +44,49 @@ test('pairs by pasting a code, naming the Mac before connecting', async ({ page 
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
   expect((await pairBody).postDataJSON()).toEqual({ code: 'a'.repeat(43), name: 'Benji’s iPhone' });
   await expect(page.getByTestId('tab-queue')).toBeVisible();
+});
+
+test('a pairing link opens straight onto confirming the Mac, and connects only on Connect', async ({
+  page,
+}) => {
+  let pairs = 0;
+  page.on('request', (request) => {
+    if (request.url().endsWith('/pair') && request.method() === 'POST') pairs += 1;
+  });
+  await openApp(page, { paired: false, path: pairingLinkPath() });
+  await expect(page.getByRole('heading', { name: 'Connect to mobile-fixture?' })).toBeVisible();
+  await expect(page.getByText(/This replaces/)).toHaveCount(0);
+  await shot(page, 'link-confirm');
+  expect(pairs).toBe(0);
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await expect.poll(() => pairs).toBe(1);
+  await expect(page.getByTestId('tab-queue')).toBeVisible();
+});
+
+test('a pairing link on a paired iPhone asks before replacing its Mac', async ({ page }) => {
+  await openApp(page, { path: pairingLinkPath('https://studio-mac.example.test') });
+  await expect(page.getByRole('heading', { name: 'Connect to studio-mac?' })).toBeVisible();
+  await expect(page.getByText("This replaces Benji's MacBook Pro")).toBeVisible();
+  await page.waitForTimeout(500); // the sheet's slide-in
+  await shot(page, 'link-replace');
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  await expect(page.getByTestId('tab-queue')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Connect to studio-mac?' })).toHaveCount(0);
+});
+
+test('a new link from the Mac already in use does not warn about replacing it', async ({ page }) => {
+  await openApp(page, { path: pairingLinkPath() });
+  await expect(page.getByRole('heading', { name: 'Connect to mobile-fixture?' })).toBeVisible();
+  await expect(page.getByText(/This replaces/)).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Cancel' })).toBeVisible();
+  await page.waitForTimeout(500); // the sheet's slide-in
+  await shot(page, 'link-same-mac');
+});
+
+test('a broken pairing link says what is wrong', async ({ page }) => {
+  await openApp(page, { paired: false, path: '/pair?url=http%3A%2F%2Fmac.test&code=a&v=2' });
+  await expect(page.getByText(/This isn’t a full pairing code/)).toBeVisible();
+  await shot(page, 'link-broken');
 });
 
 test('explains a paste that is not a full code, and a code from another Frink version', async ({

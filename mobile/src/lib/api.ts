@@ -1,7 +1,11 @@
 // Reason: Expo dependencies are installed in mobile; isolated types and iOS export verify this import.
 // fallow-ignore-next-line unresolved-import
 import { z } from 'zod';
-import { MOBILE_API_VERSION, mobilePairingSchema } from '@frink/shared/types/remote/mobile';
+import {
+  MOBILE_API_VERSION,
+  mobilePairingFields,
+  mobilePairingSchema,
+} from '@frink/shared/types/remote/mobile';
 import type {
   MobileAttachment,
   MobileRequest,
@@ -64,7 +68,7 @@ async function post(url: string, body: unknown, token?: string, signal?: AbortSi
 
 export function parsePairing(text: string) {
   try {
-    return mobilePairingSchema.parse(JSON.parse(text.trim()));
+    return mobilePairingSchema.parse(mobilePairingFields(text.trim()));
   } catch {
     throw new Error('Paste or scan the full pairing code from Settings → Mobile in Frink.');
   }

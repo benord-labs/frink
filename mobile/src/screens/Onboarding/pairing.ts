@@ -1,4 +1,4 @@
-import { MOBILE_API_VERSION } from '@frink/shared/types/remote/mobile';
+import { MOBILE_API_VERSION, mobilePairingFields } from '@frink/shared/types/remote/mobile';
 import { ApiError, parsePairing } from '../../lib/api';
 
 export const UPDATE_FRINK = 'Update Frink on your Mac, then make a new code.';
@@ -9,10 +9,10 @@ export type PairingRead =
   | { ok: true; text: string; host: string; name: string }
   | { ok: false; problem: string | null };
 
-/** A code from another Frink version still parses as JSON, so it can be told apart from a bad paste. */
+/** A code from another Frink version still reads as a code, so it can be told apart from a bad paste. */
 function otherVersion(text: string): boolean {
   try {
-    const value: unknown = JSON.parse(text.trim());
+    const value = mobilePairingFields(text.trim());
     const version = (value as { version?: unknown } | null)?.version;
     return typeof version === 'number' && version !== MOBILE_API_VERSION;
   } catch {
