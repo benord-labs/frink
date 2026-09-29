@@ -17,7 +17,10 @@ import {
   removeUserRule,
 } from '../../permissions/v2/store-local';
 import { getPolicyDoc } from '../../permissions/v2/store-policy';
-import { SYSTEM_DENIED_PATTERNS } from '../../permissions/v2/system-denied-patterns';
+import {
+  SYSTEM_DENIED_PATTERNS,
+  SYSTEM_WRITE_DENIED_DISPLAY,
+} from '../../permissions/v2/system-denied-patterns';
 import type { PermissionsDoc } from '../../permissions/v2/types';
 import { publicProcedure, router } from '../index';
 
@@ -33,6 +36,11 @@ export const permissionsRouter = router({
    */
   getSystemDeniedPaths: publicProcedure.query((): readonly string[] => {
     return SYSTEM_DENIED_PATTERNS;
+  }),
+
+  /** Shell startup files agents may read but never write (display only, `~/` form). */
+  getSystemWriteDeniedPaths: publicProcedure.query((): readonly string[] => {
+    return SYSTEM_WRITE_DENIED_DISPLAY;
   }),
 
   /** Project-tier rules for a given project. Empty doc if project has no rules. */

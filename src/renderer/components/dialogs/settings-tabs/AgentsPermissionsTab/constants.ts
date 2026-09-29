@@ -5,3 +5,5 @@ export const SYSTEM_DENIED_DESCRIPTION =
 
 export const SYSTEM_DENIED_WHAT_THIS_MEANS =
   'remains readable/writable as a public template, while sensitive files stay blocked.';
+
+export const SYSTEM_WRITE_DENIED_LABEL = 'Write-blocked — agents can read these, never write them:';

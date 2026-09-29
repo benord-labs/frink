@@ -29,6 +29,8 @@ export type PermissionRule = string;
 export type DenyReason =
   | { kind: 'rule:deny'; rule: string; tier: PermissionTier }
   | { kind: 'safety:path'; path: string }
+  /** A write to a shell startup file (agent-persistence-write-deny). Reads are not refused. */
+  | { kind: 'safety:write-path'; path: string }
   | { kind: 'db:unavailable' };
 
 export type PermissionRequest = {

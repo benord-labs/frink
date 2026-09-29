@@ -3,10 +3,13 @@ import * as nodeOs from 'node:os';
 import * as nodePath from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  isShellStartupPath,
   isAutoAllowedPath,
   isSystemDeniedPath,
   SYSTEM_DENIED_EXACT,
   SYSTEM_DENIED_PATTERNS,
+  SYSTEM_WRITE_DENIED_DISPLAY,
+  SYSTEM_WRITE_DENIED_EXACT,
 } from './system-denied-patterns';
 
 const root = '/p';
@@ -348,5 +351,79 @@ describe('isAutoAllowedPath — paste directory bypass (ticket 15)', () => {
     } finally {
       nodeFs.rmSync(chatBPasted, { recursive: true, force: true });
     }
+  });
+});
+
+describe('isShellStartupPath — shell startup files (sc-1668)', () => {
+  const home = nodeOs.homedir();
+
+  it.each([
+    '.zshrc',
+    '.zshenv',
+    '.zprofile',
+    '.zlogin',
+    '.zlogout',
+    '.bashrc',
+    '.bash_profile',
+    '.bash_login',
+    '.bash_logout',
+    '.profile',
+  ])('~/%s is a startup write', (name) => {
+    expect(isShellStartupPath(nodePath.join(home, name), root)).toBe(true);
+  });
+
+  it.each([
+    ['.config', 'fish', 'conf.d', 'evil.fish'],
+    ['.config', 'powershell', 'Microsoft.PowerShell_profile.ps1'],
+    ['Documents', 'PowerShell', 'profile.ps1'],
+  ])('anything beneath an autoloaded config dir: ~/%s/…', (...segments) => {
+    expect(isShellStartupPath(nodePath.join(home, ...segments), root)).toBe(true);
+  });
+
+  it('is not the credential list (callers check that first)', () => {
+    expect(isShellStartupPath(nodePath.join(home, '.ssh', 'authorized_keys'), root)).toBe(false);
+  });
+
+  it('never denies READS of startup files (isSystemDeniedPath stays false)', () => {
+    expect(isSystemDeniedPath(nodePath.join(home, '.zshrc'), root)).toBe(false);
+  });
+
+  it('leaves a project-tracked dotfile editable', () => {
+    expect(isShellStartupPath('/p/.zshrc', root)).toBe(false);
+  });
+
+  it.each(['.zshrc.bak', '.bashrc-old'])('does not deny look-alike ~/%s', (name) => {
+    expect(isShellStartupPath(nodePath.join(home, name), root)).toBe(false);
+  });
+
+  it('matches directories on a separator boundary (~/.config/fishy is not ~/.config/fish)', () => {
+    expect(isShellStartupPath(nodePath.join(home, '.config', 'fishy', 'x'), root)).toBe(false);
+  });
+
+  it('normalises `..` and resolves relative paths against the root', () => {
+    expect(isShellStartupPath(`${home}/Documents/../.zshrc`, root)).toBe(true);
+    expect(isShellStartupPath('.zshrc', home)).toBe(true);
+  });
+
+  describe('case-insensitive file systems', () => {
+    const realPlatform = process.platform;
+    afterEach(() => {
+      Object.defineProperty(process, 'platform', { value: realPlatform });
+    });
+
+    it('folds case on darwin (default APFS)', () => {
+      Object.defineProperty(process, 'platform', { value: 'darwin' });
+      expect(isShellStartupPath(nodePath.join(home, '.ZSHRC'), root)).toBe(true);
+    });
+
+    it('keeps case significant on linux', () => {
+      Object.defineProperty(process, 'platform', { value: 'linux' });
+      expect(isShellStartupPath(nodePath.join(home, '.ZSHRC'), root)).toBe(false);
+    });
+  });
+
+  it('pairs a ~-form display entry with every denied path', () => {
+    expect(SYSTEM_WRITE_DENIED_DISPLAY).toHaveLength(SYSTEM_WRITE_DENIED_EXACT.length);
+    for (const entry of SYSTEM_WRITE_DENIED_EXACT) expect(entry.startsWith(home)).toBe(true);
   });
 });

@@ -1,6 +1,7 @@
 /**
  * File-op checker (Edit / Read / Write / Delete / MultiEdit / NotebookEdit).
- * Tier-1c: `isSystemDeniedPath`. Then rule eval. Pure function.
+ * Tier-1c: `isSystemDeniedPath`, plus `isShellStartupPath` for mutating tools. Then
+ * rule eval.
  *
  * Ticket 05 of the permissions overhaul.
  */
@@ -12,7 +13,11 @@ import { getSkillReadRoots } from '../../frink-skills-dir';
 import { isPathWithinProject, resolveToRealPath } from '../path-check';
 import { classifyPath } from './classify-path';
 import { combineScopes, evalScope, resultFromCombined, type ScopedDocs } from './eval-rules';
-import { isAutoAllowedPath, isSystemDeniedPath } from './system-denied-patterns';
+import {
+  isShellStartupPath,
+  isAutoAllowedPath,
+  isSystemDeniedPath,
+} from './system-denied-patterns';
 import type { MatchContext, PermissionResult } from './types';
 
 /**
@@ -110,6 +115,11 @@ export function checkEdit(
   // wins. Auto-allow can never grant access to a system-denied path.
   if (isSystemDeniedPath(filePath, projectRoot)) {
     return { decision: 'deny', reason: { kind: 'safety:path', path: filePath } };
+  }
+  // Every non-Read tool here mutates the file. Shell startup files are
+  // write-only denied, so an agent can still read ~/.zshrc to debug PATH.
+  if (toolName !== 'Read' && isShellStartupPath(filePath, projectRoot)) {
+    return { decision: 'deny', reason: { kind: 'safety:write-path', path: filePath } };
   }
 
   // Rule eval. picomatch is anchored — `Edit(src/**)` matches `src/a.ts`, NOT

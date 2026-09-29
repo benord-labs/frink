@@ -7,6 +7,7 @@ const getPolicyDocMock = vi.fn();
 const listUserRulesMock = vi.fn();
 const listProjectRulesMock = vi.fn();
 const getSystemDeniedPathsMock = vi.fn();
+const getSystemWriteDeniedPathsMock = vi.fn();
 const projectsListMock = vi.fn();
 
 vi.mock('../../../../lib/trpc', () => ({
@@ -22,6 +23,9 @@ vi.mock('../../../../lib/trpc', () => ({
       listUserRules: { useQuery: (...args: unknown[]) => listUserRulesMock(...args) },
       listProjectRules: { useQuery: (...args: unknown[]) => listProjectRulesMock(...args) },
       getSystemDeniedPaths: { useQuery: (...args: unknown[]) => getSystemDeniedPathsMock(...args) },
+      getSystemWriteDeniedPaths: {
+        useQuery: (...args: unknown[]) => getSystemWriteDeniedPathsMock(...args),
+      },
       addProjectRule: {
         useMutation: () => ({
           mutateAsync: vi.fn().mockResolvedValue({ ok: true }),
@@ -60,6 +64,7 @@ beforeEach(() => {
   listUserRulesMock.mockReturnValue(loadedQuery(emptyDoc));
   listProjectRulesMock.mockReturnValue(loadedQuery(emptyDoc));
   getSystemDeniedPathsMock.mockReturnValue(loadedQuery([]));
+  getSystemWriteDeniedPathsMock.mockReturnValue(loadedQuery([]));
   projectsListMock.mockReturnValue(loadedQuery([]));
 });
 
@@ -117,5 +122,22 @@ describe('AgentsPermissionsTab', () => {
     expect(screen.getByText('Bash(p1-rule:*)')).toBeTruthy();
     // p2 section renders the skeleton (ScopeSection's loading guard)
     expect(screen.getByLabelText(/Loading Project — Beta rules/i)).toBeTruthy();
+  });
+  it('lists write-blocked shell startup files under their own label', () => {
+    getSystemDeniedPathsMock.mockReturnValue(loadedQuery(['**/.ssh/**']));
+    getSystemWriteDeniedPathsMock.mockReturnValue(loadedQuery(['~/.zshrc', '~/.config/fish']));
+    render(<AgentsPermissionsTab />);
+    expect(screen.getByText(/Write-blocked/)).toBeInTheDocument();
+    expect(screen.getByText('~/.zshrc')).toBeInTheDocument();
+    expect(screen.getByText('~/.config/fish')).toBeInTheDocument();
+    expect(screen.getByText('**/.ssh/**')).toBeInTheDocument();
+  });
+
+  it('keeps the page in its loading state until the write-blocked list has loaded', () => {
+    getSystemDeniedPathsMock.mockReturnValue(loadedQuery(['**/.ssh/**']));
+    getSystemWriteDeniedPathsMock.mockReturnValue(loadingQuery());
+    render(<AgentsPermissionsTab />);
+    expect(screen.getByText(/Loading permissions/i)).toBeInTheDocument();
+    expect(screen.queryByText('**/.ssh/**')).toBeNull();
   });
 });

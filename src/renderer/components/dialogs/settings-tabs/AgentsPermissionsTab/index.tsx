@@ -12,9 +12,14 @@ export function AgentsPermissionsTab(): ReactElement {
   const userDoc = trpc.permissions.listUserRules.useQuery();
   const projects = trpc.projects.list.useQuery();
   const systemDeniedPaths = trpc.permissions.getSystemDeniedPaths.useQuery();
+  const systemWriteDeniedPaths = trpc.permissions.getSystemWriteDeniedPaths.useQuery();
 
   const isLoading =
-    policyDoc.isLoading || userDoc.isLoading || projects.isLoading || systemDeniedPaths.isLoading;
+    policyDoc.isLoading ||
+    userDoc.isLoading ||
+    projects.isLoading ||
+    systemDeniedPaths.isLoading ||
+    systemWriteDeniedPaths.isLoading;
 
   if (isLoading) {
     return (
@@ -46,7 +51,10 @@ export function AgentsPermissionsTab(): ReactElement {
         doc={userDoc.data}
         userScope
       />
-      <SystemDeniedPathsCard paths={systemDeniedPaths.data ?? []} />
+      <SystemDeniedPathsCard
+        paths={systemDeniedPaths.data ?? []}
+        writePaths={systemWriteDeniedPaths.data ?? []}
+      />
       <div className="h-px shrink-0" />
     </div>
   );

@@ -57,6 +57,35 @@ export const SYSTEM_DENIED_EXACT = [
   nodePath.join(nodeOs.homedir(), '.config/gcloud'),
 ] as const;
 
+/** Shell startup files + autoloaded config dirs under home: writing one is persistence.
+ * Write-only and home-anchored (agent-persistence-write-deny); dirs deny everything beneath. */
+const WRITE_DENIED_HOME_ENTRIES = [
+  '.zshrc',
+  '.zshenv',
+  '.zprofile',
+  '.zlogin',
+  '.zlogout',
+  '.bashrc',
+  '.bash_profile',
+  '.bash_login',
+  '.bash_logout',
+  '.profile',
+  '.config/fish',
+  '.config/powershell',
+  'Documents/PowerShell',
+  'Documents/WindowsPowerShell',
+] as const;
+
+/** Absolute forms of `WRITE_DENIED_HOME_ENTRIES`. Built at module init like `SYSTEM_DENIED_EXACT`. */
+export const SYSTEM_WRITE_DENIED_EXACT: readonly string[] = WRITE_DENIED_HOME_ENTRIES.map((entry) =>
+  nodePath.join(nodeOs.homedir(), entry),
+);
+
+/** `~/`-form of the write-denied list, for display in Settings. */
+export const SYSTEM_WRITE_DENIED_DISPLAY: readonly string[] = WRITE_DENIED_HOME_ENTRIES.map(
+  (entry) => `~/${entry}`,
+);
+
 /**
  * True when `path` matches the hard-coded deny list.
  * - Resolves relative paths against `projectRoot` when supplied; otherwise
@@ -189,6 +218,18 @@ export function isSystemDeniedPath(path: string, projectRoot?: string): boolean 
   }
 
   return false;
+}
+
+/** True for a write target under a home shell startup entry. Lexical, pure and best-effort;
+ * callers check the credential list first (agent-persistence-write-deny). */
+export function isShellStartupPath(path: string, projectRoot?: string): boolean {
+  const foldCase = process.platform === 'win32' || process.platform === 'darwin';
+  const norm = (p: string): string => (foldCase ? p.toLowerCase() : p);
+  const target = norm(projectRoot ? nodePath.resolve(projectRoot, path) : nodePath.resolve(path));
+  return SYSTEM_WRITE_DENIED_EXACT.some((entry) => {
+    const denied = norm(entry);
+    return target === denied || target.startsWith(`${denied}${nodePath.sep}`);
+  });
 }
 
 /**

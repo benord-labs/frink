@@ -1,3 +1,5 @@
+import * as nodeOs from 'node:os';
+import * as nodePath from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { validateRuleString } from '../../../../shared/lib/validate-rule';
 import { checkBash } from './check-bash';
@@ -857,5 +859,115 @@ describe('checkBash — a command the tokenizer cannot read stays approvable', (
     expect(validateRuleString(offered[0], 'allow')).toMatchObject({ ok: true });
     const docs = { policy: noRules, project: { ...noRules, allow: offered }, user: noRules };
     expect(checkBash({ command }, docs, root)).toEqual({ decision: 'allow' });
+  });
+});
+
+describe('checkBash — shell startup files are write-denied, read-open (sc-1668)', () => {
+  const home = nodeOs.homedir();
+  // Tool-wide Bash allow: tier-1c must win however broad the grant.
+  const allowAll = { policy: noRules, project: noRules, user: { ...noRules, allow: ['Bash'] } };
+  const check = (command: string, projectRoot = root) =>
+    checkBash({ command }, allowAll, projectRoot);
+
+  it.each([
+    ['echo x >> ~/.zshrc', '.zshrc'],
+    ['echo x > ~/.bashrc', '.bashrc'],
+    ['echo x 2>> ~/.zshenv', '.zshenv'],
+    ['echo x &> ~/.profile', '.profile'],
+    ['echo x >& ~/.zshrc', '.zshrc'],
+    ['tee -a ~/.zshrc', '.zshrc'],
+    ['cp evil ~/.bashrc', '.bashrc'],
+    ['mv /tmp/evil ~/.zprofile', '.zprofile'],
+    ['touch ~/.config/fish/conf.d/evil.fish', '.config/fish/conf.d/evil.fish'],
+    ['rm ~/.zlogin', '.zlogin'],
+  ])('%s → safety:write-path', (command, rel) => {
+    expect(check(command)).toEqual({
+      decision: 'deny',
+      reason: { kind: 'safety:write-path', path: nodePath.join(home, rel) },
+    });
+  });
+
+  it.each([
+    ['exec 3<> ~/.zshrc', '.zshrc'],
+    ['cat 3<>~/.bashrc', '.bashrc'],
+    ['cp -t ~/.config/fish/conf.d evil.fish', '.config/fish/conf.d'],
+    ['cp --target-directory ~/.config/fish/conf.d evil.fish', '.config/fish/conf.d'],
+    ['install -t~/.config/fish/conf.d evil.fish', '.config/fish/conf.d'],
+  ])('%s — read-write opens and -t destinations are writes', (command, rel) => {
+    expect(check(command)).toEqual({
+      decision: 'deny',
+      reason: { kind: 'safety:write-path', path: nodePath.join(home, rel) },
+    });
+  });
+
+  it.each([
+    'install evil ~/.zshrc -m 600',
+    'install -m 600 evil ~/.zshrc',
+    'cp evil ~/.bashrc --suffix .orig',
+  ])('%s — a flag value is never taken for the destination', (command) => {
+    expect(check(command)).toMatchObject({ reason: { kind: 'safety:write-path' } });
+  });
+
+  it.each([
+    'cp -- -test ~/.zshrc',
+    'cp -- -tfoo ~/.zshrc',
+    'rsync evil ~/.zshrc --exclude foo',
+    'rm -- ~/.bashrc',
+  ])('%s — end-of-options and trailing values never hide the destination', (command) => {
+    expect(check(command)).toMatchObject({ reason: { kind: 'safety:write-path' } });
+  });
+
+  it('deny-leaning by design: a startup file as a later copy SOURCE is refused', () => {
+    // Accepted false positive: only the first copy operand is treated as a pure read.
+    expect(check('cp notes.txt ~/.zshrc /tmp/')).toMatchObject({
+      reason: { kind: 'safety:write-path' },
+    });
+  });
+
+  it('`cp -t /tmp/bak ~/.zshrc` reads the startup file → not denied', () => {
+    expect(check('cp -t /tmp/bak ~/.zshrc').decision).not.toBe('deny');
+  });
+
+  it('`>& file` onto a credential is denied (was skipped as an fd-dup)', () => {
+    expect(check('echo key >& ~/.ssh/authorized_keys')).toMatchObject({
+      decision: 'deny',
+      reason: { kind: 'safety:path' },
+    });
+  });
+
+  it.each(['echo x 1>&2', 'echo x >&-'])('%s — fd-dups are still not paths', (command) => {
+    expect(check(command)).toMatchObject({ decision: 'allow' });
+  });
+
+  it.each([
+    'cat ~/.zshrc',
+    'cat < ~/.zshrc',
+    'grep PATH ~/.bashrc',
+    'cp ~/.zshrc ~/.zshrc.bak',
+    'rsync ~/.zshrc /tmp/bak',
+  ])('%s — reading a startup file is not denied', (command) => {
+    expect(check(command).decision).not.toBe('deny');
+  });
+
+  it('a write sub inside a compound is denied', () => {
+    expect(check('echo hi && echo evil >> ~/.zshrc')).toMatchObject({
+      reason: { kind: 'safety:write-path' },
+    });
+  });
+
+  it('relative `.zshrc` in a no-project chat (root = home) is denied', () => {
+    expect(check('echo x >> .zshrc', home)).toMatchObject({
+      reason: { kind: 'safety:write-path' },
+    });
+  });
+
+  it('a project-tracked .zshrc is not denied', () => {
+    expect(check('echo x >> .zshrc').decision).not.toBe('deny');
+  });
+
+  it('pinned residual: a nested shell is not path-checked (agent-persistence-write-deny)', () => {
+    // Best-effort by design, like the credential list's `bash -c` / `cd` residual:
+    // unparsed forms reach rules or the Auto reviewer, never a tier-1c deny.
+    expect(check("sh -c 'echo evil >> ~/.zshrc'").decision).not.toBe('deny');
   });
 });

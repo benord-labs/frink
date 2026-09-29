@@ -7,6 +7,10 @@ describe('formatDenyReason', () => {
     [{ kind: 'rule:deny', rule: 'Bash(rm:*)', tier: 'user' }, /user.*Bash\(rm:\*\)/],
     [{ kind: 'rule:deny', rule: 'Edit(src/**)', tier: 'project' }, /project.*Edit\(src\/\*\*\)/],
     [{ kind: 'safety:path', path: '/etc/.env' }, /\/etc\/\.env/],
+    [
+      { kind: 'safety:write-path', path: '/home/u/.zshrc' },
+      /startup.*\/home\/u\/\.zshrc.*yourself/,
+    ],
     [{ kind: 'db:unavailable' }, /database/i],
   ])('formats %j', (reason, pattern) => {
     expect(formatDenyReason(reason)).toMatch(pattern);
@@ -16,6 +20,7 @@ describe('formatDenyReason', () => {
     const cases: DenyReason[] = [
       { kind: 'rule:deny', rule: 'X', tier: 'policy' },
       { kind: 'safety:path', path: '/p' },
+      { kind: 'safety:write-path', path: '/p' },
       { kind: 'db:unavailable' },
     ];
     for (const c of cases) {

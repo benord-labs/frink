@@ -735,3 +735,59 @@ describe('checkEdit — no-project chat (projectRoot = home directory)', () => {
     expect(r).toMatchObject({ decision: 'deny', reason: { kind: 'safety:path' } });
   });
 });
+
+describe('checkEdit — shell startup files are write-denied, read-open (sc-1668)', () => {
+  const home = nodeOs.homedir();
+  const zshrc = nodePath.join(home, '.zshrc');
+  const broadAllow = {
+    policy: noRules,
+    project: noRules,
+    user: { ...noRules, allow: ['Edit', 'Write', 'Read', 'MultiEdit', 'Delete', 'NotebookEdit'] },
+  };
+
+  it.each<PathToolName>(['Edit', 'Write', 'MultiEdit', 'Delete', 'NotebookEdit'])(
+    '%s of ~/.zshrc hard-denies even under a tool-wide allow',
+    (tool) => {
+      expect(checkEdit({ file_path: zshrc }, broadAllow, root, tool)).toEqual({
+        decision: 'deny',
+        reason: { kind: 'safety:write-path', path: zshrc },
+      });
+    },
+  );
+
+  it('Read of ~/.zshrc falls through to rules', () => {
+    expect(checkEdit({ file_path: zshrc }, broadAllow, root, 'Read')).toMatchObject({
+      decision: 'allow',
+    });
+  });
+
+  it('expands `~/.bashrc` and denies it in a no-project chat rooted at home', () => {
+    expect(checkEdit({ file_path: '~/.bashrc' }, EMPTY_DOCS, root, 'Write')).toMatchObject({
+      reason: { kind: 'safety:write-path' },
+    });
+    expect(checkEdit({ file_path: '.zshrc' }, broadAllow, home, 'Edit')).toMatchObject({
+      reason: { kind: 'safety:write-path' },
+    });
+  });
+
+  it('beats the plan-dir auto-allow', () => {
+    expect(
+      checkEdit({ file_path: zshrc }, EMPTY_DOCS, root, 'Write', undefined, home),
+    ).toMatchObject({ decision: 'deny', reason: { kind: 'safety:write-path' } });
+  });
+
+  it('leaves a project-tracked .zshrc to rules', () => {
+    const docs = { policy: noRules, project: { ...noRules, allow: ['Edit(**)'] }, user: noRules };
+    expect(checkEdit({ file_path: '/project/.zshrc' }, docs, root, 'Edit')).toMatchObject({
+      decision: 'allow',
+    });
+  });
+
+  it('keeps credential writes on the credential reason', () => {
+    const keys = nodePath.join(home, '.ssh', 'authorized_keys');
+    expect(checkEdit({ file_path: keys }, broadAllow, root, 'Write')).toEqual({
+      decision: 'deny',
+      reason: { kind: 'safety:path', path: keys },
+    });
+  });
+});

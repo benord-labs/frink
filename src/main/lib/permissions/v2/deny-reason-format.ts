@@ -17,6 +17,8 @@ export function formatDenyReason(reason: DenyReason): string {
       return `Denied by ${reason.tier}-tier rule ${reason.rule}`;
     case 'safety:path':
       return `Path is denied by safety policy: ${reason.path}`;
+    case 'safety:write-path':
+      return `Agents cannot write shell startup files (they run on every new shell): ${reason.path}. If you want this change, edit the file yourself.`;
     case 'db:unavailable':
       return 'Permission database is unavailable; cannot evaluate request';
     default: {

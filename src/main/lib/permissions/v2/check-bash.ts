@@ -6,7 +6,6 @@
  * Pure function. Ticket 05 of the permissions overhaul.
  */
 
-import type { ParseEntry } from 'shell-quote';
 import { escapeRuleContent, parseRule } from '../../../../shared/lib/rule-parser';
 import {
   type CommandSignature,
@@ -16,13 +15,11 @@ import {
 import {
   exciseHeredocBodies,
   extractSignature,
-  type SubCommand,
   splitCommand,
   stripSafeHeredocSubstitutions,
 } from './bash-parser';
-import { expandTilde } from './check-edit';
+import { findSystemDeniedPathInSub, hasUnresolvableDirectory } from './bash-paths';
 import { combineScopes, evalScope, type ScopedDocs } from './eval-rules';
-import { isSystemDeniedPath } from './system-denied-patterns';
 import type { DenyReason, MatchContext, PermissionResult, PromptData } from './types';
 
 const SUBCOMMAND_CAP = 50;
@@ -61,212 +58,6 @@ const BARE_SHELL_PREFIXES = new Set([
   'noglob',
   'nocorrect',
 ]);
-
-/**
- * Bash commands that READ a path argument. If any positional arg matches
- * `SYSTEM_DENIED_PATTERNS`, deny — closes the bash-Read parity gap (a model
- * that has `Bash(cat:*)` allowed could otherwise read `.env`).
- */
-const READ_COMMANDS = new Set([
-  'cat',
-  'head',
-  'tail',
-  'less',
-  'more',
-  'bat',
-  'xxd',
-  'hexdump',
-  'od',
-  'file',
-  'view',
-  'vi',
-  'vim',
-  'nano',
-  'emacs',
-  // Everything below also emits file CONTENT, so each is as good as `cat` for
-  // reading a secret. Metadata-only commands (ls, stat, find, du, readlink,
-  // basename, dirname, tree) are deliberately absent: they leak a filename, not
-  // contents, and listing them widens the false-positive surface for no gain.
-  'grep',
-  'egrep',
-  'fgrep',
-  'rg',
-  'ag',
-  'strings',
-  'sort',
-  'uniq',
-  'cut',
-  'tr',
-  'nl',
-  'fold',
-  'fmt',
-  'column',
-  'paste',
-  'join',
-  'comm',
-  'diff',
-  'cmp',
-  'md5sum',
-  'sha1sum',
-  'sha256sum',
-  'sha512sum',
-  'cksum',
-  'tac',
-  'rev',
-  'base64',
-  'zcat',
-  'expand',
-  'pr',
-  'shuf',
-]);
-
-/**
- * Commands whose non-flag arguments are AMBIGUOUS — a search pattern, a flag
- * value, or a path — so only path-shaped tokens reach the denied list. Skipping
- * the first non-flag arg instead would eat any value-taking flag's value and
- * hard-deny `grep -C 3 .env README.md` at tier-1c with no way to approve.
- */
-// biome-ignore format: one per line churns the size baseline for no readability gain
-const PATTERN_ARG_COMMANDS = new Set([
-  'grep',
-  'egrep',
-  'fgrep',
-  'rg',
-  'ag',
-  'find',
-  'fd',
-  'locate',
-  'ls',
-  'dir',
-  'tree',
-  'stat',
-  'du',
-  'df',
-  'wc',
-  'lsof',
-  'readlink',
-  'realpath',
-  'basename',
-  'dirname',
-]);
-
-/** A token is path-shaped if it carries a separator or a `~` home reference. */
-function looksLikePath(token: string): boolean {
-  return token.includes('/') || token.includes('\\') || token.startsWith('~');
-}
-
-/** Bash commands that WRITE a path argument. Same parity rule for destinations. */
-const WRITE_COMMANDS = new Set([
-  'tee',
-  'cp',
-  'mv',
-  'rm',
-  'touch',
-  'dd',
-  'truncate',
-  'install',
-  'ln',
-  'mkdir',
-  'rsync',
-]);
-
-const ENV_TOKEN_REGEX = /^[A-Za-z_][A-Za-z0-9_]*=/;
-
-/**
- * Strip a redirection's operator prefix to recover the target path.
- * `bash-parser:stripRedirections` emits concatenated strings like `'>/tmp/foo'`.
- * Drop fd-dups (`>&2`, `2>&1` → `'2>&1'` strips to `'1'` digit, etc.) since
- * those aren't paths.
- */
-const REDIRECT_OP_PREFIX = /^(?:&?>>?|\d?>>?|\d?<|<<<?|&>|>&)/;
-const LONE_DIGIT = /^\d+$/;
-
-/**
- * shell-quote emits `{ op: 'glob', pattern }` for an unquoted glob rather than a
- * string, so a plain string filter drops it — and `cat ~/.ssh/*` would extract
- * ZERO paths while the shell happily expands it. The pattern is literal text, so
- * `isSystemDeniedPath` matches it exactly as it would the expanded path.
- */
-function tokenAsPathString(token: ParseEntry): string | null {
-  if (typeof token === 'string') return token;
-  if (typeof token === 'object' && token !== null && 'op' in token && token.op === 'glob') {
-    return (token as { op: 'glob'; pattern: string }).pattern;
-  }
-  return null;
-}
-
-/**
- * A path argument, and whether it is unambiguously one. The denied list only
- * consumes unambiguous ones: a bare literal may be a search pattern, and
- * denying `grep .env config.txt` at tier-1c would refuse ordinary code search
- * with no rule able to override it.
- * Ruling: docs/decisions/bash-command-permission-safety-tier.md — containment
- * lives on the commands that touch files (`git diff --no-index ~/.ssh/id_rsa
- * /dev/null` is the known cost of a command outside the two lists).
- */
-type BashPathArg = { path: string; unambiguous: boolean };
-
-function extractBashPaths(sub: SubCommand): BashPathArg[] {
-  const paths: BashPathArg[] = [];
-  const tokens = sub.tokens.map(tokenAsPathString).filter((t): t is string => t !== null);
-
-  // Skip leading KEY= tokens. Safe envs already moved to envAssignments;
-  // unsafe envs left in tokens — neither is a path.
-  let i = 0;
-  while (i < tokens.length && ENV_TOKEN_REGEX.test(tokens[i])) i++;
-  const cmd = tokens[i];
-
-  if (cmd && (READ_COMMANDS.has(cmd) || WRITE_COMMANDS.has(cmd))) {
-    const ambiguous = PATTERN_ARG_COMMANDS.has(cmd);
-    for (let j = i + 1; j < tokens.length; j++) {
-      const tok = tokens[j];
-      // GNU long-flags `--target=/etc/passwd` get skipped here. Best-effort
-      // per ticket 05 §38; documented limitation, not a bug.
-      if (tok.startsWith('-')) continue;
-      paths.push({ path: tok, unambiguous: !ambiguous || looksLikePath(tok) });
-    }
-  }
-
-  for (const redir of sub.redirections) {
-    const stripped = redir.replace(REDIRECT_OP_PREFIX, '').trim();
-    if (!stripped) continue;
-    if (stripped.startsWith('&')) continue; // `>&2` → '&2' (fd-dup, not a path)
-    if (LONE_DIGIT.test(stripped)) continue; // pure file descriptor reference
-    paths.push({ path: stripped, unambiguous: true });
-  }
-
-  return paths;
-}
-
-/**
- * A shell metacharacter anywhere but the FINAL path segment. The tokenizer keeps
- * it literal, so the segment the denied list matches on is gone by the time we
- * look, while the shell still expands onto it — `~/.c*fig/gcloud/creds` reaches
- * the gcloud credentials that `~/.config/gcloud/creds` is denied for.
- */
-const METACHAR_IN_DIRECTORY = /[*?[{][^/]*\//;
-
-function findSystemDeniedPathInSub(sub: SubCommand, projectRoot: string): string | null {
-  for (const { path, unambiguous } of extractBashPaths(sub)) {
-    if (!unambiguous) continue;
-    const expanded = expandTilde(path);
-    if (isSystemDeniedPath(expanded, projectRoot)) return expanded;
-  }
-  return null;
-}
-
-/**
- * True when a subcommand carries a path the denied list cannot evaluate, because
- * a metachar hides a directory segment.
- *
- * The rule pipeline does NOT hard-deny these — `grep foo src/*​/x.ts` is ordinary
- * — it makes the signature exact-match-only, so a prefix rule like `Bash(cat:*)`
- * stops auto-allowing and the user is asked. That closes the tier-1c bypass
- * without a hard deny no rule can appeal.
- */
-function hasUnresolvableDirectory(sub: SubCommand): boolean {
-  return extractBashPaths(sub).some(({ path }) => METACHAR_IN_DIRECTORY.test(path));
-}
 
 function denyResult(reason: DenyReason): PermissionResult {
   return { decision: 'deny', reason };
@@ -324,6 +115,12 @@ export function checkBash(
   projectRoot: string,
 ): PermissionResult {
   const subs = splitCommand(input.command);
+  // Tier-1c first, over every sub (so the over-cap ask cannot skip it). shell-quote splits
+  // `<>` and orphans its target, so it is read as the `>` write it performs.
+  for (const sub of splitCommand(input.command.replace(/<>/g, '>'))) {
+    const denied = findSystemDeniedPathInSub(sub, projectRoot);
+    if (denied) return denyResult(denied);
+  }
 
   if (subs.length > SUBCOMMAND_CAP) {
     return askResult({
@@ -354,11 +151,6 @@ export function checkBash(
   let askPrompt: PromptData | undefined;
 
   for (const sub of subs) {
-    // Tier-1c: bash-Read parity. Read-ish/write-ish commands + redirections
-    // checked against SYSTEM_DENIED_PATTERNS.
-    const deniedPath = findSystemDeniedPathInSub(sub, projectRoot);
-    if (deniedPath) return denyResult({ kind: 'safety:path', path: deniedPath });
-
     // Rule eval
     const base = extractSignature(sub);
     // A metachar-hidden directory makes the denied list unevaluable, so a prefix
