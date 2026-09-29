@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import os from 'node:os';
 import { promisify } from 'node:util';
-import pidtree from 'pidtree';
+import { pidtree } from 'pidtree';
 
 const execFileAsync = promisify(execFile);
 

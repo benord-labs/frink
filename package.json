@@ -126,7 +126,7 @@
     "node-pty": "^1.1.0",
     "path-browserify": "^1.0.1",
     "picomatch": "^4.0.7",
-    "pidtree": "^0.6.1",
+    "pidtree": "^1.0.0",
     "posthog-js": "^1.434.7",
     "posthog-node": "^5.52.5",
     "pyright": "^1.1.414",
