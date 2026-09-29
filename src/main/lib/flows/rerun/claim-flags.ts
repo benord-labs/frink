@@ -6,6 +6,7 @@
 
 import { z } from 'zod';
 import { extractRawTriggerConfig } from '../../../../shared/lib/trigger-rule-config';
+import { isCodexSpeed, type CodexSpeed } from '../../../../shared/types/execution';
 import { taskResultSchema } from '../../../../shared/types/task-result';
 import type { Task as DbTask } from '../../db/schema';
 
@@ -131,14 +132,14 @@ export function resolveFlowAutoReviewToolsForTask(
  * `undefined`, which leaves the chat's own Fast state untouched. Defaulting a missing value to
  * `true` would spend a user's credits on graphs that never asked for it.
  */
-export function resolveFlowCodexFastModeForTask(
+export function resolveFlowCodexSpeedForTask(
   task: Pick<DbTask, 'flowRunId' | 'triggerContext' | 'source'>,
-): boolean | undefined {
+): CodexSpeed | undefined {
   if (!task.flowRunId && task.source !== 'flow') return undefined;
   // `?? undefined`, not the raw null: a null would survive the `!== undefined` spread guards in
   // task-executor and then fail `isOptionalBoolean`, silently dropping the whole chat-ready payload.
   return (
-    getFlowConfigField(extractTaskTriggerConfig(task.triggerContext), 'codexFastMode', isBoolean) ??
+    getFlowConfigField(extractTaskTriggerConfig(task.triggerContext), 'codexSpeed', isCodexSpeed) ??
     undefined
   );
 }

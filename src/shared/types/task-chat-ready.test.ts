@@ -46,13 +46,13 @@ describe('isTaskChatReadyData', () => {
     };
     expect(isTaskChatReadyData({ ...payload, autoReviewTools: false })).toBe(true);
     expect(isTaskChatReadyData({ ...payload, autoReviewTools: 'false' })).toBe(false);
-    expect(isTaskChatReadyData({ ...payload, codexFastMode: true })).toBe(true);
-    expect(isTaskChatReadyData({ ...payload, codexFastMode: false })).toBe(true);
-    expect(isTaskChatReadyData({ ...payload, codexFastMode: 'true' })).toBe(false);
+    expect(isTaskChatReadyData({ ...payload, codexSpeed: 'ultrafast' })).toBe(true);
+    expect(isTaskChatReadyData({ ...payload, codexSpeed: 'standard' })).toBe(true);
+    expect(isTaskChatReadyData({ ...payload, codexSpeed: true })).toBe(false);
     // A `null` here is the shape a main-process resolver leaks when it forwards getFlowConfigField
     // verbatim: it passes the `!== undefined` spread guards upstream and then sinks the WHOLE
     // payload here, so the chat never opens. Rejecting it loudly is what makes that bug findable.
-    expect(isTaskChatReadyData({ ...payload, codexFastMode: null })).toBe(false);
+    expect(isTaskChatReadyData({ ...payload, codexSpeed: null })).toBe(false);
   });
 
   it('rejects payloads missing required fields', () => {

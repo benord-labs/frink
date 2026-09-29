@@ -202,38 +202,37 @@ describe('local dispatch — Flow Auto Mode', () => {
   });
 });
 
-describe('local dispatch — Flow Codex Fast mode', () => {
-  it('emits an explicit false when unset, so a chat left on Fast is actively cleared', async () => {
+describe('local dispatch — Flow Codex speed', () => {
+  it('emits an explicit standard when unset, so a chat left on a paid speed is actively cleared', async () => {
     // The value seeds the chat's persisted Fast atom. Emitting nothing here would let a chat that a
     // previous Fast run switched on keep billing this run at the priority multiplier.
     await seedStartTask();
     await dispatchAgent(agentCtx({ previousOutput: AGENT_PREV_OUTPUT }) as never);
-    expect(h.createTask.mock.calls[0][1].triggerContext._config.codexFastMode).toBe(false);
+    expect(h.createTask.mock.calls[0][1].triggerContext._config.codexSpeed).toBe('standard');
   });
 
-  it('forwards an enabled Fast setting', async () => {
+  it('forwards the flow speed', async () => {
     await seedStartTask();
     await dispatchAgent(
       agentCtx({
         previousOutput: AGENT_PREV_OUTPUT,
-        parsedGraph: { ...GRAPH, settings: { codexFastMode: true } },
+        parsedGraph: { ...GRAPH, settings: { codexSpeed: 'ultrafast' } },
       }) as never,
     );
-    expect(h.createTask.mock.calls[0][1].triggerContext._config.codexFastMode).toBe(true);
+    expect(h.createTask.mock.calls[0][1].triggerContext._config.codexSpeed).toBe('ultrafast');
   });
 
-  it('treats a non-boolean setting as off rather than truthy', async () => {
-    // validate-flow-graph does not type-check settings keys, so only MCP-patched graphs pass
-    // through zod — a hand-edited or legacy graph can carry `codexFastMode: 'yes'`, which is
-    // truthy. `=== true` is what stops that string from silently buying the priority tier.
+  it('treats an unknown speed as standard rather than passing it on', async () => {
+    // validate-flow-graph does not type-check settings keys, so a hand-edited graph can carry any
+    // string; only a known speed name may reach billing.
     await seedStartTask();
     await dispatchAgent(
       agentCtx({
         previousOutput: AGENT_PREV_OUTPUT,
-        parsedGraph: { ...GRAPH, settings: { codexFastMode: 'yes' } },
+        parsedGraph: { ...GRAPH, settings: { codexSpeed: 'yes' } },
       }) as never,
     );
-    expect(h.createTask.mock.calls[0][1].triggerContext._config.codexFastMode).toBe(false);
+    expect(h.createTask.mock.calls[0][1].triggerContext._config.codexSpeed).toBe('standard');
   });
 
   it('does not gate on model support — resolveCodexCliModel is the single support boundary', async () => {
@@ -245,11 +244,11 @@ describe('local dispatch — Flow Codex Fast mode', () => {
         previousOutput: AGENT_PREV_OUTPUT,
         parsedGraph: {
           ...GRAPH,
-          settings: { codexFastMode: true, defaultModel: 'codex-gpt-5.4-mini-medium' },
+          settings: { codexSpeed: 'ultrafast', defaultModel: 'codex-gpt-5.4-mini-medium' },
         },
       }) as never,
     );
-    expect(h.createTask.mock.calls[0][1].triggerContext._config.codexFastMode).toBe(true);
+    expect(h.createTask.mock.calls[0][1].triggerContext._config.codexSpeed).toBe('ultrafast');
   });
 });
 

@@ -1,9 +1,7 @@
 // @vitest-environment happy-dom
 
-import { describe, expect, it, vi } from 'vitest';
-import { fastModeDescription } from '.';
-
-vi.mock('../../../../lib/trpc', () => ({ trpc: {} }));
+import { describe, expect, it } from 'vitest';
+import { fastModeDescription, ultrafastDescription } from '.';
 
 describe('fastModeDescription', () => {
   it('labels speed and the selected model ChatGPT credit multiplier separately', () => {
@@ -20,5 +18,15 @@ describe('fastModeDescription', () => {
       'The default model has no Fast tier.',
     );
     expect(fastModeDescription(undefined)).toContain('Applies only to supported OpenAI models.');
+  });
+});
+
+describe('ultrafastDescription', () => {
+  it('states the unattended cost on a model that offers it, and plain standard speed otherwise', () => {
+    expect(ultrafastDescription(8)).toContain('up to 8× faster for 8× ChatGPT credits');
+    expect(ultrafastDescription(8)).toContain('even when nobody is watching');
+    expect(ultrafastDescription(null)).toBe(
+      'The default model has no Ultrafast tier, so steps run at standard speed.',
+    );
   });
 });

@@ -122,7 +122,7 @@ export const FlowChatBottomSurface = memo(function FlowChatBottomSurface({
           modelId={bottomSurface.modelId}
           mode={bottomSurface.mode}
           autoReviewTools={bottomSurface.autoReviewTools}
-          codexFastMode={bottomSurface.codexFastMode}
+          codexSpeed={bottomSurface.codexSpeed}
           onAddNote={handleSteerNote}
           onStopTurn={onStopTurn}
         />
@@ -134,7 +134,7 @@ export const FlowChatBottomSurface = memo(function FlowChatBottomSurface({
           modelId={bottomSurface.modelId}
           mode={bottomSurface.mode}
           autoReviewTools={bottomSurface.autoReviewTools}
-          codexFastMode={bottomSurface.codexFastMode}
+          codexSpeed={bottomSurface.codexSpeed}
           isTurnActive={isTurnActive}
           onSubmitAnswer={guardedSend}
           onResume={handleResume}

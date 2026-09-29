@@ -16,6 +16,7 @@
 import { isRetryableParkedResult } from '../../../shared/lib/task-retry-policy';
 import { type ResolvedTaskStartMode, toChatMode } from '../../../shared/lib/trigger-rule-config';
 import type { ChatMode } from '../../../shared/types/chat-mode';
+import { type CodexSpeed, isCodexSpeed } from '../../../shared/types/execution';
 import type { AgentUserQuestion } from '../../../shared/types/task-signal';
 import { taskResultSchema, type TaskResultRecord } from '../../../shared/types/task-result';
 
@@ -76,7 +77,7 @@ function readTaskAgentInfo(
   modelId?: string;
   mode?: ChatMode;
   autoReviewTools?: boolean;
-  codexFastMode?: boolean;
+  codexSpeed?: CodexSpeed;
 } {
   if (!task) return {};
   const config = configRecord(task.triggerContext);
@@ -87,14 +88,14 @@ function readTaskAgentInfo(
   // so it reports what the FLOW asked for over the whole run. The chat's own seeded Auto setting is the
   // value that actually governs each turn; the two agree unless a human has since changed it.
   const autoReviewTools = config?.autoReviewTools;
-  const codexFastMode = config?.codexFastMode;
+  const codexSpeed = config?.codexSpeed;
   return {
     modelId: typeof model === 'string' ? model : undefined,
     mode:
       liveMode ??
       (typeof startMode === 'string' ? toChatMode(startMode as ResolvedTaskStartMode) : 'agent'),
     autoReviewTools: typeof autoReviewTools === 'boolean' ? autoReviewTools : undefined,
-    codexFastMode: typeof codexFastMode === 'boolean' ? codexFastMode : undefined,
+    codexSpeed: isCodexSpeed(codexSpeed) ? codexSpeed : undefined,
   };
 }
 
@@ -132,7 +133,7 @@ export type FlowChatBottomSurface =
       modelId?: string;
       mode?: ChatMode;
       autoReviewTools?: boolean;
-      codexFastMode?: boolean;
+      codexSpeed?: CodexSpeed;
     }
   | {
       kind: 'paused';
@@ -140,7 +141,7 @@ export type FlowChatBottomSurface =
       modelId?: string;
       mode?: ChatMode;
       autoReviewTools?: boolean;
-      codexFastMode?: boolean;
+      codexSpeed?: CodexSpeed;
     }
   | { kind: 'park' };
 

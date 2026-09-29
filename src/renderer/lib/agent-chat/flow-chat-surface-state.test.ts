@@ -331,25 +331,25 @@ describe('running/paused readout carries the node model + mode', () => {
     ).toMatchObject({ kind: 'paused', autoReviewTools: false });
   });
 
-  it('carries the flow’s Codex Fast setting from Config, on both surfaces', () => {
+  it('carries the flow’s Codex speed from Config, on both surfaces', () => {
     expect(
       surface(RUN, {
         status: 'running',
-        triggerContext: { Config: { model: 'codex-gpt-5.6-sol-high', codexFastMode: true } },
+        triggerContext: { Config: { model: 'codex-gpt-5.6-sol-high', codexSpeed: 'ultrafast' } },
         result: {},
       }),
-    ).toMatchObject({ kind: 'running', codexFastMode: true });
+    ).toMatchObject({ kind: 'running', codexSpeed: 'ultrafast' });
     expect(
       surface(RUN, {
         status: 'needs_attention',
-        triggerContext: { Config: { codexFastMode: false } },
+        triggerContext: { Config: { codexSpeed: 'standard' } },
         result: { userPause: { at: 'x' } },
       }),
-    ).toMatchObject({ kind: 'paused', codexFastMode: false });
+    ).toMatchObject({ kind: 'paused', codexSpeed: 'standard' });
     // Absent means "not flow-dispatched / no value", which the pill must not read as on.
     expect(
       surface(RUN, { status: 'running', triggerContext: { Config: {} }, result: {} }),
-    ).toMatchObject({ codexFastMode: undefined });
+    ).toMatchObject({ codexSpeed: undefined });
   });
 
   it('reads auto-review consent from the canonical tRPC `Config` key', () => {

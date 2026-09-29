@@ -608,7 +608,20 @@ The setting is flow-wide, deliberately: there is no per-step override, so a flow
 ```
 frink_flows_patch({
   flowId: "<id>",
-  operations: [{ op: "update_settings", settings: { codexFastMode: true } }]
+  operations: [{ op: "update_settings", settings: { codexSpeed: "fast" } }]
+})
+```
+
+### Ultrafast mode (Codex)
+
+**Ultrafast mode** asks Codex for its **ultrafast** service tier: up to **8× model speed** for **8× ChatGPT credits** on GPT-6 Astra. It needs a ChatGPT Pro 500 plan or an eligible Enterprise/Edu plan; on other accounts Codex runs the steps at standard speed. Fast and Ultrafast replace each other, and both are off unless you turn them on.
+
+The switch appears under **Fast mode** when the flow's default model is GPT-6 Astra. Remember that it applies to every Agent step of every run, even when nobody is watching. A step on a model without Ultrafast runs at standard speed, never quietly at Fast. While a run drives a chat, the status strip shows an **Ultrafast** chip with its credit cost.
+
+```
+frink_flows_patch({
+  flowId: "<id>",
+  operations: [{ op: "update_settings", settings: { codexSpeed: "ultrafast" } }]
 })
 ```
 
