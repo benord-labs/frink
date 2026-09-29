@@ -18,6 +18,7 @@ import { chats, projects, subChats, tasks } from '../../db/schema';
 import { subChatActivity } from './chat';
 import { executionReady, mobileCallers, record, text } from './context';
 import { mobilePermissions, mobileQuestions, parkedQuestion } from './questions';
+import { mobileTaskActions } from './tasks';
 
 const sections = ['attention', 'inbox', 'running'] as const;
 export async function readMobileOverview({
@@ -50,6 +51,7 @@ export async function readMobileOverview({
         flowRunId: task.flowRunId,
         projectName: task.projectName,
         activityAt: (task.completedAt ?? task.startedAt ?? task.createdAt).toISOString(),
+        actions: mobileTaskActions(task, task.effectiveStatus),
       };
     }),
   );

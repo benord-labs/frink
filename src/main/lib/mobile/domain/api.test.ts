@@ -6,10 +6,12 @@ const fixture = vi.hoisted(() => ({
   overview: vi.fn(),
   chats: vi.fn(),
   flow: vi.fn(),
+  taskAction: vi.fn(),
 }));
 vi.mock('./chat', () => ({ deleteMobileChat: fixture.deleteChat }));
 vi.mock('./composer', () => ({}));
 vi.mock('./flows', () => ({ readMobileFlow: fixture.flow }));
+vi.mock('./tasks', () => ({ runMobileTaskAction: fixture.taskAction }));
 vi.mock('./read', () => ({
   readMobileOverview: fixture.overview,
   readMobileChats: fixture.chats,
@@ -47,6 +49,14 @@ describe('executeMobileRequest', () => {
       ok: true,
     });
     expect(fixture.deleteChat).toHaveBeenCalledWith({ type: 'deleteChat', chatId: 'chat' });
+  });
+
+  it('routes each Queue task action to the task action handler', async () => {
+    fixture.taskAction.mockResolvedValue({ ok: true });
+    for (const type of ['completeTask', 'continueTask', 'startTask'] as const) {
+      await expect(executeMobileRequest({ type, id: 'task' })).resolves.toEqual({ ok: true });
+      expect(fixture.taskAction).toHaveBeenLastCalledWith({ type, id: 'task' });
+    }
   });
 
   it('reports an unexpected fault it masks, and not an expected refusal', async () => {

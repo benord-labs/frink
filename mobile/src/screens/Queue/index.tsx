@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ActivityIndicator, RefreshControl, SectionList, View } from 'react-native';
 import { CircleCheck } from 'lucide-react-native';
+import type { MobileTaskAction } from '@frink/shared/types/remote/mobile';
 import { useConnection, useResource } from '../../lib/connection';
 import { useOverview } from '../../lib/overview';
 import { useRootNavigation } from '../../navigation/routes';
@@ -8,6 +9,7 @@ import { useTabHeader } from '../../navigation/tab-header';
 import { EmptyState, RowSeparator, SectionHeader } from '../../ui/list';
 import { ResourceStatus } from '../../ui/resource-status';
 import { Screen } from '../../ui/screen';
+import { tell } from '../../ui/tell';
 import { space, useTheme } from '../../ui/theme';
 import {
   COLLAPSED_ROWS,
@@ -17,7 +19,7 @@ import {
   type QueueSectionKey,
   type QueueTarget,
 } from './queue-view';
-import { MacEyebrow, NotReadyNotice, QueueListRow } from './row';
+import { ACTION_ITEMS, MacEyebrow, NotReadyNotice, QueueListRow } from './row';
 
 /**
  * The shared overview poll serves the collapsed Queue (and the tab badge). Once a section is
@@ -39,14 +41,14 @@ function useQueueOverview() {
     else next.add(key);
     setExpanded(next);
   };
-  return { resource, sections, expanded, toggle };
+  return { resource, shared, grown, sections, expanded, toggle };
 }
 
 export function QueueScreen() {
   const t = useTheme();
   const navigation = useRootNavigation();
-  const { connection } = useConnection();
-  const { resource, sections, expanded, toggle } = useQueueOverview();
+  const { connection, request } = useConnection();
+  const { resource, shared, grown, sections, expanded, toggle } = useQueueOverview();
   const { data, error } = resource;
   const { header } = useTabHeader({
     title: 'Queue',
@@ -67,6 +69,17 @@ export function QueueScreen() {
           subChatId: target.subChatId,
           decisionTarget: target.decisionTarget,
         });
+  // The computer re-checks each action, so a row that changed since the last poll says so.
+  const act = async (id: string, action: MobileTaskAction) => {
+    try {
+      await request({ type: action, id });
+    } catch (error) {
+      tell(`Couldn’t ${ACTION_ITEMS[action].label.toLowerCase()}`, error instanceof Error ? error.message : '');
+    }
+    resource.refresh();
+    // The tab badge counts from the shared poll, which an expanded Queue doesn't refresh.
+    if (grown) shared.refresh();
+  };
   const listSections = sections.map((section) => ({
     ...section,
     data: expanded.has(section.key) ? section.rows : section.rows.slice(0, COLLAPSED_ROWS),
@@ -102,7 +115,11 @@ export function QueueScreen() {
           />
         )}
         renderItem={({ item }) => (
-          <QueueListRow row={item} onOpen={item.target ? () => open(item.target!) : undefined} />
+          <QueueListRow
+            row={item}
+            onOpen={item.target ? () => open(item.target!) : undefined}
+            onAction={(action) => void act(item.key, action)}
+          />
         )}
         ItemSeparatorComponent={() => <RowSeparator />}
         ListEmptyComponent={

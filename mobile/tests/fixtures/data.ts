@@ -114,6 +114,7 @@ export function overviewFixture(): MobileResponses['overview'] {
         flowRunId: null,
         projectName: 'billing-api',
         activityAt: ago(12),
+        actions: [],
       },
       {
         id: 'task-failed',
@@ -126,6 +127,7 @@ export function overviewFixture(): MobileResponses['overview'] {
         flowRunId: 'run-2',
         projectName: 'frink',
         activityAt: ago(35),
+        actions: [],
       },
       {
         id: 'task-done',
@@ -138,6 +140,7 @@ export function overviewFixture(): MobileResponses['overview'] {
         flowRunId: null,
         projectName: 'marketing-site',
         activityAt: ago(50),
+        actions: ['completeTask'],
       },
       {
         id: 'task-run-chat',
@@ -150,6 +153,7 @@ export function overviewFixture(): MobileResponses['overview'] {
         flowRunId: null,
         projectName: 'frink',
         activityAt: ago(4),
+        actions: [],
       },
       {
         id: 'task-run-flow',
@@ -162,6 +166,7 @@ export function overviewFixture(): MobileResponses['overview'] {
         flowRunId: 'run-1',
         projectName: 'design-system',
         activityAt: ago(9),
+        actions: [],
       },
       {
         id: 'task-inbox',
@@ -174,6 +179,7 @@ export function overviewFixture(): MobileResponses['overview'] {
         flowRunId: null,
         projectName: null,
         activityAt: ago(120),
+        actions: ['startTask'],
       },
     ],
     counts: { attention: 3, running: 2, inbox: 1 },

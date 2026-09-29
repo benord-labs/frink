@@ -4,9 +4,11 @@ import { effectiveStatusExpr, isFlowRepresentative } from './flow-collapse';
 
 export type WorkQueueSection = 'attention' | 'inbox' | 'running';
 
-/** Canonical wait-mode predicate shared by executor exclusion and Work Queue Inbox reads. */
+/** Canonical wait-mode predicate shared by executor exclusion and Work Queue Inbox reads. A saved
+ *  start mode means the task was started, so a carried-on task runs again (as the executor allows). */
 export const isWaitModeTask: SQL = drizzleSql`(
   ${tasks.status} = 'pending'
+  AND json_extract(${tasks.result}, '$.startMode') IS NULL
   AND lower(COALESCE(
     json_extract(${tasks.triggerContext}, '$._config.startMode'),
     json_extract(${tasks.triggerContext}, '$._config.start_mode'),

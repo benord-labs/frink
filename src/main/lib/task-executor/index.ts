@@ -274,11 +274,13 @@ export function resolveTaskExecutionOptions(task: DbTask): {
   // Fall back to raw _config extraction for non-webhook flow tasks (manual, schedule, post_task
   // triggers) whose trigger_context doesn't satisfy the full TriggerContext shape.
   const rawConfig = triggerContext?._config ?? extractTaskTriggerConfig(task.triggerContext);
-  const metadata = resolveTaskExecutionMetadata(rawConfig, { throwOnWait: true });
+  // A persisted start mode is an explicit start, so it releases a task its trigger holds in wait.
+  const resultStartMode = extractResultStartMode(task.result);
+  const metadata = resolveTaskExecutionMetadata(rawConfig, { throwOnWait: !resultStartMode });
   const skipReview = rawConfig != null ? metadata.skipReview : false;
 
   return {
-    startMode: extractResultStartMode(task.result) ?? metadata.startMode,
+    startMode: resultStartMode ?? metadata.startMode,
     skipReview,
     ...(metadata.configuredModel ? { configuredModel: metadata.configuredModel } : {}),
   };

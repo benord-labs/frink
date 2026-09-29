@@ -2,6 +2,7 @@ import type {
   MobileOverview,
   MobileQueueItem,
   MobileQueueSection,
+  MobileTaskAction,
 } from '@frink/shared/types/remote/mobile';
 import { taskStatus, type Status } from '../../lib/status';
 
@@ -25,12 +26,14 @@ export type QueueRow = {
   status: Status;
   activityAt: string | null;
   target: QueueTarget | null;
+  /** What a swipe offers, as the computer allows it. */
+  actions: MobileTaskAction[];
 };
 export type QueueSection = {
   key: QueueSectionKey;
   title: string;
   rows: QueueRow[];
-  /** The header count: the badge's number for Needs you, the computer's total elsewhere. */
+  /** The header count: the rows sent for the attention sections, the computer's total elsewhere. */
   total: number;
   /** More rows than the collapsed section shows, here or still on the computer. */
   hasMore: boolean;
@@ -94,6 +97,7 @@ function itemRow(
     status,
     activityAt: item.activityAt,
     target: itemTarget(item),
+    actions: item.actions,
   };
 }
 
@@ -166,6 +170,7 @@ function decisionRow(decision: Decision, queue: MobileQueueItem[]): QueueRow {
       subChatId: decision.subChatId,
       decisionTarget: { type: decision.type, id: decision.id },
     },
+    actions: [],
   };
 }
 
@@ -178,14 +183,12 @@ function progress(summary: string) {
   return /step \d+ of \d+/i.exec(summary)?.[0] ?? null;
 }
 
-/**
- * Everything that needs the user: questions, approvals and attention tasks, but not finished
- * work waiting for review. The same set the Queue tab badge counts.
- */
+/** The Queue tab badge: questions, approvals and attention tasks, finished work included now that
+ *  the phone can mark it complete. */
 export function needsYouCount(data: MobileOverview | undefined): number {
   if (!data) return 0;
   const { decisions, tasks } = collectDecisions(data);
-  return decisions.length + tasks.filter((item) => item.status !== 'done').length;
+  return decisions.length + tasks.length;
 }
 
 /** Server page sizes for the expanded sections: each list's full count, capped. */

@@ -15,6 +15,7 @@ function item(overrides: Partial<MobileQueueItem> & Pick<MobileQueueItem, 'id'>)
     flowRunId: null,
     projectName: null,
     activityAt: at(1),
+    actions: [],
     ...overrides,
   };
 }
@@ -69,7 +70,14 @@ const overview: MobileOverview = {
       summary: 'Plan is ready for your review',
       activityAt: at(2),
     }),
-    item({ id: 'finished', status: 'done', chatId: 'c3', subChatId: 's3', summary: '4 files' }),
+    item({
+      id: 'finished',
+      status: 'done',
+      chatId: 'c3',
+      subChatId: 's3',
+      summary: '4 files',
+      actions: ['completeTask'],
+    }),
     item({
       id: 'flow-running',
       section: 'running',
@@ -89,9 +97,9 @@ const section = (data: MobileOverview, key: string) =>
   queueSections(data).find((entry) => entry.key === key);
 
 describe('needsYouCount', () => {
-  it('counts each decision once and leaves finished work out', () => {
-    // q1 (its task is the same decision) + p1 + old-failure + new-plan; "finished" is review.
-    expect(needsYouCount(overview)).toBe(4);
+  it('counts each decision once, finished work included', () => {
+    // q1 (its task is the same decision) + p1 + old-failure + new-plan + finished.
+    expect(needsYouCount(overview)).toBe(5);
     expect(needsYouCount(undefined)).toBe(0);
   });
 });
@@ -168,14 +176,19 @@ describe('queueSections', () => {
     ]);
   });
 
-  it('counts Needs you like the badge and offers more when the computer holds more', () => {
+  it('carries the computer’s actions onto task rows, never onto decisions', () => {
+    expect(section(overview, 'review')?.rows[0].actions).toEqual(['completeTask']);
+    expect(section(overview, 'needsYou')?.rows.map((row) => row.actions)).toEqual([[], [], [], []]);
+  });
+
+  it('counts the rows it was sent and offers more when the computer holds more', () => {
     const paged = {
       ...overview,
       counts: { attention: 9, running: 12, inbox: 1 },
       more: { attention: true, running: true, inbox: false },
     };
-    // Unsent attention rows may be finished work, so Needs you counts what the badge counts.
-    expect(section(paged, 'needsYou')).toMatchObject({ total: needsYouCount(paged), hasMore: true });
+    // Unsent attention rows may be finished work, so Needs you counts the rows it holds.
+    expect(section(paged, 'needsYou')).toMatchObject({ total: 4, hasMore: true });
     expect(section(paged, 'running')).toMatchObject({ total: 12, hasMore: true });
     expect(section(paged, 'review')).toMatchObject({ total: 1, hasMore: true });
     expect(section(paged, 'upNext')).toMatchObject({ total: 1, hasMore: false });

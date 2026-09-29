@@ -199,6 +199,8 @@ describe('mobile overview', () => {
           section: 'attention',
           projectName: 'Frink',
           activityAt: at(3000).toISOString(),
+          // Row actions follow the queue's display status.
+          actions: ['completeTask'],
         },
         { id: 'new', section: 'attention', projectName: null, activityAt: at(1000).toISOString() },
       ],

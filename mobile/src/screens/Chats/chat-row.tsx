@@ -38,10 +38,15 @@ export const ChatRow = memo(function ChatRow({
   const title = chat.name || 'Untitled chat';
   return (
     <SwipeAction
-      label="Delete"
-      icon={Trash2}
-      accessibilityLabel={`Delete ${title}`}
-      onPress={() => onDelete(chat)}
+      actions={[
+        {
+          label: 'Delete',
+          icon: Trash2,
+          fill: 'destructive',
+          accessibilityLabel: `Delete ${title}`,
+          onPress: () => onDelete(chat),
+        },
+      ]}
     >
       <ListRow
         testID={`chat-row-${chat.id}`}
