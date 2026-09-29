@@ -13,11 +13,7 @@
     }
   },
   "frink": {
-    "keywords": [
-      "recruiting",
-      "sourcing",
-      "talent"
-    ],
+    "keywords": ["recruiting", "sourcing", "talent"],
     "source": {
       "repo": "cursor/plugins",
       "commit": "4612556",

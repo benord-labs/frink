@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { activeConsentUrl, CONSENT_IDLE, consentDialogOpen, consentViewReducer } from './consent-view';
+import {
+  activeConsentUrl,
+  CONSENT_IDLE,
+  consentDialogOpen,
+  consentViewReducer,
+} from './consent-view';
 
 const SIGN_IN = 'https://mcp.notion.com/authorize?state=abc';
 const run = (...events: Parameters<typeof consentViewReducer>[1][]) =>
@@ -17,7 +22,11 @@ describe('consent dialog view', () => {
   });
 
   it('keeps a failure until dismissed', () => {
-    const failed = run({ type: 'started' }, { type: 'page', url: SIGN_IN }, { type: 'failed', error: 'Authorization cancelled.' });
+    const failed = run(
+      { type: 'started' },
+      { type: 'page', url: SIGN_IN },
+      { type: 'failed', error: 'Authorization cancelled.' },
+    );
     expect(failed).toEqual({ url: SIGN_IN, error: 'Authorization cancelled.', dismissed: false });
     expect(consentDialogOpen(failed, false)).toBe(true);
     const closed = consentViewReducer(failed, { type: 'dismissed' });
@@ -27,7 +36,10 @@ describe('consent dialog view', () => {
   it('reopens for a failure that lands after the user closed the dialog mid-flight', () => {
     const closed = run({ type: 'started' }, { type: 'dismissed' });
     expect(consentDialogOpen(closed, true)).toBe(false);
-    const failed = consentViewReducer(closed, { type: 'failed', error: 'Authorization cancelled.' });
+    const failed = consentViewReducer(closed, {
+      type: 'failed',
+      error: 'Authorization cancelled.',
+    });
     expect(consentDialogOpen(failed, false)).toBe(true);
   });
 
@@ -46,7 +58,12 @@ describe('consent dialog view', () => {
   });
 
   it('starts a new attempt clean, dropping the previous page and dismissal', () => {
-    const again = run({ type: 'page', url: SIGN_IN }, { type: 'failed', error: 'x' }, { type: 'dismissed' }, { type: 'started' });
+    const again = run(
+      { type: 'page', url: SIGN_IN },
+      { type: 'failed', error: 'x' },
+      { type: 'dismissed' },
+      { type: 'started' },
+    );
     expect(again).toEqual(CONSENT_IDLE);
     expect(consentDialogOpen(again, true)).toBe(true);
   });

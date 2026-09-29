@@ -26,9 +26,9 @@ describe('resolveNodeOrFlowProjectId', () => {
   });
 
   it('treats a whitespace-only node projectId as absent and uses the flow default', () => {
-    expect(resolveNodeOrFlowProjectId({ projectId: '   ' }, { defaultProjectId: 'flow-pid' }, {})).toBe(
-      'flow-pid',
-    );
+    expect(
+      resolveNodeOrFlowProjectId({ projectId: '   ' }, { defaultProjectId: 'flow-pid' }, {}),
+    ).toBe('flow-pid');
   });
 
   it('returns undefined when neither the node nor the flow names a project', () => {
@@ -42,9 +42,9 @@ describe('resolveNodeOrFlowProjectId', () => {
   });
 
   it('ignores a non-string node projectId and uses the flow default', () => {
-    expect(resolveNodeOrFlowProjectId({ projectId: 99 }, { defaultProjectId: 'flow-pid' }, {})).toBe(
-      'flow-pid',
-    );
+    expect(
+      resolveNodeOrFlowProjectId({ projectId: 99 }, { defaultProjectId: 'flow-pid' }, {}),
+    ).toBe('flow-pid');
   });
 
   it('is safe when settings are absent', () => {
@@ -53,8 +53,12 @@ describe('resolveNodeOrFlowProjectId', () => {
   });
 
   it('trims surrounding whitespace from whichever projectId it returns', () => {
-    expect(resolveNodeOrFlowProjectId({ projectId: '  node-pid  ' }, undefined, {})).toBe('node-pid');
-    expect(resolveNodeOrFlowProjectId({}, { defaultProjectId: '  flow-pid  ' }, {})).toBe('flow-pid');
+    expect(resolveNodeOrFlowProjectId({ projectId: '  node-pid  ' }, undefined, {})).toBe(
+      'node-pid',
+    );
+    expect(resolveNodeOrFlowProjectId({}, { defaultProjectId: '  flow-pid  ' }, {})).toBe(
+      'flow-pid',
+    );
   });
 
   it('renders the node projectId so an upstream node can choose the target project', () => {
@@ -69,9 +73,13 @@ describe('resolveNodeOrFlowProjectId', () => {
     // The whole point of the fail-closed rule: inheriting here would provision a worktree and
     // run an agent in the flow's default repo while reporting success.
     expect(
-      resolveNodeOrFlowProjectId({ projectId: '{{trigger.project}}' }, { defaultProjectId: 'flow-pid' }, {
-        trigger: { project: '' },
-      }),
+      resolveNodeOrFlowProjectId(
+        { projectId: '{{trigger.project}}' },
+        { defaultProjectId: 'flow-pid' },
+        {
+          trigger: { project: '' },
+        },
+      ),
     ).toEqual({ error: 'projectId template "{{trigger.project}}" resolved to nothing' });
   });
 
@@ -86,9 +94,9 @@ describe('resolveNodeOrFlowProjectId', () => {
   it('fails closed on an unresolvable path written with inner spaces', () => {
     // The path is canonicalised before lookup, so comparing rendered output to the authored
     // placeholder would wrongly call this resolved.
-    expect(resolveNodeOrFlowProjectId({ projectId: '{{ trigger.missing }}' }, undefined, {})).toEqual(
-      { error: 'projectId template "{{ trigger.missing }}" did not resolve' },
-    );
+    expect(
+      resolveNodeOrFlowProjectId({ projectId: '{{ trigger.missing }}' }, undefined, {}),
+    ).toEqual({ error: 'projectId template "{{ trigger.missing }}" did not resolve' });
   });
 
   it('accepts a value that resolves to exactly its own placeholder text', () => {
@@ -146,9 +154,13 @@ describe('resolveNodeOrFlowProjectId', () => {
     // A padded webhook field is indistinguishable from an empty one once trimmed, so it must
     // take the fail-closed path rather than quietly inheriting the flow default.
     expect(
-      resolveNodeOrFlowProjectId({ projectId: '{{trigger.project}}' }, { defaultProjectId: 'flow-pid' }, {
-        trigger: { project: '   ' },
-      }),
+      resolveNodeOrFlowProjectId(
+        { projectId: '{{trigger.project}}' },
+        { defaultProjectId: 'flow-pid' },
+        {
+          trigger: { project: '   ' },
+        },
+      ),
     ).toEqual({ error: 'projectId template "{{trigger.project}}" resolved to nothing' });
   });
 
@@ -170,9 +182,13 @@ describe('resolveNodeOrFlowProjectId', () => {
 
   it('still uses the flow default when the node field is genuinely blank', () => {
     expect(
-      resolveNodeOrFlowProjectId({}, { defaultProjectId: 'flow-pid' }, {
-        trigger: { project: 'devkit' },
-      }),
+      resolveNodeOrFlowProjectId(
+        {},
+        { defaultProjectId: 'flow-pid' },
+        {
+          trigger: { project: 'devkit' },
+        },
+      ),
     ).toBe('flow-pid');
   });
 });
@@ -235,14 +251,18 @@ describe('resolveDispatchProjectId', () => {
     await createProject(db, { name: 'devkit', path: '/other/devkit' });
     const res = await resolveDispatchProjectId(db, ctx({ projectId: 'devkit' }), {}, 'start_task');
     expect(res).toEqual(
-      failure('start_task project name "devkit" is ambiguous (/repos/devkit, /other/devkit) — use the project id'),
+      failure(
+        'start_task project name "devkit" is ambiguous (/repos/devkit, /other/devkit) — use the project id',
+      ),
     );
   });
 
   it('keeps the missing-project message when neither the node nor the flow names a project', async () => {
     const res = await resolveDispatchProjectId(db, ctx({}), {}, 'start_task');
     expect(res).toEqual(
-      failure('start_task missing projectId (set on the node or as the flow default project in flow settings)'),
+      failure(
+        'start_task missing projectId (set on the node or as the flow default project in flow settings)',
+      ),
     );
   });
 
@@ -254,7 +274,9 @@ describe('resolveDispatchProjectId', () => {
       { previous: { project: '' } },
       'start_task',
     );
-    expect(res).toEqual(failure('start_task projectId template "{{previous.project}}" resolved to nothing'));
+    expect(res).toEqual(
+      failure('start_task projectId template "{{previous.project}}" resolved to nothing'),
+    );
   });
 
   it('fails loudly when the template resolves to an object rather than a project key', async () => {
@@ -265,7 +287,9 @@ describe('resolveDispatchProjectId', () => {
       { previous: { project: { name: 'devkit' } } },
       'start_task',
     );
-    expect(res).toEqual(failure('start_task no registered project with id or name "{"name":"devkit"}"'));
+    expect(res).toEqual(
+      failure('start_task no registered project with id or name "{"name":"devkit"}"'),
+    );
   });
 
   it('matches a project name case-sensitively', async () => {
@@ -275,7 +299,12 @@ describe('resolveDispatchProjectId', () => {
   });
 
   it('rejects a flow default that names no registered project', async () => {
-    const res = await resolveDispatchProjectId(db, ctx({}, { defaultProjectId: 'stale-pid' }), {}, 'start_task');
+    const res = await resolveDispatchProjectId(
+      db,
+      ctx({}, { defaultProjectId: 'stale-pid' }),
+      {},
+      'start_task',
+    );
     expect(res).toEqual(failure('start_task no registered project with id or name "stale-pid"'));
   });
 
@@ -291,7 +320,9 @@ describe('resolveDispatchProjectId', () => {
       {},
       'Custom node "check-new-prs"',
     );
-    expect(res).toEqual(failure('Custom node "check-new-prs" no registered project with id or name "devkit"'));
+    expect(res).toEqual(
+      failure('Custom node "check-new-prs" no registered project with id or name "devkit"'),
+    );
   });
 
   it('resolves names against an indexed column', () => {

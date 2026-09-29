@@ -414,7 +414,7 @@ describe('local multi-agent chain context forwarding', () => {
     });
   });
 
-  it('worktrees-off start_task (worktreePath \'\') → no executionOverride, startInWorktree: false carried downstream', async () => {
+  it("worktrees-off start_task (worktreePath '') → no executionOverride, startInWorktree: false carried downstream", async () => {
     // '' (not undefined) is what a no-worktree start_task actually emits; task-executor's own
     // resolveWorktreePathForTask is what turns startInWorktree:false into a project-root run.
     await seedStartTask({ worktreePath: '', branch: '', baseBranch: '' });

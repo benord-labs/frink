@@ -7,7 +7,10 @@ import * as Sentry from '@sentry/electron/renderer';
 import { useAtomValue } from 'jotai';
 import { useEffect, useRef } from 'react';
 import { appStore } from '../../../../../lib/jotai-store';
-import { runLiveAtomFamily, wakeHeldAtomFamily } from '../../../../../lib/stores/active-transport-registry';
+import {
+  runLiveAtomFamily,
+  wakeHeldAtomFamily,
+} from '../../../../../lib/stores/active-transport-registry';
 import { trpc } from '../../../../../lib/trpc';
 import type { TaskExecutionErrorSignal } from '../../../atoms';
 import { useStreamingStatusStore } from '../../../stores/streaming-status-store';

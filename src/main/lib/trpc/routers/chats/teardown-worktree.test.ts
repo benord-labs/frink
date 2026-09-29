@@ -1,13 +1,6 @@
 /** Worktree teardown: tri-state sibling safety, project-delete dedup, boot sweep, retry predicate. */
 
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -388,7 +381,8 @@ describe('recoverOrphanedWorktrees', () => {
     const result = await recoverOrphanedWorktrees(db, '');
 
     expect(captureContainedMock).toHaveBeenCalledWith(expect.any(Error), {
-      surface: 'worktree-ownership', stage: 'startup-prefetch',
+      surface: 'worktree-ownership',
+      stage: 'startup-prefetch',
     });
 
     expect(result).toEqual({ pruned: 0, removed: 0, skipped: 1, orphaned: 0 });

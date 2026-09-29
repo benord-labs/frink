@@ -21,5 +21,4 @@ describe('timeline', () => {
   it('refuses to start a tween on a cancelled sequence', () => {
     expect(() => tween(100, { cancelled: true }, () => {})).toThrow(SequenceCancelled);
   });
-
 });

@@ -13,10 +13,6 @@
     }
   },
   "frink": {
-    "keywords": [
-      "design",
-      "ui",
-      "prototype"
-    ]
+    "keywords": ["design", "ui", "prototype"]
   }
 }

@@ -349,7 +349,9 @@ test('long code, a table and unavailable activity states fit a narrow phone', as
   await page.screenshot({ path: '.expo/preview-02/chat-narrow-dark.png', fullPage: true });
 });
 
-test('switching conversations clears the Latest control from the previous one', async ({ page }) => {
+test('switching conversations clears the Latest control from the previous one', async ({
+  page,
+}) => {
   const messages = Array.from({ length: 30 }, (_, index) => ({
     id: `m${index}`,
     role: 'assistant',

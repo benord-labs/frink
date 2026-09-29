@@ -57,7 +57,7 @@ export async function resumeParkedTaskInPlace(
   }
 }
 
-type Db = Awaited<ReturnType<typeof import('../db')['getDatabase']>>;
+type Db = Awaited<ReturnType<(typeof import('../db'))['getDatabase']>>;
 
 /** A wake never resumes a task whose run is already over: nothing could follow the task CAS. */
 async function wakeRunIsOpen(db: Db, flowRunId: string | null): Promise<boolean> {
@@ -161,7 +161,10 @@ export async function unparkFlowInPlace(
     .select({ one: sql`1` })
     .from(nodeRuns)
     .where(
-      and(eq(nodeRuns.flowRunId, flowRunId), inArray(nodeRuns.status, ['awaiting_input', 'blocked'])),
+      and(
+        eq(nodeRuns.flowRunId, flowRunId),
+        inArray(nodeRuns.status, ['awaiting_input', 'blocked']),
+      ),
     );
   const [reopened] = await db
     .update(flowRuns)

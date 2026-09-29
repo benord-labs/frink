@@ -48,7 +48,9 @@ describe('writeSubChatSession logging', () => {
     await writeSubChatSession(db, id, '', 'rollback', logger);
     expect((await getSubChatById(db, id))?.sessionId).toBe('');
     expect(logInfo).toHaveBeenCalledTimes(1);
-    expect(logInfo.mock.calls[0]?.[0]).toBe(`[sub-chat session] ${id}: sess-old cleared (rollback)`);
+    expect(logInfo.mock.calls[0]?.[0]).toBe(
+      `[sub-chat session] ${id}: sess-old cleared (rollback)`,
+    );
   });
 
   it('logs a swap when a different id overwrites an existing one', async () => {

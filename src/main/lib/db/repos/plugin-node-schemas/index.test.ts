@@ -28,7 +28,10 @@ describe('plugin node schema cache', () => {
       new Map([
         [
           'posthog.list_errors',
-          { inputs: { status: { type: 'string' }, dateRange: { type: 'json' } }, unsupportedFields: [] },
+          {
+            inputs: { status: { type: 'string' }, dateRange: { type: 'json' } },
+            unsupportedFields: [],
+          },
         ],
       ]),
     );

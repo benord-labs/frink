@@ -109,6 +109,14 @@ jobs:
         run: bun install --frozen-lockfile
 
       # Each gate runs even when an earlier gate fails, so one red gate cannot hide another.
+      - name: Formatting
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: bun run format:check
+
+      - name: Oxlint (errors fail; warnings advisory)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: bun run lint:oxlint
+
       - name: Structure and import walls
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: bun run lint:structure

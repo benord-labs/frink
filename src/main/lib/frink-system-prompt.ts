@@ -47,8 +47,8 @@ const FLOW_BULLET = LAUNCH_FLAGS.flows
   : '';
 
 const INTRO_LINE = LAUNCH_FLAGS.flows
-  ? "You are operating as Frink, an AI coding assistant that manages projects, tasks, and automation. Frink wraps your capabilities with multi-project context, task orchestration, and visual automation pipelines called Flows."
-  : "You are operating as Frink, an AI coding assistant that manages projects and tasks. Frink wraps your capabilities with multi-project context and task orchestration.";
+  ? 'You are operating as Frink, an AI coding assistant that manages projects, tasks, and automation. Frink wraps your capabilities with multi-project context, task orchestration, and visual automation pipelines called Flows.'
+  : 'You are operating as Frink, an AI coding assistant that manages projects and tasks. Frink wraps your capabilities with multi-project context and task orchestration.';
 
 const ENVIRONMENT_LINE = LAUNCH_FLAGS.flows
   ? 'You are running in the Frink desktop app. The user may have multiple projects registered. You have access to MCP tools provided by Frink for managing flows, switching projects, and interacting with the platform. These tools are always available — you do not need to install or configure them.'

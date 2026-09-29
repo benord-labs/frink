@@ -1,7 +1,10 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { applyPatchOperations, patchArgsSchema } from '../../src/main/lib/mcp/flows-tools/flow-patch';
+import {
+  applyPatchOperations,
+  patchArgsSchema,
+} from '../../src/main/lib/mcp/flows-tools/flow-patch';
 import { resolveFanOutStructure } from '../../src/shared/lib/compute-fan-out-body-chain';
 import { validateGraph, type FlowGraph } from '../../src/shared/lib/validate-flow-graph';
 import { validateFlowTemplateVariables } from '../../src/shared/lib/validate-flow-templates';

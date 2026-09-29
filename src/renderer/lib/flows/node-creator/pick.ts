@@ -7,10 +7,7 @@ import {
   addNodeToGraph,
   splitEdgeInGraph,
 } from '../../../../shared/lib/flow-graph-mutations';
-import {
-  type FlowGraph,
-  MAX_FLOW_GRAPH_NODES,
-} from '../../../../shared/lib/validate-flow-graph';
+import { type FlowGraph, MAX_FLOW_GRAPH_NODES } from '../../../../shared/lib/validate-flow-graph';
 
 /** Where a picked block lands: a free point, appended to a node's output, or splitting an edge. */
 export type NodeCreatorMode =

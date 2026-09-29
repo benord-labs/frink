@@ -3,7 +3,21 @@ import { useRef, useState, type ComponentProps } from 'react';
 import { Platform, StyleSheet, Switch, Text, View } from 'react-native';
 import type { MobileRunNode } from '../../../../src/shared/types/remote/mobile';
 import { useAction, useResource } from '../../lib/connection';
-import { Button, Card, CardNote, IconTile, Icon, Label, Loading, Notice, Row, Section, Status, statusTone, toneColors } from '../../ui/primitives';
+import {
+  Button,
+  Card,
+  CardNote,
+  IconTile,
+  Icon,
+  Label,
+  Loading,
+  Notice,
+  Row,
+  Section,
+  Status,
+  statusTone,
+  toneColors,
+} from '../../ui/primitives';
 import { Page } from '../../ui/page';
 import { useTheme } from '../../ui/theme';
 import { ResourceStatus } from '../../ui/resource-status';
@@ -126,9 +140,7 @@ export function FlowDetail({
           )}
           <View style={{ gap: 12 }}>
             <Card>
-              <View
-                style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14 }}
-              >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14 }}>
                 <IconTile name={triggerInfo(data.flow.trigger).icon} />
                 <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
                   <Label size={16} style={{ fontWeight: '500' }}>
@@ -351,11 +363,7 @@ export function RunDetail({
                 <View style={{ gap: 12 }}>
                   <Notice>Stop this Flow and its remaining steps?</Notice>
                   <View style={{ flexDirection: 'row', gap: 8 }}>
-                    <Button
-                      secondary
-                      style={{ flex: 1 }}
-                      onPress={() => setConfirmCancel(false)}
-                    >
+                    <Button secondary style={{ flex: 1 }} onPress={() => setConfirmCancel(false)}>
                       Keep running
                     </Button>
                     <Button

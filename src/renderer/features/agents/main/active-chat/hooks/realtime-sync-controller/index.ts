@@ -121,13 +121,7 @@ function useRealtimeStreamHandlers({
   RealtimeHandlers,
   'handleMessageSaved' | 'handleStreamChunk'
 > {
-  const {
-    setMessagesRef,
-    isActiveRef,
-    remoteAssistantIdRef,
-    highWaterRef,
-    reconcilerRef,
-  } = refs;
+  const { setMessagesRef, isActiveRef, remoteAssistantIdRef, highWaterRef, reconcilerRef } = refs;
   const handleStreamChunk = useCallback(
     (payload: StreamChunkPayload) => {
       if (payload.subChatId !== subChatId) return;
@@ -252,14 +246,7 @@ function useRealtimeExecutionHandlers({
         subChatId,
       );
     },
-    [
-      subChatId,
-      highWaterRef,
-      isActiveRef,
-      reconcilerRef,
-      remoteAssistantIdRef,
-      setMessagesRef,
-    ],
+    [subChatId, highWaterRef, isActiveRef, reconcilerRef, remoteAssistantIdRef, setMessagesRef],
   );
 
   const handleExecuteError = useCallback(

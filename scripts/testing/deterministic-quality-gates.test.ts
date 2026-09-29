@@ -9,7 +9,14 @@ import { describe, expect, it } from 'vitest';
 const WORKFLOW_PATH = resolve(__dirname, '../../.github/workflows/test-suite.yml');
 const JOB_KEY = 'deterministic-quality-gates';
 const GATE_CONDITION = "if: ${{ !cancelled() && steps.install.outcome == 'success' }}";
-const REQUIRED_GATES = ['lint:structure', 'ts:check', 'knip', 'build:skills:check'];
+const REQUIRED_GATES = [
+  'format:check',
+  'lint:oxlint',
+  'lint:structure',
+  'ts:check',
+  'knip',
+  'build:skills:check',
+];
 
 function jobBlock(workflow: string, jobKey: string): string | null {
   const lines = workflow.replace(/\r\n/g, '\n').split('\n');

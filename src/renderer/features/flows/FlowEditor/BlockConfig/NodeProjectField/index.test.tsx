@@ -101,7 +101,13 @@ describe('NodeProjectField', () => {
 
   // A non-propagating spy would hide mode bugs — the component derives expression mode from the
   // value it is given, so the value has to actually round-trip.
-  function ControlledHost({ initial, onChange }: { initial: string; onChange: (v: string) => void }) {
+  function ControlledHost({
+    initial,
+    onChange,
+  }: {
+    initial: string;
+    onChange: (v: string) => void;
+  }) {
     const [value, setValue] = useState(initial);
     return (
       <NodeProjectField
@@ -132,7 +138,6 @@ describe('NodeProjectField', () => {
     expect(screen.getByRole('button', { name: 'picker' })).toBeInTheDocument();
   });
 
-
   it("abandons a variable by emitting '' — the value that means 'inherit', never undefined", () => {
     const onChange = vi.fn();
     render(<ControlledHost initial="{{trigger.project}}" onChange={onChange} />);
@@ -149,7 +154,7 @@ describe('NodeProjectField', () => {
     expect(screen.getByLabelText('Project variable')).toHaveValue('{{tri');
   });
 
-  it("discards a half-typed template on abandon rather than leaving it in the config", () => {
+  it('discards a half-typed template on abandon rather than leaving it in the config', () => {
     const onChange = vi.fn();
     render(<ControlledHost initial="proj-1" onChange={onChange} />);
 

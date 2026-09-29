@@ -15,7 +15,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export function classifyNodeManifest(raw: unknown, dirName: string): PluginNodeManifestBranch {
   if (!isRecord(raw)) return { branch: 'script' };
   const obj = raw;
-  if (obj.kind === 'plugin_mcp_tool' || obj.kind === 'plugin_operation') return { branch: 'plugin' };
+  if (obj.kind === 'plugin_mcp_tool' || obj.kind === 'plugin_operation')
+    return { branch: 'plugin' };
   if (obj.kind !== undefined && obj.kind !== 'script') {
     return {
       branch: 'error',
@@ -25,7 +26,8 @@ export function classifyNodeManifest(raw: unknown, dirName: string): PluginNodeM
   if (Object.hasOwn(obj, 'owner')) {
     return {
       branch: 'error',
-      error: '"owner" is only valid on generated plugin-node manifests, which Frink no longer reads from disk',
+      error:
+        '"owner" is only valid on generated plugin-node manifests, which Frink no longer reads from disk',
     };
   }
   const squattedId =

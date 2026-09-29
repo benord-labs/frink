@@ -102,7 +102,9 @@ describe('FlowsPage header chrome', () => {
     renderPage();
 
     expect(header()).toHaveClass('drag-region');
-    expect(screen.getByRole('button', { name: 'Close flows' }).parentElement).toHaveClass('no-drag');
+    expect(screen.getByRole('button', { name: 'Close flows' }).parentElement).toHaveClass(
+      'no-drag',
+    );
   });
 });
 

@@ -104,11 +104,16 @@ export async function resolveDispatchProjectId(
   if (byName.length === 1) return { ok: true, projectId: byName[0].id };
   if (byName.length > 1) {
     const paths = byName.map((p) => p.path).join(', ');
-    return fail(`${blockLabel} project name "${resolved}" is ambiguous (${paths}) — use the project id`);
+    return fail(
+      `${blockLabel} project name "${resolved}" is ambiguous (${paths}) — use the project id`,
+    );
   }
   return fail(`${blockLabel} no registered project with id or name "${resolved}"`);
 }
 
 type ResolveFailure = { ok: false; failure: DispatchError };
 
-const fail = (message: string): ResolveFailure => ({ ok: false, failure: { type: 'error', message } });
+const fail = (message: string): ResolveFailure => ({
+  ok: false,
+  failure: { type: 'error', message },
+});

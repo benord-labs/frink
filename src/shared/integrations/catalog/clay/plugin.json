@@ -13,11 +13,7 @@
     }
   },
   "frink": {
-    "keywords": [
-      "enrichment",
-      "research",
-      "sales"
-    ],
+    "keywords": ["enrichment", "research", "sales"],
     "source": {
       "repo": "cursor/plugins",
       "commit": "4612556",

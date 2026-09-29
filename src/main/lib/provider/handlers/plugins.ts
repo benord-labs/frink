@@ -67,4 +67,3 @@ function codexProbe(mode: DispatchResult['mode']): DispatchResult {
       : 'staged, awaiting first codex session',
   };
 }
-

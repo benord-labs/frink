@@ -35,10 +35,7 @@ export function SearchField({
         autoCapitalize="none"
         autoCorrect={false}
         returnKeyType="search"
-        style={[
-          { flex: 1, minHeight: 40, padding: 0, fontSize: 16, color: t.text },
-          bareInput,
-        ]}
+        style={[{ flex: 1, minHeight: 40, padding: 0, fontSize: 16, color: t.text }, bareInput]}
       />
       {!!value && (
         <Pressable

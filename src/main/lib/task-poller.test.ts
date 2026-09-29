@@ -3,7 +3,6 @@
 import { hostname } from 'node:os';
 import { describe, expect, it, vi } from 'vitest';
 
-
 vi.mock('./db', () => ({ getDatabase: vi.fn(() => ({}) as unknown) }));
 
 const repoMocks = vi.hoisted(() => ({

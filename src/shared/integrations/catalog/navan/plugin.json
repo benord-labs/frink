@@ -13,11 +13,7 @@
     }
   },
   "frink": {
-    "keywords": [
-      "expenses",
-      "travel",
-      "finance"
-    ],
+    "keywords": ["expenses", "travel", "finance"],
     "source": {
       "repo": "cursor/plugins",
       "commit": "4612556",

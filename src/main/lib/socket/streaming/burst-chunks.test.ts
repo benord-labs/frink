@@ -57,7 +57,12 @@ describe('burstPlanSubmissionAttempt', () => {
       toolInput('write-1', 'Write'),
       { type: 'tool-output-available', toolCallId: 'write-1', output: { success: true } },
       toolInput('exit-1', 'ExitPlanMode'),
-      { type: 'tool-output-error', toolCallId: 'exit-1', errorText: 'denied', permissionDenied: true },
+      {
+        type: 'tool-output-error',
+        toolCallId: 'exit-1',
+        errorText: 'denied',
+        permissionDenied: true,
+      },
     ];
     const denied = new Map([['exit-1', 'denied']]);
     // The backfill already closed the row before the detector runs; that must not hide the attempt.

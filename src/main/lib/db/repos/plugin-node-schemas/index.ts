@@ -30,6 +30,9 @@ export function listPluginNodeSchemas(db: Db, pluginId: string): Map<string, Plu
     .where(eq(pluginNodeSchemas.pluginId, pluginId))
     .all();
   return new Map(
-    rows.map((row) => [row.actionId, { inputs: row.inputs, unsupportedFields: row.unsupportedFields }]),
+    rows.map((row) => [
+      row.actionId,
+      { inputs: row.inputs, unsupportedFields: row.unsupportedFields },
+    ]),
   );
 }
