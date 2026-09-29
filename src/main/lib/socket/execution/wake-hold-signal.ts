@@ -127,9 +127,8 @@ export function logDisposedPendingWork(
  * subagents, `done` after the first, second killed). Mirrors the CLI's own result hold-back, which
  * never releases over live agent/workflow tasks. See decision unattended-wake-budget.
  *
- * `since` makes the read per-TURN: the signal slot is per EXECUTION CONTEXT and never cleared, and
- * an adopting turn reuses the arming turn's, so an unqualified read would let an earlier turn's
- * `done` end a wait this turn never declared finished.
+ * `since` scopes the read: the signal slot is per execution context, never cleared, and shared by
+ * its wake bursts — so an unqualified read would let a stale `done` end a wait not declared over.
  */
 export function declaresWaitOver(
   signal: TaskSignalPayload | null | undefined,

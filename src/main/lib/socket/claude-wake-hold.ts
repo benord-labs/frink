@@ -331,9 +331,8 @@ export function armWakePump(params: ArmWakePumpParams): WakeHold {
   // context, which is required — the AskUserQuestion path snapshots that same array mid-burst.
   const arming = session.currentTurn;
   if (!arming) throw new Error(`armWakePump: ${subChatId} has no arming turn to extend`);
-  // Anchored to the ARMING turn's start when no signal is on record: the signal slot is per
-  // execution context and never cleared, so a null anchor would let a PREVIOUS turn's `done`
-  // read as this wait's own declaration and stand the pump down at the first burst.
+  // Anchored to the latest signal on record: the slot is never cleared and the bursts share it, so
+  // the arming turn's own `done` must not be re-read as a burst's and stand the pump down.
   let lastSeenSignalAt: string | null = executionContextId
     ? (io.getLatestTaskSignal(executionContextId)?.at ?? arming.startedAt)
     : arming.startedAt;
