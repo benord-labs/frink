@@ -69,7 +69,7 @@ const DEFAULT_EFFORTS: EffortTier[] = [
 ];
 
 // `xhigh` and `max` are the top tiers (the bundled CLI accepts `low|medium|high|xhigh|max`).
-// Only Fable 5.1 / Fable 5 / Opus 5.5 / 5 / 4.8 / 4.7 / Sonnet 5 support them — the SDK silently downgrades elsewhere.
+// Only Fable 5.1 / Fable 5 / Opus 5.5 / 5 / 4.8 / 4.7 / Sonnet 5.5 / 5 support them — the SDK silently downgrades elsewhere.
 const XHIGH_TIER: EffortTier = {
   suffix: '-xhigh',
   label: 'Extra High',
@@ -94,7 +94,7 @@ const OPUS_47_EFFORTS: EffortTier[] = [
   ULTRA_TIER,
 ];
 
-// High-default families (Fable 5.1, Fable 5, Opus 5, Opus 4.8, Sonnet 5) — Anthropic sets `effort: high` as the API
+// High-default families (Fable 5.1, Fable 5, Opus 5, Opus 4.8, Sonnet 5.5, Sonnet 5) — Anthropic sets `effort: high` as the API
 // default and all support the full ladder. Bare row (no suffix) is High; Low / Medium / Extra High /
 // Max explicit.
 const HIGH_DEFAULT_EFFORTS: EffortTier[] = [
@@ -276,6 +276,19 @@ export const CLAUDE_CODE_MODELS_CATALOG: ClaudeCodeModel[] = [
     version: '4.6',
     cliValue: 'claude-opus-4-6',
     idPrefix: 'opus',
+  }),
+  // ── Sonnet 5.5 ── successor to Sonnet 5 at the same price; 1M native, adaptive thinking,
+  // High default with the full ladder. Needs Claude Code CLI ≥ 2.1.284.
+  ...buildFamily({
+    base: 'sonnet',
+    familyId: 'sonnet-5.5',
+    familyName: 'Sonnet 5.5',
+    version: '5.5',
+    cliValue: 'claude-sonnet-5-5',
+    efforts: HIGH_DEFAULT_EFFORTS,
+    idPrefix: 'sonnet-5.5',
+    contexts: [{ suffix: '', ctx: '1M context', prefix: '' }],
+    adaptiveThinking: true,
   }),
   // ── Sonnet 5 ─────────────────────────────────────────────────────────
   // Drop-in over Sonnet 4.6. 1M context is native (default + max, no 200k variant, no beta —
