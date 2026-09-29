@@ -1,6 +1,7 @@
 import { memo, type ReactElement, useCallback, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { trpc } from '../../../../lib/trpc';
+import { admissionSubject, admissionTrigger } from '../../utils/admission-subject';
 import { type QueuedAdmission, QueuedAdmissionsView } from '../QueuedAdmissionsView';
 
 type MoveResult = {
@@ -29,7 +30,9 @@ export const QueuedAdmissions = memo(function QueuedAdmissions(): ReactElement |
         isBatchMember: row.is_batch_member,
         priorityClass: row.priority_class,
         projectName: row.project_name,
+        subject: admissionSubject(row.trigger_context, row.is_batch_member),
         ticket: row.ticket,
+        triggerContext: admissionTrigger(row.trigger_context, row.is_batch_member),
       })),
     [query.data],
   );

@@ -310,7 +310,7 @@ export const flowRuns = sqliteTable(
       .references(() => flowVersions.id, { onDelete: 'cascade' }),
     // 'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled'
     status: text('status').notNull().default('pending'),
-    triggerContext: text('trigger_context', { mode: 'json' }),
+    triggerContext: text('trigger_context', { mode: 'json' }).$type<Record<string, unknown>>(),
     idempotencyKey: text('idempotency_key'),
     batchId: text('batch_id'),
     startedAt: integer('started_at', { mode: 'timestamp' }),

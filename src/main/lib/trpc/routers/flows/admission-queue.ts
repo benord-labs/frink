@@ -20,6 +20,7 @@ export function flowAdmissionQueueProcedures() {
         priority_class: row.priorityClass,
         project_name: row.projectName,
         ticket: row.ticket,
+        trigger_context: row.triggerContext,
       }));
     }),
     moveWorkQueueAdmission: publicProcedureRaw

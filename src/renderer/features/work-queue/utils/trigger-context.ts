@@ -6,11 +6,8 @@ import {
   type TriggerContext,
   withTriggerContextDefaults,
 } from '../../../../shared/types/trigger-context';
-import type { TaskResultRecord } from '../../../../shared/types/task-result';
 
-export function parseTriggerContext(
-  triggerContext: TaskResultRecord | TriggerContext | null | undefined,
-): TriggerContext | null {
+export function parseTriggerContext(triggerContext: unknown): TriggerContext | null {
   if (!triggerContext) {
     return null;
   }

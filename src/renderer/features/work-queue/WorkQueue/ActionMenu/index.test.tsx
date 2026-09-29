@@ -10,11 +10,6 @@ import {
 import type { Task } from '../../types';
 import { ActionMenu } from './index';
 
-vi.mock('./EmailTriggerContentDialog', () => ({
-  EmailTriggerContentDialog: ({ open }: { open: boolean }) =>
-    open ? <div role="dialog" aria-label="Original Email" /> : null,
-}));
-
 vi.mock('./TriggerContentDialog', () => ({
   TriggerContentDialog: ({ open }: { open: boolean }) =>
     open ? <div role="dialog" aria-label="Original Trigger" /> : null,
@@ -237,18 +232,15 @@ describe('WorkQueue ActionMenu', () => {
     expect(props.onDelete).toHaveBeenCalledWith('task-1');
   });
 
-  it.each([
-    ['gmail', 'Original Email'],
-    ['github', 'Original Trigger'],
-  ] as const)('opens the %s original content in its domain dialog', (source, dialogName) => {
+  it('opens the original content in the trigger dialog', () => {
     const props = createBaseProps();
-    props.task = createTask({ triggerContext: createTriggerContext(source) });
+    props.task = createTask({ triggerContext: createTriggerContext('github') });
     render(<ActionMenu {...props} />);
 
     openMenu();
     fireEvent.click(screen.getByRole('menuitem', { name: 'View original content' }));
 
-    expect(screen.getByRole('dialog', { name: dialogName })).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'Original Trigger' })).toBeInTheDocument();
   });
 
   it('opens Models settings for an account-auth failure', () => {
