@@ -18,10 +18,9 @@ const forkInput = z.object({ chatId: z.string(), accountId: z.string().optional(
 /** The AI login a fork moves onto; any other credential id is NOT_FOUND. */
 async function resolveForkAccount(db: Db, accountId?: string) {
   if (!accountId) return undefined;
-  if (!(await getAiAccountType(db, accountId))) {
-    throw new TRPCError({ code: 'NOT_FOUND', message: 'Account not found' });
-  }
-  return accountId;
+  const type = await getAiAccountType(db, accountId);
+  if (!type) throw new TRPCError({ code: 'NOT_FOUND', message: 'Account not found' });
+  return { id: accountId, type };
 }
 
 /** The renderer-facing fork; an unset worktree falls back to the project folder. */

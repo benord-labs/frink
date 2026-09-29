@@ -37,11 +37,10 @@ describe('forkRouter (local-first)', () => {
 
     const result = await caller.fork({ chatId: 'src-chat', accountId: 'acct-codex' });
 
-    expect(forkChatWithSubChatsLocalMock).toHaveBeenCalledWith(
-      expect.anything(),
-      'src-chat',
-      'acct-codex',
-    );
+    expect(forkChatWithSubChatsLocalMock).toHaveBeenCalledWith(expect.anything(), 'src-chat', {
+      id: 'acct-codex',
+      type: 'codex',
+    });
     expect(result.id).toBe('new-chat');
     expect(result.subChats).toHaveLength(1);
     expect(result.subChats[0].id).toBe('new-sub');

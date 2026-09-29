@@ -2,7 +2,7 @@ import openaiLogo from '@iconify-icons/ri/openai-fill';
 import { iconifyComponent } from '@/lib/utils/iconify-component';
 /* eslint-disable max-lines, max-lines-per-function */
 import { useSetAtom } from 'jotai';
-import { Check, ChevronDown, RefreshCw, User } from 'lucide-react';
+import { Check, ChevronDown, Plus, RefreshCw, User } from 'lucide-react';
 import { memo, useCallback, useMemo } from 'react';
 import { toast } from 'sonner';
 import {
@@ -17,11 +17,13 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '../../../components/ui/
 import {
   agentsSettingsDialogActiveTabAtom,
   agentsSettingsDialogOpenAtom,
+  focusAgentChatAtom,
   pendingAccountAuthAtom,
 } from '../../../lib/atoms';
 import { trpc } from '../../../lib/trpc';
 import { cn } from '../../../lib/utils';
 import { notifyToolSwitch } from '../../../utils/tool-switch-message';
+import { type SplitViewState, splitViewAtom } from '../atoms';
 import { HeaderBadge } from './header-badge';
 
 const CodexIcon = iconifyComponent(openaiLogo);
@@ -43,6 +45,175 @@ function ProviderGlyph({
   return <User className={className} aria-hidden />;
 }
 
+type AccountType = 'claude-code' | 'codex';
+type PickableAccount = { id: string; label: string; type: AccountType; isAuthenticated: boolean };
+
+/** In split view the forked chat takes its source chat's pane. */
+function swapPaneChat(prev: SplitViewState, fromId: string, toId: string): SplitViewState {
+  if (!prev.chatIds.includes(fromId)) return prev;
+  return { ...prev, chatIds: prev.chatIds.map((id) => (id === fromId ? toId : id)) };
+}
+
+/** One account row; `primary`/`secondary` default to "label · provider". */
+function AccountRow({
+  row,
+  isActive = false,
+  disabled,
+  primary = row.label,
+  secondary = ` · ${PROVIDER_LABEL[row.type]}`,
+  onPick,
+}: {
+  row: PickableAccount;
+  isActive?: boolean;
+  disabled: boolean;
+  primary?: string;
+  secondary?: string;
+  onPick: (row: PickableAccount) => void;
+}) {
+  const needsAuth = !row.isAuthenticated;
+  return (
+    <DropdownMenuItem
+      disabled={disabled || needsAuth}
+      title={needsAuth ? 'Sign in under Settings → AI providers' : undefined}
+      className={cn('gap-2', needsAuth && 'opacity-60 data-disabled:opacity-60')}
+      aria-label={
+        needsAuth
+          ? `${row.label}, ${PROVIDER_LABEL[row.type]}, not signed in on this machine`
+          : undefined
+      }
+      onSelect={() => {
+        if (!isActive) onPick(row);
+      }}
+    >
+      <ProviderGlyph
+        type={row.type}
+        className={cn(
+          'h-3.5 w-3.5 shrink-0',
+          needsAuth ? 'text-muted-foreground/70' : 'text-muted-foreground',
+        )}
+      />
+      <span className="min-w-0 flex-1 truncate text-xs">
+        <span
+          className={cn('font-medium', needsAuth ? 'text-muted-foreground' : 'text-foreground')}
+        >
+          {primary}
+        </span>
+        <span className="text-muted-foreground">{secondary}</span>
+      </span>
+      {isActive ? (
+        <Check className="h-3.5 w-3.5 shrink-0 text-primary" aria-label="Active" />
+      ) : null}
+    </DropdownMenuItem>
+  );
+}
+
+/**
+ * An existing chat's account moves: another login of its provider swaps in place (native resume);
+ * another provider continues in a new chat, forked onto that account and named after it.
+ */
+function useChatAccountActions() {
+  const utils = trpc.useUtils();
+  const focusChat = useSetAtom(focusAgentChatAtom);
+  const setSplitView = useSetAtom(splitViewAtom);
+  const setChatAccount = trpc.chats.setChatAccount.useMutation({
+    onSuccess: (_data, { chatId }) =>
+      void utils.claudeCode.getResolvedAccount.invalidate({ chatId }),
+    onError: (err) => toast.error(err.message),
+  });
+  const fork = trpc.chats.fork.useMutation({ onError: (err) => toast.error(err.message) });
+
+  const swap = (chatId: string, row: PickableAccount) =>
+    setChatAccount.mutate(
+      { chatId, accountId: row.id },
+      { onSuccess: () => toast.success(`This chat now uses ${row.label}`) },
+    );
+
+  const continueIn = (chatId: string, fromType: AccountType, row: PickableAccount) =>
+    fork.mutate(
+      { chatId, accountId: row.id },
+      {
+        onSuccess: (forked) => {
+          void utils.chats.listCounts.invalidate();
+          focusChat(forked.id);
+          setSplitView((prev) => swapPaneChat(prev, chatId, forked.id));
+          notifyToolSwitch(fromType, row.type, `Continued in ${PROVIDER_LABEL[row.type]}`);
+        },
+      },
+    );
+
+  return { swap, continueIn, isPending: setChatAccount.isPending || fork.isPending };
+}
+
+/** The existing-chat menu body: this provider's logins, then the other providers to continue in. */
+function ChatAccountRows({
+  chatId,
+  activeId,
+  currentType,
+  accounts,
+  actions,
+}: {
+  chatId: string;
+  activeId: string | undefined;
+  currentType: AccountType;
+  accounts: PickableAccount[];
+  actions: ReturnType<typeof useChatAccountActions>;
+}) {
+  const others = accounts.filter((a) => a.type !== currentType);
+  return (
+    <>
+      <DropdownMenuLabel className="text-[11px] font-normal text-muted-foreground leading-snug">
+        {PROVIDER_LABEL[currentType]} logins for this chat
+      </DropdownMenuLabel>
+      {accounts
+        .filter((a) => a.type === currentType)
+        .map((a) => (
+          <AccountRow
+            key={a.id}
+            row={a}
+            isActive={a.id === activeId}
+            disabled={actions.isPending}
+            onPick={(row) => actions.swap(chatId, row)}
+          />
+        ))}
+      {others.length > 0 && (
+        <>
+          <DropdownMenuSeparator />
+          <DropdownMenuLabel className="text-[11px] font-normal text-muted-foreground leading-snug">
+            Another provider continues in a new chat
+          </DropdownMenuLabel>
+          {others.map((a) => (
+            <AccountRow
+              key={a.id}
+              row={a}
+              disabled={actions.isPending}
+              primary={`Continue in ${PROVIDER_LABEL[a.type]}`}
+              secondary={` (${a.label})`}
+              onPick={(row) => actions.continueIn(chatId, currentType, row)}
+            />
+          ))}
+        </>
+      )}
+    </>
+  );
+}
+
+/** The tooltip's scope line and hint: where the account applies and what a pick changes. */
+function scopeCopy(inChat: boolean, projectId: string | null, isProjectOverride?: boolean) {
+  if (inChat) {
+    return {
+      scope: 'Used by this chat',
+      hint: 'Another provider continues this chat in a new chat.',
+    };
+  }
+  if (!projectId) {
+    return { scope: 'Default account', hint: 'Choosing an account sets your workspace default.' };
+  }
+  const scope = isProjectOverride
+    ? 'Project-specific account'
+    : 'Workspace default for this project';
+  return { scope, hint: 'Choosing an account sets the AI account for this project.' };
+}
+
 type AccountIndicatorProps = {
   /** Chat ID — used to resolve the account for an existing chat. */
   chatId?: string;
@@ -51,9 +222,8 @@ type AccountIndicatorProps = {
 };
 
 /**
- * Shows which AI account is active. Row picks set the project’s AI
- * account when this chat is tied to a project; otherwise they set the workspace default.
- * Opens Settings → AI providers from the footer action.
+ * Shows which AI account is active. In a chat, rows move that chat's account (useChatAccountActions);
+ * before a chat exists they set the project's account, else the workspace default.
  */
 export const AccountIndicator = memo(function AccountIndicator({
   chatId,
@@ -63,6 +233,7 @@ export const AccountIndicator = memo(function AccountIndicator({
   const setSettingsOpen = useSetAtom(agentsSettingsDialogOpenAtom);
   const setPendingAccountAuth = useSetAtom(pendingAccountAuthAtom);
   const utils = trpc.useUtils();
+  const chatActions = useChatAccountActions();
 
   const handleOpenAccountsSettings = useCallback(() => {
     setSettingsActiveTab('models');
@@ -116,10 +287,7 @@ export const AccountIndicator = memo(function AccountIndicator({
     setDefaultMutation.isPending || setProjectAccountMutation.isPending;
 
   const handlePickAccount = useCallback(
-    (
-      row: { id: string; label: string; type: 'claude-code' | 'codex' },
-      scopedProjectId: string | null,
-    ) => {
+    (row: PickableAccount, scopedProjectId: string | null) => {
       const oldType = account?.type ?? 'claude-code';
       if (scopedProjectId) {
         setProjectAccountMutation.mutate(
@@ -145,9 +313,11 @@ export const AccountIndicator = memo(function AccountIndicator({
 
   const providerLabel = PROVIDER_LABEL[account.type ?? 'claude-code'];
   const scopedProjectId = account.projectId ?? null;
-  const ariaLabel = account.isProjectOverride
-    ? `AI accounts menu, ${account.label}, ${providerLabel}, project-specific default`
-    : `AI accounts menu, ${account.label}, ${providerLabel}`;
+  const copy = scopeCopy(Boolean(chatId), scopedProjectId, account.isProjectOverride);
+  const ariaLabel =
+    account.isProjectOverride && !chatId
+      ? `AI accounts menu, ${account.label}, ${providerLabel}, project-specific default`
+      : `AI accounts menu, ${account.label}, ${providerLabel}`;
 
   return (
     <DropdownMenu>
@@ -188,15 +358,7 @@ export const AccountIndicator = memo(function AccountIndicator({
           <div className="text-xs max-w-64">
             <div className="font-medium">{account.label}</div>
             <div className="text-muted-foreground">{providerLabel}</div>
-            {scopedProjectId ? (
-              account.isProjectOverride ? (
-                <div className="text-muted-foreground">Project-specific account</div>
-              ) : (
-                <div className="text-muted-foreground">Workspace default for this project</div>
-              )
-            ) : (
-              <div className="text-muted-foreground">Default account</div>
-            )}
+            <div className="text-muted-foreground">{copy.scope}</div>
             {!account.isAuthenticated && (
               <div className="text-warning mt-1">
                 {account.source === 'claude-passthrough'
@@ -207,14 +369,7 @@ export const AccountIndicator = memo(function AccountIndicator({
               </div>
             )}
             <div className="text-muted-foreground mt-1.5 pt-1.5 border-t border-border/60">
-              {scopedProjectId ? (
-                <>Click for menu. Choosing an account sets it for this project.</>
-              ) : (
-                <>
-                  Click for menu. Choosing an account sets your{' '}
-                  <span className="text-foreground/90">workspace default</span>.
-                </>
-              )}
+              Click for menu. {copy.hint}
             </div>
           </div>
         </TooltipContent>
@@ -225,57 +380,31 @@ export const AccountIndicator = memo(function AccountIndicator({
         sideOffset={6}
         className="w-64 max-h-72 overflow-y-auto"
       >
-        <DropdownMenuLabel className="text-[11px] font-normal text-muted-foreground leading-snug">
-          {scopedProjectId
-            ? 'Choosing an account sets the AI account for this project.'
-            : 'Choosing an account sets your workspace default.'}
-        </DropdownMenuLabel>
         {sortedAccounts.length === 0 ? (
           <div className="px-2 py-1.5 text-xs text-muted-foreground">No accounts configured.</div>
+        ) : chatId ? (
+          <ChatAccountRows
+            chatId={chatId}
+            activeId={account.id}
+            currentType={account.type ?? 'claude-code'}
+            accounts={sortedAccounts}
+            actions={chatActions}
+          />
         ) : (
-          sortedAccounts.map((a) => {
-            const rowProvider = PROVIDER_LABEL[a.type];
-            const isActive = a.id === account.id;
-            const needsAuth = !a.isAuthenticated;
-            return (
-              <DropdownMenuItem
+          <>
+            <DropdownMenuLabel className="text-[11px] font-normal text-muted-foreground leading-snug">
+              {copy.hint}
+            </DropdownMenuLabel>
+            {sortedAccounts.map((a) => (
+              <AccountRow
                 key={a.id}
-                disabled={isAccountMutationPending || needsAuth}
-                title={needsAuth ? 'Sign in under Settings → AI providers' : undefined}
-                className={cn('gap-2', needsAuth && 'opacity-60 data-disabled:opacity-60')}
-                aria-label={
-                  needsAuth
-                    ? `${a.label}, ${rowProvider}, not signed in on this machine`
-                    : undefined
-                }
-                onSelect={() => {
-                  if (!isActive) handlePickAccount(a, scopedProjectId);
-                }}
-              >
-                <ProviderGlyph
-                  type={a.type}
-                  className={cn(
-                    'h-3.5 w-3.5 shrink-0',
-                    needsAuth ? 'text-muted-foreground/70' : 'text-muted-foreground',
-                  )}
-                />
-                <span className="min-w-0 flex-1 truncate text-xs">
-                  <span
-                    className={cn(
-                      'font-medium',
-                      needsAuth ? 'text-muted-foreground' : 'text-foreground',
-                    )}
-                  >
-                    {a.label}
-                  </span>
-                  <span className="text-muted-foreground"> · {rowProvider}</span>
-                </span>
-                {isActive ? (
-                  <Check className="h-3.5 w-3.5 shrink-0 text-primary" aria-label="Active" />
-                ) : null}
-              </DropdownMenuItem>
-            );
-          })
+                row={a}
+                isActive={a.id === account.id}
+                disabled={isAccountMutationPending}
+                onPick={(row) => handlePickAccount(row, scopedProjectId)}
+              />
+            ))}
+          </>
         )}
         <DropdownMenuSeparator />
         {(account.source === 'claude-passthrough' || account.source === 'codex-passthrough') &&
@@ -290,8 +419,9 @@ export const AccountIndicator = memo(function AccountIndicator({
               </span>
             </DropdownMenuItem>
           )}
-        <DropdownMenuItem className="text-xs" onSelect={handleOpenAccountsSettings}>
-          Manage in Settings…
+        <DropdownMenuItem className="text-xs gap-2" onSelect={handleOpenAccountsSettings}>
+          <Plus className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          <span>Add account…</span>
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

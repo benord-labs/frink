@@ -7,6 +7,7 @@ import { createStore, Provider } from 'jotai';
 import { toast } from 'sonner';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { activeOverlayAtom, agentsSettingsDialogActiveTabAtom } from '../../../lib/atoms';
+import { selectedAgentChatIdAtom, splitViewAtom } from '../atoms';
 import { AccountIndicator } from './account-indicator';
 
 type ListAccount = {
@@ -43,6 +44,13 @@ const snap = vi.hoisted(() => {
   return {
     setDefaultMutate: vi.fn(),
     setProjectAccountMutate: vi.fn(),
+    setChatAccountMutate: vi.fn(),
+    setChatAccountOpts: undefined as
+      | { onSuccess: (data: unknown, vars: { chatId: string }) => void }
+      | undefined,
+    forkMutate: vi.fn(),
+    listCountsInvalidate: vi.fn(),
+    resolvedAccountInvalidate: vi.fn(),
     listAccountsData: [...defaultListAccounts] as ListAccount[],
     defaultListAccounts,
     setDefaultIsPending: false,
@@ -55,12 +63,22 @@ const getResolvedAccountMock = vi.fn();
 vi.mock('../../../lib/trpc', () => ({
   trpc: {
     useUtils: () => ({
+      chats: { listCounts: { invalidate: snap.listCountsInvalidate } },
       claudeCode: {
         listAccounts: { invalidate: vi.fn() },
-        getResolvedAccount: { invalidate: vi.fn() },
+        getResolvedAccount: { invalidate: snap.resolvedAccountInvalidate },
         getProjectAccount: { invalidate: vi.fn() },
       },
     }),
+    chats: {
+      setChatAccount: {
+        useMutation: (opts: typeof snap.setChatAccountOpts) => {
+          snap.setChatAccountOpts = opts;
+          return { mutate: snap.setChatAccountMutate, isPending: false };
+        },
+      },
+      fork: { useMutation: () => ({ mutate: snap.forkMutate, isPending: false }) },
+    },
     claudeCode: {
       getResolvedAccount: {
         useQuery: (...args: unknown[]) => getResolvedAccountMock(...args),
@@ -109,13 +127,18 @@ afterEach(() => {
   getResolvedAccountMock.mockReset();
   snap.setDefaultMutate.mockReset();
   snap.setProjectAccountMutate.mockReset();
+  snap.setChatAccountMutate.mockReset();
+  snap.forkMutate.mockReset();
+  snap.listCountsInvalidate.mockReset();
+  snap.resolvedAccountInvalidate.mockReset();
+  vi.mocked(toast.success).mockReset();
   snap.listAccountsData = [...snap.defaultListAccounts];
   snap.setDefaultIsPending = false;
   snap.setProjectAccountIsPending = false;
 });
 
 describe('AccountIndicator', () => {
-  it('opens settings on models tab when choosing Manage in Settings', async () => {
+  it('opens Settings → Accounts from the Add account row', async () => {
     const user = userEvent.setup();
     const store = createStore();
 
@@ -139,7 +162,7 @@ describe('AccountIndicator', () => {
     const trigger = screen.getByRole('button', { name: 'AI accounts menu, Slice, Claude Code' });
     await user.click(trigger);
 
-    await user.click(screen.getByRole('menuitem', { name: /Manage in Settings/i }));
+    await user.click(screen.getByRole('menuitem', { name: /Add account/i }));
 
     expect(store.get(agentsSettingsDialogActiveTabAtom)).toBe('models');
     expect(store.get(activeOverlayAtom)).toBe('settings');
@@ -162,7 +185,7 @@ describe('AccountIndicator', () => {
 
     render(
       <Provider store={createStore()}>
-        <AccountIndicator chatId="chat-1" />
+        <AccountIndicator />
       </Provider>,
     );
 
@@ -206,7 +229,7 @@ describe('AccountIndicator', () => {
 
     render(
       <Provider store={createStore()}>
-        <AccountIndicator chatId="chat-1" />
+        <AccountIndicator />
       </Provider>,
     );
 
@@ -239,45 +262,13 @@ describe('AccountIndicator', () => {
 
     render(
       <Provider store={createStore()}>
-        <AccountIndicator chatId="chat-1" />
+        <AccountIndicator projectId="proj-1" />
       </Provider>,
     );
 
     const tooltip = screen.getByTestId('tooltip-content');
     expect(tooltip).toHaveTextContent(/Workspace default for this project/);
-    expect(tooltip).toHaveTextContent(/Choosing an account sets it for this project/);
-  });
-
-  it('calls setProjectAccount when selecting another account for a project-scoped chat', async () => {
-    const user = userEvent.setup();
-
-    getResolvedAccountMock.mockReturnValue({
-      data: {
-        id: 'acc-1',
-        label: 'Slice',
-        type: 'claude-code' as const,
-        isProjectOverride: false,
-        isAuthenticated: true,
-        projectId: 'proj-1',
-      },
-      isLoading: false,
-    });
-
-    render(
-      <Provider store={createStore()}>
-        <AccountIndicator chatId="chat-1" />
-      </Provider>,
-    );
-
-    await user.click(screen.getByRole('button', { name: 'AI accounts menu, Slice, Claude Code' }));
-
-    await user.click(screen.getByRole('menuitem', { name: /Backup/ }));
-
-    expect(snap.setProjectAccountMutate).toHaveBeenCalledWith(
-      { projectId: 'proj-1', accountId: 'acc-2' },
-      { onSuccess: expect.any(Function) },
-    );
-    expect(snap.setDefaultMutate).not.toHaveBeenCalled();
+    expect(tooltip).toHaveTextContent(/Choosing an account sets the AI account for this project/);
   });
 
   it('requests getResolvedAccount with projectId when new-chat header passes only projectId', () => {
@@ -363,6 +354,7 @@ describe('AccountIndicator', () => {
 
     expect(snap.setDefaultMutate).not.toHaveBeenCalled();
     expect(snap.setProjectAccountMutate).not.toHaveBeenCalled();
+    expect(snap.setChatAccountMutate).not.toHaveBeenCalled();
   });
 
   it('calls setProjectAccount with the Codex row id when switching to a Codex account in project scope', async () => {
@@ -394,7 +386,7 @@ describe('AccountIndicator', () => {
 
     render(
       <Provider store={createStore()}>
-        <AccountIndicator chatId="chat-1" />
+        <AccountIndicator projectId="proj-1" />
       </Provider>,
     );
 
@@ -444,7 +436,7 @@ describe('AccountIndicator', () => {
     await user.click(screen.getByRole('button', { name: 'AI accounts menu, Orphan, Claude Code' }));
 
     expect(screen.getByText('No accounts configured.')).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: /Manage in Settings/i })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /Add account/i })).toBeInTheDocument();
   });
 
   it('marks exactly one row active when two accounts share the same label', async () => {
@@ -553,7 +545,7 @@ describe('AccountIndicator', () => {
 
     render(
       <Provider store={createStore()}>
-        <AccountIndicator chatId="chat-1" />
+        <AccountIndicator />
       </Provider>,
     );
 
@@ -563,7 +555,7 @@ describe('AccountIndicator', () => {
     const backupItem = screen.getByRole('menuitem', { name: /Backup/ });
     expect(sliceItem).toHaveAttribute('aria-disabled', 'true');
     expect(backupItem).toHaveAttribute('aria-disabled', 'true');
-    expect(screen.getByRole('menuitem', { name: /Manage in Settings/i })).not.toHaveAttribute(
+    expect(screen.getByRole('menuitem', { name: /Add account/i })).not.toHaveAttribute(
       'aria-disabled',
       'true',
     );
@@ -587,7 +579,7 @@ describe('AccountIndicator', () => {
 
     render(
       <Provider store={createStore()}>
-        <AccountIndicator chatId="chat-1" />
+        <AccountIndicator projectId="proj-1" />
       </Provider>,
     );
 
@@ -599,7 +591,7 @@ describe('AccountIndicator', () => {
     expect(backupItem).toHaveAttribute('aria-disabled', 'true');
   });
 
-  it('sets models tab when choosing Manage in Settings while settings overlay is already open on another tab', async () => {
+  it('sets models tab when choosing Add account while settings overlay is already open on another tab', async () => {
     const user = userEvent.setup();
     const store = createStore();
     store.set(activeOverlayAtom, 'settings');
@@ -623,7 +615,7 @@ describe('AccountIndicator', () => {
     );
 
     await user.click(screen.getByRole('button', { name: 'AI accounts menu, Slice, Claude Code' }));
-    await user.click(screen.getByRole('menuitem', { name: /Manage in Settings/i }));
+    await user.click(screen.getByRole('menuitem', { name: /Add account/i }));
 
     expect(store.get(agentsSettingsDialogActiveTabAtom)).toBe('models');
     expect(store.get(activeOverlayAtom)).toBe('settings');
@@ -646,9 +638,8 @@ describe('AccountIndicator', () => {
       </Provider>,
     );
 
-    const trigger = screen.getByRole('button', {
-      name: 'AI accounts menu, K-Claude, Claude Code, project-specific default',
-    });
+    // A chat's own account is not a project default, even when it matches the project's.
+    const trigger = screen.getByRole('button', { name: 'AI accounts menu, K-Claude, Claude Code' });
     expect(trigger).toHaveTextContent(/K-Claude\s*-\s*Claude Code/);
     expect(trigger.textContent).not.toMatch(/·\s*project/i);
   });
@@ -703,7 +694,7 @@ describe('AccountIndicator', () => {
     expect(trigger.className).toMatch(/status-warning/);
   });
 
-  it('shows project-scoped dropdown copy when the chat has a project', async () => {
+  it('shows project-scoped dropdown copy before a project chat exists', async () => {
     const user = userEvent.setup();
 
     getResolvedAccountMock.mockReturnValue({
@@ -719,7 +710,7 @@ describe('AccountIndicator', () => {
 
     render(
       <Provider store={createStore()}>
-        <AccountIndicator chatId="chat-1" />
+        <AccountIndicator projectId="proj-1" />
       </Provider>,
     );
 
@@ -730,7 +721,110 @@ describe('AccountIndicator', () => {
     );
 
     expect(
-      screen.getByText(/Choosing an account sets the AI account for this project/i),
+      within(screen.getByRole('menu')).getByText(/sets the AI account for this project/i),
     ).toBeInTheDocument();
+  });
+
+  describe('in an existing chat', () => {
+    const codexRow: ListAccount = {
+      id: 'acc-codex',
+      label: 'CodexWork',
+      isDefault: false,
+      isAuthenticated: true,
+      connectedAt: null,
+      isApiKey: false,
+      type: 'codex',
+    };
+
+    async function openChatMenu(store = createStore()) {
+      snap.listAccountsData = [...snap.defaultListAccounts, codexRow];
+      getResolvedAccountMock.mockReturnValue({
+        data: { id: 'acc-1', label: 'Slice', type: 'claude-code' as const, isAuthenticated: true },
+        isLoading: false,
+      });
+      render(
+        <Provider store={store}>
+          <AccountIndicator chatId="chat-1" />
+        </Provider>,
+      );
+      await userEvent
+        .setup()
+        .click(screen.getByRole('button', { name: /AI accounts menu, Slice/ }));
+      return store;
+    }
+
+    it('lists same-provider logins, then other providers as Continue in rows', async () => {
+      await openChatMenu();
+
+      const rows = screen.getAllByRole('menuitem').map((el) => el.textContent);
+      expect(rows).toEqual([
+        'Backup · Claude Code',
+        'Slice · Claude Code',
+        'Continue in OpenAI (CodexWork)',
+        'Add account…',
+      ]);
+      expect(screen.getByText('Claude Code logins for this chat')).toBeInTheDocument();
+    });
+
+    it('swaps a same-provider login in place, leaving project and default alone', async () => {
+      await openChatMenu();
+
+      await userEvent.setup().click(screen.getByRole('menuitem', { name: /Backup/ }));
+
+      expect(snap.setChatAccountMutate).toHaveBeenCalledWith(
+        { chatId: 'chat-1', accountId: 'acc-2' },
+        { onSuccess: expect.any(Function) },
+      );
+      expect(snap.setProjectAccountMutate).not.toHaveBeenCalled();
+      expect(snap.setDefaultMutate).not.toHaveBeenCalled();
+      expect(snap.forkMutate).not.toHaveBeenCalled();
+
+      const vars = { chatId: 'chat-1' };
+      snap.setChatAccountOpts?.onSuccess(undefined, vars);
+      snap.setChatAccountMutate.mock.calls[0]?.[1].onSuccess();
+      expect(snap.resolvedAccountInvalidate).toHaveBeenCalledWith(vars);
+      expect(vi.mocked(toast.success)).toHaveBeenCalledWith('This chat now uses Backup');
+    });
+
+    it('continues in another provider as a fork, opens it and tells what followed', async () => {
+      const store = await openChatMenu();
+
+      await userEvent.setup().click(screen.getByRole('menuitem', { name: /Continue in OpenAI/ }));
+
+      expect(snap.forkMutate).toHaveBeenCalledWith(
+        { chatId: 'chat-1', accountId: 'acc-codex' },
+        { onSuccess: expect.any(Function) },
+      );
+      expect(snap.setChatAccountMutate).not.toHaveBeenCalled();
+      const opts = snap.forkMutate.mock.calls[0]?.[1] as {
+        onSuccess: (forked: { id: string; name: string | null }) => void;
+      };
+      opts.onSuccess({ id: 'chat-2', name: 'Refactor auth · OpenAI' });
+
+      expect(snap.listCountsInvalidate).toHaveBeenCalled();
+      expect(store.get(selectedAgentChatIdAtom)).toBe('chat-2');
+      expect(vi.mocked(toast.success)).toHaveBeenCalledWith(
+        'Now running on OpenAI',
+        expect.objectContaining({ description: expect.stringContaining('came with you') }),
+      );
+    });
+
+    it('puts the fork in the source chat pane in split view', async () => {
+      const store = createStore();
+      store.set(splitViewAtom, (prev) => ({
+        ...prev,
+        chatIds: ['other', 'chat-1'],
+        activePaneIndex: 1,
+      }));
+      await openChatMenu(store);
+
+      await userEvent.setup().click(screen.getByRole('menuitem', { name: /Continue in OpenAI/ }));
+      const opts = snap.forkMutate.mock.calls[0]?.[1] as {
+        onSuccess: (forked: { id: string; name: string | null }) => void;
+      };
+      opts.onSuccess({ id: 'chat-2', name: null });
+
+      expect(store.get(splitViewAtom).chatIds).toEqual(['other', 'chat-2']);
+    });
   });
 });

@@ -12,7 +12,7 @@ Frink lets you move between coding tools — Claude, Codex, Cursor and more — 
 
 ## Switching tools
 
-You choose which tool runs your work per project from **Settings → AI providers** — Claude or Codex. The moment you switch, Frink sets the new tool up with your config and tells you what came across and what changes. Your setup also reaches editors Frink doesn't run your chats through, Cursor included: it imports their config and writes yours back.
+Each chat stays on the tool it started with. A new chat uses its project's account (set in **Settings → AI providers**) or your default, Claude or Codex, and changing either only affects chats you start afterwards. Inside a chat, the account menu in its header can switch to another login for the same tool without leaving the conversation, or **Continue in** the other tool: a new chat that starts from a copy of this conversation. When you move to another tool, Frink sets it up with your config and tells you what came across and what changes. Your setup also reaches editors Frink doesn't run your chats through, Cursor included: it imports their config and writes yours back.
 
 ## What follows you
 
