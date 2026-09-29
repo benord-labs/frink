@@ -81,12 +81,19 @@ function PinnedStrip({
   onHeight: (height: number) => void;
   children: ReactNode;
 }) {
-  // Only iOS draws its header over the screen; elsewhere the screen starts below it.
+  // Only iOS draws its header over the screen; elsewhere the screen starts below it. The header
+  // height is natively driven, and native animation can move a view but not set its `top`.
   const headerHeight = useAnimatedHeaderHeight();
   return (
     <Animated.View
       pointerEvents="box-none"
-      style={{ position: 'absolute', left: 0, right: 0, top: ios ? headerHeight : 0 }}
+      style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        transform: ios ? [{ translateY: headerHeight }] : undefined,
+      }}
     >
       <View
         ref={edgeRef}
