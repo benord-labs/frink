@@ -36,5 +36,5 @@ export type WakeHoldChangedPayload = {
 };
 
 /** 'wait-over' when the wait's own liveness rule ends it (onWaitOver); 'adopted' when a follow-up
- * turn takes the hold over. Stop, release and pump-exit retractions omit it. */
-export type WakeHoldEndReason = 'wait-over' | 'adopted';
+ * turn takes the hold over; 'failed' when the pump dies. Every other retraction omits it. */
+export type WakeHoldEndReason = 'wait-over' | 'adopted' | 'failed';

@@ -411,7 +411,45 @@ describe('deferUntilWaitOver and the adopted-hold flag', () => {
     deferUntilWaitOver('dw1', fire);
     act(() => emit({ chatId: 'c1', subChatId: 'dw1', held: false, endReason: 'wait-over' }));
     act(() => emit({ chatId: 'c1', subChatId: 'dw1', held: false, endReason: 'wait-over' }));
-    expect(fire).toHaveBeenCalledOnce();
+    expect(fire).toHaveBeenCalledExactlyOnceWith(false);
+  });
+
+  it('fires once, in its failed form, when the wait dies', () => {
+    const fire = vi.fn();
+    deferUntilWaitOver('dw6', fire);
+    act(() => emit({ chatId: 'c1', subChatId: 'dw6', held: false, endReason: 'failed' }));
+    act(() => emit({ chatId: 'c1', subChatId: 'dw6', held: false, endReason: 'wait-over' }));
+    expect(fire).toHaveBeenCalledExactlyOnceWith(true);
+  });
+
+  // A reload loses the finished turn's deferred announce; the seeded hold stands in for it.
+  it.each([
+    ['wait-over', false],
+    ['failed', true],
+  ] as const)(
+    'announces a hold seeded after a reload once, at its %s',
+    async (endReason, failed) => {
+      queryWakeHolds.mockResolvedValueOnce([
+        { subChatId: 'rl1', chatId: 'c1', pending: { waitingOn: ['Monitor'] } },
+      ]);
+      const announce = vi.fn();
+      renderHook(() => useWakeHoldSync(announce));
+      await act(async () => {});
+      act(() => emit({ chatId: 'c1', subChatId: 'rl1', held: false, endReason }));
+      act(() => emit({ chatId: 'c1', subChatId: 'rl1', held: false, endReason }));
+      expect(announce).toHaveBeenCalledExactlyOnceWith({ chatId: 'c1', subChatId: 'rl1' }, failed);
+    },
+  );
+
+  it('never announces a seeded Flow hold: the Flow plays its own end', async () => {
+    queryWakeHolds.mockResolvedValueOnce([
+      { subChatId: 'rl2', chatId: 'c1', pending: { waitingOn: ['Monitor'] }, flow: true },
+    ]);
+    const announce = vi.fn();
+    renderHook(() => useWakeHoldSync(announce));
+    await act(async () => {});
+    act(() => emit({ chatId: 'c1', subChatId: 'rl2', held: false, endReason: 'wait-over' }));
+    expect(announce).not.toHaveBeenCalled();
   });
 
   it('drops the callback unfired on a retraction with no reason', () => {

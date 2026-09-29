@@ -105,6 +105,39 @@ function markTurnUnseen(
   }
 }
 
+type AnnouncedTurn = {
+  chatId: string;
+  subChatId: string;
+  wasManuallyAborted?: boolean;
+  /** onError already signalled it, so a success sound or notification would misreport it. */
+  errored?: boolean;
+  notifyComplete?: (subChatId: string) => void;
+};
+
+/** A turn's completion effects, resolved against the CURRENT view (the reused Chat's creation-time
+ * snapshots are stale). `failed`: its background wait died, so it plays the failure sound. */
+export function announceTurnEnd(turn: AnnouncedTurn, failed = false): void {
+  const { chatId, subChatId } = turn;
+  const subStore = useAgentSubChatStore.getState();
+  const effects = resolveCompletionEffects({
+    chatId,
+    subChatId,
+    subStoreChatId: subStore.chatId,
+    subStoreActiveSubChatId: subStore.activeSubChatId,
+    splitView: appStore.get(splitViewAtom),
+    selectedChatId: appStore.get(selectedAgentChatIdAtom),
+    isWindowFocused: document.hasFocus(),
+    wasManuallyAborted: Boolean(turn.wasManuallyAborted),
+    isFlowDriven: isFlowDrivenNow(chatId, subChatId),
+  });
+  markTurnUnseen(chatId, subChatId, effects);
+  if (!effects.notifyCompletion || turn.errored) return;
+  if (appStore.get(soundNotificationsEnabledAtom)) {
+    void playSound(failed ? 'failed' : 'turnComplete');
+  }
+  if (!failed) turn.notifyComplete?.(subChatId);
+}
+
 export function createAgentChat(params: CreateAgentChatParams): Chat<UIMessage> {
   const {
     chatId,
@@ -175,33 +208,12 @@ export function createAgentChat(params: CreateAgentChatParams): Chat<UIMessage> 
       const wasManuallyAborted = agentChatStore.wasManuallyAborted(subChatId);
       agentChatStore.clearManuallyAborted(subChatId);
 
-      const announce = () => {
+      const announce = (failed?: boolean) => {
         if (agentChatStore.wasTornDown(chat)) return;
-        // Read CURRENT view state: the reused Chat's creation-time split/focus snapshots are stale
-        // (agent-execution-lifecycle decision); hasFocus() is this renderer window's.
-        const subStore = useAgentSubChatStore.getState();
-        const effects = resolveCompletionEffects({
-          chatId,
-          subChatId,
-          subStoreChatId: subStore.chatId,
-          subStoreActiveSubChatId: subStore.activeSubChatId,
-          splitView: appStore.get(splitViewAtom),
-          selectedChatId: appStore.get(selectedAgentChatIdAtom),
-          isWindowFocused: document.hasFocus(),
-          wasManuallyAborted,
-          isFlowDriven: isFlowDrivenNow(chatId, subChatId),
-        });
-
-        markTurnUnseen(chatId, subChatId, effects);
-
-        // An errored turn already signalled via onError — a success sound or
-        // "completed" OS notification here would misreport the outcome.
-        if (effects.notifyCompletion && !turnErrored) {
-          if (appStore.get(soundNotificationsEnabledAtom)) {
-            void playSound('turnComplete');
-          }
-          notifyComplete?.(subChatId);
-        }
+        announceTurnEnd(
+          { chatId, subChatId, wasManuallyAborted, errored: turnErrored, notifyComplete },
+          failed,
+        );
       };
       // A turn that leaves background work running is not finished: announce when the wait ends.
       // Never gate on runLive here — it still reads true at onFinish (live-run-observer-lane).

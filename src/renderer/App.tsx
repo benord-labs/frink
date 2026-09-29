@@ -18,6 +18,7 @@ import { WelcomeSplash } from './components/WelcomeSplash';
 import { TRPCProvider } from './contexts/TRPCProvider';
 import { splitViewChatIdsAtom } from './features/agents/atoms';
 import { useLiveRunSync } from './features/agents/hooks/use-live-run-sync';
+import { announceTurnEnd } from './features/agents/lib/create-agent-chat';
 import { CopyAcrossPrompt } from './features/provider-config/CopyAcrossPrompt';
 import { useFlowChatReplySync } from './hooks/use-flow-chat-reply-sync';
 import { useFlowExecutionEvents } from './hooks/use-flow-execution-events';
@@ -200,7 +201,7 @@ function GlobalEventListeners() {
   useFlowChatReplySync();
   useSubChatModeSync();
   useComposerSettingsSync();
-  useWakeHoldSync();
+  useWakeHoldSync(announceTurnEnd);
   useSubagentTaskSync();
   useMcpBackgroundPrefetch();
   useMcpImportInvalidation();

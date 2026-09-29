@@ -463,9 +463,9 @@ export function armWakePump(params: ArmWakePumpParams): WakeHold {
         executionContextId,
         io,
         canClearPendingApprovals: params.canClearPendingApprovals,
-        retractIfCurrent: () => {
+        retractIfCurrent: (endReason) => {
           const own = activeWakeHolds.get(subChatId);
-          if (own?.pump === pump) retractHold(own);
+          if (own?.pump === pump) retractHold(own, endReason);
         },
         dropIfCurrent: () => {
           const own = activeWakeHolds.get(subChatId);

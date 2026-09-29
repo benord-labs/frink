@@ -1083,6 +1083,7 @@ describe('claude-wake-hold — held-state publication', () => {
     await new Promise((r) => setTimeout(r, 0));
 
     expect(heldCalls(io)).toEqual([true, false]);
+    expect(io.setHeld).toHaveBeenLastCalledWith(false, undefined, 'failed');
     expect(hasWakeHold('h2')).toBe(false);
   });
 

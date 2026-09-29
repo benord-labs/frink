@@ -22,7 +22,7 @@ const mocks = vi.hoisted(() => ({
   clearManuallyAborted: vi.fn(),
   setStatus: vi.fn(),
   flowChatIds: new Set<string>(),
-  deferred: new Map<string, () => void>(),
+  deferred: new Map<string, (failed?: boolean) => void>(),
 }));
 
 vi.mock('@ai-sdk/react', () => ({
@@ -80,7 +80,8 @@ vi.mock('../../../lib/utils/platform', () => ({
 
 // Captured rather than real: `fireWaitOver` stands in for main's wait-over retraction.
 vi.mock('../../../lib/stores/use-wake-hold-sync', () => ({
-  deferUntilWaitOver: (subChatId: string, fire: () => void) => mocks.deferred.set(subChatId, fire),
+  deferUntilWaitOver: (subChatId: string, fire: (failed?: boolean) => void) =>
+    mocks.deferred.set(subChatId, fire),
 }));
 
 import { soundNotificationsEnabledAtom } from '../../../lib/atoms';
@@ -90,7 +91,7 @@ import {
 } from '../../../lib/stores/active-transport-registry';
 import { agentsSubChatUnseenChangesAtom, loadingSubChatsAtom } from '../atoms';
 import { flowRunIncompleteAtomFamily } from '../stores/message-store';
-import { createAgentChat } from './create-agent-chat';
+import { announceTurnEnd, createAgentChat } from './create-agent-chat';
 
 /** Atom-aware store read: structural atoms get real shapes, flags get booleans. */
 function storeGet(soundEnabled: boolean, flowRunIncomplete = false, held = false) {
@@ -188,7 +189,7 @@ describe('onFinish — completion sound seam', () => {
 // unseen marks wait for the wait itself to end, and resolve against the view at that moment.
 describe('onFinish — a held turn defers its completion effects to the wait-over', () => {
   const AWAY = { markSubChatUnseen: true, markChatUnseen: true, notifyCompletion: true };
-  const fireWaitOver = () => mocks.deferred.get('sub-1')?.();
+  const fireWaitOver = (failed?: boolean) => mocks.deferred.get('sub-1')?.(failed);
   const unseenWrites = () =>
     mocks.appStoreSet.mock.calls.filter(([atom]) => atom === agentsSubChatUnseenChangesAtom);
 
@@ -230,6 +231,22 @@ describe('onFinish — a held turn defers its completion effects to the wait-ove
     fireWaitOver();
     expect(mocks.playSound.mock.calls).toEqual([['failed']]);
     expect(notifyComplete).not.toHaveBeenCalled();
+  });
+
+  it('plays the failure sound, with no completed notification, when the wait dies', () => {
+    const { options, notifyComplete } = buildChat();
+    options.onFinish();
+    fireWaitOver(true);
+    expect(mocks.playSound).toHaveBeenCalledExactlyOnceWith('failed');
+    expect(notifyComplete).not.toHaveBeenCalled();
+    expect(unseenWrites()).toHaveLength(1);
+  });
+
+  // A window that reloaded mid-wait never saw the turn finish; the ids alone must announce it.
+  it('announces a turn from its ids alone', () => {
+    announceTurnEnd({ chatId: 'chat-1', subChatId: 'sub-1' });
+    expect(mocks.playSound).toHaveBeenCalledExactlyOnceWith('turnComplete');
+    expect(unseenWrites()).toHaveLength(1);
   });
 
   it('stays silent at the wait-over of a flow-driven chat', () => {
