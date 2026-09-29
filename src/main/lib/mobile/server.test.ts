@@ -6,6 +6,7 @@ import { TRPCError } from '@trpc/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const captureContained = vi.hoisted(() => vi.fn());
 vi.mock('../sentry', () => ({ captureContained }));
+import { MOBILE_API_VERSION } from '../../../shared/types/remote/mobile';
 import { MobilePairingStore } from './pairing-store';
 import { createMobileApp, startMobileServer, stopMobileServer } from './server';
 
@@ -93,7 +94,7 @@ describe('mobile HTTP boundary', () => {
     const result = await response.json();
     expect(response.status).toBe(200);
     expect(result).toMatchObject({
-      apiVersion: 1,
+      apiVersion: MOBILE_API_VERSION,
       machineName: expect.any(String),
       deviceId: expect.any(String),
       token: expect.any(String),

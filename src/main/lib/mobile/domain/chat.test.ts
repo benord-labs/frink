@@ -153,6 +153,34 @@ describe('mobile chat actions', () => {
     expect(fixture.create).toHaveBeenLastCalledWith(expect.objectContaining({ useWorktree: true }));
   });
 
+  it('starts a chat in the chosen mode, and in Agent by default', async () => {
+    fixture.project.mockResolvedValue({ id: 'project' });
+    fixture.create.mockResolvedValue({ id: 'chat', subChats: [{ id: 'sub' }] });
+    const plan = mobileRequestSchema.parse({
+      type: 'createChat',
+      projectId: 'project',
+      mode: 'plan',
+    });
+    await createMobileChat(plan as Extract<typeof plan, { type: 'createChat' }>);
+    expect(fixture.create).toHaveBeenLastCalledWith(expect.objectContaining({ mode: 'plan' }));
+    await createMobileChat({ type: 'createChat', projectId: 'project' });
+    expect(fixture.create).toHaveBeenLastCalledWith(expect.objectContaining({ mode: 'agent' }));
+    expect(
+      mobileRequestSchema.safeParse({ type: 'createChat', projectId: 'project', mode: 'ask' })
+        .success,
+    ).toBe(false);
+  });
+
+  it('marks a conversation driven by a Flow run as a Flow step', async () => {
+    fixture.seed.mockReturnValue({ streams: [], terminals: [] });
+    const request = { type: 'chat' as const, id: 'chat', subChatId: 'sub' };
+    await expect(readMobileChat(request)).resolves.toMatchObject({ kind: 'chat' });
+    fixture.getDriving.mockResolvedValueOnce({ task: { id: 'task', flowRunId: 'run' }, run: null });
+    await expect(readMobileChat(request)).resolves.toMatchObject({ kind: 'flow' });
+    fixture.getDriving.mockResolvedValueOnce({ task: null, run: { id: 'run' } });
+    await expect(readMobileChat(request)).resolves.toMatchObject({ kind: 'flow' });
+  });
+
   it('shows a safe failure message only for the latest inactive response', async () => {
     const failure = {
       assistantMessageId: 'failed',
@@ -162,11 +190,15 @@ describe('mobile chat actions', () => {
     fixture.seed.mockReturnValue({ streams: [], terminals: [failure] });
     const request = { type: 'chat' as const, id: 'chat', subChatId: 'sub' };
     await expect(readMobileChat(request)).resolves.toMatchObject({
-      error: 'The response failed. Check Frink on your computer for details.',
+      error: 'The response failed. Open Frink on your Mac to see why.',
     });
-    for (const status of ['active', 'held']) {
+    for (const [status, activity] of [
+      ['active', 'running'],
+      ['settling', 'running'],
+      ['held', 'background'],
+    ]) {
       fixture.seed.mockReturnValue({ streams: [{ status, parts: [] }], terminals: [failure] });
-      await expect(readMobileChat(request)).resolves.toMatchObject({ active: true, error: null });
+      await expect(readMobileChat(request)).resolves.toMatchObject({ activity, error: null });
     }
     fixture.seed.mockReturnValue({
       streams: [],
@@ -511,6 +543,15 @@ describe('mobile chat actions', () => {
         ],
       },
     ]);
+  });
+
+  it('shows a steer as the text the user sent, whatever state its marker is in', () => {
+    const steer = { type: 'tool-Steer', toolName: 'Steer', input: { text: ' Use pnpm ' } };
+    const messages = mergeMobileTranscript(
+      [{ id: 'a', role: 'assistant', parts: [steer, { ...steer, input: {} }] }],
+      { streams: [], terminals: [] },
+    );
+    expect(messages[0].parts).toEqual([{ type: 'steer', text: 'Use pnpm' }]);
   });
 
   it('uses each message owning stream when classifying unfinished tools', () => {

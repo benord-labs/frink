@@ -15,6 +15,7 @@ import {
   listActiveFlowRunIdsForChat,
   listChatIdsWithActiveFlowRun,
   listChatsByBatch,
+  listFlowRunsForFlow,
   listIncompleteFlowRunIdsForChat,
   recoverOrphanedFlowRuns,
   setFlowRunStatus,
@@ -794,6 +795,31 @@ describe('getActiveFlowDrivingStatusByRun', () => {
 // Powers the flows-dashboard "Running" indicator: the newest ACTIVE run per flow, batched to avoid
 // an N+1. Active = running|paused|pending (the renderer's live set); a newer completed run must not
 // mask an older still-running one (concurrent runs are possible — no single-active-run guard).
+describe('listFlowRunsForFlow', () => {
+  it('orders runs created in the same second by id so pages stay stable between reads', async () => {
+    const db = freshDb();
+    const flow = await createFlow(db, { name: 'F' });
+    const version = await createFlowVersion(db, { flowId: flow.id, graph: GRAPH });
+    const second = new Date('2026-09-28T08:00:00Z');
+    await db
+      .insert(flowRuns)
+      .values(
+        ['run-b', 'run-c', 'run-a'].map((id) => ({
+          id,
+          flowVersionId: version.id,
+          createdAt: second,
+        })),
+      );
+    await db.insert(flowRuns).values({
+      id: 'run-0',
+      flowVersionId: version.id,
+      createdAt: new Date('2026-09-28T08:00:01Z'),
+    });
+    const runs = await listFlowRunsForFlow(db, flow.id, 3);
+    expect(runs.map((run) => run.id)).toEqual(['run-0', 'run-c', 'run-b']);
+  });
+});
+
 describe('getLatestRunsForFlows', () => {
   let db: TestDb;
   beforeEach(() => {

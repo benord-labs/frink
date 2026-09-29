@@ -2,6 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { MOBILE_API_VERSION } from '../../../shared/types/remote/mobile';
 
 const mocks = vi.hoisted(() => ({
   directory: '',
@@ -62,7 +63,7 @@ describe('desktop mobile access lifecycle', () => {
   it('restores an explicitly enabled listener and closes it without revoking on normal shutdown', async () => {
     await writeFile(
       join(mocks.directory, 'mobile.json'),
-      JSON.stringify({ version: 1, enabled: true, devices: [] }),
+      JSON.stringify({ version: MOBILE_API_VERSION, enabled: true, devices: [] }),
     );
     const mobile = await import('./index');
     await mobile.initializeMobileAccess();

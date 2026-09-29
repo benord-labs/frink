@@ -375,7 +375,7 @@ export async function listFlowRunsForFlow(
     .from(flowRuns)
     .innerJoin(flowVersions, eq(flowVersions.id, flowRuns.flowVersionId))
     .where(eq(flowVersions.flowId, flowId))
-    .orderBy(desc(flowRuns.createdAt))
+    .orderBy(desc(flowRuns.createdAt), desc(flowRuns.id))
     .limit(limit);
 }
 

@@ -22,6 +22,7 @@ import {
 import { MobileApiError, mobileCallers, requireExecutionReady } from './context';
 import { readMobileFlow, readMobileFlows, readMobileRun, resumeMobileNode } from './flows';
 import { readMobileChats, readMobileOverview, readMobileProjects } from './read';
+import { steerMobileMessage } from './steer';
 import { captureContained } from '../../sentry';
 
 // Reason: An exhaustive command switch keeps this transport boundary explicit.
@@ -29,15 +30,15 @@ import { captureContained } from '../../sentry';
 async function dispatch(request: MobileRequest): Promise<MobileResponses[MobileRequest['type']]> {
   switch (request.type) {
     case 'overview':
-      return readMobileOverview();
+      return readMobileOverview(request);
     case 'flows':
       return readMobileFlows();
     case 'flow':
-      return readMobileFlow(request.id);
+      return readMobileFlow(request);
     case 'run':
       return readMobileRun(request.id);
     case 'chats':
-      return readMobileChats();
+      return readMobileChats(request);
     case 'projects':
       return readMobileProjects();
     case 'chat':
@@ -46,6 +47,8 @@ async function dispatch(request: MobileRequest): Promise<MobileResponses[MobileR
       return createMobileChat(request);
     case 'sendMessage':
       return sendMobileMessage(request);
+    case 'steerMessage':
+      return steerMobileMessage(request);
     case 'stopChat':
       return stopMobileChat(request);
     case 'deleteChat':

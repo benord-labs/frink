@@ -12,7 +12,13 @@ import {
 } from '../schema';
 import { freshDb, type TestDb } from '../test-utils/fresh-db';
 import { createFlowVersion } from './flow-versions';
-import { copyFlow, createFlow, FlowCopyNoSavedVersionError, FlowCopyNotFoundError } from './flows';
+import {
+  copyFlow,
+  createFlow,
+  FlowCopyNoSavedVersionError,
+  FlowCopyNotFoundError,
+  listFlows,
+} from './flows';
 
 const graph = (instructions: string, briefing = '') => ({
   nodes: [
@@ -21,6 +27,26 @@ const graph = (instructions: string, briefing = '') => ({
   ],
   edges: [{ id: 'edge', source: 'trigger', target: 'agent' }],
   settings: { briefing },
+});
+
+describe('listFlows', () => {
+  it('orders Flows updated in the same second by id', async () => {
+    const db = freshDb();
+    const second = new Date('2026-09-28T08:00:00Z');
+    await db
+      .insert(flows)
+      .values(['flow-b', 'flow-c', 'flow-a'].map((id) => ({ id, name: id, updatedAt: second })));
+    await db.insert(flows).values([
+      { id: 'flow-new', name: 'New', updatedAt: new Date('2026-09-28T08:00:01Z') },
+      { id: 'flow-gone', name: 'Deleted', updatedAt: second, isActive: false },
+    ]);
+    expect((await listFlows(db)).map((flow) => flow.id)).toEqual([
+      'flow-new',
+      'flow-c',
+      'flow-b',
+      'flow-a',
+    ]);
+  });
 });
 
 describe('copyFlow', () => {

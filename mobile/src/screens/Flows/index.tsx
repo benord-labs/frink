@@ -172,11 +172,11 @@ export function FlowDetail({
             </Button>
           </View>
           <Section title="Recent runs">
-            {data.runs.length ? (
-              data.runs.map((run, index) => (
+            {data.runs.items.length ? (
+              data.runs.items.map((run, index) => (
                 <Row
                   key={run.id}
-                  separator={index < data.runs.length - 1}
+                  separator={index < data.runs.items.length - 1}
                   title={
                     run.startedAt
                       ? new Date(run.startedAt).toLocaleString([], {
