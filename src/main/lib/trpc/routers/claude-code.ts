@@ -20,6 +20,7 @@ import { ALLOWED_SOURCE_PATH_SCHEMES } from '../../credentials/source-readers';
 import { type AIAccountType, claudeCodeCredentials, getDatabase } from '../../db';
 import { getChatById } from '../../db/repos/chats';
 import {
+  getChatAiAccount,
   getProjectAiAccount as getProjectAiAccountLocal,
   setProjectAiAccount as setProjectAiAccountLocal,
 } from '../../db/repos/project-ai-accounts';
@@ -970,9 +971,9 @@ export const claudeCodeRouter = router({
     }),
 
   /**
-   * Get the resolved account label and provider type for a chat or for new-chat context.
-   * When chatId is provided, uses that chat's project; when only projectId is provided (e.g. new
-   * chat with a selected project), uses that project; otherwise uses default account.
+   * The account label and provider type for a chat (its stamped account) or for new-chat context
+   * (the projectId's override), else the default account.
+   *
    * `projectId` in the result is the scoped project for account-picker mutations (null = workspace default only).
    */
   getResolvedAccount: publicProcedure
@@ -988,55 +989,41 @@ export const claudeCodeRouter = router({
       // Type + auth state use the module-scope helpers (shared with listAccounts/getIntegration
       // so the three selection reads can't drift). `type` resolves to 'codex' when a codex row
       // surfaces (flag on); codex passthrough is authenticated by needsReauthAt, not a token.
-      let projectIdToUse: string | undefined;
-      if (input.chatId) {
-        const chat = await getChatById(getDatabase(), input.chatId);
-        projectIdToUse = chat?.projectId ?? undefined;
-      } else {
-        projectIdToUse = input.projectId;
-      }
+      const chat = input.chatId ? await getChatById(db, input.chatId) : null;
+      const scopedProjectId = (input.chatId ? chat?.projectId : input.projectId) ?? null;
+      const projectOverride = scopedProjectId ? await getProjectAiAccount(scopedProjectId) : null;
+      const pinned = await getChatAiAccount(db, {
+        accountId: chat?.accountId,
+        projectId: scopedProjectId,
+      });
+      if (pinned) {
+        // Keyed by primary key, so no ranking. The type scope still hides a launch-flag-hidden
+        // codex row even when the chat or project still points at it.
+        const localAccount = db
+          .select()
+          .from(claudeCodeCredentials)
+          .where(
+            and(eq(claudeCodeCredentials.id, pinned.id), SELECTABLE_ACCOUNT_TYPE_SCOPE_WITH_NULL),
+          )
+          .get();
+        const freshOverride = await reprobeFlaggedPassthrough(localAccount);
 
-      const scopedProjectId: string | null = projectIdToUse ?? null;
-
-      // Local-first migration: project↔AI-account routing is now in local SQLite
-      // (project_ai_accounts). The temporary 30b39fe10 try/catch around the cloud
-      // Neon round-trip is gone — local lookups don't 404 on local-only project
-      // IDs because they ARE local-only project IDs.
-      const projectAccount = projectIdToUse ? await getProjectAiAccount(projectIdToUse) : null;
-      if (projectIdToUse) {
-        if (projectAccount) {
-          // Keyed by primary key, so exactly one row can match — no ranking. The type
-          // scope still applies: a launch-flag-hidden codex row must stay invisible
-          // to selection reads even when a project override still points at it.
-          const localAccount = db
-            .select()
-            .from(claudeCodeCredentials)
-            .where(
-              and(
-                eq(claudeCodeCredentials.id, projectAccount.id),
-                SELECTABLE_ACCOUNT_TYPE_SCOPE_WITH_NULL,
-              ),
-            )
-            .get();
-          const freshOverride = await reprobeFlaggedPassthrough(localAccount);
-
-          // A pinned row this user cannot see (another account's, hidden type, or deleted
-          // mid-probe) is no override: fall through to the user's own default account.
-          if (freshOverride) {
-            const overrideType = resolveAccountType(freshOverride);
-            return {
-              id: freshOverride.id,
-              label: freshOverride.accountLabel || defaultAccountLabel(overrideType),
-              type: overrideType,
-              isProjectOverride: true,
-              isAuthenticated: isAccountAuthenticated(freshOverride),
-              source: freshOverride.source ?? null,
-              sourcePath: freshOverride.sourcePath ?? null,
-              needsReauthAt: freshOverride.needsReauthAt?.toISOString() ?? null,
-              expectedEmail: freshOverride.expectedEmail ?? null,
-              projectId: scopedProjectId,
-            };
-          }
+        // A pinned row this user cannot see (another account's, hidden type, or deleted
+        // mid-probe) is no override: fall through to the user's own default account.
+        if (freshOverride) {
+          const overrideType = resolveAccountType(freshOverride);
+          return {
+            id: freshOverride.id,
+            label: freshOverride.accountLabel || defaultAccountLabel(overrideType),
+            type: overrideType,
+            isProjectOverride: freshOverride.id === projectOverride?.id,
+            isAuthenticated: isAccountAuthenticated(freshOverride),
+            source: freshOverride.source ?? null,
+            sourcePath: freshOverride.sourcePath ?? null,
+            needsReauthAt: freshOverride.needsReauthAt?.toISOString() ?? null,
+            expectedEmail: freshOverride.expectedEmail ?? null,
+            projectId: scopedProjectId,
+          };
         }
       }
 

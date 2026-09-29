@@ -3,8 +3,11 @@ import log from 'electron-log';
 import { z } from 'zod';
 import { getDatabase } from '../../../db';
 import { getChatById, moveChatToProjectLocal, parseWorktreeHistory } from '../../../db/repos/chats';
+import { setChatAiAccount } from '../../../db/repos/project-ai-accounts';
+import { listSubChatsByChat } from '../../../db/repos/sub-chats';
 import { gitCache } from '../../../git/cache';
 import { resolveTargetWorktreeForMove } from '../../../git/resolve-target-worktree';
+import { retireRetainedSession } from '../../../socket/claude-session-registry';
 import { publicProcedure, router } from '../../index';
 import { renameChatHierarchy } from './helpers';
 import { mapLocalChatResponse } from './map-chat-response';
@@ -84,5 +87,25 @@ export const updateRouter = router({
           cause: error,
         });
       }
+    }),
+
+  /** Swap a chat to another login of the same provider; it resumes natively on its next turn. */
+  setChatAccount: publicProcedure
+    .input(z.object({ chatId: z.string(), accountId: z.string() }))
+    .mutation(async ({ input }) => {
+      const db = getDatabase();
+      const result = await setChatAiAccount(db, input.chatId, input.accountId);
+      if (result === 'not-found') {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Chat or account not found' });
+      }
+      if (result === 'other-provider') {
+        const message = 'Another provider continues this chat in a new chat';
+        throw new TRPCError({ code: 'BAD_REQUEST', message });
+      }
+      // A session idling under the old login must not serve the next turn.
+      for (const sub of await listSubChatsByChat(db, input.chatId)) {
+        retireRetainedSession(sub.id, 'credential-change');
+      }
+      return { success: true as const };
     }),
 });

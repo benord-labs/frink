@@ -7,6 +7,11 @@ import {
 } from '../../socket/claude-session-registry';
 
 const getProjectAiAccountMock = vi.fn();
+// Like the real repo, a chat without a stamped account resolves its project's override.
+const getChatAiAccountMock = vi.fn(async (db: unknown, chat: { projectId?: string | null }) =>
+  chat.projectId ? getProjectAiAccountMock(db, chat.projectId) : null,
+);
+const getChatByIdMock = vi.fn();
 const setProjectAiAccountMock = vi.fn();
 const getExistingClaudeCredentialsMock = vi.fn();
 const invalidateClaudeCredentialCacheMock = vi.fn();
@@ -56,7 +61,9 @@ void _invalidateClaudeCredentialCacheUnused;
 
 // Project↔account routing moved to local SQLite repos during the local-first
 // migration. The router imports these from db/repos/*, not cloud-client.
+vi.mock('../../db/repos/chats', () => ({ getChatById: getChatByIdMock }));
 vi.mock('../../db/repos/project-ai-accounts', () => ({
+  getChatAiAccount: getChatAiAccountMock,
   getProjectAiAccount: getProjectAiAccountMock,
   setProjectAiAccount: setProjectAiAccountMock,
   deleteProjectAiAccountsByLabel: deleteProjectAiAccountsByLabelMock,
@@ -314,6 +321,7 @@ describe('claudeCodeRouter project account ownership', () => {
   it('resolves project override accounts for text project ids', async () => {
     getProjectAiAccountMock.mockResolvedValue({ id: 'cred-work', label: 'Work' });
     selectGetMock.mockReturnValue({
+      id: 'cred-work',
       accountLabel: 'Work',
       type: 'claude',
       oauthToken: 'oauth-token',
@@ -381,6 +389,39 @@ describe('claudeCodeRouter project account ownership', () => {
       projectId: 'project/1',
     });
     expect(getProjectAiAccountMock).toHaveBeenCalledWith(expect.anything(), 'project/1');
+  });
+
+  it('getResolvedAccount resolves a chat to its stamped account', async () => {
+    getProjectAiAccountMock.mockResolvedValue({ id: 'cred-a', label: 'Personal' });
+    getChatByIdMock.mockResolvedValueOnce({
+      id: 'c1',
+      projectId: 'project/1',
+      accountId: 'cred-b',
+    });
+    getChatAiAccountMock.mockResolvedValueOnce({ id: 'cred-b', label: 'Work' });
+    selectGetMock.mockReturnValue({
+      id: 'cred-b',
+      accountLabel: 'Work',
+      type: 'claude-code',
+      oauthToken: 'token',
+      source: 'api-key',
+      needsReauthAt: null,
+    });
+
+    const { claudeCodeRouter } = await import('./claude-code');
+    const caller = claudeCodeRouter.createCaller({ getWindow: () => null });
+    const result = await caller.getResolvedAccount({ chatId: 'c1' });
+
+    expect(getChatAiAccountMock).toHaveBeenCalledWith(expect.anything(), {
+      accountId: 'cred-b',
+      projectId: 'project/1',
+    });
+    expect(result).toMatchObject({
+      id: 'cred-b',
+      label: 'Work',
+      projectId: 'project/1',
+      isProjectOverride: false,
+    });
   });
 
   // Replaces the old label tie-break test: the project-account branch used to rank rows

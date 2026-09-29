@@ -38,14 +38,8 @@ import {
   type TriggerStartMode,
   withTriggerContextDefaults,
 } from '../../../shared/types/trigger-context';
-import {
-  getClaudeCodeTokenById,
-  getDefaultClaudeCodeToken,
-  isResolvedCredential,
-} from '../credentials';
 import { getDatabase } from '../db';
 import { createChat, updateChat } from '../db/repos/chats';
-import { getProjectAiAccount as getProjectAiAccountLocal } from '../db/repos/project-ai-accounts';
 import { getProjectById as getLocalProjectById } from '../db/repos/projects';
 import { createSubChat, getSubChatById, getSubChatForChat } from '../db/repos/sub-chats';
 import {
@@ -69,11 +63,12 @@ import {
 } from '../flows/rerun/claim-flags';
 import { type DispatchErrorMeta, persistDispatchFailure } from '../tasks';
 import { fetchAttachmentImages } from './attachment-images';
+import {
+  resolveTaskAccount,
+  resolveTaskAccountType,
+  type TaskExecutionAccountType,
+} from './execution-account';
 import { extractTrailingUserReply } from './trailing-reply';
-
-/** Thin wrapper that auto-binds the local SQLite handle. */
-const getProjectAiAccount = (projectId: string) =>
-  getProjectAiAccountLocal(getDatabase(), projectId);
 
 import { createWorktreeForBranch, createWorktreeForChat } from '../git/worktree';
 import { createWorktreeWithMergedBases } from '../git/worktree-converge';
@@ -99,8 +94,6 @@ export {
   setActiveFlowTaskForChat,
 } from './dispatch-registry';
 
-export type TaskExecutionAccountType = 'claude-code' | 'codex';
-
 export function shouldForwardTaskModel(
   model: string | undefined,
   executionAccountType: TaskExecutionAccountType,
@@ -113,35 +106,11 @@ export function shouldForwardTaskModel(
   return CLAUDE_MODEL_IDS.includes(model);
 }
 
-/** Credential `type` → task execution account type (NULL/legacy/unknown → claude-code). */
-export const toTaskAccountType = (credType: string): TaskExecutionAccountType =>
-  credType === 'codex' ? 'codex' : 'claude-code';
-
 /** User-facing provider name per account type (model-fallback messaging). */
 const PROVIDER_LABEL: Record<TaskExecutionAccountType, string> = {
   'claude-code': 'Claude',
   codex: 'OpenAI',
 };
-
-async function resolveExecutionAccountTypeForTask(
-  projectId: string | null,
-): Promise<TaskExecutionAccountType> {
-  if (!projectId) {
-    return toTaskAccountType((await getDefaultClaudeCodeToken()).type);
-  }
-
-  try {
-    const projectAccount = await getProjectAiAccount(projectId);
-    if (projectAccount) {
-      const cred = await getClaudeCodeTokenById(projectAccount.id);
-      return toTaskAccountType(cred.type);
-    }
-  } catch {
-    // Fall through to default account resolution.
-  }
-
-  return toTaskAccountType((await getDefaultClaudeCodeToken()).type);
-}
 
 type TaskChatReadyPayload = TaskChatReadyData;
 
@@ -507,30 +476,6 @@ async function createChatForTask(task: DbTask): Promise<{
         .limit(1);
       localProjectId = localProject?.id ?? null;
     }
-
-    // 2.5. Ensure project override account is authenticated on this machine (no silent fallback)
-    // Project routing is keyed by LOCAL project id (not the cloud-side task.projectId),
-    // so this only matches when localProjectId resolved successfully above.
-    const projectAccount = localProjectId ? await getProjectAiAccount(localProjectId) : null;
-    if (projectAccount) {
-      const cred = await getClaudeCodeTokenById(projectAccount.id);
-      // Codex resolves token-null (machine-local passthrough); its real auth gate is the
-      // spawn-time detectCodexAccount() probe in handleRemoteExecute, which this Flow task
-      // routes through after the chat is created. Mirror the chat path's acceptance here.
-      if (!isResolvedCredential(cred)) {
-        {
-          // Action payload lets the renderer offer a "Connect account" CTA in the
-          // notification (no manual hunt for Settings → Models).
-          const err = new Error(
-            `Account "${projectAccount.label ?? 'Unnamed account'}" is not authenticated on this machine. ` +
-              `Please connect or authenticate it, then retry the task.`,
-          );
-          (err as Error & { action?: string; permanent?: boolean }).action = 'open-connect-account';
-          (err as Error & { action?: string; permanent?: boolean }).permanent = true;
-          throw err;
-        }
-      }
-    }
   }
 
   let existingChatId: string | null = null;
@@ -571,8 +516,9 @@ async function createChatForTask(task: DbTask): Promise<{
 
   const executionOptions = resolveTaskExecutionOptions(task);
   const useWorktree = resolveTaskStartInWorktree(task);
-  // Account-type resolution is keyed by LOCAL project id (project_ai_accounts is local).
-  const executionAccountType = await resolveExecutionAccountTypeForTask(localProjectId);
+  // Project routing is keyed by LOCAL project id (project_ai_accounts is local).
+  const taskAccount = await resolveTaskAccount(localProjectId, existingChatId);
+  const executionAccountType = await resolveTaskAccountType(taskAccount);
   if (executionOptions.configuredModel) {
     requestedModel = executionOptions.configuredModel;
     taskModel = executionOptions.configuredModel;

@@ -1,11 +1,11 @@
-import { eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import type { getDatabase } from '../index';
-import { claudeCodeCredentials, projectAiAccounts } from '../schema';
+import { type Chat, chats, claudeCodeCredentials, projectAiAccounts } from '../schema';
 
 type Db = ReturnType<typeof getDatabase>;
 
 /**
- * Local SQLite project ↔ AI account routing repository.
+ * Local SQLite chat and project ↔ AI account routing repository.
  *
  * The table is keyed `(projectId, accountId)` — when a project has a row, that credential
  * is the override for execution. When no row exists, callers fall back to the workspace
@@ -35,6 +35,85 @@ export async function getProjectAiAccount(
     .where(eq(projectAiAccounts.projectId, projectId))
     .limit(1);
   return row ?? null;
+}
+
+const AI_ACCOUNT_TYPES = ['claude-code', 'codex'];
+
+/** An AI account's provider type, or null for an unknown id (the table also holds non-AI rows). */
+export async function getAiAccountType(db: Db, accountId: string): Promise<string | null> {
+  const [row] = await db
+    .select({ type: claudeCodeCredentials.type })
+    .from(claudeCodeCredentials)
+    .where(
+      and(
+        eq(claudeCodeCredentials.id, accountId),
+        inArray(claudeCodeCredentials.type, AI_ACCOUNT_TYPES),
+      ),
+    )
+    .limit(1);
+  return row?.type ?? null;
+}
+
+/** The account a new chat is stamped with: the project's override, else the workspace default. */
+export async function getNewChatAccountId(
+  db: Db,
+  projectId: string | null,
+): Promise<string | null> {
+  const override = projectId ? await getProjectAiAccount(db, projectId) : null;
+  if (override) return override.id;
+  const [row] = await db
+    .select({ id: claudeCodeCredentials.id })
+    .from(claudeCodeCredentials)
+    .where(
+      and(
+        eq(claudeCodeCredentials.isDefault, true),
+        inArray(claudeCodeCredentials.type, AI_ACCOUNT_TYPES),
+      ),
+    )
+    .limit(1);
+  return row?.id ?? null;
+}
+
+/**
+ * The account a chat runs on: its stamped account, else (its provider has no login left) the
+ * project override. Null means the workspace default.
+ */
+export async function getChatAiAccount(
+  db: Db,
+  chat: Partial<Pick<Chat, 'accountId' | 'projectId'>>,
+): Promise<{ id: string; label: string | null } | null> {
+  if (chat.accountId) {
+    const [row] = await db
+      .select({ id: claudeCodeCredentials.id, label: claudeCodeCredentials.accountLabel })
+      .from(claudeCodeCredentials)
+      .where(
+        and(
+          eq(claudeCodeCredentials.id, chat.accountId),
+          inArray(claudeCodeCredentials.type, AI_ACCOUNT_TYPES),
+        ),
+      )
+      .limit(1);
+    if (row) return row;
+  }
+  return chat.projectId ? getProjectAiAccount(db, chat.projectId) : null;
+}
+
+/**
+ * Move a chat to another login of the SAME provider in place. Another provider cannot resume its
+ * session ids, so that move is a new linked chat. An unstamped chat is bound to no provider.
+ */
+export async function setChatAiAccount(
+  db: Db,
+  chatId: string,
+  accountId: string,
+): Promise<'ok' | 'not-found' | 'other-provider'> {
+  const [chat] = await db.select().from(chats).where(eq(chats.id, chatId)).limit(1);
+  const nextType = await getAiAccountType(db, accountId);
+  if (!chat || !nextType) return 'not-found';
+  const currentType = chat.accountId ? await getAiAccountType(db, chat.accountId) : null;
+  if (currentType && currentType !== nextType) return 'other-provider';
+  await db.update(chats).set({ accountId }).where(eq(chats.id, chatId));
+  return 'ok';
 }
 
 /**

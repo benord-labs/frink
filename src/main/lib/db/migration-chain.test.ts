@@ -535,6 +535,49 @@ describe('database migration chain', () => {
     }
   });
 
+  it('stamps every existing chat with the account it resolved to before', () => {
+    const chatAccountTag = '0108_chat_account';
+    const sqlite = new NodeSqliteDatabase(':memory:');
+    try {
+      sqlite.pragma('foreign_keys = ON');
+      for (const entry of readJournalEntries()) {
+        if (entry.tag === chatAccountTag) break;
+        sqlite.exec(readFileSync(join(drizzleDir, `${entry.tag}.sql`), 'utf-8'));
+      }
+      sqlite.exec(`
+        INSERT INTO projects (id, name, path) VALUES ('p1', 'P', '/tmp/p'), ('p2', 'Q', '/tmp/q');
+        INSERT INTO claude_code_credentials (id, type, account_label, is_default, source)
+          VALUES ('cred-default', 'claude-code', 'Personal', 1, 'claude-passthrough'),
+                 ('cred-codex', 'codex', 'Codex', 0, 'codex-passthrough');
+        INSERT INTO project_ai_accounts (project_id, account_id) VALUES ('p1', 'cred-codex');
+        INSERT INTO chats (id, project_id) VALUES ('c1', 'p1'), ('c2', 'p2'), ('c3', NULL);
+      `);
+
+      sqlite.exec(readFileSync(join(drizzleDir, `${chatAccountTag}.sql`), 'utf-8'));
+
+      // SAFETY: this projection returns the seeded chats TEXT columns.
+      const rows = sqlite.prepare('SELECT id, account_id FROM chats ORDER BY id').all() as Array<{
+        id: string;
+        account_id: string | null;
+      }>;
+      expect(rows).toEqual([
+        { id: 'c1', account_id: 'cred-codex' },
+        { id: 'c2', account_id: 'cred-default' },
+        { id: 'c3', account_id: 'cred-default' },
+      ]);
+      // A deleted login hands its chats to a same-provider login; with none left they un-stamp.
+      sqlite.exec(`
+        INSERT INTO claude_code_credentials (id, type, account_label, source)
+          VALUES ('cred-work', 'claude-code', 'Work', 'api-key');
+        DELETE FROM claude_code_credentials WHERE id IN ('cred-default', 'cred-codex');
+      `);
+      expect(count(sqlite, "chats WHERE account_id = 'cred-work'")).toBe(2);
+      expect(count(sqlite, 'chats WHERE account_id IS NULL')).toBe(1);
+    } finally {
+      sqlite.close();
+    }
+  });
+
   it('leaves no dropped column or table behind after the real migration runner', () => {
     const db = freshDb();
     try {

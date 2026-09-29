@@ -10,8 +10,8 @@ import {
   resolveTaskExecutionOptions,
   resolveTaskStartInWorktree,
   shouldForwardTaskModel,
-  toTaskAccountType,
 } from './index';
+import { toTaskAccountType } from './execution-account';
 
 const WAIT_MODE_ERROR_REGEX = /must remain queued/i;
 

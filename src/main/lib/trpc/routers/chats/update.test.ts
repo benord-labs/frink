@@ -16,6 +16,8 @@ const renameSubChatLocalMock = vi.fn();
 const broadcastChatNameUpdatedMock = vi.fn();
 const gitCacheInvalidateStatusMock = vi.fn();
 const gitCacheInvalidateParsedDiffMock = vi.fn();
+const setChatAiAccountMock = vi.fn();
+const retireRetainedSessionMock = vi.fn();
 
 vi.mock('../../../db', () => ({ getDatabase: () => ({}) }));
 vi.mock('../../../db/repos/chats', async (importOriginal) => {
@@ -40,6 +42,12 @@ vi.mock('../../../db/repos/sub-chats', async (importOriginal) => ({
 }));
 vi.mock('./helpers/name-generation-async', () => ({
   broadcastChatNameUpdated: broadcastChatNameUpdatedMock,
+}));
+vi.mock('../../../db/repos/project-ai-accounts', () => ({
+  setChatAiAccount: setChatAiAccountMock,
+}));
+vi.mock('../../../socket/claude-session-registry', () => ({
+  retireRetainedSession: retireRetainedSessionMock,
 }));
 vi.mock('./map-chat-response', () => ({ mapLocalChatResponse: (c: unknown) => c }));
 vi.mock('../../../git/cache', () => ({
@@ -271,5 +279,43 @@ describe('updateRouter.moveToProject', () => {
     expect(result).toBeNull();
     expect(resolveTargetWorktreeMock).not.toHaveBeenCalled();
     expect(moveChatToProjectLocalMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('updateRouter.setChatAccount', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  const setChatAccount = async (accountId: string) => {
+    const { updateRouter } = await import('./update');
+    const caller = updateRouter.createCaller({ getWindow: () => null });
+    return caller.setChatAccount({ chatId: 'c1', accountId });
+  };
+
+  it('retires every idle session of the chat after a same-provider swap', async () => {
+    setChatAiAccountMock.mockResolvedValue('ok');
+    listSubChatsByChatMock.mockResolvedValue([
+      makeLocalSubChat({ id: 's1', chatId: 'c1' }),
+      makeLocalSubChat({ id: 's2', chatId: 'c1' }),
+    ]);
+
+    await expect(setChatAccount('claude-b')).resolves.toEqual({ success: true });
+
+    expect(setChatAiAccountMock).toHaveBeenCalledWith(expect.anything(), 'c1', 'claude-b');
+    expect(retireRetainedSessionMock.mock.calls.map(([id]) => id)).toEqual(['s1', 's2']);
+  });
+
+  it('rejects another provider without retiring anything', async () => {
+    setChatAiAccountMock.mockResolvedValue('other-provider');
+
+    await expect(setChatAccount('codex')).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(retireRetainedSessionMock).not.toHaveBeenCalled();
+  });
+
+  it('reports an unknown chat or account as NOT_FOUND', async () => {
+    setChatAiAccountMock.mockResolvedValue('not-found');
+
+    await expect(setChatAccount('missing')).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 });
