@@ -7,7 +7,7 @@
 // ============================================================================
 
 /** Speed a chat asks Codex for, stored per chat. `resolveCodexCliModel` maps it to the wire tier. */
-export const CODEX_SPEEDS = ['standard', 'fast'] as const;
+export const CODEX_SPEEDS = ['standard', 'fast', 'ultrafast'] as const;
 export type CodexSpeed = (typeof CODEX_SPEEDS)[number];
 
 /**

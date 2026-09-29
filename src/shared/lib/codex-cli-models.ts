@@ -8,8 +8,8 @@ import type { CodexSpeed } from '../types/execution';
 /** Reasoning effort sent to the app-server as the separate `reasoning_effort` field. */
 export type CodexReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh';
 
-/** Value of the `priority` ("Fast") service tier on the wire. `null` explicitly clears it. */
-export type CodexServiceTier = 'priority' | null;
+/** Service tier on the wire: `priority` is Fast, `ultrafast` is Ultrafast. `null` explicitly clears it. */
+export type CodexServiceTier = 'priority' | 'ultrafast' | null;
 
 export type CodexCliModel = {
   id: string;
@@ -64,26 +64,30 @@ const CODEX_EFFORT_TIERS: { effort: CodexReasoningEffort; label: string; isDefau
  */
 export const CODEX_FAST_SPEED_MULTIPLIER = 1.5;
 
-/**
- * ChatGPT credit multiplier charged by the `priority` ("Fast") service tier, keyed by model slug.
- *
- * A slug ABSENT from this map has no priority tier and must never be offered Fast — the mapping is
- * deliberately opt-in so a newly added model cannot silently start offering, or billing for, a tier
- * it does not advertise. Doubles as the source of the number disclosed in the UI, so the gate and
- * the label can never drift apart.
- */
-const CODEX_FAST_TIER_CREDITS: Record<string, number> = {
-  'gpt-6-astra': 2.5,
-  'gpt-6.1-sol': 2.5,
-  'gpt-6-sol': 2.5,
-  'gpt-6-luna': 2.5,
-  'gpt-5.6-sol': 2.5,
-  'gpt-5.6-terra': 2.5,
-  'gpt-5.6-luna': 2.5,
-  'gpt-5.5': 2.5,
-  'gpt-5.4': 2,
-  // gpt-5.4-mini advertises no service tiers — intentionally absent.
+/** Ultrafast is "up to 8x" GPT-6 Astra's standard speed. Verified 2026-09-29 against
+ *  https://learn.chatgpt.com/docs/agent-configuration/speed */
+export const CODEX_ULTRAFAST_SPEED_MULTIPLIER = 8;
+
+/** ChatGPT credit multiplier per paid speed, keyed by model slug. Opt-in: an absent slug is never
+ *  offered (or billed) that tier, and the UI discloses these same numbers. */
+const CODEX_TIER_CREDITS: Record<Exclude<CodexSpeed, 'standard'>, Record<string, number>> = {
+  fast: {
+    'gpt-6-astra': 2.5,
+    'gpt-6.1-sol': 2.5,
+    'gpt-6-sol': 2.5,
+    'gpt-6-luna': 2.5,
+    'gpt-5.6-sol': 2.5,
+    'gpt-5.6-terra': 2.5,
+    'gpt-5.6-luna': 2.5,
+    'gpt-5.5': 2.5,
+    'gpt-5.4': 2,
+    // gpt-5.4-mini advertises no service tiers — intentionally absent.
+  },
+  // Pro 500 and eligible Enterprise/Edu plans only; the app-server drops it for other accounts.
+  ultrafast: { 'gpt-6-astra': 8 },
 };
+
+const WIRE_TIER = { standard: null, fast: 'priority', ultrafast: 'ultrafast' } as const;
 
 const CODEX_CONTEXT_WINDOW = 'Large context (varies by account tier)';
 
@@ -124,8 +128,16 @@ const CODEX_MODEL_BY_ID = new Map(CODEX_CLI_MODELS.map((m) => [m.id, m]));
  * so callers need no separate provider check before deciding whether to offer Fast.
  */
 export function codexFastTierCredits(pickerId: string | undefined): number | null {
+  return codexTierCredits(pickerId, 'fast');
+}
+
+/** Credit multiplier of `speed` for a picker id, or `null` when that model does not offer it. */
+export function codexTierCredits(
+  pickerId: string | undefined,
+  speed: Exclude<CodexSpeed, 'standard'>,
+): number | null {
   const slug = pickerId ? CODEX_MODEL_BY_ID.get(pickerId)?.cliValue : undefined;
-  return (slug ? CODEX_FAST_TIER_CREDITS[slug] : undefined) ?? null;
+  return (slug ? CODEX_TIER_CREDITS[speed][slug] : undefined) ?? null;
 }
 
 /**
@@ -135,8 +147,8 @@ export function codexFastTierCredits(pickerId: string | undefined): number | nul
  * resolved here right before `runCodexAgent`. An unknown or missing id falls back to
  * {@link CODEX_DEFAULT_MODEL_ID} (default slug + `medium`) so codex never crashes on a stale value.
  *
- * `serviceTier` is `'priority'` only when the `fast` speed is requested AND the RESOLVED slug advertises the
- * tier — so a chat left on Fast while switching to a model without it degrades to standard instead
+ * `serviceTier` is set only when a non-standard speed is requested AND the RESOLVED slug advertises
+ * that tier — so a chat left on Fast while switching to a model without it degrades to standard instead
  * of asking the app-server for a tier it would strip. It is otherwise an explicit `null`, never
  * absent: the tier is thread-sticky, so omitting it would silently keep billing. This function is
  * the single support boundary; no caller should re-implement the check.
@@ -153,11 +165,11 @@ export function resolveCodexCliModel(
     (pickerId && CODEX_MODEL_BY_ID.get(pickerId)) || CODEX_MODEL_BY_ID.get(CODEX_DEFAULT_MODEL_ID);
   // CODEX_DEFAULT_MODEL_ID is always a real catalog id, so m is defined; assert for the type.
   if (!m) throw new Error('Codex default model id is not in the catalog');
-  const supportsFast = CODEX_FAST_TIER_CREDITS[m.cliValue] !== undefined;
+  const supported = speed && speed !== 'standard' && CODEX_TIER_CREDITS[speed][m.cliValue];
   return {
     model: m.cliValue,
     effort: m.reasoningEffort,
-    serviceTier: speed === 'fast' && supportsFast ? 'priority' : null,
+    serviceTier: supported ? WIRE_TIER[speed] : null,
   };
 }
 

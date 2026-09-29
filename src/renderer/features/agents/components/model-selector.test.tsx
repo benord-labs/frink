@@ -9,6 +9,7 @@ import {
   CODEX_MODELS,
   codexModelToPickerItem,
 } from '../../../../shared/lib/models';
+import type { CodexSpeed } from '../../../../shared/types/execution';
 import { extendedThinkingEnabledAtom } from '../../../lib/atoms';
 import { codexSpeedAtomFamily } from '../../../lib/atoms/codex-speed';
 import { type ModelItem, ModelSelector } from './model-selector';
@@ -271,18 +272,39 @@ describe('provider controls', () => {
     expect(fast).toHaveTextContent(credits);
   });
 
+  it('offers Ultrafast on Astra only, and it replaces Fast rather than stacking', () => {
+    const { store } = renderPicker(codex('codex-gpt-6-astra-medium', 'chat-u'));
+    const ultrafast = screen.getByRole('switch', { name: /^Ultrafast mode — up to 8× speed/ });
+    expect(ultrafast).toHaveTextContent('8×');
+
+    fireEvent.click(screen.getByRole('switch', { name: /^Fast mode/ }));
+    fireEvent.click(ultrafast);
+    expect(store.get(codexSpeedAtomFamily('chat-u'))).toBe('ultrafast');
+    expect(screen.getByRole('switch', { name: /^Fast mode/ })).toHaveAttribute(
+      'aria-checked',
+      'false',
+    );
+
+    fireEvent.click(ultrafast);
+    expect(store.get(codexSpeedAtomFamily('chat-u'))).toBe('standard');
+    cleanup();
+
+    renderPicker(codex('codex-gpt-6.1-sol-medium', 'chat-u'));
+    expect(screen.queryByRole('switch', { name: /Ultrafast/ })).toBeNull();
+  });
+
   it('omits Fast for a model with no priority tier — never a live-but-inert control', () => {
     renderPicker(codex('codex-gpt-5.4-mini-medium', 'chat-1'));
     expect(screen.queryByRole('switch', { name: /Fast mode/ })).toBeNull();
   });
 
   it('stages Fast on the New Chat form (no chat id yet), surviving a reopen', () => {
-    const fastRef = { current: false };
-    renderPicker({ ...codex('codex-gpt-5.6-sol-medium'), newChatFastRef: fastRef });
+    const speedRef: { current: CodexSpeed } = { current: 'standard' };
+    renderPicker({ ...codex('codex-gpt-5.6-sol-medium'), newChatSpeedRef: speedRef });
     fireEvent.click(screen.getByRole('switch', { name: /Fast mode/ }));
-    expect(fastRef.current).toBe(true);
+    expect(speedRef.current).toBe('fast');
     cleanup();
-    renderPicker({ ...codex('codex-gpt-5.6-sol-medium'), newChatFastRef: fastRef });
+    renderPicker({ ...codex('codex-gpt-5.6-sol-medium'), newChatSpeedRef: speedRef });
     expect(screen.getByRole('switch', { name: /Fast mode/ })).toHaveAttribute(
       'aria-checked',
       'true',

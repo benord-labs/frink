@@ -66,14 +66,14 @@ describe('seedNewChatNavigation', () => {
   });
 
   it.each([
-    [true, 'fast'],
+    [true, 'ultrafast'],
     [false, 'standard'],
-  ])('Codex account %s: staged Fast seeds the chat as %s', (isCodexAccount, seeded) => {
+  ])('Codex account %s: staged Ultrafast seeds the chat as %s', (isCodexAccount, seeded) => {
     const store = freshStore();
 
     seedNewChatNavigation(store.get, store.set, 'chat-fast', {
       isCodexAccount,
-      codexFastEnabled: true,
+      codexSpeed: 'ultrafast',
     });
 
     expect(store.get(codexSpeedAtomFamily('chat-fast'))).toBe(seeded);
@@ -138,18 +138,18 @@ describe('createNewChatStaging', () => {
   it('freezes the staged toggles at capture, so a later flip cannot reach the in-flight chat', () => {
     const staging = createNewChatStaging();
     staging.autoMode.current = true;
-    staging.codexFast.current = true;
+    staging.codexSpeed.current = 'fast';
 
     staging.capture();
-    staging.codexFast.current = false;
+    staging.codexSpeed.current = 'standard';
 
-    expect(staging.pending).toEqual({ autoMode: true, codexFast: true });
+    expect(staging.pending).toEqual({ autoMode: true, codexSpeed: 'fast' });
   });
 
-  it('gives each form its own staging, Auto on and Fast off by default', () => {
+  it('gives each form its own staging, Auto on and standard speed by default', () => {
     const a = createNewChatStaging();
-    a.codexFast.current = true;
-    expect(createNewChatStaging().codexFast.current).toBe(false);
+    a.codexSpeed.current = 'fast';
+    expect(createNewChatStaging().codexSpeed.current).toBe('standard');
     expect(createNewChatStaging().autoMode.current).toBe(true);
   });
 });

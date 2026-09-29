@@ -6,6 +6,7 @@ import {
   CODEX_MODEL_SLUGS,
   type CodexReasoningEffort,
   codexFastTierCredits,
+  codexTierCredits,
   resolveCodexCliModel,
 } from './codex-cli-models';
 
@@ -162,6 +163,23 @@ describe('resolveCodexCliModel', () => {
     // The fallback slug (astra) does advertise the tier, so a flow forwarding a dropped id still
     // gets the tier it asked for rather than a silent downgrade.
     expect(resolveCodexCliModel('codex-gpt-5.3-codex-high', 'fast').serviceTier).toBe('priority');
+  });
+});
+
+describe('Ultrafast', () => {
+  it('is offered on GPT-6 Astra only, at 8x credits', () => {
+    expect(codexTierCredits('codex-gpt-6-astra-high', 'ultrafast')).toBe(8);
+    for (const id of ['codex-gpt-6.1-sol-high', 'codex-gpt-5.6-sol-high', 'opus-4.8', undefined]) {
+      expect(codexTierCredits(id, 'ultrafast'), id).toBeNull();
+    }
+  });
+
+  it('sends the ultrafast tier on Astra and clears the tier on a model without it', () => {
+    expect(resolveCodexCliModel('codex-gpt-6-astra-high', 'ultrafast').serviceTier).toBe(
+      'ultrafast',
+    );
+    // Never silently swaps in Fast: the user chose a speed, not "whatever is paid".
+    expect(resolveCodexCliModel('codex-gpt-6.1-sol-high', 'ultrafast').serviceTier).toBeNull();
   });
 });
 
