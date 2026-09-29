@@ -10,6 +10,7 @@ import { LeafLabel } from '@/components/ui/leaf-label';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { usePriorityOverflow } from '@/hooks/usePriorityOverflow';
 import { trpc } from '@/lib/trpc';
+import { heldChatIdsAtom } from '@/lib/stores/active-transport-registry';
 import { cn } from '@/lib/utils';
 import {
   useWorkspaceContextLock,
@@ -209,6 +210,15 @@ type ChatInputContextBarProps = {
   promptCacheExpiresAt?: number | null;
 };
 
+/** Chat-wide, not per sub-chat: every sub-chat tab shares this worktree, so an idle tab must not
+ * offer a checkout into a tree a sibling's agent (or its held background work) is using. */
+function useIsChatLive(chatId: string | undefined): boolean {
+  const loadingSubChats = useAtomValue(loadingSubChatsAtom);
+  const heldChatIds = useAtomValue(heldChatIdsAtom);
+  if (!chatId) return false;
+  return [...loadingSubChats.values()].includes(chatId) || heldChatIds.has(chatId);
+}
+
 export const ChatInputContextBar = memo(function ChatInputContextBar({
   currentBranch,
   workspaceFolderName,
@@ -227,11 +237,7 @@ export const ChatInputContextBar = memo(function ChatInputContextBar({
     { enabled: Boolean(worktreePath) },
   );
 
-  // Chat-wide, not per sub-chat: every sub-chat tab shares this worktree, so an idle tab must not
-  // offer a checkout into a tree a sibling's agent is writing to.
-  const loadingSubChats = useAtomValue(loadingSubChatsAtom);
-  const isChatStreaming = Boolean(chatId && [...loadingSubChats.values()].includes(chatId));
-  const locked = useWorkspaceContextLock(chatId, isChatStreaming);
+  const locked = useWorkspaceContextLock(chatId, useIsChatLive(chatId));
 
   const folder = workspaceFolderName?.trim() ?? '';
   const branch = currentBranch?.trim() ?? '';

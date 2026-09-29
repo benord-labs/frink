@@ -33,17 +33,14 @@ export const WORKSPACE_LOCK_REASON = 'Locked while this chat has a run in progre
  * - A run parked on awaiting_input stays non-terminal with no timeout, so a plan-approval park holds
  *   the lock until a human acts — while the chat shows an ordinary composer.
  */
-export function useWorkspaceContextLock(
-  chatId: string | undefined,
-  isChatStreaming: boolean,
-): boolean {
+export function useWorkspaceContextLock(chatId: string | undefined, isChatLive: boolean): boolean {
   const { data: activeRunChatIds } = trpc.flows.activeRunChatIds.useQuery(undefined, {
     enabled: Boolean(chatId),
     refetchInterval: ACTIVE_RUN_POLL_MS,
     structuralSharing: true,
   });
 
-  const isBusy = isChatStreaming || Boolean(chatId && activeRunChatIds?.includes(chatId));
+  const isBusy = isChatLive || Boolean(chatId && activeRunChatIds?.includes(chatId));
 
   const [locked, setLocked] = useState(isBusy);
   useEffect(() => {
