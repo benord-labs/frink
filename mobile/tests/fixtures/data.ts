@@ -55,9 +55,9 @@ export function composerFixture(): MobileComposer {
         contextDefault: true,
       },
     ],
-    settings: { modelId: 'sonnet', autoMode: true, codexFastMode: false, thinkingEnabled: true },
+    settings: { modelId: 'sonnet', autoMode: true, codexSpeed: 'standard', thinkingEnabled: true },
     autoUnavailableReason: '',
-    codexFastCredits: null,
+    codexSpeedCredits: { fast: null, ultrafast: null },
     xhighSupported: true,
   };
 }

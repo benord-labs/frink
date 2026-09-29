@@ -7,6 +7,7 @@ import {
   Hammer,
   Lightbulb,
   Map as MapIcon,
+  Rocket,
   ShieldCheck,
   Sparkles,
   Zap,
@@ -18,6 +19,11 @@ import {
   groupPickerModels,
   pickInWindow,
 } from '@frink/shared/lib/model-picker-label/groups';
+import {
+  CODEX_FAST_SPEED_MULTIPLIER,
+  CODEX_ULTRAFAST_SPEED_MULTIPLIER,
+} from '@frink/shared/lib/codex-cli-models';
+import type { CodexSpeed } from '@frink/shared/types/execution';
 import type {
   MobileChatMode,
   MobileComposer,
@@ -30,7 +36,7 @@ import { OptionRow, Sheet, SheetSection, SwitchRow } from './sheet';
 export type ComposerPatch = Partial<{
   modelId: string;
   autoMode: boolean;
-  codexFastMode: boolean;
+  codexSpeed: CodexSpeed;
   thinkingEnabled: boolean;
 }>;
 
@@ -137,18 +143,7 @@ export function ModelSheet({
             onChange={(thinkingEnabled) => onUpdate({ thinkingEnabled })}
           />
         ) : (
-          <SwitchRow
-            icon={Zap}
-            label="Fast"
-            detail={
-              composer.codexFastCredits === null
-                ? 'Not available for this model.'
-                : `Priority speed. Uses ${composer.codexFastCredits}× credits.`
-            }
-            value={composer.settings.codexFastMode && composer.codexFastCredits !== null}
-            disabled={composer.codexFastCredits === null}
-            onChange={(codexFastMode) => onUpdate({ codexFastMode })}
-          />
+          <SpeedRows composer={composer} onUpdate={onUpdate} />
         )}
         <SwitchRow
           icon={ShieldCheck}
@@ -232,5 +227,45 @@ function AccountSection({
         />
       ))}
     </SheetSection>
+  );
+}
+
+/** Codex's paid speeds, like the desktop picker: turning one on replaces the other, and each shows
+ *  its credit cost. Ultrafast appears only on a model that offers it. */
+function SpeedRows({
+  composer,
+  onUpdate,
+}: {
+  composer: MobileComposer;
+  onUpdate: (patch: ComposerPatch) => void;
+}) {
+  const { fast, ultrafast } = composer.codexSpeedCredits;
+  const speed = composer.settings.codexSpeed;
+  const toggle = (option: CodexSpeed) => (on: boolean) =>
+    onUpdate({ codexSpeed: on ? option : 'standard' });
+  return (
+    <>
+      <SwitchRow
+        icon={Zap}
+        label="Fast"
+        detail={
+          fast === null
+            ? 'Not available for this model.'
+            : `${CODEX_FAST_SPEED_MULTIPLIER}× faster. Uses ${fast}× credits.`
+        }
+        value={speed === 'fast' && fast !== null}
+        disabled={fast === null}
+        onChange={toggle('fast')}
+      />
+      {ultrafast !== null && (
+        <SwitchRow
+          icon={Rocket}
+          label="Ultrafast"
+          detail={`Up to ${CODEX_ULTRAFAST_SPEED_MULTIPLIER}× faster. Uses ${ultrafast}× credits.`}
+          value={speed === 'ultrafast'}
+          onChange={toggle('ultrafast')}
+        />
+      )}
+    </>
   );
 }

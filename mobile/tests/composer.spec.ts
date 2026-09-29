@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { openApp } from './fixtures/app';
 import { conversation, messageBox, openChat, requestsOf } from './fixtures/chat';
+import { composerFixture } from './fixtures/data';
 
 /** Opens the Model sheet and waits for its slide-up to settle, so clicks and screenshots are stable. */
 async function openModelSheet(page: import('@playwright/test').Page, label: string) {
@@ -61,6 +62,47 @@ test('two chips carry the composer; every model setting is saved from its sheet'
   await page.getByRole('radio', { name: 'Plan', exact: true }).click();
   await expect.poll(() => requestsOf(state, 'setMode').at(-1)).toMatchObject({ mode: 'plan' });
   await expect(page.getByRole('button', { name: 'Mode: Plan', exact: true })).toBeVisible();
+});
+
+test('a Codex chat runs Fast or Ultrafast, never both, and each shows its credit cost', async ({
+  page,
+}) => {
+  const astra = {
+    id: 'codex-gpt-6-astra-medium',
+    name: 'GPT-6 Astra',
+    familyId: 'codex-6-astra',
+    contextLabel: 'Large context',
+    effort: 'medium' as const,
+    effortDefault: true,
+    contextDefault: true,
+  };
+  const composer = {
+    ...composerFixture(),
+    provider: 'codex' as const,
+    models: [astra],
+    settings: { ...composerFixture().settings, modelId: astra.id },
+    codexSpeedCredits: { fast: 2.5, ultrafast: 8 },
+  };
+  const state = await openApp(page, { data: { chat: conversation(), composer } });
+  await openChat(page);
+  await openModelSheet(page, 'GPT-6 Astra');
+
+  const fast = page.getByRole('switch', { name: 'Fast', exact: true });
+  const ultrafast = page.getByRole('switch', { name: 'Ultrafast', exact: true });
+  await expect(page.getByText('Up to 8× faster. Uses 8× credits.')).toBeVisible();
+  await fast.click();
+  await ultrafast.click();
+  await expect
+    .poll(() => requestsOf(state, 'updateComposer').at(-1))
+    .toMatchObject({ patch: { codexSpeed: 'ultrafast' } });
+  await expect(ultrafast).toBeChecked();
+  await expect(fast).not.toBeChecked();
+  await page.screenshot({ path: 'test-results/composer-codex-ultrafast-dark.png' });
+
+  await page.getByRole('button', { name: 'Done', exact: true }).click();
+  await expect(
+    page.getByRole('button', { name: 'Model: GPT-6 Astra · Ultrafast', exact: true }),
+  ).toBeVisible();
 });
 
 test('quick taps on several switches are all saved, in order, while the computer is slow', async ({

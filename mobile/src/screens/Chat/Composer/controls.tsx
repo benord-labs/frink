@@ -58,12 +58,14 @@ function Chip({
   );
 }
 
-/** The model chip names the one switch that changes how it answers: Thinking, or Codex's Fast. */
+/** The model chip names the one switch that changes how it answers: Thinking, or Codex's speed. */
 function modelChipLabel(composer: MobileComposer): string {
   const name = modelLabel(composer.models.find((m) => m.id === composer.settings.modelId));
   if (composer.provider === 'claude' && composer.settings.thinkingEnabled)
     return `${name} · Thinking`;
-  if (composer.provider === 'codex' && composer.settings.codexFastMode) return `${name} · Fast`;
+  const speed = composer.settings.codexSpeed;
+  if (composer.provider === 'codex' && speed !== 'standard')
+    return `${name} · ${speed === 'fast' ? 'Fast' : 'Ultrafast'}`;
   return name;
 }
 
