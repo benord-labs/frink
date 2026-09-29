@@ -34,6 +34,7 @@ export const CODEX_MODEL_SLUGS: {
   isDefault?: boolean;
 }[] = [
   { slug: 'gpt-6-astra', familyId: 'codex-6-astra', familyName: 'GPT-6 Astra', isDefault: true },
+  { slug: 'gpt-6.1-sol', familyId: 'codex-6.1-sol', familyName: 'GPT-6.1 Sol' },
   { slug: 'gpt-6-sol', familyId: 'codex-6-sol', familyName: 'GPT-6 Sol' },
   { slug: 'gpt-6-luna', familyId: 'codex-6-luna', familyName: 'GPT-6 Luna' },
   { slug: 'gpt-5.6-sol', familyId: 'codex-5.6-sol', familyName: 'GPT-5.6 Sol' },
@@ -71,6 +72,7 @@ export const CODEX_FAST_SPEED_MULTIPLIER = 1.5;
  */
 const CODEX_FAST_TIER_CREDITS: Record<string, number> = {
   'gpt-6-astra': 2.5,
+  'gpt-6.1-sol': 2.5,
   'gpt-6-sol': 2.5,
   'gpt-6-luna': 2.5,
   'gpt-5.6-sol': 2.5,
