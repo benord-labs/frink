@@ -32,7 +32,7 @@
 
 import log from 'electron-log';
 import type { TaskSignalPayload } from '../../../shared/types/task-signal';
-import type { WakeHoldState } from '../../../shared/types/wake-hold';
+import type { WakeHoldEndReason, WakeHoldState } from '../../../shared/types/wake-hold';
 import { createTransformer } from '../claude';
 import { clearPendingApprovals } from '../claude/ask-user-question-approval';
 import type { UIMessageChunk } from '../claude/types';
@@ -77,7 +77,7 @@ export type WakeHold = {
   execution: ClaudeTurnExecution;
   /** Publishes held-vs-finished to the renderer. Carried on the hold rather than reached through
    * `io` because the module-level release functions have no io in scope. */
-  setHeld: (held: boolean, pending?: WakeHoldState) => void;
+  setHeld: (held: boolean, pending?: WakeHoldState, endReason?: WakeHoldEndReason) => void;
   /** Flow resource ownership transferred from the arming execute until this pump settles. */
   releaseFlowResourceActivity?: FlowResourceActivityRelease;
   /** Flow wake holds retain their foreground runtime slot until pump/provider cleanup settles. */
@@ -116,10 +116,10 @@ function setHold(subChatId: string, hold: WakeHold, pending: StopPendingWork): v
   hold.setHeld(true, summarizePendingWork(pending));
 }
 
-function retractHold(hold: WakeHold): void {
+function retractHold(hold: WakeHold, endReason?: WakeHoldEndReason): void {
   if (hold.retracted) return;
   hold.retracted = true;
-  hold.setHeld(false);
+  hold.setHeld(false, undefined, endReason);
 }
 
 /** Evict a hold and retract the wait. */
@@ -281,7 +281,7 @@ export interface WakeHoldIo {
    * its length — says whether anything new was said. Awaitable before the session is disposed. */
   completeBurst: (msgId: string, chunks: UIMessageChunk[], hadContent: boolean) => Promise<void>;
   /** Publish whether this chat is waiting on background work, and on what (see {@link setHold}). */
-  setHeld: (held: boolean, pending?: WakeHoldState) => void;
+  setHeld: (held: boolean, pending?: WakeHoldState, endReason?: WakeHoldEndReason) => void;
   clearPendingApprovals: (reason: string, subChatId: string) => void;
   getLatestTaskSignal: (executionContextId: string) => TaskSignalPayload | null | undefined;
   clearCurrentExecutionChat: (executionContextId: string) => void;
@@ -373,7 +373,7 @@ export function armWakePump(params: ArmWakePumpParams): WakeHold {
       waitOverDeclared || (Boolean(session.stopHook) && !session.stopHook?.lastPendingWork),
     onWaitOver: () => {
       waitOver = true;
-      retractHold(hold);
+      retractHold(hold, 'wait-over');
     },
     onBurstStart: () => {
       const wakeTurn = createWakeBurstTurn(arming, {

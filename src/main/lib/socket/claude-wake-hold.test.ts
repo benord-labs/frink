@@ -1097,6 +1097,7 @@ describe('claude-wake-hold — held-state publication', () => {
     // The adopting turn runs in the foreground — executing, not waiting.
     expect(takeWakeHold('h3')).toBeDefined();
     expect(heldCalls(io)).toEqual([true, false]);
+    expect(io.setHeld).toHaveBeenLastCalledWith(false, undefined, undefined);
     ch.end();
   });
 
@@ -1113,6 +1114,7 @@ describe('claude-wake-hold — held-state publication', () => {
 
     // Synchronous: the affordance goes on the keystroke, not after the pump's async teardown.
     expect(heldCalls(io)).toEqual([true, false]);
+    expect(io.setHeld).toHaveBeenLastCalledWith(false, undefined, undefined);
     ch.end();
   });
 
@@ -1388,6 +1390,7 @@ describe('claude-wake-hold — stand-down policy', () => {
     await wake(ch);
     await new Promise((r) => setTimeout(r, 0));
     expect(heldCalls(io).at(-1)).toBe(false);
+    expect(io.setHeld).toHaveBeenLastCalledWith(false, undefined, 'wait-over');
   });
 
   it('leaves the session alone when a follow-up turn adopted the hold', async () => {

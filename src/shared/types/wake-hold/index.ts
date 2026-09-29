@@ -32,4 +32,9 @@ export type WakeHoldChangedPayload = {
   subChatId: string;
   held: boolean;
   pending?: WakeHoldState;
+  endReason?: WakeHoldEndReason;
 };
+
+/** Only on the retraction made by the wait's own liveness rule (onWaitOver). Stop, adoption,
+ * release and pump-exit retractions omit it. */
+export type WakeHoldEndReason = 'wait-over';

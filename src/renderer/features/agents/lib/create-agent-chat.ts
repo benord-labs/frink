@@ -22,6 +22,8 @@ import type { ChatMode } from '../../../../shared/types/chat-mode';
 import { soundNotificationsEnabledAtom } from '../../../lib/atoms';
 import { playSound } from '../../../lib/audio/play-chime';
 import { appStore } from '../../../lib/jotai-store';
+import { wakeHeldAtomFamily } from '../../../lib/stores/active-transport-registry';
+import { deferUntilWaitOver } from '../../../lib/stores/use-wake-hold-sync';
 import { isDesktopApp } from '../../../lib/utils/platform';
 import { notifySidebarChatActivity } from '../../sidebar/unified/sidebar-chat-activity';
 import {
@@ -169,32 +171,38 @@ export function createAgentChat(params: CreateAgentChatParams): Chat<UIMessage> 
       const wasManuallyAborted = agentChatStore.wasManuallyAborted(subChatId);
       agentChatStore.clearManuallyAborted(subChatId);
 
-      // Read CURRENT view state at finish time. The Chat is created once and reused, so
-      // creation-time split/focus snapshots are stale (agent-execution-lifecycle decision).
-      // hasFocus() is per renderer window — matches the window the Chat + its split state live in.
-      const subStore = useAgentSubChatStore.getState();
-      const effects = resolveCompletionEffects({
-        chatId,
-        subChatId,
-        subStoreChatId: subStore.chatId,
-        subStoreActiveSubChatId: subStore.activeSubChatId,
-        splitView: appStore.get(splitViewAtom),
-        selectedChatId: appStore.get(selectedAgentChatIdAtom),
-        isWindowFocused: document.hasFocus(),
-        wasManuallyAborted,
-        isFlowDriven: isFlowDrivenNow(chatId, subChatId),
-      });
+      const announce = () => {
+        if (agentChatStore.wasTornDown(chat)) return;
+        // Read CURRENT view state: the reused Chat's creation-time split/focus snapshots are stale
+        // (agent-execution-lifecycle decision); hasFocus() is this renderer window's.
+        const subStore = useAgentSubChatStore.getState();
+        const effects = resolveCompletionEffects({
+          chatId,
+          subChatId,
+          subStoreChatId: subStore.chatId,
+          subStoreActiveSubChatId: subStore.activeSubChatId,
+          splitView: appStore.get(splitViewAtom),
+          selectedChatId: appStore.get(selectedAgentChatIdAtom),
+          isWindowFocused: document.hasFocus(),
+          wasManuallyAborted,
+          isFlowDriven: isFlowDrivenNow(chatId, subChatId),
+        });
 
-      markTurnUnseen(chatId, subChatId, effects);
+        markTurnUnseen(chatId, subChatId, effects);
 
-      // An errored turn already signalled via onError — a success sound or
-      // "completed" OS notification here would misreport the outcome.
-      if (effects.notifyCompletion && !turnErrored) {
-        if (appStore.get(soundNotificationsEnabledAtom)) {
-          void playSound('turnComplete');
+        // An errored turn already signalled via onError — a success sound or
+        // "completed" OS notification here would misreport the outcome.
+        if (effects.notifyCompletion && !turnErrored) {
+          if (appStore.get(soundNotificationsEnabledAtom)) {
+            void playSound('turnComplete');
+          }
+          notifyComplete?.(subChatId);
         }
-        notifyComplete?.(subChatId);
-      }
+      };
+      // A turn that leaves background work running is not finished: announce when the wait ends.
+      // Never gate on runLive here — it still reads true at onFinish (live-run-observer-lane).
+      if (appStore.get(wakeHeldAtomFamily(subChatId))) deferUntilWaitOver(subChatId, announce);
+      else announce();
 
       onFinishExtra?.();
 
