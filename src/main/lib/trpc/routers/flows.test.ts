@@ -338,6 +338,7 @@ describe('flowsRouter (local)', () => {
           priorityClass: 'start',
           projectName: 'Frink',
           ticket: 12,
+          triggerContext: { source: 'shortcut', fullContent: { primary_id: 7 } },
         },
         {
           batchId: 'batch-9',
@@ -345,6 +346,7 @@ describe('flowsRouter (local)', () => {
           priorityClass: 'start',
           projectName: 'Frink',
           ticket: 13,
+          triggerContext: null,
         },
       ]);
       const caller = flowsRouter.createCaller({ getWindow: () => null });
@@ -356,6 +358,7 @@ describe('flowsRouter (local)', () => {
           priority_class: 'start',
           project_name: 'Frink',
           ticket: 12,
+          trigger_context: { source: 'shortcut', fullContent: { primary_id: 7 } },
         },
         {
           flow_name: 'Migrate repo',
@@ -363,6 +366,7 @@ describe('flowsRouter (local)', () => {
           priority_class: 'start',
           project_name: 'Frink',
           ticket: 13,
+          trigger_context: null,
         },
       ]);
       expect(queuedFlowAdmissionsMock).toHaveBeenCalledWith(expect.anything());

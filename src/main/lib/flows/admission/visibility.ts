@@ -31,6 +31,8 @@ export type QueuedFlowAdmission = {
   priorityClass: 'resume' | 'start';
   projectName: string | null;
   ticket: number;
+  /** The run's originating trigger payload, raw — the renderer validates and summarises it. */
+  triggerContext: Record<string, unknown> | null;
 };
 
 const LIVE_ADMISSION_SQL = sql`${flowRunAdmissions.state} IN ('queued', 'claimed', 'active', 'releasing')`;
@@ -145,6 +147,7 @@ export function queuedFlowAdmissions(db: Db): QueuedFlowAdmission[] {
       priorityClass: flowRunAdmissions.priorityClass,
       projectName: projects.name,
       ticket: flowRunAdmissions.ticket,
+      triggerContext: flowRuns.triggerContext,
     })
     .from(flowRunAdmissions)
     .innerJoin(flowRuns, eq(flowRuns.id, flowRunAdmissions.flowRunId))

@@ -33,7 +33,6 @@ import {
 import { ConfirmDialog } from '../../../../components/ui/confirm-dialog';
 import type { Task } from '../../types';
 import { parseTriggerContext } from '../../utils/trigger-context';
-import { EmailTriggerContentDialog } from './EmailTriggerContentDialog';
 import { TriggerContentDialog } from './TriggerContentDialog';
 import { overlayGlass } from '@/lib/overlay-styles';
 
@@ -86,7 +85,6 @@ export function ActionMenu({
   const setSettingsActiveTab = useSetAtom(agentsSettingsDialogActiveTabAtom);
   const setSettingsOpen = useSetAtom(agentsSettingsDialogOpenAtom);
   const triggerContext = parseTriggerContext(task.triggerContext);
-  const canViewOriginal = !!triggerContext && typeof triggerContext.fullContent === 'object';
   const canConnectAccount =
     status === 'failed' && task.result?.errorAction === 'open-connect-account';
   const canCancel = status === 'pending' || status === 'running' || status === 'done';
@@ -162,7 +160,7 @@ export function ActionMenu({
               {status === 'running' ? 'View progress' : 'View chat'}
             </DropdownMenuItem>
           )}
-          {canViewOriginal && (
+          {triggerContext && (
             <DropdownMenuItem onSelect={() => setIsTriggerContentOpen(true)} className="text-xs">
               <Eye className="h-3 w-3" aria-hidden="true" />
               View original content
@@ -248,19 +246,13 @@ export function ActionMenu({
         title="Delete plan-ready task?"
         description="This removes it from your queue."
       />
-      {triggerContext?.source === 'gmail' ? (
-        <EmailTriggerContentDialog
-          open={isTriggerContentOpen}
-          onOpenChange={setIsTriggerContentOpen}
-          triggerContext={triggerContext}
-        />
-      ) : triggerContext ? (
+      {triggerContext && (
         <TriggerContentDialog
           open={isTriggerContentOpen}
           onOpenChange={setIsTriggerContentOpen}
           triggerContext={triggerContext}
         />
-      ) : null}
+      )}
     </>
   );
 }
