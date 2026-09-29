@@ -267,6 +267,8 @@ const CommandItem = React.forwardRef<HTMLDivElement, CommandItemProps>(
     const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
+        // Handled here, so Command's own Enter handler must not select this item a second time
+        e.stopPropagation();
         if (onSelect) {
           onSelect();
         } else {
