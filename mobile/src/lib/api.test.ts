@@ -61,7 +61,7 @@ describe('native mobile boundary', () => {
     const fetcher = vi.fn().mockRejectedValue(new Error('connection reset'));
     vi.stubGlobal('fetch', fetcher);
     await expect(requestMobile(connection, { type: 'cancelRun', id: 'run' })).rejects.toThrow(
-      'it may have reached',
+      'it may have arrived',
     );
     expect(fetcher).toHaveBeenCalledTimes(1);
   });

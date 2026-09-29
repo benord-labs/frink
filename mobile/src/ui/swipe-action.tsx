@@ -1,22 +1,26 @@
 import { useRef, useState, type ReactNode } from 'react';
-import { Pressable, ScrollView, Text, View } from 'react-native';
-import { Icon, type IconName } from './primitives';
+import { Pressable, ScrollView, View } from 'react-native';
+import type { LucideIcon } from 'lucide-react-native';
+import { Text } from './text';
 import { useTheme } from './theme';
 
-const ACTION_WIDTH = 88;
+const ACTION_WIDTH = 84;
+// A solid red with a white label in both appearances, like Mail. The theme's `danger` is tuned
+// for text, and in dark mode it is a pale pink that would need a dark label.
+const DESTRUCTIVE_FILL = { light: '#DC2828', dark: '#E5484D' } as const;
 
 /** A row that swipes left to reveal one destructive action, like iOS Mail. A horizontal scroll
  *  view does the gesture, so it needs no native gesture library and works in the web preview. */
 export function SwipeAction({
   children,
   label,
-  icon,
+  icon: Icon,
   accessibilityLabel,
   onPress,
 }: {
   children: ReactNode;
   label: string;
-  icon: IconName;
+  icon: LucideIcon;
   accessibilityLabel: string;
   onPress: () => void;
 }) {
@@ -53,12 +57,12 @@ export function SwipeAction({
             alignItems: 'center',
             justifyContent: 'center',
             gap: 4,
-            backgroundColor: t.danger,
+            backgroundColor: DESTRUCTIVE_FILL[t.dark ? 'dark' : 'light'],
             opacity: pressed ? 0.8 : 1,
           })}
         >
-          <Icon name={icon} size={20} color={t.background} />
-          <Text style={{ fontSize: 13, lineHeight: 16, fontWeight: '600', color: t.background }}>
+          <Icon size={20} color="#FFFFFF" strokeWidth={2.2} />
+          <Text variant="label" style={{ color: '#FFFFFF' }}>
             {label}
           </Text>
         </Pressable>

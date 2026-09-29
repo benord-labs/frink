@@ -46,14 +46,14 @@ async function post(url: string, body: unknown, token?: string, signal?: AbortSi
       throw new ApiError(
         typeof result.error === 'string'
           ? result.error
-          : 'Your computer could not complete this request.',
+          : 'Frink on your Mac couldn’t complete this. Try again in a moment.',
         response.status,
       );
     return result;
   } catch (error) {
     if (error instanceof ApiError) throw error;
     throw new ApiError(
-      'Cannot reach your computer. Check Tailscale and keep Frink open. If you sent an action, refresh before trying again; it may have reached your computer.',
+      'Can’t reach your Mac. Check Tailscale is on and Frink is open. If you just sent something, refresh before trying again — it may have arrived.',
       0,
     );
   } finally {
@@ -74,7 +74,7 @@ export async function pairComputer(text: string, name: string): Promise<Connecti
   const pairing = parsePairing(text);
   const result = await post(`${pairing.url.replace(/\/$/, '')}/pair`, { code: pairing.code, name });
   if (result.apiVersion !== MOBILE_API_VERSION)
-    throw new Error('Update Frink on your computer and phone to compatible versions.');
+    throw new Error('Update Frink on your Mac and this iPhone so they match.');
   return connectionSchema.parse({ ...result, url: pairing.url });
 }
 
@@ -92,7 +92,7 @@ export async function requestMobile<T extends MobileRequest>(
   return result.data;
 }
 
-/** Uploads over a cellular link can be slow; the computer allows up to two minutes. */
+/** Uploads over a cellular link can be slow; the Mac allows up to two minutes. */
 const UPLOAD_TIMEOUT_MS = 90_000;
 
 /**
@@ -128,7 +128,7 @@ export async function uploadAttachment(
     const result = await response.json();
     if (!response.ok)
       throw new ApiError(
-        typeof result.error === 'string' ? result.error : 'Your computer could not save this file.',
+        typeof result.error === 'string' ? result.error : 'Frink on your Mac couldn’t save this file.',
         response.status,
       );
     return result.data as MobileAttachment;
