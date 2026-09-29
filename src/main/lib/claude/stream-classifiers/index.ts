@@ -4,5 +4,6 @@ export {
   extractTrailingApiError,
 } from './api-error';
 export { isResumeFailureText } from './resume-failure';
+export { claudeErrorText } from './sdk-error-text';
 export { type FinalPartLike } from './trailing-text';
 export { extractTrailingUsageLimitText, isUsageLimitText } from './usage-limit';

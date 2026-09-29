@@ -3228,6 +3228,39 @@ describe('context isolation edge cases', () => {
     });
   });
 
+  describe('SDK exit errors are classified without their CLI stderr tail', () => {
+    const exitWithStderr = (tail: string) =>
+      new Error(`Claude Code process exited with code 1. stderr: ${tail}`);
+
+    it('a resume-failure phrase in stderr does not retry without resume', async () => {
+      claudeQueryThrowOnce(exitWithStderr('No conversation found with session ID x'));
+
+      await handleRemoteExecute({ ...basePayload, message: 'resumed turn', sessionId: 'sess-x' });
+
+      expect(claudeQueryMock).toHaveBeenCalledTimes(1);
+      expectSafeClaudeFailurePark();
+    });
+
+    it('an abort phrase in stderr is reported as an error, not a silent user stop', async () => {
+      claudeQueryThrowOnce(exitWithStderr('AbortError: The operation was aborted'));
+
+      await handleRemoteExecute({ ...basePayload, message: 'turn whose CLI crashed' });
+
+      expectSafeClaudeFailurePark();
+      expect(vi.mocked(socketClient.sendErrorDirect)).toHaveBeenCalledWith(
+        expect.objectContaining({ error: 'Claude execution failed. Please try again.' }),
+      );
+    });
+
+    it('a usage-limit phrase in stderr does not park as a usage limit', async () => {
+      claudeQueryThrowOnce(exitWithStderr("You've hit your limit · resets 3pm"));
+
+      await handleRemoteExecute({ ...basePayload, message: 'turn whose CLI crashed' });
+
+      expectSafeClaudeFailurePark();
+    });
+  });
+
   describe('API-error retry + park — transient/auth errors retry once, then park (non-batch)', () => {
     const AUTH_ERROR =
       'Claude Code returned an error result: Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"Invalid authentication credentials"}}';

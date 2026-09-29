@@ -5,6 +5,7 @@ import type { ChatMode } from '../../../../../shared/types/chat-mode';
 import type { ExecutionSettings } from '../../../../../shared/types/execution';
 import { getBundledClaudeBinaryPath } from '../../../claude';
 import { isValidSubChatIdForSessionPaths } from '../../../claude/session-plan-paths';
+import { claudeErrorText } from '../../../claude/stream-classifiers';
 import {
   getClaudeCodeTokenById,
   getDefaultClaudeCodeToken,
@@ -91,7 +92,7 @@ async function spawnPrewarm(request: PrewarmRequest, spawned: () => void): Promi
     await connected;
     return 'spawned';
   } catch (err) {
-    log.warn(`[Claude Session] prewarm sub=${request.subChatId} failed:`, err);
+    log.warn(`[Claude Session] prewarm sub=${request.subChatId} failed:`, claudeErrorText(err));
     return 'failed';
   }
 }

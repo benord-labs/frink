@@ -5,6 +5,7 @@
 
 import log from 'electron-log';
 import { buildOneShotClaudeLaunch, getBundledClaudeBinaryPath } from './claude';
+import { claudeErrorText } from './claude/stream-classifiers';
 import {
   type CredentialResult,
   getDescriptionCredentialAttempts,
@@ -144,7 +145,7 @@ async function generateProjectDescriptionWithClaudeCredential(
     const trimmed = accumulated.trim();
     return trimmed ? trimmed.slice(0, MAX_DESCRIPTION_LENGTH) : null;
   } catch (error) {
-    log.warn('[describe-repo] Claude description failed:', error);
+    log.warn('[describe-repo] Claude description failed:', claudeErrorText(error));
     return null;
   } finally {
     clearTimeout(timeoutId);

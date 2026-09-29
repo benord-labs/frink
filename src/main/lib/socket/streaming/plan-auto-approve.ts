@@ -12,6 +12,7 @@ import log from 'electron-log';
 import { supportsNativeAutoReview } from '../../../../shared/lib/models';
 import { type ExecutionSettings, parseClaudeModel } from '../../../../shared/types/execution';
 import { REQUIRED_TOOLS } from '../../../../shared/types/permissions';
+import { claudeErrorText } from '../../claude/stream-classifiers';
 import { getDatabase } from '../../db';
 import { withSubChatLock } from '../../db/repos/sub-chat-mutex';
 import { updateSubChatMode } from '../../db/repos/sub-chats';
@@ -139,7 +140,7 @@ async function reconcileLiveModelAndEffort(
   } catch (err) {
     log.warn(
       '[Socket Executor] Could not set model/effort on a live session — starting fresh:',
-      err,
+      claudeErrorText(err),
     );
     return false;
   }
@@ -166,7 +167,7 @@ export async function reconcileAdoptedPermissionMode(
   } catch (err) {
     log.warn(
       '[Socket Executor] Could not reconcile adopted session permission mode — disposing and starting fresh:',
-      err,
+      claudeErrorText(err),
     );
     return false;
   }
@@ -187,7 +188,10 @@ async function reconcileAdoptedUltracode(
   try {
     await session.query.applyFlagSettings({ ultracode: ultracode || null });
   } catch (err) {
-    log.warn('[Socket Executor] Could not reconcile adopted session ultracode:', err);
+    log.warn(
+      '[Socket Executor] Could not reconcile adopted session ultracode:',
+      claudeErrorText(err),
+    );
     captureContained(err, { surface: 'socket-executor', stage: 'adopted-ultracode-reconcile' });
   }
 }
@@ -367,13 +371,13 @@ export async function armAutoDuringPlan(session: PlanArmableSession): Promise<vo
       await session.query.setPermissionMode('plan').catch((restoreErr) => {
         log.error(
           '[Socket Executor] armAutoDuringPlan: failed to restore plan mode after a flip error:',
-          restoreErr,
+          claudeErrorText(restoreErr),
         );
       });
     }
     log.warn(
       '[Socket Executor] Could not arm Auto during plan — the planning phase asks (or denies unattended):',
-      err,
+      claudeErrorText(err),
     );
   }
 }
@@ -407,7 +411,7 @@ export async function armAutoReview(
   } catch (err) {
     log.warn(
       '[Socket Executor] Could not arm Auto at plan approval — the rest of this turn asks:',
-      err,
+      claudeErrorText(err),
     );
   }
 }
