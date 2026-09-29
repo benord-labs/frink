@@ -1,7 +1,12 @@
 import { DarkTheme, DefaultTheme, NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { useEffect } from 'react';
 import { Platform, StatusBar } from 'react-native';
+import { useConnection } from '../lib/connection';
 import { DraftProvider } from '../lib/drafts';
+import { NotificationProvider } from '../lib/notifications';
+import { onNotificationOpened } from '../lib/notifications/device';
+import { notificationChat } from '../lib/notifications/routing';
 import { OverviewProvider } from '../lib/overview';
 import { ChatScreen } from '../screens/Chat';
 import { FlowScreen } from '../screens/Flow';
@@ -9,17 +14,34 @@ import { NewChatScreen } from '../screens/NewChat';
 import { RunScreen } from '../screens/Run';
 import { useReduceMotion } from '../ui/glyphs';
 import { useTheme } from '../ui/theme';
-import type { RootRoutes } from './routes';
+import { useRootNavigation, type RootRoutes } from './routes';
 import { Tabs } from './tabs';
 
 const Stack = createNativeStackNavigator<RootRoutes>();
 
 /** The shared overview (Queue badge) polls only while the tab bar is the visible screen. */
 function TabsScreen() {
+  useOpenAlertedChat();
   return (
     <OverviewProvider>
-      <Tabs />
+      <NotificationProvider>
+        <Tabs />
+      </NotificationProvider>
     </OverviewProvider>
+  );
+}
+
+/** Tapping a "chat finished" alert opens that chat, if it came from the paired Mac. */
+function useOpenAlertedChat() {
+  const navigation = useRootNavigation();
+  const deviceId = useConnection().connection?.deviceId;
+  useEffect(
+    () =>
+      onNotificationOpened((data) => {
+        const chat = deviceId && notificationChat(data, deviceId);
+        if (chat) navigation.navigate('Chat', chat);
+      }),
+    [navigation, deviceId],
   );
 }
 

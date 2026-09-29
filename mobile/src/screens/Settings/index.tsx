@@ -2,6 +2,7 @@ import Constants from 'expo-constants';
 import type { ReactNode } from 'react';
 import { Platform, Pressable, ScrollView, View } from 'react-native';
 import { LogOut } from 'lucide-react-native';
+import { requestNotifications } from '../../lib/api';
 import { useConnection } from '../../lib/connection';
 import { useOverview } from '../../lib/overview';
 import { useTabHeader } from '../../navigation/tab-header';
@@ -12,6 +13,7 @@ import { Text } from '../../ui/text';
 import { GUTTER, space, useTheme } from '../../ui/theme';
 import { confirmForget, REVOKE_HINT } from './confirm-forget';
 import { MacIdentity } from './MacIdentity';
+import { Notifications } from './Notifications';
 import { macStatus, sourceLine } from './settings-view';
 
 // Web previews draw the tab bar over the page; iOS insets content under its native bar itself.
@@ -46,6 +48,9 @@ export function SettingsScreen() {
             title="Address"
             trailing={<Value>{connection ? new URL(connection.url).hostname : '—'}</Value>}
           />
+        </Group>
+        <Group title="Notifications">
+          <Notifications />
         </Group>
         <Group title="This iPhone">
           <ListRow title="Frink version" trailing={<Value>{APP_VERSION}</Value>} />
@@ -92,9 +97,11 @@ function Value({ children }: { children: string }) {
 
 function ForgetRow() {
   const t = useTheme();
-  const { disconnect } = useConnection();
+  const { connection, disconnect } = useConnection();
   async function forget() {
     if (!(await confirmForget())) return;
+    // Stop alerts from this Mac without waiting on it: forgetting must work when the Mac is away.
+    if (connection) void requestNotifications(connection, { token: null }).catch(() => undefined);
     // A failure to clear the Keychain is reported by the connection itself, on the pairing screen.
     await disconnect().catch(() => undefined);
   }

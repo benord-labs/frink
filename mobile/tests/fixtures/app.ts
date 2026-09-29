@@ -14,6 +14,9 @@ export type AppState = {
   offline: boolean;
   data: Partial<Record<keyof MobileResponses, unknown>>;
   requests: Input[];
+  /** This iPhone's alert registration on the Mac, and every registration request it received. */
+  notifications: { enabled: boolean; error: string | null };
+  alerts: { token?: string | null }[];
   /** Answer one request yourself: return a value to send it, undefined for the default. */
   respond?: (input: Input) => unknown;
 };
@@ -82,14 +85,23 @@ export async function openApp(
     paired = true,
     path = '/',
     respond,
+    notifications = { enabled: false, error: null },
   }: {
     data?: AppState['data'];
     paired?: boolean;
     path?: string;
     respond?: AppState['respond'];
+    notifications?: AppState['notifications'];
   } = {},
 ): Promise<AppState> {
-  const state: AppState = { offline: false, data: { ...previewData(), ...data }, requests: [], respond };
+  const state: AppState = {
+    offline: false,
+    data: { ...previewData(), ...data },
+    requests: [],
+    notifications,
+    alerts: [],
+    respond,
+  };
   await page.clock.install({ time: NOW });
   await page.addInitScript(drawDeviceChrome);
   if (paired)
@@ -110,6 +122,12 @@ export async function openApp(
       });
     if (request.url().endsWith('/api/attachments'))
       return route.fulfill({ headers, json: { data: recordUpload(request, state.requests) } });
+    if (request.url().endsWith('/api/notifications')) {
+      const alert = request.postDataJSON() as { token?: string | null };
+      state.alerts.push(alert);
+      if (alert.token !== undefined) state.notifications = { enabled: !!alert.token, error: null };
+      return route.fulfill({ headers, json: { data: state.notifications } });
+    }
     const input = request.postDataJSON() as Input;
     state.requests.push(input);
     const custom = state.respond?.(input);

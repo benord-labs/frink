@@ -4,6 +4,10 @@ import { dirname } from 'node:path';
 import { Mutex } from 'async-mutex';
 import { z } from 'zod';
 import { MOBILE_API_VERSION, mobilePairingSchema } from '../../../shared/types/remote/mobile';
+import {
+  pushTokenSchema,
+  type NotificationRegistration,
+} from '../../../shared/types/remote/notifications';
 import { MobileApiError } from './domain/errors';
 
 const PAIRING_DURATION_MS = 5 * 60_000;
@@ -15,6 +19,8 @@ const deviceSchema = z.object({
   name: z.string().trim().min(1).max(80),
   digest: z.string().regex(/^[a-f0-9]{64}$/),
   createdAt: z.iso.datetime(),
+  pushToken: pushTokenSchema.optional(),
+  pushError: z.string().optional(),
 });
 const configSchema = z.object({
   version: z.literal(MOBILE_API_VERSION),
@@ -157,6 +163,58 @@ export class MobilePairingStore {
   authenticate(token: string): boolean {
     if (!this.config.enabled || !credentialSchema.safeParse(token).success) return false;
     return this.config.devices.some((device) => matches(token, device.digest));
+  }
+
+  async notifications(credential: string, input: NotificationRegistration) {
+    return this.mutex.runExclusive(async () => {
+      if (!this.authenticate(credential)) throw new MobileApiError(401, 'Pair this device again.');
+      const device = this.config.devices.find((entry) => matches(credential, entry.digest))!;
+      if (input.token !== undefined && (input.token !== device.pushToken || device.pushError)) {
+        const token = input.token ?? undefined;
+        // One push token belongs to one pairing, so re-pairing the phone retires a stale entry.
+        const devices = this.config.devices.map((entry) =>
+          entry.id === device.id
+            ? { ...entry, pushToken: token, pushError: undefined }
+            : token && entry.pushToken === token
+              ? { ...entry, pushToken: undefined, pushError: undefined }
+              : entry,
+        );
+        await this.persist({ ...this.config, devices });
+      }
+      const current = this.config.devices.find((entry) => entry.id === device.id)!;
+      return { enabled: !!current.pushToken, error: current.pushError ?? null };
+    });
+  }
+
+  notificationRecipients() {
+    return this.config.enabled
+      ? this.config.devices.flatMap(({ id, pushToken }) =>
+          pushToken ? [{ id, token: pushToken }] : [],
+        )
+      : [];
+  }
+
+  async notificationFailed(id: string, token: string, unregistered: boolean): Promise<void> {
+    await this.mutex.runExclusive(async () => {
+      const device = this.config.devices.find(
+        (entry) => entry.id === id && entry.pushToken === token,
+      );
+      if (!device) return;
+      await this.persist({
+        ...this.config,
+        devices: this.config.devices.map((entry) =>
+          entry === device
+            ? {
+                ...entry,
+                pushToken: unregistered ? undefined : token,
+                pushError: unregistered
+                  ? 'Your Mac couldn’t reach this iPhone. Turn this on again to keep getting alerts.'
+                  : 'Your Mac couldn’t deliver the last alert.',
+              }
+            : entry,
+        ),
+      });
+    });
   }
 
   async revoke(id: string): Promise<void> {

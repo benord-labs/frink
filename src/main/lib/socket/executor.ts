@@ -2,6 +2,7 @@
 // Reason: Dynamic-MCP import cycles predate mobile admission; their edges are unchanged.
 // fallow-ignore-file circular-dependency
 
+import { createExecutionSenders } from './streaming/live-stream/execution-senders';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -112,12 +113,9 @@ import {
   type MessagePart,
   onPermissionResponse,
   type PermissionRequestPayload,
-  sendErrorDirect,
   sendExecuteCompleteDirect,
   sendPermissionDismiss,
   sendPermissionRequest,
-  sendStreamChunkDirect,
-  sendStreamSettledDirect,
   sendSubChatModeChange,
   sendWakeHoldChanged,
 } from './client';
@@ -625,30 +623,22 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
   let strictSignalFinalization = false;
   let signalFailure: { cause: unknown } | null = null;
   let executionFailed = false;
+  let completionHasProviderError = false;
   /** Once the Agent SDK query starts, its errors are opaque at Frink's sink boundary. */
   let claudeQueryStarted = false;
   /** Immutable identity minted for this invocation. Never re-read the sub-chat-keyed registry:
    * a superseding duplicate may replace that record before this run's late emitter/teardown fires. */
   let executionStreamEpoch: string | undefined;
-  const withExecutionStreamEpoch = <T extends { streamEpoch?: string }>(payload: T): T =>
-    executionStreamEpoch ? { ...payload, streamEpoch: executionStreamEpoch } : payload;
-  const sendRunStreamChunkDirect = (payload: Parameters<typeof sendStreamChunkDirect>[0]): void =>
-    sendStreamChunkDirect(withExecutionStreamEpoch(payload));
-  const sendRunExecuteCompleteDirect = (
-    payload: Parameters<typeof sendExecuteCompleteDirect>[0],
-  ): Promise<void> => sendExecuteCompleteDirect(withExecutionStreamEpoch(payload));
-  const sendRunErrorDirect = (
-    payload: Parameters<typeof sendErrorDirect>[0],
-    finalization?: Parameters<typeof sendErrorDirect>[1],
-  ): void | Promise<void> => {
-    const runPayload = payload.assistantMessageId ? withExecutionStreamEpoch(payload) : payload;
-    return finalization
-      ? sendErrorDirect(runPayload, withExecutionStreamEpoch(finalization))
-      : sendErrorDirect(runPayload);
-  };
-  const sendRunStreamSettledDirect = (
-    payload: Parameters<typeof sendStreamSettledDirect>[0],
-  ): void => sendStreamSettledDirect(withExecutionStreamEpoch(payload));
+  const {
+    chunk: sendRunStreamChunkDirect,
+    complete: sendRunExecuteCompleteDirect,
+    error: sendRunErrorDirect,
+    settled: sendRunStreamSettledDirect,
+  } = createExecutionSenders(() => ({
+    streamEpoch: executionStreamEpoch,
+    signal: executionAbortController?.signal,
+    failed: isFlowExecutionTurn || executionFailed || completionHasProviderError || !!signalFailure,
+  }));
   let linkedTaskSignalFinalization: Promise<void> | null = null;
   let claudeMcpConfig: ReturnType<typeof createClaudeMcpConfigTransport> = null;
   const finalizeLinkedTaskSignal = async (): Promise<void> => {
@@ -1074,10 +1064,6 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
         sendRunExecuteCompleteDirect(deferredPayload);
       });
     };
-    /** Codex reports CLI+API failures as a trailing `error` chunk instead of throwing. */
-    const disposeTrailingProviderError = (chunks: ReadonlyArray<UIMessageChunk>): Promise<void> =>
-      disposeTrailingStreamErrorChunk(subChatId, chunks, abortReason());
-
     // Codex uses a persistent app-server; Manual and Auto retain the write sandbox.
     if (storedCredential.type === 'codex') {
       await deliverProviderConfig(project, projectPath, 'codex');
@@ -1173,7 +1159,11 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
         }
         flowResources.assertLive(abortController.signal, 'Codex');
 
-        await disposeTrailingProviderError(codexChunks);
+        completionHasProviderError = await disposeTrailingStreamErrorChunk(
+          subChatId,
+          codexChunks,
+          abortReason(),
+        );
 
         const codexSessionId = codexMetadata.sessionId;
         if (codexSessionId) setCodexSession(chatId, subChatId, codexSessionId);
@@ -2045,8 +2035,8 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
     // 6a. Clean-stream park (usage limit / API error as the final text part) — awaited before any
     // IPC emit so the renderer's completion refetch reads the parked status.
     const finalParts = buildFinalPartsForPersist(mode, collectedChunks);
-    await disposeCleanStreamEnd(subChatId, finalParts);
-
+    completionHasProviderError =
+      (await disposeCleanStreamEnd(subChatId, finalParts)) || claudeResultErrored;
     // Finalize the linked signal before session disposition, then snapshot the resulting hold state.
     // Reading hasWakeHold before this await races the async wake-pump arm and can publish a terminal
     // completion for an epoch that is about to stream another burst.

@@ -226,11 +226,11 @@ export async function disposeFlowStreamError(
 export async function disposeCleanStreamEnd(
   subChatId: string,
   finalParts: ReadonlyArray<FinalPartLike>,
-): Promise<void> {
+): Promise<boolean> {
   const limitText = extractTrailingUsageLimitText(finalParts);
   if (limitText) {
     await parkFlowTaskOnClaudeInterruption(subChatId, { kind: 'usage-limit', limitText });
-    return;
+    return true;
   }
   const apiError = extractTrailingApiError(finalParts);
   if (apiError) {
@@ -240,6 +240,7 @@ export async function disposeCleanStreamEnd(
       message: apiError.message,
     });
   }
+  return !!apiError;
 }
 
 /** Chunks a provider emits to close a stream — an `error` behind these still ended the turn. */
@@ -259,14 +260,15 @@ export async function disposeTrailingStreamErrorChunk(
   subChatId: string,
   chunks: ReadonlyArray<UIMessageChunk>,
   abortReason: string | undefined,
-): Promise<void> {
+): Promise<boolean> {
   for (let i = chunks.length - 1; i >= 0; i--) {
     const chunk = chunks[i];
     if (STREAM_CLOSING_CHUNK_TYPES.has(chunk.type)) continue;
-    if (chunk.type !== 'error') return;
+    if (chunk.type !== 'error') return false;
     const errorText = (chunk as { errorText?: unknown }).errorText;
-    if (typeof errorText !== 'string' || errorText.length === 0) return;
+    if (typeof errorText !== 'string' || errorText.length === 0) return true;
     await disposeFlowStreamError(subChatId, errorText, abortReason);
-    return;
+    return true;
   }
+  return false;
 }

@@ -315,6 +315,7 @@ import type { TaskStopHook } from '../task-stop-hook';
 import { clearActiveFlowTaskForChatIfMatches, setActiveFlowTaskForChat } from '../task-executor';
 import { armWakePump, type WakeHold } from './claude-wake-hold';
 import * as socketClient from './client';
+import * as liveStreams from './streaming/live-stream/registry';
 import {
   _hasActiveExecutionForTests,
   abortActiveExecutionsForWebContents,
@@ -863,12 +864,57 @@ describe('local-only dispatch with unresolved machineId', () => {
     });
 
     it('completes normally once the prompt was pushed', async () => {
+      const notify = vi.spyOn(liveStreams, 'armLiveStreamNotification');
       claudeQueryMock.mockImplementationOnce(finishOnly);
 
       await run('hello');
 
       expect(socketClient.sendErrorDirect).not.toHaveBeenCalledWith(notDelivered);
       expect(socketClient.sendExecuteCompleteDirect).toHaveBeenCalled();
+      expect(notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          subChatId: basePayload.subChatId,
+          streamEpoch: expect.any(String),
+        }),
+        expect.any(AbortSignal),
+      );
+    });
+
+    it.each([false, true])('only arms successful Codex turns (error: %s)', async (failed) => {
+      const notify = vi.spyOn(liveStreams, 'armLiveStreamNotification');
+      vi.mocked(getDefaultClaudeCodeToken).mockResolvedValueOnce({
+        ...claudeCredential,
+        type: 'codex',
+      });
+      vi.mocked(runCodexAgent).mockImplementationOnce(async function* () {
+        if (failed) yield { type: 'error', errorText: 'Provider unavailable' };
+        yield { type: 'finish' };
+      });
+
+      await run('finish this session');
+
+      expect(notify).toHaveBeenCalledWith(
+        expect.objectContaining({ subChatId: basePayload.subChatId }),
+        failed ? undefined : expect.any(AbortSignal),
+      );
+    });
+
+    it('does not arm a Claude SDK result reported as an error', async () => {
+      const notify = vi.spyOn(liveStreams, 'armLiveStreamNotification');
+      claudeQueryMock.mockImplementationOnce(() =>
+        Object.assign(
+          (async function* () {
+            yield { chunks: [{ type: 'finish' }] as UIMessageChunk[] };
+            yield { type: 'result', is_error: true };
+          })(),
+          { interrupt: vi.fn() },
+        ),
+      );
+      await run('finish this session');
+      expect(notify).toHaveBeenCalledWith(
+        expect.objectContaining({ subChatId: basePayload.subChatId }),
+        undefined,
+      );
     });
 
     it('reports no delivery failure when Stop lands before the push', async () => {

@@ -1,6 +1,6 @@
 import * as Crypto from 'expo-crypto';
 import { useEffect, useRef, useState } from 'react';
-import { Platform, Switch, View } from 'react-native';
+import { View } from 'react-native';
 import {
   Activity,
   CalendarClock,
@@ -15,8 +15,9 @@ import { useAction } from '../../../lib/connection';
 import { useRootNavigation } from '../../../navigation/routes';
 import { Button } from '../../../ui/button';
 import { ListRow } from '../../../ui/list';
+import { Switch } from '../../../ui/switch';
 import { Text } from '../../../ui/text';
-import { GUTTER, space, useTheme } from '../../../ui/theme';
+import { GUTTER, space } from '../../../ui/theme';
 import { IconTile } from '../../Flows/Tile';
 import { isLive } from '../../Run/run-view';
 import { enabledHint, runNowBlocker } from '../flow-view';
@@ -28,7 +29,6 @@ const TRIGGER_ICONS: Record<string, LucideIcon> = {
 };
 
 function EnabledRow({ flow, onChanged }: { flow: MobileFlow; onChanged: () => void }) {
-  const t = useTheme();
   const action = useAction();
   // Holds the new position until the computer's next answer confirms it, so the switch never snaps back.
   const [pending, setPending] = useState<boolean | null>(null);
@@ -53,9 +53,6 @@ function EnabledRow({ flow, onChanged }: { flow: MobileFlow; onChanged: () => vo
             value={enabled}
             disabled={action.busy}
             onValueChange={(value) => void toggle(value)}
-            trackColor={{ true: t.accent, false: t.field }}
-            thumbColor="#FFFFFF"
-            {...(Platform.OS === 'web' ? { activeThumbColor: '#FFFFFF' } : {})}
           />
         }
       />

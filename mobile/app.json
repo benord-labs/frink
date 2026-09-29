@@ -21,6 +21,7 @@
         }
       ],
       "expo-secure-store",
+      "expo-notifications",
       [
         "expo-image-picker",
         { "photosPermission": "Attach the photos you choose to your messages to Frink." }
