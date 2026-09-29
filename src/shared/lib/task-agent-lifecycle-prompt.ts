@@ -2,11 +2,15 @@
  * Plan-mode variant for the local Claude Code path: Claude drafts the plan and submits it
  * through its native ExitPlanMode workflow.
  */
+/** The one plan-mode duty the CLI's own plan reminder does not state. */
+export const PLAN_MODE_NO_FINISH_SIGNAL =
+  "Do NOT call `frink_task_signal` to FINISH: the plan is this run's terminal artifact, so ExitPlanMode is the only way to end it. states done/partial/failed/blocked are refused here.";
+
 export const CLAUDE_PLAN_MODE_LIFECYCLE_BLOCK = [
   'Task lifecycle (plan mode):',
   '- You are in PLAN MODE: when you intend to propose work, draft the plan and submit it through your native plan workflow (ExitPlanMode); otherwise reply normally for clarifications.',
   '- Do NOT edit code/files in plan mode. The plan awaits user approval before any execution.',
-  "- Do NOT call `frink_task_signal` to FINISH: the plan is this run's terminal artifact, so ExitPlanMode is the only way to end it. states done/partial/failed/blocked are refused here.",
+  `- ${PLAN_MODE_NO_FINISH_SIGNAL}`,
 ].join('\n');
 
 /**

@@ -10,6 +10,7 @@
  * Extracted from `executor.ts` to keep that file small and make the gating logic unit-testable in
  * isolation (see `operator-reminders.test.ts`).
  */
+import { PLAN_MODE_NO_FINISH_SIGNAL } from '../../../shared/lib/task-agent-lifecycle-prompt';
 
 // Worded to be unconditionally TRUE for any agent-mode turn: it fires on unknown history too
 // (previousMode is an in-memory map, wiped by app restart and skipped by error-path turns), so it
@@ -42,6 +43,8 @@ export type OperatorReminderInputs = {
    * correct, so the disarmed notice would be vacuous.
    */
   agentSawPriorTurns: boolean;
+  /** A plan turn with a live task to signal, outside a Flow run (whose prompt states the duty). */
+  planOwesNoFinishSignal: boolean;
 };
 
 export type OperatorReminderResult = {
@@ -77,11 +80,12 @@ export function buildOperatorReminders(inputs: OperatorReminderInputs): Operator
     reminders.push(DEBUG_MODE_EXIT_REMINDER);
   }
   // Skip in plan mode: it's read-only (no Bash/Write/Edit), so the reminder's "other tools remain
-  // available" wording would mislead — and the plan-mode lifecycle block already forbids
-  // frink_task_signal, so the notice is redundant there anyway.
+  // available" wording would mislead.
   if (inputs.taskSignalDisarmed && inputs.agentSawPriorTurns && inputs.mode !== 'plan') {
     reminders.push(TASK_SIGNAL_DISARMED_REMINDER);
   }
+  // Per turn rather than in the system prompt, so the prompt (and a warm CLI) stays mode-free.
+  if (inputs.planOwesNoFinishSignal) reminders.push(PLAN_MODE_NO_FINISH_SIGNAL);
   return { reminders, isExitingDebugMode };
 }
 

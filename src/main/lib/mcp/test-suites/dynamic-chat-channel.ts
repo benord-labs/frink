@@ -175,29 +175,26 @@ export function registerDynamicChatChannelTests(h: ChannelHarness): void {
       expect(h.state.handleFlowsToolCall).toHaveBeenCalledOnce();
     });
 
-    it("lists an unbound channel's tools from its URL toolset", async () => {
+    it("lists an unbound channel's tools from its URL toolset, the same in every mode", async () => {
       const token = getChannelToken('sub-unbound', 'claude');
 
-      const plan = await h.listDynamicChatToolNames(token, 'plan:nosignal');
-      const agent = await h.listDynamicChatToolNames(token, 'agent:signal');
+      const unsignalled = await h.listDynamicChatToolNames(token, 'nosignal');
+      const signalled = await h.listDynamicChatToolNames(token, 'signal');
 
-      expect(plan).not.toContain('frink_task_signal');
-      expect(plan).not.toContain('frink_flows_patch');
-      expect(agent).toContain('frink_task_signal');
-      expect(agent).toContain('frink_flows_patch');
+      expect(unsignalled).not.toContain('frink_task_signal');
+      expect(signalled).toContain('frink_task_signal');
+      // Plan mode refuses flow tools per call, so they are listed either way.
+      expect(unsignalled).toContain('frink_flows_patch');
+      expect(signalled).toContain('frink_flows_patch');
     });
 
-    it.each([
-      ['agent', true],
-      ['plan', false],
-    ] as const)('keeps the Codex %s URL: its stable channel plus its toolset', async (mode, on) => {
+    it.each([true, false])('keeps the Codex URL: its stable channel plus its toolset (signal %s)', async (on) => {
       const baseUrl = await h.getOrStartDynamicChatMcpUrl();
-      const params = { baseUrl, subChatId: 'sub-codex', projectPath: '/repo', mode };
+      const params = { baseUrl, subChatId: 'sub-codex', projectPath: '/repo' };
       const url = buildCodexDynamicChatMcpUrl({ ...params, hasSignalTask: on });
       const channel = getChannelToken('sub-codex', 'codex');
-      const toolset = `${mode}:${on ? 'signal' : 'nosignal'}`;
 
-      expect(url).toBe(`${baseUrl}/?channel=${channel}&toolset=${encodeURIComponent(toolset)}`);
+      expect(url).toBe(`${baseUrl}/?channel=${channel}&toolset=${on ? 'signal' : 'nosignal'}`);
     });
   });
 }

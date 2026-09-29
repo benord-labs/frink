@@ -125,12 +125,11 @@ export async function buildFrinkSystemPromptAppend(opts: {
     parts.push(opts.multiProjectPrefix);
   }
 
-  if (opts.isPlanMode) {
-    parts.push(CLAUDE_PLAN_MODE_LIFECYCLE_BLOCK);
-    if (opts.isFlowDriven) {
-      parts.push(FLOW_PLAN_MODE_QUESTION_BLOCK);
-      if (opts.planAutoApprove) parts.push(FLOW_PLAN_AUTO_APPROVE_BLOCK);
-    }
+  // Flow plan turns only: they are never reused, so mode-specific text costs nothing here. A chat's
+  // plan turns rely on the CLI's own plan-mode reminder, keeping the prompt the same in every mode.
+  if (opts.isPlanMode && opts.isFlowDriven) {
+    parts.push(CLAUDE_PLAN_MODE_LIFECYCLE_BLOCK, FLOW_PLAN_MODE_QUESTION_BLOCK);
+    if (opts.planAutoApprove) parts.push(FLOW_PLAN_AUTO_APPROVE_BLOCK);
   }
 
   return parts.join('\n\n');

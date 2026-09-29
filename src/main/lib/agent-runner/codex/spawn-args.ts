@@ -1,5 +1,4 @@
 import os from 'node:os';
-import type { ChatMode } from '../../../../shared/types/chat-mode';
 import { getChannelToken, withChannelQuery } from '../../mcp/execution-identity';
 
 /** Codex shells drop `*KEY*`/`*SECRET*`/`*TOKEN*` vars; last in the args so no override undoes it.
@@ -37,15 +36,14 @@ type CodexMcpConfigParams = {
   baseUrl: string | null;
   subChatId: string;
   projectPath: string;
-  mode: ChatMode;
   /** Whether a live task expects a lifecycle signal — part of the tool-list discriminator. */
   hasSignalTask: boolean;
 };
 
 /** Build the channel-scoped dynamic-chat URL included in Codex's canonical MCP table. */
 export function buildCodexDynamicChatMcpUrl(params: CodexMcpConfigParams): string | null {
-  const { baseUrl, subChatId, projectPath, mode, hasSignalTask } = params;
+  const { baseUrl, subChatId, projectPath, hasSignalTask } = params;
   const eligible = baseUrl && projectPath && projectPath !== os.homedir();
   if (!eligible) return null;
-  return withChannelQuery(baseUrl, getChannelToken(subChatId, 'codex'), mode, hasSignalTask);
+  return withChannelQuery(baseUrl, getChannelToken(subChatId, 'codex'), hasSignalTask);
 }

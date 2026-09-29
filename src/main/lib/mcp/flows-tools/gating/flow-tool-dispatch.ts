@@ -206,7 +206,9 @@ function flowUnavailableReason({
   if (!flowsEnabled) {
     return 'Flow tools are not available in this version.';
   }
-  return mode === 'plan' ? 'Flow tools are not available in plan mode.' : undefined;
+  return mode === 'plan'
+    ? 'Flow tools are not available in plan mode. Put the Flow change in your plan instead; it can run once the plan is approved.'
+    : undefined;
 }
 
 function staleFlowExecutionResult(

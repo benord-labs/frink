@@ -11,20 +11,20 @@ import {
 } from './execution-identity';
 
 describe('withChannelQuery', () => {
-  it('carries the channel and the toolset discriminator', () => {
-    const url = new URL(withChannelQuery('http://localhost:3111/mcp', 'tok-q', 'plan', true));
+  it('carries the channel and a mode-free toolset discriminator', () => {
+    const url = new URL(withChannelQuery('http://localhost:3111/mcp', 'tok-q', true));
     expect(url.searchParams.get('channel')).toBe('tok-q');
-    expect(url.searchParams.get('toolset')).toBe('plan:signal');
+    expect(url.searchParams.get('toolset')).toBe('signal');
   });
 
   it('never adds a per-run executionId — that is what goes stale in a reused process', () => {
-    expect(withChannelQuery('http://localhost:3111/mcp', 'tok-q', 'agent', false)).not.toContain(
+    expect(withChannelQuery('http://localhost:3111/mcp', 'tok-q', false)).not.toContain(
       'executionId',
     );
   });
 
   it('returns original baseUrl when URL parsing fails', () => {
-    expect(withChannelQuery('http://%', 'tok-q', 'agent', true)).toBe('http://%');
+    expect(withChannelQuery('http://%', 'tok-q', true)).toBe('http://%');
   });
 });
 

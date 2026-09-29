@@ -1031,6 +1031,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       hasResumeSession,
       taskSignalDisarmed,
       agentSawPriorTurns: willReplayHistoryViaResume || (history?.length ?? 0) > 0,
+      planOwesNoFinishSignal: mode === 'plan' && Boolean(signalTaskId) && !isFlowExecutionTurn,
     });
     // Debug-exit cleanup: drop the ingest debug session. Side effect kept here, out of the pure util.
     if (isExitingDebugMode) releaseClaudeDebugSession(subChatId);
@@ -1108,7 +1109,6 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
         baseUrl: dynamicChatMcpUrl,
         subChatId,
         projectPath,
-        mode,
         hasSignalTask: Boolean(signalTaskId),
       });
       const frinkMcpInjected = codexDynamicChatMcpUrl !== null;

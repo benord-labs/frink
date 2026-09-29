@@ -131,14 +131,23 @@ describe('buildFrinkSystemPromptAppend', () => {
     expect(result).not.toContain('frink_task_signal');
   });
 
-  // Plan mode on the Claude path must point at the native plan workflow (ExitPlanMode) and
-  // never demand the signal tool or a tool absent from the session's tool list.
-  it('appends the Claude plan-mode block (not the signal-demand lifecycle block) when isPlanMode', async () => {
+  // A chat's plan turn keeps the prompt identical to its agent turns, so a warm CLI can switch
+  // modes: the CLI states plan mode itself, and the signal duty is a per-turn reminder.
+  it('keeps a chat plan turn prompt the same as its agent prompt', async () => {
+    readAgentsMdMock.mockResolvedValue(undefined);
+    const plan = await buildFrinkSystemPromptAppend({ cwd: '/some/cwd', isPlanMode: true });
+    const agent = await buildFrinkSystemPromptAppend({ cwd: '/some/cwd' });
+    expect(plan).toBe(agent);
+  });
+
+  // A Flow run's plan turn is never reused, so it still carries the plan blocks.
+  it('appends the Claude plan-mode block (not the signal-demand block) for a Flow plan turn', async () => {
     readAgentsMdMock.mockResolvedValue(undefined);
     const result = await buildFrinkSystemPromptAppend({
       cwd: '/some/cwd',
       isTaskExecution: true,
       isPlanMode: true,
+      isFlowDriven: true,
     });
     expect(result).toContain('PLAN MODE');
     expect(result).toContain('ExitPlanMode');

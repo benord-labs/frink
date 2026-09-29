@@ -4,6 +4,7 @@ vi.mock('../../db', () => ({ getDatabase: vi.fn(() => ({})) }));
 vi.mock('../../db/repos/sub-chats', () => ({ updateSubChatMode: vi.fn(async () => {}) }));
 
 import { computeClaudeSessionKey } from '../execution/claude-session/session-key';
+import { PLAN_MODE_EXIT_REMINDER } from '../operator-reminders';
 import {
   adoptedTurnBeforePush,
   armAutoDuringPlan,
@@ -312,7 +313,8 @@ describe('reconcileAdoptedPermissionMode', () => {
 describe('adoptedTurnBeforePush', () => {
   type Params = Parameters<typeof adoptedTurnBeforePush>[0];
   const asAdopted = (s: ReturnType<typeof session>['session']) => s as unknown as Params['session'];
-  const turnCtx = () => ({ msgId: 'adopting-turn' }) as unknown as Params['turn'];
+  const turnCtx = (pendingReminders: string[] = []) =>
+    ({ msgId: 'adopting-turn', pendingReminders }) as unknown as Params['turn'];
 
   it('swaps the turn, then reconciles — a plan follow-up reaches SDK plan at the boundary', async () => {
     const { session: s, setPermissionMode, release } = session({ defer: true });
@@ -335,6 +337,21 @@ describe('adoptedTurnBeforePush', () => {
     release();
     expect(await push).toBe(true);
     expect(setPermissionMode).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops our plan-exit reminder on a live switch: the CLI sends its own', async () => {
+    const { session: s } = session();
+    const turn = turnCtx([PLAN_MODE_EXIT_REMINDER, 'other reminder']);
+    const push = adoptedTurnBeforePush({
+      session: asAdopted(s),
+      turn,
+      signal: new AbortController().signal,
+      mode: 'agent',
+      nativeAutoReview: false,
+      live: LIVE,
+    });
+    expect(await push()).toBe(true);
+    expect(turn.pendingReminders).toEqual(['other reminder']);
   });
 
   it('agent follow-ups restore the ordinary gated (or auto) SDK mode', async () => {
