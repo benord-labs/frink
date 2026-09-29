@@ -104,7 +104,7 @@ async function connect(
           token: 'b'.repeat(43),
           deviceId: 'device-1',
           machineName: 'Benji’s Mac',
-          apiVersion: 1,
+          apiVersion: 2,
         },
         headers,
       });
@@ -306,7 +306,7 @@ async function connect(
   }
   await page
     .getByRole('textbox', { name: 'Pairing code', exact: true })
-    .fill(JSON.stringify({ version: 1, url: host, code: 'a'.repeat(43) }));
+    .fill(JSON.stringify({ version: 2, url: host, code: 'a'.repeat(43) }));
   await page.getByRole('button', { name: 'Connect to Frink', exact: true }).click();
   await expect(page.getByText('Work queue', { exact: true })).toBeVisible();
   return { mutations, resumes, sends: () => sent };

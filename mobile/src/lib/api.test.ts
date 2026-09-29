@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, pairComputer, parsePairing, requestMobile } from './api';
 
-const pairing = { version: 1, url: 'https://desktop.example.ts.net:8443', code: 'a'.repeat(43) };
+const pairing = { version: 2, url: 'https://desktop.example.ts.net:8443', code: 'a'.repeat(43) };
 const connection = {
   url: pairing.url,
   token: 'b'.repeat(43),
@@ -28,7 +28,7 @@ describe('native mobile boundary', () => {
           token: connection.token,
           deviceId: 'phone',
           machineName: 'My Mac',
-          apiVersion: 1,
+          apiVersion: 2,
         }),
       ),
     );

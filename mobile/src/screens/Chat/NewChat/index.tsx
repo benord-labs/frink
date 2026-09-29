@@ -119,7 +119,7 @@ export function NewChat({
   const [created, setCreated] = useState<Created | null>(null);
   const [starting, setStarting] = useState(false);
   const action = useAction();
-  const ordered = projects && recentProjectsFirst(projects, chats);
+  const ordered = projects && recentProjectsFirst(projects, chats?.items);
   // Until the user picks one, the project they chatted in last is already selected.
   const picked = ordered?.find((project) => project.id === draft.value.projectId);
   const project = picked ?? ordered?.[0];

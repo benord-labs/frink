@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createFlowVersion } from '../../db/repos/flow-versions';
+import { createFlow } from '../../db/repos/flows';
 import { chats, flowRuns, nodeRuns, subChats, tasks } from '../../db/schema';
 import { seedFlowRun } from '../../db/test-utils/flow-fixtures';
 import { freshDb } from '../../db/test-utils/fresh-db';
@@ -9,6 +11,7 @@ const fixture = vi.hoisted(() => ({
   db: null as unknown,
   getRun: vi.fn(),
   getFlow: vi.fn(),
+  list: vi.fn(),
   listRuns: vi.fn(),
   getVersion: vi.fn(),
   resumeRun: vi.fn(),
@@ -24,6 +27,7 @@ vi.mock('./context', async () => ({
     flows: {
       getRun: fixture.getRun,
       get: fixture.getFlow,
+      list: fixture.list,
       listRuns: fixture.listRuns,
       resumeRun: fixture.resumeRun,
     },
@@ -44,7 +48,7 @@ vi.mock('../../db/repos/sub-chats', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../db/repos/sub-chats')>()),
   getSubChatById: fixture.getSubChat,
 }));
-import { readMobileFlow, readMobileRun, resumeMobileNode } from './flows';
+import { readMobileFlow, readMobileFlows, readMobileRun, resumeMobileNode } from './flows';
 
 const request = {
   type: 'resumeNode' as const,
@@ -114,6 +118,7 @@ beforeEach(() => {
 
 describe('mobile Flow actions', () => {
   it('reads the current saved definition separately from its historical runs', async () => {
+    fixture.db = freshDb();
     fixture.getFlow.mockResolvedValue({
       id: 'flow',
       name: 'Updated Flow',
@@ -127,19 +132,49 @@ describe('mobile Flow actions', () => {
         edges: [{ id: 'next', source: 'start', target: 'current' }],
       },
     });
-    fixture.listRuns.mockResolvedValue([
-      { id: 'older-run', status: 'completed', started_at: '2026-09-28T08:00:00Z' },
-    ]);
-    await expect(readMobileFlow('flow')).resolves.toMatchObject({
+    const olderRun = {
+      id: 'older-run',
+      status: 'completed',
+      created_at: '2026-09-28T07:59:00Z',
+      started_at: '2026-09-28T08:00:00Z',
+      completed_at: '2026-09-28T08:04:00Z',
+    };
+    fixture.listRuns.mockResolvedValue([olderRun]);
+    await expect(readMobileFlow({ id: 'flow' })).resolves.toMatchObject({
       definition: {
         versionNumber: 3,
         nodes: [{ id: 'start' }, { id: 'current', instructions: 'Current instructions' }],
         edges: [{ id: 'next', source: 'start', target: 'current' }],
       },
-      runs: [{ id: 'older-run', status: 'completed', startedAt: '2026-09-28T08:00:00Z' }],
+      runs: {
+        items: [
+          {
+            id: 'older-run',
+            status: 'completed',
+            createdAt: '2026-09-28T07:59:00Z',
+            startedAt: '2026-09-28T08:00:00Z',
+            completedAt: '2026-09-28T08:04:00Z',
+          },
+        ],
+        hasMore: false,
+      },
     });
     expect(fixture.getVersion).not.toHaveBeenCalled();
-    expect(fixture.listRuns).toHaveBeenCalledWith({ flowId: 'flow', limit: 30 });
+    expect(fixture.listRuns).toHaveBeenCalledWith({ flowId: 'flow', limit: 21 });
+  });
+
+  it('windows runs by runLimit, fetching one extra row to report more', async () => {
+    fixture.db = freshDb();
+    fixture.getFlow.mockResolvedValue({ id: 'flow', graph: null });
+    fixture.listRuns.mockResolvedValue(
+      ['run-3', 'run-2', 'run-1'].map((id) => ({ id, status: 'completed', created_at: 'at' })),
+    );
+    const result = await readMobileFlow({ id: 'flow', runLimit: 2 });
+    expect(fixture.listRuns).toHaveBeenLastCalledWith({ flowId: 'flow', limit: 3 });
+    expect(result.runs.items.map((run) => run.id)).toEqual(['run-3', 'run-2']);
+    expect(result.runs.hasMore).toBe(true);
+    await readMobileFlow({ id: 'flow', runLimit: 100 });
+    expect(fixture.listRuns).toHaveBeenLastCalledWith({ flowId: 'flow', limit: 100 });
   });
 
   it('rejects mobile retry requests while accepting approval and skip', () => {
@@ -260,6 +295,8 @@ describe('mobile Flow projection queries', () => {
       ...node,
       id: `node-${index}`,
       node_id: `graph-${index}`,
+      started_at: '2026-09-28T08:00:00Z',
+      completed_at: null,
     }));
     for (let index = 0; index < projectedNodes.length; index++) {
       await db.insert(subChats).values({
@@ -323,11 +360,88 @@ describe('mobile Flow projection queries', () => {
       subChatId: 'sub-2',
       detail: planText,
       actions: ['approve', 'skip'],
+      startedAt: '2026-09-28T08:00:00Z',
+      completedAt: null,
     });
     expect(result.nodes.find((entry) => entry.id === 'node-0')?.actions).toEqual([]);
     expect(result.nodes.find((entry) => entry.id === 'node-1')?.actions).toEqual([]);
     expect(fixture.getLink).not.toHaveBeenCalled();
     expect(fixture.getDriving).not.toHaveBeenCalled();
     expect(fixture.getSubChat).not.toHaveBeenCalled();
+  });
+
+  it("adds each Flow's newest run of any status in one query, capped at 200 Flows", async () => {
+    const db = freshDb();
+    fixture.db = db;
+    const busy = await createFlow(db, { name: 'Busy' });
+    const idle = await createFlow(db, { name: 'Idle' });
+    const version = await createFlowVersion(db, {
+      flowId: busy.id,
+      graph: { nodes: [], edges: [] },
+    });
+    const at = (seconds: number) => new Date(seconds * 1000);
+    // run-x and run-y start in the same second; the id breaks the tie as the run list does.
+    await db.insert(flowRuns).values([
+      { id: 'run-older', flowVersionId: version.id, status: 'running', createdAt: at(1000) },
+      {
+        id: 'run-x',
+        flowVersionId: version.id,
+        status: 'completed',
+        createdAt: at(2000),
+        completedAt: at(2500),
+      },
+      {
+        id: 'run-y',
+        flowVersionId: version.id,
+        status: 'failed',
+        createdAt: at(2000),
+        startedAt: at(2100),
+        completedAt: at(2600),
+      },
+    ]);
+    fixture.list.mockResolvedValue(
+      [busy.id, idle.id, ...Array.from({ length: 199 }, (_, index) => `flow-${index}`)].map(
+        (id) => ({ id, name: 'Flow', is_enabled: true }),
+      ),
+    );
+    const queries = vi.spyOn(db.$client, 'prepare');
+    const result = await readMobileFlows();
+    expect(queries).toHaveBeenCalledTimes(1);
+    expect(result).toHaveLength(200);
+    expect(result[0].lastRun).toEqual({
+      id: 'run-y',
+      status: 'failed',
+      at: at(2600).toISOString(),
+    });
+    expect(result[1].lastRun).toBeNull();
+  });
+});
+
+describe('mobile Flow list status', () => {
+  const flow = (fields: Record<string, unknown>) => ({
+    id: 'flow',
+    name: 'Flow',
+    is_enabled: true,
+    latest_run_id: 'run',
+    ...fields,
+  });
+
+  it('sends the display status the desktop list shows, not the engine status', async () => {
+    fixture.db = freshDb();
+    fixture.list.mockResolvedValue([
+      flow({ id: 'working', latest_run_status: 'paused', latest_run_active_task_status: 'running' }),
+      flow({ id: 'plan', latest_run_status: 'paused', latest_run_active_task_status: 'plan_ready' }),
+      flow({ id: 'approval', latest_run_status: 'paused', latest_run_active_task_status: null }),
+      flow({ id: 'queued', latest_run_status: 'pending', latest_run_admission_state: 'queued' }),
+      flow({ id: 'idle', latest_run_id: null, latest_run_status: null }),
+    ]);
+    const statuses = (await readMobileFlows()).map((entry) => [entry.id, entry.status]);
+    expect(statuses).toEqual([
+      ['working', 'running'],
+      ['plan', 'awaiting_input'],
+      ['approval', 'awaiting_input'],
+      ['queued', 'queued'],
+      ['idle', null],
+    ]);
   });
 });

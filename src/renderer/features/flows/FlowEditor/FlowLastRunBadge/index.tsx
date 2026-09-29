@@ -9,11 +9,8 @@ import type { FlowExecutionEvent } from '../../../../../shared/types/flow';
 import { trpc } from '../../../../lib/trpc';
 import { formatRelativeTime } from '../../../../lib/utils/format-time';
 import { isDesktopApp } from '../../../../lib/utils/platform';
-import {
-  FlowRunStatusIcon,
-  flowRunDisplayStatus,
-  shouldPollFlowAdmission,
-} from '../FlowRunStatusIcon';
+import { flowRunDisplayStatus } from '../../../../../shared/lib/flows/run-display-status';
+import { FlowRunStatusIcon, shouldPollFlowAdmission } from '../FlowRunStatusIcon';
 
 type FlowLastRunBadgeProps = {
   flowId: string;

@@ -29,7 +29,8 @@ import { isEditableKeyboardTarget } from '../../../lib/is-editable-keyboard-targ
 import { trpc } from '../../../lib/trpc';
 import { cn } from '../../../lib/utils';
 import { isDesktopApp } from '../../../lib/utils/platform';
-import { flowRunDisplayStatus, shouldPollFlowAdmission } from '../FlowEditor/FlowRunStatusIcon';
+import { flowRunDisplayStatus } from '../../../../shared/lib/flows/run-display-status';
+import { shouldPollFlowAdmission } from '../FlowEditor/FlowRunStatusIcon';
 import { FlowListSkeleton } from './FlowListSkeleton';
 import { FlowListTable } from './FlowListTable';
 import { FlowSortControl, type FlowSortOrder } from './FlowSortControl';

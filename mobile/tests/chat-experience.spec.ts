@@ -11,10 +11,11 @@ function conversation(overrides: Partial<MobileChatDetail> = {}): MobileChatDeta
   return {
     chat,
     subChatId: 'sub-1',
-    subChats: [{ id: 'sub-1', name: 'Release' }],
+    subChats: [{ id: 'sub-1', name: 'Release', activity: 'idle' as const }],
     messages: [{ id: 'm1', role: 'assistant', text: 'Ready when you are.' }],
     hasMore: false,
-    active: false,
+    activity: 'idle' as const,
+    kind: 'chat' as const,
     error: null,
     questions: [],
     permissions: [],
@@ -70,8 +71,8 @@ test('navigation preserves unsent text and the identity of an uncertain send', a
 test('conversation drafts belong to the selected subchat', async ({ page }) => {
   const primary = conversation({
     subChats: [
-      { id: 'sub-1', name: 'Release' },
-      { id: 'sub-2', name: 'Follow-up' },
+      { id: 'sub-1', name: 'Release', activity: 'idle' as const },
+      { id: 'sub-2', name: 'Follow-up', activity: 'idle' as const },
     ],
   });
   const state = await mockCompanion(page, { chat: primary });
@@ -358,8 +359,8 @@ test('switching conversations clears the Latest control from the previous one', 
     text: `Update ${index}: checking the release and preparing the next step.`,
   }));
   const subChats = [
-    { id: 'sub-1', name: 'Release' },
-    { id: 'sub-2', name: 'Follow-up' },
+    { id: 'sub-1', name: 'Release', activity: 'idle' as const },
+    { id: 'sub-2', name: 'Follow-up', activity: 'idle' as const },
   ];
   const state = await mockCompanion(page, { chat: conversation({ messages, subChats }) });
   await openConversation(page);

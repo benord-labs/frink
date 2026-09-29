@@ -7,6 +7,7 @@ import {
 import { stripMessageMarkers } from '../../../../shared/lib/message-markers/strip-message-markers';
 import { SUBAGENT_TEXT_PART_TYPE } from '../../../../shared/subagent-parts';
 import type {
+  MobileActivity,
   MobileChatDetail,
   MobileMessage,
   MobileMessagePart,
@@ -107,6 +108,11 @@ function messagePartProjection(
   if (part.type === 'text') return textParts(text(part.text));
   if (part.type === SUBAGENT_TEXT_PART_TYPE) return textParts(text(record(part.input).text));
   if (typeof part.type !== 'string' || !part.type.startsWith('tool-')) return [];
+  // Keyed on the tool name, not state: the marker's state reads 'unknown' once its stream expires.
+  if (part.toolName === 'Steer') {
+    const steered = text(record(part.input).text).trim();
+    return steered ? [{ type: 'steer', text: steered }] : [];
+  }
   return toolPart(part, id, streamStatus);
 }
 
@@ -168,6 +174,14 @@ export function mergeMobileTranscript(
   return [...messages.values()];
 }
 
+/** A held stream is parked on background work; anything else live is a running response. */
+export function subChatActivity(subChatId: string): MobileActivity {
+  const streams = getLiveStreamSeed(subChatId).streams;
+  if (getActiveExecution(subChatId) || streams.some((stream) => stream.status !== 'held'))
+    return 'running';
+  return streams.length ? 'background' : 'idle';
+}
+
 export async function readMobileChat(
   input: Extract<MobileRequest, { type: 'chat' }>,
 ): Promise<MobileChatDetail> {
@@ -189,20 +203,30 @@ export async function readMobileChat(
   ) {
     history = await mobileCallers.chats.getSubChatMessages(historyInput);
   }
-  const active = Boolean(getActiveExecution(subChat.id)) || seed.streams.length > 0;
+  const activity = subChatActivity(subChat.id);
+  const { task, run } = await mobileCallers.tasks.getDrivingTaskForSubChat({
+    subChatId: subChat.id,
+    fallbackTaskId: chat.taskId,
+  });
   return {
     chat: { id: chat.id, name: chat.name ?? 'Untitled chat', projectId: chat.projectId },
     subChatId: subChat.id,
-    subChats: chat.subChats.map((sub) => ({ id: sub.id, name: sub.name ?? 'Chat' })),
+    subChats: chat.subChats.map((sub) => ({
+      id: sub.id,
+      name: sub.name ?? 'Chat',
+      activity: sub.id === subChat.id ? activity : subChatActivity(sub.id),
+    })),
     messages: mergeMobileTranscript(
       history.messages,
       input.beforeMessageId ? { streams: [], terminals: [] } : seed,
     ),
     hasMore: history.hasMore,
-    active,
+    activity,
+    // A live run owns the conversation even before its own task exists, as the send check treats it.
+    kind: run || task?.flowRunId ? 'flow' : 'chat',
     error:
-      !active && seed.terminals.at(-1)?.status === 'error'
-        ? 'The response failed. Check Frink on your computer for details.'
+      activity === 'idle' && seed.terminals.at(-1)?.status === 'error'
+        ? 'The response failed. Open Frink on your Mac to see why.'
         : null,
     questions: await mobileQuestions(chat.id, subChat.id, chat.taskId),
     permissions: mobilePermissions().filter(
@@ -217,7 +241,7 @@ export async function createMobileChat(input: Extract<MobileRequest, { type: 'cr
   const chat = await mobileCallers.chats.create({
     projectId: input.projectId,
     name: input.name,
-    mode: 'agent',
+    mode: input.mode ?? 'agent',
     useWorktree: input.useWorktree ?? true,
   });
   return { chatId: chat.id, subChatId: chat.subChats[0].id };

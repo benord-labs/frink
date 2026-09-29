@@ -210,7 +210,7 @@ export function Chat({
   const [confirmStop, setConfirmStop] = useState(false);
   useEffect(() => {
     setConfirmStop(false);
-  }, [id, subChatId, data?.subChatId, data?.active]);
+  }, [id, subChatId, data?.subChatId, data?.activity]);
   const targetExists = targetStillOpen(data, activeDecisionTarget);
   const scrolling = useTranscriptScroll(!!data, activeDecisionTarget, targetExists);
   async function send() {
@@ -256,7 +256,7 @@ export function Chat({
       <View style={{ flex: 1 }}>
         <Page
           title={data?.chat.name ?? 'Chat'}
-          context={<ChatContext active={!!data?.active} projectName={projectName} />}
+          context={<ChatContext active={!!data && data.activity !== 'idle'} projectName={projectName} />}
           onBack={onBack}
           action={data && <DeleteButton disabled={action.busy} onPress={() => void remove()} />}
           scrollRef={scrolling.scrollRef}
@@ -312,9 +312,9 @@ export function Chat({
         </Page>
         {scrolling.showLatest && <LatestButton onPress={scrolling.latest} />}
       </View>
-      {data && (data.active || (!data.questions.length && !data.permissions.length)) && (
+      {data && (data.activity !== 'idle' || (!data.questions.length && !data.permissions.length)) && (
         <Composer
-          active={data.active}
+          active={data.activity !== 'idle'}
           busy={action.busy}
           value={draft.value}
           onChange={draft.update}

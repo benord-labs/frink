@@ -25,7 +25,7 @@ export function Chats({ openChat }: { openChat: (id: string) => void }) {
   const action = useAction();
   const names = new Map(projects.data?.map((project) => [project.id, project.name]));
   const needle = search.trim().toLocaleLowerCase();
-  const chats = resource.data?.filter((chat) =>
+  const chats = resource.data?.items.filter((chat) =>
     `${chat.name} ${names.get(chat.projectId ?? '') ?? ''}`.toLocaleLowerCase().includes(needle),
   );
   async function remove(id: string, name: string) {

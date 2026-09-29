@@ -6,7 +6,7 @@ type Project = MobileResponses['projects'][number];
  *  `chats` arrives newest first, so a project's rank is where its latest chat appears. */
 export function recentProjectsFirst(
   projects: Project[],
-  chats: MobileResponses['chats'] = [],
+  chats: MobileResponses['chats']['items'] = [],
 ): Project[] {
   const rank = new Map<string, number>();
   for (const chat of chats)

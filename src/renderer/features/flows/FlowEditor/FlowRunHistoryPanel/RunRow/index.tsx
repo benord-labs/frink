@@ -5,11 +5,8 @@ import { cn } from '../../../../../lib/utils';
 import { formatRelativeTime } from '../../../../../lib/utils/format-time';
 import type { FlowLoopProgress } from '../../../atoms';
 import { LoopIterationBadge } from '../../../LoopIterationBadge';
-import {
-  FlowRunStatusIcon,
-  flowRunDisplayStatus,
-  isLiveFlowAdmissionState,
-} from '../../FlowRunStatusIcon';
+import { flowRunDisplayStatus } from '../../../../../../shared/lib/flows/run-display-status';
+import { FlowRunStatusIcon, isLiveFlowAdmissionState } from '../../FlowRunStatusIcon';
 import { formatDuration } from '../format-duration';
 import { RunStatusLabel } from '../RunStatusLabel';
 

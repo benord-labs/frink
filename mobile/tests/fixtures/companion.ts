@@ -126,7 +126,7 @@ export async function mockCompanion(page: Page, overrides: Record<string, unknow
           token: 'b'.repeat(43),
           deviceId: 'device-1',
           machineName: 'Studio Mac',
-          apiVersion: 1,
+          apiVersion: 2,
         },
       });
     if (route.request().url().endsWith('/api/attachments')) {
@@ -143,7 +143,7 @@ export async function mockCompanion(page: Page, overrides: Record<string, unknow
   await page.goto('/');
   await page
     .getByRole('textbox', { name: 'Pairing code', exact: true })
-    .fill(JSON.stringify({ version: 1, url: fixtureHost, code: 'a'.repeat(43) }));
+    .fill(JSON.stringify({ version: 2, url: fixtureHost, code: 'a'.repeat(43) }));
   await page.getByRole('button', { name: 'Connect to Frink', exact: true }).click();
   return state;
 }

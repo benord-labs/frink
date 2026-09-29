@@ -5,6 +5,9 @@ import { needsYouCount, queueView } from './queue-view';
 const overview: MobileOverview = {
   machineName: 'Mac',
   executionReady: true,
+  appVersion: '0.0.13',
+  counts: { attention: 2, inbox: 1, running: 1 },
+  more: { attention: false, inbox: false, running: false },
   questions: [
     {
       id: 'q1',
@@ -42,6 +45,8 @@ const overview: MobileOverview = {
       chatId: 'chat',
       subChatId: 'sub',
       flowRunId: null,
+      projectName: null,
+      activityAt: '2026-09-29T00:00:00Z',
     },
     {
       id: 'review',
@@ -52,6 +57,8 @@ const overview: MobileOverview = {
       chatId: null,
       subChatId: null,
       flowRunId: 'run',
+      projectName: null,
+      activityAt: '2026-09-29T00:00:00Z',
     },
     {
       id: 'running',
@@ -62,6 +69,8 @@ const overview: MobileOverview = {
       chatId: 'chat',
       subChatId: 'sub',
       flowRunId: 'run',
+      projectName: null,
+      activityAt: '2026-09-29T00:00:00Z',
     },
     {
       id: 'next',
@@ -72,6 +81,8 @@ const overview: MobileOverview = {
       chatId: null,
       subChatId: null,
       flowRunId: null,
+      projectName: null,
+      activityAt: '2026-09-29T00:00:00Z',
     },
   ],
 };
