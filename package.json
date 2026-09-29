@@ -118,7 +118,7 @@
     "jotai": "^2.20.3",
     "jsonc-parser": "^3.3.1",
     "lucide-react": "^1.47.0",
-    "mermaid": "^11.17.2",
+    "mermaid": "^12.0.0",
     "monaco-editor": "^0.55.1",
     "monaco-languageclient": "^10.7.0",
     "motion": "^13.4.0",
@@ -386,6 +386,9 @@
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico"
     }
+  },
+  "overrides": {
+    "mermaid": "^12.0.0"
   },
   "patchedDependencies": {
     "@tailwindcss/typography@0.5.20": "patches/@tailwindcss%2Ftypography@0.5.20.patch"

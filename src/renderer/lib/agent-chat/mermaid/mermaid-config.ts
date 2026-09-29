@@ -47,6 +47,11 @@ export function mermaidConfig(theme: DiagramTheme): MermaidConfig {
     suppressErrorRendering: true,
     fontFamily: 'inherit',
     theme: 'base',
+    // Mermaid 12 defaults to ELK layout and the `neo` look; keep the dagre layout and classic look Frink's diagrams were tuned for.
+    layout: 'dagre',
+    look: 'classic',
+    // A top-level layout outranks the swimlane diagram's own default, so pin it back.
+    swimlane: { layout: 'swimlane' },
     themeVariables: {
       darkMode: theme.dark,
       fontFamily: 'inherit',
