@@ -3,6 +3,11 @@ import * as device from './device';
 
 export type AlertState = { enabled: boolean; denied: boolean; error: string | null };
 
+// React Native's AbortSignal (the abort-controller polyfill) has no throwIfAborted().
+function stopIfAborted(signal: AbortSignal) {
+  if (signal.aborted) throw new Error('Alert update cancelled.');
+}
+
 /**
  * Brings the Mac's registration for this iPhone in line with `desired` (a tap on the switch) or,
  * when undefined, with what the Mac already has — re-sending a rotated token, or removing the
@@ -18,10 +23,10 @@ export async function reconcileRegistration(
   const error = desired === undefined ? status.error : null;
   const turnOn = desired ?? status.enabled;
   const allowed = await device.permission(desired === true);
-  signal.throwIfAborted();
+  stopIfAborted(signal);
   if (turnOn && allowed) {
     const token = await device.pushToken();
-    signal.throwIfAborted();
+    stopIfAborted(signal);
     await requestNotifications(host, { token }, signal);
     return { enabled: true, denied: false, error };
   }

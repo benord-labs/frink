@@ -68,3 +68,9 @@ it('does not register after the screen goes away mid-setup', async () => {
   await expect(run(true, controller.signal)).rejects.toThrow();
   expect(request).toHaveBeenCalledOnce();
 });
+it('works with a phone AbortSignal, which has no throwIfAborted', async () => {
+  const signal = { aborted: false } as AbortSignal;
+  expect(await run(true, signal)).toEqual({ enabled: true, denied: false, error: null });
+  const cancelled = { aborted: true } as AbortSignal;
+  await expect(run(true, cancelled)).rejects.toThrow('cancelled');
+});
