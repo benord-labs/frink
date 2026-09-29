@@ -4,6 +4,7 @@ import type {
   CanUseTool,
   StopHookInput,
 } from '@anthropic-ai/claude-agent-sdk';
+import log from 'electron-log';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getDefaultClaudeCodeToken } from '../../credentials';
 import { getChatWithProjectAccount } from '../../db/repos/chats';
@@ -349,6 +350,7 @@ function registerStopHookTests(harness: ClaudeTurnBindingHarness): void {
   });
 
   it('an adopted turn that leaves work running re-arms from the session hook', async () => {
+    const info = vi.spyOn(log, 'info');
     mockHeldSession(claudeQueryMock, async ({ stop }) => {
       await stop([RUNNING_TASK]);
     });
@@ -360,6 +362,8 @@ function registerStopHookTests(harness: ClaudeTurnBindingHarness): void {
     expect(published.filter((p) => p.subChatId === payload.subChatId).at(-1)).toMatchObject({
       held: true,
     });
+    const line = `[Socket Executor] Adopted turn ended for ${payload.subChatId}: re-armed (Command)`;
+    expect(info).toHaveBeenCalledWith(line);
   });
 
   it.each([
@@ -397,6 +401,7 @@ function registerStopHookTests(harness: ClaudeTurnBindingHarness): void {
   it('an adoption retried on a fresh session signals and stops under its own execution', async () => {
     const decisions: StopDecision[] = [];
     let signalled: unknown[] = [];
+    const info = vi.spyOn(log, 'info');
     mockHeldSession(claudeQueryMock, async () => {
       // A rotated api key reruns at once; a transient error would first wait out a real backoff.
       const credential = await getDefaultClaudeCodeToken();
@@ -442,6 +447,9 @@ function registerStopHookTests(harness: ClaudeTurnBindingHarness): void {
     expect(socketClient.sendErrorDirect).not.toHaveBeenCalled();
     expect(decisions.map((d) => d.decision ?? 'allow')).toEqual(['block', 'allow']);
     expect(signalled).toEqual(['task-adopting']);
+    expect(info).toHaveBeenCalledWith(
+      expect.stringContaining(`${payload.subChatId}: retried without the hold after an error`),
+    );
   });
 
   it('a follow-up landing in the pump-death window falls back to a fresh session without error', async () => {

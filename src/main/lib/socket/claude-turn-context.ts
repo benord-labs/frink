@@ -105,6 +105,8 @@ export interface ClaudeTurnContext {
    * a turn and never clears its recorded signal, and an adopting turn reuses the ARMING turn's
    * context — so anything read from there is only THIS turn's if it postdates this stamp. */
   startedAt: string;
+  /** This turn took over a wake hold and has not yet logged how it ended (logAdoptedTurnEnd). */
+  adoptedHold?: boolean;
   execution: ClaudeTurnExecution;
 }
 

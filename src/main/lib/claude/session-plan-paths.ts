@@ -98,3 +98,16 @@ export async function resolveLatestSessionPlanFile(subChatId: string): Promise<s
     return null;
   }
 }
+
+/** Absolute path of a plan-dir `.md` mutation in plan mode, else null. */
+export function planWritePathFromInput(
+  input: unknown,
+  projectPath: string,
+  subChatId: string,
+): string | null {
+  const fp = (input as { file_path?: string } | undefined)?.file_path;
+  if (typeof fp !== 'string') return null;
+  const resolved = path.isAbsolute(fp) ? fp : path.resolve(projectPath, fp);
+  if (path.extname(resolved).toLowerCase() !== '.md') return null;
+  return isAllowedClaudePlanWritePath(resolved, subChatId) ? resolved : null;
+}

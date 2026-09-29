@@ -30,6 +30,7 @@ import {
   isAllowedClaudePlanWritePath,
   isValidSubChatIdForSessionPaths,
   planPathFromExitPlanModeOutput,
+  planWritePathFromInput,
   resolveLatestSessionPlanFile,
 } from '../claude/session-plan-paths';
 import {
@@ -139,7 +140,7 @@ import {
   applyApprovedPlanContextToPrompt,
   formatPromptWithHistory,
 } from './execution/prompt-prefix';
-import { logDisposedPendingWork } from './execution/wake-hold-signal';
+import { logAdoptedTurnEnd, turnEndMustDispose } from './execution/wake-hold-signal';
 import type { WakePump } from './execution/wake-pump-types';
 import {
   requiresStrictSignalFinalization,
@@ -255,19 +256,6 @@ function persistEarlySessionId(subChatId: string, sessionId: string): void {
 }
 
 const PLAN_MUTATION_TOOLS = new Set(['Write', 'Edit', 'MultiEdit']);
-
-/** Absolute path of a plan-dir `.md` mutation in plan mode, else null. */
-function planWritePathFromInput(
-  input: unknown,
-  projectPath: string,
-  subChatId: string,
-): string | null {
-  const fp = (input as { file_path?: string } | undefined)?.file_path;
-  if (typeof fp !== 'string') return null;
-  const resolved = path.isAbsolute(fp) ? fp : path.resolve(projectPath, fp);
-  if (path.extname(resolved).toLowerCase() !== '.md') return null;
-  return isAllowedClaudePlanWritePath(resolved, subChatId) ? resolved : null;
-}
 
 /** Clear the cached Codex resume thread for a chat (e.g., when the chat is deleted). */
 export function clearCodexSession(chatId: string): void {
@@ -1778,6 +1766,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
         // Adopted turns keep the session's SDK options, Stop hook and tool list; the rest is this
         // turn's own, its MCP context included (bound at the takeover push).
         turn.execution = adoptHeldExecution(ownExecution, hold.execution);
+        turn.adoptedHold = true;
         // The attach and the SDK permission-mode reconcile land at the pump's actual push time
         // (adoptedTurnBeforePush) — earlier would misattribute a still-streaming burst's hook
         // events to this turn and flip SDK policy under it (mid-burst adoption defers the push
@@ -1788,6 +1777,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
           await processClaudeStream(hold.session, initialMessage, hold.pump);
         } catch (err) {
           if (!isPumpAdoptRefusedError(err)) throw err;
+          logAdoptedTurnEnd(turn, subChatId, 'adoption refused');
           // The pump exited before the takeover push (nothing streamed): unwind the adoption
           // and rethrow — the attempt-level retry reruns on a fresh session, as if takeWakeHold
           // had refused the dead hold in the first place.
@@ -1799,6 +1789,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       }
       // A fresh session is spawned from this execute's own options, even when retrying a failed
       // adoption, so its callbacks and signal context must be this execute's own again.
+      logAdoptedTurnEnd(turn, subChatId, 'retried without the hold after an error');
       turn.execution = ownExecution;
       const keyParts = computeClaudeSessionKey(options, claudeSpec.mcpServers, claudeSpec.login);
       // The claim, busy and attach share this span (runTurn); the push follows the mode reconcile.
@@ -1850,17 +1841,8 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       // Plan turns (mid-turn EnterPlanMode too) hold: bursts inherit the arming turn's plan locks
       // (armWakePump), so the terminal-signal predicate stays sound between wakes. Only a SUBMITTED
       // plan disposes — halted awaiting approval; follow-up spawns fresh (flow-quiet-wait-handling)
-      const mustDispose =
-        abortController.signal.aborted ||
-        turn.planSubmissionHalt() ||
-        session.busy ||
-        session.queue.closed; // killed (question-park): dead input
+      const mustDispose = turnEndMustDispose(subChatId, session, turn, abortController.signal);
       if (!pendingWork || mustDispose) {
-        logDisposedPendingWork(subChatId, pendingWork, {
-          aborted: abortController.signal.aborted,
-          planHalted: turn.planSubmissionHalt(),
-          killed: session.queue.closed,
-        });
         const flowTurn = flowResources.admitted || isFlowExecutionTurn;
         // Never kept: an error result, a dropped follower, or a steer the turn may not have read.
         const unclean = claudeResultErrored || session.stopHook?.droppedFollower || turn.steered;
@@ -2175,6 +2157,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       });
     }
   } finally {
+    logAdoptedTurnEnd(turn, subChatId, executionFailed ? 'failed' : 'ended without a disposition');
     if (!executionAdmissionAcknowledged) {
       payload.onExecutionStarted?.(new Error('The chat could not start. Refresh and try again.'));
     }
