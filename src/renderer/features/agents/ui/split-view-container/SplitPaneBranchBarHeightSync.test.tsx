@@ -52,23 +52,23 @@ describe('SplitPaneBranchBarHeightProvider + useSplitPaneBranchBarSync', () => {
     vi.stubGlobal('ResizeObserver', ResizeObserverMock);
 
     // happy-dom layout may not populate getBoundingClientRect; hook uses it for natural height.
-    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
-      function (this: HTMLElement) {
-        const raw = this.style.height;
-        const h = raw ? Number.parseFloat(raw) : 0;
-        return {
-          height: h,
-          width: 100,
-          top: 0,
-          left: 0,
-          bottom: h,
-          right: 100,
-          x: 0,
-          y: 0,
-          toJSON: () => {},
-        } as DOMRect;
-      },
-    );
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      const raw = this.style.height;
+      const h = raw ? Number.parseFloat(raw) : 0;
+      return {
+        height: h,
+        width: 100,
+        top: 0,
+        left: 0,
+        bottom: h,
+        right: 100,
+        x: 0,
+        y: 0,
+        toJSON: () => {},
+      } as DOMRect;
+    });
   });
 
   afterEach(() => {

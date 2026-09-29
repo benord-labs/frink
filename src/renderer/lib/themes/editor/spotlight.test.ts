@@ -154,12 +154,12 @@ describe('showHoverBox', () => {
   });
 
   it('measures the label in its own font before placing it', () => {
-    vi.spyOn(HTMLSpanElement.prototype, 'getBoundingClientRect').mockImplementation(
-      function (this: HTMLSpanElement) {
-        // Unstyled, the label measures as wide as body text; in its own small font it fits.
-        return new DOMRect(0, 0, this.className.includes('text-[11px]') ? 150 : 400, 16);
-      },
-    );
+    vi.spyOn(HTMLSpanElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLSpanElement,
+    ) {
+      // Unstyled, the label measures as wide as body text; in its own small font it fits.
+      return new DOMRect(0, 0, this.className.includes('text-[11px]') ? 150 : 400, 16);
+    });
     expect(hoverLabel(new DOMRect(10, 10, 200, 60))).toContain('top-1.5 right-1.5');
   });
 

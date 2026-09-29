@@ -570,48 +570,46 @@ export const TreeNode = memo(function TreeNode({
         </ContextMenuContent>
       </ContextMenu>
 
-      {isFolder &&
-        isExpanded &&
-        (hasChildren || creatingItem?.parentFolder === node.path) && (
-          // Tree children container: role="group" is correct per ARIA tree pattern; fieldset is for form grouping.
-          // biome-ignore lint/a11y/useSemanticElements: tree structure, not a form fieldset
-          <div role="group" className="space-y-0.5">
-            {/* Inline input at the top of this folder's children */}
-            {creatingItem?.parentFolder === node.path && onInlineConfirm && onInlineCancel && (
-              <InlineInput
-                type={creatingItem.type}
-                level={level + 1}
-                onConfirm={onInlineConfirm}
-                onCancel={onInlineCancel}
-              />
-            )}
-            {visibleChildren?.map((child: FileTreeNode) => (
-              <TreeNode
-                key={child.id}
-                node={child}
-                level={level + 1}
-                projectPath={projectPath}
-                paneIndex={paneIndex}
-                onFileClick={onFileClick}
-                searchQuery={searchQuery}
-                onCreateItem={onCreateItem}
-                onDeleteItem={onDeleteItem}
-                creatingItem={creatingItem}
-                onInlineConfirm={onInlineConfirm}
-                onInlineCancel={onInlineCancel}
-                onSelect={onSelect}
-                renamingPath={renamingPath}
-                onRenameConfirm={onRenameConfirm}
-                onRenameCancel={onRenameCancel}
-                onStartRename={onStartRename}
-                onCopyItem={onCopyItem}
-                onPasteIntoFolder={onPasteIntoFolder}
-                hasCopiedItem={hasCopiedItem}
-                pathToExpandAfterDrop={pathToExpandAfterDrop}
-              />
-            ))}
-          </div>
-        )}
+      {isFolder && isExpanded && (hasChildren || creatingItem?.parentFolder === node.path) && (
+        // Tree children container: role="group" is correct per ARIA tree pattern; fieldset is for form grouping.
+        // biome-ignore lint/a11y/useSemanticElements: tree structure, not a form fieldset
+        <div role="group" className="space-y-0.5">
+          {/* Inline input at the top of this folder's children */}
+          {creatingItem?.parentFolder === node.path && onInlineConfirm && onInlineCancel && (
+            <InlineInput
+              type={creatingItem.type}
+              level={level + 1}
+              onConfirm={onInlineConfirm}
+              onCancel={onInlineCancel}
+            />
+          )}
+          {visibleChildren?.map((child: FileTreeNode) => (
+            <TreeNode
+              key={child.id}
+              node={child}
+              level={level + 1}
+              projectPath={projectPath}
+              paneIndex={paneIndex}
+              onFileClick={onFileClick}
+              searchQuery={searchQuery}
+              onCreateItem={onCreateItem}
+              onDeleteItem={onDeleteItem}
+              creatingItem={creatingItem}
+              onInlineConfirm={onInlineConfirm}
+              onInlineCancel={onInlineCancel}
+              onSelect={onSelect}
+              renamingPath={renamingPath}
+              onRenameConfirm={onRenameConfirm}
+              onRenameCancel={onRenameCancel}
+              onStartRename={onStartRename}
+              onCopyItem={onCopyItem}
+              onPasteIntoFolder={onPasteIntoFolder}
+              hasCopiedItem={hasCopiedItem}
+              pathToExpandAfterDrop={pathToExpandAfterDrop}
+            />
+          ))}
+        </div>
+      )}
     </DropRoot>
   );
 }, areTreeNodePropsEqual);
