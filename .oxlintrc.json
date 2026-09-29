@@ -159,7 +159,7 @@
       }
     },
     {
-      "files": ["scripts/**/*", "examples/**/*", "relay/**/*"],
+      "files": ["scripts/**/*", "examples/**/*", "relay/**/*", "live-activity-forwarder/**/*"],
       "rules": {
         "eslint/no-console": "allow"
       }
