@@ -58,7 +58,10 @@ export function decisionStillOpen(
     : data.permissions.some((permission) => permission.requestId === target.id);
 }
 
-/** An open question or permission replaces the idle composer: answering it is the next step. */
+/** An open question, permission or plan replaces the idle composer: deciding is the next step. */
 export function showsComposer(data: MobileChatDetail): boolean {
-  return data.activity !== 'idle' || (!data.questions.length && !data.permissions.length);
+  return (
+    data.activity !== 'idle' ||
+    (!data.questions.length && !data.permissions.length && !data.pendingPlanId)
+  );
 }

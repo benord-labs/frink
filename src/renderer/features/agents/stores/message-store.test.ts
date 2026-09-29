@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it } from 'vitest';
+import { PLAN_APPROVAL_EXECUTION_TRIGGER_TEXT } from '../../../../shared/types/plan';
 import { appStore } from '../../../lib/jotai-store';
 import { approvedPlanIdsAtomFamily } from '../atoms';
 import {
@@ -864,6 +865,29 @@ describe('hiddenApprovalPlanIdsForSubChatAtomFamily', () => {
     expect(hidden.has('call-1')).toBe(true);
     expect(hidden.has('call-2')).toBe(true);
     expect(hidden.has('call-3')).toBe(false);
+  });
+
+  it('hides a plan approved from another surface once its approval message arrives', () => {
+    const plan = (callId: string, planId: string) => ({
+      id: `msg-${callId}`,
+      role: 'assistant' as const,
+      parts: [planPart(callId, planId, 'awaiting_approval')],
+    });
+    appStore.set(syncMessagesWithStatusAtom, {
+      messages: [
+        plan('call-1', 'plan-1'),
+        {
+          id: 'approval',
+          role: 'user',
+          parts: [{ type: 'text', text: PLAN_APPROVAL_EXECUTION_TRIGGER_TEXT }],
+        },
+        plan('call-2', 'plan-2'),
+      ] as unknown as import('ai').UIMessage[],
+      status: 'ready',
+      subChatId: SUB,
+    });
+    const hidden = appStore.get(hiddenApprovalPlanIdsForSubChatAtomFamily(SUB));
+    expect([...hidden]).toEqual(['call-1']);
   });
 
   it('isolates state per sub-chat — approving in one sub-chat does not hide buttons in another', () => {

@@ -8,9 +8,10 @@ export type Attachment = Extract<MobileMessagePart, { type: 'attachment' }>;
 export type Group =
   | { type: 'text'; text: string }
   | { type: 'tools'; tools: Tool[] }
-  | { type: 'steer'; text: string };
+  | { type: 'steer'; text: string }
+  | Extract<MobileMessagePart, { type: 'plan' }>;
 
-/** A message's body in reading order: prose, runs of tool steps (merged), and steered notes. */
+/** A message's body in reading order: prose, runs of tool steps (merged), steered notes, plans. */
 export function contentGroups(message: MobileMessage): Group[] {
   const parts: MobileMessagePart[] = message.parts?.length
     ? message.parts
@@ -21,7 +22,8 @@ export function contentGroups(message: MobileMessage): Group[] {
     if (part.type === 'tool') {
       if (last?.type === 'tools') last.tools.push(part);
       else groups.push({ type: 'tools', tools: [part] });
-    } else if ((part.type === 'text' || part.type === 'steer') && part.text.trim())
+    } else if (part.type === 'plan') groups.push(part);
+    else if ((part.type === 'text' || part.type === 'steer') && part.text.trim())
       groups.push({ type: part.type, text: part.text });
   }
   return groups;
@@ -31,9 +33,11 @@ export function attachmentsOf(message: MobileMessage): Attachment[] {
   return (message.parts ?? []).filter((part): part is Attachment => part.type === 'attachment');
 }
 
-/** The prose a Copy action copies: every text group, never tool names or steers. */
+/** What a Copy action copies: the prose and plans, never tool names or steers. */
 export function copyText(groups: Group[]): string {
-  return groups.flatMap((group) => (group.type === 'text' ? [group.text] : [])).join('\n\n');
+  return groups
+    .flatMap((group) => (group.type === 'text' || group.type === 'plan' ? [group.text] : []))
+    .join('\n\n');
 }
 
 // Plain words for the tools a reader meets most; anything else keeps the name it was given.

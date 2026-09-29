@@ -214,6 +214,23 @@ export function hasCurrentUnapprovedPlan(
   return false;
 }
 
+/**
+ * The plan a chat's Approve acts on: the newest plan, still open for approval, with usable text.
+ * Null for a Flow run's plan, which the run approves itself (see {@link FrinkPlanData.flowDriven}).
+ */
+export function findApprovablePlan(
+  messages: PlanMessageLike[],
+  isPlanMode: boolean,
+): ApprovedPlanContext | null {
+  if (!hasCurrentUnapprovedPlan(messages, isPlanMode)) return null;
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index];
+    const found = message?.role === 'assistant' && findUnapprovedPlanPart(message.parts ?? []);
+    if (found) return found.flowDriven ? null : found.planContext;
+  }
+  return null;
+}
+
 export function isPlanApprovalTriggerText(text: string): boolean {
   const normalized = text.trim().toLowerCase();
   return normalized === PLAN_APPROVAL_EXECUTION_TRIGGER_TEXT.toLowerCase();
