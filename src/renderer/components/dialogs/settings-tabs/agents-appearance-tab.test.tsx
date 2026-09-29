@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import userEvent from '@testing-library/user-event';
 import { createStore, Provider } from 'jotai';
 import { ThemeProvider } from 'next-themes';
-import { Toaster } from 'sonner';
+import { toast, Toaster } from 'sonner';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { themeEditorDraftNameAtom, themeEditorSessionAtom } from '@/lib/themes/editor/editor-atoms';
 import { findTheme } from '@/lib/themes/palette/built-in-themes';
@@ -27,6 +27,7 @@ import { AgentsAppearanceTab } from './agents-appearance-tab';
 const STOCK = installStockSheet();
 afterEach(() => {
   cleanup();
+  toast.dismiss();
   Reflect.deleteProperty(document, 'startViewTransition');
   vi.restoreAllMocks();
   localStorage.clear();
