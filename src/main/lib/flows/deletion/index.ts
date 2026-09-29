@@ -58,7 +58,9 @@ async function deleteSettledFlow(
     for (const flowRunId of unsettledRunIds) await cancelRun(flowRunId);
 
     const flowRunIds = await listFlowRunIdsForFlow(db, flowId);
-    const result = await withFlowRunCancellations(flowRunIds, 0, () => hardDeleteFlow(db, flowId));
+    const result = await withFlowRunCancellations(flowRunIds, 0, async () =>
+      hardDeleteFlow(db, flowId),
+    );
     if (result.deleted) return result.taskLinks;
 
     unsettledRunIds = result.unsettledRunIds;

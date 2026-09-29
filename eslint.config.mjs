@@ -498,6 +498,28 @@ export default [
       ],
     },
   },
+  // Flow-run transitions are synchronous commands (flows/transitions/index.ts): they may use the
+  // admission store, never the controller, runtime or drain, whose methods await.
+  {
+    files: ['src/main/lib/flows/transitions/**/*.ts'],
+    ignores: ['**/*.{test,spec}.ts'],
+    languageOptions: { parser: tsParser, parserOptions: { sourceType: 'module' } },
+    linterOptions: { reportUnusedDisableDirectives: 'off' },
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              regex: '(^|/)admission(/(index|controller|runtime|drain))?$',
+              message:
+                'A transition must stay synchronous: import admission store functions, not the controller, runtime or drain.',
+            },
+          ],
+        },
+      ],
+    },
+  },
   // Node-builtin ban for the renderer (browser context). Bare `path` is
   // DELIBERATELY absent — vite aliases it to path-browserify for the renderer.
   {

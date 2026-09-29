@@ -594,12 +594,12 @@ const DELETABLE_STATUSES: TaskStatus[] = [
 ];
 
 /** `previous` is the exact row the cancel replaced (read in the same sync transaction). */
-export async function cancelTaskDetailed(
+export function cancelTaskDetailed(
   db: Db,
   taskId: string,
-): Promise<TaskMutationResult & { previous?: Task }> {
-  // Status-guarded UPDATE inside one synchronous transaction: nothing (recovery sweep, poller
-  // claim) can transition the row between reading the pre-image and the write.
+): TaskMutationResult & { previous?: Task } {
+  // Status-guarded UPDATE in one synchronous transaction (a savepoint inside a caller's): nothing
+  // (recovery sweep, poller claim) can move the row between reading the pre-image and the write.
   return db.transaction(() => {
     const previous = db.select().from(tasks).where(eq(tasks.id, taskId)).get() as Task | undefined;
     if (!previous) return { task: null, reason: 'not_found' as const };
