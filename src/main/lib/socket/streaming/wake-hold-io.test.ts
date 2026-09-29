@@ -92,6 +92,22 @@ describe('buildWakeHoldIo — setHeld frames', () => {
     const [frame] = sendWakeHoldChanged.mock.calls[0];
     expect(frame).toEqual({ chatId: 'c1', subChatId: 'sc1', held: false });
     expect('pending' in frame).toBe(false);
+    expect('endReason' in frame).toBe(false);
+  });
+
+  // The renderer holds a held turn's finish chime for this reason alone: a Stop or a follow-up
+  // adopting the hold also retracts, and neither is the work finishing.
+  it('names a retraction made because the wait ended on its own', () => {
+    const { io, sendWakeHoldChanged } = ioWithSpy();
+
+    io.setHeld(false, undefined, 'wait-over');
+
+    expect(sendWakeHoldChanged.mock.calls[0][0]).toStrictEqual({
+      chatId: 'c1',
+      subChatId: 'sc1',
+      held: false,
+      endReason: 'wait-over',
+    });
   });
 
   it('emits one epoch settlement when a durably finalized hold retracts', () => {

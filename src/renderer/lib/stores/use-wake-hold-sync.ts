@@ -1,7 +1,7 @@
 import * as Sentry from '@sentry/electron/renderer';
 import { useStore } from 'jotai';
 import { useEffect } from 'react';
-import type { WakeHoldState } from '../../../shared/types/wake-hold';
+import type { WakeHoldEndReason, WakeHoldState } from '../../../shared/types/wake-hold';
 import { trpcClient } from '../trpc';
 import { isDesktopApp } from '../utils/platform';
 import { wakeHeldAtomFamily } from './active-transport-registry';
@@ -14,8 +14,20 @@ const RETRY_DELAY_MS = 500;
  * on" as one value, with no branch for a held state that has nothing to show.
  */
 type WakeHoldPayload =
-  | { subChatId: string; held: false }
+  | { subChatId: string; held: false; endReason?: WakeHoldEndReason }
   | { subChatId: string; held: true; pending: WakeHoldState };
+
+/** Completion effects a held chat withheld at turn end. First writer wins: only a retraction clears
+ * an entry, so a second writer is a turn that never adopted the hold (e.g. a failed send). */
+const deferredAnnounce = new Map<string, () => void>();
+
+/**
+ * Run `fire` when this sub-chat's wait ends on its own. Any other retraction (Stop, a follow-up
+ * adopting the hold, release) drops it unfired.
+ */
+export function deferUntilWaitOver(subChatId: string, fire: () => void): void {
+  if (!deferredAnnounce.has(subChatId)) deferredAnnounce.set(subChatId, fire);
+}
 
 /**
  * Validated to the depth the row renders. A hold is only ever armed with at least one pending item,
@@ -70,6 +82,10 @@ export function useWakeHoldSync(): void {
       if (!isWakeHoldPayload(data)) return;
       spokenFor.add(data.subChatId);
       store.set(wakeHeldAtomFamily(data.subChatId), data.held ? data.pending : null);
+      if (data.held) return;
+      const fire = deferredAnnounce.get(data.subChatId);
+      deferredAnnounce.delete(data.subChatId);
+      if (fire && data.endReason === 'wait-over') fire();
     });
 
     // Pull once; on rejection, wait and retry exactly once more; then give up. Local IPC never

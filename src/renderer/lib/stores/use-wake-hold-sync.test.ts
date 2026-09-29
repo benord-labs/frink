@@ -11,7 +11,12 @@ import { act, renderHook } from '@testing-library/react';
 import { getDefaultStore } from 'jotai';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { wakeHeldAtomFamily } from './active-transport-registry';
-import { isWakeHoldPayload, isWakeHoldState, useWakeHoldSync } from './use-wake-hold-sync';
+import {
+  deferUntilWaitOver,
+  isWakeHoldPayload,
+  isWakeHoldState,
+  useWakeHoldSync,
+} from './use-wake-hold-sync';
 
 const queryWakeHolds = vi.hoisted(() => vi.fn());
 const captureException = vi.hoisted(() => vi.fn());
@@ -288,5 +293,58 @@ describe('useWakeHoldSync — a snapshot outliving its own effect', () => {
     });
 
     expect(captureException).not.toHaveBeenCalled();
+  });
+});
+
+// A held chat's finish chime waits for the wait to end on its own. Every other retraction (Stop, a
+// follow-up adopting the hold) means the work did not finish, so the chime is dropped unplayed.
+describe('deferUntilWaitOver', () => {
+  let emit: (data: unknown) => void = () => {};
+  const HELD = { held: true, pending: { waitingOn: ['Monitor'] } };
+
+  beforeEach(() => {
+    queryWakeHolds.mockReset().mockResolvedValue([]);
+    (window as unknown as { desktopApi: unknown }).desktopApi = {
+      on: (_channel: string, callback: (data: unknown) => void) => {
+        emit = callback;
+        return () => {};
+      },
+    };
+    renderHook(() => useWakeHoldSync());
+  });
+
+  it('fires exactly once when the wait ends on its own', () => {
+    const fire = vi.fn();
+    deferUntilWaitOver('dw1', fire);
+    act(() => emit({ subChatId: 'dw1', held: false, endReason: 'wait-over' }));
+    act(() => emit({ subChatId: 'dw1', held: false, endReason: 'wait-over' }));
+    expect(fire).toHaveBeenCalledOnce();
+  });
+
+  it('drops the callback unfired on a retraction with no reason', () => {
+    const fire = vi.fn();
+    deferUntilWaitOver('dw2', fire);
+    act(() => emit({ subChatId: 'dw2', held: false }));
+    act(() => emit({ subChatId: 'dw2', held: false, endReason: 'wait-over' }));
+    expect(fire).not.toHaveBeenCalled();
+  });
+
+  it('keeps the callback pending across a held:true re-publish', () => {
+    const fire = vi.fn();
+    deferUntilWaitOver('dw3', fire);
+    act(() => emit({ subChatId: 'dw3', ...HELD }));
+    expect(fire).not.toHaveBeenCalled();
+    act(() => emit({ subChatId: 'dw3', held: false, endReason: 'wait-over' }));
+    expect(fire).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the first callback for a sub-chat, so a later non-adopting turn cannot replace it', () => {
+    const first = vi.fn();
+    const second = vi.fn();
+    deferUntilWaitOver('dw4', first);
+    deferUntilWaitOver('dw4', second);
+    act(() => emit({ subChatId: 'dw4', held: false, endReason: 'wait-over' }));
+    expect(first).toHaveBeenCalledOnce();
+    expect(second).not.toHaveBeenCalled();
   });
 });
