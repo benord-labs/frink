@@ -189,6 +189,8 @@ export type TaskStopHook = ((input: StopHookInput) => Promise<StopHookResult>) &
   lastPendingWork: StopPendingWork | null;
   /** The last Stop dropped a finished follower that is still running: only the CLI's EOF ends it. */
   droppedFollower?: boolean;
+  /** A Stop ran since the hook was built or last reset, so its snapshot is the current turn's. */
+  stoppedSinceReset?: boolean;
 };
 
 export function createTaskStopHook(opts: TaskStopHookOpts): TaskStopHook {
@@ -203,6 +205,7 @@ export function createTaskStopHook(opts: TaskStopHookOpts): TaskStopHook {
   };
 
   const hook = (async (input: StopHookInput): Promise<StopHookResult> => {
+    hook.stoppedSinceReset = true;
     hook.lastPendingWork = readPendingWork(input);
     hook.droppedFollower =
       (input.background_tasks?.length ?? 0) > (hook.lastPendingWork?.backgroundTasks.length ?? 0);
@@ -244,6 +247,7 @@ export function createTaskStopHook(opts: TaskStopHookOpts): TaskStopHook {
     retries = 0;
     hook.lastPendingWork = null;
     hook.droppedFollower = false;
+    hook.stoppedSinceReset = false;
   };
   return hook;
 }

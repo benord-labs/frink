@@ -2,8 +2,8 @@ import type { BackgroundTaskSummary, SessionCronSummary } from '@anthropic-ai/cl
 import log from 'electron-log';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as sentry from '../../sentry/init';
-import type { StopPendingWork } from '../../task-stop-hook';
-import { logDisposedPendingWork, logDroppedPendingWork } from './wake-hold-signal';
+import type { StopPendingWork, TaskStopHook } from '../../task-stop-hook';
+import { logAdoptedTurnEnd, logDroppedPendingWork, turnEndMustDispose } from './wake-hold-signal';
 
 const shellTask: BackgroundTaskSummary = {
   id: 't1',
@@ -23,10 +23,12 @@ const pendingWork: StopPendingWork = { backgroundTasks: [shellTask], sessionCron
 // Spies, not module mocks: vitest.setup.ts already replaces both modules with noops, so these only
 // record what a teardown reported.
 let warn: ReturnType<typeof vi.spyOn>;
+let info: ReturnType<typeof vi.spyOn>;
 let alert: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   warn = vi.spyOn(log, 'warn');
+  info = vi.spyOn(log, 'info');
   alert = vi.spyOn(sentry, 'captureMainMessage');
 });
 
@@ -100,11 +102,32 @@ describe('logDroppedPendingWork', () => {
   });
 });
 
-describe('logDisposedPendingWork', () => {
+type Gate = { aborted?: boolean; planHalted?: boolean; killed?: boolean; busy?: boolean };
+
+/** Ends `turn` through the gate on a session whose Stop hook last reported `work`. */
+function endTurn(
+  work: StopPendingWork | null,
+  { aborted, planHalted, killed, busy }: Gate = {},
+  turn: { adoptedHold?: boolean } = {},
+  stoppedSinceReset = true,
+): boolean {
+  const controller = new AbortController();
+  if (aborted) controller.abort();
+  const stopHook = { lastPendingWork: work, stoppedSinceReset } as unknown as TaskStopHook;
+  const session = { stopHook, queue: { closed: !!killed }, busy: !!busy };
+  return turnEndMustDispose(
+    'c6',
+    session as Parameters<typeof turnEndMustDispose>[1],
+    Object.assign(turn, { planSubmissionHalt: () => !!planHalted }),
+    controller.signal,
+  );
+}
+
+describe('turnEndMustDispose', () => {
   it('names the gate branch that fired', () => {
-    logDisposedPendingWork('c6', pendingWork, { aborted: false, planHalted: true, killed: false });
-    logDisposedPendingWork('c6', pendingWork, { aborted: false, planHalted: false, killed: true });
-    logDisposedPendingWork('c6', pendingWork, { aborted: false, planHalted: false, killed: false });
+    expect(endTurn(pendingWork, { planHalted: true })).toBe(true);
+    expect(endTurn(pendingWork, { killed: true })).toBe(true);
+    expect(endTurn(pendingWork, { busy: true })).toBe(true);
 
     expect(warn).toHaveBeenNthCalledWith(1, expect.stringContaining('(plan submitted)'));
     expect(warn).toHaveBeenNthCalledWith(2, expect.stringContaining('(question-park kill)'));
@@ -113,9 +136,38 @@ describe('logDisposedPendingWork', () => {
   });
 
   it("keeps the user's own stop out of Sentry", () => {
-    logDisposedPendingWork('c7', pendingWork, { aborted: true, planHalted: false, killed: false });
+    expect(endTurn(pendingWork, { aborted: true })).toBe(true);
 
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('(aborted)'));
     expect(alert).not.toHaveBeenCalled();
+  });
+
+  it('keeps an ordinary turn silent unless it drops work', () => {
+    expect(endTurn(pendingWork)).toBe(false);
+    expect(endTurn(null)).toBe(false);
+
+    expect(info).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it.each<[string, StopPendingWork | null, Gate, boolean]>([
+    [
+      're-armed (Command, Scheduled wake)',
+      { backgroundTasks: [shellTask], sessionCrons: [cron] },
+      {},
+      true,
+    ],
+    ['not re-armed (no pending work)', null, {}, true],
+    ['not re-armed (no Stop snapshot)', null, {}, false],
+    ['disposed (plan submitted)', pendingWork, { planHalted: true }, true],
+  ])('logs an adopted turn once: %s', (disposition, work, gate, stopped) => {
+    const turn = { adoptedHold: true };
+    endTurn(work, gate, turn, stopped);
+    logAdoptedTurnEnd(turn, 'c6', 'failed');
+
+    expect(info).toHaveBeenCalledTimes(1);
+    expect(info).toHaveBeenCalledWith(
+      `[Socket Executor] Adopted turn ended for c6: ${disposition}`,
+    );
   });
 });
