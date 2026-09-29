@@ -69,3 +69,30 @@ describe('TRPCProvider — unified client invariant', () => {
     expect(etrpc.onMessage).toHaveBeenCalledTimes(1);
   });
 });
+
+// sc-2721: the default structural sharing re-minted every Date-bearing payload on each identical
+// refetch, which re-rendered every sidebar row through the handlers keyed on projects.list.
+describe('TRPCProvider — query client sharing', () => {
+  afterEach(() => {
+    cleanup();
+    delete (globalThis as unknown as { electronTRPC?: unknown }).electronTRPC;
+  });
+
+  it('keeps the cached reference when an identical Date-bearing payload lands again', async () => {
+    installElectronTRPCMock();
+    const { TRPCProvider, getQueryClient } = await import('./TRPCProvider');
+    render(
+      <TRPCProvider>
+        <div />
+      </TRPCProvider>,
+    );
+    const client = getQueryClient();
+    const key = [['projects', 'list'], { type: 'query' }];
+    const payload = () => [{ id: 'p1', name: 'repo', createdAt: new Date('2026-09-01') }];
+
+    const first = client?.setQueryData(key, payload());
+    const second = client?.setQueryData(key, payload());
+
+    expect(second).toBe(first);
+  });
+});

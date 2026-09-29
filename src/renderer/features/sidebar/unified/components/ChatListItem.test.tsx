@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 import { cleanup, render, screen } from '@testing-library/react';
+import type { ComponentProps } from 'react';
 import type { ReactNode } from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatItem } from '../types';
 import { ChatListItem } from './ChatListItem';
 
@@ -17,10 +18,16 @@ vi.mock('../../../../components/ui/dropdown-menu', () => ({
   DropdownMenuTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 
+/** Row render tally: the chat-name tooltip is the only one whose content is the bare display name. */
+const rowRenders = vi.hoisted(() => new Map<string, number>());
+
 vi.mock('../../../../components/ui/tooltip', () => ({
   Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
   TooltipTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
-  TooltipContent: ({ children }: { children: ReactNode }) => <>{children}</>,
+  TooltipContent: ({ children }: { children: ReactNode }) => {
+    if (typeof children === 'string') rowRenders.set(children, (rowRenders.get(children) ?? 0) + 1);
+    return <>{children}</>;
+  },
 }));
 
 vi.mock('@/lib/pane-colors', () => ({
@@ -634,5 +641,147 @@ describe('ChatListItem', () => {
       // formatShortTimeAgo(~2h ago) -> "2h"; the span sits in the DOM, revealed via group-hover/focus.
       expect(container.textContent).toContain('2h');
     });
+  });
+});
+
+/**
+ * The row is memoized structurally (sc-2721) so poll/stream ticks that re-mint an unchanged chat stop
+ * re-rendering it. The risk that buys is the memo swallowing a REAL change — these pin both halves.
+ */
+describe('ChatListItem memo boundary', () => {
+  type RowProps = ComponentProps<typeof ChatListItem>;
+  const onClick = vi.fn();
+  const base = (overrides: Partial<RowProps> = {}): RowProps => ({
+    chat: makeChatItem({ name: 'Row' }),
+    isSelected: false,
+    onClick,
+    ...overrides,
+  });
+
+  beforeEach(() => rowRenders.clear());
+
+  it('does not re-render for a re-minted chat with identical fields and dates', () => {
+    const { rerender } = render(<ChatListItem {...base()} />);
+    rerender(<ChatListItem {...base({ chat: makeChatItem({ name: 'Row' }) })} />);
+    rerender(<ChatListItem {...base({ chat: makeChatItem({ name: 'Row' }) })} />);
+    expect(rowRenders.get('Row')).toBe(1);
+  });
+
+  it('does not re-render for a re-minted reason with the same text', () => {
+    const { rerender } = render(<ChatListItem {...base({ reason: { summary: 's' } })} />);
+    rerender(<ChatListItem {...base({ reason: { summary: 's' } })} />);
+    expect(rowRenders.get('Row')).toBe(1);
+  });
+
+  const realChanges: [string, Partial<RowProps>][] = [
+    ['isLoading', { chat: makeChatItem({ name: 'Row', isLoading: true }) }],
+    ['hasPendingPlan', { chat: makeChatItem({ name: 'Row', hasPendingPlan: true }) }],
+    ['hasPendingQuestion', { chat: makeChatItem({ name: 'Row', hasPendingQuestion: true }) }],
+    ['hasUnseenChanges', { chat: makeChatItem({ name: 'Row', hasUnseenChanges: true }) }],
+    ['isWorktree', { chat: makeChatItem({ name: 'Row', isWorktree: true }) }],
+    ['taskId', { chat: makeChatItem({ name: 'Row', taskId: 't' }) }],
+    ['updatedAt', { chat: makeChatItem({ name: 'Row', updatedAt: new Date('2025-06-02') }) }],
+    ['updatedAt → null', { chat: makeChatItem({ name: 'Row', updatedAt: null }) }],
+    ['pinnedAt', { chat: makeChatItem({ name: 'Row', pinnedAt: new Date('2025-06-02') }) }],
+    ['isSelected', { isSelected: true }],
+    ['isMultiSelected', { isMultiSelected: true }],
+    ['isPinned', { isPinned: true }],
+    ['taskStatus', { taskStatus: 'running' }],
+    ['reason text', { reason: { summary: 'changed' } }],
+    ['splitPaneIndex', { splitPaneIndex: 1 }],
+    ['canOpenInNewPane', { canOpenInNewPane: false }],
+    ['depth', { depth: 0 }],
+    ['onClick identity', { onClick: vi.fn() }],
+    ['onRename identity', { onRename: vi.fn() }],
+  ];
+
+  it.each(realChanges)('re-renders when %s changes', (_label, change) => {
+    const { rerender } = render(<ChatListItem {...base()} />);
+    rerender(<ChatListItem {...base(change)} />);
+    expect(rowRenders.get('Row')).toBe(2);
+  });
+
+  it('re-renders on a chat rename and shows the new name', () => {
+    const { rerender } = render(<ChatListItem {...base()} />);
+    rerender(<ChatListItem {...base({ chat: makeChatItem({ name: 'Renamed' }) })} />);
+    expect(screen.getAllByText('Renamed').length).toBeGreaterThan(0);
+  });
+
+  it('Rename hands the handler the CURRENT chat after it was renamed (no stale menu)', () => {
+    const onRename = vi.fn();
+    const { rerender } = render(<ChatListItem {...base({ onRename })} />);
+    rerender(<ChatListItem {...base({ onRename, chat: makeChatItem({ name: 'Renamed' }) })} />);
+
+    screen.getByText('Rename').click();
+
+    expect(onRename).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'chat-1', name: 'Renamed' }),
+    );
+  });
+
+  it('Rename hands over the latest chat even after a stream tick the menu skipped', () => {
+    const onRename = vi.fn();
+    const { rerender } = render(<ChatListItem {...base({ onRename })} />);
+    const streaming = makeChatItem({ name: 'Row', isLoading: true, hasUnseenChanges: true });
+    rerender(<ChatListItem {...base({ onRename, chat: streaming })} />);
+
+    screen.getByText('Rename').click();
+
+    expect(onRename).toHaveBeenCalledWith(streaming);
+  });
+
+  it('Rename on an untitled chat passes a null name, not the placeholder text', () => {
+    const onRename = vi.fn();
+    render(<ChatListItem {...base({ onRename, chat: makeChatItem({ name: null }) })} />);
+
+    screen.getByText('Rename').click();
+
+    expect(onRename).toHaveBeenCalledWith(expect.objectContaining({ id: 'chat-1', name: null }));
+  });
+
+  it('flips the Pin label when the chat becomes pinned on a later render', () => {
+    const onPin = vi.fn();
+    const { rerender } = render(<ChatListItem {...base({ onPin })} />);
+    expect(screen.getByText('Pin chat')).toBeTruthy();
+
+    rerender(<ChatListItem {...base({ onPin, isPinned: true })} />);
+
+    expect(screen.getByText('Unpin chat')).toBeTruthy();
+    expect(screen.queryByText('Pin chat')).toBeNull();
+  });
+
+  it('surfaces "Mark complete" when a running task finishes on a later render', () => {
+    markTaskCompleteMock.mockReset();
+    const chat = makeChatItem({ name: 'Row', taskId: 'task-9' });
+    const { rerender } = render(
+      <ChatListItem {...base({ chat, onRename: vi.fn(), taskStatus: 'running' })} />,
+    );
+    expect(screen.queryByText('Mark complete')).toBeNull();
+
+    rerender(<ChatListItem {...base({ chat, onRename: vi.fn(), taskStatus: 'done' })} />);
+    screen.getByText('Mark complete').click();
+
+    expect(markTaskCompleteMock).toHaveBeenCalledWith('task-9');
+  });
+
+  it('hides "Open in New Pane" once the row becomes the selection, and restores it after', () => {
+    const onOpenInNewPane = vi.fn();
+    const props = { onOpenInNewPane, canOpenInNewPane: true };
+    const { rerender } = render(<ChatListItem {...base(props)} />);
+    expect(screen.getByText('Open in New Pane')).toBeTruthy();
+
+    rerender(<ChatListItem {...base({ ...props, isSelected: true })} />);
+    expect(screen.queryByText('Open in New Pane')).toBeNull();
+
+    rerender(<ChatListItem {...base({ ...props, isSelected: false })} />);
+    screen.getByText('Open in New Pane').click();
+    expect(onOpenInNewPane).toHaveBeenCalledWith('chat-1');
+  });
+
+  it('hides "Open in New Pane" for a chat moved into pane index 0 (a falsy but real index)', () => {
+    const props = { onOpenInNewPane: vi.fn(), canOpenInNewPane: true };
+    const { rerender } = render(<ChatListItem {...base(props)} />);
+    rerender(<ChatListItem {...base({ ...props, splitPaneIndex: 0 })} />);
+    expect(screen.queryByText('Open in New Pane')).toBeNull();
   });
 });
