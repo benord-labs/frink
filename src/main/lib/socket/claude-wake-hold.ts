@@ -124,9 +124,9 @@ function retractHold(hold: WakeHold, endReason?: WakeHoldEndReason): void {
 }
 
 /** Evict a hold and retract the wait. */
-function dropHold(subChatId: string, hold: WakeHold): void {
+function dropHold(subChatId: string, hold: WakeHold, endReason?: WakeHoldEndReason): void {
   activeWakeHolds.delete(subChatId);
-  retractHold(hold);
+  retractHold(hold, endReason);
 }
 
 /** With a session, true only for THAT session's hold: a retracted-but-unsettled hold from a
@@ -190,7 +190,7 @@ export function takeWakeHold(
   }
   // The adopting turn runs in the foreground — the chat is executing, no longer waiting. If that
   // turn also ends with pending work it arms a fresh hold and re-advertises.
-  dropHold(subChatId, hold);
+  dropHold(subChatId, hold, 'adopted');
   // A question held into this wait is superseded by the reply that adopted it. The pump exits
   // 'turn-taken-over' (disposal's clear never runs) and a held chat has no activeExecutions entry
   // (the new execute's supersede clear never fires), so this is the only seam that can emit the

@@ -4,7 +4,11 @@ import { useEffect } from 'react';
 import type { WakeHoldEndReason, WakeHoldState } from '../../../shared/types/wake-hold';
 import { trpcClient } from '../trpc';
 import { isDesktopApp } from '../utils/platform';
-import { heldSubChatsAtom, wakeHeldAtomFamily } from './active-transport-registry';
+import {
+  heldSubChatsAtom,
+  wakeHeldAtomFamily,
+  wakeHoldAdoptedAtomFamily,
+} from './active-transport-registry';
 
 const RETRY_DELAY_MS = 500;
 
@@ -100,6 +104,10 @@ export function useWakeHoldSync(): void {
       if (!isWakeHoldPayload(data)) return;
       spokenFor.add(data.subChatId);
       applyWakeHold(store, data.subChatId, data.chatId, data.held ? data.pending : null);
+      store.set(
+        wakeHoldAdoptedAtomFamily(data.subChatId),
+        !data.held && data.endReason === 'adopted',
+      );
       if (data.held) return;
       const fire = deferredAnnounce.get(data.subChatId);
       deferredAnnounce.delete(data.subChatId);

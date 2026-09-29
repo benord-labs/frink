@@ -69,6 +69,21 @@ export type CodeSelectionContext = {
   createdAt: Date;
 };
 
+export function codeSelectionContextPropsEqual(
+  a: CodeSelectionContext | null | undefined,
+  b: CodeSelectionContext | null | undefined,
+): boolean {
+  if (a == null && b == null) return true;
+  if (a == null || b == null) return false;
+  return (
+    a.id === b.id &&
+    a.filePath === b.filePath &&
+    a.startLine === b.startLine &&
+    a.endLine === b.endLine &&
+    a.text === b.text
+  );
+}
+
 // Large paste saved to the session's pasted/ dir; drained as a `pasted:` mention.
 type QueuedPastedText = {
   id: string;

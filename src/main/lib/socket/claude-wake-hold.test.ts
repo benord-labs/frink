@@ -1098,7 +1098,7 @@ describe('claude-wake-hold — held-state publication', () => {
     // The adopting turn runs in the foreground — executing, not waiting.
     expect(takeWakeHold('h3')).toBeDefined();
     expect(heldCalls(io)).toEqual([true, false]);
-    expect(io.setHeld).toHaveBeenLastCalledWith(false, undefined, undefined);
+    expect(io.setHeld).toHaveBeenLastCalledWith(false, undefined, 'adopted');
     ch.end();
   });
 

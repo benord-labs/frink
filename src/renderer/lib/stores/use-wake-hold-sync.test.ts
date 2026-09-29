@@ -10,7 +10,12 @@
 import { act, renderHook } from '@testing-library/react';
 import { getDefaultStore } from 'jotai';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { heldChatIdsAtom, heldSubChatsAtom, wakeHeldAtomFamily } from './active-transport-registry';
+import {
+  heldChatIdsAtom,
+  heldSubChatsAtom,
+  wakeHeldAtomFamily,
+  wakeHoldAdoptedAtomFamily,
+} from './active-transport-registry';
 import {
   deferUntilWaitOver,
   isWakeHoldPayload,
@@ -386,7 +391,7 @@ describe('useWakeHoldSync — the chat-level held map', () => {
 
 // A held chat's finish chime waits for the wait to end on its own. Every other retraction (Stop, a
 // follow-up adopting the hold) means the work did not finish, so the chime is dropped unplayed.
-describe('deferUntilWaitOver', () => {
+describe('deferUntilWaitOver and the adopted-hold flag', () => {
   let emit: (data: unknown) => void = () => {};
   const HELD = { held: true, pending: { waitingOn: ['Monitor'] } };
 
@@ -434,5 +439,26 @@ describe('deferUntilWaitOver', () => {
     act(() => emit({ chatId: 'c1', subChatId: 'dw4', held: false, endReason: 'wait-over' }));
     expect(first).toHaveBeenCalledOnce();
     expect(second).not.toHaveBeenCalled();
+  });
+
+  it('drops the callback unfired when a follow-up adopts the hold', () => {
+    const fire = vi.fn();
+    deferUntilWaitOver('dw5', fire);
+    act(() => emit({ chatId: 'c1', subChatId: 'dw5', held: false, endReason: 'adopted' }));
+    expect(fire).not.toHaveBeenCalled();
+  });
+
+  // The composer Stop warns that it also ends background work only while the adopting turn runs.
+  it('flags an adopted hold until the sub-chat next hears from its wake hold', () => {
+    const adopted = () => getDefaultStore().get(wakeHoldAdoptedAtomFamily('ad1'));
+    act(() => emit({ chatId: 'c1', subChatId: 'ad1', ...HELD }));
+    expect(adopted()).toBe(false);
+    act(() => emit({ chatId: 'c1', subChatId: 'ad1', held: false, endReason: 'adopted' }));
+    expect(adopted()).toBe(true);
+    act(() => emit({ chatId: 'c1', subChatId: 'ad1', ...HELD }));
+    expect(adopted()).toBe(false);
+    act(() => emit({ chatId: 'c1', subChatId: 'ad1', held: false, endReason: 'adopted' }));
+    act(() => emit({ chatId: 'c1', subChatId: 'ad1', held: false }));
+    expect(adopted()).toBe(false);
   });
 });

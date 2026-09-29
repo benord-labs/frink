@@ -22,7 +22,10 @@ import type { ChatMode } from '../../../../shared/types/chat-mode';
 import { soundNotificationsEnabledAtom } from '../../../lib/atoms';
 import { playSound } from '../../../lib/audio/play-chime';
 import { appStore } from '../../../lib/jotai-store';
-import { wakeHeldAtomFamily } from '../../../lib/stores/active-transport-registry';
+import {
+  wakeHeldAtomFamily,
+  wakeHoldAdoptedAtomFamily,
+} from '../../../lib/stores/active-transport-registry';
 import { deferUntilWaitOver } from '../../../lib/stores/use-wake-hold-sync';
 import { isDesktopApp } from '../../../lib/utils/platform';
 import { notifySidebarChatActivity } from '../../sidebar/unified/sidebar-chat-activity';
@@ -165,6 +168,7 @@ export function createAgentChat(params: CreateAgentChatParams): Chat<UIMessage> 
       if (agentChatStore.wasTornDown(chat)) return;
       const turnErrored = erroredChats.delete(chat);
       clearLoadingViaStore(subChatId);
+      appStore.set(wakeHoldAdoptedAtomFamily(subChatId), false);
       // Sync status to global store for queue processing (even when component unmounted).
       useStreamingStatusStore.getState().setStatus(subChatId, 'ready');
 

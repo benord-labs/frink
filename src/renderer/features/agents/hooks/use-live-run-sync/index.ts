@@ -5,6 +5,7 @@ import {
   observedRunAtomFamily,
   runLiveAtomFamily,
   runSettlingAtomFamily,
+  wakeHoldAdoptedAtomFamily,
 } from '../../../../lib/stores/active-transport-registry';
 import { type LiveRunSocketClient, startLiveRunSync } from '../../../../lib/stores/live-run-sync';
 import {
@@ -25,6 +26,8 @@ function publishLiveRunState(subChatId: string, live: boolean, settling: boolean
     appStore.set(observedRunAtomFamily(subChatId), false);
     return;
   }
+  // An observed turn has no local onFinish, so its adopted-hold Stop warning ends here.
+  if (!live) appStore.set(wakeHoldAdoptedAtomFamily(subChatId), false);
   appStore.set(observedRunAtomFamily(subChatId), live);
   useStreamingStatusStore.getState().setStatus(subChatId, live ? 'streaming' : 'ready');
 }

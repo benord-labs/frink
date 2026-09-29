@@ -25,6 +25,7 @@ import {
   agentsSettingsDialogOpenAtom,
   hiddenModelsAtom,
 } from '../../../lib/atoms';
+import { wakeHoldAdoptedAtomFamily } from '../../../lib/stores/active-transport-registry';
 import { trpc } from '../../../lib/trpc';
 import { cn } from '../../../lib/utils';
 import { runChatShortcutAction } from '../../../lib/work-queue/chat-owns-keyboard-shortcuts';
@@ -48,7 +49,11 @@ import { useModelNormalization } from '../hooks/use-model-normalization';
 import type { PastedTextFile } from '../hooks/use-pasted-text-files';
 import { useTaskAttachment } from '../hooks/use-task-attachment';
 import { useComposerDraft } from '../lib/composer-draft';
-import type { CodeSelectionContext, DiffTextContext } from '../lib/queue-utils';
+import {
+  type CodeSelectionContext,
+  codeSelectionContextPropsEqual,
+  type DiffTextContext,
+} from '../lib/queue-utils';
 import { AgentsFileMention, AgentsMentionsEditor, type FileMentionOption } from '../mentions';
 import { AgentContextIndicator, messageTokenDataEqual } from '../ui/agent-context-indicator';
 import { AgentDiffTextContextItem } from '../ui/agent-diff-text-context-item';
@@ -113,21 +118,6 @@ type ChatInputAreaProps = ComposerForwardedProps & {
   // Callback to notify parent when input has content (for custom text with questions)
   onInputContentChange?: (hasContent: boolean) => void;
 };
-
-function codeSelectionContextPropsEqual(
-  a: CodeSelectionContext | null | undefined,
-  b: CodeSelectionContext | null | undefined,
-): boolean {
-  if (a == null && b == null) return true;
-  if (a == null || b == null) return false;
-  return (
-    a.id === b.id &&
-    a.filePath === b.filePath &&
-    a.startLine === b.startLine &&
-    a.endLine === b.endLine &&
-    a.text === b.text
-  );
-}
 
 /**
  * Custom comparison for memo to prevent re-renders from unstable array references.
@@ -410,6 +400,7 @@ export const ChatInputArea = memo(function ChatInputArea({
     );
   const isCodexAccount = resolvedAccount?.type === 'codex';
   const composerPlaceholder = useComposerPlaceholder(parentChatId, subChatId, isStreaming);
+  const stopEndsBackgroundWork = useAtomValue(wakeHoldAdoptedAtomFamily(subChatId));
   const { chatMode, commitModeChange } = useChatMode(subChatId, parentChatId);
 
   // Refs for draft saving
@@ -946,6 +937,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                   <div className="ml-1">
                     <AgentSendButton
                       isStreaming={isStreaming}
+                      stopEndsBackgroundWork={stopEndsBackgroundWork}
                       isSubmitting={false}
                       disabled={
                         (!hasContent &&
