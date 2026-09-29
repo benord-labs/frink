@@ -77,4 +77,27 @@ describe('EmailTriggerContentDialog', () => {
     expect(screen.queryByRole('tab', { name: RENDERED_TAB_REGEX })).not.toBeInTheDocument();
     expect(screen.getByText(PLAIN_BODY_REGEX)).toBeInTheDocument();
   });
+
+  // Inbound email HTML is attacker-controlled. The iframe is sandboxed as well; the sanitiser is
+  // the layer that must still hold if that attribute is ever loosened.
+  it('sanitises hostile email html before it reaches the rendered frame', () => {
+    const baseContext = createGmailContext();
+    const context = {
+      ...baseContext,
+      fullContent: {
+        ...baseContext.fullContent,
+        body:
+          '<p>Hello <b>team</b></p><script>alert(1)</script><img src=x onerror="alert(2)">' +
+          '<a href="javascript:alert(3)">click</a><iframe src="https://evil.example"></iframe>',
+      },
+    };
+
+    render(<EmailTriggerContentDialog open onOpenChange={vi.fn()} triggerContext={context} />);
+
+    const frame = screen.getByTitle(RENDERED_EMAIL_REGEX);
+    const srcDoc = frame.getAttribute('srcdoc') ?? '';
+    expect(frame).toHaveAttribute('sandbox', '');
+    expect(srcDoc).toContain('<p>Hello <b>team</b></p>');
+    expect(srcDoc).not.toMatch(/<script|onerror|javascript:|evil\.example/i);
+  });
 });
