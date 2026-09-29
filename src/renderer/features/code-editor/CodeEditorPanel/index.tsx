@@ -46,19 +46,15 @@ import {
   isInlineDiffToggleShortcut,
   shouldAutoEnableInlineDiff,
 } from '@/lib/code-editor/inline-diff';
-import {
-  getLSPClient,
-  isLanguageSupported,
-  registerAliasDefinitionProvider,
-} from '@/lib/code-editor/lsp';
+import { registerAliasDefinitionProvider } from '@/lib/code-editor/lsp';
 import {
   acquireTypes,
   clearProjectTypes,
   configureMonacoForNodeScripts,
-  disableBuiltinTsDiagnostics,
   disposeATA,
   getMonacoNavigationOptions,
   initializeATA,
+  limitTsDiagnosticsToSyntax,
   loadProjectTypes,
   useMonacoTheme,
 } from '@/lib/code-editor/monaco';
@@ -1190,26 +1186,6 @@ export function CodeEditorPanel() {
     };
   }, [projectPath, isMonacoReady]);
 
-  // Initialize LSP client when language/workspace changes
-  useEffect(() => {
-    const lspClient = getLSPClient();
-    const language = activeFile?.language;
-    const monaco = monacoRef.current;
-
-    // Try to initialize LSP for real diagnostics (from language server)
-    // Note: Built-in diagnostics are already disabled in beforeMount
-    if (projectPath && language && monaco && isLanguageSupported(language)) {
-      lspClient.initialize(monaco, projectPath, language).catch(() => {});
-    }
-
-    // Cleanup on unmount
-    return () => {
-      if (lspClient.isRunning()) {
-        lspClient.stop().catch((_error) => {});
-      }
-    };
-  }, [projectPath, activeFile?.language]);
-
   // Cleanup ATA on unmount
   useEffect(() => {
     return () => {
@@ -1980,9 +1956,8 @@ export function CodeEditorPanel() {
                     onChange={handleEditorChange}
                     beforeMount={(monaco) => {
                       monacoRef.current = monaco;
-                      // CRITICAL: Disable built-in diagnostics BEFORE Monaco processes files
-                      // This must happen in beforeMount, not in useEffect
-                      disableBuiltinTsDiagnostics(monaco);
+                      // Must run in beforeMount, before Monaco processes files
+                      limitTsDiagnosticsToSyntax(monaco);
                       configureMonacoForNodeScripts(monaco);
                       // Initialize TypeScript ATA (Automatic Type Acquisition)
                       // Uses official @typescript/ata to fetch types from jsdelivr

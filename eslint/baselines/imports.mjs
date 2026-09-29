@@ -697,14 +697,6 @@ export const rendererImportWallBaseline = [
     ]
   },
   {
-    "name": "grandfather:src/renderer/lib/code-editor/lsp/lsp-client.ts",
-    "pattern": "src/renderer/lib/code-editor/lsp/lsp-client.ts",
-    "allowImportsFrom": [
-      "{renderer_base}",
-      "src/main/**"
-    ]
-  },
-  {
     "name": "grandfather:src/renderer/lib/code-editor/state/atoms.ts",
     "pattern": "src/renderer/lib/code-editor/state/atoms.ts",
     "allowImportsFrom": [

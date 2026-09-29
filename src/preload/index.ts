@@ -1,7 +1,6 @@
 /* eslint-disable max-lines, max-lines-per-function */
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { exposeElectronTRPC } from 'trpc-electron/main';
-import { LSP_CHANNELS } from '../shared/lsp-channels';
 import type { ShellOpenExternalResult } from '../shared/shell-external-url';
 import type { TranscriptTerminalDurability } from '../shared/types/assistant-message';
 import type { ChatMode } from '../shared/types/chat-mode';
@@ -588,50 +587,6 @@ contextBridge.exposeInMainWorld('desktopApi', {
     ipcRenderer.on(channel, handler);
     return () => ipcRenderer.removeListener(channel, handler);
   },
-
-  // LSP (Language Server Protocol)
-  lsp: {
-    startServer: (params: { workspacePath: string; language: string }) =>
-      ipcRenderer.invoke(LSP_CHANNELS.START_SERVER, params),
-    stopServer: (params: { workspacePath: string; language: string }) =>
-      ipcRenderer.invoke(LSP_CHANNELS.STOP_SERVER, params),
-    sendMessage: (params: { workspacePath: string; language: string; message: string }) =>
-      ipcRenderer.invoke(LSP_CHANNELS.SEND_MESSAGE, params),
-    isRunning: (params: { workspacePath: string; language: string }) =>
-      ipcRenderer.invoke(LSP_CHANNELS.IS_RUNNING, params),
-    isAvailable: (params: { language: string }) =>
-      ipcRenderer.invoke(LSP_CHANNELS.IS_AVAILABLE, params),
-    onServerMessage: (
-      callback: (data: { workspacePath: string; language: string; message: string }) => void,
-    ) => {
-      const handler = (
-        _event: unknown,
-        data: { workspacePath: string; language: string; message: string },
-      ) => callback(data);
-      ipcRenderer.on(LSP_CHANNELS.SERVER_MESSAGE, handler);
-      return () => ipcRenderer.removeListener(LSP_CHANNELS.SERVER_MESSAGE, handler);
-    },
-    onServerError: (
-      callback: (data: { workspacePath: string; language: string; error: string }) => void,
-    ) => {
-      const handler = (
-        _event: unknown,
-        data: { workspacePath: string; language: string; error: string },
-      ) => callback(data);
-      ipcRenderer.on(LSP_CHANNELS.SERVER_ERROR, handler);
-      return () => ipcRenderer.removeListener(LSP_CHANNELS.SERVER_ERROR, handler);
-    },
-    onServerExit: (
-      callback: (data: { workspacePath: string; language: string; code: number | null }) => void,
-    ) => {
-      const handler = (
-        _event: unknown,
-        data: { workspacePath: string; language: string; code: number | null },
-      ) => callback(data);
-      ipcRenderer.on(LSP_CHANNELS.SERVER_EXIT, handler);
-      return () => ipcRenderer.removeListener(LSP_CHANNELS.SERVER_EXIT, handler);
-    },
-  },
 });
 
 // Type definitions
@@ -852,31 +807,4 @@ export type DesktopApi = {
   onSubChatModeChanged: (
     callback: (data: { chatId: string; subChatId: string; mode: ChatMode }) => void,
   ) => () => void;
-  // LSP (Language Server Protocol)
-  lsp: {
-    startServer: (params: {
-      workspacePath: string;
-      language: string;
-    }) => Promise<{ success: boolean; pid?: number; error?: string }>;
-    stopServer: (params: {
-      workspacePath: string;
-      language: string;
-    }) => Promise<{ success: boolean }>;
-    sendMessage: (params: {
-      workspacePath: string;
-      language: string;
-      message: string;
-    }) => Promise<{ success: boolean }>;
-    isRunning: (params: { workspacePath: string; language: string }) => Promise<boolean>;
-    isAvailable: (params: { language: string }) => Promise<boolean>;
-    onServerMessage: (
-      callback: (data: { workspacePath: string; language: string; message: string }) => void,
-    ) => () => void;
-    onServerError: (
-      callback: (data: { workspacePath: string; language: string; error: string }) => void,
-    ) => () => void;
-    onServerExit: (
-      callback: (data: { workspacePath: string; language: string; code: number | null }) => void,
-    ) => () => void;
-  };
 };

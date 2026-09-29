@@ -65,7 +65,6 @@ export const MAIN_LIB_DOMAINS = [
   'flows',
   'git',
   'integrations',
-  'language-server',
   'mcp',
   'mobile',
   'permissions',

@@ -83,22 +83,21 @@ export function configureMonacoForNodeScripts(monaco: MonacoForTs): void {
 }
 
 /**
- * Disable Monaco's built-in TypeScript diagnostic MARKERS (red squiggles).
+ * Show only syntax errors from Monaco's built-in TypeScript worker.
  * MUST be called in beforeMount BEFORE Monaco processes any files.
- * This prevents false positive error markers from Monaco's sandboxed TS worker
- * which can't access node_modules or project tsconfig.
+ * Semantic errors stay off: the sandboxed worker can't read node_modules or the
+ * project tsconfig, so imports and types would be flagged falsely.
  *
  * IMPORTANT: We keep setEagerModelSync(true) to preserve type inference,
- * hover info, and intellisense - only the error markers are disabled.
+ * hover info, and intellisense.
  */
-export function disableBuiltinTsDiagnostics(monaco: MonacoForTs): void {
+export function limitTsDiagnosticsToSyntax(monaco: MonacoForTs): void {
   const ts = monaco.typescript.typescriptDefaults;
   const js = monaco.typescript.javascriptDefaults;
 
-  // Disable diagnostic MARKERS only - keeps type inference working
   const diagnosticOptions = {
     noSemanticValidation: true,
-    noSyntaxValidation: true,
+    noSyntaxValidation: false,
     noSuggestionDiagnostics: true,
     // Ignore common false positive error codes as additional fallback
     diagnosticCodesToIgnore: [
@@ -124,27 +123,4 @@ export function disableBuiltinTsDiagnostics(monaco: MonacoForTs): void {
   // KEEP eager model sync enabled for type inference and hover info
   ts.setEagerModelSync(true);
   js.setEagerModelSync(true);
-}
-
-/**
- * Enable Monaco's built-in TypeScript diagnostics.
- * Call this when LSP is not active to restore default behavior.
- * Currently unused but kept for future fallback scenarios.
- */
-function _enableBuiltinTsDiagnostics(monaco: MonacoForTs): void {
-  const ts = monaco.typescript.typescriptDefaults;
-  const js = monaco.typescript.javascriptDefaults;
-
-  // Enable diagnostic options
-  ts.setDiagnosticsOptions({
-    noSemanticValidation: false,
-    noSyntaxValidation: false,
-    noSuggestionDiagnostics: false,
-  });
-
-  js.setDiagnosticsOptions({
-    noSemanticValidation: false,
-    noSyntaxValidation: false,
-    noSuggestionDiagnostics: false,
-  });
 }
