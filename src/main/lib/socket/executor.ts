@@ -36,6 +36,7 @@ import {
 import {
   API_ERROR_RETRY_BACKOFF_MS,
   classifyApiErrorText,
+  claudeErrorText,
   isResumeFailureText,
 } from '../claude/stream-classifiers';
 import type { MessageMetadata, UIMessageChunk } from '../claude/types';
@@ -1458,7 +1459,10 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
           void Promise.resolve()
             .then(() => session.query.interrupt())
             .catch((err) => {
-              log.warn(`[Socket Executor] plan-halt interrupt failed for ${subChatId}:`, err);
+              log.warn(
+                `[Socket Executor] plan-halt interrupt failed for ${subChatId}:`,
+                claudeErrorText(err),
+              );
             });
         }
       };
@@ -1926,7 +1930,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       try {
         await runClaudeQueryAttempt(sdkOptions);
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage = claudeErrorText(error);
         // When resume fails, the SDK still emits a skeleton stream (start / start-step /
         // message-metadata / finish-step / finish) representing the empty failed result, then
         // throws. None of those frames carry user content — USER_VISIBLE_CHUNK_TYPES is the
@@ -2089,7 +2093,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
     log.info(`[Socket Executor] Execution complete for ${subChatId}`);
   } catch (error) {
     executionFailed = true;
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorMessage = claudeErrorText(error);
     log.error('[Socket Executor] Claude execution failed');
 
     // Unconditional stream-error disposition (park before any IPC emit) — see the helper's doc
