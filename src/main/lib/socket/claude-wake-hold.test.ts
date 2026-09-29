@@ -94,6 +94,7 @@ function channelQuery(): { query: Query; emit: (m: SDKMessage) => void; end: () 
 }
 
 const noopIo = (): WakeHoldIo => ({
+  chatId: 'c1',
   streamChunk: vi.fn(),
   emitPlanCard: vi.fn(async () => {}),
   completeBurst: vi.fn(),
@@ -1882,8 +1883,8 @@ describe('claude-wake-hold — enumerating live holds for a booting renderer', (
     );
 
     expect(listWakeHolds()).toEqual([
-      { subChatId: 'boot-a', pending: { waitingOn: ['Command'] } },
-      { subChatId: 'boot-b', pending: { waitingOn: ['Monitor', 'Scheduled wake'] } },
+      { subChatId: 'boot-a', chatId: 'c1', pending: { waitingOn: ['Command'] } },
+      { subChatId: 'boot-b', chatId: 'c1', pending: { waitingOn: ['Monitor', 'Scheduled wake'] } },
     ]);
     chA.end();
     chB.end();
@@ -1916,7 +1917,7 @@ describe('claude-wake-hold — enumerating live holds for a booting renderer', (
     });
     const ch = armListed('boot-latest', hook);
     expect(listWakeHolds()).toEqual([
-      { subChatId: 'boot-latest', pending: { waitingOn: ['Monitor', 'Monitor'] } },
+      { subChatId: 'boot-latest', chatId: 'c1', pending: { waitingOn: ['Monitor', 'Monitor'] } },
     ]);
 
     // One monitor settles; the burst's own stop rewrites the snapshot.
@@ -1929,8 +1930,8 @@ describe('claude-wake-hold — enumerating live holds for a booting renderer', (
     await new Promise((r) => setTimeout(r, 0));
     await new Promise((r) => setTimeout(r, 0));
 
-    expect(listWakeHolds()).toEqual([
-      { subChatId: 'boot-latest', pending: { waitingOn: ['Monitor', 'Scheduled wake'] } },
+    expect(listWakeHolds().map((h) => h.pending)).toEqual([
+      { waitingOn: ['Monitor', 'Scheduled wake'] },
     ]);
     ch.end();
   });
@@ -1942,7 +1943,7 @@ describe('claude-wake-hold — enumerating live holds for a booting renderer', (
     releaseWakeHold('boot-dead', 'user stop');
 
     expect(listWakeHolds()).toEqual([
-      { subChatId: 'boot-live', pending: { waitingOn: ['Command'] } },
+      { subChatId: 'boot-live', chatId: 'c1', pending: { waitingOn: ['Command'] } },
     ]);
     live.end();
     dead.end();
@@ -1987,7 +1988,7 @@ describe('claude-wake-hold — task kinds that collide with Object.prototype', (
       });
 
       expect(listWakeHolds()).toEqual([
-        { subChatId: `proto-${type}`, pending: { waitingOn: ['Background task'] } },
+        { subChatId: `proto-${type}`, chatId: 'c1', pending: { waitingOn: ['Background task'] } },
       ]);
       ch.end();
     },

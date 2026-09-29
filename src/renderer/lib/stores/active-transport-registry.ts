@@ -85,6 +85,11 @@ export const wakeHeldAtomFamily = atomFamily((_subChatId: string) =>
   atom<WakeHoldState | null>(null),
 );
 
+/** Held subChatId → its chatId, so chat-level surfaces (the sidebar) can show the wait. Written only
+ * by `useWakeHoldSync`, alongside {@link wakeHeldAtomFamily}. */
+export const heldSubChatsAtom = atom<ReadonlyMap<string, string>>(new Map<string, string>());
+export const heldChatIdsAtom = atom((get) => new Set(get(heldSubChatsAtom).values()));
+
 /**
  * The fourth liveness state: tool-call ids of background SUBAGENTS currently running, fed by
  * 'socket:subagent-task-changed' (main's task-frame tracker). An async Agent launch resolves its

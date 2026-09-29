@@ -4,7 +4,7 @@ import { useEffect } from 'react';
 import type { WakeHoldEndReason, WakeHoldState } from '../../../shared/types/wake-hold';
 import { trpcClient } from '../trpc';
 import { isDesktopApp } from '../utils/platform';
-import { wakeHeldAtomFamily } from './active-transport-registry';
+import { heldSubChatsAtom, wakeHeldAtomFamily } from './active-transport-registry';
 
 const RETRY_DELAY_MS = 500;
 
@@ -14,8 +14,8 @@ const RETRY_DELAY_MS = 500;
  * on" as one value, with no branch for a held state that has nothing to show.
  */
 type WakeHoldPayload =
-  | { subChatId: string; held: false; endReason?: WakeHoldEndReason }
-  | { subChatId: string; held: true; pending: WakeHoldState };
+  | { subChatId: string; chatId: string; held: false; endReason?: WakeHoldEndReason }
+  | { subChatId: string; chatId: string; held: true; pending: WakeHoldState };
 
 /** Completion effects a held chat withheld at turn end. First writer wins: only a retraction clears
  * an entry, so a second writer is a turn that never adopted the hold (e.g. a failed send). */
@@ -46,8 +46,26 @@ export function isWakeHoldState(value: unknown): value is WakeHoldState {
 export function isWakeHoldPayload(data: unknown): data is WakeHoldPayload {
   if (typeof data !== 'object' || data === null) return false;
   const d = data as Record<string, unknown>;
-  if (typeof d.subChatId !== 'string' || typeof d.held !== 'boolean') return false;
+  if (typeof d.subChatId !== 'string' || typeof d.chatId !== 'string') return false;
+  if (typeof d.held !== 'boolean') return false;
   return d.held ? isWakeHoldState(d.pending) : true;
+}
+
+/** Sets one sub-chat's hold, keeping the chat-level map in step. The map is replaced only when
+ * membership changes, so a per-burst re-publish never re-renders the sidebar. */
+function applyWakeHold(
+  store: ReturnType<typeof useStore>,
+  subChatId: string,
+  chatId: string,
+  pending: WakeHoldState | null,
+): void {
+  store.set(wakeHeldAtomFamily(subChatId), pending);
+  const held = store.get(heldSubChatsAtom);
+  if (held.has(subChatId) === Boolean(pending)) return;
+  const next = new Map(held);
+  if (pending) next.set(subChatId, chatId);
+  else next.delete(subChatId);
+  store.set(heldSubChatsAtom, next);
 }
 
 /**
@@ -81,7 +99,7 @@ export function useWakeHoldSync(): void {
     const unsubscribe = window.desktopApi.on('socket:wake-hold-changed', (data) => {
       if (!isWakeHoldPayload(data)) return;
       spokenFor.add(data.subChatId);
-      store.set(wakeHeldAtomFamily(data.subChatId), data.held ? data.pending : null);
+      applyWakeHold(store, data.subChatId, data.chatId, data.held ? data.pending : null);
       if (data.held) return;
       const fire = deferredAnnounce.get(data.subChatId);
       deferredAnnounce.delete(data.subChatId);
@@ -94,8 +112,8 @@ export function useWakeHoldSync(): void {
       try {
         const holds = await trpcClient.socket.listWakeHolds.query();
         if (disposed) return;
-        for (const { subChatId, pending } of holds) {
-          if (!spokenFor.has(subChatId)) store.set(wakeHeldAtomFamily(subChatId), pending);
+        for (const { subChatId, chatId, pending } of holds) {
+          if (!spokenFor.has(subChatId)) applyWakeHold(store, subChatId, chatId, pending);
         }
       } catch (error) {
         if (disposed) return;

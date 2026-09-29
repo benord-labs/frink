@@ -57,6 +57,7 @@ export function buildWakeHoldIo(params: {
   const { chatId, subChatId, buildFinalParts, send } = params;
   let holdActive = false;
   const io: WakeHoldIo = {
+    chatId,
     streamChunk: (msgId, chunk, parts, messageIndex) => {
       send.sendStreamChunkDirect({
         chatId,
