@@ -1,7 +1,11 @@
-import { Pressable, TextInput, View } from 'react-native';
-import { Icon, bareInput } from './primitives';
-import { useTheme } from './theme';
+import { Pressable, TextInput, View, type TextStyle } from 'react-native';
+import { CircleX, Search } from 'lucide-react-native';
+import { radius, useTheme } from './theme';
 
+// Web draws a focus ring inside borderless inputs that already sit in a styled frame.
+export const bareInput = { outlineStyle: 'none' } as unknown as TextStyle;
+
+/** In-content search, used where iOS's native header search bar is not available (web). */
 export function SearchField({
   value,
   onChangeText,
@@ -20,11 +24,11 @@ export function SearchField({
         minHeight: 40,
         gap: 8,
         backgroundColor: t.field,
-        borderRadius: 12,
+        borderRadius: radius.md,
         paddingLeft: 12,
       }}
     >
-      <Icon name="search" size={17} color={t.muted} />
+      <Search size={17} color={t.muted} />
       <TextInput
         accessibilityLabel={placeholder}
         placeholder={placeholder}
@@ -44,7 +48,7 @@ export function SearchField({
           onPress={() => onChangeText('')}
           style={{ width: 40, height: 40, alignItems: 'center', justifyContent: 'center' }}
         >
-          <Icon name="close-circle" size={17} color={t.muted} />
+          <CircleX size={17} color={t.muted} />
         </Pressable>
       )}
     </View>

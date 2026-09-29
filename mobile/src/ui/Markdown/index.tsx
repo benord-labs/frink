@@ -1,94 +1,83 @@
 import { useMemo, useState } from 'react';
 import { Linking, Platform, View } from 'react-native';
 import { EnrichedMarkdownText } from 'react-native-enriched-markdown';
-import { Notice } from '../primitives';
+import { Text } from '../text';
 import { useTheme, type Theme } from '../theme';
 import { safeWebLink, sanitizeMarkdown } from './sanitize';
 
+const MONO = Platform.OS === 'ios' ? 'Menlo' : 'monospace';
+
+// Sizes come from the app's type ramp (22/17/16/14): no 13, 11 or 10pt, even inside markdown.
 function markdownStyle(t: Theme) {
   const body = {
     color: t.text,
     fontSize: 16,
-    lineHeight: 24,
+    lineHeight: 25,
     marginTop: 0,
-    marginBottom: 12,
+    marginBottom: 14,
   };
+  const heading = { ...body, fontWeight: '600', marginTop: 10, marginBottom: 8 };
   return {
     paragraph: body,
-    h1: {
-      ...body,
-      fontSize: 22,
-      lineHeight: 29,
-      fontWeight: '600',
-      marginTop: 16,
-    },
-    h2: {
-      ...body,
-      fontSize: 20,
-      lineHeight: 27,
-      fontWeight: '600',
-      marginTop: 16,
-    },
-    h3: {
-      ...body,
-      fontSize: 18,
-      lineHeight: 25,
-      fontWeight: '600',
-      marginTop: 12,
-    },
-    h4: { ...body, fontSize: 17, fontWeight: '600' },
-    h5: { ...body, fontSize: 16, fontWeight: '600' },
-    h6: { ...body, fontSize: 16, fontWeight: '600' },
+    h1: { ...heading, fontSize: 22, lineHeight: 28, fontWeight: '700' },
+    h2: { ...heading, fontSize: 17, lineHeight: 24 },
+    h3: { ...heading, fontSize: 16, lineHeight: 24 },
+    h4: { ...heading, fontSize: 16, lineHeight: 24 },
+    h5: { ...heading, fontSize: 16, lineHeight: 24 },
+    h6: { ...heading, fontSize: 16, lineHeight: 24, color: t.secondary },
     list: {
       ...body,
       bulletColor: t.muted,
       markerColor: t.muted,
-      gapWidth: 8,
-      itemSpacing: 5,
+      gapWidth: 10,
+      itemSpacing: 6,
     },
-    link: { color: t.accent, underline: true },
+    link: { color: t.accent, underline: false },
     strong: { color: t.text },
     code: {
-      fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+      fontFamily: MONO,
       fontSize: 14,
       color: t.text,
-      backgroundColor: t.solidField,
+      backgroundColor: t.fill,
+      borderColor: t.borderSubtle,
     },
     codeBlock: {
       ...body,
-      fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+      fontFamily: MONO,
       fontSize: 14,
-      lineHeight: 20,
-      backgroundColor: t.solidField,
-      borderColor: t.border,
+      lineHeight: 21,
+      color: t.secondary,
+      backgroundColor: t.fill,
+      borderColor: t.borderSubtle,
       borderWidth: 1,
-      borderRadius: 8,
-      padding: 12,
+      borderRadius: 12,
+      padding: 14,
     },
     blockquote: {
       ...body,
       color: t.secondary,
       borderColor: t.border,
-      borderWidth: 1,
+      borderWidth: 2,
       gapWidth: 12,
     },
     table: {
       ...body,
       fontSize: 14,
+      lineHeight: 20,
       borderColor: t.border,
       borderWidth: 1,
-      headerBackgroundColor: t.solidField,
+      headerBackgroundColor: t.fill,
       headerTextColor: t.text,
-      rowEvenBackgroundColor: t.background,
-      rowOddBackgroundColor: t.background,
+      rowEvenBackgroundColor: 'transparent',
+      rowOddBackgroundColor: 'transparent',
       cellPaddingHorizontal: 10,
       cellPaddingVertical: 8,
     },
     thematicBreak: {
       color: t.border,
       height: 1,
-      marginTop: 12,
-      marginBottom: 12,
+      marginTop: 14,
+      marginBottom: 14,
     },
   };
 }
@@ -121,7 +110,11 @@ export function Markdown({ content }: { content: string }) {
         selectionColor={t.accent}
         markdownStyle={markdownStyle(t)}
       />
-      {error && <Notice error>{error}</Notice>}
+      {error && (
+        <Text variant="secondary" color="danger">
+          {error}
+        </Text>
+      )}
     </View>
   );
 }
