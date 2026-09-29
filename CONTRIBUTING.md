@@ -19,8 +19,8 @@ bun run dev
 
 `bun install` itself needs no token.
 
-`bun run dev` hot-reloads the renderer and relaunches the app when main-process or preload code
-changes on disk, which ends any chats running in it.
+`bun run dev` hot-reloads the renderer; main-process and preload changes need a restart.
+`bun run dev:watch` relaunches the app on those changes instead, which ends any chats running in it.
 
 ## Tests
 
