@@ -94,7 +94,7 @@ function DraggedItemCard() {
       <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
       <span className="truncate max-w-[180px]">{dndActiveItem.nodeName}</span>
       {dndActiveItem.batchItems && dndActiveItem.batchItems.length > 0 && (
-        <span className="ml-0.5 inline-flex items-center justify-center size-5 rounded-full bg-primary text-primary-foreground text-[10px] font-medium">
+        <span className="ml-0.5 inline-flex items-center justify-center size-5 rounded-full bg-primary text-primary-foreground text-xs font-medium">
           +{dndActiveItem.batchItems.length}
         </span>
       )}
@@ -581,7 +581,7 @@ export function SplitViewContainer({
                 <CompactPaneDigitBadge
                   paneIndex={idx}
                   paneNumber={idx + 1}
-                  className="h-5! min-w-[20px]! px-1.5! text-[11px]! font-bold!"
+                  className="h-5! min-w-[20px]! px-1.5! text-xs! font-bold!"
                 />
                 <span className="truncate max-w-[140px] font-medium">{paneLabel ?? 'Chat'}</span>
               </div>
