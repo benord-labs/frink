@@ -3,7 +3,7 @@ import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { createStore, Provider } from 'jotai';
 import { ThemeProvider } from 'next-themes';
-import { Toaster } from 'sonner';
+import { toast, Toaster } from 'sonner';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { SidebarMainPaneLayout } from '@/components/SidebarMainPaneLayout';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -47,6 +47,7 @@ beforeAll(() => import('./Panel'));
 
 afterEach(() => {
   cleanup();
+  toast.dismiss();
   vi.restoreAllMocks();
   localStorage.clear();
   document.documentElement.removeAttribute('style');
