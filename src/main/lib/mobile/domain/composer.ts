@@ -19,6 +19,7 @@ import type {
 } from '../../../../shared/types/remote/mobile';
 import {
   broadcastComposerChange,
+  type ComposerSettingsPatch,
   readComposerSettings,
   setThinkingEnabled,
   updateComposerSettings,
@@ -86,7 +87,13 @@ export async function readMobileComposer(input: ComposerRequest): Promise<Mobile
       isAuthenticated,
     })),
     models: pickerModels(provider),
-    settings: { ...stored, modelId },
+    // The phone's API keeps a Fast boolean (installed apps read it); speed is desktop's shape.
+    settings: {
+      modelId,
+      autoMode: stored.autoMode,
+      codexFastMode: stored.codexSpeed === 'fast',
+      thinkingEnabled: stored.thinkingEnabled,
+    },
     autoUnavailableReason: getAutoModeUnavailableReason({
       accountResolved: true,
       isAuthenticated: account?.isAuthenticated,
@@ -100,7 +107,11 @@ export async function readMobileComposer(input: ComposerRequest): Promise<Mobile
 
 export async function updateMobileComposer(input: UpdateComposerRequest): Promise<MobileComposer> {
   const { chat } = await requireChat(input.chatId, input.subChatId);
-  const { thinkingEnabled, ...patch } = input.patch;
+  const { thinkingEnabled, codexFastMode, ...rest } = input.patch;
+  const patch: ComposerSettingsPatch = {
+    ...rest,
+    ...(codexFastMode !== undefined ? { codexSpeed: codexFastMode ? 'fast' : 'standard' } : {}),
+  };
   if (patch.modelId !== undefined && !isKnownModel(patch.modelId)) {
     throw new MobileApiError(400, 'That model is not available.');
   }

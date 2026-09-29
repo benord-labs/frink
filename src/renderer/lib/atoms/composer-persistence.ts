@@ -1,7 +1,9 @@
+import type { CodexSpeed } from '../../../shared/types/execution';
+
 /** Where composer writes go (main owns them). Registered at app start so this lib never imports
  *  tRPC; with no persister registered (e.g. unit tests) writes are cache-only. */
-export type ComposerField = 'modelId' | 'autoMode' | 'codexFastMode';
-export type ComposerPatch = Partial<{ modelId: string; autoMode: boolean; codexFastMode: boolean }>;
+export type ComposerField = 'modelId' | 'autoMode' | 'codexSpeed';
+export type ComposerPatch = Partial<{ modelId: string; autoMode: boolean; codexSpeed: CodexSpeed }>;
 
 type ComposerPersister = {
   chat: (chatId: string, patch: ComposerPatch) => void;

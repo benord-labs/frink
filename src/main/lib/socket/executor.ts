@@ -1112,7 +1112,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       // settings.model carries the RAW codex picker id (e.g. codex-gpt-5.3-codex-high); the executor
       // is the single conversion boundary that splits it into the slug, effort and service tier the
       // v2 app-server wants.
-      const codexModel = resolveCodexCliModel(settings?.model, settings?.codexFastMode);
+      const codexModel = resolveCodexCliModel(settings?.model, settings?.codexSpeed);
       const codexId = storedCredential.label ?? 'codex-default';
       const unbindCodex = flowResources.bindCodex(abortController, projectPath, codexId, subChatId);
       try {

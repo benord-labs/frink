@@ -1,4 +1,5 @@
 import { eq, isNotNull, or } from 'drizzle-orm';
+import type { CodexSpeed } from '../../../../shared/types/execution';
 import type { getDatabase } from '../index';
 import { appPreferences, chats } from '../schema';
 
@@ -8,26 +9,26 @@ type Db = ReturnType<typeof getDatabase>;
 export type StoredComposerSettings = {
   modelId: string | null;
   autoMode: boolean | null;
-  codexFastMode: boolean | null;
+  codexSpeed: CodexSpeed | null;
 };
 
 export type ComposerSettingsPatch = Partial<{
   modelId: string;
   autoMode: boolean;
-  codexFastMode: boolean;
+  codexSpeed: CodexSpeed;
 }>;
 
 const columns = {
   modelId: chats.composerModelId,
   autoMode: chats.composerAutoMode,
-  codexFastMode: chats.composerCodexFast,
+  codexSpeed: chats.composerCodexSpeed,
 };
 
 function toColumns(patch: ComposerSettingsPatch) {
   return {
     ...(patch.modelId !== undefined ? { composerModelId: patch.modelId } : {}),
     ...(patch.autoMode !== undefined ? { composerAutoMode: patch.autoMode } : {}),
-    ...(patch.codexFastMode !== undefined ? { composerCodexFast: patch.codexFastMode } : {}),
+    ...(patch.codexSpeed !== undefined ? { composerCodexSpeed: patch.codexSpeed } : {}),
   };
 }
 
@@ -87,7 +88,7 @@ export function listStoredComposerSettings(
       or(
         isNotNull(chats.composerModelId),
         isNotNull(chats.composerAutoMode),
-        isNotNull(chats.composerCodexFast),
+        isNotNull(chats.composerCodexSpeed),
       ),
     )
     .all();

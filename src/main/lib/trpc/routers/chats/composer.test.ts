@@ -41,7 +41,7 @@ describe('composer settings routes', () => {
     await expect(caller().getComposerSettings({ chatId: 'c1' })).resolves.toEqual({
       modelId: 'sonnet',
       autoMode: true,
-      codexFastMode: false,
+      codexSpeed: 'standard',
       thinkingEnabled: true,
     });
   });
@@ -52,12 +52,12 @@ describe('composer settings routes', () => {
       patch: { modelId: 'opus-4.8', autoMode: false },
     });
 
-    expect(out).toMatchObject({ modelId: 'opus-4.8', autoMode: false, codexFastMode: false });
+    expect(out).toMatchObject({ modelId: 'opus-4.8', autoMode: false, codexSpeed: 'standard' });
     expect(broadcasts('composer:changed')).toEqual([
       {
         kind: 'chat',
         chatId: 'c1',
-        settings: { modelId: 'opus-4.8', autoMode: false, codexFastMode: false },
+        settings: { modelId: 'opus-4.8', autoMode: false, codexSpeed: 'standard' },
       },
     ]);
   });
@@ -82,7 +82,7 @@ describe('composer settings routes', () => {
     state.send.mockReset();
 
     await caller().importComposerSettings({
-      entries: [{ chatId: 'c1', modelId: 'opus-4.8', codexFastMode: true }],
+      entries: [{ chatId: 'c1', modelId: 'opus-4.8', codexSpeed: 'fast' }],
       thinkingEnabled: false,
     });
     await caller().importComposerSettings({ entries: [], thinkingEnabled: true });
@@ -90,7 +90,7 @@ describe('composer settings routes', () => {
     await expect(caller().getComposerSettings({ chatId: 'c1' })).resolves.toEqual({
       modelId: 'haiku',
       autoMode: true,
-      codexFastMode: true,
+      codexSpeed: 'fast',
       thinkingEnabled: false,
     });
     expect(broadcasts('composer:changed').filter((c) => c.kind === 'chat')).toHaveLength(1);
@@ -100,10 +100,10 @@ describe('composer settings routes', () => {
     db.insert(schema.chats)
       .values(makeLocalChat({ id: 'c2' }))
       .run();
-    await caller().updateComposerSettings({ chatId: 'c2', patch: { codexFastMode: true } });
+    await caller().updateComposerSettings({ chatId: 'c2', patch: { codexSpeed: 'fast' } });
 
     await expect(caller().listComposerSettings()).resolves.toEqual({
-      chats: [{ chatId: 'c2', modelId: 'sonnet', autoMode: true, codexFastMode: true }],
+      chats: [{ chatId: 'c2', modelId: 'sonnet', autoMode: true, codexSpeed: 'fast' }],
       thinkingEnabled: true,
     });
   });

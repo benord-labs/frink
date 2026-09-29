@@ -8,7 +8,7 @@ import {
 } from '../../features/agents/atoms';
 import { appStore } from '../jotai-store';
 import { writeComposerCache } from './atom-family-factory';
-import { codexFastModeAtomFamily } from './codex-fast-mode';
+import { codexSpeedAtomFamily } from './codex-speed';
 import { collectComposerImport } from './composer-import';
 import { registerComposerPersister } from './composer-persistence';
 import { extendedThinkingEnabledAtom } from './index';
@@ -32,8 +32,8 @@ describe('main-backed composer atoms', () => {
     expect(appStore.get(lastSelectedModelIdAtomFamily('c1'))).toBe('opus-4.8');
     expect(chat).toHaveBeenCalledWith('c1', { modelId: 'opus-4.8' });
 
-    appStore.set(codexFastModeAtomFamily('c1'), true);
-    expect(chat).toHaveBeenLastCalledWith('c1', { codexFastMode: true });
+    appStore.set(codexSpeedAtomFamily('c1'), 'fast');
+    expect(chat).toHaveBeenLastCalledWith('c1', { codexSpeed: 'fast' });
   });
 
   it('does not re-send a value the chat already has', () => {
@@ -57,14 +57,14 @@ describe('main-backed composer atoms', () => {
   });
 
   it('collects this window’s old choices for the one-time import', () => {
-    writeComposerCache('import-a', { modelId: 'opus-4.8', codexFastMode: true });
+    writeComposerCache('import-a', { modelId: 'opus-4.8', codexSpeed: 'fast' });
     writeComposerCache('import-b', { autoMode: false });
 
     const { entries } = collectComposerImport();
     expect(entries).toContainEqual({
       chatId: 'import-a',
       modelId: 'opus-4.8',
-      codexFastMode: true,
+      codexSpeed: 'fast',
     });
     expect(entries).toContainEqual({ chatId: 'import-b', autoMode: false });
   });

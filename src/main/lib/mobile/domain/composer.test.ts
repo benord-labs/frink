@@ -71,7 +71,7 @@ beforeEach(() => {
   fixture.read.mockReturnValue({
     modelId: 'opus-4.8',
     autoMode: true,
-    codexFastMode: false,
+    codexSpeed: 'fast',
     thinkingEnabled: true,
   });
   fixture.update.mockReturnValue({});
@@ -86,7 +86,7 @@ describe('phone composer', () => {
       debugAvailable: true,
       provider: 'claude',
       projectId: 'project',
-      settings: { modelId: 'opus-4.8', autoMode: true, thinkingEnabled: true },
+      settings: { modelId: 'opus-4.8', autoMode: true, codexFastMode: true, thinkingEnabled: true },
       autoUnavailableReason: '',
       codexFastCredits: null,
     });
@@ -122,6 +122,16 @@ describe('phone composer', () => {
 
     expect(fixture.update).toHaveBeenCalledWith('chat', { modelId: 'sonnet', autoMode: false });
     expect(fixture.thinking).toHaveBeenCalledWith(false);
+  });
+
+  it('maps the phone’s Fast switch onto the chat’s Codex speed', async () => {
+    for (const [codexFastMode, codexSpeed] of [
+      [true, 'fast'],
+      [false, 'standard'],
+    ] as const) {
+      await updateMobileComposer({ type: 'updateComposer', ...identity, patch: { codexFastMode } });
+      expect(fixture.update).toHaveBeenLastCalledWith('chat', { codexSpeed });
+    }
   });
 
   it('refuses a model id that is in neither catalog', async () => {

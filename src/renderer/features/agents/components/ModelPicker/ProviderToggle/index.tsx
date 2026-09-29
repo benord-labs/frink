@@ -3,7 +3,7 @@ import { Zap, Brain } from 'lucide-react';
 import { type ReactElement, useState } from 'react';
 import { CODEX_FAST_SPEED_MULTIPLIER } from '../../../../../../shared/lib/codex-cli-models';
 import { extendedThinkingEnabledAtom } from '../../../../../lib/atoms';
-import { codexFastModeAtomFamily } from '../../../../../lib/atoms/codex-fast-mode';
+import { codexSpeedAtomFamily } from '../../../../../lib/atoms/codex-speed';
 import { cn } from '../../../../../lib/utils';
 
 /** Where Codex Fast lives: an existing chat's setting, or the ref a New Chat form stages it in. */
@@ -50,8 +50,15 @@ function ThinkingToggle(): ReactElement {
 }
 
 function ChatFastToggle({ chatId, credits }: { chatId: string; credits: number }): ReactElement {
-  const [enabled, setEnabled] = useAtom(codexFastModeAtomFamily(chatId));
-  return <FastToggle enabled={enabled} onToggle={() => setEnabled(!enabled)} credits={credits} />;
+  const [speed, setSpeed] = useAtom(codexSpeedAtomFamily(chatId));
+  const enabled = speed === 'fast';
+  return (
+    <FastToggle
+      enabled={enabled}
+      onToggle={() => setSpeed(enabled ? 'standard' : 'fast')}
+      credits={credits}
+    />
+  );
 }
 
 /** Stages Fast on the New Chat form's ref; the popover remounts per open, so it re-reads the ref. */

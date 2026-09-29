@@ -3,7 +3,7 @@
 import { createStore } from 'jotai';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CODEX_DEFAULT_MODEL_ID } from '../../../../shared/lib/codex-cli-models';
-import { codexFastModeAtomFamily } from '../../../lib/atoms/codex-fast-mode';
+import { codexSpeedAtomFamily } from '../../../lib/atoms/codex-speed';
 import {
   activeOverlayAtom,
   agentsSettingsDialogOpenAtom,
@@ -66,8 +66,8 @@ describe('seedNewChatNavigation', () => {
   });
 
   it.each([
-    [true, true],
-    [false, false],
+    [true, 'fast'],
+    [false, 'standard'],
   ])('Codex account %s: staged Fast seeds the chat as %s', (isCodexAccount, seeded) => {
     const store = freshStore();
 
@@ -76,7 +76,7 @@ describe('seedNewChatNavigation', () => {
       codexFastEnabled: true,
     });
 
-    expect(store.get(codexFastModeAtomFamily('chat-fast'))).toBe(seeded);
+    expect(store.get(codexSpeedAtomFamily('chat-fast'))).toBe(seeded);
   });
 
   it('includes the first sub-chat id in the just-created set', () => {

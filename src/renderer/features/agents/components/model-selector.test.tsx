@@ -10,7 +10,7 @@ import {
   codexModelToPickerItem,
 } from '../../../../shared/lib/models';
 import { extendedThinkingEnabledAtom } from '../../../lib/atoms';
-import { codexFastModeAtomFamily } from '../../../lib/atoms/codex-fast-mode';
+import { codexSpeedAtomFamily } from '../../../lib/atoms/codex-speed';
 import { type ModelItem, ModelSelector } from './model-selector';
 
 const capabilities = vi.hoisted(() => ({ supportsXhigh: true }));
@@ -302,7 +302,7 @@ describe('provider controls', () => {
   it('toggles Fast per chat and renders a Flow-seeded ON state', () => {
     const { store } = renderPicker(codex('codex-gpt-5.6-sol-medium', 'chat-9'));
     fireEvent.click(screen.getByRole('switch', { name: /Fast mode/ }));
-    expect(store.get(codexFastModeAtomFamily('chat-9'))).toBe(true);
+    expect(store.get(codexSpeedAtomFamily('chat-9'))).toBe('fast');
     expect(screen.getByRole('switch', { name: /Fast mode/ })).toHaveAttribute(
       'aria-checked',
       'true',

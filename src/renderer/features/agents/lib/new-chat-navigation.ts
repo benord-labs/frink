@@ -20,7 +20,7 @@ import { getEffectiveModelIdForPane } from '../hooks/use-effective-model-for-pan
 import { getEffectiveChatModeForPane } from '../hooks/use-effective-plan-mode-for-pane';
 import { fillNewChatInSplitState, resolveFillPaneIndex } from '../main/new-chat-form.split-routing';
 import { useAgentSubChatStore } from '../stores/sub-chat-store';
-import { codexFastModeAtomFamily } from '../../../lib/atoms/codex-fast-mode';
+import { codexSpeedAtomFamily } from '../../../lib/atoms/codex-speed';
 import { getUrlParam } from '../../../lib/utils/url-params';
 import { newChatDraftKey, replaceDraftText } from './drafts';
 
@@ -78,7 +78,7 @@ export function seedNewChatNavigation(
   );
   set(chatModeAtomFamily(chatId), effectiveChatMode);
   set(autoModePerChatAtomFamily(chatId), autoModeEnabled);
-  set(codexFastModeAtomFamily(chatId), isCodexAccount && codexFastEnabled);
+  set(codexSpeedAtomFamily(chatId), isCodexAccount && codexFastEnabled ? 'fast' : 'standard');
 
   if (subChatId) {
     useAgentSubChatStore.getState().updateSubChatMode(subChatId, effectiveChatMode, chatId);

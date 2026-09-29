@@ -456,7 +456,7 @@ export async function forkChatWithSubChats(
         // A fork keeps driving the same model / Auto / Fast as the chat it came from.
         composerModelId: source.composerModelId,
         composerAutoMode: source.composerAutoMode,
-        composerCodexFast: source.composerCodexFast,
+        composerCodexSpeed: source.composerCodexSpeed,
       })
       .run();
 

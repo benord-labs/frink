@@ -6,7 +6,7 @@ import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TaskChatReadyData } from '../../../../shared/types/task-chat-ready';
 import { activeOverlayAtom, agentsSettingsDialogOpenAtom } from '../../../lib/atoms';
-import { codexFastModeAtomFamily } from '../../../lib/atoms/codex-fast-mode';
+import { codexSpeedAtomFamily } from '../../../lib/atoms/codex-speed';
 import {
   autoModePerChatAtomFamily,
   chatModeAtomFamily,
@@ -206,26 +206,26 @@ describe('useTaskIpcHandler', () => {
     act(() => ipcCallback?.(validPayload({ codexFastMode: true })));
 
     await waitFor(() => {
-      expect(jotaiStore.get(codexFastModeAtomFamily('chat-1'))).toBe(true);
+      expect(jotaiStore.get(codexSpeedAtomFamily('chat-1'))).toBe('fast');
     });
   });
 
   it('clears a chat left on Fast when the Flow runs standard', async () => {
     // The chat's value outlives the run that set it, so `false` has to actively win — otherwise one
     // Fast flow silently bills every later run in the same chat at the priority multiplier.
-    jotaiStore.set(codexFastModeAtomFamily('chat-1'), true);
+    jotaiStore.set(codexSpeedAtomFamily('chat-1'), 'fast');
     renderHook(() => useTaskIpcHandler(), { wrapper });
 
     act(() => ipcCallback?.(validPayload({ codexFastMode: false })));
 
     await waitFor(() => {
-      expect(jotaiStore.get(codexFastModeAtomFamily('chat-1'))).toBe(false);
+      expect(jotaiStore.get(codexSpeedAtomFamily('chat-1'))).toBe('standard');
     });
   });
 
   it('leaves the chat Fast setting alone when the payload omits it', async () => {
     // Manual and non-flow dispatches carry no value; they must not reset the user's own choice.
-    jotaiStore.set(codexFastModeAtomFamily('chat-1'), true);
+    jotaiStore.set(codexSpeedAtomFamily('chat-1'), 'fast');
     renderHook(() => useTaskIpcHandler(), { wrapper });
 
     act(() => ipcCallback?.(validPayload({ autoReviewTools: true })));
@@ -233,7 +233,7 @@ describe('useTaskIpcHandler', () => {
     await waitFor(() => {
       expect(jotaiStore.get(autoModePerChatAtomFamily('chat-1'))).toBe(true);
     });
-    expect(jotaiStore.get(codexFastModeAtomFamily('chat-1'))).toBe(true);
+    expect(jotaiStore.get(codexSpeedAtomFamily('chat-1'))).toBe('fast');
   });
 
   it('navigates from Work Queue-owned Settings to a non-flow task chat', async () => {

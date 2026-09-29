@@ -23,7 +23,7 @@ import {
   type TaskChatReadyData,
 } from '../../../../shared/types/task-chat-ready';
 import { focusAgentChatAtom } from '../../../lib/atoms';
-import { codexFastModeAtomFamily } from '../../../lib/atoms/codex-fast-mode';
+import { codexSpeedAtomFamily } from '../../../lib/atoms/codex-speed';
 import { api } from '../../../lib/mock-api';
 import { trpc, trpcClient } from '../../../lib/trpc';
 import {
@@ -121,7 +121,7 @@ export function useTaskIpcHandler() {
       // the chat's value persists past the run, so a flow with Fast off must actively clear one a
       // previous Fast run left on rather than inheriting its billing.
       if (typeof data.codexFastMode === 'boolean') {
-        store.set(codexFastModeAtomFamily(chatId), data.codexFastMode);
+        store.set(codexSpeedAtomFamily(chatId), data.codexFastMode ? 'fast' : 'standard');
       }
 
       // Mode + model must be set before the queued prompt is sent: the transport reads the chat

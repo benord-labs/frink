@@ -3,6 +3,8 @@
  * Wire shape, effort ladder and slug provenance: docs/decisions/codex-fast-mode-consent.md.
  */
 
+import type { CodexSpeed } from '../types/execution';
+
 /** Reasoning effort sent to the app-server as the separate `reasoning_effort` field. */
 export type CodexReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh';
 
@@ -133,7 +135,7 @@ export function codexFastTierCredits(pickerId: string | undefined): number | nul
  * resolved here right before `runCodexAgent`. An unknown or missing id falls back to
  * {@link CODEX_DEFAULT_MODEL_ID} (default slug + `medium`) so codex never crashes on a stale value.
  *
- * `serviceTier` is `'priority'` only when Fast is requested AND the RESOLVED slug advertises the
+ * `serviceTier` is `'priority'` only when the `fast` speed is requested AND the RESOLVED slug advertises the
  * tier — so a chat left on Fast while switching to a model without it degrades to standard instead
  * of asking the app-server for a tier it would strip. It is otherwise an explicit `null`, never
  * absent: the tier is thread-sticky, so omitting it would silently keep billing. This function is
@@ -141,7 +143,7 @@ export function codexFastTierCredits(pickerId: string | undefined): number | nul
  */
 export function resolveCodexCliModel(
   pickerId: string | undefined,
-  fastMode?: boolean,
+  speed?: CodexSpeed,
 ): {
   model: string;
   effort: CodexReasoningEffort;
@@ -155,7 +157,7 @@ export function resolveCodexCliModel(
   return {
     model: m.cliValue,
     effort: m.reasoningEffort,
-    serviceTier: fastMode && supportsFast ? 'priority' : null,
+    serviceTier: speed === 'fast' && supportsFast ? 'priority' : null,
   };
 }
 

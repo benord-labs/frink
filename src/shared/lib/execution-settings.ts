@@ -1,6 +1,6 @@
 /** A chat's composer settings and the one place both desktop and main turn them into the
  *  `ExecutionSettings` a send carries. */
-import type { ExecutionSettings } from '../types/execution';
+import type { CodexSpeed, ExecutionSettings } from '../types/execution';
 import { codexFastTierCredits } from './codex-cli-models';
 import {
   claudeModelRequires1M,
@@ -17,28 +17,28 @@ export type ComposerSettings = {
    *  destroy the other provider's choice. */
   modelId: string;
   autoMode: boolean;
-  codexFastMode: boolean;
+  codexSpeed: CodexSpeed;
   /** Global, not per chat: one Thinking switch governs every Claude chat. */
   thinkingEnabled: boolean;
 };
 
-/** Defaults for a chat nobody has configured. Fast is off on purpose: it bills a credit multiplier. */
+/** Defaults for a chat nobody has configured. Standard speed on purpose: Fast bills a credit multiplier. */
 export const COMPOSER_DEFAULTS: ComposerSettings = {
   modelId: 'sonnet',
   autoMode: true,
-  codexFastMode: false,
+  codexSpeed: 'standard',
   thinkingEnabled: true,
 };
 
 /** Stored per-chat values (NULL = never set) resolved against the defaults. */
 export function resolveComposerSettings(
-  row: { modelId?: string | null; autoMode?: boolean | null; codexFastMode?: boolean | null },
+  row: { modelId?: string | null; autoMode?: boolean | null; codexSpeed?: CodexSpeed | null },
   thinkingEnabled: boolean | null | undefined,
 ): ComposerSettings {
   return {
     modelId: row.modelId ?? COMPOSER_DEFAULTS.modelId,
     autoMode: row.autoMode ?? COMPOSER_DEFAULTS.autoMode,
-    codexFastMode: row.codexFastMode ?? COMPOSER_DEFAULTS.codexFastMode,
+    codexSpeed: row.codexSpeed ?? COMPOSER_DEFAULTS.codexSpeed,
     thinkingEnabled: thinkingEnabled ?? COMPOSER_DEFAULTS.thinkingEnabled,
   };
 }
@@ -86,6 +86,6 @@ export function buildExecutionSettings(
       : {}),
     // Gated on the model advertising the tier, so a chat left on Fast while switching to a model
     // without one sends nothing. `resolveCodexCliModel` re-checks in main.
-    ...(codexFastTierCredits(modelId) !== null ? { codexFastMode: settings.codexFastMode } : {}),
+    ...(codexFastTierCredits(modelId) !== null ? { codexSpeed: settings.codexSpeed } : {}),
   };
 }

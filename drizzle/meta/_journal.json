@@ -393,6 +393,13 @@
       "when": 1788963135000,
       "tag": "0105_chat_composer_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "6",
+      "when": 1790715361583,
+      "tag": "0106_chat_composer_codex_speed",
+      "breakpoints": true
     }
   ]
 }
