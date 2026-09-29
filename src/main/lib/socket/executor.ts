@@ -14,14 +14,12 @@ import { resolveCodexCliModel } from '../../../shared/lib/codex-cli-models';
 import { stripHiddenWakeMarker } from '../../../shared/lib/message-markers/hidden-wake-marker';
 import { stripMessageMarkers } from '../../../shared/lib/message-markers/strip-message-markers';
 import { isUserAbortErrorMessage } from '../../../shared/lib/user-abort-error';
-import { filterCanonicalPlanParts } from '../../../shared/plan-parts-filter';
 import type { ChatMode } from '../../../shared/types/chat-mode';
 import type { ExecutionSettings } from '../../../shared/types/execution';
 import type { PermissionPresentation } from '../../../shared/types/permissions';
 import { runCodexAgent } from '../agent-runner';
 import { createCodexHostPermissionCheck } from '../agent-runner/codex/permissions';
 import { buildCodexDynamicChatMcpUrl } from '../agent-runner/codex/spawn-args';
-import { buildFrinkPlanChunks } from '../agent-runner/plan-document';
 import { createTransformer, getBundledClaudeBinaryPath } from '../claude';
 import { clearPendingApprovals } from '../claude/ask-user-question-approval';
 import { relaunchWithCredential } from '../claude/credential-fd-spawn';
@@ -30,7 +28,6 @@ import {
   getClaudeSessionPlansDir,
   isAllowedClaudePlanWritePath,
   isValidSubChatIdForSessionPaths,
-  planPathFromExitPlanModeOutput,
   planWritePathFromInput,
   resolveLatestSessionPlanFile,
 } from '../claude/session-plan-paths';
@@ -147,7 +144,7 @@ import {
   finalizeFlowSignalBeforeSessionDisposition as settleSignal,
 } from './flow-signal';
 import { buildOperatorReminders, wrapRemindersForPrompt } from './operator-reminders';
-import { normalizePlanHaltFinishChunk, shouldDropPostPlanChunkFromHistory } from './plan-mode-halt';
+import { shouldDropPostPlanChunkFromHistory } from './plan-mode-halt';
 import { acquireRuntimeSlot } from './runtime-gate';
 import { reportIfControlChannelClosed } from './stream-closed-sentinel';
 import {
@@ -1263,10 +1260,8 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
     const deniedToolIdsWithMessages = new Map<string, string>();
     turn.deniedToolIdsWithMessages = deniedToolIdsWithMessages;
 
-    // Plan submitted outside auto: ExitPlanMode lifts the SDK's plan restrictions, so the session's
-    // callbacks deny every tool until the halt interrupt lands.
-    // Also read by the stream-error path: an interrupt surfacing as an iterator throw is the
-    // normal halt, not an error.
+    // Plan submitted outside auto: the PreToolUse hook denies ExitPlanMode and raises this, and the
+    // session's callbacks deny every later tool so the turn ends at submission.
     let planSubmissionHalt = false;
     turn.planSubmissionHalt = () => planSubmissionHalt;
     // A wake burst raises this through the arming turn when it surfaces a plan card of its own.
@@ -1328,17 +1323,14 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
     ): Promise<void> => {
       // Create transformer for SDK messages -> UI chunks
       const transform = createTransformer();
-      let stopConsuming = false;
 
       // Stream messages as they come
       const toolNameByCallId = new Map<string, string>();
       const toolInputByCallId = new Map<string, Record<string, unknown>>();
-      // Claude Code plan mode: track ExitPlanMode tool call to stop stream after plan is complete.
-      // SDK's native plan mode produces Write (plan file) → ExitPlanMode. When ExitPlanMode output
-      // arrives, the plan is done and we break out — the post-stream handler converts it to frink-plan.
+      // Claude Code plan mode: SDK's native plan mode produces Write (plan file) → ExitPlanMode.
+      // Submission (the hook's deny, or an auto-approve node's allowed call) emits the frink-plan card.
       let exitPlanModeToolCallId: string | null = null;
       let planCompletedByExitPlanMode = false;
-      let stopStreamAfterExitPlanModeFinish = false;
       // Track last Write to an allowed Claude plan path for inline plan emission at ExitPlanMode
       let lastPlanFilePathInStream: string | null = null;
       let planEmittedInline = false;
@@ -1403,18 +1395,19 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
         }
       };
 
-      /** ExitPlanMode completed: emit the frink-plan card inline (before the trailing 'finish')
-       * and — outside auto-approve — halt at plan submission: allowing ExitPlanMode lifts the
-       * SDK's plan-mode restrictions, so the model would implement in-turn before approval.
-       * `planSubmissionHalt` denies every tool from this instant (the interrupt can lag); a
-       * failed interrupt leaves tools denied and the history filter hides the text overrun. */
+      /** Plan submitted (submitPlanForReview): emit the frink-plan card inline, before the trailing
+       * 'finish'. Outside auto-approve the hook already denied ExitPlanMode and raised the halt. */
       const handleExitPlanModeCompletion = async (): Promise<void> => {
         planCompletedByExitPlanMode = true;
-        // Plan submitted: an auto-approved node implements in-turn and must be able to signal a
-        // real `done` to advance. (Non-auto turns are halted below by planSubmissionHalt anyway.)
-        turn.planTerminalsLocked = false;
+        // An auto-approved node implements in-turn and must be able to signal a real `done` to
+        // advance. A halted turn stays locked, so the Stop hook never chases it for a signal.
+        if (flowPlanAutoApprove) turn.planTerminalsLocked = false;
         turn.planSubmitted = true;
-        lastPlanFilePathInStream ??= await resolveLatestSessionPlanFile(subChatId);
+        // The submitted plan is the one under approval: its own text, never an earlier in-stream Write.
+        lastPlanFilePathInStream =
+          turn.submittedPlan?.path ??
+          lastPlanFilePathInStream ??
+          (await resolveLatestSessionPlanFile(subChatId));
         if (lastPlanFilePathInStream) {
           // A null return keeps planEmittedInline = false so the post-stream fallback fires.
           const advancedIndex = await emitInlinePlanCard({
@@ -1422,6 +1415,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
             subChatId,
             assistantMessageId: msgId,
             planPath: lastPlanFilePathInStream,
+            planText: turn.submittedPlan?.text,
             collectedChunks,
             messageIndex,
             flowDriven: isFlowDrivenExecution,
@@ -1441,19 +1435,6 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
           // just the inline one). `force` because planning already set the abstain flag, which would
           // otherwise no-op armAutoReview and leave the implementation half denying every tool.
           await armAutoReview(session, autoReviewArmable, planAutoReview);
-        } else {
-          // End this turn but keep the session (interrupt expected). Consumption continues so the
-          // trailing finish chunk (session metadata) still lands while the interrupt is in flight.
-          planSubmissionHalt = true;
-          session.interruptExpected = true;
-          void Promise.resolve()
-            .then(() => session.query.interrupt())
-            .catch((err) => {
-              log.warn(
-                `[Socket Executor] plan-halt interrupt failed for ${subChatId}:`,
-                claudeErrorText(err),
-              );
-            });
         }
       };
 
@@ -1467,15 +1448,13 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
         }
       };
 
-      /** Non-auto plan, post-submission: keep racing chunks out of history (reload view must
-       * equal live view). Returns the (possibly normalized) chunk to keep, or null to drop. */
-      const filterPostPlanChunk = (chunk: UIMessageChunk): UIMessageChunk | null => {
-        if (!(effectivePlanMode && planCompletedByExitPlanMode && !flowPlanAutoApprove)) {
-          return chunk;
-        }
-        if (shouldDropPostPlanChunkFromHistory(chunk, exitPlanModeToolCallId)) return null;
-        return normalizePlanHaltFinishChunk(chunk);
-      };
+      /** Non-auto plan, post-submission: keep the model's overrun out of history (reload view
+       * must equal live view). */
+      const isPostPlanOverrun = (chunk: UIMessageChunk): boolean =>
+        effectivePlanMode &&
+        planCompletedByExitPlanMode &&
+        !flowPlanAutoApprove &&
+        shouldDropPostPlanChunkFromHistory(chunk, exitPlanModeToolCallId);
 
       /** Plan-mode IPC suppression: auto-approve streams its in-turn implementation (hiding only
        * ExitPlanMode rows); non-auto hides everything post-ExitPlanMode until approval; drafting
@@ -1496,7 +1475,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       const onSdkMessage = async (sdkMessage: SDKMessage): Promise<void> => {
         await claudeMcpConfig?.clear();
         // An aborted turn's session is already closing (bindTurnAbort); its late frames are dropped.
-        if (stopConsuming || abortController.signal.aborted) return;
+        if (abortController.signal.aborted) return;
         if (sdkMessage.type === 'result') claudeResultErrored = sdkMessage.is_error;
 
         // First live frame of a plan-auto turn: arm the during-plan reviewer (plan→default→plan flip)
@@ -1506,7 +1485,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
           await armAutoDuringPlan(session);
         }
 
-        for (let chunk of transform(sdkMessage)) {
+        for (const chunk of transform(sdkMessage)) {
           if (!earlySessionIdPersisted) {
             const chunkSessionId = sessionIdFromFrame(sdkMessage, chunk);
             if (chunkSessionId) {
@@ -1517,20 +1496,20 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
           }
           trackToolInputChunk(chunk);
 
+          // Submitted: the hook raised the halt (non-auto), or an auto-approve node's call ran.
           if (
-            chunk.type === 'tool-output-available' &&
             exitPlanModeToolCallId &&
-            chunk.toolCallId === exitPlanModeToolCallId
+            !planCompletedByExitPlanMode &&
+            (planSubmissionHalt ||
+              (chunk.type === 'tool-output-available' &&
+                chunk.toolCallId === exitPlanModeToolCallId))
           ) {
-            lastPlanFilePathInStream ??= planPathFromExitPlanModeOutput(chunk, subChatId);
             await handleExitPlanModeCompletion();
           }
 
           broadcastToolOutputChunk(chunk);
 
-          const keptChunk = filterPostPlanChunk(chunk);
-          if (keptChunk === null) continue;
-          chunk = keptChunk;
+          if (isPostPlanOverrun(chunk)) continue;
 
           // Regression alarm for the "Stream closed" bug — names the closer so a recurrence is
           // diagnosable (which abort superseded the turn / whether a wake hold owned the session).
@@ -1568,24 +1547,6 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
           });
 
           messageIndex++;
-
-          // In plan mode, preserve trailing finish metadata (e.g., sessionId) after ExitPlanMode,
-          // then stop — the turn pauses for human approval. EXCEPT auto-approve plan nodes, which have
-          // no approval gate: let the loop run to natural completion so the in-turn implementation
-          // streams (the suppression branch above already lets it through).
-          if (planCompletedByExitPlanMode && chunk.type === 'finish' && !flowPlanAutoApprove) {
-            stopStreamAfterExitPlanModeFinish = true;
-            log.info(
-              `[Socket Executor] Claude plan mode: ExitPlanMode completed for ${subChatId}, finish chunk handled; stopping stream`,
-            );
-            break;
-          }
-        }
-        // Plan halt: stop consuming only after the finish metadata has been captured. The
-        // ExitPlanMode branch already fired the halt interrupt; this is the belt for the case
-        // where the graceful `result` beats the interrupt onto the stream.
-        if (stopStreamAfterExitPlanModeFinish) {
-          stopConsuming = true;
         }
       };
       // No close-on-result: the session queue outlives the turn (registry-owned). Both paths return
@@ -1655,11 +1616,8 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
 
       if (effectivePlanMode) {
         if (!planEmittedInline) {
-          // Claude Code SDK native plan mode path. Two cases reach this branch: a first plan turn
-          // whose inline emission failed/was skipped, and a follow-up amend turn that rewrote the
-          // plan file without re-calling ExitPlanMode (without this branch that update never
-          // reaches the UI card). Resolution: newest in-stream plan mutation, else the path the
-          // stream already resolved (SDK filePath or mutation), else the plans-dir scan.
+          // A plan turn whose inline card was not emitted, or an amend turn with no ExitPlanMode.
+          // Precedence: the submitted plan's own text, else the newest in-stream mutation, then the scan.
           let planFilePath: string | null = null;
           for (const c of collectedChunks) {
             if (c.type !== 'tool-input-available') continue;
@@ -1667,50 +1625,37 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
             if (!PLAN_MUTATION_TOOLS.has(name)) continue;
             planFilePath = planWritePathFromInput(c.input, projectPath, subChatId) ?? planFilePath;
           }
-          planFilePath ??=
-            lastPlanFilePathInStream ??
-            (planCompletedByExitPlanMode ? await resolveLatestSessionPlanFile(subChatId) : null);
-
           let planEmittedPostStream = false;
-          if (planFilePath) {
-            try {
-              const planContent = (await fs.promises.readFile(planFilePath, 'utf8')).trim();
-              if (planContent.length > 0) {
-                const frinkPlanChunks = buildFrinkPlanChunks(subChatId, planContent, planFilePath, {
-                  flowDriven: isFlowDrivenExecution,
-                  autoApproved: flowPlanAutoApprove,
-                });
-                for (const chunk of frinkPlanChunks) {
-                  collectedChunks.push(chunk);
-                  const parts = filterCanonicalPlanParts(
-                    buildPartsFromChunks(collectedChunks),
-                    planContent,
-                  );
-                  sendRunStreamChunkDirect({
-                    chatId,
-                    subChatId,
-                    assistantMessageId: msgId,
-                    chunk,
-                    parts,
-                    messageIndex: messageIndex++,
-                  });
-                }
-                planEmittedPostStream = true;
-                flipToAgentModeForAutoApprove();
-                log.info(
-                  `[Socket Executor] Claude plan mode: emitted frink-plan post-stream for ${subChatId} (planPath=${planFilePath}, exitPlanMode=${planCompletedByExitPlanMode})`,
-                );
-              } else {
-                log.warn(
-                  `[Socket Executor] Claude plan mode: plan file was empty for ${subChatId} (${planFilePath})`,
-                );
-              }
-            } catch (err) {
-              log.warn(
-                `[Socket Executor] Claude plan mode: failed to read plan file for ${subChatId} (${planFilePath}):`,
-                err,
-              );
+          const emitFromPlanFile = async (path: string, planText?: string): Promise<boolean> => {
+            const advancedIndex = await emitInlinePlanCard({
+              chatId,
+              subChatId,
+              assistantMessageId: msgId,
+              planPath: path,
+              planText,
+              collectedChunks,
+              messageIndex,
+              flowDriven: isFlowDrivenExecution,
+              autoApproved: flowPlanAutoApprove,
+              send: sendRunStreamChunkDirect,
+            });
+            if (advancedIndex === null) return false;
+            messageIndex = advancedIndex;
+            flipToAgentModeForAutoApprove();
+            return true;
+          };
+          const submitted = turn.submittedPlan;
+          if (submitted)
+            planEmittedPostStream = await emitFromPlanFile(submitted.path, submitted.text);
+          for (const path of submitted ? [] : new Set([planFilePath, lastPlanFilePathInStream])) {
+            if (path && (await emitFromPlanFile(path))) {
+              planEmittedPostStream = true;
+              break;
             }
+          }
+          if (!planEmittedPostStream && !submitted && planCompletedByExitPlanMode) {
+            const scanned = await resolveLatestSessionPlanFile(subChatId);
+            planEmittedPostStream = scanned !== null && (await emitFromPlanFile(scanned));
           }
           if (!planEmittedPostStream) {
             // No card rendered — no plan artifact, or the resolved file vanished/was empty by
@@ -1832,9 +1777,8 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       // successor owns disposition; touching the key here would destroy its live session.
       if (!session || getClaudeSession(subChatId) !== session) return;
       const pendingWork = session.stopHook?.lastPendingWork ?? null;
-      // Plan turns (mid-turn EnterPlanMode too) hold: bursts inherit the arming turn's plan locks
-      // (armWakePump), so the terminal-signal predicate stays sound between wakes. Only a SUBMITTED
-      // plan disposes — halted awaiting approval; follow-up spawns fresh (flow-quiet-wait-handling)
+      // Plan turns hold like any turn (bursts inherit the plan locks). A submitted plan never holds,
+      // but with no pending work it is kept idle so the approval reuses this CLI.
       const mustDispose = turnEndMustDispose(subChatId, session, turn, abortController.signal);
       if (!pendingWork || mustDispose) {
         const flowTurn = flowResources.admitted || isFlowExecutionTurn;
@@ -2006,17 +1950,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       await runClaudeQueryAttempt(retryOptions as typeof sdkOptions);
       log.info(`[Socket Executor] API-error retry succeeded for ${subChatId}`);
     }
-    try {
-      await runWithOptionalResumeRetry();
-    } catch (error) {
-      // The plan-halt interrupt can surface as an iterator throw instead of a graceful result.
-      // The plan card is already emitted by then — finalize normally (a missing finish only means
-      // no sessionId this turn; finalize keeps the row's existing one) instead of showing an error.
-      if (!planSubmissionHalt) throw error;
-      log.warn(
-        `[Socket Executor] Claude plan mode: stream ended via interrupt throw for ${subChatId}:`,
-      );
-    }
+    await runWithOptionalResumeRetry();
     // sc-3666: a turn that settled without its prompt reaching the CLI must not report complete.
     delivery.assertDelivered(abortController.signal.aborted, shouldResumeClaudeSession);
 

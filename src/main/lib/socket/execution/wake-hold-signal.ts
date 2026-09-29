@@ -126,7 +126,8 @@ function disposeCause(
   signal: AbortSignal,
 ): string | null {
   if (signal.aborted) return 'aborted';
-  if (turn.planSubmissionHalt()) return 'plan submitted';
+  // A submitted plan never holds; with nothing pending it is kept for the approval to claim.
+  if (turn.planSubmissionHalt() && session.stopHook?.lastPendingWork) return 'plan submitted';
   if (session.queue.closed) return 'question-park kill'; // killed by a question park: dead input
   if (session.busy) return 'session busy';
   return chatFence(session) || null; // its chat was torn down or switched account mid-turn

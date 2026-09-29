@@ -2,8 +2,8 @@
  * What happens when a plan is AUTO-approved — the flip out of plan mode, and arming the provider
  * reviewer for the rest of that turn.
  *
- * An auto-approved plan node implements in the SAME turn it planned in (the turn is only
- * interrupted when a human has to approve), so it opens in `permissionMode: 'plan'` and nothing
+ * An auto-approved plan node implements in the SAME turn it planned in (the turn only
+ * stops at submission when a human has to approve), so it opens in `permissionMode: 'plan'` and nothing
  * else would ever re-arm it: every tool of the implementation half would prompt, on a run nobody is
  * watching. See decision `auto-mode-tool-approval`.
  */
@@ -16,6 +16,7 @@ import { claudeErrorText } from '../../claude/stream-classifiers';
 import { getDatabase } from '../../db';
 import { withSubChatLock } from '../../db/repos/sub-chat-mutex';
 import { updateSubChatMode } from '../../db/repos/sub-chats';
+import { submittedPlanFromExitPlanModeInput } from '../../claude/session-plan-paths';
 import { captureContained } from '../../sentry';
 import type { ClaudeTurnContext } from '../claude-turn-context';
 import { attachTurn } from '../execution/claude-session/attach';
@@ -102,6 +103,25 @@ export function denyPlanTransitionInWakeBurst(
     };
   }
   return null;
+}
+
+/** The deny that ends a turn at plan submission, stated as a stop the model cannot misread. */
+export const PLAN_SUBMITTED_FOR_REVIEW =
+  "Plan submitted for the user's review. Stop now: do not call ExitPlanMode again or run tools; the user replies in a later turn.";
+
+/** Records the plan file a foreground ExitPlanMode names. With a human approver, submits the plan
+ * and returns the deny that ends the turn; an auto-approve node gets null and implements in-turn. */
+export function submitPlanForReview(
+  toolInput: unknown,
+  turn: ClaudeTurnContext,
+  subChatId: string,
+): string | null {
+  turn.submittedPlan = submittedPlanFromExitPlanModeInput(toolInput, subChatId);
+  if (turn.execution.flowPlanAutoApprove) return null;
+  // Set here, not when the stream sees the deny: the Stop hook reads both before the turn ends.
+  turn.planSubmitted = true;
+  turn.setPlanSubmissionHalt();
+  return PLAN_SUBMITTED_FOR_REVIEW;
 }
 
 type AdoptableSession = {

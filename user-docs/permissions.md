@@ -89,7 +89,7 @@ Deny wins over allow if both match the same tool call.
 
 A short list of tools is required for the agent to function correctly. You can `allow` or `ask` them, but `deny` is blocked at the input layer:
 
-- `ExitPlanMode` — denying it strands the agent in plan mode forever
+- `ExitPlanMode` — Frink handles it itself: when a plan is ready, it shows you the plan card and ends the turn, and **Approve & Run** starts the work. A rule can't block that step.
 - `TodoWrite` — denying it silently breaks the agent's internal task tracking
 - `Task` — denying it disables subagent dispatch entirely
 

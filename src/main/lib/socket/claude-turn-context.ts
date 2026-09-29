@@ -76,9 +76,11 @@ export interface ClaudeTurnContext {
   /** Plan restrictions still in force (plan mode, plan not yet submitted): refuses terminal
    * `frink_task_signal` states so plan mode finishes only through ExitPlanMode. */
   planTerminalsLocked: boolean;
-  /** This turn submitted a plan (ExitPlanMode completed), so any signal recorded BEFORE that point
+  /** This turn submitted a plan (ExitPlanMode called), so any signal recorded BEFORE that point
    * belongs to the drafting phase — see hasLatestTaskSignalFor's `requireTerminal`. */
   planSubmitted: boolean;
+  /** The plan this turn's ExitPlanMode submitted (hook input): the card is built from this text. */
+  submittedPlan: { path: string; text: string } | null;
   /** Records that canUseTool persisted the task signal mid-stream (skips the post-stream write). */
   setHasExplicitTaskSignal: (value: boolean) => void;
   /** Denied tool_use ids → denial message, read post-stream to emit synthetic tool-output-errors. */
@@ -120,6 +122,7 @@ export function createClaudeTurnContext(): ClaudeTurnContext {
     setPlanSubmissionHalt: () => {},
     planTerminalsLocked: false,
     planSubmitted: false,
+    submittedPlan: null,
     setHasExplicitTaskSignal: () => {},
     deniedToolIdsWithMessages: new Map(),
     pendingReminders: [],
@@ -323,6 +326,8 @@ export async function emitInlinePlanCard(params: {
   subChatId: string;
   assistantMessageId: string;
   planPath: string;
+  /** The submitted plan's exact text; when given, the card is built from it and the file is not read. */
+  planText?: string;
   collectedChunks: UIMessageChunk[];
   messageIndex: number;
   flowDriven: boolean;
@@ -341,7 +346,7 @@ export async function emitInlinePlanCard(params: {
   const { chatId, subChatId, assistantMessageId, planPath, collectedChunks, send } = params;
   let { messageIndex } = params;
   try {
-    const planContent = (await fs.promises.readFile(planPath, 'utf8')).trim();
+    const planContent = (params.planText ?? (await fs.promises.readFile(planPath, 'utf8'))).trim();
     if (planContent.length === 0) {
       log.warn(
         `[Socket Executor] Claude plan mode: plan file was empty at inline emission for ${subChatId} (${planPath})`,
