@@ -97,7 +97,7 @@ function registerCodexBasicPermissionTests({
     expect(codexCall?.configArgs).toBeUndefined();
     expect(dynamicServer).toContain('http://127.0.0.1:4312/mcp');
     expect(dynamicServer).toContain('channel=');
-    expect(dynamicServer).toContain('toolset=agent%3Anosignal');
+    expect(dynamicServer).toContain('toolset=nosignal');
     expect(dynamicServer).not.toContain('executionId');
   });
 

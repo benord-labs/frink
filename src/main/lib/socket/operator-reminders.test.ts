@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { PLAN_MODE_NO_FINISH_SIGNAL } from '../../../shared/lib/task-agent-lifecycle-prompt';
 import {
   buildOperatorReminders,
   buildUserPromptSubmitReminderHook,
@@ -14,6 +15,7 @@ const base = {
   hasResumeSession: false,
   taskSignalDisarmed: false,
   agentSawPriorTurns: false,
+  planOwesNoFinishSignal: false,
 };
 
 describe('buildOperatorReminders', () => {
@@ -21,6 +23,16 @@ describe('buildOperatorReminders', () => {
     const { reminders, isExitingDebugMode } = buildOperatorReminders(base);
     expect(reminders).toEqual([]);
     expect(isExitingDebugMode).toBe(false);
+  });
+
+  it('states the no-finish-signal duty on a plan turn that owes it, every turn', () => {
+    const { reminders } = buildOperatorReminders({
+      ...base,
+      mode: 'plan',
+      previousMode: 'plan',
+      planOwesNoFinishSignal: true,
+    });
+    expect(reminders).toEqual([PLAN_MODE_NO_FINISH_SIGNAL]);
   });
 
   it('adds the plan-exit reminder on plan→agent while resuming', () => {
@@ -124,6 +136,7 @@ describe('buildOperatorReminders', () => {
       hasResumeSession: true,
       taskSignalDisarmed: true,
       agentSawPriorTurns: true,
+      planOwesNoFinishSignal: false,
     });
     expect(reminders).toEqual([PLAN_MODE_EXIT_REMINDER, TASK_SIGNAL_DISARMED_REMINDER]);
   });

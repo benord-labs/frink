@@ -96,6 +96,9 @@ function resultText(result: McpToolResult | null): string {
   return result.content[0]?.text ?? '';
 }
 
+const PLAN_MODE_REFUSAL =
+  'Flow tools are not available in plan mode. Put the Flow change in your plan instead; it can run once the plan is approved.';
+
 describe('dispatchFlowToolCall', () => {
   beforeEach(() => {
     state.handleFlowsToolCall.mockReset();
@@ -140,7 +143,7 @@ describe('dispatchFlowToolCall', () => {
     const result = await dispatch({ name: 'frink_flows_list', mode: 'plan' });
 
     expect(result?.isError).toBe(true);
-    expect(resultText(result)).toBe('Flow tools are not available in plan mode.');
+    expect(resultText(result)).toBe(PLAN_MODE_REFUSAL);
   });
 
   it('returns a structured no-write result for a patch tool in plan mode', async () => {
@@ -150,7 +153,7 @@ describe('dispatchFlowToolCall', () => {
     expect(JSON.parse(resultText(result))).toEqual({
       status: 'failure',
       persistence: 'none',
-      message: 'Flow tools are not available in plan mode.',
+      message: PLAN_MODE_REFUSAL,
     });
     expect(state.handleFlowsToolCall).not.toHaveBeenCalled();
   });

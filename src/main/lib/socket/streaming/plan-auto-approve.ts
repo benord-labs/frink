@@ -18,6 +18,7 @@ import { updateSubChatMode } from '../../db/repos/sub-chats';
 import { captureContained } from '../../sentry';
 import type { ClaudeTurnContext } from '../claude-turn-context';
 import { attachTurn } from '../execution/claude-session/attach';
+import { PLAN_MODE_EXIT_REMINDER } from '../operator-reminders';
 import { effortKeyPart } from '../execution/claude-session/session-key';
 
 /** Whether the send's Auto consent runs natively on its provider and model (the SDK default model
@@ -219,6 +220,8 @@ export function adoptedTurnBeforePush(params: {
     if (signal.aborted) return false;
     attachTurn(session, turn, params.onTakeover);
     if (await reconcileAdoptedPermissionMode(session, mode, nativeAutoReview)) {
+      // A live switch out of plan gets the CLI's own exit reminder; ours would repeat it.
+      turn.pendingReminders = turn.pendingReminders.filter((r) => r !== PLAN_MODE_EXIT_REMINDER);
       // Ultra first: clearing it leaves the CLI at xhigh until an effort is set after it.
       await reconcileAdoptedUltracode(session, params.live.ultracode);
       if (await reconcileLiveModelAndEffort(session, params.live)) return !signal.aborted;

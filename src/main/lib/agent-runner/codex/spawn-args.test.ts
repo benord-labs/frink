@@ -10,7 +10,6 @@ const base = {
   baseUrl: 'http://127.0.0.1:3111',
   subChatId: 'sub-a',
   projectPath: '/repo',
-  mode: 'agent' as const,
   hasSignalTask: true,
 };
 
@@ -80,7 +79,6 @@ describe('buildCodexDynamicChatMcpUrl', () => {
   it('changes when the tool list would, so the registry respawns instead of serving a stale list', () => {
     const armed = buildCodexDynamicChatMcpUrl(base);
     expect(armed).not.toBe(buildCodexDynamicChatMcpUrl({ ...base, hasSignalTask: false }));
-    expect(armed).not.toBe(buildCodexDynamicChatMcpUrl({ ...base, mode: 'plan' }));
   });
 
   it('returns no URL without a base URL or outside a project', () => {

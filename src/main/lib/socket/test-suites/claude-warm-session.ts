@@ -247,17 +247,6 @@ function registerRecreateTests({ claudeQueryMock }: WarmSessionHarness, send: Se
           void vi.mocked(buildFrinkSystemPromptAppend).mockResolvedValueOnce('# AGENTS.md changed'),
       },
     ],
-    [
-      'plan-toggle',
-      'mcpServers',
-      {
-        first: () => void vi.mocked(getMultiProjectContext).mockResolvedValueOnce(mcpUrl),
-        second: () => {
-          vi.mocked(getMultiProjectContext).mockResolvedValueOnce(mcpUrl);
-          return { mode: 'plan' };
-        },
-      },
-    ],
     ['max effort', 'effort', { second: () => ({ settings: { effort: 'max' } }) }],
   ])('a changed %s recreates the CLI, resuming the conversation', async (_, part, change) => {
     const first = mockQuery(claudeQueryMock, answeringCli());
@@ -271,6 +260,18 @@ function registerRecreateTests({ claudeQueryMock }: WarmSessionHarness, send: Se
     expect(first.close).toHaveBeenCalledOnce();
     expect(claudeQueryMock).toHaveBeenCalledTimes(2);
     expect(spawnedResume(1)).toBe('sess-held');
+  });
+
+  it('a plan toggle runs on the same CLI, switching its permission mode live', async () => {
+    const warm = mockQuery(claudeQueryMock, answeringCli());
+    vi.mocked(getMultiProjectContext).mockResolvedValueOnce(mcpUrl).mockResolvedValueOnce(mcpUrl);
+
+    await send('first');
+    await send('second', { sessionId: 'sess-held', mode: 'plan' });
+
+    expect(claimLines()).toEqual(['miss:none', 'hit']);
+    expect(claudeQueryMock).toHaveBeenCalledTimes(1);
+    expect(warm.setPermissionMode).toHaveBeenLastCalledWith('plan');
   });
 
   it('a chat whose worktree is gone falls back to the project and recreates there', async () => {

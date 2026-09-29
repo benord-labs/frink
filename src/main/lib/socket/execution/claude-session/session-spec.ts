@@ -166,8 +166,7 @@ export async function buildClaudeSessionSpec(inputs: ClaudeSessionSpecInputs) {
   // This execute's CLI channel: live only once its CLI spawns (an adopted session keeps its own).
   const claudeChannel = crypto.randomUUID();
   const claudeDynamicChatMcpUrl =
-    dynamicChatMcpUrl &&
-    withChannelQuery(dynamicChatMcpUrl, claudeChannel, mode, Boolean(signalTaskId));
+    dynamicChatMcpUrl && withChannelQuery(dynamicChatMcpUrl, claudeChannel, Boolean(signalTaskId));
   const { servers: mcpServers } = await resolveFrinkMcpServers({
     projectId: inputs.projectId,
     projectPath,

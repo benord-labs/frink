@@ -4212,7 +4212,7 @@ describe('execution-scoped MCP URL wiring', () => {
     const parsed = new URL(mcpUrl as string);
     expect(parsed.searchParams.get('executionId')).toBeNull();
     expect(channelOwner(parsed.searchParams.get('channel') ?? '')?.runtime).toBe('claude');
-    expect(parsed.searchParams.get('toolset')).toBe('agent:nosignal');
+    expect(parsed.searchParams.get('toolset')).toBe('nosignal');
   });
 });
 
