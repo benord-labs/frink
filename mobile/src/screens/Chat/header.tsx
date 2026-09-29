@@ -3,7 +3,7 @@ import type { NativeStackNavigationOptions } from '@react-navigation/native-stac
 import { useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Platform, Pressable, ScrollView, View } from 'react-native';
 import { Trash2 } from 'lucide-react-native';
-import type { MobileActivity, MobileChatDetail } from '../../../../src/shared/types/remote/mobile';
+import type { MobileActivity, MobileChatDetail } from '@frink/shared/types/remote/mobile';
 import { PulseDot } from '../../ui/glyphs';
 import { Text } from '../../ui/text';
 import { GUTTER, radius, space, useTheme } from '../../ui/theme';

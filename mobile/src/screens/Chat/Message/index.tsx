@@ -2,7 +2,7 @@ import * as Clipboard from 'expo-clipboard';
 import { useState, type ReactNode } from 'react';
 import { Pressable, View } from 'react-native';
 import { Check, Copy, CornerDownRight, FileText, Image as ImageIcon } from 'lucide-react-native';
-import type { MobileMessage } from '../../../../../src/shared/types/remote/mobile';
+import type { MobileMessage } from '@frink/shared/types/remote/mobile';
 import { Markdown } from '../../../ui/Markdown';
 import { glassLighting } from '../../../ui/material';
 import { Text } from '../../../ui/text';

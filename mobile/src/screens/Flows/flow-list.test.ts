@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { MobileFlow } from '../../../../src/shared/types/remote/mobile';
+import type { MobileFlow } from '@frink/shared/types/remote/mobile';
 import { flowSections, flowStatus, flowTrailing } from './flow-list';
 
 const NOW = Date.parse('2026-09-29T14:30:00Z');

@@ -1,4 +1,4 @@
-import type { MobileFlow } from '../../../../src/shared/types/remote/mobile';
+import type { MobileFlow } from '@frink/shared/types/remote/mobile';
 import { runStatus, shortAge, type Status, type StatusTone } from '../../lib/status';
 
 type SectionId = 'needs_you' | 'enabled' | 'disabled';

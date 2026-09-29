@@ -22,7 +22,7 @@ import {
   Webhook,
   type LucideIcon,
 } from 'lucide-react-native';
-import type { MobileFlowDefinition } from '../../../../../src/shared/types/remote/mobile';
+import type { MobileFlowDefinition } from '@frink/shared/types/remote/mobile';
 import { Markdown } from '../../../ui/Markdown';
 import { EmptyState, RowSeparator } from '../../../ui/list';
 import { Text } from '../../../ui/text';

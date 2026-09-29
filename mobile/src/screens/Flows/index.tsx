@@ -1,7 +1,7 @@
 import { Fragment, useMemo } from 'react';
 import { ActivityIndicator, RefreshControl, ScrollView } from 'react-native';
 import { Search, Workflow } from 'lucide-react-native';
-import type { MobileFlow } from '../../../../src/shared/types/remote/mobile';
+import type { MobileFlow } from '@frink/shared/types/remote/mobile';
 import { useResource } from '../../lib/connection';
 import { useRootNavigation } from '../../navigation/routes';
 import { useTabHeader } from '../../navigation/tab-header';

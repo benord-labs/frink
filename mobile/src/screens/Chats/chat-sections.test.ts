@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { MobileChatSummary } from '../../../../src/shared/types/remote/mobile';
+import type { MobileChatSummary } from '@frink/shared/types/remote/mobile';
 import { chatSections, chatSubtitle } from './chat-sections';
 
 const now = new Date(2026, 8, 29, 15, 0);

@@ -2,7 +2,7 @@ import type {
   MobileFlowDefinition,
   MobileResponses,
   MobileRun,
-} from '../../../src/shared/types/remote/mobile';
+} from '@frink/shared/types/remote/mobile';
 import { flowFixture, flowsFixture, NOW, runFixture } from './data';
 
 const ago = (minutes: number) => new Date(NOW - minutes * 60_000).toISOString();

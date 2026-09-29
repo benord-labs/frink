@@ -2,7 +2,7 @@ import type {
   MobileOverview,
   MobileQueueItem,
   MobileQueueSection,
-} from '../../../../src/shared/types/remote/mobile';
+} from '@frink/shared/types/remote/mobile';
 import { taskStatus, type Status } from '../../lib/status';
 
 export type QueueSectionKey = 'needsYou' | 'running' | 'review' | 'upNext';

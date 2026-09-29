@@ -1,4 +1,4 @@
-import type { MobileProject } from '../../../../src/shared/types/remote/mobile';
+import type { MobileProject } from '@frink/shared/types/remote/mobile';
 
 /** One plain line per choice, for people who have never heard of a git worktree. */
 export const WORK_HELP = {

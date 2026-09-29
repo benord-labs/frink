@@ -1,5 +1,5 @@
 import { expect as baseExpect, test, type Page } from '@playwright/test';
-import type { MobileQueueItem } from '../../src/shared/types/remote/mobile';
+import type { MobileQueueItem } from '@frink/shared/types/remote/mobile';
 import { openApp } from './fixtures/app';
 import { NOW, overviewFixture } from './fixtures/data';
 

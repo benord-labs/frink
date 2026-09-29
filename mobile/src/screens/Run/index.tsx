@@ -1,7 +1,7 @@
 import { useRoute, type RouteProp } from '@react-navigation/native';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, RefreshControl, ScrollView, View } from 'react-native';
-import type { MobileRun, MobileRunNode } from '../../../../src/shared/types/remote/mobile';
+import type { MobileRun, MobileRunNode } from '@frink/shared/types/remote/mobile';
 import { useAction, useResource } from '../../lib/connection';
 import { useLargeTitle } from '../../navigation/large-title';
 import type { RootRoutes } from '../../navigation/routes';

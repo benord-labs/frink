@@ -1,6 +1,6 @@
 import { memo } from 'react';
 import { Trash2 } from 'lucide-react-native';
-import type { MobileChatSummary } from '../../../../src/shared/types/remote/mobile';
+import type { MobileChatSummary } from '@frink/shared/types/remote/mobile';
 import { shortAge } from '../../lib/status';
 import { KindTile } from '../../ui/glyphs';
 import { ListRow } from '../../ui/list';

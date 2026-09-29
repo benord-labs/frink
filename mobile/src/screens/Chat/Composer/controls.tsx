@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { ChevronDown, Sparkles, type LucideIcon } from 'lucide-react-native';
-import type { MobileChatMode, MobileComposer } from '../../../../../src/shared/types/remote/mobile';
+import type { MobileChatMode, MobileComposer } from '@frink/shared/types/remote/mobile';
 import { Text } from '../../../ui/text';
 import { radius, space, useTheme } from '../../../ui/theme';
 import { MODES, ModeSheet, ModelSheet, modelLabel, type ComposerPatch } from './sheets';

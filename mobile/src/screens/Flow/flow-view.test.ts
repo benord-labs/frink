@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { MobileFlow } from '../../../../src/shared/types/remote/mobile';
+import type { MobileFlow } from '@frink/shared/types/remote/mobile';
 import { enabledHint, flowAttention, runNowBlocker } from './flow-view';
 
 describe('enabledHint', () => {

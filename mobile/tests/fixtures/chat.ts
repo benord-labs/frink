@@ -1,5 +1,5 @@
 import { expect, type Page } from '@playwright/test';
-import type { MobileChatDetail } from '../../../src/shared/types/remote/mobile';
+import type { MobileChatDetail } from '@frink/shared/types/remote/mobile';
 import type { AppState } from './app';
 import { chatFixture } from './data';
 

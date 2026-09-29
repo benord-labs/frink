@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { MobileChatMode, MobileComposer } from '../../../../../src/shared/types/remote/mobile';
+import type { MobileChatMode, MobileComposer } from '@frink/shared/types/remote/mobile';
 import { useConnection, useResource } from '../../../lib/connection';
 import type { ComposerPatch } from './controls';
 

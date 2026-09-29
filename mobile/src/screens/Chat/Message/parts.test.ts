@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { MobileMessage } from '../../../../../src/shared/types/remote/mobile';
+import type { MobileMessage } from '@frink/shared/types/remote/mobile';
 import { contentGroups, copyText, toolLabel, toolRunSummary, type Tool } from './parts';
 
 const tool = (name: string, state: Tool['state'] = 'completed'): Tool => ({

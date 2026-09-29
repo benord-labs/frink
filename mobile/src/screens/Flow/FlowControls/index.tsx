@@ -10,7 +10,7 @@ import {
   Webhook,
   type LucideIcon,
 } from 'lucide-react-native';
-import type { MobileFlow } from '../../../../../src/shared/types/remote/mobile';
+import type { MobileFlow } from '@frink/shared/types/remote/mobile';
 import { useAction } from '../../../lib/connection';
 import { useRootNavigation } from '../../../navigation/routes';
 import { Button } from '../../../ui/button';

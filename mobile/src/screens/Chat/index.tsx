@@ -12,7 +12,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import type { MobileActivity } from '../../../../src/shared/types/remote/mobile';
+import type { MobileActivity } from '@frink/shared/types/remote/mobile';
 import { useResource } from '../../lib/connection';
 import { useDraft } from '../../lib/drafts';
 import { useRootNavigation, type DecisionTarget, type RootRoutes } from '../../navigation/routes';

@@ -1,7 +1,7 @@
 import { requireOptionalNativeModule } from 'expo';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Platform } from 'react-native';
-import { MOBILE_MAX_ATTACHMENTS } from '../../../../../src/shared/types/remote/mobile';
+import { MOBILE_MAX_ATTACHMENTS } from '@frink/shared/types/remote/mobile';
 import { uploadAttachment } from '../../../lib/api';
 import { useConnection } from '../../../lib/connection';
 

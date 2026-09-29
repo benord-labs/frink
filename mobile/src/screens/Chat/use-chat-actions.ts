@@ -1,6 +1,6 @@
 import * as Haptics from 'expo-haptics';
 import { useEffect, useState } from 'react';
-import type { MobileChatDetail } from '../../../../src/shared/types/remote/mobile';
+import type { MobileChatDetail } from '@frink/shared/types/remote/mobile';
 import { useAction } from '../../lib/connection';
 import type { useDraft } from '../../lib/drafts';
 import type { Attachments } from './Composer/attach';

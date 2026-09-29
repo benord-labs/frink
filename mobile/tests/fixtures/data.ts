@@ -2,7 +2,7 @@ import type {
   MobileChatDetail,
   MobileComposer,
   MobileResponses,
-} from '../../../src/shared/types/remote/mobile';
+} from '@frink/shared/types/remote/mobile';
 
 /** Fixed clock for every preview, so relative times ("5m") are stable in screenshots. */
 export const NOW = Date.parse('2026-09-29T14:30:00Z');

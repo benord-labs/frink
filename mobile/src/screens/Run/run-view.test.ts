@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { MobileRunNode } from '../../../../src/shared/types/remote/mobile';
+import type { MobileRunNode } from '@frink/shared/types/remote/mobile';
 import {
   isLive,
   isTerminal,

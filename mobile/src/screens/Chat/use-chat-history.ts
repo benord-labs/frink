@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { MobileMessage } from '../../../../src/shared/types/remote/mobile';
+import type { MobileMessage } from '@frink/shared/types/remote/mobile';
 import { useConnection } from '../../lib/connection';
 
 // Earlier pages of one conversation. A generation counter drops responses that arrive after the

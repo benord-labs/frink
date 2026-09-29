@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, Platform, SectionList, View } from 'react-native';
 import { MessageSquare, SearchX } from 'lucide-react-native';
-import type { MobileChatSummary } from '../../../../src/shared/types/remote/mobile';
+import type { MobileChatSummary } from '@frink/shared/types/remote/mobile';
 import { useConnection, useResource } from '../../lib/connection';
 import { useOverview } from '../../lib/overview';
 import { useWindow } from '../../lib/use-window';

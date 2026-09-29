@@ -1,4 +1,4 @@
-import type { MobileFlow } from '../../../../src/shared/types/remote/mobile';
+import type { MobileFlow } from '@frink/shared/types/remote/mobile';
 import type { Status } from '../../lib/status';
 import { flowStatus } from '../Flows/flow-list';
 

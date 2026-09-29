@@ -1,6 +1,6 @@
 import { Pressable, View } from 'react-native';
 import { Check, MessageSquare, SkipForward } from 'lucide-react-native';
-import type { MobileRunNode } from '../../../../../src/shared/types/remote/mobile';
+import type { MobileRunNode } from '@frink/shared/types/remote/mobile';
 import { useRootNavigation } from '../../../navigation/routes';
 import { Button } from '../../../ui/button';
 import { StatusGlyph } from '../../../ui/glyphs';

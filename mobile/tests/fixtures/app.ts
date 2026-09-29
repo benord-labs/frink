@@ -1,5 +1,5 @@
 import type { Page, Request } from '@playwright/test';
-import type { MobileResponses } from '../../../src/shared/types/remote/mobile';
+import type { MobileResponses } from '@frink/shared/types/remote/mobile';
 import { NOW, previewData } from './data';
 
 export const fixtureHost = 'https://mobile-fixture.example.test';

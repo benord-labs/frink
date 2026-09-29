@@ -1,4 +1,4 @@
-import type { MobileChatSummary } from '../../../../src/shared/types/remote/mobile';
+import type { MobileChatSummary } from '@frink/shared/types/remote/mobile';
 import { dateBucket, type DateBucket } from '../../lib/status';
 
 export type ChatSection = { title: DateBucket; data: MobileChatSummary[] };
