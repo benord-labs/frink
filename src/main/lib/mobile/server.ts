@@ -14,6 +14,7 @@ import {
   mobileRequestSchema,
   type MobileRequest,
 } from '../../../shared/types/remote/mobile';
+import { notificationRegistrationSchema } from '../../../shared/types/remote/notifications';
 import type { MobilePairingStore } from './pairing-store';
 import { MobileApiError } from './domain/errors';
 import { captureContained } from '../sentry';
@@ -123,6 +124,11 @@ export function createMobileApp(
   });
   app.use('/api', auth);
   app.use(ATTACHMENTS_PATH, auth);
+  app.use('/api/notifications', auth);
+  app.post('/api/notifications', async (context) => {
+    const input = notificationRegistrationSchema.parse(await readJson(context.req));
+    return context.json({ data: await store.notifications(context.get('mobileToken'), input) });
+  });
   app.post('/api', async (context) => {
     const request = mobileRequestSchema.parse(await readJson(context.req));
     if (!store.authenticate(context.get('mobileToken'))) {

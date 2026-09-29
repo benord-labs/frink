@@ -11,6 +11,10 @@ import type {
   MobileRequest,
   MobileResponses,
 } from '@frink/shared/types/remote/mobile';
+import type {
+  NotificationRegistration,
+  NotificationStatus,
+} from '@frink/shared/types/remote/notifications';
 
 export const connectionSchema = z.object({
   url: mobilePairingSchema.shape.url,
@@ -94,6 +98,16 @@ export async function requestMobile<T extends MobileRequest>(
     signal,
   );
   return result.data;
+}
+
+/** Reads this iPhone's alert registration on the Mac; a `token` registers it, `null` removes it. */
+export async function requestNotifications(
+  connection: Connection,
+  input: NotificationRegistration,
+  signal?: AbortSignal,
+): Promise<NotificationStatus> {
+  const url = `${connection.url.replace(/\/$/, '')}/api/notifications`;
+  return (await post(url, input, connection.token, signal)).data;
 }
 
 /** Uploads over a cellular link can be slow; the Mac allows up to two minutes. */

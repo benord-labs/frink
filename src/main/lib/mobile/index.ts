@@ -6,12 +6,14 @@ import { app } from 'electron';
 import log from 'electron-log';
 import { MOBILE_PORT } from '../../../shared/types/remote/mobile';
 import { executeMobileRequest, storeMobileAttachment } from './domain-api';
+import { startMobileNotifications } from './notifications';
 import { MobilePairingStore } from './pairing-store';
 import { startMobileServer, stopMobileServer } from './server';
 
 let storePromise: Promise<MobilePairingStore> | null = null;
 let server: Server | null = null;
 let serverError: string | null = null;
+let stopNotifications: (() => void) | null = null;
 const lifecycle = new Mutex();
 
 function getStore(): Promise<MobilePairingStore> {
@@ -32,6 +34,7 @@ async function startServer(store: MobilePairingStore): Promise<void> {
       MOBILE_PORT,
       storeMobileAttachment,
     );
+    stopNotifications = startMobileNotifications(store);
     serverError = null;
   } catch {
     serverError = `Mobile access could not start on port ${MOBILE_PORT}. Close any other Frink instance using it, then try again.`;
@@ -69,6 +72,8 @@ export async function enableMobileAccess() {
 
 export async function stopMobileAccess(): Promise<void> {
   await lifecycle.runExclusive(async () => {
+    stopNotifications?.();
+    stopNotifications = null;
     if (!server) return;
     const current = server;
     server = null;
@@ -86,6 +91,8 @@ export async function disableMobileAccess() {
     try {
       await store.disable();
     } finally {
+      stopNotifications?.();
+      stopNotifications = null;
       if (server) {
         const current = server;
         server = null;
