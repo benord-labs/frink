@@ -33,4 +33,33 @@ describe('formatPromptWithHistory', () => {
     expect(formatPromptWithHistory('do the thing', [])).toBe('do the thing');
     expect(formatPromptWithHistory('do the thing', undefined)).toBe('do the thing');
   });
+
+  it('keeps the newest history within budget and marks what it dropped', () => {
+    const long = Array.from({ length: 300 }, (_, i) => ({
+      role: i % 2 === 0 ? ('user' as const) : ('assistant' as const),
+      content: `message ${i} ${'x'.repeat(1000)}`,
+    }));
+
+    const out = formatPromptWithHistory('latest ask', long);
+
+    expect(out.length).toBeLessThan(200_000 + 500);
+    expect(out).toMatch(
+      /\[Earlier conversation omitted to fit the context budget: \d+ characters\]/,
+    );
+    expect(out).toContain('Assistant: message 299');
+    expect(out).not.toContain('message 0 ');
+    expect(out.endsWith('latest ask')).toBe(true);
+    // The cut lands on a message boundary, so the first kept turn is whole.
+    expect(out).toMatch(/characters\]\n\n(Human|Assistant): message \d+ /);
+  });
+
+  it('keeps the tail of a single message larger than the budget', () => {
+    const out = formatPromptWithHistory('go', [
+      { role: 'user', content: `${'a'.repeat(300_000)}END` },
+    ]);
+
+    expect(out.length).toBeLessThan(200_000 + 500);
+    expect(out).toContain('aEND');
+    expect(out).toContain('Earlier conversation omitted');
+  });
 });

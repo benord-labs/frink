@@ -4,7 +4,7 @@ import { Button } from '@benord-labs/frink-primitives';
 import { useAtomValue } from 'jotai';
 import { ChevronRight } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { SUBAGENT_TEXT_PART_TYPE } from '../../../../shared/subagent-parts';
+import { NARRATION_PART_TYPES, SUBAGENT_TEXT_PART_TYPE } from '../../../../shared/subagent-parts';
 import { TextShimmer } from '../../../components/ui/text-shimmer';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../components/ui/tooltip';
 import { isFlowPatchToolType } from '../../../lib/flows/flow-change-tool';
@@ -38,9 +38,6 @@ type AgentTaskToolProps = {
 // Constants for rendering
 const MAX_VISIBLE_TOOLS = 5;
 const TOOL_HEIGHT_PX = 24;
-
-/** Narration, not work — excluded from the collapsed card's one-line "what is it doing now". */
-const NARRATION_PART_TYPES = new Set<string>([SUBAGENT_TEXT_PART_TYPE, 'tool-Thinking']);
 
 // Format elapsed time in a human-readable format
 function formatElapsedTime(ms: number): string {

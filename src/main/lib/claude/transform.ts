@@ -3,6 +3,7 @@ import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import log from 'electron-log';
 import { SUBAGENT_TEXT_TOOL_NAME } from '../../../shared/subagent-parts';
 import { createCompactionMapper, createContextUsageTracker } from './compaction';
+import { usageLimitResultChunks } from './stream-classifiers';
 import { createThinkingEmitter } from './thinking-emitter';
 import type { MCPServer, MCPServerStatus, MessageMetadata, UIMessageChunk } from './types';
 
@@ -232,19 +233,8 @@ export function createTransformer() {
     currentToolName = null;
     accumulatedToolInput = '';
 
-    if (!raw) {
-      emittedToolIds.add(compositeId);
-      yield {
-        type: 'tool-input-available',
-        toolCallId: compositeId,
-        toolName,
-        input: {},
-      };
-      return;
-    }
-
     try {
-      const parsedInput: unknown = JSON.parse(raw);
+      const parsedInput: unknown = raw ? JSON.parse(raw) : {};
       emittedToolIds.add(compositeId);
       yield {
         type: 'tool-input-available',
@@ -660,6 +650,7 @@ export function createTransformer() {
       yield { type: 'message-metadata', messageMetadata: metadata };
       yield { type: 'finish-step' };
       yield { type: 'finish', messageMetadata: metadata };
+      yield* usageLimitResultChunks(msg);
     }
   };
 }

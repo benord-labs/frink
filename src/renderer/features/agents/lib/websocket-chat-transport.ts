@@ -12,7 +12,6 @@ import * as Sentry from '@sentry/electron/renderer';
 import type { ChatTransport, UIMessage, UIMessageChunk } from 'ai';
 import { toast } from 'sonner';
 import type { UIMessageChunk as BaseUIMessageChunk } from '../../../../main/lib/claude/types';
-import { stripMessageMarkers } from '../../../../shared/lib/message-markers/strip-message-markers';
 import { buildExecutionSettings as buildComposerExecutionSettings } from '../../../../shared/lib/execution-settings';
 import { isUserAbortErrorMessage } from '../../../../shared/lib/user-abort-error';
 import { isPlanApprovalTriggerText } from '../../../../shared/types/plan';
@@ -59,6 +58,7 @@ import { useStreamingStatusStore } from '../stores/streaming-status-store';
 import { useAgentSubChatStore } from '../stores/sub-chat-store';
 import { applyAskUserQuestionChunk } from './ask-user-question-chunks';
 import {
+  buildTurnHistory,
   type ExtractedImage,
   extractImages,
   extractText,
@@ -273,11 +273,7 @@ export class WebSocketChatTransport implements ChatTransport<UIMessage> {
       });
     };
 
-    const history = filteredMessages.flatMap((m) => {
-      if (m === lastUser || (m.role !== 'user' && m.role !== 'assistant')) return [];
-      const content = stripMessageMarkers(extractText(m));
-      return content ? [{ role: m.role as 'user' | 'assistant', content }] : [];
-    });
+    const history = buildTurnHistory(filteredMessages, lastUser);
 
     let ownedCleanup: (() => void) | null = null;
     const cleanupIfOwner = () => {

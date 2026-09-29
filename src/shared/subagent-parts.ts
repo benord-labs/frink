@@ -10,6 +10,12 @@ export const SUBAGENT_TEXT_TOOL_NAME = 'SubagentText';
 
 export const SUBAGENT_TEXT_PART_TYPE = `tool-${SUBAGENT_TEXT_TOOL_NAME}` as const;
 
+/** Tool-shaped parts that carry narration (subagent prose, reasoning), not work the agent did. */
+export const NARRATION_PART_TYPES: ReadonlySet<string> = new Set([
+  SUBAGENT_TEXT_PART_TYPE,
+  'tool-Thinking',
+]);
+
 /**
  * The pseudo-tool a codex `collabAgentToolCall` travels as.
  *

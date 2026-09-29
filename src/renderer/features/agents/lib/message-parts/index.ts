@@ -1,4 +1,7 @@
 import type { UIMessage } from 'ai';
+import { stripMessageMarkers } from '../../../../../shared/lib/message-markers/strip-message-markers';
+import { NARRATION_PART_TYPES } from '../../../../../shared/subagent-parts';
+import { isFrinkPlanMessagePartType, stripPlanFrontmatter } from '../../../../../shared/types/plan';
 
 /**
  * Extract text content from a UIMessage
@@ -57,4 +60,44 @@ export function extractImages(message: UIMessage | undefined): ExtractedImage[] 
   }
 
   return images;
+}
+
+type HistoryTurn = { role: 'user' | 'assistant'; content: string };
+type ToolPartLike = { type: string; input?: unknown };
+
+const TOOL_PART_PREFIX = 'tool-';
+const TOOL_HINT_MAX_CHARS = 80;
+
+/** A tool call as one line: its name and the first line of its first string input. */
+function toolTrailLine(part: ToolPartLike): string {
+  const values = part.input && typeof part.input === 'object' ? Object.values(part.input) : [];
+  const hint = values.find((v): v is string => typeof v === 'string')?.split('\n')[0];
+  const name = part.type.slice(TOOL_PART_PREFIX.length);
+  return hint ? `[${name}] ${hint.slice(0, TOOL_HINT_MAX_CHARS)}` : `[${name}]`;
+}
+
+function partHistoryText(part: ToolPartLike & { text?: string }): string | null {
+  if (part.type === 'text') return part.text ?? null;
+  if (NARRATION_PART_TYPES.has(part.type)) return null;
+  if (isFrinkPlanMessagePartType(part.type)) {
+    const planText = (part.input as { planText?: unknown } | undefined)?.planText;
+    return typeof planText === 'string'
+      ? `<plan>\n${stripPlanFrontmatter(planText)}\n</plan>`
+      : null;
+  }
+  return part.type.startsWith(TOOL_PART_PREFIX) ? toolTrailLine(part) : null;
+}
+
+/**
+ * The transcript a fresh session is seeded with (every message but the one being sent): text, any
+ * plan in full, and one line per tool call, so a handoff keeps what was planned and done.
+ */
+export function buildTurnHistory(messages: UIMessage[], current?: UIMessage): HistoryTurn[] {
+  return messages.flatMap((m) => {
+    if (m === current || (m.role !== 'user' && m.role !== 'assistant')) return [];
+    const parts = (m.parts ?? []) as Array<ToolPartLike & { text?: string }>;
+    const text = parts.flatMap((part) => partHistoryText(part) ?? []).join('\n');
+    const content = stripMessageMarkers(text);
+    return content ? [{ role: m.role, content }] : [];
+  });
 }

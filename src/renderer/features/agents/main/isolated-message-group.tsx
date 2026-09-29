@@ -34,6 +34,7 @@ import {
   ORPHAN_ANCHOR_PREFIX,
   rollbackHandlerAtom,
 } from '../stores/message-store';
+import { ContinueAfterUsageLimit } from '../ui/account-indicator';
 import type { IsolatedChatToolRegistry } from '../ui/agent-tool-registry';
 import { MessageJsonDisplay } from '../ui/message-json-display';
 import { RetryActionButton } from './active-chat/components/RetryActionButton';
@@ -109,11 +110,15 @@ type IsolatedMessageGroupProps = IsolatedChatSharedProps & {
  * Carry on needs a session to resume; with none, `onCarryOnChat` is null and only Retry renders.
  */
 function ChatRetryAfterGroupRow({
+  chatId,
+  subChatId,
   retryInFlight,
   onRetryChat,
   onCarryOnChat,
   chatRetryTooltipText,
 }: {
+  chatId: string;
+  subChatId: string;
   retryInFlight: boolean;
   onRetryChat: () => void;
   onCarryOnChat: (() => void) | null;
@@ -121,6 +126,7 @@ function ChatRetryAfterGroupRow({
 }) {
   return (
     <div className="px-2 mt-1 flex justify-end gap-1">
+      <ContinueAfterUsageLimit chatId={chatId} subChatId={subChatId} onRetry={onRetryChat} />
       <RetryActionButton
         onClick={onRetryChat}
         disabled={retryInFlight}
@@ -262,6 +268,8 @@ export const IsolatedMessageGroup = memo(function IsolatedMessageGroup({
         )}
         {showRetryAfterGroup && (
           <ChatRetryAfterGroupRow
+            chatId={chatId}
+            subChatId={subChatId}
             retryInFlight={retryInFlight}
             onRetryChat={onRetryChat}
             onCarryOnChat={onCarryOnChat}
@@ -451,6 +459,8 @@ export const IsolatedMessageGroup = memo(function IsolatedMessageGroup({
 
       {showRetryAfterGroup && (
         <ChatRetryAfterGroupRow
+          chatId={chatId}
+          subChatId={subChatId}
           retryInFlight={retryInFlight}
           onRetryChat={onRetryChat}
           onCarryOnChat={onCarryOnChat}

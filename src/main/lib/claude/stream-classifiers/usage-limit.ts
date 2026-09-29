@@ -6,6 +6,7 @@
  * regardless of whether the chat UI is mounted.
  */
 
+import type { UIMessageChunk } from '../types';
 import { type FinalPartLike, trailingTextPart } from './trailing-text';
 
 /** Limit messages are one-liners; anything longer is an agent quoting the phrase. */
@@ -45,6 +46,26 @@ const TRAILING_LIMIT_PATTERN =
  */
 export function extractTrailingUsageLimitText(parts: ReadonlyArray<FinalPartLike>): string | null {
   const text = trailingTextPart(parts);
-  if (text === null || text.length > MAX_LIMIT_TEXT_LENGTH) return null;
-  return TRAILING_LIMIT_PATTERN.test(normalizeLimitText(text)) ? text : null;
+  return text !== null && isLimitMessage(text) ? text : null;
+}
+
+/** True when the whole text IS a limit message, not an agent quoting one. */
+function isLimitMessage(text: string): boolean {
+  return (
+    text.length <= MAX_LIMIT_TEXT_LENGTH && TRAILING_LIMIT_PATTERN.test(normalizeLimitText(text))
+  );
+}
+
+/** A usage limit that ends a turn without a throw still reaches the chat as a categorized error. */
+export function usageLimitErrorChunk(errorText: string): UIMessageChunk {
+  return { type: 'error', errorText, debugInfo: { category: 'RATE_LIMIT_SDK' } };
+}
+
+/** A warm Claude session ends a limit-hit turn on a plain result, so its text is classified here. */
+export function usageLimitResultChunks(msg: {
+  type: 'result';
+  result?: unknown;
+}): UIMessageChunk[] {
+  const text = typeof msg.result === 'string' ? msg.result : '';
+  return isLimitMessage(text) ? [usageLimitErrorChunk(text)] : [];
 }
