@@ -1,6 +1,6 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`derivePalette > 'amber dark' > matches the pinned palette 1`] = `
+exports[`derivePalette > amber dark > matches the pinned palette 1`] = `
 {
   "accent": "#ffc799",
   "accentForeground": "#101010",
@@ -23,7 +23,7 @@ exports[`derivePalette > 'amber dark' > matches the pinned palette 1`] = `
 }
 `;
 
-exports[`derivePalette > 'amber light' > matches the pinned palette 1`] = `
+exports[`derivePalette > amber light > matches the pinned palette 1`] = `
 {
   "accent": "#9a5b13",
   "accentForeground": "#fcfcfb",
@@ -46,7 +46,7 @@ exports[`derivePalette > 'amber light' > matches the pinned palette 1`] = `
 }
 `;
 
-exports[`derivePalette > 'clay dark' > matches the pinned palette 1`] = `
+exports[`derivePalette > clay dark > matches the pinned palette 1`] = `
 {
   "accent": "#d97857",
   "accentForeground": "#262624",
@@ -69,7 +69,7 @@ exports[`derivePalette > 'clay dark' > matches the pinned palette 1`] = `
 }
 `;
 
-exports[`derivePalette > 'clay light' > matches the pinned palette 1`] = `
+exports[`derivePalette > clay light > matches the pinned palette 1`] = `
 {
   "accent": "#b05230",
   "accentForeground": "#faf9f5",
@@ -92,7 +92,7 @@ exports[`derivePalette > 'clay light' > matches the pinned palette 1`] = `
 }
 `;
 
-exports[`derivePalette > 'moss dark' > matches the pinned palette 1`] = `
+exports[`derivePalette > moss dark > matches the pinned palette 1`] = `
 {
   "accent": "#4d9375",
   "accentForeground": "#121212",
@@ -115,7 +115,7 @@ exports[`derivePalette > 'moss dark' > matches the pinned palette 1`] = `
 }
 `;
 
-exports[`derivePalette > 'moss light' > matches the pinned palette 1`] = `
+exports[`derivePalette > moss light > matches the pinned palette 1`] = `
 {
   "accent": "#1e754f",
   "accentForeground": "#ffffff",
@@ -138,7 +138,7 @@ exports[`derivePalette > 'moss light' > matches the pinned palette 1`] = `
 }
 `;
 
-exports[`derivePalette > 'sprinkles dark' > matches the pinned palette 1`] = `
+exports[`derivePalette > sprinkles dark > matches the pinned palette 1`] = `
 {
   "accent": "#ff8cc6",
   "accentForeground": "#1c1519",
@@ -161,7 +161,7 @@ exports[`derivePalette > 'sprinkles dark' > matches the pinned palette 1`] = `
 }
 `;
 
-exports[`derivePalette > 'sprinkles light' > matches the pinned palette 1`] = `
+exports[`derivePalette > sprinkles light > matches the pinned palette 1`] = `
 {
   "accent": "#bc2b72",
   "accentForeground": "#fff7fa",
@@ -184,7 +184,7 @@ exports[`derivePalette > 'sprinkles light' > matches the pinned palette 1`] = `
 }
 `;
 
-exports[`derivePalette > 'tide dark' > matches the pinned palette 1`] = `
+exports[`derivePalette > tide dark > matches the pinned palette 1`] = `
 {
   "accent": "#86b3c2",
   "accentForeground": "#1f1f1f",
@@ -207,7 +207,7 @@ exports[`derivePalette > 'tide dark' > matches the pinned palette 1`] = `
 }
 `;
 
-exports[`derivePalette > 'tide light' > matches the pinned palette 1`] = `
+exports[`derivePalette > tide light > matches the pinned palette 1`] = `
 {
   "accent": "#2b6878",
   "accentForeground": "#ffffff",
