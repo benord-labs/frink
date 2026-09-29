@@ -98,24 +98,24 @@ describe('HtmlArtifactPreview', () => {
       left: 10,
       toJSON: () => ({}),
     };
-    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
-      function (this: HTMLElement) {
-        if (this.hasAttribute('data-chat-container')) {
-          return {
-            x: 0,
-            y: 0,
-            width: 800,
-            height: 700,
-            top: 0,
-            right: 800,
-            bottom: 700,
-            left: 0,
-            toJSON: () => ({}),
-          };
-        }
-        return previewBounds;
-      },
-    );
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (this.hasAttribute('data-chat-container')) {
+        return {
+          x: 0,
+          y: 0,
+          width: 800,
+          height: 700,
+          top: 0,
+          right: 800,
+          bottom: 700,
+          left: 0,
+          toJSON: () => ({}),
+        };
+      }
+      return previewBounds;
+    });
     closedListener = () => undefined;
     focusReturnedListener = () => undefined;
     Object.defineProperty(window, 'desktopApi', {

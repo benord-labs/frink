@@ -263,11 +263,11 @@ describe('usageCandidates', () => {
       ['sr-only', new DOMRect(0, 0, 1, 1)],
       ['divider', new DOMRect(0, 0, 100, 1)],
     ]);
-    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(
-      function (this: Element) {
-        return boxes.get(this.id) ?? new DOMRect(0, 0, 100, 20);
-      },
-    );
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: Element,
+    ) {
+      return boxes.get(this.id) ?? new DOMRect(0, 0, 100, 20);
+    });
     document.body.innerHTML = `
       <div id="on"><span id="on-child"></span></div>
       <div id="below"><span></span></div>
