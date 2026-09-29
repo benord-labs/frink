@@ -459,7 +459,7 @@ describe('AgentUserQuestion — long question text', () => {
 
     fireEvent.click(screen.getByText('A')); // single-select auto-advances
 
-    await waitFor(() => expect(screen.getByText('Q2')).toBeInTheDocument());
+    await waitFor(() => expect(within(questionRegion()).getByText('Q2')).toBeInTheDocument());
     expect(screen.getByRole('listbox').scrollTop).toBe(0);
   });
 
@@ -503,7 +503,7 @@ describe('AgentUserQuestion — long question text', () => {
 
     fireEvent.click(screen.getByText('A')); // single-select auto-advances
 
-    await waitFor(() => expect(screen.getByText('Q2')).toBeInTheDocument());
+    await waitFor(() => expect(within(questionRegion()).getByText('Q2')).toBeInTheDocument());
     expect(questionRegion().scrollTop).toBe(0);
   });
 });
