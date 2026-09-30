@@ -1,10 +1,11 @@
-import { and, eq, inArray, isNotNull, isNull, notInArray, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, isNull, notInArray, or } from 'drizzle-orm';
 import { FLOW_ADMISSION_LIVE_STATES } from '../../../../../shared/lib/flow-admission';
 import { FLOW_DRIVING_STATUSES } from '../../../../../shared/types/flow';
 import type { getDatabase } from '../../index';
 import { cancelRunCommand } from '../../../flows/transitions';
-import { chats, flowRunAdmissions, flowRuns, nodeRuns, tasks } from '../../schema';
+import { chats, flowRunAdmissions, flowRuns, tasks } from '../../schema';
 import { cancelResultPatch } from '../task-parking/cancel-marker';
+import { chatLinkId, linkedFlowRunIds } from './linked-flow-runs';
 
 type Db = ReturnType<typeof getDatabase>;
 
@@ -12,12 +13,7 @@ export type DeleteChatsResult =
   | { deleted: false; unsettledRunIds: string[]; chatIds: string[] }
   | { deleted: true };
 
-const taskChatId = sql<string | null>`CASE
-  WHEN ${tasks.result} IS NULL THEN NULL
-  WHEN NOT json_valid(${tasks.result}) THEN NULL
-  WHEN json_type(${tasks.result}) <> 'object' THEN NULL
-  ELSE json_extract(${tasks.result}, '$.chatId')
-END`;
+const taskChatId = chatLinkId(tasks.result, '$.chatId');
 
 function protectedTasksOutsideChats(chatIds: string[]) {
   return and(
@@ -36,8 +32,6 @@ export function listUnsettledFlowRunIdsForChats(db: Db, chatIds: string[]): stri
   const linkedActiveRunIds = db
     .selectDistinct({ flowRunId: flowRuns.id })
     .from(flowRuns)
-    .leftJoin(nodeRuns, eq(nodeRuns.flowRunId, flowRuns.id))
-    .leftJoin(tasks, eq(tasks.flowRunId, flowRuns.id))
     .leftJoin(flowRunAdmissions, eq(flowRunAdmissions.flowRunId, flowRuns.id))
     .where(
       and(
@@ -45,11 +39,7 @@ export function listUnsettledFlowRunIdsForChats(db: Db, chatIds: string[]): stri
           inArray(flowRuns.status, ['pending', 'running', 'paused']),
           inArray(flowRunAdmissions.state, [...FLOW_ADMISSION_LIVE_STATES]),
         ),
-        or(
-          inArray(sql<string>`json_extract(${flowRuns.triggerContext}, '$.chatId')`, chatIds),
-          inArray(sql<string>`json_extract(${nodeRuns.nodeOutput}, '$.outputs.chatId')`, chatIds),
-          inArray(taskChatId, chatIds),
-        ),
+        inArray(flowRuns.id, linkedFlowRunIds(db, 'chatId', chatIds)),
       ),
     )
     .all()
@@ -185,20 +175,9 @@ export function cancelExecutingFlowTasksForChats(db: Db, chatIds: string[]): num
 /** Delete queue rows owned by chats being permanently deleted. Must run in the caller's transaction. */
 export function deleteFlowQueueTasksForChats(db: Db, chatIds: string[]): number {
   if (chatIds.length === 0) return 0;
-  const linkedRunIds = db
-    .selectDistinct({ flowRunId: flowRuns.id })
-    .from(flowRuns)
-    .leftJoin(nodeRuns, eq(nodeRuns.flowRunId, flowRuns.id))
-    .leftJoin(tasks, eq(tasks.flowRunId, flowRuns.id))
-    .where(
-      or(
-        inArray(sql<string>`json_extract(${flowRuns.triggerContext}, '$.chatId')`, chatIds),
-        inArray(sql<string>`json_extract(${nodeRuns.nodeOutput}, '$.outputs.chatId')`, chatIds),
-        inArray(taskChatId, chatIds),
-      ),
-    )
+  const linkedRunIds = linkedFlowRunIds(db, 'chatId', chatIds)
     .all()
-    .map((row) => row.flowRunId);
+    .map((row) => row.id);
   const sharedRunIds = new Set(
     compactFlowRunIds(
       linkedRunIds.length === 0
