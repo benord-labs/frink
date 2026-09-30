@@ -73,6 +73,12 @@ vi.mock('./active-chat/components/RetryActionButton', () => ({
   ),
 }));
 
+vi.mock('../ui/account-indicator', () => ({
+  ContinueAfterUsageLimit: ({ chatId, subChatId }: { chatId: string; subChatId: string }) => (
+    <span data-testid="continue-after-usage-limit">{`${chatId}/${subChatId}`}</span>
+  ),
+}));
+
 vi.mock('../ui/message-json-display', () => ({
   MessageJsonDisplay: () => null,
 }));
@@ -271,6 +277,7 @@ describe('IsolatedMessageGroup orphan anchor rendering', () => {
     const carryOn = screen.getByRole('button', { name: /carry on/i });
     fireEvent.click(carryOn);
     expect(onCarryOn).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('continue-after-usage-limit')).toHaveTextContent('chat-1/sub-1');
   });
 
   it('omits Carry on when there is no session to resume, leaving Retry alone', () => {

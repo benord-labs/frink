@@ -88,13 +88,18 @@ import { appStore } from '../../../lib/jotai-store';
 import { WebSocketChatTransport } from './websocket-chat-transport';
 
 type ErrorPayload = { subChatId: string; error: string; category?: string };
+type ChunkPayload = { subChatId: string; chunk: Record<string, unknown> };
 
 const waitForAsync = (ms = 50): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 function setupErrorTransport(subChatId: string, accountType = 'claude-code') {
   let fireSocketError: (payload: ErrorPayload) => void = () => {};
+  let fireStreamChunk: (payload: ChunkPayload) => void = () => {};
   (window as unknown as Record<string, unknown>).desktopApi = {
-    onSocketStreamChunk: vi.fn(() => vi.fn()),
+    onSocketStreamChunk: vi.fn((cb: (payload: ChunkPayload) => void) => {
+      fireStreamChunk = cb;
+      return vi.fn();
+    }),
     onSocketExecuteComplete: vi.fn(() => vi.fn()),
     onSocketError: vi.fn((cb: (payload: ErrorPayload) => void) => {
       fireSocketError = cb;
@@ -111,7 +116,12 @@ function setupErrorTransport(subChatId: string, accountType = 'claude-code') {
     mode: 'agent',
     onExecutionError,
   });
-  return { transport, onExecutionError, fireSocketError: (p: ErrorPayload) => fireSocketError(p) };
+  return {
+    transport,
+    onExecutionError,
+    fireSocketError: (p: ErrorPayload) => fireSocketError(p),
+    fireStreamChunk: (p: ChunkPayload) => fireStreamChunk(p),
+  };
 }
 
 /** Start a turn so its send-time content is captured in the retry gate's closure. */
@@ -216,6 +226,23 @@ describe('websocket-chat-transport pending-retry gate', () => {
 
     expect(onExecutionError).toHaveBeenCalledWith(subChatId);
     expect(retryWritten(subChatId)).toBe(true);
+  });
+
+  it('offers a usage-limit retry, without rollback, for a limit that ends the turn as a chunk', async () => {
+    const subChatId = 'gate-limit-chunk';
+    const { transport, onExecutionError, fireStreamChunk } = setupErrorTransport(subChatId);
+    await startTurn(transport, subChatId, [{ type: 'text', text: 'hello' }]);
+
+    const errorText = "You've hit your limit · resets 3pm";
+    const chunk = { type: 'error', errorText, debugInfo: { category: 'RATE_LIMIT_SDK' } };
+    fireStreamChunk({ subChatId, chunk });
+    await waitForAsync();
+
+    expect(onExecutionError).not.toHaveBeenCalled();
+    const retry = (
+      appStore.set as unknown as { mock: { calls: Array<[unknown, unknown]> } }
+    ).mock.calls.find((call) => String(call[0]).includes(`pendingChatRetry:${subChatId}`));
+    expect(retry?.[1]).toMatchObject({ errorCategory: 'RATE_LIMIT_SDK' });
   });
 
   it('gates each pane on its own content when two sub-chats fail together', async () => {

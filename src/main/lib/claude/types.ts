@@ -40,7 +40,8 @@ export type UIMessageChunk =
       permissionDenied?: boolean;
     }
   // Error & metadata
-  | { type: 'error'; errorText: string }
+  // debugInfo.category classifies an error that ends a turn without a throw (e.g. RATE_LIMIT_SDK).
+  | { type: 'error'; errorText: string; debugInfo?: { category: string } }
   | { type: 'auth-error'; errorText: string }
   | {
       type: 'ask-user-question';

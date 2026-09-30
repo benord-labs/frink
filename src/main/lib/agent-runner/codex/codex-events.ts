@@ -15,6 +15,7 @@
 
 import { z } from 'zod';
 import { CODEX_SUBAGENT_TOOL_NAME } from '../../../../shared/subagent-parts';
+import { usageLimitErrorChunk } from '../../claude/stream-classifiers';
 import type { UIMessageChunk } from '../../claude/types';
 
 /** Result of Frink's permission gate, as returned by `validateToolPermission`. */
@@ -435,19 +436,25 @@ export function mergeDelta(prev: UIMessageChunk, next: UIMessageChunk): UIMessag
  * TurnStatus wire values are camelCase (v2/turn.rs): completed/interrupted/failed/inProgress.
  */
 function mapTurnCompleted(p: Record<string, unknown>): UIMessageChunk[] {
-  const turn = p.turn as { status?: string; error?: { message?: string } } | undefined;
+  const turn = p.turn as { status?: string; error?: CodexTurnError } | undefined;
   if (turn?.status === 'failed' || turn?.status === 'interrupted') {
-    return [
-      { type: 'error', errorText: String(turn.error?.message ?? `Codex turn ${turn.status}`) },
-    ];
+    return [codexErrorChunk(turn.error, `Codex turn ${turn.status}`)];
   }
   return [{ type: 'finish' }];
 }
 
 /** error: ErrorNotification (v2/notification.rs) is { error: TurnError, willRetry, ... }; string at error.message. */
 function mapError(p: Record<string, unknown>): UIMessageChunk[] {
-  const err = p.error as { message?: string } | undefined;
-  return [{ type: 'error', errorText: String(err?.message ?? 'Codex error') }];
+  return [codexErrorChunk(p.error as CodexTurnError, 'Codex error')];
+}
+
+type CodexTurnError = { message?: string; codexErrorInfo?: unknown } | undefined;
+
+/** Codex flags a usage limit structurally (TurnError.codexErrorInfo), so no wording is matched. */
+function codexErrorChunk(error: CodexTurnError, fallback: string): UIMessageChunk {
+  const errorText = String(error?.message ?? fallback);
+  if (error?.codexErrorInfo === 'usageLimitExceeded') return usageLimitErrorChunk(errorText);
+  return { type: 'error', errorText };
 }
 
 /**

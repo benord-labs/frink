@@ -1,7 +1,7 @@
 import openaiLogo from '@iconify-icons/ri/openai-fill';
 import { iconifyComponent } from '@/lib/utils/iconify-component';
 /* eslint-disable max-lines, max-lines-per-function */
-import { useSetAtom } from 'jotai';
+import { useAtomValue, useSetAtom } from 'jotai';
 import { Check, ChevronDown, Plus, RefreshCw, User } from 'lucide-react';
 import { memo, useCallback, useMemo } from 'react';
 import { toast } from 'sonner';
@@ -23,7 +23,8 @@ import {
 import { trpc } from '../../../lib/trpc';
 import { cn } from '../../../lib/utils';
 import { notifyToolSwitch } from '../../../utils/tool-switch-message';
-import { type SplitViewState, splitViewAtom } from '../atoms';
+import { pendingChatRetryAtomFamily, type SplitViewState, splitViewAtom } from '../atoms';
+import { RetryActionButton } from '../main/active-chat/components/RetryActionButton';
 import { HeaderBadge } from './header-badge';
 
 const CodexIcon = iconifyComponent(openaiLogo);
@@ -122,10 +123,15 @@ function useChatAccountActions() {
   });
   const fork = trpc.chats.fork.useMutation({ onError: (err) => toast.error(err.message) });
 
-  const swap = (chatId: string, row: PickableAccount) =>
+  const swap = (chatId: string, row: PickableAccount, onSwapped?: () => void) =>
     setChatAccount.mutate(
       { chatId, accountId: row.id },
-      { onSuccess: () => toast.success(`This chat now uses ${row.label}`) },
+      {
+        onSuccess: () => {
+          toast.success(`This chat now uses ${row.label}`);
+          onSwapped?.();
+        },
+      },
     );
 
   const continueIn = (chatId: string, fromType: AccountType, row: PickableAccount) =>
@@ -197,6 +203,76 @@ function ChatAccountRows({
   );
 }
 
+/** Opens Settings → Accounts, where logins are added; no chat surface sets one up itself. */
+function useOpenAccountsSettings() {
+  const setSettingsActiveTab = useSetAtom(agentsSettingsDialogActiveTabAtom);
+  const setSettingsOpen = useSetAtom(agentsSettingsDialogOpenAtom);
+  return useCallback(() => {
+    setSettingsActiveTab('models');
+    setSettingsOpen(true);
+  }, [setSettingsActiveTab, setSettingsOpen]);
+}
+
+const USAGE_LIMIT_ERROR_CATEGORY = 'RATE_LIMIT_SDK';
+
+/** Beside a usage-limit Retry: retry on another login, continue on another provider, or add one. */
+export function ContinueAfterUsageLimit({
+  chatId,
+  subChatId,
+  onRetry,
+}: {
+  chatId: string;
+  subChatId: string;
+  onRetry: () => void;
+}) {
+  const pendingRetry = useAtomValue(pendingChatRetryAtomFamily(subChatId));
+  const actions = useChatAccountActions();
+  const openAccountsSettings = useOpenAccountsSettings();
+  const { data: account } = trpc.claudeCode.getResolvedAccount.useQuery({ chatId });
+  const { data: accounts = [] } = trpc.claudeCode.listAccounts.useQuery();
+  if (pendingRetry?.errorCategory !== USAGE_LIMIT_ERROR_CATEGORY || !account) return null;
+  const fromType = account.type ?? 'claude-code';
+  const signedIn = accounts.filter((a) => a.isAuthenticated && a.id !== account.id);
+  if (signedIn.length === 0) {
+    return (
+      <RetryActionButton
+        icon={Plus}
+        onClick={openAccountsSettings}
+        ariaLabel="Add another AI account"
+        label="Add account…"
+      />
+    );
+  }
+  // Same-provider logins come first: they keep this chat and its native resume.
+  const sameProvider = signedIn.filter((a) => a.type === fromType);
+  const others = signedIn.filter((a) => a.type !== fromType);
+  return (
+    <>
+      {sameProvider.map((a) => (
+        <RetryActionButton
+          key={a.id}
+          onClick={() => actions.swap(chatId, a, onRetry)}
+          disabled={actions.isPending}
+          ariaLabel={`Retry with ${a.label}`}
+          label={`Retry with ${a.label}`}
+          tooltipText="Moves this chat to that login and retries; the conversation carries on here."
+        />
+      ))}
+      {others.map((a) => (
+        <RetryActionButton
+          key={a.id}
+          icon={a.type === 'codex' ? CodexIcon : User}
+          onClick={() => actions.continueIn(chatId, fromType, a)}
+          disabled={actions.isPending}
+          ariaLabel={`Continue in ${PROVIDER_LABEL[a.type]} as ${a.label}`}
+          label={`Continue in ${PROVIDER_LABEL[a.type]}${others.length > 1 ? ` (${a.label})` : ''}`}
+          tooltipText="Opens a new chat on this login, carrying the conversation and plan with it."
+        />
+      ))}
+    </>
+  );
+}
+
 /** The tooltip's scope line and hint: where the account applies and what a pick changes. */
 function scopeCopy(inChat: boolean, projectId: string | null, isProjectOverride?: boolean) {
   if (inChat) {
@@ -229,16 +305,10 @@ export const AccountIndicator = memo(function AccountIndicator({
   chatId,
   projectId,
 }: AccountIndicatorProps) {
-  const setSettingsActiveTab = useSetAtom(agentsSettingsDialogActiveTabAtom);
-  const setSettingsOpen = useSetAtom(agentsSettingsDialogOpenAtom);
   const setPendingAccountAuth = useSetAtom(pendingAccountAuthAtom);
   const utils = trpc.useUtils();
   const chatActions = useChatAccountActions();
-
-  const handleOpenAccountsSettings = useCallback(() => {
-    setSettingsActiveTab('models');
-    setSettingsOpen(true);
-  }, [setSettingsActiveTab, setSettingsOpen]);
+  const handleOpenAccountsSettings = useOpenAccountsSettings();
 
   const handleReauthPassthrough = useCallback(
     (label: string, source: string | null | undefined) => {

@@ -7,8 +7,8 @@ import { createStore, Provider } from 'jotai';
 import { toast } from 'sonner';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { activeOverlayAtom, agentsSettingsDialogActiveTabAtom } from '../../../lib/atoms';
-import { selectedAgentChatIdAtom, splitViewAtom } from '../atoms';
-import { AccountIndicator } from './account-indicator';
+import { pendingChatRetryAtomFamily, selectedAgentChatIdAtom, splitViewAtom } from '../atoms';
+import { AccountIndicator, ContinueAfterUsageLimit } from './account-indicator';
 
 type ListAccount = {
   id: string;
@@ -825,6 +825,108 @@ describe('AccountIndicator', () => {
       opts.onSuccess({ id: 'chat-2', name: null });
 
       expect(store.get(splitViewAtom).chatIds).toEqual(['other', 'chat-2']);
+    });
+  });
+
+  describe('ContinueAfterUsageLimit', () => {
+    const onRetry = vi.fn();
+
+    function renderAfterError(errorCategory: string, accounts: ListAccount[]) {
+      snap.listAccountsData = accounts;
+      getResolvedAccountMock.mockReturnValue({
+        data: { id: 'acc-1', label: 'Slice', type: 'claude-code' as const, isAuthenticated: true },
+        isLoading: false,
+      });
+      const store = createStore();
+      store.set(pendingChatRetryAtomFamily('sub-1'), {
+        chatId: 'chat-1',
+        subChatId: 'sub-1',
+        projectId: 'proj-1',
+        trigger: 'submit-message',
+        errorCategory,
+        errorText: "You've hit your limit",
+        createdAt: 0,
+      });
+      render(
+        <Provider store={store}>
+          <ContinueAfterUsageLimit chatId="chat-1" subChatId="sub-1" onRetry={onRetry} />
+        </Provider>,
+      );
+      return store;
+    }
+
+    const codexRow = (id: string, label: string, isAuthenticated = true): ListAccount => ({
+      id,
+      label,
+      isDefault: false,
+      isAuthenticated,
+      connectedAt: null,
+      isApiKey: false,
+      type: 'codex',
+    });
+
+    it('offers the other provider and forks onto it in one click', async () => {
+      renderAfterError('RATE_LIMIT_SDK', [...snap.defaultListAccounts, codexRow('acc-x', 'Work')]);
+
+      await userEvent
+        .setup()
+        .click(screen.getByRole('button', { name: 'Continue in OpenAI as Work' }));
+
+      expect(screen.getByText('Continue in OpenAI')).toBeInTheDocument();
+      expect(snap.forkMutate).toHaveBeenCalledWith(
+        { chatId: 'chat-1', accountId: 'acc-x' },
+        { onSuccess: expect.any(Function) },
+      );
+    });
+
+    it('names each login when the other provider has several, skipping signed-out ones', () => {
+      renderAfterError('RATE_LIMIT_SDK', [
+        ...snap.defaultListAccounts,
+        codexRow('acc-x', 'Work'),
+        codexRow('acc-y', 'Personal'),
+        codexRow('acc-z', 'Old', false),
+      ]);
+
+      expect(screen.getByText('Continue in OpenAI (Work)')).toBeInTheDocument();
+      expect(screen.getByText('Continue in OpenAI (Personal)')).toBeInTheDocument();
+      expect(screen.queryByText(/\(Old\)/)).not.toBeInTheDocument();
+    });
+
+    it('retries on another login of the same provider first, keeping the chat', async () => {
+      renderAfterError('RATE_LIMIT_SDK', [...snap.defaultListAccounts, codexRow('acc-x', 'Work')]);
+
+      const buttons = screen.getAllByRole('button').map((b) => b.textContent);
+      expect(buttons).toEqual(['Retry with Backup', 'Continue in OpenAI']);
+      await userEvent.setup().click(screen.getByRole('button', { name: 'Retry with Backup' }));
+
+      expect(snap.setChatAccountMutate).toHaveBeenCalledWith(
+        { chatId: 'chat-1', accountId: 'acc-2' },
+        { onSuccess: expect.any(Function) },
+      );
+      expect(onRetry).not.toHaveBeenCalled();
+      snap.setChatAccountMutate.mock.calls[0]?.[1].onSuccess();
+      expect(onRetry).toHaveBeenCalledTimes(1);
+      expect(snap.forkMutate).not.toHaveBeenCalled();
+    });
+
+    it('offers Add account, opening Settings, when no other login is signed in', async () => {
+      const [active, backup] = snap.defaultListAccounts;
+      const store = renderAfterError('RATE_LIMIT_SDK', [
+        active,
+        { ...backup, isAuthenticated: false },
+      ]);
+
+      expect(screen.queryByText(/Continue in|Retry with/)).not.toBeInTheDocument();
+      await userEvent.setup().click(screen.getByRole('button', { name: 'Add another AI account' }));
+
+      expect(store.get(agentsSettingsDialogActiveTabAtom)).toBe('models');
+      expect(snap.forkMutate).not.toHaveBeenCalled();
+    });
+
+    it('stays hidden for errors other than a usage limit', () => {
+      renderAfterError('NETWORK_ERROR', [...snap.defaultListAccounts, codexRow('acc-x', 'Work')]);
+
+      expect(screen.queryByRole('button')).not.toBeInTheDocument();
     });
   });
 });
