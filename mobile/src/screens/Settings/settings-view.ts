@@ -42,3 +42,31 @@ export function sourceLine(source: CodeSource | undefined): string | null {
   if (!source?.commit) return null;
   return [source.checkout, source.branch, source.commit].filter(Boolean).join(' · ');
 }
+
+export type NotificationsNote = { text: string; tone: 'muted' | 'danger'; openSettings: boolean };
+
+/** The one line under the Notifications card: what alerts carry, or the single thing to fix. */
+export function notificationsNote(state: {
+  denied: boolean;
+  refused: boolean;
+  error: string | null;
+}): NotificationsNote {
+  if (state.error) return { text: state.error, tone: 'danger', openSettings: false };
+  if (state.denied)
+    return {
+      text: 'Alerts are off for Frink in iPhone Settings. Allow them there, then turn Alerts on.',
+      tone: 'muted',
+      openSettings: true,
+    };
+  if (state.refused)
+    return {
+      text: 'Live Activities are off for Frink in iPhone Settings. Allow them there to see Frink on your Lock Screen.',
+      tone: 'muted',
+      openSettings: true,
+    };
+  return {
+    text: 'Tells you when a chat needs you or finishes. Your prompts and code stay on your Mac.',
+    tone: 'muted',
+    openSettings: false,
+  };
+}

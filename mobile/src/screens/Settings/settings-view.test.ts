@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { macStatus, sourceLine } from './settings-view';
+import { macStatus, notificationsNote, sourceLine } from './settings-view';
 
 describe('macStatus', () => {
   it('reads a healthy poll as connected', () => {
@@ -41,5 +41,39 @@ describe('sourceLine', () => {
     expect(sourceLine({ commit: 'abc1234' })).toBe('abc1234');
     expect(sourceLine({ branch: 'main' })).toBeNull();
     expect(sourceLine(undefined)).toBeNull();
+  });
+});
+
+describe('notificationsNote', () => {
+  const quiet = { denied: false, refused: false, error: null };
+
+  it('says what alerts carry when nothing is wrong', () => {
+    expect(notificationsNote(quiet)).toEqual({
+      text: 'Tells you when a chat needs you or finishes. Your prompts and code stay on your Mac.',
+      tone: 'muted',
+      openSettings: false,
+    });
+  });
+
+  it('points to iPhone Settings when alerts are refused there', () => {
+    expect(notificationsNote({ ...quiet, denied: true })).toMatchObject({
+      text: expect.stringMatching(/^Alerts are off for Frink in iPhone Settings/),
+      openSettings: true,
+    });
+  });
+
+  it('points to iPhone Settings when Live Activities are refused there', () => {
+    expect(notificationsNote({ ...quiet, refused: true })).toMatchObject({
+      text: expect.stringMatching(/^Live Activities are off for Frink in iPhone Settings/),
+      openSettings: true,
+    });
+  });
+
+  it('puts a failed update first, in red, over every other note', () => {
+    expect(notificationsNote({ denied: true, refused: true, error: 'Try again.' })).toEqual({
+      text: 'Try again.',
+      tone: 'danger',
+      openSettings: false,
+    });
   });
 });

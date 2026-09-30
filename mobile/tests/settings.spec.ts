@@ -12,18 +12,25 @@ async function openSettings(page: Page, options: Parameters<typeof openApp>[1] =
   return state;
 }
 
-test('shows the paired Mac, the app version and how to forget it', async ({ page }) => {
+test('shows the paired Mac, both versions and how to forget it, in framed cards', async ({
+  page,
+}) => {
   await openSettings(page);
   const mac = page.getByTestId('mac-identity');
   await expect(mac.getByText("Benji's MacBook Pro")).toBeVisible();
   await expect(mac.getByText('Connected', { exact: true })).toBeVisible();
-  await expect(page.getByText('This Mac', { exact: true })).toBeVisible();
-  await expect(page.getByText('0.0.13')).toBeVisible();
-  await expect(page.getByText('mobile-fixture.example.test')).toBeVisible();
-  await expect(page.getByText('This iPhone', { exact: true })).toBeVisible();
-  await expect(page.getByText('Frink version', { exact: true })).toHaveCount(2);
+  const about = page.getByTestId('settings-about');
+  await expect(page.getByText('About', { exact: true })).toBeVisible();
+  await expect(about.getByText('Frink on your Mac', { exact: true })).toBeVisible();
+  await expect(about.getByText('0.0.13')).toBeVisible();
+  await expect(about.getByText('Frink on this iPhone', { exact: true })).toBeVisible();
+  // One card per topic: the old "This Mac" / "This iPhone" groups and the network address are gone.
+  await expect(page.getByText('This Mac', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('This iPhone', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('mobile-fixture.example.test')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Forget this Mac' })).toBeVisible();
-  await expect(page.getByText(/remove this iPhone under Paired phones/)).toBeVisible();
+  // How to fully revoke access is said once, in the confirm, not under the button.
+  await expect(page.getByText(/remove this iPhone under Paired phones/)).toHaveCount(0);
   await shot(page, 'connected');
 });
 
@@ -73,6 +80,7 @@ test('forgetting the Mac asks first, then returns to pairing', async ({ page }) 
   await page.getByRole('button', { name: 'Forget this Mac' }).click();
   await expect(page.getByRole('heading', { name: 'Your Mac, in your pocket' })).toBeVisible();
   expect(message).toMatch(/^Forget this Mac\?/);
+  expect(message).toMatch(/remove this iPhone under Paired phones/);
   expect(await page.evaluate(() => sessionStorage.getItem('frink.mobile.connection'))).toBeNull();
 });
 
@@ -83,9 +91,22 @@ test('light appearance', async ({ page }) => {
   await shot(page, 'connected', 'light');
 });
 
-test('the Lock Screen card is offered only in the iPhone app, not in a browser', async ({ page }) => {
+test('the Lock Screen card is offered only in the iPhone app, not in a browser', async ({
+  page,
+}) => {
   await openSettings(page);
-  await expect(page.getByText('When a chat finishes')).toBeVisible();
-  await expect(page.getByText('Show on Lock Screen')).toHaveCount(0);
+  await expect(page.getByRole('switch', { name: 'Alerts' })).toBeVisible();
+  await expect(page.getByText('Lock Screen', { exact: true })).toHaveCount(0);
   await page.screenshot({ path: 'test-results/live-activity-web-hidden-dark.png' });
+});
+
+test('an off switch keeps a visible track on the framed card', async ({ page }) => {
+  await openSettings(page);
+  const alerts = page.getByRole('switch', { name: 'Alerts' });
+  await expect(alerts).not.toBeChecked();
+  // The track is the switch input's first sibling; iOS's own off track is a translucent grey.
+  const track = alerts.evaluate(
+    (input) => getComputedStyle(input.parentElement!.children[0]!).backgroundColor,
+  );
+  expect(await track).toBe('rgba(120, 120, 128, 0.36)');
 });

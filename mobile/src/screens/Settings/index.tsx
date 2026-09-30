@@ -11,7 +11,8 @@ import { ResourceStatus } from '../../ui/resource-status';
 import { Screen } from '../../ui/screen';
 import { Text } from '../../ui/text';
 import { GUTTER, space, useTheme } from '../../ui/theme';
-import { confirmForget, REVOKE_HINT } from './confirm-forget';
+import { Card } from './card';
+import { confirmForget } from './confirm-forget';
 import { MacIdentity } from './MacIdentity';
 import { Notifications } from './Notifications';
 import { macStatus, sourceLine } from './settings-view';
@@ -38,31 +39,29 @@ export function SettingsScreen() {
           name={overview.data?.machineName ?? connection?.machineName ?? 'Your Mac'}
           status={macStatus(overview)}
         />
-        <Group title="This Mac">
-          <ListRow
-            title="Frink version"
-            trailing={<Value>{overview.data?.appVersion ?? '—'}</Value>}
-          />
-          <RowSeparator inset={GUTTER} />
-          <ListRow
-            title="Address"
-            trailing={<Value>{connection ? new URL(connection.url).hostname : '—'}</Value>}
-          />
-        </Group>
         <Group title="Notifications">
           <Notifications />
         </Group>
-        <Group title="This iPhone">
-          <ListRow title="Frink version" trailing={<Value>{APP_VERSION}</Value>} />
-          {SOURCE && (
-            <>
-              <RowSeparator inset={GUTTER} />
-              <ListRow title="Built from" subtitle={SOURCE} />
-            </>
-          )}
+        <Group title="About">
+          <Card testID="settings-about">
+            <ListRow
+              title="Frink on your Mac"
+              trailing={<Value>{overview.data?.appVersion ?? '—'}</Value>}
+            />
+            <RowSeparator inset={GUTTER} />
+            <ListRow title="Frink on this iPhone" trailing={<Value>{APP_VERSION}</Value>} />
+            {SOURCE && (
+              <>
+                <RowSeparator inset={GUTTER} />
+                <ListRow title="Built from" subtitle={SOURCE} />
+              </>
+            )}
+          </Card>
         </Group>
         <Group>
-          <ForgetRow />
+          <Card>
+            <ForgetRow />
+          </Card>
         </Group>
       </ScrollView>
     </Screen>
@@ -77,7 +76,7 @@ function Group({ title, children }: { title?: string; children: ReactNode }) {
           variant="label"
           color="muted"
           accessibilityRole="header"
-          style={{ paddingHorizontal: GUTTER, paddingBottom: space.xs, textTransform: 'uppercase' }}
+          style={{ paddingHorizontal: GUTTER * 2, paddingBottom: space.xs, textTransform: 'uppercase' }}
         >
           {title}
         </Text>
@@ -106,27 +105,22 @@ function ForgetRow() {
     await disconnect().catch(() => undefined);
   }
   return (
-    <View style={{ gap: space.sm }}>
-      <Pressable
-        accessibilityRole="button"
-        onPress={() => void forget()}
-        style={({ pressed }) => ({
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: space.md,
-          minHeight: 52,
-          paddingHorizontal: GUTTER,
-          backgroundColor: pressed ? t.pressed : 'transparent',
-        })}
-      >
-        <LogOut size={20} color={t.danger} />
-        <Text variant="row" color="danger">
-          Forget this Mac
-        </Text>
-      </Pressable>
-      <Text variant="secondary" color="muted" style={{ paddingHorizontal: GUTTER }}>
-        {REVOKE_HINT}
+    <Pressable
+      accessibilityRole="button"
+      onPress={() => void forget()}
+      style={({ pressed }) => ({
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: space.md,
+        minHeight: 52,
+        paddingHorizontal: GUTTER,
+        backgroundColor: pressed ? t.pressed : 'transparent',
+      })}
+    >
+      <LogOut size={20} color={t.danger} />
+      <Text variant="row" color="danger">
+        Forget this Mac
       </Text>
-    </View>
+    </Pressable>
   );
 }

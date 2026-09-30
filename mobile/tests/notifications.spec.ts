@@ -4,7 +4,7 @@ import { openApp } from './fixtures/app';
 const shot = (page: Page, state: string, scheme = 'dark') =>
   page.screenshot({ path: `test-results/notifications-${state}-${scheme}.png` });
 const alertSwitch = (page: Page) =>
-  page.getByRole('switch', { name: 'Alert me when a chat finishes' });
+  page.getByRole('switch', { name: 'Alerts' });
 // On web the list row around the switch reports itself disabled (it has no tap action of its own),
 // which Playwright's enabled check inherits; the switch itself still takes the tap.
 const tapSwitch = (page: Page) => alertSwitch(page).click({ force: true });
@@ -19,8 +19,8 @@ async function openSettings(page: Page) {
 test('offers chat-finished alerts in Settings, off until asked', async ({ page }) => {
   const state = await openSettings(page);
   await expect(page.getByText('Notifications', { exact: true })).toBeVisible();
-  await expect(page.getByText('When a chat finishes')).toBeVisible();
-  await expect(page.getByText(/Your prompts and code stay on your Mac/)).toBeVisible();
+  await expect(page.getByText('Alerts', { exact: true })).toBeVisible();
+  await expect(page.getByText(/needs you or finishes\. Your prompts and code stay on your Mac/)).toBeVisible();
   await expect(alertSwitch(page)).not.toBeChecked();
   // Opening Settings only reads the registration; it never registers or prompts.
   expect(state.alerts).toEqual([{}]);
