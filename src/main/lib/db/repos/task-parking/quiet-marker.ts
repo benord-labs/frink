@@ -52,13 +52,13 @@ export async function removeQuietEndMarker(db: Db, taskId: string): Promise<Task
 
 /** Wake-burst resume: `needs_attention` → `running` ONLY while the row is still the exact quiet-idle
  * park the burst read (status + result JSON), so a newer park is never overwritten by a stale one. */
-export async function resumeQuietIdlePark(
+export function resumeQuietIdlePark(
   db: Db,
   taskId: string,
   parkedResult: Task['result'],
   result: TaskResultRecord,
-): Promise<Task | null> {
-  const [row] = await db
+): Task | null {
+  const row = db
     .update(tasks)
     .set({ status: 'running', startedAt: new Date(), result })
     .where(
@@ -69,7 +69,8 @@ export async function resumeQuietIdlePark(
         drizzleSql`json(${tasks.result}) IS json(${JSON.stringify(parkedResult ?? null)})`,
       ),
     )
-    .returning();
+    .returning()
+    .get();
   return row ?? null;
 }
 

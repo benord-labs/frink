@@ -171,9 +171,13 @@ vi.mock('./runtime-gate', async (importOriginal) => ({
 }));
 
 vi.mock('../flows/resume', () => ({
-  resumeFlowNodeInPlace: vi.fn(async () => true),
   isRunRestartInterrupted: vi.fn(async () => false),
-  resumeInterruptedFlowInPlace: vi.fn(async () => true),
+}));
+
+vi.mock('../tasks', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../tasks')>()),
+  resumeParkedTaskInPlace: vi.fn(async () => true),
+  reviveRestartInterruptedFlow: vi.fn(async () => undefined),
 }));
 
 vi.mock('../db/repos/chats', () => ({
@@ -304,13 +308,10 @@ import {
   getTaskById,
   updateTaskStatus,
 } from '../db/repos/tasks';
-import {
-  isRunRestartInterrupted,
-  resumeFlowNodeInPlace,
-  resumeInterruptedFlowInPlace,
-} from '../flows/resume';
+import { isRunRestartInterrupted } from '../flows/resume';
 import { getMultiProjectContext } from '../multi-project-prompt';
 import { checkPermission } from '../permissions/v2/check';
+import { resumeParkedTaskInPlace, reviveRestartInterruptedFlow } from '../tasks';
 import type { TaskStopHook } from '../task-stop-hook';
 import { clearActiveFlowTaskForChatIfMatches, setActiveFlowTaskForChat } from '../task-executor';
 import { armWakePump, type WakeHold } from './claude-wake-hold';
@@ -560,7 +561,7 @@ describe('local-only dispatch with unresolved machineId', () => {
 
     expect(flowProviderPreflightMocks.registerNodeAbort).toHaveBeenCalledOnce();
     expect(updateTaskStatus).not.toHaveBeenCalled();
-    expect(resumeInterruptedFlowInPlace).not.toHaveBeenCalled();
+    expect(reviveRestartInterruptedFlow).not.toHaveBeenCalled();
     expect(claudeQueryMock).not.toHaveBeenCalled();
   });
 
@@ -651,7 +652,7 @@ describe('local-only dispatch with unresolved machineId', () => {
       expect.objectContaining({ category: 'FLOW_RUN_ENDED' }),
     );
     expect(updateTaskStatus).not.toHaveBeenCalled();
-    expect(resumeFlowNodeInPlace).not.toHaveBeenCalled();
+    expect(resumeParkedTaskInPlace).not.toHaveBeenCalled();
     expect(dbProjectState.updates).toEqual([]);
     expect(dynamicChatServerMocks.setCurrentExecutionChat).not.toHaveBeenCalled();
     expect(claudeQueryMock).not.toHaveBeenCalled();

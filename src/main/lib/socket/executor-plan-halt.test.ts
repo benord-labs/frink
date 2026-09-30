@@ -127,9 +127,7 @@ vi.mock('../db/repos/sub-chats', () => ({
 }));
 
 vi.mock('../flows/resume', () => ({
-  resumeFlowNodeInPlace: vi.fn(async () => true),
   isRunRestartInterrupted: vi.fn(async () => false),
-  resumeInterruptedFlowInPlace: vi.fn(async () => true),
 }));
 
 vi.mock('../db/repos/chats', () => ({

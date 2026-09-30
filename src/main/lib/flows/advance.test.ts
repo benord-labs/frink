@@ -484,10 +484,8 @@ describe('dispatchAndAdvance — a thrown dispatcher terminalizes its node', () 
   });
 });
 
-// A terminal run is a PURE no-op here, and `cancelled` is the load-bearing case: a revived run is
-// unparked node_run-FIRST (resume.ts unparkNodeRunInPlace), so a concurrent cancel can read
-// `cancelled` while the driving task is already `running`. Sweeping on that read would cancel the
-// just-revived task and let the watcher re-terminalize a live run.
+// A terminal run is a PURE no-op here: sweeping a `cancelled` run's live task would let the watcher
+// re-terminalize work an in-place revive already brought back.
 describe('cancelFlowRun — a terminal run is never swept', () => {
   it.each(['completed', 'failed', 'cancelled'] as const)(
     'leaves a %s run and its live task untouched',

@@ -13,6 +13,9 @@ export const DISPATCHABLE_RUN_STATUSES: FlowRunStatus[] = ['running', 'paused'];
 const ACTIVE_NODE_RUN_STATUSES = ['pending', 'running', 'awaiting_input', 'blocked'];
 const UNDISPATCHED_ADMISSION_STATES = ['queued', 'claimed'];
 
+export const readRun = (db: Db, flowRunId: string) =>
+  db.select().from(flowRuns).where(eq(flowRuns.id, flowRunId)).get();
+
 export const isCancellableRunStatus = (status: string): boolean =>
   (CANCELLABLE_RUN_STATUSES as string[]).includes(status);
 

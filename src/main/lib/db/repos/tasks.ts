@@ -245,12 +245,12 @@ export type UpdateTaskStatusOptions = {
  * - terminal statuses (completed / failed / cancelled / done / needs_attention)
  *   set completed_at + result.
  */
-export async function updateTaskStatus(
+export function updateTaskStatus(
   db: Db,
   taskId: string,
   status: TaskStatus,
   options: UpdateTaskStatusOptions = {},
-): Promise<Task | null> {
+): Task | null {
   const patch: Partial<Task> = { status };
   const result = options.result == null ? options.result : taskResultSchema.parse(options.result);
   if (options.executedBy !== undefined) patch.executedBy = options.executedBy ?? null;
@@ -267,8 +267,7 @@ export async function updateTaskStatus(
     patch.result = result;
   }
 
-  const [row] = await db.update(tasks).set(patch).where(casWhere(taskId, options)).returning();
-  return row ?? null;
+  return db.update(tasks).set(patch).where(casWhere(taskId, options)).returning().get() ?? null;
 }
 
 function casWhere(taskId: string, options: { expectStatuses?: readonly TaskStatus[] }) {

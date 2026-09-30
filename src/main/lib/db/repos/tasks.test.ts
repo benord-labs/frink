@@ -1426,9 +1426,9 @@ describe('retryTaskDetailed — user-requested retry flips failed/parked → pen
     ).rejects.toThrow(/expected record/);
 
     const task = await createTask(db, { description: 'valid', source: 'flow' });
-    await expect(
+    expect(() =>
       updateTaskStatus(db, task.id, 'failed', { result: JSON.stringify({ error: 'boom' }) }),
-    ).rejects.toThrow(/expected record/);
+    ).toThrow(/expected record/);
     await expect(updateTaskResult(db, task.id, 'invalid')).rejects.toThrow(/expected record/);
   });
 
