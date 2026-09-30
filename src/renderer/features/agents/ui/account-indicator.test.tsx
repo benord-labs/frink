@@ -55,6 +55,7 @@ const snap = vi.hoisted(() => {
 });
 
 const getResolvedAccountMock = vi.fn();
+const getChatMock = vi.fn();
 
 vi.mock('../../../lib/trpc', () => ({
   trpc: {
@@ -62,6 +63,7 @@ vi.mock('../../../lib/trpc', () => ({
       claudeCode: { getResolvedAccount: { invalidate: snap.resolvedAccountInvalidate } },
     }),
     chats: {
+      get: { useQuery: (...args: unknown[]) => getChatMock(...args) },
       setChatAccount: {
         useMutation: (opts: typeof snap.setChatAccountOpts) => {
           snap.setChatAccountOpts = opts;
@@ -107,6 +109,7 @@ vi.mock('sonner', () => ({
 afterEach(() => {
   cleanup();
   getResolvedAccountMock.mockReset();
+  getChatMock.mockReset();
   snap.setDefaultMutate.mockReset();
   snap.setProjectAccountMutate.mockReset();
   snap.setChatAccountMutate.mockReset();
@@ -369,10 +372,16 @@ describe('AccountIndicator', () => {
       type: 'codex',
     };
 
-    async function openChatMenu() {
+    async function openChatMenu(isBlocked = false) {
       snap.listAccountsData = [...snap.defaultListAccounts, codexRow];
       getResolvedAccountMock.mockReturnValue({
-        data: { id: 'acc-1', label: 'Slice', type: 'claude-code' as const, isAuthenticated: true },
+        data: {
+          id: 'acc-1',
+          label: 'Slice',
+          type: 'claude-code',
+          isAuthenticated: true,
+          isBlocked,
+        },
         isLoading: false,
       });
       render(
@@ -396,6 +405,13 @@ describe('AccountIndicator', () => {
       expect(snap.setProjectAccountMutate).not.toHaveBeenCalled();
       expect(snap.setDefaultMutate).not.toHaveBeenCalled();
     });
+
+    it('says the login was removed instead of naming the stand-in login', async () => {
+      await openChatMenu(true);
+
+      expect(screen.getByText("This chat's login was removed")).toBeInTheDocument();
+      expect(screen.queryByText(/This chat always uses/)).not.toBeInTheDocument();
+    });
   });
 
   describe('ContinueAfterUsageLimit', () => {
@@ -404,13 +420,12 @@ describe('AccountIndicator', () => {
     function renderAfterError(
       errorCategory: string,
       accounts: ListAccount[],
-      type: ListAccount['type'] = 'claude-code',
+      provider: ListAccount['type'] = 'claude-code',
+      resolved: unknown = { id: 'acc-1', label: 'Slice', type: provider, isAuthenticated: true },
     ) {
       snap.listAccountsData = accounts;
-      getResolvedAccountMock.mockReturnValue({
-        data: { id: 'acc-1', label: 'Slice', type, isAuthenticated: true },
-        isLoading: false,
-      });
+      getChatMock.mockReturnValue({ data: { id: 'chat-1', provider } });
+      getResolvedAccountMock.mockReturnValue({ data: resolved, isLoading: false });
       const store = createStore();
       store.set(pendingChatRetryAtomFamily('sub-1'), {
         chatId: 'chat-1',
@@ -463,7 +478,7 @@ describe('AccountIndicator', () => {
       ]);
 
       expect(screen.queryByText(/Retry with/)).not.toBeInTheDocument();
-      await userEvent.setup().click(screen.getByRole('button', { name: 'Add another AI account' }));
+      await userEvent.setup().click(screen.getByRole('button', { name: 'Add account…' }));
 
       expect(store.get(agentsSettingsDialogActiveTabAtom)).toBe('models');
     });
@@ -476,6 +491,21 @@ describe('AccountIndicator', () => {
       );
 
       expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    });
+
+    it("offers every signed-in login of the chat's provider once its login was removed", () => {
+      renderAfterError('LOGIN_REMOVED', [...snap.defaultListAccounts, codexRow('acc-x', 'Work')]);
+
+      const buttons = screen.getAllByRole('button').map((b) => b.textContent);
+      expect(buttons).toEqual(['Retry with Slice', 'Retry with Backup']);
+    });
+
+    it('offers to add a login of the same provider when a Codex chat has none left', () => {
+      // No OpenAI login is left, so the chat resolves no account at all.
+      renderAfterError('LOGIN_REMOVED', snap.defaultListAccounts, 'codex', null);
+
+      const buttons = screen.getAllByRole('button').map((b) => b.textContent);
+      expect(buttons).toEqual(['Add an OpenAI login…']);
     });
 
     it('stays hidden for errors other than a usage limit', () => {

@@ -19,6 +19,7 @@ import type {
 import type { ApprovedPlanContext } from '../../../shared/types/plan';
 import type { WakeHoldChangedPayload } from '../../../shared/types/wake-hold';
 import { getDatabase } from '../db';
+import { assertChatLogin } from '../db/repos/project-ai-accounts';
 import { withSubChatLock } from '../db/repos/sub-chat-mutex';
 import {
   appendUserMessage as appendUserMessageLocal,
@@ -308,6 +309,7 @@ async function persistAndDispatchMessage(
     }
   }
 
+  await assertChatLogin(getDatabase(), chatId, subChatId);
   // Synthesize the ExecuteRequestPayload and dispatch the executor in-process.
   const assistantMessageId = randomUUID();
   const streamId = randomUUID();

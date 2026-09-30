@@ -33,6 +33,7 @@ export function makeLocalChat(overrides: Partial<Chat> = {}): Chat {
     composerAutoMode: null,
     composerCodexSpeed: null,
     accountId: null,
+    provider: 'claude-code',
     ...overrides,
   };
 }

@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import * as schema from '../schema';
 import { freshDb, type TestDb } from '../test-utils/fresh-db';
 import {
+  assertChatLogin,
+  getChatAiAccount,
   getProjectAiAccount,
   getProjectAiAccountsBatch,
   setChatAiAccount,
@@ -145,9 +147,11 @@ describe('project AI account overrides', () => {
   });
 });
 
-describe('setChatAiAccount', () => {
-  const seedChat = (accountId: string | null) =>
-    db.insert(schema.chats).values({ id: 'c1', projectId: 'p1', accountId });
+describe('chat login binding', () => {
+  const seedChat = (accountId: string | null, provider = 'claude-code') =>
+    db.insert(schema.chats).values({ id: 'c1', projectId: 'p1', accountId, provider });
+  const chatRow = async () =>
+    (await db.select().from(schema.chats).where(eq(schema.chats.id, 'c1')))[0];
 
   beforeEach(async () => {
     await seedAccount('claude-a', 'Personal', 'claude-code');
@@ -161,8 +165,7 @@ describe('setChatAiAccount', () => {
 
     expect(await setChatAiAccount(db, 'c1', 'claude-b')).toBe('ok');
 
-    const [chat] = await db.select().from(schema.chats).where(eq(schema.chats.id, 'c1'));
-    expect(chat.accountId).toBe('claude-b');
+    expect((await chatRow()).accountId).toBe('claude-b');
     expect(await getProjectAiAccount(db, 'p1')).toEqual({ id: 'claude-a', label: 'Personal' });
   });
 
@@ -171,28 +174,15 @@ describe('setChatAiAccount', () => {
 
     expect(await setChatAiAccount(db, 'c1', 'codex')).toBe('other-provider');
 
-    const [chat] = await db.select().from(schema.chats).where(eq(schema.chats.id, 'c1'));
-    expect(chat.accountId).toBe('claude-a');
+    expect((await chatRow()).accountId).toBe('claude-a');
   });
 
-  // An unstamped chat runs on the project override (else default), so that provider binds it.
-  it('checks an unstamped chat against the account it runs on', async () => {
-    await setProjectAiAccount(db, 'p1', 'codex');
-    await seedChat(null);
+  it("checks a blocked chat against its stamped provider, not the project's", async () => {
+    await setProjectAiAccount(db, 'p1', 'claude-a');
+    await seedChat(null, 'codex');
 
     expect(await setChatAiAccount(db, 'c1', 'claude-b')).toBe('other-provider');
-  });
-
-  it('checks a chat stamped with a non-AI row against the default it runs on', async () => {
-    await db.insert(schema.claudeCodeCredentials).values({ id: 'gh', type: 'github' });
-    await db
-      .update(schema.claudeCodeCredentials)
-      .set({ isDefault: true })
-      .where(eq(schema.claudeCodeCredentials.id, 'claude-a'));
-    await seedChat('gh');
-
-    expect(await setChatAiAccount(db, 'c1', 'codex')).toBe('other-provider');
-    expect(await setChatAiAccount(db, 'c1', 'claude-b')).toBe('ok');
+    expect(await setChatAiAccount(db, 'c1', 'codex')).toBe('ok');
   });
 
   it('reports an unknown chat or account', async () => {
@@ -200,5 +190,35 @@ describe('setChatAiAccount', () => {
 
     expect(await setChatAiAccount(db, 'missing', 'claude-b')).toBe('not-found');
     expect(await setChatAiAccount(db, 'c1', 'missing')).toBe('not-found');
+  });
+
+  it("never resolves a chat to another provider's login", async () => {
+    await setProjectAiAccount(db, 'p1', 'claude-a');
+    await seedChat('claude-a', 'codex');
+
+    expect(await getChatAiAccount(db, await chatRow())).toBeNull();
+  });
+
+  it('blocks a turn once the login is removed and parks the Flow task it drives', async () => {
+    await seedChat('codex', 'codex');
+    await db.insert(schema.tasks).values({
+      id: 't1',
+      source: 'flow',
+      status: 'running',
+      description: 'step',
+      result: { subChatId: 's1' },
+    });
+    await assertChatLogin(db, 'c1', 's1');
+
+    await db
+      .delete(schema.claudeCodeCredentials)
+      .where(eq(schema.claudeCodeCredentials.id, 'codex'));
+
+    await expect(assertChatLogin(db, 'c1', 's1')).rejects.toMatchObject({
+      message: "This chat's login was removed",
+      category: 'LOGIN_REMOVED',
+    });
+    const [task] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, 't1'));
+    expect(task.status).toBe('needs_attention');
   });
 });

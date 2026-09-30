@@ -52,6 +52,7 @@ export function mapLocalChatResponse(chat: Chat) {
     prUrl: chat.prUrl,
     prNumber: chat.prNumber,
     taskId: chat.taskId,
+    provider: chat.provider,
     batchId: null as string | null,
     // JSON-as-text Record<projectId, worktreePath> — internal; the renderer doesn't render
     // it but the mutation roundtrips it (move resolver reads + writes it).

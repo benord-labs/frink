@@ -7,10 +7,7 @@ import {
 } from '../../socket/claude-session-registry';
 
 const getProjectAiAccountMock = vi.fn();
-// Like the real repo, a chat without a stamped account resolves its project's override.
-const getChatAiAccountMock = vi.fn(async (db: unknown, chat: { projectId?: string | null }) =>
-  chat.projectId ? getProjectAiAccountMock(db, chat.projectId) : null,
-);
+const getChatAiAccountMock = vi.fn();
 const getChatByIdMock = vi.fn();
 const setProjectAiAccountMock = vi.fn();
 const getExistingClaudeCredentialsMock = vi.fn();
@@ -393,11 +390,8 @@ describe('claudeCodeRouter project account ownership', () => {
 
   it('getResolvedAccount resolves a chat to its stamped account', async () => {
     getProjectAiAccountMock.mockResolvedValue({ id: 'cred-a', label: 'Personal' });
-    getChatByIdMock.mockResolvedValueOnce({
-      id: 'c1',
-      projectId: 'project/1',
-      accountId: 'cred-b',
-    });
+    const chat = { id: 'c1', projectId: 'project/1', accountId: 'cred-b', provider: 'claude-code' };
+    getChatByIdMock.mockResolvedValueOnce(chat);
     getChatAiAccountMock.mockResolvedValueOnce({ id: 'cred-b', label: 'Work' });
     selectGetMock.mockReturnValue({
       id: 'cred-b',
@@ -412,10 +406,7 @@ describe('claudeCodeRouter project account ownership', () => {
     const caller = claudeCodeRouter.createCaller({ getWindow: () => null });
     const result = await caller.getResolvedAccount({ chatId: 'c1' });
 
-    expect(getChatAiAccountMock).toHaveBeenCalledWith(expect.anything(), {
-      accountId: 'cred-b',
-      projectId: 'project/1',
-    });
+    expect(getChatAiAccountMock).toHaveBeenCalledWith(expect.anything(), chat);
     expect(result).toMatchObject({
       id: 'cred-b',
       label: 'Work',

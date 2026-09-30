@@ -86,6 +86,11 @@ export const ERROR_TOAST_CONFIG: Record<
       'Your message will continue this run — the agent picks up where it left off once the run is re-admitted.',
     toastId: 'flow-run-resuming',
   },
+  LOGIN_REMOVED: {
+    title: "This chat's login was removed",
+    description: 'Retry the chat with another login, or add one.',
+    toastId: 'login-removed',
+  },
 };
 
 /** Per-sub-chat dedup id for a category's toast: repeats replace, sibling chats don't collide. */

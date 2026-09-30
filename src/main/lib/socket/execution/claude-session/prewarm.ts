@@ -6,11 +6,7 @@ import type { ExecutionSettings } from '../../../../../shared/types/execution';
 import { getBundledClaudeBinaryPath } from '../../../claude';
 import { isValidSubChatIdForSessionPaths } from '../../../claude/session-plan-paths';
 import { claudeErrorText } from '../../../claude/stream-classifiers';
-import {
-  getClaudeCodeTokenById,
-  getDefaultClaudeCodeToken,
-  isResolvedCredential,
-} from '../../../credentials';
+import { getClaudeCodeTokenById, isResolvedCredential } from '../../../credentials';
 import { getDatabase } from '../../../db';
 import { getChatWithProjectAccount } from '../../../db/repos/chats';
 import { getProjectById } from '../../../db/repos/projects';
@@ -117,9 +113,9 @@ async function buildPrewarmSpec({ chatId, subChatId, mode: intent, settings }: P
   ]);
   const chat = owner?.chat;
   if (!chat || subChat?.chatId !== chatId || chat.archivedAt) return 'closed';
-  const credential = owner.account
-    ? await getClaudeCodeTokenById(owner.account.id)
-    : await getDefaultClaudeCodeToken();
+  // A chat whose login was removed waits for the user's retry, never a default login.
+  if (!owner.account) return 'login-removed';
+  const credential = await getClaudeCodeTokenById(owner.account.id);
   if (!isResolvedCredential(credential) || credential.type === 'codex') return 'not-claude';
   if (chat.taskId || (await getLatestFlowTaskForSubChat(db, subChatId))) return 'task-linked';
   const mode = intent ?? (subChat.mode as ChatMode);

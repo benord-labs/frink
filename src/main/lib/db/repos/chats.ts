@@ -2,7 +2,7 @@ import { and, desc, eq, inArray, isNotNull, isNull, lt, or, sql } from 'drizzle-
 import type { getDatabase } from '../index';
 import { type Chat, chats, type NewChat, type SubChat, subChats } from '../schema';
 import { createId } from '../utils';
-import { getChatAiAccount, getNewChatAccountId } from './project-ai-accounts';
+import { getAiAccountType, getChatAiAccount, getNewChatAccountId } from './project-ai-accounts';
 import { createSubChat, listSubChatsByChat } from './sub-chats';
 
 type Db = ReturnType<typeof getDatabase>;
@@ -17,11 +17,17 @@ type Db = ReturnType<typeof getDatabase>;
  * Single-user DB, so there's no `userId` filter — every row belongs to the current desktop user.
  */
 
+/** A new chat's login (the given one, else project override, else default) and its provider. */
+async function newChatStamp(db: Db, projectId: string | null, accountId?: string | null) {
+  const id = accountId ?? (await getNewChatAccountId(db, projectId));
+  return { accountId: id, provider: (id && (await getAiAccountType(db, id))) || 'claude-code' };
+}
+
 export async function createChat(db: Db, input: NewChat): Promise<Chat> {
-  const accountId = input.accountId ?? (await getNewChatAccountId(db, input.projectId ?? null));
+  const stamp = await newChatStamp(db, input.projectId ?? null, input.accountId);
   const [row] = await db
     .insert(chats)
-    .values({ ...input, accountId })
+    .values({ ...input, ...stamp })
     .returning();
   return row;
 }
@@ -134,12 +140,12 @@ export async function getOrCreateFlowChat(
       ).id;
     return { chatId: existing.id, subChatId };
   }
-  const accountId = await getNewChatAccountId(db, input.projectId);
+  const stamp = await newChatStamp(db, input.projectId);
   return db.transaction(() => {
     const chat = db
       .insert(chats)
       .values({
-        accountId,
+        ...stamp,
         projectId: input.projectId,
         name: input.name,
         mode: 'agent',
@@ -376,8 +382,8 @@ export async function togglePin(db: Db, id: string): Promise<Chat | null> {
 }
 
 /**
- * A chat + the AI account it runs on (getChatAiAccount; null = workspace default). A failed
- * account read yields null so the chat's worktree/task context still reaches the agent.
+ * A chat + the AI account it runs on (getChatAiAccount; null = blocked, its login was removed). A
+ * failed account read yields null so the chat's worktree/task context still reaches the agent.
  */
 export async function getChatWithProjectAccount(
   db: Db,
@@ -451,6 +457,7 @@ export async function forkChatWithSubChats(
         composerAutoMode: source.composerAutoMode,
         composerCodexSpeed: source.composerCodexSpeed,
         accountId: source.accountId,
+        provider: source.provider,
       })
       .run();
 
