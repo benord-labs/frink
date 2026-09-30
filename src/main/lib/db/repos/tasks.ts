@@ -604,7 +604,7 @@ export function cancelTaskDetailed(
     if (!previous) return { task: null, reason: 'not_found' as const };
     const updated = db
       .update(tasks)
-      .set({ status: 'cancelled', completedAt: new Date(), result: { cancelled: true } })
+      .set({ status: 'cancelled', completedAt: new Date(), result: cancelResultPatch(false) })
       .where(and(eq(tasks.id, taskId), inArray(tasks.status, CANCELLABLE_STATUSES)))
       .returning()
       .get() as Task | undefined;

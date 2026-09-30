@@ -30,9 +30,10 @@ import {
 import type { FlowRun, NodeRun } from '../db/schema';
 import { clearActiveFlowTaskForChat } from '../task-executor';
 import { loadRunContext } from './advance';
+import { dropStagedContinuation } from './admission/terminal-resume/continuation';
 import { abortFlowRun } from './cancel-registry';
 import { emitRunTerminal } from './event-emit';
-import { cancelRunCommand } from './transitions';
+import { type CancelRunOutcome, cancelRunCommand, cancelWorkQueueRunCommand } from './transitions';
 
 export class LocalEngineNotImplementedError extends Error {
   constructor(detail: string) {
@@ -105,14 +106,17 @@ async function dequeueFlowRun(flowRunId: string, queuedOnly: CancelQueuedOnly) {
 }
 
 /** One Cancel command: aborts in the commit's tick, then drains a dropped ticket and emits once. */
-async function commitCancel(flowRunId: string, includeParked: boolean) {
+async function commitCancel<T extends CancelRunOutcome>(
+  flowRunId: string,
+  command: () => T | null,
+  touched: (outcome: T) => boolean = (outcome) => outcome.cancelled,
+) {
   const admissionRuntime = await import('./admission/runtime');
-  const outcome = await admissionRuntime.transitionFlowRun(
-    () => cancelRunCommand(getDatabase(), flowRunId, { includeParked }),
-    (result) => {
-      if (result?.cancelled) abortFlowRun(flowRunId);
-    },
-  );
+  const outcome = await admissionRuntime.transitionFlowRun(command, (result) => {
+    if (!result || !touched(result)) return;
+    abortFlowRun(flowRunId);
+    dropStagedContinuation(flowRunId);
+  });
   if (outcome?.droppedTicket) void admissionRuntime.drainFlowAdmissions();
   if (outcome?.cancelled) await emitCancelledFlowRun(flowRunId);
   return outcome;
@@ -136,14 +140,29 @@ export async function cancelFlowRun(
   options: { queuedOnly?: CancelQueuedOnly } = {},
 ): Promise<FlowRun | null> {
   if (options.queuedOnly) return dequeueFlowRun(flowRunId, options.queuedOnly);
-  const outcome = await commitCancel(flowRunId, false);
+  const outcome = await commitCancel(flowRunId, () =>
+    cancelRunCommand(getDatabase(), flowRunId, { includeParked: false }),
+  );
   if (outcome?.cancelled) await releaseFlowAdmission(flowRunId, outcome.liveTicket);
   return outcome?.run ?? null;
 }
 
 export async function cancelFlowRunForDeletion(flowRunId: string): Promise<void> {
-  const outcome = await commitCancel(flowRunId, true);
+  const outcome = await commitCancel(flowRunId, () =>
+    cancelRunCommand(getDatabase(), flowRunId, { includeParked: true }),
+  );
   await releaseFlowAdmission(flowRunId, outcome?.liveTicket ?? null);
+}
+
+/** Work Queue Cancel of a flow row (see cancelWorkQueueRunCommand); null when the run is missing. */
+export async function cancelFlowRunFromWorkQueue(flowRunId: string, clickedTaskId: string) {
+  const outcome = await commitCancel(
+    flowRunId,
+    () => cancelWorkQueueRunCommand(getDatabase(), flowRunId, clickedTaskId),
+    (result) => result.touched,
+  );
+  if (outcome?.cancelled) await releaseFlowAdmission(flowRunId, outcome.liveTicket);
+  return outcome;
 }
 
 async function finalizeChatOwnedFlowCancellation(

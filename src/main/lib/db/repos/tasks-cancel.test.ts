@@ -20,13 +20,18 @@ describe('cancelTaskDetailed — atomic pre-image for the session stop (sc-3263)
     return t;
   };
 
-  it('returns the replaced row (subChatId intact) while the saved row is cancelled', async () => {
-    const t = await taskIn('running', { chatId: 'c1', subChatId: 'sc1' });
+  it('returns the replaced row while the saved row merges the cancel marker over its result', async () => {
+    const t = await taskIn('running', {
+      chatId: 'c1',
+      subChatId: 'sc1',
+      agentSignal: { state: 'done' },
+    });
 
     const { task, previous, reason } = await cancelTaskDetailed(db, t.id);
 
     expect(reason).toBeUndefined();
-    expect(task).toMatchObject({ status: 'cancelled', result: { cancelled: true } });
+    expect(task).toMatchObject({ status: 'cancelled' });
+    expect(task?.result).toEqual({ chatId: 'c1', subChatId: 'sc1', cancelled: true });
     expect(previous).toMatchObject({ status: 'running', result: { subChatId: 'sc1' } });
     expect((await getTaskById(db, t.id))?.status).toBe('cancelled');
   });

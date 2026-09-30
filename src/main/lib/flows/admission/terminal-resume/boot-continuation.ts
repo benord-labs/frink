@@ -11,11 +11,11 @@ import { getFlowRun } from '../../../db/repos/flow-runs';
 import { getVersion } from '../../../db/repos/flow-versions';
 import { listNodeRunsForFlowRun } from '../../../db/repos/node-runs';
 import { recoverOrphanedTasks } from '../../../db/repos/tasks';
-import { chats, type FlowVersion, flowRuns, type Task } from '../../../db/schema';
+import { chats, type FlowVersion, type Task } from '../../../db/schema';
 import { type FlowGraphNode, findNodeById, parseGraph } from '../../graph';
 import { lastUnfinishedNodeRun } from '../../rerun/resume-point';
 import { resolveSessionResumeSeed } from '../../rerun/session-resume';
-import { restartMarkedNode } from '../../transitions';
+import { isRestartInterrupted } from '../../transitions';
 import { captureFlowAdmissionException } from '../activity';
 import { hasActiveFlowAdmission } from '../runtime';
 import { stageContinuationResume } from './continuation';
@@ -31,15 +31,8 @@ const taskLinkageSchema = z.object({ chatId: z.string(), startMode: z.string().o
  * still existing: deleting the chat is how an interrupted run is abandoned, and it must win.
  */
 function stillInterrupted(db: Db, flowRunId: string, chatId: string): boolean {
-  const run = db
-    .select({ status: flowRuns.status })
-    .from(flowRuns)
-    .where(eq(flowRuns.id, flowRunId))
-    .get();
   const chat = db.select({ id: chats.id }).from(chats).where(eq(chats.id, chatId)).get();
-  return (
-    run?.status === 'cancelled' && Boolean(chat) && restartMarkedNode(db, flowRunId) !== undefined
-  );
+  return Boolean(chat) && isRestartInterrupted(db, flowRunId);
 }
 
 /**

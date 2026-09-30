@@ -15,7 +15,6 @@ import { getDatabase } from '../../db';
 import { getWorkQueueOverviewCounts } from '../../db/repos/task-queries/work-queue-overview-counts';
 import {
   cancelAllPendingTasks,
-  cancelTaskDetailed,
   completeAllDoneTasks,
   completeDoneTasksForFlowRun,
   createTask,
@@ -39,7 +38,7 @@ import {
   listUndeliveredDispatches,
 } from '../../task-executor/dispatch-registry';
 import { getTaskPoller } from '../../task-poller';
-import { stopTaskSession } from '../../tasks/abort-task-session';
+import { cancelWorkQueueTask } from '../../tasks/cancel-work-queue-task';
 import { publicProcedure, router } from '../index';
 import {
   getTaskWithRunOutcome,
@@ -355,7 +354,7 @@ export const tasksRouter = router({
   cancel: publicProcedure
     .input(z.string().min(1))
     .mutation(async ({ input: taskId }): Promise<Task | null> => {
-      const { task, reason, previous } = await cancelTaskDetailed(getDatabase(), taskId);
+      const { task, reason } = await cancelWorkQueueTask(getDatabase(), taskId);
       if (!task) {
         throwTaskMutationReason(reason, {
           notFound: 'Task not found',
@@ -363,8 +362,6 @@ export const tasksRouter = router({
           fallback: 'Could not cancel task',
         });
       }
-      // Stop only once the guarded flip has won, so a declined cancel never kills a live turn.
-      if (previous) await stopTaskSession(previous);
       return task;
     }),
 

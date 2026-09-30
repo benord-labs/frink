@@ -325,7 +325,8 @@ export async function registerFlowProviderExecution(
   const takePendingContinuationResume = (): PendingContinuationResume | null => {
     const pending = pendingContinuationResume;
     pendingContinuationResume = null;
-    return pending;
+    // A Cancel that aborted this turn owns the run: its continuation must not be staged.
+    return registeredController?.signal.aborted ? null : pending;
   };
   return {
     release,

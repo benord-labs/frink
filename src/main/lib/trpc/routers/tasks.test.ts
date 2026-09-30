@@ -6,7 +6,7 @@ const createTaskMock = vi.fn();
 const getTasksWithProjectPaginatedMock = vi.fn();
 const getTaskCountsMock = vi.fn();
 const updateTaskStatusMock = vi.fn();
-const cancelTaskDetailedMock = vi.fn();
+const cancelWorkQueueTaskMock = vi.fn();
 const cancelAllPendingTasksMock = vi.fn();
 const completeAllDoneTasksMock = vi.fn();
 const completeDoneTasksForFlowRunMock = vi.fn();
@@ -23,7 +23,6 @@ const getSubChatByIdMock = vi.fn();
 const getSubChatModeMock = vi.fn();
 const carryOnFlowTaskMock = vi.fn();
 const hasActiveFlowAdmissionMock = vi.fn();
-const stopTaskSessionMock = vi.fn();
 class MockApiRequestError extends Error {
   status: number;
 
@@ -57,7 +56,6 @@ vi.mock('../../db/repos/tasks', () => ({
   getTaskCounts: getTaskCountsMock,
   startExecutionFromReviewDetailed: startExecutionFromReviewDetailedMock,
   updateTaskStatus: updateTaskStatusMock,
-  cancelTaskDetailed: cancelTaskDetailedMock,
   cancelAllPendingTasks: cancelAllPendingTasksMock,
   completeAllDoneTasks: completeAllDoneTasksMock,
   completeDoneTasksForFlowRun: completeDoneTasksForFlowRunMock,
@@ -88,8 +86,8 @@ vi.mock('../../flows/admission/runtime', () => ({
   hasActiveFlowAdmission: hasActiveFlowAdmissionMock,
 }));
 
-vi.mock('../../tasks/abort-task-session', () => ({
-  stopTaskSession: stopTaskSessionMock,
+vi.mock('../../tasks/cancel-work-queue-task', () => ({
+  cancelWorkQueueTask: cancelWorkQueueTaskMock,
 }));
 
 vi.mock('../../task-poller', () => ({
@@ -108,7 +106,7 @@ describe('tasksRouter status schema', () => {
     getTasksWithProjectPaginatedMock.mockReset();
     getTaskCountsMock.mockReset();
     updateTaskStatusMock.mockReset();
-    cancelTaskDetailedMock.mockReset();
+    cancelWorkQueueTaskMock.mockReset();
     cancelAllPendingTasksMock.mockReset();
     completeAllDoneTasksMock.mockReset();
     completeDoneTasksForFlowRunMock.mockReset();
@@ -134,7 +132,7 @@ describe('tasksRouter status schema', () => {
       total: 0,
     });
     updateTaskStatusMock.mockResolvedValue({ id: 'task-1', status: 'running' });
-    cancelTaskDetailedMock.mockResolvedValue({ task: { id: 'task-1', status: 'failed' } });
+    cancelWorkQueueTaskMock.mockResolvedValue({ task: { id: 'task-1', status: 'failed' } });
     cancelAllPendingTasksMock.mockResolvedValue({ cancelledCount: 3 });
     completeAllDoneTasksMock.mockResolvedValue({ completedCount: 0 });
     deleteTasksMatchingStatusesMock.mockResolvedValue(0);
@@ -154,7 +152,6 @@ describe('tasksRouter status schema', () => {
     getSubChatModeMock.mockReset().mockResolvedValue(null);
     carryOnFlowTaskMock.mockReset();
     hasActiveFlowAdmissionMock.mockReset();
-    stopTaskSessionMock.mockReset().mockResolvedValue(undefined);
   });
 
   // The continue path delegates to carryOnFlowTask (its session and Flow-provenance gates live in
@@ -703,63 +700,32 @@ describe('tasksRouter status schema', () => {
     await expect(caller.delete(taskId)).rejects.toThrow('network down');
   });
 
-  it('cancel throws when cloud helper reports task missing', async () => {
+  it('cancel returns the row the Work Queue Cancel left', async () => {
     const { tasksRouter } = await import('./tasks');
     const caller = tasksRouter.createCaller({ getWindow: () => null });
-    const taskId = '11111111-1111-4111-8111-111111111111';
-    cancelTaskDetailedMock.mockResolvedValueOnce({ task: null, reason: 'not_found' });
-
-    await expect(caller.cancel(taskId)).rejects.toThrow('Task not found');
-    expect(cancelTaskDetailedMock).toHaveBeenCalledWith(expect.anything(), taskId);
-  });
-
-  it('cancel throws when task cannot be cancelled in current status', async () => {
-    const { tasksRouter } = await import('./tasks');
-    const caller = tasksRouter.createCaller({ getWindow: () => null });
-    const taskId = '11111111-1111-4111-8111-111111111111';
-    cancelTaskDetailedMock.mockResolvedValueOnce({ task: null, reason: 'invalid_state' });
-
-    await expect(caller.cancel(taskId)).rejects.toThrow('cannot be cancelled');
-  });
-
-  it('cancel stops the session of the row the cancel replaced, after the cancel', async () => {
-    const { tasksRouter } = await import('./tasks');
-    const caller = tasksRouter.createCaller({ getWindow: () => null });
-    const previous = { id: 'task-1', status: 'running', result: { subChatId: 'sub-1' } };
     const after = { id: 'task-1', status: 'cancelled', result: { cancelled: true } };
-    const order: string[] = [];
-    cancelTaskDetailedMock.mockImplementationOnce(async () => {
-      order.push('cancel');
-      return { task: after, previous };
-    });
-    stopTaskSessionMock.mockImplementationOnce(async () => {
-      order.push('stop');
-    });
+    cancelWorkQueueTaskMock.mockResolvedValueOnce({ task: after });
 
     await expect(caller.cancel('task-1')).resolves.toEqual(after);
-    expect(order).toEqual(['cancel', 'stop']);
-    expect(stopTaskSessionMock).toHaveBeenCalledWith(previous);
-    // No separate (stale) pre-read: the pre-image comes from the cancel's own transaction.
-    expect(getTaskByIdMock).not.toHaveBeenCalled();
+    expect(cancelWorkQueueTaskMock).toHaveBeenCalledWith(expect.anything(), 'task-1');
   });
 
   it.each([
     ['not_found', 'Task not found'],
     ['invalid_state', 'cannot be cancelled'],
-  ])('cancel refused (%s) never stops a session', async (reason, message) => {
+  ])('cancel refused (%s) throws', async (reason, message) => {
     const { tasksRouter } = await import('./tasks');
     const caller = tasksRouter.createCaller({ getWindow: () => null });
-    cancelTaskDetailedMock.mockResolvedValueOnce({ task: null, reason });
+    cancelWorkQueueTaskMock.mockResolvedValueOnce({ task: null, reason });
 
     await expect(caller.cancel('task-1')).rejects.toThrow(message);
-    expect(stopTaskSessionMock).not.toHaveBeenCalled();
   });
 
   it('cancel rethrows non-5xx ApiRequestError', async () => {
     const { tasksRouter } = await import('./tasks');
     const caller = tasksRouter.createCaller({ getWindow: () => null });
     const taskId = '11111111-1111-4111-8111-111111111111';
-    cancelTaskDetailedMock.mockRejectedValueOnce(new MockApiRequestError('bad request', 400));
+    cancelWorkQueueTaskMock.mockRejectedValueOnce(new MockApiRequestError('bad request', 400));
 
     await expect(caller.cancel(taskId)).rejects.toThrow('bad request');
   });

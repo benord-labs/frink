@@ -30,6 +30,8 @@ type StagedContinuation = {
   pending: PendingContinuationResume;
   emitCorrective: (message: string) => void;
   watch: ContinuationWatch;
+  /** The run's drop generation when staged; a later Cancel's drop makes the enqueue admit decline. */
+  generation: number;
 };
 
 // Both surfacing lanes render ERROR_TOAST_CONFIG's copy over this once category:'FLOW_RUN_ENDED'
@@ -38,6 +40,7 @@ const CONTINUATION_CORRECTIVE_MESSAGE =
   'Use Re-run step (or Resume) above the composer to continue this flow.';
 
 const staged = new Map<string, StagedContinuation>();
+const dropGenerations = new Map<string, number>();
 
 /**
  * Stage a typed-reply continuation re-admission for this run. The run's FINAL activity
@@ -52,7 +55,30 @@ export function stageContinuationResume(
 ): void {
   // A later stage for the same run (a typed reply after boot carry-on) must keep the abandon guard.
   const admit = pending.admit ?? staged.get(pending.flowRunId)?.pending.admit;
-  staged.set(pending.flowRunId, { pending: { ...pending, admit }, emitCorrective, watch });
+  const generation = dropGenerations.get(pending.flowRunId) ?? 0;
+  staged.set(pending.flowRunId, {
+    pending: { ...pending, admit },
+    emitCorrective,
+    watch,
+    generation,
+  });
+}
+
+/** A Cancel drops the run's staged continuation in its commit tick, including one a fire or settle
+ * already holds: its admit, re-read in the enqueue transaction, then declines. */
+export function dropStagedContinuation(flowRunId: string): void {
+  staged.delete(flowRunId);
+  dropGenerations.set(flowRunId, (dropGenerations.get(flowRunId) ?? 0) + 1);
+}
+
+function droppedSinceStaged({ pending, generation }: StagedContinuation): boolean {
+  return (dropGenerations.get(pending.flowRunId) ?? 0) !== generation;
+}
+
+function continuationInput(entry: StagedContinuation) {
+  const { pending } = entry;
+  const admit = (db: Db) => !droppedSinceStaged(entry) && (pending.admit?.(db) ?? true);
+  return { ...pending, admit, continuation: true as const };
 }
 
 /**
@@ -69,10 +95,7 @@ export async function settleWithStagedContinuation(
   const entry = staged.get(flowRunId);
   if (!entry) return (await controller.settle(ticket, outcome)) !== null;
   // The entry leaves the map only once the settle committed: a thrown transaction keeps it staged.
-  const result = await controller.settleWithContinuation(ticket, outcome, {
-    ...entry.pending,
-    continuation: true,
-  });
+  const result = await controller.settleWithContinuation(ticket, outcome, continuationInput(entry));
   if (!result.settled) return false;
   // Only this entry is consumed: a newer stage that landed during the await stays for the next fire.
   if (staged.get(flowRunId) === entry) staged.delete(flowRunId);
@@ -84,14 +107,18 @@ export async function settleWithStagedContinuation(
   } else if (result.declined) {
     reportContinuationEnqueueFailure(entry, result.declined);
   } else {
-    void watchContinuationDispatch(flowRunId, entry.emitCorrective, entry.watch, ops).catch(
-      (error) => log.warn('[Flow Admission] continuation dispatch watch failed:', error),
+    void watchContinuationDispatch(entry, ops).catch((error) =>
+      log.warn('[Flow Admission] continuation dispatch watch failed:', error),
     );
   }
   return true;
 }
 
 function reportContinuationEnqueueFailure(entry: StagedContinuation, error: Error): void {
+  if (droppedSinceStaged(entry)) {
+    log.info('[Flow Admission] continuation ended by a Cancel', { error: error.message });
+    return;
+  }
   log.warn('[Flow Admission] typed-reply continuation re-admission failed:', error);
   captureFlowAdmissionException(error, 'continuation-enqueue');
   entry.emitCorrective(CONTINUATION_CORRECTIVE_MESSAGE);
@@ -142,7 +169,7 @@ export async function fireStagedContinuationResume(
     return;
   }
   try {
-    await ops.requestTerminalFlowResume({ ...entry.pending, continuation: true });
+    await ops.requestTerminalFlowResume(continuationInput(entry));
   } catch (error) {
     if (error instanceof ResumeAdmitDeclinedError) {
       log.info('[Flow Admission] staged continuation declined', {
@@ -157,17 +184,17 @@ export async function fireStagedContinuationResume(
     );
     return;
   }
-  void watchContinuationDispatch(flowRunId, entry.emitCorrective, entry.watch, ops).catch((error) =>
+  void watchContinuationDispatch(entry, ops).catch((error) =>
     log.warn('[Flow Admission] continuation dispatch watch failed:', error),
   );
 }
 
 async function watchContinuationDispatch(
-  flowRunId: string,
-  emitCorrective: (message: string) => void,
-  { intervalMs = 2_000, attempts = 30 }: ContinuationWatch,
+  entry: StagedContinuation,
   ops: ContinuationAdmissionOps,
 ): Promise<void> {
+  const { flowRunId } = entry.pending;
+  const { intervalMs = 2_000, attempts = 30 } = entry.watch;
   const db = getDatabase();
   const before = await getLatestFlowTaskForRun(db, flowRunId);
   // `attempts` bounds only NON-live observations: a continuation legitimately queued
@@ -189,11 +216,13 @@ async function watchContinuationDispatch(
     misses++;
     const run = await getFlowRun(db, flowRunId);
     if (!run || ['failed', 'cancelled', 'completed'].includes(run.status)) {
+      // A Cancel that dropped the queued continuation ended it on purpose.
+      if (droppedSinceStaged(entry)) return;
       captureFlowAdmissionException(
         new Error(`Continuation dispatch lost for flow run ${flowRunId}`),
         'continuation-dispatch',
       );
-      emitCorrective(CONTINUATION_CORRECTIVE_MESSAGE);
+      entry.emitCorrective(CONTINUATION_CORRECTIVE_MESSAGE);
       return;
     }
   }

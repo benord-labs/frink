@@ -12,11 +12,13 @@ import {
   recoverOrphanedTasks,
   updateTaskStatus,
 } from '../db/repos/tasks';
+import { abandonRestartInterruption } from '../db/repos/task-parking/abandon-marker';
 import { batchStageRuns, batchStages, flowRuns, tasks } from '../db/schema';
 import { seedActiveAdmission, seedFlowRun } from '../db/test-utils/flow-fixtures';
 import { freshDb, type TestDb } from '../db/test-utils/fresh-db';
 import { unparkFlowInPlace } from '../tasks';
 import { hasFlowResourceActivity, setFlowAdmissionLifecycleHooks } from './admission/activity';
+import { TerminalResumeAdmissionError } from './admission/terminal-resume/resume-store';
 
 // The engine reads its db via the getDatabase() singleton; point it at the per-test
 // in-memory db so the guard reads (getFlowRun / listNodeRunsForFlowRun) hit seeded rows.
@@ -419,10 +421,30 @@ describe('rerunFlowRunFromInterruption — guards', () => {
     expect(holder.requestTerminalFlowResume).toHaveBeenCalledWith({
       flowRunId,
       nodeRunId,
+      admit: expect.any(Function),
     });
     expect(loadRunContext).not.toHaveBeenCalled();
     expect(dispatchAndAdvance).not.toHaveBeenCalled();
     expect((await getFlowRun(db, flowRunId))?.status).toBe('cancelled');
+  });
+
+  it('reports a Cancel that lands while the enqueue drains as the user cancelling', async () => {
+    const flowRunId = await seedCancelledRun();
+    await seedInterruptedNode(flowRunId);
+    const dropped = new TerminalResumeAdmissionError('Flow resume admission cancelled');
+    holder.requestTerminalFlowResume.mockImplementation(async () => {
+      abandonRestartInterruption(db, flowRunId);
+      throw dropped;
+    });
+    await expect(rerunFlowRunFromInterruption(flowRunId)).rejects.toThrow(/cancelled by the user/i);
+  });
+
+  it('passes an admission failure through while the run is still interrupted', async () => {
+    const flowRunId = await seedCancelledRun();
+    await seedInterruptedNode(flowRunId);
+    const failed = new TerminalResumeAdmissionError('Flow resume admission failed');
+    holder.requestTerminalFlowResume.mockRejectedValue(failed);
+    await expect(rerunFlowRunFromInterruption(flowRunId)).rejects.toBe(failed);
   });
 
   it('rejects a run that does not exist', async () => {
@@ -491,6 +513,7 @@ describe('rerunFlowRunFromInterruption — guards', () => {
     expect(holder.requestTerminalFlowResume).toHaveBeenCalledWith({
       flowRunId,
       nodeRunId: lane.id,
+      admit: expect.any(Function),
     });
   });
 });

@@ -2,7 +2,7 @@
  * or drain call inside one. Invariants: docs/decisions/flow-run-transition-serialization.md. */
 import type { getDatabase } from '../../db';
 
-export { cancelRunCommand } from './cancel-run';
+export { type CancelRunOutcome, cancelRunCommand, cancelWorkQueueRunCommand } from './cancel-run';
 export { cancelRunRows, DISPATCHABLE_RUN_STATUSES, insertNodeRunIfLive } from './run-rows';
 export {
   type ParkedTask,
@@ -13,6 +13,7 @@ export {
 export {
   type DrivingTaskRow,
   flowStillRunning,
+  isRestartInterrupted,
   type ReopenPausedRunOutcome,
   reopenPausedRunCommand,
   restartMarkedNode,
