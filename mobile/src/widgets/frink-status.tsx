@@ -1,6 +1,8 @@
 import { HStack, Image, Spacer, Text, VStack } from '@expo/ui/swift-ui';
 import {
   activityBackgroundTint,
+  background,
+  clipShape,
   contentTransition,
   font,
   foregroundStyle,
@@ -75,6 +77,18 @@ function FrinkStatus(
       {text('Frink', 14, primary, 'semibold')}
     </HStack>
   );
+  // The app icon as iOS draws it beside notifications: the violet F on a black rounded tile.
+  const appIcon = (
+    <HStack
+      modifiers={[
+        frame({ width: 38, height: 38 }),
+        background('#000000'),
+        clipShape('roundedRectangle', 9),
+      ]}
+    >
+      {mark(24, '#A78BFA')}
+    </HStack>
+  );
   // A zero stays in place but goes grey, so the card never reflows as work starts and stops.
   const stat = (value: number, label: string, tint: Tint) => (
     <VStack alignment="trailing" spacing={0}>
@@ -111,10 +125,13 @@ function FrinkStatus(
           ),
         ]}
       >
-        <VStack alignment="leading" spacing={4}>
-          {brand}
-          {status}
-        </VStack>
+        <HStack spacing={10}>
+          {appIcon}
+          <VStack alignment="leading" spacing={2}>
+            {text('Frink', 15, primary, 'semibold')}
+            {status}
+          </VStack>
+        </HStack>
         <Spacer />
         {stats}
       </HStack>

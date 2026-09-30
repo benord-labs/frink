@@ -14,6 +14,8 @@ vi.mock('@expo/ui/swift-ui/modifiers', () =>
   Object.fromEntries(
     [
       'activityBackgroundTint',
+      'background',
+      'clipShape',
       'contentTransition',
       'font',
       'foregroundStyle',
@@ -82,4 +84,10 @@ it('says the card may be out of date once the Mac has gone quiet', () => {
   const regions = layout({ running: 1, needsYou: 0 }, { ...dark, isStale: true });
   expect(read(regions.banner).text).toContain('May be out of date');
   expect(read(regions.expandedBottom).text).toContain('May be out of date');
+});
+
+it('leads the Lock Screen card with the app icon tile, like the notifications beside it', () => {
+  const banner = JSON.stringify(layout({ running: 1, needsYou: 0 }, dark).banner);
+  expect(banner).toContain('"clipShape"');
+  expect(banner).toContain('"background"');
 });
