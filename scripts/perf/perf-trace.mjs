@@ -325,7 +325,7 @@ async function pageTarget(port) {
       `Nothing answers on DevTools port ${port}. The dev app is not running, or its DevToolsActivePort file is stale from an earlier run.`,
     );
   }
-  const page = targets.find((t) => t.type === 'page');
+  const page = targets.find((t) => t.type === 'page' && !t.url.startsWith('devtools://'));
   if (!page) throw new Error('No page target on the DevTools port.');
   return page;
 }

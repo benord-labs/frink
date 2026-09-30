@@ -338,6 +338,30 @@ describe('AgentsDestinationPane', () => {
     expect(agentsContent.parentElement).toHaveClass('hidden');
   });
 
+  it('keeps the chat mounted but covered and inert behind Settings', () => {
+    const props = {
+      isMobile: false,
+      onCloseOverlay: vi.fn(),
+      onCloseSettings: vi.fn(),
+      onRequestWorkQueueClose: vi.fn(),
+      onNavigateWorkQueueToChat: vi.fn(),
+    };
+    const { rerender } = render(<AgentsDestinationPane {...props} activeOverlay={null} />);
+    const agentsContent = screen.getByTestId('agents-content');
+
+    rerender(<AgentsDestinationPane {...props} activeOverlay="settings" />);
+    const chat = agentsContent.parentElement;
+    expect(screen.getByTestId('settings-page')).toBeInTheDocument();
+    expect(chat).toHaveAttribute('inert');
+    expect(chat).toHaveAttribute('aria-hidden', 'true');
+    expect(chat).toHaveClass('[content-visibility:hidden]');
+
+    rerender(<AgentsDestinationPane {...props} activeOverlay={null} />);
+    expect(screen.getByTestId('agents-content')).toBe(agentsContent);
+    expect(chat).not.toHaveAttribute('inert');
+    expect(chat).not.toHaveClass('[content-visibility:hidden]');
+  });
+
   it('returns mobile dismissal focus to the restored chat input', () => {
     const { container } = render(<WorkQueueDestinationHarness />);
     const returnTarget = container.querySelector<HTMLElement>('[data-work-queue-return-target]');

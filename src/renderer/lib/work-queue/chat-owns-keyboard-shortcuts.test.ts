@@ -21,6 +21,14 @@ describe('chatOwnsKeyboardShortcuts', () => {
     expect(chatOwnsKeyboardShortcuts()).toBe(false);
   });
 
+  it('returns false while Settings covers the chat', () => {
+    const settings = document.createElement('div');
+    settings.dataset.agentsDestination = 'settings';
+    document.body.append(settings);
+
+    expect(chatOwnsKeyboardShortcuts()).toBe(false);
+  });
+
   it('exits Work Queue before running a retained chat shortcut action', () => {
     const store = createStore();
     const observedDestinations: Array<string | null> = [];

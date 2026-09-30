@@ -64,16 +64,9 @@ export function AgentsDestinationPane({
     );
   }
 
-  if (activeOverlay === 'settings') {
-    return (
-      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
-        <CodeEditorPanel />
-        <SettingsPage onClose={onCloseSettings} />
-      </div>
-    );
-  }
-
   const isWorkQueue = activeOverlay === 'workqueue';
+  const isSettings = activeOverlay === 'settings';
+  const isChatCovered = isWorkQueue || isSettings;
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -82,16 +75,27 @@ export function AgentsDestinationPane({
           <CodeEditorPanel />
         </div>
       )}
+      {/* Settings covers the chat rather than replacing it; content-visibility keeps the chat's
+          rendering cached, so closing Settings repaints instead of rebuilding every pane. */}
       <section
         aria-label="Chat"
-        className={cn('flex min-h-0 flex-1 flex-col overflow-hidden', isWorkQueue && 'hidden')}
-        aria-hidden={isWorkQueue || undefined}
+        className={cn(
+          'flex min-h-0 flex-1 flex-col overflow-hidden',
+          isWorkQueue && 'hidden',
+          isSettings && '[content-visibility:hidden]',
+        )}
+        aria-hidden={isChatCovered || undefined}
         data-work-queue-return-target
-        inert={isWorkQueue || undefined}
+        inert={isChatCovered || undefined}
         tabIndex={-1}
       >
         <AgentsContent />
       </section>
+      {isSettings ? (
+        <div className="absolute inset-0 flex flex-col" data-agents-destination="settings">
+          <SettingsPage onClose={onCloseSettings} />
+        </div>
+      ) : null}
       {isWorkQueue ? (
         <ChatAtmosphereSurface className="bg-background" data-agents-destination="workqueue">
           <WorkQueue

@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import { sidePanelDockAtom } from '@/lib/atoms/side-panel-dock';
 
 /** Right of the main pane, mirroring the left sidebar. `hidden` follows the chat while Work Queue
- * covers it, since portalled panels leave the chat's hidden section. */
+ * or Settings covers it, since portalled panels leave the chat's hidden section. */
 export function SidePanelDockHost({ hidden }: { hidden: boolean }): ReactElement {
   const setDock = useSetAtom(sidePanelDockAtom);
   // pl-1 matches the left sidebar's gap to the pane; hidden while empty so it adds no layout gap
