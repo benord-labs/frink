@@ -3,9 +3,9 @@ import type { MobileAgentCounts } from '../../../../shared/types/remote/mobile';
 import type { MobilePairingStore } from '../pairing-store';
 import { readAgentCounts } from './counts';
 
-/** Set after deploying live-activity-forwarder; forks point it at their own deployment. */
+/** Frink's live-activity-forwarder deployment; forks point this at their own. */
 export const LIVE_ACTIVITY_URL =
-  'https://REPLACE-WITH-DEPLOYED-FORWARDER.workers.dev/live-activity';
+  'https://frink-live-activity.benord-labs.workers.dev/live-activity';
 
 const TICK_MS = 5_000;
 const FLOOR_MS = 10_000;
