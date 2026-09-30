@@ -21,6 +21,7 @@ vi.mock('./domain-api', () => ({
 }));
 vi.mock('./server', () => ({ startMobileServer: mocks.start, stopMobileServer: mocks.stop }));
 vi.mock('./live-activity', () => ({ startMobileLiveActivity: mocks.liveActivity }));
+vi.mock('./live-activity/counts', () => ({ readWaitingChats: async () => new Map() }));
 
 beforeEach(async () => {
   vi.resetModules();

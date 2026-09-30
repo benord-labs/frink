@@ -2,6 +2,12 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import type { WaitingChat } from './live-activity/counts';
+
+const fixture = vi.hoisted(() => ({ waiting: new Map<string, WaitingChat>() }));
+vi.mock('./live-activity/counts', () => ({
+  readWaitingChats: async () => new Map(fixture.waiting),
+}));
 import { MobilePairingStore } from './pairing-store';
 import { startMobileNotifications } from './notifications';
 import { publishSessionCompletion } from '../socket/streaming/live-stream/completion-events';
@@ -13,6 +19,13 @@ let credential: { token: string; deviceId: string };
 let stop: (() => void) | undefined;
 const push = 'ExpoPushToken[phone-one]';
 const fetchMock = vi.fn();
+const TICK_MS = 5_000;
+const sent = () => fetchMock.mock.calls.flatMap(([, options]) => JSON.parse(options.body));
+/** A chat's run settles; its alert goes out once two looks show it isn't waiting on you. */
+async function finish(chatId = 'chat') {
+  publishSessionCompletion({ chatId, subChatId: 'sub' });
+  await vi.advanceTimersByTimeAsync(2 * TICK_MS);
+}
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), 'frink-push-'));
   store = new MobilePairingStore(join(directory, 'mobile.json'));
@@ -26,6 +39,8 @@ beforeEach(async () => {
     ok: true,
     json: async () => ({ data: [{ status: 'ok', id: 'receipt' }] }),
   });
+  fixture.waiting.clear();
+  vi.useFakeTimers();
 });
 afterEach(async () => {
   stop?.();
@@ -58,20 +73,22 @@ it('binds registration to the authenticated phone and never exposes push tokens 
 
 it('sends only a generic alert with identifiers, and stops after disable or shutdown', async () => {
   stop = startMobileNotifications(store);
-  publishSessionCompletion({ chatId: 'chat', subChatId: 'sub' });
+  await finish();
   expect(fetchMock).not.toHaveBeenCalled();
   await store.notifications(credential.token, { token: push });
-  publishSessionCompletion({ chatId: 'chat', subChatId: 'sub' });
-  await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+  await finish();
+  expect(fetchMock).toHaveBeenCalledOnce();
   const [url, options] = fetchMock.mock.calls[0];
   expect(url).toBe('https://exp.host/--/api/v2/push/send');
   expect(JSON.parse(options.body)).toEqual([
     {
       to: push,
-      title: 'Frink',
-      body: 'A chat on your Mac has finished.',
+      title: 'A chat finished',
+      body: 'Open it to see the result.',
       sound: 'default',
       ttl: 3600,
+      interruptionLevel: 'active',
+      collapseId: 'chat',
       data: {
         type: 'session-completed',
         deviceId: credential.deviceId,
@@ -81,9 +98,9 @@ it('sends only a generic alert with identifiers, and stops after disable or shut
     },
   ]);
   await store.disable();
-  publishSessionCompletion({ chatId: 'chat', subChatId: 'sub' });
+  await finish();
   stop();
-  publishSessionCompletion({ chatId: 'chat', subChatId: 'sub' });
+  await finish();
   expect(fetchMock).toHaveBeenCalledOnce();
 });
 
@@ -91,8 +108,7 @@ it('removes dead tokens from receipts without removing a rotated registration', 
   vi.useFakeTimers();
   await store.notifications(credential.token, { token: push });
   stop = startMobileNotifications(store);
-  publishSessionCompletion({ chatId: 'chat', subChatId: 'sub' });
-  await vi.advanceTimersByTimeAsync(0);
+  await finish();
   await store.notifications(credential.token, { token: 'ExpoPushToken[new-token]' });
   fetchMock.mockResolvedValueOnce({
     ok: true,
@@ -111,6 +127,7 @@ it('contains network errors and exposes actionable delivery status', async () =>
   fetchMock.mockRejectedValue(new Error('network offline'));
   stop = startMobileNotifications(store);
   expect(() => publishSessionCompletion({ chatId: 'chat', subChatId: 'sub' })).not.toThrow();
+  await vi.advanceTimersByTimeAsync(2 * TICK_MS);
   await vi.waitFor(async () =>
     expect((await store.notifications(credential.token, {})).error).toContain('couldn’t deliver'),
   );
@@ -126,7 +143,7 @@ it.each([undefined, '', '   ', 42, null])(
       json: async () => ({ data: [{ status: 'ok', id }] }),
     });
     stop = startMobileNotifications(store);
-    publishSessionCompletion({ chatId: 'chat', subChatId: 'sub' });
+    await finish();
     await vi.waitFor(async () =>
       expect((await store.notifications(credential.token, {})).error).toContain('couldn’t deliver'),
     );
@@ -141,8 +158,7 @@ it.each(['ok', 'DeviceNotRegistered', 'MessageRateExceeded'] as const)(
     vi.useFakeTimers();
     await store.notifications(credential.token, { token: push });
     stop = startMobileNotifications(store);
-    publishSessionCompletion({ chatId: 'chat', subChatId: 'sub' });
-    await vi.advanceTimersByTimeAsync(0);
+    await finish();
     fetchMock.mockResolvedValueOnce({
       ok: true,
       json: async () => ({
@@ -190,7 +206,7 @@ it('batches paired phones into one Expo request and maps tickets by recipient', 
     }),
   });
   stop = startMobileNotifications(store);
-  publishSessionCompletion({ chatId: 'chat', subChatId: 'sub' });
+  await finish();
   await vi.waitFor(() =>
     expect(store.notificationRecipients()).toEqual([{ id: credential.deviceId, token: push }]),
   );
@@ -204,8 +220,7 @@ it('retains receipt IDs through a transient failure and observes the eventual re
   vi.useFakeTimers();
   await store.notifications(credential.token, { token: push });
   stop = startMobileNotifications(store);
-  publishSessionCompletion({ chatId: 'chat', subChatId: 'sub' });
-  await vi.advanceTimersByTimeAsync(0);
+  await finish();
   fetchMock.mockRejectedValueOnce(new Error('temporarily offline'));
   await vi.advanceTimersByTimeAsync(15 * 60_000);
   expect(store.notificationRecipients()).toHaveLength(1);
@@ -220,4 +235,74 @@ it('retains receipt IDs through a transient failure and observes the eventual re
   await vi.advanceTimersByTimeAsync(15 * 60_000);
   await vi.waitFor(() => expect(store.notificationRecipients()).toEqual([]));
   expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toEqual({ ids: ['receipt'] });
+});
+
+it('alerts once, time-sensitive, when a chat starts waiting on you and the wait holds', async () => {
+  fixture.waiting.set('already', { kind: 'plan' });
+  await store.notifications(credential.token, { token: push });
+  stop = startMobileNotifications(store);
+  await vi.advanceTimersByTimeAsync(TICK_MS);
+  fixture.waiting.set('chat', { kind: 'question', subChatId: 'sub' });
+  await vi.advanceTimersByTimeAsync(TICK_MS);
+  // One look is not enough: a question answered at the Mac within seconds stays off the phone.
+  expect(fetchMock).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(5 * TICK_MS);
+  expect(sent()).toEqual([
+    {
+      to: push,
+      title: 'A chat has a question',
+      body: 'Answer it to let the chat carry on.',
+      sound: 'default',
+      ttl: 3600,
+      interruptionLevel: 'time-sensitive',
+      collapseId: 'chat',
+      data: { type: 'needs-you', deviceId: credential.deviceId, chatId: 'chat', subChatId: 'sub' },
+    },
+  ]);
+  // Waiting again after the answer is a new wait, and a chat-less task opens the Queue.
+  fixture.waiting.delete('chat');
+  await vi.advanceTimersByTimeAsync(TICK_MS);
+  fixture.waiting.set('chat', { kind: 'permission', subChatId: 'sub' });
+  fixture.waiting.set('task:7', { kind: 'attention' });
+  await vi.advanceTimersByTimeAsync(2 * TICK_MS);
+  expect(sent().slice(1)).toEqual([
+    expect.objectContaining({
+      title: 'A chat needs your permission',
+      body: 'Allow or deny it to let the chat carry on.',
+      interruptionLevel: 'time-sensitive',
+    }),
+    expect.objectContaining({
+      title: 'A task needs you',
+      collapseId: 'task:7',
+      data: { type: 'needs-you', deviceId: credential.deviceId },
+    }),
+  ]);
+});
+
+it('stays quiet for a wait answered before the second look', async () => {
+  await store.notifications(credential.token, { token: push });
+  stop = startMobileNotifications(store);
+  await vi.advanceTimersByTimeAsync(TICK_MS);
+  fixture.waiting.set('chat', { kind: 'permission', subChatId: 'sub' });
+  await vi.advanceTimersByTimeAsync(TICK_MS);
+  fixture.waiting.delete('chat');
+  await vi.advanceTimersByTimeAsync(4 * TICK_MS);
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
+it('sends one plan alert, not a finished alert too, when a run parks on its plan', async () => {
+  await store.notifications(credential.token, { token: push });
+  stop = startMobileNotifications(store);
+  await vi.advanceTimersByTimeAsync(TICK_MS);
+  publishSessionCompletion({ chatId: 'chat', subChatId: 'sub' });
+  await vi.advanceTimersByTimeAsync(TICK_MS);
+  fixture.waiting.set('chat', { kind: 'plan' });
+  await vi.advanceTimersByTimeAsync(4 * TICK_MS);
+  expect(sent()).toEqual([
+    expect.objectContaining({
+      title: 'A plan is ready',
+      body: 'Review it, then approve or change it.',
+      data: { type: 'needs-you', deviceId: credential.deviceId, chatId: 'chat' },
+    }),
+  ]);
 });
