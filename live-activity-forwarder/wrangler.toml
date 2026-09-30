@@ -1,0 +1,8 @@
+# APNS_KEY_ID and APNS_PRIVATE_KEY are Worker secrets (`wrangler secret put`), never vars.
+name = "frink-live-activity"
+main = "src/index.ts"
+compatibility_date = "2026-09-26"
+
+# Keeps the forwarder's warnings (APNs status and reason, never a token) in the dashboard.
+[observability]
+enabled = true

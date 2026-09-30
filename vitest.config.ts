@@ -38,6 +38,7 @@ export default defineConfig({
     include: [
       'src/**/*.{test,spec}.{ts,tsx}',
       'relay/**/*.{test,spec}.ts',
+      'live-activity-forwarder/tests/**/*.test.ts',
       'scripts/**/*.{test,spec}.{ts,mjs}',
     ],
     exclude: [
