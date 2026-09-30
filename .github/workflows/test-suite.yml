@@ -18,6 +18,10 @@ concurrency:
 permissions:
   contents: read
 
+# Runners are dedicated 4-vCPU boxes; the config's maxWorkers: 2 is sized for a loaded dev machine.
+env:
+  VITEST_MAX_WORKERS: 3
+
 jobs:
   pull-request-suite:
     if: github.event_name == 'pull_request'
