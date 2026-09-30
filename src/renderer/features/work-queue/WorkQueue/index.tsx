@@ -355,7 +355,7 @@ export function WorkQueue({
 
   const showMissingChatToast = () => {
     toast.error('This chat was deleted', {
-      description: 'This is a leftover from a previous deletion. You can safely delete this task.',
+      description: 'This is a leftover from a previous deletion. You can safely remove this task.',
     });
   };
 
@@ -528,19 +528,6 @@ export function WorkQueue({
       },
     });
   };
-  const handleDismiss = (taskId: string) => {
-    const task = allTaskRows.find((t) => t.id === taskId);
-    if (!task) return;
-    updateTaskStatusMutation.mutate({
-      taskId,
-      status: 'cancelled',
-      result: {
-        ...(isObject(task?.result) ? task.result : {}),
-        cancelled: true,
-        summary: 'Dismissed from needs attention',
-      },
-    });
-  };
 
   const deleteAllMatching = async () => {
     if (isDeletingAllRef.current) return;
@@ -655,7 +642,6 @@ export function WorkQueue({
     onStartTask: handleStartTask,
     onRetryTask: handleRetryTask,
     onMarkComplete: handleMarkComplete,
-    onDismiss: handleDismiss,
     isLoading: isMutating,
   };
 

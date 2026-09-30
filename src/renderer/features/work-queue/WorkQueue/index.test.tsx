@@ -42,6 +42,7 @@ const {
   completeTaskMutateMock,
   createChatMutateMock,
   deleteMutateMock,
+  cancelMutateMock,
   deleteMatchingMutateAsyncMock,
   listPaginatedInvalidateMock,
   listCountsInvalidateMock,
@@ -103,6 +104,7 @@ const {
     completeTaskMutateMock: vi.fn(),
     createChatMutateMock: vi.fn(),
     deleteMutateMock: vi.fn(),
+    cancelMutateMock: vi.fn(),
     deleteMatchingMutateAsyncMock: vi.fn(),
     listPaginatedInvalidateMock: vi.fn(),
     listCountsInvalidateMock: vi.fn(),
@@ -403,6 +405,7 @@ vi.mock('../../../lib/trpc', () => ({
       cancel: {
         useMutation: (options?: { onSuccess?: (result: unknown, taskId: string) => void }) => ({
           mutate: (taskId: string) => {
+            cancelMutateMock(taskId);
             options?.onSuccess?.(undefined, taskId);
           },
           isPending: false,
@@ -855,7 +858,7 @@ describe('WorkQueue mapTask trigger context', () => {
       'This chat was deleted',
       expect.objectContaining({
         description:
-          'This is a leftover from a previous deletion. You can safely delete this task.',
+          'This is a leftover from a previous deletion. You can safely remove this task.',
       }),
     );
   });
@@ -875,7 +878,7 @@ describe('WorkQueue mapTask trigger context', () => {
       'This chat was deleted',
       expect.objectContaining({
         description:
-          'This is a leftover from a previous deletion. You can safely delete this task.',
+          'This is a leftover from a previous deletion. You can safely remove this task.',
       }),
     );
   });
@@ -1242,11 +1245,11 @@ describe('WorkQueue mapTask trigger context', () => {
   });
   it('supports out-of-order status intents on the same task', () => {
     overviewLaneSpy.mockClear();
-    updateTaskStatusMutateMock.mockReset();
+    cancelMutateMock.mockReset();
     const needsAttentionTask = {
       id: 'task-needs-attention-order',
       title: 'Needs attention ordering',
-      description: 'Race between complete and dismiss',
+      description: 'Race between complete and cancel',
       status: 'needs_attention' as const,
       source: 'manual',
       result: { chatId: 'chat-order', subChatId: 'sub-order', startMode: 'execute' as const },
@@ -1261,20 +1264,14 @@ describe('WorkQueue mapTask trigger context', () => {
       renderWorkQueue();
       const needsAttentionProps = getOverviewLaneProps<{
         onMarkComplete: (taskId: string) => void;
-        onDismiss: (taskId: string) => void;
+        onCancel: (taskId: string) => void;
       }>('needs-attention');
       needsAttentionProps.onMarkComplete('task-needs-attention-order');
-      needsAttentionProps.onDismiss('task-needs-attention-order');
+      needsAttentionProps.onCancel('task-needs-attention-order');
       expect(completeTaskMutateMock).toHaveBeenCalledWith(
         expect.objectContaining({ taskId: 'task-needs-attention-order' }),
       );
-      expect(updateTaskStatusMutateMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          taskId: 'task-needs-attention-order',
-          status: 'cancelled',
-        }),
-        undefined,
-      );
+      expect(cancelMutateMock).toHaveBeenCalledWith('task-needs-attention-order');
       expect(overviewRefetchMocks.attention).toHaveBeenCalledTimes(2);
       expect(overviewRefetchMocks.running).toHaveBeenCalledTimes(2);
       expect(overviewRefetchMocks.inbox).toHaveBeenCalledTimes(2);
@@ -1307,9 +1304,9 @@ describe('WorkQueue mapTask trigger context', () => {
       workQueueRows.pop();
     }
   });
-  it('preserves existing result fields when marking complete or dismissing', () => {
+  it('preserves existing result fields when marking complete; Cancel sends only the id', () => {
     overviewLaneSpy.mockClear();
-    updateTaskStatusMutateMock.mockReset();
+    cancelMutateMock.mockReset();
     const needsAttentionTask = {
       id: 'task-needs-attention-1',
       title: 'Needs attention',
@@ -1328,11 +1325,11 @@ describe('WorkQueue mapTask trigger context', () => {
       renderWorkQueue();
       const needsAttentionProps = getOverviewLaneProps<{
         onMarkComplete: (taskId: string) => void;
-        onDismiss: (taskId: string) => void;
+        onCancel: (taskId: string) => void;
       }>('needs-attention');
 
       needsAttentionProps.onMarkComplete('task-needs-attention-1');
-      needsAttentionProps.onDismiss('task-needs-attention-1');
+      needsAttentionProps.onCancel('task-needs-attention-1');
 
       expect(completeTaskMutateMock).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1346,20 +1343,7 @@ describe('WorkQueue mapTask trigger context', () => {
         }),
       );
 
-      expect(updateTaskStatusMutateMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          taskId: 'task-needs-attention-1',
-          status: 'cancelled',
-          result: expect.objectContaining({
-            chatId: 'chat-1',
-            subChatId: 'sub-1',
-            startMode: 'execute',
-            cancelled: true,
-            summary: 'Dismissed from needs attention',
-          }),
-        }),
-        undefined,
-      );
+      expect(cancelMutateMock).toHaveBeenCalledWith('task-needs-attention-1');
       expect(overviewRefetchMocks.attention).toHaveBeenCalledTimes(2);
       expect(overviewRefetchMocks.running).toHaveBeenCalledTimes(2);
       expect(overviewRefetchMocks.inbox).toHaveBeenCalledTimes(2);
