@@ -2,7 +2,7 @@ import { and, desc, eq, inArray, isNotNull, isNull, lt, or, sql } from 'drizzle-
 import type { getDatabase } from '../index';
 import { type Chat, chats, type NewChat, type SubChat, subChats } from '../schema';
 import { createId } from '../utils';
-import { getProjectAiAccount } from './project-ai-accounts';
+import { getChatAiAccount, getNewChatAccountId } from './project-ai-accounts';
 import { createSubChat, listSubChatsByChat } from './sub-chats';
 
 type Db = ReturnType<typeof getDatabase>;
@@ -18,7 +18,11 @@ type Db = ReturnType<typeof getDatabase>;
  */
 
 export async function createChat(db: Db, input: NewChat): Promise<Chat> {
-  const [row] = await db.insert(chats).values(input).returning();
+  const accountId = input.accountId ?? (await getNewChatAccountId(db, input.projectId ?? null));
+  const [row] = await db
+    .insert(chats)
+    .values({ ...input, accountId })
+    .returning();
   return row;
 }
 
@@ -130,10 +134,12 @@ export async function getOrCreateFlowChat(
       ).id;
     return { chatId: existing.id, subChatId };
   }
+  const accountId = await getNewChatAccountId(db, input.projectId);
   return db.transaction(() => {
     const chat = db
       .insert(chats)
       .values({
+        accountId,
         projectId: input.projectId,
         name: input.name,
         mode: 'agent',
@@ -370,11 +376,8 @@ export async function togglePin(db: Db, id: string): Promise<Chat | null> {
 }
 
 /**
- * Resolves a chat + its project's AI account override (`project_ai_accounts`), `null` when
- * there's no project or no override. `id` resolves the credential, `label` is for messages.
- * The account read is fenced in its own try, separate from the chat read: the caller wraps
- * this in `.catch(() => null)`, so propagating an override failure would also discard the
- * chat's worktree/task context and silently run the agent against the main checkout.
+ * A chat + the AI account it runs on (getChatAiAccount; null = workspace default). A failed
+ * account read yields null so the chat's worktree/task context still reaches the agent.
  */
 export async function getChatWithProjectAccount(
   db: Db,
@@ -382,15 +385,7 @@ export async function getChatWithProjectAccount(
 ): Promise<{ chat: Chat; account: { id: string; label: string | null } | null } | null> {
   const chat = await getChatById(db, chatId);
   if (!chat) return null;
-  let account: { id: string; label: string | null } | null = null;
-  if (chat.projectId) {
-    try {
-      account = await getProjectAiAccount(db, chat.projectId);
-    } catch {
-      account = null;
-    }
-  }
-  return { chat, account };
+  return { chat, account: await getChatAiAccount(db, chat).catch(() => null) };
 }
 
 /**
@@ -409,16 +404,15 @@ export async function updateChatBranchByWorktreePath(
 }
 
 /**
- * Deep-copy a chat and its sub-chats with fresh IDs in a single sync transaction.
- * Mirrors the cloud `forkChatWithSubChats` semantics — the new chat inherits the source
- * worktree/branch (callers may override afterward) and every sub-chat gets a new id while
- * preserving its messages JSON, mode, sessionId, etc.
+ * Deep-copy a chat and its sub-chats with fresh IDs in one sync transaction. The fork keeps the
+ * worktree, branch and account (`accountId` overrides it); its sub-chats start with no session id.
  *
  * Returns the new chat + new sub-chats. Throws if the source chat doesn't exist.
  */
 export async function forkChatWithSubChats(
   db: Db,
   sourceChatId: string,
+  accountId?: string,
 ): Promise<{ chat: Chat; subChats: SubChat[] }> {
   const newChatId = createId();
   return db.transaction(() => {
@@ -457,6 +451,7 @@ export async function forkChatWithSubChats(
         composerModelId: source.composerModelId,
         composerAutoMode: source.composerAutoMode,
         composerCodexSpeed: source.composerCodexSpeed,
+        accountId: accountId ?? source.accountId,
       })
       .run();
 

@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import log from 'electron-log';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { getClaudeCodeTokenById } from '../../credentials';
+import { getChatWithProjectAccount } from '../../db/repos/chats';
 import { __resetSessionsForTest, retireRetainedSessions } from '../claude-session-registry';
 import { hasWakeHold, releaseWakeHold } from '../claude-wake-hold';
 import * as socketClient from '../client';
@@ -98,6 +100,31 @@ export function registerClaudeWarmSessionGuardTests(harness: WarmSessionGuardHar
       } finally {
         acquire.mockRestore();
       }
+    });
+
+    // Session files live in the sub-chat's own config dir, so no login owns the transcript.
+    it('a swap to another Claude login respawns under it, resuming the same session', async () => {
+      const first = mockQuery(claudeQueryMock, answeringCli());
+      mockQuery(claudeQueryMock, answeringCli());
+      const spawned = (call: number) => claudeQueryMock.mock.calls[call]?.[0]?.options;
+      await send('first');
+      vi.mocked(getChatWithProjectAccount).mockResolvedValueOnce({
+        chat: {},
+        account: { id: 'claude-work', label: 'Work' },
+      } as never);
+      vi.mocked(getClaudeCodeTokenById).mockResolvedValueOnce({
+        token: 'sk-ant-api03-work',
+        isApiKey: true,
+        type: 'claude-code',
+        label: 'Work',
+      });
+
+      await send('second', { sessionId: 'sess-held' });
+
+      expect(sessionLines('claim')).toEqual(['miss:none', 'miss:key-mismatch:credential']);
+      expect(first.close).toHaveBeenCalledOnce();
+      expect(spawned(1)?.resume).toBe('sess-held');
+      expect(spawned(1)?.env.CLAUDE_CONFIG_DIR).toBe(spawned(0)?.env.CLAUDE_CONFIG_DIR);
     });
 
     it('a refused permission-mode reconcile retires the claimed CLI and reruns on a fresh one', async () => {

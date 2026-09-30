@@ -1,10 +1,14 @@
+import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeLocalChat } from '../../trpc/routers/chats/test-factories';
 import * as schema from '../schema';
 import { freshDb, type TestDb } from '../test-utils/fresh-db';
 import {
   countChatsByProject,
+  createChat,
+  forkChatWithSubChats,
   getChatWithProjectAccount,
+  getOrCreateFlowChat,
   hasOtherChatsSharingWorktree,
   listAllArchivedChats,
   pageChatsForProjects,
@@ -303,7 +307,7 @@ describe('getChatWithProjectAccount', () => {
   it('isolates an account-read failure — null account, chat context intact', async () => {
     await seedProject('p1');
     await seed({ id: 'c', projectId: 'p1', worktreePath: '/tmp/wt/c', taskId: 't1' });
-    vi.spyOn(projectAiAccountsRepo, 'getProjectAiAccount').mockRejectedValueOnce(
+    vi.spyOn(projectAiAccountsRepo, 'getChatAiAccount').mockRejectedValueOnce(
       new Error('db error'),
     );
 
@@ -313,6 +317,91 @@ describe('getChatWithProjectAccount', () => {
     expect(result?.chat.id).toBe('c');
     expect(result?.chat.worktreePath).toBe('/tmp/wt/c');
     expect(result?.chat.taskId).toBe('t1');
+  });
+});
+
+describe('chat account stamping', () => {
+  beforeEach(async () => {
+    db = freshDb();
+    await seedProject('p1');
+    await seedAccount('cred-work', 'Work');
+    await seedAccount('cred-home', 'Home');
+    await db.insert(schema.claudeCodeCredentials).values({
+      id: 'cred-default',
+      accountLabel: 'Default',
+      type: 'claude-code',
+      isDefault: true,
+    });
+  });
+
+  const accountOf = async (chatId: string) =>
+    (await getChatWithProjectAccount(db, chatId))?.account?.id ?? null;
+
+  it('stamps the project override, and a later project change leaves the chat alone', async () => {
+    await projectAiAccountsRepo.setProjectAiAccount(db, 'p1', 'cred-work');
+    const chat = await createChat(db, { projectId: 'p1', name: 'c' });
+
+    await projectAiAccountsRepo.setProjectAiAccount(db, 'p1', 'cred-home');
+
+    expect(chat.accountId).toBe('cred-work');
+    expect(await accountOf(chat.id)).toBe('cred-work');
+  });
+
+  it('stamps the workspace default when there is no project override', async () => {
+    const general = await createChat(db, { projectId: null, name: 'g' });
+    const project = await createChat(db, { projectId: 'p1', name: 'p' });
+
+    expect([general.accountId, project.accountId]).toEqual(['cred-default', 'cred-default']);
+  });
+
+  it('stamps a new Flow chat, and reuses an existing one as it is', async () => {
+    await projectAiAccountsRepo.setProjectAiAccount(db, 'p1', 'cred-work');
+    const input = { projectId: 'p1', name: 'flow', worktreePath: '/tmp/wt/flow' };
+    const { chatId } = await getOrCreateFlowChat(db, input);
+    await projectAiAccountsRepo.setProjectAiAccount(db, 'p1', 'cred-home');
+
+    expect((await getOrCreateFlowChat(db, input)).chatId).toBe(chatId);
+    expect(await accountOf(chatId)).toBe('cred-work');
+  });
+
+  it('forks onto the source account, or the given one, with no session ids', async () => {
+    const source = await createChat(db, { projectId: 'p1', name: 'src', accountId: 'cred-work' });
+    await db
+      .insert(schema.subChats)
+      .values({ chatId: source.id, sessionId: 'sess-1', messages: '[]' });
+
+    const kept = await forkChatWithSubChats(db, source.id);
+    const moved = await forkChatWithSubChats(db, source.id, 'cred-home');
+
+    expect(kept.chat.accountId).toBe('cred-work');
+    expect(moved.chat.accountId).toBe('cred-home');
+    expect(moved.subChats.map((sub) => sub.sessionId)).toEqual([null]);
+    expect(await accountOf(source.id)).toBe('cred-work');
+  });
+
+  it("hands a deleted login's chats to the same provider's default login", async () => {
+    const chat = await createChat(db, { projectId: 'p1', name: 'c', accountId: 'cred-work' });
+
+    await db
+      .delete(schema.claudeCodeCredentials)
+      .where(eq(schema.claudeCodeCredentials.id, 'cred-work'));
+
+    expect(await accountOf(chat.id)).toBe('cred-default');
+  });
+
+  it("falls back to the project override once the provider's last login is deleted", async () => {
+    await db
+      .insert(schema.claudeCodeCredentials)
+      .values({ id: 'cred-codex', accountLabel: 'Codex', type: 'codex' });
+    await projectAiAccountsRepo.setProjectAiAccount(db, 'p1', 'cred-home');
+    const chat = await createChat(db, { projectId: 'p1', name: 'c', accountId: 'cred-codex' });
+
+    await db
+      .delete(schema.claudeCodeCredentials)
+      .where(eq(schema.claudeCodeCredentials.id, 'cred-codex'));
+
+    expect((await getChatWithProjectAccount(db, chat.id))?.chat.accountId).toBeNull();
+    expect(await accountOf(chat.id)).toBe('cred-home');
   });
 });
 

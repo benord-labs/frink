@@ -18,12 +18,9 @@ export const projects = sqliteTable('projects', {
   gitProvider: text('git_provider'), // "github" | "gitlab" | "bitbucket" | null
   gitOwner: text('git_owner'),
   gitRepo: text('git_repo'),
-  // AI-assisted description, generated on first add (was previously stored on Neon
-  // alongside the cloud-synced project row; now lives locally per the project
-  // localization milestone). Nullable — backfilled on demand by description workers.
+  // AI-assisted description generated on first add; NULL until a description worker fills it.
   description: text('description'),
-  // Permissions overhaul ticket 01: storage tier for permission rules. false → local
-  // sqlite only; true → Neon mirror. Promotion logic ships in ticket 07.
+  // Storage tier for permission rules: false = local sqlite only, true = Neon mirror.
   isCrossMachine: integer('is_cross_machine', { mode: 'boolean' }).notNull().default(false),
 });
 
@@ -75,8 +72,7 @@ export const chats = sqliteTable(
     // PR tracking fields
     prUrl: text('pr_url'),
     prNumber: integer('pr_number'),
-    // Task link (for work queue integration)
-    taskId: text('task_id'), // Cloud task UUID - links chat to triggered task
+    taskId: text('task_id'), // The task driving this chat (a work queue item or Flow agent task)
     // Default sub-chat mode for new sub-chats in this chat
     mode: text('mode').default('agent'), // 'plan' | 'agent'
     // Pinned chats appear at top of sidebar (NULL = not pinned)
@@ -91,6 +87,9 @@ export const chats = sqliteTable(
     composerModelId: text('composer_model_id'),
     composerAutoMode: integer('composer_auto_mode', { mode: 'boolean' }),
     composerCodexSpeed: text('composer_codex_speed', { enum: CODEX_SPEEDS }),
+    accountId: text('account_id').references(() => claudeCodeCredentials.id, {
+      onDelete: 'set null', // Stamped at creation; NULL once no login of its provider is left.
+    }),
   },
   (table) => [index('chats_worktree_path_idx').on(table.worktreePath)],
 );

@@ -5,6 +5,7 @@ import { freshDb, type TestDb } from '../test-utils/fresh-db';
 import {
   getProjectAiAccount,
   getProjectAiAccountsBatch,
+  setChatAiAccount,
   setProjectAiAccount,
 } from './project-ai-accounts';
 
@@ -141,5 +142,63 @@ describe('project AI account overrides', () => {
 
   it('returns an empty map for no project ids', async () => {
     expect(await getProjectAiAccountsBatch(db, [])).toEqual(new Map());
+  });
+});
+
+describe('setChatAiAccount', () => {
+  const seedChat = (accountId: string | null) =>
+    db.insert(schema.chats).values({ id: 'c1', projectId: 'p1', accountId });
+
+  beforeEach(async () => {
+    await seedAccount('claude-a', 'Personal', 'claude-code');
+    await seedAccount('claude-b', 'Work', 'claude-code');
+    await seedAccount('codex', 'Codex', 'codex');
+  });
+
+  it('swaps the chat to another login of the same provider, leaving the project alone', async () => {
+    await setProjectAiAccount(db, 'p1', 'claude-a');
+    await seedChat('claude-a');
+
+    expect(await setChatAiAccount(db, 'c1', 'claude-b')).toBe('ok');
+
+    const [chat] = await db.select().from(schema.chats).where(eq(schema.chats.id, 'c1'));
+    expect(chat.accountId).toBe('claude-b');
+    expect(await getProjectAiAccount(db, 'p1')).toEqual({ id: 'claude-a', label: 'Personal' });
+  });
+
+  it('refuses another provider and keeps the chat on its account', async () => {
+    await seedChat('claude-a');
+
+    expect(await setChatAiAccount(db, 'c1', 'codex')).toBe('other-provider');
+
+    const [chat] = await db.select().from(schema.chats).where(eq(schema.chats.id, 'c1'));
+    expect(chat.accountId).toBe('claude-a');
+  });
+
+  // An unstamped chat runs on the project override (else default), so that provider binds it.
+  it('checks an unstamped chat against the account it runs on', async () => {
+    await setProjectAiAccount(db, 'p1', 'codex');
+    await seedChat(null);
+
+    expect(await setChatAiAccount(db, 'c1', 'claude-b')).toBe('other-provider');
+  });
+
+  it('checks a chat stamped with a non-AI row against the default it runs on', async () => {
+    await db.insert(schema.claudeCodeCredentials).values({ id: 'gh', type: 'github' });
+    await db
+      .update(schema.claudeCodeCredentials)
+      .set({ isDefault: true })
+      .where(eq(schema.claudeCodeCredentials.id, 'claude-a'));
+    await seedChat('gh');
+
+    expect(await setChatAiAccount(db, 'c1', 'codex')).toBe('other-provider');
+    expect(await setChatAiAccount(db, 'c1', 'claude-b')).toBe('ok');
+  });
+
+  it('reports an unknown chat or account', async () => {
+    await seedChat('claude-a');
+
+    expect(await setChatAiAccount(db, 'missing', 'claude-b')).toBe('not-found');
+    expect(await setChatAiAccount(db, 'c1', 'missing')).toBe('not-found');
   });
 });

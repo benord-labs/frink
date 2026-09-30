@@ -10,7 +10,7 @@ import type { TaskSignalPayload, TaskSignalState } from '../../../../shared/type
 import type { WakeHoldState } from '../../../../shared/types/wake-hold';
 import { captureMainException, captureMainMessage } from '../../sentry/init';
 import type { StopPendingWork } from '../../task-stop-hook';
-import type { ClaudeSession } from '../claude-session-registry';
+import { type ClaudeSession, chatFence } from '../claude-session-registry';
 import type { ClaudeTurnContext } from '../claude-turn-context';
 import {
   markLinkedTaskQuietEnd,
@@ -114,7 +114,10 @@ export function logAdoptedTurnEnd(
   log.info(`[Socket Executor] Adopted turn ended for ${subChatId}: ${disposition}`);
 }
 
-type TurnEndSession = Pick<ClaudeSession, 'stopHook' | 'queue' | 'busy'>;
+type TurnEndSession = Pick<
+  ClaudeSession,
+  'stopHook' | 'queue' | 'busy' | 'subChatId' | 'inputsReadAt'
+>;
 
 /** Why the session must end instead of being held or kept, or null when it may stay. */
 function disposeCause(
@@ -126,7 +129,7 @@ function disposeCause(
   if (turn.planSubmissionHalt()) return 'plan submitted';
   if (session.queue.closed) return 'question-park kill'; // killed by a question park: dead input
   if (session.busy) return 'session busy';
-  return null;
+  return chatFence(session) || null; // its chat was torn down or switched account mid-turn
 }
 
 function adoptedTurnDisposition(cause: string | null, session: TurnEndSession): string {
