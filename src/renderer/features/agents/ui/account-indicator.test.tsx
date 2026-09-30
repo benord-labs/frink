@@ -7,7 +7,6 @@ import { createStore, Provider } from 'jotai';
 import { toast } from 'sonner';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { activeOverlayAtom, agentsSettingsDialogActiveTabAtom } from '../../../lib/atoms';
-import { pendingChatRetryAtomFamily } from '../atoms';
 import { AccountIndicator, ContinueAfterUsageLimit } from './account-indicator';
 
 type ListAccount = {
@@ -418,7 +417,7 @@ describe('AccountIndicator', () => {
     const onRetry = vi.fn();
 
     function renderAfterError(
-      errorCategory: string,
+      usageLimited: boolean,
       accounts: ListAccount[],
       provider: ListAccount['type'] = 'claude-code',
       resolved: unknown = { id: 'acc-1', label: 'Slice', type: provider, isAuthenticated: true },
@@ -427,18 +426,9 @@ describe('AccountIndicator', () => {
       getChatMock.mockReturnValue({ data: { id: 'chat-1', provider } });
       getResolvedAccountMock.mockReturnValue({ data: resolved, isLoading: false });
       const store = createStore();
-      store.set(pendingChatRetryAtomFamily('sub-1'), {
-        chatId: 'chat-1',
-        subChatId: 'sub-1',
-        projectId: 'proj-1',
-        trigger: 'submit-message',
-        errorCategory,
-        errorText: "You've hit your limit",
-        createdAt: 0,
-      });
       render(
         <Provider store={store}>
-          <ContinueAfterUsageLimit chatId="chat-1" subChatId="sub-1" onRetry={onRetry} />
+          <ContinueAfterUsageLimit chatId="chat-1" usageLimited={usageLimited} onRetry={onRetry} />
         </Provider>,
       );
       return store;
@@ -455,7 +445,7 @@ describe('AccountIndicator', () => {
     });
 
     it('re-stamps the chat onto another Claude login, then resends the failed turn', async () => {
-      renderAfterError('RATE_LIMIT_SDK', [...snap.defaultListAccounts, codexRow('acc-x', 'Work')]);
+      renderAfterError(true, [...snap.defaultListAccounts, codexRow('acc-x', 'Work')]);
 
       const buttons = screen.getAllByRole('button').map((b) => b.textContent);
       expect(buttons).toEqual(['Retry with Backup']);
@@ -471,7 +461,7 @@ describe('AccountIndicator', () => {
 
     it('offers Add account, opening Settings, when no other Claude login is signed in', async () => {
       const [active, backup] = snap.defaultListAccounts;
-      const store = renderAfterError('RATE_LIMIT_SDK', [
+      const store = renderAfterError(true, [
         active,
         { ...backup, isAuthenticated: false },
         codexRow('acc-x', 'Work'),
@@ -484,17 +474,19 @@ describe('AccountIndicator', () => {
     });
 
     it('offers nothing beside Retry in a Codex chat', () => {
-      renderAfterError(
-        'RATE_LIMIT_SDK',
-        [...snap.defaultListAccounts, codexRow('acc-x', 'Work')],
-        'codex',
-      );
+      renderAfterError(true, [...snap.defaultListAccounts, codexRow('acc-x', 'Work')], 'codex');
 
       expect(screen.queryByRole('button')).not.toBeInTheDocument();
     });
 
     it("offers every signed-in login of the chat's provider once its login was removed", () => {
-      renderAfterError('LOGIN_REMOVED', [...snap.defaultListAccounts, codexRow('acc-x', 'Work')]);
+      renderAfterError(false, [...snap.defaultListAccounts, codexRow('acc-x', 'Work')], undefined, {
+        id: 'acc-1',
+        label: 'Slice',
+        type: 'claude-code',
+        isAuthenticated: true,
+        isBlocked: true,
+      });
 
       const buttons = screen.getAllByRole('button').map((b) => b.textContent);
       expect(buttons).toEqual(['Retry with Slice', 'Retry with Backup']);
@@ -502,14 +494,14 @@ describe('AccountIndicator', () => {
 
     it('offers to add a login of the same provider when a Codex chat has none left', () => {
       // No OpenAI login is left, so the chat resolves no account at all.
-      renderAfterError('LOGIN_REMOVED', snap.defaultListAccounts, 'codex', null);
+      renderAfterError(false, snap.defaultListAccounts, 'codex', null);
 
       const buttons = screen.getAllByRole('button').map((b) => b.textContent);
       expect(buttons).toEqual(['Add an OpenAI login…']);
     });
 
     it('stays hidden for errors other than a usage limit', () => {
-      renderAfterError('NETWORK_ERROR', snap.defaultListAccounts);
+      renderAfterError(false, snap.defaultListAccounts);
 
       expect(screen.queryByRole('button')).not.toBeInTheDocument();
     });

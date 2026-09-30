@@ -1,7 +1,7 @@
 import openaiLogo from '@iconify-icons/ri/openai-fill';
 import { iconifyComponent } from '@/lib/utils/iconify-component';
 /* eslint-disable max-lines, max-lines-per-function */
-import { useAtomValue, useSetAtom } from 'jotai';
+import { useSetAtom } from 'jotai';
 import { Check, ChevronDown, Plus, RefreshCw, Settings, User } from 'lucide-react';
 import { Fragment, memo, useCallback } from 'react';
 import { toast } from 'sonner';
@@ -22,7 +22,6 @@ import {
 import { useNewChatAccount } from '../../../lib/hooks/use-new-chat-account';
 import { trpc } from '../../../lib/trpc';
 import { cn } from '../../../lib/utils';
-import { pendingChatRetryAtomFamily } from '../atoms';
 import { RetryActionButton } from '../main/active-chat/components/RetryActionButton';
 import { HeaderBadge } from './header-badge';
 
@@ -91,31 +90,35 @@ const ADD_LOGIN_LABEL = {
  * another Claude login; a removed login moves to any signed-in login of the chat's provider.
  */
 function recoveryLogins(
-  category: string | undefined,
+  usageLimited: boolean,
+  loginRemoved: boolean,
   provider: AccountType,
   currentId: string | undefined,
   all: PickableAccount[],
 ) {
-  const loginRemoved = category === 'LOGIN_REMOVED';
   // Codex has one login per device, so a Codex limit has nowhere else to go.
-  const isLimit = category === 'RATE_LIMIT_SDK' && provider !== 'codex' && currentId;
+  const isLimit = usageLimited && provider !== 'codex' && currentId;
   if (!loginRemoved && !isLimit) return null;
   return all.filter(
     (a) => a.isAuthenticated && a.type === provider && (loginRemoved || a.id !== currentId),
   );
 }
 
+/** A chat that resolves no login, or only a stand-in, has had its own login removed. */
+export function isLoginRemoved(account: { isBlocked: boolean } | null | undefined) {
+  return account === null || Boolean(account?.isBlocked);
+}
+
 /** Beside Retry on a blocked chat (usage limit, or login removed): retry on another login, or add one. */
 export function ContinueAfterUsageLimit({
   chatId,
-  subChatId,
+  usageLimited,
   onRetry,
 }: {
   chatId: string;
-  subChatId: string;
+  usageLimited: boolean;
   onRetry: () => void;
 }) {
-  const pendingRetry = useAtomValue(pendingChatRetryAtomFamily(subChatId));
   const utils = trpc.useUtils();
   const openAccountsSettings = useOpenAccountsSettings();
   const setChatAccount = trpc.chats.setChatAccount.useMutation({
@@ -127,11 +130,13 @@ export function ContinueAfterUsageLimit({
   const { data: account } = trpc.claudeCode.getResolvedAccount.useQuery({ chatId });
   const { data: accounts = [] } = trpc.claudeCode.listAccounts.useQuery();
   const provider = chat?.provider === 'codex' ? 'codex' : 'claude-code';
-  const category = pendingRetry?.errorCategory;
-  const others = chat ? recoveryLogins(category, provider, account?.id, accounts) : null;
+  const loginRemoved = isLoginRemoved(account);
+  const others = chat
+    ? recoveryLogins(usageLimited, loginRemoved, provider, account?.id, accounts)
+    : null;
   if (!others) return null;
   if (others.length === 0) {
-    const label = category === 'LOGIN_REMOVED' ? ADD_LOGIN_LABEL[provider] : 'Add account…';
+    const label = loginRemoved ? ADD_LOGIN_LABEL[provider] : 'Add account…';
     return (
       <RetryActionButton
         icon={Plus}

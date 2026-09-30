@@ -19,7 +19,7 @@ import {
   DropdownMenuTrigger,
 } from '../../../components/ui/dropdown-menu';
 import { cn } from '../../../lib/utils';
-import { showMessageJsonAtom } from '../atoms';
+import { pendingChatRetryAtomFamily, showMessageJsonAtom } from '../atoms';
 import { compactingAtomFor } from '../lib/compaction-flag';
 import { extractTextMentions, TextMentionBlocks } from '../mentions/render-file-mentions';
 import {
@@ -124,9 +124,14 @@ function ChatRetryAfterGroupRow({
   onCarryOnChat: (() => void) | null;
   chatRetryTooltipText: string | null;
 }) {
+  const pendingRetry = useAtomValue(pendingChatRetryAtomFamily(subChatId));
   return (
     <div className="px-2 mt-1 flex justify-end gap-1">
-      <ContinueAfterUsageLimit chatId={chatId} subChatId={subChatId} onRetry={onRetryChat} />
+      <ContinueAfterUsageLimit
+        chatId={chatId}
+        usageLimited={pendingRetry?.errorCategory === 'RATE_LIMIT_SDK'}
+        onRetry={onRetryChat}
+      />
       <RetryActionButton
         onClick={onRetryChat}
         disabled={retryInFlight}
