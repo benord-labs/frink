@@ -1,7 +1,7 @@
 import { Alert, Platform } from 'react-native';
 
 const TITLE = 'Forget this Mac?';
-export const REVOKE_HINT =
+const REVOKE_HINT =
   'To fully remove access, also remove this iPhone under Paired phones in Frink on your Mac → Settings → Mobile.';
 const MESSAGE = `This iPhone stops showing your Mac until you pair it again. ${REVOKE_HINT}`;
 
