@@ -2,7 +2,6 @@ import { getDatabase } from '../../../db';
 import { getFlowRun } from '../../../db/repos/flow-runs';
 import { listNodeRunsForFlowRun } from '../../../db/repos/node-runs';
 import { dispatchAndAdvance, loadRunContext } from '../../advance';
-import { reserveNodeAbortRegistration } from '../../cancel-registry';
 import { emitRunStarted } from '../../event-emit';
 import { findNodeById } from '../../graph';
 import { lastUnfinishedNodeRun, resolveRerunStartNode } from '../../rerun/resume-point';
@@ -68,29 +67,13 @@ async function dispatchAdmittedTerminalResume(intent: TerminalFlowResumeIntent):
   if (target.nodeRunId !== intent.node_run_id) {
     throw new Error(`Flow run ${intent.flow_run_id} changed its canonical resume target`);
   }
-  const releaseRegistration = reserveNodeAbortRegistration(intent.flow_run_id);
-  if (!releaseRegistration) throw new Error(`Flow run ${intent.flow_run_id} is being cancelled`);
-  try {
-    const run = await getFlowRun(db, intent.flow_run_id);
-    if (run?.status !== 'running') {
-      throw new Error(`Flow run ${intent.flow_run_id} is no longer dispatchable`);
-    }
-    emitRunStarted(target.ctx.meta, intent.flow_run_id);
-    await dispatchAndAdvance(
-      intent.flow_run_id,
-      target.node,
-      undefined,
-      target.ctx,
-      undefined,
-      releaseRegistration,
-      {
-        resumeKind: intent.continuation ? 'continuation' : 'redispatch',
-        ...target.fanOutScope,
-      },
-    );
-  } finally {
-    releaseRegistration();
-  }
+  // A Cancel that committed after promotion owns the run; its release settles this ticket.
+  if ((await getFlowRun(db, intent.flow_run_id))?.status !== 'running') return;
+  emitRunStarted(target.ctx.meta, intent.flow_run_id);
+  await dispatchAndAdvance(intent.flow_run_id, target.node, undefined, target.ctx, undefined, {
+    resumeKind: intent.continuation ? 'continuation' : 'redispatch',
+    ...target.fanOutScope,
+  });
 }
 
 registerTerminalFlowResumeDispatcher(dispatchAdmittedTerminalResume);

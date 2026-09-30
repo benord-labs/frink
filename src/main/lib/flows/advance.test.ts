@@ -26,7 +26,11 @@ import {
   updateTaskStatus,
 } from '../db/repos/tasks';
 import { flowRunAdmissions, flowRuns } from '../db/schema';
-import { seedCompletedNodeRun, seedFlowRun } from '../db/test-utils/flow-fixtures';
+import {
+  seedActiveAdmission,
+  seedCompletedNodeRun,
+  seedFlowRun,
+} from '../db/test-utils/flow-fixtures';
 import { freshDb, type TestDb } from '../db/test-utils/fresh-db';
 import {
   clearActiveFlowTaskForChat,
@@ -39,7 +43,6 @@ import {
 const holder = vi.hoisted(() => ({
   db: null as unknown,
   cancelUndispatchedFlowAdmission: vi.fn(),
-  hasPromotedFlowAdmission: vi.fn(),
   requestFlowAdmissionRelease: vi.fn(),
 }));
 vi.mock('../db', async (orig) => ({
@@ -51,7 +54,6 @@ vi.mock('./dispatch', () => ({ dispatchNode: vi.fn() }));
 vi.mock('./admission/runtime', async (original) => ({
   ...(await original<typeof import('./admission/runtime')>()),
   cancelUndispatchedFlowAdmission: holder.cancelUndispatchedFlowAdmission,
-  hasPromotedFlowAdmission: holder.hasPromotedFlowAdmission,
   requestFlowAdmissionRelease: holder.requestFlowAdmissionRelease,
 }));
 // Mocked so the contained-error report is assertable, and so its lazy `./init` import never
@@ -62,7 +64,8 @@ vi.mock('../sentry', () => ({
 }));
 
 import { advanceFlowRun, dispatchAndAdvance, loadRunContext } from './advance';
-import { abortFlowRun, registerNodeAbort, reserveNodeAbortRegistration } from './cancel-registry';
+import { _setFlowAdmissionControllerForTests } from './admission/runtime';
+import { abortFlowRun, registerNodeAbort } from './cancel-registry';
 import { deleteFlow, settleChatOwnedFlowDeletion } from './deletion';
 import { dispatchNode } from './dispatch';
 import { cancelFlowRun, cancelFlowRunForChatDeletion, cancelFlowRunsForChat } from './engine';
@@ -71,8 +74,8 @@ import { loadBodyMember, loadFanOutState, saveBodyMembers, saveFanOutState } fro
 
 afterEach(() => {
   holder.cancelUndispatchedFlowAdmission.mockReset();
-  holder.hasPromotedFlowAdmission.mockReset();
   holder.requestFlowAdmissionRelease.mockReset();
+  _setFlowAdmissionControllerForTests(null);
 });
 
 // evaluate(agent) → cond → 6805(agent): the 203 shape. cond's edge is irrelevant to these
@@ -346,25 +349,6 @@ describe('dispatchAndAdvance — a thrown dispatcher terminalizes its node', () 
     ({ flowRunId } = await seedFlowRun(db, GRAPH));
   });
 
-  it('releases a reserved handoff after registering its controller, before dispatch', async () => {
-    let abortedControllers = 0;
-    const releaseRegistration = () => {
-      abortedControllers = abortFlowRun(flowRunId);
-    };
-
-    await dispatchAndAdvance(
-      flowRunId,
-      GRAPH.nodes[0],
-      undefined,
-      await ctxFor(flowRunId),
-      undefined,
-      releaseRegistration,
-    );
-
-    expect(abortedControllers).toBe(1);
-    expect(dispatchNode).not.toHaveBeenCalled();
-  });
-
   it('inserts no node_run and dispatches nothing once the run was cancelled', async () => {
     const ctx = await ctxFor(flowRunId);
     await setFlowRunStatus(db, flowRunId, 'cancelled');
@@ -534,7 +518,6 @@ describe('cancelFlowRun — admission cancellation', () => {
     const { flowRunId } = await seedFlowRun(db, GRAPH);
     await setFlowRunStatus(db, flowRunId, 'running');
     holder.cancelUndispatchedFlowAdmission.mockResolvedValueOnce(false);
-    holder.hasPromotedFlowAdmission.mockResolvedValueOnce(false);
 
     await expect(cancelFlowRun(flowRunId, { queuedOnly: { ticket: 7 } })).resolves.toBeNull();
 
@@ -554,7 +537,6 @@ describe('cancelFlowRun — admission cancellation', () => {
     await setFlowRunStatus(db, flowRunId, 'running');
     // The clicked ticket was dequeued, but another admission has since put this run back to work.
     holder.cancelUndispatchedFlowAdmission.mockResolvedValueOnce(true);
-    holder.hasPromotedFlowAdmission.mockResolvedValueOnce(true);
 
     const result = await cancelFlowRun(flowRunId, { queuedOnly: { ticket: 7 } });
 
@@ -571,7 +553,6 @@ describe('cancelFlowRun — admission cancellation', () => {
       await setFlowRunStatus(db, flowRunId, 'cancelled', { completedAt: new Date() });
       return true;
     });
-    holder.hasPromotedFlowAdmission.mockResolvedValueOnce(false);
 
     const result = await cancelFlowRun(flowRunId, { queuedOnly: { ticket: 7 } });
 
@@ -622,13 +603,8 @@ describe('cancelFlowRun — admission cancellation', () => {
     await updateTaskStatus(db, siblingChatTask.id, 'running');
     const controller = new AbortController();
     registerNodeAbort(flowRunId, controller);
-    const releaseDispatch = reserveNodeAbortRegistration(flowRunId);
 
-    const cancellation = cancelFlowRunForChatDeletion(flowRunId, ['chat-deleting']);
-    await Promise.resolve();
-    expect((await getFlowRun(db, flowRunId))?.status).toBe('running');
-    releaseDispatch?.();
-    await cancellation;
+    await cancelFlowRunForChatDeletion(flowRunId, ['chat-deleting']);
 
     expect(controller.signal.aborted).toBe(false);
     expect((await getTaskById(db, deletingChatTask.id))?.status).toBe('cancelled');
@@ -747,8 +723,6 @@ describe('cancelFlowRun — admission cancellation', () => {
     });
     await updateTaskStatus(db, task.id, 'needs_attention');
     await setFlowRunStatus(db, flowRunId, 'paused');
-    holder.cancelUndispatchedFlowAdmission.mockResolvedValueOnce(false);
-    holder.hasPromotedFlowAdmission.mockResolvedValueOnce(false);
 
     await cancelFlowRun(flowRunId);
 
@@ -766,8 +740,16 @@ describe('cancelFlowRun — admission cancellation', () => {
     });
     await updateTaskStatus(db, task.id, 'running');
     await setFlowRunStatus(db, flowRunId, 'paused');
-    holder.cancelUndispatchedFlowAdmission.mockResolvedValueOnce(true);
-    holder.hasPromotedFlowAdmission.mockResolvedValueOnce(false);
+    const [{ ticket }] = await db
+      .insert(flowRunAdmissions)
+      .values({
+        flowRunId,
+        state: 'queued',
+        priorityClass: 'resume',
+        intentVersion: 1,
+        intentJson: { version: 1, action: 'resume', flow_run_id: flowRunId },
+      })
+      .returning({ ticket: flowRunAdmissions.ticket });
     const events: FlowExecutionEvent[] = [];
     const unsubscribe = subscribeFlowEvents((event) => {
       if (event.eventType === 'run_cancelled') events.push(event);
@@ -782,6 +764,9 @@ describe('cancelFlowRun — admission cancellation', () => {
         completedAt: expect.any(Date),
       });
       expect((await getTaskById(db, task.id))?.status).toBe('cancelled');
+      expect(
+        db.select().from(flowRunAdmissions).where(eq(flowRunAdmissions.ticket, ticket)).get(),
+      ).toMatchObject({ state: 'cancelled' });
       expect(events).toHaveLength(1);
     } finally {
       unsubscribe();
@@ -799,7 +784,10 @@ describe('deleteFlow — hard cutover', () => {
     }));
 
     try {
-      const deletion = settleChatOwnedFlowDeletion(attemptDelete);
+      const deletion = settleChatOwnedFlowDeletion(
+        attemptDelete,
+        vi.fn(async () => undefined),
+      );
       const assertion = expect(deletion).rejects.toThrow(
         'Deletion could not finish while Flow work was still stopping',
       );
@@ -854,8 +842,6 @@ describe('deleteFlow — hard cutover', () => {
   it('cancels an active run and removes its run history and queue tasks', async () => {
     const db = freshDb();
     holder.db = db;
-    holder.cancelUndispatchedFlowAdmission.mockResolvedValue(false);
-    holder.hasPromotedFlowAdmission.mockResolvedValue(false);
     const { flowId, flowRunId } = await seedFlowRun(db, GRAPH);
     await setFlowRunStatus(db, flowRunId, 'paused');
     const task = await createTask(db, {
@@ -866,6 +852,14 @@ describe('deleteFlow — hard cutover', () => {
     });
     await updateTaskStatus(db, task.id, 'running');
     setActiveFlowTaskForChat('flow-chat', task.id);
+    const ticket = seedActiveAdmission(db, flowRunId);
+    holder.requestFlowAdmissionRelease.mockImplementation(() =>
+      db
+        .update(flowRunAdmissions)
+        .set({ state: 'released', settledAt: new Date() })
+        .where(eq(flowRunAdmissions.ticket, ticket))
+        .run(),
+    );
 
     await expect(deleteFlow(flowId)).resolves.toBe(true);
 
@@ -873,14 +867,12 @@ describe('deleteFlow — hard cutover', () => {
     expect(await getFlowRun(db, flowRunId)).toBeNull();
     expect(await getTaskById(db, task.id)).toBeNull();
     expect(getActiveFlowTaskForChat('flow-chat')).toBeNull();
-    expect(holder.requestFlowAdmissionRelease).toHaveBeenCalledWith(flowRunId);
+    expect(holder.requestFlowAdmissionRelease).toHaveBeenCalledWith(flowRunId, ticket);
   });
 
   it('preserves another flow task registered for the same chat', async () => {
     const db = freshDb();
     holder.db = db;
-    holder.cancelUndispatchedFlowAdmission.mockResolvedValue(false);
-    holder.hasPromotedFlowAdmission.mockResolvedValue(false);
     const { flowId, flowRunId } = await seedFlowRun(db, GRAPH);
     await setFlowRunStatus(db, flowRunId, 'failed');
     await createTask(db, {

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { getFlowRun, setFlowRunStatus } from '../../db/repos/flow-runs';
 import { createNodeRun, listNodeRunsForFlowRun, setNodeRunStatus } from '../../db/repos/node-runs';
 import { cancelChatOwnedFlowWorkForArchive } from '../../db/repos/task-queries/chat-flow-cleanup';
@@ -96,13 +96,13 @@ describe('run-row transitions', () => {
       return task.id;
     };
     const tasks = [await inChat('running'), await inChat('needs_attention')];
-    const abortRun = vi.fn();
 
-    expect(cancelChatOwnedFlowWorkForArchive(db, flowRunId, ['chat-a'], abortRun)).toBe(
-      'cancelled',
-    );
+    expect(cancelChatOwnedFlowWorkForArchive(db, flowRunId, ['chat-a'])).toEqual({
+      outcome: 'cancelled',
+      droppedTicket: false,
+      liveTicket: null,
+    });
 
-    expect(abortRun).toHaveBeenCalledOnce();
     expect((await getFlowRun(db, flowRunId))?.status).toBe('cancelled');
     expect(await taskStatuses(tasks)).toEqual(['cancelled', 'needs_attention']);
   });

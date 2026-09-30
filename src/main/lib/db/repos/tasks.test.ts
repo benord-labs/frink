@@ -13,7 +13,6 @@ import {
 import { createNodeRun, setNodeRunStatus } from './node-runs';
 import { parkFlowTaskForSubChat } from './task-parking';
 import {
-  cancelFlowLinkedTasks,
   cancelFlowTaskForSubChat,
   completeAllDoneTasks,
   completeDoneTasksForFlowRun,
@@ -807,51 +806,6 @@ describe('getFlowDriveInfoForSubChat — flow-driving task is the signal target'
       expect(info.active).toBe(true);
       expect(info.taskId).toBe(t.id);
     });
-  });
-});
-
-describe('cancelFlowLinkedTasks — a run cancel terminalizes every still-live task', () => {
-  let db: TestDb;
-  let flowRunId: string;
-  beforeEach(async () => {
-    db = freshDb();
-    ({ flowRunId } = await seedFlowRun(db, GRAPH));
-  });
-
-  it.each(['pending', 'running'] as const)('sweeps a %s task', async (status) => {
-    const t = await addFlowTask(db, flowRunId, status);
-    expect(await cancelFlowLinkedTasks(db, flowRunId)).toBe(1);
-    expect((await getTaskById(db, t.id))?.status).toBe('cancelled');
-  });
-
-  it.each(['plan_ready', 'needs_attention'] as const)(
-    'sweeps a parked %s task only for permanent deletion',
-    async (status) => {
-      const task = await addFlowTask(db, flowRunId, status);
-      expect(await cancelFlowLinkedTasks(db, flowRunId)).toBe(0);
-      expect(await cancelFlowLinkedTasks(db, flowRunId, true)).toBe(1);
-      expect((await getTaskById(db, task.id))?.status).toBe('cancelled');
-    },
-  );
-
-  it('leaves already-terminal tasks alone', async () => {
-    await addFlowTask(db, flowRunId, 'done');
-    expect(await cancelFlowLinkedTasks(db, flowRunId)).toBe(0);
-  });
-
-  it('preserves chat ownership on rows it sweeps', async () => {
-    const live = await createTask(db, {
-      description: 'live',
-      source: 'flow',
-      flowRunId,
-      result: { chatId: 'c-deleted', subChatId: 'sc-1' },
-    });
-    await updateTaskStatus(db, live.id, 'running', { result: { chatId: 'c-deleted' } });
-
-    expect(await cancelFlowLinkedTasks(db, flowRunId)).toBe(1);
-
-    const result = (await getTaskById(db, live.id))?.result as Record<string, unknown>;
-    expect(result).toEqual({ chatId: 'c-deleted', cancelled: true });
   });
 });
 

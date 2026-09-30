@@ -20,6 +20,7 @@ import {
   recoverOrphanedFlowRuns,
   setFlowRunStatus,
 } from './flow-runs';
+import { cancelFlowTaskRows } from '../../flows/transitions/run-rows';
 import { createFlowVersion } from './flow-versions';
 import { createFlow } from './flows';
 import {
@@ -32,7 +33,6 @@ import {
   deleteFlowQueueTasksForChats,
 } from './task-queries/chat-flow-cleanup';
 import {
-  cancelFlowLinkedTasks,
   createTask,
   getTaskById,
   listTasksWithProjectPaginated,
@@ -250,7 +250,7 @@ describe('deleteFlowQueueTasksForChats', () => {
     expect(await getChatById(db, chat.id)).not.toBeNull();
     expect(await getTaskById(db, task.id)).not.toBeNull();
 
-    await cancelFlowLinkedTasks(db, flowRunId, true);
+    cancelFlowTaskRows(db, flowRunId, true);
     await setFlowRunStatus(db, flowRunId, 'cancelled');
     expect(deleteChatWithFlowQueueTasks(db, chat.id)).toEqual({ deleted: true });
     expect(await getChatById(db, chat.id)).toBeNull();
@@ -389,7 +389,7 @@ describe('deleteFlowQueueTasksForChats', () => {
     const task = await flowTask(flowRunId, CHAT, 'needs_attention');
     const pending = await flowTask(flowRunId, CHAT, 'pending');
     await setFlowRunStatus(db, flowRunId, 'failed');
-    await cancelFlowLinkedTasks(db, flowRunId, true);
+    cancelFlowTaskRows(db, flowRunId, true);
 
     expect(deleteFlowQueueTasksForChats(db, [CHAT])).toBe(2);
     expect(await getTaskById(db, task.id)).toBeNull();

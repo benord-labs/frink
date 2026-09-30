@@ -290,8 +290,8 @@ export async function registerFlowProviderExecution(
     if (!registeredController || registeredController === controller) return;
     const previousController = registeredController;
     registerNodeAbort(identity.flowRunId, controller);
-    // Cancellation may have durably settled and removed its late-registration tombstone while the
-    // provider was still unwinding the old controller. Never let a replacement revive that turn.
+    // A Cancel may have aborted the old controller while the provider was still unwinding it.
+    // Never let a replacement revive that turn.
     if (previousController.signal.aborted) controller.abort();
     unregisterNodeAbort(identity.flowRunId, previousController);
     registeredController = controller;

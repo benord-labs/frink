@@ -277,7 +277,6 @@ describe('resumeFlowRun — admission lease', () => {
       undefined,
       expect.anything(),
       undefined,
-      expect.any(Function),
       undefined,
     );
     expect(hasFlowResourceActivity(flowRunId)).toBe(false);
@@ -311,7 +310,6 @@ describe('resumeFlowRun — admission lease', () => {
       undefined,
       expect.anything(),
       undefined,
-      expect.any(Function),
       { laneIndex: 3, parentFanOutNodeRunId: parent.id },
     );
   });
