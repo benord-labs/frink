@@ -3,6 +3,7 @@ import type { ConfigContext, ExpoConfig } from 'expo/config';
 
 // The development variant installs beside the TestFlight app and loads JavaScript from Metro.
 const development = process.env.APP_VARIANT === 'development';
+const bundle = development ? 'dev.frink.mobile.dev' : 'dev.frink.mobile';
 
 /** Output of a git query in this checkout, or undefined where there is no git (e.g. a build server). */
 function git(...args: string[]): string | undefined {
@@ -28,9 +29,21 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       checkout: git('rev-parse', '--show-toplevel')?.split('/').pop(),
     },
   },
+  // The Lock Screen card's widget extension; each variant signs its own extension and app group.
+  plugins: [
+    ...(config.plugins ?? []),
+    [
+      'expo-widgets',
+      {
+        bundleIdentifier: `${bundle}.widgets`,
+        groupIdentifier: `group.${bundle}`,
+        enablePushNotifications: true,
+      },
+    ],
+  ],
   ...(development && {
     name: 'Frink Dev',
     scheme: 'frink-mobile-dev',
-    ios: { ...config.ios, bundleIdentifier: 'dev.frink.mobile.dev' },
+    ios: { ...config.ios, bundleIdentifier: bundle },
   }),
 });

@@ -4,10 +4,12 @@ import { useEffect } from 'react';
 import { Platform, StatusBar } from 'react-native';
 import { useConnection } from '../lib/connection';
 import { DraftProvider } from '../lib/drafts';
+import { LiveActivityProvider } from '../lib/live-activity';
 import { NotificationProvider } from '../lib/notifications';
 import { onNotificationOpened } from '../lib/notifications/device';
 import { notificationChat } from '../lib/notifications/routing';
 import { OverviewProvider } from '../lib/overview';
+import { onQueueLink } from '../lib/pairing-link';
 import { ChatScreen } from '../screens/Chat';
 import { FlowScreen } from '../screens/Flow';
 import { NewChatScreen } from '../screens/NewChat';
@@ -22,10 +24,13 @@ const Stack = createNativeStackNavigator<RootRoutes>();
 /** The shared overview (Queue badge) polls only while the tab bar is the visible screen. */
 function TabsScreen() {
   useOpenAlertedChat();
+  useOpenQueueLink();
   return (
     <OverviewProvider>
       <NotificationProvider>
-        <Tabs />
+        <LiveActivityProvider>
+          <Tabs />
+        </LiveActivityProvider>
       </NotificationProvider>
     </OverviewProvider>
   );
@@ -43,6 +48,12 @@ function useOpenAlertedChat() {
       }),
     [navigation, deviceId],
   );
+}
+
+/** Tapping the Lock Screen card opens the Queue, including when the tap launched the app. */
+function useOpenQueueLink() {
+  const navigation = useRootNavigation();
+  useEffect(() => onQueueLink(() => navigation.navigate('Tabs', { screen: 'Queue' })), [navigation]);
 }
 
 const ios = Platform.OS === 'ios';
