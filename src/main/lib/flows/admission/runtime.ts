@@ -41,8 +41,9 @@ import {
 } from './terminal-resume/resume-store';
 
 let controller: FlowAdmissionController | null = null;
-let dispatchStartedFlow: ((flowRunId: string) => Promise<void>) | null = null;
-let dispatchResumedFlow: ((intent: TerminalFlowResumeIntent) => Promise<void>) | null = null;
+type AdmittedDispatcher<T> = (admitted: T, ticket: number) => Promise<void>;
+let dispatchStartedFlow: AdmittedDispatcher<string> | null = null;
+let dispatchResumedFlow: AdmittedDispatcher<TerminalFlowResumeIntent> | null = null;
 
 const admissionController = (): FlowAdmissionController =>
   (controller ??= new FlowAdmissionController(getDatabase()));
@@ -140,7 +141,7 @@ async function executeStartedAdmission(flowRunId: string, ticket: number): Promi
     await releaseNonDispatchableStartedAdmission(flowRunId, ticket, live, run?.status);
     return;
   }
-  await dispatchStartedFlow(flowRunId);
+  await dispatchStartedFlow(flowRunId, ticket);
 }
 
 async function executeResumedAdmission(flowRunId: string, ticket: number): Promise<void> {
@@ -155,17 +156,15 @@ async function executeResumedAdmission(flowRunId: string, ticket: number): Promi
   }
   const intent = terminalFlowResumeIntent(live?.intentJson);
   if (!intent) throw new Error(`Flow admission ${ticket} has no terminal resume node reference`);
-  await dispatchResumedFlow(intent);
+  await dispatchResumedFlow(intent, ticket);
 }
 
-export function registerFlowAdmissionStartDispatcher(
-  dispatcher: (flowRunId: string) => Promise<void>,
-): void {
+export function registerFlowAdmissionStartDispatcher(dispatcher: AdmittedDispatcher<string>): void {
   dispatchStartedFlow = dispatcher;
 }
 
 export function registerTerminalFlowResumeDispatcher(
-  dispatcher: (intent: TerminalFlowResumeIntent) => Promise<void>,
+  dispatcher: AdmittedDispatcher<TerminalFlowResumeIntent>,
 ): void {
   dispatchResumedFlow = dispatcher;
 }

@@ -5,7 +5,7 @@ import { cancelChatOwnedFlowWorkForArchive } from '../../db/repos/task-queries/c
 import { createTask, getTaskById, type TaskStatus, updateTaskStatus } from '../../db/repos/tasks';
 import { seedFlowRun } from '../../db/test-utils/flow-fixtures';
 import { freshDb, type TestDb } from '../../db/test-utils/fresh-db';
-import { cancelRunRows, insertNodeRunIfLive, runTransition } from '.';
+import { cancelRunRows, runTransition } from '.';
 
 const GRAPH = { nodes: [], edges: [], settings: {} };
 
@@ -105,28 +105,5 @@ describe('run-row transitions', () => {
 
     expect((await getFlowRun(db, flowRunId))?.status).toBe('cancelled');
     expect(await taskStatuses(tasks)).toEqual(['cancelled', 'needs_attention']);
-  });
-
-  describe('insertNodeRunIfLive', () => {
-    const insert = () =>
-      runTransition(db, () =>
-        insertNodeRunIfLive(db, { flowRunId, nodeId: 'a', blockType: 'x', status: 'running' }),
-      );
-
-    it.each(['running', 'paused'] as const)('inserts into a %s run', async (status) => {
-      await setFlowRunStatus(db, flowRunId, status);
-
-      expect(insert()).toMatchObject({ flowRunId, nodeId: 'a', status: 'running' });
-    });
-
-    it.each(['pending', 'completed', 'failed', 'cancelled'] as const)(
-      'declines a %s run without writing',
-      async (status) => {
-        await setFlowRunStatus(db, flowRunId, status);
-
-        expect(insert()).toBeNull();
-        expect(await listNodeRunsForFlowRun(db, flowRunId)).toEqual([]);
-      },
-    );
   });
 });

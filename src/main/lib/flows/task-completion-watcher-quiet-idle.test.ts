@@ -90,6 +90,7 @@ describe('task-completion-watcher — quiet-idle sweep', () => {
   }
 
   it('parks a quiet task once the idle ceiling elapses and pauses its flow run', async () => {
+    seedActiveAdmission(db, flowRunId);
     await setRunClock(RUN_STARTED_AGO_MS, QUIET_IDLE_PARK_CEILING_MS + MINUTE_MS);
 
     await tick();
@@ -181,6 +182,7 @@ describe('task-completion-watcher — quiet-idle sweep', () => {
   });
 
   it('a late wake done-signal supersedes the park, re-opens the run, and the next tick advances', async () => {
+    seedActiveAdmission(db, flowRunId);
     await setRunClock(RUN_STARTED_AGO_MS, QUIET_IDLE_PARK_CEILING_MS + MINUTE_MS);
     await tick(); // park: task needs_attention, node awaiting_input, run paused
 

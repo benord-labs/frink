@@ -12,7 +12,7 @@ import { TRPCError } from '@trpc/server';
 import type { FlowResumeSnapshot } from '../../../shared/types/flow-run/resume';
 import { type NodeOutput, RESUME_ACTIONABLE_NODE_STATUSES } from '../../../shared/types/flow';
 import { getDatabase } from '../db';
-import { getFlowRun, getLatestFlowRunForChat, setFlowRunStatus } from '../db/repos/flow-runs';
+import { getFlowRun, getLatestFlowRunForChat } from '../db/repos/flow-runs';
 import {
   getNodeRun,
   listNodeRunsForFlowRun,
@@ -29,9 +29,10 @@ import { lastUnfinishedNodeRun } from './rerun/resume-point';
 import { commitUnpark } from './rerun/unpark-node-run';
 import {
   isRestartInterrupted,
-  type ReopenPausedRunOutcome,
+  type ReopenDeclined,
   reopenPausedRunCommand,
   restartMarkedNode,
+  setFencedRunStatus,
   unparkFailedRunCommand,
 } from './transitions';
 
@@ -164,7 +165,7 @@ export async function pauseFlowRunForSubChat(
   return { paused: true };
 }
 
-const REOPEN_DECLINED: Record<Exclude<ReopenPausedRunOutcome, 'reopened'>, string> = {
+const REOPEN_DECLINED: Record<ReopenDeclined, string> = {
   'run-changed': 'Flow run changed while it was being resumed.',
   'node-changed': 'This Flow step has already changed.',
   'no-slot': 'This paused Flow lost its place in the run queue. Cancel it and start it again.',
@@ -223,11 +224,11 @@ export async function resumeFlowRun(
   const allowed: readonly string[] =
     action === 'approve' ? ['awaiting_input'] : RESUME_ACTIONABLE_NODE_STATUSES;
   const { transitionFlowRun } = await import('./admission/runtime');
-  const reopened = await transitionFlowRun(() =>
+  const fence = await transitionFlowRun(() =>
     reopenPausedRunCommand(db, flowRunId, nodeRunId, allowed, expectedSnapshot),
   );
-  if (reopened !== 'reopened') {
-    throw new TRPCError({ code: 'PRECONDITION_FAILED', message: REOPEN_DECLINED[reopened] });
+  if (typeof fence === 'string') {
+    throw new TRPCError({ code: 'PRECONDITION_FAILED', message: REOPEN_DECLINED[fence] });
   }
 
   await withFlowResourceCleanup(flowRunId, async () => {
@@ -239,7 +240,7 @@ export async function resumeFlowRun(
               parentFanOutNodeRunId: nodeRun.parentFanOutNodeRunId,
             }
           : undefined;
-      await dispatchAndAdvance(flowRunId, retryNode, undefined, ctx, undefined, fanOutScope);
+      await dispatchAndAdvance(fence, retryNode, undefined, ctx, undefined, fanOutScope);
       return;
     }
 
@@ -257,7 +258,7 @@ export async function resumeFlowRun(
       expectedSnapshot,
     );
     if (advanced === false) {
-      await setFlowRunStatus(db, flowRunId, 'paused', {}, 'running');
+      setFencedRunStatus(db, fence, 'paused', {}, ['running']);
       throw new TRPCError({
         code: 'PRECONDITION_FAILED',
         message: 'This Flow step has already changed.',

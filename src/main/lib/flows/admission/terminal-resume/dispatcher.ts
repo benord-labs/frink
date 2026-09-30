@@ -1,10 +1,10 @@
 import { getDatabase } from '../../../db';
-import { getFlowRun } from '../../../db/repos/flow-runs';
 import { listNodeRunsForFlowRun } from '../../../db/repos/node-runs';
 import { dispatchAndAdvance, loadRunContext } from '../../advance';
 import { emitRunStarted } from '../../event-emit';
 import { findNodeById } from '../../graph';
 import { lastUnfinishedNodeRun, resolveRerunStartNode } from '../../rerun/resume-point';
+import { readRunFence } from '../../transitions';
 import { registerTerminalFlowResumeDispatcher, requestTerminalFlowResume } from '../runtime';
 import type { TerminalFlowResumeIntent } from './resume-store';
 
@@ -58,7 +58,10 @@ export async function retryTerminalFlowRun(db: Db, flowRunId: string): Promise<b
   return true;
 }
 
-async function dispatchAdmittedTerminalResume(intent: TerminalFlowResumeIntent): Promise<void> {
+async function dispatchAdmittedTerminalResume(
+  intent: TerminalFlowResumeIntent,
+  ticket: number,
+): Promise<void> {
   const db = getDatabase();
   const target = await resolveTerminalResumeTarget(db, intent.flow_run_id);
   if (!target) {
@@ -68,9 +71,10 @@ async function dispatchAdmittedTerminalResume(intent: TerminalFlowResumeIntent):
     throw new Error(`Flow run ${intent.flow_run_id} changed its canonical resume target`);
   }
   // A Cancel that committed after promotion owns the run; its release settles this ticket.
-  if ((await getFlowRun(db, intent.flow_run_id))?.status !== 'running') return;
+  const fence = readRunFence(db, intent.flow_run_id, ticket);
+  if (!fence) return;
   emitRunStarted(target.ctx.meta, intent.flow_run_id);
-  await dispatchAndAdvance(intent.flow_run_id, target.node, undefined, target.ctx, undefined, {
+  await dispatchAndAdvance(fence, target.node, undefined, target.ctx, undefined, {
     resumeKind: intent.continuation ? 'continuation' : 'redispatch',
     ...target.fanOutScope,
   });
