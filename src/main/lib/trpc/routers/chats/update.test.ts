@@ -18,6 +18,7 @@ const gitCacheInvalidateStatusMock = vi.fn();
 const gitCacheInvalidateParsedDiffMock = vi.fn();
 const setChatAiAccountMock = vi.fn();
 const retireRetainedSessionMock = vi.fn();
+const releaseWakeHoldMock = vi.fn();
 
 vi.mock('../../../db', () => ({ getDatabase: () => ({}) }));
 vi.mock('../../../db/repos/chats', async (importOriginal) => {
@@ -49,6 +50,7 @@ vi.mock('../../../db/repos/project-ai-accounts', () => ({
 vi.mock('../../../socket/claude-session-registry', () => ({
   retireRetainedSession: retireRetainedSessionMock,
 }));
+vi.mock('../../../socket/claude-wake-hold', () => ({ releaseWakeHold: releaseWakeHoldMock }));
 vi.mock('./map-chat-response', () => ({ mapLocalChatResponse: (c: unknown) => c }));
 vi.mock('../../../git/cache', () => ({
   gitCache: {
@@ -293,7 +295,7 @@ describe('updateRouter.setChatAccount', () => {
     return caller.setChatAccount({ chatId: 'c1', accountId });
   };
 
-  it('retires every idle session of the chat after a same-provider swap', async () => {
+  it('retires every idle session and wake hold of the chat after a same-provider swap', async () => {
     setChatAiAccountMock.mockResolvedValue('ok');
     listSubChatsByChatMock.mockResolvedValue([
       makeLocalSubChat({ id: 's1', chatId: 'c1' }),
@@ -304,6 +306,10 @@ describe('updateRouter.setChatAccount', () => {
 
     expect(setChatAiAccountMock).toHaveBeenCalledWith(expect.anything(), 'c1', 'claude-b');
     expect(retireRetainedSessionMock.mock.calls.map(([id]) => id)).toEqual(['s1', 's2']);
+    expect(releaseWakeHoldMock.mock.calls).toEqual([
+      ['s1', 'credential-change'],
+      ['s2', 'credential-change'],
+    ]);
   });
 
   it('rejects another provider without retiring anything', async () => {
@@ -311,6 +317,7 @@ describe('updateRouter.setChatAccount', () => {
 
     await expect(setChatAccount('codex')).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(retireRetainedSessionMock).not.toHaveBeenCalled();
+    expect(releaseWakeHoldMock).not.toHaveBeenCalled();
   });
 
   it('reports an unknown chat or account as NOT_FOUND', async () => {

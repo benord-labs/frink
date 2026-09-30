@@ -2,6 +2,7 @@ import type { BackgroundTaskSummary, SessionCronSummary } from '@anthropic-ai/cl
 import log from 'electron-log';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as sentry from '../../sentry/init';
+import { retireRetainedSession } from '../claude-session-registry';
 import type { StopPendingWork, TaskStopHook } from '../../task-stop-hook';
 import { logAdoptedTurnEnd, logDroppedPendingWork, turnEndMustDispose } from './wake-hold-signal';
 
@@ -102,19 +103,26 @@ describe('logDroppedPendingWork', () => {
   });
 });
 
-type Gate = { aborted?: boolean; planHalted?: boolean; killed?: boolean; busy?: boolean };
+type Gate = {
+  aborted?: boolean;
+  planHalted?: boolean;
+  killed?: boolean;
+  busy?: boolean;
+  fenced?: boolean;
+};
 
 /** Ends `turn` through the gate on a session whose Stop hook last reported `work`. */
 function endTurn(
   work: StopPendingWork | null,
-  { aborted, planHalted, killed, busy }: Gate = {},
+  { aborted, planHalted, killed, busy, fenced }: Gate = {},
   turn: { adoptedHold?: boolean } = {},
   stoppedSinceReset = true,
 ): boolean {
   const controller = new AbortController();
   if (aborted) controller.abort();
   const stopHook = { lastPendingWork: work, stoppedSinceReset } as unknown as TaskStopHook;
-  const session = { stopHook, queue: { closed: !!killed }, busy: !!busy };
+  const fence = fenced && { subChatId: 'c6', inputsReadAt: 0 };
+  const session = { stopHook, queue: { closed: !!killed }, busy: !!busy, ...fence };
   return turnEndMustDispose(
     'c6',
     session as Parameters<typeof turnEndMustDispose>[1],
@@ -139,6 +147,14 @@ describe('turnEndMustDispose', () => {
     expect(endTurn(pendingWork, { aborted: true })).toBe(true);
 
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('(aborted)'));
+    expect(alert).not.toHaveBeenCalled();
+  });
+
+  it('ends a session whose chat switched account mid-turn, without an alert', () => {
+    retireRetainedSession('c6', 'credential-change');
+
+    expect(endTurn(pendingWork, { fenced: true })).toBe(true);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('(credential-change)'));
     expect(alert).not.toHaveBeenCalled();
   });
 

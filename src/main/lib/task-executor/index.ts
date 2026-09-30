@@ -69,7 +69,6 @@ import {
   type TaskExecutionAccountType,
 } from './execution-account';
 import { extractTrailingUserReply } from './trailing-reply';
-
 import { createWorktreeForBranch, createWorktreeForChat } from '../git/worktree';
 import { createWorktreeWithMergedBases } from '../git/worktree-converge';
 import { sanitizeProjectName } from '../git/worktree-naming';

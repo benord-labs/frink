@@ -96,9 +96,10 @@ const sessions = new Map<string, ClaudeSession>();
 let lastSweep = { at: 0, reason: '' };
 /** Set by the app-quit sweep, for good: no pre-warm starts after it. */
 let quitting = false;
-/** The app's one pre-warm in flight: a send for its chat awaits its spawn, then claims its CLI. A
- * teardown of its chat while it spawns (`fence`) retires it as it lands. */
-let prewarming: { subChatId: string; spawned: Promise<void>; fence?: string } | null = null;
+/** Per chat, its latest teardown: like `lastSweep`, it fences that chat's sessions not idle yet. */
+const chatFences = new Map<string, { at: number; reason: string }>();
+/** The app's one pre-warm in flight: a send for its chat awaits its spawn, then claims its CLI. */
+let prewarming: { subChatId: string; spawned: Promise<void> } | null = null;
 /** Latest wins: the last pre-warm the one in flight turned away, run once that one lands. A
  * teardown of its chat drops it. */
 let queuedPrewarm: { subChatId: string; run: () => Promise<unknown> } | null = null;
@@ -215,10 +216,10 @@ function retireSession(session: ClaudeSession, reason: string): void {
   log.info(`[Claude Session] retire sub=${session.subChatId} reason=${reason}${prewarm}`);
 }
 
-/** Retire the chat's session if it is idling between turns, and stop its pending pre-warm (chat
- * delete/archive, provider switch). */
+/** Retire the chat's idle session, fence one busy, held or spawning, and stop its pending pre-warm
+ * (chat delete/archive, provider or account switch). */
 export function retireRetainedSession(subChatId: string, reason: string): void {
-  if (prewarming?.subChatId === subChatId) prewarming.fence = reason;
+  chatFences.set(subChatId, { at: Date.now(), reason });
   if (queuedPrewarm?.subChatId === subChatId) queuedPrewarm = null;
   const session = sessions.get(subChatId);
   if (session?.retained) retireSession(session, reason);
@@ -235,8 +236,7 @@ export function retireRetainedSessions(reason: string): void {
  * any. It holds no turn, so its callbacks deny tools, and its reader retires it on any activity. */
 export function retainSession(session: ClaudeSession, { prewarm = false } = {}): void {
   // A sweep or chat teardown since its inputs were read skipped it (busy, held, not yet spawned).
-  const fence = prewarm && prewarming?.subChatId === session.subChatId ? prewarming.fence : '';
-  const swept = session.inputsReadAt <= lastSweep.at ? lastSweep.reason : fence;
+  const swept = session.inputsReadAt <= lastSweep.at ? lastSweep.reason : chatFence(session);
   if (swept || session.loop.exited) {
     retireSession(session, swept || 'stream-ended');
     return;
@@ -258,6 +258,12 @@ export function retainSession(session: ClaudeSession, { prewarm = false } = {}):
   session.currentTurn = null;
   evictOverCap(session);
   if (session.retained === retained) watchRetainedSession(session);
+}
+
+/** The teardown of its chat since the session's inputs were read: its turn end must end it. */
+export function chatFence(session: Pick<ClaudeSession, 'subChatId' | 'inputsReadAt'>): string {
+  const fence = chatFences.get(session.subChatId);
+  return fence && session.inputsReadAt <= fence.at ? fence.reason : '';
 }
 
 /** Keep the cap, retiring unused pre-warms first, then the longest idle. Only idle sessions count,
@@ -408,6 +414,7 @@ export function __resetSessionsForTest(): void {
     stopSessionLoop(session);
   }
   sessions.clear();
+  chatFences.clear();
   lastSweep = { at: 0, reason: '' };
   quitting = false;
   prewarming = null;

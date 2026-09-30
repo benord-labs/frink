@@ -99,8 +99,8 @@ export async function getChatAiAccount(
 }
 
 /**
- * Move a chat to another login of the SAME provider in place. Another provider cannot resume its
- * session ids, so that move is a new linked chat. An unstamped chat is bound to no provider.
+ * Move a chat in place to another login of the provider it runs on (stamp, else project override,
+ * else default); another provider is a new linked chat.
  */
 export async function setChatAiAccount(
   db: Db,
@@ -110,7 +110,8 @@ export async function setChatAiAccount(
   const [chat] = await db.select().from(chats).where(eq(chats.id, chatId)).limit(1);
   const nextType = await getAiAccountType(db, accountId);
   if (!chat || !nextType) return 'not-found';
-  const currentType = chat.accountId ? await getAiAccountType(db, chat.accountId) : null;
+  const currentId = (await getChatAiAccount(db, chat))?.id ?? (await getNewChatAccountId(db, null));
+  const currentType = currentId ? await getAiAccountType(db, currentId) : null;
   if (currentType && currentType !== nextType) return 'other-provider';
   await db.update(chats).set({ accountId }).where(eq(chats.id, chatId));
   return 'ok';

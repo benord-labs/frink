@@ -12,6 +12,7 @@ import {
   bindTurnAbort,
   claimRetainedSession,
   endSession,
+  chatFence,
   createSession,
   getSession,
   IDLE_TTL_MS,
@@ -578,6 +579,19 @@ describe('idle sessions: retain, claim, retire', () => {
     ]);
   });
 
+  it('a chat teardown fences its live session to retire at turn end, not another chat’s', () => {
+    const live = spawn('fence-live');
+    const other = spawn('fence-other');
+
+    retireRetainedSession('fence-live', 'credential-change');
+    retainSession(live);
+    retainSession(other);
+
+    expect(chatFence(live)).toBe('credential-change');
+    expect(getSession('fence-live')).toBeUndefined();
+    expect(other.retained).not.toBeNull();
+  });
+
   it('a sweep between reading a spawn’s inputs and its spawn fences it; a later spawn is kept', () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     const readAt = Date.now();
@@ -705,6 +719,8 @@ describe('pre-warmed sessions: TTL, cap, teardown fence, claim', () => {
     expect(landed?.query.close).toHaveBeenCalledOnce();
     expect(getSession('pw-gone')).toBeUndefined();
     expect(retires()).toEqual(['[Claude Session] retire sub=pw-gone reason=delete']);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.now() + 1); // a pre-warm reading its inputs after the teardown is kept
     expect(prewarmed('pw-gone').retained?.prewarm).toBe(true);
   });
 

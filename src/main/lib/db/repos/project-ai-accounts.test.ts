@@ -175,11 +175,23 @@ describe('setChatAiAccount', () => {
     expect(chat.accountId).toBe('claude-a');
   });
 
-  // An unstamped chat lost its provider's last login, so no provider binds it any more.
-  it('lets an unstamped chat take an account of any provider', async () => {
+  // An unstamped chat runs on the project override (else default), so that provider binds it.
+  it('checks an unstamped chat against the account it runs on', async () => {
     await setProjectAiAccount(db, 'p1', 'codex');
     await seedChat(null);
 
+    expect(await setChatAiAccount(db, 'c1', 'claude-b')).toBe('other-provider');
+  });
+
+  it('checks a chat stamped with a non-AI row against the default it runs on', async () => {
+    await db.insert(schema.claudeCodeCredentials).values({ id: 'gh', type: 'github' });
+    await db
+      .update(schema.claudeCodeCredentials)
+      .set({ isDefault: true })
+      .where(eq(schema.claudeCodeCredentials.id, 'claude-a'));
+    await seedChat('gh');
+
+    expect(await setChatAiAccount(db, 'c1', 'codex')).toBe('other-provider');
     expect(await setChatAiAccount(db, 'c1', 'claude-b')).toBe('ok');
   });
 
