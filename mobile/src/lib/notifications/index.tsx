@@ -10,6 +10,7 @@ import {
 import { AppState } from 'react-native';
 import { ApiError } from '../api';
 import { useConnection } from '../connection';
+import { markTurnedOn, turnOnByDefault } from './default-on';
 import { onTokenChanged } from './device';
 import { reconcileRegistration, type AlertState } from './registration';
 
@@ -21,6 +22,7 @@ const Context = createContext<Alerts | null>(null);
 /**
  * Keeps this iPhone's alert registration on the Mac current: on open, on return to the app and
  * when iOS rotates the push token. One update runs at a time, so a refresh can't undo a tap.
+ * The first open after pairing turns alerts on, as if tapped, which is when iOS asks to allow them.
  */
 export function NotificationProvider({ children }: { children: ReactNode }) {
   const { connection } = useConnection();
@@ -28,8 +30,9 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   const [pending, setPending] = useState<boolean | null>(null);
   const active = useRef<AbortController | null>(null);
   const update = useCallback(
-    async (desired?: boolean) => {
-      if (!connection || (active.current && desired === undefined)) return;
+    /** Whether this update reached the Mac. */
+    async (desired?: boolean): Promise<boolean> => {
+      if (!connection || (active.current && desired === undefined)) return false;
       // A tap wins over a background refresh still in flight.
       active.current?.abort();
       const controller = new AbortController();
@@ -37,7 +40,9 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
       if (desired !== undefined) setPending(desired);
       try {
         const next = await reconcileRegistration(connection, desired, controller.signal);
-        if (!controller.signal.aborted) setState(next);
+        if (controller.signal.aborted) return false;
+        setState(next);
+        return true;
       } catch (cause) {
         // Only a tap reports a failed update; an unreachable Mac already shows as offline.
         if (!controller.signal.aborted && desired !== undefined)
@@ -45,6 +50,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
             ...old,
             error: cause instanceof ApiError ? cause.message : SETUP_FAILED,
           }));
+        return false;
       } finally {
         if (active.current === controller) active.current = null;
         if (!controller.signal.aborted) setPending(null);
@@ -54,6 +60,11 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   );
   useEffect(() => {
     void update();
+    const deviceId = connection?.deviceId;
+    if (deviceId)
+      void turnOnByDefault(deviceId).then(async (turnOn) => {
+        if (turnOn && (await update(true))) markTurnedOn(deviceId);
+      });
     const appState = AppState.addEventListener('change', (next) => {
       if (next === 'active') void update();
     });
@@ -63,7 +74,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
       appState.remove();
       stopTokens();
     };
-  }, [update]);
+  }, [update, connection?.deviceId]);
   const value: Alerts = {
     ...state,
     enabled: pending ?? state.enabled,

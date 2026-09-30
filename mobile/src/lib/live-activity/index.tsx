@@ -1,4 +1,3 @@
-import * as SecureStore from 'expo-secure-store';
 import {
   createContext,
   useCallback,
@@ -14,21 +13,13 @@ import type { Connection } from '../api';
 import { useConnection } from '../connection';
 import { useOverview } from '../overview';
 import { endSession, reconcile, type Session } from './reconcile';
+import { readSwitch, saveSwitch } from './switch';
 
 type LockScreen = { on: boolean; refused: boolean; set: (on: boolean) => void };
 const Context = createContext<LockScreen | null>(null);
 
-const KEY = 'frink.mobile.live-activity.v1';
 // iPad has no Lock Screen card layout, so it never offers one.
 const SUPPORTED = !(Platform.OS === 'ios' && Platform.isPad);
-
-/** The switch is off until turned on; a switch that fails to save is off again after a restart. */
-function readSwitch() {
-  return SecureStore.getItemAsync(KEY).then((saved) => saved === 'on', () => false);
-}
-function saveSwitch(on: boolean) {
-  SecureStore.setItemAsync(KEY, on ? 'on' : 'off').catch(() => undefined);
-}
 
 function refresh(
   session: Session,
