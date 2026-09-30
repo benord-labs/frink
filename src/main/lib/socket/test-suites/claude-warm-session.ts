@@ -315,18 +315,6 @@ const endings: Array<[string, (cli: Cli) => AsyncGenerator<object>, () => Partia
     () => ({}),
   ],
   [
-    'plan-halted',
-    async function* ({ prompt }) {
-      await prompt.next();
-      const exit = { type: 'tool-input-available', toolCallId: 'x1', toolName: 'ExitPlanMode' };
-      yield { chunks: [{ ...exit, input: {} }] };
-      yield { chunks: [{ type: 'tool-output-available', toolCallId: 'x1', output: {} }] };
-      yield* TURN_END;
-      await never();
-    },
-    () => ({ mode: 'plan' }),
-  ],
-  [
     'flow-driven',
     answeringCli(),
     () => {

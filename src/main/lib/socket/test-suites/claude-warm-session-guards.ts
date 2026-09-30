@@ -3,7 +3,12 @@ import log from 'electron-log';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getClaudeCodeTokenById } from '../../credentials';
 import { getChatWithProjectAccount } from '../../db/repos/chats';
-import { __resetSessionsForTest, retireRetainedSessions } from '../claude-session-registry';
+import { getMultiProjectContext } from '../../multi-project-prompt';
+import {
+  __resetSessionsForTest,
+  getSession,
+  retireRetainedSessions,
+} from '../claude-session-registry';
 import { hasWakeHold, releaseWakeHold } from '../claude-wake-hold';
 import * as socketClient from '../client';
 import { abortActiveExecutionsForSubChats } from '../executor';
@@ -29,6 +34,24 @@ const sessionLines = (kind: 'claim' | 'retire') =>
     .filter((line) => line.startsWith(`[Claude Session] ${kind} sub=${payload.subChatId} `))
     .map((line) => line.split(' ').at(-1));
 
+type PreToolUse = (input: object, toolUseId: string) => Promise<object>;
+/** A plan turn as the CLI plays it: the model calls ExitPlanMode, which its PreToolUse hook sees. */
+const submitPlan = async (options: object) => {
+  const hooks = (options as { hooks: { PreToolUse: Array<{ hooks: PreToolUse[] }> } }).hooks;
+  const tool = { hook_event_name: 'PreToolUse', tool_name: 'ExitPlanMode', tool_input: {} };
+  return hooks.PreToolUse[0].hooks[0](tool, 'exit-plan-1');
+};
+const exitPlanCall = {
+  chunks: [
+    {
+      type: 'tool-input-available',
+      toolCallId: 'exit-plan-1',
+      toolName: 'ExitPlanMode',
+      input: {},
+    },
+  ],
+};
+
 /** Registers the cases proving a warm Claude session runs a turn under the same guards as a
  * freshly spawned one: the runtime slot, the permission-mode reconcile and credential sweeps. */
 export function registerClaudeWarmSessionGuardTests(harness: WarmSessionGuardHarness): void {
@@ -44,6 +67,7 @@ export function registerClaudeWarmSessionGuardTests(harness: WarmSessionGuardHar
       releaseWakeHold(payload.subChatId, 'test cleanup');
       __resetSessionsForTest();
     });
+    registerPlanApprovalReuseTests(claudeQueryMock, send);
 
     it('Ultra spawns with the ultracode setting, and toggling it applies live on the same CLI', async () => {
       const first = mockQuery(claudeQueryMock, answeringCli());
@@ -213,5 +237,54 @@ export function registerClaudeWarmSessionGuardTests(harness: WarmSessionGuardHar
       expect(sessionLines('retire')).toEqual(['reason=credential-change']);
       expect(held.close).toHaveBeenCalledOnce();
     });
+  });
+}
+
+/** A submitted plan's CLI is kept for its approval, unless background work is still running. */
+function registerPlanApprovalReuseTests(
+  claudeQueryMock: WarmSessionGuardHarness['claudeQueryMock'],
+  send: (message: string, overrides?: Partial<Payload>) => Promise<void>,
+): void {
+  it('approving a submitted plan runs on the CLI that drafted it', async () => {
+    let submission: object = {};
+    const warm = mockQuery(claudeQueryMock, async function* ({ prompt, options }) {
+      await prompt.next();
+      yield exitPlanCall;
+      submission = await submitPlan(options);
+      yield* TURN_END;
+      await prompt.next();
+      yield { chunks: [{ type: 'text-delta', id: 'impl', delta: 'implementing' }] };
+      yield* TURN_END;
+      await never();
+    });
+    const mcp = { promptPrefix: '', dynamicChatMcpUrl: 'http://127.0.0.1:9/mcp' };
+    vi.mocked(getMultiProjectContext).mockResolvedValueOnce(mcp).mockResolvedValueOnce(mcp);
+
+    await send('plan it', { mode: 'plan' });
+    await send('approved', { sessionId: 'sess-held' });
+
+    // Submission denies ExitPlanMode, so the CLI stays in plan mode until the approval's switch.
+    expect(submission).toMatchObject({ hookSpecificOutput: { permissionDecision: 'deny' } });
+    expect(sessionLines('claim')).toEqual(['miss:none', 'hit']);
+    expect(claudeQueryMock).toHaveBeenCalledOnce();
+    expect(warm.interrupt).not.toHaveBeenCalled();
+    expect(warm.setPermissionMode).toHaveBeenLastCalledWith('default');
+    expect(replies()).toContain('implementing');
+  });
+
+  it('a submitted plan with background work still running is not kept', async () => {
+    mockQuery(claudeQueryMock, async function* ({ prompt, options, stop }) {
+      await prompt.next();
+      yield exitPlanCall;
+      await submitPlan(options);
+      await stop([RUNNING_TASK]);
+      yield* TURN_END;
+      await never();
+    });
+
+    await send('plan it', { mode: 'plan' });
+
+    expect(hasWakeHold(payload.subChatId)).toBe(false);
+    expect(getSession(payload.subChatId)).toBeUndefined();
   });
 }

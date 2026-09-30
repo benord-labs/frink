@@ -53,6 +53,7 @@ describe('usePlanApproval', () => {
         scrollToBottom,
         sendMessageRef: { current: sendMessage },
         isResolvedExecutionAccountReady: true,
+        isStreaming: false,
       }),
     );
 
@@ -80,6 +81,7 @@ describe('usePlanApproval', () => {
         scrollToBottom,
         sendMessageRef: { current: sendMessage },
         isResolvedExecutionAccountReady: true,
+        isStreaming: false,
       }),
     );
 
@@ -110,6 +112,7 @@ describe('usePlanApproval', () => {
         scrollToBottom,
         sendMessageRef: { current: sendMessage },
         isResolvedExecutionAccountReady: true,
+        isStreaming: false,
       }),
     );
 
@@ -160,6 +163,7 @@ describe('usePlanApproval', () => {
         scrollToBottom,
         sendMessageRef,
         isResolvedExecutionAccountReady: true,
+        isStreaming: false,
       }),
     );
 
@@ -211,6 +215,7 @@ describe('usePlanApproval', () => {
         scrollToBottom: vi.fn(),
         sendMessageRef: { current: sendMessage },
         isResolvedExecutionAccountReady: true,
+        isStreaming: false,
       }),
     );
 
@@ -260,6 +265,7 @@ describe('usePlanApproval', () => {
         scrollToBottom,
         sendMessageRef: { current: sendMessage },
         isResolvedExecutionAccountReady: true,
+        isStreaming: false,
       }),
     );
 
@@ -314,6 +320,7 @@ describe('usePlanApproval', () => {
         scrollToBottom: vi.fn(),
         sendMessageRef: { current: sendMessage },
         isResolvedExecutionAccountReady: true,
+        isStreaming: false,
       }),
     );
 
@@ -354,6 +361,7 @@ describe('usePlanApproval', () => {
         scrollToBottom,
         sendMessageRef: { current: sendMessage },
         isResolvedExecutionAccountReady: true,
+        isStreaming: false,
       }),
     );
 
@@ -367,5 +375,45 @@ describe('usePlanApproval', () => {
     expect(toastError).toHaveBeenCalledWith(
       'No pending plan found to approve. Refresh and try again.',
     );
+  });
+
+  it('holds a card approval until the plan turn settles, then sends it once', () => {
+    const sendMessage = vi.fn();
+    const setPendingBuildPlanSubChatId = vi.fn();
+    const messages = [
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        parts: [
+          {
+            type: 'tool-frink-plan',
+            input: { planId: 'plan-1', status: 'awaiting_approval', planText: 'Do the work' },
+          },
+        ],
+      },
+    ] as unknown as UIMessage[];
+    const { rerender } = renderHook(
+      ({ isStreaming }) =>
+        usePlanApproval({
+          subChatId: 'sub-1',
+          messages,
+          pendingBuildPlanSubChatId: 'sub-1',
+          setPendingBuildPlanSubChatId,
+          setChatMode: vi.fn(),
+          scrollToBottom: vi.fn(),
+          sendMessageRef: { current: sendMessage },
+          isResolvedExecutionAccountReady: true,
+          isStreaming,
+        }),
+      { initialProps: { isStreaming: true } },
+    );
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(setPendingBuildPlanSubChatId).not.toHaveBeenCalled();
+
+    rerender({ isStreaming: false });
+
+    expect(setPendingBuildPlanSubChatId).toHaveBeenCalledWith(null);
+    expect(sendMessage).toHaveBeenCalledOnce();
   });
 });

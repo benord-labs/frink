@@ -27,7 +27,7 @@ import { useSteerOrQueue } from '../../../lib/agent-chat/steer';
 import { isRunBusy } from '../../../lib/agent-chat/steer/run-busy';
 import { useFlowSurfaceQuery } from '../../../lib/agent-chat/use-flow-surface-query';
 import { trackMessageSent } from '../../../lib/analytics';
-import { isDesktopAtom, isFullscreenAtom, pendingAccountAuthAtom } from '../../../lib/atoms';
+import { isDesktopAtom, pendingAccountAuthAtom } from '../../../lib/atoms';
 import { useFileChangeListener, useGitWatcher } from '../../../lib/hooks/use-file-change-listener';
 import { appStore } from '../../../lib/jotai-store';
 import { api } from '../../../lib/mock-api';
@@ -796,7 +796,6 @@ const ChatViewInner = memo(function ChatViewInner({
     setRetryInFlight,
   ]);
 
-  // Handle plan approval - sends "Build plan" message and switches to agent mode
   const handleApprovePlan = usePlanApproval({
     subChatId,
     messages,
@@ -806,6 +805,7 @@ const ChatViewInner = memo(function ChatViewInner({
     scrollToBottom,
     sendMessageRef,
     isResolvedExecutionAccountReady,
+    isStreaming,
   });
 
   // Convert messages to Message[] for hooks that expect that type
@@ -1583,8 +1583,6 @@ export const ChatView = memo(function ChatView({
   const isActive = useIsPaneActive(splitPaneIndex);
   const splitViewState = useAtomValue(splitViewAtom);
   const isSplitActive = splitViewState.chatIds.length > 0;
-  const isDesktop = useAtomValue(isDesktopAtom);
-  const isFullscreen = useAtomValue(isFullscreenAtom);
   const unseenChanges = useAtomValue(agentsUnseenChangesAtom);
   const setUnseenChanges = useSetAtom(agentsUnseenChangesAtom);
   const setSubChatUnseenChanges = useSetAtom(agentsSubChatUnseenChangesAtom);

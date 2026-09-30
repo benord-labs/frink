@@ -21,6 +21,7 @@ import { buildUserPromptSubmitReminderHook } from '../../operator-reminders';
 import {
   denyPlanTransitionInWakeBurst,
   planAutoDenyFloor,
+  submitPlanForReview,
 } from '../../streaming/plan-auto-approve';
 import { holdOrParkQuestion } from '../../streaming/question-hold-park';
 
@@ -109,6 +110,10 @@ function createPreToolUseHook(scope: ClaudeSessionScope, activeTurn: ActiveTurn)
     // Auto mode can resolve a tool before canUseTool runs, but a PreToolUse deny always wins.
     const burstDeny = denyPlanTransitionInWakeBurst(toolName, turn);
     if (burstDeny) return denyToolUse(burstDeny.message);
+    if (toolName === 'ExitPlanMode' && turn.planTerminalsLocked) {
+      const submitted = submitPlanForReview(toolInput, turn, subChatId);
+      if (submitted) return denyToolUse(submitted);
+    }
 
     const isRegisterNodeTransport = toolName === 'mcp__frink_dynamic_chat__frink_register_node';
     if (

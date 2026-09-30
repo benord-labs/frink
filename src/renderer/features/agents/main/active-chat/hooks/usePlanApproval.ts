@@ -20,6 +20,8 @@ type Props = {
   scrollToBottom: () => void;
   sendMessageRef: React.RefObject<unknown>;
   isResolvedExecutionAccountReady: boolean;
+  /** The sub-chat's turn is still running in the renderer or in main. */
+  isStreaming: boolean;
 };
 
 export function usePlanApproval({
@@ -31,6 +33,7 @@ export function usePlanApproval({
   scrollToBottom,
   sendMessageRef,
   isResolvedExecutionAccountReady,
+  isStreaming,
 }: Props) {
   const handleApprovePlan = useCallback(() => {
     if (!isResolvedExecutionAccountReady) return;
@@ -106,6 +109,9 @@ export function usePlanApproval({
   useEffect(() => {
     if (pendingBuildPlanSubChatId !== subChatId) return;
     if (!isResolvedExecutionAccountReady) return;
+    // A click while the plan turn is still finishing waits for it to settle: sending now would abort
+    // that turn and throw away the CLI that drafted the plan, which the approval would otherwise reuse.
+    if (isStreaming) return;
     // Target sub-chat only (one ChatViewInner per subChatId). Do not gate on isActive:
     // hidden keep-alive tabs can briefly report isActive=false while the user still clicked Approve on that sub-chat.
     setPendingBuildPlanSubChatId(null); // Clear immediately to prevent double-trigger
@@ -114,6 +120,7 @@ export function usePlanApproval({
     pendingBuildPlanSubChatId,
     subChatId,
     isResolvedExecutionAccountReady,
+    isStreaming,
     setPendingBuildPlanSubChatId,
     handleApprovePlan,
   ]);

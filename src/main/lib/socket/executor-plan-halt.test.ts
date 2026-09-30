@@ -239,7 +239,7 @@ import { parkFlowTaskOnClaudeInterruption } from '../db/repos/task-parking';
 import { getMultiProjectContext } from '../multi-project-prompt';
 import { checkPermission } from '../permissions/v2/check';
 import {
-  planPathFromExitPlanModeOutput,
+  submittedPlanFromExitPlanModeInput,
   resolveLatestSessionPlanFile,
 } from '../claude/session-plan-paths';
 import {
@@ -251,6 +251,7 @@ import { buildPartsFromChunks } from './claude-turn-context';
 import type { MessagePart } from './client';
 import { handleRemoteExecute, validateToolPermission } from './executor';
 import { emitBurstPlanCard } from './streaming/burst-chunks';
+import { PLAN_SUBMITTED_FOR_REVIEW } from './streaming/plan-auto-approve';
 import { claudePromptText } from './test-utils';
 
 function stubPermissionsStoreDefault() {
@@ -283,6 +284,51 @@ describe('Claude plan-mode submission halt', () => {
 
   /** Arguments these tests hand canUseTool: a file-op path, or nothing for an MCP call. */
   type ToolInputFixture = { file_path?: string };
+  type CanUseToolFn = (
+    toolName: string,
+    toolInput: ToolInputFixture,
+    options: { toolUseID: string },
+  ) => Promise<{ behavior: string; message?: string }>;
+  type PreToolUseHookFn = (
+    input: { hook_event_name: string; tool_name: string; tool_input: unknown },
+    toolUseId: string,
+  ) => Promise<{
+    hookSpecificOutput?: { permissionDecision?: string; permissionDecisionReason?: string };
+  }>;
+  type PlanQueryCall = {
+    options: {
+      canUseTool: CanUseToolFn;
+      hooks: { PreToolUse: Array<{ hooks: PreToolUseHookFn[] }> };
+    };
+  };
+
+  /** Plays the CLI's side of a plan submission: the ExitPlanMode call, its PreToolUse hook, then the
+   * denied call's error result. Returns the hook's decision. */
+  async function* submitPlan(call: PlanQueryCall, id: string, hookInput: unknown = {}) {
+    yield {
+      chunks: [
+        { type: 'tool-input-available', toolCallId: id, toolName: 'ExitPlanMode', input: {} },
+      ] satisfies UIMessageChunk[],
+    };
+    const decision = await call.options.hooks.PreToolUse[0].hooks[0](
+      { hook_event_name: 'PreToolUse', tool_name: 'ExitPlanMode', tool_input: hookInput },
+      id,
+    );
+    const reason = decision.hookSpecificOutput?.permissionDecisionReason ?? '';
+    yield {
+      chunks: [
+        { type: 'tool-output-error', toolCallId: id, errorText: reason },
+      ] satisfies UIMessageChunk[],
+    };
+    return decision.hookSpecificOutput;
+  }
+
+  const writePlanChunk = (id: string): UIMessageChunk => ({
+    type: 'tool-input-available',
+    toolCallId: id,
+    toolName: 'Write',
+    input: { file_path: '/mock/home/.claude/plans/test-plan.md', content: validPlanContent },
+  });
 
   const basePayload = {
     chatId: 'chat-plan-halt',
@@ -380,37 +426,16 @@ Done.
     );
   });
 
-  it('interrupts the turn at plan submission and keeps racing chunks out of history', async () => {
+  it('ends the turn at plan submission by denying ExitPlanMode, keeping the overrun out of history', async () => {
     vi.spyOn(fs.promises, 'readFile').mockResolvedValue(validPlanContent);
 
     const interrupt = vi.fn().mockResolvedValue(undefined);
-    claudeQueryMock.mockImplementationOnce(() => {
+    let decision: { permissionDecision?: string; permissionDecisionReason?: string } | undefined;
+    claudeQueryMock.mockImplementationOnce((call: PlanQueryCall) => {
       const gen = (async function* () {
-        yield {
-          chunks: [
-            {
-              type: 'tool-input-available',
-              toolCallId: 'write-plan-i1',
-              toolName: 'Write',
-              input: {
-                file_path: '/mock/home/.claude/plans/test-plan.md',
-                content: validPlanContent,
-              },
-            } satisfies UIMessageChunk,
-            {
-              type: 'tool-input-available',
-              toolCallId: 'exit-plan-i1',
-              toolName: 'ExitPlanMode',
-              input: {},
-            } satisfies UIMessageChunk,
-            {
-              type: 'tool-output-available',
-              toolCallId: 'exit-plan-i1',
-              output: { success: true },
-            } satisfies UIMessageChunk,
-          ],
-        };
-        // Chunks the model races in before the interrupt lands — hidden live AND from history.
+        yield { chunks: [writePlanChunk('write-plan-i1')] };
+        decision = yield* submitPlan(call, 'exit-plan-i1');
+        // A model that ignores the deny's stop — hidden live AND from history.
         yield {
           chunks: [
             {
@@ -426,15 +451,12 @@ Done.
             } satisfies UIMessageChunk,
           ],
         };
-        // The interrupt ends the turn with a non-success subtype; it must surface as success.
         yield {
+          type: 'result',
           chunks: [
             {
               type: 'finish',
-              messageMetadata: {
-                sessionId: 'sess-plan-interrupt-1',
-                resultSubtype: 'error_during_execution',
-              },
+              messageMetadata: { sessionId: 'sess-plan-deny-1', resultSubtype: 'success' },
             } satisfies UIMessageChunk,
           ],
         };
@@ -448,17 +470,18 @@ Done.
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(interrupt).toHaveBeenCalledTimes(1);
+    expect(decision?.permissionDecision).toBe('deny');
+    expect(decision?.permissionDecisionReason).toBe(PLAN_SUBMITTED_FOR_REVIEW);
+    expect(interrupt).not.toHaveBeenCalled();
 
     const clientModule = await import('./client');
+    expect(vi.mocked(clientModule.sendErrorDirect)).not.toHaveBeenCalled();
     const completeCalls = vi.mocked(clientModule.sendExecuteCompleteDirect).mock.calls;
     const payload = completeCalls[completeCalls.length - 1]?.[0] as {
       sessionId?: string;
-      metadata?: { resultSubtype?: string };
       finalParts?: Array<{ type?: string; text?: string }>;
     };
-    expect(payload.sessionId).toBe('sess-plan-interrupt-1');
-    expect(payload.metadata?.resultSubtype).toBe('success');
+    expect(payload.sessionId).toBe('sess-plan-deny-1');
     expect(payload.finalParts).toEqual(
       expect.arrayContaining([expect.objectContaining({ type: 'tool-frink-plan' })]),
     );
@@ -466,111 +489,20 @@ Done.
     expect(payload.finalParts?.some((p) => p.text === 'implementing...')).toBe(false);
   });
 
-  it('treats an interrupt that surfaces as an iterator throw as the normal halt, not an error', async () => {
-    vi.spyOn(fs.promises, 'readFile').mockResolvedValue(validPlanContent);
-
-    const interrupt = vi.fn().mockResolvedValue(undefined);
-    claudeQueryMock.mockImplementationOnce(() => {
-      const gen = (async function* () {
-        yield {
-          chunks: [
-            {
-              type: 'tool-input-available',
-              toolCallId: 'write-plan-t1',
-              toolName: 'Write',
-              input: {
-                file_path: '/mock/home/.claude/plans/test-plan.md',
-                content: validPlanContent,
-              },
-            } satisfies UIMessageChunk,
-            {
-              type: 'tool-input-available',
-              toolCallId: 'exit-plan-t1',
-              toolName: 'ExitPlanMode',
-              input: {},
-            } satisfies UIMessageChunk,
-            {
-              type: 'tool-output-available',
-              toolCallId: 'exit-plan-t1',
-              output: { success: true },
-            } satisfies UIMessageChunk,
-          ],
-        };
-        throw new Error('Request was interrupted');
-      })();
-      return Object.assign(gen, { interrupt });
-    });
-
-    await handleRemoteExecute({
-      ...basePayload,
-      message: 'create a plan',
-    });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    const clientModule = await import('./client');
-    expect(vi.mocked(clientModule.sendErrorDirect)).not.toHaveBeenCalled();
-    const completeCalls = vi.mocked(clientModule.sendExecuteCompleteDirect).mock.calls;
-    expect(completeCalls.length).toBeGreaterThan(0);
-    const payload = completeCalls[completeCalls.length - 1]?.[0] as {
-      finalParts?: Array<{ type?: string }>;
-    };
-    expect(payload.finalParts).toEqual(
-      expect.arrayContaining([expect.objectContaining({ type: 'tool-frink-plan' })]),
-    );
-  });
-
   it('denies every tool from plan submission onward (canUseTool AND the PreToolUse hook)', async () => {
     vi.spyOn(fs.promises, 'readFile').mockResolvedValue(validPlanContent);
-    type CanUseToolFn = (
-      toolName: string,
-      toolInput: ToolInputFixture,
-      options: { toolUseID: string },
-    ) => Promise<{ behavior: string; message?: string }>;
-    type PreToolUseHookFn = (
-      input: { hook_event_name: string; tool_name: string; tool_input: unknown },
-      toolUseId: string,
-    ) => Promise<{ hookSpecificOutput?: { permissionDecision?: string } }>;
 
     const decisions: Array<{ behavior: string } | undefined> = [];
     const hookDecisions: string[] = [];
-    type PlanQueryCall = {
-      options: {
-        canUseTool: CanUseToolFn;
-        hooks: { PreToolUse: Array<{ hooks: PreToolUseHookFn[] }> };
-      };
-    };
     claudeQueryMock.mockImplementationOnce((call: PlanQueryCall) => {
       const canUse = call.options.canUseTool;
       const hook = call.options.hooks.PreToolUse[0].hooks[0];
       const gen = (async function* () {
         // Pre-submission: research tools flow normally.
         decisions.push(await canUse('Read', { file_path: '/a.ts' }, { toolUseID: 'pre-1' }));
-        yield {
-          chunks: [
-            {
-              type: 'tool-input-available',
-              toolCallId: 'write-plan-g1',
-              toolName: 'Write',
-              input: {
-                file_path: '/mock/home/.claude/plans/test-plan.md',
-                content: validPlanContent,
-              },
-            } satisfies UIMessageChunk,
-            {
-              type: 'tool-input-available',
-              toolCallId: 'exit-plan-g1',
-              toolName: 'ExitPlanMode',
-              input: {},
-            } satisfies UIMessageChunk,
-            {
-              type: 'tool-output-available',
-              toolCallId: 'exit-plan-g1',
-              output: { success: true },
-            } satisfies UIMessageChunk,
-          ],
-        };
-        // Post-submission: the SDK has lifted plan restrictions, so frink's gate is the only
-        // thing standing between the model and a pre-approval file mutation.
+        yield { chunks: [writePlanChunk('write-plan-g1')] };
+        yield* submitPlan(call, 'exit-plan-g1');
+        // Post-submission: the model was told to stop; frink's gate holds if it does not.
         decisions.push(await canUse('Write', { file_path: '/b.ts' }, { toolUseID: 'post-1' }));
         decisions.push(await canUse('mcp__shortcut__stories-create', {}, { toolUseID: 'post-2' }));
         const hookRes = await hook(
@@ -579,6 +511,7 @@ Done.
         );
         hookDecisions.push(hookRes.hookSpecificOutput?.permissionDecision ?? 'none');
         yield {
+          type: 'result',
           chunks: [
             {
               type: 'finish',
@@ -663,16 +596,11 @@ Done.
     expect(decisionsB[0]?.behavior).toBe('allow');
   });
 
-  it('mid-turn EnterPlanMode: halts at ExitPlanMode even when the interrupt control request fails', async () => {
-    // Agent-mode turn where the model enters plan mode itself: the prompt was sent as a plain
-    // string, so Query.interrupt() rejects (control requests need streaming input). The halt must
-    // still hold via tool denial + history filtering, with no error surfaced.
+  it('mid-turn EnterPlanMode: halts at ExitPlanMode and keeps the overrun out of view', async () => {
     vi.spyOn(fs.promises, 'readFile').mockResolvedValue(validPlanContent);
 
-    const interrupt = vi
-      .fn()
-      .mockRejectedValue(new Error('Interrupt requires --input-format stream-json'));
-    claudeQueryMock.mockImplementationOnce(() => {
+    let decision: { permissionDecision?: string } | undefined;
+    claudeQueryMock.mockImplementationOnce((call: PlanQueryCall) => {
       const gen = (async function* () {
         yield {
           chunks: [
@@ -687,27 +615,12 @@ Done.
               toolCallId: 'enter-plan-m1',
               output: { success: true },
             } satisfies UIMessageChunk,
-            {
-              type: 'tool-input-available',
-              toolCallId: 'write-plan-m1',
-              toolName: 'Write',
-              input: {
-                file_path: '/mock/home/.claude/plans/test-plan.md',
-                content: validPlanContent,
-              },
-            } satisfies UIMessageChunk,
-            {
-              type: 'tool-input-available',
-              toolCallId: 'exit-plan-m1',
-              toolName: 'ExitPlanMode',
-              input: {},
-            } satisfies UIMessageChunk,
-            {
-              type: 'tool-output-available',
-              toolCallId: 'exit-plan-m1',
-              output: { success: true },
-            } satisfies UIMessageChunk,
-            // Overrun the failed interrupt cannot stop — must stay out of view AND history.
+            writePlanChunk('write-plan-m1'),
+          ],
+        };
+        decision = yield* submitPlan(call, 'exit-plan-m1');
+        yield {
+          chunks: [
             {
               type: 'tool-input-available',
               toolCallId: 'edit-race-m1',
@@ -722,6 +635,7 @@ Done.
           ],
         };
         yield {
+          type: 'result',
           chunks: [
             {
               type: 'finish',
@@ -730,14 +644,14 @@ Done.
           ],
         };
       })();
-      return Object.assign(gen, { interrupt });
+      return Object.assign(gen, { interrupt: vi.fn() });
     });
 
     await handleRemoteExecute({ ...basePayload, mode: 'agent', message: 'fix the bug' });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
+    expect(decision?.permissionDecision).toBe('deny');
     const clientModule = await import('./client');
-    expect(interrupt).toHaveBeenCalledTimes(1);
     expect(vi.mocked(clientModule.sendErrorDirect)).not.toHaveBeenCalled();
     const completeCalls = vi.mocked(clientModule.sendExecuteCompleteDirect).mock.calls;
     const payload = completeCalls[completeCalls.length - 1]?.[0] as {
@@ -1049,52 +963,26 @@ Done.
       taskId: 'flow-task-nonauto-1',
     } as never);
 
-    const interrupt = vi.fn().mockResolvedValue(undefined);
-    claudeQueryMock.mockImplementationOnce(() => {
+    claudeQueryMock.mockImplementationOnce((call: PlanQueryCall) => {
       const gen = (async function* () {
+        yield { chunks: [writePlanChunk('write-plan-f1')] };
+        yield* submitPlan(call, 'exit-plan-f1');
         yield {
-          chunks: [
-            {
-              type: 'tool-input-available',
-              toolCallId: 'write-plan-f1',
-              toolName: 'Write',
-              input: {
-                file_path: '/mock/home/.claude/plans/test-plan.md',
-                content: validPlanContent,
-              },
-            } satisfies UIMessageChunk,
-            {
-              type: 'tool-input-available',
-              toolCallId: 'exit-plan-f1',
-              toolName: 'ExitPlanMode',
-              input: {},
-            } satisfies UIMessageChunk,
-            {
-              type: 'tool-output-available',
-              toolCallId: 'exit-plan-f1',
-              output: { success: true },
-            } satisfies UIMessageChunk,
-          ],
-        };
-        yield {
+          type: 'result',
           chunks: [
             {
               type: 'finish',
-              messageMetadata: {
-                sessionId: 'sess-flow-nonauto-1',
-                resultSubtype: 'error_during_execution',
-              },
+              messageMetadata: { sessionId: 'sess-flow-nonauto-1', resultSubtype: 'success' },
             } satisfies UIMessageChunk,
           ],
         };
       })();
-      return Object.assign(gen, { interrupt });
+      return Object.assign(gen, { interrupt: vi.fn() });
     });
 
     await handleRemoteExecute({ ...basePayload, message: 'flow plan node without skipReview' });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(interrupt).toHaveBeenCalledTimes(1);
     const clientModule = await import('./client');
     expect(vi.mocked(clientModule.sendErrorDirect)).not.toHaveBeenCalled();
     // The node parks for approval (flow-agent-node-mode resume surface): the halt must never
@@ -1186,17 +1074,19 @@ Done.
     };
 
     // A bare result terminal (no finish metadata) ends the stream without arming the wake pump,
-    // whose stop-hook surface these tests do not mock.
+    // whose stop-hook surface these tests do not mock. `submission` submits a plan after `chunks`.
     const queueTurn = (
       chunks: UIMessageChunk[],
       end: 'finish' | 'result' = 'finish',
-      interrupt = vi.fn().mockResolvedValue(undefined),
+      submission?: { id: string; hookInput?: unknown },
     ) => {
-      claudeQueryMock.mockImplementationOnce(() => {
+      claudeQueryMock.mockImplementationOnce((call: PlanQueryCall) => {
         const gen = (async function* () {
           yield { chunks };
+          if (submission) yield* submitPlan(call, submission.id, submission.hookInput);
           yield end === 'finish'
             ? {
+                type: 'result',
                 chunks: [
                   {
                     type: 'finish',
@@ -1206,70 +1096,55 @@ Done.
               }
             : { type: 'result' };
         })();
-        return Object.assign(gen, { interrupt });
+        return Object.assign(gen, { interrupt: vi.fn() });
       });
-      return interrupt;
     };
 
-    const exitPlanChunks = (
-      id: string,
-      output: { plan: string | null; isAgent: boolean; filePath?: string } | string = {
-        plan: null,
-        isAgent: false,
-      },
-    ): UIMessageChunk[] => [
-      { type: 'tool-input-available', toolCallId: id, toolName: 'ExitPlanMode', input: {} },
-      { type: 'tool-output-available', toolCallId: id, output },
+    const proseChunks = (id: string): UIMessageChunk[] => [
+      { type: 'text-start', id },
+      { type: 'text-delta', id, delta: 'the drafted plan as text' },
+      { type: 'text-end', id },
     ];
 
-    it('emits the card from the session plans dir when ExitPlanMode runs with no plan mutation in-stream (wake-burst edits)', async () => {
+    it('emits the card from the session plans dir when the CLI names no plan file (wake-burst edits)', async () => {
       mockPlansDir({ 'stale.md': 1000, 'plan.md': 2000 });
       vi.spyOn(fs.promises, 'readFile').mockResolvedValue(validPlanContent);
-      const interrupt = queueTurn(exitPlanChunks('exit-plan-refresh-1'));
+      queueTurn([], 'finish', { id: 'exit-plan-refresh-1' });
 
       await handleRemoteExecute({ ...basePayload, message: 'carry on' });
       await new Promise((resolve) => setTimeout(resolve, 0));
 
-      expect(interrupt).toHaveBeenCalledTimes(1);
       const finalParts = await finalPartsOfLastComplete();
       const card = finalParts.find((part) => part.type === 'tool-frink-plan');
       expect(card?.input?.planPath).toBe(`${sessionPlansDir}/plan.md`);
       expect(fs.promises.readFile).toHaveBeenCalledWith(`${sessionPlansDir}/plan.md`, 'utf8');
     });
 
-    it('renders the SDK-declared filePath and never scans the dir, even with a newer decoy', async () => {
+    it('renders the plan file the CLI names and never scans the dir, even with a newer decoy', async () => {
       mockPlansDir({ 'newer-decoy.md': 9000 });
       vi.spyOn(fs.promises, 'readFile').mockResolvedValue(validPlanContent);
-      const interrupt = queueTurn(
-        exitPlanChunks('exit-plan-sdk-1', {
-          plan: '# The plan',
-          isAgent: false,
-          filePath: `${sessionPlansDir}/from-sdk.md`,
-        }),
-      );
+      queueTurn([], 'finish', {
+        id: 'exit-plan-sdk-1',
+        hookInput: { plan: '# The plan', planFilePath: `${sessionPlansDir}/from-sdk.md` },
+      });
 
       await handleRemoteExecute({ ...basePayload, message: 'carry on' });
       await new Promise((resolve) => setTimeout(resolve, 0));
 
-      expect(interrupt).toHaveBeenCalledTimes(1);
       const finalParts = await finalPartsOfLastComplete();
       const card = finalParts.find((part) => part.type === 'tool-frink-plan');
       expect(card?.input?.planPath).toBe(`${sessionPlansDir}/from-sdk.md`);
-      // The only signal separating "SDK rung won" from "the scan happened to agree" — also the
-      // assertion that catches the rung being ordered after handleExitPlanModeCompletion.
+      // The only signal separating "the named file won" from "the scan happened to agree".
       expect(fs.promises.readdir).not.toHaveBeenCalled();
     });
 
-    it('vetoes a filePath whose plan the CLI could not read (plan: null) and falls back', async () => {
+    it('vetoes a named file whose plan text is empty and falls back to the scan', async () => {
       mockPlansDir({ 'sibling.md': 2000 });
       vi.spyOn(fs.promises, 'readFile').mockResolvedValue(validPlanContent);
-      queueTurn(
-        exitPlanChunks('exit-plan-null-1', {
-          plan: null,
-          isAgent: false,
-          filePath: `${sessionPlansDir}/missing.md`,
-        }),
-      );
+      queueTurn([], 'finish', {
+        id: 'exit-plan-null-1',
+        hookInput: { plan: '', planFilePath: `${sessionPlansDir}/missing.md` },
+      });
 
       await handleRemoteExecute({ ...basePayload, message: 'carry on' });
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -1283,18 +1158,9 @@ Done.
       );
     });
 
-    it('emits no card and replays prose when plan: null and the plans dir is empty', async () => {
+    it('emits no card and replays prose when no plan file is named and the plans dir is empty', async () => {
       mockPlansDir({});
-      queueTurn([
-        { type: 'text-start', id: 'plan-prose-1' },
-        { type: 'text-delta', id: 'plan-prose-1', delta: 'the drafted plan as text' },
-        { type: 'text-end', id: 'plan-prose-1' },
-        ...exitPlanChunks('exit-plan-null-2', {
-          plan: null,
-          isAgent: false,
-          filePath: `${sessionPlansDir}/missing.md`,
-        }),
-      ]);
+      queueTurn(proseChunks('plan-prose-1'), 'finish', { id: 'exit-plan-null-2' });
 
       await handleRemoteExecute({ ...basePayload, message: 'carry on' });
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -1304,21 +1170,19 @@ Done.
       expect(finalParts.some((part) => part.text === 'the drafted plan as text')).toBe(true);
     });
 
-    it('replays prose when the SDK-named file vanishes before emission — never a blank turn', async () => {
+    it('replays prose when the written plan file vanishes before emission — never a blank turn', async () => {
       mockPlansDir({});
       vi.spyOn(fs.promises, 'readFile').mockRejectedValue(
         Object.assign(new Error('ENOENT'), { code: 'ENOENT' }),
       );
-      queueTurn([
-        { type: 'text-start', id: 'plan-prose-2' },
-        { type: 'text-delta', id: 'plan-prose-2', delta: 'the drafted plan as text' },
-        { type: 'text-end', id: 'plan-prose-2' },
-        ...exitPlanChunks('exit-plan-gone-1', {
-          plan: '# The plan',
-          isAgent: false,
-          filePath: `${sessionPlansDir}/vanished.md`,
-        }),
-      ]);
+      const write: UIMessageChunk = {
+        type: 'tool-input-available',
+        toolCallId: 'write-gone-1',
+        toolName: 'Write',
+        input: { file_path: `${sessionPlansDir}/vanished.md`, content: validPlanContent },
+      };
+      // No submitted text to snapshot: the CLI could not read the plan file either.
+      queueTurn([...proseChunks('plan-prose-2'), write], 'finish', { id: 'exit-plan-gone-1' });
 
       await handleRemoteExecute({ ...basePayload, message: 'carry on' });
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -1338,56 +1202,74 @@ Done.
       expect(replayed).toBe(true);
     });
 
-    it('keeps the in-stream Write path over a divergent SDK filePath', async () => {
+    it('renders the submitted plan over an earlier in-stream Write', async () => {
       vi.spyOn(fs.promises, 'readFile').mockResolvedValue(validPlanContent);
-      queueTurn([
+      queueTurn(
+        [
+          {
+            type: 'tool-input-available',
+            toolCallId: 'write-plan-a',
+            toolName: 'Write',
+            input: { file_path: `${sessionPlansDir}/plan-a.md`, content: validPlanContent },
+          },
+          { type: 'tool-output-available', toolCallId: 'write-plan-a', output: { success: true } },
+        ],
+        'finish',
         {
-          type: 'tool-input-available',
-          toolCallId: 'write-plan-a',
-          toolName: 'Write',
-          input: { file_path: `${sessionPlansDir}/plan-a.md`, content: validPlanContent },
+          id: 'exit-plan-prec-1',
+          hookInput: { plan: '# The plan', planFilePath: `${sessionPlansDir}/plan-b.md` },
         },
-        { type: 'tool-output-available', toolCallId: 'write-plan-a', output: { success: true } },
-        ...exitPlanChunks('exit-plan-prec-1', {
-          plan: '# The plan',
-          isAgent: false,
-          filePath: `${sessionPlansDir}/plan-b.md`,
-        }),
-      ]);
+      );
 
       await handleRemoteExecute({ ...basePayload, message: 'carry on' });
       await new Promise((resolve) => setTimeout(resolve, 0));
 
       const finalParts = await finalPartsOfLastComplete();
       const card = finalParts.find((part) => part.type === 'tool-frink-plan');
-      expect(card?.input?.planPath).toBe(`${sessionPlansDir}/plan-a.md`);
+      expect(card?.input?.planPath).toBe(`${sessionPlansDir}/plan-b.md`);
     });
 
-    it('treats a string output — the real subagent shape — exactly like today', async () => {
-      mockPlansDir({ 'plan.md': 2000 });
-      vi.spyOn(fs.promises, 'readFile').mockResolvedValue(validPlanContent);
-      queueTurn(exitPlanChunks('exit-plan-str-1', 'User has approved your plan.'));
+    it('builds the card from the submitted text even when its file cannot be read', async () => {
+      vi.spyOn(fs.promises, 'readFile').mockImplementation(async (path) => {
+        if (String(path).endsWith('plan-b.md'))
+          throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+        return validPlanContent;
+      });
+      queueTurn(
+        [
+          {
+            type: 'tool-input-available',
+            toolCallId: 'write-plan-a',
+            toolName: 'Write',
+            input: { file_path: `${sessionPlansDir}/plan-a.md`, content: validPlanContent },
+          },
+          { type: 'tool-output-available', toolCallId: 'write-plan-a', output: { success: true } },
+        ],
+        'finish',
+        {
+          id: 'exit-plan-prec-2',
+          hookInput: { plan: '# The plan', planFilePath: `${sessionPlansDir}/plan-b.md` },
+        },
+      );
 
       await handleRemoteExecute({ ...basePayload, message: 'carry on' });
       await new Promise((resolve) => setTimeout(resolve, 0));
 
       const finalParts = await finalPartsOfLastComplete();
       const card = finalParts.find((part) => part.type === 'tool-frink-plan');
-      expect(card?.input?.planPath).toBe(`${sessionPlansDir}/plan.md`);
+      expect(card?.input?.planPath).toBe(`${sessionPlansDir}/plan-b.md`);
+      expect(fs.promises.readFile).not.toHaveBeenCalledWith(`${sessionPlansDir}/plan-b.md`, 'utf8');
     });
 
-    it('both sites resolve the SDK path: a failed inline emit does not fall back to the scan', async () => {
+    it('both sites resolve the named file: a failed inline emit does not fall back to the scan', async () => {
       mockPlansDir({ 'newer-decoy.md': 9000 });
       vi.spyOn(fs.promises, 'readFile')
         .mockRejectedValueOnce(Object.assign(new Error('EBUSY'), { code: 'EBUSY' }))
         .mockResolvedValue(validPlanContent);
-      queueTurn(
-        exitPlanChunks('exit-plan-sdk-2', {
-          plan: '# The plan',
-          isAgent: false,
-          filePath: `${sessionPlansDir}/from-sdk.md`,
-        }),
-      );
+      queueTurn([], 'finish', {
+        id: 'exit-plan-sdk-2',
+        hookInput: { plan: '# The plan', planFilePath: `${sessionPlansDir}/from-sdk.md` },
+      });
 
       await handleRemoteExecute({ ...basePayload, message: 'carry on' });
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -1610,42 +1492,31 @@ Done.
     });
   });
 
-  describe('planPathFromExitPlanModeOutput', () => {
-    type ExitPlanModeTestOutput = { plan: string | null; isAgent: boolean; filePath?: string };
-    const outputChunk = (output: ExitPlanModeTestOutput | string) =>
-      // SAFETY: literal is exactly the tool-output-available member the helper's param requires.
-      ({ type: 'tool-output-available', toolCallId: 'exit-1', output }) as Extract<
-        UIMessageChunk,
-        { type: 'tool-output-available' }
-      >;
-    const valid = (filePath: string) => ({ plan: '# P', isAgent: false, filePath });
+  describe('submittedPlanFromExitPlanModeInput', () => {
+    const valid = (planFilePath: string) => ({ plan: '# P', planFilePath });
+    const sub = basePayload.subChatId;
 
     it('returns a contained session-plans path', () => {
       const fp = `${sessionPlansDir}/plan.md`;
-      expect(planPathFromExitPlanModeOutput(outputChunk(valid(fp)), basePayload.subChatId)).toBe(
-        fp,
-      );
+      expect(submittedPlanFromExitPlanModeInput(valid(fp), sub)).toEqual({ path: fp, text: '# P' });
     });
 
-    it('returns a machine-global ~/.claude/plans path — the payload carries the attribution the scan lacks', () => {
+    it('returns a machine-global ~/.claude/plans path — the input carries the attribution the scan lacks', () => {
       const fp = '/mock/home/.claude/plans/plan.md';
-      expect(planPathFromExitPlanModeOutput(outputChunk(valid(fp)), basePayload.subChatId)).toBe(
-        fp,
-      );
+      expect(submittedPlanFromExitPlanModeInput(valid(fp), sub)).toEqual({ path: fp, text: '# P' });
     });
 
-    it('rejects a foreign sub-chat path, a relative path, plan: null, and a non-object output', () => {
+    it('rejects a foreign sub-chat path, a relative path, an unread plan, and raw model input', () => {
       const foreign = '/mock/userData/claude-sessions/other-sub-chat-id/plans/plan.md';
-      const sub = basePayload.subChatId;
-      expect(planPathFromExitPlanModeOutput(outputChunk(valid(foreign)), sub)).toBeNull();
-      expect(planPathFromExitPlanModeOutput(outputChunk(valid('plan.md')), sub)).toBeNull();
+      expect(submittedPlanFromExitPlanModeInput(valid(foreign), sub)).toBeNull();
+      expect(submittedPlanFromExitPlanModeInput(valid('plan.md'), sub)).toBeNull();
       expect(
-        planPathFromExitPlanModeOutput(
-          outputChunk({ plan: null, isAgent: false, filePath: `${sessionPlansDir}/p.md` }),
+        submittedPlanFromExitPlanModeInput(
+          { plan: '', planFilePath: `${sessionPlansDir}/p.md` },
           sub,
         ),
       ).toBeNull();
-      expect(planPathFromExitPlanModeOutput(outputChunk('approved'), sub)).toBeNull();
+      expect(submittedPlanFromExitPlanModeInput({ allowedPrompts: [] }, sub)).toBeNull();
     });
   });
 

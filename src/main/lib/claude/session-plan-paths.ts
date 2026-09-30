@@ -3,7 +3,6 @@ import path from 'node:path';
 import { app } from 'electron';
 import { z } from 'zod';
 import { isPathWithinProject } from '../permissions';
-import type { UIMessageChunk } from './types';
 
 const CLAUDE_PLANS_DIR = ['.claude', 'plans'] as const;
 const SUBCHAT_ID_PATH_SAFE_RE = /^[a-z0-9-]{10,64}$/i;
@@ -50,28 +49,28 @@ export function isAllowedClaudePlanWritePath(resolvedAbsolute: string, subChatId
   return isPathWithinProject(resolvedAbsolute, getClaudeSessionPlansDir(subChatId));
 }
 
-/** The SDK's declared ExitPlanMode result (sdk-tools.d.ts ExitPlanModeOutput). `plan` is required
- * non-empty ON PURPOSE: plan === null means the CLI itself could not read the file at filePath, so
- * trusting filePath then would render nothing and strand a halted turn with no card and no prose —
- * the mtime-scan fallback must own that case. */
-const exitPlanModeOutputSchema = z.object({ filePath: z.string(), plan: z.string().min(1) });
+/** The CLI adds these to ExitPlanMode's input before hooks run. An empty `plan` means it could not
+ * read the file, so the path is not trusted and the plans-dir scan decides instead. */
+const exitPlanModeInputSchema = z.object({ planFilePath: z.string(), plan: z.string().min(1) });
 
 /**
- * The plan file the SDK itself reports for a completed ExitPlanMode call, else null. Preferred over
- * {@link resolveLatestSessionPlanFile} because it names the exact file this call saved — a stale
+ * The plan the CLI submits in an ExitPlanMode call's input (its file and exact text), else null. Preferred over
+ * {@link resolveLatestSessionPlanFile} because it names the exact file this call submits — a stale
  * sibling in the plans dir can never win a newest-mtime race onto the approval card.
  */
-export function planPathFromExitPlanModeOutput(
-  chunk: Extract<UIMessageChunk, { type: 'tool-output-available' }>,
+export function submittedPlanFromExitPlanModeInput(
+  input: unknown,
   subChatId: string,
-): string | null {
-  const parsed = exitPlanModeOutputSchema.safeParse(chunk.output);
+): { path: string; text: string } | null {
+  const parsed = exitPlanModeInputSchema.safeParse(input);
   if (!parsed.success) return null;
-  const { filePath } = parsed.data;
+  const { planFilePath, plan } = parsed.data;
   // Reject relative paths: isPathWithinProject resolves them against its base, so "plan.md" would
   // clear containment while the returned string reads from cwd.
-  if (!path.isAbsolute(filePath)) return null;
-  return isAllowedClaudePlanWritePath(filePath, subChatId) ? filePath : null;
+  if (!path.isAbsolute(planFilePath)) return null;
+  return isAllowedClaudePlanWritePath(planFilePath, subChatId)
+    ? { path: planFilePath, text: plan }
+    : null;
 }
 
 /**

@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
+vi.mock('electron', () => ({ app: { getPath: () => '/mock/home' } }));
 vi.mock('../../db', () => ({ getDatabase: vi.fn(() => ({})) }));
 vi.mock('../../db/repos/sub-chats', () => ({ updateSubChatMode: vi.fn(async () => {}) }));
 
 import { computeClaudeSessionKey } from '../execution/claude-session/session-key';
+import { createClaudeTurnContext } from '../claude-turn-context';
 import { PLAN_MODE_EXIT_REMINDER } from '../operator-reminders';
 import {
   adoptedTurnBeforePush,
@@ -11,10 +13,12 @@ import {
   armAutoReview,
   createModeFlip,
   denyPlanTransitionInWakeBurst,
+  PLAN_SUBMITTED_FOR_REVIEW,
   planAutoDenyFloor,
   reconcileAdoptedPermissionMode,
   resolveAutoReviewModes,
   resolvePermissionMode,
+  submitPlanForReview,
 } from './plan-auto-approve';
 
 /** A session whose `setPermissionMode` the test drives. */
@@ -283,9 +287,42 @@ describe('denyPlanTransitionInWakeBurst', () => {
 
   it('leaves every other burst tool and every foreground turn alone', () => {
     expect(denyPlanTransitionInWakeBurst('Bash', { isWakeBurst: true })).toBeNull();
-    // A foreground plan turn submits through the full ExitPlanMode machinery — never denied here.
+    // A foreground plan turn's ExitPlanMode is submitPlanForReview's call, not this one's.
     expect(denyPlanTransitionInWakeBurst('ExitPlanMode', { isWakeBurst: false })).toBeNull();
     expect(denyPlanTransitionInWakeBurst('EnterPlanMode', { isWakeBurst: false })).toBeNull();
+  });
+});
+
+describe('submitPlanForReview', () => {
+  const input = { plan: '# P', planFilePath: '/mock/home/.claude/plans/p.md' };
+  const planTurn = (flowPlanAutoApprove: boolean) => {
+    const turn = createClaudeTurnContext();
+    let halted = false;
+    turn.setPlanSubmissionHalt = () => {
+      halted = true;
+    };
+    turn.planTerminalsLocked = true;
+    turn.execution.flowPlanAutoApprove = flowPlanAutoApprove;
+    return { turn, halted: () => halted };
+  };
+  const subChatId = 'sub-chat-plan-submit';
+
+  it('submits a plan a human approves: records its file, halts, and denies with a stop', () => {
+    const { turn, halted } = planTurn(false);
+    expect(submitPlanForReview(input, turn, subChatId)).toBe(PLAN_SUBMITTED_FOR_REVIEW);
+    expect(turn.submittedPlan).toEqual({ path: input.planFilePath, text: input.plan });
+    expect(turn.planSubmitted).toBe(true);
+    expect(halted()).toBe(true);
+    // Still locked: the Stop hook must not chase a halted turn for a terminal signal.
+    expect(turn.planTerminalsLocked).toBe(true);
+  });
+
+  it('lets an auto-approve node run ExitPlanMode, recording only the file', () => {
+    const { turn, halted } = planTurn(true);
+    expect(submitPlanForReview(input, turn, subChatId)).toBeNull();
+    expect(turn.submittedPlan).toEqual({ path: input.planFilePath, text: input.plan });
+    expect(turn.planSubmitted).toBe(false);
+    expect(halted()).toBe(false);
   });
 });
 

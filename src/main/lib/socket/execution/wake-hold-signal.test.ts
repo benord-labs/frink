@@ -143,6 +143,11 @@ describe('turnEndMustDispose', () => {
     expect(alert).toHaveBeenCalledTimes(3);
   });
 
+  it('keeps a submitted plan with nothing pending, for its approval to claim', () => {
+    expect(endTurn(null, { planHalted: true })).toBe(false);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
   it("keeps the user's own stop out of Sentry", () => {
     expect(endTurn(pendingWork, { aborted: true })).toBe(true);
 
