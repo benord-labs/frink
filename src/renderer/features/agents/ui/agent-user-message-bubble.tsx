@@ -13,6 +13,7 @@ import { useChatMarkdownToggle } from '../../../hooks/use-chat-markdown-toggle';
 import { useOverflowDetection } from '../../../hooks/use-overflow-detection';
 import { cn } from '../../../lib/utils';
 import { parseSlashCommandDisplayParts } from '../commands/parse-slash-command-display';
+import { dataImageSrc } from '../lib/message-parts';
 import { agentsChatUserBubbleShellClass } from '../main/chat-composer-shell-classes';
 import { RenderFileMentions, TextMentionBlocks } from '../mentions/render-file-mentions';
 import { useSearchHighlight, useSearchQuery } from '../search';
@@ -34,6 +35,8 @@ type AgentUserMessageBubbleProps = {
     data?: {
       filename?: string;
       url?: string;
+      base64Data?: string;
+      mediaType?: string;
     };
   }>;
   /** If true, renders only images and text - no TextMentionBlocks (they're rendered by parent) */
@@ -259,29 +262,24 @@ export const AgentUserMessageBubble = memo(function AgentUserMessageBubble({
         {imageParts.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
             {(() => {
-              // Build allImages array for gallery navigation
-              const allImages = imageParts
-                .filter((img) => img.data?.url)
-                .map((img, idx) => ({
-                  id: `${messageId}-img-${idx}`,
-                  filename: img.data?.filename || 'image',
-                  url: img.data?.url || '',
-                }));
+              const images = imageParts.map((img, idx) => ({
+                id: `${messageId}-img-${idx}`,
+                filename: img.data?.filename || 'image',
+                url: dataImageSrc(img.data),
+              }));
+              // Gallery navigation only cycles through images that have a source
+              const allImages = images.filter((img) => img.url);
 
-              return imageParts.map((img, idx) => {
-                // Use URL as unique key if available, otherwise fallback to messageId + index
-                const imageKey = img.data?.url || `${messageId}-img-${idx}`;
-                return (
-                  <AgentImageItem
-                    key={imageKey}
-                    id={`${messageId}-img-${idx}`}
-                    filename={img.data?.filename || 'image'}
-                    url={img.data?.url || ''}
-                    allImages={allImages}
-                    imageIndex={idx}
-                  />
-                );
-              });
+              return images.map((img, idx) => (
+                <AgentImageItem
+                  key={img.id}
+                  id={img.id}
+                  filename={img.filename}
+                  url={img.url}
+                  allImages={allImages}
+                  imageIndex={idx}
+                />
+              ));
             })()}
           </div>
         )}
