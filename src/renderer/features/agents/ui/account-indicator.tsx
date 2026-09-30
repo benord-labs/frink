@@ -3,7 +3,7 @@ import { iconifyComponent } from '@/lib/utils/iconify-component';
 /* eslint-disable max-lines, max-lines-per-function */
 import { useAtomValue, useSetAtom } from 'jotai';
 import { Check, ChevronDown, Plus, RefreshCw, Settings, User } from 'lucide-react';
-import { memo, useCallback, useMemo } from 'react';
+import { Fragment, memo, useCallback } from 'react';
 import { toast } from 'sonner';
 import {
   DropdownMenu,
@@ -19,9 +19,9 @@ import {
   agentsSettingsDialogOpenAtom,
   pendingAccountAuthAtom,
 } from '../../../lib/atoms';
+import { useNewChatAccount } from '../../../lib/hooks/use-new-chat-account';
 import { trpc } from '../../../lib/trpc';
 import { cn } from '../../../lib/utils';
-import { notifyToolSwitch } from '../../../utils/tool-switch-message';
 import { pendingChatRetryAtomFamily } from '../atoms';
 import { RetryActionButton } from '../main/active-chat/components/RetryActionButton';
 import { HeaderBadge } from './header-badge';
@@ -48,47 +48,21 @@ function ProviderGlyph({
 type AccountType = 'claude-code' | 'codex';
 type PickableAccount = { id: string; label: string; type: AccountType; isAuthenticated: boolean };
 
-/** One "label · provider" account row. */
+/** One signed-in login under its provider's heading. */
 function AccountRow({
   row,
   isActive,
-  disabled,
   onPick,
 }: {
   row: PickableAccount;
   isActive: boolean;
-  disabled: boolean;
-  onPick: (row: PickableAccount) => void;
+  onPick: (accountId: string) => void;
 }) {
-  const needsAuth = !row.isAuthenticated;
   return (
-    <DropdownMenuItem
-      disabled={disabled || needsAuth}
-      title={needsAuth ? 'Sign in under Settings → AI providers' : undefined}
-      className={cn('gap-2', needsAuth && 'opacity-60 data-disabled:opacity-60')}
-      aria-label={
-        needsAuth
-          ? `${row.label}, ${PROVIDER_LABEL[row.type]}, not signed in on this machine`
-          : undefined
-      }
-      onSelect={() => {
-        if (!isActive) onPick(row);
-      }}
-    >
-      <ProviderGlyph
-        type={row.type}
-        className={cn(
-          'h-3.5 w-3.5 shrink-0',
-          needsAuth ? 'text-muted-foreground/70' : 'text-muted-foreground',
-        )}
-      />
-      <span className="min-w-0 flex-1 truncate text-xs">
-        <span
-          className={cn('font-medium', needsAuth ? 'text-muted-foreground' : 'text-foreground')}
-        >
-          {row.label}
-        </span>
-        <span className="text-muted-foreground"> · {PROVIDER_LABEL[row.type]}</span>
+    <DropdownMenuItem className="gap-2" onSelect={() => onPick(row.id)}>
+      <ProviderGlyph type={row.type} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
+        {row.label}
       </span>
       {isActive ? (
         <Check className="h-3.5 w-3.5 shrink-0 text-primary" aria-label="Active" />
@@ -160,15 +134,144 @@ export function ContinueAfterUsageLimit({
   );
 }
 
-/** The new-chat tooltip's scope line and hint: where the account applies and what a pick changes. */
-function scopeCopy(projectId: string | null, isProjectOverride?: boolean) {
-  if (!projectId) {
-    return { scope: 'Default account', hint: 'Choosing an account sets your workspace default.' };
+/** The new-chat tooltip's scope line: where the shown login comes from. */
+function newChatScope(isPicked: boolean, projectId?: string, isProjectOverride?: boolean) {
+  if (isPicked) return 'Chosen for this chat';
+  if (isProjectOverride) return 'Project-specific account';
+  return projectId ? 'Workspace default for this project' : 'Default account';
+}
+
+/** Signed-in logins, grouped by provider, for the new-chat picker. */
+function groupSignedIn(accounts: PickableAccount[]) {
+  const signedIn = accounts
+    .filter((a) => a.isAuthenticated)
+    .sort((a, b) => a.label.localeCompare(b.label));
+  return (['claude-code', 'codex'] as const)
+    .map((type) => ({ type, rows: signedIn.filter((a) => a.type === type) }))
+    .filter((group) => group.rows.length > 0);
+}
+
+type ShownAccount = {
+  label: string;
+  type?: AccountType | null;
+  isAuthenticated: boolean;
+  source?: string | null;
+  isProjectOverride?: boolean;
+};
+
+/** The badge's provider, tooltip scope and hint lines, and aria-label, for a chat or a new chat. */
+function badgeCopy(
+  account: ShownAccount,
+  chatId: string | undefined,
+  isPicked: boolean,
+  projectId?: string,
+) {
+  const providerLabel = PROVIDER_LABEL[account.type ?? 'claude-code'];
+  const menuLabel = `AI accounts menu, ${account.label}, ${providerLabel}`;
+  if (chatId) {
+    return {
+      providerLabel,
+      scope: `This chat always uses ${account.label}`,
+      hint: 'Start a new chat to use a different account.',
+      ariaLabel: menuLabel,
+    };
   }
-  const scope = isProjectOverride
-    ? 'Project-specific account'
-    : 'Workspace default for this project';
-  return { scope, hint: 'Choosing an account sets the AI account for this project.' };
+  return {
+    providerLabel,
+    scope: newChatScope(isPicked, projectId, account.isProjectOverride),
+    hint: 'Your choice applies to this new chat only.',
+    ariaLabel: account.isProjectOverride ? `${menuLabel}, project-specific default` : menuLabel,
+  };
+}
+
+/** The new-chat picker: signed-in logins under their provider headings. */
+function NewChatAccountRows({
+  accounts,
+  activeId,
+  onPick,
+}: {
+  accounts: PickableAccount[];
+  activeId: string;
+  onPick: (accountId: string) => void;
+}) {
+  const groups = groupSignedIn(accounts);
+  return (
+    <>
+      {groups.length === 0 ? (
+        <div className="px-2 py-1.5 text-xs text-muted-foreground">No signed-in accounts.</div>
+      ) : (
+        groups.map((group) => (
+          <Fragment key={group.type}>
+            <DropdownMenuLabel className="text-[11px] font-normal text-muted-foreground leading-snug">
+              {PROVIDER_LABEL[group.type]}
+            </DropdownMenuLabel>
+            {group.rows.map((a) => (
+              <AccountRow key={a.id} row={a} isActive={a.id === activeId} onPick={onPick} />
+            ))}
+          </Fragment>
+        ))
+      )}
+      <DropdownMenuSeparator />
+    </>
+  );
+}
+
+/** The badge tooltip: the login, its provider and scope, and why a signed-out login needs action. */
+function AccountTooltipBody({
+  account,
+  providerLabel,
+  scope,
+  hint,
+}: {
+  account: ShownAccount;
+  providerLabel: string;
+  scope: string;
+  hint: string;
+}) {
+  return (
+    <div className="text-xs max-w-64">
+      <div className="font-medium">{account.label}</div>
+      <div className="text-muted-foreground">{providerLabel}</div>
+      <div className="text-muted-foreground">{scope}</div>
+      {!account.isAuthenticated && (
+        <div className="text-warning mt-1">
+          {account.source === 'claude-passthrough'
+            ? 'Claude Code login expired on this machine. Click for the Reconnect option.'
+            : account.source === 'codex-passthrough'
+              ? 'OpenAI login expired on this machine. Click for the Reconnect option.'
+              : 'Not authenticated on this machine — open Settings to update the API key.'}
+        </div>
+      )}
+      <div className="text-muted-foreground mt-1.5 pt-1.5 border-t border-border/60">
+        Click for menu. {hint}
+      </div>
+    </div>
+  );
+}
+
+/** Re-runs the sign-in for an expired passthrough login; nothing for any other login. */
+function ReconnectItem({ account }: { account: ShownAccount }) {
+  const setPendingAccountAuth = useSetAtom(pendingAccountAuthAtom);
+  const isPassthrough =
+    account.source === 'claude-passthrough' || account.source === 'codex-passthrough';
+  if (!isPassthrough || account.isAuthenticated) return null;
+  const isCodex = account.source === 'codex-passthrough';
+  return (
+    <DropdownMenuItem
+      className="text-xs gap-2 text-foreground"
+      onSelect={() =>
+        setPendingAccountAuth({
+          mode: 'reauth',
+          accountLabel: account.label,
+          returnToSettings: false,
+          provider: isCodex ? 'codex' : undefined,
+        })
+      }
+    >
+      <RefreshCw className="h-3.5 w-3.5 shrink-0" aria-hidden />
+      <span>Reconnect {isCodex ? 'OpenAI' : 'Claude Code'} login</span>
+    </DropdownMenuItem>
+  );
 }
 
 type AccountIndicatorProps = {
@@ -180,99 +283,23 @@ type AccountIndicatorProps = {
 
 /**
  * Shows which AI account is active. A chat's badge is read-only: it always uses its own login.
- * Before a chat exists, rows set the project's account, else the workspace default.
+ * Before a chat exists, a row picks the login for that new chat only.
  */
 export const AccountIndicator = memo(function AccountIndicator({
   chatId,
   projectId,
 }: AccountIndicatorProps) {
-  const setPendingAccountAuth = useSetAtom(pendingAccountAuthAtom);
-  const utils = trpc.useUtils();
   const handleOpenAccountsSettings = useOpenAccountsSettings();
-
-  const handleReauthPassthrough = useCallback(
-    (label: string, source: string | null | undefined) => {
-      setPendingAccountAuth({
-        mode: 'reauth',
-        accountLabel: label,
-        returnToSettings: false,
-        provider: source === 'codex-passthrough' ? 'codex' : undefined,
-      });
-    },
-    [setPendingAccountAuth],
+  const chatAccount = trpc.claudeCode.getResolvedAccount.useQuery(
+    { chatId },
+    { staleTime: 30000, enabled: Boolean(chatId) },
   );
-
-  const queryInput = {
-    ...(chatId ? { chatId } : {}),
-    ...(projectId ? { projectId } : {}),
-  };
-  const { data: account } = trpc.claudeCode.getResolvedAccount.useQuery(queryInput, {
-    staleTime: 30000,
-  });
-
-  const { data: accounts = [] } = trpc.claudeCode.listAccounts.useQuery(undefined, {
-    staleTime: 30000,
-  });
-
-  // The success toast is fired per-call in handlePickAccount (switch-aware); the
-  // base onSuccess only invalidates. react-query runs BOTH, so keeping a toast
-  // here too would double-fire.
-  const setDefaultMutation = trpc.claudeCode.setDefault.useMutation({
-    onSuccess: () => {
-      void utils.claudeCode.listAccounts.invalidate();
-      void utils.claudeCode.getResolvedAccount.invalidate();
-    },
-    onError: (err) => toast.error(err.message),
-  });
-
-  const setProjectAccountMutation = trpc.claudeCode.setProjectAccount.useMutation({
-    onSuccess: (_data, variables) => {
-      void utils.claudeCode.getResolvedAccount.invalidate();
-      void utils.claudeCode.getProjectAccount.invalidate({ projectId: variables.projectId });
-    },
-    onError: (err) => toast.error(err.message),
-  });
-
-  const isAccountMutationPending =
-    setDefaultMutation.isPending || setProjectAccountMutation.isPending;
-
-  const handlePickAccount = useCallback(
-    (row: PickableAccount, scopedProjectId: string | null) => {
-      const oldType = account?.type ?? 'claude-code';
-      if (scopedProjectId) {
-        setProjectAccountMutation.mutate(
-          { projectId: scopedProjectId, accountId: row.id },
-          { onSuccess: () => notifyToolSwitch(oldType, row.type, 'Account set') },
-        );
-      } else {
-        setDefaultMutation.mutate(
-          { id: row.id },
-          { onSuccess: () => notifyToolSwitch(oldType, row.type, 'Default account updated') },
-        );
-      }
-    },
-    [account?.type, setDefaultMutation, setProjectAccountMutation],
-  );
-
-  const sortedAccounts = useMemo(
-    () => [...accounts].sort((a, b) => a.label.localeCompare(b.label)),
-    [accounts],
-  );
+  const draft = useNewChatAccount(projectId, undefined, !chatId);
+  const account = chatId ? chatAccount.data : draft.account;
 
   if (!account) return null;
 
-  const providerLabel = PROVIDER_LABEL[account.type ?? 'claude-code'];
-  const scopedProjectId = account.projectId ?? null;
-  const copy = chatId
-    ? {
-        scope: `This chat always uses ${account.label}`,
-        hint: 'Start a new chat to use a different account.',
-      }
-    : scopeCopy(scopedProjectId, account.isProjectOverride);
-  const ariaLabel =
-    account.isProjectOverride && !chatId
-      ? `AI accounts menu, ${account.label}, ${providerLabel}, project-specific default`
-      : `AI accounts menu, ${account.label}, ${providerLabel}`;
+  const copy = badgeCopy(account, chatId, Boolean(draft.pickedAccountId), projectId);
 
   return (
     <DropdownMenu>
@@ -281,7 +308,7 @@ export const AccountIndicator = memo(function AccountIndicator({
           <DropdownMenuTrigger asChild>
             <HeaderBadge
               variant="menuTrigger"
-              aria-label={ariaLabel}
+              aria-label={copy.ariaLabel}
               // Styled like the pane's icon buttons beside it (24px ghost, foreground icon); as a
               // glyph it is the same 24px square.
               className={cn(
@@ -299,7 +326,7 @@ export const AccountIndicator = memo(function AccountIndicator({
                 {account.label}
                 <span className="font-normal text-muted-foreground @max-[26rem]/pane-header:hidden">
                   {' '}
-                  - {providerLabel}
+                  - {copy.providerLabel}
                 </span>
               </span>
               <ChevronDown
@@ -310,23 +337,12 @@ export const AccountIndicator = memo(function AccountIndicator({
           </DropdownMenuTrigger>
         </TooltipTrigger>
         <TooltipContent side="bottom">
-          <div className="text-xs max-w-64">
-            <div className="font-medium">{account.label}</div>
-            <div className="text-muted-foreground">{providerLabel}</div>
-            <div className="text-muted-foreground">{copy.scope}</div>
-            {!account.isAuthenticated && (
-              <div className="text-warning mt-1">
-                {account.source === 'claude-passthrough'
-                  ? 'Claude Code login expired on this machine. Click for the Reconnect option.'
-                  : account.source === 'codex-passthrough'
-                    ? 'OpenAI login expired on this machine. Click for the Reconnect option.'
-                    : 'Not authenticated on this machine — open Settings to update the API key.'}
-              </div>
-            )}
-            <div className="text-muted-foreground mt-1.5 pt-1.5 border-t border-border/60">
-              Click for menu. {copy.hint}
-            </div>
-          </div>
+          <AccountTooltipBody
+            account={account}
+            providerLabel={copy.providerLabel}
+            scope={copy.scope}
+            hint={copy.hint}
+          />
         </TooltipContent>
       </Tooltip>
       <DropdownMenuContent
@@ -335,37 +351,14 @@ export const AccountIndicator = memo(function AccountIndicator({
         sideOffset={6}
         className="w-64 max-h-72 overflow-y-auto"
       >
-        {chatId ? null : sortedAccounts.length === 0 ? (
-          <div className="px-2 py-1.5 text-xs text-muted-foreground">No accounts configured.</div>
-        ) : (
-          <>
-            <DropdownMenuLabel className="text-[11px] font-normal text-muted-foreground leading-snug">
-              {copy.hint}
-            </DropdownMenuLabel>
-            {sortedAccounts.map((a) => (
-              <AccountRow
-                key={a.id}
-                row={a}
-                isActive={a.id === account.id}
-                disabled={isAccountMutationPending}
-                onPick={(row) => handlePickAccount(row, scopedProjectId)}
-              />
-            ))}
-          </>
+        {chatId ? null : (
+          <NewChatAccountRows
+            accounts={draft.accounts}
+            activeId={account.id}
+            onPick={draft.pickAccount}
+          />
         )}
-        {!chatId && <DropdownMenuSeparator />}
-        {(account.source === 'claude-passthrough' || account.source === 'codex-passthrough') &&
-          !account.isAuthenticated && (
-            <DropdownMenuItem
-              className="text-xs gap-2 text-foreground"
-              onSelect={() => handleReauthPassthrough(account.label, account.source)}
-            >
-              <RefreshCw className="h-3.5 w-3.5 shrink-0" aria-hidden />
-              <span>
-                Reconnect {account.source === 'codex-passthrough' ? 'OpenAI' : 'Claude Code'} login
-              </span>
-            </DropdownMenuItem>
-          )}
+        <ReconnectItem account={account} />
         <DropdownMenuItem className="text-xs gap-2" onSelect={handleOpenAccountsSettings}>
           <Settings className="h-3.5 w-3.5 shrink-0" aria-hidden />
           <span>Manage accounts…</span>

@@ -34,13 +34,13 @@ import {
   hiddenModelsAtom,
   pendingAccountAuthAtom,
 } from '../../../lib/atoms';
+import { useNewChatAccount } from '../../../lib/hooks/use-new-chat-account';
 import { appStore } from '../../../lib/jotai-store';
 import { trpc } from '../../../lib/trpc';
 import { runChatShortcutAction } from '../../../lib/work-queue/chat-owns-keyboard-shortcuts';
 import { terminalSidebarOpenAtomFamily } from '../../terminal/atoms';
 import { TerminalBottomPanel } from '../../terminal/terminal-bottom-panel';
 import {
-  agentsDebugModeAtom,
   agentsSidebarOpenAtom,
   agentsUnseenChangesAtom,
   NEW_CHAT_PANE,
@@ -191,7 +191,6 @@ export function NewChatForm({
   useEffect(() => {
     setSelectedWorktreePath(null);
   }, [selectedProject?.id]);
-  const _debugMode = useAtomValue(agentsDebugModeAtom);
   const setSettingsDialogOpen = useSetAtom(agentsSettingsDialogOpenAtom);
   const setSettingsActiveTab = useSetAtom(agentsSettingsDialogActiveTabAtom);
 
@@ -227,11 +226,8 @@ export function NewChatForm({
     }
   };
 
-  const { data: resolvedAccount, isSuccess: accountResolved } =
-    trpc.claudeCode.getResolvedAccount.useQuery(
-      { projectId: validatedProject?.id },
-      { staleTime: 30000, refetchInterval: accountGateRefetchInterval },
-    );
+  const newChatAccount = useNewChatAccount(validatedProject?.id, accountGateRefetchInterval);
+  const { account: resolvedAccount, accountResolved, pickedAccountId } = newChatAccount;
   const isCodexAccount = resolvedAccount?.type === 'codex';
 
   const hiddenModelFamilies = useAtomValue(hiddenModelsAtom);
@@ -361,6 +357,7 @@ export function NewChatForm({
       clearPastedTexts();
       taskAttachment.clearTask();
       clearCurrentDraft();
+      newChatAccount.clearPick();
       appStore.set(newChatWorktreePathAtom, null);
       appStore.set(pendingNewChatTextAtom, null);
       appStore.set(codeSelectionContextAtomFamily(NEW_CHAT_PANE), null);
@@ -550,6 +547,7 @@ export function NewChatForm({
       existingWorktreePath:
         workMode !== 'worktree' && selectedWorktreePath ? selectedWorktreePath : undefined,
       mode: chatMode,
+      accountId: pickedAccountId,
     });
     // Editor, images, pasted texts, and attached task are cleared in onSuccess callback
   }, [
@@ -572,6 +570,7 @@ export function NewChatForm({
     utils,
     accountResolved,
     resolvedAccount,
+    pickedAccountId,
     setPendingAccountAuth,
   ]);
 

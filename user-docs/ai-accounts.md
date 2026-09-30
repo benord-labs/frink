@@ -17,7 +17,7 @@ Every AI account belongs to this computer — Claude and OpenAI sign-ins and API
 
 If you'd rather keep credentials inside Frink, paste an Anthropic API key (`sk-ant-api…`) under Settings → AI providers → **Add an account** → **Add a Claude API key**. The name is optional (it defaults to "Claude API key", then "Claude API key 2" and so on). The key is encrypted with `safeStorage` (macOS Keychain, libsecret on Linux) and stays on this machine. Paste it again on another machine to use it there.
 
-You can have **as many API-key accounts as you want** — useful for separating Work vs Personal vs different orgs. Add a new one any time and pick which one a project uses via the account picker. The account marked **Used for new chats** is the default; change it from another account's ⋯ menu.
+You can have **as many API-key accounts as you want** — useful for separating Work vs Personal vs different orgs. Add a new one any time and pick which one a project uses in that project's settings (the account menu on a new chat only changes the chat you're starting). The account marked **Used for new chats** is the default; change it from another account's ⋯ menu.
 
 ## How your sign-in behaves
 

@@ -17,6 +17,7 @@ const updateChatLocalMock = vi.fn();
 const projectsSelectMock = vi.fn();
 const autoNameSubChatMock = vi.fn();
 const trackWorkspaceCreatedMock = vi.fn();
+const getAiAccountTypeMock = vi.fn();
 
 vi.mock('../../../db', () => ({
   getDatabase: () => ({
@@ -33,6 +34,9 @@ vi.mock('../../../db/repos/chats', () => ({
   createChat: createChatLocalMock,
   findChatByWorktree: findChatByWorktreeLocalMock,
   updateChat: updateChatLocalMock,
+}));
+vi.mock('../../../db/repos/project-ai-accounts', () => ({
+  getAiAccountType: getAiAccountTypeMock,
 }));
 vi.mock('../../../db/repos/sub-chats', () => ({
   createSubChat: createSubChatLocalMock,
@@ -184,5 +188,33 @@ describe('createRouter (local-first)', () => {
     await expect(caller.create({ ...baseInput, mode: 'agent' })).rejects.toMatchObject({
       code: 'INTERNAL_SERVER_ERROR',
     });
+  });
+
+  it('stamps the login picked in the new-chat composer on the chat', async () => {
+    getAiAccountTypeMock.mockResolvedValue('codex');
+    createChatLocalMock.mockResolvedValue(makeLocalChat({ id: 'c1', name: 'Test' }));
+    createSubChatLocalMock.mockResolvedValue(makeLocalSubChat({ id: 's1', chatId: 'c1' }));
+
+    const { createRouter } = await import('./create');
+    const caller = createRouter.createCaller({ getWindow: () => null });
+    await caller.create({ ...baseInput, mode: 'agent', accountId: 'acct-codex' });
+
+    expect(getAiAccountTypeMock).toHaveBeenCalledWith(expect.anything(), 'acct-codex');
+    expect(createChatLocalMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ accountId: 'acct-codex' }),
+    );
+  });
+
+  it('rejects an unknown or non-AI account before creating the chat', async () => {
+    getAiAccountTypeMock.mockResolvedValue(null);
+
+    const { createRouter } = await import('./create');
+    const caller = createRouter.createCaller({ getWindow: () => null });
+
+    await expect(
+      caller.create({ ...baseInput, mode: 'agent', accountId: 'github-pat' }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(createChatLocalMock).not.toHaveBeenCalled();
   });
 });
