@@ -5,6 +5,7 @@ import {
   codexTierCredits,
 } from '../../../../../../shared/lib/codex-cli-models';
 import type { CodexSpeed } from '../../../../../../shared/types/execution';
+import type { FlowNode } from '../../../../../../shared/lib/validate-flow-graph';
 import type { FlowSettings } from '../../../../../../shared/types/flow';
 import { Label } from '../../../../../components/ui/label';
 import { Switch } from '../../../../../components/ui/switch';
@@ -26,22 +27,38 @@ export function fastModeDescription(defaultModelId: string | undefined): string 
 /** Copy for the Flow-level Ultrafast switch; the cost lands on every step, with nobody watching. */
 export function ultrafastDescription(credits: number | null): string {
   if (credits === null)
-    return 'The default model has no Ultrafast tier, so steps run at standard speed.';
+    return 'No step uses a model with Ultrafast, so steps run at standard speed.';
   return `Runs every Agent step up to ${CODEX_ULTRAFAST_SPEED_MULTIPLIER}× faster for ${credits}× ChatGPT credits per turn, even when nobody is watching. Pro 500 and eligible Enterprise/Edu plans only.`;
 }
 
-/** Flow-wide Codex speed: Fast, plus Ultrafast where the default model offers it (or it is already
+/** Ultrafast's credit multiplier if the flow default or any step's own model offers it, else null.
+ *  A step without a model runs on the default, so the two together cover every step. */
+export function flowUltrafastCredits(
+  defaultModelId: string | undefined,
+  nodes: readonly FlowNode[],
+): number | null {
+  const stepModels = nodes.map((n) => n.config?.model).filter((m) => typeof m === 'string');
+  for (const id of [defaultModelId, ...stepModels]) {
+    const credits = codexTierCredits(id, 'ultrafast');
+    if (credits !== null) return credits;
+  }
+  return null;
+}
+
+/** Flow-wide Codex speed: Fast, plus Ultrafast where a step's model offers it (or it is already
  *  on, so it can be turned off). Turning one on replaces the other. */
 export function FlowSpeedSettings({
   settings,
+  nodes,
   onSettingsChange,
 }: {
   settings: FlowSettings | undefined;
+  nodes: readonly FlowNode[];
   onSettingsChange: (settings: FlowSettings) => void;
 }): ReactElement {
   const modelId = settings?.defaultModel?.trim() || undefined;
   const speed = settings?.codexSpeed ?? 'standard';
-  const ultrafastCredits = codexTierCredits(modelId, 'ultrafast');
+  const ultrafastCredits = flowUltrafastCredits(modelId, nodes);
   const toggle = (option: CodexSpeed) => (on: boolean) =>
     onSettingsChange(patch(settings, { codexSpeed: on ? option : undefined }));
   return (
