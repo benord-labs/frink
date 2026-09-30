@@ -21,7 +21,6 @@ import {
   removeEdgeFromGraph,
   removeNodeFromGraph,
   resizeNodeInGraph,
-  splitEdgeInGraph,
   updateNodePositionInGraph,
   updateNodePositionsInGraph,
 } from '../../../../shared/lib/flow-graph-mutations';
@@ -36,7 +35,6 @@ import {
   type FlowEdge,
   type FlowGraph,
   flowGraphsEqual,
-  MAX_FLOW_GRAPH_NODES,
   normalizeFlowGraph,
   validateGraph,
 } from '../../../../shared/lib/validate-flow-graph';
@@ -1422,6 +1420,7 @@ export function FlowEditor({ flowId, onBack }: FlowEditorProps): ReactElement {
                   isEnabled={data?.is_enabled ?? true}
                   agentInvocable={data?.agent_invocable ?? false}
                   settings={graph.settings}
+                  nodes={graph.nodes}
                   onSettingsChange={updateFlowSettings}
                   onAfterStash={() => {
                     if (!validation.valid) {

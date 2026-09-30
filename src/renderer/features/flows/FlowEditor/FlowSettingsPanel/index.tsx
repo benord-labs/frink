@@ -7,6 +7,7 @@ import { Button, Textarea } from '@benord-labs/frink-primitives';
 import { FileText, X } from 'lucide-react';
 import { type ReactElement, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
+import type { FlowNode } from '../../../../../shared/lib/validate-flow-graph';
 import type { FlowSettings } from '../../../../../shared/types/flow';
 import { Label } from '../../../../components/ui/label';
 import { Switch } from '../../../../components/ui/switch';
@@ -30,6 +31,8 @@ type Props = {
   /** When true, agents may start runs via MCP (frink_flows_run). */
   agentInvocable: boolean;
   settings: FlowSettings | undefined;
+  /** The graph's steps; Ultrafast is offered when any of their models supports it. */
+  nodes: readonly FlowNode[];
   onSettingsChange: (settings: FlowSettings) => void;
   /** Forwarded to BriefingStashControls to trigger a flow save after stashing. */
   onAfterStash?: () => void;
@@ -54,6 +57,7 @@ export function FlowSettingsPanel({
   isEnabled,
   agentInvocable,
   settings,
+  nodes,
   onSettingsChange,
   onAfterStash,
   onClose,
@@ -278,7 +282,11 @@ export function FlowSettingsPanel({
             />
           </div>
 
-          <FlowSpeedSettings settings={settings} onSettingsChange={onSettingsChange} />
+          <FlowSpeedSettings
+            settings={settings}
+            nodes={nodes}
+            onSettingsChange={onSettingsChange}
+          />
         </div>
 
         {/* Project */}
