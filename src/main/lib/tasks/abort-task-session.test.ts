@@ -1,17 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Task } from '../db/schema';
 
-const {
-  abortActiveExecutionsForSubChatsMock,
-  cancelFlowRunMock,
-  logWarnMock,
-  getDispatchedSubChatForTaskMock,
-} = vi.hoisted(() => ({
-  getDispatchedSubChatForTaskMock: vi.fn((): string | null => null),
-  abortActiveExecutionsForSubChatsMock: vi.fn(),
-  cancelFlowRunMock: vi.fn(),
-  logWarnMock: vi.fn(),
-}));
+const { abortActiveExecutionsForSubChatsMock, logWarnMock, getDispatchedSubChatForTaskMock } =
+  vi.hoisted(() => ({
+    getDispatchedSubChatForTaskMock: vi.fn((): string | null => null),
+    abortActiveExecutionsForSubChatsMock: vi.fn(),
+    logWarnMock: vi.fn(),
+  }));
 
 vi.mock('electron-log', () => ({
   default: { info: vi.fn(), warn: logWarnMock, error: vi.fn(), debug: vi.fn() },
@@ -19,7 +14,6 @@ vi.mock('electron-log', () => ({
 vi.mock('../socket/executor', () => ({
   abortActiveExecutionsForSubChats: abortActiveExecutionsForSubChatsMock,
 }));
-vi.mock('../flows/engine', () => ({ cancelFlowRun: cancelFlowRunMock }));
 vi.mock('../task-executor/dispatch-registry', () => ({
   getDispatchedSubChatForTask: getDispatchedSubChatForTaskMock,
 }));
@@ -51,7 +45,6 @@ function task(overrides: Partial<Task> = {}): Task {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  cancelFlowRunMock.mockResolvedValue({ status: 'cancelled' });
   getDispatchedSubChatForTaskMock.mockReturnValue(null);
 });
 
@@ -119,64 +112,31 @@ describe('resolveTaskSubChatIds', () => {
 });
 
 describe('stopTaskSession', () => {
-  it('aborts the running task session', async () => {
-    await stopTaskSession(task({ result: { subChatId: 'sub-1' } }));
+  it('aborts the running task session', () => {
+    stopTaskSession(task({ result: { subChatId: 'sub-1' } }));
     expect(abortActiveExecutionsForSubChatsMock).toHaveBeenCalledWith(['sub-1'], 'task cancelled');
-    expect(cancelFlowRunMock).not.toHaveBeenCalled();
   });
 
   it.each(['pending', 'plan_ready', 'needs_attention', 'done', 'completed', 'failed', 'cancelled'])(
     'does nothing when the replaced row was %s (user may be driving the sub-chat)',
-    async (status) => {
-      await stopTaskSession(task({ status, result: { subChatId: 'sub-1' }, flowRunId: 'run-1' }));
+    (status) => {
+      stopTaskSession(task({ status, result: { subChatId: 'sub-1' }, flowRunId: 'run-1' }));
       expect(abortActiveExecutionsForSubChatsMock).not.toHaveBeenCalled();
-      expect(cancelFlowRunMock).not.toHaveBeenCalled();
     },
   );
 
-  it('skips the executor abort when no sub-chat was stamped', async () => {
-    await stopTaskSession(task());
+  it('skips the executor abort when no sub-chat was stamped', () => {
+    stopTaskSession(task());
     expect(abortActiveExecutionsForSubChatsMock).not.toHaveBeenCalled();
   });
 
-  it('flow-linked task: aborts the sub-chat and then cancels the flow run', async () => {
-    const order: string[] = [];
-    abortActiveExecutionsForSubChatsMock.mockImplementation(() => order.push('abort'));
-    cancelFlowRunMock.mockImplementation(async () => {
-      order.push('cancelRun');
-      return { status: 'cancelled' };
-    });
-    await stopTaskSession(
-      task({
-        flowRunId: 'run-1',
-        triggerContext: { subChatId: 'sub-flow' } as Task['triggerContext'],
-      }),
-    );
-    expect(order).toEqual(['abort', 'cancelRun']);
-    expect(cancelFlowRunMock).toHaveBeenCalledWith('run-1');
-  });
-
-  it('flow-linked task with no stamped sub-chat still cancels the run', async () => {
-    await stopTaskSession(task({ flowRunId: 'run-1' }));
-    expect(cancelFlowRunMock).toHaveBeenCalledWith('run-1');
-  });
-
-  it('swallows and logs an executor abort failure, still cancelling the flow run', async () => {
+  it('swallows and logs an executor abort failure', () => {
     abortActiveExecutionsForSubChatsMock.mockImplementation(() => {
       throw new Error('boom');
     });
-    await expect(
+    expect(() =>
       stopTaskSession(task({ flowRunId: 'run-1', result: { subChatId: 'sub-1' } })),
-    ).resolves.toBeUndefined();
-    expect(cancelFlowRunMock).toHaveBeenCalledWith('run-1');
-    expect(logWarnMock).toHaveBeenCalled();
-  });
-
-  it('swallows and logs a flow cancel rejection', async () => {
-    cancelFlowRunMock.mockRejectedValue(new Error('db locked'));
-    await expect(
-      stopTaskSession(task({ flowRunId: 'run-1', result: { subChatId: 'sub-1' } })),
-    ).resolves.toBeUndefined();
+    ).not.toThrow();
     expect(logWarnMock).toHaveBeenCalled();
   });
 });

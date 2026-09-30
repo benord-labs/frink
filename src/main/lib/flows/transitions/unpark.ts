@@ -44,6 +44,10 @@ export function restartMarkedNode(db: Db, flowRunId: string): NodeRun | undefine
   return output?.error?.message === RESTART_INTERRUPTION_REASON ? last : undefined;
 }
 
+/** Cancelled by a restart, not by the user: the run is `cancelled` and still carries the marker. */
+export const isRestartInterrupted = (db: Db, flowRunId: string): boolean =>
+  readRun(db, flowRunId)?.status === 'cancelled' && restartMarkedNode(db, flowRunId) !== undefined;
+
 /** A fan-out lane stays paused while a sibling lane of the same iteration is still parked. */
 function hasParkedFanOutSibling(db: Db, node: NodeRun): boolean {
   if (node.parentFanOutNodeRunId === null || node.laneIndex === null) return false;

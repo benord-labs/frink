@@ -22,11 +22,13 @@ import { getSubChatById } from '../db/repos/sub-chats';
 import { parkFlowTaskForSubChat } from '../db/repos';
 import { getLatestFlowTaskForSubChat } from '../db/repos/tasks';
 import { withFlowResourceCleanup } from './admission/activity';
+import { TerminalResumeAdmissionError } from './admission/terminal-resume/resume-store';
 import { advanceFlowRun, dispatchAndAdvance, loadRunContext } from './advance';
 import { findNodeById } from './graph';
 import { lastUnfinishedNodeRun } from './rerun/resume-point';
 import { commitUnpark } from './rerun/unpark-node-run';
 import {
+  isRestartInterrupted,
   type ReopenPausedRunOutcome,
   reopenPausedRunCommand,
   restartMarkedNode,
@@ -35,14 +37,15 @@ import {
 
 export type ResumeAction = 'approve' | 'retry' | 'skip';
 
+const USER_CANCELLED_RUN =
+  'Run was cancelled by the user, not interrupted — start a fresh run instead.';
+
 /**
  * True when a flow run is `cancelled` BUT recoverable — interrupted by a restart/reload (carries the
  * marker), not deliberately cancelled by the user. Drives the in-chat banner's "Resume flow" CTA.
  */
 export async function isRunRestartInterrupted(flowRunId: string): Promise<boolean> {
-  const db = getDatabase();
-  const run = await getFlowRun(db, flowRunId);
-  return run?.status === 'cancelled' && restartMarkedNode(db, flowRunId) !== undefined;
+  return isRestartInterrupted(getDatabase(), flowRunId);
 }
 
 /** `queued`: a resume ticket already owns the run's continuation and is waiting for a slot. */
@@ -279,11 +282,24 @@ export async function rerunFlowRunFromInterruption(flowRunId: string): Promise<v
   const interrupted = restartMarkedNode(db, flowRunId);
   if (!interrupted) {
     const message = lastUnfinishedNodeRun(await listNodeRunsForFlowRun(db, flowRunId))
-      ? 'Run was cancelled by the user, not interrupted — start a fresh run instead.'
+      ? USER_CANCELLED_RUN
       : 'No interrupted node to re-run.';
     throw new TRPCError({ code: 'PRECONDITION_FAILED', message });
   }
 
   const { requestTerminalFlowResume } = await import('./admission/runtime');
-  await requestTerminalFlowResume({ flowRunId, nodeRunId: interrupted.id });
+  // Re-read in the enqueue transaction, so a Work Queue Cancel that clears the marker first wins.
+  const admit = (tx: typeof db) => isRestartInterrupted(tx, flowRunId);
+  await requestTerminalFlowResume({ flowRunId, nodeRunId: interrupted.id, admit }).catch(
+    (error) => {
+      // A Cancel that cleared the marker, before the enqueue or while it drained, is the user's call.
+      if (!(error instanceof TerminalResumeAdmissionError) || isRestartInterrupted(db, flowRunId))
+        throw error;
+      throw new TRPCError({
+        code: 'PRECONDITION_FAILED',
+        message: USER_CANCELLED_RUN,
+        cause: error,
+      });
+    },
+  );
 }

@@ -16,18 +16,21 @@ vi.mock('../../../db/repos/tasks', () => ({
 vi.mock('../activity', () => ({ captureFlowAdmissionException }));
 
 import {
+  dropStagedContinuation,
   fireStagedContinuationResume,
+  type PendingContinuationResume,
   settleWithStagedContinuation,
   stageContinuationResume,
 } from './continuation';
 import { ResumeAdmitDeclinedError, TerminalResumeAdmissionError } from './resume-store';
 
 const PENDING = { flowRunId: 'flow-run', nodeRunId: 'node-run-1' };
+const db = {} as Parameters<NonNullable<PendingContinuationResume['admit']>>[0];
 const FAST_WATCH = { intervalMs: 1, attempts: 3 };
 
 const makeOps = () => ({
   requestTerminalFlowResume: vi.fn<
-    (input: { flowRunId: string; nodeRunId: string; continuation: true }) => Promise<object>
+    (input: PendingContinuationResume & { continuation: true }) => Promise<object>
   >(async () => ({})),
   hasLiveFlowAdmission: vi.fn<(flowRunId: string) => Promise<boolean>>(async () => false),
   getLiveAdmissionState: vi.fn<(flowRunId: string) => Promise<string | null>>(async () => null),
@@ -55,10 +58,9 @@ describe('staged continuation resume', () => {
     await fireStagedContinuationResume(PENDING.flowRunId, ops);
     await fireStagedContinuationResume(PENDING.flowRunId, ops);
     expect(ops.requestTerminalFlowResume).toHaveBeenCalledTimes(1);
-    expect(ops.requestTerminalFlowResume).toHaveBeenCalledWith({
-      ...PENDING,
-      continuation: true,
-    });
+    expect(ops.requestTerminalFlowResume).toHaveBeenCalledWith(
+      expect.objectContaining({ ...PENDING, continuation: true }),
+    );
   });
 
   it('an admit decline from a guarded entry is logged, never surfaced as a corrective', async () => {
@@ -75,13 +77,23 @@ describe('staged continuation resume', () => {
 
   it('a later stage for the same run keeps the earlier admit guard (typed reply after boot carry-on)', async () => {
     const ops = makeOps();
-    const admit = () => false;
+    const admit = vi.fn(() => false);
     stageContinuationResume({ ...PENDING, admit }, vi.fn(), FAST_WATCH);
     stageContinuationResume(PENDING, vi.fn(), FAST_WATCH);
     await fireStagedContinuationResume(PENDING.flowRunId, ops);
-    expect(ops.requestTerminalFlowResume).toHaveBeenCalledWith(
-      expect.objectContaining({ admit, continuation: true }),
-    );
+    expect(ops.requestTerminalFlowResume.mock.calls[0][0].admit?.(db)).toBe(false);
+    expect(admit).toHaveBeenCalledWith(db);
+  });
+
+  it('declines the enqueue of an entry a Cancel dropped while the fire held it', async () => {
+    const ops = makeOps();
+    stageContinuationResume(PENDING, vi.fn(), FAST_WATCH);
+    ops.getLiveAdmissionState.mockImplementationOnce(async () => {
+      dropStagedContinuation(PENDING.flowRunId);
+      return null;
+    });
+    await fireStagedContinuationResume(PENDING.flowRunId, ops);
+    expect(ops.requestTerminalFlowResume.mock.calls[0][0].admit?.(db)).toBe(false);
   });
 
   describe('settleWithStagedContinuation', () => {
@@ -153,7 +165,9 @@ describe('staged continuation resume', () => {
     expect(emit).not.toHaveBeenCalled();
     // The next final release re-enters with the run actually free — the entry survived.
     await fireStagedContinuationResume(PENDING.flowRunId, ops);
-    expect(ops.requestTerminalFlowResume).toHaveBeenCalledWith({ ...PENDING, continuation: true });
+    expect(ops.requestTerminalFlowResume).toHaveBeenCalledWith(
+      expect.objectContaining({ ...PENDING, continuation: true }),
+    );
   });
 
   it("a queued/claimed admission for the run supersedes the staged continuation silently — that admission's own claim delivers the reply", async () => {
