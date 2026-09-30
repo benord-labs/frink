@@ -1,3 +1,4 @@
+import { type CodexSpeed, isCodexSpeed } from './execution';
 import { TRIGGER_START_MODES, type TriggerStartMode } from './trigger-context';
 
 export type TaskChatImageAttachment = {
@@ -27,12 +28,9 @@ export type TaskChatReadyData = {
    * non-provider task paths; omitted legacy Flow graphs are interpreted as on by the renderer.
    */
   autoReviewTools?: boolean;
-  /**
-   * Flow-level Codex Fast snapshot for this dispatch. Omitted for manual and non-flow paths; an
-   * omitted value leaves the chat's own Fast state alone. Unlike `autoReviewTools` there is no
-   * legacy-on reading — absent never means on, because the tier bills a credit multiplier.
-   */
-  codexFastMode?: boolean;
+  /** Flow-level Codex speed for this dispatch. Omitted outside flows, which leaves the chat's own
+   *  speed alone; absent never means a paid speed. */
+  codexSpeed?: CodexSpeed;
   model?: string;
   executionLeaseId?: string;
   /** Vision content blocks from trigger_context.attachments (type=image only). */
@@ -63,7 +61,7 @@ function hasRequiredTaskChatReadyFields(candidate: Record<string, unknown>): boo
 function hasOptionalTaskChatReadyFields(candidate: Record<string, unknown>): boolean {
   return (
     isOptionalBoolean(candidate.autoReviewTools) &&
-    isOptionalBoolean(candidate.codexFastMode) &&
+    (candidate.codexSpeed === undefined || isCodexSpeed(candidate.codexSpeed)) &&
     isOptionalString(candidate.model) &&
     isOptionalString(candidate.executionLeaseId) &&
     isOptionalBoolean(candidate.isRetry)

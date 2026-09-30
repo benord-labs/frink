@@ -33,6 +33,7 @@ import {
   MAX_AGENT_PROSE_LENGTH,
 } from '../../../../shared/lib/flows/agent-prose-limit';
 import type { ChatMode } from '../../../../shared/types/chat-mode';
+import { type CodexSpeed, isCodexSpeed } from '../../../../shared/types/execution';
 import { getDatabase } from '../../db';
 import { linkChatToTask } from '../../db/repos/chats';
 import { getVersion } from '../../db/repos/flow-versions';
@@ -169,16 +170,17 @@ function resolveEffectiveModel(
  * previous run put there — silently applying one flow's policy to another flow's run.
  *
  * The defaults are deliberately opposite. Auto is ON when unset, so graphs saved before it existed
- * keep working; Fast is OFF when unset, because it bills a 2-2.5x credit multiplier and must never
- * arrive by inheritance.
+ * keep working; speed is standard when unset, because Fast and Ultrafast bill a credit multiplier
+ * and must never arrive by inheritance.
  */
 function flowExecutionFlags(settings: Parameters<Dispatcher>[0]['parsedGraph']['settings']): {
   autoReviewTools: boolean;
-  codexFastMode: boolean;
+  codexSpeed: CodexSpeed;
 } {
   return {
     autoReviewTools: settings?.autoReviewTools !== false,
-    codexFastMode: settings?.codexFastMode === true,
+    // Graph settings are not re-validated at dispatch, so a hand-edited value must not reach billing.
+    codexSpeed: isCodexSpeed(settings?.codexSpeed) ? settings.codexSpeed : 'standard',
   };
 }
 

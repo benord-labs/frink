@@ -200,23 +200,23 @@ describe('useTaskIpcHandler', () => {
     });
   });
 
-  it("seeds the chat's Codex Fast setting from the Flow", async () => {
+  it("seeds the chat's Codex speed from the Flow", async () => {
     renderHook(() => useTaskIpcHandler(), { wrapper });
 
-    act(() => ipcCallback?.(validPayload({ codexFastMode: true })));
+    act(() => ipcCallback?.(validPayload({ codexSpeed: 'ultrafast' })));
 
     await waitFor(() => {
-      expect(jotaiStore.get(codexSpeedAtomFamily('chat-1'))).toBe('fast');
+      expect(jotaiStore.get(codexSpeedAtomFamily('chat-1'))).toBe('ultrafast');
     });
   });
 
   it('clears a chat left on Fast when the Flow runs standard', async () => {
-    // The chat's value outlives the run that set it, so `false` has to actively win — otherwise one
-    // Fast flow silently bills every later run in the same chat at the priority multiplier.
+    // The chat's value outlives the run that set it, so `standard` has to actively win, or one Fast
+    // flow bills every later run in the same chat.
     jotaiStore.set(codexSpeedAtomFamily('chat-1'), 'fast');
     renderHook(() => useTaskIpcHandler(), { wrapper });
 
-    act(() => ipcCallback?.(validPayload({ codexFastMode: false })));
+    act(() => ipcCallback?.(validPayload({ codexSpeed: 'standard' })));
 
     await waitFor(() => {
       expect(jotaiStore.get(codexSpeedAtomFamily('chat-1'))).toBe('standard');

@@ -26,6 +26,7 @@ import {
   toChatMode,
 } from '../../../shared/lib/trigger-rule-config';
 import { buildTriggerSummary } from '../../../shared/lib/trigger-summary';
+import type { CodexSpeed } from '../../../shared/types/execution';
 import type {
   TaskChatImageAttachment,
   TaskChatReadyData,
@@ -63,7 +64,7 @@ import {
   isString,
   resolveClaimResume,
   resolveFlowAutoReviewToolsForTask,
-  resolveFlowCodexFastModeForTask,
+  resolveFlowCodexSpeedForTask,
   taskClaimResultSchema,
 } from '../flows/rerun/claim-flags';
 import { type DispatchErrorMeta, persistDispatchFailure } from '../tasks';
@@ -477,7 +478,7 @@ async function createChatForTask(task: DbTask): Promise<{
   startMode: ResolvedTaskStartMode;
   skipReview: boolean;
   autoReviewTools?: boolean;
-  codexFastMode?: boolean;
+  codexSpeed?: CodexSpeed;
   model?: string;
   executionLeaseId: string;
   images: TaskChatImageAttachment[];
@@ -558,7 +559,7 @@ async function createChatForTask(task: DbTask): Promise<{
   const executionOverride = getFlowConfigField(rawFlowConfig, 'executionOverride', isRecord);
   const executionMode = getFlowConfigField(rawFlowConfig, 'executionMode', isString);
   const autoReviewTools = resolveFlowAutoReviewToolsForTask(task);
-  const codexFastMode = resolveFlowCodexFastModeForTask(task);
+  const codexSpeed = resolveFlowCodexSpeedForTask(task);
 
   // continue_chat: reuse the originating chat instead of creating a new one
   if (executionMode === 'continue_chat' && !existingChatId) {
@@ -759,7 +760,7 @@ async function createChatForTask(task: DbTask): Promise<{
     skipReview: executionOptions.skipReview,
     images: attachmentImages,
     ...(autoReviewTools !== undefined ? { autoReviewTools } : {}),
-    ...(codexFastMode !== undefined ? { codexFastMode } : {}),
+    ...(codexSpeed !== undefined ? { codexSpeed } : {}),
     ...(taskModel ? { model: taskModel } : {}),
     ...deriveTaskClaimFlags(retryMode, rawFlowConfig),
   };
@@ -1007,7 +1008,7 @@ async function handleClaimedTask(task: DbTask): Promise<void> {
       startMode,
       skipReview,
       autoReviewTools,
-      codexFastMode,
+      codexSpeed,
       model,
       executionLeaseId,
       images,
@@ -1062,7 +1063,7 @@ async function handleClaimedTask(task: DbTask): Promise<void> {
       headless: Boolean(task.flowRunId),
       executionLeaseId,
       ...(autoReviewTools !== undefined ? { autoReviewTools } : {}),
-      ...(codexFastMode !== undefined ? { codexFastMode } : {}),
+      ...(codexSpeed !== undefined ? { codexSpeed } : {}),
       ...(model ? { model } : {}),
       ...(images && images.length > 0 ? { images } : {}),
       ...(isRetry ? { isRetry: true } : {}),

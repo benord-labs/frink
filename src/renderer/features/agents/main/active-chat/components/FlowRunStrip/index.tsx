@@ -33,6 +33,7 @@ import { Loader2, Pause, Pencil, Play } from 'lucide-react';
 import { memo, type ReactNode, useState } from 'react';
 import { toast } from 'sonner';
 import type { ChatMode } from '../../../../../../../shared/types/chat-mode';
+import type { CodexSpeed } from '../../../../../../../shared/types/execution';
 import { useFlowNoteField } from '../../../../../../lib/agent-chat/use-flow-note-field';
 import { useFlowResumeLock } from '../../../../../../lib/agent-chat/use-flow-resume-lock';
 import { trpc } from '../../../../../../lib/trpc';
@@ -53,7 +54,7 @@ type FlowRunStripProps = {
   mode?: ChatMode;
   /** The flow's Auto Mode consent, snapshotted onto the task at dispatch. */
   autoReviewTools?: boolean;
-  codexFastMode?: boolean;
+  codexSpeed?: CodexSpeed;
   /** Sends a note through the normal send pipe (queues while streaming); returns whether sent. */
   onAddNote: (text: string) => boolean;
   /** Aborts the local in-flight turn (composer stop) — combined with flows.cancelRun for Stop. */
@@ -162,7 +163,7 @@ export const FlowRunStrip = memo(function FlowRunStrip({
   modelId,
   mode,
   autoReviewTools,
-  codexFastMode,
+  codexSpeed,
   onAddNote,
   onStopTurn,
 }: FlowRunStripProps) {
@@ -201,7 +202,7 @@ export const FlowRunStrip = memo(function FlowRunStrip({
           modelId={modelId}
           mode={mode}
           autoReviewTools={autoReviewTools}
-          codexFastMode={codexFastMode}
+          codexSpeed={codexSpeed}
           confirming={confirming}
         />
       }
@@ -268,7 +269,7 @@ type FlowPausedBarProps = {
   modelId?: string;
   mode?: ChatMode;
   autoReviewTools?: boolean;
-  codexFastMode?: boolean;
+  codexSpeed?: CodexSpeed;
   /** True after the accepted continuation enters submitted/streaming state. */
   isTurnActive: boolean;
   /** Sends the reply as a follow-up message (resumes the flow in place); returns whether sent. */
@@ -284,7 +285,7 @@ export const FlowPausedBar = memo(function FlowPausedBar({
   modelId,
   mode,
   autoReviewTools,
-  codexFastMode,
+  codexSpeed,
   isTurnActive,
   onSubmitAnswer,
   onResume,
@@ -313,7 +314,7 @@ export const FlowPausedBar = memo(function FlowPausedBar({
           modelId={modelId}
           mode={mode}
           autoReviewTools={autoReviewTools}
-          codexFastMode={codexFastMode}
+          codexSpeed={codexSpeed}
           confirming={confirming}
         />
       }

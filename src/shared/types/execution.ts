@@ -10,6 +10,10 @@
 export const CODEX_SPEEDS = ['standard', 'fast', 'ultrafast'] as const;
 export type CodexSpeed = (typeof CODEX_SPEEDS)[number];
 
+export function isCodexSpeed(value: unknown): value is CodexSpeed {
+  return (CODEX_SPEEDS as readonly unknown[]).includes(value);
+}
+
 /**
  * Valid Claude model identifiers for the Claude Code / agent SDK path.
  * Includes short aliases (`haiku` | `sonnet` | `opus`) and version-pinned

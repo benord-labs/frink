@@ -117,11 +117,10 @@ export function useTaskIpcHandler() {
         store.set(autoModePerChatAtomFamily(chatId), data.autoReviewTools);
       }
 
-      // Same seed-and-re-assert contract for Codex Fast. Setting `false` matters as much as `true`:
-      // the chat's value persists past the run, so a flow with Fast off must actively clear one a
-      // previous Fast run left on rather than inheriting its billing.
-      if (typeof data.codexFastMode === 'boolean') {
-        store.set(codexSpeedAtomFamily(chatId), data.codexFastMode ? 'fast' : 'standard');
+      // Same seed-and-re-assert contract for Codex speed: `standard` must actively clear a paid speed
+      // a previous run left on, since the chat's value outlives the run.
+      if (data.codexSpeed !== undefined) {
+        store.set(codexSpeedAtomFamily(chatId), data.codexSpeed);
       }
 
       // Mode + model must be set before the queued prompt is sent: the transport reads the chat
