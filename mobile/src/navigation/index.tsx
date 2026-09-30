@@ -7,7 +7,7 @@ import { DraftProvider } from '../lib/drafts';
 import { LiveActivityProvider } from '../lib/live-activity';
 import { NotificationProvider } from '../lib/notifications';
 import { onNotificationOpened } from '../lib/notifications/device';
-import { notificationChat } from '../lib/notifications/routing';
+import { notificationTarget } from '../lib/notifications/routing';
 import { OverviewProvider } from '../lib/overview';
 import { onQueueLink } from '../lib/pairing-link';
 import { ChatScreen } from '../screens/Chat';
@@ -36,15 +36,16 @@ function TabsScreen() {
   );
 }
 
-/** Tapping a "chat finished" alert opens that chat, if it came from the paired Mac. */
+/** Tapping an alert from the paired Mac opens its chat, or the Queue for a chat-less task. */
 function useOpenAlertedChat() {
   const navigation = useRootNavigation();
   const deviceId = useConnection().connection?.deviceId;
   useEffect(
     () =>
       onNotificationOpened((data) => {
-        const chat = deviceId && notificationChat(data, deviceId);
-        if (chat) navigation.navigate('Chat', chat);
+        const target = deviceId && notificationTarget(data, deviceId);
+        if (target === 'queue') navigation.navigate('Tabs', { screen: 'Queue' });
+        else if (target) navigation.navigate('Chat', target);
       }),
     [navigation, deviceId],
   );

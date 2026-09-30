@@ -10,7 +10,8 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "dev.frink.mobile",
-      "infoPlist": { "ITSAppUsesNonExemptEncryption": false }
+      "infoPlist": { "ITSAppUsesNonExemptEncryption": false },
+      "entitlements": { "com.apple.developer.usernotifications.time-sensitive": true }
     },
     "plugins": [
       [
