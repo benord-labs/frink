@@ -364,30 +364,16 @@ describe('chat account stamping', () => {
     expect(await accountOf(chatId)).toBe('cred-work');
   });
 
-  it('forks onto the source account, or the given one, with no session ids', async () => {
+  it('forks onto the source account and name, with no session ids', async () => {
     const source = await createChat(db, { projectId: 'p1', name: 'src', accountId: 'cred-work' });
     await db
       .insert(schema.subChats)
       .values({ chatId: source.id, name: 'src', sessionId: 'sess-1', messages: '[]' });
 
-    const kept = await forkChatWithSubChats(db, source.id);
-    const moved = await forkChatWithSubChats(db, source.id, { id: 'cred-home', type: 'codex' });
+    const forked = await forkChatWithSubChats(db, source.id);
 
-    expect([kept.chat.accountId, kept.chat.name]).toEqual(['cred-work', 'src']);
-    expect([moved.chat.accountId, moved.chat.name]).toEqual(['cred-home', 'src · OpenAI']);
-    expect(moved.subChats.map((sub) => [sub.name, sub.sessionId])).toEqual([
-      ['src · OpenAI', null],
-    ]);
-    expect(await accountOf(source.id)).toBe('cred-work');
-  });
-
-  it('replaces an earlier provider suffix and leaves an untitled chat untitled', async () => {
-    const titled = await createChat(db, { projectId: 'p1', name: 'src · OpenAI' });
-    const untitled = await createChat(db, { projectId: 'p1', name: null });
-    const back = { id: 'cred-home', type: 'claude-code' };
-
-    expect((await forkChatWithSubChats(db, titled.id, back)).chat.name).toBe('src · Claude Code');
-    expect((await forkChatWithSubChats(db, untitled.id, back)).chat.name).toBeNull();
+    expect([forked.chat.accountId, forked.chat.name]).toEqual(['cred-work', 'src']);
+    expect(forked.subChats.map((sub) => [sub.name, sub.sessionId])).toEqual([['src', null]]);
   });
 
   it("hands a deleted login's chats to the same provider's default login", async () => {

@@ -100,7 +100,7 @@ export async function getChatAiAccount(
 
 /**
  * Move a chat in place to another login of the provider it runs on (stamp, else project override,
- * else default); another provider is a new linked chat.
+ * else default); another provider is refused because a chat stays on its provider.
  */
 export async function setChatAiAccount(
   db: Db,
