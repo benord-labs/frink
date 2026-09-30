@@ -300,35 +300,6 @@ export const agentsSubChatUnseenChangesAtom = atom<Set<string>>(new Set<string>(
 export type AgentsMobileViewMode = 'chats' | 'chat' | 'preview' | 'diff' | 'terminal';
 export const agentsMobileViewModeAtom = atom<AgentsMobileViewMode>('chat');
 
-// Debug mode for testing first-time user experience
-// Only works in development mode
-export type AgentsDebugMode = {
-  enabled: boolean;
-  simulateNoTeams: boolean; // Simulate no teams available
-  simulateNoRepos: boolean; // Simulate no repositories connected
-  simulateNoReadyRepos: boolean; // Simulate only non-ready repos (in_progress/error)
-  resetOnboarding: boolean; // Reset onboarding dialog on next load
-  bypassConnections: boolean; // Allow going through onboarding steps even if already connected
-  forceStep: 'workspace' | 'profile' | 'claude-code' | 'github' | 'discord' | null; // Force a specific onboarding step
-  simulateCompleted: boolean; // Simulate onboarding as completed
-};
-
-export const agentsDebugModeAtom = atomWithStorage<AgentsDebugMode>(
-  'agents:debugMode',
-  {
-    enabled: false,
-    simulateNoTeams: false,
-    simulateNoRepos: false,
-    simulateNoReadyRepos: false,
-    resetOnboarding: false,
-    bypassConnections: false,
-    forceStep: null,
-    simulateCompleted: false,
-  },
-  undefined,
-  { getOnInit: true },
-);
-
 // Changed files per sub-chat for tracking edits/writes
 // Map<subChatId, FileChange[]>
 export type SubChatFileChange = {
