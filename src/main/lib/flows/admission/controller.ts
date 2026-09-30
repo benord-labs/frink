@@ -1,6 +1,7 @@
 import { Mutex } from 'async-mutex';
 import type { FlowAdmissionState } from '../../../../shared/lib/flow-admission';
 import type { getDatabase } from '../../db';
+import { captureFlowAdmissionException } from './activity';
 import {
   type FlowAdmissionConfig,
   type FlowAdmissionConfigPatch,
@@ -91,6 +92,20 @@ export class FlowAdmissionController {
 
   async updateConfig(patch: FlowAdmissionConfigPatch): Promise<FlowAdmissionConfig> {
     return this.replaceConfigSnapshot(() => this.writeConfig(patch));
+  }
+
+  /** A synchronous run command under the mutex in one immediate transaction, then `afterCommit` in
+   * the commit's tick; its throw is captured, not rethrown, because the command already committed. */
+  async transition<T>(command: () => T, afterCommit?: (result: T) => undefined): Promise<T> {
+    return controllerMutex.runExclusive(() => {
+      const result = this.immediate(command);
+      try {
+        afterCommit?.(result);
+      } catch (error) {
+        captureFlowAdmissionException(error, 'after-commit');
+      }
+      return result;
+    });
   }
 
   async enqueue(input: EnqueueFlowAdmissionInput): Promise<EnqueueFlowAdmissionResult> {

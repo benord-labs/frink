@@ -62,10 +62,23 @@ describe('cancelTaskDetailed — atomic pre-image for the session stop (sc-3263)
     },
   );
 
-  it('reports not_found for an unknown id', async () => {
-    await expect(cancelTaskDetailed(db, 'missing')).resolves.toEqual({
-      task: null,
-      reason: 'not_found',
-    });
+  it('reports not_found for an unknown id', () => {
+    expect(cancelTaskDetailed(db, 'missing')).toEqual({ task: null, reason: 'not_found' });
+  });
+
+  it('nests inside a caller transaction, so the caller rolling back undoes the cancel', async () => {
+    const t = await taskIn('running');
+
+    expect(() =>
+      db.transaction(
+        () => {
+          expect(cancelTaskDetailed(db, t.id).task?.status).toBe('cancelled');
+          throw new Error('caller failed');
+        },
+        { behavior: 'immediate' },
+      ),
+    ).toThrow('caller failed');
+
+    expect((await getTaskById(db, t.id))?.status).toBe('running');
   });
 });

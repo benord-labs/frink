@@ -17,7 +17,6 @@ import { getVersion } from '../db/repos/flow-versions';
 import { getFlowById } from '../db/repos/flows';
 import {
   cancelRemainingNodeRunsForRun,
-  createNodeRun,
   listNodeRunsForFlowRun,
   setNodeRunStatus,
 } from '../db/repos/node-runs';
@@ -35,6 +34,7 @@ import {
   resolveFanOutStructure,
 } from './graph';
 import { withSlot } from './scheduler';
+import { insertNodeRunIfLive, runTransition } from './transitions';
 
 type FlowMeta = { flowId: string; flowName: string; batchId?: string };
 
@@ -391,26 +391,29 @@ export async function dispatchAndAdvance(
   },
 ): Promise<void> {
   const db = getDatabase();
-  const inserted = await createNodeRun(db, {
-    flowRunId,
-    nodeId: node.id,
-    blockType: node.blockType,
-    status: 'running',
-    startedAt: new Date(),
-    laneIndex: options?.laneIndex,
-    parentFanOutNodeRunId: options?.parentFanOutNodeRunId,
-  });
-
-  emitNodeStarted(ctx.meta, flowRunId, node.id, node.blockType, node.label);
-
   // Inject fan_out loopContext when this node is part of a body chain, unless
   // the caller already supplied one (the iteration-step path passes it through
   // explicitly to avoid an extra KV roundtrip).
   const loopContext = explicitLoopContext ?? (await buildLoopContextFor(flowRunId, node.id));
 
+  // The insert and the abort registration share one tick: a Cancel that commits first makes the
+  // insert decline, and one that commits later finds this controller to abort.
+  const inserted = runTransition(db, () =>
+    insertNodeRunIfLive(db, {
+      flowRunId,
+      nodeId: node.id,
+      blockType: node.blockType,
+      status: 'running',
+      startedAt: new Date(),
+      laneIndex: options?.laneIndex,
+      parentFanOutNodeRunId: options?.parentFanOutNodeRunId,
+    }),
+  );
+  if (!inserted) return;
   const controller = new AbortController();
   registerNodeAbort(flowRunId, controller);
   releaseAbortRegistration?.();
+  emitNodeStarted(ctx.meta, flowRunId, node.id, node.blockType, node.label);
 
   try {
     const result = await dispatchNodeUnlessAborted(controller, {

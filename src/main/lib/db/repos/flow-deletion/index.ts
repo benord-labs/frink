@@ -49,7 +49,7 @@ export async function listFlowRunIdsForFlow(db: Db, flowId: string): Promise<str
     .map((run) => run.id);
 }
 
-export async function hardDeleteFlow(db: Db, flowId: string): Promise<HardDeleteFlowResult> {
+export function hardDeleteFlow(db: Db, flowId: string): HardDeleteFlowResult {
   return db.transaction(
     () => {
       const unsettledRunIds = unsettledFlowRunIdsForFlow(db, flowId);

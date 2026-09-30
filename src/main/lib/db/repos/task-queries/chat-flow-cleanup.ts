@@ -2,11 +2,11 @@ import { and, eq, inArray, isNotNull, isNull, notInArray, or, sql } from 'drizzl
 import { FLOW_ADMISSION_LIVE_STATES } from '../../../../../shared/lib/flow-admission';
 import { FLOW_DRIVING_STATUSES } from '../../../../../shared/types/flow';
 import type { getDatabase } from '../../index';
+import { cancelRunRows } from '../../../flows/transitions';
 import { chats, flowRunAdmissions, flowRuns, nodeRuns, tasks } from '../../schema';
 import { cancelResultPatch } from '../task-parking/cancel-marker';
 
 type Db = ReturnType<typeof getDatabase>;
-const ACTIVE_FLOW_RUN_STATUSES = new Set(['pending', 'running', 'paused']);
 
 export type DeleteChatsResult =
   | { deleted: false; unsettledRunIds: string[]; chatIds: string[] }
@@ -134,36 +134,9 @@ function cancelChatOwnedFlowWorkWithScope(
         return 'preserved';
       }
 
-      const run = db
-        .select({ status: flowRuns.status })
-        .from(flowRuns)
-        .where(eq(flowRuns.id, flowRunId))
-        .limit(1)
-        .all()[0];
       cancelDrivingFlowTasksForChats(db, flowRunId, chatIds, true, includeParked);
-      if (!run || !ACTIVE_FLOW_RUN_STATUSES.has(run.status)) {
-        return 'settled';
-      }
-
+      if (!cancelRunRows(db, flowRunId, { includeParked: false })) return 'settled';
       abortRun();
-      const completedAt = new Date();
-      db.update(flowRuns)
-        .set({ status: 'cancelled', completedAt })
-        .where(eq(flowRuns.id, flowRunId))
-        .run();
-      db.update(nodeRuns)
-        .set({ status: 'cancelled', completedAt })
-        .where(
-          and(
-            eq(nodeRuns.flowRunId, flowRunId),
-            inArray(nodeRuns.status, ['pending', 'running', 'awaiting_input', 'blocked']),
-          ),
-        )
-        .run();
-      db.update(tasks)
-        .set({ status: 'cancelled', completedAt, result: cancelResultPatch(false) })
-        .where(and(eq(tasks.flowRunId, flowRunId), inArray(tasks.status, ['pending', 'running'])))
-        .run();
       return 'cancelled';
     },
     { behavior: 'immediate' },

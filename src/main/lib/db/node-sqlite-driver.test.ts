@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { sqliteTable, text } from 'drizzle-orm/sqlite-core';
 import { describe, expect, it } from 'vitest';
 import { drizzleNodeSqlite } from './drizzle-node-sqlite';
 import { NodeSqliteDatabase } from './node-sqlite-driver';
@@ -36,6 +37,85 @@ describe('NodeSqliteDatabase', () => {
     expect(() => tx('x')).toThrow('abort');
     expect(db.prepare('select count(*) as n from t').get()).toEqual({ n: 0 });
     db.close();
+  });
+
+  it('surfaces the original error when SQLite already rolled back the whole transaction', () => {
+    const db = new NodeSqliteDatabase(':memory:');
+    db.exec(
+      'create table t(v text);' +
+        " create trigger boom before insert on t begin select raise(rollback, 'boom'); end",
+    );
+    const inner = db.transaction(() => db.prepare('insert into t values (1)').run());
+    expect(() => db.transaction(() => inner())()).toThrow('boom');
+    db.close();
+  });
+
+  describe('transaction nesting and the synchronous-body guard', () => {
+    const table = sqliteTable('t', { v: text('v') });
+    const setup = () => {
+      const db = new NodeSqliteDatabase(':memory:');
+      db.exec('create table t(v text)');
+      const insert = (v: string) => db.prepare('insert into t values (?)').run(v);
+      const values = () => db.prepare('select v from t order by v').raw().all().flat();
+      return { db, insert, values };
+    };
+
+    it('throws on an async body and rolls back what it wrote before its first await', () => {
+      const { db, insert, values } = setup();
+      const tx = db.transaction(async () => {
+        insert('before-await');
+        await Promise.resolve();
+      });
+      expect(() => tx()).toThrow('must be synchronous');
+      expect(values()).toEqual([]);
+      expect(() => db.transaction(() => insert('after'))()).not.toThrow();
+      db.close();
+    });
+
+    it('throws on a body that returns an unexecuted Drizzle builder', () => {
+      const { db: sqlite } = setup();
+      const db = drizzleNodeSqlite(sqlite, { table });
+      expect(() => db.transaction(() => db.select().from(table))).toThrow('must be synchronous');
+      sqlite.close();
+    });
+
+    it('commits a nested transaction together with the outer one', () => {
+      const { db, insert, values } = setup();
+      db.transaction(() => {
+        insert('outer');
+        db.transaction(() => insert('inner')).immediate();
+      }).immediate();
+      expect(values()).toEqual(['inner', 'outer']);
+      db.close();
+    });
+
+    it('rolls back only the nested savepoint when it throws, leaving the outer to commit', () => {
+      const { db, insert, values } = setup();
+      db.transaction(() => {
+        insert('outer');
+        expect(() =>
+          db.transaction(() => {
+            insert('inner');
+            throw new Error('inner failed');
+          })(),
+        ).toThrow('inner failed');
+        db.transaction(() => insert('sibling'))();
+      })();
+      expect(values()).toEqual(['outer', 'sibling']);
+      db.close();
+    });
+
+    it('rolls back the nested writes too when the outer transaction throws', () => {
+      const { db, insert, values } = setup();
+      expect(() =>
+        db.transaction(() => {
+          db.transaction(() => insert('inner'))();
+          throw new Error('outer failed');
+        })(),
+      ).toThrow('outer failed');
+      expect(values()).toEqual([]);
+      db.close();
+    });
   });
 
   it('exposes the raw client as $client on the drizzle instance', () => {

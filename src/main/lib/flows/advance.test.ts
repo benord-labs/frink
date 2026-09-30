@@ -365,6 +365,17 @@ describe('dispatchAndAdvance — a thrown dispatcher terminalizes its node', () 
     expect(dispatchNode).not.toHaveBeenCalled();
   });
 
+  it('inserts no node_run and dispatches nothing once the run was cancelled', async () => {
+    const ctx = await ctxFor(flowRunId);
+    await setFlowRunStatus(db, flowRunId, 'cancelled');
+
+    await dispatchAndAdvance(flowRunId, GRAPH.nodes[0], undefined, ctx);
+
+    expect(await listNodeRunsForFlowRun(db, flowRunId)).toEqual([]);
+    expect(dispatchNode).not.toHaveBeenCalled();
+    expect(abortFlowRun(flowRunId)).toBe(0);
+  });
+
   it('does not revive a run cancelled while its dispatcher returns awaiting input', async () => {
     (dispatchNode as Mock).mockImplementation(async () => {
       await cancelFlowRun(flowRunId);
@@ -811,7 +822,7 @@ describe('deleteFlow — hard cutover', () => {
     });
     await updateTaskStatus(db, task.id, 'needs_attention');
 
-    await expect(hardDeleteFlow(db, flowId)).resolves.toEqual({
+    expect(hardDeleteFlow(db, flowId)).toEqual({
       deleted: false,
       unsettledRunIds: [flowRunId],
     });
