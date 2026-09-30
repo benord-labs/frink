@@ -59,8 +59,9 @@ function start(agents: MobileAgentCounts) {
 
 /**
  * Brings the Lock Screen card in line with the switch and the Mac's counts. Only the app starts a
- * card (in the foreground, while something runs); only the Mac updates it. Returns true when iOS
- * refused to start one, false once a card started or the switch is off, undefined otherwise.
+ * card (in the foreground, while something runs or needs you); only the Mac updates it. Returns
+ * true when iOS refused to start one, false once a card started or the switch is off, undefined
+ * otherwise.
  */
 export async function reconcile(
   session: Session,
@@ -79,7 +80,7 @@ export async function reconcile(
   const [card, ...extras] = cards;
   extras.forEach(end);
   if (card) return void (await follow(session, host, card));
-  if (!agents?.running || AppState.currentState !== 'active') return undefined;
+  if (!agents || AppState.currentState !== 'active') return undefined;
   const started = start(agents);
   if (started === 'refused') return true;
   await follow(session, host, started);

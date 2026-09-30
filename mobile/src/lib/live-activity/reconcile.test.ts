@@ -37,11 +37,10 @@ beforeEach(() => {
   request.mockResolvedValue({ enabled: true, error: null });
 });
 
-it('starts a card only when on, in the foreground and something is running', async () => {
+it('starts a card only when on, in the foreground and something is running or needs you', async () => {
   const started = card();
   widget.start.mockReturnValue(started);
   expect(await reconcile(session, host, false, { running: 2, needsYou: 0 })).toBe(false);
-  expect(await reconcile(session, host, true, { running: 0, needsYou: 1 })).toBeUndefined();
   expect(await reconcile(session, host, true, undefined)).toBeUndefined();
   app.currentState = 'background';
   await reconcile(session, host, true, { running: 2, needsYou: 0 });
@@ -53,6 +52,15 @@ it('starts a card only when on, in the foreground and something is running', asy
     'frink-mobile://queue',
   );
   expect(started.update).not.toHaveBeenCalled();
+});
+
+it('starts a card for chats that need you even when nothing is running', async () => {
+  widget.start.mockReturnValue(card());
+  expect(await reconcile(session, host, true, { running: 0, needsYou: 2 })).toBe(false);
+  expect(widget.start).toHaveBeenCalledExactlyOnceWith(
+    { running: 0, needsYou: 2 },
+    'frink-mobile://queue',
+  );
 });
 
 it('leaves a running card to the Mac and ends any extras', async () => {
@@ -93,7 +101,9 @@ it('registers the card’s token once per change, including rotations', async ()
   expect(shown.addPushTokenListener).toHaveBeenCalledOnce();
   const rotated = 'cd'.repeat(32);
   shown.addPushTokenListener.mock.calls[0][0]({ pushToken: rotated });
-  await vi.waitFor(() => expect(request).toHaveBeenLastCalledWith(host, { activityToken: rotated }));
+  await vi.waitFor(() =>
+    expect(request).toHaveBeenLastCalledWith(host, { activityToken: rotated }),
+  );
 });
 
 it('says when iOS refuses the card, and rethrows anything else', async () => {
