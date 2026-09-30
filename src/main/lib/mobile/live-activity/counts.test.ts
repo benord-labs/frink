@@ -26,7 +26,7 @@ vi.mock('../domain/context', () => ({
   record: (value: unknown) => (value && typeof value === 'object' ? value : {}),
   text: (value: unknown) => (typeof value === 'string' ? value : ''),
 }));
-import { readAgentCounts } from './counts';
+import { readAgentCounts, readWaitingChats } from './counts';
 
 const execution = (chatId: string, subChatId = `${chatId}-sub`) => ({ chatId, subChatId });
 const task = (id: string, effectiveStatus: string, linkedChatId: string | null = null) => ({
@@ -93,5 +93,28 @@ describe('readAgentCounts', () => {
       collapseByFlow: true,
       limit: 200,
     });
+  });
+
+  it('names what each chat waits for, the most specific wait winning', async () => {
+    fixture.questions.mockReturnValue(['asking-sub']);
+    fixture.permissions.mockReturnValue([{ chatId: 'b', subChatId: 'b-sub' }]);
+    fixture.moves.mockReturnValue([{ chatId: 'c' }]);
+    fixture.list.mockResolvedValue({
+      items: [
+        task('1', 'plan_ready', 'asking'),
+        task('2', 'plan_ready', 'd'),
+        task('3', 'needs_attention'),
+      ],
+      hasMore: false,
+    });
+    expect(await readWaitingChats()).toEqual(
+      new Map([
+        ['asking', { kind: 'question', subChatId: 'asking-sub' }],
+        ['d', { kind: 'plan' }],
+        ['task:3', { kind: 'attention' }],
+        ['c', { kind: 'permission' }],
+        ['b', { kind: 'permission', subChatId: 'b-sub' }],
+      ]),
+    );
   });
 });

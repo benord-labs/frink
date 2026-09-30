@@ -23,8 +23,12 @@ export async function chatsBySubChat(subChatIds: string[]): Promise<Map<string, 
   return new Map(rows.map((row) => [row.id, row.chatId]));
 }
 
-/** Counts chats, not sessions or tasks, and never the same chat twice: needing you wins. */
-export async function readAgentCounts(): Promise<MobileAgentCounts> {
+/** What a waiting chat is waiting for, most specific first when a chat waits on several. */
+export type WaitingKind = 'question' | 'permission' | 'plan' | 'attention';
+export type WaitingChat = { kind: WaitingKind; subChatId?: string };
+
+/** Every chat (or chat-less task, as `task:<id>`) that is waiting on the user, keyed by chat. */
+export async function readWaitingChats(): Promise<Map<string, WaitingChat>> {
   const [questions, attention] = await Promise.all([
     chatsBySubChat(listPendingQuestionSubChatIds()),
     // A cap, not a page: the count must not depend on how many rows the phone shows.
@@ -34,14 +38,23 @@ export async function readAgentCounts(): Promise<MobileAgentCounts> {
       limit: 200,
     }),
   ]);
-  const waiting = new Set([
-    ...questions.values(),
-    ...listPendingPermissionRequests().map((request) => request.chatId),
-    ...listPendingMoveChatRequests().map((request) => request.chatId),
-    ...attention.items
-      .filter((task) => WAITING_STATUSES.has(task.effectiveStatus))
-      .map((task) => task.linkedChatId ?? (text(record(task.result).chatId) || `task:${task.id}`)),
-  ]);
+  const waiting = new Map<string, WaitingChat>();
+  for (const task of attention.items)
+    if (WAITING_STATUSES.has(task.effectiveStatus))
+      waiting.set(task.linkedChatId ?? (text(record(task.result).chatId) || `task:${task.id}`), {
+        kind: task.effectiveStatus === 'plan_ready' ? 'plan' : 'attention',
+      });
+  for (const request of listPendingMoveChatRequests())
+    waiting.set(request.chatId, { kind: 'permission' });
+  for (const request of listPendingPermissionRequests())
+    waiting.set(request.chatId, { kind: 'permission', subChatId: request.subChatId });
+  for (const [subChatId, chatId] of questions) waiting.set(chatId, { kind: 'question', subChatId });
+  return waiting;
+}
+
+/** Counts chats, not sessions or tasks, and never the same chat twice: needing you wins. */
+export async function readAgentCounts(): Promise<MobileAgentCounts> {
+  const waiting = await readWaitingChats();
   const running = new Set(
     listActiveExecutionHeaders()
       .map((execution) => execution.chatId ?? execution.subChatId)
