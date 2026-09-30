@@ -2,7 +2,8 @@
  * or drain call inside one. Invariants: docs/decisions/flow-run-transition-serialization.md. */
 import type { getDatabase } from '../../db';
 
-export { cancelRunRows, insertNodeRunIfLive } from './run-rows';
+export { cancelRunCommand } from './cancel-run';
+export { cancelRunRows, DISPATCHABLE_RUN_STATUSES, insertNodeRunIfLive } from './run-rows';
 
 type Db = ReturnType<typeof getDatabase>;
 

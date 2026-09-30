@@ -28,7 +28,6 @@ import { getLatestFlowTaskForSubChat } from '../db/repos/tasks';
 import type { NodeRun } from '../db/schema';
 import { withFlowResourceCleanup } from './admission/activity';
 import { advanceFlowRun, dispatchAndAdvance, loadRunContext } from './advance';
-import { reserveNodeAbortRegistration } from './cancel-registry';
 import { findNodeById } from './graph';
 import { lastUnfinishedNodeRun } from './rerun/resume-point';
 import { type DrivingTaskRow, unparkNodeRunInPlace } from './rerun/unpark-node-run';
@@ -36,28 +35,6 @@ import { type DrivingTaskRow, unparkNodeRunInPlace } from './rerun/unpark-node-r
 type Db = ReturnType<typeof getDatabase>;
 
 export type ResumeAction = 'approve' | 'retry' | 'skip';
-
-async function reserveFlowResumeDispatch(db: Db, flowRunId: string): Promise<() => void> {
-  const releaseRegistration = reserveNodeAbortRegistration(flowRunId);
-  if (!releaseRegistration) {
-    throw new TRPCError({
-      code: 'PRECONDITION_FAILED',
-      message: 'Flow run is being cancelled.',
-    });
-  }
-  try {
-    if ((await getFlowRun(db, flowRunId))?.status !== 'running') {
-      throw new TRPCError({
-        code: 'PRECONDITION_FAILED',
-        message: 'Flow run changed while it was being resumed.',
-      });
-    }
-    return releaseRegistration;
-  } catch (error) {
-    releaseRegistration();
-    throw error;
-  }
-}
 
 type InterruptedNodeLookup =
   | { ok: true; nodeRun: NodeRun }
@@ -413,57 +390,50 @@ export async function resumeFlowRun(
       });
     }
 
-    const releaseRegistration = await reserveFlowResumeDispatch(db, flowRunId);
-    try {
-      if (action === 'retry') {
-        const node = findNodeById(ctx.graph.nodes, nodeRun.nodeId);
-        if (!node) {
-          throw new TRPCError({
-            code: 'PRECONDITION_FAILED',
-            message: `Node ${nodeRun.nodeId} no longer in graph; can't retry.`,
-          });
-        }
-        const fanOutScope =
-          nodeRun.parentFanOutNodeRunId && nodeRun.laneIndex !== null
-            ? {
-                laneIndex: nodeRun.laneIndex,
-                parentFanOutNodeRunId: nodeRun.parentFanOutNodeRunId,
-              }
-            : undefined;
-        await dispatchAndAdvance(
-          flowRunId,
-          node,
-          undefined,
-          ctx,
-          undefined,
-          releaseRegistration,
-          fanOutScope,
-        );
-        return;
-      }
-
-      const synthetic: NodeOutput = {
-        status: action === 'skip' ? 'skipped' : 'completed',
-        outputs: action === 'approve' ? { approved: true } : {},
-        artifacts: [],
-        durationMs: 0,
-      };
-      const advanced = await advanceFlowRun(
-        flowRunId,
-        nodeRunId,
-        synthetic,
-        undefined,
-        expectedSnapshot,
-      );
-      if (advanced === false) {
-        await setFlowRunStatus(db, flowRunId, 'paused', {}, 'running');
+    if ((await getFlowRun(db, flowRunId))?.status !== 'running') {
+      throw new TRPCError({
+        code: 'PRECONDITION_FAILED',
+        message: 'Flow run changed while it was being resumed.',
+      });
+    }
+    if (action === 'retry') {
+      const node = findNodeById(ctx.graph.nodes, nodeRun.nodeId);
+      if (!node) {
         throw new TRPCError({
           code: 'PRECONDITION_FAILED',
-          message: 'This Flow step has already changed.',
+          message: `Node ${nodeRun.nodeId} no longer in graph; can't retry.`,
         });
       }
-    } finally {
-      releaseRegistration();
+      const fanOutScope =
+        nodeRun.parentFanOutNodeRunId && nodeRun.laneIndex !== null
+          ? {
+              laneIndex: nodeRun.laneIndex,
+              parentFanOutNodeRunId: nodeRun.parentFanOutNodeRunId,
+            }
+          : undefined;
+      await dispatchAndAdvance(flowRunId, node, undefined, ctx, undefined, fanOutScope);
+      return;
+    }
+
+    const synthetic: NodeOutput = {
+      status: action === 'skip' ? 'skipped' : 'completed',
+      outputs: action === 'approve' ? { approved: true } : {},
+      artifacts: [],
+      durationMs: 0,
+    };
+    const advanced = await advanceFlowRun(
+      flowRunId,
+      nodeRunId,
+      synthetic,
+      undefined,
+      expectedSnapshot,
+    );
+    if (advanced === false) {
+      await setFlowRunStatus(db, flowRunId, 'paused', {}, 'running');
+      throw new TRPCError({
+        code: 'PRECONDITION_FAILED',
+        message: 'This Flow step has already changed.',
+      });
     }
   });
 }

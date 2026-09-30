@@ -112,7 +112,9 @@ async function releaseNonDispatchableStartedAdmission(
   runStatus: string | undefined,
 ): Promise<void> {
   const message = 'Flow admission claim was not dispatchable';
-  captureFlowAdmissionException(new Error(message), 'non-dispatchable-claim');
+  // A Cancel that committed after promotion is the user's call, not a fault.
+  if (runStatus !== 'cancelled')
+    captureFlowAdmissionException(new Error(message), 'non-dispatchable-claim');
   log.warn(`[FlowAdmission] ${message}; releasing the lease`, {
     flowRunId,
     ticket,
@@ -214,8 +216,16 @@ const drainer = createFlowAdmissionDrainer({
   notifyFailedStartAdmission,
 });
 
-function drainFlowAdmissions(): Promise<void> {
+export function drainFlowAdmissions(): Promise<void> {
   return drainer.drain();
+}
+
+/** Runs a Flow-run command under the admission mutex; see FlowAdmissionController.transition. */
+export function transitionFlowRun<T>(
+  command: () => T,
+  afterCommit?: (result: T) => undefined,
+): Promise<T> {
+  return admissionController().transition(command, afterCommit);
 }
 
 /** Re-drains a queue whose retries ran out; a no-op otherwise. Safe to call from a poll. */
@@ -310,11 +320,6 @@ export async function cancelUndispatchedFlowAdmission(
     log.warn('[FlowAdmission] drain after dequeue failed', { flowRunId, error });
   });
   return true;
-}
-
-export async function hasPromotedFlowAdmission(flowRunId: string): Promise<boolean> {
-  const live = await admissionController().getLiveForRun(flowRunId);
-  return live?.state === 'active' || live?.state === 'releasing';
 }
 
 /**

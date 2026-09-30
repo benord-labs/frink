@@ -4,33 +4,29 @@ import type { FlowGraph } from '../../../../../shared/lib/validate-flow-graph';
 import type { FlowExecutionEvent } from '../../../../../shared/types/flow';
 import { getFlowRun, setFlowRunStatus } from '../../../db/repos/flow-runs';
 import { createTask, getTaskById, updateTaskStatus } from '../../../db/repos/tasks';
-import { flowRuns } from '../../../db/schema';
+import { flowRunAdmissions, flowRuns } from '../../../db/schema';
 import { seedFlowRun } from '../../../db/test-utils/flow-fixtures';
-import { freshDb } from '../../../db/test-utils/fresh-db';
+import { freshDb, type TestDb } from '../../../db/test-utils/fresh-db';
 
 const holder = vi.hoisted(() => ({
   db: null as unknown,
   cancelUndispatched: vi.fn(),
   hasLive: vi.fn(async () => false),
-  hasPromoted: vi.fn(),
 }));
 
 vi.mock('../../../db', async (original) => ({
   ...(await original<typeof import('../../../db')>()),
   getDatabase: () => holder.db,
 }));
-vi.mock('../runtime', () => ({
+vi.mock('../runtime', async (original) => ({
+  ...(await original<typeof import('../runtime')>()),
   cancelUndispatchedFlowAdmission: holder.cancelUndispatched,
   hasLiveFlowAdmission: holder.hasLive,
-  hasPromotedFlowAdmission: holder.hasPromoted,
-  registerFlowAdmissionStartDispatcher: vi.fn(),
-  registerTerminalFlowResumeDispatcher: vi.fn(),
-  requestFlowStart: vi.fn(),
-  requestTerminalFlowResume: vi.fn(),
 }));
 
 import { cancelFlowRun } from '../../engine';
 import { subscribeFlowEvents } from '../../events';
+import { _setFlowAdmissionControllerForTests } from '../runtime';
 
 const GRAPH: FlowGraph = {
   nodes: [
@@ -48,8 +44,25 @@ afterEach(() => {
   holder.cancelUndispatched.mockReset();
   holder.hasLive.mockReset();
   holder.hasLive.mockResolvedValue(false);
-  holder.hasPromoted.mockReset();
+  _setFlowAdmissionControllerForTests(null);
 });
+
+function seedResumeAdmission(db: TestDb, flowRunId: string, state: 'queued' | 'active'): number {
+  return db
+    .insert(flowRunAdmissions)
+    .values({
+      flowRunId,
+      state,
+      priorityClass: 'resume',
+      intentVersion: 1,
+      intentJson: { version: 1, action: 'resume', flow_run_id: flowRunId },
+    })
+    .returning({ ticket: flowRunAdmissions.ticket })
+    .get().ticket;
+}
+
+const admissionState = (db: TestDb, ticket: number) =>
+  db.select().from(flowRunAdmissions).where(eq(flowRunAdmissions.ticket, ticket)).get()?.state;
 
 describe('terminal Flow retry cancellation', () => {
   it('cancels a queued resume admission without sweeping the terminal run', async () => {
@@ -63,19 +76,17 @@ describe('terminal Flow retry cancellation', () => {
     });
     await updateTaskStatus(db, task.id, 'running');
     await setFlowRunStatus(db, flowRunId, 'failed');
-    holder.cancelUndispatched.mockResolvedValueOnce(true);
-    holder.hasPromoted.mockResolvedValueOnce(false);
+    const ticket = seedResumeAdmission(db, flowRunId, 'queued');
 
     const result = await cancelFlowRun(flowRunId);
 
-    // An ordinary cancel carries no dequeue guard: every undispatched state is fair game.
-    expect(holder.cancelUndispatched).toHaveBeenCalledWith(flowRunId, undefined);
+    expect(admissionState(db, ticket)).toBe('cancelled');
     expect(result?.status).toBe('failed');
     expect((await getFlowRun(db, flowRunId))?.status).toBe('failed');
     expect((await getTaskById(db, task.id))?.status).toBe('running');
   });
 
-  it('cancels a retry that wins promotion after the initial terminal read', async () => {
+  it('cancels a retry that was promoted before the Cancel', async () => {
     const db = freshDb();
     holder.db = db;
     const { flowRunId } = await seedFlowRun(db, GRAPH);
@@ -85,42 +96,15 @@ describe('terminal Flow retry cancellation', () => {
       flowRunId,
     });
     await updateTaskStatus(db, task.id, 'running');
-    await setFlowRunStatus(db, flowRunId, 'failed');
-    holder.cancelUndispatched.mockImplementationOnce(async () => {
-      await setFlowRunStatus(db, flowRunId, 'running');
-      return false;
-    });
-    holder.hasPromoted.mockResolvedValueOnce(true);
+    await setFlowRunStatus(db, flowRunId, 'running');
+    const ticket = seedResumeAdmission(db, flowRunId, 'active');
 
     const result = await cancelFlowRun(flowRunId);
 
     expect(result?.status).toBe('cancelled');
-    expect((await getFlowRun(db, flowRunId))?.status).toBe('cancelled');
     expect((await getTaskById(db, task.id))?.status).toBe('cancelled');
-  });
-
-  it('preserves a node-first in-place revival when no admission was promoted', async () => {
-    const db = freshDb();
-    holder.db = db;
-    const { flowRunId } = await seedFlowRun(db, GRAPH);
-    const task = await createTask(db, {
-      description: 'in-place revival',
-      source: 'flow',
-      flowRunId,
-    });
-    await updateTaskStatus(db, task.id, 'running');
-    await setFlowRunStatus(db, flowRunId, 'cancelled');
-    holder.cancelUndispatched.mockImplementationOnce(async () => {
-      await setFlowRunStatus(db, flowRunId, 'running');
-      return false;
-    });
-    holder.hasPromoted.mockResolvedValueOnce(false);
-
-    const result = await cancelFlowRun(flowRunId);
-
-    expect(result?.status).toBe('running');
-    expect((await getFlowRun(db, flowRunId))?.status).toBe('running');
-    expect((await getTaskById(db, task.id))?.status).toBe('running');
+    // The Cancel releases the promoted slot; nothing else holds it.
+    expect(admissionState(db, ticket)).toBe('cancelled');
   });
 });
 
@@ -143,7 +127,6 @@ describe('Work Queue dequeue', () => {
     // Replaying the run's terminal event would settle its batch stage a second time.
     expect(seen).toEqual([]);
     expect(result?.status).toBe('cancelled');
-    expect(holder.hasPromoted).not.toHaveBeenCalled();
   });
 
   it('withholds the terminal event when a retry has already re-admitted the run', async () => {
@@ -176,7 +159,6 @@ describe('Work Queue dequeue', () => {
       await setFlowRunStatus(db, flowRunId, 'cancelled');
       return true;
     });
-    holder.hasPromoted.mockResolvedValueOnce(false);
     const seen: FlowExecutionEvent[] = [];
     const unsubscribe = subscribeFlowEvents((event) => seen.push(event));
 

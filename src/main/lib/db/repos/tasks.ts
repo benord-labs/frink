@@ -622,21 +622,6 @@ export async function cancelAllPendingTasks(db: Db): Promise<{ cancelledCount: n
   return { cancelledCount: rows.length };
 }
 
-/** Cancel a run's in-flight tasks; permanent deletion also sweeps parked work. */
-export async function cancelFlowLinkedTasks(
-  db: Db,
-  flowRunId: string,
-  includeParked = false,
-): Promise<number> {
-  const statuses = includeParked ? FLOW_DRIVING_STATUSES : (['pending', 'running'] as const);
-  const rows = await db
-    .update(tasks)
-    .set({ status: 'cancelled', completedAt: new Date(), result: cancelResultPatch(false) })
-    .where(and(eq(tasks.flowRunId, flowRunId), inArray(tasks.status, [...statuses])))
-    .returning({ id: tasks.id });
-  return rows.length;
-}
-
 /**
  * Accept a finished flow: flip the run's `done` rows to `completed`. Accepting only the queue's
  * representative row would leave a `done` sibling as the new representative (flowTaskRank ranks
@@ -855,7 +840,7 @@ export async function recoverOrphanedTasks(
 
 /**
  * Finalize a run's still-active flow-linked tasks (pending/running) when the flow_run goes
- * terminal. Mirrors the cloud engine's cancelFlowLinkedTasks — without it a task re-dispatched
+ * terminal. Mirrors cancelFlowTaskRows — without it a task re-dispatched
  * right as its run cancels can outlive the run as a stuck 'running' row (sidebar/work-queue
  * divergence). Called from advanceFlowRun's failed/cancelled branches alongside the node-run sweep.
  */

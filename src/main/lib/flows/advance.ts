@@ -34,7 +34,7 @@ import {
   resolveFanOutStructure,
 } from './graph';
 import { withSlot } from './scheduler';
-import { insertNodeRunIfLive, runTransition } from './transitions';
+import { DISPATCHABLE_RUN_STATUSES, insertNodeRunIfLive, runTransition } from './transitions';
 
 type FlowMeta = { flowId: string; flowName: string; batchId?: string };
 
@@ -170,18 +170,10 @@ async function handleFanOutProgress(
   if (step.kind === 'next-iteration') {
     await Promise.all(
       step.rootNodes.map((rootNode) =>
-        dispatchAndAdvance(
-          flowRunId,
-          rootNode,
-          step.previousOutput,
-          ctx,
-          step.loopContext,
-          undefined,
-          {
-            laneIndex: step.laneIndex,
-            parentFanOutNodeRunId: step.parentFanOutNodeRunId,
-          },
-        ),
+        dispatchAndAdvance(flowRunId, rootNode, step.previousOutput, ctx, step.loopContext, {
+          laneIndex: step.laneIndex,
+          parentFanOutNodeRunId: step.parentFanOutNodeRunId,
+        }),
       ),
     );
     return null;
@@ -199,7 +191,7 @@ async function handleFanOutProgress(
     resolution.structure.branches.map(async (branch) => {
       const rootNode = findNodeById(ctx.graph.nodes, branch.rootNodeId);
       if (!rootNode) return;
-      await dispatchAndAdvance(flowRunId, rootNode, output, ctx, loopContext, undefined, {
+      await dispatchAndAdvance(flowRunId, rootNode, output, ctx, loopContext, {
         laneIndex: 0,
         parentFanOutNodeRunId: node.id,
       });
@@ -225,6 +217,22 @@ export async function loadRunContext(flowRunId: string): Promise<RunContext | nu
   };
 }
 
+/** Terminal write gated on a live run, so a Cancel that committed mid-advance is never overwritten
+ * and only the winning write sweeps and emits. */
+async function endRun(
+  db: Db,
+  flowRunId: string,
+  status: 'failed' | 'cancelled',
+  ctx: RunContext,
+  summary?: string,
+): Promise<void> {
+  const at = { completedAt: new Date() };
+  if (!(await setFlowRunStatus(db, flowRunId, status, at, DISPATCHABLE_RUN_STATUSES))) return;
+  await cancelRemainingNodeRunsForRun(db, flowRunId);
+  await cancelFlowLinkedTasksForRun(db, flowRunId);
+  emitRunTerminal(ctx.meta, flowRunId, status, { summary });
+}
+
 async function handleNonProgressOutput(
   db: Db,
   flowRunId: string,
@@ -245,14 +253,12 @@ async function handleNonProgressOutput(
 
   if (output.status === 'failed') {
     abortFlowRun(flowRunId);
-    await setFlowRunStatus(db, flowRunId, 'failed', { completedAt: new Date() });
-    await cancelRemainingNodeRunsForRun(db, flowRunId);
-    await cancelFlowLinkedTasksForRun(db, flowRunId);
-    emitRunTerminal(ctx.meta, flowRunId, 'failed', { summary: output.error?.message });
+    await endRun(db, flowRunId, 'failed', ctx, output.error?.message);
     return true;
   }
   if (output.status === 'awaiting_input' || output.status === 'blocked') {
-    await setFlowRunStatus(db, flowRunId, 'paused');
+    if (!(await setFlowRunStatus(db, flowRunId, 'paused', {}, DISPATCHABLE_RUN_STATUSES)))
+      return true;
     emitRunPaused(
       ctx.meta,
       flowRunId,
@@ -262,11 +268,7 @@ async function handleNonProgressOutput(
     return true;
   }
   if (output.status !== 'cancelled') return false;
-
-  await setFlowRunStatus(db, flowRunId, 'cancelled', { completedAt: new Date() });
-  await cancelRemainingNodeRunsForRun(db, flowRunId);
-  await cancelFlowLinkedTasksForRun(db, flowRunId);
-  emitRunTerminal(ctx.meta, flowRunId, 'cancelled');
+  await endRun(db, flowRunId, 'cancelled', ctx);
   return true;
 }
 
@@ -334,7 +336,9 @@ export async function advanceFlowRun(
   const nextNodeId =
     fanOutContinuation ?? pickNextTargetNodeId(ctx.graph.edges, updated.nodeId, conditionResult);
   if (!nextNodeId) {
-    await setFlowRunStatus(db, flowRunId, 'completed', { completedAt: new Date() });
+    const at = { completedAt: new Date() };
+    if (!(await setFlowRunStatus(db, flowRunId, 'completed', at, DISPATCHABLE_RUN_STATUSES)))
+      return true;
     // Opt-in auto-accept: the flow author pre-authorized skipping the review gate, so the run's
     // `done` tasks finalize straight to `completed`. Default (flag off) leaves them at `done` —
     // the work queue surfaces the flow as Ready for review until the user accepts.
@@ -348,12 +352,7 @@ export async function advanceFlowRun(
   const nextNode = findNodeById(ctx.graph.nodes, nextNodeId);
   if (!nextNode) {
     log.warn('[FlowsEngine] next node id not found in graph', { flowRunId, nextNodeId });
-    await setFlowRunStatus(db, flowRunId, 'failed', { completedAt: new Date() });
-    await cancelRemainingNodeRunsForRun(db, flowRunId);
-    await cancelFlowLinkedTasksForRun(db, flowRunId);
-    emitRunTerminal(ctx.meta, flowRunId, 'failed', {
-      summary: `Edge target ${nextNodeId} not in graph`,
-    });
+    await endRun(db, flowRunId, 'failed', ctx, `Edge target ${nextNodeId} not in graph`);
     return true;
   }
 
@@ -370,7 +369,6 @@ export async function advanceFlowRun(
     outputAfterFanOut(fanOutStep, output),
     ctx,
     undefined,
-    undefined,
     fanOutScope,
   );
   return true;
@@ -383,7 +381,6 @@ export async function dispatchAndAdvance(
   previousOutput: NodeOutput | undefined,
   ctx: RunContext,
   explicitLoopContext?: Record<string, unknown>,
-  releaseAbortRegistration?: () => void,
   options?: {
     resumeKind?: 'continuation' | 'redispatch';
     laneIndex?: number;
@@ -412,7 +409,6 @@ export async function dispatchAndAdvance(
   if (!inserted) return;
   const controller = new AbortController();
   registerNodeAbort(flowRunId, controller);
-  releaseAbortRegistration?.();
   emitNodeStarted(ctx.meta, flowRunId, node.id, node.blockType, node.label);
 
   try {
@@ -457,10 +453,7 @@ export async function dispatchAndAdvance(
     // 'running' forever: the trigger entry point is `void runFlow(...).catch(log.error)`
     // (start.ts), so the only trace is one log line and the user sees a hung flow.
     //
-    // An abort is NOT a failure, and the terminal-run bail in advanceFlowRun is not enough to
-    // cover it: cancelFlowRun aborts the controller BEFORE it writes 'cancelled', so a thrown
-    // AbortError can arrive here while the run is still non-terminal and would flip a cancel
-    // into a failure. Gate on the signal itself and let the canceller own the terminal state.
+    // An abort is NOT a failure: whoever aborted this controller owns the run's terminal state.
     if (controller.signal.aborted) return;
 
     const message = err instanceof Error ? err.message : String(err);

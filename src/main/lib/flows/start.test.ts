@@ -232,7 +232,6 @@ describe('terminal Flow retry admission', () => {
       undefined,
       RERUN_CTX,
       undefined,
-      expect.any(Function),
       // A plain resume intent (no continuation flag) is the deliberate re-run lane.
       { resumeKind: 'redispatch' },
     );

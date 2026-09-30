@@ -85,13 +85,13 @@ describe('dispatchAdmittedTerminalResume (registered dispatcher)', () => {
   it("forwards a continuation intent as resumeKind 'continuation'", async () => {
     await mocks.registered?.(intent(true));
     expect(mocks.dispatchAndAdvance).toHaveBeenCalledOnce();
-    expect(mocks.dispatchAndAdvance.mock.calls[0][6]).toEqual({ resumeKind: 'continuation' });
+    expect(mocks.dispatchAndAdvance.mock.calls[0][5]).toEqual({ resumeKind: 'continuation' });
   });
 
   it("forwards a plain intent (flows.rerunRun — the honest re-run surfaces) as resumeKind 'redispatch'", async () => {
     await mocks.registered?.(intent());
     expect(mocks.dispatchAndAdvance).toHaveBeenCalledOnce();
-    expect(mocks.dispatchAndAdvance.mock.calls[0][6]).toEqual({ resumeKind: 'redispatch' });
+    expect(mocks.dispatchAndAdvance.mock.calls[0][5]).toEqual({ resumeKind: 'redispatch' });
   });
 
   it('forwards the persisted Fan Out branch scope', async () => {
@@ -110,19 +110,19 @@ describe('dispatchAdmittedTerminalResume (registered dispatcher)', () => {
 
     await mocks.registered?.(intent());
 
-    expect(mocks.dispatchAndAdvance.mock.calls[0][6]).toEqual({
+    expect(mocks.dispatchAndAdvance.mock.calls[0][5]).toEqual({
       resumeKind: 'redispatch',
       laneIndex: 3,
       parentFanOutNodeRunId: parent.id,
     });
   });
 
-  it('still refuses a run that is no longer dispatchable, before any dispatch', async () => {
+  it('returns quietly for a run a Cancel took after promotion, before any dispatch', async () => {
     const { flowRuns } = await import('../../../db/schema');
     const { eq } = await import('drizzle-orm');
-    await db.update(flowRuns).set({ status: 'failed' }).where(eq(flowRuns.id, flowRunId));
+    await db.update(flowRuns).set({ status: 'cancelled' }).where(eq(flowRuns.id, flowRunId));
 
-    await expect(mocks.registered?.(intent(true))).rejects.toThrow('no longer dispatchable');
+    await expect(mocks.registered?.(intent(true))).resolves.toBeUndefined();
     expect(mocks.dispatchAndAdvance).not.toHaveBeenCalled();
   });
 });

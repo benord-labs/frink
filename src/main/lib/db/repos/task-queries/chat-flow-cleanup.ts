@@ -2,7 +2,7 @@ import { and, eq, inArray, isNotNull, isNull, notInArray, or, sql } from 'drizzl
 import { FLOW_ADMISSION_LIVE_STATES } from '../../../../../shared/lib/flow-admission';
 import { FLOW_DRIVING_STATUSES } from '../../../../../shared/types/flow';
 import type { getDatabase } from '../../index';
-import { cancelRunRows } from '../../../flows/transitions';
+import { cancelRunCommand } from '../../../flows/transitions';
 import { chats, flowRunAdmissions, flowRuns, nodeRuns, tasks } from '../../schema';
 import { cancelResultPatch } from '../task-parking/cancel-marker';
 
@@ -110,17 +110,20 @@ function cancelDrivingFlowTasksForChats(
     .all().length;
 }
 
-export type ChatOwnedFlowCancellation = 'preserved' | 'cancelled' | 'settled';
+export type ChatOwnedFlowCancellation = {
+  outcome: 'preserved' | 'cancelled' | 'settled';
+  droppedTicket: boolean;
+  liveTicket: number | null;
+};
 
 /** Decide and persist chat-scoped cancellation without a sibling-task check/act race. */
 function cancelChatOwnedFlowWorkWithScope(
   db: Db,
   flowRunId: string,
   chatIds: string[],
-  abortRun: () => void,
   includeParked: boolean,
 ): ChatOwnedFlowCancellation {
-  if (chatIds.length === 0) return 'settled';
+  if (chatIds.length === 0) return { outcome: 'settled', droppedTicket: false, liveTicket: null };
   return db.transaction(
     () => {
       const siblingTask = db
@@ -131,13 +134,16 @@ function cancelChatOwnedFlowWorkWithScope(
         .all()[0];
       if (siblingTask) {
         cancelDrivingFlowTasksForChats(db, flowRunId, chatIds, false, includeParked);
-        return 'preserved';
+        return { outcome: 'preserved', droppedTicket: false, liveTicket: null };
       }
 
+      const result = cancelRunCommand(db, flowRunId, { includeParked: false });
       cancelDrivingFlowTasksForChats(db, flowRunId, chatIds, true, includeParked);
-      if (!cancelRunRows(db, flowRunId, { includeParked: false })) return 'settled';
-      abortRun();
-      return 'cancelled';
+      return {
+        outcome: result?.cancelled ? 'cancelled' : 'settled',
+        droppedTicket: result?.droppedTicket ?? false,
+        liveTicket: result?.liveTicket ?? null,
+      };
     },
     { behavior: 'immediate' },
   );
@@ -147,18 +153,16 @@ export function cancelChatOwnedFlowWork(
   db: Db,
   flowRunId: string,
   chatIds: string[],
-  abortRun: () => void,
 ): ChatOwnedFlowCancellation {
-  return cancelChatOwnedFlowWorkWithScope(db, flowRunId, chatIds, abortRun, true);
+  return cancelChatOwnedFlowWorkWithScope(db, flowRunId, chatIds, true);
 }
 
 export function cancelChatOwnedFlowWorkForArchive(
   db: Db,
   flowRunId: string,
   chatIds: string[],
-  abortRun: () => void,
 ): ChatOwnedFlowCancellation {
-  return cancelChatOwnedFlowWorkWithScope(db, flowRunId, chatIds, abortRun, false);
+  return cancelChatOwnedFlowWorkWithScope(db, flowRunId, chatIds, false);
 }
 
 /** Archive stops executing work but leaves parked review tasks available for restore. */
