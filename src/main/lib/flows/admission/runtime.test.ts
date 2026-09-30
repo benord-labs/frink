@@ -132,7 +132,9 @@ describe('Flow admission runtime recovery', () => {
       max_concurrent_runs: 1,
       queued_runs: 1,
     });
-    await vi.waitFor(() => expect(mocks.dispatcher).toHaveBeenCalledExactlyOnceWith(first.run.id));
+    await vi.waitFor(() =>
+      expect(mocks.dispatcher).toHaveBeenCalledExactlyOnceWith(first.run.id, expect.any(Number)),
+    );
     expect(await controller.getLiveForRun(second.run.id)).toMatchObject({ state: 'queued' });
   });
 
@@ -226,7 +228,7 @@ describe('Flow admission runtime recovery', () => {
       state: 'active',
     });
     expect(mocks.dispatcher).toHaveBeenCalledOnce();
-    expect(mocks.dispatcher).toHaveBeenCalledWith(second.run.id);
+    expect(mocks.dispatcher).toHaveBeenCalledWith(second.run.id, expect.any(Number));
   });
   describe('a releasing admission left by a dead process', () => {
     /** An active run whose release began but never settled — the shape a crashed teardown leaves. */
@@ -306,7 +308,9 @@ describe('Flow admission runtime recovery', () => {
     expect(mocks.dispatcher).not.toHaveBeenCalled();
 
     const next = await requestFlowStart(startInput('after-non-dispatchable'));
-    await vi.waitFor(() => expect(mocks.dispatcher).toHaveBeenCalledWith(next.run.id));
+    await vi.waitFor(() =>
+      expect(mocks.dispatcher).toHaveBeenCalledWith(next.run.id, expect.any(Number)),
+    );
   });
   it('stops recovery before reprocessing a non-advancing page', async () => {
     const queued = await controller.enqueueStart(startInput('stuck-cursor'));
@@ -645,6 +649,7 @@ describe('Flow admission runtime recovery', () => {
         node_run_id: 'resume-node-run',
         continuation: true,
       }),
+      expect.any(Number),
     );
     expect(emitCorrective).not.toHaveBeenCalled();
   });
@@ -699,14 +704,14 @@ describe('a failed admission drain (sc-2481)', () => {
     expect(await stateOf(second.run.id)).toBe('active');
     expect(await stateOf(first.run.id)).toBe('claimed');
     expect(mocks.dispatcher).toHaveBeenCalledOnce();
-    expect(mocks.dispatcher).toHaveBeenCalledWith(second.run.id);
+    expect(mocks.dispatcher).toHaveBeenCalledWith(second.run.id, expect.any(Number));
 
     await vi.advanceTimersByTimeAsync(FLOW_ADMISSION_DRAIN_RETRY_DELAYS_MS[0]);
     await flush();
 
     expect(await stateOf(first.run.id)).toBe('active');
     expect(mocks.dispatcher).toHaveBeenCalledTimes(2);
-    expect(mocks.dispatcher).toHaveBeenCalledWith(first.run.id);
+    expect(mocks.dispatcher).toHaveBeenCalledWith(first.run.id, expect.any(Number));
     expect(
       db.select().from(flowRunAdmissions).where(eq(flowRunAdmissions.state, 'claimed')).all(),
     ).toEqual([]);
@@ -770,7 +775,7 @@ describe('a failed admission drain (sc-2481)', () => {
     await flush();
 
     expect(await stateOf(first.run.id)).toBeNull();
-    expect(mocks.dispatcher).not.toHaveBeenCalledWith(first.run.id);
+    expect(mocks.dispatcher).not.toHaveBeenCalledWith(first.run.id, expect.any(Number));
     expect(mocks.emitRunTerminal).not.toHaveBeenCalled();
     // The dequeue's own drain succeeded, which ends the failure episode.
     expect(vi.getTimerCount()).toBe(0);

@@ -70,6 +70,7 @@ import { deleteFlow, settleChatOwnedFlowDeletion } from './deletion';
 import { dispatchNode } from './dispatch';
 import { cancelFlowRun, cancelFlowRunForChatDeletion, cancelFlowRunsForChat } from './engine';
 import { subscribeFlowEvents } from './events';
+import { type RunFence, readRunFence } from './transitions';
 import { loadBodyMember, loadFanOutState, saveBodyMembers, saveFanOutState } from './fan-out-state';
 
 afterEach(() => {
@@ -179,6 +180,7 @@ describe('advanceFlowRun — idempotent across restart (the 203 duplicate-dispat
     holder.db = db;
     (dispatchNode as Mock).mockReset();
     ({ flowRunId } = await seedFlowRun(db, GRAPH));
+    seedActiveAdmission(db, flowRunId);
     await setFlowRunStatus(db, flowRunId, 'paused'); // agent in flight keeps the run paused
   });
 
@@ -341,19 +343,22 @@ describe('dispatchAndAdvance — a thrown dispatcher terminalizes its node', () 
 
   let db: TestDb;
   let flowRunId: string;
+  let fence: RunFence;
   beforeEach(async () => {
     db = freshDb();
     holder.db = db;
     (dispatchNode as Mock).mockReset();
     captureContainedMock.mockReset();
     ({ flowRunId } = await seedFlowRun(db, GRAPH));
+    seedActiveAdmission(db, flowRunId);
+    fence = readRunFence(db, flowRunId) as RunFence;
   });
 
   it('inserts no node_run and dispatches nothing once the run was cancelled', async () => {
     const ctx = await ctxFor(flowRunId);
     await setFlowRunStatus(db, flowRunId, 'cancelled');
 
-    await dispatchAndAdvance(flowRunId, GRAPH.nodes[0], undefined, ctx);
+    await dispatchAndAdvance(fence, GRAPH.nodes[0], undefined, ctx);
 
     expect(await listNodeRunsForFlowRun(db, flowRunId)).toEqual([]);
     expect(dispatchNode).not.toHaveBeenCalled();
@@ -366,7 +371,7 @@ describe('dispatchAndAdvance — a thrown dispatcher terminalizes its node', () 
       return { type: 'awaiting_input', reason: 'late handoff', handoff: true };
     });
 
-    await dispatchAndAdvance(flowRunId, GRAPH.nodes[0], undefined, await ctxFor(flowRunId));
+    await dispatchAndAdvance(fence, GRAPH.nodes[0], undefined, await ctxFor(flowRunId));
 
     expect((await getFlowRun(db, flowRunId))?.status).toBe('cancelled');
     const nodeRuns = await listNodeRunsForFlowRun(db, flowRunId);
@@ -376,7 +381,7 @@ describe('dispatchAndAdvance — a thrown dispatcher terminalizes its node', () 
   it('marks the node and run failed instead of stranding them in running', async () => {
     (dispatchNode as Mock).mockRejectedValue(new Error('SQLITE_IOERR: disk I/O error'));
 
-    await dispatchAndAdvance(flowRunId, GRAPH.nodes[0], undefined, await ctxFor(flowRunId));
+    await dispatchAndAdvance(fence, GRAPH.nodes[0], undefined, await ctxFor(flowRunId));
 
     const nodeRuns = await listNodeRunsForFlowRun(db, flowRunId);
     expect(nodeRuns[0]?.status).toBe('failed');
@@ -399,7 +404,7 @@ describe('dispatchAndAdvance — a thrown dispatcher terminalizes its node', () 
       throw new Error('SQLITE_IOERR: disk I/O error');
     });
 
-    await dispatchAndAdvance(flowRunId, GRAPH.nodes[0], undefined, await ctxFor(flowRunId));
+    await dispatchAndAdvance(fence, GRAPH.nodes[0], undefined, await ctxFor(flowRunId));
 
     const nodeRuns = await listNodeRunsForFlowRun(db, flowRunId);
     const evaluate = nodeRuns.find((n) => n.nodeId === 'evaluate');
@@ -435,7 +440,7 @@ describe('dispatchAndAdvance — a thrown dispatcher terminalizes its node', () 
       throw new Error('SQLITE_IOERR: disk I/O error');
     });
 
-    await dispatchAndAdvance(flowRunId, GRAPH.nodes[0], undefined, await ctxFor(flowRunId));
+    await dispatchAndAdvance(fence, GRAPH.nodes[0], undefined, await ctxFor(flowRunId));
 
     const nodeRuns = await listNodeRunsForFlowRun(db, flowRunId);
     expect(nodeRuns.find((n) => n.nodeId === 'evaluate')?.status).toBe('completed');
@@ -456,7 +461,7 @@ describe('dispatchAndAdvance — a thrown dispatcher terminalizes its node', () 
   it('records a readable message when a dispatcher throws a non-Error value', async () => {
     (dispatchNode as Mock).mockRejectedValue('plain string failure');
 
-    await dispatchAndAdvance(flowRunId, GRAPH.nodes[0], undefined, await ctxFor(flowRunId));
+    await dispatchAndAdvance(fence, GRAPH.nodes[0], undefined, await ctxFor(flowRunId));
 
     const nodeRuns = await listNodeRunsForFlowRun(db, flowRunId);
     expect(nodeRuns[0]?.status).toBe('failed');
@@ -474,7 +479,7 @@ describe('dispatchAndAdvance — a thrown dispatcher terminalizes its node', () 
       throw new Error('Operation was aborted');
     });
 
-    await dispatchAndAdvance(flowRunId, GRAPH.nodes[0], undefined, await ctxFor(flowRunId));
+    await dispatchAndAdvance(fence, GRAPH.nodes[0], undefined, await ctxFor(flowRunId));
 
     // Untouched by the catch: the node stays as dispatch left it and the run keeps the status
     // cancelFlowRun is about to write. Without the signal gate both would read 'failed'.
@@ -977,6 +982,7 @@ describe('advanceFlowRun — run completion: review gate vs autoAcceptCompletedR
     holder.db = db;
     (dispatchNode as Mock).mockReset();
     const { flowRunId } = await seedFlowRun(db, graph);
+    seedActiveAdmission(db, flowRunId);
     const doneTask = await createTask(db, {
       description: 'solo',
       source: 'flow',
@@ -1026,6 +1032,7 @@ describe('advanceFlowRun — empty Fan Out', () => {
       ],
     };
     const { flowRunId } = await seedFlowRun(db, graph);
+    seedActiveAdmission(db, flowRunId);
     const nodeRun = await createNodeRun(db, {
       flowRunId,
       nodeId: 'fan',
@@ -1073,6 +1080,7 @@ describe('advanceFlowRun — branched Fan Out', () => {
     const db = freshDb();
     holder.db = db;
     const { flowRunId } = await seedFlowRun(db, graph);
+    seedActiveAdmission(db, flowRunId);
     const fanRun = await createNodeRun(db, {
       flowRunId,
       nodeId: 'fan',
@@ -1113,6 +1121,7 @@ describe('advanceFlowRun — branched Fan Out', () => {
     const db = freshDb();
     holder.db = db;
     const { flowRunId, flowId } = await seedFlowRun(db, graph);
+    seedActiveAdmission(db, flowRunId);
     const fanRun = await createNodeRun(db, {
       flowRunId,
       nodeId: 'fan',
@@ -1180,6 +1189,7 @@ describe('advanceFlowRun — branched Fan Out', () => {
     const db = freshDb();
     holder.db = db;
     const { flowRunId, flowId } = await seedFlowRun(db, graph);
+    seedActiveAdmission(db, flowRunId);
     const fanRun = await createNodeRun(db, {
       flowRunId,
       nodeId: 'fan',

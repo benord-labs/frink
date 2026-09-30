@@ -14,6 +14,7 @@ import { registerFlowAdmissionStartDispatcher, requestFlowStart } from './admiss
 import { dispatchAndAdvance, loadRunContext } from './advance';
 import { emitRunStarted } from './event-emit';
 import { findNodeById, parseGraph } from './graph';
+import { type RunFence, readRunFence } from './transitions';
 
 type Db = ReturnType<typeof getDatabase>;
 
@@ -84,21 +85,24 @@ export async function startFlowRun(input: StartFlowRunInput): Promise<{
   return { run: result.run, version: admittedVersion, isReplay: result.isReplay };
 }
 
-async function runFlow(flowRunId: string, triggerNodeId: string): Promise<void> {
-  const ctx = await loadRunContext(flowRunId);
+async function runFlow(fence: RunFence, triggerNodeId: string): Promise<void> {
+  const ctx = await loadRunContext(fence.flowRunId);
   if (!ctx) return;
   const triggerNode = findNodeById(ctx.graph.nodes, triggerNodeId);
   if (!triggerNode) return;
-  await dispatchAndAdvance(flowRunId, triggerNode, undefined, ctx);
+  await dispatchAndAdvance(fence, triggerNode, undefined, ctx);
 }
 
-async function dispatchAdmittedFlow(flowRunId: string): Promise<void> {
+async function dispatchAdmittedFlow(flowRunId: string, ticket: number): Promise<void> {
   const ctx = await loadRunContext(flowRunId);
   if (!ctx) throw new Error(`Flow run ${flowRunId} has no canonical execution context`);
   const trigger = ctx.graph.nodes.find((node) => isTriggerBlockType(node.blockType));
   if (!trigger) throw new Error(`Flow run ${flowRunId} has no trigger node`);
+  // A Cancel that committed after promotion owns the run; its release settles this ticket.
+  const fence = readRunFence(getDatabase(), flowRunId, ticket);
+  if (!fence) return;
   emitRunStarted(ctx.meta, flowRunId);
-  await runFlow(flowRunId, trigger.id);
+  await runFlow(fence, trigger.id);
 }
 
 registerFlowAdmissionStartDispatcher(dispatchAdmittedFlow);

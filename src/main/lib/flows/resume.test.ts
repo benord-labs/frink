@@ -13,7 +13,7 @@ import {
   updateTaskStatus,
 } from '../db/repos/tasks';
 import { abandonRestartInterruption } from '../db/repos/task-parking/abandon-marker';
-import { batchStageRuns, batchStages, flowRuns, tasks } from '../db/schema';
+import { batchStageRuns, batchStages, flowRunAdmissions, flowRuns, tasks } from '../db/schema';
 import { seedActiveAdmission, seedFlowRun } from '../db/test-utils/flow-fixtures';
 import { freshDb, type TestDb } from '../db/test-utils/fresh-db';
 import { unparkFlowInPlace } from '../tasks';
@@ -211,6 +211,30 @@ describe('resumeFlowRun — admission lease', () => {
     expect((await getNodeRun(db, node.id))?.status).toBe('awaiting_input');
   });
 
+  it('never re-pauses a run that a Cancel and a Retry re-admitted under a new ticket', async () => {
+    const { flowRunId } = await seedFlowRun(db, GRAPH);
+    await setFlowRunStatus(db, flowRunId, 'paused');
+    const node = await createNodeRun(db, {
+      flowRunId,
+      nodeId: 'a',
+      blockType: 'agent',
+      status: 'awaiting_input',
+    });
+    const ticket = seedActiveAdmission(db, flowRunId);
+    (advanceFlowRun as Mock).mockImplementationOnce(async () => {
+      db.update(flowRunAdmissions)
+        .set({ state: 'released', settledAt: new Date() })
+        .where(eq(flowRunAdmissions.ticket, ticket))
+        .run();
+      seedActiveAdmission(db, flowRunId);
+      return false;
+    });
+
+    await expect(resumeFlowRun(flowRunId, 'approve', node.id)).rejects.toThrow('already changed');
+
+    expect((await getFlowRun(db, flowRunId))?.status).toBe('running');
+  });
+
   it('does not reopen a run cancelled while its context loads', async () => {
     const { flowRunId } = await seedFlowRun(db, GRAPH);
     await setFlowRunStatus(db, flowRunId, 'paused');
@@ -243,7 +267,7 @@ describe('resumeFlowRun — admission lease', () => {
       blockType: 'agent',
       status: 'awaiting_input',
     });
-    seedActiveAdmission(db, flowRunId);
+    const ticket = seedActiveAdmission(db, flowRunId);
     (dispatchAndAdvance as Mock).mockImplementationOnce(async () => {
       expect(hasFlowResourceActivity(flowRunId)).toBe(true);
     });
@@ -252,7 +276,7 @@ describe('resumeFlowRun — admission lease', () => {
 
     expect(dispatchAndAdvance).toHaveBeenCalledOnce();
     expect(dispatchAndAdvance).toHaveBeenCalledWith(
-      flowRunId,
+      { flowRunId, ticket },
       GRAPH.nodes[1],
       undefined,
       expect.anything(),
@@ -279,13 +303,13 @@ describe('resumeFlowRun — admission lease', () => {
       laneIndex: 3,
       parentFanOutNodeRunId: parent.id,
     });
-    seedActiveAdmission(db, flowRunId);
+    const ticket = seedActiveAdmission(db, flowRunId);
     vi.mocked(dispatchAndAdvance).mockReset().mockResolvedValue(undefined);
 
     await resumeFlowRun(flowRunId, 'retry', nodeRun.id);
 
     expect(dispatchAndAdvance).toHaveBeenCalledWith(
-      flowRunId,
+      { flowRunId, ticket },
       GRAPH.nodes[1],
       undefined,
       expect.anything(),

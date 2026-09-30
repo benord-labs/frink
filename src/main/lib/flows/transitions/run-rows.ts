@@ -3,13 +3,12 @@ import { FLOW_DRIVING_STATUSES } from '../../../../shared/types/flow';
 import type { getDatabase } from '../../db';
 import type { FlowRunStatus } from '../../db/repos/flow-runs';
 import { cancelResultPatch } from '../../db/repos/task-parking/cancel-marker';
-import { flowRuns, type NewNodeRun, type NodeRun, nodeRuns, tasks } from '../../db/schema';
+import { flowRuns, nodeRuns, tasks } from '../../db/schema';
 import { cancelAdmission, liveAdmissionForRun } from '../admission/store';
 
 type Db = ReturnType<typeof getDatabase>;
 
 const CANCELLABLE_RUN_STATUSES: FlowRunStatus[] = ['pending', 'running', 'paused'];
-export const DISPATCHABLE_RUN_STATUSES: FlowRunStatus[] = ['running', 'paused'];
 const ACTIVE_NODE_RUN_STATUSES = ['pending', 'running', 'awaiting_input', 'blocked'];
 const UNDISPATCHED_ADMISSION_STATES = ['queued', 'claimed'];
 
@@ -76,17 +75,4 @@ export function sweepUnfinishedRunRows(
     )
     .run();
   cancelFlowTaskRows(db, flowRunId, includeParked, now);
-}
-
-/** Inserts a node_run only while its run is running or paused, so a dispatch decided before a Cancel
- * committed writes nothing (null). Runs inside `runTransition`. */
-export function insertNodeRunIfLive(db: Db, input: NewNodeRun): NodeRun | null {
-  const live = db
-    .select({ id: flowRuns.id })
-    .from(flowRuns)
-    .where(
-      and(eq(flowRuns.id, input.flowRunId), inArray(flowRuns.status, DISPATCHABLE_RUN_STATUSES)),
-    )
-    .get();
-  return live ? db.insert(nodeRuns).values(input).returning().get() : null;
 }

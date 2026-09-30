@@ -11,6 +11,7 @@ import {
 import { batchStageRuns, flowRuns, type NodeRun, nodeRuns } from '../../db/schema';
 import { liveAdmissionForRun } from '../admission/store';
 import { lastUnfinishedNodeRun } from '../rerun/resume-point';
+import { type RunFence, readRunFence } from './fence';
 import { readRun } from './run-rows';
 
 type Db = ReturnType<typeof getDatabase>;
@@ -149,17 +150,17 @@ export function reviveMarkedNode(db: Db, flowRunId: string): NodeRun | null {
   });
 }
 
-export type ReopenPausedRunOutcome = 'reopened' | 'run-changed' | 'node-changed' | 'no-slot';
+export type ReopenDeclined = 'run-changed' | 'node-changed' | 'no-slot';
 
 /** Reopens a paused run for a renderer approve, retry or skip, only while it is still paused on the
- * node the user reviewed and still holds its active slot. */
+ * node the user reviewed and still holds its active slot; returns the fence the resume carries. */
 export function reopenPausedRunCommand(
   db: Db,
   flowRunId: string,
   nodeRunId: string,
   allowedNodeStatuses: readonly string[],
   snapshot?: FlowResumeSnapshot,
-): ReopenPausedRunOutcome {
+): RunFence | ReopenDeclined {
   if (readRun(db, flowRunId)?.status !== 'paused') return 'run-changed';
   const node = db.select().from(nodeRuns).where(eq(nodeRuns.id, nodeRunId)).get();
   if (
@@ -171,5 +172,5 @@ export function reopenPausedRunCommand(
   }
   if (!hasActiveSlot(db, flowRunId)) return 'no-slot';
   db.update(flowRuns).set({ status: 'running' }).where(eq(flowRuns.id, flowRunId)).run();
-  return 'reopened';
+  return readRunFence(db, flowRunId) ?? 'run-changed';
 }

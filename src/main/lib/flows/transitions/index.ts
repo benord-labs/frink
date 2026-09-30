@@ -3,7 +3,8 @@
 import type { getDatabase } from '../../db';
 
 export { type CancelRunOutcome, cancelRunCommand, cancelWorkQueueRunCommand } from './cancel-run';
-export { cancelRunRows, DISPATCHABLE_RUN_STATUSES, insertNodeRunIfLive } from './run-rows';
+export { insertNodeRunIfFenced, type RunFence, readRunFence, setFencedRunStatus } from './fence';
+export { cancelRunRows } from './run-rows';
 export {
   type ParkedTask,
   type ResumedBy,
@@ -14,7 +15,7 @@ export {
   type DrivingTaskRow,
   flowStillRunning,
   isRestartInterrupted,
-  type ReopenPausedRunOutcome,
+  type ReopenDeclined,
   reopenPausedRunCommand,
   restartMarkedNode,
   unparkFailedRunCommand,

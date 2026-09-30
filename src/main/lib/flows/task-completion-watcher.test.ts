@@ -3,7 +3,7 @@ import type { FlowGraph } from '../../../shared/lib/validate-flow-graph';
 import { getFlowRun, setFlowRunStatus } from '../db/repos/flow-runs';
 import { createNodeRun, getNodeRun } from '../db/repos/node-runs';
 import { createTask, updateTaskStatus } from '../db/repos/tasks';
-import { seedFlowRun } from '../db/test-utils/flow-fixtures';
+import { seedActiveAdmission, seedFlowRun } from '../db/test-utils/flow-fixtures';
 import { freshDb, type TestDb } from '../db/test-utils/fresh-db';
 
 // tick() and advanceFlowRun read their db via the getDatabase() singleton — point it at the
@@ -32,6 +32,7 @@ describe('task-completion-watcher — failed dispatch task fails the flow run', 
     db = freshDb();
     holder.db = db;
     ({ flowRunId } = await seedFlowRun(db, GRAPH));
+    seedActiveAdmission(db, flowRunId);
   });
 
   it('a task failed during dispatch (no chat created) fails the node and the run', async () => {

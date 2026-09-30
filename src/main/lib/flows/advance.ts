@@ -12,7 +12,7 @@ import log from 'electron-log';
 import type { NodeOutput } from '../../../shared/types/flow';
 import type { FlowResumeSnapshot } from '../../../shared/types/flow-run/resume';
 import { getDatabase } from '../db';
-import { getFlowRun, setFlowRunStatus } from '../db/repos/flow-runs';
+import { getFlowRun } from '../db/repos/flow-runs';
 import { getVersion } from '../db/repos/flow-versions';
 import { getFlowById } from '../db/repos/flows';
 import {
@@ -34,7 +34,13 @@ import {
   resolveFanOutStructure,
 } from './graph';
 import { withSlot } from './scheduler';
-import { DISPATCHABLE_RUN_STATUSES, insertNodeRunIfLive, runTransition } from './transitions';
+import {
+  insertNodeRunIfFenced,
+  type RunFence,
+  readRunFence,
+  runTransition,
+  setFencedRunStatus,
+} from './transitions';
 
 type FlowMeta = { flowId: string; flowName: string; batchId?: string };
 
@@ -65,21 +71,18 @@ async function dispatchNodeUnlessAborted(
   return controller.signal.aborted ? null : result;
 }
 
-async function parkAwaitingInput(
+function parkAwaitingInput(
   db: Db,
-  flowRunId: string,
+  fence: RunFence,
   nodeRunId: string,
   controller: AbortController,
-): Promise<boolean> {
-  const parked = await setNodeRunStatus(db, nodeRunId, 'awaiting_input', {
+): boolean {
+  const parked = setNodeRunStatus(db, nodeRunId, 'awaiting_input', {
     completedAt: new Date(),
     expectStatuses: ['running'],
   });
   if (!parked || controller.signal.aborted) return false;
-  const activeRun = await getFlowRun(db, flowRunId);
-  if (activeRun?.status !== 'running' && activeRun?.status !== 'paused') return false;
-  const paused = await setFlowRunStatus(db, flowRunId, 'paused', {}, activeRun.status);
-  return paused !== null && !controller.signal.aborted;
+  return setFencedRunStatus(db, fence, 'paused') !== null;
 }
 
 function fanOutContinuationNodeId(
@@ -123,10 +126,11 @@ type AdvancedNode = {
 
 async function pauseForParkedFanOutSibling(
   db: Db,
-  flowRunId: string,
+  fence: RunFence,
   node: AdvancedNode,
   ctx: RunContext,
 ): Promise<void> {
+  const { flowRunId } = fence;
   if (!node.parentFanOutNodeRunId) return;
   const parkedSiblings = (await listNodeRunsForFlowRun(db, flowRunId)).filter(
     (nodeRun) =>
@@ -135,8 +139,7 @@ async function pauseForParkedFanOutSibling(
       (nodeRun.status === 'awaiting_input' || nodeRun.status === 'blocked'),
   );
   if (parkedSiblings.length === 0) return;
-  const paused = await setFlowRunStatus(db, flowRunId, 'paused', {}, 'running');
-  if (!paused) return;
+  if (!setFencedRunStatus(db, fence, 'paused', {}, ['running'])) return;
   emitRunPaused(
     ctx.meta,
     flowRunId,
@@ -151,26 +154,26 @@ async function pauseForParkedFanOutSibling(
 
 async function handleFanOutProgress(
   db: Db,
-  flowRunId: string,
+  fence: RunFence,
   node: AdvancedNode,
   output: NodeOutput,
   ctx: RunContext,
 ): Promise<FanOutStepResult | null> {
   const step = await maybeAdvanceFanOut({
-    flowRunId,
+    flowRunId: fence.flowRunId,
     nodeId: node.nodeId,
     laneIndex: node.laneIndex,
     parentFanOutNodeRunId: node.parentFanOutNodeRunId,
     graph: ctx.graph,
   });
   if (step.kind === 'waiting') {
-    await pauseForParkedFanOutSibling(db, flowRunId, node, ctx);
+    await pauseForParkedFanOutSibling(db, fence, node, ctx);
     return null;
   }
   if (step.kind === 'next-iteration') {
     await Promise.all(
       step.rootNodes.map((rootNode) =>
-        dispatchAndAdvance(flowRunId, rootNode, step.previousOutput, ctx, step.loopContext, {
+        dispatchAndAdvance(fence, rootNode, step.previousOutput, ctx, step.loopContext, {
           laneIndex: step.laneIndex,
           parentFanOutNodeRunId: step.parentFanOutNodeRunId,
         }),
@@ -191,7 +194,7 @@ async function handleFanOutProgress(
     resolution.structure.branches.map(async (branch) => {
       const rootNode = findNodeById(ctx.graph.nodes, branch.rootNodeId);
       if (!rootNode) return;
-      await dispatchAndAdvance(flowRunId, rootNode, output, ctx, loopContext, {
+      await dispatchAndAdvance(fence, rootNode, output, ctx, loopContext, {
         laneIndex: 0,
         parentFanOutNodeRunId: node.id,
       });
@@ -217,29 +220,41 @@ export async function loadRunContext(flowRunId: string): Promise<RunContext | nu
   };
 }
 
-/** Terminal write gated on a live run, so a Cancel that committed mid-advance is never overwritten
+/** Terminal write gated on the fence, so a Cancel that committed mid-advance is never overwritten
  * and only the winning write sweeps and emits. */
 async function endRun(
   db: Db,
-  flowRunId: string,
+  fence: RunFence,
   status: 'failed' | 'cancelled',
   ctx: RunContext,
   summary?: string,
 ): Promise<void> {
-  const at = { completedAt: new Date() };
-  if (!(await setFlowRunStatus(db, flowRunId, status, at, DISPATCHABLE_RUN_STATUSES))) return;
+  const { flowRunId } = fence;
+  if (!setFencedRunStatus(db, fence, status, { completedAt: new Date() })) return;
+  if (status === 'failed') abortFlowRun(flowRunId);
   await cancelRemainingNodeRunsForRun(db, flowRunId);
   await cancelFlowLinkedTasksForRun(db, flowRunId);
   emitRunTerminal(ctx.meta, flowRunId, status, { summary });
 }
 
+async function completeRun(db: Db, fence: RunFence, ctx: RunContext): Promise<void> {
+  if (!setFencedRunStatus(db, fence, 'completed', { completedAt: new Date() })) return;
+  // Opt-in auto-accept: the author pre-authorized skipping review, so `done` tasks finalize to
+  // `completed`; by default they stay `done` and the queue shows the run as Ready for review.
+  if (ctx.graph.settings?.autoAcceptCompletedRuns === true) {
+    await completeDoneTasksForFlowRun(db, fence.flowRunId);
+  }
+  emitRunTerminal(ctx.meta, fence.flowRunId, 'completed');
+}
+
 async function handleNonProgressOutput(
   db: Db,
-  flowRunId: string,
+  fence: RunFence,
   node: AdvancedNode,
   output: NodeOutput,
   ctx: RunContext,
 ): Promise<boolean> {
+  const { flowRunId } = fence;
   if (isEmittedTerminalStatus(output.status)) {
     emitNodeTerminal(
       ctx.meta,
@@ -252,13 +267,11 @@ async function handleNonProgressOutput(
   }
 
   if (output.status === 'failed') {
-    abortFlowRun(flowRunId);
-    await endRun(db, flowRunId, 'failed', ctx, output.error?.message);
+    await endRun(db, fence, 'failed', ctx, output.error?.message);
     return true;
   }
   if (output.status === 'awaiting_input' || output.status === 'blocked') {
-    if (!(await setFlowRunStatus(db, flowRunId, 'paused', {}, DISPATCHABLE_RUN_STATUSES)))
-      return true;
+    if (!setFencedRunStatus(db, fence, 'paused')) return true;
     emitRunPaused(
       ctx.meta,
       flowRunId,
@@ -268,7 +281,7 @@ async function handleNonProgressOutput(
     return true;
   }
   if (output.status !== 'cancelled') return false;
-  await endRun(db, flowRunId, 'cancelled', ctx);
+  await endRun(db, fence, 'cancelled', ctx);
   return true;
 }
 
@@ -287,18 +300,10 @@ export async function advanceFlowRun(
   resumeSnapshot?: FlowResumeSnapshot,
 ): Promise<boolean> {
   const db = getDatabase();
-  // Never resurrect a terminal run. The task-completion-watcher can fire advanceFlowRun
-  // after a cancel (e.g. the chat was deleted mid agent-task), and an aborted in-process
-  // node's catch path would otherwise flip 'cancelled' → 'failed'. Bail before touching state.
-  const current = await getFlowRun(db, flowRunId);
-  if (
-    current &&
-    (current.status === 'cancelled' ||
-      current.status === 'failed' ||
-      current.status === 'completed')
-  ) {
-    return true;
-  }
+  // Never write into a terminal run. Every write below re-checks this fence, so a Cancel (or a
+  // Cancel and a Retry under a new ticket) landing across an await makes it decline.
+  const fence = readRunFence(db, flowRunId);
+  if (!fence) return true;
 
   // CAS guard: only advance when the node_run is still active. A re-advance of an
   // already-terminal node (e.g. the watcher re-firing a completed task after a restart
@@ -317,14 +322,14 @@ export async function advanceFlowRun(
   const ctx = await loadRunContext(flowRunId);
   if (!ctx) return true;
 
-  if (await handleNonProgressOutput(db, flowRunId, updated, output, ctx)) return true;
+  if (await handleNonProgressOutput(db, fence, updated, output, ctx)) return true;
 
   // status === 'completed' || 'skipped' — walk to next node.
   // Sequential fan_out: when a body-tail node finishes, advance the iteration
   // before falling through to graph edges. 'next-iteration' re-dispatches the
   // body head with a new loopContext; 'finished' walks to the continuation
   // outside the explicitly-owned body.
-  const fanOutStep = await handleFanOutProgress(db, flowRunId, updated, output, ctx);
+  const fanOutStep = await handleFanOutProgress(db, fence, updated, output, ctx);
   if (!fanOutStep) return true;
 
   const fanOutContinuation = fanOutContinuationNodeId(ctx.graph, updated, output, fanOutStep);
@@ -336,23 +341,14 @@ export async function advanceFlowRun(
   const nextNodeId =
     fanOutContinuation ?? pickNextTargetNodeId(ctx.graph.edges, updated.nodeId, conditionResult);
   if (!nextNodeId) {
-    const at = { completedAt: new Date() };
-    if (!(await setFlowRunStatus(db, flowRunId, 'completed', at, DISPATCHABLE_RUN_STATUSES)))
-      return true;
-    // Opt-in auto-accept: the flow author pre-authorized skipping the review gate, so the run's
-    // `done` tasks finalize straight to `completed`. Default (flag off) leaves them at `done` —
-    // the work queue surfaces the flow as Ready for review until the user accepts.
-    if (ctx.graph.settings?.autoAcceptCompletedRuns === true) {
-      await completeDoneTasksForFlowRun(db, flowRunId);
-    }
-    emitRunTerminal(ctx.meta, flowRunId, 'completed');
+    await completeRun(db, fence, ctx);
     return true;
   }
 
   const nextNode = findNodeById(ctx.graph.nodes, nextNodeId);
   if (!nextNode) {
     log.warn('[FlowsEngine] next node id not found in graph', { flowRunId, nextNodeId });
-    await endRun(db, flowRunId, 'failed', ctx, `Edge target ${nextNodeId} not in graph`);
+    await endRun(db, fence, 'failed', ctx, `Edge target ${nextNodeId} not in graph`);
     return true;
   }
 
@@ -364,7 +360,7 @@ export async function advanceFlowRun(
         }
       : undefined;
   await dispatchAndAdvance(
-    flowRunId,
+    fence,
     nextNode,
     outputAfterFanOut(fanOutStep, output),
     ctx,
@@ -376,7 +372,7 @@ export async function advanceFlowRun(
 
 /** Internal: insert node_run, register abort, dispatch, recurse on result. */
 export async function dispatchAndAdvance(
-  flowRunId: string,
+  fence: RunFence,
   node: { id: string; blockType: string; label?: string; config?: Record<string, unknown> },
   previousOutput: NodeOutput | undefined,
   ctx: RunContext,
@@ -388,6 +384,7 @@ export async function dispatchAndAdvance(
   },
 ): Promise<void> {
   const db = getDatabase();
+  const { flowRunId } = fence;
   // Inject fan_out loopContext when this node is part of a body chain, unless
   // the caller already supplied one (the iteration-step path passes it through
   // explicitly to avoid an extra KV roundtrip).
@@ -396,8 +393,7 @@ export async function dispatchAndAdvance(
   // The insert and the abort registration share one tick: a Cancel that commits first makes the
   // insert decline, and one that commits later finds this controller to abort.
   const inserted = runTransition(db, () =>
-    insertNodeRunIfLive(db, {
-      flowRunId,
+    insertNodeRunIfFenced(db, fence, {
       nodeId: node.id,
       blockType: node.blockType,
       status: 'running',
@@ -426,7 +422,7 @@ export async function dispatchAndAdvance(
     if (!result) return;
 
     if (result.type === 'awaiting_input') {
-      if (!(await parkAwaitingInput(db, flowRunId, inserted.id, controller))) return;
+      if (!parkAwaitingInput(db, fence, inserted.id, controller)) return;
       // An agent hand-off waits on the machine and happens on every advance; an approval block
       // (or a merge conflict) waits on the user. Only the latter is user-facing signal.
       emitRunPaused(
