@@ -48,12 +48,8 @@ const ACTIVE_NODE_RUN_STATUSES = new Set(['running', 'awaiting_input', 'blocked'
 
 let interval: NodeJS.Timeout | null = null;
 
-/**
- * Evict a task from the in-process advanced-set so the watcher can advance it AGAIN on its next
- * terminal status. Required when a parked node is resumed IN PLACE (awaiting_input/needs_attention →
- * running): the first park already recorded the task here, so without this the agent's later `done`
- * is deduped away and the flow stays stuck. Called by the resume path (see resumeFlowNodeInPlace).
- */
+/** Evict a task from the advanced-set so the watcher advances it AGAIN on its next terminal status:
+ * a node resumed in place would otherwise have the agent's later `done` deduped away. */
 export function forgetAdvancedTask(taskId: string): void {
   advancedTaskIds.delete(taskId);
 }

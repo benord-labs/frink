@@ -1,12 +1,5 @@
-/**
- * SEAM test for the crash-recovery strand: a revive declined for lack of an admission slot must
- * leave the whole restart-interrupted shape intact — task `cancelled`, run `cancelled`, marker on
- * the node_run — so the re-dispatch path can still recover it. The property spans two modules:
- * the guard in `reviveRestartInterruptedFlow` keeps the task off `running`, which is exactly what
- * makes `parkFlowTaskForSubChat`'s CAS a no-op — the run can never be rewritten to `paused`
- * without a slot (a state no affordance or sweep recovers). The sibling unit file mocks all of
- * this away; here the repos and DB are real, only the admission probe is stubbed.
- */
+/** Seam: a revive declined for lack of an admission slot leaves task, run and marker intact, so the
+ * follow-up park's `running` CAS matches nothing and Re-run can still recover the run. */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { type NodeOutput, RESTART_INTERRUPTION_REASON } from '../../../shared/types/flow';
@@ -18,16 +11,13 @@ import { createTask, getTaskById, updateTaskStatus } from '../db/repos/tasks';
 import { chats } from '../db/schema';
 import { seedFlowRun } from '../db/test-utils/flow-fixtures';
 import { freshDb, type TestDb } from '../db/test-utils/fresh-db';
+import { _setFlowAdmissionControllerForTests } from '../flows/admission/runtime';
 import { reviveRestartInterruptedFlow } from './revive-interrupted-flow';
 
 const holder = vi.hoisted(() => ({ db: null as unknown }));
 vi.mock('../db', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../db')>()),
   getDatabase: () => holder.db,
-}));
-
-vi.mock('../flows/admission/runtime', () => ({
-  hasActiveFlowAdmission: async () => false,
 }));
 
 const SUB_CHAT_ID = 'sc-seam';
@@ -41,6 +31,8 @@ describe('declined revive keeps the run recoverable (revive → park seam)', () 
   beforeEach(async () => {
     db = freshDb();
     holder.db = db;
+    // No admission row is seeded, so the run holds no active slot.
+    _setFlowAdmissionControllerForTests(null);
     const seeded = await seedFlowRun(db, { nodes: [], edges: [] }, { idempotencyKey: 'k-seam' });
     runId = seeded.flowRunId;
     await db.insert(chats).values({ id: 'chat-seam' });

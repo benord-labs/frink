@@ -1,12 +1,12 @@
-import { eq } from 'drizzle-orm';
 import type { getDatabase } from '../../db';
-import { type FlowRun, flowRuns } from '../../db/schema';
+import type { FlowRun } from '../../db/schema';
 import { liveAdmissionForRun } from '../admission/store';
 import {
   cancelFlowTaskRows,
   cancelRunRows,
   dropUndispatchedAdmission,
   isCancellableRunStatus,
+  readRun,
   sweepUnfinishedRunRows,
 } from './run-rows';
 
@@ -19,9 +19,6 @@ type CancelRunOutcome = {
   droppedTicket: boolean;
   liveTicket: number | null;
 };
-
-const readRun = (db: Db, flowRunId: string) =>
-  db.select().from(flowRuns).where(eq(flowRuns.id, flowRunId)).get();
 
 /** Drops an undispatched ticket, then cancels a live run and its unfinished rows; null when missing.
  * A terminal run keeps its status; `includeParked` (permanent deletion) still sweeps its parked tasks. */

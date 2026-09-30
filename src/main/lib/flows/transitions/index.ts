@@ -4,6 +4,21 @@ import type { getDatabase } from '../../db';
 
 export { cancelRunCommand } from './cancel-run';
 export { cancelRunRows, DISPATCHABLE_RUN_STATUSES, insertNodeRunIfLive } from './run-rows';
+export {
+  type ParkedTask,
+  type ResumedBy,
+  resumeParkedTaskCommand,
+  reviveInPlaceCommand,
+} from './resume-task';
+export {
+  type DrivingTaskRow,
+  flowStillRunning,
+  type ReopenPausedRunOutcome,
+  reopenPausedRunCommand,
+  restartMarkedNode,
+  unparkFailedRunCommand,
+  unparkFlowCommand,
+} from './unpark';
 
 type Db = ReturnType<typeof getDatabase>;
 

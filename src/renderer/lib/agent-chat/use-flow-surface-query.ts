@@ -30,12 +30,8 @@ export function useFlowSurfaceQuery(subChatId: string, fallbackTaskId: string | 
     },
   );
 
-  // The poll is a FLOOR, not the mechanism. A resume runs in the main process (the executor's
-  // follow-up turn, or rerunRun) and every in-place resume emits run_started/node_started
-  // (unparkNodeRunInPlace), so waiting for the next tick makes the strip take up to a full interval
-  // to come back — visible as a stale composer while the agent is already streaming. Refetch on the
-  // engine's own announcement instead of optimistically guessing a `{run, task}` shape we would have
-  // to unwind if the resume failed.
+  // The poll is a floor: every in-place resume emits run_started/node_started, so refetch on that
+  // announcement instead of waiting a full interval or guessing an optimistic `{run, task}` shape.
   const { refetch } = query;
   useEffect(() => {
     // Mirror the query's own `enabled` gate: without this, an engine event would refetch a DISABLED

@@ -3,19 +3,19 @@
  * session, so its resume ticket takes the freed slot ahead of queued starts (see flow-run-restart-recovery).
  */
 
-import { asc, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import log from 'electron-log';
 import { z } from 'zod';
-import { RESTART_INTERRUPTION_REASON } from '../../../../../shared/types/flow';
 import type { getDatabase } from '../../../db';
 import { getFlowRun } from '../../../db/repos/flow-runs';
 import { getVersion } from '../../../db/repos/flow-versions';
 import { listNodeRunsForFlowRun } from '../../../db/repos/node-runs';
 import { recoverOrphanedTasks } from '../../../db/repos/tasks';
-import { chats, type FlowVersion, flowRuns, nodeRuns, type Task } from '../../../db/schema';
+import { chats, type FlowVersion, flowRuns, type Task } from '../../../db/schema';
 import { type FlowGraphNode, findNodeById, parseGraph } from '../../graph';
 import { lastUnfinishedNodeRun } from '../../rerun/resume-point';
 import { resolveSessionResumeSeed } from '../../rerun/session-resume';
+import { restartMarkedNode } from '../../transitions';
 import { captureFlowAdmissionException } from '../activity';
 import { hasActiveFlowAdmission } from '../runtime';
 import { stageContinuationResume } from './continuation';
@@ -25,9 +25,6 @@ type InterruptedTask = Pick<Task, 'flowRunId' | 'nodeRunId' | 'result'>;
 
 /** The chat linkage dispatchAgent stamped on the task; it survives the cancel because the marker is merged. */
 const taskLinkageSchema = z.object({ chatId: z.string(), startMode: z.string().optional() });
-const restartMarkedOutput = z.object({
-  error: z.object({ message: z.literal(RESTART_INTERRUPTION_REASON) }),
-});
 
 /**
  * Sync twin of resume.ts isRunRestartInterrupted for the enqueue transaction, plus the run's chat
@@ -40,14 +37,9 @@ function stillInterrupted(db: Db, flowRunId: string, chatId: string): boolean {
     .where(eq(flowRuns.id, flowRunId))
     .get();
   const chat = db.select({ id: chats.id }).from(chats).where(eq(chats.id, chatId)).get();
-  if (run?.status !== 'cancelled' || !chat) return false;
-  const attempts = db
-    .select()
-    .from(nodeRuns)
-    .where(eq(nodeRuns.flowRunId, flowRunId))
-    .orderBy(asc(nodeRuns.createdAt))
-    .all();
-  return restartMarkedOutput.safeParse(lastUnfinishedNodeRun(attempts)?.nodeOutput).success;
+  return (
+    run?.status === 'cancelled' && Boolean(chat) && restartMarkedNode(db, flowRunId) !== undefined
+  );
 }
 
 /**

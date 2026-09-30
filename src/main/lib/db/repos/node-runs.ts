@@ -262,7 +262,7 @@ export async function resolveUpstreamStartTaskContext(
   return outputs as StartTaskContext;
 }
 
-export async function setNodeRunStatus(
+export function setNodeRunStatus(
   db: Db,
   id: string,
   status: NodeRunStatus,
@@ -282,8 +282,9 @@ export async function setNodeRunStatus(
      * read (status + result JSON) — a resumed or re-parked task never gets a stale node. */
     expectDrivingTask?: { id: string; status: string; result: unknown };
     expectResumeSnapshot?: FlowResumeSnapshot;
+    expectFlowRunId?: string;
   } = {},
-): Promise<NodeRun | null> {
+): NodeRun | null {
   const update: Partial<NodeRun> = { status };
   if (patch.nodeOutput !== undefined) update.nodeOutput = patch.nodeOutput;
   if (patch.startedAt !== undefined) update.startedAt = patch.startedAt;
@@ -292,6 +293,7 @@ export async function setNodeRunStatus(
   if (patch.expectStatuses) {
     guards.push(inArray(nodeRuns.status, [...patch.expectStatuses]));
   }
+  if (patch.expectFlowRunId) guards.push(eq(nodeRuns.flowRunId, patch.expectFlowRunId));
   if (patch.expectResumeSnapshot)
     guards.push(resumeSnapshotGuard(db, id, patch.expectResumeSnapshot));
   if (patch.expectDrivingTask) {
@@ -310,12 +312,14 @@ export async function setNodeRunStatus(
       ),
     );
   }
-  const [row] = await db
-    .update(nodeRuns)
-    .set(update)
-    .where(and(...guards))
-    .returning();
-  return row ?? null;
+  return (
+    db
+      .update(nodeRuns)
+      .set(update)
+      .where(and(...guards))
+      .returning()
+      .get() ?? null
+  );
 }
 
 /** A resume is valid only for the exact park and latest attempt that the user reviewed. */

@@ -65,10 +65,8 @@ export type FlowRunStatus = (typeof FLOW_RUN_STATUSES)[number];
  * Run states in which no task of the run can still accept an agent signal, so the executor disarms
  * the whole task-signal apparatus (lifecycle prompt, stop hook, `frink_task_signal`) for that chat.
  *
- * Deliberately NOT `failed` or `paused`: both are chat-reply resume surfaces. A follow-up message
- * flips the parked task back to `running` and unparks the run in place (`resumeFailedFlowInPlace`
- * accepts `failed`; `resumeFlowNodeInPlace` accepts `paused`), so the agent's next signal must still
- * land. Disarming those would silently kill recovery for every failed or paused flow.
+ * Deliberately NOT `failed` or `paused`: a follow-up message un-parks both in place, so the agent's
+ * next signal must still land. Disarming them would kill recovery for every failed or paused flow.
  *
  * Distinct from `getActiveFlowRunForSubChat`'s live set (`pending|running|paused`), which answers a
  * different question — which run owns the chat composer — and treats `failed` as dead.
