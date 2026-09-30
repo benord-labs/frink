@@ -8,7 +8,6 @@ export function makeTaskActions(
     isLoading: false,
     onCancel: vi.fn(),
     onDelete: vi.fn(),
-    onDismiss: vi.fn(),
     onMarkComplete: vi.fn(),
     onOpenChat: vi.fn(),
     onRetryTask: vi.fn(),
