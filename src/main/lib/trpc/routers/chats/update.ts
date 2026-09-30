@@ -100,8 +100,7 @@ export const updateRouter = router({
         throw new TRPCError({ code: 'NOT_FOUND', message: 'Chat or account not found' });
       }
       if (result === 'other-provider') {
-        const message = 'Another provider continues this chat in a new chat';
-        throw new TRPCError({ code: 'BAD_REQUEST', message });
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'A chat stays on its provider' });
       }
       // No old-login session serves the next turn: idle ones retire, wake holds end, busy ones are
       // fenced to end with their turn.

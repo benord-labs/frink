@@ -403,25 +403,15 @@ export async function updateChatBranchByWorktreePath(
   return true;
 }
 
-const PROVIDER_NAME: Record<string, string> = { 'claude-code': 'Claude Code', codex: 'OpenAI' };
-const PROVIDER_SUFFIX_RE = / · (?:Claude Code|OpenAI)$/;
-
-/** Moved to `account`, a name becomes "<name> · <Provider>" (replacing an earlier suffix). */
-function forkName(name: string | null, account?: { type: string }): string | null {
-  if (!name || !account) return name;
-  return `${name.replace(PROVIDER_SUFFIX_RE, '')} · ${PROVIDER_NAME[account.type]}`;
-}
-
 /**
  * Deep-copy a chat and its sub-chats with fresh IDs in one sync transaction. The fork keeps the
- * worktree, branch and account (`account` moves it); its sub-chats start with no session id.
+ * worktree, branch and account; its sub-chats start with no session id.
  *
  * Returns the new chat + new sub-chats. Throws if the source chat doesn't exist.
  */
 export async function forkChatWithSubChats(
   db: Db,
   sourceChatId: string,
-  account?: { id: string; type: string },
 ): Promise<{ chat: Chat; subChats: SubChat[] }> {
   const newChatId = createId();
   return db.transaction(() => {
@@ -440,7 +430,7 @@ export async function forkChatWithSubChats(
     db.insert(chats)
       .values({
         id: newChatId,
-        name: forkName(source.name, account),
+        name: source.name,
         projectId: source.projectId,
         createdAt: now,
         updatedAt: now,
@@ -460,7 +450,7 @@ export async function forkChatWithSubChats(
         composerModelId: source.composerModelId,
         composerAutoMode: source.composerAutoMode,
         composerCodexSpeed: source.composerCodexSpeed,
-        accountId: account?.id ?? source.accountId,
+        accountId: source.accountId,
       })
       .run();
 
@@ -472,7 +462,7 @@ export async function forkChatWithSubChats(
         .values({
           id: newSubId,
           chatId: newChatId,
-          name: forkName(sub.name, account),
+          name: sub.name,
           sessionId: null,
           streamId: null,
           mode: sub.mode,

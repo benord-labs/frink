@@ -2,7 +2,7 @@ import openaiLogo from '@iconify-icons/ri/openai-fill';
 import { iconifyComponent } from '@/lib/utils/iconify-component';
 /* eslint-disable max-lines, max-lines-per-function */
 import { useAtomValue, useSetAtom } from 'jotai';
-import { Check, ChevronDown, Plus, RefreshCw, User } from 'lucide-react';
+import { Check, ChevronDown, Plus, RefreshCw, Settings, User } from 'lucide-react';
 import { memo, useCallback, useMemo } from 'react';
 import { toast } from 'sonner';
 import {
@@ -17,13 +17,12 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '../../../components/ui/
 import {
   agentsSettingsDialogActiveTabAtom,
   agentsSettingsDialogOpenAtom,
-  focusAgentChatAtom,
   pendingAccountAuthAtom,
 } from '../../../lib/atoms';
 import { trpc } from '../../../lib/trpc';
 import { cn } from '../../../lib/utils';
 import { notifyToolSwitch } from '../../../utils/tool-switch-message';
-import { pendingChatRetryAtomFamily, type SplitViewState, splitViewAtom } from '../atoms';
+import { pendingChatRetryAtomFamily } from '../atoms';
 import { RetryActionButton } from '../main/active-chat/components/RetryActionButton';
 import { HeaderBadge } from './header-badge';
 
@@ -49,26 +48,16 @@ function ProviderGlyph({
 type AccountType = 'claude-code' | 'codex';
 type PickableAccount = { id: string; label: string; type: AccountType; isAuthenticated: boolean };
 
-/** In split view the forked chat takes its source chat's pane. */
-function swapPaneChat(prev: SplitViewState, fromId: string, toId: string): SplitViewState {
-  if (!prev.chatIds.includes(fromId)) return prev;
-  return { ...prev, chatIds: prev.chatIds.map((id) => (id === fromId ? toId : id)) };
-}
-
-/** One account row; `primary`/`secondary` default to "label · provider". */
+/** One "label · provider" account row. */
 function AccountRow({
   row,
-  isActive = false,
+  isActive,
   disabled,
-  primary = row.label,
-  secondary = ` · ${PROVIDER_LABEL[row.type]}`,
   onPick,
 }: {
   row: PickableAccount;
-  isActive?: boolean;
+  isActive: boolean;
   disabled: boolean;
-  primary?: string;
-  secondary?: string;
   onPick: (row: PickableAccount) => void;
 }) {
   const needsAuth = !row.isAuthenticated;
@@ -97,109 +86,14 @@ function AccountRow({
         <span
           className={cn('font-medium', needsAuth ? 'text-muted-foreground' : 'text-foreground')}
         >
-          {primary}
+          {row.label}
         </span>
-        <span className="text-muted-foreground">{secondary}</span>
+        <span className="text-muted-foreground"> · {PROVIDER_LABEL[row.type]}</span>
       </span>
       {isActive ? (
         <Check className="h-3.5 w-3.5 shrink-0 text-primary" aria-label="Active" />
       ) : null}
     </DropdownMenuItem>
-  );
-}
-
-/**
- * An existing chat's account moves: another login of its provider swaps in place (native resume);
- * another provider continues in a new chat, forked onto that account and named after it.
- */
-function useChatAccountActions() {
-  const utils = trpc.useUtils();
-  const focusChat = useSetAtom(focusAgentChatAtom);
-  const setSplitView = useSetAtom(splitViewAtom);
-  const setChatAccount = trpc.chats.setChatAccount.useMutation({
-    onSuccess: (_data, { chatId }) =>
-      void utils.claudeCode.getResolvedAccount.invalidate({ chatId }),
-    onError: (err) => toast.error(err.message),
-  });
-  const fork = trpc.chats.fork.useMutation({ onError: (err) => toast.error(err.message) });
-
-  const swap = (chatId: string, row: PickableAccount, onSwapped?: () => void) =>
-    setChatAccount.mutate(
-      { chatId, accountId: row.id },
-      {
-        onSuccess: () => {
-          toast.success(`This chat now uses ${row.label}`);
-          onSwapped?.();
-        },
-      },
-    );
-
-  const continueIn = (chatId: string, fromType: AccountType, row: PickableAccount) =>
-    fork.mutate(
-      { chatId, accountId: row.id },
-      {
-        onSuccess: (forked) => {
-          void utils.chats.listCounts.invalidate();
-          focusChat(forked.id);
-          setSplitView((prev) => swapPaneChat(prev, chatId, forked.id));
-          notifyToolSwitch(fromType, row.type, `Continued in ${PROVIDER_LABEL[row.type]}`);
-        },
-      },
-    );
-
-  return { swap, continueIn, isPending: setChatAccount.isPending || fork.isPending };
-}
-
-/** The existing-chat menu body: this provider's logins, then the other providers to continue in. */
-function ChatAccountRows({
-  chatId,
-  activeId,
-  currentType,
-  accounts,
-  actions,
-}: {
-  chatId: string;
-  activeId: string | undefined;
-  currentType: AccountType;
-  accounts: PickableAccount[];
-  actions: ReturnType<typeof useChatAccountActions>;
-}) {
-  const others = accounts.filter((a) => a.type !== currentType);
-  return (
-    <>
-      <DropdownMenuLabel className="text-[11px] font-normal text-muted-foreground leading-snug">
-        {PROVIDER_LABEL[currentType]} logins for this chat
-      </DropdownMenuLabel>
-      {accounts
-        .filter((a) => a.type === currentType)
-        .map((a) => (
-          <AccountRow
-            key={a.id}
-            row={a}
-            isActive={a.id === activeId}
-            disabled={actions.isPending}
-            onPick={(row) => actions.swap(chatId, row)}
-          />
-        ))}
-      {others.length > 0 && (
-        <>
-          <DropdownMenuSeparator />
-          <DropdownMenuLabel className="text-[11px] font-normal text-muted-foreground leading-snug">
-            Another provider continues in a new chat
-          </DropdownMenuLabel>
-          {others.map((a) => (
-            <AccountRow
-              key={a.id}
-              row={a}
-              disabled={actions.isPending}
-              primary={`Continue in ${PROVIDER_LABEL[a.type]}`}
-              secondary={` (${a.label})`}
-              onPick={(row) => actions.continueIn(chatId, currentType, row)}
-            />
-          ))}
-        </>
-      )}
-    </>
   );
 }
 
@@ -215,7 +109,7 @@ function useOpenAccountsSettings() {
 
 const USAGE_LIMIT_ERROR_CATEGORY = 'RATE_LIMIT_SDK';
 
-/** Beside a usage-limit Retry: retry on another login, continue on another provider, or add one. */
+/** Beside a usage-limit Retry: retry this chat on another Claude login, or add one. */
 export function ContinueAfterUsageLimit({
   chatId,
   subChatId,
@@ -226,14 +120,21 @@ export function ContinueAfterUsageLimit({
   onRetry: () => void;
 }) {
   const pendingRetry = useAtomValue(pendingChatRetryAtomFamily(subChatId));
-  const actions = useChatAccountActions();
+  const utils = trpc.useUtils();
   const openAccountsSettings = useOpenAccountsSettings();
+  const setChatAccount = trpc.chats.setChatAccount.useMutation({
+    onSuccess: () => void utils.claudeCode.getResolvedAccount.invalidate({ chatId }),
+    onError: (err) => toast.error(err.message),
+  });
   const { data: account } = trpc.claudeCode.getResolvedAccount.useQuery({ chatId });
   const { data: accounts = [] } = trpc.claudeCode.listAccounts.useQuery();
   if (pendingRetry?.errorCategory !== USAGE_LIMIT_ERROR_CATEGORY || !account) return null;
-  const fromType = account.type ?? 'claude-code';
-  const signedIn = accounts.filter((a) => a.isAuthenticated && a.id !== account.id);
-  if (signedIn.length === 0) {
+  // Only another Claude login resumes this session natively; Codex has one login per device.
+  if (account.type === 'codex') return null;
+  const others = accounts.filter(
+    (a) => a.isAuthenticated && a.type === 'claude-code' && a.id !== account.id,
+  );
+  if (others.length === 0) {
     return (
       <RetryActionButton
         icon={Plus}
@@ -243,44 +144,24 @@ export function ContinueAfterUsageLimit({
       />
     );
   }
-  // Same-provider logins come first: they keep this chat and its native resume.
-  const sameProvider = signedIn.filter((a) => a.type === fromType);
-  const others = signedIn.filter((a) => a.type !== fromType);
   return (
     <>
-      {sameProvider.map((a) => (
-        <RetryActionButton
-          key={a.id}
-          onClick={() => actions.swap(chatId, a, onRetry)}
-          disabled={actions.isPending}
-          ariaLabel={`Retry with ${a.label}`}
-          label={`Retry with ${a.label}`}
-          tooltipText="Moves this chat to that login and retries; the conversation carries on here."
-        />
-      ))}
       {others.map((a) => (
         <RetryActionButton
           key={a.id}
-          icon={a.type === 'codex' ? CodexIcon : User}
-          onClick={() => actions.continueIn(chatId, fromType, a)}
-          disabled={actions.isPending}
-          ariaLabel={`Continue in ${PROVIDER_LABEL[a.type]} as ${a.label}`}
-          label={`Continue in ${PROVIDER_LABEL[a.type]}${others.length > 1 ? ` (${a.label})` : ''}`}
-          tooltipText="Opens a new chat on this login, carrying the conversation and plan with it."
+          onClick={() => setChatAccount.mutate({ chatId, accountId: a.id }, { onSuccess: onRetry })}
+          disabled={setChatAccount.isPending}
+          ariaLabel={`Retry with ${a.label}`}
+          label={`Retry with ${a.label}`}
+          tooltipText={`The conversation continues on ${a.label}'s organisation, and this chat stays on that login.`}
         />
       ))}
     </>
   );
 }
 
-/** The tooltip's scope line and hint: where the account applies and what a pick changes. */
-function scopeCopy(inChat: boolean, projectId: string | null, isProjectOverride?: boolean) {
-  if (inChat) {
-    return {
-      scope: 'Used by this chat',
-      hint: 'Another provider continues this chat in a new chat.',
-    };
-  }
+/** The new-chat tooltip's scope line and hint: where the account applies and what a pick changes. */
+function scopeCopy(projectId: string | null, isProjectOverride?: boolean) {
   if (!projectId) {
     return { scope: 'Default account', hint: 'Choosing an account sets your workspace default.' };
   }
@@ -298,8 +179,8 @@ type AccountIndicatorProps = {
 };
 
 /**
- * Shows which AI account is active. In a chat, rows move that chat's account (useChatAccountActions);
- * before a chat exists they set the project's account, else the workspace default.
+ * Shows which AI account is active. A chat's badge is read-only: it always uses its own login.
+ * Before a chat exists, rows set the project's account, else the workspace default.
  */
 export const AccountIndicator = memo(function AccountIndicator({
   chatId,
@@ -307,7 +188,6 @@ export const AccountIndicator = memo(function AccountIndicator({
 }: AccountIndicatorProps) {
   const setPendingAccountAuth = useSetAtom(pendingAccountAuthAtom);
   const utils = trpc.useUtils();
-  const chatActions = useChatAccountActions();
   const handleOpenAccountsSettings = useOpenAccountsSettings();
 
   const handleReauthPassthrough = useCallback(
@@ -383,7 +263,12 @@ export const AccountIndicator = memo(function AccountIndicator({
 
   const providerLabel = PROVIDER_LABEL[account.type ?? 'claude-code'];
   const scopedProjectId = account.projectId ?? null;
-  const copy = scopeCopy(Boolean(chatId), scopedProjectId, account.isProjectOverride);
+  const copy = chatId
+    ? {
+        scope: `This chat always uses ${account.label}`,
+        hint: 'Start a new chat to use a different account.',
+      }
+    : scopeCopy(scopedProjectId, account.isProjectOverride);
   const ariaLabel =
     account.isProjectOverride && !chatId
       ? `AI accounts menu, ${account.label}, ${providerLabel}, project-specific default`
@@ -450,16 +335,8 @@ export const AccountIndicator = memo(function AccountIndicator({
         sideOffset={6}
         className="w-64 max-h-72 overflow-y-auto"
       >
-        {sortedAccounts.length === 0 ? (
+        {chatId ? null : sortedAccounts.length === 0 ? (
           <div className="px-2 py-1.5 text-xs text-muted-foreground">No accounts configured.</div>
-        ) : chatId ? (
-          <ChatAccountRows
-            chatId={chatId}
-            activeId={account.id}
-            currentType={account.type ?? 'claude-code'}
-            accounts={sortedAccounts}
-            actions={chatActions}
-          />
         ) : (
           <>
             <DropdownMenuLabel className="text-[11px] font-normal text-muted-foreground leading-snug">
@@ -476,7 +353,7 @@ export const AccountIndicator = memo(function AccountIndicator({
             ))}
           </>
         )}
-        <DropdownMenuSeparator />
+        {!chatId && <DropdownMenuSeparator />}
         {(account.source === 'claude-passthrough' || account.source === 'codex-passthrough') &&
           !account.isAuthenticated && (
             <DropdownMenuItem
@@ -490,8 +367,8 @@ export const AccountIndicator = memo(function AccountIndicator({
             </DropdownMenuItem>
           )}
         <DropdownMenuItem className="text-xs gap-2" onSelect={handleOpenAccountsSettings}>
-          <Plus className="h-3.5 w-3.5 shrink-0" aria-hidden />
-          <span>Add account…</span>
+          <Settings className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          <span>Manage accounts…</span>
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

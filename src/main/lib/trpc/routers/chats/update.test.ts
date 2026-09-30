@@ -315,7 +315,10 @@ describe('updateRouter.setChatAccount', () => {
   it('rejects another provider without retiring anything', async () => {
     setChatAiAccountMock.mockResolvedValue('other-provider');
 
-    await expect(setChatAccount('codex')).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    await expect(setChatAccount('codex')).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'A chat stays on its provider',
+    });
     expect(retireRetainedSessionMock).not.toHaveBeenCalled();
     expect(releaseWakeHoldMock).not.toHaveBeenCalled();
   });

@@ -7,7 +7,7 @@ import { createStore, Provider } from 'jotai';
 import { toast } from 'sonner';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { activeOverlayAtom, agentsSettingsDialogActiveTabAtom } from '../../../lib/atoms';
-import { pendingChatRetryAtomFamily, selectedAgentChatIdAtom, splitViewAtom } from '../atoms';
+import { pendingChatRetryAtomFamily } from '../atoms';
 import { AccountIndicator, ContinueAfterUsageLimit } from './account-indicator';
 
 type ListAccount = {
@@ -48,8 +48,6 @@ const snap = vi.hoisted(() => {
     setChatAccountOpts: undefined as
       | { onSuccess: (data: unknown, vars: { chatId: string }) => void }
       | undefined,
-    forkMutate: vi.fn(),
-    listCountsInvalidate: vi.fn(),
     resolvedAccountInvalidate: vi.fn(),
     listAccountsData: [...defaultListAccounts] as ListAccount[],
     defaultListAccounts,
@@ -63,7 +61,6 @@ const getResolvedAccountMock = vi.fn();
 vi.mock('../../../lib/trpc', () => ({
   trpc: {
     useUtils: () => ({
-      chats: { listCounts: { invalidate: snap.listCountsInvalidate } },
       claudeCode: {
         listAccounts: { invalidate: vi.fn() },
         getResolvedAccount: { invalidate: snap.resolvedAccountInvalidate },
@@ -77,7 +74,6 @@ vi.mock('../../../lib/trpc', () => ({
           return { mutate: snap.setChatAccountMutate, isPending: false };
         },
       },
-      fork: { useMutation: () => ({ mutate: snap.forkMutate, isPending: false }) },
     },
     claudeCode: {
       getResolvedAccount: {
@@ -128,8 +124,6 @@ afterEach(() => {
   snap.setDefaultMutate.mockReset();
   snap.setProjectAccountMutate.mockReset();
   snap.setChatAccountMutate.mockReset();
-  snap.forkMutate.mockReset();
-  snap.listCountsInvalidate.mockReset();
   snap.resolvedAccountInvalidate.mockReset();
   vi.mocked(toast.success).mockReset();
   snap.listAccountsData = [...snap.defaultListAccounts];
@@ -138,7 +132,7 @@ afterEach(() => {
 });
 
 describe('AccountIndicator', () => {
-  it('opens Settings → Accounts from the Add account row', async () => {
+  it('opens Settings → Accounts from the Manage accounts row', async () => {
     const user = userEvent.setup();
     const store = createStore();
 
@@ -162,7 +156,7 @@ describe('AccountIndicator', () => {
     const trigger = screen.getByRole('button', { name: 'AI accounts menu, Slice, Claude Code' });
     await user.click(trigger);
 
-    await user.click(screen.getByRole('menuitem', { name: /Add account/i }));
+    await user.click(screen.getByRole('menuitem', { name: /Manage accounts/i }));
 
     expect(store.get(agentsSettingsDialogActiveTabAtom)).toBe('models');
     expect(store.get(activeOverlayAtom)).toBe('settings');
@@ -327,7 +321,7 @@ describe('AccountIndicator', () => {
     expect(snap.setDefaultMutate).not.toHaveBeenCalled();
   });
 
-  it('does not call account mutations when selecting the active row in a project-scoped chat', async () => {
+  it('does not call account mutations when selecting the active row before a project chat exists', async () => {
     const user = userEvent.setup();
 
     getResolvedAccountMock.mockReturnValue({
@@ -344,7 +338,7 @@ describe('AccountIndicator', () => {
 
     render(
       <Provider store={createStore()}>
-        <AccountIndicator chatId="chat-1" />
+        <AccountIndicator projectId="proj-1" />
       </Provider>,
     );
 
@@ -354,7 +348,6 @@ describe('AccountIndicator', () => {
 
     expect(snap.setDefaultMutate).not.toHaveBeenCalled();
     expect(snap.setProjectAccountMutate).not.toHaveBeenCalled();
-    expect(snap.setChatAccountMutate).not.toHaveBeenCalled();
   });
 
   it('calls setProjectAccount with the Codex row id when switching to a Codex account in project scope', async () => {
@@ -429,14 +422,14 @@ describe('AccountIndicator', () => {
 
     render(
       <Provider store={createStore()}>
-        <AccountIndicator chatId="chat-1" />
+        <AccountIndicator />
       </Provider>,
     );
 
     await user.click(screen.getByRole('button', { name: 'AI accounts menu, Orphan, Claude Code' }));
 
     expect(screen.getByText('No accounts configured.')).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: /Add account/i })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /Manage accounts/i })).toBeInTheDocument();
   });
 
   it('marks exactly one row active when two accounts share the same label', async () => {
@@ -475,7 +468,7 @@ describe('AccountIndicator', () => {
 
     render(
       <Provider store={createStore()}>
-        <AccountIndicator chatId="chat-1" />
+        <AccountIndicator />
       </Provider>,
     );
 
@@ -515,7 +508,7 @@ describe('AccountIndicator', () => {
 
     render(
       <Provider store={createStore()}>
-        <AccountIndicator chatId="chat-1" />
+        <AccountIndicator />
       </Provider>,
     );
 
@@ -555,7 +548,7 @@ describe('AccountIndicator', () => {
     const backupItem = screen.getByRole('menuitem', { name: /Backup/ });
     expect(sliceItem).toHaveAttribute('aria-disabled', 'true');
     expect(backupItem).toHaveAttribute('aria-disabled', 'true');
-    expect(screen.getByRole('menuitem', { name: /Add account/i })).not.toHaveAttribute(
+    expect(screen.getByRole('menuitem', { name: /Manage accounts/i })).not.toHaveAttribute(
       'aria-disabled',
       'true',
     );
@@ -591,7 +584,7 @@ describe('AccountIndicator', () => {
     expect(backupItem).toHaveAttribute('aria-disabled', 'true');
   });
 
-  it('sets models tab when choosing Add account while settings overlay is already open on another tab', async () => {
+  it('sets models tab when choosing Manage accounts while settings overlay is already open on another tab', async () => {
     const user = userEvent.setup();
     const store = createStore();
     store.set(activeOverlayAtom, 'settings');
@@ -615,7 +608,7 @@ describe('AccountIndicator', () => {
     );
 
     await user.click(screen.getByRole('button', { name: 'AI accounts menu, Slice, Claude Code' }));
-    await user.click(screen.getByRole('menuitem', { name: /Add account/i }));
+    await user.click(screen.getByRole('menuitem', { name: /Manage accounts/i }));
 
     expect(store.get(agentsSettingsDialogActiveTabAtom)).toBe('models');
     expect(store.get(activeOverlayAtom)).toBe('settings');
@@ -736,105 +729,46 @@ describe('AccountIndicator', () => {
       type: 'codex',
     };
 
-    async function openChatMenu(store = createStore()) {
+    async function openChatMenu() {
       snap.listAccountsData = [...snap.defaultListAccounts, codexRow];
       getResolvedAccountMock.mockReturnValue({
         data: { id: 'acc-1', label: 'Slice', type: 'claude-code' as const, isAuthenticated: true },
         isLoading: false,
       });
       render(
-        <Provider store={store}>
+        <Provider store={createStore()}>
           <AccountIndicator chatId="chat-1" />
         </Provider>,
       );
       await userEvent
         .setup()
         .click(screen.getByRole('button', { name: /AI accounts menu, Slice/ }));
-      return store;
     }
 
-    it('lists same-provider logins, then other providers as Continue in rows', async () => {
+    it('is read-only: the menu only manages accounts and nothing moves the chat', async () => {
       await openChatMenu();
 
       const rows = screen.getAllByRole('menuitem').map((el) => el.textContent);
-      expect(rows).toEqual([
-        'Backup · Claude Code',
-        'Slice · Claude Code',
-        'Continue in OpenAI (CodexWork)',
-        'Add account…',
-      ]);
-      expect(screen.getByText('Claude Code logins for this chat')).toBeInTheDocument();
-    });
-
-    it('swaps a same-provider login in place, leaving project and default alone', async () => {
-      await openChatMenu();
-
-      await userEvent.setup().click(screen.getByRole('menuitem', { name: /Backup/ }));
-
-      expect(snap.setChatAccountMutate).toHaveBeenCalledWith(
-        { chatId: 'chat-1', accountId: 'acc-2' },
-        { onSuccess: expect.any(Function) },
-      );
+      expect(rows).toEqual(['Manage accounts…']);
+      expect(screen.getByText('This chat always uses Slice')).toBeInTheDocument();
+      expect(screen.getByText(/Start a new chat to use a different account\./)).toBeInTheDocument();
+      expect(snap.setChatAccountMutate).not.toHaveBeenCalled();
       expect(snap.setProjectAccountMutate).not.toHaveBeenCalled();
       expect(snap.setDefaultMutate).not.toHaveBeenCalled();
-      expect(snap.forkMutate).not.toHaveBeenCalled();
-
-      const vars = { chatId: 'chat-1' };
-      snap.setChatAccountOpts?.onSuccess(undefined, vars);
-      snap.setChatAccountMutate.mock.calls[0]?.[1].onSuccess();
-      expect(snap.resolvedAccountInvalidate).toHaveBeenCalledWith(vars);
-      expect(vi.mocked(toast.success)).toHaveBeenCalledWith('This chat now uses Backup');
-    });
-
-    it('continues in another provider as a fork, opens it and tells what followed', async () => {
-      const store = await openChatMenu();
-
-      await userEvent.setup().click(screen.getByRole('menuitem', { name: /Continue in OpenAI/ }));
-
-      expect(snap.forkMutate).toHaveBeenCalledWith(
-        { chatId: 'chat-1', accountId: 'acc-codex' },
-        { onSuccess: expect.any(Function) },
-      );
-      expect(snap.setChatAccountMutate).not.toHaveBeenCalled();
-      const opts = snap.forkMutate.mock.calls[0]?.[1] as {
-        onSuccess: (forked: { id: string; name: string | null }) => void;
-      };
-      opts.onSuccess({ id: 'chat-2', name: 'Refactor auth · OpenAI' });
-
-      expect(snap.listCountsInvalidate).toHaveBeenCalled();
-      expect(store.get(selectedAgentChatIdAtom)).toBe('chat-2');
-      expect(vi.mocked(toast.success)).toHaveBeenCalledWith(
-        'Now running on OpenAI',
-        expect.objectContaining({ description: expect.stringContaining('came with you') }),
-      );
-    });
-
-    it('puts the fork in the source chat pane in split view', async () => {
-      const store = createStore();
-      store.set(splitViewAtom, (prev) => ({
-        ...prev,
-        chatIds: ['other', 'chat-1'],
-        activePaneIndex: 1,
-      }));
-      await openChatMenu(store);
-
-      await userEvent.setup().click(screen.getByRole('menuitem', { name: /Continue in OpenAI/ }));
-      const opts = snap.forkMutate.mock.calls[0]?.[1] as {
-        onSuccess: (forked: { id: string; name: string | null }) => void;
-      };
-      opts.onSuccess({ id: 'chat-2', name: null });
-
-      expect(store.get(splitViewAtom).chatIds).toEqual(['other', 'chat-2']);
     });
   });
 
   describe('ContinueAfterUsageLimit', () => {
     const onRetry = vi.fn();
 
-    function renderAfterError(errorCategory: string, accounts: ListAccount[]) {
+    function renderAfterError(
+      errorCategory: string,
+      accounts: ListAccount[],
+      type: ListAccount['type'] = 'claude-code',
+    ) {
       snap.listAccountsData = accounts;
       getResolvedAccountMock.mockReturnValue({
-        data: { id: 'acc-1', label: 'Slice', type: 'claude-code' as const, isAuthenticated: true },
+        data: { id: 'acc-1', label: 'Slice', type, isAuthenticated: true },
         isLoading: false,
       });
       const store = createStore();
@@ -855,76 +789,57 @@ describe('AccountIndicator', () => {
       return store;
     }
 
-    const codexRow = (id: string, label: string, isAuthenticated = true): ListAccount => ({
+    const codexRow = (id: string, label: string): ListAccount => ({
       id,
       label,
       isDefault: false,
-      isAuthenticated,
+      isAuthenticated: true,
       connectedAt: null,
       isApiKey: false,
       type: 'codex',
     });
 
-    it('offers the other provider and forks onto it in one click', async () => {
-      renderAfterError('RATE_LIMIT_SDK', [...snap.defaultListAccounts, codexRow('acc-x', 'Work')]);
-
-      await userEvent
-        .setup()
-        .click(screen.getByRole('button', { name: 'Continue in OpenAI as Work' }));
-
-      expect(screen.getByText('Continue in OpenAI')).toBeInTheDocument();
-      expect(snap.forkMutate).toHaveBeenCalledWith(
-        { chatId: 'chat-1', accountId: 'acc-x' },
-        { onSuccess: expect.any(Function) },
-      );
-    });
-
-    it('names each login when the other provider has several, skipping signed-out ones', () => {
-      renderAfterError('RATE_LIMIT_SDK', [
-        ...snap.defaultListAccounts,
-        codexRow('acc-x', 'Work'),
-        codexRow('acc-y', 'Personal'),
-        codexRow('acc-z', 'Old', false),
-      ]);
-
-      expect(screen.getByText('Continue in OpenAI (Work)')).toBeInTheDocument();
-      expect(screen.getByText('Continue in OpenAI (Personal)')).toBeInTheDocument();
-      expect(screen.queryByText(/\(Old\)/)).not.toBeInTheDocument();
-    });
-
-    it('retries on another login of the same provider first, keeping the chat', async () => {
+    it('re-stamps the chat onto another Claude login, then resends the failed turn', async () => {
       renderAfterError('RATE_LIMIT_SDK', [...snap.defaultListAccounts, codexRow('acc-x', 'Work')]);
 
       const buttons = screen.getAllByRole('button').map((b) => b.textContent);
-      expect(buttons).toEqual(['Retry with Backup', 'Continue in OpenAI']);
+      expect(buttons).toEqual(['Retry with Backup']);
       await userEvent.setup().click(screen.getByRole('button', { name: 'Retry with Backup' }));
 
       expect(snap.setChatAccountMutate).toHaveBeenCalledWith(
         { chatId: 'chat-1', accountId: 'acc-2' },
-        { onSuccess: expect.any(Function) },
+        { onSuccess: onRetry },
       );
-      expect(onRetry).not.toHaveBeenCalled();
-      snap.setChatAccountMutate.mock.calls[0]?.[1].onSuccess();
-      expect(onRetry).toHaveBeenCalledTimes(1);
-      expect(snap.forkMutate).not.toHaveBeenCalled();
+      snap.setChatAccountOpts?.onSuccess(undefined, { chatId: 'chat-1' });
+      expect(snap.resolvedAccountInvalidate).toHaveBeenCalledWith({ chatId: 'chat-1' });
     });
 
-    it('offers Add account, opening Settings, when no other login is signed in', async () => {
+    it('offers Add account, opening Settings, when no other Claude login is signed in', async () => {
       const [active, backup] = snap.defaultListAccounts;
       const store = renderAfterError('RATE_LIMIT_SDK', [
         active,
         { ...backup, isAuthenticated: false },
+        codexRow('acc-x', 'Work'),
       ]);
 
-      expect(screen.queryByText(/Continue in|Retry with/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Retry with/)).not.toBeInTheDocument();
       await userEvent.setup().click(screen.getByRole('button', { name: 'Add another AI account' }));
 
       expect(store.get(agentsSettingsDialogActiveTabAtom)).toBe('models');
-      expect(snap.forkMutate).not.toHaveBeenCalled();
+    });
+
+    it('offers nothing beside Retry in a Codex chat', () => {
+      renderAfterError(
+        'RATE_LIMIT_SDK',
+        [...snap.defaultListAccounts, codexRow('acc-x', 'Work')],
+        'codex',
+      );
+
+      expect(screen.queryByRole('button')).not.toBeInTheDocument();
     });
 
     it('stays hidden for errors other than a usage limit', () => {
-      renderAfterError('NETWORK_ERROR', [...snap.defaultListAccounts, codexRow('acc-x', 'Work')]);
+      renderAfterError('NETWORK_ERROR', snap.defaultListAccounts);
 
       expect(screen.queryByRole('button')).not.toBeInTheDocument();
     });

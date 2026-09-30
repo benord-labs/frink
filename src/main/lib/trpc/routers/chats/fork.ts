@@ -3,7 +3,6 @@ import log from 'electron-log';
 import { z } from 'zod';
 import { getDatabase } from '../../../db';
 import { forkChatWithSubChats as forkChatWithSubChatsLocal } from '../../../db/repos/chats';
-import { getAiAccountType } from '../../../db/repos/project-ai-accounts';
 import { getProjectById } from '../../../db/repos/projects';
 import type { Chat, SubChat } from '../../../db/schema';
 import { publicProcedure, router } from '../../index';
@@ -13,15 +12,7 @@ type Db = ReturnType<typeof getDatabase>;
 
 const NOT_FOUND_RE = /not found/i;
 
-const forkInput = z.object({ chatId: z.string(), accountId: z.string().optional() });
-
-/** The AI login a fork moves onto; any other credential id is NOT_FOUND. */
-async function resolveForkAccount(db: Db, accountId?: string) {
-  if (!accountId) return undefined;
-  const type = await getAiAccountType(db, accountId);
-  if (!type) throw new TRPCError({ code: 'NOT_FOUND', message: 'Account not found' });
-  return { id: accountId, type };
-}
+const forkInput = z.object({ chatId: z.string() });
 
 /** The renderer-facing fork; an unset worktree falls back to the project folder. */
 async function forkResponse(db: Db, chat: Chat, subChats: SubChat[]) {
@@ -56,12 +47,11 @@ export const forkRouter = router({
   fork: publicProcedure.input(forkInput).mutation(async ({ input }) => {
     try {
       const db = getDatabase();
-      const account = await resolveForkAccount(db, input.accountId);
 
       let chat: Awaited<ReturnType<typeof forkChatWithSubChatsLocal>>['chat'];
       let subChats: Awaited<ReturnType<typeof forkChatWithSubChatsLocal>>['subChats'];
       try {
-        const forkResult = await forkChatWithSubChatsLocal(db, input.chatId, account);
+        const forkResult = await forkChatWithSubChatsLocal(db, input.chatId);
         chat = forkResult.chat;
         subChats = forkResult.subChats;
       } catch (err) {
