@@ -14,7 +14,7 @@ import { extendedThinkingEnabledAtom } from '../../../lib/atoms';
 import { codexSpeedAtomFamily } from '../../../lib/atoms/codex-speed';
 import { type ModelItem, ModelSelector } from './model-selector';
 
-const capabilities = vi.hoisted(() => ({ supportsXhigh: true }));
+const capabilities = vi.hoisted(() => ({ supportsXhigh: true, supportsUltra: true }));
 
 // Stub the trpc client (the real module creates a client at load needing the electronTRPC preload
 // global, absent in tests). Only the bundled-CLI capability query is consumed here.
@@ -63,6 +63,7 @@ const focusedSlider = async () => {
 afterEach(() => {
   cleanup();
   capabilities.supportsXhigh = true;
+  capabilities.supportsUltra = true;
 });
 
 describe('trigger label', () => {
@@ -85,9 +86,10 @@ describe('trigger label', () => {
     const { unmount } = renderTrigger('opus-5.5-max');
     expect(trigger().querySelector('.chroma-text')).toBeNull();
     unmount();
-    renderTrigger('opus-5.5-ultra');
+    renderTrigger('opus-5.5-low-ultra');
     expect(trigger().querySelector('.chroma-text-animate')).toHaveTextContent('Ultra');
-    expect(trigger()).toHaveAccessibleName('Model: Opus 5.5 · Ultra — parallel agents on');
+    expect(trigger()).toHaveTextContent('Opus 5.5 · Low · Ultra');
+    expect(trigger()).toHaveAccessibleName('Model: Opus 5.5 · Low · Ultra — parallel agents on');
   });
 
   it('falls back to "Auto" in chat and the inherit label in flow', () => {
@@ -187,6 +189,54 @@ describe('effort pane', () => {
     renderPicker({ selectedModel: byId('opus-4.7-high') });
     expect(slider()).toHaveAttribute('aria-valuemax', '3');
     expect(screen.getByText(/Extra High needs a newer Claude CLI/)).toBeVisible();
+  });
+});
+
+describe('Ultra switch', () => {
+  const ultraSwitch = () => screen.getByRole('switch', { name: 'Ultra' });
+
+  it('turns Ultra on at the chosen effort, and off again', () => {
+    const { onModelChange } = renderPicker({ selectedModel: byId('opus-5.5-low') });
+    expect(ultraSwitch()).toHaveAttribute('aria-checked', 'false');
+    fireEvent.click(ultraSwitch());
+    expect(onModelChange).toHaveBeenLastCalledWith(byId('opus-5.5-low-ultra'));
+    cleanup();
+    const next = renderPicker({ selectedModel: byId('opus-5.5-low-ultra') });
+    expect(ultraSwitch()).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(ultraSwitch());
+    expect(next.onModelChange).toHaveBeenLastCalledWith(byId('opus-5.5-low'));
+  });
+
+  it('keeps Ultra on as the slider moves', async () => {
+    const { onModelChange } = renderPicker({ selectedModel: byId('opus-5.5-low-ultra') });
+    expect(slider()).toHaveAttribute('aria-valuenow', '0');
+    fireEvent.keyDown(await focusedSlider(), { key: 'ArrowRight' });
+    expect(onModelChange).toHaveBeenCalledWith(byId('opus-5.5-ultra'));
+  });
+
+  it('stays usable with Thinking off: it is not an effort', () => {
+    renderPicker({ selectedModel: byId('opus-5.5') }, false);
+    expect(ultraSwitch()).not.toBeDisabled();
+  });
+
+  it('is hidden when the bundled CLI cannot run it, unless already on (so it can be turned off)', () => {
+    capabilities.supportsUltra = false;
+    renderPicker({ selectedModel: byId('opus-5.5-xhigh') });
+    expect(screen.queryByRole('switch', { name: 'Ultra' })).toBeNull();
+    cleanup();
+    renderPicker({ selectedModel: byId('opus-5.5-xhigh-ultra') });
+    expect(ultraSwitch()).toHaveAttribute('aria-checked', 'true');
+  });
+
+  it('is absent for a family the CLI offers no Ultra on', () => {
+    renderPicker({ selectedModel: byId('sonnet-high') });
+    expect(screen.queryByRole('switch', { name: 'Ultra' })).toBeNull();
+  });
+
+  it('reset turns Ultra off', () => {
+    const { onModelChange } = renderPicker({ selectedModel: byId('opus-5.5-ultra') });
+    fireEvent.click(screen.getByRole('button', { name: 'Reset to defaults' }));
+    expect(onModelChange).toHaveBeenCalledWith(byId('opus-5.5'));
   });
 });
 

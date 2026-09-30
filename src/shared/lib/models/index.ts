@@ -1,11 +1,11 @@
 import { LAUNCH_FLAGS } from '../../launch-flags';
-import type {
-  ClaudeSdkEffortLevel,
-  ExecutionSettings,
-  PickerEffortLevel,
-} from '../../types/execution';
+import type { ClaudeSdkEffortLevel } from '../../types/execution';
 import { CODEX_CLI_MODELS, CODEX_DEFAULT_MODEL_ID, type CodexCliModel } from '../codex-cli-models';
-import { CLAUDE_CODE_MODELS_CATALOG, type ClaudeCodeModel } from './claude-catalog';
+import {
+  CLAUDE_CODE_MODELS_CATALOG,
+  CLAUDE_ULTRA_SUFFIX,
+  type ClaudeCodeModel,
+} from './claude-catalog';
 
 /**
  * Provider model derivations (picker rows, id → CLI map, family toggles, effort/thinking
@@ -63,9 +63,11 @@ type ModelPickerItem = {
   detail?: string;
   familyId: string;
   contextLabel: string;
-  effort?: PickerEffortLevel;
+  effort?: ClaudeSdkEffortLevel;
   effortDefault?: true;
   contextDefault?: true;
+  /** Claude Ultra twin of the same tier (see `ClaudeCodeModel.ultra`). */
+  ultra?: true;
 };
 
 /** Deduped families for settings visibility (a family toggle hides the whole familyId). */
@@ -87,7 +89,7 @@ function isModelVisible(model: { familyId: string }, hiddenFamilyIds: string[]):
 /** The common UI picker row shape shared by every provider catalog. */
 function toModelPickerItem(
   m: CatalogModel,
-  effort: PickerEffortLevel | undefined,
+  effort: ClaudeSdkEffortLevel | undefined,
 ): ModelPickerItem {
   return {
     id: m.id,
@@ -162,18 +164,9 @@ export function getClaudeThinkingBudget(modelId: string): number | undefined {
   return model?.maxThinkingTokens;
 }
 
-/** Effort settings a picker id sends: SDK `effort`, plus `ultra` for the Ultra tier. */
-export function getClaudeEffortSettings(
-  modelId: string,
-): Pick<ExecutionSettings, 'effort' | 'ultra'> {
-  const effort = getClaudeSdkEffort(modelId);
-  if (!effort) return {};
-  return isClaudeUltraModel(modelId) ? { effort, ultra: true } : { effort };
-}
-
-/** Picker id is the Ultra tier: `xhigh` effort plus the CLI's parallel-agent orchestration. */
+/** Picker id has Ultra on: the CLI's parallel-agent orchestration, at the tier's own effort. */
 export function isClaudeUltraModel(modelId: string): boolean {
-  return modelId.endsWith('-ultra');
+  return modelId.endsWith(CLAUDE_ULTRA_SUFFIX);
 }
 
 /**
@@ -181,7 +174,9 @@ export function isClaudeUltraModel(modelId: string): boolean {
  * Default tier (no suffix) → `medium`, except Fable 5.1 / Fable 5 / Opus 5 / Opus 4.8 / Sonnet 5.5 / Sonnet 5 whose default is `high`.
  */
 export function getClaudeSdkEffort(modelId: string): ClaudeSdkEffortLevel | undefined {
-  if (isClaudeUltraModel(modelId)) return 'xhigh';
+  if (isClaudeUltraModel(modelId)) {
+    return getClaudeSdkEffort(modelId.slice(0, -CLAUDE_ULTRA_SUFFIX.length));
+  }
   if (modelId.endsWith('-max')) return 'max';
   if (modelId.endsWith('-xhigh')) return 'xhigh';
   if (modelId.endsWith('-low')) return 'low';
@@ -210,7 +205,11 @@ export function claudeModelRequires1M(modelId: string): boolean {
 }
 
 export function claudeModelToPickerItem(m: ClaudeCodeModel): ModelPickerItem & { version: string } {
-  return { ...toModelPickerItem(m, m.effort), version: m.pickerVersion };
+  return {
+    ...toModelPickerItem(m, m.effort),
+    version: m.pickerVersion,
+    ...(m.ultra && { ultra: m.ultra }),
+  };
 }
 
 /** UI picker rows for Claude Code models (same shape as `claudeModelToPickerItem`). */

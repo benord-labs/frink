@@ -7,9 +7,9 @@ import {
 import { flowModelVariant, getFlowPickerModels } from './flow-picker-models';
 
 describe('getFlowPickerModels', () => {
-  it('returns Claude picker models without the composer-only Ultra tier when not Codex', () => {
+  it('returns Claude picker models without the composer-only Ultra rows when not Codex', () => {
     const claude = getFlowPickerModels(false);
-    expect(claude).toEqual(CLAUDE_PICKER_MODELS.filter((m) => m.effort !== 'ultra'));
+    expect(claude).toEqual(CLAUDE_PICKER_MODELS.filter((m) => !m.ultra));
     expect(claude.length).toBeLessThan(CLAUDE_PICKER_MODELS.length);
   });
 

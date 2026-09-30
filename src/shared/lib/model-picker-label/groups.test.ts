@@ -30,7 +30,6 @@ describe('groupPickerModels', () => {
       'opus-4.7-high',
       'opus-4.7-xhigh',
       'opus-4.7-max',
-      'opus-4.7-ultra',
     ]);
     expect(ids(family('Sonnet 4.6').windows[0].tiers)).toEqual([
       'sonnet-low',
@@ -68,6 +67,7 @@ describe('findPickerSelection', () => {
     const hit = findPickerSelection(claude, 'opus-4.7-1m-high');
     expect(hit?.family.label).toBe('Opus 4.7');
     expect(hit?.window.label).toBe('1M');
+    expect(findPickerSelection(claude, 'opus-4.7-1m-high-ultra')?.window).toBe(hit?.window);
     expect(findPickerSelection(claude, 'gone')).toBeUndefined();
   });
 });
@@ -80,5 +80,16 @@ describe('pickInWindow', () => {
   it('falls back to the window default when the tier is missing', () => {
     expect(pickInWindow(family('Opus 4.6').defaultWindow, 'max').id).toBe('opus-1m');
     expect(pickInWindow(family('Haiku 4.5').defaultWindow, 'high').id).toBe('haiku');
+  });
+
+  it("picks the effort's Ultra twin, keeping Ultra out of the slider's tiers", () => {
+    const window = family('Opus 5.5').defaultWindow;
+    expect(ids(window.tiers).some((id) => id.endsWith('-ultra'))).toBe(false);
+    expect(pickInWindow(window, 'low', true).id).toBe('opus-5.5-low-ultra');
+    expect(pickInWindow(window, undefined, true).id).toBe('opus-5.5-ultra');
+  });
+
+  it('drops Ultra in a window without it', () => {
+    expect(pickInWindow(family('Opus 4.6').defaultWindow, 'high', true).id).toBe('opus-1m-high');
   });
 });

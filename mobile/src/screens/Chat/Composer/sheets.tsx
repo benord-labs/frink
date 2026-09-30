@@ -7,6 +7,7 @@ import {
   Hammer,
   Lightbulb,
   Map as MapIcon,
+  Network,
   Rocket,
   ShieldCheck,
   Sparkles,
@@ -18,6 +19,7 @@ import {
   findPickerSelection,
   groupPickerModels,
   pickInWindow,
+  type PickerWindow,
 } from '@frink/shared/lib/model-picker-label/groups';
 import {
   CODEX_FAST_SPEED_MULTIPLIER,
@@ -60,6 +62,8 @@ function Padded({ children }: { children: ReactNode }) {
   return <View style={{ paddingHorizontal: GUTTER }}>{children}</View>;
 }
 
+type Window = PickerWindow<MobilePickerModel>;
+
 /** Family, context window, effort, the switches and the account: every model setting lives here,
  *  so the composer itself keeps two chips. */
 export function ModelSheet({
@@ -75,13 +79,11 @@ export function ModelSheet({
 }) {
   const families = groupPickerModels(composer.models);
   const current = findPickerSelection(families, composer.settings.modelId);
-  const selected = current?.window.tiers.find((tier) => tier.id === composer.settings.modelId);
+  const selected = current && selectedTier(current.window, composer.settings.modelId);
+  const ultra = Boolean(selected?.ultra);
   const claude = composer.provider === 'claude';
-  // Effort only reaches Claude while Thinking is on; the desktop slider goes inert the same way.
-  const effortInert = claude && !composer.settings.thinkingEnabled;
-  const tiers = (current?.window.tiers ?? []).filter(
-    (tier) => composer.xhighSupported || tier.effort !== 'xhigh',
-  );
+  const pick = (window: Window, effort = selected?.effort, on = ultra) =>
+    onUpdate({ modelId: pickInWindow(window, effort, on).id });
   return (
     <Sheet title="Model" onClose={onClose}>
       <SheetSection title={claude ? 'Claude' : 'Codex'}>
@@ -93,45 +95,20 @@ export function ModelSheet({
             subtitle={family.defaultWindow.defaultTier.contextLabel}
             selected={family.key === current?.family.key}
             separator={index < families.length - 1}
-            onPress={() =>
-              onUpdate({ modelId: pickInWindow(family.defaultWindow, selected?.effort).id })
-            }
+            onPress={() => pick(family.defaultWindow)}
           />
         ))}
       </SheetSection>
-      {current && current.family.windows.length > 1 && (
-        <SheetSection title="Context">
-          <Padded>
-            <Segmented
-              items={current.family.windows.map((window) => ({
-                id: window.label || 'default',
-                label: window.label || 'Standard',
-              }))}
-              value={current.window.label || 'default'}
-              onChange={(label) => {
-                const window = current.family.windows.find((w) => (w.label || 'default') === label);
-                if (window) onUpdate({ modelId: pickInWindow(window, selected?.effort).id });
-              }}
-            />
-          </Padded>
-        </SheetSection>
+      {current && (
+        <ContextSection windows={current.family.windows} value={current.window} onPick={pick} />
       )}
-      {tiers.length > 1 && (
-        <SheetSection
-          title="Effort"
-          footer={effortInert ? 'Effort applies while Thinking is on.' : undefined}
-        >
-          <Padded>
-            <Segmented
-              items={tiers.map((tier) => ({
-                id: tier.id,
-                label: tier.effort ? EFFORT_LABEL[tier.effort] : tier.name,
-              }))}
-              value={selected?.id ?? tiers[0].id}
-              onChange={(id) => onUpdate({ modelId: id })}
-            />
-          </Padded>
-        </SheetSection>
+      {current && (
+        <EffortSection
+          window={current.window}
+          composer={composer}
+          effort={selected?.effort}
+          onEffort={(effort) => pick(current.window, effort)}
+        />
       )}
       <SheetSection>
         {claude ? (
@@ -145,6 +122,15 @@ export function ModelSheet({
         ) : (
           <SpeedRows composer={composer} onUpdate={onUpdate} />
         )}
+        {current && ultraOffered(current.window, composer, ultra) && (
+          <SwitchRow
+            icon={Network}
+            label="Ultra"
+            detail="Runs many agents at once. Uses your plan faster."
+            value={ultra}
+            onChange={(on) => pick(current.window, selected?.effort, on)}
+          />
+        )}
         <SwitchRow
           icon={ShieldCheck}
           label="Auto Mode"
@@ -156,6 +142,81 @@ export function ModelSheet({
       </SheetSection>
       {composer.accounts.length > 0 && <AccountSection composer={composer} onAccount={onAccount} />}
     </Sheet>
+  );
+}
+
+/** The window's row for `modelId`, whether Ultra is on or off. */
+function selectedTier(window: Window, modelId: string): MobilePickerModel | undefined {
+  return [...window.tiers, ...window.ultraTiers].find((tier) => tier.id === modelId);
+}
+
+/** The Ultra switch shows where the model has it and the CLI runs it (or it is on, to turn off). */
+function ultraOffered(window: Window, composer: MobileComposer, ultra: boolean): boolean {
+  return window.ultraTiers.length > 0 && (composer.ultraSupported || ultra);
+}
+
+/** The family's context windows; switching keeps effort and Ultra. */
+function ContextSection({
+  windows,
+  value,
+  onPick,
+}: {
+  windows: Window[];
+  value: Window;
+  onPick: (window: Window) => void;
+}) {
+  if (windows.length < 2) return null;
+  return (
+    <SheetSection title="Context">
+      <Padded>
+        <Segmented
+          items={windows.map((window) => ({
+            id: window.label || 'default',
+            label: window.label || 'Standard',
+          }))}
+          value={value.label || 'default'}
+          onChange={(label) => {
+            const window = windows.find((w) => (w.label || 'default') === label);
+            if (window) onPick(window);
+          }}
+        />
+      </Padded>
+    </SheetSection>
+  );
+}
+
+/** Effort tiers of the window (Extra High only where the CLI runs it); Ultra is its own switch. */
+function EffortSection({
+  window,
+  composer,
+  effort,
+  onEffort,
+}: {
+  window: Window;
+  composer: MobileComposer;
+  effort: MobilePickerModel['effort'];
+  onEffort: (effort: MobilePickerModel['effort']) => void;
+}) {
+  const tiers = window.tiers.filter((tier) => composer.xhighSupported || tier.effort !== 'xhigh');
+  if (tiers.length < 2) return null;
+  // Effort only reaches Claude while Thinking is on; the desktop slider goes inert the same way.
+  const inert = composer.provider === 'claude' && !composer.settings.thinkingEnabled;
+  return (
+    <SheetSection
+      title="Effort"
+      footer={inert ? 'Effort applies while Thinking is on.' : undefined}
+    >
+      <Padded>
+        <Segmented
+          items={tiers.map((tier) => ({
+            id: tier.id,
+            label: tier.effort ? EFFORT_LABEL[tier.effort] : tier.name,
+          }))}
+          value={tiers.find((tier) => tier.effort === effort)?.id ?? tiers[0].id}
+          onChange={(id) => onEffort(tiers.find((tier) => tier.id === id)?.effort)}
+        />
+      </Padded>
+    </SheetSection>
   );
 }
 

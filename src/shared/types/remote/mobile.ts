@@ -260,9 +260,11 @@ export type MobilePickerModel = {
   detail?: string;
   familyId: string;
   contextLabel: string;
-  effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra';
+  effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   effortDefault?: true;
   contextDefault?: true;
+  /** Claude: this row runs Ultra (parallel agents) at its effort. */
+  ultra?: true;
 };
 export type MobileAccount = {
   id: string;
@@ -301,6 +303,8 @@ export type MobileComposer = {
   codexSpeedCredits: Record<Exclude<CodexSpeed, 'standard'>, number | null>;
   /** The bundled Claude CLI accepts the Extra High effort. */
   xhighSupported: boolean;
+  /** The bundled Claude CLI runs Ultra at any effort. */
+  ultraSupported: boolean;
 };
 export type MobileAttachment = { id: string; kind: 'image' | 'file'; name: string; size: number };
 export type MobileChatDetail = {

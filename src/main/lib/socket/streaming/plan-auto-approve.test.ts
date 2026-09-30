@@ -473,7 +473,7 @@ describe('adoptedTurnBeforePush', () => {
     expect(effort).toEqual([[{ effortLevel: null }]]);
   });
 
-  it('sets the effort after clearing Ultra, which would otherwise leave the CLI at xhigh', async () => {
+  it('reconciles Ultra and the effort as separate settings', async () => {
     const { session: s, applyFlagSettings } = session();
     const push = adoptedTurnBeforePush({
       session: asAdopted(s),

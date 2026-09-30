@@ -131,8 +131,8 @@ vi.mock('../claude', () => ({
   createTransformer: vi.fn(),
   getBundledClaudeBinaryPath: vi.fn(),
   clampEffortForBundledBinary: vi.fn((effort?: string) => effort),
+  claudeVersionSupportsUltra: vi.fn(() => true),
 }));
-
 vi.mock('../cloud-client', () => ({
   denyBashPermission: vi.fn(),
   grantBashPermissionWithValidation: vi.fn(),

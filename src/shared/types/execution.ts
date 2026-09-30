@@ -59,12 +59,6 @@ export function parseClaudeModel(input: unknown): string | null {
  */
 export type ClaudeSdkEffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
-/**
- * Effort tiers the model picker offers: the SDK set plus `ultra`, which is never sent as `--effort`.
- * Ultra runs at `xhigh` and turns on the CLI's parallel-agent orchestration (`ExecutionSettings.ultra`).
- */
-export type PickerEffortLevel = ClaudeSdkEffortLevel | 'ultra';
-
 export type ExecutionSettings = {
   /** Extended thinking token budget (0-100000) */
   maxThinkingTokens?: number;
@@ -88,11 +82,8 @@ export type ExecutionSettings = {
   /** Codex speed; `resolveCodexCliModel` maps it to the wire tier the model advertises. Ignored by
    *  non-codex runtimes. Why: docs/decisions/codex-fast-mode-consent.md */
   codexSpeed?: CodexSpeed;
-  /**
-   * Ultra effort tier: the Claude CLI's session `ultracode` setting — `xhigh` effort plus standing
-   * parallel-agent workflow orchestration. Sent alongside `effort: 'xhigh'`; ignored by non-claude
-   * runtimes. Why: docs/decisions/ultra-effort-tier.md
-   */
+  /** Ultra: the Claude CLI's `ultracode` parallel-agent orchestration, at any `effort`. Claude-only.
+   *  Why: docs/decisions/ultra-effort-tier.md */
   ultra?: boolean;
 };
 

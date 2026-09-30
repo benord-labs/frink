@@ -10,7 +10,7 @@ import {
 import type { ModelItem } from '../../../agents/components/model-selector';
 
 /** Ultra is composer-only for now: unattended runs have no surface disclosing its usage cost. */
-const FLOW_CLAUDE_PICKER_MODELS = CLAUDE_PICKER_MODELS.filter((m) => m.effort !== 'ultra');
+const FLOW_CLAUDE_PICKER_MODELS = CLAUDE_PICKER_MODELS.filter((m) => !m.ultra);
 
 /** Picker catalog for the resolved project provider — one provider per project. */
 export function getFlowPickerModels(isCodexProject = false): readonly ModelItem[] {

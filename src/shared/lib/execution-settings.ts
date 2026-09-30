@@ -5,8 +5,9 @@ import { codexFastTierCredits } from './codex-cli-models';
 import {
   claudeModelRequires1M,
   getClaudeCliModel,
-  getClaudeEffortSettings,
+  getClaudeSdkEffort,
   getClaudeThinkingBudget,
+  isClaudeUltraModel,
   supportsNativeAutoReview,
 } from './models';
 
@@ -72,9 +73,12 @@ export function buildExecutionSettings(
   // The thinking budget is Claude-Code-only: Codex carries its own reasoning_effort field.
   const maxThinkingTokens =
     isClaude && settings.thinkingEnabled ? (getClaudeThinkingBudget(modelId) ?? 32_000) : undefined;
+  const effort = maxThinkingTokens != null ? getClaudeSdkEffort(modelId) : undefined;
   return {
     maxThinkingTokens,
-    ...(maxThinkingTokens != null ? getClaudeEffortSettings(modelId) : {}),
+    ...(effort && { effort }),
+    // Ultra is orchestration, not reasoning depth, so it holds whether or not Thinking is on.
+    ...(isClaude && isClaudeUltraModel(modelId) && { ultra: true }),
     model: resolveExecutionModelCliString(accountType, modelId),
     ...(extra.enableTasks !== undefined ? { enableTasks: extra.enableTasks } : {}),
     // Enable 1M context beta when a 1M model variant is selected (Claude SDK only)

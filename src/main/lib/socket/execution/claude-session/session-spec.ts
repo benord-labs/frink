@@ -8,7 +8,11 @@ import type { ChatMode } from '../../../../../shared/types/chat-mode';
 import type { ExecutionSettings } from '../../../../../shared/types/execution';
 import { parseClaudeModel } from '../../../../../shared/types/execution';
 import { buildDebugModePrompt } from '../../../agent-runner/debug-mode';
-import { buildClaudeEnv, clampEffortForBundledBinary } from '../../../claude';
+import {
+  buildClaudeEnv,
+  clampEffortForBundledBinary,
+  claudeVersionSupportsUltra,
+} from '../../../claude';
 import { buildClaudeCredentialLaunch } from '../../../claude/credential-fd-spawn';
 import { buildClaudeSdkThinkingPartial } from '../../../claude/sdk-thinking-options';
 import { stageClaudeConfigDir } from '../../../claude/session-config-dir';
@@ -262,14 +266,13 @@ export async function buildClaudeSessionSpec(inputs: ClaudeSessionSpecInputs) {
         );
       }
       if (!effort) return {};
-      // Ultra = xhigh + the CLI's session `ultracode` orchestration; a clamped binary drops it with
-      // xhigh. Flow turns never run it: unattended runs have no usage disclosure surface yet.
-      const ultra = settings?.ultra && effort === 'xhigh' && !inputs.isFlowExecutionTurn;
-      return {
-        effort: effort as import('@anthropic-ai/claude-agent-sdk').Options['effort'],
-        ...(ultra && { settings: { ultracode: true } }),
-      };
+      return { effort: effort as import('@anthropic-ai/claude-agent-sdk').Options['effort'] };
     })(),
+    // Ultra: the CLI's `ultracode` orchestration, dropped on an older bundled CLI. Flow turns never
+    // run it: unattended runs have no usage disclosure surface yet.
+    ...(settings?.ultra &&
+      !inputs.isFlowExecutionTurn &&
+      claudeVersionSupportsUltra() && { settings: { ultracode: true } }),
     // SDK betas (e.g. 1M context window: 'context-1m-2025-08-07')
     ...(settings?.betas?.length && {
       betas: settings.betas as import('@anthropic-ai/claude-agent-sdk').SdkBeta[],

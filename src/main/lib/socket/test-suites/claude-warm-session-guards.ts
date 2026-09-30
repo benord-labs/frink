@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import log from 'electron-log';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { claudeVersionSupportsUltra } from '../../claude';
 import { getClaudeCodeTokenById } from '../../credentials';
 import { getChatWithProjectAccount } from '../../db/repos/chats';
 import { getMultiProjectContext } from '../../multi-project-prompt';
@@ -69,17 +70,16 @@ export function registerClaudeWarmSessionGuardTests(harness: WarmSessionGuardHar
     });
     registerPlanApprovalReuseTests(claudeQueryMock, send);
 
-    it('Ultra spawns with the ultracode setting, and toggling it applies live on the same CLI', async () => {
+    it('Ultra spawns with the ultracode setting at any effort, and toggling it applies live', async () => {
       const first = mockQuery(claudeQueryMock, answeringCli());
       const spawned = (call: number) => claudeQueryMock.mock.calls[call]?.[0]?.options;
 
-      await send('first', { settings: { effort: 'xhigh', ultra: true } });
+      await send('first', { settings: { effort: 'low', ultra: true } });
       await send('second', { sessionId: 'sess-held', settings: { effort: 'xhigh' } });
 
       expect(spawned(0)?.settings).toEqual({ ultracode: true });
       expect(sessionLines('claim')).toEqual(['miss:none', 'hit']);
       expect(claudeQueryMock).toHaveBeenCalledTimes(1);
-      // Ultra is cleared before the effort is set: clearing it alone leaves the CLI at xhigh.
       expect(first.applyFlagSettings.mock.calls).toEqual([
         [{ ultracode: null }],
         [{ effortLevel: 'xhigh' }],
@@ -104,6 +104,16 @@ export function registerClaudeWarmSessionGuardTests(harness: WarmSessionGuardHar
       await send('flow turn', { settings: { effort: 'xhigh', ultra: true } });
       expect(claudeQueryMock.mock.calls[0]?.[0]?.options.effort).toBe('xhigh');
       expect(claudeQueryMock.mock.calls[0]?.[0]?.options.settings).toBeUndefined();
+    });
+
+    it('a bundled CLI too old for Ultra at any effort never spawns or live-applies it', async () => {
+      const warm = mockQuery(claudeQueryMock, answeringCli());
+      vi.mocked(claudeVersionSupportsUltra).mockReturnValue(false);
+      await send('first', { settings: { effort: 'low', ultra: true } });
+      await send('second', { sessionId: 'sess-held', settings: { effort: 'low', ultra: true } });
+      vi.mocked(claudeVersionSupportsUltra).mockReturnValue(true);
+      expect(claudeQueryMock.mock.calls[0]?.[0]?.options.settings).toBeUndefined();
+      expect(warm.applyFlagSettings).not.toHaveBeenCalledWith({ ultracode: true });
     });
 
     it('a warm-hit turn holds a Claude runtime slot until its settle, as a spawned turn does', async () => {
