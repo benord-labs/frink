@@ -81,9 +81,31 @@ function useOpenAccountsSettings() {
   }, [setSettingsActiveTab, setSettingsOpen]);
 }
 
-const USAGE_LIMIT_ERROR_CATEGORY = 'RATE_LIMIT_SDK';
+const ADD_LOGIN_LABEL = {
+  'claude-code': 'Add a Claude Code login…',
+  codex: 'Add an OpenAI login…',
+} as const satisfies Record<AccountType, string>;
 
-/** Beside a usage-limit Retry: retry this chat on another Claude login, or add one. */
+/**
+ * The logins a blocked chat can retry on, or null for no recovery rows. A usage limit moves only to
+ * another Claude login; a removed login moves to any signed-in login of the chat's provider.
+ */
+function recoveryLogins(
+  category: string | undefined,
+  provider: AccountType,
+  currentId: string | undefined,
+  all: PickableAccount[],
+) {
+  const loginRemoved = category === 'LOGIN_REMOVED';
+  // Codex has one login per device, so a Codex limit has nowhere else to go.
+  const isLimit = category === 'RATE_LIMIT_SDK' && provider !== 'codex' && currentId;
+  if (!loginRemoved && !isLimit) return null;
+  return all.filter(
+    (a) => a.isAuthenticated && a.type === provider && (loginRemoved || a.id !== currentId),
+  );
+}
+
+/** Beside Retry on a blocked chat (usage limit, or login removed): retry on another login, or add one. */
 export function ContinueAfterUsageLimit({
   chatId,
   subChatId,
@@ -100,21 +122,22 @@ export function ContinueAfterUsageLimit({
     onSuccess: () => void utils.claudeCode.getResolvedAccount.invalidate({ chatId }),
     onError: (err) => toast.error(err.message),
   });
+  // The chat's own provider, since a chat whose provider has no login left resolves no account.
+  const { data: chat } = trpc.chats.get.useQuery({ id: chatId });
   const { data: account } = trpc.claudeCode.getResolvedAccount.useQuery({ chatId });
   const { data: accounts = [] } = trpc.claudeCode.listAccounts.useQuery();
-  if (pendingRetry?.errorCategory !== USAGE_LIMIT_ERROR_CATEGORY || !account) return null;
-  // Only another Claude login resumes this session natively; Codex has one login per device.
-  if (account.type === 'codex') return null;
-  const others = accounts.filter(
-    (a) => a.isAuthenticated && a.type === 'claude-code' && a.id !== account.id,
-  );
+  const provider = chat?.provider === 'codex' ? 'codex' : 'claude-code';
+  const category = pendingRetry?.errorCategory;
+  const others = chat ? recoveryLogins(category, provider, account?.id, accounts) : null;
+  if (!others) return null;
   if (others.length === 0) {
+    const label = category === 'LOGIN_REMOVED' ? ADD_LOGIN_LABEL[provider] : 'Add account…';
     return (
       <RetryActionButton
         icon={Plus}
         onClick={openAccountsSettings}
-        ariaLabel="Add another AI account"
-        label="Add account…"
+        ariaLabel={label}
+        label={label}
       />
     );
   }
@@ -132,6 +155,11 @@ export function ContinueAfterUsageLimit({
       ))}
     </>
   );
+}
+
+/** A chat tooltip's scope line: the login it always uses, or that its login was removed. */
+function chatScope(label: string, resolved?: { isBlocked?: boolean } | null) {
+  return resolved?.isBlocked ? "This chat's login was removed" : `This chat always uses ${label}`;
 }
 
 /** The new-chat tooltip's scope line: where the shown login comes from. */
@@ -157,6 +185,7 @@ type ShownAccount = {
   isAuthenticated: boolean;
   source?: string | null;
   isProjectOverride?: boolean;
+  isBlocked?: boolean;
 };
 
 /** The badge's provider, tooltip scope and hint lines, and aria-label, for a chat or a new chat. */
@@ -171,7 +200,7 @@ function badgeCopy(
   if (chatId) {
     return {
       providerLabel,
-      scope: `This chat always uses ${account.label}`,
+      scope: chatScope(account.label, account),
       hint: 'Start a new chat to use a different account.',
       ariaLabel: menuLabel,
     };

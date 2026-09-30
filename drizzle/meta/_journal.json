@@ -414,6 +414,13 @@
       "when": 1790778842000,
       "tag": "0108_chat_account",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "6",
+      "when": 1790788468508,
+      "tag": "0109_chat_provider",
+      "breakpoints": true
     }
   ]
 }

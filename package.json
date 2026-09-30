@@ -280,7 +280,8 @@
           "0105_chat_composer_settings.sql",
           "0106_chat_composer_codex_speed.sql",
           "0107_flow_codex_speed.sql",
-          "0108_chat_account.sql"
+          "0108_chat_account.sql",
+          "0109_chat_provider.sql"
         ]
       },
       {

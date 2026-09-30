@@ -1,6 +1,8 @@
 import { and, eq, inArray } from 'drizzle-orm';
+import log from 'electron-log';
 import type { getDatabase } from '../index';
 import { type Chat, chats, claudeCodeCredentials, projectAiAccounts } from '../schema';
+import { parkFlowTaskForSubChat } from './task-parking';
 
 type Db = ReturnType<typeof getDatabase>;
 
@@ -75,33 +77,43 @@ export async function getNewChatAccountId(
 }
 
 /**
- * The account a chat runs on: its stamped account, else (its provider has no login left) the
- * project override. Null means the workspace default.
+ * The login a chat runs on: its stamped one, and never another provider's. Null means the chat is
+ * blocked because its login was removed.
  */
 export async function getChatAiAccount(
   db: Db,
-  chat: Partial<Pick<Chat, 'accountId' | 'projectId'>>,
+  chat: Pick<Chat, 'accountId' | 'provider'>,
 ): Promise<{ id: string; label: string | null } | null> {
-  if (chat.accountId) {
-    const [row] = await db
-      .select({ id: claudeCodeCredentials.id, label: claudeCodeCredentials.accountLabel })
-      .from(claudeCodeCredentials)
-      .where(
-        and(
-          eq(claudeCodeCredentials.id, chat.accountId),
-          inArray(claudeCodeCredentials.type, AI_ACCOUNT_TYPES),
-        ),
-      )
-      .limit(1);
-    if (row) return row;
-  }
-  return chat.projectId ? getProjectAiAccount(db, chat.projectId) : null;
+  if (!chat.accountId) return null;
+  const [row] = await db
+    .select({ id: claudeCodeCredentials.id, label: claudeCodeCredentials.accountLabel })
+    .from(claudeCodeCredentials)
+    .where(
+      and(
+        eq(claudeCodeCredentials.id, chat.accountId),
+        eq(claudeCodeCredentials.type, chat.provider),
+      ),
+    )
+    .limit(1);
+  return row ?? null;
 }
 
 /**
- * Move a chat in place to another login of the provider it runs on (stamp, else project override,
- * else default); another provider is refused because a chat stays on its provider.
+ * Blocks a turn in a chat whose login was removed, parking its Flow task like a usage limit; the
+ * user then retries on another login of the chat's provider.
  */
+export async function assertChatLogin(db: Db, chatId: string, subChatId: string): Promise<void> {
+  const [chat] = await db.select().from(chats).where(eq(chats.id, chatId)).limit(1);
+  if (!chat || (await getChatAiAccount(db, chat))) return;
+  const message = "This chat's login was removed";
+  // A failed park must not replace the error that shows the recovery rows.
+  await parkFlowTaskForSubChat(db, subChatId, { kind: 'api-error', status: null, message }).catch(
+    (err) => log.warn(`[chat-login] park failed for ${subChatId}:`, err),
+  );
+  throw Object.assign(new Error(message), { category: 'LOGIN_REMOVED' });
+}
+
+/** Move a chat in place to another login of its provider; another provider is refused. */
 export async function setChatAiAccount(
   db: Db,
   chatId: string,
@@ -110,9 +122,7 @@ export async function setChatAiAccount(
   const [chat] = await db.select().from(chats).where(eq(chats.id, chatId)).limit(1);
   const nextType = await getAiAccountType(db, accountId);
   if (!chat || !nextType) return 'not-found';
-  const currentId = (await getChatAiAccount(db, chat))?.id ?? (await getNewChatAccountId(db, null));
-  const currentType = currentId ? await getAiAccountType(db, currentId) : null;
-  if (currentType && currentType !== nextType) return 'other-provider';
+  if (nextType !== chat.provider) return 'other-provider';
   await db.update(chats).set({ accountId }).where(eq(chats.id, chatId));
   return 'ok';
 }

@@ -578,6 +578,52 @@ describe('database migration chain', () => {
     }
   });
 
+  it("stamps every chat with the provider it resolves to and stops moving a deleted login's chats", () => {
+    const chatProviderTag = '0109_chat_provider';
+    const sqlite = new NodeSqliteDatabase(':memory:');
+    try {
+      sqlite.pragma('foreign_keys = ON');
+      for (const entry of readJournalEntries()) {
+        if (entry.tag === chatProviderTag) break;
+        sqlite.exec(readFileSync(join(drizzleDir, `${entry.tag}.sql`), 'utf-8'));
+      }
+      sqlite.exec(`
+        INSERT INTO projects (id, name, path) VALUES ('p1', 'P', '/tmp/p'), ('p2', 'Q', '/tmp/q');
+        INSERT INTO claude_code_credentials (id, type, account_label, is_default, source)
+          VALUES ('cred-default', 'claude-code', 'Personal', 1, 'claude-passthrough'),
+                 ('cred-codex', 'codex', 'Codex', 0, 'codex-passthrough');
+        INSERT INTO project_ai_accounts (project_id, account_id) VALUES ('p1', 'cred-codex');
+        INSERT INTO chats (id, project_id, account_id)
+          VALUES ('stamped', 'p2', 'cred-codex'), ('override', 'p1', NULL),
+                 ('default', 'p2', NULL), ('general', NULL, NULL);
+      `);
+
+      sqlite.exec(readFileSync(join(drizzleDir, `${chatProviderTag}.sql`), 'utf-8'));
+
+      // SAFETY: this projection returns the seeded chats TEXT columns.
+      const rows = sqlite.prepare('SELECT id, provider FROM chats ORDER BY id').all();
+      expect(rows).toEqual([
+        { id: 'default', provider: 'claude-code' },
+        { id: 'general', provider: 'claude-code' },
+        { id: 'override', provider: 'codex' },
+        { id: 'stamped', provider: 'codex' },
+      ]);
+      sqlite.exec("DELETE FROM claude_code_credentials WHERE id = 'cred-codex'");
+      sqlite.exec("INSERT INTO chats (id) VALUES ('fresh')");
+      expect(count(sqlite, "chats WHERE provider = 'codex' AND account_id IS NULL")).toBe(2);
+      expect(count(sqlite, "chats WHERE id = 'fresh' AND provider = 'claude-code'")).toBe(1);
+      // SAFETY: sqlite_master.name is TEXT and this query projects that single non-null column.
+      const triggers = sqlite
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'claude_code_credentials'",
+        )
+        .all();
+      expect(triggers).toEqual([]);
+    } finally {
+      sqlite.close();
+    }
+  });
+
   it('leaves no dropped column or table behind after the real migration runner', () => {
     const db = freshDb();
     try {

@@ -540,6 +540,7 @@ describe('forkMutationResultToSidebarItem', () => {
       prUrl: null,
       prNumber: null,
       taskId: null,
+      provider: 'claude-code',
       batchId: null,
       worktreeHistory: null,
       subChats: [],

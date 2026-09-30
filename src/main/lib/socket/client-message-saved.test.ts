@@ -16,6 +16,7 @@ const { appendUserMessageLocalMock } = vi.hoisted(() => ({
 }));
 
 vi.mock('../db', () => ({ getDatabase: vi.fn(() => ({}) as unknown) }));
+vi.mock('../db/repos/project-ai-accounts', () => ({ assertChatLogin: vi.fn() }));
 
 vi.mock('../db/repos/sub-chats', () => ({
   appendUserMessage: appendUserMessageLocalMock,
@@ -31,6 +32,8 @@ vi.mock('../credentials', () => ({
   isResolvedCredential: () => true,
 }));
 
+import { assertChatLogin } from '../db/repos/project-ai-accounts';
+import { setStreamId } from '../db/repos/sub-chats';
 import { onExecuteRequest, sendMessage } from './client';
 
 const send = vi.fn();
@@ -100,5 +103,17 @@ describe('sendMessage → socket:message-saved', () => {
     await sendFromPhone();
 
     expect(send).not.toHaveBeenCalledWith('socket:message-saved', expect.anything());
+  });
+
+  it('keeps the message but never starts a turn in a chat whose login was removed', async () => {
+    const blocked = Object.assign(new Error('removed'), { category: 'LOGIN_REMOVED' });
+    vi.mocked(assertChatLogin).mockRejectedValueOnce(blocked);
+    vi.mocked(setStreamId).mockClear();
+
+    await expect(sendFromPhone()).rejects.toBe(blocked);
+
+    expect(send).toHaveBeenCalledWith('socket:message-saved', expect.anything());
+    expect(events).not.toContain('execute');
+    expect(setStreamId).not.toHaveBeenCalled();
   });
 });

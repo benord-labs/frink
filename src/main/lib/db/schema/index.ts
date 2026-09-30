@@ -69,7 +69,6 @@ export const chats = sqliteTable(
     worktreePath: text('worktree_path'),
     branch: text('branch'),
     baseBranch: text('base_branch'),
-    // PR tracking fields
     prUrl: text('pr_url'),
     prNumber: integer('pr_number'),
     taskId: text('task_id'), // The task driving this chat (a work queue item or Flow agent task)
@@ -88,8 +87,9 @@ export const chats = sqliteTable(
     composerAutoMode: integer('composer_auto_mode', { mode: 'boolean' }),
     composerCodexSpeed: text('composer_codex_speed', { enum: CODEX_SPEEDS }),
     accountId: text('account_id').references(() => claudeCodeCredentials.id, {
-      onDelete: 'set null', // Stamped at creation; NULL once no login of its provider is left.
+      onDelete: 'set null', // Stamped at creation; a deleted login leaves NULL and blocks the chat.
     }),
+    provider: text('provider').notNull().default('claude-code'), // Stamped at creation; never changes.
   },
   (table) => [index('chats_worktree_path_idx').on(table.worktreePath)],
 );

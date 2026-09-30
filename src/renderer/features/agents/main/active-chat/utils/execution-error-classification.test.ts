@@ -14,6 +14,7 @@ describe('isExecutionLevelFailure', () => {
       'MESSAGE_TIMEOUT',
       'MACHINE_OFFLINE',
       'FLOW_RUN_ENDED',
+      'LOGIN_REMOVED',
     ];
 
     for (const category of excluded) {
