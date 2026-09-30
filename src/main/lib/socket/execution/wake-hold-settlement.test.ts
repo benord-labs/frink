@@ -162,3 +162,18 @@ describe('settleClaudeWakeHold — reporting the background work a pump exit dro
     expect(captureMainMessage).not.toHaveBeenCalled();
   });
 });
+
+// The renderer plays the failure sound for a wait that died; Stop and release retract earlier,
+// and a clean or interrupted end must never be mistaken for a crash.
+describe('settleClaudeWakeHold — naming a failed wait', () => {
+  it.each([
+    [{ reason: 'stream-ended' }, 'failed'],
+    [{ reason: 'sink-error', error: new Error('sink') }, 'failed'],
+    [{ reason: 'work-finished', bursts: 1 }, undefined],
+    [{ reason: 'interrupted' }, undefined],
+  ] as const)('retracts a %o exit with endReason %s', async (exit, endReason) => {
+    const retractIfCurrent = vi.fn();
+    await settleClaudeWakeHold(settleParams({}, { exit, retractIfCurrent })).catch(() => {});
+    expect(retractIfCurrent).toHaveBeenCalledExactlyOnceWith(endReason);
+  });
+});

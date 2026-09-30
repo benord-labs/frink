@@ -23,13 +23,16 @@ type WakeHoldPayload =
 
 /** Completion effects a held chat withheld at turn end. First writer wins: only a retraction clears
  * an entry, so a second writer is a turn that never adopted the hold (e.g. a failed send). */
-const deferredAnnounce = new Map<string, () => void>();
+const deferredAnnounce = new Map<string, (failed: boolean) => void>();
+
+/** Announces a held turn whose finish this window never saw (it reloaded mid-wait). */
+type AnnounceSeededHold = (turn: { chatId: string; subChatId: string }, failed: boolean) => void;
 
 /**
- * Run `fire` when this sub-chat's wait ends on its own. Any other retraction (Stop, a follow-up
- * adopting the hold, release) drops it unfired.
+ * Run `fire` when this sub-chat's wait ends on its own, or with `failed` when the wait dies. Any
+ * other retraction (Stop, a follow-up adopting the hold, release) drops it unfired.
  */
-export function deferUntilWaitOver(subChatId: string, fire: () => void): void {
+export function deferUntilWaitOver(subChatId: string, fire: (failed: boolean) => void): void {
   if (!deferredAnnounce.has(subChatId)) deferredAnnounce.set(subChatId, fire);
 }
 
@@ -84,7 +87,7 @@ function applyWakeHold(
  * ever makes: a window that reloads mid-wait would otherwise render the chat as finished and lose
  * the held row's Stop, the only stop affordance between bursts, while main keeps pumping into it.
  */
-export function useWakeHoldSync(): void {
+export function useWakeHoldSync(announceSeededHold?: AnnounceSeededHold): void {
   const store = useStore();
 
   useEffect(() => {
@@ -111,7 +114,9 @@ export function useWakeHoldSync(): void {
       if (data.held) return;
       const fire = deferredAnnounce.get(data.subChatId);
       deferredAnnounce.delete(data.subChatId);
-      if (fire && data.endReason === 'wait-over') fire();
+      if (data.endReason === 'wait-over' || data.endReason === 'failed') {
+        fire?.(data.endReason === 'failed');
+      }
     });
 
     // Pull once; on rejection, wait and retry exactly once more; then give up. Local IPC never
@@ -120,8 +125,16 @@ export function useWakeHoldSync(): void {
       try {
         const holds = await trpcClient.socket.listWakeHolds.query();
         if (disposed) return;
-        for (const { subChatId, chatId, pending } of holds) {
-          if (!spokenFor.has(subChatId)) applyWakeHold(store, subChatId, chatId, pending);
+        for (const { subChatId, chatId, pending, flow } of holds) {
+          if (spokenFor.has(subChatId)) continue;
+          applyWakeHold(store, subChatId, chatId, pending);
+          // The reload lost this wait's deferred announce; the hold's end still owes one (a Flow
+          // node's never does: its Flow announces the run).
+          if (announceSeededHold && !flow) {
+            deferUntilWaitOver(subChatId, (failed) =>
+              announceSeededHold({ chatId, subChatId }, failed),
+            );
+          }
         }
       } catch (error) {
         if (disposed) return;
@@ -144,5 +157,5 @@ export function useWakeHoldSync(): void {
       if (retryTimer) clearTimeout(retryTimer);
       unsubscribe();
     };
-  }, [store]);
+  }, [store, announceSeededHold]);
 }

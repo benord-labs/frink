@@ -1,4 +1,5 @@
 import log from 'electron-log';
+import type { WakeHoldEndReason } from '../../../../shared/types/wake-hold';
 import type { FlowResourceActivityRelease } from '../../flows/admission/activity';
 import { awaitBounded } from '../../provider/await-bounded';
 import type { ClaudeSession } from '../claude-session-registry';
@@ -137,7 +138,7 @@ export async function settleClaudeWakeHold(params: {
   executionContextId: string | undefined;
   io: PumpCleanupIo;
   canClearPendingApprovals?: () => boolean;
-  retractIfCurrent: () => unknown;
+  retractIfCurrent: (endReason?: WakeHoldEndReason) => unknown;
   dropIfCurrent: () => unknown;
   takeCutShortBurst: () => CutShortBurstCleanup | null;
 }): Promise<void> {
@@ -157,7 +158,9 @@ export async function settleClaudeWakeHold(params: {
     }
   };
 
-  await runCleanup(params.retractIfCurrent);
+  // A wait that died rather than ended is announced as failed; Stop and release already retracted.
+  const failed = params.exit.reason === 'stream-ended' || params.exit.reason === 'sink-error';
+  await runCleanup(() => params.retractIfCurrent(failed ? 'failed' : undefined));
   log.info(`[Socket Executor] Wake pump for ${params.subChatId} ended: ${params.exit.reason}`);
   const cutShort = params.takeCutShortBurst();
   if (cutShort) {
