@@ -32,6 +32,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   // The Lock Screen card's widget extension; each variant signs its own extension and app group.
   plugins: [
     ...(config.plugins ?? []),
+    // Must stay immediately before expo-widgets, which would otherwise wipe the logo's asset catalog.
+    './plugins/with-widget-logo.cjs',
     [
       'expo-widgets',
       {
