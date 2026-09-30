@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MOBILE_API_VERSION } from '../../../shared/types/remote/mobile';
+import type { MobilePairingStore } from './pairing-store';
 
 const mocks = vi.hoisted(() => ({
   directory: '',
@@ -10,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   stop: vi.fn(),
   executor: vi.fn(),
   warn: vi.fn(),
+  liveActivity: vi.fn(),
 }));
 vi.mock('electron', () => ({ app: { getPath: () => mocks.directory } }));
 vi.mock('electron-log', () => ({ default: { warn: mocks.warn } }));
@@ -18,6 +20,7 @@ vi.mock('./domain-api', () => ({
   storeMobileAttachment: vi.fn(),
 }));
 vi.mock('./server', () => ({ startMobileServer: mocks.start, stopMobileServer: mocks.stop }));
+vi.mock('./live-activity', () => ({ startMobileLiveActivity: mocks.liveActivity }));
 
 beforeEach(async () => {
   vi.resetModules();
@@ -25,6 +28,7 @@ beforeEach(async () => {
   mocks.start.mockReset().mockResolvedValue({ listening: true });
   mocks.stop.mockReset().mockResolvedValue(undefined);
   mocks.warn.mockReset();
+  mocks.liveActivity.mockReset().mockReturnValue({ stop: vi.fn(), endDevice: vi.fn() });
 });
 afterEach(async () => {
   await rm(mocks.directory, { recursive: true, force: true });
@@ -122,5 +126,24 @@ describe('desktop mobile access lifecycle', () => {
       running: true,
       error: null,
     });
+  });
+
+  it('ends Live Activity cards while the store still knows the phone', async () => {
+    const seen: string[] = [];
+    mocks.liveActivity.mockImplementation((store: MobilePairingStore) => ({
+      stop: () => seen.push(`stop with access ${store.status().enabled ? 'on' : 'off'}`),
+      endDevice: (id: string) =>
+        seen.push(
+          `end ${store.status().devices.some((device) => device.id === id) ? 'paired' : 'gone'}`,
+        ),
+    }));
+    const mobile = await import('./index');
+    await mobile.enableMobileAccess();
+    const [store] = mocks.liveActivity.mock.calls[0] as [MobilePairingStore];
+    const { pairing } = await mobile.createMobilePairing('https://computer.ts.net');
+    const { deviceId } = await store.redeem(pairing.code, 'Phone');
+    await mobile.revokeMobileDevice(deviceId);
+    await mobile.disableMobileAccess();
+    expect(seen).toEqual(['end paired', 'stop with access on']);
   });
 });

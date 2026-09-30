@@ -4,8 +4,12 @@ export const pushTokenSchema = z
   .string()
   .max(200)
   .regex(/^(Expo|Exponent)PushToken\[[A-Za-z0-9_-]+\]$/);
+export const liveActivityTokenSchema = z.string().regex(/^[0-9a-f]{64,400}$/);
 export const notificationRegistrationSchema = z
-  .object({ token: pushTokenSchema.nullable().optional() })
+  .object({
+    token: pushTokenSchema.nullable().optional(),
+    activityToken: liveActivityTokenSchema.nullable().optional(),
+  })
   .strict();
 export const completionNotificationSchema = z.object({
   type: z.literal('session-completed'),

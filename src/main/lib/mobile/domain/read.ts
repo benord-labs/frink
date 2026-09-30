@@ -15,6 +15,7 @@ import { listPendingQuestionSubChatIds } from '../../claude/ask-user-question-ap
 import { getDatabase } from '../../db';
 import { listProjectsByRecentActivity } from '../../db/repos/projects';
 import { chats, projects, subChats, tasks } from '../../db/schema';
+import { chatsBySubChat, readAgentCounts } from '../live-activity/counts';
 import { subChatActivity } from './chat';
 import { executionReady, mobileCallers, record, text } from './context';
 import { mobilePermissions, mobileQuestions, parkedQuestion } from './questions';
@@ -24,7 +25,7 @@ const sections = ['attention', 'inbox', 'running'] as const;
 export async function readMobileOverview({
   limits = {},
 }: Omit<Extract<MobileRequest, { type: 'overview' }>, 'type'> = {}): Promise<MobileOverview> {
-  const [counts, pages] = await Promise.all([
+  const [counts, pages, agents] = await Promise.all([
     mobileCallers.tasks.workQueueOverviewCounts(),
     Promise.all(
       sections.map((workQueueSection) =>
@@ -35,6 +36,7 @@ export async function readMobileOverview({
         }),
       ),
     ),
+    readAgentCounts(),
   ]);
   const queue = pages.flatMap((page, index) =>
     page.items.map((task): MobileQueueItem => {
@@ -56,13 +58,7 @@ export async function readMobileOverview({
     }),
   );
   const pendingIds = listPendingQuestionSubChatIds();
-  const pendingChats = pendingIds.length
-    ? await getDatabase()
-        .select({ id: subChats.id, chatId: subChats.chatId })
-        .from(subChats)
-        .where(inArray(subChats.id, pendingIds))
-    : [];
-  const chatBySubChat = new Map(pendingChats.map((subChat) => [subChat.id, subChat.chatId]));
+  const chatBySubChat = await chatsBySubChat(pendingIds);
   const liveQuestions = (
     await Promise.all(
       pendingIds.map((subChatId) => {
@@ -98,6 +94,7 @@ export async function readMobileOverview({
     },
     questions,
     permissions: mobilePermissions(),
+    agents,
   };
 }
 
