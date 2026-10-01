@@ -578,12 +578,12 @@ describe('PluginDetail', () => {
     });
   });
 
-  it('covers every builtin provider without throwing', () => {
-    for (const plugin of PLUGIN_DEFINITIONS) {
-      cleanup();
-      expect(() => renderPage({ pluginId: plugin.id })).not.toThrow();
-    }
-  });
+  it.each(PLUGIN_DEFINITIONS.map((plugin) => plugin.id))(
+    'renders builtin provider %s',
+    (pluginId) => {
+      expect(() => renderPage({ pluginId })).not.toThrow();
+    },
+  );
 });
 
 describe('PluginDisconnect menu (via PluginDetail header) [sc-2068]', () => {

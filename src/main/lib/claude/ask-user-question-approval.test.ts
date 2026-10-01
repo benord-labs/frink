@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PERMISSION_PROMPT_TIMEOUT_MS } from '../permissions/constants';
 import { QUESTION_TEXT_MAX } from '../trpc/routers/frink-task-signal';
 import {
@@ -197,6 +197,12 @@ describe('holdQuestionUntilAnswered', () => {
       },
       parkAndKill,
     });
+  let claudeRouter: typeof import('../trpc/routers/claude').claudeRouter;
+
+  // Loading the router graph takes seconds on a busy machine; keep it out of the 5 s test budget.
+  beforeAll(async () => {
+    ({ claudeRouter } = await import('../trpc/routers/claude'));
+  }, 60_000);
 
   beforeEach(() => {
     vi.useRealTimers();
@@ -460,7 +466,6 @@ describe('holdQuestionUntilAnswered', () => {
         }),
     );
     const promise = hold();
-    const { claudeRouter } = await import('../trpc/routers/claude');
     const caller = claudeRouter.createCaller({ getWindow: () => null });
 
     await vi.advanceTimersByTimeAsync(PERMISSION_PROMPT_TIMEOUT_MS);
