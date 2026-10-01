@@ -23,7 +23,11 @@ import {
   setThinkingEnabled,
   updateComposerSettings,
 } from '../../chat-composer';
-import { claudeVersionSupportsXhigh, getBundledClaudeVersion } from '../../claude';
+import {
+  claudeVersionSupportsUltra,
+  claudeVersionSupportsXhigh,
+  getBundledClaudeVersion,
+} from '../../claude';
 import { MobileApiError, mobileCallers, requireChat } from './context';
 
 type ComposerRequest = Extract<MobileRequest, { type: 'composer' }>;
@@ -49,6 +53,14 @@ function xhighSupported(): boolean {
     return claudeVersionSupportsXhigh(getBundledClaudeVersion());
   } catch {
     return true; // Desktop's default while unknown; the executor clamps xhigh as the backstop.
+  }
+}
+
+function ultraSupported(): boolean {
+  try {
+    return claudeVersionSupportsUltra(getBundledClaudeVersion());
+  } catch {
+    return true; // Desktop's default while unknown; the executor drops Ultra as the backstop.
   }
 }
 
@@ -98,6 +110,7 @@ export async function readMobileComposer(input: ComposerRequest): Promise<Mobile
       ultrafast: provider === 'codex' ? codexTierCredits(modelId, 'ultrafast') : null,
     },
     xhighSupported: xhighSupported(),
+    ultraSupported: ultraSupported(),
   };
 }
 

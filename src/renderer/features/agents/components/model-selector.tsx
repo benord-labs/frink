@@ -7,7 +7,7 @@ import {
   formatModelPickerLabel,
   formatModelPickerLabelParts,
 } from '../../../../shared/lib/model-picker-label';
-import type { CodexSpeed, PickerEffortLevel } from '../../../../shared/types/execution';
+import type { CodexSpeed, ClaudeSdkEffortLevel } from '../../../../shared/types/execution';
 import { ChevronDown } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '../../../components/ui/popover';
 import { trpc } from '../../../lib/trpc';
@@ -17,7 +17,8 @@ import {
   COMPOSER_MODEL_DETAIL_CLASS,
   COMPOSER_MODEL_LABEL_CLASS,
 } from '../main/chat-composer-shell-classes';
-import { ModelPicker, UltraWord } from './ModelPicker';
+import { ModelPicker } from './ModelPicker';
+import { UltraWord } from './ModelPicker/UltraSwitch';
 
 const ClaudeCodeIcon = iconifyComponent(claudeLogo);
 const CodexIcon = iconifyComponent(openaiLogo);
@@ -33,9 +34,11 @@ export type ModelItem = {
   /** Context window; a family offering several is switched inside the effort card. */
   contextLabel?: string;
   /** Effort tier — the picker's slider axis. Absent for models without an effort choice. */
-  effort?: PickerEffortLevel;
+  effort?: ClaudeSdkEffortLevel;
   /** The family's default tier — the slider's reset target. */
   effortDefault?: true;
+  /** Claude: Ultra (parallel agents) on for this tier. */
+  ultra?: true;
   /** Claude Code: model version label in the picker. */
   version?: string;
 };
@@ -91,6 +94,9 @@ function formatTriggerLabel(m: ModelItem | undefined): string {
   return m ? formatModelPickerLabel(m) : '';
 }
 
+/** How an Ultra row's label ends (see the Claude catalog); the trigger restyles just this word. */
+const ULTRA_LABEL_TAIL = ' · Ultra';
+
 /** Composer trigger text: the name in the foreground and the tier muted. As the composer narrows
  *  the tier and chevron go first; the name goes only when it no longer fits. */
 function ComposerTriggerLabel({
@@ -110,6 +116,7 @@ function ComposerTriggerLabel({
           <span className={cn('text-muted-foreground/70', COMPOSER_MODEL_DETAIL_CLASS)}>
             {ultra ? (
               <>
+                {suffix.slice(0, -ULTRA_LABEL_TAIL.length)}
                 {' · '}
                 <UltraWord />
               </>
@@ -171,8 +178,9 @@ export function ModelSelector({
     },
   );
   const xhighSupported = claudeCaps?.supportsXhigh ?? true;
-  // Ultra is a mode, not just a tier: its word takes the animated chroma used for power keywords.
-  const ultra = !isFlow && selectedModel?.effort === 'ultra';
+  const ultraSupported = claudeCaps?.supportsUltra ?? true;
+  // Ultra is a mode: its word takes the animated chroma used for power keywords.
+  const ultra = !isFlow && Boolean(selectedModel?.ultra);
   // biome-ignore lint/style/useNamingConvention: Renders as a component
   const TriggerIcon = TRIGGER_ICON[modelVariant];
 
@@ -230,6 +238,7 @@ export function ModelSelector({
           onSelect={onModelChange}
           variant={modelVariant}
           hideXhigh={modelVariant === 'claude' && !xhighSupported}
+          hideUltra={modelVariant === 'claude' && !ultraSupported}
           speed={isFlow ? undefined : speedScope(selectedModel?.id, chatId, newChatSpeedRef)}
           inherit={
             isFlow

@@ -77,9 +77,9 @@ vi.mock('../../../../shared/lib/models', async (importOriginal) => {
   return {
     ...real,
     // Intentionally simplified vs the real catalog (getClaudeCliModel collapses Opus to `opus`);
-    // effort settings stay real, only coerced because some cases leave the model id unset.
-    getClaudeEffortSettings: (modelId: unknown) =>
-      real.getClaudeEffortSettings(String(modelId ?? '')),
+    // effort and Ultra stay real, only coerced because some cases leave the model id unset.
+    getClaudeSdkEffort: (modelId: unknown) => real.getClaudeSdkEffort(String(modelId ?? '')),
+    isClaudeUltraModel: (modelId: unknown) => real.isClaudeUltraModel(String(modelId ?? '')),
     getClaudeCliModel: (modelId: unknown) => {
       const id = String(modelId ?? '');
       if (id.startsWith('opus-4.8')) return 'claude-opus-4-8';
@@ -2533,7 +2533,7 @@ describe('websocket-chat-transport', () => {
 
     it('thinking is disabled when toggle is OFF regardless of model effort tier', async () => {
       extendedThinkingMockValue = false;
-      selectedModelMockValue = 'opus-4.8-ultra';
+      selectedModelMockValue = 'opus-4.8-low-ultra';
 
       const transport = new WebSocketChatTransport({
         getExecutionAccountType: () => 'claude-code',
@@ -2551,7 +2551,7 @@ describe('websocket-chat-transport', () => {
       const payload = call?.[0];
       expect(payload?.settings?.maxThinkingTokens).toBeUndefined();
       expect(payload?.settings?.effort).toBeUndefined();
-      expect(payload?.settings?.ultra).toBeUndefined();
+      expect(payload?.settings?.ultra).toBe(true);
     });
 
     it('toggle ON with high-effort model uses high budget', async () => {
@@ -2643,7 +2643,7 @@ describe('websocket-chat-transport', () => {
 
     it.each<[string, { effort: string; ultra?: true }]>([
       ['opus-4.8-xhigh', { effort: 'xhigh' }],
-      ['opus-4.8-ultra', { effort: 'xhigh', ultra: true }],
+      ['opus-4.8-low-ultra', { effort: 'low', ultra: true }],
     ])('%s maps its effort settings when thinking is on', async (model, settings) => {
       extendedThinkingMockValue = true;
       selectedModelMockValue = model;

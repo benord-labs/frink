@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { clampEffortForBundledBinary, claudeVersionSupportsXhigh } from './bundled-claude-version';
+import {
+  clampEffortForBundledBinary,
+  claudeVersionSupportsUltra,
+  claudeVersionSupportsXhigh,
+} from './bundled-claude-version';
 
 // The module imports `app` from electron at load; getBundledClaudeVersion is never exercised here
 // (every test passes an explicit version), so a stub is enough to resolve the import.
@@ -23,6 +27,16 @@ describe('claudeVersionSupportsXhigh', () => {
     // parse as a huge version and defeat the guard.
     for (const v of [null, '', 'unknown', '2.1', 'a.b.c', '2026-07-01T12:00:00Z']) {
       expect(claudeVersionSupportsXhigh(v), String(v)).toBe(false);
+    }
+  });
+});
+
+describe('claudeVersionSupportsUltra', () => {
+  it('needs 2.1.284, where ultracode stopped forcing xhigh, and fails closed on a bad VERSION', () => {
+    expect(claudeVersionSupportsUltra('2.1.284')).toBe(true);
+    expect(claudeVersionSupportsUltra('2.2.0')).toBe(true);
+    for (const v of ['2.1.283', '2.1.173', null, 'unknown']) {
+      expect(claudeVersionSupportsUltra(v), String(v)).toBe(false);
     }
   });
 });

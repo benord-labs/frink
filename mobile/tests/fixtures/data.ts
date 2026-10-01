@@ -59,6 +59,7 @@ export function composerFixture(): MobileComposer {
     autoUnavailableReason: '',
     codexSpeedCredits: { fast: null, ultrafast: null },
     xhighSupported: true,
+    ultraSupported: true,
   };
 }
 

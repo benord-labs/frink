@@ -246,7 +246,6 @@ export function adoptedTurnBeforePush(params: {
     if (await reconcileAdoptedPermissionMode(session, mode, nativeAutoReview)) {
       // A live switch out of plan gets the CLI's own exit reminder; ours would repeat it.
       turn.pendingReminders = turn.pendingReminders.filter((r) => r !== PLAN_MODE_EXIT_REMINDER);
-      // Ultra first: clearing it leaves the CLI at xhigh until an effort is set after it.
       await reconcileAdoptedUltracode(session, params.live.ultracode);
       if (await reconcileLiveModelAndEffort(session, params.live)) return !signal.aborted;
     }

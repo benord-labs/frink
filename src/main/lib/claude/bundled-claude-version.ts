@@ -16,6 +16,8 @@ import { compareVersionQuad, parseVersionQuad } from '../auto-updater';
  * (fail closed, since a crash is worse than dropping to `high`).
  */
 const XHIGH_MIN_VERSION: [number, number, number, number] = [2, 1, 173, 0];
+/** First CLI whose `ultracode` setting runs at any effort instead of forcing xhigh. */
+const ULTRA_ANY_EFFORT_MIN_VERSION: [number, number, number, number] = [2, 1, 284, 0];
 
 let cachedVersion: string | null = null;
 
@@ -45,8 +47,19 @@ const LEADING_SEMVER = /^\d+\.\d+\.\d+/;
 /** Whether the bundled CLI is known to accept `--effort xhigh` (≥ 2.1.173). A VERSION that is not
  * a leading semver (download-claude-binary.mjs always writes one) fails closed to `high`. */
 export function claudeVersionSupportsXhigh(version: string | null): boolean {
+  return versionAtLeast(version, XHIGH_MIN_VERSION);
+}
+
+/** Whether the bundled CLI runs Ultra (`ultracode`) at any effort; an unreadable VERSION fails closed. */
+export function claudeVersionSupportsUltra(
+  version: string | null = getBundledClaudeVersion(),
+): boolean {
+  return versionAtLeast(version, ULTRA_ANY_EFFORT_MIN_VERSION);
+}
+
+function versionAtLeast(version: string | null, min: [number, number, number, number]): boolean {
   if (!version || !LEADING_SEMVER.test(version)) return false;
-  return compareVersionQuad(parseVersionQuad(version), XHIGH_MIN_VERSION) >= 0;
+  return compareVersionQuad(parseVersionQuad(version), min) >= 0;
 }
 
 /**

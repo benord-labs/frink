@@ -1,7 +1,11 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { z } from 'zod';
-import { claudeVersionSupportsXhigh, getBundledClaudeVersion } from '../../claude';
+import {
+  claudeVersionSupportsUltra,
+  claudeVersionSupportsXhigh,
+  getBundledClaudeVersion,
+} from '../../claude';
 import {
   DEFAULT_WORKTREE_BASE_PATH,
   FRINK_WORKTREE_CONFIG_PATH,
@@ -48,10 +52,15 @@ export const claudeSettingsRouter = router({
    * Capabilities of the bundled Claude Code CLI that the renderer needs to gate UI on.
    * `supportsXhigh`: whether the bundled binary accepts `--effort xhigh` (>= 2.1.173); when false,
    * the model picker greys the Extra High tier (the executor also clamps xhigh->high as a backstop).
+   * `supportsUltra`: whether it runs Ultra at any effort; when false the picker hides the switch.
    */
   getBundledClaudeCapabilities: publicProcedure.query(() => {
     const version = getBundledClaudeVersion();
-    return { version, supportsXhigh: claudeVersionSupportsXhigh(version) };
+    return {
+      version,
+      supportsXhigh: claudeVersionSupportsXhigh(version),
+      supportsUltra: claudeVersionSupportsUltra(version),
+    };
   }),
 
   /**
