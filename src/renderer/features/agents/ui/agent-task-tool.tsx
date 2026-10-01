@@ -7,6 +7,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { NARRATION_PART_TYPES, SUBAGENT_TEXT_PART_TYPE } from '../../../../shared/subagent-parts';
 import { TextShimmer } from '../../../components/ui/text-shimmer';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../components/ui/tooltip';
+import { formatElapsedTime } from '../../../lib/agent-chat/elapsed-time/format-elapsed-time';
 import { isFlowPatchToolType } from '../../../lib/flows/flow-change-tool';
 import { runningSubagentToolIdsAtom } from '../../../lib/stores/active-transport-registry';
 import { cn } from '../../../lib/utils';
@@ -38,17 +39,6 @@ type AgentTaskToolProps = {
 // Constants for rendering
 const MAX_VISIBLE_TOOLS = 5;
 const TOOL_HEIGHT_PX = 24;
-
-// Format elapsed time in a human-readable format
-function formatElapsedTime(ms: number): string {
-  if (ms < 1000) return '';
-  const seconds = Math.floor(ms / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = seconds % 60;
-  if (remainingSeconds === 0) return `${minutes}m`;
-  return `${minutes}m ${remainingSeconds}s`;
-}
 
 function findCurrentActionPart(
   nestedTools: MessagePart[],

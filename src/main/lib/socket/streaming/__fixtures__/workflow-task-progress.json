@@ -1,0 +1,162 @@
+{
+  "running": {
+    "type": "system",
+    "subtype": "task_progress",
+    "task_id": "weqw5kxv6",
+    "tool_use_id": "toolu_013QSkimkcuC5MPHhXsHheuR",
+    "description": "Alpha: a2",
+    "usage": {
+      "total_tokens": 0,
+      "tool_uses": 0,
+      "duration_ms": 681
+    },
+    "last_tool_name": "a2",
+    "summary": "Two tiny phases",
+    "workflow_progress": [
+      {
+        "type": "workflow_phase",
+        "index": 1,
+        "title": "Alpha"
+      },
+      {
+        "type": "workflow_phase",
+        "index": 2,
+        "title": "Beta"
+      },
+      {
+        "type": "workflow_agent",
+        "index": 1,
+        "label": "a1",
+        "phaseIndex": 1,
+        "phaseTitle": "Alpha",
+        "agentId": "a1b61f786f73d950b",
+        "model": "claude-haiku-4-5-20251001",
+        "state": "start",
+        "startedAt": 1790856248285,
+        "queuedAt": 1790856248284,
+        "attempt": 1,
+        "promptPreview": "Reply with exactly: one",
+        "promptFramed": true,
+        "lastProgressAt": 1790856248286
+      },
+      {
+        "type": "workflow_agent",
+        "index": 2,
+        "label": "a2",
+        "phaseIndex": 1,
+        "phaseTitle": "Alpha",
+        "agentId": "af6b29961230dd51a",
+        "model": "claude-haiku-4-5-20251001",
+        "state": "start",
+        "startedAt": 1790856248285,
+        "queuedAt": 1790856248284,
+        "attempt": 1,
+        "promptPreview": "Run the Bash command sleep 20, then reply with exactly: two",
+        "promptFramed": true,
+        "lastProgressAt": 1790856248933
+      }
+    ]
+  },
+  "finished": {
+    "type": "system",
+    "subtype": "task_progress",
+    "task_id": "weqw5kxv6",
+    "tool_use_id": "toolu_013QSkimkcuC5MPHhXsHheuR",
+    "description": "Beta: b1",
+    "usage": {
+      "total_tokens": 31375,
+      "tool_uses": 1,
+      "duration_ms": 24438
+    },
+    "last_tool_name": "b1",
+    "summary": "Two tiny phases",
+    "workflow_progress": [
+      {
+        "type": "workflow_phase",
+        "index": 1,
+        "title": "Alpha"
+      },
+      {
+        "type": "workflow_phase",
+        "index": 2,
+        "title": "Beta"
+      },
+      {
+        "type": "workflow_agent",
+        "index": 1,
+        "label": "a1",
+        "phaseIndex": 1,
+        "phaseTitle": "Alpha",
+        "agentId": "a1b61f786f73d950b",
+        "model": "claude-haiku-4-5-20251001",
+        "state": "done",
+        "startedAt": 1790856248285,
+        "queuedAt": 1790856248284,
+        "attempt": 1,
+        "promptPreview": "Reply with exactly: one",
+        "promptFramed": true,
+        "lastProgressAt": 1790856249419,
+        "tokens": 10202,
+        "toolCalls": 0,
+        "durationMs": 1133,
+        "resultPreview": "one"
+      },
+      {
+        "type": "workflow_agent",
+        "index": 2,
+        "label": "a2",
+        "phaseIndex": 1,
+        "phaseTitle": "Alpha",
+        "agentId": "af6b29961230dd51a",
+        "model": "claude-haiku-4-5-20251001",
+        "state": "done",
+        "startedAt": 1790856248285,
+        "queuedAt": 1790856248284,
+        "attempt": 1,
+        "lastToolName": "Bash",
+        "lastToolSummary": "sleep 20",
+        "promptPreview": "Run the Bash command sleep 20, then reply with exactly: two",
+        "promptFramed": true,
+        "lastProgressAt": 1790856271663,
+        "tokens": 10968,
+        "toolCalls": 1,
+        "durationMs": 22730,
+        "resultPreview": "two"
+      },
+      {
+        "type": "workflow_agent",
+        "index": 3,
+        "label": "b1",
+        "phaseIndex": 2,
+        "phaseTitle": "Beta",
+        "agentId": "af913db5664585297",
+        "model": "claude-haiku-4-5-20251001",
+        "state": "done",
+        "startedAt": 1790856271665,
+        "queuedAt": 1790856271664,
+        "attempt": 1,
+        "promptPreview": "Reply with exactly: three",
+        "promptFramed": true,
+        "lastProgressAt": 1790856272707,
+        "tokens": 10205,
+        "toolCalls": 0,
+        "durationMs": 1042,
+        "resultPreview": "three"
+      }
+    ]
+  },
+  "unchanged": {
+    "type": "system",
+    "subtype": "task_progress",
+    "task_id": "weqw5kxv6",
+    "tool_use_id": "toolu_013QSkimkcuC5MPHhXsHheuR",
+    "description": "Alpha: a2",
+    "usage": {
+      "total_tokens": 20416,
+      "tool_uses": 0,
+      "duration_ms": 1940
+    },
+    "last_tool_name": "a2",
+    "summary": "Two tiny phases"
+  }
+}

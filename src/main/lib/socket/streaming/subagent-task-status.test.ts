@@ -1,9 +1,12 @@
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import captured from './__fixtures__/workflow-task-progress.json';
 import {
   __resetSubagentTaskStatusForTest,
   clearSubagentTasks,
   noteSubagentTaskFrame,
+  parseWorkflowProgress,
+  readWorkflowProgress,
   setSubagentTaskPublisher,
 } from './subagent-task-status';
 
@@ -139,5 +142,140 @@ describe('subagent-task-status', () => {
       toolCallId: 'tool-1',
       running: false,
     });
+  });
+});
+
+// Frames captured from a real two-phase Workflow run against CLI 2.1.278.
+describe('workflow progress', () => {
+  const frame = (value: unknown) => value as SDKMessage;
+  const TASK = captured.running.task_id;
+
+  beforeEach(() => __resetSubagentTaskStatusForTest());
+
+  it('reads phases and agents from a running snapshot', () => {
+    noteSubagentTaskFrame('sub-1', frame(captured.running));
+
+    expect(readWorkflowProgress('sub-1', TASK)).toEqual({
+      phases: [
+        { index: 1, title: 'Alpha' },
+        { index: 2, title: 'Beta' },
+      ],
+      agents: [
+        expect.objectContaining({ index: 1, label: 'a1', phaseIndex: 1, state: 'running' }),
+        expect.objectContaining({ index: 2, label: 'a2', phaseIndex: 1, state: 'running' }),
+      ],
+    });
+  });
+
+  it('keeps the last snapshot when a frame carries none, then takes the next one', () => {
+    noteSubagentTaskFrame('sub-1', frame(captured.running));
+    noteSubagentTaskFrame('sub-1', frame(captured.unchanged));
+    expect(readWorkflowProgress('sub-1', TASK)?.agents).toHaveLength(2);
+
+    noteSubagentTaskFrame('sub-1', frame(captured.finished));
+    const agents = readWorkflowProgress('sub-1', TASK)?.agents ?? [];
+    expect(agents.map((a) => [a.label, a.state])).toEqual([
+      ['a1', 'done'],
+      ['a2', 'done'],
+      ['b1', 'done'],
+    ]);
+    expect(agents[1]).toMatchObject({ durationMs: 22730, activity: 'Bash · sleep 20' });
+  });
+
+  it('clears the last snapshot when a present one carries nothing usable', () => {
+    noteSubagentTaskFrame('sub-1', frame(captured.running));
+    noteSubagentTaskFrame('sub-1', frame({ ...captured.running, workflow_progress: [] }));
+    expect(readWorkflowProgress('sub-1', TASK)).toBeNull();
+
+    noteSubagentTaskFrame('sub-1', frame(captured.running));
+    noteSubagentTaskFrame('sub-1', frame({ ...captured.running, workflow_progress: [{ x: 1 }] }));
+    expect(readWorkflowProgress('sub-1', TASK)).toBeNull();
+
+    noteSubagentTaskFrame('sub-1', frame(captured.running));
+    noteSubagentTaskFrame('sub-1', frame({ ...captured.running, workflow_progress: null }));
+    expect(readWorkflowProgress('sub-1', TASK)).toBeNull();
+  });
+
+  it('forgets a workflow once it finishes, and every workflow when the session detaches', () => {
+    noteSubagentTaskFrame('sub-1', frame(captured.running));
+    noteSubagentTaskFrame('sub-1', notification({ task_id: TASK }));
+    expect(readWorkflowProgress('sub-1', TASK)).toBeNull();
+
+    // No tool_use_id, so the card roster never tracked it; detaching must still drop it.
+    noteSubagentTaskFrame('sub-1', frame({ ...captured.running, tool_use_id: undefined }));
+    clearSubagentTasks('sub-1');
+    expect(readWorkflowProgress('sub-1', TASK)).toBeNull();
+  });
+
+  it('dedupes by type and index, last entry winning, and orders by index', () => {
+    const view = parseWorkflowProgress([
+      { type: 'workflow_agent', index: 2, label: 'b', state: 'start' },
+      { type: 'workflow_agent', index: 1, label: 'a', state: 'start', startedAt: 5 },
+      { type: 'workflow_agent', index: 2, label: 'b', state: 'error', error: 'stalled' },
+    ]);
+    expect(view?.agents).toEqual([
+      { index: 1, label: 'a', state: 'running', startedAt: 5 },
+      { index: 2, label: 'b', state: 'error', error: 'stalled' },
+    ]);
+  });
+
+  it('lets an unusable last entry retract an earlier one with the same index', () => {
+    const view = parseWorkflowProgress([
+      { type: 'workflow_phase', index: 1, title: 'Alpha' },
+      { type: 'workflow_phase', index: 2, title: 'Beta' },
+      { type: 'workflow_phase', index: 2 },
+      { type: 'workflow_agent', index: 1, label: 'a', state: 'done' },
+      { type: 'workflow_agent', index: 2, label: 'b', state: 'done' },
+      { type: 'workflow_agent', index: 2, label: 'b', state: 'paused' },
+    ]);
+    expect(view?.phases.map((p) => p.title)).toEqual(['Alpha']);
+    expect(view?.agents.map((a) => a.label)).toEqual(['a']);
+  });
+
+  it('drops anything it does not recognise, and yields nothing when nothing is usable', () => {
+    const junk = [
+      null,
+      'x',
+      { type: 'workflow_agent', label: 'no index', state: 'done' },
+      { type: 'workflow_agent', index: 1, label: 'odd', state: 'paused' },
+      { type: 'workflow_phase', index: 1 },
+      { type: 'workflow_log', index: 1, title: 'noise' },
+    ];
+    expect(parseWorkflowProgress(junk)).toBeNull();
+  });
+
+  it('bounds what it keeps', () => {
+    const many = Array.from({ length: 250 }, (_, i) => ({
+      type: 'workflow_agent',
+      index: i,
+      label: 'x'.repeat(500),
+      state: 'done',
+    }));
+    const view = parseWorkflowProgress(many);
+    expect(view?.agents).toHaveLength(200);
+    expect(view?.agents[0]?.label).toHaveLength(200);
+
+    const phases = Array.from({ length: 80 }, (_, i) => ({
+      type: 'workflow_phase',
+      index: i,
+      title: `p${i}`,
+    }));
+    expect(parseWorkflowProgress(phases)?.phases).toHaveLength(50);
+  });
+
+  it('never throws on a malformed snapshot, and drops the stale one it replaced', () => {
+    noteSubagentTaskFrame('sub-1', frame(captured.running));
+    const hostile = {
+      ...captured.running,
+      workflow_progress: [
+        {
+          get index() {
+            throw new Error('x');
+          },
+        },
+      ],
+    };
+    expect(() => noteSubagentTaskFrame('sub-1', frame(hostile))).not.toThrow();
+    expect(readWorkflowProgress('sub-1', TASK)).toBeNull();
   });
 });
