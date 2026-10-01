@@ -40,6 +40,7 @@ import {
 } from '../utils/chat-equality';
 import { BatchGroup } from './BatchGroup';
 import { DraggableChat } from './DraggableChat';
+import { FolderRowMeta } from './FolderRowMeta';
 import { TreeItem } from './TreeItem';
 
 type CodebaseItemProps = ProjectActionHandlers & {
@@ -168,7 +169,7 @@ export const CodebaseItem = memo(function CodebaseItem({
   onDeleteAllChatsInFolder,
   onDeleteBatch,
   activeDropTargetId,
-  totalChatsCount,
+  totalChatsCount: totalChats,
   isSearchActive = false,
   hasMoreChatsFromServer = false,
   isLoadingMoreChats = false,
@@ -292,7 +293,6 @@ export const CodebaseItem = memo(function CodebaseItem({
     return withHeaders;
   }, [allChats, batchGroups, isSearchActive]);
 
-  const totalChats = totalChatsCount;
   /** Section headers don't count toward pagination; they are layout, not content. */
   const renderableEntryCount = useMemo(
     () => sidebarEntries.filter((e) => e.type !== 'sectionHeader').length,
@@ -359,7 +359,11 @@ export const CodebaseItem = memo(function CodebaseItem({
       )}
     >
       <TreeItem
-        label={<span className="truncate font-medium text-foreground">{codebase.displayName}</span>}
+        label={
+          <span className="truncate font-medium text-foreground" title={codebase.displayName}>
+            {codebase.displayName}
+          </span>
+        }
         icon={
           hasGitRemote ? (
             <GitBranch className="h-4 w-4 text-muted-foreground" />
@@ -371,17 +375,13 @@ export const CodebaseItem = memo(function CodebaseItem({
         }
         rightContent={
           totalChats > 0 ? (
-            <span className="flex items-center gap-1.5">
-              {folderState && (
-                <span
-                  role="img"
-                  aria-label={`${folderState.label}: ${folderState.count}`}
-                  title={`${folderState.label}: ${folderState.count}`}
-                  className={cn('h-1.5 w-1.5 shrink-0 rounded-full', folderState.dotClassName)}
-                />
-              )}
-              <span className="text-xs tabular-nums text-muted-foreground/60">{totalChats}</span>
-            </span>
+            <FolderRowMeta
+              isExpanded={isExpanded}
+              chats={allChats}
+              chatPaneMap={chatPaneMap}
+              folderState={folderState}
+              totalChats={totalChats}
+            />
           ) : undefined
         }
         trailingAction={

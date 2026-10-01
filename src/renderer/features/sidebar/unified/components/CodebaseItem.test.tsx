@@ -314,6 +314,39 @@ describe('CodebaseItem', () => {
     });
   });
 
+  describe('collapsed folder pane badges', () => {
+    const renderFolder = (isExpanded: boolean, chatPaneMap: Map<string, number>) =>
+      render(
+        <CodebaseItem
+          codebaseKey="git@github.com:acme/repo.git"
+          codebase={buildCodebase()}
+          isExpanded={isExpanded}
+          toggleCodebase={vi.fn()}
+          selectedChatId={null}
+          onChatSelect={vi.fn()}
+          totalChatsCount={2}
+          chatPaneMap={chatPaneMap}
+        />,
+      );
+
+    it('badges every pane showing one of its chats, in pane order', () => {
+      renderFolder(
+        false,
+        new Map([
+          ['chat-b', 3],
+          ['other-project-chat', 2],
+          ['chat-a', 1],
+        ]),
+      );
+      expect(screen.getByTitle('Open in panes 1, 3')).toBeTruthy();
+    });
+
+    it('drops the folder badges once expanded, where the chat rows carry them', () => {
+      renderFolder(true, new Map([['chat-a', 1]]));
+      expect(screen.queryByTitle(/^Open in pane/)).toBeNull();
+    });
+  });
+
   it('passes folder key to delete-all handler for multi-project folders', () => {
     const onDeleteAllChatsInFolder = vi.fn();
     render(
