@@ -45,6 +45,9 @@ export const PATH_TOOLS: ReadonlySet<string> = new Set<string>([
   'NotebookEdit',
 ]);
 
+/** Search tools gated on the folder they read (`permissions/v2/search`). */
+export const SEARCH_TOOLS: ReadonlySet<string> = new Set<string>(['Glob', 'Grep']);
+
 /**
  * Classification of the path involved in a file-op permission request, relative
  * to the chat's current project. Drives the prompt UI: in-project paths can be

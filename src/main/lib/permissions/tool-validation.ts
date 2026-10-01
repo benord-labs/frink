@@ -8,7 +8,13 @@
 
 import * as nodePath from 'node:path';
 import { z } from 'zod';
-import { PATH_TOOLS, TOOL_OPERATIONS, type ToolOperation } from '../../../shared/types/permissions';
+import { expandHomePath } from '../../../shared/lib/expand-home';
+import {
+  PATH_TOOLS,
+  SEARCH_TOOLS,
+  TOOL_OPERATIONS,
+  type ToolOperation,
+} from '../../../shared/types/permissions';
 import { resolveProjectPathFromWorktree } from '../claude-config';
 
 // ============================================================================
@@ -62,7 +68,7 @@ export function extractFilePathFromToolInput(
     }
     case 'Glob':
     case 'Grep':
-      // Search tools: auto-allow (read-only, safe operations)
+      // Search tools are gated on their folder; see resolveToolPermissionPath.
       return null;
     default:
       return null;
@@ -135,7 +141,10 @@ export function resolveToolPermissionPath(
   executionPath: string,
   permissionProjectPath: string,
 ): string | undefined {
-  const candidate = extractFilePathFromToolInput(toolName, toolInput);
+  // A search with no `path` reads the execution folder.
+  const candidate = SEARCH_TOOLS.has(toolName)
+    ? expandHomePath(stringField(toolInput, 'path') ?? '.')
+    : extractFilePathFromToolInput(toolName, toolInput);
   if (!candidate || candidate.startsWith('bash:')) return undefined;
   return remapPathForPermissionBoundary(
     nodePath.resolve(executionPath, candidate),

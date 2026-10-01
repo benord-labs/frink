@@ -12,6 +12,7 @@ import {
   getOperationFromToolName,
   remapPathForPermissionBoundary,
   resolvePermissionProjectPath,
+  resolveToolPermissionPath,
 } from './tool-validation';
 
 vi.mock('electron', () => ({
@@ -220,6 +221,27 @@ describe('remapPathForPermissionBoundary', () => {
       '/Users/me/repos/project a',
     );
     expect(remapped).toBe('/Users/me/repos/project a/src/file%name.ts');
+  });
+});
+
+describe('resolveToolPermissionPath — search tools', () => {
+  const worktree = '/tmp/worktrees/project-a/chat-1';
+  const root = '/Users/me/repos/project-a';
+
+  it('maps a search with no path to the permission root', () => {
+    expect(resolveToolPermissionPath('Grep', { pattern: 'x' }, worktree, root)).toBe(root);
+  });
+
+  it('maps a worktree search folder into the permission root', () => {
+    expect(resolveToolPermissionPath('Glob', { pattern: '*', path: 'src' }, worktree, root)).toBe(
+      `${root}/src`,
+    );
+  });
+
+  it('expands ~ instead of resolving it under the worktree', () => {
+    expect(
+      resolveToolPermissionPath('Grep', { pattern: 'x', path: '~/.ssh' }, worktree, root),
+    ).toBe(nodePath.join(nodeOs.homedir(), '.ssh'));
   });
 });
 
