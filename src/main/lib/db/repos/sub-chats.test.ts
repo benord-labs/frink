@@ -14,6 +14,7 @@ import {
   getSubChatForChat,
   getSubChatById,
   getSubChatMode,
+  listSubChatsByChat,
   markPlanApproved,
   pickOldestSubChat,
   resolveSendMode,
@@ -368,6 +369,22 @@ describe('markPlanApproved', () => {
     const msg2Part = hydrated?.messages[1]?.parts[0] as { input?: { status?: string } };
     expect(msg1Part.input?.status).toBe('awaiting_approval');
     expect(msg2Part.input?.status).toBe('approved');
+  });
+});
+
+describe('listSubChatsByChat', () => {
+  beforeEach(() => {
+    db = freshDb();
+  });
+
+  it('lists sub-chats without reading their transcripts', async () => {
+    await db.insert(schema.chats).values({ id: 'chat-1' });
+    await createSubChat(db, { id: 'sub-1', chatId: 'chat-1', messages: '[{"id":"m1"}]' });
+
+    const [row] = await listSubChatsByChat(db, 'chat-1');
+
+    expect(row?.id).toBe('sub-1');
+    expect(row).not.toHaveProperty('messages');
   });
 });
 
