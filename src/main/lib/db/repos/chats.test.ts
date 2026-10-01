@@ -1,4 +1,4 @@
-import { eq, inArray } from 'drizzle-orm';
+import { inArray } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeLocalChat } from '../../trpc/routers/chats/test-factories';
 import * as schema from '../schema';
@@ -367,7 +367,7 @@ describe('chat account stamping', () => {
     const source = await createChat(db, { projectId: 'p1', name: 'src', accountId: 'cred-work' });
     await db
       .insert(schema.subChats)
-      .values({ chatId: source.id, name: 'src', sessionId: 'sess-1', messages: '[]' });
+      .values({ chatId: source.id, name: 'src', sessionId: 'sess-1' });
 
     const forked = await forkChatWithSubChats(db, source.id);
 

@@ -16,11 +16,14 @@ beforeEach(async () => {
   db = freshDb();
   await db.insert(schema.chats).values({ id: 'chat-1' });
   await createSubChat(db, { id: 'sub-1', chatId: 'chat-1', messages: JSON.stringify(transcript) });
-  await createSubChat(db, { id: 'sub-2', chatId: 'chat-1', messages: '{corrupt' });
+  await createSubChat(db, { id: 'sub-2', chatId: 'chat-1' });
+  await db
+    .insert(schema.subChatMessages)
+    .values({ subChatId: 'sub-2', seq: 0, message: '{corrupt' });
 });
 
 describe('sub-chat transcript access', () => {
-  it('reads transcripts by id and degrades a corrupt one to empty', () => {
+  it('reads transcripts by id and skips a corrupt message', () => {
     const read = readTranscripts(db, ['sub-1', 'sub-2', 'missing']);
     expect(read.get('sub-1')).toEqual(transcript);
     expect(read.get('sub-2')).toEqual([]);

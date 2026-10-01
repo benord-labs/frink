@@ -3,11 +3,8 @@ import { Mutex } from 'async-mutex';
 /**
  * Per-sub-chat async mutex registry.
  *
- * Phase 1 local-first migration: the messages JSON column is updated via
- * read-modify-write under the hood (`UPDATE sub_chats SET messages = ?`). With two
- * concurrent streams (e.g. an active chat + a sub-agent firing in parallel), an
- * unguarded RMW would lose chunks. SQLite's table-level lock alone doesn't cover
- * the read-then-write boundary across two awaits.
+ * Transcript writes are read-modify-writes spanning awaits, so two concurrent streams on one
+ * sub-chat would lose chunks; SQLite's own locking does not cover that read-then-write gap.
  *
  * `async-mutex` is already a project dependency (see src/main/lib/mcp/config.ts).
  * We keep one Mutex per sub-chat ID; entries are never evicted because per-user

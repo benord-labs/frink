@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createSubChat } from '../../../../db/repos/sub-chats';
 import * as schema from '../../../../db/schema';
 import { freshDb, type TestDb } from '../../../../db/test-utils/fresh-db';
 
@@ -23,23 +24,20 @@ const planPart = (status: string) => ({
 
 async function seed(): Promise<string> {
   await db.insert(schema.chats).values({ id: 'chat-1', worktreePath: '/tmp/worktree' });
-  const [row] = await db
-    .insert(schema.subChats)
-    .values({
-      chatId: 'chat-1',
-      messages: JSON.stringify([
-        { id: 'u1', role: 'user', parts: [] },
-        {
-          id: 'a1',
-          role: 'assistant',
-          parts: [planPart('awaiting_approval')],
-          metadata: { sdkMessageUuid: 'sdk-1' },
-        },
-        { id: 'u2', role: 'user', parts: [] },
-        { id: 'a2', role: 'assistant', parts: [], metadata: { sdkMessageUuid: 'sdk-2' } },
-      ]),
-    })
-    .returning();
+  const row = await createSubChat(db, {
+    chatId: 'chat-1',
+    messages: JSON.stringify([
+      { id: 'u1', role: 'user', parts: [] },
+      {
+        id: 'a1',
+        role: 'assistant',
+        parts: [planPart('awaiting_approval')],
+        metadata: { sdkMessageUuid: 'sdk-1' },
+      },
+      { id: 'u2', role: 'user', parts: [] },
+      { id: 'a2', role: 'assistant', parts: [], metadata: { sdkMessageUuid: 'sdk-2' } },
+    ]),
+  });
   return row.id;
 }
 

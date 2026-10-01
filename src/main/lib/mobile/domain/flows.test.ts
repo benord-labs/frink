@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFlowVersion } from '../../db/repos/flow-versions';
 import { createFlow } from '../../db/repos/flows';
-import { chats, flowRuns, nodeRuns, subChats, tasks } from '../../db/schema';
+import { createSubChat } from '../../db/repos/sub-chats';
+import { chats, flowRuns, nodeRuns, tasks } from '../../db/schema';
 import { seedFlowRun } from '../../db/test-utils/flow-fixtures';
 import { freshDb } from '../../db/test-utils/fresh-db';
 import type { DbNodeRun } from '../../../../shared/types/flow-run';
@@ -299,7 +300,7 @@ describe('mobile Flow projection queries', () => {
       completed_at: null,
     }));
     for (let index = 0; index < projectedNodes.length; index++) {
-      await db.insert(subChats).values({
+      await createSubChat(db, {
         id: `sub-${index}`,
         chatId: 'chat',
         mode: 'plan',

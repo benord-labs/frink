@@ -63,7 +63,6 @@ async function seedPriorAttempt(opts: {
     chatId: 'chat-1',
     mode: (opts.subChatMode ?? 'agent') as never,
     sessionId: opts.sessionId === undefined ? 'sess-1' : opts.sessionId,
-    messages: '[]',
   });
   const priorNodeRunId = 'nr-prior';
   await db.insert(nodeRuns).values({

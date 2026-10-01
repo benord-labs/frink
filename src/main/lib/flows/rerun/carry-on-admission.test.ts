@@ -32,9 +32,7 @@ beforeEach(async () => {
   ({ flowRunId } = await seedFlowRun(db, GRAPH));
   await db.update(flowRuns).set({ status: 'paused' }).where(eq(flowRuns.id, flowRunId));
   await db.insert(chats).values({ id: 'chat-1', name: 'Flow chat' });
-  await db
-    .insert(subChats)
-    .values({ id: 'sub-1', chatId: 'chat-1', sessionId: 'session-1', messages: '[]' });
+  await db.insert(subChats).values({ id: 'sub-1', chatId: 'chat-1', sessionId: 'session-1' });
   taskId = 'task-1';
   await db.insert(tasks).values({
     id: taskId,

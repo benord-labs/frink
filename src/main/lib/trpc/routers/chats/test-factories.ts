@@ -47,7 +47,6 @@ export function makeLocalSubChat(overrides: Partial<SubChat> = {}): SubChat {
     sessionId: null,
     streamId: null,
     mode: 'agent',
-    messages: '[]',
     additions: 0,
     deletions: 0,
     fileCount: 0,

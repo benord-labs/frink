@@ -4,6 +4,7 @@ import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqli
 import { CODEX_SPEEDS } from '../../../../shared/types/execution';
 import { createId } from '../utils';
 import { defineFlowRunAdmissions } from './flow-run-admissions';
+import { defineSubChatMessages } from './sub-chat-messages';
 // ============ PROJECTS ============
 export const projects = sqliteTable('projects', {
   id: text('id')
@@ -76,11 +77,8 @@ export const chats = sqliteTable(
     mode: text('mode').default('agent'), // 'plan' | 'agent'
     // Pinned chats appear at top of sidebar (NULL = not pinned)
     pinnedAt: integer('pinned_at', { mode: 'timestamp' }),
-    // Per-chat worktree history: JSON-as-text `Record<projectId, worktreePath>` (parsed by
-    // helpers in repos/chats.ts — matches the subChats.messages JSON-text pattern). Used to
-    // auto-restore a chat's previous worktree when it's moved back to a project it visited
-    // before (the move-chat collapse would otherwise abandon the original worktree).
-    // MACHINE-LOCAL: do not sync to cloud — worktree paths are filesystem-local.
+    // JSON `Record<projectId, worktreePath>` (helpers in repos/chats.ts): a chat moved back to a
+    // project it visited restores that worktree. MACHINE-LOCAL: paths are filesystem-local.
     worktreeHistory: text('worktree_history'),
     // Composer settings every window and the phone share (NULL = default; see chat-composer).
     composerModelId: text('composer_model_id'),
@@ -114,7 +112,6 @@ export const subChats = sqliteTable('sub_chats', {
   sessionId: text('session_id'), // Claude SDK session ID for resume
   streamId: text('stream_id'), // Track in-progress streams
   mode: text('mode').notNull().default('agent'), // "plan" | "agent"
-  messages: text('messages').notNull().default('[]'), // JSON array
   // Diff stats use DEFAULT 0 without NOT NULL to match migration 0005.
   additions: integer('additions').default(0),
   deletions: integer('deletions').default(0),
@@ -123,6 +120,7 @@ export const subChats = sqliteTable('sub_chats', {
   updatedAt: integer('updated_at', { mode: 'timestamp' }).$defaultFn(() => new Date()),
 });
 
+export const subChatMessages = defineSubChatMessages(subChats);
 export const subChatsRelations = relations(subChats, ({ one }) => ({
   chat: one(chats, {
     fields: [subChats.chatId],

@@ -1,20 +1,19 @@
-import { and, eq, getTableColumns, ne } from 'drizzle-orm';
-import log from 'electron-log';
+import { and, eq, ne } from 'drizzle-orm';
 import { isHtmlArtifactPart } from '../../../../shared/lib/artifacts/html-artifact';
 import type { ChatMode } from '../../../../shared/types/chat-mode';
 import { isFrinkPlanReadyPart, type MessagePartLike } from '../../../../shared/types/plan';
 import { recordCheckpointPersist } from '../../diagnostics/stream-cadence';
 import type { getDatabase } from '../index';
 import { type NewSubChat, type SubChat, subChats } from '../schema';
-import { reportCorruptTranscript } from '../transcript-corruption';
 import { patchLastAssistantParts } from './sub-chat-checkpoint';
+import { readTranscript, writeTranscript } from './sub-chat-messages';
 import { logSessionHandleChange, writeSubChatSession } from './sub-chat-session';
 import { bumpWriteGeneration, isStaleWrite, withSubChatLock } from './sub-chat-mutex';
 
 type Db = ReturnType<typeof getDatabase>;
 
 /**
- * Local SQLite sub-chats repository. Every read-modify-write of the `messages` JSON column runs
+ * Local SQLite sub-chats repository. Every transcript read-modify-write (sub-chat-messages) runs
  * inside BOTH `withSubChatLock` (async serialization across streams targeting one sub-chat) and
  * `db.transaction` (sync atomicity for SELECT-then-UPDATE). The transaction callback must stay
  * SYNCHRONOUS — async work inside it silently breaks atomicity — and reuses the outer `db`, which
@@ -28,31 +27,33 @@ export type Message = {
   metadata?: unknown;
 };
 
-export type SubChatRow = Omit<SubChat, 'messages'>;
+export type SubChatRow = SubChat;
 export type SubChatHydrated = SubChatRow & { messages: Message[] };
 
-/**
- * One corrupt `messages` row used to throw an unguarded `JSON.parse` and crash export, list, stats
- * and chats.get for the WHOLE chat (commits 7e06b0 … f655a8); it now degrades to `[]` so the rest
- * of the chat stays usable, and reports (see `reportCorruptTranscript`).
- */
-function hydrate(row: SubChat): SubChatHydrated {
-  return { ...row, messages: safeParseMessages(row.id, row.messages) };
+/** `messages` is the initial transcript as a JSON array string. */
+export async function createSubChat(
+  db: Db,
+  { messages = '[]', ...input }: NewSubChat & { messages?: string },
+): Promise<SubChatHydrated> {
+  const initial = JSON.parse(messages) as Message[];
+  return db.transaction(() => {
+    const row = db.insert(subChats).values(input).returning().get() as SubChat;
+    writeTranscript(db, row.id, [], initial);
+    return { ...row, messages: initial };
+  });
 }
 
-export async function createSubChat(db: Db, input: NewSubChat): Promise<SubChatHydrated> {
-  const [row] = await db.insert(subChats).values(input).returning();
-  return hydrate(row);
+function readRow(db: Db, id: string): SubChat | undefined {
+  return db.select().from(subChats).where(eq(subChats.id, id)).get() as SubChat | undefined;
 }
 
 export async function getSubChatById(db: Db, id: string): Promise<SubChatHydrated | null> {
-  const [row] = await db.select().from(subChats).where(eq(subChats.id, id)).limit(1);
-  return row ? hydrate(row) : null;
+  const row = readRow(db, id);
+  return row ? { ...row, messages: readTranscript(db, id).messages } : null;
 }
 
 export async function listSubChatsByChat(db: Db, chatId: string): Promise<SubChatRow[]> {
-  const { messages: _transcript, ...columns } = getTableColumns(subChats);
-  return db.select(columns).from(subChats).where(eq(subChats.chatId, chatId));
+  return db.select().from(subChats).where(eq(subChats.chatId, chatId));
 }
 
 /**
@@ -79,25 +80,8 @@ export async function getSubChatForChat(db: Db, chatId: string): Promise<SubChat
   return pickOldestSubChat(await listSubChatsByChat(db, chatId));
 }
 
-/**
- * Defensive parse: a corrupt row degrades to `[]` so writes can still proceed.
- * Exported so satellite stats / aggregation routers (`stats/*`) can apply the same
- * hardening when they read `sub_chats.messages` directly via Drizzle (i.e. without
- * going through the repo's hydrate path).
- */
-export function safeParseMessages(rowId: string, raw: string): Message[] {
-  try {
-    const parsed = JSON.parse(raw) as Message[];
-    if (Array.isArray(parsed)) return parsed;
-    reportCorruptTranscript(rowId, raw, new Error('messages JSON is not an array'));
-  } catch (err) {
-    reportCorruptTranscript(rowId, raw, err instanceof Error ? err : new Error(String(err)));
-  }
-  return [];
-}
-
-/** Read-modify-write over the messages column. `mutate` runs sync in the txn; never await in it.
- * `onWrite` fires only when the row was really rewritten (an identical result short-circuits). */
+/** Read-modify-write of a transcript. `mutate` runs sync in the txn; never await in it.
+ * `onWrite` fires only when a message really changed (an identical result short-circuits). */
 function withMessagesSync(
   db: Db,
   subChatId: string,
@@ -105,24 +89,12 @@ function withMessagesSync(
   onWrite?: () => void,
 ): SubChatHydrated | null {
   return db.transaction(() => {
-    const row = db.select().from(subChats).where(eq(subChats.id, subChatId)).get() as
-      | SubChat
-      | undefined;
+    const row = readRow(db, subChatId);
     if (!row) return null;
 
-    const messages = safeParseMessages(row.id, row.messages);
+    const { rows, messages } = readTranscript(db, subChatId);
     const next = mutate(messages);
-    const nextJson = JSON.stringify(next);
-
-    if (nextJson === row.messages) return { ...row, messages };
-
-    db.update(subChats)
-      .set({
-        messages: nextJson,
-        updatedAt: new Date(),
-      })
-      .where(eq(subChats.id, subChatId))
-      .run();
+    if (!writeTranscript(db, subChatId, rows, next)) return { ...row, messages };
     onWrite?.();
 
     return { ...row, messages: next };
@@ -174,18 +146,6 @@ export type SeedUserMessageResult = {
   subChat: SubChatHydrated | null;
 };
 
-function parseMessagesForSeed(row: SubChat): Message[] | null {
-  try {
-    const parsed = JSON.parse(row.messages) as unknown;
-    if (Array.isArray(parsed)) return parsed as Message[];
-  } catch (err) {
-    log.warn(`[sub-chats] refusing to seed unparseable messages for sub-chat ${row.id}`, err);
-    return null;
-  }
-  log.warn(`[sub-chats] refusing to seed non-array messages for sub-chat ${row.id}`);
-  return null;
-}
-
 /** Seed an empty sub-chat once without replacing history written by a concurrent actor. */
 export async function seedUserMessageIfEmpty(
   db: Db,
@@ -194,23 +154,13 @@ export async function seedUserMessageIfEmpty(
 ): Promise<SeedUserMessageResult> {
   return withSubChatLock(subChatId, async () =>
     db.transaction(() => {
-      const row = db.select().from(subChats).where(eq(subChats.id, subChatId)).get() as
-        | SubChat
-        | undefined;
+      const row = readRow(db, subChatId);
       if (!row) return { seeded: false, subChat: null };
-      const messages = parseMessagesForSeed(row);
-      if (!messages) return { seeded: false, subChat: { ...row, messages: [] } };
-      if (messages.length > 0) {
-        return { seeded: false, subChat: { ...row, messages } };
-      }
+      // Rows, not parsed messages: an unparseable message is still history this must not replace.
+      const { rows, messages } = readTranscript(db, subChatId);
+      if (rows.length > 0) return { seeded: false, subChat: { ...row, messages } };
       const next = [message];
-      db.update(subChats)
-        .set({
-          messages: JSON.stringify(next),
-          updatedAt: new Date(),
-        })
-        .where(eq(subChats.id, subChatId))
-        .run();
+      writeTranscript(db, subChatId, rows, next);
       return {
         seeded: true,
         subChat: { ...row, messages: next },
@@ -280,29 +230,17 @@ export async function upsertAssistantMessage(
       if (isStaleWrite(subChatId, generation)) return 'dropped';
       if (patchLastAssistantParts(db, subChatId, assistantMessageId, parts)) return 'patched';
 
-      const row = db.select().from(subChats).where(eq(subChats.id, subChatId)).get() as
-        | SubChat
-        | undefined;
-      if (!row) return 'missing';
+      if (!readRow(db, subChatId)) return 'missing';
 
+      const { rows, messages } = readTranscript(db, subChatId);
       const { idx, messages: nextMessages } = placeAssistantMessage(
-        safeParseMessages(row.id, row.messages),
+        messages,
         assistantMessageId,
         // checkpoints never carry metadata, and the fast path above cannot express one either
         parts,
         undefined,
       );
-
-      const nextJson = JSON.stringify(nextMessages);
-      if (nextJson === row.messages) return 'unchanged';
-
-      db.update(subChats)
-        .set({
-          messages: nextJson,
-          updatedAt: new Date(),
-        })
-        .where(eq(subChats.id, subChatId))
-        .run();
+      if (!writeTranscript(db, subChatId, rows, nextMessages)) return 'unchanged';
 
       return idx === -1 ? 'appended' : 'rewritten';
     });
@@ -323,12 +261,10 @@ export async function finalizeAssistantMessage(
   return withSubChatLock(subChatId, async () => {
     return db.transaction(() => {
       if (isStaleWrite(subChatId, generation)) return null;
-      const row = db.select().from(subChats).where(eq(subChats.id, subChatId)).get() as
-        | SubChat
-        | undefined;
+      const row = readRow(db, subChatId);
       if (!row) return null;
 
-      const existing = safeParseMessages(row.id, row.messages);
+      const { rows, messages: existing } = readTranscript(db, subChatId);
       // A contentless finalize (aborted or silently-superseded turn) must not wipe parts that
       // mid-stream checkpoints already persisted — finalize REPLACES, so pass the checkpoint back.
       let finalParts = parts;
@@ -345,13 +281,12 @@ export async function finalizeAssistantMessage(
         finalParts,
         metadata,
       );
-      const nextJson = JSON.stringify(next);
+      writeTranscript(db, subChatId, rows, next);
       const nextSessionId = sessionId ?? row.sessionId;
       logSessionHandleChange(subChatId, row.sessionId, nextSessionId, 'finalize');
 
       db.update(subChats)
         .set({
-          messages: nextJson,
           sessionId: nextSessionId,
           streamId: null,
           updatedAt: new Date(),

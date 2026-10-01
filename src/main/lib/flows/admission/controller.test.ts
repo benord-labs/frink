@@ -7,6 +7,7 @@ import {
   flows,
   flowVersions,
   nodeRuns,
+  subChatMessages,
   subChats,
   tasks,
 } from '../../db/schema';
@@ -622,8 +623,9 @@ describe('FlowAdmissionController', () => {
       ),
     );
     db.insert(chats).values({ id: 'flow-chat' }).run();
-    db.insert(subChats)
-      .values({ id: 'flow-sub-chat', chatId: 'flow-chat', messages: '{corrupt' })
+    db.insert(subChats).values({ id: 'flow-sub-chat', chatId: 'flow-chat' }).run();
+    db.insert(subChatMessages)
+      .values({ subChatId: 'flow-sub-chat', seq: 0, message: '{corrupt' })
       .run();
     db.insert(tasks)
       .values({

@@ -29,7 +29,7 @@ async function forkResponse(db: Db, chat: Chat, subChats: SubChat[]) {
       sessionId: sc.sessionId,
       streamId: sc.streamId,
       mode: sc.mode,
-      messages: sc.messages,
+      messages: '[]', // like chats.get: the renderer loads a transcript per sub-chat
       createdAt: sc.createdAt,
       updatedAt: sc.updatedAt,
       additions: sc.additions ?? 0,

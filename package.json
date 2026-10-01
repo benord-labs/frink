@@ -282,7 +282,8 @@
           "0107_flow_codex_speed.sql",
           "0108_chat_account.sql",
           "0109_chat_provider.sql",
-          "0110_chat_run_link_indexes.sql"
+          "0110_chat_run_link_indexes.sql",
+          "0111_sub_chat_messages.sql"
         ]
       },
       {

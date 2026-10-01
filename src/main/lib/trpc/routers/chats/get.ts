@@ -10,10 +10,8 @@ import { mapChatProject, mapLocalChatResponse } from './map-chat-response';
  * Phase 1 local-first migration: read a single chat (with sub-chats + project) from local
  * SQLite. Every project on this machine is "local" by definition.
  *
- * sub_chats.messages comes back as the JSON string (renderer parses it on demand). The
- * cloud variant of this endpoint elided messages from the bulk response too — we mirror
- * that behaviour by stringifying an empty array; full messages are fetched per-sub-chat
- * via `chats.getSubChatMessages`.
+ * Transcripts are elided as `messages: '[]'`; the renderer fetches each per sub-chat via
+ * `chats.getSubChatMessages`.
  */
 export const getRouter = router({
   get: publicProcedure.input(z.object({ id: z.string() })).query(async ({ input }) => {
