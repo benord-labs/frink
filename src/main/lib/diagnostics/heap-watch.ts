@@ -184,8 +184,9 @@ function logRuntimeSample(snapshot: DiagnosticContext): void {
     snapshot.renderer_pressure,
     snapshot.system_pressure,
   ].includes(true);
-  if (isPressure) log.warn('[heap-watch] pressure sample', snapshot);
-  else log.info('[heap-watch] sample', snapshot);
+  // Info even under pressure: warn reaches the terminal, and this object would be a large blocking
+  // write there every 5 s exactly when the machine is loaded.
+  log.info(isPressure ? '[heap-watch] pressure sample' : '[heap-watch] sample', snapshot);
   recordRuntimeSnapshot(snapshot);
 }
 

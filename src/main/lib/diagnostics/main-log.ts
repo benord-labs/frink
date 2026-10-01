@@ -5,6 +5,9 @@ import log from 'electron-log';
 export function configureMainLog(): void {
   log.transports.file.sync = false;
   log.transports.file.maxSize = 20 * 1024 * 1024;
+  // The file keeps every level, written async; the console is the dev terminal, a blocking write
+  // on macOS that stalls the main thread under load.
+  log.transports.console.level = 'warn';
   const dir = process.env.FRINK_LOG_DIR;
   if (dir) log.transports.file.resolvePathFn = () => mainLogPath(dir);
 }
