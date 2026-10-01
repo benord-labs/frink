@@ -188,6 +188,23 @@ describe('cancelWorkQueueTask', () => {
     expect(cancelledEvents).toHaveLength(1);
   });
 
+  it('reports a saved Cancel as saved and stops its sessions when the slot release fails', async () => {
+    seedActiveAdmission(db, flowRunId);
+    const clicked = await flowTask('needs_attention');
+    await flowTask('running', { subChatId: 'sub-run' });
+    registerNodeAbort(flowRunId, new AbortController());
+    vi.spyOn(controller, 'beginRelease').mockRejectedValueOnce(new Error('release failed'));
+
+    expect((await cancelWorkQueueTask(db, clicked.id)).task?.status).toBe('cancelled');
+    expect(holder.abortSessions).toHaveBeenCalledWith(['sub-run'], 'task cancelled');
+    expect((await getFlowRun(db, flowRunId))?.status).toBe('cancelled');
+    expect(cancelledEvents).toHaveLength(1);
+    expect(holder.capture).toHaveBeenCalledWith(expect.any(Error), {
+      surface: 'flow-cancel',
+      stage: 'release',
+    });
+  });
+
   it('clears an interrupted run and drops its queued Re-run', async () => {
     const { node, task } = await interruptedRun();
     await controller.enqueueTerminalResume({ flowRunId, nodeRunId: node.id });

@@ -386,7 +386,11 @@ async function settleTerminalAdmission(
     flowRunId,
     continuationOps,
   );
-  if (settled) await drainFlowAdmissions();
+  if (!settled) return;
+  // The settle is the release; the drain only re-fills the freed slot and captures and retries itself.
+  await drainFlowAdmissions().catch((error) => {
+    log.warn('[FlowAdmission] drain after settle failed', { flowRunId, error });
+  });
 }
 
 async function reconcileFlowAdmission(
