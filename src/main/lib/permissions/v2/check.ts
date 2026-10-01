@@ -22,13 +22,8 @@ import {
   resultFromCombined,
   type ScopedDocs,
 } from './eval-rules';
+import { checkSearch, type SearchInput } from './search';
 import type { PermissionRequest, PermissionResult } from './types';
-
-/**
- * Read-only search tools that today's `tool-validation.ts:60-63` auto-allows.
- * Mirroring here so ticket 09 wiring doesn't regress UX.
- */
-const AUTO_ALLOW_TOOLS = new Set<string>(['Glob', 'Grep']);
 
 export type DocsLoader = (req: PermissionRequest) => Promise<ScopedDocs>;
 
@@ -92,8 +87,8 @@ export async function checkPermission(req: PermissionRequest): Promise<Permissio
     );
   }
 
-  if (AUTO_ALLOW_TOOLS.has(req.tool)) {
-    return { decision: 'allow' };
+  if (req.tool === 'Glob' || req.tool === 'Grep') {
+    return checkSearch(req.tool, req.input as SearchInput, docs, req.projectPath);
   }
 
   // Generic: rules-only, no tier-1c.

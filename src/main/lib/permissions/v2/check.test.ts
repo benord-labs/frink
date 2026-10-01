@@ -210,14 +210,13 @@ describe('checkPermission — dispatcher routing', () => {
     });
   });
 
-  it('Glob → auto-allow (mirrors tool-validation.ts)', async () => {
-    const r = await checkPermission(baseReq({ tool: 'Glob', input: { pattern: '**/*.ts' } }));
-    expect(r).toEqual({ decision: 'allow' });
-  });
-
-  it('Grep → auto-allow', async () => {
-    const r = await checkPermission(baseReq({ tool: 'Grep', input: { pattern: 'foo' } }));
-    expect(r).toEqual({ decision: 'allow' });
+  it('Glob/Grep → routes to checkSearch (gated on the folder searched)', async () => {
+    const glob = await checkPermission(baseReq({ tool: 'Glob', input: { pattern: '/etc/*' } }));
+    expect(glob).toMatchObject({ decision: 'ask', prompt: { tool: 'Glob' } });
+    const grep = await checkPermission(
+      baseReq({ tool: 'Grep', input: { pattern: 'KEY', path: '~/.ssh' } }),
+    );
+    expect(grep).toMatchObject({ decision: 'deny', reason: { kind: 'safety:path' } });
   });
 
   it('unknown tool → generic rule-eval (tool-wide allow)', async () => {
