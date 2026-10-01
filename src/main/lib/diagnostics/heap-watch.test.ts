@@ -129,14 +129,12 @@ describe('heap-watch', () => {
     expect(observabilitySpy.record).toHaveBeenCalledTimes(1);
   });
 
-  it('escalates to warn level at or above 85% of the heap size limit', async () => {
+  it('labels a sample at or above 85% of the heap size limit as pressure, at info level', async () => {
     stubHeapUsed(3_500_000_000); // 87.5% of limit
     const { startHeapWatch } = await import('./heap-watch');
     startHeapWatch();
 
-    expect(logSpy.warn).toHaveBeenCalled();
-    const firstArg = logSpy.warn.mock.calls[0]?.[0];
-    expect(firstArg).toBe('[heap-watch] pressure sample');
+    expect(logSpy.info.mock.calls[0]?.[0]).toBe('[heap-watch] pressure sample');
   });
 
   it('is idempotent — a second start does not create a second interval', async () => {
@@ -198,7 +196,7 @@ describe('heap-watch', () => {
     const { startHeapWatch } = await import('./heap-watch');
     startHeapWatch();
 
-    expect(logSpy.warn).toHaveBeenCalledWith(
+    expect(logSpy.info).toHaveBeenCalledWith(
       '[heap-watch] pressure sample',
       expect.objectContaining({
         renderer_count: 2,

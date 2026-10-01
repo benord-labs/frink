@@ -147,7 +147,7 @@ async function projectToTarget(
     await unlink(target).catch(() => {});
   } else if (lst && !isFrinkProjection(target)) {
     // User-authored real dir — never clobber.
-    log.warn(`[skill-projection] ${skillName}: non-frink skill dir at ${target}; skipping`);
+    log.info(`[skill-projection] ${skillName}: non-frink skill dir at ${target}; skipping`);
     return;
   } else if (lst) {
     const verdict = await reconcileProjection(sourceDir, target);
