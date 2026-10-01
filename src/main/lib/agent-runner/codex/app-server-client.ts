@@ -39,6 +39,7 @@ import {
   type MessageReader,
   type MessageWriter,
 } from 'vscode-jsonrpc/node';
+import { lowerChildPriority } from '../../platform/lower-child-priority';
 import { captureMainException } from '../../sentry/init';
 import { createChildProcessCloseBarrier } from '../process-settlement';
 import { APPROVAL_REQUEST_METHODS, declineApprovalResponse } from './codex-events';
@@ -262,6 +263,7 @@ export class CodexAppServerClient {
       env: { ...process.env, ...this.options.env },
       stdio: ['pipe', 'pipe', 'pipe'],
     }) as ChildProcessWithoutNullStreams;
+    lowerChildPriority(child.pid);
     this.child = child;
 
     // Drain stderr so the pipe never blocks; log under debug only.

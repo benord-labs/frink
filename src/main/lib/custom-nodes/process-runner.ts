@@ -1,5 +1,6 @@
 import type { Readable } from 'node:stream';
 import { utilityProcess } from 'electron';
+import { lowerChildPriority } from '../platform/lower-child-priority';
 import type { CustomNodeManifest } from './discovery';
 import { getManagedCustomNodeBootstrapPath } from './managed-bootstrap-path';
 import { drainManagedOutputAfterExit } from './managed-output-drain';
@@ -96,6 +97,7 @@ function runManagedProcess(params: {
       );
       return;
     }
+    child.once('spawn', () => lowerChildPriority(child.pid));
     const stdout = child.stdout as Readable | null;
     const stderr = child.stderr as Readable | null;
     const missingPipesMessage = `Frink's bundled Node.js did not provide piped output for custom node "${manifest.name}".`;
