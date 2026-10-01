@@ -18,6 +18,7 @@ type StopTaskResult =
   | { ok: true }
   | { ok: false; reason: 'ended' | 'last' | 'timeout' }
   | { ok: false; reason: 'failed'; message: string };
+const workflowProgressQuery = vi.fn((_input: unknown) => ({ data: null }));
 const stopTaskMutate = vi.fn();
 let stopTaskPending = false;
 let stopTaskOnSuccess: ((result: StopTaskResult) => void) | undefined;
@@ -38,6 +39,7 @@ vi.mock('../../../lib/trpc', () => ({
           return { mutate: sendStopMutate, isPending: sendStopPending };
         },
       },
+      getWorkflowProgress: { useQuery: (input: unknown) => workflowProgressQuery(input) },
       stopBackgroundTask: {
         useMutation: (opts?: { onSuccess?: (result: StopTaskResult) => void }) => {
           stopTaskOnSuccess = opts?.onSuccess;
@@ -103,6 +105,7 @@ describe('RunStatusRows', () => {
     stopTaskMutate.mockReset();
     stopTaskPending = false;
     stopTaskOnSuccess = undefined;
+    workflowProgressQuery.mockClear();
   });
   afterEach(cleanup);
 
@@ -289,5 +292,14 @@ describe('RunStatusRows', () => {
     expect(toastError).toHaveBeenCalledWith('Couldn’t stop it', { description: 'not running' });
     stopTaskOnSuccess?.({ ok: false, reason: 'timeout' });
     expect(toastInfo).toHaveBeenCalledTimes(1);
+  });
+  it('pulls a workflow’s live progress only while the list is open', () => {
+    holdItems(item('Workflow', 'w1'), item('Command', 's1'));
+    renderRows();
+    expect(workflowProgressQuery).not.toHaveBeenCalled();
+
+    openList();
+
+    expect(workflowProgressQuery).toHaveBeenCalledWith({ subChatId: 'sc1', taskId: 'w1' });
   });
 });

@@ -17,6 +17,7 @@ import { stopBackgroundTask } from '../../socket/execution/claude-session/stop-b
 import { listWakeHolds } from '../../socket/execution/wake-hold-registry-view';
 import { steerActiveTurn } from '../../socket/steering';
 import { getLiveStreamSeed, listLiveStreamHeaders } from '../../socket/streaming/live-stream';
+import { readWorkflowProgress } from '../../socket/streaming/subagent-task-status';
 import {
   listPendingMoveChatRequests,
   listPendingPermissionRequests,
@@ -87,6 +88,11 @@ export const socketRouter = router({
   listLiveStreamHeaders: publicProcedure.query(() => listLiveStreamHeaders()),
 
   listPendingQuestionSubChatIds: publicProcedure.query(() => listPendingQuestionSubChatIds()),
+
+  /** A held Workflow's phases and agents, pulled only while the user has the list open. */
+  getWorkflowProgress: publicProcedure
+    .input(z.object({ subChatId: z.string().min(1), taskId: z.string().min(1) }))
+    .query(({ input }) => readWorkflowProgress(input.subChatId, input.taskId)),
 
   listPendingPermissionRequests: publicProcedure.query(() => [
     ...listPendingPermissionRequests(),

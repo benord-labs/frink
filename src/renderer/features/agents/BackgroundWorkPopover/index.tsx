@@ -31,6 +31,7 @@ import {
 import { trpc } from '../../../lib/trpc';
 import { cn } from '../../../lib/utils';
 import { RunStatusRow } from '../RunStatusRow';
+import { WorkflowProgress } from './WorkflowProgress';
 
 const KIND_ICONS = new Map<string, LucideIcon>([
   ['Command', SquareTerminal],
@@ -165,6 +166,9 @@ function BackgroundWorkRow({
           <div className="truncate font-mono text-xs text-muted-foreground" title={item.command}>
             {item.command}
           </div>
+        ) : null}
+        {item.label === 'Workflow' ? (
+          <WorkflowProgress subChatId={subChatId} taskId={item.id} />
         ) : null}
       </div>
       {canStop ? (
