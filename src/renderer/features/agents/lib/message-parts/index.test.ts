@@ -1,6 +1,6 @@
 import type { UIMessage } from 'ai';
 import { describe, expect, it } from 'vitest';
-import { buildTurnHistory } from './index';
+import { buildTurnHistory, dataImageSrc } from './index';
 
 function message(id: string, role: UIMessage['role'], parts: unknown[]): UIMessage {
   return { id, role, parts } as UIMessage;
@@ -57,5 +57,26 @@ describe('buildTurnHistory', () => {
     );
 
     expect(history).toEqual([{ role: 'user', content: 'do it' }]);
+  });
+});
+
+describe('dataImageSrc', () => {
+  it('renders from the persisted base64, not the session-scoped blob url', () => {
+    expect(
+      dataImageSrc({
+        url: 'blob:http://localhost/dead',
+        base64Data: 'AAAA',
+        mediaType: 'image/jpeg',
+      }),
+    ).toBe('data:image/jpeg;base64,AAAA');
+  });
+
+  it('renders a task-dispatched image that was queued without a url', () => {
+    expect(dataImageSrc({ url: '', base64Data: 'AAAA' })).toBe('data:image/png;base64,AAAA');
+  });
+
+  it('falls back to the url when no inline data exists', () => {
+    expect(dataImageSrc({ url: 'blob:http://localhost/live' })).toBe('blob:http://localhost/live');
+    expect(dataImageSrc(undefined)).toBe('');
   });
 });

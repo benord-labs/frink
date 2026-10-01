@@ -62,6 +62,15 @@ export function extractImages(message: UIMessage | undefined): ExtractedImage[] 
   return images;
 }
 
+/** Display src for a persisted `data-image` part: its `url` is a session-scoped `blob:` URL (dead
+ * after reload, empty for task dispatches), so the always-persisted inline base64 wins. */
+export function dataImageSrc(
+  data: { url?: string; base64Data?: string; mediaType?: string } | undefined,
+): string {
+  if (data?.base64Data) return `data:${data.mediaType || 'image/png'};base64,${data.base64Data}`;
+  return data?.url || '';
+}
+
 type HistoryTurn = { role: 'user' | 'assistant'; content: string };
 type ToolPartLike = { type: string; input?: unknown };
 
