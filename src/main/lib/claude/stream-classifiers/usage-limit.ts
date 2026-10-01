@@ -21,7 +21,9 @@ export function isUsageLimitText(text: string): boolean {
   if (text.length > MAX_LIMIT_TEXT_LENGTH) return false;
   const normalized = normalizeLimitText(text);
   return (
-    normalized.includes("you've hit your limit") ||
+    // The CLI names the window: "You've hit your weekly limit", "…your usage credit limit".
+    /you've (hit|reached) your [^.·]{0,40}limit/.test(normalized) ||
+    /you're out of (extra )?usage|your org is out of usage/.test(normalized) ||
     normalized.includes('usage limit reached') ||
     normalized.includes('hit the claude code usage limit') ||
     // Covers timed variants like "5-hour limit reached ∙ resets 3am".
@@ -31,12 +33,12 @@ export function isUsageLimitText(text: string): boolean {
 
 /**
  * The clean-stream limit message is the ENTIRE final text part (e.g. "You've hit your
- * limit · resets 2:20pm"), so the part must START with a limit phrase. A bare `includes`
- * is too loose here: consecutive text deltas merge into one part, so an agent quoting the
+ * weekly limit · resets 10pm"), so the part must START with a limit phrase. A bare `includes` is
+ * too loose here: consecutive text deltas merge into one part, so an agent quoting the
  * phrase mid-sentence would otherwise match.
  */
 const TRAILING_LIMIT_PATTERN =
-  /^\s*(you've hit your limit|you've hit the claude code usage limit|claude ai usage limit reached|usage limit reached|\d+-hour limit reached)/i;
+  /^\s*(you've (hit|reached) your [^.·]{0,40}limit|you've hit the claude code usage limit|you're out of (extra )?usage|your org is out of usage|claude ai usage limit reached|usage limit reached|\d+-hour limit reached)/i;
 
 /**
  * Returns the usage-limit text when it is the FINAL meaningful part of an assistant

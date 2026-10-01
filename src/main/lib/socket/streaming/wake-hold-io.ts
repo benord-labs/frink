@@ -15,6 +15,7 @@ import type { TranscriptTerminalDurability } from '../../../../shared/types/assi
 import type { TaskSignalPayload } from '../../../../shared/types/task-signal';
 import type { WakeHoldChangedPayload } from '../../../../shared/types/wake-hold';
 import type { UIMessageChunk } from '../../claude/types';
+import { disposeCleanStreamEnd } from '../../tasks/stream-error-disposition';
 import type { WakeHoldIo } from '../claude-wake-hold';
 import type { ExecuteCompletePayload, MessagePart, StreamChunkPayload } from '../client';
 import { clearChunkCounter } from './assistant-chunk-checkpoint';
@@ -75,11 +76,14 @@ export function buildWakeHoldIo(params: {
       // Awaited: the caller may be about to dispose the session, and an abandoned write would leave
       // this burst's text only in the CLI's own transcript.
       if (hadContent) {
+        const finalParts = buildFinalParts(chunks);
+        // A wake can hit a usage limit too; park before the completion emit, as the arming turn does.
+        await disposeCleanStreamEnd(subChatId, finalParts);
         await send.sendExecuteCompleteDirect({
           chatId,
           subChatId,
           assistantMessageId: msgId,
-          finalParts: buildFinalParts(chunks),
+          finalParts,
           wakeBurst: true,
           continuesWakeHold: holdActive,
         });

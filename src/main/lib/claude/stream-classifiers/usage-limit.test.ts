@@ -3,6 +3,17 @@ import { extractTrailingUsageLimitText, isUsageLimitText } from './usage-limit';
 
 const LIMIT_TEXT = "You've hit your limit · resets 2:20pm (Europe/London)";
 
+/** Limit copy that names the exhausted window or credit pool, as the Claude Code CLI emits it. */
+const WINDOWED_LIMIT_TEXTS = [
+  "You've hit your weekly limit · resets 10pm (Europe/London)",
+  "You've hit your session limit · resets 3am",
+  "You've hit your Opus limit · resets Sep 17 at 10pm",
+  "You've hit your usage credit limit",
+  "You've hit your org's monthly spend limit",
+  "You've reached your Fable limit.",
+  "You're out of extra usage",
+];
+
 describe('isUsageLimitText', () => {
   it.each([
     ['chat-surface limit message', LIMIT_TEXT],
@@ -12,6 +23,10 @@ describe('isUsageLimitText', () => {
     ['timed-window variant (limit reached + resets)', '5-hour limit reached ∙ resets 3am'],
     ['typographic apostrophe (U+2019)', 'You’ve hit your limit · resets 2:20pm (Europe/London)'],
   ])('matches %s', (_label, text) => {
+    expect(isUsageLimitText(text)).toBe(true);
+  });
+
+  it.each(WINDOWED_LIMIT_TEXTS)('matches windowed copy %s', (text) => {
     expect(isUsageLimitText(text)).toBe(true);
   });
 
@@ -81,9 +96,18 @@ describe('extractTrailingUsageLimitText', () => {
       [{ type: 'text', text: `The toast text is "${LIMIT_TEXT}". Continuing now.` }],
       null,
     ],
+    [
+      'final part opens with the prefix but is not a limit',
+      [{ type: 'text', text: "You've hit your target: all 119 tests pass." }],
+      null,
+    ],
     ['normal completion', [{ type: 'text', text: 'All done!' }], null],
     ['empty parts', [], null],
   ])('%s', (_label, parts, expected) => {
     expect(extractTrailingUsageLimitText(parts)).toBe(expected);
+  });
+
+  it.each(WINDOWED_LIMIT_TEXTS)('extracts windowed copy %s as the final text part', (text) => {
+    expect(extractTrailingUsageLimitText([{ type: 'text', text }])).toBe(text);
   });
 });

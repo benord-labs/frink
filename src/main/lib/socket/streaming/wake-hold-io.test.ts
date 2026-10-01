@@ -12,6 +12,9 @@ import {
 } from './live-stream';
 import { buildWakeHoldIo } from './wake-hold-io';
 
+const { disposeCleanStreamEnd } = vi.hoisted(() => ({ disposeCleanStreamEnd: vi.fn() }));
+vi.mock('../../tasks/stream-error-disposition', () => ({ disposeCleanStreamEnd }));
+
 function ioWithSpy() {
   const sendWakeHoldChanged = vi.fn();
   const sendExecuteCompleteDirect = vi.fn();
@@ -80,6 +83,28 @@ describe('buildWakeHoldIo — setHeld frames', () => {
     expect(sendExecuteCompleteDirect).toHaveBeenLastCalledWith(
       expect.objectContaining({ wakeBurst: true, continuesWakeHold: false }),
     );
+  });
+
+  it('parks a burst that ended on a usage limit before announcing its completion', async () => {
+    disposeCleanStreamEnd.mockClear();
+    const { io, sendExecuteCompleteDirect } = ioWithSpy();
+    const order: string[] = [];
+    disposeCleanStreamEnd.mockImplementationOnce(async () => order.push('park'));
+    sendExecuteCompleteDirect.mockImplementationOnce(async () => order.push('complete'));
+
+    await io.completeBurst('assistant', [{ type: 'finish' } as never], true);
+
+    expect(disposeCleanStreamEnd).toHaveBeenCalledWith('sc1', []);
+    expect(order).toEqual(['park', 'complete']);
+  });
+
+  it('leaves the park alone for a burst with nothing to say', async () => {
+    disposeCleanStreamEnd.mockClear();
+    const { io } = ioWithSpy();
+
+    await io.completeBurst('assistant', [{ type: 'finish' } as never], false);
+
+    expect(disposeCleanStreamEnd).not.toHaveBeenCalled();
   });
 
   // `pending: undefined` is a PRESENT key, so a retraction carrying it would contradict the wire
