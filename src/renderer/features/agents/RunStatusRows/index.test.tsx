@@ -254,7 +254,10 @@ describe('RunStatusRows', () => {
     renderRows();
     openList();
 
-    expect(screen.getAllByText('Stopping…')).toHaveLength(2);
+    for (const button of within(screen.getByRole('list')).getAllByRole('button')) {
+      expect(button).toHaveAttribute('aria-busy', 'true');
+      expect(button).toBeDisabled();
+    }
   });
 
   it('reports a refused or slow row stop, and stays quiet when the wait already moved on', () => {

@@ -16,7 +16,6 @@ import { trpc } from '../../../lib/trpc';
 import { BackgroundWorkPopover } from '../BackgroundWorkPopover';
 import { InterruptedRunControls } from '../InterruptedRunControls';
 import { TaskAcceptBar, TaskControls } from '../main/active-chat/components';
-import { RunStatusRow } from '../RunStatusRow';
 
 type RunStatusRowsProps = {
   subChatId: string;
@@ -92,16 +91,11 @@ function BackgroundWaitRow({
   });
 
   return (
-    <RunStatusRow
-      dotClassName="bg-primary motion-safe:animate-pulse"
-      label={
-        <BackgroundWorkPopover
-          subChatId={subChatId}
-          label={`Working in the background — ${describeWait(waitingOn)}`}
-          waitingOn={waitingOn}
-          hasSessionStop={stopTarget !== null}
-        />
-      }
+    <BackgroundWorkPopover
+      subChatId={subChatId}
+      label={`Working in the background — ${describeWait(waitingOn)}`}
+      waitingOn={waitingOn}
+      hasSessionStop={stopTarget !== null}
     >
       {stopTarget ? (
         <Tooltip delayDuration={300}>
@@ -130,7 +124,7 @@ function BackgroundWaitRow({
           </TooltipContent>
         </Tooltip>
       ) : null}
-    </RunStatusRow>
+    </BackgroundWorkPopover>
   );
 }
 
