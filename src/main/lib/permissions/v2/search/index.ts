@@ -1,12 +1,11 @@
 /** Glob/Grep checker: Read parity on the folder a search reads. In-project searches stay
  * prompt-free; anything else goes to rules, then the prompt or Auto. */
 
-import * as nodeOs from 'node:os';
 import * as nodePath from 'node:path';
 import { isPathWithinProject } from '../../path-check';
 import { expandTilde } from '../check-edit';
 import { combineScopes, evalScope, resultFromCombined, type ScopedDocs } from '../eval-rules';
-import { isSystemDeniedPath } from '../system-denied-patterns';
+import { isSystemDeniedPath, SYSTEM_DENIED_EXACT } from '../system-denied-patterns';
 import type { PermissionResult } from '../types';
 
 export type SearchInput = { path?: unknown; pattern?: unknown };
@@ -37,10 +36,12 @@ export function checkSearch(
   const result = resultFromCombined(combineScopes(policy, project, user), tool, input);
   if (result.decision !== 'ask') return result;
 
-  // A general chat's project root is the home folder, so it never counts as a project.
+  // Same rule for every chat (general-chat-permission-parity); a folder holding a protected
+  // folder (a search of `~`) would read inside it, so that one asks.
   const escapes =
     tool === 'Glob' && typeof input.pattern === 'string' && ESCAPING_GLOB.test(input.pattern);
-  if (projectRoot !== nodeOs.homedir() && !escapes && isPathWithinProject(root, projectRoot)) {
+  const spansProtected = SYSTEM_DENIED_EXACT.some((entry) => isPathWithinProject(entry, root));
+  if (!escapes && !spansProtected && isPathWithinProject(root, projectRoot)) {
     return { decision: 'allow' };
   }
   result.prompt.suggestedRules = [tool];

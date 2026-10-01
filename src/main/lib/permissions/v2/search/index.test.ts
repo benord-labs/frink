@@ -76,9 +76,18 @@ describe('checkSearch', () => {
     ).toBe('ask');
   });
 
-  it('asks in a general chat, whose project root is the home folder', () => {
-    const r = checkSearch('Grep', { pattern: 'x' }, EMPTY_DOCS, nodeOs.homedir());
-    expect(r.decision).toBe('ask');
+  it('treats a general chat like any project: its home root is the project', () => {
+    const home = nodeOs.homedir();
+    const sub = nodePath.join(home, 'frink-search-test-not-created');
+    expect(checkSearch('Grep', { pattern: 'x', path: sub }, EMPTY_DOCS, home)).toEqual({
+      decision: 'allow',
+    });
+  });
+
+  it('asks for a search whose folder contains a protected folder, in any chat', () => {
+    const home = nodeOs.homedir();
+    expect(checkSearch('Grep', { pattern: 'PRIVATE KEY' }, EMPTY_DOCS, home).decision).toBe('ask');
+    expect(checkSearch('Glob', { pattern: '**/id_*' }, EMPTY_DOCS, home).decision).toBe('ask');
   });
 
   it('honours a deny rule even inside the project', () => {
