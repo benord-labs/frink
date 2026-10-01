@@ -67,9 +67,19 @@ let flowRunId: string;
 let cancelledEvents: FlowExecutionEvent[];
 let unsubscribe: () => void;
 
+const flush = async () => {
+  for (let i = 0; i < 5; i += 1) await new Promise((resolve) => setImmediate(resolve));
+};
+const drainTimers = async () => {
+  await vi.runAllTimersAsync();
+  expect(vi.getTimerCount()).toBe(0);
+};
+
 beforeEach(async () => {
   _resetFlowAdmissionControllerMutexForTests();
   vi.clearAllMocks();
+  // Continuation watches tick on setTimeout; afterEach drains them against this test's DB.
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   db = freshDb();
   holder.db = db;
   // Paused, so an enqueued resume stays queued where the test can see it.
@@ -88,9 +98,14 @@ beforeEach(async () => {
   });
 });
 
-afterEach(() => {
-  unsubscribe();
-  _setFlowAdmissionControllerForTests(null);
+afterEach(async () => {
+  try {
+    await drainTimers();
+  } finally {
+    unsubscribe();
+    vi.useRealTimers();
+    _setFlowAdmissionControllerForTests(null);
+  }
 });
 
 const status = async (taskId: string) => (await getTaskById(db, taskId))?.status;
@@ -252,18 +267,20 @@ async function sendTurn(canonicalTaskId: string) {
   return registration;
 }
 
+const FAST_WATCH = { intervalMs: 5, attempts: 3 };
+
 /** The executor's finally: stage what the turn recorded, then settle its activity. */
 async function settleTurn(
   registration: Awaited<ReturnType<typeof sendTurn>>,
   emitCorrective = vi.fn(),
-  watch = {},
+  watch = FAST_WATCH,
 ) {
   const pending = registration.takePendingContinuationResume();
   if (pending) stageContinuationResume(pending, emitCorrective, watch);
   registration.unregisterAbort();
   registration.release();
   await vi.waitFor(() => expect(hasFlowResourceActivity(flowRunId)).toBe(false));
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await flush();
 }
 
 const resumeTickets = () =>
@@ -300,7 +317,7 @@ describe.each([
   it('drops a continuation staged before the Cancel', async () => {
     const turn = await sendTurn(taskId);
     const pending = turn.takePendingContinuationResume();
-    if (pending) stageContinuationResume(pending, vi.fn());
+    if (pending) stageContinuationResume(pending, vi.fn(), FAST_WATCH);
     await cancelWorkQueueTask(db, taskId);
     await settleTurn(turn);
 
@@ -342,11 +359,9 @@ describe.each([
     await cancelWorkQueueTask(db, taskId);
     await settleTurn(await sendTurn(taskId));
 
-    expect(resumeTickets()).toHaveLength(1);
+    await vi.waitFor(() => expect(resumeTickets()).toHaveLength(1));
   });
 });
-
-const FAST_WATCH = { intervalMs: 5, attempts: 3 };
 
 describe('a Cancel after an interrupted run enqueued its continuation', () => {
   let taskId: string;
@@ -356,11 +371,11 @@ describe('a Cancel after an interrupted run enqueued its continuation', () => {
 
   it('ends the queued continuation without an error report or corrective', async () => {
     const emitCorrective = vi.fn();
-    await settleTurn(await sendTurn(taskId), emitCorrective, FAST_WATCH);
+    await settleTurn(await sendTurn(taskId), emitCorrective);
     expect(resumeTickets()).toHaveLength(1);
 
     await cancelWorkQueueTask(db, taskId);
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await drainTimers();
 
     expect(resumeTickets()).toEqual([]);
     expect(emitCorrective).not.toHaveBeenCalled();
@@ -374,7 +389,8 @@ describe('a Cancel after an interrupted run enqueued its continuation', () => {
       return getByTicket(ticket);
     });
     const emitCorrective = vi.fn();
-    await settleTurn(await sendTurn(taskId), emitCorrective, FAST_WATCH);
+    await settleTurn(await sendTurn(taskId), emitCorrective);
+    await drainTimers();
 
     expect(isRestartInterrupted(db, flowRunId)).toBe(false);
     expect(resumeTickets()).toEqual([]);
@@ -383,15 +399,18 @@ describe('a Cancel after an interrupted run enqueued its continuation', () => {
   });
 });
 
-it("keeps a failed run's enqueued continuation when its row is cancelled", async () => {
+// Residual: a row Cancel silences the kept continuation's loss watch (sc-4226).
+it("keeps a failed run's enqueued continuation when its row is cancelled, and a later loss of it draws no corrective", async () => {
   const taskId = await seedTypedReplyTarget(failedRun);
   const emitCorrective = vi.fn();
-  await settleTurn(await sendTurn(taskId), emitCorrective, FAST_WATCH);
+  await settleTurn(await sendTurn(taskId), emitCorrective);
   expect(resumeTickets()).toHaveLength(1);
 
   await cancelWorkQueueTask(db, taskId);
 
   expect(resumeTickets()).toHaveLength(1);
+  await controller.cancelUndispatchedForRun(flowRunId);
+  await drainTimers();
   expect(emitCorrective).not.toHaveBeenCalled();
   expect(holder.capture).not.toHaveBeenCalled();
 });
