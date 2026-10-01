@@ -16,12 +16,13 @@ export async function resumeParkedTaskInPlace(
     const { transitionFlowRun } = await import('../flows/admission/runtime');
     const { forgetAdvancedTask } = await import('../flows/task-completion-watcher');
     const db = getDatabase();
-    const resumed = await transitionFlowRun(
-      () => resumeParkedTaskCommand(db, task, resumedBy),
-      (applied) => {
-        if (applied) forgetAdvancedTask(task.id);
-      },
-    );
+    const command = () => resumeParkedTaskCommand(db, task, resumedBy);
+    // A task with no Flow writes no admission or run row; it must not wait behind admission work.
+    const resumed = task.flowRunId
+      ? await transitionFlowRun(command, (applied) => {
+          if (applied) forgetAdvancedTask(task.id);
+        })
+      : command();
     if (!resumed) {
       log.info('[TaskResume] skipped — task left resumable status', { subChatId, taskId: task.id });
       return false;

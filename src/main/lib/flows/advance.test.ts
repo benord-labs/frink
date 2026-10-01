@@ -43,7 +43,7 @@ import {
 const holder = vi.hoisted(() => ({
   db: null as unknown,
   cancelUndispatchedFlowAdmission: vi.fn(),
-  requestFlowAdmissionRelease: vi.fn(),
+  requestFlowAdmissionRelease: vi.fn(async () => undefined),
 }));
 vi.mock('../db', async (orig) => ({
   ...(await orig<typeof import('../db')>()),
@@ -856,13 +856,12 @@ describe('deleteFlow — hard cutover', () => {
     await updateTaskStatus(db, task.id, 'running');
     setActiveFlowTaskForChat('flow-chat', task.id);
     const ticket = seedActiveAdmission(db, flowRunId);
-    holder.requestFlowAdmissionRelease.mockImplementation(() =>
-      db
-        .update(flowRunAdmissions)
+    holder.requestFlowAdmissionRelease.mockImplementation(async () => {
+      db.update(flowRunAdmissions)
         .set({ state: 'released', settledAt: new Date() })
         .where(eq(flowRunAdmissions.ticket, ticket))
-        .run(),
-    );
+        .run();
+    });
 
     await expect(deleteFlow(flowId)).resolves.toBe(true);
 

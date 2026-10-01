@@ -51,10 +51,25 @@ function isTerminalFlowRun(run: FlowRun): boolean {
   return TERMINAL_FLOW_STATUSES.has(run.status);
 }
 
+function reportCommittedCancelStep(
+  flowRunId: string,
+  stage: 'terminal-event' | 'release',
+  error: unknown,
+): void {
+  log.error('[FlowsEngine] post-cancel step failed', { flowRunId, stage, error });
+  captureMainException(error, { surface: 'flow-cancel', stage });
+}
+
 async function emitCancelledFlowRun(flowRunId: string): Promise<void> {
-  const ctx = await loadRunContext(flowRunId);
-  if (ctx) emitRunTerminal(ctx.meta, flowRunId, 'cancelled');
-  else log.warn('[FlowsEngine] cancelFlowRun: run context unavailable', { flowRunId });
+  // Every caller emits after its Cancel committed; a failed delivery must not report it as failed.
+  // The startup batch sweep settles the stage this event would have settled.
+  try {
+    const ctx = await loadRunContext(flowRunId);
+    if (ctx) emitRunTerminal(ctx.meta, flowRunId, 'cancelled');
+    else log.warn('[FlowsEngine] cancelFlowRun: run context unavailable', { flowRunId });
+  } catch (error) {
+    reportCommittedCancelStep(flowRunId, 'terminal-event', error);
+  }
 }
 
 /**
@@ -82,12 +97,7 @@ async function dequeuedFlowRun(
   // emitting here would settle the stage while that replacement is still waiting to run.
   const admissionRuntime = await import('./admission/runtime');
   if (await admissionRuntime.hasLiveFlowAdmission(flowRunId)) return updated;
-  // The dequeue has committed. A failed delivery must not report the removal as failed — the
-  // startup batch sweep is the backstop for the stage this event would have settled.
-  await emitCancelledFlowRun(flowRunId).catch((error) => {
-    log.error('[FlowsEngine] dequeue terminal event failed', { flowRunId, error });
-    captureMainException(error, { surface: 'flow-dequeue', stage: 'terminal-event' });
-  });
+  await emitCancelledFlowRun(flowRunId);
   return updated;
 }
 
@@ -117,7 +127,7 @@ async function commitCancel<T extends CancelRunOutcome>(
     abortFlowRun(flowRunId);
     dropStagedContinuation(flowRunId);
   });
-  if (outcome?.droppedTicket) void admissionRuntime.drainFlowAdmissions();
+  if (outcome?.droppedTicket) void admissionRuntime.drainFlowAdmissions().catch(() => undefined);
   if (outcome?.cancelled) await emitCancelledFlowRun(flowRunId);
   return outcome;
 }
@@ -125,7 +135,11 @@ async function commitCancel<T extends CancelRunOutcome>(
 async function releaseFlowAdmission(flowRunId: string, ticket: number | null): Promise<void> {
   if (ticket === null) return;
   const admissionRuntime = await import('./admission/runtime');
-  await admissionRuntime.requestFlowAdmissionRelease(flowRunId, ticket);
+  // The Cancel has committed. A slot left active or releasing is reconciled by an executing run's
+  // dispatch cleanup or, for a parked or paused run, by startup recovery.
+  await admissionRuntime
+    .requestFlowAdmissionRelease(flowRunId, ticket)
+    .catch((error) => reportCommittedCancelStep(flowRunId, 'release', error));
 }
 
 /**
@@ -176,7 +190,7 @@ async function finalizeChatOwnedFlowCancellation(
       if (result.outcome === 'cancelled') abortFlowRun(flowRunId);
     },
   );
-  if (droppedTicket) void admissionRuntime.drainFlowAdmissions();
+  if (droppedTicket) void admissionRuntime.drainFlowAdmissions().catch(() => undefined);
   if (outcome !== 'cancelled') return;
   await emitCancelledFlowRun(flowRunId);
   await releaseFlowAdmission(flowRunId, liveTicket);

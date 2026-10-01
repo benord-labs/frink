@@ -53,7 +53,11 @@ vi.mock('../fan-out-step', async (original) => {
 
 import type { FlowExecutionEvent, NodeOutput } from '../../../../shared/types/flow';
 import { createChat, getChatById } from '../../db/repos/chats';
-import { getFlowRun, setFlowRunStatus } from '../../db/repos/flow-runs';
+import {
+  getFlowRun,
+  getOrCreateFlowRunByIdempotencyKey,
+  setFlowRunStatus,
+} from '../../db/repos/flow-runs';
 import { createNodeRun, getNodeRun, listNodeRunsForFlowRun } from '../../db/repos/node-runs';
 import { deleteChatWithFlowQueueTasks } from '../../db/repos/task-queries/chat-flow-cleanup';
 import { createTask, getTaskById, updateTaskStatus } from '../../db/repos/tasks';
@@ -138,19 +142,22 @@ const ticketState = (ticket: number) =>
   db.select().from(flowRunAdmissions).where(eq(flowRunAdmissions.ticket, ticket)).get()?.state;
 
 /** A pending run with its start ticket waiting in the queue. */
-function queueStart(triggerContext: Record<string, unknown> | null = null): number {
+function queueStart(
+  triggerContext: Record<string, unknown> | null = null,
+  runId = flowRunId,
+): number {
   db.update(flowRuns)
     .set({ status: 'pending', startedAt: null, triggerContext })
-    .where(eq(flowRuns.id, flowRunId))
+    .where(eq(flowRuns.id, runId))
     .run();
   return db
     .insert(flowRunAdmissions)
     .values({
-      flowRunId,
+      flowRunId: runId,
       state: 'queued',
       priorityClass: 'start',
       intentVersion: 1,
-      intentJson: { version: 1, action: 'start', flow_run_id: flowRunId },
+      intentJson: { version: 1, action: 'start', flow_run_id: runId },
     })
     .returning({ ticket: flowRunAdmissions.ticket })
     .get().ticket;
@@ -420,6 +427,76 @@ describe('Cancel against admission and dispatch', () => {
     expect(terminal).toEqual(['run_cancelled']);
     expect(holder.capture).not.toHaveBeenCalled();
   });
+});
+
+const CANCEL_ENTRY_POINTS: [string, (id: string) => Promise<unknown>][] = [
+  ['Cancel', (id) => cancelFlowRun(id)],
+  ['chat deletion', (id) => cancelFlowRunForChatDeletion(id, ['chat-x'])],
+];
+
+describe('steps after a committed Cancel', () => {
+  it.each(CANCEL_ENTRY_POINTS)(
+    '%s keeps a committed Cancel and releases its slot when the terminal event fails',
+    async (_, cancel) => {
+      const ticket = seedActiveAdmission(db, flowRunId);
+      holder.onVersionRead = async () => {
+        holder.onVersionRead = null;
+        throw new Error('emit failed');
+      };
+
+      await cancel(flowRunId);
+
+      expect(await runStatus()).toBe('cancelled');
+      await vi.waitFor(() => expect(ticketState(ticket)).not.toMatch(/active|releasing/));
+      expect(holder.capture).toHaveBeenCalledWith(expect.any(Error), {
+        surface: 'flow-cancel',
+        stage: 'terminal-event',
+      });
+    },
+  );
+
+  it("a failed refill after a Cancel's settle is not reported as a Cancel failure", async () => {
+    const ticket = seedActiveAdmission(db, flowRunId);
+    vi.spyOn(controller, 'claimEligible').mockRejectedValueOnce(new Error('drain failed'));
+
+    await cancelFlowRun(flowRunId);
+
+    expect(ticketState(ticket)).not.toMatch(/active|releasing/);
+    expect(holder.capture).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ surface: 'flow-cancel' }),
+    );
+    // A clean pass clears the drainer's retry timer before the next test swaps the db.
+    await drainFlowAdmissions();
+  });
+
+  it.each(CANCEL_ENTRY_POINTS)(
+    '%s refills a limit-1 slot freed by dropping a claimed ticket',
+    async (_, cancel) => {
+      config = { ...config, concurrencyLimitEnabled: true, maxConcurrentRuns: 1 };
+      const claimed = queueStart();
+      db.update(flowRunAdmissions)
+        .set({ state: 'claimed', claimedAt: new Date() })
+        .where(eq(flowRunAdmissions.ticket, claimed))
+        .run();
+      const { run: other } = await getOrCreateFlowRunByIdempotencyKey(db, {
+        flowVersionId: (await getFlowRun(db, flowRunId))?.flowVersionId ?? '',
+        status: 'pending',
+        triggerContext: null,
+        idempotencyKey: 'k2',
+      });
+      const waiting = queueStart(null, other.id);
+      abortableDispatch([]);
+
+      await cancel(flowRunId);
+
+      expect(ticketState(claimed)).toBe('cancelled');
+      await vi.waitFor(() => expect(ticketState(waiting)).not.toBe('queued'));
+      // The refilled run's dispatch must settle before the next test swaps the db.
+      await cancelFlowRun(other.id);
+      await vi.waitFor(() => expect(ticketState(waiting)).toMatch(/cancelled|completed|failed/));
+    },
+  );
 });
 
 const COMPLETED: NodeOutput = { status: 'completed', outputs: {}, artifacts: [], durationMs: 0 };

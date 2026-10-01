@@ -30,6 +30,7 @@ const GRAPH = {
 const QUIET_PARK = { agentSignal: { state: 'missing_completion_signal', summary: 'quiet' } };
 
 let db: TestDb;
+let controller: FlowAdmissionController;
 let flowRunId: string;
 let nodeRunId: string;
 let cancelled: FlowExecutionEvent[];
@@ -63,14 +64,13 @@ beforeEach(() => {
   db = freshDb();
   holder.db = db;
   holder.capture.mockReset();
-  _setFlowAdmissionControllerForTests(
-    new FlowAdmissionController(db, async () => ({
-      version: 1,
-      queuePaused: false,
-      concurrencyLimitEnabled: false,
-      maxConcurrentRuns: 4,
-    })),
-  );
+  controller = new FlowAdmissionController(db, async () => ({
+    version: 1,
+    queuePaused: false,
+    concurrencyLimitEnabled: false,
+    maxConcurrentRuns: 4,
+  }));
+  _setFlowAdmissionControllerForTests(controller);
   cancelled = [];
   unsubscribe = subscribeFlowEvents((event) => {
     if (event.eventType === 'run_cancelled') cancelled.push(event);
@@ -83,6 +83,19 @@ afterEach(() => {
 });
 
 describe('resumeParkedTaskInPlace — follow-up message', () => {
+  it('resumes a flow-less parked task without the admission mutex', async () => {
+    const task = await createTask(db, { description: 'manual', source: 'manual' });
+    await updateTaskStatus(db, task.id, 'running');
+    const parked = await updateTaskStatus(db, task.id, 'needs_attention');
+    if (!parked) throw new Error('park failed');
+    const transition = vi.spyOn(controller, 'transition');
+
+    expect(await resumeParkedTaskInPlace(parked, 'follow_up_message', 'sub-1')).toBe(true);
+    expect((await getTaskById(db, task.id))?.status).toBe('running');
+    expect(transition).not.toHaveBeenCalled();
+    expect(holder.capture).not.toHaveBeenCalled();
+  });
+
   it('resumes the task, its parked node and its paused run together', async () => {
     const task = await seedParkedTask('needs_attention');
 
