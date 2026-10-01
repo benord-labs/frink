@@ -1,10 +1,12 @@
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { cp, mkdir, rename, rm, stat } from 'node:fs/promises';
-import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import log from 'electron-log';
 import { getGitEnv } from '../shell-env';
+import { findIgnoredOverlay, linkOverlay } from './overlay';
+import { isPathInside } from './path-guards';
 
 const execFileAsync = promisify(execFile);
 
@@ -30,7 +32,12 @@ async function synchronizeCheckoutRunner(
   const sourceHooksPath = resolve(mainRepoPath, hooksPath);
   const worktreeHooksPath = resolve(worktreePath, hooksPath);
 
-  if (!(await pathExists(worktreeHooksPath))) {
+  // An ignored overlay (devkit's `.devkit/`) also holds baselines, so it is linked whole; it is
+  // never copied into, since a copy would follow whatever already sits at that path.
+  const overlay = await findIgnoredOverlay(mainRepoPath, sourceHooksPath, env);
+  if (overlay) {
+    await linkOverlay(mainRepoPath, worktreePath, overlay);
+  } else if (!(await pathExists(worktreeHooksPath))) {
     await copyHooksRunner(mainRepoPath, worktreePath, sourceHooksPath, worktreeHooksPath);
   }
 
@@ -141,14 +148,4 @@ async function pathExists(path: string): Promise<boolean> {
   return stat(path)
     .then(() => true)
     .catch(() => false);
-}
-
-function isPathInside(rootPath: string, candidatePath: string): boolean {
-  const fromRoot = relative(resolve(rootPath), resolve(candidatePath));
-  return (
-    Boolean(fromRoot) &&
-    fromRoot !== '..' &&
-    !fromRoot.startsWith(`..${sep}`) &&
-    !isAbsolute(fromRoot)
-  );
 }
