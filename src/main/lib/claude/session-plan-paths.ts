@@ -98,6 +98,8 @@ export async function resolveLatestSessionPlanFile(subChatId: string): Promise<s
   }
 }
 
+export const PLAN_MUTATION_TOOLS = new Set(['Write', 'Edit', 'MultiEdit']);
+
 /** Absolute path of a plan-dir `.md` mutation in plan mode, else null. */
 export function planWritePathFromInput(
   input: unknown,

@@ -58,6 +58,14 @@ export function onChatRegistered(listener: (subChatId: string) => void): () => v
   };
 }
 
+function subChatIdsForChat(chatId: string): string[] {
+  const subChatIds: string[] = [];
+  for (const [subChatId, parentId] of parentChatIds) {
+    if (parentId === chatId) subChatIds.push(subChatId);
+  }
+  return subChatIds;
+}
+
 const BACKSLASH_REGEX = /\\/g;
 const TRAILING_SLASHES_REGEX = /\/+$/;
 
@@ -109,6 +117,9 @@ export const agentChatStore = {
   // Get the ORIGINAL parentChatId that was set when the Chat was created
   getParentChatId: (subChatId: string) => parentChatIds.get(subChatId),
 
+  /** Sub-chats with a registered Chat under this parent. */
+  getSubChatIdsForChat: (chatId: string) => subChatIdsForChat(chatId),
+
   getStreamId: (id: string) => streamIds.get(id),
   setStreamId: (id: string, streamId: string | null) => {
     streamIds.set(id, streamId);
@@ -145,15 +156,8 @@ export const agentChatStore = {
    * Called when a chat is moved to a new project to force recreation with new projectPath.
    */
   clearAllForChat: (chatId: string) => {
-    // Find all sub-chat IDs that belong to this parent chat
-    const subChatIdsToDelete: string[] = [];
-    for (const [subChatId, parentId] of parentChatIds.entries()) {
-      if (parentId === chatId) {
-        subChatIdsToDelete.push(subChatId);
-      }
-    }
-    // Delete them all
-    for (const subChatId of subChatIdsToDelete) {
+    // Delete every sub-chat that belongs to this parent chat
+    for (const subChatId of subChatIdsForChat(chatId)) {
       const chat = chats.get(subChatId);
       chats.delete(subChatId);
       streamIds.delete(subChatId);

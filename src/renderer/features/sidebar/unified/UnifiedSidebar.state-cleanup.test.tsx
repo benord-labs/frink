@@ -4,6 +4,8 @@ import { toast } from 'sonner';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createRuntimeAtomFamily } from '../../../lib/atoms/atom-family-factory';
 import { appStore } from '../../../lib/jotai-store';
+import { createQueueItem } from '../../agents/lib/queue-utils';
+import { useMessageQueueStore } from '../../agents/stores/message-queue-store';
 import { captureChatAction, hoisted, resetHarness, setupHarness } from './sidebar-test-harness';
 import { UnifiedSidebar } from './UnifiedSidebar';
 
@@ -137,6 +139,45 @@ describe('UnifiedSidebar archive chat (sc-208)', () => {
     await onChatArchive('chat-arch-keep');
 
     expect(appStore.get(family('chat-arch-keep'))).toBe('selection');
+  });
+
+  // sc-682: main aborts the chat's run inside this mutation, so a queued follow-up would otherwise
+  // be sent into the chat being archived before the mutation resolves.
+  it("holds the chat's queue during the archive, then drops what was queued", async () => {
+    hoisted.getSubChatIdsForChatMock.mockImplementation((chatId: string) =>
+      chatId === 'chat-arch-queue' ? ['sub-arch-queue'] : [],
+    );
+    useMessageQueueStore.setState({
+      queues: { 'sub-arch-queue': [createQueueItem('q1', 'follow-up')] },
+      heldChatIds: {},
+    });
+    let heldDuringMutation = false;
+    hoisted.archiveChatMutateAsyncMock.mockImplementationOnce(async () => {
+      heldDuringMutation = useMessageQueueStore.getState().isChatHeld('chat-arch-queue');
+      return {};
+    });
+
+    await getOnChatArchive()('chat-arch-queue');
+
+    expect(heldDuringMutation).toBe(true);
+    expect(useMessageQueueStore.getState().queues['sub-arch-queue']).toBeUndefined();
+    expect(useMessageQueueStore.getState().isChatHeld('chat-arch-queue')).toBe(false);
+  });
+
+  it('keeps the queue and lifts the hold when the archive fails', async () => {
+    hoisted.getSubChatIdsForChatMock.mockReturnValue(['sub-arch-fail']);
+    useMessageQueueStore.setState({
+      queues: { 'sub-arch-fail': [createQueueItem('q1', 'keep me')] },
+      heldChatIds: {},
+    });
+    hoisted.archiveChatMutateAsyncMock.mockRejectedValueOnce(new Error('archive boom'));
+
+    await getOnChatArchive()('chat-arch-fail');
+
+    expect(useMessageQueueStore.getState().queues['sub-arch-fail']?.map((i) => i.id)).toEqual([
+      'q1',
+    ]);
+    expect(useMessageQueueStore.getState().isChatHeld('chat-arch-fail')).toBe(false);
   });
 });
 

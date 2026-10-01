@@ -18,6 +18,7 @@ const clearCodexSessionMock = vi.fn();
 const killByWorkspaceIdMock = vi.fn();
 const cancelFlowRunsForChatMock = vi.fn();
 const tearDownChatWorktreeMock = vi.fn();
+const abortActiveExecutionsForChatMock = vi.fn();
 
 vi.mock('../../../db', () => ({ getDatabase: () => ({}) }));
 vi.mock('../../../db/repos/chats', () => ({
@@ -35,6 +36,7 @@ vi.mock('../../../analytics', () => ({ trackWorkspaceArchived: trackWorkspaceArc
 vi.mock('../../../socket/executor', () => ({
   clearCodexSession: clearCodexSessionMock,
   abortActiveExecutionsForSubChats: vi.fn(),
+  abortActiveExecutionsForChat: abortActiveExecutionsForChatMock,
 }));
 vi.mock('../../../terminal/manager', () => ({
   terminalManager: { killByWorkspaceId: killByWorkspaceIdMock },
@@ -236,7 +238,7 @@ describe('archiveRouter (local-first)', () => {
       });
     });
 
-    it('aborts running executions before tearing the worktree down even if the sub-chat lookup fails', async () => {
+    it('skips worktree teardown when the sub-chat lookup fails, since live runs cannot be proven stopped', async () => {
       const { listSubChatsByChat } = await import('../../../db/repos/sub-chats');
       vi.mocked(listSubChatsByChat).mockRejectedValue(new Error('database is locked'));
       tearDownChatWorktreeMock.mockResolvedValue(true);
@@ -292,6 +294,311 @@ describe('archiveRouter (local-first)', () => {
       await flushTeardown();
 
       expect(tearDownChatWorktreeMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  /** sc-682: nothing may keep running after archive — sweep by chat id, write, then doom sends still
+   * mid-admission and sweep again. */
+  describe("stopping the chat's agents", () => {
+    const load = async () => {
+      const { archiveRouter } = await import('./archive');
+      const registry = await import('../../../socket/streaming/execution-registry');
+      return { caller: archiveRouter.createCaller({ getWindow: () => null }), registry };
+    };
+    const archived = (id: string) => makeLocalChat({ id, archivedAt: new Date() });
+    const archiveC1 = (caller: Awaited<ReturnType<typeof load>>['caller']) =>
+      caller.archive({ id: 'c1', deleteWorktree: false, killTerminals: false });
+
+    it('sweeps, writes, then dooms sends mid-admission and sweeps again', async () => {
+      const { caller, registry } = await load();
+      const midAdmission = registry.openAdmission('c1');
+      const order: string[] = [];
+      getChatByIdLocalMock.mockResolvedValue(makeLocalChat({ id: 'c1' }));
+      abortActiveExecutionsForChatMock.mockImplementation(() => order.push('sweep'));
+      archiveChatLocalMock.mockImplementation(async () => {
+        // A send holding the pre-archive row is only doomed once archived_at has landed.
+        order.push(midAdmission.doomed ? 'write(doomed)' : 'write');
+        return archived('c1');
+      });
+
+      await archiveC1(caller);
+
+      expect(order).toEqual(['sweep', 'write', 'sweep']);
+      expect(midAdmission.doomed).toBe(true);
+    });
+
+    it("still stops the chat's agents when the sub-chat lookup fails", async () => {
+      const { listSubChatsByChat } = await import('../../../db/repos/sub-chats');
+      vi.mocked(listSubChatsByChat).mockRejectedValue(new Error('database is locked'));
+      getChatByIdLocalMock.mockResolvedValue(makeLocalChat({ id: 'c1' }));
+      archiveChatLocalMock.mockResolvedValue(archived('c1'));
+      const { caller } = await load();
+
+      await archiveC1(caller);
+
+      expect(abortActiveExecutionsForChatMock).toHaveBeenCalledWith('c1', 'chat archived');
+    });
+
+    it("still stops the chat's agents when the chat row read fails", async () => {
+      getChatByIdLocalMock.mockRejectedValue(new Error('database is locked'));
+      archiveChatLocalMock.mockResolvedValue(archived('c1'));
+      const { caller } = await load();
+
+      await archiveC1(caller);
+
+      expect(abortActiveExecutionsForChatMock).toHaveBeenCalledWith('c1', 'chat archived');
+    });
+
+    it('neither dooms nor re-sweeps when there was no chat to archive', async () => {
+      getChatByIdLocalMock.mockResolvedValue(null);
+      archiveChatLocalMock.mockResolvedValue(null);
+      const { caller, registry } = await load();
+      const midAdmission = registry.openAdmission('c1');
+
+      await archiveC1(caller);
+
+      expect(midAdmission.doomed).toBe(false);
+      expect(abortActiveExecutionsForChatMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not doom sends when the archive write fails', async () => {
+      getChatByIdLocalMock.mockResolvedValue(makeLocalChat({ id: 'c1' }));
+      archiveChatLocalMock.mockRejectedValue(new Error('disk full'));
+      const { caller, registry } = await load();
+      const midAdmission = registry.openAdmission('c1');
+
+      await expect(archiveC1(caller)).rejects.toThrow('disk full');
+
+      // The chat is still active, so a send mid-admission must go through.
+      expect(midAdmission.doomed).toBe(false);
+    });
+
+    it('makes a concurrent restore wait for the archive write', async () => {
+      const order: string[] = [];
+      let finishWrite: () => void = () => {};
+      getChatByIdLocalMock.mockResolvedValue(makeLocalChat({ id: 'c1' }));
+      archiveChatLocalMock.mockReturnValue(
+        new Promise((resolve) => {
+          finishWrite = () => {
+            order.push('write');
+            resolve(archived('c1'));
+          };
+        }),
+      );
+      unarchiveChatLocalMock.mockImplementation(async () => {
+        order.push('unarchive');
+        return makeLocalChat({ id: 'c1', archivedAt: null });
+      });
+      const { caller } = await load();
+
+      const archiving = archiveC1(caller);
+      await vi.waitFor(() => expect(archiveChatLocalMock).toHaveBeenCalled());
+      const restoring = caller.restore({ id: 'c1' });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(unarchiveChatLocalMock).not.toHaveBeenCalled();
+
+      finishWrite();
+      await Promise.all([archiving, restoring]);
+
+      expect(order).toEqual(['write', 'unarchive']);
+    });
+
+    it('archiveOutcome waits for an in-flight archive before reporting it (renderer reload)', async () => {
+      let finishWrite: () => void = () => {};
+      let written = false;
+      getChatByIdLocalMock.mockImplementation(async () =>
+        makeLocalChat({ id: 'c1', archivedAt: written ? new Date() : null }),
+      );
+      archiveChatLocalMock.mockReturnValue(
+        new Promise((resolve) => {
+          finishWrite = () => {
+            written = true;
+            resolve(archived('c1'));
+          };
+        }),
+      );
+      const { caller } = await load();
+
+      const archiving = archiveC1(caller);
+      await vi.waitFor(() => expect(archiveChatLocalMock).toHaveBeenCalled());
+      let outcome: unknown;
+      const asking = caller.archiveOutcome({ id: 'c1' }).then((value) => {
+        outcome = value;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      // Reading now would see the pre-archive row and release the restored queue too early.
+      expect(outcome).toBeUndefined();
+
+      finishWrite();
+      await Promise.all([archiving, asking]);
+      expect(outcome).toEqual({ archived: true });
+    });
+
+    it('archiveOutcome reports a missing chat as null and an active one as not archived', async () => {
+      const { caller } = await load();
+      getChatByIdLocalMock.mockResolvedValueOnce(null);
+      await expect(caller.archiveOutcome({ id: 'gone' })).resolves.toBeNull();
+      getChatByIdLocalMock.mockResolvedValueOnce(makeLocalChat({ id: 'c1', archivedAt: null }));
+      await expect(caller.archiveOutcome({ id: 'c1' })).resolves.toEqual({ archived: false });
+    });
+
+    it('makes a restore issued before the archive write wait for the whole archive', async () => {
+      // A restore finishing during archive's pre-write awaits would be silently overwritten.
+      const order: string[] = [];
+      let finishFlowCancel: () => void = () => {};
+      getChatByIdLocalMock.mockResolvedValue(makeLocalChat({ id: 'c1' }));
+      cancelFlowRunsForChatMock.mockReturnValue(
+        new Promise<void>((resolve) => {
+          finishFlowCancel = resolve;
+        }),
+      );
+      archiveChatLocalMock.mockImplementation(async () => {
+        order.push('archive-write');
+        return archived('c1');
+      });
+      unarchiveChatLocalMock.mockImplementation(async () => {
+        order.push('unarchive');
+        return makeLocalChat({ id: 'c1', archivedAt: null });
+      });
+      const { caller } = await load();
+
+      const archiving = archiveC1(caller);
+      await vi.waitFor(() => expect(cancelFlowRunsForChatMock).toHaveBeenCalled());
+      const restoring = caller.restore({ id: 'c1' });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(unarchiveChatLocalMock).not.toHaveBeenCalled();
+
+      finishFlowCancel();
+      await Promise.all([archiving, restoring]);
+
+      expect(order).toEqual(['archive-write', 'unarchive']);
+    });
+
+    it('makes a restore wait for every overlapping archive of the same chat', async () => {
+      let finishFirst: () => void = () => {};
+      getChatByIdLocalMock.mockResolvedValue(makeLocalChat({ id: 'c1' }));
+      cancelFlowRunsForChatMock
+        .mockReturnValueOnce(
+          new Promise<void>((resolve) => {
+            finishFirst = resolve;
+          }),
+        )
+        .mockResolvedValue(undefined);
+      archiveChatLocalMock.mockResolvedValue(archived('c1'));
+      unarchiveChatLocalMock.mockResolvedValue(makeLocalChat({ id: 'c1', archivedAt: null }));
+      const { caller } = await load();
+
+      const slow = archiveC1(caller);
+      await vi.waitFor(() => expect(cancelFlowRunsForChatMock).toHaveBeenCalledTimes(1));
+      // A second pane's archive of the same chat finishes first; the first is still pending.
+      await archiveC1(caller);
+      const restoring = caller.restore({ id: 'c1' });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(unarchiveChatLocalMock).not.toHaveBeenCalled();
+
+      finishFirst();
+      await Promise.all([slow, restoring]);
+      expect(unarchiveChatLocalMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('archiveBatch sweeps every chat even when one sub-chat lookup fails, then dooms each', async () => {
+      const { listSubChatsByChat } = await import('../../../db/repos/sub-chats');
+      vi.mocked(listSubChatsByChat).mockImplementation(async (_db, chatId) => {
+        if (chatId === 'c2') throw new Error('database is locked');
+        return [];
+      });
+      archiveChatLocalMock.mockImplementation(async (_db: unknown, id: string) => archived(id));
+      const { caller, registry } = await load();
+      const midAdmission = registry.openAdmission('c2');
+
+      await caller.archiveBatch({ chatIds: ['c1', 'c2'] });
+
+      const swept = abortActiveExecutionsForChatMock.mock.calls.map(([id]) => id);
+      // Pre-write sweep for both, then a post-write sweep for both archived chats.
+      expect(swept.sort()).toEqual(['c1', 'c1', 'c2', 'c2']);
+      expect(midAdmission.doomed).toBe(true);
+    });
+
+    it('archiveBatch dooms each chat as soon as its own write lands, not after the slowest', async () => {
+      let finishSlow: () => void = () => {};
+      archiveChatLocalMock.mockImplementation((_db: unknown, id: string) =>
+        id === 'fast'
+          ? Promise.resolve(archived(id))
+          : new Promise((resolve) => {
+              finishSlow = () => resolve(archived(id));
+            }),
+      );
+      const { caller, registry } = await load();
+      const fastSend = registry.openAdmission('fast');
+
+      const batch = caller.archiveBatch({ chatIds: ['fast', 'slow'] });
+      await vi.waitFor(() => expect(fastSend.doomed).toBe(true));
+
+      finishSlow();
+      await batch;
+    });
+
+    it('archiveBatch dooms only the chats that were archived', async () => {
+      archiveChatLocalMock.mockResolvedValueOnce(archived('c1')).mockResolvedValueOnce(null);
+      const { caller, registry } = await load();
+      const archivedSend = registry.openAdmission('c1');
+      const missingSend = registry.openAdmission('missing');
+
+      await caller.archiveBatch({ chatIds: ['c1', 'missing'] });
+
+      expect(archivedSend.doomed).toBe(true);
+      expect(missingSend.doomed).toBe(false);
+    });
+
+    it('archiveBatch settles every write before rejecting, so restore waits for slow siblings', async () => {
+      // One failed write must not release restore while a sibling's write is still landing.
+      let finishSlow: () => void = () => {};
+      archiveChatLocalMock.mockImplementation((_db: unknown, id: string) =>
+        id === 'bad'
+          ? Promise.reject(new Error('write failed'))
+          : new Promise((resolve) => {
+              finishSlow = () => resolve(archived(id));
+            }),
+      );
+      unarchiveChatLocalMock.mockResolvedValue(makeLocalChat({ id: 'slow', archivedAt: null }));
+      const { caller, registry } = await load();
+      const slowSend = registry.openAdmission('slow');
+
+      const batch = caller.archiveBatch({ chatIds: ['bad', 'slow'] });
+      batch.catch(() => {});
+      await vi.waitFor(() => expect(archiveChatLocalMock).toHaveBeenCalledTimes(2));
+      const restoring = caller.restore({ id: 'slow' });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(unarchiveChatLocalMock).not.toHaveBeenCalled();
+
+      finishSlow();
+      await expect(batch).rejects.toThrow('write failed');
+      await restoring;
+      expect(unarchiveChatLocalMock).toHaveBeenCalledTimes(1);
+      // The sibling that did archive still had its late sends doomed and swept.
+      expect(slowSend.doomed).toBe(true);
+    });
+
+    it('archiveBatch makes a concurrent restore of one of its chats wait', async () => {
+      let finishWrites: () => void = () => {};
+      const writesGate = new Promise<void>((resolve) => {
+        finishWrites = resolve;
+      });
+      archiveChatLocalMock.mockImplementation(async (_db: unknown, id: string) => {
+        await writesGate;
+        return archived(id);
+      });
+      unarchiveChatLocalMock.mockResolvedValue(makeLocalChat({ id: 'c2', archivedAt: null }));
+      const { caller } = await load();
+
+      const archiving = caller.archiveBatch({ chatIds: ['c1', 'c2'] });
+      const restoring = caller.restore({ id: 'c2' });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(unarchiveChatLocalMock).not.toHaveBeenCalled();
+
+      finishWrites();
+      await Promise.all([archiving, restoring]);
+      expect(unarchiveChatLocalMock).toHaveBeenCalledTimes(1);
     });
   });
 

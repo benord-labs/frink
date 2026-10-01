@@ -25,6 +25,11 @@ type MessageQueueState = {
   // Map: subChatId -> parent chat id, recorded on enqueue so a chat's queues can be pruned when it
   // is archived or deleted even after a reload, when agentChatStore no longer knows the sub-chat.
   chatIds: Record<string, string>;
+  // Map: parent chatId -> number of in-flight archives holding its sub-chats' queues. Counted, so
+  // one pane's archive settling cannot release a hold another pane's archive still needs.
+  heldChatIds: Record<string, number>;
+  // Map: subChatId -> times its queue was cleared; an in-flight send checks it before requeueing.
+  clearEpochs: Record<string, number>;
 
   // Actions
   addToQueue: (subChatId: string, item: AgentQueueItem) => void;
@@ -35,6 +40,7 @@ type MessageQueueState = {
   clearQueue: (subChatId: string) => void;
   // Drop every queue (and editing flag) belonging to a parent chat.
   clearQueuesForChat: (chatId: string) => void;
+  getClearEpoch: (subChatId: string) => number;
   // Returns and removes the item for sending (atomic). Null for a turn held for lost attachments.
   popItem: (subChatId: string, itemId: string) => AgentQueueItem | null;
   // Add item to front of queue (for error recovery)
@@ -44,6 +50,10 @@ type MessageQueueState = {
   reorderVisibleQueue: (subChatId: string, fromIndex: number, toIndex: number) => void;
   // Set or clear the per-subchat editing item id.
   setEditingItemId: (subChatId: string, itemId: string | null) => void;
+  // Pause auto-send for every sub-chat of these parent chats (archive in flight).
+  holdChats: (chatIds: readonly string[]) => void;
+  releaseChats: (chatIds: readonly string[]) => void;
+  isChatHeld: (chatId: string | undefined) => boolean;
 };
 
 /** A turn that becomes the head while main only finalizes the last one goes the moment main settles
@@ -77,6 +87,13 @@ function withChatId(chatIds: Record<string, string>, subChatId: string): Record<
   return { ...chatIds, [subChatId]: chatId };
 }
 
+/** In-memory only (not persisted): a reload has no in-flight send left to requeue. */
+function bumpEpochs(epochs: Record<string, number>, subChatIds: string[]): Record<string, number> {
+  const next = { ...epochs };
+  for (const subChatId of subChatIds) next[subChatId] = (next[subChatId] ?? 0) + 1;
+  return next;
+}
+
 function without<T>(map: Record<string, T>, keys: string[]): Record<string, T> {
   if (!keys.some((key) => Object.hasOwn(map, key))) return map;
   const next = { ...map };
@@ -84,7 +101,8 @@ function without<T>(map: Record<string, T>, keys: string[]): Record<string, T> {
   return next;
 }
 
-type PersistedQueueState = Pick<MessageQueueState, 'queues' | 'editingItemIds' | 'chatIds'>;
+type PersistedQueueState = Pick<MessageQueueState, 'queues' | 'editingItemIds' | 'chatIds'> &
+  Partial<Pick<MessageQueueState, 'heldChatIds'>>;
 
 /** A restored image keeps only its inline data: its blob: url died with the old document. */
 function reviveItem(raw: AgentQueueItem): AgentQueueItem {
@@ -190,7 +208,15 @@ export function reviveQueueState(persisted: unknown): PersistedQueueState {
     queues[subChatId]?.some((item) => item.id === itemId),
   );
   const chatIds = restoredLinks(source.chatIds, (subChatId) => subChatId in queues);
-  return { queues, editingItemIds, chatIds };
+  // An archive in flight at reload: one hold per chat until reconcileRestoredHolds settles it.
+  const heldChatIds: Record<string, number> = {};
+  for (const [chatId, count] of entriesOf(source.heldChatIds)) if (count) heldChatIds[chatId] = 1;
+  return {
+    queues,
+    editingItemIds,
+    chatIds,
+    ...(Object.keys(heldChatIds).length && { heldChatIds }),
+  };
 }
 
 function entriesOf(value: unknown): [string, unknown][] {
@@ -222,7 +248,8 @@ function persistedSlice(state: MessageQueueState): PersistedQueueState {
   for (const [subChatId, chatId] of Object.entries(state.chatIds)) {
     if (queues[subChatId]) chatIds[subChatId] = chatId;
   }
-  return { queues, editingItemIds, chatIds };
+  const held = Object.keys(state.heldChatIds).length ? { heldChatIds: state.heldChatIds } : {};
+  return { queues, editingItemIds, chatIds, ...held };
 }
 
 let quotaWarned = false;
@@ -263,6 +290,8 @@ export const useMessageQueueStore = create<MessageQueueState>()(
       queues: {},
       editingItemIds: {},
       chatIds: {},
+      heldChatIds: {},
+      clearEpochs: {},
 
       addToQueue: (subChatId, item) => {
         set((state) => {
@@ -308,8 +337,11 @@ export const useMessageQueueStore = create<MessageQueueState>()(
           queues: without(state.queues, [subChatId]),
           editingItemIds: without(state.editingItemIds, [subChatId]),
           chatIds: without(state.chatIds, [subChatId]),
+          clearEpochs: bumpEpochs(state.clearEpochs, [subChatId]),
         }));
       },
+
+      getClearEpoch: (subChatId) => get().clearEpochs[subChatId] ?? 0,
 
       clearQueuesForChat: (chatId) => {
         set((state) => {
@@ -321,6 +353,7 @@ export const useMessageQueueStore = create<MessageQueueState>()(
             queues: without(state.queues, subChatIds),
             editingItemIds: without(state.editingItemIds, subChatIds),
             chatIds: without(state.chatIds, subChatIds),
+            clearEpochs: bumpEpochs(state.clearEpochs, subChatIds),
           };
         });
       },
@@ -411,6 +444,30 @@ export const useMessageQueueStore = create<MessageQueueState>()(
           };
         });
       },
+
+      holdChats: (chatIds) => {
+        if (chatIds.length === 0) return;
+        set((state) => {
+          const heldChatIds = { ...state.heldChatIds };
+          for (const chatId of chatIds) heldChatIds[chatId] = (heldChatIds[chatId] ?? 0) + 1;
+          return { heldChatIds };
+        });
+      },
+
+      releaseChats: (chatIds) => {
+        if (chatIds.length === 0) return;
+        set((state) => {
+          const heldChatIds = { ...state.heldChatIds };
+          for (const chatId of chatIds) {
+            const remaining = (heldChatIds[chatId] ?? 0) - 1;
+            if (remaining > 0) heldChatIds[chatId] = remaining;
+            else delete heldChatIds[chatId];
+          }
+          return { heldChatIds };
+        });
+      },
+
+      isChatHeld: (chatId) => (chatId ? (get().heldChatIds[chatId] ?? 0) > 0 : false),
     })),
     {
       name: MESSAGE_QUEUE_STORAGE_KEY,

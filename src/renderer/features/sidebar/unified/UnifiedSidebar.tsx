@@ -45,6 +45,7 @@ import {
   MAX_PANES,
   useSplitViewActions,
 } from '../../agents/hooks/use-split-view';
+import { useQueueHeldArchiveRef } from '../../agents/lib/archive-queue-hold';
 import { filesSidebarOpenAtom } from '../../files-sidebar/atoms';
 import { InsetGlassSidebarShell } from '../inset-glass-sidebar-shell';
 import {
@@ -585,8 +586,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
     const createFolder = trpc.projects.createFolder.useMutation();
 
     /** tRPC mutation return objects are often new references each render; refs keep downstream useCallbacks stable. */
-    const archiveChatMutRef = useRef(archiveChat);
-    archiveChatMutRef.current = archiveChat;
+    const heldArchiveMutRef = useQueueHeldArchiveRef(archiveChat);
     const restoreChatMutRef = useRef(restoreChat);
     restoreChatMutRef.current = restoreChat;
     const deleteChatMutRef = useRef(deleteChat);
@@ -1150,7 +1150,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
       async (chatId: string, options?: { killTerminals?: boolean }) => {
         // Clear panes eagerly before async mutation to avoid stale splitView snapshot
         clearPanesForChat(chatId);
-        await archiveChatMutRef.current.mutateAsync({
+        await heldArchiveMutRef.current.mutateAsync({
           id: chatId,
           ...(options?.killTerminals !== undefined ? { killTerminals: options.killTerminals } : {}),
         });
@@ -1390,7 +1390,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
       setSelectedChatId,
       setShowArchived,
       deleteMutRef: deleteChatMutRef,
-      archiveMutRef: archiveChatMutRef,
+      archiveMutRef: heldArchiveMutRef,
       moveOne: handleMoveChat,
       getActiveLinkedTasks: getActiveLinkedTasksForChatIdsWithFallback,
       openTaskAwareDialog: setTaskAwareActionDialog,

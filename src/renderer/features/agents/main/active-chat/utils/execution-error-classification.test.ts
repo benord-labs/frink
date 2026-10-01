@@ -15,6 +15,8 @@ describe('isExecutionLevelFailure', () => {
       'MACHINE_OFFLINE',
       'FLOW_RUN_ENDED',
       'LOGIN_REMOVED',
+      // Archive decline (sc-682): the run never started, so the task must not be failed.
+      'CHAT_ARCHIVED',
     ];
 
     for (const category of excluded) {

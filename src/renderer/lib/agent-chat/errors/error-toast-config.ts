@@ -91,6 +91,11 @@ export const ERROR_TOAST_CONFIG: Record<
     description: 'Retry the chat with another login, or add one.',
     toastId: 'login-removed',
   },
+  CHAT_ARCHIVED: {
+    title: 'Chat is archived',
+    description: 'Restore the chat from the archive to keep working in it.',
+    toastId: 'chat-archived',
+  },
 };
 
 /** Per-sub-chat dedup id for a category's toast: repeats replace, sibling chats don't collide. */
@@ -107,6 +112,8 @@ const NON_RETRYABLE_CHAT_ERROR_CATEGORIES = new Set([
   // A send declined because the flow run already ended can only fail identically on retry;
   // recovery is the interrupted-run controls (Re-run step), not a resend.
   'FLOW_RUN_ENDED',
+  // Declined because the chat was archived; a resend fails identically until it is restored.
+  'CHAT_ARCHIVED',
   // Decline-and-convert: the message is already the continuation payload — the re-admitted
   // run delivers it; a resend would fail identically and then double-deliver.
   'FLOW_RUN_RESUMING',

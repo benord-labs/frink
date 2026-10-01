@@ -122,6 +122,46 @@ export function listActiveExecutionHeaders(): Array<{
   }));
 }
 
+/** Sub-chats with a live run for `chatId`, read from the registry alone (no DB round-trip). */
+export function listSubChatIdsForChat(chatId: string): string[] {
+  const subChatIds: string[] = [];
+  for (const [subChatId, record] of activeExecutions) {
+    if (record.chatId === chatId) subChatIds.push(subChatId);
+  }
+  return subChatIds;
+}
+
+/** A send between its chat-row read and registration. Archive dooms these once archived_at lands, so
+ * one that read the pre-archive row still declines. Held only for the admission, so bounded. */
+export type AdmissionToken = { chatId: string; doomed: boolean };
+const admissions = new Set<AdmissionToken>();
+
+export function openAdmission(chatId: string): AdmissionToken {
+  const token = { chatId, doomed: false };
+  admissions.add(token);
+  return token;
+}
+
+export function closeAdmission(token: AdmissionToken): void {
+  admissions.delete(token);
+}
+
+export function doomAdmissionsForChat(chatId: string): void {
+  for (const token of admissions) if (token.chatId === chatId) token.doomed = true;
+}
+
+/** Why a send must not start: its chat row was unreadable (retryable), or the chat is archived. */
+export function admissionDeclineError(
+  chatReadFailed: boolean,
+  token: AdmissionToken | null,
+  archivedAt: unknown,
+): (Error & { category?: string }) | null {
+  if (chatReadFailed) return new Error('Could not read this chat. Try again.');
+  if (!token?.doomed && !archivedAt) return null;
+  const error = new Error('This chat is archived. Restore it to continue.');
+  return Object.assign(error, { category: 'CHAT_ARCHIVED' });
+}
+
 /** A window navigated away from its document (dev full reload): its transports are gone. */
 export function releaseExecutionOwnershipForWebContents(webContentsId: number): void {
   for (const record of activeExecutions.values()) {
@@ -136,8 +176,14 @@ export function _registerExecutionForTests(
   subChatId: string,
   controller: AbortController,
   localRendererWebContentsId?: number,
+  chatId?: string,
 ): void {
-  setActiveExecution(subChatId, controller, localRendererWebContentsId);
+  setActiveExecution(
+    subChatId,
+    controller,
+    localRendererWebContentsId,
+    chatId ? { chatId, assistantMessageId: `test-${subChatId}` } : undefined,
+  );
 }
 
 /** Test-only: probe the activeExecutions map. */
@@ -153,4 +199,5 @@ export function _getActiveExecutionCountForTests(): number {
 /** Test-only: clear any seeded entries between tests. */
 export function _clearActiveExecutionsForTests(): void {
   activeExecutions.clear();
+  admissions.clear();
 }

@@ -8,15 +8,21 @@ import { ERROR_TOAST_CONFIG, shouldPersistChatRetry, toastDedupId } from './erro
 // silently rolls the typed message back or stacks toasts (see execution-error-classification
 // and task-execution-error-signal for the other registries).
 describe('flow-run decline categories', () => {
-  it.each(['FLOW_RUN_ENDED', 'FLOW_RUN_RESUMING'])('%s is toast-deduped', (category) => {
-    const config = ERROR_TOAST_CONFIG[category];
-    expect(config?.toastId).toBeTruthy();
-    expect(toastDedupId(config, 'sub-1').id).toBe(`${config?.toastId}:sub-1`);
-  });
+  it.each(['FLOW_RUN_ENDED', 'FLOW_RUN_RESUMING', 'CHAT_ARCHIVED'])(
+    '%s is toast-deduped',
+    (category) => {
+      const config = ERROR_TOAST_CONFIG[category];
+      expect(config?.toastId).toBeTruthy();
+      expect(toastDedupId(config, 'sub-1').id).toBe(`${config?.toastId}:sub-1`);
+    },
+  );
 
-  it.each(['FLOW_RUN_ENDED', 'FLOW_RUN_RESUMING'])('%s never persists a chat retry', (category) => {
-    expect(shouldPersistChatRetry(category)).toBe(false);
-  });
+  it.each(['FLOW_RUN_ENDED', 'FLOW_RUN_RESUMING', 'CHAT_ARCHIVED'])(
+    '%s never persists a chat retry',
+    (category) => {
+      expect(shouldPersistChatRetry(category)).toBe(false);
+    },
+  );
 
   it('unknown categories stay retryable', () => {
     expect(shouldPersistChatRetry('SOMETHING_ELSE')).toBe(true);

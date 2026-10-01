@@ -497,3 +497,26 @@ describe('reviveQueueState', () => {
     expect(reviveQueueState(input)).toEqual({ queues: {}, editingItemIds: {}, chatIds: {} });
   });
 });
+
+// sc-682: a reload while an archive is in flight must not release its queue before main has said
+// whether the archive landed (reconcileRestoredHolds settles it).
+describe('archive holds across a reload', () => {
+  beforeEach(resetStore);
+
+  it('persists a held chat and restores it as a single hold', async () => {
+    useMessageQueueStore.getState().addToQueue(SUB_A, createQueueItem('q', 'follow-up'));
+    useMessageQueueStore.getState().holdChats(['chat-a']);
+    useMessageQueueStore.getState().holdChats(['chat-a']);
+
+    await reload();
+
+    expect(useMessageQueueStore.getState().heldChatIds).toEqual({ 'chat-a': 1 });
+    expect(useMessageQueueStore.getState().isChatHeld('chat-a')).toBe(true);
+  });
+
+  it('drops malformed or zero hold counts on revive', () => {
+    const state = reviveQueueState({ heldChatIds: { a: 0, b: 'x', c: 3 } });
+
+    expect(state.heldChatIds).toEqual({ b: 1, c: 1 });
+  });
+});
