@@ -13,6 +13,7 @@ import {
 import { captureMainException } from '../../sentry/init';
 import { sendMessage, sendStop } from '../../socket';
 import { prewarmClaudeSession } from '../../socket/execution/claude-session/prewarm';
+import { stopBackgroundTask } from '../../socket/execution/claude-session/stop-background-task';
 import { listWakeHolds } from '../../socket/execution/wake-hold-registry-view';
 import { steerActiveTurn } from '../../socket/steering';
 import { getLiveStreamSeed, listLiveStreamHeaders } from '../../socket/streaming/live-stream';
@@ -213,4 +214,9 @@ export const socketRouter = router({
         };
       }
     }),
+
+  /** Stop ONE background task of a held chat; the rest of its wait keeps running. */
+  stopBackgroundTask: publicProcedure
+    .input(z.object({ subChatId: z.string().min(1), taskId: z.string().min(1) }))
+    .mutation(({ input }) => stopBackgroundTask(input.subChatId, input.taskId)),
 });

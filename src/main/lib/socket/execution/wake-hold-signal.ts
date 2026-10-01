@@ -36,23 +36,28 @@ const BACKGROUND_TASK_LABELS = new Map<string, string>([
   ['workflow', 'Workflow'],
 ]);
 
-/**
- * Name what a wait is blocked on, for the held row.
- *
- * Publishes the task KIND only — never a task's description, command line or cron prompt. Those are
- * free text the CLI caps at 1000 chars and which routinely carry file paths and arguments, and the
- * held row has no room to render them honestly. Because every label comes from the table above or
- * the neutral fallback, the published strings are bounded by construction: `type` is documented as
- * falling back to a raw discriminant for kinds this build has never heard of, so an unknown kind
- * must not reach the UI verbatim.
- */
+/** Kinds whose `stopTask` was checked against the CLI (a stopped shell or workflow ends silently, a
+ * subagent wakes the model). Monitor-tool watches run as shells; MCP 'monitor' is unchecked. */
+export const STOPPABLE_TASK_TYPES: ReadonlySet<string> = new Set(['shell', 'subagent', 'workflow']);
+
+/** Name what a wait is blocked on. Labels stay bounded (table or fallback, never a raw `type`);
+ * descriptions and commands are free text for the list to render, and are never logged. */
 export function summarizePendingWork(work: StopPendingWork): WakeHoldState {
   return {
     waitingOn: [
-      ...work.backgroundTasks.map(
-        (task) => BACKGROUND_TASK_LABELS.get(task.type) ?? 'Background task',
-      ),
-      ...work.sessionCrons.map(() => 'Scheduled wake'),
+      ...work.backgroundTasks.map((task) => ({
+        id: task.id,
+        label: BACKGROUND_TASK_LABELS.get(task.type) ?? 'Background task',
+        description: task.name ?? task.description,
+        ...(task.command ? { command: task.command } : {}),
+        stoppable: STOPPABLE_TASK_TYPES.has(task.type),
+      })),
+      ...work.sessionCrons.map((cron) => ({
+        id: cron.id,
+        label: 'Scheduled wake',
+        description: cron.prompt,
+        stoppable: false,
+      })),
     ],
   };
 }
@@ -136,7 +141,10 @@ function disposeCause(
 function adoptedTurnDisposition(cause: string | null, session: TurnEndSession): string {
   const pendingWork = session.stopHook?.lastPendingWork;
   if (cause) return `disposed (${cause})`;
-  if (pendingWork) return `re-armed (${summarizePendingWork(pendingWork).waitingOn.join(', ')})`;
+  if (pendingWork) {
+    const labels = summarizePendingWork(pendingWork).waitingOn.map((item) => item.label);
+    return `re-armed (${labels.join(', ')})`;
+  }
   const why = session.stopHook?.stoppedSinceReset ? 'no pending work' : 'no Stop snapshot';
   return `not re-armed (${why})`;
 }

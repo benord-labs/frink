@@ -3,6 +3,7 @@ import log from 'electron-log';
 import { captureMainMessage } from '../../sentry/init';
 import type { ClaudeSession } from '../claude-session-registry';
 import { clearSubagentTasks } from '../streaming/subagent-task-status';
+import type { WakePumpCallbacks } from './wake-pump-types';
 
 /**
  * What happens when a wait is over: settle its ADVERTISEMENT, close stdin, and keep reading.
@@ -86,4 +87,31 @@ export function beginWaitOverDrain(params: {
       timer = null;
     },
   };
+}
+
+/** What the wait-over latch reads and writes of a wake arming. */
+type LatchableArming = {
+  phase: 'idle' | 'burst';
+  drain: WaitOverDrain | null;
+  takeover: unknown;
+  ended: unknown;
+  callbacks: Pick<WakePumpCallbacks, 'isWorkFinished' | 'onWaitOver'>;
+};
+
+/** Latch the wait over once its work is finished: idle, nothing queued to take over, latched once,
+ * and only while this arming is still the session's own. */
+export function settleIfWorkFinished(
+  session: ClaudeSession,
+  arming: LatchableArming,
+  releaseBusy: () => void,
+): void {
+  if (arming.phase !== 'idle' || arming.takeover || arming.drain || arming.ended) return;
+  if (session.loop.arming !== arming || !arming.callbacks.isWorkFinished()) return;
+  session.loop.closeExpected = true;
+  arming.drain = beginWaitOverDrain({
+    session,
+    retract: arming.callbacks.onWaitOver,
+    releaseBusy,
+    isBurstOpen: () => arming.phase === 'burst',
+  });
 }

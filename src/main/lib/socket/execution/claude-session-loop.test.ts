@@ -355,6 +355,54 @@ describe('a wait that is over', () => {
     expect((await arming.done).reason).toBe('work-finished');
   });
 
+  // A user-stopped shell or workflow runs no turn, so nothing would ever re-check the wait.
+  it('ends an idle wait on request once its work is finished, and only then', async () => {
+    const ch = channelQuery();
+    const session = createSession('settle', () => ch.query);
+    const log = newLog();
+    let finished = false;
+    const arming = armIdle(
+      session,
+      wakeCallbacks(log, () => finished),
+    );
+
+    arming.settleIfWorkFinished();
+    expect(log.waitOvers).toBe(0);
+
+    ch.emit(msg('assistant')); // a burst is open: its own result decides
+    await vi.waitFor(() => expect(log.starts).toBe(1));
+    finished = true;
+    arming.settleIfWorkFinished();
+    expect(log.waitOvers).toBe(0);
+
+    ch.emit(resultMsg());
+    await vi.waitFor(() => expect(log.waitOvers).toBe(1));
+    arming.settleIfWorkFinished(); // latched once
+    expect(log.waitOvers).toBe(1);
+    ch.end();
+    await arming.done;
+  });
+
+  it('settles at once when asked while idle with nothing left', async () => {
+    const ch = channelQuery();
+    const session = createSession('settle-idle', () => ch.query);
+    const log = newLog();
+    let finished = false;
+    const arming = armIdle(
+      session,
+      wakeCallbacks(log, () => finished),
+    );
+
+    finished = true;
+    arming.settleIfWorkFinished();
+
+    expect(log.waitOvers).toBe(1);
+    expect(session.queue.closed).toBe(true);
+    expect(session.busy).toBe(false);
+    ch.end();
+    expect((await arming.done).reason).toBe('work-finished');
+  });
+
   it('refuses to adopt once the wait is over, so the caller retries on a fresh session', async () => {
     const ch = channelQuery();
     const session = createSession('drain-adopt', () => ch.query);

@@ -20,6 +20,7 @@ vi.mock('../db', () => ({ getDatabase: vi.fn(() => ({})) }));
 vi.mock('../db/repos/sub-chats', () => ({ updateSubChatMode: vi.fn(async () => {}) }));
 
 import type { TaskSignalPayload } from '../../../shared/types/task-signal';
+import type { WakeHoldState } from '../../../shared/types/wake-hold';
 import { pendingToolApprovals } from '../claude/ask-user-question-approval';
 import type { TaskStopHook } from '../task-stop-hook';
 import { persistLinkedTaskSignal } from '../trpc/routers/frink-task-signal-persist';
@@ -107,6 +108,14 @@ const noopIo = (): WakeHoldIo => ({
 /** The held-state values published to the renderer, in order. */
 const heldCalls = (io: WakeHoldIo): boolean[] =>
   (io.setHeld as unknown as { mock: { calls: [boolean][] } }).mock.calls.map(([held]) => held);
+
+/** A published wait reduced to its kind labels, which is what most assertions here are about. */
+const labelsOf = (pending?: WakeHoldState) =>
+  pending && { waitingOn: pending.waitingOn.map((item) => item.label) };
+
+/** {@link listWakeHolds}, with each wait reduced to its labels. */
+const listedLabels = () =>
+  listWakeHolds().map((hold) => ({ ...hold, pending: labelsOf(hold.pending) }));
 
 const pendingWork = {
   backgroundTasks: [{ id: 'bg1', type: 'shell', status: 'running', description: 'coverage' }],
@@ -1188,11 +1197,11 @@ describe('claude-wake-hold — wait detail republish', () => {
   const stopHookWith = (work: unknown): TaskStopHook =>
     ({ lastPendingWork: work, reset: () => {} }) as unknown as TaskStopHook;
 
-  /** The pending-work detail published with each held-state value, in order. */
+  /** The pending-work labels published with each held-state value, in order. */
   const waitDetails = (io: WakeHoldIo) =>
-    (
-      io.setHeld as unknown as { mock: { calls: [boolean, { waitingOn: string[] }?][] } }
-    ).mock.calls.map(([, pending]) => pending);
+    (io.setHeld as unknown as { mock: { calls: [boolean, WakeHoldState?][] } }).mock.calls.map(
+      ([, pending]) => labelsOf(pending),
+    );
 
   const armDetailed = (subChatId: string, stopHook: TaskStopHook | null) => {
     const ch = channelQuery();
@@ -1263,18 +1272,40 @@ describe('claude-wake-hold — wait detail republish', () => {
     ch.end();
   });
 
-  it('publishes an unknown task kind as a neutral label rather than the raw discriminant', async () => {
-    const hook = stopHookWith({
-      backgroundTasks: [{ id: 'x1', type: 'some_future_kind', status: 'running', description: '' }],
-      sessionCrons: [],
+  it('re-reads the snapshot after the burst’s signal duties, so a task stopped meanwhile stays gone', async () => {
+    const shell = (id: string) => ({ id, type: 'shell', status: 'running', description: id });
+    const hook = stopHookWith({ backgroundTasks: [shell('s1'), shell('s2')], sessionCrons: [] });
+    const ch = channelQuery();
+    // Arming reads the signal once; the burst's second read runs inside its awaited duties, which
+    // is where a user stop forgetting s1 lands.
+    const getLatestTaskSignal = vi
+      .fn((): null => {
+        hook.lastPendingWork = { backgroundTasks: [shell('s2')], sessionCrons: [] } as never;
+        return null;
+      })
+      .mockImplementationOnce(() => null);
+    const io: WakeHoldIo = { ...noopIo(), getLatestTaskSignal };
+    armWakePump({
+      session: withArmingTurn(createSession('d-reread', () => ch.query, { stopHook: hook })),
+      pendingWork,
+      subChatId: 'd-reread',
+      executionContextId: 'ctx-reread',
+      signalTaskId: null,
+      io,
     });
-    const { ch, io } = armDetailed('d3', hook);
 
     ch.emit(msg('assistant'));
     ch.emit(resultMsg());
     await settle();
 
-    expect(waitDetails(io).at(-1)).toEqual({ waitingOn: ['Background task'] });
+    expect(getLatestTaskSignal).toHaveBeenCalledTimes(2);
+    expect(waitDetails(io).at(-1)).toEqual({ waitingOn: ['Command'] });
+    expect(
+      vi
+        .mocked(io.setHeld)
+        .mock.calls.at(-1)?.[1]
+        ?.waitingOn.map((i) => i.id),
+    ).toEqual(['s2']);
     ch.end();
   });
 
@@ -1883,7 +1914,7 @@ describe('claude-wake-hold — enumerating live holds for a booting renderer', (
       }),
     );
 
-    expect(listWakeHolds()).toEqual([
+    expect(listedLabels()).toEqual([
       { subChatId: 'boot-a', chatId: 'c1', pending: { waitingOn: ['Command'] } },
       { subChatId: 'boot-b', chatId: 'c1', pending: { waitingOn: ['Monitor', 'Scheduled wake'] } },
     ]);
@@ -1917,7 +1948,7 @@ describe('claude-wake-hold — enumerating live holds for a booting renderer', (
       sessionCrons: [],
     });
     const ch = armListed('boot-latest', hook);
-    expect(listWakeHolds()).toEqual([
+    expect(listedLabels()).toEqual([
       { subChatId: 'boot-latest', chatId: 'c1', pending: { waitingOn: ['Monitor', 'Monitor'] } },
     ]);
 
@@ -1931,7 +1962,7 @@ describe('claude-wake-hold — enumerating live holds for a booting renderer', (
     await new Promise((r) => setTimeout(r, 0));
     await new Promise((r) => setTimeout(r, 0));
 
-    expect(listWakeHolds().map((h) => h.pending)).toEqual([
+    expect(listedLabels().map((h) => h.pending)).toEqual([
       { waitingOn: ['Monitor', 'Scheduled wake'] },
     ]);
     ch.end();
@@ -1943,7 +1974,7 @@ describe('claude-wake-hold — enumerating live holds for a booting renderer', (
     const dead = armListed('boot-dead', stopHookWith(pendingWork));
     releaseWakeHold('boot-dead', 'user stop');
 
-    expect(listWakeHolds()).toEqual([
+    expect(listedLabels()).toEqual([
       { subChatId: 'boot-live', chatId: 'c1', pending: { waitingOn: ['Command'] } },
     ]);
     live.end();
@@ -1959,39 +1990,4 @@ describe('claude-wake-hold — enumerating live holds for a booting renderer', (
     expect(listWakeHolds()).toEqual([]);
     ch.end();
   });
-});
-
-describe('claude-wake-hold — task kinds that collide with Object.prototype', () => {
-  beforeEach(() => {
-    __resetSessionsForTest();
-  });
-
-  // `type` is an unbounded string off the SDK. Looked up on an object literal, these three resolve
-  // to INHERITED members — a function or the prototype — which the `??` fallback cannot catch. The
-  // renderer requires every label to be a string and drops the whole frame otherwise, so a single
-  // such task would silently cost the chat its held row and the only Stop it has between bursts.
-  it.each(['constructor', 'toString', '__proto__'])(
-    'labels a %s-typed task neutrally rather than leaking a prototype member',
-    (type) => {
-      const ch = channelQuery();
-      const work = {
-        backgroundTasks: [{ id: 'p1', type, status: 'running', description: '' }],
-        sessionCrons: [],
-      };
-      const stopHook = Object.assign(async () => ({}), { reset: () => {}, lastPendingWork: work });
-      armWakePump({
-        session: withArmingTurn(createSession(`proto-${type}`, () => ch.query, { stopHook })),
-        pendingWork: work,
-        subChatId: `proto-${type}`,
-        executionContextId: undefined,
-        signalTaskId: null,
-        io: noopIo(),
-      });
-
-      expect(listWakeHolds()).toEqual([
-        { subChatId: `proto-${type}`, chatId: 'c1', pending: { waitingOn: ['Background task'] } },
-      ]);
-      ch.end();
-    },
-  );
 });

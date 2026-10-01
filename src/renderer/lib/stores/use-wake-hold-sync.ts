@@ -1,7 +1,11 @@
 import * as Sentry from '@sentry/electron/renderer';
 import { useStore } from 'jotai';
 import { useEffect } from 'react';
-import type { WakeHoldEndReason, WakeHoldState } from '../../../shared/types/wake-hold';
+import type {
+  WakeHoldEndReason,
+  WakeHoldItem,
+  WakeHoldState,
+} from '../../../shared/types/wake-hold';
 import { trpcClient } from '../trpc';
 import { isDesktopApp } from '../utils/platform';
 import {
@@ -43,10 +47,22 @@ export function deferUntilWaitOver(subChatId: string, fire: (failed: boolean) =>
  */
 export function isWakeHoldState(value: unknown): value is WakeHoldState {
   const waitingOn = (value as Record<string, unknown> | null | undefined)?.waitingOn;
+  return Array.isArray(waitingOn) && waitingOn.length > 0 && waitingOn.every(isWakeHoldItem);
+}
+
+const isNonEmptyString = (value: unknown): value is string =>
+  typeof value === 'string' && value.length > 0;
+
+/** The id addresses a stop and the label names the row, so neither may be blank. */
+function isWakeHoldItem(value: unknown): value is WakeHoldItem {
+  if (typeof value !== 'object' || value === null) return false;
+  const item = value as Record<string, unknown>;
   return (
-    Array.isArray(waitingOn) &&
-    waitingOn.length > 0 &&
-    waitingOn.every((label) => typeof label === 'string')
+    isNonEmptyString(item.id) &&
+    isNonEmptyString(item.label) &&
+    typeof item.description === 'string' &&
+    (item.command === undefined || typeof item.command === 'string') &&
+    typeof item.stoppable === 'boolean'
   );
 }
 

@@ -19,15 +19,19 @@ const AMBIENT_IDLE_SUBTYPES = new Set([
   'task_updated',
   'task_progress',
   'task_started',
+  'background_tasks_changed',
   'session_state_changed',
   'thinking_tokens',
 ]);
 
+/**
+ * A user-stopped task's notification is ambient too: a stopped shell or workflow wakes no turn at
+ * all, and a stopped subagent's reaction turn opens its burst with its own frames.
+ */
 export function isAmbientIdleFrame(m: SDKMessage): boolean {
-  return (
-    (m as { type?: string }).type === 'system' &&
-    AMBIENT_IDLE_SUBTYPES.has((m as { subtype?: string }).subtype ?? '')
-  );
+  if (m.type !== 'system') return false;
+  if (m.subtype === 'task_notification') return m.status === 'stopped';
+  return AMBIENT_IDLE_SUBTYPES.has(m.subtype);
 }
 
 /** The CLI's echo of a live setter: `setModel` answers with a `<local-command-stdout>` user frame

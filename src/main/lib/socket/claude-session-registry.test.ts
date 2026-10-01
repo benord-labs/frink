@@ -1161,6 +1161,50 @@ describe('armIdle', () => {
     await pump.done;
   });
 
+  // The exact frames the CLI emits when the user stops one shell or workflow: no turn follows, so a
+  // burst opened on any of them would defer the next takeover forever.
+  const userStopFrames = () => [
+    msg('system', { subtype: 'background_tasks_changed', tasks: [] }),
+    msg('system', { subtype: 'task_updated', task_id: 's1' }),
+    msg('system', { subtype: 'task_notification', task_id: 's1', status: 'stopped' }),
+  ];
+
+  it('a user-stopped task at idle opens no burst, and a takeover after it pushes at once', async () => {
+    const ch = channelQuery();
+    const session = createSession('p9-stop', () => ch.query);
+    const log: BurstLog = { starts: 0, messages: [], ends: 0 };
+    const pump = armIdle(session, collectingCallbacks(log, 5));
+    for (const frame of userStopFrames()) ch.emit(frame);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(log.starts).toBe(0);
+
+    const turnSeen: string[] = [];
+    const turnDone = pump.startTurn(userTurn('hi'), (m) => {
+      turnSeen.push((m as { type: string }).type);
+    });
+    ch.emit(msg('assistant'));
+    ch.emit(resultMsg());
+    await turnDone;
+    expect(turnSeen).toEqual(['assistant', 'result']);
+    expect((await pump.done).reason).toBe('turn-taken-over');
+  });
+
+  it("a stopped subagent's reaction turn still opens its burst on its own frames", async () => {
+    const ch = channelQuery();
+    const session = createSession('p9-agent', () => ch.query);
+    const log: BurstLog = { starts: 0, messages: [], ends: 0 };
+    const pump = armIdle(session, collectingCallbacks(log, 5));
+    for (const frame of userStopFrames()) ch.emit(frame);
+    ch.emit(msg('user'));
+    ch.emit(msg('assistant'));
+    ch.emit(resultMsg());
+    await new Promise((r) => setTimeout(r, 0));
+    expect(log.starts).toBe(1);
+    expect(log.messages).toEqual(['user', 'assistant', 'result']);
+    ch.end();
+    await pump.done;
+  });
+
   it('a pump dying mid-burst REJECTS an unpushed takeover instead of silently dropping the message', async () => {
     const ch = channelQuery();
     const session = createSession('p12', () => ch.query);

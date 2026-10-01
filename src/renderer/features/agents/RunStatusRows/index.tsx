@@ -9,9 +9,11 @@ import { Button } from '@benord-labs/frink-primitives';
 import { useAtomValue } from 'jotai';
 import { Square } from 'lucide-react';
 import { toast } from 'sonner';
+import type { WakeHoldItem } from '../../../../shared/types/wake-hold';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../components/ui/tooltip';
 import { wakeHeldAtomFamily } from '../../../lib/stores/active-transport-registry';
 import { trpc } from '../../../lib/trpc';
+import { BackgroundWorkPopover } from '../BackgroundWorkPopover';
 import { InterruptedRunControls } from '../InterruptedRunControls';
 import { TaskAcceptBar, TaskControls } from '../main/active-chat/components';
 import { RunStatusRow } from '../RunStatusRow';
@@ -57,20 +59,22 @@ type RunStatusRowsProps = {
  * commands should not print the same word five times. Every label is one of a fixed set main emits,
  * so the naive plural is safe and the string is bounded.
  */
-function describeWait(waitingOn: string[]): string {
+function describeWait(waitingOn: WakeHoldItem[]): string {
   const byKind = new Map<string, number>();
-  for (const label of waitingOn) byKind.set(label, (byKind.get(label) ?? 0) + 1);
+  for (const { label } of waitingOn) byKind.set(label, (byKind.get(label) ?? 0) + 1);
   return [...byKind]
     .map(([label, count]) => `${count} ${label}${count === 1 ? '' : 's'}`)
     .join(', ');
 }
 
 function BackgroundWaitRow({
+  subChatId,
   waitingOn,
   stopTarget,
 }: {
+  subChatId: string;
   /** Non-empty — the IPC guard rejects a hold that names nothing. */
-  waitingOn: string[];
+  waitingOn: WakeHoldItem[];
   stopTarget: { chatId: string; subChatId: string } | null;
 }) {
   // Same mutation the transport's own abort fires, so a stop from here is indistinguishable from
@@ -90,7 +94,14 @@ function BackgroundWaitRow({
   return (
     <RunStatusRow
       dotClassName="bg-primary motion-safe:animate-pulse"
-      label={`Working in the background — ${describeWait(waitingOn)}`}
+      label={
+        <BackgroundWorkPopover
+          subChatId={subChatId}
+          label={`Working in the background — ${describeWait(waitingOn)}`}
+          waitingOn={waitingOn}
+          hasSessionStop={stopTarget !== null}
+        />
+      }
     >
       {stopTarget ? (
         <Tooltip delayDuration={300}>
@@ -139,6 +150,7 @@ export function RunStatusRows({
   if (wakeHold) {
     return (
       <BackgroundWaitRow
+        subChatId={subChatId}
         waitingOn={wakeHold.waitingOn}
         stopTarget={chatId && !flowSurfaceOwnsStop ? { chatId, subChatId } : null}
       />

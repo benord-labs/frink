@@ -11,7 +11,7 @@ import {
 import { drainToResult } from './claude-session/drain-to-result';
 import { logTurnTiming, noteTurnTiming, type TurnTiming } from './claude-session/turn-timing';
 import type { WakePump, WakePumpCallbacks, WakePumpExit } from './wake-pump-types';
-import { beginWaitOverDrain, type WaitOverDrain } from './wake-wait-over';
+import { settleIfWorkFinished, type WaitOverDrain } from './wake-wait-over';
 
 /**
  * The ONE consumer of a session's shared SDK generator, started with the session and living as long
@@ -297,7 +297,12 @@ export function armIdle(session: ClaudeSession, callbacks: WakePumpCallbacks): W
   // instead, and its cleanup releases the flow lease and runtime slot it carries.
   if (loop.exited) endArming(session, { reason: 'stream-ended' });
   else wakeLoop(loop);
-  return { done, isEnded: () => arming.ended !== null, startTurn: arming.startTurn };
+  return {
+    done,
+    isEnded: () => arming.ended !== null,
+    startTurn: arming.startTurn,
+    settleIfWorkFinished: () => settleIfWorkFinished(session, arming, () => clearBusy(session)),
+  };
 }
 
 async function pushTakeover(session: ClaudeSession, arming: IdleArming): Promise<void> {
@@ -420,15 +425,7 @@ async function consumeWakeFrame(
   if (arming.takeover) await pushTakeover(session, arming);
   // Evaluated strictly after the burst's own awaited duties (persist, signal) and only on a result
   // frame, so a burst parked on an unanswered question can never end the wait. Latched once.
-  else if (!arming.drain && arming.callbacks.isWorkFinished()) {
-    session.loop.closeExpected = true;
-    arming.drain = beginWaitOverDrain({
-      session,
-      retract: arming.callbacks.onWaitOver,
-      releaseBusy: () => clearBusy(session),
-      isBurstOpen: () => arming.phase === 'burst',
-    });
-  }
+  else settleIfWorkFinished(session, arming, () => clearBusy(session));
 }
 
 /** A sink threw where its own handler could not catch it (opening a burst, a realignment drain). */

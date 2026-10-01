@@ -1,11 +1,12 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render as rtlRender, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render as rtlRender, screen, within } from '@testing-library/react';
 import { createStore, Provider } from 'jotai';
 import type { ReactElement, ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TooltipProvider } from '../../../components/ui/tooltip';
 import { wakeHeldAtomFamily } from '../../../lib/stores/active-transport-registry';
+import type { WakeHoldItem } from '../../../../shared/types/wake-hold';
 import { RunStatusRows } from './index';
 
 const sendStopMutate = vi.fn();
@@ -13,8 +14,16 @@ let sendStopPending = false;
 let capturedOnSuccess: ((result: { success: boolean; reason?: string }) => void) | undefined;
 let capturedOnError: ((error: { message: string }) => void) | undefined;
 
-const { toastError } = vi.hoisted(() => ({ toastError: vi.fn() }));
-vi.mock('sonner', () => ({ toast: { error: toastError } }));
+type StopTaskResult =
+  | { ok: true }
+  | { ok: false; reason: 'ended' | 'last' | 'timeout' }
+  | { ok: false; reason: 'failed'; message: string };
+const stopTaskMutate = vi.fn();
+let stopTaskPending = false;
+let stopTaskOnSuccess: ((result: StopTaskResult) => void) | undefined;
+
+const { toastError, toastInfo } = vi.hoisted(() => ({ toastError: vi.fn(), toastInfo: vi.fn() }));
+vi.mock('sonner', () => ({ toast: { error: toastError, info: toastInfo } }));
 
 vi.mock('../../../lib/trpc', () => ({
   trpc: {
@@ -27,6 +36,12 @@ vi.mock('../../../lib/trpc', () => ({
           capturedOnSuccess = opts?.onSuccess;
           capturedOnError = opts?.onError;
           return { mutate: sendStopMutate, isPending: sendStopPending };
+        },
+      },
+      stopBackgroundTask: {
+        useMutation: (opts?: { onSuccess?: (result: StopTaskResult) => void }) => {
+          stopTaskOnSuccess = opts?.onSuccess;
+          return { mutate: stopTaskMutate, isPending: stopTaskPending };
         },
       },
     },
@@ -63,7 +78,18 @@ const renderRows = (opts?: { chatId?: string | null; flowSurfaceOwnsStop?: boole
     />,
   );
 
-const hold = (...waitingOn: string[]) => store.set(wakeHeldAtomFamily('sc1'), { waitingOn });
+const item = (label: string, id = label, extra: Partial<WakeHoldItem> = {}): WakeHoldItem => ({
+  id,
+  label,
+  description: `${label} work`,
+  stoppable: label !== 'Scheduled wake',
+  ...extra,
+});
+const holdItems = (...waitingOn: WakeHoldItem[]) =>
+  store.set(wakeHeldAtomFamily('sc1'), { waitingOn });
+const hold = (...labels: string[]) => holdItems(...labels.map((label, i) => item(label, `t${i}`)));
+const openList = () =>
+  fireEvent.click(screen.getByRole('button', { name: /Working in the background/ }));
 
 describe('RunStatusRows', () => {
   beforeEach(() => {
@@ -73,6 +99,10 @@ describe('RunStatusRows', () => {
     capturedOnError = undefined;
     sendStopMutate.mockReset();
     toastError.mockReset();
+    toastInfo.mockReset();
+    stopTaskMutate.mockReset();
+    stopTaskPending = false;
+    stopTaskOnSuccess = undefined;
   });
   afterEach(cleanup);
 
@@ -162,5 +192,84 @@ describe('RunStatusRows', () => {
 
     expect(screen.getByRole('button', { name: 'Stop waiting on background work' })).toBeDisabled();
     expect(screen.getByText('Stopping…')).toBeInTheDocument();
+  });
+  it('opens the list of every item from the label', () => {
+    holdItems(
+      item('Command', 's1', { description: 'Run the tests', command: 'bun test' }),
+      item('Workflow', 'w1', { description: 'review-pr' }),
+      item('Scheduled wake', 'c1', { description: 'Check CI' }),
+    );
+    renderRows();
+
+    openList();
+
+    expect(screen.getByText('Background work')).toBeInTheDocument();
+    expect(screen.getByText('Run the tests')).toBeInTheDocument();
+    expect(screen.getByText('bun test')).toBeInTheDocument();
+    expect(screen.getByText('review-pr')).toBeInTheDocument();
+    expect(screen.getByText('Check CI')).toBeInTheDocument();
+  });
+
+  it('stops one item, addressed by its task id', () => {
+    holdItems(
+      item('Command', 's1', { description: 'Run the tests' }),
+      item('Command', 's2', { description: 'Build the app' }),
+    );
+    renderRows();
+    openList();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Stop Command: Run the tests' }));
+
+    expect(stopTaskMutate).toHaveBeenCalledWith({ subChatId: 'sc1', taskId: 's1' });
+  });
+
+  it('offers no row Stop for a scheduled wake or an unverified kind', () => {
+    holdItems(
+      item('Command', 's1'),
+      item('Scheduled wake', 'c1'),
+      item('Monitor', 'm1', { stoppable: false }),
+    );
+    renderRows();
+    openList();
+
+    expect(within(screen.getByRole('list')).getAllByRole('button')).toHaveLength(1);
+    expect(
+      screen.getByText('Stop on the banner ends everything still running.'),
+    ).toBeInTheDocument();
+  });
+
+  // Main never ends a wait from a per-item stop, so the last item points at the stop that does.
+  it('leaves the last item to the session Stop, or to the flow’s in a Flow chat', () => {
+    hold('Command');
+    renderRows({ flowSurfaceOwnsStop: true });
+    openList();
+
+    expect(within(screen.getByRole('list')).queryByRole('button')).toBeNull();
+    expect(screen.getByText('The flow’s Stop ends everything still running.')).toBeInTheDocument();
+  });
+
+  it('shows a row stop in flight', () => {
+    stopTaskPending = true;
+    holdItems(item('Command', 's1'), item('Agent', 'a1'));
+    renderRows();
+    openList();
+
+    expect(screen.getAllByText('Stopping…')).toHaveLength(2);
+  });
+
+  it('reports a refused or slow row stop, and stays quiet when the wait already moved on', () => {
+    holdItems(item('Command', 's1'), item('Agent', 'a1'));
+    renderRows();
+    openList();
+
+    stopTaskOnSuccess?.({ ok: false, reason: 'ended' });
+    stopTaskOnSuccess?.({ ok: false, reason: 'last' });
+    expect(toastError).not.toHaveBeenCalled();
+    expect(toastInfo).not.toHaveBeenCalled();
+
+    stopTaskOnSuccess?.({ ok: false, reason: 'failed', message: 'not running' });
+    expect(toastError).toHaveBeenCalledWith('Couldn’t stop it', { description: 'not running' });
+    stopTaskOnSuccess?.({ ok: false, reason: 'timeout' });
+    expect(toastInfo).toHaveBeenCalledTimes(1);
   });
 });

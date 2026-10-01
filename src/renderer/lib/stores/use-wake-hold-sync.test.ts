@@ -34,10 +34,13 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+const item = (label: string) => ({ id: `id-${label}`, label, description: label, stoppable: true });
+const held = (...labels: string[]) => ({ waitingOn: labels.map(item) });
+
 describe('isWakeHoldState', () => {
-  it('accepts a non-empty list of labels', () => {
-    expect(isWakeHoldState({ waitingOn: ['Monitor'] })).toBe(true);
-    expect(isWakeHoldState({ waitingOn: ['Monitor', 'Command'] })).toBe(true);
+  it('accepts a non-empty list of items', () => {
+    expect(isWakeHoldState(held('Monitor'))).toBe(true);
+    expect(isWakeHoldState({ waitingOn: [{ ...item('Command'), command: 'sleep 9' }] })).toBe(true);
   });
 
   // A hold is only ever armed with at least one pending item, so an empty list means the payload is
@@ -46,9 +49,17 @@ describe('isWakeHoldState', () => {
     expect(isWakeHoldState({ waitingOn: [] })).toBe(false);
   });
 
-  it('rejects a list carrying anything but strings, which the row would render as undefined', () => {
-    expect(isWakeHoldState({ waitingOn: ['Monitor', 2] })).toBe(false);
+  it('rejects an item the list could not render or stop', () => {
+    expect(isWakeHoldState({ waitingOn: ['Monitor'] })).toBe(false);
     expect(isWakeHoldState({ waitingOn: [null] })).toBe(false);
+    const { id: _id, ...noId } = item('Command');
+    expect(isWakeHoldState({ waitingOn: [noId] })).toBe(false);
+    expect(isWakeHoldState({ waitingOn: [{ ...item('Command'), id: '' }] })).toBe(false);
+    expect(isWakeHoldState({ waitingOn: [{ ...item('Command'), label: '' }] })).toBe(false);
+    expect(isWakeHoldState({ waitingOn: [{ ...item('Command'), description: '' }] })).toBe(true);
+    expect(isWakeHoldState({ waitingOn: [{ ...item('Command'), stoppable: 'yes' }] })).toBe(false);
+    expect(isWakeHoldState({ waitingOn: [{ ...item('Command'), description: 2 }] })).toBe(false);
+    expect(isWakeHoldState({ waitingOn: [{ ...item('Command'), command: 7 }] })).toBe(false);
   });
 
   it('rejects a missing or wrongly-typed waitingOn', () => {
@@ -70,7 +81,7 @@ describe('isWakeHoldPayload', () => {
         subChatId: 'sc1',
         chatId: 'c1',
         held: true,
-        pending: { waitingOn: ['Monitor'] },
+        pending: held('Monitor'),
       }),
     ).toBe(true);
   });
@@ -117,13 +128,13 @@ describe('useWakeHoldSync — boot rehydrate', () => {
 
   it('seeds the waits main is still pumping, which a reload would otherwise render as finished', async () => {
     queryWakeHolds.mockResolvedValue([
-      { subChatId: 'sc1', chatId: 'c1', pending: { waitingOn: ['Monitor'] } },
+      { subChatId: 'sc1', chatId: 'c1', pending: held('Monitor') },
     ]);
 
     renderHook(() => useWakeHoldSync());
     await act(async () => {});
 
-    expect(getDefaultStore().get(wakeHeldAtomFamily('sc1'))).toEqual({ waitingOn: ['Monitor'] });
+    expect(getDefaultStore().get(wakeHeldAtomFamily('sc1'))).toEqual(held('Monitor'));
   });
 
   // The snapshot is taken before the frame, so seeding over it would re-raise the wait the user
@@ -139,7 +150,7 @@ describe('useWakeHoldSync — boot rehydrate', () => {
     renderHook(() => useWakeHoldSync());
     act(() => emit({ subChatId: 'sc2', chatId: 'c1', held: false }));
     await act(async () => {
-      resolveQuery([{ subChatId: 'sc2', chatId: 'c1', pending: { waitingOn: ['Command'] } }]);
+      resolveQuery([{ subChatId: 'sc2', chatId: 'c1', pending: held('Command') }]);
     });
 
     expect(getDefaultStore().get(wakeHeldAtomFamily('sc2'))).toBeNull();
@@ -160,9 +171,7 @@ describe('useWakeHoldSync — boot rehydrate', () => {
     vi.useFakeTimers();
     queryWakeHolds
       .mockRejectedValueOnce(new Error('ipc unavailable'))
-      .mockResolvedValueOnce([
-        { subChatId: 'sc-retry', chatId: 'c1', pending: { waitingOn: ['Monitor'] } },
-      ]);
+      .mockResolvedValueOnce([{ subChatId: 'sc-retry', chatId: 'c1', pending: held('Monitor') }]);
     const hook = renderHook(() => useWakeHoldSync());
     await act(async () => {});
 
@@ -170,9 +179,7 @@ describe('useWakeHoldSync — boot rehydrate', () => {
     await act(async () => vi.advanceTimersByTimeAsync(500));
 
     expect(queryWakeHolds).toHaveBeenCalledTimes(2);
-    expect(getDefaultStore().get(wakeHeldAtomFamily('sc-retry'))).toEqual({
-      waitingOn: ['Monitor'],
-    });
+    expect(getDefaultStore().get(wakeHeldAtomFamily('sc-retry'))).toEqual(held('Monitor'));
     hook.unmount();
   });
 
@@ -223,13 +230,13 @@ describe('useWakeHoldSync — boot rehydrate edge cases', () => {
 
     act(() => emit({ subChatId: 'sc3', chatId: 'c1', held: false }));
     await resolveWith([
-      { subChatId: 'sc3', chatId: 'c1', pending: { waitingOn: ['Command'] } },
-      { subChatId: 'sc4', chatId: 'c1', pending: { waitingOn: ['Agent'] } },
+      { subChatId: 'sc3', chatId: 'c1', pending: held('Command') },
+      { subChatId: 'sc4', chatId: 'c1', pending: held('Agent') },
     ]);
 
     const store = getDefaultStore();
     expect(store.get(wakeHeldAtomFamily('sc3'))).toBeNull();
-    expect(store.get(wakeHeldAtomFamily('sc4'))).toEqual({ waitingOn: ['Agent'] });
+    expect(store.get(wakeHeldAtomFamily('sc4'))).toEqual(held('Agent'));
   });
 
   // A discarded frame never spoke, so it must not out-rank the snapshot — else garbage on the wire
@@ -239,9 +246,9 @@ describe('useWakeHoldSync — boot rehydrate edge cases', () => {
     renderHook(() => useWakeHoldSync());
 
     act(() => emit({ subChatId: 'sc5', chatId: 'c1', held: true })); // held with no detail — rejected
-    await resolveWith([{ subChatId: 'sc5', chatId: 'c1', pending: { waitingOn: ['Monitor'] } }]);
+    await resolveWith([{ subChatId: 'sc5', chatId: 'c1', pending: held('Monitor') }]);
 
-    expect(getDefaultStore().get(wakeHeldAtomFamily('sc5'))).toEqual({ waitingOn: ['Monitor'] });
+    expect(getDefaultStore().get(wakeHeldAtomFamily('sc5'))).toEqual(held('Monitor'));
   });
 
   it('asks nothing when there is no desktop bridge to ask', async () => {
@@ -288,7 +295,7 @@ describe('useWakeHoldSync — a snapshot outliving its own effect', () => {
 
     act(() => emit({ subChatId: 'sc6', chatId: 'c1', held: false }));
     await act(async () => {
-      resolveFirst([{ subChatId: 'sc6', chatId: 'c1', pending: { waitingOn: ['Command'] } }]);
+      resolveFirst([{ subChatId: 'sc6', chatId: 'c1', pending: held('Command') }]);
     });
 
     expect(getDefaultStore().get(wakeHeldAtomFamily('sc6'))).toBeNull();
@@ -315,7 +322,7 @@ describe('useWakeHoldSync — a snapshot outliving its own effect', () => {
 describe('useWakeHoldSync — the chat-level held map', () => {
   let emit: (data: unknown) => void = () => {};
   const store = getDefaultStore();
-  const monitor = { waitingOn: ['Monitor'] };
+  const monitor = held('Monitor');
 
   beforeEach(() => {
     queryWakeHolds.mockReset();
@@ -371,9 +378,7 @@ describe('useWakeHoldSync — the chat-level held map', () => {
     act(() => emit({ subChatId: 'm5', chatId: 'chat-m5', held: true, pending: monitor }));
     const before = store.get(heldSubChatsAtom);
 
-    act(() =>
-      emit({ subChatId: 'm5', chatId: 'chat-m5', held: true, pending: { waitingOn: ['Command'] } }),
-    );
+    act(() => emit({ subChatId: 'm5', chatId: 'chat-m5', held: true, pending: held('Command') }));
     expect(store.get(heldSubChatsAtom)).toBe(before);
   });
 
@@ -393,7 +398,7 @@ describe('useWakeHoldSync — the chat-level held map', () => {
 // follow-up adopting the hold) means the work did not finish, so the chime is dropped unplayed.
 describe('deferUntilWaitOver and the adopted-hold flag', () => {
   let emit: (data: unknown) => void = () => {};
-  const HELD = { held: true, pending: { waitingOn: ['Monitor'] } };
+  const HELD = { held: true, pending: held('Monitor') };
 
   beforeEach(() => {
     queryWakeHolds.mockReset().mockResolvedValue([]);
@@ -430,7 +435,7 @@ describe('deferUntilWaitOver and the adopted-hold flag', () => {
     'announces a hold seeded after a reload once, at its %s',
     async (endReason, failed) => {
       queryWakeHolds.mockResolvedValueOnce([
-        { subChatId: 'rl1', chatId: 'c1', pending: { waitingOn: ['Monitor'] } },
+        { subChatId: 'rl1', chatId: 'c1', pending: held('Monitor') },
       ]);
       const announce = vi.fn();
       renderHook(() => useWakeHoldSync(announce));
@@ -443,7 +448,7 @@ describe('deferUntilWaitOver and the adopted-hold flag', () => {
 
   it('never announces a seeded Flow hold: the Flow plays its own end', async () => {
     queryWakeHolds.mockResolvedValueOnce([
-      { subChatId: 'rl2', chatId: 'c1', pending: { waitingOn: ['Monitor'] }, flow: true },
+      { subChatId: 'rl2', chatId: 'c1', pending: held('Monitor'), flow: true },
     ]);
     const announce = vi.fn();
     renderHook(() => useWakeHoldSync(announce));

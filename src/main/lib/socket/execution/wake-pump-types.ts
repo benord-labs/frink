@@ -68,4 +68,7 @@ export interface WakePump {
   ) => Promise<void>;
   /** True once the loop exits. An ended pump has no queue reader and cannot be adopted. */
   isEnded: () => boolean;
+  /** Re-check {@link WakePumpCallbacks.isWorkFinished} outside a burst, for a change no turn will
+   * follow (a user-stopped shell or workflow). A no-op mid-burst, with a takeover queued, or once over. */
+  settleIfWorkFinished: () => void;
 }

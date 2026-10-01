@@ -429,13 +429,11 @@ export function armWakePump(params: ArmWakePumpParams): WakeHold {
       });
       lastSeenSignalAt = settled.lastSeenSignalAt;
       waitOverDeclared ||= settled.waitOver;
-      // Re-state what the wait is still blocked on, now that this burst's own stop refreshed the
-      // snapshot. A falsy read ends the wait rather than extends it. Checked AFTER the await so a
-      // takeover or Stop landing during it still wins; `waitOverDeclared` joins `retracted` because
-      // this callback runs before the work-finished branch and would else advertise one last wait.
-      if (pending && !hold.retracted && !waitOverDeclared) {
-        io.setHeld(true, summarizePendingWork(pending));
-      }
+      // Re-read after the await, so a Stop, takeover or user task stop landing during it wins; a
+      // falsy read ends the wait. `waitOverDeclared` keeps this burst from advertising one last wait.
+      const latest = session.stopHook?.lastPendingWork;
+      if (latest && !hold.retracted && !waitOverDeclared)
+        io.setHeld(true, summarizePendingWork(latest));
     },
   });
   const hold: WakeHold = {
