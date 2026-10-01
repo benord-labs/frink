@@ -85,6 +85,8 @@ export function Companion() {
             animation: reduceMotion ? 'none' : 'default',
             contentStyle: { backgroundColor: t.background },
             headerTransparent: ios,
+            // Content scrolls under the transparent bar; the material keeps it from showing through the title.
+            headerBlurEffect: 'systemChromeMaterial',
             headerTintColor: t.accent,
             headerBackButtonDisplayMode: 'minimal',
             headerTitleAlign: 'center',
