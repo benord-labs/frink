@@ -186,7 +186,11 @@ describe('useTaskCompletionDetection', () => {
     // Between wake bursts there is no transport, no observed run and status is 'ready' — only the
     // hold says the session will wake again. An eager question must not park the task here.
     setRunLive(true);
-    act(() => appStore.set(wakeHeldAtomFamily(SUB), { waitingOn: ['Command'] }));
+    act(() =>
+      appStore.set(wakeHeldAtomFamily(SUB), {
+        waitingOn: [{ id: 't1', label: 'Command', description: 'x', stoppable: true }],
+      }),
+    );
     setRunLive(false);
     await Promise.resolve();
     expect(updateStatusMutate).not.toHaveBeenCalled();

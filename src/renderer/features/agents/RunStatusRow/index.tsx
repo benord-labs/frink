@@ -9,7 +9,7 @@
  * (pre-stream failure, cancelled follow-up), which orphans any message-anchored control.
  */
 
-import type { ReactNode } from 'react';
+import type { ReactNode, Ref } from 'react';
 import { cn } from '../../../lib/utils';
 
 type RunStatusRowProps = {
@@ -21,15 +21,26 @@ type RunStatusRowProps = {
   detail?: ReactNode;
   /** Ghost buttons, each an icon + a text <span>; below the icon tier only the icon shows. */
   children: ReactNode;
+  /** The visible card, for overlays that anchor to the whole row. */
+  cardRef?: Ref<HTMLDivElement>;
 };
 
-export function RunStatusRow({ dotClassName, label, detail, children }: RunStatusRowProps) {
+export function RunStatusRow({
+  dotClassName,
+  label,
+  detail,
+  children,
+  cardRef,
+}: RunStatusRowProps) {
   return (
     // role="status": rows mount asynchronously (a poll surfaces the state) — announce them.
     <div className="px-2 relative z-10" role="status">
       {/* One row at every width, sized on the chat pane: the detail goes first (40rem), then the
           action labels (26rem, icon squares keep aria-label + tooltip); the state always stays. */}
-      <div className="@container/run-status w-full max-w-2xl mx-auto px-2 mb-1 glass-float rounded-xl border border-border">
+      <div
+        ref={cardRef}
+        className="@container/run-status w-full max-w-2xl mx-auto px-2 mb-1 glass-float rounded-xl border border-border"
+      >
         <div className="flex items-start justify-between gap-2 px-1 py-1">
           <span className="flex min-w-0 flex-1 items-start gap-2 py-1.5 text-xs text-muted-foreground">
             <span

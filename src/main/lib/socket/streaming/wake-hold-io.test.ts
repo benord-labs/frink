@@ -12,6 +12,10 @@ import {
 } from './live-stream';
 import { buildWakeHoldIo } from './wake-hold-io';
 
+const MONITOR_WAIT = {
+  waitingOn: [{ id: 'm1', label: 'Monitor', description: 'Watch deploys', stoppable: false }],
+};
+
 function ioWithSpy() {
   const sendWakeHoldChanged = vi.fn();
   const sendExecuteCompleteDirect = vi.fn();
@@ -57,19 +61,19 @@ describe('buildWakeHoldIo — setHeld frames', () => {
   it('announces a hold with the detail it was given', () => {
     const { io, sendWakeHoldChanged } = ioWithSpy();
 
-    io.setHeld(true, { waitingOn: ['Monitor'] });
+    io.setHeld(true, MONITOR_WAIT);
 
     expect(sendWakeHoldChanged).toHaveBeenCalledWith({
       chatId: 'c1',
       subChatId: 'sc1',
       held: true,
-      pending: { waitingOn: ['Monitor'] },
+      pending: MONITOR_WAIT,
     });
   });
 
   it('separates wake-burst ownership from whether the hold still continues', async () => {
     const { io, sendExecuteCompleteDirect } = ioWithSpy();
-    io.setHeld(true, { waitingOn: ['Monitor'] });
+    io.setHeld(true, MONITOR_WAIT);
     await io.completeBurst('assistant', [{ type: 'finish' } as never], true);
     expect(sendExecuteCompleteDirect).toHaveBeenLastCalledWith(
       expect.objectContaining({ wakeBurst: true, continuesWakeHold: true }),

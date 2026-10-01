@@ -99,7 +99,10 @@ function storeGet(soundEnabled: boolean, flowRunIncomplete = false, held = false
     if (atom === loadingSubChatsAtom) return new Map();
     if (atom === soundNotificationsEnabledAtom) return soundEnabled;
     if (atom === flowRunIncompleteAtomFamily('sub-1')) return flowRunIncomplete;
-    if (atom === wakeHeldAtomFamily('sub-1')) return held ? { waitingOn: ['Monitor'] } : null;
+    if (atom === wakeHeldAtomFamily('sub-1'))
+      return held
+        ? { waitingOn: [{ id: 't1', label: 'Monitor', description: 'x', stoppable: true }] }
+        : null;
     return true;
   };
 }

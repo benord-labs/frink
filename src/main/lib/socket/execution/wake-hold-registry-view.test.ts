@@ -3,7 +3,10 @@ import { describe, expect, it, vi } from 'vitest';
 const holds = vi.hoisted(() => new Map<string, unknown>());
 vi.mock('../claude-wake-hold', () => ({ readWakeHolds: () => holds }));
 vi.mock('../claude-session-registry', () => ({ getSession: vi.fn() }));
-vi.mock('./wake-hold-signal', () => ({ summarizePendingWork: () => ({ waitingOn: ['Monitor'] }) }));
+const pending = vi.hoisted(() => ({
+  waitingOn: [{ id: 'm1', label: 'Monitor', description: 'Watch deploys', stoppable: false }],
+}));
+vi.mock('./wake-hold-signal', () => ({ summarizePendingWork: () => pending }));
 
 import { listWakeHolds } from './wake-hold-registry-view';
 
@@ -20,7 +23,6 @@ describe('listWakeHolds — marking Flow-owned holds', () => {
   it('marks only the hold armed by a Flow turn', () => {
     holds.set('chat-hold', liveHold(false));
     holds.set('flow-hold', liveHold(true));
-    const pending = { waitingOn: ['Monitor'] };
     expect(listWakeHolds()).toEqual([
       { subChatId: 'chat-hold', chatId: 'c1', pending },
       { subChatId: 'flow-hold', chatId: 'c1', pending, flow: true },

@@ -15,6 +15,21 @@ describe('isAmbientIdleFrame', () => {
     expect(isAmbientIdleFrame(frame('system', { subtype: 'init' }))).toBe(false);
     expect(isAmbientIdleFrame(frame('assistant'))).toBe(false);
   });
+
+  // A user stop of a shell or workflow emits exactly these two frames and no turn; a burst opened
+  // on either would wait forever for a result.
+  it('treats a task-set change and a stopped task as ambient', () => {
+    expect(isAmbientIdleFrame(frame('system', { subtype: 'background_tasks_changed' }))).toBe(true);
+    const stopped = { subtype: 'task_notification', status: 'stopped' };
+    expect(isAmbientIdleFrame(frame('system', stopped))).toBe(true);
+  });
+
+  it('still wakes on a task that finished by itself', () => {
+    for (const status of ['completed', 'failed']) {
+      const notification = { subtype: 'task_notification', status };
+      expect(isAmbientIdleFrame(frame('system', notification))).toBe(false);
+    }
+  });
 });
 
 describe('isTurnBoundary', () => {

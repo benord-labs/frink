@@ -128,9 +128,24 @@ function readPendingWork(input: StopHookInput): StopPendingWork | null {
       log.info(`[Stop hook] Ignoring finished follower ${task.id}: ${task.command?.slice(0, 200)}`);
     }
   }
-  const sessionCrons = input.session_crons ?? [];
+  return pendingWorkOrNull(backgroundTasks, input.session_crons ?? []);
+}
+
+function pendingWorkOrNull(
+  backgroundTasks: BackgroundTaskSummary[],
+  sessionCrons: StopPendingWork['sessionCrons'],
+): StopPendingWork | null {
   if (backgroundTasks.length === 0 && sessionCrons.length === 0) return null;
   return { backgroundTasks, sessionCrons };
+}
+
+/**
+ * The snapshot minus a task the CLI confirmed stopped. A user stop of a shell or workflow runs no
+ * turn and so no Stop, which would otherwise keep listing the task until some later wake.
+ */
+export function forgetPendingTask(work: StopPendingWork, taskId: string): StopPendingWork | null {
+  const backgroundTasks = work.backgroundTasks.filter((task) => task.id !== taskId);
+  return pendingWorkOrNull(backgroundTasks, work.sessionCrons);
 }
 
 type TaskStopHookOpts = {

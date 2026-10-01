@@ -12,11 +12,22 @@
  * why the held row carried no detail before.)
  */
 export type WakeHoldState = {
-  /**
-   * One human label per in-flight item, e.g. `['Monitor', 'Command']`. Never empty: a hold is only
-   * ever armed with at least one pending item.
-   */
-  waitingOn: string[];
+  /** One entry per in-flight item. Never empty: a hold is only ever armed with at least one. */
+  waitingOn: WakeHoldItem[];
+};
+
+/** One background task or scheduled wake a held chat is waiting on. */
+export type WakeHoldItem = {
+  /** The harness task id (the `stopTask` target) or the cron id. */
+  id: string;
+  /** Kind label from a fixed set, e.g. 'Command', 'Agent', 'Workflow', 'Scheduled wake'. */
+  label: string;
+  /** What the item is doing: the workflow's name, the task's description, or the cron's prompt. */
+  description: string;
+  /** The shell command line; only for shell tasks. */
+  command?: string;
+  /** Whether the user may stop this item on its own (see `stopBackgroundTask`). */
+  stoppable: boolean;
 };
 
 /**

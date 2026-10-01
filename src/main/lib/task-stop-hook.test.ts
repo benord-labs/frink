@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createTaskStopHook } from './task-stop-hook';
+import { createTaskStopHook, forgetPendingTask } from './task-stop-hook';
 
 /** Minimal SDK StopHookInput shapes — the SDK always passes the hook input (it is not optional
  * in the HookCallback contract), so every invocation here supplies one. */
@@ -531,5 +531,28 @@ describe('createTaskStopHook', () => {
     const hook = createTaskStopHook({ hasSignal: () => true, isAborted: () => false });
     await hook(stopInput({ background_tasks: [follower('t1', 'gone1')], session_crons: [cron] }));
     expect(hook.lastPendingWork).toEqual({ backgroundTasks: [], sessionCrons: [cron] });
+  });
+});
+
+describe('forgetPendingTask', () => {
+  const shell = (id: string) =>
+    ({ id, type: 'shell', status: 'running', description: id, command: `sleep ${id}` }) as never;
+  const cron = { id: 'c1', schedule: '*/5 * * * *', recurring: true, prompt: 'check' };
+
+  it('drops only the stopped task', () => {
+    const work = { backgroundTasks: [shell('a'), shell('b')], sessionCrons: [cron] };
+    expect(forgetPendingTask(work, 'a')).toEqual({
+      backgroundTasks: [shell('b')],
+      sessionCrons: [cron],
+    });
+  });
+
+  it('keeps a wait that only a cron still holds', () => {
+    const work = { backgroundTasks: [shell('a')], sessionCrons: [cron] };
+    expect(forgetPendingTask(work, 'a')).toEqual({ backgroundTasks: [], sessionCrons: [cron] });
+  });
+
+  it('reads as nothing pending once the last item is gone, like a Stop would', () => {
+    expect(forgetPendingTask({ backgroundTasks: [shell('a')], sessionCrons: [] }, 'a')).toBeNull();
   });
 });

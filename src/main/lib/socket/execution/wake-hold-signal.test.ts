@@ -4,7 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as sentry from '../../sentry/init';
 import { retireRetainedSession } from '../claude-session-registry';
 import type { StopPendingWork, TaskStopHook } from '../../task-stop-hook';
-import { logAdoptedTurnEnd, logDroppedPendingWork, turnEndMustDispose } from './wake-hold-signal';
+import {
+  logAdoptedTurnEnd,
+  logDroppedPendingWork,
+  summarizePendingWork,
+  turnEndMustDispose,
+} from './wake-hold-signal';
 
 const shellTask: BackgroundTaskSummary = {
   id: 't1',
@@ -191,4 +196,47 @@ describe('turnEndMustDispose', () => {
       `[Socket Executor] Adopted turn ended for c6: ${disposition}`,
     );
   });
+});
+
+describe('summarizePendingWork', () => {
+  const task = (id: string, type: string, extra: Partial<BackgroundTaskSummary> = {}) => ({
+    id,
+    type,
+    status: 'running',
+    description: `${id} work`,
+    ...extra,
+  });
+
+  it('publishes each item with what the list needs to show and stop it', () => {
+    const work: StopPendingWork = {
+      backgroundTasks: [
+        task('s1', 'shell', { command: 'bun test' }),
+        task('w1', 'workflow', { name: 'review-pr' }),
+        task('a1', 'subagent'),
+        task('m1', 'monitor'),
+      ],
+      sessionCrons: [cron],
+    };
+
+    expect(summarizePendingWork(work).waitingOn).toEqual([
+      { id: 's1', label: 'Command', description: 's1 work', command: 'bun test', stoppable: true },
+      { id: 'w1', label: 'Workflow', description: 'review-pr', stoppable: true },
+      { id: 'a1', label: 'Agent', description: 'a1 work', stoppable: true },
+      { id: 'm1', label: 'Monitor', description: 'm1 work', stoppable: false },
+      { id: cron.id, label: 'Scheduled wake', description: cron.prompt, stoppable: false },
+    ]);
+  });
+
+  // `type` is unbounded: an unknown kind must not reach the UI verbatim or be offered a stop, and
+  // prototype names would resolve to inherited members on an object-literal lookup.
+  it.each(['some_future_kind', 'constructor', 'toString', '__proto__'])(
+    'labels a %s-typed task neutrally and never offers to stop it',
+    (type) => {
+      const [item] = summarizePendingWork({
+        backgroundTasks: [task('x1', type)],
+        sessionCrons: [],
+      }).waitingOn;
+      expect(item).toMatchObject({ label: 'Background task', stoppable: false });
+    },
+  );
 });
