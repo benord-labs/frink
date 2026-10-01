@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { act, render, waitFor } from '@testing-library/react';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { useMessageQueueStore } from '../../agents/stores/message-queue-store';
 import { hoisted, resetHarness, setupHarness } from './sidebar-test-harness';
 import { UnifiedSidebar } from './UnifiedSidebar';
 
@@ -80,6 +81,24 @@ describe('UnifiedSidebar multi-select bulk actions', () => {
     expect(hoisted.chatDeleteMutateAsyncMock).toHaveBeenCalledWith({ id: 'chat-a' });
     expect(hoisted.chatDeleteMutateAsyncMock).toHaveBeenCalledWith({ id: 'chat-b' });
     expect(chipProps().pendingDeleteCount).toBe(0);
+  });
+
+  it("holds each chat's message queue while bulk archive runs its mutation", async () => {
+    useMessageQueueStore.setState({ heldChatIds: {} });
+    const heldDuring: Record<string, boolean> = {};
+    // The harness types this mock as zero-arg; read the input off the rest args.
+    hoisted.archiveChatMutateAsyncMock.mockImplementation(async (...args: unknown[]) => {
+      const { id } = args[0] as { id: string };
+      heldDuring[id] = useMessageQueueStore.getState().isChatHeld(id);
+      return {};
+    });
+    render(<UnifiedSidebar />);
+
+    await act(() => chipProps().onArchive(['chat-a', 'chat-b']));
+
+    await waitFor(() => expect(hoisted.archiveChatMutateAsyncMock).toHaveBeenCalledTimes(2));
+    expect(heldDuring).toEqual({ 'chat-a': true, 'chat-b': true });
+    await waitFor(() => expect(useMessageQueueStore.getState().heldChatIds).toEqual({}));
   });
 
   it('stops the linked tasks and kills terminals when bulk archive is confirmed with "Stop task"', async () => {

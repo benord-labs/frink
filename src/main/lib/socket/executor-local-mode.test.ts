@@ -315,10 +315,15 @@ import { resumeParkedTaskInPlace, reviveRestartInterruptedFlow } from '../tasks'
 import type { TaskStopHook } from '../task-stop-hook';
 import { clearActiveFlowTaskForChatIfMatches, setActiveFlowTaskForChat } from '../task-executor';
 import { armWakePump, type WakeHold } from './claude-wake-hold';
+import { doomAdmissionsForChat } from './streaming/execution-registry';
 import * as socketClient from './client';
 import * as liveStreams from './streaming/live-stream/registry';
 import {
+  _clearActiveExecutionsForTests,
+  _getActiveExecutionCountForTests,
   _hasActiveExecutionForTests,
+  _registerExecutionForTests,
+  abortActiveExecutionsForChat,
   abortActiveExecutionsForWebContents,
   handleRemoteExecute,
   handleRemoteStop,
@@ -928,5 +933,153 @@ describe('local-only dispatch with unresolved machineId', () => {
 
       expect(socketClient.sendErrorDirect).not.toHaveBeenCalledWith(notDelivered);
     });
+  });
+
+  /** sc-682: every send to an archived chat — queued or late — is swept or sees the archived row,
+   * and never reaches a provider. */
+  describe('archived chat admission', () => {
+    type ChatAccount = Awaited<ReturnType<typeof getChatWithProjectAccount>>;
+    // SAFETY: the executor reads only chat.taskId / chat.archivedAt and account from this row.
+    const chatRow = (archivedAt: Date | null) =>
+      ({ chat: { taskId: null, archivedAt }, account: null }) as ChatAccount;
+    const expectDeclined = (category: string | null = 'CHAT_ARCHIVED') => {
+      expect(claudeQueryMock).not.toHaveBeenCalled();
+      expect(socketClient.sendErrorDirect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          subChatId: basePayload.subChatId,
+          category: category ?? undefined,
+        }),
+      );
+      // Declined before registering: nothing for a later sweep or Stop to find.
+      expect(_hasActiveExecutionForTests(basePayload.subChatId)).toBe(false);
+    };
+    /** Hold the chat-row read open so a test can land an archive while the send is mid-admission. */
+    const holdRowRead = () => {
+      let finish: (row: ChatAccount) => void = () => {};
+      vi.mocked(getChatWithProjectAccount).mockImplementationOnce(
+        () =>
+          new Promise<ChatAccount>((resolve) => {
+            finish = resolve;
+          }),
+      );
+      return (row: ChatAccount) => finish(row);
+    };
+    const runsOnce = (sessionId: string) =>
+      claudeQueryMock.mockImplementationOnce(async function* () {
+        yield { chunks: [{ type: 'finish', messageMetadata: { sessionId } }] };
+        yield { type: 'result' };
+      });
+
+    it('declines a send to an archived chat before any provider starts', async () => {
+      vi.mocked(getChatWithProjectAccount).mockResolvedValueOnce(chatRow(new Date()));
+      const onExecutionStarted = vi.fn();
+
+      await handleRemoteExecute({
+        ...basePayload,
+        message: 'queued follow-up',
+        onExecutionStarted,
+      });
+
+      expectDeclined();
+      expect(onExecutionStarted).toHaveBeenCalledWith(
+        expect.objectContaining({ category: 'CHAT_ARCHIVED' }),
+      );
+    });
+
+    it('declines a Codex send to an archived chat too (guard sits before provider dispatch)', async () => {
+      // Not a Once: the decline happens before credentials are read, so a queued Once would leak
+      // into the next test. beforeEach restores the Claude credential.
+      vi.mocked(getDefaultClaudeCodeToken).mockResolvedValue({
+        token: null,
+        isApiKey: false,
+        type: 'codex',
+        label: 'codex-test',
+        passthrough: true,
+      });
+      vi.mocked(getChatWithProjectAccount).mockResolvedValueOnce(chatRow(new Date()));
+
+      await handleRemoteExecute({ ...basePayload, message: 'codex follow-up' });
+
+      expect(runCodexAgent).not.toHaveBeenCalled();
+      expectDeclined();
+    });
+
+    it('declines a send that read the pre-archive row when archive lands mid-admission', async () => {
+      const finishRead = holdRowRead();
+
+      const execution = handleRemoteExecute({ ...basePayload, message: 'late send' });
+      await vi.waitFor(() => expect(getChatWithProjectAccount).toHaveBeenCalled());
+      doomAdmissionsForChat(basePayload.chatId);
+      finishRead(chatRow(null));
+      await execution;
+
+      expectDeclined();
+    });
+
+    it('is not declined when a different chat is archived mid-admission', async () => {
+      const finishRead = holdRowRead();
+      runsOnce('other-chat-archived');
+
+      const execution = handleRemoteExecute({ ...basePayload, message: 'unrelated archive' });
+      await vi.waitFor(() => expect(getChatWithProjectAccount).toHaveBeenCalled());
+      doomAdmissionsForChat('some-other-chat');
+      finishRead(chatRow(null));
+      await execution;
+
+      expect(claudeQueryMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('releases its admission once registered, so a later archive cannot doom a finished send', async () => {
+      runsOnce('first');
+      await handleRemoteExecute({ ...basePayload, message: 'first' });
+      doomAdmissionsForChat(basePayload.chatId);
+      runsOnce('second');
+
+      await handleRemoteExecute({ ...basePayload, message: 'second' });
+
+      expect(claudeQueryMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('fails closed, retryably, when the chat row cannot be read', async () => {
+      vi.mocked(getChatWithProjectAccount).mockRejectedValueOnce(new Error('database is locked'));
+
+      await handleRemoteExecute({ ...basePayload, message: 'db hiccup' });
+
+      // No CHAT_ARCHIVED: the chat may be fine, so the renderer keeps the send retryable.
+      expectDeclined(null);
+    });
+  });
+});
+
+describe('abortActiveExecutionsForChat (archive sweep)', () => {
+  beforeEach(() => _clearActiveExecutionsForTests());
+  afterEach(() => _clearActiveExecutionsForTests());
+
+  it('stops every tab of the archived chat and leaves other chats running', () => {
+    const tab1 = new AbortController();
+    const tab2 = new AbortController();
+    const otherChat = new AbortController();
+    _registerExecutionForTests('arch-tab-1', tab1, 1, 'chat-archived');
+    _registerExecutionForTests('arch-tab-2', tab2, 2, 'chat-archived');
+    _registerExecutionForTests('live-tab', otherChat, 1, 'chat-live');
+
+    abortActiveExecutionsForChat('chat-archived', 'chat archived');
+
+    expect(tab1.signal.aborted).toBe(true);
+    expect(tab2.signal.aborted).toBe(true);
+    expect(otherChat.signal.aborted).toBe(false);
+    expect(_hasActiveExecutionForTests('arch-tab-1')).toBe(false);
+    expect(_hasActiveExecutionForTests('live-tab')).toBe(true);
+  });
+
+  it('is a safe no-op when the chat has nothing running, including a repeat sweep', () => {
+    const live = new AbortController();
+    _registerExecutionForTests('live-tab', live, 1, 'chat-live');
+
+    abortActiveExecutionsForChat('chat-archived', 'chat archived');
+    abortActiveExecutionsForChat('chat-archived', 'chat archived');
+
+    expect(live.signal.aborted).toBe(false);
+    expect(_getActiveExecutionCountForTests()).toBe(1);
   });
 });

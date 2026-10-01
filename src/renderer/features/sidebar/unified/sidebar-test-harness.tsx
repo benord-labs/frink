@@ -111,6 +111,7 @@ export const hoisted = {
   setPendingMoveTargetMock: vi.fn(),
   clearPendingMoveTargetMock: vi.fn(),
   clearAllForChatMock: vi.fn(),
+  getSubChatIdsForChatMock: vi.fn((_chatId: string): string[] => []),
   updateSubChatNameMock: vi.fn(),
   // SAFETY: starts empty; the useChatDnd double stores the onMoveChat it was given.
   capturedOnMoveChat: null as null | MoveChatHandler,
@@ -282,14 +283,20 @@ export const agentChatStoreMock = {
   agentChatStore: {
     setPendingMoveTarget: hoisted.setPendingMoveTargetMock,
     clearAllForChat: hoisted.clearAllForChatMock,
+    getSubChatIdsForChat: hoisted.getSubChatIdsForChatMock,
     clearPendingMoveTarget: hoisted.clearPendingMoveTargetMock,
+    getParentChatId: () => undefined,
   },
+  // The message queue store subscribes to Chat registrations at import.
+  onChatRegistered: () => () => {},
   // Trivial normalizer; the re-pin compares the pending-target path to `updated.worktreePath`.
   normalizeWorktreePath: (p: string | null | undefined) => p ?? null,
 };
 
 export const subChatStoreMock = {
-  useAgentSubChatStore: { getState: () => ({ updateSubChatName: hoisted.updateSubChatNameMock }) },
+  useAgentSubChatStore: {
+    getState: () => ({ updateSubChatName: hoisted.updateSubChatNameMock, subChatsById: {} }),
+  },
 };
 
 export const gitStatusMock = { hasModifiedFiles: () => false };
@@ -394,6 +401,8 @@ export function resetHarness() {
   hoisted.setPendingMoveTargetMock.mockClear();
   hoisted.clearPendingMoveTargetMock.mockClear();
   hoisted.clearAllForChatMock.mockClear();
+  hoisted.getSubChatIdsForChatMock.mockReset();
+  hoisted.getSubChatIdsForChatMock.mockReturnValue([]);
   hoisted.updateSubChatNameMock.mockClear();
   hoisted.capturedOnMoveChat = null;
   hoisted.capturedProjectsTreeProps = null;

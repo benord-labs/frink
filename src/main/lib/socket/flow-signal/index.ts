@@ -155,3 +155,14 @@ async function restartInterruptedTarget(
   if (!(await isRunRestartInterrupted(latest.flowRunId))) return null;
   return { id: latest.id, flowRunId: latest.flowRunId };
 }
+
+/** Resume reads reuse the disarm-check prefetch when it already holds the target row, so a
+ * follow-up turn does a single task read; a different target (the flow-driving task) reads its own. */
+export async function getTaskRowForResume(
+  db: Parameters<typeof getTaskById>[0],
+  targetTaskId: string,
+  prefetched: SignalTaskRow,
+): Promise<SignalTaskRow> {
+  if (prefetched?.id === targetTaskId) return prefetched;
+  return getTaskById(db, targetTaskId);
+}

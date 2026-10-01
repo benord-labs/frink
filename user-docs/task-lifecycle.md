@@ -89,10 +89,10 @@ Cancelling a flow's task cancels the whole flow run, because the work queue show
 
 Removing a chat can also affect its linked task. How Frink handles this depends on where the task is in its lifecycle:
 
-- **The task is still actively working** (Pending, Running, or Plan Ready) — Frink asks first, since deleting the chat would otherwise leave the task running with nowhere to surface it. You can **stop the task and remove the chat** together, or keep the task running and only remove the chat.
+- **The task is still actively working** (Pending, Running, or Plan Ready) — Frink asks first, since removing the chat would otherwise leave the task open with nowhere to surface it. You can **stop the task and remove the chat** together, or keep the task open in the work queue and only remove the chat.
 - **The task has finished or is waiting on you** (Ready for review, Needs Attention, Completed, Failed, or Cancelled) — there's nothing actively running to stop, so the chat is removed right away with no prompt. A task waiting on you (Needs Attention) is left as-is so you can still return to it from the work queue.
 
-Those rules apply to regular chats whether you delete or archive them. Archiving is recoverable — restore it from the Archived view.
+Those rules apply to regular chats whether you delete or archive them. Either way, the chat's agent stops: a reply in progress is cancelled, no new run starts in that chat, and follow-up messages you had queued for it are dropped. Keeping the task only keeps its work-queue record. Archiving is recoverable — restore it from the Archived view and send a message to carry on.
 
 Flow chats follow the Flow lifecycle instead. Permanently deleting a flow chat stops its linked run and removes that chat's work-queue tasks, including Needs Attention rows. Archiving keeps parked work available so you can restore the chat and continue.
 

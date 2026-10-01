@@ -3,6 +3,7 @@
  * Adapted from canvas chat queue implementation
  */
 
+import { buildQueuedMessageText } from '@/lib/mentions/queued-message-text';
 import type { ApprovedPlanContext } from '../../../../shared/types/plan';
 import type { UploadedFile, UploadedImage } from '../hooks/use-agents-file-upload';
 
@@ -255,4 +256,47 @@ export function createTextPreview(text: string, maxLength: number = 50): string 
   const trimmed = text.trim().replace(/\s+/g, ' ');
   if (trimmed.length <= maxLength) return trimmed;
   return `${trimmed.slice(0, maxLength)}...`;
+}
+
+/** Chat message parts for a queued turn: its images and files, then its serialized text. */
+export type QueuedMessagePart =
+  | {
+      type: 'data-image';
+      data: { url?: string; mediaType?: string; filename?: string; base64Data?: string };
+    }
+  | {
+      type: 'data-file';
+      data: { url?: string; mediaType?: string; filename?: string; size?: number };
+    }
+  | { type: 'text'; text: string };
+
+export function buildQueuedMessageParts(item: AgentQueueItem): QueuedMessagePart[] {
+  const parts: QueuedMessagePart[] = [
+    ...(item.images || []).map((img) => ({
+      type: 'data-image' as const,
+      data: {
+        url: img.url,
+        mediaType: img.mediaType,
+        filename: img.filename,
+        base64Data: img.base64Data,
+      },
+    })),
+    ...(item.files || []).map((f) => ({
+      type: 'data-file' as const,
+      data: {
+        url: f.url,
+        mediaType: f.mediaType,
+        filename: f.filename,
+        size: f.size,
+      },
+    })),
+  ];
+
+  // Same serializer as the queue card's Send: attached contexts become mention tokens, so an
+  // item whose content is only a pasted chip or quote still reaches the agent (sc-3666).
+  const text = buildQueuedMessageText(item);
+  if (text.trim()) {
+    parts.push({ type: 'text', text });
+  }
+  return parts;
 }

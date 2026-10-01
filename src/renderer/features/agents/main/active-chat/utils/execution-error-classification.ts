@@ -24,6 +24,8 @@ const NON_EXECUTION_ERROR_CATEGORIES = new Set([
   // rollback here would delete what the re-admitted run is about to deliver.
   'FLOW_RUN_ENDED',
   'FLOW_RUN_RESUMING',
+  // Declined by main's archived admission check: the chat was archived, the run never started.
+  'CHAT_ARCHIVED',
 ]);
 
 function normalizeErrorText(raw: string): string {

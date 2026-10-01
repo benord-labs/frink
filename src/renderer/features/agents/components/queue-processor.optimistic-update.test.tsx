@@ -93,7 +93,12 @@ vi.mock('../stores/agent-chat-store', () => ({
 vi.mock('../stores/message-queue-store', () => ({
   useMessageQueueStore: {
     subscribe: vi.fn(() => vi.fn()),
-    getState: vi.fn(() => ({ queues: {}, popItem: vi.fn(), prependItem: vi.fn() })),
+    getState: vi.fn(() => ({
+      queues: {},
+      heldChatIds: {},
+      popItem: vi.fn(),
+      prependItem: vi.fn(),
+    })),
   },
 }));
 vi.mock('../stores/streaming-status-store', () => ({

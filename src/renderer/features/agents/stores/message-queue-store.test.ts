@@ -258,3 +258,49 @@ describe('message-queue-store — queueing while main settles a finished run', (
     ]);
   });
 });
+
+describe('message-queue-store — archive holds', () => {
+  beforeEach(() => useMessageQueueStore.setState({ heldChatIds: {} }));
+
+  it('stays held until every overlapping hold on the chat is released', () => {
+    const store = useMessageQueueStore.getState();
+    // Two panes archive the same chat: the first to settle must not release the second's hold.
+    store.holdChats(['chat-1']);
+    store.holdChats(['chat-1']);
+    store.releaseChats(['chat-1']);
+    expect(useMessageQueueStore.getState().isChatHeld('chat-1')).toBe(true);
+
+    store.releaseChats(['chat-1']);
+    expect(useMessageQueueStore.getState().isChatHeld('chat-1')).toBe(false);
+    expect(useMessageQueueStore.getState().heldChatIds).toEqual({});
+  });
+
+  it('does not bank a stray release against a later hold', () => {
+    const store = useMessageQueueStore.getState();
+    store.releaseChats(['chat-1']);
+    store.holdChats(['chat-1']);
+
+    expect(useMessageQueueStore.getState().isChatHeld('chat-1')).toBe(true);
+  });
+
+  it('holds only the named chats, and never an unknown parent', () => {
+    useMessageQueueStore.getState().holdChats(['chat-1']);
+    const { isChatHeld } = useMessageQueueStore.getState();
+
+    expect(isChatHeld('chat-2')).toBe(false);
+    // A sub-chat with no registered parent resolves to undefined; that must not read as held.
+    expect(isChatHeld(undefined)).toBe(false);
+  });
+});
+
+describe('message-queue-store — clear epochs', () => {
+  it('bumps a sub-chat epoch on clear, so an in-flight send can tell its queue was dropped', () => {
+    const store = useMessageQueueStore.getState();
+    const before = store.getClearEpoch('sub-x');
+
+    store.clearQueue('sub-x');
+
+    expect(useMessageQueueStore.getState().getClearEpoch('sub-x')).toBe(before + 1);
+    expect(useMessageQueueStore.getState().getClearEpoch('sub-y')).toBe(0);
+  });
+});

@@ -3,7 +3,6 @@ import { hashKey, useQueryClient } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import { useEffect, useRef } from 'react';
 import { toast } from 'sonner';
-import { buildQueuedMessageText } from '@/lib/mentions/queued-message-text';
 import { runLiveAtomFamily } from '@/lib/stores/active-transport-registry';
 import {
   isLiveRunHydrationComplete,
@@ -22,9 +21,10 @@ import {
   pendingModeIntentAtomFamily,
   setLoading,
 } from '../atoms';
-import type { AgentQueueItem } from '../lib/queue-utils';
+import { type AgentQueueItem, buildQueuedMessageParts } from '../lib/queue-utils';
 import { invalidateTaskQueries } from '../main/active-chat/utils/task-query';
 import { agentChatStore, onChatRegistered } from '../stores/agent-chat-store';
+import { reconcileRestoredHolds } from '../lib/archive-queue-hold';
 import { useMessageQueueStore } from '../stores/message-queue-store';
 import { useStreamingStatusStore } from '../stores/streaming-status-store';
 import { armApprovedPlanState, useAgentSubChatStore } from '../stores/sub-chat-store';
@@ -144,6 +144,7 @@ export function QueueProcessor() {
   useEffect(() => {
     // False after effect cleanup so async `finally` in processQueue does not schedule post-unmount.
     const activeRef = { current: true };
+    void reconcileRestoredHolds();
 
     let checkAllQueues: () => void = () => {};
 
@@ -248,6 +249,11 @@ export function QueueProcessor() {
       }
 
       const parentChatIdForAccount = agentChatStore.getParentChatId(subChatId);
+      // Archiving aborts the chat's run mid-mutation, which drops the sub-chat to 'ready'. Hold the
+      // queue until the archive settles: it is then cleared (archived) or released (archive failed).
+      if (useMessageQueueStore.getState().isChatHeld(parentChatIdForAccount)) {
+        return;
+      }
       if (parentChatIdForAccount) {
         const resolvedKey = getQueryKey(
           trpc.claudeCode.getResolvedAccount,
@@ -296,6 +302,7 @@ export function QueueProcessor() {
       processingRef.current.add(subChatId);
 
       // Pop the first item from queue (atomic operation)
+      const clearEpoch = useMessageQueueStore.getState().getClearEpoch(subChatId);
       const item = useMessageQueueStore.getState().popItem(subChatId, queue[0].id);
       if (!item) {
         processingRef.current.delete(subChatId);
@@ -306,44 +313,7 @@ export function QueueProcessor() {
       }
 
       try {
-        // Build message parts from queued item
-        const parts: Array<
-          | {
-              type: 'data-image';
-              data: { url?: string; mediaType?: string; filename?: string; base64Data?: string };
-            }
-          | {
-              type: 'data-file';
-              data: { url?: string; mediaType?: string; filename?: string; size?: number };
-            }
-          | { type: 'text'; text: string }
-        > = [
-          ...(item.images || []).map((img) => ({
-            type: 'data-image' as const,
-            data: {
-              url: img.url,
-              mediaType: img.mediaType,
-              filename: img.filename,
-              base64Data: img.base64Data,
-            },
-          })),
-          ...(item.files || []).map((f) => ({
-            type: 'data-file' as const,
-            data: {
-              url: f.url,
-              mediaType: f.mediaType,
-              filename: f.filename,
-              size: f.size,
-            },
-          })),
-        ];
-
-        // Same serializer as the queue card's Send: attached contexts become mention tokens, so an
-        // item whose content is only a pasted chip or quote still reaches the agent (sc-3666).
-        const text = buildQueuedMessageText(item);
-        if (text.trim()) {
-          parts.push({ type: 'text', text });
-        }
+        const parts = buildQueuedMessageParts(item);
 
         // Nothing sendable: never dispatch an empty turn (it reads as a delivered message that
         // carried nothing), and never requeue it — that would retry forever. Say so and move on.
@@ -398,11 +368,14 @@ export function QueueProcessor() {
         });
       } catch (_error) {
         disarmFailedPlanApproval(subChatId, item);
-        // Requeue the item at the front so it can be retried
-        useMessageQueueStore.getState().prependItem(subChatId, item);
-
-        // Set error status (will be cleared on next successful send or manual retry)
-        useStreamingStatusStore.getState().setStatus(subChatId, 'error');
+        // Requeue at the front for a retry, unless the queue was cleared mid-send (e.g. archived).
+        const queueStore = useMessageQueueStore.getState();
+        const requeued = queueStore.getClearEpoch(subChatId) === clearEpoch;
+        if (requeued) {
+          queueStore.prependItem(subChatId, item);
+          // Set error status (will be cleared on next successful send or manual retry)
+          useStreamingStatusStore.getState().setStatus(subChatId, 'error');
+        }
 
         // Clear loading state since send failed
         clearLoading(
@@ -410,8 +383,8 @@ export function QueueProcessor() {
           subChatId,
         );
 
-        // Notify user
-        toast.error('Failed to send queued message. It will be retried.');
+        // Only promise a retry for an item that is back in the queue.
+        if (requeued) toast.error('Failed to send queued message. It will be retried.');
       } finally {
         processingRef.current.delete(subChatId);
         if (activeRef.current) {
@@ -456,6 +429,12 @@ export function QueueProcessor() {
       () => checkAllQueues(),
     );
 
+    // A released archive hold (the archive failed) must resume the queue it paused.
+    const unsubscribeHeld = useMessageQueueStore.subscribe(
+      (state) => state.heldChatIds,
+      () => checkAllQueues(),
+    );
+
     // Subscribe to streaming status changes with selector
     const unsubscribeStatus = useStreamingStatusStore.subscribe(
       (state) => state.statuses,
@@ -495,6 +474,7 @@ export function QueueProcessor() {
       unsubCache();
       unsubscribeQueue();
       unsubscribeEditing();
+      unsubscribeHeld();
       unsubscribeStatus();
       unsubscribeHydration();
       unsubscribeChatRegistered();

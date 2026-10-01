@@ -28,6 +28,7 @@ import {
   getClaudeSessionPlansDir,
   isAllowedClaudePlanWritePath,
   isValidSubChatIdForSessionPaths,
+  PLAN_MUTATION_TOOLS,
   planWritePathFromInput,
   resolveLatestSessionPlanFile,
 } from '../claude/session-plan-paths';
@@ -123,6 +124,7 @@ import {
   attachTurn,
   buildClaudeSessionSpec,
   computeClaudeSessionKey,
+  persistEarlySessionId,
   prepareClaudeSpawn,
   releaseClaudeDebugSession,
   spawnClaudeSession,
@@ -139,6 +141,7 @@ import {
 import { logAdoptedTurnEnd, turnEndMustDispose } from './execution/wake-hold-signal';
 import type { WakePump } from './execution/wake-pump-types';
 import {
+  getTaskRowForResume,
   requiresStrictSignalFinalization,
   resolveFlowSignalArming,
   finalizeFlowSignalBeforeSessionDisposition as settleSignal,
@@ -148,12 +151,17 @@ import { shouldDropPostPlanChunkFromHistory } from './plan-mode-halt';
 import { acquireRuntimeSlot } from './runtime-gate';
 import { reportIfControlChannelClosed } from './stream-closed-sentinel';
 import {
+  type AdmissionToken,
+  admissionDeclineError,
+  closeAdmission,
   deleteActiveExecution,
   getActiveExecution,
   getExecutionOwner,
   getExecutionStreamEpoch,
   hasActiveExecutions,
   listExecutionsForWebContents,
+  listSubChatIdsForChat,
+  openAdmission,
   setActiveExecution,
 } from './streaming/execution-registry';
 
@@ -240,18 +248,6 @@ const USER_VISIBLE_CHUNK_TYPES = new Set<UIMessageChunk['type']>([
   'error',
   'auth-error',
 ]);
-
-/** Fire-and-forget persist of the first session id a stream announces — a turn that dies
- * mid-stream never reaches the finish-path persist, and Carry on then has no session to resume. */
-function persistEarlySessionId(subChatId: string, sessionId: string): void {
-  void import('../db/repos/sub-chats')
-    .then(({ updateSubChatSession }) => updateSubChatSession(getDatabase(), subChatId, sessionId))
-    .catch((err) => {
-      log.warn(`[Socket Executor] early session-id persist failed for ${subChatId}:`, err);
-    });
-}
-
-const PLAN_MUTATION_TOOLS = new Set(['Write', 'Edit', 'MultiEdit']);
 
 /** Clear the cached Codex resume thread for a chat (e.g., when the chat is deleted). */
 export function clearCodexSession(chatId: string): void {
@@ -524,24 +520,6 @@ type ExecuteRequestPayload = {
 /**
  * Format conversation history as context for Claude
  */
-type TasksRepo = typeof import('../db/repos/tasks');
-type SignalTaskRow = Awaited<ReturnType<TasksRepo['getTaskById']>>;
-
-/**
- * Resume reads reuse the disarm-check prefetch when it already holds the target row, so a
- * follow-up turn does a single task read; a different target (the flow-driving task) fetches
- * its own row.
- */
-async function getTaskRowForResume(
-  db: Parameters<TasksRepo['getTaskById']>[0],
-  targetTaskId: string,
-  prefetched: SignalTaskRow,
-): Promise<SignalTaskRow> {
-  if (prefetched?.id === targetTaskId) return prefetched;
-  const { getTaskById } = await import('../db/repos/tasks');
-  return getTaskById(db, targetTaskId);
-}
-
 export {
   buildPlanFallbackSends,
   emitPlanFallbackSends,
@@ -614,6 +592,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
   /** Retained for provider-neutral teardown duties outside the try block. */
   let executionAbortController: AbortController | null = null;
   let executionAdmissionAcknowledged = false;
+  let admission: AdmissionToken | null = null;
   /** This run's own abort reason. Never read the sub-chat-keyed map directly — see latchAbortReason. */
   let abortReason: () => string | undefined = () => undefined;
   let isFlowExecutionTurn = false;
@@ -636,6 +615,18 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
     signal: executionAbortController?.signal,
     failed: isFlowExecutionTurn || executionFailed || completionHasProviderError || !!signalFailure,
   }));
+  /** Refuse the send before it registers: acknowledge admission and report why as a run error. */
+  const declineAdmission = (error: Error & { category?: string }): void => {
+    executionAdmissionAcknowledged = true;
+    payload.onExecutionStarted?.(error);
+    sendRunErrorDirect({
+      chatId,
+      subChatId,
+      assistantMessageId: msgId,
+      error: error.message,
+      category: error.category,
+    });
+  };
   let linkedTaskSignalFinalization: Promise<void> | null = null;
   let claudeMcpConfig: ReturnType<typeof createClaudeMcpConfigTransport> = null;
   const finalizeLinkedTaskSignal = async (): Promise<void> => {
@@ -702,8 +693,13 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       }
     }
 
+    if (chatId) admission = openAdmission(chatId);
+    let chatReadFailed = false;
     const chatAccountResult = chatId
-      ? await getChatWithProjectAccount(getDatabase(), chatId).catch(() => null)
+      ? await getChatWithProjectAccount(getDatabase(), chatId).catch(() => {
+          chatReadFailed = true;
+          return null;
+        })
       : null;
     const { resolveFlowContinuationExecutionTask } = await import('../task-executor');
     const resolvedContinuation = resolveFlowContinuationExecutionTask({
@@ -721,17 +717,14 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       });
       // Only dispatches and mobile approvals assert a step; a spike means a sender builds stale ids.
       captureMainMessage(error.message, 'warning', { surface: 'flow-stale-step-decline' });
-      executionAdmissionAcknowledged = true;
-      payload.onExecutionStarted?.(error);
-      sendRunErrorDirect({
-        chatId,
-        subChatId,
-        assistantMessageId: msgId,
-        error: error.message,
-        category: error.category,
-      });
-      return;
+      return declineAdmission(error);
     }
+
+    // Synchronous from here to setActiveExecution (sc-682): archive writes, then dooms open admissions
+    // and sweeps registered runs, so a stale row can't admit. An unreadable row fails closed.
+    const archived = chatAccountResult?.chat?.archivedAt;
+    const declined = admissionDeclineError(chatReadFailed, admission, archived);
+    if (declined) return declineAdmission(declined);
 
     log.info(`[Socket Executor] Starting execution for project ${projectId || '(general chat)'}`);
 
@@ -2085,6 +2078,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       });
     }
   } finally {
+    if (admission) closeAdmission(admission);
     logAdoptedTurnEnd(turn, subChatId, executionFailed ? 'failed' : 'ended without a disposition');
     if (!executionAdmissionAcknowledged) {
       payload.onExecutionStarted?.(new Error('The chat could not start. Refresh and try again.'));
@@ -2204,6 +2198,11 @@ export function abortActiveExecutionsForSubChats(
   if (aborted > 0) {
     log.info(`[Socket Executor] Aborted ${aborted} execution(s) for sub-chats: ${reason}`);
   }
+}
+
+/** Abort every run the registry attributes to `chatId` (no DB read): archive's pre/post-write sweep. */
+export function abortActiveExecutionsForChat(chatId: string, reason: string): void {
+  abortActiveExecutionsForSubChats(listSubChatIdsForChat(chatId), reason);
 }
 
 /**
