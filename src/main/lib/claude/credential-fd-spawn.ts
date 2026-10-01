@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import type { Readable, Writable } from 'node:stream';
 import type { SpawnedProcess, SpawnOptions } from '@anthropic-ai/claude-agent-sdk';
+import { lowerChildPriority } from '../platform/lower-child-priority';
 
 /** The fd the CLI reads its credential from. 0-2 are the SDK's stdio pipes. */
 const CREDENTIAL_FD = 3;
@@ -98,6 +99,7 @@ function spawnWithCredentialPipe(
     stdio: ['pipe', 'pipe', onStderr ? 'pipe' : 'ignore', 'pipe'],
     windowsHide: true,
   });
+  lowerChildPriority(child.pid);
   if (onStderr) child.stderr?.on('data', (chunk: Buffer) => onStderr(chunk.toString()));
 
   const credentialPipe = child.stdio[CREDENTIAL_FD] as Writable | null;

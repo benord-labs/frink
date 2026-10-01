@@ -16,6 +16,7 @@ import { parseResultRecord, updateTaskStatus as updateTaskStatusLocal } from './
 import type { Task as DbTask } from './db/schema';
 import { validateWorktreeForReuse } from './git/worktree-validation';
 import { resolveCommandShell } from './platform/command-shell';
+import { lowerChildPriority } from './platform/lower-child-priority';
 import { buildSafeEnv } from './terminal/env';
 
 export const SHELL_TASK_TIMEOUT_MS = 5 * 60 * 1000;
@@ -137,6 +138,7 @@ export async function runShellCommand(
         });
       },
     );
+    lowerChildPriority(child.pid);
 
     // Cancellation support: kill the child process when the AbortSignal fires.
     if (options.signal) {
