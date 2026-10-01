@@ -110,11 +110,17 @@ function BackgroundWaitRow({
                 className="h-7 px-2 gap-1 text-xs text-muted-foreground hover:text-foreground rounded-md"
                 disabled={stopWait.isPending}
                 onClick={() => stopWait.mutate(stopTarget)}
-                aria-label="Stop waiting on background work"
+                aria-label={
+                  waitingOn.length > 1
+                    ? 'Stop all background work'
+                    : 'Stop waiting on background work'
+                }
                 aria-busy={stopWait.isPending || undefined}
               >
                 <Square className="h-3.5 w-3.5" aria-hidden />
-                <span>{stopWait.isPending ? 'Stopping…' : 'Stop'}</span>
+                <span>
+                  {stopWait.isPending ? 'Stopping…' : waitingOn.length > 1 ? 'Stop all' : 'Stop'}
+                </span>
               </Button>
             </span>
           </TooltipTrigger>

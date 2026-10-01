@@ -137,6 +137,23 @@ describe('RunStatusRows', () => {
     ).toBeInTheDocument();
   });
 
+  // With several items each row has its own Stop, so the banner's one ends them all.
+  it('names the banner Stop for what it ends', () => {
+    hold('Monitor');
+    const { unmount } = renderRows();
+    expect(
+      screen.getByRole('button', { name: 'Stop waiting on background work' }),
+    ).toHaveTextContent(/^Stop$/);
+    unmount();
+
+    // The accessible name says the same as the label: this ends every item, not one.
+    hold('Command', 'Command');
+    renderRows();
+    expect(screen.getByRole('button', { name: 'Stop all background work' })).toHaveTextContent(
+      'Stop all',
+    );
+  });
+
   it('offers Stop as the wait’s only exit, addressed to the chat', () => {
     hold('Monitor');
     renderRows();
@@ -233,9 +250,7 @@ describe('RunStatusRows', () => {
     openList();
 
     expect(within(screen.getByRole('list')).getAllByRole('button')).toHaveLength(1);
-    expect(
-      screen.getByText('Stop on the banner ends everything still running.'),
-    ).toBeInTheDocument();
+    expect(screen.getByText('Stop all ends everything still running.')).toBeInTheDocument();
   });
 
   // Main never ends a wait from a per-item stop, so the last item points at the stop that does.

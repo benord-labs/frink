@@ -6,11 +6,10 @@ import {
   Activity,
   Bot,
   ChevronUp,
-  CircleStop,
   Clock,
-  Loader2,
   type LucideIcon,
   Radar,
+  Square,
   SquareTerminal,
   Workflow,
 } from 'lucide-react';
@@ -23,7 +22,6 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '../../../components/ui/popover';
-import { Tooltip, TooltipContent, TooltipTrigger } from '../../../components/ui/tooltip';
 import {
   overlayItemBase,
   overlayItemHover,
@@ -117,9 +115,11 @@ export function BackgroundWorkPopover({
           <>
             <div className={overlaySeparator} />
             <p className={cn(overlayLabel, 'font-normal')}>
-              {hasSessionStop
-                ? 'Stop on the banner ends everything still running.'
-                : 'The flow’s Stop ends everything still running.'}
+              {!hasSessionStop
+                ? 'The flow’s Stop ends everything still running.'
+                : rowsCanStop
+                  ? 'Stop all ends everything still running.'
+                  : 'Stop on the banner ends it.'}
             </p>
           </>
         ) : null}
@@ -168,29 +168,20 @@ function BackgroundWorkRow({
         ) : null}
       </div>
       {canStop ? (
-        <Tooltip delayDuration={300}>
-          <TooltipTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="h-6 w-6 shrink-0 rounded-md text-muted-foreground hover:text-foreground"
-              disabled={stopTask.isPending}
-              onClick={() => stopTask.mutate({ subChatId, taskId: item.id })}
-              aria-label={`Stop ${item.label}: ${item.description}`}
-              aria-busy={stopTask.isPending || undefined}
-            >
-              {stopTask.isPending ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-              ) : (
-                <CircleStop className="h-3.5 w-3.5" aria-hidden />
-              )}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            {stopTask.isPending ? 'Stopping…' : `Stop this ${item.label.toLowerCase()}`}
-          </TooltipContent>
-        </Tooltip>
+        // The banner's own Stop, so the two read as one control.
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-7 shrink-0 gap-1 rounded-md px-2 text-xs text-muted-foreground hover:text-foreground"
+          disabled={stopTask.isPending}
+          onClick={() => stopTask.mutate({ subChatId, taskId: item.id })}
+          aria-label={`Stop ${item.label}: ${item.description}`}
+          aria-busy={stopTask.isPending || undefined}
+        >
+          <Square className="h-3.5 w-3.5" aria-hidden />
+          <span>{stopTask.isPending ? 'Stopping…' : 'Stop'}</span>
+        </Button>
       ) : null}
     </li>
   );
