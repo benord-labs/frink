@@ -8,7 +8,6 @@ import { runCredentialMigrationSweep } from '../credentials/migration-sweep';
 import { ensureDirExists } from '../fs-helpers';
 import { drizzleNodeSqlite } from './drizzle-node-sqlite';
 import { NodeSqliteDatabase } from './node-sqlite-driver';
-import { normalizeToolPartStates } from './normalize-tool-part-states';
 import * as schema from './schema';
 
 let db: BetterSQLite3Database<typeof schema> | null = null;
@@ -104,9 +103,6 @@ export function initDatabase() {
 
     // Normalize existing git_remote_url values to canonical form (SSH alias support)
     normalizeExistingGitRemoteUrls(sqlite);
-
-    // Must run last — see normalizeToolPartStates' own doc for why order matters here.
-    normalizeToolPartStates(sqlite);
 
     // Phase 1 local-first migration: chats start fresh in local SQLite. The Neon →
     // SQLite backfill that briefly lived here was deleted (Path B) — local rows are
@@ -262,7 +258,7 @@ function ensureCredentialSourceColumns(dbInstance: NodeSqliteDatabase): void {
  * Bump the target version and add a new block when adding future normalizations.
  *   1 = git_remote_url canonical normalization
  *   2 = credential OAuth-snapshot vs API-key sweep (credentials/migration-sweep.ts)
- *   3 = tool-part state vocabulary (normalize-tool-part-states.ts)
+ *   3 = retired (tool-part state sweep, deleted pre-launch); the next normalization uses 4
  */
 function normalizeExistingGitRemoteUrls(dbInstance: NodeSqliteDatabase): void {
   // user_version >= 1 means normalization already ran — skip
