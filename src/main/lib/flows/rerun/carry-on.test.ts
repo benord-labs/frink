@@ -25,7 +25,7 @@ async function seedTask(sessionId: string | null): Promise<string> {
   const subChatId = `sub-${sequence}`;
   const taskId = `task-${sequence}`;
   await db.insert(chats).values({ id: chatId, name: `chat ${sequence}` });
-  await db.insert(subChats).values({ id: subChatId, chatId, sessionId, messages: '[]' });
+  await db.insert(subChats).values({ id: subChatId, chatId, sessionId });
   await db.insert(tasks).values({
     id: taskId,
     description: `task ${sequence}`,

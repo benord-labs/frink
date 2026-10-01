@@ -29,11 +29,16 @@ const planMessage = (planId: string, status = 'awaiting_approval') =>
 
 describe('planApprovalRouter.getPendingPlanApprovals', () => {
   let db: TestDb;
+  const seedRow = (subChatId: string, seq: number, message: string) =>
+    db.insert(schema.subChatMessages).values({ subChatId, seq, message }).run();
   const rows = {
     push: (...subs: Array<{ id: string; chatId: string; mode: string; messages: string }>) => {
-      for (const sub of subs) {
+      for (const { messages, ...sub } of subs) {
         db.insert(schema.chats).values({ id: sub.chatId }).onConflictDoNothing().run();
         db.insert(schema.subChats).values(sub).run();
+        (JSON.parse(messages) as unknown[]).forEach((message, seq) => {
+          seedRow(sub.id, seq, JSON.stringify(message));
+        });
       }
     },
   };
@@ -98,7 +103,8 @@ describe('planApprovalRouter.getPendingPlanApprovals', () => {
   });
 
   it('skips a malformed history', async () => {
-    rows.push({ id: 'broken', chatId: 'chat-1', mode: 'plan', messages: 'not-json' });
+    rows.push({ id: 'broken', chatId: 'chat-1', mode: 'plan', messages: '[]' });
+    seedRow('broken', 0, 'not-json');
 
     await expect(caller().getPendingPlanApprovals({ chatIds: ['chat-1'] })).resolves.toEqual([]);
   });

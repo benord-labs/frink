@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import type { FlowResumeSnapshot } from '../../../../shared/types/flow-run/resume';
-import { chats, subChats, tasks } from '../schema';
+import { chats, tasks } from '../schema';
 import { seedFlowRun } from '../test-utils/flow-fixtures';
 import { freshDb } from '../test-utils/fresh-db';
 import {
@@ -11,6 +11,7 @@ import {
   nodeMatchesResumeSnapshot,
   setNodeRunStatus,
 } from './node-runs';
+import { createSubChat, type Message, updateSubChatMessages } from './sub-chats';
 
 async function parkedNode() {
   const db = freshDb();
@@ -24,9 +25,7 @@ async function parkedNode() {
   });
   await db.insert(chats).values({ id: 'chat' });
   const messages = [{ id: 'plan', role: 'assistant', content: 'Plan A' }];
-  await db
-    .insert(subChats)
-    .values({ id: 'sub', chatId: 'chat', messages: JSON.stringify(messages) });
+  await createSubChat(db, { id: 'sub', chatId: 'chat', messages: JSON.stringify(messages) });
   const result = { subChatId: 'sub', resumedAt: '2026-09-27T10:00:00.001Z' };
   await db.insert(tasks).values({
     id: 'task',
@@ -118,10 +117,9 @@ describe('node resume snapshot CAS', () => {
 
   it('refuses a changed plan transcript when the task and node are unchanged', async () => {
     const { db, node, snapshot } = await parkedNode();
-    await db
-      .update(subChats)
-      .set({ messages: JSON.stringify([{ role: 'assistant', content: 'Plan B' }]) })
-      .where(eq(subChats.id, 'sub'));
+    await updateSubChatMessages(db, 'sub', () => [
+      { id: 'plan', role: 'assistant', parts: [], content: 'Plan B' } as Message,
+    ]);
     expect(
       await setNodeRunStatus(db, node.id, 'completed', { expectResumeSnapshot: snapshot }),
     ).toBeNull();

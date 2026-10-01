@@ -17,7 +17,7 @@ const lazyCapture: Capture = (err, context) =>
 let capture: Capture = lazyCapture;
 
 export function reportCorruptTranscript(rowId: string, raw: string, err: Error): void {
-  log.warn(`[sub-chats] unparseable messages JSON for sub-chat ${rowId}; degrading to []`, err);
+  log.warn(`[sub-chats] skipping an unparseable message in sub-chat ${rowId}`, err);
   if (reportedCorruptRows.has(rowId)) return;
   if (reportedCorruptRows.size >= REPORTED_ROWS_MAX) reportedCorruptRows.clear();
   const attempt = ++attempts;

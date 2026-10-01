@@ -624,6 +624,62 @@ describe('database migration chain', () => {
     }
   });
 
+  it('moves every transcript into one row per message and drops the column', () => {
+    const subChatMessagesTag = '0111_sub_chat_messages';
+    const transcripts: Record<string, string> = {
+      metadata: JSON.stringify([
+        { id: 'a1', role: 'assistant', parts: [], metadata: { sdkMessageUuid: 'sdk-1' } },
+      ]),
+      partial: JSON.stringify([
+        { id: 'u1', role: 'user', parts: [{ type: 'text', text: 'hi' }] },
+        { id: 'a1', role: 'assistant' },
+      ]),
+      duplicates: JSON.stringify([
+        { id: 'm1', role: 'user', parts: [] },
+        { id: 'm1', role: 'assistant', parts: [] },
+      ]),
+      holes: JSON.stringify([{ id: 'm1' }, null, { id: 'm2' }]),
+      corrupt: '{not json',
+    };
+    const sqlite = new NodeSqliteDatabase(':memory:');
+    try {
+      sqlite.pragma('foreign_keys = ON');
+      for (const entry of readJournalEntries()) {
+        if (entry.tag === subChatMessagesTag) break;
+        sqlite.exec(readFileSync(join(drizzleDir, `${entry.tag}.sql`), 'utf-8'));
+      }
+      sqlite.exec("INSERT INTO chats (id) VALUES ('c1')");
+      const insert = sqlite.prepare(
+        'INSERT INTO sub_chats (id, chat_id, messages) VALUES (?, ?, ?)',
+      );
+      for (const [id, raw] of Object.entries(transcripts)) insert.run(id, 'c1', raw);
+
+      sqlite.exec(readFileSync(join(drizzleDir, `${subChatMessagesTag}.sql`), 'utf-8'));
+
+      expect(columnNames(sqlite, 'sub_chats')).not.toContain('messages');
+      // SAFETY: this projection returns the sub_chat_messages columns, all non-null.
+      const rows = sqlite
+        .prepare('SELECT sub_chat_id, seq, message FROM sub_chat_messages ORDER BY seq')
+        .all() as Array<{ sub_chat_id: string; seq: number; message: string }>;
+      for (const [id, raw] of Object.entries(transcripts)) {
+        const own = rows.filter((row) => row.sub_chat_id === id);
+        const expected = id === 'corrupt' ? [] : (JSON.parse(raw) as unknown[]);
+        expect(
+          own.map((row) => row.seq),
+          id,
+        ).toEqual(own.map((_, seq) => seq));
+        expect(
+          own.map((row) => JSON.parse(row.message)),
+          id,
+        ).toEqual(expected.filter((message) => message !== null));
+      }
+      sqlite.exec("DELETE FROM sub_chats WHERE id = 'metadata'");
+      expect(count(sqlite, "sub_chat_messages WHERE sub_chat_id = 'metadata'")).toBe(0);
+    } finally {
+      sqlite.close();
+    }
+  });
+
   it('leaves no dropped column or table behind after the real migration runner', () => {
     const db = freshDb();
     try {

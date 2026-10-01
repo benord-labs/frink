@@ -38,7 +38,6 @@ async function seedSubChat(over: Partial<typeof subChats.$inferInsert> = {}): Pr
     chatId: CHAT_ID,
     mode: 'agent',
     sessionId: 'sess-1',
-    messages: '[]',
     createdAt: new Date('2026-08-01T10:00:00.000Z'),
     ...over,
   });

@@ -94,15 +94,16 @@ describe('seedUserMessageIfEmpty', () => {
     expect((await getSubChatById(db, subChat.id))?.messages).toEqual([message('live-message')]);
   });
 
-  it.each(['{"broken"', '{}'])('never treats malformed history %s as empty', async (messages) => {
+  it.each(['{"broken"', '{}'])('never treats malformed history %s as empty', async (raw) => {
     await db.insert(schema.chats).values({ id: 'chat-malformed' });
-    const subChat = await createSubChat(db, { chatId: 'chat-malformed', messages });
+    const subChat = await createSubChat(db, { chatId: 'chat-malformed' });
+    const stored = { subChatId: subChat.id, seq: 0, message: raw };
+    await db.insert(schema.subChatMessages).values(stored);
 
     const result = await seedUserMessageIfEmpty(db, subChat.id, message('stale-seed'));
-    const persisted = db.select().from(schema.subChats).get();
 
     expect(result.seeded).toBe(false);
-    expect(persisted?.messages).toBe(messages);
+    expect(await db.select().from(schema.subChatMessages)).toEqual([stored]);
   });
 });
 
@@ -719,8 +720,8 @@ describe('assistant message metadata is preserved across re-persists', () => {
 
   it('keeps it when a checkpoint write carries none', async () => {
     const subChatId = await seed(original);
-    // 'patched' pins the in-SQLite fast path: it writes `$[#-1].parts` rather than replacing the
-    // element, which is exactly why metadata survives here without a read-modify-write.
+    // 'patched' pins the in-SQLite fast path: it writes `$.parts` rather than replacing the
+    // message, which is exactly why metadata survives here without a read-modify-write.
     expect(
       await upsertAssistantMessage(
         db,
@@ -825,7 +826,6 @@ describe('getSubChatForChat', () => {
       chatId: 'chat-n',
       name: 'one',
       mode: 'agent',
-      messages: '[]',
       sessionId: 'sess-1',
     });
     const row = await getSubChatForChat(db, 'chat-n');

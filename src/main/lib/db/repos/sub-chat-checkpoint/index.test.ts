@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { asc, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   _resetStreamCadenceForTests,
@@ -43,9 +43,21 @@ describe('upsertAssistantMessage branch selection', () => {
     return subChat.id;
   };
 
-  const rawMessages = async (subChatId: string): Promise<string> =>
-    (await db.select().from(schema.subChats).where(eq(schema.subChats.id, subChatId)).limit(1))[0]
-      .messages;
+  const { subChatMessages } = schema;
+  /** Stores each string verbatim as the next message row, bypassing the writer. */
+  const seedRawRows = (subChatId: string, rows: string[]) =>
+    rows.forEach((message, seq) => {
+      db.insert(subChatMessages).values({ subChatId, seq, message }).run();
+    });
+  const rawMessages = async (subChatId: string): Promise<string> => {
+    const rows = db
+      .select({ message: subChatMessages.message })
+      .from(subChatMessages)
+      .where(eq(subChatMessages.subChatId, subChatId))
+      .orderBy(asc(subChatMessages.seq))
+      .all();
+    return `[${rows.map((row) => row.message).join(',')}]`;
+  };
 
   const assistant = (id: string, text: string) =>
     JSON.stringify({ id, role: 'assistant', parts: [{ type: 'text', text }] });
@@ -196,19 +208,13 @@ describe('upsertAssistantMessage branch selection', () => {
     expect(await rawMessages(subChatId)).not.toContain('rolled away');
   });
 
-  it.each([
-    ['unparseable JSON', '{not json'],
-    ['valid JSON of the wrong shape', '{"a":1}'],
-  ])('captures %s to Sentry, so the transcript loss is not silent', async (_l, raw) => {
-    // Degrading to [] discards the user's history and throws NOTHING, so without a capture the
+  it('captures an unparseable message to Sentry, so the loss is not silent', async () => {
+    // Skipping the message discards history and throws NOTHING, so without a capture the
     // only trace is a local warn nobody reads and the user finds out on reload.
     captureMainException.mockClear();
     _resetCorruptTranscriptReportsForTests();
     const subChatId = await seedRaw('[]');
-    await db
-      .update(schema.subChats)
-      .set({ messages: raw })
-      .where(eq(schema.subChats.id, subChatId));
+    seedRawRows(subChatId, ['{not json']);
 
     await getSubChatById(db, subChatId);
     await vi.waitFor(() => expect(captureMainException).toHaveBeenCalled());
@@ -224,10 +230,7 @@ describe('upsertAssistantMessage branch selection', () => {
     captureMainException.mockClear();
     _resetCorruptTranscriptReportsForTests();
     const subChatId = await seedRaw('[]');
-    await db
-      .update(schema.subChats)
-      .set({ messages: '{not json' })
-      .where(eq(schema.subChats.id, subChatId));
+    seedRawRows(subChatId, ['{not json']);
 
     await getSubChatById(db, subChatId);
     await vi.waitFor(() => expect(captureMainException).toHaveBeenCalledTimes(1));
@@ -239,10 +242,7 @@ describe('upsertAssistantMessage branch selection', () => {
 
   it('heals a corrupt row rather than throwing on malformed JSON', async () => {
     const subChatId = await seedRaw('[]');
-    await db
-      .update(schema.subChats)
-      .set({ messages: '{not json' })
-      .where(eq(schema.subChats.id, subChatId));
+    seedRawRows(subChatId, ['{not json']);
     expect(await upsertAssistantMessage(db, subChatId, 'assistant-1', [{ type: 'text' }], 0)).toBe(
       'appended',
     );
@@ -274,26 +274,6 @@ describe('upsertAssistantMessage branch selection', () => {
     const subChatId = await seedRaw(`[${assistant('assistant-1', 'first')}]`);
     expect(await upsertAssistantMessage(db, subChatId, 'assistant-1', [], 0)).toBe('patched');
     expect((await getSubChatById(db, subChatId))?.messages[0].parts).toEqual([]);
-  });
-
-  it.each([
-    ['an object', '{"a":1}'],
-    ['a bare null', 'null'],
-    ['a bare string', '"hello"'],
-  ])('heals %s — valid JSON that is not a transcript — instead of throwing', async (_l, raw) => {
-    // json_valid() passes for all of these, so the fast path's guard is what must reject them.
-    // json_extract(..., '$[#-1].id') returns NULL rather than raising, so the write falls through
-    // to the rewrite, whose safeParseMessages rebuilds the row.
-    const subChatId = await seedRaw('[]');
-    await db
-      .update(schema.subChats)
-      .set({ messages: raw })
-      .where(eq(schema.subChats.id, subChatId));
-
-    expect(await upsertAssistantMessage(db, subChatId, 'assistant-1', [{ type: 'text' }], 0)).toBe(
-      'appended',
-    );
-    expect((await getSubChatById(db, subChatId))?.messages).toHaveLength(1);
   });
 
   it('lets a rollback truncation queued behind a checkpoint win', async () => {
@@ -430,14 +410,26 @@ describe('upsertAssistantMessage branch selection', () => {
     expect(messages[0].id).toBe('assistant-1');
   });
 
+  // A re-serialised row would renormalise these (1e+21, a/b), so they prove which rows were written.
+  const exotic = '{"id":"user-1","role":"user","parts":[{"n":1e21,"s":"a\\/b"}]}';
+
   it('leaves untouched messages byte-identical', async () => {
-    // `stats/*` routers parse this column directly, so a patch must not silently renormalise
-    // numbers or escapes in messages it did not target.
-    const exotic = '{"id":"user-1","role":"user","parts":[{"n":1e21,"s":"a\\/b"}]}';
-    const subChatId = await seedRaw(`[${exotic},${assistant('assistant-1', 'first')}]`);
+    const subChatId = await seedRaw('[]');
+    seedRawRows(subChatId, [exotic, assistant('assistant-1', 'first')]);
     expect(await upsertAssistantMessage(db, subChatId, 'assistant-1', [{ type: 'text' }], 0)).toBe(
       'patched',
     );
     expect(await rawMessages(subChatId)).toContain(exotic);
+  });
+
+  it('rewrites only the targeted row when the message is not last', async () => {
+    const subChatId = await seedRaw('[]');
+    seedRawRows(subChatId, [assistant('assistant-1', 'first'), exotic]);
+    expect(await upsertAssistantMessage(db, subChatId, 'assistant-1', [{ type: 'text' }], 0)).toBe(
+      'rewritten',
+    );
+    expect(await rawMessages(subChatId)).toBe(
+      `[{"id":"assistant-1","role":"assistant","parts":[{"type":"text"}]},${exotic}]`,
+    );
   });
 });
