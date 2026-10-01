@@ -3,6 +3,7 @@ import { hardDeleteFlow, listUnsettledFlowRunIdsForFlow } from '../../db/repos/f
 import { getFlowById, updateFlow } from '../../db/repos/flows';
 import type { DeleteChatsResult } from '../../db/repos/task-queries/chat-flow-cleanup';
 import { clearActiveFlowTaskForChatIfMatches } from '../../task-executor';
+import { dropStagedContinuation } from '../admission/terminal-resume/continuation';
 import { abortFlowRun } from '../cancel-registry';
 import { cancelFlowRunForChatDeletion, cancelFlowRunForDeletion } from '../engine';
 
@@ -44,7 +45,11 @@ async function deleteSettledFlow(
     const result = await transitionFlowRun(
       () => hardDeleteFlow(db, flowId),
       (deleted) => {
-        if (deleted.deleted) for (const flowRunId of deleted.flowRunIds) abortFlowRun(flowRunId);
+        if (!deleted.deleted) return;
+        for (const flowRunId of deleted.flowRunIds) {
+          abortFlowRun(flowRunId);
+          dropStagedContinuation(flowRunId);
+        }
       },
     );
     if (result.deleted) return result.taskLinks;

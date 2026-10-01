@@ -57,7 +57,9 @@ export class FlowExecutorResourceScope {
     | ((prepareForExecution: () => Promise<void>) => Promise<void>)
     | null = null;
   // Survives clear()/settle on purpose: the executor reads it AFTER settling the turn.
-  private pendingContinuationResumeTaker: (() => PendingContinuationResume | null) | null = null;
+  private pendingContinuationResumeTaker:
+    | ((abortReason?: string) => PendingContinuationResume | null)
+    | null = null;
   private readonly providerSettlements: Promise<void>[] = [];
   private readonly executionSettlement = createExecutionSettlementBarrier();
   private wakeHoldArmed = false;
@@ -102,8 +104,8 @@ export class FlowExecutorResourceScope {
   }
 
   /** The continuation re-admission a FLOW_RUN_RESUMING decline recorded — read after settle. */
-  takePendingContinuationResume(): PendingContinuationResume | null {
-    return this.pendingContinuationResumeTaker?.() ?? null;
+  takePendingContinuationResume(abortReason?: string): PendingContinuationResume | null {
+    return this.pendingContinuationResumeTaker?.(abortReason) ?? null;
   }
 
   async prepareProviderExecution(prepareForExecution: () => Promise<void>): Promise<void> {
