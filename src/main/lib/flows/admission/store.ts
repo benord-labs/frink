@@ -6,14 +6,8 @@ import {
   isFlowAdmissionIntentV1,
 } from '../../../../shared/lib/flow-admission';
 import type { getDatabase } from '../../db';
-import {
-  batchStageRuns,
-  flowRunAdmissions,
-  flowRuns,
-  nodeRuns,
-  subChats,
-  tasks,
-} from '../../db/schema';
+import { batchStageRuns, flowRunAdmissions, flowRuns, nodeRuns, tasks } from '../../db/schema';
+import { transcriptHasMessage } from '../../db/repos/sub-chat-messages';
 import { batchMemberPromotionError, promoteStageRunToDispatched } from './batch-promotion';
 import type { FlowAdmissionConfig } from './config';
 import { FLOW_ADMISSION_QUEUE_ORDER_BY } from './queue-order';
@@ -128,21 +122,6 @@ function missingBatchRun(db: Db, intent: FlowAdmissionIntentV1): string | null {
     : `Missing batch stage run ${intent.batch_stage_run_id}`;
 }
 
-function missingMessage(messagesJson: string, intent: FlowAdmissionIntentV1): string | null {
-  if (!intent.message_id) return null;
-  let messages: unknown;
-  try {
-    messages = JSON.parse(messagesJson);
-  } catch {
-    return `Invalid messages for sub-chat ${intent.sub_chat_id}`;
-  }
-  const found =
-    Array.isArray(messages) &&
-    messages.some((message) => jsonObject(message)?.id === intent.message_id);
-  if (!found) return `Missing message ${intent.message_id} in sub-chat ${intent.sub_chat_id}`;
-  return null;
-}
-
 function missingSubChatReference(db: Db, intent: FlowAdmissionIntentV1): string | null {
   if (!intent.sub_chat_id) return null;
   if (!intent.task_id) return `Sub-chat ${intent.sub_chat_id} has no owning task reference`;
@@ -154,12 +133,9 @@ function missingSubChatReference(db: Db, intent: FlowAdmissionIntentV1): string 
   if (jsonObject(task?.result)?.subChatId !== intent.sub_chat_id) {
     return `Sub-chat ${intent.sub_chat_id} is not owned by task ${intent.task_id}`;
   }
-  const row = db
-    .select({ messages: subChats.messages })
-    .from(subChats)
-    .where(eq(subChats.id, intent.sub_chat_id))
-    .get();
-  return row ? missingMessage(row.messages, intent) : `Missing sub-chat ${intent.sub_chat_id}`;
+  const found = transcriptHasMessage(db, intent.sub_chat_id, intent.message_id);
+  if (found === null) return `Missing sub-chat ${intent.sub_chat_id}`;
+  return found ? null : `Missing message ${intent.message_id} in sub-chat ${intent.sub_chat_id}`;
 }
 
 function missingReference(db: Db, intent: FlowAdmissionIntentV1): string | null {
