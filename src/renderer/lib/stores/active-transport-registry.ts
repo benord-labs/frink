@@ -58,32 +58,20 @@ export const runLiveAtomFamily = atomFamily((_subChatId: string) => atom<boolean
  * (execute-complete → stream-settled): nothing is left to steer. */
 export const runSettlingAtomFamily = atomFamily((_subChatId: string) => atom<boolean>(false));
 
-/**
- * The third liveness state: the session is held open waiting on background work — a backgrounded
- * command, a Monitor, a ScheduleWakeup cron — and WILL wake again on its own.
- *
- * Neither of the two above covers it. Between wake bursts there is no transport, no observed run,
- * and status is 'ready' — byte-identical to a finished turn. This flag is what lets the
- * BackgroundWaitRow advertise the wait, the plan card hide Approve, and PendingQuestionsManager
- * keep a held question answerable across burst boundaries.
- *
- * Declared by the producer (main broadcasts 'socket:wake-hold-changed' from the wake pump's own
- * arm/release paths), never inferred here — a burst is otherwise invisible to the renderer, and
- * guessing from message shape misreads flow chat_reply rows and retried turns.
- *
- * Nothing is persisted, but a reload does NOT lose the wait: `useWakeHoldSync` re-seeds this on boot
- * from main's live registry (`socket.listWakeHolds`), which is the only record either process keeps.
- * This once deliberately rendered a reloaded chat as finished, on the reasoning that a "waiting"
- * badge nothing could retract was worse. That reasoning was wrong — retractions broadcast to EVERY
- * window, so a reloaded one has always been able to clear the badge — and the cost was real: a held
- * chat with no BackgroundWaitRow has no Stop at all, since the composer's is gated on isStreaming.
- *
- * Null means not held. The value doubles as the wait's detail (what it is blocked on, as of the
- * last wake) so the two can never disagree about whether a wait is on.
- */
+/** Held on background work: null = not held, else what it waits on. Main-declared (rationale in the
+ * unattended-wake-budget decision); read by BackgroundWaitRow, plan Approve, turn-end detection. */
 export const wakeHeldAtomFamily = atomFamily((_subChatId: string) =>
   atom<WakeHoldState | null>(null),
 );
+
+/** Held subChatId → its chatId, so chat-level surfaces (the sidebar) can show the wait. Written only
+ * by `useWakeHoldSync`, alongside {@link wakeHeldAtomFamily}. */
+export const heldSubChatsAtom = atom<ReadonlyMap<string, string>>(new Map<string, string>());
+export const heldChatIdsAtom = atom((get) => new Set(get(heldSubChatsAtom).values()));
+
+/** True while a follow-up turn runs on an adopted hold, so its Stop also ends the background work.
+ * Set by an 'adopted' retraction; cleared by the sub-chat's next wake-hold frame or turn finish. */
+export const wakeHoldAdoptedAtomFamily = atomFamily((_subChatId: string) => atom<boolean>(false));
 
 /**
  * The fourth liveness state: tool-call ids of background SUBAGENTS currently running, fed by

@@ -196,11 +196,10 @@ export function TransientConnectDialog({
           <Button variant="secondary" onClick={onClose}>
             {connectError ? 'Close' : 'Cancel'}
           </Button>
-          {connectError &&
-            provider && (
-              // Retries through the plugin handler so a failed install is retried too (install is an idempotent upsert).
-              <Button onClick={() => onRetry(provider.id)}>Try Again</Button>
-            )}
+          {connectError && provider && (
+            // Retries through the plugin handler so a failed install is retried too (install is an idempotent upsert).
+            <Button onClick={() => onRetry(provider.id)}>Try Again</Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

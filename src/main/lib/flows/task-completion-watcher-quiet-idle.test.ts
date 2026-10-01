@@ -6,7 +6,7 @@ import { getFlowRun } from '../db/repos/flow-runs';
 import { createNodeRun, getNodeRun } from '../db/repos/node-runs';
 import { createTask, getTaskById, parseResultRecord, updateTaskStatus } from '../db/repos/tasks';
 import { flowRuns, tasks } from '../db/schema';
-import { seedFlowRun } from '../db/test-utils/flow-fixtures';
+import { seedActiveAdmission, seedFlowRun } from '../db/test-utils/flow-fixtures';
 import { freshDb, type TestDb } from '../db/test-utils/fresh-db';
 
 // tick() and its callees read the db via the getDatabase() singleton — point it at the per-test
@@ -25,13 +25,13 @@ import {
   resumeQuietIdleParkOnBurst,
   settleBurstSignal,
 } from '../socket/execution/wake-hold-signal';
-import { resumeParkedTaskInPlace } from '../tasks';
+import { resumeParkedTaskInPlace, unparkFlowInPlace } from '../tasks';
 import {
   markLinkedTaskQuietEnd,
   persistLinkedTaskSignal,
 } from '../trpc/routers/frink-task-signal-persist';
+import { _setFlowAdmissionControllerForTests } from './admission/runtime';
 import { advanceFlowRun } from './advance';
-import { resumeFlowNodeInPlace } from './resume';
 import { mapTaskToNodeOutput } from './signal-bridge';
 import { QUIET_IDLE_PARK_CEILING_MS, tick } from './task-completion-watcher';
 
@@ -55,6 +55,7 @@ describe('task-completion-watcher — quiet-idle sweep', () => {
   beforeEach(async () => {
     db = freshDb();
     holder.db = db;
+    _setFlowAdmissionControllerForTests(null);
     ({ flowRunId } = await seedFlowRun(db, GRAPH));
     const node = await createNodeRun(db, {
       flowRunId,
@@ -89,6 +90,7 @@ describe('task-completion-watcher — quiet-idle sweep', () => {
   }
 
   it('parks a quiet task once the idle ceiling elapses and pauses its flow run', async () => {
+    seedActiveAdmission(db, flowRunId);
     await setRunClock(RUN_STARTED_AGO_MS, QUIET_IDLE_PARK_CEILING_MS + MINUTE_MS);
 
     await tick();
@@ -180,6 +182,7 @@ describe('task-completion-watcher — quiet-idle sweep', () => {
   });
 
   it('a late wake done-signal supersedes the park, re-opens the run, and the next tick advances', async () => {
+    seedActiveAdmission(db, flowRunId);
     await setRunClock(RUN_STARTED_AGO_MS, QUIET_IDLE_PARK_CEILING_MS + MINUTE_MS);
     await tick(); // park: task needs_attention, node awaiting_input, run paused
 
@@ -220,6 +223,11 @@ describe('task-completion-watcher — quiet-idle sweep', () => {
   describe('task-completion-watcher — a wake burst un-parks a quiet-idle park', () => {
     const quietPark = (at = '2026-09-04T00:00:00.000Z') => ({
       agentSignal: { state: 'missing_completion_signal', summary: 'went quiet', at },
+    });
+
+    // A wake continues the run in place, so the run holds its active slot.
+    beforeEach(() => {
+      seedActiveAdmission(db, flowRunId);
     });
 
     async function parkViaSweep(): Promise<void> {
@@ -428,11 +436,8 @@ describe('task-completion-watcher — quiet-idle sweep', () => {
       const readAsRunning = await readTask();
       await updateTaskStatus(db, taskId, 'needs_attention', { result: { userPause: true } });
 
-      const reopened = await resumeFlowNodeInPlace(flowRunId, nodeRunId, taskId, {
-        id: taskId,
-        status: readAsRunning.status,
-        result: readAsRunning.result,
-      });
+      const row = { id: taskId, status: readAsRunning.status, result: readAsRunning.result };
+      const reopened = await unparkFlowInPlace(flowRunId, nodeRunId, taskId, row, false);
 
       expect(reopened).toBe(false);
       expect((await getNodeRun(db, nodeRunId))?.status).toBe('awaiting_input');

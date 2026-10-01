@@ -812,3 +812,99 @@ describe('a claimed turn prepares under busy before its push', () => {
     expect(isPumpAdoptRefusedError(outcome)).toBe(false);
   });
 });
+
+// sc-3666: the executor asserts the user's message reached the CLI before reporting a turn as
+// complete, so `onPushed` must fire exactly when — and only when — the push happens.
+describe('onPushed reports the actual push of the turn message', () => {
+  beforeEach(() => __resetSessionsForTest());
+
+  it('fires once for a fresh turn, before the turn resolves', async () => {
+    const ch = channelQuery();
+    const session = createSession('pushed-fresh', () => ch.query);
+    const onPushed = vi.fn();
+
+    const turn = runTurn(session, userTurn('hi'), () => {}, undefined, onPushed);
+    expect(onPushed).toHaveBeenCalledOnce();
+    ch.emit(resultMsg());
+    await turn;
+
+    expect(onPushed).toHaveBeenCalledOnce();
+  });
+
+  it('waits for a claimed turn’s beforePush, and never fires when it refuses', async () => {
+    const ch = channelQuery();
+    const session = createSession('pushed-claimed', () => ch.query, { sdkSessionId: 's' });
+    retainSession(session);
+    claimRetainedSession('pushed-claimed', {
+      keyParts: {},
+      persistedSessionId: 's',
+      flowTurn: false,
+    });
+    const onPushed = vi.fn();
+    let ready: (ok: boolean) => void = () => {};
+
+    const turn = runTurn(
+      session,
+      userTurn('hi'),
+      () => {},
+      () => new Promise<boolean>((resolve) => (ready = resolve)),
+      onPushed,
+    ).catch((err: unknown) => err);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(onPushed).not.toHaveBeenCalled();
+
+    ready(false);
+    expect(isPumpAdoptRefusedError(await turn)).toBe(true);
+    expect(onPushed).not.toHaveBeenCalled();
+  });
+
+  it('fires for a takeover of an idle arming', async () => {
+    const ch = channelQuery();
+    const session = createSession('pushed-takeover', () => ch.query);
+    const arming = armIdle(session, wakeCallbacks(newLog()));
+    const onPushed = vi.fn();
+
+    const taken = arming.startTurn(userTurn('follow-up'), () => {}, undefined, onPushed);
+    await vi.waitFor(() => expect(onPushed).toHaveBeenCalledOnce());
+    ch.emit(resultMsg());
+    await taken;
+
+    expect(onPushed).toHaveBeenCalledOnce();
+  });
+
+  it('holds a mid-burst takeover until the burst’s result, then fires once', async () => {
+    const ch = channelQuery();
+    const session = createSession('pushed-midburst', () => ch.query);
+    const arming = armIdle(session, wakeCallbacks(newLog()));
+    const onPushed = vi.fn();
+
+    ch.emit(msg('assistant'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const taken = arming.startTurn(userTurn('follow-up'), () => {}, undefined, onPushed);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(onPushed).not.toHaveBeenCalled();
+
+    ch.emit(resultMsg()); // the burst's own result
+    await vi.waitFor(() => expect(onPushed).toHaveBeenCalledOnce());
+    ch.emit(resultMsg()); // the adopted turn's result
+    await taken;
+    expect(onPushed).toHaveBeenCalledOnce();
+  });
+
+  it('never fires when the arming’s stream ends before the takeover could push', async () => {
+    const ch = channelQuery();
+    const session = createSession('pushed-dead-arming', () => ch.query);
+    const arming = armIdle(session, wakeCallbacks(newLog()));
+    const onPushed = vi.fn();
+
+    ch.emit(msg('assistant'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const taken = arming
+      .startTurn(userTurn('lost?'), () => {}, undefined, onPushed)
+      .catch((err: unknown) => err);
+    ch.end();
+
+    expect(isPumpAdoptRefusedError(await taken)).toBe(true);
+    expect(onPushed).not.toHaveBeenCalled();
+  });
+});

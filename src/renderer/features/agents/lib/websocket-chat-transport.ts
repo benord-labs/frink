@@ -12,12 +12,7 @@ import * as Sentry from '@sentry/electron/renderer';
 import type { ChatTransport, UIMessage, UIMessageChunk } from 'ai';
 import { toast } from 'sonner';
 import type { UIMessageChunk as BaseUIMessageChunk } from '../../../../main/lib/claude/types';
-import { stripMessageMarkers } from '../../../../shared/lib/message-markers/strip-message-markers';
-import {
-  claudeModelRequires1M,
-  getClaudeEffortSettings,
-  getClaudeThinkingBudget,
-} from '../../../../shared/lib/models';
+import { buildExecutionSettings as buildComposerExecutionSettings } from '../../../../shared/lib/execution-settings';
 import { isUserAbortErrorMessage } from '../../../../shared/lib/user-abort-error';
 import { isPlanApprovalTriggerText } from '../../../../shared/types/plan';
 import { normalizeErrorTextPrefix } from '../../../../shared/utils/error-prefixes';
@@ -32,7 +27,7 @@ import {
   pendingAccountAuthAtom,
   sessionInfoAtom,
 } from '../../../lib/atoms';
-import { codexFastModeSetting } from '../../../lib/atoms/codex-fast-mode';
+import { codexSpeedAtomFamily } from '../../../lib/atoms/codex-speed';
 import { appStore } from '../../../lib/jotai-store';
 import {
   activeListeners,
@@ -56,17 +51,14 @@ import {
   retryInFlightAtomFamily,
   taskExecutionErrorAtomFamily,
 } from '../atoms';
-import {
-  type ExecutionAccountKind,
-  resolveExecutionModelCliString,
-  supportsNativeAutoReview,
-} from '../lib/resolve-execution-model-cli';
+import type { ExecutionAccountKind } from '../lib/resolve-execution-model-cli';
 import { createTaskExecutionErrorSignal, isExecutionLevelFailure } from '../main/active-chat/utils';
 import { applyRollbackFilter } from '../stores/message-store';
 import { useStreamingStatusStore } from '../stores/streaming-status-store';
 import { useAgentSubChatStore } from '../stores/sub-chat-store';
 import { applyAskUserQuestionChunk } from './ask-user-question-chunks';
 import {
+  buildTurnHistory,
   type ExtractedImage,
   extractImages,
   extractText,
@@ -99,11 +91,6 @@ type WebSocketChatTransportConfig = {
    * Resolved AI account for this chat/project — read at send time (not ctor snapshot only).
    */
   getExecutionAccountType: () => ExecutionAccountKind;
-  /**
-   * Parent chat's linked task id when known — forwarded so the executor only applies the
-   * flow-continuation in-memory override when it matches (see `expectedFlowTaskId`).
-   */
-  expectedFlowTaskId?: string | null;
   /** When execution fails, call with subChatId so UI can remove the failed send */
   onExecutionError?: (subChatId: string) => void;
   /** When execution completes (e.g. execute:complete), call so UI can refetch chat and show persisted message if stream was missed */
@@ -188,29 +175,16 @@ export function cleanupTransportListeners(subChatId: string, clearInFlight = tru
 
 /** The execution settings a send from this chat carries, read from its settings at call time. */
 function buildExecutionSettings(chatId: string, accountType: ExecutionAccountKind) {
-  const selectedModelId = appStore.get(lastSelectedModelIdAtomFamily(chatId));
-  const isClaude = accountType === 'claude-code';
-  // The thinking budget is Claude-Code-only: Codex carries its own reasoning_effort field.
-  const maxThinkingTokens =
-    isClaude && appStore.get(extendedThinkingEnabledAtom)
-      ? (getClaudeThinkingBudget(selectedModelId) ?? 32_000)
-      : undefined;
-  return {
-    maxThinkingTokens,
-    ...(maxThinkingTokens != null ? getClaudeEffortSettings(selectedModelId) : {}),
-    model: resolveExecutionModelCliString(accountType, selectedModelId),
-    enableTasks: appStore.get(enableTasksAtom),
-    // Enable 1M context beta when a 1M model variant is selected (Claude SDK only)
-    ...(isClaude && claudeModelRequires1M(selectedModelId) && { betas: ['context-1m-2025-08-07'] }),
-    // One Auto value governs every turn in this chat, whoever sent it: a Flow seeds it on dispatch.
-    // Plan mode is NOT excluded — the executor still opens a plan turn in `permissionMode: 'plan'`,
-    // but can only arm the reviewer at plan approval if it knows the chat consented.
-    ...(appStore.get(autoModePerChatAtomFamily(chatId)) &&
-    supportsNativeAutoReview(accountType, selectedModelId)
-      ? { autoReviewTools: true }
-      : {}),
-    ...codexFastModeSetting(chatId, selectedModelId),
-  };
+  return buildComposerExecutionSettings(
+    accountType,
+    {
+      modelId: appStore.get(lastSelectedModelIdAtomFamily(chatId)),
+      autoMode: appStore.get(autoModePerChatAtomFamily(chatId)),
+      codexSpeed: appStore.get(codexSpeedAtomFamily(chatId)),
+      thinkingEnabled: appStore.get(extendedThinkingEnabledAtom),
+    },
+    { enableTasks: appStore.get(enableTasksAtom) },
+  );
 }
 
 /** Start this chat's CLI with what its next send carries (Approve's agent mode if a plan waits). */
@@ -299,11 +273,7 @@ export class WebSocketChatTransport implements ChatTransport<UIMessage> {
       });
     };
 
-    const history = filteredMessages.flatMap((m) => {
-      if (m === lastUser || (m.role !== 'user' && m.role !== 'assistant')) return [];
-      const content = stripMessageMarkers(extractText(m));
-      return content ? [{ role: m.role as 'user' | 'assistant', content }] : [];
-    });
+    const history = buildTurnHistory(filteredMessages, lastUser);
 
     let ownedCleanup: (() => void) | null = null;
     const cleanupIfOwner = () => {
@@ -416,17 +386,17 @@ export class WebSocketChatTransport implements ChatTransport<UIMessage> {
               // Include approved plan context for compression-safe execution handoff.
               approvedPlanContext,
               ...(navigationSessionId ? { navigationSessionId } : {}),
-              ...(typeof this.config.expectedFlowTaskId === 'string' &&
-              this.config.expectedFlowTaskId.length > 0
-                ? { expectedFlowTaskId: this.config.expectedFlowTaskId }
-                : {}),
-              ...(dispatchTaskId ? { dispatchTaskId } : {}),
+              // The dispatching task is also the Flow step this send expects; user replies carry
+              // neither and target whichever step currently drives the sub-chat.
+              ...(dispatchTaskId ? { dispatchTaskId, expectedFlowTaskId: dispatchTaskId } : {}),
             }),
             timeoutPromise,
           ]);
 
           if (sendResult && sendResult.success === false) {
-            throw new Error(sendResult.reason || 'Failed to send message');
+            throw Object.assign(new Error(sendResult.reason || 'Failed to send message'), {
+              category: sendResult.category,
+            });
           }
 
           // Clear timeout if message sent successfully
@@ -458,8 +428,12 @@ export class WebSocketChatTransport implements ChatTransport<UIMessage> {
           const errorMessage = error instanceof Error ? error.message : String(error);
 
           // Determine error category and show appropriate toast
+          const serverCategory = (error as { category?: string } | null)?.category;
           let category = 'UNKNOWN';
-          if (errorMessage === 'MESSAGE_TIMEOUT') {
+          if (serverCategory) {
+            // Shares the run error's toast id, so a declined send shows one toast, not two.
+            category = serverCategory;
+          } else if (errorMessage === 'MESSAGE_TIMEOUT') {
             category = 'MESSAGE_TIMEOUT';
           } else if (
             errorMessage.includes('offline') ||

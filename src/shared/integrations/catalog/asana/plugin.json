@@ -13,10 +13,6 @@
     }
   },
   "frink": {
-    "keywords": [
-      "tasks",
-      "projects",
-      "work management"
-    ]
+    "keywords": ["tasks", "projects", "work management"]
   }
 }

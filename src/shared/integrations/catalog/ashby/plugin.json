@@ -13,12 +13,7 @@
     }
   },
   "frink": {
-    "keywords": [
-      "recruiting",
-      "hiring",
-      "ats",
-      "candidates"
-    ],
+    "keywords": ["recruiting", "hiring", "ats", "candidates"],
     "beforeYouConnect": [
       "An Ashby Org Admin has to switch on the MCP Server toggle under Admin → Organization Setup → Opt-In Features before anyone can connect.",
       "Your own Ashby account needs Elevated Access permissions to sign in."

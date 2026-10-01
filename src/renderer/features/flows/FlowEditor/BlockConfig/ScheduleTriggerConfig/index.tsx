@@ -36,11 +36,7 @@ type Props = {
   onPatchConfig: (config: Record<string, unknown>) => void;
 };
 
-export function ScheduleTriggerConfig({
-  node,
-  onPatchLabel,
-  onPatchConfig,
-}: Props): ReactElement {
+export function ScheduleTriggerConfig({ node, onPatchLabel, onPatchConfig }: Props): ReactElement {
   const cfg = node.config;
   const cronExpression = readStr(cfg, 'cronExpression', '0 * * * *');
   const timezone = readStr(cfg, 'timezone', 'UTC');
@@ -157,7 +153,6 @@ export function ScheduleTriggerConfig({
           Invalid cron or timezone — fix expression to preview.
         </p>
       )}
-
     </div>
   );
 }

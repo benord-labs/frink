@@ -9,11 +9,12 @@ import {
   CODEX_MODELS,
   codexModelToPickerItem,
 } from '../../../../shared/lib/models';
+import type { CodexSpeed } from '../../../../shared/types/execution';
 import { extendedThinkingEnabledAtom } from '../../../lib/atoms';
-import { codexFastModeAtomFamily } from '../../../lib/atoms/codex-fast-mode';
+import { codexSpeedAtomFamily } from '../../../lib/atoms/codex-speed';
 import { type ModelItem, ModelSelector } from './model-selector';
 
-const capabilities = vi.hoisted(() => ({ supportsXhigh: true }));
+const capabilities = vi.hoisted(() => ({ supportsXhigh: true, supportsUltra: true }));
 
 // Stub the trpc client (the real module creates a client at load needing the electronTRPC preload
 // global, absent in tests). Only the bundled-CLI capability query is consumed here.
@@ -62,6 +63,7 @@ const focusedSlider = async () => {
 afterEach(() => {
   cleanup();
   capabilities.supportsXhigh = true;
+  capabilities.supportsUltra = true;
 });
 
 describe('trigger label', () => {
@@ -84,9 +86,10 @@ describe('trigger label', () => {
     const { unmount } = renderTrigger('opus-5.5-max');
     expect(trigger().querySelector('.chroma-text')).toBeNull();
     unmount();
-    renderTrigger('opus-5.5-ultra');
+    renderTrigger('opus-5.5-low-ultra');
     expect(trigger().querySelector('.chroma-text-animate')).toHaveTextContent('Ultra');
-    expect(trigger()).toHaveAccessibleName('Model: Opus 5.5 · Ultra — parallel agents on');
+    expect(trigger()).toHaveTextContent('Opus 5.5 · Low · Ultra');
+    expect(trigger()).toHaveAccessibleName('Model: Opus 5.5 · Low · Ultra — parallel agents on');
   });
 
   it('falls back to "Auto" in chat and the inherit label in flow', () => {
@@ -189,6 +192,54 @@ describe('effort pane', () => {
   });
 });
 
+describe('Ultra switch', () => {
+  const ultraSwitch = () => screen.getByRole('switch', { name: 'Ultra' });
+
+  it('turns Ultra on at the chosen effort, and off again', () => {
+    const { onModelChange } = renderPicker({ selectedModel: byId('opus-5.5-low') });
+    expect(ultraSwitch()).toHaveAttribute('aria-checked', 'false');
+    fireEvent.click(ultraSwitch());
+    expect(onModelChange).toHaveBeenLastCalledWith(byId('opus-5.5-low-ultra'));
+    cleanup();
+    const next = renderPicker({ selectedModel: byId('opus-5.5-low-ultra') });
+    expect(ultraSwitch()).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(ultraSwitch());
+    expect(next.onModelChange).toHaveBeenLastCalledWith(byId('opus-5.5-low'));
+  });
+
+  it('keeps Ultra on as the slider moves', async () => {
+    const { onModelChange } = renderPicker({ selectedModel: byId('opus-5.5-low-ultra') });
+    expect(slider()).toHaveAttribute('aria-valuenow', '0');
+    fireEvent.keyDown(await focusedSlider(), { key: 'ArrowRight' });
+    expect(onModelChange).toHaveBeenCalledWith(byId('opus-5.5-ultra'));
+  });
+
+  it('stays usable with Thinking off: it is not an effort', () => {
+    renderPicker({ selectedModel: byId('opus-5.5') }, false);
+    expect(ultraSwitch()).not.toBeDisabled();
+  });
+
+  it('is hidden when the bundled CLI cannot run it, unless already on (so it can be turned off)', () => {
+    capabilities.supportsUltra = false;
+    renderPicker({ selectedModel: byId('opus-5.5-xhigh') });
+    expect(screen.queryByRole('switch', { name: 'Ultra' })).toBeNull();
+    cleanup();
+    renderPicker({ selectedModel: byId('opus-5.5-xhigh-ultra') });
+    expect(ultraSwitch()).toHaveAttribute('aria-checked', 'true');
+  });
+
+  it('is absent for a family the CLI offers no Ultra on', () => {
+    renderPicker({ selectedModel: byId('sonnet-high') });
+    expect(screen.queryByRole('switch', { name: 'Ultra' })).toBeNull();
+  });
+
+  it('reset turns Ultra off', () => {
+    const { onModelChange } = renderPicker({ selectedModel: byId('opus-5.5-ultra') });
+    fireEvent.click(screen.getByRole('button', { name: 'Reset to defaults' }));
+    expect(onModelChange).toHaveBeenCalledWith(byId('opus-5.5'));
+  });
+});
+
 describe('model list pane', () => {
   it('lists one row per family and lands a switch on its default 1M window, keeping effort', () => {
     const { onModelChange } = renderPicker({ selectedModel: byId('opus-4.7-high') });
@@ -271,18 +322,39 @@ describe('provider controls', () => {
     expect(fast).toHaveTextContent(credits);
   });
 
+  it('offers Ultrafast on Astra only, and it replaces Fast rather than stacking', () => {
+    const { store } = renderPicker(codex('codex-gpt-6-astra-medium', 'chat-u'));
+    const ultrafast = screen.getByRole('switch', { name: /^Ultrafast mode — up to 8× speed/ });
+    expect(ultrafast).toHaveTextContent('8×');
+
+    fireEvent.click(screen.getByRole('switch', { name: /^Fast mode/ }));
+    fireEvent.click(ultrafast);
+    expect(store.get(codexSpeedAtomFamily('chat-u'))).toBe('ultrafast');
+    expect(screen.getByRole('switch', { name: /^Fast mode/ })).toHaveAttribute(
+      'aria-checked',
+      'false',
+    );
+
+    fireEvent.click(ultrafast);
+    expect(store.get(codexSpeedAtomFamily('chat-u'))).toBe('standard');
+    cleanup();
+
+    renderPicker(codex('codex-gpt-6.1-sol-medium', 'chat-u'));
+    expect(screen.queryByRole('switch', { name: /Ultrafast/ })).toBeNull();
+  });
+
   it('omits Fast for a model with no priority tier — never a live-but-inert control', () => {
     renderPicker(codex('codex-gpt-5.4-mini-medium', 'chat-1'));
     expect(screen.queryByRole('switch', { name: /Fast mode/ })).toBeNull();
   });
 
   it('stages Fast on the New Chat form (no chat id yet), surviving a reopen', () => {
-    const fastRef = { current: false };
-    renderPicker({ ...codex('codex-gpt-5.6-sol-medium'), newChatFastRef: fastRef });
+    const speedRef: { current: CodexSpeed } = { current: 'standard' };
+    renderPicker({ ...codex('codex-gpt-5.6-sol-medium'), newChatSpeedRef: speedRef });
     fireEvent.click(screen.getByRole('switch', { name: /Fast mode/ }));
-    expect(fastRef.current).toBe(true);
+    expect(speedRef.current).toBe('fast');
     cleanup();
-    renderPicker({ ...codex('codex-gpt-5.6-sol-medium'), newChatFastRef: fastRef });
+    renderPicker({ ...codex('codex-gpt-5.6-sol-medium'), newChatSpeedRef: speedRef });
     expect(screen.getByRole('switch', { name: /Fast mode/ })).toHaveAttribute(
       'aria-checked',
       'true',
@@ -302,7 +374,7 @@ describe('provider controls', () => {
   it('toggles Fast per chat and renders a Flow-seeded ON state', () => {
     const { store } = renderPicker(codex('codex-gpt-5.6-sol-medium', 'chat-9'));
     fireEvent.click(screen.getByRole('switch', { name: /Fast mode/ }));
-    expect(store.get(codexFastModeAtomFamily('chat-9'))).toBe(true);
+    expect(store.get(codexSpeedAtomFamily('chat-9'))).toBe('fast');
     expect(screen.getByRole('switch', { name: /Fast mode/ })).toHaveAttribute(
       'aria-checked',
       'true',

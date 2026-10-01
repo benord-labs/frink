@@ -70,6 +70,7 @@ vi.mock('../../../../lib/stores/active-transport-registry', () => ({
   observedRunAtomFamily: (subChatId: string) => `observed:${subChatId}`,
   runLiveAtomFamily: (subChatId: string) => `runLive:${subChatId}`,
   runSettlingAtomFamily: (subChatId: string) => `settling:${subChatId}`,
+  wakeHoldAdoptedAtomFamily: (subChatId: string) => `adopted:${subChatId}`,
 }));
 
 function deferred<T>() {
@@ -150,6 +151,20 @@ describe('useLiveRunSync', () => {
     expect(mocks.appStoreSet).toHaveBeenCalledWith('runLive:sub-own', true);
     expect(mocks.appStoreSet).toHaveBeenCalledWith('observed:sub-own', false);
     expect(mocks.setStatus).not.toHaveBeenCalled();
+    hook.unmount();
+  });
+
+  it("ends an observed turn's adopted-hold Stop warning only when the run goes idle", async () => {
+    mocks.listHeaders.mockResolvedValue([]);
+    const hook = renderHook(() => useLiveRunSync());
+    await waitFor(() => expect(isLiveRunHydrationComplete()).toBe(true));
+    const run = { subChatId: 'sub-obs', assistantMessageId: 'assistant-obs', streamEpoch: 'e-obs' };
+
+    streamChunkHandler?.(run);
+    completeHandler?.(run);
+    expect(mocks.appStoreSet).not.toHaveBeenCalledWith('adopted:sub-obs', false);
+    settledHandler?.(run);
+    expect(mocks.appStoreSet).toHaveBeenCalledWith('adopted:sub-obs', false);
     hook.unmount();
   });
 

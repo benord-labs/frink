@@ -59,6 +59,9 @@ describe('renderDiagram', () => {
     expect(mermaid.initialize).toHaveBeenCalledWith(
       expect.objectContaining({
         theme: 'base',
+        layout: 'dagre',
+        look: 'classic',
+        swimlane: { layout: 'swimlane' },
         securityLevel: 'strict',
         suppressErrorRendering: true,
         themeVariables: expect.objectContaining({

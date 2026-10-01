@@ -93,6 +93,7 @@ function createTrpcWrapper(queryClient: QueryClient) {
     return createElement(trpc.Provider, {
       client,
       queryClient,
+      // oxlint-disable-next-line react/no-children-prop -- TRPCProviderProps types children as a required prop, so createElement's positional children fails ts:check
       children: createElement(QueryClientProvider, { client: queryClient, children }),
     });
   };

@@ -1,1 +1,1 @@
-export { buildPermissionDecisionInput, readSearchRoot } from './request-context';
+export { buildPermissionDecisionInput } from './request-context';

@@ -15,7 +15,7 @@
 import { execSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 
-for (const pkg of ['relay']) {
+for (const pkg of ['relay', 'live-activity-forwarder']) {
   const packageRequire = createRequire(new URL(`../../${pkg}/package.json`, import.meta.url));
 
   const unresolved = Object.keys(packageRequire('./package.json').dependencies).filter((name) => {

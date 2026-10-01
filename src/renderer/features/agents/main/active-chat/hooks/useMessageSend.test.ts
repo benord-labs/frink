@@ -9,6 +9,8 @@ import { appStore } from '../../../../../lib/jotai-store';
 import { runLiveAtomFamily } from '../../../../../lib/stores/active-transport-registry';
 import { pendingChatRetryAtomFamily } from '../../../atoms';
 import type { AgentsMentionsEditorHandle } from '../../../mentions';
+import { buildQueuedMessageText } from '@/lib/mentions/queued-message-text';
+import type { AgentQueueItem } from '../../../lib/queue-utils';
 import { ACCOUNT_NOT_READY_TOAST_MESSAGE_SEND } from '../utils';
 import { useMessageSend } from './useMessageSend';
 
@@ -66,7 +68,8 @@ vi.mock('../../../../../lib/trpc', () => ({
   },
 }));
 
-vi.mock('@/lib/commands/expand-slash-command', () => ({
+vi.mock('@/lib/commands/expand-slash-command', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/commands/expand-slash-command')>()),
   expandSlashCommand: vi.fn(async (text: string) => text),
 }));
 
@@ -619,6 +622,96 @@ describe('useMessageSend', () => {
       await result.current();
 
       expect(sendMessageMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // sc-3666: a large paste becomes a chip, not editor text. The busy branch used to queue only the
+  // editor text, so a paste sent while a turn ran reached the agent as nothing at all.
+  describe('queueing while busy keeps every attachment (sc-3666)', () => {
+    afterEach(() => appStore.set(runLiveAtomFamily('sub-1'), false));
+
+    const chip = {
+      id: 'pasted_1',
+      filePath: '/sessions/sub-1/pasted/pasted_1.txt',
+      filename: 'pasted_1.txt',
+      size: 6000,
+      preview: 'Build a cron-triggered flow that...',
+      createdAt: new Date(),
+    };
+    const diff = {
+      id: 'diff_1',
+      text: 'const a = 1;',
+      filePath: 'src/a.ts',
+      lineNumber: 4,
+      lineType: 'new' as const,
+      preview: 'const a = 1;',
+      createdAt: new Date(),
+    };
+
+    function busyProps(typed: string) {
+      appStore.set(runLiveAtomFamily('sub-1'), true);
+      const addToQueue = vi.fn();
+      const props = idleComposerProps(addToQueue);
+      (props.editorRef.current as unknown as { getValue: () => string }).getValue = () => typed;
+      return { props, addToQueue };
+    }
+
+    it('queues a paste-only send with its chip and clears the chip from the composer', async () => {
+      const { props, addToQueue } = busyProps('');
+      props.pastedTextsRef.current = [chip];
+      const { result } = renderHook(() => useMessageSend(props));
+
+      await result.current();
+
+      expect(addToQueue).toHaveBeenCalledTimes(1);
+      const item = addToQueue.mock.calls[0][1] as AgentQueueItem;
+      expect(item.pastedTexts).toEqual([
+        {
+          id: chip.id,
+          filePath: chip.filePath,
+          filename: chip.filename,
+          size: 6000,
+          preview: chip.preview,
+        },
+      ]);
+      expect(buildQueuedMessageText(item)).toContain(`|${chip.filePath}]`);
+      expect(props.clearPastedTexts).toHaveBeenCalledTimes(1);
+    });
+
+    it('queues diff contexts instead of leaving them to ride a later turn', async () => {
+      const { props, addToQueue } = busyProps('look at this');
+      props.diffTextContextsRef.current = [diff];
+      const { result } = renderHook(() => useMessageSend(props));
+
+      await result.current();
+
+      const item = addToQueue.mock.calls[0][1] as AgentQueueItem;
+      expect(item.diffTextContexts).toEqual([
+        { id: diff.id, text: diff.text, filePath: diff.filePath, lineNumber: 4, lineType: 'new' },
+      ]);
+      expect(props.clearDiffTextContexts).toHaveBeenCalledTimes(1);
+    });
+
+    it('drains a queued paste to the same text the direct path sends', async () => {
+      const queued = busyProps('see above');
+      queued.props.pastedTextsRef.current = [chip];
+      const busy = renderHook(() => useMessageSend(queued.props));
+      await busy.result.current();
+      const drained = buildQueuedMessageText(queued.addToQueue.mock.calls[0][1] as AgentQueueItem);
+      appStore.set(runLiveAtomFamily('sub-1'), false);
+
+      const direct = idleComposerProps();
+      (direct.editorRef.current as unknown as { getValue: () => string }).getValue = () =>
+        'see above';
+      direct.pastedTextsRef.current = [chip];
+      const idle = renderHook(() => useMessageSend(direct));
+      await idle.result.current();
+      const calls = sendMessageMock.mock.calls as unknown as Array<
+        [{ parts: Array<{ type: string; text?: string }> }]
+      >;
+      const sent = calls.at(-1)?.[0];
+
+      expect(sent?.parts.find((p) => p.type === 'text')?.text).toBe(drained);
     });
   });
 });

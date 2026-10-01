@@ -7,7 +7,7 @@ import { createStore, Provider } from 'jotai';
 import { toast } from 'sonner';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { activeOverlayAtom, agentsSettingsDialogActiveTabAtom } from '../../../lib/atoms';
-import { AccountIndicator } from './account-indicator';
+import { AccountIndicator, ContinueAfterUsageLimit } from './account-indicator';
 
 type ListAccount = {
   id: string;
@@ -43,24 +43,33 @@ const snap = vi.hoisted(() => {
   return {
     setDefaultMutate: vi.fn(),
     setProjectAccountMutate: vi.fn(),
+    setChatAccountMutate: vi.fn(),
+    setChatAccountOpts: undefined as
+      | { onSuccess: (data: unknown, vars: { chatId: string }) => void }
+      | undefined,
+    resolvedAccountInvalidate: vi.fn(),
     listAccountsData: [...defaultListAccounts] as ListAccount[],
     defaultListAccounts,
-    setDefaultIsPending: false,
-    setProjectAccountIsPending: false,
   };
 });
 
 const getResolvedAccountMock = vi.fn();
+const getChatMock = vi.fn();
 
 vi.mock('../../../lib/trpc', () => ({
   trpc: {
     useUtils: () => ({
-      claudeCode: {
-        listAccounts: { invalidate: vi.fn() },
-        getResolvedAccount: { invalidate: vi.fn() },
-        getProjectAccount: { invalidate: vi.fn() },
-      },
+      claudeCode: { getResolvedAccount: { invalidate: snap.resolvedAccountInvalidate } },
     }),
+    chats: {
+      get: { useQuery: (...args: unknown[]) => getChatMock(...args) },
+      setChatAccount: {
+        useMutation: (opts: typeof snap.setChatAccountOpts) => {
+          snap.setChatAccountOpts = opts;
+          return { mutate: snap.setChatAccountMutate, isPending: false };
+        },
+      },
+    },
     claudeCode: {
       getResolvedAccount: {
         useQuery: (...args: unknown[]) => getResolvedAccountMock(...args),
@@ -71,17 +80,9 @@ vi.mock('../../../lib/trpc', () => ({
           isLoading: false,
         }),
       },
-      setDefault: {
-        useMutation: () => ({
-          mutate: snap.setDefaultMutate,
-          isPending: snap.setDefaultIsPending,
-        }),
-      },
+      setDefault: { useMutation: () => ({ mutate: snap.setDefaultMutate, isPending: false }) },
       setProjectAccount: {
-        useMutation: () => ({
-          mutate: snap.setProjectAccountMutate,
-          isPending: snap.setProjectAccountIsPending,
-        }),
+        useMutation: () => ({ mutate: snap.setProjectAccountMutate, isPending: false }),
       },
     },
   },
@@ -107,15 +108,17 @@ vi.mock('sonner', () => ({
 afterEach(() => {
   cleanup();
   getResolvedAccountMock.mockReset();
+  getChatMock.mockReset();
   snap.setDefaultMutate.mockReset();
   snap.setProjectAccountMutate.mockReset();
+  snap.setChatAccountMutate.mockReset();
+  snap.resolvedAccountInvalidate.mockReset();
+  vi.mocked(toast.success).mockReset();
   snap.listAccountsData = [...snap.defaultListAccounts];
-  snap.setDefaultIsPending = false;
-  snap.setProjectAccountIsPending = false;
 });
 
 describe('AccountIndicator', () => {
-  it('opens settings on models tab when choosing Manage in Settings', async () => {
+  it('opens Settings → Accounts from the Manage accounts row', async () => {
     const user = userEvent.setup();
     const store = createStore();
 
@@ -139,467 +142,122 @@ describe('AccountIndicator', () => {
     const trigger = screen.getByRole('button', { name: 'AI accounts menu, Slice, Claude Code' });
     await user.click(trigger);
 
-    await user.click(screen.getByRole('menuitem', { name: /Manage in Settings/i }));
+    await user.click(screen.getByRole('menuitem', { name: /Manage accounts/i }));
 
     expect(store.get(agentsSettingsDialogActiveTabAtom)).toBe('models');
     expect(store.get(activeOverlayAtom)).toBe('settings');
   });
 
-  it('calls setDefault when selecting another account without a project scope', async () => {
-    const user = userEvent.setup();
+  describe('before a chat exists', () => {
+    const codexRow: ListAccount = {
+      id: 'acc-codex',
+      label: 'CodexWork',
+      isDefault: false,
+      isAuthenticated: true,
+      connectedAt: null,
+      isApiKey: false,
+      type: 'codex',
+    };
+    const signedOutRow: ListAccount = {
+      ...codexRow,
+      id: 'acc-out',
+      label: 'NeedsLogin',
+      isAuthenticated: false,
+    };
+    const defaultAccount = {
+      id: 'acc-1',
+      label: 'Slice',
+      type: 'claude-code' as const,
+      isProjectOverride: false,
+      isAuthenticated: true,
+    };
 
-    getResolvedAccountMock.mockReturnValue({
-      data: {
-        id: 'acc-1',
-        label: 'Slice',
-        type: 'claude-code' as const,
-        isProjectOverride: false,
-        isAuthenticated: true,
-        projectId: null,
-      },
-      isLoading: false,
-    });
-
-    render(
-      <Provider store={createStore()}>
-        <AccountIndicator chatId="chat-1" />
-      </Provider>,
-    );
-
-    await user.click(screen.getByRole('button', { name: 'AI accounts menu, Slice, Claude Code' }));
-
-    await user.click(screen.getByRole('menuitem', { name: /Backup/ }));
-
-    expect(snap.setDefaultMutate).toHaveBeenCalledWith(
-      { id: 'acc-2' },
-      { onSuccess: expect.any(Function) },
-    );
-    expect(snap.setProjectAccountMutate).not.toHaveBeenCalled();
-  });
-
-  it('disables accounts that are not signed in on this machine', async () => {
-    const user = userEvent.setup();
-    snap.listAccountsData = [
-      ...snap.defaultListAccounts,
-      {
-        id: 'acc-unauth',
-        label: 'NeedsLogin',
-        isDefault: false,
-        isAuthenticated: false,
-        connectedAt: null,
-        isApiKey: false,
-        type: 'claude-code',
-      },
-    ];
-
-    getResolvedAccountMock.mockReturnValue({
-      data: {
-        id: 'acc-1',
-        label: 'Slice',
-        type: 'claude-code' as const,
-        isProjectOverride: false,
-        isAuthenticated: true,
-        projectId: null,
-      },
-      isLoading: false,
-    });
-
-    render(
-      <Provider store={createStore()}>
-        <AccountIndicator chatId="chat-1" />
-      </Provider>,
-    );
-
-    await user.click(screen.getByRole('button', { name: 'AI accounts menu, Slice, Claude Code' }));
-
-    const unauthItem = screen.getByRole('menuitem', {
-      name: /NeedsLogin, Claude Code, not signed in on this machine/i,
-    });
-    expect(unauthItem).toHaveAttribute('aria-disabled', 'true');
-
-    await user.click(screen.getByRole('menuitem', { name: /Backup/ }));
-    expect(snap.setDefaultMutate).toHaveBeenCalledWith(
-      { id: 'acc-2' },
-      { onSuccess: expect.any(Function) },
-    );
-  });
-
-  it('tooltip scope line says workspace default for project when not project override', () => {
-    getResolvedAccountMock.mockReturnValue({
-      data: {
-        id: 'acc-1',
-        label: 'Slice',
-        type: 'claude-code' as const,
-        isProjectOverride: false,
-        isAuthenticated: true,
-        projectId: 'proj-1',
-      },
-      isLoading: false,
-    });
-
-    render(
-      <Provider store={createStore()}>
-        <AccountIndicator chatId="chat-1" />
-      </Provider>,
-    );
-
-    const tooltip = screen.getByTestId('tooltip-content');
-    expect(tooltip).toHaveTextContent(/Workspace default for this project/);
-    expect(tooltip).toHaveTextContent(/Choosing an account sets it for this project/);
-  });
-
-  it('calls setProjectAccount when selecting another account for a project-scoped chat', async () => {
-    const user = userEvent.setup();
-
-    getResolvedAccountMock.mockReturnValue({
-      data: {
-        id: 'acc-1',
-        label: 'Slice',
-        type: 'claude-code' as const,
-        isProjectOverride: false,
-        isAuthenticated: true,
-        projectId: 'proj-1',
-      },
-      isLoading: false,
-    });
-
-    render(
-      <Provider store={createStore()}>
-        <AccountIndicator chatId="chat-1" />
-      </Provider>,
-    );
-
-    await user.click(screen.getByRole('button', { name: 'AI accounts menu, Slice, Claude Code' }));
-
-    await user.click(screen.getByRole('menuitem', { name: /Backup/ }));
-
-    expect(snap.setProjectAccountMutate).toHaveBeenCalledWith(
-      { projectId: 'proj-1', accountId: 'acc-2' },
-      { onSuccess: expect.any(Function) },
-    );
-    expect(snap.setDefaultMutate).not.toHaveBeenCalled();
-  });
-
-  it('requests getResolvedAccount with projectId when new-chat header passes only projectId', () => {
-    getResolvedAccountMock.mockReturnValue({
-      data: {
-        id: 'acc-1',
-        label: 'Slice',
-        type: 'claude-code' as const,
-        isProjectOverride: false,
-        isAuthenticated: true,
-        projectId: 'proj-new',
-      },
-      isLoading: false,
-    });
-
-    render(
-      <Provider store={createStore()}>
-        <AccountIndicator projectId="proj-new" />
-      </Provider>,
-    );
-
-    expect(getResolvedAccountMock).toHaveBeenCalled();
-    const input = getResolvedAccountMock.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
-    expect(input).toEqual({ projectId: 'proj-new' });
-  });
-
-  it('calls setProjectAccount when selecting another account from projectId-only (new-chat) context', async () => {
-    const user = userEvent.setup();
-
-    getResolvedAccountMock.mockReturnValue({
-      data: {
-        id: 'acc-1',
-        label: 'Slice',
-        type: 'claude-code' as const,
-        isProjectOverride: false,
-        isAuthenticated: true,
-        projectId: 'proj-new',
-      },
-      isLoading: false,
-    });
-
-    render(
-      <Provider store={createStore()}>
-        <AccountIndicator projectId="proj-new" />
-      </Provider>,
-    );
-
-    await user.click(screen.getByRole('button', { name: 'AI accounts menu, Slice, Claude Code' }));
-
-    await user.click(screen.getByRole('menuitem', { name: /Backup/ }));
-
-    expect(snap.setProjectAccountMutate).toHaveBeenCalledWith(
-      { projectId: 'proj-new', accountId: 'acc-2' },
-      { onSuccess: expect.any(Function) },
-    );
-    expect(snap.setDefaultMutate).not.toHaveBeenCalled();
-  });
-
-  it('does not call account mutations when selecting the active row in a project-scoped chat', async () => {
-    const user = userEvent.setup();
-
-    getResolvedAccountMock.mockReturnValue({
-      data: {
-        id: 'acc-1',
-        label: 'Slice',
-        type: 'claude-code' as const,
-        isProjectOverride: false,
-        isAuthenticated: true,
-        projectId: 'proj-1',
-      },
-      isLoading: false,
-    });
-
-    render(
-      <Provider store={createStore()}>
-        <AccountIndicator chatId="chat-1" />
-      </Provider>,
-    );
-
-    await user.click(screen.getByRole('button', { name: 'AI accounts menu, Slice, Claude Code' }));
-
-    await user.click(screen.getByRole('menuitem', { name: /^Slice/ }));
-
-    expect(snap.setDefaultMutate).not.toHaveBeenCalled();
-    expect(snap.setProjectAccountMutate).not.toHaveBeenCalled();
-  });
-
-  it('calls setProjectAccount with the Codex row id when switching to a Codex account in project scope', async () => {
-    const user = userEvent.setup();
-    snap.listAccountsData = [
-      ...snap.defaultListAccounts,
-      {
-        id: 'acc-codex',
-        label: 'CodexWork',
-        isDefault: false,
-        isAuthenticated: true,
-        connectedAt: null,
-        isApiKey: false,
-        type: 'codex' as const,
-      },
-    ];
-
-    getResolvedAccountMock.mockReturnValue({
-      data: {
-        id: 'acc-1',
-        label: 'Slice',
-        type: 'claude-code' as const,
-        isProjectOverride: false,
-        isAuthenticated: true,
-        projectId: 'proj-1',
-      },
-      isLoading: false,
-    });
-
-    render(
-      <Provider store={createStore()}>
-        <AccountIndicator chatId="chat-1" />
-      </Provider>,
-    );
-
-    await user.click(screen.getByRole('button', { name: 'AI accounts menu, Slice, Claude Code' }));
-
-    await user.click(screen.getByRole('menuitem', { name: /CodexWork/ }));
-
-    expect(snap.setProjectAccountMutate).toHaveBeenCalledWith(
-      { projectId: 'proj-1', accountId: 'acc-codex' },
-      { onSuccess: expect.any(Function) },
-    );
-    expect(snap.setDefaultMutate).not.toHaveBeenCalled();
-
-    // Regression-lock the at-switch tell: invoking the mutation's onSuccess fires
-    // the "what changed" toast for a cross-tool (Claude → Codex) pick.
-    const opts = snap.setProjectAccountMutate.mock.calls[0]?.[1] as
-      | { onSuccess?: () => void }
-      | undefined;
-    opts?.onSuccess?.();
-    expect(vi.mocked(toast.success)).toHaveBeenCalledWith(
-      'Now running on OpenAI',
-      expect.objectContaining({ description: expect.stringContaining('came with you') }),
-    );
-  });
-
-  it('shows empty list copy when listAccounts is empty but resolved account exists', async () => {
-    const user = userEvent.setup();
-    snap.listAccountsData = [];
-
-    getResolvedAccountMock.mockReturnValue({
-      data: {
-        label: 'Orphan',
-        type: 'claude-code' as const,
-        isProjectOverride: false,
-        isAuthenticated: true,
-        projectId: null,
-      },
-      isLoading: false,
-    });
-
-    render(
-      <Provider store={createStore()}>
-        <AccountIndicator chatId="chat-1" />
-      </Provider>,
-    );
-
-    await user.click(screen.getByRole('button', { name: 'AI accounts menu, Orphan, Claude Code' }));
-
-    expect(screen.getByText('No accounts configured.')).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: /Manage in Settings/i })).toBeInTheDocument();
-  });
-
-  it('marks exactly one row active when two accounts share the same label', async () => {
-    const user = userEvent.setup();
-    snap.listAccountsData = [
-      {
-        id: 'c1',
-        label: 'Shared',
-        isDefault: true,
-        isAuthenticated: true,
-        connectedAt: null,
-        isApiKey: false,
-        type: 'claude-code' as const,
-      },
-      {
-        id: 'c2',
-        label: 'Shared',
-        isDefault: false,
-        isAuthenticated: true,
-        connectedAt: null,
-        isApiKey: false,
-        type: 'codex' as const,
-      },
-    ];
-
-    getResolvedAccountMock.mockReturnValue({
-      data: {
-        id: 'c2',
-        label: 'Shared',
-        type: 'codex' as const,
-        isProjectOverride: false,
-        isAuthenticated: true,
-      },
-      isLoading: false,
-    });
-
-    render(
-      <Provider store={createStore()}>
-        <AccountIndicator chatId="chat-1" />
-      </Provider>,
-    );
-
-    await user.click(screen.getByRole('button', { name: 'AI accounts menu, Shared, OpenAI' }));
-
-    const items = screen
-      .getAllByRole('menuitem')
-      .filter((el) => el.textContent?.includes('Shared'));
-    expect(items).toHaveLength(2);
-
-    const codexRow = items.find((el) => el.textContent?.includes('OpenAI'));
-    const claudeRow = items.find((el) => el.textContent?.includes('Claude Code'));
-    expect(codexRow).toBeTruthy();
-    expect(claudeRow).toBeTruthy();
-    if (codexRow == null || claudeRow == null) {
-      throw new Error('expected both Shared rows');
+    function renderNewChat(
+      resolved: Record<string, unknown> = defaultAccount,
+      accounts = [...snap.defaultListAccounts, codexRow, signedOutRow],
+    ) {
+      snap.listAccountsData = accounts;
+      getResolvedAccountMock.mockReturnValue({ data: resolved, isSuccess: true });
+      render(
+        <Provider store={createStore()}>
+          <AccountIndicator projectId="proj-1" />
+        </Provider>,
+      );
     }
 
-    expect(within(codexRow).getByLabelText('Active')).toBeInTheDocument();
-    expect(within(claudeRow).queryByLabelText('Active')).toBeNull();
-  });
+    const openMenu = () =>
+      userEvent.setup().click(screen.getByRole('button', { name: /^AI accounts menu/ }));
 
-  it('does not call setDefault when selecting the already-active account row', async () => {
-    const user = userEvent.setup();
+    it('lists only signed-in logins, grouped under their provider', async () => {
+      renderNewChat();
+      await openMenu();
 
-    getResolvedAccountMock.mockReturnValue({
-      data: {
-        id: 'acc-1',
-        label: 'Slice',
-        type: 'claude-code' as const,
-        isProjectOverride: false,
-        isAuthenticated: true,
-        projectId: null,
-      },
-      isLoading: false,
+      const menu = screen.getByRole('menu');
+      expect(within(menu).getByText('Claude Code')).toBeInTheDocument();
+      expect(within(menu).getByText('OpenAI')).toBeInTheDocument();
+      const rows = within(menu)
+        .getAllByRole('menuitem')
+        .map((el) => el.textContent);
+      expect(rows).toEqual(['Backup', 'Slice', 'CodexWork', 'Manage accounts…']);
     });
 
-    render(
-      <Provider store={createStore()}>
-        <AccountIndicator chatId="chat-1" />
-      </Provider>,
-    );
+    it('picks the login for this new chat only, never the project or workspace default', async () => {
+      renderNewChat();
+      await openMenu();
+      await userEvent.setup().click(screen.getByRole('menuitem', { name: 'CodexWork' }));
 
-    await user.click(screen.getByRole('button', { name: 'AI accounts menu, Slice, Claude Code' }));
-
-    await user.click(screen.getByRole('menuitem', { name: /^Slice/ }));
-
-    expect(snap.setDefaultMutate).not.toHaveBeenCalled();
-    expect(snap.setProjectAccountMutate).not.toHaveBeenCalled();
-  });
-
-  it('disables account rows while setDefault is pending', async () => {
-    const user = userEvent.setup();
-    snap.setDefaultIsPending = true;
-
-    getResolvedAccountMock.mockReturnValue({
-      data: {
-        id: 'acc-1',
-        label: 'Slice',
-        type: 'claude-code' as const,
-        isProjectOverride: false,
-        isAuthenticated: true,
-        projectId: null,
-      },
-      isLoading: false,
+      expect(
+        screen.getByRole('button', { name: 'AI accounts menu, CodexWork, OpenAI' }),
+      ).toBeInTheDocument();
+      expect(screen.getByTestId('tooltip-content')).toHaveTextContent('Chosen for this chat');
+      expect(snap.setProjectAccountMutate).not.toHaveBeenCalled();
+      expect(snap.setDefaultMutate).not.toHaveBeenCalled();
     });
 
-    render(
-      <Provider store={createStore()}>
-        <AccountIndicator chatId="chat-1" />
-      </Provider>,
-    );
+    it('starts on the project default and says where it comes from', () => {
+      renderNewChat();
 
-    await user.click(screen.getByRole('button', { name: 'AI accounts menu, Slice, Claude Code' }));
-
-    const sliceItem = screen.getByRole('menuitem', { name: /^Slice/ });
-    const backupItem = screen.getByRole('menuitem', { name: /Backup/ });
-    expect(sliceItem).toHaveAttribute('aria-disabled', 'true');
-    expect(backupItem).toHaveAttribute('aria-disabled', 'true');
-    expect(screen.getByRole('menuitem', { name: /Manage in Settings/i })).not.toHaveAttribute(
-      'aria-disabled',
-      'true',
-    );
-  });
-
-  it('disables account rows while setProjectAccount is pending', async () => {
-    const user = userEvent.setup();
-    snap.setProjectAccountIsPending = true;
-
-    getResolvedAccountMock.mockReturnValue({
-      data: {
-        id: 'acc-1',
-        label: 'Slice',
-        type: 'claude-code' as const,
-        isProjectOverride: false,
-        isAuthenticated: true,
-        projectId: 'proj-1',
-      },
-      isLoading: false,
+      expect(getResolvedAccountMock).toHaveBeenCalledWith(
+        { projectId: 'proj-1' },
+        expect.anything(),
+      );
+      const tooltip = screen.getByTestId('tooltip-content');
+      expect(tooltip).toHaveTextContent('Workspace default for this project');
+      expect(tooltip).toHaveTextContent('Your choice applies to this new chat only.');
     });
 
-    render(
-      <Provider store={createStore()}>
-        <AccountIndicator chatId="chat-1" />
-      </Provider>,
-    );
+    it('names a project-specific default on the badge', () => {
+      renderNewChat({ ...defaultAccount, isProjectOverride: true });
 
-    await user.click(screen.getByRole('button', { name: 'AI accounts menu, Slice, Claude Code' }));
+      expect(
+        screen.getByRole('button', {
+          name: 'AI accounts menu, Slice, Claude Code, project-specific default',
+        }),
+      ).toBeInTheDocument();
+      expect(screen.getByTestId('tooltip-content')).toHaveTextContent('Project-specific account');
+    });
 
-    const sliceItem = screen.getByRole('menuitem', { name: /^Slice/ });
-    const backupItem = screen.getByRole('menuitem', { name: /Backup/ });
-    expect(sliceItem).toHaveAttribute('aria-disabled', 'true');
-    expect(backupItem).toHaveAttribute('aria-disabled', 'true');
+    it('marks exactly one row active when two logins share a label', async () => {
+      renderNewChat({ ...defaultAccount, id: 'c2', label: 'Shared', type: 'codex' }, [
+        { ...snap.defaultListAccounts[0], id: 'c1', label: 'Shared' },
+        { ...codexRow, id: 'c2', label: 'Shared' },
+      ]);
+      await openMenu();
+
+      const [claudeRow, codexShared] = screen.getAllByRole('menuitem', { name: /Shared/ });
+      expect(within(codexShared).getByLabelText('Active')).toBeInTheDocument();
+      expect(within(claudeRow).queryByLabelText('Active')).toBeNull();
+    });
+
+    it('says so when no login is signed in', async () => {
+      renderNewChat(defaultAccount, [signedOutRow]);
+      await openMenu();
+
+      expect(screen.getByText('No signed-in accounts.')).toBeInTheDocument();
+    });
   });
 
-  it('sets models tab when choosing Manage in Settings while settings overlay is already open on another tab', async () => {
+  it('sets models tab when choosing Manage accounts while settings overlay is already open on another tab', async () => {
     const user = userEvent.setup();
     const store = createStore();
     store.set(activeOverlayAtom, 'settings');
@@ -623,7 +281,7 @@ describe('AccountIndicator', () => {
     );
 
     await user.click(screen.getByRole('button', { name: 'AI accounts menu, Slice, Claude Code' }));
-    await user.click(screen.getByRole('menuitem', { name: /Manage in Settings/i }));
+    await user.click(screen.getByRole('menuitem', { name: /Manage accounts/i }));
 
     expect(store.get(agentsSettingsDialogActiveTabAtom)).toBe('models');
     expect(store.get(activeOverlayAtom)).toBe('settings');
@@ -646,9 +304,8 @@ describe('AccountIndicator', () => {
       </Provider>,
     );
 
-    const trigger = screen.getByRole('button', {
-      name: 'AI accounts menu, K-Claude, Claude Code, project-specific default',
-    });
+    // A chat's own account is not a project default, even when it matches the project's.
+    const trigger = screen.getByRole('button', { name: 'AI accounts menu, K-Claude, Claude Code' });
     expect(trigger).toHaveTextContent(/K-Claude\s*-\s*Claude Code/);
     expect(trigger.textContent).not.toMatch(/·\s*project/i);
   });
@@ -703,34 +360,150 @@ describe('AccountIndicator', () => {
     expect(trigger.className).toMatch(/status-warning/);
   });
 
-  it('shows project-scoped dropdown copy when the chat has a project', async () => {
-    const user = userEvent.setup();
+  describe('in an existing chat', () => {
+    const codexRow: ListAccount = {
+      id: 'acc-codex',
+      label: 'CodexWork',
+      isDefault: false,
+      isAuthenticated: true,
+      connectedAt: null,
+      isApiKey: false,
+      type: 'codex',
+    };
 
-    getResolvedAccountMock.mockReturnValue({
-      data: {
-        label: 'ProjAcct',
-        type: 'claude-code' as const,
-        isProjectOverride: true,
-        isAuthenticated: true,
-        projectId: 'proj-1',
-      },
-      isLoading: false,
+    async function openChatMenu(isBlocked = false) {
+      snap.listAccountsData = [...snap.defaultListAccounts, codexRow];
+      getResolvedAccountMock.mockReturnValue({
+        data: {
+          id: 'acc-1',
+          label: 'Slice',
+          type: 'claude-code',
+          isAuthenticated: true,
+          isBlocked,
+        },
+        isLoading: false,
+      });
+      render(
+        <Provider store={createStore()}>
+          <AccountIndicator chatId="chat-1" />
+        </Provider>,
+      );
+      await userEvent
+        .setup()
+        .click(screen.getByRole('button', { name: /AI accounts menu, Slice/ }));
+    }
+
+    it('is read-only: the menu only manages accounts and nothing moves the chat', async () => {
+      await openChatMenu();
+
+      const rows = screen.getAllByRole('menuitem').map((el) => el.textContent);
+      expect(rows).toEqual(['Manage accounts…']);
+      expect(screen.getByText('This chat always uses Slice')).toBeInTheDocument();
+      expect(screen.getByText(/Start a new chat to use a different account\./)).toBeInTheDocument();
+      expect(snap.setChatAccountMutate).not.toHaveBeenCalled();
+      expect(snap.setProjectAccountMutate).not.toHaveBeenCalled();
+      expect(snap.setDefaultMutate).not.toHaveBeenCalled();
     });
 
-    render(
-      <Provider store={createStore()}>
-        <AccountIndicator chatId="chat-1" />
-      </Provider>,
-    );
+    it('says the login was removed instead of naming the stand-in login', async () => {
+      await openChatMenu(true);
 
-    await user.click(
-      screen.getByRole('button', {
-        name: 'AI accounts menu, ProjAcct, Claude Code, project-specific default',
-      }),
-    );
+      expect(screen.getByText("This chat's login was removed")).toBeInTheDocument();
+      expect(screen.queryByText(/This chat always uses/)).not.toBeInTheDocument();
+    });
+  });
 
-    expect(
-      screen.getByText(/Choosing an account sets the AI account for this project/i),
-    ).toBeInTheDocument();
+  describe('ContinueAfterUsageLimit', () => {
+    const onRetry = vi.fn();
+
+    function renderAfterError(
+      usageLimited: boolean,
+      accounts: ListAccount[],
+      provider: ListAccount['type'] = 'claude-code',
+      resolved: unknown = { id: 'acc-1', label: 'Slice', type: provider, isAuthenticated: true },
+    ) {
+      snap.listAccountsData = accounts;
+      getChatMock.mockReturnValue({ data: { id: 'chat-1', provider } });
+      getResolvedAccountMock.mockReturnValue({ data: resolved, isLoading: false });
+      const store = createStore();
+      render(
+        <Provider store={store}>
+          <ContinueAfterUsageLimit chatId="chat-1" usageLimited={usageLimited} onRetry={onRetry} />
+        </Provider>,
+      );
+      return store;
+    }
+
+    const codexRow = (id: string, label: string): ListAccount => ({
+      id,
+      label,
+      isDefault: false,
+      isAuthenticated: true,
+      connectedAt: null,
+      isApiKey: false,
+      type: 'codex',
+    });
+
+    it('re-stamps the chat onto another Claude login, then resends the failed turn', async () => {
+      renderAfterError(true, [...snap.defaultListAccounts, codexRow('acc-x', 'Work')]);
+
+      const buttons = screen.getAllByRole('button').map((b) => b.textContent);
+      expect(buttons).toEqual(['Retry with Backup']);
+      await userEvent.setup().click(screen.getByRole('button', { name: 'Retry with Backup' }));
+
+      expect(snap.setChatAccountMutate).toHaveBeenCalledWith(
+        { chatId: 'chat-1', accountId: 'acc-2' },
+        { onSuccess: onRetry },
+      );
+      snap.setChatAccountOpts?.onSuccess(undefined, { chatId: 'chat-1' });
+      expect(snap.resolvedAccountInvalidate).toHaveBeenCalledWith({ chatId: 'chat-1' });
+    });
+
+    it('offers Add account, opening Settings, when no other Claude login is signed in', async () => {
+      const [active, backup] = snap.defaultListAccounts;
+      const store = renderAfterError(true, [
+        active,
+        { ...backup, isAuthenticated: false },
+        codexRow('acc-x', 'Work'),
+      ]);
+
+      expect(screen.queryByText(/Retry with/)).not.toBeInTheDocument();
+      await userEvent.setup().click(screen.getByRole('button', { name: 'Add account…' }));
+
+      expect(store.get(agentsSettingsDialogActiveTabAtom)).toBe('models');
+    });
+
+    it('offers nothing beside Retry in a Codex chat', () => {
+      renderAfterError(true, [...snap.defaultListAccounts, codexRow('acc-x', 'Work')], 'codex');
+
+      expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    });
+
+    it("offers every signed-in login of the chat's provider once its login was removed", () => {
+      renderAfterError(false, [...snap.defaultListAccounts, codexRow('acc-x', 'Work')], undefined, {
+        id: 'acc-1',
+        label: 'Slice',
+        type: 'claude-code',
+        isAuthenticated: true,
+        isBlocked: true,
+      });
+
+      const buttons = screen.getAllByRole('button').map((b) => b.textContent);
+      expect(buttons).toEqual(['Retry with Slice', 'Retry with Backup']);
+    });
+
+    it('offers to add a login of the same provider when a Codex chat has none left', () => {
+      // No OpenAI login is left, so the chat resolves no account at all.
+      renderAfterError(false, snap.defaultListAccounts, 'codex', null);
+
+      const buttons = screen.getAllByRole('button').map((b) => b.textContent);
+      expect(buttons).toEqual(['Add an OpenAI login…']);
+    });
+
+    it('stays hidden for errors other than a usage limit', () => {
+      renderAfterError(false, snap.defaultListAccounts);
+
+      expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    });
   });
 });

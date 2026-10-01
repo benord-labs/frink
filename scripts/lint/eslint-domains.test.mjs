@@ -3,7 +3,11 @@
 // the folder-only lib/ walls). Deliberately light: names must be kebab, unique,
 // and not junk-drawers; no ordering or naming-style opinions beyond that.
 import { describe, expect, it } from 'vitest';
-import { MAIN_LIB_DOMAINS, MAIN_ROOT_FOLDERS, RENDERER_LIB_DOMAINS } from '../../eslint/domains.mjs';
+import {
+  MAIN_LIB_DOMAINS,
+  MAIN_ROOT_FOLDERS,
+  RENDERER_LIB_DOMAINS,
+} from '../../eslint/domains.mjs';
 
 const KEBAB = /^[a-z][a-z0-9-]*$/;
 // Names that defeat the registry's purpose: a domain must be the concern it

@@ -26,6 +26,7 @@ import { stripMessageMarkers } from '../../../../../../shared/lib/message-marker
 import { parseTriggerBubbleMessage } from '../../../../../../shared/lib/trigger-bubble-marker';
 import { BUILD_PROJECT_PLACEHOLDER, isManagedBuildPath } from '../../../../builds-path';
 import { buildOneShotClaudeLaunch, getBundledClaudeBinaryPath } from '../../../../claude/env';
+import { claudeErrorText } from '../../../../claude/stream-classifiers';
 import {
   type CredentialResult,
   getClaudeCodeTokenById,
@@ -281,7 +282,7 @@ async function generateWithClaudeSdk(
     return cleanGeneratedName(accumulated);
   } catch (err) {
     clearTimeout(timer);
-    log.warn('[chat-name] Claude SDK failed', err);
+    log.warn('[chat-name] Claude SDK failed', claudeErrorText(err));
     return null;
   }
 }

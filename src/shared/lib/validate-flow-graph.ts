@@ -15,6 +15,12 @@ import { canonicalStringify } from './canonical-stringify';
 import { resolveFanOutStructure } from './compute-fan-out-body-chain';
 import { FLOW_BLOCK_DISPLAY_LABELS } from './flow-block-display-labels';
 import { findBackEdges } from './flow-graph-cycle';
+import {
+  AFTER_FAN_OUT_NEEDS_OUTER_START,
+  AGENT_SESSION_SOURCES,
+  CHAT_REPLY_SESSION_SOURCES,
+  findUpstreamSession,
+} from './flow-upstream-session';
 import { LAUNCH_FLAGS } from '../launch-flags';
 import {
   chatReplyTemplateWarnings,
@@ -515,22 +521,10 @@ export function validateGraph(
       if (c.fireAndForget !== undefined && typeof c.fireAndForget !== 'boolean') {
         errors.push(`Agent node "${wName}" fireAndForget must be a boolean when present`);
       }
-      const hasUpstreamStartTaskOrAgent = (function findUpstreamStartTaskOrAgent(
-        nodeId: string,
-        visited = new Set<string>(),
-      ): boolean {
-        if (visited.has(nodeId)) return false;
-        visited.add(nodeId);
-        const incomingEdges = (edgesRaw as FlowEdge[]).filter((e) => e.target === nodeId);
-        for (const edge of incomingEdges) {
-          const pred = (nodes as FlowNode[]).find((nd) => nd.id === edge.source);
-          if (!pred) continue;
-          if (pred.blockType === 'start_task' || pred.blockType === 'agent') return true;
-          if (findUpstreamStartTaskOrAgent(pred.id, visited)) return true;
-        }
-        return false;
-      })(n.id);
-      if (!hasUpstreamStartTaskOrAgent) {
+      const upstream = findUpstreamSession(nodes as FlowNode[], edges, n, AGENT_SESSION_SOURCES);
+      if (upstream === 'lane-only') {
+        errors.push(`Agent node "${wName}" ${AFTER_FAN_OUT_NEEDS_OUTER_START}`);
+      } else if (upstream === 'none') {
         errors.push(
           `Agent node "${wName}" requires an upstream Start Task node to create the task`,
         );
@@ -623,22 +617,15 @@ export function validateGraph(
         );
       }
       if (!triggerProvidesChatIdForReply) {
-        const hasUpstreamStartTask = (function findUpstreamStartTaskForChatReply(
-          nodeId: string,
-          visited = new Set<string>(),
-        ): boolean {
-          if (visited.has(nodeId)) return false;
-          visited.add(nodeId);
-          const incomingEdges = (edgesRaw as FlowEdge[]).filter((e) => e.target === nodeId);
-          for (const edge of incomingEdges) {
-            const pred = (nodes as FlowNode[]).find((nd) => nd.id === edge.source);
-            if (!pred) continue;
-            if (pred.blockType === 'start_task') return true;
-            if (findUpstreamStartTaskForChatReply(pred.id, visited)) return true;
-          }
-          return false;
-        })(n.id);
-        if (!hasUpstreamStartTask) {
+        const upstream = findUpstreamSession(
+          nodes as FlowNode[],
+          edges,
+          n,
+          CHAT_REPLY_SESSION_SOURCES,
+        );
+        if (upstream === 'lane-only') {
+          errors.push(`Chat Reply node "${wName}" ${AFTER_FAN_OUT_NEEDS_OUTER_START}`);
+        } else if (upstream === 'none') {
           errors.push(
             `Chat Reply node "${wName}" requires an upstream Start Task node or a Post-Task trigger to provide the chat session`,
           );

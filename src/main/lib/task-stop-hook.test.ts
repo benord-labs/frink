@@ -361,10 +361,12 @@ describe('createTaskStopHook', () => {
 
     await hook(stopInput({ background_tasks: [], session_crons: [] }));
     expect(hook.lastPendingWork).toBeNull();
+    expect(hook.stoppedSinceReset).toBe(true); // nothing pending, unlike no Stop at all
 
     await hook(stopInput({ background_tasks: [bgTask] }));
     hook.reset();
     expect(hook.lastPendingWork).toBeNull();
+    expect(hook.stoppedSinceReset).toBe(false);
   });
 
   it('abort wins over pending work: allows with onAllow', async () => {

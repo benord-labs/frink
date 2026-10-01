@@ -34,10 +34,12 @@ import {
 } from './runtime';
 import { stageContinuationResume } from './terminal-resume/continuation';
 
+let queuePaused = false;
 let maxConcurrentRuns = 1;
 let concurrencyLimitEnabled = true;
 const config = async () => ({
   version: 1 as const,
+  queuePaused,
   concurrencyLimitEnabled,
   maxConcurrentRuns,
 });
@@ -79,6 +81,7 @@ let controller: FlowAdmissionController;
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.dispatcher.mockResolvedValue(undefined);
+  queuePaused = false;
   maxConcurrentRuns = 1;
   concurrencyLimitEnabled = true;
   _resetFlowAdmissionControllerMutexForTests();
@@ -94,6 +97,7 @@ beforeEach(() => {
     .run();
   mocks.getDatabase.mockReturnValue(db);
   controller = new FlowAdmissionController(db, config, async (patch) => {
+    queuePaused = patch.queuePaused ?? queuePaused;
     concurrencyLimitEnabled = patch.concurrencyLimitEnabled ?? concurrencyLimitEnabled;
     maxConcurrentRuns = patch.maxConcurrentRuns ?? maxConcurrentRuns;
     return config();
@@ -106,6 +110,34 @@ afterEach(() => {
   _setFlowAdmissionControllerForTests(null);
 });
 describe('Flow admission runtime recovery', () => {
+  it('holds newly queued work through recovery and resumes at the saved limit', async () => {
+    await expect(updateFlowAdmissionSettings({ queuePaused: true })).resolves.toMatchObject({
+      queue_paused: true,
+    });
+    const first = await requestFlowStart(startInput('paused-first'));
+    const second = await requestFlowStart(startInput('paused-second'));
+    expect(mocks.dispatcher).not.toHaveBeenCalled();
+    // A fresh controller models loss of the in-memory config snapshot on restart.
+    _setFlowAdmissionControllerForTests(
+      new FlowAdmissionController(db, config, async (patch) => {
+        queuePaused = patch.queuePaused ?? queuePaused;
+        return config();
+      }),
+    );
+    await recoverFlowAdmissions();
+    expect(mocks.dispatcher).not.toHaveBeenCalled();
+    expect(await controller.getLiveForRun(first.run.id)).toMatchObject({ state: 'queued' });
+    await expect(updateFlowAdmissionSettings({ queuePaused: false })).resolves.toMatchObject({
+      queue_paused: false,
+      max_concurrent_runs: 1,
+      queued_runs: 1,
+    });
+    await vi.waitFor(() =>
+      expect(mocks.dispatcher).toHaveBeenCalledExactlyOnceWith(first.run.id, expect.any(Number)),
+    );
+    expect(await controller.getLiveForRun(second.run.id)).toMatchObject({ state: 'queued' });
+  });
+
   it('auto-dispatches a proven-unstarted queued activation at most once', async () => {
     const queued = await controller.enqueueStart(startInput('queued-on-boot'));
     await expect(recoverFlowAdmissions()).resolves.toEqual({ queued: 1, ambiguous: 0 });
@@ -154,6 +186,7 @@ describe('Flow admission runtime recovery', () => {
     expect(second.run.status).toBe('pending');
 
     await expect(updateFlowAdmissionSettings({ maxConcurrentRuns: 2 })).resolves.toEqual({
+      queue_paused: false,
       concurrency_limit_enabled: true,
       max_concurrent_runs: 2,
       occupied_runs: 2,
@@ -195,7 +228,7 @@ describe('Flow admission runtime recovery', () => {
       state: 'active',
     });
     expect(mocks.dispatcher).toHaveBeenCalledOnce();
-    expect(mocks.dispatcher).toHaveBeenCalledWith(second.run.id);
+    expect(mocks.dispatcher).toHaveBeenCalledWith(second.run.id, expect.any(Number));
   });
   describe('a releasing admission left by a dead process', () => {
     /** An active run whose release began but never settled — the shape a crashed teardown leaves. */
@@ -275,7 +308,9 @@ describe('Flow admission runtime recovery', () => {
     expect(mocks.dispatcher).not.toHaveBeenCalled();
 
     const next = await requestFlowStart(startInput('after-non-dispatchable'));
-    await vi.waitFor(() => expect(mocks.dispatcher).toHaveBeenCalledWith(next.run.id));
+    await vi.waitFor(() =>
+      expect(mocks.dispatcher).toHaveBeenCalledWith(next.run.id, expect.any(Number)),
+    );
   });
   it('stops recovery before reprocessing a non-advancing page', async () => {
     const queued = await controller.enqueueStart(startInput('stuck-cursor'));
@@ -614,6 +649,7 @@ describe('Flow admission runtime recovery', () => {
         node_run_id: 'resume-node-run',
         continuation: true,
       }),
+      expect.any(Number),
     );
     expect(emitCorrective).not.toHaveBeenCalled();
   });
@@ -668,14 +704,14 @@ describe('a failed admission drain (sc-2481)', () => {
     expect(await stateOf(second.run.id)).toBe('active');
     expect(await stateOf(first.run.id)).toBe('claimed');
     expect(mocks.dispatcher).toHaveBeenCalledOnce();
-    expect(mocks.dispatcher).toHaveBeenCalledWith(second.run.id);
+    expect(mocks.dispatcher).toHaveBeenCalledWith(second.run.id, expect.any(Number));
 
     await vi.advanceTimersByTimeAsync(FLOW_ADMISSION_DRAIN_RETRY_DELAYS_MS[0]);
     await flush();
 
     expect(await stateOf(first.run.id)).toBe('active');
     expect(mocks.dispatcher).toHaveBeenCalledTimes(2);
-    expect(mocks.dispatcher).toHaveBeenCalledWith(first.run.id);
+    expect(mocks.dispatcher).toHaveBeenCalledWith(first.run.id, expect.any(Number));
     expect(
       db.select().from(flowRunAdmissions).where(eq(flowRunAdmissions.state, 'claimed')).all(),
     ).toEqual([]);
@@ -739,7 +775,7 @@ describe('a failed admission drain (sc-2481)', () => {
     await flush();
 
     expect(await stateOf(first.run.id)).toBeNull();
-    expect(mocks.dispatcher).not.toHaveBeenCalledWith(first.run.id);
+    expect(mocks.dispatcher).not.toHaveBeenCalledWith(first.run.id, expect.any(Number));
     expect(mocks.emitRunTerminal).not.toHaveBeenCalled();
     // The dequeue's own drain succeeded, which ends the failure episode.
     expect(vi.getTimerCount()).toBe(0);

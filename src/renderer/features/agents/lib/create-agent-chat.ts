@@ -22,6 +22,11 @@ import type { ChatMode } from '../../../../shared/types/chat-mode';
 import { soundNotificationsEnabledAtom } from '../../../lib/atoms';
 import { playSound } from '../../../lib/audio/play-chime';
 import { appStore } from '../../../lib/jotai-store';
+import {
+  wakeHeldAtomFamily,
+  wakeHoldAdoptedAtomFamily,
+} from '../../../lib/stores/active-transport-registry';
+import { deferUntilWaitOver } from '../../../lib/stores/use-wake-hold-sync';
 import { isDesktopApp } from '../../../lib/utils/platform';
 import { notifySidebarChatActivity } from '../../sidebar/unified/sidebar-chat-activity';
 import {
@@ -55,8 +60,6 @@ export type CreateAgentChatParams = {
   projectPath?: string;
   /** Existing stream id at creation time — pins resume behaviour during active streaming. */
   streamId?: string | null;
-  /** Parent chat's linked task id — forwarded so the executor applies flow-continuation overrides only on match. */
-  expectedFlowTaskId?: string | null;
   /** Execution account resolver, read at SEND time by the transport (never snapshotted). */
   getExecutionAccountType: () => ExecutionAccountKind;
   /** View-only: OS notification on completion when the user isn't viewing. Omit for headless. */
@@ -102,6 +105,39 @@ function markTurnUnseen(
   }
 }
 
+type AnnouncedTurn = {
+  chatId: string;
+  subChatId: string;
+  wasManuallyAborted?: boolean;
+  /** onError already signalled it, so a success sound or notification would misreport it. */
+  errored?: boolean;
+  notifyComplete?: (subChatId: string) => void;
+};
+
+/** A turn's completion effects, resolved against the CURRENT view (the reused Chat's creation-time
+ * snapshots are stale). `failed`: its background wait died, so it plays the failure sound. */
+export function announceTurnEnd(turn: AnnouncedTurn, failed = false): void {
+  const { chatId, subChatId } = turn;
+  const subStore = useAgentSubChatStore.getState();
+  const effects = resolveCompletionEffects({
+    chatId,
+    subChatId,
+    subStoreChatId: subStore.chatId,
+    subStoreActiveSubChatId: subStore.activeSubChatId,
+    splitView: appStore.get(splitViewAtom),
+    selectedChatId: appStore.get(selectedAgentChatIdAtom),
+    isWindowFocused: document.hasFocus(),
+    wasManuallyAborted: Boolean(turn.wasManuallyAborted),
+    isFlowDriven: isFlowDrivenNow(chatId, subChatId),
+  });
+  markTurnUnseen(chatId, subChatId, effects);
+  if (!effects.notifyCompletion || turn.errored) return;
+  if (appStore.get(soundNotificationsEnabledAtom)) {
+    void playSound(failed ? 'failed' : 'turnComplete');
+  }
+  if (!failed) turn.notifyComplete?.(subChatId);
+}
+
 export function createAgentChat(params: CreateAgentChatParams): Chat<UIMessage> {
   const {
     chatId,
@@ -111,7 +147,6 @@ export function createAgentChat(params: CreateAgentChatParams): Chat<UIMessage> 
     initialMessages,
     projectPath,
     streamId = null,
-    expectedFlowTaskId = null,
     getExecutionAccountType,
     notifyComplete,
     onFinishExtra,
@@ -123,7 +158,6 @@ export function createAgentChat(params: CreateAgentChatParams): Chat<UIMessage> 
     projectId,
     mode,
     getExecutionAccountType,
-    expectedFlowTaskId,
     onExecutionError(errSubChatId: string) {
       appStore.set(executionErrorRollbackSubChatIdAtom, errSubChatId);
     },
@@ -167,38 +201,24 @@ export function createAgentChat(params: CreateAgentChatParams): Chat<UIMessage> 
       if (agentChatStore.wasTornDown(chat)) return;
       const turnErrored = erroredChats.delete(chat);
       clearLoadingViaStore(subChatId);
+      appStore.set(wakeHoldAdoptedAtomFamily(subChatId), false);
       // Sync status to global store for queue processing (even when component unmounted).
       useStreamingStatusStore.getState().setStatus(subChatId, 'ready');
 
       const wasManuallyAborted = agentChatStore.wasManuallyAborted(subChatId);
       agentChatStore.clearManuallyAborted(subChatId);
 
-      // Read CURRENT view state at finish time. The Chat is created once and reused, so
-      // creation-time split/focus snapshots are stale (agent-execution-lifecycle decision).
-      // hasFocus() is per renderer window — matches the window the Chat + its split state live in.
-      const subStore = useAgentSubChatStore.getState();
-      const effects = resolveCompletionEffects({
-        chatId,
-        subChatId,
-        subStoreChatId: subStore.chatId,
-        subStoreActiveSubChatId: subStore.activeSubChatId,
-        splitView: appStore.get(splitViewAtom),
-        selectedChatId: appStore.get(selectedAgentChatIdAtom),
-        isWindowFocused: document.hasFocus(),
-        wasManuallyAborted,
-        isFlowDriven: isFlowDrivenNow(chatId, subChatId),
-      });
-
-      markTurnUnseen(chatId, subChatId, effects);
-
-      // An errored turn already signalled via onError — a success sound or
-      // "completed" OS notification here would misreport the outcome.
-      if (effects.notifyCompletion && !turnErrored) {
-        if (appStore.get(soundNotificationsEnabledAtom)) {
-          void playSound('turnComplete');
-        }
-        notifyComplete?.(subChatId);
-      }
+      const announce = (failed?: boolean) => {
+        if (agentChatStore.wasTornDown(chat)) return;
+        announceTurnEnd(
+          { chatId, subChatId, wasManuallyAborted, errored: turnErrored, notifyComplete },
+          failed,
+        );
+      };
+      // A turn that leaves background work running is not finished: announce when the wait ends.
+      // Never gate on runLive here — it still reads true at onFinish (live-run-observer-lane).
+      if (appStore.get(wakeHeldAtomFamily(subChatId))) deferUntilWaitOver(subChatId, announce);
+      else announce();
 
       onFinishExtra?.();
 

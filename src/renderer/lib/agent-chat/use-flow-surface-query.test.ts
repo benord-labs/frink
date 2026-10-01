@@ -105,14 +105,16 @@ describe('useFlowSurfaceQuery', () => {
   // tick to return — a stale composer while the agent is already streaming. The engine announces
   // every in-place resume, so the surface refetches on that rather than waiting.
   describe('refetch on the engine’s resume announcement', () => {
-    let listener: ((e: { eventType: string }) => void) | undefined;
+    let listener: ((e: { eventType: string; flowRunId?: string }) => void) | undefined;
     const unsubscribe = vi.fn();
 
     beforeEach(() => {
       listener = undefined;
       unsubscribe.mockReset();
       (window as unknown as { desktopApi?: unknown }).desktopApi = {
-        onSocketFlowExecutionEvent: (cb: (e: { eventType: string }) => void) => {
+        onSocketFlowExecutionEvent: (
+          cb: (e: { eventType: string; flowRunId?: string }) => void,
+        ) => {
           listener = cb;
           return unsubscribe;
         },
@@ -122,12 +124,23 @@ describe('useFlowSurfaceQuery', () => {
       (window as unknown as { desktopApi?: unknown }).desktopApi = undefined;
     });
 
-    it.each(['run_started', 'node_started'])('refetches on %s', (eventType) => {
+    it('refetches on run_started from any run, since this sub-chat may not know its run yet', () => {
       const refetch = vi.fn();
       h.queryResult = { refetch };
       renderHook(() => useFlowSurfaceQuery('sub-1', null));
 
-      listener?.({ eventType });
+      listener?.({ eventType: 'run_started', flowRunId: 'run-other' });
+      expect(refetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('refetches on node_started only for its own run', () => {
+      const refetch = vi.fn();
+      h.queryResult = { refetch, data: { run: { id: 'run-1' } } };
+      renderHook(() => useFlowSurfaceQuery('sub-1', null));
+
+      listener?.({ eventType: 'node_started', flowRunId: 'run-other' });
+      expect(refetch).not.toHaveBeenCalled();
+      listener?.({ eventType: 'node_started', flowRunId: 'run-1' });
       expect(refetch).toHaveBeenCalledTimes(1);
     });
 

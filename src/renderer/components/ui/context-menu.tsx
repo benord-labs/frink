@@ -1,10 +1,6 @@
 import * as ContextMenuPrimitive from '@radix-ui/react-context-menu';
 import * as React from 'react';
-import {
-  overlayContent,
-  overlayItemWithIcon,
-  overlaySeparator,
-} from '../../lib/overlay-styles';
+import { overlayContent, overlayItemWithIcon, overlaySeparator } from '../../lib/overlay-styles';
 import { cn } from '../../lib/utils';
 
 const ContextMenu = ContextMenuPrimitive.Root;

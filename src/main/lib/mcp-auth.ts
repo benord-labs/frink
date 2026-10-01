@@ -216,10 +216,7 @@ function needsRefresh(expiresAt: number | undefined): boolean {
  * Refresh MCP OAuth token for a server
  * Returns the new access token, or null if refresh fails
  */
-async function refreshMcpToken(
-  serverName: string,
-  projectPath: string,
-): Promise<string | null> {
+async function refreshMcpToken(serverName: string, projectPath: string): Promise<string | null> {
   try {
     let config = await readClaudeConfig();
     let serverConfig: ReturnType<typeof getMcpServerConfig> = getMcpServerConfig(

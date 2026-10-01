@@ -27,7 +27,8 @@ import type { BatchRunState } from '../../../../lib/utils/batch-run-state';
 import { formatRelativeTime } from '../../../../lib/utils/format-time';
 import { FlowLastRunBadge } from '../FlowLastRunBadge';
 import { FlowRunButton } from '../FlowRunButton';
-import { FlowRunStatusIcon, flowRunDisplayStatus } from '../FlowRunStatusIcon';
+import { flowRunDisplayStatus } from '../../../../../shared/lib/flows/run-display-status';
+import { FlowRunStatusIcon } from '../FlowRunStatusIcon';
 import { NodeHealthBadge } from '../NodeHealthBadge';
 
 type FlowEditorTab = 'editor' | 'runs';

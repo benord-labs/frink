@@ -355,7 +355,7 @@ export function WorkQueue({
 
   const showMissingChatToast = () => {
     toast.error('This chat was deleted', {
-      description: 'This is a leftover from a previous deletion. You can safely delete this task.',
+      description: 'This is a leftover from a previous deletion. You can safely remove this task.',
     });
   };
 
@@ -447,7 +447,6 @@ export function WorkQueue({
               initialMessages: (parseWorkQueueMessages(subChat.messages) ?? []) as UIMessage[],
               projectPath: chat.project?.path,
               streamId: subChat.streamId ?? null,
-              expectedFlowTaskId: chat.taskId ?? null,
               getExecutionAccountType: () =>
                 utils.claudeCode.getResolvedAccount.getData({ chatId })?.type ?? 'claude-code',
             });
@@ -526,19 +525,6 @@ export function WorkQueue({
       result: {
         ...(isObject(task?.result) ? task.result : {}),
         summary: 'Marked complete from work queue',
-      },
-    });
-  };
-  const handleDismiss = (taskId: string) => {
-    const task = allTaskRows.find((t) => t.id === taskId);
-    if (!task) return;
-    updateTaskStatusMutation.mutate({
-      taskId,
-      status: 'cancelled',
-      result: {
-        ...(isObject(task?.result) ? task.result : {}),
-        cancelled: true,
-        summary: 'Dismissed from needs attention',
       },
     });
   };
@@ -656,7 +642,6 @@ export function WorkQueue({
     onStartTask: handleStartTask,
     onRetryTask: handleRetryTask,
     onMarkComplete: handleMarkComplete,
-    onDismiss: handleDismiss,
     isLoading: isMutating,
   };
 

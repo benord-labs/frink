@@ -1,299 +1,289 @@
-import { useEffect, useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, Text, View } from 'react-native';
-import type {
-  MobileChatDetail,
-  MobileMessage,
-} from '../../../../src/shared/types/remote/mobile';
-import { useAction, useResource } from '../../lib/connection';
+import { useRoute, type RouteProp } from '@react-navigation/native';
+import { useAnimatedHeaderHeight } from '@react-navigation/native-stack';
+import { useEffect, useState, type ReactNode, type RefObject } from 'react';
+import {
+  ActivityIndicator,
+  Animated,
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
+  RefreshControl,
+  ScrollView,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import type { MobileActivity } from '@frink/shared/types/remote/mobile';
+import { useResource } from '../../lib/connection';
 import { useDraft } from '../../lib/drafts';
-import { Button, Icon, Label, Loading, Notice } from '../../ui/primitives';
-import { Page } from '../../ui/page';
-import { Segmented } from '../../ui/segmented';
+import { useRootNavigation, type DecisionTarget, type RootRoutes } from '../../navigation/routes';
+import { GlassSurface } from '../../ui/material';
 import { ResourceStatus } from '../../ui/resource-status';
-import { useTheme } from '../../ui/theme';
-import { Composer } from './Composer';
-import { Message } from './Message';
-import { PermissionForm, QuestionForm } from './questions';
+import { Screen } from '../../ui/screen';
+import { GUTTER, space, useTheme } from '../../ui/theme';
+import { chatPollInterval, decisionStillOpen, showsComposer } from './chat-state';
+import { Composer, useComposerAttachments, useComposerState } from './Composer';
+import { SubChatTabs, useChatHeader } from './header';
+import { LatestChip, Transcript } from './transcript';
+import { useChatActions } from './use-chat-actions';
 import { useChatHistory } from './use-chat-history';
-import { useTranscriptScroll, type DecisionTarget } from './use-transcript-scroll';
+import { useTranscriptScroll } from './use-transcript-scroll';
+import { useTurnClock } from './use-turn-clock';
 
-export { Chats } from './Chats';
-export { NewChat } from './NewChat';
-export type { DecisionTarget } from './use-transcript-scroll';
+const ios = Platform.OS === 'ios';
 
-type Scrolling = ReturnType<typeof useTranscriptScroll>;
+/** The home-indicator gap only applies while the keyboard is down. */
+function useKeyboardShown() {
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    if (!ios) return;
+    const show = Keyboard.addListener('keyboardWillShow', () => setShown(true));
+    const hide = Keyboard.addListener('keyboardWillHide', () => setShown(false));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+  return shown;
+}
 
-// Reason: Working and project context share one header line.
-// fallow-ignore-next-line complexity
-function ChatContext({ active, projectName }: { active: boolean; projectName?: string }) {
-  const t = useTheme();
-  if (!active && !projectName) return null;
+/** Busy chats poll faster; the interval follows the last activity the computer reported. */
+function useChatResource(id: string, subChatId: string | undefined) {
+  const [activity, setActivity] = useState<MobileActivity>();
+  const resource = useResource(
+    { type: 'chat', id, subChatId },
+    { interval: chatPollInterval(activity) },
+  );
+  const latest = resource.data?.activity;
+  useEffect(() => setActivity(latest), [latest]);
+  return resource;
+}
+
+/** Only whether the Mac can run chats is needed here, so the overview's lists stay one row long. */
+function useExecutionReady() {
+  const overview = useResource(
+    { type: 'overview', limits: { attention: 1, running: 1, inbox: 1 } },
+    { interval: 10_000 },
+  );
+  return overview.data?.executionReady ?? true;
+}
+
+/**
+ * What must stay in sight while the transcript follows the newest message: the offline banner and
+ * the conversation tabs. Pinned under the navigation bar on a glass band the transcript scrolls
+ * beneath; `edgeRef` marks where readable space starts, for scrolling to a question.
+ */
+function PinnedStrip({
+  edgeRef,
+  onHeight,
+  children,
+}: {
+  edgeRef: RefObject<View | null>;
+  onHeight: (height: number) => void;
+  children: ReactNode;
+}) {
+  // Only iOS draws its header over the screen; elsewhere the screen starts below it. The header
+  // height is natively driven, and native animation can move a view but not set its `top`.
+  const headerHeight = useAnimatedHeaderHeight();
   return (
-    <Text
-      numberOfLines={1}
+    <Animated.View
+      pointerEvents="box-none"
       style={{
-        fontSize: 12,
-        lineHeight: 16,
-        fontWeight: '500',
-        color: active ? t.accent : t.muted,
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        transform: ios ? [{ translateY: headerHeight }] : undefined,
       }}
     >
-      {active ? 'Working…' : projectName}
-    </Text>
+      <View
+        ref={edgeRef}
+        collapsable={false}
+        pointerEvents="box-none"
+        onLayout={(event) => onHeight(event.nativeEvent.layout.height)}
+      >
+        {children && (
+          <GlassSurface
+            style={{
+              borderRadius: 0,
+              borderTopWidth: 0,
+              borderLeftWidth: 0,
+              borderRightWidth: 0,
+              paddingBottom: space.xs,
+            }}
+          >
+            {children}
+          </GlassSurface>
+        )}
+      </View>
+    </Animated.View>
   );
 }
 
-function EmptyConversation() {
-  const t = useTheme();
-  return (
-    <View style={{ alignItems: 'center', gap: 8, paddingTop: 48 }}>
-      <Icon name="chatbubbles-outline" size={28} color={t.muted} />
-      <Label bold size={17}>
-        Start the conversation
-      </Label>
-      <Label muted size={14} style={{ textAlign: 'center', maxWidth: 260 }}>
-        Your agent works on your computer. Replies appear here.
-      </Label>
-    </View>
-  );
-}
-
-function Transcript({ messages, scrolling }: { messages: MobileMessage[]; scrolling: Scrolling }) {
-  if (!messages.length) return <EmptyConversation />;
-  return (
-    <View style={{ gap: 20 }}>
-      {messages.map((message) => (
-        <View
-          key={message.id}
-          collapsable={false}
-          ref={(view) => scrolling.registerMessage(message.id, view)}
-          onLayout={() => {
-            void scrolling.restorePosition();
-          }}
-        >
-          <Message message={message} />
-        </View>
-      ))}
-    </View>
-  );
-}
-
-// Questions, a failed response and permission requests, each registered as a scroll target.
-function Decisions({
-  data,
-  scrolling,
-  onAnswered,
-}: {
-  data: MobileChatDetail;
-  scrolling: Scrolling;
-  onAnswered: () => void;
-}) {
-  return (
-    <>
-      {data.questions.map((question) => (
-        <View
-          key={question.id}
-          collapsable={false}
-          testID={`decision-question-${question.id}`}
-          ref={(view) => scrolling.registerDecision('question', question.id, view)}
-          onLayout={() => {
-            void scrolling.restorePosition();
-          }}
-        >
-          <QuestionForm prompt={question} onAnswered={onAnswered} />
-        </View>
-      ))}
-      {data.error && <Notice error>{data.error}</Notice>}
-      {data.permissions.map((permission) => (
-        <View
-          key={permission.requestId}
-          collapsable={false}
-          testID={`decision-permission-${permission.requestId}`}
-          ref={(view) => scrolling.registerDecision('permission', permission.requestId, view)}
-          onLayout={() => {
-            void scrolling.restorePosition();
-          }}
-        >
-          <PermissionForm prompt={permission} onAnswered={onAnswered} />
-        </View>
-      ))}
-    </>
-  );
-}
-
-function LatestButton({ onPress }: { onPress: () => void }) {
-  const t = useTheme();
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel="Latest"
-      onPress={onPress}
-      style={({ pressed }) => ({
-        position: 'absolute',
-        bottom: 12,
-        alignSelf: 'center',
-        height: 34,
-        paddingHorizontal: 14,
-        borderRadius: 17,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 6,
-        backgroundColor: t.raised,
-        boxShadow: '0 4px 12px rgba(0,0,0,0.25)',
-        opacity: pressed ? 0.8 : 1,
-      })}
-    >
-      <Icon name="arrow-down" size={15} color={t.text} />
-      <Text style={{ fontSize: 14, lineHeight: 18, fontWeight: '600', color: t.text }}>
-        Latest
-      </Text>
-    </Pressable>
-  );
-}
-
-function targetStillOpen(data: MobileChatDetail | undefined, target: DecisionTarget | undefined) {
-  if (!data || !target) return false;
-  return target.type === 'question'
-    ? data.questions.some((question) => question.id === target.id)
-    : data.permissions.some((permission) => permission.requestId === target.id);
-}
-
-// Reason: The screen keeps loading, history, decision and composer states together.
-// fallow-ignore-next-line complexity
-export function Chat({
+function ChatView({
   id,
   initialSubChatId,
   decisionTarget,
-  onBack,
 }: {
   id: string;
   initialSubChatId?: string;
   decisionTarget?: DecisionTarget;
-  onBack: () => void;
 }) {
+  const t = useTheme();
+  const navigation = useRootNavigation();
+  const insets = useSafeAreaInsets();
+  const keyboard = useKeyboardShown();
+  const [composerHeight, setComposerHeight] = useState(0);
   const [subChatId, setSubChatId] = useState(initialSubChatId);
-  const activeDecisionTarget =
-    subChatId && subChatId !== initialSubChatId ? undefined : decisionTarget;
-  const resource = useResource({ type: 'chat', id, subChatId });
-  const projects = useResource({ type: 'projects' });
+  const target = subChatId && subChatId !== initialSubChatId ? undefined : decisionTarget;
+  const resource = useChatResource(id, subChatId);
   const { data } = resource;
-  const projectName = projects.data?.find((project) => project.id === data?.chat.projectId)?.name;
-  const action = useAction();
+  const [stripHeight, setStripHeight] = useState(0);
+  const executionReady = useExecutionReady();
+  const kind = data?.kind;
+  const flowRun = kind === 'flow';
+  const projects = useResource({ type: 'projects' }, { interval: 60_000 });
+  const project = projects.data?.find((entry) => entry.id === data?.chat.projectId)?.name;
   const draft = useDraft(
     JSON.stringify(['chat', id, data?.subChatId ?? subChatId ?? 'loading']),
     '',
   );
   const history = useChatHistory(id, data?.messages);
-  const [confirmStop, setConfirmStop] = useState(false);
-  useEffect(() => {
-    setConfirmStop(false);
-  }, [id, subChatId, data?.subChatId, data?.active]);
-  const targetExists = targetStillOpen(data, activeDecisionTarget);
-  const scrolling = useTranscriptScroll(!!data, activeDecisionTarget, targetExists);
-  async function send() {
-    if (!data) return;
-    const sent = await action.run({
-      type: 'sendMessage',
-      chatId: id,
-      subChatId: data.subChatId,
-      text: draft.value,
-      requestId: draft.requestId,
-    });
-    if (sent) {
-      draft.clear(draft.requestId);
+  const composerState = useComposerState(id, data?.subChatId);
+  const attachments = useComposerAttachments(
+    data ? { chatId: id, subChatId: data.subChatId } : null,
+  );
+  const targetOpen = decisionStillOpen(data, target);
+  const scrolling = useTranscriptScroll(!!data, target, targetOpen);
+  const tabs = !!data && data.subChats.length > 1;
+  // The strip's height is the transcript's top inset; when the banner comes or goes, keep the
+  // reader's place (or the newest message in view) rather than letting the text jump.
+  const { restorePosition } = scrolling;
+  useEffect(() => void restorePosition(), [stripHeight]);
+  const clock = useTurnClock(data?.activity, `${id}:${data?.subChatId}`, resource.updatedAt);
+  const actions = useChatActions({
+    chatId: id,
+    data,
+    draft,
+    attachments,
+    flowRun,
+    refresh: resource.refresh,
+    onSent: () => {
+      if (data?.activity === 'idle') clock.started();
       scrolling.latest();
-      resource.refresh();
-    }
-  }
-  async function stop() {
-    if (!data) return;
-    if (await action.run({ type: 'stopChat', chatId: id, subChatId: data.subChatId })) {
-      setConfirmStop(false);
-      resource.refresh();
-    }
-  }
+    },
+    onDeleted: () => navigation.goBack(),
+  });
+  useChatHeader(
+    { name: data?.chat.name ?? '', kind, project, activity: data?.activity, elapsed: clock.elapsed },
+    data ? actions.remove : null,
+  );
   function switchConversation(next: string) {
-    if (action.busy || next === data?.subChatId) return;
+    if (actions.busy || next === data?.subChatId) return;
     history.reset();
     setSubChatId(next);
     scrolling.reset();
   }
-  const error = action.error || history.error;
+  const composer = data && showsComposer(data);
+  const bottom = keyboard ? space.sm : Math.max(insets.bottom, space.sm);
+  const note =
+    actions.note ?? (composerState.error ? { text: composerState.error, error: true } : null);
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1 }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <View style={{ flex: 1 }}>
-        <Page
-          title={data?.chat.name ?? 'Chat'}
-          context={<ChatContext active={!!data?.active} projectName={projectName} />}
-          onBack={onBack}
-          scrollRef={scrolling.scrollRef}
-          refreshing={resource.refreshing}
-          onRefresh={resource.pull}
-          scrollProps={scrolling.scrollProps}
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={ios ? 'padding' : undefined}>
+      <ScrollView
+        ref={scrolling.scrollRef}
+        {...scrolling.scrollProps}
+        contentInsetAdjustmentBehavior="automatic"
+        keyboardDismissMode="interactive"
+        keyboardShouldPersistTaps="handled"
+        refreshControl={
+          <RefreshControl
+            refreshing={resource.refreshing}
+            onRefresh={resource.pull}
+            tintColor={t.muted}
+          />
+        }
+        contentContainerStyle={{
+          paddingTop: stripHeight,
+          // iOS already insets the scroll view by the home indicator ("automatic" adjustment).
+          paddingBottom: (composer ? composerHeight : 0) + space.xl + (ios ? space.sm : bottom),
+        }}
+      >
+        <View
+          style={{
+            width: '100%',
+            maxWidth: 720,
+            alignSelf: 'center',
+            paddingHorizontal: GUTTER,
+            paddingTop: space.lg,
+          }}
         >
-          <ResourceStatus {...resource} />
-          {error && (
-            <>
-              <Notice error>{error}</Notice>
-              <Button secondary onPress={resource.refresh}>
-                Refresh conversation
-              </Button>
-            </>
-          )}
-          {!data ? (
-            !resource.error && <Loading />
+          {data ? (
+            <Transcript
+              data={data}
+              messages={history.messages}
+              history={history}
+              scrolling={scrolling}
+              targetResolved={!!target && !targetOpen}
+              onAnswered={resource.refresh}
+            />
           ) : (
-            <>
-              {data.subChats.length > 1 && (
-                <Segmented
-                  items={data.subChats.map((sub) => ({
-                    id: sub.id,
-                    label: sub.name || 'Conversation',
-                  }))}
-                  value={data.subChatId}
-                  onChange={switchConversation}
-                />
-              )}
-              {activeDecisionTarget && !targetExists && (
-                <Notice>
-                  This request has already been resolved on your computer. The conversation is up
-                  to date.
-                </Notice>
-              )}
-              {data.hasMore && !history.done && (
-                <Button
-                  compact
-                  secondary
-                  icon="time-outline"
-                  disabled={history.loading}
-                  onPress={() => void history.loadOlder(data.subChatId, scrolling.captureHistory)}
-                  style={{ alignSelf: 'center' }}
-                >
-                  {history.loading ? 'Loading…' : 'Load earlier messages'}
-                </Button>
-              )}
-              <Transcript messages={history.messages} scrolling={scrolling} />
-              <Decisions data={data} scrolling={scrolling} onAnswered={resource.refresh} />
-            </>
+            !resource.error && <ActivityIndicator color={t.muted} style={{ paddingTop: 120 }} />
           )}
-        </Page>
-        {scrolling.showLatest && <LatestButton onPress={scrolling.latest} />}
+        </View>
+      </ScrollView>
+      <PinnedStrip edgeRef={scrolling.edgeRef} onHeight={setStripHeight}>
+        {(resource.error || tabs) && (
+          <>
+            <ResourceStatus {...resource} />
+            {data && <SubChatTabs data={data} onChange={switchConversation} />}
+          </>
+        )}
+      </PinnedStrip>
+      <View
+        pointerEvents="box-none"
+        style={{ position: 'absolute', left: 0, right: 0, bottom, paddingHorizontal: 10, gap: 10 }}
+      >
+        {scrolling.showLatest && <LatestChip onPress={scrolling.latest} />}
+        {composer && (
+          <View
+            testID="composer"
+            onLayout={(event) => setComposerHeight(event.nativeEvent.layout.height)}
+            style={{ width: '100%', maxWidth: 720, alignSelf: 'center' }}
+          >
+            <Composer
+              activity={data.activity}
+              executionReady={executionReady}
+              flowRun={flowRun}
+              busy={actions.busy}
+              note={note}
+              value={draft.value}
+              onChange={draft.update}
+              onSend={actions.submit}
+              onStop={actions.stop}
+              composer={composerState.composer}
+              attachments={attachments}
+              onUpdate={(patch) => composerState.change({ type: 'updateComposer', patch })}
+              onMode={(mode) => composerState.change({ type: 'setMode', mode })}
+              onAccount={(accountId) => composerState.change({ type: 'setAccount', accountId })}
+            />
+          </View>
+        )}
       </View>
-      {data && (data.active || (!data.questions.length && !data.permissions.length)) && (
-        <Composer
-          active={data.active}
-          busy={action.busy}
-          value={draft.value}
-          onChange={draft.update}
-          onSend={() => void send()}
-          confirmStop={confirmStop}
-          setConfirmStop={setConfirmStop}
-          onStop={() => void stop()}
-        />
-      )}
     </KeyboardAvoidingView>
+  );
+}
+
+/** A conversation pushed above the tabs: native header, transcript and floating composer. */
+export function ChatScreen() {
+  const { params } = useRoute<RouteProp<RootRoutes, 'Chat'>>();
+  return (
+    <Screen atmosphere>
+      <ChatView
+        key={params.id}
+        id={params.id}
+        initialSubChatId={params.subChatId}
+        decisionTarget={params.decisionTarget}
+      />
+    </Screen>
   );
 }

@@ -32,7 +32,7 @@ export function EmailTriggerContentDialog({
   triggerContext,
 }: Props): ReactElement {
   const gmailContent = asGmailFullContent(triggerContext);
-  // Defensive guard: ActionMenu routes only Gmail sources here.
+  // Defensive guard: TriggerContentDialog routes only Gmail sources here.
   if (!gmailContent) {
     const payload = JSON.stringify(triggerContext.fullContent ?? {}, null, 2);
     return (

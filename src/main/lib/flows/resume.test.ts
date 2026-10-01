@@ -12,16 +12,18 @@ import {
   recoverOrphanedTasks,
   updateTaskStatus,
 } from '../db/repos/tasks';
-import { batchStageRuns, batchStages, flowRuns, tasks } from '../db/schema';
-import { seedFlowRun } from '../db/test-utils/flow-fixtures';
+import { abandonRestartInterruption } from '../db/repos/task-parking/abandon-marker';
+import { batchStageRuns, batchStages, flowRunAdmissions, flowRuns, tasks } from '../db/schema';
+import { seedActiveAdmission, seedFlowRun } from '../db/test-utils/flow-fixtures';
 import { freshDb, type TestDb } from '../db/test-utils/fresh-db';
+import { unparkFlowInPlace } from '../tasks';
 import { hasFlowResourceActivity, setFlowAdmissionLifecycleHooks } from './admission/activity';
+import { TerminalResumeAdmissionError } from './admission/terminal-resume/resume-store';
 
 // The engine reads its db via the getDatabase() singleton; point it at the per-test
 // in-memory db so the guard reads (getFlowRun / listNodeRunsForFlowRun) hit seeded rows.
 const holder = vi.hoisted(() => ({
   db: null as unknown,
-  hasActiveFlowAdmission: vi.fn(),
   probeFlowAdmission: vi.fn(async () => ({ active: false, queuedResume: false })),
   requestTerminalFlowResume: vi.fn(),
 }));
@@ -35,23 +37,24 @@ vi.mock('./advance', () => ({
   dispatchAndAdvance: vi.fn(),
   advanceFlowRun: vi.fn(),
 }));
-vi.mock('./admission/runtime', () => ({
-  hasActiveFlowAdmission: holder.hasActiveFlowAdmission,
+// Commands run through the real admission transaction; each test's controller binds its own db.
+vi.mock('./admission/runtime', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./admission/runtime')>()),
   probeFlowAdmission: holder.probeFlowAdmission,
   requestTerminalFlowResume: holder.requestTerminalFlowResume,
 }));
 
+import { _setFlowAdmissionControllerForTests } from './admission/runtime';
 import { advanceFlowRun, dispatchAndAdvance, loadRunContext } from './advance';
 import {
-  canReviveInterruptedFlowInPlace,
   isRunRestartInterrupted,
   rerunFlowRunFromInterruption,
   resumeFailedFlowInPlace,
-  resumeFlowNodeInPlace,
   resumeFlowRun,
-  resumeInterruptedFlowInPlace,
 } from './resume';
 import { forgetAdvancedTask, stopTaskCompletionWatcher, tick } from './task-completion-watcher';
+
+beforeEach(() => _setFlowAdmissionControllerForTests(null));
 
 const GRAPH: FlowGraph = {
   nodes: [
@@ -66,7 +69,6 @@ describe('resumeFlowRun — admission lease', () => {
   beforeEach(() => {
     db = freshDb();
     holder.db = db;
-    holder.hasActiveFlowAdmission.mockReset();
     (loadRunContext as Mock).mockReset();
     (loadRunContext as Mock).mockResolvedValue({ graph: GRAPH });
     (advanceFlowRun as Mock).mockReset();
@@ -111,7 +113,6 @@ describe('resumeFlowRun — admission lease', () => {
       blockType: 'agent',
       status: 'awaiting_input',
     });
-    holder.hasActiveFlowAdmission.mockResolvedValue(false);
 
     await expect(resumeFlowRun(flowRunId, 'approve', nodeRun.id)).rejects.toThrow(
       /lost its place in the run queue/,
@@ -185,7 +186,7 @@ describe('resumeFlowRun — admission lease', () => {
       completedAt: null,
       attemptIds: [node.id],
     };
-    holder.hasActiveFlowAdmission.mockResolvedValue(true);
+    seedActiveAdmission(db, flowRunId);
     (advanceFlowRun as Mock).mockImplementationOnce(
       async (_run, id, _output, _driver, expected) => {
         await setNodeRunStatus(db, id, 'awaiting_input', {
@@ -210,29 +211,31 @@ describe('resumeFlowRun — admission lease', () => {
     expect((await getNodeRun(db, node.id))?.status).toBe('awaiting_input');
   });
 
-  it('does not resurrect a run cancelled while its admission is being checked', async () => {
+  it('never re-pauses a run that a Cancel and a Retry re-admitted under a new ticket', async () => {
     const { flowRunId } = await seedFlowRun(db, GRAPH);
     await setFlowRunStatus(db, flowRunId, 'paused');
-    const nodeRun = await createNodeRun(db, {
+    const node = await createNodeRun(db, {
       flowRunId,
       nodeId: 'a',
       blockType: 'agent',
       status: 'awaiting_input',
     });
-    holder.hasActiveFlowAdmission.mockImplementationOnce(async () => {
-      await setFlowRunStatus(db, flowRunId, 'cancelled', {}, 'running');
+    const ticket = seedActiveAdmission(db, flowRunId);
+    (advanceFlowRun as Mock).mockImplementationOnce(async () => {
+      db.update(flowRunAdmissions)
+        .set({ state: 'released', settledAt: new Date() })
+        .where(eq(flowRunAdmissions.ticket, ticket))
+        .run();
+      seedActiveAdmission(db, flowRunId);
       return false;
     });
 
-    await expect(resumeFlowRun(flowRunId, 'approve', nodeRun.id)).rejects.toThrow(
-      /lost its place in the run queue/,
-    );
+    await expect(resumeFlowRun(flowRunId, 'approve', node.id)).rejects.toThrow('already changed');
 
-    expect((await getFlowRun(db, flowRunId))?.status).toBe('cancelled');
-    expect(advanceFlowRun).not.toHaveBeenCalled();
+    expect((await getFlowRun(db, flowRunId))?.status).toBe('running');
   });
 
-  it('does not dispatch when cancellation wins after an active-admission check', async () => {
+  it('does not reopen a run cancelled while its context loads', async () => {
     const { flowRunId } = await seedFlowRun(db, GRAPH);
     await setFlowRunStatus(db, flowRunId, 'paused');
     const nodeRun = await createNodeRun(db, {
@@ -241,9 +244,10 @@ describe('resumeFlowRun — admission lease', () => {
       blockType: 'agent',
       status: 'awaiting_input',
     });
-    holder.hasActiveFlowAdmission.mockImplementationOnce(async () => {
-      await setFlowRunStatus(db, flowRunId, 'cancelled', {}, 'running');
-      return true;
+    seedActiveAdmission(db, flowRunId);
+    (loadRunContext as Mock).mockImplementationOnce(async () => {
+      await setFlowRunStatus(db, flowRunId, 'cancelled', {}, 'paused');
+      return { graph: GRAPH };
     });
 
     await expect(resumeFlowRun(flowRunId, 'retry', nodeRun.id)).rejects.toThrow(
@@ -263,7 +267,7 @@ describe('resumeFlowRun — admission lease', () => {
       blockType: 'agent',
       status: 'awaiting_input',
     });
-    holder.hasActiveFlowAdmission.mockResolvedValue(true);
+    const ticket = seedActiveAdmission(db, flowRunId);
     (dispatchAndAdvance as Mock).mockImplementationOnce(async () => {
       expect(hasFlowResourceActivity(flowRunId)).toBe(true);
     });
@@ -272,12 +276,11 @@ describe('resumeFlowRun — admission lease', () => {
 
     expect(dispatchAndAdvance).toHaveBeenCalledOnce();
     expect(dispatchAndAdvance).toHaveBeenCalledWith(
-      flowRunId,
+      { flowRunId, ticket },
       GRAPH.nodes[1],
       undefined,
       expect.anything(),
       undefined,
-      expect.any(Function),
       undefined,
     );
     expect(hasFlowResourceActivity(flowRunId)).toBe(false);
@@ -300,18 +303,17 @@ describe('resumeFlowRun — admission lease', () => {
       laneIndex: 3,
       parentFanOutNodeRunId: parent.id,
     });
-    holder.hasActiveFlowAdmission.mockResolvedValue(true);
+    const ticket = seedActiveAdmission(db, flowRunId);
     vi.mocked(dispatchAndAdvance).mockReset().mockResolvedValue(undefined);
 
     await resumeFlowRun(flowRunId, 'retry', nodeRun.id);
 
     expect(dispatchAndAdvance).toHaveBeenCalledWith(
-      flowRunId,
+      { flowRunId, ticket },
       GRAPH.nodes[1],
       undefined,
       expect.anything(),
       undefined,
-      expect.any(Function),
       { laneIndex: 3, parentFanOutNodeRunId: parent.id },
     );
   });
@@ -443,10 +445,30 @@ describe('rerunFlowRunFromInterruption — guards', () => {
     expect(holder.requestTerminalFlowResume).toHaveBeenCalledWith({
       flowRunId,
       nodeRunId,
+      admit: expect.any(Function),
     });
     expect(loadRunContext).not.toHaveBeenCalled();
     expect(dispatchAndAdvance).not.toHaveBeenCalled();
     expect((await getFlowRun(db, flowRunId))?.status).toBe('cancelled');
+  });
+
+  it('reports a Cancel that lands while the enqueue drains as the user cancelling', async () => {
+    const flowRunId = await seedCancelledRun();
+    await seedInterruptedNode(flowRunId);
+    const dropped = new TerminalResumeAdmissionError('Flow resume admission cancelled');
+    holder.requestTerminalFlowResume.mockImplementation(async () => {
+      abandonRestartInterruption(db, flowRunId);
+      throw dropped;
+    });
+    await expect(rerunFlowRunFromInterruption(flowRunId)).rejects.toThrow(/cancelled by the user/i);
+  });
+
+  it('passes an admission failure through while the run is still interrupted', async () => {
+    const flowRunId = await seedCancelledRun();
+    await seedInterruptedNode(flowRunId);
+    const failed = new TerminalResumeAdmissionError('Flow resume admission failed');
+    holder.requestTerminalFlowResume.mockRejectedValue(failed);
+    await expect(rerunFlowRunFromInterruption(flowRunId)).rejects.toBe(failed);
   });
 
   it('rejects a run that does not exist', async () => {
@@ -515,11 +537,12 @@ describe('rerunFlowRunFromInterruption — guards', () => {
     expect(holder.requestTerminalFlowResume).toHaveBeenCalledWith({
       flowRunId,
       nodeRunId: lane.id,
+      admit: expect.any(Function),
     });
   });
 });
 
-describe('resumeFlowNodeInPlace — unpark an agent node after a chat follow-up', () => {
+describe('unparkFlowInPlace — unpark an agent node after a chat follow-up', () => {
   let db: TestDb;
   beforeEach(() => {
     db = freshDb();
@@ -532,20 +555,39 @@ describe('resumeFlowNodeInPlace — unpark an agent node after a chat follow-up'
   ): Promise<{ flowRunId: string; nodeRunId: string }> {
     const { flowRunId } = await seedFlowRun(db, GRAPH);
     await setFlowRunStatus(db, flowRunId, 'paused');
+    seedActiveAdmission(db, flowRunId);
     const node = await createNodeRun(db, { flowRunId, nodeId: 'a', blockType: 'agent', status });
     return { flowRunId, nodeRunId: node.id };
   }
 
+  const unpark = (flowRunId: string, nodeRunId: string) =>
+    unparkFlowInPlace(flowRunId, nodeRunId, 'task-1', undefined, false);
+
+  // An in-place un-park continues without re-admitting, so a paused run without its slot stays parked.
+  it('declines when the run no longer holds its active slot', async () => {
+    const { flowRunId } = await seedFlowRun(db, GRAPH);
+    await setFlowRunStatus(db, flowRunId, 'paused');
+    const node = await createNodeRun(db, {
+      flowRunId,
+      nodeId: 'a',
+      blockType: 'agent',
+      status: 'awaiting_input',
+    });
+    expect(await unpark(flowRunId, node.id)).toBe(false);
+    expect((await getNodeRun(db, node.id))?.status).toBe('awaiting_input');
+    expect((await getFlowRun(db, flowRunId))?.status).toBe('paused');
+  });
+
   it('flips the node_run and flow_run back to running', async () => {
     const { flowRunId, nodeRunId } = await seedPausedAgentNode();
-    expect(await resumeFlowNodeInPlace(flowRunId, nodeRunId)).toBe(true);
+    expect(await unpark(flowRunId, nodeRunId)).toBe(true);
     expect((await getNodeRun(db, nodeRunId))?.status).toBe('running');
     expect((await getFlowRun(db, flowRunId))?.status).toBe('running');
   });
 
   it('unparks a blocked node too', async () => {
     const { flowRunId, nodeRunId } = await seedPausedAgentNode('blocked');
-    expect(await resumeFlowNodeInPlace(flowRunId, nodeRunId)).toBe(true);
+    expect(await unpark(flowRunId, nodeRunId)).toBe(true);
     expect((await getNodeRun(db, nodeRunId))?.status).toBe('running');
   });
 
@@ -557,7 +599,7 @@ describe('resumeFlowNodeInPlace — unpark an agent node after a chat follow-up'
       triggerContext: null,
       userId: 'u1',
     });
-    expect(await resumeFlowNodeInPlace(flowRunId, nodeRunId)).toBe(true);
+    expect(await unpark(flowRunId, nodeRunId)).toBe(true);
     expect((await getNodeRun(db, nodeRunId))?.status).toBe('running');
     expect((await getFlowRun(db, flowRunId))?.status).toBe('running');
   });
@@ -570,26 +612,28 @@ describe('resumeFlowNodeInPlace — unpark an agent node after a chat follow-up'
       blockType: 'agent',
       status: 'awaiting_input',
     });
-    expect(await resumeFlowNodeInPlace(flowRunId, node.id)).toBe(false);
+    expect(await unpark(flowRunId, node.id)).toBe(false);
     expect((await getNodeRun(db, node.id))?.status).toBe('awaiting_input');
   });
 
   it('no-ops (CAS miss) when the node is already running — guards double-fire', async () => {
     const { flowRunId } = await seedFlowRun(db, GRAPH);
     await setFlowRunStatus(db, flowRunId, 'paused');
+    seedActiveAdmission(db, flowRunId);
     const node = await createNodeRun(db, {
       flowRunId,
       nodeId: 'a',
       blockType: 'agent',
       status: 'running',
     });
-    expect(await resumeFlowNodeInPlace(flowRunId, node.id)).toBe(false);
+    expect(await unpark(flowRunId, node.id)).toBe(false);
     expect((await getFlowRun(db, flowRunId))?.status).toBe('paused');
   });
 
   it('unparks one Fan Out branch without changing its sibling', async () => {
     const { flowRunId } = await seedFlowRun(db, GRAPH);
     await setFlowRunStatus(db, flowRunId, 'paused');
+    seedActiveAdmission(db, flowRunId);
     const parent = await createNodeRun(db, {
       flowRunId,
       nodeId: 'fan',
@@ -612,12 +656,12 @@ describe('resumeFlowNodeInPlace — unpark an agent node after a chat follow-up'
       parentFanOutNodeRunId: parent.id,
       laneIndex: 0,
     });
-    expect(await resumeFlowNodeInPlace(flowRunId, lane.id)).toBe(true);
+    expect(await unpark(flowRunId, lane.id)).toBe(true);
     expect((await getNodeRun(db, lane.id))?.status).toBe('running');
     expect((await getNodeRun(db, sibling.id))?.status).toBe('awaiting_input');
     expect((await getFlowRun(db, flowRunId))?.status).toBe('paused');
 
-    expect(await resumeFlowNodeInPlace(flowRunId, sibling.id)).toBe(true);
+    expect(await unpark(flowRunId, sibling.id)).toBe(true);
     expect((await getFlowRun(db, flowRunId))?.status).toBe('running');
   });
 });
@@ -628,37 +672,25 @@ describe('resumeFailedFlowInPlace — failed-run retry unpark (non-batch only)',
     db = freshDb();
     holder.db = db;
     (loadRunContext as Mock).mockReset();
-    // These cases exercise the unpark itself; the lease gate below has its own decline case.
-    holder.hasActiveFlowAdmission.mockReset().mockResolvedValue(true);
   });
 
   // Same lease rule as the interrupted revive: a terminal run's slot is settled, and flipping it
   // live anyway would strand it paused-without-slot at the next preflight rejection. Declining
   // leaves the run terminal, where Retry re-admits through a durable resume ticket.
   it('declines when the run no longer holds its admission slot', async () => {
-    const { flowRunId, nodeRunId } = await seedFailedRun();
-    holder.hasActiveFlowAdmission.mockResolvedValue(false);
+    const { flowRunId, nodeRunId } = await seedFailedRun({ slot: false });
 
     expect(await resumeFailedFlowInPlace(flowRunId, 'task-1')).toBe(false);
     expect((await getNodeRun(db, nodeRunId))?.status).toBe('failed');
     expect((await getFlowRun(db, flowRunId))?.status).toBe('failed');
   });
 
-  // The probe is only check-then-act safe under a held reservation — settlement defers while
-  // activity is live, so the slot the probe saw cannot settle before the unpark writes.
-  it('holds a flow-resource reservation across the probe and unpark', async () => {
-    const { flowRunId } = await seedFailedRun();
-    holder.hasActiveFlowAdmission.mockImplementation(async () => {
-      expect(hasFlowResourceActivity(flowRunId)).toBe(true);
-      return true;
-    });
-
-    expect(await resumeFailedFlowInPlace(flowRunId, 'task-1')).toBe(true);
-    expect(hasFlowResourceActivity(flowRunId)).toBe(false);
-  });
-
-  async function seedFailedRun(): Promise<{ flowRunId: string; nodeRunId: string }> {
+  async function seedFailedRun({ slot = true } = {}): Promise<{
+    flowRunId: string;
+    nodeRunId: string;
+  }> {
     const { flowRunId } = await seedFlowRun(db, GRAPH);
+    if (slot) seedActiveAdmission(db, flowRunId);
     const node = await createNodeRun(db, {
       flowRunId,
       nodeId: 'a',
@@ -711,6 +743,7 @@ describe('resumeFailedFlowInPlace — failed-run retry unpark (non-batch only)',
     // user clicked Retry. The sweep stamps the restart marker — that marker is what makes the
     // cancelled run recoverable here.
     const { flowRunId } = await seedFlowRun(db, GRAPH);
+    seedActiveAdmission(db, flowRunId);
     const node = await createNodeRun(db, {
       flowRunId,
       nodeId: 'a',
@@ -738,6 +771,7 @@ describe('resumeFailedFlowInPlace — failed-run retry unpark (non-batch only)',
     // A user-initiated cancel carries no restart marker. Retrying an older failed task of that
     // run must not flip the cancelled run back to running behind the user's back.
     const { flowRunId } = await seedFlowRun(db, GRAPH);
+    seedActiveAdmission(db, flowRunId);
     const node = await createNodeRun(db, {
       flowRunId,
       nodeId: 'a',
@@ -754,6 +788,7 @@ describe('resumeFailedFlowInPlace — failed-run retry unpark (non-batch only)',
 
   it('unparks a paused run whose node is awaiting_input (api-error/usage-limit park shape)', async () => {
     const { flowRunId } = await seedFlowRun(db, GRAPH);
+    seedActiveAdmission(db, flowRunId);
     const node = await createNodeRun(db, {
       flowRunId,
       nodeId: 'a',
@@ -770,6 +805,7 @@ describe('resumeFailedFlowInPlace — failed-run retry unpark (non-batch only)',
 
   it('unparks a failed contained Fan Out node', async () => {
     const { flowRunId } = await seedFlowRun(db, GRAPH);
+    seedActiveAdmission(db, flowRunId);
     const parent = await createNodeRun(db, {
       flowRunId,
       nodeId: 't',
@@ -793,14 +829,11 @@ describe('resumeFailedFlowInPlace — failed-run retry unpark (non-batch only)',
   });
 });
 
-describe('resumeInterruptedFlowInPlace / isRunRestartInterrupted — cancelled-run chat resume', () => {
+describe('isRunRestartInterrupted — cancelled-run chat resume', () => {
   let db: TestDb;
   beforeEach(() => {
     db = freshDb();
     holder.db = db;
-    (loadRunContext as Mock).mockReset(); // undefined → emit branch skipped; assert state only
-    // Default: the run still holds its slot (the activity-held window), so the wake is legal.
-    holder.hasActiveFlowAdmission.mockReset().mockResolvedValue(true);
   });
 
   async function seedInterruptedCancelledRun(opts: {
@@ -828,134 +861,6 @@ describe('resumeInterruptedFlowInPlace / isRunRestartInterrupted — cancelled-r
     });
     return { flowRunId, nodeRunId: node.id };
   }
-
-  it('flips a marked-cancelled run + its interrupted node back to running, clearing the marker', async () => {
-    const { flowRunId, nodeRunId } = await seedInterruptedCancelledRun({ marker: true });
-    expect(await resumeInterruptedFlowInPlace(flowRunId)).toBe(true);
-    expect((await getFlowRun(db, flowRunId))?.status).toBe('running');
-    const node = await getNodeRun(db, nodeRunId);
-    expect(node?.status).toBe('running');
-    expect(node?.nodeOutput).toBeNull();
-  });
-
-  it('does NOT re-dispatch (in-place only) — leaves the agent turn to drive the work', async () => {
-    const { flowRunId } = await seedInterruptedCancelledRun({ marker: true });
-    await resumeInterruptedFlowInPlace(flowRunId);
-    expect(dispatchAndAdvance).not.toHaveBeenCalled();
-  });
-
-  // The pre-flip probe the executor's revive keys on: same three gates as the unpark itself, so
-  // "probe said yes" and "unpark would act" cannot drift apart.
-  it('canRevive mirrors the unpark gates: marker + cancelled + live slot', async () => {
-    const { flowRunId } = await seedInterruptedCancelledRun({ marker: true });
-    expect(await canReviveInterruptedFlowInPlace(flowRunId)).toBe(true);
-    holder.hasActiveFlowAdmission.mockResolvedValue(false);
-    expect(await canReviveInterruptedFlowInPlace(flowRunId)).toBe(false);
-  });
-
-  it('canRevive declines a user-cancelled run (no marker)', async () => {
-    const { flowRunId } = await seedInterruptedCancelledRun({ marker: false });
-    expect(await canReviveInterruptedFlowInPlace(flowRunId)).toBe(false);
-  });
-
-  // A wake continues the run WITHOUT re-admitting: once the slot has settled, flipping the run
-  // live would get the turn rejected at the provider preflight and the failure park would strand
-  // it `paused` with no slot. Declining routes recovery to the re-dispatch path, which re-admits.
-  it('declines when the run no longer holds its active admission slot', async () => {
-    holder.hasActiveFlowAdmission.mockResolvedValue(false);
-    const { flowRunId, nodeRunId } = await seedInterruptedCancelledRun({ marker: true });
-    expect(await resumeInterruptedFlowInPlace(flowRunId)).toBe(false);
-    expect((await getFlowRun(db, flowRunId))?.status).toBe('cancelled');
-    expect((await getNodeRun(db, nodeRunId))?.status).toBe('cancelled');
-  });
-
-  it('no-ops on a user-cancelled run (interrupted node lacks the marker)', async () => {
-    const { flowRunId, nodeRunId } = await seedInterruptedCancelledRun({ marker: false });
-    expect(await resumeInterruptedFlowInPlace(flowRunId)).toBe(false);
-    expect((await getFlowRun(db, flowRunId))?.status).toBe('cancelled');
-    expect((await getNodeRun(db, nodeRunId))?.status).toBe('cancelled');
-  });
-
-  it('no-ops when the run is not cancelled (a paused/running run uses resumeFlowNodeInPlace)', async () => {
-    const { flowRunId } = await seedFlowRun(db, GRAPH); // running
-    expect(await resumeInterruptedFlowInPlace(flowRunId)).toBe(false);
-  });
-
-  it('is idempotent — a second resume no-ops once the run is already running (double message / click)', async () => {
-    const { flowRunId } = await seedInterruptedCancelledRun({ marker: true });
-    expect(await resumeInterruptedFlowInPlace(flowRunId)).toBe(true);
-    // The run is no longer cancelled, so a racing/duplicate follow-up does not re-flip or re-advance.
-    expect(await resumeInterruptedFlowInPlace(flowRunId)).toBe(false);
-    expect((await getFlowRun(db, flowRunId))?.status).toBe('running');
-  });
-
-  it('resumes the LAST non-completed node, leaving an already-completed upstream node untouched', async () => {
-    const { flowRunId } = await seedFlowRun(db, GRAPH);
-    await setFlowRunStatus(db, flowRunId, 'cancelled', { completedAt: new Date() });
-    const upstream = await createNodeRun(db, {
-      flowRunId,
-      nodeId: 'up',
-      blockType: 'agent',
-      status: 'running',
-    });
-    await setNodeRunStatus(db, upstream.id, 'completed', {
-      nodeOutput: { status: 'completed', outputs: {}, artifacts: [], durationMs: 0 },
-      completedAt: new Date(),
-    });
-    const interrupted = await createNodeRun(db, {
-      flowRunId,
-      nodeId: 'a',
-      blockType: 'agent',
-      status: 'running',
-    });
-    await setNodeRunStatus(db, interrupted.id, 'cancelled', {
-      nodeOutput: {
-        status: 'cancelled',
-        outputs: {},
-        artifacts: [],
-        durationMs: 0,
-        error: { message: RESTART_INTERRUPTION_REASON, retryable: true },
-      },
-      completedAt: new Date(),
-    });
-
-    expect(await resumeInterruptedFlowInPlace(flowRunId)).toBe(true);
-    expect((await getNodeRun(db, interrupted.id))?.status).toBe('running');
-    expect((await getNodeRun(db, upstream.id))?.status).toBe('completed');
-  });
-
-  it('resumes a contained Fan Out node interrupted by restart', async () => {
-    const { flowRunId } = await seedFlowRun(db, GRAPH);
-    await setFlowRunStatus(db, flowRunId, 'cancelled', { completedAt: new Date() });
-    const parent = await createNodeRun(db, {
-      flowRunId,
-      nodeId: 'fan',
-      blockType: 'fan_out',
-      status: 'running',
-    });
-    const lane = await createNodeRun(db, {
-      flowRunId,
-      nodeId: 'a',
-      blockType: 'agent',
-      status: 'running',
-      parentFanOutNodeRunId: parent.id,
-      laneIndex: 0,
-    });
-    await setNodeRunStatus(db, parent.id, 'completed', { completedAt: new Date() });
-    await setNodeRunStatus(db, lane.id, 'cancelled', {
-      nodeOutput: {
-        status: 'cancelled',
-        outputs: {},
-        artifacts: [],
-        durationMs: 0,
-        error: { message: RESTART_INTERRUPTION_REASON, retryable: true },
-      },
-      completedAt: new Date(),
-    });
-
-    expect(await resumeInterruptedFlowInPlace(flowRunId)).toBe(true);
-    expect((await getFlowRun(db, flowRunId))?.status).toBe('running');
-  });
 
   // Split per case: seedFlowRun can only run once per db (projects.path is unique).
   it('isRunRestartInterrupted is true for a marked-cancelled run', async () => {

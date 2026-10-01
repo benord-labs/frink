@@ -3,8 +3,10 @@
  * Transforms flat project/chat lists into hierarchical structure
  */
 
+import { useAtomValue } from 'jotai';
 import { useMemo } from 'react';
 import { groupByCodebase } from '../../../../../shared/lib/project-codebase';
+import { heldChatIdsAtom } from '../../../../lib/stores/active-transport-registry';
 import type { ChatItem, CodebaseGroup } from '../types';
 
 type ProjectInput = {
@@ -45,6 +47,7 @@ export function useGroupedProjects({
   pendingPlans,
   pendingQuestions,
 }: UseGroupedProjectsParams): CodebaseGroup[] {
+  const heldChats = useAtomValue(heldChatIdsAtom);
   return useMemo(() => {
     // Guard against undefined/non-array values during initial render
     if (!Array.isArray(chats) || !Array.isArray(projects)) {
@@ -67,7 +70,8 @@ export function useGroupedProjects({
         pinnedAt: chat.pinnedAt,
         projectId: chat.projectId,
         hasUnseenChanges: unseenChanges.has(chat.id),
-        isLoading: loadingChats.has(chat.id),
+        // Waiting on background work still reads as running: the agent will wake and continue.
+        isLoading: loadingChats.has(chat.id) || heldChats.has(chat.id),
         hasPendingPlan: pendingPlans.has(chat.id),
         hasPendingQuestion: pendingQuestions.has(chat.id),
         isWorktree: !!chat.worktreePath && chat.worktreePath !== projectPath,
@@ -128,5 +132,5 @@ export function useGroupedProjects({
     }
 
     return result;
-  }, [projects, chats, unseenChanges, loadingChats, pendingPlans, pendingQuestions]);
+  }, [projects, chats, unseenChanges, loadingChats, pendingPlans, pendingQuestions, heldChats]);
 }

@@ -57,6 +57,7 @@ function controllerWithMutableConfig(
 } {
   let current: FlowAdmissionConfig = {
     version: 1,
+    queuePaused: false,
     concurrencyLimitEnabled: true,
     maxConcurrentRuns: 4,
     ...initial,
@@ -90,6 +91,101 @@ function seedResumeNode(db: TestDb, flowRunId: string): string {
 describe('FlowAdmissionController', () => {
   beforeEach(() => {
     _resetFlowAdmissionControllerMutexForTests();
+  });
+
+  it.each([true, false])(
+    'holds starts and resumes while paused (limit enabled: %s)',
+    async (concurrencyLimitEnabled) => {
+      const db = freshDb();
+      seedRuns(db, ['start-1', 'start-2']);
+      seedRuns(db, ['resume'], 'failed');
+      const nodeRunId = seedResumeNode(db, 'resume');
+      const { controller, setConfig } = controllerWithMutableConfig(db, {
+        queuePaused: true,
+        concurrencyLimitEnabled,
+      });
+      const first = await enqueueStart(controller, 'start-1');
+      const second = await enqueueStart(controller, 'start-2');
+      await controller.moveQueued(second.admission.ticket, first.admission.ticket);
+      const resume = await controller.enqueue({
+        intent: { version: 1, action: 'resume', flow_run_id: 'resume', node_run_id: nodeRunId },
+      });
+      await expect(controller.claimEligible()).resolves.toMatchObject({
+        admissions: [],
+        failed: [],
+        hasMore: true,
+        candidatesProcessed: 0,
+      });
+      expect((await controller.getSnapshot()).counts.queued).toBe(3);
+      setConfig({ queuePaused: false });
+      await controller.refreshConfig();
+      expect((await claimRows(controller)).map((row) => row.ticket)).toEqual([
+        resume.admission.ticket,
+        second.admission.ticket,
+        first.admission.ticket,
+      ]);
+    },
+  );
+
+  it('returns claimed work to its queue position when pause wins the dispatch race', async () => {
+    const db = freshDb();
+    seedRuns(db, ['active', 'first', 'second']);
+    const { controller, setConfig } = controllerWithMutableConfig(db);
+    const active = await enqueueStart(controller, 'active');
+    await controller.claimEligible();
+    await controller.beginDispatch(active.admission.ticket);
+    const first = await enqueueStart(controller, 'first');
+    const second = await enqueueStart(controller, 'second');
+    await controller.moveQueued(second.admission.ticket, first.admission.ticket);
+    const claimed = await claimRows(controller);
+    setConfig({ queuePaused: true });
+    await controller.refreshConfig();
+    for (const row of claimed) {
+      await expect(controller.beginDispatch(row.ticket)).resolves.toBeNull();
+      expect(await controller.getByTicket(row.ticket)).toMatchObject({
+        state: 'queued',
+        claimedAt: null,
+        startedAt: null,
+        queueOrder: row.queueOrder,
+      });
+      expect(db.select().from(flowRuns).where(eq(flowRuns.id, row.flowRunId)).get()).toMatchObject({
+        status: 'pending',
+        startedAt: null,
+      });
+    }
+    expect(await controller.getByTicket(active.admission.ticket)).toMatchObject({
+      state: 'active',
+    });
+    setConfig({ queuePaused: false });
+    await controller.refreshConfig();
+    expect((await claimRows(controller)).map((row) => row.ticket)).toEqual([
+      second.admission.ticket,
+      first.admission.ticket,
+    ]);
+  });
+
+  it('retains the effective pause when saving resume fails', async () => {
+    const db = freshDb();
+    seedRuns(db, ['pending']);
+    const controller = new FlowAdmissionController(
+      db,
+      async () => ({
+        version: 1,
+        queuePaused: true,
+        concurrencyLimitEnabled: true,
+        maxConcurrentRuns: 4,
+      }),
+      async () => {
+        throw new Error('Config write failed');
+      },
+    );
+    await enqueueStart(controller, 'pending');
+    await controller.getSnapshot();
+    await expect(controller.updateConfig({ queuePaused: false })).rejects.toThrow(
+      'Config write failed',
+    );
+    expect((await controller.getSnapshot()).config.queuePaused).toBe(true);
+    expect(await claimRows(controller)).toEqual([]);
   });
 
   it('claims at most four simultaneous starts in monotonic ticket order', async () => {
@@ -313,6 +409,20 @@ describe('FlowAdmissionController', () => {
     });
   });
 
+  it('fills 100 slots across bounded claim batches and leaves excess work queued', async () => {
+    const db = freshDb();
+    const ids = Array.from({ length: 101 }, (_, index) => `limited-${index}`);
+    seedRuns(db, ids);
+    const { controller } = controllerWithMutableConfig(db, { maxConcurrentRuns: 100 });
+    await Promise.all(ids.map((id) => enqueueStart(controller, id)));
+
+    for (let batch = 0; batch < 5; batch++) {
+      expect(await claimRows(controller)).toHaveLength(20);
+    }
+    expect(await claimRows(controller)).toEqual([]);
+    expect(await controller.getSnapshot()).toMatchObject({ occupied: 100, counts: { queued: 1 } });
+  });
+
   it('tracks Unlimited work while bounding each claim transaction', async () => {
     const db = freshDb();
     const ids = Array.from({ length: 45 }, (_, index) => `unlimited-${index}`);
@@ -333,7 +443,12 @@ describe('FlowAdmissionController', () => {
       resolveFirst = resolve;
     });
     let reads = 0;
-    const lower = { version: 1, concurrencyLimitEnabled: true, maxConcurrentRuns: 2 } as const;
+    const lower = {
+      version: 1,
+      queuePaused: false,
+      concurrencyLimitEnabled: true,
+      maxConcurrentRuns: 2,
+    } as const;
     const controller = new FlowAdmissionController(db, () => {
       reads += 1;
       return reads === 1 ? firstRead : Promise.resolve(lower);

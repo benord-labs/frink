@@ -6,17 +6,10 @@
  * - Socket executor (remote execution)
  */
 
-import { promises as fsp } from 'node:fs';
 import * as nodePath from 'node:path';
 import { z } from 'zod';
-import {
-  PATH_TOOLS,
-  SEARCH_TOOLS,
-  TOOL_OPERATIONS,
-  type ToolOperation,
-} from '../../../shared/types/permissions';
+import { PATH_TOOLS, TOOL_OPERATIONS, type ToolOperation } from '../../../shared/types/permissions';
 import { resolveProjectPathFromWorktree } from '../claude-config';
-import { searchRootFromInput } from './v2/search';
 
 // ============================================================================
 // Types
@@ -69,7 +62,7 @@ export function extractFilePathFromToolInput(
     }
     case 'Glob':
     case 'Grep':
-      // Search tools are gated on their root: see `resolveSearchPermissionPath`.
+      // Search tools: auto-allow (read-only, safe operations)
       return null;
     default:
       return null;
@@ -149,42 +142,4 @@ export function resolveToolPermissionPath(
     executionPath,
     permissionProjectPath,
   );
-}
-
-async function realpathOr(p: string): Promise<string> {
-  try {
-    return await fsp.realpath(p);
-  } catch {
-    return p;
-  }
-}
-
-/** Canonical Glob/Grep search root. Resolved in the EXECUTION tree first: if the path goes
- * through a symlink there, it stays un-remapped so the gate realpaths the tree actually read. */
-export async function resolveSearchPermissionPath(
-  toolName: string,
-  toolInput: unknown,
-  executionPath: string,
-  permissionProjectPath: string,
-): Promise<string> {
-  const exec = nodePath.resolve(executionPath);
-  const absolute = nodePath.resolve(exec, searchRootFromInput(toolName, toolInput));
-  const [real, realExec] = await Promise.all([realpathOr(absolute), realpathOr(exec)]);
-  const viaSymlink = nodePath.relative(realExec, real) !== nodePath.relative(exec, absolute);
-  return viaSymlink
-    ? absolute
-    : remapPathForPermissionBoundary(absolute, executionPath, permissionProjectPath);
-}
-
-/** Permission-path override for any gated tool: search roots async, file paths lexically. */
-export async function resolvePermissionPathOverride(
-  toolName: string,
-  toolInput: PathToolInput,
-  executionPath: string,
-  permissionProjectPath: string,
-): Promise<string | undefined> {
-  if (SEARCH_TOOLS.has(toolName)) {
-    return resolveSearchPermissionPath(toolName, toolInput, executionPath, permissionProjectPath);
-  }
-  return resolveToolPermissionPath(toolName, toolInput, executionPath, permissionProjectPath);
 }

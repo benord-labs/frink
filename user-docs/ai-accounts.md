@@ -17,7 +17,7 @@ Every AI account belongs to this computer — Claude and OpenAI sign-ins and API
 
 If you'd rather keep credentials inside Frink, paste an Anthropic API key (`sk-ant-api…`) under Settings → AI providers → **Add an account** → **Add a Claude API key**. The name is optional (it defaults to "Claude API key", then "Claude API key 2" and so on). The key is encrypted with `safeStorage` (macOS Keychain, libsecret on Linux) and stays on this machine. Paste it again on another machine to use it there.
 
-You can have **as many API-key accounts as you want** — useful for separating Work vs Personal vs different orgs. Add a new one any time and pick which one a project uses via the account picker. The account marked **Used for new chats** is the default; change it from another account's ⋯ menu.
+You can have **as many API-key accounts as you want** — useful for separating Work vs Personal vs different orgs. Add a new one any time and pick which one a project uses in that project's settings (the account menu on a new chat only changes the chat you're starting). The account marked **Used for new chats** is the default; change it from another account's ⋯ menu.
 
 ## How your sign-in behaves
 
@@ -25,6 +25,7 @@ These are the things people notice and wonder about:
 
 - **Frink always runs as whoever is signed in right now.** If you switch accounts in your terminal (or with an account switcher), your next chat simply runs as the new account. Nothing to reconnect. The account's name in Frink stays whatever you called it (a Claude account also shows the email it last ran as, which updates with you).
 - **Signed out? Chats pause until you sign back in.** The chat shows **Reconnect to keep chatting** and re-checks every few seconds. Run `claude auth login` or `codex login` and it clears on its own — you don't have to click anything (a **Reconnect** button is there too if you prefer).
+- **Removing an account never moves its chats.** A chat keeps the account and provider it started with. If you remove that account, the chat stops with **This chat's login was removed** and offers **Retry with** another account of the same provider, or to add one.
 - **Rotation can't interrupt a running agent.** The agent holds the credential itself and refreshes it mid-run under the same lock your terminal uses. Earlier versions handed the agent a copy of the token taken at start time, so anything that rotated your credential — another terminal, another app — revoked that copy and every in-flight agent failed at once with a 401. That whole class of failure is gone.
 - **One sign-in per provider per machine.** This mirrors how `claude` and `codex` themselves work: one sign-in per user, not one per project. For Claude it has to be the main sign-in — `claude` also creates project-scoped sub-credentials when used inside specific folders, and Frink can't use those. If Frink reports no sign-in found, run a top-level `claude auth login`. To use a second Anthropic identity in the same Frink, add an API-key account.
 - **Each machine connects on its own.** Sign-ins and API keys live on that machine and don't travel. On a new Mac you'll see the connect prompt again — connect once and you're done. Names are per machine too ("Personal Claude" on your laptop, "Work Claude" on your desktop).

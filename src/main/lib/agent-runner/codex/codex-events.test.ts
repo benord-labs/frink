@@ -172,6 +172,22 @@ describe('mapNotificationToChunks', () => {
     ).toEqual([{ type: 'error', errorText: 'boom' }]);
   });
 
+  it('tags a usage limit as RATE_LIMIT_SDK from codexErrorInfo, on either wire path', () => {
+    const error = { message: 'You’ve hit your usage limit.', codexErrorInfo: 'usageLimitExceeded' };
+    const expected = [
+      { type: 'error', errorText: error.message, debugInfo: { category: 'RATE_LIMIT_SDK' } },
+    ];
+    expect(
+      mapNotificationToChunks('turn/completed', {
+        threadId: 't',
+        turn: { status: 'failed', error },
+      }),
+    ).toEqual(expected);
+    expect(mapNotificationToChunks('error', { threadId: 't', error, willRetry: false })).toEqual(
+      expected,
+    );
+  });
+
   it('returns no chunks for output deltas and unknown methods', () => {
     expect(mapNotificationToChunks('item/commandExecution/outputDelta', { delta: 'x' })).toEqual(
       [],

@@ -10,7 +10,7 @@
  * Context tiers (200k vs 1M) and thinking variants are picker-level rows
  * grouped under the same family. All variants resolve to the same CLI value.
  */
-import type { PickerEffortLevel } from '../../types/execution';
+import type { ClaudeSdkEffortLevel } from '../../types/execution';
 
 export type ClaudeCodeModel = {
   id: string;
@@ -30,9 +30,11 @@ export type ClaudeCodeModel = {
   /** Thinking token budget used when the thinking toggle is ON. */
   maxThinkingTokens?: number;
   /** Effort tier this variant runs at; the picker's slider ranks and groups by it. */
-  effort?: PickerEffortLevel;
+  effort?: ClaudeSdkEffortLevel;
   /** The family's default tier (the bare id) — the picker's reset target. */
   effortDefault?: true;
+  /** Ultra twin of this tier (`-ultra` id): same effort plus the CLI's `ultracode` orchestration. */
+  ultra?: true;
   /** The family's default context window — where the picker lands when this family is chosen. */
   contextDefault?: true;
   /**
@@ -56,7 +58,7 @@ const EFFORT_MAX = 63_000; // Opus "Max" tier — still under 64k max_tokens cap
 type EffortTier = {
   suffix: string;
   label: string;
-  effort: PickerEffortLevel;
+  effort: ClaudeSdkEffortLevel;
   budget: number;
   isDefault?: true;
 };
@@ -69,7 +71,7 @@ const DEFAULT_EFFORTS: EffortTier[] = [
 ];
 
 // `xhigh` and `max` are the top tiers (the bundled CLI accepts `low|medium|high|xhigh|max`).
-// Only Fable 5.1 / Fable 5 / Opus 5.5 / 5 / 4.8 / 4.7 / Sonnet 5 support them — the SDK silently downgrades elsewhere.
+// Only Fable 5.1 / Fable 5 / Opus 5.5 / 5 / 4.8 / 4.7 / Sonnet 5.5 / 5 support them — the SDK silently downgrades elsewhere.
 const XHIGH_TIER: EffortTier = {
   suffix: '-xhigh',
   label: 'Extra High',
@@ -77,24 +79,18 @@ const XHIGH_TIER: EffortTier = {
   budget: EFFORT_XHIGH,
 };
 
-// Ultra = `xhigh` plus the CLI's parallel-agent orchestration (`settings.ultracode`), so it rides
-// only the ladders that offer xhigh. Why: docs/decisions/ultra-effort-tier.md
-const ULTRA_TIER: EffortTier = {
-  suffix: '-ultra',
-  label: 'Ultra',
-  effort: 'ultra',
-  budget: EFFORT_XHIGH,
-};
+// Ultra (`settings.ultracode`) runs at any effort where the CLI offers xhigh: each such tier gets a
+// `-ultra` twin. Why: docs/decisions/ultra-effort-tier.md
+export const CLAUDE_ULTRA_SUFFIX = '-ultra';
 
 // Medium-default full ladder (Opus 4.7, Opus 5.5).
 const OPUS_47_EFFORTS: EffortTier[] = [
   ...DEFAULT_EFFORTS,
   XHIGH_TIER,
   { suffix: '-max', label: 'Max', effort: 'max', budget: EFFORT_MAX },
-  ULTRA_TIER,
 ];
 
-// High-default families (Fable 5.1, Fable 5, Opus 5, Opus 4.8, Sonnet 5) — Anthropic sets `effort: high` as the API
+// High-default families (Fable 5.1, Fable 5, Opus 5, Opus 4.8, Sonnet 5.5, Sonnet 5) — Anthropic sets `effort: high` as the API
 // default and all support the full ladder. Bare row (no suffix) is High; Low / Medium / Extra High /
 // Max explicit.
 const HIGH_DEFAULT_EFFORTS: EffortTier[] = [
@@ -103,7 +99,6 @@ const HIGH_DEFAULT_EFFORTS: EffortTier[] = [
   { suffix: '-medium', label: 'Medium', effort: 'medium', budget: EFFORT_MEDIUM },
   XHIGH_TIER,
   { suffix: '-max', label: 'Max', effort: 'max', budget: EFFORT_MAX },
-  ULTRA_TIER,
 ];
 
 type ContextTier = { suffix: string; ctx: string; prefix: string; isDefault?: true };
@@ -154,27 +149,42 @@ function buildFamily(cfg: FamilyConfig): ClaudeCodeModel[] {
   const contexts = cfg.contexts ?? DEFAULT_CONTEXTS;
   const defaultLabel = efforts.find((e) => e.isDefault)?.label ?? 'Medium';
 
+  const ultraTwins = efforts.some((e) => e.effort === 'xhigh') ? [false, true] : [false];
+
   const out: ClaudeCodeModel[] = [];
-  for (const c of contexts) {
-    for (const e of efforts) {
-      const variantParts = [c.prefix, e.isDefault ? '' : e.label].filter(Boolean);
-      out.push({
-        id: `${idPrefix}${c.suffix}${e.suffix}`,
-        familyId: cfg.familyId,
-        familyName: cfg.familyName,
-        variantLabel: variantParts.length ? variantParts.join(' · ') : defaultLabel,
-        contextWindow: c.ctx,
-        cliValue: cfg.cliValue,
-        pickerVersion: cfg.version,
-        maxThinkingTokens: e.budget,
-        effort: e.effort,
-        effortDefault: e.isDefault,
-        contextDefault: c.isDefault,
-        ...(cfg.adaptiveThinking && { adaptiveThinking: true as const }),
-      });
+  for (const ultra of ultraTwins) {
+    for (const c of contexts) {
+      for (const e of efforts) out.push(buildVariant(cfg, idPrefix, defaultLabel, c, e, ultra));
     }
   }
   return out;
+}
+
+function buildVariant(
+  cfg: FamilyConfig,
+  idPrefix: string,
+  defaultLabel: string,
+  c: ContextTier,
+  e: EffortTier,
+  ultra: boolean,
+): ClaudeCodeModel {
+  const variantParts = [c.prefix, e.isDefault ? '' : e.label].filter(Boolean);
+  const variantLabel = variantParts.length ? variantParts.join(' · ') : defaultLabel;
+  return {
+    id: `${idPrefix}${c.suffix}${e.suffix}${ultra ? CLAUDE_ULTRA_SUFFIX : ''}`,
+    familyId: cfg.familyId,
+    familyName: cfg.familyName,
+    variantLabel: ultra ? `${variantLabel} · Ultra` : variantLabel,
+    contextWindow: c.ctx,
+    cliValue: cfg.cliValue,
+    pickerVersion: cfg.version,
+    maxThinkingTokens: e.budget,
+    effort: e.effort,
+    effortDefault: e.isDefault,
+    contextDefault: c.isDefault,
+    ...(ultra && { ultra: true as const }),
+    ...(cfg.adaptiveThinking && { adaptiveThinking: true as const }),
+  };
 }
 
 /**
@@ -276,6 +286,19 @@ export const CLAUDE_CODE_MODELS_CATALOG: ClaudeCodeModel[] = [
     version: '4.6',
     cliValue: 'claude-opus-4-6',
     idPrefix: 'opus',
+  }),
+  // ── Sonnet 5.5 ── successor to Sonnet 5 at the same price; 1M native, adaptive thinking,
+  // High default with the full ladder. Needs Claude Code CLI ≥ 2.1.284.
+  ...buildFamily({
+    base: 'sonnet',
+    familyId: 'sonnet-5.5',
+    familyName: 'Sonnet 5.5',
+    version: '5.5',
+    cliValue: 'claude-sonnet-5-5',
+    efforts: HIGH_DEFAULT_EFFORTS,
+    idPrefix: 'sonnet-5.5',
+    contexts: [{ suffix: '', ctx: '1M context', prefix: '' }],
+    adaptiveThinking: true,
   }),
   // ── Sonnet 5 ─────────────────────────────────────────────────────────
   // Drop-in over Sonnet 4.6. 1M context is native (default + max, no 200k variant, no beta —

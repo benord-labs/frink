@@ -4,6 +4,7 @@ export { useMessageSend } from './useMessageSend';
 export { usePendingMessageHandlers } from './usePendingMessageHandlers';
 export { usePlanApproval } from './usePlanApproval';
 export { useChatMode } from './usePlanMode';
+export { useQueueEdit } from './use-queue-edit';
 export { useQuickComment } from './useQuickComment';
 export { useRollback } from './useRollback';
 export { useSingleShotPlanApproval } from './useSingleShotPlanApproval';

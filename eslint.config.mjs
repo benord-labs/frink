@@ -477,9 +477,10 @@ export default [
     },
     rules: { 'project-structure/independent-modules': ['error', importWalls] },
   },
-  // relay/ installs its own node_modules, which a resolving import wall would need on every lint run.
+  // relay/ and live-activity-forwarder/ install their own node_modules, which a resolving import
+  // wall would need on every lint run.
   {
-    files: ['relay/src/**/*.ts'],
+    files: ['relay/src/**/*.ts', 'live-activity-forwarder/src/**/*.ts'],
     ignores: ['**/*.{test,spec}.ts'],
     languageOptions: { parser: tsParser, parserOptions: { sourceType: 'module' } },
     linterOptions: { reportUnusedDisableDirectives: 'off' },
@@ -491,7 +492,29 @@ export default [
             {
               group: ['../**', 'src/**', '@/**'],
               message:
-                'relay/ is a standalone public package: it may only import relay/src (+ externals) — never src/.',
+                'relay/ and live-activity-forwarder/ are standalone public packages: they may only import their own src (+ externals) — never src/.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  // Flow-run transitions are synchronous commands (flows/transitions/index.ts): they may use the
+  // admission store, never the controller, runtime or drain, whose methods await.
+  {
+    files: ['src/main/lib/flows/transitions/**/*.ts'],
+    ignores: ['**/*.{test,spec}.ts'],
+    languageOptions: { parser: tsParser, parserOptions: { sourceType: 'module' } },
+    linterOptions: { reportUnusedDisableDirectives: 'off' },
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              regex: '(^|/)admission(/(index|controller|runtime|drain))?$',
+              message:
+                'A transition must stay synchronous: import admission store functions, not the controller, runtime or drain.',
             },
           ],
         },
@@ -586,7 +609,12 @@ export default [
   // File-size + function-size limits. Source = 500/file + 200/function. Tests =
   // 2000/file (loose). Stub plugins register rule names for legacy inline disables.
   {
-    files: ['src/**/*.{ts,tsx}', 'relay/src/**/*.ts', 'mobile/**/*.{ts,tsx}'],
+    files: [
+      'src/**/*.{ts,tsx}',
+      'relay/src/**/*.ts',
+      'live-activity-forwarder/src/**/*.ts',
+      'mobile/**/*.{ts,tsx}',
+    ],
     ignores: ['**/*.{test,spec}.{ts,tsx}'],
     languageOptions: {
       parser: tsParser,

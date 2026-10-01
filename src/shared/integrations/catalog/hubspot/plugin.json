@@ -13,12 +13,7 @@
     }
   },
   "frink": {
-    "keywords": [
-      "crm",
-      "sales",
-      "marketing",
-      "contacts"
-    ],
+    "keywords": ["crm", "sales", "marketing", "contacts"],
     "source": {
       "repo": "cursor/plugins",
       "commit": "4612556",

@@ -10,7 +10,8 @@ import {
  * A Frink worktree path contains `/.frink/` AND the resource's own tool dir, so these fixtures pin
  * that `deriveSourceFromPath` tests `.frink` LAST.
  */
-const worktree = (dir: string) => `/Users/b/.frink/worktrees/frink/husky-solstice/${dir}/agents/a.md`;
+const worktree = (dir: string) =>
+  `/Users/b/.frink/worktrees/frink/husky-solstice/${dir}/agents/a.md`;
 const winWorktree = (dir: string) =>
   `C:\\Users\\b\\.frink\\worktrees\\frink\\husky-solstice\\${dir}\\agents\\a.md`;
 
@@ -25,7 +26,7 @@ describe('deriveSourceFromPath — tool precedence', () => {
     expect(deriveSourceFromPath(worktree('.cursor'))).toBe('cursor');
   });
 
-  it("a global resource under ~/.frink is frink when no tool dir is present", () => {
+  it('a global resource under ~/.frink is frink when no tool dir is present', () => {
     expect(deriveSourceFromPath('/Users/b/.frink/agents/a.md')).toBe('frink');
   });
 });

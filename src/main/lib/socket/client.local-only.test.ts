@@ -20,6 +20,7 @@ const { finalizeAssistantMessageLocalMock, upsertAssistantMessageLocalMock, setS
   }));
 
 vi.mock('../db', () => ({ getDatabase: vi.fn(() => ({}) as unknown) }));
+vi.mock('../db/repos/project-ai-accounts', () => ({ assertChatLogin: vi.fn() }));
 
 vi.mock('../credentials', () => ({
   getClaudeCodeTokenByLabel: vi.fn(),

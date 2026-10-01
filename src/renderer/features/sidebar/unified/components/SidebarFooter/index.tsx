@@ -165,7 +165,6 @@ function SidebarFooterComponent({
           />
         )}
       </div>
-
     </div>
   );
 }

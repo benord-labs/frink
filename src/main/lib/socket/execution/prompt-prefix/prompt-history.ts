@@ -1,5 +1,19 @@
 import { isCompactCommand } from '../../../../../shared/commands/expand-slash-command';
 
+/** ≈50k tokens at ~4 chars/token: a quarter of the smallest target window leaves room to work. */
+const HISTORY_BUDGET_CHARS = 200_000;
+const MESSAGE_BOUNDARY_RE = /\n\n(?=(?:Human|Assistant): )/;
+
+/** Keeps the newest history within budget, cut at a message boundary, and says what was dropped. */
+function keepRecentHistory(historyText: string): string {
+  if (historyText.length <= HISTORY_BUDGET_CHARS) return historyText;
+  const tail = historyText.slice(-HISTORY_BUDGET_CHARS);
+  const boundary = tail.search(MESSAGE_BOUNDARY_RE);
+  const kept = boundary >= 0 ? tail.slice(boundary + 2) : tail;
+  const omitted = historyText.length - kept.length;
+  return `[Earlier conversation omitted to fit the context budget: ${omitted} characters]\n\n${kept}`;
+}
+
 /**
  * Wraps a prompt with the renderer-supplied transcript when the provider will NOT replay
  * history natively (fresh sessions, and the resume-failure fallback that degrades a
@@ -18,12 +32,14 @@ export function formatPromptWithHistory(
     return currentPrompt;
   }
 
-  const historyText = history
-    .map((msg) => {
-      const role = msg.role === 'user' ? 'Human' : 'Assistant';
-      return `${role}: ${msg.content}`;
-    })
-    .join('\n\n');
+  const historyText = keepRecentHistory(
+    history
+      .map((msg) => {
+        const role = msg.role === 'user' ? 'Human' : 'Assistant';
+        return `${role}: ${msg.content}`;
+      })
+      .join('\n\n'),
+  );
 
   return `<conversation_history>
 ${historyText}

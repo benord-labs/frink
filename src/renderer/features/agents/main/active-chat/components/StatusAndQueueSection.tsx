@@ -1,4 +1,5 @@
 import type { ReactElement } from 'react';
+import { useUncommittedFiles } from '../../../../../lib/agent-chat/use-uncommitted-files';
 import { trpc } from '../../../../../lib/trpc';
 import type { SubChatFileChange } from '../../../atoms';
 import type { AgentQueueItem } from '../../../lib/queue-utils';
@@ -51,13 +52,15 @@ export function StatusAndQueueSection({
   handleStop,
 }: Props): ReactElement {
   const steerSupported = useSteerSupported(parentChatId);
+  const uncommittedFiles = useUncommittedFiles(changedFilesForSubChat, projectPath, isStreaming);
+  const hasCards = queue.length > 0 || uncommittedFiles.length > 0 || undefined;
 
   return (
-    <div className="px-2 relative z-10">
+    // `data-stacked-cards` squares the top of the surface below (`composer-slot-surface`).
+    <div className="px-2 relative z-10" data-stacked-cards={hasCards}>
       {/* The glass cards sit flush on the surface below them (each drops its bottom border), never
           tucked under it: glass behind glass shows through as a denser band. */}
-      {/* Same column as that surface, so card and surface share both edges; a card on it squares
-          its top corners (`composer-slot-surface`, globals.css). */}
+      {/* Same column as that surface, so card and surface share both edges. */}
       <div className="w-full max-w-2xl mx-auto">
         {/* Queue indicator card - top card */}
         {queue.length > 0 && (
@@ -73,15 +76,14 @@ export function StatusAndQueueSection({
             steerSupported={steerSupported}
           />
         )}
-        {/* Status card - bottom card, only when there are changed files */}
-        {changedFilesForSubChat.length > 0 && (
+        {/* Status card - bottom card, only while changed files are still uncommitted */}
+        {uncommittedFiles.length > 0 && (
           <SubChatStatusCard
             chatId={parentChatId}
             subChatId={subChatId}
             isStreaming={isStreaming}
             isCompacting={isCompacting}
-            changedFiles={changedFilesForSubChat}
-            worktreePath={projectPath}
+            uncommittedFiles={uncommittedFiles}
             onStop={handleStop}
             hasQueueCardAbove={queue.length > 0}
           />

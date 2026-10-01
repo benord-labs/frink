@@ -1,6 +1,7 @@
 /* eslint-disable project-structure/folder-structure */
 import { atom, type Getter, type Setter } from 'jotai';
 import { normalizeModelIdForExecutionAccount } from '../../../../shared/lib/models';
+import type { CodexSpeed } from '../../../../shared/types/execution';
 import { leaveOverlayStackForChatSurfaceAtom } from '../../../lib/atoms';
 import {
   agentsMobileViewModeAtom,
@@ -20,7 +21,7 @@ import { getEffectiveModelIdForPane } from '../hooks/use-effective-model-for-pan
 import { getEffectiveChatModeForPane } from '../hooks/use-effective-plan-mode-for-pane';
 import { fillNewChatInSplitState, resolveFillPaneIndex } from '../main/new-chat-form.split-routing';
 import { useAgentSubChatStore } from '../stores/sub-chat-store';
-import { codexFastModeAtomFamily } from '../../../lib/atoms/codex-fast-mode';
+import { codexSpeedAtomFamily } from '../../../lib/atoms/codex-speed';
 import { getUrlParam } from '../../../lib/utils/url-params';
 import { newChatDraftKey, replaceDraftText } from './drafts';
 
@@ -31,19 +32,19 @@ type SeedOptions = {
   subChatId?: string;
   /** Staged manual Auto Mode state from New Chat. Defaults on for all fresh chats. */
   autoModeEnabled?: boolean;
-  /** Staged Codex Fast from New Chat; applied only on a Codex account. Defaults off. */
-  codexFastEnabled?: boolean;
+  /** Staged Codex speed from New Chat; applied only on a Codex account. Defaults to standard. */
+  codexSpeed?: CodexSpeed;
 };
 
 /** Toggles one New Chat form stages before its chat exists; `capture` freezes them at send, so a
  *  toggle flipped while the create is in flight cannot reach the chat being created. */
 export function createNewChatStaging() {
   const autoMode = { current: true };
-  const codexFast = { current: false };
-  const pending = { autoMode: true, codexFast: false };
+  const codexSpeed = { current: 'standard' as CodexSpeed };
+  const pending = { autoMode: true, codexSpeed: 'standard' as CodexSpeed };
   const capture = () =>
-    Object.assign(pending, { autoMode: autoMode.current, codexFast: codexFast.current });
-  return { autoMode, codexFast, pending, capture };
+    Object.assign(pending, { autoMode: autoMode.current, codexSpeed: codexSpeed.current });
+  return { autoMode, codexSpeed, pending, capture };
 }
 
 /**
@@ -60,7 +61,7 @@ export function seedNewChatNavigation(
   get: Getter,
   set: Setter,
   chatId: string,
-  { isCodexAccount, subChatId, autoModeEnabled = true, codexFastEnabled = false }: SeedOptions,
+  { isCodexAccount, subChatId, autoModeEnabled = true, codexSpeed = 'standard' }: SeedOptions,
 ): void {
   set(selectedAgentChatIdAtom, chatId);
 
@@ -78,7 +79,7 @@ export function seedNewChatNavigation(
   );
   set(chatModeAtomFamily(chatId), effectiveChatMode);
   set(autoModePerChatAtomFamily(chatId), autoModeEnabled);
-  set(codexFastModeAtomFamily(chatId), isCodexAccount && codexFastEnabled);
+  set(codexSpeedAtomFamily(chatId), isCodexAccount ? codexSpeed : 'standard');
 
   if (subChatId) {
     useAgentSubChatStore.getState().updateSubChatMode(subChatId, effectiveChatMode, chatId);

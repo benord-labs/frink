@@ -18,8 +18,6 @@ import { DatabaseSync, type SQLInputValue, type StatementSync } from 'node:sqlit
  *   the exact reason Drizzle selects with raw mode).
  * - `timeout: 5000` preserves better-sqlite3's busy_timeout default; node:sqlite
  *   defaults to 0, which would silently drop lock-wait behaviour.
- * - Drizzle nests transactions via its own savepoints; only the OUTER
- *   begin/commit/rollback happens here, mirroring better-sqlite3's wrapper.
  */
 
 type SqlParams = SQLInputValue[];
@@ -36,6 +34,14 @@ type PositionalStatement = {
   all: (...params: SqlParams) => unknown[];
   setReturnArrays: (returnArrays: boolean) => void;
 };
+
+function isThenable(value: unknown): boolean {
+  return (
+    (typeof value === 'object' || typeof value === 'function') &&
+    value !== null &&
+    typeof (value as { then?: unknown }).then === 'function'
+  );
+}
 
 class NodeSqliteStatement {
   private readonly stmt: PositionalStatement;
@@ -77,6 +83,10 @@ export class NodeSqliteDatabase {
     this.db.exec(sql);
   }
 
+  get inTransaction(): boolean {
+    return this.db.isTransaction;
+  }
+
   /** `PRAGMA <source>`; `simple` returns the first column of the first row, as better-sqlite3 did. */
   pragma(source: string, options?: { simple?: boolean }): unknown {
     const stmt = this.prepare(`PRAGMA ${source}`);
@@ -86,18 +96,24 @@ export class NodeSqliteDatabase {
     return stmt.all();
   }
 
-  /** Callable transaction wrapper: `db.transaction(fn)(...args)` runs fn inside BEGIN/COMMIT. */
+  /** `db.transaction(fn)(...args)` runs fn inside BEGIN/COMMIT, or a SAVEPOINT when nested. A body
+   * returning a thenable (async fn, unexecuted builder) throws: COMMIT would precede its writes. */
   transaction<A extends unknown[], R>(fn: (...args: A) => R) {
     const wrap =
       (mode: 'DEFERRED' | 'IMMEDIATE' | 'EXCLUSIVE') =>
       (...args: A): R => {
-        this.db.exec(`BEGIN ${mode}`);
+        // SAVEPOINT names may repeat: RELEASE and ROLLBACK TO bind to the innermost one.
+        const nested = this.db.isTransaction;
+        this.db.exec(nested ? 'SAVEPOINT frink_nested' : `BEGIN ${mode}`);
         try {
           const result = fn(...args);
-          this.db.exec('COMMIT');
+          if (isThenable(result)) throw new TypeError('A transaction body must be synchronous');
+          this.db.exec(nested ? 'RELEASE frink_nested' : 'COMMIT');
           return result;
         } catch (err) {
-          this.db.exec('ROLLBACK');
+          if (this.db.isTransaction) {
+            this.db.exec(nested ? 'ROLLBACK TO frink_nested; RELEASE frink_nested' : 'ROLLBACK');
+          }
           throw err;
         }
       };

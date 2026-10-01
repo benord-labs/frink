@@ -13,11 +13,7 @@
     }
   },
   "frink": {
-    "keywords": [
-      "sales",
-      "sequences",
-      "prospects"
-    ],
+    "keywords": ["sales", "sequences", "prospects"],
     "source": {
       "repo": "cursor/plugins",
       "commit": "4612556",

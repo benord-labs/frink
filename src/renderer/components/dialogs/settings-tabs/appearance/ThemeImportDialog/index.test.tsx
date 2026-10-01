@@ -2,7 +2,7 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { createStore, Provider } from 'jotai';
-import { Toaster } from 'sonner';
+import { toast, Toaster } from 'sonner';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MAX_THEME_FILE_BYTES } from '@/lib/themes/import/import-themes';
 import { customThemesAtom, themeHalvesAtom } from '@/lib/themes/palette/theme-atoms';
@@ -19,6 +19,7 @@ const EDITED = { ...MINE, light: { ...MINE.light, accent: '#1e754f' } };
 
 afterEach(() => {
   cleanup();
+  toast.dismiss();
   localStorage.clear();
 });
 

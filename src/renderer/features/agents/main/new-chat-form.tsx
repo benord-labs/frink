@@ -16,6 +16,7 @@ import {
 } from '@/lib/code-editor/state';
 import { commandFetcher } from '@/lib/commands/command-fetcher';
 import { expandSlashCommand } from '@/lib/commands/expand-slash-command';
+import { pastedTextMention } from '@/lib/mentions/queued-message-text';
 import type { TaskData } from '@/lib/tasks/format-task-message';
 import {
   CLAUDE_CODE_MODELS,
@@ -33,13 +34,13 @@ import {
   hiddenModelsAtom,
   pendingAccountAuthAtom,
 } from '../../../lib/atoms';
+import { useNewChatAccount } from '../../../lib/hooks/use-new-chat-account';
 import { appStore } from '../../../lib/jotai-store';
 import { trpc } from '../../../lib/trpc';
 import { runChatShortcutAction } from '../../../lib/work-queue/chat-owns-keyboard-shortcuts';
 import { terminalSidebarOpenAtomFamily } from '../../terminal/atoms';
 import { TerminalBottomPanel } from '../../terminal/terminal-bottom-panel';
 import {
-  agentsDebugModeAtom,
   agentsSidebarOpenAtom,
   agentsUnseenChangesAtom,
   NEW_CHAT_PANE,
@@ -76,7 +77,6 @@ import {
   AgentsFileMention,
   type AgentsMentionsEditorHandle,
   type FileMentionOption,
-  MENTION_PREFIXES,
   MENTION_PREVIEW_SANITIZE_REGEX,
 } from '../mentions';
 import { ActionsToolbar } from './ActionsToolbar';
@@ -191,7 +191,6 @@ export function NewChatForm({
   useEffect(() => {
     setSelectedWorktreePath(null);
   }, [selectedProject?.id]);
-  const _debugMode = useAtomValue(agentsDebugModeAtom);
   const setSettingsDialogOpen = useSetAtom(agentsSettingsDialogOpenAtom);
   const setSettingsActiveTab = useSetAtom(agentsSettingsDialogActiveTabAtom);
 
@@ -227,11 +226,8 @@ export function NewChatForm({
     }
   };
 
-  const { data: resolvedAccount, isSuccess: accountResolved } =
-    trpc.claudeCode.getResolvedAccount.useQuery(
-      { projectId: validatedProject?.id },
-      { staleTime: 30000, refetchInterval: accountGateRefetchInterval },
-    );
+  const newChatAccount = useNewChatAccount(validatedProject?.id, accountGateRefetchInterval);
+  const { account: resolvedAccount, accountResolved, pickedAccountId } = newChatAccount;
   const isCodexAccount = resolvedAccount?.type === 'codex';
 
   const hiddenModelFamilies = useAtomValue(hiddenModelsAtom);
@@ -361,6 +357,7 @@ export function NewChatForm({
       clearPastedTexts();
       taskAttachment.clearTask();
       clearCurrentDraft();
+      newChatAccount.clearPick();
       appStore.set(newChatWorktreePathAtom, null);
       appStore.set(pendingNewChatTextAtom, null);
       appStore.set(codeSelectionContextAtomFamily(NEW_CHAT_PANE), null);
@@ -373,7 +370,7 @@ export function NewChatForm({
         isCodexAccount,
         subChatId: data.subChats?.[0]?.id,
         autoModeEnabled: staging.pending.autoMode,
-        codexFastEnabled: staging.pending.codexFast,
+        codexSpeed: staging.pending.codexSpeed,
       });
 
       // Chat created — keep the scaffolded project and release the send guard.
@@ -484,13 +481,7 @@ export function NewChatForm({
     // Use "|" as separator since file paths can contain colons.
     let finalMessage: string = message.trim();
     if (pastedTexts.length > 0) {
-      const pastedMentions = pastedTexts
-        .map((pt) => {
-          const safePreview = pt.preview.replace(/[[\]]/g, '');
-          const safePath = pt.filePath.replace(/[[\]]/g, '');
-          return `@[${MENTION_PREFIXES.PASTED}${pt.size}:${safePreview}|${safePath}]`;
-        })
-        .join(' ');
+      const pastedMentions = pastedTexts.map(pastedTextMention).join(' ');
       finalMessage = pastedMentions + (finalMessage ? ` ${finalMessage}` : '');
     }
 
@@ -556,6 +547,7 @@ export function NewChatForm({
       existingWorktreePath:
         workMode !== 'worktree' && selectedWorktreePath ? selectedWorktreePath : undefined,
       mode: chatMode,
+      accountId: pickedAccountId,
     });
     // Editor, images, pasted texts, and attached task are cleared in onSuccess callback
   }, [
@@ -578,6 +570,7 @@ export function NewChatForm({
     utils,
     accountResolved,
     resolvedAccount,
+    pickedAccountId,
     setPendingAccountAuth,
   ]);
 
@@ -858,7 +851,7 @@ export function NewChatForm({
                         onBlur={() => editorHandlers.setIsFocused(false)}
                       >
                         <ActionsToolbar
-                          codexFastRef={staging.codexFast}
+                          codexSpeedRef={staging.codexSpeed}
                           chatMode={chatMode}
                           onModeChange={setChatMode}
                           modeDropdownOpen={modeDropdownOpen}

@@ -9,47 +9,9 @@ import {
   listActiveExecutionHeaders,
 } from '../execution-registry';
 
-type LiveStreamStatus = 'active' | 'held' | 'settling' | 'settled' | 'error';
-
-type LiveStreamRecord = {
-  chatId: string;
-  subChatId: string;
-  assistantMessageId: string;
-  streamEpoch: string;
-  generation?: number; // minted at run start, then carried unchanged; absent once pruned
-  messageIndex: number;
-  parts?: unknown[];
-  finalParts?: unknown[];
-  textOpen: boolean;
-  deliveryOwnerWebContentsId?: number;
-  status: LiveStreamStatus;
-  terminalDurability?: TranscriptTerminalDurability;
-  settledAt?: number;
-  error?: string;
-  category?: string;
-};
-
-export type LiveStreamSeed = {
-  chatId: string;
-  subChatId: string;
-  assistantMessageId: string;
-  streamEpoch: string;
-  messageIndex: number;
-  parts: unknown[];
-  textOpen: boolean;
-  status: 'active' | 'held' | 'settling';
-  observerOwned: boolean;
-};
-
-export type LiveStreamTerminal = {
-  subChatId: string;
-  assistantMessageId: string;
-  streamEpoch: string;
-  status: 'settled' | 'error';
-  error?: string;
-  category?: string;
-  parts?: unknown[];
-} & TranscriptTerminalDurability;
+import type { LiveStreamRecord, LiveStreamSeed, LiveStreamTerminal } from './types';
+import { publishSessionCompletion } from './completion-events';
+export type { LiveStreamSeed, LiveStreamTerminal } from './types';
 
 const TERMINAL_TTL_MS = 60_000;
 const TERMINAL_RECORD_LIMIT = 64;
@@ -206,6 +168,7 @@ export function recordLiveStreamChunk(input: {
     streamEpoch: input.streamEpoch,
     // Carried only. Minting here would hand a pruned epoch's late chunk the CURRENT generation,
     // which is the fail-open this fence exists to prevent; recordLiveStreamStart is the only mint.
+    completionSignal: sameEpoch?.completionSignal,
     generation: sameEpoch?.generation,
     messageIndex: input.messageIndex,
     parts: input.parts ?? sameEpoch?.parts,
@@ -247,6 +210,7 @@ export function beginLiveStreamCompletion(input: {
     subChatId: input.subChatId,
     assistantMessageId: input.assistantMessageId,
     streamEpoch: input.streamEpoch,
+    completionSignal: previous?.completionSignal,
     generation: previous?.generation,
     messageIndex: previous?.streamEpoch === input.streamEpoch ? previous.messageIndex : -1,
     finalParts: input.finalParts,
@@ -274,6 +238,18 @@ export function markLiveStreamCompletionFinalized(input: {
   previous.terminalDurability = { durability: 'committed' };
 }
 
+export function armLiveStreamNotification(
+  input: {
+    subChatId: string;
+    assistantMessageId: string;
+    streamEpoch: string;
+  },
+  signal: AbortSignal | undefined,
+): void {
+  const record = exactRecord(input.subChatId, input.assistantMessageId, input.streamEpoch);
+  if (record) record.completionSignal = signal;
+}
+
 export function settleLiveStreamCompletion(input: {
   subChatId: string;
   assistantMessageId: string;
@@ -297,6 +273,14 @@ export function settleLiveStreamCompletion(input: {
     terminalDurability,
     settledAt: Date.now(),
   });
+  if (
+    previous.completionSignal &&
+    !previous.completionSignal.aborted &&
+    terminalDurability.durability === 'committed' &&
+    isLiveStreamEpochCurrent(input.subChatId, input.assistantMessageId, input.streamEpoch)
+  ) {
+    publishSessionCompletion({ chatId: previous.chatId, subChatId: previous.subChatId });
+  }
   pruneTerminals();
   return true;
 }

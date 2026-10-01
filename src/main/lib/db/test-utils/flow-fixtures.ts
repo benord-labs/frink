@@ -10,7 +10,7 @@ import { createFlowVersion } from '../repos/flow-versions';
 import { createFlow } from '../repos/flows';
 import { createNodeRun, setNodeRunStatus } from '../repos/node-runs';
 import { createProject } from '../repos/projects';
-import type { NodeRun } from '../schema';
+import { flowRunAdmissions, type NodeRun } from '../schema';
 import type { TestDb } from './fresh-db';
 
 /** Creates a project + flow + version(graph) + a running flow_run; returns their ids. */
@@ -69,4 +69,20 @@ export async function seedCompletedNodeRun(
     completedAt: input.completedAt ?? new Date(),
   });
   return run;
+}
+
+/** Seeds the admission a dispatched run holds: its live ticket in state `active`. Returns the ticket. */
+export function seedActiveAdmission(db: TestDb, flowRunId: string): number {
+  return db
+    .insert(flowRunAdmissions)
+    .values({
+      flowRunId,
+      state: 'active',
+      priorityClass: 'start',
+      intentVersion: 1,
+      intentJson: { version: 1, action: 'start', flow_run_id: flowRunId },
+      startedAt: new Date(),
+    })
+    .returning({ ticket: flowRunAdmissions.ticket })
+    .get().ticket;
 }

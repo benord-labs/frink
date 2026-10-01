@@ -1,32 +1,123 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-import type { MobilePermission, MobileQuestion } from '../../../../src/shared/types/remote/mobile';
+import { useState, type ReactNode } from 'react';
+import { Pressable, TextInput, View, type TextInputProps } from 'react-native';
+import {
+  ArrowUp,
+  Circle,
+  CircleCheck,
+  CircleQuestionMark,
+  ShieldAlert,
+  Square,
+  SquareCheck,
+  type LucideIcon,
+} from 'lucide-react-native';
+import type { MobilePermission, MobileQuestion } from '@frink/shared/types/remote/mobile';
 import { useAction } from '../../lib/connection';
 import { useDraft } from '../../lib/drafts';
-import {
-  Button,
-  Card,
-  Field,
-  Icon,
-  IconTile,
-  Label,
-  Notice,
-  ROW_INSET,
-  type Tone,
-} from '../../ui/primitives';
+import { Button, IconButton } from '../../ui/button';
+import { Text } from '../../ui/text';
+import { radius, space, type as ramp, useTheme } from '../../ui/theme';
+import { bareInput } from './Composer';
+import { Note } from './note';
 
-function DecisionHeader({ icon, tone, label }: { icon: 'help' | 'shield-checkmark'; tone: Tone; label: string }) {
+/** "#RRGGBB" at an opacity, so a state colour can tint a rim without a second palette entry. */
+function withAlpha(hex: string, alpha: number): string {
+  const value = Number.parseInt(hex.slice(1), 16);
+  return `rgba(${value >> 16},${(value >> 8) & 255},${value & 255},${alpha})`;
+}
+
+/** An inline request that waits on the reader: amber rim, amber eyebrow, then the question.
+ *  `settled` draws the same card without the amber, for one that no longer waits. */
+export function DecisionCard({
+  icon: Icon,
+  eyebrow,
+  settled = false,
+  children,
+}: {
+  icon: LucideIcon;
+  eyebrow: string;
+  settled?: boolean;
+  children: ReactNode;
+}) {
+  const t = useTheme();
+  const tint = settled ? t.muted : t.attention;
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-      <IconTile name={icon} tone={tone} />
-      <Label size={14} bold muted>
-        {label}
-      </Label>
+    <View
+      style={{
+        paddingHorizontal: space.md + 2,
+        paddingVertical: space.md,
+        gap: space.md,
+        borderRadius: radius.lg,
+        borderWidth: 1,
+        borderColor: settled ? t.borderSubtle : withAlpha(t.attention, t.dark ? 0.32 : 0.3),
+        backgroundColor: t.solidCard,
+      }}
+    >
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
+        <Icon size={14} color={tint} strokeWidth={2.2} />
+        <Text variant="label" color={settled ? 'muted' : 'attention'}>
+          {eyebrow}
+        </Text>
+      </View>
+      {children}
     </View>
   );
 }
-import { useTheme } from '../../ui/theme';
+
+const CLAMP_LINES = 4;
+const LONG_PROMPT = 180;
+
+/** The question itself: body-sized, and a long one folds to four lines with Show more. */
+function PromptText({ children }: { children: string }) {
+  const [open, setOpen] = useState(false);
+  const long = children.length > LONG_PROMPT;
+  return (
+    <View style={{ gap: space.xs }}>
+      <Text variant="row" numberOfLines={long && !open ? CLAMP_LINES : undefined}>
+        {children}
+      </Text>
+      {long && (
+        <Pressable accessibilityRole="button" onPress={() => setOpen(!open)} hitSlop={8}>
+          <Text variant="secondary" color="accent" style={{ fontWeight: '600' }}>
+            {open ? 'Show less' : 'Show more'}
+          </Text>
+        </Pressable>
+      )}
+    </View>
+  );
+}
+
+export function AnswerField(props: TextInputProps) {
+  const t = useTheme();
+  return (
+    <TextInput
+      placeholderTextColor={t.muted}
+      selectionColor={t.accent}
+      maxFontSizeMultiplier={1.6}
+      {...props}
+      style={[
+        ramp.secondary,
+        {
+          flex: 1,
+          minHeight: 40,
+          maxHeight: 120,
+          borderRadius: radius.md,
+          paddingHorizontal: space.md,
+          paddingVertical: 10,
+          color: t.text,
+          backgroundColor: t.fill,
+          borderWidth: 1,
+          borderColor: t.borderSubtle,
+          textAlignVertical: props.multiline ? 'top' : 'center',
+        },
+        bareInput,
+        props.style,
+      ]}
+    />
+  );
+}
 
 type Option = MobileQuestion['questions'][number]['options'][number];
+type Answers = { choices: Record<string, string[]>; custom: Record<string, string>; reply: string };
 
 function toggleChoice(current: string[], label: string, multiSelect: boolean, selected: boolean) {
   if (!multiSelect) return [label];
@@ -34,28 +125,25 @@ function toggleChoice(current: string[], label: string, multiSelect: boolean, se
 }
 
 function choiceIcon(multiSelect: boolean, selected: boolean) {
-  if (multiSelect) return selected ? 'checkbox' : 'square-outline';
-  return selected ? 'radio-button-on' : 'radio-button-off';
+  if (multiSelect) return selected ? SquareCheck : Square;
+  return selected ? CircleCheck : Circle;
 }
 
-// Reason: Single and multiple choice share one selection row.
-// fallow-ignore-next-line complexity
 function OptionRow({
   option,
   multiSelect,
-  first,
   selected,
   disabled,
   onToggle,
 }: {
   option: Option;
   multiSelect: boolean;
-  first: boolean;
   selected: boolean;
   disabled: boolean;
   onToggle: (selected: boolean) => void;
 }) {
   const t = useTheme();
+  const Icon = choiceIcon(multiSelect, selected);
   return (
     <Pressable
       accessibilityRole={multiSelect ? 'checkbox' : 'radio'}
@@ -64,47 +152,44 @@ function OptionRow({
       disabled={disabled}
       onPress={() => onToggle(selected)}
       style={({ pressed }) => ({
-        paddingVertical: 12,
-        paddingHorizontal: 12,
-        gap: 12,
         flexDirection: 'row',
         alignItems: 'flex-start',
-        minHeight: 48,
-        backgroundColor: selected ? t.accentSoft : pressed ? t.fill : 'transparent',
-        borderTopWidth: first ? 0 : StyleSheet.hairlineWidth,
-        borderColor: t.border,
+        gap: 10,
+        minHeight: 44,
+        paddingHorizontal: 10,
+        paddingVertical: space.sm,
+        borderRadius: radius.md,
+        backgroundColor: selected ? t.accentSoft : pressed ? t.pressed : 'transparent',
       })}
     >
-      <View style={{ marginTop: 1 }}>
-        <Icon
-          name={choiceIcon(multiSelect, selected)}
-          size={20}
-          color={selected ? t.accent : t.muted}
-        />
+      <View style={{ paddingTop: 1 }}>
+        <Icon size={18} color={selected ? t.accent : t.muted} strokeWidth={2} />
       </View>
-      <View style={{ flex: 1, gap: 2 }}>
-        <Text
-          style={{
-            color: t.text,
-            fontSize: 16,
-            lineHeight: 22,
-            fontWeight: selected ? '600' : '500',
-          }}
-        >
+      <View style={{ flex: 1, gap: 1 }}>
+        <Text variant="secondary" style={{ fontWeight: '600' }}>
           {option.label}
         </Text>
         {!!option.description && (
-          <Label size={14} muted>
+          <Text variant="secondary" color="muted" numberOfLines={2}>
             {option.description}
-          </Label>
+          </Text>
         )}
       </View>
     </Pressable>
   );
 }
 
-// Reason: Question types and validation remain together for the MVP answer form.
-// fallow-ignore-next-line complexity
+function answersFor(prompt: MobileQuestion, { choices, custom, reply }: Answers) {
+  if (!prompt.questions.length) return { reply: reply.trim() };
+  return Object.fromEntries(
+    prompt.questions.map((q) => [
+      q.question,
+      [...(choices[q.question] ?? []), custom[q.question]?.trim()].filter(Boolean).join(', '),
+    ]),
+  );
+}
+
+/** A question from Frink, answered inline. Unsent choices survive leaving the chat. */
 export function QuestionForm({
   prompt,
   onAnswered,
@@ -112,26 +197,13 @@ export function QuestionForm({
   prompt: MobileQuestion;
   onAnswered: () => void;
 }) {
-  const draft = useDraft<{
-    choices: Record<string, string[]>;
-    custom: Record<string, string>;
-    reply: string;
-  }>(JSON.stringify(['question', prompt.chatId, prompt.subChatId, prompt.source, prompt.id]), {
-    choices: {},
-    custom: {},
-    reply: '',
-  });
+  const draft = useDraft<Answers>(
+    JSON.stringify(['question', prompt.chatId, prompt.subChatId, prompt.source, prompt.id]),
+    { choices: {}, custom: {}, reply: '' },
+  );
   const { choices, custom, reply } = draft.value;
   const action = useAction();
-  const t = useTheme();
-  const answers = prompt.questions.length
-    ? Object.fromEntries(
-        prompt.questions.map((q) => [
-          q.question,
-          [...(choices[q.question] ?? []), custom[q.question]?.trim()].filter(Boolean).join(', '),
-        ]),
-      )
-    : { reply: reply.trim() };
+  const answers = answersFor(prompt, draft.value);
   async function submit() {
     const result = await action.run({
       type: 'answerQuestion',
@@ -147,97 +219,98 @@ export function QuestionForm({
       onAnswered();
     }
   }
+  const ready = Object.values(answers).every(Boolean);
+  const send = (
+    <IconButton
+      icon={ArrowUp}
+      label="Send answer"
+      tone="accent"
+      size={36}
+      disabled={!ready || action.busy}
+      onPress={() => void submit()}
+    />
+  );
+  const last = prompt.questions.length - 1;
   return (
-    <Card style={{ padding: ROW_INSET, gap: 16 }}>
-      <DecisionHeader icon="help" tone="accent" label="Frink needs your answer" />
+    <DecisionCard icon={CircleQuestionMark} eyebrow="Frink needs your answer">
       {!prompt.questions.length && (
         <>
-          <Label size={17} bold style={{ lineHeight: 24 }}>
-            {prompt.title}
-          </Label>
-          <Field
-            accessibilityLabel="Reply to your agent"
-            placeholder="Reply to your agent…"
-            value={reply}
-            onChangeText={(text) => {
-              draft.update({ ...draft.value, reply: text });
-            }}
-            editable={!action.busy}
-            multiline
-          />
+          <PromptText>{prompt.title}</PromptText>
+          <AnswerRow send={send}>
+            <AnswerField
+              accessibilityLabel="Reply to your agent"
+              placeholder="Write your answer"
+              value={reply}
+              onChangeText={(text) => draft.update({ ...draft.value, reply: text })}
+              editable={!action.busy}
+              multiline
+            />
+          </AnswerRow>
         </>
       )}
-      {prompt.questions.map((q) => (
-        <View key={q.question} style={{ gap: 12 }}>
-          <View style={{ gap: 4 }}>
-            <Label bold size={17} style={{ lineHeight: 24 }}>
-              {q.question}
-            </Label>
-            {q.multiSelect && (
-              <Label size={14} muted>
-                Choose any that apply.
-              </Label>
-            )}
+      {prompt.questions.map((q, index) => (
+        <View key={q.question} style={{ gap: space.sm }}>
+          <PromptText>{q.question}</PromptText>
+          {q.multiSelect && (
+            <Text variant="secondary" color="muted">
+              Choose any that apply.
+            </Text>
+          )}
+          <View style={{ gap: 2, marginHorizontal: -4 }}>
+            {q.options.map((option) => (
+              <OptionRow
+                key={option.label}
+                option={option}
+                multiSelect={q.multiSelect}
+                selected={choices[q.question]?.includes(option.label) ?? false}
+                disabled={action.busy}
+                onToggle={(selected) =>
+                  draft.update({
+                    ...draft.value,
+                    choices: {
+                      ...choices,
+                      [q.question]: toggleChoice(
+                        choices[q.question] ?? [],
+                        option.label,
+                        q.multiSelect,
+                        selected,
+                      ),
+                    },
+                  })
+                }
+              />
+            ))}
           </View>
-          <View
-            style={{
-              borderRadius: 12,
-              borderWidth: StyleSheet.hairlineWidth,
-              borderColor: t.border,
-              overflow: 'hidden',
-            }}
-          >
-          {q.options.map((option, index) => (
-            <OptionRow
-              key={option.label}
-              option={option}
-              multiSelect={q.multiSelect}
-              first={index === 0}
-              selected={choices[q.question]?.includes(option.label) ?? false}
-              disabled={action.busy}
-              onToggle={(selected) =>
-                draft.update({
-                  ...draft.value,
-                  choices: {
-                    ...choices,
-                    [q.question]: toggleChoice(
-                      choices[q.question] ?? [],
-                      option.label,
-                      q.multiSelect,
-                      selected,
-                    ),
-                  },
-                })
+          <AnswerRow send={index === last ? send : null}>
+            <AnswerField
+              accessibilityLabel={`Custom answer: ${q.question}`}
+              placeholder="Or write your own"
+              value={custom[q.question] ?? ''}
+              onChangeText={(value) =>
+                draft.update({ ...draft.value, custom: { ...custom, [q.question]: value } })
               }
+              multiline
+              editable={!action.busy}
             />
-          ))}
-          </View>
-          <Field
-            accessibilityLabel={`Custom answer: ${q.question}`}
-            placeholder="Or write an answer…"
-            value={custom[q.question] ?? ''}
-            onChangeText={(value) => {
-              draft.update({
-                ...draft.value,
-                custom: { ...custom, [q.question]: value },
-              });
-            }}
-            multiline
-            editable={!action.busy}
-          />
+          </AnswerRow>
         </View>
       ))}
-      {action.error && <Notice error>{action.error}</Notice>}
-      <Button
-        onPress={() => void submit()}
-        disabled={action.busy || Object.values(answers).some((answer) => !answer)}
-      >
-        {action.busy ? 'Sending answer…' : 'Send answer'}
-      </Button>
-    </Card>
+      {action.error && <Note error>{action.error}</Note>}
+    </DecisionCard>
   );
 }
 
+/** A reply field with the send arrow beside it, as in the message box. */
+export function AnswerRow({ children, send }: { children: ReactNode; send: ReactNode }) {
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: space.sm }}>
+      {children}
+      {send && <View style={{ paddingBottom: 2 }}>{send}</View>}
+    </View>
+  );
+}
+
+/** A permission Frink asked for, e.g. to run a command. Some kinds can only be answered on the Mac. */
 export function PermissionForm({
   prompt,
   onAnswered,
@@ -245,6 +318,7 @@ export function PermissionForm({
   prompt: MobilePermission;
   onAnswered: () => void;
 }) {
+  const t = useTheme();
   const action = useAction();
   async function respond(approved: boolean) {
     if (
@@ -259,34 +333,37 @@ export function PermissionForm({
       onAnswered();
   }
   return (
-    <Card style={{ padding: ROW_INSET, gap: 16 }}>
-      <DecisionHeader icon="shield-checkmark" tone="warning" label="Permission requested" />
-      <View style={{ gap: 6 }}>
-        <Label size={17} bold style={{ lineHeight: 24 }}>
-          {prompt.title}
-        </Label>
-        <Label size={15} style={{ lineHeight: 22 }} muted>
-          {prompt.description}
-        </Label>
-      </View>
-      {action.error && <Notice error>{action.error}</Notice>}
-      {prompt.supported ? (
-        <View style={{ flexDirection: 'row', gap: 8 }}>
-          <Button
-            secondary
-            disabled={action.busy}
-            onPress={() => void respond(false)}
-            style={{ flex: 1 }}
+    <DecisionCard icon={ShieldAlert} eyebrow="Frink is asking permission">
+      <View style={{ gap: space.sm }}>
+        <PromptText>{prompt.title}</PromptText>
+        {!!prompt.description && (
+          <View
+            style={{
+              borderRadius: radius.md,
+              backgroundColor: t.fill,
+              paddingHorizontal: space.md,
+              paddingVertical: 10,
+            }}
           >
-            Deny request
+            <Text variant="mono" color="secondary" selectable numberOfLines={4}>
+              {prompt.description}
+            </Text>
+          </View>
+        )}
+      </View>
+      {action.error && <Note error>{action.error}</Note>}
+      {prompt.supported ? (
+        <View style={{ flexDirection: 'row', gap: space.sm, justifyContent: 'flex-end' }}>
+          <Button small variant="secondary" disabled={action.busy} onPress={() => void respond(false)}>
+            Deny
           </Button>
-          <Button disabled={action.busy} onPress={() => void respond(true)} style={{ flex: 1 }}>
+          <Button small busy={action.busy} onPress={() => void respond(true)}>
             Allow once
           </Button>
         </View>
       ) : (
-        <Notice>Review this request on your computer.</Notice>
+        <Note>Answer this one in Frink on your Mac.</Note>
       )}
-    </Card>
+    </DecisionCard>
   );
 }

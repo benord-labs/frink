@@ -13,11 +13,7 @@
     }
   },
   "frink": {
-    "keywords": [
-      "design",
-      "graphics",
-      "presentations"
-    ],
+    "keywords": ["design", "graphics", "presentations"],
     "actions": [
       {
         "id": "canva.search_designs",

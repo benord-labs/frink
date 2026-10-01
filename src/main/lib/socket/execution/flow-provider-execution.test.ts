@@ -214,7 +214,7 @@ describe('Flow provider execution preflight', () => {
     registration?.release();
   });
 
-  it('keeps a replacement controller cancelled after the durable tombstone settles', async () => {
+  it('keeps a replacement controller cancelled once the old one was aborted', async () => {
     const controller = new AbortController();
     const replacement = new AbortController();
     const registration = await registerFlowProviderExecution({

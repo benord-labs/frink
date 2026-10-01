@@ -5,11 +5,14 @@ import {
   consumeDispatchMode,
   getActiveFlowTaskForChat,
   getDispatchedSubChatForTask,
+  isDispatchPending,
+  listUndeliveredDispatches,
   matchDispatchModeForSend,
   registerPendingDispatchMode,
   resolveFlowContinuationExecutionTask,
   setActiveFlowTaskForChat,
 } from './dispatch-registry';
+import type { TaskChatReadyData } from '../../../shared/types/task-chat-ready';
 import {
   _clearActiveExecutionsForTests,
   _registerExecutionForTests,
@@ -213,6 +216,61 @@ describe('dispatchedSubChatByTask (sc-3263 cancel reach)', () => {
       _clearActiveExecutionsForTests();
       consumeDispatchMode('sc-live', 'task-live');
       consumeDispatchMode('sc-done', 'task-done');
+    }
+  });
+});
+
+describe('listUndeliveredDispatches', () => {
+  const payload = (taskId: string): TaskChatReadyData => ({
+    chatId: 'undelivered-chat',
+    subChatId: 'undelivered-sub',
+    taskId,
+    prompt: 'Plan the fix',
+    projectId: null,
+    projectPath: null,
+    startMode: 'plan',
+    skipReview: true,
+    headless: true,
+  });
+  const undeliveredTaskIds = () => listUndeliveredDispatches().map((d) => d.taskId);
+
+  afterEach(() => {
+    consumeDispatchMode('undelivered-sub', 'task-undelivered');
+  });
+
+  it('holds a dispatched payload until its send lands', () => {
+    registerPendingDispatchMode(
+      'undelivered-sub',
+      'task-undelivered',
+      'plan',
+      payload('task-undelivered'),
+    );
+    expect(listUndeliveredDispatches()).toContainEqual(payload('task-undelivered'));
+    expect(isDispatchPending('undelivered-sub', 'task-undelivered')).toBe(true);
+    consumeDispatchMode('undelivered-sub', 'task-undelivered');
+    expect(undeliveredTaskIds()).not.toContain('task-undelivered');
+    expect(isDispatchPending('undelivered-sub', 'task-undelivered')).toBe(false);
+  });
+
+  it('never lists a record registered without a payload', () => {
+    registerPendingDispatchMode('undelivered-sub', 'task-undelivered', 'plan');
+    expect(undeliveredTaskIds()).not.toContain('task-undelivered');
+  });
+
+  it('drops a payload past the dispatch TTL, when its mode binding has expired too', () => {
+    const now = Date.now();
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(now);
+    try {
+      registerPendingDispatchMode(
+        'undelivered-sub',
+        'task-undelivered',
+        'plan',
+        payload('task-undelivered'),
+      );
+      nowSpy.mockReturnValue(now + 16 * 60 * 1000);
+      expect(undeliveredTaskIds()).not.toContain('task-undelivered');
+    } finally {
+      nowSpy.mockRestore();
     }
   });
 });

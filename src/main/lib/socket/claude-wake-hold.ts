@@ -32,7 +32,7 @@
 
 import log from 'electron-log';
 import type { TaskSignalPayload } from '../../../shared/types/task-signal';
-import type { WakeHoldState } from '../../../shared/types/wake-hold';
+import type { WakeHoldEndReason, WakeHoldState } from '../../../shared/types/wake-hold';
 import { createTransformer } from '../claude';
 import { clearPendingApprovals } from '../claude/ask-user-question-approval';
 import type { UIMessageChunk } from '../claude/types';
@@ -71,13 +71,14 @@ import { backfillDeniedTools } from './streaming/burst-chunks';
  * whether the session listed `frink_task_signal` (adoptHeldExecution). */
 export type WakeHold = {
   pump: WakePump;
+  chatId: string;
   /** The exact session this hold owns — disposal is identity-guarded on it (ABA: the key can be
    * re-registered to a NEW session while an orphaned hold's async cleanup is still in flight). */
   session: ClaudeSession;
   execution: ClaudeTurnExecution;
   /** Publishes held-vs-finished to the renderer. Carried on the hold rather than reached through
    * `io` because the module-level release functions have no io in scope. */
-  setHeld: (held: boolean, pending?: WakeHoldState) => void;
+  setHeld: (held: boolean, pending?: WakeHoldState, endReason?: WakeHoldEndReason) => void;
   /** Flow resource ownership transferred from the arming execute until this pump settles. */
   releaseFlowResourceActivity?: FlowResourceActivityRelease;
   /** Flow wake holds retain their foreground runtime slot until pump/provider cleanup settles. */
@@ -116,16 +117,16 @@ function setHold(subChatId: string, hold: WakeHold, pending: StopPendingWork): v
   hold.setHeld(true, summarizePendingWork(pending));
 }
 
-function retractHold(hold: WakeHold): void {
+function retractHold(hold: WakeHold, endReason?: WakeHoldEndReason): void {
   if (hold.retracted) return;
   hold.retracted = true;
-  hold.setHeld(false);
+  hold.setHeld(false, undefined, endReason);
 }
 
 /** Evict a hold and retract the wait. */
-function dropHold(subChatId: string, hold: WakeHold): void {
+function dropHold(subChatId: string, hold: WakeHold, endReason?: WakeHoldEndReason): void {
   activeWakeHolds.delete(subChatId);
-  retractHold(hold);
+  retractHold(hold, endReason);
 }
 
 /** With a session, true only for THAT session's hold: a retracted-but-unsettled hold from a
@@ -189,7 +190,7 @@ export function takeWakeHold(
   }
   // The adopting turn runs in the foreground — the chat is executing, no longer waiting. If that
   // turn also ends with pending work it arms a fresh hold and re-advertises.
-  dropHold(subChatId, hold);
+  dropHold(subChatId, hold, 'adopted');
   // A question held into this wait is superseded by the reply that adopted it. The pump exits
   // 'turn-taken-over' (disposal's clear never runs) and a held chat has no activeExecutions entry
   // (the new execute's supersede clear never fires), so this is the only seam that can emit the
@@ -261,6 +262,7 @@ export function releaseNonFlowClaudeSessions(reason: string): void {
 
 /** Executor-injected adapters — each closes over the executor's typed senders/builders. */
 export interface WakeHoldIo {
+  chatId: string;
   /** Stream one wake-burst chunk with the burst's cumulative parts snapshot. */
   streamChunk: (
     msgId: string,
@@ -281,7 +283,7 @@ export interface WakeHoldIo {
    * its length — says whether anything new was said. Awaitable before the session is disposed. */
   completeBurst: (msgId: string, chunks: UIMessageChunk[], hadContent: boolean) => Promise<void>;
   /** Publish whether this chat is waiting on background work, and on what (see {@link setHold}). */
-  setHeld: (held: boolean, pending?: WakeHoldState) => void;
+  setHeld: (held: boolean, pending?: WakeHoldState, endReason?: WakeHoldEndReason) => void;
   clearPendingApprovals: (reason: string, subChatId: string) => void;
   getLatestTaskSignal: (executionContextId: string) => TaskSignalPayload | null | undefined;
   clearCurrentExecutionChat: (executionContextId: string) => void;
@@ -329,9 +331,8 @@ export function armWakePump(params: ArmWakePumpParams): WakeHold {
   // context, which is required — the AskUserQuestion path snapshots that same array mid-burst.
   const arming = session.currentTurn;
   if (!arming) throw new Error(`armWakePump: ${subChatId} has no arming turn to extend`);
-  // Anchored to the ARMING turn's start when no signal is on record: the signal slot is per
-  // execution context and never cleared, so a null anchor would let a PREVIOUS turn's `done`
-  // read as this wait's own declaration and stand the pump down at the first burst.
+  // Anchored to the latest signal on record: the slot is never cleared and the bursts share it, so
+  // the arming turn's own `done` must not be re-read as a burst's and stand the pump down.
   let lastSeenSignalAt: string | null = executionContextId
     ? (io.getLatestTaskSignal(executionContextId)?.at ?? arming.startedAt)
     : arming.startedAt;
@@ -373,7 +374,7 @@ export function armWakePump(params: ArmWakePumpParams): WakeHold {
       waitOverDeclared || (Boolean(session.stopHook) && !session.stopHook?.lastPendingWork),
     onWaitOver: () => {
       waitOver = true;
-      retractHold(hold);
+      retractHold(hold, 'wait-over');
     },
     onBurstStart: () => {
       const wakeTurn = createWakeBurstTurn(arming, {
@@ -439,6 +440,7 @@ export function armWakePump(params: ArmWakePumpParams): WakeHold {
   });
   const hold: WakeHold = {
     pump,
+    chatId: io.chatId,
     session,
     execution: arming.execution,
     setHeld: io.setHeld,
@@ -461,9 +463,9 @@ export function armWakePump(params: ArmWakePumpParams): WakeHold {
         executionContextId,
         io,
         canClearPendingApprovals: params.canClearPendingApprovals,
-        retractIfCurrent: () => {
+        retractIfCurrent: (endReason) => {
           const own = activeWakeHolds.get(subChatId);
-          if (own?.pump === pump) retractHold(own);
+          if (own?.pump === pump) retractHold(own, endReason);
         },
         dropIfCurrent: () => {
           const own = activeWakeHolds.get(subChatId);

@@ -13,12 +13,7 @@
     }
   },
   "frink": {
-    "keywords": [
-      "twitter",
-      "social",
-      "posts",
-      "trends"
-    ],
+    "keywords": ["twitter", "social", "posts", "trends"],
     "source": {
       "repo": "cursor/plugins",
       "commit": "4612556",

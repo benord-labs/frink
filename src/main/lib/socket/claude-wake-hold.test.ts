@@ -94,6 +94,7 @@ function channelQuery(): { query: Query; emit: (m: SDKMessage) => void; end: () 
 }
 
 const noopIo = (): WakeHoldIo => ({
+  chatId: 'c1',
   streamChunk: vi.fn(),
   emitPlanCard: vi.fn(async () => {}),
   completeBurst: vi.fn(),
@@ -1082,6 +1083,7 @@ describe('claude-wake-hold — held-state publication', () => {
     await new Promise((r) => setTimeout(r, 0));
 
     expect(heldCalls(io)).toEqual([true, false]);
+    expect(io.setHeld).toHaveBeenLastCalledWith(false, undefined, 'failed');
     expect(hasWakeHold('h2')).toBe(false);
   });
 
@@ -1097,6 +1099,7 @@ describe('claude-wake-hold — held-state publication', () => {
     // The adopting turn runs in the foreground — executing, not waiting.
     expect(takeWakeHold('h3')).toBeDefined();
     expect(heldCalls(io)).toEqual([true, false]);
+    expect(io.setHeld).toHaveBeenLastCalledWith(false, undefined, 'adopted');
     ch.end();
   });
 
@@ -1113,6 +1116,7 @@ describe('claude-wake-hold — held-state publication', () => {
 
     // Synchronous: the affordance goes on the keystroke, not after the pump's async teardown.
     expect(heldCalls(io)).toEqual([true, false]);
+    expect(io.setHeld).toHaveBeenLastCalledWith(false, undefined, undefined);
     ch.end();
   });
 
@@ -1388,6 +1392,7 @@ describe('claude-wake-hold — stand-down policy', () => {
     await wake(ch);
     await new Promise((r) => setTimeout(r, 0));
     expect(heldCalls(io).at(-1)).toBe(false);
+    expect(io.setHeld).toHaveBeenLastCalledWith(false, undefined, 'wait-over');
   });
 
   it('leaves the session alone when a follow-up turn adopted the hold', async () => {
@@ -1633,8 +1638,8 @@ describe('claude-wake-hold — a turn that declared its work done', () => {
   });
 
   it('ignores a `done` older than the turn', () => {
-    // The signal slot is per EXECUTION CONTEXT and never cleared, and an adopting turn reuses the
-    // arming turn's context — so without the anchor an earlier turn's verdict would end this one.
+    // The signal slot is per execution context, never cleared, and shared by its wake bursts — so
+    // without the anchor an earlier verdict would end this wait.
     expect(declaresWaitOver(sig('done', '2025-01-01T00:00:00.000Z'), null, TURN_START)).toBe(false);
   });
 
@@ -1879,8 +1884,8 @@ describe('claude-wake-hold — enumerating live holds for a booting renderer', (
     );
 
     expect(listWakeHolds()).toEqual([
-      { subChatId: 'boot-a', pending: { waitingOn: ['Command'] } },
-      { subChatId: 'boot-b', pending: { waitingOn: ['Monitor', 'Scheduled wake'] } },
+      { subChatId: 'boot-a', chatId: 'c1', pending: { waitingOn: ['Command'] } },
+      { subChatId: 'boot-b', chatId: 'c1', pending: { waitingOn: ['Monitor', 'Scheduled wake'] } },
     ]);
     chA.end();
     chB.end();
@@ -1913,7 +1918,7 @@ describe('claude-wake-hold — enumerating live holds for a booting renderer', (
     });
     const ch = armListed('boot-latest', hook);
     expect(listWakeHolds()).toEqual([
-      { subChatId: 'boot-latest', pending: { waitingOn: ['Monitor', 'Monitor'] } },
+      { subChatId: 'boot-latest', chatId: 'c1', pending: { waitingOn: ['Monitor', 'Monitor'] } },
     ]);
 
     // One monitor settles; the burst's own stop rewrites the snapshot.
@@ -1926,8 +1931,8 @@ describe('claude-wake-hold — enumerating live holds for a booting renderer', (
     await new Promise((r) => setTimeout(r, 0));
     await new Promise((r) => setTimeout(r, 0));
 
-    expect(listWakeHolds()).toEqual([
-      { subChatId: 'boot-latest', pending: { waitingOn: ['Monitor', 'Scheduled wake'] } },
+    expect(listWakeHolds().map((h) => h.pending)).toEqual([
+      { waitingOn: ['Monitor', 'Scheduled wake'] },
     ]);
     ch.end();
   });
@@ -1939,7 +1944,7 @@ describe('claude-wake-hold — enumerating live holds for a booting renderer', (
     releaseWakeHold('boot-dead', 'user stop');
 
     expect(listWakeHolds()).toEqual([
-      { subChatId: 'boot-live', pending: { waitingOn: ['Command'] } },
+      { subChatId: 'boot-live', chatId: 'c1', pending: { waitingOn: ['Command'] } },
     ]);
     live.end();
     dead.end();
@@ -1984,7 +1989,7 @@ describe('claude-wake-hold — task kinds that collide with Object.prototype', (
       });
 
       expect(listWakeHolds()).toEqual([
-        { subChatId: `proto-${type}`, pending: { waitingOn: ['Background task'] } },
+        { subChatId: `proto-${type}`, chatId: 'c1', pending: { waitingOn: ['Background task'] } },
       ]);
       ch.end();
     },

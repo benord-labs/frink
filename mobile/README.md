@@ -8,10 +8,19 @@ Use Bun and Node 22.12 or newer. From this directory:
 
 ```sh
 bun install --frozen-lockfile
-bun start
 ```
 
-Open the development project in a compatible Expo Go on your iPhone. This app uses Expo SDK 57. For a local native development build, install Xcode and its iOS platform support, then run `bun run ios` (or `bunx expo run:ios --device` for a connected iPhone). Select a development signing team in Xcode when building on a physical device. App Store submission, TestFlight, and a production distribution pipeline are outside this MVP.
+The app uses native modules (Markdown, photo and file pickers), so Expo Go cannot run it. Develop with **Frink Dev**, a development build that installs beside the TestFlight app (bundle `dev.frink.mobile.dev`) and loads JavaScript live from your Mac:
+
+1. Register your iPhone once: `bunx eas-cli device:create`, then open the link on the phone. Turn on Settings → Privacy & Security → Developer Mode.
+2. Build Frink Dev in the cloud: `bunx eas-cli build -p ios --profile development`, then install it from the link EAS prints. Rebuild only when native dependencies, permissions or the app icon change.
+3. Start Metro and open Frink Dev:
+   - Same network: `bun run dev`
+   - Anywhere on your tailnet: `bun run dev:tailnet` (serves Metro privately over Tailscale HTTPS on port 8444)
+
+Saving a file updates the phone in about a second. The TestFlight app is built with `bunx eas-cli build -p ios --profile production`.
+
+Frink Dev loads from port 8081 by default, so run Metro on 8081 only from the checkout you want on your phone (normally your main checkout). To preview a worktree, start its Metro on another port, such as `bun run dev -- --port 8082`, and enter that address in Frink Dev. **Your computer** in the app shows the checkout, branch and commit the running code came from.
 
 Start the desktop app from the repository root with `bun install --frozen-lockfile` and `bun run dev`. Configure an AI provider and a project there before starting a new chat on the phone.
 
@@ -42,6 +51,16 @@ This uses **Tailscale Serve** for private HTTPS access. Do not use public Tailsc
 
 The phone credential lives in the iOS Keychain on this device only. Desktop stores credential digests in its private app data. Sharing a pairing code grants control of this Frink instance; treat the code like an invitation to your computer.
 
+## Chat-finished alerts
+
+In the iPhone app, open **Settings → Notifications** and turn on **When a chat finishes**, then allow notifications when iOS asks. When an ordinary chat finishes successfully, Frink on your computer sends a short alert, including while the app is in the background or the phone is locked. Tap it to open that chat. Stopped, failed and superseded turns, and individual Flow steps, send no alert. The computer must be awake and online with mobile access enabled.
+
+Alerts go through Expo's push service to Apple. Only a fixed "a chat on your Mac has finished" message and opaque pairing and chat ids leave the computer; prompts, code, chat titles and credentials never do. Delivery is best effort: a failure the computer sees is shown under the switch. Turning the switch off or removing the phone in desktop Mobile settings stops future alerts. Forgetting the Mac on the phone stops them too when the Mac is reachable; otherwise that takes effect when you pair again or remove the phone on the desktop. An alert already accepted by the push service may still arrive.
+
+`expo-notifications` is a native module, so the app must be rebuilt after it is added; a Metro reload is not enough. Before the first build with it, create an Apple Push Notifications key and let EAS store it: run `bunx eas-cli credentials -p ios`, choose the build profile, and set up **Push Notifications** for the bundle id (`dev.frink.mobile.dev` for Frink Dev, `dev.frink.mobile` for TestFlight). EAS then regenerates the provisioning profile with the push entitlement on the next `bunx eas-cli build -p ios --profile development` (or `production`). The key stays in EAS; never put it or an Expo access token in the desktop app.
+
+To verify on a physical iPhone: install the rebuilt app, turn alerts on, start a chat, lock the phone, and check that an alert arrives and opens the right chat. Also check turning alerts off and removing the phone on the desktop. A bundle export or a push ticket alone does not prove delivery.
+
 ## Validation
 
 ```sh
@@ -58,6 +77,6 @@ The desktop bridge and domain tests are part of the repository-root `bun run tes
 
 ## MVP boundaries
 
-Foreground polling refreshes the queue, runs, and chats. There are no push notifications, offline execution, Flow canvas editing, terminal access, or attachment upload. Complex presentation/consent requests remain on desktop. A sleeping or disconnected computer cannot execute work. Transcripts display text; rich tool cards remain available on desktop.
+Foreground polling refreshes the queue, runs, and chats; the only push alert is the chat-finished one above. There is no offline execution, Flow canvas editing, terminal access, or attachment upload. Complex presentation/consent requests remain on desktop. A sleeping or disconnected computer cannot execute work. Transcripts display text; rich tool cards remain available on desktop.
 
 The mobile implementation and Frink styling are original to this repository. Other applications informed the connection research; their application code and assets were not copied. Package dependencies retain their own licenses.

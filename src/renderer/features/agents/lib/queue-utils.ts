@@ -69,6 +69,30 @@ export type CodeSelectionContext = {
   createdAt: Date;
 };
 
+export function codeSelectionContextPropsEqual(
+  a: CodeSelectionContext | null | undefined,
+  b: CodeSelectionContext | null | undefined,
+): boolean {
+  if (a == null && b == null) return true;
+  if (a == null || b == null) return false;
+  return (
+    a.id === b.id &&
+    a.filePath === b.filePath &&
+    a.startLine === b.startLine &&
+    a.endLine === b.endLine &&
+    a.text === b.text
+  );
+}
+
+// Large paste saved to the session's pasted/ dir; drained as a `pasted:` mention.
+type QueuedPastedText = {
+  id: string;
+  filePath: string;
+  filename: string;
+  size: number;
+  preview: string;
+};
+
 type QueuedCodeSelectionContext = {
   id: string;
   text: string;
@@ -95,6 +119,7 @@ export type AgentQueueItem = {
   textContexts?: QueuedTextContext[];
   diffTextContexts?: QueuedDiffTextContext[];
   codeSelectionContexts?: QueuedCodeSelectionContext[];
+  pastedTexts?: QueuedPastedText[];
   timestamp: Date;
   status: 'pending' | 'processing';
   source?: typeof FLOW_DISPATCH_SOURCE;
@@ -106,10 +131,23 @@ export type AgentQueueItem = {
   /** Queued only because main was finalizing a turn whose stream had closed: it goes out the
    * moment main settles, without the spacing between queued turns. */
   sendOnSettle?: true;
+  /** Restored after a reload without an attachment that was only a blob: url; held at the head,
+   * never sent partially (`message-queue-reload-persistence`). */
+  attachmentsLost?: true;
 };
 
 export function isInternalQueueItem(item: AgentQueueItem | undefined): boolean {
   return item?.approvedPlanContext !== undefined;
+}
+
+/** Images to load into the composer when editing a queued turn: a reload-restored image previews
+ * from its inline data, and one with neither url nor data is dropped for the user to re-attach. */
+export function editableQueuedImages(images: QueuedImage[] | undefined): QueuedImage[] {
+  return (images ?? [])
+    .filter((img) => img.url || img.base64Data)
+    .map((img) =>
+      img.url ? img : { ...img, url: `data:${img.mediaType};base64,${img.base64Data}` },
+    );
 }
 
 export function generateQueueId(): string {
@@ -124,6 +162,7 @@ export function createQueueItem(
   textContexts?: QueuedTextContext[],
   diffTextContexts?: QueuedDiffTextContext[],
   codeSelectionContexts?: QueuedCodeSelectionContext[],
+  pastedTexts?: QueuedPastedText[],
 ): AgentQueueItem {
   return {
     id,
@@ -135,6 +174,7 @@ export function createQueueItem(
       diffTextContexts && diffTextContexts.length > 0 ? diffTextContexts : undefined,
     codeSelectionContexts:
       codeSelectionContexts && codeSelectionContexts.length > 0 ? codeSelectionContexts : undefined,
+    pastedTexts: pastedTexts && pastedTexts.length > 0 ? pastedTexts : undefined,
     timestamp: new Date(),
     status: 'pending',
   };
@@ -172,6 +212,26 @@ export function toQueuedTextContext(ctx: SelectedTextContext): QueuedTextContext
     id: ctx.id,
     text: ctx.text,
     sourceMessageId: ctx.sourceMessageId,
+  };
+}
+
+export function toQueuedDiffTextContext(ctx: DiffTextContext): QueuedDiffTextContext {
+  return {
+    id: ctx.id,
+    text: ctx.text,
+    filePath: ctx.filePath,
+    lineNumber: ctx.lineNumber,
+    lineType: ctx.lineType,
+  };
+}
+
+export function toQueuedPastedText(pasted: QueuedPastedText): QueuedPastedText {
+  return {
+    id: pasted.id,
+    filePath: pasted.filePath,
+    filename: pasted.filename,
+    size: pasted.size,
+    preview: pasted.preview,
   };
 }
 

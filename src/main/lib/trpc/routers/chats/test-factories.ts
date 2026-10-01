@@ -29,6 +29,11 @@ export function makeLocalChat(overrides: Partial<Chat> = {}): Chat {
     mode: 'agent',
     pinnedAt: null,
     worktreeHistory: null,
+    composerModelId: null,
+    composerAutoMode: null,
+    composerCodexSpeed: null,
+    accountId: null,
+    provider: 'claude-code',
     ...overrides,
   };
 }

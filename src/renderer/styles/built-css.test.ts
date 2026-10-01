@@ -28,15 +28,15 @@ function valueOf(rule: Rule | undefined, prop: string): string | undefined {
   return value;
 }
 
-/** Top-left, top-right and bottom-left radius of `#id` in ChatDock's stack, with `cards` as the
- *  stacked-cards column. A fresh document per call: happy-dom caches `:has()` across mutations. */
-async function dockRadii(css: string, cards: string, id: string): Promise<string[]> {
+/** Top-left, top-right and bottom-left radius of `#id` in ChatDock's stack, with the stacked-cards
+ *  column flagged or not. */
+async function dockRadii(css: string, hasCards: boolean, id: string): Promise<string[]> {
   const window = new Window();
   const sheet = window.document.createElement('style');
   sheet.textContent = `.composer-slot-surface { border-radius: 16px }\n${css}`;
   window.document.head.append(sheet);
   window.document.body.innerHTML = `<div data-chat-dock>
-    <div><div>${cards}</div></div>
+    <div${hasCards ? ' data-stacked-cards' : ''}><div></div></div>
     <div><div><div id="slot" class="composer-slot-surface"></div></div></div>
     <div><div id="below" class="composer-slot-surface"></div></div>
   </div>`;
@@ -50,6 +50,33 @@ async function dockRadii(css: string, cards: string, id: string): Promise<string
   ];
   await window.happyDOM.close();
   return radii;
+}
+
+/** Index just past the parenthesised group that opens at `open`. */
+function skipGroup(selector: string, open: number): number {
+  let depth = 0;
+  for (let i = open; i < selector.length; i++) {
+    if (selector[i] === '(') depth++;
+    else if (selector[i] === ')' && --depth === 0) return i + 1;
+  }
+  return selector.length;
+}
+
+/** What follows `from` in its own selector: up to the enclosing `)` or `,`, nested groups dropped. */
+function restOfSelector(selector: string, from: number): string {
+  let rest = '';
+  for (let i = from; i < selector.length && !/[),]/.test(selector[i]); i++) {
+    if (selector[i] === '(') i = skipGroup(selector, i) - 1;
+    else rest += selector[i];
+  }
+  return rest.trimEnd();
+}
+
+/** Whether a `:has(...)` is followed by a combinator, i.e. styles something other than itself. */
+function hasNonSubjectHas(selector: string): boolean {
+  return [...selector.matchAll(/:has\(/g)].some((match) =>
+    /[\s>+~]/.test(restOfSelector(selector, skipGroup(selector, match.index + ':has'.length))),
+  );
 }
 
 describe('production CSS', () => {
@@ -147,19 +174,24 @@ describe('production CSS', () => {
     // The utilities layer, so it beats the account cards' `rounded-2xl` and the composer's radius.
     for (const rule of rules) expect(rule.parent?.toString()).toMatch(/^@layer utilities/);
     const css = rules.join('\n');
-    expect(await dockRadii(css, '<div data-stacked-card></div>', 'slot')).toEqual([
-      '0px',
-      '0px',
-      '16px',
-    ]);
-    // A status card that renders nothing leaves the slot surface fully rounded.
-    expect(await dockRadii(css, '', 'slot')).toEqual(['16px', '16px', '16px']);
+    expect(await dockRadii(css, true, 'slot')).toEqual(['0px', '0px', '16px']);
+    // No card showing (a status card whose files are all committed renders none): fully rounded.
+    expect(await dockRadii(css, false, 'slot')).toEqual(['16px', '16px', '16px']);
     // Only the surface directly under the cards, not a later one in the stack.
-    expect(await dockRadii(css, '<div data-stacked-card></div>', 'below')).toEqual([
-      '16px',
-      '16px',
-      '16px',
-    ]);
+    expect(await dockRadii(css, true, 'below')).toEqual(['16px', '16px', '16px']);
+  });
+
+  // Chromium re-checks a `:has()` followed by a combinator (Tailwind's `group-has-*`, `.a:has(b) .c`)
+  // across the whole subtree on every DOM change: a ~70ms full-document restyle per insert with a
+  // few split panes open. Style from an attribute the owning component sets instead.
+  it('keeps every :has() on the element it styles', async () => {
+    const offenders = new Set<string>();
+    postcss.parse(await built).walkRules((rule) => {
+      // Sonner's toast rules only re-check inside a toast, which holds a handful of elements.
+      if (rule.selector.startsWith('[data-sonner-toast]')) return;
+      if (hasNonSubjectHas(rule.selector)) offenders.add(rule.selector);
+    });
+    expect([...offenders]).toEqual([]);
   });
 
   // The OS override forces the Solid glass vars, so a surface must look as it does at Solid.

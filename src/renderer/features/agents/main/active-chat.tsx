@@ -27,7 +27,7 @@ import { useSteerOrQueue } from '../../../lib/agent-chat/steer';
 import { isRunBusy } from '../../../lib/agent-chat/steer/run-busy';
 import { useFlowSurfaceQuery } from '../../../lib/agent-chat/use-flow-surface-query';
 import { trackMessageSent } from '../../../lib/analytics';
-import { isDesktopAtom, isFullscreenAtom, pendingAccountAuthAtom } from '../../../lib/atoms';
+import { isDesktopAtom, pendingAccountAuthAtom } from '../../../lib/atoms';
 import { useFileChangeListener, useGitWatcher } from '../../../lib/hooks/use-file-change-listener';
 import { appStore } from '../../../lib/jotai-store';
 import { api } from '../../../lib/mock-api';
@@ -144,6 +144,7 @@ import {
   useMessageSend,
   usePendingMessageHandlers,
   usePlanApproval,
+  useQueueEdit,
   useQuickComment,
   useRollback,
   useSingleShotPlanApproval,
@@ -152,6 +153,7 @@ import {
   useTaskCompletionDetection,
   useTextContextWrapper,
 } from './active-chat/hooks';
+import { shouldReleaseEdit } from './active-chat/hooks/use-queue-edit';
 import { useRealtimeSync } from './active-chat/hooks/useRealtimeSync';
 import type { ChatViewInnerProps, ChatViewProps } from './active-chat/types';
 import {
@@ -379,8 +381,9 @@ const ChatViewInner = memo(function ChatViewInner({
   });
 
   // Pasted text files (large pasted text saved as files)
+  const pastedFiles = usePastedTextFiles(subChatId);
   const { pastedTexts, addPastedText, removePastedText, clearPastedTexts, pastedTextsRef } =
-    usePastedTextFiles(subChatId);
+    pastedFiles;
 
   // Message queue for sending messages while streaming
   const queue = useMessageQueueStore((s) => s.getVisibleQueue(subChatId));
@@ -444,11 +447,9 @@ const ChatViewInner = memo(function ChatViewInner({
       clearTextContexts();
     }
 
-    // Editing state is session-scoped to the chat it was started in. When we leave a sub-chat,
-    // clear its editing flag so we don't return to a stale "Editing…" badge with an empty input.
-    if (prevSubChatIdForDraftRef.current && prevSubChatIdForDraftRef.current !== subChatId) {
-      setEditingItemId(prevSubChatIdForDraftRef.current, null);
-    }
+    // The editing flag outlives unmount and reload; the saved draft is what the edit left. An empty
+    // one cannot finish it, so release the flag or it holds the queue head forever.
+    if (shouldReleaseEdit(subChatId, savedDraft)) setEditingItemId(subChatId, null);
 
     prevSubChatIdForDraftRef.current = subChatId;
   }, [
@@ -461,15 +462,6 @@ const ChatViewInner = memo(function ChatViewInner({
     clearTextContexts,
     setEditingItemId,
   ]);
-
-  // Clear the editing flag when the chat session ends (component unmount, e.g. user closes
-  // the pane). Without this the flag persists and reopening the chat shows a stale "Editing…"
-  // badge with an empty editor (the populated input is component-local; the flag is store-global).
-  useEffect(() => {
-    return () => {
-      setEditingItemId(subChatId, null);
-    };
-  }, [subChatId, setEditingItemId]);
 
   // No `resume`: reconnectToStream is a stub, so resuming only flips a live run to 'ready'.
   const { messages, sendMessage, status, stop, regenerate, setMessages } = useChat({
@@ -804,7 +796,6 @@ const ChatViewInner = memo(function ChatViewInner({
     setRetryInFlight,
   ]);
 
-  // Handle plan approval - sends "Build plan" message and switches to agent mode
   const handleApprovePlan = usePlanApproval({
     subChatId,
     messages,
@@ -814,6 +805,7 @@ const ChatViewInner = memo(function ChatViewInner({
     scrollToBottom,
     sendMessageRef,
     isResolvedExecutionAccountReady,
+    isStreaming,
   });
 
   // Convert messages to Message[] for hooks that expect that type
@@ -1037,61 +1029,20 @@ const ChatViewInner = memo(function ChatViewInner({
     prependItem,
   ]);
 
-  // Edit a queued item: pop its content into the chat input. The original stays in the queue
-  // with an "Editing…" badge until the user sends (success → remove original) or abandons.
-  const handleAbandonEdit = useCallback(() => {
-    const currentEditingId = useMessageQueueStore.getState().editingItemIds[subChatId];
-    if (!currentEditingId) return;
-    setEditingItemId(subChatId, null);
-    editorRef.current?.clear();
-    clearAll();
-    clearTextContexts();
-    clearDiffTextContexts();
-  }, [subChatId, setEditingItemId, clearAll, clearTextContexts, clearDiffTextContexts]);
-
-  const handleEditFromQueue = useCallback(
-    (itemId: string) => {
-      // Don't let the user clobber unsaved input. UI also disables the button in this state.
-      if (inputHasContent) return;
-      // No composer to load into — an AskUserQuestion card owns its slot. Leave the queue alone
-      // rather than flag an item as "Editing…" against an editor that cannot receive its text.
-      if (!editorRef.current) return;
-      const currentQueue = useMessageQueueStore.getState().queues[subChatId] ?? [];
-      const item = currentQueue.find((i) => i.id === itemId);
-      if (!item) return;
-
-      // If a different item was previously being edited, clear that flag (UI side-effect only —
-      // the original stays in the queue, which is the expected abandonment behaviour).
-      const prevEditingId = useMessageQueueStore.getState().editingItemIds[subChatId];
-      if (prevEditingId && prevEditingId !== itemId) {
-        setEditingItemId(subChatId, null);
-      }
-
-      editorRef.current?.setValue(item.message);
-      setImagesFromDraft((item.images ?? []) as Parameters<typeof setImagesFromDraft>[0]);
-      setFilesFromDraft((item.files ?? []) as Parameters<typeof setFilesFromDraft>[0]);
-      setTextContextsFromDraft(
-        (item.textContexts ?? []) as Parameters<typeof setTextContextsFromDraft>[0],
-      );
-      setDiffTextContextsFromDraft(
-        (item.diffTextContexts ?? []) as Parameters<typeof setDiffTextContextsFromDraft>[0],
-      );
-      // Note: codeSelectionContexts are managed via Jotai atom families and aren't restored
-      // to the editor in v1. Documented limitation in the plan.
-
-      setEditingItemId(subChatId, itemId);
-      editorRef.current?.focus();
-    },
-    [
-      subChatId,
-      inputHasContent,
-      setEditingItemId,
-      setImagesFromDraft,
-      setFilesFromDraft,
+  const { handleAbandonEdit, handleEditFromQueue } = useQueueEdit({
+    subChatId,
+    parentChatId,
+    editorRef,
+    inputHasContent,
+    upload: { clearAll, setImagesFromDraft, setFilesFromDraft },
+    textContexts: {
+      clearTextContexts,
+      clearDiffTextContexts,
       setTextContextsFromDraft,
       setDiffTextContextsFromDraft,
-    ],
-  );
+    },
+    pasted: pastedFiles,
+  });
 
   const handleReorderQueue = useCallback(
     (fromIndex: number, toIndex: number) => {
@@ -1133,7 +1084,7 @@ const ChatViewInner = memo(function ChatViewInner({
           | { type: 'text'; text: string }
         > = [
           ...(item.images || [])
-            .filter((img) => img.url)
+            .filter((img) => img.url || img.base64Data)
             .map((img) => ({
               type: 'data-image' as const,
               data: {
@@ -1632,8 +1583,6 @@ export const ChatView = memo(function ChatView({
   const isActive = useIsPaneActive(splitPaneIndex);
   const splitViewState = useAtomValue(splitViewAtom);
   const isSplitActive = splitViewState.chatIds.length > 0;
-  const isDesktop = useAtomValue(isDesktopAtom);
-  const isFullscreen = useAtomValue(isFullscreenAtom);
   const unseenChanges = useAtomValue(agentsUnseenChangesAtom);
   const setUnseenChanges = useSetAtom(agentsUnseenChangesAtom);
   const setSubChatUnseenChanges = useSetAtom(agentsSubChatUnseenChangesAtom);
@@ -2224,7 +2173,6 @@ export const ChatView = memo(function ChatView({
         initialMessages: messages,
         projectPath,
         streamId: subChat?.streamId || null,
-        expectedFlowTaskId: agentChat?.taskId ?? null,
         getExecutionAccountType: () => executionAccountTypeRef.current,
         notifyComplete: notifyAgentCompleteForSubChatId,
         onFinishExtra: () => {

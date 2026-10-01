@@ -35,9 +35,7 @@ export function createAssistantPartsState<
 }
 
 // oxlint-disable-next-line anti-slop/no-shape-in-symbol-names -- AssistantPartShape is this module's generic bound, declared above and used by every helper here; renaming it is a separate refactor.
-function flushOpenText<TPart extends AssistantPartShape>(
-  state: AssistantPartsState<TPart>,
-): void {
+function flushOpenText<TPart extends AssistantPartShape>(state: AssistantPartsState<TPart>): void {
   if (!state.currentText) return;
   state.parts.push({ type: 'text', text: state.currentText } as TPart);
   state.currentText = '';

@@ -36,6 +36,7 @@ const getBundledClaudeVersionMock = vi.fn();
 vi.mock('../../claude', () => ({
   getBundledClaudeVersion: getBundledClaudeVersionMock,
   claudeVersionSupportsXhigh: (v: string | null) => v === '2.1.200',
+  claudeVersionSupportsUltra: (v: string | null) => v === '2.1.200',
 }));
 
 describe('validateAndNormalizeWorktreeBasePath', () => {
@@ -100,6 +101,7 @@ describe('claudeSettingsRouter', () => {
     expect(await caller.getBundledClaudeCapabilities()).toEqual({
       version: '2.1.200',
       supportsXhigh: true,
+      supportsUltra: true,
     });
   });
 
@@ -110,6 +112,7 @@ describe('claudeSettingsRouter', () => {
     expect(await caller.getBundledClaudeCapabilities()).toEqual({
       version: '2.1.97',
       supportsXhigh: false,
+      supportsUltra: false,
     });
   });
 

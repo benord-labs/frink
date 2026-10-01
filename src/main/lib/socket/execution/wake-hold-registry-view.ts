@@ -21,7 +21,13 @@ import { summarizePendingWork } from './wake-hold-signal';
  * `pump.isEnded()` nor a burst's wait-over declaration earns a field here: each leads its flag by
  * one microtask, and the retraction broadcast that follows corrects a list taken inside it.
  */
-export function listWakeHolds(): Array<{ subChatId: string; pending: WakeHoldState }> {
+export function listWakeHolds(): Array<{
+  subChatId: string;
+  chatId: string;
+  pending: WakeHoldState;
+  /** A Flow's node turn: the Flow announces its own end, so the chat must not chime for it. */
+  flow?: true;
+}> {
   return [...readWakeHolds()].flatMap(([subChatId, hold]) => {
     if (hold.retracted || hold.settling) return [];
     // A hold with no hook can never satisfy `isWorkFinished` — unstoppable by itself, so it must not
@@ -29,7 +35,9 @@ export function listWakeHolds(): Array<{ subChatId: string; pending: WakeHoldSta
     const { stopHook } = hold.session;
     if (!stopHook) log.warn(`[Socket Executor] Wake hold for ${subChatId} has no Stop hook`);
     const work = stopHook?.lastPendingWork;
-    return work ? [{ subChatId, pending: summarizePendingWork(work) }] : [];
+    if (!work) return [];
+    const row = { subChatId, chatId: hold.chatId, pending: summarizePendingWork(work) };
+    return [hold.execution.isFlowTurn ? { ...row, flow: true as const } : row];
   });
 }
 

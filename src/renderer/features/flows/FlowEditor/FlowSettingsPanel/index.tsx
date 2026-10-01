@@ -7,10 +7,7 @@ import { Button, Textarea } from '@benord-labs/frink-primitives';
 import { FileText, X } from 'lucide-react';
 import { type ReactElement, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import {
-  CODEX_FAST_SPEED_MULTIPLIER,
-  codexFastTierCredits,
-} from '../../../../../shared/lib/codex-cli-models';
+import type { FlowNode } from '../../../../../shared/lib/validate-flow-graph';
 import type { FlowSettings } from '../../../../../shared/types/flow';
 import { Label } from '../../../../components/ui/label';
 import { Switch } from '../../../../components/ui/switch';
@@ -23,6 +20,7 @@ import { flowModelVariant, getFlowPickerModels } from '../hooks/flow-picker-mode
 import { useProjectModelOptions } from '../hooks/use-project-model-options';
 import { BatchTriggerVariables } from './BatchTriggerVariables';
 import { BriefingStashControls } from './BriefingStashControls';
+import { FlowSpeedSettings } from './FlowSpeedSettings';
 import { patch } from './patch';
 
 type Props = {
@@ -33,6 +31,8 @@ type Props = {
   /** When true, agents may start runs via MCP (frink_flows_run). */
   agentInvocable: boolean;
   settings: FlowSettings | undefined;
+  /** The graph's steps; Ultrafast is offered when any of their models supports it. */
+  nodes: readonly FlowNode[];
   onSettingsChange: (settings: FlowSettings) => void;
   /** Forwarded to BriefingStashControls to trigger a flow save after stashing. */
   onAfterStash?: () => void;
@@ -50,19 +50,6 @@ function normalizeDescription(value: string): string | null {
   return t.length === 0 ? null : t;
 }
 
-/** Copy for the Flow-level Fast switch; keeps speed and ChatGPT credit use as separate axes. */
-export function fastModeDescription(defaultModelId: string | undefined): string {
-  const credits = codexFastTierCredits(defaultModelId);
-  if (credits !== null) {
-    return `Runs Agent steps at ${CODEX_FAST_SPEED_MULTIPLIER}× model speed for ${credits}× ChatGPT credits per turn. API-key pricing differs.`;
-  }
-
-  const availability = defaultModelId
-    ? 'The default model has no Fast tier.'
-    : 'Applies only to supported OpenAI models.';
-  return `${availability} Fast offers ${CODEX_FAST_SPEED_MULTIPLIER}× model speed with model-dependent ChatGPT credit use; API-key pricing differs.`;
-}
-
 export function FlowSettingsPanel({
   flowId,
   flowName,
@@ -70,6 +57,7 @@ export function FlowSettingsPanel({
   isEnabled,
   agentInvocable,
   settings,
+  nodes,
   onSettingsChange,
   onAfterStash,
   onClose,
@@ -120,8 +108,6 @@ export function FlowSettingsPanel({
     ? availableModels.find((m) => m.id === defaultModelId)
     : undefined;
   const staleModelId = defaultModelId && !selectedPickerModel ? defaultModelId : undefined;
-
-  const fastDescription = fastModeDescription(defaultModelId || undefined);
 
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
 
@@ -296,21 +282,11 @@ export function FlowSettingsPanel({
             />
           </div>
 
-          <div className="flex items-center justify-between gap-3">
-            <div className="grid min-w-0 flex-1 gap-0.5">
-              <Label htmlFor="flow-settings-codex-fast" className="text-xs font-medium">
-                Fast mode
-              </Label>
-              <p className="text-[11px] text-muted-foreground">{fastDescription}</p>
-            </div>
-            <Switch
-              id="flow-settings-codex-fast"
-              checked={settings?.codexFastMode === true}
-              onCheckedChange={(checked) =>
-                onSettingsChange(patch(settings, { codexFastMode: checked || undefined }))
-              }
-            />
-          </div>
+          <FlowSpeedSettings
+            settings={settings}
+            nodes={nodes}
+            onSettingsChange={onSettingsChange}
+          />
         </div>
 
         {/* Project */}

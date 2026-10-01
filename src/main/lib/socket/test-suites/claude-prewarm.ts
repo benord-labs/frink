@@ -4,7 +4,7 @@ import type { Query, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import log from 'electron-log';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatMode } from '../../../../shared/types/chat-mode';
-import { getDefaultClaudeCodeToken } from '../../credentials';
+import { getClaudeCodeTokenById, getDefaultClaudeCodeToken } from '../../credentials';
 import { getChatWithProjectAccount } from '../../db/repos/chats';
 import { getSubChatById } from '../../db/repos/sub-chats';
 import { getLatestFlowTaskForSubChat } from '../../db/repos/tasks';
@@ -92,8 +92,10 @@ export function registerClaudePrewarmTests(harness: PrewarmHarness): void {
       // SAFETY: the pre-warm and the send read only these fields of the chat row.
       vi.mocked(getChatWithProjectAccount).mockResolvedValue({
         chat: chatRow,
-        account: null,
+        account: { id: 'acc-1', label: null },
       } as never);
+      // The chat's login resolves to the credential the executor suite serves by default.
+      vi.mocked(getClaudeCodeTokenById).mockImplementation(() => getDefaultClaudeCodeToken());
       vi.mocked(getSubChatById).mockImplementation(
         async (_db, id) =>
           ({ id, chatId: payload.chatId, sessionId: subChatSessionId, mode: 'agent' }) as never,
@@ -103,6 +105,7 @@ export function registerClaudePrewarmTests(harness: PrewarmHarness): void {
       _clearActiveExecutionsForTests();
       __resetSessionsForTest();
       vi.mocked(getSubChatById).mockReset();
+      vi.mocked(getClaudeCodeTokenById).mockReset();
       vi.useRealTimers();
     });
     registerHitAndMissTests(claudeQueryMock, send, spawnedResume);
@@ -396,9 +399,14 @@ function registerSkipTests(claudeQueryMock: PrewarmHarness['claudeQueryMock'], s
     [
       'not-claude',
       () =>
+        vi.mocked(getClaudeCodeTokenById).mockResolvedValueOnce({ ...credential, type: 'codex' }),
+    ],
+    [
+      'login-removed',
+      () =>
         vi
-          .mocked(getDefaultClaudeCodeToken)
-          .mockResolvedValueOnce({ ...credential, type: 'codex' }),
+          .mocked(getChatWithProjectAccount)
+          .mockResolvedValueOnce({ chat: chatRow, account: null } as never),
     ],
     [
       'cap-full',

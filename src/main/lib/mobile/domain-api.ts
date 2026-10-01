@@ -1,1 +1,1 @@
-export { executeMobileRequest } from './domain';
+export { executeMobileRequest, storeMobileAttachment } from './domain';

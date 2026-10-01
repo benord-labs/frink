@@ -16,6 +16,8 @@ export function useTranscriptScroll(
   targetExists = false,
 ) {
   const scrollRef = useRef<ScrollView>(null);
+  // The bottom of whatever is pinned over the transcript's top; a question scrolls to just below.
+  const edgeRef = useRef<View>(null);
   const messages = useRef(new Map<string, View>());
   const target = useRef<View | null>(null);
   const follow = useRef(!decisionTarget);
@@ -75,9 +77,15 @@ export function useTranscriptScroll(
       if (generation.current === capturedGeneration && anchor.current === saved)
         scrollTo(offset.current + current.y - saved.y);
     } else if (target.current && targetExists && !targetLocked.current && host) {
-      const [position, viewport] = await Promise.all([measure(target.current), measure(host)]);
+      const edge = edgeRef.current;
+      const [position, viewport, pinned] = await Promise.all([
+        measure(target.current),
+        measure(host),
+        edge ? measure(edge) : null,
+      ]);
+      const top = pinned ? pinned.y + pinned.height : viewport.y;
       if (generation.current === capturedGeneration && !targetLocked.current)
-        scrollTo(offset.current + position.y - viewport.y - 12);
+        scrollTo(offset.current + position.y - top - 12);
     } else if (follow.current && ready) scrollRef.current?.scrollToEnd({ animated: false });
   }
   async function restorePosition() {
@@ -143,6 +151,7 @@ export function useTranscriptScroll(
   }
   return {
     scrollRef,
+    edgeRef,
     scrollProps,
     showLatest,
     latest,

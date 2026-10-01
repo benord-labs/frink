@@ -15,10 +15,12 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { ArrowDown, ArrowUp, GripVertical, Workflow, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, Eye, GripVertical, Workflow, X } from 'lucide-react';
 import { memo, type ReactElement, type Ref, useMemo, useRef, useState } from 'react';
+import type { TriggerContext } from '../../../../../shared/types/trigger-context';
 import { ConfirmDialog } from '../../../../components/ui/confirm-dialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../../components/ui/tooltip';
+import { TriggerContentDialog } from '../ActionMenu/TriggerContentDialog';
 
 export type QueuedAdmission = {
   flowName: string;
@@ -26,7 +28,11 @@ export type QueuedAdmission = {
   isBatchMember: boolean;
   priorityClass: 'resume' | 'start';
   projectName: string | null;
+  /** What the run is about (story name, batch item label); null when the trigger carries nothing readable. */
+  subject: string | null;
   ticket: number;
+  /** Validated webhook envelope behind "View original content"; null for every other kind of start. */
+  triggerContext: TriggerContext | null;
 };
 
 type SortableAdmissionProps = {
@@ -35,6 +41,7 @@ type SortableAdmissionProps = {
   isMoving: boolean;
   onMove: (ticket: number, targetTicket: number, targetPosition: number) => Promise<void>;
   onRemoveRequest: (ticket: number) => void;
+  onViewContent: (ticket: number) => void;
   rows: QueuedAdmission[];
 };
 
@@ -98,6 +105,7 @@ function AdmissionRowActions({
   next,
   onMove,
   onRemoveRequest,
+  onViewContent,
   previous,
   index,
   rowSuffix,
@@ -109,6 +117,7 @@ function AdmissionRowActions({
   next?: QueuedAdmission;
   onMove: SortableAdmissionProps['onMove'];
   onRemoveRequest: (ticket: number) => void;
+  onViewContent: (ticket: number) => void;
   previous?: QueuedAdmission;
   index: number;
   rowSuffix: string;
@@ -122,6 +131,24 @@ function AdmissionRowActions({
 
   return (
     <div className="flex shrink-0 items-center gap-0.5">
+      {admission.triggerContext && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label={`View original content for ${label}, ${rowSuffix}`}
+              className="size-7 text-muted-foreground"
+              data-view-content-ticket={admission.ticket}
+              onClick={() => onViewContent(admission.ticket)}
+            >
+              <Eye className="size-3.5" aria-hidden />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="top">View original content</TooltipContent>
+        </Tooltip>
+      )}
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
@@ -145,7 +172,8 @@ function AdmissionRowActions({
         rowSuffix={rowSuffix}
         disabled={isMoving || !previous}
         onClick={() => {
-          if (previous) void preserveFocus(() => onMove(admission.ticket, previous.ticket, index - 1));
+          if (previous)
+            void preserveFocus(() => onMove(admission.ticket, previous.ticket, index - 1));
         }}
       >
         <ArrowUp className="size-3.5" aria-hidden />
@@ -188,6 +216,7 @@ const SortableAdmission = memo(function SortableAdmission({
   isMoving,
   onMove,
   onRemoveRequest,
+  onViewContent,
   rows,
 }: SortableAdmissionProps): ReactElement {
   const { attributes, listeners, setActivatorNodeRef, setNodeRef, transform, isDragging } =
@@ -207,7 +236,6 @@ const SortableAdmission = memo(function SortableAdmission({
     if (focused?.isConnected) focused.focus();
   };
 
-
   return (
     <SortableActivityRow
       ref={setNodeRef}
@@ -225,6 +253,7 @@ const SortableAdmission = memo(function SortableAdmission({
           next={next}
           onMove={onMove}
           onRemoveRequest={onRemoveRequest}
+          onViewContent={onViewContent}
           previous={previous}
           rowSuffix={rowSuffix}
         />
@@ -234,7 +263,11 @@ const SortableAdmission = memo(function SortableAdmission({
       statusLabel={admission.priorityClass === 'resume' ? 'Queued to resume' : 'Queued to start'}
       leading={<Workflow />}
       title={label}
-      description={admission.priorityClass === 'resume' ? 'Waiting to resume' : 'Waiting to start'}
+      // The subject replaces the waiting line; the section and group headings still carry the state.
+      description={
+        admission.subject ??
+        (admission.priorityClass === 'resume' ? 'Waiting to resume' : 'Waiting to start')
+      }
       meta={
         projectName ? (
           <Badge noDot className="bg-surface/70 px-1.5 py-0.5 text-xs text-muted-foreground">
@@ -252,12 +285,14 @@ function SortableAdmissionGroup({
   label,
   onMove,
   onRemoveRequest,
+  onViewContent,
   rows,
   isMoving,
 }: {
   label: string;
   onMove: SortableAdmissionProps['onMove'];
   onRemoveRequest: SortableAdmissionProps['onRemoveRequest'];
+  onViewContent: SortableAdmissionProps['onViewContent'];
   rows: QueuedAdmission[];
   isMoving: boolean;
 }): ReactElement | null {
@@ -280,7 +315,7 @@ function SortableAdmissionGroup({
       <h4 className="mb-1.5 text-xs font-medium text-muted-foreground">{label}</h4>
       <DndContext sensors={sensors} modifiers={[restrictToVerticalAxis]} onDragEnd={handleDragEnd}>
         <SortableContext items={tickets} strategy={verticalListSortingStrategy}>
-          <ol className="overflow-hidden rounded-xl border border-border/50 bg-surface/30">
+          <ol className="overflow-hidden">
             {rows.map((admission, index) => (
               <SortableAdmission
                 key={admission.ticket}
@@ -289,6 +324,7 @@ function SortableAdmissionGroup({
                 isMoving={isMoving}
                 onMove={onMove}
                 onRemoveRequest={onRemoveRequest}
+                onViewContent={onViewContent}
                 rows={rows}
               />
             ))}
@@ -343,6 +379,18 @@ export const QueuedAdmissionsView = memo(function QueuedAdmissionsView({
 
   const rootRef = useRef<HTMLDivElement>(null);
   const [pendingRemoval, setPendingRemoval] = useState<QueuedAdmission | null>(null);
+  const [viewing, setViewing] = useState<QueuedAdmission | null>(null);
+  const requestView = (ticket: number) =>
+    setViewing(rows.find((row) => row.ticket === ticket) ?? null);
+  const closeView = () => {
+    setViewing(null);
+    // The 5s poll can unmount the row while its dialog is open; Radix would then drop focus to
+    // <body>. Return to the eye button that opened it if it still exists, else the panel wrapper.
+    const opener = rootRef.current?.querySelector<HTMLElement>(
+      `[data-view-content-ticket="${viewing?.ticket}"]`,
+    );
+    requestAnimationFrame(() => (opener ?? rootRef.current)?.focus());
+  };
   const requestRemoval = (ticket: number) =>
     setPendingRemoval(rows.find((row) => row.ticket === ticket) ?? null);
   const confirmRemoval = async (admission: QueuedAdmission) => {
@@ -389,6 +437,7 @@ export const QueuedAdmissionsView = memo(function QueuedAdmissionsView({
             isMoving={moving}
             onMove={onMove}
             onRemoveRequest={requestRemoval}
+            onViewContent={requestView}
           />
           <SortableAdmissionGroup
             label="Starting"
@@ -396,6 +445,7 @@ export const QueuedAdmissionsView = memo(function QueuedAdmissionsView({
             isMoving={moving}
             onMove={onMove}
             onRemoveRequest={requestRemoval}
+            onViewContent={requestView}
           />
         </div>
       </section>
@@ -423,6 +473,15 @@ export const QueuedAdmissionsView = memo(function QueuedAdmissionsView({
         description={pendingRemoval ? removalDescription(pendingRemoval) : ''}
         confirmLabel="Remove"
       />
+      {viewing?.triggerContext && (
+        <TriggerContentDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) closeView();
+          }}
+          triggerContext={viewing.triggerContext}
+        />
+      )}
     </div>
   );
 });

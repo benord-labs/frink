@@ -2,8 +2,8 @@
  * What happens when a plan is AUTO-approved — the flip out of plan mode, and arming the provider
  * reviewer for the rest of that turn.
  *
- * An auto-approved plan node implements in the SAME turn it planned in (the turn is only
- * interrupted when a human has to approve), so it opens in `permissionMode: 'plan'` and nothing
+ * An auto-approved plan node implements in the SAME turn it planned in (the turn only
+ * stops at submission when a human has to approve), so it opens in `permissionMode: 'plan'` and nothing
  * else would ever re-arm it: every tool of the implementation half would prompt, on a run nobody is
  * watching. See decision `auto-mode-tool-approval`.
  */
@@ -12,12 +12,15 @@ import log from 'electron-log';
 import { supportsNativeAutoReview } from '../../../../shared/lib/models';
 import { type ExecutionSettings, parseClaudeModel } from '../../../../shared/types/execution';
 import { REQUIRED_TOOLS } from '../../../../shared/types/permissions';
+import { claudeErrorText } from '../../claude/stream-classifiers';
 import { getDatabase } from '../../db';
 import { withSubChatLock } from '../../db/repos/sub-chat-mutex';
 import { updateSubChatMode } from '../../db/repos/sub-chats';
+import { submittedPlanFromExitPlanModeInput } from '../../claude/session-plan-paths';
 import { captureContained } from '../../sentry';
 import type { ClaudeTurnContext } from '../claude-turn-context';
 import { attachTurn } from '../execution/claude-session/attach';
+import { PLAN_MODE_EXIT_REMINDER } from '../operator-reminders';
 import { effortKeyPart } from '../execution/claude-session/session-key';
 
 /** Whether the send's Auto consent runs natively on its provider and model (the SDK default model
@@ -102,6 +105,25 @@ export function denyPlanTransitionInWakeBurst(
   return null;
 }
 
+/** The deny that ends a turn at plan submission, stated as a stop the model cannot misread. */
+export const PLAN_SUBMITTED_FOR_REVIEW =
+  "Plan submitted for the user's review. Stop now: do not call ExitPlanMode again or run tools; the user replies in a later turn.";
+
+/** Records the plan file a foreground ExitPlanMode names. With a human approver, submits the plan
+ * and returns the deny that ends the turn; an auto-approve node gets null and implements in-turn. */
+export function submitPlanForReview(
+  toolInput: unknown,
+  turn: ClaudeTurnContext,
+  subChatId: string,
+): string | null {
+  turn.submittedPlan = submittedPlanFromExitPlanModeInput(toolInput, subChatId);
+  if (turn.execution.flowPlanAutoApprove) return null;
+  // Set here, not when the stream sees the deny: the Stop hook reads both before the turn ends.
+  turn.planSubmitted = true;
+  turn.setPlanSubmissionHalt();
+  return PLAN_SUBMITTED_FOR_REVIEW;
+}
+
 type AdoptableSession = {
   query: Pick<Query, 'setPermissionMode' | 'setModel' | 'applyFlagSettings'>;
   /** The spawn key; only its `max`-effort part matters here. */
@@ -138,7 +160,7 @@ async function reconcileLiveModelAndEffort(
   } catch (err) {
     log.warn(
       '[Socket Executor] Could not set model/effort on a live session — starting fresh:',
-      err,
+      claudeErrorText(err),
     );
     return false;
   }
@@ -165,7 +187,7 @@ export async function reconcileAdoptedPermissionMode(
   } catch (err) {
     log.warn(
       '[Socket Executor] Could not reconcile adopted session permission mode — disposing and starting fresh:',
-      err,
+      claudeErrorText(err),
     );
     return false;
   }
@@ -186,7 +208,10 @@ async function reconcileAdoptedUltracode(
   try {
     await session.query.applyFlagSettings({ ultracode: ultracode || null });
   } catch (err) {
-    log.warn('[Socket Executor] Could not reconcile adopted session ultracode:', err);
+    log.warn(
+      '[Socket Executor] Could not reconcile adopted session ultracode:',
+      claudeErrorText(err),
+    );
     captureContained(err, { surface: 'socket-executor', stage: 'adopted-ultracode-reconcile' });
   }
 }
@@ -219,7 +244,8 @@ export function adoptedTurnBeforePush(params: {
     if (signal.aborted) return false;
     attachTurn(session, turn, params.onTakeover);
     if (await reconcileAdoptedPermissionMode(session, mode, nativeAutoReview)) {
-      // Ultra first: clearing it leaves the CLI at xhigh until an effort is set after it.
+      // A live switch out of plan gets the CLI's own exit reminder; ours would repeat it.
+      turn.pendingReminders = turn.pendingReminders.filter((r) => r !== PLAN_MODE_EXIT_REMINDER);
       await reconcileAdoptedUltracode(session, params.live.ultracode);
       if (await reconcileLiveModelAndEffort(session, params.live)) return !signal.aborted;
     }
@@ -364,13 +390,13 @@ export async function armAutoDuringPlan(session: PlanArmableSession): Promise<vo
       await session.query.setPermissionMode('plan').catch((restoreErr) => {
         log.error(
           '[Socket Executor] armAutoDuringPlan: failed to restore plan mode after a flip error:',
-          restoreErr,
+          claudeErrorText(restoreErr),
         );
       });
     }
     log.warn(
       '[Socket Executor] Could not arm Auto during plan — the planning phase asks (or denies unattended):',
-      err,
+      claudeErrorText(err),
     );
   }
 }
@@ -404,7 +430,7 @@ export async function armAutoReview(
   } catch (err) {
     log.warn(
       '[Socket Executor] Could not arm Auto at plan approval — the rest of this turn asks:',
-      err,
+      claudeErrorText(err),
     );
   }
 }

@@ -2,12 +2,12 @@ import claudeLogo from '@iconify-icons/simple-icons/claude';
 import openaiLogo from '@iconify-icons/ri/openai-fill';
 import { iconifyComponent } from '@/lib/utils/iconify-component';
 import { Button } from '@benord-labs/frink-primitives';
-import { codexFastTierCredits } from '../../../../shared/lib/codex-cli-models';
+import { codexTierCredits } from '../../../../shared/lib/codex-cli-models';
 import {
   formatModelPickerLabel,
   formatModelPickerLabelParts,
 } from '../../../../shared/lib/model-picker-label';
-import type { PickerEffortLevel } from '../../../../shared/types/execution';
+import type { CodexSpeed, ClaudeSdkEffortLevel } from '../../../../shared/types/execution';
 import { ChevronDown } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '../../../components/ui/popover';
 import { trpc } from '../../../lib/trpc';
@@ -17,7 +17,8 @@ import {
   COMPOSER_MODEL_DETAIL_CLASS,
   COMPOSER_MODEL_LABEL_CLASS,
 } from '../main/chat-composer-shell-classes';
-import { ModelPicker, UltraWord } from './ModelPicker';
+import { ModelPicker } from './ModelPicker';
+import { UltraWord } from './ModelPicker/UltraSwitch';
 
 const ClaudeCodeIcon = iconifyComponent(claudeLogo);
 const CodexIcon = iconifyComponent(openaiLogo);
@@ -33,9 +34,11 @@ export type ModelItem = {
   /** Context window; a family offering several is switched inside the effort card. */
   contextLabel?: string;
   /** Effort tier — the picker's slider axis. Absent for models without an effort choice. */
-  effort?: PickerEffortLevel;
+  effort?: ClaudeSdkEffortLevel;
   /** The family's default tier — the slider's reset target. */
   effortDefault?: true;
+  /** Claude: Ultra (parallel agents) on for this tier. */
+  ultra?: true;
   /** Claude Code: model version label in the picker. */
   version?: string;
 };
@@ -61,11 +64,26 @@ type ModelSelectorProps = {
   triggerClassName?: string;
   /** Flow: id on trigger for htmlFor from Label. */
   triggerId?: string;
-  /** Chat: scopes Codex Fast to this chat. Absent on New Chat, which stages Fast via `newChatFastRef`. */
+  /** Chat: scopes Codex speed to this chat. Absent on New Chat, which stages it via `newChatSpeedRef`. */
   chatId?: string;
-  /** New Chat: the form's staged Fast, applied to the chat it creates. */
-  newChatFastRef?: { current: boolean };
+  /** New Chat: the form's staged speed, applied to the chat it creates. */
+  newChatSpeedRef?: { current: CodexSpeed };
 };
+
+/** Codex speed controls, or none for a model without a paid tier (incl. Claude) or with nowhere
+ *  to keep the choice — never a live-but-inert control. Ultrafast is only offered beside Fast. */
+function speedScope(
+  modelId: string | undefined,
+  chatId: string | undefined,
+  newChatSpeedRef: { current: CodexSpeed } | undefined,
+) {
+  const credits = {
+    fast: codexTierCredits(modelId, 'fast'),
+    ultrafast: codexTierCredits(modelId, 'ultrafast'),
+  };
+  if (credits.fast === null || (!chatId && !newChatSpeedRef)) return undefined;
+  return { chatId, newChatSpeedRef, credits };
+}
 
 /** Flow form: middle label must shrink so long model names truncate (min-w-0 + flex-1). */
 const FLOW_FORM_TRIGGER_CLASS =
@@ -75,6 +93,9 @@ const FLOW_FORM_TRIGGER_CLASS =
 function formatTriggerLabel(m: ModelItem | undefined): string {
   return m ? formatModelPickerLabel(m) : '';
 }
+
+/** How an Ultra row's label ends (see the Claude catalog); the trigger restyles just this word. */
+const ULTRA_LABEL_TAIL = ' · Ultra';
 
 /** Composer trigger text: the name in the foreground and the tier muted. As the composer narrows
  *  the tier and chevron go first; the name goes only when it no longer fits. */
@@ -95,6 +116,7 @@ function ComposerTriggerLabel({
           <span className={cn('text-muted-foreground/70', COMPOSER_MODEL_DETAIL_CLASS)}>
             {ultra ? (
               <>
+                {suffix.slice(0, -ULTRA_LABEL_TAIL.length)}
                 {' · '}
                 <UltraWord />
               </>
@@ -143,7 +165,7 @@ export function ModelSelector({
   triggerClassName,
   triggerId,
   chatId,
-  newChatFastRef,
+  newChatSpeedRef,
 }: ModelSelectorProps) {
   const isFlow = mode === 'flow';
   // Grey the Claude Extra High tier when the bundled CLI can't run `--effort xhigh` (< 2.1.173).
@@ -156,8 +178,9 @@ export function ModelSelector({
     },
   );
   const xhighSupported = claudeCaps?.supportsXhigh ?? true;
-  // Ultra is a mode, not just a tier: its word takes the animated chroma used for power keywords.
-  const ultra = !isFlow && selectedModel?.effort === 'ultra';
+  const ultraSupported = claudeCaps?.supportsUltra ?? true;
+  // Ultra is a mode: its word takes the animated chroma used for power keywords.
+  const ultra = !isFlow && Boolean(selectedModel?.ultra);
   // biome-ignore lint/style/useNamingConvention: Renders as a component
   const TriggerIcon = TRIGGER_ICON[modelVariant];
 
@@ -172,10 +195,6 @@ export function ModelSelector({
   const triggerLabel = isFlow
     ? flowTriggerText(selectedModel, staleModelId, flowInheritLabel)
     : chatText.label;
-
-  // `null` for any model without a priority tier (incl. Claude), so Fast is absent rather than
-  // present-but-inert wherever it cannot apply.
-  const fastCredits = codexFastTierCredits(selectedModel?.id);
 
   return (
     <Popover open={isOpen} onOpenChange={onOpenChange}>
@@ -219,11 +238,8 @@ export function ModelSelector({
           onSelect={onModelChange}
           variant={modelVariant}
           hideXhigh={modelVariant === 'claude' && !xhighSupported}
-          fast={
-            !isFlow && fastCredits !== null && (chatId || newChatFastRef)
-              ? { chatId, newChatFastRef, credits: fastCredits }
-              : undefined
-          }
+          hideUltra={modelVariant === 'claude' && !ultraSupported}
+          speed={isFlow ? undefined : speedScope(selectedModel?.id, chatId, newChatSpeedRef)}
           inherit={
             isFlow
               ? {

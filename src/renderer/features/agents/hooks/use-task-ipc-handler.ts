@@ -23,7 +23,7 @@ import {
   type TaskChatReadyData,
 } from '../../../../shared/types/task-chat-ready';
 import { focusAgentChatAtom } from '../../../lib/atoms';
-import { codexFastModeAtomFamily } from '../../../lib/atoms/codex-fast-mode';
+import { codexSpeedAtomFamily } from '../../../lib/atoms/codex-speed';
 import { api } from '../../../lib/mock-api';
 import { trpc, trpcClient } from '../../../lib/trpc';
 import {
@@ -35,6 +35,9 @@ import { createAgentChat } from '../lib/create-agent-chat';
 import { createQueueItem, FLOW_DISPATCH_SOURCE, generateQueueId } from '../lib/queue-utils';
 import { agentChatStore } from '../stores/agent-chat-store';
 import { useMessageQueueStore } from '../stores/message-queue-store';
+
+/** Delay before re-pulling undelivered dispatches after a failed pull. Exported for tests. */
+export const UNDELIVERED_PULL_RETRY_MS = 2_000;
 
 type MaybeUserMessage = { role?: string; parts?: Array<{ type?: string; text?: string }> };
 
@@ -90,7 +93,7 @@ export function useTaskIpcHandler() {
   useEffect(() => {
     if (!window.desktopApi?.onTaskChatReady) return;
 
-    const cleanup = window.desktopApi.onTaskChatReady((data) => {
+    const handleChatReady = (data: unknown) => {
       if (!isTaskChatReadyData(data)) return;
 
       const { chatId, subChatId } = data;
@@ -114,11 +117,10 @@ export function useTaskIpcHandler() {
         store.set(autoModePerChatAtomFamily(chatId), data.autoReviewTools);
       }
 
-      // Same seed-and-re-assert contract for Codex Fast. Setting `false` matters as much as `true`:
-      // the chat's value persists past the run, so a flow with Fast off must actively clear one a
-      // previous Fast run left on rather than inheriting its billing.
-      if (typeof data.codexFastMode === 'boolean') {
-        store.set(codexFastModeAtomFamily(chatId), data.codexFastMode);
+      // Same seed-and-re-assert contract for Codex speed: `standard` must actively clear a paid speed
+      // a previous run left on, since the chat's value outlives the run.
+      if (data.codexSpeed !== undefined) {
+        store.set(codexSpeedAtomFamily(chatId), data.codexSpeed);
       }
 
       // Mode + model must be set before the queued prompt is sent: the transport reads the chat
@@ -160,9 +162,6 @@ export function useTaskIpcHandler() {
               mode,
               initialMessages,
               projectPath: data.projectPath ?? undefined,
-              // Matches the active flow task registered by handleClaimedTask so the flow-continuation
-              // execution override applies (resolveFlowContinuationExecutionTask).
-              expectedFlowTaskId: data.taskId,
               // Read at SEND time from the resolved-account cache (prefetched below). QueueProcessor's
               // account-gate holds the send until that query succeeds, so this returns the real
               // account — never a premature default.
@@ -220,8 +219,30 @@ export function useTaskIpcHandler() {
       if (!data.headless) {
         focusAgentChat(chatId);
       }
-    });
+    };
 
-    return cleanup;
+    // Listener first, then pull: `task:chat-ready` is one-shot, so a dispatch that fired before this
+    // mounted (renderer reload, slow lazy layout load) is only reachable through main's record.
+    const cleanup = window.desktopApi.onTaskChatReady(handleChatReady);
+    let unmounted = false;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    // A failed pull is not "nothing pending": retry until main answers.
+    const pullUndelivered = () => {
+      trpcClient.tasks.listUndeliveredDispatches
+        .query()
+        .then((dispatches) => {
+          if (!unmounted) for (const data of dispatches) handleChatReady(data);
+        })
+        .catch(() => {
+          if (!unmounted) retryTimer = setTimeout(pullUndelivered, UNDELIVERED_PULL_RETRY_MS);
+        });
+    };
+    pullUndelivered();
+
+    return () => {
+      unmounted = true;
+      clearTimeout(retryTimer);
+      cleanup();
+    };
   }, [focusAgentChat, store, utils, apiUtils]);
 }

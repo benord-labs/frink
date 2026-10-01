@@ -10,6 +10,7 @@ import {
   findChatByWorktree as findChatByWorktreeLocal,
   updateChat as updateChatLocal,
 } from '../../../db/repos/chats';
+import { getAiAccountType } from '../../../db/repos/project-ai-accounts';
 import { createSubChat as createSubChatLocal } from '../../../db/repos/sub-chats';
 import { projects as projectsTable } from '../../../db/schema';
 import {
@@ -24,6 +25,13 @@ import { extractInitialMessageText } from './helpers/message-text';
 import { autoNameSubChat, maybeNameBuildProjectFromMessage } from './helpers/name-generation-async';
 import { mapLocalChatResponse } from './map-chat-response';
 import { mapSubChatResponse } from './sub-chats/map-sub-chat-response';
+
+/** The login the new-chat composer picked; any other credential id is NOT_FOUND. */
+async function assertAiAccount(db: ReturnType<typeof getDatabase>, accountId?: string) {
+  if (accountId && !(await getAiAccountType(db, accountId))) {
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'Account not found' });
+  }
+}
 
 /**
  * Chat creation operations
@@ -64,6 +72,7 @@ export const createRouter = router({
         useWorktree: z.boolean().default(true),
         existingWorktreePath: z.string().optional(),
         mode: z.enum(['plan', 'agent', 'debug']).default('agent'),
+        accountId: z.string().optional(),
       }),
     )
     .mutation(async ({ input }) => {
@@ -123,11 +132,13 @@ export const createRouter = router({
           }
         }
 
+        await assertAiAccount(db, input.accountId);
         const chat = await createChatLocal(db, {
           projectId: project?.id ?? null,
           name: seededName,
           mode: input.mode,
           taskId: input.taskId ?? null,
+          accountId: input.accountId,
         });
 
         // Initial message parts → wrapped as a single user message in the sub-chat's messages array.

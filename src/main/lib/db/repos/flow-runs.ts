@@ -12,6 +12,7 @@ import {
   tasks,
 } from '../schema';
 import type { TaskStatus } from './tasks';
+import { linkedFlowRunIds } from './task-queries/linked-flow-runs';
 import { activeFlowRunForSubChatId } from './task-queries/subchat-driver';
 
 type Db = ReturnType<typeof getDatabase>;
@@ -130,13 +131,6 @@ export async function hasActiveRunForFlow(db: Db, flowId: string): Promise<boole
   return rows.length > 0;
 }
 
-const chatLinkClause = (chatId: string) =>
-  or(
-    sql`json_extract(${flowRuns.triggerContext}, '$.chatId') = ${chatId}`,
-    sql`json_extract(${nodeRuns.nodeOutput}, '$.outputs.chatId') = ${chatId}`,
-    sql`json_extract(${tasks.result}, '$.chatId') = ${chatId}`,
-  );
-
 /**
  * The chat-id projection for each of the THREE chat↔run JSON link sources (no FK). Centralised so the
  * readers that resolve a chat FROM a run (listChatIdsWithActiveFlowRun, getBatchIdByChatId,
@@ -152,16 +146,19 @@ export const CHAT_LINK_SOURCES = {
 } as const;
 
 /**
- * Active runs linked to a chat. selectDistinct dedupes the joins. Callers cancel these explicitly
- * (no FK cascade); terminal-run residue is cleaned at the task boundary instead.
+ * Active runs linked to a chat. Callers cancel these explicitly (no FK cascade); terminal-run residue
+ * is cleaned at the task boundary instead.
  */
 export async function listActiveFlowRunIdsForChat(db: Db, chatId: string): Promise<string[]> {
   const rows = await db
-    .selectDistinct({ id: flowRuns.id })
+    .select({ id: flowRuns.id })
     .from(flowRuns)
-    .leftJoin(nodeRuns, eq(nodeRuns.flowRunId, flowRuns.id))
-    .leftJoin(tasks, eq(tasks.flowRunId, flowRuns.id))
-    .where(and(inArray(flowRuns.status, ['pending', 'running', 'paused']), chatLinkClause(chatId)));
+    .where(
+      and(
+        inArray(flowRuns.status, ['pending', 'running', 'paused']),
+        inArray(flowRuns.id, linkedFlowRunIds(db, 'chatId', chatId)),
+      ),
+    );
   return rows.map((r) => r.id);
 }
 
@@ -173,11 +170,14 @@ export async function listActiveFlowRunIdsForChat(db: Db, chatId: string): Promi
  */
 export async function listIncompleteFlowRunIdsForChat(db: Db, chatId: string): Promise<string[]> {
   const rows = await db
-    .selectDistinct({ id: flowRuns.id })
+    .select({ id: flowRuns.id })
     .from(flowRuns)
-    .leftJoin(nodeRuns, eq(nodeRuns.flowRunId, flowRuns.id))
-    .leftJoin(tasks, eq(tasks.flowRunId, flowRuns.id))
-    .where(and(ne(flowRuns.status, 'completed'), chatLinkClause(chatId)));
+    .where(
+      and(
+        ne(flowRuns.status, 'completed'),
+        inArray(flowRuns.id, linkedFlowRunIds(db, 'chatId', chatId)),
+      ),
+    );
   return rows.map((r) => r.id);
 }
 
@@ -190,21 +190,9 @@ export async function listIncompleteFlowRunIdsForChat(db: Db, chatId: string): P
  */
 export async function getLatestFlowRunForChat(db: Db, chatId: string): Promise<FlowRun | null> {
   const [row] = await db
-    .selectDistinct({
-      id: flowRuns.id,
-      flowVersionId: flowRuns.flowVersionId,
-      status: flowRuns.status,
-      triggerContext: flowRuns.triggerContext,
-      idempotencyKey: flowRuns.idempotencyKey,
-      batchId: flowRuns.batchId,
-      startedAt: flowRuns.startedAt,
-      completedAt: flowRuns.completedAt,
-      createdAt: flowRuns.createdAt,
-    })
+    .select()
     .from(flowRuns)
-    .leftJoin(nodeRuns, eq(nodeRuns.flowRunId, flowRuns.id))
-    .leftJoin(tasks, eq(tasks.flowRunId, flowRuns.id))
-    .where(chatLinkClause(chatId))
+    .where(inArray(flowRuns.id, linkedFlowRunIds(db, 'chatId', chatId)))
     .orderBy(desc(flowRuns.createdAt))
     .limit(1);
   return row ?? null;
@@ -375,7 +363,7 @@ export async function listFlowRunsForFlow(
     .from(flowRuns)
     .innerJoin(flowVersions, eq(flowVersions.id, flowRuns.flowVersionId))
     .where(eq(flowVersions.flowId, flowId))
-    .orderBy(desc(flowRuns.createdAt))
+    .orderBy(desc(flowRuns.createdAt), desc(flowRuns.id))
     .limit(limit);
 }
 

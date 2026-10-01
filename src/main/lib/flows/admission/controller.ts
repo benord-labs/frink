@@ -1,6 +1,7 @@
 import { Mutex } from 'async-mutex';
 import type { FlowAdmissionState } from '../../../../shared/lib/flow-admission';
 import type { getDatabase } from '../../db';
+import { captureFlowAdmissionException } from './activity';
 import {
   type FlowAdmissionConfig,
   type FlowAdmissionConfigPatch,
@@ -93,6 +94,20 @@ export class FlowAdmissionController {
     return this.replaceConfigSnapshot(() => this.writeConfig(patch));
   }
 
+  /** A synchronous run command under the mutex in one immediate transaction, then `afterCommit` in
+   * the commit's tick; its throw is captured, not rethrown, because the command already committed. */
+  async transition<T>(command: () => T, afterCommit?: (result: T) => undefined): Promise<T> {
+    return controllerMutex.runExclusive(() => {
+      const result = this.immediate(command);
+      try {
+        afterCommit?.(result);
+      } catch (error) {
+        captureFlowAdmissionException(error, 'after-commit');
+      }
+      return result;
+    });
+  }
+
   async enqueue(input: EnqueueFlowAdmissionInput): Promise<EnqueueFlowAdmissionResult> {
     return controllerMutex.runExclusive(() =>
       this.immediate(() => enqueueFlowAdmission(this.db, input)),
@@ -164,9 +179,17 @@ export class FlowAdmissionController {
   }
 
   async beginDispatch(ticket: number, now = new Date()): Promise<FlowRunAdmission | null> {
-    return controllerMutex.runExclusive(() =>
-      this.immediate(() => beginAdmissionDispatch(this.db, ticket, now)),
-    );
+    return controllerMutex.runExclusive(async () => {
+      const config = await this.effectiveConfigLocked();
+      return this.immediate(() => {
+        if (config.queuePaused) {
+          // A pause may arrive after a batch was claimed but before this ticket starts.
+          transitionAdmission(this.db, ticket, ['claimed'], { state: 'queued', claimedAt: null });
+          return null;
+        }
+        return beginAdmissionDispatch(this.db, ticket, now);
+      });
+    });
   }
 
   async beginRelease(ticket: number): Promise<FlowRunAdmission | null> {

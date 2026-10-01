@@ -10,6 +10,7 @@ import {
   TriggerSummaryFieldRow,
 } from '../../../../../components/TriggerSummaryFields';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../../../components/ui/tabs';
+import { EmailTriggerContentDialog } from '../EmailTriggerContentDialog';
 import { TriggerDialogShell } from '../TriggerDialogShell';
 
 type Props = {
@@ -52,7 +53,17 @@ function TriggerSummaryCard({ summary }: { summary: TriggerSummary }): ReactElem
   );
 }
 
+/** The one "View original content" dialog: Gmail gets its rendered-email view, everything else the summary. */
 export function TriggerContentDialog({ open, onOpenChange, triggerContext }: Props): ReactElement {
+  if (triggerContext.source === 'gmail') {
+    return (
+      <EmailTriggerContentDialog
+        open={open}
+        onOpenChange={onOpenChange}
+        triggerContext={triggerContext}
+      />
+    );
+  }
   const summary = buildTriggerSummary(triggerContext);
   const title = `Original ${summary.provider} Trigger`;
   const rawPayload = JSON.stringify(triggerContext.fullContent ?? {}, null, 2);

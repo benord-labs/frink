@@ -4,17 +4,28 @@ import { dirname } from 'node:path';
 import { Mutex } from 'async-mutex';
 import { z } from 'zod';
 import { MOBILE_API_VERSION, mobilePairingSchema } from '../../../shared/types/remote/mobile';
+import {
+  liveActivityTokenSchema,
+  pushTokenSchema,
+  type NotificationRegistration,
+} from '../../../shared/types/remote/notifications';
 import { MobileApiError } from './domain/errors';
 
 const PAIRING_DURATION_MS = 5 * 60_000;
 const MAX_PAIRING_ATTEMPTS = 10;
 const MAX_DEVICES = 20;
+/** iOS ends a Live Activity after eight hours, so an older token has nothing left to update. */
+const ACTIVITY_TOKEN_MAX_AGE_MS = 8 * 60 * 60_000;
 const credentialSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 const deviceSchema = z.object({
   id: z.uuid(),
   name: z.string().trim().min(1).max(80),
   digest: z.string().regex(/^[a-f0-9]{64}$/),
   createdAt: z.iso.datetime(),
+  pushToken: pushTokenSchema.optional(),
+  pushError: z.string().optional(),
+  activityToken: liveActivityTokenSchema.optional(),
+  activityTokenAt: z.iso.datetime().optional(),
 });
 const configSchema = z.object({
   version: z.literal(MOBILE_API_VERSION),
@@ -22,6 +33,7 @@ const configSchema = z.object({
   devices: z.array(deviceSchema).max(MAX_DEVICES),
 });
 type MobileConfig = z.infer<typeof configSchema>;
+type Device = z.infer<typeof deviceSchema>;
 type PendingPairing = { digest: string; expiresAt: number; attempts: number };
 
 function emptyConfig(): MobileConfig {
@@ -34,6 +46,23 @@ function digest(value: string): string {
 
 function matches(value: string, expected: string): boolean {
   return timingSafeEqual(Buffer.from(digest(value), 'hex'), Buffer.from(expected, 'hex'));
+}
+
+/** One token belongs to one pairing, so re-pairing the phone retires a stale entry's copy. */
+function assignToken(
+  devices: Device[],
+  id: string,
+  key: 'pushToken' | 'activityToken',
+  token: string | undefined,
+  fields: (token?: string) => Partial<Device>,
+): Device[] {
+  return devices.map((entry) =>
+    entry.id === id
+      ? { ...entry, ...fields(token) }
+      : token && entry[key] === token
+        ? { ...entry, ...fields() }
+        : entry,
+  );
 }
 
 /** One authority for the per-installation credentials; plaintext credentials never reach disk. */
@@ -157,6 +186,94 @@ export class MobilePairingStore {
   authenticate(token: string): boolean {
     if (!this.config.enabled || !credentialSchema.safeParse(token).success) return false;
     return this.config.devices.some((device) => matches(token, device.digest));
+  }
+
+  async notifications(credential: string, input: NotificationRegistration) {
+    return this.mutex.runExclusive(async () => {
+      if (!this.authenticate(credential)) throw new MobileApiError(401, 'Pair this device again.');
+      const device = this.config.devices.find((entry) => matches(credential, entry.digest))!;
+      let { devices } = this.config;
+      if (input.token !== undefined && (input.token !== device.pushToken || device.pushError)) {
+        devices = assignToken(
+          devices,
+          device.id,
+          'pushToken',
+          input.token ?? undefined,
+          (pushToken) => ({
+            pushToken,
+            pushError: undefined,
+          }),
+        );
+      }
+      const activityToken = input.activityToken ?? undefined;
+      if (input.activityToken !== undefined && activityToken !== device.activityToken) {
+        const at = new Date(this.now()).toISOString();
+        devices = assignToken(devices, device.id, 'activityToken', activityToken, (token) => ({
+          activityToken: token,
+          activityTokenAt: token && at,
+        }));
+      }
+      if (devices !== this.config.devices) await this.persist({ ...this.config, devices });
+      const current = this.config.devices.find((entry) => entry.id === device.id)!;
+      return { enabled: !!current.pushToken, error: current.pushError ?? null };
+    });
+  }
+
+  notificationRecipients() {
+    return this.config.enabled
+      ? this.config.devices.flatMap(({ id, pushToken }) =>
+          pushToken ? [{ id, token: pushToken }] : [],
+        )
+      : [];
+  }
+
+  liveActivityRecipients() {
+    const cutoff = this.now() - ACTIVITY_TOKEN_MAX_AGE_MS;
+    return this.config.enabled
+      ? this.config.devices.flatMap(({ id, activityToken, activityTokenAt }) =>
+          activityToken && Date.parse(activityTokenAt!) > cutoff
+            ? [{ id, token: activityToken }]
+            : [],
+        )
+      : [];
+  }
+
+  /** Clears the token only while it is still current, so a newer card keeps its token. */
+  async liveActivityGone(id: string, token: string): Promise<void> {
+    await this.mutex.runExclusive(async () => {
+      if (!this.config.devices.some((entry) => entry.id === id && entry.activityToken === token))
+        return;
+      await this.persist({
+        ...this.config,
+        devices: assignToken(this.config.devices, id, 'activityToken', undefined, () => ({
+          activityToken: undefined,
+          activityTokenAt: undefined,
+        })),
+      });
+    });
+  }
+
+  async notificationFailed(id: string, token: string, unregistered: boolean): Promise<void> {
+    await this.mutex.runExclusive(async () => {
+      const device = this.config.devices.find(
+        (entry) => entry.id === id && entry.pushToken === token,
+      );
+      if (!device) return;
+      await this.persist({
+        ...this.config,
+        devices: this.config.devices.map((entry) =>
+          entry === device
+            ? {
+                ...entry,
+                pushToken: unregistered ? undefined : token,
+                pushError: unregistered
+                  ? 'Your Mac couldn’t reach this iPhone. Turn this on again to keep getting alerts.'
+                  : 'Your Mac couldn’t deliver the last alert.',
+              }
+            : entry,
+        ),
+      });
+    });
   }
 
   async revoke(id: string): Promise<void> {

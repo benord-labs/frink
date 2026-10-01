@@ -7,29 +7,40 @@ import {
 import {
   answerMobileQuestion,
   createMobileChat,
+  deleteMobileChat,
   readMobileChat,
   respondMobilePermission,
   sendMobileMessage,
   stopMobileChat,
 } from './chat';
+import {
+  readMobileComposer,
+  setMobileAccount,
+  setMobileMode,
+  updateMobileComposer,
+} from './composer';
 import { MobileApiError, mobileCallers, requireExecutionReady } from './context';
 import { readMobileFlow, readMobileFlows, readMobileRun, resumeMobileNode } from './flows';
+import { approveMobilePlan } from './plan';
 import { readMobileChats, readMobileOverview, readMobileProjects } from './read';
+import { steerMobileMessage } from './steer';
+import { runMobileTaskAction } from './tasks';
+import { captureContained } from '../../sentry';
 
 // Reason: An exhaustive command switch keeps this transport boundary explicit.
 // fallow-ignore-next-line complexity
 async function dispatch(request: MobileRequest): Promise<MobileResponses[MobileRequest['type']]> {
   switch (request.type) {
     case 'overview':
-      return readMobileOverview();
+      return readMobileOverview(request);
     case 'flows':
       return readMobileFlows();
     case 'flow':
-      return readMobileFlow(request.id);
+      return readMobileFlow(request);
     case 'run':
       return readMobileRun(request.id);
     case 'chats':
-      return readMobileChats();
+      return readMobileChats(request);
     case 'projects':
       return readMobileProjects();
     case 'chat':
@@ -38,14 +49,32 @@ async function dispatch(request: MobileRequest): Promise<MobileResponses[MobileR
       return createMobileChat(request);
     case 'sendMessage':
       return sendMobileMessage(request);
+    case 'steerMessage':
+      return steerMobileMessage(request);
     case 'stopChat':
       return stopMobileChat(request);
+    case 'deleteChat':
+      return deleteMobileChat(request);
     case 'answerQuestion':
       return answerMobileQuestion(request);
     case 'respondPermission':
       return respondMobilePermission(request);
+    case 'approvePlan':
+      return approveMobilePlan(request);
+    case 'composer':
+      return readMobileComposer(request);
+    case 'updateComposer':
+      return updateMobileComposer(request);
+    case 'setMode':
+      return setMobileMode(request);
+    case 'setAccount':
+      return setMobileAccount(request);
     case 'resumeNode':
       return resumeMobileNode(request);
+    case 'completeTask':
+    case 'continueTask':
+    case 'startTask':
+      return runMobileTaskAction(request);
     case 'startFlow': {
       requireExecutionReady();
       const run = await mobileCallers.flows.startRun({
@@ -78,6 +107,8 @@ export async function executeMobileRequest(
     if (error instanceof TRPCError && ['CONFLICT', 'PRECONDITION_FAILED'].includes(error.code)) {
       throw new MobileApiError(409, 'This item changed. Refresh and try again.');
     }
+    // The phone only sees this generic message, so the real fault is reported here.
+    captureContained(error, { surface: 'mobile-api', stage: parsed.data.type });
     throw new MobileApiError(500, 'Frink could not complete this request. Try again.');
   }
 }

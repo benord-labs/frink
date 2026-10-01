@@ -6,9 +6,7 @@ import { ChevronDown } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { memo, useEffect, useMemo, useState } from 'react';
 import { Kbd } from '../../../components/ui/kbd';
-import { useFileChangeListener } from '../../../lib/hooks/use-file-change-listener';
 import { keysToDisplayPlatform } from '../../../lib/hotkeys';
-import { trpc } from '../../../lib/trpc';
 import { cn } from '../../../lib/utils';
 import { isMacOS } from '../../../lib/utils/platform';
 
@@ -42,8 +40,8 @@ type SubChatStatusCardProps = {
   subChatId: string; // Sub-chat ID for filtering (used when Review is clicked)
   isStreaming: boolean;
   isCompacting?: boolean;
-  changedFiles: SubChatFileChange[];
-  worktreePath?: string | null; // For git status check to hide committed files
+  /** From useUncommittedFiles: the card renders nothing when this is empty. */
+  uncommittedFiles: SubChatFileChange[];
   onStop?: () => void;
   /** Whether there's a queue card above this one - affects border radius */
   hasQueueCardAbove?: boolean;
@@ -54,8 +52,7 @@ export const SubChatStatusCard = memo(function SubChatStatusCard({
   subChatId,
   isStreaming,
   isCompacting,
-  changedFiles,
-  worktreePath,
+  uncommittedFiles,
   onStop,
   hasQueueCardAbove = false,
 }: SubChatStatusCardProps) {
@@ -66,54 +63,6 @@ export const SubChatStatusCard = memo(function SubChatStatusCard({
   const setFilteredDiffFiles = useSetAtom(filteredDiffFilesAtomFamily(chatId));
   const setFilteredSubChatId = useSetAtom(filteredSubChatIdAtomFamily(chatId));
   const setFocusedDiffFile = useSetAtom(focusedDiffFileAtomFamily(chatId));
-
-  // Listen for file changes from Claude Write/Edit tools
-  useFileChangeListener(worktreePath);
-
-  // Fetch git status to filter out committed files
-  const { data: gitStatus } = trpc.changes.getStatus.useQuery(
-    { worktreePath: worktreePath || '', defaultBranch: 'main' },
-    {
-      enabled: !!worktreePath && changedFiles.length > 0 && !isStreaming,
-      // No polling - updates triggered by file-changed events from Claude tools
-      staleTime: 30000,
-      placeholderData: (prev) => prev,
-    },
-  );
-
-  // Filter changedFiles to only include files that are still uncommitted
-  const uncommittedFiles = useMemo(() => {
-    // If no git status yet, no worktreePath, or still streaming - show all files
-    if (!gitStatus || !worktreePath || isStreaming) {
-      return changedFiles;
-    }
-
-    // Build set of all uncommitted file paths from git status
-    const uncommittedPaths = new Set<string>();
-    // Safely iterate - arrays might be undefined in edge cases
-    if (gitStatus.staged) {
-      for (const file of gitStatus.staged) {
-        uncommittedPaths.add(file.path);
-      }
-    }
-    if (gitStatus.unstaged) {
-      for (const file of gitStatus.unstaged) {
-        uncommittedPaths.add(file.path);
-      }
-    }
-    if (gitStatus.untracked) {
-      for (const file of gitStatus.untracked) {
-        uncommittedPaths.add(file.path);
-      }
-    }
-
-    // Filter changedFiles to only include files that are still uncommitted
-    const filtered = changedFiles.filter((file) => {
-      const hasMatch = uncommittedPaths.has(file.displayPath);
-      return hasMatch;
-    });
-    return filtered;
-  }, [changedFiles, gitStatus, worktreePath, isStreaming]);
 
   // Calculate totals from uncommitted files only
   const totals = useMemo(() => {

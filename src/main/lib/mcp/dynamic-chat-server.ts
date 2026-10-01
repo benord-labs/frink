@@ -342,10 +342,9 @@ function sendSseStream(
 
 async function handleToolsList(toolset?: string) {
   // From the URL's toolset: a session lists its tools at spawn, before a turn binds its channel.
-  // Plan mode hides flow tools (they create real resources); LAUNCH_FLAGS.flows is the kill switch.
-  const [mode, signal] = toolset?.split(':') ?? [];
-  const flowsTools = mode === 'plan' || !LAUNCH_FLAGS.flows ? [] : FLOWS_TOOLS;
-  return { tools: [...toolCatalog.getRuntimeBaseTools(signal !== 'nosignal'), ...flowsTools] };
+  // The same list in every mode (plan mode refuses flow tools per call); LAUNCH_FLAGS.flows is the kill switch.
+  const flowsTools = LAUNCH_FLAGS.flows ? FLOWS_TOOLS : [];
+  return { tools: [...toolCatalog.getRuntimeBaseTools(toolset !== 'nosignal'), ...flowsTools] };
 }
 
 /** Zod schemas for MCP tools/call argument validation (per API security SKILL). */

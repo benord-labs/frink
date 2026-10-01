@@ -5,6 +5,7 @@
  * generated mirror whose parity a sync test asserts.
  */
 import { z } from 'zod';
+import { CODEX_SPEEDS } from './execution';
 
 const batchTriggerSchemaItem = z.object({
   key: z
@@ -55,11 +56,11 @@ export const flowSettingsShapeSchema = z.object({
     .describe(
       'Whether eligible provider-backed Agent steps use the provider native Auto reviewer. Defaults to on when omitted. Direct run_command and custom-node steps are unaffected.',
     ),
-  codexFastMode: z
-    .boolean()
+  codexSpeed: z
+    .enum(CODEX_SPEEDS)
     .optional()
     .describe(
-      "Whether Codex-backed Agent steps request the 'priority' (Fast) service tier, which bills 2-2.5x credits for lower latency. Defaults to OFF when omitted. Flow-level only — there is deliberately no per-node override, so an automation's cost policy stays visible across its whole graph. Ignored by non-Codex accounts and by Codex models with no priority tier.",
+      "Speed Codex-backed Agent steps request. 'fast' (the priority tier) bills 2-2.5x credits; 'ultrafast' (GPT-6 Astra only, Pro 500 and eligible Enterprise/Edu plans) runs up to 8x faster for 8x credits. Defaults to 'standard' when omitted. Flow-level only — there is deliberately no per-node override, so an automation's cost policy stays visible across its whole graph. A step whose model lacks the chosen tier runs at standard speed. Ignored by non-Codex accounts.",
     ),
   maxBatchConcurrency: z
     .number()

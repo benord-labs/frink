@@ -13,12 +13,7 @@
     }
   },
   "frink": {
-    "keywords": [
-      "postgres",
-      "database",
-      "sql",
-      "branches"
-    ],
+    "keywords": ["postgres", "database", "sql", "branches"],
     "actions": [
       {
         "id": "neon.list_projects",

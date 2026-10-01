@@ -99,7 +99,7 @@ export function buildPieces(): MarkPiece[] {
   const data = new SVGLoader().parse(FRINK_SVG);
   const out: MarkPiece[] = [];
   for (const path of data.paths) {
-    for (const shape of SVGLoader.createShapes(path)) {
+    for (const shape of path.toShapes()) {
       const fill = new Three.ExtrudeGeometry(shape, {
         depth: 36,
         bevelEnabled: true,

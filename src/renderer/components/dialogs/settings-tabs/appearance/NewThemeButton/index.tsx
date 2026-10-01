@@ -32,9 +32,7 @@ export function NewThemeButton({ from, disabled, onClick }: Props): ReactElement
         <Plus className="size-3.5" />
       </span>
       <span className="min-w-0">
-        <span className="block text-sm leading-tight font-medium text-foreground">
-          New theme
-        </span>
+        <span className="block text-sm leading-tight font-medium text-foreground">New theme</span>
         <span id={hintId} className="block text-xs leading-snug text-muted-foreground">
           Starts from {from}. Change two colors, Frink picks the rest.
         </span>

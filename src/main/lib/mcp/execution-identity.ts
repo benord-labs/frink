@@ -1,7 +1,6 @@
 /** How a client addresses its run on the dynamic-chat MCP server: the channel token its process
  * carries plus the toolset it lists (decision codex-app-server-identity-scope). */
 
-import type { ChatMode } from '../../../shared/types/chat-mode';
 
 export type ChannelRuntime = 'claude' | 'codex';
 export type ExecutionIdentity = { channel?: string; toolset?: string };
@@ -71,17 +70,13 @@ export function appendIdentityToEndpointUrl(baseUrl: string, identity: Execution
 }
 
 /** A dynamic-chat URL on `channel`. The server lists tools from its `toolset`, so the URL (and a
- * reused process's spawn args) changes exactly when that list would. */
-export function withChannelQuery(
-  baseUrl: string,
-  channel: string,
-  mode: ChatMode,
-  hasSignalTask: boolean,
-): string {
+ * reused process's spawn args) changes exactly when that list would. Mode is not part of it: plan
+ * mode refuses flow tools per call, so a warm CLI can switch modes. */
+export function withChannelQuery(baseUrl: string, channel: string, hasSignalTask: boolean): string {
   try {
     const url = new URL(baseUrl);
     url.searchParams.set('channel', channel);
-    url.searchParams.set('toolset', `${mode}:${hasSignalTask ? 'signal' : 'nosignal'}`);
+    url.searchParams.set('toolset', hasSignalTask ? 'signal' : 'nosignal');
     return url.toString();
   } catch {
     return baseUrl;

@@ -71,7 +71,7 @@ function registerCodexBasicPermissionTests({
     await handleRemoteExecute({
       ...basePayload,
       message: 'codex turn with Auto on',
-      settings: { autoReviewTools: true, codexFastMode: true, model: 'codex-gpt-5.6-sol-high' },
+      settings: { autoReviewTools: true, codexSpeed: 'fast', model: 'codex-gpt-5.6-sol-high' },
     });
 
     expect(vi.mocked(runCodexAgent).mock.calls[0]?.[0]).toEqual(
@@ -97,7 +97,7 @@ function registerCodexBasicPermissionTests({
     expect(codexCall?.configArgs).toBeUndefined();
     expect(dynamicServer).toContain('http://127.0.0.1:4312/mcp');
     expect(dynamicServer).toContain('channel=');
-    expect(dynamicServer).toContain('toolset=agent%3Anosignal');
+    expect(dynamicServer).toContain('toolset=nosignal');
     expect(dynamicServer).not.toContain('executionId');
   });
 

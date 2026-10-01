@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { cleanup, render } from '@testing-library/react';
+import { act, cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useHotkeyRecorder } from './use-hotkey-recorder';
 
@@ -111,5 +111,68 @@ describe('useHotkeyRecorder — plus/minus key normalisation', () => {
 
     // Must equal the default shortcut-registry value for zoom-in-grow-pane
     expect(onRecord).toHaveBeenCalledWith('cmd+shift+plus');
+  });
+});
+
+function DisplayHarness() {
+  const { recorderRef, currentDisplay } = useHotkeyRecorder({
+    onRecord: vi.fn(),
+    onCancel: vi.fn(),
+    isRecording: true,
+  });
+  return (
+    <div ref={recorderRef} data-testid="display">
+      {currentDisplay}
+    </div>
+  );
+}
+
+// The live display shares the registry's key→glyph table, so what the user sees while
+// holding keys matches what the Settings search shows once the combination is recorded.
+describe('useHotkeyRecorder — live display', () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it.each([
+    ['k', '⌘⇧K'],
+    ['ArrowUp', '⌘⇧↑'],
+    ['Enter', '⌘⇧↵'],
+    ['Backspace', '⌘⇧⌫'],
+    ['Delete', '⌘⇧⌦'],
+    [' ', '⌘⇧Space'],
+    ['+', '⌘⇧+'],
+    ['-', '⌘⇧−'],
+    ['F5', '⌘⇧F5'],
+    ['Home', '⌘⇧HOME'],
+  ])('shows %j held with Cmd+Shift as %s', (key, expected) => {
+    render(<DisplayHarness />);
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Meta', metaKey: true }));
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Shift', metaKey: true, shiftKey: true }),
+      );
+      window.dispatchEvent(new KeyboardEvent('keydown', { key, metaKey: true, shiftKey: true }));
+    });
+    expect(screen.getByTestId('display').textContent).toBe(expected);
+  });
+
+  it('orders modifiers canonically regardless of press order', () => {
+    render(<DisplayHarness />);
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Shift', shiftKey: true }));
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Alt', shiftKey: true, altKey: true }),
+      );
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Control',
+          shiftKey: true,
+          altKey: true,
+          ctrlKey: true,
+        }),
+      );
+    });
+    expect(screen.getByTestId('display').textContent).toBe('⌃⌥⇧');
   });
 });

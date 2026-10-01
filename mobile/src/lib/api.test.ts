@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mobilePairingLink } from '@frink/shared/types/remote/mobile';
 import { ApiError, pairComputer, parsePairing, requestMobile } from './api';
 
-const pairing = { version: 1, url: 'https://desktop.example.ts.net:8443', code: 'a'.repeat(43) };
+const pairing = { version: 2, url: 'https://desktop.example.ts.net:8443', code: 'a'.repeat(43) };
 const connection = {
   url: pairing.url,
   token: 'b'.repeat(43),
@@ -21,6 +22,18 @@ describe('native mobile boundary', () => {
   ])('rejects unsafe pairing origin %s', (url) => {
     expect(() => parsePairing(JSON.stringify({ ...pairing, url }))).toThrow('pairing code');
   });
+  it('reads the link the Mac shows as well as its JSON', () => {
+    const link = mobilePairingLink({ ...pairing, version: 2 });
+    expect(parsePairing(` ${link}\n`)).toEqual(pairing);
+    expect(parsePairing(JSON.stringify(pairing))).toEqual(pairing);
+  });
+  it.each([
+    ['another scheme', mobilePairingLink({ ...pairing, version: 2 }).replace('frink-mobile', 'https')],
+    ['an http origin', mobilePairingLink({ ...pairing, version: 2, url: 'http://desktop.local' })],
+    ['a bad code', mobilePairingLink({ ...pairing, version: 2, code: 'short' })],
+  ])('rejects a link with %s', (_, link) => {
+    expect(() => parsePairing(link)).toThrow('pairing code');
+  });
   it('pairs only against the explicitly supplied origin and checks API compatibility', async () => {
     const fetcher = vi.fn().mockResolvedValue(
       new Response(
@@ -28,7 +41,7 @@ describe('native mobile boundary', () => {
           token: connection.token,
           deviceId: 'phone',
           machineName: 'My Mac',
-          apiVersion: 1,
+          apiVersion: 2,
         }),
       ),
     );
@@ -61,7 +74,7 @@ describe('native mobile boundary', () => {
     const fetcher = vi.fn().mockRejectedValue(new Error('connection reset'));
     vi.stubGlobal('fetch', fetcher);
     await expect(requestMobile(connection, { type: 'cancelRun', id: 'run' })).rejects.toThrow(
-      'it may have reached',
+      'it may have arrived',
     );
     expect(fetcher).toHaveBeenCalledTimes(1);
   });

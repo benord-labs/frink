@@ -7,6 +7,7 @@
 import log from 'electron-log';
 import { type ResolvedTaskStartMode, toChatMode } from '../../../shared/lib/trigger-rule-config';
 import type { ChatMode } from '../../../shared/types/chat-mode';
+import type { TaskChatReadyData } from '../../../shared/types/task-chat-ready';
 import { getActiveExecution } from '../socket/streaming/execution-registry';
 
 /**
@@ -66,8 +67,13 @@ export function resolveFlowContinuationExecutionTask(input: FlowContinuationReso
  * A send carrying the matching `dispatchTaskId` binds to this mode instead of renderer state
  * (decision `sub-chat-mode-ownership`, machine-turn amendment); user sends never carry the id.
  * Keyed per task so overlapping dispatches into one reused sub-chat each keep their binding.
+ * The record also holds the dispatch's payload until its send lands, for a renderer that missed
+ * the one-shot `task:chat-ready` event (see {@link listUndeliveredDispatches}).
  */
-const pendingDispatchMode = new Map<string, { mode: ChatMode; registeredAtMs: number }>();
+const pendingDispatchMode = new Map<
+  string,
+  { mode: ChatMode; registeredAtMs: number; payload?: TaskChatReadyData }
+>();
 
 const PENDING_DISPATCH_TTL_MS = 15 * 60 * 1000;
 
@@ -95,10 +101,12 @@ export function registerPendingDispatchMode(
   subChatId: string,
   taskId: string,
   startMode: ResolvedTaskStartMode,
+  payload?: TaskChatReadyData,
 ): void {
   pendingDispatchMode.set(dispatchKey(subChatId, taskId), {
     mode: toChatMode(startMode),
     registeredAtMs: Date.now(),
+    payload,
   });
   const nowMs = Date.now();
   dispatchedSubChatByTask.delete(taskId);
@@ -128,6 +136,22 @@ export function matchDispatchModeForSend(
     mode: record.mode,
   });
   return record.mode;
+}
+
+/** Unsent dispatch payloads: a renderer that missed the one-shot `task:chat-ready` (reload, listener
+ * not mounted yet) pulls these once listening; its queued/sent dedup makes re-delivery idempotent. */
+export function listUndeliveredDispatches(): TaskChatReadyData[] {
+  const nowMs = Date.now();
+  return [...pendingDispatchMode.values()].flatMap((record) =>
+    record.payload && nowMs - record.registeredAtMs <= PENDING_DISPATCH_TTL_MS
+      ? [record.payload]
+      : [],
+  );
+}
+
+/** True until the dispatch's send lands ({@link consumeDispatchMode}). */
+export function isDispatchPending(subChatId: string, taskId: string): boolean {
+  return pendingDispatchMode.has(dispatchKey(subChatId, taskId));
 }
 
 /** Settle a matched record after its send's mode write landed (write failure → record stays). */

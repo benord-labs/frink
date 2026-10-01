@@ -25,6 +25,7 @@ const {
 }));
 
 vi.mock('../db', () => ({ getDatabase: vi.fn(() => ({}) as unknown) }));
+vi.mock('../db/repos/project-ai-accounts', () => ({ assertChatLogin: vi.fn() }));
 
 vi.mock('../db/repos/sub-chats', () => ({
   appendUserMessageLocal: appendUserMessageLocalMock,

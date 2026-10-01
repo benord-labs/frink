@@ -7,7 +7,12 @@ import { FLOW_ADMISSION_QUEUE_ORDER_BY } from './queue-order';
 import { flowRunAdmissionSnapshotsForRuns, queuedFlowAdmissions } from './visibility';
 
 const GRAPH = { nodes: [], edges: [], settings: {} };
-const CONFIG = { version: 1 as const, concurrencyLimitEnabled: true, maxConcurrentRuns: 10 };
+const CONFIG = {
+  version: 1 as const,
+  queuePaused: false,
+  concurrencyLimitEnabled: true,
+  maxConcurrentRuns: 10,
+};
 
 function seedRun(db: TestDb, id: string, status: 'pending' | 'failed' = 'pending'): void {
   db.insert(flows)
@@ -60,6 +65,15 @@ describe('Flow admission queue order', () => {
       admissions.moveQueued(first.admission.ticket, third.admission.ticket),
     ).resolves.toEqual({ status: 'moved' });
     expect(orderedRunIds(db)).toEqual(['run-2', 'run-3', 'run-1']);
+    db.update(flowRuns)
+      .set({ triggerContext: { label: '#7 batch item' } })
+      .where(eq(flowRuns.id, 'run-3'))
+      .run();
+    expect(queuedFlowAdmissions(db).map((row) => row.triggerContext)).toEqual([
+      null,
+      { label: '#7 batch item' },
+      null,
+    ]);
     expect(queuedFlowAdmissions(db).map((row) => row.flowName)).toEqual([
       'Flow run-2',
       'Flow run-3',

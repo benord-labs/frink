@@ -100,7 +100,7 @@ export function DiffFileList({
   onToggleCollapsed,
   onExpand,
 }: DiffFileListProps) {
-  const viewerRef = useRef<CodeViewHandle<undefined>>(null);
+  const viewerRef = useRef<CodeViewHandle<undefined, undefined>>(null);
   const layout = useAtomValue(diffPanelLayoutAtom);
   const [menuPath, setMenuPath] = useState<string | null>(null);
   const openFile = useSetAtom(openFileAtom);
@@ -110,7 +110,7 @@ export function DiffFileList({
   const items = useMemo(() => toCodeViewItems(files, collapsedKeys), [files, collapsedKeys]);
   // CodeView re-renders every visible file when these change identity; keep them stable
   const renderHeaderPrefix = useCallback(
-    (item: CodeViewItem) => (
+    (item: CodeViewItem<undefined>) => (
       <CollapseToggle
         collapsed={collapsedKeys.has(item.id)}
         onToggle={() => onToggleCollapsed(item.id)}

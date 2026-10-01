@@ -5,6 +5,7 @@ on:
     paths:
       - 'mobile/**'
       - 'src/shared/types/remote/mobile.ts'
+      - 'src/shared/types/remote/notifications.ts'
       - 'src/shared/types/task-signal.ts'
       - '.github/workflows/mobile.yml'
   push:
@@ -12,6 +13,7 @@ on:
     paths:
       - 'mobile/**'
       - 'src/shared/types/remote/mobile.ts'
+      - 'src/shared/types/remote/notifications.ts'
       - 'src/shared/types/task-signal.ts'
       - '.github/workflows/mobile.yml'
   workflow_dispatch:

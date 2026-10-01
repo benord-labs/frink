@@ -14,7 +14,10 @@ import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { type MoveResult, showMoveToast } from '@/features/files-sidebar/utils/batch-result-toasts';
 import { getFileIconByExtension } from '@/lib/mentions/agents-file-mention-icons';
 import { Folder, GripVertical } from 'lucide-react';
-import { splitPaneFileTreesAtom } from '../../../../features/files-sidebar/atoms';
+import {
+  splitPaneFileTreesAtom,
+  UNSEEDED_SPLIT_PANE_FILE_TREES,
+} from '../../../../features/files-sidebar/atoms';
 import {
   CrossProjectDropDialog,
   type CrossProjectDropInfo,
@@ -91,7 +94,7 @@ function DraggedItemCard() {
       <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
       <span className="truncate max-w-[180px]">{dndActiveItem.nodeName}</span>
       {dndActiveItem.batchItems && dndActiveItem.batchItems.length > 0 && (
-        <span className="ml-0.5 inline-flex items-center justify-center size-5 rounded-full bg-primary text-primary-foreground text-[10px] font-medium">
+        <span className="ml-0.5 inline-flex items-center justify-center size-5 rounded-full bg-primary text-primary-foreground text-xs font-medium">
           +{dndActiveItem.batchItems.length}
         </span>
       )}
@@ -138,16 +141,12 @@ export function SplitViewContainer({
 
   // Track which panes have their file tree open (by pane index).
   // Shared via Jotai atom so each pane's chat-header file-tree toggle can flip it too.
-  // Pane 0 inherits the single-pane file sidebar state so it persists across the transition.
   const [openFileTrees, setOpenFileTrees] = useAtom(splitPaneFileTreesAtom);
 
-  // One-time: seed which panes have the file tree open from mount props. `didInit` ensures we do not
-  // re-apply when `panes` is replaced/updated; omitting `panes` from deps keeps that contract explicit.
-  const didInit = useRef(false);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: one-time init; `didInit` guards application; `panes` omitted so pane list updates do not reset open trees.
+  // Seed once per split session: Settings/Flows unmount this view without ending the split.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: once per split session; `panes` omitted so pane list updates never re-seed.
   useEffect(() => {
-    if (didInit.current) return;
-    didInit.current = true;
+    if (jotaiStore.get(splitPaneFileTreesAtom) !== UNSEEDED_SPLIT_PANE_FILE_TREES) return;
     setOpenFileTrees(
       new Set(
         initialFileTreeOpen
@@ -156,13 +155,6 @@ export function SplitViewContainer({
       ),
     );
   }, [initialFileTreeOpen, setOpenFileTrees]);
-
-  // Reset atom when split view unmounts so stale state doesn't leak.
-  useEffect(() => {
-    return () => {
-      setOpenFileTrees(new Set<number>());
-    };
-  }, [setOpenFileTrees]);
 
   const toggleFileTree = useCallback(
     (idx: number) => {
@@ -589,7 +581,7 @@ export function SplitViewContainer({
                 <CompactPaneDigitBadge
                   paneIndex={idx}
                   paneNumber={idx + 1}
-                  className="h-5! min-w-[20px]! px-1.5! text-[11px]! font-bold!"
+                  className="h-5! min-w-[20px]! px-1.5! text-xs! font-bold!"
                 />
                 <span className="truncate max-w-[140px] font-medium">{paneLabel ?? 'Chat'}</span>
               </div>

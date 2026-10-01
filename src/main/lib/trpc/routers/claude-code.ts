@@ -20,6 +20,7 @@ import { ALLOWED_SOURCE_PATH_SCHEMES } from '../../credentials/source-readers';
 import { type AIAccountType, claudeCodeCredentials, getDatabase } from '../../db';
 import { getChatById } from '../../db/repos/chats';
 import {
+  getChatAiAccount,
   getProjectAiAccount as getProjectAiAccountLocal,
   setProjectAiAccount as setProjectAiAccountLocal,
 } from '../../db/repos/project-ai-accounts';
@@ -109,6 +110,25 @@ async function reprobeFlaggedPassthrough<
     .get() as T | undefined;
   // No fallback to the stale snapshot: undefined means the row was deleted mid-probe.
   return fresh;
+}
+
+/** A login as the account surfaces show it; `isBlocked` marks a chat whose own login was removed. */
+function toResolvedAccount(
+  row: typeof claudeCodeCredentials.$inferSelect,
+  unlabelled: string,
+  flags: { isProjectOverride: boolean; isBlocked: boolean; projectId: string | null },
+) {
+  return {
+    id: row.id,
+    label: row.accountLabel || unlabelled,
+    type: resolveAccountType(row),
+    isAuthenticated: isAccountAuthenticated(row),
+    source: row.source ?? null,
+    sourcePath: row.sourcePath ?? null,
+    needsReauthAt: row.needsReauthAt?.toISOString() ?? null,
+    expectedEmail: row.expectedEmail ?? null,
+    ...flags,
+  };
 }
 
 function clearLocalAccountDefaults(): void {
@@ -970,9 +990,9 @@ export const claudeCodeRouter = router({
     }),
 
   /**
-   * Get the resolved account label and provider type for a chat or for new-chat context.
-   * When chatId is provided, uses that chat's project; when only projectId is provided (e.g. new
-   * chat with a selected project), uses that project; otherwise uses default account.
+   * The account label and provider type for a chat (its stamped account) or for new-chat context
+   * (the projectId's override), else the default account.
+   *
    * `projectId` in the result is the scoped project for account-picker mutations (null = workspace default only).
    */
   getResolvedAccount: publicProcedure
@@ -988,57 +1008,44 @@ export const claudeCodeRouter = router({
       // Type + auth state use the module-scope helpers (shared with listAccounts/getIntegration
       // so the three selection reads can't drift). `type` resolves to 'codex' when a codex row
       // surfaces (flag on); codex passthrough is authenticated by needsReauthAt, not a token.
-      let projectIdToUse: string | undefined;
-      if (input.chatId) {
-        const chat = await getChatById(getDatabase(), input.chatId);
-        projectIdToUse = chat?.projectId ?? undefined;
-      } else {
-        projectIdToUse = input.projectId;
-      }
+      const chat = input.chatId ? await getChatById(db, input.chatId) : null;
+      const scopedProjectId = (input.chatId ? chat?.projectId : input.projectId) ?? null;
+      const projectOverride = scopedProjectId ? await getProjectAiAccount(scopedProjectId) : null;
+      const pinned = chat ? await getChatAiAccount(db, chat) : projectOverride;
+      // A blocked chat (login removed) shows another login of its own provider, never another's.
+      const scope = chat
+        ? sql`${claudeCodeCredentials.type} = ${chat.provider}`
+        : SELECTABLE_ACCOUNT_TYPE_SCOPE_WITH_NULL;
+      if (pinned) {
+        // Keyed by primary key, so no ranking. The type scope still hides a launch-flag-hidden
+        // codex row even when the chat or project still points at it.
+        const localAccount = db
+          .select()
+          .from(claudeCodeCredentials)
+          .where(
+            and(eq(claudeCodeCredentials.id, pinned.id), SELECTABLE_ACCOUNT_TYPE_SCOPE_WITH_NULL),
+          )
+          .get();
+        const freshOverride = await reprobeFlaggedPassthrough(localAccount);
 
-      const scopedProjectId: string | null = projectIdToUse ?? null;
-
-      // Local-first migration: project↔AI-account routing is now in local SQLite
-      // (project_ai_accounts). The temporary 30b39fe10 try/catch around the cloud
-      // Neon round-trip is gone — local lookups don't 404 on local-only project
-      // IDs because they ARE local-only project IDs.
-      const projectAccount = projectIdToUse ? await getProjectAiAccount(projectIdToUse) : null;
-      if (projectIdToUse) {
-        if (projectAccount) {
-          // Keyed by primary key, so exactly one row can match — no ranking. The type
-          // scope still applies: a launch-flag-hidden codex row must stay invisible
-          // to selection reads even when a project override still points at it.
-          const localAccount = db
-            .select()
-            .from(claudeCodeCredentials)
-            .where(
-              and(
-                eq(claudeCodeCredentials.id, projectAccount.id),
-                SELECTABLE_ACCOUNT_TYPE_SCOPE_WITH_NULL,
-              ),
-            )
-            .get();
-          const freshOverride = await reprobeFlaggedPassthrough(localAccount);
-
-          // A pinned row this user cannot see (another account's, hidden type, or deleted
-          // mid-probe) is no override: fall through to the user's own default account.
-          if (freshOverride) {
-            const overrideType = resolveAccountType(freshOverride);
-            return {
-              id: freshOverride.id,
-              label: freshOverride.accountLabel || defaultAccountLabel(overrideType),
-              type: overrideType,
-              isProjectOverride: true,
-              isAuthenticated: isAccountAuthenticated(freshOverride),
-              source: freshOverride.source ?? null,
-              sourcePath: freshOverride.sourcePath ?? null,
-              needsReauthAt: freshOverride.needsReauthAt?.toISOString() ?? null,
-              expectedEmail: freshOverride.expectedEmail ?? null,
-              projectId: scopedProjectId,
-            };
-          }
+        // A pinned row this user cannot see (another account's, hidden type, or deleted
+        // mid-probe) is no override: fall through to the user's own default account.
+        if (freshOverride) {
+          const unlabelled = defaultAccountLabel(resolveAccountType(freshOverride));
+          return toResolvedAccount(freshOverride, unlabelled, {
+            isProjectOverride: freshOverride.id === projectOverride?.id,
+            isBlocked: false,
+            projectId: scopedProjectId,
+          });
         }
       }
+
+      // Any fallback for a chat stands in for a removed login: the chat is blocked until retried.
+      const fallback = {
+        isProjectOverride: false,
+        isBlocked: Boolean(chat),
+        projectId: scopedProjectId,
+      };
 
       // Fall back to default account. More than one row could carry isDefault=1 (cloud
       // sync race or stale flag), and we want the authenticated one to win — this ranks
@@ -1046,9 +1053,7 @@ export const claudeCodeRouter = router({
       const defaultAccount = db
         .select()
         .from(claudeCodeCredentials)
-        .where(
-          sql`${claudeCodeCredentials.isDefault} = 1 AND ${SELECTABLE_ACCOUNT_TYPE_SCOPE_WITH_NULL}`,
-        )
+        .where(sql`${claudeCodeCredentials.isDefault} = 1 AND ${scope}`)
         .orderBy(
           desc(RESOLVABLE_FIRST_RANK),
           desc(HEALABLE_NEXT_RANK),
@@ -1058,20 +1063,7 @@ export const claudeCodeRouter = router({
         .get();
 
       const freshDefault = await reprobeFlaggedPassthrough(defaultAccount);
-      if (freshDefault) {
-        return {
-          id: freshDefault.id,
-          label: freshDefault.accountLabel || 'Claude Code',
-          type: resolveAccountType(freshDefault),
-          isProjectOverride: false,
-          isAuthenticated: isAccountAuthenticated(freshDefault),
-          source: freshDefault.source ?? null,
-          sourcePath: freshDefault.sourcePath ?? null,
-          needsReauthAt: freshDefault.needsReauthAt?.toISOString() ?? null,
-          expectedEmail: freshDefault.expectedEmail ?? null,
-          projectId: scopedProjectId,
-        };
-      }
+      if (freshDefault) return toResolvedAccount(freshDefault, 'Claude Code', fallback);
 
       // Fall back to best available account. Order: passthrough (no needsReauthAt)
       // OR api-key with token, then by recency. Without the source check passthrough
@@ -1080,7 +1072,7 @@ export const claudeCodeRouter = router({
       const anyAccount = db
         .select()
         .from(claudeCodeCredentials)
-        .where(sql`${SELECTABLE_ACCOUNT_TYPE_SCOPE_WITH_NULL}`)
+        .where(scope)
         .orderBy(
           desc(RESOLVABLE_FIRST_RANK),
           desc(HEALABLE_NEXT_RANK),
@@ -1089,20 +1081,7 @@ export const claudeCodeRouter = router({
         .limit(1)
         .get();
       const freshAny = await reprobeFlaggedPassthrough(anyAccount);
-      if (freshAny) {
-        return {
-          id: freshAny.id,
-          label: freshAny.accountLabel || 'Account',
-          type: resolveAccountType(freshAny),
-          isProjectOverride: false,
-          isAuthenticated: isAccountAuthenticated(freshAny),
-          source: freshAny.source ?? null,
-          sourcePath: freshAny.sourcePath ?? null,
-          needsReauthAt: freshAny.needsReauthAt?.toISOString() ?? null,
-          expectedEmail: freshAny.expectedEmail ?? null,
-          projectId: scopedProjectId,
-        };
-      }
+      if (freshAny) return toResolvedAccount(freshAny, 'Account', fallback);
 
       return null;
     }),

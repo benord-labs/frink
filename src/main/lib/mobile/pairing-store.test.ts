@@ -178,6 +178,52 @@ describe('mobile pairing credentials', () => {
     expect(invalid.status().error).toBeNull();
   });
 
+  it('stores, replaces, moves and clears a Live Activity token', async () => {
+    const first = await pairPhone();
+    const next = await store.pair(endpoint);
+    const second = await store.redeem(next.pairing.code, 'Second phone');
+    const [a, b] = ['a'.repeat(64), 'b'.repeat(64)];
+    await store.notifications(first.token, { activityToken: a });
+    expect(store.liveActivityRecipients()).toEqual([{ id: first.deviceId, token: a }]);
+    await store.notifications(first.token, { activityToken: b });
+    await store.notifications(first.token, {});
+    expect(store.liveActivityRecipients()).toEqual([{ id: first.deviceId, token: b }]);
+    // Re-pairing the same phone carries its token to the new pairing.
+    await store.notifications(second.token, { activityToken: b });
+    expect(store.liveActivityRecipients()).toEqual([{ id: second.deviceId, token: b }]);
+    const reopened = new MobilePairingStore(filePath, () => now);
+    await reopened.initialize();
+    expect(reopened.liveActivityRecipients()).toEqual([{ id: second.deviceId, token: b }]);
+    await store.notifications(second.token, { activityToken: null });
+    expect(store.liveActivityRecipients()).toEqual([]);
+  });
+
+  it('skips tokens past the eight-hour card limit and drops them on revoke or disable', async () => {
+    const { token } = await pairPhone();
+    await store.notifications(token, { activityToken: 'a'.repeat(64) });
+    now += 8 * 60 * 60_000 - 1;
+    expect(store.liveActivityRecipients()).toHaveLength(1);
+    await store.disable();
+    expect(store.liveActivityRecipients()).toEqual([]);
+    const phone = await pairPhone();
+    await store.notifications(phone.token, { activityToken: 'a'.repeat(64) });
+    now += 8 * 60 * 60_000;
+    expect(store.liveActivityRecipients()).toEqual([]);
+    await store.notifications(phone.token, { activityToken: 'b'.repeat(64) });
+    expect(store.liveActivityRecipients()).toHaveLength(1);
+    await store.revoke(phone.deviceId);
+    expect(store.liveActivityRecipients()).toEqual([]);
+  });
+
+  it('clears a gone Live Activity token only while it is still current', async () => {
+    const { token, deviceId } = await pairPhone();
+    await store.notifications(token, { activityToken: 'b'.repeat(64) });
+    await store.liveActivityGone(deviceId, 'a'.repeat(64));
+    expect(store.liveActivityRecipients()).toHaveLength(1);
+    await store.liveActivityGone(deviceId, 'b'.repeat(64));
+    expect(store.liveActivityRecipients()).toEqual([]);
+  });
+
   it.each([
     'http://computer:43129',
     'https://user:pass@computer',

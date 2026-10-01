@@ -1,10 +1,14 @@
 import * as Sentry from '@sentry/electron/renderer';
 import { useStore } from 'jotai';
 import { useEffect } from 'react';
-import type { WakeHoldState } from '../../../shared/types/wake-hold';
+import type { WakeHoldEndReason, WakeHoldState } from '../../../shared/types/wake-hold';
 import { trpcClient } from '../trpc';
 import { isDesktopApp } from '../utils/platform';
-import { wakeHeldAtomFamily } from './active-transport-registry';
+import {
+  heldSubChatsAtom,
+  wakeHeldAtomFamily,
+  wakeHoldAdoptedAtomFamily,
+} from './active-transport-registry';
 
 const RETRY_DELAY_MS = 500;
 
@@ -14,8 +18,23 @@ const RETRY_DELAY_MS = 500;
  * on" as one value, with no branch for a held state that has nothing to show.
  */
 type WakeHoldPayload =
-  | { subChatId: string; held: false }
-  | { subChatId: string; held: true; pending: WakeHoldState };
+  | { subChatId: string; chatId: string; held: false; endReason?: WakeHoldEndReason }
+  | { subChatId: string; chatId: string; held: true; pending: WakeHoldState };
+
+/** Completion effects a held chat withheld at turn end. First writer wins: only a retraction clears
+ * an entry, so a second writer is a turn that never adopted the hold (e.g. a failed send). */
+const deferredAnnounce = new Map<string, (failed: boolean) => void>();
+
+/** Announces a held turn whose finish this window never saw (it reloaded mid-wait). */
+type AnnounceSeededHold = (turn: { chatId: string; subChatId: string }, failed: boolean) => void;
+
+/**
+ * Run `fire` when this sub-chat's wait ends on its own, or with `failed` when the wait dies. Any
+ * other retraction (Stop, a follow-up adopting the hold, release) drops it unfired.
+ */
+export function deferUntilWaitOver(subChatId: string, fire: (failed: boolean) => void): void {
+  if (!deferredAnnounce.has(subChatId)) deferredAnnounce.set(subChatId, fire);
+}
 
 /**
  * Validated to the depth the row renders. A hold is only ever armed with at least one pending item,
@@ -34,8 +53,26 @@ export function isWakeHoldState(value: unknown): value is WakeHoldState {
 export function isWakeHoldPayload(data: unknown): data is WakeHoldPayload {
   if (typeof data !== 'object' || data === null) return false;
   const d = data as Record<string, unknown>;
-  if (typeof d.subChatId !== 'string' || typeof d.held !== 'boolean') return false;
+  if (typeof d.subChatId !== 'string' || typeof d.chatId !== 'string') return false;
+  if (typeof d.held !== 'boolean') return false;
   return d.held ? isWakeHoldState(d.pending) : true;
+}
+
+/** Sets one sub-chat's hold, keeping the chat-level map in step. The map is replaced only when
+ * membership changes, so a per-burst re-publish never re-renders the sidebar. */
+function applyWakeHold(
+  store: ReturnType<typeof useStore>,
+  subChatId: string,
+  chatId: string,
+  pending: WakeHoldState | null,
+): void {
+  store.set(wakeHeldAtomFamily(subChatId), pending);
+  const held = store.get(heldSubChatsAtom);
+  if (held.has(subChatId) === Boolean(pending)) return;
+  const next = new Map(held);
+  if (pending) next.set(subChatId, chatId);
+  else next.delete(subChatId);
+  store.set(heldSubChatsAtom, next);
 }
 
 /**
@@ -50,7 +87,7 @@ export function isWakeHoldPayload(data: unknown): data is WakeHoldPayload {
  * ever makes: a window that reloads mid-wait would otherwise render the chat as finished and lose
  * the held row's Stop, the only stop affordance between bursts, while main keeps pumping into it.
  */
-export function useWakeHoldSync(): void {
+export function useWakeHoldSync(announceSeededHold?: AnnounceSeededHold): void {
   const store = useStore();
 
   useEffect(() => {
@@ -69,7 +106,17 @@ export function useWakeHoldSync(): void {
     const unsubscribe = window.desktopApi.on('socket:wake-hold-changed', (data) => {
       if (!isWakeHoldPayload(data)) return;
       spokenFor.add(data.subChatId);
-      store.set(wakeHeldAtomFamily(data.subChatId), data.held ? data.pending : null);
+      applyWakeHold(store, data.subChatId, data.chatId, data.held ? data.pending : null);
+      store.set(
+        wakeHoldAdoptedAtomFamily(data.subChatId),
+        !data.held && data.endReason === 'adopted',
+      );
+      if (data.held) return;
+      const fire = deferredAnnounce.get(data.subChatId);
+      deferredAnnounce.delete(data.subChatId);
+      if (data.endReason === 'wait-over' || data.endReason === 'failed') {
+        fire?.(data.endReason === 'failed');
+      }
     });
 
     // Pull once; on rejection, wait and retry exactly once more; then give up. Local IPC never
@@ -78,8 +125,16 @@ export function useWakeHoldSync(): void {
       try {
         const holds = await trpcClient.socket.listWakeHolds.query();
         if (disposed) return;
-        for (const { subChatId, pending } of holds) {
-          if (!spokenFor.has(subChatId)) store.set(wakeHeldAtomFamily(subChatId), pending);
+        for (const { subChatId, chatId, pending, flow } of holds) {
+          if (spokenFor.has(subChatId)) continue;
+          applyWakeHold(store, subChatId, chatId, pending);
+          // The reload lost this wait's deferred announce; the hold's end still owes one (a Flow
+          // node's never does: its Flow announces the run).
+          if (announceSeededHold && !flow) {
+            deferUntilWaitOver(subChatId, (failed) =>
+              announceSeededHold({ chatId, subChatId }, failed),
+            );
+          }
         }
       } catch (error) {
         if (disposed) return;
@@ -102,5 +157,5 @@ export function useWakeHoldSync(): void {
       if (retryTimer) clearTimeout(retryTimer);
       unsubscribe();
     };
-  }, [store]);
+  }, [store, announceSeededHold]);
 }

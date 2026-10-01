@@ -202,38 +202,37 @@ describe('local dispatch — Flow Auto Mode', () => {
   });
 });
 
-describe('local dispatch — Flow Codex Fast mode', () => {
-  it('emits an explicit false when unset, so a chat left on Fast is actively cleared', async () => {
+describe('local dispatch — Flow Codex speed', () => {
+  it('emits an explicit standard when unset, so a chat left on a paid speed is actively cleared', async () => {
     // The value seeds the chat's persisted Fast atom. Emitting nothing here would let a chat that a
     // previous Fast run switched on keep billing this run at the priority multiplier.
     await seedStartTask();
     await dispatchAgent(agentCtx({ previousOutput: AGENT_PREV_OUTPUT }) as never);
-    expect(h.createTask.mock.calls[0][1].triggerContext._config.codexFastMode).toBe(false);
+    expect(h.createTask.mock.calls[0][1].triggerContext._config.codexSpeed).toBe('standard');
   });
 
-  it('forwards an enabled Fast setting', async () => {
+  it('forwards the flow speed', async () => {
     await seedStartTask();
     await dispatchAgent(
       agentCtx({
         previousOutput: AGENT_PREV_OUTPUT,
-        parsedGraph: { ...GRAPH, settings: { codexFastMode: true } },
+        parsedGraph: { ...GRAPH, settings: { codexSpeed: 'ultrafast' } },
       }) as never,
     );
-    expect(h.createTask.mock.calls[0][1].triggerContext._config.codexFastMode).toBe(true);
+    expect(h.createTask.mock.calls[0][1].triggerContext._config.codexSpeed).toBe('ultrafast');
   });
 
-  it('treats a non-boolean setting as off rather than truthy', async () => {
-    // validate-flow-graph does not type-check settings keys, so only MCP-patched graphs pass
-    // through zod — a hand-edited or legacy graph can carry `codexFastMode: 'yes'`, which is
-    // truthy. `=== true` is what stops that string from silently buying the priority tier.
+  it('treats an unknown speed as standard rather than passing it on', async () => {
+    // validate-flow-graph does not type-check settings keys, so a hand-edited graph can carry any
+    // string; only a known speed name may reach billing.
     await seedStartTask();
     await dispatchAgent(
       agentCtx({
         previousOutput: AGENT_PREV_OUTPUT,
-        parsedGraph: { ...GRAPH, settings: { codexFastMode: 'yes' } },
+        parsedGraph: { ...GRAPH, settings: { codexSpeed: 'yes' } },
       }) as never,
     );
-    expect(h.createTask.mock.calls[0][1].triggerContext._config.codexFastMode).toBe(false);
+    expect(h.createTask.mock.calls[0][1].triggerContext._config.codexSpeed).toBe('standard');
   });
 
   it('does not gate on model support — resolveCodexCliModel is the single support boundary', async () => {
@@ -245,11 +244,11 @@ describe('local dispatch — Flow Codex Fast mode', () => {
         previousOutput: AGENT_PREV_OUTPUT,
         parsedGraph: {
           ...GRAPH,
-          settings: { codexFastMode: true, defaultModel: 'codex-gpt-5.4-mini-medium' },
+          settings: { codexSpeed: 'ultrafast', defaultModel: 'codex-gpt-5.4-mini-medium' },
         },
       }) as never,
     );
-    expect(h.createTask.mock.calls[0][1].triggerContext._config.codexFastMode).toBe(true);
+    expect(h.createTask.mock.calls[0][1].triggerContext._config.codexSpeed).toBe('ultrafast');
   });
 });
 
@@ -414,7 +413,7 @@ describe('local multi-agent chain context forwarding', () => {
     });
   });
 
-  it('worktrees-off start_task (worktreePath \'\') → no executionOverride, startInWorktree: false carried downstream', async () => {
+  it("worktrees-off start_task (worktreePath '') → no executionOverride, startInWorktree: false carried downstream", async () => {
     // '' (not undefined) is what a no-worktree start_task actually emits; task-executor's own
     // resolveWorktreePathForTask is what turns startInWorktree:false into a project-root run.
     await seedStartTask({ worktreePath: '', branch: '', baseBranch: '' });
@@ -730,5 +729,219 @@ describe('agent node inherited model resolution', () => {
     expect((h.createTask.mock.calls[0][1].triggerContext._config as { model?: string }).model).toBe(
       'opus-4.8',
     );
+  });
+});
+
+// sc-3836: st (outer) → fo[st-lane → ag-lane] → ag-after. The continuation's only inputs are the
+// lane tails, so findUpstreamNodeIds returns the lane start_task as well as the outer one.
+const AFTER_FAN_OUT_GRAPH: FlowGraph = {
+  nodes: [
+    { id: 'st', blockType: 'start_task', position: { x: 0, y: 0 } },
+    { id: 'fo', blockType: 'fan_out', position: { x: 0, y: 1 } },
+    {
+      id: 'st-lane',
+      blockType: 'start_task',
+      parentId: 'fo',
+      position: { x: 0, y: 2 },
+    },
+    {
+      id: 'ag-lane',
+      blockType: 'agent',
+      parentId: 'fo',
+      position: { x: 0, y: 3 },
+    },
+    {
+      id: 'ag-after',
+      blockType: 'agent',
+      position: { x: 0, y: 4 },
+      config: { instructions: 'report' },
+    },
+  ],
+  edges: [
+    { id: 'e1', source: 'st', target: 'fo' },
+    { id: 'e2', source: 'fo', target: 'st-lane' },
+    { id: 'e3', source: 'st-lane', target: 'ag-lane' },
+    { id: 'e4', source: 'ag-lane', target: 'ag-after' },
+  ],
+};
+
+describe('nodes after a Fan Out resolve the outer start_task (sc-3836)', () => {
+  const t0 = Date.now();
+
+  async function seedLaneStartTasks(count: number) {
+    const parent = await createNodeRun(db, {
+      flowRunId,
+      nodeId: 'fo',
+      blockType: 'fan_out',
+      status: 'completed',
+    });
+    for (let lane = 0; lane < count; lane += 1) {
+      // Lanes finish AFTER the outer start_task — the newest completed start_task is a lane's.
+      await seedCompletedNodeRun(db, {
+        flowRunId,
+        nodeId: 'st-lane',
+        blockType: 'start_task',
+        outputs: {
+          ...START_TASK_OUTPUTS,
+          projectId,
+          chatId: `chat-lane-${lane}`,
+          worktreePath: `/wt/lane-${lane}`,
+        },
+        completedAt: new Date(t0 + 10_000 + lane * 1000),
+        laneIndex: lane,
+        parentFanOutNodeRunId: parent.id,
+      });
+    }
+    return parent.id;
+  }
+
+  async function afterBarrierAgentRun() {
+    return createNodeRun(db, {
+      flowRunId,
+      nodeId: 'ag-after',
+      blockType: 'agent',
+      status: 'running',
+    });
+  }
+
+  function dispatchAfterBarrier(nodeRunId: string) {
+    return dispatchAgent(
+      agentCtx({
+        nodeRunId,
+        node: AFTER_FAN_OUT_GRAPH.nodes[4],
+        parsedGraph: AFTER_FAN_OUT_GRAPH,
+        previousOutput: {
+          status: 'completed',
+          outputs: { results: [], totalCount: 2, _fanOutState: 'completed' },
+          artifacts: [],
+          durationMs: 0,
+        },
+      }) as never,
+    );
+  }
+
+  it('dispatches the continuation agent into the outer chat + worktree, not the last lane', async () => {
+    await seedNodeRun(
+      'st',
+      'start_task',
+      {
+        ...START_TASK_OUTPUTS,
+        projectId,
+        chatId: 'chat-outer',
+        worktreePath: '/wt/outer',
+      },
+      new Date(t0),
+    );
+    await seedLaneStartTasks(4);
+    const run = await afterBarrierAgentRun();
+
+    const res = await dispatchAfterBarrier(run.id);
+
+    expect(res.type).not.toBe('error');
+    const arg = h.createTask.mock.calls[0][1];
+    expect(arg.triggerContext.chatId).toBe('chat-outer');
+    expect(arg.triggerContext._config.continueChatId).toBe('chat-outer');
+    expect(arg.triggerContext._config.executionOverride.worktreePath).toBe('/wt/outer');
+  });
+
+  it('still picks the latest attempt when the outer start_task was retried', async () => {
+    await seedNodeRun(
+      'st',
+      'start_task',
+      { ...START_TASK_OUTPUTS, projectId, chatId: 'chat-outer-old' },
+      new Date(t0),
+    );
+    await seedNodeRun(
+      'st',
+      'start_task',
+      { ...START_TASK_OUTPUTS, projectId, chatId: 'chat-outer-new' },
+      new Date(t0 + 1000),
+    );
+    await seedLaneStartTasks(2);
+    const run = await afterBarrierAgentRun();
+
+    const context = await resolveUpstreamStartTaskContext(db, flowRunId, {
+      nodeRunId: run.id,
+      upstreamNodeIds: findUpstreamNodeIds(AFTER_FAN_OUT_GRAPH, 'ag-after'),
+    });
+
+    expect(context?.chatId).toBe('chat-outer-new');
+  });
+
+  it('refuses to dispatch (no lane chat) when the only start_tasks ran inside lanes', async () => {
+    await seedLaneStartTasks(3);
+    const run = await afterBarrierAgentRun();
+
+    const res = await dispatchAfterBarrier(run.id);
+
+    expect(res).toMatchObject({ type: 'error' });
+    expect(h.createTask).not.toHaveBeenCalled();
+  });
+
+  it('ignores a later-completed start_task that is not upstream of the node', async () => {
+    // st → cond →(a) ag ; cond →(b) st-other. st-other is not an ancestor of ag.
+    const graph: FlowGraph = {
+      nodes: [
+        { id: 'st', blockType: 'start_task', position: { x: 0, y: 0 } },
+        { id: 'cond', blockType: 'condition', position: { x: 0, y: 1 } },
+        { id: 'ag', blockType: 'agent', position: { x: 0, y: 2 } },
+        { id: 'st-other', blockType: 'start_task', position: { x: 1, y: 2 } },
+      ],
+      edges: [
+        { id: 'e1', source: 'st', target: 'cond' },
+        { id: 'e2', source: 'cond', target: 'ag' },
+        { id: 'e3', source: 'cond', target: 'st-other' },
+      ],
+    };
+    await seedNodeRun(
+      'st',
+      'start_task',
+      { ...START_TASK_OUTPUTS, projectId, chatId: 'chat-mine' },
+      new Date(t0),
+    );
+    await seedNodeRun(
+      'st-other',
+      'start_task',
+      { ...START_TASK_OUTPUTS, projectId, chatId: 'chat-other' },
+      new Date(t0 + 5000),
+    );
+    const run = await createNodeRun(db, {
+      flowRunId,
+      nodeId: 'ag',
+      blockType: 'agent',
+      status: 'running',
+    });
+
+    const context = await resolveUpstreamStartTaskContext(db, flowRunId, {
+      nodeRunId: run.id,
+      upstreamNodeIds: findUpstreamNodeIds(graph, 'ag'),
+    });
+
+    expect(context?.chatId).toBe('chat-mine');
+  });
+
+  it('keeps a lane node on its own lane even when later lanes finished first', async () => {
+    await seedNodeRun(
+      'st',
+      'start_task',
+      { ...START_TASK_OUTPUTS, projectId, chatId: 'chat-outer' },
+      new Date(t0),
+    );
+    const parent = await seedLaneStartTasks(3);
+    const laneRun = await createNodeRun(db, {
+      flowRunId,
+      nodeId: 'ag-lane',
+      blockType: 'agent',
+      status: 'running',
+      laneIndex: 1,
+      parentFanOutNodeRunId: parent,
+    });
+
+    const context = await resolveUpstreamStartTaskContext(db, flowRunId, {
+      nodeRunId: laneRun.id,
+      upstreamNodeIds: findUpstreamNodeIds(AFTER_FAN_OUT_GRAPH, 'ag-lane'),
+    });
+
+    expect(context?.chatId).toBe('chat-lane-1');
   });
 });

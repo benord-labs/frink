@@ -13,11 +13,7 @@
     }
   },
   "frink": {
-    "keywords": [
-      "meetings",
-      "video",
-      "transcripts"
-    ],
+    "keywords": ["meetings", "video", "transcripts"],
     "source": {
       "repo": "cursor/plugins",
       "commit": "4612556",

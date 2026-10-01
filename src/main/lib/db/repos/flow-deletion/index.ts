@@ -39,17 +39,7 @@ export async function listUnsettledFlowRunIdsForFlow(db: Db, flowId: string): Pr
   return unsettledFlowRunIdsForFlow(db, flowId);
 }
 
-export async function listFlowRunIdsForFlow(db: Db, flowId: string): Promise<string[]> {
-  return db
-    .select({ id: flowRuns.id })
-    .from(flowRuns)
-    .innerJoin(flowVersions, eq(flowVersions.id, flowRuns.flowVersionId))
-    .where(eq(flowVersions.flowId, flowId))
-    .all()
-    .map((run) => run.id);
-}
-
-export async function hardDeleteFlow(db: Db, flowId: string): Promise<HardDeleteFlowResult> {
+export function hardDeleteFlow(db: Db, flowId: string): HardDeleteFlowResult {
   return db.transaction(
     () => {
       const unsettledRunIds = unsettledFlowRunIdsForFlow(db, flowId);

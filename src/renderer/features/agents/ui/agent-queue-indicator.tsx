@@ -20,6 +20,10 @@ import { parseSlashCommandDisplayParts } from '../commands/parse-slash-command-d
 import type { AgentQueueItem } from '../lib/queue-utils';
 import { RenderFileMentions } from '../mentions/render-file-mentions';
 
+/** Module-level: dnd-kit's useSensor memoizes on the options object, so an inline literal rebuilds
+ * DndContext's internal context every render and re-renders every draggable past its memo (sc-2721). */
+const POINTER_SENSOR_OPTIONS = { activationConstraint: { distance: 6 } };
+
 /**
  * Lock drag movement to the vertical axis. Queue rows are full-width and reorder is purely
  * vertical — letting the row drift sideways with the cursor makes drop targets harder to hit.
@@ -190,7 +194,16 @@ const QueueItemRow = memo(function QueueItemRow({
           Editing
         </span>
       )}
-      {!isEditing && hasAttachments && (
+      {!isEditing && item.attachmentsLost && (
+        <span
+          role="status"
+          title="Attachments were lost on reload. Edit or remove this message."
+          className="shrink-0 text-[10px] font-medium text-destructive bg-destructive/10 rounded px-1.5 py-0.5"
+        >
+          Attachments lost
+        </span>
+      )}
+      {!isEditing && !item.attachmentsLost && hasAttachments && (
         <span className="shrink-0 text-muted-foreground text-[10px]">
           +{attachmentCount} {attachmentCount === 1 ? 'file' : 'files'}
         </span>
@@ -221,7 +234,7 @@ const QueueItemRow = memo(function QueueItemRow({
             <TooltipContent side="top">{editTooltip}</TooltipContent>
           </Tooltip>
         )}
-        {onSendNow && !isEditing && (
+        {onSendNow && !isEditing && !item.attachmentsLost && (
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -309,7 +322,7 @@ export const AgentQueueIndicator = memo(function AgentQueueIndicator({
 
   // 6px activation distance: a normal click/tap doesn't read as a drag, but a deliberate
   // drag past the threshold engages the sortable. (TODO(a11y): wire KeyboardSensor for keyboard reorder.)
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+  const sensors = useSensors(useSensor(PointerSensor, POINTER_SENSOR_OPTIONS));
 
   const ids = useMemo(() => queue.map((item) => item.id), [queue]);
 

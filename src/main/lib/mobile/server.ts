@@ -2,7 +2,7 @@ import { createServer, type Server } from 'node:http';
 import { hostname } from 'node:os';
 import { getRequestListener } from '@hono/node-server';
 import { TRPCError } from '@trpc/server';
-import { Hono, type HonoRequest } from 'hono';
+import { type Context, Hono, type HonoRequest } from 'hono';
 import { bearerAuth } from 'hono/bearer-auth';
 import { bodyLimit } from 'hono/body-limit';
 import { HTTPException } from 'hono/http-exception';
@@ -14,15 +14,41 @@ import {
   mobileRequestSchema,
   type MobileRequest,
 } from '../../../shared/types/remote/mobile';
+import { notificationRegistrationSchema } from '../../../shared/types/remote/notifications';
 import type { MobilePairingStore } from './pairing-store';
 import { MobileApiError } from './domain/errors';
+import { captureContained } from '../sentry';
 
 export type MobileExecutor = (request: MobileRequest) => Promise<unknown>;
+export type MobileUploader = (input: {
+  chatId: string;
+  subChatId: string;
+  name: string;
+  mimeType: string;
+  bytes: Uint8Array;
+}) => Promise<unknown>;
+/** Raw-body attachment uploads; everything else on this server is small JSON. */
+const ATTACHMENTS_PATH = '/api/attachments';
+export const MOBILE_UPLOAD_MAX_BYTES = 20 * 1024 * 1024;
 type MobileEnvironment = { Variables: { mobileToken: string } };
 const redemptionSchema = z.object({
   code: z.string().min(1).max(200),
   name: z.string().trim().min(1).max(80),
 });
+const uploadHeadersSchema = z.object({
+  chatId: z.string().min(1).max(200),
+  subChatId: z.string().min(1).max(200),
+  name: z.string().trim().min(1).max(255),
+});
+
+function decodeHeader(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return undefined;
+  }
+}
 const domainErrorStatus = {
   BAD_REQUEST: 400,
   UNAUTHORIZED: 401,
@@ -44,7 +70,11 @@ async function readJson(request: HonoRequest): Promise<unknown> {
   }
 }
 
-export function createMobileApp(store: MobilePairingStore, execute: MobileExecutor) {
+export function createMobileApp(
+  store: MobilePairingStore,
+  execute: MobileExecutor,
+  upload?: MobileUploader,
+) {
   const app = new Hono<MobileEnvironment>();
   app.use(
     '*',
@@ -58,18 +88,18 @@ export function createMobileApp(store: MobilePairingStore, execute: MobileExecut
     if (context.req.header('Origin'))
       return context.json({ error: 'Use the Frink mobile app.' }, 403);
     if (context.req.method !== 'POST') return context.json({ error: 'Method not allowed.' }, 405);
+    if (context.req.path === ATTACHMENTS_PATH) return next();
     const mediaType = context.req.header('Content-Type')?.split(';', 1)[0]?.trim().toLowerCase();
     if (mediaType !== 'application/json') {
       return context.json({ error: 'Send an application/json request.' }, 415);
     }
     await next();
   });
-  app.use(
-    '*',
-    bodyLimit({
-      maxSize: 128 * 1024,
-      onError: (context) => context.json({ error: 'Request is too large.' }, 413),
-    }),
+  const tooLarge = (context: Context) => context.json({ error: 'Request is too large.' }, 413);
+  app.use('*', async (context, next) =>
+    context.req.path === ATTACHMENTS_PATH
+      ? bodyLimit({ maxSize: MOBILE_UPLOAD_MAX_BYTES, onError: tooLarge })(context, next)
+      : bodyLimit({ maxSize: 128 * 1024, onError: tooLarge })(context, next),
   );
   app.post('/pair', async (context) => {
     const input = redemptionSchema.parse(await readJson(context.req));
@@ -80,27 +110,45 @@ export function createMobileApp(store: MobilePairingStore, execute: MobileExecut
       apiVersion: MOBILE_API_VERSION,
     });
   });
-  app.use(
-    '/api',
-    bearerAuth<MobileEnvironment>({
-      verifyToken: (token, context) => {
-        if (!store.authenticate(token)) return false;
-        context.set('mobileToken', token);
-        return true;
-      },
-      noAuthenticationHeader: { message: { error: 'Pair this device with Frink first.' } },
-      invalidAuthenticationHeader: { message: { error: 'Invalid authorization header.' } },
-      invalidToken: {
-        message: { error: 'Access expired or was revoked. Pair this device again.' },
-      },
-    }),
-  );
+  const auth = bearerAuth<MobileEnvironment>({
+    verifyToken: (token, context) => {
+      if (!store.authenticate(token)) return false;
+      context.set('mobileToken', token);
+      return true;
+    },
+    noAuthenticationHeader: { message: { error: 'Pair this device with Frink first.' } },
+    invalidAuthenticationHeader: { message: { error: 'Invalid authorization header.' } },
+    invalidToken: {
+      message: { error: 'Access expired or was revoked. Pair this device again.' },
+    },
+  });
+  app.use('/api', auth);
+  app.use(ATTACHMENTS_PATH, auth);
+  app.use('/api/notifications', auth);
+  app.post('/api/notifications', async (context) => {
+    const input = notificationRegistrationSchema.parse(await readJson(context.req));
+    return context.json({ data: await store.notifications(context.get('mobileToken'), input) });
+  });
   app.post('/api', async (context) => {
     const request = mobileRequestSchema.parse(await readJson(context.req));
     if (!store.authenticate(context.get('mobileToken'))) {
       throw new MobileApiError(401, 'Access was revoked. Pair this device again.');
     }
     return context.json({ data: await execute(request) });
+  });
+  app.post(ATTACHMENTS_PATH, async (context) => {
+    if (!upload) return context.json({ error: 'Not found.' }, 404);
+    if (!store.authenticate(context.get('mobileToken'))) {
+      throw new MobileApiError(401, 'Access was revoked. Pair this device again.');
+    }
+    const input = uploadHeadersSchema.parse({
+      chatId: context.req.header('X-Frink-Chat'),
+      subChatId: context.req.header('X-Frink-Sub-Chat'),
+      name: decodeHeader(context.req.header('X-Frink-Filename')),
+    });
+    const mimeType = context.req.header('Content-Type')?.split(';', 1)[0]?.trim().toLowerCase();
+    const bytes = new Uint8Array(await context.req.arrayBuffer());
+    return context.json({ data: await upload({ ...input, mimeType: mimeType ?? '', bytes }) });
   });
   app.notFound((context) => context.json({ error: 'Not found.' }, 404));
   app.onError((error, context) => {
@@ -117,6 +165,8 @@ export function createMobileApp(store: MobilePairingStore, execute: MobileExecut
       const status = domainErrorStatus[error.code as keyof typeof domainErrorStatus];
       return context.json({ error: error.message }, status);
     }
+    // The phone only sees a generic message, so this is the one place the real fault is reported.
+    captureContained(error, { surface: 'mobile-api', stage: context.req.path });
     return context.json(
       { error: 'Frink could not complete this request. Try again from the desktop.' },
       500,
@@ -129,10 +179,12 @@ export async function startMobileServer(
   store: MobilePairingStore,
   execute: MobileExecutor,
   port = MOBILE_PORT,
+  upload?: MobileUploader,
 ): Promise<Server> {
-  const app = createMobileApp(store, execute);
+  const app = createMobileApp(store, execute, upload);
   const server = createServer(getRequestListener(app.fetch));
-  server.requestTimeout = 30_000;
+  // Room for an attachment upload over a slow cellular link; JSON requests finish far sooner.
+  server.requestTimeout = 120_000;
   server.headersTimeout = 10_000;
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);

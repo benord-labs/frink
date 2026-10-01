@@ -5,11 +5,12 @@ import { lastActiveTabPerPaneAtom, openFilesAtom } from '@/lib/code-editor/state
 import type { ChatMode } from '../../../../shared/types/chat-mode';
 import type { ApprovedPlanContext } from '../../../../shared/types/plan';
 import {
+  createMainBackedAtomFamily,
   createPersistedAtomFamily,
   createRuntimeAtomFamily,
 } from '../../../lib/atoms/atom-family-factory';
 import { atomWithWindowStorage } from '../../../lib/window-storage';
-import { splitPaneFileTreesAtom } from '../../files-sidebar/atoms';
+import { splitPaneFileTreesAtom, UNSEEDED_SPLIT_PANE_FILE_TREES } from '../../files-sidebar/atoms';
 
 export { selectedAgentChatIdAtom } from '../../../lib/atoms/agent-navigation-atoms';
 
@@ -136,10 +137,11 @@ export const newChatPaneModelMapAtom = atomWithWindowStorage<Record<number, stri
   { getOnInit: true },
 );
 
-// Per-chat model selection (persisted)
-export const lastSelectedModelIdAtomFamily = createPersistedAtomFamily(
+// Per-chat model selection. Main owns it (shared with the phone); this is the window's cache.
+export const lastSelectedModelIdAtomFamily = createMainBackedAtomFamily(
   'agents:lastSelectedModelId:perChat',
   'sonnet',
+  'modelId',
 );
 
 // Global fallback for contexts without a chatId (e.g. NewChatForm)
@@ -159,9 +161,10 @@ export const chatModeAtomFamily = createPersistedAtomFamily<ChatMode>(
  * Per-chat Auto state, persisted and defaulting on. A Flow seeds it on dispatch, so this single
  * value governs every turn in the chat — and, since it is keyed by parent chat id, every sub-chat.
  */
-export const autoModePerChatAtomFamily = createPersistedAtomFamily(
+export const autoModePerChatAtomFamily = createMainBackedAtomFamily(
   'agents:autoModeToolApproval:perChat',
   true,
+  'autoMode',
 );
 
 export const chatModeAtom = atomWithStorage<ChatMode>('agents:chatMode', 'agent', undefined, {
@@ -296,35 +299,6 @@ export const agentsSubChatUnseenChangesAtom = atom<Set<string>>(new Set<string>(
 // Mobile view mode - chat (default, shows NewChatForm), chats list, preview, diff, or terminal
 export type AgentsMobileViewMode = 'chats' | 'chat' | 'preview' | 'diff' | 'terminal';
 export const agentsMobileViewModeAtom = atom<AgentsMobileViewMode>('chat');
-
-// Debug mode for testing first-time user experience
-// Only works in development mode
-export type AgentsDebugMode = {
-  enabled: boolean;
-  simulateNoTeams: boolean; // Simulate no teams available
-  simulateNoRepos: boolean; // Simulate no repositories connected
-  simulateNoReadyRepos: boolean; // Simulate only non-ready repos (in_progress/error)
-  resetOnboarding: boolean; // Reset onboarding dialog on next load
-  bypassConnections: boolean; // Allow going through onboarding steps even if already connected
-  forceStep: 'workspace' | 'profile' | 'claude-code' | 'github' | 'discord' | null; // Force a specific onboarding step
-  simulateCompleted: boolean; // Simulate onboarding as completed
-};
-
-export const agentsDebugModeAtom = atomWithStorage<AgentsDebugMode>(
-  'agents:debugMode',
-  {
-    enabled: false,
-    simulateNoTeams: false,
-    simulateNoRepos: false,
-    simulateNoReadyRepos: false,
-    resetOnboarding: false,
-    bypassConnections: false,
-    forceStep: null,
-    simulateCompleted: false,
-  },
-  undefined,
-  { getOnInit: true },
-);
 
 // Changed files per sub-chat for tracking edits/writes
 // Map<subChatId, FileChange[]>
@@ -855,7 +829,7 @@ const splitViewStorageAtom = atomWithWindowStorage<SplitViewState>(
 /** Persisted split view; reads/writes are normalized (layout vs pane count, ratio length). */
 export const splitViewAtom = atom(
   (get) => normalizeSplitViewState(get(splitViewStorageAtom)),
-  (_get, set, update: SplitViewState | ((prev: SplitViewState) => SplitViewState)) => {
+  (get, set, update: SplitViewState | ((prev: SplitViewState) => SplitViewState)) => {
     set(splitViewStorageAtom, (prev) => {
       const current = normalizeSplitViewState(prev);
       const next = typeof update === 'function' ? update(current) : update;
@@ -870,6 +844,11 @@ export const splitViewAtom = atom(
       }
       return normalized;
     });
+    // Per-pane file trees live for one split session; ending it here (even while Settings hides the
+    // split view) lets the next split seed afresh.
+    if (get(splitViewAtom).chatIds.length < 2) {
+      set(splitPaneFileTreesAtom, UNSEEDED_SPLIT_PANE_FILE_TREES);
+    }
   },
 );
 

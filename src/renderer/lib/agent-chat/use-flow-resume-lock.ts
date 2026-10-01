@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { agentChatStore } from '../../features/agents/stores/agent-chat-store';
 
 /**
  * Single-shot lock shared by the paused bar's two continuation affordances (Resume and a typed
@@ -13,13 +14,16 @@ import { toast } from 'sonner';
  * Release is engine-confirmed, never optimistic: the lock clears once a turn has actually been seen
  * active and then ends. A turn that ends while the run is STILL paused means the continuation
  * failed, so it unlocks with an error — except when the user pressed Stop, which is a deliberate end
- * rather than a failure.
+ * rather than a failure, or when the turn errored, whose own error toast already said why.
  */
-export function useFlowResumeLock(flowRunId: string, isTurnActive: boolean) {
+export function useFlowResumeLock(flowRunId: string, subChatId: string, isTurnActive: boolean) {
   const [resumePending, setResumePending] = useState(false);
   const lockedRef = useRef(false);
   const sawActiveTurnRef = useRef(false);
   const stopRequestedRef = useRef(false);
+  // The Chat that took the continuation: the store may swap in a replacement for this sub-chat
+  // before the turn ends, and only this instance's status says how the continuation ended.
+  const sentChatRef = useRef<ReturnType<typeof agentChatStore.get>>(undefined);
   const previousFlowRunIdRef = useRef(flowRunId);
 
   // A new run under the same mounted bar starts unlocked; otherwise the previous run's lock would
@@ -44,7 +48,7 @@ export function useFlowResumeLock(flowRunId: string, isTurnActive: boolean) {
     lockedRef.current = false;
     sawActiveTurnRef.current = false;
     setResumePending(false);
-    if (!stopRequestedRef.current) {
+    if (!stopRequestedRef.current && sentChatRef.current?.status !== 'error') {
       toast.error('Flow did not resume', {
         description: 'The continuation ended while the flow was still paused. Try again.',
       });
@@ -66,6 +70,7 @@ export function useFlowResumeLock(flowRunId: string, isTurnActive: boolean) {
       lockedRef.current = false;
       throw error;
     }
+    sentChatRef.current = agentChatStore.get(subChatId);
     sawActiveTurnRef.current = isTurnActive;
     setResumePending(true);
     return true;

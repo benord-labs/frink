@@ -21,7 +21,13 @@ const { mocks } = vi.hoisted(() => ({
     requestTerminalFlowResume: vi.fn(),
     registerFlowAdmissionStartDispatcher: vi.fn(),
     registerTerminalFlowResumeDispatcher: vi.fn(),
-    admittedResumeDispatcher: null as null | ((intent: Record<string, unknown>) => Promise<void>),
+    readRunFence: vi.fn((_db: unknown, flowRunId: string, ticket?: number) =>
+      ticket === 7 ? { flowRunId, ticket } : null,
+    ),
+    admittedStartDispatcher: null as null | ((flowRunId: string, ticket: number) => Promise<void>),
+    admittedResumeDispatcher: null as
+      | null
+      | ((intent: Record<string, unknown>, ticket: number) => Promise<void>),
   },
 }));
 
@@ -43,8 +49,12 @@ vi.mock('./advance', () => ({
   dispatchAndAdvance: mocks.dispatchAndAdvance,
 }));
 vi.mock('./event-emit', () => ({ emitRunStarted: mocks.emitRunStarted }));
+vi.mock('./transitions', () => ({ readRunFence: mocks.readRunFence }));
 vi.mock('./admission/runtime', () => ({
-  registerFlowAdmissionStartDispatcher: mocks.registerFlowAdmissionStartDispatcher,
+  registerFlowAdmissionStartDispatcher:
+    mocks.registerFlowAdmissionStartDispatcher.mockImplementation((dispatcher) => {
+      mocks.admittedStartDispatcher = dispatcher;
+    }),
   registerTerminalFlowResumeDispatcher:
     mocks.registerTerminalFlowResumeDispatcher.mockImplementation((dispatcher) => {
       mocks.admittedResumeDispatcher = dispatcher;
@@ -175,6 +185,25 @@ const RERUN_CTX = {
 const nr = (nodeId: string, status: string) => ({ id: `run-${nodeId}`, nodeId, status });
 const db = {} as Parameters<typeof retryTerminalFlowRun>[0];
 
+describe('admitted Flow start dispatch', () => {
+  it('starts the run only while its promoted ticket is still live', async () => {
+    mocks.loadRunContext.mockResolvedValue(RERUN_CTX);
+
+    await mocks.admittedStartDispatcher?.('run-1', 3);
+    expect(mocks.emitRunStarted).not.toHaveBeenCalled();
+    expect(mocks.dispatchAndAdvance).not.toHaveBeenCalled();
+
+    await mocks.admittedStartDispatcher?.('run-1', 7);
+    expect(mocks.emitRunStarted).toHaveBeenCalledWith(RERUN_CTX.meta, 'run-1');
+    expect(mocks.dispatchAndAdvance).toHaveBeenCalledWith(
+      { flowRunId: 'run-1', ticket: 7 },
+      expect.objectContaining({ id: 'trigger' }),
+      undefined,
+      RERUN_CTX,
+    );
+  });
+});
+
 describe('terminal Flow retry admission', () => {
   beforeEach(() => {
     mocks.loadRunContext.mockResolvedValue(RERUN_CTX);
@@ -218,21 +247,18 @@ describe('terminal Flow retry admission', () => {
   it('dispatches an admitted retry only from its durable node-run anchor', async () => {
     expect(mocks.admittedResumeDispatcher).not.toBeNull();
 
-    await mocks.admittedResumeDispatcher?.({
-      version: 1,
-      action: 'resume',
-      flow_run_id: 'run-1',
-      node_run_id: 'run-work',
-    });
+    await mocks.admittedResumeDispatcher?.(
+      { version: 1, action: 'resume', flow_run_id: 'run-1', node_run_id: 'run-work' },
+      7,
+    );
 
     expect(mocks.emitRunStarted).toHaveBeenCalledWith(RERUN_CTX.meta, 'run-1');
     expect(mocks.dispatchAndAdvance).toHaveBeenCalledWith(
-      'run-1',
+      { flowRunId: 'run-1', ticket: 7 },
       expect.objectContaining({ id: 'work' }),
       undefined,
       RERUN_CTX,
       undefined,
-      expect.any(Function),
       // A plain resume intent (no continuation flag) is the deliberate re-run lane.
       { resumeKind: 'redispatch' },
     );
@@ -245,12 +271,10 @@ describe('terminal Flow retry admission', () => {
     ]);
 
     await expect(
-      mocks.admittedResumeDispatcher?.({
-        version: 1,
-        action: 'resume',
-        flow_run_id: 'run-1',
-        node_run_id: 'run-work',
-      }),
+      mocks.admittedResumeDispatcher?.(
+        { version: 1, action: 'resume', flow_run_id: 'run-1', node_run_id: 'run-work' },
+        7,
+      ),
     ).rejects.toThrow(/changed its canonical resume target/);
     expect(mocks.emitRunStarted).not.toHaveBeenCalled();
     expect(mocks.dispatchAndAdvance).not.toHaveBeenCalled();

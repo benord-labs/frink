@@ -1,4 +1,4 @@
-import { and, eq, ne } from 'drizzle-orm';
+import { and, eq, getTableColumns, ne } from 'drizzle-orm';
 import log from 'electron-log';
 import { isHtmlArtifactPart } from '../../../../shared/lib/artifacts/html-artifact';
 import type { ChatMode } from '../../../../shared/types/chat-mode';
@@ -28,7 +28,8 @@ export type Message = {
   metadata?: unknown;
 };
 
-export type SubChatHydrated = Omit<SubChat, 'messages'> & { messages: Message[] };
+export type SubChatRow = Omit<SubChat, 'messages'>;
+export type SubChatHydrated = SubChatRow & { messages: Message[] };
 
 /**
  * One corrupt `messages` row used to throw an unguarded `JSON.parse` and crash export, list, stats
@@ -49,9 +50,9 @@ export async function getSubChatById(db: Db, id: string): Promise<SubChatHydrate
   return row ? hydrate(row) : null;
 }
 
-export async function listSubChatsByChat(db: Db, chatId: string): Promise<SubChatHydrated[]> {
-  const rows = await db.select().from(subChats).where(eq(subChats.chatId, chatId));
-  return rows.map(hydrate);
+export async function listSubChatsByChat(db: Db, chatId: string): Promise<SubChatRow[]> {
+  const { messages: _transcript, ...columns } = getTableColumns(subChats);
+  return db.select(columns).from(subChats).where(eq(subChats.chatId, chatId));
 }
 
 /**
@@ -59,7 +60,7 @@ export async function listSubChatsByChat(db: Db, chatId: string): Promise<SubCha
  * title is the parent chat's title, so renaming either side keeps them in sync.
  * Rows have no inherent order, so never rely on array position. Null when empty.
  */
-export function pickOldestSubChat(subs: SubChatHydrated[]): SubChatHydrated | null {
+export function pickOldestSubChat<T extends SubChatRow>(subs: T[]): T | null {
   if (subs.length === 0) return null;
   return subs.reduce((a, b) => {
     const at = +new Date(a.createdAt ?? 0);
@@ -74,7 +75,7 @@ export function pickOldestSubChat(subs: SubChatHydrated[]): SubChatHydrated | nu
  * caller creates it). The single definition of which sub-chat a `continue_chat` task drives —
  * `createChatForTask` and the flow session-resume gate must agree.
  */
-export async function getSubChatForChat(db: Db, chatId: string): Promise<SubChatHydrated | null> {
+export async function getSubChatForChat(db: Db, chatId: string): Promise<SubChatRow | null> {
   return pickOldestSubChat(await listSubChatsByChat(db, chatId));
 }
 

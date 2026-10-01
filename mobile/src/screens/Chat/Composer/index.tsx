@@ -1,201 +1,209 @@
 import { useState } from 'react';
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
-  StyleSheet,
-  Text,
   TextInput,
   View,
   useWindowDimensions,
+  type TextStyle,
 } from 'react-native';
-import { Button, GUTTER, Icon, Notice, bareInput } from '../../../ui/primitives';
-import { useTheme } from '../../../ui/theme';
-import { glassStyle } from '../../../ui/material';
+import { ArrowUp, Square } from 'lucide-react-native';
+import type {
+  MobileActivity,
+  MobileChatMode,
+  MobileComposer,
+} from '@frink/shared/types/remote/mobile';
+import { GlassSurface } from '../../../ui/material';
+import { space, useTheme } from '../../../ui/theme';
+import {
+  acceptsMessage,
+  actionEnabled,
+  composerMode,
+  composerPlaceholder,
+  type ComposerMode,
+} from '../chat-state';
+import { Note } from '../note';
+import { ACTION, AttachButton, AttachmentTray, type Attachments } from './attach';
+import { ComposerControls, type ComposerPatch } from './controls';
+import { LINE, messageInputSizing } from './input-sizing';
 
-// Pill geometry: a 22pt text line with 12pt above and below makes a 46pt pill. The 32pt action
-// keeps a 7pt margin, so it shares the centre of a single line and stays on the last line as text grows.
-const LINE = 22;
-const PAD = 12;
-const ACTION = 32;
-const MAX_LINES = 6;
+export { useComposerAttachments } from './use-attachments';
+export { useComposerState } from './use-composer-state';
+export type { ComposerPatch } from './controls';
+
 // iOS scales lineHeight with Dynamic Type, so every height derived from LINE scales with it too.
 const MAX_FONT_SCALE = 1.6;
+/** Web inputs draw a focus outline React Native has no prop for. */
+export const bareInput: TextStyle =
+  Platform.OS === 'web' ? ({ outlineStyle: 'none' } as unknown as TextStyle) : {};
 
 function useLine() {
   const { fontScale } = useWindowDimensions();
   return Math.round(LINE * Math.min(Math.max(fontScale, 1), MAX_FONT_SCALE));
 }
 
-// Reason: Send, stop, busy and disabled share one 32pt control.
-// fallow-ignore-next-line complexity
-function ComposerAction({
-  label,
-  icon,
+/** The trailing control: Send (violet arrow) and Stop (square) share one slot, so typing while
+ *  Frink works turns Stop into Send in place. */
+function ActionButton({
+  mode,
   enabled,
-  busy = false,
-  onPress,
+  busy,
+  stopLabel,
+  onSend,
+  onStop,
 }: {
-  label: string;
-  icon: 'arrow-up' | 'stop';
+  mode: ComposerMode;
   enabled: boolean;
-  busy?: boolean;
-  onPress: () => void;
+  busy: boolean;
+  stopLabel: string;
+  onSend: () => void;
+  onStop: () => void;
 }) {
   const t = useTheme();
-  const line = useLine();
-  const stop = icon === 'stop';
+  const stop = mode === 'stop';
+  const bg = !enabled ? t.fill : stop ? t.text : t.accent;
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={label}
-      accessibilityState={{ disabled: !enabled }}
+      accessibilityLabel={stop ? stopLabel : 'Send message'}
+      accessibilityState={{ disabled: !enabled, busy }}
       disabled={!enabled}
-      onPress={onPress}
+      onPress={stop ? onStop : onSend}
       hitSlop={6}
       style={({ pressed }) => ({
         width: ACTION,
         height: ACTION,
-        margin: (line + PAD * 2 - ACTION) / 2,
         borderRadius: ACTION / 2,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: enabled ? (stop ? t.text : t.accent) : t.fill,
-        opacity: pressed ? 0.7 : 1,
+        backgroundColor: bg,
+        opacity: pressed ? 0.75 : 1,
       })}
     >
       {busy ? (
         <ActivityIndicator size="small" color={t.muted} />
+      ) : stop ? (
+        <Square size={12} color={t.background} fill={t.background} />
       ) : (
-        <Icon
-          name={icon}
-          size={stop ? 12 : 18}
-          color={enabled ? (stop ? t.background : t.onAccent) : t.muted}
-        />
+        <ArrowUp size={19} color={enabled ? t.onAccent : t.muted} strokeWidth={2.5} />
       )}
     </Pressable>
   );
 }
 
-// Reason: Idle, sending, working and stop-confirmation states share one fixed composer frame.
-// fallow-ignore-next-line complexity
 export function Composer({
-  active,
+  activity,
+  executionReady,
+  flowRun,
   busy,
+  note,
   value,
   onChange,
   onSend,
-  confirmStop,
-  setConfirmStop,
   onStop,
+  composer,
+  attachments,
+  onUpdate,
+  onMode,
+  onAccount,
 }: {
-  active: boolean;
+  activity: MobileActivity;
+  executionReady: boolean;
+  /** Stopping this chat ends a whole Flow run. */
+  flowRun: boolean;
   busy: boolean;
+  note: { text: string; error?: boolean } | null;
   value: string;
   onChange: (text: string) => void;
   onSend: () => void;
-  confirmStop: boolean;
-  setConfirmStop: (value: boolean) => void;
   onStop: () => void;
+  composer?: MobileComposer;
+  attachments: Attachments;
+  onUpdate: (patch: ComposerPatch) => void;
+  onMode: (mode: MobileChatMode) => void;
+  onAccount: (accountId: string) => void;
 }) {
   const t = useTheme();
   const line = useLine();
   const [contentHeight, setContentHeight] = useState(LINE);
-  // A cleared draft collapses at once; web textareas never report a shrinking scroll height.
-  const lines = value ? Math.max(1, Math.round(contentHeight / line)) : 1;
+  const sizing = messageInputSizing(Platform.OS === 'web', line, contentHeight, !!value);
+  const mode = composerMode(
+    activity,
+    { text: value, files: attachments.items.length },
+    executionReady,
+    flowRun,
+  );
+  // Any message that can start a turn takes files, so Attach stays put as Stop turns into Send.
+  const attachable = acceptsMessage(activity, executionReady, flowRun);
+  const enabled =
+    !busy &&
+    actionEnabled(mode, {
+      text: value,
+      files: attachments.ids.length,
+      uploading: attachments.uploading,
+      failed: attachments.failed,
+    });
+  // The box holds only what you type and its controls; live state is in the header, and a note
+  // is one short caption above the box.
   return (
-    <View
-      style={{
-        maxWidth: 720,
-        width: '100%',
-        alignSelf: 'center',
-        paddingHorizontal: GUTTER - 4,
-        paddingTop: 8,
-        paddingBottom: 8,
-        gap: 12,
-      }}
-    >
-      {active && confirmStop && (
-        <View style={{ gap: 12, paddingHorizontal: 4 }}>
-          <Notice>Stopping also ends any active Flow in this chat.</Notice>
-          <View style={{ flexDirection: 'row', gap: 8 }}>
-            <Button
-              secondary
-              disabled={busy}
-              onPress={() => setConfirmStop(false)}
-              style={{ flex: 1 }}
-            >
-              Keep running
-            </Button>
-            <Button secondary destructive disabled={busy} onPress={onStop} style={{ flex: 1 }}>
-              Confirm stop
-            </Button>
-          </View>
+    <View style={{ gap: 6 }}>
+      {note && (
+        <View style={{ paddingHorizontal: space.md }}>
+          <Note error={note.error}>{note.text}</Note>
         </View>
       )}
-      <View
-        style={{
-          flexDirection: 'row',
-          alignItems: 'flex-end',
-          ...glassStyle(t),
-          borderWidth: StyleSheet.hairlineWidth,
-          borderRadius: (line + PAD * 2) / 2,
-        }}
+      <GlassSurface
+        interactive
+        style={{ borderRadius: 26, paddingHorizontal: 10, paddingTop: 8, paddingBottom: 8, gap: 6 }}
       >
-        <View style={{ flex: 1, minWidth: 0, paddingLeft: 18, paddingVertical: PAD }}>
-          {active ? (
-            <View style={{ height: line, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-              <ActivityIndicator size="small" color={t.accent} />
-              <Text
-                maxFontSizeMultiplier={MAX_FONT_SCALE}
-                style={{ fontSize: 16, lineHeight: LINE, color: t.secondary }}
-              >
-                Frink is working…
-              </Text>
-            </View>
-          ) : (
-            <TextInput
-              accessibilityLabel="Message"
-              placeholder="Message Frink"
-              placeholderTextColor={t.muted}
-              selectionColor={t.accent}
-              value={value}
-              onChangeText={onChange}
-              editable={!busy}
-              multiline
-              maxLength={32000}
-              maxFontSizeMultiplier={MAX_FONT_SCALE}
-              scrollEnabled={lines > MAX_LINES}
-              onContentSizeChange={(event) => setContentHeight(event.nativeEvent.contentSize.height)}
-              style={[
-                {
-                  height: Math.min(lines, MAX_LINES) * line,
-                  padding: 0,
-                  fontSize: 16,
-                  lineHeight: LINE,
-                  color: t.text,
-                },
-                bareInput,
-              ]}
-            />
-          )}
+      {activity === 'idle' && executionReady && composer && (
+        <ComposerControls
+          composer={composer}
+          disabled={busy}
+          onUpdate={onUpdate}
+          onMode={onMode}
+          onAccount={onAccount}
+        />
+      )}
+      {attachable && <AttachmentTray attachments={attachments} />}
+      <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: space.sm }}>
+        {attachable && <AttachButton attachments={attachments} disabled={busy} />}
+        <View style={{ flex: 1, minWidth: 0, paddingLeft: attachable ? 0 : 4 }}>
+          <TextInput
+            accessibilityLabel="Message"
+            placeholder={composerPlaceholder(activity, executionReady, flowRun)}
+            placeholderTextColor={t.muted}
+            selectionColor={t.accent}
+            value={value}
+            onChangeText={onChange}
+            editable={!busy && mode !== 'unavailable'}
+            multiline
+            maxLength={32000}
+            maxFontSizeMultiplier={MAX_FONT_SCALE}
+            scrollEnabled={sizing.scrollEnabled}
+            onContentSizeChange={
+              sizing.measure
+                ? (event) => setContentHeight(event.nativeEvent.contentSize.height)
+                : undefined
+            }
+            style={[
+              { padding: 0, marginVertical: (ACTION - line) / 2, fontSize: 16, color: t.text },
+              sizing.style,
+              bareInput,
+            ]}
+          />
         </View>
-        {active ? (
-          <ComposerAction
-            label="Stop response…"
-            icon="stop"
-            enabled={!busy && !confirmStop}
-            onPress={() => setConfirmStop(true)}
-          />
-        ) : (
-          <ComposerAction
-            label="Send message"
-            icon="arrow-up"
-            enabled={!!value.trim() && !busy}
-            busy={busy}
-            onPress={onSend}
-          />
-        )}
+        <ActionButton
+          mode={mode}
+          enabled={enabled}
+          busy={busy || (mode === 'send' && attachments.uploading)}
+          stopLabel={flowRun ? 'Stop run' : 'Stop'}
+          onSend={onSend}
+          onStop={onStop}
+        />
       </View>
+      </GlassSurface>
     </View>
   );
 }

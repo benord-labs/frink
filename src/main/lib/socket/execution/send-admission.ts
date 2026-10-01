@@ -1,6 +1,5 @@
 import { Mutex } from 'async-mutex';
 import { getActiveExecution } from '../streaming/execution-registry';
-import { getLiveStreamSeed } from '../streaming/live-stream';
 
 const admissions = new Map<string, Mutex>();
 
@@ -32,12 +31,8 @@ export async function withMessageAdmission(
     await mutex.runExclusive(async () => {
       // A persisted user message does not prove executor admission succeeded.
       if (await alreadyPersisted?.()) throw new DuplicateMessageError();
-      if (
-        rejectIfBusy &&
-        (getActiveExecution(subChatId) ||
-          getLiveStreamSeed(subChatId).streams.some((stream) => stream.status === 'held'))
-      )
-        throw new ChatBusyError();
+      // A background wait has no execution: the send adopts it, exactly as a desktop send does.
+      if (rejectIfBusy && getActiveExecution(subChatId)) throw new ChatBusyError();
       let acknowledge!: (error?: Error) => void;
       const claimed = new Promise<void>((resolve, reject) => {
         let acknowledged = false;

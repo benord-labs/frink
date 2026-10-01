@@ -19,16 +19,13 @@ import {
   type PickerWindow,
   pickInWindow,
 } from '../../../../../shared/lib/model-picker-label/groups';
-import { Slider } from '../../../../components/ui/slider';
 import { extendedThinkingEnabledAtom } from '../../../../lib/atoms';
 import { overlayItem } from '../../../../lib/overlay-styles';
 import { cn } from '../../../../lib/utils';
 import type { ModelItem } from '../model-selector';
-import { type FastScope, ICON_BUTTON_CLASS, ProviderToggle } from './ProviderToggle';
-
-/** Shown when the Extra High stop is dropped — a user-reachable action (packaged users update the app). */
-const XHIGH_HIDDEN_HINT = 'Extra High needs a newer Claude CLI — update Frink to enable it.';
-const ULTRA_HINT = 'Ultra runs many agents in parallel — it uses your usage much faster.';
+import { ICON_BUTTON_CLASS, ProviderToggle, type SpeedScope } from './ProviderToggle';
+import { EffortFooter, EffortSlider } from './EffortControls';
+import { UltraWord } from './UltraSwitch';
 
 /** The shared menu-item look (hover, keyboard focus), so the rows read like every other menu. */
 const ROW_CLASS = cn(overlayItem, 'w-[calc(100%-0.5rem)] cursor-pointer justify-between text-left');
@@ -47,8 +44,10 @@ type Props = {
   variant: 'claude' | 'codex';
   /** Drop the Extra High stop (the bundled Claude CLI cannot run `--effort xhigh`). */
   hideXhigh: boolean;
-  /** Codex Fast: per chat, or staged by New Chat for the chat it creates. Absent without a tier. */
-  fast?: FastScope;
+  /** Hide the Ultra switch (the bundled Claude CLI cannot run Ultra at any effort). */
+  hideUltra: boolean;
+  /** Codex speed: per chat, or staged by New Chat for the chat it creates. Absent without a tier. */
+  speed?: SpeedScope;
   /** Flow: the "Agent default" row that clears the stored model. */
   inherit?: { label: string; selected: boolean; onSelect: () => void };
   onOpenModelSettings?: () => void;
@@ -63,7 +62,8 @@ export function ModelPicker({
   onSelect,
   variant,
   hideXhigh,
-  fast,
+  hideUltra,
+  speed,
   inherit,
   onOpenModelSettings,
   onClose,
@@ -75,18 +75,25 @@ export function ModelPicker({
     current && tiersOf(current.window).length > 1 ? 'effort' : 'list',
   );
   const paneRef = usePaneFocus(pane);
-  const toggle = <ProviderToggle variant={variant} fast={fast} />;
+  const toggle = <ProviderToggle variant={variant} speed={speed} />;
 
   if (pane === 'effort' && current && selectedModel) {
-    const tiers = tiersOf(current.window);
+    const { window } = current;
+    const tiers = tiersOf(window);
+    const xhighHidden = tiers.length !== window.tiers.length;
     return (
       <EffortPane
         paneRef={paneRef}
         toggle={toggle}
         familyLabel={current.family.label}
         tiers={tiers}
-        defaultTier={current.window.defaultTier}
-        xhighHidden={tiers.length !== current.window.tiers.length}
+        defaultTier={window.defaultTier}
+        xhighHidden={xhighHidden}
+        // Kept while on, so an unsupported Ultra can still be turned off.
+        ultraAvailable={
+          window.ultraTiers.length > 0 && (!hideUltra || Boolean(selectedModel.ultra))
+        }
+        pick={(effort, ultra) => pickInWindow(window, effort, ultra)}
         selected={selectedModel}
         effortNeedsThinking={variant === 'claude'}
         onSelect={onSelect}
@@ -105,8 +112,8 @@ export function ModelPicker({
       inherit={inherit}
       onSelect={onSelect}
       onPickFamily={(f) => {
-        // A new family lands on its default context window, keeping the chosen effort.
-        onSelect(pickInWindow(f.defaultWindow, selectedModel?.effort));
+        // A new family lands on its default context window, keeping the chosen effort and Ultra.
+        onSelect(pickInWindow(f.defaultWindow, selectedModel?.effort, selectedModel?.ultra));
         if (tiersOf(f.defaultWindow).length > 1) setPane('effort');
         else onClose();
       }}
@@ -116,16 +123,13 @@ export function ModelPicker({
   );
 }
 
-/** A window's tiers minus Extra High, and Ultra which runs at it, when the bundled CLI lacks it
- *  (kept if already selected). */
+/** A window's tiers minus Extra High when the bundled CLI lacks it (kept if already selected). */
 function visibleTiers(
   w: PickerWindow<ModelItem>,
   hideXhigh: boolean,
   selectedId: string | undefined,
 ): ModelItem[] {
-  return w.tiers.filter(
-    (t) => !hideXhigh || (t.effort !== 'xhigh' && t.effort !== 'ultra') || t.id === selectedId,
-  );
+  return w.tiers.filter((t) => !hideXhigh || t.effort !== 'xhigh' || t.id === selectedId);
 }
 
 /** Focuses the pane's control on open and on every pane switch, one frame late: Radix registers
@@ -177,6 +181,8 @@ function EffortPane({
   tiers,
   defaultTier,
   xhighHidden,
+  ultraAvailable,
+  pick,
   selected,
   effortNeedsThinking,
   onSelect,
@@ -188,6 +194,9 @@ function EffortPane({
   tiers: ModelItem[];
   defaultTier: ModelItem;
   xhighHidden: boolean;
+  ultraAvailable: boolean;
+  /** The row for an effort with Ultra on or off, in the selected window. */
+  pick: (effort: ModelItem['effort'], ultra: boolean) => ModelItem;
   selected: ModelItem;
   /** Claude: effort only reaches the SDK while Thinking is on, so the slider follows the toggle. */
   effortNeedsThinking: boolean;
@@ -196,62 +205,62 @@ function EffortPane({
 }): ReactElement {
   const [thinkingEnabled, setThinkingEnabled] = useAtom(extendedThinkingEnabledAtom);
   const inert = effortNeedsThinking && !thinkingEnabled;
-  const offDefault = !selected.effortDefault;
-  const index = Math.max(
-    0,
-    tiers.findIndex((t) => t.id === selected.id),
-  );
+  const ultra = Boolean(selected.ultra);
+  const offDefault = !selected.effortDefault || ultra;
   const effortLabel = inert ? 'Thinking off' : effortName(selected);
-  // Reset restores both defaults the card shows: the family's default effort and Thinking on.
-  const reset = () => {
-    if (offDefault) onSelect(defaultTier);
-    if (inert) setThinkingEnabled(RESET);
-  };
+  const onReset = resetAction(
+    offDefault,
+    inert,
+    () => onSelect(defaultTier),
+    () => setThinkingEnabled(RESET),
+  );
   return (
     <div ref={paneRef} className={cn('flex flex-col gap-3 p-3', ENTER, 'zoom-in-95')}>
       <PaneHeader
         toggle={toggle}
-        onReset={offDefault || inert ? reset : undefined}
+        onReset={onReset}
         center={
           <EffortTitle
             familyLabel={familyLabel}
             effortLabel={effortLabel}
-            ultra={selected.effort === 'ultra'}
+            ultra={ultra}
             inert={inert}
             onClick={onShowModels}
           />
         }
       />
-      <Slider
-        min={0}
-        max={tiers.length - 1}
-        step={1}
-        value={[index]}
+      <EffortSlider
+        tiers={tiers}
+        effort={selected.effort}
         disabled={inert}
-        thumbLabel="Effort"
-        onValueChange={([i]) => {
-          const next = tiers[i];
-          if (next && next.id !== selected.id) onSelect(next);
-        }}
+        onEffort={(effort) => onSelect(pick(effort, ultra))}
       />
-      {xhighHidden ? (
-        <p className="text-xs leading-snug text-muted-foreground">{XHIGH_HIDDEN_HINT}</p>
-      ) : null}
-      {selected.effort === 'ultra' && !inert ? (
-        <p className="text-xs leading-snug text-muted-foreground">{ULTRA_HINT}</p>
-      ) : null}
+      <EffortFooter
+        xhighHidden={xhighHidden}
+        ultra={ultraAvailable ? ultra : undefined}
+        onUltra={(on) => onSelect(pick(selected.effort, on))}
+      />
     </div>
   );
 }
 
-function effortName(m: ModelItem): string {
-  return m.effort ? EFFORT_LABEL[m.effort] : 'Default';
+/** Reset restores every default the card shows: the family's default effort, Ultra off, Thinking on.
+ *  Undefined when there is nothing to restore, which hides the button. */
+function resetAction(
+  offDefault: boolean,
+  inert: boolean,
+  restoreEffort: () => void,
+  restoreThinking: () => void,
+): (() => void) | undefined {
+  if (!offDefault && !inert) return undefined;
+  return () => {
+    if (offDefault) restoreEffort();
+    if (inert) restoreThinking();
+  };
 }
 
-/** The Ultra tier's word, in the animated chroma Frink uses for power keywords (reduced-motion
- *  safe). Text only: the chroma fill is transparent, so it must not wrap `currentColor` icons. */
-export function UltraWord(): ReactElement {
-  return <span className="chroma-text chroma-text-animate font-medium">Ultra</span>;
+function effortName(m: ModelItem): string {
+  return m.effort ? EFFORT_LABEL[m.effort] : 'Default';
 }
 
 /** "High ›" over the model name; opens the model list. */
@@ -272,7 +281,7 @@ function EffortTitle({
     <button
       type="button"
       className="flex flex-col items-center rounded-md px-2 py-0.5 outline-none transition-colors hover:bg-foreground/10 focus-visible:outline-2 focus-visible:outline-ring/70"
-      aria-label={`${familyLabel}, ${effortLabel} effort. Change model`}
+      aria-label={`${familyLabel}, ${effortLabel} effort${ultra ? ', Ultra on' : ''}. Change model`}
       onClick={onClick}
     >
       <span
@@ -284,7 +293,13 @@ function EffortTitle({
           inert ? 'text-muted-foreground' : 'text-primary',
         )}
       >
-        {ultra && !inert ? <UltraWord /> : effortLabel}
+        {effortLabel}
+        {ultra ? (
+          <>
+            {' · '}
+            <UltraWord />
+          </>
+        ) : null}
         <ChevronRight className="h-3.5 w-3.5" />
       </span>
       <span className="text-xs text-muted-foreground">{familyLabel}</span>
@@ -376,7 +391,7 @@ function ContextWindows({
           role="radio"
           aria-checked={w === current.window}
           className={ROW_CLASS}
-          onClick={() => onSelect(pickInWindow(w, selected.effort))}
+          onClick={() => onSelect(pickInWindow(w, selected.effort, selected.ultra))}
         >
           <span className="flex items-center gap-1.5">
             {w.label}

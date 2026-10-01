@@ -19,27 +19,21 @@
 import log from 'electron-log';
 import { captureMainException } from '../sentry/init';
 import { getDatabase } from '../db';
+import { getFlowRun as getFlowRunRow, listActiveFlowRunIdsForChat } from '../db/repos/flow-runs';
+import { listNodeRunsForFlowRun } from '../db/repos/node-runs';
 import {
-  getFlowRun as getFlowRunRow,
-  listActiveFlowRunIdsForChat,
-  setFlowRunStatus,
-} from '../db/repos/flow-runs';
-import { cancelRemainingNodeRunsForRun, listNodeRunsForFlowRun } from '../db/repos/node-runs';
-import {
+  type ChatOwnedFlowCancellation,
   cancelChatOwnedFlowWork,
   cancelChatOwnedFlowWorkForArchive,
   cancelExecutingFlowTasksForChats,
 } from '../db/repos/task-queries/chat-flow-cleanup';
-import { cancelFlowLinkedTasks } from '../db/repos/tasks';
 import type { FlowRun, NodeRun } from '../db/schema';
 import { clearActiveFlowTaskForChat } from '../task-executor';
 import { loadRunContext } from './advance';
-import {
-  abortFlowRun,
-  withFlowRunCancellation,
-  withFlowRunCancellationGuard,
-} from './cancel-registry';
+import { dropStagedContinuation } from './admission/terminal-resume/continuation';
+import { abortFlowRun } from './cancel-registry';
 import { emitRunTerminal } from './event-emit';
+import { type CancelRunOutcome, cancelRunCommand, cancelWorkQueueRunCommand } from './transitions';
 
 export class LocalEngineNotImplementedError extends Error {
   constructor(detail: string) {
@@ -55,34 +49,6 @@ const TERMINAL_FLOW_STATUSES = new Set<FlowRun['status']>(['completed', 'failed'
 
 function isTerminalFlowRun(run: FlowRun): boolean {
   return TERMINAL_FLOW_STATUSES.has(run.status);
-}
-
-function shouldPreserveTerminalRun(
-  initialRun: FlowRun,
-  currentRun: FlowRun,
-  hasPromotedAdmission: boolean,
-): boolean {
-  return isTerminalFlowRun(initialRun) && (!hasPromotedAdmission || isTerminalFlowRun(currentRun));
-}
-
-async function cancellationAdmissionState(
-  flowRunId: string,
-  queuedOnly?: CancelQueuedOnly,
-): Promise<{
-  cancelledBeforeDispatch: boolean;
-  hasPromotedAdmission: boolean;
-}> {
-  const admissionRuntime = await import('./admission/runtime');
-  const cancelledBeforeDispatch = await admissionRuntime.cancelUndispatchedFlowAdmission(
-    flowRunId,
-    queuedOnly && { states: ['queued'], ticket: queuedOnly.ticket },
-  );
-  // A dequeue returns through `dequeuedFlowRun` before promotion is ever read, so asking for it
-  // would spend a query on a value nobody consumes.
-  const hasPromotedAdmission = queuedOnly
-    ? false
-    : await admissionRuntime.hasPromotedFlowAdmission(flowRunId);
-  return { cancelledBeforeDispatch, hasPromotedAdmission };
 }
 
 async function emitCancelledFlowRun(flowRunId: string): Promise<void> {
@@ -128,9 +94,43 @@ async function dequeuedFlowRun(
 /** Restrict a cancellation to this exact ticket, while it still waits in the queue. */
 export type CancelQueuedOnly = { ticket: number };
 
+async function dequeueFlowRun(flowRunId: string, queuedOnly: CancelQueuedOnly) {
+  const run = await getFlowRunRow(getDatabase(), flowRunId);
+  if (!run) return null;
+  const admissionRuntime = await import('./admission/runtime');
+  const dequeued = await admissionRuntime.cancelUndispatchedFlowAdmission(flowRunId, {
+    states: ['queued'],
+    ticket: queuedOnly.ticket,
+  });
+  return dequeuedFlowRun(flowRunId, run, dequeued);
+}
+
+/** One Cancel command: aborts in the commit's tick, then drains a dropped ticket and emits once. */
+async function commitCancel<T extends CancelRunOutcome>(
+  flowRunId: string,
+  command: () => T | null,
+  touched: (outcome: T) => boolean = (outcome) => outcome.cancelled,
+) {
+  const admissionRuntime = await import('./admission/runtime');
+  const outcome = await admissionRuntime.transitionFlowRun(command, (result) => {
+    if (!result || !touched(result)) return;
+    abortFlowRun(flowRunId);
+    dropStagedContinuation(flowRunId);
+  });
+  if (outcome?.droppedTicket) void admissionRuntime.drainFlowAdmissions();
+  if (outcome?.cancelled) await emitCancelledFlowRun(flowRunId);
+  return outcome;
+}
+
+async function releaseFlowAdmission(flowRunId: string, ticket: number | null): Promise<void> {
+  if (ticket === null) return;
+  const admissionRuntime = await import('./admission/runtime');
+  await admissionRuntime.requestFlowAdmissionRelease(flowRunId, ticket);
+}
+
 /**
- * Cancel an in-flight or pending flow run. Idempotent — calling on an already
- * terminal run is a no-op aside from event emission.
+ * Cancel an in-flight or pending flow run. A terminal run keeps its status; only its undispatched
+ * ticket (a queued Retry) is dropped.
  *
  * `queuedOnly` makes the cancellation a dequeue: the run is left untouched unless its admission
  * is still queued, so work the scheduler has already claimed is never preempted by a stale click.
@@ -139,65 +139,47 @@ export async function cancelFlowRun(
   flowRunId: string,
   options: { queuedOnly?: CancelQueuedOnly } = {},
 ): Promise<FlowRun | null> {
-  const db = getDatabase();
-  const run = await getFlowRunRow(db, flowRunId);
-  if (!run) return null;
-  const { cancelledBeforeDispatch, hasPromotedAdmission } = await cancellationAdmissionState(
-    flowRunId,
-    options.queuedOnly,
+  if (options.queuedOnly) return dequeueFlowRun(flowRunId, options.queuedOnly);
+  const outcome = await commitCancel(flowRunId, () =>
+    cancelRunCommand(getDatabase(), flowRunId, { includeParked: false }),
   );
-  if (options.queuedOnly) return dequeuedFlowRun(flowRunId, run, cancelledBeforeDispatch);
-  const currentRun = (await getFlowRunRow(db, flowRunId)) ?? run;
-  // Already terminal — a PURE no-op, deliberately: `resumeInterruptedFlowInPlace` unparks a revived
-  // run by flipping its node_run to `running` BEFORE its flow_run, so a concurrent call here reads
-  // `cancelled` while the driving task is live. Only a promoted admission proves a terminal read
-  // became a newly-running retry that this cancellation must stop.
-  if (shouldPreserveTerminalRun(run, currentRun, hasPromotedAdmission)) {
-    return currentRun;
-  }
-
-  let updated: FlowRun | null = currentRun;
-  if (cancelledBeforeDispatch) {
-    updated = await getFlowRunRow(db, flowRunId);
-    if (!updated) return run;
-  }
-  if (!cancelledBeforeDispatch || updated.status !== 'cancelled') {
-    // Status first so the polling watcher cannot emit a second terminal event during task sweep.
-    updated = await withFlowRunCancellation(flowRunId, () =>
-      setFlowRunStatus(db, flowRunId, 'cancelled', { completedAt: new Date() }),
-    );
-    if (!updated) return run;
-
-    // Terminalize the node runs too, mirroring advanceFlowRun's own cancelled branch. The
-    // in-process node whose controller we just aborted returns WITHOUT writing a status —
-    // dispatchAndAdvance deliberately leaves terminal state to this function rather than
-    // racing it into 'failed' (see its catch). Without this the run reads 'cancelled' while
-    // its active node_run stays 'running' forever.
-    await cancelRemainingNodeRunsForRun(db, flowRunId);
-
-    await cancelFlowLinkedTasks(db, flowRunId);
-  }
-
-  await emitCancelledFlowRun(flowRunId);
-  return updated;
+  if (outcome?.cancelled) await releaseFlowAdmission(flowRunId, outcome.liveTicket);
+  return outcome?.run ?? null;
 }
 
 export async function cancelFlowRunForDeletion(flowRunId: string): Promise<void> {
-  await cancelFlowRun(flowRunId);
-  await cancelFlowLinkedTasks(getDatabase(), flowRunId, true);
-  const admissionRuntime = await import('./admission/runtime');
-  await admissionRuntime.requestFlowAdmissionRelease(flowRunId);
+  const outcome = await commitCancel(flowRunId, () =>
+    cancelRunCommand(getDatabase(), flowRunId, { includeParked: true }),
+  );
+  await releaseFlowAdmission(flowRunId, outcome?.liveTicket ?? null);
+}
+
+/** Work Queue Cancel of a flow row (see cancelWorkQueueRunCommand); null when the run is missing. */
+export async function cancelFlowRunFromWorkQueue(flowRunId: string, clickedTaskId: string) {
+  const outcome = await commitCancel(
+    flowRunId,
+    () => cancelWorkQueueRunCommand(getDatabase(), flowRunId, clickedTaskId),
+    (result) => result.touched,
+  );
+  if (outcome?.cancelled) await releaseFlowAdmission(flowRunId, outcome.liveTicket);
+  return outcome;
 }
 
 async function finalizeChatOwnedFlowCancellation(
   flowRunId: string,
-  cancelWork: () => ReturnType<typeof cancelChatOwnedFlowWork>,
+  cancelWork: () => ChatOwnedFlowCancellation,
 ): Promise<void> {
-  const outcome = await withFlowRunCancellationGuard(flowRunId, cancelWork);
-  if (outcome !== 'cancelled') return;
   const admissionRuntime = await import('./admission/runtime');
-  await admissionRuntime.requestFlowAdmissionRelease(flowRunId);
+  const { outcome, droppedTicket, liveTicket } = await admissionRuntime.transitionFlowRun(
+    cancelWork,
+    (result) => {
+      if (result.outcome === 'cancelled') abortFlowRun(flowRunId);
+    },
+  );
+  if (droppedTicket) void admissionRuntime.drainFlowAdmissions();
+  if (outcome !== 'cancelled') return;
   await emitCancelledFlowRun(flowRunId);
+  await releaseFlowAdmission(flowRunId, liveTicket);
 }
 
 export async function cancelFlowRunForChatDeletion(
@@ -205,15 +187,13 @@ export async function cancelFlowRunForChatDeletion(
   chatIds: string[],
 ): Promise<void> {
   await finalizeChatOwnedFlowCancellation(flowRunId, () =>
-    cancelChatOwnedFlowWork(getDatabase(), flowRunId, chatIds, () => abortFlowRun(flowRunId)),
+    cancelChatOwnedFlowWork(getDatabase(), flowRunId, chatIds),
   );
 }
 
 async function cancelFlowRunForChatArchive(flowRunId: string, chatIds: string[]): Promise<void> {
   await finalizeChatOwnedFlowCancellation(flowRunId, () =>
-    cancelChatOwnedFlowWorkForArchive(getDatabase(), flowRunId, chatIds, () =>
-      abortFlowRun(flowRunId),
-    ),
+    cancelChatOwnedFlowWorkForArchive(getDatabase(), flowRunId, chatIds),
   );
 }
 

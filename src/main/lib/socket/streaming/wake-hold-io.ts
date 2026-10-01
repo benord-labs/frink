@@ -57,6 +57,7 @@ export function buildWakeHoldIo(params: {
   const { chatId, subChatId, buildFinalParts, send } = params;
   let holdActive = false;
   const io: WakeHoldIo = {
+    chatId,
     streamChunk: (msgId, chunk, parts, messageIndex) => {
       send.sendStreamChunkDirect({
         chatId,
@@ -84,7 +85,7 @@ export function buildWakeHoldIo(params: {
         });
       }
     },
-    setHeld: (held, pending) => {
+    setHeld: (held, pending, endReason) => {
       // Latch before any asynchronous completion can inspect it. `wakeBurst` identifies the
       // observer lane; it does not prove the wait still exists after Stop/reload retracted it.
       holdActive = held;
@@ -104,7 +105,13 @@ export function buildWakeHoldIo(params: {
       }
       // Spread rather than pass through: a retraction carries no detail, and `pending: undefined`
       // is a present key, so the frame would contradict the contract it is meant to satisfy.
-      send.sendWakeHoldChanged({ chatId, subChatId, held, ...(pending && { pending }) });
+      send.sendWakeHoldChanged({
+        chatId,
+        subChatId,
+        held,
+        ...(pending && { pending }),
+        ...(endReason && { endReason }),
+      });
     },
     clearPendingApprovals: params.clearPendingApprovals,
     getLatestTaskSignal: params.getLatestTaskSignal,

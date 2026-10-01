@@ -1,205 +1,201 @@
 import * as Clipboard from 'expo-clipboard';
-import { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-import type { MobileMessage } from '../../../../../src/shared/types/remote/mobile';
+import { useState, type ReactNode } from 'react';
+import { Pressable, View } from 'react-native';
+import { Check, Copy, CornerDownRight, FileText, Image as ImageIcon } from 'lucide-react-native';
+import type { MobileMessage } from '@frink/shared/types/remote/mobile';
 import { Markdown } from '../../../ui/Markdown';
-import { Icon, Notice, type IconName } from '../../../ui/primitives';
-import { glassStyle } from '../../../ui/material';
-import { useTheme, type Theme } from '../../../ui/theme';
+import { glassLighting } from '../../../ui/material';
+import { Text } from '../../../ui/text';
+import { radius, space, useTheme } from '../../../ui/theme';
+import { Note } from '../note';
+import { PlanCard, type PendingPlan } from '../plan';
+import { attachmentsOf, contentGroups, copyText, type Attachment, type Group } from './parts';
+import { ToolRun } from './tool-run';
 
-type Part = NonNullable<MobileMessage['parts']>[number];
-type Tool = Extract<Part, { type: 'tool' }>;
-
-const toolStates: Record<Tool['state'], { label: string; icon: IconName }> = {
-  failed: { label: 'Failed', icon: 'alert-circle' },
-  running: { label: 'Working', icon: 'ellipsis-horizontal-circle' },
-  completed: { label: 'Complete', icon: 'checkmark-circle' },
-  interrupted: { label: 'Stopped', icon: 'stop-circle-outline' },
-  unknown: { label: 'Status unavailable', icon: 'help-circle-outline' },
-};
-
-function toolColor(t: Theme, state: Tool['state']) {
-  if (state === 'failed') return t.danger;
-  if (state === 'running') return t.accent;
-  if (state === 'completed') return t.success;
-  return t.muted;
-}
-
-// Reason: Running, failed and expanded activity states share one disclosure.
-// fallow-ignore-next-line complexity
-function Activity({ tools }: { tools: Tool[] }) {
-  const [expanded, setExpanded] = useState(false);
+/** The phone's own words: a right-aligned bubble on a faint lit fill. */
+function Bubble({ children, compact = false }: { children: ReactNode; compact?: boolean }) {
   const t = useTheme();
-  const running = tools.some((tool) => tool.state === 'running');
-  const failed = tools.some((tool) => tool.state === 'failed');
-  const count = `${tools.length} ${tools.length === 1 ? 'activity' : 'activities'}`;
-  const summary: Tool['state'] = running ? 'running' : failed ? 'failed' : 'completed';
   return (
     <View
-      style={{
-        ...glassStyle(t),
-        borderWidth: StyleSheet.hairlineWidth,
-        borderRadius: 12,
-        overflow: 'hidden',
-        marginBottom: 12,
-      }}
+      style={[
+        {
+          maxWidth: '84%',
+          paddingHorizontal: compact ? space.md : 14,
+          paddingVertical: compact ? space.sm : 10,
+          borderRadius: compact ? radius.lg : radius.xl,
+          backgroundColor: t.dark ? 'rgba(255,255,255,0.08)' : t.field,
+        },
+        glassLighting(t),
+      ]}
     >
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`${count}${running ? ', working' : ''}`}
-        accessibilityState={{ expanded }}
-        aria-expanded={expanded}
-        onPress={() => setExpanded((value) => !value)}
-        style={({ pressed }) => ({
-          height: 44,
-          paddingHorizontal: 12,
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 10,
-          backgroundColor: pressed ? t.fill : 'transparent',
-        })}
-      >
-        <Icon name="construct-outline" size={16} color={t.muted} />
-        <Text style={{ flex: 1, fontSize: 14, lineHeight: 20, color: t.secondary }}>
-          {count}
-          {running ? ' · Working' : failed ? ' · Something failed' : ''}
-        </Text>
-        <Icon name={toolStates[summary].icon} size={16} color={toolColor(t, summary)} />
-        <Icon name={expanded ? 'chevron-up' : 'chevron-down'} size={16} color={t.muted} />
-      </Pressable>
-      {expanded &&
-        tools.map((tool) => (
-          <View
-            key={tool.id}
-            style={{
-              minHeight: 40,
-              paddingHorizontal: 12,
-              paddingVertical: 10,
-              flexDirection: 'row',
-              gap: 10,
-              alignItems: 'flex-start',
-              borderTopWidth: StyleSheet.hairlineWidth,
-              borderColor: t.border,
-            }}
-          >
-            <View style={{ paddingTop: 2 }}>
-              <Icon
-                name={toolStates[tool.state].icon}
-                size={16}
-                color={toolColor(t, tool.state)}
-              />
-            </View>
-            <Text style={{ flex: 1, fontSize: 14, lineHeight: 20, color: t.text }}>
-              {tool.name}
-              <Text style={{ color: t.muted }}>{` · ${toolStates[tool.state].label}`}</Text>
-            </Text>
-          </View>
-        ))}
+      {children}
     </View>
   );
 }
 
-// Reason: Merges adjacent tool parts and drops empty text in one pass.
-// fallow-ignore-next-line complexity
-function contentGroups(parts: Part[]) {
-  const groups: Array<{ type: 'text'; text: string } | { type: 'tools'; tools: Tool[] }> = [];
-  for (const part of parts) {
-    const last = groups[groups.length - 1];
-    if (part.type === 'tool') {
-      if (last?.type === 'tools') last.tools.push(part);
-      else groups.push({ type: 'tools', tools: [part] });
-    } else if (part.text) groups.push({ type: 'text', text: part.text });
-  }
-  return groups;
+/** A note steered into a running turn: the user's words, tagged so it reads as mid-turn. */
+function SteerBubble({ text }: { text: string }) {
+  const t = useTheme();
+  return (
+    <View
+      accessibilityLabel={`Steered, picked up at the next step: ${text}`}
+      style={{ alignItems: 'flex-end', gap: space.xs, marginVertical: space.xs }}
+    >
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.xs }}>
+        <CornerDownRight size={13} color={t.muted} strokeWidth={2.2} />
+        <Text variant="label" color="muted">
+          Steered
+        </Text>
+      </View>
+      <Bubble compact>
+        <Text variant="secondary" selectable>
+          {text}
+        </Text>
+      </Bubble>
+    </View>
+  );
 }
 
-// Reason: Copied and copy-failed feedback share one control.
-// fallow-ignore-next-line complexity
+/** What was attached to a message; the files themselves stay on the computer. */
+function AttachmentChips({ items, end }: { items: Attachment[]; end: boolean }) {
+  const t = useTheme();
+  if (!items.length) return null;
+  return (
+    <View
+      style={{
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 6,
+        justifyContent: end ? 'flex-end' : 'flex-start',
+      }}
+    >
+      {items.map((item, index) => {
+        const Icon = item.kind === 'image' ? ImageIcon : FileText;
+        return (
+          <View
+            key={`${item.name}-${index}`}
+            accessibilityLabel={`${item.kind === 'image' ? 'Image' : 'File'}: ${item.name}`}
+            style={{
+              maxWidth: 240,
+              height: 32,
+              paddingHorizontal: space.md,
+              borderRadius: radius.pill,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 6,
+              backgroundColor: t.fill,
+              borderWidth: 1,
+              borderColor: t.borderSubtle,
+            }}
+          >
+            <Icon size={14} color={t.muted} />
+            <Text variant="secondary" color="secondary" numberOfLines={1} style={{ flexShrink: 1 }}>
+              {item.name}
+            </Text>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
 function CopyAction({ text }: { text: string }) {
   const t = useTheme();
-  const [copied, setCopied] = useState(false);
-  const [copyError, setCopyError] = useState(false);
+  const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle');
   async function copy() {
     try {
       await Clipboard.setStringAsync(text);
-      setCopied(true);
-      setCopyError(false);
+      setState('copied');
     } catch {
-      setCopyError(true);
+      setState('failed');
     }
   }
+  const copied = state === 'copied';
   return (
-    <>
+    <View style={{ gap: space.sm }}>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={copied ? 'Message copied' : 'Copy message'}
         onPress={() => void copy()}
-        hitSlop={10}
+        hitSlop={12}
         style={({ pressed }) => ({
           alignSelf: 'flex-start',
-          height: 24,
+          height: 28,
           flexDirection: 'row',
-          gap: 6,
           alignItems: 'center',
-          opacity: pressed ? 0.6 : 1,
+          gap: 6,
+          opacity: pressed ? 0.5 : 0.85,
         })}
       >
-        <Icon name={copied ? 'checkmark' : 'copy-outline'} size={17} color={t.muted} />
-        {copied && <Text style={{ fontSize: 12, lineHeight: 16, color: t.muted }}>Copied</Text>}
+        {copied ? (
+          <Check size={15} color={t.muted} strokeWidth={2.2} />
+        ) : (
+          <Copy size={15} color={t.muted} strokeWidth={2} />
+        )}
+        {copied && (
+          <Text variant="label" color="muted">
+            Copied
+          </Text>
+        )}
       </Pressable>
-      {copyError && <Notice error>Could not copy. Select the text to copy it.</Notice>}
-    </>
+      {state === 'failed' && (
+        <Note error>Couldn’t copy. Press and hold the text to select it.</Note>
+      )}
+    </View>
   );
 }
 
-// Reason: User bubbles and assistant parts are one message renderer.
-// fallow-ignore-next-line complexity
-export function Message({ message }: { message: MobileMessage }) {
-  const t = useTheme();
-  const isUser = message.role === 'user';
-  const groups = contentGroups(
-    message.parts?.length ? message.parts : [{ type: 'text', text: message.text }],
-  );
-  const text = groups
-    .filter((group) => group.type === 'text')
-    .map((group) => group.text)
-    .join('\n\n');
-  if (isUser)
+function AssistantGroup({ group, plan }: { group: Group; plan?: PendingPlan }) {
+  if (group.type === 'tools') return <ToolRun tools={group.tools} />;
+  if (group.type === 'steer') return <SteerBubble text={group.text} />;
+  if (group.type === 'plan')
+    return <PlanCard text={group.text} pending={plan?.id === group.id ? plan : undefined} />;
+  return <Markdown content={group.text} />;
+}
+
+/** One message. Only the newest reply (`latest`) carries a Copy button, so a long chat isn't a
+ *  column of repeated icons; earlier replies stay selectable. `plan` is the one awaiting review. */
+export function Message({
+  message,
+  latest = false,
+  plan,
+}: {
+  message: MobileMessage;
+  latest?: boolean;
+  plan?: PendingPlan;
+}) {
+  const groups = contentGroups(message);
+  const attachments = attachmentsOf(message);
+  const text = copyText(groups);
+  // Copy sits under the last prose or plan, not after trailing tool steps.
+  const lastText = latest
+    ? groups.findLastIndex((group) => group.type === 'text' || group.type === 'plan')
+    : -1;
+  if (message.role === 'user')
     return (
-      <View
-        testID={`message-${message.id}`}
-        style={{
-          alignSelf: 'flex-end',
-          maxWidth: '86%',
-          paddingHorizontal: 14,
-          paddingVertical: 10,
-          borderRadius: 20,
-          borderBottomRightRadius: 6,
-          backgroundColor: t.raised,
-        }}
-      >
-        <Text selectable style={{ color: t.text, fontSize: 16, lineHeight: 22 }}>
-          {text}
-        </Text>
+      <View testID={`message-${message.id}`} style={{ alignItems: 'flex-end', gap: 6 }}>
+        <AttachmentChips items={attachments} end />
+        {!!text && (
+          <Bubble>
+            <Text selectable>{text}</Text>
+          </Bubble>
+        )}
       </View>
     );
   return (
-    <View testID={`message-${message.id}`} style={{ alignSelf: 'stretch', gap: 4 }}>
+    <View testID={`message-${message.id}`} style={{ alignSelf: 'stretch', gap: space.sm }}>
       {message.role === 'system' && (
-        <Text style={{ fontSize: 12, lineHeight: 16, fontWeight: '600', color: t.muted }}>
+        <Text variant="label" color="muted">
           System
         </Text>
       )}
-      <View>
-        {groups.map((group, index) =>
-          group.type === 'tools' ? (
-            <Activity key={`activity-${index}`} tools={group.tools} />
-          ) : (
-            <Markdown key={`text-${index}`} content={group.text} />
-          ),
-        )}
-      </View>
-      {!!text && <CopyAction text={text} />}
+      <AttachmentChips items={attachments} end={false} />
+      {groups.map((group, index) => (
+        <View key={`${group.type}-${index}`} style={{ gap: space.xs }}>
+          <AssistantGroup group={group} plan={plan} />
+          {index === lastText && <CopyAction text={text} />}
+        </View>
+      ))}
     </View>
   );
 }

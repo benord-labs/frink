@@ -13,6 +13,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../../../components/ui/tooltip';
 import { trpc } from '../../../../../lib/trpc';
 import { RunStatusRow } from '../../../RunStatusRow';
+import { ContinueAfterUsageLimit, isLoginRemoved } from '../../../ui/account-indicator';
 import { invalidateTaskQueries } from '../utils';
 
 type TaskControlsProps = {
@@ -115,6 +116,15 @@ export const TaskControls = memo(function TaskControls({
     flowRunStatus !== 'completed',
   );
   const carryOnBlockedByFlowState = Boolean(isFlowTask && flowRunStatus !== 'paused');
+  const canCarryOn = canAct && !confirmingFreshRetry && !carryOnBlockedByFlowState;
+  const isCarryOnPending = carryOnMutation.isPending;
+  const parkedChatId = status === 'needs_attention' ? chatId : null;
+  const { data: chatLogin } = trpc.claudeCode.getResolvedAccount.useQuery(
+    { chatId: parkedChatId ?? '' },
+    { enabled: Boolean(parkedChatId) },
+  );
+  // A parked run may move its chat to another login, then carries on there.
+  const retryWithChatId = canCarryOn && !isCarryOnPending ? parkedChatId : null;
 
   const startCooldown = () => {
     setIsCoolingDown(true);
@@ -128,7 +138,7 @@ export const TaskControls = memo(function TaskControls({
   };
 
   const handleCarryOn = () => {
-    if (!canAct || !canShowControls || confirmingFreshRetry || carryOnBlockedByFlowState) return;
+    if (!canCarryOn || !canShowControls) return;
     carryOnMutation.mutate({ taskId, mode: 'continue' });
     startCooldown();
   };
@@ -152,7 +162,6 @@ export const TaskControls = memo(function TaskControls({
     startCooldown();
   };
 
-  const isCarryOnPending = carryOnMutation.isPending;
   const isRetryPending = retryNodeMutation.isPending || freshRetryMutation.isPending;
 
   const blockedTooltip = !retryAssessment.canRetry
@@ -176,6 +185,11 @@ export const TaskControls = memo(function TaskControls({
 
   if (!canShowControls) return null;
 
+  const pausedLabel =
+    parkedChatId && isLoginRemoved(chatLogin)
+      ? "This chat's login was removed"
+      : 'Task paused by a transient error';
+
   const retryTooltip = retryBlockedByRunState
     ? 'Retry needs a settled run. Resume it from the Flow surface.'
     : (blockedTooltip ??
@@ -190,8 +204,15 @@ export const TaskControls = memo(function TaskControls({
           retry arrow. */}
       <RunStatusRow
         dotClassName="bg-destructive"
-        label={status === 'failed' ? 'Task failed' : 'Task paused by a transient error'}
+        label={status === 'failed' ? 'Task failed' : pausedLabel}
       >
+        {retryWithChatId ? (
+          <ContinueAfterUsageLimit
+            chatId={retryWithChatId}
+            usageLimited={Boolean(resultRecord?.usageLimit)}
+            onRetry={handleCarryOn}
+          />
+        ) : null}
         <Tooltip delayDuration={300}>
           <TooltipTrigger asChild>
             {/* span keeps the tooltip alive while the button is disabled (disabled elements
@@ -224,9 +245,7 @@ export const TaskControls = memo(function TaskControls({
                 variant="ghost"
                 size="sm"
                 className="h-7 px-2 gap-1 text-xs text-muted-foreground hover:text-foreground rounded-md"
-                disabled={
-                  isCarryOnPending || !canAct || confirmingFreshRetry || carryOnBlockedByFlowState
-                }
+                disabled={isCarryOnPending || !canCarryOn}
                 onClick={handleCarryOn}
                 aria-label={
                   isCarryOnPending ? 'Carrying on task' : 'Carry on task from last response'

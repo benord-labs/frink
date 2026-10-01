@@ -10,6 +10,8 @@ import type { TaskSignalPayload, TaskSignalState } from '../../../../shared/type
 import type { WakeHoldState } from '../../../../shared/types/wake-hold';
 import { captureMainException, captureMainMessage } from '../../sentry/init';
 import type { StopPendingWork } from '../../task-stop-hook';
+import { type ClaudeSession, chatFence } from '../claude-session-registry';
+import type { ClaudeTurnContext } from '../claude-turn-context';
 import {
   markLinkedTaskQuietEnd,
   persistLinkedTaskSignal,
@@ -100,20 +102,57 @@ export function logDroppedPendingWork(
   }
 }
 
-/** The turn-end arm-vs-dispose gate's own drop, named from the branch that fired. */
-export function logDisposedPendingWork(
+/** One line naming how a turn that took over a wake hold ended, so a wait that never came back
+ * can be traced to its cause. Logs once per adopted turn; ordinary turns stay silent. */
+export function logAdoptedTurnEnd(
+  turn: Pick<ClaudeTurnContext, 'adoptedHold'>,
   subChatId: string,
-  pendingWork: StopPendingWork | null,
-  gate: { aborted: boolean; planHalted: boolean; killed: boolean },
+  disposition: string,
 ): void {
-  const cause = gate.aborted
-    ? 'aborted'
-    : gate.planHalted
-      ? 'plan submitted'
-      : gate.killed
-        ? 'question-park kill'
-        : 'session busy';
-  logDroppedPendingWork(subChatId, pendingWork, cause);
+  if (!turn.adoptedHold) return;
+  turn.adoptedHold = false;
+  log.info(`[Socket Executor] Adopted turn ended for ${subChatId}: ${disposition}`);
+}
+
+type TurnEndSession = Pick<
+  ClaudeSession,
+  'stopHook' | 'queue' | 'busy' | 'subChatId' | 'inputsReadAt'
+>;
+
+/** Why the session must end instead of being held or kept, or null when it may stay. */
+function disposeCause(
+  session: TurnEndSession,
+  turn: Pick<ClaudeTurnContext, 'planSubmissionHalt'>,
+  signal: AbortSignal,
+): string | null {
+  if (signal.aborted) return 'aborted';
+  // A submitted plan never holds; with nothing pending it is kept for the approval to claim.
+  if (turn.planSubmissionHalt() && session.stopHook?.lastPendingWork) return 'plan submitted';
+  if (session.queue.closed) return 'question-park kill'; // killed by a question park: dead input
+  if (session.busy) return 'session busy';
+  return chatFence(session) || null; // its chat was torn down or switched account mid-turn
+}
+
+function adoptedTurnDisposition(cause: string | null, session: TurnEndSession): string {
+  const pendingWork = session.stopHook?.lastPendingWork;
+  if (cause) return `disposed (${cause})`;
+  if (pendingWork) return `re-armed (${summarizePendingWork(pendingWork).waitingOn.join(', ')})`;
+  const why = session.stopHook?.stoppedSinceReset ? 'no pending work' : 'no Stop snapshot';
+  return `not re-armed (${why})`;
+}
+
+/** The turn-end arm-vs-dispose gate: true ends the session instead of holding or keeping it. Names
+ * the work a disposal drops, and gives an adopted turn its disposition line. */
+export function turnEndMustDispose(
+  subChatId: string,
+  session: TurnEndSession,
+  turn: Pick<ClaudeTurnContext, 'adoptedHold' | 'planSubmissionHalt'>,
+  signal: AbortSignal,
+): boolean {
+  const cause = disposeCause(session, turn, signal);
+  if (cause) logDroppedPendingWork(subChatId, session.stopHook?.lastPendingWork ?? null, cause);
+  logAdoptedTurnEnd(turn, subChatId, adoptedTurnDisposition(cause, session));
+  return cause !== null;
 }
 
 /**
@@ -127,9 +166,8 @@ export function logDisposedPendingWork(
  * subagents, `done` after the first, second killed). Mirrors the CLI's own result hold-back, which
  * never releases over live agent/workflow tasks. See decision unattended-wake-budget.
  *
- * `since` makes the read per-TURN: the signal slot is per EXECUTION CONTEXT and never cleared, and
- * an adopting turn reuses the arming turn's, so an unqualified read would let an earlier turn's
- * `done` end a wait this turn never declared finished.
+ * `since` scopes the read: the signal slot is per execution context, never cleared, and shared by
+ * its wake bursts — so an unqualified read would let a stale `done` end a wait not declared over.
  */
 export function declaresWaitOver(
   signal: TaskSignalPayload | null | undefined,

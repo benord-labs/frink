@@ -1,5 +1,6 @@
-import { Pressable, Text, View } from 'react-native';
-import { useTheme } from './theme';
+import { Pressable, View } from 'react-native';
+import { Text } from './text';
+import { radius, useTheme } from './theme';
 
 // Reason: Selected and idle segments share one renderer.
 // fallow-ignore-next-line complexity
@@ -24,22 +25,18 @@ function Segment({
         flex: 1,
         minWidth: 0,
         paddingVertical: 6,
-        borderRadius: 8,
+        borderRadius: radius.sm,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: selected ? t.raised : 'transparent',
+        backgroundColor: selected ? (t.dark ? '#3A3A3C' : '#FFFFFF') : 'transparent',
         boxShadow: selected ? '0 1px 3px rgba(0,0,0,0.18)' : undefined,
       }}
     >
       <Text
+        variant="secondary"
         numberOfLines={1}
-        maxFontSizeMultiplier={1.6}
-        style={{
-          fontSize: 14,
-          lineHeight: 18,
-          fontWeight: selected ? '600' : '500',
-          color: selected ? t.text : t.secondary,
-        }}
+        color={selected ? 'text' : 'secondary'}
+        style={{ fontWeight: selected ? '600' : '500' }}
       >
         {label}
       </Text>
@@ -65,7 +62,7 @@ export function Segmented<Id extends string>({
         flexDirection: 'row',
         minHeight: 36,
         padding: 2,
-        borderRadius: 10,
+        borderRadius: radius.sm + 2,
         backgroundColor: t.field,
       }}
     >

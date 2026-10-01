@@ -245,12 +245,12 @@ export type UpdateTaskStatusOptions = {
  * - terminal statuses (completed / failed / cancelled / done / needs_attention)
  *   set completed_at + result.
  */
-export async function updateTaskStatus(
+export function updateTaskStatus(
   db: Db,
   taskId: string,
   status: TaskStatus,
   options: UpdateTaskStatusOptions = {},
-): Promise<Task | null> {
+): Task | null {
   const patch: Partial<Task> = { status };
   const result = options.result == null ? options.result : taskResultSchema.parse(options.result);
   if (options.executedBy !== undefined) patch.executedBy = options.executedBy ?? null;
@@ -267,8 +267,7 @@ export async function updateTaskStatus(
     patch.result = result;
   }
 
-  const [row] = await db.update(tasks).set(patch).where(casWhere(taskId, options)).returning();
-  return row ?? null;
+  return db.update(tasks).set(patch).where(casWhere(taskId, options)).returning().get() ?? null;
 }
 
 function casWhere(taskId: string, options: { expectStatuses?: readonly TaskStatus[] }) {
@@ -594,18 +593,18 @@ const DELETABLE_STATUSES: TaskStatus[] = [
 ];
 
 /** `previous` is the exact row the cancel replaced (read in the same sync transaction). */
-export async function cancelTaskDetailed(
+export function cancelTaskDetailed(
   db: Db,
   taskId: string,
-): Promise<TaskMutationResult & { previous?: Task }> {
-  // Status-guarded UPDATE inside one synchronous transaction: nothing (recovery sweep, poller
-  // claim) can transition the row between reading the pre-image and the write.
+): TaskMutationResult & { previous?: Task } {
+  // Status-guarded UPDATE in one synchronous transaction (a savepoint inside a caller's): nothing
+  // (recovery sweep, poller claim) can move the row between reading the pre-image and the write.
   return db.transaction(() => {
     const previous = db.select().from(tasks).where(eq(tasks.id, taskId)).get() as Task | undefined;
     if (!previous) return { task: null, reason: 'not_found' as const };
     const updated = db
       .update(tasks)
-      .set({ status: 'cancelled', completedAt: new Date(), result: { cancelled: true } })
+      .set({ status: 'cancelled', completedAt: new Date(), result: cancelResultPatch(false) })
       .where(and(eq(tasks.id, taskId), inArray(tasks.status, CANCELLABLE_STATUSES)))
       .returning()
       .get() as Task | undefined;
@@ -620,21 +619,6 @@ export async function cancelAllPendingTasks(db: Db): Promise<{ cancelledCount: n
     .where(eq(tasks.status, 'pending'))
     .returning({ id: tasks.id });
   return { cancelledCount: rows.length };
-}
-
-/** Cancel a run's in-flight tasks; permanent deletion also sweeps parked work. */
-export async function cancelFlowLinkedTasks(
-  db: Db,
-  flowRunId: string,
-  includeParked = false,
-): Promise<number> {
-  const statuses = includeParked ? FLOW_DRIVING_STATUSES : (['pending', 'running'] as const);
-  const rows = await db
-    .update(tasks)
-    .set({ status: 'cancelled', completedAt: new Date(), result: cancelResultPatch(false) })
-    .where(and(eq(tasks.flowRunId, flowRunId), inArray(tasks.status, [...statuses])))
-    .returning({ id: tasks.id });
-  return rows.length;
 }
 
 /**
@@ -855,7 +839,7 @@ export async function recoverOrphanedTasks(
 
 /**
  * Finalize a run's still-active flow-linked tasks (pending/running) when the flow_run goes
- * terminal. Mirrors the cloud engine's cancelFlowLinkedTasks — without it a task re-dispatched
+ * terminal. Mirrors cancelFlowTaskRows — without it a task re-dispatched
  * right as its run cancels can outlive the run as a stuck 'running' row (sidebar/work-queue
  * divergence). Called from advanceFlowRun's failed/cancelled branches alongside the node-run sweep.
  */

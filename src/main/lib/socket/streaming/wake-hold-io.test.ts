@@ -92,6 +92,22 @@ describe('buildWakeHoldIo — setHeld frames', () => {
     const [frame] = sendWakeHoldChanged.mock.calls[0];
     expect(frame).toEqual({ chatId: 'c1', subChatId: 'sc1', held: false });
     expect('pending' in frame).toBe(false);
+    expect('endReason' in frame).toBe(false);
+  });
+
+  // The renderer chimes only on 'wait-over', and warns that Stop also ends the background work
+  // only on 'adopted'; a bare retraction (Stop, release) must stay distinguishable from both.
+  it.each(['wait-over', 'adopted'] as const)('names a %s retraction', (endReason) => {
+    const { io, sendWakeHoldChanged } = ioWithSpy();
+
+    io.setHeld(false, undefined, endReason);
+
+    expect(sendWakeHoldChanged.mock.calls[0][0]).toStrictEqual({
+      chatId: 'c1',
+      subChatId: 'sc1',
+      held: false,
+      endReason,
+    });
   });
 
   it('emits one epoch settlement when a durably finalized hold retracts', () => {

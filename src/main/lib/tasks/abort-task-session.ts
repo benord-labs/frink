@@ -1,5 +1,5 @@
 // Cancel bridge (sc-3263): `tasks.cancel` flips the row; this stops the executor turn (keyed by
-// sub-chat, same abort as chat archive/delete) and, for a flow task, its run.
+// sub-chat, same abort as chat archive/delete). A flow row's run is cancelled by cancelWorkQueueTask.
 
 import log from 'electron-log';
 import type { Task } from '../db/schema';
@@ -25,7 +25,7 @@ export function resolveTaskSubChatIds(task: Task): string[] {
 
 /** `task` is the row the cancel replaced (`cancelTaskDetailed`'s `previous`). Only a `running`
  * task is stopped (the user may drive a plan_ready chat); never throws, the cancel is saved. */
-export async function stopTaskSession(task: Task): Promise<void> {
+export function stopTaskSession(task: Task): void {
   if (task.status !== 'running') return;
 
   try {
@@ -34,19 +34,6 @@ export async function stopTaskSession(task: Task): Promise<void> {
   } catch (error) {
     log.warn('[tasks.cancel] Failed to abort the cancelled task session', {
       taskId: task.id,
-      error,
-    });
-  }
-
-  if (!task.flowRunId) return;
-  try {
-    // Dynamic import mirrors the tasks router's flows imports (avoids a static import cycle).
-    const { cancelFlowRun } = await import('../flows/engine');
-    await cancelFlowRun(task.flowRunId);
-  } catch (error) {
-    log.warn('[tasks.cancel] Failed to cancel the flow run of a cancelled task', {
-      taskId: task.id,
-      flowRunId: task.flowRunId,
       error,
     });
   }

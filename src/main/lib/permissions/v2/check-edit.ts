@@ -80,8 +80,8 @@ export type PathToolName = 'Edit' | 'Read' | 'Write' | 'Delete' | 'MultiEdit' | 
  * Tools the agent uses to author a plan (create, read back, rewrite). Only these
  * bypass the prompt against `planDirRoot`. Delete + NotebookEdit are excluded —
  * not part of plan authoring, so they keep prompting even inside the plans dir.
- * Path-conditional (only inside the plans dir). Glob/Grep are gated separately by
- * `search/check-search.ts`.
+ * Distinct from `check.ts`'s `AUTO_ALLOW_TOOLS` (Glob/Grep, unconditional bypass):
+ * this set is path-conditional (only inside the plans dir).
  */
 const PLAN_DIR_BYPASS_TOOLS = new Set<PathToolName>(['Read', 'Write', 'Edit', 'MultiEdit']);
 

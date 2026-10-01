@@ -8,6 +8,27 @@ function collect(gen: Generator<UIMessageChunk>): UIMessageChunk[] {
 }
 
 describe('createTransformer', () => {
+  it('ends a turn whose result is a usage limit with a RATE_LIMIT_SDK error chunk', () => {
+    const transform = createTransformer();
+    const limit = "You've hit your limit · resets 3pm";
+    const chunks = collect(transform({ type: 'result', subtype: 'success', result: limit }));
+
+    expect(chunks.at(-2)?.type).toBe('finish');
+    expect(chunks.at(-1)).toEqual({
+      type: 'error',
+      errorText: limit,
+      debugInfo: { category: 'RATE_LIMIT_SDK' },
+    });
+    const quoted = collect(
+      createTransformer()({
+        type: 'result',
+        subtype: 'success',
+        result: `Fixed the "${limit}" copy`,
+      }),
+    );
+    expect(quoted.some((c) => c.type === 'error')).toBe(false);
+  });
+
   it('emits start on first message', () => {
     const transform = createTransformer();
     const chunks = collect(transform({ type: 'system', subtype: 'init' }));

@@ -7,7 +7,7 @@ const SENTINEL = /node_modules[\\/]\.electron-test-sentinel$/;
 /**
  * Guards the vitest.config.ts ELECTRON_OVERRIDE_DIST_PATH pin (sc-1452).
  *
- * electron@43 has no install lifecycle script and fetches its ~120MB binary lazily inside
+ * electron (43+) has no install lifecycle script and fetches its ~120MB binary lazily inside
  * `module.exports = getElectronPath()`. Without this pin a test process that reaches the real
  * module downloads it mid-suite, or — on a checkout that never ran `dev` — fails with
  * "Electron failed to install correctly" across every suite whose graph touches electron.

@@ -5,6 +5,7 @@
 
 import { z } from 'zod';
 import { approvedPlanContextSchema } from '../../../../shared/types/approved-plan-context-schema';
+import { CODEX_SPEEDS } from '../../../../shared/types/execution';
 import {
   listPendingQuestionProjections,
   listPendingQuestionSubChatIds,
@@ -64,8 +65,8 @@ const executionSettingsSchema = z.object({
   betas: z.array(z.string().max(64)).max(5).optional(),
   // Provider-native Auto reviewer; unsupported runtimes ignore it.
   autoReviewTools: z.boolean().optional(),
-  // Codex "Fast mode" (priority service tier); billed at a credit multiplier.
-  codexFastMode: z.boolean().optional(),
+  // Codex speed; `fast` requests the priority service tier, billed at a credit multiplier.
+  codexSpeed: z.enum(CODEX_SPEEDS).optional(),
   // Claude Ultra tier: CLI session `ultracode` (parallel-agent orchestration).
   ultra: z.boolean().optional(),
 });
@@ -143,6 +144,7 @@ export const socketRouter = router({
         return {
           success: false as const,
           reason: error instanceof Error ? error.message : 'Failed to send message',
+          category: (error as { category?: string } | null)?.category,
         };
       }
     }),

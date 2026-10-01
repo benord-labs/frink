@@ -30,10 +30,8 @@ import {
   agentsSettingsDialogActiveTabAtom,
   agentsSettingsDialogOpenAtom,
 } from '../../../../lib/atoms';
-import { ConfirmDialog } from '../../../../components/ui/confirm-dialog';
 import type { Task } from '../../types';
 import { parseTriggerContext } from '../../utils/trigger-context';
-import { EmailTriggerContentDialog } from './EmailTriggerContentDialog';
 import { TriggerContentDialog } from './TriggerContentDialog';
 import { overlayGlass } from '@/lib/overlay-styles';
 
@@ -52,7 +50,6 @@ export type ActionMenuProps = {
   onStartTask?: (taskId: string, mode: 'agent' | 'plan') => void;
   onRetryTask?: (taskId: string) => void;
   onMarkComplete?: (taskId: string) => void;
-  onDismiss?: (taskId: string) => void;
 };
 
 type TaskActionMenuHandlers = Omit<
@@ -79,32 +76,31 @@ export function ActionMenu({
   onStartTask,
   onRetryTask,
   onMarkComplete,
-  onDismiss,
 }: ActionMenuProps): ReactElement {
-  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [isTriggerContentOpen, setIsTriggerContentOpen] = useState(false);
   const setSettingsActiveTab = useSetAtom(agentsSettingsDialogActiveTabAtom);
   const setSettingsOpen = useSetAtom(agentsSettingsDialogOpenAtom);
   const triggerContext = parseTriggerContext(task.triggerContext);
-  const canViewOriginal = !!triggerContext && typeof triggerContext.fullContent === 'object';
   const canConnectAccount =
     status === 'failed' && task.result?.errorAction === 'open-connect-account';
-  const canCancel = status === 'pending' || status === 'running' || status === 'done';
   const canReview = status === 'plan_ready';
   const canMarkComplete = (status === 'needs_attention' || status === 'done') && !!onMarkComplete;
-  const canDismiss = status === 'needs_attention' && !!onDismiss;
-  // `interrupted` is deliberately NOT deletable from the row: a per-row delete of a derived-status
-  // flow run can race a concurrent chat-resume and orphan it (delete the task row while the node_run
-  // revives). An interrupted run leaves Active by being resumed, or is abandoned by deleting its chat.
+  const hasChat = !!task.result?.chatId || !!task.linkedChatId;
+  const canStart = status === 'pending' && !hasChat && !!onStartTask;
+  // One exit per state (decision work-queue-attention-hierarchy): Cancel while the task can still
+  // do something, Delete once nothing runs. An interrupted run leaves via Cancel, never a row delete.
+  const canCancel =
+    status === 'running' ||
+    status === 'plan_ready' ||
+    status === 'needs_attention' ||
+    status === 'interrupted' ||
+    (status === 'pending' && hasChat);
   const canDelete =
     status === 'completed' ||
     status === 'cancelled' ||
     status === 'failed' ||
-    status === 'pending' ||
-    status === 'plan_ready' ||
-    status === 'done';
-  const canStart =
-    status === 'pending' && !task.result?.chatId && !task.linkedChatId && !!onStartTask;
+    status === 'done' ||
+    (status === 'pending' && !hasChat);
   const canRetry =
     (status === 'failed' || status === 'needs_attention') &&
     !task.flowRunId &&
@@ -162,7 +158,7 @@ export function ActionMenu({
               {status === 'running' ? 'View progress' : 'View chat'}
             </DropdownMenuItem>
           )}
-          {canViewOriginal && (
+          {triggerContext && (
             <DropdownMenuItem onSelect={() => setIsTriggerContentOpen(true)} className="text-xs">
               <Eye className="h-3 w-3" aria-hidden="true" />
               View original content
@@ -202,17 +198,7 @@ export function ActionMenu({
               Mark complete
             </DropdownMenuItem>
           )}
-          {canDismiss && (
-            <DropdownMenuItem
-              onSelect={() => onDismiss?.(task.id)}
-              disabled={isLoading}
-              className="text-xs"
-            >
-              <X className="h-3 w-3" />
-              Dismiss
-            </DropdownMenuItem>
-          )}
-          {canCancel && !canStart && (
+          {canCancel && (
             <DropdownMenuItem
               onSelect={() => onCancel(task.id)}
               disabled={isLoading}
@@ -224,13 +210,7 @@ export function ActionMenu({
           )}
           {canDelete && (
             <DropdownMenuItem
-              onSelect={() => {
-                if (status === 'plan_ready') {
-                  setIsDeleteConfirmOpen(true);
-                  return;
-                }
-                onDelete(task.id);
-              }}
+              onSelect={() => onDelete(task.id)}
               disabled={isLoading}
               className="text-xs"
               tone="danger"
@@ -241,26 +221,13 @@ export function ActionMenu({
           )}
         </DropdownMenuContent>
       </DropdownMenu>
-      <ConfirmDialog
-        open={isDeleteConfirmOpen}
-        onOpenChange={setIsDeleteConfirmOpen}
-        onConfirm={() => onDelete(task.id)}
-        title="Delete plan-ready task?"
-        description="This removes it from your queue."
-      />
-      {triggerContext?.source === 'gmail' ? (
-        <EmailTriggerContentDialog
-          open={isTriggerContentOpen}
-          onOpenChange={setIsTriggerContentOpen}
-          triggerContext={triggerContext}
-        />
-      ) : triggerContext ? (
+      {triggerContext && (
         <TriggerContentDialog
           open={isTriggerContentOpen}
           onOpenChange={setIsTriggerContentOpen}
           triggerContext={triggerContext}
         />
-      ) : null}
+      )}
     </>
   );
 }

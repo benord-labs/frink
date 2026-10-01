@@ -1,6 +1,7 @@
 import type {
   MobileFlow,
   MobileRequest,
+  MobileResponses,
   MobileRun,
   MobileRunNode,
 } from '../../../../shared/types/remote/mobile';
@@ -12,6 +13,7 @@ import {
   hasCurrentUnapprovedPlan,
   type PlanMessageLike,
 } from '../../../../shared/types/plan';
+import { flowRunDisplayStatus } from '../../../../shared/lib/flows/run-display-status';
 import { getDatabase } from '../../db';
 import { getVersion } from '../../db/repos/flow-versions';
 import { getSubChatById, safeParseMessages, type SubChatHydrated } from '../../db/repos/sub-chats';
@@ -20,12 +22,28 @@ import {
   activeFlowRunForSubChatId,
   latestFlowTaskForSubChatId,
 } from '../../db/repos/task-queries/subchat-driver';
-import { subChats, tasks } from '../../db/schema';
+import { flowRuns, flowVersions, subChats, tasks } from '../../db/schema';
 import { flowResumeActionToken, resumeSnapshotForNode } from '../../flows/rerun/resume-snapshot';
 import { MobileApiError, mobileCallers, record, requireExecutionReady, text } from './context';
 import { projectMobileFlowDefinition } from './projections';
 
-function flowProjection(flow: DbFlow): MobileFlow {
+const MAX_FLOWS = 200;
+/** The desktop run list's own cap, which is also the phone's largest window. */
+const MAX_RUNS = 100;
+
+/** The live run's state as the desktop list shows it. A paused run that is not working is parked
+ *  on a person (an approval, a plan, or a failed step to retry or skip), so it reads as a wait. */
+function liveStatus(flow: DbFlow): string | null {
+  if (!flow.latest_run_status) return null;
+  const status = flowRunDisplayStatus(
+    flow.latest_run_status,
+    flow.latest_run_active_task_status,
+    flow.latest_run_admission_state,
+  );
+  return status === 'paused' ? 'awaiting_input' : status;
+}
+
+function flowProjection(flow: DbFlow, lastRun: MobileFlow['lastRun']): MobileFlow {
   return {
     id: flow.id,
     name: flow.name,
@@ -33,27 +51,66 @@ function flowProjection(flow: DbFlow): MobileFlow {
     enabled: flow.is_enabled,
     trigger: flow.trigger_type ?? 'manual_trigger',
     latestRunId: flow.latest_run_id ?? null,
-    status: flow.latest_run_status ?? null,
+    status: liveStatus(flow),
+    lastRun,
   };
 }
 
-export async function readMobileFlows(): Promise<MobileFlow[]> {
-  return (await mobileCallers.flows.list()).map(flowProjection);
+/** The newest run of any status per Flow; the list's live status covers only active runs. */
+async function lastRuns(flowIds: string[]): Promise<Map<string, MobileFlow['lastRun']>> {
+  if (!flowIds.length) return new Map();
+  const db = getDatabase();
+  const ranked = db
+    .select({
+      flowId: flowVersions.flowId,
+      id: flowRuns.id,
+      status: flowRuns.status,
+      at: sql<Date>`coalesce(${flowRuns.completedAt}, ${flowRuns.startedAt}, ${flowRuns.createdAt})`
+        .mapWith(flowRuns.createdAt)
+        .as('at'),
+      rank: sql<number>`row_number() over (partition by ${flowVersions.flowId} order by ${flowRuns.createdAt} desc, ${flowRuns.id} desc)`.as(
+        'rank',
+      ),
+    })
+    .from(flowRuns)
+    .innerJoin(flowVersions, eq(flowVersions.id, flowRuns.flowVersionId))
+    .where(inArray(flowVersions.flowId, flowIds))
+    .as('ranked');
+  const rows = await db.select().from(ranked).where(eq(ranked.rank, 1));
+  return new Map(
+    rows.map((row) => [row.flowId, { id: row.id, status: row.status, at: row.at.toISOString() }]),
+  );
 }
 
-export async function readMobileFlow(id: string) {
-  const [flow, runs] = await Promise.all([
+export async function readMobileFlows(): Promise<MobileFlow[]> {
+  const flows = (await mobileCallers.flows.list()).slice(0, MAX_FLOWS);
+  const runs = await lastRuns(flows.map((flow) => flow.id));
+  return flows.map((flow) => flowProjection(flow, runs.get(flow.id) ?? null));
+}
+
+export async function readMobileFlow({
+  id,
+  runLimit = 20,
+}: Omit<Extract<MobileRequest, { type: 'flow' }>, 'type'>): Promise<MobileResponses['flow']> {
+  const [flow, runs, last] = await Promise.all([
     mobileCallers.flows.get({ id }),
-    mobileCallers.flows.listRuns({ flowId: id, limit: 30 }),
+    // One extra row tells whether more exist. At the 100-run cap the phone cannot widen further.
+    mobileCallers.flows.listRuns({ flowId: id, limit: Math.min(runLimit + 1, MAX_RUNS) }),
+    lastRuns([id]),
   ]);
   return {
-    flow: flowProjection(flow),
+    flow: flowProjection(flow, last.get(id) ?? null),
     definition: projectMobileFlowDefinition(flow.graph, flow.version_number),
-    runs: runs.map((run) => ({
-      id: run.id,
-      status: run.status,
-      startedAt: run.started_at,
-    })),
+    runs: {
+      items: runs.slice(0, runLimit).map((run) => ({
+        id: run.id,
+        status: run.status,
+        createdAt: run.created_at,
+        startedAt: run.started_at,
+        completedAt: run.completed_at,
+      })),
+      hasMore: runs.length > runLimit,
+    },
   };
 }
 
@@ -219,12 +276,16 @@ export async function readMobileRun(id: string): Promise<MobileRun> {
           ? nodeActions(run, node, planText, plan?.task ?? null)
           : [],
       actionToken: flowResumeActionToken(snapshot),
+      startedAt: node.started_at,
+      completedAt: node.completed_at,
     };
   });
   return {
     id: run.id,
     status: run.status,
+    createdAt: run.created_at,
     startedAt: run.started_at,
+    completedAt: run.completed_at,
     flowId: flow.id,
     flowName: flow.name,
     nodes,

@@ -1,11 +1,13 @@
-import { eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
+import log from 'electron-log';
 import type { getDatabase } from '../index';
-import { claudeCodeCredentials, projectAiAccounts } from '../schema';
+import { type Chat, chats, claudeCodeCredentials, projectAiAccounts } from '../schema';
+import { parkFlowTaskForSubChat } from './task-parking';
 
 type Db = ReturnType<typeof getDatabase>;
 
 /**
- * Local SQLite project ↔ AI account routing repository.
+ * Local SQLite chat and project ↔ AI account routing repository.
  *
  * The table is keyed `(projectId, accountId)` — when a project has a row, that credential
  * is the override for execution. When no row exists, callers fall back to the workspace
@@ -35,6 +37,94 @@ export async function getProjectAiAccount(
     .where(eq(projectAiAccounts.projectId, projectId))
     .limit(1);
   return row ?? null;
+}
+
+const AI_ACCOUNT_TYPES = ['claude-code', 'codex'];
+
+/** An AI account's provider type, or null for an unknown id (the table also holds non-AI rows). */
+export async function getAiAccountType(db: Db, accountId: string): Promise<string | null> {
+  const [row] = await db
+    .select({ type: claudeCodeCredentials.type })
+    .from(claudeCodeCredentials)
+    .where(
+      and(
+        eq(claudeCodeCredentials.id, accountId),
+        inArray(claudeCodeCredentials.type, AI_ACCOUNT_TYPES),
+      ),
+    )
+    .limit(1);
+  return row?.type ?? null;
+}
+
+/** The account a new chat is stamped with: the project's override, else the workspace default. */
+export async function getNewChatAccountId(
+  db: Db,
+  projectId: string | null,
+): Promise<string | null> {
+  const override = projectId ? await getProjectAiAccount(db, projectId) : null;
+  if (override) return override.id;
+  const [row] = await db
+    .select({ id: claudeCodeCredentials.id })
+    .from(claudeCodeCredentials)
+    .where(
+      and(
+        eq(claudeCodeCredentials.isDefault, true),
+        inArray(claudeCodeCredentials.type, AI_ACCOUNT_TYPES),
+      ),
+    )
+    .limit(1);
+  return row?.id ?? null;
+}
+
+/**
+ * The login a chat runs on: its stamped one, and never another provider's. Null means the chat is
+ * blocked because its login was removed.
+ */
+export async function getChatAiAccount(
+  db: Db,
+  chat: Pick<Chat, 'accountId' | 'provider'>,
+): Promise<{ id: string; label: string | null } | null> {
+  if (!chat.accountId) return null;
+  const [row] = await db
+    .select({ id: claudeCodeCredentials.id, label: claudeCodeCredentials.accountLabel })
+    .from(claudeCodeCredentials)
+    .where(
+      and(
+        eq(claudeCodeCredentials.id, chat.accountId),
+        eq(claudeCodeCredentials.type, chat.provider),
+      ),
+    )
+    .limit(1);
+  return row ?? null;
+}
+
+/**
+ * Blocks a turn in a chat whose login was removed, parking its Flow task like a usage limit; the
+ * user then retries on another login of the chat's provider.
+ */
+export async function assertChatLogin(db: Db, chatId: string, subChatId: string): Promise<void> {
+  const [chat] = await db.select().from(chats).where(eq(chats.id, chatId)).limit(1);
+  if (!chat || (await getChatAiAccount(db, chat))) return;
+  const message = "This chat's login was removed";
+  // A failed park must not replace the error that shows the recovery rows.
+  await parkFlowTaskForSubChat(db, subChatId, { kind: 'api-error', status: null, message }).catch(
+    (err) => log.warn(`[chat-login] park failed for ${subChatId}:`, err),
+  );
+  throw Object.assign(new Error(message), { category: 'LOGIN_REMOVED' });
+}
+
+/** Move a chat in place to another login of its provider; another provider is refused. */
+export async function setChatAiAccount(
+  db: Db,
+  chatId: string,
+  accountId: string,
+): Promise<'ok' | 'not-found' | 'other-provider'> {
+  const [chat] = await db.select().from(chats).where(eq(chats.id, chatId)).limit(1);
+  const nextType = await getAiAccountType(db, accountId);
+  if (!chat || !nextType) return 'not-found';
+  if (nextType !== chat.provider) return 'other-provider';
+  await db.update(chats).set({ accountId }).where(eq(chats.id, chatId));
+  return 'ok';
 }
 
 /**

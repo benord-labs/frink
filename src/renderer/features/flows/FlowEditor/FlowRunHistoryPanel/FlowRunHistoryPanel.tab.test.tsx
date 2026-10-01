@@ -128,8 +128,6 @@ vi.mock('sonner', () => ({
 
 vi.mock('../FlowRunStatusIcon', () => ({
   FlowRunStatusIcon: () => <span>icon</span>,
-  flowRunDisplayStatus: (status: string, _taskStatus?: string, admissionState?: string) =>
-    admissionState === 'queued' ? 'queued' : status,
   isLiveFlowAdmissionState: (state?: string | null) =>
     state != null && ['queued', 'claimed', 'active', 'releasing'].includes(state),
   shouldShowPausedActions: (status: string) => status === 'paused',

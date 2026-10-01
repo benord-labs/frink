@@ -146,7 +146,6 @@ export const mcpRouter = router({
       // Save to local config (this is the primary storage)
       await setGlobalMcpServer(input.name, normalizedConfig);
       invalidateMcpToolsCache(input.name);
-
     }),
 
   /** Remove a global MCP server from local config. */
@@ -347,7 +346,6 @@ export const mcpRouter = router({
       }),
     );
     results.push(...localServerResults);
-
 
     return results;
   }),

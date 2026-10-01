@@ -4,7 +4,7 @@ const mocks = vi.hoisted(() => ({
   db: null as unknown,
   dispatchAndAdvance: vi.fn(async (..._args: unknown[]) => {}),
   requestTerminalFlowResume: vi.fn(async () => ({ created: true })),
-  registered: null as null | ((intent: unknown) => Promise<void>),
+  registered: null as null | ((intent: unknown, ticket: number) => Promise<void>),
 }));
 
 vi.mock('../../../db', async (orig) => ({
@@ -18,7 +18,9 @@ vi.mock('../../advance', async (orig) => ({
 // Bare mock on purpose: importing the real runtime would boot the admission controller.
 // dispatcher.ts imports exactly these two names.
 vi.mock('../runtime', () => ({
-  registerTerminalFlowResumeDispatcher: (fn: (intent: unknown) => Promise<void>) => {
+  registerTerminalFlowResumeDispatcher: (
+    fn: (intent: unknown, ticket: number) => Promise<void>,
+  ) => {
     mocks.registered = fn;
   },
   requestTerminalFlowResume: mocks.requestTerminalFlowResume,
@@ -30,7 +32,7 @@ vi.mock('../../event-emit', async (orig) => ({
 
 import type { FlowGraph } from '../../../../../shared/lib/validate-flow-graph';
 import { createNodeRun } from '../../../db/repos/node-runs';
-import { seedFlowRun } from '../../../db/test-utils/flow-fixtures';
+import { seedActiveAdmission, seedFlowRun } from '../../../db/test-utils/flow-fixtures';
 import { freshDb, type TestDb } from '../../../db/test-utils/fresh-db';
 import { retryTerminalFlowRun } from './dispatcher';
 
@@ -45,6 +47,7 @@ const GRAPH: FlowGraph = {
 let db: TestDb;
 let flowRunId: string;
 let nodeRunId: string;
+let ticket: number;
 
 beforeEach(async () => {
   vi.clearAllMocks();
@@ -58,6 +61,7 @@ beforeEach(async () => {
     status: 'failed',
   });
   nodeRunId = nodeRun.id;
+  ticket = seedActiveAdmission(db, flowRunId);
 });
 
 describe('retryTerminalFlowRun', () => {
@@ -83,15 +87,16 @@ describe('dispatchAdmittedTerminalResume (registered dispatcher)', () => {
   }
 
   it("forwards a continuation intent as resumeKind 'continuation'", async () => {
-    await mocks.registered?.(intent(true));
+    await mocks.registered?.(intent(true), ticket);
     expect(mocks.dispatchAndAdvance).toHaveBeenCalledOnce();
-    expect(mocks.dispatchAndAdvance.mock.calls[0][6]).toEqual({ resumeKind: 'continuation' });
+    expect(mocks.dispatchAndAdvance.mock.calls[0][0]).toEqual({ flowRunId, ticket });
+    expect(mocks.dispatchAndAdvance.mock.calls[0][5]).toEqual({ resumeKind: 'continuation' });
   });
 
   it("forwards a plain intent (flows.rerunRun — the honest re-run surfaces) as resumeKind 'redispatch'", async () => {
-    await mocks.registered?.(intent());
+    await mocks.registered?.(intent(), ticket);
     expect(mocks.dispatchAndAdvance).toHaveBeenCalledOnce();
-    expect(mocks.dispatchAndAdvance.mock.calls[0][6]).toEqual({ resumeKind: 'redispatch' });
+    expect(mocks.dispatchAndAdvance.mock.calls[0][5]).toEqual({ resumeKind: 'redispatch' });
   });
 
   it('forwards the persisted Fan Out branch scope', async () => {
@@ -108,21 +113,34 @@ describe('dispatchAdmittedTerminalResume (registered dispatcher)', () => {
       .set({ laneIndex: 3, parentFanOutNodeRunId: parent.id })
       .where(eq(nodeRuns.id, nodeRunId));
 
-    await mocks.registered?.(intent());
+    await mocks.registered?.(intent(), ticket);
 
-    expect(mocks.dispatchAndAdvance.mock.calls[0][6]).toEqual({
+    expect(mocks.dispatchAndAdvance.mock.calls[0][5]).toEqual({
       resumeKind: 'redispatch',
       laneIndex: 3,
       parentFanOutNodeRunId: parent.id,
     });
   });
 
-  it('still refuses a run that is no longer dispatchable, before any dispatch', async () => {
+  it('returns quietly for a run a Cancel took after promotion, before any dispatch', async () => {
     const { flowRuns } = await import('../../../db/schema');
     const { eq } = await import('drizzle-orm');
-    await db.update(flowRuns).set({ status: 'failed' }).where(eq(flowRuns.id, flowRunId));
+    await db.update(flowRuns).set({ status: 'cancelled' }).where(eq(flowRuns.id, flowRunId));
 
-    await expect(mocks.registered?.(intent(true))).rejects.toThrow('no longer dispatchable');
+    await expect(mocks.registered?.(intent(true), ticket)).resolves.toBeUndefined();
+    expect(mocks.dispatchAndAdvance).not.toHaveBeenCalled();
+  });
+
+  it('returns quietly once a Cancel and a Retry replaced its promoted ticket', async () => {
+    const { flowRunAdmissions } = await import('../../../db/schema');
+    const { eq } = await import('drizzle-orm');
+    await db
+      .update(flowRunAdmissions)
+      .set({ state: 'released', settledAt: new Date() })
+      .where(eq(flowRunAdmissions.ticket, ticket));
+    seedActiveAdmission(db, flowRunId);
+
+    await expect(mocks.registered?.(intent(true), ticket)).resolves.toBeUndefined();
     expect(mocks.dispatchAndAdvance).not.toHaveBeenCalled();
   });
 });

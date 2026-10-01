@@ -1623,7 +1623,7 @@ describe('dynamic-chat-server frink_task_signal', () => {
   });
 
   it('omits frink_task_signal from tools list when the URL toolset carries no signal', async () => {
-    const tools = await listDynamicChatToolNames(undefined, 'agent:nosignal');
+    const tools = await listDynamicChatToolNames(undefined, 'nosignal');
     expect(tools).not.toContain('frink_task_signal');
     // Other base tools are unaffected by the gate.
     expect(tools).toContain('searchProjects');

@@ -12,6 +12,11 @@ const NON_EXECUTION_ERROR_CATEGORIES = new Set([
   'SOCKET_NOT_CONNECTED',
   'MESSAGE_TIMEOUT',
   'MACHINE_OFFLINE',
+  // The turn never started (the prompt did not reach the agent), so nothing ran to fail: keep the
+  // persisted message and let Retry deliver it.
+  'MESSAGE_NOT_DELIVERED',
+  // Blocked before the turn started, like a usage limit: keep the message for Retry with a login.
+  'LOGIN_REMOVED',
   // Expected declines: a send into a flow run whose task/admission already settled (stamped by
   // main's provider preflight). The server persisted the message before preflight, so rolling it
   // back would diverge UI from DB — surface the toast and keep the transcript intact. RESUMING is

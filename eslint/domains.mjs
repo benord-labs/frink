@@ -52,6 +52,8 @@ export const MAIN_ROOT_FOLDERS = ['lib', 'windows'];
 export const MAIN_LIB_DOMAINS = [
   'agent-runner',
   'agents',
+  // Per-chat composer settings (model / Auto / Fast / Thinking) main owns for every window + phone.
+  'chat-composer',
   'claude',
   'cloud',
   'commands',
@@ -63,7 +65,6 @@ export const MAIN_LIB_DOMAINS = [
   'flows',
   'git',
   'integrations',
-  'language-server',
   'mcp',
   'mobile',
   'permissions',

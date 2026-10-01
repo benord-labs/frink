@@ -1,239 +1,213 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { eq } from 'drizzle-orm';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  type FlowExecutionEvent,
+  type NodeOutput,
+  RESTART_INTERRUPTION_REASON,
+} from '../../../shared/types/flow';
+import { getFlowRun, setFlowRunStatus } from '../db/repos/flow-runs';
+import { createNodeRun, getNodeRun, setNodeRunStatus } from '../db/repos/node-runs';
+import { createTask, getTaskById, parseResultRecord, updateTaskStatus } from '../db/repos/tasks';
+import { flowRunAdmissions, tasks } from '../db/schema';
+import { seedActiveAdmission, seedFlowRun } from '../db/test-utils/flow-fixtures';
+import { freshDb, type TestDb } from '../db/test-utils/fresh-db';
 
-const getTaskById = vi.fn();
-const updateTaskStatus = vi.fn();
-const resumeInterruptedFlowInPlace = vi.fn();
-const canReviveInterruptedFlowInPlace = vi.fn();
+const holder = vi.hoisted(() => ({ db: null as unknown, capture: vi.fn() }));
+vi.mock('../db', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../db')>()),
+  getDatabase: () => holder.db,
+}));
+vi.mock('../sentry/init', () => ({
+  captureMainException: holder.capture,
+  captureMainMessage: holder.capture,
+}));
+vi.mock('../flows/task-completion-watcher', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../flows/task-completion-watcher')>();
+  return { ...actual, forgetAdvancedTask: vi.fn(actual.forgetAdvancedTask) };
+});
 
-vi.mock('../db', () => ({ getDatabase: () => ({}) }));
-vi.mock('../db/repos/tasks', () => ({
-  getTaskById: (...args: unknown[]) => getTaskById(...args),
-  updateTaskStatus: (...args: unknown[]) => updateTaskStatus(...args),
-}));
-vi.mock('../flows/resume', () => ({
-  resumeInterruptedFlowInPlace: (...args: unknown[]) => resumeInterruptedFlowInPlace(...args),
-  canReviveInterruptedFlowInPlace: (...args: unknown[]) => canReviveInterruptedFlowInPlace(...args),
-}));
-const forgetAdvancedTask = vi.fn();
-vi.mock('../flows/task-completion-watcher', () => ({
-  forgetAdvancedTask: (...args: unknown[]) => forgetAdvancedTask(...args),
-}));
-const getFlowRun = vi.fn();
-vi.mock('../db/repos/flow-runs', () => ({
-  getFlowRun: (...args: unknown[]) => getFlowRun(...args),
-}));
-
+import { FlowAdmissionController } from '../flows/admission/controller';
+import { _setFlowAdmissionControllerForTests } from '../flows/admission/runtime';
+import { cancelFlowRun } from '../flows/engine';
+import { subscribeFlowEvents } from '../flows/events';
+import { forgetAdvancedTask } from '../flows/task-completion-watcher';
 import { reviveRestartInterruptedFlow } from './revive-interrupted-flow';
 
-/** The result a cancel MERGES onto a task the restart interrupted, markers of the ended attempt and all. */
-function cancelledTaskResult(): Record<string, unknown> {
-  return {
-    cancelled: true,
-    error: 'Interrupted by app restart',
-    subChatId: 'sub-1',
-    userPause: { at: '2026-07-14T00:00:00Z' },
-    apiError: { status: 500 },
-    agentSignal: { state: 'awaiting_input', summary: 'stale ask' },
-  };
+const GRAPH = {
+  nodes: [{ id: 'a', blockType: 'agent', config: { instructions: 'x' }, position: { x: 0, y: 0 } }],
+  edges: [],
+};
+const MARKED_OUTPUT: NodeOutput = {
+  status: 'cancelled',
+  outputs: {},
+  artifacts: [],
+  durationMs: 0,
+  error: { message: RESTART_INTERRUPTION_REASON, retryable: true },
+};
+/** The result a restart cancel merges onto the task, stale markers of the ended attempt and all. */
+const CANCELLED_RESULT = {
+  cancelled: true,
+  error: RESTART_INTERRUPTION_REASON,
+  subChatId: 'sub-1',
+  userPause: { at: '2026-07-14T00:00:00Z' },
+  agentSignal: { state: 'awaiting_input', summary: 'stale ask' },
+};
+
+let db: TestDb;
+let flowRunId: string;
+let nodeRunId: string;
+let taskId: string;
+let ticket: number;
+
+/** The shape a restart leaves: run, node and task cancelled, the marker on the node, slot active. */
+async function seedInterruptedRun(nodeOutput: NodeOutput = MARKED_OUTPUT): Promise<void> {
+  ({ flowRunId } = await seedFlowRun(db, GRAPH));
+  ticket = seedActiveAdmission(db, flowRunId);
+  nodeRunId = (await createNodeRun(db, { flowRunId, nodeId: 'a', blockType: 'agent' })).id;
+  await setNodeRunStatus(db, nodeRunId, 'cancelled', { nodeOutput, completedAt: new Date() });
+  await setFlowRunStatus(db, flowRunId, 'cancelled', { completedAt: new Date() });
+  const task = await createTask(db, { description: 'agent', source: 'flow', flowRunId, nodeRunId });
+  taskId = task.id;
+  await updateTaskStatus(db, taskId, 'cancelled', { result: CANCELLED_RESULT });
 }
 
-function resumePayload(): Record<string, unknown> {
-  const call = updateTaskStatus.mock.calls[0]?.[3] as { result?: Record<string, unknown> };
-  return call.result ?? {};
-}
+const statuses = async () => ({
+  run: (await getFlowRun(db, flowRunId))?.status,
+  node: (await getNodeRun(db, nodeRunId))?.status,
+  task: (await getTaskById(db, taskId))?.status,
+});
+
+beforeEach(() => {
+  db = freshDb();
+  holder.db = db;
+  holder.capture.mockReset();
+  vi.mocked(forgetAdvancedTask).mockClear();
+  _setFlowAdmissionControllerForTests(
+    new FlowAdmissionController(db, async () => ({
+      version: 1,
+      queuePaused: false,
+      concurrencyLimitEnabled: false,
+      maxConcurrentRuns: 4,
+    })),
+  );
+});
+
+afterEach(() => _setFlowAdmissionControllerForTests(null));
 
 describe('reviveRestartInterruptedFlow', () => {
-  beforeEach(() => {
-    getTaskById.mockReset();
-    updateTaskStatus.mockReset().mockResolvedValue({ id: 'task-1', status: 'running' });
-    forgetAdvancedTask.mockReset();
-    getFlowRun.mockReset().mockResolvedValue({ id: 'fr-1', status: 'running' });
-    canReviveInterruptedFlowInPlace.mockReset().mockResolvedValue(true);
-    resumeInterruptedFlowInPlace.mockReset().mockResolvedValue(true);
+  it('revives task, marked node and run together, scrubbing the ended attempt’s markers', async () => {
+    await seedInterruptedRun();
+
+    await reviveRestartInterruptedFlow(taskId, flowRunId, 'sub-1');
+
+    expect(await statuses()).toEqual({ run: 'running', node: 'running', task: 'running' });
+    expect(forgetAdvancedTask).toHaveBeenCalledWith(taskId);
+    expect((await getNodeRun(db, nodeRunId))?.nodeOutput).toBeNull();
+    const result = parseResultRecord((await getTaskById(db, taskId))?.result ?? null);
+    expect(result).toMatchObject({
+      subChatId: 'sub-1',
+      resumedBy: 'follow_up_message',
+      previousStatus: 'cancelled',
+    });
+    for (const marker of ['cancelled', 'error', 'userPause', 'agentSignal']) {
+      expect(result).not.toHaveProperty(marker);
+    }
   });
 
-  // The probe declines when the run is not revivable (no marker, or no active admission slot — a
-  // revive continues the run WITHOUT re-admitting, so a slotless wake would be rejected at the
-  // provider preflight and the failure park would rewrite the run `paused` with no slot,
-  // unrecoverable). Leaving the task `cancelled` keeps the park's `running` CAS unmatchable and
-  // the run on the re-dispatch path, which re-admits.
-  it('leaves the task cancelled and unparks nothing when the probe declines', async () => {
-    canReviveInterruptedFlowInPlace.mockResolvedValue(false);
+  // Continuing in place skips re-admission, so a slot that already began releasing (a settle, or a
+  // teardown cleanup error) must decline and leave the run on the Re-run path.
+  it('writes nothing once the slot is no longer active', async () => {
+    await seedInterruptedRun();
+    db.update(flowRunAdmissions)
+      .set({ state: 'releasing', error: 'cleanup failed' })
+      .where(eq(flowRunAdmissions.ticket, ticket))
+      .run();
 
-    await reviveRestartInterruptedFlow('task-1', 'fr-1', 'sub-1');
+    await reviveRestartInterruptedFlow(taskId, flowRunId, 'sub-1');
 
-    expect(updateTaskStatus).not.toHaveBeenCalled();
-    expect(resumeInterruptedFlowInPlace).not.toHaveBeenCalled();
-    expect(forgetAdvancedTask).not.toHaveBeenCalled();
-  });
-
-  it('flips the cancelled driving task back to running and records what revived it', async () => {
-    getTaskById.mockResolvedValueOnce({ id: 'task-1', status: 'cancelled' });
-
-    await reviveRestartInterruptedFlow('task-1', 'fr-1', 'sub-1');
-
-    expect(updateTaskStatus).toHaveBeenCalledWith(
-      expect.anything(),
-      'task-1',
-      'running',
-      expect.objectContaining({
-        result: expect.objectContaining({
-          resumedBy: 'follow_up_message',
-          previousStatus: 'cancelled',
-        }),
-      }),
+    expect(await statuses()).toEqual({ run: 'cancelled', node: 'cancelled', task: 'cancelled' });
+    expect((await getNodeRun(db, nodeRunId))?.nodeOutput).toEqual(MARKED_OUTPUT);
+    expect(parseResultRecord((await getTaskById(db, taskId))?.result ?? null)).toEqual(
+      CANCELLED_RESULT,
     );
   });
 
-  // Every marker describes the attempt that ENDED. A survivor misclassifies the NEXT park — a stale
-  // userPause renders the paused bar instead of the question card, a stale apiError reads as a
-  // transient retry. The sub-chat linkage is not a marker: the resume lookup needs it.
-  it('clears the ended attempt’s markers but keeps the sub-chat linkage', async () => {
-    getTaskById.mockResolvedValueOnce({
-      id: 'task-1',
-      status: 'cancelled',
-      result: cancelledTaskResult(),
-    });
+  it('never revives a run the user cancelled (no restart marker)', async () => {
+    await seedInterruptedRun({ ...MARKED_OUTPUT, error: undefined });
 
-    await reviveRestartInterruptedFlow('task-1', 'fr-1', 'sub-1');
+    await reviveRestartInterruptedFlow(taskId, flowRunId, 'sub-1');
 
-    const result = resumePayload();
-    expect(result.cancelled).toBeUndefined();
-    expect(result.error).toBeUndefined();
-    expect(result.userPause).toBeUndefined();
-    expect(result.apiError).toBeUndefined();
-    expect(result.agentSignal).toBeUndefined();
-    expect(result.subChatId).toBe('sub-1');
-  });
-
-  // NOT a re-dispatch: the follow-up turn drives the work, so re-dispatching would double-run.
-  it('unparks the run in place, keyed to the run alone', async () => {
-    getTaskById.mockResolvedValueOnce({ id: 'task-1', status: 'cancelled' });
-
-    await reviveRestartInterruptedFlow('task-1', 'fr-1', 'sub-1');
-
-    expect(resumeInterruptedFlowInPlace).toHaveBeenCalledWith('fr-1');
-  });
-
-  // Structural race guard: the task must read `running` BEFORE the run/node go live, so the
-  // completion watcher's terminal-status query cannot re-select it mid-revive and re-advance the
-  // stale cancelled output (its in-memory advanced-set does not survive a second restart). The
-  // forget re-arms the watcher for the agent's next real `done`, after the flip.
-  it('flips the task before unparking, then forgets it for the watcher', async () => {
-    getTaskById.mockResolvedValueOnce({ id: 'task-1', status: 'cancelled' });
-
-    await reviveRestartInterruptedFlow('task-1', 'fr-1', 'sub-1');
-
-    expect(forgetAdvancedTask).toHaveBeenCalledWith('task-1');
-    const flipOrder = updateTaskStatus.mock.invocationCallOrder[0];
-    const unparkOrder = resumeInterruptedFlowInPlace.mock.invocationCallOrder[0];
-    const forgetOrder = forgetAdvancedTask.mock.invocationCallOrder[0];
-    expect(unparkOrder).toBeGreaterThan(flipOrder);
-    expect(forgetOrder).toBeGreaterThan(flipOrder);
-  });
-
-  it('treats a missing or non-object previous result as empty rather than throwing', async () => {
-    getTaskById.mockResolvedValueOnce({ id: 'task-1', status: 'cancelled', result: null });
-
-    await reviveRestartInterruptedFlow('task-1', 'fr-1', 'sub-1');
-
-    expect(resumePayload().resumedBy).toBe('follow_up_message');
-  });
-
-  it('falls back to `cancelled` when the task row has vanished', async () => {
-    getTaskById.mockResolvedValueOnce(undefined);
-
-    await reviveRestartInterruptedFlow('task-1', 'fr-1', 'sub-1');
-
-    expect(resumePayload().previousStatus).toBe('cancelled');
-  });
-
-  // TOCTOU inside the revive: the probe passed, but the slot settled during the flip→unpark gap
-  // and the unpark declined (mutation-free). A `running` task over a still-`cancelled` run would
-  // swallow the agent's completion and satisfy no recovery precondition — the flip must be
-  // reverted to the exact pre-revive shape so Re-run/Retry stay available.
-  it('reverts the flip when the unpark declines after the task went running', async () => {
-    getTaskById.mockResolvedValueOnce({
-      id: 'task-1',
-      status: 'cancelled',
-      result: cancelledTaskResult(),
-    });
-    resumeInterruptedFlowInPlace.mockResolvedValue(false);
-
-    await reviveRestartInterruptedFlow('task-1', 'fr-1', 'sub-1');
-
-    expect(updateTaskStatus).toHaveBeenCalledTimes(2);
-    expect(updateTaskStatus).toHaveBeenLastCalledWith(expect.anything(), 'task-1', 'cancelled', {
-      result: cancelledTaskResult(),
-      expectStatuses: ['running'],
-    });
+    expect(await statuses()).toEqual({ run: 'cancelled', node: 'cancelled', task: 'cancelled' });
     expect(forgetAdvancedTask).not.toHaveBeenCalled();
   });
 
-  // Check-then-act protection: admission settlement defers while flow-resource activity is held,
-  // so the slot the probe saw cannot settle before the unpark's writes land. The reservation must
-  // span the ENTIRE window (probe through unpark) and release afterwards.
-  it('holds a flow-resource reservation across the whole revive window', async () => {
-    getTaskById.mockResolvedValueOnce({ id: 'task-1', status: 'cancelled' });
-    const { hasFlowResourceActivity } = await import('../flows/admission/activity');
-    canReviveInterruptedFlowInPlace.mockImplementation(async () => {
-      expect(hasFlowResourceActivity('fr-1')).toBe(true);
-      return true;
-    });
-    resumeInterruptedFlowInPlace.mockImplementation(async () => {
-      expect(hasFlowResourceActivity('fr-1')).toBe(true);
-      return true;
-    });
+  it('writes nothing once the driving task left cancelled', async () => {
+    await seedInterruptedRun();
+    db.update(tasks).set({ status: 'done' }).where(eq(tasks.id, taskId)).run();
 
-    await reviveRestartInterruptedFlow('task-1', 'fr-1', 'sub-1');
+    await reviveRestartInterruptedFlow(taskId, flowRunId, 'sub-1');
 
-    expect(hasFlowResourceActivity('fr-1')).toBe(false);
+    expect(await statuses()).toEqual({ run: 'cancelled', node: 'cancelled', task: 'done' });
   });
 
-  // Double message: a concurrent revive already flipped the task, so this one's CAS matches
-  // nothing. It must stop entirely — proceeding could pair its decline-revert with the winner's
-  // live run, re-exposing a terminal task to the watcher against a running node.
-  it('stops without unparking when the running flip loses the CAS', async () => {
-    getTaskById.mockResolvedValueOnce({ id: 'task-1', status: 'cancelled' });
-    updateTaskStatus.mockResolvedValue(null);
+  it('never revives a marked node on a run that is not cancelled', async () => {
+    await seedInterruptedRun();
+    await setFlowRunStatus(db, flowRunId, 'failed');
 
-    await reviveRestartInterruptedFlow('task-1', 'fr-1', 'sub-1');
+    await reviveRestartInterruptedFlow(taskId, flowRunId, 'sub-1');
 
-    expect(updateTaskStatus).toHaveBeenCalledTimes(1);
-    expect(resumeInterruptedFlowInPlace).not.toHaveBeenCalled();
-    expect(forgetAdvancedTask).not.toHaveBeenCalled();
+    expect(await statuses()).toEqual({ run: 'failed', node: 'cancelled', task: 'cancelled' });
   });
 
-  // A throw AFTER the unpark landed (run reads `running`) is best-effort: the task stays flipped
-  // and the follow-up turn drives the work; aborting here would strand the state just set.
-  it('swallows a post-unpark failure so the follow-up turn still runs', async () => {
-    getTaskById.mockResolvedValueOnce({ id: 'task-1', status: 'cancelled' });
-    resumeInterruptedFlowInPlace.mockRejectedValueOnce(new Error('emit failed'));
-    getFlowRun.mockResolvedValue({ id: 'fr-1', status: 'running' });
+  it('a second revive (double message) writes nothing over the first', async () => {
+    await seedInterruptedRun();
+    await reviveRestartInterruptedFlow(taskId, flowRunId, 'sub-1');
+    const first = await getTaskById(db, taskId);
 
-    await expect(reviveRestartInterruptedFlow('task-1', 'fr-1', 'sub-1')).resolves.toBeUndefined();
-    expect(updateTaskStatus).toHaveBeenCalledTimes(1);
-    expect(forgetAdvancedTask).toHaveBeenCalledWith('task-1');
+    await reviveRestartInterruptedFlow(taskId, flowRunId, 'sub-1');
+
+    expect(await getTaskById(db, taskId)).toEqual(first);
+    expect(await statuses()).toEqual({ run: 'running', node: 'running', task: 'running' });
   });
 
-  // A throw BEFORE any unpark write (run still `cancelled` — e.g. the unpark's own guard reads
-  // failed) must revert the flip like a clean decline: a `running` task over a cancelled node is
-  // unreachable by advance's node CAS, so the agent's done would be silently dropped forever.
-  it('reverts the flip when the unpark throws with the run still cancelled', async () => {
-    getTaskById.mockResolvedValueOnce({
-      id: 'task-1',
-      status: 'cancelled',
-      result: cancelledTaskResult(),
+  describe('against Cancel', () => {
+    let cancelled: FlowExecutionEvent[];
+    let unsubscribe: () => void;
+    beforeEach(() => {
+      cancelled = [];
+      unsubscribe = subscribeFlowEvents((event) => {
+        if (event.eventType === 'run_cancelled') cancelled.push(event);
+      });
     });
-    resumeInterruptedFlowInPlace.mockRejectedValueOnce(new Error('admission store unavailable'));
-    getFlowRun.mockResolvedValue({ id: 'fr-1', status: 'cancelled' });
+    afterEach(() => unsubscribe());
 
-    await reviveRestartInterruptedFlow('task-1', 'fr-1', 'sub-1');
+    it('a Stop after the revive commits cancels the revived run once and releases its slot', async () => {
+      await seedInterruptedRun();
+      await reviveRestartInterruptedFlow(taskId, flowRunId, 'sub-1');
 
-    expect(updateTaskStatus).toHaveBeenLastCalledWith(expect.anything(), 'task-1', 'cancelled', {
-      result: cancelledTaskResult(),
-      expectStatuses: ['running'],
+      await cancelFlowRun(flowRunId);
+
+      expect(await statuses()).toEqual({ run: 'cancelled', node: 'cancelled', task: 'cancelled' });
+      expect(cancelled).toHaveLength(1);
+      const slot = db
+        .select()
+        .from(flowRunAdmissions)
+        .where(eq(flowRunAdmissions.ticket, ticket))
+        .get();
+      expect(slot?.state).not.toBe('active');
+      expect(holder.capture).not.toHaveBeenCalled();
     });
-    expect(forgetAdvancedTask).not.toHaveBeenCalled();
+
+    it('a revive after the Stop released the slot writes nothing', async () => {
+      await seedInterruptedRun();
+      const { requestFlowAdmissionRelease } = await import('../flows/admission/runtime');
+      await cancelFlowRun(flowRunId);
+      await requestFlowAdmissionRelease(flowRunId);
+
+      await reviveRestartInterruptedFlow(taskId, flowRunId, 'sub-1');
+
+      expect(await statuses()).toEqual({ run: 'cancelled', node: 'cancelled', task: 'cancelled' });
+      expect(cancelled).toHaveLength(0);
+    });
   });
 });

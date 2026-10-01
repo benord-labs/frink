@@ -171,9 +171,13 @@ vi.mock('./runtime-gate', async (importOriginal) => ({
 }));
 
 vi.mock('../flows/resume', () => ({
-  resumeFlowNodeInPlace: vi.fn(async () => true),
   isRunRestartInterrupted: vi.fn(async () => false),
-  resumeInterruptedFlowInPlace: vi.fn(async () => true),
+}));
+
+vi.mock('../tasks', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../tasks')>()),
+  resumeParkedTaskInPlace: vi.fn(async () => true),
+  reviveRestartInterruptedFlow: vi.fn(async () => undefined),
 }));
 
 vi.mock('../db/repos/chats', () => ({
@@ -265,6 +269,19 @@ vi.mock('../trpc/routers/agent-utils', () => ({
   getAllAgentsForSdk: vi.fn(() => []),
 }));
 
+/** Pass-through unless a test swaps `runTurn`, to settle a turn without its push (sc-3666). */
+const sessionLoopOverride = vi.hoisted(() => ({
+  runTurn: null as null | ((...args: unknown[]) => Promise<void>),
+}));
+vi.mock('./execution/claude-session-loop', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./execution/claude-session-loop')>();
+  return {
+    ...actual,
+    runTurn: (...args: Parameters<typeof actual.runTurn>) =>
+      sessionLoopOverride.runTurn ? sessionLoopOverride.runTurn(...args) : actual.runTurn(...args),
+  };
+});
+
 vi.mock('./client', () => ({
   broadcastToRenderer: vi.fn(),
   broadcastTaskSignalPersisted: vi.fn(),
@@ -291,17 +308,15 @@ import {
   getTaskById,
   updateTaskStatus,
 } from '../db/repos/tasks';
-import {
-  isRunRestartInterrupted,
-  resumeFlowNodeInPlace,
-  resumeInterruptedFlowInPlace,
-} from '../flows/resume';
+import { isRunRestartInterrupted } from '../flows/resume';
 import { getMultiProjectContext } from '../multi-project-prompt';
 import { checkPermission } from '../permissions/v2/check';
+import { resumeParkedTaskInPlace, reviveRestartInterruptedFlow } from '../tasks';
 import type { TaskStopHook } from '../task-stop-hook';
 import { clearActiveFlowTaskForChatIfMatches, setActiveFlowTaskForChat } from '../task-executor';
 import { armWakePump, type WakeHold } from './claude-wake-hold';
 import * as socketClient from './client';
+import * as liveStreams from './streaming/live-stream/registry';
 import {
   _hasActiveExecutionForTests,
   abortActiveExecutionsForWebContents,
@@ -546,7 +561,7 @@ describe('local-only dispatch with unresolved machineId', () => {
 
     expect(flowProviderPreflightMocks.registerNodeAbort).toHaveBeenCalledOnce();
     expect(updateTaskStatus).not.toHaveBeenCalled();
-    expect(resumeInterruptedFlowInPlace).not.toHaveBeenCalled();
+    expect(reviveRestartInterruptedFlow).not.toHaveBeenCalled();
     expect(claudeQueryMock).not.toHaveBeenCalled();
   });
 
@@ -637,7 +652,7 @@ describe('local-only dispatch with unresolved machineId', () => {
       expect.objectContaining({ category: 'FLOW_RUN_ENDED' }),
     );
     expect(updateTaskStatus).not.toHaveBeenCalled();
-    expect(resumeFlowNodeInPlace).not.toHaveBeenCalled();
+    expect(resumeParkedTaskInPlace).not.toHaveBeenCalled();
     expect(dbProjectState.updates).toEqual([]);
     expect(dynamicChatServerMocks.setCurrentExecutionChat).not.toHaveBeenCalled();
     expect(claudeQueryMock).not.toHaveBeenCalled();
@@ -809,5 +824,109 @@ describe('local-only dispatch with unresolved machineId', () => {
     await handleRemoteExecute({ ...basePayload, message: 'answer quietly' });
 
     await expect(quietEndMarkerWritten()).resolves.toBe(true);
+  });
+
+  describe('user-message delivery (sc-3666)', () => {
+    const finishOnly = () =>
+      Object.assign(
+        (async function* () {
+          yield { chunks: [{ type: 'finish' }] as UIMessageChunk[] };
+          yield { type: 'result' };
+        })(),
+        { interrupt: vi.fn() },
+      );
+    const run = async (message: string) => {
+      // An earlier test's completion is deferred a tick; drain it before this run is observed.
+      await new Promise((resolve) => setImmediate(resolve));
+      vi.mocked(socketClient.sendExecuteCompleteDirect).mockClear();
+      try {
+        await handleRemoteExecute({ ...basePayload, message });
+        await new Promise((resolve) => setImmediate(resolve));
+      } finally {
+        sessionLoopOverride.runTurn = null;
+      }
+    };
+    const notDelivered = expect.objectContaining({ category: 'MESSAGE_NOT_DELIVERED' });
+
+    it('fails a turn that settled unpushed instead of reporting it complete', async () => {
+      claudeQueryMock.mockImplementationOnce(finishOnly);
+      sessionLoopOverride.runTurn = async () => {};
+
+      await run('a long requirements brief');
+
+      expect(socketClient.sendErrorDirect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          subChatId: basePayload.subChatId,
+          assistantMessageId: basePayload.assistantMessageId,
+          category: 'MESSAGE_NOT_DELIVERED',
+        }),
+      );
+      expect(socketClient.sendExecuteCompleteDirect).not.toHaveBeenCalled();
+    });
+
+    it('completes normally once the prompt was pushed', async () => {
+      const notify = vi.spyOn(liveStreams, 'armLiveStreamNotification');
+      claudeQueryMock.mockImplementationOnce(finishOnly);
+
+      await run('hello');
+
+      expect(socketClient.sendErrorDirect).not.toHaveBeenCalledWith(notDelivered);
+      expect(socketClient.sendExecuteCompleteDirect).toHaveBeenCalled();
+      expect(notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          subChatId: basePayload.subChatId,
+          streamEpoch: expect.any(String),
+        }),
+        expect.any(AbortSignal),
+      );
+    });
+
+    it.each([false, true])('only arms successful Codex turns (error: %s)', async (failed) => {
+      const notify = vi.spyOn(liveStreams, 'armLiveStreamNotification');
+      vi.mocked(getDefaultClaudeCodeToken).mockResolvedValueOnce({
+        ...claudeCredential,
+        type: 'codex',
+      });
+      vi.mocked(runCodexAgent).mockImplementationOnce(async function* () {
+        if (failed) yield { type: 'error', errorText: 'Provider unavailable' };
+        yield { type: 'finish' };
+      });
+
+      await run('finish this session');
+
+      expect(notify).toHaveBeenCalledWith(
+        expect.objectContaining({ subChatId: basePayload.subChatId }),
+        failed ? undefined : expect.any(AbortSignal),
+      );
+    });
+
+    it('does not arm a Claude SDK result reported as an error', async () => {
+      const notify = vi.spyOn(liveStreams, 'armLiveStreamNotification');
+      claudeQueryMock.mockImplementationOnce(() =>
+        Object.assign(
+          (async function* () {
+            yield { chunks: [{ type: 'finish' }] as UIMessageChunk[] };
+            yield { type: 'result', is_error: true };
+          })(),
+          { interrupt: vi.fn() },
+        ),
+      );
+      await run('finish this session');
+      expect(notify).toHaveBeenCalledWith(
+        expect.objectContaining({ subChatId: basePayload.subChatId }),
+        undefined,
+      );
+    });
+
+    it('reports no delivery failure when Stop lands before the push', async () => {
+      claudeQueryMock.mockImplementationOnce(finishOnly);
+      sessionLoopOverride.runTurn = async () => {
+        handleRemoteStop({ chatId: basePayload.chatId, subChatId: basePayload.subChatId });
+      };
+
+      await run('stopped before delivery');
+
+      expect(socketClient.sendErrorDirect).not.toHaveBeenCalledWith(notDelivered);
+    });
   });
 });

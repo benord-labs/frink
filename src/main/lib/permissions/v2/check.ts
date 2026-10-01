@@ -11,12 +11,10 @@
 
 import log from 'electron-log';
 import { isFrinkMutatingFlowTool, isFrinkOwnedMcpTool } from '../../../../shared/lib/mcp-tool-name';
-import { PATH_TOOLS, SEARCH_TOOLS } from '../../../../shared/types/permissions';
+import { PATH_TOOLS } from '../../../../shared/types/permissions';
 import { checkBash } from './check-bash';
 import { checkEdit, type FileOpInput, type PathToolName } from './check-edit';
 import { checkMcp } from './check-mcp';
-import { checkSearch, type SearchToolName } from './search';
-import { readSearchRoot } from './context';
 import {
   combineScopes,
   EMPTY_DOCS,
@@ -25,6 +23,12 @@ import {
   type ScopedDocs,
 } from './eval-rules';
 import type { PermissionRequest, PermissionResult } from './types';
+
+/**
+ * Read-only search tools that today's `tool-validation.ts:60-63` auto-allows.
+ * Mirroring here so ticket 09 wiring doesn't regress UX.
+ */
+const AUTO_ALLOW_TOOLS = new Set<string>(['Glob', 'Grep']);
 
 export type DocsLoader = (req: PermissionRequest) => Promise<ScopedDocs>;
 
@@ -88,13 +92,8 @@ export async function checkPermission(req: PermissionRequest): Promise<Permissio
     );
   }
 
-  if (SEARCH_TOOLS.has(req.tool)) {
-    return checkSearch(req.input, docs, req.projectPath, req.tool as SearchToolName, {
-      projectId: req.projectId,
-      searchRoot: readSearchRoot(req.input),
-      sessionDirRoot: req.sessionDirRoot,
-      planDirRoot: req.planDirRoot,
-    });
+  if (AUTO_ALLOW_TOOLS.has(req.tool)) {
+    return { decision: 'allow' };
   }
 
   // Generic: rules-only, no tier-1c.

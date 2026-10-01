@@ -78,14 +78,7 @@ type ThemeMenuProps = {
   onDelete: (theme: ThemeDefinition) => void;
 };
 
-function ThemeMenu({
-  theme,
-  custom,
-  unavailable,
-  onCustomize,
-  onEdit,
-  onDelete,
-}: ThemeMenuProps) {
+function ThemeMenu({ theme, custom, unavailable, onCustomize, onEdit, onDelete }: ThemeMenuProps) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -242,7 +235,10 @@ export function ThemeShelf({ stock }: Props): ReactElement {
 
   return (
     <div
-      className={cn(SETTINGS_GLASS_PANEL_CLASS, 'tile-rim flex flex-col overflow-hidden rounded-2xl p-0')}
+      className={cn(
+        SETTINGS_GLASS_PANEL_CLASS,
+        'tile-rim flex flex-col overflow-hidden rounded-2xl p-0',
+      )}
     >
       <div className={cn(SHELF_GRID_CLASS, 'h-10 text-xs text-muted-foreground')}>
         <span />

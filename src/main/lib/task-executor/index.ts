@@ -26,6 +26,7 @@ import {
   toChatMode,
 } from '../../../shared/lib/trigger-rule-config';
 import { buildTriggerSummary } from '../../../shared/lib/trigger-summary';
+import type { CodexSpeed } from '../../../shared/types/execution';
 import type {
   TaskChatImageAttachment,
   TaskChatReadyData,
@@ -37,14 +38,8 @@ import {
   type TriggerStartMode,
   withTriggerContextDefaults,
 } from '../../../shared/types/trigger-context';
-import {
-  getClaudeCodeTokenById,
-  getDefaultClaudeCodeToken,
-  isResolvedCredential,
-} from '../credentials';
 import { getDatabase } from '../db';
 import { createChat, updateChat } from '../db/repos/chats';
-import { getProjectAiAccount as getProjectAiAccountLocal } from '../db/repos/project-ai-accounts';
 import { getProjectById as getLocalProjectById } from '../db/repos/projects';
 import { createSubChat, getSubChatById, getSubChatForChat } from '../db/repos/sub-chats';
 import {
@@ -63,17 +58,17 @@ import {
   isString,
   resolveClaimResume,
   resolveFlowAutoReviewToolsForTask,
-  resolveFlowCodexFastModeForTask,
+  resolveFlowCodexSpeedForTask,
   taskClaimResultSchema,
 } from '../flows/rerun/claim-flags';
 import { type DispatchErrorMeta, persistDispatchFailure } from '../tasks';
 import { fetchAttachmentImages } from './attachment-images';
+import {
+  resolveTaskAccount,
+  resolveTaskAccountType,
+  type TaskExecutionAccountType,
+} from './execution-account';
 import { extractTrailingUserReply } from './trailing-reply';
-
-/** Thin wrapper that auto-binds the local SQLite handle. */
-const getProjectAiAccount = (projectId: string) =>
-  getProjectAiAccountLocal(getDatabase(), projectId);
-
 import { createWorktreeForBranch, createWorktreeForChat } from '../git/worktree';
 import { createWorktreeWithMergedBases } from '../git/worktree-converge';
 import { sanitizeProjectName } from '../git/worktree-naming';
@@ -98,8 +93,6 @@ export {
   setActiveFlowTaskForChat,
 } from './dispatch-registry';
 
-export type TaskExecutionAccountType = 'claude-code' | 'codex';
-
 export function shouldForwardTaskModel(
   model: string | undefined,
   executionAccountType: TaskExecutionAccountType,
@@ -112,35 +105,11 @@ export function shouldForwardTaskModel(
   return CLAUDE_MODEL_IDS.includes(model);
 }
 
-/** Credential `type` → task execution account type (NULL/legacy/unknown → claude-code). */
-export const toTaskAccountType = (credType: string): TaskExecutionAccountType =>
-  credType === 'codex' ? 'codex' : 'claude-code';
-
 /** User-facing provider name per account type (model-fallback messaging). */
 const PROVIDER_LABEL: Record<TaskExecutionAccountType, string> = {
   'claude-code': 'Claude',
   codex: 'OpenAI',
 };
-
-async function resolveExecutionAccountTypeForTask(
-  projectId: string | null,
-): Promise<TaskExecutionAccountType> {
-  if (!projectId) {
-    return toTaskAccountType((await getDefaultClaudeCodeToken()).type);
-  }
-
-  try {
-    const projectAccount = await getProjectAiAccount(projectId);
-    if (projectAccount) {
-      const cred = await getClaudeCodeTokenById(projectAccount.id);
-      return toTaskAccountType(cred.type);
-    }
-  } catch {
-    // Fall through to default account resolution.
-  }
-
-  return toTaskAccountType((await getDefaultClaudeCodeToken()).type);
-}
 
 type TaskChatReadyPayload = TaskChatReadyData;
 
@@ -274,11 +243,13 @@ export function resolveTaskExecutionOptions(task: DbTask): {
   // Fall back to raw _config extraction for non-webhook flow tasks (manual, schedule, post_task
   // triggers) whose trigger_context doesn't satisfy the full TriggerContext shape.
   const rawConfig = triggerContext?._config ?? extractTaskTriggerConfig(task.triggerContext);
-  const metadata = resolveTaskExecutionMetadata(rawConfig, { throwOnWait: true });
+  // A persisted start mode is an explicit start, so it releases a task its trigger holds in wait.
+  const resultStartMode = extractResultStartMode(task.result);
+  const metadata = resolveTaskExecutionMetadata(rawConfig, { throwOnWait: !resultStartMode });
   const skipReview = rawConfig != null ? metadata.skipReview : false;
 
   return {
-    startMode: extractResultStartMode(task.result) ?? metadata.startMode,
+    startMode: resultStartMode ?? metadata.startMode,
     skipReview,
     ...(metadata.configuredModel ? { configuredModel: metadata.configuredModel } : {}),
   };
@@ -475,7 +446,7 @@ async function createChatForTask(task: DbTask): Promise<{
   startMode: ResolvedTaskStartMode;
   skipReview: boolean;
   autoReviewTools?: boolean;
-  codexFastMode?: boolean;
+  codexSpeed?: CodexSpeed;
   model?: string;
   executionLeaseId: string;
   images: TaskChatImageAttachment[];
@@ -503,30 +474,6 @@ async function createChatForTask(task: DbTask): Promise<{
         .where(eq(projects.path, cloudProject.path))
         .limit(1);
       localProjectId = localProject?.id ?? null;
-    }
-
-    // 2.5. Ensure project override account is authenticated on this machine (no silent fallback)
-    // Project routing is keyed by LOCAL project id (not the cloud-side task.projectId),
-    // so this only matches when localProjectId resolved successfully above.
-    const projectAccount = localProjectId ? await getProjectAiAccount(localProjectId) : null;
-    if (projectAccount) {
-      const cred = await getClaudeCodeTokenById(projectAccount.id);
-      // Codex resolves token-null (machine-local passthrough); its real auth gate is the
-      // spawn-time detectCodexAccount() probe in handleRemoteExecute, which this Flow task
-      // routes through after the chat is created. Mirror the chat path's acceptance here.
-      if (!isResolvedCredential(cred)) {
-        {
-          // Action payload lets the renderer offer a "Connect account" CTA in the
-          // notification (no manual hunt for Settings → Models).
-          const err = new Error(
-            `Account "${projectAccount.label ?? 'Unnamed account'}" is not authenticated on this machine. ` +
-              `Please connect or authenticate it, then retry the task.`,
-          );
-          (err as Error & { action?: string; permanent?: boolean }).action = 'open-connect-account';
-          (err as Error & { action?: string; permanent?: boolean }).permanent = true;
-          throw err;
-        }
-      }
     }
   }
 
@@ -556,7 +503,7 @@ async function createChatForTask(task: DbTask): Promise<{
   const executionOverride = getFlowConfigField(rawFlowConfig, 'executionOverride', isRecord);
   const executionMode = getFlowConfigField(rawFlowConfig, 'executionMode', isString);
   const autoReviewTools = resolveFlowAutoReviewToolsForTask(task);
-  const codexFastMode = resolveFlowCodexFastModeForTask(task);
+  const codexSpeed = resolveFlowCodexSpeedForTask(task);
 
   // continue_chat: reuse the originating chat instead of creating a new one
   if (executionMode === 'continue_chat' && !existingChatId) {
@@ -568,8 +515,9 @@ async function createChatForTask(task: DbTask): Promise<{
 
   const executionOptions = resolveTaskExecutionOptions(task);
   const useWorktree = resolveTaskStartInWorktree(task);
-  // Account-type resolution is keyed by LOCAL project id (project_ai_accounts is local).
-  const executionAccountType = await resolveExecutionAccountTypeForTask(localProjectId);
+  // Project routing is keyed by LOCAL project id (project_ai_accounts is local).
+  const taskAccount = await resolveTaskAccount(localProjectId, existingChatId);
+  const executionAccountType = await resolveTaskAccountType(taskAccount);
   if (executionOptions.configuredModel) {
     requestedModel = executionOptions.configuredModel;
     taskModel = executionOptions.configuredModel;
@@ -757,7 +705,7 @@ async function createChatForTask(task: DbTask): Promise<{
     skipReview: executionOptions.skipReview,
     images: attachmentImages,
     ...(autoReviewTools !== undefined ? { autoReviewTools } : {}),
-    ...(codexFastMode !== undefined ? { codexFastMode } : {}),
+    ...(codexSpeed !== undefined ? { codexSpeed } : {}),
     ...(taskModel ? { model: taskModel } : {}),
     ...deriveTaskClaimFlags(retryMode, rawFlowConfig),
   };
@@ -1005,7 +953,7 @@ async function handleClaimedTask(task: DbTask): Promise<void> {
       startMode,
       skipReview,
       autoReviewTools,
-      codexFastMode,
+      codexSpeed,
       model,
       executionLeaseId,
       images,
@@ -1046,9 +994,6 @@ async function handleClaimedTask(task: DbTask): Promise<void> {
       });
     }
 
-    // Bind this prompt's send-time mode to the task, immune to renderer mode-state races.
-    registerPendingDispatchMode(subChatId, task.id, startMode);
-
     // Emit IPC event to renderer to open chat and auto-send
     const payload: TaskChatReadyPayload = {
       chatId,
@@ -1063,11 +1008,14 @@ async function handleClaimedTask(task: DbTask): Promise<void> {
       headless: Boolean(task.flowRunId),
       executionLeaseId,
       ...(autoReviewTools !== undefined ? { autoReviewTools } : {}),
-      ...(codexFastMode !== undefined ? { codexFastMode } : {}),
+      ...(codexSpeed !== undefined ? { codexSpeed } : {}),
       ...(model ? { model } : {}),
       ...(images && images.length > 0 ? { images } : {}),
       ...(isRetry ? { isRetry: true } : {}),
     };
+
+    // Bind the send-time mode to the task; hold the payload for a renderer that misses the event.
+    registerPendingDispatchMode(subChatId, task.id, startMode, payload);
 
     log.info('[TaskExecutor] dispatching task:chat-ready to renderer', {
       taskId: task.id,

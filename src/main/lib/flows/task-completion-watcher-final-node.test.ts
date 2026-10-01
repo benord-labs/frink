@@ -3,7 +3,7 @@ import type { FlowGraph } from '../../../shared/lib/validate-flow-graph';
 import { getFlowRun, setFlowRunStatus } from '../db/repos/flow-runs';
 import { createNodeRun, getNodeRun, listNodeRunsForFlowRun } from '../db/repos/node-runs';
 import { createTask, updateTaskStatus } from '../db/repos/tasks';
-import { seedFlowRun } from '../db/test-utils/flow-fixtures';
+import { seedActiveAdmission, seedFlowRun } from '../db/test-utils/flow-fixtures';
 import { freshDb, type TestDb } from '../db/test-utils/fresh-db';
 
 // sc-2771: the LAST agent node's `done` must advance the run into the next node. getDatabase()
@@ -61,6 +61,7 @@ describe('task-completion-watcher — final agent node done advances into the ne
     db = freshDb();
     holder.db = db;
     ({ flowRunId } = await seedFlowRun(db, GRAPH));
+    seedActiveAdmission(db, flowRunId);
     // The agent handoff steady state (advance.ts parkAwaitingInput): node awaiting_input, run
     // paused, the node's task running under the agent.
     const node = await createNodeRun(db, {

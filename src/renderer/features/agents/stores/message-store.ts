@@ -4,6 +4,7 @@ import { atom } from 'jotai';
 import { atomFamily } from 'jotai/utils';
 import {
   isFrinkPlanMessagePartType,
+  isPlanApprovalTriggerText,
   isPlanReadyPart,
   normalizeFrinkPlanMessagePartType,
 } from '../../../../shared/types/plan';
@@ -385,10 +386,10 @@ export const messageGroupsForSubChatAtomFamily = atomFamily((subChatId: string) 
  * to a closed approval epoch.
  *
  * Approval epochs: a plan is "closed" once it (or any plan in the same conversation cluster) has
- * been approved. Walks plans in chronological order; the latest plan that's either marked
- * `approved`/`in_progress`/`completed` OR whose planId is in `approvedPlanIdsAtomFamily` (set
- * synchronously on Approve & Run click) is the epoch boundary — every plan up to and including
- * that boundary hides its button. Plans created *after* the boundary (next epoch, user re-enters
+ * been approved. Walks plans in chronological order; the latest plan that's marked
+ * `approved`/`in_progress`/`completed`, whose planId is in `approvedPlanIdsAtomFamily` (set
+ * synchronously on Approve & Run click), or that a later approval message follows is the epoch
+ * boundary — every plan up to and including that boundary hides its button. Plans created *after* the boundary (next epoch, user re-enters
  * plan mode) keep their buttons so the user can approve fresh plans.
  *
  * Result is cached per sub-chat by content fingerprint (plan ids+statuses + approvedPlanIds).
@@ -402,10 +403,17 @@ export const hiddenApprovalPlanIdsForSubChatAtomFamily = atomFamily((subChatId: 
   atom<ReadonlySet<string>>((get) => {
     const ids = get(perSubChatMessageIdsAtomFamily(subChatId));
     const plans: Array<{ toolCallId: string; planId?: string; status?: string }> = [];
+    // An approval sent from another surface (the phone) closes every plan before it.
+    let triggeredIdx = -1;
     for (const id of ids) {
       if (!id) continue;
       const msg = get(messageAtomFamily(id));
       if (!msg?.parts) continue;
+      if (
+        msg.role === 'user' &&
+        msg.parts.some((part) => !!part?.text && isPlanApprovalTriggerText(part.text))
+      )
+        triggeredIdx = plans.length - 1;
       for (const part of msg.parts) {
         if (!part || typeof part.type !== 'string') continue;
         if (!isFrinkPlanMessagePartType(part.type)) continue;
@@ -418,8 +426,8 @@ export const hiddenApprovalPlanIdsForSubChatAtomFamily = atomFamily((subChatId: 
     if (plans.length === 0) return EMPTY_HIDDEN_SET;
 
     const approvedPlanIds = get(approvedPlanIdsAtomFamily(subChatId));
-    let latestClosedIdx = -1;
-    for (let i = 0; i < plans.length; i++) {
+    let latestClosedIdx = triggeredIdx;
+    for (let i = triggeredIdx + 1; i < plans.length; i++) {
       const p = plans[i];
       if (p.status === 'approved' || p.status === 'in_progress' || p.status === 'completed') {
         latestClosedIdx = i;

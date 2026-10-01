@@ -130,14 +130,18 @@ describe('disposeTrailingStreamErrorChunk', () => {
     expect(parkFlowTaskOnClaudeInterruption).not.toHaveBeenCalled();
   });
 
-  it('ignores an error chunk with no usable text', async () => {
-    await disposeTrailingStreamErrorChunk(
-      'sub-1',
-      chunks({ type: 'error', errorText: '' }, { type: 'finish' }),
-      undefined,
-    );
-    expect(parkFlowTaskOnClaudeInterruption).not.toHaveBeenCalled();
-  });
+  it.each(['', undefined])(
+    'classifies an error with no usable text as a failure (%s)',
+    async (errorText) => {
+      const failed = await disposeTrailingStreamErrorChunk(
+        'sub-1',
+        chunks({ type: 'error', errorText }, { type: 'finish' }),
+        undefined,
+      );
+      expect(failed).toBe(true);
+      expect(parkFlowTaskOnClaudeInterruption).not.toHaveBeenCalled();
+    },
+  );
 });
 
 /**

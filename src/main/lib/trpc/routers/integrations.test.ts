@@ -46,8 +46,7 @@ async function createCaller() {
   });
 }
 
-function signedIn() {
-}
+function signedIn() {}
 
 describe('integrationsRouter webhook endpoints', () => {
   beforeEach(() => {

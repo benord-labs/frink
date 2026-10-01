@@ -7,8 +7,9 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import { useIsFocused } from '@react-navigation/native';
 import { AppState } from 'react-native';
-import type { MobileRequest, MobileResponses } from '../../../src/shared/types/remote/mobile';
+import type { MobileRequest, MobileResponses } from '@frink/shared/types/remote/mobile';
 import { ApiError, requestMobile, type Connection } from './api';
 import { readConnection, saveConnection } from './storage';
 
@@ -24,7 +25,6 @@ type Session = {
   ) => Promise<MobileResponses[T['type']]>;
 };
 const Context = createContext<Session | null>(null);
-export const ResourceActivity = createContext(true);
 export function ConnectionProvider({ children }: { children: ReactNode }) {
   const [connection, setConnection] = useState<Connection | null>(null);
   const [loading, setLoading] = useState(true);
@@ -38,7 +38,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         if (mounted) setConnection(saved);
       })
       .catch(() => {
-        if (mounted) setError('Could not read the saved connection. Pair your computer again.');
+        if (mounted) setError('This iPhone couldn’t read its saved connection. Pair your Mac again.');
       })
       .finally(() => {
         if (mounted) setLoading(false);
@@ -59,7 +59,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       await saveConnection(null);
     } catch (error) {
       setError(
-        'Keychain could not be cleared. Revoke this phone in Settings → Mobile on your computer.',
+        'This iPhone couldn’t forget the connection. Remove it in Frink on your Mac: Settings → Mobile.',
       );
       throw error;
     }
@@ -72,12 +72,12 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       signal?: AbortSignal,
     ): Promise<MobileResponses[T['type']]> => {
       const host = current.current;
-      if (!host) throw new ApiError('Pair a computer to continue.', 401);
+      if (!host) throw new ApiError('Pair your Mac to continue.', 401);
       try {
         return await requestMobile(host, input, signal);
       } catch (error) {
         if (error instanceof ApiError && error.status === 401 && current.current === host) {
-          setError('This connection was revoked. Pair your computer again.');
+          setError('Your Mac stopped accepting it. Make a new code in Frink on your Mac: Settings → Mobile.');
           await disconnect();
         }
         throw error;
@@ -107,9 +107,19 @@ function failureState(error: unknown) {
 
 // Reason: Foreground polling keeps host identity and stale-response checks together.
 // fallow-ignore-next-line complexity
-export function useResource<T extends MobileRequest>(input: T) {
+export function useResource<T extends MobileRequest>(
+  input: T,
+  // `enabled: false` waits for inputs that aren't known yet; `interval` spaces out costly reads.
+  // `keep` shows the previous rows while a grown window or new search loads, instead of a blank list.
+  {
+    enabled = true,
+    interval = 3000,
+    keep = false,
+  }: { enabled?: boolean; interval?: number; keep?: boolean } = {},
+) {
   const { connection, request } = useConnection();
-  const focused = useContext(ResourceActivity);
+  // Polls only while its own screen is visible (a hidden tab or a screen under a pushed one waits).
+  const focused = useIsFocused();
   const key = JSON.stringify([connection?.deviceId, connection?.url, input]);
   const currentKey = useRef(key);
   currentKey.current = key;
@@ -125,7 +135,7 @@ export function useResource<T extends MobileRequest>(input: T) {
     refreshing?: boolean;
   }>({ key });
   useEffect(() => {
-    if (!focused || !connection) return;
+    if (!focused || !connection || !enabled) return;
     let cancelled = false;
     let pending: AbortController | null = null;
     // Reason: The polling request owns cancellation, visibility, and error state together.
@@ -161,21 +171,24 @@ export function useResource<T extends MobileRequest>(input: T) {
     }
     void refresh(pulled.current);
     pulled.current = false;
-    const interval = setInterval(() => void refresh(), 3000);
+    const timer = setInterval(() => void refresh(), interval);
     const listener = AppState.addEventListener('change', (state) => {
       if (state === 'active') void refresh();
       else pending?.abort();
     });
     return () => {
       cancelled = true;
-      clearInterval(interval);
+      clearInterval(timer);
       listener.remove();
       pending?.abort();
     };
     // The serialized input is the request identity, including host and pagination.
-  }, [key, revision, request, focused]);
+  }, [key, revision, request, focused, enabled, interval]);
+  const current = state.key === key;
   return {
-    data: state.key === key ? state.data : undefined,
+    data: current || keep ? state.data : undefined,
+    /** True while `data` belongs to the previous request (kept by `keep`). */
+    stale: !current && state.data !== undefined,
     error: state.key === key ? state.error : undefined,
     errorStatus: state.key === key ? state.errorStatus : undefined,
     updatedAt: state.key === key ? state.updatedAt : undefined,

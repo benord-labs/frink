@@ -5,17 +5,19 @@ import { iconifyComponent } from '@/lib/utils/iconify-component';
  * The read-only mode / model / auto-review readout carried by both flow bottom surfaces — what the
  * composer's selectors showed, restored now that a running or paused flow replaces the composer.
  */
-import { Zap, Sparkles } from 'lucide-react';
+import { Rocket, Zap, Sparkles } from 'lucide-react';
 import type { ComponentType } from 'react';
 import {
   CODEX_FAST_SPEED_MULTIPLIER,
-  codexFastTierCredits,
+  CODEX_ULTRAFAST_SPEED_MULTIPLIER,
+  codexTierCredits,
 } from '../../../../../../../../shared/lib/codex-cli-models';
 import {
   formatModelPickerLabel,
   resolveModelPickerItemById,
 } from '../../../../../../../../shared/lib/model-picker-label';
 import type { ChatMode } from '../../../../../../../../shared/types/chat-mode';
+import type { CodexSpeed } from '../../../../../../../../shared/types/execution';
 import { MODE_CONFIG } from '../../../../../components/mode-selector';
 import { supportsNativeAutoReview } from '../../../../../lib/resolve-execution-model-cli';
 import { HIDE_CONTEXT_PILLS, HIDE_MODEL_TEXT, HIDE_PILL_TEXT } from '../FlowSurfaceCard';
@@ -61,8 +63,8 @@ type FlowRunMetaProps = {
   mode?: ChatMode;
   /** The flow's `settings.autoReviewTools`, snapshotted onto the task's `_config` at dispatch. */
   autoReviewTools?: boolean;
-  /** The flow's `settings.codexFastMode`, snapshotted onto the task's `_config` at dispatch. */
-  codexFastMode?: boolean;
+  /** The flow's `settings.codexSpeed`, snapshotted onto the task's `_config` at dispatch. */
+  codexSpeed?: CodexSpeed;
   /** While Stop is armed the whole readout steps aside — the row becomes the question. */
   confirming?: boolean;
 };
@@ -110,18 +112,29 @@ function autoPill(modelId: string | undefined, requested?: boolean) {
  * composer — where the user's own Fast switch lives — is replaced by this strip while a run is live.
  * Absent for any model with no priority tier, so it never claims a cost that is not being charged.
  */
-function fastPill(modelId: string | undefined, requested?: boolean) {
-  const credits = codexFastTierCredits(modelId);
-  if (requested !== true || credits === null) return null;
+function speedPill(modelId: string | undefined, speed: CodexSpeed | undefined) {
+  if (speed === undefined || speed === 'standard') return null;
+  const credits = codexTierCredits(modelId, speed);
+  if (credits === null) return null;
+  const { name, icon, pace } = SPEED_PILL[speed];
   return {
-    key: 'fast',
-    icon: Zap,
-    label: `Fast · ${CODEX_FAST_SPEED_MULTIPLIER}× speed · ${credits}× ChatGPT credits`,
-    title: `Fast mode on — ${CODEX_FAST_SPEED_MULTIPLIER}× model speed at ${credits}× ChatGPT credits per turn; API-key pricing differs`,
+    key: 'speed',
+    icon,
+    label: `${name} · ${pace} speed · ${credits}× ChatGPT credits`,
+    title: `${name} mode on — ${pace} model speed at ${credits}× ChatGPT credits per turn; API-key pricing differs`,
     tint: 'bg-accent/60 text-foreground',
     labelTier: HIDE_FAST_PILL_TEXT,
   } satisfies PillSpec;
 }
+
+const SPEED_PILL = {
+  fast: { name: 'Fast', icon: Zap, pace: `${CODEX_FAST_SPEED_MULTIPLIER}×` },
+  ultrafast: {
+    name: 'Ultrafast',
+    icon: Rocket,
+    pace: `up to ${CODEX_ULTRAFAST_SPEED_MULTIPLIER}×`,
+  },
+} as const;
 
 function modePill(mode: ChatMode | undefined) {
   const config = mode ? MODE_CONFIG[mode] : null;
@@ -154,10 +167,10 @@ function readoutPills(
   modelId: string | undefined,
   mode: ChatMode | undefined,
   autoReviewTools: boolean | undefined,
-  codexFastMode: boolean | undefined,
+  codexSpeed: CodexSpeed | undefined,
 ): PillSpec[] {
   return [
-    fastPill(modelId, codexFastMode),
+    speedPill(modelId, codexSpeed),
     autoPill(modelId, autoReviewTools),
     modePill(mode),
     modelPill(modelId),
@@ -198,10 +211,10 @@ export function FlowRunMeta({
   modelId,
   mode,
   autoReviewTools,
-  codexFastMode,
+  codexSpeed,
   confirming,
 }: FlowRunMetaProps) {
-  const pills = readoutPills(modelId, mode, autoReviewTools, codexFastMode);
+  const pills = readoutPills(modelId, mode, autoReviewTools, codexSpeed);
   if (pills.length === 0) return null;
   return (
     // The chips own their line, so they never compete with the status sentence for width and never

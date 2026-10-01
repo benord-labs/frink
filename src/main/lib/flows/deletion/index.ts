@@ -1,13 +1,9 @@
 import { getDatabase } from '../../db';
-import {
-  hardDeleteFlow,
-  listFlowRunIdsForFlow,
-  listUnsettledFlowRunIdsForFlow,
-} from '../../db/repos/flow-deletion';
+import { hardDeleteFlow, listUnsettledFlowRunIdsForFlow } from '../../db/repos/flow-deletion';
 import { getFlowById, updateFlow } from '../../db/repos/flows';
 import type { DeleteChatsResult } from '../../db/repos/task-queries/chat-flow-cleanup';
 import { clearActiveFlowTaskForChatIfMatches } from '../../task-executor';
-import { withFlowRunCancellation } from '../cancel-registry';
+import { abortFlowRun } from '../cancel-registry';
 import { cancelFlowRunForChatDeletion, cancelFlowRunForDeletion } from '../engine';
 
 const DELETE_ATTEMPTS = 100;
@@ -35,30 +31,22 @@ export async function settleChatOwnedFlowDeletion(
   );
 }
 
-async function withFlowRunCancellations<T>(
-  flowRunIds: string[],
-  index: number,
-  persist: () => Promise<T>,
-): Promise<T> {
-  const flowRunId = flowRunIds[index];
-  return flowRunId
-    ? withFlowRunCancellation(flowRunId, () =>
-        withFlowRunCancellations(flowRunIds, index + 1, persist),
-      )
-    : persist();
-}
-
 async function deleteSettledFlow(
   db: Db,
   flowId: string,
   cancelRun: CancelRun,
 ): Promise<Array<{ chatId: string; taskId: string }>> {
+  const { transitionFlowRun } = await import('../admission/runtime');
   let unsettledRunIds = await listUnsettledFlowRunIdsForFlow(db, flowId);
   for (let attempt = 0; attempt < DELETE_ATTEMPTS; attempt += 1) {
     for (const flowRunId of unsettledRunIds) await cancelRun(flowRunId);
 
-    const flowRunIds = await listFlowRunIdsForFlow(db, flowId);
-    const result = await withFlowRunCancellations(flowRunIds, 0, () => hardDeleteFlow(db, flowId));
+    const result = await transitionFlowRun(
+      () => hardDeleteFlow(db, flowId),
+      (deleted) => {
+        if (deleted.deleted) for (const flowRunId of deleted.flowRunIds) abortFlowRun(flowRunId);
+      },
+    );
     if (result.deleted) return result.taskLinks;
 
     unsettledRunIds = result.unsettledRunIds;

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildApprovedPlanContextBlock,
+  findApprovablePlan,
   FRINK_PLAN_MESSAGE_PART_TYPE,
   findUnapprovedPlanPart,
   hasCurrentUnapprovedPlan,
@@ -198,6 +199,40 @@ describe('shared/types/plan', () => {
           true,
         ),
       ).toBe(false);
+    });
+  });
+
+  describe('findApprovablePlan', () => {
+    const plan = (planId: string, extra: Record<string, unknown> = {}) => ({
+      role: 'assistant',
+      parts: [
+        {
+          type: 'tool-frink-plan',
+          input: {
+            status: 'awaiting_approval',
+            planId,
+            planText: '---\nname: x\n---\n## Steps',
+            ...extra,
+          },
+        },
+      ],
+    });
+
+    it('returns the newest open plan with its text, as desktop Approve hands it over', () => {
+      expect(findApprovablePlan([plan('old'), plan('new')], true)).toEqual({
+        planId: 'new',
+        planText: '## Steps',
+      });
+    });
+
+    it('offers nothing outside Plan mode, after approval, or for a Flow run plan', () => {
+      const trigger = {
+        role: 'user',
+        parts: [{ type: 'text', text: PLAN_APPROVAL_EXECUTION_TRIGGER_TEXT }],
+      };
+      expect(findApprovablePlan([plan('p')], false)).toBeNull();
+      expect(findApprovablePlan([plan('p'), trigger], true)).toBeNull();
+      expect(findApprovablePlan([plan('p', { flowDriven: true })], true)).toBeNull();
     });
   });
 

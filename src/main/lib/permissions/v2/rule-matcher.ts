@@ -9,7 +9,7 @@
 
 import picomatch from 'picomatch';
 import { parseRule } from '../../../../shared/lib/rule-parser';
-import { PATH_TOOLS, SEARCH_TOOLS } from '../../../../shared/types/permissions';
+import { PATH_TOOLS } from '../../../../shared/types/permissions';
 import { signaturesMatchPattern } from '../command-parser';
 import type { BashCommandSignature, MatchContext } from './types';
 
@@ -82,8 +82,7 @@ export function matchesRule(
   if (toolName === 'Bash') {
     return matchBashContent(parsed.content, context?.bashCommandSignature);
   }
-  // Search tools match on the resolved search root `checkSearch` supplies.
-  if (PATH_TOOLS.has(toolName) || SEARCH_TOOLS.has(toolName)) {
+  if (PATH_TOOLS.has(toolName)) {
     return matchPathContent(parsed.content, toolInput, context?.resolvedPath);
   }
 

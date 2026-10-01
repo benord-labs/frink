@@ -13,12 +13,7 @@
     }
   },
   "frink": {
-    "keywords": [
-      "sales",
-      "leads",
-      "outreach",
-      "prospecting"
-    ],
+    "keywords": ["sales", "leads", "outreach", "prospecting"],
     "source": {
       "repo": "cursor/plugins",
       "commit": "4612556",

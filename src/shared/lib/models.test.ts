@@ -15,7 +15,6 @@ import {
   claudeModelUsesAdaptiveThinking,
   codexModelToPickerItem,
   getClaudeCliModel,
-  getClaudeEffortSettings,
   getClaudeSdkEffort,
   getClaudeThinkingBudget,
   isClaudeModelVisible,
@@ -37,6 +36,8 @@ describe('supportsNativeAutoReview', () => {
     'claude-opus-4-8',
     'claude-opus-5',
     'claude-opus-5-5',
+    'sonnet-5.5',
+    'claude-sonnet-5-5',
   ])('supports current Claude model %s', (model) => {
     expect(supportsNativeAutoReview('claude-code', model)).toBe(true);
   });
@@ -356,20 +357,24 @@ describe('getClaudeSdkEffort', () => {
   });
 });
 
-describe('Ultra effort tier', () => {
-  it('is offered exactly on the ladders that offer xhigh, which it runs at', () => {
+describe('Ultra', () => {
+  it('twins every tier, exactly on the ladders that offer xhigh', () => {
     const byFamily = (tier: string) =>
       new Set(CLAUDE_CODE_MODELS.filter((m) => m.id.endsWith(tier)).map((m) => m.familyId));
     expect(byFamily('-ultra')).toEqual(byFamily('-xhigh'));
     expect(byFamily('-ultra').size).toBeGreaterThan(0);
+    for (const twin of CLAUDE_CODE_MODELS.filter((m) => m.ultra)) {
+      const base = CLAUDE_CODE_MODELS.find((m) => `${m.id}-ultra` === twin.id);
+      expect(base?.effort, twin.id).toBe(twin.effort);
+      expect(twin.variantLabel).toBe(`${base?.variantLabel} · Ultra`);
+    }
   });
 
-  it('resolves to xhigh effort plus the ultra flag, and only for the -ultra suffix', () => {
-    expect(getClaudeSdkEffort('opus-5.5-ultra')).toBe('xhigh');
-    expect(getClaudeEffortSettings('opus-4.7-1m-ultra')).toEqual({ effort: 'xhigh', ultra: true });
-    expect(getClaudeEffortSettings('opus-4.7-1m-xhigh')).toEqual({ effort: 'xhigh' });
-    expect(getClaudeEffortSettings('not-a-model')).toEqual({});
-    expect(isClaudeUltraModel('fable-5.1-ultra')).toBe(true);
+  it("runs at its own tier's effort", () => {
+    expect(getClaudeSdkEffort('opus-5.5-ultra')).toBe('medium');
+    expect(getClaudeSdkEffort('opus-4.7-1m-low-ultra')).toBe('low');
+    expect(getClaudeSdkEffort('fable-5.1-max-ultra')).toBe('max');
+    expect(isClaudeUltraModel('fable-5.1-low-ultra')).toBe(true);
     expect(isClaudeUltraModel('fable-5.1-max')).toBe(false);
   });
 
@@ -387,14 +392,15 @@ describe('Opus 4.8 catalog (1M-native, High default)', () => {
   });
 
   it('exposes a single 1M context row per effort (no 200k, no -1m duplicate)', () => {
-    const ids = CLAUDE_CODE_MODELS.filter((m) => m.familyId === 'opus-4.8').map((m) => m.id);
+    const ids = CLAUDE_CODE_MODELS.filter((m) => m.familyId === 'opus-4.8' && !m.ultra).map(
+      (m) => m.id,
+    );
     expect(ids).toEqual([
       'opus-4.8',
       'opus-4.8-low',
       'opus-4.8-medium',
       'opus-4.8-xhigh',
       'opus-4.8-max',
-      'opus-4.8-ultra',
     ]);
     for (const m of CLAUDE_CODE_MODELS.filter((x) => x.familyId === 'opus-4.8')) {
       expect(m.contextWindow).toBe('1M context');
@@ -427,16 +433,15 @@ describe('Opus 4.8 catalog (1M-native, High default)', () => {
 });
 
 describe('Opus 5.5 catalog (1M-native, Medium default, full effort ladder)', () => {
-  const opus55 = () => CLAUDE_CODE_MODELS.filter((m) => m.familyId === 'opus-5.5');
+  const opus55 = () => CLAUDE_CODE_MODELS.filter((m) => m.familyId === 'opus-5.5' && !m.ultra);
 
-  it('exposes one 1M row per effort: Medium default + low/high/xhigh/max/ultra (no 200k, no -1m)', () => {
+  it('exposes one 1M row per effort: Medium default + low/high/xhigh/max (no 200k, no -1m)', () => {
     expect(opus55().map((m) => m.id)).toEqual([
       'opus-5.5',
       'opus-5.5-low',
       'opus-5.5-high',
       'opus-5.5-xhigh',
       'opus-5.5-max',
-      'opus-5.5-ultra',
     ]);
     for (const m of opus55()) {
       expect(m.contextWindow).toBe('1M context');
@@ -468,16 +473,15 @@ describe('Opus 5.5 catalog (1M-native, Medium default, full effort ladder)', () 
 });
 
 describe('Opus 5 catalog (1M-native, High default, full effort ladder)', () => {
-  const opus5 = () => CLAUDE_CODE_MODELS.filter((m) => m.familyId === 'opus-5');
+  const opus5 = () => CLAUDE_CODE_MODELS.filter((m) => m.familyId === 'opus-5' && !m.ultra);
 
-  it('exposes one 1M row per effort: High default + low/medium/xhigh/max/ultra (no 200k, no -1m)', () => {
+  it('exposes one 1M row per effort: High default + low/medium/xhigh/max (no 200k, no -1m)', () => {
     expect(opus5().map((m) => m.id)).toEqual([
       'opus-5',
       'opus-5-low',
       'opus-5-medium',
       'opus-5-xhigh',
       'opus-5-max',
-      'opus-5-ultra',
     ]);
     for (const m of opus5()) expect(m.contextWindow).toBe('1M context');
   });
@@ -517,43 +521,40 @@ describe('Opus 5 catalog (1M-native, High default, full effort ladder)', () => {
   });
 });
 
-describe('Sonnet 5 catalog (1M-native, High default, full effort ladder)', () => {
-  const sonnet5 = () => CLAUDE_CODE_MODELS.filter((m) => m.familyId === 'sonnet-5');
+describe.each([
+  { family: 'sonnet-5', cli: 'claude-sonnet-5' },
+  { family: 'sonnet-5.5', cli: 'claude-sonnet-5-5' },
+])('$family catalog (1M-native, High default, full effort ladder)', ({ family, cli }) => {
+  const rows = () => CLAUDE_CODE_MODELS.filter((m) => m.familyId === family && !m.ultra);
 
-  // Sonnet 5 supports the same effort ladder as Opus 4.8 (High default + Low/Medium/Xhigh/Max) per
+  // Sonnet 5+ supports the same effort ladder as Opus 4.8 (High default + Low/Medium/Xhigh/Max) per
   // the effort docs — NOT the Sonnet 4.6 Low/Medium/High set.
-  it('exposes one 1M row per effort: High default + low/medium/xhigh/max/ultra (no 200k, no -1m)', () => {
-    expect(sonnet5().map((m) => m.id)).toEqual([
-      'sonnet-5',
-      'sonnet-5-low',
-      'sonnet-5-medium',
-      'sonnet-5-xhigh',
-      'sonnet-5-max',
-      'sonnet-5-ultra',
-    ]);
-    for (const m of sonnet5()) expect(m.contextWindow).toBe('1M context');
+  it('exposes one 1M row per effort: High default + low/medium/xhigh/max (no 200k, no -1m)', () => {
+    expect(rows().map((m) => m.id)).toEqual(
+      ['', '-low', '-medium', '-xhigh', '-max'].map((s) => `${family}${s}`),
+    );
+    for (const m of rows()) expect(m.contextWindow).toBe('1M context');
   });
 
   it('labels the bare row High (its default effort), not Medium', () => {
-    expect(CLAUDE_CODE_MODELS.find((m) => m.id === 'sonnet-5')?.variantLabel).toBe('High');
+    expect(CLAUDE_CODE_MODELS.find((m) => m.id === family)?.variantLabel).toBe('High');
   });
 
-  it('pins every variant cliValue to claude-sonnet-5', () => {
-    for (const m of sonnet5()) expect(CLAUDE_MODEL_ID_MAP[m.id], m.id).toBe('claude-sonnet-5');
+  it('pins every variant cliValue to the versioned model id', () => {
+    for (const m of rows()) expect(CLAUDE_MODEL_ID_MAP[m.id], m.id).toBe(cli);
   });
 
   it('resolves effort: bare → high, low/medium/xhigh/max per suffix', () => {
-    expect(getClaudeSdkEffort('sonnet-5')).toBe('high');
-    expect(getClaudeSdkEffort('sonnet-5-low')).toBe('low');
-    expect(getClaudeSdkEffort('sonnet-5-medium')).toBe('medium');
-    expect(getClaudeSdkEffort('sonnet-5-xhigh')).toBe('xhigh');
-    expect(getClaudeSdkEffort('sonnet-5-max')).toBe('max');
+    expect(getClaudeSdkEffort(family)).toBe('high');
+    for (const e of ['low', 'medium', 'xhigh', 'max'] as const) {
+      expect(getClaudeSdkEffort(`${family}-${e}`)).toBe(e);
+    }
   });
 
   // 1M is the default window (no `context-1m-2025-08-07` beta header — like Opus 4.8). A stray
   // -1m variant would wrongly flip claudeModelRequires1M → attach the redundant beta.
   it('is 1M-native: no -1m variant, never requests the 1M context beta', () => {
-    for (const m of sonnet5()) {
+    for (const m of rows()) {
       expect(m.id, `${m.id} must not carry a -1m suffix`).not.toContain('-1m');
       expect(claudeModelRequires1M(m.id), `${m.id} must not request the 1M beta`).toBe(false);
     }
@@ -561,7 +562,7 @@ describe('Sonnet 5 catalog (1M-native, High default, full effort ladder)', () =>
 
   it('surfaces before Sonnet 4.6 (separate family, distinct from the sonnet alias)', () => {
     const ids = CLAUDE_CODE_MODELS.map((m) => m.familyId);
-    expect(ids.indexOf('sonnet-5')).toBeLessThan(ids.indexOf('sonnet'));
+    expect(ids.indexOf(family)).toBeLessThan(ids.indexOf('sonnet'));
   });
 });
 
@@ -574,6 +575,7 @@ describe('claudeModelUsesAdaptiveThinking', () => {
       'claude-opus-5',
       'claude-opus-4-8',
       'claude-opus-4-7',
+      'claude-sonnet-5-5',
       'claude-sonnet-5',
     ]) {
       expect(claudeModelUsesAdaptiveThinking(cli), cli).toBe(true);
@@ -823,11 +825,12 @@ describe('Fable 5.1 catalog (1M-native, High default)', () => {
     'fable-5.1-medium',
     'fable-5.1-xhigh',
     'fable-5.1-max',
-    'fable-5.1-ultra',
   ];
 
-  it('has exactly 6 variants: single 1M row × full effort ladder incl. Ultra', () => {
-    const ids = CLAUDE_CODE_MODELS.filter((m) => m.familyId === 'fable-5.1').map((m) => m.id);
+  it('has exactly 5 variants plus Ultra twins: single 1M row × full effort ladder', () => {
+    const ids = CLAUDE_CODE_MODELS.filter((m) => m.familyId === 'fable-5.1' && !m.ultra).map(
+      (m) => m.id,
+    );
     expect(ids).toEqual(FABLE_5_1_VARIANTS);
   });
 
@@ -870,19 +873,19 @@ describe('Fable 5 catalog (1M-beta, High default)', () => {
     'fable-5-medium',
     'fable-5-xhigh',
     'fable-5-max',
-    'fable-5-ultra',
     'fable-5-1m',
     'fable-5-1m-low',
     'fable-5-1m-medium',
     'fable-5-1m-xhigh',
     'fable-5-1m-max',
-    'fable-5-1m-ultra',
   ];
 
   // Definition-shape assertions target the full _CATALOG so they validate the
   // dormant Fable 5 definition regardless of the launch flag.
-  it('has exactly 12 variants: 6 efforts × 2 context tiers (full ladder incl. Max and Ultra)', () => {
-    const ids = CLAUDE_CODE_MODELS_CATALOG.filter((m) => m.familyId === 'fable-5').map((m) => m.id);
+  it('has exactly 10 variants plus Ultra twins: 5 efforts × 2 context tiers (full ladder incl. Max)', () => {
+    const ids = CLAUDE_CODE_MODELS_CATALOG.filter((m) => m.familyId === 'fable-5' && !m.ultra).map(
+      (m) => m.id,
+    );
     expect(ids).toEqual(FABLE_5_VARIANTS);
   });
 
@@ -945,12 +948,12 @@ describe('splitNewestFamilies', () => {
     expect(names(splitNewestFamilies(CLAUDE_MODEL_FAMILIES).newest)).toEqual([
       'Fable 5.1',
       'Opus 5.5',
-      'Sonnet 5',
+      'Sonnet 5.5',
       'Haiku 4.5',
     ]);
     expect(names(splitNewestFamilies(CODEX_MODEL_FAMILIES).newest)).toEqual([
       'GPT-6 Astra',
-      'GPT-6 Sol',
+      'GPT-6.1 Sol',
       'GPT-6 Luna',
       'GPT-5.6 Terra',
       'GPT-5.5',

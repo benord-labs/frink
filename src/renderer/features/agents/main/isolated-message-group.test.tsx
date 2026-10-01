@@ -19,6 +19,7 @@ vi.mock('jotai', () => ({
 
 vi.mock('../atoms', () => ({
   showMessageJsonAtom: 'show-message-json',
+  pendingChatRetryAtomFamily: (subChatId: string) => `pending-retry:${subChatId}`,
   compactingForSubChatAtomFamily: (subChatId: string) => `compacting:${subChatId}`,
   compactingSubChatsAtom: Symbol('compactingSubChatsAtom'),
 }));
@@ -71,6 +72,16 @@ vi.mock('./active-chat/components/RetryActionButton', () => ({
       {label ?? 'Retry'}
     </button>
   ),
+}));
+
+vi.mock('../ui/account-indicator', () => ({
+  ContinueAfterUsageLimit: ({
+    chatId,
+    usageLimited,
+  }: {
+    chatId: string;
+    usageLimited: boolean;
+  }) => <span data-testid="continue-after-usage-limit">{`${chatId}/${usageLimited}`}</span>,
 }));
 
 vi.mock('../ui/message-json-display', () => ({
@@ -243,6 +254,7 @@ describe('IsolatedMessageGroup orphan anchor rendering', () => {
     atomValues.set(`assistant-ids:sub-1:${orphanId}`, []);
     atomValues.set(`is-last-user:sub-1:${orphanId}`, true);
     atomValues.set('is-streaming:sub-1', false);
+    atomValues.set('pending-retry:sub-1', { errorCategory: 'RATE_LIMIT_SDK' });
     const onCarryOn = vi.fn();
 
     render(
@@ -271,6 +283,7 @@ describe('IsolatedMessageGroup orphan anchor rendering', () => {
     const carryOn = screen.getByRole('button', { name: /carry on/i });
     fireEvent.click(carryOn);
     expect(onCarryOn).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('continue-after-usage-limit')).toHaveTextContent('chat-1/true');
   });
 
   it('omits Carry on when there is no session to resume, leaving Retry alone', () => {

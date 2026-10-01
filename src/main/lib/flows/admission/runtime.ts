@@ -41,8 +41,9 @@ import {
 } from './terminal-resume/resume-store';
 
 let controller: FlowAdmissionController | null = null;
-let dispatchStartedFlow: ((flowRunId: string) => Promise<void>) | null = null;
-let dispatchResumedFlow: ((intent: TerminalFlowResumeIntent) => Promise<void>) | null = null;
+type AdmittedDispatcher<T> = (admitted: T, ticket: number) => Promise<void>;
+let dispatchStartedFlow: AdmittedDispatcher<string> | null = null;
+let dispatchResumedFlow: AdmittedDispatcher<TerminalFlowResumeIntent> | null = null;
 
 const admissionController = (): FlowAdmissionController =>
   (controller ??= new FlowAdmissionController(getDatabase()));
@@ -112,7 +113,9 @@ async function releaseNonDispatchableStartedAdmission(
   runStatus: string | undefined,
 ): Promise<void> {
   const message = 'Flow admission claim was not dispatchable';
-  captureFlowAdmissionException(new Error(message), 'non-dispatchable-claim');
+  // A Cancel that committed after promotion is the user's call, not a fault.
+  if (runStatus !== 'cancelled')
+    captureFlowAdmissionException(new Error(message), 'non-dispatchable-claim');
   log.warn(`[FlowAdmission] ${message}; releasing the lease`, {
     flowRunId,
     ticket,
@@ -138,7 +141,7 @@ async function executeStartedAdmission(flowRunId: string, ticket: number): Promi
     await releaseNonDispatchableStartedAdmission(flowRunId, ticket, live, run?.status);
     return;
   }
-  await dispatchStartedFlow(flowRunId);
+  await dispatchStartedFlow(flowRunId, ticket);
 }
 
 async function executeResumedAdmission(flowRunId: string, ticket: number): Promise<void> {
@@ -153,17 +156,15 @@ async function executeResumedAdmission(flowRunId: string, ticket: number): Promi
   }
   const intent = terminalFlowResumeIntent(live?.intentJson);
   if (!intent) throw new Error(`Flow admission ${ticket} has no terminal resume node reference`);
-  await dispatchResumedFlow(intent);
+  await dispatchResumedFlow(intent, ticket);
 }
 
-export function registerFlowAdmissionStartDispatcher(
-  dispatcher: (flowRunId: string) => Promise<void>,
-): void {
+export function registerFlowAdmissionStartDispatcher(dispatcher: AdmittedDispatcher<string>): void {
   dispatchStartedFlow = dispatcher;
 }
 
 export function registerTerminalFlowResumeDispatcher(
-  dispatcher: (intent: TerminalFlowResumeIntent) => Promise<void>,
+  dispatcher: AdmittedDispatcher<TerminalFlowResumeIntent>,
 ): void {
   dispatchResumedFlow = dispatcher;
 }
@@ -214,8 +215,16 @@ const drainer = createFlowAdmissionDrainer({
   notifyFailedStartAdmission,
 });
 
-function drainFlowAdmissions(): Promise<void> {
+export function drainFlowAdmissions(): Promise<void> {
   return drainer.drain();
+}
+
+/** Runs a Flow-run command under the admission mutex; see FlowAdmissionController.transition. */
+export function transitionFlowRun<T>(
+  command: () => T,
+  afterCommit?: (result: T) => undefined,
+): Promise<T> {
+  return admissionController().transition(command, afterCommit);
 }
 
 /** Re-drains a queue whose retries ran out; a no-op otherwise. Safe to call from a poll. */
@@ -224,6 +233,7 @@ export function kickStalledFlowAdmissionDrain(): void {
 }
 
 export type FlowAdmissionSettings = {
+  queue_paused: boolean;
   concurrency_limit_enabled: boolean;
   max_concurrent_runs: number;
   occupied_runs: number;
@@ -234,6 +244,7 @@ export type FlowAdmissionSettings = {
 const toFlowAdmissionSettings = (
   snapshot: Awaited<ReturnType<FlowAdmissionController['getSnapshot']>>,
 ): FlowAdmissionSettings => ({
+  queue_paused: snapshot.config.queuePaused,
   concurrency_limit_enabled: snapshot.config.concurrencyLimitEnabled,
   max_concurrent_runs: snapshot.config.maxConcurrentRuns,
   occupied_runs: snapshot.occupied,
@@ -308,11 +319,6 @@ export async function cancelUndispatchedFlowAdmission(
     log.warn('[FlowAdmission] drain after dequeue failed', { flowRunId, error });
   });
   return true;
-}
-
-export async function hasPromotedFlowAdmission(flowRunId: string): Promise<boolean> {
-  const live = await admissionController().getLiveForRun(flowRunId);
-  return live?.state === 'active' || live?.state === 'releasing';
 }
 
 /**

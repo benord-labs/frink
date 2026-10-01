@@ -231,6 +231,8 @@ export type StartTaskContext = {
  * for a downstream block, parsing its persisted node_output.outputs. Returns null when no
  * start_task has completed / the output has no outputs object. Used by agent / run_command /
  * chat_reply so condition/agent nodes in between are transparent (sc-801 / sc-802).
+ * A lane node resolves its own lane, then outer start_tasks; any other node sees only upstream
+ * start_tasks outside every Fan Out lane (sc-3836).
  */
 export async function resolveUpstreamStartTaskContext(
   db: Db,
@@ -238,28 +240,29 @@ export async function resolveUpstreamStartTaskContext(
   options?: { nodeRunId: string; upstreamNodeIds: string[] },
 ): Promise<StartTaskContext | null> {
   const current = options ? await getNodeRun(db, options.nodeRunId) : null;
-  const scope =
-    current?.laneIndex !== null && current?.parentFanOutNodeRunId
+  const laneScope =
+    options && current?.laneIndex !== null && current?.parentFanOutNodeRunId
       ? {
-          nodeIds: options?.upstreamNodeIds ?? [],
+          nodeIds: options.upstreamNodeIds,
           laneIndex: current.laneIndex,
           parentFanOutNodeRunId: current.parentFanOutNodeRunId,
         }
       : undefined;
-  let run = await findLatestCompletedStartTaskRun(db, flowRunId, scope);
-  if (!run && scope && options) {
-    run = await findLatestCompletedStartTaskRun(db, flowRunId, {
-      nodeIds: options.upstreamNodeIds,
-      outsideFanOut: true,
-    });
-  }
+  // Outside a lane, only start_tasks outside every Fan Out count — a continuation's upstream
+  // walk passes through the lane bodies, and the newest lane start_task must not win (sc-3836).
+  const outsideScope = options
+    ? { nodeIds: options.upstreamNodeIds, outsideFanOut: true as const }
+    : undefined;
+  const run =
+    (laneScope && (await findLatestCompletedStartTaskRun(db, flowRunId, laneScope))) ||
+    (await findLatestCompletedStartTaskRun(db, flowRunId, outsideScope));
   if (!run || run.nodeOutput === null || typeof run.nodeOutput !== 'object') return null;
   const outputs = (run.nodeOutput as { outputs?: unknown }).outputs;
   if (outputs === null || typeof outputs !== 'object') return null;
   return outputs as StartTaskContext;
 }
 
-export async function setNodeRunStatus(
+export function setNodeRunStatus(
   db: Db,
   id: string,
   status: NodeRunStatus,
@@ -279,8 +282,9 @@ export async function setNodeRunStatus(
      * read (status + result JSON) — a resumed or re-parked task never gets a stale node. */
     expectDrivingTask?: { id: string; status: string; result: unknown };
     expectResumeSnapshot?: FlowResumeSnapshot;
+    expectFlowRunId?: string;
   } = {},
-): Promise<NodeRun | null> {
+): NodeRun | null {
   const update: Partial<NodeRun> = { status };
   if (patch.nodeOutput !== undefined) update.nodeOutput = patch.nodeOutput;
   if (patch.startedAt !== undefined) update.startedAt = patch.startedAt;
@@ -289,6 +293,7 @@ export async function setNodeRunStatus(
   if (patch.expectStatuses) {
     guards.push(inArray(nodeRuns.status, [...patch.expectStatuses]));
   }
+  if (patch.expectFlowRunId) guards.push(eq(nodeRuns.flowRunId, patch.expectFlowRunId));
   if (patch.expectResumeSnapshot)
     guards.push(resumeSnapshotGuard(db, id, patch.expectResumeSnapshot));
   if (patch.expectDrivingTask) {
@@ -307,12 +312,14 @@ export async function setNodeRunStatus(
       ),
     );
   }
-  const [row] = await db
-    .update(nodeRuns)
-    .set(update)
-    .where(and(...guards))
-    .returning();
-  return row ?? null;
+  return (
+    db
+      .update(nodeRuns)
+      .set(update)
+      .where(and(...guards))
+      .returning()
+      .get() ?? null
+  );
 }
 
 /** A resume is valid only for the exact park and latest attempt that the user reviewed. */

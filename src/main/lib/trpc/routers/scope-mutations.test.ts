@@ -251,7 +251,9 @@ describe('skills.copyAcross', () => {
   it('expands a tilde SKILL.md display path to the absolute skill directory', async () => {
     // `~` is the operator's real home (shared expand-home), not Frink's FRINK_HOME.
     const tildeHome = os.homedir();
-    listProjectsMock.mockResolvedValue([{ id: 'x', name: 'X', path: path.join(tildeHome, 'proj') }]);
+    listProjectsMock.mockResolvedValue([
+      { id: 'x', name: 'X', path: path.join(tildeHome, 'proj') },
+    ]);
     await caller().copyAcross({
       skills: [
         { name: 'frontend-design', sourcePath: '~/proj/.cursor/skills/frontend-design/SKILL.md' },

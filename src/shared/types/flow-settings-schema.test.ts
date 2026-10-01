@@ -13,20 +13,21 @@ describe('flowSettingsShapeSchema — autoReviewTools', () => {
   });
 });
 
-describe('flowSettingsShapeSchema — codexFastMode', () => {
+describe('flowSettingsShapeSchema — codexSpeed', () => {
   it('round-trips through the schema so frink_flows_patch cannot silently drop it', () => {
     // `flow-patch.ts` validates settings with `flowSettingsShapeSchema.partial()`, and zod strips
     // unknown keys — an unmirrored field would be accepted and then vanish.
     expect(flowSettingsShapeSchema.safeParse({}).success).toBe(true);
-    for (const codexFastMode of [true, false]) {
-      const parsed = flowSettingsShapeSchema.safeParse({ codexFastMode });
+    for (const codexSpeed of ['standard', 'fast', 'ultrafast'] as const) {
+      const parsed = flowSettingsShapeSchema.safeParse({ codexSpeed });
       expect(parsed.success).toBe(true);
-      expect(parsed.success && parsed.data.codexFastMode).toBe(codexFastMode);
+      expect(parsed.success && parsed.data.codexSpeed).toBe(codexSpeed);
     }
   });
 
-  it('rejects non-boolean Fast settings', () => {
-    expect(flowSettingsShapeSchema.safeParse({ codexFastMode: 'on' }).success).toBe(false);
+  it('rejects unknown speeds and the retired Fast boolean', () => {
+    expect(flowSettingsShapeSchema.safeParse({ codexSpeed: 'turbo' }).success).toBe(false);
+    expect(flowSettingsShapeSchema.safeParse({ codexSpeed: true }).success).toBe(false);
   });
 });
 

@@ -10,12 +10,7 @@
     }
   },
   "frink": {
-    "keywords": [
-      "jira",
-      "confluence",
-      "issues",
-      "wiki"
-    ],
+    "keywords": ["jira", "confluence", "issues", "wiki"],
     "actions": [
       {
         "id": "atlassian.search_jira_issues",

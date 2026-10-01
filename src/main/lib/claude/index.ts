@@ -1,5 +1,6 @@
 export {
   clampEffortForBundledBinary,
+  claudeVersionSupportsUltra,
   claudeVersionSupportsXhigh,
   getBundledClaudeVersion,
 } from './bundled-claude-version';

@@ -1,10 +1,14 @@
+import { eq, inArray } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeLocalChat } from '../../trpc/routers/chats/test-factories';
 import * as schema from '../schema';
 import { freshDb, type TestDb } from '../test-utils/fresh-db';
 import {
   countChatsByProject,
+  createChat,
+  forkChatWithSubChats,
   getChatWithProjectAccount,
+  getOrCreateFlowChat,
   hasOtherChatsSharingWorktree,
   listAllArchivedChats,
   pageChatsForProjects,
@@ -264,13 +268,10 @@ describe('getChatWithProjectAccount', () => {
     vi.restoreAllMocks();
   });
 
-  it('resolves the project-assigned account for the chat', async () => {
-    // The regression this fixes: the executor reads this to pick the provider. When a
-    // project has an override, returning null routes the turn to the wrong (default) account.
+  it("resolves the chat's stamped account", async () => {
     await seedProject('p1');
     await seedAccount('cred-1', 'Personal Claude');
-    await projectAiAccountsRepo.setProjectAiAccount(db, 'p1', 'cred-1');
-    await seed({ id: 'c', projectId: 'p1' });
+    await seed({ id: 'c', projectId: 'p1', accountId: 'cred-1' });
 
     const result = await getChatWithProjectAccount(db, 'c');
 
@@ -278,8 +279,10 @@ describe('getChatWithProjectAccount', () => {
     expect(result?.chat.id).toBe('c');
   });
 
-  it('returns a null account when the project has no override (falls back to default)', async () => {
+  it('returns a null account for a chat with no login, even with a project override', async () => {
     await seedProject('p1');
+    await seedAccount('cred-1', 'Personal Claude');
+    await projectAiAccountsRepo.setProjectAiAccount(db, 'p1', 'cred-1');
     await seed({ id: 'c', projectId: 'p1' });
 
     expect((await getChatWithProjectAccount(db, 'c'))?.account).toBeNull();
@@ -303,7 +306,7 @@ describe('getChatWithProjectAccount', () => {
   it('isolates an account-read failure — null account, chat context intact', async () => {
     await seedProject('p1');
     await seed({ id: 'c', projectId: 'p1', worktreePath: '/tmp/wt/c', taskId: 't1' });
-    vi.spyOn(projectAiAccountsRepo, 'getProjectAiAccount').mockRejectedValueOnce(
+    vi.spyOn(projectAiAccountsRepo, 'getChatAiAccount').mockRejectedValueOnce(
       new Error('db error'),
     );
 
@@ -313,6 +316,106 @@ describe('getChatWithProjectAccount', () => {
     expect(result?.chat.id).toBe('c');
     expect(result?.chat.worktreePath).toBe('/tmp/wt/c');
     expect(result?.chat.taskId).toBe('t1');
+  });
+});
+
+describe('chat account stamping', () => {
+  beforeEach(async () => {
+    db = freshDb();
+    await seedProject('p1');
+    await seedAccount('cred-work', 'Work');
+    await seedAccount('cred-home', 'Home');
+    await db.insert(schema.claudeCodeCredentials).values({
+      id: 'cred-default',
+      accountLabel: 'Default',
+      type: 'claude-code',
+      isDefault: true,
+    });
+  });
+
+  const accountOf = async (chatId: string) =>
+    (await getChatWithProjectAccount(db, chatId))?.account?.id ?? null;
+
+  it('stamps the project override, and a later project change leaves the chat alone', async () => {
+    await projectAiAccountsRepo.setProjectAiAccount(db, 'p1', 'cred-work');
+    const chat = await createChat(db, { projectId: 'p1', name: 'c' });
+
+    await projectAiAccountsRepo.setProjectAiAccount(db, 'p1', 'cred-home');
+
+    expect(chat.accountId).toBe('cred-work');
+    expect(await accountOf(chat.id)).toBe('cred-work');
+  });
+
+  it('stamps the workspace default when there is no project override', async () => {
+    const general = await createChat(db, { projectId: null, name: 'g' });
+    const project = await createChat(db, { projectId: 'p1', name: 'p' });
+
+    expect([general.accountId, project.accountId]).toEqual(['cred-default', 'cred-default']);
+  });
+
+  it('stamps a new Flow chat, and reuses an existing one as it is', async () => {
+    await projectAiAccountsRepo.setProjectAiAccount(db, 'p1', 'cred-work');
+    const input = { projectId: 'p1', name: 'flow', worktreePath: '/tmp/wt/flow' };
+    const { chatId } = await getOrCreateFlowChat(db, input);
+    await projectAiAccountsRepo.setProjectAiAccount(db, 'p1', 'cred-home');
+
+    expect((await getOrCreateFlowChat(db, input)).chatId).toBe(chatId);
+    expect(await accountOf(chatId)).toBe('cred-work');
+  });
+
+  it('forks onto the source account and name, with no session ids', async () => {
+    const source = await createChat(db, { projectId: 'p1', name: 'src', accountId: 'cred-work' });
+    await db
+      .insert(schema.subChats)
+      .values({ chatId: source.id, name: 'src', sessionId: 'sess-1', messages: '[]' });
+
+    const forked = await forkChatWithSubChats(db, source.id);
+
+    expect([forked.chat.accountId, forked.chat.name]).toEqual(['cred-work', 'src']);
+    expect(forked.subChats.map((sub) => [sub.name, sub.sessionId])).toEqual([['src', null]]);
+  });
+
+  it('stamps the provider of the login a new, Flow or forked chat starts on', async () => {
+    await db
+      .insert(schema.claudeCodeCredentials)
+      .values({ id: 'cred-codex', accountLabel: 'Codex', type: 'codex' });
+    await projectAiAccountsRepo.setProjectAiAccount(db, 'p1', 'cred-codex');
+    const picked = await createChat(db, { projectId: 'p1', name: 'c', accountId: 'cred-work' });
+    const { chatId } = await getOrCreateFlowChat(db, {
+      projectId: 'p1',
+      name: 'f',
+      worktreePath: null,
+    });
+    const forked = await forkChatWithSubChats(db, chatId);
+
+    expect(picked.provider).toBe('claude-code');
+    expect((await getChatWithProjectAccount(db, chatId))?.chat.provider).toBe('codex');
+    expect(forked.chat.provider).toBe('codex');
+  });
+
+  it('blocks a chat whose login is deleted instead of moving it to another login', async () => {
+    await db
+      .insert(schema.claudeCodeCredentials)
+      .values({ id: 'cred-codex', accountLabel: 'Codex', type: 'codex' });
+    await projectAiAccountsRepo.setProjectAiAccount(db, 'p1', 'cred-home');
+    const codex = await createChat(db, { projectId: 'p1', name: 'c', accountId: 'cred-codex' });
+    const claude = await createChat(db, { projectId: 'p1', name: 'w', accountId: 'cred-work' });
+
+    await db
+      .delete(schema.claudeCodeCredentials)
+      .where(inArray(schema.claudeCodeCredentials.id, ['cred-codex', 'cred-work']));
+
+    for (const [chat, provider] of [
+      [codex, 'codex'],
+      [claude, 'claude-code'],
+    ] as const) {
+      const owner = await getChatWithProjectAccount(db, chat.id);
+      expect([owner?.chat.accountId, owner?.chat.provider, owner?.account]).toEqual([
+        null,
+        provider,
+        null,
+      ]);
+    }
   });
 });
 

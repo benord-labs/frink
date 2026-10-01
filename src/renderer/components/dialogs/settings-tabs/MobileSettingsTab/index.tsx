@@ -7,7 +7,7 @@ import { SettingsCard } from '@/components/settings/SettingsCard';
 import { SettingsSection } from '@/components/settings/SettingsSection';
 import { Switch } from '@/components/ui/switch';
 import { trpc } from '@/lib/trpc';
-import { MOBILE_PORT } from '../../../../../shared/types/remote/mobile';
+import { MOBILE_PORT, mobilePairingLink } from '../../../../../shared/types/remote/mobile';
 import { SettingsTabHeader } from '../SettingsTabHeader';
 import { SETTINGS_TAB_PAGE_CLASS } from '../settings-tab-surface';
 
@@ -90,12 +90,12 @@ function PairPhone({ enabled }: { enabled: boolean }) {
     return () => clearInterval(timer);
   }, [pairing.data]);
   const expired = pairing.data ? now >= Date.parse(pairing.data.expiresAt) : false;
-  const pairingText = pairing.data ? JSON.stringify(pairing.data.pairing) : '';
+  const pairingText = pairing.data ? mobilePairingLink(pairing.data.pairing) : '';
 
   return (
     <SettingsSection
       title="Pair your iPhone"
-      description="Open the Frink mobile app and scan the code, or choose Paste pairing code."
+      description="Scan the code with your iPhone camera, or copy it and choose Paste pairing code in the Frink app."
     >
       <SettingsCard>
         <div className="space-y-3 px-4 py-4">

@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  type FlowGraph,
-  MAX_FLOW_GRAPH_NODES,
-} from '../../../../shared/lib/validate-flow-graph';
+import { type FlowGraph, MAX_FLOW_GRAPH_NODES } from '../../../../shared/lib/validate-flow-graph';
 import { applyCreatorPick } from './pick';
 
 const graph: FlowGraph = {
@@ -25,7 +22,11 @@ function selected(result: ReturnType<typeof applyCreatorPick>) {
 
 describe('applyCreatorPick', () => {
   it('places a floating step where the gesture pointed, and lets the layout place one with no point', () => {
-    const atPoint = applyCreatorPick(graph, { kind: 'floating', position: { x: 40, y: 80 } }, 'agent');
+    const atPoint = applyCreatorPick(
+      graph,
+      { kind: 'floating', position: { x: 40, y: 80 } },
+      'agent',
+    );
     expect(selected(atPoint)).toMatchObject({ blockType: 'agent', position: { x: 40, y: 80 } });
 
     // The header button and the keyboard shortcut name no point: a random spot could land the step

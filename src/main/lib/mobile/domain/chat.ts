@@ -5,8 +5,21 @@ import {
   stripHiddenWakeMarker,
 } from '../../../../shared/lib/message-markers/hidden-wake-marker';
 import { stripMessageMarkers } from '../../../../shared/lib/message-markers/strip-message-markers';
+import {
+  extractCanonicalPlanTextForFilter,
+  filterCanonicalPlanParts,
+  type CanonicalPlanPartLike,
+} from '../../../../shared/plan-parts-filter';
 import { SUBAGENT_TEXT_PART_TYPE } from '../../../../shared/subagent-parts';
+import {
+  type ApprovedPlanContext,
+  findApprovablePlan,
+  isFrinkPlanMessagePartType,
+  type PlanMessageLike,
+  stripPlanFrontmatter,
+} from '../../../../shared/types/plan';
 import type {
+  MobileActivity,
   MobileChatDetail,
   MobileMessage,
   MobileMessagePart,
@@ -32,6 +45,7 @@ import {
   text,
 } from './context';
 import { mobilePermissions, mobileQuestions } from './questions';
+import { resolveMobileAttachments } from './attachments';
 
 type StreamStatus = 'active' | 'held' | 'settling' | 'settled' | 'error';
 type ToolState = Extract<MobileMessagePart, { type: 'tool' }>['state'];
@@ -52,39 +66,91 @@ function toolState(part: Record<string, unknown>, streamStatus?: StreamStatus): 
   return (streamStatus && unfinishedToolStates[streamStatus]) || 'unknown';
 }
 
+// `@[pasted:<size>:<name>|<path>]` — a desktop large paste or a phone file attachment.
+const PASTED_MENTION = /@\[pasted:\d+:([^|\]]*)\|[^\]]*\]\s?/g;
+
+/** Pulls pasted-file mentions out of text so the phone shows them as attachments, not tokens. */
+export function splitPastedMentions(body: string): { text: string; names: string[] } {
+  const names: string[] = [];
+  const text = body.replace(PASTED_MENTION, (_match, name: string) => {
+    names.push(name || 'Attachment');
+    return '';
+  });
+  return { text: text.trim(), names };
+}
+
+function isImagePart(part: Record<string, unknown>): boolean {
+  if (part.type === 'data-image') return true;
+  return (
+    part.type === 'file' && typeof part.mimeType === 'string' && part.mimeType.startsWith('image/')
+  );
+}
+
+/** Text as the phone shows it: pasted-file mentions become attachment chips. */
+function textParts(body: string): MobileMessagePart[] {
+  const { text: remaining, names } = splitPastedMentions(body);
+  const chips = names.map((name) => ({ type: 'attachment', kind: 'file', name }) as const);
+  return remaining ? [...chips, { type: 'text', text: remaining }] : chips;
+}
+
+function toolPart(
+  part: Record<string, unknown>,
+  id: string,
+  streamStatus?: StreamStatus,
+): MobileMessagePart[] {
+  const name = text(part.toolName, String(part.type).slice(5)).trim();
+  if (!name) return [];
+  return [
+    {
+      type: 'tool',
+      id: text(part.toolCallId).trim() || id,
+      name,
+      state: toolState(part, streamStatus),
+    },
+  ];
+}
+
 function messagePartProjection(
   value: unknown,
   id: string,
   streamStatus?: StreamStatus,
-): MobileMessagePart | null {
+): MobileMessagePart[] {
   const part = record(value);
-  if (part.type === 'text' || part.type === SUBAGENT_TEXT_PART_TYPE) {
-    const body = part.type === 'text' ? text(part.text) : text(record(part.input).text);
-    return body ? { type: 'text', text: body } : null;
+  if (isImagePart(part)) return [{ type: 'attachment', kind: 'image', name: 'Image' }];
+  if (part.type === 'text') return textParts(text(part.text));
+  if (part.type === SUBAGENT_TEXT_PART_TYPE) return textParts(text(record(part.input).text));
+  if (typeof part.type !== 'string') return [];
+  if (isFrinkPlanMessagePartType(part.type)) {
+    const plan = record(part.input);
+    const body = stripPlanFrontmatter(text(plan.planText));
+    return body ? [{ type: 'plan', id: text(plan.planId) || id, text: body }] : [];
   }
-  if (typeof part.type !== 'string' || !part.type.startsWith('tool-')) return null;
-  const name = text(part.toolName, part.type.slice(5)).trim();
-  if (!name) return null;
-  return {
-    type: 'tool',
-    id: text(part.toolCallId).trim() || id,
-    name,
-    state: toolState(part, streamStatus),
-  };
+  if (!part.type.startsWith('tool-')) return [];
+  // Keyed on the tool name, not state: the marker's state reads 'unknown' once its stream expires.
+  if (part.toolName === 'Steer') {
+    const steered = text(record(part.input).text).trim();
+    return steered ? [{ type: 'steer', text: steered }] : [];
+  }
+  return toolPart(part, id, streamStatus);
 }
 
 function messageProjection(value: unknown, streamStatus?: StreamStatus): MobileMessage | null {
   const message = record(value);
   if (typeof message.id !== 'string' || typeof message.role !== 'string') return null;
-  const rawParts = Array.isArray(message.parts) ? message.parts : [];
+  const raw = (Array.isArray(message.parts) ? message.parts : []).map(
+    record,
+  ) as CanonicalPlanPartLike[];
+  // As desktop shows it: plan markdown the agent also wrote as prose appears once, in the plan.
+  const rawParts = filterCanonicalPlanParts(raw, extractCanonicalPlanTextForFilter(raw));
   const status = record(message.metadata).interruptedBy ? 'settled' : streamStatus;
   const parts: MobileMessagePart[] = [];
   rawParts.forEach((part, index) => {
-    const projected = messagePartProjection(part, `${message.id}:${index}`, status);
-    const previous = parts.at(-1);
-    if (projected?.type === 'text' && previous?.type === 'text') {
-      previous.text += `\n${projected.text}`;
-    } else if (projected) parts.push(projected);
+    for (const projected of messagePartProjection(part, `${message.id}:${index}`, status)) {
+      const previous = parts.at(-1);
+      if (projected.type === 'text' && previous?.type === 'text') {
+        previous.text += `\n${projected.text}`;
+      } else parts.push(projected);
+    }
   });
   const body = parts
     .filter((part) => part.type === 'text')
@@ -130,6 +196,14 @@ export function mergeMobileTranscript(
   return [...messages.values()];
 }
 
+/** A held stream is parked on background work; anything else live is a running response. */
+export function subChatActivity(subChatId: string): MobileActivity {
+  const streams = getLiveStreamSeed(subChatId).streams;
+  if (getActiveExecution(subChatId) || streams.some((stream) => stream.status !== 'held'))
+    return 'running';
+  return streams.length ? 'background' : 'idle';
+}
+
 export async function readMobileChat(
   input: Extract<MobileRequest, { type: 'chat' }>,
 ): Promise<MobileChatDetail> {
@@ -151,25 +225,37 @@ export async function readMobileChat(
   ) {
     history = await mobileCallers.chats.getSubChatMessages(historyInput);
   }
-  const active = Boolean(getActiveExecution(subChat.id)) || seed.streams.length > 0;
+  const activity = subChatActivity(subChat.id);
+  const plan = findApprovablePlan(history.messages as PlanMessageLike[], subChat.mode === 'plan');
+  const { task, run } = await mobileCallers.tasks.getDrivingTaskForSubChat({
+    subChatId: subChat.id,
+    fallbackTaskId: chat.taskId,
+  });
   return {
     chat: { id: chat.id, name: chat.name ?? 'Untitled chat', projectId: chat.projectId },
     subChatId: subChat.id,
-    subChats: chat.subChats.map((sub) => ({ id: sub.id, name: sub.name ?? 'Chat' })),
+    subChats: chat.subChats.map((sub) => ({
+      id: sub.id,
+      name: sub.name ?? 'Chat',
+      activity: sub.id === subChat.id ? activity : subChatActivity(sub.id),
+    })),
     messages: mergeMobileTranscript(
       history.messages,
       input.beforeMessageId ? { streams: [], terminals: [] } : seed,
     ),
     hasMore: history.hasMore,
-    active,
+    activity,
+    // A live run owns the conversation even before its own task exists, as the send check treats it.
+    kind: run || task?.flowRunId ? 'flow' : 'chat',
     error:
-      !active && seed.terminals.at(-1)?.status === 'error'
-        ? 'The response failed. Check Frink on your computer for details.'
+      activity === 'idle' && seed.terminals.at(-1)?.status === 'error'
+        ? 'The response failed. Open Frink on your Mac to see why.'
         : null,
     questions: await mobileQuestions(chat.id, subChat.id, chat.taskId),
     permissions: mobilePermissions().filter(
       (entry) => entry.chatId === chat.id && entry.subChatId === subChat.id,
     ),
+    pendingPlanId: (activity === 'idle' && !input.beforeMessageId && plan?.planId) || null,
   };
 }
 
@@ -179,23 +265,60 @@ export async function createMobileChat(input: Extract<MobileRequest, { type: 'cr
   const chat = await mobileCallers.chats.create({
     projectId: input.projectId,
     name: input.name,
-    mode: 'agent',
-    useWorktree: true,
+    mode: input.mode ?? 'agent',
+    useWorktree: input.useWorktree ?? true,
   });
   return { chatId: chat.id, subChatId: chat.subChats[0].id };
 }
 
-type SendInput = { chatId: string; subChatId: string; requestId: string; text: string };
+/** Permanently deletes an ordinary chat, as desktop's "Delete chat permanently" does. A chat that
+ *  belongs to a task or a running Flow is left to desktop, which asks what to do with that work. */
+export async function deleteMobileChat(input: Extract<MobileRequest, { type: 'deleteChat' }>) {
+  const { chat } = await requireChat(input.chatId);
+  const drivers = await Promise.all(
+    chat.subChats.map((subChat) =>
+      mobileCallers.tasks.getDrivingTaskForSubChat({ subChatId: subChat.id, fallbackTaskId: null }),
+    ),
+  );
+  if (chat.taskId || drivers.some(({ run }) => run))
+    throw new MobileApiError(
+      409,
+      'This chat belongs to a task or Flow. Delete it from Frink on your computer.',
+    );
+  await mobileCallers.chats.delete({ id: chat.id });
+  return { ok: true as const };
+}
+
+type SendInput = {
+  chatId: string;
+  subChatId: string;
+  requestId: string;
+  text: string;
+  attachments?: string[];
+};
 export async function sendMobileMessage(
   input: SendInput,
   extra?: {
     expectedFlowTaskId?: string;
     metadata?: { answeredQuestions: Array<{ label: string; answer: string }> };
+    /** A plan approval: the mode it switches to and the plan the turn implements. */
+    mode?: 'agent';
+    approvedPlanContext?: ApprovedPlanContext;
   },
 ) {
   const message = input.text.replaceAll(HIDDEN_WAKE_MARKER, '').trim();
-  if (!message) throw new MobileApiError(400, 'Write a message before sending.');
+  if (!message && !input.attachments?.length) {
+    throw new MobileApiError(400, 'Write a message before sending.');
+  }
   const { chat } = await requireChat(input.chatId, input.subChatId);
+  const attachments = input.attachments?.length
+    ? await resolveMobileAttachments(input.attachments, {
+        chatId: chat.id,
+        subChatId: input.subChatId,
+      })
+    : null;
+  // Same layout as a desktop send: file mentions lead the text part, images follow it.
+  const mentions = attachments?.fileMentions.join(' ') ?? '';
   const payload: Parameters<typeof sendMessage>[0] = {
     chatId: chat.id,
     subChatId: input.subChatId,
@@ -203,10 +326,15 @@ export async function sendMobileMessage(
     userMessage: {
       id: input.requestId,
       role: 'user',
-      parts: [{ type: 'text', text: message }],
+      parts: [
+        { type: 'text', text: mentions ? `${mentions} ${message}` : message },
+        ...(attachments?.imageParts ?? []),
+      ],
       metadata: extra?.metadata,
     },
     expectedFlowTaskId: extra?.expectedFlowTaskId,
+    mode: extra?.mode,
+    approvedPlanContext: extra?.approvedPlanContext,
   };
   try {
     await sendMessage(payload, {
@@ -230,6 +358,9 @@ export async function sendMobileMessage(
           );
         }
         if (task?.flowRunId) payload.expectedFlowTaskId = task.id;
+        // Approving starts a reviewed task, only once the turn is sure to run.
+        if (extra?.approvedPlanContext && task?.status === 'plan_ready')
+          await mobileCallers.tasks.startExecution({ taskId: task.id });
       },
     });
   } catch (error) {
@@ -239,6 +370,7 @@ export async function sendMobileMessage(
       throw new MobileApiError(409, 'This Flow step changed. Refresh the chat before replying.');
     throw error;
   }
+  await attachments?.release();
   return { ok: true as const };
 }
 

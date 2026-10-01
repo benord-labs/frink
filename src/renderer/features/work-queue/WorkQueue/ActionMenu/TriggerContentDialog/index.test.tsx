@@ -25,6 +25,15 @@ function makeContext(
 }
 
 describe('TriggerContentDialog', () => {
+  it('routes a gmail trigger to the rendered-email dialog', () => {
+    const ctx = makeContext('gmail', { subject: 'Invoice overdue', bodyPlain: 'Please pay.' });
+
+    render(<TriggerContentDialog open onOpenChange={vi.fn()} triggerContext={ctx} />);
+
+    expect(screen.getByText('Original Email')).toBeInTheDocument();
+    expect(screen.queryByText('Original Gmail Trigger')).not.toBeInTheDocument();
+  });
+
   it('renders a structured shortcut summary from the RAW webhook body', () => {
     const ctx = makeContext('shortcut', {
       primary_id: 123,

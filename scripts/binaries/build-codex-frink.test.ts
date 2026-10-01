@@ -195,9 +195,9 @@ describe('empty CODEX_HOME MCP replacement', () => {
   });
 
   it('rejects a listing that surfaced the sentinel as a server', () => {
-    expect(() => assertMcpReplaceConsumed('Name             Command\n__frink_replace  -\n')).toThrow(
-      '__frink_replace',
-    );
+    expect(() =>
+      assertMcpReplaceConsumed('Name             Command\n__frink_replace  -\n'),
+    ).toThrow('__frink_replace');
   });
 
   it('rejects a config-load failure reported on stdout', () => {

@@ -47,9 +47,7 @@ type InterruptedRunControlsProps = {
 function QueuedResumeRow() {
   return (
     <RunStatusRow dotClassName="bg-[hsl(var(--status-warning))]" label="Flow run interrupted">
-      <span className="px-2 text-xs text-muted-foreground">
-        Waiting for a free slot to resume this step…
-      </span>
+      <span className="px-2 text-xs text-muted-foreground">Queued to resume this step…</span>
     </RunStatusRow>
   );
 }
@@ -115,7 +113,7 @@ export const InterruptedRunControls = memo(function InterruptedRunControls({
   // that React state alone leaves open. Without it a second click inside the 5s poll window sends a
   // duplicate request, which the executor treats as a supersede — aborting the very turn the first
   // click started. It also reports a wake that ended with the run still cancelled.
-  const { resumePending, start } = useFlowResumeLock(data?.runId ?? '', isTurnActive);
+  const { resumePending, start } = useFlowResumeLock(data?.runId ?? '', subChatId, isTurnActive);
 
   // Only a recoverable (restart-interrupted) run gets a resume CTA; a user-cancelled run is absent
   // here (resumable === false renders nothing — the user stopped it on purpose).

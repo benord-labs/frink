@@ -13,12 +13,7 @@
     }
   },
   "frink": {
-    "keywords": [
-      "docs",
-      "documentation",
-      "libraries",
-      "api"
-    ],
+    "keywords": ["docs", "documentation", "libraries", "api"],
     "actions": [
       {
         "id": "context7.resolve_library_id",

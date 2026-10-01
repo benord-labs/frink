@@ -60,7 +60,7 @@ export async function listFlows(db: Db, projectId?: string | null): Promise<Flow
     projectId === undefined || projectId === null
       ? eq(flows.isActive, true)
       : and(eq(flows.projectId, projectId), eq(flows.isActive, true));
-  return db.select().from(flows).where(scope).orderBy(desc(flows.updatedAt));
+  return db.select().from(flows).where(scope).orderBy(desc(flows.updatedAt), desc(flows.id));
 }
 
 // fallow-ignore-next-line code-duplication -- list/update stay per-table so each returns its own row type.

@@ -6,7 +6,7 @@ import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TaskChatReadyData } from '../../../../shared/types/task-chat-ready';
 import { activeOverlayAtom, agentsSettingsDialogOpenAtom } from '../../../lib/atoms';
-import { codexFastModeAtomFamily } from '../../../lib/atoms/codex-fast-mode';
+import { codexSpeedAtomFamily } from '../../../lib/atoms/codex-speed';
 import {
   autoModePerChatAtomFamily,
   chatModeAtomFamily,
@@ -15,7 +15,7 @@ import {
 } from '../atoms';
 import { agentChatStore } from '../stores/agent-chat-store';
 import { useMessageQueueStore } from '../stores/message-queue-store';
-import { useTaskIpcHandler } from './use-task-ipc-handler';
+import { UNDELIVERED_PULL_RETRY_MS, useTaskIpcHandler } from './use-task-ipc-handler';
 
 const {
   createAgentChat,
@@ -23,12 +23,14 @@ const {
   getResolvedAccountData,
   getSubChatMessages,
   invalidateAgentChat,
+  listUndeliveredDispatches,
 } = vi.hoisted(() => ({
   createAgentChat: vi.fn(),
   fetchResolvedAccount: vi.fn(async () => undefined),
   getResolvedAccountData: vi.fn(() => ({ type: 'claude-code' })),
   getSubChatMessages: vi.fn(async () => ({ messages: [], hasMore: false, sessionId: null })),
   invalidateAgentChat: vi.fn(async () => undefined),
+  listUndeliveredDispatches: vi.fn(async (): Promise<unknown[]> => []),
 }));
 
 vi.mock('../lib/create-agent-chat', () => ({ createAgentChat }));
@@ -46,6 +48,7 @@ vi.mock('../../../lib/trpc', () => ({
   },
   trpcClient: {
     chats: { getSubChatMessages: { query: getSubChatMessages } },
+    tasks: { listUndeliveredDispatches: { query: listUndeliveredDispatches } },
   },
 }));
 
@@ -81,6 +84,7 @@ describe('useTaskIpcHandler', () => {
     fetchResolvedAccount.mockClear();
     getSubChatMessages.mockClear();
     invalidateAgentChat.mockClear();
+    listUndeliveredDispatches.mockReset().mockResolvedValue([]);
     getResolvedAccountData.mockReturnValue({ type: 'claude-code' as const });
     // Mirror the real factory: register the Chat in agentChatStore so the handler's
     // `agentChatStore.has(subChatId)` idempotency re-check and message dedup behave realistically.
@@ -135,6 +139,40 @@ describe('useTaskIpcHandler', () => {
     expect(fetchResolvedAccount).toHaveBeenCalledWith({ chatId: 'chat-1' });
   });
 
+  it('delivers a dispatch that fired before the listener mounted, once, via the mount pull', async () => {
+    // A renderer reload (or slow lazy layout load) misses the one-shot IPC event; main still holds
+    // the undelivered payload. A live re-fire of the same dispatch must not double-enqueue it.
+    listUndeliveredDispatches.mockResolvedValue([validPayload({ startMode: 'plan' })]);
+    renderHook(() => useTaskIpcHandler(), { wrapper });
+
+    await waitFor(() => {
+      const queue = useMessageQueueStore.getState().getQueue('sub-1');
+      expect(queue.map((item) => item.dispatchTaskId)).toEqual(['task-1']);
+    });
+    expect(jotaiStore.get(chatModeAtomFamily('chat-1'))).toBe('plan');
+
+    act(() => ipcCallback?.(validPayload({ startMode: 'plan' })));
+    await waitFor(() => expect(useMessageQueueStore.getState().getQueue('sub-1')).toHaveLength(1));
+  });
+
+  it('retries a failed mount pull instead of treating it as nothing pending', async () => {
+    vi.useFakeTimers();
+    try {
+      listUndeliveredDispatches
+        .mockRejectedValueOnce(new Error('ipc unavailable'))
+        .mockResolvedValue([validPayload()]);
+      renderHook(() => useTaskIpcHandler(), { wrapper });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(useMessageQueueStore.getState().getQueue('sub-1')).toHaveLength(0);
+
+      await vi.advanceTimersByTimeAsync(UNDELIVERED_PULL_RETRY_MS);
+      expect(listUndeliveredDispatches).toHaveBeenCalledTimes(2);
+      expect(useMessageQueueStore.getState().getQueue('sub-1')).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("seeds the chat's Auto setting from the Flow and tags the prompt flow-dispatched", async () => {
     // The tag is for plan-mode semantics only: without it, a plan node continuing a chat that holds
     // an earlier node's parked plan card would be re-flipped to agent mode at send
@@ -162,32 +200,32 @@ describe('useTaskIpcHandler', () => {
     });
   });
 
-  it("seeds the chat's Codex Fast setting from the Flow", async () => {
+  it("seeds the chat's Codex speed from the Flow", async () => {
     renderHook(() => useTaskIpcHandler(), { wrapper });
 
-    act(() => ipcCallback?.(validPayload({ codexFastMode: true })));
+    act(() => ipcCallback?.(validPayload({ codexSpeed: 'ultrafast' })));
 
     await waitFor(() => {
-      expect(jotaiStore.get(codexFastModeAtomFamily('chat-1'))).toBe(true);
+      expect(jotaiStore.get(codexSpeedAtomFamily('chat-1'))).toBe('ultrafast');
     });
   });
 
   it('clears a chat left on Fast when the Flow runs standard', async () => {
-    // The chat's value outlives the run that set it, so `false` has to actively win — otherwise one
-    // Fast flow silently bills every later run in the same chat at the priority multiplier.
-    jotaiStore.set(codexFastModeAtomFamily('chat-1'), true);
+    // The chat's value outlives the run that set it, so `standard` has to actively win, or one Fast
+    // flow bills every later run in the same chat.
+    jotaiStore.set(codexSpeedAtomFamily('chat-1'), 'fast');
     renderHook(() => useTaskIpcHandler(), { wrapper });
 
-    act(() => ipcCallback?.(validPayload({ codexFastMode: false })));
+    act(() => ipcCallback?.(validPayload({ codexSpeed: 'standard' })));
 
     await waitFor(() => {
-      expect(jotaiStore.get(codexFastModeAtomFamily('chat-1'))).toBe(false);
+      expect(jotaiStore.get(codexSpeedAtomFamily('chat-1'))).toBe('standard');
     });
   });
 
   it('leaves the chat Fast setting alone when the payload omits it', async () => {
     // Manual and non-flow dispatches carry no value; they must not reset the user's own choice.
-    jotaiStore.set(codexFastModeAtomFamily('chat-1'), true);
+    jotaiStore.set(codexSpeedAtomFamily('chat-1'), 'fast');
     renderHook(() => useTaskIpcHandler(), { wrapper });
 
     act(() => ipcCallback?.(validPayload({ autoReviewTools: true })));
@@ -195,7 +233,7 @@ describe('useTaskIpcHandler', () => {
     await waitFor(() => {
       expect(jotaiStore.get(autoModePerChatAtomFamily('chat-1'))).toBe(true);
     });
-    expect(jotaiStore.get(codexFastModeAtomFamily('chat-1'))).toBe(true);
+    expect(jotaiStore.get(codexSpeedAtomFamily('chat-1'))).toBe('fast');
   });
 
   it('navigates from Work Queue-owned Settings to a non-flow task chat', async () => {

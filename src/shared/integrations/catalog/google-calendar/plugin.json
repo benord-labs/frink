@@ -13,12 +13,7 @@
     }
   },
   "frink": {
-    "keywords": [
-      "calendar",
-      "meetings",
-      "scheduling",
-      "google"
-    ],
+    "keywords": ["calendar", "meetings", "scheduling", "google"],
     "source": {
       "repo": "cursor/plugins",
       "commit": "4612556",

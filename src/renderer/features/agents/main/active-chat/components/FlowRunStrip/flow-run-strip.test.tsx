@@ -4,6 +4,8 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { createStore, Provider } from 'jotai';
 import { toast } from 'sonner';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { CodexSpeed } from '../../../../../../../shared/types/execution';
+import { agentChatStore } from '../../../../stores/agent-chat-store';
 import { FlowPausedBar, FlowRunStrip } from './index';
 
 const pauseMutate = vi.fn();
@@ -49,7 +51,7 @@ function renderStrip(
     mode?: 'agent' | 'plan' | 'debug';
     subChatId?: string;
     autoReviewTools?: boolean;
-    codexFastMode?: boolean;
+    codexSpeed?: CodexSpeed;
   } = {},
 ) {
   const onAddNote = overrides.onAddNote ?? vi.fn(() => true);
@@ -63,7 +65,7 @@ function renderStrip(
         modelId={overrides.modelId}
         mode={overrides.mode}
         autoReviewTools={overrides.autoReviewTools}
-        codexFastMode={overrides.codexFastMode}
+        codexSpeed={overrides.codexSpeed}
         onAddNote={onAddNote}
         onStopTurn={onStopTurn}
       />
@@ -450,7 +452,7 @@ describe('FlowRunStrip', () => {
     it('labels speed and ChatGPT credit use separately while a Fast run is live', () => {
       // The composer — and its own Fast switch — is replaced by this strip during a run, so this
       // pill is the only place the multiplier is visible while it is being charged.
-      renderStrip({ modelId: 'codex-gpt-5.6-sol-high', mode: 'agent', codexFastMode: true });
+      renderStrip({ modelId: 'codex-gpt-5.6-sol-high', mode: 'agent', codexSpeed: 'fast' });
       const label = screen.getByText('Fast · 1.5× speed · 2.5× ChatGPT credits');
       expect(label).toBeInTheDocument();
       expect(label.className).toContain('@max-[22rem]:sr-only');
@@ -460,28 +462,46 @@ describe('FlowRunStrip', () => {
       );
     });
 
+    it('discloses Ultrafast and its multiplier on a model that offers it', () => {
+      renderStrip({ modelId: 'codex-gpt-6-astra-high', mode: 'agent', codexSpeed: 'ultrafast' });
+      expect(
+        screen.getByText('Ultrafast · up to 8× speed · 8× ChatGPT credits'),
+      ).toBeInTheDocument();
+    });
+
+    it('hides the Ultrafast pill on a model without the tier, which runs at standard speed', () => {
+      renderStrip({ modelId: 'codex-gpt-6.1-sol-high', mode: 'agent', codexSpeed: 'ultrafast' });
+      expect(screen.queryByText(/Ultrafast/)).toBeNull();
+    });
+
     it('shows the per-model multiplier rather than a fixed one', () => {
-      renderStrip({ modelId: 'codex-gpt-5.4-medium', mode: 'agent', codexFastMode: true });
+      renderStrip({ modelId: 'codex-gpt-5.4-medium', mode: 'agent', codexSpeed: 'fast' });
       expect(screen.getByText('Fast · 1.5× speed · 2× ChatGPT credits')).toBeInTheDocument();
     });
 
     it.each([
-      ['the flow runs standard', { modelId: 'codex-gpt-5.6-sol-high', codexFastMode: false }],
+      [
+        'the flow runs standard',
+        { modelId: 'codex-gpt-5.6-sol-high', codexSpeed: 'standard' as const },
+      ],
       ['the flow carries no value', { modelId: 'codex-gpt-5.6-sol-high' }],
       // Claiming a cost that is not being charged is worse than saying nothing.
       [
         'the model has no priority tier',
-        { modelId: 'codex-gpt-5.4-mini-high', codexFastMode: true },
+        { modelId: 'codex-gpt-5.4-mini-high', codexSpeed: 'fast' as const },
       ],
-      ['the node is not Codex', { modelId: 'opus-4.8-max', codexFastMode: true }],
-      ['the picker id is stale', { modelId: 'codex-gpt-5.3-codex-high', codexFastMode: true }],
+      ['the node is not Codex', { modelId: 'opus-4.8-max', codexSpeed: 'fast' as const }],
+      [
+        'the picker id is stale',
+        { modelId: 'codex-gpt-5.3-codex-high', codexSpeed: 'fast' as const },
+      ],
       // KNOWN UNDER-REPORT, deliberate: a node that INHERITS its model writes no `model` into
       // _config, so the provider is unknown here. An inheriting Codex node really is billing at the
       // tier and shows nothing. Silence is the safe failure — the alternative is painting a credit
       // cost onto a Claude run that is not being charged one. autoPill can resolve this because it
       // may assume the Claude SDK default; a cost claim may not. Revisit if _config ever carries the
       // resolved account type.
-      ['the node inherits its model', { codexFastMode: true }],
+      ['the node inherits its model', { codexSpeed: 'fast' as const }],
     ])('hides the pill when %s', (_label, over) => {
       renderStrip({ mode: 'agent', ...over });
       expect(screen.queryByText(/^Fast /)).toBeNull();
@@ -578,6 +598,7 @@ describe('FlowPausedBar', () => {
     const result = render(
       <FlowPausedBar
         flowRunId={props.flowRunId}
+        subChatId="sub1"
         isTurnActive={props.isTurnActive}
         modelId={props.modelId}
         mode={props.mode}
@@ -594,6 +615,7 @@ describe('FlowPausedBar', () => {
         result.rerender(
           <FlowPausedBar
             flowRunId={next.flowRunId ?? props.flowRunId}
+            subChatId="sub1"
             isTurnActive={next.isTurnActive ?? props.isTurnActive}
             modelId={props.modelId}
             mode={props.mode}
@@ -692,6 +714,24 @@ describe('FlowPausedBar', () => {
     expect(toast.error).toHaveBeenCalledWith('Flow did not resume', {
       description: 'The continuation ended while the flow was still paused. Try again.',
     });
+  });
+
+  it('leaves an errored continuation to its own error toast', () => {
+    type StoredChat = ReturnType<typeof agentChatStore.get>;
+    const getChat = vi
+      .spyOn(agentChatStore, 'get')
+      .mockReturnValue({ status: 'error' } as StoredChat);
+    vi.mocked(toast.error).mockClear();
+    const { rerenderBar } = renderBar();
+    fireEvent.click(screen.getByRole('button', { name: 'Resume' }));
+    // A replacement Chat for the sub-chat must not decide how the sent continuation ended.
+    getChat.mockReturnValue({ status: 'ready' } as StoredChat);
+    rerenderBar({ isTurnActive: true });
+    rerenderBar({ isTurnActive: false });
+
+    expect(screen.getByRole('button', { name: 'Resume' })).toBeEnabled();
+    expect(toast.error).not.toHaveBeenCalledWith('Flow did not resume', expect.anything());
+    getChat.mockRestore();
   });
 
   it('starts a different flow run unlocked', () => {

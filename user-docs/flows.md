@@ -394,7 +394,9 @@ For a concise in-repo reminder (including clearing briefing), see the **Frink Fl
 
 ## Machine-wide Flow concurrency
 
-Frink limits the number of top-level Flow runs using machine resources at once. The limit is enabled by default at **4** and can be changed from **Settings → Preferences → Flows** (valid range: 1–20), or disabled for an explicit **Unlimited** state. The setting is local to this machine. Ordinary chats do not count toward it.
+Frink limits the number of top-level Flow runs using machine resources at once. The limit is enabled by default at **4** and can be changed from **Settings → Preferences → Flows** (valid range: 1–100), or disabled for an explicit **Unlimited** state. The setting is local to this machine. Ordinary chats do not count toward it.
+
+Changes to the limit toggle and maximum stay in the settings panel until you choose **Save**. Choose **Discard** to restore the latest saved settings. The live capacity counts keep refreshing while you edit. Saving changes preserves whether the Work Queue is paused, and disabling the limit keeps your numeric preference for later.
 
 When every slot is occupied, another Flow is accepted as **Queued** and starts automatically when capacity becomes available. Lowering the limit never interrupts active work; Frink drains down to the new maximum. Paused runs and runs waiting for approval or a question continue to hold their slot in this release. A queued run does not satisfy a DAG dependency—the successor remains pending until every predecessor actually completes.
 
@@ -595,7 +597,7 @@ frink_flows_patch({
 
 ### Fast mode (Codex)
 
-**Fast mode** asks Codex for its **priority** service tier on this flow's Agent steps. For ChatGPT-authenticated Codex it provides **1.5× model speed** and uses **2.5× ChatGPT credits** on GPT-6 Astra, Sol and Luna, GPT-5.6 and GPT-5.5 or **2× ChatGPT credits** on GPT-5.4. API-key priority pricing is separate and may differ. It is **off** unless you turn it on, and the Settings panel labels speed and credit use separately for the flow's default model.
+**Fast mode** asks Codex for its **priority** service tier on this flow's Agent steps. For ChatGPT-authenticated Codex it provides **1.5× model speed** and uses **2.5× ChatGPT credits** on GPT-6 Astra, Sol and Luna, GPT-6.1 Sol, GPT-5.6 and GPT-5.5 or **2× ChatGPT credits** on GPT-5.4. API-key priority pricing is separate and may differ. It is **off** unless you turn it on, and the Settings panel labels speed and credit use separately for the flow's default model.
 
 It applies only to Codex models that advertise the tier; steps on any other model — including GPT-5.4 Mini and Claude — run normally and are unaffected. Direct command and custom-node steps are unaffected too.
 
@@ -606,7 +608,20 @@ The setting is flow-wide, deliberately: there is no per-step override, so a flow
 ```
 frink_flows_patch({
   flowId: "<id>",
-  operations: [{ op: "update_settings", settings: { codexFastMode: true } }]
+  operations: [{ op: "update_settings", settings: { codexSpeed: "fast" } }]
+})
+```
+
+### Ultrafast mode (Codex)
+
+**Ultrafast mode** asks Codex for its **ultrafast** service tier: up to **8× model speed** for **8× ChatGPT credits** on GPT-6 Astra. It needs a ChatGPT Pro 500 plan or an eligible Enterprise/Edu plan; on other accounts Codex runs the steps at standard speed. Fast and Ultrafast replace each other, and both are off unless you turn them on.
+
+The switch appears under **Fast mode** when the flow's default model is GPT-6 Astra. Remember that it applies to every Agent step of every run, even when nobody is watching. A step on a model without Ultrafast runs at standard speed, never quietly at Fast. While a run drives a chat, the status strip shows an **Ultrafast** chip with its credit cost.
+
+```
+frink_flows_patch({
+  flowId: "<id>",
+  operations: [{ op: "update_settings", settings: { codexSpeed: "ultrafast" } }]
 })
 ```
 
@@ -668,7 +683,7 @@ On macOS, closing Frink's window without quitting the app leaves a main-owned st
 
 If the app or machine restarts (or a window reloads) while a flow's agent is mid-run, that run is marked **cancelled** with a recovery marker — a restart is treated as a recoverable interruption, not a failure, so it never surfaces an alarming red badge. The work up to the interrupted node (its worktree and the prior nodes' outputs) survives on the same run.
 
-**Finding one.** Interrupted runs appear under **Active → Needs attention** in the work queue, marked *Interrupted* — the same place you look for any run waiting on you, alongside runs paused for your input. They are deliberately kept out of History: an interrupted run is work still waiting on you, not a finished record, and History is where you would never look for it. Opening the card takes you to the run's chat, where you resume it. An interrupted run stays in Needs attention until you resume it — or, if you'd rather abandon it, delete its chat: that clears the run from the work queue while keeping it under **Flows → Runs** history. (Before this existed, an interrupted run sat in History labelled "Cancelled" and was only reachable if you already knew which chat it was.) A run interrupted inside a **parallel/fan-out step** is the one exception — those can't be resumed, so they stay in History as *Cancelled*, same as before.
+**Finding one.** Interrupted runs appear under **Active → Needs attention** in the work queue, marked *Interrupted* — the same place you look for any run waiting on you, alongside runs paused for your input. They are deliberately kept out of History: an interrupted run is work still waiting on you, not a finished record, and History is where you would never look for it. Opening the card takes you to the run's chat, where you resume it. An interrupted run stays in Needs attention until you resume it — or, if you'd rather abandon it, choose **Cancel** from its row menu: the run moves to History as *Cancelled* (deletable there like any other cancelled row) while staying under **Flows → Runs** history. Deleting its chat clears it as well. (Before this existed, an interrupted run sat in History labelled "Cancelled" and was only reachable if you already knew which chat it was.) A run interrupted inside a **parallel/fan-out step** is the one exception — those can't be resumed, so they stay in History as *Cancelled*, same as before.
 
 **Continuing automatically.** After an app restart, Frink carries interrupted agent steps on by itself whenever it safely can: if the agent's session survived, the run re-enters the run queue as a resumption — ahead of any fresh starts that were waiting — and the agent wakes up where it stopped, in the same chat and worktree (a tool call that was cut off mid-flight may run again — the same as pressing Carry on yourself). While it waits for a free slot the chat shows *Waiting for a free slot to resume this step* instead of a button; cancelling the run from the work queue during that wait still works and stops the resumption. Steps that can't be continued this way (no surviving session, a non-agent step, a batch member whose stage already settled, a parallel/fan-out lane) stay *Interrupted* and wait for you, as below.
 

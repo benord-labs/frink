@@ -16,10 +16,6 @@
       "project": ["src/**/*.{ts,tsx}"],
       "ignoreDependencies": [
         "babel-plugin-react-compiler",
-        "vscode-languageserver-protocol",
-        "vscode-langservers-extracted",
-        "typescript-language-server",
-        "pyright",
         "path-browserify",
         "@tailwindcss/typography",
         "tw-animate-css"
@@ -28,6 +24,10 @@
     "relay": {
       "entry": ["src/index.ts"],
       "project": ["src/**/*.ts"]
+    },
+    "live-activity-forwarder": {
+      "entry": ["src/index.ts"],
+      "project": ["src/**/*.ts", "tests/**/*.ts"]
     }
   },
   "ignoreBinaries": ["lsof", "ps", "security"],

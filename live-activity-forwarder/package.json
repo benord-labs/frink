@@ -1,0 +1,17 @@
+{
+  "name": "frink-live-activity",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "npx wrangler@4.144.0 deploy",
+    "test": "cd .. && bun run test:run live-activity-forwarder"
+  },
+  "dependencies": {
+    "@noble/curves": "^2.4.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260929.1"
+  }
+}

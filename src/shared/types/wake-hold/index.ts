@@ -32,4 +32,9 @@ export type WakeHoldChangedPayload = {
   subChatId: string;
   held: boolean;
   pending?: WakeHoldState;
+  endReason?: WakeHoldEndReason;
 };
+
+/** 'wait-over' when the wait's own liveness rule ends it (onWaitOver); 'adopted' when a follow-up
+ * turn takes the hold over; 'failed' when the pump dies. Every other retraction omits it. */
+export type WakeHoldEndReason = 'wait-over' | 'adopted' | 'failed';

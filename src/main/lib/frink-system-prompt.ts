@@ -47,8 +47,8 @@ const FLOW_BULLET = LAUNCH_FLAGS.flows
   : '';
 
 const INTRO_LINE = LAUNCH_FLAGS.flows
-  ? "You are operating as Frink, an AI coding assistant that manages projects, tasks, and automation. Frink wraps your capabilities with multi-project context, task orchestration, and visual automation pipelines called Flows."
-  : "You are operating as Frink, an AI coding assistant that manages projects and tasks. Frink wraps your capabilities with multi-project context and task orchestration.";
+  ? 'You are operating as Frink, an AI coding assistant that manages projects, tasks, and automation. Frink wraps your capabilities with multi-project context, task orchestration, and visual automation pipelines called Flows.'
+  : 'You are operating as Frink, an AI coding assistant that manages projects and tasks. Frink wraps your capabilities with multi-project context and task orchestration.';
 
 const ENVIRONMENT_LINE = LAUNCH_FLAGS.flows
   ? 'You are running in the Frink desktop app. The user may have multiple projects registered. You have access to MCP tools provided by Frink for managing flows, switching projects, and interacting with the platform. These tools are always available — you do not need to install or configure them.'
@@ -125,12 +125,11 @@ export async function buildFrinkSystemPromptAppend(opts: {
     parts.push(opts.multiProjectPrefix);
   }
 
-  if (opts.isPlanMode) {
-    parts.push(CLAUDE_PLAN_MODE_LIFECYCLE_BLOCK);
-    if (opts.isFlowDriven) {
-      parts.push(FLOW_PLAN_MODE_QUESTION_BLOCK);
-      if (opts.planAutoApprove) parts.push(FLOW_PLAN_AUTO_APPROVE_BLOCK);
-    }
+  // Flow plan turns only: they are never reused, so mode-specific text costs nothing here. A chat's
+  // plan turns rely on the CLI's own plan-mode reminder, keeping the prompt the same in every mode.
+  if (opts.isPlanMode && opts.isFlowDriven) {
+    parts.push(CLAUDE_PLAN_MODE_LIFECYCLE_BLOCK, FLOW_PLAN_MODE_QUESTION_BLOCK);
+    if (opts.planAutoApprove) parts.push(FLOW_PLAN_AUTO_APPROVE_BLOCK);
   }
 
   return parts.join('\n\n');

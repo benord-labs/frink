@@ -69,6 +69,12 @@ export const ERROR_TOAST_CONFIG: Record<
     title: 'Not connected',
     description: 'Cannot send message - socket server is not connected. Please check your network.',
   },
+  // Main settled the turn but its prompt never reached the agent (sc-3666). The message is
+  // persisted and shown, so Retry re-sends it; there is nothing to roll back.
+  MESSAGE_NOT_DELIVERED: {
+    title: 'Message not delivered',
+    description: "The agent didn't receive your message. Use Retry to send it again.",
+  },
   FLOW_RUN_ENDED: {
     title: 'This flow run has ended',
     description: 'Use Re-run step (or Resume) above the composer to continue this flow.',
@@ -79,6 +85,11 @@ export const ERROR_TOAST_CONFIG: Record<
     description:
       'Your message will continue this run — the agent picks up where it left off once the run is re-admitted.',
     toastId: 'flow-run-resuming',
+  },
+  LOGIN_REMOVED: {
+    title: "This chat's login was removed",
+    description: 'Retry the chat with another login, or add one.',
+    toastId: 'login-removed',
   },
 };
 

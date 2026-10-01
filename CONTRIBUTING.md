@@ -19,6 +19,9 @@ bun run dev
 
 `bun install` itself needs no token.
 
+`bun run dev` hot-reloads the renderer; main-process and preload changes need a restart.
+`bun run dev:watch` relaunches the app on those changes instead, which ends any chats running in it.
+
 ## Tests
 
 ```bash
@@ -31,9 +34,10 @@ form for anything that changes behaviour; `test:run` is enough for docs and conf
 
 ## Committing
 
-There is no commit hook. CI runs the structure lint, type check, knip, the skill-content drift check
-and the test suite on every pull request (`.github/workflows/test-suite.yml`); run them locally
-before you push.
+There is no commit hook. CI runs the formatting check, oxlint, the structure lint, type check, knip,
+the skill-content drift check and the test suite on every pull request
+(`.github/workflows/test-suite.yml`); run them locally before you push. `bun run format` fixes
+formatting, and `bun run lint` runs the format check, oxlint and the structure lint together.
 
 ## Pull requests
 

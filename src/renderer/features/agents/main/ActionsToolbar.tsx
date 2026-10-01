@@ -1,5 +1,6 @@
 import type { ReactElement } from 'react';
 import type { ChatMode } from '../../../../shared/types/chat-mode';
+import type { CodexSpeed } from '../../../../shared/types/execution';
 import { PromptInputActions } from '../../../components/ui/prompt-input';
 import { AgentSendButton } from '../components/agent-send-button';
 import { StagedAutoModeToggle } from '../components/auto-mode-toggle';
@@ -11,7 +12,7 @@ import { LIMITS } from './new-chat-form-constants';
 
 type Props = {
   /** Codex Fast staged by this New Chat form for the chat it creates. */
-  codexFastRef: { current: boolean };
+  codexSpeedRef: { current: CodexSpeed };
   // Mode selector props
   chatMode: ChatMode;
   onModeChange: (mode: ChatMode) => void;
@@ -64,7 +65,7 @@ type Props = {
  * Toolbar with mode selector, model selector, attach button, and send button
  */
 export function ActionsToolbar({
-  codexFastRef,
+  codexSpeedRef,
   chatMode,
   onModeChange,
   modeDropdownOpen,
@@ -119,7 +120,7 @@ export function ActionsToolbar({
           isOpen={isModelDropdownOpen}
           onOpenChange={onModelDropdownOpenChange}
           onOpenModelSettings={onOpenModelSettings}
-          newChatFastRef={codexFastRef}
+          newChatSpeedRef={codexSpeedRef}
         />
       </div>
 

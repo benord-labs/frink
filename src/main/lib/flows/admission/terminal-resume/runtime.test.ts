@@ -90,6 +90,7 @@ beforeEach(() => {
   mocks.getDatabase.mockReturnValue(db);
   controller = new FlowAdmissionController(db, async () => ({
     version: 1,
+    queuePaused: false,
     concurrencyLimitEnabled: true,
     maxConcurrentRuns,
   }));
@@ -214,6 +215,7 @@ describe('terminal Flow resume admission runtime', () => {
     await vi.waitFor(() => expect(mocks.resumeDispatcher).toHaveBeenCalledOnce());
     expect(mocks.resumeDispatcher).toHaveBeenCalledWith(
       expect.objectContaining({ node_run_id: 'claimed-other-target-second' }),
+      expect.any(Number),
     );
   });
 
@@ -227,7 +229,7 @@ describe('terminal Flow resume admission runtime', () => {
     await expect(recoverFlowAdmissions()).resolves.toEqual({ queued: 1, ambiguous: 0 });
 
     await vi.waitFor(() => expect(mocks.startDispatcher).toHaveBeenCalledOnce());
-    expect(mocks.startDispatcher).toHaveBeenCalledWith(queuedStart.run.id);
+    expect(mocks.startDispatcher).toHaveBeenCalledWith(queuedStart.run.id, expect.any(Number));
     expect(mocks.resumeDispatcher).not.toHaveBeenCalled();
   });
 
@@ -470,6 +472,7 @@ describe('boot carry-on — staged from the startup sweep, fired ahead of queued
         node_run_id: nodeRunId,
         continuation: true,
       }),
+      expect.any(Number),
     );
     expect(mocks.startDispatcher).toHaveBeenCalledTimes(1);
     expect(db.select().from(flowRuns).where(eq(flowRuns.id, queued.run.id)).get()).toMatchObject({

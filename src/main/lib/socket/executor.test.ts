@@ -131,8 +131,8 @@ vi.mock('../claude', () => ({
   createTransformer: vi.fn(),
   getBundledClaudeBinaryPath: vi.fn(),
   clampEffortForBundledBinary: vi.fn((effort?: string) => effort),
+  claudeVersionSupportsUltra: vi.fn(() => true),
 }));
-
 vi.mock('../cloud-client', () => ({
   denyBashPermission: vi.fn(),
   grantBashPermissionWithValidation: vi.fn(),
@@ -189,13 +189,15 @@ vi.mock('../db/repos/sub-chats', () => ({
 }));
 
 vi.mock('../flows/resume', () => ({
-  resumeFlowNodeInPlace: vi.fn(async () => true),
   // Default: no run is restart-interrupted, so a follow-up never takes the cancelled-resume branch.
   isRunRestartInterrupted: vi.fn(async () => false),
-  canReviveInterruptedFlowInPlace: vi.fn(async () => true),
-  resumeInterruptedFlowInPlace: vi.fn(async () => true),
-  // Follow-up fallback for FAILED runs (the paused-run unpark above no-ops on them).
-  resumeFailedFlowInPlace: vi.fn(async () => true),
+}));
+
+// What a resume writes is covered in tasks/*.test.ts; here only which task is resumed, and when.
+vi.mock('../tasks', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../tasks')>()),
+  resumeParkedTaskInPlace: vi.fn(async () => true),
+  reviveRestartInterruptedFlow: vi.fn(async () => undefined),
 }));
 
 vi.mock('../db/repos/chats', () => ({
@@ -321,17 +323,14 @@ import {
   getTaskById,
   updateTaskStatus,
 } from '../db/repos/tasks';
-import {
-  isRunRestartInterrupted,
-  resumeFlowNodeInPlace,
-  resumeInterruptedFlowInPlace,
-} from '../flows/resume';
+import { isRunRestartInterrupted } from '../flows/resume';
 import { getGlobalMcpServers, getMcpCredentials } from '../mcp/config';
 import * as dynamicChatServer from '../mcp/dynamic-chat-server';
 import { channelOwner } from '../mcp/execution-identity';
 import { getMultiProjectContext } from '../multi-project-prompt';
 import * as toolValidation from '../permissions/tool-validation';
 import { checkPermission } from '../permissions/v2/check';
+import { resumeParkedTaskInPlace, reviveRestartInterruptedFlow } from '../tasks';
 import type { MessagePart } from './client';
 import type { PlanFallbackSend } from './executor';
 import { applyApprovedPlanContextToPrompt } from './execution/prompt-prefix/approved-plan-prompt';
@@ -1009,7 +1008,7 @@ describe('socket file permission edge cases', () => {
     );
   });
 
-  it('resumes failed task to running and clears stale signal/error before execution', async () => {
+  it('resumes a failed task before execution', async () => {
     vi.mocked(dynamicChatServer.getLatestTaskSignal).mockReturnValueOnce({
       state: 'done',
       summary: 'Resume succeeded',
@@ -1038,93 +1037,12 @@ describe('socket file permission edge cases', () => {
       message: 'follow-up message after failure',
     });
 
-    expect(vi.mocked(updateTaskStatus)).toHaveBeenCalledWith(
-      expect.anything(),
-      'task-resume-1',
-      'running',
-      expect.objectContaining({
-        result: expect.objectContaining({
-          existing: 'keep-me',
-          resumedBy: 'follow_up_message',
-          previousStatus: 'failed',
-        }),
-      }),
+    expect(vi.mocked(resumeParkedTaskInPlace)).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'task-resume-1', status: 'failed' }),
+      'follow_up_message',
+      basePayload.subChatId,
     );
-    const resultPayload = vi.mocked(updateTaskStatus).mock.calls[0]?.[3] as {
-      result?: Record<string, unknown>;
-    };
-    expect(resultPayload.result?.agentSignal).toBeUndefined();
-    expect(resultPayload.result?.error).toBeUndefined();
     expect(vi.mocked(socketClient.sendErrorDirect)).not.toHaveBeenCalled();
-  });
-
-  it('follow-up resume yields when a concurrent terminal transition wins the status CAS', async () => {
-    // Between the resume's status read and its write, a late completion signal can supersede a
-    // quiet-idle park (needs_attention → done). The resume write is CAS-guarded on the statuses it
-    // read; a lost CAS (null row) must skip the unpark + heartbeat side-effects so the completion's
-    // terminal status and result survive.
-    vi.mocked(dynamicChatServer.getLatestTaskSignal).mockReturnValueOnce(undefined);
-    vi.mocked(getChatWithProjectAccount).mockResolvedValueOnce({
-      chat: { taskId: 'task-cas-lost' },
-      account: null,
-    } as Awaited<ReturnType<typeof getChatWithProjectAccount>>);
-    vi.mocked(getTaskById).mockResolvedValueOnce({
-      id: 'task-cas-lost',
-      status: 'needs_attention',
-      result: { agentSignal: { state: 'missing_completion_signal' } },
-    } as Awaited<ReturnType<typeof getTaskById>>);
-    vi.mocked(updateTaskStatus).mockResolvedValueOnce(null);
-    claudeQueryMock.mockImplementationOnce(async function* () {
-      yield { chunks: [{ type: 'finish', messageMetadata: { sessionId: 'sess-cas-lost' } }] };
-      yield { type: 'result' };
-    });
-
-    await handleRemoteExecute({
-      ...basePayload,
-      message: 'follow-up racing a late completion',
-    });
-
-    expect(vi.mocked(updateTaskStatus)).toHaveBeenCalledWith(
-      expect.anything(),
-      'task-cas-lost',
-      'running',
-      expect.objectContaining({ expectStatuses: ['failed', 'needs_attention'] }),
-    );
-  });
-
-  it('follow-up resume of a usage-limit-parked task strips the stale usageLimit marker', async () => {
-    vi.mocked(dynamicChatServer.getLatestTaskSignal).mockReturnValueOnce(undefined);
-    vi.mocked(getChatWithProjectAccount).mockResolvedValueOnce({
-      chat: { taskId: 'task-limit-parked' },
-      account: null,
-    } as Awaited<ReturnType<typeof getChatWithProjectAccount>>);
-    vi.mocked(getTaskById).mockResolvedValueOnce({
-      id: 'task-limit-parked',
-      status: 'needs_attention',
-      result: {
-        subChatId: basePayload.subChatId,
-        usageLimit: { message: "You've hit your limit · resets 2:20pm", at: '2026-06-10' },
-      },
-    } as Awaited<ReturnType<typeof getTaskById>>);
-    claudeQueryMock.mockImplementationOnce(async function* () {
-      yield { chunks: [{ type: 'finish', messageMetadata: { sessionId: 'sess-limit-resume' } }] };
-      yield { type: 'result' };
-    });
-
-    await handleRemoteExecute({ ...basePayload, message: 'follow-up after the limit reset' });
-
-    expect(vi.mocked(updateTaskStatus)).toHaveBeenCalledWith(
-      expect.anything(),
-      'task-limit-parked',
-      'running',
-      expect.anything(),
-    );
-    const resumePayload = vi.mocked(updateTaskStatus).mock.calls[0]?.[3] as {
-      result?: Record<string, unknown>;
-    };
-    // A resumed/running task must not re-report "paused on usage limit".
-    expect(resumePayload.result?.usageLimit).toBeUndefined();
-    expect(resumePayload.result?.subChatId).toBe(basePayload.subChatId);
   });
 
   it('flow follow-up resumes the DRIVING plan task (not the pinned task) and keeps plan mode', async () => {
@@ -1157,30 +1075,13 @@ describe('socket file permission edge cases', () => {
 
     await handleRemoteExecute({ ...basePayload, message: 'bun' });
 
-    // Resume targets the DRIVING task and flips it running. Answering a question is NOT plan
-    // approval: startMode stays 'plan' so the agent keeps planning and the strict gate still
-    // resolves `done` → plan_ready. Approval flows only via ExitPlanMode → plan card.
-    expect(vi.mocked(updateTaskStatus)).toHaveBeenCalledWith(
-      expect.anything(),
-      'driving-plan-task',
-      'running',
-      expect.objectContaining({
-        result: expect.objectContaining({
-          startMode: 'plan',
-          resumedBy: 'follow_up_message',
-          previousStatus: 'needs_attention',
-        }),
-      }),
+    // Resume targets the DRIVING task, never the pinned (already-done) one. Answering a question is
+    // NOT plan approval, so the sub-chat's plan permission-mode persists.
+    expect(vi.mocked(resumeParkedTaskInPlace)).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ id: 'driving-plan-task' }),
+      'follow_up_message',
+      basePayload.subChatId,
     );
-    // The pinned (already-done) task is never touched.
-    expect(vi.mocked(updateTaskStatus)).not.toHaveBeenCalledWith(
-      expect.anything(),
-      'pinned-evaluate-task',
-      expect.anything(),
-      expect.anything(),
-    );
-    // The sub-chat's mode persists: the resumed turn keeps plan permission-mode.
-    // The downstream in-place unpark (resumeFlowNodeInPlace) is unit-tested in flows/resume.test.ts.
     expect(vi.mocked(updateSubChatMode)).not.toHaveBeenCalled();
   });
 
@@ -1212,17 +1113,10 @@ describe('socket file permission edge cases', () => {
 
     await handleRemoteExecute({ ...basePayload, message: 'yes, on save' });
 
-    expect(vi.mocked(updateTaskStatus)).toHaveBeenCalledWith(
-      expect.anything(),
-      'driving-debug-task',
-      'running',
-      expect.objectContaining({
-        result: expect.objectContaining({
-          startMode: 'debug',
-          resumedBy: 'follow_up_message',
-          previousStatus: 'needs_attention',
-        }),
-      }),
+    expect(vi.mocked(resumeParkedTaskInPlace)).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'driving-debug-task' }),
+      'follow_up_message',
+      basePayload.subChatId,
     );
     expect(vi.mocked(updateSubChatMode)).not.toHaveBeenCalled();
   });
@@ -1300,20 +1194,13 @@ describe('socket file permission edge cases', () => {
         message: 'resume the paused flow',
       });
 
-      expect(vi.mocked(resumeFlowNodeInPlace)).toHaveBeenCalledWith(
-        'flow-run-1',
-        'node-run-1',
-        'driving-paused-task',
-        expect.objectContaining({ id: 'driving-paused-task' }),
+      expect(vi.mocked(resumeParkedTaskInPlace)).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'driving-paused-task', nodeRunId: 'node-run-1' }),
+        'follow_up_message',
+        basePayload.subChatId,
       );
-      expect(vi.mocked(resumeFlowNodeInPlace).mock.invocationCallOrder[0]).toBeLessThan(
+      expect(vi.mocked(resumeParkedTaskInPlace).mock.invocationCallOrder[0]).toBeLessThan(
         runner.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
-      );
-      expect(vi.mocked(updateTaskStatus)).toHaveBeenCalledWith(
-        expect.anything(),
-        'driving-paused-task',
-        'running',
-        expect.objectContaining({ expectStatuses: ['failed', 'needs_attention'] }),
       );
       expect(vi.mocked(dynamicChatServer.getLatestTaskSignal)).toHaveBeenCalledWith(
         'exec-context-1',
@@ -1374,6 +1261,7 @@ describe('socket file permission edge cases', () => {
     // Registered disarmed (taskSignalEnabled=false): frink_task_signal calls are refused.
     expect(taskSignalEnabledArg(-1)).toBe(false);
     // The dead task is never resumed or touched.
+    expect(vi.mocked(resumeParkedTaskInPlace)).not.toHaveBeenCalled();
     expect(vi.mocked(updateTaskStatus)).not.toHaveBeenCalled();
   });
 
@@ -1398,12 +1286,11 @@ describe('socket file permission edge cases', () => {
     await handleRemoteExecute({ ...basePayload, message: 'carry on' });
 
     expect(taskSignalEnabledArg(-1)).toBe(true);
-    // Resume still flips the task to running (the single prefetched read feeds both checks).
-    expect(vi.mocked(updateTaskStatus)).toHaveBeenCalledWith(
-      expect.anything(),
-      'task-failed-armed',
-      'running',
-      expect.anything(),
+    // Resume still runs on the task (the single prefetched read feeds both checks).
+    expect(vi.mocked(resumeParkedTaskInPlace)).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'task-failed-armed' }),
+      'follow_up_message',
+      basePayload.subChatId,
     );
   });
 
@@ -1433,7 +1320,7 @@ describe('socket file permission edge cases', () => {
 
     expect(taskSignalEnabledArg(-1)).toBe(false);
     // Nothing is resumed — the run is over, so there is no signal for the agent to land.
-    expect(vi.mocked(updateTaskStatus)).not.toHaveBeenCalled();
+    expect(vi.mocked(resumeParkedTaskInPlace)).not.toHaveBeenCalled();
     vi.mocked(getTaskById).mockReset();
   });
 
@@ -1450,11 +1337,10 @@ describe('socket file permission edge cases', () => {
     await handleRemoteExecute({ ...basePayload, message: 'bun' });
 
     expect(taskSignalEnabledArg(-1)).toBe(true);
-    expect(vi.mocked(updateTaskStatus)).toHaveBeenCalledWith(
-      expect.anything(),
-      'parked-live-run-task',
-      'running',
-      expect.anything(),
+    expect(vi.mocked(resumeParkedTaskInPlace)).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'parked-live-run-task' }),
+      'follow_up_message',
+      basePayload.subChatId,
     );
   });
 
@@ -1491,9 +1377,11 @@ describe('socket file permission edge cases', () => {
     expect(taskSignalEnabledArg(-1)).toBe(true);
     // Reaching the revive with this run's ids is what this test owns; what the revive then WRITES
     // (status flip, marker scrub, linkage) is covered directly in revive-interrupted-flow.test.ts.
-    // Unparked IN PLACE — never re-dispatched, which would double-run alongside this turn.
-    expect(vi.mocked(resumeInterruptedFlowInPlace)).toHaveBeenCalledWith('fr-restart');
-    expect(vi.mocked(resumeInterruptedFlowInPlace)).toHaveBeenCalledOnce();
+    expect(vi.mocked(reviveRestartInterruptedFlow)).toHaveBeenCalledWith(
+      'cancelled-driving-task',
+      'fr-restart',
+      basePayload.subChatId,
+    );
   });
 
   it('flow follow-up does NOT revive a USER-cancelled run (no marker) — disarms, no resume', async () => {
@@ -1525,7 +1413,7 @@ describe('socket file permission edge cases', () => {
     await handleRemoteExecute({ ...basePayload, message: 'carry on' });
 
     // Marker gate held: no in-place revive, no task flip, and the dead chat disarms its signal.
-    expect(vi.mocked(resumeInterruptedFlowInPlace)).not.toHaveBeenCalled();
+    expect(vi.mocked(reviveRestartInterruptedFlow)).not.toHaveBeenCalled();
     expect(vi.mocked(updateTaskStatus)).not.toHaveBeenCalled();
     expect(taskSignalEnabledArg(-1)).toBe(false);
   });
@@ -1551,7 +1439,7 @@ describe('socket file permission edge cases', () => {
     // First registration threads the flag; later re-calls on the same executionId omit it and
     // inherit (inheritance unit-tested in dynamic-chat-server tests).
     expect(taskSignalEnabledArg(0)).toBe(false);
-    expect(vi.mocked(updateTaskStatus)).not.toHaveBeenCalled();
+    expect(vi.mocked(resumeParkedTaskInPlace)).not.toHaveBeenCalled();
   });
 
   it('prepends the disarmed reminder to the prompt on the Codex path (no in-conversation system-prompt channel; sc-996)', async () => {
@@ -1724,53 +1612,6 @@ describe('socket file permission edge cases', () => {
     expect(vi.mocked(dynamicChatServer.setCurrentExecutionChat)).not.toHaveBeenCalled();
   });
 
-  it('continues Claude execution when failed-task resume update throws', async () => {
-    vi.mocked(dynamicChatServer.getLatestTaskSignal).mockReturnValueOnce(undefined);
-    vi.mocked(getChatWithProjectAccount).mockResolvedValueOnce({
-      chat: { taskId: 'task-resume-err-1' },
-      account: null,
-    } as Awaited<ReturnType<typeof getChatWithProjectAccount>>);
-    vi.mocked(getTaskById)
-      .mockResolvedValueOnce({
-        id: 'task-resume-err-1',
-        status: 'failed',
-        result: {
-          agentSignal: { state: 'failed', summary: 'Old failure' },
-          error: 'Old error',
-        },
-      } as Awaited<ReturnType<typeof getTaskById>>)
-      .mockResolvedValueOnce({
-        id: 'task-resume-err-1',
-        status: 'failed',
-        result: {},
-      } as Awaited<ReturnType<typeof getTaskById>>);
-    vi.mocked(updateTaskStatus).mockRejectedValueOnce(new Error('write failed'));
-    claudeQueryMock.mockImplementationOnce(async function* () {
-      yield { chunks: [{ type: 'finish', messageMetadata: { sessionId: 'sess-resume-err-1' } }] };
-      yield { type: 'result' };
-    });
-
-    await expect(
-      handleRemoteExecute({
-        ...basePayload,
-        message: 'follow-up message with transient resume update failure',
-      }),
-    ).resolves.toBeUndefined();
-
-    expect(claudeQueryMock).toHaveBeenCalledTimes(1);
-    const callArg = claudeQueryMock.mock.calls[0][0] as { options?: Record<string, unknown> };
-    expect(callArg.options?.systemPrompt).toMatchObject({
-      type: 'preset',
-      preset: 'claude_code',
-      append: expect.stringContaining('# Frink'),
-    });
-    // The first resume attempt throws; the marker clear reports 'parked' and the retry re-reads
-    // FRESH (bypassing the turn-start prefetch), which finds no row in this fixture — so exactly
-    // one update attempt happens and execution continues.
-    expect(vi.mocked(updateTaskStatus)).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(socketClient.sendErrorDirect)).not.toHaveBeenCalled();
-  });
-
   it('Claude: injects the flow briefing into systemPrompt.append (prompt-cached), never into the user message', async () => {
     vi.mocked(getFlowBriefingForSubChat).mockResolvedValueOnce('PRD: use strict mode');
     mockClaudeFinishTurn('sess-brief-claude');
@@ -1901,17 +1742,10 @@ describe('socket file permission edge cases', () => {
       message: 'codex follow-up after failure',
     });
 
-    expect(vi.mocked(updateTaskStatus)).toHaveBeenCalledWith(
-      expect.anything(),
-      'task-resume-codex-1',
-      'running',
-      expect.objectContaining({
-        expectStatuses: ['failed', 'needs_attention'],
-        result: expect.objectContaining({
-          previousStatus: 'failed',
-          resumedBy: 'follow_up_message',
-        }),
-      }),
+    expect(vi.mocked(resumeParkedTaskInPlace)).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'task-resume-codex-1', status: 'failed' }),
+      'follow_up_message',
+      basePayload.subChatId,
     );
   });
 
@@ -1937,7 +1771,7 @@ describe('socket file permission edge cases', () => {
       message: 'follow-up with missing claude credentials',
     });
 
-    expect(vi.mocked(updateTaskStatus)).not.toHaveBeenCalled();
+    expect(vi.mocked(resumeParkedTaskInPlace)).not.toHaveBeenCalled();
     expect(vi.mocked(socketClient.sendErrorDirect)).toHaveBeenCalledWith(
       expect.objectContaining({
         chatId: basePayload.chatId,
@@ -1968,7 +1802,7 @@ describe('socket file permission edge cases', () => {
       message: 'follow-up with missing claude binary',
     });
 
-    expect(vi.mocked(updateTaskStatus)).not.toHaveBeenCalled();
+    expect(vi.mocked(resumeParkedTaskInPlace)).not.toHaveBeenCalled();
     expect(vi.mocked(socketClient.sendErrorDirect)).toHaveBeenCalledWith(
       expect.objectContaining({
         chatId: basePayload.chatId,
@@ -2039,58 +1873,6 @@ describe('socket file permission edge cases', () => {
         error: expect.stringContaining('Claude binary not found'),
       }),
     );
-  });
-
-  it('resume-to-running status update does not include executedBy (preserved server-side)', async () => {
-    vi.mocked(dynamicChatServer.getLatestTaskSignal).mockReturnValueOnce({
-      state: 'done',
-      summary: 'Completed',
-      at: new Date().toISOString(),
-    });
-    vi.mocked(getChatWithProjectAccount).mockResolvedValueOnce({
-      chat: { taskId: 'task-resume-noexecby' },
-      account: null,
-    } as Awaited<ReturnType<typeof getChatWithProjectAccount>>);
-    vi.mocked(getTaskById)
-      .mockResolvedValueOnce({
-        id: 'task-resume-noexecby',
-        status: 'failed',
-        result: {
-          executionLeaseId: 'lease-xyz',
-          error: 'Execution lease expired (no heartbeat)',
-          failureCode: 'EXECUTION_LEASE_EXPIRED',
-          staleExecution: true,
-          staleDetectedAt: '2026-01-01T00:00:00.000Z',
-          lastHeartbeatAt: '2026-01-01T00:00:00.000Z',
-        },
-      } as Awaited<ReturnType<typeof getTaskById>>)
-      .mockResolvedValueOnce({
-        id: 'task-resume-noexecby',
-        status: 'running',
-        result: { executionLeaseId: 'lease-xyz' },
-      } as Awaited<ReturnType<typeof getTaskById>>);
-    claudeQueryMock.mockImplementationOnce(async function* () {
-      yield { chunks: [{ type: 'finish', messageMetadata: { sessionId: 'sess-noexecby' } }] };
-      yield { type: 'result' };
-    });
-
-    await handleRemoteExecute({
-      ...basePayload,
-      message: 'follow-up without executedBy',
-    });
-
-    const resumeCall = vi.mocked(updateTaskStatus).mock.calls.find((c) => c[2] === 'running');
-    if (!resumeCall) {
-      throw new Error('Expected running resume update call');
-    }
-    const opts = resumeCall[3] as { result?: unknown; executedBy?: string } | undefined;
-    expect(opts?.executedBy).toBeUndefined();
-    const resumedResult = (opts?.result ?? {}) as Record<string, unknown>;
-    expect(resumedResult.error).toBeUndefined();
-    expect(resumedResult.failureCode).toBeUndefined();
-    expect(resumedResult.staleExecution).toBeUndefined();
-    expect(resumedResult.staleDetectedAt).toBeUndefined();
-    expect(resumedResult.lastHeartbeatAt).toBeUndefined();
   });
 
   it('queries task signal without proactively stopping heartbeat', async () => {
@@ -3228,6 +3010,39 @@ describe('context isolation edge cases', () => {
     });
   });
 
+  describe('SDK exit errors are classified without their CLI stderr tail', () => {
+    const exitWithStderr = (tail: string) =>
+      new Error(`Claude Code process exited with code 1. stderr: ${tail}`);
+
+    it('a resume-failure phrase in stderr does not retry without resume', async () => {
+      claudeQueryThrowOnce(exitWithStderr('No conversation found with session ID x'));
+
+      await handleRemoteExecute({ ...basePayload, message: 'resumed turn', sessionId: 'sess-x' });
+
+      expect(claudeQueryMock).toHaveBeenCalledTimes(1);
+      expectSafeClaudeFailurePark();
+    });
+
+    it('an abort phrase in stderr is reported as an error, not a silent user stop', async () => {
+      claudeQueryThrowOnce(exitWithStderr('AbortError: The operation was aborted'));
+
+      await handleRemoteExecute({ ...basePayload, message: 'turn whose CLI crashed' });
+
+      expectSafeClaudeFailurePark();
+      expect(vi.mocked(socketClient.sendErrorDirect)).toHaveBeenCalledWith(
+        expect.objectContaining({ error: 'Claude execution failed. Please try again.' }),
+      );
+    });
+
+    it('a usage-limit phrase in stderr does not park as a usage limit', async () => {
+      claudeQueryThrowOnce(exitWithStderr("You've hit your limit · resets 3pm"));
+
+      await handleRemoteExecute({ ...basePayload, message: 'turn whose CLI crashed' });
+
+      expectSafeClaudeFailurePark();
+    });
+  });
+
   describe('API-error retry + park — transient/auth errors retry once, then park (non-batch)', () => {
     const AUTH_ERROR =
       'Claude Code returned an error result: Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"Invalid authentication credentials"}}';
@@ -4212,7 +4027,7 @@ describe('execution-scoped MCP URL wiring', () => {
     const parsed = new URL(mcpUrl as string);
     expect(parsed.searchParams.get('executionId')).toBeNull();
     expect(channelOwner(parsed.searchParams.get('channel') ?? '')?.runtime).toBe('claude');
-    expect(parsed.searchParams.get('toolset')).toBe('agent:nosignal');
+    expect(parsed.searchParams.get('toolset')).toBe('nosignal');
   });
 });
 

@@ -4,7 +4,6 @@ import * as nodePath from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { freshDb } from '../../db/test-utils/fresh-db';
 import { checkPermission, resetDocsLoader, setDocsLoader } from './check';
-import { buildPermissionDecisionInput } from './context';
 import { resolveScopes } from './scope-resolver';
 import type { PermissionRequest, PermissionsDoc } from './types';
 
@@ -211,54 +210,14 @@ describe('checkPermission — dispatcher routing', () => {
     });
   });
 
-  it('Glob → routes to checkSearch (in-project search stays prompt-free)', async () => {
+  it('Glob → auto-allow (mirrors tool-validation.ts)', async () => {
     const r = await checkPermission(baseReq({ tool: 'Glob', input: { pattern: '**/*.ts' } }));
     expect(r).toEqual({ decision: 'allow' });
   });
 
-  it('Grep of ~/.ssh → tier-1c deny (no unconditional auto-allow)', async () => {
-    const r = await checkPermission(
-      baseReq({ tool: 'Grep', input: { pattern: 'PRIVATE KEY', path: '~/.ssh' } }),
-    );
-    expect(r).toMatchObject({ decision: 'deny', reason: { kind: 'safety:path' } });
-  });
-
-  it('Grep → uses the host-resolved root from the decision input over the input path', async () => {
-    const input = buildPermissionDecisionInput(
-      'Grep',
-      { pattern: 'x', path: '/home/user/project/src' },
-      nodePath.join(nodeOs.homedir(), '.aws'),
-    );
-    const r = await checkPermission(baseReq({ tool: 'Grep', input }));
-    expect(r).toMatchObject({ decision: 'deny' });
-  });
-
-  it('Grep → a worktree override remapped into the project stays prompt-free', async () => {
-    const input = buildPermissionDecisionInput(
-      'Grep',
-      { pattern: 'x', path: '/wt/brave-lion/src' },
-      '/home/user/project/src',
-    );
-    expect(await checkPermission(baseReq({ tool: 'Grep', input }))).toEqual({ decision: 'allow' });
-  });
-
-  it('Grep → forwards projectId: no project row makes an in-project path ask', async () => {
-    const r = await checkPermission(
-      baseReq({
-        tool: 'Grep',
-        input: { pattern: 'x', path: '/home/user/project/src' },
-        projectId: '',
-      }),
-    );
-    expect(r).toMatchObject({ decision: 'ask', prompt: { tool: 'Grep' } });
-  });
-
-  it('Grep → an unreadable rule store denies rather than allowing', async () => {
-    setDocsLoader(async () => {
-      throw new Error('db down');
-    });
-    const r = await checkPermission(baseReq({ tool: 'Grep', input: { pattern: 'x' } }));
-    expect(r).toMatchObject({ decision: 'deny', reason: { kind: 'db:unavailable' } });
+  it('Grep → auto-allow', async () => {
+    const r = await checkPermission(baseReq({ tool: 'Grep', input: { pattern: 'foo' } }));
+    expect(r).toEqual({ decision: 'allow' });
   });
 
   it('unknown tool → generic rule-eval (tool-wide allow)', async () => {

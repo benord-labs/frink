@@ -11,9 +11,7 @@ import {
   extractFilePathFromToolInput,
   getOperationFromToolName,
   remapPathForPermissionBoundary,
-  resolvePermissionPathOverride,
   resolvePermissionProjectPath,
-  resolveSearchPermissionPath,
 } from './tool-validation';
 
 vi.mock('electron', () => ({
@@ -134,77 +132,6 @@ describe('extractFilePathFromToolInput', () => {
         new_string: '',
       }),
     ).toBe('notebook.ipynb');
-  });
-});
-
-describe('resolveSearchPermissionPath', () => {
-  const worktree = '/wt/brave-lion';
-  const root = '/proj';
-
-  it('a Grep with no path resolves to the worktree cwd, remapped onto the root project', async () => {
-    expect(await resolveSearchPermissionPath('Grep', { pattern: 'x' }, worktree, root)).toBe(root);
-  });
-
-  it('an absolute worktree path is remapped onto the root project', async () => {
-    expect(
-      await resolveSearchPermissionPath(
-        'Grep',
-        { pattern: 'x', path: `${worktree}/src` },
-        worktree,
-        root,
-      ),
-    ).toBe('/proj/src');
-  });
-
-  it('a relative Glob pattern prefix resolves against the worktree, then remaps', async () => {
-    expect(
-      await resolveSearchPermissionPath('Glob', { pattern: 'src/**/*.ts' }, worktree, root),
-    ).toBe('/proj/src');
-  });
-
-  it('a path outside the worktree is not canonicalised into the project', async () => {
-    expect(
-      await resolveSearchPermissionPath('Grep', { pattern: 'x', path: '/etc' }, worktree, root),
-    ).toBe('/etc');
-  });
-
-  it('a Glob climbing out of the worktree stays outside the project', async () => {
-    expect(
-      await resolveSearchPermissionPath('Glob', { pattern: '../../.ssh/*' }, worktree, root),
-    ).toBe('/.ssh');
-  });
-
-  it('a worktree-only symlink is left un-remapped so the gate sees where it leads', async () => {
-    const tmp = nodeFs.realpathSync(await mkdtemp(nodePath.join(nodeOs.tmpdir(), 'search-wt-')));
-    const wt = nodePath.join(tmp, 'wt');
-    const target = nodePath.join(tmp, 'secret');
-    nodeFs.mkdirSync(nodePath.join(wt, 'src'), { recursive: true });
-    nodeFs.mkdirSync(target);
-    nodeFs.symlinkSync(target, nodePath.join(wt, 'escape'));
-    try {
-      expect(
-        await resolveSearchPermissionPath('Grep', { pattern: 'x', path: 'escape' }, wt, root),
-      ).toBe(nodePath.join(wt, 'escape'));
-      expect(
-        await resolveSearchPermissionPath('Grep', { pattern: 'x', path: 'src' }, wt, root),
-      ).toBe('/proj/src');
-    } finally {
-      nodeFs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-});
-
-describe('resolvePermissionPathOverride', () => {
-  it('routes search tools through the search resolver and file tools through the lexical remap', async () => {
-    expect(await resolvePermissionPathOverride('Grep', { pattern: 'x' }, '/wt/a', '/proj')).toBe(
-      '/proj',
-    );
-    expect(
-      await resolvePermissionPathOverride('Read', { file_path: '/wt/a/f.ts' }, '/wt/a', '/proj'),
-    ).toBe('/proj/f.ts');
-    expect(
-      await resolvePermissionPathOverride('Bash', { command: 'ls' }, '/wt/a', '/proj'),
-    ).toBeUndefined();
   });
 });
 

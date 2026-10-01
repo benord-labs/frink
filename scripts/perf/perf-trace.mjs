@@ -4,7 +4,8 @@
  * tasks to functions. react-scan only sees React render time; this sees everything the
  * renderer thread did, sampled by the V8 CPU profiler.
  *
- *   bun scripts/perf/perf-trace.mjs [--seconds 25] [--out trace.json] [--probe] [--port 9222]
+ *   bun scripts/perf/perf-trace.mjs [--seconds 25] [--out trace.json] [--probe] [--invalidations]
+ *     [--port 9222]
  *   bun scripts/perf/perf-trace.mjs --history [seconds]
  *
  * --history skips recording: it prints the slow frames the browser already buffered (every
@@ -14,11 +15,16 @@
  *
  * --probe also installs an in-page longtask observer plus focus/visibilitychange timing and
  * prints those lines with the report.
+ *
+ * --invalidations also records Blink's style-invalidation tracking and reports every style recalc
+ * over 20ms with what changed just before it and which CSS rules widened it to whole subtrees
+ * (e.g. a non-subject `:has()` restyling the entire document on each DOM insert).
  */
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { formatRestyles, rendererMainThreads, summarizeRestyles } from './restyles.mjs';
 
 const TRACE_CATEGORIES = [
   '-*',
@@ -28,6 +34,8 @@ const TRACE_CATEGORIES = [
   'disabled-by-default-v8.cpu_profiler',
   'toplevel',
 ].join(',');
+
+const INVALIDATION_CATEGORY = 'disabled-by-default-devtools.timeline.invalidationTracking';
 
 const PROBE_SCRIPT = `(() => {
   if (window.__perfTraceProbe) return;
@@ -78,8 +86,17 @@ function collectProfiles(events) {
   for (const e of events) {
     if (e.name === 'ProfileChunk') appendChunk(profiles.get(key(e)), e.args.data);
   }
-  for (const p of profiles.values()) linkChildren(p.nodes);
+  for (const p of profiles.values()) {
+    linkChildren(p.nodes);
+    p.sampledFrom = p.start + (p.deltas[0] ?? 0) - medianDelta(p.deltas.slice(1));
+  }
   return [...profiles.values()];
+}
+
+/** The profiler's sampling interval; the first delta is not one (it spans the profiler's start-up). */
+function medianDelta(deltas) {
+  const sorted = deltas.filter((d) => d > 0).sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)] ?? 0;
 }
 
 function appendChunk(profile, data) {
@@ -124,13 +141,26 @@ function sortedEntries(map, limit) {
     .map(([k, v]) => [k, Math.round(v / 1000)]);
 }
 
-/** The trace covers every Chromium process; the page's JS runs on the renderer main thread. */
-function rendererMainThreads(events) {
-  return new Set(
-    events
-      .filter((e) => e.ph === 'M' && e.name === 'thread_name' && e.args?.name === 'CrRendererMain')
-      .map((e) => `${e.pid}:${e.tid}`),
-  );
+/** Blink's per-frame rendering steps; they run outside JS, so the CPU profile cannot see them. */
+const RENDER_PHASES = {
+  UpdateLayoutTree: 'style',
+  Layout: 'layout',
+  PrePaint: 'prepaint',
+  Paint: 'paint',
+  Layerize: 'layerize',
+  Commit: 'commit',
+};
+
+/** Time the task spent in each rendering step, largest first. */
+function renderPhases(events, task) {
+  const end = task.ts + task.dur;
+  const byPhase = {};
+  for (const e of events) {
+    const phase = RENDER_PHASES[e.name];
+    if (!phase || e.ph !== 'X' || e.pid !== task.pid || e.tid !== task.tid) continue;
+    if (e.ts >= task.ts && e.ts + e.dur <= end) byPhase[phase] = (byPhase[phase] ?? 0) + e.dur;
+  }
+  return sortedEntries(byPhase).filter(([, ms]) => ms > 0);
 }
 
 /**
@@ -142,10 +172,14 @@ export function attributeTrace(events, { minTaskMs = 50, limit = 12, origin = ''
   const profiles = collectProfiles(events);
   const renderers = rendererMainThreads(events);
   const profileOf = (e) => profiles.find((p) => p.pid === e.pid && p.tid === e.tid);
-  const profiled = events
+  const long = events
     .filter((e) => e.ph === 'X' && e.name === 'RunTask' && e.dur >= minTaskMs * 1000)
     .filter((e) => profileOf(e))
     .sort((a, b) => b.dur - a.dur);
+  // The profiler only starts sampling once the thread yields, so a task already running when the
+  // recording began has (almost) no samples; reading that as "not running JS" would be wrong.
+  const profiled = long.filter((e) => e.ts >= profileOf(e).sampledFrom);
+  const unsampled = long.filter((e) => e.ts < profileOf(e).sampledFrom);
   const onRenderer = profiled.filter((e) => renderers.has(`${e.pid}:${e.tid}`));
   const onPage = origin ? onRenderer.filter((e) => servesOrigin(profileOf(e), origin)) : [];
   const runTasks = onPage.length > 0 ? onPage : onRenderer.length > 0 ? onRenderer : profiled;
@@ -183,6 +217,9 @@ export function attributeTrace(events, { minTaskMs = 50, limit = 12, origin = ''
   }
   return {
     thread: { pid: longest.pid, tid: longest.tid },
+    unsampledMs: unsampled
+      .filter((t) => t.pid === longest.pid && t.tid === longest.tid && t.dur > longest.dur)
+      .map((t) => Math.round(t.dur / 1000)),
     tasks: tasks.map((task) => ({
       ms: Math.round(task.dur / 1000),
       atMs: Math.round((task.ts - firstTs) / 1000),
@@ -190,6 +227,7 @@ export function attributeTrace(events, { minTaskMs = 50, limit = 12, origin = ''
     longest: {
       ms: Math.round(longest.dur / 1000),
       sampledMs: Math.round(sampled / 1000),
+      renderPhases: renderPhases(events, longest),
       selfByFunction: sortedEntries(selfByFunction, limit),
       selfByFile: sortedEntries(selfByFile, limit),
       entryStacks: sortedEntries(entryStacks, 6),
@@ -207,31 +245,50 @@ export function loadWarning({ loadavg = os.loadavg()[0], cores = os.cpus().lengt
 
 export function formatReport(report, probeLines = []) {
   if (!report) return 'No task over the threshold on a profiled thread.';
+  const { longest } = report;
+  const renderMs = longest.renderPhases.reduce((sum, [, ms]) => sum + ms, 0);
   const lines = [
     `Thread pid ${report.thread.pid} tid ${report.thread.tid}: ${report.tasks.length} long task(s): ${report.tasks.map((t) => `${t.ms}ms@+${t.atMs}ms`).join(', ')}`,
-    `Longest task ${report.longest.ms}ms, ${report.longest.sampledMs}ms of it sampled` +
-      (report.longest.sampledMs < report.longest.ms / 2
-        ? ' — the thread was mostly not running JS (blocked, or starved of CPU)'
+    ...(report.unsampledMs.length
+      ? [
+          `Not attributed: ${report.unsampledMs.map((ms) => `${ms}ms`).join(', ')} began before the profiler's first sample (already running when recording started).`,
+        ]
+      : []),
+    // Style/layout forced by a JS call (a `focus()`, a `getBoundingClientRect()`) also samples as JS.
+    `Longest task ${longest.ms}ms, ${longest.sampledMs}ms of it sampled` +
+      (renderMs
+        ? `; rendering: ${longest.renderPhases.map(([k, v]) => `${k} ${v}ms`).join(', ')}`
+        : '') +
+      (longest.sampledMs + renderMs < longest.ms / 2
+        ? ' — the thread was mostly neither running JS nor rendering (blocked, or starved of CPU)'
         : ''),
     '  self time by function (ms):',
-    ...report.longest.selfByFunction.map(([k, v]) => `    ${String(v).padStart(5)} ${k}`),
+    ...longest.selfByFunction.map(([k, v]) => `    ${String(v).padStart(5)} ${k}`),
     '  self time by file (ms):',
-    ...report.longest.selfByFile.map(([k, v]) => `    ${String(v).padStart(5)} ${k}`),
+    ...longest.selfByFile.map(([k, v]) => `    ${String(v).padStart(5)} ${k}`),
     '  entry stacks (ms):',
-    ...report.longest.entryStacks.map(([k, v]) => `    ${String(v).padStart(5)} ${k}`),
+    ...longest.entryStacks.map(([k, v]) => `    ${String(v).padStart(5)} ${k}`),
   ];
   if (probeLines.length) lines.push('  probe:', ...probeLines.map((l) => `    ${l}`));
   return lines.join('\n');
 }
 
 function parseArgs(argv) {
-  const args = { seconds: 25, out: resolve('trace.json'), probe: false, port: null, history: 0 };
+  const args = {
+    seconds: 25,
+    out: resolve('trace.json'),
+    probe: false,
+    invalidations: false,
+    port: null,
+    history: 0,
+  };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--history') args.history = Number(argv[i + 1]) > 0 ? Number(argv[++i]) : 300;
     else if (argv[i] === '--seconds') args.seconds = Number(argv[++i]);
     else if (argv[i] === '--out') args.out = resolve(argv[++i]);
     else if (argv[i] === '--port') args.port = Number(argv[++i]);
     else if (argv[i] === '--probe') args.probe = true;
+    else if (argv[i] === '--invalidations') args.invalidations = true;
   }
   return args;
 }
@@ -268,7 +325,7 @@ async function pageTarget(port) {
       `Nothing answers on DevTools port ${port}. The dev app is not running, or its DevToolsActivePort file is stale from an earlier run.`,
     );
   }
-  const page = targets.find((t) => t.type === 'page');
+  const page = targets.find((t) => t.type === 'page' && !t.url.startsWith('devtools://'));
   if (!page) throw new Error('No page target on the DevTools port.');
   return page;
 }
@@ -353,7 +410,7 @@ async function readHistory({ port, history }) {
   return result.result.value;
 }
 
-async function record({ seconds, out, probe, port }) {
+async function record({ seconds, out, probe, invalidations, port }) {
   const page = await pageTarget(devToolsPort(port));
   const ws = new WebSocket(page.webSocketDebuggerUrl);
   await new Promise((ok, fail) => {
@@ -394,7 +451,10 @@ async function record({ seconds, out, probe, port }) {
     const { result } = await send('Runtime.evaluate', { expression: PROBE_SCRIPT });
     if (result?.exceptionDetails) throw new Error(`Probe failed: ${result.exceptionDetails.text}`);
   }
-  await send('Tracing.start', { categories: TRACE_CATEGORIES, transferMode: 'ReportEvents' });
+  const categories = invalidations
+    ? `${TRACE_CATEGORIES},${INVALIDATION_CATEGORY}`
+    : TRACE_CATEGORIES;
+  await send('Tracing.start', { categories, transferMode: 'ReportEvents' });
   tracing = true;
   console.log(`Recording ${seconds}s on ${page.url} — reproduce the slowdown now.`);
   await new Promise((r) => setTimeout(r, seconds * 1000));
@@ -414,13 +474,14 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     : record(args);
   run
     .then((recorded) => {
-      if (recorded)
-        console.log(
-          formatReport(
-            attributeTrace(recorded.events, { origin: recorded.origin }),
-            recorded.probeLines,
-          ),
-        );
+      if (!recorded) return;
+      console.log(
+        formatReport(
+          attributeTrace(recorded.events, { origin: recorded.origin }),
+          recorded.probeLines,
+        ),
+      );
+      if (args.invalidations) console.log(formatRestyles(summarizeRestyles(recorded.events)));
     })
     .catch((error) => {
       console.error(error.message);

@@ -259,3 +259,73 @@ describe('QueueProcessor — editing-lock guard', () => {
     expect(useMessageQueueStore.getState().queues[SUB_A] ?? []).toEqual([]);
   });
 });
+
+describe('QueueProcessor — turns restored without their attachments', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    setupDesktopApiMinimal();
+    resetStores();
+    mockSendMessage.mockReset();
+    mockSendMessage.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    delete (window as { desktopApi?: unknown }).desktopApi;
+  });
+
+  it('holds an attachmentsLost head and everything behind it, keeping order', async () => {
+    const lost = { ...createQueueItem('lost', 'see attached'), attachmentsLost: true as const };
+    const next = createQueueItem('next', 'follow-up');
+    useMessageQueueStore.setState({ queues: { [SUB_A]: [lost, next] } });
+    useStreamingStatusStore.getState().setStatus(SUB_A, 'ready');
+
+    renderQueueProcessor();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(QUEUE_PROCESS_DELAY_MS * 3);
+    });
+
+    expect(mockSendMessage).not.toHaveBeenCalled();
+    expect(useMessageQueueStore.getState().queues[SUB_A]?.map((i) => i.id)).toEqual([
+      'lost',
+      'next',
+    ]);
+  });
+
+  it('drains the rest in order once the user removes the held turn', async () => {
+    const lost = { ...createQueueItem('lost', 'see attached'), attachmentsLost: true as const };
+    const next = createQueueItem('next', 'follow-up');
+    useMessageQueueStore.setState({ queues: { [SUB_A]: [lost, next] } });
+    useStreamingStatusStore.getState().setStatus(SUB_A, 'ready');
+
+    renderQueueProcessor();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(QUEUE_PROCESS_DELAY_MS);
+    });
+    act(() => {
+      useMessageQueueStore.getState().removeFromQueue(SUB_A, 'lost');
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(QUEUE_PROCESS_DELAY_MS * 2);
+    });
+
+    expect(mockSendMessage).toHaveBeenCalledTimes(1);
+    expect(useMessageQueueStore.getState().queues[SUB_A] ?? []).toEqual([]);
+  });
+
+  it('sends intact turns ahead of a held one, then stops at it', async () => {
+    const first = createQueueItem('first', 'fine');
+    const lost = { ...createQueueItem('lost', 'see attached'), attachmentsLost: true as const };
+    useMessageQueueStore.setState({ queues: { [SUB_A]: [first, lost] } });
+    useStreamingStatusStore.getState().setStatus(SUB_A, 'ready');
+
+    renderQueueProcessor();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(QUEUE_PROCESS_DELAY_MS * 4);
+    });
+
+    expect(mockSendMessage).toHaveBeenCalledTimes(1);
+    expect(useMessageQueueStore.getState().queues[SUB_A]?.map((i) => i.id)).toEqual(['lost']);
+  });
+});

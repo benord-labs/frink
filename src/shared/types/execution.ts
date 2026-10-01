@@ -6,10 +6,18 @@
 // Execution Settings (shared across socket client/executor)
 // ============================================================================
 
+/** Speed a chat asks Codex for, stored per chat. `resolveCodexCliModel` maps it to the wire tier. */
+export const CODEX_SPEEDS = ['standard', 'fast', 'ultrafast'] as const;
+export type CodexSpeed = (typeof CODEX_SPEEDS)[number];
+
+export function isCodexSpeed(value: unknown): value is CodexSpeed {
+  return (CODEX_SPEEDS as readonly unknown[]).includes(value);
+}
+
 /**
  * Valid Claude model identifiers for the Claude Code / agent SDK path.
  * Includes short aliases (`haiku` | `sonnet` | `opus`) and version-pinned
- * Anthropic model IDs — pinning is required for Opus 4.6 / 4.7 / 4.8 / 5 / 5.5 so the SDK's
+ * Anthropic model IDs — pinning is required for Opus 4.6 / 4.7 / 4.8 / 5 / 5.5 and Sonnet 5 / 5.5 so the SDK's
  * baked-in system prompt reflects the correct version.
  * Matches executor gating (`src/main/lib/socket/executor.ts`). UI catalog and
  * thinking variants live in `src/shared/lib/models.ts` (`CLAUDE_CODE_MODELS`).
@@ -25,6 +33,7 @@ const VALID_MODELS = [
   'claude-opus-4-8',
   'claude-opus-4-7',
   'claude-opus-4-6',
+  'claude-sonnet-5-5',
   'claude-sonnet-5',
 ] as const;
 type ClaudeModel = (typeof VALID_MODELS)[number];
@@ -50,12 +59,6 @@ export function parseClaudeModel(input: unknown): string | null {
  */
 export type ClaudeSdkEffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
-/**
- * Effort tiers the model picker offers: the SDK set plus `ultra`, which is never sent as `--effort`.
- * Ultra runs at `xhigh` and turns on the CLI's parallel-agent orchestration (`ExecutionSettings.ultra`).
- */
-export type PickerEffortLevel = ClaudeSdkEffortLevel | 'ultra';
-
 export type ExecutionSettings = {
   /** Extended thinking token budget (0-100000) */
   maxThinkingTokens?: number;
@@ -76,18 +79,11 @@ export type ExecutionSettings = {
    * remain active; unsupported providers omit this flag.
    */
   autoReviewTools?: boolean;
-  /**
-   * Codex "Fast mode": request the `priority` service tier. Per-chat and off by default — it bills
-   * a 2-2.5x credit multiplier. A boolean rather than a tier string on purpose: main owns the model
-   * catalog and is the authority on which models advertise the tier, so `resolveCodexCliModel` can
-   * refuse it for a model that has none. Ignored by non-codex runtimes.
-   */
-  codexFastMode?: boolean;
-  /**
-   * Ultra effort tier: the Claude CLI's session `ultracode` setting — `xhigh` effort plus standing
-   * parallel-agent workflow orchestration. Sent alongside `effort: 'xhigh'`; ignored by non-claude
-   * runtimes. Why: docs/decisions/ultra-effort-tier.md
-   */
+  /** Codex speed; `resolveCodexCliModel` maps it to the wire tier the model advertises. Ignored by
+   *  non-codex runtimes. Why: docs/decisions/codex-fast-mode-consent.md */
+  codexSpeed?: CodexSpeed;
+  /** Ultra: the Claude CLI's `ultracode` parallel-agent orchestration, at any `effort`. Claude-only.
+   *  Why: docs/decisions/ultra-effort-tier.md */
   ultra?: boolean;
 };
 

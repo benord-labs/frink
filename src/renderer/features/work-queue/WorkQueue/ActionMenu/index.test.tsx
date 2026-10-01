@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { createStore, Provider } from 'jotai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -9,11 +9,6 @@ import {
 } from '../../../../lib/atoms';
 import type { Task } from '../../types';
 import { ActionMenu } from './index';
-
-vi.mock('./EmailTriggerContentDialog', () => ({
-  EmailTriggerContentDialog: ({ open }: { open: boolean }) =>
-    open ? <div role="dialog" aria-label="Original Email" /> : null,
-}));
 
 vi.mock('./TriggerContentDialog', () => ({
   TriggerContentDialog: ({ open }: { open: boolean }) =>
@@ -61,7 +56,6 @@ function createBaseProps() {
     onStartTask: vi.fn(),
     onRetryTask: vi.fn(),
     onMarkComplete: vi.fn(),
-    onDismiss: vi.fn(),
   };
 }
 
@@ -109,8 +103,50 @@ describe('WorkQueue ActionMenu', () => {
     expect(screen.getByRole('menuitem', { name: 'Start execution' })).toHaveClass(
       'text-success-fg',
     );
-    expect(screen.getByRole('menuitem', { name: 'Delete' })).toHaveClass('text-danger-fg');
-    expect(screen.queryByRole('menuitem', { name: 'Reject' })).not.toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Cancel' })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Delete' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Start task' })).not.toBeInTheDocument();
+  });
+
+  // One exit per state: Cancel while the task can still do something, Delete once nothing runs.
+  it.each([
+    ['running', 'Cancel'],
+    ['needs_attention', 'Cancel'],
+    ['interrupted', 'Cancel'],
+    ['done', 'Delete'],
+    ['failed', 'Delete'],
+    ['completed', 'Delete'],
+    ['cancelled', 'Delete'],
+  ] as const)('%s offers %s as its only exit', (status, exit) => {
+    render(
+      <ActionMenu
+        {...createBaseProps()}
+        task={createTask({ status: status === 'interrupted' ? 'cancelled' : status })}
+        status={status}
+        onStartTask={undefined}
+      />,
+    );
+    openMenu();
+    expect(screen.getByRole('menuitem', { name: exit })).toBeInTheDocument();
+    expect(
+      screen.queryByRole('menuitem', { name: exit === 'Cancel' ? 'Delete' : 'Cancel' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('a never-started queued task offers Delete even without a start handler', () => {
+    render(<ActionMenu {...createBaseProps()} onStartTask={undefined} />);
+    openMenu();
+    expect(screen.getByRole('menuitem', { name: 'Delete' })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Cancel' })).not.toBeInTheDocument();
+  });
+
+  it('a queued task with a chat offers Cancel instead of Delete', () => {
+    render(
+      <ActionMenu {...createBaseProps()} task={createTask({ result: { chatId: 'chat-1' } })} />,
+    );
+    openMenu();
+    expect(screen.getByRole('menuitem', { name: 'Cancel' })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Delete' })).not.toBeInTheDocument();
     expect(screen.queryByRole('menuitem', { name: 'Start task' })).not.toBeInTheDocument();
   });
 
@@ -134,20 +170,6 @@ describe('WorkQueue ActionMenu', () => {
     expect(screen.queryByRole('menuitem', { name: 'Delete' })).not.toBeInTheDocument();
   });
 
-  // A restart-`interrupted` run gets NO row Delete: a per-row delete of a derived-status flow run
-  // can race a chat-resume and orphan it. It leaves Active by being resumed, or via deleting its chat.
-  it('does not offer Delete for interrupted runs', () => {
-    render(
-      <ActionMenu
-        {...createBaseProps()}
-        task={createTask({ status: 'cancelled' })}
-        status="interrupted"
-      />,
-    );
-    openMenu();
-    expect(screen.queryByRole('menuitem', { name: 'Delete' })).not.toBeInTheDocument();
-  });
-
   it('does not offer task-level Carry on for Flow-linked work', () => {
     render(
       <ActionMenu
@@ -161,35 +183,7 @@ describe('WorkQueue ActionMenu', () => {
     expect(screen.queryByRole('menuitem', { name: 'Carry on task' })).not.toBeInTheDocument();
   });
 
-  it('confirms in-app before deleting review-plan tasks', async () => {
-    const props = createReviewPlanProps();
-    render(<ActionMenu {...props} />);
-
-    openMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
-
-    const dialog = await screen.findByRole('alertdialog');
-    expect(props.onDelete).not.toHaveBeenCalled();
-
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
-    expect(props.onDelete).toHaveBeenCalledWith('task-1');
-    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
-  });
-
-  it('does not delete review-plan task when confirmation is cancelled', async () => {
-    const props = createReviewPlanProps();
-    render(<ActionMenu {...props} />);
-
-    openMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
-
-    const dialog = await screen.findByRole('alertdialog');
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
-
-    expect(props.onDelete).not.toHaveBeenCalled();
-  });
-
-  it('deletes non-plan_ready tasks immediately without a confirmation dialog', () => {
+  it('deletes without a confirmation dialog', () => {
     const props = createBaseProps();
     render(<ActionMenu {...props} />);
 
@@ -200,55 +194,15 @@ describe('WorkQueue ActionMenu', () => {
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
   });
 
-  it('keeps the review-plan task when the confirmation dialog is dismissed via Escape', async () => {
-    const props = createReviewPlanProps();
-    render(<ActionMenu {...props} />);
-
-    openMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
-    await screen.findByRole('alertdialog');
-
-    fireEvent.keyDown(document, { key: 'Escape' });
-
-    expect(props.onDelete).not.toHaveBeenCalled();
-  });
-
-  it('can confirm deletion on a second attempt after a prior cancel', async () => {
-    const props = createReviewPlanProps();
-    render(<ActionMenu {...props} />);
-
-    openMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
-    fireEvent.click(
-      within(await screen.findByRole('alertdialog')).getByRole('button', {
-        name: 'Cancel',
-      }),
-    );
-
-    openMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
-    fireEvent.click(
-      within(await screen.findByRole('alertdialog')).getByRole('button', {
-        name: 'Delete',
-      }),
-    );
-
-    expect(props.onDelete).toHaveBeenCalledTimes(1);
-    expect(props.onDelete).toHaveBeenCalledWith('task-1');
-  });
-
-  it.each([
-    ['gmail', 'Original Email'],
-    ['github', 'Original Trigger'],
-  ] as const)('opens the %s original content in its domain dialog', (source, dialogName) => {
+  it('opens the original content in the trigger dialog', () => {
     const props = createBaseProps();
-    props.task = createTask({ triggerContext: createTriggerContext(source) });
+    props.task = createTask({ triggerContext: createTriggerContext('github') });
     render(<ActionMenu {...props} />);
 
     openMenu();
     fireEvent.click(screen.getByRole('menuitem', { name: 'View original content' }));
 
-    expect(screen.getByRole('dialog', { name: dialogName })).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'Original Trigger' })).toBeInTheDocument();
   });
 
   it('opens Models settings for an account-auth failure', () => {
@@ -321,7 +275,7 @@ describe('WorkQueue ActionMenu', () => {
     expect(props.onMarkComplete).toHaveBeenCalledWith('task-1');
 
     openMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Dismiss' }));
-    expect(props.onDismiss).toHaveBeenCalledWith('task-1');
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Cancel' }));
+    expect(props.onCancel).toHaveBeenCalledWith('task-1');
   });
 });

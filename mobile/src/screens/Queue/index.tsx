@@ -1,200 +1,144 @@
 import { useState } from 'react';
-import { View } from 'react-native';
-import type { MobileQueueItem } from '../../../../src/shared/types/remote/mobile';
-import type { useResource } from '../../lib/connection';
-import {
-  Card,
-  CardNote,
-  Loading,
-  Notice,
-  Row,
-  Section,
-  type IconName,
-  type Tone,
-} from '../../ui/primitives';
-import { Page } from '../../ui/page';
-import { Segmented } from '../../ui/segmented';
-import { SearchField } from '../../ui/search-field';
+import { ActivityIndicator, RefreshControl, SectionList, View } from 'react-native';
+import { CircleCheck } from 'lucide-react-native';
+import type { MobileTaskAction } from '@frink/shared/types/remote/mobile';
+import { useConnection, useResource } from '../../lib/connection';
+import { useOverview } from '../../lib/overview';
+import { useRootNavigation } from '../../navigation/routes';
+import { useTabHeader } from '../../navigation/tab-header';
+import { EmptyState, RowSeparator, SectionHeader } from '../../ui/list';
 import { ResourceStatus } from '../../ui/resource-status';
-import { queueView, type Decision, type QueueFilter } from './queue-view';
+import { Screen } from '../../ui/screen';
+import { tell } from '../../ui/tell';
+import { space, useTheme } from '../../ui/theme';
+import {
+  COLLAPSED_ROWS,
+  expandedLimits,
+  queueSections,
+  type QueueSection,
+  type QueueSectionKey,
+  type QueueTarget,
+} from './queue-view';
+import { ACTION_ITEMS, MacEyebrow, NotReadyNotice, QueueListRow } from './row';
 
-type Props = {
-  openChat: (
-    id: string,
-    subChatId?: string,
-    target?: { type: 'question' | 'permission'; id: string },
-  ) => void;
-  openRun: (id: string) => void;
-};
-// Reason: Decision, Flow run and chat destinations resolve in one place.
-// fallow-ignore-next-line complexity
-function openItem(
-  item: Pick<Decision, 'chatId' | 'subChatId' | 'flowRunId' | 'target'>,
-  actions: Props,
-) {
-  // A targeted decision opens its chat; otherwise a Flow run wins over its chat.
-  if (item.chatId && (item.target || !item.flowRunId))
-    actions.openChat(item.chatId, item.subChatId ?? undefined, item.target);
-  else if (item.flowRunId) actions.openRun(item.flowRunId);
+/**
+ * The shared overview poll serves the collapsed Queue (and the tab badge). Once a section is
+ * expanded the Queue polls its own, larger overview, keeping the old rows while it loads.
+ */
+function useQueueOverview() {
+  const shared = useOverview();
+  const [expanded, setExpanded] = useState<Set<QueueSectionKey>>(new Set());
+  // Derived each render from the shared poll's counts, so an expanded list follows the live total.
+  const limits = shared.data ? expandedLimits(expanded, shared.data.counts) : {};
+  const grown = Object.keys(limits).length > 0;
+  const own = useResource({ type: 'overview', limits }, { enabled: grown, keep: true });
+  // `keep` bridges a growing window; rows left from an earlier expansion are older than the shared poll.
+  const resource = grown ? { ...own, data: own.stale ? shared.data : (own.data ?? shared.data) } : shared;
+  const sections = resource.data ? queueSections(resource.data) : [];
+  const toggle = (key: QueueSectionKey) => {
+    const next = new Set(expanded);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    setExpanded(next);
+  };
+  return { resource, shared, grown, sections, expanded, toggle };
 }
 
-const decisionKinds: Record<string, { icon: IconName; tone: Tone }> = {
-  question: { icon: 'help', tone: 'accent' },
-  permission: { icon: 'shield-checkmark', tone: 'warning' },
-};
-const reviewKind = { icon: 'eye-outline', tone: 'warning' } as const;
-
-// Reason: Question, permission and review decisions map onto one shared row.
-// fallow-ignore-next-line complexity
-function DecisionRow({
-  item,
-  actions,
-  separator,
-}: {
-  item: Decision;
-  actions: Props;
-  separator: boolean;
-}) {
-  const actionable = !!(item.chatId || item.flowRunId);
-  const kind = decisionKinds[item.key.split(':')[0]] ?? reviewKind;
-  const subtitle = [item.context !== item.title ? item.context : '', item.description]
-    .filter(Boolean)
-    .join(' · ');
-  return (
-    <Row
-      title={item.title}
-      separator={separator}
-      subtitle={subtitle}
-      status={actionable ? undefined : item.status}
-      icon={kind.icon}
-      tone={kind.tone}
-      testID={`queue-row-${item.key}`}
-      accessibilityLabel={actionable ? `${item.action}: ${item.title}` : undefined}
-      onPress={actionable ? () => openItem(item, actions) : undefined}
-    />
-  );
-}
-
-// Reason: Flow and chat work, running or waiting, share one row.
-// fallow-ignore-next-line complexity
-function WorkRow({
-  item,
-  actions,
-  separator,
-}: {
-  item: MobileQueueItem;
-  actions: Props;
-  separator: boolean;
-}) {
-  return (
-    <Row
-      separator={separator}
-      title={item.title}
-      subtitle={item.summary}
-      status={item.status}
-      icon={item.flowRunId ? 'git-network-outline' : 'chatbubble-outline'}
-      tone={item.section === 'running' ? 'success' : 'neutral'}
-      testID={`queue-row-${item.id}`}
-      onPress={item.flowRunId || item.chatId ? () => openItem(item, actions) : undefined}
-    />
-  );
-}
-
-function QueueSection({
-  title,
-  items,
-  actions,
-}: {
-  title: string;
-  items: MobileQueueItem[];
-  actions: Props;
-}) {
-  return (
-    <Section title={title} count={items.length || undefined}>
-      {items.length ? (
-        items.map((item, index) => (
-          <WorkRow
-            key={item.id}
-            item={item}
-            actions={actions}
-            separator={index < items.length - 1}
-          />
-        ))
-      ) : (
-        <CardNote>No work running right now.</CardNote>
-      )}
-    </Section>
-  );
-}
-
-// Reason: Loading, readiness, search and section states belong to one overview.
-// fallow-ignore-next-line complexity
-export function Queue({
-  openChat,
-  openRun,
-  resource,
-}: Props & { resource: ReturnType<typeof useResource<{ type: 'overview' }>> }) {
+export function QueueScreen() {
+  const t = useTheme();
+  const navigation = useRootNavigation();
+  const { connection, request } = useConnection();
+  const { resource, shared, grown, sections, expanded, toggle } = useQueueOverview();
   const { data, error } = resource;
-  const [query, setQuery] = useState('');
-  const [filter, setFilter] = useState<QueueFilter>('all');
-  const actions = { openChat, openRun };
-  const view = queueView(data, query, filter);
+  const { header } = useTabHeader({
+    title: 'Queue',
+    eyebrow: (
+      <MacEyebrow
+        name={data?.machineName ?? connection?.machineName ?? 'Your Mac'}
+        online={!!data && !error}
+      />
+    ),
+    compose: true,
+    composeDisabled: data?.executionReady === false,
+  });
+  const open = (target: QueueTarget) =>
+    target.screen === 'Run'
+      ? navigation.navigate('Run', { id: target.id })
+      : navigation.navigate('Chat', {
+          id: target.id,
+          subChatId: target.subChatId,
+          decisionTarget: target.decisionTarget,
+        });
+  // The computer re-checks each action, so a row that changed since the last poll says so.
+  const act = async (id: string, action: MobileTaskAction) => {
+    try {
+      await request({ type: action, id });
+    } catch (error) {
+      tell(`Couldn’t ${ACTION_ITEMS[action].label.toLowerCase()}`, error instanceof Error ? error.message : '');
+    }
+    resource.refresh();
+    // The tab badge counts from the shared poll, which an expanded Queue doesn't refresh.
+    if (grown) shared.refresh();
+  };
+  const listSections = sections.map((section) => ({
+    ...section,
+    data: expanded.has(section.key) ? section.rows : section.rows.slice(0, COLLAPSED_ROWS),
+  }));
   return (
-    <Page title="Work queue" root onRefresh={resource.pull} refreshing={resource.refreshing}>
-      <View style={{ gap: 12 }}>
-        <SearchField placeholder="Search work" value={query} onChangeText={setQuery} />
-        <Segmented
-          items={[
-            { id: 'all', label: 'All work' },
-            { id: 'attention', label: 'Needs you' },
-            { id: 'running', label: 'Running' },
-          ]}
-          value={filter}
-          onChange={setFilter}
-        />
-      </View>
-      <ResourceStatus {...resource} />
-      {!data ? (
-        !error && <Loading />
-      ) : (
-        <>
-          {!data.executionReady && (
-            <Card style={{ padding: 14 }}>
-              <Notice>Keep a Frink window open on your computer to run and resume Flows.</Notice>
-            </Card>
-          )}
-          {view.noMatches ? (
-            <Card>
-              <CardNote>No matching work in your current queue.</CardNote>
-            </Card>
-          ) : (
-            <>
-              {view.showAttention && (
-                <Section title="Needs attention" count={view.decisions.length || undefined}>
-                  {view.decisions.length ? (
-                    view.decisions.map((item, index) => (
-                      <DecisionRow
-                        key={item.key}
-                        item={item}
-                        actions={actions}
-                        separator={index < view.decisions.length - 1}
-                      />
-                    ))
-                  ) : (
-                    <CardNote>You’re all caught up. Nothing needs your input.</CardNote>
-                  )}
-                </Section>
-              )}
-              {view.showRunning && (
-                <QueueSection title="In progress" items={view.running} actions={actions} />
-              )}
-              {view.showInbox && (
-                <QueueSection title="Up next" items={view.inbox} actions={actions} />
-              )}
-            </>
-          )}
-        </>
-      )}
-    </Page>
+    <Screen>
+      <SectionList
+        sections={listSections}
+        keyExtractor={(row) => row.key}
+        contentInsetAdjustmentBehavior="automatic"
+        stickySectionHeadersEnabled={false}
+        contentContainerStyle={{ paddingBottom: 120 }}
+        refreshControl={
+          <RefreshControl
+            refreshing={resource.refreshing}
+            onRefresh={resource.pull}
+            tintColor={t.muted}
+          />
+        }
+        ListHeaderComponent={
+          <View>
+            {header}
+            <ResourceStatus {...resource} refresh={resource.pull} />
+            {data && !data.executionReady && <NotReadyNotice />}
+          </View>
+        }
+        renderSectionHeader={({ section }) => (
+          <SectionHeader
+            title={section.title}
+            count={section.total}
+            action={sectionAction(section, expanded.has(section.key))}
+            onAction={() => toggle(section.key)}
+          />
+        )}
+        renderItem={({ item }) => (
+          <QueueListRow
+            row={item}
+            onOpen={item.target ? () => open(item.target!) : undefined}
+            onAction={(action) => void act(item.key, action)}
+          />
+        )}
+        ItemSeparatorComponent={() => <RowSeparator />}
+        ListEmptyComponent={
+          data ? (
+            <EmptyState
+              icon={CircleCheck}
+              title="You’re all caught up"
+              detail="Questions, approvals and finished work from your Mac will show up here."
+            />
+          ) : error ? null : (
+            <ActivityIndicator color={t.muted} style={{ marginTop: space.xxl * 2 }} />
+          )
+        }
+      />
+    </Screen>
   );
+}
+
+function sectionAction(section: QueueSection, expanded: boolean) {
+  if (expanded) return section.rows.length > COLLAPSED_ROWS ? 'Show less' : undefined;
+  return section.hasMore ? 'Show all' : undefined;
 }

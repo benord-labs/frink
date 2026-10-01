@@ -82,10 +82,17 @@
       }
 
       /* Hide loading when root has content */
+      /* visibility (after the fade) and no animation: an invisible pulse still ticks every frame */
       #root:not(:empty) + .loading-container,
       #root:not(:empty) ~ .loading-container {
         opacity: 0;
+        visibility: hidden;
         pointer-events: none;
+        transition: opacity 150ms ease-out, visibility 0s 150ms;
+      }
+
+      #root:not(:empty) ~ .loading-container .loading-logo {
+        animation: none;
       }
 
       .loading-logo {

@@ -6,19 +6,11 @@
   "mcpServers": {
     "playwright": {
       "command": "npx",
-      "args": [
-        "-y",
-        "@playwright/mcp@latest"
-      ]
+      "args": ["-y", "@playwright/mcp@latest"]
     }
   },
   "frink": {
-    "keywords": [
-      "browser",
-      "testing",
-      "automation",
-      "screenshots"
-    ],
+    "keywords": ["browser", "testing", "automation", "screenshots"],
     "source": {
       "repo": "cursor/plugins",
       "commit": "4612556",

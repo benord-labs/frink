@@ -1,9 +1,13 @@
 // @vitest-environment happy-dom
 import { renderHook } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { getDefaultStore } from 'jotai';
+import { afterEach, describe, expect, it } from 'vitest';
+import { heldSubChatsAtom } from '../../../../lib/stores/active-transport-registry';
 import { useGroupedProjects } from './use-grouped-projects';
 
 const EMPTY_SET = new Set<string>();
+
+afterEach(() => getDefaultStore().set(heldSubChatsAtom, new Map()));
 
 function makeParams(overrides: Partial<Parameters<typeof useGroupedProjects>[0]> = {}) {
   return {
@@ -141,6 +145,25 @@ describe('useGroupedProjects', () => {
     const generalGroup = result.current.find((g) => g.displayName === 'General Chats');
     expect(generalGroup).toBeDefined();
     expect(generalGroup?.chats[0].taskId).toBeNull();
+  });
+
+  it('shows a chat waiting on background work as running', () => {
+    getDefaultStore().set(heldSubChatsAtom, new Map([['sub-1', 'chat-held']]));
+    const general = (id: string) => ({
+      id,
+      name: null,
+      branch: null,
+      updatedAt: null,
+      projectId: null,
+      worktreePath: null,
+      taskId: null,
+      batchId: null,
+      pinnedAt: null,
+    });
+    const params = makeParams({ chats: [general('chat-held'), general('chat-idle')] });
+
+    const { result } = renderHook(() => useGroupedProjects(params));
+    expect(result.current[0].chats.map((c) => c.isLoading)).toEqual([true, false]);
   });
 
   it('marks isWorktree correctly when worktreePath differs from project path', () => {

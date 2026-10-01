@@ -37,6 +37,8 @@
     "src/renderer/styles/globals.css",
     "**/electron.vite.config.*.mjs",
     "eslint/baselines",
+    "assets/skills/*/.baseline.json",
+    "src/shared/integrations/vendor-inventory/*.json",
     "bun.lock",
     "node_modules"
   ]

@@ -28,6 +28,7 @@ let taskData: {
 // Captured so tests can assert the sub-chat resolution inputs (latest flow task vs fallback
 // selection itself is server-side — see tasks-subchat.ts).
 let capturedQueryInput: { subChatId: string; fallbackTaskId: string | null } | undefined;
+let resolvedAccount: { id: string; isBlocked: boolean } | null | undefined;
 
 vi.mock('../../../../../lib/trpc', () => ({
   trpc: {
@@ -61,6 +62,29 @@ vi.mock('../../../../../lib/trpc', () => ({
         useQuery: () => ({ data: undefined }),
       },
     },
+    claudeCode: {
+      getResolvedAccount: {
+        useQuery: () => ({ data: resolvedAccount }),
+      },
+    },
+  },
+}));
+
+const retryWithProps = vi.fn();
+
+vi.mock('../../../ui/account-indicator', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../ui/account-indicator')>()),
+  ContinueAfterUsageLimit: (props: {
+    chatId: string;
+    usageLimited: boolean;
+    onRetry: () => void;
+  }) => {
+    retryWithProps(props);
+    return (
+      <button type="button" onClick={props.onRetry}>
+        Retry with Backup
+      </button>
+    );
   },
 }));
 
@@ -82,6 +106,8 @@ describe('TaskControls', () => {
     capturedQueryInput = undefined;
     tasksRetryMutate.mockReset();
     retryNodeMutate.mockReset();
+    retryWithProps.mockReset();
+    resolvedAccount = undefined;
   });
 
   afterEach(() => {
@@ -287,5 +313,73 @@ describe('TaskControls', () => {
     fireEvent.click(carryOn);
     expect(tasksRetryMutate).toHaveBeenCalledWith({ taskId: 'task-paused', mode: 'continue' });
     expect(screen.getByRole('button', { name: RETRY_NAME })).toBeDisabled();
+  });
+
+  it("offers Retry with another login on a parked run, then carries on in the run's chat", () => {
+    taskData = {
+      id: 'task-limit',
+      status: 'needs_attention',
+      result: { chatId: 'chat-1', usageLimit: { message: "You've hit your limit" } },
+      flowRunId: 'run-paused',
+      flowRunStatus: 'paused',
+    };
+    renderControls();
+
+    expect(retryWithProps).toHaveBeenCalledWith(
+      expect.objectContaining({ chatId: 'chat-1', usageLimited: true }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Retry with Backup' }));
+    expect(tasksRetryMutate).toHaveBeenCalledWith({ taskId: 'task-limit', mode: 'continue' });
+  });
+
+  it('hides Retry with while the carry-on it would trigger cannot run', () => {
+    taskData = {
+      id: 'task-limit',
+      status: 'needs_attention',
+      result: { chatId: 'chat-1', usageLimit: { message: "You've hit your limit" } },
+      flowRunId: 'run-paused',
+      flowRunStatus: 'paused',
+    };
+    renderControls();
+
+    fireEvent.click(screen.getByRole('button', { name: CARRY_ON_NAME }));
+    expect(screen.queryByRole('button', { name: 'Retry with Backup' })).toBeNull();
+  });
+
+  it('offers no Retry with on a parked task whose Flow run is not paused', () => {
+    taskData = {
+      id: 'task-limit',
+      status: 'needs_attention',
+      result: { chatId: 'chat-1', usageLimit: { message: "You've hit your limit" } },
+      flowRunId: 'run-live',
+      flowRunStatus: 'running',
+    };
+    renderControls();
+
+    expect(screen.queryByRole('button', { name: 'Retry with Backup' })).toBeNull();
+  });
+
+  it('names a removed login on its park and offers the login rows outside a usage limit', () => {
+    resolvedAccount = { id: 'stand-in', isBlocked: true };
+    taskData = {
+      id: 'task-login',
+      status: 'needs_attention',
+      result: { chatId: 'chat-1', apiError: { message: "This chat's login was removed" } },
+      flowRunId: 'run-paused',
+      flowRunStatus: 'paused',
+    };
+    renderControls();
+
+    expect(screen.getByText("This chat's login was removed")).toBeInTheDocument();
+    expect(retryWithProps).toHaveBeenCalledWith(
+      expect.objectContaining({ chatId: 'chat-1', usageLimited: false }),
+    );
+  });
+
+  it('offers no Retry with on a failed task', () => {
+    taskData = { id: 'task-failed', status: 'failed', result: { chatId: 'chat-1', error: 'boom' } };
+    renderControls();
+
+    expect(screen.queryByRole('button', { name: 'Retry with Backup' })).toBeNull();
   });
 });

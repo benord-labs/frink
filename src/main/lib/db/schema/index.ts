@@ -1,6 +1,7 @@
 /* eslint-disable max-lines, max-lines-per-function */
 import { relations, sql } from 'drizzle-orm';
 import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { CODEX_SPEEDS } from '../../../../shared/types/execution';
 import { createId } from '../utils';
 import { defineFlowRunAdmissions } from './flow-run-admissions';
 // ============ PROJECTS ============
@@ -17,12 +18,9 @@ export const projects = sqliteTable('projects', {
   gitProvider: text('git_provider'), // "github" | "gitlab" | "bitbucket" | null
   gitOwner: text('git_owner'),
   gitRepo: text('git_repo'),
-  // AI-assisted description, generated on first add (was previously stored on Neon
-  // alongside the cloud-synced project row; now lives locally per the project
-  // localization milestone). Nullable — backfilled on demand by description workers.
+  // AI-assisted description generated on first add; NULL until a description worker fills it.
   description: text('description'),
-  // Permissions overhaul ticket 01: storage tier for permission rules. false → local
-  // sqlite only; true → Neon mirror. Promotion logic ships in ticket 07.
+  // Storage tier for permission rules: false = local sqlite only, true = Neon mirror.
   isCrossMachine: integer('is_cross_machine', { mode: 'boolean' }).notNull().default(false),
 });
 
@@ -71,11 +69,9 @@ export const chats = sqliteTable(
     worktreePath: text('worktree_path'),
     branch: text('branch'),
     baseBranch: text('base_branch'),
-    // PR tracking fields
     prUrl: text('pr_url'),
     prNumber: integer('pr_number'),
-    // Task link (for work queue integration)
-    taskId: text('task_id'), // Cloud task UUID - links chat to triggered task
+    taskId: text('task_id'), // The task driving this chat (a work queue item or Flow agent task)
     // Default sub-chat mode for new sub-chats in this chat
     mode: text('mode').default('agent'), // 'plan' | 'agent'
     // Pinned chats appear at top of sidebar (NULL = not pinned)
@@ -86,6 +82,14 @@ export const chats = sqliteTable(
     // before (the move-chat collapse would otherwise abandon the original worktree).
     // MACHINE-LOCAL: do not sync to cloud — worktree paths are filesystem-local.
     worktreeHistory: text('worktree_history'),
+    // Composer settings every window and the phone share (NULL = default; see chat-composer).
+    composerModelId: text('composer_model_id'),
+    composerAutoMode: integer('composer_auto_mode', { mode: 'boolean' }),
+    composerCodexSpeed: text('composer_codex_speed', { enum: CODEX_SPEEDS }),
+    accountId: text('account_id').references(() => claudeCodeCredentials.id, {
+      onDelete: 'set null', // Stamped at creation; a deleted login leaves NULL and blocks the chat.
+    }),
+    provider: text('provider').notNull().default('claude-code'), // Stamped at creation; never changes.
   },
   (table) => [index('chats_worktree_path_idx').on(table.worktreePath)],
 );
@@ -200,12 +204,6 @@ export const backfillProgress = sqliteTable('_backfill_progress', {
   completedAt: integer('completed_at', { mode: 'timestamp' }).notNull(),
 });
 
-// ============ PROJECT PERMISSIONS ============
-// Local-first permission rows (file paths). Mirrors parked Neon migrations
-// v1 `projectPermissions` + `bashPermissions` tables dropped in ticket 14
-// (migration 0075). Replaced by `userPermissionRules` + `projectPermissionRules`
-// below (ticket 06).
-
 // ============ V2 PERMISSION RULES ============
 // Permissions overhaul ticket 06: rule-string storage for the v2 dispatcher.
 // One row per rule. Rule strings are claude-code grammar (`Bash(git push:*)`,
@@ -312,7 +310,7 @@ export const flowRuns = sqliteTable(
       .references(() => flowVersions.id, { onDelete: 'cascade' }),
     // 'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled'
     status: text('status').notNull().default('pending'),
-    triggerContext: text('trigger_context', { mode: 'json' }),
+    triggerContext: text('trigger_context', { mode: 'json' }).$type<Record<string, unknown>>(),
     idempotencyKey: text('idempotency_key'),
     batchId: text('batch_id'),
     startedAt: integer('started_at', { mode: 'timestamp' }),
@@ -669,5 +667,6 @@ export type FlowTriggerBinding = typeof flowTriggerBindings.$inferSelect;
 export type NewFlowTriggerBinding = typeof flowTriggerBindings.$inferInsert;
 export type ProjectAgent = typeof projectAgents.$inferSelect;
 export type NewProjectAgent = typeof projectAgents.$inferInsert;
+export { appPreferences } from './app-preferences';
 export { pluginInstallations } from './plugin-installations';
 export { integrations, integrationWebhooks } from './webhook-ingress';

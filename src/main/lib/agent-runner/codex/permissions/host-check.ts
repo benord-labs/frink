@@ -3,12 +3,8 @@ import {
   FRINK_DYNAMIC_CHAT_MCP_KEY,
   parseMcpToolFullName,
 } from '../../../../../shared/lib/mcp-tool-name';
-import { PATH_TOOLS, SEARCH_TOOLS } from '../../../../../shared/types/permissions';
-import {
-  extractFilePathFromToolInput,
-  remapPathForPermissionBoundary,
-  resolveSearchPermissionPath,
-} from '../../../permissions';
+import { PATH_TOOLS } from '../../../../../shared/types/permissions';
+import { extractFilePathFromToolInput, remapPathForPermissionBoundary } from '../../../permissions';
 import type { ApprovalOutcome, CodexApprovalRequest } from '../codex-events';
 
 type ValidateToolPermission = (
@@ -46,19 +42,11 @@ function trustedFrinkMcpFor(
   return parseMcpToolFullName(request.toolName) ? false : undefined;
 }
 
-async function permissionPathFor(
+function permissionPathFor(
   request: CodexApprovalRequest,
   projectPath: string,
   permissionRoot: string,
-): Promise<string | undefined> {
-  if (SEARCH_TOOLS.has(request.toolName)) {
-    return resolveSearchPermissionPath(
-      request.toolName,
-      request.input,
-      projectPath,
-      permissionRoot,
-    );
-  }
+): string | undefined {
   if (!PATH_TOOLS.has(request.toolName)) return undefined;
   const candidate = extractFilePathFromToolInput(request.toolName, request.input);
   if (!candidate || candidate.startsWith('bash:')) return undefined;
@@ -88,7 +76,7 @@ export function createCodexHostPermissionCheck({
       chatId,
       subChatId,
       request.reason,
-      await permissionPathFor(request, projectPath, permissionRoot),
+      permissionPathFor(request, projectPath, permissionRoot),
       isFlowExecutionTurn,
       autoReview,
       executionSignal,

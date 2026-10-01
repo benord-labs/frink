@@ -121,13 +121,7 @@ function useRealtimeStreamHandlers({
   RealtimeHandlers,
   'handleMessageSaved' | 'handleStreamChunk'
 > {
-  const {
-    setMessagesRef,
-    isActiveRef,
-    remoteAssistantIdRef,
-    highWaterRef,
-    reconcilerRef,
-  } = refs;
+  const { setMessagesRef, isActiveRef, remoteAssistantIdRef, highWaterRef, reconcilerRef } = refs;
   const handleStreamChunk = useCallback(
     (payload: StreamChunkPayload) => {
       if (payload.subChatId !== subChatId) return;
@@ -172,9 +166,10 @@ function useRealtimeStreamHandlers({
     (payload: {
       chatId: string;
       subChatId: string;
-      message: { id: string; role: string; parts: unknown[] };
+      message: { id: string; role: string; parts: unknown[]; metadata?: unknown };
     }) => {
       if (payload.subChatId !== subChatId || payload.message.role !== 'user') return;
+      const { metadata } = payload.message;
       setMessagesRef.current((previous) => {
         if (previous.find((message) => message.id === payload.message.id)) return previous;
         return [
@@ -183,6 +178,7 @@ function useRealtimeStreamHandlers({
             id: payload.message.id,
             role: 'user' as const,
             parts: (payload.message.parts || []).map((part) => part as UIMessage['parts'][0]),
+            ...(metadata ? { metadata } : {}),
           },
         ];
       });
@@ -250,14 +246,7 @@ function useRealtimeExecutionHandlers({
         subChatId,
       );
     },
-    [
-      subChatId,
-      highWaterRef,
-      isActiveRef,
-      reconcilerRef,
-      remoteAssistantIdRef,
-      setMessagesRef,
-    ],
+    [subChatId, highWaterRef, isActiveRef, reconcilerRef, remoteAssistantIdRef, setMessagesRef],
   );
 
   const handleExecuteError = useCallback(

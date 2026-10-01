@@ -12,8 +12,10 @@ import type { TaskStopHook } from '../../task-stop-hook';
 import { getSession } from '../claude-session-registry';
 import { hasWakeHold, releaseWakeHold } from '../claude-wake-hold';
 import * as socketClient from '../client';
+import { withMessageAdmission } from '../execution/send-admission';
 import { abortActiveExecutionsForSubChats, handleRemoteStop } from '../executor';
 import { getActiveExecution } from '../streaming/execution-registry';
+import { beginLiveStreamCompletion, getLiveStreamSeed } from '../streaming/live-stream';
 import {
   expireQuestion,
   flowDriven,
@@ -260,6 +262,41 @@ function registerDetachedAbortTests(harness: ClaudeTurnAbortHarness): void {
     expect(hasWakeHold(payload.subChatId)).toBe(true);
     await followUp(harness);
     expect(claudeQueryMock).toHaveBeenCalledOnce();
+  });
+
+  it('a phone send admitted into a held chat takes the hold over on the same CLI, aborting nothing', async () => {
+    let arming: AbortController | undefined;
+    mockQuery(claudeQueryMock, async function* (cli) {
+      arming = getActiveExecution(payload.subChatId)?.controller;
+      yield* heldCli(async () => {})(cli);
+    });
+    await handleRemoteExecute({ ...payload, message: 'run coverage and wait' });
+    expect(hasWakeHold(payload.subChatId)).toBe(true);
+    // The socket client is mocked here, so mark the stream held as its transport does.
+    const armed = await vi.waitFor(() => {
+      const complete = vi.mocked(socketClient.sendExecuteCompleteDirect).mock.calls.at(-1)?.[0];
+      if (!complete?.continuesWakeHold || !complete.streamEpoch) throw new Error('not held yet');
+      return { ...complete, streamEpoch: complete.streamEpoch, continuesWakeHold: true };
+    });
+    beginLiveStreamCompletion(armed);
+    expect(getLiveStreamSeed(payload.subChatId).streams).toEqual([
+      expect.objectContaining({ status: 'held' }),
+    ]);
+
+    // The phone's path: admission refuses only a live execution, so this dispatches into the hold.
+    await withMessageAdmission(payload.subChatId, true, (started) =>
+      handleRemoteExecute({
+        ...payload,
+        assistantMessageId: 'msg-phone',
+        message: 'follow-up from the phone',
+        onExecutionStarted: started,
+      }),
+    );
+
+    expect(hasWakeHold(payload.subChatId)).toBe(false);
+    expect(claudeQueryMock).toHaveBeenCalledOnce();
+    expect(arming?.signal.aborted).toBe(false);
+    expect(socketClient.sendErrorDirect).not.toHaveBeenCalled();
   });
 
   it("a send after Stop on a held chat spawns a CLI whose channel the held CLI can't reach", async () => {
