@@ -1,28 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PLAN_APPROVAL_EXECUTION_TRIGGER_TEXT } from '../../../../../shared/types';
+import * as schema from '../../../db/schema';
+import { freshDb, type TestDb } from '../../../db/test-utils/fresh-db';
 
-const { rows, safeParseMessagesMock, whereMock } = vi.hoisted(() => ({
-  rows: [] as Array<{
-    id: string;
-    chatId: string | null;
-    mode: string;
-    messages: string;
-  }>,
-  safeParseMessagesMock: vi.fn((_id: string, messages: string) => JSON.parse(messages)),
-  whereMock: vi.fn(),
-}));
+const state = vi.hoisted(() => ({ db: null as unknown }));
 
-vi.mock('../../../db', () => ({
-  getDatabase: () => ({
-    select: () => ({
-      from: () => ({
-        where: whereMock,
-      }),
-    }),
-  }),
-}));
-vi.mock('../../../db/repos/sub-chats', () => ({
-  safeParseMessages: safeParseMessagesMock,
+vi.mock('electron-log', () => ({ default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
+vi.mock('../../../db', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../db')>()),
+  getDatabase: () => state.db,
 }));
 
 import { planApprovalRouter } from './stats/plan-approval';
@@ -42,19 +28,24 @@ const planMessage = (planId: string, status = 'awaiting_approval') =>
   ]);
 
 describe('planApprovalRouter.getPendingPlanApprovals', () => {
+  let db: TestDb;
+  const rows = {
+    push: (...subs: Array<{ id: string; chatId: string; mode: string; messages: string }>) => {
+      for (const sub of subs) {
+        db.insert(schema.chats).values({ id: sub.chatId }).onConflictDoNothing().run();
+        db.insert(schema.subChats).values(sub).run();
+      }
+    },
+  };
+
   beforeEach(() => {
-    vi.clearAllMocks();
-    rows.length = 0;
-    whereMock.mockImplementation(async () => rows);
-    safeParseMessagesMock.mockImplementation((_id: string, messages: string) =>
-      JSON.parse(messages),
-    );
+    db = freshDb();
+    state.db = db;
   });
 
   it('returns no approvals without a non-empty selector', async () => {
     await expect(caller().getPendingPlanApprovals({})).resolves.toEqual([]);
     await expect(caller().getPendingPlanApprovals({ chatIds: [] })).resolves.toEqual([]);
-    expect(whereMock).not.toHaveBeenCalled();
   });
 
   it('accepts parent chat selectors and returns every pending child agent', async () => {
@@ -69,16 +60,15 @@ describe('planApprovalRouter.getPendingPlanApprovals', () => {
     ]);
   });
 
-  it('deduplicates parent-chat selectors into one query', async () => {
+  it('deduplicates parent-chat selectors', async () => {
     rows.push({ id: 'sub-1', chatId: 'chat-1', mode: 'plan', messages: planMessage('plan-1') });
 
     await expect(
       caller().getPendingPlanApprovals({ chatIds: ['chat-1', 'chat-1'] }),
     ).resolves.toEqual([{ subChatId: 'sub-1', chatId: 'chat-1' }]);
-    expect(whereMock).toHaveBeenCalledTimes(1);
   });
 
-  it('skips non-Plan rows before parsing their message histories', async () => {
+  it('ignores sub-chats that are not in Plan mode', async () => {
     rows.push(
       { id: 'sub-agent', chatId: 'chat-1', mode: 'agent', messages: planMessage('old-plan') },
       { id: 'sub-plan', chatId: 'chat-1', mode: 'plan', messages: planMessage('new-plan') },
@@ -87,8 +77,6 @@ describe('planApprovalRouter.getPendingPlanApprovals', () => {
     await expect(caller().getPendingPlanApprovals({ chatIds: ['chat-1'] })).resolves.toEqual([
       { subChatId: 'sub-plan', chatId: 'chat-1' },
     ]);
-    expect(safeParseMessagesMock).toHaveBeenCalledTimes(1);
-    expect(safeParseMessagesMock).toHaveBeenCalledWith('sub-plan', expect.any(String));
   });
 
   it('does not resurrect a plan from a closed approval epoch', async () => {
@@ -109,11 +97,8 @@ describe('planApprovalRouter.getPendingPlanApprovals', () => {
     await expect(caller().getPendingPlanApprovals({ chatIds: ['chat-1'] })).resolves.toEqual([]);
   });
 
-  it('skips malformed histories and rows without a parent chat id', async () => {
-    rows.push(
-      { id: 'broken', chatId: 'chat-1', mode: 'plan', messages: 'not-json' },
-      { id: 'orphan', chatId: null, mode: 'plan', messages: planMessage('plan-1') },
-    );
+  it('skips a malformed history', async () => {
+    rows.push({ id: 'broken', chatId: 'chat-1', mode: 'plan', messages: 'not-json' });
 
     await expect(caller().getPendingPlanApprovals({ chatIds: ['chat-1'] })).resolves.toEqual([]);
   });

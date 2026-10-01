@@ -351,7 +351,8 @@ describe('mobile Flow projection queries', () => {
     fixture.getFlow.mockResolvedValue({ id: seeded.flowId, name: 'Flow' });
     const queries = vi.spyOn(db.$client, 'prepare');
     const result = await readMobileRun(seeded.flowRunId);
-    expect(queries).toHaveBeenCalledTimes(2);
+    // Runs, plans, and the plan transcripts in one batched read each, however many nodes there are.
+    expect(queries).toHaveBeenCalledTimes(3);
     expect(result.nodes.map((entry) => entry.id)).toEqual(
       projectedNodes.map((entry) => entry.id).reverse(),
     );
@@ -429,8 +430,16 @@ describe('mobile Flow list status', () => {
   it('sends the display status the desktop list shows, not the engine status', async () => {
     fixture.db = freshDb();
     fixture.list.mockResolvedValue([
-      flow({ id: 'working', latest_run_status: 'paused', latest_run_active_task_status: 'running' }),
-      flow({ id: 'plan', latest_run_status: 'paused', latest_run_active_task_status: 'plan_ready' }),
+      flow({
+        id: 'working',
+        latest_run_status: 'paused',
+        latest_run_active_task_status: 'running',
+      }),
+      flow({
+        id: 'plan',
+        latest_run_status: 'paused',
+        latest_run_active_task_status: 'plan_ready',
+      }),
       flow({ id: 'approval', latest_run_status: 'paused', latest_run_active_task_status: null }),
       flow({ id: 'queued', latest_run_status: 'pending', latest_run_admission_state: 'queued' }),
       flow({ id: 'idle', latest_run_id: null, latest_run_status: null }),

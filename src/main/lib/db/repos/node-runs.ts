@@ -16,7 +16,8 @@ import { alias } from 'drizzle-orm/sqlite-core';
 import { RESTART_INTERRUPTION_REASON } from '../../../../shared/types/flow';
 import type { FlowResumeSnapshot } from '../../../../shared/types/flow-run/resume';
 import type { getDatabase } from '../index';
-import { flowRuns, type NewNodeRun, type NodeRun, nodeRuns, subChats, tasks } from '../schema';
+import { flowRuns, type NewNodeRun, type NodeRun, nodeRuns, tasks } from '../schema';
+import { transcriptUnchanged } from './sub-chat-messages';
 import { latestFlowTaskForSubChatId } from './task-queries/subchat-driver';
 
 type Db = ReturnType<typeof getDatabase>;
@@ -368,19 +369,7 @@ function resumeSnapshotGuard(db: Db, id: string, snapshot: FlowResumeSnapshot) {
     );
   }
   if (snapshot.plan)
-    guards.push(
-      exists(
-        db
-          .select({ one: drizzleSql`1` })
-          .from(subChats)
-          .where(
-            and(
-              eq(subChats.id, snapshot.plan.subChatId),
-              drizzleSql`json(${subChats.messages}) IS json(${JSON.stringify(snapshot.plan.messages)})`,
-            ),
-          ),
-      ),
-    );
+    guards.push(transcriptUnchanged(db, snapshot.plan.subChatId, snapshot.plan.messages));
   return and(...guards)!;
 }
 

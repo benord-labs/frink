@@ -675,7 +675,7 @@ describe('FlowAdmissionController', () => {
         .from(flowRunAdmissions)
         .where(eq(flowRunAdmissions.ticket, corrupt.admission.ticket))
         .get(),
-    ).toMatchObject({ state: 'failed', error: expect.stringContaining('Invalid messages') });
+    ).toMatchObject({ state: 'failed', error: expect.stringContaining('Missing message answer') });
   });
 
   it('cascades hard-deleted runs and prunes only old settled history', async () => {

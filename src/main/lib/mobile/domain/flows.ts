@@ -16,7 +16,8 @@ import {
 import { flowRunDisplayStatus } from '../../../../shared/lib/flows/run-display-status';
 import { getDatabase } from '../../db';
 import { getVersion } from '../../db/repos/flow-versions';
-import { getSubChatById, safeParseMessages, type SubChatHydrated } from '../../db/repos/sub-chats';
+import { readTranscripts } from '../../db/repos/sub-chat-messages';
+import { getSubChatById, type SubChatHydrated } from '../../db/repos/sub-chats';
 import { parseResultRecord } from '../../db/repos/tasks';
 import {
   activeFlowRunForSubChatId,
@@ -198,7 +199,6 @@ async function nodePlans(subChatIds: string[]) {
     .select({
       id: subChats.id,
       mode: subChats.mode,
-      messages: subChats.messages,
       task: {
         id: tasks.id,
         result: tasks.result,
@@ -211,8 +211,9 @@ async function nodePlans(subChatIds: string[]) {
     .from(subChats)
     .leftJoin(tasks, eq(tasks.id, latestFlowTaskForSubChatId(db, sql`${subChats.id}`)))
     .where(inArray(subChats.id, subChatIds));
+  const transcripts = readTranscripts(db, subChatIds);
   for (const row of rows) {
-    const messages = safeParseMessages(row.id, row.messages);
+    const messages = transcripts.get(row.id) ?? [];
     plans.set(row.id, {
       messages,
       text: planTextForSubChat({

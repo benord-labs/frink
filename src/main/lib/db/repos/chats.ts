@@ -3,6 +3,7 @@ import type { getDatabase } from '../index';
 import { type Chat, chats, type NewChat, type SubChat, subChats } from '../schema';
 import { createId } from '../utils';
 import { getAiAccountType, getChatAiAccount, getNewChatAccountId } from './project-ai-accounts';
+import { copyTranscript } from './sub-chat-messages';
 import { createSubChat, listSubChatsByChat } from './sub-chats';
 
 type Db = ReturnType<typeof getDatabase>;
@@ -155,7 +156,7 @@ export async function getOrCreateFlowChat(
       .get() as Chat;
     const subChat = db
       .insert(subChats)
-      .values({ chatId: chat.id, name: input.name, mode: 'agent', messages: '[]' })
+      .values({ chatId: chat.id, name: input.name, mode: 'agent' })
       .returning()
       .get() as SubChat;
     return { chatId: chat.id, subChatId: subChat.id };
@@ -473,7 +474,6 @@ export async function forkChatWithSubChats(
           sessionId: null,
           streamId: null,
           mode: sub.mode,
-          messages: sub.messages,
           additions: sub.additions ?? 0,
           deletions: sub.deletions ?? 0,
           fileCount: sub.fileCount ?? 0,
@@ -482,6 +482,7 @@ export async function forkChatWithSubChats(
         })
         .returning()
         .get() as SubChat;
+      copyTranscript(db, sub.id, newSubId);
       newSubs.push(inserted);
     }
 
