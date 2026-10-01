@@ -6,7 +6,7 @@ import { getFlowRun } from '../../db/repos/flow-runs';
 import { flowRunAdmissions, flowRuns } from '../../db/schema';
 import { captureFlowAdmissionException } from './activity';
 import type { FlowAdmissionController } from './controller';
-import { type FlowRunAdmission, transitionAdmission } from './store';
+import { admissionByTicket, type FlowRunAdmission, transitionAdmission } from './store';
 import { isTerminalResumeStatus } from './terminal-resume/resume-store';
 
 type Db = ReturnType<typeof getDatabase>;
@@ -100,6 +100,29 @@ export function outcomeForRunStatus(status: string): AdmissionOutcome | null {
   if (status === 'failed') return 'failed';
   if (status === 'cancelled') return 'cancelled';
   return null;
+}
+
+/** Moves a terminal run's slot to `releasing`, deciding on the run status read in the same
+ * transaction, so an un-park or revive that reopened the run first keeps its slot. */
+export function beginTerminalRelease(
+  db: Db,
+  ticket: number,
+): { releasing: FlowRunAdmission; outcome: AdmissionOutcome } | null {
+  const admission = admissionByTicket(db, ticket);
+  const run =
+    admission &&
+    db
+      .select({ status: flowRuns.status })
+      .from(flowRuns)
+      .where(eq(flowRuns.id, admission.flowRunId))
+      .get();
+  const outcome = run ? outcomeForRunStatus(run.status) : null;
+  if (!admission || !outcome) return null;
+  const releasing =
+    admission.state === 'active'
+      ? transitionAdmission(db, ticket, ['active'], { state: 'releasing', error: null })
+      : admission;
+  return releasing?.state === 'releasing' ? { releasing, outcome } : null;
 }
 
 /** A `releasing` row at boot: its cleanup owner is dead and held only in-memory resources, so a paused

@@ -12,11 +12,30 @@ import { flowRunAdmissions, tasks } from '../db/schema';
 import { seedActiveAdmission, seedFlowRun } from '../db/test-utils/flow-fixtures';
 import { freshDb, type TestDb } from '../db/test-utils/fresh-db';
 
-const holder = vi.hoisted(() => ({ db: null as unknown, capture: vi.fn() }));
+const holder = vi.hoisted(() => ({
+  db: null as unknown,
+  capture: vi.fn(),
+  afterRunRead: null as null | (() => unknown),
+}));
 vi.mock('../db', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../db')>()),
   getDatabase: () => holder.db,
 }));
+// Runs `afterRunRead` once, right after the next getFlowRun resolves: a commit parked mid-read.
+vi.mock('../db/repos/flow-runs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../db/repos/flow-runs')>();
+  return {
+    ...actual,
+    getFlowRun: async (...args: Parameters<typeof actual.getFlowRun>) => {
+      const run = await actual.getFlowRun(...args);
+      const hook = holder.afterRunRead;
+      holder.afterRunRead = null;
+      await hook?.();
+      return run;
+    },
+  };
+});
+vi.mock('../socket/executor', () => ({ abortActiveExecutionsForSubChats: vi.fn() }));
 vi.mock('../sentry/init', () => ({
   captureMainException: holder.capture,
   captureMainMessage: holder.capture,
@@ -27,10 +46,19 @@ vi.mock('../flows/task-completion-watcher', async (importOriginal) => {
 });
 
 import { FlowAdmissionController } from '../flows/admission/controller';
-import { _setFlowAdmissionControllerForTests } from '../flows/admission/runtime';
+import {
+  _setFlowAdmissionControllerForTests,
+  recoverFlowAdmissions,
+} from '../flows/admission/runtime';
 import { cancelFlowRun } from '../flows/engine';
 import { subscribeFlowEvents } from '../flows/events';
 import { forgetAdvancedTask } from '../flows/task-completion-watcher';
+import {
+  isRestartInterrupted,
+  reviveInPlaceCommand,
+  unparkFailedRunCommand,
+} from '../flows/transitions';
+import { cancelWorkQueueTask } from './cancel-work-queue-task';
 import { reviveRestartInterruptedFlow } from './revive-interrupted-flow';
 
 const GRAPH = {
@@ -58,6 +86,7 @@ let flowRunId: string;
 let nodeRunId: string;
 let taskId: string;
 let ticket: number;
+let controller: FlowAdmissionController;
 
 /** The shape a restart leaves: run, node and task cancelled, the marker on the node, slot active. */
 async function seedInterruptedRun(nodeOutput: NodeOutput = MARKED_OUTPUT): Promise<void> {
@@ -76,20 +105,22 @@ const statuses = async () => ({
   node: (await getNodeRun(db, nodeRunId))?.status,
   task: (await getTaskById(db, taskId))?.status,
 });
+const slotState = () =>
+  db.select().from(flowRunAdmissions).where(eq(flowRunAdmissions.ticket, ticket)).get()?.state;
 
 beforeEach(() => {
   db = freshDb();
   holder.db = db;
   holder.capture.mockReset();
+  holder.afterRunRead = null;
   vi.mocked(forgetAdvancedTask).mockClear();
-  _setFlowAdmissionControllerForTests(
-    new FlowAdmissionController(db, async () => ({
-      version: 1,
-      queuePaused: false,
-      concurrencyLimitEnabled: false,
-      maxConcurrentRuns: 4,
-    })),
-  );
+  controller = new FlowAdmissionController(db, async () => ({
+    version: 1,
+    queuePaused: false,
+    concurrencyLimitEnabled: false,
+    maxConcurrentRuns: 4,
+  }));
+  _setFlowAdmissionControllerForTests(controller);
 });
 
 afterEach(() => _setFlowAdmissionControllerForTests(null));
@@ -170,16 +201,72 @@ describe('reviveRestartInterruptedFlow', () => {
     expect(await statuses()).toEqual({ run: 'running', node: 'running', task: 'running' });
   });
 
+  describe('against a terminal release deciding on a stale run read', () => {
+    /** Commits `reopen` right after the release's run read, then runs boot recovery's reconcile. */
+    async function reconcileAround(reopen: () => unknown): Promise<void> {
+      let fired = false;
+      holder.afterRunRead = () => {
+        fired = true;
+        return db.transaction(() => reopen());
+      };
+      await recoverFlowAdmissions();
+      expect(fired).toBe(true);
+    }
+
+    it('a revive that commits while the release is deciding keeps its slot', async () => {
+      await seedInterruptedRun();
+
+      await reconcileAround(() => reviveInPlaceCommand(db, taskId, flowRunId));
+
+      expect(await statuses()).toEqual({ run: 'running', node: 'running', task: 'running' });
+      expect(slotState()).toBe('active');
+    });
+
+    it('a failed-run Retry that commits while the release is deciding keeps its slot', async () => {
+      await seedInterruptedRun();
+      await setNodeRunStatus(db, nodeRunId, 'failed', { nodeOutput: null });
+      await setFlowRunStatus(db, flowRunId, 'failed');
+
+      await reconcileAround(() => unparkFailedRunCommand(db, flowRunId));
+
+      expect(await statuses()).toMatchObject({ run: 'running', node: 'running' });
+      expect(slotState()).toBe('active');
+    });
+  });
+
   describe('against Cancel', () => {
     let cancelled: FlowExecutionEvent[];
+    let started: FlowExecutionEvent[];
     let unsubscribe: () => void;
     beforeEach(() => {
       cancelled = [];
+      started = [];
       unsubscribe = subscribeFlowEvents((event) => {
         if (event.eventType === 'run_cancelled') cancelled.push(event);
+        if (event.eventType === 'run_started' || event.eventType === 'node_started') {
+          started.push(event);
+        }
       });
     });
     afterEach(() => unsubscribe());
+
+    it('a Stop that commits inside the revive’s context load leaves no started events', async () => {
+      await seedInterruptedRun();
+      const transition = controller.transition.bind(controller);
+      vi.spyOn(controller, 'transition').mockImplementationOnce(async (command, afterCommit) => {
+        const result = await transition(command, afterCommit);
+        // The next run read is loadRunContext's, after the revive committed.
+        holder.afterRunRead = () => cancelFlowRun(flowRunId);
+        return result;
+      });
+
+      await reviveRestartInterruptedFlow(taskId, flowRunId, 'sub-1');
+
+      expect(holder.afterRunRead).toBeNull();
+      expect(started).toEqual([]);
+      expect(cancelled).toHaveLength(1);
+      expect(await statuses()).toEqual({ run: 'cancelled', node: 'cancelled', task: 'cancelled' });
+    });
 
     it('a Stop after the revive commits cancels the revived run once and releases its slot', async () => {
       await seedInterruptedRun();
@@ -198,16 +285,30 @@ describe('reviveRestartInterruptedFlow', () => {
       expect(holder.capture).not.toHaveBeenCalled();
     });
 
-    it('a revive after the Stop released the slot writes nothing', async () => {
+    // Pins the marker clear only: this Cancel still leaves the slot active (sc-4206).
+    it('a revive after a Work Queue Cancel cleared the restart marker writes nothing', async () => {
       await seedInterruptedRun();
-      const { requestFlowAdmissionRelease } = await import('../flows/admission/runtime');
-      await cancelFlowRun(flowRunId);
-      await requestFlowAdmissionRelease(flowRunId);
+      await cancelWorkQueueTask(db, taskId);
+      expect(isRestartInterrupted(db, flowRunId)).toBe(false);
 
       await reviveRestartInterruptedFlow(taskId, flowRunId, 'sub-1');
 
       expect(await statuses()).toEqual({ run: 'cancelled', node: 'cancelled', task: 'cancelled' });
-      expect(cancelled).toHaveLength(0);
+      expect(forgetAdvancedTask).not.toHaveBeenCalled();
+      expect(started).toEqual([]);
+    });
+
+    it('a Work Queue Cancel after a committed revive wins', async () => {
+      await seedInterruptedRun();
+      await reviveRestartInterruptedFlow(taskId, flowRunId, 'sub-1');
+      expect((await statuses()).run).toBe('running');
+
+      await cancelWorkQueueTask(db, taskId);
+
+      expect(await statuses()).toEqual({ run: 'cancelled', node: 'cancelled', task: 'cancelled' });
+      expect(cancelled).toHaveLength(1);
+      expect(slotState()).not.toBe('active');
+      expect(holder.capture).not.toHaveBeenCalled();
     });
   });
 });

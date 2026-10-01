@@ -52,25 +52,8 @@ export async function isRunRestartInterrupted(flowRunId: string): Promise<boolea
 /** `queued`: a resume ticket already owns the run's continuation and is waiting for a slot. */
 export type InterruptedResumeMode = 'session' | 'redispatch' | 'queued';
 
-/**
- * WHICH mechanism resumes a restart-interrupted run from THIS sub-chat — the discriminator behind
- * the in-chat Resume affordance.
- *
- * `session`: this sub-chat's newest flow task is the cancelled driving task (a non-agent node fails
- * this) and its Claude session persisted, so `reviveRestartInterruptedFlow` continues it in place.
- *
- * `redispatch`: everything else falls back to `rerunFlowRunFromInterruption`, which is run-scoped
- * and covers what a chat message cannot. Callers MUST label that branch honestly ("Re-run step") —
- * it re-sends the node's instructions, which a "Resume" must never appear to do.
- *
- * `session` additionally requires the run to still hold its active admission: a session revive
- * continues the run in place without re-admitting, so without a live slot the wake turn is
- * rejected at the provider preflight and the failure park strands the run `paused` with no slot —
- * a state no affordance or sweep recovers. This is a runtime check, not a constant `redispatch`,
- * because a cancelled run can briefly retain its `active` ticket while another in-process activity
- * owner holds it (settleTerminalAdmission defers while activity is live); in that window a session
- * revive is still legitimate. `redispatch` re-admits via a durable resume ticket instead.
- */
+/** Resume mechanism for this sub-chat: `queued` when a resume ticket owns the run; `session` with the
+ * driving task's persisted session and an `active` slot; else `redispatch`, labelled "Re-run step". */
 export async function resolveInterruptedResumeMode(
   flowRunId: string,
   subChatId: string,
