@@ -18,6 +18,7 @@ import { flowRunAdmissions, flowRuns, flows, flowVersions, nodeRuns, tasks } fro
 import { freshDb, type TestDb } from '../../db/test-utils/fresh-db';
 import { beginFlowResourceActivity } from './activity';
 import { FLOW_ADMISSION_DRAIN_RETRY_DELAYS_MS } from './drain';
+import { beginTerminalRelease } from './recovery-store';
 import { _resetFlowAdmissionControllerMutexForTests, FlowAdmissionController } from './controller';
 import {
   _setFlowAdmissionControllerForTests,
@@ -891,5 +892,61 @@ describe('a failed admission drain (sc-2481)', () => {
     expect(vi.getTimerCount()).toBe(1);
     _setFlowAdmissionControllerForTests(null);
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe('beginTerminalRelease', () => {
+  type SlotState = 'active' | 'releasing' | 'cancelled';
+  const admit = (flowRunId: string, state: SlotState) =>
+    db
+      .insert(flowRunAdmissions)
+      .values({
+        flowRunId,
+        state,
+        priorityClass: 'start',
+        intentVersion: 1,
+        intentJson: { version: 1, action: 'start', flow_run_id: flowRunId },
+        startedAt: new Date(),
+        settledAt: state === 'cancelled' ? new Date() : null,
+      })
+      .returning({ ticket: flowRunAdmissions.ticket })
+      .get().ticket;
+  function seedSlot(runStatus: string, state: SlotState = 'active') {
+    const flowRunId = `run-${runStatus}`;
+    db.insert(flowRuns)
+      .values({ id: flowRunId, flowVersionId: 'version-runtime', status: runStatus })
+      .run();
+    return { flowRunId, ticket: admit(flowRunId, state) };
+  }
+  const slot = (ticket: number) =>
+    db.select().from(flowRunAdmissions).where(eq(flowRunAdmissions.ticket, ticket)).get();
+
+  it.each(['running', 'paused'])('keeps the active slot of a %s run', (runStatus) => {
+    const { ticket } = seedSlot(runStatus);
+    expect(beginTerminalRelease(db, ticket)).toBeNull();
+    expect(slot(ticket)?.state).toBe('active');
+  });
+
+  it('moves a failed run’s active slot to releasing with its outcome', () => {
+    const { ticket } = seedSlot('failed');
+    expect(beginTerminalRelease(db, ticket)).toMatchObject({
+      outcome: 'failed',
+      releasing: { ticket, state: 'releasing' },
+    });
+    expect(slot(ticket)?.state).toBe('releasing');
+  });
+
+  it('passes an already-releasing slot through without writing', () => {
+    const { ticket } = seedSlot('completed', 'releasing');
+    const before = slot(ticket);
+    expect(beginTerminalRelease(db, ticket)).toEqual({ releasing: before, outcome: 'released' });
+    expect(slot(ticket)).toEqual(before);
+  });
+
+  it('declines a settled ticket and leaves the run’s newer ticket alone', () => {
+    const settled = seedSlot('cancelled', 'cancelled');
+    const newer = admit(settled.flowRunId, 'active');
+    expect(beginTerminalRelease(db, settled.ticket)).toBeNull();
+    expect(slot(newer)?.state).toBe('active');
   });
 });

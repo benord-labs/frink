@@ -26,9 +26,11 @@ import type { FlowAdmissionConfigPatch } from './config';
 import { createFlowAdmissionDrainer } from './drain';
 import {
   type AdmissionOutcome,
+  beginTerminalRelease,
   outcomeForRunStatus,
   recoverReleasingAdmission,
 } from './recovery-store';
+import type { FlowRunAdmission } from './store';
 import {
   fireStagedContinuationResume,
   settleWithStagedContinuation,
@@ -372,17 +374,11 @@ async function retainReleaseFailure(
 }
 
 async function settleTerminalAdmission(
-  live: NonNullable<Awaited<ReturnType<FlowAdmissionController['getLiveForRun']>>>,
+  releasing: FlowRunAdmission,
   flowRunId: string,
   outcome: AdmissionOutcome,
 ): Promise<void> {
-  const releasing =
-    live.state === 'active'
-      ? ((await admissionController().beginRelease(live.ticket)) ?? live)
-      : live;
-  if (releasing.state !== 'releasing' || releasing.error || hasFlowResourceActivity(flowRunId)) {
-    return;
-  }
+  if (releasing.error || hasFlowResourceActivity(flowRunId)) return;
   const settled = await settleWithStagedContinuation(
     admissionController(),
     releasing.ticket,
@@ -413,9 +409,10 @@ async function reconcileFlowAdmission(
     await retainReleaseFailure(live, cleanupError);
     return;
   }
-  const outcome = outcomeForRunStatus(run.status);
-  if (!outcome) return;
-  await settleTerminalAdmission(live, flowRunId, outcome);
+  // Stale-read fast path only: the terminal decision is re-made inside the transaction below.
+  if (!outcomeForRunStatus(run.status)) return;
+  const release = await transitionFlowRun(() => beginTerminalRelease(db, live.ticket));
+  if (release) await settleTerminalAdmission(release.releasing, flowRunId, release.outcome);
 }
 
 export async function recoverFlowAdmissions(): Promise<{
