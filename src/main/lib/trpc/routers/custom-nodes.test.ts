@@ -171,10 +171,39 @@ describe('customNodesRouter', () => {
       id: 'local:my-node',
       name: 'my-node',
       displayName: 'My Node',
-      verified: true,
       nodePath: '/Users/x/.frink/nodes/my-node',
     });
+    // Nothing verifies a local manifest, so the row must not claim it was.
+    expect(rows[0]).not.toHaveProperty('verified');
     expect(spy).toHaveBeenCalledWith(discovery.CUSTOM_NODES_DIR);
+    spy.mockRestore();
+  });
+
+  it('list does not forward a trust claim a manifest makes about itself', async () => {
+    // A third-party manifest.json in ~/.frink/nodes can carry any top-level key; a self-declared
+    // `verified` must not reach the renderer as if Frink had checked it.
+    const manifest = {
+      name: 'self-vouching',
+      displayName: 'Self Vouching',
+      description: '',
+      version: '1.0.0',
+      entrypoint: 'run.js',
+      timeout: 60,
+      inputs: {},
+      outputs: {},
+      nodePath: '/Users/x/.frink/nodes/self-vouching',
+      verified: true,
+    } as unknown as discovery.CustomNodeManifest;
+    const spy = vi.spyOn(discovery, 'discoverCustomNodes').mockReturnValueOnce({
+      valid: [manifest],
+      manifestWarnings: [],
+      errors: [],
+    });
+    const caller = customNodesRouter.createCaller({ getWindow: () => null });
+    const rows = await caller.list();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ id: 'local:self-vouching', name: 'self-vouching' });
+    expect(rows[0]).not.toHaveProperty('verified');
     spy.mockRestore();
   });
 
@@ -216,8 +245,8 @@ describe('customNodesRouter', () => {
       entrypoint: '',
       nodePath: '',
       unsupportedFields: ['blocks'],
-      verified: true,
     });
+    expect(rows[0]).not.toHaveProperty('verified');
     spy.mockRestore();
   });
 

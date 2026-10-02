@@ -28,7 +28,6 @@ type TestNode = {
   timeout: number;
   inputs: Record<string, never>;
   nodePath: string;
-  verified: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -47,7 +46,6 @@ function testNode(name: string, displayName: string): TestNode {
     timeout: 30_000,
     inputs: {},
     nodePath: `/nodes/${name}`,
-    verified: true,
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
   };

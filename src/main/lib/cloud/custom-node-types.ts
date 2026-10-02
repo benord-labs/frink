@@ -3,8 +3,7 @@
  *
  * Local migration (Phase 2 finish-list #4) DROPPED the cloud cache. Local
  * manifest discovery (`discoverCustomNodes()` in `custom-nodes/discovery.ts`)
- * is the canonical source for the renderer + MCP learn tool +
- * `routers/custom-nodes.ts::list`. The boot-time loop in `src/main/index.ts`
+ * is the canonical source for the renderer + `routers/custom-nodes.ts::list`. The boot-time loop in `src/main/index.ts`
  * was deleted, and so was the `syncCustomNodesToCloud()` no-op shim.
  *
  * File retained only for the `CloudCustomNodeType` DTO type export — consumed
@@ -33,7 +32,6 @@ export type CloudCustomNodeType = {
   /** Provider arguments the spawned form cannot render at all (integration-node-field-source). */
   unsupportedFields?: string[];
   nodePath: string;
-  verified: boolean;
   createdAt: string;
   updatedAt: string;
 };
