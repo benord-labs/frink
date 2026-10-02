@@ -32,11 +32,8 @@ import { listPluginServerTools } from '../../integrations/plugin-node-derivation
 
 /**
  * Project a local manifest into the cloud `CloudCustomNodeType` shape so the
- * renderer + MCP learn tool keep compiling against the same DTO. Cloud-only
- * fields:
+ * renderer keeps compiling against the same DTO. Cloud-only fields:
  * - `id` — synthesized from `name` (single-user; no UUID needed locally).
- * - `verified` — hardcoded `true` for local manifests (UI badge only;
- *   reviewer confirmed no capability gating reads this).
  * - `createdAt`/`updatedAt` — synthesized from process start time (frozen
  *   at module-load) so repeated tRPC calls produce byte-identical results.
  *   Without freezing, every `list` invocation would yield a new ISO string
@@ -67,7 +64,6 @@ function manifestToCloudShape(m: CustomNodeManifest | PluginNodeManifest): Cloud
         }
       : { outputs: m.outputs, icon: m.icon ?? null, pluginId: null }),
     nodePath: 'owner' in m ? '' : m.nodePath,
-    verified: true,
     createdAt: STABLE_PROCESS_START_ISO,
     updatedAt: STABLE_PROCESS_START_ISO,
   };
@@ -112,8 +108,8 @@ export const customNodesRouter = router({
   // belong to the node/provider and must survive IPC verbatim, including mixed or delimited keys.
   /**
    * List custom node types — reads from local disk discovery instead of the
-   * cloud cache. The DTO shape matches `CloudCustomNodeType` so the renderer +
-   * MCP learn tool keep compiling unchanged. Plugin-spawned nodes are part of
+   * cloud cache. The DTO shape matches `CloudCustomNodeType` so the renderer
+   * keeps compiling unchanged. Plugin-spawned nodes are part of
    * the list: the palette's Integrations category, the node health badge, and
    * the config panel all resolve node types from here.
    */
