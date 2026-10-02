@@ -123,6 +123,17 @@ describe('ChatHeader', () => {
     expect(getByText('Task').parentElement).toHaveAttribute('title', 'Work Queue task');
   });
 
+  // Electron drag regions never deliver mouse events to the DOM, so a click on an inactive pane's
+  // header gap would otherwise never reach SplitPane's activate handler.
+  it.each([
+    ['the single-pane header', undefined, true],
+    ['the active split pane', 0, true],
+    ['an inactive split pane', 1, false],
+  ])('makes the header gap a window drag region only for %s', (_, splitPaneIndex, isDrag) => {
+    const { container } = render(<ChatHeader {...baseProps()} splitPaneIndex={splitPaneIndex} />);
+    expect(container.querySelector('.drag-region') !== null).toBe(isDrag);
+  });
+
   it('names the outer header, not the static row, as the pane-header container', () => {
     const { container } = render(<ChatHeader {...baseProps()} splitPaneIndex={0} />);
     expect(container.firstElementChild).toHaveClass('@container/pane-header');
