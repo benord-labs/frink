@@ -82,17 +82,22 @@ async function gateApprovalRequests(
   return { decision: 'accept' };
 }
 
+/** A deny carries Frink's message as `reason`, which Codex shows its model verbatim (sc-1357). */
+type HostPermissionDecision =
+  | { decision: 'allow' | 'defer' }
+  | { decision: 'deny'; reason: string };
+
 async function gateHostPermissionRequests(
   requests: CodexApprovalRequest[],
   checkApproval: CodexApprovalCheck,
-): Promise<'allow' | 'defer' | 'deny'> {
+): Promise<HostPermissionDecision> {
   let decision: 'allow' | 'defer' = 'allow';
   for (const request of requests) {
     const outcome = await checkApproval(request);
-    if (outcome.allowed === false) return 'deny';
+    if (outcome.allowed === false) return { decision: 'deny', reason: outcome.message };
     if (outcome.allowed === null) decision = 'defer';
   }
-  return decision;
+  return { decision };
 }
 
 /** Register both approval handlers on the turn's thread subscription. */
@@ -125,11 +130,11 @@ export function registerApprovalHandlers(
     // This provider callback only lets that exact canonical call reach dynamic Flow dispatch.
     if (isRegisterNodeTransportRequest(request)) return { decision: 'allow' as const };
     try {
-      const decision = await gateHostPermissionRequests(
+      const result = await gateHostPermissionRequests(
         mapFrinkHostPermissionRequests(request),
         checkApproval,
       );
-      if (decision !== 'allow') return { decision };
+      if (result.decision !== 'allow') return result;
       codexHostPermissionDeduper.remember(request);
       return { decision: 'allow' as const };
     } catch (err) {
