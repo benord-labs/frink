@@ -126,6 +126,8 @@ export type AgentQueueItem = {
   /** Task id of the machine dispatch that enqueued this prompt — rides metadata → send payload
    * so main binds the turn's mode to the dispatching task (`sub-chat-mode-ownership`). */
   dispatchTaskId?: string;
+  /** The dispatch attempt (sc-2775) — rides with `dispatchTaskId` so main can reject a stale one. */
+  dispatchGeneration?: string;
   /** Internal Work Queue recovery turn. Queue UI must not expose user mutation controls for it. */
   approvedPlanContext?: ApprovedPlanContext;
   /** Queued only because main was finalizing a turn whose stream had closed: it goes out the
@@ -255,4 +257,39 @@ export function createTextPreview(text: string, maxLength: number = 50): string 
   const trimmed = text.trim().replace(/\s+/g, ' ');
   if (trimmed.length <= maxLength) return trimmed;
   return `${trimmed.slice(0, maxLength)}...`;
+}
+
+/** The send metadata a queued item carries: its source, and for a machine dispatch, which task and
+ * attempt it delivers (main binds the turn's mode and its flow-step provenance to them). */
+export function dispatchMetadata(
+  item: Pick<AgentQueueItem, 'source' | 'dispatchTaskId' | 'dispatchGeneration'>,
+): Record<string, string> {
+  return {
+    ...(item.source ? { source: item.source } : {}),
+    ...(item.dispatchTaskId ? { dispatchTaskId: item.dispatchTaskId } : {}),
+    // Restored from sessionStorage unchecked: only a string can cross the send boundary.
+    ...(typeof item.dispatchGeneration === 'string' && item.dispatchGeneration
+      ? { dispatchGeneration: item.dispatchGeneration }
+      : {}),
+  };
+}
+
+/** A queued dispatch prompt a NEWER attempt of the same task has replaced in the queue. Generations
+ * are increasing ISO times; a malformed one is never "newer", nor ever superseded. */
+export function isSupersededDispatch(item: AgentQueueItem, queue: AgentQueueItem[]): boolean {
+  const generation = generationTime(item.dispatchGeneration);
+  if (!item.dispatchTaskId || generation === null) return false;
+  return queue.some(
+    (other) =>
+      other.id !== item.id &&
+      other.dispatchTaskId === item.dispatchTaskId &&
+      (generationTime(other.dispatchGeneration) ?? -Infinity) > generation,
+  );
+}
+
+/** A generation's time, or null for a malformed one (restored storage is unchecked). */
+function generationTime(value: unknown): number | null {
+  if (typeof value !== 'string') return null;
+  const ms = Date.parse(value);
+  return Number.isNaN(ms) ? null : ms;
 }

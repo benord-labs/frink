@@ -52,6 +52,7 @@ vi.mock('../credentials', () => ({
 
 vi.mock('../tasks/dispatch-cancel-fence', () => ({ abortIfTaskNoLongerRunning: fenceMock }));
 
+import { isDispatchPending, registerPendingDispatchMode } from '../task-executor/dispatch-registry';
 import { onExecuteRequest, sendMessage } from './client';
 
 const payload = (over: Record<string, unknown> = {}) =>
@@ -91,5 +92,142 @@ describe('dispatched turn → dispatch-cancel fence', () => {
   it('never fences a user send (no dispatch task id)', async () => {
     await send({});
     expect(fenceMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('dispatch identity on the execute request (sc-2775)', () => {
+  async function executePayload(over: Record<string, unknown>) {
+    let seen: Record<string, unknown> | undefined;
+    const off = onExecuteRequest((p: Record<string, unknown>) => {
+      seen = p;
+      (p.onExecutionStarted as (e?: Error) => void)?.();
+    });
+    try {
+      await sendMessage(payload(over)).catch(() => {});
+    } finally {
+      off();
+    }
+    return seen;
+  }
+
+  const DISPATCHED_AT = '2026-10-02T10:30:13.000Z';
+  function holdDispatch(taskId: string): void {
+    registerPendingDispatchMode('s-fence', taskId, 'execute', {
+      chatId: 'c1',
+      subChatId: 's-fence',
+      taskId,
+      prompt: 'go',
+      dispatchGeneration: DISPATCHED_AT,
+      projectId: null,
+      projectPath: null,
+      startMode: 'execute',
+      skipReview: true,
+      headless: true,
+    });
+  }
+
+  it("forwards the dispatch attempt so the executor can stamp that step's turn as started", async () => {
+    holdDispatch('task-d1');
+    expect(
+      await executePayload({ dispatchTaskId: 'task-d1', dispatchGeneration: DISPATCHED_AT }),
+    ).toMatchObject({
+      dispatch: { taskId: 'task-d1', dispatchedAt: DISPATCHED_AT },
+    });
+  });
+
+  // A retry or re-claim reuses the task id (and maybe the prompt); only the attempt tells them apart.
+  it("drops a send naming an earlier attempt of the held dispatch's task", async () => {
+    holdDispatch('task-d2');
+    expect(
+      await executePayload({
+        dispatchTaskId: 'task-d2',
+        dispatchGeneration: '2026-10-02T09:00:00.000Z',
+      }),
+    ).not.toHaveProperty('dispatch');
+  });
+
+  it('drops a send naming no attempt at all', async () => {
+    holdDispatch('task-d3');
+    expect(await executePayload({ dispatchTaskId: 'task-d3' })).not.toHaveProperty('dispatch');
+  });
+
+  // A renderer-supplied id is only a claim: without a held dispatch it must not arm or stamp a step.
+  it('drops a dispatch id that matches no held dispatch', async () => {
+    expect(await executePayload({ dispatchTaskId: 'task-unheld' })).not.toHaveProperty('dispatch');
+  });
+
+  it('carries no dispatch identity for a user send', async () => {
+    expect(await executePayload({})).not.toHaveProperty('dispatch');
+  });
+});
+
+describe('a dispatched send that never starts a turn (sc-2775)', () => {
+  const held = () =>
+    registerPendingDispatchMode('s-fence', 'task-r1', 'execute', {
+      chatId: 'c1',
+      subChatId: 's-fence',
+      taskId: 'task-r1',
+      prompt: 'go',
+      projectId: null,
+      projectPath: null,
+      startMode: 'execute',
+      skipReview: true,
+      headless: true,
+      dispatchGeneration: 'gen-r1',
+    });
+
+  it('keeps its dispatch pending when the executor declines it, so the retry still proves it', async () => {
+    held();
+    await send({ dispatchTaskId: 'task-r1', dispatchGeneration: 'gen-r1' }, new Error('declined'));
+    expect(isDispatchPending('s-fence', 'task-r1')).toBe(true);
+  });
+
+  it('keeps its dispatch pending when the send throws before execution', async () => {
+    held();
+    await sendMessage(payload({ dispatchTaskId: 'task-r1', dispatchGeneration: 'gen-r1' })).catch(
+      () => {},
+    );
+    expect(isDispatchPending('s-fence', 'task-r1')).toBe(true);
+  });
+
+  it("a stale attempt's send never settles the current attempt's dispatch, nor takes its mode", async () => {
+    held();
+    resolveSendModeMock.mockClear();
+    await send({ dispatchTaskId: 'task-r1', dispatchGeneration: 'gen-older' });
+    expect(isDispatchPending('s-fence', 'task-r1')).toBe(true);
+    expect(resolveSendModeMock.mock.calls.at(-1)?.[2]).toBeUndefined();
+  });
+
+  it("binds the current attempt's send to the dispatch's mode", async () => {
+    held();
+    resolveSendModeMock.mockClear();
+    await send({ dispatchTaskId: 'task-r1', dispatchGeneration: 'gen-r1' });
+    expect(resolveSendModeMock.mock.calls.at(-1)?.[2]).toBe('agent');
+  });
+
+  // A prompt can wait behind a long turn: its attempt is still provable after the mode TTL.
+  it('still proves a flow dispatch queued for longer than 15 minutes', async () => {
+    const start = Date.now();
+    const now = vi.spyOn(Date, 'now').mockReturnValue(start);
+    held();
+    now.mockReturnValue(start + 20 * 60_000);
+    let seen: Record<string, unknown> | undefined;
+    const off = onExecuteRequest((p: Record<string, unknown>) => {
+      seen = p;
+      (p.onExecutionStarted as (e?: Error) => void)?.();
+    });
+    try {
+      await sendMessage(payload({ dispatchTaskId: 'task-r1', dispatchGeneration: 'gen-r1' }));
+    } finally {
+      off();
+      now.mockRestore();
+    }
+    expect(seen).toMatchObject({ dispatch: { taskId: 'task-r1', dispatchedAt: 'gen-r1' } });
+  });
+
+  it('settles it once the turn starts', async () => {
+    held();
+    await send({ dispatchTaskId: 'task-r1', dispatchGeneration: 'gen-r1' });
+    expect(isDispatchPending('s-fence', 'task-r1')).toBe(false);
   });
 });

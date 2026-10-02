@@ -28,6 +28,9 @@ export const DEBUG_MODE_EXIT_REMINDER =
 export const TASK_SIGNAL_DISARMED_REMINDER =
   'This chat is linked to a task whose lifecycle is already over (it finished, or the task no longer exists), so the frink_task_signal tool is intentionally not available this turn. If you called it earlier in this conversation, that was a prior active run — there is nothing left to signal now. Only frink_task_signal is unavailable; your other tools (Bash, Read, Write, Edit, MCP tools, etc.) remain available — handle the user request normally, just do not look for or attempt to call frink_task_signal.';
 
+export const UNDELIVERED_FLOW_STEP_REMINDER =
+  "This chat belongs to a flow whose current step has been sent but has not received its prompt yet, so the frink_task_signal tool is intentionally not available this turn: this message is not that step, and it cannot complete it. Handle the user's request normally and do not look for or attempt to call frink_task_signal.";
+
 export type OperatorReminderInputs = {
   /** Current turn mode (e.g. 'plan' | 'debug' | 'agent'). */
   mode: string;
@@ -37,6 +40,8 @@ export type OperatorReminderInputs = {
   hasResumeSession: boolean;
   /** Whether the task-signal apparatus is disarmed (pinned task terminal-final or gone). */
   taskSignalDisarmed: boolean;
+  /** Disarmed because the flow step's dispatch is undelivered, not because its task is over. */
+  undeliveredFlowStep?: boolean;
   /**
    * Whether the agent can see prior turns that referenced the now-stripped tool — a replayed SDK
    * transcript (resume) or frink's inlined `<conversation_history>`. A fresh first turn has nothing to
@@ -81,7 +86,11 @@ export function buildOperatorReminders(inputs: OperatorReminderInputs): Operator
   }
   // Skip in plan mode: it's read-only (no Bash/Write/Edit), so the reminder's "other tools remain
   // available" wording would mislead.
-  if (inputs.taskSignalDisarmed && inputs.agentSawPriorTurns && inputs.mode !== 'plan') {
+  // An undelivered step is live, so the "lifecycle is over" wording would be false — and the agent
+  // needs telling even on a first turn, since the flow's lifecycle prompt may already be present.
+  if (inputs.undeliveredFlowStep) {
+    if (inputs.mode !== 'plan') reminders.push(UNDELIVERED_FLOW_STEP_REMINDER);
+  } else if (inputs.taskSignalDisarmed && inputs.agentSawPriorTurns && inputs.mode !== 'plan') {
     reminders.push(TASK_SIGNAL_DISARMED_REMINDER);
   }
   // Per turn rather than in the system prompt, so the prompt (and a warm CLI) stays mode-free.

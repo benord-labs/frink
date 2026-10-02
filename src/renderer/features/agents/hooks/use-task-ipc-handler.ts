@@ -47,6 +47,42 @@ type MaybeUserMessage = { role?: string; parts?: Array<{ type?: string; text?: s
  * prompt was dropped and its run will sit `running` with no stream — capture it. An
  * already-queued swallow is benign (the pending queue item still delivers the prompt).
  */
+/** True when this dispatch's prompt is already sent or queued in the sub-chat (see the caller). */
+function swallowDuplicateDispatch(data: TaskChatReadyData, subChatId: string): boolean {
+  const promptText = data.prompt.trim();
+  const existingMessages = (agentChatStore.get(subChatId)?.messages ?? []) as MaybeUserMessage[];
+  const alreadySent = existingMessages.some((m) => userMessageMatchesPrompt(m, promptText));
+  const sameText = useMessageQueueStore
+    .getState()
+    .getQueue(subChatId)
+    .filter((item) => item.message.trim() === promptText);
+  // Prefer this task's own copy: another task may have queued the same text.
+  const queued = sameText.find((item) => item.dispatchTaskId === data.taskId) ?? sameText[0];
+  // sc-2775: the queued copy now delivers THIS attempt, or main would reject it as stale.
+  if (queued?.dispatchTaskId === data.taskId) refreshQueuedAttempt(subChatId, queued.id, data);
+  if ((alreadySent && !data.isRetry) || queued) {
+    reportSwallowedFlowDispatch(data, subChatId, alreadySent);
+    return true;
+  }
+  return false;
+}
+
+function refreshQueuedAttempt(subChatId: string, itemId: string, data: TaskChatReadyData): void {
+  if (!data.dispatchGeneration) return;
+  const generation = data.dispatchGeneration;
+  useMessageQueueStore.setState((state) => ({
+    queues: {
+      ...state.queues,
+      // Forward only: a delayed older dispatch must not downgrade a newer queued attempt.
+      [subChatId]: (state.queues[subChatId] ?? []).map((item) =>
+        item.id === itemId && (item.dispatchGeneration ?? '') < generation
+          ? { ...item, dispatchGeneration: generation }
+          : item,
+      ),
+    },
+  }));
+}
+
 function reportSwallowedFlowDispatch(
   data: TaskChatReadyData,
   subChatId: string,
@@ -184,18 +220,7 @@ export function useTaskIpcHandler() {
         // without the send no stream listener is registered — the retry would be a dead-end.
         // alreadyQueued still applies (a retry while a retry is pending must not double-enqueue);
         // cross-window double-fire is bounded by the server-side claim CAS, same as fresh chats.
-        const promptText = data.prompt.trim();
-        const existingMessages = (agentChatStore.get(subChatId)?.messages ??
-          []) as MaybeUserMessage[];
-        const alreadySent = existingMessages.some((m) => userMessageMatchesPrompt(m, promptText));
-        const alreadyQueued = useMessageQueueStore
-          .getState()
-          .getQueue(subChatId)
-          .some((item) => item.message.trim() === promptText);
-        if ((alreadySent && !data.isRetry) || alreadyQueued) {
-          reportSwallowedFlowDispatch(data, subChatId, alreadySent);
-          return;
-        }
+        if (swallowDuplicateDispatch(data, subChatId)) return;
 
         // Deliver the initial prompt via the focus-independent message queue (drained by the global
         // QueueProcessor) — NOT the old isActive-gated pendingTaskPrompt path.
@@ -211,6 +236,7 @@ export function useTaskIpcHandler() {
           ...(data.headless ? { source: FLOW_DISPATCH_SOURCE } : {}),
           // Identity for main's dispatch-mode binding — every task dispatch, flow or work-queue.
           dispatchTaskId: data.taskId,
+          ...(data.dispatchGeneration ? { dispatchGeneration: data.dispatchGeneration } : {}),
         });
       })();
 

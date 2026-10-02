@@ -89,4 +89,21 @@ describe('isTaskChatReadyData', () => {
       }),
     ).toBe(false);
   });
+
+  // sc-2775: an empty attempt stamp would be dropped as falsy downstream and the turn misread as stale.
+  it('rejects an empty dispatch generation', () => {
+    const base = {
+      chatId: 'c1',
+      subChatId: 's1',
+      taskId: 't1',
+      prompt: 'run task',
+      projectId: null,
+      projectPath: null,
+      startMode: 'plan',
+      skipReview: false,
+      headless: true,
+    };
+    expect(isTaskChatReadyData({ ...base, dispatchGeneration: '' })).toBe(false);
+    expect(isTaskChatReadyData({ ...base, dispatchGeneration: 'gen-1' })).toBe(true);
+  });
 });

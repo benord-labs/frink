@@ -28,7 +28,13 @@ import {
   resolveSendMode as resolveSendModeLocal,
   setStreamId as setStreamIdLocal,
 } from '../db/repos/sub-chats';
-import { consumeDispatchMode, matchDispatchModeForSend } from '../task-executor/dispatch-registry';
+import {
+  consumeDispatchMode,
+  type DispatchProvenance,
+  heldDispatchProvenance,
+  matchDispatchModeForSend,
+  restoreDispatchRecord,
+} from '../task-executor/dispatch-registry';
 import { abortIfTaskNoLongerRunning } from '../tasks/dispatch-cancel-fence';
 import { runSendSideNaming } from './naming';
 import { withMessageAdmission } from './execution/send-admission';
@@ -84,6 +90,7 @@ export type MessageSendPayload = {
    */
   expectedFlowTaskId?: string;
   dispatchTaskId?: string; // machine-dispatch identity → dispatch-registry mode binding
+  dispatchGeneration?: string; // the dispatch attempt it delivers (sc-2775)
   /** Originating `webContents.id` when sending from Electron tRPC (for window-scoped abort). */
   sourceWebContentsId?: number;
 };
@@ -166,6 +173,8 @@ type ExecuteRequestPayload = {
   navigationSessionId?: string;
   /** Flow continuation guard — must match active map entry to use continuation task id. */
   expectedFlowTaskId?: string;
+  /** The dispatch attempt this turn delivers; absent for user-typed and mobile sends (sc-2775). */
+  dispatch?: DispatchProvenance;
   sourceWebContentsId?: number;
   onExecutionStarted?: (error?: Error) => void;
 };
@@ -258,100 +267,118 @@ async function persistAndDispatchMessage(
   const messageText = payload.userMessage.parts?.find((p) => p.type === 'text')?.text ?? '';
   // A machine-dispatched prompt (flow/work-queue task) binds its mode from the dispatching
   // task, never from renderer state (`sub-chat-mode-ownership`, machine-turn amendment).
-  const sendMode = matchDispatchModeForSend(subChatId, dispatchTaskId) ?? payload.mode;
+  const sendMode =
+    matchDispatchModeForSend(subChatId, dispatchTaskId, payload.dispatchGeneration) ?? payload.mode;
+  // sc-2775: only a send naming its held dispatch's attempt tells the executor which step it delivers.
+  const dispatch =
+    heldDispatchProvenance(subChatId, dispatchTaskId, payload.dispatchGeneration) ?? undefined;
   // Intent-or-row resolution BEFORE any persistence (see resolveSendMode), under the shared
   // per-sub-chat mutex so all sub_chats.mode writers serialize and every echo (the row's UI
   // mirror) announces its own landed write in order. Intents clear only via their correlated
   // acks, never echoes; the dispatch record settles only after the row write lands (fail→retry).
+  let consumed: ReturnType<typeof consumeDispatchMode>;
   const mode = await withSubChatLock(subChatId, async () => {
     const resolved = await resolveSendModeLocal(getDatabase(), subChatId, sendMode);
-    if (dispatchTaskId) consumeDispatchMode(subChatId, dispatchTaskId);
+    if (dispatchTaskId) {
+      consumed = consumeDispatchMode(subChatId, dispatchTaskId, payload.dispatchGeneration);
+    }
     if (sendMode) sendSubChatModeChange({ chatId, subChatId, mode: sendMode });
     return resolved;
   });
 
-  // 'submit-message' appends a fresh user message; 'regenerate-message' replays an existing one.
-  if (payload.trigger !== 'regenerate-message') {
-    try {
-      const userMessage = {
-        id: payload.userMessage.id,
-        role: 'user' as const,
-        parts: payload.userMessage.parts ?? [],
-        ...(payload.userMessage.metadata ? { metadata: payload.userMessage.metadata } : {}),
-      };
-      await appendUserMessageLocal(getDatabase(), payload.subChatId, userMessage);
-      // A phone send has no desktop bubble: announce it before dispatch so it precedes the reply.
-      // The sending window already holds this id and skips it.
-      broadcastToRenderer('socket:message-saved', { chatId, subChatId, message: userMessage });
-    } catch (err) {
-      log.error('[Socket] Failed to persist user message locally:', err);
-      if (requirePersistence) throw err;
+  // sc-2775: a send that never starts a turn leaves its dispatch pending, so a retry still proves it.
+  const restoreUnstartedDispatch = () => {
+    if (consumed && dispatchTaskId) restoreDispatchRecord(subChatId, dispatchTaskId, consumed);
+  };
+  try {
+    // 'submit-message' appends a fresh user message; 'regenerate-message' replays an existing one.
+    if (payload.trigger !== 'regenerate-message') {
+      try {
+        const userMessage = {
+          id: payload.userMessage.id,
+          role: 'user' as const,
+          parts: payload.userMessage.parts ?? [],
+          ...(payload.userMessage.metadata ? { metadata: payload.userMessage.metadata } : {}),
+        };
+        await appendUserMessageLocal(getDatabase(), payload.subChatId, userMessage);
+        // A phone send has no desktop bubble: announce it before dispatch so it precedes the reply.
+        // The sending window already holds this id and skips it.
+        broadcastToRenderer('socket:message-saved', { chatId, subChatId, message: userMessage });
+      } catch (err) {
+        log.error('[Socket] Failed to persist user message locally:', err);
+        if (requirePersistence) throw err;
+      }
+
+      // Fire-and-forget sub-chat + build-project naming (never blocks the send).
+      runSendSideNaming({
+        chatId: payload.chatId,
+        subChatId: payload.subChatId,
+        projectId: payload.projectId,
+        userMessageParts: payload.userMessage.parts,
+      });
     }
 
-    // Fire-and-forget sub-chat + build-project naming (never blocks the send).
-    runSendSideNaming({
+    if (payload.approvedPlanContext?.planId) {
+      try {
+        await markPlanApprovedLocal(
+          getDatabase(),
+          payload.subChatId,
+          payload.approvedPlanContext.planId,
+        );
+      } catch (err) {
+        log.error('[Socket] Failed to mark plan approved locally:', err);
+      }
+    }
+
+    await assertChatLogin(getDatabase(), chatId, subChatId);
+    // Synthesize the ExecuteRequestPayload and dispatch the executor in-process.
+    const assistantMessageId = randomUUID();
+    const streamId = randomUUID();
+
+    let persistedSessionId: string | undefined;
+    try {
+      const subChat = await getSubChatByIdLocal(getDatabase(), payload.subChatId);
+      persistedSessionId = subChat?.sessionId ?? undefined;
+    } catch (err) {
+      log.warn('[Socket] Local sub-chat session lookup failed:', err);
+    }
+
+    try {
+      await setStreamIdLocal(getDatabase(), payload.subChatId, streamId);
+    } catch (err) {
+      log.warn('[Socket] Local setStreamId failed:', err);
+    }
+
+    if (executeRequestListeners.size === 0) throw new Error('Chat execution is not ready.');
+    notifyListeners(executeRequestListeners, {
       chatId: payload.chatId,
       subChatId: payload.subChatId,
       projectId: payload.projectId,
+      message: messageText,
       userMessageParts: payload.userMessage.parts,
+      mode,
+      history: payload.history,
+      settings: payload.settings,
+      assistantMessageId,
+      streamId,
+      sessionId: persistedSessionId,
+      continuity: { status: 'ok' },
+      approvedPlanContext: payload.approvedPlanContext,
+      navigationSessionId: payload.navigationSessionId,
+      expectedFlowTaskId: payload.expectedFlowTaskId,
+      ...(dispatch ? { dispatch } : {}),
+      sourceWebContentsId: payload.sourceWebContentsId,
+      // A dispatched turn re-checks its task once registered, closing the Cancel-before-start gap.
+      onExecutionStarted: (error?: Error) => {
+        if (error) restoreUnstartedDispatch();
+        onExecutionStarted(error);
+        if (!error && dispatchTaskId) void abortIfTaskNoLongerRunning(dispatchTaskId, subChatId);
+      },
     });
-  }
-
-  if (payload.approvedPlanContext?.planId) {
-    try {
-      await markPlanApprovedLocal(
-        getDatabase(),
-        payload.subChatId,
-        payload.approvedPlanContext.planId,
-      );
-    } catch (err) {
-      log.error('[Socket] Failed to mark plan approved locally:', err);
-    }
-  }
-
-  await assertChatLogin(getDatabase(), chatId, subChatId);
-  // Synthesize the ExecuteRequestPayload and dispatch the executor in-process.
-  const assistantMessageId = randomUUID();
-  const streamId = randomUUID();
-
-  let persistedSessionId: string | undefined;
-  try {
-    const subChat = await getSubChatByIdLocal(getDatabase(), payload.subChatId);
-    persistedSessionId = subChat?.sessionId ?? undefined;
   } catch (err) {
-    log.warn('[Socket] Local sub-chat session lookup failed:', err);
+    restoreUnstartedDispatch();
+    throw err;
   }
-
-  try {
-    await setStreamIdLocal(getDatabase(), payload.subChatId, streamId);
-  } catch (err) {
-    log.warn('[Socket] Local setStreamId failed:', err);
-  }
-
-  if (executeRequestListeners.size === 0) throw new Error('Chat execution is not ready.');
-  notifyListeners(executeRequestListeners, {
-    chatId: payload.chatId,
-    subChatId: payload.subChatId,
-    projectId: payload.projectId,
-    message: messageText,
-    userMessageParts: payload.userMessage.parts,
-    mode,
-    history: payload.history,
-    settings: payload.settings,
-    assistantMessageId,
-    streamId,
-    sessionId: persistedSessionId,
-    continuity: { status: 'ok' },
-    approvedPlanContext: payload.approvedPlanContext,
-    navigationSessionId: payload.navigationSessionId,
-    expectedFlowTaskId: payload.expectedFlowTaskId,
-    sourceWebContentsId: payload.sourceWebContentsId,
-    // A dispatched turn re-checks its task once registered, closing the Cancel-before-start gap.
-    onExecutionStarted: (error?: Error) => {
-      onExecutionStarted(error);
-      if (!error && dispatchTaskId) void abortIfTaskNoLongerRunning(dispatchTaskId, subChatId);
-    },
-  });
 }
 
 export function sendStop(payload: StopPayload): void {

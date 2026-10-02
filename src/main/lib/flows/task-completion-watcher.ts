@@ -22,6 +22,7 @@ import { captureMainException } from '../sentry/init';
 import { resolveTaskSignalTransition } from '../trpc/routers/frink-task-signal';
 import { advanceFlowRun } from './advance';
 import { isTerminalTaskStatus, mapTaskToNodeOutput } from './signal-bridge';
+import { recoverUndeliveredDispatch } from './undelivered-dispatch';
 
 const POLL_INTERVAL_MS = 2_000;
 
@@ -84,6 +85,7 @@ async function sweepQuietIdleTasks(db: ReturnType<typeof getDatabase>): Promise<
   const now = Date.now();
   for (const task of running) {
     await reportDispatchedButNeverExecuted(task, now);
+    await recoverUndeliveredDispatchSafely(db, task, now);
     const marker = expiredQuietMarker(task, now);
     if (!marker) continue;
     if (await waitIsAttended(task, now)) continue;
@@ -94,6 +96,23 @@ async function sweepQuietIdleTasks(db: ReturnType<typeof getDatabase>): Promise<
       const { captureMainMessage } = await import('../sentry/init');
       captureMainMessage('Quiet-idle park failed', 'warning', { taskId: task.id });
     }
+  }
+}
+
+/** One task's watchdog step must not abort the sweep for the rest. */
+async function recoverUndeliveredDispatchSafely(
+  db: ReturnType<typeof getDatabase>,
+  task: Task,
+  now: number,
+): Promise<void> {
+  try {
+    await recoverUndeliveredDispatch(db, task, now);
+  } catch (err) {
+    log.warn('[FlowsWatcher] undelivered-dispatch recovery failed', { taskId: task.id, err });
+    captureMainException(err, {
+      surface: 'flow-task-completion-watcher',
+      stage: 'undelivered-dispatch',
+    });
   }
 }
 

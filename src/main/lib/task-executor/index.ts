@@ -13,7 +13,6 @@
 
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import { BrowserWindow } from 'electron';
 import log from 'electron-log';
 import { buildHiddenWakeMessage } from '../../../shared/lib/message-markers/hidden-wake-marker';
 import { CLAUDE_MODEL_IDS } from '../../../shared/lib/models';
@@ -77,6 +76,8 @@ import { executeShellTask, isShellExecutionMode } from '../shell-executor';
 import { sendSubChatModeChange } from '../socket/client';
 import { persistModeThenNotify } from '../socket/streaming/plan-auto-approve';
 import { getTaskPoller } from '../task-poller';
+import { buildInitialTaskChatName } from './chat-name';
+import * as delivery from './dispatch-delivery';
 import {
   clearActiveFlowTaskForChat,
   registerPendingDispatchMode,
@@ -113,28 +114,7 @@ const PROVIDER_LABEL: Record<TaskExecutionAccountType, string> = {
 
 type TaskChatReadyPayload = TaskChatReadyData;
 
-const TASK_CHAT_NAME_MAX_LENGTH = 100;
-
-export function buildInitialTaskChatName(taskDescription: string): string {
-  const plainText = taskDescription
-    // Strip markdown links: [label](url) -> label
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    // Strip common markdown formatting markers
-    .replace(/[`*_~]/g, '')
-    // Strip markdown heading/blockquote markers
-    .replace(/^#{1,6}\s+/gm, '')
-    .replace(/^\s*>\s?/gm, '')
-    // Strip leading markdown list bullets
-    .replace(/^\s*[-+]\s+/gm, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  if (plainText.length === 0) {
-    return 'Task';
-  }
-
-  return plainText.slice(0, TASK_CHAT_NAME_MAX_LENGTH);
-}
+export { buildInitialTaskChatName } from './chat-name';
 
 /**
  * Picks sub-chat for an existing parent chat (flow `continue_chat` or cross-machine) and
@@ -457,6 +437,8 @@ async function createChatForTask(task: DbTask): Promise<{
   isRetry: boolean;
   /** True only for a user-requested tasks.retry claim (result.retryMode) — drives the unpark gate. */
   isUserRetryClaim: boolean;
+  /** sc-2775: this claim's dispatch generation (`result.dispatchedAt`); flow tasks only. */
+  dispatchGeneration?: string;
 }> {
   // Get project info (if task has a project)
   let projectPath: string | null = null;
@@ -635,6 +617,7 @@ async function createChatForTask(task: DbTask): Promise<{
   }
 
   // 5. Stamp chatId/subChatId (non-critical). Guarded so a Cancel landing mid-prep stays cancelled.
+  const dispatchStamps = delivery.flowDispatchStamps(task, retryMode, subChatId);
   try {
     const updatedTask = await updateTaskStatusLocal(getDatabase(), task.id, 'running', {
       result: {
@@ -649,6 +632,7 @@ async function createChatForTask(task: DbTask): Promise<{
         ...(requestedModel ? { requestedModel } : {}),
         ...(activeModel ? { activeModel } : {}),
         ...(modelFallbackReason ? { modelFallbackReason } : {}),
+        ...dispatchStamps,
       },
       ...(task.executedBy ? { executedBy: task.executedBy } : {}),
       expectStatuses: ['running'],
@@ -659,6 +643,7 @@ async function createChatForTask(task: DbTask): Promise<{
       });
     }
   } catch (error) {
+    delivery.failUnstampedFlowClaim(task, { chatId, subChatId }, error);
     // Log but don't fail - chat was created successfully, proceed with execution
     // Failing here would orphan the chat on retry
     // biome-ignore lint/suspicious/noConsole: We don't want to fail the task if this fails
@@ -708,6 +693,7 @@ async function createChatForTask(task: DbTask): Promise<{
     ...(codexSpeed !== undefined ? { codexSpeed } : {}),
     ...(taskModel ? { model: taskModel } : {}),
     ...deriveTaskClaimFlags(retryMode, rawFlowConfig),
+    ...(dispatchStamps ? { dispatchGeneration: dispatchStamps.dispatchedAt } : {}),
   };
 }
 
@@ -959,6 +945,7 @@ async function handleClaimedTask(task: DbTask): Promise<void> {
       images,
       isRetry,
       isUserRetryClaim,
+      dispatchGeneration,
     } = await createChatForTask(task);
     // Cancelled while being prepared: there was no session to abort, so don't start one.
     if ((await getTaskById(getDatabase(), task.id))?.status !== 'running') return;
@@ -1012,6 +999,7 @@ async function handleClaimedTask(task: DbTask): Promise<void> {
       ...(model ? { model } : {}),
       ...(images && images.length > 0 ? { images } : {}),
       ...(isRetry ? { isRetry: true } : {}),
+      ...(dispatchGeneration ? { dispatchGeneration } : {}),
     };
 
     // Bind the send-time mode to the task; hold the payload for a renderer that misses the event.
@@ -1025,13 +1013,7 @@ async function handleClaimedTask(task: DbTask): Promise<void> {
       startMode,
     });
 
-    // Send to all windows (in case app has multiple)
-    const windows = BrowserWindow.getAllWindows();
-    for (const win of windows) {
-      if (!win.isDestroyed()) {
-        win.webContents.send('task:chat-ready', payload);
-      }
-    }
+    delivery.broadcastTaskChatReady(payload);
 
     flowContinuationChatRegistered = null;
 

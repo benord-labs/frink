@@ -139,6 +139,70 @@ describe('useTaskIpcHandler', () => {
     expect(fetchResolvedAccount).toHaveBeenCalledWith({ chatId: 'chat-1' });
   });
 
+  it("queues a flow dispatch with its attempt, so main can tell it from an earlier attempt's", async () => {
+    listUndeliveredDispatches.mockResolvedValue([
+      validPayload({ dispatchGeneration: '2026-10-02T10:30:13.000Z' }),
+    ]);
+    renderHook(() => useTaskIpcHandler(), { wrapper });
+
+    await waitFor(() => {
+      const queue = useMessageQueueStore.getState().getQueue('sub-1');
+      expect(queue.map((item) => item.dispatchGeneration)).toEqual(['2026-10-02T10:30:13.000Z']);
+    });
+  });
+
+  it('moves a still-queued copy of the prompt onto the newer attempt instead of stranding it', async () => {
+    renderHook(() => useTaskIpcHandler(), { wrapper });
+    act(() => ipcCallback?.(validPayload({ dispatchGeneration: 'gen-a' })));
+    await waitFor(() => expect(useMessageQueueStore.getState().getQueue('sub-1')).toHaveLength(1));
+
+    act(() => ipcCallback?.(validPayload({ dispatchGeneration: 'gen-b' })));
+
+    await waitFor(() => {
+      const queue = useMessageQueueStore.getState().getQueue('sub-1');
+      expect(queue.map((item) => item.dispatchGeneration)).toEqual(['gen-b']);
+    });
+  });
+
+  it('never downgrades a queued attempt for a delayed, older dispatch', async () => {
+    renderHook(() => useTaskIpcHandler(), { wrapper });
+    act(() => ipcCallback?.(validPayload({ dispatchGeneration: '2026-10-02T10:40:00.000Z' })));
+    await waitFor(() => expect(useMessageQueueStore.getState().getQueue('sub-1')).toHaveLength(1));
+
+    act(() => ipcCallback?.(validPayload({ dispatchGeneration: '2026-10-02T10:30:00.000Z' })));
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(useMessageQueueStore.getState().getQueue('sub-1')[0]?.dispatchGeneration).toBe(
+      '2026-10-02T10:40:00.000Z',
+    );
+  });
+
+  it("refreshes this task's queued copy, not another task's with the same text", async () => {
+    renderHook(() => useTaskIpcHandler(), { wrapper });
+    act(() => ipcCallback?.(validPayload({ taskId: 'task-other', dispatchGeneration: 'gen-o' })));
+    await waitFor(() => expect(useMessageQueueStore.getState().getQueue('sub-1')).toHaveLength(1));
+    act(() => {
+      useMessageQueueStore.getState().addToQueue('sub-1', {
+        ...useMessageQueueStore.getState().getQueue('sub-1')[0],
+        id: 'own-copy',
+        dispatchTaskId: 'task-1',
+        dispatchGeneration: 'gen-a',
+      });
+    });
+
+    act(() => ipcCallback?.(validPayload({ dispatchGeneration: 'gen-b' })));
+
+    await waitFor(() => {
+      const byTask = Object.fromEntries(
+        useMessageQueueStore
+          .getState()
+          .getQueue('sub-1')
+          .map((item) => [item.dispatchTaskId, item.dispatchGeneration]),
+      );
+      expect(byTask).toEqual({ 'task-other': 'gen-o', 'task-1': 'gen-b' });
+    });
+  });
+
   it('delivers a dispatch that fired before the listener mounted, once, via the mount pull', async () => {
     // A renderer reload (or slow lazy layout load) misses the one-shot IPC event; main still holds
     // the undelivered payload. A live re-fire of the same dispatch must not double-enqueue it.

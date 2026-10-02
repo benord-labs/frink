@@ -6,6 +6,7 @@ import {
   DEBUG_MODE_EXIT_REMINDER,
   PLAN_MODE_EXIT_REMINDER,
   TASK_SIGNAL_DISARMED_REMINDER,
+  UNDELIVERED_FLOW_STEP_REMINDER,
   wrapRemindersForPrompt,
 } from './operator-reminders';
 
@@ -159,5 +160,27 @@ describe('buildUserPromptSubmitReminderHook', () => {
         additionalContext: 'alpha\n\nbeta',
       },
     });
+  });
+});
+
+describe('buildOperatorReminders — undelivered flow step (sc-2775)', () => {
+  it('explains the missing signal tool instead of claiming the task is over, even on a first turn', () => {
+    const { reminders } = buildOperatorReminders({
+      ...base,
+      taskSignalDisarmed: true,
+      undeliveredFlowStep: true,
+    });
+    expect(reminders).toEqual([UNDELIVERED_FLOW_STEP_REMINDER]);
+  });
+
+  it('stays silent in plan mode, like the disarmed notice', () => {
+    const { reminders } = buildOperatorReminders({
+      ...base,
+      mode: 'plan',
+      previousMode: 'plan',
+      taskSignalDisarmed: true,
+      undeliveredFlowStep: true,
+    });
+    expect(reminders).toEqual([]);
   });
 });

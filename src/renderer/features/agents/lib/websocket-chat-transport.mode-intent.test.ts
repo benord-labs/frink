@@ -205,6 +205,18 @@ describe('websocket-chat-transport mode transition intent', () => {
     expect(plain?.dispatchTaskId).toBeUndefined();
   });
 
+  // sc-2775: the dispatch attempt rides along so main can reject an earlier attempt's delayed send.
+  it('forwards metadata.dispatchGeneration with its dispatch; never without one', async () => {
+    const send = (metadata: Record<string, string>) =>
+      sendTurn('sub-dispatch-gen', 'submit-message', [
+        { id: 'msg-g1', role: 'user', parts: [{ type: 'text', text: 'dispatched' }], metadata },
+      ] as unknown as UIMessage[]) as Promise<{ dispatchGeneration?: string } | undefined>;
+
+    const call = await send({ dispatchTaskId: 'task-g', dispatchGeneration: 'gen-1' });
+    expect(call?.dispatchGeneration).toBe('gen-1');
+    expect((await send({ dispatchGeneration: 'gen-1' }))?.dispatchGeneration).toBeUndefined();
+  });
+
   // A dispatch-carrying send never takes the intent lane: main binds its mode by identity, and a
   // user toggle armed during the dispatch window must stay armed (and never be falsely acked) so
   // the user's own next turn still carries it.

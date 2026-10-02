@@ -12,12 +12,24 @@ import log from 'electron-log';
 import { getDatabase } from '../../db';
 import { isFlowRunSignalDead } from '../../db/repos/flow-runs';
 import {
+  clearDispatchStartedMarker,
+  nextDispatchStamp,
+  setDispatchStartedMarker,
+  undeliveredDispatchSince,
+} from '../../db/repos/task-parking/dispatch-marker';
+import {
   getFlowDriveInfoForSubChat,
   getLatestFlowTaskForSubChat,
   getTaskById,
   isTerminalFinalTaskStatus,
 } from '../../db/repos/tasks';
-import { captureMainException } from '../../sentry/init';
+import { captureMainException, captureMainMessage } from '../../sentry/init';
+import {
+  type DispatchProvenance,
+  deliveringTaskOf,
+  markDeliveringTurn,
+  unmarkDeliveringTurn,
+} from '../../task-executor/dispatch-registry';
 
 type SignalTaskRow = Awaited<ReturnType<typeof getTaskById>>;
 
@@ -36,6 +48,9 @@ export type FlowSignalArming = {
   restartInterruptedFlowRunId: string | null;
   /** The task an agent signal lands on: the driving flow task, else the chat's pinned task. */
   effectiveSignalTaskId: string | null;
+  /** sc-2775: set (with `taskSignalDisarmed`) when a turn the step's dispatch did not send arrives
+   * while that step's prompt is undelivered — it must not complete the step. */
+  undeliveredDispatchTaskId: string | null;
 };
 
 /** Unknown provenance stays execution-fail-open, but its signal write must not fail silently. */
@@ -89,9 +104,35 @@ export async function isSignalTargetDead(task: SignalTaskRow): Promise<boolean> 
   return isFlowRunSignalDead(getDatabase(), task.flowRunId);
 }
 
+/** Only an UNDELIVERED dispatch bars other turns: once the step's own turn ran, a reply resuming a
+ * parked step signals it as before. */
+export function isTurnForeignToUndeliveredDispatch(
+  task: SignalTaskRow,
+  dispatch: DispatchProvenance | undefined,
+): boolean {
+  if (!task || task.status !== 'running') return false;
+  const result = task.result as Record<string, unknown> | null;
+  // An earlier attempt's turn (same task id, older generation) is as foreign as an operator's.
+  if (dispatch?.taskId === task.id && dispatch.dispatchedAt === result?.dispatchedAt) return false;
+  return undeliveredDispatchSince(task.result) !== null;
+}
+
+/** Reuses the arming prefetch when it holds the target row (one read per follow-up turn); another
+ * target (the flow-driving task) is read fresh. */
+export async function getTaskRowForResume(
+  db: ReturnType<typeof getDatabase>,
+  targetTaskId: string,
+  prefetched: SignalTaskRow,
+): Promise<SignalTaskRow> {
+  if (prefetched?.id === targetTaskId) return prefetched;
+  return getTaskById(db, targetTaskId);
+}
+
 export async function resolveFlowSignalArming(
   subChatId: string | undefined,
   taskIdForExecution: string | null,
+  /** The dispatch attempt this turn delivers; undefined for user-typed and mobile sends. */
+  dispatch?: DispatchProvenance,
 ): Promise<FlowSignalArming> {
   const armed: FlowSignalArming = {
     isFlowDrivenExecution: false,
@@ -101,6 +142,7 @@ export async function resolveFlowSignalArming(
     provenanceLookupError: null,
     restartInterruptedFlowRunId: null,
     effectiveSignalTaskId: taskIdForExecution,
+    undeliveredDispatchTaskId: null,
   };
   if (!subChatId) return armed;
 
@@ -122,6 +164,13 @@ export async function resolveFlowSignalArming(
     if (armed.effectiveSignalTaskId) {
       armed.prefetchedSignalTask = await getTaskById(getDatabase(), armed.effectiveSignalTaskId);
       armed.taskSignalDisarmed = await isSignalTargetDead(armed.prefetchedSignalTask);
+      if (
+        !armed.taskSignalDisarmed &&
+        isTurnForeignToUndeliveredDispatch(armed.prefetchedSignalTask, dispatch)
+      ) {
+        armed.taskSignalDisarmed = true;
+        armed.undeliveredDispatchTaskId = armed.effectiveSignalTaskId;
+      }
     }
   } catch (err) {
     // Fail OPEN, but never silently: this swallows a DB read fault, and the degraded turn looks
@@ -154,4 +203,82 @@ async function restartInterruptedTarget(
   const { isRunRestartInterrupted } = await import('../../flows/resume');
   if (!(await isRunRestartInterrupted(latest.flowRunId))) return null;
   return { id: latest.id, flowRunId: latest.flowRunId };
+}
+
+/** After admission: a dispatched turn stamps its dispatch started — or, when that attempt has been
+ * superseded (or the stamp fails), is disarmed like a foreign turn. Never throws. */
+export async function recordDispatchTurnStart(
+  armed: Pick<FlowSignalArming, 'undeliveredDispatchTaskId' | 'taskSignalDisarmed'>,
+  dispatch: DispatchProvenance | undefined,
+  subChatId: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (dispatch && !(await stampDispatchStarted(dispatch, signal))) {
+    armed.taskSignalDisarmed = true;
+    armed.undeliveredDispatchTaskId = dispatch.taskId;
+  }
+  if (!armed.undeliveredDispatchTaskId) return;
+  log.warn('[Socket Executor] turn not armed: its flow step has not received its prompt yet', {
+    subChatId,
+    taskId: armed.undeliveredDispatchTaskId,
+  });
+  captureMainMessage('Turn ran while its flow step prompt was undelivered', 'warning', {
+    surface: 'flow-signal-foreign-turn',
+  });
+}
+
+/** A turn that replaces the step's own dispatched turn interrupts that delivery — it was armed from
+ * the stamp the replaced turn wrote, so it must be disarmed before that turn is aborted. */
+export function abortReplacedTurn(
+  armed: Pick<FlowSignalArming, 'undeliveredDispatchTaskId' | 'taskSignalDisarmed'>,
+  replaced: AbortController,
+  /** The replacing turn's own dispatch: a resend of the same step takes over the delivery instead. */
+  dispatch: DispatchProvenance | undefined,
+): void {
+  const taskId = deliveringTaskOf(replaced.signal);
+  // A turn with its own proven dispatch delivers that one; only an unproven turn is disarmed.
+  if (taskId && !dispatch) {
+    armed.taskSignalDisarmed = true;
+    armed.undeliveredDispatchTaskId = taskId;
+  }
+  replaced.abort();
+}
+
+async function stampDispatchStarted(
+  dispatch: DispatchProvenance,
+  signal: AbortSignal | undefined,
+): Promise<boolean> {
+  if (signal?.aborted) return false;
+  const at = nextDispatchStamp();
+  // Registered BEFORE the write, so a concurrent re-claim sees this delivery (flowDispatchStamps).
+  if (signal) markDeliveringTurn(signal, dispatch.taskId);
+  if (!(await tryStampDispatchStarted(dispatch, at))) {
+    if (signal) unmarkDeliveringTurn(signal);
+    return false;
+  }
+  // An aborted dispatched turn (replaced, paused, stopped) has not delivered the step: undo exactly
+  // this turn's stamp, never one a later turn of the same attempt has written since.
+  const undo = () =>
+    void clearDispatchStartedMarker(
+      getDatabase(),
+      dispatch.taskId,
+      dispatch.dispatchedAt,
+      at,
+    ).catch(() => null);
+  if (signal?.aborted) undo();
+  else signal?.addEventListener('abort', undo, { once: true });
+  return !signal?.aborted;
+}
+
+async function tryStampDispatchStarted({ taskId, dispatchedAt }: DispatchProvenance, at: string) {
+  try {
+    return (await setDispatchStartedMarker(getDatabase(), taskId, dispatchedAt, at)) !== null;
+  } catch (err) {
+    log.warn('[Socket Executor] dispatch-started stamp failed', {
+      taskId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    captureMainException(err, { surface: 'flow-dispatch-started-stamp' });
+    return false;
+  }
 }
