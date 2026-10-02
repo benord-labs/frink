@@ -60,7 +60,11 @@ function initRepo(dir = tmp('frink-overlay-repo-')): string {
 }
 
 /** devkit overlay mode: excluded `.devkit/` holding the hook runner plus gate baselines. */
-function addDevkitOverlay(repo: string, overlayDir = join(repo, '.devkit')): void {
+function addDevkitOverlay(
+  repo: string,
+  overlayDir = join(repo, '.devkit'),
+  excludeLine = '/.devkit',
+): void {
   mkdirSync(join(overlayDir, 'hooks'), { recursive: true });
   mkdirSync(join(overlayDir, 'baselines'), { recursive: true });
   writeFileSync(join(overlayDir, 'hooks/pre-commit'), BASELINE_GATE);
@@ -68,7 +72,7 @@ function addDevkitOverlay(repo: string, overlayDir = join(repo, '.devkit')): voi
   writeFileSync(join(overlayDir, 'baselines/size.json'), '{"grandfathered":1}\n');
   if (overlayDir !== join(repo, '.devkit')) linkDir(overlayDir, join(repo, '.devkit'));
   mkdirSync(join(repo, '.git/info'), { recursive: true });
-  writeFileSync(join(repo, '.git/info/exclude'), '/.devkit\n', { flag: 'a' });
+  writeFileSync(join(repo, '.git/info/exclude'), `${excludeLine}\n`, { flag: 'a' });
   git(repo, 'config core.hooksPath .devkit/hooks');
 }
 
@@ -232,4 +236,104 @@ describe.skipIf(!canInitGit)('worktree hook overlay provisioning (sc-3849)', () 
     expect(existsSync(join(repo, '.devkit/baselines/size.json'))).toBe(true);
     expect(existsSync(join(repo, '.devkit/hooks/pre-commit'))).toBe(true);
   });
+
+  // devkit before sc-4157 excluded `.devkit/`; a trailing-slash pattern never matches a symlink.
+  it.each([
+    ['a real main overlay', false],
+    ['a main overlay that is itself a symlink', true],
+  ])(
+    'keeps a fresh worktree clean under a dir-only `.devkit/` exclude (%s)',
+    async (_, viaStore) => {
+      const repo = initRepo();
+      const overlayDir = viaStore ? join(tmp('frink-overlay-store-'), 'store') : undefined;
+      addDevkitOverlay(repo, overlayDir, '.devkit/');
+      const wt = join(tmp('frink-overlay-out-'), 'wt');
+
+      await createWorktree(repo, 'feat-dir-only-exclude', wt, 'main');
+
+      expect(git(wt, 'status --porcelain')).toBe('');
+      expect(lstatSync(join(wt, '.devkit')).isSymbolicLink()).toBe(false);
+      expect(existsSync(join(wt, '.devkit/hooks/pre-commit'))).toBe(true);
+    },
+  );
+
+  it('converges on a hooks copy when racing wirings each withdraw an un-ignorable link', async () => {
+    const repo = initRepo();
+    addDevkitOverlay(repo, undefined, '.devkit/');
+    const wt = join(tmp('frink-overlay-out-'), 'wt');
+    await createWorktree(repo, 'feat-race-dir-only', wt, 'main');
+    rmSync(join(wt, '.devkit'), { recursive: true, force: true });
+
+    const results = await Promise.allSettled(
+      [1, 2, 3, 4].map(() => configureWorktreeHooks(repo, wt)),
+    );
+
+    expect(results.filter((r) => r.status === 'rejected')).toEqual([]);
+    expect(existsSync(join(wt, '.devkit/hooks/pre-commit'))).toBe(true);
+    expect(git(wt, 'status --porcelain')).toBe('');
+  });
+
+  it('leaves the worktree alone when main uses an absolute overlay hooksPath (devkit sc-4157)', async () => {
+    const repo = initRepo();
+    addDevkitOverlay(repo);
+    git(repo, `config core.hooksPath "${join(repo, '.devkit/hooks')}"`);
+    const wt = join(tmp('frink-overlay-out-'), 'wt');
+
+    await createWorktree(repo, 'feat-absolute', wt, 'main');
+
+    expect(existsSync(join(wt, '.devkit'))).toBe(false);
+    expect(git(wt, 'status --porcelain')).toBe('');
+  });
+
+  it('creates nothing when hooksPath points into an overlay main no longer has', async () => {
+    const repo = initRepo();
+    mkdirSync(join(repo, '.git/info'), { recursive: true });
+    writeFileSync(join(repo, '.git/info/exclude'), '/.devkit\n', { flag: 'a' });
+    git(repo, 'config core.hooksPath .devkit/hooks');
+    const wt = join(tmp('frink-overlay-out-'), 'wt');
+
+    await createWorktree(repo, 'feat-no-overlay', wt, 'main');
+
+    expect(existsSync(join(wt, '.devkit'))).toBe(false);
+    expect(() => lstatSync(join(wt, '.devkit'))).toThrow();
+  });
+
+  it('links only the ignored package overlay in a monorepo, never its tracked parent', async () => {
+    const repo = initRepo();
+    mkdirSync(join(repo, 'pkg'));
+    writeFileSync(join(repo, 'pkg/README.md'), 'pkg\n');
+    git(repo, 'add pkg/README.md');
+    git(repo, 'commit -m pkg');
+    mkdirSync(join(repo, 'pkg/.devkit/hooks'), { recursive: true });
+    writeFileSync(join(repo, 'pkg/.devkit/hooks/pre-commit'), '#!/usr/bin/env sh\nexit 0\n');
+    mkdirSync(join(repo, '.git/info'), { recursive: true });
+    writeFileSync(join(repo, '.git/info/exclude'), '/pkg/.devkit\n', { flag: 'a' });
+    git(repo, 'config core.hooksPath pkg/.devkit/hooks');
+    const wt = join(tmp('frink-overlay-out-'), 'wt');
+
+    await createWorktree(repo, 'feat-monorepo', wt, 'main');
+
+    expect(lstatSync(join(wt, 'pkg')).isSymbolicLink()).toBe(false);
+    expect(isLinkTo(join(wt, 'pkg/.devkit'), join(repo, 'pkg/.devkit'))).toBe(true);
+    expect(git(wt, 'status --porcelain')).toBe('');
+  });
+
+  // Permission bits do not stop symlink(2) on Windows, and root ignores them.
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+    'fails closed when the overlay link cannot be created',
+    async () => {
+      const repo = initRepo();
+      addDevkitOverlay(repo);
+      const wt = join(tmp('frink-overlay-out-'), 'wt');
+      await createWorktree(repo, 'feat-readonly', wt, 'main');
+      rmSync(join(wt, '.devkit'));
+      chmodSync(wt, 0o555);
+      try {
+        await expect(configureWorktreeHooks(repo, wt)).rejects.toMatchObject({ code: 'EACCES' });
+      } finally {
+        chmodSync(wt, 0o755);
+      }
+      expect(existsSync(join(wt, '.devkit'))).toBe(false);
+    },
+  );
 });

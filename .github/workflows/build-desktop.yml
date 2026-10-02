@@ -24,6 +24,8 @@ on:
       - 'patches/codex/**'
       - 'scripts/skills/build-skill-content.ts'
       - 'scripts/smoke/smoke-native.cjs'
+      - 'scripts/smoke/smoke-worktree-overlay-junction.cjs'
+      - 'src/main/lib/git/worktree/overlay.ts'
       - '.github/workflows/build-desktop.yml'
 
 # A new push to the same PR cancels the in-flight run (stale builds otherwise double-spend the
@@ -258,6 +260,11 @@ jobs:
         if: matrix.os == 'windows-2022'
         timeout-minutes: 2
         run: node scripts/smoke/smoke-command-shell.cjs
+
+      - name: Smoke — worktree removal unlinks the .devkit junction (Windows overlay link)
+        if: matrix.os == 'windows-2022'
+        timeout-minutes: 2
+        run: node scripts/smoke/smoke-worktree-overlay-junction.cjs
 
       - name: Assert bundled agent binaries
         shell: bash

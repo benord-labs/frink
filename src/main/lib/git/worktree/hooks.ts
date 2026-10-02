@@ -35,9 +35,8 @@ async function synchronizeCheckoutRunner(
   // An ignored overlay (devkit's `.devkit/`) also holds baselines, so it is linked whole; it is
   // never copied into, since a copy would follow whatever already sits at that path.
   const overlay = await findIgnoredOverlay(mainRepoPath, sourceHooksPath, env);
-  if (overlay) {
-    await linkOverlay(mainRepoPath, worktreePath, overlay);
-  } else if (!(await pathExists(worktreeHooksPath))) {
+  const linked = overlay ? await linkOverlay(mainRepoPath, worktreePath, overlay, env) : false;
+  if (!linked && !(await pathExists(worktreeHooksPath))) {
     await copyHooksRunner(mainRepoPath, worktreePath, sourceHooksPath, worktreeHooksPath);
   }
 

@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { lstat, mkdir, realpath, stat, symlink } from 'node:fs/promises';
+import { lstat, mkdir, realpath, stat, symlink, unlink } from 'node:fs/promises';
 import { dirname, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import log from 'electron-log';
@@ -26,12 +26,14 @@ export async function findIgnoredOverlay(
 }
 
 /** Link a missing `<worktree>/<overlay>` to main's. Anything already there is never touched:
- *  an older partial copy only gets a warning naming the manual fix. */
+ *  an older partial copy only gets a warning naming the manual fix. Returns false when the
+ *  caller should fall back to copying the hook runner instead. */
 export async function linkOverlay(
   mainRepoPath: string,
   worktreePath: string,
   overlay: string,
-): Promise<void> {
+  env: Record<string, string>,
+): Promise<boolean> {
   const target = resolve(mainRepoPath, overlay);
   const linkPath = resolve(worktreePath, overlay);
   if (!isPathInside(worktreePath, linkPath)) {
@@ -44,12 +46,24 @@ export async function linkOverlay(
     await symlink(target, linkPath, process.platform === 'win32' ? 'junction' : 'dir');
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-    if (await linksTo(linkPath, target)) return;
+    if (await linksTo(linkPath, target)) return true;
     log.warn(
       `Hook overlay ${linkPath} is not a link to ${target}; gates may miss its baselines. ` +
         `If it only holds a stale hooks copy, replace it with a link to ${target}.`,
     );
+    return true;
   }
+  // A dir-only exclude (`.devkit/`, devkit before sc-4157) never matches a link, so the link
+  // would show as untracked and could be committed. Withdraw only the link this call made.
+  if (await isIgnored(worktreePath, overlay, env)) return true;
+  log.warn(
+    `Hook overlay ${overlay} is excluded only as a directory, so a link would be untracked; ` +
+      `copying the hook runner instead. Exclude \`${overlay}\` without a trailing slash to link it.`,
+  );
+  await unlink(linkPath).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== 'ENOENT') throw error;
+  });
+  return false;
 }
 
 async function isIgnored(
