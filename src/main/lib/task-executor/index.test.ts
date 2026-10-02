@@ -352,6 +352,17 @@ describe('buildInitialTaskChatName', () => {
     );
   });
 
+  it('keeps balanced parentheses inside a link url out of the title', () => {
+    expect(buildInitialTaskChatName('See [the PR](https://example.com/a_(b)) now')).toBe(
+      'See the PR now',
+    );
+  });
+
+  it('never cuts an emoji in half at the cap', () => {
+    const name = buildInitialTaskChatName(`${'x'.repeat(99)}🚀 and more`);
+    expect(name).toBe(`${'x'.repeat(99)}🚀`);
+  });
+
   it('caps long titles to 100 characters', () => {
     expect(buildInitialTaskChatName('x'.repeat(200))).toHaveLength(100);
   });

@@ -97,6 +97,44 @@ function pruneSettledDispatches(nowMs: number): void {
   }
 }
 
+/** taskId → its latest dispatch, kept past {@link consumeDispatchMode} so the undelivered-dispatch
+ * watchdog (sc-2775) can re-send a prompt whose send landed but never started a turn. */
+const lastDispatchByTask = new Map<
+  string,
+  { startMode: ResolvedTaskStartMode; payload: TaskChatReadyData; heldAtMs: number }
+>();
+/** Past the soft cap, only dispatches older than the watchdog's whole redeliver-then-fail window go:
+ * a younger one may still need its redelivery. */
+const REDELIVERY_HORIZON_MS = 30 * 60 * 1000;
+/** Memory bound regardless of age: past it the oldest go, and their watchdog fails rather than resends. */
+const HELD_DISPATCH_HARD_CAP = 5000;
+
+/** A send's proof of which dispatch ATTEMPT it delivers: retries and re-claims reuse the task id. */
+export type DispatchProvenance = { taskId: string; dispatchedAt: string };
+
+/** The held flow dispatch a send delivers — only when it names that dispatch's attempt, so a stale
+ * send from an earlier attempt of the same task never claims the current one. Peek, like the mode. */
+export function heldDispatchProvenance(
+  subChatId: string,
+  taskId: string | undefined,
+  generation: string | undefined,
+): DispatchProvenance | null {
+  if (!taskId || !generation) return null;
+  const record = pendingDispatchMode.get(dispatchKey(subChatId, taskId));
+  // No TTL: the generation is the proof, and a prompt may wait behind a long turn. Consume, forget
+  // and redelivery clear a flow record.
+  if (record?.payload?.dispatchGeneration !== generation) return null;
+  return { taskId, dispatchedAt: generation };
+}
+
+/** The task's latest dispatch, for one redelivery; null when none is held (restart, evicted). */
+export function getRedeliverableDispatch(
+  taskId: string,
+): { startMode: ResolvedTaskStartMode; payload: TaskChatReadyData } | null {
+  const held = lastDispatchByTask.get(taskId);
+  return held ? { startMode: held.startMode, payload: held.payload } : null;
+}
+
 export function registerPendingDispatchMode(
   subChatId: string,
   taskId: string,
@@ -108,6 +146,17 @@ export function registerPendingDispatchMode(
     registeredAtMs: Date.now(),
     payload,
   });
+  if (payload) {
+    lastDispatchByTask.delete(taskId);
+    lastDispatchByTask.set(taskId, { startMode, payload, heldAtMs: Date.now() });
+    // Insertion order is dispatch order: past the cap, the oldest dispatches are long settled.
+    for (const [oldest, held] of lastDispatchByTask) {
+      if (lastDispatchByTask.size <= DISPATCHED_SOFT_CAP) break;
+      const young = Date.now() - held.heldAtMs < REDELIVERY_HORIZON_MS;
+      if (young && lastDispatchByTask.size <= HELD_DISPATCH_HARD_CAP) break;
+      lastDispatchByTask.delete(oldest);
+    }
+  }
   const nowMs = Date.now();
   dispatchedSubChatByTask.delete(taskId);
   dispatchedSubChatByTask.set(taskId, { subChatId, registeredAtMs: nowMs });
@@ -122,12 +171,14 @@ export function registerPendingDispatchMode(
 export function matchDispatchModeForSend(
   subChatId: string,
   dispatchTaskId: string | undefined,
+  generation?: string,
 ): ChatMode | null {
   if (!dispatchTaskId) return null;
   const key = dispatchKey(subChatId, dispatchTaskId);
   const record = pendingDispatchMode.get(key);
-  if (!record) return null;
-  if (Date.now() - record.registeredAtMs > PENDING_DISPATCH_TTL_MS) {
+  if (!record || !isSendForRecord(record, generation)) return null;
+  const expired = Date.now() - record.registeredAtMs > PENDING_DISPATCH_TTL_MS;
+  if (expired && !record.payload?.dispatchGeneration) {
     pendingDispatchMode.delete(key);
     return null;
   }
@@ -154,7 +205,93 @@ export function isDispatchPending(subChatId: string, taskId: string): boolean {
   return pendingDispatchMode.has(dispatchKey(subChatId, taskId));
 }
 
-/** Settle a matched record after its send's mode write landed (write failure → record stays). */
-export function consumeDispatchMode(subChatId: string, dispatchTaskId: string): void {
-  pendingDispatchMode.delete(dispatchKey(subChatId, dispatchTaskId));
+type PendingDispatchRecord = NonNullable<ReturnType<typeof pendingDispatchMode.get>>;
+
+/** sc-2775: a flow record belongs only to the send naming its attempt — a stale attempt's send must
+ * neither take the current attempt's mode nor settle its record. Generation-less records match. */
+function isSendForRecord(record: PendingDispatchRecord, generation: string | undefined): boolean {
+  const held = record.payload?.dispatchGeneration;
+  return held === undefined || held === generation;
+}
+
+/** Settle a matched record after its send's mode write landed (write failure → record stays).
+ * Returns it so a send that then fails to start a turn can {@link restoreDispatchRecord} it. */
+export function consumeDispatchMode(
+  subChatId: string,
+  dispatchTaskId: string,
+  generation?: string,
+): PendingDispatchRecord | undefined {
+  const key = dispatchKey(subChatId, dispatchTaskId);
+  const record = pendingDispatchMode.get(key);
+  if (record && !isSendForRecord(record, generation)) return undefined;
+  pendingDispatchMode.delete(key);
+  if (record) noteDispatchSend(dispatchTaskId);
+  return record;
+}
+
+/** taskId → when a send of its dispatch last landed in main (sc-2775). */
+const lastSendByTask = new Map<string, number>();
+/** A send this recent may still be on its way to admission: redelivering now would run it twice. */
+const SEND_IN_FLIGHT_MS = 2 * 60 * 1000;
+
+function noteDispatchSend(taskId: string): void {
+  const now = Date.now();
+  lastSendByTask.delete(taskId);
+  lastSendByTask.set(taskId, now);
+  // Bounded: an entry only matters for SEND_IN_FLIGHT_MS, and never more than the soft cap are kept
+  // (insertion order is send order, so the oldest go first).
+  for (const [id, at] of lastSendByTask) {
+    if (now - at < SEND_IN_FLIGHT_MS && lastSendByTask.size <= DISPATCHED_SOFT_CAP) break;
+    lastSendByTask.delete(id);
+  }
+}
+
+export function isDispatchSendInFlight(taskId: string): boolean {
+  const at = lastSendByTask.get(taskId);
+  if (at === undefined) return false;
+  if (Date.now() - at < SEND_IN_FLIGHT_MS) return true;
+  lastSendByTask.delete(taskId);
+  return false;
+}
+
+/** sc-2775: a consumed dispatch whose send never started a turn is still pending — unless it is no
+ * longer the task's latest dispatch. */
+export function restoreDispatchRecord(
+  subChatId: string,
+  dispatchTaskId: string,
+  record: PendingDispatchRecord,
+): void {
+  const key = dispatchKey(subChatId, dispatchTaskId);
+  const latest = lastDispatchByTask.get(dispatchTaskId)?.payload;
+  if (latest !== record.payload || pendingDispatchMode.has(key)) return;
+  pendingDispatchMode.set(key, record);
+}
+
+/** sc-2775: a dispatch the watchdog failed must not be pulled or re-sent later. */
+export function forgetDispatch(subChatId: string, taskId: string): void {
+  pendingDispatchMode.delete(dispatchKey(subChatId, taskId));
+  lastDispatchByTask.delete(taskId);
+  lastSendByTask.delete(taskId);
+}
+
+/** The live dispatched turns, by abort signal: which step each one is delivering (sc-2775). */
+const deliveringTurns = new WeakMap<AbortSignal, string>();
+
+export function markDeliveringTurn(signal: AbortSignal, taskId: string): void {
+  deliveringTurns.set(signal, taskId);
+}
+
+export function unmarkDeliveringTurn(signal: AbortSignal): void {
+  deliveringTurns.delete(signal);
+}
+
+export function deliveringTaskOf(signal: AbortSignal): string | undefined {
+  return deliveringTurns.get(signal);
+}
+
+/** True while the sub-chat's live turn is delivering this task's dispatch. Synchronous, so a claim
+ * reading it right before its own write cannot miss a delivery that is mid-stamp. */
+export function isTaskBeingDelivered(taskId: string, subChatId: string): boolean {
+  const live = getActiveExecution(subChatId);
+  return live !== undefined && deliveringTurns.get(live.controller.signal) === taskId;
 }

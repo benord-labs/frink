@@ -52,11 +52,16 @@ import {
   taskExecutionErrorAtomFamily,
 } from '../atoms';
 import type { ExecutionAccountKind } from '../lib/resolve-execution-model-cli';
-import { createTaskExecutionErrorSignal, isExecutionLevelFailure } from '../main/active-chat/utils';
+import { createTaskExecutionErrorSignal } from '../main/active-chat/utils';
 import { applyRollbackFilter } from '../stores/message-store';
 import { useStreamingStatusStore } from '../stores/streaming-status-store';
 import { useAgentSubChatStore } from '../stores/sub-chat-store';
 import { applyAskUserQuestionChunk } from './ask-user-question-chunks';
+import {
+  dispatchFailureFollowups,
+  shouldRollbackExecutionError,
+  surfaceExecutionError,
+} from './execution-error-surface';
 import {
   buildTurnHistory,
   type ExtractedImage,
@@ -99,47 +104,6 @@ type WebSocketChatTransportConfig = {
 
 function normalizeErrorText(raw: string): string {
   return normalizeErrorTextPrefix(raw, { stripRetriablePrefix: true });
-}
-
-function shouldRollbackExecutionError(rawError: string, category: string): boolean {
-  return isExecutionLevelFailure(rawError, category);
-}
-
-/**
- * Post-surface follow-ups for a failed turn: roll the send back only for execution-level
- * failures, and offer a persisted Retry only for retryable categories. The retry write is last,
- * deliberately — it is localStorage-backed and can throw (quota); nothing may depend on it.
- */
-function dispatchFailureFollowups(
-  errorText: string,
-  category: string,
-  rollback: () => void,
-  persistRetry: (errorCategory: string, rawErrorText: string) => void,
-): void {
-  if (shouldRollbackExecutionError(errorText, category)) {
-    rollback();
-  }
-  if (shouldPersistChatRetry(category)) {
-    persistRetry(category, errorText);
-  }
-}
-
-/** Latch the per-sub-chat error signal and show the category's toast (or the generic one). */
-function surfaceExecutionError(
-  subChatId: string,
-  errorText: string,
-  category: string | undefined,
-): void {
-  appStore.set(
-    taskExecutionErrorAtomFamily(subChatId),
-    createTaskExecutionErrorSignal(errorText, category),
-  );
-  const toastConfig = ERROR_TOAST_CONFIG[category ?? 'UNKNOWN'];
-  toast.error(toastConfig?.title ?? 'Execution failed', {
-    description: toastConfig?.description || errorText || 'Unknown error',
-    action: toastConfig?.action,
-    ...toastDedupId(toastConfig, subChatId),
-  });
 }
 
 function isUserInitiatedAbortError(rawError: string): boolean {
@@ -236,9 +200,10 @@ export class WebSocketChatTransport implements ChatTransport<UIMessage> {
     // Machine-dispatch identity (queue item → metadata): forwarded top-level so main binds the
     // turn's mode to the dispatching task.
     const lastUserMetadata = lastUser?.metadata as
-      | { source?: string; dispatchTaskId?: string }
+      | { source?: string; dispatchTaskId?: string; dispatchGeneration?: string }
       | undefined;
     const dispatchTaskId = lastUserMetadata?.dispatchTaskId || undefined;
+    const dispatchGeneration = lastUserMetadata?.dispatchGeneration || undefined;
 
     // A human reply on a parked flow plan approves it (`flow-agent-node-mode`); dispatched
     // prompts and armed toggles are exempt. The wipeable store's mode is never consulted.
@@ -389,6 +354,7 @@ export class WebSocketChatTransport implements ChatTransport<UIMessage> {
               // The dispatching task is also the Flow step this send expects; user replies carry
               // neither and target whichever step currently drives the sub-chat.
               ...(dispatchTaskId ? { dispatchTaskId, expectedFlowTaskId: dispatchTaskId } : {}),
+              ...(dispatchTaskId && dispatchGeneration ? { dispatchGeneration } : {}),
             }),
             timeoutPromise,
           ]);

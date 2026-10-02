@@ -22,6 +22,8 @@ const dbProjectState = vi.hoisted(() => ({
   projectRow: null as { id: string; name: string; path: string } | null,
   /** Every `.set()` payload the stub received — how a task-result write is observed. */
   updates: new Array<{ result?: object }>(),
+  /** Rows an UPDATE … RETURNING yields (default none: the guarded write matched nothing). */
+  returning: [] as object[],
 }));
 
 const dynamicChatServerMocks = vi.hoisted(() => ({
@@ -196,7 +198,7 @@ vi.mock('../db', () => ({
         dbProjectState.updates.push(values);
         return builder;
       },
-      returning: () => Promise.resolve([]),
+      returning: () => Promise.resolve(dbProjectState.returning),
     };
     return builder as unknown;
   }),
@@ -316,6 +318,7 @@ import type { TaskStopHook } from '../task-stop-hook';
 import { clearActiveFlowTaskForChatIfMatches, setActiveFlowTaskForChat } from '../task-executor';
 import { armWakePump, type WakeHold } from './claude-wake-hold';
 import * as socketClient from './client';
+import { UNDELIVERED_FLOW_STEP_REMINDER } from './operator-reminders';
 import * as liveStreams from './streaming/live-stream/registry';
 import {
   _hasActiveExecutionForTests,
@@ -824,6 +827,149 @@ describe('local-only dispatch with unresolved machineId', () => {
     await handleRemoteExecute({ ...basePayload, message: 'answer quietly' });
 
     await expect(quietEndMarkerWritten()).resolves.toBe(true);
+  });
+
+  // sc-2775 wiring: the arming decision reaches every consumer of the turn's signal target —
+  // quiet-end marker, Codex signal tool, dispatch-start stamp.
+  describe('undelivered flow dispatch (sc-2775)', () => {
+    const SHIP_TASK = 'ship-task';
+
+    function undeliveredFlowStep(): void {
+      dbProjectState.updates.length = 0;
+      // SAFETY: the executor reads only chat.taskId and account from this row.
+      vi.mocked(getChatWithProjectAccount).mockResolvedValueOnce({
+        chat: { taskId: 'edge-cases-task' },
+        account: null,
+      } as Awaited<ReturnType<typeof getChatWithProjectAccount>>);
+      vi.mocked(getFlowDriveInfoForSubChat).mockResolvedValueOnce({
+        active: true,
+        autoApprovePlan: false,
+        taskId: SHIP_TASK,
+      });
+      // SAFETY: task linkage reads only id/source/status/flowRunId/result.
+      vi.mocked(getTaskById).mockResolvedValue({
+        id: SHIP_TASK,
+        source: 'flow',
+        status: 'running',
+        flowRunId: 'ship-run',
+        result: { subChatId: basePayload.subChatId, dispatchedAt: '2026-10-02T10:30:13.000Z' },
+      } as Awaited<ReturnType<typeof getTaskById>>);
+    }
+
+    const quietClaudeTurn = () =>
+      claudeQueryMock.mockImplementationOnce(() => {
+        const chunks: UIMessageChunk[] = [
+          { type: 'finish', messageMetadata: { sessionId: 'sess-sc-2775' } },
+        ];
+        const query = (async function* () {
+          yield { type: 'result', chunks };
+        })();
+        return Object.assign(query, { interrupt: vi.fn(async () => {}) });
+      });
+
+    async function wroteResultKey(key: string): Promise<boolean> {
+      const { SQL, StringChunk } = await import('drizzle-orm');
+      return dbProjectState.updates.some(
+        ({ result }) =>
+          result instanceof SQL &&
+          result.queryChunks.some(
+            (chunk) => chunk instanceof StringChunk && chunk.value.join('').includes(key),
+          ),
+      );
+    }
+
+    it('an operator turn neither arms nor stamps the undelivered step (Claude)', async () => {
+      undeliveredFlowStep();
+      quietClaudeTurn();
+
+      await handleRemoteExecute({ ...basePayload, message: 'why has the flow stopped?' });
+
+      await expect(wroteResultKey('quietEndedAt')).resolves.toBe(false);
+      await expect(wroteResultKey('dispatchStartedAt')).resolves.toBe(false);
+    });
+
+    it('a mobile reply asserting the step is still run, but not armed against it', async () => {
+      undeliveredFlowStep();
+      quietClaudeTurn();
+
+      await handleRemoteExecute({
+        ...basePayload,
+        message: 'reply from the phone',
+        expectedFlowTaskId: SHIP_TASK,
+      });
+
+      expect(socketClient.sendErrorDirect).not.toHaveBeenCalledWith(
+        expect.objectContaining({ category: 'FLOW_RUN_ENDED' }),
+      );
+      expect(claudeQueryMock).toHaveBeenCalled();
+      await expect(wroteResultKey('quietEndedAt')).resolves.toBe(false);
+    });
+
+    it("the step's own dispatched turn stamps it started and stays armed", async () => {
+      undeliveredFlowStep();
+      quietClaudeTurn();
+      dbProjectState.returning = [{ id: SHIP_TASK }];
+
+      await handleRemoteExecute({
+        ...basePayload,
+        message: 'Ship the PR',
+        dispatch: { taskId: SHIP_TASK, dispatchedAt: '2026-10-02T10:30:13.000Z' },
+        expectedFlowTaskId: SHIP_TASK,
+      });
+
+      await expect(wroteResultKey('dispatchStartedAt')).resolves.toBe(true);
+      await expect(wroteResultKey('quietEndedAt')).resolves.toBe(true);
+      dbProjectState.returning = [];
+    });
+
+    it('a dispatched turn whose attempt was superseded before its stamp is not armed', async () => {
+      undeliveredFlowStep();
+      quietClaudeTurn();
+
+      await handleRemoteExecute({
+        ...basePayload,
+        message: 'Ship the PR',
+        dispatch: { taskId: SHIP_TASK, dispatchedAt: '2026-10-02T10:30:13.000Z' },
+        expectedFlowTaskId: SHIP_TASK,
+      });
+
+      await expect(wroteResultKey('dispatchStartedAt')).resolves.toBe(true);
+      await expect(wroteResultKey('quietEndedAt')).resolves.toBe(false);
+    });
+
+    it('a delayed turn from an earlier attempt of the same step is not armed against the retry', async () => {
+      undeliveredFlowStep();
+      quietClaudeTurn();
+
+      await handleRemoteExecute({
+        ...basePayload,
+        message: 'Ship the PR (first attempt)',
+        dispatch: { taskId: SHIP_TASK, dispatchedAt: '2026-10-02T09:00:00.000Z' },
+        expectedFlowTaskId: SHIP_TASK,
+      });
+
+      await expect(wroteResultKey('quietEndedAt')).resolves.toBe(false);
+    });
+
+    it('a Codex operator turn gets no signal tool and is told why', async () => {
+      undeliveredFlowStep();
+      vi.mocked(getDefaultClaudeCodeToken).mockResolvedValueOnce({
+        token: null,
+        isApiKey: false,
+        type: 'codex',
+        label: 'codex-test',
+        passthrough: true,
+      });
+      vi.mocked(runCodexAgent).mockImplementationOnce(async function* () {
+        yield { type: 'finish', messageMetadata: { sessionId: 'codex-sc-2775' } } as UIMessageChunk;
+      });
+
+      await handleRemoteExecute({ ...basePayload, message: 'is the flow stuck?' });
+
+      const call = vi.mocked(runCodexAgent).mock.calls[0]?.[0];
+      expect(call?.taskSignalEnabled).toBe(false);
+      expect(call?.prompt).toContain(UNDELIVERED_FLOW_STEP_REMINDER);
+    });
   });
 
   describe('user-message delivery (sc-3666)', () => {

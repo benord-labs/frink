@@ -139,6 +139,9 @@ import {
 import { logAdoptedTurnEnd, turnEndMustDispose } from './execution/wake-hold-signal';
 import type { WakePump } from './execution/wake-pump-types';
 import {
+  abortReplacedTurn,
+  getTaskRowForResume,
+  recordDispatchTurnStart,
   requiresStrictSignalFinalization,
   resolveFlowSignalArming,
   finalizeFlowSignalBeforeSessionDisposition as settleSignal,
@@ -512,6 +515,8 @@ type ExecuteRequestPayload = {
    * continuation task id instead of the chat row's possibly stale `task_id`.
    */
   expectedFlowTaskId?: string;
+  /** The dispatch attempt this turn delivers; absent for user-typed and mobile sends. */
+  dispatch?: import('../task-executor/dispatch-registry').DispatchProvenance;
   /**
    * The originating `webContents.id` of the window that sent this turn (for aborting
    * only that window's agents on reload/crash).
@@ -524,24 +529,6 @@ type ExecuteRequestPayload = {
 /**
  * Format conversation history as context for Claude
  */
-type TasksRepo = typeof import('../db/repos/tasks');
-type SignalTaskRow = Awaited<ReturnType<TasksRepo['getTaskById']>>;
-
-/**
- * Resume reads reuse the disarm-check prefetch when it already holds the target row, so a
- * follow-up turn does a single task read; a different target (the flow-driving task) fetches
- * its own row.
- */
-async function getTaskRowForResume(
-  db: Parameters<TasksRepo['getTaskById']>[0],
-  targetTaskId: string,
-  prefetched: SignalTaskRow,
-): Promise<SignalTaskRow> {
-  if (prefetched?.id === targetTaskId) return prefetched;
-  const { getTaskById } = await import('../db/repos/tasks');
-  return getTaskById(db, targetTaskId);
-}
-
 export {
   buildPlanFallbackSends,
   emitPlanFallbackSends,
@@ -713,7 +700,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
     });
     taskIdForExecution = resolvedContinuation.taskIdForExecution;
     flowContinuationClearId = resolvedContinuation.flowContinuationClearId;
-    const armed = await resolveFlowSignalArming(subChatId, taskIdForExecution);
+    const armed = await resolveFlowSignalArming(subChatId, taskIdForExecution, payload.dispatch);
     if (expectedFlowTaskId && armed.effectiveSignalTaskId !== expectedFlowTaskId) {
       // Decline stale replies before claiming the chat or parking its successor.
       const error = Object.assign(new Error('This Flow step changed. Refresh before replying.'), {
@@ -742,7 +729,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
         `[Socket Executor] Aborting previous execution for ${subChatId} (duplicate request)`,
       );
       clearPendingApprovals('Superseded by new execution.', subChatId);
-      existing.controller.abort();
+      abortReplacedTurn(armed, existing.controller, payload.dispatch);
     }
     const abortController = new AbortController();
     executionAbortController = abortController;
@@ -755,6 +742,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
     });
     executionAdmissionAcknowledged = true;
     payload.onExecutionStarted?.();
+    await recordDispatchTurnStart(armed, payload.dispatch, subChatId, abortController.signal);
     executionStreamEpoch = getExecutionStreamEpoch(subChatId, msgId);
     if (!executionStreamEpoch) throw new Error('Active execution was registered without an epoch');
     recordLiveStreamStart({
@@ -1006,6 +994,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       previousMode: lastExecutedModeBySubChat.get(subChatId),
       hasResumeSession,
       taskSignalDisarmed,
+      undeliveredFlowStep: armed.undeliveredDispatchTaskId !== null,
       agentSawPriorTurns: willReplayHistoryViaResume || (history?.length ?? 0) > 0,
       planOwesNoFinishSignal: mode === 'plan' && Boolean(signalTaskId) && !isFlowExecutionTurn,
     });

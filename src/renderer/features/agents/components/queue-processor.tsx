@@ -15,19 +15,14 @@ import { appStore } from '../../../lib/jotai-store';
 import { api } from '../../../lib/mock-api';
 import { trpc } from '../../../lib/trpc';
 import { notifySidebarChatActivity } from '../../sidebar/unified/sidebar-chat-activity';
-import {
-  approvedPlanContextAtomFamily,
-  clearLoading,
-  loadingSubChatsAtom,
-  pendingModeIntentAtomFamily,
-  setLoading,
-} from '../atoms';
-import type { AgentQueueItem } from '../lib/queue-utils';
+import { clearLoading, loadingSubChatsAtom, setLoading } from '../atoms';
+import { dispatchMetadata, isSupersededDispatch } from '../lib/queue-utils';
 import { invalidateTaskQueries } from '../main/active-chat/utils/task-query';
 import { agentChatStore, onChatRegistered } from '../stores/agent-chat-store';
 import { useMessageQueueStore } from '../stores/message-queue-store';
 import { useStreamingStatusStore } from '../stores/streaming-status-store';
-import { armApprovedPlanState, useAgentSubChatStore } from '../stores/sub-chat-store';
+import { useAgentSubChatStore } from '../stores/sub-chat-store';
+import { armPlanApproval, disarmFailedPlanApproval } from './queue-plan-approval';
 
 /** Delay between processing queue items (ms). Exported for tests. */
 export const QUEUE_PROCESS_DELAY_MS = 1000;
@@ -47,22 +42,6 @@ type GenericDesktopListener = (
   channel: string,
   callback: (payload?: unknown) => void,
 ) => (() => void) | undefined;
-
-function armPlanApproval(subChatId: string, item: AgentQueueItem): void {
-  const context = item.approvedPlanContext;
-  if (!context) return;
-  armApprovedPlanState(subChatId, context);
-  appStore.set(pendingModeIntentAtomFamily(subChatId), 'agent');
-}
-
-function disarmFailedPlanApproval(subChatId: string, item: AgentQueueItem): void {
-  const context = item.approvedPlanContext;
-  if (!context) return;
-  const contextAtom = approvedPlanContextAtomFamily(subChatId);
-  if (appStore.get(contextAtom) === context) appStore.set(contextAtom, null);
-  const intentAtom = pendingModeIntentAtomFamily(subChatId);
-  if (appStore.get(intentAtom) === 'agent') appStore.set(intentAtom, null);
-}
 
 /**
  * Global queue processor component.
@@ -387,10 +366,7 @@ export function QueueProcessor() {
         // `flow-agent-node-mode`); dispatchTaskId lets main bind the turn's mode to the
         // dispatching task by identity. Auto Mode is not carried here — the Flow seeds the
         // chat's own setting on dispatch instead.
-        const metadata = {
-          ...(item.source ? { source: item.source } : {}),
-          ...(item.dispatchTaskId ? { dispatchTaskId: item.dispatchTaskId } : {}),
-        };
+        const metadata = dispatchMetadata(item);
         await chat.sendMessage({
           role: 'user',
           parts,
@@ -398,8 +374,12 @@ export function QueueProcessor() {
         });
       } catch (_error) {
         disarmFailedPlanApproval(subChatId, item);
-        // Requeue the item at the front so it can be retried
-        useMessageQueueStore.getState().prependItem(subChatId, item);
+        // Requeue the item at the front so it can be retried — unless a newer attempt of its dispatch
+        // has been queued since (sc-2775): resending the stale one would only hold that one back.
+        const queue = useMessageQueueStore.getState().getQueue(subChatId);
+        if (!isSupersededDispatch(item, queue)) {
+          useMessageQueueStore.getState().prependItem(subChatId, item);
+        }
 
         // Set error status (will be cleared on next successful send or manual retry)
         useStreamingStatusStore.getState().setStatus(subChatId, 'error');

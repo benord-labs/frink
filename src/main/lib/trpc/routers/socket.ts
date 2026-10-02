@@ -136,6 +136,8 @@ export const socketRouter = router({
         // Machine-dispatch identity: binds the turn's mode to the dispatching task in main
         // (dispatch-registry; decision `sub-chat-mode-ownership`, machine-turn amendment).
         dispatchTaskId: z.string().min(1).optional(),
+        // sc-2775: which dispatch attempt this send delivers; checked against the held dispatch.
+        dispatchGeneration: z.string().min(1).optional(),
       }),
     )
     .mutation(async ({ input, ctx }) => {

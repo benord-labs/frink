@@ -5,11 +5,14 @@ import {
   consumeDispatchMode,
   getActiveFlowTaskForChat,
   getDispatchedSubChatForTask,
+  getRedeliverableDispatch,
   isDispatchPending,
+  isDispatchSendInFlight,
   listUndeliveredDispatches,
   matchDispatchModeForSend,
   registerPendingDispatchMode,
   resolveFlowContinuationExecutionTask,
+  restoreDispatchRecord,
   setActiveFlowTaskForChat,
 } from './dispatch-registry';
 import type { TaskChatReadyData } from '../../../shared/types/task-chat-ready';
@@ -272,5 +275,115 @@ describe('listUndeliveredDispatches', () => {
     } finally {
       nowSpy.mockRestore();
     }
+  });
+});
+
+describe('getRedeliverableDispatch (sc-2775 watchdog)', () => {
+  const payload: TaskChatReadyData = {
+    chatId: 'redeliver-chat',
+    subChatId: 'redeliver-sub',
+    taskId: 'task-redeliver',
+    prompt: 'Ship the PR',
+    projectId: null,
+    projectPath: null,
+    startMode: 'execute',
+    skipReview: true,
+    headless: true,
+  };
+
+  it('keeps the latest dispatch after its send lands, so a lost turn can be re-sent', () => {
+    registerPendingDispatchMode('redeliver-sub', 'task-redeliver', 'execute', payload);
+    consumeDispatchMode('redeliver-sub', 'task-redeliver');
+
+    expect(getRedeliverableDispatch('task-redeliver')).toEqual({ startMode: 'execute', payload });
+  });
+
+  it('holds nothing for a dispatch registered without a payload', () => {
+    registerPendingDispatchMode('redeliver-sub', 'task-no-payload', 'execute');
+    expect(getRedeliverableDispatch('task-no-payload')).toBeNull();
+  });
+});
+
+describe('restoreDispatchRecord (sc-2775)', () => {
+  const attempt = (dispatchGeneration: string): TaskChatReadyData => ({
+    chatId: 'restore-chat',
+    subChatId: 'restore-sub',
+    taskId: 'task-restore',
+    prompt: 'Ship the PR',
+    projectId: null,
+    projectPath: null,
+    startMode: 'execute',
+    skipReview: true,
+    headless: true,
+    dispatchGeneration,
+  });
+
+  afterEach(() => consumeDispatchMode('restore-sub', 'task-restore', 'gen-b'));
+
+  it('restores a consumed dispatch whose turn never started', () => {
+    registerPendingDispatchMode('restore-sub', 'task-restore', 'execute', attempt('gen-a'));
+    const record = consumeDispatchMode('restore-sub', 'task-restore', 'gen-a');
+    if (!record) throw new Error('expected a consumed record');
+
+    restoreDispatchRecord('restore-sub', 'task-restore', record);
+
+    expect(isDispatchPending('restore-sub', 'task-restore')).toBe(true);
+    consumeDispatchMode('restore-sub', 'task-restore', 'gen-a');
+  });
+
+  it('never resurrects an attempt superseded by a newer one, even once that is consumed', () => {
+    registerPendingDispatchMode('restore-sub', 'task-restore', 'execute', attempt('gen-a'));
+    const stale = consumeDispatchMode('restore-sub', 'task-restore', 'gen-a');
+    if (!stale) throw new Error('expected a consumed record');
+    registerPendingDispatchMode('restore-sub', 'task-restore', 'execute', attempt('gen-b'));
+    consumeDispatchMode('restore-sub', 'task-restore', 'gen-b');
+
+    restoreDispatchRecord('restore-sub', 'task-restore', stale);
+
+    expect(isDispatchPending('restore-sub', 'task-restore')).toBe(false);
+  });
+});
+
+describe('held dispatches past the soft cap (sc-2775)', () => {
+  it('never evicts one the watchdog may still need to redeliver', () => {
+    const payload = (taskId: string): TaskChatReadyData => ({
+      chatId: 'cap-chat',
+      subChatId: 'cap-sub',
+      taskId,
+      prompt: 'p',
+      projectId: null,
+      projectPath: null,
+      startMode: 'execute',
+      skipReview: true,
+      headless: true,
+    });
+    for (let i = 0; i <= 600; i += 1) {
+      registerPendingDispatchMode('cap-sub', `cap-${i}`, 'execute', payload(`cap-${i}`));
+    }
+
+    expect(getRedeliverableDispatch('cap-0')).not.toBeNull();
+    for (let i = 0; i <= 600; i += 1) consumeDispatchMode('cap-sub', `cap-${i}`);
+  });
+});
+
+describe('isDispatchSendInFlight (sc-2775)', () => {
+  // A popped prompt still on its way to admission must not be redelivered into a double run.
+  it('holds off redelivery for a little while after a send of the dispatch lands', () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    registerPendingDispatchMode('flight-sub', 'task-flight', 'execute');
+    consumeDispatchMode('flight-sub', 'task-flight');
+    expect(isDispatchSendInFlight('task-flight')).toBe(true);
+    now.mockReturnValue(1_000_000 + 3 * 60_000);
+    expect(isDispatchSendInFlight('task-flight')).toBe(false);
+    now.mockRestore();
+  });
+
+  it('keeps no more than the soft cap of recent sends', () => {
+    for (let i = 0; i <= 600; i += 1) {
+      registerPendingDispatchMode('burst-sub', `burst-${i}`, 'execute');
+      consumeDispatchMode('burst-sub', `burst-${i}`);
+    }
+    expect(isDispatchSendInFlight('burst-0')).toBe(false);
+    expect(isDispatchSendInFlight('burst-600')).toBe(true);
   });
 });

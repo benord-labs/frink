@@ -31,6 +31,11 @@ export const RESUME_STALE_RESULT_KEYS = [
   'resumedBy',
   'resumedAt',
   'previousStatus',
+  // A resume in place sends no new dispatch: stale delivery stamps would bar the reply that
+  // resumes the step from signalling it, and the watchdog would fail it again (sc-2775).
+  'dispatchedAt',
+  'dispatchStartedAt',
+  'dispatchRedeliveredAt',
 ] as const;
 
 /** What a RETRY (tasks.ts `retryTaskDetailed`) clears so the next attempt inherits no stale failure

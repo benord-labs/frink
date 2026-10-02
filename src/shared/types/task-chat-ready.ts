@@ -41,10 +41,14 @@ export type TaskChatReadyData = {
    * the prompt already exists as a persisted user message from the failed attempt.
    */
   isRetry?: boolean;
+  /** Which dispatch attempt this is (the claim's `result.dispatchedAt`). Echoed back on the send so
+   * main can tell this attempt's turn from an earlier attempt's of the same task (sc-2775). */
+  dispatchGeneration?: string;
 };
 
 const requiredStringFields = ['chatId', 'subChatId', 'taskId', 'prompt'] as const;
 const isOptionalString = (value: unknown) => value === undefined || typeof value === 'string';
+const isNonEmptyString = (value: unknown) => typeof value === 'string' && value.length > 0;
 const isOptionalBoolean = (value: unknown) => value === undefined || typeof value === 'boolean';
 
 function hasRequiredTaskChatReadyFields(candidate: Record<string, unknown>): boolean {
@@ -64,7 +68,8 @@ function hasOptionalTaskChatReadyFields(candidate: Record<string, unknown>): boo
     (candidate.codexSpeed === undefined || isCodexSpeed(candidate.codexSpeed)) &&
     isOptionalString(candidate.model) &&
     isOptionalString(candidate.executionLeaseId) &&
-    isOptionalBoolean(candidate.isRetry)
+    isOptionalBoolean(candidate.isRetry) &&
+    (candidate.dispatchGeneration === undefined || isNonEmptyString(candidate.dispatchGeneration))
   );
 }
 
