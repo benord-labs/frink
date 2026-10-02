@@ -1,7 +1,11 @@
 import type { CanUseTool } from '@anthropic-ai/claude-agent-sdk';
 import { isClaudePermissionGatedTool, resolveToolPermissionPath } from '../../../permissions';
 import { createSubagentAllowlistHook } from '../../../permissions/subagent-allowlist-hook';
-import { createTaskStopHook, type TaskStopHook } from '../../../task-stop-hook';
+import {
+  createTaskStopHook,
+  HUMAN_INTERJECTION_STOP_REASON,
+  type TaskStopHook,
+} from '../../../task-stop-hook';
 import { turnOwesTerminalSignal } from '../../../trpc/routers/frink-task-signal';
 import {
   hasLatestTaskSignalFor,
@@ -175,6 +179,8 @@ function createClaudeStopHook(activeTurn: ActiveTurn): TaskStopHook {
       );
     },
     isAborted,
+    blockReason: () =>
+      activeTurn()?.execution.humanInterjection ? HUMAN_INTERJECTION_STOP_REASON : undefined,
     onAllow: async () => {
       const turn = activeTurn();
       if (!turn?.execution.taskSignalReady || !turn.execution.signalTaskId) return;

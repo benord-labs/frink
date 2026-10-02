@@ -10,7 +10,9 @@
  * Extracted from `executor.ts` to keep that file small and make the gating logic unit-testable in
  * isolation (see `operator-reminders.test.ts`).
  */
+import log from 'electron-log';
 import { PLAN_MODE_NO_FINISH_SIGNAL } from '../../../shared/lib/task-agent-lifecycle-prompt';
+import { TOOL_TASK_SIGNAL_STATES } from '../trpc/routers/frink-task-signal';
 
 // Worded to be unconditionally TRUE for any agent-mode turn: it fires on unknown history too
 // (previousMode is an in-memory map, wiped by app restart and skipped by error-path turns), so it
@@ -27,6 +29,70 @@ export const DEBUG_MODE_EXIT_REMINDER =
 // gone instead of letting it invent a reason. A notice only; it does not re-arm.
 export const TASK_SIGNAL_DISARMED_REMINDER =
   'This chat is linked to a task whose lifecycle is already over (it finished, or the task no longer exists), so the frink_task_signal tool is intentionally not available this turn. If you called it earlier in this conversation, that was a prior active run — there is nothing left to signal now. Only frink_task_signal is unavailable; your other tools (Bash, Read, Write, Edit, MCP tools, etc.) remain available — handle the user request normally, just do not look for or attempt to call frink_task_signal.';
+
+/** The flow step a person's message landed on, read BEFORE the follow-up resume scrubs its signal. */
+export type HumanInterjectionContext = {
+  stepTitle: string | null;
+  /** Task status at turn start, e.g. `needs_attention` (parked) or `running`. */
+  priorStatus: string | null;
+  /** State of the step's last `frink_task_signal`, or null when it has none the agent could send. */
+  priorSignalState: string | null;
+  /** The quiet-idle sweep parked it for ending silently (a synthetic, non-sendable state). */
+  endedWithoutSignal?: boolean;
+  /** A plan turn ends with ExitPlanMode, not a terminal signal. */
+  isPlanMode?: boolean;
+};
+
+/** Marks a message a person typed into a Flow step's chat (sc-3214), and what a new signal does now
+ * that the follow-up resumed the step (`flow-park-answer-surface`) and cleared its old one. */
+export function buildHumanInterjectionReminder(ctx: HumanInterjectionContext): string {
+  const step = ctx.stepTitle ? `the flow step "${ctx.stepTitle}"` : 'the current flow step';
+  // Only a parked row is resumed by a follow-up (resumeParkedTaskInPlace); a running one is not.
+  const wasParked = ctx.priorStatus === 'needs_attention' || ctx.priorStatus === 'failed';
+  const before = !ctx.priorSignalState
+    ? wasParked && ctx.endedWithoutSignal
+      ? 'It was parked because it ended without a signal; this message resumed the step.'
+      : 'No signal is recorded for it yet.'
+    : wasParked
+      ? `It was parked after signalling \`${ctx.priorSignalState}\`; this message resumed the step, so that signal no longer stands.`
+      : `It last signalled \`${ctx.priorSignalState}\`, and this turn still owes its own signal.`;
+  const resend = ctx.priorSignalState
+    ? `re-send \`${ctx.priorSignalState}\` if it still holds, or the state their input now warrants`
+    : 'with the state that reflects the outcome';
+  const provenance = `This message was typed by a person in this chat. It is NOT the next flow step, and it does not end the flow — you are still inside ${step}.`;
+  if (ctx.isPlanMode) {
+    return `${provenance} Take their input into the plan, then finish by submitting it with ExitPlanMode as usual.`;
+  }
+  return [
+    provenance,
+    before,
+    `Answer the person (act on it if they asked for something), then call frink_task_signal for this step: ${resend}.`,
+    'A new signal replaces the earlier one; the flow advances at most once per step, so it is never double-counted.',
+  ].join(' ');
+}
+
+/**
+ * Read the step context from the turn-start task row — the snapshot taken BEFORE the follow-up
+ * resume scrubs `agentSignal`, so the agent learns what it had signalled.
+ */
+export function humanInterjectionFromTask(
+  task: { title?: string | null; status?: string | null; result?: unknown },
+  isPlanMode: boolean,
+): HumanInterjectionContext {
+  const result = task.result && typeof task.result === 'object' ? task.result : {};
+  const signal = (result as { agentSignal?: unknown }).agentSignal;
+  const state =
+    signal && typeof signal === 'object' ? (signal as { state?: unknown }).state : undefined;
+  // Only echo a state the agent can send back; a synthetic park state would be refused by the tool.
+  const sendable = (TOOL_TASK_SIGNAL_STATES as readonly unknown[]).includes(state);
+  return {
+    stepTitle: task.title || null,
+    priorStatus: task.status ?? null,
+    priorSignalState: sendable ? (state as string) : null,
+    endedWithoutSignal: typeof state === 'string' && !sendable,
+    isPlanMode,
+  };
+}
 
 export type OperatorReminderInputs = {
   /** Current turn mode (e.g. 'plan' | 'debug' | 'agent'). */
@@ -45,6 +111,8 @@ export type OperatorReminderInputs = {
   agentSawPriorTurns: boolean;
   /** A plan turn with a live task to signal, outside a Flow run (whose prompt states the duty). */
   planOwesNoFinishSignal: boolean;
+  /** Set only when a person typed this turn into a chat an armed Flow step drives. */
+  humanInterjection?: HumanInterjectionContext | null;
 };
 
 export type OperatorReminderResult = {
@@ -86,6 +154,9 @@ export function buildOperatorReminders(inputs: OperatorReminderInputs): Operator
   }
   // Per turn rather than in the system prompt, so the prompt (and a warm CLI) stays mode-free.
   if (inputs.planOwesNoFinishSignal) reminders.push(PLAN_MODE_NO_FINISH_SIGNAL);
+  if (inputs.humanInterjection) {
+    reminders.push(buildHumanInterjectionReminder(inputs.humanInterjection));
+  }
   return { reminders, isExitingDebugMode };
 }
 
@@ -108,4 +179,37 @@ export function buildUserPromptSubmitReminderHook(reminders: string[]) {
   return async () => ({
     hookSpecificOutput: { hookEventName: 'UserPromptSubmit' as const, additionalContext },
   });
+}
+
+export type TurnReminderInputs = Omit<OperatorReminderInputs, 'humanInterjection'> & {
+  /** Turn-start row of the Flow step a person typed into (sc-3214), else null. Read BEFORE the
+   * follow-up resume scrubs its agentSignal. */
+  interjectedTask: Parameters<typeof humanInterjectionFromTask>[0] | null;
+  agentRuntime: string;
+  subChatId: string;
+  prompt: string;
+};
+
+/** This turn's reminders per runtime: Claude's ride the UserPromptSubmit hook (caller hands
+ * `reminders` to the turn); Codex has no such channel (sc-996), so they are prepended to `prompt`. */
+export function prepareTurnReminders(inputs: TurnReminderInputs): OperatorReminderResult & {
+  prompt: string;
+} {
+  const { interjectedTask, agentRuntime, subChatId } = inputs;
+  const result = buildOperatorReminders({
+    ...inputs,
+    humanInterjection: interjectedTask
+      ? humanInterjectionFromTask(interjectedTask, inputs.mode === 'plan')
+      : null,
+  });
+  let prompt = inputs.prompt;
+  if (result.reminders.length > 0) {
+    if (agentRuntime !== 'claude')
+      prompt = `${wrapRemindersForPrompt(result.reminders)}\n\n${prompt}`;
+    const via = agentRuntime === 'claude' ? 'UserPromptSubmit hook' : 'prompt prepend';
+    log.info(
+      `[Socket Executor] ${result.reminders.length} operator reminder(s) for ${subChatId} via ${via}`,
+    );
+  }
+  return { ...result, prompt };
 }

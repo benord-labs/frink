@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createTaskStopHook, forgetPendingTask } from './task-stop-hook';
+import {
+  createTaskStopHook,
+  forgetPendingTask,
+  HUMAN_INTERJECTION_STOP_REASON,
+} from './task-stop-hook';
 
 /** Minimal SDK StopHookInput shapes — the SDK always passes the hook input (it is not optional
  * in the HookCallback contract), so every invocation here supplies one. */
@@ -531,6 +535,39 @@ describe('createTaskStopHook', () => {
     const hook = createTaskStopHook({ hasSignal: () => true, isAborted: () => false });
     await hook(stopInput({ background_tasks: [follower('t1', 'gone1')], session_crons: [cron] }));
     expect(hook.lastPendingWork).toEqual({ backgroundTasks: [], sessionCrons: [cron] });
+  });
+});
+
+describe('per-turn block reason (sc-3214)', () => {
+  it('uses the override while it is set and the standard reason otherwise, read per stop', async () => {
+    let humanTurn = true;
+    const hook = createTaskStopHook({
+      hasSignal: () => false,
+      isAborted: () => false,
+      blockReason: () => (humanTurn ? HUMAN_INTERJECTION_STOP_REASON : undefined),
+    });
+    expect(await hook(idleStop())).toEqual({
+      decision: 'block',
+      reason: HUMAN_INTERJECTION_STOP_REASON,
+    });
+    // A warm session reused by a later dispatch turn must not keep the human-turn wording.
+    hook.reset();
+    humanTurn = false;
+    const next = await hook(idleStop());
+    expect(next).toEqual({
+      decision: 'block',
+      reason: expect.stringContaining('frink_task_signal'),
+    });
+    expect((next as { reason: string }).reason).not.toBe(HUMAN_INTERJECTION_STOP_REASON);
+  });
+
+  it('never blocks a signalled human turn just to change the wording', async () => {
+    const hook = createTaskStopHook({
+      hasSignal: () => true,
+      isAborted: () => false,
+      blockReason: () => HUMAN_INTERJECTION_STOP_REASON,
+    });
+    expect(await hook(idleStop())).toEqual({});
   });
 });
 

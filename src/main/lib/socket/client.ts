@@ -10,6 +10,7 @@ import type {
   AssistantMessageMetadata,
   TranscriptTerminalDurability,
 } from '../../../shared/types/assistant-message';
+import { isHiddenWakeMessage } from '../../../shared/lib/message-markers/hidden-wake-marker';
 import type { ChatMode } from '../../../shared/types/chat-mode';
 import type { ExecutionSettings } from '../../../shared/types/execution';
 import type {
@@ -167,6 +168,8 @@ type ExecuteRequestPayload = {
   /** Flow continuation guard — must match active map entry to use continuation task id. */
   expectedFlowTaskId?: string;
   sourceWebContentsId?: number;
+  /** Main-only: a person typed this turn (see {@link isTypedByPerson}). */
+  typedByPerson?: boolean;
   onExecutionStarted?: (error?: Error) => void;
 };
 
@@ -245,6 +248,16 @@ export async function sendMessage(
         }
       : undefined,
   );
+}
+
+/** Did a person type this send (sc-3214)? Main-only: false for any marker a machine send carries
+ * (dispatch id, flow-dispatch source, internal plan context, regenerate, hidden wake text). */
+export function isTypedByPerson(payload: MessageSendPayload, messageText: string): boolean {
+  if (payload.trigger === 'regenerate-message') return false;
+  if (payload.dispatchTaskId || payload.approvedPlanContext) return false;
+  if (isHiddenWakeMessage(messageText)) return false;
+  const metadata = payload.userMessage.metadata as { source?: unknown } | undefined;
+  return metadata?.source !== 'flow-dispatch';
 }
 
 // Reason: Persistence and dispatch share one admission boundary; preserve their ordered writes.
@@ -346,6 +359,7 @@ async function persistAndDispatchMessage(
     navigationSessionId: payload.navigationSessionId,
     expectedFlowTaskId: payload.expectedFlowTaskId,
     sourceWebContentsId: payload.sourceWebContentsId,
+    typedByPerson: isTypedByPerson(payload, messageText),
     // A dispatched turn re-checks its task once registered, closing the Cancel-before-start gap.
     onExecutionStarted: (error?: Error) => {
       onExecutionStarted(error);

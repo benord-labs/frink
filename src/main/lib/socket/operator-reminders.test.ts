@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { PLAN_MODE_NO_FINISH_SIGNAL } from '../../../shared/lib/task-agent-lifecycle-prompt';
 import {
+  buildHumanInterjectionReminder,
   buildOperatorReminders,
   buildUserPromptSubmitReminderHook,
+  humanInterjectionFromTask,
   DEBUG_MODE_EXIT_REMINDER,
   PLAN_MODE_EXIT_REMINDER,
   TASK_SIGNAL_DISARMED_REMINDER,
@@ -139,6 +141,100 @@ describe('buildOperatorReminders', () => {
       planOwesNoFinishSignal: false,
     });
     expect(reminders).toEqual([PLAN_MODE_EXIT_REMINDER, TASK_SIGNAL_DISARMED_REMINDER]);
+  });
+});
+
+describe('human interjection reminder (sc-3214)', () => {
+  const parkedPartial = {
+    title: 'Triage sc-2717',
+    status: 'needs_attention',
+    result: { agentSignal: { state: 'partial', summary: 'edit denied' } },
+  };
+
+  it('is emitted only when the turn carries a human interjection', () => {
+    expect(buildOperatorReminders({ ...base, humanInterjection: null }).reminders).toEqual([]);
+    const { reminders } = buildOperatorReminders({
+      ...base,
+      humanInterjection: humanInterjectionFromTask(parkedPartial, false),
+    });
+    expect(reminders).toHaveLength(1);
+    expect(reminders[0]).toContain('typed by a person');
+  });
+
+  it('names the step and the parked signal read from the pre-resume row', () => {
+    const text = buildHumanInterjectionReminder(humanInterjectionFromTask(parkedPartial, false));
+    expect(text).toContain('"Triage sc-2717"');
+    expect(text).toContain('parked after signalling `partial`');
+    expect(text).toContain('re-send `partial` if it still holds');
+    expect(text).toContain('advances at most once');
+  });
+
+  it('says no signal is recorded when the step has none yet', () => {
+    const text = buildHumanInterjectionReminder(
+      humanInterjectionFromTask({ title: 'Build', status: 'running', result: {} }, false),
+    );
+    expect(text).toContain('No signal is recorded for it yet.');
+    expect(text).not.toContain('resumed the step');
+  });
+
+  it('does not claim a resume for a step that was still running', () => {
+    const text = buildHumanInterjectionReminder(
+      humanInterjectionFromTask(
+        {
+          title: 'Build',
+          status: 'running',
+          result: { agentSignal: { state: 'done' } },
+        },
+        false,
+      ),
+    );
+    expect(text).toContain('last signalled `done`');
+    expect(text).not.toContain('resumed the step');
+  });
+
+  it('points a plan turn at ExitPlanMode instead of a terminal signal', () => {
+    const text = buildHumanInterjectionReminder(humanInterjectionFromTask(parkedPartial, true));
+    expect(text).toContain('ExitPlanMode');
+    expect(text).not.toContain('frink_task_signal');
+  });
+
+  it('never tells the agent to re-send a synthetic quiet-idle park state it cannot send', () => {
+    // The sweep parks a step that ended silently with agentSignal.state 'missing_completion_signal',
+    // which is not in frink_task_signal's enum.
+    const text = buildHumanInterjectionReminder(
+      humanInterjectionFromTask(
+        {
+          title: 'Build',
+          status: 'needs_attention',
+          result: { agentSignal: { state: 'missing_completion_signal', summary: 'went quiet' } },
+        },
+        false,
+      ),
+    );
+    expect(text).not.toContain('missing_completion_signal');
+    expect(text).toContain('ended without a signal');
+    expect(text).toContain('resumed the step');
+  });
+
+  it('treats a parked failure as resumed, like any other park', () => {
+    const text = buildHumanInterjectionReminder(
+      humanInterjectionFromTask(
+        { title: 'Build', status: 'failed', result: { agentSignal: { state: 'failed' } } },
+        false,
+      ),
+    );
+    expect(text).toContain('parked after signalling `failed`');
+    expect(text).toContain('re-send `failed` if it still holds');
+  });
+
+  it('tolerates a malformed result and an untitled step', () => {
+    expect(humanInterjectionFromTask({ title: '', status: null, result: 'x' }, false)).toEqual({
+      stepTitle: null,
+      priorStatus: null,
+      priorSignalState: null,
+      endedWithoutSignal: false,
+      isPlanMode: false,
+    });
   });
 });
 

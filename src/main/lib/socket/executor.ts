@@ -136,6 +136,7 @@ import {
   applyApprovedPlanContextToPrompt,
   formatPromptWithHistory,
 } from './execution/prompt-prefix';
+import { renderFlowBriefingSection } from './execution/prompt-prefix/flow-briefing-section';
 import { logAdoptedTurnEnd, turnEndMustDispose } from './execution/wake-hold-signal';
 import type { WakePump } from './execution/wake-pump-types';
 import {
@@ -143,7 +144,7 @@ import {
   resolveFlowSignalArming,
   finalizeFlowSignalBeforeSessionDisposition as settleSignal,
 } from './flow-signal';
-import { buildOperatorReminders, wrapRemindersForPrompt } from './operator-reminders';
+import { prepareTurnReminders } from './operator-reminders';
 import { shouldDropPostPlanChunkFromHistory } from './plan-mode-halt';
 import { acquireRuntimeSlot } from './runtime-gate';
 import { reportIfControlChannelClosed } from './stream-closed-sentinel';
@@ -517,6 +518,8 @@ type ExecuteRequestPayload = {
    * only that window's agents on reload/crash).
    */
   sourceWebContentsId?: number;
+  /** Main-only (`persistAndDispatchMessage`): a person typed this turn, not the flow pipeline. */
+  typedByPerson?: boolean;
   /** Main-only send admission acknowledgement; never accepted from an IPC/network schema. */
   onExecutionStarted?: (error?: Error) => void;
 };
@@ -572,6 +575,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
     navigationSessionId,
     expectedFlowTaskId,
     sourceWebContentsId: payloadSourceWebContentsId,
+    typedByPerson,
   } = payload;
 
   // Markers persist for the renderer (hide the bubble, or draw it as a card) — never for the model.
@@ -997,30 +1001,23 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
     let fullPrompt = willReplayHistoryViaResume
       ? message
       : formatPromptWithHistory(message, history);
-    // Operator reminders to inject this turn (mode-exit transitions + the disarmed task-signal notice).
-    // Gating + copy live in ./operator-reminders. Claude delivers them as an in-conversation system
-    // prompt via the UserPromptSubmit hook (the session's callbacks); Codex has no such channel
-    // yet (sc-996) and gets a <system-reminder> prompt prepend.
-    const { reminders: pendingReminders, isExitingDebugMode } = buildOperatorReminders({
+    // Operator reminders + per-runtime delivery: ./operator-reminders (incl. sc-3214's human mark).
+    const isHumanInterjection = Boolean(typedByPerson && signalTaskId && isFlowExecutionTurn);
+    const turnReminders = prepareTurnReminders({
       mode,
       previousMode: lastExecutedModeBySubChat.get(subChatId),
       hasResumeSession,
       taskSignalDisarmed,
       agentSawPriorTurns: willReplayHistoryViaResume || (history?.length ?? 0) > 0,
       planOwesNoFinishSignal: mode === 'plan' && Boolean(signalTaskId) && !isFlowExecutionTurn,
+      interjectedTask: isHumanInterjection ? (prefetchedSignalTask ?? {}) : null,
+      agentRuntime,
+      subChatId,
+      prompt: fullPrompt,
     });
+    fullPrompt = turnReminders.prompt;
     // Debug-exit cleanup: drop the ingest debug session. Side effect kept here, out of the pure util.
-    if (isExitingDebugMode) releaseClaudeDebugSession(subChatId);
-    if (pendingReminders.length > 0) {
-      if (agentRuntime !== 'claude') {
-        fullPrompt = `${wrapRemindersForPrompt(pendingReminders)}\n\n${fullPrompt}`;
-      }
-      log.info(
-        `[Socket Executor] ${pendingReminders.length} operator reminder(s) for ${subChatId} via ${
-          agentRuntime === 'claude' ? 'UserPromptSubmit hook' : 'prompt prepend'
-        }`,
-      );
-    }
+    if (turnReminders.isExitingDebugMode) releaseClaudeDebugSession(subChatId);
     // Inject approved plan context at the start of execution turns.
     // This is the compression-safe handoff — the agent always knows what plan was approved
     // even when provider session memory is stale or missing.
@@ -1038,10 +1035,10 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
           : fullPrompt
         : undefined;
     if (sessionFlowBriefing && agentRuntime !== 'claude' && !hasResumeSession) {
-      fullPrompt = `## Flow Briefing\n\n${sessionFlowBriefing}\n\n---\n\n${fullPrompt}`;
+      fullPrompt = `${renderFlowBriefingSection(sessionFlowBriefing)}\n\n---\n\n${fullPrompt}`;
     }
     if (sessionFlowBriefing && codexFreshThreadFallbackPrompt !== undefined) {
-      codexFreshThreadFallbackPrompt = `## Flow Briefing\n\n${sessionFlowBriefing}\n\n---\n\n${codexFreshThreadFallbackPrompt}`;
+      codexFreshThreadFallbackPrompt = `${renderFlowBriefingSection(sessionFlowBriefing)}\n\n---\n\n${codexFreshThreadFallbackPrompt}`;
     }
     const { dynamicChatMcpUrl } = workspace;
     // Independent of the dynamic-chat MCP mount (gated on 2+ projects): an unsignalled linked task
@@ -1278,6 +1275,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       signalTaskId,
       taskSignalReady: claudeSpec.taskSignalReady,
       isFlowTurn: isFlowExecutionTurn,
+      humanInterjection: isHumanInterjection && mode !== 'plan',
       isPlanMode: mode === 'plan',
       flowPlanAutoApprove,
       abortController,
@@ -1311,7 +1309,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
     let claudeResultErrored = false; // the last result read is the turn's own
     turn.lastCollectedChunks = collectedChunks;
     turn.nextMessageIndex = () => messageIndex++;
-    turn.pendingReminders = pendingReminders;
+    turn.pendingReminders = turnReminders.reminders;
 
     const shouldResumeClaudeSession = Boolean(persistedSessionId);
     const delivery = trackUserMessageDelivery(subChatId, msgId, () => fullPrompt.length);
