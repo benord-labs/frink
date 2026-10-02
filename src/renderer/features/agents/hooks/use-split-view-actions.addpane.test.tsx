@@ -532,6 +532,46 @@ describe('canOpenChatInNewPane (capability gate — single source of truth)', ()
   });
 });
 
+describe('fillActivePane', () => {
+  function renderFill(seed: SplitViewState) {
+    const store = createStore();
+    store.set(splitViewAtom, seed);
+    const { result } = renderHook(() => useSplitViewActions(), {
+      wrapper: ({ children }) => <Provider store={store}>{children}</Provider>,
+    });
+    return { store, fill: (id: string) => act(() => result.current.fillActivePane(id)) };
+  }
+
+  it.each<[string, string | null]>([
+    ['new-chat', NEW_CHAT_PANE],
+    ['empty', null],
+  ])('replaces the active chat pane even while another pane is a %s placeholder', (_n, cell) => {
+    const { store, fill } = renderFill({
+      ...seedSplit(['chat-a', 'chat-b', cell], 'horizontal'),
+      activePaneIndex: 1,
+    });
+    fill('chat-x');
+    expect(store.get(splitViewAtom).chatIds).toEqual(['chat-a', 'chat-x', cell]);
+    expect(store.get(splitViewAtom).activePaneIndex).toBe(1);
+  });
+
+  it('fills the active placeholder pane', () => {
+    const { store, fill } = renderFill({
+      ...seedSplit(['chat-a', NEW_CHAT_PANE], 'horizontal'),
+      activePaneIndex: 1,
+    });
+    fill('chat-x');
+    expect(store.get(splitViewAtom).chatIds).toEqual(['chat-a', 'chat-x']);
+  });
+
+  it('focuses a chat already open in another pane instead of duplicating it', () => {
+    const { store, fill } = renderFill(seedSplit(['chat-a', 'chat-b', null], 'horizontal'));
+    fill('chat-b');
+    expect(store.get(splitViewAtom).chatIds).toEqual(['chat-a', 'chat-b', null]);
+    expect(store.get(splitViewAtom).activePaneIndex).toBe(1);
+  });
+});
+
 describe('restorePaneAt', () => {
   it('restores an empty pane without replacing a newer selection', () => {
     const store = createStore();
