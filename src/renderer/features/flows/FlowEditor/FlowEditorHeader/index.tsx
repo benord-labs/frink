@@ -74,6 +74,8 @@ type RunGroup = {
   state: BatchRunState | null;
   isBatchDeferred: boolean;
   disabled: boolean;
+  /** The canvas differs from the saved version Run executes. */
+  hasUnsavedChanges?: boolean;
   pending: boolean;
   onPrimaryStart: () => void;
 };
@@ -379,6 +381,7 @@ export function FlowEditorHeader({
           runState={run.state}
           isBatchDeferred={run.isBatchDeferred}
           disabled={run.disabled}
+          hasUnsavedChanges={run.hasUnsavedChanges}
           isPending={run.pending}
           onPrimaryStart={run.onPrimaryStart}
         />

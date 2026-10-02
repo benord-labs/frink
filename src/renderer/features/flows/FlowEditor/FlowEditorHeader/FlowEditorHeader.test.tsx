@@ -19,8 +19,18 @@ vi.mock('../NodeHealthBadge', () => ({
 }));
 
 vi.mock('../FlowRunButton', () => ({
-  FlowRunButton: ({ onPrimaryStart }: { onPrimaryStart: () => void }) => (
-    <button type="button" onClick={onPrimaryStart}>
+  FlowRunButton: ({
+    onPrimaryStart,
+    hasUnsavedChanges,
+  }: {
+    onPrimaryStart: () => void;
+    hasUnsavedChanges?: boolean;
+  }) => (
+    <button
+      type="button"
+      onClick={onPrimaryStart}
+      data-unsaved={String(Boolean(hasUnsavedChanges))}
+    >
       run-button
     </button>
   ),
@@ -90,6 +100,22 @@ describe('FlowEditorHeader', () => {
     expect(screen.getByRole('button', { name: 'Editor' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Runs' }));
     expect(props.onEditorTabChange).toHaveBeenCalledWith('runs');
+  });
+
+  it('forwards unsaved canvas edits to the Run button', () => {
+    const base = makeProps();
+    const { rerender } = render(<FlowEditorHeader {...base} />);
+    expect(screen.getByRole('button', { name: 'run-button' })).toHaveAttribute(
+      'data-unsaved',
+      'false',
+    );
+    rerender(
+      <FlowEditorHeader {...makeProps({ run: { ...base.run, hasUnsavedChanges: true } })} />,
+    );
+    expect(screen.getByRole('button', { name: 'run-button' })).toHaveAttribute(
+      'data-unsaved',
+      'true',
+    );
   });
 
   it('offers Add step on the Editor tab only', () => {

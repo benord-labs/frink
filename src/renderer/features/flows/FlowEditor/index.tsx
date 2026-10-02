@@ -63,6 +63,7 @@ import { deleteFlowDraft, loadFlowDraft, saveFlowDraft } from '../../../lib/flow
 import { clearRehearsal, ghostRunActiveAtom } from '../../../lib/flow-rehearsal';
 import { hasOpenDialogLayer } from '../../../lib/has-open-dialog-layer';
 import { useBatchRunActions } from '../../../lib/hooks/use-batch-run-actions';
+import { useSingleFlowRun } from '../../../lib/hooks/use-single-flow-run';
 import { isEditableKeyboardTarget } from '../../../lib/is-editable-keyboard-target';
 import { appStore } from '../../../lib/jotai-store';
 import { trpc } from '../../../lib/trpc';
@@ -851,37 +852,29 @@ export function FlowEditor({ flowId, onBack }: FlowEditorProps): ReactElement {
     },
   });
 
-  const runMutation = trpc.flows.startRun.useMutation({
-    onSuccess: (run) => {
-      toast.success(run.status === 'pending' ? 'Run queued' : 'Run started');
-      void utils.flows.listRuns.invalidate({ flowId });
-      void utils.flows.listBatches.invalidate({ flowId });
-      void utils.flows.listBatchRuns.invalidate({ flowId });
-      void utils.flows.list.invalidate();
-    },
-    onError: (err) => {
-      toast.error(err.message || 'Could not start run');
-    },
-  });
+  const singleRun = useSingleFlowRun(flowId);
+  const { startSingleRun } = singleRun;
 
   // The header run button is the ONLY run-action surface. It targets what you are looking
   // at: the selected batch on the Runs tab, else the flow's active batch.
   const headerBatchTarget =
     editorTab === 'runs' ? (effectiveSelectedBatchId ?? currentBatchId) : currentBatchId;
-  const headerBatch = useBatchRunActions(flowId, headerBatchTarget, () =>
-    runMutation.mutate({ flowId, triggerContext: null }),
-  );
+  const headerBatch = useBatchRunActions(flowId, headerBatchTarget, startSingleRun);
   const terminalBatchOnEditor =
     editorTab === 'editor' && headerBatch.runState?.primary === 'unavailable';
   const headerRunState = terminalBatchOnEditor ? null : headerBatch.runState;
 
   /** Start the selected batch, or start a fresh single run from the editor after a batch settles. */
   const runPrimary = useCallback(() => {
-    dispatchFlowRun(terminalBatchOnEditor ? null : headerBatchTarget, {
-      startBatch: () => headerBatch.startBatch(),
-      runSingle: () => runMutation.mutate({ flowId, triggerContext: null }),
-    });
-  }, [flowId, headerBatch, headerBatchTarget, runMutation, terminalBatchOnEditor]);
+    dispatchFlowRun(
+      terminalBatchOnEditor ? null : headerBatchTarget,
+      {
+        startBatch: (_batchId, hadUnsavedChanges) => headerBatch.startBatch(hadUnsavedChanges),
+        runSingle: startSingleRun,
+      },
+      hasChanges,
+    );
+  }, [hasChanges, headerBatch, headerBatchTarget, startSingleRun, terminalBatchOnEditor]);
 
   const updateTitleMutation = trpc.flows.update.useMutation({
     onSuccess: () => {
@@ -1063,11 +1056,18 @@ export function FlowEditor({ flowId, onBack }: FlowEditorProps): ReactElement {
 
   useEffect(() => {
     runHotkeyRef.current = () => {
-      const isRunPending = runMutation.isPending || headerBatch.isPending;
+      const isRunPending = singleRun.isPending || headerBatch.isPending;
       if (!triggerNode || baselineVersion < 1 || isRunPending || !flowEnabled) return;
       runPrimary();
     };
-  }, [triggerNode, baselineVersion, runMutation, headerBatch.isPending, flowEnabled, runPrimary]);
+  }, [
+    triggerNode,
+    baselineVersion,
+    singleRun.isPending,
+    headerBatch.isPending,
+    flowEnabled,
+    runPrimary,
+  ]);
 
   const handleRun = () => {
     if (!triggerNode) {
@@ -1240,7 +1240,8 @@ export function FlowEditor({ flowId, onBack }: FlowEditorProps): ReactElement {
           state: headerRunState,
           isBatchDeferred: headerBatch.hasDeferredRoots,
           disabled: triggerNode == null || baselineVersion < 1 || !flowEnabled,
-          pending: runMutation.isPending || headerBatch.isPending,
+          hasUnsavedChanges: hasChanges,
+          pending: singleRun.isPending || headerBatch.isPending,
           onPrimaryStart: handleRun,
         }}
       />
