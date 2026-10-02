@@ -1338,6 +1338,7 @@ describe('retryTaskDetailed — user-requested retry flips failed/parked → pen
       agentSignal: { kind: 'failed' },
       usageLimit: { message: 'limit' },
       cancelled: true,
+      heldQuestions: { 'tu-1': { summary: 'stale ask' } },
     });
 
     const { task } = await retryTaskDetailed(db, t.id, 'continue');
@@ -1359,6 +1360,7 @@ describe('retryTaskDetailed — user-requested retry flips failed/parked → pen
       'agentSignal',
       'usageLimit',
       'cancelled',
+      'heldQuestions',
     ]) {
       expect(result[key]).toBeUndefined();
     }

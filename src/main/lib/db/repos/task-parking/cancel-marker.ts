@@ -18,11 +18,17 @@ import { tasks } from '../../schema';
  * park writer. A cancel is the newest fact about the turn, so a `done` recorded mid-stream moments
  * before must not survive to classify the node `completed` and walk the flow past a step the user
  * stopped. `mapTaskToNodeOutput` enforces the same precedence independently; this keeps the row
- * honest as well.
+ * honest as well. `heldQuestions: null` likewise drops a hold marker: a cancelled turn's question
+ * must never be promoted to a park by a later boot.
  */
 export function cancelResultPatch(interrupted: boolean): SQL {
   const marker = interrupted
-    ? { cancelled: true, agentSignal: null, error: RESTART_INTERRUPTION_REASON }
-    : { cancelled: true, agentSignal: null };
+    ? {
+        cancelled: true,
+        agentSignal: null,
+        heldQuestions: null,
+        error: RESTART_INTERRUPTION_REASON,
+      }
+    : { cancelled: true, agentSignal: null, heldQuestions: null };
   return drizzleSql`json_patch(coalesce(${tasks.result}, '{}'), ${JSON.stringify(marker)})`;
 }

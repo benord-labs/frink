@@ -32,6 +32,8 @@ const PARK_STALE_RESULT_KEYS = [
   'usageLimit',
   'apiError',
   'userPause',
+  // A park ends the turn, and with it any hold the turn had open.
+  'heldQuestions',
 ] as const;
 
 /**
