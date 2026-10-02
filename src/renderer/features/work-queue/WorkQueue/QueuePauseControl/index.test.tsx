@@ -52,21 +52,18 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('QueuePauseControl', () => {
-  it('requests pause and only confirms the saved state', () => {
+  it('requests a pause, then hands the paused state to the Overview banner', () => {
     const view = render(<QueuePauseControl />);
-    fireEvent.click(screen.getByRole('button', { name: 'Pause queue' }));
+    const pause = screen.getByRole('button', { name: 'Pause queue' });
+    expect(pause).toHaveAccessibleDescription(/Active work continues/);
+    fireEvent.click(pause);
     expect(mocks.mutation.mutate).toHaveBeenCalledWith({ queue_paused: true });
-    expect(screen.getByRole('status')).toBeEmptyDOMElement();
     mocks.options.onSuccess({ queue_paused: true });
     expect(mocks.setData).toHaveBeenCalledWith(undefined, { queue_paused: true });
     expect(mocks.invalidate).toHaveBeenCalled();
     mocks.query.data = { queue_paused: true };
     view.rerender(<QueuePauseControl />);
-    expect(screen.getByRole('status')).toHaveTextContent('Queue paused');
-    const resume = screen.getByRole('button', { name: 'Resume queue' });
-    expect(resume).toHaveAccessibleDescription(/Active work continues/);
-    fireEvent.click(resume);
-    expect(mocks.mutation.mutate).toHaveBeenLastCalledWith({ queue_paused: false });
+    expect(view.container).toBeEmptyDOMElement();
   });
 
   it('disables submission while loading or saving', () => {
@@ -74,14 +71,14 @@ describe('QueuePauseControl', () => {
     mocks.query.isLoading = true;
     const view = render(<QueuePauseControl />);
     expect(screen.getByRole('button', { name: 'Pause queue' })).toBeDisabled();
-    mocks.query.data = { queue_paused: true };
+    mocks.query.data = { queue_paused: false };
     mocks.query.isLoading = false;
     mocks.mutation.isPending = true;
     view.rerender(<QueuePauseControl />);
-    const resume = screen.getByRole('button', { name: 'Resume queue' });
-    expect(resume).toBeDisabled();
-    expect(resume).toHaveAttribute('aria-busy', 'true');
-    fireEvent.click(resume);
+    const pause = screen.getByRole('button', { name: 'Pause queue' });
+    expect(pause).toBeDisabled();
+    expect(pause).toHaveAttribute('aria-busy', 'true');
+    fireEvent.click(pause);
     expect(mocks.mutation.mutate).not.toHaveBeenCalled();
   });
 
@@ -101,7 +98,6 @@ describe('QueuePauseControl', () => {
       description: 'Could not save settings',
     });
     expect(screen.getByRole('button', { name: 'Pause queue' })).toBeEnabled();
-    expect(screen.getByRole('status')).toBeEmptyDOMElement();
     expect(mocks.setData).not.toHaveBeenCalled();
   });
 });

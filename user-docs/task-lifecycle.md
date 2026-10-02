@@ -11,7 +11,7 @@ Every task in Frink has a status that reflects where it is in its lifecycle.
 | **Pending** | The task has been created and is waiting for a machine to pick it up. |
 | **Running** | An agent is actively working on the task. A task can also be **Running with a plan already waiting** — see the note below. |
 | **Plan Ready** | The agent finished in plan mode and is waiting for you to review and approve the proposed changes. |
-| **Needs Attention** | The agent has paused and needs your input before it can continue. |
+| **Needs Attention** | The agent has paused and needs your input before it can continue. A flow step you paused yourself with the chat's **Pause** button also sits here; the work queue marks it *Paused by you*, and it waits until you resume it from its chat. |
 | **Ready for review** (`done`) | The agent finished execution; the work waits for you to verify it before final closure. Shown as "Review" in the sidebar. |
 | **Completed** | You confirmed the outcome — the task is closed. |
 | **Failed** | The run hit an execution-level error and could not complete. |

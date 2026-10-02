@@ -1,4 +1,4 @@
-import { type ActivityRowState, Badge } from '@benord-labs/frink-primitives';
+import { type ActivityRowState, Badge, type BadgeVariant } from '@benord-labs/frink-primitives';
 import { ChevronDown } from 'lucide-react';
 import { memo, type ReactElement } from 'react';
 import {
@@ -17,6 +17,14 @@ type Props = {
   taskActions: TaskActionListProps['taskActions'];
   tasks: Task[];
   totalCount: number;
+};
+
+const ROW_BADGE_VARIANT: Record<ActivityRowState, BadgeVariant> = {
+  neutral: 'default',
+  running: 'running',
+  success: 'success',
+  warning: 'warning',
+  error: 'error',
 };
 
 export const OtherAttentionTasks = memo(function OtherAttentionTasks({
@@ -74,11 +82,7 @@ export const OtherAttentionTasks = memo(function OtherAttentionTasks({
               state={rowState}
               statusLabel={compactLabel}
               trailing={
-                <Badge
-                  variant={rowState === 'error' ? 'error' : 'warning'}
-                  noDot
-                  className="px-2 py-0.5 text-xs"
-                >
+                <Badge variant={ROW_BADGE_VARIANT[rowState]} noDot className="px-2 py-0.5 text-xs">
                   {compactLabel}
                 </Badge>
               }

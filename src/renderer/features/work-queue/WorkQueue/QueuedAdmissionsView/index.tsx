@@ -20,6 +20,7 @@ import { memo, type ReactElement, type Ref, useMemo, useRef, useState } from 're
 import type { TriggerContext } from '../../../../../shared/types/trigger-context';
 import { ConfirmDialog } from '../../../../components/ui/confirm-dialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../../components/ui/tooltip';
+import { admissionWaitCopy } from '../../../../lib/work-queue/admission-wait-copy';
 import { TriggerContentDialog } from '../ActionMenu/TriggerContentDialog';
 
 export type QueuedAdmission = {
@@ -42,6 +43,7 @@ type SortableAdmissionProps = {
   onMove: (ticket: number, targetTicket: number, targetPosition: number) => Promise<void>;
   onRemoveRequest: (ticket: number) => void;
   onViewContent: (ticket: number) => void;
+  queuePaused: boolean | null;
   rows: QueuedAdmission[];
 };
 
@@ -217,6 +219,7 @@ const SortableAdmission = memo(function SortableAdmission({
   onMove,
   onRemoveRequest,
   onViewContent,
+  queuePaused,
   rows,
 }: SortableAdmissionProps): ReactElement {
   const { attributes, listeners, setActivatorNodeRef, setNodeRef, transform, isDragging } =
@@ -225,6 +228,7 @@ const SortableAdmission = memo(function SortableAdmission({
   const previous = rows[index - 1];
   const next = rows[index + 1];
   const label = admission.flowName;
+  const waitCopy = admissionWaitCopy(admission.priorityClass, queuePaused);
   // Two rows routinely name the SAME flow — one flow queued twice, or two members of one batch — so
   // the flow name alone gives every control in this row an accessible name identical to another
   // row's. Every control appends the position the row already displays, plus the group that makes
@@ -260,14 +264,11 @@ const SortableAdmission = memo(function SortableAdmission({
       }
       className="group"
       state="neutral"
-      statusLabel={admission.priorityClass === 'resume' ? 'Queued to resume' : 'Queued to start'}
+      statusLabel={waitCopy.statusLabel}
       leading={<Workflow />}
       title={label}
       // The subject replaces the waiting line; the section and group headings still carry the state.
-      description={
-        admission.subject ??
-        (admission.priorityClass === 'resume' ? 'Waiting to resume' : 'Waiting to start')
-      }
+      description={admission.subject ?? waitCopy.description}
       meta={
         projectName ? (
           <Badge noDot className="bg-surface/70 px-1.5 py-0.5 text-xs text-muted-foreground">
@@ -286,6 +287,7 @@ function SortableAdmissionGroup({
   onMove,
   onRemoveRequest,
   onViewContent,
+  queuePaused,
   rows,
   isMoving,
 }: {
@@ -293,6 +295,7 @@ function SortableAdmissionGroup({
   onMove: SortableAdmissionProps['onMove'];
   onRemoveRequest: SortableAdmissionProps['onRemoveRequest'];
   onViewContent: SortableAdmissionProps['onViewContent'];
+  queuePaused: boolean | null;
   rows: QueuedAdmission[];
   isMoving: boolean;
 }): ReactElement | null {
@@ -325,6 +328,7 @@ function SortableAdmissionGroup({
                 onMove={onMove}
                 onRemoveRequest={onRemoveRequest}
                 onViewContent={onViewContent}
+                queuePaused={queuePaused}
                 rows={rows}
               />
             ))}
@@ -356,6 +360,8 @@ export type QueuedAdmissionsViewProps = {
   /** Resolves true when the row is really gone, which is the only case that moves focus. */
   onRemove: (admission: QueuedAdmission) => Promise<boolean>;
   onRetry: () => void;
+  /** Nothing here is admitted while the queue is paused; the rows say so instead of "waiting". */
+  queuePaused: boolean | null;
   rows: QueuedAdmission[];
 };
 
@@ -367,6 +373,7 @@ export const QueuedAdmissionsView = memo(function QueuedAdmissionsView({
   onMove,
   onRemove,
   onRetry,
+  queuePaused,
   rows,
 }: QueuedAdmissionsViewProps): ReactElement {
   const [resumptions, starts] = useMemo(
@@ -427,7 +434,9 @@ export const QueuedAdmissionsView = memo(function QueuedAdmissionsView({
             Queued to run
           </h3>
           <p className="mt-1 text-xs text-muted-foreground">
-            Resumes run first. Reorder work within either group.
+            {queuePaused
+              ? 'On hold while the queue is paused. Reorder work within either group.'
+              : 'Resumes run first. Reorder work within either group.'}
           </p>
         </div>
         <div className="space-y-4">
@@ -438,6 +447,7 @@ export const QueuedAdmissionsView = memo(function QueuedAdmissionsView({
             onMove={onMove}
             onRemoveRequest={requestRemoval}
             onViewContent={requestView}
+            queuePaused={queuePaused}
           />
           <SortableAdmissionGroup
             label="Starting"
@@ -446,6 +456,7 @@ export const QueuedAdmissionsView = memo(function QueuedAdmissionsView({
             onMove={onMove}
             onRemoveRequest={requestRemoval}
             onViewContent={requestView}
+            queuePaused={queuePaused}
           />
         </div>
       </section>

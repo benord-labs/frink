@@ -16,6 +16,7 @@ const { toastError } = vi.hoisted(() => {
   return { toastError: vi.fn() };
 });
 vi.mock('sonner', () => ({ toast: { error: toastError } }));
+vi.mock('../../QueuePausedBanner', () => ({ QueuePausedBanner: () => null }));
 
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {

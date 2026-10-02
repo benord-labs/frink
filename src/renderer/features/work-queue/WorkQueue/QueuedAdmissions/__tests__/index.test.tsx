@@ -70,6 +70,7 @@ function renderQueue(props: Partial<ComponentProps<typeof QueuedAdmissionsView>>
         onMove={move}
         onRemove={removeRow}
         onRetry={retry}
+        queuePaused={false}
         rows={queuedRows}
         {...props}
       />
@@ -233,6 +234,27 @@ describe('QueuedAdmissions', () => {
     expect(screen.getAllByRole('button', { name: /^View original content for / })).toHaveLength(1);
   });
 
+  it('marks every row as on hold while the queue is paused', () => {
+    renderQueue({ queuePaused: true });
+    const section = screen.getByRole('region', { name: 'Queued to run' });
+
+    expect(section).toHaveTextContent('On hold while the queue is paused.');
+    const rows = screen.getAllByRole('listitem');
+    // A paused queue holds resumes too, so neither group still claims to be waiting its turn.
+    expect(rows[1]).toHaveTextContent('On hold until you resume the queue');
+    expect(section).not.toHaveTextContent(/Waiting to|Queued to (start|resume)/);
+    // The subject still names the run; only the state wording changes.
+    expect(rows[0]).toHaveTextContent('Un-ignore the atoms barrel');
+  });
+
+  it('claims neither waiting nor on hold while the pause setting is unknown', () => {
+    renderQueue({ queuePaused: null });
+    const section = screen.getByRole('region', { name: 'Queued to run' });
+
+    expect(screen.getAllByRole('listitem')[1]).toHaveTextContent('In the queue');
+    expect(section).not.toHaveTextContent(/Waiting to|On hold/);
+  });
+
   it('opens the trigger dialog from the row and returns focus to the eye button on close', async () => {
     renderQueue({ moving: true });
     const eye = screen.getByRole('button', {
@@ -274,6 +296,7 @@ describe('QueuedAdmissions', () => {
           onMove={move}
           onRemove={removeRow}
           onRetry={retry}
+          queuePaused={false}
           rows={queuedRows.slice(1)}
         />
       </TooltipProvider>,

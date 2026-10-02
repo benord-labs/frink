@@ -107,6 +107,32 @@ describe('AttentionCarousel', () => {
     expect(screen.getByText('1 / 2')).toBeInTheDocument();
   });
 
+  it('presents a flow the user paused as paused, not as a warning', () => {
+    const onOpenTask = vi.fn();
+    const task = makeTask({
+      status: 'needs_attention',
+      result: { chatId: 'chat-1', userPause: { at: '2026-08-11T12:05:00.000Z' } },
+    });
+    render(
+      <AttentionCarousel
+        tasks={[task]}
+        onOpenTask={onOpenTask}
+        onSelectTask={vi.fn()}
+        selectedTaskId={task.id}
+        spotlightActionRef={createRef()}
+        taskActions={makeTaskActions()}
+      />,
+    );
+
+    expect(screen.getByText('Paused by you')).toBeInTheDocument();
+    expect(screen.queryByText('Needs your attention')).not.toBeInTheDocument();
+    expect(
+      screen.getByText('You paused this flow. Resume it from its chat when you are ready.'),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Open' }));
+    expect(onOpenTask).toHaveBeenCalledWith(task);
+  });
+
   it('falls back to the first task when the selected task leaves the queue', () => {
     const planTask = makeTask();
     const interruptedTask = makeTask({

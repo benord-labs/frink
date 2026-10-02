@@ -10,6 +10,7 @@ import {
 } from '../AttentionCarousel';
 import { InboxTaskList } from '../InboxTaskList';
 import { QueuedAdmissions } from '../QueuedAdmissions';
+import { QueuePausedBanner } from '../QueuePausedBanner';
 import { QueueProgressSummary } from '../QueueProgressSummary';
 import { RunningTaskList } from '../RunningTaskList';
 import { OtherAttentionTasks } from './OtherAttentionTasks';
@@ -87,6 +88,7 @@ export const QueueOverview = memo(function QueueOverview({
 
   return (
     <>
+      <QueuePausedBanner />
       {openTaskCount > 0 && (
         <div className="mb-4 shrink-0">
           <QueueProgressSummary

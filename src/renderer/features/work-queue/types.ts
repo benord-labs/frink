@@ -35,6 +35,8 @@ type TaskResult = {
   cancelled?: boolean;
   promptInjectedFromQueue?: boolean;
   retryRequestedAt?: string;
+  /** Set while the task is parked by the user's own chat Pause; cleared on resume. */
+  userPause?: { at: string };
   agentSignal?: {
     state: TaskSignalState;
     summary: string;
