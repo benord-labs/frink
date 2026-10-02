@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pendingToolApprovals } from '../../claude/ask-user-question-approval';
 import { createPendingPermissionRequestBroker } from '../../socket/streaming/pending-permission/request';
+import {
+  __resetSubagentTaskStatusForTest,
+  noteSubagentTaskFrame,
+} from '../../socket/streaming/subagent-task-status';
 import type { Context } from '../index';
 import { socketRouter } from './socket';
 
@@ -101,6 +105,28 @@ describe('socketRouter renderer recovery projections', () => {
         projectName: 'Project two',
       }),
     ]);
+  });
+
+  // The wiring a reloaded renderer boots from: the query must read the live tracker, not a copy.
+  it('lists the subagents the tracker still reports running, and none once they retire', async () => {
+    __resetSubagentTaskStatusForTest();
+    const frame = (subtype: string) =>
+      ({
+        type: 'system',
+        subtype,
+        task_id: 'task-1',
+        tool_use_id: 'tool-1',
+        subagent_type: 'general-purpose',
+      }) as unknown as Parameters<typeof noteSubagentTaskFrame>[1];
+    const caller = socketRouter.createCaller({ getWindow: () => null } satisfies Context);
+
+    noteSubagentTaskFrame('sub-1', frame('task_started'));
+    await expect(caller.listRunningSubagentTasks()).resolves.toEqual([
+      { subChatId: 'sub-1', toolCallId: 'tool-1', running: true },
+    ]);
+
+    noteSubagentTaskFrame('sub-1', frame('task_notification'));
+    await expect(caller.listRunningSubagentTasks()).resolves.toEqual([]);
   });
 
   it('augments the live seed with only this sub-chat pending questions', async () => {

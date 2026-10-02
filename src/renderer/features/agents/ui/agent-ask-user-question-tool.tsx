@@ -130,9 +130,9 @@ export const AgentAskUserQuestionTool = memo(function AgentAskUserQuestionTool({
   // Show pending state
   const firstQuestion = questions[0]?.header || questions[0]?.question;
 
-  // If streaming THIS message, show "Waiting for response..."
-  // isStreaming is true only when global streaming is active AND this is the last message
-  if (isStreaming) {
+  // Waiting while THIS message streams, or while its answer card is shown: main still holds it,
+  // even when a reload re-raised it with no live run observed.
+  if (isStreaming || isDialogShown) {
     return (
       <div className="flex items-center gap-2 py-1 px-2 text-xs text-muted-foreground">
         <span className="min-w-0 truncate">{firstQuestion || 'Question'}</span>
