@@ -193,12 +193,12 @@ export const flowsRouter = router({
     )
     .mutation(async ({ input }) => {
       try {
-        const { run } = await startFlowRunLocal({
+        const { run, version } = await startFlowRunLocal({
           flowId: input.flowId,
           triggerContext: input.triggerContext ?? null,
           idempotencyKey: input.idempotencyKey ?? null,
         });
-        return flowStartResponse(getDatabase(), run);
+        return { ...flowStartResponse(getDatabase(), run), version_number: version.versionNumber };
       } catch (e) {
         mapEngineError(e);
       }

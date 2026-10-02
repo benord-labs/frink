@@ -4,6 +4,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { BatchRunState } from '../../../../lib/utils/batch-run-state';
+import { UNSAVED_RUN_TITLE } from '../../../../lib/utils/flow-run-dispatch';
 import { FlowRunButton } from './index';
 
 afterEach(cleanup);
@@ -71,5 +72,23 @@ describe('FlowRunButton', () => {
   it('a pending mutation disables the button (in-flight)', () => {
     renderButton({ runState: START_STATE, isPending: true });
     expect(screen.getByRole('button')).toBeDisabled();
+  });
+
+  it('unsaved canvas edits: plain Run says it runs the last saved version', () => {
+    renderButton({ runState: null, hasUnsavedChanges: true });
+    expect(screen.getByRole('button', { name: 'Run' })).toHaveAttribute('title', UNSAVED_RUN_TITLE);
+  });
+
+  it('a clean canvas adds no tooltip to the plain Run button', () => {
+    renderButton({ runState: null });
+    expect(screen.getByRole('button', { name: 'Run' })).not.toHaveAttribute('title');
+  });
+
+  it('a batch state title still wins over the unsaved-edits notice', () => {
+    renderButton({ hasUnsavedChanges: true });
+    expect(screen.getByRole('button', { name: 'Batch already ran' })).toHaveAttribute(
+      'title',
+      'This batch already has runs — use Retry or Carry on above, per run',
+    );
   });
 });

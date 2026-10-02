@@ -715,7 +715,11 @@ describe('flowsRouter (local)', () => {
         completedAt: null,
         createdAt: new Date('2026-08-01T10:00:00Z'),
       };
-      startFlowRunMock.mockResolvedValueOnce({ run, version: {}, isReplay: false });
+      startFlowRunMock.mockResolvedValueOnce({
+        run,
+        version: { versionNumber: 5 },
+        isReplay: false,
+      });
       flowRunAdmissionSnapshotsForRunsMock.mockReturnValueOnce(
         new Map([
           [
@@ -742,6 +746,8 @@ describe('flowsRouter (local)', () => {
         admission_state: 'queued',
         queue_position: 3,
         admission_requested_at: '2026-08-01T10:00:00.000Z',
+        // The executed (saved) version, so the editor can name it when the canvas is dirty.
+        version_number: 5,
       });
       expect(flowRunAdmissionSnapshotsForRunsMock).toHaveBeenCalledWith(expect.anything(), [
         run.id,
@@ -760,7 +766,11 @@ describe('flowsRouter (local)', () => {
         completedAt: null,
         createdAt: new Date('2026-08-01T10:00:00Z'),
       };
-      startFlowRunMock.mockResolvedValueOnce({ run, version: {}, isReplay: false });
+      startFlowRunMock.mockResolvedValueOnce({
+        run,
+        version: { versionNumber: 5 },
+        isReplay: false,
+      });
       flowRunAdmissionSnapshotsForRunsMock.mockReturnValueOnce(
         new Map([
           [

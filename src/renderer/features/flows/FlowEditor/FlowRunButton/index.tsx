@@ -11,6 +11,7 @@ import { Button } from '@benord-labs/frink-primitives';
 import { Loader2, Play } from 'lucide-react';
 import type { ReactElement } from 'react';
 import type { BatchRunState } from '../../../../lib/utils/batch-run-state';
+import { UNSAVED_RUN_TITLE } from '../../../../lib/utils/flow-run-dispatch';
 
 type Props = {
   /** null = no batch (plain single run). */
@@ -18,6 +19,8 @@ type Props = {
   /** A never-run batch whose root stages are still deferred → "Start Batch" rather than "Run batch". */
   isBatchDeferred: boolean;
   disabled: boolean;
+  /** The canvas has unsaved edits — Run executes the last saved version without them. */
+  hasUnsavedChanges?: boolean;
   isPending: boolean;
   /** Start a single run / start (or advance) the batch — the `start` and no-batch paths. */
   onPrimaryStart: () => void;
@@ -43,12 +46,14 @@ function StartRunButton({
   primary,
   isBatchDeferred,
   disabled,
+  hasUnsavedChanges,
   isPending,
   onClick,
 }: {
   primary: StartRunPrimary;
   isBatchDeferred: boolean;
   disabled: boolean;
+  hasUnsavedChanges: boolean;
   isPending: boolean;
   onClick: () => void;
 }): ReactElement {
@@ -75,7 +80,9 @@ function StartRunButton({
         size="sm"
         className="h-7 gap-1.5 text-xs"
         disabled={disabled || busy || unavailable}
-        title={primary ? PRIMARY_TITLE[primary] : undefined}
+        title={
+          (primary && PRIMARY_TITLE[primary]) || (hasUnsavedChanges ? UNSAVED_RUN_TITLE : undefined)
+        }
         onClick={onClick}
       >
         {busy ? spinner : <Play className="h-3.5 w-3.5" aria-hidden />}
@@ -89,6 +96,7 @@ export function FlowRunButton({
   runState,
   isBatchDeferred,
   disabled,
+  hasUnsavedChanges = false,
   isPending,
   onPrimaryStart,
 }: Props): ReactElement {
@@ -98,6 +106,7 @@ export function FlowRunButton({
       primary={primary}
       isBatchDeferred={isBatchDeferred}
       disabled={disabled}
+      hasUnsavedChanges={hasUnsavedChanges}
       isPending={isPending}
       onClick={onPrimaryStart}
     />

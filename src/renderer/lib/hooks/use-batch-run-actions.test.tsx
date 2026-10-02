@@ -89,6 +89,7 @@ afterEach(() => {
   snap.startBatchMutate.mockReset();
   snap.runSingle.mockReset();
   vi.mocked(toast.info).mockReset();
+  vi.mocked(toast.success).mockReset();
 });
 
 describe('useBatchRunActions', () => {
@@ -176,5 +177,70 @@ describe('useBatchRunActions', () => {
     const { result } = renderHook(() => useBatchRunActions(FLOW_ID, BATCH_ID, snap.runSingle));
     act(() => result.current.startBatch());
     expect(snap.startBatchMutate).toHaveBeenCalledWith({ flowId: FLOW_ID, batchId: BATCH_ID });
+  });
+
+  describe('unsaved canvas edits (batch runs use the saved version)', () => {
+    function startWith(hadUnsavedChanges: boolean | undefined) {
+      snap.stages = [stageRow({ status: 'pending', completed_count: 0 })];
+      const { result } = renderHook(() => useBatchRunActions(FLOW_ID, BATCH_ID, snap.runSingle));
+      act(() => result.current.startBatch(hadUnsavedChanges));
+      return result;
+    }
+
+    it('a clean start keeps the plain "Batch started" copy', () => {
+      startWith(false);
+      snap.onSuccess({ started: true });
+      expect(toast.success).toHaveBeenCalledExactlyOnceWith('Batch started');
+      expect(toast.info).not.toHaveBeenCalled();
+    });
+
+    it('a dirty start says the unsaved edits are not included, in one toast', () => {
+      startWith(true);
+      snap.onSuccess({ started: true });
+      expect(toast.success).toHaveBeenCalledExactlyOnceWith(
+        "Batch started on the saved version — your unsaved edits aren't included",
+      );
+      expect(toast.info).not.toHaveBeenCalled();
+    });
+
+    it('a dirty start that queues nothing explains why, without an unsaved-edits notice', () => {
+      startWith(true);
+      snap.onSuccess({ started: false, reason: 'all-roots-started' });
+      expect(toast.info).toHaveBeenCalledExactlyOnceWith('Every root stage has already started.');
+      expect(toast.success).not.toHaveBeenCalled();
+    });
+
+    it('a dirty start that falls back to a single run hands the dirty flag over (no batch toast)', () => {
+      startWith(true);
+      snap.onSuccess({ started: false, reason: 'no-stages-defined' });
+      expect(snap.runSingle).toHaveBeenCalledExactlyOnceWith(true);
+      expect(toast.info).not.toHaveBeenCalled();
+      expect(toast.success).not.toHaveBeenCalled();
+    });
+
+    it('a clean fallback single run is told the canvas was clean', () => {
+      startWith(false);
+      snap.onSuccess({ started: false, reason: 'no-stages-defined' });
+      expect(snap.runSingle).toHaveBeenCalledExactlyOnceWith(false);
+    });
+
+    it('the dirty flag does not leak into the next clean start', () => {
+      const result = startWith(true);
+      snap.onSuccess({ started: true });
+      act(() => result.current.startBatch(false));
+      snap.onSuccess({ started: true });
+      expect(vi.mocked(toast.success).mock.calls.at(-1)?.[0]).toBe('Batch started');
+    });
+
+    it('omitting the flag is treated as a clean start', () => {
+      startWith(undefined);
+      snap.onSuccess({ started: true });
+      expect(toast.success).toHaveBeenCalledExactlyOnceWith('Batch started');
+    });
+
+    it('never sends the UI-only dirty flag to the server', () => {
+      startWith(true);
+      expect(snap.startBatchMutate).toHaveBeenCalledWith({ flowId: FLOW_ID, batchId: BATCH_ID });
+    });
   });
 });

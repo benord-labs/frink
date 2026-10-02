@@ -6,9 +6,10 @@
  * Carry on in each run's chat); this hook only starts never-run batches.
  */
 
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import { toast } from 'sonner';
 import { trpc } from '../trpc';
+import { batchStartedMessage } from '../utils/flow-run-dispatch';
 import {
   type BatchRunState,
   deriveBatchRunState,
@@ -21,8 +22,8 @@ export type BatchRunActions = {
   /** The batch has planned-but-never-dispatched root stages → "Start Batch" label. */
   hasDeferredRoots: boolean;
   isPending: boolean;
-  /** Start (or advance) this batch's root stages. */
-  startBatch: () => void;
+  /** Start (or advance) this batch's root stages. `hadUnsavedChanges` only shapes the toast copy. */
+  startBatch: (hadUnsavedChanges?: boolean) => void;
 };
 
 type TrpcUtils = ReturnType<typeof trpc.useUtils>;
@@ -54,15 +55,16 @@ function noStartCopy(reason: string | undefined, fallback: string): string {
 function batchActionSuccess(
   utils: TrpcUtils,
   flowId: string,
-  successMsg: string,
   emptyMsg: string,
-  runSingle: () => void,
+  runSingle: (hadUnsavedChanges: boolean) => void,
+  hadUnsavedChanges: () => boolean,
 ) {
   return (result: BatchActionResult): void => {
     // The server owns the stage-existence check, so routing on its answer is atomic — a client-side
     // pre-check can always be overtaken by an agent or another window planning the first stage.
-    if (result.started) toast.success(successMsg);
-    else if (result.reason === 'no-stages-defined') runSingle();
+    // The unsaved-edits notice rides on the outcome toast, so a no-op or fallback never shows it twice.
+    if (result.started) toast.success(batchStartedMessage(hadUnsavedChanges()));
+    else if (result.reason === 'no-stages-defined') runSingle(hadUnsavedChanges());
     else toast.info(noStartCopy(result.reason, emptyMsg));
     invalidateBatchQueries(utils, flowId);
   };
@@ -78,7 +80,7 @@ function hasDeferredRootStages(stages: DeferredStageRow[]): boolean {
 export function useBatchRunActions(
   flowId: string,
   batchId: string | null,
-  runSingle: () => void,
+  runSingle: (hadUnsavedChanges: boolean) => void,
 ): BatchRunActions {
   const utils = trpc.useUtils();
   const enabled = batchId !== null;
@@ -102,20 +104,28 @@ export function useBatchRunActions(
     return deriveBatchRunState(stagesData?.stages ?? []);
   }, [batchId, stagesData]);
 
+  // Captured per startBatch call; one start is in flight at a time (the Run button and hotkey
+  // both gate on isPending), so the flag read in onSuccess belongs to that call.
+  const hadUnsavedChangesRef = useRef(false);
   const startBatchMutation = trpc.flows.startBatch.useMutation({
     onSuccess: batchActionSuccess(
       utils,
       flowId,
-      'Batch started',
       'Nothing was queued—root stages may already be running or another tab started this batch.',
       runSingle,
+      () => hadUnsavedChangesRef.current,
     ),
     onError: (err) => toast.error(err.message || 'Could not start batch'),
   });
 
-  const startBatch = useCallback(() => {
-    if (batchId) startBatchMutation.mutate({ flowId, batchId });
-  }, [batchId, flowId, startBatchMutation]);
+  const startBatch = useCallback(
+    (hadUnsavedChanges = false) => {
+      if (!batchId) return;
+      hadUnsavedChangesRef.current = hadUnsavedChanges;
+      startBatchMutation.mutate({ flowId, batchId });
+    },
+    [batchId, flowId, startBatchMutation],
+  );
 
   return {
     runState,
