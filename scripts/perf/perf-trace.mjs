@@ -4,7 +4,7 @@
  * tasks to functions. react-scan only sees React render time; this sees everything the
  * renderer thread did, sampled by the V8 CPU profiler.
  *
- *   bun scripts/perf/perf-trace.mjs [--seconds 25] [--out trace.json] [--probe] [--invalidations]
+ *   bun scripts/perf/perf-trace.mjs [--seconds 25] [--out <tmpdir>/frink-perf-trace.json] [--probe] [--invalidations]
  *     [--port 9222]
  *   bun scripts/perf/perf-trace.mjs --history [seconds]
  *
@@ -276,7 +276,8 @@ export function formatReport(report, probeLines = []) {
 function parseArgs(argv) {
   const args = {
     seconds: 25,
-    out: resolve('trace.json'),
+    // Outside the repo: a trace is hundreds of MB, and Frink diffs every untracked file.
+    out: join(os.tmpdir(), 'frink-perf-trace.json'),
     probe: false,
     invalidations: false,
     port: null,
