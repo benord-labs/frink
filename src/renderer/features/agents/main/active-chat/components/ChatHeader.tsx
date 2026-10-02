@@ -1,10 +1,12 @@
 import { Button } from '@benord-labs/frink-primitives';
+import { useAtomValue } from 'jotai';
 import { ListTodo, PanelRight, Undo2 } from 'lucide-react';
 import { memo } from 'react';
 import { Kbd } from '../../../../../components/ui/kbd';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../../../components/ui/tooltip';
 import { cn } from '../../../../../lib/utils';
 import { isMacOS } from '../../../../../lib/utils/platform';
+import { splitViewActivePaneIndexAtom } from '../../../atoms';
 import { PaneUtilityButtons } from '../../../components/pane-utility-buttons';
 import { PreviewSetupHoverCard } from '../../../components/preview-setup-hover-card';
 import { useFileTreeToggle } from '../../../hooks/use-file-tree-toggle';
@@ -83,6 +85,7 @@ export const ChatHeader = memo(function ChatHeader({
   restoreWorkspaceMutationIsPending,
 }: ChatHeaderProps) {
   const isInSplitView = splitPaneIndex !== undefined;
+  const activePaneIndex = useAtomValue(splitViewActivePaneIndexAtom);
   const canOpenTerminal = !!gitContextPath;
   const hasProject = !!gitContextPath;
   const { fileTreeOpen, modifiedFiles, toggleFileTree } = useFileTreeToggle({
@@ -142,8 +145,14 @@ export const ChatHeader = memo(function ChatHeader({
                 </HeaderBadge>
               )}
 
-              {/* Empty header space doubles as the frameless window's drag handle. */}
-              <div className="drag-region h-7 flex-1 min-w-0" />
+              {/* Empty header space doubles as the frameless window's drag handle. Drag regions
+                  swallow mouse events, so an inactive split pane leaves it clickable to activate. */}
+              <div
+                className={cn(
+                  'h-7 flex-1 min-w-0',
+                  (!isInSplitView || splitPaneIndex === activePaneIndex) && 'drag-region',
+                )}
+              />
             </>
           )}
         </div>
