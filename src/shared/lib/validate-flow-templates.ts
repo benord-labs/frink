@@ -171,6 +171,12 @@ type PredecessorSchema = {
   attributableBlockType?: string;
 };
 
+/** Graph-wide resolver inputs; nodes in `continuationIds` receive `fan_out_completed`. */
+type SchemaContext = {
+  customNodeOutputs?: ReadonlyMap<string, OutputFieldSchema[]>;
+  continuationIds: ReadonlySet<string>;
+};
+
 /**
  * Returns the effective output schema for a single node — what it outputs as `outputs`
  * when it completes, factoring in passthrough behaviour:
@@ -186,7 +192,7 @@ function getEffectiveOutputSchemaForNode(
   predecessorsOf: Map<string, string[]>,
   nodeId: string,
   visitedOutput: Set<string>,
-  customNodeOutputs?: ReadonlyMap<string, OutputFieldSchema[]>,
+  ctx: SchemaContext,
 ): PredecessorSchema {
   if (visitedOutput.has(nodeId)) return { fields: [], hasDynamic: false };
   const nextVisited = new Set(visitedOutput);
@@ -209,7 +215,7 @@ function getEffectiveOutputSchemaForNode(
       nodeId,
       new Set<string>(),
       nextVisited,
-      customNodeOutputs,
+      ctx,
     );
     const conditionFields = OUTPUT_SCHEMAS.condition ?? [];
     return {
@@ -225,7 +231,7 @@ function getEffectiveOutputSchemaForNode(
   }
 
   return {
-    fields: getBlockOutputSchema(blockType, nodeConfig, customNodeOutputs),
+    fields: getBlockOutputSchema(blockType, nodeConfig, ctx.customNodeOutputs),
     hasDynamic: hasDynamicOutputs(blockType, nodeConfig),
     attributableBlockType: blockType,
   };
@@ -243,56 +249,39 @@ function resolveEffectivePredecessorSchema(
   nodes: FlowNode[],
   predecessorsOf: Map<string, string[]>,
   nodeId: string,
-  visitedWalk = new Set<string>(),
-  visitedOutput = new Set<string>(),
-  customNodeOutputs?: ReadonlyMap<string, OutputFieldSchema[]>,
+  visitedWalk: Set<string>,
+  visitedOutput: Set<string>,
+  ctx: SchemaContext,
 ): PredecessorSchema {
   if (visitedWalk.has(nodeId)) return { fields: [], hasDynamic: false };
+  // A Fan Out continuation receives the aggregate; an Approval one emits only {approved} (sc-3578).
+  if (ctx.continuationIds.has(nodeId) && getBlockType(nodes, nodeId) !== 'approval') {
+    return {
+      fields: OUTPUT_SCHEMAS.fan_out_completed ?? [],
+      hasDynamic: false,
+      attributableBlockType: 'fan_out',
+    };
+  }
   const nextWalk = new Set(visitedWalk);
   nextWalk.add(nodeId);
 
   const predIds = predecessorsOf.get(nodeId) ?? [];
-
-  if (predIds.length === 0) {
-    return { fields: [], hasDynamic: false };
-  }
-
-  if (predIds.length === 1) {
-    const predId = predIds[0] as string;
-    const predBlockType = getBlockType(nodes, predId);
-    if (!predBlockType) return { fields: [], hasDynamic: false };
-
-    // Approval: no outputs — skip it and look further upstream
-    if (predBlockType === 'approval') {
-      return resolveEffectivePredecessorSchema(
-        nodes,
-        predecessorsOf,
-        predId,
-        nextWalk,
-        visitedOutput,
-        customNodeOutputs,
-      );
-    }
-
-    return getEffectiveOutputSchemaForNode(
-      nodes,
-      predecessorsOf,
-      predId,
-      new Set(visitedOutput),
-      customNodeOutputs,
-    );
-  }
+  // A lone approval predecessor has no outputs — skip it and look further upstream
+  const all: PredecessorSchema[] = predIds.map((predId) =>
+    predIds.length === 1 && getBlockType(nodes, predId) === 'approval'
+      ? resolveEffectivePredecessorSchema(
+          nodes,
+          predecessorsOf,
+          predId,
+          nextWalk,
+          visitedOutput,
+          ctx,
+        )
+      : getEffectiveOutputSchemaForNode(nodes, predecessorsOf, predId, new Set(visitedOutput), ctx),
+  );
+  if (all.length === 1) return all[0] as PredecessorSchema;
 
   // Diamond merge: union the actual output schemas of all predecessors
-  const all: PredecessorSchema[] = predIds.map((predId) =>
-    getEffectiveOutputSchemaForNode(
-      nodes,
-      predecessorsOf,
-      predId,
-      new Set(visitedOutput),
-      customNodeOutputs,
-    ),
-  );
   const merged = all.reduce<OutputFieldSchema[]>((acc, s) => mergeSchemaFields(acc, s.fields), []);
   const anyDynamic = all.some((s) => s.hasDynamic);
   return { fields: merged, hasDynamic: anyDynamic };
@@ -424,25 +413,19 @@ export function computeNodeVariables(
       return resolution.ok ? [resolution.structure.continuationNodeId] : [];
     }),
   );
-  const customNodeOutputs = options?.customNodeOutputs;
+  const ctx: SchemaContext = { customNodeOutputs: options?.customNodeOutputs, continuationIds };
 
   const result: Record<string, NodeVariables> = {};
 
   for (const node of nodes) {
-    const predecessor = continuationIds.has(node.id)
-      ? {
-          fields: OUTPUT_SCHEMAS.fan_out_completed ?? [],
-          hasDynamic: false,
-          attributableBlockType: 'fan_out',
-        }
-      : resolveEffectivePredecessorSchema(
-          nodes,
-          predecessorsOf,
-          node.id,
-          new Set(),
-          new Set(),
-          customNodeOutputs,
-        );
+    const predecessor = resolveEffectivePredecessorSchema(
+      nodes,
+      predecessorsOf,
+      node.id,
+      new Set(),
+      new Set(),
+      ctx,
+    );
 
     const inLoop = fanOutBodyMembers.has(node.id);
     const loopFields: OutputFieldSchema[] | null = inLoop
