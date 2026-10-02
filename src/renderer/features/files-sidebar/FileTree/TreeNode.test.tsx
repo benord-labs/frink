@@ -677,3 +677,70 @@ describe('TreeNode selection subscription', () => {
     expect(screen.queryByText('Copy 2 Paths')).not.toBeInTheDocument();
   });
 });
+
+// sc-3855: a plain click always opens the file, including the file that is already selected.
+describe('TreeNode file click', () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('opens the already-selected file on every plain click', () => {
+    const onFileClick = vi.fn();
+    const onSelect = vi.fn();
+    render(
+      <ModifiedFilterContext.Provider value={false}>
+        <RefreshContext.Provider value={0}>
+          <SelectionActionsContext.Provider value={{}}>
+            <SelectionStateContext.Provider value={seedStore(new Set([fileNode.path]))}>
+              <TreeNode
+                node={fileNode}
+                level={0}
+                projectPath="/tmp/proj"
+                onFileClick={onFileClick}
+                onSelect={onSelect}
+              />
+            </SelectionStateContext.Provider>
+          </SelectionActionsContext.Provider>
+        </RefreshContext.Provider>
+      </ModifiedFilterContext.Provider>,
+    );
+    const row = screen.getByRole('treeitem', { name: /index\.ts/ });
+    expect(row).toHaveAttribute('aria-selected', 'true');
+
+    fireEvent.click(row);
+    fireEvent.click(row);
+
+    expect(onFileClick).toHaveBeenCalledTimes(2);
+    expect(onFileClick).toHaveBeenNthCalledWith(2, fileNode.path);
+  });
+
+  it.each([
+    ['Cmd', { metaKey: true }, { shift: false, meta: true }],
+    ['Ctrl', { ctrlKey: true }, { shift: false, meta: true }],
+    ['Shift', { shiftKey: true }, { shift: true, meta: false }],
+  ])('%s+click extends the selection instead of opening the file', (_label, init, modifiers) => {
+    const onFileClick = vi.fn();
+    const onModifiedClick = vi.fn();
+    render(
+      <ModifiedFilterContext.Provider value={false}>
+        <RefreshContext.Provider value={0}>
+          <SelectionActionsContext.Provider value={{ onModifiedClick }}>
+            <SelectionStateContext.Provider value={seedStore(new Set([fileNode.path]))}>
+              <TreeNode
+                node={fileNode}
+                level={0}
+                projectPath="/tmp/proj"
+                onFileClick={onFileClick}
+              />
+            </SelectionStateContext.Provider>
+          </SelectionActionsContext.Provider>
+        </RefreshContext.Provider>
+      </ModifiedFilterContext.Provider>,
+    );
+
+    fireEvent.click(screen.getByRole('treeitem', { name: /index\.ts/ }), init);
+
+    expect(onFileClick).not.toHaveBeenCalled();
+    expect(onModifiedClick).toHaveBeenCalledWith(fileNode.path, fileNode.name, 'file', modifiers);
+  });
+});
