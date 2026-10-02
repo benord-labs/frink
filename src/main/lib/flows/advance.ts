@@ -9,7 +9,7 @@
  */
 
 import log from 'electron-log';
-import type { NodeOutput } from '../../../shared/types/flow';
+import { CONDITION_TRUE_RESULT, type NodeOutput } from '../../../shared/types/flow';
 import type { FlowResumeSnapshot } from '../../../shared/types/flow-run/resume';
 import { getDatabase } from '../db';
 import { getFlowRun } from '../db/repos/flow-runs';
@@ -123,6 +123,24 @@ type AdvancedNode = {
   laneIndex: number | null;
   parentFanOutNodeRunId: string | null;
 };
+
+// dispatchCondition always sets `result`, so a bad one is a broken invariant: report it, then fail
+// closed to 'stop' like evaluateCondition — the true branch would run gated nodes on unchecked data.
+function conditionResultOf(flowRunId: string, node: AdvancedNode, output: NodeOutput) {
+  const result = output.outputs?.result;
+  if (result === CONDITION_TRUE_RESULT || result === 'stop') return result;
+
+  log.error('[FlowsEngine] condition advanced without a valid result; taking false branch', {
+    flowRunId,
+    nodeId: node.nodeId,
+    result,
+  });
+  captureContained(new Error('Condition node advanced without a valid result'), {
+    surface: 'flow-condition-result',
+    blockType: node.blockType,
+  });
+  return 'stop';
+}
 
 async function pauseForParkedFanOutSibling(
   db: Db,
@@ -334,9 +352,7 @@ export async function advanceFlowRun(
 
   const fanOutContinuation = fanOutContinuationNodeId(ctx.graph, updated, output, fanOutStep);
   const conditionResult =
-    updated.blockType === 'condition'
-      ? ((output.outputs?.result as 'continue' | 'stop' | undefined) ?? 'stop')
-      : undefined;
+    updated.blockType === 'condition' ? conditionResultOf(flowRunId, updated, output) : undefined;
 
   const nextNodeId =
     fanOutContinuation ?? pickNextTargetNodeId(ctx.graph.edges, updated.nodeId, conditionResult);
@@ -405,9 +421,11 @@ export async function dispatchAndAdvance(
   if (!inserted) return;
   const controller = new AbortController();
   registerNodeAbort(flowRunId, controller);
-  emitNodeStarted(ctx.meta, flowRunId, node.id, node.blockType, node.label);
 
+  // Nothing may run between registering and the try: the finally is what unregisters, and a
+  // node_started listener can throw (flowEventBus is a plain EventEmitter).
   try {
+    emitNodeStarted(ctx.meta, flowRunId, node.id, node.blockType, node.label);
     const result = await dispatchNodeUnlessAborted(controller, {
       flowRunId,
       nodeRunId: inserted.id,
