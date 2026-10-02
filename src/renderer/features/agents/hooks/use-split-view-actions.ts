@@ -151,41 +151,19 @@ export function useSplitViewActions() {
   /** Add a new-chat pane (active state - NewChatForm). Used by "New Pane" in the New Chat dropdown. */
   const addNewChatPane = useCallback(() => addPane(true), [addPane]);
 
-  /** Fill the active pane (or the first empty pane) with a chat ID. */
+  /** Show a chat in the active pane, replacing whatever it holds — even when another pane is an
+   *  empty / new-chat placeholder. A chat already open in some pane is focused, not duplicated. */
   const fillActivePane = useCallback(
     (chatId: string) => {
       setSplitView((prev: SplitViewState) => {
-        // Don't add duplicate chat to split
-        if (prev.chatIds.includes(chatId)) {
-          // If clicking a chat already in split, just set it as active pane
-          const existingIdx = prev.chatIds.indexOf(chatId);
-          if (existingIdx !== prev.activePaneIndex) {
-            return { ...prev, activePaneIndex: existingIdx };
-          }
-          return prev;
+        const existingIdx = prev.chatIds.indexOf(chatId);
+        if (existingIdx !== -1) {
+          return existingIdx === prev.activePaneIndex
+            ? prev
+            : { ...prev, activePaneIndex: existingIdx };
         }
 
-        // Prefer filling the active pane if it's empty or showing new-chat form
         const activeIdx = prev.activePaneIndex;
-        if (
-          activeIdx >= 0 &&
-          activeIdx < prev.chatIds.length &&
-          isFillablePane(prev.chatIds[activeIdx])
-        ) {
-          const newChatIds = [...prev.chatIds];
-          newChatIds[activeIdx] = chatId;
-          return { ...prev, chatIds: newChatIds };
-        }
-
-        // Otherwise fill the first fillable pane (empty placeholder or new-chat)
-        const emptyIdx = prev.chatIds.findIndex(isFillablePane);
-        if (emptyIdx !== -1) {
-          const newChatIds = [...prev.chatIds];
-          newChatIds[emptyIdx] = chatId;
-          return { ...prev, chatIds: newChatIds, activePaneIndex: emptyIdx };
-        }
-
-        // No empty pane — replace the active pane's chat
         if (activeIdx >= 0 && activeIdx < prev.chatIds.length) {
           const newChatIds = [...prev.chatIds];
           newChatIds[activeIdx] = chatId;
