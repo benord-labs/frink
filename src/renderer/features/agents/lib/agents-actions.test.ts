@@ -106,7 +106,7 @@ describe('agents-actions', () => {
     expect(event.type).toBe('sidebar:toggle-archived');
   });
 
-  // These five actions are built by one factory, so a mis-wired argument would swap two
+  // These actions are built by one factory, so a mis-wired argument would swap two
   // event names without breaking anything else. Pin each id to its event.
   it('keeps every event-dispatch action pointed at its own event', async () => {
     const expected = [
@@ -115,6 +115,7 @@ describe('agents-actions', () => {
       ['open-branch-delete-picker', 'branches:open-delete-picker'],
       ['collapse-all-sidebar', 'sidebar:collapse-all'],
       ['toggle-archived', 'sidebar:toggle-archived'],
+      ['archive-agent', 'sidebar:archive-focused-chat'],
     ] as const;
 
     for (const [actionId, eventName] of expected) {

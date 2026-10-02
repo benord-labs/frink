@@ -59,6 +59,13 @@ const state = {
   localProjectsData: new Array<LocalProjectStub>(),
   persistedPendingPlanApprovals: [] as Array<{ subChatId: string; chatId: string }>,
   livePendingPlanApprovals: new Map<string, string>(),
+  /** subChatId → parent chatId; a chat listed here is streaming. */
+  loadingSubChats: new Map<string, string>(),
+  activeChatsData: [] as Array<{ chatId: string; hasLiveFlowRun: boolean }>,
+  /** Chat ids with a held background turn (heldChatIdsAtom). */
+  heldChatIds: new Set<string>(),
+  /** activeOverlayAtom: null = the chat destination. */
+  activeOverlay: null as null | 'workqueue' | 'settings' | 'flows',
 };
 
 /** Chat-row shape the chat mutations resolve with; per-mutation fixtures differ only by identity. */
@@ -185,25 +192,28 @@ export const atomRefs = {
   splitViewActivePaneIndexAtom: null as unknown,
   splitViewQuickActionsChromeAtom: null as unknown,
   pendingPlanApprovalsAtom: null as unknown,
+  loadingSubChatsAtom: null as unknown,
+  heldChatIdsAtom: null as unknown,
+  activeOverlayAtom: null as unknown,
 };
 
 export const makeJotaiMock = (actual: typeof import('jotai')) => ({
   ...actual,
-  useAtom: () => [null, hoisted.setSelectedChatIdMock],
+  useAtom: (a: unknown) =>
+    a === atomRefs.activeOverlayAtom
+      ? [hoisted.state.activeOverlay, vi.fn()]
+      : [null, hoisted.setSelectedChatIdMock],
   useAtomValue: (a: unknown) => {
-    if (a === atomRefs.splitViewChatIdsAtom) {
-      return hoisted.state.splitViewState.splitView.chatIds;
-    }
-    if (a === atomRefs.splitViewActivePaneIndexAtom) {
-      return hoisted.state.splitViewState.splitView.activePaneIndex;
-    }
-    if (a === atomRefs.splitViewQuickActionsChromeAtom) {
-      return hoisted.state.splitViewQuickActionsChrome;
-    }
-    if (a === atomRefs.pendingPlanApprovalsAtom) {
-      return hoisted.state.livePendingPlanApprovals;
-    }
-    return new Map();
+    const { state } = hoisted;
+    const values: Array<[unknown, unknown]> = [
+      [atomRefs.splitViewChatIdsAtom, state.splitViewState.splitView.chatIds],
+      [atomRefs.splitViewActivePaneIndexAtom, state.splitViewState.splitView.activePaneIndex],
+      [atomRefs.splitViewQuickActionsChromeAtom, state.splitViewQuickActionsChrome],
+      [atomRefs.pendingPlanApprovalsAtom, state.livePendingPlanApprovals],
+      [atomRefs.loadingSubChatsAtom, state.loadingSubChats],
+      [atomRefs.heldChatIdsAtom, state.heldChatIds],
+    ];
+    return values.find(([ref]) => ref !== null && ref === a)?.[1] ?? new Map();
   },
   useSetAtom: () => vi.fn(),
 });
@@ -253,7 +263,7 @@ export const trpcMock = {
     },
     chats: {
       listCounts: { useQuery: hoisted.chatsListCountsForSidebarQueryMock },
-      listActiveChats: { useQuery: () => ({ data: [] }) },
+      listActiveChats: { useQuery: () => ({ data: hoisted.state.activeChatsData }) },
       getPendingPlanApprovals: { useQuery: hoisted.getPendingPlanApprovalsUseQueryMock },
       listArchived: { useQuery: () => ({ data: hoisted.archivedChatsData }) },
       listByFolder: { useQuery: () => ({ data: { chats: [], hasMore: false, nextCursor: null } }) },
@@ -363,6 +373,11 @@ export async function setupHarness() {
   atomRefs.splitViewActivePaneIndexAtom = atoms.splitViewActivePaneIndexAtom;
   atomRefs.splitViewQuickActionsChromeAtom = atoms.splitViewQuickActionsChromeAtom;
   atomRefs.pendingPlanApprovalsAtom = atoms.pendingPlanApprovalsAtom;
+  atomRefs.loadingSubChatsAtom = atoms.loadingSubChatsAtom;
+  atomRefs.heldChatIdsAtom = (
+    await import('../../../lib/stores/active-transport-registry')
+  ).heldChatIdsAtom;
+  atomRefs.activeOverlayAtom = (await import('../../../lib/atoms')).activeOverlayAtom;
   SidebarUnderTest = (await import('./UnifiedSidebar')).UnifiedSidebar;
 }
 
@@ -447,6 +462,10 @@ export function resetHarness() {
   hoisted.state.localProjectsData = [];
   hoisted.state.persistedPendingPlanApprovals = [];
   hoisted.state.livePendingPlanApprovals = new Map();
+  hoisted.state.loadingSubChats = new Map();
+  hoisted.state.activeChatsData = [];
+  hoisted.state.heldChatIds = new Set();
+  hoisted.state.activeOverlay = null;
   hoisted.capturedGroupedProjectsParams = null;
   hoisted.state.splitViewState = {
     splitView: { chatIds: [null], activePaneIndex: 0 },

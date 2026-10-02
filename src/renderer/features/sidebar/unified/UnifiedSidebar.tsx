@@ -22,6 +22,10 @@ import {
   flowsDashboardActiveAtom,
 } from '../../../lib/atoms/agent-navigation-atoms';
 import { cleanupChatScopedState } from '../../../lib/atoms/atom-family-factory';
+import {
+  useArchiveWindowEvents,
+  useTaskAwareArchive,
+} from '../../../lib/hooks/sidebar-chat-archive/use-chat-archive-actions';
 import { usePendingPlanIds } from '../../../lib/hooks/use-sidebar-pending-plan-ids';
 import { useWindowEvent } from '../../../lib/hooks/use-window-event';
 import { createIdSelectionStore } from '../../../lib/tree-navigation';
@@ -1205,34 +1209,8 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
       [getActiveLinkedTasksForChatIdsWithFallback],
     );
 
-    const handleChatArchive = useCallback(
-      async (chatId: string) => {
-        if (await deferToTaskAwareDialog(chatId, 'archive')) return;
+    const handleChatArchive = useTaskAwareArchive(deferToTaskAwareDialog, archiveSingleChat);
 
-        try {
-          await archiveSingleChat(chatId);
-        } catch (error) {
-          toast.error('Failed to archive chat', {
-            description: extractErrorMessage(error) ?? 'Unable to archive this chat right now.',
-          });
-        }
-      },
-      [deferToTaskAwareDialog, archiveSingleChat],
-    );
-
-    // Bridge for the chat view's "Complete & Archive" (TaskAcceptBar): it completes the task, then
-    // asks the sidebar to archive. Archives directly (not handleChatArchive) — the task is already
-    // completed, so there is no active task to warn about, and archiveSingleChat owns the
-    // pane-clear + deselect navigation that closes the open chat cleanly.
-    useWindowEvent('sidebar:archive-chat', (event) => {
-      const chatId = (event as CustomEvent<{ chatId?: string }>).detail?.chatId;
-      if (!chatId) return;
-      void archiveSingleChat(chatId).catch((error) => {
-        toast.error('Failed to archive chat', {
-          description: extractErrorMessage(error) ?? 'Unable to archive this chat right now.',
-        });
-      });
-    });
     const deleteSingleChat = useCallback(
       async (chatId: string, checkActiveTasks = false) => {
         if (checkActiveTasks && (await deferToTaskAwareDialog(chatId, 'delete'))) return;
@@ -1377,6 +1355,17 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
         transformedProjects,
       ],
     );
+
+    useArchiveWindowEvents({
+      // A split pane on the new-chat form holds a sentinel, not a chat.
+      focusedChatId: effectiveSelectedChatId === NEW_CHAT_PANE ? null : effectiveSelectedChatId,
+      isChatCovered: activeOverlay !== null,
+      loadingChatIds,
+      activeChats,
+      deferToTaskAwareDialog,
+      archiveSingleChat,
+      restoreChat: handleChatRestore,
+    });
 
     const bulk = useBulkChatActions({
       selection: chatSelection,
