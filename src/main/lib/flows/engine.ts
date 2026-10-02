@@ -187,7 +187,9 @@ async function finalizeChatOwnedFlowCancellation(
   const { outcome, droppedTicket, liveTicket } = await admissionRuntime.transitionFlowRun(
     cancelWork,
     (result) => {
-      if (result.outcome === 'cancelled') abortFlowRun(flowRunId);
+      if (result.outcome !== 'cancelled') return;
+      abortFlowRun(flowRunId);
+      dropStagedContinuation(flowRunId);
     },
   );
   if (droppedTicket) void admissionRuntime.drainFlowAdmissions().catch(() => undefined);

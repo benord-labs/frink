@@ -55,7 +55,7 @@ export function stageContinuationResume(
 ): void {
   // A later stage for the same run (a typed reply after boot carry-on) must keep the abandon guard.
   const admit = pending.admit ?? staged.get(pending.flowRunId)?.pending.admit;
-  const generation = dropGenerations.get(pending.flowRunId) ?? 0;
+  const generation = continuationDropGeneration(pending.flowRunId);
   staged.set(pending.flowRunId, {
     pending: { ...pending, admit },
     emitCorrective,
@@ -71,8 +71,13 @@ export function dropStagedContinuation(flowRunId: string): void {
   dropGenerations.set(flowRunId, (dropGenerations.get(flowRunId) ?? 0) + 1);
 }
 
+/** The run's drop generation: bumped by every Cancel and hard Flow deletion, never by other aborts. */
+export function continuationDropGeneration(flowRunId: string): number {
+  return dropGenerations.get(flowRunId) ?? 0;
+}
+
 function droppedSinceStaged({ pending, generation }: StagedContinuation): boolean {
-  return (dropGenerations.get(pending.flowRunId) ?? 0) !== generation;
+  return continuationDropGeneration(pending.flowRunId) !== generation;
 }
 
 function continuationInput(entry: StagedContinuation) {
