@@ -2,8 +2,9 @@
 /** The row "…" menu against the REAL Radix DropdownMenu: its own memo boundary (sc-2721) must keep
  * the trigger wiring intact. */
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import type { ReactNode } from 'react';
+import type { ReactElement, ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { useConfirm } from '../../../../components/ui/use-confirm';
 import type { ChatItem } from '../types';
 import { ChatListItem } from './ChatListItem';
 
@@ -81,5 +82,60 @@ describe('ChatListItem actions menu (real Radix)', () => {
     expect(onRename).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'chat-1', isLoading: true }),
     );
+  });
+
+  it('hands delete the latest chat name so the confirmation can name it', async () => {
+    const onDelete = vi.fn();
+    const props = { isSelected: false, onClick: vi.fn(), onDelete };
+    const { rerender } = render(<ChatListItem chat={{ ...chat, name: null }} {...props} />);
+    // The title arrives after the row first rendered; the menu must not hand delete a stale name.
+    rerender(<ChatListItem chat={chat} {...props} />);
+    const trigger = screen.getByRole('button', { name: 'Chat actions' });
+    trigger.focus();
+    fireEvent.keyDown(trigger, { key: 'Enter' });
+
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete chat permanently' }));
+
+    expect(onDelete).toHaveBeenCalledWith('chat-1', 'Menu chat');
+  });
+
+  it('opens the confirm from the real menu with Cancel focused, and leaves the page usable after', async () => {
+    const onConfirmed = vi.fn();
+    function Host(): ReactElement {
+      const { confirm, confirmDialog } = useConfirm();
+      return (
+        <>
+          <ChatListItem
+            chat={chat}
+            isSelected={false}
+            onClick={vi.fn()}
+            onDelete={async (chatId, chatName) => {
+              const title = `Delete "${chatName}" permanently?`;
+              if (await confirm({ title, description: 'Removed for good.' })) onConfirmed(chatId);
+            }}
+          />
+          {confirmDialog}
+        </>
+      );
+    }
+    render(<Host />);
+    const trigger = screen.getByRole('button', { name: 'Chat actions' });
+    trigger.focus();
+    fireEvent.keyDown(trigger, { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete chat permanently' }));
+
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog.textContent).toContain('Delete "Menu chat" permanently?');
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+    // A key still held from picking the menu item must land on Cancel, never on Delete.
+    const cancel = screen.getByRole('button', { name: 'Cancel' });
+    await waitFor(() => expect(document.activeElement).toBe(cancel));
+
+    fireEvent.click(cancel);
+
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(onConfirmed).not.toHaveBeenCalled();
+    // The menu and the dialog both lock the page while open; neither lock may outlive them.
+    await waitFor(() => expect(document.body.style.pointerEvents).not.toBe('none'));
   });
 });
