@@ -3,7 +3,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ZodError } from 'zod';
 import { FlowVersionConflictError } from '../../db/repos/flow-versions';
 import { FlowCopyNoSavedVersionError, FlowCopyNotFoundError } from '../../db/repos/flows';
-import { TerminalResumeAdmissionError } from '../../flows/admission/terminal-resume';
+import {
+  TerminalResumeAdmissionError,
+  TerminalResumeChatDeletedError,
+} from '../../flows/admission/terminal-resume';
 import { flowsRouter } from './flows';
 
 const createFlowVersionMock = vi.fn();
@@ -1009,6 +1012,20 @@ describe('flowsRouter (local)', () => {
         );
       });
       expect(retryTerminalFlowRunMock).toHaveBeenCalledWith(expect.anything(), runId);
+    });
+
+    it("surfaces a deleted chat's refusal in plain words, without the admission prefix", async () => {
+      const runId = '550e8400-e29b-41d4-a716-446655440024';
+      getFlowRunMock.mockResolvedValueOnce({ id: runId, status: 'failed' });
+      retryTerminalFlowRunMock.mockRejectedValueOnce(new TerminalResumeChatDeletedError());
+      const caller = flowsRouter.createCaller({ getWindow: () => null });
+
+      await expect(caller.retryRunFromLastNode({ runId })).rejects.toSatisfy(
+        (error: unknown) =>
+          error instanceof TRPCError &&
+          error.code === 'PRECONDITION_FAILED' &&
+          error.message === "This run's chat was deleted — start the flow again to re-run it.",
+      );
     });
 
     it('re-throws unexpected retry faults instead of masking them as admission rejection', async () => {

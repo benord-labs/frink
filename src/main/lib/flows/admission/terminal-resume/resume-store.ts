@@ -14,6 +14,7 @@ import {
   reopenFailedStage,
   stageConcurrencyLimit,
 } from '../batch-promotion';
+import { RESUME_CHAT_DELETED_MESSAGE, resumeChatDeleted } from './chat-gate';
 
 type Db = ReturnType<typeof getDatabase>;
 type FlowRunAdmission = typeof flowRunAdmissions.$inferSelect;
@@ -38,6 +39,21 @@ export type EnqueueTerminalFlowResumeInput = {
 
 export class TerminalResumeAdmissionError extends Error {
   override name = 'TerminalResumeAdmissionError';
+}
+
+/** The run's start_task chat was deleted — the user abandoned the run (sc-3509); copy is user-facing. */
+export class TerminalResumeChatDeletedError extends TerminalResumeAdmissionError {
+  override name = 'TerminalResumeChatDeletedError';
+  constructor() {
+    super(RESUME_CHAT_DELETED_MESSAGE);
+  }
+}
+
+/** Admission failures cross the ticket as strings; this restores the typed refusal the UI maps. */
+export function terminalResumeAdmissionError(message: string): TerminalResumeAdmissionError {
+  return message === RESUME_CHAT_DELETED_MESSAGE
+    ? new TerminalResumeChatDeletedError()
+    : new TerminalResumeAdmissionError(message);
 }
 
 /** The caller's own `admit` said no (e.g. the run was abandoned meanwhile) — expected, not a failure. */
@@ -144,6 +160,11 @@ function resumeEligibility(db: Db, flowRunId: string, nodeRunId: string): Termin
   if (target.blockType === 'fan_out') {
     return { ok: false, error: 'Terminal resume admission does not support fan-out execution' };
   }
+  // Read at enqueue AND at promotion: a chat deleted while the ticket queued is refused before the
+  // run is promoted, so it keeps its terminal status instead of failing mid-dispatch.
+  if (resumeChatDeleted(db, flowRunId, nodeRunId, target.flowVersionId)) {
+    return { ok: false, error: RESUME_CHAT_DELETED_MESSAGE };
+  }
   const batchMember = batchMemberTarget(db, target);
   // A batch member is an ordinary Flow run plus a stage slot: it re-enters through this same
   // ticket, and only its own stage can refuse it.
@@ -179,7 +200,7 @@ export function enqueueTerminalFlowResume(
     );
   }
   const eligibility = resumeEligibility(db, input.flowRunId, input.nodeRunId);
-  if (!eligibility.ok) throw new TerminalResumeAdmissionError(eligibility.error);
+  if (!eligibility.ok) throw terminalResumeAdmissionError(eligibility.error);
   return ops.enqueue(db, { intent, requestedAt: input.requestedAt });
 }
 

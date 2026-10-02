@@ -38,8 +38,8 @@ import {
 import {
   type EnqueueTerminalFlowResumeInput,
   type TerminalFlowResumeIntent,
-  TerminalResumeAdmissionError,
   terminalFlowResumeIntent,
+  terminalResumeAdmissionError,
 } from './terminal-resume/resume-store';
 
 let controller: FlowAdmissionController | null = null;
@@ -298,7 +298,7 @@ export async function requestTerminalFlowResume(
   }
   const admission = await admissionController().getByTicket(result.admission.ticket);
   if (admission?.state === 'failed' || admission?.state === 'cancelled') {
-    throw new TerminalResumeAdmissionError(
+    throw terminalResumeAdmissionError(
       admission.error ?? `Flow resume admission ${admission.state} before dispatch`,
     );
   }

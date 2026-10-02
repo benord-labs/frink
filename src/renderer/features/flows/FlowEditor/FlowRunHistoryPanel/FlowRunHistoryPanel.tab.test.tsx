@@ -29,6 +29,7 @@ const snap = vi.hoisted(() => ({
   rerunRunMutate: vi.fn(),
   rerunRunIsPending: false,
   rerunRunVariables: undefined as { runId?: string } | undefined,
+  rerunRunOptions: undefined as { onError?: (err: { message: string }) => void } | undefined,
   getRunData: undefined as unknown,
   isListRunsLoading: false,
   isListRunsError: false,
@@ -74,11 +75,14 @@ vi.mock('../../../../lib/trpc', () => ({
         }),
       },
       rerunRun: {
-        useMutation: () => ({
-          mutate: snap.rerunRunMutate,
-          isPending: snap.rerunRunIsPending,
-          variables: snap.rerunRunVariables,
-        }),
+        useMutation: (options: { onError?: (err: { message: string }) => void }) => {
+          snap.rerunRunOptions = options;
+          return {
+            mutate: snap.rerunRunMutate,
+            isPending: snap.rerunRunIsPending,
+            variables: snap.rerunRunVariables,
+          };
+        },
       },
     },
     useUtils: () => ({
@@ -423,6 +427,20 @@ describe('RunDetailPane — Re-run from previous node', () => {
     expect(snap.rerunRunMutate).not.toHaveBeenCalled();
     await user.click(screen.getByRole('button', { name: /Confirm re-run/i }));
     expect(snap.rerunRunMutate).toHaveBeenCalledWith({ runId: RUN_ID });
+  });
+
+  it("toasts the server's plain refusal when the run's chat was deleted", async () => {
+    const { toast } = await import('sonner');
+    snap.getRunData = cancelledDetail(true);
+    renderPane();
+
+    snap.rerunRunOptions?.onError?.({
+      message: "This run's chat was deleted — start the flow again to re-run it.",
+    });
+
+    expect(toast.error).toHaveBeenCalledWith(
+      "This run's chat was deleted — start the flow again to re-run it.",
+    );
   });
 
   it('hides the re-run affordance for a user-cancelled run (no restart marker)', () => {

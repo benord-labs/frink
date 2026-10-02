@@ -22,7 +22,10 @@ import { getSubChatById } from '../db/repos/sub-chats';
 import { parkFlowTaskForSubChat } from '../db/repos';
 import { getLatestFlowTaskForSubChat } from '../db/repos/tasks';
 import { withFlowResourceCleanup } from './admission/activity';
-import { TerminalResumeAdmissionError } from './admission/terminal-resume/resume-store';
+import {
+  TerminalResumeAdmissionError,
+  TerminalResumeChatDeletedError,
+} from './admission/terminal-resume/resume-store';
 import { advanceFlowRun, dispatchAndAdvance, loadRunContext } from './advance';
 import { findNodeById } from './graph';
 import { lastUnfinishedNodeRun } from './rerun/resume-point';
@@ -276,6 +279,9 @@ export async function rerunFlowRunFromInterruption(flowRunId: string): Promise<v
   const admit = (tx: typeof db) => isRestartInterrupted(tx, flowRunId);
   await requestTerminalFlowResume({ flowRunId, nodeRunId: interrupted.id, admit }).catch(
     (error) => {
+      if (error instanceof TerminalResumeChatDeletedError) {
+        throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error.message, cause: error });
+      }
       // A Cancel that cleared the marker, before the enqueue or while it drained, is the user's call.
       if (!(error instanceof TerminalResumeAdmissionError) || isRestartInterrupted(db, flowRunId))
         throw error;

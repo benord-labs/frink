@@ -17,10 +17,18 @@ import { RESTART_INTERRUPTION_REASON } from '../../../../shared/types/flow';
 import type { FlowResumeSnapshot } from '../../../../shared/types/flow-run/resume';
 import type { getDatabase } from '../index';
 import { flowRuns, type NewNodeRun, type NodeRun, nodeRuns, tasks } from '../schema';
+import {
+  findLatestCompletedStartTaskRunSync,
+  resolveUpstreamStartTaskContextSync,
+  type StartTaskContext,
+  type StartTaskScope,
+} from './start-task-context';
 import { transcriptUnchanged } from './sub-chat-messages';
 import { latestFlowTaskForSubChatId } from './task-queries/subchat-driver';
 
 type Db = ReturnType<typeof getDatabase>;
+
+export type { StartTaskContext } from './start-task-context';
 
 const TERMINAL_NODE_STATUSES = ['completed', 'failed', 'cancelled', 'skipped'] as const;
 
@@ -65,34 +73,9 @@ export async function listNodeRunsForFlowRun(db: Db, flowRunId: string): Promise
 export async function findLatestCompletedStartTaskRun(
   db: Db,
   flowRunId: string,
-  scope?:
-    | { nodeIds: string[]; laneIndex: number; parentFanOutNodeRunId: string }
-    | { nodeIds: string[]; outsideFanOut: true },
+  scope?: StartTaskScope,
 ): Promise<NodeRun | null> {
-  if (scope && scope.nodeIds.length === 0) return null;
-  const filters = [
-    eq(nodeRuns.flowRunId, flowRunId),
-    eq(nodeRuns.blockType, 'start_task'),
-    eq(nodeRuns.status, 'completed'),
-  ];
-  if (scope) {
-    filters.push(inArray(nodeRuns.nodeId, scope.nodeIds));
-    if ('outsideFanOut' in scope) {
-      filters.push(isNull(nodeRuns.laneIndex), isNull(nodeRuns.parentFanOutNodeRunId));
-    } else {
-      filters.push(
-        eq(nodeRuns.laneIndex, scope.laneIndex),
-        eq(nodeRuns.parentFanOutNodeRunId, scope.parentFanOutNodeRunId),
-      );
-    }
-  }
-  const [row] = await db
-    .select()
-    .from(nodeRuns)
-    .where(and(...filters))
-    .orderBy(desc(nodeRuns.completedAt))
-    .limit(1);
-  return row ?? null;
+  return findLatestCompletedStartTaskRunSync(db, flowRunId, scope);
 }
 
 /**
@@ -207,27 +190,6 @@ export async function findLatestCompletedRunForNode(
 }
 
 /**
- * The identity context a start_task surfaces into its node_output for the rest of
- * the flow — invariant down the chain (agents/run_command/chat_reply all reuse the
- * start_task's chat + worktree). Resolved by every downstream block that needs it.
- */
-export type StartTaskContext = {
-  projectId?: string;
-  chatId?: string;
-  subChatId?: string;
-  taskId?: string;
-  worktreePath?: string;
-  branch?: string;
-  baseBranch?: string;
-  /** 'plan' | 'execute' — gates the downstream agent task. */
-  startMode?: string;
-  /** Start_task's model (PICKER id, e.g. `opus-4.8`); a downstream agent inherits it when it has no own override. */
-  model?: string;
-  /** Resolved task title (from start_task's Task title field, templates rendered); a downstream agent names its task row from this. */
-  label?: string;
-};
-
-/**
  * Resolves the flow's originating start_task context (see findLatestCompletedStartTaskRun)
  * for a downstream block, parsing its persisted node_output.outputs. Returns null when no
  * start_task has completed / the output has no outputs object. Used by agent / run_command /
@@ -240,27 +202,7 @@ export async function resolveUpstreamStartTaskContext(
   flowRunId: string,
   options?: { nodeRunId: string; upstreamNodeIds: string[] },
 ): Promise<StartTaskContext | null> {
-  const current = options ? await getNodeRun(db, options.nodeRunId) : null;
-  const laneScope =
-    options && current?.laneIndex !== null && current?.parentFanOutNodeRunId
-      ? {
-          nodeIds: options.upstreamNodeIds,
-          laneIndex: current.laneIndex,
-          parentFanOutNodeRunId: current.parentFanOutNodeRunId,
-        }
-      : undefined;
-  // Outside a lane, only start_tasks outside every Fan Out count — a continuation's upstream
-  // walk passes through the lane bodies, and the newest lane start_task must not win (sc-3836).
-  const outsideScope = options
-    ? { nodeIds: options.upstreamNodeIds, outsideFanOut: true as const }
-    : undefined;
-  const run =
-    (laneScope && (await findLatestCompletedStartTaskRun(db, flowRunId, laneScope))) ||
-    (await findLatestCompletedStartTaskRun(db, flowRunId, outsideScope));
-  if (!run || run.nodeOutput === null || typeof run.nodeOutput !== 'object') return null;
-  const outputs = (run.nodeOutput as { outputs?: unknown }).outputs;
-  if (outputs === null || typeof outputs !== 'object') return null;
-  return outputs as StartTaskContext;
+  return resolveUpstreamStartTaskContextSync(db, flowRunId, options);
 }
 
 export function setNodeRunStatus(

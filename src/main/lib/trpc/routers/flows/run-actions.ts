@@ -3,7 +3,10 @@ import type { getDatabase } from '../../../db';
 import { FlowVersionConflictError } from '../../../db/repos/flow-versions';
 import type { FlowRun } from '../../../db/schema';
 import { toDbFlowRunSnapshot } from '../../../flows/adapters';
-import { TerminalResumeAdmissionError } from '../../../flows/admission/terminal-resume';
+import {
+  TerminalResumeAdmissionError,
+  TerminalResumeChatDeletedError,
+} from '../../../flows/admission/terminal-resume';
 import { flowRunAdmissionSnapshotsForRuns } from '../../../flows/admission/visibility';
 import { LocalEngineNotImplementedError } from '../../../flows/engine';
 
@@ -47,6 +50,10 @@ export async function retrySettledFlowRun(
     return await retryTerminalFlowRun(db, flowRunId);
   } catch (error) {
     if (!(error instanceof TerminalResumeAdmissionError)) throw error;
+    // The deleted-chat refusal is already plain copy for the user — no admission prefix.
+    if (error instanceof TerminalResumeChatDeletedError) {
+      throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error.message, cause: error });
+    }
     mapEngineError(error, {
       code: 'PRECONDITION_FAILED',
       message: `Flow retry could not be admitted: ${error.message}`,

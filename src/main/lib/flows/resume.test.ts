@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 import type { FlowGraph } from '../../../shared/lib/validate-flow-graph';
@@ -17,8 +18,12 @@ import { batchStageRuns, batchStages, flowRunAdmissions, flowRuns, tasks } from 
 import { seedActiveAdmission, seedFlowRun } from '../db/test-utils/flow-fixtures';
 import { freshDb, type TestDb } from '../db/test-utils/fresh-db';
 import { unparkFlowInPlace } from '../tasks';
+import { isRestartInterrupted } from './transitions';
 import { hasFlowResourceActivity, setFlowAdmissionLifecycleHooks } from './admission/activity';
-import { TerminalResumeAdmissionError } from './admission/terminal-resume/resume-store';
+import {
+  TerminalResumeAdmissionError,
+  TerminalResumeChatDeletedError,
+} from './admission/terminal-resume/resume-store';
 
 // The engine reads its db via the getDatabase() singleton; point it at the per-test
 // in-memory db so the guard reads (getFlowRun / listNodeRunsForFlowRun) hit seeded rows.
@@ -469,6 +474,19 @@ describe('rerunFlowRunFromInterruption — guards', () => {
     const failed = new TerminalResumeAdmissionError('Flow resume admission failed');
     holder.requestTerminalFlowResume.mockRejectedValue(failed);
     await expect(rerunFlowRunFromInterruption(flowRunId)).rejects.toBe(failed);
+  });
+
+  it('refuses a run whose chat was deleted in plain words, keeping its interruption marker', async () => {
+    const flowRunId = await seedCancelledRun();
+    await seedInterruptedNode(flowRunId);
+    holder.requestTerminalFlowResume.mockRejectedValue(new TerminalResumeChatDeletedError());
+    await expect(rerunFlowRunFromInterruption(flowRunId)).rejects.toSatisfy(
+      (error: unknown) =>
+        error instanceof TRPCError &&
+        error.code === 'PRECONDITION_FAILED' &&
+        error.message === "This run's chat was deleted — start the flow again to re-run it.",
+    );
+    expect(isRestartInterrupted(db, flowRunId)).toBe(true);
   });
 
   it('rejects a run that does not exist', async () => {
