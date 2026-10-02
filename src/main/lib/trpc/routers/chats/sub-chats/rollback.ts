@@ -9,7 +9,7 @@ import {
   updateSubChatSession as updateSubChatSessionLocal,
 } from '../../../../db/repos/sub-chats';
 import { applyRollbackStash, type RollbackResult } from '../../../../git/stash';
-import { publicProcedure, router } from '../../../index';
+import { publicProcedureRaw, router } from '../../../index';
 import {
   findRollbackCheckpoint,
   findRollbackTarget,
@@ -140,7 +140,8 @@ function targetVanished(
  * Git side-effects (applyRollbackStash) are unchanged — they were already local.
  */
 export const subChatRollbackRouter = router({
-  rollbackToMessage: publicProcedure
+  // Raw: `messages` is the stored transcript, read verbatim like getSubChatMessages (see get.ts).
+  rollbackToMessage: publicProcedureRaw
     .input(
       z
         .object({
