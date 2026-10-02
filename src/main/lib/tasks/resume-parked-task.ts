@@ -2,17 +2,18 @@ import log from 'electron-log';
 import type { DrivingTaskRow, ParkedTask, ResumedBy } from '../flows/transitions';
 import { captureMainException, captureMainMessage } from '../sentry/init';
 
-/** A parked task (`failed` | `needs_attention`) back to `running` with its node and run, in one
- * transaction. True when this resume won AND the flow is live again. */
+/** A parked task (`failed` | `needs_attention`, or a reply-approved flow `plan_ready`) back to
+ * `running` with its node and run, in one transaction. True when this won AND the flow is live. */
 export async function resumeParkedTaskInPlace(
   task: ParkedTask,
   resumedBy: ResumedBy,
   subChatId: string,
 ): Promise<boolean> {
-  if (task.status !== 'failed' && task.status !== 'needs_attention') return false;
+  const { isPlanApprovalResume, resumeParkedTaskCommand } = await import('../flows/transitions');
+  const parked = task.status === 'failed' || task.status === 'needs_attention';
+  if (!parked && !isPlanApprovalResume(task, resumedBy)) return false;
   try {
     const { getDatabase } = await import('../db');
-    const { resumeParkedTaskCommand } = await import('../flows/transitions');
     const { transitionFlowRun } = await import('../flows/admission/runtime');
     const { forgetAdvancedTask } = await import('../flows/task-completion-watcher');
     const db = getDatabase();
