@@ -83,34 +83,52 @@ export function getGridPaneResizeCorner(
   return map[paneIndex] ?? null;
 }
 
-/** Outer border-radius only (avoids inner rounded corners at grid seams). */
-export function getGridPaneOuterCornerClass(
+/** The pane corners that sit on the split view's outer edge, and so are rounded. */
+export type PaneCorners = { tl: boolean; tr: boolean; br: boolean; bl: boolean };
+
+function corners(...rounded: (keyof PaneCorners)[]): PaneCorners {
+  return {
+    tl: rounded.includes('tl'),
+    tr: rounded.includes('tr'),
+    br: rounded.includes('br'),
+    bl: rounded.includes('bl'),
+  };
+}
+
+const ALL_CORNERS = corners('tl', 'tr', 'br', 'bl');
+
+/** Outer corners of a row/column pane (avoids inner rounded corners at split seams). */
+export function getLinearPaneOuterCorners(
+  isVertical: boolean,
+  index: number,
+  totalPanes: number,
+): PaneCorners {
+  if (totalPanes <= 1) return ALL_CORNERS;
+  const isFirst = index === 0;
+  const isLast = index === totalPanes - 1;
+  return isVertical
+    ? { tl: isFirst, tr: isFirst, br: isLast, bl: isLast }
+    : { tl: isFirst, tr: isLast, br: isLast, bl: isFirst };
+}
+
+/** Outer corners of a grid pane (avoids inner rounded corners at grid seams). */
+export function getGridPaneOuterCorners(
   layout: SplitLayout,
   index: number,
   totalPanes: number,
-): string {
-  if (totalPanes <= 1) return 'rounded-(--pane-outer-radius)';
+): PaneCorners {
+  if (totalPanes <= 1) return ALL_CORNERS;
   switch (layout) {
     case 'three-bottom':
-      if (index === 0) return 'rounded-tl-(--pane-outer-radius)';
-      if (index === 1) return 'rounded-tr-(--pane-outer-radius)';
-      if (index === 2) return 'rounded-b-(--pane-outer-radius)';
-      return '';
+      return [corners('tl'), corners('tr'), corners('bl', 'br')][index] ?? corners();
     case 'three-right':
-      if (index === 0) return 'rounded-tl-(--pane-outer-radius)';
-      if (index === 1) return 'rounded-bl-(--pane-outer-radius)';
-      if (index === 2) return 'rounded-r-(--pane-outer-radius)';
-      return '';
+      return [corners('tl'), corners('bl'), corners('tr', 'br')][index] ?? corners();
     case 'grid':
-      if (totalPanes >= 4) {
-        if (index === 0) return 'rounded-tl-(--pane-outer-radius)';
-        if (index === 1) return 'rounded-tr-(--pane-outer-radius)';
-        if (index === 2) return 'rounded-bl-(--pane-outer-radius)';
-        if (index === 3) return 'rounded-br-(--pane-outer-radius)';
-      }
-      return 'rounded-(--pane-outer-radius)';
+      if (totalPanes >= 4)
+        return [corners('tl'), corners('tr'), corners('bl'), corners('br')][index] ?? corners();
+      return ALL_CORNERS;
     default:
-      return 'rounded-lg';
+      return ALL_CORNERS;
   }
 }
 

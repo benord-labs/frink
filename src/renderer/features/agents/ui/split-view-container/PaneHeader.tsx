@@ -80,6 +80,7 @@ export function PaneHeader({
   onResetPaneZoom,
   totalPanes,
   onActivate,
+  className,
 }: {
   paneNumber: number;
   paneIndex: number;
@@ -104,6 +105,8 @@ export function PaneHeader({
   totalPanes?: number;
   /** When provided, clicking the header activates this pane (avoids activating when clicking content). */
   onActivate?: () => void;
+  /** Merged onto the header bar, e.g. the pane's rounded top corners. */
+  className?: string;
 }) {
   const color = getPaneColor(paneIndex);
   const displayLabel =
@@ -123,6 +126,7 @@ export function PaneHeader({
   const headerBarClassName = cn(
     'flex items-center justify-between px-2 py-1 border-b shrink-0 gap-2',
     isActive ? cn(color.borderSubtle, color.sidebarBg) : 'border-border/50 bg-muted/30',
+    className,
   );
 
   const badgeAndLabel = (

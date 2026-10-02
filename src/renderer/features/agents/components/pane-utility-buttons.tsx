@@ -5,11 +5,12 @@ import { TerminalToggleButton } from './terminal-toggle-button';
 
 const NOOP = () => {};
 
-/** Backdrop-blur wrapper for inline button variant (ChatHeader / NewChatFormHeader). */
+/** Tinted wrapper for the inline variant. No blur: the header behind it is static, so a blur changes
+ *  no pixel but costs a GPU pass per button whenever the header is damaged. */
 function InlineWrapper({ children }: { children: ReactNode }) {
   return (
     <div
-      className="rounded-md bg-background/10 backdrop-blur-[10px] flex items-center justify-center"
+      className="rounded-md bg-background/10 flex items-center justify-center"
       style={{
         // @ts-expect-error - WebKit-specific property
         // biome-ignore lint/style/useNamingConvention: vendor-prefixed CSS property name
@@ -22,7 +23,7 @@ function InlineWrapper({ children }: { children: ReactNode }) {
 }
 
 type PaneUtilityButtonsProps = {
-  /** "inline" wraps each button in backdrop-blur-sm container; "plain" renders bare buttons. */
+  /** "inline" wraps each button in a tinted container; "plain" renders bare buttons. */
   variant?: 'inline' | 'plain';
 
   /** Show file tree toggle */

@@ -140,3 +140,51 @@ describe('SplitPane pane activation', () => {
     );
   });
 });
+
+describe('SplitPane corners', () => {
+  it('paints its own rounded border but never clips, so the chat layer skips a rounded mask', () => {
+    renderPane('linear', true, vi.fn());
+
+    const pane = screen.getByRole('region', { name: PANE_SECTION });
+    // A real border, not padding: borders snap to device pixels, so the content box matches the old
+    // bordered pane exactly and no transcript text rewraps at fractional zoom.
+    expect(pane).toHaveClass(
+      'border-[3px]',
+      'rounded-tl-(--pane-outer-radius)',
+      'rounded-bl-(--pane-outer-radius)',
+    );
+    expect(pane.className).not.toMatch(/rounded-(tr|br)-|overflow-hidden|layout_paint|p-\[3px\]/);
+    expect(pane.querySelector('[class*="rounded-tl-(--pane-inner-radius)"]')).not.toBeNull();
+  });
+
+  it('rounds the body with one radius on its own layer, stretched past the square sides', () => {
+    renderPane('linear', true, vi.fn());
+
+    const clip = screen
+      .getByRole('region', { name: PANE_SECTION })
+      .querySelector<HTMLElement>('[data-pane-corner-clip]');
+    expect(clip).toHaveClass('overflow-hidden');
+    expect(clip?.style.borderRadius).toBe('var(--pane-inner-radius)');
+    expect(clip?.style.willChange).toBe('transform');
+    // Pane 0 of 2 in a row: only its bottom-left corner shows; top and right reach out of view.
+    expect(clip?.style.top).toBe('calc(-1 * var(--pane-inner-radius))');
+    expect(clip?.style.right).toBe('calc(-1 * var(--pane-inner-radius))');
+    expect(clip?.style.left).toBe('0px');
+    expect(clip?.style.bottom).toBe('0px');
+  });
+
+  it('gives Compact panels a positioned box on the body itself, not on the overhanging clip', () => {
+    renderPane('linear', true, vi.fn());
+
+    const clip = screen
+      .getByRole('region', { name: PANE_SECTION })
+      .querySelector<HTMLElement>('[data-pane-corner-clip]');
+    const box = clip?.firstElementChild;
+    // The clip's padding exactly cancels its overhang, so a relative child of it covers the body rect.
+    expect(clip?.style.paddingTop).toBe('var(--pane-inner-radius)');
+    expect(clip?.style.paddingRight).toBe('var(--pane-inner-radius)');
+    expect(box).toHaveAttribute('data-pane-body-box');
+    expect(box).toHaveClass('relative');
+    expect(box?.querySelector('[data-pane-chat]')).not.toBeNull();
+  });
+});

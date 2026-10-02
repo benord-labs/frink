@@ -8,7 +8,11 @@ import { cn } from '../../../../lib/utils';
 import { isMacOS } from '../../../../lib/utils/platform';
 import type { SplitLayout } from '../../atoms';
 import { GridCornerHandle } from './GridCornerHandle';
-import { getGridPaneOuterCornerClass } from './grid-helpers';
+import {
+  getGridPaneOuterCorners,
+  getLinearPaneOuterCorners,
+  type PaneCorners,
+} from './grid-helpers';
 import { PaneHeader } from './PaneHeader';
 import { PaneDropSection } from './pane-reorder-dnd';
 import { SplitPaneFileTreeSidebar } from './SplitPaneFileTreeSidebar';
@@ -16,6 +20,31 @@ import type { SplitPaneData } from './types';
 import { ZoomWrapper } from './ZoomWrapper';
 
 type ResizeCorner = 'br' | 'bl' | 'tr' | 'tl';
+
+const OUTER_CORNER_CLASS: Record<keyof PaneCorners, string> = {
+  tl: 'rounded-tl-(--pane-outer-radius)',
+  tr: 'rounded-tr-(--pane-outer-radius)',
+  br: 'rounded-br-(--pane-outer-radius)',
+  bl: 'rounded-bl-(--pane-outer-radius)',
+};
+
+/** One radius on its own GPU layer (on Mac the only rounded clip glass skips a mask surface for),
+ *  reaching past each unrounded side so the body's rect clip cuts those corners off. */
+function bodyCornerClipStyle({ br, bl }: PaneCorners): React.CSSProperties {
+  if (!br && !bl) return { inset: 0 };
+  const reach = 'calc(-1 * var(--pane-inner-radius))';
+  const inset = 'var(--pane-inner-radius)';
+  return {
+    top: reach,
+    right: br ? 0 : reach,
+    bottom: 0,
+    left: bl ? 0 : reach,
+    paddingTop: inset,
+    paddingRight: br ? 0 : inset,
+    paddingLeft: bl ? 0 : inset,
+    borderRadius: inset,
+  };
+}
 
 type SplitPaneBase = {
   pane: SplitPaneData;
@@ -97,21 +126,11 @@ export const SplitPane = memo(function SplitPane(props: SplitPaneProps) {
     if (!isActive) onSetActive();
   }, [isActive, onSetActive]);
 
-  const outerCornerClass = isLinear
-    ? totalPanes <= 1
-      ? 'rounded-(--pane-outer-radius)'
-      : isVertical
-        ? cn(
-            index === 0 && 'rounded-t-(--pane-outer-radius)',
-            index === totalPanes - 1 && 'rounded-b-(--pane-outer-radius)',
-          )
-        : cn(
-            index === 0 && 'rounded-l-(--pane-outer-radius)',
-            index === totalPanes - 1 && 'rounded-r-(--pane-outer-radius)',
-          )
+  const corners: PaneCorners = isLinear
+    ? getLinearPaneOuterCorners(isVertical, index, totalPanes)
     : layout
-      ? getGridPaneOuterCornerClass(layout, index, totalPanes)
-      : '';
+      ? getGridPaneOuterCorners(layout, index, totalPanes)
+      : { tl: false, tr: false, br: false, bl: false };
 
   const gridStyle: React.CSSProperties | undefined = isLinear
     ? undefined
@@ -122,22 +141,28 @@ export const SplitPane = memo(function SplitPane(props: SplitPaneProps) {
       paneIndex={index}
       onClick={handlePaneClick}
       style={isLinear ? sizeStyle : gridStyle}
+      // The section paints its rounded border but never clips: a rounded clip around the chat's GPU
+      // layer costs every glass pass a mask surface on Mac, so the inner corner clip does the rounding.
       className={cn(
-        '@container/pane overflow-hidden relative flex flex-col',
-        'contain-[layout_paint]',
+        '@container/pane relative flex flex-col border-[3px]',
+        'transition-colors duration-200 motion-reduce:transition-none',
+        'contain-[layout]',
+        corners.tl && OUTER_CORNER_CLASS.tl,
+        corners.tr && OUTER_CORNER_CLASS.tr,
+        corners.br && OUTER_CORNER_CLASS.br,
+        corners.bl && OUTER_CORNER_CLASS.bl,
+        isActive ? color.border : color.borderSubtle,
+        color.bg,
         '[--open-sidebar-button-position:absolute]',
         showFileTree
           ? '[--open-sidebar-button-left:1px] [--open-sidebar-button-inset:0px]'
           : '[--open-sidebar-button-left:calc(1rem_-_3px)]',
-        'border-[3px] transition-colors duration-200 motion-reduce:transition-none',
-        outerCornerClass,
         // macOS clips windowed apps with a native corner radius CSS cannot read, and Tahoe's is wider
         // than the 12px default. Widen outer corners so the border wraps it; fullscreen is square.
         isMacOS() && isFullscreen !== true && '[--pane-outer-radius:16px]',
-        isActive ? color.border : color.borderSubtle,
+        '[--pane-inner-radius:calc(var(--pane-outer-radius)_-_3px)]',
         isDragSource && 'opacity-40',
         justSwapped && 'motion-safe:animate-pane-swap',
-        color.bg,
         isLinear && (isVertical ? 'w-full' : 'h-full'),
         !isLinear && 'min-h-0 min-w-0',
       )}
@@ -165,31 +190,49 @@ export const SplitPane = memo(function SplitPane(props: SplitPaneProps) {
         paneReorderIndex={onSwapPanes ? index : undefined}
         zoomFactor={zoomFactor}
         onResetPaneZoom={onResetPaneZoom}
+        className={cn(
+          corners.tl && 'rounded-tl-(--pane-inner-radius)',
+          corners.tr && 'rounded-tr-(--pane-inner-radius)',
+        )}
       />
       <div
         data-pane-body
         className="group/pane-body relative flex-1 min-h-0 min-w-0 overflow-hidden flex"
       >
-        {showFileTree && pane.projectPath && (
-          <SplitPaneFileTreeSidebar
-            projectPath={pane.projectPath}
-            isWorktree={pane.isWorktree}
-            chatId={pane.id}
-            paneIndex={index}
-            onFileTreeRef={onFileTreeRef}
-            onCloseFileTree={onCloseFileTree}
-          />
-        )}
         <div
-          data-pane-chat
-          className={cn(
-            'flex-1 min-w-0 min-h-0 overflow-auto flex flex-col',
-            PANE_CHAT_BEHIND_PANEL_CLASS,
-          )}
+          data-pane-corner-clip
+          className="absolute flex overflow-hidden"
+          style={{
+            ...bodyCornerClipStyle(corners),
+            transform: 'translateZ(0)',
+            willChange: 'transform',
+          }}
         >
-          <ZoomWrapper zoomFactor={zoomFactor} className="min-h-0 min-w-0 flex-1 flex flex-col">
-            {children}
-          </ZoomWrapper>
+          {/* The clip reaches past the body to hide its unrounded corners; this box sits exactly on the
+              body again, so a Compact panel's absolute inset-0 fills the body, not the overhang. */}
+          <div data-pane-body-box className="relative flex flex-1 min-w-0 min-h-0">
+            {showFileTree && pane.projectPath && (
+              <SplitPaneFileTreeSidebar
+                projectPath={pane.projectPath}
+                isWorktree={pane.isWorktree}
+                chatId={pane.id}
+                paneIndex={index}
+                onFileTreeRef={onFileTreeRef}
+                onCloseFileTree={onCloseFileTree}
+              />
+            )}
+            <div
+              data-pane-chat
+              className={cn(
+                'flex-1 min-w-0 min-h-0 overflow-auto flex flex-col',
+                PANE_CHAT_BEHIND_PANEL_CLASS,
+              )}
+            >
+              <ZoomWrapper zoomFactor={zoomFactor} className="min-h-0 min-w-0 flex-1 flex flex-col">
+                {children}
+              </ZoomWrapper>
+            </div>
+          </div>
         </div>
       </div>
       {!isLinear && resizeCorner && gridContainerRef && gridRatiosRef && onGridRatiosChange && (
