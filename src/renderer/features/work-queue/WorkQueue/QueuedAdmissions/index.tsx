@@ -1,6 +1,7 @@
 import { memo, type ReactElement, useCallback, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { trpc } from '../../../../lib/trpc';
+import { useQueuePause } from '../../../../lib/work-queue/use-queue-pause';
 import { admissionSubject, admissionTrigger } from '../../utils/admission-subject';
 import { type QueuedAdmission, QueuedAdmissionsView } from '../QueuedAdmissionsView';
 
@@ -21,6 +22,7 @@ export const QueuedAdmissions = memo(function QueuedAdmissions(): ReactElement |
     refetchOnWindowFocus: true,
     structuralSharing: true,
   });
+  const queuePaused = useQueuePause().paused;
   const mutation = trpc.flows.moveWorkQueueAdmission.useMutation();
   const removeMutation = trpc.flows.cancelWorkQueueAdmission.useMutation();
   const rows: QueuedAdmission[] = useMemo(
@@ -117,6 +119,7 @@ export const QueuedAdmissions = memo(function QueuedAdmissions(): ReactElement |
       onMove={move}
       onRemove={remove}
       onRetry={() => void query.refetch()}
+      queuePaused={queuePaused}
       rows={rows}
     />
   );

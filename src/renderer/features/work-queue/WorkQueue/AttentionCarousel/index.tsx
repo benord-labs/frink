@@ -54,7 +54,7 @@ type AttentionCopyTemplate = Omit<AttentionCopy, 'helper'> & {
   helper?: string;
 };
 
-type AttentionTone = 'error' | 'review' | 'warning';
+type AttentionTone = 'error' | 'paused' | 'review' | 'warning';
 
 const ATTENTION_TONE_STYLES: Record<
   AttentionTone,
@@ -69,6 +69,11 @@ const ATTENTION_TONE_STYLES: Record<
     badgeVariant: 'error',
     iconClassName: 'text-danger-fg',
     surfaceClassName: '[--color-primary:var(--danger)]',
+  },
+  paused: {
+    badgeVariant: 'default',
+    iconClassName: 'text-muted-fg',
+    surfaceClassName: '[--color-primary:var(--muted-fg)]',
   },
   review: {
     badgeClassName: 'border-primary/40 text-primary',
@@ -90,6 +95,17 @@ const DEFAULT_ATTENTION_COPY: AttentionCopyTemplate = {
   label: 'Needs your attention',
   rowState: 'warning',
   tone: 'warning',
+};
+
+/** The user's own chat Pause — calm, not a warning: nothing went wrong, it waits on purpose. */
+const USER_PAUSED_COPY: AttentionCopy = {
+  action: 'Open',
+  compactLabel: 'Paused',
+  helper: 'You paused this flow. Resume it from its chat when you are ready.',
+  icon: CirclePause,
+  label: 'Paused by you',
+  rowState: 'neutral',
+  tone: 'paused',
 };
 
 const ATTENTION_COPY_BY_KEY = new Map<string, AttentionCopyTemplate>([
@@ -189,6 +205,10 @@ const ATTENTION_COPY_BY_KEY = new Map<string, AttentionCopyTemplate>([
 
 export function getAttentionCopy(task: Task): AttentionCopy {
   const signal = task.result?.agentSignal;
+  // A user pause scrubs the agent signal, so without this it falls through to the generic warning.
+  if (task.status === 'needs_attention' && task.result?.userPause) {
+    return USER_PAUSED_COPY;
+  }
   const copy =
     ATTENTION_COPY_BY_KEY.get(task.status) ??
     ATTENTION_COPY_BY_KEY.get(signal?.state ?? '') ??
