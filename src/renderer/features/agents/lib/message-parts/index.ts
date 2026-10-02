@@ -97,16 +97,61 @@ function partHistoryText(part: ToolPartLike & { text?: string }): string | null 
   return part.type.startsWith(TOOL_PART_PREFIX) ? toolTrailLine(part) : null;
 }
 
+type HistoryPart = ToolPartLike & { text?: string; data?: unknown };
+type CompactBoundary = { messageIndex: number; partIndex: number; summary: string };
+
+function turnFrom(role: 'user' | 'assistant', parts: HistoryPart[]): HistoryTurn[] {
+  const text = parts.flatMap((part) => partHistoryText(part) ?? []).join('\n');
+  const content = stripMessageMarkers(text);
+  return content ? [{ role, content }] : [];
+}
+
+/** Newest settled, summarised, non-partial compaction; an older one stands in for one that falls
+ * short, and null keeps history whole rather than drop context with nothing to replace it. */
+function findCompactBoundary(messages: UIMessage[], current?: UIMessage): CompactBoundary | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m === current) continue;
+    const parts = (m.parts ?? []) as HistoryPart[];
+    for (let j = parts.length - 1; j >= 0; j--) {
+      if (parts[j].type !== 'data-compact') continue;
+      const data = parts[j].data as
+        | { state?: string; summary?: unknown; partial?: boolean }
+        | undefined;
+      if (data?.state !== 'output-available') continue;
+      if (typeof data.summary !== 'string' || !data.summary.trim() || data.partial) continue;
+      return { messageIndex: i, partIndex: j, summary: data.summary };
+    }
+  }
+  return null;
+}
+
 /**
  * The transcript a fresh session is seeded with (every message but the one being sent): text, any
  * plan in full, and one line per tool call, so a handoff keeps what was planned and done.
+ *
+ * A compacted chat starts from its newest compaction: the summary stands in for everything before
+ * the boundary, so a fresh session does not silently re-inflate what the user compacted away.
  */
 export function buildTurnHistory(messages: UIMessage[], current?: UIMessage): HistoryTurn[] {
-  return messages.flatMap((m) => {
-    if (m === current || (m.role !== 'user' && m.role !== 'assistant')) return [];
-    const parts = (m.parts ?? []) as Array<ToolPartLike & { text?: string }>;
-    const text = parts.flatMap((part) => partHistoryText(part) ?? []).join('\n');
-    const content = stripMessageMarkers(text);
-    return content ? [{ role: m.role, content }] : [];
-  });
+  const boundary = findCompactBoundary(messages, current);
+  const start = boundary ? boundary.messageIndex : 0;
+  const head: HistoryTurn[] = boundary
+    ? [
+        {
+          role: 'user',
+          content: `[Earlier conversation was compacted. Summary:]\n\n${boundary.summary}`,
+        },
+      ]
+    : [];
+  return [
+    ...head,
+    ...messages.slice(start).flatMap((m, offset) => {
+      if (m === current || (m.role !== 'user' && m.role !== 'assistant')) return [];
+      const parts = (m.parts ?? []) as HistoryPart[];
+      // The boundary's own message keeps only what followed it (an auto-compact mid-turn).
+      const kept = boundary && offset === 0 ? parts.slice(boundary.partIndex + 1) : parts;
+      return turnFrom(m.role, kept);
+    }),
+  ];
 }
