@@ -716,12 +716,9 @@ export class WebSocketChatTransport implements ChatTransport<UIMessage> {
     // Execute complete handler
     const cleanupExecuteComplete = desktopApi.onSocketExecuteComplete((payload) => {
       if (payload.subChatId !== subChatId) return;
-      if (!payload.assistantMessageId) {
-        // Some backends complete without a run-scoped assistant id.
-        // Close immediately to avoid hanging transport listeners.
-        finalizeRun();
-        return;
-      }
+      // Main always stamps a run-scoped id, so an id-less completion can't be proven to be this
+      // run's — never let it finalize (or buffer) the live turn.
+      if (!payload.assistantMessageId) return;
       // Buffer execute-complete if it arrives before first stream chunk.
       // We flush once run identity is established from execute:start or stream chunks.
       if (activeAssistantMessageId == null) {
