@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createRuntimeAtomFamily } from '../../../lib/atoms/atom-family-factory';
 import { appStore } from '../../../lib/jotai-store';
+import { answerConfirm } from './sidebar-confirm-test-harness';
 import { captureChatAction, hoisted, resetHarness, setupHarness } from './sidebar-test-harness';
 import { UnifiedSidebar } from './UnifiedSidebar';
 
@@ -63,7 +64,7 @@ describe('UnifiedSidebar delete chat (single)', () => {
     appStore.set(family('chat-kept'), 'other-selection');
 
     const onChatDelete = getOnChatDelete();
-    await onChatDelete('chat-del-state');
+    await answerConfirm(() => onChatDelete('chat-del-state'), 'confirm');
 
     expect(appStore.get(family('chat-del-state'))).toBe('default');
     expect(appStore.get(family('chat-kept'))).toBe('other-selection');
@@ -82,7 +83,7 @@ describe('UnifiedSidebar delete chat (single)', () => {
     appStore.set(family('chat-pane-b'), 'b-selection');
 
     const onChatDelete = getOnChatDelete();
-    await onChatDelete('chat-pane-a');
+    await answerConfirm(() => onChatDelete('chat-pane-a'), 'confirm');
 
     expect(hoisted.clearPaneAtMock).toHaveBeenCalledTimes(1);
     expect(hoisted.clearPaneAtMock).toHaveBeenCalledWith(0);
@@ -99,7 +100,7 @@ describe('UnifiedSidebar delete chat (single)', () => {
     hoisted.chatDeleteMutateAsyncMock.mockRejectedValueOnce(new Error('still stopping'));
 
     const onChatDelete = getOnChatDelete();
-    await onChatDelete('chat-delete-fails');
+    await answerConfirm(() => onChatDelete('chat-delete-fails'), 'confirm');
 
     expect(toastErrorSpy).toHaveBeenCalledWith('Failed to delete chat', {
       description: 'still stopping',
@@ -155,7 +156,6 @@ describe('UnifiedSidebar delete all chats in folder (pinned preserved)', () => {
   }
 
   it('drops per-chat state only for chats whose delete succeeded', async () => {
-    vi.stubGlobal('confirm', () => true);
     hoisted.state.splitViewState = {
       splitView: { chatIds: ['unpinned-a', 'unpinned-b'], activePaneIndex: 0 },
       isSplitActive: true,
@@ -167,8 +167,8 @@ describe('UnifiedSidebar delete all chats in folder (pinned preserved)', () => {
     hoisted.chatsListCountsForSidebarData = [{ projectId: null, count: 2 }];
     hoisted.chatsListByFolderFetchMock.mockResolvedValue({
       chats: [
-        { id: 'unpinned-a', projectId: null },
-        { id: 'unpinned-b', projectId: null },
+        { id: 'unpinned-a', projectId: null, updatedAt: new Date(0) },
+        { id: 'unpinned-b', projectId: null, updatedAt: new Date(0) },
       ],
       hasMore: false,
       nextCursor: null,
@@ -181,7 +181,7 @@ describe('UnifiedSidebar delete all chats in folder (pinned preserved)', () => {
       .mockRejectedValueOnce(new Error('delete boom'));
 
     const onDelete = getOnDeleteAllChatsInFolder();
-    await onDelete(GENERAL_KEY);
+    await answerConfirm(() => onDelete(GENERAL_KEY), 'confirm');
 
     // Pin the assumed order, so a change in folder ordering fails here rather than
     // silently inverting which chat this test believes failed.

@@ -3,6 +3,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { toast } from 'sonner';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { answerConfirm } from './sidebar-confirm-test-harness';
 import {
   captureChatAction,
   expectScopedCountsRefetch,
@@ -642,26 +643,39 @@ describe('UnifiedSidebar handleDeleteBatch', () => {
     expect(typeof props?.onDeleteBatch).toBe('function');
   });
 
-  it('shows running-batch warning and aborts when user cancels', async () => {
-    const confirmMock = vi.fn().mockReturnValueOnce(false);
-    vi.stubGlobal('confirm', confirmMock);
+  it('names the running flow runs in its one confirm and deletes nothing on cancel', async () => {
+    hoisted.chatsListByBatchFetchMock.mockResolvedValueOnce([{ id: 'chat-1' }]);
     const onDeleteBatch = getOnDeleteBatch();
-    await onDeleteBatch('batch-uuid-001', makeBatchSummary({ running_count: 2 }));
-    expect(confirmMock).toHaveBeenCalledWith(expect.stringContaining('2 running flow run'));
-    expect(hoisted.chatsListByBatchFetchMock).not.toHaveBeenCalled();
-    vi.unstubAllGlobals();
+    const asked = await answerConfirm(
+      () => onDeleteBatch('batch-uuid-001', makeBatchSummary({ running_count: 2 })),
+      'cancel',
+    );
+    expect(asked).toContain('2 running flow runs will be stopped');
+    expect(hoisted.chatDeleteMutateAsyncMock).not.toHaveBeenCalled();
   });
 
-  it('proceeds past running-batch warning when user confirms', async () => {
-    const confirmMock = vi.fn().mockReturnValue(true);
-    vi.stubGlobal('confirm', confirmMock);
+  it('uses singular wording for one chat and one running run', async () => {
+    hoisted.chatsListByBatchFetchMock.mockResolvedValueOnce([{ id: 'chat-1' }]);
+    const onDeleteBatch = getOnDeleteBatch();
+    const asked = await answerConfirm(
+      () => onDeleteBatch('batch-uuid-001', makeBatchSummary({ running_count: 1 })),
+      'cancel',
+    );
+    expect(asked).toContain('Delete all 1 chat from batch "Test Flow"?');
+    expect(asked).toContain('1 running flow run will be stopped');
+  });
+
+  it('asks once for a batch with running runs, then deletes on confirm', async () => {
     hoisted.chatsListByBatchFetchMock.mockResolvedValueOnce([{ id: 'chat-1' }, { id: 'chat-2' }]);
     const onDeleteBatch = getOnDeleteBatch();
-    await onDeleteBatch('batch-uuid-001', makeBatchSummary({ running_count: 1 }));
-    // First confirm is the running-batch warning, second is the deletion confirmation
-    expect(confirmMock).toHaveBeenCalledTimes(2);
+    await answerConfirm(
+      () => onDeleteBatch('batch-uuid-001', makeBatchSummary({ running_count: 1 })),
+      'confirm',
+    );
+    // A second prompt would still be open here, and the deletes would not have run.
+    expect(screen.queryByRole('alertdialog')).toBeNull();
     expect(hoisted.chatsListByBatchFetchMock).toHaveBeenCalledWith({ batchId: 'batch-uuid-001' });
-    vi.unstubAllGlobals();
+    expect(hoisted.chatDeleteMutateAsyncMock).toHaveBeenCalledTimes(2);
   });
 
   it('shows a toast and returns early when listByBatch fetch fails', async () => {
@@ -680,11 +694,13 @@ describe('UnifiedSidebar handleDeleteBatch', () => {
   });
 
   it('calls delete for each chat when user confirms non-task-linked batch', async () => {
-    const confirmMock = vi.fn().mockReturnValueOnce(true);
-    vi.stubGlobal('confirm', confirmMock);
     hoisted.chatsListByBatchFetchMock.mockResolvedValueOnce([{ id: 'chat-a' }, { id: 'chat-b' }]);
     const onDeleteBatch = getOnDeleteBatch();
-    await onDeleteBatch('batch-uuid-001', makeBatchSummary());
+    const asked = await answerConfirm(
+      () => onDeleteBatch('batch-uuid-001', makeBatchSummary()),
+      'confirm',
+    );
+    expect(asked).toContain('Delete all 2 chats from batch "Test Flow"?');
     expect(hoisted.chatDeleteMutateAsyncMock).toHaveBeenCalledTimes(2);
     expect(hoisted.chatDeleteMutateAsyncMock).toHaveBeenCalledWith({ id: 'chat-a' });
     expect(hoisted.chatDeleteMutateAsyncMock).toHaveBeenCalledWith({ id: 'chat-b' });
@@ -694,36 +710,30 @@ describe('UnifiedSidebar handleDeleteBatch', () => {
   });
 
   it('aborts deletion when user cancels the confirmation dialog', async () => {
-    const confirmMock = vi.fn().mockReturnValueOnce(false);
-    vi.stubGlobal('confirm', confirmMock);
     hoisted.chatsListByBatchFetchMock.mockResolvedValueOnce([{ id: 'chat-a' }]);
     const onDeleteBatch = getOnDeleteBatch();
-    await onDeleteBatch('batch-uuid-001', makeBatchSummary());
+    await answerConfirm(() => onDeleteBatch('batch-uuid-001', makeBatchSummary()), 'cancel');
     expect(hoisted.chatDeleteMutateAsyncMock).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
   });
 
   it('invokes delete once per chat returned by listByBatch (no silent cap in handler)', async () => {
-    const confirmMock = vi.fn().mockReturnValue(true);
-    vi.stubGlobal('confirm', confirmMock);
     const many = Array.from({ length: 101 }, (_, i) => ({ id: `chat-${i}` }));
     hoisted.chatsListByBatchFetchMock.mockResolvedValueOnce(many);
     const onDeleteBatch = getOnDeleteBatch();
-    await onDeleteBatch('batch-uuid-001', makeBatchSummary());
+    await answerConfirm(() => onDeleteBatch('batch-uuid-001', makeBatchSummary()), 'confirm');
     expect(hoisted.chatDeleteMutateAsyncMock).toHaveBeenCalledTimes(101);
     vi.unstubAllGlobals();
   });
 
   it('shows partial-failure toast when some chat deletes fail', async () => {
-    const confirmMock = vi.fn().mockReturnValue(true);
-    vi.stubGlobal('confirm', confirmMock);
     const toastErrorSpy = vi.spyOn(toast, 'error').mockReturnValue('toast-id');
     hoisted.chatsListByBatchFetchMock.mockResolvedValueOnce([{ id: 'ok' }, { id: 'bad' }]);
     hoisted.chatDeleteMutateAsyncMock
       .mockResolvedValueOnce({})
       .mockRejectedValueOnce(new Error('not found'));
     const onDeleteBatch = getOnDeleteBatch();
-    await onDeleteBatch('batch-uuid-001', makeBatchSummary());
+    await answerConfirm(() => onDeleteBatch('batch-uuid-001', makeBatchSummary()), 'confirm');
     expect(toastErrorSpy).toHaveBeenCalledWith(
       expect.stringMatching(/Deleted 1 of 2 chats\. 1 failed — try again\./),
     );
@@ -732,8 +742,6 @@ describe('UnifiedSidebar handleDeleteBatch', () => {
   });
 
   it('shows warning toast when unresolved task links cannot be fully resolved (batch delete continues)', async () => {
-    const confirmMock = vi.fn().mockReturnValue(true);
-    vi.stubGlobal('confirm', confirmMock);
     hoisted.chatsListByBatchFetchMock.mockResolvedValueOnce([{ id: 'chat-unresolved' }]);
     hoisted.getActiveLinkedTasksForChatIdsWithFallbackMock.mockImplementation(
       async (chatIds: string[]) => {
@@ -745,7 +753,7 @@ describe('UnifiedSidebar handleDeleteBatch', () => {
     );
     const toastWarnSpy = vi.spyOn(toast, 'warning').mockReturnValue('toast-id');
     const onDeleteBatch = getOnDeleteBatch();
-    await onDeleteBatch('batch-uuid-001', makeBatchSummary());
+    await answerConfirm(() => onDeleteBatch('batch-uuid-001', makeBatchSummary()), 'confirm');
     expect(toastWarnSpy).toHaveBeenCalledWith(
       'Some linked task details were unavailable',
       expect.objectContaining({
@@ -758,8 +766,6 @@ describe('UnifiedSidebar handleDeleteBatch', () => {
   });
 
   it('opens task-aware dialog instead of confirm+delete when batch has linked active tasks', async () => {
-    const confirmMock = vi.fn().mockReturnValue(true);
-    vi.stubGlobal('confirm', confirmMock);
     hoisted.chatsListByBatchFetchMock.mockResolvedValueOnce([{ id: 'chat-x' }]);
     // Do not use mockResolvedValueOnce: other code paths may call the fallback before batch delete.
     hoisted.getActiveLinkedTasksForChatIdsWithFallbackMock.mockImplementation(
@@ -775,7 +781,7 @@ describe('UnifiedSidebar handleDeleteBatch', () => {
     );
     const onDeleteBatch = getOnDeleteBatch();
     await onDeleteBatch('batch-uuid-001', makeBatchSummary());
-    expect(confirmMock).not.toHaveBeenCalled();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
     expect(hoisted.chatDeleteMutateAsyncMock).not.toHaveBeenCalled();
     await waitFor(() => {
       const dialogProps = hoisted.capturedSidebarDialogsProps as {
@@ -1068,20 +1074,21 @@ describe('UnifiedSidebar delete all chats in folder (pinned preserved)', () => {
   }
 
   it('deletes only unpinned chats; omits ids returned by listPinned from deleteChat', async () => {
-    vi.stubGlobal('confirm', () => true);
     hoisted.chatsListCountsForSidebarData = [{ projectId: null, count: 2 }];
     hoisted.chatsListByFolderFetchMock.mockResolvedValue({
       chats: [
-        { id: 'unpinned-a', projectId: null },
-        { id: 'unpinned-b', projectId: null },
+        { id: 'unpinned-a', projectId: null, updatedAt: new Date(0) },
+        { id: 'unpinned-b', projectId: null, updatedAt: new Date(0) },
       ],
       hasMore: false,
       nextCursor: null,
     });
-    hoisted.listPinnedFetchMock.mockResolvedValue([{ id: 'pinned-1' } as { id: string }]);
+    hoisted.listPinnedFetchMock.mockResolvedValue([
+      { id: 'pinned-1', updatedAt: new Date(0) } as { id: string },
+    ]);
 
     const onDelete = getOnDeleteAllChatsInFolder();
-    await onDelete(GENERAL_KEY);
+    await answerConfirm(() => onDelete(GENERAL_KEY), 'confirm');
 
     expect(hoisted.listPinnedFetchMock).toHaveBeenCalled();
     expect(hoisted.chatDeleteMutateAsyncMock).toHaveBeenCalledTimes(2);
@@ -1093,14 +1100,15 @@ describe('UnifiedSidebar delete all chats in folder (pinned preserved)', () => {
 
   it('info toast and no delete when every chat in the folder is pinned', async () => {
     const toastInfoSpy = vi.spyOn(toast, 'info').mockReturnValue('t-id');
-    vi.stubGlobal('confirm', () => true);
     hoisted.chatsListCountsForSidebarData = [{ projectId: null, count: 1 }];
     hoisted.chatsListByFolderFetchMock.mockResolvedValue({
       chats: [],
       hasMore: false,
       nextCursor: null,
     });
-    hoisted.listPinnedFetchMock.mockResolvedValue([{ id: 'only-pinned' } as { id: string }]);
+    hoisted.listPinnedFetchMock.mockResolvedValue([
+      { id: 'only-pinned', updatedAt: new Date(0) } as { id: string },
+    ]);
 
     const onDelete = getOnDeleteAllChatsInFolder();
     await onDelete(GENERAL_KEY);
@@ -1117,7 +1125,7 @@ describe('UnifiedSidebar delete all chats in folder (pinned preserved)', () => {
     const toastErrorSpy = vi.spyOn(toast, 'error').mockReturnValue('e-id');
     hoisted.chatsListCountsForSidebarData = [{ projectId: null, count: 1 }];
     hoisted.chatsListByFolderFetchMock.mockResolvedValue({
-      chats: [{ id: 'x', projectId: null }],
+      chats: [{ id: 'x', projectId: null, updatedAt: new Date(0) }],
       hasMore: false,
       nextCursor: null,
     });
@@ -1156,13 +1164,11 @@ describe('UnifiedSidebar delete all chats in folder (pinned preserved)', () => {
   });
 
   it('does not delete when the user cancels the post-fetch confirmation', async () => {
-    const confirmMock = vi.fn().mockReturnValue(false);
-    vi.stubGlobal('confirm', confirmMock);
     hoisted.chatsListCountsForSidebarData = [{ projectId: null, count: 2 }];
     hoisted.chatsListByFolderFetchMock.mockResolvedValue({
       chats: [
-        { id: 'a', projectId: null },
-        { id: 'b', projectId: null },
+        { id: 'a', projectId: null, updatedAt: new Date(0) },
+        { id: 'b', projectId: null, updatedAt: new Date(0) },
       ],
       hasMore: false,
       nextCursor: null,
@@ -1170,25 +1176,26 @@ describe('UnifiedSidebar delete all chats in folder (pinned preserved)', () => {
     hoisted.listPinnedFetchMock.mockResolvedValue([]);
 
     const onDelete = getOnDeleteAllChatsInFolder();
-    await onDelete(GENERAL_KEY);
+    const asked = await answerConfirm(() => onDelete(GENERAL_KEY), 'cancel');
 
-    expect(confirmMock).toHaveBeenCalledWith(expect.stringContaining('Delete 2 unpinned chat'));
+    expect(asked).toContain('Delete 2 unpinned chats in this folder?');
     expect(hoisted.chatDeleteMutateAsyncMock).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
   });
 
   it('passes only unpinned chat ids to task preflight; pinned id is not in the task-gating set', async () => {
-    vi.stubGlobal('confirm', () => true);
     hoisted.chatsListCountsForSidebarData = [{ projectId: null, count: 2 }];
     hoisted.chatsListByFolderFetchMock.mockResolvedValue({
       chats: [
-        { id: 'unp-task', projectId: null },
-        { id: 'pinned-skip', projectId: null },
+        { id: 'unp-task', projectId: null, updatedAt: new Date(0) },
+        { id: 'pinned-skip', projectId: null, updatedAt: new Date(0) },
       ],
       hasMore: false,
       nextCursor: null,
     });
-    hoisted.listPinnedFetchMock.mockResolvedValue([{ id: 'pinned-skip' } as { id: string }]);
+    hoisted.listPinnedFetchMock.mockResolvedValue([
+      { id: 'pinned-skip', updatedAt: new Date(0) } as { id: string },
+    ]);
 
     const getActive = hoisted.getActiveLinkedTasksForChatIdsWithFallbackMock;
     getActive.mockImplementation(async (chatIds: string[]) => {
@@ -1201,7 +1208,7 @@ describe('UnifiedSidebar delete all chats in folder (pinned preserved)', () => {
     });
 
     const onDelete = getOnDeleteAllChatsInFolder();
-    await onDelete(GENERAL_KEY);
+    await answerConfirm(() => onDelete(GENERAL_KEY), 'confirm');
 
     expect(getActive).toHaveBeenCalled();
     expect(hoisted.chatDeleteMutateAsyncMock).not.toHaveBeenCalled();
@@ -1432,17 +1439,18 @@ describe('UnifiedSidebar archive chat (sc-208)', () => {
 
 describe('UnifiedSidebar project delete (complete) includes pinned in wipe', () => {
   it('deleteCompletely: task preflight and deleteChat receive all project chat ids including pinned', async () => {
-    vi.stubGlobal('confirm', () => true);
     hoisted.chatsListCountsForSidebarData = [{ projectId: 'cloud-p1', count: 2 }];
     hoisted.chatsListByFolderFetchMock.mockResolvedValue({
       chats: [
-        { id: 'unp-1', projectId: 'cloud-p1' },
-        { id: 'pin-1', projectId: 'cloud-p1' },
+        { id: 'unp-1', projectId: 'cloud-p1', updatedAt: new Date(0) },
+        { id: 'pin-1', projectId: 'cloud-p1', updatedAt: new Date(0) },
       ],
       hasMore: false,
       nextCursor: null,
     });
-    hoisted.listPinnedFetchMock.mockResolvedValue([{ id: 'pin-1' } as { id: string }]);
+    hoisted.listPinnedFetchMock.mockResolvedValue([
+      { id: 'pin-1', updatedAt: new Date(0) } as { id: string },
+    ]);
 
     const getActive = hoisted.getActiveLinkedTasksForChatIdsWithFallbackMock;
     getActive.mockImplementation(async (chatIds: string[]) => {
@@ -1458,7 +1466,9 @@ describe('UnifiedSidebar project delete (complete) includes pinned in wipe', () 
     } | null;
     if (!props?.onProjectDelete) throw new Error('onProjectDelete not found in ProjectsTree props');
 
-    await props.onProjectDelete('local-p1');
+    const onProjectDelete = props.onProjectDelete;
+    const asked = await answerConfirm(() => onProjectDelete('local-p1'), 'confirm');
+    expect(asked).toContain('Delete this project?');
 
     const callWithAllChats = getActive.mock.calls.find(
       (args) => args[0].length === 2 && args[0].includes('unp-1') && args[0].includes('pin-1'),
@@ -1468,39 +1478,6 @@ describe('UnifiedSidebar project delete (complete) includes pinned in wipe', () 
     expect(hoisted.chatDeleteMutateAsyncMock).toHaveBeenCalledWith({ id: 'pin-1' });
     expect(hoisted.projectsDeleteMutateAsyncMock).toHaveBeenCalledWith({ id: 'local-p1' });
     vi.unstubAllGlobals();
-  });
-});
-
-describe('UnifiedSidebar delete chat (single)', () => {
-  function getOnChatDelete() {
-    return captureChatAction('onChatDelete');
-  }
-
-  it('refetches list counts and batch views after delete, without broad chat list invalidation', async () => {
-    const onChatDelete = getOnChatDelete();
-    await onChatDelete('chat-del-1');
-    expect(hoisted.chatDeleteMutateAsyncMock).toHaveBeenCalledWith({ id: 'chat-del-1' });
-    expect(hoisted.chatsListInvalidateMock).not.toHaveBeenCalled();
-    expect(hoisted.chatsListByFolderInvalidateMock).not.toHaveBeenCalled();
-    expect(hoisted.chatsListPinnedInvalidateMock).not.toHaveBeenCalled();
-    expect(hoisted.chatsListBatchGroupsInvalidateMock).toHaveBeenCalledTimes(1);
-    expect(hoisted.chatsListCountsInvalidateMock).toHaveBeenCalledTimes(1);
-    expect(hoisted.chatsListCountsFetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('warns and full-refreshes when delete succeeds but listCounts refetch fails', async () => {
-    const toastWarningSpy = vi.spyOn(toast, 'warning').mockReturnValue('toast-id');
-    hoisted.chatsListCountsFetchMock.mockRejectedValueOnce(new Error('counts sync failed'));
-    const onChatDelete = getOnChatDelete();
-    await onChatDelete('chat-del-refetch-fail');
-    expect(toastWarningSpy).toHaveBeenCalledWith(
-      'Chat deleted; refreshing sidebar',
-      expect.objectContaining({
-        description: expect.stringContaining('counts sync failed'),
-      }),
-    );
-    expect(hoisted.chatsListInvalidateMock).toHaveBeenCalled();
-    toastWarningSpy.mockRestore();
   });
 });
 

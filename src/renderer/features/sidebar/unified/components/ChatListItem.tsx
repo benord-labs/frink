@@ -53,7 +53,8 @@ export type ChatRowActions = {
   onRename?: (chat: ChatItem) => void;
   onArchive?: (chatId: string) => void;
   onFork?: (chatId: string) => void;
-  onDelete?: (chatId: string) => void;
+  /** `chatName` lets the handler name the chat in its confirmation without a lookup. */
+  onDelete?: (chatId: string, chatName?: string | null) => void;
   onPin?: (chatId: string) => void;
   /** Opens this chat in a new split pane. Omitted where the action shouldn't appear. */
   onOpenInNewPane?: (chatId: string) => void;
@@ -130,6 +131,10 @@ export const ChatListItem = memo(function ChatListItem({
     latestChat.current = chat;
   });
   const renameChat = useMemo(() => onRename && (() => onRename(latestChat.current)), [onRename]);
+  const deleteChat = useMemo(
+    () => onDelete && ((chatId: string) => onDelete(chatId, latestChat.current.name)),
+    [onDelete],
+  );
   const hasActions = onRename || onArchive || onFork || onDelete || onPin || onOpenInNewPane;
   const taskPresentation = taskStatus ? SIDEBAR_TASK_PRESENTATION[taskStatus] : null;
   // A flow chat is task-driven the moment its task is linked. `taskStatus` (from the polled tasks
@@ -352,7 +357,7 @@ export const ChatListItem = memo(function ChatListItem({
           onRename={renameChat}
           onArchive={onArchive}
           onFork={onFork}
-          onDelete={onDelete}
+          onDelete={deleteChat}
           onPin={onPin}
           onOpenInNewPane={onOpenInNewPane}
         />

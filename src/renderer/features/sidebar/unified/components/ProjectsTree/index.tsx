@@ -32,7 +32,7 @@ type ChatRowActions = {
   onChatRename: (chat: { id: string; name: string | null }) => void;
   onChatArchive: (chatId: string) => void;
   onChatFork: (chatId: string) => void;
-  onChatDelete: (chatId: string) => void;
+  onChatDelete: (chatId: string, chatName?: string | null) => void;
   onChatPin?: (chatId: string) => void;
   onChatOpenInNewPane?: (chatId: string) => void;
   /** False when all panes are full → the "Open in New Pane" action renders disabled. */

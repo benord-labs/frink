@@ -37,7 +37,7 @@ type BatchGroupProps = {
   onChatRename?: (chat: ChatItem) => void;
   onChatArchive?: (chatId: string) => void;
   onChatFork?: (chatId: string) => void;
-  onChatDelete?: (chatId: string) => void;
+  onChatDelete?: (chatId: string, chatName?: string | null) => void;
   onChatOpenInNewPane?: (chatId: string) => void;
   canOpenInNewPane?: boolean;
   onDeleteBatch?: (batchId: string, summary: SidebarBatchGroup) => void;
@@ -83,7 +83,7 @@ type BatchChatRowProps = {
   onChatRename?: (chat: ChatItem) => void;
   onChatArchive?: (chatId: string) => void;
   onChatFork?: (chatId: string) => void;
-  onChatDelete?: (chatId: string) => void;
+  onChatDelete?: (chatId: string, chatName?: string | null) => void;
   onChatOpenInNewPane?: (chatId: string) => void;
   canOpenInNewPane?: boolean;
   splitPaneIndex?: number;

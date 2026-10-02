@@ -63,6 +63,7 @@ import {
   useBulkChatActions,
 } from '../../../lib/hooks/sidebar-bulk-chats/use-bulk-chat-actions';
 import { useChatDnd } from './hooks/use-chat-dnd';
+import { useDeleteConfirm } from './hooks/use-delete-confirm';
 import { useExpansionState } from './hooks/use-expansion-state';
 import { useGroupedProjects } from './hooks/use-grouped-projects';
 import {
@@ -124,6 +125,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
     const [searchQuery, setSearchQuery] = useState('');
     const searchInputRef = useRef<HTMLInputElement>(null);
     const treeContainerRef = useRef<HTMLDivElement>(null);
+    const { askDelete, confirmDialog } = useDeleteConfirm();
     const [chatSelection] = useState(createIdSelectionStore);
     const workQueueTriggerRef = useRef<HTMLButtonElement>(null);
     const flowsTriggerRef = useRef<HTMLButtonElement>(null);
@@ -1296,6 +1298,12 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
       ],
     );
 
+    const handleChatDelete = useCallback(
+      async (chatId: string, chatName?: string | null) => {
+        if (await askDelete.chat(chatName, treeContainerRef)) await deleteSingleChat(chatId, true);
+      },
+      [askDelete, deleteSingleChat],
+    );
     // Chat-row action callbacks bundled into one prop so they thread through ProjectsTree as a single
     // value (not eight). Memoized on the stable handlers + capacity flag so ProjectsTree's memo holds.
     const chatActions = useMemo(
@@ -1304,7 +1312,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
         onChatRename: handleChatRename,
         onChatArchive: handleChatArchive,
         onChatFork: wrapWorkQueueExitAction(handleChatFork),
-        onChatDelete: (chatId: string) => deleteSingleChat(chatId, true),
+        onChatDelete: handleChatDelete,
         onChatPin: handlePinChat,
         onChatOpenInNewPane: wrapWorkQueueExitAction(openChatInNewPane),
         canOpenInNewPane,
@@ -1314,7 +1322,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
         handleChatRename,
         handleChatArchive,
         handleChatFork,
-        deleteSingleChat,
+        handleChatDelete,
         handlePinChat,
         openChatInNewPane,
         canOpenInNewPane,
@@ -1464,14 +1472,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
       async (projectId: string) => {
         const chatCount = chatCountByProjectRef.current.get(projectId) ?? 0;
 
-        const message =
-          chatCount > 0
-            ? `Delete this project and ${chatCount} chat${chatCount === 1 ? '' : 's'}? This cannot be undone.`
-            : 'Delete this project? This cannot be undone.';
-
-        if (!confirm(message)) {
-          return;
-        }
+        if (!(await askDelete.project(chatCount))) return;
         try {
           // Delete chats then the project; refuse while a linked task is still running.
           const { allChats: projectChats } = await fetchAllChatsForFolder([projectId]);
@@ -1513,6 +1514,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
         }
       },
       [
+        askDelete,
         deleteChatsBatch,
         fetchAllChatsForFolder,
         invalidateProjectLists,
@@ -1551,10 +1553,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
           return;
         }
 
-        const message = `Delete ${chatsToDelete.length} unpinned chat${chatsToDelete.length === 1 ? '' : 's'} in this folder? Pinned chats stay in the sidebar. Only active (non-archived) chats are included. This cannot be undone.`;
-        if (!confirm(message)) {
-          return;
-        }
+        if (!(await askDelete.folderChats(chatsToDelete.length))) return;
 
         const chatIds = chatsToDelete.map((chat) => chat.id);
         const { activeTasks: linkedActiveTasks, unresolvedTaskLinks } =
@@ -1588,19 +1587,16 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
           toast.error('Failed to delete chats in folder', { description: detail });
         }
       },
-      [deleteChatsBatch, fetchAllChatsForFolder, getActiveLinkedTasksForChatIdsWithFallback],
+      [
+        askDelete,
+        deleteChatsBatch,
+        fetchAllChatsForFolder,
+        getActiveLinkedTasksForChatIdsWithFallback,
+      ],
     );
 
     const handleDeleteBatch = useCallback(
       async (batchId: string, summary: SidebarBatchGroup) => {
-        // Guard: active flow runs — warn before proceeding
-        if (summary.running_count > 0) {
-          const proceed = confirm(
-            `This batch has ${summary.running_count} running flow run${summary.running_count === 1 ? '' : 's'}. Deleting will stop them and remove all results. Continue?`,
-          );
-          if (!proceed) return;
-        }
-
         // Fetch all chats in the batch (fresh data for destructive action)
         let batchChats: Awaited<ReturnType<typeof utilsRef.current.chats.listByBatch.fetch>>;
         try {
@@ -1639,11 +1635,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
           return;
         }
 
-        const chatCount = batchChats.length;
-        const confirmed = confirm(
-          `Delete all ${chatCount} chat${chatCount === 1 ? '' : 's'} from batch "${summary.flow_name}"? This cannot be undone.`,
-        );
-        if (!confirmed) return;
+        if (!(await askDelete.batch(batchChats.length, summary))) return;
 
         try {
           await deleteChatsBatch(
@@ -1658,7 +1650,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
           toast.error('Failed to delete batch chats', { description: detail });
         }
       },
-      [deleteChatsBatch, getActiveLinkedTasksForChatIdsWithFallback],
+      [askDelete, deleteChatsBatch, getActiveLinkedTasksForChatIdsWithFallback],
     );
 
     const closeTaskAwareActionDialog = useCallback(() => {
@@ -1861,6 +1853,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
           onTaskAwareActionCancelAndContinue={() => executeTaskAwareAction(true)}
           onTaskAwareActionClose={closeTaskAwareActionDialog}
         />
+        {confirmDialog}
       </InsetGlassSidebarShell>
     );
   },
