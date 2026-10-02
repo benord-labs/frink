@@ -263,9 +263,11 @@ export const ChatListItem = memo(function ChatListItem({
             ) : (
               <MessageSquare className={cn('h-3.5 w-3.5', iconClassName)} aria-hidden="true" />
             )}
+            {/* Static on purpose: any infinite CSS animation in the always-visible sidebar keeps
+                the renderer restyling and re-layerizing the whole page every frame. */}
             {showIconActivityDot && (
               <span
-                className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-[hsl(var(--primary))] ring-2 ring-background motion-safe:animate-pulse"
+                className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-[hsl(var(--primary))] ring-2 ring-background"
                 role="status"
                 aria-label={iconActivityDotAriaLabel}
               />

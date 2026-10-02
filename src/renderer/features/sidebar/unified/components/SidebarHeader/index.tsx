@@ -95,11 +95,9 @@ export function SidebarHeader({
     ro.observe(homeRef.current);
     ro.observe(document.body);
     window.addEventListener('resize', update);
-    window.addEventListener('scroll', update, true);
     return () => {
       ro.disconnect();
       window.removeEventListener('resize', update);
-      window.removeEventListener('scroll', update, true);
     };
   }, []);
 

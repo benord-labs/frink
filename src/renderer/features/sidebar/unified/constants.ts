@@ -102,9 +102,9 @@ export const SIDEBAR_TASK_PRESENTATION: Record<SidebarTaskStatus, SidebarTaskPre
     shortLabel: 'Running',
     ariaLabel: 'Task running',
     textClassName: 'text-[hsl(var(--primary))]',
-    dotClassName: 'bg-[hsl(var(--primary))] motion-safe:animate-pulse',
+    dotClassName: 'bg-[hsl(var(--primary))]',
     bgClassName: 'bg-[hsl(var(--primary)/0.12)]',
-    iconClassName: 'text-[hsl(var(--primary))] motion-safe:animate-pulse',
+    iconClassName: 'text-[hsl(var(--primary))]',
   },
   // biome-ignore lint/style/useNamingConvention: DB enum value used as discriminator
   needs_attention: {
@@ -178,11 +178,11 @@ export const CHAT_STATE_PRESENTATION: Record<ChatActiveState, ChatStatePresentat
   loading: {
     label: 'Running',
     ariaLabel: 'Agent is running',
-    iconClassName: 'text-[hsl(var(--primary))] motion-safe:animate-pulse',
+    iconClassName: 'text-[hsl(var(--primary))]',
     textClassName: 'text-[hsl(var(--primary))]',
     bgClassName: 'bg-[hsl(var(--primary)/0.12)]',
-    dotClassName: 'bg-[hsl(var(--primary))] motion-safe:animate-pulse',
-    showPill: false, // icon pulse is enough — pills reserved for task/flow "Run"
+    dotClassName: 'bg-[hsl(var(--primary))]',
+    showPill: false, // corner activity dot is enough — pills reserved for task/flow "Run"
   },
   pendingQuestion: {
     label: 'Waiting',
