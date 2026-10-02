@@ -167,6 +167,73 @@ describe('useAgentsHotkeys', () => {
     expect(toggles).toHaveLength(1);
   });
 
+  // sc-3840: Cmd+W was advertised as "Archive current agent" but had no action behind it.
+  it('archives the focused chat with Cmd+W while typing in the composer, never closing the window', () => {
+    const dispatchSpy = vi.spyOn(window, 'dispatchEvent');
+    render(
+      <>
+        <textarea id="composer" />
+        <HotkeysHarness canShowFilesSidebar={true} />
+      </>,
+    );
+    const composer = document.getElementById('composer') as HTMLTextAreaElement;
+    composer.focus();
+
+    const keydown = new KeyboardEvent('keydown', {
+      key: 'w',
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    composer.dispatchEvent(keydown);
+
+    const archives = dispatchSpy.mock.calls.filter(
+      ([evt]) => (evt as Event).type === 'sidebar:archive-focused-chat',
+    );
+    expect(archives).toHaveLength(1);
+    expect(keydown.defaultPrevented).toBe(true);
+  });
+
+  // In a shell, Ctrl+W is "delete previous word". The default binding is Cmd-only, so typing in
+  // the integrated terminal (an xterm textarea) on any OS must never archive the chat.
+  it('does not archive on Ctrl+W typed into the terminal', () => {
+    const dispatchSpy = vi.spyOn(window, 'dispatchEvent');
+    render(
+      <>
+        <textarea id="xterm-helper" className="xterm-helper-textarea" />
+        <HotkeysHarness canShowFilesSidebar={true} />
+      </>,
+    );
+    const terminal = document.getElementById('xterm-helper') as HTMLTextAreaElement;
+    terminal.focus();
+
+    const keydown = new KeyboardEvent('keydown', {
+      key: 'w',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    terminal.dispatchEvent(keydown);
+
+    const archives = dispatchSpy.mock.calls.filter(
+      ([evt]) => (evt as Event).type === 'sidebar:archive-focused-chat',
+    );
+    expect(archives).toHaveLength(0);
+    expect(keydown.defaultPrevented).toBe(false);
+  });
+
+  it('does not archive on Cmd+Shift+W (close active pane)', () => {
+    const dispatchSpy = vi.spyOn(window, 'dispatchEvent');
+    render(<HotkeysHarness canShowFilesSidebar={true} />);
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w', metaKey: true, shiftKey: true }));
+
+    const archives = dispatchSpy.mock.calls.filter(
+      ([evt]) => (evt as Event).type === 'sidebar:archive-focused-chat',
+    );
+    expect(archives).toHaveLength(0);
+  });
+
   it('does not toggle archived chats on Shift+A alone', () => {
     const dispatchSpy = vi.spyOn(window, 'dispatchEvent');
     render(<HotkeysHarness canShowFilesSidebar={true} />);

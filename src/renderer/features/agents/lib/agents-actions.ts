@@ -244,40 +244,44 @@ const createEventAction = (event: string, action: EventActionInput): AgentAction
   },
 });
 
-const openFileInEditorAction = createEventAction('file-viewer:open-in-editor', {
-  id: 'open-file-in-editor',
-  label: 'Open file in editor',
-  description: 'Open the currently previewed file in external editor',
-  hotkey: ['cmd+shift+o', 'ctrl+shift+o'],
-});
-
-const openBranchPickerAction = createEventAction('branches:open-picker', {
-  id: 'open-branch-picker',
-  label: 'Open branch picker',
-  description: 'Open the current chat branch picker',
-  hotkey: ['cmd+shift+b', 'ctrl+shift+b'],
-});
-
-const openBranchDeletePickerAction = createEventAction('branches:open-delete-picker', {
-  id: 'open-branch-delete-picker',
-  label: 'Delete branch picker',
-  description: 'Open the branch delete picker for the current chat',
-  hotkey: ['cmd+shift+backspace', 'ctrl+shift+backspace'],
-});
-
-const collapseAllSidebarAction = createEventAction('sidebar:collapse-all', {
-  id: 'collapse-all-sidebar',
-  label: 'Collapse all sidebar folders',
-  description: 'Collapse all expanded folders in the sidebar',
-  hotkey: ['cmd+shift+e', 'ctrl+shift+e'],
-});
-
-const toggleArchivedAction = createEventAction('sidebar:toggle-archived', {
-  id: 'toggle-archived',
-  label: 'Toggle archived chats',
-  description: 'Show or hide the sidebar archived chats list',
-  hotkey: ['cmd+shift+a', 'ctrl+shift+a'],
-});
+const EVENT_ACTIONS: AgentActionDefinition[] = [
+  createEventAction('file-viewer:open-in-editor', {
+    id: 'open-file-in-editor',
+    label: 'Open file in editor',
+    description: 'Open the currently previewed file in external editor',
+    hotkey: ['cmd+shift+o', 'ctrl+shift+o'],
+  }),
+  createEventAction('branches:open-picker', {
+    id: 'open-branch-picker',
+    label: 'Open branch picker',
+    description: 'Open the current chat branch picker',
+    hotkey: ['cmd+shift+b', 'ctrl+shift+b'],
+  }),
+  createEventAction('branches:open-delete-picker', {
+    id: 'open-branch-delete-picker',
+    label: 'Delete branch picker',
+    description: 'Open the branch delete picker for the current chat',
+    hotkey: ['cmd+shift+backspace', 'ctrl+shift+backspace'],
+  }),
+  createEventAction('sidebar:collapse-all', {
+    id: 'collapse-all-sidebar',
+    label: 'Collapse all sidebar folders',
+    description: 'Collapse all expanded folders in the sidebar',
+    hotkey: ['cmd+shift+e', 'ctrl+shift+e'],
+  }),
+  createEventAction('sidebar:toggle-archived', {
+    id: 'toggle-archived',
+    label: 'Toggle archived chats',
+    description: 'Show or hide the sidebar archived chats list',
+    hotkey: ['cmd+shift+a', 'ctrl+shift+a'],
+  }),
+  createEventAction('sidebar:archive-focused-chat', {
+    id: 'archive-agent',
+    label: 'Archive current agent',
+    description: 'Archive the focused chat',
+    hotkey: ['cmd+w', 'ctrl+w'],
+  }),
+];
 
 const closeAllEditorFilesAction: AgentActionDefinition = {
   id: 'close-all-editor-files',
@@ -589,11 +593,7 @@ export const AGENT_ACTIONS: Record<string, AgentActionDefinition> = {
   'toggle-files': toggleFilesAction,
   'file-search': fileSearchAction,
   'find-in-files': findInFilesAction,
-  'open-file-in-editor': openFileInEditorAction,
-  'open-branch-picker': openBranchPickerAction,
-  'open-branch-delete-picker': openBranchDeletePickerAction,
-  'collapse-all-sidebar': collapseAllSidebarAction,
-  'toggle-archived': toggleArchivedAction,
+  ...Object.fromEntries(EVENT_ACTIONS.map((action) => [action.id, action])),
   'close-all-editor-files': closeAllEditorFilesAction,
   'toggle-editor-layout': toggleEditorLayoutAction,
   'next-pane-group': nextPaneGroupAction,
