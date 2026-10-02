@@ -809,11 +809,8 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       sendSubChatModeChange({ chatId, subChatId, mode: 'agent' }),
     );
     const resumeTaskOnFollowUpMessage = async (forceFreshRead = false) => {
-      // Resume the FLOW-DRIVING task (signalTaskId), NOT the chat's pinned/first task. For a flow the
-      // pinned task is an already-completed upstream node; the parked task that the agent's next
-      // signal lands on is the driving one. Flipping it → running is what lets that signal be
-      // accepted (canApplyTaskSignalForStatus requires 'running'), not silently dropped. Interactive
-      // (non-flow) turns have signalTaskId === taskIdForExecution, so behaviour is unchanged.
+      // Resume the FLOW-DRIVING task, not the pinned upstream one: the agent's signal lands there
+      // and drops unless 'running'. plan_ready resumes only on the reply-as-approval agent turn.
       const resumeTargetTaskId = signalTaskId;
       if (!resumeTargetTaskId) return;
       const { getDatabase } = await import('../db');
@@ -837,6 +834,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
         forceFreshRead ? null : prefetchedSignalTask,
       );
       if (!latestTask) return;
+      if (latestTask.status === 'plan_ready' && mode !== 'agent') return;
       await resumeParkedTaskInPlace(latestTask, 'follow_up_message', subChatId);
     };
     const prepareLinkedTaskForExecution = async (): Promise<void> => {

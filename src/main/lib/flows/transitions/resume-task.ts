@@ -16,8 +16,18 @@ export type ParkedTask = Pick<Task, 'id' | 'status' | 'result' | 'flowRunId' | '
 
 type ResumedTask = { node: NodeRun | null; flowLive: boolean };
 
-/** Rolls back a wake's task write inside its savepoint when the flow cannot follow. */
-class WakeDeclined extends Error {}
+/** Rolls back a wake's (or a plan approval's) task write inside its savepoint when the flow
+ * cannot follow. */
+class ResumeDeclined extends Error {}
+
+/** A chat reply approving a strict flow plan park (`flow-agent-node-mode`). Never a wake, and never
+ * a flow-less task, whose plan review has its own path. */
+export function isPlanApprovalResume(
+  task: Pick<ParkedTask, 'status' | 'flowRunId'>,
+  resumedBy: ResumedBy,
+): boolean {
+  return task.status === 'plan_ready' && resumedBy === 'follow_up_message' && !!task.flowRunId;
+}
 
 /** The ended attempt's markers scrubbed, stamped with who resumed the task and when. */
 function resumedResult(
@@ -54,7 +64,8 @@ export function reviveInPlaceCommand(
 }
 
 /** A parked task back to running together with its flow; null when the task left its park. A
- * follow-up keeps the task running when the flow cannot follow; a wake then writes nothing. */
+ * follow-up keeps the task running when the flow cannot follow; a wake or a plan approval then
+ * writes nothing. */
 export function resumeParkedTaskCommand(
   db: Db,
   task: ParkedTask,
@@ -64,7 +75,7 @@ export function resumeParkedTaskCommand(
   try {
     return db.transaction(() => resumeTaskThenFlow(db, task, resumedBy, now));
   } catch (error) {
-    if (error instanceof WakeDeclined) return null;
+    if (error instanceof ResumeDeclined) return null;
     throw error;
   }
 }
@@ -75,6 +86,7 @@ function resumeTaskThenFlow(
   resumedBy: ResumedBy,
   now: Date,
 ): ResumedTask | null {
+  if (isPlanApprovalResume(task, resumedBy)) return approvePlanThenFlow(db, task, now);
   const result = resumedResult(task, resumedBy, now);
   // A wake holds only while the row is still the exact quiet-idle park it read.
   const resumed =
@@ -89,6 +101,23 @@ function resumeTaskThenFlow(
   const followUp = resumedBy === 'follow_up_message';
   const node = unparkFlowCommand(db, task.flowRunId, task.nodeRunId, undefined, followUp);
   const flowLive = node !== null || flowStillRunning(db, task.flowRunId, task.nodeRunId);
-  if (!flowLive && !followUp) throw new WakeDeclined();
+  if (!flowLive && !followUp) throw new ResumeDeclined();
   return { node, flowLive };
+}
+
+/** Runs the approved plan in execute mode (`done` resolves `done`), only while its node is parked:
+ * a panel Approve completes the node without touching the task, so a later reply no-ops. */
+function approvePlanThenFlow(db: Db, task: ParkedTask, now: Date): ResumedTask | null {
+  const result = {
+    ...resumedResult(task, 'follow_up_message', now),
+    startMode: 'execute' as const,
+  };
+  const resumed = updateTaskStatus(db, task.id, 'running', {
+    result,
+    expectStatuses: ['plan_ready'],
+  });
+  if (!resumed || !task.flowRunId) return null;
+  const node = unparkFlowCommand(db, task.flowRunId, task.nodeRunId, undefined, false);
+  if (!node) throw new ResumeDeclined();
+  return { node, flowLive: true };
 }
