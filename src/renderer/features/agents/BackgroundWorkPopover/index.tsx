@@ -96,9 +96,11 @@ export function BackgroundWorkPopover({
           (event.currentTarget as HTMLElement | null)?.focus();
         }}
         tabIndex={-1}
-        className="max-h-(--radix-popover-content-available-height) w-(--radix-popover-trigger-width) overflow-y-auto p-1"
+        // As wide as the row, but never so narrow that the titles stop being readable: below
+        // 32rem the kind label and Stop text give their room to the title.
+        className="@container/bg-work max-h-(--radix-popover-content-available-height) w-(--radix-popover-trigger-width) min-w-[min(22rem,var(--radix-popover-content-available-width))] overflow-y-auto p-1"
       >
-        <div className={cn(overlayLabel, 'flex items-baseline justify-between gap-2')}>
+        <div className={cn(overlayLabel, 'flex flex-wrap items-baseline justify-between gap-x-2')}>
           <span>Background work</span>
           <span className="font-normal">Updates when the agent checks in</span>
         </div>
@@ -157,10 +159,14 @@ function BackgroundWorkRow({
       <Icon className="mt-[3px] h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
-          <span className="min-w-0 truncate" title={item.description}>
+          {/* Wraps rather than truncates: rows often differ only at the end of the title. */}
+          <span className="min-w-0 line-clamp-2 wrap-break-word" title={item.description}>
             {item.description || item.label}
           </span>
-          <span className="shrink-0 text-xs text-muted-foreground">{item.label}</span>
+          {/* The icon already shows the kind, so narrow rows keep the label for screen readers only. */}
+          <span className="shrink-0 text-xs text-muted-foreground @max-[32rem]/bg-work:sr-only">
+            {item.label}
+          </span>
         </div>
         {item.command ? (
           <div className="truncate font-mono text-xs text-muted-foreground" title={item.command}>
@@ -177,7 +183,8 @@ function BackgroundWorkRow({
           type="button"
           variant="ghost"
           size="sm"
-          className="h-7 shrink-0 gap-1 rounded-md px-2 text-xs text-muted-foreground hover:text-foreground"
+          className="h-7 shrink-0 gap-1 rounded-md px-2 text-xs text-muted-foreground hover:text-foreground @max-[32rem]/bg-work:w-7 @max-[32rem]/bg-work:px-0 @max-[32rem]/bg-work:[&>span]:sr-only"
+          title="Stop"
           disabled={stopTask.isPending}
           onClick={() => stopTask.mutate({ subChatId, taskId: item.id })}
           aria-label={`Stop ${item.label}: ${item.description}`}
