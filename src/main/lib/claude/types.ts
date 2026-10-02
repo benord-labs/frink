@@ -88,6 +88,10 @@ export type UIMessageChunk =
         state: 'input-streaming' | 'output-available' | 'output-error';
         /** Only known once the boundary lands; distinguishes a user's `/compact` from an automatic one. */
         trigger?: 'manual' | 'auto';
+        /** What compaction replaced the earlier conversation with; seeds a fresh session's history. */
+        summary?: string;
+        /** The SDK kept some pre-boundary messages verbatim, so the summary alone is not the whole context. */
+        partial?: boolean;
       };
     }
   // Session initialization (MCP servers, plugins, tools)

@@ -67,4 +67,45 @@ describe('compaction chunks reach the transcript', () => {
     expect(compact).toHaveLength(1);
     expect(compact[0]).toMatchObject({ data: { state: 'output-error' } });
   });
+
+  it('upserts the summary the SDK streams after the boundary onto the same card', async () => {
+    const map = createCompactionMapper();
+    const chunks = [
+      ...map({ type: 'system', subtype: 'status', status: 'compacting' }),
+      ...map({
+        type: 'system',
+        subtype: 'compact_boundary',
+        compact_metadata: { trigger: 'auto' },
+      }),
+      ...map({ type: 'user', message: { content: [{ type: 'text', text: 'the gist' }] } }),
+    ];
+
+    const parts = await partsFor(chunks);
+
+    expect(parts.filter((part) => part.type === 'data-compact')).toMatchObject([
+      { data: { state: 'output-available', trigger: 'auto', summary: 'the gist' } },
+    ]);
+  });
+
+  it('takes no summary once the assistant has replied after the boundary', () => {
+    const map = createCompactionMapper();
+    map({ type: 'system', subtype: 'status', status: 'compacting' });
+    map({ type: 'system', subtype: 'compact_boundary' });
+    map({ type: 'assistant' });
+
+    expect(map({ type: 'user', message: { content: 'a later prompt' } })).toEqual([]);
+  });
+
+  it('marks a compaction that kept messages verbatim as partial', () => {
+    const map = createCompactionMapper();
+    map({ type: 'system', subtype: 'status', status: 'compacting' });
+
+    const [chunk] = map({
+      type: 'system',
+      subtype: 'compact_boundary',
+      compact_metadata: { trigger: 'auto', preserved_messages: { anchor_uuid: 'a', uuids: ['b'] } },
+    });
+
+    expect(chunk).toMatchObject({ data: { partial: true } });
+  });
 });
