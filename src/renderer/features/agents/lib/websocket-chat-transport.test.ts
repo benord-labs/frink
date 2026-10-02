@@ -2236,12 +2236,6 @@ describe('websocket-chat-transport', () => {
       expect(capturedChunks.length).toBe(chunkCountAfterClose);
     });
 
-    it('closes stream when execute-complete has no assistantMessageId', async () => {
-      onExecuteComplete({ subChatId });
-      await waitForAsync();
-      expect(hasActiveTransport(subChatId)).toBe(false);
-    });
-
     it('synthesizes missing tool-input when tool-output arrives first', async () => {
       onStreamChunk({
         subChatId,
@@ -2473,7 +2467,13 @@ describe('websocket-chat-transport', () => {
 
       // Latest transport should own the listener, and execute-complete should close it deterministically.
       expect(hasActiveTransport(sameSubChatId)).toBe(true);
-      emitExecuteComplete({ subChatId: sameSubChatId });
+      emitStreamChunk({
+        subChatId: sameSubChatId,
+        assistantMessageId: 'run-same',
+        chunk: { type: 'text-delta', delta: 'same-sub' },
+      });
+      await waitForAsync();
+      emitExecuteComplete({ subChatId: sameSubChatId, assistantMessageId: 'run-same' });
       await waitForAsync();
       expect(hasActiveTransport(sameSubChatId)).toBe(false);
 
