@@ -277,7 +277,16 @@ async function persistAndDispatchMessage(
         id: payload.userMessage.id,
         role: 'user' as const,
         parts: payload.userMessage.parts ?? [],
-        ...(payload.userMessage.metadata ? { metadata: payload.userMessage.metadata } : {}),
+        ...(payload.userMessage.metadata || dispatchTaskId
+          ? {
+              // The dispatch stamp is what the restart-resume gate reads to prove this task's prompt
+              // reached the chat (latestAnsweredDispatchTaskId); written here, never trusted from metadata.
+              metadata: {
+                ...payload.userMessage.metadata,
+                ...(dispatchTaskId ? { dispatchTaskId } : {}),
+              },
+            }
+          : {}),
       };
       await appendUserMessageLocal(getDatabase(), payload.subChatId, userMessage);
       // A phone send has no desktop bubble: announce it before dispatch so it precedes the reply.

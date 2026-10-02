@@ -10,9 +10,19 @@ export async function reviveRestartInterruptedFlow(
   try {
     // Dynamic imports keep the db/flows graph off the executor's static import chain.
     const { getDatabase } = await import('../db');
+    const { sessionAnsweredTaskNode } = await import('../flows/rerun/session-resume');
+    const db = getDatabase();
+    // A follow-up continues the node only if the session ever answered its prompt; otherwise the
+    // agent's next `done` would complete a node it never received. The run stays on Re-run.
+    if (!(await sessionAnsweredTaskNode(db, subChatId, taskId))) {
+      log.info('[Socket Executor] in-place revive declined: node never answered', {
+        subChatId,
+        flowRunId,
+      });
+      return;
+    }
     const { reviveInPlaceCommand } = await import('../flows/transitions');
     const { commitUnpark } = await import('../flows/rerun/unpark-node-run');
-    const db = getDatabase();
     const revived = await commitUnpark(
       flowRunId,
       () => reviveInPlaceCommand(db, taskId, flowRunId),

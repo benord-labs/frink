@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { TriggerStartMode } from '../../../../shared/types/trigger-context';
 import { getOrCreateFlowRunByIdempotencyKey } from '../../db/repos/flow-runs';
-import { chats, nodeRuns, subChats, tasks } from '../../db/schema';
+import { chats, nodeRuns, subChatMessages, subChats, tasks } from '../../db/schema';
 import { seedFlowRun } from '../../db/test-utils/flow-fixtures';
 import { freshDb, type TestDb } from '../../db/test-utils/fresh-db';
 import { resolveSessionResumeSeed } from './session-resume';
@@ -48,9 +48,32 @@ async function seedNodeRun(id: string, nodeId: string): Promise<void> {
   await db.insert(nodeRuns).values({ id, flowRunId, nodeId, blockType: 'agent' });
 }
 
-async function seedFlowTask(over: Partial<typeof tasks.$inferInsert> = {}): Promise<void> {
+/** Appends `messages` to sub-1's transcript, after whatever rows it already holds. */
+async function appendTranscript(messages: object[]): Promise<void> {
+  const seq = (await db.select().from(subChatMessages)).length;
+  for (const [i, message] of messages.entries()) {
+    await db
+      .insert(subChatMessages)
+      .values({ subChatId: 'sub-1', seq: seq + i, message: JSON.stringify(message) });
+  }
+}
+
+/** The task's prompt as the send pipeline persists it, optionally followed by the session's reply. */
+async function seedDispatch(taskId: string, answered: boolean): Promise<void> {
+  await appendTranscript([
+    { id: `u-${taskId}`, role: 'user', parts: [], metadata: { dispatchTaskId: taskId } },
+    ...(answered ? [{ id: `a-${taskId}`, role: 'assistant', parts: [] }] : []),
+  ]);
+}
+
+/** A flow task whose prompt the session answered (pass `answered: false` for an unsent one). */
+async function seedFlowTask(
+  over: Partial<typeof tasks.$inferInsert> = {},
+  answered = true,
+): Promise<void> {
+  const id = over.id ?? 'task-1';
   await db.insert(tasks).values({
-    id: over.id ?? 'task-1',
+    id,
     description: 'flow task',
     source: 'flow',
     status: 'cancelled',
@@ -59,6 +82,7 @@ async function seedFlowTask(over: Partial<typeof tasks.$inferInsert> = {}): Prom
     result: { subChatId: 'sub-1' },
     ...over,
   });
+  await seedDispatch(id, answered);
 }
 
 function resolve(configuredStartMode: TriggerStartMode | undefined = 'plan') {
@@ -106,11 +130,29 @@ describe('resolveSessionResumeSeed — session gate', () => {
     expect(await resolve()).toBeNull();
   });
 
-  it('returns null when the newest flow task never streamed (no result.subChatId)', async () => {
+  it("returns null when this node's prompt never reached the session — the previous node's turn is the newest it answered", async () => {
+    await seedSubChat();
+    await seedNodeRun('nr-prev', 'previous-node');
+    await seedFlowTask({ id: 'task-prev', sourceId: 'nr-prev' });
+    await seedNodeRun(NODE_RUN_ID, NODE_ID);
+    await seedFlowTask({}, false);
+    expect(await resolve()).toBeNull();
+  });
+
+  it('returns null when the prompt was persisted but nothing answered it', async () => {
     await seedSubChat();
     await seedNodeRun(NODE_RUN_ID, NODE_ID);
-    await seedFlowTask({ result: null });
+    await seedFlowTask({}, false);
     expect(await resolve()).toBeNull();
+  });
+
+  it("still continues after a resume whose nudge never sent — the node's earlier answered turn is the proof", async () => {
+    await seedSubChat();
+    await seedNodeRun(NODE_RUN_ID, NODE_ID);
+    await seedFlowTask({ id: 'task-a' });
+    await seedNodeRun('nr-2', NODE_ID);
+    await seedFlowTask({ id: 'task-b', sourceId: 'nr-2' }, false);
+    expect((await resolve())?.config.resumeSession).toBe(true);
   });
 });
 

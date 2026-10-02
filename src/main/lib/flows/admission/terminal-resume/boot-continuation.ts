@@ -1,7 +1,5 @@
-/**
- * Boot carry-on: stage a continuation for each restart-interrupted agent turn that can continue its
- * session, so its resume ticket takes the freed slot ahead of queued starts (see flow-run-restart-recovery).
- */
+/** Boot carry-on: stage a continuation for each restart-interrupted agent turn, ahead of queued starts;
+ * the dispatch's session seed picks nudge (answered) vs full instructions (never received). */
 
 import { eq } from 'drizzle-orm';
 import log from 'electron-log';
@@ -14,7 +12,6 @@ import { recoverOrphanedTasks } from '../../../db/repos/tasks';
 import { chats, type FlowVersion, type Task } from '../../../db/schema';
 import { type FlowGraphNode, findNodeById, parseGraph } from '../../graph';
 import { lastUnfinishedNodeRun } from '../../rerun/resume-point';
-import { resolveSessionResumeSeed } from '../../rerun/session-resume';
 import { isRestartInterrupted } from '../../transitions';
 import { captureFlowAdmissionException } from '../activity';
 import { hasActiveFlowAdmission } from '../runtime';
@@ -24,7 +21,7 @@ type Db = ReturnType<typeof getDatabase>;
 type InterruptedTask = Pick<Task, 'flowRunId' | 'nodeRunId' | 'result'>;
 
 /** The chat linkage dispatchAgent stamped on the task; it survives the cancel because the marker is merged. */
-const taskLinkageSchema = z.object({ chatId: z.string(), startMode: z.string().optional() });
+const taskLinkageSchema = z.object({ chatId: z.string() });
 
 /**
  * Sync twin of resume.ts isRunRestartInterrupted for the enqueue transaction, plus the run's chat
@@ -36,8 +33,8 @@ function stillInterrupted(db: Db, flowRunId: string, chatId: string): boolean {
 }
 
 /**
- * Boot step: sweep the turns a dead process left `running`, then stage a carry-on for each that
- * can continue — before the completion watcher turns them terminal and frees their slots.
+ * Boot step: sweep the turns a dead process left `running`, then stage a carry-on for each agent
+ * turn — before the completion watcher turns them terminal and frees their slots.
  */
 export async function recoverInterruptedFlowTasks(db: Db): Promise<void> {
   const recovered = await recoverOrphanedTasks(db);
@@ -100,15 +97,6 @@ async function stageRestartContinuation(
   const node = await continuableAgentTarget(db, flowRunId, nodeRunId);
   const linkage = taskLinkageSchema.safeParse(result);
   if (!node || !linkage.success) return false;
-  // Same two-half gate the claim applies (the chat's sub-chat, its newest flow task minted
-  // for this node of this run), so "staged" never diverges from "will actually continue".
-  const seed = await resolveSessionResumeSeed(db, {
-    chatId: linkage.data.chatId,
-    flowRunId,
-    nodeId: node.id,
-    configuredStartMode: linkage.data.startMode,
-  });
-  if (!seed) return false;
   const { chatId } = linkage.data;
   // Re-checked inside the enqueue transaction, so an abandon that lands first wins by construction.
   stageContinuationResume(

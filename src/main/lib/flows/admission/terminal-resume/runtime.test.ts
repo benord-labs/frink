@@ -535,8 +535,14 @@ describe('boot carry-on — staged from the startup sweep, fired ahead of queued
     expect(mocks.resumeDispatcher).not.toHaveBeenCalled();
   });
 
+  // The dispatch picks nudge vs full prompt; boot only decides the turn gets a resume at all, so a
+  // turn whose prompt never reached a session is re-queued too rather than left for a click.
+  it('re-queues an interrupted turn that never reached a session, so its node is not skipped', async () => {
+    const { swept } = await seedInterruptedAgentRun({ sessionId: null });
+    expect(await stageRestartContinuations(db, swept)).toBe(1);
+  });
+
   it.each<[string, Parameters<typeof seedInterruptedAgentRun>[0]]>([
-    ['the sub-chat has no session to continue', { sessionId: null }],
     ['the interrupted node is not an agent node', { nodeId: 'trigger' }],
     ['the interrupted node is a fan-out lane', { laneIndex: 0 }],
   ])('stays manual when %s', async (_reason, opts) => {
