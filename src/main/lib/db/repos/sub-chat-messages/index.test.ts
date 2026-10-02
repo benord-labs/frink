@@ -80,6 +80,17 @@ describe('latestAnsweredDispatchTaskId', () => {
     expect(latestAnsweredDispatchTaskId(db, 'sub-d')).toBe('task-a');
   });
 
+  it("does not credit a later turn's reply to a dispatched prompt that never ran", async () => {
+    await seed([
+      dispatched('u1', 'task-a'),
+      reply('a1'),
+      dispatched('u2', 'task-b'),
+      typed('u3'),
+      reply('a3'),
+    ]);
+    expect(latestAnsweredDispatchTaskId(db, 'sub-d')).toBe('task-a');
+  });
+
   it('ignores typed replies, which carry no dispatch identity', async () => {
     await seed([dispatched('u1', 'task-a'), reply('a1'), typed('u2'), reply('a2')]);
     expect(latestAnsweredDispatchTaskId(db, 'sub-d')).toBe('task-a');

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, exists, gt, gte, inArray, type SQL, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, exists, gte, inArray, type SQL, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import type { getDatabase } from '../../index';
 import { subChatMessages, subChats } from '../../schema';
@@ -120,8 +120,8 @@ export function transcriptHasMessage(
   return transcript ? transcript.some((message) => message.id === messageId) : null;
 }
 
-/** The task of the newest dispatch-stamped user row that an assistant reply follows: the prompt this
- * session last provably received. A stamped prompt nothing answered (preflight-rejected) is skipped. */
+/** The task of the newest dispatch-stamped user row whose very next row is an assistant reply. A
+ * prompt nothing answered, or one a later turn's prompt and reply followed, is skipped. */
 export function latestAnsweredDispatchTaskId(db: Db, subChatId: string): string | null {
   const reply = alias(subChatMessages, 'reply');
   const taskId = sql<
@@ -143,7 +143,7 @@ export function latestAnsweredDispatchTaskId(db: Db, subChatId: string): string 
             .where(
               and(
                 eq(reply.subChatId, subChatId),
-                gt(reply.seq, subChatMessages.seq),
+                eq(reply.seq, sql`${subChatMessages.seq} + 1`),
                 sql`json_extract(${reply.message}, '$.role') = 'assistant'`,
               ),
             ),
