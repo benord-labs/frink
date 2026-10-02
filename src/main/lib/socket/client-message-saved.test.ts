@@ -101,6 +101,23 @@ describe('sendMessage → socket:message-saved', () => {
     );
   });
 
+  it('never persists a dispatch stamp the caller supplied in metadata', async () => {
+    await sendFromPhone({
+      userMessage: {
+        id: 'u1',
+        role: 'user',
+        parts: [{ type: 'text', text: 'hi' }],
+        metadata: { source: 'mobile', dispatchTaskId: 'forged' },
+      },
+    });
+
+    expect(appendUserMessageLocalMock).toHaveBeenCalledWith(
+      expect.anything(),
+      's1',
+      expect.objectContaining({ metadata: { source: 'mobile' } }),
+    );
+  });
+
   it('does not broadcast a regenerate, which appends no new user message', async () => {
     await sendFromPhone({ trigger: 'regenerate-message' });
 

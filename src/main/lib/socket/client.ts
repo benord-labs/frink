@@ -247,6 +247,16 @@ export async function sendMessage(
   );
 }
 
+/** The restart-resume gate reads `dispatchTaskId` as proof a task's prompt reached the chat, so only
+ * the send's validated top-level id may set it; a copy inside caller metadata is dropped. */
+function persistedUserMetadata(
+  metadata: Message['metadata'],
+  dispatchTaskId: string | undefined,
+): Record<string, unknown> {
+  const { dispatchTaskId: _supplied, ...rest } = (metadata ?? {}) as { dispatchTaskId?: unknown };
+  return dispatchTaskId ? { ...rest, dispatchTaskId } : rest;
+}
+
 // Reason: Persistence and dispatch share one admission boundary; preserve their ordered writes.
 // fallow-ignore-next-line complexity
 async function persistAndDispatchMessage(
@@ -278,14 +288,7 @@ async function persistAndDispatchMessage(
         role: 'user' as const,
         parts: payload.userMessage.parts ?? [],
         ...(payload.userMessage.metadata || dispatchTaskId
-          ? {
-              // The dispatch stamp is what the restart-resume gate reads to prove this task's prompt
-              // reached the chat (latestAnsweredDispatchTaskId); written here, never trusted from metadata.
-              metadata: {
-                ...payload.userMessage.metadata,
-                ...(dispatchTaskId ? { dispatchTaskId } : {}),
-              },
-            }
+          ? { metadata: persistedUserMetadata(payload.userMessage.metadata, dispatchTaskId) }
           : {}),
       };
       await appendUserMessageLocal(getDatabase(), payload.subChatId, userMessage);
