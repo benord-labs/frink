@@ -25,6 +25,12 @@ describe('getNodeRunTooltipText', () => {
     expect(getNodeRunTooltipText(baseRun({ status: 'pending' }))).toBe('Pending');
   });
 
+  it('names a superseded attempt as retried rather than echoing the raw status', () => {
+    expect(getNodeRunTooltipText(baseRun({ status: 'superseded' }))).toBe(
+      'Retried — replaced by a later attempt',
+    );
+  });
+
   it('returns Awaiting input', () => {
     expect(getNodeRunTooltipText(baseRun({ status: 'awaiting_input' }))).toBe('Awaiting input');
   });

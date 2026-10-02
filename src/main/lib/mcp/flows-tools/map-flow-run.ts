@@ -6,6 +6,7 @@
  */
 
 import { type FlowNode, formatFlowNodeLabel } from '../../../../shared/lib/validate-flow-graph';
+import { SUPERSEDED_NODE_STATUS } from '../../../../shared/types/flow';
 import type { DbFlowRunWithNodeRuns, DbNodeRun } from '../../../../shared/types/flow-run';
 
 export const MAX_SUMMARY_NODES = 50;
@@ -187,6 +188,8 @@ function buildFanOutEntry(
   // Group by lane_index to get per-lane status
   const laneMap = new Map<number, DbNodeRun[]>();
   for (const child of children) {
+    // A retried attempt is history; the lane's state is its replacement's.
+    if (child.status === SUPERSEDED_NODE_STATUS) continue;
     const laneIdx = child.lane_index ?? 0;
     const lane = laneMap.get(laneIdx) ?? [];
     lane.push(child);

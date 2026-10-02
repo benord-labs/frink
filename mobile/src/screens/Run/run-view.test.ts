@@ -79,6 +79,14 @@ describe('run summary', () => {
     expect(runProgress(steps())).toBe('Getting ready');
   });
 
+  it('does not count a retried attempt as an extra step', () => {
+    const steps = (...statuses: string[]) => ({
+      nodes: statuses.map((status) => node({ status })),
+    });
+    expect(runProgress(steps('completed', 'superseded', 'running', 'pending'))).toBe('Step 2 of 3');
+    expect(runProgress(steps('superseded', 'completed', 'completed'))).toBe('2 steps');
+  });
+
   it('measures elapsed time until the run completes', () => {
     expect(runElapsed({ startedAt: ago(9), completedAt: null }, NOW)).toBe('9m 0s');
     expect(runElapsed({ startedAt: ago(9), completedAt: ago(7) }, NOW)).toBe('2m 0s');

@@ -1,3 +1,4 @@
+import { SUPERSEDED_NODE_STATUS } from '../../../../../shared/types/flow';
 import type { DbNodeRun } from '../../../../../shared/types/flow-run';
 import { truncateUiString } from '../truncate-ui-string';
 import { formatDuration, formatElapsedSinceStartLive } from './format-duration';
@@ -60,6 +61,9 @@ export function getNodeRunTooltipText(nr: DbNodeRun, nowMs?: number): string {
   }
   if (status === 'skipped') {
     return 'Skipped';
+  }
+  if (status === SUPERSEDED_NODE_STATUS) {
+    return 'Retried — replaced by a later attempt';
   }
 
   return status;

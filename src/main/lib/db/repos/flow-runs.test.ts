@@ -801,15 +801,13 @@ describe('listFlowRunsForFlow', () => {
     const flow = await createFlow(db, { name: 'F' });
     const version = await createFlowVersion(db, { flowId: flow.id, graph: GRAPH });
     const second = new Date('2026-09-28T08:00:00Z');
-    await db
-      .insert(flowRuns)
-      .values(
-        ['run-b', 'run-c', 'run-a'].map((id) => ({
-          id,
-          flowVersionId: version.id,
-          createdAt: second,
-        })),
-      );
+    await db.insert(flowRuns).values(
+      ['run-b', 'run-c', 'run-a'].map((id) => ({
+        id,
+        flowVersionId: version.id,
+        createdAt: second,
+      })),
+    );
     await db.insert(flowRuns).values({
       id: 'run-0',
       flowVersionId: version.id,
@@ -1098,6 +1096,12 @@ describe('node_run cleanup on terminal flow_runs', () => {
       blockType: 'agent',
       status: 'completed',
     });
+    const retried = await createNodeRun(db, {
+      flowRunId,
+      nodeId: 'd',
+      blockType: 'agent',
+      status: 'superseded',
+    });
 
     expect(await cancelRemainingNodeRunsForRun(db, flowRunId)).toBe(2);
     const rows = await db.select().from(nodeRuns).where(eq(nodeRuns.flowRunId, flowRunId));
@@ -1105,6 +1109,7 @@ describe('node_run cleanup on terminal flow_runs', () => {
     expect(byId.get(awaiting.id)).toBe('cancelled');
     expect(byId.get(pending.id)).toBe('cancelled');
     expect(byId.get(done.id)).toBe('completed');
+    expect(byId.get(retried.id)).toBe('superseded');
   });
 
   it('cleanupNodeRunsForTerminalFlows sweeps a failed run but leaves an active run untouched', async () => {

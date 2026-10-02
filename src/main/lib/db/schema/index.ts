@@ -345,7 +345,7 @@ export const nodeRuns = sqliteTable(
       .references(() => flowRuns.id, { onDelete: 'cascade' }),
     nodeId: text('node_id').notNull(),
     blockType: text('block_type').notNull(),
-    // 'pending' | 'running' | 'awaiting_input' | 'blocked' | 'completed' | 'failed' | 'cancelled' | 'skipped'
+    // pending|running|awaiting_input|blocked|completed|failed|cancelled|skipped|superseded (retried)
     status: text('status').notNull().default('pending'),
     nodeOutput: text('node_output', { mode: 'json' }),
     attemptNumber: integer('attempt_number').notNull().default(1),

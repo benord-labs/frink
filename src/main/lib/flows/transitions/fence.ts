@@ -1,4 +1,8 @@
 import { and, eq, exists, inArray } from 'drizzle-orm';
+import {
+  RESUME_ACTIONABLE_NODE_STATUSES,
+  SUPERSEDED_NODE_STATUS,
+} from '../../../../shared/types/flow';
 import type { getDatabase } from '../../db';
 import type { FlowRunStatus } from '../../db/repos/flow-runs';
 import {
@@ -81,23 +85,46 @@ export function setFencedRunStatus(
   );
 }
 
-/** Inserts a node_run only while the fence holds, so a dispatch decided before a Cancel, or before
- * a Cancel and a Retry, writes nothing (null). Runs inside `runTransition`. */
+/** Inserts a node_run only while the fence holds (else null); a Retry's `supersedesNodeRunId` is
+ * terminalized in the same tick, so a Cancel never strands it. Runs inside `runTransition`. */
 export function insertNodeRunIfFenced(
   db: Db,
   fence: RunFence,
   input: Omit<NewNodeRun, 'flowRunId'>,
+  supersedesNodeRunId?: string,
 ): NodeRun | null {
   const live = db
     .select({ id: flowRuns.id })
     .from(flowRuns)
     .where(fenceHolds(db, fence, DISPATCHABLE_RUN_STATUSES))
     .get();
-  return live
-    ? db
-        .insert(nodeRuns)
-        .values({ ...input, flowRunId: fence.flowRunId })
-        .returning()
-        .get()
-    : null;
+  if (!live) return null;
+  const attemptNumber = supersedesNodeRunId
+    ? supersedeAttempt(db, fence.flowRunId, supersedesNodeRunId)
+    : undefined;
+  return db
+    .insert(nodeRuns)
+    .values({ ...input, flowRunId: fence.flowRunId, ...(attemptNumber && { attemptNumber }) })
+    .returning()
+    .get();
+}
+
+/** Terminalizes a still-actionable attempt as `superseded`; returns the next attempt number. */
+function supersedeAttempt(db: Db, flowRunId: string, nodeRunId: string): number | undefined {
+  const prior = db
+    .select({ attemptNumber: nodeRuns.attemptNumber })
+    .from(nodeRuns)
+    .where(and(eq(nodeRuns.id, nodeRunId), eq(nodeRuns.flowRunId, flowRunId)))
+    .get();
+  if (!prior) return undefined;
+  db.update(nodeRuns)
+    .set({ status: SUPERSEDED_NODE_STATUS, completedAt: new Date() })
+    .where(
+      and(
+        eq(nodeRuns.id, nodeRunId),
+        inArray(nodeRuns.status, [...RESUME_ACTIONABLE_NODE_STATUSES]),
+      ),
+    )
+    .run();
+  return prior.attemptNumber + 1;
 }

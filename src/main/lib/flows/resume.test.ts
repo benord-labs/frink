@@ -140,6 +140,32 @@ describe('resumeFlowRun — admission lease', () => {
     expect(advanceFlowRun).not.toHaveBeenCalled();
   });
 
+  // A second pane (or a double-click) still showing the old attempt's Retry after the first retry
+  // replaced it and the replacement parked again: the superseded row is no longer actionable.
+  it('refuses to retry an attempt a previous retry already superseded', async () => {
+    const { flowRunId } = await seedFlowRun(db, GRAPH);
+    await setFlowRunStatus(db, flowRunId, 'paused');
+    const old = await createNodeRun(db, {
+      flowRunId,
+      nodeId: 'a',
+      blockType: 'agent',
+      status: 'superseded',
+    });
+    const replacement = await createNodeRun(db, {
+      flowRunId,
+      nodeId: 'a',
+      blockType: 'agent',
+      status: 'awaiting_input',
+      attemptNumber: 2,
+    });
+    seedActiveAdmission(db, flowRunId);
+
+    await expect(resumeFlowRun(flowRunId, 'retry', old.id)).rejects.toThrow('already changed');
+    expect((await getFlowRun(db, flowRunId))?.status).toBe('paused');
+    expect((await getNodeRun(db, replacement.id))?.status).toBe('awaiting_input');
+    expect(dispatchAndAdvance).not.toHaveBeenCalled();
+  });
+
   it('rejects a changed park on the same node after loading context', async () => {
     const { flowRunId } = await seedFlowRun(db, GRAPH);
     await setFlowRunStatus(db, flowRunId, 'paused');
@@ -281,7 +307,7 @@ describe('resumeFlowRun — admission lease', () => {
       undefined,
       expect.anything(),
       undefined,
-      undefined,
+      { supersedesNodeRunId: nodeRun.id },
     );
     expect(hasFlowResourceActivity(flowRunId)).toBe(false);
   });
@@ -314,7 +340,7 @@ describe('resumeFlowRun — admission lease', () => {
       undefined,
       expect.anything(),
       undefined,
-      { laneIndex: 3, parentFanOutNodeRunId: parent.id },
+      { laneIndex: 3, parentFanOutNodeRunId: parent.id, supersedesNodeRunId: nodeRun.id },
     );
   });
 });

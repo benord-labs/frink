@@ -354,6 +354,30 @@ describe('dispatchAndAdvance — a thrown dispatcher terminalizes its node', () 
     fence = readRunFence(db, flowRunId) as RunFence;
   });
 
+  // Wiring: resume's retry → dispatchAndAdvance → the fenced insert. Each unit is covered; this
+  // pins that the option actually reaches the insert and the replacement row runs to completion.
+  it('a retry dispatch supersedes the parked attempt and runs its replacement as attempt 2', async () => {
+    const parked = await createNodeRun(db, {
+      flowRunId,
+      nodeId: 'evaluate',
+      blockType: 'agent',
+      status: 'awaiting_input',
+    });
+    (dispatchNode as Mock).mockResolvedValue({ type: 'completed', output: completedOutput });
+
+    await dispatchAndAdvance(fence, GRAPH.nodes[0], undefined, await ctxFor(flowRunId), undefined, {
+      supersedesNodeRunId: parked.id,
+    });
+
+    const evaluate = (await listNodeRunsForFlowRun(db, flowRunId)).filter(
+      (n) => n.nodeId === 'evaluate',
+    );
+    expect(evaluate.map((n) => [n.status, n.attemptNumber])).toEqual([
+      ['superseded', 1],
+      ['completed', 2],
+    ]);
+  });
+
   it('inserts no node_run and dispatches nothing once the run was cancelled', async () => {
     const ctx = await ctxFor(flowRunId);
     await setFlowRunStatus(db, flowRunId, 'cancelled');

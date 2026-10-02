@@ -1,6 +1,7 @@
 import { Button } from '@benord-labs/frink-primitives';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { memo } from 'react';
+import { SUPERSEDED_NODE_STATUS } from '../../../../../shared/types/flow';
 import type { DbNodeRun } from '../../../../../shared/types/flow-run';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../../components/ui/tooltip';
 import { cn } from '../../../../lib/utils';
@@ -39,7 +40,7 @@ function NodeRunRowInner({
   const now = usePeriodicNow(isRunning);
   const tooltipText = getNodeRunTooltipText(nr, isRunning ? now : undefined);
   const skippedLine =
-    nr.status === 'skipped' || nr.status === 'cancelled'
+    nr.status === 'skipped' || nr.status === 'cancelled' || nr.status === SUPERSEDED_NODE_STATUS
       ? 'text-muted-foreground/40 line-through'
       : 'text-foreground';
   const laneNumber = nr.lane_index != null ? nr.lane_index + 1 : undefined;
