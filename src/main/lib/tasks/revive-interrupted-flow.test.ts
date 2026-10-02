@@ -8,7 +8,7 @@ import {
 import { getFlowRun, setFlowRunStatus } from '../db/repos/flow-runs';
 import { createNodeRun, getNodeRun, setNodeRunStatus } from '../db/repos/node-runs';
 import { createTask, getTaskById, parseResultRecord, updateTaskStatus } from '../db/repos/tasks';
-import { flowRunAdmissions, tasks } from '../db/schema';
+import { chats, flowRunAdmissions, subChatMessages, subChats, tasks } from '../db/schema';
 import { seedActiveAdmission, seedFlowRun } from '../db/test-utils/flow-fixtures';
 import { freshDb, type TestDb } from '../db/test-utils/fresh-db';
 
@@ -88,16 +88,36 @@ let taskId: string;
 let ticket: number;
 let controller: FlowAdmissionController;
 
-/** The shape a restart leaves: run, node and task cancelled, the marker on the node, slot active. */
-async function seedInterruptedRun(nodeOutput: NodeOutput = MARKED_OUTPUT): Promise<void> {
+/** The shape a restart leaves (run, node, task cancelled; marker on the node; slot active). `answered`
+ * seeds the task's prompt and the session's reply; false models a prompt never sent. */
+async function seedInterruptedRun(
+  nodeOutput: NodeOutput = MARKED_OUTPUT,
+  answered = true,
+): Promise<void> {
   ({ flowRunId } = await seedFlowRun(db, GRAPH));
   ticket = seedActiveAdmission(db, flowRunId);
   nodeRunId = (await createNodeRun(db, { flowRunId, nodeId: 'a', blockType: 'agent' })).id;
   await setNodeRunStatus(db, nodeRunId, 'cancelled', { nodeOutput, completedAt: new Date() });
   await setFlowRunStatus(db, flowRunId, 'cancelled', { completedAt: new Date() });
-  const task = await createTask(db, { description: 'agent', source: 'flow', flowRunId, nodeRunId });
+  const task = await createTask(db, {
+    description: 'agent',
+    source: 'flow',
+    sourceId: nodeRunId,
+    flowRunId,
+    nodeRunId,
+  });
   taskId = task.id;
   await updateTaskStatus(db, taskId, 'cancelled', { result: CANCELLED_RESULT });
+  await db.insert(chats).values({ id: 'chat-1' });
+  await db.insert(subChats).values({ id: 'sub-1', chatId: 'chat-1', sessionId: 'session-1' });
+  const prompt = { id: 'u1', role: 'user', parts: [], metadata: { dispatchTaskId: taskId } };
+  const reply = { id: 'a1', role: 'assistant', parts: [] };
+  await db
+    .insert(subChatMessages)
+    .values([
+      { subChatId: 'sub-1', seq: 0, message: JSON.stringify(prompt) },
+      ...(answered ? [{ subChatId: 'sub-1', seq: 1, message: JSON.stringify(reply) }] : []),
+    ]);
 }
 
 const statuses = async () => ({
@@ -143,6 +163,16 @@ describe('reviveRestartInterruptedFlow', () => {
     for (const marker of ['cancelled', 'error', 'userPause', 'agentSignal']) {
       expect(result).not.toHaveProperty(marker);
     }
+  });
+
+  // The app died between dispatching this node and sending its prompt: the shared session only ever
+  // answered an earlier node, so a follow-up must not let this node complete unrun.
+  it("writes nothing when the session never answered the task's node", async () => {
+    await seedInterruptedRun(MARKED_OUTPUT, false);
+
+    await reviveRestartInterruptedFlow(taskId, flowRunId, 'sub-1');
+
+    expect(await statuses()).toEqual({ run: 'cancelled', node: 'cancelled', task: 'cancelled' });
   });
 
   // Continuing in place skips re-admission, so a slot that already began releasing (a settle, or a

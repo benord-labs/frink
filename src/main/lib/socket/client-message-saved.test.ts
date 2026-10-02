@@ -91,6 +91,33 @@ describe('sendMessage → socket:message-saved', () => {
     expect(events.indexOf('socket:message-saved')).toBeLessThan(events.indexOf('execute'));
   });
 
+  it("stamps a dispatched prompt with its task, the resume gate's proof the prompt was sent", async () => {
+    await sendFromPhone({ dispatchTaskId: 'task-1' });
+
+    expect(appendUserMessageLocalMock).toHaveBeenCalledWith(
+      expect.anything(),
+      's1',
+      expect.objectContaining({ metadata: { source: 'mobile', dispatchTaskId: 'task-1' } }),
+    );
+  });
+
+  it('never persists a dispatch stamp the caller supplied in metadata', async () => {
+    await sendFromPhone({
+      userMessage: {
+        id: 'u1',
+        role: 'user',
+        parts: [{ type: 'text', text: 'hi' }],
+        metadata: { source: 'mobile', dispatchTaskId: 'forged' },
+      },
+    });
+
+    expect(appendUserMessageLocalMock).toHaveBeenCalledWith(
+      expect.anything(),
+      's1',
+      expect.objectContaining({ metadata: { source: 'mobile' } }),
+    );
+  });
+
   it('does not broadcast a regenerate, which appends no new user message', async () => {
     await sendFromPhone({ trigger: 'regenerate-message' });
 

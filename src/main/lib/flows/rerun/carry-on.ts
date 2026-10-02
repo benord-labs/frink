@@ -11,6 +11,7 @@ import { getSubChatById } from '../../db/repos/sub-chats';
 import { getTaskById, parseResultRecord, retryTaskDetailed } from '../../db/repos/tasks';
 import type { Task } from '../../db/schema';
 import { withFlowResourceCleanup } from '../admission/activity';
+import { sessionAnsweredTaskNode } from './session-resume';
 
 type Db = ReturnType<typeof getDatabase>;
 
@@ -46,6 +47,11 @@ export async function carryOnFlowTask(db: Db, taskId: string): Promise<CarryOnFl
     const subChatId = typeof prior.subChatId === 'string' ? prior.subChatId : null;
     const subChat = subChatId ? await getSubChatById(db, subChatId) : null;
     if (!subChat?.sessionId) return { ok: false, reason: 'no-session' };
+    // A Flow's nodes share one sub-chat, so its session predates this task: only a session that
+    // answered this task's node has anything of it to continue.
+    if (existing.flowRunId && !(await sessionAnsweredTaskNode(db, subChat.id, taskId))) {
+      return { ok: false, reason: 'no-session' };
+    }
 
     const { task, reason } = await retryTaskDetailed(
       db,

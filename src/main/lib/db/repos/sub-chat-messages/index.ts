@@ -1,4 +1,5 @@
-import { and, asc, eq, exists, gte, inArray, type SQL, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, exists, gte, inArray, type SQL, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/sqlite-core';
 import type { getDatabase } from '../../index';
 import { subChatMessages, subChats } from '../../schema';
 import { reportCorruptTranscript } from '../../transcript-corruption';
@@ -117,6 +118,42 @@ export function transcriptHasMessage(
   }
   const transcript = readTranscripts(db, [subChatId]).get(subChatId);
   return transcript ? transcript.some((message) => message.id === messageId) : null;
+}
+
+/** The task of the newest dispatch-stamped user row whose very next row is an assistant reply. A
+ * prompt nothing answered, or one a later turn's prompt and reply followed, is skipped. */
+export function latestAnsweredDispatchTaskId(db: Db, subChatId: string): string | null {
+  const reply = alias(subChatMessages, 'reply');
+  const taskId = sql<
+    string | null
+  >`json_extract(${subChatMessages.message}, '$.metadata.dispatchTaskId')`;
+  const row = db
+    .select({ taskId })
+    .from(subChatMessages)
+    .where(
+      and(
+        eq(subChatMessages.subChatId, subChatId),
+        // Cheap substring prefilter so json_extract only parses candidate rows.
+        sql`instr(${subChatMessages.message}, '"dispatchTaskId"') > 0`,
+        sql`${taskId} IS NOT NULL`,
+        exists(
+          db
+            .select({ one: sql`1` })
+            .from(reply)
+            .where(
+              and(
+                eq(reply.subChatId, subChatId),
+                eq(reply.seq, sql`${subChatMessages.seq} + 1`),
+                sql`json_extract(${reply.message}, '$.role') = 'assistant'`,
+              ),
+            ),
+        ),
+      ),
+    )
+    .orderBy(desc(subChatMessages.seq))
+    .limit(1)
+    .get();
+  return row?.taskId ?? null;
 }
 
 /** SQL that holds while the sub-chat exists and its transcript still equals `messages`. */

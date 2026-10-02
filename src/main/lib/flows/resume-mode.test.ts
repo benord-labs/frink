@@ -14,7 +14,7 @@ import { getOrCreateFlowRunByIdempotencyKey, setFlowRunStatus } from '../db/repo
 import { createNodeRun, setNodeRunStatus } from '../db/repos/node-runs';
 import { createSubChat } from '../db/repos/sub-chats';
 import { createTask, updateTaskStatus } from '../db/repos/tasks';
-import { chats } from '../db/schema';
+import { chats, subChatMessages } from '../db/schema';
 import { seedFlowRun } from '../db/test-utils/flow-fixtures';
 import { freshDb, type TestDb } from '../db/test-utils/fresh-db';
 
@@ -83,23 +83,42 @@ describe('resolveInterruptedResumeMode', () => {
     });
   });
 
-  /** The cancelled+marker driving task, linked to its sub-chat exactly as the cancel sweep leaves it. */
-  const seedDrivingTask = async (flowRunId: string) => {
+  /** The cancelled+marker driving task as the cancel sweep leaves it; `answered` seeds its prompt and
+   * the session's reply, false models a prompt that never reached the chat. */
+  const seedDrivingTask = async (flowRunId: string, answered = true, nodeRunId?: string) => {
+    const sourceId =
+      nodeRunId ?? (await createNodeRun(db, { flowRunId, nodeId: 'a', blockType: 'agent' })).id;
     const task = await createTask(db, {
       description: 'agent step',
       source: 'flow',
+      sourceId,
       flowRunId,
       result: { subChatId: SUB_CHAT_ID },
     });
     await updateTaskStatus(db, task.id, 'cancelled', {
       result: { subChatId: SUB_CHAT_ID, cancelled: true },
     });
+    if (answered) {
+      const prompt = { id: 'u1', role: 'user', parts: [], metadata: { dispatchTaskId: task.id } };
+      const reply = { id: 'a1', role: 'assistant', parts: [] };
+      await db.insert(subChatMessages).values([
+        { subChatId: SUB_CHAT_ID, seq: 0, message: JSON.stringify(prompt) },
+        { subChatId: SUB_CHAT_ID, seq: 1, message: JSON.stringify(reply) },
+      ]);
+    }
     return task;
   };
 
   it('wakes in place when the cancelled driving task and a session are both present', async () => {
     await seedDrivingTask(RUN_ID);
     expect(await resolveInterruptedResumeMode(RUN_ID, SUB_CHAT_ID)).toBe('session');
+  });
+
+  // The shared sub-chat's session is from earlier nodes; waking it would make the agent redo the
+  // previous node and complete this one unrun.
+  it("falls back to re-dispatch when the session never answered the interrupted node's prompt", async () => {
+    await seedDrivingTask(RUN_ID, false);
+    expect(await resolveInterruptedResumeMode(RUN_ID, SUB_CHAT_ID)).toBe('redispatch');
   });
 
   // No session id means the attempt died before the CLI produced a frame, so a follow-up would
@@ -206,12 +225,12 @@ describe('resolveInterruptedResumeMode', () => {
         },
       });
       await setFlowRunStatus(db, runId, 'cancelled');
-      return runId;
+      return { runId, nodeRunId: nodeRun.id };
     };
 
     it('reports the run, its resumability and the mechanism together', async () => {
-      const runId = await seedCancelledRunForChat('k-int', true);
-      await seedDrivingTask(runId);
+      const { runId, nodeRunId } = await seedCancelledRunForChat('k-int', true);
+      await seedDrivingTask(runId, true, nodeRunId);
 
       expect(await describeInterruptedRunForChat('chat-1', SUB_CHAT_ID)).toEqual({
         runId,
@@ -223,8 +242,8 @@ describe('resolveInterruptedResumeMode', () => {
     // The gate seen through the read the renderer consumes: losing the slot renames the row to
     // "Re-run step" (mode redispatch) — it must NOT make the row disappear (resumable stays true).
     it('keeps a slotless interrupted run resumable, via redispatch', async () => {
-      const runId = await seedCancelledRunForChat('k-slotless', true);
-      await seedDrivingTask(runId);
+      const { runId, nodeRunId } = await seedCancelledRunForChat('k-slotless', true);
+      await seedDrivingTask(runId, true, nodeRunId);
       admission.active = false;
 
       expect(await describeInterruptedRunForChat('chat-1', SUB_CHAT_ID)).toEqual({
@@ -236,8 +255,8 @@ describe('resolveInterruptedResumeMode', () => {
 
     // A deliberate user cancel carries no marker: no row renders, so the mechanism is moot.
     it('marks a user-cancelled run non-resumable', async () => {
-      const runId = await seedCancelledRunForChat('k-stop', false);
-      await seedDrivingTask(runId);
+      const { runId, nodeRunId } = await seedCancelledRunForChat('k-stop', false);
+      await seedDrivingTask(runId, true, nodeRunId);
 
       expect(await describeInterruptedRunForChat('chat-1', SUB_CHAT_ID)).toEqual({
         runId,

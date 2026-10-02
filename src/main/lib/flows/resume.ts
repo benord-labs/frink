@@ -29,6 +29,7 @@ import {
 import { advanceFlowRun, dispatchAndAdvance, loadRunContext } from './advance';
 import { findNodeById } from './graph';
 import { lastUnfinishedNodeRun } from './rerun/resume-point';
+import { sessionAnsweredTaskNode } from './rerun/session-resume';
 import { commitUnpark } from './rerun/unpark-node-run';
 import {
   isRestartInterrupted,
@@ -55,8 +56,8 @@ export async function isRunRestartInterrupted(flowRunId: string): Promise<boolea
 /** `queued`: a resume ticket already owns the run's continuation and is waiting for a slot. */
 export type InterruptedResumeMode = 'session' | 'redispatch' | 'queued';
 
-/** Resume mechanism for this sub-chat: `queued` when a resume ticket owns the run; `session` with the
- * driving task's persisted session and an `active` slot; else `redispatch`, labelled "Re-run step". */
+/** `queued` when a resume ticket owns the run; `session` when the session answered the driving task's
+ * node and the run holds an `active` slot; else `redispatch` ("Re-run step"). */
 export async function resolveInterruptedResumeMode(
   flowRunId: string,
   subChatId: string,
@@ -71,8 +72,12 @@ export async function resolveInterruptedResumeMode(
     return 'redispatch';
   }
   const subChat = await getSubChatById(db, subChatId);
-  if (!subChat?.sessionId) return 'redispatch';
-  return admission?.active ? 'session' : 'redispatch';
+  if (!subChat?.sessionId || !admission?.active) return 'redispatch';
+  // A shared flow sub-chat has a session from earlier nodes; waking it is only right when it
+  // actually answered the interrupted node's prompt, else the agent would redo the previous node.
+  return (await sessionAnsweredTaskNode(db, subChatId, latestFlowTask.id))
+    ? 'session'
+    : 'redispatch';
 }
 
 /** `null` on a probe failure (e.g. the admission store not yet ready at boot): callers degrade to

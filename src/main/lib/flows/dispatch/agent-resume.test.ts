@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FlowGraph } from '../../../../shared/lib/validate-flow-graph';
-import { chats, nodeRuns, subChats, tasks } from '../../db/schema';
+import { chats, nodeRuns, subChatMessages, subChats, tasks } from '../../db/schema';
 import { seedCompletedNodeRun, seedFlowRun } from '../../db/test-utils/flow-fixtures';
 import { freshDb, type TestDb } from '../../db/test-utils/fresh-db';
 
@@ -51,12 +51,16 @@ beforeEach(async () => {
   await db.insert(chats).values({ id: 'chat-1', name: 'flow chat' });
 });
 
-/** Sub-chat + prior failed attempt of ag1 whose task drove that sub-chat's session. */
+/**
+ * Sub-chat + prior failed attempt of ag1 whose task drove that sub-chat's session. `answered: false`
+ * leaves the attempt's prompt persisted with no reply — it never reached the session.
+ */
 async function seedPriorAttempt(opts: {
   sessionId?: string | null;
   subChatMode?: string;
   taskNodeId?: string;
   priorError?: string;
+  answered?: boolean;
 }): Promise<void> {
   await db.insert(subChats).values({
     id: 'sub-1',
@@ -81,6 +85,16 @@ async function seedPriorAttempt(opts: {
     sourceId: priorNodeRunId,
     result: { subChatId: 'sub-1', ...(opts.priorError ? { error: opts.priorError } : {}) },
   });
+  const prompt = { id: 'u1', role: 'user', parts: [], metadata: { dispatchTaskId: 'task-prior' } };
+  const reply = { id: 'a1', role: 'assistant', parts: [] };
+  await db
+    .insert(subChatMessages)
+    .values([
+      { subChatId: 'sub-1', seq: 0, message: JSON.stringify(prompt) },
+      ...(opts.answered === false
+        ? []
+        : [{ subChatId: 'sub-1', seq: 1, message: JSON.stringify(reply) }]),
+    ]);
 }
 
 function agentCtx(over: Record<string, unknown> = {}) {
@@ -146,6 +160,14 @@ describe('continuation terminal-resume dispatch (resumeKind: continuation)', () 
     expect(cfg.resumeSession).toBeUndefined();
     expect(cfg.startMode).toBe('plan');
     expect(description.startsWith('This step is being re-run')).toBe(false);
+  });
+
+  it("this node's prompt never reached the session (app died between dispatch and send) → its full instructions, no nudge, no framing", async () => {
+    await seedPriorAttempt({ answered: false });
+    const { description, cfg } = await dispatched({ resumeKind: 'continuation' });
+    expect(cfg.resumeSession).toBeUndefined();
+    expect(description.startsWith('This step is being re-run')).toBe(false);
+    expect(description).toContain('do it');
   });
 
   it('session exists but its newest task drove a DIFFERENT node → no resumeSession AND no framing (the session holds unrelated work — disowning it would be a false claim)', async () => {

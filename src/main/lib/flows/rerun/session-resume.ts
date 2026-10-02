@@ -1,18 +1,5 @@
-/**
- * Session gate for a `continuation` terminal-resume dispatch: decides whether the node
- * being re-dispatched can CONTINUE the driving sub-chat's surviving Claude session
- * instead of re-sending its instructions.
- *
- * Two halves, both required (mirrors `resolveInterruptedResumeMode` in flows/resume.ts —
- * a session id alone proves a session exists, not that it holds THIS node's turn):
- *   1. the chat's sub-chat — the one `createChatForTask` resolves for a `continue_chat`
- *      task (both go through `getSubChatForChat`, or the nudge lands in a session-less
- *      sub-chat) — has a live `sessionId`, and
- *   2. that sub-chat's newest flow task was minted for the SAME node of the SAME run
- *      (task.sourceId → node_run.nodeId). A node that failed before streaming, a
- *      non-agent anchor, or a session last driven by an upstream node all fail here and
- *      fall back to an honest full re-dispatch.
- */
+/** Session gate for a `continuation` terminal-resume dispatch: continue the chat's live session only
+ * when it answered THIS node's prompt in this run, else re-send the node's instructions in full. */
 
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
@@ -20,8 +7,8 @@ import type { ChatMode } from '../../../../shared/types/chat-mode';
 import type { TriggerStartMode } from '../../../../shared/types/trigger-context';
 import type { getDatabase } from '../../db';
 import { getNodeRun } from '../../db/repos/node-runs';
+import { latestAnsweredDispatchTaskId } from '../../db/repos/sub-chat-messages';
 import { getSubChatForChat } from '../../db/repos/sub-chats';
-import { getLatestFlowTaskForSubChat } from '../../db/repos/tasks';
 import { tasks } from '../../db/schema';
 
 type Db = ReturnType<typeof getDatabase>;
@@ -73,6 +60,48 @@ function extractPriorError(result: unknown): string | null {
   return message.trim().length > 0 ? message.slice(0, PRIOR_ERROR_MAX_LENGTH) : null;
 }
 
+/** The run and node a flow task was minted for (task.sourceId → node_run), with its result. */
+async function flowTaskNode(
+  db: Db,
+  taskId: string,
+): Promise<{ flowRunId: string; nodeId: string; result: unknown } | null> {
+  const [task] = await db
+    .select({ flowRunId: tasks.flowRunId, sourceId: tasks.sourceId, result: tasks.result })
+    .from(tasks)
+    .where(eq(tasks.id, taskId))
+    .limit(1);
+  if (!task?.flowRunId || !task.sourceId) return null;
+  const nodeRun = await getNodeRun(db, task.sourceId);
+  return nodeRun
+    ? { flowRunId: task.flowRunId, nodeId: nodeRun.nodeId, result: task.result }
+    : null;
+}
+
+/** The newest answered dispatch's task when it drove this node of this run. Keyed on the node, as a
+ * continuation mints a fresh task whose nudge may never have sent. */
+async function answeredNodeTask(
+  db: Db,
+  subChatId: string,
+  node: { flowRunId: string; nodeId: string },
+): Promise<{ result: unknown } | null> {
+  const taskId = latestAnsweredDispatchTaskId(db, subChatId);
+  const answered = taskId ? await flowTaskNode(db, taskId) : null;
+  return answered?.flowRunId === node.flowRunId && answered.nodeId === node.nodeId
+    ? { result: answered.result }
+    : null;
+}
+
+/** Whether the session answered the node this flow task drove: the gate every continue-in-place
+ * entrance shares, so none wakes an agent on a node it never received. */
+export async function sessionAnsweredTaskNode(
+  db: Db,
+  subChatId: string,
+  taskId: string,
+): Promise<boolean> {
+  const node = await flowTaskNode(db, taskId);
+  return node !== null && (await answeredNodeTask(db, subChatId, node)) !== null;
+}
+
 export async function resolveSessionResumeSeed(
   db: Db,
   input: {
@@ -85,19 +114,10 @@ export async function resolveSessionResumeSeed(
 ): Promise<SessionResumeSeed | null> {
   const subChat = await getSubChatForChat(db, input.chatId);
   if (!subChat?.sessionId) return null;
+  const answered = await answeredNodeTask(db, subChat.id, input);
+  if (!answered) return null;
 
-  const latest = await getLatestFlowTaskForSubChat(db, subChat.id);
-  if (!latest || latest.flowRunId !== input.flowRunId) return null;
-  const [latestTask] = await db
-    .select({ sourceId: tasks.sourceId, result: tasks.result })
-    .from(tasks)
-    .where(eq(tasks.id, latest.id))
-    .limit(1);
-  if (!latestTask?.sourceId) return null;
-  const mintingNodeRun = await getNodeRun(db, latestTask.sourceId);
-  if (mintingNodeRun?.nodeId !== input.nodeId) return null;
-
-  const priorError = extractPriorError(latestTask.result);
+  const priorError = extractPriorError(answered.result);
   const liveStartMode = MODE_TO_START_MODE[subChat.mode as ChatMode] as
     | TriggerStartMode
     | undefined;

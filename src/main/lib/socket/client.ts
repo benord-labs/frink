@@ -247,6 +247,16 @@ export async function sendMessage(
   );
 }
 
+/** The restart-resume gate reads `dispatchTaskId` as proof a task's prompt reached the chat, so only
+ * the send's validated top-level id may set it; a copy inside caller metadata is dropped. */
+function persistedUserMetadata(
+  metadata: Message['metadata'],
+  dispatchTaskId: string | undefined,
+): Record<string, unknown> {
+  const { dispatchTaskId: _supplied, ...rest } = (metadata ?? {}) as { dispatchTaskId?: unknown };
+  return dispatchTaskId ? { ...rest, dispatchTaskId } : rest;
+}
+
 // Reason: Persistence and dispatch share one admission boundary; preserve their ordered writes.
 // fallow-ignore-next-line complexity
 async function persistAndDispatchMessage(
@@ -277,7 +287,9 @@ async function persistAndDispatchMessage(
         id: payload.userMessage.id,
         role: 'user' as const,
         parts: payload.userMessage.parts ?? [],
-        ...(payload.userMessage.metadata ? { metadata: payload.userMessage.metadata } : {}),
+        ...(payload.userMessage.metadata || dispatchTaskId
+          ? { metadata: persistedUserMetadata(payload.userMessage.metadata, dispatchTaskId) }
+          : {}),
       };
       await appendUserMessageLocal(getDatabase(), payload.subChatId, userMessage);
       // A phone send has no desktop bubble: announce it before dispatch so it precedes the reply.
