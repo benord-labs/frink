@@ -102,6 +102,16 @@ export function clearSubagentTasks(subChatId: string): void {
   }
 }
 
+/** Boot pull for a renderer that reloaded mid-task (a start is only ever pushed once). Wire-shaped
+ * and task_id-free: the card is addressed by its tool call alone. */
+export function listRunningSubagentTasks(): SubagentTaskChangedPayload[] {
+  const running: SubagentTaskChangedPayload[] = [];
+  for (const [subChatId, chat] of runningByChat) {
+    for (const toolCallId of chat.values()) running.push({ subChatId, toolCallId, running: true });
+  }
+  return running;
+}
+
 /** The latest snapshot of one of the chat's running Workflows, or null when none has arrived. */
 export function readWorkflowProgress(
   subChatId: string,

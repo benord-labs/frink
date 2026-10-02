@@ -17,7 +17,10 @@ import { stopBackgroundTask } from '../../socket/execution/claude-session/stop-b
 import { listWakeHolds } from '../../socket/execution/wake-hold-registry-view';
 import { steerActiveTurn } from '../../socket/steering';
 import { getLiveStreamSeed, listLiveStreamHeaders } from '../../socket/streaming/live-stream';
-import { readWorkflowProgress } from '../../socket/streaming/subagent-task-status';
+import {
+  listRunningSubagentTasks,
+  readWorkflowProgress,
+} from '../../socket/streaming/subagent-task-status';
 import {
   listPendingMoveChatRequests,
   listPendingPermissionRequests,
@@ -83,6 +86,10 @@ export const socketRouter = router({
    * listener mounts — so the booting window asks instead.
    */
   listWakeHolds: publicProcedure.query(() => listWakeHolds()),
+
+  /** Same pull-on-boot seam for subagent cards: a reload would otherwise read a running background
+   * subagent as "Completed Subagent" until its task ends. */
+  listRunningSubagentTasks: publicProcedure.query(() => listRunningSubagentTasks()),
 
   /** Listener-first renderer boot uses these bounded projections to reattach to main-owned runs. */
   listLiveStreamHeaders: publicProcedure.query(() => listLiveStreamHeaders()),
