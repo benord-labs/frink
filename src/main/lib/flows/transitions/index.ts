@@ -3,6 +3,11 @@
 import type { getDatabase } from '../../db';
 
 export { type CancelRunOutcome, cancelRunCommand, cancelWorkQueueRunCommand } from './cancel-run';
+export {
+  HeldQuestionParkDeclined,
+  type HeldQuestionTask,
+  parkHeldQuestionCommand,
+} from './held-question';
 export { insertNodeRunIfFenced, type RunFence, readRunFence, setFencedRunStatus } from './fence';
 export { cancelRunRows } from './run-rows';
 export {

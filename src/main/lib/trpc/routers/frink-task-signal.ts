@@ -330,6 +330,9 @@ export function resolveTaskSignalTransition(
     // Any recorded signal supersedes a quiet-end marker — a survivor would let the quiet-idle
     // sweep park a turn that has already signaled (see markLinkedTaskQuietEnd).
     quietEndedAt: _ignoredQuietEndedAt,
+    // Any recorded signal also supersedes a held-question marker — the expiry park is itself a
+    // signal, and a survivor would let a later boot resurrect a question already parked or answered.
+    heldQuestions: _ignoredHeldQuestions,
     ...resultWithoutStaleFailureMeta
   } = currentResult;
   // A stray agent `completed` is coerced to a done-class status below; normalize the STORED signal to

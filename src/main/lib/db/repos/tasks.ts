@@ -9,6 +9,7 @@ import { taskResultSchema, type TaskResultRecord } from '../../../../shared/type
 import type { getDatabase } from '../index';
 import { flowRuns, type NewTask, projects, type Task, tasks } from '../schema';
 import { cancelResultPatch } from './task-parking/cancel-marker';
+import { RETRY_STALE_RESULT_KEYS } from './task-parking/resume-scrub';
 import {
   effectiveStatusExpr,
   getWorkQueueSectionFilter,
@@ -737,22 +738,6 @@ export function parseResultRecord(result: Task['result']): TaskResultRecord {
   const parsed = taskResultSchema.safeParse(result);
   return parsed.success ? parsed.data : {};
 }
-
-/** Failure metadata cleared on retry so the next attempt cannot inherit stale failure state. */
-const RETRY_STALE_RESULT_KEYS = [
-  'error',
-  'errorAction',
-  'dispatchAttempts',
-  'failureCode',
-  'agentSignal',
-  'staleExecution',
-  'staleDetectedAt',
-  'usageLimit',
-  'apiError',
-  'userPause',
-  'cancelled',
-  'retryPriorError',
-] as const;
 
 /**
  * Flip a failed/parked task to `pending`. The source-status CAS prevents a concurrent retry; an

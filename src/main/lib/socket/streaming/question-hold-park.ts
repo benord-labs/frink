@@ -1,6 +1,15 @@
+import log from 'electron-log';
 import type { TaskSignalPayload } from '../../../../shared/types/task-signal';
-import { holdQuestionUntilAnswered } from '../../claude/ask-user-question-approval';
+import {
+  buildAskUserQuestionParkSignal,
+  holdQuestionUntilAnswered,
+} from '../../claude/ask-user-question-approval';
 import type { UIMessageChunk } from '../../claude/types';
+import { getDatabase } from '../../db';
+import {
+  removeHeldQuestionMarker,
+  setHeldQuestionMarker,
+} from '../../db/repos/task-parking/held-question-marker';
 import { captureMainMessage } from '../../sentry/init';
 import { persistLinkedTaskSignal } from '../../trpc/routers/frink-task-signal-persist';
 import { type ClaudeSession, unregisterSessionIfOwned } from '../claude-session-registry';
@@ -94,7 +103,7 @@ export async function parkHeldQuestion(params: {
  * The whole AskUserQuestion path: hold the call, and on expiry park + end the turn. Kept together so
  * the session's `canUseTool` names one thing rather than wiring the hold to its own ending.
  */
-export function holdOrParkQuestion(params: {
+export async function holdOrParkQuestion(params: {
   toolUseID: string;
   toolInput: Record<string, unknown>;
   chatId: string;
@@ -109,7 +118,14 @@ export function holdOrParkQuestion(params: {
   questionSession: ClaudeSession;
 }) {
   const { toolUseID, toolInput, chatId, subChatId, signalTaskId, isFlowTurn, emitChunk } = params;
-  return holdQuestionUntilAnswered({
+  // Not awaited: the hold must register this tick, or a Stop during the write finds nothing to
+  // resolve. The clear chains behind it; the park never returns here and strips the key itself.
+  const marked = markHeldQuestion(
+    signalTaskId,
+    toolUseID,
+    buildAskUserQuestionParkSignal(toolInput),
+  );
+  const decision = await holdQuestionUntilAnswered({
     toolUseID,
     toolInput,
     chatId,
@@ -128,4 +144,41 @@ export function holdOrParkQuestion(params: {
         questionSession: params.questionSession,
       }),
   });
+  await marked;
+  await clearHeldQuestion(signalTaskId, toolUseID);
+  return decision;
+}
+
+/** Record a question about to be held, for boot to park on after a crash. Fails open: without the
+ * marker the hold still works, it just would not survive a crash. */
+async function markHeldQuestion(
+  taskId: string | null | undefined,
+  toolUseId: string,
+  signal: TaskSignalPayload,
+): Promise<void> {
+  if (!taskId) return;
+  try {
+    await setHeldQuestionMarker(getDatabase(), taskId, toolUseId, signal);
+  } catch (error) {
+    reportMarkerFailure('write', taskId, error);
+  }
+}
+
+/** Drop one hold's marker once the hold ended without parking (answered, skipped, torn down). */
+async function clearHeldQuestion(taskId: string | null | undefined, toolUseId: string) {
+  if (!taskId) return;
+  try {
+    await removeHeldQuestionMarker(getDatabase(), taskId, toolUseId);
+  } catch (error) {
+    reportMarkerFailure('clear', taskId, error);
+  }
+}
+
+function reportMarkerFailure(stage: 'write' | 'clear', taskId: string, error: unknown): void {
+  log.error('[QuestionHold] held-question marker write failed', {
+    stage,
+    taskId,
+    error: error instanceof Error ? error.message : String(error),
+  });
+  captureMainMessage('Held-question marker write failed', 'warning', { stage, taskId });
 }

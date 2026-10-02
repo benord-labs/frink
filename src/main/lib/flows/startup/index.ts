@@ -50,6 +50,12 @@ export async function runStartupRecoveryAndLoops(): Promise<void> {
     startBatchAdvanceListener();
   });
 
+  // A question still HELD when the process died parks first: the sweeps below would otherwise
+  // cancel its run and boot carry-on would resume the agent without it.
+  await step('flows park held questions', async () => {
+    const { parkQuestionsHeldAtShutdown } = await import('./held-question-recovery');
+    parkQuestionsHeldAtShutdown(getDatabase());
+  });
   // node_run / flow_run rows still 'running' from a prior process are marked cancelled (a restart).
   await step('flows recoverOrphans', async () => {
     const { recoverOrphans } = await import('../scheduler');

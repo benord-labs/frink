@@ -246,6 +246,17 @@ describe('resolveTaskSignalTransition', () => {
     expect(transition.result.startMode).toBe('execute');
   });
 
+  // The expiry park is itself a signal, so it is what retires the hold's crash marker (sc-1313).
+  it('strips the held-question marker — a later boot must not resurrect a parked question', () => {
+    const transition = resolveTaskSignalTransition(
+      { result: { subChatId: 'sc-1', heldQuestions: { 'tu-1': { summary: 'old ask' } } } },
+      { state: 'awaiting_input', summary: 'Needs your input', at: '2026-10-02T00:00:00.000Z' },
+    );
+
+    expect(transition.result.heldQuestions).toBeUndefined();
+    expect(transition.result.subChatId).toBe('sc-1');
+  });
+
   it('maps awaiting_input to needs_attention with signal metadata', () => {
     const transition = resolveTaskSignalTransition(
       { result: { startMode: 'execute' } },
