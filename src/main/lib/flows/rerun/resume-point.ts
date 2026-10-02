@@ -5,14 +5,21 @@
  */
 
 import { isTriggerBlockType } from '../../../../shared/lib/block-registry';
+import { SUPERSEDED_NODE_STATUS } from '../../../../shared/types/flow';
 import type { NodeRun } from '../../db/schema';
 import { type ParsedFlowGraph, pickNextTargetNodeId } from '../graph';
 
-/** The last node_run that did not finish successfully; undefined when every node completed/skipped. */
+/** The last node_run that did not finish successfully; undefined when every node completed/skipped.
+ * A superseded attempt is not a resume point: its retry row stands in for it. */
 export function lastUnfinishedNodeRun(nodeRunsForRun: NodeRun[]): NodeRun | undefined {
   return [...nodeRunsForRun]
     .reverse()
-    .find((nr) => nr.status !== 'completed' && nr.status !== 'skipped');
+    .find(
+      (nr) =>
+        nr.status !== 'completed' &&
+        nr.status !== 'skipped' &&
+        nr.status !== SUPERSEDED_NODE_STATUS,
+    );
 }
 
 /**

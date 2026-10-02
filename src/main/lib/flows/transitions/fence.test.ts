@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { getFlowRun, setFlowRunStatus } from '../../db/repos/flow-runs';
-import { listNodeRunsForFlowRun } from '../../db/repos/node-runs';
+import { createNodeRun, getNodeRun, listNodeRunsForFlowRun } from '../../db/repos/node-runs';
 import { flowRunAdmissions } from '../../db/schema';
 import { seedActiveAdmission, seedFlowRun } from '../../db/test-utils/flow-fixtures';
 import { freshDb, type TestDb } from '../../db/test-utils/fresh-db';
@@ -99,5 +99,53 @@ describe('fenced writes', () => {
     expect(setFencedRunStatus(db, fence, 'completed')).toBeNull();
     expect(await listNodeRunsForFlowRun(db, flowRunId)).toEqual([]);
     expect(await runStatus()).toBe(status);
+  });
+});
+
+describe('retry supersedes the replaced attempt', () => {
+  const seedAttempt = (status: string, attemptNumber = 1) =>
+    createNodeRun(db, { flowRunId, nodeId: 'a', blockType: 'x', status, attemptNumber });
+  const retry = (supersedesNodeRunId: string) =>
+    runTransition(db, () =>
+      insertNodeRunIfFenced(
+        db,
+        fence,
+        { nodeId: 'a', blockType: 'x', status: 'running' },
+        supersedesNodeRunId,
+      ),
+    );
+
+  it.each(['failed', 'awaiting_input', 'blocked'])(
+    'terminalizes a %s attempt and numbers the retry after it',
+    async (status) => {
+      const prior = await seedAttempt(status);
+
+      expect(retry(prior.id)).toMatchObject({ status: 'running', attemptNumber: 2 });
+      const superseded = await getNodeRun(db, prior.id);
+      expect(superseded?.status).toBe('superseded');
+      expect(superseded?.completedAt).toBeInstanceOf(Date);
+    },
+  );
+
+  it('counts on from the replaced attempt, not from 1', async () => {
+    const prior = await seedAttempt('awaiting_input', 2);
+
+    expect(retry(prior.id)).toMatchObject({ attemptNumber: 3 });
+  });
+
+  it('leaves an attempt that is no longer actionable as it is', async () => {
+    const prior = await seedAttempt('completed');
+
+    expect(retry(prior.id)).toMatchObject({ attemptNumber: 2 });
+    expect((await getNodeRun(db, prior.id))?.status).toBe('completed');
+  });
+
+  it('writes neither row once a Cancel has won the fence', async () => {
+    const prior = await seedAttempt('awaiting_input');
+    await setFlowRunStatus(db, flowRunId, 'cancelled');
+
+    expect(retry(prior.id)).toBeNull();
+    expect((await getNodeRun(db, prior.id))?.status).toBe('awaiting_input');
+    expect(await listNodeRunsForFlowRun(db, flowRunId)).toHaveLength(1);
   });
 });

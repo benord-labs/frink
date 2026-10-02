@@ -30,6 +30,7 @@ const RUN: Record<string, Status> = {
   completed: QUIET_DONE,
   succeeded: QUIET_DONE,
   skipped: { word: 'Skipped', tone: 'quiet', glyph: 'cancelled' },
+  superseded: { word: 'Retried', tone: 'quiet', glyph: 'cancelled' },
 };
 
 export function runStatus(status: string | null | undefined): Status {

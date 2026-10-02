@@ -13,7 +13,7 @@ import {
   or,
 } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
-import { RESTART_INTERRUPTION_REASON } from '../../../../shared/types/flow';
+import { RESTART_INTERRUPTION_REASON, SUPERSEDED_NODE_STATUS } from '../../../../shared/types/flow';
 import type { FlowResumeSnapshot } from '../../../../shared/types/flow-run/resume';
 import type { getDatabase } from '../index';
 import { flowRuns, type NewNodeRun, type NodeRun, nodeRuns, tasks } from '../schema';
@@ -22,7 +22,13 @@ import { latestFlowTaskForSubChatId } from './task-queries/subchat-driver';
 
 type Db = ReturnType<typeof getDatabase>;
 
-const TERMINAL_NODE_STATUSES = ['completed', 'failed', 'cancelled', 'skipped'] as const;
+const TERMINAL_NODE_STATUSES = [
+  'completed',
+  'failed',
+  'cancelled',
+  'skipped',
+  SUPERSEDED_NODE_STATUS,
+] as const;
 
 export type NodeRunStatus =
   | 'pending'
@@ -32,7 +38,8 @@ export type NodeRunStatus =
   | 'completed'
   | 'failed'
   | 'cancelled'
-  | 'skipped';
+  | 'skipped'
+  | typeof SUPERSEDED_NODE_STATUS;
 
 export async function createNodeRun(db: Db, input: NewNodeRun): Promise<NodeRun> {
   const [row] = await db.insert(nodeRuns).values(input).returning();

@@ -10,6 +10,7 @@ const STATUS_LABEL_MAP: Record<string, string> = {
   paused: 'Paused',
   cancelled: 'Cancelled',
   pending: 'Pending',
+  superseded: 'Retried',
 };
 
 export function RunStatusLabel({ status, suffix = '' }: { status: string; suffix?: string }) {
@@ -22,7 +23,8 @@ export function RunStatusLabel({ status, suffix = '' }: { status: string; suffix
         status === 'running' && 'text-blue-500',
         status === 'queued' && 'text-blue-700 dark:text-blue-300',
         (status === 'paused' || status === 'awaiting_input') && 'text-warning',
-        (status === 'cancelled' || status === 'pending') && 'text-muted-foreground/60',
+        (status === 'cancelled' || status === 'pending' || status === 'superseded') &&
+          'text-muted-foreground/60',
       )}
     >
       {STATUS_LABEL_MAP[status] ?? status}

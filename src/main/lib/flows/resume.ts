@@ -223,7 +223,11 @@ export async function resumeFlowRun(
               parentFanOutNodeRunId: nodeRun.parentFanOutNodeRunId,
             }
           : undefined;
-      await dispatchAndAdvance(fence, retryNode, undefined, ctx, undefined, fanOutScope);
+      // The retry is a new attempt: the paused row goes `superseded` in the insert's own tick.
+      await dispatchAndAdvance(fence, retryNode, undefined, ctx, undefined, {
+        ...fanOutScope,
+        supersedesNodeRunId: nodeRunId,
+      });
       return;
     }
 
