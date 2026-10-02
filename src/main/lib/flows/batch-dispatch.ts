@@ -51,6 +51,7 @@ import {
   rearmBatchCompleted,
   resolveBatchCtx,
   stageDeps,
+  startableStages,
   TERMINAL_STAGE_STATUSES,
   validateDeclaredTriggerTypes,
 } from './batch-context';
@@ -313,19 +314,18 @@ async function cascadeCancelBlockedStages(db: Db, batchId: string): Promise<void
   });
 }
 
-/**
- * Real local startBatch: promote pending root stages and create actual
- * flow_runs for their BSRs. totalEnqueued counts runs genuinely dispatched.
- */
+/** Real local startBatch: promote pending root (and late-ready) stages and create actual flow_runs
+ * for their BSRs. totalEnqueued counts runs genuinely dispatched. */
 export async function startFlowBatchLocal(
   flowId: string,
   batchId: string,
 ): Promise<StartBatchResult> {
   const db = getDatabase();
+  await cascadeCancelBlockedStages(db, batchId);
   const stages = await listStagesForBatch(db, batchId);
   if (stages.length === 0) return { started: false, reason: 'no-stages-defined' };
 
-  const roots = stages.filter((s) => stageDeps(s).length === 0);
+  const { roots, startable } = startableStages(stages);
   if (roots.length === 0) {
     return {
       started: false,
@@ -334,7 +334,6 @@ export async function startFlowBatchLocal(
       rootStageCount: 0,
     };
   }
-  const startable = roots.filter((s) => s.status === 'pending');
   if (startable.length === 0) {
     return {
       started: false,
@@ -370,7 +369,7 @@ export async function startFlowBatchLocal(
     totalEnqueued,
     totalStages: stages.length,
     rootStageCount: roots.length,
-    startedRootCount: startedStageNumbers.length,
+    startedRootCount: roots.filter((r) => startedStageNumbers.includes(r.stageNumber)).length,
   };
 }
 

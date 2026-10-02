@@ -30,6 +30,7 @@ import {
   setRunStatus,
 } from './batch-test-factories';
 import { subscribeFlowEvents } from './events';
+import { defineFlowBatchStages } from './mcp-cloud-shim';
 
 let db: TestDb;
 let flowId: string;
@@ -487,5 +488,77 @@ describe('finalize recounts inside its own transaction', () => {
     });
     expect((await getBatchStage(db, stage.id))?.status).toBe('failed');
     expect(settleStageIfQuiescent(db, { id: stage.id, failureThreshold: 0 })).toBeNull();
+  });
+});
+
+describe('stages defined after the batch started (cross-call dependsOn)', () => {
+  const stageByNumber = async (n: number) =>
+    (await db.select().from(batchStages).where(eq(batchStages.batchId, BATCH))).find(
+      (s) => s.stageNumber === n,
+    );
+
+  async function startAndFinishStage1(status: 'completed' | 'failed') {
+    await defineFlowBatchStages(flowId, BATCH, [{ stageNumber: 1, runs: [{}] }]);
+    await startFlowBatchLocal(flowId, BATCH);
+    const stage1 = await stageByNumber(1);
+    const [bsr] = await listRunsForStage(db, stage1?.id ?? '');
+    await finishRun(runId(bsr), status);
+    expect((await stageByNumber(1))?.status).toBe(status);
+  }
+
+  it('start_batch starts a late stage whose dependency already completed', async () => {
+    await startAndFinishStage1('completed');
+
+    await defineFlowBatchStages(flowId, BATCH, [{ stageNumber: 2, dependsOn: [1], runs: [{}] }]);
+    const result = await startFlowBatchLocal(flowId, BATCH);
+
+    expect(result).toMatchObject({
+      started: true,
+      startedStageNumbers: [2],
+      totalEnqueued: 1,
+      rootStageCount: 1,
+      startedRootCount: 0,
+    });
+    expect((await stageByNumber(2))?.status).toBe('running');
+  });
+
+  it('start_batch cancels a late stage whose dependency already failed instead of stranding it', async () => {
+    await startAndFinishStage1('failed');
+
+    await defineFlowBatchStages(flowId, BATCH, [{ stageNumber: 2, dependsOn: [1], runs: [{}] }]);
+    mocks.startFlowRun.mockClear();
+    await startFlowBatchLocal(flowId, BATCH);
+
+    expect(mocks.startFlowRun).not.toHaveBeenCalled();
+    expect((await stageByNumber(2))?.status).toBe('cancelled');
+  });
+
+  it('promotes a late stage automatically when its still-running dependency completes', async () => {
+    await defineFlowBatchStages(flowId, BATCH, [{ stageNumber: 1, runs: [{}] }]);
+    await startFlowBatchLocal(flowId, BATCH);
+
+    await defineFlowBatchStages(flowId, BATCH, [{ stageNumber: 2, dependsOn: [1], runs: [{}] }]);
+    expect((await stageByNumber(2))?.status).toBe('pending');
+    const [bsr] = await listRunsForStage(db, (await stageByNumber(1))?.id ?? '');
+    await finishRun(runId(bsr), 'completed');
+
+    expect((await stageByNumber(2))?.status).toBe('running');
+  });
+
+  it('defineFlowBatchStages reports the persisted ids, run counts and root count', async () => {
+    const result = await defineFlowBatchStages(flowId, BATCH, [
+      { stageNumber: 1, name: 'build', runs: [{}, {}] },
+      { stageNumber: 2, dependsOn: [1], runs: [{}] },
+    ]);
+
+    const s1 = await stageByNumber(1);
+    const s2 = await stageByNumber(2);
+    expect(result).toMatchObject({
+      rootStageCount: 1,
+      stages: [
+        { id: s1?.id, stageNumber: 1, name: 'build', status: 'pending', runCount: 2 },
+        { id: s2?.id, stageNumber: 2, name: null, runCount: 1, dependsOnStageNumbers: [1] },
+      ],
+    });
   });
 });

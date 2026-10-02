@@ -93,16 +93,82 @@ export function reopenCascadedSuccessor(db: Db, stageId: string): void {
   });
 }
 
-export async function patchStageDeps(
+export type NewStageWithRuns = {
+  stageNumber: number;
+  name?: string;
+  failureThreshold?: number;
+  dependsOn?: number[];
+  runs: Array<{ triggerContext?: Record<string, unknown> }>;
+};
+
+/** All-or-nothing stage + deps + runs insert (one sync transaction): a failure leaves no orphan stage to
+ * block a retry. dependsOn also resolves against earlier calls' stages. Returns stageNumber → id. */
+export function insertBatchStagesWithRuns(
   db: Db,
   batchId: string,
-  stageId: string,
-  dependsOnStageIds: string[],
-): Promise<BatchStage | null> {
-  const [row] = await db
-    .update(batchStages)
-    .set({ dependsOnStageIds })
-    .where(and(eq(batchStages.batchId, batchId), eq(batchStages.id, stageId)))
-    .returning();
-  return row ?? null;
+  stages: NewStageWithRuns[],
+): Map<number, string> {
+  return db.transaction(() => {
+    const stageIdByNumber = new Map<number, string>(
+      db
+        .select({ id: batchStages.id, stageNumber: batchStages.stageNumber })
+        .from(batchStages)
+        .where(eq(batchStages.batchId, batchId))
+        .all()
+        .map((s) => [s.stageNumber, s.id]),
+    );
+
+    const seen = new Set<number>();
+    const repeated = stages.map((s) => s.stageNumber).filter((n) => seen.has(n) || !seen.add(n));
+    if (repeated.length > 0) {
+      throw new Error(
+        `Stage(s) ${[...new Set(repeated)].join(', ')} defined more than once in this call`,
+      );
+    }
+    const existing = stages.map((s) => s.stageNumber).filter((n) => stageIdByNumber.has(n));
+    if (existing.length > 0) {
+      throw new Error(
+        `Stage(s) ${existing.join(', ')} already exist for batch ${batchId}; use frink_flows_add_stage_runs to add runs`,
+      );
+    }
+
+    for (const s of stages) {
+      const inserted = db
+        .insert(batchStages)
+        .values({
+          batchId,
+          stageNumber: s.stageNumber,
+          name: s.name ?? null,
+          status: 'pending',
+          failureThreshold: s.failureThreshold ?? 0,
+          dependsOnStageIds: [], // backfilled once every stage in the call has an id
+        })
+        .returning({ id: batchStages.id })
+        .get();
+      stageIdByNumber.set(s.stageNumber, inserted.id);
+    }
+
+    for (const s of stages) {
+      const id = stageIdByNumber.get(s.stageNumber) as string;
+      const dependsOnStageIds = (s.dependsOn ?? [])
+        .map((n) => stageIdByNumber.get(n))
+        .filter((x): x is string => Boolean(x));
+      if (dependsOnStageIds.length > 0) {
+        db.update(batchStages).set({ dependsOnStageIds }).where(eq(batchStages.id, id)).run();
+      }
+      if (s.runs.length > 0) {
+        db.insert(batchStageRuns)
+          .values(
+            s.runs.map((r) => ({
+              stageId: id,
+              triggerContext: r.triggerContext ?? null,
+              status: 'pending',
+            })),
+          )
+          .run();
+      }
+    }
+
+    return stageIdByNumber;
+  });
 }

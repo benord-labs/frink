@@ -7,7 +7,11 @@ import { TRPCError } from '@trpc/server';
 import { getDatabase } from '../db';
 import { listBatchPlanTemplates as listBatchPlanTemplatesLocal } from '../db/repos/batch-plan-templates';
 import { createBatchStageRun } from '../db/repos/batch-stage-runs';
-import { createBatchStage, listStagesForBatch, patchStageDeps } from '../db/repos/batch-stages';
+import {
+  insertBatchStagesWithRuns,
+  listStagesForBatch,
+  type NewStageWithRuns,
+} from '../db/repos/batch-stages';
 import { getFlowRun as getFlowRunRow, listFlowRunsForFlow } from '../db/repos/flow-runs';
 import {
   createFlowVersion as createFlowVersionLocal,
@@ -148,13 +152,7 @@ export async function startFlowRun(
 
 // ============ batches ============
 
-export type BatchStageInput = {
-  stageNumber: number;
-  name?: string;
-  failureThreshold?: number;
-  dependsOn?: number[];
-  runs: Array<{ triggerContext?: Record<string, unknown> }>;
-};
+export type BatchStageInput = NewStageWithRuns;
 
 export async function listFlowBatchRuns(
   _flowId: string,
@@ -170,8 +168,8 @@ export async function listFlowBatchStages(_flowId: string, batchId: string) {
 }
 
 /**
- * Bulk insert batch_stages + their batch_stage_runs. Resolves dependsOn
- * (stageNumbers) → dependsOnStageIds after all stages exist.
+ * Bulk insert batch_stages + their batch_stage_runs atomically (all or nothing).
+ * Resolves dependsOn (stageNumbers) → dependsOnStageIds, including stages from earlier calls.
  */
 export async function defineFlowBatchStages(
   _flowId: string,
@@ -191,38 +189,7 @@ export async function defineFlowBatchStages(
   partial?: boolean;
   failedStages?: Array<{ stageNumber: number; error: string }>;
 }> {
-  const db = getDatabase();
-  const stageIdByNumber = new Map<number, string>();
-
-  for (const s of stages) {
-    const inserted = await createBatchStage(db, {
-      batchId,
-      stageNumber: s.stageNumber,
-      name: s.name ?? null,
-      status: 'pending',
-      failureThreshold: s.failureThreshold ?? 0,
-      dependsOnStageIds: [], // backfilled after all rows exist
-    });
-    stageIdByNumber.set(s.stageNumber, inserted.id);
-  }
-
-  for (const s of stages) {
-    const id = stageIdByNumber.get(s.stageNumber);
-    if (!id) continue;
-    const dependsOnStageIds = (s.dependsOn ?? [])
-      .map((n) => stageIdByNumber.get(n))
-      .filter((x): x is string => Boolean(x));
-    if (dependsOnStageIds.length > 0) {
-      await patchStageDeps(db, batchId, id, dependsOnStageIds);
-    }
-    for (const r of s.runs) {
-      await createBatchStageRun(db, {
-        stageId: id,
-        triggerContext: r.triggerContext ?? null,
-        status: 'pending',
-      });
-    }
-  }
+  const stageIdByNumber = insertBatchStagesWithRuns(getDatabase(), batchId, stages);
 
   const rootStageCount = stages.filter((s) => (s.dependsOn ?? []).length === 0).length;
   return {

@@ -57,6 +57,21 @@ export function stageDeps(stage: BatchStage): string[] {
   return Array.isArray(stage.dependsOnStageIds) ? (stage.dependsOnStageIds as string[]) : [];
 }
 
+/** Pending roots, plus pending stages whose deps all exist and completed — defined after those deps
+ * finished, so successor promotion never saw them. */
+export function startableStages(stages: BatchStage[]): {
+  roots: BatchStage[];
+  startable: BatchStage[];
+} {
+  const byId = new Map(stages.map((s) => [s.id, s]));
+  const roots = stages.filter((s) => stageDeps(s).length === 0);
+  const lateReady = stages.filter((s) => {
+    const deps = stageDeps(s);
+    return deps.length > 0 && deps.every((id) => byId.get(id)?.status === 'completed');
+  });
+  return { roots, startable: [...roots, ...lateReady].filter((s) => s.status === 'pending') };
+}
+
 export function evaluateDepGate(
   stage: BatchStage,
   byId: Map<string, BatchStage>,
