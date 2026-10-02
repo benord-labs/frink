@@ -881,6 +881,10 @@ export async function createWorktreeForChat(
   }
 }
 
+/** Untracked files above this are listed as binary instead of diffed: a multi-hundred-MB file
+ * makes each `git diff --no-index` run for minutes, and every refresh starts another. */
+const MAX_UNTRACKED_DIFF_SIZE = 1024 * 1024;
+
 /**
  * Get diff for a worktree compared to its base branch
  * @param worktreePath - Path to the worktree
@@ -923,6 +927,12 @@ export async function getWorktreeDiff(
       const untrackedDiffs: string[] = [];
       for (const file of untrackedFiles) {
         try {
+          if ((await stat(join(worktreePath, file))).size > MAX_UNTRACKED_DIFF_SIZE) {
+            untrackedDiffs.push(
+              `diff --git a/${file} b/${file}\nnew file mode 100644\nBinary files /dev/null and b/${file} differ`,
+            );
+            continue;
+          }
           const fileDiff = await git.raw(['diff', '--no-color', '--no-index', devNull, file]);
           if (fileDiff) {
             untrackedDiffs.push(fileDiff);
