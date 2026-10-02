@@ -31,6 +31,7 @@ import { captureMainException } from '../../../sentry/init';
 import { getAllAgentsForSdk } from '../../../trpc/routers/agent-utils';
 import { type ClaudeSession, createSession } from '../../claude-session-registry';
 import { resolvePermissionMode } from '../../streaming/plan-auto-approve';
+import { renderFlowBriefingSection } from '../prompt-prefix/flow-briefing-section';
 import { deliverProviderConfig } from '../provider-delivery';
 import { buildClaudeSessionCallbacks, type ClaudeSessionScope } from './session-callbacks';
 
@@ -326,7 +327,7 @@ async function buildSessionPromptAppend(
   // byte-stable per run (constant context at dispatch) so it does not bust the cache across nodes.
   // Codex gets it via a first-turn prompt prepend instead. Empty for non-flow chats.
   if (sessionFlowBriefing) {
-    frinkSystemPromptAppend = `${frinkSystemPromptAppend}\n\n## Flow Briefing\n\n${sessionFlowBriefing}`;
+    frinkSystemPromptAppend = `${frinkSystemPromptAppend}\n\n${renderFlowBriefingSection(sessionFlowBriefing)}`;
   }
 
   // Debug mode (SDK path): start ingest server, register session, append debug prompt to system prompt.

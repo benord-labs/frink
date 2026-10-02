@@ -37,6 +37,8 @@ export interface ClaudeTurnExecution {
   /** `frink_task_signal` is mounted in the session this turn runs on. Enforced only with a task. */
   taskSignalReady: boolean;
   isFlowTurn: boolean;
+  /** A person typed this turn into a chat an armed Flow step drives (sc-3214). */
+  humanInterjection: boolean;
   isPlanMode: boolean;
   flowPlanAutoApprove: boolean;
   abortController: AbortController;
@@ -136,6 +138,7 @@ export function createClaudeTurnContext(): ClaudeTurnContext {
       signalTaskId: null,
       taskSignalReady: false,
       isFlowTurn: false,
+      humanInterjection: false,
       isPlanMode: false,
       flowPlanAutoApprove: false,
       abortController: new AbortController(),

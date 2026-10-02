@@ -16,6 +16,7 @@ import {
   registerClaudeWarmSessionTests,
   registerCustomNodeTransportTest,
   registerExecutorPermissionTests,
+  registerOperatorReminderDeliveryTests,
   registerPermissionDbUnavailableTests,
 } from './test-suites';
 
@@ -334,6 +335,7 @@ import { resumeParkedTaskInPlace, reviveRestartInterruptedFlow } from '../tasks'
 import type { MessagePart } from './client';
 import type { PlanFallbackSend } from './executor';
 import { applyApprovedPlanContextToPrompt } from './execution/prompt-prefix/approved-plan-prompt';
+import { FLOW_BRIEFING_PROVENANCE_NOTE } from './execution/prompt-prefix/flow-briefing-section';
 import {
   shouldSuppressExitPlanModeToolChunk,
   shouldSuppressNativePlanStreamChunk,
@@ -1521,78 +1523,7 @@ describe('socket file permission edge cases', () => {
     ).resolves.toEqual({});
   });
 
-  it('delivers the disarmed reminder via the UserPromptSubmit hook on a dead-chat follow-up with prior turns, but not on an armed turn', async () => {
-    // On the Claude path the disarmed notice is delivered as an in-conversation system prompt via the
-    // UserPromptSubmit hook — NOT prepended to the user prompt. It fires only when prior turns exist
-    // for the agent to have seen the now-stripped tool (here: inlined history).
-    const callOf = (callIndex: number) => claudeQueryMock.mock.calls[callIndex][0];
-    const priorTurns = [
-      { role: 'user' as const, content: 'do the task' },
-      { role: 'assistant' as const, content: 'done, signalling now' },
-    ];
-
-    vi.mocked(getMultiProjectContext).mockResolvedValue({
-      promptPrefix: '',
-      dynamicChatMcpUrl: 'http://127.0.0.1:9/mcp',
-    });
-    mockPinnedTaskChat('task-armed-reminder', { status: 'running' });
-    mockClaudeFinishTurn('sess-reminder-armed');
-
-    await handleRemoteExecute({ ...basePayload, message: 'armed turn', history: priorTurns });
-
-    expect(firedReminders.get(callOf(0))).toBeUndefined();
-
-    mockPinnedTaskChat('task-dead-reminder', { status: 'done' });
-    mockClaudeFinishTurn('sess-reminder-dead');
-
-    await handleRemoteExecute({
-      ...basePayload,
-      message: 'follow-up on dead chat',
-      history: priorTurns,
-    });
-
-    const reminder = firedReminders.get(callOf(1));
-    expect(reminder).toContain('intentionally not available');
-    expect(reminder).toContain('frink_task_signal');
-    // Delivered via the hook, not the user prompt.
-    expect(await claudePromptText(callOf(1).prompt)).not.toContain('intentionally not available');
-  });
-
-  it('omits the disarmed reminder on a fresh first turn with no prior context', async () => {
-    // No replayed transcript and no inlined history → the agent never saw the tool, so the notice
-    // would be vacuous. Mirrors the plan/debug exit reminders, which fire only with prior context.
-    // `history: undefined` models the real renderer transport, which sends `undefined` (not []) on a
-    // first turn — guards the optional-history crash.
-    vi.mocked(dynamicChatServer.getLatestTaskSignal).mockReturnValueOnce(undefined);
-    mockPinnedTaskChat('task-dead-fresh', { status: 'done' });
-    mockClaudeFinishTurn('sess-reminder-fresh');
-
-    await handleRemoteExecute({ ...basePayload, message: 'first turn', history: undefined });
-
-    expect(firedReminders.get(claudeQueryMock.mock.calls[0][0])).toBeUndefined();
-  });
-
-  it('delivers the disarmed reminder via the hook regardless of an image attachment', async () => {
-    // The hook channel is independent of prompt shape, so an image attachment (which switches
-    // buildPromptForClaude to its async-iterable form) does not affect reminder delivery.
-    vi.mocked(dynamicChatServer.getLatestTaskSignal).mockReturnValueOnce(undefined);
-    mockPinnedTaskChat('task-dead-image', { status: 'done' });
-    mockClaudeFinishTurn('sess-reminder-dead-image');
-
-    await handleRemoteExecute({
-      ...basePayload,
-      message: 'what does this screenshot show?',
-      history: [
-        { role: 'user', content: 'do the task' },
-        { role: 'assistant', content: 'done' },
-      ],
-      userMessageParts: [{ type: 'file', mimeType: 'image/png', data: 'AAAA' }],
-    });
-
-    expect(firedReminders.get(claudeQueryMock.mock.calls[0][0])).toContain(
-      'intentionally not available',
-    );
-  });
+  registerOperatorReminderDeliveryTests({ basePayload, claudeQueryMock, handleRemoteExecute });
 
   it('aborts the turn when the drive-info read faults', async () => {
     // A recorded provenance fault is rethrown at admission, ahead of any provider work — see
@@ -1624,6 +1555,7 @@ describe('socket file permission edge cases', () => {
     };
     expect(call.options?.systemPrompt?.append).toContain('## Flow Briefing');
     expect(call.options?.systemPrompt?.append).toContain('PRD: use strict mode');
+    expect(call.options?.systemPrompt?.append).toContain(FLOW_BRIEFING_PROVENANCE_NOTE);
     // The whole point: it is NOT re-shipped in the user turn's transcript.
     const promptText = await claudePromptText(call.prompt);
     expect(promptText).not.toContain('## Flow Briefing');
@@ -1668,6 +1600,7 @@ describe('socket file permission edge cases', () => {
     const prompt = vi.mocked(runCodexAgent).mock.calls[0]?.[0]?.prompt;
     expect(prompt).toContain('## Flow Briefing');
     expect(prompt).toContain('PRD: use strict mode');
+    expect(prompt).toContain(FLOW_BRIEFING_PROVENANCE_NOTE);
   });
 
   it('Codex: does NOT re-prepend the briefing on a resume turn (continuation inherits it via transcript replay)', async () => {
@@ -1880,11 +1813,10 @@ describe('socket file permission edge cases', () => {
       promptPrefix: '',
       dynamicChatMcpUrl: 'http://127.0.0.1:9/mcp',
     });
-    vi.mocked(dynamicChatServer.getLatestTaskSignal).mockReturnValueOnce({
-      state: 'awaiting_input',
-      summary: 'Need confirmation',
-      at: new Date().toISOString(),
-    });
+    // Self-contained: this used to lean on an unconsumed Once leaked by an earlier test, so it
+    // failed when run alone and whenever an armed turn ran first.
+    dynamicChatServerMocks.getLatestTaskSignal.mockReset();
+    dynamicChatServerMocks.getLatestTaskSignal.mockReturnValue(undefined);
     vi.mocked(getChatWithProjectAccount).mockResolvedValueOnce({
       chat: { taskId: 'task-signal-persist-no-stop' },
       account: null,
@@ -1910,8 +1842,8 @@ describe('socket file permission edge cases', () => {
     });
 
     expect(vi.mocked(dynamicChatServer.getLatestTaskSignal)).toHaveBeenCalledWith('exec-context-1');
-    // The Once-mocked signal is consumed by an earlier getLatestTaskSignal call, so the
-    // post-stream block sees a quiet end and records the marker (no terminal status write).
+    // No signal was recorded, so the post-stream block sees a quiet end and records the marker
+    // (no terminal status write).
     expect(quietMarkerMocks.setQuietEndMarker).toHaveBeenCalledWith(
       expect.anything(),
       'task-signal-persist-no-stop',

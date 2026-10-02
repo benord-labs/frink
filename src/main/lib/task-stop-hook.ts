@@ -11,6 +11,11 @@
 import type { BackgroundTaskSummary, StopHookInput } from '@anthropic-ai/claude-agent-sdk';
 import log from 'electron-log';
 
+/** Block reason for a turn a person typed into a Flow step's chat: their reply resumed the step,
+ * so it owes a signal again, and re-sending the earlier state is a valid answer (sc-3214). */
+export const HUMAN_INTERJECTION_STOP_REASON =
+  'You replied to a message a person typed, which resumed this flow step, so it needs a frink_task_signal again before you stop. Re-sending the state you signalled before is correct if it still stands; otherwise send the state that now reflects the outcome (done, awaiting_input, blocked, partial, or failed). The flow advances at most once for this step.';
+
 const STOP_HOOK_BLOCK_REASON =
   'You stopped without calling frink_task_signal. If this step is genuinely finished, blocked, or needs user input, call frink_task_signal now with the appropriate state (done, awaiting_input, blocked, partial, or failed) and a concise summary. If you are intentionally waiting on still-running background work (subagents, monitors, long commands), do NOT signal a premature or false state — keep waiting and check on that work instead.';
 
@@ -163,6 +168,11 @@ type TaskStopHookOpts = {
    */
   maxRetries?: number;
   /**
+   * Per-turn override of the block reason, read at block time so a warm session reused by a later
+   * turn never carries an earlier turn's wording. Undefined → the standard reason.
+   */
+  blockReason?: () => string | undefined;
+  /**
    * Fired on every allow — i.e. whenever the turn actually ends (after any forced
    * frink_task_signal round-trip). The executor's turn-end duty here is the quiet-end mark, which
    * doubles as the park sweep's inactivity timestamp: a pending-work allow marks it too, and each
@@ -254,7 +264,7 @@ export function createTaskStopHook(opts: TaskStopHookOpts): TaskStopHook {
     retries++;
     return {
       decision: 'block',
-      reason: STOP_HOOK_BLOCK_REASON,
+      reason: opts.blockReason?.() ?? STOP_HOOK_BLOCK_REASON,
     };
   }) as TaskStopHook;
   hook.lastPendingWork = null;
