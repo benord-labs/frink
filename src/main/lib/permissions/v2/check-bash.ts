@@ -8,18 +8,8 @@
 
 import type { ParseEntry } from 'shell-quote';
 import { escapeRuleContent, parseRule } from '../../../../shared/lib/rule-parser';
-import {
-  type CommandSignature,
-  extractCommandSignatures,
-  generatePatternChoices,
-} from '../command-parser';
-import {
-  exciseHeredocBodies,
-  extractSignature,
-  type SubCommand,
-  splitCommand,
-  stripSafeHeredocSubstitutions,
-} from './bash-parser';
+import { type CommandSignature, generatePatternChoices } from '../command-parser';
+import { extractSignature, type SubCommand, splitCommand } from './bash-parser';
 import { expandTilde } from './check-edit';
 import { combineScopes, evalScope, type ScopedDocs } from './eval-rules';
 import { isSystemDeniedPath } from './system-denied-patterns';
@@ -330,14 +320,14 @@ export function checkBash(
       tool: 'Bash',
       input,
       reason: 'over-50-subcommands',
-      // Strip safe heredoc substitutions + excise heredoc bodies here too —
-      // extractCommandSignatures runs raw shell-quote on the whole command and
-      // would otherwise resurface the phantom subcommands splitCommand already
-      // removed.
+      // Skip exact-only subs (the matcher drops prefix rules for them); always an
+      // array, so nothing prefix-able hides persistence instead of the `:*` fallback.
       suggestedRules: buildSuggestedRules(
-        extractCommandSignatures(
-          exciseHeredocBodies(stripSafeHeredocSubstitutions(input.command) ?? input.command),
-        ),
+        subs.flatMap((sub) => {
+          if (hasUnresolvableDirectory(sub)) return [];
+          const sig = extractSignature(sub);
+          return sig.isExactMatchOnly || sig.base === '' ? [] : [sig];
+        }),
       ),
     });
   }
@@ -349,8 +339,11 @@ export function checkBash(
   // must not offer the same rule twice in the dropdown.
   const exactRules = new Set<string>();
   // Heredoc bodies are excised before signatures, so an exact rule minted from
-  // a multi-line command would match every future body. Single-line only.
-  const canMintExact = !input.command.includes('\n');
+  // a multi-line command would match every future body. Single-line only, judged
+  // on the trimmed text splitCommand reads, so a trailing newline still mints.
+  const canMintExact = !input.command.trim().includes('\n');
+  // An exact-only sub that got no exact rule cannot be expressed by any rule.
+  let unmintableExact = false;
   let askPrompt: PromptData | undefined;
 
   for (const sub of subs) {
@@ -408,9 +401,10 @@ export function checkBash(
       if (!sig.isExactMatchOnly) askSignatures.push(sig);
       // The matcher compares an exact rule against `fullSignature`, so a truncated
       // one (`grep foo` for `grep foo src/*/x.ts`) could never match the rule.
-      else if (canMintExact && sig.fullSignature === sub.raw) {
-        const exact = exactRuleFor(sub.raw);
+      else {
+        const exact = canMintExact && sig.fullSignature === sub.raw ? exactRuleFor(sub.raw) : null;
         if (exact) exactRules.add(exact);
+        else unmintableExact = true;
       }
       askPrompt ??= {
         tool: 'Bash',
@@ -425,9 +419,10 @@ export function checkBash(
 
   if (askPrompt) {
     const rules = [...buildSuggestedRules(askSignatures), ...exactRules];
-    // Empty tells the card no rule can express the command. A withheld wrapper
-    // prefix (`sudo npm i`) is not that: unset keeps the card's working fallback.
-    askPrompt.suggestedRules = rules.length === 0 && askSignatures.length > 0 ? undefined : rules;
+    // Empty = no rule can express the command. A lone withheld wrapper (`sudo npm i`)
+    // stays unset for the card's fallback; an unmintable exact-only sub makes it dead.
+    askPrompt.suggestedRules =
+      rules.length === 0 && askSignatures.length > 0 && !unmintableExact ? undefined : rules;
     return askResult(askPrompt);
   }
   return { decision: 'allow' };
