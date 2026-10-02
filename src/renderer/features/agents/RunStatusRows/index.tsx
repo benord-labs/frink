@@ -24,7 +24,8 @@ type RunStatusRowsProps = {
   chatId: string | null;
   /** Guarded chat send — the Resume row wakes an interrupted run through it. */
   guardedSend: (text: string) => boolean;
-  /** Streaming state, so the Resume row can tell a finished wake from a stalled one. */
+  /** Streaming state: the Resume row tells a finished wake from a stalled one by it, and a held
+   * chat's wait row steps aside while a turn streams. */
   isTurnActive: boolean;
   /**
    * True while a flow surface owns the chat's terminal verb — see {@link BackgroundWaitRow}. Also
@@ -148,6 +149,9 @@ export function RunStatusRows({
   // retrying a run that is about to write more would act on a half-finished state. The wait
   // REPLACES them, preserving this surface's one-row-at-a-time grammar.
   if (wakeHold) {
+    // A wake burst streams like any turn, with the composer's own Stop, so the wait row steps aside
+    // until it settles: the same as when a follow-up adopts the hold, which main retracts outright.
+    if (isTurnActive) return null;
     return (
       <BackgroundWaitRow
         subChatId={subChatId}

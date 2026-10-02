@@ -129,6 +129,37 @@ describe('RunStatusRows', () => {
     expect(screen.queryByTestId('interrupted-controls')).not.toBeInTheDocument();
   });
 
+  it('steps aside while a wake burst streams, and returns when it settles', () => {
+    hold('Command');
+    const { rerender } = render(
+      <RunStatusRows
+        subChatId="sc1"
+        pinnedTaskId={null}
+        chatId="c1"
+        guardedSend={() => true}
+        isTurnActive
+        flowSurfaceOwnsStop={false}
+      />,
+    );
+
+    expect(screen.queryByText(/Working in the background/)).not.toBeInTheDocument();
+    // Still held, so the end-of-run rows stay away too.
+    expect(screen.queryByTestId('accept-bar')).not.toBeInTheDocument();
+
+    rerender(
+      <RunStatusRows
+        subChatId="sc1"
+        pinnedTaskId={null}
+        chatId="c1"
+        guardedSend={() => true}
+        isTurnActive={false}
+        flowSurfaceOwnsStop={false}
+      />,
+    );
+
+    expect(screen.getByText(/Working in the background/)).toBeInTheDocument();
+  });
+
   it('names what the wait is blocked on, aggregated by kind', () => {
     hold('Monitor', 'Monitor', 'Command');
     renderRows();
