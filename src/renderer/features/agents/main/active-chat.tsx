@@ -1376,6 +1376,7 @@ const ChatViewInner = memo(function ChatViewInner({
         messages={messages}
         hasUnapprovedPlanRef={hasUnapprovedPlanRef}
         hasExistingSession={hasExistingSession}
+        isAccountReady={isResolvedExecutionAccountReady}
         streamId={streamId}
         hasTriggeredAutoGenerateRef={hasTriggeredAutoGenerateRef}
         regenerate={regenerate}
@@ -2057,13 +2058,12 @@ export const ChatView = memo(function ChatView({
     isResolvedAccountQuerySuccess &&
     (resolvedAccountForExecution === null ? false : resolvedAccountForExecution.isAuthenticated),
   );
+  // Assigned during render, not in an effect: child effects (first-message auto-generate) run
+  // before a parent effect would, and must already see the resolved type.
   const executionAccountTypeRef = useRef<'claude-code' | 'codex'>('claude-code');
-  useEffect(() => {
-    const t = resolvedAccountForExecution?.type;
-    if (t != null) {
-      executionAccountTypeRef.current = t;
-    }
-  }, [resolvedAccountForExecution?.type]);
+  if (resolvedAccountForExecution?.type != null) {
+    executionAccountTypeRef.current = resolvedAccountForExecution.type;
+  }
 
   // Create or get Chat instance for a sub-chat
   const getOrCreateChat = useCallback(

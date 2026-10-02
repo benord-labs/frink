@@ -319,6 +319,18 @@ export async function clearStreamId(db: Db, subChatId: string): Promise<void> {
   await setStreamId(db, subChatId, null);
 }
 
+/** Clears stream_id only while it still holds `streamId`, so a newer turn's id survives. */
+export async function clearStreamIdIfCurrent(
+  db: Db,
+  subChatId: string,
+  streamId: string,
+): Promise<void> {
+  await db
+    .update(subChats)
+    .set({ streamId: null, updatedAt: new Date() })
+    .where(and(eq(subChats.id, subChatId), eq(subChats.streamId, streamId)));
+}
+
 /** Delegates to sub-chat-session/, which logs a dropped or swapped handle (sc-2462). */
 export async function updateSubChatSession(
   db: Db,

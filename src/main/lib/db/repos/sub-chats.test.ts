@@ -9,6 +9,7 @@ import { __resetSubChatLocks } from './sub-chat-mutex';
 import {
   appendHtmlArtifactMessage,
   appendUserMessage,
+  clearStreamIdIfCurrent,
   createSubChat,
   finalizeAssistantMessage,
   getSubChatForChat,
@@ -832,5 +833,31 @@ describe('getSubChatForChat', () => {
     expect(row?.id).toBe('sub-1');
     expect(row?.mode).toBe('agent');
     expect(row?.sessionId).toBe('sess-1');
+  });
+});
+
+// sc-2512: a send whose turn never started releases only its own stream_id.
+describe('clearStreamIdIfCurrent', () => {
+  beforeEach(() => {
+    db = freshDb();
+  });
+
+  async function seedStreamingSubChat(streamId: string): Promise<string> {
+    await db.insert(schema.chats).values({ id: 'chat-1' });
+    const subChat = await createSubChat(db, { chatId: 'chat-1', messages: '[]' });
+    await setStreamId(db, subChat.id, streamId);
+    return subChat.id;
+  }
+
+  it('clears stream_id when it still holds the given id', async () => {
+    const id = await seedStreamingSubChat('stream-failed');
+    await clearStreamIdIfCurrent(db, id, 'stream-failed');
+    expect((await getSubChatById(db, id))?.streamId).toBeNull();
+  });
+
+  it("leaves a newer turn's stream_id alone", async () => {
+    const id = await seedStreamingSubChat('stream-newer');
+    await clearStreamIdIfCurrent(db, id, 'stream-failed');
+    expect((await getSubChatById(db, id))?.streamId).toBe('stream-newer');
   });
 });
