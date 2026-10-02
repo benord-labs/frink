@@ -8,6 +8,10 @@ import { TaskControls } from './TaskControls';
 
 const tasksRetryMutate = vi.fn();
 const retryNodeMutate = vi.fn();
+let retryNodeOptions: { onError?: (error: { message?: string }) => void } | undefined;
+const toastError = vi.fn();
+
+vi.mock('sonner', () => ({ toast: { error: (...args: unknown[]) => toastError(...args) } }));
 
 let taskData: {
   id: string;
@@ -54,7 +58,10 @@ vi.mock('../../../../../lib/trpc', () => ({
     },
     flows: {
       retryRunFromLastNode: {
-        useMutation: () => ({ mutate: retryNodeMutate, isPending: false }),
+        useMutation: (options: { onError?: (error: { message?: string }) => void }) => {
+          retryNodeOptions = options;
+          return { mutate: retryNodeMutate, isPending: false };
+        },
       },
     },
     chats: {
@@ -187,6 +194,19 @@ describe('TaskControls', () => {
     expect(retryNodeMutate).toHaveBeenCalledWith({ runId: 'run-9' });
     expect(tasksRetryMutate).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: CARRY_ON_NAME })).toBeDisabled();
+  });
+
+  it("shows the server's plain refusal when a Retry's run chat was deleted", () => {
+    taskData = { id: 'task-flow', status: 'failed', result: { error: 'boom' }, flowRunId: 'run-9' };
+    renderControls();
+
+    retryNodeOptions?.onError?.({
+      message: "This run's chat was deleted — start the flow again to re-run it.",
+    });
+
+    expect(toastError).toHaveBeenCalledWith('Could not retry task', {
+      description: "This run's chat was deleted — start the flow again to re-run it.",
+    });
   });
 
   it('enables Retry on a batch member whose run has settled to failed', () => {

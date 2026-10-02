@@ -641,6 +641,8 @@ A failed or parked task shows one recovery row with two controls, under the last
 
 **For a Flow task the two are never active together.** The run's state picks the live control — a *paused* run that still holds its admission slot offers **Carry on**; a *settled* run (failed, cancelled, or completed), whose slot is gone, offers **Retry** — and the other button's tooltip explains why it's disabled. Only a failed *standalone* task genuinely offers both at once, where they mean continue vs start over. Want a deliberate clean re-run of a Flow step regardless of whether its session survived? That's **Re-run step** / **Re-run from previous node** in the Flow surfaces, which always restart from the instructions.
 
+If the chat the flow started in has been **deleted**, Retry is refused with "This run's chat was deleted — start the flow again to re-run it." Deleting the chat abandons the run, so start a fresh run instead. An *archived* chat still retries, because archiving can be undone.
+
 Work Queue opens the Flow chat for these slot-sensitive actions rather than duplicating Carry on. Both controls work for batch members too: a retried member re-enters the run queue and its stage, subject to the stage's concurrency limit (see *Re-running a terminal batch*).
 
 ### Usage-limit and API-error pauses
@@ -694,7 +696,7 @@ If the app or machine restarts (or a window reloads) while a flow's agent is mid
 
 Either way, typing into the chat is never a dead end — and when the run has *lost* its place in the queue but its session survived (the usual case a while after a restart), typing is the better option: the button above reads **Re-run step** and would repeat the step from its instructions, but a typed message instead re-enters the run queue and *continues* the surviving session with your message, nothing repeated. Only when no session survived at all does a typed message get a "This flow run has ended" notice pointing you to **Re-run step**.
 
-The **Re-run from previous node** button in the run-history panel always re-runs from instructions, whichever behaviour the chat offers.
+The **Re-run from previous node** button in the run-history panel always re-runs from instructions, whichever behaviour the chat offers. It needs the run's chat: if that chat was deleted, the re-run is refused with the same "chat was deleted" message and the run stays as it was.
 
 A run you stopped yourself — the **Stop** button, or deleting/archiving the chat — carries no recovery marker, so it shows no button at all; start a fresh run instead.
 
