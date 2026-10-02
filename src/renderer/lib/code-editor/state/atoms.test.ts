@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   activeFilePathAtom,
   clearPaneContextAtom,
+  closeFileAtom,
   closeFilesOutsideProjectAtom,
   codeEditorMaximizedAtom,
   codeEditorOpenAtom,
@@ -453,5 +454,99 @@ describe('codeEditorMaximizedAtom', () => {
 
     // Atoms are independent — CodeEditorPanel resets maximized in its close handlers.
     expect(store.get(codeEditorMaximizedAtom)).toBe(true);
+  });
+});
+
+// sc-3855: closing the panel (✕ or Esc sets codeEditorOpenAtom false, tabs stay) must not stop a
+// file-tree click from reopening it.
+describe('openFileAtom after the panel is closed', () => {
+  it('reopens the panel on the already-open file', () => {
+    const store = createStore();
+    const file = {
+      path: 'src/a.ts',
+      name: 'a.ts',
+      projectPath: '/repo',
+      intent: 'preview' as const,
+    };
+    store.set(openFileAtom, file);
+    store.set(codeEditorOpenAtom, false);
+
+    store.set(openFileAtom, file);
+
+    expect(store.get(codeEditorOpenAtom)).toBe(true);
+    expect(store.get(openFilesAtom)).toHaveLength(1);
+    expect(store.get(activeFilePathAtom)).toBe(fileKey('src/a.ts', '/repo'));
+  });
+
+  it('reopens the panel on a different file that replaces the preview tab', () => {
+    const store = createStore();
+    store.set(openFileAtom, { path: 'src/a.ts', name: 'a.ts', projectPath: '/repo' });
+    store.set(codeEditorOpenAtom, false);
+
+    store.set(openFileAtom, { path: 'src/b.ts', name: 'b.ts', projectPath: '/repo' });
+
+    expect(store.get(codeEditorOpenAtom)).toBe(true);
+    expect(store.get(openFilesAtom).map((f) => f.path)).toEqual(['src/b.ts']);
+    expect(store.get(activeFilePathAtom)).toBe(fileKey('src/b.ts', '/repo'));
+  });
+
+  it('reopens the panel on a new tab alongside a pinned one', () => {
+    const store = createStore();
+    store.set(openFileAtom, {
+      path: 'src/a.ts',
+      name: 'a.ts',
+      projectPath: '/repo',
+      intent: 'pinned',
+    });
+    store.set(codeEditorOpenAtom, false);
+
+    store.set(openFileAtom, { path: 'src/b.ts', name: 'b.ts', projectPath: '/repo' });
+
+    expect(store.get(codeEditorOpenAtom)).toBe(true);
+    expect(store.get(openFilesAtom).map((f) => f.path)).toEqual(['src/a.ts', 'src/b.ts']);
+  });
+});
+
+describe('openFileAtom after the last tab is closed', () => {
+  it('closing the last tab closes the panel, and the next open reopens it', () => {
+    const store = createStore();
+    store.set(openFileAtom, { path: 'src/a.ts', name: 'a.ts', projectPath: '/repo' });
+
+    store.set(closeFileAtom, fileKey('src/a.ts', '/repo'));
+    expect(store.get(codeEditorOpenAtom)).toBe(false);
+    expect(store.get(activeFilePathAtom)).toBeNull();
+
+    store.set(openFileAtom, { path: 'src/a.ts', name: 'a.ts', projectPath: '/repo' });
+
+    expect(store.get(codeEditorOpenAtom)).toBe(true);
+    expect(store.get(openFilesAtom).map((f) => f.path)).toEqual(['src/a.ts']);
+    expect(store.get(activeFilePathAtom)).toBe(fileKey('src/a.ts', '/repo'));
+  });
+});
+
+describe('openFileAtom after the panel is closed in split view', () => {
+  it('reopens from another pane without replacing the first pane preview tab', () => {
+    const store = createStore();
+    store.set(openFileAtom, {
+      path: 'src/a.ts',
+      name: 'a.ts',
+      projectPath: '/repo',
+      sourcePaneIndex: 0,
+    });
+    store.set(codeEditorOpenAtom, false);
+
+    store.set(openFileAtom, {
+      path: 'src/b.ts',
+      name: 'b.ts',
+      projectPath: '/repo',
+      sourcePaneIndex: 1,
+    });
+
+    expect(store.get(codeEditorOpenAtom)).toBe(true);
+    expect(store.get(openFilesAtom).map((f) => [f.path, f.sourcePaneIndex])).toEqual([
+      ['src/a.ts', 0],
+      ['src/b.ts', 1],
+    ]);
+    expect(store.get(activeFilePathAtom)).toBe(fileKey('src/b.ts', '/repo'));
   });
 });

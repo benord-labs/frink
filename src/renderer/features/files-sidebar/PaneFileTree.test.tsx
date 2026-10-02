@@ -1,8 +1,14 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render } from '@testing-library/react';
-import { atom } from 'jotai';
+import { act, cleanup, fireEvent, render } from '@testing-library/react';
+import { atom, getDefaultStore } from 'jotai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  activeFilePathAtom,
+  codeEditorOpenAtom,
+  fileKey,
+  openFilesAtom,
+} from '@/lib/code-editor/state';
 import { PaneFileTree } from './PaneFileTree';
 import { FILE_TREE_REFRESH_EVENT } from './refresh-trigger';
 
@@ -42,6 +48,7 @@ const fileTreePropsState = vi.hoisted(() => ({
   onCopyItem: null as null | ((path: string) => void),
   onPasteIntoFolder: null as null | ((targetFolder: string) => void),
   nodes: [] as Array<{ path: string; gitStatus?: string }>,
+  onFileClick: null as null | ((path: string) => void),
 }));
 
 vi.mock('@dnd-kit/core', () => ({
@@ -117,7 +124,9 @@ vi.mock('./FileTree', () => ({
     onCopyItem?: (path: string) => void;
     onPasteIntoFolder?: (targetFolder: string) => void;
     nodes: Array<{ path: string; gitStatus?: string }>;
+    onFileClick?: (path: string) => void;
   }) => {
+    fileTreePropsState.onFileClick = props.onFileClick ?? null;
     fileTreePropsState.pathToExpandAfterDrop = props.pathToExpandAfterDrop;
     fileTreePropsState.onCopyItem = props.onCopyItem ?? null;
     fileTreePropsState.onPasteIntoFolder = props.onPasteIntoFolder ?? null;
@@ -191,6 +200,7 @@ afterEach(() => {
   fileTreePropsState.onCopyItem = null;
   fileTreePropsState.onPasteIntoFolder = null;
   fileTreePropsState.nodes = [];
+  fileTreePropsState.onFileClick = null;
   mutationHandlers.deleteOnSuccess = null;
   utilsInvalidate.listDirectory.mockReset();
   utilsInvalidate.search.mockReset();
@@ -697,5 +707,54 @@ describe('PaneFileTree external-drop announcement', () => {
     const liveRegion = container.querySelector('[role="tree"] [role="status"]');
     expect(liveRegion).toBeInTheDocument();
     expect(liveRegion).toHaveTextContent('');
+  });
+});
+
+// sc-3855: the tree's click/Space wiring reaches the real openFileAtom, so a closed editor reopens.
+describe('PaneFileTree opens files into the editor', () => {
+  const store = getDefaultStore();
+
+  afterEach(() => {
+    store.set(openFilesAtom, []);
+    store.set(activeFilePathAtom, null);
+    store.set(codeEditorOpenAtom, false);
+  });
+
+  it('reopens a closed editor on a tree click, carrying the pane and preview intent', () => {
+    render(
+      <PaneFileTree projectPath="/tmp/proj" paneIndex={1} chatId="chat-1" isWorktree={false} />,
+    );
+    const onFileClick = fileTreePropsState.onFileClick;
+    expect(onFileClick).toBeTypeOf('function');
+
+    act(() => onFileClick?.('src/a.ts'));
+    act(() => store.set(codeEditorOpenAtom, false));
+    act(() => onFileClick?.('src/a.ts'));
+
+    expect(store.get(codeEditorOpenAtom)).toBe(true);
+    expect(store.get(activeFilePathAtom)).toBe(fileKey('src/a.ts', '/tmp/proj'));
+    expect(store.get(openFilesAtom)).toEqual([
+      expect.objectContaining({
+        path: 'src/a.ts',
+        name: 'a.ts',
+        projectPath: '/tmp/proj',
+        sourcePaneIndex: 1,
+        sourceChatId: 'chat-1',
+        isPreview: true,
+      }),
+    ]);
+  });
+
+  it('reopens a closed editor when Space is pressed on the already-selected file', () => {
+    mockState.primary = { path: 'src/a.ts', name: 'a.ts', type: 'file' };
+    const { getByRole } = render(<PaneFileTree projectPath="/tmp/proj" isWorktree={false} />);
+
+    fireEvent.keyDown(getByRole('tree'), { key: ' ' });
+    expect(store.get(codeEditorOpenAtom)).toBe(true);
+    act(() => store.set(codeEditorOpenAtom, false));
+    fireEvent.keyDown(getByRole('tree'), { key: ' ' });
+
+    expect(store.get(codeEditorOpenAtom)).toBe(true);
+    expect(store.get(openFilesAtom).map((f) => f.path)).toEqual(['src/a.ts']);
   });
 });
