@@ -26,6 +26,7 @@ describe('codex live-turn registry', () => {
       turnId: 'tn1',
       pushChunk: () => {},
       hasOpenApproval: () => false,
+      commandOutputs: new Map(),
     });
     expect(getRuntimeTopologySnapshot().codexLiveTurnCount).toBe(1);
     // Turn 2 registered before turn 1 finished tearing down; turn 1's clear must not evict it.
@@ -35,6 +36,7 @@ describe('codex live-turn registry', () => {
       turnId: 'tn2',
       pushChunk: () => {},
       hasOpenApproval: () => false,
+      commandOutputs: new Map(),
     });
 
     clearCodexLiveTurn('s1', 'tn1');
@@ -57,6 +59,7 @@ describe('steerCodexTurn', () => {
       turnId: 'tn1',
       pushChunk: () => {},
       hasOpenApproval: () => false,
+      commandOutputs: new Map(),
     });
 
     await expect(steerCodexTurn('s1', 'focus the failing tests')).resolves.toBe('delivered');
@@ -85,6 +88,7 @@ describe('steerCodexTurn', () => {
       turnId: 'tn1',
       pushChunk: () => {},
       hasOpenApproval: () => false,
+      commandOutputs: new Map(),
     });
 
     await expect(steerCodexTurn('s1', 'a')).resolves.toBe('unsupported');
@@ -104,6 +108,7 @@ describe('steerCodexTurn', () => {
       turnId: 'tn1',
       pushChunk: () => {},
       hasOpenApproval: () => false,
+      commandOutputs: new Map(),
     });
 
     await expect(steerCodexTurn('s1', 'a')).resolves.toBe('not-steerable');
@@ -119,6 +124,7 @@ describe('steerCodexTurn', () => {
       turnId: 'tn1',
       pushChunk: (c) => pushed.push(c),
       hasOpenApproval: () => false,
+      commandOutputs: new Map(),
     });
 
     await expect(steerCodexTurn('s1', 'skip the tests')).resolves.toBe('delivered');
@@ -139,6 +145,7 @@ describe('steerCodexTurn', () => {
       turnId: 'tn1',
       pushChunk: (c) => pushedA.push(c),
       hasOpenApproval: () => false,
+      commandOutputs: new Map(),
     });
 
     await expect(steerCodexTurn('s1', 'hi')).resolves.toBe('delivered');
@@ -149,6 +156,7 @@ describe('steerCodexTurn', () => {
       turnId: 'tn2',
       pushChunk: (c) => pushedB.push(c),
       hasOpenApproval: () => false,
+      commandOutputs: new Map(),
     });
     emitCodexSteerMarker('s1', 'tn1', { type: 'tool-input-available' } as never);
 
@@ -168,6 +176,7 @@ describe('steerCodexTurn', () => {
       turnId: 'tn1',
       pushChunk: () => {},
       hasOpenApproval: () => parked,
+      commandOutputs: new Map(),
     });
 
     await expect(steerCodexTurn('s1', 'hi')).resolves.toBe('not-steerable');
@@ -181,7 +190,12 @@ describe('steerCodexTurn', () => {
   // closed under it) cannot leave its successor on the same sub-chat wrongly refused.
   it('does not carry a parked approval state into the next turn', async () => {
     const sendRequest = vi.fn(async () => ({}));
-    const base = { client: fakeClient(sendRequest), threadId: 'th1', pushChunk: () => {} };
+    const base = {
+      client: fakeClient(sendRequest),
+      threadId: 'th1',
+      pushChunk: () => {},
+      commandOutputs: new Map(),
+    };
     setCodexLiveTurn('s1', { ...base, turnId: 'tn1', hasOpenApproval: () => true });
     await expect(steerCodexTurn('s1', 'hi')).resolves.toBe('not-steerable');
 

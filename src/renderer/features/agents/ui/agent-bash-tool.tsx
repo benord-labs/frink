@@ -4,6 +4,7 @@ import { Button } from '@benord-labs/frink-primitives';
 import { Check, ShieldAlert, X, Minimize2, Maximize2, Loader2 } from 'lucide-react';
 import { memo, useCallback, useMemo, useState } from 'react';
 import { TextShimmer } from '../../../components/ui/text-shimmer';
+import { CommandOutput } from '../BackgroundWorkPopover/CommandOutput';
 import { cn } from '../../../lib/utils';
 import type { MessagePart } from '../stores/message-store';
 import { getBashToolDenialState } from './agent-bash-permission';
@@ -13,6 +14,8 @@ import { areToolPropsEqual, getOutputNumber, getOutputString } from './agent-too
 
 type AgentBashToolProps = {
   part: MessagePart;
+  /** Lets a running command show its live output, where its provider streams one. */
+  subChatId?: string;
   messageId?: string;
   partIndex?: number;
   chatStatus?: string;
@@ -49,6 +52,7 @@ function limitLines(text: string, maxLines: number): { text: string; truncated: 
 
 export const AgentBashTool = memo(function AgentBashTool({
   part,
+  subChatId,
   messageId,
   partIndex,
   chatStatus,
@@ -228,6 +232,9 @@ export const AgentBashTool = memo(function AgentBashTool({
         <span className="text-foreground whitespace-pre-wrap break-all">{command}</span>
       </div>
       {renderPermissionDeniedReason()}
+      {isPending && subChatId && part.toolCallId ? (
+        <CommandOutput subChatId={subChatId} commandId={part.toolCallId} />
+      ) : null}
       {stdout && (
         <div className="mt-1.5 font-mono text-xs text-muted-foreground whitespace-pre-wrap break-all">
           {isOutputExpanded ? stdout : stdoutLimited.text}

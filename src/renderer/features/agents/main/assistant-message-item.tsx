@@ -420,13 +420,13 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
           <AgentBashTool
             key={idx}
             part={part}
+            subChatId={subChatId}
             messageId={message.id}
             partIndex={idx}
             chatStatus={status}
           />
         );
       if (part.type === 'tool-Thinking') {
-        // Ensure part matches ThinkingToolPart shape
         const thinkingPart: ThinkingToolPart = {
           type: part.type,
           state: part.state,

@@ -5,6 +5,7 @@ import { Button } from '@benord-labs/frink-primitives';
 import {
   Activity,
   Bot,
+  ChevronDown,
   ChevronUp,
   Clock,
   type LucideIcon,
@@ -13,7 +14,7 @@ import {
   SquareTerminal,
   Workflow,
 } from 'lucide-react';
-import { type ReactNode, useRef } from 'react';
+import { type ReactNode, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import type { WakeHoldItem } from '../../../../shared/types/wake-hold';
 import {
@@ -31,6 +32,7 @@ import {
 import { trpc } from '../../../lib/trpc';
 import { cn } from '../../../lib/utils';
 import { RunStatusRow } from '../RunStatusRow';
+import { CommandOutput } from './CommandOutput';
 import { WorkflowProgress } from './WorkflowProgress';
 
 const KIND_ICONS = new Map<string, LucideIcon>([
@@ -61,6 +63,8 @@ export function BackgroundWorkPopover({
   children,
 }: BackgroundWorkPopoverProps) {
   const cardRef = useRef<HTMLDivElement>(null);
+  // One open at a time: each open row polls, and two tails would crowd the list.
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const rowsCanStop = waitingOn.length > 1;
   const someRowCannotStop = waitingOn.some((item) => !(rowsCanStop && item.stoppable));
   return (
@@ -111,6 +115,8 @@ export function BackgroundWorkPopover({
               subChatId={subChatId}
               item={item}
               canStop={rowsCanStop && item.stoppable}
+              expanded={expandedId === item.id}
+              onToggle={() => setExpandedId((open) => (open === item.id ? null : item.id))}
             />
           ))}
         </ul>
@@ -135,12 +141,77 @@ function BackgroundWorkRow({
   subChatId,
   item,
   canStop,
+  expanded,
+  onToggle,
 }: {
   subChatId: string;
   item: WakeHoldItem;
   canStop: boolean;
+  expanded: boolean;
+  onToggle: () => void;
 }) {
   const Icon = KIND_ICONS.get(item.label) ?? Activity;
+  // Only a shell has output to show; the rest stay plain rows.
+  const expandable = item.label === 'Command';
+  const summary = <RowSummary item={item} expanded={expandable ? expanded : null} />;
+  return (
+    <li className={cn(overlayItemBase, overlayItemHover, 'items-start gap-2 py-1')}>
+      <Icon className="mt-[3px] h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+      <div className="min-w-0 flex-1">
+        {expandable ? (
+          <button
+            type="button"
+            aria-expanded={expanded}
+            onClick={onToggle}
+            className="block w-full min-w-0 rounded-sm text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          >
+            {summary}
+          </button>
+        ) : (
+          summary
+        )}
+        {expanded ? <CommandOutput subChatId={subChatId} commandId={item.id} /> : null}
+        {item.label === 'Workflow' ? (
+          <WorkflowProgress subChatId={subChatId} taskId={item.id} />
+        ) : null}
+      </div>
+      {canStop ? <RowStop subChatId={subChatId} item={item} /> : null}
+    </li>
+  );
+}
+
+/** Title, kind and command line. Spans, not divs: it may sit inside a <button>, which only holds
+ * phrasing content. `expanded` is null for a row that cannot expand. */
+function RowSummary({ item, expanded }: { item: WakeHoldItem; expanded: boolean | null }) {
+  return (
+    <>
+      <span className="flex items-baseline gap-2">
+        {/* Wraps rather than truncates: rows often differ only at the end of the title. */}
+        <span className="min-w-0 line-clamp-2 wrap-break-word" title={item.description}>
+          {item.description || item.label}
+        </span>
+        {/* The icon already shows the kind, so narrow rows keep the label for screen readers only. */}
+        <span className="shrink-0 text-xs text-muted-foreground @max-[32rem]/bg-work:sr-only">
+          {item.label}
+        </span>
+        {expanded === null ? null : (
+          <ChevronDown
+            className={cn('h-3 w-3 shrink-0 self-center transition-transform', expanded && 'rotate-180')}
+            aria-hidden
+          />
+        )}
+      </span>
+      {item.command ? (
+        <span className="block truncate font-mono text-xs text-muted-foreground" title={item.command}>
+          {item.command}
+        </span>
+      ) : null}
+    </>
+  );
+}
+
+/** The banner's own Stop, so the two read as one control. */
+function RowStop({ subChatId, item }: { subChatId: string; item: WakeHoldItem }) {
   const stopTask = trpc.socket.stopBackgroundTask.useMutation({
     onSuccess: (result) => {
       if (result.ok) return;
@@ -153,47 +224,20 @@ function BackgroundWorkRow({
     },
     onError: (error) => toast.error('Couldn’t stop it', { description: error.message }),
   });
-
   return (
-    <li className={cn(overlayItemBase, overlayItemHover, 'items-start gap-2 py-1')}>
-      <Icon className="mt-[3px] h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-baseline gap-2">
-          {/* Wraps rather than truncates: rows often differ only at the end of the title. */}
-          <span className="min-w-0 line-clamp-2 wrap-break-word" title={item.description}>
-            {item.description || item.label}
-          </span>
-          {/* The icon already shows the kind, so narrow rows keep the label for screen readers only. */}
-          <span className="shrink-0 text-xs text-muted-foreground @max-[32rem]/bg-work:sr-only">
-            {item.label}
-          </span>
-        </div>
-        {item.command ? (
-          <div className="truncate font-mono text-xs text-muted-foreground" title={item.command}>
-            {item.command}
-          </div>
-        ) : null}
-        {item.label === 'Workflow' ? (
-          <WorkflowProgress subChatId={subChatId} taskId={item.id} />
-        ) : null}
-      </div>
-      {canStop ? (
-        // The banner's own Stop, so the two read as one control.
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-7 shrink-0 gap-1 rounded-md px-2 text-xs text-muted-foreground hover:text-foreground @max-[32rem]/bg-work:w-7 @max-[32rem]/bg-work:px-0 @max-[32rem]/bg-work:[&>span]:sr-only"
-          title="Stop"
-          disabled={stopTask.isPending}
-          onClick={() => stopTask.mutate({ subChatId, taskId: item.id })}
-          aria-label={`Stop ${item.label}: ${item.description}`}
-          aria-busy={stopTask.isPending || undefined}
-        >
-          <Square className="h-3.5 w-3.5" aria-hidden />
-          <span>{stopTask.isPending ? 'Stopping…' : 'Stop'}</span>
-        </Button>
-      ) : null}
-    </li>
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      className="h-7 shrink-0 gap-1 rounded-md px-2 text-xs text-muted-foreground hover:text-foreground @max-[32rem]/bg-work:w-7 @max-[32rem]/bg-work:px-0 @max-[32rem]/bg-work:[&>span]:sr-only"
+      title="Stop"
+      disabled={stopTask.isPending}
+      onClick={() => stopTask.mutate({ subChatId, taskId: item.id })}
+      aria-label={`Stop ${item.label}: ${item.description}`}
+      aria-busy={stopTask.isPending || undefined}
+    >
+      <Square className="h-3.5 w-3.5" aria-hidden />
+      <span>{stopTask.isPending ? 'Stopping…' : 'Stop'}</span>
+    </Button>
   );
 }

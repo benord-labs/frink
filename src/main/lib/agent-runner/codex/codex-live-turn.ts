@@ -3,6 +3,7 @@ import { ResponseError } from 'vscode-jsonrpc/node';
 import type { UIMessageChunk } from '../../claude/types';
 import { registerCodexLiveTurnCountReader } from '../../diagnostics/provider-topology';
 import type { CodexAppServerClient } from './app-server-client';
+import type { CodexCommandOutputs } from './command-output';
 
 /**
  * The live Codex turn for one sub-chat, published so a STEER can reach it.
@@ -30,6 +31,8 @@ export type CodexLiveTurn = {
    * or strand a sibling turn's approvals — and a successor on the same sub-chat starts clean.
    */
   hasOpenApproval: () => boolean;
+  /** Its running commands' output so far, read while the user watches one run. */
+  commandOutputs: CodexCommandOutputs;
 };
 
 const liveTurns = new Map<string, CodexLiveTurn>();
