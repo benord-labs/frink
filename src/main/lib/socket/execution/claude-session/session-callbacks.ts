@@ -20,6 +20,7 @@ import type { validateToolPermission } from '../../executor';
 import { buildUserPromptSubmitReminderHook } from '../../operator-reminders';
 import {
   denyPlanTransitionInWakeBurst,
+  isPlanAutoDenyFloorActive,
   planAutoDenyFloor,
   submitPlanForReview,
 } from '../../streaming/plan-auto-approve';
@@ -192,7 +193,7 @@ function createClaudeStopHook(activeTurn: ActiveTurn): TaskStopHook {
   return hook;
 }
 
-/** Plan-mode denial, task-signal persistence, AskUserQuestion, and the MCP permission fallback.
+/** Plan-mode denial, task-signal persistence, AskUserQuestion, and the MCP rule re-check.
  * Sub-agent allowlisting lives in the PreToolUse backstop: only a hook sees the calling agent. */
 function createCanUseTool(scope: ClaudeSessionScope, session: ClaudeSessionRef): CanUseTool {
   const { chatId, subChatId, permissionProjectPath } = scope;
@@ -237,8 +238,8 @@ function createCanUseTool(scope: ClaudeSessionScope, session: ClaudeSessionRef):
       });
     }
 
-    // Registration is transport-only: Flow dispatch owns its snapshot-bound prompt. Other MCP calls
-    // use v2; Auto takes residual asks unless planning, where they fail closed.
+    // Registration is transport-only. Other MCP calls re-check v2 rules, never prompting: the
+    // PreToolUse hook owns the card, as only a hook's deny reason reaches the model (sc-1357).
     if (toolName.startsWith('mcp__')) {
       if (toolName === 'mcp__frink_dynamic_chat__frink_register_node') {
         return { behavior: 'allow', updatedInput: toolInput };
@@ -252,10 +253,10 @@ function createCanUseTool(scope: ClaudeSessionScope, session: ClaudeSessionRef):
         undefined,
         undefined,
         execution.isFlowTurn,
-        turn.autoReviewTools,
+        true,
       );
       if (permResult.allowed === null) {
-        if (turn.planAutoReview && !turn.planSubmitted) {
+        if (isPlanAutoDenyFloorActive(turn)) {
           return { behavior: 'deny', message: 'Provider review was not available' };
         }
         return { behavior: 'allow', updatedInput: toolInput };

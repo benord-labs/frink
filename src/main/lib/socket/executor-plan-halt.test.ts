@@ -952,6 +952,64 @@ Done.
     });
   });
 
+  it('planning phase, arm FAILED: an MCP ask the hook already prompted for is allowed, not floored or re-carded', async () => {
+    // sc-1357: un-armed, the hook already prompted, so canUseTool must neither re-card nor floor —
+    // the planning floor applies only once Auto is actually armed.
+    const clientModule = await import('./client');
+    vi.mocked(checkPermission).mockResolvedValue({
+      decision: 'ask',
+      prompt: { reason: 'no-matching-rule' },
+    } as Awaited<ReturnType<typeof checkPermission>>);
+    // Approve any card, so a regression surfaces as an extra request rather than a 9.5-min hang.
+    vi.mocked(clientModule.sendPermissionRequest).mockClear();
+    vi.mocked(clientModule.sendPermissionRequest).mockImplementation((request) => {
+      permissionBridge.lastResponseHandler?.({ ...request, approved: true });
+    });
+
+    const decisions: Array<{ behavior: string; message?: string } | undefined> = [];
+    claudeQueryMock.mockImplementationOnce(
+      (call: {
+        options: {
+          canUseTool: (
+            toolName: string,
+            toolInput: ToolInputFixture,
+            options: { toolUseID: string },
+          ) => Promise<{ behavior: string; message?: string }>;
+        };
+      }) => {
+        const gen = (async function* () {
+          yield { chunks: [] };
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          decisions.push(
+            await call.options.canUseTool('mcp__deploy__ship', {}, { toolUseID: 'unarmed-1' }),
+          );
+          yield {
+            chunks: [{ type: 'finish', messageMetadata: {} } satisfies UIMessageChunk],
+          };
+        })();
+        // The opt-in rejects (closed gate / tier miss), so the turn stays un-armed.
+        return Object.assign(gen, {
+          interrupt: vi.fn().mockResolvedValue(undefined),
+          setPermissionMode: vi.fn().mockResolvedValue(undefined),
+          applyFlagSettings: vi.fn().mockRejectedValue(new Error('gate closed')),
+        });
+      },
+    );
+
+    try {
+      await handleRemoteExecute({
+        ...basePayload,
+        message: 'plan turn, arm fails, MCP call',
+        settings: { model: 'sonnet', autoReviewTools: true },
+      });
+      expect(clientModule.sendPermissionRequest).not.toHaveBeenCalled();
+    } finally {
+      vi.mocked(clientModule.sendPermissionRequest).mockReset();
+    }
+
+    expect(decisions[0]).toEqual({ behavior: 'allow', updatedInput: {} });
+  });
+
   it('flow-driven non-auto plan node: halts resumable, never marks the flow task failed', async () => {
     vi.spyOn(fs.promises, 'readFile').mockResolvedValue(validPlanContent);
     const { getFlowDriveInfoForSubChat, updateTaskStatus } = await import('../db/repos/tasks');
