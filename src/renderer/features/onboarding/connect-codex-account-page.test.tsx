@@ -5,6 +5,7 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createStore, Provider } from 'jotai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { DETECTION_QUERY_OPTIONS } from '../../hooks/useConnectAccountFlow';
 import { pendingAccountAuthAtom } from '../../lib/atoms';
 import { ConnectCodexAccountPage } from './connect-codex-account-page';
 
@@ -29,7 +30,7 @@ vi.mock('../../lib/trpc', () => ({
     }),
     claudeCode: {
       detectCodexAccount: {
-        useQuery: () => detectMock(),
+        useQuery: (_input: unknown, opts: unknown) => detectMock(opts),
       },
       connectCodexPassthrough: {
         useMutation: () => ({ mutateAsync: connect.mutateAsync }),
@@ -98,13 +99,15 @@ describe('ConnectCodexAccountPage', () => {
       detectionState({ available: false, hint: 'Looked in ~/.codex but found no session.' }),
     );
 
-    render(
+    const { container } = render(
       <Provider store={createStore()}>
         <ConnectCodexAccountPage />
       </Provider>,
     );
 
     expect(screen.getByText('No OpenAI login detected')).toBeInTheDocument();
+    // Warning glyph mirrors the found-state check icon (sc-49 AC2).
+    expect(container.querySelector('svg.text-warning')).toBeInTheDocument();
     expect(screen.getByText('codex login')).toBeInTheDocument();
     expect(screen.getByText('Looked in ~/.codex but found no session.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Check for Login/i })).toBeInTheDocument();
@@ -134,5 +137,17 @@ describe('ConnectCodexAccountPage', () => {
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('codex session expired');
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+  });
+
+  it('passes the shared detection options so window-return refetch stops once a login is found', () => {
+    detectMock.mockReturnValue(detectionState({ available: false }));
+
+    render(
+      <Provider store={createStore()}>
+        <ConnectCodexAccountPage />
+      </Provider>,
+    );
+
+    expect(detectMock).toHaveBeenCalledWith(DETECTION_QUERY_OPTIONS);
   });
 });
