@@ -487,6 +487,134 @@ describe('dispatchAndAdvance — a thrown dispatcher terminalizes its node', () 
     const nodeRuns = await listNodeRunsForFlowRun(db, flowRunId);
     expect(nodeRuns[0]?.status).toBe('running');
   });
+
+  // A throwing listener propagates out of emitNodeStarted (plain EventEmitter); outside the try it
+  // would skip the finally's unregister and strand the node in 'running'.
+  it('terminalizes the node when a node_started listener throws', async () => {
+    const unsubscribe = subscribeFlowEvents((e) => {
+      if (e.eventType === 'node_started') throw new Error('listener blew up');
+    });
+    try {
+      await dispatchAndAdvance(fence, GRAPH.nodes[0], undefined, await ctxFor(flowRunId));
+    } finally {
+      unsubscribe();
+    }
+
+    const nodeRuns = await listNodeRunsForFlowRun(db, flowRunId);
+    expect(nodeRuns[0]?.status).toBe('failed');
+    expect((await getFlowRun(db, flowRunId))?.status).toBe('failed');
+    expect(dispatchNode).not.toHaveBeenCalled();
+    expect(abortFlowRun(flowRunId)).toBe(0);
+  });
+
+  // dispatchCondition always sets outputs.result, so a condition that advances without a valid
+  // one is a broken invariant: it is reported, and the run fails closed down the 'false' edge.
+  it.each([
+    ['missing', {}],
+    ['not continue/stop', { result: 'yes' }],
+  ])('reports a condition result that is %s and takes the false edge', async (_, outputs) => {
+    (dispatchNode as Mock).mockImplementation(async (args: { node: { id: string } }) => {
+      if (args.node.id === 'cond') {
+        return { type: 'completed', output: { ...completedOutput, outputs } };
+      }
+      return { type: 'completed', output: completedOutput };
+    });
+
+    await dispatchAndAdvance(fence, GRAPH.nodes[0], undefined, await ctxFor(flowRunId));
+
+    const nodeRuns = await listNodeRunsForFlowRun(db, flowRunId);
+    expect(nodeRuns.find((n) => n.nodeId === '6805')?.status).toBe('completed');
+    expect((await getFlowRun(db, flowRunId))?.status).not.toBe('failed');
+    expect(captureContainedMock).toHaveBeenCalledTimes(1);
+    expect(captureContainedMock).toHaveBeenCalledWith(expect.any(Error), {
+      surface: 'flow-condition-result',
+      blockType: 'condition',
+    });
+  });
+});
+
+describe('advanceFlowRun — condition branch routing', () => {
+  const branchGraph = (edges: FlowGraph['edges']): FlowGraph => ({
+    nodes: [
+      {
+        id: 'evaluate',
+        blockType: 'agent',
+        config: { instructions: 'e' },
+        position: { x: 0, y: 0 },
+      },
+      { id: 'cond', blockType: 'condition', position: { x: 0, y: 1 } },
+      { id: 'yes', blockType: 'agent', config: { instructions: 'y' }, position: { x: 0, y: 2 } },
+      { id: 'no', blockType: 'agent', config: { instructions: 'n' }, position: { x: 1, y: 2 } },
+    ],
+    edges: [{ id: 'e0', source: 'evaluate', target: 'cond' }, ...edges],
+  });
+  const TRUE_EDGE = { id: 'et', source: 'cond', target: 'yes', sourceHandle: 'true' };
+  const FALSE_EDGE = { id: 'ef', source: 'cond', target: 'no', sourceHandle: 'false' };
+
+  /** Runs evaluate → cond with `condOutputs`, returning the ids of the nodes that were dispatched. */
+  const run = async (graph: FlowGraph, condOutputs: Record<string, unknown>) => {
+    const db = freshDb();
+    holder.db = db;
+    (dispatchNode as Mock).mockReset();
+    captureContainedMock.mockReset();
+    const { flowRunId } = await seedFlowRun(db, graph);
+    seedActiveAdmission(db, flowRunId);
+    const dispatched: string[] = [];
+    (dispatchNode as Mock).mockImplementation(async (args: { node: { id: string } }) => {
+      dispatched.push(args.node.id);
+      const outputs = args.node.id === 'cond' ? condOutputs : {};
+      return { type: 'completed', output: { ...completedOutput, outputs } };
+    });
+    const ctx = await loadRunContext(flowRunId);
+    if (!ctx) throw new Error('no run context');
+    const fence = readRunFence(db, flowRunId) as RunFence;
+    await dispatchAndAdvance(fence, graph.nodes[0], undefined, ctx);
+    return { dispatched, status: (await getFlowRun(db, flowRunId))?.status };
+  };
+
+  it('takes the true edge on continue without reporting anything', async () => {
+    const { dispatched } = await run(branchGraph([TRUE_EDGE, FALSE_EDGE]), { result: 'continue' });
+
+    expect(dispatched).toEqual(['evaluate', 'cond', 'yes']);
+    expect(captureContainedMock).not.toHaveBeenCalled();
+  });
+
+  // The story's scenario: no result and no 'false' edge. It fails closed (the run ends rather than
+  // taking the true branch) but is no longer silent.
+  it('ends the run instead of taking the only (true) edge when the result is missing', async () => {
+    const { dispatched, status } = await run(branchGraph([TRUE_EDGE]), {});
+
+    expect(dispatched).toEqual(['evaluate', 'cond']);
+    expect(status).not.toBe('running');
+    expect(status).not.toBe('failed');
+    expect(captureContainedMock).toHaveBeenCalledTimes(1);
+  });
+
+  // Agents and commands may emit their own `result` key; only a condition node's is a branch choice.
+  it('does not report a non-condition node whose outputs carry an arbitrary result', async () => {
+    const graph = branchGraph([TRUE_EDGE, FALSE_EDGE]);
+    const db = freshDb();
+    holder.db = db;
+    captureContainedMock.mockReset();
+    (dispatchNode as Mock).mockReset();
+    (dispatchNode as Mock).mockImplementation(async (args: { node: { id: string } }) => {
+      if (args.node.id === 'cond') return { type: 'awaiting_input', reason: 'stop here' };
+      return { type: 'completed', output: { ...completedOutput, outputs: { result: 'yes' } } };
+    });
+    const { flowRunId } = await seedFlowRun(db, graph);
+    seedActiveAdmission(db, flowRunId);
+    const ctx = await loadRunContext(flowRunId);
+    if (!ctx) throw new Error('no run context');
+    await dispatchAndAdvance(
+      readRunFence(db, flowRunId) as RunFence,
+      graph.nodes[0],
+      undefined,
+      ctx,
+    );
+
+    expect(dispatchNode).toHaveBeenCalledTimes(2); // evaluate advanced on to cond
+    expect(captureContainedMock).not.toHaveBeenCalled();
+  });
 });
 
 // A terminal run is a PURE no-op here: sweeping a `cancelled` run's live task would let the watcher
