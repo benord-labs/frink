@@ -305,6 +305,8 @@ export function createTransformer() {
       yield { type: 'start-step' };
     }
 
+    yield* mapCompaction(msg);
+
     // Reset thinking state on new message start to prevent memory leaks
     if (isStreamEventMessage(msg) && msg.event?.type === 'message_start') {
       thinking.reset();
@@ -607,8 +609,6 @@ export function createTransformer() {
           skills: msg.skills || [],
         };
       }
-
-      yield* mapCompaction(msg);
     }
 
     // ===== RESULT (final) =====

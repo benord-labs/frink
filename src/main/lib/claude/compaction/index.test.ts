@@ -1,7 +1,7 @@
 import { readUIMessageStream, type UIMessageChunk as SdkChunk } from 'ai';
 import { describe, expect, it } from 'vitest';
 import type { UIMessageChunk } from '../types';
-import { compactionSummaryJoinFor, createCompactionMapper } from './index';
+import { createCompactionMapper } from './index';
 
 /**
  * Feeds chunks through the same AI SDK stream reader the renderer uses and returns the resulting
@@ -30,15 +30,6 @@ async function partsFor(chunks: UIMessageChunk[]) {
   let last;
   for await (const message of readUIMessageStream({ stream })) last = message;
   return last?.parts ?? [];
-}
-
-/** A mapper whose messages carry `sessionId`, and the summary join that session resolves to. */
-function sessionMapper(sessionId: string) {
-  const map = createCompactionMapper();
-  return {
-    join: compactionSummaryJoinFor(sessionId),
-    map: (msg: Parameters<typeof map>[0]) => map({ session_id: sessionId, ...msg }),
-  };
 }
 
 describe('compaction chunks reach the transcript', () => {
@@ -77,86 +68,44 @@ describe('compaction chunks reach the transcript', () => {
     expect(compact[0]).toMatchObject({ data: { state: 'output-error' } });
   });
 
-  it('carries the PostCompact summary on the settled part', async () => {
-    const { join, map } = sessionMapper('mapper-session-1');
-    const chunks = map({ subtype: 'status', status: 'compacting' });
-    join.onSummary('what happened so far');
-    chunks.push(...map({ subtype: 'compact_boundary', compact_metadata: { trigger: 'auto' } }));
-
-    const parts = await partsFor(chunks);
-
-    expect(parts.filter((part) => part.type === 'data-compact')).toMatchObject([
-      { data: { state: 'output-available', trigger: 'auto', summary: 'what happened so far' } },
-    ]);
-  });
-
-  it('upserts a summary re-emitted after the boundary onto the same part', async () => {
-    const { join, map } = sessionMapper('mapper-session-2');
-    const chunks = [
-      ...map({ subtype: 'status', status: 'compacting' }),
-      ...map({ subtype: 'compact_boundary', compact_metadata: { trigger: 'manual' } }),
-    ];
-    const reemit = join.onSummary('late summary');
-    expect(reemit).not.toBeNull();
-    chunks.push({ type: 'data-compact', id: reemit!.id, data: reemit!.data });
-
-    const parts = await partsFor(chunks);
-
-    expect(parts.filter((part) => part.type === 'data-compact')).toMatchObject([
-      { data: { state: 'output-available', summary: 'late summary' } },
-    ]);
-  });
-
-  it.each([
-    ['preserved_messages', { preserved_messages: { anchor_uuid: 'a', uuids: ['b'] } }],
-    [
-      'preserved_segment',
-      { preserved_segment: { head_uuid: 'a', anchor_uuid: 'b', tail_uuid: 'c' } },
-    ],
-  ])('marks a compaction that kept %s as partial', (_name, kept) => {
+  it('upserts the summary the SDK streams after the boundary onto the same card', async () => {
     const map = createCompactionMapper();
-    map({ subtype: 'status', status: 'compacting' });
+    const chunks = [
+      ...map({ type: 'system', subtype: 'status', status: 'compacting' }),
+      ...map({
+        type: 'system',
+        subtype: 'compact_boundary',
+        compact_metadata: { trigger: 'auto' },
+      }),
+      ...map({ type: 'user', message: { content: [{ type: 'text', text: 'the gist' }] } }),
+    ];
+
+    const parts = await partsFor(chunks);
+
+    expect(parts.filter((part) => part.type === 'data-compact')).toMatchObject([
+      { data: { state: 'output-available', trigger: 'auto', summary: 'the gist' } },
+    ]);
+  });
+
+  it('takes no summary once the assistant has replied after the boundary', () => {
+    const map = createCompactionMapper();
+    map({ type: 'system', subtype: 'status', status: 'compacting' });
+    map({ type: 'system', subtype: 'compact_boundary' });
+    map({ type: 'assistant' });
+
+    expect(map({ type: 'user', message: { content: 'a later prompt' } })).toEqual([]);
+  });
+
+  it('marks a compaction that kept messages verbatim as partial', () => {
+    const map = createCompactionMapper();
+    map({ type: 'system', subtype: 'status', status: 'compacting' });
 
     const [chunk] = map({
+      type: 'system',
       subtype: 'compact_boundary',
-      compact_metadata: { trigger: 'auto', ...kept },
+      compact_metadata: { trigger: 'auto', preserved_messages: { anchor_uuid: 'a', uuids: ['b'] } },
     });
 
-    expect(chunk).toMatchObject({ data: { state: 'output-available', partial: true } });
-  });
-
-  it('keeps a summary from an earlier, unseen compaction off the next card', () => {
-    const { join, map } = sessionMapper('mapper-session-3');
-    join.onSummary('from a compaction this stream never saw');
-
-    map({ subtype: 'status', status: 'compacting' });
-    const [chunk] = map({ subtype: 'compact_boundary', compact_metadata: { trigger: 'auto' } });
-
-    expect(chunk).toMatchObject({ data: { state: 'output-available' } });
-    expect((chunk as { data: { summary?: string } }).data.summary).toBeUndefined();
-  });
-
-  it('merges a summary that lands between the compacting status and the boundary', () => {
-    const { join, map } = sessionMapper('mapper-session-4');
-
-    map({ subtype: 'status', status: 'compacting' });
-    join.onSummary('fresh');
-    const [chunk] = map({ subtype: 'compact_boundary', compact_metadata: { trigger: 'manual' } });
-
-    expect(chunk).toMatchObject({ data: { summary: 'fresh' } });
-  });
-
-  it('never joins a summary across sessions', () => {
-    const a = sessionMapper('mapper-session-a');
-    const b = sessionMapper('mapper-session-b');
-    a.map({ subtype: 'status', status: 'compacting' });
-    b.map({ subtype: 'status', status: 'compacting' });
-    a.join.onSummary('summary for A');
-
-    const [chunkB] = b.map({ subtype: 'compact_boundary', compact_metadata: { trigger: 'auto' } });
-    const [chunkA] = a.map({ subtype: 'compact_boundary', compact_metadata: { trigger: 'auto' } });
-
-    expect((chunkB as { data: { summary?: string } }).data.summary).toBeUndefined();
-    expect(chunkA).toMatchObject({ data: { summary: 'summary for A' } });
+    expect(chunk).toMatchObject({ data: { partial: true } });
   });
 });

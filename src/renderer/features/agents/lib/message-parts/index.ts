@@ -98,29 +98,19 @@ function partHistoryText(part: ToolPartLike & { text?: string }): string | null 
 }
 
 type HistoryPart = ToolPartLike & { text?: string; data?: unknown };
-type CompactBoundary = { messageIndex: number; partIndex: number; summary: string };
+type CompactData = { state?: string; summary?: unknown; partial?: boolean } | undefined;
 
-function turnFrom(role: 'user' | 'assistant', parts: HistoryPart[]): HistoryTurn[] {
-  const text = parts.flatMap((part) => partHistoryText(part) ?? []).join('\n');
-  const content = stripMessageMarkers(text);
-  return content ? [{ role, content }] : [];
-}
-
-/** Newest settled, summarised, non-partial compaction; an older one stands in for one that falls
- * short, and null keeps history whole rather than drop context with nothing to replace it. */
-function findCompactBoundary(messages: UIMessage[], current?: UIMessage): CompactBoundary | null {
+/** The newest settled, summarised, non-partial compaction; null keeps the history whole. */
+function findCompactBoundary(messages: UIMessage[], current?: UIMessage) {
   for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i];
-    if (m === current) continue;
-    const parts = (m.parts ?? []) as HistoryPart[];
+    if (messages[i] === current) continue;
+    const parts = (messages[i].parts ?? []) as HistoryPart[];
     for (let j = parts.length - 1; j >= 0; j--) {
-      if (parts[j].type !== 'data-compact') continue;
-      const data = parts[j].data as
-        | { state?: string; summary?: unknown; partial?: boolean }
-        | undefined;
-      if (data?.state !== 'output-available') continue;
-      if (typeof data.summary !== 'string' || !data.summary.trim() || data.partial) continue;
-      return { messageIndex: i, partIndex: j, summary: data.summary };
+      const data = parts[j].data as CompactData;
+      if (parts[j].type !== 'data-compact' || data?.state !== 'output-available') continue;
+      if (typeof data.summary === 'string' && data.summary.trim() && !data.partial) {
+        return { messageIndex: i, partIndex: j, summary: data.summary };
+      }
     }
   }
   return null;
@@ -129,13 +119,10 @@ function findCompactBoundary(messages: UIMessage[], current?: UIMessage): Compac
 /**
  * The transcript a fresh session is seeded with (every message but the one being sent): text, any
  * plan in full, and one line per tool call, so a handoff keeps what was planned and done.
- *
- * A compacted chat starts from its newest compaction: the summary stands in for everything before
- * the boundary, so a fresh session does not silently re-inflate what the user compacted away.
+ * A compacted chat starts from its newest compaction's summary instead of re-inflating (sc-2281).
  */
 export function buildTurnHistory(messages: UIMessage[], current?: UIMessage): HistoryTurn[] {
   const boundary = findCompactBoundary(messages, current);
-  const start = boundary ? boundary.messageIndex : 0;
   const head: HistoryTurn[] = boundary
     ? [
         {
@@ -144,14 +131,15 @@ export function buildTurnHistory(messages: UIMessage[], current?: UIMessage): Hi
         },
       ]
     : [];
-  return [
-    ...head,
-    ...messages.slice(start).flatMap((m, offset) => {
-      if (m === current || (m.role !== 'user' && m.role !== 'assistant')) return [];
-      const parts = (m.parts ?? []) as HistoryPart[];
-      // The boundary's own message keeps only what followed it (an auto-compact mid-turn).
-      const kept = boundary && offset === 0 ? parts.slice(boundary.partIndex + 1) : parts;
-      return turnFrom(m.role, kept);
-    }),
-  ];
+  const tail = messages.slice(boundary?.messageIndex ?? 0).flatMap((m, offset) => {
+    if (m === current || (m.role !== 'user' && m.role !== 'assistant')) return [];
+    const parts = (m.parts ?? []) as HistoryPart[];
+    // The boundary's own message keeps only what followed it (an auto-compact mid-turn).
+    const kept = boundary && offset === 0 ? parts.slice(boundary.partIndex + 1) : parts;
+    const content = stripMessageMarkers(
+      kept.flatMap((part) => partHistoryText(part) ?? []).join('\n'),
+    );
+    return content ? [{ role: m.role, content }] : [];
+  });
+  return [...head, ...tail];
 }

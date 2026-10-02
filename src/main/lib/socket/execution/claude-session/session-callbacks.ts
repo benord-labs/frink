@@ -1,6 +1,4 @@
 import type { CanUseTool } from '@anthropic-ai/claude-agent-sdk';
-import log from 'electron-log';
-import { compactionSummaryJoinFor } from '../../../claude/compaction';
 import { isClaudePermissionGatedTool, resolveToolPermissionPath } from '../../../permissions';
 import { createSubagentAllowlistHook } from '../../../permissions/subagent-allowlist-hook';
 import { createTaskStopHook, type TaskStopHook } from '../../../task-stop-hook';
@@ -84,33 +82,7 @@ export function buildClaudeSessionCallbacks(scope: ClaudeSessionScope, session: 
       Stop: [{ hooks: [stopHook as any] }],
       // Delivers the active turn's operator reminders as an in-conversation system message.
       UserPromptSubmit: [{ hooks: [userPromptSubmitReminderHook as any] }],
-      // Keeps the compaction summary on the transcript, so a fresh session replays it (sc-2281).
-      PostCompact: [{ hooks: [createPostCompactHook(scope, activeTurn) as any] }],
     },
-  };
-}
-
-/** Hands the PostCompact summary to its session's join. When the boundary already settled, the
- * summary re-emits that card by id, which the parts reducer and the renderer both upsert in place. */
-function createPostCompactHook(scope: ClaudeSessionScope, activeTurn: ActiveTurn) {
-  return async (hookInput: { session_id?: unknown; compact_summary?: unknown }) => {
-    const { session_id: sessionId, compact_summary: summary } = hookInput;
-    if (typeof sessionId !== 'string' || typeof summary !== 'string' || !summary.trim()) return {};
-    const reemit = compactionSummaryJoinFor(sessionId).onSummary(summary);
-    if (!reemit) return {};
-    const turn = activeTurn();
-    if (!turn) {
-      log.warn(`[Socket Executor] compaction summary for ${scope.subChatId} arrived with no turn`);
-      return {};
-    }
-    createTurnChunkEmitter({
-      turn,
-      liveParts: buildPartsFromChunks(turn.lastCollectedChunks),
-      chatId: scope.chatId,
-      subChatId: scope.subChatId,
-      sendChunk: turn.execution.sendChunk,
-    })({ type: 'data-compact', id: reemit.id, data: reemit.data });
-    return {};
   };
 }
 
