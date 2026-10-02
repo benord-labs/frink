@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Context } from '../index';
 
-const { updateTriggerBindingMock } = vi.hoisted(() => ({
+const { updateTriggerBindingMock, deleteBindingMock } = vi.hoisted(() => ({
   updateTriggerBindingMock: vi.fn(),
+  deleteBindingMock: vi.fn(),
 }));
 
 vi.mock('../../db', () => ({
@@ -16,6 +17,7 @@ vi.mock('../../db/repos/flow-trigger-bindings', async () => {
   return {
     ...actual,
     update: updateTriggerBindingMock,
+    deleteBinding: deleteBindingMock,
   };
 });
 
@@ -69,5 +71,35 @@ describe('triggerBindingsRouter update', () => {
       bindingId,
       expect.objectContaining({ config: {} }),
     );
+  });
+});
+
+describe('triggerBindingsRouter delete', () => {
+  beforeEach(() => {
+    deleteBindingMock.mockReset();
+  });
+
+  it('succeeds when the binding is already gone (double-click / stale id)', async () => {
+    deleteBindingMock.mockResolvedValue(false);
+
+    await expect(caller.delete({ id: bindingId })).resolves.toEqual({ ok: true });
+  });
+
+  it('succeeds when the binding is removed', async () => {
+    deleteBindingMock.mockResolvedValue(true);
+
+    await expect(caller.delete({ id: bindingId })).resolves.toEqual({ ok: true });
+    expect(deleteBindingMock).toHaveBeenCalledWith(expect.anything(), bindingId);
+  });
+
+  it('rejects an empty id without touching the database', async () => {
+    await expect(caller.delete({ id: '' })).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(deleteBindingMock).not.toHaveBeenCalled();
+  });
+
+  it('still rejects when the database delete fails', async () => {
+    deleteBindingMock.mockRejectedValue(new Error('SQLITE_BUSY'));
+
+    await expect(caller.delete({ id: bindingId })).rejects.toThrow('SQLITE_BUSY');
   });
 });

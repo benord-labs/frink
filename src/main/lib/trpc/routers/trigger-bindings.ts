@@ -108,12 +108,9 @@ export const triggerBindingsRouter = router({
       return toRawDbFlowTriggerBinding(row) as unknown as DbFlowTriggerBinding;
     }),
 
+  // Idempotent: the row has no side effects, so "already gone" (double-click, stale id) is success.
   delete: publicProcedure.input(z.object({ id: z.string().min(1) })).mutation(async ({ input }) => {
-    const db = getDatabase();
-    const ok = await bindingsRepo.deleteBinding(db, input.id);
-    if (!ok) {
-      throw new TRPCError({ code: 'NOT_FOUND', message: 'Trigger binding not found' });
-    }
+    await bindingsRepo.deleteBinding(getDatabase(), input.id);
     return { ok: true as const };
   }),
 });
