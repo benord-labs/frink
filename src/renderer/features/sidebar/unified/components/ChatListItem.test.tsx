@@ -426,10 +426,11 @@ describe('ChatListItem', () => {
           onClick={vi.fn()}
         />,
       );
-      // Left: task icon pulses primary + corner activity dot present (live agent run).
+      // Left: task icon turns primary + static corner activity dot (live agent run). Nothing pulses:
+      // an infinite animation in the sidebar forces a full-page restyle every frame.
       const taskIcon = container.querySelector('svg.lucide-list-todo');
       expect(runningIconClass(taskIcon)).toContain('text-[hsl(var(--primary))]');
-      expect(runningIconClass(taskIcon)).toContain('animate-pulse');
+      expect(runningIconClass(taskIcon)).not.toContain('animate-pulse');
       expect(screen.getByRole('status', { name: 'Agent is running' })).toBeTruthy();
       // Single live region: the running corner dot is the only role=status, so a SR hears "running",
       // not a contradiction with the resting pill (the pill drops its status role while running).
@@ -441,7 +442,7 @@ describe('ChatListItem', () => {
       ).toBeTruthy();
     });
 
-    it('also pulses the worktree icon while running (both left icons reflect the live state)', () => {
+    it('also colours the worktree icon while running (both left icons reflect the live state)', () => {
       const { container } = render(
         <ChatListItem
           chat={makeChatItem({ taskId: 'task-wt', isLoading: true, isWorktree: true })}
@@ -452,7 +453,7 @@ describe('ChatListItem', () => {
       );
       const worktreeIcon = container.querySelector('svg.lucide-git-fork');
       expect(runningIconClass(worktreeIcon)).toContain('text-[hsl(var(--primary))]');
-      expect(runningIconClass(worktreeIcon)).toContain('animate-pulse');
+      expect(runningIconClass(worktreeIcon)).not.toContain('animate-pulse');
     });
 
     it('an idle done task chat is unchanged: green static icon, no pulse, no activity dot', () => {
@@ -477,7 +478,7 @@ describe('ChatListItem', () => {
       expect(screen.getAllByText('Review').length).toBeGreaterThan(0);
     });
 
-    it('a plain (taskless) chat that is loading still shows the running dot + pulsing icon', () => {
+    it('a plain (taskless) chat that is loading still shows the running dot + primary icon', () => {
       const { container } = render(
         <ChatListItem
           chat={makeChatItem({ isLoading: true })}
@@ -488,7 +489,7 @@ describe('ChatListItem', () => {
       expect(screen.getByRole('status', { name: 'Agent is running' })).toBeTruthy();
       const chatIcon = container.querySelector('svg.lucide-message-square');
       expect(runningIconClass(chatIcon)).toContain('text-[hsl(var(--primary))]');
-      expect(runningIconClass(chatIcon)).toContain('animate-pulse');
+      expect(runningIconClass(chatIcon)).not.toContain('animate-pulse');
     });
   });
 
