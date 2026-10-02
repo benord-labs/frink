@@ -3,7 +3,7 @@ import { getDatabase } from '../../../../db';
 import { getChatById as getChatByIdLocal } from '../../../../db/repos/chats';
 import { getProjectById } from '../../../../db/repos/projects';
 import { getSubChatById as getSubChatByIdLocal } from '../../../../db/repos/sub-chats';
-import { publicProcedure, router } from '../../../index';
+import { publicProcedure, publicProcedureRaw, router } from '../../../index';
 import { mapChatProject } from '../map-chat-response';
 import { mapSubChatResponse } from './map-sub-chat-response';
 import { paginateMessages } from './messages-utils';
@@ -16,7 +16,9 @@ const DEFAULT_MESSAGES_LIMIT = 20;
  * cache hit ever was on cloud); the file is left in place but its callers are gone.
  */
 export const subChatGetRouter = router({
-  getSubChatMessages: publicProcedure
+  // Raw: the renderer reads the stored SDK transcript's tool keys (`input.file_path`) verbatim.
+  // See decision `flows-ipc-casing-contract`.
+  getSubChatMessages: publicProcedureRaw
     .input(
       z.object({
         subChatId: z.string(),

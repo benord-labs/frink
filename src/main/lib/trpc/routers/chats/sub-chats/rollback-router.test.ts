@@ -261,6 +261,31 @@ describe('subChatRollbackRouter — userMessageId rollback', () => {
     expect((result.messages[1] as Record<string, unknown>).id).toBe('a1');
   });
 
+  // sc-3829: the returned transcript goes straight into the renderer store, which reads tool
+  // keys verbatim — the procedure's caseConvertOutput must not camelCase them.
+  it('returns kept tool parts with their snake_case keys intact', async () => {
+    const editPart = {
+      type: 'tool-Edit',
+      state: 'output-available',
+      input: { file_path: '/repo/src/a.ts', old_string: 'x', new_string: 'y' },
+    };
+    getSubChatByIdMock.mockResolvedValue({
+      id: 'sub-1',
+      chatId: 'chat-1',
+      messages: [
+        { id: 'u1', role: 'user', metadata: {} },
+        { id: 'a1', role: 'assistant', metadata: { sdkMessageUuid: 'sdk-1' }, parts: [editPart] },
+        { id: 'u2', role: 'user', metadata: {} },
+      ],
+    });
+
+    const result = await callRollback({ subChatId: 'sub-1', userMessageId: 'u2', mode: 'chat' });
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect((result.messages[1] as { parts: unknown[] }).parts).toEqual([editPart]);
+  });
+
   it('uses preceding assistant sdkMessageUuid as git checkpoint for chat-and-code', async () => {
     getSubChatByIdMock.mockResolvedValue({
       id: 'sub-1',
