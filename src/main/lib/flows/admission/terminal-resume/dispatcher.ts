@@ -3,8 +3,12 @@ import { listNodeRunsForFlowRun } from '../../../db/repos/node-runs';
 import { dispatchAndAdvance, loadRunContext } from '../../advance';
 import { emitRunStarted } from '../../event-emit';
 import { findNodeById } from '../../graph';
+import {
+  type SiblingBranchResumeTarget,
+  siblingBranchResumeTargets,
+} from '../../rerun/fan-out-lane-resume';
 import { lastUnfinishedNodeRun, resolveRerunStartNode } from '../../rerun/resume-point';
-import { readRunFence } from '../../transitions';
+import { type RunFence, readRunFence } from '../../transitions';
 import { registerTerminalFlowResumeDispatcher, requestTerminalFlowResume } from '../runtime';
 import type { TerminalFlowResumeIntent } from './resume-store';
 
@@ -19,6 +23,8 @@ type TerminalResumeTarget = {
     laneIndex: number;
     parentFanOutNodeRunId: string;
   };
+  /** The other branches of the anchor's Fan Out item, re-dispatched with it so the barrier can close. */
+  siblings: SiblingBranchResumeTarget[];
 };
 
 /**
@@ -46,7 +52,8 @@ export async function resolveTerminalResumeTarget(
           parentFanOutNodeRunId: anchor.parentFanOutNodeRunId,
         }
       : undefined;
-  return { ctx, node, nodeRunId: anchor.id, fanOutScope };
+  const siblings = fanOutScope ? siblingBranchResumeTargets(ctx.graph, attempts, anchor) : [];
+  return { ctx, node, nodeRunId: anchor.id, fanOutScope, siblings };
 }
 
 export async function retryTerminalFlowRun(db: Db, flowRunId: string): Promise<boolean> {
@@ -56,6 +63,30 @@ export async function retryTerminalFlowRun(db: Db, flowRunId: string): Promise<b
   // re-instructed. The deliberate re-run surfaces (flows.rerunRun) omit the flag.
   await requestTerminalFlowResume({ flowRunId, nodeRunId: target.nodeRunId, continuation: true });
   return true;
+}
+
+/** Re-dispatch the anchor and, inside a Fan Out item, every sibling branch it must finish beside.
+ * Only the anchor continues its session; siblings were swept mid-step and are re-instructed. */
+export async function dispatchTerminalResumeTarget(
+  fence: RunFence,
+  target: TerminalResumeTarget,
+  continuation: boolean,
+): Promise<void> {
+  // allSettled: the caller settles the ticket once this returns, so no branch may still be advancing.
+  const results = await Promise.allSettled([
+    dispatchAndAdvance(fence, target.node, undefined, target.ctx, undefined, {
+      resumeKind: continuation ? 'continuation' : 'redispatch',
+      ...target.fanOutScope,
+    }),
+    ...target.siblings.map((sibling) =>
+      dispatchAndAdvance(fence, sibling.node, sibling.previousOutput, target.ctx, undefined, {
+        resumeKind: 'redispatch',
+        ...target.fanOutScope,
+      }),
+    ),
+  ]);
+  const rejected = results.find((result) => result.status === 'rejected');
+  if (rejected) throw rejected.reason;
 }
 
 async function dispatchAdmittedTerminalResume(
@@ -74,10 +105,7 @@ async function dispatchAdmittedTerminalResume(
   const fence = readRunFence(db, intent.flow_run_id, ticket);
   if (!fence) return;
   emitRunStarted(target.ctx.meta, intent.flow_run_id);
-  await dispatchAndAdvance(fence, target.node, undefined, target.ctx, undefined, {
-    resumeKind: intent.continuation ? 'continuation' : 'redispatch',
-    ...target.fanOutScope,
-  });
+  await dispatchTerminalResumeTarget(fence, target, intent.continuation === true);
 }
 
 registerTerminalFlowResumeDispatcher(dispatchAdmittedTerminalResume);
