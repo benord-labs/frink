@@ -12,6 +12,7 @@ import {
 } from '../../claude/ask-user-question-approval';
 import { captureMainException } from '../../sentry/init';
 import { sendMessage, sendStop } from '../../socket';
+import { readCommandOutput } from '../../socket/command-output';
 import { prewarmClaudeSession } from '../../socket/execution/claude-session/prewarm';
 import { stopBackgroundTask } from '../../socket/execution/claude-session/stop-background-task';
 import { listWakeHolds } from '../../socket/execution/wake-hold-registry-view';
@@ -93,6 +94,11 @@ export const socketRouter = router({
   getWorkflowProgress: publicProcedure
     .input(z.object({ subChatId: z.string().min(1), taskId: z.string().min(1) }))
     .query(({ input }) => readWorkflowProgress(input.subChatId, input.taskId)),
+
+  /** A running command's latest output, pulled every second only while the user watches it. */
+  getCommandOutput: publicProcedure
+    .input(z.object({ subChatId: z.string().min(1), commandId: z.string().min(1) }))
+    .query(({ input }) => readCommandOutput(input.subChatId, input.commandId)),
 
   listPendingPermissionRequests: publicProcedure.query(() => [
     ...listPendingPermissionRequests(),

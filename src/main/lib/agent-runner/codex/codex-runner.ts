@@ -34,6 +34,7 @@ import { ChunkQueue } from './chunk-queue';
 import { type CodexApprovalCheck, registerApprovalHandlers } from './codex-approvals';
 import { getCodexCliMissingMessage, resolveCodexBinary } from './codex-binary';
 import { extractFileChangeItem, type FileChange, mapNotificationToChunks } from './codex-events';
+import { type CodexCommandOutputs, recordCodexCommandOutput } from './command-output';
 import { setCodexLiveTurn } from './codex-live-turn';
 import { completeTurnChunks, makeChunkSink } from './codex-stream-chunks';
 import { buildCodexMcpBinding } from './mcp';
@@ -140,10 +141,13 @@ function registerStreamHandlers(
   queue: ChunkQueue,
   onChunk: (chunk: UIMessageChunk) => void,
   fileChangeCache: Map<string, FileChange[]>,
+  commandOutputs: CodexCommandOutputs,
 ): void {
   for (const method of STREAM_METHODS) {
     sub.onNotification(method, (raw) => {
       traceNotification(method, raw);
+      // Before the chunks, so the command's card already has output to read when it mounts.
+      recordCodexCommandOutput(commandOutputs, method, raw);
       // Cache the per-file paths off the fileChange item so the matching approval
       // request (which carries only itemId + grantRoot) can gate on real paths.
       if (method === 'item/started') {
@@ -257,6 +261,7 @@ async function openTurn(
   openTextIds: Set<string>,
   thinking: ThinkingEmitter,
   fileChangeCache: Map<string, FileChange[]>,
+  commandOutputs: CodexCommandOutputs,
 ): Promise<{
   threadId: string;
   turnId: string;
@@ -279,7 +284,13 @@ async function openTurn(
       }
     };
     registerApprovalHandlers(s, gatedCheckApproval, fileChangeCache);
-    registerStreamHandlers(s, queue, makeChunkSink(queue, openTextIds, thinking), fileChangeCache);
+    registerStreamHandlers(
+      s,
+      queue,
+      makeChunkSink(queue, openTextIds, thinking),
+      fileChangeCache,
+      commandOutputs,
+    );
   };
   const openOn = async (threadId: string, prompt: string) => {
     const sub = client.forThread(threadId);
@@ -404,6 +415,8 @@ export async function* runCodexAgent(
   // Per-turn (generator-local) cache of fileChange paths for approval gating; fresh
   // per invocation, so a resumed thread never reads stale paths from a prior turn.
   const fileChangeCache = new Map<string, FileChange[]>();
+  // Per-turn too: published on the live turn below, so it goes when the turn does.
+  const commandOutputs: CodexCommandOutputs = new Map();
   // Connection-level close/error are multi-listener: register up front so a crash
   // ends THIS turn even if the thread subscription isn't wired yet.
   const closeDisposers = registerCloseHandlers(client, queue);
@@ -422,6 +435,7 @@ export async function* runCodexAgent(
       openTextIds,
       thinking,
       fileChangeCache,
+      commandOutputs,
     );
     identity.threadId = opened.threadId;
     identity.turnId = opened.turnId;
@@ -439,6 +453,7 @@ export async function* runCodexAgent(
       turnId: opened.turnId,
       pushChunk: (chunk) => queue.push(chunk),
       hasOpenApproval: opened.hasOpenApproval,
+      commandOutputs,
     });
 
     // Surface the thread id as the resumable session id.

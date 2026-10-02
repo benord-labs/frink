@@ -19,6 +19,11 @@ type StopTaskResult =
   | { ok: false; reason: 'ended' | 'last' | 'timeout' }
   | { ok: false; reason: 'failed'; message: string };
 const workflowProgressQuery = vi.fn((_input: unknown) => ({ data: null }));
+const commandOutputQuery = vi.fn(
+  (_input: unknown): { data: { runningForMs: number | null; text: string | null } | null } => ({
+    data: { runningForMs: 192_000, text: 'PASS a.test\nPASS b.test' },
+  }),
+);
 const stopTaskMutate = vi.fn();
 let stopTaskPending = false;
 let stopTaskOnSuccess: ((result: StopTaskResult) => void) | undefined;
@@ -40,6 +45,7 @@ vi.mock('../../../lib/trpc', () => ({
         },
       },
       getWorkflowProgress: { useQuery: (input: unknown) => workflowProgressQuery(input) },
+      getCommandOutput: { useQuery: (input: unknown, _opts?: unknown) => commandOutputQuery(input) },
       stopBackgroundTask: {
         useMutation: (opts?: { onSuccess?: (result: StopTaskResult) => void }) => {
           stopTaskOnSuccess = opts?.onSuccess;
@@ -106,6 +112,7 @@ describe('RunStatusRows', () => {
     stopTaskPending = false;
     stopTaskOnSuccess = undefined;
     workflowProgressQuery.mockClear();
+    commandOutputQuery.mockClear();
   });
   afterEach(cleanup);
 
@@ -283,7 +290,9 @@ describe('RunStatusRows', () => {
     renderRows();
     openList();
 
-    expect(within(screen.getByRole('list')).getAllByRole('button')).toHaveLength(1);
+    expect(within(screen.getByRole('list')).getAllByRole('button', { name: /^Stop / })).toHaveLength(
+      1,
+    );
     expect(screen.getByText('Stop all ends everything still running.')).toBeInTheDocument();
   });
 
@@ -293,7 +302,7 @@ describe('RunStatusRows', () => {
     renderRows({ flowSurfaceOwnsStop: true });
     openList();
 
-    expect(within(screen.getByRole('list')).queryByRole('button')).toBeNull();
+    expect(within(screen.getByRole('list')).queryByRole('button', { name: /^Stop / })).toBeNull();
     expect(screen.getByText('The flow’s Stop ends everything still running.')).toBeInTheDocument();
   });
 
@@ -303,7 +312,7 @@ describe('RunStatusRows', () => {
     renderRows();
     openList();
 
-    for (const button of within(screen.getByRole('list')).getAllByRole('button')) {
+    for (const button of within(screen.getByRole('list')).getAllByRole('button', { name: /^Stop / })) {
       expect(button).toHaveAttribute('aria-busy', 'true');
       expect(button).toBeDisabled();
     }
@@ -332,5 +341,42 @@ describe('RunStatusRows', () => {
     openList();
 
     expect(workflowProgressQuery).toHaveBeenCalledWith({ subChatId: 'sc1', taskId: 'w1' });
+  });
+
+  it('shows a Command’s runtime and latest output once its row is opened, one row at a time', () => {
+    holdItems(
+      item('Command', 's1', { description: 'Run the tests' }),
+      item('Command', 's2', { description: 'Build the app' }),
+    );
+    renderRows();
+    openList();
+    expect(commandOutputQuery).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: /^Run the tests/ }));
+
+    expect(commandOutputQuery).toHaveBeenCalledWith({ subChatId: 'sc1', commandId: 's1' });
+    expect(screen.getByText('Running for 3m 12s')).toBeInTheDocument();
+    expect(screen.getByText(/PASS b\.test/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /^Build the app/ }));
+
+    expect(screen.getByRole('button', { name: /^Run the tests/ })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    );
+    expect(commandOutputQuery).toHaveBeenLastCalledWith({ subChatId: 'sc1', commandId: 's2' });
+  });
+
+  it('says so when a Command’s output cannot be read', () => {
+    commandOutputQuery.mockReturnValue({ data: { runningForMs: null, text: null } });
+    holdItems(item('Command', 's1', { description: 'Run the tests' }), item('Workflow', 'w1'));
+    renderRows();
+    openList();
+
+    fireEvent.click(screen.getByRole('button', { name: /^Run the tests/ }));
+
+    expect(screen.getByText('Its output isn’t available.')).toBeInTheDocument();
+    // Only a shell has output to open.
+    expect(screen.queryByRole('button', { name: /^Workflow work/ })).not.toBeInTheDocument();
   });
 });

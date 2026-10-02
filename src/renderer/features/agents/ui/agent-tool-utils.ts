@@ -74,9 +74,11 @@ function isToolCompleted(part: MessagePart): boolean {
  * OPTIMIZATION: Completed tools don't re-render on chatStatus changes.
  */
 export function areToolPropsEqual(
-  prevProps: { part: MessagePart; chatStatus?: string },
-  nextProps: { part: MessagePart; chatStatus?: string },
+  prevProps: { part: MessagePart; chatStatus?: string; subChatId?: string },
+  nextProps: { part: MessagePart; chatStatus?: string; subChatId?: string },
 ): boolean {
+  // A card whose message moved to another sub-chat must read from that sub-chat.
+  if (prevProps.subChatId !== nextProps.subChatId) return false;
   // First check if the tool data itself changed
   const partsEqual = arePartsEqual(prevProps.part, nextProps.part);
 

@@ -3,6 +3,17 @@ import type { MessagePart } from '../stores/message-store';
 import { areToolPropsEqual } from './agent-tool-utils';
 
 describe('areToolPropsEqual', () => {
+  it('re-renders a card whose message moved to another sub-chat', () => {
+    const part = { type: 'tool-Bash', state: 'input-available', toolCallId: 'c1' } as MessagePart;
+
+    expect(
+      areToolPropsEqual(
+        { part, chatStatus: 'streaming', subChatId: 'a' },
+        { part, chatStatus: 'streaming', subChatId: 'b' },
+      ),
+    ).toBe(false);
+  });
+
   describe('tool-Thinking streaming (toolCallId + input deltas)', () => {
     const thinkingStreaming = (text: string, toolCallId = 'thinking-test-1'): MessagePart => ({
       type: 'tool-Thinking',
