@@ -140,14 +140,17 @@ describe('validateRuleString — internal escapes pass through parseRule', () =>
 });
 
 describe('validateRuleString — required-tool deny block', () => {
-  it.each(['ExitPlanMode', 'TodoWrite', 'Task'])('rejects deny on required tool %s', (tool) => {
-    const r = validateRuleString(tool, 'deny');
-    expect(r.ok).toBe(false);
-    if (!r.ok) {
-      expect(r.message).toMatch(/required for the agent/i);
-      expect(r.message).toContain(tool);
-    }
-  });
+  it.each(['ExitPlanMode', 'TodoWrite', 'Task', 'SubagentHandback'])(
+    'rejects deny on required tool %s',
+    (tool) => {
+      const r = validateRuleString(tool, 'deny');
+      expect(r.ok).toBe(false);
+      if (!r.ok) {
+        expect(r.message).toMatch(/required for the agent/i);
+        expect(r.message).toContain(tool);
+      }
+    },
+  );
 
   it('allows ASK on required tool', () => {
     expect(validateRuleString('ExitPlanMode', 'ask')).toEqual({ ok: true });

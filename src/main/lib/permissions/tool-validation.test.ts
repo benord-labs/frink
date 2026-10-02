@@ -10,6 +10,7 @@ import { isPathWithinProject } from './path-check';
 import {
   extractFilePathFromToolInput,
   getOperationFromToolName,
+  isClaudePermissionGatedTool,
   remapPathForPermissionBoundary,
   resolvePermissionProjectPath,
   resolveToolPermissionPath,
@@ -280,6 +281,14 @@ describe('getOperationFromToolName — regression coverage post TOOL_OPERATIONS 
   it('treats both Task and Agent as required (deny-protected) subagent tools', () => {
     expect(REQUIRED_TOOLS.has('Task')).toBe(true);
     expect(REQUIRED_TOOLS.has('Agent')).toBe(true);
+  });
+
+  // sc-3852: the hand-back skips the permission gate entirely. Gating it would route it to the
+  // generic no-rule `ask`, holding the parent's turn on a prompt for a sub-agent's report.
+  it('keeps SubagentHandback required but out of the permission-gated and rule-target sets', () => {
+    expect(REQUIRED_TOOLS.has('SubagentHandback')).toBe(true);
+    expect(isClaudePermissionGatedTool('SubagentHandback')).toBe(false);
+    expect(getOperationFromToolName('SubagentHandback')).toBeNull();
   });
 
   it('unknown tool returns null', () => {

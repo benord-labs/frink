@@ -265,6 +265,8 @@ describe('planAutoDenyFloor', () => {
 
   it('lets REQUIRED_TOOLS through so the turn cannot brick itself', () => {
     expect(planAutoDenyFloor(true, true, false, 'ExitPlanMode')).toBeNull();
+    // A sub-agent's report hand-back is infra too — denying it loses the report (sc-3852).
+    expect(planAutoDenyFloor(true, true, false, 'SubagentHandback')).toBeNull();
   });
 
   it('does not apply off a plan-auto turn or without the abstain flag', () => {
