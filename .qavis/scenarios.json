@@ -1,0 +1,175 @@
+{
+  "version": 1,
+  "scenarios": [
+    {
+      "id": "settings-sidebar-seam",
+      "match": ["src/renderer/features/settings/SettingsPage/**"],
+      "module": ".qavis/scenarios/settings-sidebar-seam.mjs",
+      "claims": [
+        "The Settings navigation has a visible inset gutter at its right edge, with the glass panel separated from the main content instead of the gutter being clipped."
+      ]
+    },
+    {
+      "id": "plan-approval-indicator",
+      "match": [
+        "src/renderer/features/sidebar/unified/components/ChatListItem.tsx",
+        "src/renderer/features/sidebar/unified/constants.ts",
+        "src/renderer/lib/hooks/use-sidebar-pending-plan-ids.ts"
+      ],
+      "module": ".qavis/scenarios/plan-approval-indicator.mjs",
+      "claims": [
+        "The seeded plan-ready chat row uses a distinct cyan Plan icon to show that its plan awaits approval, without also showing a duplicate Plan pill."
+      ]
+    },
+    {
+      "id": "html-artifact-preview",
+      "match": [
+        "src/renderer/features/agents/HtmlArtifactCard/**",
+        "src/renderer/features/agents/HtmlArtifactChatView/**",
+        "src/renderer/features/agents/HtmlArtifactPane/**",
+        "src/renderer/features/agents/HtmlArtifactPreview/**",
+        "src/renderer/features/agents/main/assistant-message-item.tsx",
+        "src/renderer/hooks/use-html-artifact-preview.ts",
+        "src/renderer/features/flows/FlowEditor/BlockConfig/ChatReplyConfig/**",
+        "src/shared/lib/artifacts/html-artifact.ts",
+        "src/shared/types/artifacts/html-artifact.ts",
+        "src/main/lib/flows/dispatch/chat-reply.ts",
+        "src/main/windows/artifact-preview/**",
+        "src/preload/artifact-preview.ts"
+      ],
+      "module": ".qavis/scenarios/html-artifact-preview.mjs",
+      "claims": [
+        "The chat surface spans the full width of its pane, with no bare background strip beside the transcript.",
+        "The seeded assistant reply presents \u2018Customer message digest \u00b7 18\u201322 Aug\u2019 as an artifact with a Run artifact action instead of exposing raw markup.",
+        "Running the artifact expands it inside the originating assistant message, keeping the surrounding conversation visible.",
+        "The expanded artifact shows a three-theme chart and four collated customer messages: Billing 2, Onboarding 1, and Sync reliability 1.",
+        "The theme control filters the message list, and the bounded inline result remains readable without horizontal clipping."
+      ]
+    },
+    {
+      "id": "work-queue-history-filter",
+      "match": [
+        "src/renderer/features/work-queue/WorkQueue/HistoryTaskList/**",
+        "src/renderer/features/work-queue/WorkQueue/TaskActivityList/**"
+      ],
+      "module": ".qavis/scenarios/work-queue-history-filter.mjs",
+      "claims": [
+        "Completed and Cancelled rows use clearly distinct semantic badges with visible icons and labels.",
+        "The All, Completed, and Cancelled controls filter the loaded History rows without changing their chronological order."
+      ]
+    },
+    {
+      "id": "model-catalog",
+      "match": [
+        "src/shared/lib/models/**",
+        "src/shared/types/execution.ts",
+        "src/renderer/features/agents/components/model-selector.tsx",
+        "src/renderer/features/agents/components/ModelPicker/**",
+        "src/renderer/components/ui/slider.tsx",
+        "src/shared/lib/model-picker-label/**"
+      ],
+      "module": ".qavis/scenarios/model-catalog.mjs",
+      "claims": [
+        "Opening the composer's model picker shows an effort card — 'Medium ›' over 'Sonnet 4.6' above a slider — and clicking that title shows a 'Select model' list of plain rows with Fable 5.1 above Fable 5.",
+        "Choosing Fable 5.1 from the list then moving the effort slider to High updates the picker button to read 'Fable 5.1 \u00b7 High'.",
+        "Choosing Sonnet 5 from the list then moving the effort slider to High updates the picker button from 'Sonnet 4.6' to 'Sonnet 5 \u00b7 High'."
+      ]
+    },
+    {
+      "id": "plugin-node-steps",
+      "match": [
+        "src/main/lib/integrations/plugin-node-derivation/index.ts",
+        "src/renderer/features/flows/FlowEditor/BlockConfig/CustomNodeConfig/CallToolArguments/index.tsx",
+        "src/renderer/features/flows/FlowEditor/BlockConfig/CustomNodeConfig/ToolPickerField/index.tsx",
+        "src/renderer/features/flows/FlowEditor/BlockConfig/CustomNodeConfig/index.tsx",
+        "src/renderer/features/flows/FlowEditor/BlockConfig/SchemaFields/index.tsx",
+        "src/renderer/features/flows/FlowEditor/BlockConfig/TemplatableField/index.tsx",
+        "src/shared/integrations/catalog/index.ts",
+        "src/shared/integrations/plugin-nodes.ts",
+        "src/shared/lib/flows/json-schema-to-manifest-inputs.ts"
+      ],
+      "module": ".qavis/scenarios/plugin-node-steps.mjs",
+      "claims": [
+        "The selected Call any PostHog tool step shows a Tool field with no free-text box: because PostHog is not connected in this profile, the field shows the reason text and an Open Settings \u2192 Plugins button, and no Arguments section is shown.",
+        "Selecting the List PostHog errors step instead shows a multi-line text field labelled dateRange (JSON) whose placeholder is a pretty-printed JSON object, while status stays a single-line field, and below its fields a line reads Not editable here: assignee, filterGroup."
+      ]
+    },
+    {
+      "id": "command-arguments-popover",
+      "match": [
+        "src/renderer/features/agents/commands/CommandArgumentsPopover/**",
+        "src/renderer/features/agents/commands/agents-slash-command.tsx",
+        "src/shared/commands/expand-slash-command.ts",
+        "src/shared/commands/fill-command-arguments.ts"
+      ],
+      "module": ".qavis/scenarios/command-arguments-popover.mjs",
+      "claims": [
+        "Picking a Slack command that consumes $ARGUMENTS, such as slack:channel-digest, opens a popover asking for that command's arguments instead of dropping it straight into the composer.",
+        "Confirming that popover closes it and puts the command into the composer with the arguments filled in, leaving the composer ready for an ordinary message."
+      ]
+    },
+    {
+      "id": "plugin-trigger-card",
+      "match": [
+        "src/renderer/features/plugins/PluginDetail/PluginTriggers/**",
+        "src/renderer/lib/plugins/triggers/**",
+        "src/renderer/lib/plugins/use-webhook-endpoint-setup.ts"
+      ],
+      "module": ".qavis/scenarios/plugin-trigger-card.mjs",
+      "claims": [
+        "The PostHog Triggers card answers \"is this working?\" in one line at the top, with no raw webhook URL row above it.",
+        "The card lists the events Frink can start a Flow for, each with a plain sentence saying what fires it.",
+        "An event picker and a Send a test event button sit together, so one click sends a real sample event.",
+        "When Frink could not register the webhook itself, the card says so in plain words and shows the address and secret once, with nothing repeated under Advanced."
+      ]
+    },
+    {
+      "id": "interrupted-run-queued-resume",
+      "match": [
+        "src/renderer/features/agents/InterruptedRunControls/**",
+        "src/renderer/lib/agent-chat/use-composer-placeholder.ts",
+        "src/main/lib/flows/resume.ts",
+        "src/main/lib/flows/admission/terminal-resume/**"
+      ],
+      "module": ".qavis/scenarios/interrupted-run-queued-resume.mjs",
+      "claims": [
+        "Above the message box, the interrupted flow chat shows a Flow run interrupted note that reads Waiting for a free slot to resume this step, with no Resume or Re-run step button to press.",
+        "The message box placeholder says the step is waiting for a free slot and will pick up where it stopped, rather than telling the user to press a button."
+      ]
+    },
+    {
+      "id": "easter-egg-logo-long-press",
+      "match": [
+        "src/renderer/hooks/use-easter-eggs.ts",
+        "src/renderer/hooks/use-logo-dodge.ts",
+        "src/renderer/components/EasterEggOverlay/**",
+        "src/renderer/components/FloatingBadge.tsx",
+        "src/renderer/features/sidebar/unified/components/SidebarHeader/index.tsx"
+      ],
+      "module": ".qavis/scenarios/easter-egg-logo-long-press.mjs",
+      "claims": [
+        "The screen is a full-black overlay showing one large coloured Frink logo drifting across it, DVD-screensaver style, with no sidebar or app chrome visible. The long press that opens it was already performed during preparation; do not click or hold anything."
+      ]
+    },
+    {
+      "id": "sidebar-batch-member-delete",
+      "match": ["src/renderer/features/sidebar/unified/hooks/use-sidebar-chat-cache.ts"],
+      "module": ".qavis/scenarios/sidebar-batch-member-delete.mjs",
+      "claims": [
+        "Choosing 'Delete chat permanently' in the open menu of 'Batch member A' removes that row from the expanded 'Batch QA flow' group straight away, with no leftover grey row, while 'Batch member B' stays listed."
+      ]
+    },
+    {
+      "id": "work-queue-exit-menu",
+      "match": [
+        "src/renderer/features/work-queue/WorkQueue/ActionMenu/**"
+      ],
+      "module": ".qavis/scenarios/work-queue-exit-menu.mjs",
+      "claims": [
+        "The Interrupted row's more-actions menu offers Cancel and offers no Delete and no Dismiss.",
+        "The paused (needs attention) row's more-actions menu offers Mark complete and Cancel, and no Dismiss.",
+        "Choosing Cancel on the Interrupted row removes it from Needs attention, and View task history then lists it as Cancelled."
+      ]
+    }
+  ]
+}
