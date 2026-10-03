@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import log from 'electron-log';
 import matter from 'gray-matter';
 import { stringify as stringifyToml } from 'smol-toml';
-import { TOOL_OPERATIONS } from '../../../../shared/types/permissions';
+import { PATH_TOOLS, TOOL_OPERATIONS } from '../../../../shared/types/permissions';
 import { ensureDirExistsAsync } from '../../fs-helpers';
 import type { CategoryHandler } from './types';
 import { frinkUserHome } from '../../platform/frink-home';
@@ -115,14 +115,22 @@ async function discoverUserAgents(dirs: AgentDir[]): Promise<SourceAgent[]> {
  * might need more. No `tools` field = unrestricted = never readonly.
  */
 function isDeclaredReadOnly(data: Record<string, unknown>): boolean {
-  const tools =
-    typeof data.tools === 'string'
-      ? data.tools.split(',').map((t) => t.trim())
-      : Array.isArray(data.tools)
-        ? (data.tools as string[])
-        : null;
+  const tools = declaredToolList(data.tools);
   if (!tools || tools.length === 0) return false;
   return tools.every((t) => TOOL_OPERATIONS[t] === 'read');
+}
+
+/** A frontmatter tool list in either shape authors write it: `Read, Grep` or a YAML array. */
+function declaredToolList(value: unknown): string[] | null {
+  if (typeof value === 'string') return value.split(',').map((t) => t.trim());
+  return Array.isArray(value) ? (value as string[]) : null;
+}
+
+/** Whether a read-only sandbox already forbids everything `disallowedTools` names: file mutations
+ * only. `Bash`, `Task` and the like are write-class too, but still run there, so they do not count. */
+function sandboxCoversDisallowed(data: Record<string, unknown>): boolean {
+  const disallowed = declaredToolList(data.disallowedTools) ?? [];
+  return disallowed.every((t) => PATH_TOOLS.has(t) && TOOL_OPERATIONS[t] !== 'read');
 }
 
 /**
@@ -183,7 +191,7 @@ function renderCodexRoleToml(agent: SourceAgent): CodexRole {
   const instructions = agent.body.trim();
   if (typeof description !== 'string' || !description.trim()) return { skip: 'no description' };
   if (!instructions) return { skip: 'no instructions' };
-  const readOnly = isDeclaredReadOnly(agent.data);
+  const readOnly = isDeclaredReadOnly(agent.data) && sandboxCoversDisallowed(agent.data);
   const restricted = agent.data.tools !== undefined || agent.data.disallowedTools !== undefined;
   if (restricted && !readOnly) return { skip: 'tool limits Codex cannot enforce' };
   const role = {
