@@ -114,6 +114,31 @@ describe('deliverAgentBrain (PCH-4)', () => {
       expect(existsSync(path.join(codexDir(), 'writer.toml'))).toBe(false);
     });
 
+    // The sandbox is Codex's only lever: it stands in for a denied file edit and nothing else.
+    it.each([
+      ['a read-class tool', 'tools: Read, Grep, WebFetch\ndisallowedTools: WebFetch'],
+      ['a tool it also allows', 'tools: Read\ndisallowedTools: Read'],
+      ['an MCP tool', 'tools: Read, Grep\ndisallowedTools: mcp__github__get_issue'],
+      ['Bash, which a read-only sandbox still runs', 'tools: Read, Grep\ndisallowedTools: Bash'],
+      ['sub-agent dispatch', 'tools: Read, Grep\ndisallowedTools: Task'],
+    ])('refuses a read-only agent that also disallows %s', async (_label, limits) => {
+      await fs.writeFile(
+        path.join(claudeDir(), 'picky.md'),
+        `---\nname: picky\ndescription: d\n${limits}\n---\n\nBody.\n`,
+      );
+      await deliverAgentBrain({ mode: 'copy', ctx });
+      expect(existsSync(path.join(codexDir(), 'picky.toml'))).toBe(false);
+    });
+
+    it('still delivers a read-only agent whose disallowed tools the sandbox already blocks', async () => {
+      await fs.writeFile(
+        path.join(claudeDir(), 'careful.md'),
+        '---\nname: careful\ndescription: d\ntools: Read, Grep\ndisallowedTools: [Edit, Write, MultiEdit, NotebookEdit, Delete]\n---\n\nBody.\n',
+      );
+      await deliverAgentBrain({ mode: 'copy', ctx });
+      expect(await readRole('careful.toml')).toMatchObject({ sandbox_mode: 'read-only' });
+    });
+
     it('skips agents Codex would reject (no description)', async () => {
       await fs.writeFile(path.join(claudeDir(), 'bare.md'), '---\nname: bare\n---\n\nBody.\n');
       await deliverAgentBrain({ mode: 'copy', ctx });

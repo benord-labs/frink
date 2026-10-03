@@ -227,6 +227,8 @@ Things to know:
 
 On **Cursor** there is no per-tool veto, so the limit relaxes to the closest thing Cursor understands: an agent whose `tools` are all read-class follows as a `readonly` agent. Anything finer-grained than read-only doesn't carry to Cursor — the full limit applies again whenever the agent runs on a tool that can enforce it.
 
+On **Codex** there is no per-tool allowlist either, and Frink never hands Codex a limit it can't hold. An agent whose `tools` are all read-class is delivered as a Codex role locked to the `read-only` sandbox (any `disallowedTools` it adds must be file-editing tools — `Edit`, `Write`, `MultiEdit`, `NotebookEdit`, `Delete` — which that sandbox already blocks). An agent with any other limit — a `tools` list that includes a write-class tool, `disallowedTools` on its own, or a disallowed tool the sandbox can't stop, such as `Bash`, a read tool or an MCP tool — is **not delivered to Codex at all**, rather than delivered unrestricted; it stays available on Claude. If a custom agent is missing in Codex, check whether it has tool limits Codex can't enforce.
+
 > Note: `disallowedTools` was previously accepted in agent files but not passed through to the runtime — it is now enforced. If an agent suddenly loses a tool, check its frontmatter.
 
 ## Inspecting + cleaning up
