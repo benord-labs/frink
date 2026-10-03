@@ -154,7 +154,7 @@ describe('checkBash — substitution and eval-like heads ask; a prefix rule neve
     expect(r).toMatchObject({ decision: 'deny', reason: { kind: 'safety:path' } });
   });
 
-  it('a multi-line exact-only sub gets no exact suggestion (renderer fallback instead)', () => {
+  it('a multi-line exact-only sub gets no exact suggestion (persistence hidden)', () => {
     const r = checkBash({ command: 'echo "$(cat <<EOF\nx\nEOF\n)"' }, EMPTY_DOCS, root);
     expect(r).toMatchObject({ decision: 'ask' });
     if (r.decision !== 'ask') return;
@@ -857,5 +857,112 @@ describe('checkBash — a command the tokenizer cannot read stays approvable', (
     expect(validateRuleString(offered[0], 'allow')).toMatchObject({ ok: true });
     const docs = { policy: noRules, project: { ...noRules, allow: offered }, user: noRules };
     expect(checkBash({ command }, docs, root)).toEqual({ decision: 'allow' });
+  });
+});
+
+describe('checkBash — never offers a :* rule for an exact-only sub (sc-3416)', () => {
+  const ask = (command: string) => {
+    const r = checkBash({ command }, EMPTY_DOCS, root);
+    expect(r.decision).toBe('ask');
+    return r.decision === 'ask' ? r.prompt : undefined;
+  };
+
+  it.each([
+    ['multi-line exact-only', 'sudo npm install && echo "$(cat <<EOF\nx\nEOF\n)"'],
+    ['truncated-signature exact-only', 'sudo npm install && grep foo src/*/x.ts'],
+  ])('wrapper beside an unmintable %s sub hides persistence instead of the fallback', (_n, cmd) => {
+    expect(ask(cmd)?.suggestedRules).toEqual([]);
+  });
+
+  it('a wrapper alone still leaves suggestions unset for the card fallback', () => {
+    expect(ask('sudo npm install')?.suggestedRules).toBeUndefined();
+  });
+
+  it.each([
+    ['truncated signature', 'npm test && grep foo src/*/x.ts'],
+    ['multi-line', 'npm test\necho $HOME'],
+  ])('a prefix sub beside an unmintable %s sub keeps only its live prefix rule', (_n, cmd) => {
+    const rules = ask(cmd)?.suggestedRules ?? [];
+    expect(rules).toContain('Bash(npm test:*)');
+    expect(rules.some((rule) => /^Bash\((grep|echo)\b/.test(rule))).toBe(false);
+  });
+
+  it('over-50 cap skips exact-only subs when suggesting prefix rules', () => {
+    const cmd = [...Array(51).fill('true'), 'echo $HOME'].join(' ; ');
+    const prompt = ask(cmd);
+    expect(prompt?.reason).toBe('over-50-subcommands');
+    expect(prompt?.suggestedRules).toContain('Bash(true:*)');
+    expect(prompt?.suggestedRules?.some((rule) => rule.startsWith('Bash(echo'))).toBe(false);
+  });
+
+  it('over-50 cap of only exact-only subs offers no rule (persistence hidden)', () => {
+    const prompt = ask(Array(55).fill('echo $HOME').join(' ; '));
+    expect(prompt?.reason).toBe('over-50-subcommands');
+    expect(prompt?.suggestedRules).toEqual([]);
+  });
+});
+
+describe('checkBash — sc-3416 edge cases', () => {
+  const ask = (command: string, docs = EMPTY_DOCS) => {
+    const r = checkBash({ command }, docs, root);
+    expect(r.decision).toBe('ask');
+    return r.decision === 'ask' ? r.prompt : undefined;
+  };
+  const allowing = (rule: string) => ({
+    policy: noRules,
+    project: { ...noRules, allow: [rule] },
+    user: noRules,
+  });
+
+  it.each([
+    ['trailing LF', 'echo $HOME\n'],
+    ['trailing CRLF', 'echo $HOME\r\n'],
+    ['leading LF', '\necho $HOME'],
+  ])(
+    'a single-line command with a %s still mints its exact rule, which matches on replay',
+    (_n, cmd) => {
+      expect(ask(cmd)?.suggestedRules).toEqual(['Bash(echo $HOME)']);
+      expect(checkBash({ command: cmd }, allowing('Bash(echo $HOME)'), root).decision).toBe(
+        'allow',
+      );
+    },
+  );
+
+  it('wrapper beside an exact-only sub whose text ends in the wildcard shape hides persistence', () => {
+    expect(ask('sudo npm install && echo $HOME *')?.suggestedRules).toEqual([]);
+  });
+
+  it('an exact-only sub already allowed by its exact rule does not hide the wrapper fallback', () => {
+    const prompt = ask('sudo npm install && echo $HOME', allowing('Bash(echo $HOME)'));
+    expect(prompt?.suggestedRules).toBeUndefined();
+  });
+
+  it('over-50 cap skips metachar-directory, unsafe-env and eval-like subs too', () => {
+    const cmd = [...Array(51).fill('true'), 'grep foo src/*/x.ts', 'FOO=1 npm test', 'eval ls'];
+    expect(ask(cmd.join(' ; '))?.suggestedRules).toEqual(['Bash(true:*)']);
+  });
+
+  it('over-50 cap still reads past value-taking flags (git -C <dir> push)', () => {
+    const cmd = [...Array(51).fill('true'), 'git -C /tmp/x push origin main'].join(' ; ');
+    expect(ask(cmd)?.suggestedRules).toContain('Bash(git push:*)');
+  });
+
+  // Integration: suggestion → persisted rule → matcher. A dead rule is one that,
+  // once persisted, changes nothing and is offered again.
+  it.each([
+    'echo $HOME',
+    'npm test && grep foo src/*/x.ts',
+    'npm test\necho $HOME',
+    'npm test && echo $HOME',
+    'git status && echo "$(date)" | head -1',
+    'cat > /tmp/a.json << \'EOF\'\n{"x":1}\nEOF',
+  ])('every rule offered for %j has an effect once persisted', (cmd) => {
+    for (const rule of ask(cmd)?.suggestedRules ?? []) {
+      const after = checkBash({ command: cmd }, allowing(rule), root);
+      if (after.decision === 'allow') continue;
+      expect(after.decision).toBe('ask');
+      if (after.decision !== 'ask') continue;
+      expect(after.prompt.suggestedRules ?? []).not.toContain(rule);
+    }
   });
 });
