@@ -17,8 +17,9 @@ const connection = {
   route: pairing.route,
   key: pairing.key,
   token: 'b'.repeat(43),
-  deviceId: 'phone',
+  deviceId: '00000000-0000-4000-8000-000000000001',
   machineName: 'Studio Mac',
+  pairedAt: 1,
 };
 const transport = vi.mocked(relayRequest);
 const reply = (value: unknown, status = 200) => ({
@@ -47,7 +48,10 @@ describe('mobile API boundary', () => {
   });
   it('pairs through the pinned target and stores no invitation in the saved connection', async () => {
     transport.mockResolvedValue(reply({ ...connection, apiVersion: 3 }));
-    expect(await pairComputer(JSON.stringify(pairing), 'My iPhone')).toEqual(connection);
+    expect(await pairComputer(JSON.stringify(pairing), 'My iPhone')).toEqual({
+      ...connection,
+      pairedAt: expect.any(Number),
+    });
     expect(transport).toHaveBeenCalledWith(
       pairing,
       '/pair',

@@ -9,6 +9,7 @@ export async function pushToken(): Promise<string> {
 export function onTokenChanged(_refresh: () => void) {
   return () => {};
 }
+export function setShownComputer(_deviceId: string | null) {}
 export function onNotificationOpened(_open: (data: unknown) => void) {
   return () => {};
 }

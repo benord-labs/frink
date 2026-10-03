@@ -1,5 +1,5 @@
 import { View } from 'react-native';
-import { ArrowLeftRight, ChevronLeft, Laptop, ShieldCheck, X } from 'lucide-react-native';
+import { ArrowLeftRight, ChevronLeft, Laptop, RefreshCw, ShieldCheck, X } from 'lucide-react-native';
 import { Button, IconButton } from '../../../ui/button';
 import { Text } from '../../../ui/text';
 import { radius, space, useTheme } from '../../../ui/theme';
@@ -7,13 +7,15 @@ import { Field } from '../Field';
 import { Notice } from '../Notice';
 
 /**
- * Names the Mac a code points at before anything is sent to it. `replacing` is the other Mac this
- * iPhone already uses; `onCancel` closes the sheet a pairing link opened over the app.
+ * Names the Mac a code points at before anything is sent to it. `onCancel` closes the sheet a
+ * pairing link opened over the app.
  */
 export function ConfirmStep({
   host,
   name,
-  replacing,
+  overlap,
+  keepBoth,
+  onKeepBoth,
   deviceName,
   busy,
   failure,
@@ -24,7 +26,10 @@ export function ConfirmStep({
 }: {
   host: string;
   name: string;
-  replacing?: string;
+  /** How the code relates to a computer already paired, if at all. */
+  overlap?: 'repair' | 'namesake';
+  keepBoth: boolean;
+  onKeepBoth: (keepBoth: boolean) => void;
   deviceName: string;
   busy: boolean;
   failure: string | null;
@@ -77,14 +82,7 @@ export function ConfirmStep({
       />
       <View style={{ flex: 1, minHeight: space.lg }} />
       <View style={{ gap: space.lg }}>
-        {replacing && (
-          <Notice
-            icon={ArrowLeftRight}
-            tone="attention"
-            title={`This replaces ${replacing}`}
-            detail="This iPhone stops using it once you connect."
-          />
-        )}
+        <OverlapNotice name={name} overlap={overlap} keepBoth={keepBoth} onKeepBoth={onKeepBoth} />
         {failure && <Notice title="Couldn’t connect" detail={failure} />}
         <View style={{ flexDirection: 'row', gap: space.sm, alignItems: 'center' }}>
           <ShieldCheck size={18} color={t.muted} />
@@ -96,6 +94,51 @@ export function ConfirmStep({
           {busy ? 'Connecting…' : 'Connect'}
         </Button>
       </View>
+    </View>
+  );
+}
+
+const REPAIR = (name: string) => ({
+  icon: RefreshCw,
+  title: `Re-pairs ${name}`,
+  detail: 'This iPhone updates its saved pairing for this computer.',
+  toggle: null,
+});
+const REPLACE = (name: string) => ({
+  icon: ArrowLeftRight,
+  title: `Replaces your other ${name}`,
+  detail: 'A computer gets a new code when its mobile access is reset, so the old pairing no longer works.',
+  toggle: 'Keep both',
+});
+const KEEP_BOTH = (name: string) => ({
+  icon: ArrowLeftRight,
+  title: `Keeps both ${name} pairings`,
+  detail: 'Both stay in your list of computers.',
+  toggle: 'Replace it instead',
+});
+
+/** Says how this code relates to a computer already paired; a same-named one can be kept too. */
+function OverlapNotice({
+  name,
+  overlap,
+  keepBoth,
+  onKeepBoth,
+}: {
+  name: string;
+  overlap?: 'repair' | 'namesake';
+  keepBoth: boolean;
+  onKeepBoth: (keepBoth: boolean) => void;
+}) {
+  if (!overlap) return null;
+  const copy = overlap === 'repair' ? REPAIR(name) : (keepBoth ? KEEP_BOTH : REPLACE)(name);
+  return (
+    <View style={{ gap: space.xs }}>
+      <Notice icon={copy.icon} tone="attention" title={copy.title} detail={copy.detail} />
+      {copy.toggle && (
+        <Button variant="plain" small onPress={() => onKeepBoth(!keepBoth)}>
+          {copy.toggle}
+        </Button>
+      )}
     </View>
   );
 }

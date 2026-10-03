@@ -1,27 +1,69 @@
 import { beforeEach, expect, it, vi } from 'vitest';
-const store = vi.hoisted(() => ({ getItemAsync: vi.fn(), setItemAsync: vi.fn() }));
+const keychain = vi.hoisted(() => ({ values: new Map<string, string>(), locked: false }));
 const platform = vi.hoisted(() => ({ OS: 'ios' }));
-vi.mock('expo-secure-store', () => store);
 vi.mock('react-native', () => ({ Platform: platform }));
-import { markTurnedOn, turnOnByDefault } from './default-on';
+vi.mock('expo-secure-store', () => ({
+  getItemAsync: async (key: string) => {
+    if (keychain.locked) throw new Error('keychain locked');
+    return keychain.values.get(key) ?? null;
+  },
+  setItemAsync: async (key: string, value: string) => void keychain.values.set(key, value),
+}));
+import { forgetTurnedOn, markTurnedOn, turnOnByDefault } from './default-on';
+
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 beforeEach(() => {
-  vi.resetAllMocks();
+  keychain.values.clear();
+  keychain.locked = false;
   platform.OS = 'ios';
-  store.setItemAsync.mockResolvedValue(undefined);
 });
-it('turns alerts on once per pairing, so turning them off sticks', async () => {
-  store.getItemAsync.mockResolvedValue(null);
-  expect(await turnOnByDefault('phone')).toBe(true);
-  markTurnedOn('phone');
-  expect(store.setItemAsync).toHaveBeenCalledWith('frink.mobile.alerts-on.v1', 'phone');
-  store.getItemAsync.mockResolvedValue('phone');
-  expect(await turnOnByDefault('phone')).toBe(false);
-  expect(await turnOnByDefault('phone-paired-to-another-mac')).toBe(true);
+
+it('turns alerts on once per computer, so switching back never re-enables them', async () => {
+  expect(await turnOnByDefault('a')).toBe(true);
+  markTurnedOn('a');
+  await settle();
+  expect(await turnOnByDefault('a')).toBe(false);
+  expect(await turnOnByDefault('b')).toBe(true);
+  markTurnedOn('b');
+  await settle();
+  expect(await turnOnByDefault('a')).toBe(false);
+  expect(await turnOnByDefault('b')).toBe(false);
 });
+
+it('a forgotten computer turns its alerts on again when paired anew', async () => {
+  markTurnedOn('a');
+  await settle();
+  forgetTurnedOn('a');
+  await settle();
+  expect(await turnOnByDefault('a')).toBe(true);
+});
+
 it('never asks from a browser preview or when the choice can’t be read', async () => {
-  store.getItemAsync.mockRejectedValue(new Error('keychain locked'));
-  expect(await turnOnByDefault('phone')).toBe(false);
+  keychain.locked = true;
+  expect(await turnOnByDefault('a')).toBe(false);
+  keychain.locked = false;
   platform.OS = 'web';
-  store.getItemAsync.mockResolvedValue(null);
-  expect(await turnOnByDefault('phone')).toBe(false);
+  expect(await turnOnByDefault('a')).toBe(false);
+});
+
+it('two computers turned on at once both stick', async () => {
+  markTurnedOn('a');
+  markTurnedOn('b');
+  await settle();
+  await settle();
+  expect(await turnOnByDefault('a')).toBe(false);
+  expect(await turnOnByDefault('b')).toBe(false);
+});
+
+it('an unreadable stored value counts as none and is repaired by the next change', async () => {
+  keychain.values.set('frink.mobile.alerts-on.v2', '[');
+  expect(await turnOnByDefault('a')).toBe(true);
+  markTurnedOn('a');
+  await settle();
+  expect(await turnOnByDefault('a')).toBe(false);
+});
+
+it('a choice still being saved is what a quick switch back reads', async () => {
+  markTurnedOn('a');
+  expect(await turnOnByDefault('a')).toBe(false);
 });

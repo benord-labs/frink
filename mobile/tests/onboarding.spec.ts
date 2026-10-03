@@ -1,10 +1,22 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
-import { fixtureHost, openApp, pairingCode, pairingLinkPath } from './fixtures/app';
+import {
+  computers,
+  corsHeaders as cors,
+  fixtureHost,
+  openApp,
+  pairingCode,
+  pairingLinkPath,
+} from './fixtures/app';
+import { ROUTE_HEADER } from './fixtures/relay';
 
-const cors = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'content-type,authorization',
-};
+const OVERLAP = /Re-pairs|Replaces your other|Keeps both/;
+/** The Camera link for the second computer, as if scanned from its Settings → Mobile. */
+const secondLink = () =>
+  pairingLinkPath(fixtureHost, {
+    route: computers.second.route,
+    key: computers.second.key,
+    machine: computers.second.machineName,
+  });
 const shot = (page: Page, state: string, scheme = 'dark') =>
   page.screenshot({ path: `test-results/onboarding-${state}-${scheme}.png` });
 
@@ -55,7 +67,7 @@ test('a pairing link opens straight onto confirming the Mac, and connects only o
   });
   await openApp(page, { paired: false, path: pairingLinkPath() });
   await expect(page.getByRole('heading', { name: 'Connect to mobile-fixture?' })).toBeVisible();
-  await expect(page.getByText(/This replaces/)).toHaveCount(0);
+  await expect(page.getByText(OVERLAP)).toHaveCount(0);
   await shot(page, 'link-confirm');
   expect(pairs).toBe(0);
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
@@ -63,24 +75,57 @@ test('a pairing link opens straight onto confirming the Mac, and connects only o
   await expect(page.getByTestId('tab-queue')).toBeVisible();
 });
 
-test('a pairing link on a paired iPhone asks before replacing its Mac', async ({ page }) => {
-  await openApp(page, { path: pairingLinkPath('https://studio-mac.example.test') });
-  await expect(page.getByRole('heading', { name: 'Connect to studio-mac?' })).toBeVisible();
-  await expect(page.getByText("This replaces Benji's MacBook Pro")).toBeVisible();
+test('a pairing link on a paired iPhone adds the computer and keeps the first', async ({ page }) => {
+  await openApp(page, { path: secondLink() });
+  await expect(page.getByRole('heading', { name: 'Connect to Studio Mac?' })).toBeVisible();
+  await expect(page.getByText(OVERLAP)).toHaveCount(0);
   await page.waitForTimeout(500); // the sheet's slide-in
-  await shot(page, 'link-replace');
-  await page.getByRole('button', { name: 'Cancel' }).click();
+  await shot(page, 'link-add');
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
   await expect(page.getByTestId('tab-queue')).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Connect to studio-mac?' })).toHaveCount(0);
+  await page.getByTestId('tab-settings').click();
+  const list = page.getByTestId('settings-computers');
+  await expect(list.getByText("Benji's MacBook Pro")).toBeVisible();
+  // The newly added computer is the one shown.
+  await expect(list.getByLabel('Studio Mac, shown')).toBeVisible();
 });
 
-test('a new link from the Mac already in use does not warn about replacing it', async ({ page }) => {
+test('Cancel on a pairing link keeps the app as it was', async ({ page }) => {
+  await openApp(page, { path: secondLink() });
+  await expect(page.getByRole('heading', { name: 'Connect to Studio Mac?' })).toBeVisible();
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  await expect(page.getByTestId('tab-queue')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Connect to Studio Mac?' })).toHaveCount(0);
+});
+
+test('a new link from a computer already paired re-pairs it', async ({ page }) => {
   await openApp(page, { path: pairingLinkPath() });
   await expect(page.getByRole('heading', { name: 'Connect to mobile-fixture?' })).toBeVisible();
-  await expect(page.getByText(/This replaces/)).toHaveCount(0);
+  await expect(page.getByText('Re-pairs mobile-fixture')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Cancel' })).toBeVisible();
   await page.waitForTimeout(500); // the sheet's slide-in
   await shot(page, 'link-same-mac');
+});
+
+test('a reset computer with the same name replaces its old pairing unless both are kept', async ({
+  page,
+}) => {
+  const resetLink = pairingLinkPath('https://reset.example.test', {
+    machine: computers.first.machineName,
+  });
+  await openApp(page, { path: resetLink });
+  await expect(page.getByText("Replaces your other Benji's MacBook Pro")).toBeVisible();
+  await page.waitForTimeout(500); // the sheet's slide-in
+  await shot(page, 'link-namesake');
+  await page.getByRole('button', { name: 'Keep both' }).click();
+  await expect(page.getByText("Keeps both Benji's MacBook Pro pairings")).toBeVisible();
+  await page.getByRole('button', { name: 'Replace it instead' }).click();
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await expect(page.getByTestId('tab-queue')).toBeVisible();
+  await page.getByTestId('tab-settings').click();
+  await expect(
+    page.getByTestId('settings-computers').getByText("Benji's MacBook Pro"),
+  ).toHaveCount(1);
 });
 
 test('a broken pairing link says what is wrong', async ({ page }) => {
@@ -162,6 +207,47 @@ test('a revoked iPhone lands back on pairing with the reason', async ({ page }) 
   ).toBeVisible();
   await expect(page.getByTestId('tab-queue')).toHaveCount(0);
   await shot(page, 'revoked');
+});
+
+test('a revoked computer is dropped even when this iPhone can’t store that', async ({ page }) => {
+  await openApp(page);
+  await expect(page.getByTestId('tab-queue')).toBeVisible();
+  await page.evaluate(() => {
+    Storage.prototype.setItem = () => {
+      throw new Error('storage full');
+    };
+  });
+  await page.route(`${fixtureHost}/api`, (route) =>
+    route.request().method() === 'OPTIONS'
+      ? route.fulfill({ status: 204, headers: cors })
+      : route.fulfill({ status: 401, headers: cors, json: { error: 'Access was revoked.' } }),
+  );
+  await page.clock.runFor(3500);
+  await expect(page.getByText('This iPhone was disconnected')).toBeVisible();
+  await expect(page.getByTestId('tab-queue')).toHaveCount(0);
+});
+
+test('a computer that revokes this iPhone is dropped, naming it, and the next one is shown', async ({
+  page,
+}) => {
+  await openApp(page, { second: true });
+  await expect(page.getByTestId('tab-queue')).toBeVisible();
+  await page.route(`${fixtureHost}/api`, (route) =>
+    route.request().method() === 'OPTIONS'
+      ? route.fulfill({ status: 204, headers: cors })
+      : route.request().headers()[ROUTE_HEADER] === computers.first.route
+        ? route.fulfill({ status: 401, headers: cors, json: { error: 'Access was revoked.' } })
+        : route.fallback(),
+  );
+  const notice = page.waitForEvent('dialog');
+  await page.clock.runFor(3500);
+  const dialog = await notice;
+  expect(dialog.message()).toMatch(/^Benji's MacBook Pro stopped accepting this iPhone/);
+  await dialog.accept();
+  await page.getByTestId('tab-settings').click();
+  const list = page.getByTestId('settings-computers');
+  await expect(list.getByText('Studio Mac')).toBeVisible();
+  await expect(list.getByText("Benji's MacBook Pro")).toHaveCount(0);
 });
 
 test('the scanner offers the paste fallback when the camera is unavailable', async ({ page }) => {

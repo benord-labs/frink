@@ -24,8 +24,10 @@ export const connectionSchema = mobilePairingSchema
   .pick({ relay: true, route: true, key: true })
   .extend({
     token: z.string().min(32),
-    deviceId: z.string().min(1),
+    // A UUID minted by the desktop; it also names this computer's key in SecureStore.
+    deviceId: z.uuid(),
     machineName: z.string().min(1),
+    pairedAt: z.number().int(),
   });
 export type Connection = z.infer<typeof connectionSchema>;
 
@@ -89,7 +91,7 @@ export async function pairComputer(text: string, name: string): Promise<Connecti
   const result = await jsonPost(pairing, '/pair', { code: pairing.code, name });
   if (result.apiVersion !== MOBILE_API_VERSION)
     throw new Error('Update Frink on your Mac and this iPhone so they match.');
-  return connectionSchema.parse({ ...pairing, ...result });
+  return connectionSchema.parse({ ...pairing, ...result, pairedAt: Date.now() });
 }
 
 export async function requestMobile<T extends MobileRequest>(

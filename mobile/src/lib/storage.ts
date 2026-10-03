@@ -1,27 +1,26 @@
 import * as SecureStore from 'expo-secure-store';
-import { connectionSchema, type Connection } from './api';
+import type { Computers } from './computers';
+import { computerSaver, readComputers, type KeyValue } from './computer-store';
 
-const KEY = 'frink.mobile.connection.v1';
-export async function readConnection(): Promise<Connection | null> {
-  const saved = await SecureStore.getItemAsync(KEY);
-  if (!saved) return null;
-  let value: unknown;
-  try {
-    value = JSON.parse(saved);
-  } catch {
-    await SecureStore.deleteItemAsync(KEY);
-    return null;
-  }
-  const parsed = connectionSchema.safeParse(value);
-  if (!parsed.success) {
-    await SecureStore.deleteItemAsync(KEY);
-    return null;
-  }
-  return parsed.data;
+const keychain: KeyValue = {
+  get: (key) => SecureStore.getItemAsync(key),
+  set: (key, value) =>
+    SecureStore.setItemAsync(key, value, {
+      keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+    }),
+  remove: (key) => SecureStore.deleteItemAsync(key),
+};
+
+// Single-computer builds kept one pairing and one alerts flag; neither is carried over, and the
+// computer is scanned again once.
+const SINGLE_COMPUTER_KEYS = ['frink.mobile.connection.v1', 'frink.mobile.alerts-on.v1'];
+
+export async function readSavedComputers(): Promise<Computers> {
+  // Best effort: a failed cleanup must not keep the saved computers from loading.
+  await Promise.all(SINGLE_COMPUTER_KEYS.map((key) => keychain.remove(key).catch(() => undefined)));
+  return readComputers(keychain);
 }
-export async function saveConnection(value: Connection | null): Promise<void> {
-  if (!value) return SecureStore.deleteItemAsync(KEY);
-  await SecureStore.setItemAsync(KEY, JSON.stringify(value), {
-    keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-  });
+/** Saves later states of the computers just read, one at a time. */
+export function savingComputers(stored: Computers) {
+  return computerSaver(keychain, stored);
 }

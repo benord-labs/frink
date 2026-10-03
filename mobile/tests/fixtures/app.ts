@@ -1,14 +1,33 @@
 import type { Page, Request } from '@playwright/test';
 import type { MobileResponses } from '@frink/shared/types/remote/mobile';
-import { fixtureKey, fixtureRoute, mockRelay } from './relay';
+import { ROUTE_HEADER, fixtureKey, fixtureRoute, mockRelay, secondKey, secondRoute } from './relay';
 import { NOW, previewData } from './data';
 
 export const fixtureHost = 'https://mobile-fixture.example.test';
-const headers = {
+export const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers':
-    'content-type,authorization,x-frink-chat,x-frink-sub-chat,x-frink-filename',
+  'Access-Control-Allow-Headers': `content-type,authorization,x-frink-chat,x-frink-sub-chat,x-frink-filename,${ROUTE_HEADER}`,
 };
+
+/** The two computers a test can pair: the default one, and a second to switch to. */
+export const computers = {
+  first: {
+    relay: fixtureHost,
+    key: fixtureKey,
+    route: fixtureRoute,
+    deviceId: '00000000-0000-4000-8000-000000000001',
+    machineName: "Benji's MacBook Pro",
+  },
+  second: {
+    relay: fixtureHost,
+    key: secondKey,
+    route: secondRoute,
+    deviceId: '00000000-0000-4000-8000-000000000002',
+    machineName: 'Studio Mac',
+  },
+};
+const computerFor = (route: string | undefined) =>
+  route === secondRoute ? computers.second : computers.first;
 
 type Input = Record<string, unknown> & { type: keyof MobileResponses };
 export type AppState = {
@@ -84,12 +103,15 @@ export async function openApp(
   {
     data = {},
     paired = true,
+    second = false,
     path = '/',
     respond,
     notifications = { enabled: false, error: null },
   }: {
     data?: AppState['data'];
     paired?: boolean;
+    /** Also pair the second computer; the first stays the one shown. */
+    second?: boolean;
     path?: string;
     respond?: AppState['respond'];
     notifications?: AppState['notifications'];
@@ -108,52 +130,47 @@ export async function openApp(
   await mockRelay(page, fixtureHost);
   if (paired)
     await page.addInitScript(
-      ({ relay, key, route }) => {
+      (saved) => {
         sessionStorage.setItem(
-          'frink.mobile.connection',
-          JSON.stringify({
-            relay,
-            key,
-            route,
-            token: 'b'.repeat(43),
-            deviceId: 'device-1',
-            machineName: "Benji's MacBook Pro",
-          }),
+          'frink.mobile.computers.v2',
+          JSON.stringify({ selected: saved[0].deviceId, ids: saved.map((c) => c.deviceId) }),
         );
+        for (const computer of saved)
+          sessionStorage.setItem(
+            `frink.mobile.computer.${computer.deviceId}`,
+            JSON.stringify({ ...computer, token: 'b'.repeat(43), pairedAt: Date.UTC(2026, 8, 1) }),
+          );
       },
-      { relay: fixtureHost, key: fixtureKey, route: fixtureRoute },
+      second ? [computers.first, computers.second] : [computers.first],
     );
   await page.route(`${fixtureHost}/**`, async (route) => {
     const request = route.request();
-    if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
+    if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: corsHeaders });
     if (state.offline) return route.abort('connectionreset');
-    if (request.url().endsWith('/pair'))
+    if (request.url().endsWith('/pair')) {
+      const { deviceId, machineName } = computerFor(request.headers()[ROUTE_HEADER]);
       return route.fulfill({
-        headers,
-        json: {
-          token: 'b'.repeat(43),
-          deviceId: 'device-1',
-          machineName: "Benji's MacBook Pro",
-          apiVersion: 3,
-        },
+        headers: corsHeaders,
+        json: { token: 'b'.repeat(43), deviceId, machineName, apiVersion: 3 },
       });
+    }
     if (request.url().endsWith('/api/attachments'))
-      return route.fulfill({ headers, json: { data: recordUpload(request, state.requests) } });
+      return route.fulfill({ headers: corsHeaders, json: { data: recordUpload(request, state.requests) } });
     if (request.url().endsWith('/api/notifications')) {
       const alert = request.postDataJSON() as { token?: string | null };
       state.alerts.push(alert);
       if (alert.token !== undefined) state.notifications = { enabled: !!alert.token, error: null };
-      return route.fulfill({ headers, json: { data: state.notifications } });
+      return route.fulfill({ headers: corsHeaders, json: { data: state.notifications } });
     }
     const input = request.postDataJSON() as Input;
     state.requests.push(input);
     const custom = state.respond?.(input);
     if (custom instanceof Error)
-      return route.fulfill({ status: 409, headers, json: { error: custom.message } });
-    if (custom !== undefined) return route.fulfill({ headers, json: { data: custom } });
+      return route.fulfill({ status: 409, headers: corsHeaders, json: { error: custom.message } });
+    if (custom !== undefined) return route.fulfill({ headers: corsHeaders, json: { data: custom } });
     const saved = applyComposerChange(state.data.composer as ComposerLike, input);
-    if (saved) return route.fulfill({ headers, json: { data: saved } });
-    return route.fulfill({ headers, json: { data: state.data[input.type] ?? { ok: true } } });
+    if (saved) return route.fulfill({ headers: corsHeaders, json: { data: saved } });
+    return route.fulfill({ headers: corsHeaders, json: { data: state.data[input.type] ?? { ok: true } } });
   });
   await page.goto(path);
   return state;
@@ -168,6 +185,12 @@ export const pairingCode = () =>
     machine: 'mobile-fixture',
     code: 'a'.repeat(43),
   });
-/** The web preview's stand-in for opening the Camera's pairing link. */
-export const pairingLinkPath = (url = fixtureHost) =>
-  `/pair?${new URLSearchParams({ relay: fixtureHost, route: url === fixtureHost ? fixtureRoute : 'd'.repeat(64), key: fixtureKey, machine: new URL(url).hostname.split('.')[0], code: 'a'.repeat(43), v: '3' })}`;
+/**
+ * The web preview's stand-in for opening the Camera's pairing link. Another `url` points at a
+ * different route; `pairing` overrides fields, such as the second computer's route and key.
+ */
+export const pairingLinkPath = (
+  url = fixtureHost,
+  pairing: { route?: string; key?: string; machine?: string } = {},
+) =>
+  `/pair?${new URLSearchParams({ relay: fixtureHost, route: url === fixtureHost ? fixtureRoute : 'd'.repeat(64), key: fixtureKey, machine: new URL(url).hostname.split('.')[0], code: 'a'.repeat(43), ...pairing, v: '3' })}`;

@@ -2,14 +2,26 @@ import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
 import { AppState } from 'react-native';
 
-// An alert that arrives while Frink is open stays in Notification Center without a banner.
+let shownComputer: string | null = null;
+/** The paired computer the app is showing; its alerts stay quiet while Frink is open. */
+export function setShownComputer(deviceId: string | null) {
+  shownComputer = deviceId;
+}
+
+// An alert that arrives while Frink is open stays in Notification Center without a banner, unless
+// it comes from a paired computer other than the one on screen.
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: AppState.currentState !== 'active',
-    shouldShowList: true,
-    shouldPlaySound: AppState.currentState !== 'active',
-    shouldSetBadge: false,
-  }),
+  handleNotification: async (notification) => {
+    const from = notification.request.content.data?.deviceId;
+    const elsewhere = typeof from === 'string' && from !== shownComputer;
+    const quiet = AppState.currentState === 'active' && !elsewhere;
+    return {
+      shouldShowBanner: !quiet,
+      shouldShowList: true,
+      shouldPlaySound: !quiet,
+      shouldSetBadge: false,
+    };
+  },
 });
 
 /** Whether alerts are allowed; only `ask` shows the system prompt. Provisional counts as allowed. */

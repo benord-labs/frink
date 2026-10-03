@@ -3,7 +3,7 @@ vi.mock('../api', () => ({ requestNotifications: vi.fn() }));
 vi.mock('./device', () => ({ permission: vi.fn(), pushToken: vi.fn() }));
 import { requestNotifications, type Connection } from '../api';
 import { permission, pushToken } from './device';
-import { mayStartUpdate, reconcileRegistration } from './registration';
+import { mayStartUpdate, reconcileRegistration, releaseAlerts } from './registration';
 const host = {
   relay: 'https://relay.example.test',
   route: 'a'.repeat(64),
@@ -87,4 +87,12 @@ it('starts no refresh or tap while the Mac is being forgotten', () => {
   expect(mayStartUpdate(undefined, { inFlight: true, forgetting: false })).toBe(false);
   expect(mayStartUpdate(true, { inFlight: true, forgetting: false })).toBe(true);
   expect(mayStartUpdate(undefined, { inFlight: false, forgetting: false })).toBe(true);
+});
+
+it('releases a superseded pairing’s alerts, and skips an unreachable one', async () => {
+  request.mockResolvedValue({ enabled: false, error: null });
+  await releaseAlerts(host);
+  expect(request).toHaveBeenCalledWith(host, { token: null }, expect.any(AbortSignal));
+  request.mockRejectedValue(new Error('unreachable'));
+  await expect(releaseAlerts(host)).resolves.toBeUndefined();
 });

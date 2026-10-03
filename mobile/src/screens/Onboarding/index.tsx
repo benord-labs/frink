@@ -3,7 +3,9 @@ import { useEffect, useState } from 'react';
 import { KeyboardAvoidingView, Platform, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { pairComputer } from '../../lib/api';
+import { pairingOverlap, replacedComputer } from '../../lib/computers';
 import { useConnection } from '../../lib/connection';
+import { releaseAlerts } from '../../lib/notifications/registration';
 import { Atmosphere } from '../../ui/material';
 import { space } from '../../ui/theme';
 import { ConfirmStep } from './ConfirmStep';
@@ -14,12 +16,14 @@ import { Scanner } from './Scanner';
 type Target = { text: string; host: string; name: string; route: string; key: string };
 
 /**
- * Pairing, shown whenever no Mac is saved or a pairing link opens the app. Connect hands over a
- * code (scan, paste or link); Confirm names the Mac it points at before anything is sent. Rendered
- * outside navigation, so it owns its insets.
+ * Pairing, shown when no computer is saved, a pairing link opens the app, or Settings adds a
+ * computer. Connect hands over a code (scan, paste or link); Confirm names the computer it points
+ * at before anything is sent. Rendered outside navigation, so it owns its insets.
  */
+// Reason: One screen owns the code's source (scan, paste, link), its confirmation and the pairing request.
+// fallow-ignore-next-line complexity
 export function Onboarding({ link, onDone }: { link: string | null; onDone: () => void }) {
-  const { connect, connection, error: disconnected } = useConnection();
+  const { connect, connection, computers, error: disconnected } = useConnection();
   // Over an existing connection this is a sheet, so it closes rather than steps back.
   const cancel = connection ? onDone : undefined;
   const insets = useSafeAreaInsets();
@@ -30,10 +34,13 @@ export function Onboarding({ link, onDone }: { link: string | null; onDone: () =
   const [deviceName, setDeviceName] = useState('My iPhone');
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  const [keepBoth, setKeepBoth] = useState(false);
   const pasted = readPairing(code);
+  const overlap = pairingOverlap(computers, target && { ...target, machine: target.name });
 
   function choose(text: string) {
     const read = readPairing(text);
+    setKeepBoth(false);
     if (read.ok) setTarget(read);
     return read.ok;
   }
@@ -65,8 +72,13 @@ export function Onboarding({ link, onDone }: { link: string | null; onDone: () =
       setBusy(false);
       return;
     }
+    const replaced = replacedComputer(overlap, keepBoth);
     try {
-      await connect(next);
+      await connect(next, replaced?.deviceId);
+      // Once the new pairing is stored: the computer keeps the old one as a separate device, so
+      // its alerts stop now; if storing failed, the old pairing stays with its alerts.
+      if (replaced) void releaseAlerts(replaced);
+      setBusy(false);
       onDone();
     } catch {
       setFailure(
@@ -107,11 +119,9 @@ export function Onboarding({ link, onDone }: { link: string | null; onDone: () =
               host={target.host}
               name={target.name}
               deviceName={deviceName}
-              replacing={
-                connection && (connection.route !== target.route || connection.key !== target.key)
-                  ? connection.machineName
-                  : undefined
-              }
+              overlap={overlap?.kind}
+              keepBoth={keepBoth}
+              onKeepBoth={setKeepBoth}
               busy={busy}
               failure={failure}
               onDeviceName={setDeviceName}

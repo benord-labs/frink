@@ -13,6 +13,7 @@ import { Text } from '../../ui/text';
 import { GUTTER, space, useTheme } from '../../ui/theme';
 import { Card } from './card';
 import { confirmForget } from './confirm-forget';
+import { Computers } from './Computers';
 import { MacIdentity } from './MacIdentity';
 import { Notifications } from './Notifications';
 import { macStatus, sourceLine } from './settings-view';
@@ -39,6 +40,9 @@ export function SettingsScreen() {
           name={overview.data?.machineName ?? connection?.machineName ?? 'Your Mac'}
           status={macStatus(overview)}
         />
+        <Group title="Computers">
+          <Computers />
+        </Group>
         <Group title="Notifications">
           <Notifications />
         </Group>
@@ -100,14 +104,15 @@ function Value({ children }: { children: string }) {
 
 function ForgetRow() {
   const t = useTheme();
-  const { disconnect } = useConnection();
-  const { unregister } = useNotifications();
+  const { connection, forget: forgetComputer } = useConnection();
+  const { unregister, resume } = useNotifications();
   async function forget() {
-    if (!(await confirmForget())) return;
+    if (!connection || !(await confirmForget())) return;
     // Alerts are removed before the encrypted channel closes, through the one update queue.
     await unregister();
-    // A failure to clear the Keychain is reported by the connection itself, on the pairing screen.
-    await disconnect().catch(() => undefined);
+    // A Mac that couldn't be forgotten stays, with its alerts working again; the connection
+    // reports the failure itself.
+    await forgetComputer(connection.deviceId).catch(resume);
   }
   return (
     <Pressable
