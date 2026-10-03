@@ -129,6 +129,23 @@ describe('socketRouter renderer recovery projections', () => {
     await expect(caller.listRunningSubagentTasks()).resolves.toEqual([]);
   });
 
+  it('lists the live background roster a reloaded renderer seeds the row from', async () => {
+    __resetSubagentTaskStatusForTest();
+    const caller = socketRouter.createCaller({ getWindow: () => null } satisfies Context);
+    noteSubagentTaskFrame('sub-1', {
+      type: 'system',
+      subtype: 'background_tasks_changed',
+      tasks: [{ task_id: 'b1', task_type: 'local_bash', description: 'npm test' }],
+    } as unknown as Parameters<typeof noteSubagentTaskFrame>[1]);
+
+    await expect(caller.listBackgroundRosters()).resolves.toEqual([
+      {
+        subChatId: 'sub-1',
+        tasks: [{ id: 'b1', type: 'local_bash', description: 'npm test', ambient: false }],
+      },
+    ]);
+  });
+
   it('augments the live seed with only this sub-chat pending questions', async () => {
     pendingToolApprovals.set('tool-1', {
       subChatId: 'sub-1',

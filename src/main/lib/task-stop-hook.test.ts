@@ -405,6 +405,22 @@ describe('createTaskStopHook', () => {
     expect(hook.droppedFollower).toBe(false);
   });
 
+  it('reports every Stop’s dropped followers, so the display roster hides them too', async () => {
+    const onDroppedFollowers = vi.fn();
+    const hook = createTaskStopHook({
+      hasSignal: () => true,
+      isAborted: () => false,
+      onDroppedFollowers,
+    });
+    await hook(
+      stopInput({ background_tasks: [follower('tail1', 'ship9'), shell('b2', 'sleep 60')] }),
+    );
+    expect(onDroppedFollowers).toHaveBeenLastCalledWith(new Set(['tail1']));
+
+    await hook(stopInput({ background_tasks: [shell('b2', 'sleep 60')] }));
+    expect(onDroppedFollowers).toHaveBeenLastCalledWith(new Set());
+  });
+
   it('drops the observed real-world follower verbatim', async () => {
     // Captured from a chat that advertised a wait for 28 minutes after its ship had finished.
     const observed = shell(

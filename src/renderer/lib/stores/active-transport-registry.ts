@@ -11,6 +11,7 @@
 import { atom } from 'jotai';
 import { atomFamily } from 'jotai/utils';
 import type { WakeHoldState } from '../../../shared/types/wake-hold';
+import type { BackgroundRosterTask } from '../../../shared/types/wake-hold/subagent-task';
 
 /**
  * subChatId → listener cleanup fn (`closeStream` also closes the owned stream on teardown). The
@@ -68,6 +69,12 @@ export const wakeHeldAtomFamily = atomFamily((_subChatId: string) =>
  * by `useWakeHoldSync`, alongside {@link wakeHeldAtomFamily}. */
 export const heldSubChatsAtom = atom<ReadonlyMap<string, string>>(new Map<string, string>());
 export const heldChatIdsAtom = atom((get) => new Set(get(heldSubChatsAtom).values()));
+
+/** The sub-chat's live background tasks ('socket:background-tasks-changed'), in every phase; null =
+ * unknown. Display-only — what the background-work row lists, never whether a wait has ended. */
+export const backgroundRosterAtomFamily = atomFamily((_subChatId: string) =>
+  atom<BackgroundRosterTask[] | null>(null),
+);
 
 /** True while a follow-up turn runs on an adopted hold, so its Stop also ends the background work.
  * Set by an 'adopted' retraction; cleared by the sub-chat's next wake-hold frame or turn finish. */

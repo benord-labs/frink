@@ -5,8 +5,12 @@ import { createStore, Provider } from 'jotai';
 import type { ReactElement, ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TooltipProvider } from '../../../components/ui/tooltip';
-import { wakeHeldAtomFamily } from '../../../lib/stores/active-transport-registry';
+import {
+  backgroundRosterAtomFamily,
+  wakeHeldAtomFamily,
+} from '../../../lib/stores/active-transport-registry';
 import type { WakeHoldItem } from '../../../../shared/types/wake-hold';
+import type { BackgroundRosterTask } from '../../../../shared/types/wake-hold/subagent-task';
 import { RunStatusRows } from './index';
 
 const sendStopMutate = vi.fn();
@@ -45,7 +49,9 @@ vi.mock('../../../lib/trpc', () => ({
         },
       },
       getWorkflowProgress: { useQuery: (input: unknown) => workflowProgressQuery(input) },
-      getCommandOutput: { useQuery: (input: unknown, _opts?: unknown) => commandOutputQuery(input) },
+      getCommandOutput: {
+        useQuery: (input: unknown, _opts?: unknown) => commandOutputQuery(input),
+      },
       stopBackgroundTask: {
         useMutation: (opts?: { onSuccess?: (result: StopTaskResult) => void }) => {
           stopTaskOnSuccess = opts?.onSuccess;
@@ -74,17 +80,18 @@ const Wrapper = ({ children }: { children: ReactNode }) => (
 );
 const render = (ui: ReactElement) => rtlRender(ui, { wrapper: Wrapper });
 
-const renderRows = (opts?: { chatId?: string | null; flowSurfaceOwnsStop?: boolean }) =>
-  render(
-    <RunStatusRows
-      subChatId="sc1"
-      pinnedTaskId={null}
-      chatId={opts?.chatId === undefined ? 'c1' : opts.chatId}
-      guardedSend={() => true}
-      isTurnActive={false}
-      flowSurfaceOwnsStop={opts?.flowSurfaceOwnsStop ?? false}
-    />,
-  );
+type RowOpts = { chatId?: string | null; flowSurfaceOwnsStop?: boolean; isTurnActive?: boolean };
+const rows = (opts?: RowOpts) => (
+  <RunStatusRows
+    subChatId="sc1"
+    pinnedTaskId={null}
+    chatId={opts?.chatId === undefined ? 'c1' : opts.chatId}
+    guardedSend={() => true}
+    isTurnActive={opts?.isTurnActive ?? false}
+    flowSurfaceOwnsStop={opts?.flowSurfaceOwnsStop ?? false}
+  />
+);
+const renderRows = (opts?: RowOpts) => render(rows(opts));
 
 const item = (label: string, id = label, extra: Partial<WakeHoldItem> = {}): WakeHoldItem => ({
   id,
@@ -96,6 +103,10 @@ const item = (label: string, id = label, extra: Partial<WakeHoldItem> = {}): Wak
 const holdItems = (...waitingOn: WakeHoldItem[]) =>
   store.set(wakeHeldAtomFamily('sc1'), { waitingOn });
 const hold = (...labels: string[]) => holdItems(...labels.map((label, i) => item(label, `t${i}`)));
+const task = (id: string, type: string, description: string, ambient = false) =>
+  ({ id, type, description, ambient }) satisfies BackgroundRosterTask;
+const setRoster = (...tasks: BackgroundRosterTask[]) =>
+  store.set(backgroundRosterAtomFamily('sc1'), tasks);
 const openList = () =>
   fireEvent.click(screen.getByRole('button', { name: /Working in the background/ }));
 
@@ -136,35 +147,86 @@ describe('RunStatusRows', () => {
     expect(screen.queryByTestId('interrupted-controls')).not.toBeInTheDocument();
   });
 
-  it('steps aside while a wake burst streams, and returns when it settles', () => {
-    hold('Command');
-    const { rerender } = render(
-      <RunStatusRows
-        subChatId="sc1"
-        pinnedTaskId={null}
-        chatId="c1"
-        guardedSend={() => true}
-        isTurnActive
-        flowSurfaceOwnsStop={false}
-      />,
-    );
+  // A Monitor relaying events wakes the session every few seconds; hiding the row per burst made it
+  // blink, and a row that vanishes while the agent speaks reads as "the work ended".
+  it('stays on screen through a wake burst, handing its Stops to the composer', () => {
+    hold('Command', 'Command');
+    const { rerender } = renderRows({ isTurnActive: true });
 
-    expect(screen.queryByText(/Working in the background/)).not.toBeInTheDocument();
+    expect(screen.getByText('Working in the background — 2 Commands')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Stop all background work' })).toBeNull();
+    openList();
+    expect(within(screen.getByRole('list')).queryByRole('button', { name: /^Stop / })).toBeNull();
     // Still held, so the end-of-run rows stay away too.
     expect(screen.queryByTestId('accept-bar')).not.toBeInTheDocument();
 
-    rerender(
-      <RunStatusRows
-        subChatId="sc1"
-        pinnedTaskId={null}
-        chatId="c1"
-        guardedSend={() => true}
-        isTurnActive={false}
-        flowSurfaceOwnsStop={false}
-      />,
-    );
+    rerender(rows());
+    expect(screen.getByRole('button', { name: 'Stop all background work' })).toBeInTheDocument();
+  });
 
-    expect(screen.getByText(/Working in the background/)).toBeInTheDocument();
+  it('drops a finished item the moment the live roster does, ahead of the next snapshot', () => {
+    holdItems(item('Command', 't0', { description: 'Ship the PR' }), item('Monitor', 'm1'));
+    setRoster(task('m1', 'local_bash', 'Monitor work'));
+    renderRows();
+
+    expect(screen.getByText('Working in the background — Monitor work')).toBeInTheDocument();
+  });
+
+  it('lists work started since the last snapshot, with no row Stop main could not honour', () => {
+    hold('Command', 'Command');
+    setRoster(
+      task('t0', 'local_bash', 'a'),
+      task('t1', 'local_bash', 'b'),
+      task('n1', 'local_bash', 'Re-ship'),
+    );
+    renderRows();
+    openList();
+
+    const list = within(screen.getByRole('list'));
+    expect(list.getByText('Re-ship')).toBeInTheDocument();
+    expect(list.getAllByRole('button', { name: /^Stop / })).toHaveLength(2);
+  });
+
+  it('never lists an ambient task on its own', () => {
+    setRoster(task('w1', 'local_bash', 'live-update watcher', true));
+    renderRows({ isTurnActive: true });
+
+    expect(screen.queryByText(/Working in the background/)).not.toBeInTheDocument();
+  });
+
+  // A follow-up adopts the hold (main retracts it), yet the Workflow it was waiting on is still live.
+  it('keeps live work on screen through a turn that is not held', () => {
+    setRoster(task('w1', 'local_workflow', 'Code reduction'));
+    const { rerender } = renderRows({ isTurnActive: true });
+
+    expect(screen.getByText('Working in the background — Code reduction')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Stop/ })).toBeNull();
+    // Not held, so the end-of-run rows stay mounted: the Resume row's lock tracks this turn.
+    expect(screen.getByTestId('interrupted-controls')).toBeInTheDocument();
+
+    // Idle and not held is a finished turn: its end-of-run rows, not a row nobody can stop.
+    rerender(rows());
+    expect(screen.queryByText(/Working in the background/)).not.toBeInTheDocument();
+    expect(screen.getByTestId('accept-bar')).toBeInTheDocument();
+  });
+
+  // The settling wake has not run yet: the Stop must stay, but the finished task must not be listed.
+  it('keeps a held, idle row and its Stop after the roster emptied, without listing finished work', () => {
+    hold('Command');
+    setRoster();
+    renderRows();
+
+    expect(screen.getByText('Working in the background — Finishing up')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Stop waiting on background work' }),
+    ).toBeInTheDocument();
+  });
+
+  it('names a single item by what it is doing, so a new command never reads as the old one', () => {
+    holdItems(item('Command', 't0', { description: 'Ship the QA rig PR' }));
+    renderRows();
+
+    expect(screen.getByText('Working in the background — Ship the QA rig PR')).toBeInTheDocument();
   });
 
   it('names what the wait is blocked on, aggregated by kind', () => {
@@ -290,9 +352,9 @@ describe('RunStatusRows', () => {
     renderRows();
     openList();
 
-    expect(within(screen.getByRole('list')).getAllByRole('button', { name: /^Stop / })).toHaveLength(
-      1,
-    );
+    expect(
+      within(screen.getByRole('list')).getAllByRole('button', { name: /^Stop / }),
+    ).toHaveLength(1);
     expect(screen.getByText('Stop all ends everything still running.')).toBeInTheDocument();
   });
 
@@ -312,7 +374,9 @@ describe('RunStatusRows', () => {
     renderRows();
     openList();
 
-    for (const button of within(screen.getByRole('list')).getAllByRole('button', { name: /^Stop / })) {
+    for (const button of within(screen.getByRole('list')).getAllByRole('button', {
+      name: /^Stop /,
+    })) {
       expect(button).toHaveAttribute('aria-busy', 'true');
       expect(button).toBeDisabled();
     }
