@@ -23,17 +23,19 @@ type Alerts = AlertState & {
   set: (enabled: boolean) => void;
   /** Removes this iPhone's alerts before the Mac is forgotten; no refresh can re-register after. */
   unregister: () => Promise<void>;
+  /** Undoes `unregister`'s hold when the Mac could not be forgotten after all. */
+  resume: () => void;
 };
 const Context = createContext<Alerts | null>(null);
 
 /** Turns alerts off on the Mac, giving up after a moment: forgetting must work when it is away. */
 async function removeBeforeForget(
-  update: (desired: false, forget: true) => Promise<boolean>,
-  active: { current: AbortController | null },
+  update: (desired: false, forget: AbortController) => Promise<boolean>,
 ): Promise<void> {
-  const timeout = setTimeout(() => active.current?.abort(), UNREGISTER_WAIT_MS);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), UNREGISTER_WAIT_MS);
   try {
-    await update(false, true);
+    await update(false, controller);
   } finally {
     clearTimeout(timeout);
   }
@@ -50,24 +52,29 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   const [pending, setPending] = useState<boolean | null>(null);
   const active = useRef<AbortController | null>(null);
   const forgetting = useRef<Promise<void> | null>(null);
+  const shown = useRef(connection);
+  shown.current = connection;
   const update = useCallback(
     /** Whether this update reached the Mac. Only the forget's own removal runs while forgetting. */
-    async (desired?: boolean, forget = false): Promise<boolean> => {
+    async (desired?: boolean, forget?: AbortController): Promise<boolean> => {
       const state = { inFlight: active.current !== null, forgetting: forgetting.current !== null };
       if (!connection || (!forget && !mayStartUpdate(desired, state))) return false;
-      // A tap wins over a background refresh still in flight.
+      // A tap or a Forget wins over a background refresh still in flight.
       active.current?.abort();
-      const controller = new AbortController();
-      active.current = controller;
+      // A Forget's removal owns its controller, so nothing else (a switch included) cancels it.
+      const controller = forget ?? new AbortController();
+      if (!forget) active.current = controller;
       if (desired !== undefined) setPending(desired);
+      // A late answer, success or failure, from a computer no longer shown never touches its state.
+      const stale = () => controller.signal.aborted || shown.current !== connection;
       try {
         const next = await reconcileRegistration(connection, desired, controller.signal);
-        if (controller.signal.aborted) return false;
+        if (stale()) return false;
         setState(next);
         return true;
       } catch (cause) {
         // Only a tap reports a failed update; an unreachable Mac already shows as offline.
-        if (!controller.signal.aborted && desired !== undefined)
+        if (!stale() && desired !== undefined)
           setState((old) => ({
             ...old,
             error: cause instanceof ApiError ? cause.message : SETUP_FAILED,
@@ -82,7 +89,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   );
   const unregister = useCallback(() => {
     // A second Forget joins the removal already running instead of cancelling it.
-    forgetting.current ??= removeBeforeForget(update, active);
+    forgetting.current ??= removeBeforeForget(update);
     return forgetting.current;
   }, [update]);
   useEffect(() => {
@@ -98,7 +105,9 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     });
     const stopTokens = onTokenChanged(() => void update());
     return () => {
+      // Released at once, so the next computer's first refresh isn't refused as one in flight.
       active.current?.abort();
+      active.current = null;
       appState.remove();
       stopTokens();
     };
@@ -109,6 +118,11 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     busy: pending !== null,
     set: (enabled) => void update(enabled),
     unregister,
+    resume: () => {
+      forgetting.current = null;
+      setPending(null);
+      void update();
+    },
   };
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }

@@ -17,6 +17,12 @@ import {
 const desktop = generateDesktopKeyPair();
 export const fixtureKey = encodeKey(desktop.publicKey);
 export const fixtureRoute = 'c'.repeat(64);
+/** A second paired computer, for switching between computers. */
+const secondDesktop = generateDesktopKeyPair();
+export const secondKey = encodeKey(secondDesktop.publicKey);
+export const secondRoute = 'e'.repeat(64);
+/** Every request the mock relay forwards names the route the phone dialled. */
+export const ROUTE_HEADER = 'x-fixture-route';
 
 /** Actual phone crypto + Socket.IO framing; only the desktop's domain HTTP responses are mocked. */
 export async function mockRelay(page: Page, origin: string) {
@@ -24,6 +30,7 @@ export async function mockRelay(page: Page, origin: string) {
     const encoder = new Encoder();
     const decoder = new Decoder();
     let session: ChannelSession | undefined;
+    let route = fixtureRoute;
     const requests = new Map<
       number,
       { path: string; headers: Record<string, string>; chunks: number[] }
@@ -45,15 +52,15 @@ export async function mockRelay(page: Page, origin: string) {
       requests.delete(part.id);
       void page
         .evaluate(
-          async ({ origin, request }) => {
+          async ({ origin, request, route }) => {
             const response = await fetch(`${origin}${request.path}`, {
               method: 'POST',
-              headers: request.headers,
+              headers: { ...request.headers, 'x-fixture-route': route },
               body: new Uint8Array(request.chunks),
             });
             return { status: response.status, body: await response.text() };
           },
-          { origin, request },
+          { origin, request, route },
         )
         .then((response) => {
           for (const [index, partBody] of envelopeBodyParts(
@@ -74,13 +81,14 @@ export async function mockRelay(page: Page, origin: string) {
     };
     decoder.on('decoded', async (packet) => {
       if (packet.type === PacketType.CONNECT) {
+        route = (packet.data as { route?: string } | undefined)?.route ?? fixtureRoute;
         send({ type: PacketType.CONNECT, nsp: '/mobile', data: { sid: 'fixture-peer' } });
         return;
       }
       if (packet.type !== PacketType.EVENT || packet.data[0] !== 'frame') return;
       const bytes = new Uint8Array(packet.data[1]);
       if (!session) {
-        const ready = answerHandshake(bytes, desktop)!;
+        const ready = answerHandshake(bytes, route === secondRoute ? secondDesktop : desktop)!;
         session = ready.session;
         frame(ready.ready);
       } else {

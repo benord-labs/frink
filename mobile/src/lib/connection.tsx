@@ -11,36 +11,57 @@ import { useIsFocused } from '@react-navigation/native';
 import { AppState } from 'react-native';
 import type { MobileRequest, MobileResponses } from '@frink/shared/types/remote/mobile';
 import { ApiError, requestMobile, type Connection } from './api';
+import {
+  NO_COMPUTERS,
+  addComputer,
+  removeComputer,
+  selectComputer,
+  selectedComputer,
+  type Computers,
+} from './computers';
+import { showNotice } from './notice';
+import { forgetTurnedOn } from './notifications/default-on';
 import { closeMobileRelay } from './relay/client';
-import { readConnection, saveConnection } from './storage';
+import { readSavedComputers, savingComputers } from './storage';
 
 type Session = {
+  /** Every paired computer, in the order they were paired. */
+  computers: Connection[];
+  /** The computer the app is showing; null before the first pairing. */
   connection: Connection | null;
   loading: boolean;
   error: string | null;
-  connect: (connection: Connection) => Promise<void>;
-  disconnect: () => Promise<void>;
+  /** Adds and selects a computer; `replacing` drops a stale entry for the same machine. */
+  connect: (connection: Connection, replacing?: string) => Promise<void>;
+  select: (deviceId: string) => void;
+  forget: (deviceId: string) => Promise<void>;
   request: <T extends MobileRequest>(
     request: T,
     signal?: AbortSignal,
   ) => Promise<MobileResponses[T['type']]>;
 };
 const Context = createContext<Session | null>(null);
+
+const UNREADABLE = 'This iPhone couldn’t read its saved computers. Pair your computer again.';
+const REVOKED =
+  'Your Mac stopped accepting it. Make a new code in Frink on your Mac: Settings → Mobile.';
+
 export function ConnectionProvider({ children }: { children: ReactNode }) {
-  const [connection, setConnection] = useState<Connection | null>(null);
+  const [state, setState] = useState<Computers>(NO_COMPUTERS);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const current = useRef(connection);
-  current.current = connection;
+  const current = useRef(state);
+  const saver = useRef(savingComputers(NO_COMPUTERS));
   useEffect(() => {
     let mounted = true;
-    readConnection()
+    readSavedComputers()
       .then((saved) => {
-        if (mounted) setConnection(saved);
+        current.current = saved;
+        saver.current = savingComputers(saved);
+        if (mounted) setState(saved);
       })
       .catch(() => {
-        if (mounted)
-          setError('This iPhone couldn’t read its saved connection. Pair your Mac again.');
+        if (mounted) setError(UNREADABLE);
       })
       .finally(() => {
         if (mounted) setLoading(false);
@@ -49,24 +70,75 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       mounted = false;
     };
   }, []);
-  const connect = useCallback(async (value: Connection) => {
-    await saveConnection(value);
-    setError(null);
-    setConnection(value);
+  const update = useCallback((change: (state: Computers) => Computers, rollback = true) => {
+    const previous = current.current;
+    const next = change(previous);
+    const undoable = rollback && previous.computers !== next.computers;
+    current.current = next;
+    setState(next);
+    const saved = saver.current.save(next);
+    // A failed add or forget shows what is stored, so nothing unsaved looks paired; a later change
+    // wins. A failed switch, or dropping a revoked computer, stays as shown and the next save
+    // stores it.
+    saved.catch(() => {
+      if (current.current !== next || !undoable) return;
+      current.current = saver.current.stored();
+      setState(current.current);
+    });
+    return saved;
   }, []);
-  const disconnect = useCallback(async () => {
-    closeMobileRelay();
-    current.current = null;
-    setConnection(null);
-    try {
-      await saveConnection(null);
-    } catch (error) {
-      setError(
-        'This iPhone couldn’t forget the connection. Remove it in Frink on your Mac: Settings → Mobile.',
+  // A save that failed (say, a switch) is retried when the app comes back, so a restart opens the
+  // computer that was last shown.
+  useEffect(() => {
+    const listener = AppState.addEventListener('change', (next) => {
+      if (next === 'active' && saver.current.stored() !== current.current)
+        saver.current.save(() => current.current).catch(() => undefined);
+    });
+    return () => listener.remove();
+  }, []);
+  const connect = useCallback(
+    async (value: Connection, replacing?: string) => {
+      await update((state) => addComputer(state, value, replacing));
+      setError(null);
+    },
+    [update],
+  );
+  const select = useCallback(
+    (deviceId: string) => void update((state) => selectComputer(state, deviceId)).catch(() => {}),
+    [update],
+  );
+  const forget = useCallback(
+    async (deviceId: string) => {
+      if (current.current.selected === deviceId) closeMobileRelay();
+      try {
+        await update((state) => removeComputer(state, deviceId));
+      } catch (error) {
+        // The computer stays on screen, so the failure is said there, not on the pairing screen.
+        showNotice(
+          'This iPhone couldn’t forget it',
+          'Try again, or remove this iPhone in Frink on that computer: Settings → Mobile.',
+        );
+        throw error;
+      }
+      // Only once it is really gone: a computer that stays keeps its alerts choice.
+      forgetTurnedOn(deviceId);
+    },
+    [update],
+  );
+  // A revoked computer's credentials are dead, so it leaves the list even if storing that fails.
+  const dropRevoked = useCallback(
+    async (host: Connection) => {
+      closeMobileRelay();
+      const othersRemain = current.current.computers.length > 1;
+      await update((state) => removeComputer(state, host.deviceId), false).catch(() => undefined);
+      if (!othersRemain) return setError(REVOKED);
+      showNotice(
+        `${host.machineName} stopped accepting this iPhone`,
+        'Pair it again from Frink on that computer: Settings → Mobile.',
       );
-      throw error;
-    }
-  }, []);
+    },
+    [update],
+  );
   const request = useCallback(
     // Reason: Request failures and revocation share the MVP connection lifecycle.
     // fallow-ignore-next-line complexity
@@ -74,28 +146,30 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       input: T,
       signal?: AbortSignal,
     ): Promise<MobileResponses[T['type']]> => {
-      const host = current.current;
-      if (!host) throw new ApiError('Pair your Mac to continue.', 401);
+      const host = selectedComputer(current.current);
+      if (!host) throw new ApiError('Pair your computer to continue.', 401);
       try {
         return await requestMobile(host, input, signal);
       } catch (error) {
-        if (error instanceof ApiError && error.status === 401 && current.current === host) {
-          setError(
-            'Your Mac stopped accepting it. Make a new code in Frink on your Mac: Settings → Mobile.',
-          );
-          await disconnect();
-        }
+        if (isRevocation(error) && selectedComputer(current.current) === host)
+          await dropRevoked(host);
         throw error;
       }
     },
-    [disconnect],
+    [dropRevoked],
   );
+  const connection = selectedComputer(state);
   return (
-    <Context.Provider value={{ connection, loading, error, connect, disconnect, request }}>
+    <Context.Provider
+      value={{ computers: state.computers, connection, loading, error, connect, select, forget, request }}
+    >
       {children}
     </Context.Provider>
   );
 }
+
+const isRevocation = (error: unknown) => error instanceof ApiError && error.status === 401;
+
 export function useConnection() {
   const value = useContext(Context);
   if (!value) throw new Error('ConnectionProvider is missing');

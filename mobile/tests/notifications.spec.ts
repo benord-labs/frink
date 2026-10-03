@@ -54,7 +54,13 @@ test('says when the Mac could not reach this iPhone', async ({ page }) => {
 });
 
 test('forgetting the Mac also asks it to stop alerts', async ({ page }) => {
-  const state = await openSettings(page);
+  // Removal is only sent while the Mac has this iPhone registered, which needs alerts allowed;
+  // headless Chromium denies notifications, so the page reports them as allowed.
+  await page.addInitScript(() =>
+    Object.defineProperty(Notification, 'permission', { get: () => 'granted' }),
+  );
+  const state = await openApp(page, { notifications: { enabled: true, error: null } });
+  await page.getByTestId('tab-settings').click();
   page.once('dialog', (dialog) => void dialog.accept());
   await page.getByRole('button', { name: 'Forget this Mac' }).click();
   await expect(page.getByRole('heading', { name: 'Your Mac, in your pocket' })).toBeVisible();

@@ -1,5 +1,6 @@
 import * as Crypto from 'expo-crypto';
 import { createContext, useContext, useRef, useSyncExternalStore, type ReactNode } from 'react';
+import { useConnection } from './connection';
 
 type Draft<T> = { value: T; requestId: string };
 type DraftStore = {
@@ -7,9 +8,11 @@ type DraftStore = {
   listeners: Set<() => void>;
 };
 const Context = createContext<DraftStore | null>(null);
+const SEPARATOR = '\n';
 
-// The connection-scoped provider is discarded on disconnect or revocation. Nothing is written
-// to disk, and a retained request ID never causes a command to be sent automatically.
+// Drafts are kept per paired computer, so switching computers and back keeps a half-typed message.
+// They live in memory only: a forgotten computer's drafts can no longer be reached and end with the
+// app, and a retained request ID never causes a command to be sent automatically.
 export function DraftProvider({ children }: { children: ReactNode }) {
   const store = useRef<DraftStore>({
     entries: new Map(),
@@ -18,9 +21,11 @@ export function DraftProvider({ children }: { children: ReactNode }) {
   return <Context.Provider value={store.current}>{children}</Context.Provider>;
 }
 
-export function useDraft<T>(key: string, initial: T) {
+
+export function useDraft<T>(name: string, initial: T) {
   const store = useContext(Context);
   if (!store) throw new Error('DraftProvider is missing');
+  const key = `${useConnection().connection?.deviceId}${SEPARATOR}${name}`;
   const initialValue = useRef(initial);
   function snapshot(): Draft<T> {
     if (!store!.entries.has(key))

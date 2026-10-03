@@ -1,12 +1,17 @@
-import { connectionSchema, type Connection } from './api';
+import type { Computers } from './computers';
+import { computerSaver, readComputers, type KeyValue } from './computer-store';
 
-// Browser previews keep the pairing for this tab only (sessionStorage), never across sessions.
-const KEY = 'frink.mobile.connection';
-export async function readConnection(): Promise<Connection | null> {
-  const parsed = connectionSchema.safeParse(JSON.parse(sessionStorage.getItem(KEY) ?? 'null'));
-  return parsed.success ? parsed.data : null;
+// Browser previews keep pairings for this tab only (sessionStorage), never across sessions.
+const tab: KeyValue = {
+  get: async (key) => sessionStorage.getItem(key),
+  set: async (key, value) => sessionStorage.setItem(key, value),
+  remove: async (key) => sessionStorage.removeItem(key),
+};
+
+export function readSavedComputers(): Promise<Computers> {
+  return readComputers(tab);
 }
-export async function saveConnection(value: Connection | null) {
-  if (value) sessionStorage.setItem(KEY, JSON.stringify(value));
-  else sessionStorage.removeItem(KEY);
+/** Saves later states of the computers just read, one at a time. */
+export function savingComputers(stored: Computers) {
+  return computerSaver(tab, stored);
 }

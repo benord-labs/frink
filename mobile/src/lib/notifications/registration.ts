@@ -47,3 +47,19 @@ export async function reconcileRegistration(
   if (status.enabled) await requestNotifications(host, { token: null }, signal);
   return { enabled: false, denied: turnOn && !allowed, error };
 }
+
+/**
+ * Asks a computer to stop alerts for a pairing this iPhone is replacing, since each pairing is its
+ * own device on that computer. Best effort and brief: an old or unreachable pairing is skipped.
+ */
+export async function releaseAlerts(host: Connection, waitMs = 1500): Promise<void> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), waitMs);
+  try {
+    await requestNotifications(host, { token: null }, controller.signal);
+  } catch {
+    // An unreachable old pairing simply keeps no live connection to this iPhone.
+  } finally {
+    clearTimeout(timeout);
+  }
+}

@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
-import { openApp } from './fixtures/app';
+import { computers, openApp } from './fixtures/app';
+import { conversation, messageBox, openChat } from './fixtures/chat';
 import { overviewFixture } from './fixtures/data';
 
 const shot = (page: Page, state: string, scheme = 'dark') =>
@@ -81,7 +82,39 @@ test('forgetting the Mac asks first, then returns to pairing', async ({ page }) 
   await expect(page.getByRole('heading', { name: 'Your Mac, in your pocket' })).toBeVisible();
   expect(message).toMatch(/^Forget this Mac\?/);
   expect(message).toMatch(/remove this iPhone under Paired phones/);
-  expect(await page.evaluate(() => sessionStorage.getItem('frink.mobile.connection'))).toBeNull();
+  expect(
+    await page.evaluate((id) => sessionStorage.getItem(`frink.mobile.computer.${id}`), computers.first.deviceId),
+  ).toBeNull();
+});
+
+test('lists every paired computer and switches to another with a tap', async ({ page }) => {
+  await openSettings(page, { second: true });
+  const list = page.getByTestId('settings-computers');
+  await expect(list.getByLabel("Benji's MacBook Pro, shown")).toBeVisible();
+  await expect(list.getByText(/^Paired .*2026$/).first()).toBeVisible();
+  await shot(page, 'computers');
+  await list.getByRole('button', { name: 'Studio Mac' }).click();
+  await page.getByTestId('tab-settings').click();
+  await expect(page.getByTestId('settings-computers').getByLabel('Studio Mac, shown')).toBeVisible();
+});
+
+test('Add a computer opens pairing over the app, and Cancel keeps everything', async ({ page }) => {
+  await openSettings(page);
+  await page.getByRole('button', { name: 'Add a computer' }).click();
+  await expect(page.getByRole('button', { name: 'Paste pairing code' })).toBeVisible();
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  await expect(page.getByTestId('settings-computers').getByText("Benji's MacBook Pro")).toBeVisible();
+});
+
+test('forgetting the shown computer moves to the other one', async ({ page }) => {
+  await openSettings(page, { second: true });
+  page.once('dialog', (dialog) => void dialog.accept());
+  await page.getByRole('button', { name: 'Forget this Mac' }).click();
+  await expect(page.getByTestId('tab-queue')).toBeVisible();
+  await page.getByTestId('tab-settings').click();
+  const list = page.getByTestId('settings-computers');
+  await expect(list.getByLabel('Studio Mac, shown')).toBeVisible();
+  await expect(list.getByText("Benji's MacBook Pro")).toHaveCount(0);
 });
 
 test('light appearance', async ({ page }) => {
@@ -109,4 +142,19 @@ test('an off switch keeps a visible track on the framed card', async ({ page }) 
     (input) => getComputedStyle(input.parentElement!.children[0]!).backgroundColor,
   );
   expect(await track).toBe('rgba(120, 120, 128, 0.36)');
+});
+
+test('a half-typed message survives switching to another computer and back', async ({ page }) => {
+  await openApp(page, { second: true, data: { chat: conversation() } });
+  await openChat(page);
+  await messageBox(page).fill('Half-typed note');
+  await page.getByRole('link', { name: 'Tabs, back', exact: true }).click();
+  const switchTo = async (name: string) => {
+    await page.getByTestId('tab-settings').click();
+    await page.getByTestId('settings-computers').getByRole('button', { name }).click();
+  };
+  await switchTo('Studio Mac');
+  await switchTo("Benji's MacBook Pro");
+  await openChat(page);
+  await expect(messageBox(page)).toHaveValue('Half-typed note');
 });

@@ -6,8 +6,7 @@ import { useConnection } from '../lib/connection';
 import { DraftProvider } from '../lib/drafts';
 import { LiveActivityProvider } from '../lib/live-activity';
 import { NotificationProvider } from '../lib/notifications';
-import { onNotificationOpened } from '../lib/notifications/device';
-import { notificationTarget } from '../lib/notifications/routing';
+import { usePendingAlert } from '../lib/notifications/alert-open';
 import { OverviewProvider } from '../lib/overview';
 import { onQueueLink } from '../lib/pairing-link';
 import { ChatScreen } from '../screens/Chat';
@@ -25,9 +24,11 @@ const Stack = createNativeStackNavigator<RootRoutes>();
 function TabsScreen() {
   useOpenAlertedChat();
   useOpenQueueLink();
+  const deviceId = useConnection().connection?.deviceId;
   return (
     <OverviewProvider>
-      <NotificationProvider>
+      {/* One provider per computer, so no alert request or state ever crosses to another. */}
+      <NotificationProvider key={deviceId}>
         <LiveActivityProvider>
           <Tabs />
         </LiveActivityProvider>
@@ -36,19 +37,17 @@ function TabsScreen() {
   );
 }
 
-/** Tapping an alert from the paired Mac opens its chat, or the Queue for a chat-less task. */
+/** A tapped alert for the computer on screen opens its chat, or the Queue for a chat-less task. */
 function useOpenAlertedChat() {
   const navigation = useRootNavigation();
-  const deviceId = useConnection().connection?.deviceId;
-  useEffect(
-    () =>
-      onNotificationOpened((data) => {
-        const target = deviceId && notificationTarget(data, deviceId);
-        if (target === 'queue') navigation.navigate('Tabs', { screen: 'Queue' });
-        else if (target) navigation.navigate('Chat', target);
-      }),
-    [navigation, deviceId],
-  );
+  const { alert, done } = usePendingAlert(useConnection().connection?.deviceId);
+  useEffect(() => {
+    if (!alert) return;
+    done(alert);
+    if (alert.target === 'queue') navigation.navigate('Tabs', { screen: 'Queue' });
+    else navigation.navigate('Chat', alert.target);
+    // `done` only clears this alert; the alert alone decides when to open.
+  }, [navigation, alert]);
 }
 
 /** Tapping the Lock Screen card opens the Queue, including when the tap launched the app. */
@@ -59,13 +58,26 @@ function useOpenQueueLink() {
 
 const ios = Platform.OS === 'ios';
 
-/** Tabs at the root; Chat, Flow and Run push above them (the tab bar hides, as in Messages). */
+/**
+ * The app for the computer on screen. Switching computers remounts its screens, so none shows
+ * another computer's data, while drafts sit above them and survive the switch.
+ */
 export function Companion() {
+  const { connection } = useConnection();
+  return (
+    <DraftProvider>
+      <CompanionScreens key={`${connection?.deviceId}:${connection?.route}`} />
+    </DraftProvider>
+  );
+}
+
+/** Tabs at the root; Chat, Flow and Run push above them (the tab bar hides, as in Messages). */
+function CompanionScreens() {
   const t = useTheme();
   const reduceMotion = useReduceMotion();
   const base = t.dark ? DarkTheme : DefaultTheme;
   return (
-    <DraftProvider>
+    <>
       <StatusBar barStyle={t.dark ? 'light-content' : 'dark-content'} />
       <NavigationContainer
         theme={{
@@ -112,6 +124,6 @@ export function Companion() {
           />
         </Stack.Navigator>
       </NavigationContainer>
-    </DraftProvider>
+    </>
   );
 }

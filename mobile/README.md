@@ -27,6 +27,8 @@ Start the desktop app from the repository root with `bun install --frozen-lockfi
 1. In Frink desktop, open **Settings → Mobile** and turn on mobile access.
 2. In the iPhone app, scan the QR code or paste the copied pairing link. Confirm your Mac and tap **Connect**. Each code works once, for five minutes.
 
+One iPhone can pair with several computers. Add another from **Settings → Computers → Add a computer**, or by scanning its code; the computers already paired stay paired. Tap a computer in that list to switch to it. Only the computer on screen is refreshed. Alerts keep arriving from every paired computer, and tapping one opens that computer's chat. If iOS gives this iPhone a new push token, a computer learns it the next time you switch to it, and its alerts resume then. If a computer's mobile access was reset, scanning its new code offers to replace its old pairing. The Lock Screen card shows the computer on screen.
+
 The connection works over cellular or other Wi-Fi networks. Keep Frink open with a loaded window and the computer awake and online. Both devices connect out to Frink's relay; no account or network setup is needed. Your phone pins the desktop's encryption key from the QR. The relay forwards encrypted frames and cannot read prompts, files, credentials or responses. It sees routing identifiers, IP addresses, traffic sizes and timing; it can interrupt connectivity.
 
 ## Use and recovery

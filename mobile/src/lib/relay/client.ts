@@ -55,6 +55,7 @@ class RelayClient {
   private pending = new Map<number, Pending>();
   private nextId = 0;
   closed = false;
+  private retiring = false;
   private failHandshake: (error: Error) => void = () => {};
 
   constructor(target: RelayTarget) {
@@ -117,6 +118,12 @@ class RelayClient {
     this.pending.clear();
   }
 
+  /** Closes once in-flight requests settle, so a replaced computer's last clean-up still arrives. */
+  retire() {
+    this.retiring = true;
+    if (this.pending.size === 0) this.close();
+  }
+
   private receive(part: MobileEnvelope) {
     if (part.t !== 'res') throw new Error('Unexpected envelope.');
     const item = this.pending.get(part.id);
@@ -170,6 +177,7 @@ class RelayClient {
         clearTimeout(timer);
         signal?.removeEventListener('abort', abort);
         this.pending.delete(id);
+        if (this.retiring && this.pending.size === 0) this.close();
         if (error) reject(error);
         else resolve(result!);
       };
@@ -216,7 +224,8 @@ export function relayRequest(
 ) {
   const identity = JSON.stringify([target.relay, target.route, target.key]);
   if (cached?.identity !== identity || cached.client.closed) {
-    closeMobileRelay();
+    // Switching computers lets the previous one finish what is in flight, then closes it.
+    cached?.client.retire();
     cached = { identity, client: new RelayClient(target) };
   }
   return cached.client.request(path, headers, body, signal, timeoutMs);

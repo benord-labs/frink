@@ -29,6 +29,7 @@ class Socket {
   frames: Uint8Array[] = [];
   response = true;
   wrongKey = false;
+  keyPair = desktop;
   delayAck?: Promise<void>;
   disconnected = false;
   on(name: string, fn: (...args: any[]) => void) {
@@ -48,7 +49,7 @@ class Socket {
   async emitWithAck(_name: string, bytes: Uint8Array) {
     this.frames.push(bytes);
     if (!this.session) {
-      const ready = answerHandshake(bytes, this.wrongKey ? generateDesktopKeyPair() : desktop)!;
+      const ready = answerHandshake(bytes, this.wrongKey ? generateDesktopKeyPair() : this.keyPair)!;
       this.session = ready.session;
       this.handlers.get('frame')?.(ready.ready, () => {});
     } else {
@@ -130,6 +131,23 @@ it('disconnect fails pending work and never resends it; a later request handshak
   wire.io.mockReturnValue(replacement);
   await relayRequest(target, '/api', {}, input);
   expect(replacement.parts).toHaveLength(1);
+});
+it('a request to another computer lets the previous one finish, then closes it', async () => {
+  socket.response = false;
+  const last = relayRequest(target, '/api/notifications', {}, input);
+  await vi.waitFor(() => expect(socket.parts).toHaveLength(1));
+  const previous = socket;
+  const other = generateDesktopKeyPair();
+  socket = new Socket();
+  socket.keyPair = other;
+  wire.io.mockReturnValue(socket);
+  const otherTarget = { ...target, route: 'b'.repeat(64), key: encodeKey(other.publicKey) };
+  const next = relayRequest(otherTarget, '/api', {}, input);
+  expect(previous.disconnected).toBe(false);
+  previous.reply(0, new TextEncoder().encode('{"data":null}'));
+  expect((await last).status).toBe(200);
+  expect(previous.disconnected).toBe(true);
+  expect((await next).status).toBe(200);
 });
 it('cancellation drops a late response without corrupting the session', async () => {
   socket.response = false;

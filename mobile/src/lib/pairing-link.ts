@@ -1,5 +1,5 @@
 import Constants from 'expo-constants';
-import { useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 import { Linking, Platform } from 'react-native';
 import { MOBILE_PAIRING_LINK } from '@frink/shared/types/remote/mobile';
 
@@ -25,11 +25,13 @@ function asPairingLink(url: string | null) {
 }
 
 /**
- * The pairing link that opened the app or arrived while it was open, such as the Mac's code
- * scanned with the Camera. `clear` once it has been handled.
+ * The pairing sheet: open for a pairing link that opened the app or arrived while it was open
+ * (such as a computer's code scanned with the Camera), or after `start` from Settings to add a
+ * computer. `clear` once it has been handled.
  */
 export function usePairingLink() {
   const [link, setLink] = useState<string | null>(null);
+  const [started, setStarted] = useState(false);
   useEffect(
     () =>
       onAppLink((url) => {
@@ -38,5 +40,20 @@ export function usePairingLink() {
       }),
     [],
   );
-  return { link, clear: () => setLink(null) };
+  return {
+    link,
+    open: started || link !== null,
+    start: () => setStarted(true),
+    clear: () => {
+      setLink(null);
+      setStarted(false);
+    },
+  };
+}
+
+const StartPairing = createContext<() => void>(() => {});
+/** Lets screens inside the app open the pairing sheet the app root owns. */
+export const StartPairingProvider = StartPairing.Provider;
+export function useStartPairing() {
+  return useContext(StartPairing);
 }
