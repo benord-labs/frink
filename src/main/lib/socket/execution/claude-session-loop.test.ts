@@ -222,6 +222,48 @@ describe('the session-lifetime reader', () => {
     expect(next).toEqual(['result']);
   });
 
+  it('rejects a turn whose own result failed, with the error the one-shot SDK throws', async () => {
+    const ch = channelQuery();
+    const session = createSession('failed-boundary', () => ch.query);
+    const turn = runTurn(session, userTurn('hi'), () => {});
+    ch.emit(msg('result', { subtype: 'error_during_execution', is_error: true, errors: ['gone'] }));
+
+    await expect(turn).rejects.toThrow('Claude Code returned an error result: gone');
+    expect(session.busy).toBe(false);
+  });
+
+  it('ends a taken-over arming as a turn error when the adopted turn fails', async () => {
+    const ch = channelQuery();
+    const session = createSession('failed-takeover', () => ch.query);
+    const arming = armIdle(session, wakeCallbacks(newLog()));
+    const taken = arming.startTurn(userTurn('follow-up'), () => {});
+    ch.emit(msg('result', { subtype: 'error_max_turns', is_error: true, errors: [] }));
+
+    await expect(taken).rejects.toThrow('error_max_turns');
+    expect((await arming.done).reason).toBe('turn-error');
+  });
+
+  it('does not fail a turn on a harness turn’s error result ahead of its own success', async () => {
+    const ch = channelQuery();
+    const session = createSession('harness-error', () => ch.query);
+    const seen: string[] = [];
+    const turn = runTurn(session, userTurn('hi'), (m) => {
+      seen.push(m.type);
+    });
+    ch.emit(
+      msg('result', {
+        subtype: 'error_during_execution',
+        is_error: true,
+        errors: ['harness'],
+        origin: { kind: 'task-notification' },
+      }),
+    );
+    ch.emit(resultMsg());
+
+    await expect(turn).resolves.toBeUndefined();
+    expect(seen).toEqual(['result', 'result']);
+  });
+
   it('refuses to adopt an arming that a sink error already ended, before any preparation runs', async () => {
     const ch = channelQuery();
     const session = createSession('sink-error-adopt', () => ch.query);

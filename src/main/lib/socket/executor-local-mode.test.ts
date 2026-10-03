@@ -906,7 +906,7 @@ describe('local-only dispatch with unresolved machineId', () => {
         Object.assign(
           (async function* () {
             yield { chunks: [{ type: 'finish' }] as UIMessageChunk[] };
-            yield { type: 'result', is_error: true };
+            yield { type: 'result', subtype: 'success', is_error: true, result: '' };
           })(),
           { interrupt: vi.fn() },
         ),

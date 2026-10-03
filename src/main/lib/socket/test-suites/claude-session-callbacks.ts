@@ -21,6 +21,7 @@ import {
   TURN_END,
   toolCall,
 } from './claude-turn-bindings';
+import { UNCLEAN_RESULT } from './claude-turn-abort';
 import type { ExecutorPermissionHarness } from './executor-codex-permissions';
 
 type ClaudeSessionCallbackHarness = Pick<
@@ -30,7 +31,7 @@ type ClaudeSessionCallbackHarness = Pick<
 
 let payload: ClaudeSessionCallbackHarness['basePayload'];
 /** An error result is never kept idle, so the ended session's turn stays attached. */
-const UNKEPT_TURN_END = [TURN_END[0], { type: 'result', is_error: true }];
+const UNKEPT_TURN_END = [TURN_END[0], UNCLEAN_RESULT];
 const todoWrite = { hook_event_name: 'PreToolUse', tool_name: 'TodoWrite', tool_input: {} };
 
 /** Registers the cases proving a session's callbacks act only for the turn attached to the session
