@@ -1,5 +1,5 @@
 #!/bin/bash
-# Boots frink for a qavis managed-CDP QA run (.qavis/recipe.json `start`).
+# Boots the prebuilt QA app on its isolated profile, with CDP on :9223.
 # Boot-only: app-state prep (profile wipe, fixture DB) lives in seed.sh, which
 # qavis runs first — this script owns what must span the app's lifetime: the
 # single-run lock and launch. Isolated from the owner's running dev app (own
