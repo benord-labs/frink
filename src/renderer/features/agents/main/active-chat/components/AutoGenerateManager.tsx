@@ -3,6 +3,8 @@ import { useEffect } from 'react';
 
 type Props = {
   hasExistingSession: boolean;
+  /** Resolved, authenticated execution account; every other send path gates on the same flag. */
+  isAccountReady: boolean;
   messages: UIMessage[];
   status: string;
   streamId?: string | null;
@@ -12,20 +14,21 @@ type Props = {
 
 export function AutoGenerateManager({
   hasExistingSession,
+  isAccountReady,
   messages,
   status,
   streamId,
   hasTriggeredAutoGenerateRef,
   regenerate,
 }: Props) {
-  // Auto-trigger AI response when we have initial message but no response yet.
-  // Skip if sub-chat already has a persisted session (was already executed -- e.g. after chat move).
-  // Skip when there is no user message (e.g. flow chat_reply notification — nothing to respond to).
+  // Replays a new chat's first message once per mount; a failed dispatch is recovered by the Retry
+  // control (re-firing would abort a live turn) or by replay on the next mount (sc-2512).
   useEffect(() => {
     const hasNoUserMessages = messages.length > 0 && messages.every((m) => m.role !== 'user');
     const shouldAutoGenerate =
       messages.length === 1 &&
       status === 'ready' &&
+      isAccountReady &&
       !streamId &&
       !hasExistingSession &&
       !hasNoUserMessages &&
@@ -34,7 +37,15 @@ export function AutoGenerateManager({
       hasTriggeredAutoGenerateRef.current = true;
       regenerate();
     }
-  }, [status, messages, regenerate, hasExistingSession, streamId, hasTriggeredAutoGenerateRef]);
+  }, [
+    status,
+    messages,
+    regenerate,
+    hasExistingSession,
+    isAccountReady,
+    streamId,
+    hasTriggeredAutoGenerateRef,
+  ]);
 
   return null;
 }

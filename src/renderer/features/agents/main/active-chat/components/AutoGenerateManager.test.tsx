@@ -30,6 +30,7 @@ describe('AutoGenerateManager', () => {
     const { rerender } = render(
       <AutoGenerateManager
         hasExistingSession={false}
+        isAccountReady
         messages={[makeUserMessage('hello')]}
         status="ready"
         streamId={null}
@@ -41,6 +42,7 @@ describe('AutoGenerateManager', () => {
     rerender(
       <AutoGenerateManager
         hasExistingSession={false}
+        isAccountReady
         messages={[makeUserMessage('hello')]}
         status="ready"
         streamId={null}
@@ -59,6 +61,7 @@ describe('AutoGenerateManager', () => {
     render(
       <AutoGenerateManager
         hasExistingSession={false}
+        isAccountReady
         messages={[makeUserMessage('hello')]}
         status="ready"
         streamId="stream-1"
@@ -77,6 +80,7 @@ describe('AutoGenerateManager', () => {
     render(
       <AutoGenerateManager
         hasExistingSession
+        isAccountReady
         messages={[makeUserMessage('hello')]}
         status="ready"
         streamId={null}
@@ -95,6 +99,7 @@ describe('AutoGenerateManager', () => {
     render(
       <AutoGenerateManager
         hasExistingSession={false}
+        isAccountReady
         messages={[makeAssistantMessage({ id: 'msg-flow', text: 'Flow completed!' })]}
         status="ready"
         streamId={null}
@@ -104,5 +109,61 @@ describe('AutoGenerateManager', () => {
     );
 
     expect(regenerate).not.toHaveBeenCalled();
+  });
+
+  // sc-2512: dispatching before the account resolves would run the turn on the default runtime.
+  it('waits for the resolved account, then fires once', () => {
+    const regenerate = vi.fn();
+    const hasTriggeredAutoGenerateRef = { current: false };
+    const props = {
+      hasExistingSession: false,
+      messages: [makeUserMessage('hello')],
+      status: 'ready',
+      streamId: null,
+      hasTriggeredAutoGenerateRef,
+      regenerate,
+    };
+
+    const { rerender } = render(<AutoGenerateManager {...props} isAccountReady={false} />);
+    expect(regenerate).not.toHaveBeenCalled();
+    expect(hasTriggeredAutoGenerateRef.current).toBe(false);
+
+    rerender(<AutoGenerateManager {...props} isAccountReady />);
+    rerender(<AutoGenerateManager {...props} isAccountReady />);
+    expect(regenerate).toHaveBeenCalledTimes(1);
+  });
+
+  // sc-2512: Retry owns in-session recovery; main releasing stream_id enables the remount replay.
+  it('does not re-fire after a failed dispatch, and replays on the next mount', () => {
+    const regenerate = vi.fn();
+    const props = {
+      hasExistingSession: false,
+      isAccountReady: true,
+      messages: [makeUserMessage('hello')],
+      streamId: null,
+      regenerate,
+    };
+    const firstMountRef = { current: false };
+
+    const { rerender, unmount } = render(
+      <AutoGenerateManager {...props} status="ready" hasTriggeredAutoGenerateRef={firstMountRef} />,
+    );
+    rerender(
+      <AutoGenerateManager {...props} status="error" hasTriggeredAutoGenerateRef={firstMountRef} />,
+    );
+    rerender(
+      <AutoGenerateManager {...props} status="ready" hasTriggeredAutoGenerateRef={firstMountRef} />,
+    );
+    expect(regenerate).toHaveBeenCalledTimes(1);
+    unmount();
+
+    render(
+      <AutoGenerateManager
+        {...props}
+        status="ready"
+        hasTriggeredAutoGenerateRef={{ current: false }}
+      />,
+    );
+    expect(regenerate).toHaveBeenCalledTimes(2);
   });
 });

@@ -26,8 +26,10 @@ import {
   getSubChatById as getSubChatByIdLocal,
   markPlanApproved as markPlanApprovedLocal,
   resolveSendMode as resolveSendModeLocal,
+  clearStreamIdIfCurrent as clearStreamIdIfCurrentLocal,
   setStreamId as setStreamIdLocal,
 } from '../db/repos/sub-chats';
+import { captureMainException } from '../sentry/init';
 import { consumeDispatchMode, matchDispatchModeForSend } from '../task-executor/dispatch-registry';
 import { abortIfTaskNoLongerRunning } from '../tasks/dispatch-cancel-fence';
 import { runSendSideNaming } from './naming';
@@ -340,7 +342,28 @@ async function persistAndDispatchMessage(
     log.warn('[Socket] Local setStreamId failed:', err);
   }
 
-  if (executeRequestListeners.size === 0) throw new Error('Chat execution is not ready.');
+  // A turn that never starts must not keep stream_id: renderers skip first-message replay while it
+  // is set, so a failed first dispatch would otherwise never be re-sent on reopen (sc-2512).
+  const releaseStreamId = async () => {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        await clearStreamIdIfCurrentLocal(getDatabase(), payload.subChatId, streamId);
+        return;
+      } catch (err) {
+        if (attempt < 2) continue;
+        log.error('[Socket] Local clearStreamId after failed start failed:', err);
+        captureMainException(err, { surface: 'stream-id-release' });
+        return;
+      }
+    }
+  };
+
+  let startAcknowledged = false;
+
+  if (executeRequestListeners.size === 0) {
+    await releaseStreamId();
+    throw new Error('Chat execution is not ready.');
+  }
   notifyListeners(executeRequestListeners, {
     chatId: payload.chatId,
     subChatId: payload.subChatId,
@@ -359,9 +382,17 @@ async function persistAndDispatchMessage(
     expectedFlowTaskId: payload.expectedFlowTaskId,
     sourceWebContentsId: payload.sourceWebContentsId,
     // A dispatched turn re-checks its task once registered, closing the Cancel-before-start gap.
+    // Only the first acknowledgement decides: flows/startup also reports a handler that rejects
+    // mid-run, and that turn did start, so its stream_id is not released.
     onExecutionStarted: (error?: Error) => {
-      onExecutionStarted(error);
-      if (!error && dispatchTaskId) void abortIfTaskNoLongerRunning(dispatchTaskId, subChatId);
+      if (startAcknowledged) return;
+      startAcknowledged = true;
+      if (error) {
+        void releaseStreamId().then(() => onExecutionStarted(error));
+        return;
+      }
+      onExecutionStarted();
+      if (dispatchTaskId) void abortIfTaskNoLongerRunning(dispatchTaskId, subChatId);
     },
   });
 }

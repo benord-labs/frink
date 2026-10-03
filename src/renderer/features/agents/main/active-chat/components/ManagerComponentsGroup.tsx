@@ -26,6 +26,7 @@ type Props = {
   messages: UIMessage[];
   hasUnapprovedPlanRef: React.RefObject<boolean>;
   hasExistingSession: boolean;
+  isAccountReady: boolean;
   streamId?: string | null;
   hasTriggeredAutoGenerateRef: React.RefObject<boolean>;
   regenerate: () => void;
@@ -58,6 +59,7 @@ export function ManagerComponentsGroup({
   messages,
   hasUnapprovedPlanRef,
   hasExistingSession,
+  isAccountReady,
   streamId,
   hasTriggeredAutoGenerateRef,
   regenerate,
@@ -101,6 +103,7 @@ export function ManagerComponentsGroup({
       />
       <AutoGenerateManager
         hasExistingSession={hasExistingSession}
+        isAccountReady={isAccountReady}
         messages={messages}
         status={status}
         streamId={streamId}
