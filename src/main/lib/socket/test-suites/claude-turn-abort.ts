@@ -54,6 +54,8 @@ type CliScript = (cli: Cli) => AsyncGenerator<Frame>;
 const DONE = { done: true, value: undefined } as const;
 /** A tool call that never answers, like a CLI blocked in a silent tool. */
 export const never = () => new Promise<never>(() => {});
+/** A result the CLI flags `is_error` without failing the turn (usage-limit or API-error text). */
+export const UNCLEAN_RESULT = { type: 'result', subtype: 'success', is_error: true, result: '' };
 const tick = () => new Promise((resolve) => setTimeout(resolve, 10));
 
 /** Registers the next SDK query. Like the real `Query`, `close()`/`return()` end the pending read

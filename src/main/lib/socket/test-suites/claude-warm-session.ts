@@ -20,7 +20,7 @@ import * as socketClient from '../client';
 import * as flowCleanup from '../execution/flow-resource-cleanup';
 import { abortActiveExecutionsForSubChats, handleRemoteStop } from '../executor';
 import { steerActiveTurn } from '../steering';
-import { mockQuery, never } from './claude-turn-abort';
+import { mockQuery, never, UNCLEAN_RESULT } from './claude-turn-abort';
 import {
   expireQuestion,
   flowDriven,
@@ -328,7 +328,7 @@ const endings: Array<[string, (cli: Cli) => AsyncGenerator<object>, () => Partia
     async function* ({ prompt }) {
       await prompt.next();
       yield TURN_END[0];
-      yield { type: 'result', is_error: true };
+      yield UNCLEAN_RESULT;
       await never();
     },
     () => ({}),

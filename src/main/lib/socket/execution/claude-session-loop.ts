@@ -1,4 +1,5 @@
 import type { SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import { failedResultError } from '../../claude/stream-classifiers';
 import type { ClaudeSession } from '../claude-session-registry';
 import {
   isAmbientIdleFrame,
@@ -395,11 +396,13 @@ async function consumeTurnFrame(session: ClaudeSession, msg: SDKMessage): Promis
     else endTurn(session, err);
     return;
   }
-  // Only OUR turn's result ends the wait. A harness turn's result arrives first whenever the CLI
-  // ran one of its own ahead of ours, and returning on it would file that turn as the reply.
+  // Only OUR turn's result ends the wait — a harness turn's result can arrive first, and returning on
+  // it would file that turn as the reply. A failed one rejects, as the one-shot SDK's query throws.
   if (!isTurnBoundary(msg)) return;
-  if (loop.arming) endArming(session, { reason: 'turn-taken-over' });
-  else endTurn(session);
+  const error = failedResultError(msg);
+  if (!loop.arming) endTurn(session, error);
+  else if (error) endArming(session, { reason: 'turn-error', error }, error);
+  else endArming(session, { reason: 'turn-taken-over' });
 }
 
 async function consumeWakeFrame(

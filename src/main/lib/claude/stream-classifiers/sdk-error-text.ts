@@ -1,3 +1,5 @@
+import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+
 /**
  * The Agent SDK appends the CLI's stderr tail to its process-exit errors ("Claude Code process
  * exited with code 1. stderr: …"), but only when it spawns the CLI itself. Stderr may carry remote
@@ -13,4 +15,15 @@ const SDK_STDERR_TAIL =
 export function claudeErrorText(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   return message.replace(SDK_STDERR_TAIL, '$1');
+}
+
+/** The error the one-shot SDK throws for a failed result frame, which a warm turn must raise itself.
+ * An `is_error` success (usage-limit or API text) stays with the trailing-text classifiers. */
+export function failedResultError(msg: SDKMessage): Error | undefined {
+  if (msg.type !== 'result' || !msg.is_error || msg.subtype === 'success') return undefined;
+  const errors = msg.errors
+    .map((e) => e.trim())
+    .filter(Boolean)
+    .join('; ');
+  return new Error(`Claude Code returned an error result: ${errors || msg.subtype}`);
 }

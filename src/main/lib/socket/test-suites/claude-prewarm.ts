@@ -47,11 +47,20 @@ const prewarm = (subChatId = payload.subChatId, mode?: ChatMode) =>
   prewarmClaudeSession({ chatId: payload.chatId, subChatId, mode });
 /** A CLI that idles until closed, as a used session of another chat does. */
 const parkedQuery = () => ({ next: never, close: vi.fn() }) as unknown as Query;
-/** A CLI whose `resume` id names no transcript: it fails as the SDK reports it. */
-const staleResumeCli = (afterPrompt: boolean) =>
+const STALE_RESUME = 'No conversation found with session ID: sess-held';
+const failedResult = (subtype: string, ...errors: string[]) => ({
+  type: 'result',
+  subtype,
+  is_error: true,
+  errors,
+});
+/** A CLI whose `resume` id names no transcript. The one-shot SDK throws it; a live session instead
+ * reports it as the failed result frame its turn ends on. */
+const staleResumeCli = (afterPrompt: boolean, reported = false) =>
   async function* ({ prompt }: { prompt: AsyncIterator<SDKUserMessage> }) {
     if (afterPrompt) await prompt.next();
-    throw new Error('Claude Code returned an error result: No conversation found with session ID');
+    if (reported) yield failedResult('error_during_execution', STALE_RESUME);
+    else throw new Error(`Claude Code returned an error result: ${STALE_RESUME}`);
   };
 /** Holds the pre-warm's sub-chat read until released, as a slow spec build does. */
 function slowSubChatRead() {
@@ -208,6 +217,35 @@ function registerHitAndMissTests(
     expect([0, 1, 2].map(spawnedResume)).toEqual(['sess-held', 'sess-held', undefined]);
     expect(replies()).toEqual(['reply 1']);
     expect(socketClient.sendErrorDirect).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a claimed pre-warm', true],
+    ['a cold send', false],
+  ])('%s whose stale resume ends the turn on a failed result reruns fresh', async (_, warmed) => {
+    mockQuery(claudeQueryMock, staleResumeCli(true, true));
+    mockQuery(claudeQueryMock, answeringCli());
+
+    if (warmed) await prewarm();
+    await send('first');
+
+    expect([0, 1].map(spawnedResume)).toEqual(['sess-held', undefined]);
+    expect(replies()).toEqual(['reply 1']);
+    expect(socketClient.sendErrorDirect).not.toHaveBeenCalled();
+  });
+
+  it('a turn that ends on any other failed result reports the failure, not a silent finish', async () => {
+    mockQuery(claudeQueryMock, async function* ({ prompt }: { prompt: AsyncIterator<unknown> }) {
+      await prompt.next();
+      yield failedResult('error_max_turns');
+    });
+
+    await send('first');
+
+    expect(claudeQueryMock).toHaveBeenCalledOnce();
+    expect(socketClient.sendErrorDirect).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ error: 'Claude execution failed. Please try again.' }),
+    );
   });
 }
 

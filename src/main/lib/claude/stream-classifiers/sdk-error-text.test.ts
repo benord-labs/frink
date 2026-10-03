@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { claudeErrorText } from './sdk-error-text';
+import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import { claudeErrorText, failedResultError } from './sdk-error-text';
 
 describe('claudeErrorText', () => {
   it.each([
@@ -40,5 +41,35 @@ describe('claudeErrorText', () => {
       'Claude Code process terminated by signal SIGTERM',
     );
     expect(claudeErrorText(42)).toBe('42');
+  });
+});
+
+describe('failedResultError', () => {
+  const result = (fields: Record<string, unknown>) =>
+    ({ type: 'result', is_error: true, ...fields }) as unknown as SDKMessage;
+
+  it('carries the joined errors the SDK would throw with', () => {
+    const msg = result({
+      subtype: 'error_during_execution',
+      errors: [' No conversation found with session ID: s-1 ', '', 'second'],
+    });
+    expect(failedResultError(msg)?.message).toBe(
+      'Claude Code returned an error result: No conversation found with session ID: s-1; second',
+    );
+  });
+
+  it('names the subtype when the errors are empty', () => {
+    expect(failedResultError(result({ subtype: 'error_max_turns', errors: [] }))?.message).toBe(
+      'Claude Code returned an error result: error_max_turns',
+    );
+  });
+
+  it.each([
+    ['a success', result({ subtype: 'success', is_error: false, result: 'done' })],
+    ['an is_error success', result({ subtype: 'success', result: "You've hit your limit" })],
+    ['an unflagged error subtype', result({ subtype: 'error_during_execution', is_error: false })],
+    ['a non-result frame', { type: 'assistant' } as unknown as SDKMessage],
+  ])('is undefined for %s', (_label, msg) => {
+    expect(failedResultError(msg)).toBeUndefined();
   });
 });
