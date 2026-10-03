@@ -15,7 +15,7 @@ import type { CategoryHandler } from './types';
  * Honest limits, by design:
  *  - NAME-level matching only (no tool-argument inspection). `mcp__*` names match
  *    like any other tool name, since agents may list them.
- *  - REQUIRED tools (ExitPlanMode/TodoWrite/Task/Agent) always pass the
+ *  - REQUIRED tools (ExitPlanMode/TodoWrite/Task/Agent/SubagentHandback) always pass the
  *    `tools`-membership check — the SDK grants sub-agents these infra tools whether
  *    or not an author lists them, and denying them bricks the agent (same reason
  *    the rule-validator refuses user `deny` rules on them). Not a security

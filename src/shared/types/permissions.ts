@@ -219,6 +219,9 @@ export const REQUIRED_TOOLS: ReadonlySet<string> = new Set<string>([
   'TodoWrite', // agent task tracking
   'Task', // subagent dispatch (older tool name)
   'Agent', // subagent dispatch (Claude Code's current tool name)
+  // Sub-agent report delivery to the parent (CLI-granted). Deliberately absent from
+  // TOOL_OPERATIONS/KNOWN_TOOLS: it is never a user-rule target.
+  'SubagentHandback',
 ]);
 
 // ---------------------------------------------------------------------------
