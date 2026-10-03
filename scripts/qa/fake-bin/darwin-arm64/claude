@@ -1,0 +1,169 @@
+#!/usr/bin/env node
+// Scripted stand-in for the bundled `claude` CLI: speaks the Agent SDK's stream-json control protocol and
+// answers fixed scenarios with no model call, so held background states are deterministic and free.
+// A scenario starts on its exact `request`, the text fixtures/background-work.ts sends each seeded chat.
+// CommonJS on purpose: an extensionless file is only ESM under a "type": "module" package.
+const { spawn } = require('node:child_process');
+const { randomUUID } = require('node:crypto');
+const { mkdirSync, openSync } = require('node:fs');
+const { join } = require('node:path');
+const { createInterface } = require('node:readline');
+
+const SUITE = 'for i in $(seq 1 3600); do echo "[$i/3600] ✓ src/main/lib/flows/case-$((i % 40)).test.ts (12 tests) $((i % 90 + 10))ms"; sleep 1; done';
+const SCENARIOS = {
+  tests: {
+    request: 'Run the full test suite in the background.',
+    title: 'Long-running tests',
+    tasks: [{ kind: 'shell', description: 'Run the full test suite', command: SUITE }],
+  },
+  workflow: {
+    request: 'Start the review workflow in the background.',
+    title: 'Review workflow',
+    tasks: [{ kind: 'workflow', name: 'qa-fixture-review' }],
+  },
+  commands: {
+    request: 'Start the tests, build watch and dev server in the background.',
+    title: 'Tests, build watch and dev server',
+    tasks: [
+      { kind: 'shell', description: 'Run the test suite', command: 'for i in $(seq 1 3600); do echo "✓ test batch $i passed"; sleep 2; done' },
+      { kind: 'shell', description: 'Watch the build', command: 'for i in $(seq 1 3600); do echo "[build] rebuilt in $((i % 400 + 100))ms"; sleep 3; done' },
+      { kind: 'shell', description: 'Start the dev server', command: 'echo "Local: http://localhost:5173"; for i in $(seq 1 3600); do echo "[vite] hmr update /src/App.tsx ($i)"; sleep 5; done' },
+    ],
+  },
+};
+const MODEL = 'claude-sonnet-4-6';
+
+const args = process.argv.slice(2);
+const flag = (name) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
+const sessionId = flag('--resume') ?? flag('--session-id') ?? randomUUID();
+const tasksDir = join(
+  process.env.CLAUDE_CODE_TMPDIR || '/tmp',
+  `claude-${process.getuid()}`,
+  process.cwd().replace(/[^A-Za-z0-9]/g, '-'),
+  sessionId,
+  'tasks',
+);
+const children = new Map();
+const pending = new Map();
+let stopHookId;
+let nextRequest = 0;
+
+const send = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
+const base = () => ({ session_id: sessionId, uuid: randomUUID() });
+const assistant = (content) =>
+  send({
+    type: 'assistant',
+    message: { id: `msg_${randomUUID()}`, type: 'message', role: 'assistant', model: MODEL, content, stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } },
+    parent_tool_use_id: null,
+    ...base(),
+  });
+const toolResult = (toolUseId, text, extra) =>
+  send({
+    type: 'user',
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId, content: text }] },
+    parent_tool_use_id: null,
+    tool_use_result: extra,
+    ...base(),
+  });
+
+function respond(requestId, response = {}) {
+  send({ type: 'control_response', response: { subtype: 'success', request_id: requestId, response } });
+}
+
+/** Asks the SDK side something (a hook callback) and resolves with its answer. */
+function request(body) {
+  const requestId = `fake-${++nextRequest}`;
+  send({ type: 'control_request', request_id: requestId, request: body });
+  return new Promise((resolve) => pending.set(requestId, resolve));
+}
+
+function startShell(task) {
+  const id = `b${randomUUID().replace(/-/g, '').slice(0, 8)}`;
+  const toolUseId = `toolu_${randomUUID().replace(/-/g, '')}`;
+  mkdirSync(tasksDir, { recursive: true });
+  const outputFile = join(tasksDir, `${id}.output`);
+  const out = openSync(outputFile, 'a');
+  children.set(id, spawn('sh', ['-c', task.command], { stdio: ['ignore', out, out] }));
+  assistant([{ type: 'tool_use', id: toolUseId, name: 'Bash', input: { command: task.command, description: task.description, run_in_background: true } }]);
+  send({ type: 'system', subtype: 'task_started', task_id: id, tool_use_id: toolUseId, description: task.description, task_type: 'local_bash', ...base() });
+  toolResult(toolUseId, `Command running in background with ID: ${id}. Output is being written to: ${outputFile}`, {
+    stdout: '', stderr: '', interrupted: false, isImage: false, backgroundTaskId: id,
+  });
+  return { id, type: 'shell', status: 'running', description: task.description, command: task.command };
+}
+
+function startWorkflow(task) {
+  const id = `w${randomUUID().replace(/-/g, '').slice(0, 8)}`;
+  const toolUseId = `toolu_${randomUUID().replace(/-/g, '')}`;
+  const now = Date.now();
+  assistant([{ type: 'tool_use', id: toolUseId, name: 'Workflow', input: { name: task.name } }]);
+  send({ type: 'system', subtype: 'task_started', task_id: id, tool_use_id: toolUseId, description: task.name, task_type: 'local_workflow', ...base() });
+  send({
+    type: 'system',
+    subtype: 'task_progress',
+    task_id: id,
+    tool_use_id: toolUseId,
+    description: task.name,
+    workflow_progress: [
+      { type: 'workflow_phase', index: 0, title: 'Scan' },
+      { type: 'workflow_phase', index: 1, title: 'Report' },
+      { type: 'workflow_agent', index: 0, phaseIndex: 0, label: 'Scan sources', state: 'progress', startedAt: now, lastToolName: 'Bash', lastToolSummary: 'rg -n TODO src' },
+      { type: 'workflow_agent', index: 1, phaseIndex: 0, label: 'Scan tests', state: 'progress', startedAt: now, lastToolName: 'Read', lastToolSummary: 'vitest.config.ts' },
+      { type: 'workflow_agent', index: 2, phaseIndex: 1, label: 'Write report', state: 'start' },
+    ],
+    ...base(),
+  });
+  toolResult(toolUseId, `Workflow ${task.name} started in the background.`, {});
+  return { id, type: 'workflow', status: 'running', description: task.name, name: task.name };
+}
+
+async function runTurn(text) {
+  send({ type: 'system', subtype: 'init', cwd: process.cwd(), tools: ['Bash', 'Workflow'], mcp_servers: [], model: MODEL, permissionMode: 'default', slash_commands: [], apiKeySource: 'none', output_style: 'default', ...base() });
+  const scenario = Object.values(SCENARIOS).find((s) => text.includes(s.request));
+  // A one-shot caller (chat naming) registers no Stop hook: it only wants a title back.
+  const live = scenario && stopHookId;
+  const backgroundTasks = live ? scenario.tasks.map((t) => (t.kind === 'shell' ? startShell(t) : startWorkflow(t))) : [];
+  // A live scenario answers with its tool calls alone, so the chat never reads as a model reply.
+  const reply = live ? '' : (scenario?.title ?? 'QA fixture chat');
+  if (reply) assistant([{ type: 'text', text: reply }]);
+  if (stopHookId) {
+    await request({
+      subtype: 'hook_callback',
+      callback_id: stopHookId,
+      input: { session_id: sessionId, transcript_path: join(tasksDir, '..', 'transcript.jsonl'), cwd: process.cwd(), hook_event_name: 'Stop', stop_hook_active: false, background_tasks: backgroundTasks, session_crons: [] },
+    });
+  }
+  send({
+    type: 'result', subtype: 'success', is_error: false, duration_ms: 400, duration_api_ms: 0, num_turns: 1, result: reply,
+    total_cost_usd: 0, usage: { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+    modelUsage: {}, permission_denials: [], ...base(),
+  });
+}
+
+function onControlRequest({ request_id: requestId, request: body }) {
+  if (body?.subtype === 'initialize') stopHookId = body.hooks?.Stop?.[0]?.hookCallbackIds?.[0];
+  if (body?.subtype === 'stop_task') {
+    children.get(body.task_id)?.kill();
+    children.delete(body.task_id);
+    send({ type: 'system', subtype: 'task_notification', task_id: body.task_id, status: 'stopped', output_file: join(tasksDir, `${body.task_id}.output`), summary: 'Stopped', ...base() });
+  }
+  respond(requestId, body?.subtype === 'initialize' ? { commands: [], models: [], account: {}, output_style: 'default', available_output_styles: ['default'] } : {});
+}
+
+const messageText = (message) =>
+  typeof message?.content === 'string' ? message.content : (message?.content ?? []).map((part) => part.text ?? '').join(' ');
+
+let turns = Promise.resolve();
+createInterface({ input: process.stdin }).on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.type === 'control_request') return onControlRequest(message);
+  if (message.type === 'control_response') {
+    pending.get(message.response?.request_id)?.(message.response);
+    return pending.delete(message.response?.request_id);
+  }
+  if (message.type === 'user') turns = turns.then(() => runTurn(messageText(message.message)));
+}).on('close', () => {
+  // Like the real CLI, end of input ends every background task this session started.
+  for (const child of children.values()) child.kill();
+  process.exit(0);
+});

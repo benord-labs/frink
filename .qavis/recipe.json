@@ -1,0 +1,11 @@
+{
+  "install": "bun install",
+  "bootstrap": "bash scripts/qa/build.sh",
+  "link": [".env"],
+  "seed": "bash scripts/qa/seed.sh",
+  "start": "bash scripts/qa/boot.sh",
+  "cdp": "cdp://127.0.0.1:9223",
+  "readyWhen": {
+    "timeoutMs": 600000
+  }
+}
