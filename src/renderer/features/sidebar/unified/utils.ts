@@ -252,7 +252,11 @@ const FOLDER_LEVEL_PRESENTATION = {
   failed: SIDEBAR_TASK_PRESENTATION.failed,
   needs: SIDEBAR_TASK_PRESENTATION.needs_attention,
   plan: SIDEBAR_TASK_PRESENTATION.plan_ready,
-  running: SIDEBAR_TASK_PRESENTATION.running,
+  // Rows stay static for render cost; one pulse per collapsed folder is the only motion left.
+  running: {
+    ...SIDEBAR_TASK_PRESENTATION.running,
+    dotClassName: `${SIDEBAR_TASK_PRESENTATION.running.dotClassName} motion-safe:animate-pulse`,
+  },
   review: SIDEBAR_TASK_PRESENTATION.done,
 } satisfies Record<FolderLevel, { label: string; dotClassName: string }>;
 
