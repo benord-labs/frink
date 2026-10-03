@@ -146,6 +146,22 @@ describe('createSubagentAllowlistHook — pinned tool allowlist', () => {
     expect(markDenied).toHaveBeenCalledTimes(1);
   });
 
+  // The real reviewer list declares MCP servers by wildcard; those tools must reach the agent.
+  it('lets a reviewer use the MCP servers its list declares by wildcard, and no others', async () => {
+    const markDenied = vi.fn();
+    const hook = createSubagentAllowlistHook({
+      agents: { 'correctness-reviewer': { tools: ['Read', 'Grep', 'mcp__codebase__*'] } },
+      project: { id: 'proj-1' },
+      projectPath: '/repo',
+      markDenied,
+    });
+
+    expect(await hook(reviewerInput('mcp__codebase__searchCode'), 'tu-15')).toEqual({});
+    expect(
+      denial(await hook(reviewerInput('mcp__github__create_pr'), 'tu-16'))?.permissionDecision,
+    ).toBe('deny');
+  });
+
   it('still refuses an off-list tool for the same agent', async () => {
     const { hook, markDenied } = makeReviewerHook();
 

@@ -218,10 +218,12 @@ disallowedTools: Edit      # or: everything EXCEPT these
 
 On **Claude**, these limits are hard-enforced — twice. The runtime applies them when the agent is dispatched, and Frink's own gate independently checks every tool call the agent makes, denying anything off the list with a clear message. If both `tools` and `disallowedTools` are set, a disallowed entry wins.
 
-Two things to know:
+Things to know:
 
 - **Matching is by tool name** (`Bash`, `Edit`, `mcp__github__create_pr`), not by what the call does with its arguments. Your scoped rules above (`Edit(src/**)` etc.) still apply on top.
-- **Agent-internal tools always pass**: `TodoWrite`, `ExitPlanMode`, `Task`, `Agent` keep working even when not listed — they're how the agent tracks work, exits plan mode, and dispatches sub-agents. Blocking them just bricks the agent (same reason you can't `deny` them as rules).
+- **A whole MCP server can be named at once**: `mcp__github__*` or just `mcp__github` covers every tool from the `github` server, in either list — the same way Claude itself reads them. A bare `mcp__*` does not mean "every MCP tool".
+- **Agent-internal tools always pass**: `TodoWrite`, `ExitPlanMode`, `Task`, `Agent` and `SubagentHandback` keep working even when not listed — they're how the agent tracks work, exits plan mode, dispatches sub-agents, and hands its final report back. Blocking them just bricks the agent (same reason you can't `deny` them as rules).
+- **New Claude built-ins pass, with a warning**: when a newer Claude release gives sub-agents an internal tool Frink doesn't know yet, Frink's gate lets it through (Claude's own runtime has already applied your limits) and logs a warning naming it, instead of silently breaking the agent. Tools Frink knows — `Write`, `Bash`, and any MCP tool you didn't list — are still denied, and so is anything you name in `disallowedTools`.
 
 On **Cursor** there is no per-tool veto, so the limit relaxes to the closest thing Cursor understands: an agent whose `tools` are all read-class follows as a `readonly` agent. Anything finer-grained than read-only doesn't carry to Cursor — the full limit applies again whenever the agent runs on a tool that can enforce it.
 

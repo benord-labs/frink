@@ -1,5 +1,6 @@
+import log from 'electron-log';
 import { describe, expect, it, vi } from 'vitest';
-import { enforceAllowlist, isToolAllowedForAgent } from './allowlist';
+import { enforceAllowlist, isToolAllowedForAgent, isUnknownBuiltinTool } from './allowlist';
 
 vi.mock('electron-log', () => ({ default: { info: vi.fn(), warn: vi.fn() } }));
 
@@ -73,6 +74,34 @@ describe('isToolAllowedForAgent (PCH-5 pure matcher)', () => {
   });
 });
 
+// The CLI reads `mcp__srv__*` and bare `mcp__srv` as every tool on server `srv` (probed on SDK
+// 0.3.278); reviewer agents ship lists like these, so an exact-only match denied their MCP tools.
+describe('isToolAllowedForAgent — MCP server entries', () => {
+  const reviewer = { tools: ['Read', 'mcp__codebase__*', 'mcp__autonomous_bugs'] };
+
+  it('grants every tool on a server named by `mcp__srv__*` or bare `mcp__srv`', () => {
+    expect(isToolAllowedForAgent('mcp__codebase__searchCode', reviewer)).toBe(true);
+    expect(isToolAllowedForAgent('mcp__autonomous_bugs__search_autonomous_issues', reviewer)).toBe(
+      true,
+    );
+  });
+
+  it('does not reach a different server, including one whose name merely starts the same', () => {
+    expect(isToolAllowedForAgent('mcp__github__create_pr', reviewer)).toBe(false);
+    expect(isToolAllowedForAgent('mcp__codebase2__searchCode', reviewer)).toBe(false);
+    expect(isToolAllowedForAgent('mcp__autonomous_bugs_admin__wipe', reviewer)).toBe(false);
+  });
+
+  it('does not read a lone `mcp__*` as a grant of every MCP tool', () => {
+    expect(isToolAllowedForAgent('mcp__github__create_pr', { tools: ['mcp__*'] })).toBe(false);
+  });
+
+  it('applies a server entry in disallowedTools too, over a listing in tools', () => {
+    const r = { tools: ['mcp__github__create_pr'], disallowedTools: ['mcp__github__*'] };
+    expect(isToolAllowedForAgent('mcp__github__create_pr', r)).toBe(false);
+  });
+});
+
 describe('enforceAllowlist (PCH-5 handler)', () => {
   it('returns denied with an honest detail on an enforce-mode miss', async () => {
     const res = await enforceAllowlist({
@@ -114,5 +143,60 @@ describe('enforceAllowlist (PCH-5 handler)', () => {
       ctx: { ...ctx, provider: 'cursor' as const },
     });
     expect(res.status).toBe('noop');
+  });
+});
+
+// A newer CLI can grant sub-agents plumbing this list has never heard of (as with SubagentHandback).
+// On Claude the SDK filtered first, so an unknown built-in passes and is named once in the log.
+describe('enforceAllowlist — built-in tools Frink does not know yet', () => {
+  const reviewer = { tools: ['Read', 'Grep'] };
+  const call = (toolName: string, provider: 'claude-code' | 'codex' = 'claude-code') =>
+    enforceAllowlist({
+      mode: 'enforce',
+      rule: { toolName, agentType: 'correctness-reviewer', restrictions: reviewer },
+      ctx: { ...ctx, provider },
+    });
+
+  it('classifies only non-MCP names outside KNOWN_TOOLS and REQUIRED_TOOLS as unknown', () => {
+    expect(isUnknownBuiltinTool('SomeFutureCliTool')).toBe(true);
+    expect(isUnknownBuiltinTool('Write')).toBe(false);
+    expect(isUnknownBuiltinTool('SubagentHandback')).toBe(false);
+    expect(isUnknownBuiltinTool('mcp__github__create_pr')).toBe(false);
+  });
+
+  it('passes an unknown built-in on Claude and warns about it only once', async () => {
+    vi.mocked(log.warn).mockClear();
+
+    expect((await call('FutureInfraToolA')).status).toBe('enforced');
+    expect((await call('FutureInfraToolA')).status).toBe('enforced');
+
+    const warnings = vi
+      .mocked(log.warn)
+      .mock.calls.filter(([m]) => String(m).includes('FutureInfraToolA'));
+    expect(warnings).toHaveLength(1);
+  });
+
+  it('still denies a known built-in and an unlisted MCP tool', async () => {
+    expect((await call('Write')).status).toBe('denied');
+    expect((await call('mcp__github__create_pr')).status).toBe('denied');
+  });
+
+  // The pass covers a tool merely absent from `tools`; one the author forbade by name stays denied.
+  it('still denies an unknown built-in the agent explicitly disallows', async () => {
+    const disallow = (restrictions: { tools?: string[]; disallowedTools: string[] }) =>
+      enforceAllowlist({
+        mode: 'enforce',
+        rule: { toolName: 'FutureInfraToolC', agentType: 'correctness-reviewer', restrictions },
+        ctx,
+      });
+
+    expect((await disallow({ disallowedTools: ['FutureInfraToolC'] })).status).toBe('denied');
+    expect(
+      (await disallow({ tools: ['Read'], disallowedTools: ['FutureInfraToolC'] })).status,
+    ).toBe('denied');
+  });
+
+  it('stays strict for an unknown built-in on a provider the SDK does not filter for', async () => {
+    expect((await call('FutureInfraToolB', 'codex')).status).toBe('denied');
   });
 });
