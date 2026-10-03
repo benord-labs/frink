@@ -47,6 +47,7 @@ type DesktopBroadcastChannel =
   | 'socket:wake-hold-changed'
   | 'socket:stream-settled'
   | 'socket:subagent-task-changed'
+  | 'socket:background-tasks-changed'
   | 'composer:changed';
 
 type MoveChatRequest = Omit<PendingMoveChatProjection, 'operation'>;

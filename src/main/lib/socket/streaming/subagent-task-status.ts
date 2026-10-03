@@ -1,5 +1,6 @@
 /**
- * Display-only tracker for background subagent liveness, fed by the SDK's task lifecycle frames.
+ * Display-only trackers fed by the SDK's task frames: background subagent liveness, Workflow
+ * progress, and the live background-task roster behind the background-work row.
  *
  * An async Agent launch resolves its tool part immediately, so the renderer card reads "Completed
  * Subagent" while the task runs; `task_started`/`task_notification` carry the `tool_use_id` that
@@ -8,7 +9,11 @@
  * snapshot remains the authority (docs/decisions/unattended-wake-budget.md).
  */
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
-import type { SubagentTaskChangedPayload } from '../../../../shared/types/wake-hold/subagent-task';
+import type {
+  BackgroundRosterPayload,
+  BackgroundRosterTask,
+  SubagentTaskChangedPayload,
+} from '../../../../shared/types/wake-hold/subagent-task';
 import type {
   WorkflowAgentProgress,
   WorkflowProgressView,
@@ -24,11 +29,26 @@ const workflowProgressByChat = new Map<string, Map<string, WorkflowProgressView>
 
 let publish: ((payload: SubagentTaskChangedPayload) => void) | null = null;
 
+/** Per chat: the latest `background_tasks_changed` set. A REPLACE-semantics level signal, so a missed
+ * start/notification bookend can never strand a stale row. */
+const rosterByChat = new Map<string, BackgroundRosterTask[]>();
+
+/** Per chat: tasks the last Stop hook judged finished followers (task-stop-hook.ts) — never shown. */
+const ignoredByChat = new Map<string, ReadonlySet<string>>();
+
+let publishRoster: ((payload: BackgroundRosterPayload) => void) | null = null;
+
 /** Injected at boot (src/main/lib/socket/index.ts) so this module stays IO-free and test-spyable. */
 export function setSubagentTaskPublisher(
   fn: ((payload: SubagentTaskChangedPayload) => void) | null,
 ): void {
   publish = fn;
+}
+
+export function setBackgroundRosterPublisher(
+  fn: ((payload: BackgroundRosterPayload) => void) | null,
+): void {
+  publishRoster = fn;
 }
 
 type TaskFrame = {
@@ -41,6 +61,8 @@ type TaskFrame = {
   skip_transcript?: boolean;
   /** Undocumented CLI field: a full snapshot of a Workflow's phases and agents, absent between. */
   workflow_progress?: unknown;
+  /** `background_tasks_changed` only: every live task after the change. */
+  tasks?: unknown;
 };
 
 /** Only agent-shaped and workflow tasks address a tool card (Task/Agent, Workflow); shells, crons
@@ -63,32 +85,47 @@ export function noteSubagentTaskFrame(subChatId: string, message: SDKMessage): v
   try {
     const frame = message as TaskFrame;
     if (frame.subtype === 'task_progress') return noteWorkflowProgress(subChatId, frame);
-    if (frame.subtype === 'task_started') {
-      if (!frame.task_id || !frame.tool_use_id || !isCardTaskStart(frame)) return;
-      const chat = runningByChat.get(subChatId) ?? new Map<string, string>();
-      if (chat.has(frame.task_id)) return;
-      chat.set(frame.task_id, frame.tool_use_id);
-      runningByChat.set(subChatId, chat);
-      publish?.({ subChatId, toolCallId: frame.tool_use_id, running: true });
-      return;
-    }
-    if (frame.subtype !== 'task_notification' || !frame.task_id) return;
-    workflowProgressByChat.get(subChatId)?.delete(frame.task_id);
-    const chat = runningByChat.get(subChatId);
-    const toolCallId = chat?.get(frame.task_id);
-    if (!chat || toolCallId === undefined) return;
-    chat.delete(frame.task_id);
-    if (chat.size === 0) runningByChat.delete(subChatId);
-    publish?.({ subChatId, toolCallId, running: false });
+    if (frame.subtype === 'background_tasks_changed') return noteRoster(subChatId, frame.tasks);
+    if (frame.subtype === 'task_started') return noteSubagentStart(subChatId, frame);
+    if (frame.subtype === 'task_notification') return noteTaskEnd(subChatId, frame);
   } catch (error) {
     captureMainException(error, { surface: 'subagent-task-status', stage: 'note-frame' });
   }
+}
+
+function noteSubagentStart(subChatId: string, frame: TaskFrame): void {
+  if (!frame.task_id || !frame.tool_use_id || !isCardTaskStart(frame)) return;
+  const chat = runningByChat.get(subChatId) ?? new Map<string, string>();
+  if (chat.has(frame.task_id)) return;
+  chat.set(frame.task_id, frame.tool_use_id);
+  runningByChat.set(subChatId, chat);
+  publish?.({ subChatId, toolCallId: frame.tool_use_id, running: true });
+}
+
+function noteTaskEnd(subChatId: string, frame: TaskFrame): void {
+  if (!frame.task_id) return;
+  workflowProgressByChat.get(subChatId)?.delete(frame.task_id);
+  const chat = runningByChat.get(subChatId);
+  const toolCallId = chat?.get(frame.task_id);
+  if (!chat || toolCallId === undefined) return;
+  chat.delete(frame.task_id);
+  if (chat.size === 0) runningByChat.delete(subChatId);
+  publish?.({ subChatId, toolCallId, running: false });
 }
 
 /** Retract every tracked id for a chat — called from BOTH session-detach seams (endSession and
  * unregisterSessionIfOwned). A silent map drop never crosses IPC, which would strand spinners. */
 export function clearSubagentTasks(subChatId: string): void {
   workflowProgressByChat.delete(subChatId);
+  ignoredByChat.delete(subChatId);
+  // The roster is per CLI process, so a detached session's set must not outlive it (SDK contract).
+  if (rosterByChat.delete(subChatId)) {
+    try {
+      publishRoster?.({ subChatId, tasks: null });
+    } catch (error) {
+      captureMainException(error, { surface: 'subagent-task-status', stage: 'roster-retract' });
+    }
+  }
   const chat = runningByChat.get(subChatId);
   if (!chat) return;
   runningByChat.delete(subChatId);
@@ -110,6 +147,67 @@ export function listRunningSubagentTasks(): SubagentTaskChangedPayload[] {
     for (const toolCallId of chat.values()) running.push({ subChatId, toolCallId, running: true });
   }
   return running;
+}
+
+/** A malformed entry is dropped rather than trusted. The id is kept whole, never cut: it is what the
+ * row and the Stop hook share, and a cut one would match nothing. */
+function parseRosterTask(entry: unknown): BackgroundRosterTask | null {
+  if (typeof entry !== 'object' || entry === null) return null;
+  const fields = entry as Record<string, unknown>;
+  const id = fields.task_id;
+  if (typeof id !== 'string' || id.length === 0) return null;
+  return {
+    id,
+    type: text(fields.task_type) ?? '',
+    description: text(fields.description) ?? '',
+    ambient: fields.ambient === true,
+  };
+}
+
+function noteRoster(subChatId: string, tasks: unknown): void {
+  if (!Array.isArray(tasks)) return;
+  const roster = tasks.flatMap((entry) => parseRosterTask(entry) ?? []);
+  rosterByChat.set(subChatId, roster);
+  // A dead-follower verdict lasts until its task leaves the CLI's set, not until the next Stop.
+  const ignored = ignoredByChat.get(subChatId);
+  if (ignored) {
+    const live = new Set(roster.map((task) => task.id));
+    const kept = new Set([...ignored].filter((id) => live.has(id)));
+    if (kept.size > 0) ignoredByChat.set(subChatId, kept);
+    else ignoredByChat.delete(subChatId);
+  }
+  publishRosterFor(subChatId);
+}
+
+function visibleRoster(subChatId: string, roster: BackgroundRosterTask[]): BackgroundRosterTask[] {
+  const ignored = ignoredByChat.get(subChatId);
+  return roster.filter((task) => !ignored?.has(task.id));
+}
+
+function publishRosterFor(subChatId: string): void {
+  const roster = rosterByChat.get(subChatId);
+  if (roster) publishRoster?.({ subChatId, tasks: visibleRoster(subChatId, roster) });
+}
+
+/** Boot pull for a renderer that reloaded: the roster is pushed only on a membership change. */
+export function listBackgroundRosters(): BackgroundRosterPayload[] {
+  return [...rosterByChat].map(([subChatId, roster]) => ({
+    subChatId,
+    tasks: visibleRoster(subChatId, roster),
+  }));
+}
+
+/** Adds the Stop hook's dead followers for this chat, re-publishing the roster on a change since the
+ * roster itself only re-sends on a membership change. Never throws (called from a hook). */
+export function ignoreBackgroundTasks(subChatId: string, ids: ReadonlySet<string>): void {
+  try {
+    const previous = ignoredByChat.get(subChatId) ?? new Set<string>();
+    if ([...ids].every((id) => previous.has(id))) return;
+    ignoredByChat.set(subChatId, new Set([...previous, ...ids]));
+    publishRosterFor(subChatId);
+  } catch (error) {
+    captureMainException(error, { surface: 'subagent-task-status', stage: 'roster-ignore' });
+  }
 }
 
 /** The latest snapshot of one of the chat's running Workflows, or null when none has arrived. */
@@ -139,8 +237,12 @@ const MAX_ENTRIES = 1000;
 const MAX_PHASES = 50;
 const MAX_AGENTS = 200;
 
-const text = (value: unknown): string | undefined =>
-  typeof value === 'string' && value.length > 0 ? value.slice(0, MAX_TEXT) : undefined;
+/** Bounded at MAX_TEXT, never splitting a surrogate pair: a lone half renders as a broken glyph. */
+const text = (value: unknown): string | undefined => {
+  if (typeof value !== 'string' || value.length === 0) return undefined;
+  const cut = value.slice(0, MAX_TEXT);
+  return /[\uD800-\uDBFF]$/.test(cut) ? cut.slice(0, -1) : cut;
+};
 
 const finite = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isFinite(value) ? value : undefined;
@@ -220,5 +322,8 @@ function agentState(
 export function __resetSubagentTaskStatusForTest(): void {
   workflowProgressByChat.clear();
   runningByChat.clear();
+  rosterByChat.clear();
+  ignoredByChat.clear();
   publish = null;
+  publishRoster = null;
 }

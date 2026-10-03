@@ -1,4 +1,4 @@
-/** The held row, whose label opens the list of what the wait is on — anchored to the whole row and
+/** The background-work row, whose label opens the list of what is running — anchored to the row and
  * as wide as it. Main owns the list; the last item has no row Stop since that never ends a wait. */
 
 import { Button } from '@benord-labs/frink-primitives';
@@ -47,10 +47,14 @@ type BackgroundWorkPopoverProps = {
   subChatId: string;
   /** The row's text, e.g. "Working in the background — 1 Workflow". */
   label: string;
-  /** Non-empty, as published by main. */
+  /** Non-empty. */
   waitingOn: WakeHoldItem[];
-  /** Whether the row offers its session Stop; a Flow chat's stop lives on the flow instead. */
-  hasSessionStop: boolean;
+  /** Who ends everything: the row's own Stop, the flow's, or nobody here (a turn is streaming and
+   * the composer owns stopping). */
+  sessionStop: 'row' | 'flow' | 'none';
+  /** Whether stoppable items get their own Stop — false while streaming and when main's snapshot
+   * holds only one item, since stopping the last item never ends a wait. */
+  canStopItems: boolean;
   /** The row's own actions (its session Stop). */
   children: ReactNode;
 };
@@ -59,14 +63,14 @@ export function BackgroundWorkPopover({
   subChatId,
   label,
   waitingOn,
-  hasSessionStop,
+  sessionStop,
+  canStopItems,
   children,
 }: BackgroundWorkPopoverProps) {
   const cardRef = useRef<HTMLDivElement>(null);
   // One open at a time: each open row polls, and two tails would crowd the list.
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const rowsCanStop = waitingOn.length > 1;
-  const someRowCannotStop = waitingOn.some((item) => !(rowsCanStop && item.stoppable));
+  const someRowCannotStop = waitingOn.some((item) => !(canStopItems && item.stoppable));
   return (
     <Popover>
       <PopoverAnchor virtualRef={cardRef} />
@@ -106,7 +110,7 @@ export function BackgroundWorkPopover({
       >
         <div className={cn(overlayLabel, 'flex flex-wrap items-baseline justify-between gap-x-2')}>
           <span>Background work</span>
-          <span className="font-normal">Updates when the agent checks in</span>
+          <span className="font-normal">Updates as work starts and finishes</span>
         </div>
         <ul>
           {waitingOn.map((item) => (
@@ -114,19 +118,19 @@ export function BackgroundWorkPopover({
               key={item.id}
               subChatId={subChatId}
               item={item}
-              canStop={rowsCanStop && item.stoppable}
+              canStop={canStopItems && item.stoppable}
               expanded={expandedId === item.id}
               onToggle={() => setExpandedId((open) => (open === item.id ? null : item.id))}
             />
           ))}
         </ul>
-        {someRowCannotStop ? (
+        {someRowCannotStop && sessionStop !== 'none' ? (
           <>
             <div className={overlaySeparator} />
             <p className={cn(overlayLabel, 'font-normal')}>
-              {!hasSessionStop
+              {sessionStop === 'flow'
                 ? 'The flow’s Stop ends everything still running.'
-                : rowsCanStop
+                : canStopItems
                   ? 'Stop all ends everything still running.'
                   : 'Stop on the banner ends it.'}
             </p>
@@ -196,13 +200,19 @@ function RowSummary({ item, expanded }: { item: WakeHoldItem; expanded: boolean 
         </span>
         {expanded === null ? null : (
           <ChevronDown
-            className={cn('h-3 w-3 shrink-0 self-center transition-transform', expanded && 'rotate-180')}
+            className={cn(
+              'h-3 w-3 shrink-0 self-center transition-transform',
+              expanded && 'rotate-180',
+            )}
             aria-hidden
           />
         )}
       </span>
       {item.command ? (
-        <span className="block truncate font-mono text-xs text-muted-foreground" title={item.command}>
+        <span
+          className="block truncate font-mono text-xs text-muted-foreground"
+          title={item.command}
+        >
           {item.command}
         </span>
       ) : null}

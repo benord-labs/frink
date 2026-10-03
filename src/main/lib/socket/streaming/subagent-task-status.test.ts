@@ -4,10 +4,13 @@ import captured from './__fixtures__/workflow-task-progress.json';
 import {
   __resetSubagentTaskStatusForTest,
   clearSubagentTasks,
+  ignoreBackgroundTasks,
+  listBackgroundRosters,
   listRunningSubagentTasks,
   noteSubagentTaskFrame,
   parseWorkflowProgress,
   readWorkflowProgress,
+  setBackgroundRosterPublisher,
   setSubagentTaskPublisher,
 } from './subagent-task-status';
 
@@ -310,5 +313,123 @@ describe('workflow progress', () => {
     };
     expect(() => noteSubagentTaskFrame('sub-1', frame(hostile))).not.toThrow();
     expect(readWorkflowProgress('sub-1', TASK)).toBeNull();
+  });
+
+  describe('background roster', () => {
+    const publishRoster = vi.fn();
+    const changed = (tasks: unknown): SDKMessage =>
+      ({ type: 'system', subtype: 'background_tasks_changed', tasks }) as unknown as SDKMessage;
+    const live = (task_id: string, extra: Record<string, unknown> = {}) => ({
+      task_id,
+      task_type: 'local_bash',
+      description: `${task_id} work`,
+      ...extra,
+    });
+    const roster = (id: string, ambient = false) => ({
+      id,
+      type: 'local_bash',
+      description: `${id} work`,
+      ambient,
+    });
+
+    beforeEach(() => {
+      publishRoster.mockClear();
+      setBackgroundRosterPublisher(publishRoster);
+    });
+
+    it('replaces the set on every change rather than pairing start and end frames', () => {
+      noteSubagentTaskFrame('sub-1', changed([live('a'), live('b', { ambient: true })]));
+      noteSubagentTaskFrame('sub-1', changed([live('b', { ambient: true })]));
+
+      expect(publishRoster).toHaveBeenNthCalledWith(1, {
+        subChatId: 'sub-1',
+        tasks: [roster('a'), roster('b', true)],
+      });
+      expect(publishRoster).toHaveBeenLastCalledWith({
+        subChatId: 'sub-1',
+        tasks: [roster('b', true)],
+      });
+    });
+
+    // A later Stop no longer lists a follower that already left; clearing the verdict before the
+    // roster's own removal frame lands would show the follower again.
+    it('keeps a dead-follower verdict until its task leaves the roster', () => {
+      noteSubagentTaskFrame('sub-1', changed([live('tail1'), live('b2')]));
+      ignoreBackgroundTasks('sub-1', new Set(['tail1']));
+      ignoreBackgroundTasks('sub-1', new Set());
+      expect(publishRoster).toHaveBeenLastCalledWith({ subChatId: 'sub-1', tasks: [roster('b2')] });
+
+      noteSubagentTaskFrame('sub-1', changed([live('b2')]));
+      noteSubagentTaskFrame('sub-1', changed([live('tail1'), live('b2')]));
+      expect(publishRoster).toHaveBeenLastCalledWith({
+        subChatId: 'sub-1',
+        tasks: [roster('tail1'), roster('b2')],
+      });
+    });
+
+    it('never caps the set before the follower filter, so live work behind ignored tasks shows', () => {
+      const ids = Array.from({ length: 201 }, (_, i) => `t${i}`);
+      noteSubagentTaskFrame('sub-1', changed(ids.map((id) => live(id))));
+      ignoreBackgroundTasks('sub-1', new Set(ids.slice(0, 200)));
+      expect(publishRoster).toHaveBeenLastCalledWith({
+        subChatId: 'sub-1',
+        tasks: [roster('t200')],
+      });
+    });
+
+    it('drops malformed entries and ignores a frame with no list', () => {
+      noteSubagentTaskFrame('sub-1', changed('nope'));
+      expect(publishRoster).not.toHaveBeenCalled();
+
+      noteSubagentTaskFrame('sub-1', changed([null, { task_id: '' }, live('a')]));
+      expect(publishRoster).toHaveBeenLastCalledWith({ subChatId: 'sub-1', tasks: [roster('a')] });
+    });
+
+    // The roster re-sends only on a membership change, so a follower the Stop hook drops later must
+    // be re-published without it, or it would keep showing for as long as it runs.
+    it('hides the Stop hook’s dead followers, re-publishing when the verdict changes', () => {
+      noteSubagentTaskFrame('sub-1', changed([live('tail1'), live('b2')]));
+      ignoreBackgroundTasks('sub-1', new Set(['tail1']));
+      expect(publishRoster).toHaveBeenLastCalledWith({ subChatId: 'sub-1', tasks: [roster('b2')] });
+
+      publishRoster.mockClear();
+      ignoreBackgroundTasks('sub-1', new Set(['tail1']));
+      expect(publishRoster).not.toHaveBeenCalled();
+    });
+
+    // A cut id would match nothing the Stop hook reports, so the dead-follower filter would miss it.
+    it('keeps a long task id whole, so the Stop hook can still address it', () => {
+      const id = 'x'.repeat(300);
+      noteSubagentTaskFrame('sub-1', changed([live(id)]));
+      ignoreBackgroundTasks('sub-1', new Set([id]));
+      expect(publishRoster).toHaveBeenLastCalledWith({ subChatId: 'sub-1', tasks: [] });
+    });
+
+    it('bounds a description without splitting a surrogate pair at the cut', () => {
+      const description = `${'a'.repeat(199)}😀tail`;
+      noteSubagentTaskFrame('sub-1', changed([live('a', { description })]));
+      const [task] = publishRoster.mock.lastCall?.[0].tasks ?? [];
+      expect(task.description).toBe('a'.repeat(199));
+    });
+
+    it('lists every chat’s visible roster for a reloaded renderer, and forgets a detached one', () => {
+      noteSubagentTaskFrame('sub-1', changed([live('tail1'), live('b2')]));
+      ignoreBackgroundTasks('sub-1', new Set(['tail1']));
+      expect(listBackgroundRosters()).toEqual([{ subChatId: 'sub-1', tasks: [roster('b2')] }]);
+
+      clearSubagentTasks('sub-1');
+      expect(listBackgroundRosters()).toEqual([]);
+    });
+
+    it('retracts to unknown when the session detaches, since the set is per CLI process', () => {
+      noteSubagentTaskFrame('sub-1', changed([live('a')]));
+      clearSubagentTasks('sub-1');
+      expect(publishRoster).toHaveBeenLastCalledWith({ subChatId: 'sub-1', tasks: null });
+
+      publishRoster.mockClear();
+      clearSubagentTasks('sub-1');
+      ignoreBackgroundTasks('sub-1', new Set(['a']));
+      expect(publishRoster).not.toHaveBeenCalled();
+    });
   });
 });

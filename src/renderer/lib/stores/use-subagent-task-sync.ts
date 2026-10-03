@@ -1,10 +1,17 @@
 import * as Sentry from '@sentry/electron/renderer';
 import { useStore } from 'jotai';
 import { useEffect } from 'react';
-import type { SubagentTaskChangedPayload } from '../../../shared/types/wake-hold/subagent-task';
+import type {
+  BackgroundRosterPayload,
+  BackgroundRosterTask,
+  SubagentTaskChangedPayload,
+} from '../../../shared/types/wake-hold/subagent-task';
 import { trpcClient } from '../trpc';
 import { isDesktopApp } from '../utils/platform';
-import { runningSubagentToolIdsAtom } from './active-transport-registry';
+import {
+  backgroundRosterAtomFamily,
+  runningSubagentToolIdsAtom,
+} from './active-transport-registry';
 
 const RETRY_DELAY_MS = 500;
 
@@ -18,6 +25,70 @@ export function isSubagentTaskPayload(data: unknown): data is SubagentTaskChange
     d.toolCallId.length > 0 &&
     typeof d.running === 'boolean'
   );
+}
+
+function isRosterTask(value: unknown): value is BackgroundRosterTask {
+  if (typeof value !== 'object' || value === null) return false;
+  const task = value as Record<string, unknown>;
+  return (
+    typeof task.id === 'string' &&
+    task.id.length > 0 &&
+    typeof task.type === 'string' &&
+    typeof task.description === 'string' &&
+    typeof task.ambient === 'boolean'
+  );
+}
+
+export function isBackgroundRosterPayload(data: unknown): data is BackgroundRosterPayload {
+  if (typeof data !== 'object' || data === null) return false;
+  const d = data as Record<string, unknown>;
+  if (typeof d.subChatId !== 'string') return false;
+  return d.tasks === null || (Array.isArray(d.tasks) && d.tasks.every(isRosterTask));
+}
+
+function applyRosterSnapshot(
+  store: ReturnType<typeof useStore>,
+  rosters: unknown[],
+  spokenFor: ReadonlySet<string>,
+): void {
+  for (const roster of rosters) {
+    if (!isBackgroundRosterPayload(roster) || spokenFor.has(roster.subChatId)) continue;
+    store.set(backgroundRosterAtomFamily(roster.subChatId), roster.tasks);
+  }
+}
+
+/**
+ * Mirrors main's background roster into {@link backgroundRosterAtomFamily}, then seeds it from main's
+ * snapshot, since a frame is pushed only on a membership change. A live frame beats the snapshot.
+ */
+function syncBackgroundRosters(store: ReturnType<typeof useStore>): () => void {
+  const spokenFor = new Set<string>();
+  let disposed = false;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  const unsubscribe = window.desktopApi.on('socket:background-tasks-changed', (data) => {
+    if (!isBackgroundRosterPayload(data)) return;
+    spokenFor.add(data.subChatId);
+    store.set(backgroundRosterAtomFamily(data.subChatId), data.tasks);
+  });
+  // Report once and retry once, as the subagent seed does; then give up.
+  const seed = (mayRetry: boolean): void => {
+    trpcClient.socket.listBackgroundRosters
+      .query()
+      .then((rosters) => {
+        if (!disposed) applyRosterSnapshot(store, rosters, spokenFor);
+      })
+      .catch((error: unknown) => {
+        if (disposed || !mayRetry) return;
+        Sentry.captureException(error, { tags: { surface: 'background-roster-rehydrate' } });
+        retryTimer = setTimeout(() => seed(false), RETRY_DELAY_MS);
+      });
+  };
+  seed(true);
+  return () => {
+    disposed = true;
+    if (retryTimer) clearTimeout(retryTimer);
+    unsubscribe();
+  };
 }
 
 /** The set is replaced only when membership changes, so a repeated frame never re-renders cards. */
@@ -46,6 +117,8 @@ function applySubagentTask(
  *
  * Boot also SEEDS from main's tracker, because the push is the only announcement a start ever
  * makes: a window that reloads mid-task would otherwise read the card as "Completed Subagent".
+ *
+ * Also mirrors each sub-chat's live background tasks into {@link backgroundRosterAtomFamily}.
  */
 export function useSubagentTaskSync(): void {
   const store = useStore();
@@ -96,5 +169,10 @@ export function useSubagentTaskSync(): void {
       if (retryTimer) clearTimeout(retryTimer);
       unsubscribe();
     };
+  }, [store]);
+
+  useEffect(() => {
+    if (!isDesktopApp() || !window.desktopApi?.on) return;
+    return syncBackgroundRosters(store);
   }, [store]);
 }

@@ -12,6 +12,10 @@ import {
 import { createClaudeTurnContext } from '../claude-turn-context';
 import * as socketClient from '../client';
 import { drainPendingPermissions } from '../executor';
+import {
+  noteSubagentTaskFrame,
+  setBackgroundRosterPublisher,
+} from '../streaming/subagent-task-status';
 import { getPreToolUseHook } from '../test-utils';
 import {
   expireQuestion,
@@ -79,6 +83,8 @@ export function registerClaudeSessionCallbackTests(harness: ClaudeSessionCallbac
         {},
       ]);
     });
+
+    itGatesRosterVerdictOnLiveSession(harness);
 
     // sc-2771: the signal target check must see the task the flow DRIVES; the pinned first-node
     // task is terminal, so checking it would refuse every later node's live `done`.
@@ -202,5 +208,49 @@ export function registerClaudeSessionCallbackTests(harness: ClaudeSessionCallbac
         endSession(payload.subChatId);
       }
     });
+  });
+}
+
+/** A late Stop from a draining or ended session shares its successor's sub-chat key, so its
+ * dead-follower verdict must not reach the roster. */
+function itGatesRosterVerdictOnLiveSession(harness: ClaudeSessionCallbackHarness): void {
+  const { claudeQueryMock, handleRemoteExecute } = harness;
+  it('applies a Stop’s dead-follower verdict only while its session is live, not draining or ended', async () => {
+    const publishRoster = vi.fn();
+    setBackgroundRosterPublisher(publishRoster);
+    const follower = {
+      id: 'tail1',
+      type: 'shell',
+      status: 'running',
+      description: '',
+      command: 'tail -f /tmp/x/sess1/tasks/ship9.output',
+    };
+    const stopWith = { ...stopInput([follower]), session_id: 'sess1' };
+    const changed = {
+      type: 'system',
+      subtype: 'background_tasks_changed',
+      tasks: [{ task_id: 'tail1', task_type: 'local_bash', description: 'follow' }],
+    } as unknown as Parameters<typeof noteSubagentTaskFrame>[1];
+    const published: unknown[] = [];
+    claudeQueryMock.mockImplementationOnce(async function* (input: { options: SessionOptions }) {
+      const session = getSession(payload.subChatId);
+      const stop = input.options.hooks.Stop[0].hooks[0];
+      noteSubagentTaskFrame(payload.subChatId, changed);
+      publishRoster.mockClear();
+      if (session) session.loop.closeExpected = true;
+      await stop(stopWith);
+      if (session) Object.assign(session.loop, { closeExpected: false, stopped: true });
+      await stop(stopWith);
+      published.push(publishRoster.mock.calls.length);
+      if (session) session.loop.stopped = false;
+      await stop(stopWith);
+      published.push(publishRoster.mock.lastCall?.[0]);
+      yield* UNKEPT_TURN_END;
+    });
+
+    await handleRemoteExecute({ ...payload, message: 'watch the ship' });
+    setBackgroundRosterPublisher(null);
+
+    expect(published).toEqual([0, { subChatId: payload.subChatId, tasks: [] }]);
   });
 }

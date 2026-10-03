@@ -171,6 +171,9 @@ type TaskStopHookOpts = {
    * it performs is ordered before the turn ends. Best-effort; must not throw.
    */
   onAllow?: () => void | Promise<void>;
+  /** Every Stop: the reported tasks it dropped as finished followers, so the display-only roster
+   * can hide them too. Must not throw. */
+  onDroppedFollowers?: (taskIds: ReadonlySet<string>) => void;
 };
 
 /**
@@ -222,8 +225,12 @@ export function createTaskStopHook(opts: TaskStopHookOpts): TaskStopHook {
   const hook = (async (input: StopHookInput): Promise<StopHookResult> => {
     hook.stoppedSinceReset = true;
     hook.lastPendingWork = readPendingWork(input);
-    hook.droppedFollower =
-      (input.background_tasks?.length ?? 0) > (hook.lastPendingWork?.backgroundTasks.length ?? 0);
+    const kept = new Set(hook.lastPendingWork?.backgroundTasks.map((task) => task.id));
+    const dropped = new Set(
+      (input.background_tasks ?? []).map((task) => task.id).filter((id) => !kept.has(id)),
+    );
+    hook.droppedFollower = dropped.size > 0;
+    opts.onDroppedFollowers?.(dropped);
     if (opts.isAborted()) {
       return allow();
     }

@@ -25,6 +25,7 @@ import {
   submitPlanForReview,
 } from '../../streaming/plan-auto-approve';
 import { holdOrParkQuestion } from '../../streaming/question-hold-park';
+import { ignoreBackgroundTasks } from '../../streaming/subagent-task-status';
 
 /** What a session's callbacks read that holds for the session's whole life. The last two are
  * injected because the executor owns the permission prompt and the abort-reason map. */
@@ -54,7 +55,7 @@ const PLAN_SUBMITTED = 'Plan submitted — awaiting user approval; no tools may 
  * they were built for; with no turn attached, tools are denied and Stop allows. */
 export function buildClaudeSessionCallbacks(scope: ClaudeSessionScope, session: ClaudeSessionRef) {
   const activeTurn: ActiveTurn = () => session.current?.currentTurn ?? null;
-  const stopHook = createClaudeStopHook(activeTurn);
+  const stopHook = createClaudeStopHook(activeTurn, scope.subChatId, session);
   const allowlistOnlyHook = createSubagentAllowlistHook({
     agents: scope.agents,
     project: scope.project,
@@ -158,7 +159,11 @@ function createPreToolUseHook(scope: ClaudeSessionScope, activeTurn: ActiveTurn)
 
 /** Stop hook judged on the active turn: a turn owing frink_task_signal continues (≤2 retries), a
  * turn with no task never blocks, and `lastPendingWork` feeds the wake pump. */
-function createClaudeStopHook(activeTurn: ActiveTurn): TaskStopHook {
+function createClaudeStopHook(
+  activeTurn: ActiveTurn,
+  subChatId: string,
+  session: ClaudeSessionRef,
+): TaskStopHook {
   // With no turn attached there is nothing to continue, so Stop allows.
   const isAborted = (): boolean => activeTurn()?.isAborted() ?? true;
   const hook = createTaskStopHook({
@@ -176,6 +181,11 @@ function createClaudeStopHook(activeTurn: ActiveTurn): TaskStopHook {
       );
     },
     isAborted,
+    onDroppedFollowers: (taskIds) => {
+      // A draining or ended session shares its successor's key, so only a live one may write.
+      const loop = session.current?.loop;
+      if (loop && !loop.closeExpected && !loop.stopped) ignoreBackgroundTasks(subChatId, taskIds);
+    },
     onAllow: async () => {
       const turn = activeTurn();
       if (!turn?.execution.taskSignalReady || !turn.execution.signalTaskId) return;

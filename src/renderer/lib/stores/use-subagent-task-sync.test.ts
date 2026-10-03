@@ -10,13 +10,26 @@
 import { act, renderHook } from '@testing-library/react';
 import { getDefaultStore } from 'jotai';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { runningSubagentToolIdsAtom } from './active-transport-registry';
-import { isSubagentTaskPayload, useSubagentTaskSync } from './use-subagent-task-sync';
+import {
+  backgroundRosterAtomFamily,
+  runningSubagentToolIdsAtom,
+} from './active-transport-registry';
+import {
+  isBackgroundRosterPayload,
+  isSubagentTaskPayload,
+  useSubagentTaskSync,
+} from './use-subagent-task-sync';
 
 const queryRunningTasks = vi.hoisted(() => vi.fn());
+const queryRosters = vi.hoisted(() => vi.fn());
 const captureException = vi.hoisted(() => vi.fn());
 vi.mock('../trpc', () => ({
-  trpcClient: { socket: { listRunningSubagentTasks: { query: queryRunningTasks } } },
+  trpcClient: {
+    socket: {
+      listRunningSubagentTasks: { query: queryRunningTasks },
+      listBackgroundRosters: { query: queryRosters },
+    },
+  },
 }));
 vi.mock('@sentry/electron/renderer', () => ({ captureException }));
 
@@ -57,18 +70,83 @@ describe('isSubagentTaskPayload', () => {
 
 describe('useSubagentTaskSync — boot rehydrate', () => {
   let emit: (data: unknown) => void = () => {};
+  let emitRoster: (data: unknown) => void = () => {};
   const running = () => getDefaultStore().get(runningSubagentToolIdsAtom);
 
   beforeEach(() => {
     queryRunningTasks.mockReset();
+    queryRosters.mockReset().mockResolvedValue([]);
     captureException.mockReset();
     getDefaultStore().set(runningSubagentToolIdsAtom, new Set<string>());
     (window as unknown as { desktopApi: unknown }).desktopApi = {
-      on: (_channel: string, callback: (data: unknown) => void) => {
-        emit = callback;
+      on: (channel: string, callback: (data: unknown) => void) => {
+        if (channel === 'socket:subagent-task-changed') emit = callback;
+        if (channel === 'socket:background-tasks-changed') emitRoster = callback;
         return () => {};
       },
     };
+  });
+
+  it('mirrors a sub-chat’s live background tasks, ignoring a malformed frame', async () => {
+    queryRunningTasks.mockResolvedValue([]);
+    const roster = () => getDefaultStore().get(backgroundRosterAtomFamily('sc1'));
+    const task = { id: 'b1', type: 'local_bash', description: 'npm test', ambient: false };
+
+    renderHook(() => useSubagentTaskSync());
+    act(() => emitRoster({ subChatId: 'sc1', tasks: [task] }));
+    expect(roster()).toEqual([task]);
+
+    act(() => emitRoster({ subChatId: 'sc1', tasks: 'nope' }));
+    expect(roster()).toEqual([task]);
+    act(() => emitRoster({ subChatId: 'sc1', tasks: null }));
+    expect(roster()).toBeNull();
+  });
+
+  // A reload mid-wait would otherwise hide the row until the CLI's task set next changes.
+  it('seeds the background roster on boot, letting a frame that lands mid-fetch win', async () => {
+    queryRunningTasks.mockResolvedValue([]);
+    const task = (id: string) => ({ id, type: 'local_bash', description: id, ambient: false });
+    let resolveRosters: (rosters: unknown) => void = () => {};
+    queryRosters.mockReturnValue(
+      new Promise((resolve) => {
+        resolveRosters = resolve;
+      }),
+    );
+    const roster = (subChatId: string) =>
+      getDefaultStore().get(backgroundRosterAtomFamily(subChatId));
+
+    renderHook(() => useSubagentTaskSync());
+    act(() => emitRoster({ subChatId: 'sc1', tasks: [task('live')] }));
+    await act(async () => {
+      resolveRosters([
+        { subChatId: 'sc1', tasks: [task('stale')] },
+        { subChatId: 'sc2', tasks: [task('seeded')] },
+      ]);
+    });
+
+    expect(roster('sc1')).toEqual([task('live')]);
+    expect(roster('sc2')).toEqual([task('seeded')]);
+  });
+
+  it('retries the roster seed once after a transient failure', async () => {
+    vi.useFakeTimers();
+    queryRunningTasks.mockResolvedValue([]);
+    const task = { id: 'b1', type: 'local_bash', description: 'npm test', ambient: false };
+    queryRosters
+      .mockRejectedValueOnce(new Error('boot race'))
+      .mockResolvedValueOnce([{ subChatId: 'sc1', tasks: [task] }]);
+
+    renderHook(() => useSubagentTaskSync());
+    await act(async () => {});
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+
+    expect(queryRosters).toHaveBeenCalledTimes(2);
+    expect(getDefaultStore().get(backgroundRosterAtomFamily('sc1'))).toEqual([task]);
+    expect(captureException).toHaveBeenCalledWith(expect.any(Error), {
+      tags: { surface: 'background-roster-rehydrate' },
+    });
   });
 
   it('seeds the subagents main still runs, which a reload would otherwise read as completed', async () => {
@@ -173,11 +251,12 @@ describe('useSubagentTaskSync — boot rehydrate edge cases', () => {
 
   beforeEach(() => {
     queryRunningTasks.mockReset();
+    queryRosters.mockReset().mockResolvedValue([]);
     captureException.mockReset();
     getDefaultStore().set(runningSubagentToolIdsAtom, new Set<string>());
     (window as unknown as { desktopApi: unknown }).desktopApi = {
-      on: (_channel: string, callback: (data: unknown) => void) => {
-        emit = callback;
+      on: (channel: string, callback: (data: unknown) => void) => {
+        if (channel === 'socket:subagent-task-changed') emit = callback;
         return () => {};
       },
     };
@@ -264,5 +343,26 @@ describe('useSubagentTaskSync — boot rehydrate edge cases', () => {
 
     expect(queryRunningTasks).not.toHaveBeenCalled();
     expect(captureException).not.toHaveBeenCalled();
+  });
+});
+
+describe('isBackgroundRosterPayload', () => {
+  const task = { id: 'b1', type: 'local_bash', description: 'npm test', ambient: false };
+
+  it('accepts a roster and the unknown retraction', () => {
+    expect(isBackgroundRosterPayload({ subChatId: 'sc1', tasks: [task] })).toBe(true);
+    expect(isBackgroundRosterPayload({ subChatId: 'sc1', tasks: [] })).toBe(true);
+    expect(isBackgroundRosterPayload({ subChatId: 'sc1', tasks: null })).toBe(true);
+  });
+
+  it('rejects a frame whose entries could not name a row', () => {
+    expect(isBackgroundRosterPayload({ subChatId: 'sc1', tasks: [{ ...task, id: '' }] })).toBe(
+      false,
+    );
+    expect(isBackgroundRosterPayload({ subChatId: 'sc1', tasks: [{ ...task, ambient: 1 }] })).toBe(
+      false,
+    );
+    expect(isBackgroundRosterPayload({ subChatId: 'sc1' })).toBe(false);
+    expect(isBackgroundRosterPayload({ tasks: [] })).toBe(false);
   });
 });

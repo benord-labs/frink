@@ -19,6 +19,7 @@ import { listWakeHolds } from '../../socket/execution/wake-hold-registry-view';
 import { steerActiveTurn } from '../../socket/steering';
 import { getLiveStreamSeed, listLiveStreamHeaders } from '../../socket/streaming/live-stream';
 import {
+  listBackgroundRosters,
   listRunningSubagentTasks,
   readWorkflowProgress,
 } from '../../socket/streaming/subagent-task-status';
@@ -91,6 +92,9 @@ export const socketRouter = router({
   /** Same pull-on-boot seam for subagent cards: a reload would otherwise read a running background
    * subagent as "Completed Subagent" until its task ends. */
   listRunningSubagentTasks: publicProcedure.query(() => listRunningSubagentTasks()),
+
+  /** And for the background-work row's live roster, which is pushed only on a membership change. */
+  listBackgroundRosters: publicProcedure.query(() => listBackgroundRosters()),
 
   /** Listener-first renderer boot uses these bounded projections to reattach to main-owned runs. */
   listLiveStreamHeaders: publicProcedure.query(() => listLiveStreamHeaders()),
