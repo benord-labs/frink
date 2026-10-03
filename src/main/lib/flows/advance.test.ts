@@ -1360,6 +1360,217 @@ describe('advanceFlowRun — branched Fan Out', () => {
   });
 });
 
+describe('Retry after a branched Fan Out failure (sc-716)', () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'fan', blockType: 'fan_out' },
+      { id: 'a', blockType: 'agent', parentId: 'fan' },
+      { id: 'b', blockType: 'agent', parentId: 'fan' },
+      { id: 'after', blockType: 'agent' },
+    ],
+    edges: [
+      { id: 'e1', source: 'fan', target: 'a' },
+      { id: 'e2', source: 'fan', target: 'b' },
+      { id: 'e3', source: 'a', target: 'after' },
+      { id: 'e4', source: 'b', target: 'after' },
+    ],
+  };
+
+  it.each(['a', 'b'] as const)(
+    're-runs the failed branch and its swept sibling, then the continuation once (%s inserted first)',
+    async (firstInserted) => {
+      const db = freshDb();
+      holder.db = db;
+      const { flowRunId, flowId } = await seedFlowRun(db, graph);
+      seedActiveAdmission(db, flowRunId);
+      const fanRun = await createNodeRun(db, {
+        flowRunId,
+        nodeId: 'fan',
+        blockType: 'fan_out',
+        status: 'completed',
+      });
+      const branchRun = (nodeId: string) =>
+        createNodeRun(db, {
+          flowRunId,
+          nodeId,
+          blockType: 'agent',
+          status: 'running',
+          laneIndex: 0,
+          parentFanOutNodeRunId: fanRun.id,
+        });
+      const order = firstInserted === 'a' ? ['a', 'b'] : ['b', 'a'];
+      const runs = Object.fromEntries(
+        await Promise.all(order.map(async (nodeId) => [nodeId, await branchRun(nodeId)] as const)),
+      );
+      await saveFanOutState(flowId, flowRunId, 'fan', {
+        items: ['item-1'],
+        currentIndex: 0,
+        totalCount: 1,
+        maxIterations: 50,
+        completedOutputs: [],
+        arrayField: 'items',
+        branches: [
+          { rootNodeId: 'a', tailNodeId: 'a', nodeIds: ['a'] },
+          { rootNodeId: 'b', tailNodeId: 'b', nodeIds: ['b'] },
+        ],
+      });
+      await saveBodyMembers(flowId, flowRunId, ['a', 'b'], 'fan');
+
+      // Branch a fails while b is still running: the run fails and the sweep cancels b.
+      await advanceFlowRun(flowRunId, runs.a?.id ?? '', {
+        status: 'failed',
+        outputs: {},
+        artifacts: [],
+        durationMs: 0,
+        error: { message: 'boom', retryable: false },
+      });
+      expect((await getFlowRun(db, flowRunId))?.status).toBe('failed');
+      expect((await getNodeRun(db, runs.b?.id ?? ''))?.status).toBe('cancelled');
+
+      // Retry: the terminal-resume admission revives the run, then the dispatcher re-runs it.
+      const { resolveTerminalResumeTarget, dispatchTerminalResumeTarget } =
+        await import('./admission/terminal-resume/dispatcher');
+      const target = await resolveTerminalResumeTarget(db, flowRunId);
+      expect(target?.nodeRunId).toBe(runs.a?.id);
+      await db.update(flowRuns).set({ status: 'running' }).where(eq(flowRuns.id, flowRunId));
+      const fence = readRunFence(db, flowRunId);
+      if (!target || !fence) throw new Error('expected a resumable target and a live fence');
+
+      (dispatchNode as Mock)
+        .mockReset()
+        .mockImplementation(async (args: { node: { id: string } }) => ({
+          type: 'completed',
+          output: { ...completedOutput, outputs: { result: args.node.id } },
+        }));
+      await dispatchTerminalResumeTarget(fence, target, true);
+
+      const dispatched = (dispatchNode as Mock).mock.calls.map(([args]) => args.node.id);
+      expect(dispatched.filter((id) => id !== 'after').sort()).toEqual(['a', 'b']);
+      expect(dispatched.filter((id) => id === 'after')).toHaveLength(1);
+      expect((await getFlowRun(db, flowRunId))?.status).toBe('completed');
+    },
+  );
+});
+
+describe('Retry after a branched Fan Out failure — edge cases (sc-716)', () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 'fan', blockType: 'fan_out' },
+      { id: 'a', blockType: 'agent', parentId: 'fan' },
+      { id: 'b', blockType: 'agent', parentId: 'fan' },
+      { id: 'after', blockType: 'agent' },
+    ],
+    edges: [
+      { id: 'e1', source: 'fan', target: 'a' },
+      { id: 'e2', source: 'fan', target: 'b' },
+      { id: 'e3', source: 'a', target: 'after' },
+      { id: 'e4', source: 'b', target: 'after' },
+    ],
+  };
+  const failedOutput: NodeOutput = {
+    status: 'failed',
+    outputs: {},
+    artifacts: [],
+    durationMs: 0,
+    error: { message: 'boom', retryable: false },
+  };
+
+  async function seedItem(laneIndex: number, totalCount: number) {
+    const db = freshDb();
+    holder.db = db;
+    const { flowRunId, flowId } = await seedFlowRun(db, graph);
+    seedActiveAdmission(db, flowRunId);
+    const fanRun = await createNodeRun(db, {
+      flowRunId,
+      nodeId: 'fan',
+      blockType: 'fan_out',
+      status: 'completed',
+    });
+    await saveFanOutState(flowId, flowRunId, 'fan', {
+      items: Array.from({ length: totalCount }, (_, i) => `item-${i}`),
+      currentIndex: laneIndex,
+      totalCount,
+      maxIterations: 50,
+      completedOutputs: Array.from({ length: laneIndex }, (_, i) => ({
+        a: { result: `a${i}` },
+        b: { result: `b${i}` },
+      })),
+      arrayField: 'items',
+      branches: [
+        { rootNodeId: 'a', tailNodeId: 'a', nodeIds: ['a'] },
+        { rootNodeId: 'b', tailNodeId: 'b', nodeIds: ['b'] },
+      ],
+    });
+    await saveBodyMembers(flowId, flowRunId, ['a', 'b'], 'fan');
+    const branchRun = (nodeId: string) =>
+      createNodeRun(db, {
+        flowRunId,
+        nodeId,
+        blockType: 'agent',
+        status: 'running',
+        laneIndex,
+        parentFanOutNodeRunId: fanRun.id,
+      });
+    return { db, flowRunId, branchRun };
+  }
+
+  async function retry(db: TestDb, flowRunId: string) {
+    const { resolveTerminalResumeTarget, dispatchTerminalResumeTarget } =
+      await import('./admission/terminal-resume/dispatcher');
+    const target = await resolveTerminalResumeTarget(db, flowRunId);
+    await db.update(flowRuns).set({ status: 'running' }).where(eq(flowRuns.id, flowRunId));
+    const fence = readRunFence(db, flowRunId);
+    if (!target || !fence) throw new Error('expected a resumable target and a live fence');
+    (dispatchNode as Mock)
+      .mockReset()
+      .mockImplementation(async (args: { node: { id: string } }) => ({
+        type: 'completed',
+        output: { ...completedOutput, outputs: { result: `${args.node.id}-retried` } },
+      }));
+    await dispatchTerminalResumeTarget(fence, target, true);
+    return (dispatchNode as Mock).mock.calls.map(([args]) => args);
+  }
+
+  it('re-runs only the failed branch when its sibling already finished the item', async () => {
+    const { db, flowRunId, branchRun } = await seedItem(0, 1);
+    const a = await branchRun('a');
+    const b = await branchRun('b');
+    // b finishes first: the barrier waits on a, which then fails.
+    await advanceFlowRun(flowRunId, b.id, { ...completedOutput, outputs: { result: 'b-first' } });
+    await advanceFlowRun(flowRunId, a.id, failedOutput);
+    expect((await getFlowRun(db, flowRunId))?.status).toBe('failed');
+
+    const calls = await retry(db, flowRunId);
+
+    expect(calls.map((args) => args.node.id)).toEqual(['a', 'after']);
+    // The aggregate keeps b's ORIGINAL completed output alongside a's retried one.
+    expect(calls[1]?.previousOutput.outputs.results).toEqual([
+      { a: { result: 'a-retried' }, b: { result: 'b-first' } },
+    ]);
+    expect((await getFlowRun(db, flowRunId))?.status).toBe('completed');
+  });
+
+  it('resumes a failure in a LATER item in that item, keeping the earlier item results', async () => {
+    const { db, flowRunId, branchRun } = await seedItem(1, 2);
+    const a = await branchRun('a');
+    await branchRun('b');
+    await advanceFlowRun(flowRunId, a.id, failedOutput);
+
+    const calls = await retry(db, flowRunId);
+
+    const laneOne = calls.filter((args) => args.node.id !== 'after');
+    expect(laneOne.map((args) => args.node.id).sort()).toEqual(['a', 'b']);
+    expect(laneOne.every((args) => args.loopContext?.currentIndex === 1)).toBe(true);
+    const after = calls.filter((args) => args.node.id === 'after');
+    expect(after).toHaveLength(1);
+    expect(after[0]?.previousOutput.outputs.results).toEqual([
+      { a: { result: 'a0' }, b: { result: 'b0' } },
+      { a: { result: 'a-retried' }, b: { result: 'b-retried' } },
+    ]);
+    expect((await getFlowRun(db, flowRunId))?.status).toBe('completed');
+  });
+});
+
 describe('loadRunContext — batchId threading (member-suppression seam)', () => {
   it('stamps meta.batchId for a batch-member run and leaves it undefined otherwise', async () => {
     const db = freshDb();

@@ -8,8 +8,10 @@ import {
   type NodeRunStatus,
   setNodeRunStatus,
 } from '../../db/repos/node-runs';
-import { batchStageRuns, flowRuns, type NodeRun, nodeRuns } from '../../db/schema';
+import { batchStageRuns, flowRuns, flowVersions, type NodeRun, nodeRuns } from '../../db/schema';
 import { liveAdmissionForRun } from '../admission/store';
+import { parseGraph } from '../graph';
+import { siblingBranchResumeTargets } from '../rerun/fan-out-lane-resume';
 import { lastUnfinishedNodeRun } from '../rerun/resume-point';
 import { type RunFence, readRunFence } from './fence';
 import { readRun } from './run-rows';
@@ -92,6 +94,24 @@ function unparkNode(
   return node;
 }
 
+/** A failed Fan Out branch whose failure swept its siblings: un-parking it alone would strand the
+ * item's barrier, so only the run-level re-dispatch (which resumes every branch) may continue it. */
+function leavesSiblingBranchesBehind(
+  db: Db,
+  flowVersionId: string,
+  attempts: NodeRun[],
+  anchor: NodeRun,
+): boolean {
+  if (!anchor.parentFanOutNodeRunId) return false;
+  const version = db
+    .select({ graph: flowVersions.graph })
+    .from(flowVersions)
+    .where(eq(flowVersions.id, flowVersionId))
+    .get();
+  if (!version) return false;
+  return siblingBranchResumeTargets(parseGraph(version.graph), attempts, anchor).length > 0;
+}
+
 /** Un-parks a failed or paused run's last unfinished node, or a restart-interrupted run's marked
  * node. A batch member only while its stage still waits for it; a deliberate Cancel never. */
 export function unparkFailedRunCommand(db: Db, flowRunId: string): NodeRun | null {
@@ -106,8 +126,15 @@ export function unparkFailedRunCommand(db: Db, flowRunId: string): NodeRun | nul
     if (stage?.status !== 'dispatched') return null;
   }
   if (run.status === 'cancelled') return reviveMarkedNode(db, flowRunId);
-  const last = lastUnfinishedNodeRun(readNodeRuns(db, flowRunId));
+  const attempts = readNodeRuns(db, flowRunId);
+  const last = lastUnfinishedNodeRun(attempts);
   if (!last) return null;
+  if (
+    run.status === 'failed' &&
+    leavesSiblingBranchesBehind(db, run.flowVersionId, attempts, last)
+  ) {
+    return null;
+  }
   return unparkNode(db, flowRunId, last.id, {
     nodeStatuses: ['failed', ...PARKED_NODE_STATUSES],
     runStatuses: ['failed', 'paused'],
