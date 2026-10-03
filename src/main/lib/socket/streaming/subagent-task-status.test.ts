@@ -4,6 +4,7 @@ import captured from './__fixtures__/workflow-task-progress.json';
 import {
   __resetSubagentTaskStatusForTest,
   clearSubagentTasks,
+  listRunningSubagentTasks,
   noteSubagentTaskFrame,
   parseWorkflowProgress,
   readWorkflowProgress,
@@ -141,6 +142,38 @@ describe('subagent-task-status', () => {
       subChatId: 'sub-1',
       toolCallId: 'tool-1',
       running: false,
+    });
+  });
+
+  // The boot pull a reloaded renderer seeds from: exactly what the push lane last left running.
+  describe('listRunningSubagentTasks', () => {
+    it('is empty when nothing runs', () => {
+      expect(listRunningSubagentTasks()).toEqual([]);
+    });
+
+    it('lists every running card across chats, addressed by tool call alone', () => {
+      noteSubagentTaskFrame('sub-1', started());
+      noteSubagentTaskFrame('sub-2', started({ task_id: 'task-2', tool_use_id: 'tool-2' }));
+      expect(listRunningSubagentTasks()).toEqual([
+        { subChatId: 'sub-1', toolCallId: 'tool-1', running: true },
+        { subChatId: 'sub-2', toolCallId: 'tool-2', running: true },
+      ]);
+    });
+
+    it('drops a task once its notification retires it', () => {
+      noteSubagentTaskFrame('sub-1', started());
+      noteSubagentTaskFrame('sub-1', notification());
+      expect(listRunningSubagentTasks()).toEqual([]);
+    });
+
+    it("drops every one of a chat's tasks when its session detaches", () => {
+      noteSubagentTaskFrame('sub-1', started());
+      noteSubagentTaskFrame('sub-1', started({ task_id: 'task-2', tool_use_id: 'tool-2' }));
+      noteSubagentTaskFrame('sub-2', started({ task_id: 'task-3', tool_use_id: 'tool-3' }));
+      clearSubagentTasks('sub-1');
+      expect(listRunningSubagentTasks()).toEqual([
+        { subChatId: 'sub-2', toolCallId: 'tool-3', running: true },
+      ]);
     });
   });
 });
