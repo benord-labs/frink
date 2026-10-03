@@ -1,4 +1,4 @@
-# Frink webhook relay
+# Frink relay
 
 A tiny public address that catches webhooks for you and hands them straight to your Frink desktop app.
 
@@ -104,3 +104,51 @@ delivery. That means a vendor sees green even when your app rejected the body, a
 retries on failure will not retry. The Triggers card in the app is where a rejection shows up.
 
 Logs carry request counts and drops only — never a body, a header value, an address or a key.
+
+## Mobile companion
+
+The `/mobile` Socket.IO namespace joins an outbound desktop connection to its paired phones,
+including phones on cellular or other Wi-Fi. Both sides use WebSocket transport over HTTPS
+(`transports: ['websocket']`, `forceNew: true`). Native phones also send
+`extraHeaders: { 'X-Frink-Mobile': '1' }` because iOS and Android add Origin automatically.
+No inbound desktop port or account is needed.
+Mobile data is encrypted end to end; this relay only forwards opaque binary frames. The desktop
+and phone own the encryption, pairing expiry and access checks. A relay operator can observe IPs,
+routes, connection times and byte lengths, or disrupt delivery, but cannot authenticate as a
+paired device or decrypt its data. The desktop key pinned by the QR authenticates the other end.
+
+The desktop connects with `auth: { role: 'desktop', key }`, where `key` is 32 random bytes encoded
+as 64 lowercase hex characters. Its public route is `sha256(key)` of that UTF-8 string, also hex.
+The relay learns this routing key; it is **not** an encryption or pairing credential. A phone uses
+`auth: { role: 'phone', route }`. A new holder of the same routing key replaces the old desktop
+connection and closes its phones, so switching networks does not wait for a stale socket to expire.
+The QR carries the route, never the routing key. A phone cannot connect while its desktop is offline.
+
+| Direction | Event and arguments |
+| --- | --- |
+| Phone → relay → desktop | `frame(data, ack)` → `frame({ peerId, data }, ack)` |
+| Desktop → relay → phone | `frame({ peerId, data }, ack)` → `frame(data, ack)` |
+| Relay → desktop | `peer-connected(peerId)`, `peer-disconnected(peerId)` |
+| Desktop → relay | `disconnect-peer(peerId)` cuts that phone off immediately |
+
+`data` is a binary frame of at most 256 KiB, enforced by Engine.IO before namespace dispatch.
+Each receiver calls `ack()` after accepting the frame;
+the relay then acknowledges the sender with `true`. Senders serialize frames and await each ack
+(use a timeout above the relay's 15 seconds). No response causes that phone to be disconnected.
+Large requests and responses, including attachments, must be fragmented by the endpoints.
+Desktop disconnect closes every phone connection. Reconnection requires a fresh encrypted session;
+there is no offline queue, request replay, or persisted routing state.
+
+The process caps raw Socket.IO connections at 4096 globally and 128 per origin IP (including the
+existing webhook namespace), and connection attempts at 60 per IP per minute. Mobile additionally
+caps namespace admissions at 60 per IP per minute, phones at 20 per route, frames at 2048 per
+sender per minute, ciphertext at 64 MiB per route per minute in both directions combined, and
+unacknowledged frames at eight per phone. Rate-limit maps are bounded and reset every minute.
+Origin headers without the native marker and non-WebSocket mobile transports are rejected. The
+marker is browser abuse friction only; it grants no access to the desktop. Proxy-origin accounting
+uses the same `RELAY_TRUSTED_PROXY_HOPS` setting as webhooks. These are process-local limits:
+continue to run exactly one instance. A relay restart drops connections; clients reconnect.
+
+The desktop app reaches Frink's relay for mobile unless `FRINK_MOBILE_RELAY_URL` names another
+one, as a bare `https://` origin. It never follows `FRINK_WEBHOOK_BASE_URL`, which may point at a
+webhook tunnel that has no `/mobile` namespace.

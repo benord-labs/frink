@@ -2,8 +2,8 @@ import Constants from 'expo-constants';
 import type { ReactNode } from 'react';
 import { Platform, Pressable, ScrollView, View } from 'react-native';
 import { LogOut } from 'lucide-react-native';
-import { requestNotifications } from '../../lib/api';
 import { useConnection } from '../../lib/connection';
+import { useNotifications } from '../../lib/notifications';
 import { useOverview } from '../../lib/overview';
 import { useTabHeader } from '../../navigation/tab-header';
 import { ListRow, RowSeparator } from '../../ui/list';
@@ -76,7 +76,11 @@ function Group({ title, children }: { title?: string; children: ReactNode }) {
           variant="label"
           color="muted"
           accessibilityRole="header"
-          style={{ paddingHorizontal: GUTTER * 2, paddingBottom: space.xs, textTransform: 'uppercase' }}
+          style={{
+            paddingHorizontal: GUTTER * 2,
+            paddingBottom: space.xs,
+            textTransform: 'uppercase',
+          }}
         >
           {title}
         </Text>
@@ -96,11 +100,12 @@ function Value({ children }: { children: string }) {
 
 function ForgetRow() {
   const t = useTheme();
-  const { connection, disconnect } = useConnection();
+  const { disconnect } = useConnection();
+  const { unregister } = useNotifications();
   async function forget() {
     if (!(await confirmForget())) return;
-    // Stop alerts from this Mac without waiting on it: forgetting must work when the Mac is away.
-    if (connection) void requestNotifications(connection, { token: null }).catch(() => undefined);
+    // Alerts are removed before the encrypted channel closes, through the one update queue.
+    await unregister();
     // A failure to clear the Keychain is reported by the connection itself, on the pairing screen.
     await disconnect().catch(() => undefined);
   }

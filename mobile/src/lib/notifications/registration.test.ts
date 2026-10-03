@@ -3,9 +3,11 @@ vi.mock('../api', () => ({ requestNotifications: vi.fn() }));
 vi.mock('./device', () => ({ permission: vi.fn(), pushToken: vi.fn() }));
 import { requestNotifications, type Connection } from '../api';
 import { permission, pushToken } from './device';
-import { reconcileRegistration } from './registration';
+import { mayStartUpdate, reconcileRegistration } from './registration';
 const host = {
-  url: 'https://host.ts.net',
+  relay: 'https://relay.example.test',
+  route: 'a'.repeat(64),
+  key: 'b'.repeat(43),
   machineName: 'Mac',
   token: 'secret',
   deviceId: 'phone',
@@ -73,4 +75,16 @@ it('works with a phone AbortSignal, which has no throwIfAborted', async () => {
   expect(await run(true, signal)).toEqual({ enabled: true, denied: false, error: null });
   const cancelled = { aborted: true } as AbortSignal;
   await expect(run(true, cancelled)).rejects.toThrow('cancelled');
+});
+
+it('starts no refresh or tap while the Mac is being forgotten', () => {
+  const forgetting = { inFlight: false, forgetting: true };
+  // A turn-on would re-register alerts for a Mac about to be dropped; any tap would cancel the
+  // forget's own removal.
+  expect(mayStartUpdate(undefined, forgetting)).toBe(false);
+  expect(mayStartUpdate(true, forgetting)).toBe(false);
+  expect(mayStartUpdate(false, forgetting)).toBe(false);
+  expect(mayStartUpdate(undefined, { inFlight: true, forgetting: false })).toBe(false);
+  expect(mayStartUpdate(true, { inFlight: true, forgetting: false })).toBe(true);
+  expect(mayStartUpdate(undefined, { inFlight: false, forgetting: false })).toBe(true);
 });

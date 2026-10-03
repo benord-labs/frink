@@ -26,17 +26,17 @@ function answerPair(page: Page, answer: (route: Route) => Promise<void>) {
 test('pairs by pasting a code, naming the Mac before connecting', async ({ page }) => {
   await openApp(page, { paired: false });
   await expect(page.getByRole('heading', { name: 'Your Mac, in your pocket' })).toBeVisible();
-  await expect(page.getByText('Turn on Tailscale on both devices')).toBeVisible();
+  await expect(page.getByText('Open Frink on your Mac')).toBeVisible();
   await shot(page, 'connect');
   await page.getByRole('button', { name: 'Paste pairing code' }).click();
-  await expect(page.getByText('Turn on Tailscale on both devices')).toHaveCount(0);
+  await expect(page.getByText('Open Frink on your Mac')).toHaveCount(0);
   await shot(page, 'paste');
   const pairBody = page.waitForRequest(
     (request) => request.url().endsWith('/pair') && request.method() === 'POST',
   );
   await page.getByRole('textbox', { name: 'Pairing code', exact: true }).fill(pairingCode());
   await expect(page.getByRole('heading', { name: 'Connect to mobile-fixture?' })).toBeVisible();
-  await expect(page.getByText('mobile-fixture.example.test', { exact: true })).toBeVisible();
+  await expect(page.getByText('End-to-end encrypted via mobile-fixture.example.test', { exact: true })).toBeVisible();
   await expect(page.getByText('Only connect if this is your Mac.')).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'This iPhone’s name' })).toHaveValue('My iPhone');
   await shot(page, 'confirm');
@@ -84,7 +84,7 @@ test('a new link from the Mac already in use does not warn about replacing it', 
 });
 
 test('a broken pairing link says what is wrong', async ({ page }) => {
-  await openApp(page, { paired: false, path: '/pair?url=http%3A%2F%2Fmac.test&code=a&v=2' });
+  await openApp(page, { paired: false, path: '/pair?relay=http%3A%2F%2Fmac.test&code=a&v=3' });
   await expect(page.getByText(/This isn’t a full pairing code/)).toBeVisible();
   await shot(page, 'link-broken');
 });
@@ -111,7 +111,7 @@ test('an unreachable Mac is named in plain words and the code is kept to retry',
   await pasteCode(page);
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
   await expect(
-    page.getByText('Can’t reach your Mac. Check Tailscale is on for both devices, then try again.'),
+    page.getByText('Can’t reach your Mac. Keep Frink open and your Mac awake and online, then try again.'),
   ).toBeVisible();
   await expect(page.getByRole('button', { name: 'Connect', exact: true })).toBeEnabled();
   await shot(page, 'unreachable');

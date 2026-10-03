@@ -11,6 +11,7 @@ import { useIsFocused } from '@react-navigation/native';
 import { AppState } from 'react-native';
 import type { MobileRequest, MobileResponses } from '@frink/shared/types/remote/mobile';
 import { ApiError, requestMobile, type Connection } from './api';
+import { closeMobileRelay } from './relay/client';
 import { readConnection, saveConnection } from './storage';
 
 type Session = {
@@ -38,7 +39,8 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         if (mounted) setConnection(saved);
       })
       .catch(() => {
-        if (mounted) setError('This iPhone couldn’t read its saved connection. Pair your Mac again.');
+        if (mounted)
+          setError('This iPhone couldn’t read its saved connection. Pair your Mac again.');
       })
       .finally(() => {
         if (mounted) setLoading(false);
@@ -53,6 +55,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     setConnection(value);
   }, []);
   const disconnect = useCallback(async () => {
+    closeMobileRelay();
     current.current = null;
     setConnection(null);
     try {
@@ -77,7 +80,9 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         return await requestMobile(host, input, signal);
       } catch (error) {
         if (error instanceof ApiError && error.status === 401 && current.current === host) {
-          setError('Your Mac stopped accepting it. Make a new code in Frink on your Mac: Settings → Mobile.');
+          setError(
+            'Your Mac stopped accepting it. Make a new code in Frink on your Mac: Settings → Mobile.',
+          );
           await disconnect();
         }
         throw error;
@@ -120,7 +125,7 @@ export function useResource<T extends MobileRequest>(
   const { connection, request } = useConnection();
   // Polls only while its own screen is visible (a hidden tab or a screen under a pushed one waits).
   const focused = useIsFocused();
-  const key = JSON.stringify([connection?.deviceId, connection?.url, input]);
+  const key = JSON.stringify([connection?.deviceId, connection?.route, input]);
   const currentKey = useRef(key);
   currentKey.current = key;
   const [revision, setRevision] = useState(0);

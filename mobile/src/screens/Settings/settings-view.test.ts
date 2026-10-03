@@ -19,13 +19,17 @@ describe('macStatus', () => {
   it('prefers an unreachable Mac over stale data from an earlier poll', () => {
     expect(
       macStatus({ data: { executionReady: true }, error: 'offline', errorStatus: 0 }),
-    ).toMatchObject({ label: 'Offline', detail: expect.stringMatching(/Tailscale/), tone: 'quiet' });
+    ).toMatchObject({
+      label: 'Offline',
+      detail: expect.stringMatching(/awake and online/),
+      tone: 'quiet',
+    });
   });
 
   it('does not blame the network when the Mac answered with an error', () => {
     const status = macStatus({ data: { executionReady: true }, error: 'boom', errorStatus: 500 });
     expect(status).toMatchObject({ label: 'Having trouble', tone: 'attention' });
-    expect(status.detail).not.toMatch(/Tailscale/);
+    expect(status.detail).not.toMatch(/awake and online/);
   });
 
   it('waits quietly for the first answer', () => {

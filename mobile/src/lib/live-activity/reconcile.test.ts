@@ -13,7 +13,12 @@ vi.mock('expo-constants', () => ({ default: constants }));
 import type { Connection } from '../api';
 import { endSession, reconcile, type Session } from './reconcile';
 
-const host = { url: 'https://host.ts.net', token: 'secret' } as Connection;
+const host = {
+  relay: 'https://relay.example.test',
+  route: 'a'.repeat(64),
+  key: 'b'.repeat(43),
+  token: 'secret',
+} as Connection;
 const TOKEN = 'ab'.repeat(32);
 const request = api.requestNotifications;
 

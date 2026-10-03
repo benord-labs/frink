@@ -48,7 +48,7 @@ test('says when the Mac cannot be reached, keeping what it last sent', async ({ 
   await page.clock.runFor(3500);
   const mac = page.getByTestId('mac-identity');
   await expect(mac.getByText('Offline', { exact: true })).toBeVisible();
-  await expect(mac.getByText(/Check Tailscale is on/)).toBeVisible();
+  await expect(mac.getByText(/Keep Frink open/)).toBeVisible();
   await expect(mac.getByText('Can’t reach your Mac')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Try again' }).last()).toBeVisible();
   await expect(page.getByText('0.0.13')).toBeVisible();
@@ -62,7 +62,7 @@ test('a Mac that answers with an error is not blamed on the network', async ({ p
   });
   const mac = page.getByTestId('mac-identity');
   await expect(mac.getByText('Having trouble', { exact: true })).toBeVisible();
-  await expect(mac.getByText(/Tailscale/)).toHaveCount(0);
+  await expect(mac.getByText(/awake and online/)).toHaveCount(0);
   await expect(page.getByText('Couldn’t refresh').last()).toBeVisible();
   await shot(page, 'server-error');
 });

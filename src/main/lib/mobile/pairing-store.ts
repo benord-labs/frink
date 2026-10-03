@@ -3,7 +3,11 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { Mutex } from 'async-mutex';
 import { z } from 'zod';
-import { MOBILE_API_VERSION, mobilePairingSchema } from '../../../shared/types/remote/mobile';
+import {
+  MOBILE_API_VERSION,
+  mobilePairingSchema,
+  type MobilePairing,
+} from '../../../shared/types/remote/mobile';
 import {
   liveActivityTokenSchema,
   pushTokenSchema,
@@ -34,7 +38,13 @@ const configSchema = z.object({
 });
 type MobileConfig = z.infer<typeof configSchema>;
 type Device = z.infer<typeof deviceSchema>;
-type PendingPairing = { digest: string; expiresAt: number; attempts: number };
+type PendingPairing = {
+  digest: string;
+  expiresAt: number;
+  attempts: number;
+  /** Held in memory only, so a second Settings window shows the live code instead of replacing it. */
+  issued: { pairing: MobilePairing; expiresAt: string };
+};
 
 function emptyConfig(): MobileConfig {
   return { version: MOBILE_API_VERSION, enabled: false, devices: [] };
@@ -136,20 +146,25 @@ export class MobilePairingStore {
     });
   }
 
-  async pair(url: string) {
+  /** `address` is where this desktop is reached; the store adds the one-time code. */
+  async pair(address: Omit<MobilePairing, 'version' | 'code'>) {
     return this.mutex.runExclusive(() => {
       if (!this.config.enabled) throw new MobileApiError(409, 'Enable mobile access first.');
       if (this.config.devices.length >= MAX_DEVICES) {
         throw new MobileApiError(409, 'Remove a paired device before adding another.');
       }
+      const live = this.pending;
+      const reusable = live && this.now() < live.expiresAt && live.attempts < MAX_PAIRING_ATTEMPTS;
+      if (reusable && live.issued.pairing.route === address.route) return live.issued;
       const pairing = mobilePairingSchema.parse({
+        ...address,
         version: MOBILE_API_VERSION,
-        url,
         code: randomBytes(32).toString('base64url'),
       });
       const expiresAt = this.now() + PAIRING_DURATION_MS;
-      this.pending = { digest: digest(pairing.code), expiresAt, attempts: 0 };
-      return { pairing, expiresAt: new Date(expiresAt).toISOString() };
+      const issued = { pairing, expiresAt: new Date(expiresAt).toISOString() };
+      this.pending = { digest: digest(pairing.code), expiresAt, attempts: 0, issued };
+      return issued;
     });
   }
 
@@ -163,13 +178,14 @@ export class MobilePairingStore {
           'Pairing code expired or already used. Create a new code in Frink.',
         );
       }
-      if (pending.attempts >= MAX_PAIRING_ATTEMPTS) {
-        throw new MobileApiError(429, 'Too many attempts. Create a new pairing code in Frink.');
-      }
-      pending.attempts++;
       if (!credentialSchema.safeParse(code).success || !matches(code, pending.digest)) {
+        if (pending.attempts >= MAX_PAIRING_ATTEMPTS) {
+          throw new MobileApiError(429, 'Too many attempts. Create a new pairing code in Frink.');
+        }
+        pending.attempts++;
         throw new MobileApiError(401, 'Pairing code is incorrect.');
       }
+      // Wrong guesses cannot lock out the holder of the current 256-bit capability.
       const token = randomBytes(32).toString('base64url');
       const device = deviceSchema.parse({
         id: randomUUID(),
@@ -276,7 +292,8 @@ export class MobilePairingStore {
     });
   }
 
-  async revoke(id: string): Promise<void> {
+  /** `revoked` runs once the token is refused in memory, before the file write. */
+  async revoke(id: string, revoked?: () => void): Promise<void> {
     await this.mutex.runExclusive(async () => {
       const config = {
         ...this.config,
@@ -284,6 +301,7 @@ export class MobilePairingStore {
       };
       // A revoked token cannot authorize another request while the file write is pending.
       this.config = config;
+      revoked?.();
       await this.persistRevocation(config);
     });
   }

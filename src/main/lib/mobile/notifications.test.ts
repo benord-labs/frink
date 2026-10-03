@@ -26,12 +26,19 @@ async function finish(chatId = 'chat') {
   publishSessionCompletion({ chatId, subChatId: 'sub' });
   await vi.advanceTimersByTimeAsync(2 * TICK_MS);
 }
+const address = {
+  relay: 'https://relay.frink.dev',
+  route: 'a'.repeat(64),
+  key: 'K'.repeat(43),
+  machine: 'Mac',
+};
+
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), 'frink-push-'));
   store = new MobilePairingStore(join(directory, 'mobile.json'));
   await store.initialize();
   await store.enable();
-  const { pairing } = await store.pair('https://host.ts.net');
+  const { pairing } = await store.pair(address);
   credential = await store.redeem(pairing.code, 'Phone');
   vi.stubGlobal('fetch', fetchMock);
   fetchMock.mockReset();
@@ -184,7 +191,7 @@ it.each(['ok', 'DeviceNotRegistered', 'MessageRateExceeded'] as const)(
 );
 
 it('moves a push token to the newest pairing that registers it', async () => {
-  const { pairing } = await store.pair('https://host.ts.net');
+  const { pairing } = await store.pair(address);
   const again = await store.redeem(pairing.code, 'Phone');
   await store.notifications(credential.token, { token: push });
   await store.notifications(again.token, { token: push });
@@ -192,7 +199,7 @@ it('moves a push token to the newest pairing that registers it', async () => {
 });
 
 it('batches paired phones into one Expo request and maps tickets by recipient', async () => {
-  const { pairing } = await store.pair('https://host.ts.net');
+  const { pairing } = await store.pair(address);
   const other = await store.redeem(pairing.code, 'Other phone');
   await store.notifications(credential.token, { token: push });
   await store.notifications(other.token, { token: 'ExpoPushToken[other]' });

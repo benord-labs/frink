@@ -1,10 +1,16 @@
+import { readFileSync } from 'node:fs';
 import { chmod, mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MobilePairingStore } from './pairing-store';
 
-const endpoint = 'https://computer.tailnet.ts.net:8443';
+const endpoint = {
+  relay: 'https://relay.frink.dev',
+  route: 'a'.repeat(64),
+  key: 'K'.repeat(43),
+  machine: 'Mac',
+};
 let directory: string;
 let filePath: string;
 let now: number;
@@ -65,24 +71,28 @@ describe('mobile pairing credentials', () => {
     expect(store.status().devices).toHaveLength(1);
   });
 
-  it('expires a code at five minutes and replaces previously issued codes', async () => {
+  it('shows the one live code to every window, expires it at five minutes, then issues another', async () => {
     await store.enable();
     const first = await store.pair(endpoint);
     const second = await store.pair(endpoint);
-    await expect(store.redeem(first.pairing.code, 'Phone')).rejects.toThrow('incorrect');
+    expect(second).toEqual(first);
     now += 5 * 60_000;
-    await expect(store.redeem(second.pairing.code, 'Phone')).rejects.toThrow('expired');
+    await expect(store.redeem(first.pairing.code, 'Phone')).rejects.toThrow('expired');
+    const fresh = await store.pair(endpoint);
+    expect(fresh.pairing.code).not.toBe(first.pairing.code);
+    await expect(store.redeem(first.pairing.code, 'Phone')).rejects.toThrow('incorrect');
     expect(store.status().devices).toHaveLength(0);
   });
 
-  it('bounds failed attempts and allows a fresh desktop-issued code', async () => {
+  it('throttles expired QR guesses without locking out the correct fresh code', async () => {
     await store.enable();
-    const { pairing } = await store.pair(endpoint);
-    for (let attempt = 0; attempt < 10; attempt++) {
-      await expect(store.redeem('wrong', 'Phone')).rejects.toThrow('incorrect');
-    }
-    await expect(store.redeem(pairing.code, 'Phone')).rejects.toThrow('Too many attempts');
+    const expired = await store.pair(endpoint);
+    now += 5 * 60_000 + 1;
     const fresh = await store.pair(endpoint);
+    for (let attempt = 0; attempt < 10; attempt++) {
+      await expect(store.redeem(expired.pairing.code, 'Phone')).rejects.toThrow('incorrect');
+    }
+    await expect(store.redeem(expired.pairing.code, 'Phone')).rejects.toThrow('Too many attempts');
     const credentials = await store.redeem(fresh.pairing.code, 'Phone');
     expect(store.authenticate(credentials.token)).toBe(true);
   });
@@ -225,12 +235,27 @@ describe('mobile pairing credentials', () => {
   });
 
   it.each([
-    'http://computer:43129',
-    'https://user:pass@computer',
-    'https://computer/path',
-    'https://computer/?token=secret',
-  ])('rejects unsafe pairing endpoint %s', async (url) => {
+    'http://relay.frink.dev',
+    'https://user:pass@relay.frink.dev',
+    'https://relay.frink.dev/path',
+    'https://relay.frink.dev/?token=secret',
+  ])('rejects unsafe relay address %s', async (relay) => {
     await store.enable();
-    await expect(store.pair(url)).rejects.toThrow();
+    await expect(store.pair({ ...endpoint, relay })).rejects.toThrow();
+  });
+
+  it('reports a revocation once the token is refused, before the file is rewritten', async () => {
+    await store.enable();
+    const { pairing } = await store.pair(endpoint);
+    const { token, deviceId } = await store.redeem(pairing.code, 'Phone');
+    const seen: { refused: boolean; stillOnDisk: boolean }[] = [];
+    await store.revoke(deviceId, () =>
+      seen.push({
+        refused: !store.authenticate(token),
+        stillOnDisk: readFileSync(filePath, 'utf8').includes(deviceId),
+      }),
+    );
+    expect(seen).toEqual([{ refused: true, stillOnDisk: true }]);
+    expect(await readFile(filePath, 'utf8')).not.toContain(deviceId);
   });
 });

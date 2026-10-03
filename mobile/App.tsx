@@ -23,7 +23,7 @@ function SessionContent() {
   return (
     <>
       {/* A new pairing remounts everything, so no screen shows another computer's data. */}
-      <Companion key={`${connection.deviceId}:${connection.url}`} />
+      <Companion key={`${connection.deviceId}:${connection.route}`} />
       {/* A pairing link opens over the app; nothing changes until Connect, and Cancel keeps its place. */}
       <Modal
         visible={!!pairingLink.link}

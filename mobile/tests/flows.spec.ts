@@ -237,8 +237,9 @@ test.describe('Run detail', () => {
     );
     const before = state.requests.filter((request) => request.type === 'run').length;
     await page.clock.runFor(4100);
-    const after = state.requests.filter((request) => request.type === 'run').length;
-    expect(after - before).toBeGreaterThanOrEqual(2);
+    await expect
+      .poll(() => state.requests.filter((request) => request.type === 'run').length - before)
+      .toBeGreaterThanOrEqual(2);
     await tallShot(page, 'run-live-dark');
     await page.emulateMedia({ colorScheme: 'light' });
     await tallShot(page, 'run-live-light');

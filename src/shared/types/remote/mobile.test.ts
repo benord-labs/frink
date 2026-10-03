@@ -7,8 +7,11 @@ import {
 } from './mobile';
 
 const pairing = {
-  version: 2 as const,
-  url: 'https://studio-mac.tail1234.ts.net:8443/',
+  version: 3 as const,
+  relay: 'https://relay.frink.dev',
+  route: 'a1'.repeat(32),
+  key: `${'K'.repeat(42)}A`,
+  machine: 'Studio Mac',
   code: `${'a'.repeat(41)}-_`,
 };
 
@@ -19,9 +22,25 @@ describe('mobilePairingLink', () => {
     expect(mobilePairingSchema.parse(mobilePairingFields(link))).toEqual(pairing);
   });
 
-  it('encodes the address so it survives as one query value', () => {
+  it('carries the relay, route, pinned key, machine and code, with the version last', () => {
     expect(mobilePairingLink(pairing)).toBe(
-      `frink-mobile://pair?url=https%3A%2F%2Fstudio-mac.tail1234.ts.net%3A8443%2F&code=${pairing.code}&v=2`,
+      `frink-mobile://pair?relay=https%3A%2F%2Frelay.frink.dev&route=${pairing.route}&key=${pairing.key}&machine=Studio+Mac&code=${pairing.code}&v=3`,
     );
+  });
+
+  it('refuses a link without a pinned desktop key or with a plaintext relay', () => {
+    const { key: _key, ...unpinned } = pairing;
+    expect(mobilePairingSchema.safeParse(unpinned).success).toBe(false);
+    expect(
+      mobilePairingSchema.safeParse({ ...pairing, relay: 'http://relay.frink.dev' }).success,
+    ).toBe(false);
+    expect(
+      mobilePairingSchema.safeParse({ ...pairing, relay: 'https://relay.frink.dev/x' }).success,
+    ).toBe(false);
+  });
+
+  it('reads an explicit default port as the same relay origin', () => {
+    const parsed = mobilePairingSchema.parse({ ...pairing, relay: 'https://relay.frink.dev:443/' });
+    expect(parsed.relay).toBe('https://relay.frink.dev');
   });
 });

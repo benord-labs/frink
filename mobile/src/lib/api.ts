@@ -16,58 +16,63 @@ import type {
   NotificationStatus,
 } from '@frink/shared/types/remote/notifications';
 
-export const connectionSchema = z.object({
-  url: mobilePairingSchema.shape.url,
-  token: z.string().min(32),
-  deviceId: z.string().min(1),
-  machineName: z.string().min(1),
-});
+import { closeMobileRelay, relayRequest, type RelayTarget } from './relay/client';
+import { ApiError, unreachable } from './relay/error';
+export { ApiError } from './relay/error';
+
+export const connectionSchema = mobilePairingSchema
+  .pick({ relay: true, route: true, key: true })
+  .extend({
+    token: z.string().min(32),
+    deviceId: z.string().min(1),
+    machineName: z.string().min(1),
+  });
 export type Connection = z.infer<typeof connectionSchema>;
-export class ApiError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-  ) {
-    super(message);
+
+/** A reply that isn't JSON is reported like any other failed round trip, never as a SyntaxError. */
+function parseResponse(body: Uint8Array) {
+  try {
+    return JSON.parse(new TextDecoder().decode(body));
+  } catch {
+    throw unreachable();
   }
 }
 
-async function post(url: string, body: unknown, token?: string, signal?: AbortSignal) {
-  const controller = new AbortController();
-  const abort = () => controller.abort();
-  signal?.addEventListener('abort', abort);
-  if (signal?.aborted) controller.abort();
-  const timeout = setTimeout(abort, 20000);
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      redirect: 'error',
-      signal: controller.signal,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify(body),
-    });
-    const result = await response.json();
-    if (!response.ok)
-      throw new ApiError(
-        typeof result.error === 'string'
-          ? result.error
-          : 'Frink on your Mac couldn’t complete this. Try again in a moment.',
-        response.status,
-      );
-    return result;
-  } catch (error) {
-    if (error instanceof ApiError) throw error;
+async function post(
+  target: RelayTarget,
+  path: '/pair' | '/api' | '/api/notifications' | '/api/attachments',
+  body: Uint8Array,
+  headers: Record<string, string>,
+  signal?: AbortSignal,
+  timeoutMs?: number,
+) {
+  const response = await relayRequest(target, path, headers, body, signal, timeoutMs);
+  const result = parseResponse(response.body);
+  if (response.status < 200 || response.status >= 300)
     throw new ApiError(
-      'Can’t reach your Mac. Check Tailscale is on and Frink is open. If you just sent something, refresh before trying again — it may have arrived.',
-      0,
+      typeof result.error === 'string' ? result.error : 'Frink on your Mac couldn’t complete this.',
+      response.status,
     );
-  } finally {
-    clearTimeout(timeout);
-    signal?.removeEventListener('abort', abort);
-  }
+  return result;
+}
+
+function jsonPost(
+  target: RelayTarget,
+  path: '/pair' | '/api' | '/api/notifications',
+  body: unknown,
+  token?: string,
+  signal?: AbortSignal,
+) {
+  return post(
+    target,
+    path,
+    new TextEncoder().encode(JSON.stringify(body)),
+    {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    signal,
+  );
 }
 
 export function parsePairing(text: string) {
@@ -80,10 +85,11 @@ export function parsePairing(text: string) {
 
 export async function pairComputer(text: string, name: string): Promise<Connection> {
   const pairing = parsePairing(text);
-  const result = await post(`${pairing.url.replace(/\/$/, '')}/pair`, { code: pairing.code, name });
+  closeMobileRelay();
+  const result = await jsonPost(pairing, '/pair', { code: pairing.code, name });
   if (result.apiVersion !== MOBILE_API_VERSION)
     throw new Error('Update Frink on your Mac and this iPhone so they match.');
-  return connectionSchema.parse({ ...result, url: pairing.url });
+  return connectionSchema.parse({ ...pairing, ...result });
 }
 
 export async function requestMobile<T extends MobileRequest>(
@@ -91,12 +97,7 @@ export async function requestMobile<T extends MobileRequest>(
   request: T,
   signal?: AbortSignal,
 ): Promise<MobileResponses[T['type']]> {
-  const result = await post(
-    `${connection.url.replace(/\/$/, '')}/api`,
-    request,
-    connection.token,
-    signal,
-  );
+  const result = await jsonPost(connection, '/api', request, connection.token, signal);
   return result.data;
 }
 
@@ -106,55 +107,39 @@ export async function requestNotifications(
   input: NotificationRegistration,
   signal?: AbortSignal,
 ): Promise<NotificationStatus> {
-  const url = `${connection.url.replace(/\/$/, '')}/api/notifications`;
-  return (await post(url, input, connection.token, signal)).data;
+  return (await jsonPost(connection, '/api/notifications', input, connection.token, signal)).data;
 }
 
-/** Uploads over a cellular link can be slow; the Mac allows up to two minutes. */
-const UPLOAD_TIMEOUT_MS = 90_000;
-
-/**
- * Sends one picked file as a raw body (no base64), returning the id `sendMessage` references.
- * `uri` is a local file (native) or blob URL (web); either is read with fetch.
- */
+/** Reads a local file, then sends bounded encrypted chunks to the desktop. */
 export async function uploadAttachment(
   connection: Connection,
   target: { chatId: string; subChatId: string },
   file: { uri: string; name: string; mimeType?: string | null },
   signal?: AbortSignal,
 ): Promise<MobileAttachment> {
-  const controller = new AbortController();
-  const abort = () => controller.abort();
-  signal?.addEventListener('abort', abort);
-  if (signal?.aborted) controller.abort();
-  const timeout = setTimeout(abort, UPLOAD_TIMEOUT_MS);
   try {
-    const body = await (await fetch(file.uri)).blob();
-    const response = await fetch(`${connection.url.replace(/\/$/, '')}/api/attachments`, {
-      method: 'POST',
-      redirect: 'error',
-      signal: controller.signal,
-      headers: {
-        'Content-Type': file.mimeType || 'application/octet-stream',
-        Authorization: `Bearer ${connection.token}`,
-        'X-Frink-Chat': target.chatId,
-        'X-Frink-Sub-Chat': target.subChatId,
-        'X-Frink-Filename': encodeURIComponent(file.name),
-      },
-      body,
-    });
-    const result = await response.json();
-    if (!response.ok)
-      throw new ApiError(
-        typeof result.error === 'string' ? result.error : 'Frink on your Mac couldn’t save this file.',
-        response.status,
-      );
-    return result.data as MobileAttachment;
+    const response = await fetch(file.uri, { signal });
+    const blob = await response.blob();
+    if (blob.size > 20 * 1024 * 1024) throw new ApiError('Choose a file smaller than 20 MB.', 413);
+    const body = new Uint8Array(await new Response(blob).arrayBuffer());
+    return (
+      await post(
+        connection,
+        '/api/attachments',
+        body,
+        {
+          'Content-Type': file.mimeType || 'application/octet-stream',
+          Authorization: `Bearer ${connection.token}`,
+          'X-Frink-Chat': target.chatId,
+          'X-Frink-Sub-Chat': target.subChatId,
+          'X-Frink-Filename': encodeURIComponent(file.name),
+        },
+        signal,
+        90_000,
+      )
+    ).data as MobileAttachment;
   } catch (error) {
     if (error instanceof ApiError) throw error;
-    throw new ApiError('Could not upload. Check your connection and try again.', 0);
-  } finally {
-    clearTimeout(timeout);
-    signal?.removeEventListener('abort', abort);
+    throw unreachable();
   }
 }

@@ -116,13 +116,14 @@ test.describe('reading a chat', () => {
   test('an unreachable Mac keeps the transcript and says what happened', async ({ page }) => {
     const state = await openApp(page, { data: { chat: conversation() } });
     await openChat(page);
+    await expect(page.getByTestId('message-m1')).toBeVisible();
     state.offline = true;
-    await expect(page.getByText('Can’t reach your Mac')).toBeVisible();
+    await expect(page.getByText('Can’t reach your Mac', { exact: true })).toBeVisible();
     await expect(page.getByTestId('message-m1')).toBeVisible();
     await page.screenshot({ path: 'test-results/chat-offline-dark.png' });
     state.offline = false;
     await page.getByRole('button', { name: 'Try again', exact: true }).click();
-    await expect(page.getByText('Can’t reach your Mac')).toHaveCount(0);
+    await expect(page.getByText('Can’t reach your Mac', { exact: true })).toHaveCount(0);
   });
 
   test('rich replies render safely and fit a narrow phone', async ({ page }) => {
