@@ -1,22 +1,24 @@
-import type { Server } from 'node:http';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
 import { Mutex } from 'async-mutex';
 import { app } from 'electron';
-import log from 'electron-log';
-import { MOBILE_PORT } from '../../../shared/types/remote/mobile';
+import { encodeKey } from '../../../shared/lib/mobile-channel';
+import { FRINK_RELAY_BASE_URL } from '../webhooks/base-url';
 import { executeMobileRequest, storeMobileAttachment } from './domain-api';
+import { loadDesktopIdentity, resetDesktopIdentity, type DesktopIdentity } from './identity';
 import { startMobileLiveActivity } from './live-activity';
 import { startMobileNotifications } from './notifications';
 import { MobilePairingStore } from './pairing-store';
-import { startMobileServer, stopMobileServer } from './server';
+import { startRelayHost, type RelayHost } from './relay-host';
+import { createMobileApp } from './server';
 
 let storePromise: Promise<MobilePairingStore> | null = null;
-let server: Server | null = null;
-let serverError: string | null = null;
+let host: { relay: string; identity: DesktopIdentity; channel: RelayHost } | null = null;
+let hostError: string | null = null;
 let stopNotifications: (() => void) | null = null;
 let liveActivity: ReturnType<typeof startMobileLiveActivity> | null = null;
 const lifecycle = new Mutex();
+const identityPath = () => join(app.getPath('userData'), 'mobile-identity.json');
 
 function getStore(): Promise<MobilePairingStore> {
   storePromise ??= (async () => {
@@ -27,28 +29,60 @@ function getStore(): Promise<MobilePairingStore> {
   return storePromise;
 }
 
-async function startServer(store: MobilePairingStore): Promise<void> {
-  if (server) return;
+/** Frink's relay unless FRINK_MOBILE_RELAY_URL names a self-hosted one. Webhook ingress may be a
+ * tunnel with no /mobile namespace, so it is never reused; the phone needs a bare HTTPS origin. */
+function mobileRelay(): string {
+  const configured = process.env.FRINK_MOBILE_RELAY_URL;
+  if (configured === undefined) return FRINK_RELAY_BASE_URL;
   try {
-    server = await startMobileServer(
-      store,
-      executeMobileRequest,
-      MOBILE_PORT,
-      storeMobileAttachment,
-    );
+    const url = new URL(configured.trim());
+    const bare = !url.username && !url.password && url.pathname === '/' && !url.search && !url.hash;
+    if (url.protocol === 'https:' && bare) return url.origin;
+  } catch {
+    // Unparseable falls through to the same refusal as a non-HTTPS address.
+  }
+  throw new Error(
+    'Mobile access needs the Frink relay. Unset FRINK_MOBILE_RELAY_URL or set it to a bare HTTPS origin.',
+  );
+}
+
+async function startHost(store: MobilePairingStore): Promise<void> {
+  if (host) return;
+  try {
+    const relay = mobileRelay();
+    const identity = await loadDesktopIdentity(identityPath());
+    const mobileApp = createMobileApp(store, executeMobileRequest, storeMobileAttachment);
     stopNotifications = startMobileNotifications(store);
     liveActivity = startMobileLiveActivity(store);
-    serverError = null;
-  } catch {
-    serverError = `Mobile access could not start on port ${MOBILE_PORT}. Close any other Frink instance using it, then try again.`;
-    throw new Error(serverError);
+    const channel = startRelayHost({
+      relay,
+      identity,
+      fetch: (request) => mobileApp.fetch(request),
+      authenticate: (token) => store.authenticate(token),
+    });
+    host = { relay, identity, channel };
+    hostError = null;
+  } catch (error) {
+    // Nothing half-started survives a failed start.
+    liveActivity?.stop();
+    liveActivity = null;
+    stopHost();
+    hostError = error instanceof Error ? error.message : 'Mobile access could not start.';
+    throw new Error(hostError);
   }
+}
+
+function stopHost(): void {
+  stopNotifications?.();
+  stopNotifications = null;
+  host?.channel.close();
+  host = null;
 }
 
 export async function initializeMobileAccess(): Promise<void> {
   await lifecycle.runExclusive(async () => {
     const store = await getStore();
-    if (store.status().enabled) await startServer(store);
+    if (store.status().enabled) await startHost(store);
   });
 }
 
@@ -57,9 +91,9 @@ export async function mobileAccessStatus() {
   const status = store.status();
   return {
     ...status,
-    error: status.error ?? serverError,
-    running: Boolean(server),
-    port: MOBILE_PORT,
+    error: status.error ?? hostError,
+    running: Boolean(host),
+    relayConnected: host?.channel.connected() ?? false,
     machineName: hostname(),
   };
 }
@@ -68,25 +102,16 @@ export async function enableMobileAccess() {
   await lifecycle.runExclusive(async () => {
     const store = await getStore();
     await store.enable();
-    await startServer(store);
+    await startHost(store);
   });
   return mobileAccessStatus();
 }
 
 export async function stopMobileAccess(): Promise<void> {
   await lifecycle.runExclusive(async () => {
-    stopNotifications?.();
-    stopNotifications = null;
     liveActivity?.stop();
     liveActivity = null;
-    if (!server) return;
-    const current = server;
-    server = null;
-    try {
-      await stopMobileServer(current);
-    } catch (error) {
-      log.warn('[Mobile] Listener shutdown failed:', error);
-    }
+    stopHost();
   });
 }
 
@@ -99,26 +124,32 @@ export async function disableMobileAccess() {
     try {
       await store.disable();
     } finally {
-      stopNotifications?.();
-      stopNotifications = null;
-      if (server) {
-        const current = server;
-        server = null;
-        await stopMobileServer(current);
-      }
+      stopHost();
+      // A new identity retires every QR already shown and every key a phone pinned.
+      await resetDesktopIdentity(identityPath());
     }
-    serverError = null;
+    hostError = null;
   });
   return mobileAccessStatus();
 }
 
-export async function createMobilePairing(url: string) {
-  if (!server) throw new Error('Enable mobile access before pairing a phone.');
-  return (await getStore()).pair(url);
+export async function createMobilePairing() {
+  // Serialized with stop and disable, so a code never names an identity being torn down.
+  return lifecycle.runExclusive(async () => {
+    if (!host) throw new Error('Enable mobile access before pairing a phone.');
+    return (await getStore()).pair({
+      relay: host.relay,
+      route: host.identity.route,
+      key: encodeKey(host.identity.keyPair.publicKey),
+      machine: hostname().slice(0, 80),
+    });
+  });
 }
 
 export async function revokeMobileDevice(id: string) {
   liveActivity?.endDevice(id);
-  await (await getStore()).revoke(id);
+  const store = await getStore();
+  // The live channel closes as soon as the token is refused in memory, not after the disk write.
+  await store.revoke(id, () => host?.channel.sever((token) => !store.authenticate(token)));
   return mobileAccessStatus();
 }

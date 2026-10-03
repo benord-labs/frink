@@ -1,4 +1,3 @@
-import type { Server } from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,13 +7,12 @@ const captureContained = vi.hoisted(() => vi.fn());
 vi.mock('../sentry', () => ({ captureContained }));
 import { MOBILE_API_VERSION } from '../../../shared/types/remote/mobile';
 import { MobilePairingStore } from './pairing-store';
-import { createMobileApp, startMobileServer, stopMobileServer } from './server';
+import { createMobileApp } from './server';
 
 let directory: string;
 let store: MobilePairingStore;
 let token: string;
 let deviceId: string;
-let server: Server | undefined;
 const execute = vi.fn(async () => ({ queue: [] }));
 
 beforeEach(async () => {
@@ -22,17 +20,18 @@ beforeEach(async () => {
   store = new MobilePairingStore(join(directory, 'mobile.json'));
   await store.initialize();
   await store.enable();
-  const { pairing } = await store.pair('https://computer.tailnet.ts.net:8443');
+  const { pairing } = await store.pair({
+    relay: 'https://relay.frink.dev',
+    route: 'a'.repeat(64),
+    key: 'K'.repeat(43),
+    machine: 'Mac',
+  });
   ({ token, deviceId } = await store.redeem(pairing.code, 'Phone'));
   execute.mockReset();
   captureContained.mockReset();
   execute.mockResolvedValue({ queue: [] });
 });
 afterEach(async () => {
-  if (server) {
-    await stopMobileServer(server);
-    server = undefined;
-  }
   await rm(directory, { recursive: true, force: true });
 });
 
@@ -83,7 +82,12 @@ describe('mobile HTTP boundary', () => {
   });
 
   it('allows pairing once and reports protocol version with the issued token', async () => {
-    const { pairing } = await store.pair('https://computer.tailnet.ts.net:8443');
+    const { pairing } = await store.pair({
+      relay: 'https://relay.frink.dev',
+      route: 'a'.repeat(64),
+      key: 'K'.repeat(43),
+      machine: 'Mac',
+    });
     const app = createMobileApp(store, execute);
     const init = {
       method: 'POST',
@@ -196,22 +200,6 @@ describe('mobile HTTP boundary', () => {
     finishBody?.();
     expect((await pending).status).toBe(401);
     expect(execute).not.toHaveBeenCalled();
-  });
-
-  it('binds only to IPv4 loopback and closes the listener on shutdown', async () => {
-    server = await startMobileServer(store, execute, 0);
-    const address = server.address();
-    expect(address).toMatchObject({ address: '127.0.0.1' });
-    if (!address || typeof address === 'string') throw new Error('Expected TCP listener');
-    const response = await fetch(`http://127.0.0.1:${address.port}/api`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ type: 'overview' }),
-    });
-    expect(response.status).toBe(200);
-    await stopMobileServer(server);
-    expect(server.listening).toBe(false);
-    server = undefined;
   });
 });
 

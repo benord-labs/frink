@@ -5,11 +5,9 @@
     "noEmit": true,
     "paths": {
       "zod": ["./node_modules/zod"],
+      "tweetnacl": ["./node_modules/tweetnacl"],
       "@frink/shared/*": ["../src/shared/*"]
     }
   },
-  "include": [
-    "**/*.ts",
-    "**/*.tsx"
-  ]
+  "include": ["**/*.ts", "**/*.tsx"]
 }

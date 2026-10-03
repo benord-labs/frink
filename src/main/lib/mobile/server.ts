@@ -1,6 +1,4 @@
-import { createServer, type Server } from 'node:http';
 import { hostname } from 'node:os';
-import { getRequestListener } from '@hono/node-server';
 import { TRPCError } from '@trpc/server';
 import { type Context, Hono, type HonoRequest } from 'hono';
 import { bearerAuth } from 'hono/bearer-auth';
@@ -10,7 +8,6 @@ import { secureHeaders } from 'hono/secure-headers';
 import { z } from 'zod';
 import {
   MOBILE_API_VERSION,
-  MOBILE_PORT,
   mobileRequestSchema,
   type MobileRequest,
 } from '../../../shared/types/remote/mobile';
@@ -173,32 +170,4 @@ export function createMobileApp(
     );
   });
   return app;
-}
-
-export async function startMobileServer(
-  store: MobilePairingStore,
-  execute: MobileExecutor,
-  port = MOBILE_PORT,
-  upload?: MobileUploader,
-): Promise<Server> {
-  const app = createMobileApp(store, execute, upload);
-  const server = createServer(getRequestListener(app.fetch));
-  // Room for an attachment upload over a slow cellular link; JSON requests finish far sooner.
-  server.requestTimeout = 120_000;
-  server.headersTimeout = 10_000;
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(port, '127.0.0.1', () => {
-      server.removeListener('error', reject);
-      resolve();
-    });
-  });
-  return server;
-}
-
-export async function stopMobileServer(server: Server): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    server.close((error) => (error ? reject(error) : resolve()));
-    server.closeAllConnections();
-  });
 }

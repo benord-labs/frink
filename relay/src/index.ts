@@ -1,6 +1,6 @@
 /**
- * The public webhook relay: forward the exact bytes of an inbound delivery to whoever holds the
- * subscribe key for that path token, then forget it. No storage, no retry, no secrets, no accounts.
+ * Public webhook and encrypted mobile relay. Forward deliveries or opaque frames to the route
+ * holder, then forget them. No durable storage, offline queue, provider secrets or accounts.
  */
 
 import { createHash } from 'node:crypto';
@@ -14,7 +14,207 @@ import { pathToFileURL } from 'node:url';
 import express, { type Request, type Response } from 'express';
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import helmet from 'helmet';
-import { Server as SocketServer } from 'socket.io';
+import { Server as SocketServer, type Socket } from 'socket.io';
+
+const HEX_32_BYTES = /^[0-9a-f]{64}$/;
+const FRAME_BYTES = 256 * 1024;
+const UNAVAILABLE = 'Mobile connection unavailable.';
+const DEFAULT_LIMITS = {
+  sockets: 4096,
+  socketsPerIp: 128,
+  phonesPerRoute: 20,
+  attemptsPerMinute: 60,
+  framesPerMinute: 2048,
+  bytesPerMinute: 64 * 1024 * 1024,
+  pendingFrames: 8,
+  ackTimeoutMs: 15_000,
+  windowMs: 60_000,
+};
+type MobileRelayLimits = Partial<typeof DEFAULT_LIMITS>;
+type Origin = (input: { address: string; headers: IncomingHttpHeaders }) => string;
+type Route = { desktop: Socket; phones: Map<string, Socket>; bytes: number };
+type Ack = (received: boolean) => void;
+
+/** Fixed-window counters are bounded even if rejected clients churn arbitrary IPs. */
+function spend(budget: Map<string, number>, key: string, cap: number, maxKeys: number) {
+  if (!budget.has(key) && budget.size >= maxKeys) return false;
+  const count = (budget.get(key) ?? 0) + 1;
+  budget.set(key, count);
+  return count <= cap;
+}
+
+function mobileIdentity(socket: Socket) {
+  const auth = socket.handshake.auth ?? {};
+  if (!['desktop', 'phone'].includes(auth.role)) return null;
+  const host = auth.role === 'desktop';
+  const key = host ? auth.key : auth.route;
+  if (typeof key !== 'string' || !HEX_32_BYTES.test(key)) return null;
+  return { host, id: host ? createHash('sha256').update(key, 'utf8').digest('hex') : key };
+}
+
+function reserveRoute(
+  socket: Socket,
+  routes: Map<string, Route>,
+  id: string,
+  host: boolean,
+  cap: number,
+) {
+  let route = routes.get(id);
+  if (host) {
+    // A matching preimage proves ownership; replace a stale connection after network changes.
+    route?.desktop.disconnect(true);
+    route = { desktop: socket, phones: new Map(), bytes: 0 };
+    routes.set(id, route);
+  } else {
+    if (!route || !route.desktop.connected || route.phones.size >= cap) return null;
+    route.phones.set(socket.id, socket);
+  }
+  return route;
+}
+
+function frameDestination(frame: unknown, socket: Socket, route: Route) {
+  if (route.desktop !== socket) return { phone: socket, target: route.desktop, data: frame };
+  if (!frame || typeof frame !== 'object') return null;
+  const { peerId, data } = frame as Record<string, unknown>;
+  if (typeof peerId !== 'string') return null;
+  const phone = route.phones.get(peerId);
+  return phone ? { phone, target: phone, data } : null;
+}
+
+function mobileFrame(frame: unknown, socket: Socket, route: Route) {
+  const decoded = frameDestination(frame, socket, route);
+  if (!decoded || !decoded.target.connected) return null;
+  const { phone, target, data } = decoded;
+  if (!(data instanceof Uint8Array)) return null;
+  if (!data.byteLength || data.byteLength > FRAME_BYTES) return null;
+  return { phone, target, data };
+}
+
+function attachMobileRelay(io: SocketServer, origin: Origin, options: MobileRelayLimits = {}) {
+  const limits = { ...DEFAULT_LIMITS, ...options };
+  const mobile = io.of('/mobile');
+  const routes = new Map<string, Route>();
+  const byIp = new Map<string, number>();
+  const reservations = new WeakMap<IncomingMessage, () => void>();
+  let sockets = 0;
+  const upgrades = new Map<string, number>();
+  const attempts = new Map<string, number>();
+  const frames = new Map<string, number>();
+  const pending = new Map<string, number>();
+  const keyCap = limits.sockets * 2;
+  const ipFor = (input: Parameters<Origin>[0]) => ipKeyGenerator(origin(input));
+  const reset = setInterval(() => {
+    upgrades.clear();
+    attempts.clear();
+    frames.clear();
+    for (const route of routes.values()) route.bytes = 0;
+  }, limits.windowMs);
+  reset.unref();
+
+  // Bound raw Engine.IO sockets too: an unauthenticated client need never join a namespace.
+  io.engine.use(
+    (
+      request: IncomingMessage & { _query: Record<string, unknown> },
+      _response: unknown,
+      next: (error?: Error) => void,
+    ) => {
+      if (request._query.sid) return next();
+      const ip = ipFor({ address: request.socket.remoteAddress ?? '', headers: request.headers });
+      if (
+        sockets >= limits.sockets ||
+        (byIp.get(ip) ?? 0) >= limits.socketsPerIp ||
+        !spend(upgrades, ip, limits.attemptsPerMinute, keyCap)
+      ) {
+        return next(new Error(UNAVAILABLE));
+      }
+      // Engine.IO awaits generateId after middleware: count pending and established sockets alike.
+      sockets++;
+      byIp.set(ip, (byIp.get(ip) ?? 0) + 1);
+      const release = () => {
+        if (!reservations.delete(request)) return;
+        request.socket.off('close', release);
+        sockets--;
+        const count = (byIp.get(ip) ?? 1) - 1;
+        if (count) byIp.set(ip, count);
+        else byIp.delete(ip);
+      };
+      reservations.set(request, release);
+      request.socket.once('close', release);
+      next();
+    },
+  );
+  io.engine.on('connection', (connection) => {
+    const release = reservations.get(connection.request);
+    if (!release) return connection.close(true);
+    // Polling may outlive its initial TCP connection; the Engine.IO socket now owns the reservation.
+    connection.request.socket.off('close', release);
+    connection.once('close', release);
+  });
+  io.engine.on('connection_error', ({ req }) => reservations.get(req)?.());
+
+  mobile.use((socket, next) => {
+    // Native iOS/Android add Origin too. This marker is browser abuse friction, never auth.
+    const headers = socket.handshake.headers;
+    if (headers.origin && headers['x-frink-mobile'] !== '1') return next(new Error(UNAVAILABLE));
+    if (socket.conn.transport.name !== 'websocket') return next(new Error(UNAVAILABLE));
+    if (!spend(attempts, ipFor(socket.handshake), limits.attemptsPerMinute, keyCap)) {
+      return next(new Error(UNAVAILABLE));
+    }
+    const identity = mobileIdentity(socket);
+    if (!identity) return next(new Error(UNAVAILABLE));
+    const { id, host } = identity;
+    const route = reserveRoute(socket, routes, id, host, limits.phonesPerRoute);
+    if (!route) return next(new Error(UNAVAILABLE));
+    socket.data.mobileRoute = route;
+    // Reserve in middleware to prevent simultaneous hosts/phones racing the admission limits.
+    const release = () => {
+      if (host && routes.get(id)?.desktop === socket) {
+        routes.delete(id);
+        for (const phone of route.phones.values()) phone.disconnect(true);
+      } else if (!host && route.phones.delete(socket.id)) {
+        route.desktop.emit('peer-disconnected', socket.id);
+      }
+      frames.delete(socket.id);
+      pending.delete(socket.id);
+    };
+    socket.once('disconnect', release);
+    socket.conn.once('close', release);
+    next();
+  });
+
+  mobile.on('connection', (socket) => {
+    const route: Route = socket.data.mobileRoute;
+    const host = route.desktop === socket;
+    if (!host) route.desktop.emit('peer-connected', socket.id);
+    socket.on('disconnect-peer', (peerId: unknown) => {
+      if (host && typeof peerId === 'string') route.phones.get(peerId)?.disconnect(true);
+    });
+    socket.on('frame', (frame: unknown, acknowledge: unknown) => {
+      const decoded = mobileFrame(frame, socket, route);
+      if (!decoded || typeof acknowledge !== 'function') {
+        socket.disconnect(true);
+        return;
+      }
+      const { phone, target, data } = decoded;
+      if (
+        (pending.get(phone.id) ?? 0) >= limits.pendingFrames ||
+        !spend(frames, socket.id, limits.framesPerMinute, keyCap) ||
+        (route.bytes += data.byteLength) > limits.bytesPerMinute
+      ) {
+        socket.disconnect(true);
+        return;
+      }
+      pending.set(phone.id, (pending.get(phone.id) ?? 0) + 1);
+      const payload = host ? data : { peerId: phone.id, data };
+      target.timeout(limits.ackTimeoutMs).emit('frame', payload, (error: Error | null) => {
+        if (phone.connected) pending.set(phone.id, Math.max(0, (pending.get(phone.id) ?? 1) - 1));
+        if (error) phone.disconnect(true);
+        else if (socket.connected) (acknowledge as Ack)(true);
+      });
+    });
+  });
+  return () => clearInterval(reset);
+}
 
 const BODY_MAX_BYTES = 1_048_576;
 const WINDOW_MS = 60_000;
@@ -22,7 +222,6 @@ const POSTS_PER_TOKEN = 60;
 const SUBSCRIBES_PER_IP = 20;
 const SUBSCRIBES_PER_SOCKET = 20;
 const TRUSTED_PROXY_HOPS = 1;
-const HEX_32_BYTES = /^[0-9a-f]{64}$/;
 const DEFAULT_PORT = 8787;
 
 type DeliveryParams = { provider: string; token: string };
@@ -154,7 +353,7 @@ function attachSubscribe(
 // The cap and the window are injectable so a test can tell this cap apart from the equal-sized
 // per-IP budget, and watch a window turn over without waiting a minute. Production passes nothing.
 export function createRelay(
-  options: { subscribesPerSocket?: number; windowMs?: number } = {},
+  options: { subscribesPerSocket?: number; windowMs?: number; mobile?: MobileRelayLimits } = {},
 ): Relay {
   const proxyHops = trustedProxyHops();
   const windowMs = options.windowMs ?? WINDOW_MS;
@@ -165,7 +364,12 @@ export function createRelay(
   app.use(helmet());
 
   const httpServer = createServer(app);
-  const io = new SocketServer(httpServer);
+  const io = new SocketServer(httpServer, { maxHttpBufferSize: FRAME_BYTES });
+  const stopMobile = attachMobileRelay(
+    io,
+    (handshake) => originOf(handshake, proxyHops),
+    options.mobile,
+  );
 
   const subscribesByIp = new Map<string, number>();
   const subscribesBySocket = new Map<string, number>();
@@ -204,6 +408,7 @@ export function createRelay(
     close: () =>
       new Promise((resolve) => {
         clearInterval(windowReset);
+        stopMobile();
         io.close(() => resolve());
       }),
   };

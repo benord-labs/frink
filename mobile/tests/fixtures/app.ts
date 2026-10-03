@@ -1,5 +1,6 @@
 import type { Page, Request } from '@playwright/test';
 import type { MobileResponses } from '@frink/shared/types/remote/mobile';
+import { fixtureKey, fixtureRoute, mockRelay } from './relay';
 import { NOW, previewData } from './data';
 
 export const fixtureHost = 'https://mobile-fixture.example.test';
@@ -104,13 +105,24 @@ export async function openApp(
   };
   await page.clock.install({ time: NOW });
   await page.addInitScript(drawDeviceChrome);
+  await mockRelay(page, fixtureHost);
   if (paired)
-    await page.addInitScript((url) => {
-      sessionStorage.setItem(
-        'frink.mobile.connection',
-        JSON.stringify({ url, token: 'b'.repeat(43), deviceId: 'device-1', machineName: "Benji's MacBook Pro" }),
-      );
-    }, `${fixtureHost}/`);
+    await page.addInitScript(
+      ({ relay, key, route }) => {
+        sessionStorage.setItem(
+          'frink.mobile.connection',
+          JSON.stringify({
+            relay,
+            key,
+            route,
+            token: 'b'.repeat(43),
+            deviceId: 'device-1',
+            machineName: "Benji's MacBook Pro",
+          }),
+        );
+      },
+      { relay: fixtureHost, key: fixtureKey, route: fixtureRoute },
+    );
   await page.route(`${fixtureHost}/**`, async (route) => {
     const request = route.request();
     if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
@@ -118,7 +130,12 @@ export async function openApp(
     if (request.url().endsWith('/pair'))
       return route.fulfill({
         headers,
-        json: { token: 'b'.repeat(43), deviceId: 'device-1', machineName: "Benji's MacBook Pro", apiVersion: 2 },
+        json: {
+          token: 'b'.repeat(43),
+          deviceId: 'device-1',
+          machineName: "Benji's MacBook Pro",
+          apiVersion: 3,
+        },
       });
     if (request.url().endsWith('/api/attachments'))
       return route.fulfill({ headers, json: { data: recordUpload(request, state.requests) } });
@@ -143,7 +160,14 @@ export async function openApp(
 }
 
 export const pairingCode = () =>
-  JSON.stringify({ version: 2, url: fixtureHost, code: 'a'.repeat(43) });
-/** The web preview's stand-in for opening frink-mobile://pair?… from the Camera. */
+  JSON.stringify({
+    version: 3,
+    relay: fixtureHost,
+    route: fixtureRoute,
+    key: fixtureKey,
+    machine: 'mobile-fixture',
+    code: 'a'.repeat(43),
+  });
+/** The web preview's stand-in for opening the Camera's pairing link. */
 export const pairingLinkPath = (url = fixtureHost) =>
-  `/pair?${new URLSearchParams({ url, code: 'a'.repeat(43), v: '2' })}`;
+  `/pair?${new URLSearchParams({ relay: fixtureHost, route: url === fixtureHost ? fixtureRoute : 'd'.repeat(64), key: fixtureKey, machine: new URL(url).hostname.split('.')[0], code: 'a'.repeat(43), v: '3' })}`;

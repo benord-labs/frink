@@ -16,7 +16,7 @@ export function macStatus(overview: {
   if (overview.error && overview.errorStatus === 0)
     return {
       label: 'Offline',
-      detail: 'Check Tailscale is on for both devices and your Mac is awake.',
+      detail: 'Keep Frink open and your Mac awake and online.',
       tone: 'quiet',
     };
   if (overview.error)

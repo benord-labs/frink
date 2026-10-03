@@ -3,16 +3,13 @@ import { Text } from '../../../ui/text';
 import { space, useTheme } from '../../../ui/theme';
 
 const STEPS = [
-  {
-    title: 'Turn on Tailscale on both devices',
-    detail: 'It keeps the link between your iPhone and Mac private.',
-  },
-  {
-    title: 'Make a code on your Mac',
-    detail:
-      'In Frink, open Settings → Mobile, turn on mobile access and follow the steps there, then choose Create pairing code.',
-  },
+  { title: 'Open Frink on your Mac', detail: 'Go to Settings → Mobile and turn on mobile access.' },
   { title: 'Scan the code', detail: 'Each code works once, for five minutes.' },
+  {
+    title: 'Take Frink with you',
+    detail:
+      'Your connection is encrypted end to end, on Wi-Fi or cellular. Keep your Mac awake and online.',
+  },
 ];
 const NODE = 28;
 

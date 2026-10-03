@@ -63,7 +63,7 @@ export function ConfirmStep({
           Connect to {name}?
         </Text>
         <Text variant="body" color="secondary" selectable style={{ marginTop: -space.sm }}>
-          {host}
+          End-to-end encrypted via {host}
         </Text>
       </View>
       <Field

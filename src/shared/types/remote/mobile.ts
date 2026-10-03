@@ -358,31 +358,32 @@ export type MobileResponses = {
   setAccount: MobileComposer;
 };
 
-export const MOBILE_API_VERSION = 2;
-export const MOBILE_PORT = 43129;
+export const MOBILE_API_VERSION = 3;
+/** The relay origin both ends dial out to: HTTPS with nothing but scheme, host and port, as an origin. */
+const relayOrigin = z
+  .url()
+  .refine((value) => {
+    const url = new URL(value);
+    const bare = !url.username && !url.password && url.pathname === '/' && !url.search;
+    return url.protocol === 'https:' && bare && !url.hash;
+  }, 'Use the HTTPS address of the Frink relay.')
+  .transform((value) => new URL(value).origin);
 export const mobilePairingSchema = z.object({
   version: z.literal(MOBILE_API_VERSION),
-  url: z.url().refine((value) => {
-    const url = new URL(value);
-    return (
-      url.protocol === 'https:' &&
-      !url.username &&
-      !url.password &&
-      url.pathname === '/' &&
-      !url.search &&
-      !url.hash
-    );
-  }, 'Use the private HTTPS address of your computer.'),
+  relay: relayOrigin,
+  /** Public routing id on the relay: sha256 of the desktop's secret route key. */
+  route: z.string().regex(/^[a-f0-9]{64}$/),
+  /** The desktop's X25519 channel key, pinned by the phone; base64url, 32 bytes. */
+  key: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+  machine: z.string().trim().min(1).max(80),
   code: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
 });
+export type MobilePairing = z.infer<typeof mobilePairingSchema>;
 /** The pairing QR is this link, so the iPhone Camera can open Frink straight onto confirming the Mac. */
 export const MOBILE_PAIRING_LINK = 'frink-mobile://pair';
-export function mobilePairingLink({
-  version,
-  url,
-  code,
-}: z.infer<typeof mobilePairingSchema>): string {
-  return `${MOBILE_PAIRING_LINK}?${new URLSearchParams({ url, code, v: String(version) })}`;
+export function mobilePairingLink({ version, relay, route, key, machine, code }: MobilePairing) {
+  const params = new URLSearchParams({ relay, route, key, machine, code, v: String(version) });
+  return `${MOBILE_PAIRING_LINK}?${params}`;
 }
 /** The unvalidated fields of a pairing code in either form: the link above, or its JSON. */
 export function mobilePairingFields(text: string): unknown {
@@ -391,5 +392,13 @@ export function mobilePairingFields(text: string): unknown {
   const params = new URLSearchParams(text.slice(link.length));
   // `v` comes last, so a cut-off link has no version rather than a wrong one.
   const v = params.get('v');
-  return { version: v ? Number(v) : undefined, url: params.get('url'), code: params.get('code') };
+  const field = (name: string) => params.get(name) ?? undefined;
+  return {
+    version: v ? Number(v) : undefined,
+    relay: field('relay'),
+    route: field('route'),
+    key: field('key'),
+    machine: field('machine'),
+    code: field('code'),
+  };
 }

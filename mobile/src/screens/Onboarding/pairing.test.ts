@@ -1,17 +1,27 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+vi.mock('../../lib/relay/client', () => ({ relayRequest: vi.fn(), closeMobileRelay: vi.fn() }));
 import { ApiError } from '../../lib/api';
 import { pairingFailure, readPairing, UPDATE_FRINK } from './pairing';
 
-const code = (version = 2) =>
-  JSON.stringify({ version, url: 'https://studio-mac.tail1234.ts.net/', code: 'a'.repeat(43) });
+const code = (version = 3) =>
+  JSON.stringify({
+    version,
+    relay: 'https://relay.example.test',
+    route: 'c'.repeat(64),
+    key: 'a'.repeat(43),
+    machine: 'Studio Mac',
+    code: 'a'.repeat(43),
+  });
 
 describe('readPairing', () => {
   it('reads the Mac a valid code points at', () => {
     expect(readPairing(`  ${code()}\n`)).toEqual({
       ok: true,
       text: code(),
-      host: 'studio-mac.tail1234.ts.net',
-      name: 'studio-mac',
+      host: 'relay.example.test',
+      name: 'Studio Mac',
+      route: 'c'.repeat(64),
+      key: 'a'.repeat(43),
     });
   });
 
@@ -21,7 +31,7 @@ describe('readPairing', () => {
 
   it('asks for an update when the code comes from another Frink version', () => {
     expect(readPairing(code(1))).toEqual({ ok: false, problem: UPDATE_FRINK });
-    expect(readPairing(`frink-mobile://pair?url=https%3A%2F%2Fmac.test%2F&code=x&v=3`)).toEqual({
+    expect(readPairing(`frink-mobile://pair?url=https%3A%2F%2Fmac.test%2F&code=x&v=2`)).toEqual({
       ok: false,
       problem: UPDATE_FRINK,
     });
@@ -31,7 +41,7 @@ describe('readPairing', () => {
     for (const text of [
       '{"version":2',
       'hello',
-      JSON.stringify({ version: 2, url: 'http://x.test/', code: 'a' }),
+      JSON.stringify({ version: 3, relay: 'http://x.test/', code: 'a' }),
       `frink-mobile://pair?url=https%3A%2F%2Fmac.test%2F&code=${'a'.repeat(20)}`,
       `frink-mobile://pair?url=https%3A%2F%2Fmac.test%2F&code=${'a'.repeat(43)}&v=`,
       `frink-mobile://pair?url=https%3A%2F%2Fmac.test%2F&code=${'a'.repeat(43)}&v`,
@@ -46,7 +56,7 @@ describe('readPairing', () => {
 describe('pairingFailure', () => {
   it('names the cause and the fix in plain words', () => {
     expect(pairingFailure(new ApiError('offline', 0))).toMatch(
-      /Can’t reach your Mac. Check Tailscale/,
+      /Can’t reach your Mac. Keep Frink open/,
     );
     expect(pairingFailure(new ApiError('expired', 401))).toMatch(/expired or was already used/);
     expect(pairingFailure(new ApiError('slow down', 429))).toMatch(/Too many tries/);

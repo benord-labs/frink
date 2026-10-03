@@ -1,5 +1,5 @@
-import { Button, Input } from '@benord-labs/frink-primitives';
-import { Copy, Smartphone } from 'lucide-react';
+import { Button } from '@benord-labs/frink-primitives';
+import { Smartphone } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
@@ -7,12 +7,9 @@ import { SettingsCard } from '@/components/settings/SettingsCard';
 import { SettingsSection } from '@/components/settings/SettingsSection';
 import { Switch } from '@/components/ui/switch';
 import { trpc } from '@/lib/trpc';
-import { MOBILE_PORT, mobilePairingLink } from '../../../../../shared/types/remote/mobile';
+import { mobilePairingLink } from '../../../../../shared/types/remote/mobile';
 import { SettingsTabHeader } from '../SettingsTabHeader';
 import { SETTINGS_TAB_PAGE_CLASS } from '../settings-tab-surface';
-
-const SERVE_COMMAND = `tailscale serve --bg --https=8443 http://127.0.0.1:${MOBILE_PORT}`;
-const STOP_COMMAND = 'tailscale serve --https=8443 off';
 
 async function copyText(value: string): Promise<void> {
   try {
@@ -23,67 +20,14 @@ async function copyText(value: string): Promise<void> {
   }
 }
 
-function Command({ value }: { value: string }) {
-  return (
-    <div className="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2">
-      <code className="min-w-0 flex-1 select-text break-all text-xs">{value}</code>
-      <Button
-        size="icon"
-        variant="ghost"
-        aria-label={`Copy ${value}`}
-        onClick={() => void copyText(value)}
-      >
-        <Copy className="h-4 w-4" aria-hidden />
-      </Button>
-    </div>
-  );
-}
-
-function ConnectionInstructions() {
-  return (
-    <SettingsSection
-      title="Connect privately"
-      description="Install Tailscale on this computer and your iPhone, then sign in to the same tailnet."
-    >
-      <SettingsCard>
-        <div className="space-y-4 px-4 py-4 text-sm">
-          <div className="space-y-2">
-            <p>1. Check your existing Tailscale setup.</p>
-            <Command value="tailscale serve status" />
-            <p className="text-xs leading-relaxed text-muted-foreground">
-              Port 8443 must be unused. If it already serves another app, keep that setup and use a
-              different private HTTPS proxy for Frink.
-            </p>
-          </div>
-          <div className="space-y-2">
-            <p>2. Share Frink within your tailnet.</p>
-            <Command value={SERVE_COMMAND} />
-            <p className="text-xs leading-relaxed text-muted-foreground">
-              Tailscale shows an address like https://your-computer.your-tailnet.ts.net:8443. Use
-              Serve, never Funnel, to keep access private.
-            </p>
-          </div>
-          <details className="text-xs text-muted-foreground">
-            <summary className="cursor-pointer rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-              Remove this Tailscale route
-            </summary>
-            <div className="mt-2 space-y-2">
-              <p>Only run this if port 8443 still belongs to Frink.</p>
-              <Command value={STOP_COMMAND} />
-            </div>
-          </details>
-        </div>
-      </SettingsCard>
-    </SettingsSection>
-  );
-}
-
 // Reason: One form owns pairing generation, expiry, and confirmation states.
 // fallow-ignore-next-line complexity
-function PairPhone({ enabled }: { enabled: boolean }) {
-  const [url, setUrl] = useState('');
+function PairPhone() {
   const [now, setNow] = useState(Date.now());
   const pairing = trpc.mobile.pair.useMutation();
+  const { mutate } = pairing;
+  // Opening this page is the whole setup: show a fresh code straight away.
+  useEffect(() => mutate(), [mutate]);
   useEffect(() => {
     if (!pairing.data) return;
     const timer = setInterval(() => setNow(Date.now()), 1_000);
@@ -99,44 +43,28 @@ function PairPhone({ enabled }: { enabled: boolean }) {
     >
       <SettingsCard>
         <div className="space-y-3 px-4 py-4">
-          <label htmlFor="mobile-endpoint" className="text-sm font-medium">
-            This computer&apos;s private HTTPS address
-          </label>
-          <Input
-            id="mobile-endpoint"
-            type="url"
-            autoComplete="off"
-            spellCheck={false}
-            value={url}
-            onChange={(event) => {
-              setUrl(event.target.value);
-              pairing.reset();
-            }}
-            placeholder="https://your-computer.your-tailnet.ts.net:8443"
-            aria-describedby="mobile-endpoint-hint"
-            disabled={!enabled || pairing.isPending}
-          />
-          <p id="mobile-endpoint-hint" className="text-xs text-muted-foreground">
-            Paste the address shown by Tailscale. An existing private HTTPS proxy works too.
-          </p>
-          <Button
-            disabled={!enabled || pairing.isPending || !url.trim()}
-            onClick={() => pairing.mutate({ url: url.trim() })}
-          >
-            {pairing.isPending ? 'Creating code…' : 'Create pairing code'}
-          </Button>
           {pairing.error && (
-            <p role="alert" className="text-sm text-destructive">
-              {pairing.error.message}
-            </p>
+            <div className="space-y-2">
+              <p role="alert" className="text-sm text-destructive">
+                {pairing.error.message}
+              </p>
+              <Button disabled={pairing.isPending} onClick={() => mutate()}>
+                Try again
+              </Button>
+            </div>
           )}
           {pairing.data && (
-            <div className="space-y-2 border-t border-border/60 pt-3">
+            <div className="space-y-2">
               <p className="text-sm" role="status">
                 {expired
-                  ? 'Code expired. Create a new code to pair.'
+                  ? 'Code expired.'
                   : 'Valid for five minutes and one phone. Keep this code private.'}
               </p>
+              {expired && (
+                <Button disabled={pairing.isPending} onClick={() => mutate()}>
+                  {pairing.isPending ? 'Creating code…' : 'Create a new code'}
+                </Button>
+              )}
               {!expired && (
                 <>
                   <div className="w-fit rounded-xl bg-white p-3">
@@ -215,9 +143,11 @@ export function MobileSettingsTab() {
                     every phone and removes their access. You will need to pair again.
                   </p>
                   <p className="text-xs text-muted-foreground" role="status">
-                    {status.data.running
-                      ? 'Ready for a private connection'
-                      : 'Mobile access is off'}
+                    {!status.data.running
+                      ? 'Mobile access is off'
+                      : status.data.relayConnected
+                        ? 'Ready. Your iPhone can reach this computer from anywhere.'
+                        : 'Connecting to the Frink relay…'}
                   </p>
                 </div>
                 <Switch
@@ -240,12 +170,7 @@ export function MobileSettingsTab() {
               )}
             </SettingsCard>
           </SettingsSection>
-          {status.data.running && (
-            <>
-              <ConnectionInstructions />
-              <PairPhone key="enabled" enabled />
-            </>
-          )}
+          {status.data.running && <PairPhone />}
           <SettingsSection title="Paired phones">
             <SettingsCard>
               {status.data.devices.length === 0 ? (

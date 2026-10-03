@@ -125,7 +125,7 @@ function Viewfinder({
               textAlign: 'center',
             }}
           >
-            {problem ?? 'In Frink: Settings → Mobile → Create pairing code.'}
+            {problem ?? 'In Frink on your Mac, open Settings → Mobile and scan the code shown there.'}
           </Text>
         </View>
         <GlassSurface style={{ borderRadius: radius.pill }}>

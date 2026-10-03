@@ -11,7 +11,7 @@ import { ConnectStep } from './ConnectStep';
 import { pairingFailure, readPairing } from './pairing';
 import { Scanner } from './Scanner';
 
-type Target = { text: string; host: string; name: string };
+type Target = { text: string; host: string; name: string; route: string; key: string };
 
 /**
  * Pairing, shown whenever no Mac is saved or a pairing link opens the app. Connect hands over a
@@ -69,7 +69,9 @@ export function Onboarding({ link, onDone }: { link: string | null; onDone: () =
       await connect(next);
       onDone();
     } catch {
-      setFailure('This iPhone couldn’t save the connection. Make a new code on your Mac and try again.');
+      setFailure(
+        'This iPhone couldn’t save the connection. Make a new code on your Mac and try again.',
+      );
       setBusy(false);
     }
   }
@@ -106,7 +108,7 @@ export function Onboarding({ link, onDone }: { link: string | null; onDone: () =
               name={target.name}
               deviceName={deviceName}
               replacing={
-                connection && new URL(connection.url).hostname !== target.host
+                connection && (connection.route !== target.route || connection.key !== target.key)
                   ? connection.machineName
                   : undefined
               }

@@ -1,100 +1,108 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mobilePairingLink } from '@frink/shared/types/remote/mobile';
-import { ApiError, pairComputer, parsePairing, requestMobile } from './api';
+vi.mock('./relay/client', () => ({ relayRequest: vi.fn(), closeMobileRelay: vi.fn() }));
+import { relayRequest } from './relay/client';
+import { ApiError, pairComputer, parsePairing, requestMobile, uploadAttachment } from './api';
 
-const pairing = { version: 2, url: 'https://desktop.example.ts.net:8443', code: 'a'.repeat(43) };
+const pairing = {
+  version: 3 as const,
+  relay: 'https://relay.example.test',
+  route: 'c'.repeat(64),
+  key: 'a'.repeat(43),
+  machine: 'Studio Mac',
+  code: 'a'.repeat(43),
+};
 const connection = {
-  url: pairing.url,
+  relay: pairing.relay,
+  route: pairing.route,
+  key: pairing.key,
   token: 'b'.repeat(43),
   deviceId: 'phone',
-  machineName: 'My Mac',
+  machineName: 'Studio Mac',
 };
-afterEach(() => {
-  vi.unstubAllGlobals();
-  vi.useRealTimers();
+const transport = vi.mocked(relayRequest);
+const reply = (value: unknown, status = 200) => ({
+  status,
+  body: new TextEncoder().encode(JSON.stringify(value)),
 });
-describe('native mobile boundary', () => {
+afterEach(() => {
+  vi.resetAllMocks();
+  vi.unstubAllGlobals();
+});
+describe('mobile API boundary', () => {
   it.each([
     'http://desktop.local',
     'https://user:pass@host.test',
     'https://host.test/path',
     'https://host.test?token=secret',
-  ])('rejects unsafe pairing origin %s', (url) => {
-    expect(() => parsePairing(JSON.stringify({ ...pairing, url }))).toThrow('pairing code');
+  ])('rejects unsafe relay origin %s', (relay) => {
+    expect(() => parsePairing(JSON.stringify({ ...pairing, relay }))).toThrow('pairing code');
   });
-  it('reads the link the Mac shows as well as its JSON', () => {
-    const link = mobilePairingLink({ ...pairing, version: 2 });
-    expect(parsePairing(` ${link}\n`)).toEqual(pairing);
+  it('reads the desktop link and JSON form including the pinned identity', () => {
+    expect(parsePairing(mobilePairingLink(pairing))).toEqual(pairing);
     expect(parsePairing(JSON.stringify(pairing))).toEqual(pairing);
+    expect(() =>
+      parsePairing(JSON.stringify({ version: 2, url: pairing.relay, code: pairing.code })),
+    ).toThrow();
   });
-  it.each([
-    ['another scheme', mobilePairingLink({ ...pairing, version: 2 }).replace('frink-mobile', 'https')],
-    ['an http origin', mobilePairingLink({ ...pairing, version: 2, url: 'http://desktop.local' })],
-    ['a bad code', mobilePairingLink({ ...pairing, version: 2, code: 'short' })],
-  ])('rejects a link with %s', (_, link) => {
-    expect(() => parsePairing(link)).toThrow('pairing code');
-  });
-  it('pairs only against the explicitly supplied origin and checks API compatibility', async () => {
-    const fetcher = vi.fn().mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          token: connection.token,
-          deviceId: 'phone',
-          machineName: 'My Mac',
-          apiVersion: 2,
-        }),
-      ),
-    );
-    vi.stubGlobal('fetch', fetcher);
+  it('pairs through the pinned target and stores no invitation in the saved connection', async () => {
+    transport.mockResolvedValue(reply({ ...connection, apiVersion: 3 }));
     expect(await pairComputer(JSON.stringify(pairing), 'My iPhone')).toEqual(connection);
-    expect(fetcher).toHaveBeenCalledWith(
-      `${pairing.url}/pair`,
-      expect.objectContaining({
-        redirect: 'error',
-        body: JSON.stringify({ code: pairing.code, name: 'My iPhone' }),
-      }),
+    expect(transport).toHaveBeenCalledWith(
+      pairing,
+      '/pair',
+      { 'Content-Type': 'application/json' },
+      new TextEncoder().encode(JSON.stringify({ code: pairing.code, name: 'My iPhone' })),
+      undefined,
+      undefined,
     );
   });
-  it('keeps credentials in the authorization header and sends a validated request unchanged', async () => {
-    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: [] })));
-    vi.stubGlobal('fetch', fetcher);
+  it('keeps bearer and request inside the encrypted transport envelope', async () => {
+    transport.mockResolvedValue(reply({ data: [] }));
     expect(await requestMobile(connection, { type: 'flows' })).toEqual([]);
-    expect(fetcher).toHaveBeenCalledWith(
-      `${pairing.url}/api`,
-      expect.objectContaining({
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${connection.token}`,
-        },
-        body: '{"type":"flows"}',
-      }),
+    expect(transport).toHaveBeenCalledWith(
+      connection,
+      '/api',
+      { 'Content-Type': 'application/json', Authorization: `Bearer ${connection.token}` },
+      new TextEncoder().encode('{"type":"flows"}'),
+      undefined,
+      undefined,
     );
   });
-  it('does not retry a mutation after the response is lost', async () => {
-    const fetcher = vi.fn().mockRejectedValue(new Error('connection reset'));
-    vi.stubGlobal('fetch', fetcher);
-    await expect(requestMobile(connection, { type: 'cancelRun', id: 'run' })).rejects.toThrow(
-      'it may have arrived',
+  it('does not retry a mutation when the response is lost', async () => {
+    transport.mockRejectedValue(new ApiError('It may have arrived.', 0));
+    await expect(requestMobile(connection, { type: 'cancelRun', id: 'run' })).rejects.toMatchObject(
+      { status: 0 },
     );
-    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(transport).toHaveBeenCalledTimes(1);
   });
-  it('preserves authorization rejection for the session to clear protected state', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(new Response('{"error":"Revoked"}', { status: 401 })),
-    );
-    await expect(requestMobile(connection, { type: 'overview' })).rejects.toEqual(
-      new ApiError('Revoked', 401),
-    );
-  });
-  it('reports domain conflicts rather than returning a successful action', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(new Response('{"error":"Question closed"}', { status: 409 })),
-    );
+  it.each(['', 'not json'])('reports a %j reply as an unreachable Mac', async (text) => {
+    transport.mockResolvedValue({ status: 200, body: new TextEncoder().encode(text) });
     await expect(requestMobile(connection, { type: 'overview' })).rejects.toMatchObject({
-      status: 409,
-      message: 'Question closed',
+      constructor: ApiError,
+      status: 0,
     });
+  });
+  it.each([401, 409])('preserves desktop status %s', async (status) => {
+    transport.mockResolvedValue(reply({ error: 'Refused' }, status));
+    await expect(requestMobile(connection, { type: 'overview' })).rejects.toEqual(
+      new ApiError('Refused', status),
+    );
+  });
+  it('fetches only the local attachment URI and sends its bytes through the relay', async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response('file content'));
+    vi.stubGlobal('fetch', fetcher);
+    transport.mockResolvedValue(reply({ data: { id: 'saved' } }));
+    expect(
+      await uploadAttachment(
+        connection,
+        { chatId: 'chat', subChatId: 'sub' },
+        { uri: 'file:///photo.jpg', name: 'photo.jpg', mimeType: 'image/jpeg' },
+      ),
+    ).toEqual({ id: 'saved' });
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(fetcher.mock.calls[0][0]).toBe('file:///photo.jpg');
+    expect(transport.mock.calls[0][1]).toBe('/api/attachments');
+    expect(new TextDecoder().decode(transport.mock.calls[0][3])).toBe('file content');
   });
 });
