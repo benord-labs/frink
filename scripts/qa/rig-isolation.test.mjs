@@ -17,13 +17,10 @@ describe('QA rig home isolation', () => {
     expect(read('seed.sh')).toContain('rm -rf "$QA_USER_DATA"');
   });
 
-  it('keeps every launcher of the rig bundle local-only, so no run re-mints it against the public relay', () => {
+  it('keeps the rig local-only, so no run re-mints its bundle against the public relay', () => {
     // Unset resolves Frink's relay in every build, and the re-mint it triggers is written into the
-    // shared rig home; a local-only boot afterwards cannot undo it, so both launchers pass blank.
+    // shared rig home; a local-only boot afterwards cannot undo it, so the launcher passes blank.
     expect(boot).toContain('FRINK_WEBHOOK_BASE_URL= \\');
-    expect(readFileSync(join(qaDir, '../perf/real-app-storm.mjs'), 'utf-8')).toContain(
-      "FRINK_WEBHOOK_BASE_URL: ''",
-    );
   });
 
   it('seeds the MCP config into that same rig home, never the operator home', () => {

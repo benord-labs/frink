@@ -1,5 +1,5 @@
 #!/bin/bash
-# App-state seeding for a qavis managed-CDP QA run (.qavis/recipe.json `seed`).
+# Seeds the QA app's state: wipes its profile, then writes the fixture workspace.
 # Runs before EVERY boot (base baseline, head, compare relaunch) and is
 # idempotent: wipes the QA profile and seeds the deterministic fixture
 # workspace. A broken fixture fails HERE, in seconds, as qavis `uncertain`

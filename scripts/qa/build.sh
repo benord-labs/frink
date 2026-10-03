@@ -1,5 +1,5 @@
 #!/bin/bash
-# QA build for a qavis managed-CDP run (.qavis/recipe.json `bootstrap`); boot.sh launches it.
+# Builds the QA app into out-qa/; boot.sh launches it.
 # Builds into out-qa/, never out/: this build bakes QA-only env, and a stale QA build in out/
 # is what `bun run package:mac` would ship.
 set -euo pipefail
