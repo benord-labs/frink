@@ -1,5 +1,5 @@
 import log from 'electron-log';
-import { REQUIRED_TOOLS } from '../../../../shared/types/permissions';
+import { KNOWN_TOOLS, REQUIRED_TOOLS } from '../../../../shared/types/permissions';
 import type { CategoryHandler } from './types';
 
 /**
@@ -14,7 +14,7 @@ import type { CategoryHandler } from './types';
  *
  * Honest limits, by design:
  *  - NAME-level matching only (no tool-argument inspection). `mcp__*` names match
- *    like any other tool name, since agents may list them.
+ *    like any other tool name; `mcp__srv__*` or bare `mcp__srv` covers server `srv`.
  *  - REQUIRED tools (ExitPlanMode/TodoWrite/Task/Agent/SubagentHandback) always pass the
  *    `tools`-membership check — the SDK grants sub-agents these infra tools whether
  *    or not an author lists them, and denying them bricks the agent (same reason
@@ -24,11 +24,6 @@ import type { CategoryHandler } from './types';
  *    RESTRICTED agent — spoofing INTO a restricted name only tightens, and an
  *    unknown name has no recorded restriction to enforce. Deny-unknown would brick
  *    renamed agents and any non-frink agent for zero security gain.
- *
- * Provider-agnostic: NO per-provider branch is needed. The `enforce` mode binds at the
- * provider's permission gate, not here — Claude via `canUseTool`, Codex via the
- * `codex app-server` ExecCommand/ApplyPatch approval callback the runner wires to Frink's
- * gate. This pure decision is the same for every enforce provider.
  */
 
 export type AgentToolRestrictions = {
@@ -36,19 +31,42 @@ export type AgentToolRestrictions = {
   disallowedTools?: string[];
 };
 
+/** Whether one `tools`/`disallowedTools` entry covers `toolName`. */
+function entryCovers(entry: string, toolName: string): boolean {
+  if (entry === toolName) return true;
+  const server = entry.endsWith('__*') ? entry.slice(0, -3) : entry;
+  // A server entry names exactly one server: `mcp__*` alone is not a grant of every MCP tool.
+  const serverName = server.startsWith('mcp__') ? server.slice('mcp__'.length) : '';
+  if (!serverName || serverName.includes('__')) return false;
+  return toolName.startsWith(`${server}__`);
+}
+
+const isListed = (toolName: string, entries: string[] | undefined): boolean =>
+  entries?.some((entry) => entryCovers(entry, toolName)) ?? false;
+
 /** Pure allowlist decision for one attributed tool call. */
 export function isToolAllowedForAgent(
   toolName: string,
   restrictions: AgentToolRestrictions,
 ): boolean {
-  if (restrictions.disallowedTools?.includes(toolName) && !REQUIRED_TOOLS.has(toolName)) {
+  if (isListed(toolName, restrictions.disallowedTools) && !REQUIRED_TOOLS.has(toolName)) {
     return false;
   }
-  if (restrictions.tools && !restrictions.tools.includes(toolName)) {
+  if (restrictions.tools && !isListed(toolName, restrictions.tools)) {
     return REQUIRED_TOOLS.has(toolName); // infra tools always pass the membership check
   }
   return true;
 }
+
+/** A built-in Frink has no record of. On Claude it passes with a warning: the SDK filtered first,
+ * so it is plumbing a newer CLI grants that KNOWN_TOOLS/REQUIRED_TOOLS have not caught up with. */
+export function isUnknownBuiltinTool(toolName: string): boolean {
+  return (
+    !toolName.startsWith('mcp__') && !KNOWN_TOOLS.has(toolName) && !REQUIRED_TOOLS.has(toolName)
+  );
+}
+
+const warnedUnknownBuiltins = new Set<string>();
 
 type AllowlistRule = {
   toolName: string;
@@ -68,6 +86,21 @@ export const enforceAllowlist: CategoryHandler = async ({ mode, rule, ctx }) => 
   const { toolName, agentType, restrictions } = rule as AllowlistRule;
   if (isToolAllowedForAgent(toolName, restrictions)) {
     return { category: 'allowlist', mode, status: 'enforced', detail: toolName };
+  }
+  const explicitlyDisallowed = isListed(toolName, restrictions.disallowedTools);
+  if (ctx.provider === 'claude-code' && !explicitlyDisallowed && isUnknownBuiltinTool(toolName)) {
+    if (!warnedUnknownBuiltins.has(toolName)) {
+      warnedUnknownBuiltins.add(toolName);
+      log.warn(
+        `[provider] enforce:allowlist passed unknown built-in ${toolName} for agent '${agentType}' — add it to KNOWN_TOOLS or REQUIRED_TOOLS`,
+      );
+    }
+    return {
+      category: 'allowlist',
+      mode,
+      status: 'enforced',
+      detail: `${toolName} (unknown built-in)`,
+    };
   }
   log.warn(
     `[provider] enforce:allowlist DENY ${toolName} for agent '${agentType}' @ ${ctx.projectId}`,
