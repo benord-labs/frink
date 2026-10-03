@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getTaskById } from '../../db/repos/tasks';
 import * as dynamicChatServer from '../../mcp/dynamic-chat-server';
+import { checkPermission } from '../../permissions/v2/check';
 import {
   type ClaudeSession,
   createSession,
@@ -9,6 +10,8 @@ import {
   getSession,
 } from '../claude-session-registry';
 import { createClaudeTurnContext } from '../claude-turn-context';
+import * as socketClient from '../client';
+import { drainPendingPermissions } from '../executor';
 import { getPreToolUseHook } from '../test-utils';
 import {
   expireQuestion,
@@ -32,6 +35,11 @@ let payload: ClaudeSessionCallbackHarness['basePayload'];
 /** An error result is never kept idle, so the ended session's turn stays attached. */
 const UNKEPT_TURN_END = [TURN_END[0], { type: 'result', is_error: true }];
 const todoWrite = { hook_event_name: 'PreToolUse', tool_name: 'TodoWrite', tool_input: {} };
+const mcpShip = { hook_event_name: 'PreToolUse', tool_name: 'mcp__deploy__ship', tool_input: {} };
+// SAFETY: the seam consumes only decision/prompt; this is the dispatcher's ask shape.
+const ASK = { decision: 'ask', prompt: { reason: 'no-matching-rule' } } as Awaited<
+  ReturnType<typeof checkPermission>
+>;
 
 /** Registers the cases proving a session's callbacks act only for the turn attached to the session
  * they were spawned for: none attached denies tools, and a successor's turn is never theirs. */
@@ -87,6 +95,60 @@ export function registerClaudeSessionCallbackTests(harness: ClaudeSessionCallbac
 
       const calls = vi.mocked(dynamicChatServer.setCurrentExecutionChat).mock.calls;
       expect(calls.at(-1)?.[12]).toBe(expected);
+    });
+
+    // sc-1357: the CLI re-enters canUseTool after a hook allow (settings ask rules); a card there
+    // would time out as a user refusal, so only PreToolUse, whose reason survives, prompts.
+    it('an MCP ask prompts once, in PreToolUse; canUseTool re-checks rules but never prompts', async () => {
+      const decisions: unknown[] = [];
+      vi.mocked(checkPermission).mockResolvedValue(ASK);
+      vi.mocked(socketClient.sendPermissionRequest).mockClear();
+      // Every card expires unanswered: drain settles pending requests exactly as a timeout does.
+      vi.mocked(socketClient.sendPermissionRequest).mockImplementation(() =>
+        queueMicrotask(drainPendingPermissions),
+      );
+      claudeQueryMock.mockImplementationOnce(async function* (input: { options: SessionOptions }) {
+        decisions.push(
+          await getPreToolUseHook(input)(mcpShip, 'tool-1'),
+          await input.options.canUseTool('mcp__deploy__ship', {}, toolCall('tool-1')),
+        );
+        yield* UNKEPT_TURN_END;
+      });
+
+      try {
+        await handleRemoteExecute({ ...payload, message: 'ship it' });
+        // The hook's card is the only one: a second request would come from canUseTool.
+        expect(socketClient.sendPermissionRequest).toHaveBeenCalledOnce();
+      } finally {
+        // clearAllMocks keeps implementations; later suites must not inherit the auto-timeout.
+        vi.mocked(socketClient.sendPermissionRequest).mockReset();
+      }
+
+      expect(decisions).toEqual([
+        {
+          hookSpecificOutput: expect.objectContaining({
+            permissionDecision: 'deny',
+            permissionDecisionReason: expect.stringContaining('the user did NOT deny it'),
+          }),
+        },
+        { behavior: 'allow', updatedInput: {} },
+      ]);
+    });
+
+    it('canUseTool still enforces an MCP deny rule', async () => {
+      let decision: unknown;
+      vi.mocked(checkPermission).mockResolvedValueOnce({
+        decision: 'deny',
+        reason: { kind: 'rule:deny', rule: 'mcp__deploy__ship', tier: 'user' },
+      });
+      claudeQueryMock.mockImplementationOnce(async function* (input: { options: SessionOptions }) {
+        decision = await input.options.canUseTool('mcp__deploy__ship', {}, toolCall('tool-1'));
+        yield* UNKEPT_TURN_END;
+      });
+
+      await handleRemoteExecute({ ...payload, message: 'ship it' });
+
+      expect(decision).toEqual({ behavior: 'deny', message: expect.any(String) });
     });
 
     it("a session's callbacks act for it, never a successor under the same chat id", async () => {

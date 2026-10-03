@@ -993,7 +993,8 @@ describe('runCodexAgent', () => {
     expect(result).toEqual({
       deferred: { decision: 'defer' },
       allowed: { decision: 'allow' },
-      denied: { decision: 'deny' },
+      // sc-1357: the reason is Codex's model-visible text, so a timeout must not read as a refusal.
+      denied: { decision: 'deny', reason: 'blocked' },
       deferredPreapproved: false,
       allowedPreapproved: true,
       deniedPreapproved: false,
