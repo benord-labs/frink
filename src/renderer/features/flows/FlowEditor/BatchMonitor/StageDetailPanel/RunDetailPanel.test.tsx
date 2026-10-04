@@ -102,6 +102,32 @@ describe('RunDetailPanel', () => {
     vi.useRealTimers();
   });
 
+  it('offers only stages that can still dispatch as a move target', () => {
+    const finished: BatchStageDetail = {
+      ...stages[1],
+      id: 'stage-3',
+      stage_number: 3,
+      name: 'Stage 3',
+      status: 'completed',
+    };
+    render(
+      <RunDetailPanel
+        flowId="flow-1"
+        run={makeRun('run-1', '')}
+        runIndex={0}
+        stages={[...stages, finished]}
+        currentStageId="stage-1"
+        onBack={() => {}}
+        onReassigned={() => {}}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /Select a stage/ }));
+
+    expect(screen.getByText('Stage 2')).toBeInTheDocument();
+    expect(screen.queryByText('Stage 3')).not.toBeInTheDocument();
+  });
+
   it('cancels pending autosave and resets save state when switching runs', () => {
     const { rerender } = render(
       <RunDetailPanel

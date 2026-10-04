@@ -5,9 +5,11 @@
  */
 
 import { TRPCError } from '@trpc/server';
+import log from 'electron-log';
 import type { BatchTriggerSchemaItem } from '../../../shared/types/flow-settings-schema';
 import type { getDatabase } from '../db';
-import { listStagesForBatch } from '../db/repos/batch-stages';
+import { cancelUndispatchedRunsForStage } from '../db/repos/batch-stage-runs';
+import { listStagesForBatch, setStageStatusIf } from '../db/repos/batch-stages';
 import { getEarliestRunForBatch } from '../db/repos/flow-runs';
 import { getLatestVersion, getVersion } from '../db/repos/flow-versions';
 import { getFlowById } from '../db/repos/flows';
@@ -83,6 +85,38 @@ export function evaluateDepGate(
   return deps.every((d) => TERMINAL_STAGE_STATUSES.has(d.status)) ? 'orphaned' : 'blocked';
 }
 
+const CASCADE_ROUND_LIMIT = 50;
+
+/** Fixpoint cancel of pending stages whose deps are all terminal but not all completed.
+ * One DAG layer per round, so it converges in O(depth) rounds. */
+export async function cascadeCancelBlockedStages(db: Db, batchId: string): Promise<void> {
+  for (let round = 0; round < CASCADE_ROUND_LIMIT; round += 1) {
+    const stages = await listStagesForBatch(db, batchId);
+    const byId = new Map(stages.map((s) => [s.id, s]));
+    const blocked = stages.filter((s) => {
+      if (s.status !== 'pending') return false;
+      const deps = stageDeps(s)
+        .map((id) => byId.get(id))
+        .filter((d): d is BatchStage => Boolean(d));
+      if (deps.length === 0) return false;
+      return (
+        deps.every((d) => TERMINAL_STAGE_STATUSES.has(d.status)) &&
+        deps.some((d) => d.status !== 'completed')
+      );
+    });
+    if (blocked.length === 0) return;
+    for (const stage of blocked) {
+      if (await setStageStatusIf(db, stage.id, 'pending', 'cancelled')) {
+        await cancelUndispatchedRunsForStage(db, stage.id);
+      }
+    }
+  }
+  log.warn('[BatchDispatch] cascade cancel hit round limit — deep stages may stay pending', {
+    batchId,
+    rounds: CASCADE_ROUND_LIMIT,
+  });
+}
+
 /**
  * Per-stage in-flight ceiling when graph.settings.maxBatchConcurrency is unset.
  * Matches the documented worker ceiling in mcp/flows-tools/guidelines/
@@ -130,6 +164,19 @@ export async function resolveBatchCtx(db: Db, flowId: string, batchId: string): 
     });
   }
   return buildCtx(version, batchId);
+}
+
+/** A batch records its flow only through its runs: null before the first run or under another
+ * flow, when nothing may be dispatched for it on this flow's behalf. */
+export async function ctxIfOwnedBatch(
+  db: Db,
+  flowId: string,
+  batchId: string,
+): Promise<BatchCtx | null> {
+  const earliest = await getEarliestRunForBatch(db, batchId);
+  if (!earliest) return null;
+  const ctx = await ctxFromRun(db, earliest);
+  return ctx?.flowId === flowId ? ctx : null;
 }
 
 /** Ctx from a batch run's own pinned version — the event/recovery path has no session. */
