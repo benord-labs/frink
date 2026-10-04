@@ -59,7 +59,13 @@ vi.mock('../../sentry/init', () => ({ captureMainMessage: captureMainMessageMock
 
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import type { FrinkMcpServerConfig } from '../types';
-import { fetchMcpToolDescriptors, fetchMcpToolDescriptorsStdio, toolNames } from '.';
+import {
+  _resetMcpPaginationCaptureForTests,
+  fetchMcpToolDescriptors,
+  fetchMcpToolDescriptorsStdio,
+  MAX_TOOL_LIST_PAGES,
+  toolNames,
+} from '.';
 import { callMcpTool, callMcpToolStdio } from './call';
 import { callServerTool } from './resolve';
 import {
@@ -87,6 +93,7 @@ const baseConfig: FrinkMcpServerConfig = {
 beforeEach(() => {
   vi.clearAllMocks();
   _resetMcpFailureCaptureForTests();
+  _resetMcpPaginationCaptureForTests();
   connectMock.mockResolvedValue(undefined);
 });
 
@@ -460,5 +467,240 @@ describe('failure attribution across the lifecycle', () => {
     expect(captureMainMessageMock).toHaveBeenCalledTimes(2);
     const reasons = captureMainMessageMock.mock.calls.map(([, , tags]) => tags.reason);
     expect(reasons.sort()).toEqual(['timeout', 'transport']);
+  });
+});
+
+describe('tools/list pagination', () => {
+  const toolA = { name: 'a', description: 'A', inputSchema: { type: 'object' as const } };
+  const toolB = { name: 'b', description: 'B', inputSchema: { type: 'object' as const } };
+  const paginationCaptures = () =>
+    captureMainMessageMock.mock.calls.filter((call) =>
+      String(call[0]).includes('pagination stopped early'),
+    );
+
+  it('follows nextCursor over HTTP and returns every page in order', async () => {
+    listToolsMock
+      .mockResolvedValueOnce({ tools: [toolA], nextCursor: 'c1' })
+      .mockResolvedValueOnce({ tools: [toolB] });
+    const result = await fetchMcpToolDescriptors('https://mcp.example');
+    expect(listToolsMock).toHaveBeenNthCalledWith(1, undefined, {
+      timeout: MCP_OPERATION_TIMEOUT_MS,
+    });
+    expect(listToolsMock).toHaveBeenNthCalledWith(
+      2,
+      { cursor: 'c1' },
+      {
+        timeout: MCP_OPERATION_TIMEOUT_MS,
+      },
+    );
+    expect(result.ok && result.tools.map((t) => t.name)).toEqual(['a', 'b']);
+  });
+
+  it('follows nextCursor over stdio', async () => {
+    listToolsMock
+      .mockResolvedValueOnce({ tools: [toolA], nextCursor: 'c1' })
+      .mockResolvedValueOnce({ tools: [toolB] });
+    const result = await fetchMcpToolDescriptorsStdio({ command: 'npx' });
+    expect(listToolsMock).toHaveBeenCalledTimes(2);
+    expect(result.ok && result.tools.map((t) => t.name)).toEqual(['a', 'b']);
+  });
+
+  it('makes exactly one request for a single-page server', async () => {
+    listToolsMock.mockResolvedValue({ tools: [toolA] });
+    await fetchMcpToolDescriptors('https://mcp.example');
+    expect(listToolsMock).toHaveBeenCalledTimes(1);
+    expect(listToolsMock).toHaveBeenCalledWith(undefined, { timeout: MCP_OPERATION_TIMEOUT_MS });
+  });
+
+  it('treats an empty-string cursor as the last page', async () => {
+    listToolsMock.mockResolvedValue({ tools: [toolA], nextCursor: '' });
+    await fetchMcpToolDescriptors('https://mcp.example');
+    expect(listToolsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives each page its own budget rather than one total across pages', async () => {
+    vi.useFakeTimers();
+    try {
+      const slowPage = (value: unknown) =>
+        new Promise((resolve) =>
+          setTimeout(() => resolve(value), MCP_OPERATION_TIMEOUT_MS - 2_000),
+        );
+      listToolsMock
+        .mockReturnValueOnce(slowPage({ tools: [toolA], nextCursor: 'c1' }))
+        .mockImplementationOnce(() => slowPage({ tools: [toolB] }));
+      const pending = fetchMcpToolDescriptors('https://mcp.example');
+      await vi.advanceTimersByTimeAsync(2 * MCP_OPERATION_TIMEOUT_MS);
+      const result = await pending;
+      expect(result.ok && result.tools.map((t) => t.name)).toEqual(['a', 'b']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('fails the whole probe when a later page fails — never a partial success', async () => {
+    listToolsMock
+      .mockResolvedValueOnce({ tools: [toolA], nextCursor: 'c1' })
+      .mockRejectedValueOnce(new McpError(ErrorCode.RequestTimeout, 'Request timed out'));
+    const result = await fetchMcpToolDescriptors('https://mcp.example');
+    expect(result).toMatchObject({ ok: false, reason: 'timeout' });
+  });
+
+  it('stops on a repeated cursor, returning what it has and capturing once', async () => {
+    listToolsMock
+      .mockResolvedValueOnce({ tools: [toolA], nextCursor: 'c1' })
+      .mockResolvedValueOnce({ tools: [toolB], nextCursor: 'c1' });
+    const result = await fetchMcpToolDescriptors('https://mcp.example', undefined, 'loopy');
+    expect(listToolsMock).toHaveBeenCalledTimes(2);
+    expect(result.ok && result.tools.map((t) => t.name)).toEqual(['a', 'b']);
+    expect(paginationCaptures()).toHaveLength(1);
+  });
+
+  it('stops at the page bound and captures once per server across probes', async () => {
+    let n = 0;
+    listToolsMock.mockImplementation(async () => ({
+      tools: [{ ...toolA, name: `t${n}` }],
+      nextCursor: `c${++n}`,
+    }));
+    const result = await fetchMcpToolDescriptors('https://mcp.example', undefined, 'endless');
+    expect(listToolsMock).toHaveBeenCalledTimes(MAX_TOOL_LIST_PAGES);
+    expect(result.ok && result.tools).toHaveLength(MAX_TOOL_LIST_PAGES);
+    await fetchMcpToolDescriptors('https://mcp.example', undefined, 'endless');
+    expect(paginationCaptures()).toHaveLength(1);
+  });
+
+  it('keeps the first descriptor when a tool name repeats across pages', async () => {
+    listToolsMock
+      .mockResolvedValueOnce({ tools: [toolA], nextCursor: 'c1' })
+      .mockResolvedValueOnce({ tools: [{ ...toolA, description: 'dupe' }, toolB] });
+    const result = await fetchMcpToolDescriptors('https://mcp.example');
+    expect(result.ok && result.tools.map((t) => [t.name, t.description])).toEqual([
+      ['a', 'A'],
+      ['b', 'B'],
+    ]);
+  });
+});
+
+describe('tools/list pagination edge cases', () => {
+  const tool = (name: string) => ({ name, inputSchema: { type: 'object' as const } });
+  const paginationCaptures = () =>
+    captureMainMessageMock.mock.calls.filter((call) =>
+      String(call[0]).includes('pagination stopped early'),
+    );
+
+  it('treats a last page landing exactly on the bound as complete, not truncated', async () => {
+    for (let i = 1; i < MAX_TOOL_LIST_PAGES; i++) {
+      listToolsMock.mockResolvedValueOnce({ tools: [tool(`t${i}`)], nextCursor: `c${i}` });
+    }
+    listToolsMock.mockResolvedValueOnce({ tools: [tool('last')] });
+    const result = await fetchMcpToolDescriptors('https://mcp.example', undefined, 'exact');
+    expect(listToolsMock).toHaveBeenCalledTimes(MAX_TOOL_LIST_PAGES);
+    expect(result.ok && result.tools).toHaveLength(MAX_TOOL_LIST_PAGES);
+    expect(captureMainMessageMock).not.toHaveBeenCalled();
+  });
+
+  it('detects a cursor cycle that is not back-to-back (c1 → c2 → c1)', async () => {
+    listToolsMock
+      .mockResolvedValueOnce({ tools: [tool('a')], nextCursor: 'c1' })
+      .mockResolvedValueOnce({ tools: [tool('b')], nextCursor: 'c2' })
+      .mockResolvedValueOnce({ tools: [tool('c')], nextCursor: 'c1' });
+    const result = await fetchMcpToolDescriptors('https://mcp.example', undefined, 'cyclic');
+    expect(listToolsMock).toHaveBeenCalledTimes(3);
+    expect(result.ok && result.tools.map((t) => t.name)).toEqual(['a', 'b', 'c']);
+    expect(paginationCaptures()).toHaveLength(1);
+  });
+
+  it('keeps paging past an empty intermediate page', async () => {
+    listToolsMock
+      .mockResolvedValueOnce({ tools: [], nextCursor: 'c1' })
+      .mockResolvedValueOnce({ nextCursor: 'c2' })
+      .mockResolvedValueOnce({ tools: [tool('late')] });
+    const result = await fetchMcpToolDescriptors('https://mcp.example');
+    expect(listToolsMock).toHaveBeenCalledTimes(3);
+    expect(result.ok && result.tools.map((t) => t.name)).toEqual(['late']);
+  });
+
+  it('times out a hung later page on its own guard, timed from that page, and reaps the child', async () => {
+    vi.useFakeTimers();
+    try {
+      const page1Ms = MCP_OPERATION_TIMEOUT_MS - 2_000;
+      listToolsMock
+        .mockReturnValueOnce(
+          new Promise((resolve) =>
+            setTimeout(() => resolve({ tools: [tool('a')], nextCursor: 'c1' }), page1Ms),
+          ),
+        )
+        .mockReturnValueOnce(new Promise(() => {}));
+      const pending = fetchMcpToolDescriptorsStdio({ command: 'npx' }, 'hangs');
+      let settled = false;
+      void pending.then(() => {
+        settled = true;
+      });
+      // One guard window after the op began would kill a shared-total guard; per-page must not.
+      await vi.advanceTimersByTimeAsync(outerGuardMs(MCP_OPERATION_TIMEOUT_MS));
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(page1Ms);
+      expect(await pending).toEqual({ ok: false, reason: 'timeout', message: 'MCP fetch timeout' });
+      expect(closeMock).toHaveBeenCalledTimes(1);
+      const [, , tags] = captureMainMessageMock.mock.calls[0];
+      expect(tags.step).toBe('operation');
+      // Per-request clock: page 2's own wait, not page 1 + page 2.
+      expect(Number(tags.elapsed_ms)).toBeLessThan(outerGuardMs(MCP_OPERATION_TIMEOUT_MS) + 1);
+      expect(Number(tags.elapsed_ms)).toBeGreaterThanOrEqual(
+        outerGuardMs(MCP_OPERATION_TIMEOUT_MS),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('captures a truncation once per server AND transport, never hiding a second server', async () => {
+    const endless = () => {
+      let n = 0;
+      listToolsMock.mockImplementation(async () => ({ tools: [], nextCursor: `c${++n}` }));
+    };
+    endless();
+    await fetchMcpToolDescriptors('https://a.example', undefined, 'server-a');
+    endless();
+    await fetchMcpToolDescriptors('https://b.example', undefined, 'server-b');
+    endless();
+    await fetchMcpToolDescriptorsStdio({ command: 'npx' }, 'server-a');
+    endless();
+    await fetchMcpToolDescriptors('https://a.example', undefined, 'server-a');
+    const tags = paginationCaptures().map(([, , t]) => `${t.server}:${t.transport}`);
+    expect(tags.sort()).toEqual(['server-a:http', 'server-a:stdio', 'server-b:http']);
+  });
+
+  it('never puts cursors or credential headers in a truncation capture', async () => {
+    listToolsMock
+      .mockResolvedValueOnce({ tools: [], nextCursor: 'opaque-cursor-secret' })
+      .mockResolvedValueOnce({ tools: [], nextCursor: 'opaque-cursor-secret' });
+    await fetchMcpToolDescriptors(
+      'https://mcp.example',
+      { Authorization: 'Bearer live-token' },
+      'linear',
+    );
+    const serialized = JSON.stringify(paginationCaptures());
+    expect(serialized).not.toContain('live-token');
+    expect(serialized).not.toContain('opaque-cursor-secret');
+    expect(paginationCaptures()[0][2]).toMatchObject({
+      server: 'linear',
+      reason: 'repeated_cursor',
+    });
+  });
+});
+
+describe('callMcpTool through the per-request runner', () => {
+  it('still bounds a hung tool call with the outer guard and closes the transport', async () => {
+    vi.useFakeTimers();
+    try {
+      callToolMock.mockReturnValue(new Promise(() => {}));
+      const pending = callMcpToolStdio({ command: 'npx' }, 'slow_tool', {});
+      await vi.advanceTimersByTimeAsync(outerGuardMs(MCP_CALL_TIMEOUT_MS));
+      expect(await pending).toMatchObject({ ok: false, reason: 'timeout' });
+      expect(closeMock).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

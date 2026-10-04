@@ -33,7 +33,10 @@ export async function callMcpTool(
   const outcome = await withMcpClient(
     { kind: 'http', serverName, operationTimeoutMs: MCP_CALL_TIMEOUT_MS },
     () => createHttpTransport(serverUrl, headers),
-    (client, options) => client.callTool({ name: toolName, arguments: args }, undefined, options),
+    (client, request) =>
+      request((options) =>
+        client.callTool({ name: toolName, arguments: args }, undefined, options),
+      ),
   );
   return outcome.ok ? { ok: true, result: outcome.value } : outcome;
 }
@@ -48,7 +51,10 @@ export async function callMcpToolStdio(
   const outcome = await withMcpClient(
     { kind: 'stdio', serverName, operationTimeoutMs: MCP_CALL_TIMEOUT_MS },
     () => createStdioTransport(config),
-    (client, options) => client.callTool({ name: toolName, arguments: args }, undefined, options),
+    (client, request) =>
+      request((options) =>
+        client.callTool({ name: toolName, arguments: args }, undefined, options),
+      ),
   );
   return outcome.ok ? { ok: true, result: outcome.value } : outcome;
 }
