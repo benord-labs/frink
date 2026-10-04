@@ -16,10 +16,10 @@ Read consent outcomes: \`permissionDenied: true\` is a refusal; do not retry. A 
 | Entity | Statuses |
 |---|---|
 | Run | pending, running, completed, failed, cancelled, paused |
-| Node | pending, running, completed, failed, cancelled, timed_out, awaiting_input |
+| Node | pending, running, completed, failed, cancelled, timed_out, awaiting_input, blocked, skipped, superseded |
 
 Fan-out inspection summarizes \`totalLanes\`, \`completedLanes\`, \`failedLanes\`, \`failedLaneNodeRunIds\`; drill into a failed id. This summary is distinct from continuation \`previous.results\`, which is keyed by branch-root id per item.
-\`attemptNumber > 1\` marks an automatic retry; inspect \`retryable\` and the error.
+\`attemptNumber > 1\` marks a retry (automatic or a user Retry); the attempt it replaced stays as a \`superseded\` row for the same node. Inspect \`retryable\` and the error.
 
 ## Pauses and failures
 

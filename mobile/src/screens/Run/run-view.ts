@@ -37,9 +37,11 @@ export function stepTrailing(
 
 /** "Step 2 of 4" while a run is on its way, "4 steps" once every step is behind it. */
 export function runProgress(run: Pick<MobileRun, 'nodes'>): string {
-  const total = run.nodes.length;
+  // A retried attempt is history, not a step: its replacement row stands in for it.
+  const steps = run.nodes.filter((node) => node.status !== 'superseded');
+  const total = steps.length;
   if (!total) return 'Getting ready';
-  const current = run.nodes.findIndex((node) => !FINISHED_STEP.has(node.status));
+  const current = steps.findIndex((node) => !FINISHED_STEP.has(node.status));
   if (current === -1) return total === 1 ? '1 step' : `${total} steps`;
   return `Step ${current + 1} of ${total}`;
 }

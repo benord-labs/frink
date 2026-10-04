@@ -4,6 +4,7 @@
  * (CanvasNodeRun) so this lib module never imports src/main types.
  */
 import { computeFanOutBodyChain } from '../../../shared/lib/compute-fan-out-body-chain';
+import { SUPERSEDED_NODE_STATUS } from '../../../shared/types/flow';
 import type { FlowGraph } from '../../../shared/lib/validate-flow-graph';
 import { countUniqueLanesByParent } from './count-unique-lanes-by-parent';
 
@@ -80,9 +81,12 @@ function isFanOutBodyNodeRun(
  * `attempt_number` is scoped to that fan_out's body only (not unrelated graph nodes).
  */
 export function mergeNodeRunsForCanvas(
-  nodeRuns: CanvasNodeRun[],
+  allNodeRuns: CanvasNodeRun[],
   graph: FlowGraph | null | undefined,
 ): Map<string, CanvasOverlayNodeState> {
+  // A retried attempt is history: the node's state is its replacement's, and the old row must not
+  // keep it parked/failed or count toward a sequential loop's attempt_number.
+  const nodeRuns = allNodeRuns.filter((nr) => nr.status !== SUPERSEDED_NODE_STATUS);
   const byNode = new Map<string, CanvasNodeRun[]>();
   for (const nr of nodeRuns) {
     const list = byNode.get(nr.node_id) ?? [];

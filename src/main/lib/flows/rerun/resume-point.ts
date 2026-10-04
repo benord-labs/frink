@@ -5,10 +5,13 @@
  */
 
 import { isTriggerBlockType } from '../../../../shared/lib/block-registry';
+import { SUPERSEDED_NODE_STATUS } from '../../../../shared/types/flow';
 import type { NodeRun } from '../../db/schema';
 import { type ParsedFlowGraph, pickNextTargetNodeId } from '../graph';
 
-const isUnfinished = (nr: NodeRun): boolean => nr.status !== 'completed' && nr.status !== 'skipped';
+/** A superseded attempt is history, not a resume point: its retry row stands in for it. */
+const isUnfinished = (nr: NodeRun): boolean =>
+  nr.status !== 'completed' && nr.status !== 'skipped' && nr.status !== SUPERSEDED_NODE_STATUS;
 
 /** Cancelled by the run-terminal sweep, which writes only the status: the row's own output never
  * says cancelled (a restart marker or a user Stop does). */
