@@ -435,14 +435,24 @@ describe('listIncompleteFlowRunIdsForChat', () => {
 
   async function seedLinkedRun(
     status: 'running' | 'paused' | 'completed' | 'failed' | 'cancelled',
+    link: 'node-output' | 'task-result' = 'node-output',
   ) {
     const { flowRunId } = await seedFlowRun(db, GRAPH);
-    await seedCompletedNodeRun(db, {
-      flowRunId,
-      nodeId: 'st',
-      blockType: 'start_task',
-      outputs: { chatId: CHAT },
-    });
+    if (link === 'task-result') {
+      await createTask(db, {
+        description: 'branch',
+        source: 'flow',
+        flowRunId,
+        result: { chatId: CHAT },
+      });
+    } else {
+      await seedCompletedNodeRun(db, {
+        flowRunId,
+        nodeId: 'st',
+        blockType: 'start_task',
+        outputs: { chatId: CHAT },
+      });
+    }
     await setFlowRunStatus(db, flowRunId, status, {
       completedAt: status === 'running' || status === 'paused' ? undefined : new Date(),
     });
@@ -475,6 +485,52 @@ describe('listIncompleteFlowRunIdsForChat', () => {
   it('returns empty for a chat with no linked flow run', async () => {
     await seedLinkedRun('running');
     expect(await listIncompleteFlowRunIdsForChat(db, 'unrelated')).toEqual([]);
+  });
+
+  // A branch chat in a multi-agent run is linked only by its task result, never by a node output.
+  it.each(['running', 'paused', 'failed', 'cancelled'] as const)(
+    'blocks a branch chat linked only by its task result while the run is %s',
+    async (status) => {
+      const run = await seedLinkedRun(status, 'task-result');
+      expect(await listIncompleteFlowRunIdsForChat(db, CHAT)).toEqual([run]);
+    },
+  );
+
+  it('re-enables a branch chat linked only by its task result once the run is completed', async () => {
+    await seedLinkedRun('completed', 'task-result');
+    expect(await listIncompleteFlowRunIdsForChat(db, CHAT)).toEqual([]);
+  });
+
+  it('never blocks an ordinary chat whose task has no flow run', async () => {
+    await seedLinkedRun('running');
+    await createTask(db, { description: 'manual', source: 'manual', result: { chatId: 'plain' } });
+
+    expect(await listIncompleteFlowRunIdsForChat(db, 'plain')).toEqual([]);
+    expect(await listActiveFlowRunIdsForChat(db, 'plain')).toEqual([]);
+    expect(await getLatestFlowRunForChat(db, 'plain')).toBeNull();
+  });
+
+  it('still blocks on a task-linked run after an older node-linked run completed', async () => {
+    const completed = await seedLinkedRun('completed');
+    const [{ flowVersionId }] = await db
+      .select({ flowVersionId: flowRuns.flowVersionId })
+      .from(flowRuns)
+      .where(eq(flowRuns.id, completed));
+    const { run } = await getOrCreateFlowRunByIdempotencyKey(db, {
+      flowVersionId,
+      status: 'running',
+      triggerContext: null,
+      idempotencyKey: 'second-run',
+      startedAt: new Date(),
+    });
+    await createTask(db, {
+      description: 'branch',
+      source: 'flow',
+      flowRunId: run.id,
+      result: { chatId: CHAT },
+    });
+
+    expect(await listIncompleteFlowRunIdsForChat(db, CHAT)).toEqual([run.id]);
   });
 });
 
@@ -706,6 +762,41 @@ describe('getLatestFlowRunForChat', () => {
     const { versionId } = await seedFlowRun(db, GRAPH);
     await linkedRun(versionId, { key: 'k-x', status: 'cancelled', createdAt: new Date(1000) });
     expect(await getLatestFlowRunForChat(db, 'unrelated')).toBeNull();
+  });
+
+  it('returns a cancelled run a branch chat is linked to only by its task result', async () => {
+    const { versionId, flowRunId } = await seedFlowRun(db, GRAPH);
+    await linkedRun(versionId, { key: 'k-anchor', status: 'completed', createdAt: new Date(500) });
+    await db
+      .update(flowRuns)
+      .set({ createdAt: new Date(1000) })
+      .where(eq(flowRuns.id, flowRunId));
+    await createTask(db, {
+      description: 'branch',
+      source: 'flow',
+      flowRunId,
+      result: { chatId: 'branch-chat' },
+    });
+    await setFlowRunStatus(db, flowRunId, 'cancelled', { completedAt: new Date() });
+
+    expect((await getLatestFlowRunForChat(db, 'branch-chat'))?.id).toBe(flowRunId);
+  });
+
+  it('picks the newest run across link sources for one chat', async () => {
+    const { versionId, flowRunId } = await seedFlowRun(db, GRAPH);
+    await linkedRun(versionId, { key: 'k-node', status: 'completed', createdAt: new Date(1000) });
+    await db
+      .update(flowRuns)
+      .set({ createdAt: new Date(2000) })
+      .where(eq(flowRuns.id, flowRunId));
+    await createTask(db, {
+      description: 'branch',
+      source: 'flow',
+      flowRunId,
+      result: { chatId: CHAT },
+    });
+
+    expect((await getLatestFlowRunForChat(db, CHAT))?.id).toBe(flowRunId);
   });
 });
 

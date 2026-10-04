@@ -9,7 +9,9 @@ import {
 import { hardDeleteFlow } from '../db/repos/flow-deletion';
 import {
   getFlowRun,
+  getLatestFlowRunForChat,
   getOrCreateFlowRunByIdempotencyKey,
+  listIncompleteFlowRunIdsForChat,
   setFlowRunStatus,
 } from '../db/repos/flow-runs';
 import { getFlowById } from '../db/repos/flows';
@@ -70,6 +72,7 @@ import { deleteFlow, settleChatOwnedFlowDeletion } from './deletion';
 import { dispatchNode } from './dispatch';
 import { cancelFlowRun, cancelFlowRunForChatDeletion, cancelFlowRunsForChat } from './engine';
 import { subscribeFlowEvents } from './events';
+import { tick } from './task-completion-watcher';
 import { type RunFence, readRunFence } from './transitions';
 import { loadBodyMember, loadFanOutState, saveBodyMembers, saveFanOutState } from './fan-out-state';
 
@@ -884,6 +887,38 @@ describe('cancelFlowRun — admission cancellation', () => {
     expect((await getFlowRun(db, flowRunId))?.status).not.toBe('cancelled');
   });
 
+  it('archives a branch chat that alone drives its run and cancels that run', async () => {
+    const db = freshDb();
+    holder.db = db;
+    const { projectId, flowRunId } = await seedFlowRun(db, GRAPH);
+    const node = await createNodeRun(db, {
+      flowRunId,
+      nodeId: 'evaluate',
+      blockType: 'agent',
+      status: 'awaiting_input',
+    });
+    // Linked only through the task result, not the run trigger or a node output.
+    const task = await createTask(db, {
+      projectId,
+      description: 'branch work',
+      source: 'flow',
+      flowRunId,
+      nodeRunId: node.id,
+      result: { chatId: 'chat-archived' },
+    });
+    await updateTaskStatus(db, task.id, 'running');
+
+    await cancelFlowRunsForChat('chat-archived');
+    await tick();
+
+    expect((await getFlowRun(db, flowRunId))?.status).toBe('cancelled');
+    expect((await getTaskById(db, task.id))?.status).toBe('cancelled');
+    expect((await getNodeRun(db, node.id))?.status).toBe('cancelled');
+    // The cancel keeps the task's chat link, so the chat can still find its stopped run.
+    expect((await getLatestFlowRunForChat(db, 'chat-archived'))?.id).toBe(flowRunId);
+    expect(await listIncompleteFlowRunIdsForChat(db, 'chat-archived')).toEqual([flowRunId]);
+  });
+
   it('leaves parked review work available after a recoverable cancellation', async () => {
     const db = freshDb();
     holder.db = db;
@@ -1477,7 +1512,7 @@ describe('Retry after a branched Fan Out failure (sc-716)', () => {
       const fence = readRunFence(db, flowRunId);
       if (!target || !fence) throw new Error('expected a resumable target and a live fence');
 
-      (dispatchNode as Mock)
+      vi.mocked(dispatchNode)
         .mockReset()
         .mockImplementation(async (args: { node: { id: string } }) => ({
           type: 'completed',
@@ -1485,7 +1520,7 @@ describe('Retry after a branched Fan Out failure (sc-716)', () => {
         }));
       await dispatchTerminalResumeTarget(fence, target, true);
 
-      const dispatched = (dispatchNode as Mock).mock.calls.map(([args]) => args.node.id);
+      const dispatched = vi.mocked(dispatchNode).mock.calls.map(([args]) => args.node.id);
       expect(dispatched.filter((id) => id !== 'after').sort()).toEqual(['a', 'b']);
       expect(dispatched.filter((id) => id === 'after')).toHaveLength(1);
       expect((await getFlowRun(db, flowRunId))?.status).toBe('completed');
@@ -1562,14 +1597,14 @@ describe('Retry after a branched Fan Out failure — edge cases (sc-716)', () =>
     await db.update(flowRuns).set({ status: 'running' }).where(eq(flowRuns.id, flowRunId));
     const fence = readRunFence(db, flowRunId);
     if (!target || !fence) throw new Error('expected a resumable target and a live fence');
-    (dispatchNode as Mock)
+    vi.mocked(dispatchNode)
       .mockReset()
       .mockImplementation(async (args: { node: { id: string } }) => ({
         type: 'completed',
         output: { ...completedOutput, outputs: { result: `${args.node.id}-retried` } },
       }));
     await dispatchTerminalResumeTarget(fence, target, true);
-    return (dispatchNode as Mock).mock.calls.map(([args]) => args);
+    return vi.mocked(dispatchNode).mock.calls.map(([args]) => args);
   }
 
   it('re-runs only the failed branch when its sibling already finished the item', async () => {
@@ -1585,7 +1620,7 @@ describe('Retry after a branched Fan Out failure — edge cases (sc-716)', () =>
 
     expect(calls.map((args) => args.node.id)).toEqual(['a', 'after']);
     // The aggregate keeps b's ORIGINAL completed output alongside a's retried one.
-    expect(calls[1]?.previousOutput.outputs.results).toEqual([
+    expect(calls[1]?.previousOutput?.outputs.results).toEqual([
       { a: { result: 'a-retried' }, b: { result: 'b-first' } },
     ]);
     expect((await getFlowRun(db, flowRunId))?.status).toBe('completed');
@@ -1604,7 +1639,7 @@ describe('Retry after a branched Fan Out failure — edge cases (sc-716)', () =>
     expect(laneOne.every((args) => args.loopContext?.currentIndex === 1)).toBe(true);
     const after = calls.filter((args) => args.node.id === 'after');
     expect(after).toHaveLength(1);
-    expect(after[0]?.previousOutput.outputs.results).toEqual([
+    expect(after[0]?.previousOutput?.outputs.results).toEqual([
       { a: { result: 'a0' }, b: { result: 'b0' } },
       { a: { result: 'a-retried' }, b: { result: 'b-retried' } },
     ]);
