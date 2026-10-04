@@ -1,4 +1,6 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import type { ExecFileOptions } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -6,14 +8,40 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // File-based auth is exercised with REAL fixtures (a temp CODEX_HOME + a real auth.json),
 // so node:fs is NOT mocked. Only the macOS keychain probe is mocked — there is no safe way
 // to seed a real "Codex Auth" generic-password in a test. (electron-log is globally mocked
-// in vitest.setup.ts, so no per-file mock is needed.)
+// in vitest.setup.ts, so no per-file mock is needed.) `securityMock` stands in for the
+// `security` binary: return = exit 0, throw = non-zero exit / kill.
+const securityMock = vi.fn();
 const execFileSyncMock = vi.fn();
 vi.mock('node:child_process', async () => {
   const actual = await vi.importActual<typeof import('node:child_process')>('node:child_process');
-  return { ...actual, execFileSync: (...args: unknown[]) => execFileSyncMock(...args) };
+  return {
+    ...actual,
+    execFileSync: (...args: unknown[]) => execFileSyncMock(...args),
+    execFile: (
+      cmd: string,
+      args: string[],
+      opts: ExecFileOptions | undefined,
+      callback: (err: Error | null, result?: { stdout: string; stderr: string }) => void,
+    ) => {
+      // Defer to next microtask so promisify resolves like the real binding.
+      queueMicrotask(() => {
+        try {
+          securityMock(cmd, args, opts);
+          callback(null, { stdout: '', stderr: '' });
+        } catch (err) {
+          callback(err instanceof Error ? err : new Error(String(err)));
+        }
+      });
+    },
+  };
 });
 
-import { detectCodexAccount, emailFromIdToken, parseCodexAuthBlob } from './detect-codex';
+import {
+  codexKeyringAccount,
+  detectCodexAccount,
+  emailFromIdToken,
+  parseCodexAuthBlob,
+} from './detect-codex';
 
 /** Build an unsigned JWT (header.payload.sig) carrying the given claims. */
 function makeJwt(claims: Record<string, unknown>): string {
@@ -58,6 +86,37 @@ describe('parseCodexAuthBlob', () => {
   });
 });
 
+describe('codexKeyringAccount', () => {
+  const keyFor = (path: string) =>
+    `cli|${createHash('sha256').update(path).digest('hex').slice(0, 16)}`;
+  let dir: string | undefined;
+
+  afterEach(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+    dir = undefined;
+  });
+
+  it('hashes the canonical path when CODEX_HOME is reached through a symlink (sc-3811)', async () => {
+    // codex-rs `compute_store_key` canonicalizes an existing home, so a dotfiles-style
+    // symlinked ~/.codex must resolve to the same keychain account the CLI wrote.
+    dir = realpathSync(mkdtempSync(join(tmpdir(), 'frink-codex-key-')));
+    const real = join(dir, 'real-home');
+    const link = join(dir, 'linked-home');
+    mkdirSync(real);
+    symlinkSync(real, link);
+
+    expect(await codexKeyringAccount(link)).toBe(keyFor(real));
+    expect(await codexKeyringAccount(real)).toBe(keyFor(real));
+  });
+
+  it('hashes the path as given when CODEX_HOME does not exist', async () => {
+    // Matches codex-rs's `unwrap_or_else` branch: nothing to canonicalize.
+    const missing = join(tmpdir(), 'frink-codex-key-does-not-exist', 'home');
+
+    expect(await codexKeyringAccount(missing)).toBe(keyFor(missing));
+  });
+});
+
 describe('detectCodexAccount', () => {
   const originalPlatform = process.platform;
   const originalCodexHome = process.env.CODEX_HOME;
@@ -78,6 +137,7 @@ describe('detectCodexAccount', () => {
   }
 
   beforeEach(() => {
+    securityMock.mockReset();
     execFileSyncMock.mockReset();
     delete process.env.CODEX_HOME;
   });
@@ -92,7 +152,7 @@ describe('detectCodexAccount', () => {
     else process.env.CODEX_HOME = originalCodexHome;
   });
 
-  it('reads identity from CODEX_HOME/auth.json when present (token never returned)', () => {
+  it('reads identity from CODEX_HOME/auth.json when present (token never returned)', async () => {
     setCodexHome(
       JSON.stringify({
         OPENAI_API_KEY: null,
@@ -104,7 +164,7 @@ describe('detectCodexAccount', () => {
       }),
     );
 
-    const result = detectCodexAccount();
+    const result = await detectCodexAccount();
 
     expect(result.available).toBe(true);
     expect(result.email).toBe('dev@openai.com');
@@ -115,81 +175,117 @@ describe('detectCodexAccount', () => {
     expect(JSON.stringify(result)).not.toContain('secret-refresh');
   });
 
-  it('honors a custom CODEX_HOME (never reading ~/.codex) and surfaces API-key auth', () => {
+  it('honors a custom CODEX_HOME (never reading ~/.codex) and surfaces API-key auth', async () => {
     const home = setCodexHome(JSON.stringify({ OPENAI_API_KEY: 'sk-proj-xyz' }));
     expect(process.env.CODEX_HOME).toBe(home); // proves the temp home is honored, not overridden
 
-    const result = detectCodexAccount();
+    const result = await detectCodexAccount();
 
     expect(result.available).toBe(true);
     expect(result.displayName).toBe('OpenAI (API key)');
   });
 
-  it('reports an unreadable hint when auth.json exists but carries no usable credential', () => {
+  it('reports an unreadable hint when auth.json exists but carries no usable credential', async () => {
     // A present-but-stale auth.json (e.g. only a last_refresh stamp) parses to no
     // credential — the user must re-login, not be told "available".
     setCodexHome(JSON.stringify({ last_refresh: '2026-01-01' }));
 
-    const result = detectCodexAccount();
+    const result = await detectCodexAccount();
 
     expect(result.available).toBe(false);
     expect(result.hint).toMatch(/re-run `codex login`/i);
   });
 
-  it('returns a safe failure hint (no detail leak) when auth.json cannot be read', () => {
+  it('returns a safe failure hint (no detail leak) when auth.json cannot be read', async () => {
     // auth.json present but unreadable (here: a directory where a file is expected →
     // EISDIR) must be caught and reported without leaking the error into the result.
     setCodexHome();
     mkdirSync(join(tempHome as string, 'auth.json'));
 
-    const result = detectCodexAccount();
+    const result = await detectCodexAccount();
 
     expect(result.available).toBe(false);
     expect(result.hint).toMatch(/failed to read codex credentials/i);
     expect(JSON.stringify(result)).not.toMatch(/EISDIR|auth\.json/i);
   });
 
-  it('falls back to the macOS keychain when auth.json is absent', () => {
-    setCodexHome(); // empty temp home → no auth.json on disk
+  it('confirms a keychain-stored login by presence, without reading the secret (sc-3811)', async () => {
+    const home = setCodexHome(); // empty temp home → no auth.json on disk
     setPlatform('darwin');
-    execFileSyncMock.mockImplementation((...args: unknown[]) => {
-      const argv = args[1];
-      if (
-        Array.isArray(argv) &&
-        argv.includes('find-generic-password') &&
-        argv.includes('Codex Auth')
-      ) {
-        return JSON.stringify({ tokens: { id_token: makeJwt({ email: 'kc@openai.com' }) } });
-      }
-      throw new Error('unexpected call');
+
+    const result = await detectCodexAccount();
+
+    expect(result).toEqual({
+      available: true,
+      displayName: 'OpenAI',
+      sourcePath: 'codex-passthrough://local',
     });
-
-    const result = detectCodexAccount();
-
-    expect(result.available).toBe(true);
-    expect(result.email).toBe('kc@openai.com');
+    // Metadata only: `-w` would print the token and raise a prompt nobody can answer in time.
+    expect(securityMock).toHaveBeenCalledTimes(1);
+    expect(securityMock.mock.calls[0]?.[1]).toEqual([
+      'find-generic-password',
+      '-s',
+      'Codex Auth',
+      '-a',
+      await codexKeyringAccount(home),
+    ]);
+    expect(execFileSyncMock).not.toHaveBeenCalled();
   });
 
-  it('treats an empty / non-JSON keychain blob as not-found, not a crash', () => {
+  it.each([
+    ['the probe times out', Object.assign(new Error('timed out'), { signal: 'SIGTERM' })],
+    ['macOS refuses the read', Object.assign(new Error('denied'), { status: 36 })],
+  ])('still reports the login as available when %s', async (_label, error) => {
+    // A locked keychain says nothing about whether the login exists, so it must not
+    // read as "logged out".
     setCodexHome();
     setPlatform('darwin');
-    execFileSyncMock.mockReturnValue('   '); // keychain returns whitespace
+    securityMock.mockImplementation(() => {
+      throw error;
+    });
 
-    const result = detectCodexAccount();
+    const result = await detectCodexAccount();
+
+    expect(result.available).toBe(true);
+    expect(result.email).toBeUndefined();
+  });
+
+  it('reports no login when the keychain item does not exist', async () => {
+    setCodexHome();
+    setPlatform('darwin');
+    securityMock.mockImplementation(() => {
+      throw Object.assign(new Error('SecKeychainSearchCopyNext: not found'), { status: 44 });
+    });
+
+    const result = await detectCodexAccount();
 
     expect(result.available).toBe(false);
     expect(result.hint).toMatch(/codex login/i);
   });
 
-  it('returns available=false with a login hint, and never shells out on non-macOS', () => {
+  it('refuses a malformed auth.json even when a keychain login also exists, without probing it', async () => {
+    // The file wins over the keychain: a stale file must not be papered over by a
+    // keychain item that merely exists.
+    setCodexHome(JSON.stringify({ last_refresh: '2026-01-01' }));
+    setPlatform('darwin'); // securityMock's default (no throw) = keychain item present
+
+    const result = await detectCodexAccount();
+
+    expect(result.available).toBe(false);
+    expect(result.hint).toMatch(/re-run `codex login`/i);
+    expect(securityMock).not.toHaveBeenCalled();
+  });
+
+  it('returns available=false with a login hint, and never shells out on non-macOS', async () => {
     setCodexHome(); // empty temp home → no auth.json
     setPlatform('linux');
 
-    const result = detectCodexAccount();
+    const result = await detectCodexAccount();
 
     expect(result.available).toBe(false);
     expect(result.hint).toMatch(/codex login/i);
     // Linux without a file must not shell out to the macOS `security` tool.
+    expect(securityMock).not.toHaveBeenCalled();
     expect(execFileSyncMock).not.toHaveBeenCalled();
   });
 });
