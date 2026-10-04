@@ -1,5 +1,5 @@
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { Inbox, MessagesSquare, Settings, Workflow, type LucideIcon } from 'lucide-react-native';
+import { Inbox, MessageCircle, Settings, Workflow, type LucideIcon } from 'lucide-react-native';
 import { StyleSheet } from 'react-native';
 import { GlassSurface } from '../ui/material';
 import { useOverview } from '../lib/overview';
@@ -13,7 +13,7 @@ const DOCK_HEIGHT = 62;
 const DOCK_BOTTOM = 20;
 const ICONS: Record<keyof TabRoutes, LucideIcon> = {
   Queue: Inbox,
-  Chats: MessagesSquare,
+  Chats: MessageCircle,
   Flows: Workflow,
   Settings,
 };
@@ -59,7 +59,7 @@ export function Tabs() {
           tabBarBackground: () => (
             <GlassSurface style={[StyleSheet.absoluteFill, { borderRadius: DOCK_HEIGHT / 2 }]} />
           ),
-          tabBarIcon: ({ color }) => <Icon size={23} color={color} strokeWidth={1.9} />,
+          tabBarIcon: ({ color }) => <Icon size={22} color={color} strokeWidth={1.8} />,
           tabBarBadgeStyle: { backgroundColor: t.attentionSolid, color: '#FFFFFF', fontSize: 12 },
           tabBarButtonTestID: `tab-${route.name.toLowerCase()}`,
         };
