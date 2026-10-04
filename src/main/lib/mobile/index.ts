@@ -1,10 +1,10 @@
 import { hostname } from 'node:os';
 import { join } from 'node:path';
 import { Mutex } from 'async-mutex';
-import { app } from 'electron';
+import { app, BrowserWindow, powerMonitor } from 'electron';
 import { encodeKey } from '../../../shared/lib/mobile-channel';
 import { FRINK_RELAY_BASE_URL } from '../webhooks/base-url';
-import { executeMobileRequest, storeMobileAttachment } from './domain-api';
+import { executeMobileRequest, storeMobileAttachment, subChatBusy } from './domain-api';
 import { loadDesktopIdentity, resetDesktopIdentity, type DesktopIdentity } from './identity';
 import { startMobileLiveActivity } from './live-activity';
 import { startMobileNotifications } from './notifications';
@@ -27,6 +27,14 @@ function getStore(): Promise<MobilePairingStore> {
     return store;
   })();
   return storePromise;
+}
+
+/** Whether Frink is the app in front on an unlocked screen, and seconds since the last input
+ * anywhere. An unknown state reads as out of view, so a wrong read costs an extra alert. */
+export function desktopPresence(): { inView: boolean; idle: number } {
+  const state = powerMonitor.getSystemIdleState(1);
+  const inView = !!BrowserWindow.getFocusedWindow() && (state === 'active' || state === 'idle');
+  return { inView, idle: powerMonitor.getSystemIdleTime() };
 }
 
 /** Frink's relay unless FRINK_MOBILE_RELAY_URL names a self-hosted one. Webhook ingress may be a
@@ -52,7 +60,10 @@ async function startHost(store: MobilePairingStore): Promise<void> {
     const relay = mobileRelay();
     const identity = await loadDesktopIdentity(identityPath());
     const mobileApp = createMobileApp(store, executeMobileRequest, storeMobileAttachment);
-    stopNotifications = startMobileNotifications(store);
+    stopNotifications = startMobileNotifications(store, {
+      desktop: desktopPresence,
+      isBusy: subChatBusy,
+    });
     liveActivity = startMobileLiveActivity(store);
     const channel = startRelayHost({
       relay,

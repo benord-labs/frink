@@ -31,6 +31,7 @@ import {
 } from '../../claude/ask-user-question-approval';
 import { getDatabase } from '../../db';
 import { getProjectById } from '../../db/repos/projects';
+import { readWakeHolds } from '../../socket/claude-wake-hold';
 import { sendMessage, sendPermissionResponse, sendStop } from '../../socket/client';
 import { ChatBusyError, DuplicateMessageError } from '../../socket/execution/send-admission';
 import { getActiveExecution } from '../../socket/streaming/execution-registry';
@@ -202,6 +203,13 @@ export function subChatActivity(subChatId: string): MobileActivity {
   if (getActiveExecution(subChatId) || streams.some((stream) => stream.status !== 'held'))
     return 'running';
   return streams.length ? 'background' : 'idle';
+}
+
+/** Not finished yet: responding, waiting on background work, or a wait that is over while its
+ * CLI is still writing (the hold stays registered until its pump ends). */
+export function subChatBusy(subChatId: string): boolean {
+  const hold = readWakeHolds().get(subChatId);
+  return subChatActivity(subChatId) !== 'idle' || (!!hold && !hold.pump.isEnded());
 }
 
 export async function readMobileChat(
