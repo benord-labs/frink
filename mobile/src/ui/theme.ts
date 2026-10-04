@@ -6,7 +6,14 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { AccessibilityInfo, Platform, useColorScheme, type TextStyle } from 'react-native';
+import {
+  AccessibilityInfo,
+  Appearance,
+  Platform,
+  useColorScheme,
+  type TextStyle,
+} from 'react-native';
+import { readAppearance, saveAppearance, type AppearanceMode } from '../lib/preferences';
 
 // Neutral surfaces mirror desktop; the mobile accent uses a quieter violet.
 // Colour is spent on state only: running (primary), live (green), needs you (amber), failed (red).
@@ -119,10 +126,29 @@ export function toneColors(t: Theme, tone: Tone) {
 }
 
 const SolidMaterial = createContext(false);
+const AppearancePreference = createContext<{
+  mode: AppearanceMode;
+  setMode: (mode: AppearanceMode) => void;
+}>({ mode: 'system', setMode: () => {} });
 
-/** iOS Reduce Transparency makes every glass surface solid, as desktop's reduced-transparency. */
+/** Device appearance and Reduce Transparency apply across every screen and native control. */
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [solid, setSolid] = useState(false);
+  const [storedMode, setStoredMode] = useState<AppearanceMode | null>(null);
+  const mode = storedMode ?? 'system';
+  useEffect(() => {
+    let mounted = true;
+    void readAppearance().then((saved) => {
+      // A choice made while the keychain loads takes precedence over the saved preference.
+      if (mounted) setStoredMode((current) => current ?? saved);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+  useEffect(() => {
+    if (Platform.OS !== 'web') Appearance.setColorScheme(mode === 'system' ? 'unspecified' : mode);
+  }, [mode]);
   useEffect(() => {
     if (Platform.OS !== 'ios') return;
     let mounted = true;
@@ -135,11 +161,25 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       subscription.remove();
     };
   }, []);
-  return createElement(SolidMaterial.Provider, { value: solid }, children);
+  const setMode = (next: AppearanceMode) => {
+    setStoredMode(next);
+    void saveAppearance(next);
+  };
+  return createElement(
+    AppearancePreference.Provider,
+    { value: { mode, setMode } },
+    createElement(SolidMaterial.Provider, { value: solid }, children),
+  );
+}
+
+export function useAppearance() {
+  return useContext(AppearancePreference);
 }
 
 export function useTheme(): Theme {
-  const dark = useColorScheme() !== 'light';
+  const system = useColorScheme();
+  const { mode } = useAppearance();
+  const dark = (mode === 'system' ? system : mode) !== 'light';
   const base = themes[dark ? 'dark' : 'light'];
   const solid = useContext(SolidMaterial);
   return { ...base, surface: solid ? base.solidSurface : base.surface, solid, dark };

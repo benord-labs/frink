@@ -37,3 +37,31 @@ export async function savePreferences(value: NewChatPreferences): Promise<void> 
     else await SecureStore.setItemAsync(KEY, json);
   } catch {}
 }
+
+const appearanceSchema = z.enum(['system', 'light', 'dark']);
+export type AppearanceMode = z.infer<typeof appearanceSchema>;
+const APPEARANCE_KEY = 'frink.mobile.appearance.v1';
+let appearanceWrites: Promise<void> = Promise.resolve();
+
+export async function readAppearance(): Promise<AppearanceMode> {
+  try {
+    const saved = web
+      ? sessionStorage.getItem(APPEARANCE_KEY)
+      : await SecureStore.getItemAsync(APPEARANCE_KEY);
+    const parsed = appearanceSchema.safeParse(saved);
+    return parsed.success ? parsed.data : 'system';
+  } catch {
+    return 'system';
+  }
+}
+
+/** Keep rapid choices in order; unavailable storage must not prevent switching appearance. */
+export function saveAppearance(mode: AppearanceMode): Promise<void> {
+  appearanceWrites = appearanceWrites
+    .then(async () => {
+      if (web) sessionStorage.setItem(APPEARANCE_KEY, mode);
+      else await SecureStore.setItemAsync(APPEARANCE_KEY, mode);
+    })
+    .catch(() => undefined);
+  return appearanceWrites;
+}

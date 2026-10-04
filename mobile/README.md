@@ -33,6 +33,8 @@ The connection works over cellular or other Wi-Fi networks. Keep Frink open with
 
 ## Use and recovery
 
+In **Settings → Appearance**, choose Light or Dark, or System to follow your iPhone. The choice is saved on this phone and applies to every paired computer.
+
 - **Queue:** see work needing attention and open its chat or Flow. Answer structured and free-text questions; allow or deny supported pending tool requests.
 - **Flows:** inspect runs and step output, read a plan before approving it, skip supported failed steps, start a run, stop it, or enable/disable its automation. Retry failed steps on desktop.
 - **Chats:** continue conversations, load earlier messages, stop an active response, and start a chat in an existing project using the desktop's configured provider.

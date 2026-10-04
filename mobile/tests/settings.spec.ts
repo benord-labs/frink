@@ -83,7 +83,10 @@ test('forgetting the Mac asks first, then returns to pairing', async ({ page }) 
   expect(message).toMatch(/^Forget this Mac\?/);
   expect(message).toMatch(/remove this iPhone under Paired phones/);
   expect(
-    await page.evaluate((id) => sessionStorage.getItem(`frink.mobile.computer.${id}`), computers.first.deviceId),
+    await page.evaluate(
+      (id) => sessionStorage.getItem(`frink.mobile.computer.${id}`),
+      computers.first.deviceId,
+    ),
   ).toBeNull();
 });
 
@@ -95,7 +98,9 @@ test('lists every paired computer and switches to another with a tap', async ({ 
   await shot(page, 'computers');
   await list.getByRole('button', { name: 'Studio Mac' }).click();
   await page.getByTestId('tab-settings').click();
-  await expect(page.getByTestId('settings-computers').getByLabel('Studio Mac, shown')).toBeVisible();
+  await expect(
+    page.getByTestId('settings-computers').getByLabel('Studio Mac, shown'),
+  ).toBeVisible();
 });
 
 test('Add a computer opens pairing over the app, and Cancel keeps everything', async ({ page }) => {
@@ -103,7 +108,9 @@ test('Add a computer opens pairing over the app, and Cancel keeps everything', a
   await page.getByRole('button', { name: 'Add a computer' }).click();
   await expect(page.getByRole('button', { name: 'Paste pairing code' })).toBeVisible();
   await page.getByRole('button', { name: 'Cancel' }).click();
-  await expect(page.getByTestId('settings-computers').getByText("Benji's MacBook Pro")).toBeVisible();
+  await expect(
+    page.getByTestId('settings-computers').getByText("Benji's MacBook Pro"),
+  ).toBeVisible();
 });
 
 test('forgetting the shown computer moves to the other one', async ({ page }) => {
@@ -122,6 +129,93 @@ test('light appearance', async ({ page }) => {
   await openSettings(page);
   await expect(page.getByText('Connected', { exact: true })).toBeVisible();
   await shot(page, 'connected', 'light');
+});
+
+test('manual appearance overrides the device and survives navigation, computer changes and reload', async ({
+  page,
+}) => {
+  await openSettings(page, { second: true });
+  const appearance = page.getByTestId('settings-appearance');
+  const title = page.getByRole('heading', { name: 'Settings', exact: true });
+  await expect(appearance.getByRole('radio', { name: 'System', exact: true })).toBeChecked();
+  await appearance.getByRole('radio', { name: 'Light', exact: true }).click();
+  await expect(title).toHaveCSS('color', 'rgb(10, 10, 10)');
+  await page.emulateMedia({ colorScheme: 'light' });
+  await shot(page, 'manual', 'light');
+  await appearance.getByRole('radio', { name: 'Dark', exact: true }).click();
+  await expect(title).toHaveCSS('color', 'rgb(232, 232, 232)');
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await shot(page, 'manual', 'dark');
+  await page.getByTestId('tab-queue').click();
+  await expect(page.getByRole('heading', { name: 'Queue', exact: true })).toHaveCSS(
+    'color',
+    'rgb(232, 232, 232)',
+  );
+  await page.getByTestId('tab-settings').click();
+  await page.getByTestId('settings-computers').getByRole('button', { name: 'Studio Mac' }).click();
+  await page.getByTestId('tab-settings').click();
+  await expect(appearance.getByRole('radio', { name: 'Dark', exact: true })).toBeChecked();
+  await page.reload();
+  await page.getByTestId('tab-settings').click();
+  await expect(appearance.getByRole('radio', { name: 'Dark', exact: true })).toBeChecked();
+  await expect(title).toHaveCSS('color', 'rgb(232, 232, 232)');
+});
+
+test('System restores the current device appearance and follows later device changes', async ({
+  page,
+}) => {
+  await page.emulateMedia({ colorScheme: 'light' });
+  await openSettings(page);
+  const appearance = page.getByTestId('settings-appearance');
+  const title = page.getByRole('heading', { name: 'Settings', exact: true });
+  await appearance.getByRole('radio', { name: 'Dark', exact: true }).click();
+  await expect(title).toHaveCSS('color', 'rgb(232, 232, 232)');
+  await appearance.getByRole('radio', { name: 'System', exact: true }).click();
+  await expect(appearance.getByRole('radio', { name: 'System', exact: true })).toBeChecked();
+  await expect(title).toHaveCSS('color', 'rgb(10, 10, 10)');
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(title).toHaveCSS('color', 'rgb(232, 232, 232)');
+});
+
+test('an invalid saved appearance falls back to the device appearance', async ({ page }) => {
+  await page.addInitScript(() => sessionStorage.setItem('frink.mobile.appearance.v1', 'invalid'));
+  await openSettings(page);
+  await expect(
+    page.getByTestId('settings-appearance').getByRole('radio', { name: 'System', exact: true }),
+  ).toBeChecked();
+  await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toHaveCSS(
+    'color',
+    'rgb(232, 232, 232)',
+  );
+});
+
+test('appearance remains usable when preference storage cannot be read or written', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await page.addInitScript(() => {
+    const read = Storage.prototype.getItem;
+    const write = Storage.prototype.setItem;
+    Storage.prototype.getItem = function (key) {
+      if (key === 'frink.mobile.appearance.v1') throw new Error('Storage unavailable');
+      return read.call(this, key);
+    };
+    Storage.prototype.setItem = function (key, value) {
+      if (key === 'frink.mobile.appearance.v1') throw new Error('Storage unavailable');
+      return write.call(this, key, value);
+    };
+  });
+  await openSettings(page);
+  const appearance = page.getByTestId('settings-appearance');
+  await expect(appearance.getByRole('radio', { name: 'System', exact: true })).toBeChecked();
+  await appearance.getByRole('radio', { name: 'Light', exact: true }).click();
+  await expect(appearance.getByRole('radio', { name: 'Light', exact: true })).toBeChecked();
+  await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toHaveCSS(
+    'color',
+    'rgb(10, 10, 10)',
+  );
+  expect(errors).toEqual([]);
 });
 
 test('the Lock Screen card is offered only in the iPhone app, not in a browser', async ({
