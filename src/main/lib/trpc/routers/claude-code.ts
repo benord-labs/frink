@@ -403,11 +403,11 @@ export const claudeCodeRouter = router({
    * unavailable, so the (gated) UI never probes and `connectCodexPassthrough` stays the one
    * creation surface. No multi-entry picker — codex auth is one-per-device, machine-local.
    */
-  detectCodexAccount: publicProcedure.query(() => {
+  detectCodexAccount: publicProcedure.query(async () => {
     if (!LAUNCH_FLAGS.codexAccounts) {
       return { available: false as const, hint: 'Codex accounts are not enabled.' };
     }
-    return detectCodexAccount();
+    return await detectCodexAccount();
   }),
 
   /**
@@ -625,9 +625,9 @@ export const claudeCodeRouter = router({
       }
 
       // Confirm the codex CLI is actually logged in on this machine (identity only —
-      // no token; the binary owns auth). Synchronous, no keychain shell-out timeout to
-      // worry about. Fail with the detector's hint if not.
-      const detection = detectCodexAccount();
+      // no token; the binary owns auth). A keychain-stored login is confirmed by presence
+      // and carries no email. Fail with the detector's hint if not.
+      const detection = await detectCodexAccount();
       if (!detection.available) {
         throw new Error(detection.hint ?? 'No Codex login found. Run `codex login` and try again.');
       }

@@ -93,6 +93,34 @@ describe('ConnectCodexAccountPage', () => {
     expect(getResolvedAccountInvalidate).toHaveBeenCalled();
   });
 
+  it('connects a keychain-stored login that has no email, labelled with its display name (sc-3811)', async () => {
+    const user = userEvent.setup();
+    detectMock.mockReturnValue(
+      detectionState({
+        available: true,
+        displayName: 'OpenAI',
+        sourcePath: 'codex-passthrough://local',
+      }),
+    );
+    connect.mutateAsync.mockResolvedValue(undefined);
+
+    render(
+      <Provider store={createStore()}>
+        <ConnectCodexAccountPage />
+      </Provider>,
+    );
+
+    // No email to show, but the login is found and the CTA is usable in one click.
+    expect(screen.getByText('OpenAI login found')).toBeInTheDocument();
+    expect(screen.queryByText('No OpenAI login detected')).not.toBeInTheDocument();
+    const connectButton = screen.getByRole('button', { name: 'Connect' });
+    expect(connectButton).toBeEnabled();
+
+    await user.click(connectButton);
+
+    expect(connect.mutateAsync).toHaveBeenCalledWith({ accountLabel: 'OpenAI' });
+  });
+
   it('renders the no-login empty state with the codex login instruction + Check for Login refresh (no Connect)', () => {
     detectMock.mockReturnValue(
       detectionState({ available: false, hint: 'Looked in ~/.codex but found no session.' }),
