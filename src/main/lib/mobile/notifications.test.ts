@@ -4,12 +4,16 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { WaitingChat } from './live-activity/counts';
 
-const fixture = vi.hoisted(() => ({ waiting: new Map<string, WaitingChat>() }));
+const fixture = vi.hoisted(() => ({ waiting: new Map<string, WaitingChat>(), slowMs: 0 }));
 vi.mock('./live-activity/counts', () => ({
-  readWaitingChats: async () => new Map(fixture.waiting),
+  readWaitingChats: async () => {
+    if (fixture.slowMs) await new Promise((resolve) => setTimeout(resolve, fixture.slowMs));
+    return new Map(fixture.waiting);
+  },
 }));
+import log from 'electron-log';
 import { MobilePairingStore } from './pairing-store';
-import { startMobileNotifications } from './notifications';
+import { startMobileNotifications, type DesktopReads } from './notifications';
 import { publishSessionCompletion } from '../socket/streaming/live-stream/completion-events';
 import { createMobileApp } from './server';
 
@@ -21,6 +25,17 @@ const push = 'ExpoPushToken[phone-one]';
 const fetchMock = vi.fn();
 const TICK_MS = 5_000;
 const sent = () => fetchMock.mock.calls.flatMap(([, options]) => JSON.parse(options.body));
+/** Away from the Mac with every chat quiet, unless a test says otherwise. */
+const start = (reads: Partial<DesktopReads> = {}) =>
+  startMobileNotifications(store, {
+    desktop: () => ({ inView: false, idle: 0 }),
+    isBusy: () => false,
+    ...reads,
+  });
+/** Frink in front, with the Mac's whole-second idle clock running from `lastInput`. */
+const atMac = (lastInput: () => number, inView = () => true) => ({
+  desktop: () => ({ inView: inView(), idle: Math.floor((Date.now() - lastInput()) / 1000) }),
+});
 /** A chat's run settles; its alert goes out once two looks show it isn't waiting on you. */
 async function finish(chatId = 'chat') {
   publishSessionCompletion({ chatId, subChatId: 'sub' });
@@ -47,6 +62,7 @@ beforeEach(async () => {
     json: async () => ({ data: [{ status: 'ok', id: 'receipt' }] }),
   });
   fixture.waiting.clear();
+  fixture.slowMs = 0;
   vi.useFakeTimers();
 });
 afterEach(async () => {
@@ -79,7 +95,7 @@ it('binds registration to the authenticated phone and never exposes push tokens 
 });
 
 it('sends only a generic alert with identifiers, and stops after disable or shutdown', async () => {
-  stop = startMobileNotifications(store);
+  stop = start();
   await finish();
   expect(fetchMock).not.toHaveBeenCalled();
   await store.notifications(credential.token, { token: push });
@@ -114,7 +130,7 @@ it('sends only a generic alert with identifiers, and stops after disable or shut
 it('removes dead tokens from receipts without removing a rotated registration', async () => {
   vi.useFakeTimers();
   await store.notifications(credential.token, { token: push });
-  stop = startMobileNotifications(store);
+  stop = start();
   await finish();
   await store.notifications(credential.token, { token: 'ExpoPushToken[new-token]' });
   fetchMock.mockResolvedValueOnce({
@@ -132,7 +148,7 @@ it('removes dead tokens from receipts without removing a rotated registration', 
 it('contains network errors and exposes actionable delivery status', async () => {
   await store.notifications(credential.token, { token: push });
   fetchMock.mockRejectedValue(new Error('network offline'));
-  stop = startMobileNotifications(store);
+  stop = start();
   expect(() => publishSessionCompletion({ chatId: 'chat', subChatId: 'sub' })).not.toThrow();
   await vi.advanceTimersByTimeAsync(2 * TICK_MS);
   await vi.waitFor(async () =>
@@ -149,7 +165,7 @@ it.each([undefined, '', '   ', 42, null])(
       ok: true,
       json: async () => ({ data: [{ status: 'ok', id }] }),
     });
-    stop = startMobileNotifications(store);
+    stop = start();
     await finish();
     await vi.waitFor(async () =>
       expect((await store.notifications(credential.token, {})).error).toContain('couldn’t deliver'),
@@ -164,7 +180,7 @@ it.each(['ok', 'DeviceNotRegistered', 'MessageRateExceeded'] as const)(
   async (result) => {
     vi.useFakeTimers();
     await store.notifications(credential.token, { token: push });
-    stop = startMobileNotifications(store);
+    stop = start();
     await finish();
     fetchMock.mockResolvedValueOnce({
       ok: true,
@@ -212,7 +228,7 @@ it('batches paired phones into one Expo request and maps tickets by recipient', 
       ],
     }),
   });
-  stop = startMobileNotifications(store);
+  stop = start();
   await finish();
   await vi.waitFor(() =>
     expect(store.notificationRecipients()).toEqual([{ id: credential.deviceId, token: push }]),
@@ -226,7 +242,7 @@ it('batches paired phones into one Expo request and maps tickets by recipient', 
 it('retains receipt IDs through a transient failure and observes the eventual rejection', async () => {
   vi.useFakeTimers();
   await store.notifications(credential.token, { token: push });
-  stop = startMobileNotifications(store);
+  stop = start();
   await finish();
   fetchMock.mockRejectedValueOnce(new Error('temporarily offline'));
   await vi.advanceTimersByTimeAsync(15 * 60_000);
@@ -247,7 +263,7 @@ it('retains receipt IDs through a transient failure and observes the eventual re
 it('alerts once, time-sensitive, when a chat starts waiting on you and the wait holds', async () => {
   fixture.waiting.set('already', { kind: 'plan' });
   await store.notifications(credential.token, { token: push });
-  stop = startMobileNotifications(store);
+  stop = start();
   await vi.advanceTimersByTimeAsync(TICK_MS);
   fixture.waiting.set('chat', { kind: 'question', subChatId: 'sub' });
   await vi.advanceTimersByTimeAsync(TICK_MS);
@@ -288,7 +304,7 @@ it('alerts once, time-sensitive, when a chat starts waiting on you and the wait 
 
 it('stays quiet for a wait answered before the second look', async () => {
   await store.notifications(credential.token, { token: push });
-  stop = startMobileNotifications(store);
+  stop = start();
   await vi.advanceTimersByTimeAsync(TICK_MS);
   fixture.waiting.set('chat', { kind: 'permission', subChatId: 'sub' });
   await vi.advanceTimersByTimeAsync(TICK_MS);
@@ -299,7 +315,7 @@ it('stays quiet for a wait answered before the second look', async () => {
 
 it('sends one plan alert, not a finished alert too, when a run parks on its plan', async () => {
   await store.notifications(credential.token, { token: push });
-  stop = startMobileNotifications(store);
+  stop = start();
   await vi.advanceTimersByTimeAsync(TICK_MS);
   publishSessionCompletion({ chatId: 'chat', subChatId: 'sub' });
   await vi.advanceTimersByTimeAsync(TICK_MS);
@@ -312,4 +328,157 @@ it('sends one plan alert, not a finished alert too, when a run parks on its plan
       data: { type: 'needs-you', deviceId: credential.deviceId, chatId: 'chat' },
     }),
   ]);
+});
+
+it('holds a finished alert while the chat is still working, then sends one', async () => {
+  await store.notifications(credential.token, { token: push });
+  let busy = true;
+  stop = start({ isBusy: () => busy });
+  // Three wakes of one background wait, each publishing a completion.
+  for (let wake = 0; wake < 3; wake++) await finish();
+  expect(fetchMock).not.toHaveBeenCalled();
+  busy = false;
+  await vi.advanceTimersByTimeAsync(TICK_MS);
+  expect(fetchMock).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(5 * TICK_MS);
+  expect(sent()).toEqual([expect.objectContaining({ title: 'A chat finished' })]);
+});
+
+// Idle time is whole seconds, so input on either side of the chat going quiet must still be told
+// apart: after it means the user saw it, before it means they may already have left.
+it.each([
+  [100, 0],
+  [900, 0],
+  [-100, 1],
+  [-900, 1],
+])('input %i ms from a chat going quiet at the Mac sends %i alerts', async (offset, alerts) => {
+  await store.notifications(credential.token, { token: push });
+  let lastInput = Date.now() + Math.min(offset, 0);
+  stop = start(atMac(() => lastInput));
+  publishSessionCompletion({ chatId: 'chat', subChatId: 'sub' });
+  if (offset > 0) {
+    await vi.advanceTimersByTimeAsync(offset);
+    lastInput = Date.now();
+  }
+  await vi.advanceTimersByTimeAsync(130_000);
+  expect(sent()).toHaveLength(alerts);
+});
+
+it('does not take earlier input for later input when a look runs late', async () => {
+  await store.notifications(credential.token, { token: push });
+  const lastInput = Date.now() - 100;
+  stop = start(atMac(() => lastInput));
+  publishSessionCompletion({ chatId: 'chat', subChatId: 'sub' });
+  await vi.advanceTimersByTimeAsync(1_000);
+  fixture.slowMs = 600;
+  await vi.advanceTimersByTimeAsync(130_000);
+  expect(sent()).toEqual([expect.objectContaining({ title: 'A chat finished' })]);
+});
+
+it('never sends a finished alert the user saw before switching to another app', async () => {
+  await store.notifications(credential.token, { token: push });
+  let lastInput = Date.now();
+  let inView = true;
+  stop = start(
+    atMac(
+      () => lastInput,
+      () => inView,
+    ),
+  );
+  publishSessionCompletion({ chatId: 'chat', subChatId: 'sub' });
+  await vi.advanceTimersByTimeAsync(TICK_MS + 1_000);
+  lastInput = Date.now();
+  inView = false;
+  await vi.advanceTimersByTimeAsync(60 * TICK_MS);
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
+it('sends a finished alert at once when Frink was never in view, even with the Mac in use', async () => {
+  await store.notifications(credential.token, { token: push });
+  stop = start(
+    atMac(
+      () => Date.now(),
+      () => false,
+    ),
+  );
+  await finish();
+  expect(sent()).toEqual([expect.objectContaining({ title: 'A chat finished' })]);
+});
+
+it('keeps a finished alert when the only input came while the chat was still working', async () => {
+  await store.notifications(credential.token, { token: push });
+  let busy = true;
+  let lastInput = Date.now();
+  stop = start({ isBusy: () => busy, ...atMac(() => lastInput) });
+  publishSessionCompletion({ chatId: 'chat', subChatId: 'sub' });
+  await vi.advanceTimersByTimeAsync(2 * TICK_MS);
+  lastInput = Date.now();
+  await vi.advanceTimersByTimeAsync(2 * TICK_MS);
+  busy = false;
+  await vi.advanceTimersByTimeAsync(130_000);
+  expect(sent()).toEqual([expect.objectContaining({ title: 'A chat finished' })]);
+});
+
+it('sends a finished alert once the user has left the Mac with Frink in front', async () => {
+  await store.notifications(credential.token, { token: push });
+  const lastInput = Date.now();
+  stop = start(atMac(() => lastInput));
+  publishSessionCompletion({ chatId: 'chat', subChatId: 'sub' });
+  await vi.advanceTimersByTimeAsync(115_000);
+  expect(fetchMock).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(4 * TICK_MS);
+  expect(sent()).toEqual([expect.objectContaining({ title: 'A chat finished' })]);
+});
+
+it('stays quiet about a wait that was already open when alerts came on at the Mac', async () => {
+  await store.notifications(credential.token, { token: push });
+  fixture.waiting.set('already', { kind: 'plan' });
+  let inView = true;
+  stop = start({ desktop: () => ({ inView, idle: 0 }) });
+  await vi.advanceTimersByTimeAsync(2 * TICK_MS);
+  inView = false;
+  await vi.advanceTimersByTimeAsync(3 * TICK_MS);
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
+it('alerts for a wait that opens just after alerts start', async () => {
+  await store.notifications(credential.token, { token: push });
+  stop = start();
+  fixture.waiting.set('chat', { kind: 'question', subChatId: 'sub' });
+  await vi.advanceTimersByTimeAsync(2 * TICK_MS);
+  expect(sent()).toEqual([expect.objectContaining({ title: 'A chat has a question' })]);
+});
+
+it('defers a new wait until the user leaves the Mac, and drops one answered there', async () => {
+  await store.notifications(credential.token, { token: push });
+  let inView = true;
+  stop = start({ desktop: () => ({ inView, idle: 0 }) });
+  await vi.advanceTimersByTimeAsync(TICK_MS);
+  fixture.waiting.set('chat', { kind: 'permission', subChatId: 'sub' });
+  await vi.advanceTimersByTimeAsync(3 * TICK_MS);
+  fixture.waiting.delete('chat');
+  await vi.advanceTimersByTimeAsync(TICK_MS);
+  inView = false;
+  await vi.advanceTimersByTimeAsync(2 * TICK_MS);
+  expect(fetchMock).not.toHaveBeenCalled();
+  // A later wait on the same chat, left open when the user walks away, alerts exactly once.
+  inView = true;
+  fixture.waiting.set('chat', { kind: 'question', subChatId: 'sub' });
+  await vi.advanceTimersByTimeAsync(3 * TICK_MS);
+  expect(fetchMock).not.toHaveBeenCalled();
+  inView = false;
+  await vi.advanceTimersByTimeAsync(4 * TICK_MS);
+  expect(sent()).toEqual([expect.objectContaining({ title: 'A chat has a question' })]);
+});
+
+it('logs a completion and an alert by type and id, never by content or token', async () => {
+  const info = vi.spyOn(log, 'info');
+  await store.notifications(credential.token, { token: push });
+  stop = start();
+  await finish();
+  expect(info.mock.calls).toEqual([
+    ['[Mobile] Chat chat completed a response (busy=false).'],
+    ['[Mobile] Sending session-completed alert for chat.'],
+  ]);
+  info.mockRestore();
 });

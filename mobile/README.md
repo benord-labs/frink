@@ -41,11 +41,15 @@ The connection works over cellular or other Wi-Fi networks. Keep Frink open with
 
 The phone credential lives in the iOS Keychain on this device only. Desktop stores credential digests and its channel identity in its private app data. Sharing a pairing code grants control of this Frink instance; treat the code like an invitation to your computer.
 
-## Chat-finished alerts
+## Alerts
 
 In the iPhone app, open **Settings → Notifications** and turn on **When a chat finishes**, then allow notifications when iOS asks. When an ordinary chat finishes successfully, Frink on your computer sends a short alert, including while the app is in the background or the phone is locked. Tap it to open that chat. Stopped, failed and superseded turns, and individual Flow steps, send no alert. The computer must be awake and online with mobile access enabled.
 
-Alerts go through Expo's push service to Apple. Only a fixed "a chat on your Mac has finished" message and opaque pairing and chat ids leave the computer; prompts, code, chat titles and credentials never do. Delivery is best effort: a failure the computer sees is shown under the switch. Turning the switch off or removing the phone in desktop Mobile settings stops future alerts. Forgetting the Mac on the phone stops them too when the Mac is reachable; otherwise that takes effect when you pair again or remove the phone on the desktop. An alert already accepted by the push service may still arrive.
+The alert is sent once the chat is really finished. A chat still waiting on background work, such as a test run it is watching, alerts after its final reply and not each time that work wakes it. Frink also holds alerts while you are using the Mac with Frink in front: a chat you saw finish there sends nothing, and one that finishes after you step away alerts once the Mac has had no input for two minutes. With another app in front, alerts go to the phone straight away.
+
+Frink also alerts when a chat needs you: a question, a permission request, a plan to review, or a task waiting on you. One you answer at the Mac never reaches the phone; one still open when you leave it does.
+
+Alerts go through Expo's push service to Apple. Only a fixed message naming the kind of alert (a chat finished, has a question, needs a permission, has a plan ready, or a task needs you) and opaque pairing and chat ids leave the computer; prompts, code, chat titles and credentials never do. Delivery is best effort: a failure the computer sees is shown under the switch. Turning the switch off or removing the phone in desktop Mobile settings stops future alerts. Forgetting the Mac on the phone stops them too when the Mac is reachable; otherwise that takes effect when you pair again or remove the phone on the desktop. An alert already accepted by the push service may still arrive.
 
 `expo-notifications` is a native module, so the app must be rebuilt after it is added; a Metro reload is not enough. Before the first build with it, create an Apple Push Notifications key and let EAS store it: run `bunx eas-cli credentials -p ios`, choose the build profile, and set up **Push Notifications** for the bundle id (`dev.frink.mobile.dev` for Frink Dev, `dev.frink.mobile` for TestFlight). EAS then regenerates the provisioning profile with the push entitlement on the next `bunx eas-cli build -p ios --profile development` (or `production`). The key stays in EAS; never put it or an Expo access token in the desktop app.
 
@@ -67,6 +71,6 @@ The desktop bridge and domain tests are part of the repository-root `bun run tes
 
 ## MVP boundaries
 
-Foreground polling refreshes the queue, runs, and chats; the only push alert is the chat-finished one above. There is no offline execution, Flow canvas editing, terminal access. Complex presentation/consent requests remain on desktop. A sleeping or disconnected computer cannot execute work. Transcripts display text; rich tool cards remain available on desktop.
+Foreground polling refreshes the queue, runs, and chats; the only push alerts are the ones above. There is no offline execution, Flow canvas editing, terminal access. Complex presentation/consent requests remain on desktop. A sleeping or disconnected computer cannot execute work. Transcripts display text; rich tool cards remain available on desktop.
 
 The mobile implementation and Frink styling are original to this repository. Other applications informed the connection research; their application code and assets were not copied. Package dependencies retain their own licenses.

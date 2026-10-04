@@ -17,6 +17,15 @@ const ticketSchema = z.discriminatedUnion('status', [
 ]);
 const RECEIPT_DELAY_MS = 15 * 60_000;
 const LOOK_MS = 5_000;
+/** No input for this long, or Frink out of view, means the user is not watching it at the Mac. */
+const AWAY_AFTER_S = 120;
+
+export type DesktopReads = {
+  /** Whether Frink is in view, and whole seconds since the last input anywhere on the Mac. */
+  desktop: () => { inView: boolean; idle: number };
+  /** The sub-chat is still working: responding, or waiting on background work. */
+  isBusy: (subChatId: string) => boolean;
+};
 
 /** Generic by design: the kind of wait, never the chat's title or content. */
 const NEEDS_YOU: Record<WaitingKind, { title: string; body: string }> = {
@@ -69,8 +78,13 @@ async function expoRequest(operation: 'send' | 'getReceipts', body: unknown, sig
   return response.json();
 }
 
+const elapsed = (since: number, now: number) => Math.floor((now - since) / 1000);
+
 /** Delivery is independent of execution; stopping mobile access cancels outstanding requests. */
-export function startMobileNotifications(store: MobilePairingStore) {
+export function startMobileNotifications(
+  store: MobilePairingStore,
+  { desktop, isBusy }: DesktopReads,
+) {
   const controller = new AbortController();
   const timers = new Set<ReturnType<typeof setTimeout>>();
   const pending = new Map<
@@ -157,19 +171,36 @@ export function startMobileNotifications(store: MobilePairingStore) {
       for (const recipient of recipients) await recordFailure(recipient);
     }
   }
-  const deliver = (alert: Alert) =>
+  const deliver = (alert: Alert) => {
+    log.info(`[Mobile] Sending ${alert.data.type} alert for ${alert.collapseId}.`);
     void send(alert).catch(() => log.warn('[Mobile] Could not save notification delivery status.'));
+  };
 
   // Chats waiting on the user at the last look (null until the first), and those already alerted.
   let seen: Map<string, WaitingChat> | null = null;
   const alerted = new Set<string>();
-  // A finished run is held for two looks, so one that parks on a plan alerts once, not twice.
-  const finished = new Map<string, { event: SessionCompletion; looks: number }>();
-  // A finished run goes out after two looks unless the chat went on to wait on the user.
-  function releaseFinished(waiting: Map<string, WaitingChat>) {
+  // A finished run is held until its chat is quiet for two looks and the user is away from the Mac.
+  type Finished = { event: SessionCompletion; quietAt: number; quietIdle: number; looks: number };
+  const finished = new Map<string, Finished>();
+  // The last look that found Frink in view: focus may move on before the next one.
+  let lastInView = 0;
+  function releaseFinished(
+    waiting: Map<string, WaitingChat>,
+    now: number,
+    idle: number,
+    away: boolean,
+  ) {
     for (const [chatId, entry] of finished) {
+      // Parked on the user: that wait alerts by itself.
       if (waiting.has(chatId)) finished.delete(chatId);
-      else if (++entry.looks >= 2) {
+      // Every completion published before the chat is really done collapses into one alert.
+      else if (isBusy(entry.event.subChatId)) entry.looks = 0;
+      else if (entry.looks++ === 0) Object.assign(entry, { quietAt: now, quietIdle: idle });
+      // Seen: Frink was in view once the chat was quiet, and there has been input since. Idle is
+      // whole seconds, so it is measured against its own reading then: never early, at most late.
+      else if (lastInView >= entry.quietAt && idle < entry.quietIdle + elapsed(entry.quietAt, now))
+        finished.delete(chatId);
+      else if (away) {
         finished.delete(chatId);
         deliver(finishedAlert(entry.event));
       }
@@ -177,8 +208,10 @@ export function startMobileNotifications(store: MobilePairingStore) {
   }
   // What already waited when alerts came on is not news; a new wait must hold for two looks,
   // so one answered at the Mac within seconds never reaches the phone.
-  function alertNewWaits(waiting: Map<string, WaitingChat>, previous: typeof seen) {
+  function alertNewWaits(waiting: Map<string, WaitingChat>, previous: typeof seen, away: boolean) {
     for (const chatId of alerted) if (!waiting.has(chatId)) alerted.delete(chatId);
+    // At the Mac a new wait stays unalerted, so one still open once the user leaves alerts then.
+    if (previous && !away) return;
     for (const [chatId, chat] of waiting) {
       if (alerted.has(chatId) || (previous && !previous.has(chatId))) continue;
       alerted.add(chatId);
@@ -193,12 +226,16 @@ export function startMobileNotifications(store: MobilePairingStore) {
     }
     const waiting = await readWaitingChats();
     if (controller.signal.aborted) return;
-    releaseFinished(waiting);
-    alertNewWaits(waiting, seen);
+    const now = Date.now();
+    const { inView, idle } = desktop();
+    if (inView) lastInView = now;
+    const away = !inView || idle >= AWAY_AFTER_S;
+    releaseFinished(waiting, now, idle, away);
+    alertNewWaits(waiting, seen, away);
     seen = waiting;
   }
   let looking = false;
-  const timer = setInterval(() => {
+  const tick = () => {
     if (looking) return;
     looking = true;
     void look()
@@ -206,12 +243,18 @@ export function startMobileNotifications(store: MobilePairingStore) {
       .finally(() => {
         looking = false;
       });
-  }, LOOK_MS);
-  timer.unref();
-
+  };
   const unsubscribe = subscribeSessionCompletions((event) => {
-    finished.set(event.chatId, { event, looks: 0 });
+    // A completion published while its chat is still busy is not the chat finishing.
+    log.info(
+      `[Mobile] Chat ${event.chatId} completed a response (busy=${isBusy(event.subChatId)}).`,
+    );
+    finished.set(event.chatId, { event, quietAt: 0, quietIdle: 0, looks: 0 });
   });
+  // The first look only records what already waits, so it runs now: a wait opening next is new.
+  tick();
+  const timer = setInterval(tick, LOOK_MS);
+  timer.unref();
   return () => {
     unsubscribe();
     clearInterval(timer);

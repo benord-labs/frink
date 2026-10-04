@@ -28,6 +28,7 @@ const fixture = vi.hoisted(() => ({
   project: vi.fn(),
   deleteChat: vi.fn(),
   startExecution: vi.fn(),
+  holds: vi.fn(),
 }));
 vi.mock('./context', async () => ({
   MobileApiError: (await import('./errors')).MobileApiError,
@@ -67,6 +68,7 @@ vi.mock('../../socket/streaming/live-stream', () => ({
 vi.mock('../../socket/streaming/execution-registry', () => ({
   getActiveExecution: () => undefined,
 }));
+vi.mock('../../socket/claude-wake-hold', () => ({ readWakeHolds: fixture.holds }));
 vi.mock('./attachments', () => ({ resolveMobileAttachments: fixture.attachments }));
 vi.mock('../../db', () => ({ getDatabase: () => ({}) }));
 vi.mock('../../db/repos/projects', () => ({ getProjectById: fixture.project }));
@@ -80,6 +82,7 @@ import {
   respondMobilePermission,
   sendMobileMessage,
   stopMobileChat,
+  subChatBusy,
 } from './chat';
 
 const identity = { chatId: 'chat', subChatId: 'sub' };
@@ -108,6 +111,7 @@ beforeEach(() => {
   fixture.getDriving.mockResolvedValue({ task: null, run: null });
   fixture.history.mockResolvedValue({ messages: [], hasMore: false });
   fixture.seed.mockReturnValue({ streams: [], terminals: [] });
+  fixture.holds.mockReturnValue(new Map());
   fixture.ready.mockReset();
   fixture.cancelRun.mockResolvedValue(undefined);
 });
@@ -828,5 +832,20 @@ describe('mobile attachments', () => {
         ],
       },
     ]);
+  });
+});
+
+describe('subChatBusy', () => {
+  const hold = (ended: boolean) => new Map([['sub', { pump: { isEnded: () => ended } }]]);
+  it.each([
+    ['a live response', [{ status: 'active' }], new Map(), true],
+    ['a background wait', [{ status: 'held' }], hold(false), true],
+    ['a wait that is over while its CLI still writes', [], hold(false), true],
+    ['a hold whose pump has ended', [], hold(true), false],
+    ['a finished chat', [], new Map(), false],
+  ])('reads %s', (_case, streams, holds, busy) => {
+    fixture.seed.mockReturnValue({ streams, terminals: [] });
+    fixture.holds.mockReturnValue(holds);
+    expect(subChatBusy('sub')).toBe(busy);
   });
 });

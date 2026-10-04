@@ -13,12 +13,19 @@ const mocks = vi.hoisted(() => ({
   executor: vi.fn(),
   warn: vi.fn(),
   liveActivity: vi.fn(),
+  focused: vi.fn(),
+  idleState: vi.fn(),
 }));
-vi.mock('electron', () => ({ app: { getPath: () => mocks.directory } }));
+vi.mock('electron', () => ({
+  app: { getPath: () => mocks.directory },
+  BrowserWindow: { getFocusedWindow: mocks.focused },
+  powerMonitor: { getSystemIdleState: mocks.idleState, getSystemIdleTime: () => 42 },
+}));
 vi.mock('electron-log', () => ({ default: { warn: mocks.warn } }));
 vi.mock('./domain-api', () => ({
   executeMobileRequest: mocks.executor,
   storeMobileAttachment: vi.fn(),
+  subChatBusy: vi.fn(),
 }));
 vi.mock('./relay-host', () => ({ startRelayHost: mocks.start }));
 vi.mock('./live-activity', () => ({ startMobileLiveActivity: mocks.liveActivity }));
@@ -91,15 +98,18 @@ describe('desktop mobile access lifecycle', () => {
     expect((await mobile.createMobilePairing()).pairing.relay).toBe('https://mobile.example.com');
   });
 
-  it.each(['', 'https://user:pass@relay.example.com', 'https://relay.example.com/path', 'https://relay.example.com/?key=x', 'https://relay.example.com/#fragment'])(
-    'rejects a mobile relay that is not a bare HTTPS origin: %j',
-    async (relay) => {
-      vi.stubEnv('FRINK_MOBILE_RELAY_URL', relay);
-      const mobile = await import('./index');
-      await expect(mobile.enableMobileAccess()).rejects.toThrow('FRINK_MOBILE_RELAY_URL');
-      expect(mocks.start).not.toHaveBeenCalled();
-    },
-  );
+  it.each([
+    '',
+    'https://user:pass@relay.example.com',
+    'https://relay.example.com/path',
+    'https://relay.example.com/?key=x',
+    'https://relay.example.com/#fragment',
+  ])('rejects a mobile relay that is not a bare HTTPS origin: %j', async (relay) => {
+    vi.stubEnv('FRINK_MOBILE_RELAY_URL', relay);
+    const mobile = await import('./index');
+    await expect(mobile.enableMobileAccess()).rejects.toThrow('FRINK_MOBILE_RELAY_URL');
+    expect(mocks.start).not.toHaveBeenCalled();
+  });
 
   it('hosts the route its pairing code names and pins the key it holds', async () => {
     const mobile = await import('./index');
@@ -198,5 +208,19 @@ describe('desktop mobile access lifecycle', () => {
     await mobile.revokeMobileDevice(deviceId);
     await mobile.disableMobileAccess();
     expect(seen).toEqual(['end paired', 'stop with access on']);
+  });
+});
+
+describe('desktopPresence', () => {
+  it.each([
+    ['Frink focused and the Mac in use', true, 'active', true],
+    ['Frink focused and the Mac idle', true, 'idle', true],
+    ['another app in front', false, 'active', false],
+    ['the screen locked', true, 'locked', false],
+    ['an unknown idle state', true, 'unknown', false],
+  ])('reads %s', async (_case, focused, state, inView) => {
+    mocks.focused.mockReturnValue(focused ? {} : null);
+    mocks.idleState.mockReturnValue(state);
+    expect((await import('./index')).desktopPresence()).toEqual({ inView, idle: 42 });
   });
 });
