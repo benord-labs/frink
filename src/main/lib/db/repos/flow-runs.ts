@@ -13,7 +13,10 @@ import {
 } from '../schema';
 import type { TaskStatus } from './tasks';
 import { linkedFlowRunIds } from './task-queries/linked-flow-runs';
-import { activeFlowRunForSubChatId } from './task-queries/subchat-driver';
+import {
+  activeFlowRunForSubChatId,
+  newestFlowRunForSubChatId,
+} from './task-queries/subchat-driver';
 
 type Db = ReturnType<typeof getDatabase>;
 
@@ -33,6 +36,17 @@ export async function isFlowRunSignalDead(db: Db, flowRunId: string | null): Pro
     .where(and(eq(flowRuns.id, flowRunId), inArray(flowRuns.status, [...SIGNAL_DEAD_RUN_STATUSES])))
     .limit(1);
   return Boolean(row);
+}
+
+/** The newest run linked to a sub-chat in ANY status, or null when none exists (never linked, or
+ * deleted). {@link getActiveFlowRunForSubChat} without its status filter; same lookup and ordering. */
+export async function getNewestFlowRunForSubChat(
+  db: Db,
+  subChatId: string,
+): Promise<{ id: string; status: string } | null> {
+  if (!subChatId) return null;
+  const [row] = await newestFlowRunForSubChatId(db, subChatId);
+  return row ?? null;
 }
 
 /** Display priority among active flow-driving statuses; highest wins when a run has several. */

@@ -46,6 +46,11 @@ import {
   drainCodexTurnChunks,
 } from './permissions';
 import { buildSpawnArgs } from './spawn-args';
+import {
+  MESSAGE_PROVENANCE_RULE,
+  codexMessageContext,
+  type MessageProvenance,
+} from '../../../../shared/lib/message-markers/message-provenance';
 
 /**
  * Approval policy that makes the server ask the host on each privileged action.
@@ -77,8 +82,15 @@ const STREAM_METHODS = [
 ] as const;
 
 const resumableThreadsByClient = new WeakMap<CodexAppServerClient, Set<string>>();
+/** Threads that already carry MESSAGE_PROVENANCE_RULE; any other thread gets it with its tag. */
+const ruledThreads = new WeakMap<CodexAppServerClient, Set<string>>();
+function markRuled(client: CodexAppServerClient, threadId: string): void {
+  const ruled = ruledThreads.get(client) ?? new Set<string>();
+  ruledThreads.set(client, ruled.add(threadId));
+}
 
 export type CodexRunnerParams = {
+  messageProvenance?: MessageProvenance;
   prompt: string;
   /** Prompt used only when a missing resumed thread is recoverably replaced by a fresh thread. */
   freshThreadFallbackPrompt?: string;
@@ -200,6 +212,7 @@ async function startFreshThread(
     // Keep Frink's threads in memory only: a durable thread writes a rollout + state row into
     // ~/.codex, which the user's own Codex app lists as one of their chats.
     ephemeral: true,
+    ...(params.messageProvenance && { developerInstructions: MESSAGE_PROVENANCE_RULE }),
     approvalPolicy: CODEX_APPROVAL_POLICY,
     sandbox: CODEX_SANDBOX_MODE,
     approvalsReviewer: params.autoReview ? CODEX_AUTO_REVIEWER : CODEX_USER_REVIEWER,
@@ -207,6 +220,7 @@ async function startFreshThread(
   });
   const threadId = started.thread?.id;
   if (!threadId) throw new Error('Codex did not return a thread id');
+  if (params.messageProvenance) markRuled(client, threadId);
   return threadId;
 }
 
@@ -218,9 +232,13 @@ async function startTurn(
   prompt: string,
 ): Promise<string> {
   const { model, effort, serviceTier } = params;
+  const needsRule = Boolean(params.messageProvenance) && !ruledThreads.get(client)?.has(threadId);
   const turn = await client.sendRequest<TurnStartResponse>('turn/start', {
     threadId,
     input: [{ type: 'text', text: prompt }],
+    ...(params.messageProvenance && {
+      additionalContext: codexMessageContext(params.messageProvenance, needsRule),
+    }),
     ...(model && { model }),
     // effort + serviceTier live on TurnStartParams, not on thread/start|resume (v2 protocol).
     ...(effort && { effort }),
@@ -238,6 +256,8 @@ async function startTurn(
   recordCodexTurnStart();
   const turnId = turn.turn?.id;
   if (!turnId) throw new Error('Codex did not return a turn id');
+  // Latch only once the turn that carried the rule really started, so a failed start retries it.
+  if (needsRule) markRuled(client, threadId);
   return turnId;
 }
 
@@ -453,6 +473,7 @@ export async function* runCodexAgent(
       turnId: opened.turnId,
       pushChunk: (chunk) => queue.push(chunk),
       hasOpenApproval: opened.hasOpenApproval,
+      hasFlowProvenance: Boolean(runtimeParams.messageProvenance),
       commandOutputs,
     });
 

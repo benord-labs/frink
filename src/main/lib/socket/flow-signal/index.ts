@@ -5,12 +5,13 @@
  */
 
 import log from 'electron-log';
+import { SIGNAL_DEAD_RUN_STATUSES } from '../../../../shared/types/flow';
 // Static, not `await import`: the db layer has no edge back into socket/, so laziness buys nothing
 // here, and two turns arming at once can resolve the same lazy specifier to different module
 // instances — which loses a test's module mock and fabricates a provenance fault that aborts the
 // turn. `../../flows/resume` below stays lazy: it reaches flows/advance, which does cycle back here.
 import { getDatabase } from '../../db';
-import { isFlowRunSignalDead } from '../../db/repos/flow-runs';
+import { getNewestFlowRunForSubChat, isFlowRunSignalDead } from '../../db/repos/flow-runs';
 import {
   getFlowDriveInfoForSubChat,
   getLatestFlowTaskForSubChat,
@@ -22,6 +23,11 @@ import { captureMainException } from '../../sentry/init';
 type SignalTaskRow = Awaited<ReturnType<typeof getTaskById>>;
 
 export type FlowSignalArming = {
+  /** The chat's newest Flow run, when it had not ended as this turn was admitted; else null. Read
+   * once, on purpose: a record describes the delivery as admitted, even if the run ends mid-turn. */
+  liveFlowRunId?: string | null;
+  /** The restart-interrupted row being revived, for provenance only; `prefetchedSignalTask` stays null. */
+  revivedTask?: SignalTaskRow;
   /** A flow task is live on this sub-chat — suppresses the in-chat plan-card Approve. */
   isFlowDrivenExecution: boolean;
   /** The driving node is a plan node with skipReview: emit the card `approved` and auto-advance. */
@@ -101,6 +107,7 @@ export async function resolveFlowSignalArming(
     provenanceLookupError: null,
     restartInterruptedFlowRunId: null,
     effectiveSignalTaskId: taskIdForExecution,
+    liveFlowRunId: null,
   };
   if (!subChatId) return armed;
 
@@ -111,11 +118,21 @@ export async function resolveFlowSignalArming(
     armed.effectiveSignalTaskId =
       driveInfo.active && driveInfo.taskId ? driveInfo.taskId : taskIdForExecution;
 
-    const revived = driveInfo.active ? null : await restartInterruptedTarget(subChatId);
+    const latest = driveInfo.active
+      ? null
+      : await getLatestFlowTaskForSubChat(getDatabase(), subChatId);
+    const revived = latest ? await restartInterruptedTarget(latest) : null;
+    // The briefing and every step reach a chat through a Flow task: with none, even under a linked
+    // live run, nothing can be mistaken for a step, so the chat stays untagged and skips the read.
+    if (driveInfo.active || latest)
+      armed.liveFlowRunId = await readLiveFlowRunId(subChatId, revived);
     if (revived) {
       // Retarget the signal at the revived task and stay ARMED — its next `done` advances the flow.
       armed.effectiveSignalTaskId = revived.id;
       armed.restartInterruptedFlowRunId = revived.flowRunId;
+      // Keep the status seen at detection: a concurrent revive can flip the row before this read.
+      const row = await getTaskById(getDatabase(), revived.id);
+      armed.revivedTask = row && { ...row, status: latest?.status ?? row.status };
       return armed;
     }
 
@@ -142,14 +159,36 @@ export async function resolveFlowSignalArming(
 }
 
 /**
+ * The id of the run that owns the chat, when it has not ended or is the restart-interrupted run
+ * being revived. Decided from the run row, never a task: a driving task can outlive a deleted run.
+ */
+async function readLiveFlowRunId(
+  subChatId: string,
+  revived: { flowRunId: string } | null,
+): Promise<string | null> {
+  try {
+    const newest = await getNewestFlowRunForSubChat(getDatabase(), subChatId);
+    if (!newest) return null;
+    const ended = SIGNAL_DEAD_RUN_STATUSES.some((status) => status === newest.status);
+    return !ended || newest.id === revived?.flowRunId ? newest.id : null;
+  } catch (err) {
+    // Feeds message provenance only: a read fault costs this turn its record, never the turn.
+    log.warn('[Socket Executor] flow-run liveness read failed; sending no provenance', {
+      subChatId,
+    });
+    captureMainException(err, { surface: 'flow-run-live' });
+    return null;
+  }
+}
+
+/**
  * The `cancelled` driving task a chat follow-up should REVIVE in place rather than treat as a dead
  * chat: its run was interrupted by a restart/reload, so it carries the marker. `null` for a
  * deliberate user cancel (no marker) — status alone never separates the two.
  */
 async function restartInterruptedTarget(
-  subChatId: string,
+  latest: Awaited<ReturnType<typeof getLatestFlowTaskForSubChat>>,
 ): Promise<{ id: string; flowRunId: string } | null> {
-  const latest = await getLatestFlowTaskForSubChat(getDatabase(), subChatId);
   if (latest?.status !== 'cancelled' || !latest.flowRunId) return null;
   const { isRunRestartInterrupted } = await import('../../flows/resume');
   if (!(await isRunRestartInterrupted(latest.flowRunId))) return null;

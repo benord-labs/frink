@@ -31,8 +31,10 @@ import { captureMainException } from '../../../sentry/init';
 import { getAllAgentsForSdk } from '../../../trpc/routers/agent-utils';
 import { type ClaudeSession, createSession } from '../../claude-session-registry';
 import { resolvePermissionMode } from '../../streaming/plan-auto-approve';
+import { renderFlowBriefingSection } from '../prompt-prefix/flow-briefing-section';
 import { deliverProviderConfig } from '../provider-delivery';
 import { buildClaudeSessionCallbacks, type ClaudeSessionScope } from './session-callbacks';
+import { MESSAGE_PROVENANCE_RULE } from '../../../../../shared/lib/message-markers/message-provenance';
 
 /**
  * Stdio MCPs are connected in parallel batches by the bundled Claude CLI
@@ -125,6 +127,7 @@ interface ClaudeSessionSpecInputs extends Omit<ClaudeSessionScope, 'agents'> {
   dynamicChatMcpUrl: string | null;
   multiProjectPrefix: string;
   sessionFlowBriefing: string;
+  flowRunLive?: boolean;
   signalTaskId: string | null;
   isFlowExecutionTurn: boolean;
   flowPlanAutoApprove: boolean;
@@ -325,8 +328,9 @@ async function buildSessionPromptAppend(
   // in each user turn — the CLAUDE.md-like behaviour the flow briefing is meant to have. Rendered
   // byte-stable per run (constant context at dispatch) so it does not bust the cache across nodes.
   // Codex gets it via a first-turn prompt prepend instead. Empty for non-flow chats.
+  if (inputs.flowRunLive) frinkSystemPromptAppend += `\n\n${MESSAGE_PROVENANCE_RULE}`;
   if (sessionFlowBriefing) {
-    frinkSystemPromptAppend = `${frinkSystemPromptAppend}\n\n## Flow Briefing\n\n${sessionFlowBriefing}`;
+    frinkSystemPromptAppend = `${frinkSystemPromptAppend}\n\n${renderFlowBriefingSection(sessionFlowBriefing)}`;
   }
 
   // Debug mode (SDK path): start ingest server, register session, append debug prompt to system prompt.
@@ -407,7 +411,7 @@ export function spawnClaudeSession(
 ): ClaudeSession {
   const spawned: { current: ClaudeSession | null } = { current: null };
   const { stopHook, ...callbacks } = buildClaudeSessionCallbacks(spec.scope, spawned);
-  return createSession(
+  const session = createSession(
     spec.scope.subChatId,
     (stream) => query({ prompt: stream, options: { ...options, ...callbacks } }),
     {
@@ -419,4 +423,7 @@ export function spawnClaudeSession(
       ref: spawned,
     },
   );
+  // A session spawned before its chat's Flow began lacks the rule; the hook then sends it once.
+  session.provenanceRuleKnown = options.systemPrompt.append.includes(MESSAGE_PROVENANCE_RULE);
+  return session;
 }

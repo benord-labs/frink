@@ -147,7 +147,7 @@ describe('CodexAppServerClient', () => {
     expect(spawnMock).toHaveBeenCalledWith('codex', ['app-server'], expect.any(Object));
     expect(initializeId).toBeDefined();
     expect(initializeParams).toMatchObject({
-      capabilities: { frinkHostToolPermission: 1 },
+      capabilities: { frinkHostToolPermission: 1, experimentalApi: true },
     });
     expect(result.platformOs).toBe('macos');
     // Allow the initialized notification (fire-and-forget) to flush.

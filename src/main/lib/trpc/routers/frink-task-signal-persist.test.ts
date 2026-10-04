@@ -358,6 +358,24 @@ describe('persistLinkedTaskSignal', () => {
     expect(mockUpdateTaskStatus).not.toHaveBeenCalled();
   });
 
+  it('drops a second signal on a step still parked on its own partial — only a resume reopens it (sc-3214)', async () => {
+    mockGetTaskById.mockResolvedValue({
+      status: 'needs_attention',
+      result: {
+        agentSignal: { state: 'partial', summary: 'edit denied', at: 'x' },
+      },
+      flowRunId: 'flow-run-1',
+    });
+    await expect(
+      persistLinkedTaskSignal({
+        taskIdForExecution: 't-parked',
+        signal: { state: 'done', summary: 'late done', at: 'y' },
+      }),
+    ).resolves.toBe(false);
+    expect(mockUpdateTaskStatus).not.toHaveBeenCalled();
+    expect(mockBroadcastTaskSignalPersisted).not.toHaveBeenCalled();
+  });
+
   it('persists, broadcasts, and returns true when task is running', async () => {
     mockGetTaskById.mockResolvedValue({
       status: 'running',

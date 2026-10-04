@@ -33,6 +33,7 @@ import { captureMainException } from '../sentry/init';
 import { consumeDispatchMode, matchDispatchModeForSend } from '../task-executor/dispatch-registry';
 import { abortIfTaskNoLongerRunning } from '../tasks/dispatch-cancel-fence';
 import { runSendSideNaming } from './naming';
+import { describeDelivery, type MessageDelivery } from './execution/message-provenance/origin';
 import { withMessageAdmission } from './execution/send-admission';
 import { createLiveStreamTransport } from './streaming/live-stream/transport';
 
@@ -158,10 +159,7 @@ type ExecuteRequestPayload = {
   assistantMessageId?: string;
   streamId?: string;
   sessionId?: string;
-  continuity?: {
-    status: 'ok' | 'degraded';
-    reason?: string;
-  };
+  continuity?: { status: 'ok' | 'degraded'; reason?: string };
   /** Approved plan context — injected into execution prompts to survive session loss */
   approvedPlanContext?: ApprovedPlanContext;
   /** Dynamic-chat navigation session continuity across chat switches. */
@@ -169,6 +167,7 @@ type ExecuteRequestPayload = {
   /** Flow continuation guard — must match active map entry to use continuation task id. */
   expectedFlowTaskId?: string;
   sourceWebContentsId?: number;
+  delivery?: MessageDelivery;
   onExecutionStarted?: (error?: Error) => void;
 };
 
@@ -381,6 +380,7 @@ async function persistAndDispatchMessage(
     navigationSessionId: payload.navigationSessionId,
     expectedFlowTaskId: payload.expectedFlowTaskId,
     sourceWebContentsId: payload.sourceWebContentsId,
+    delivery: describeDelivery(payload, messageText),
     // A dispatched turn re-checks its task once registered, closing the Cancel-before-start gap.
     // Only the first acknowledgement decides: flows/startup also reports a handler that rejects
     // mid-run, and that turn did start, so its stream_id is not released.

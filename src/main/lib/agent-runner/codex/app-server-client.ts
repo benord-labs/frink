@@ -292,7 +292,10 @@ export class CodexAppServerClient {
     const result = (await withTimeout(
       connection.sendRequest('initialize', {
         clientInfo: this.options.clientInfo,
-        capabilities: { frinkHostToolPermission: FRINK_HOST_TOOL_PERMISSION_VERSION },
+        capabilities: {
+          frinkHostToolPermission: FRINK_HOST_TOOL_PERMISSION_VERSION,
+          experimentalApi: true,
+        },
       }),
       INITIALIZE_TIMEOUT_MS,
       'codex app-server did not respond to initialize (wrong binary or hung process)',

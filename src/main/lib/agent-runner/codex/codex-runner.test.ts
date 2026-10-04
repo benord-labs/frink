@@ -1,3 +1,4 @@
+import { MESSAGE_PROVENANCE_RULE } from '../../../../shared/lib/message-markers/message-provenance';
 /**
  * runCodexAgent unit tests. The app-server registry + binary resolver are mocked
  * (no real codex process); the pure codex-events mapping runs for real so the
@@ -6,6 +7,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import type { UIMessageChunk } from '../../claude/types';
 import {
   _resetProviderTopologyForTests,
@@ -138,12 +140,25 @@ async function drain(gen: AsyncGenerator<UIMessageChunk, void>): Promise<UIMessa
   return out;
 }
 
-/** Fake client pre-loaded with the standard thread/start + turn/start responses, wired into the registry mock. */
-function startedFakeClient(): ReturnType<typeof makeFakeClient> {
-  const fake = makeFakeClient({
+const turnStartParams = z.object({
+  additionalContext: z.record(z.string(), z.object({ value: z.string() })).optional(),
+});
+
+/** The native context each turn/start carried, oldest first. */
+function turnStartContexts(fake: ReturnType<typeof makeFakeClient>) {
+  return fake.sent
+    .filter((sent) => sent.method === 'turn/start')
+    .map((sent) => turnStartParams.parse(sent.params).additionalContext);
+}
+
+/** Fake client wired into the registry mock; standard thread/start + turn/start responses by default. */
+function startedFakeClient(
+  responses: Parameters<typeof makeFakeClient>[0] = {
     'thread/start': { thread: { id: 'th1' } },
     'turn/start': { turn: { id: 'tn1' } },
-  });
+  },
+): ReturnType<typeof makeFakeClient> {
+  const fake = makeFakeClient(responses);
   vi.mocked(getCodexAppServer).mockResolvedValue(fake.client as never);
   return fake;
 }
@@ -258,6 +273,98 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe('runCodexAgent', () => {
+  it('defines the record on a thread that predates the chat becoming a Flow chat, exactly once', async () => {
+    let turnNumber = 0;
+    const fake = startedFakeClient({
+      'thread/start': { thread: { id: 'old-thread' } },
+      'turn/start': () => ({ turn: { id: `tn${++turnNumber}` } }),
+    });
+    await primeThread(fake);
+    const taggedTurn = async (deliveryId: string) => {
+      const gen = runCodexAgent(
+        params({
+          resumeThreadId: 'old-thread',
+          messageProvenance: { v: 1, delivery_id: deliveryId, source: 'flow', kind: 'message' },
+        }),
+      );
+      await gen.next();
+      await gen.next();
+      fake.fire('turn/completed', { turn: { status: 'completed' } });
+      await drain(gen);
+      return turnStartContexts(fake).at(-1);
+    };
+    const first = await taggedTurn('d-1');
+    expect(first?.frink_message_rule?.value).toBe(MESSAGE_PROVENANCE_RULE);
+    expect(first?.frink_message?.value).toContain('"delivery_id":"d-1"');
+    const second = await taggedTurn('d-2');
+    expect(second?.frink_message_rule).toBeUndefined();
+    expect(second?.frink_message?.value).toContain('"delivery_id":"d-2"');
+  });
+
+  it('sends the rule again when the turn that first carried it never started', async () => {
+    let failNext = false;
+    let turnNumber = 0;
+    const fake = startedFakeClient({
+      'thread/start': { thread: { id: 'old-thread' } },
+      'turn/start': () => {
+        if (failNext) {
+          failNext = false;
+          throw new Error('transport down');
+        }
+        return { turn: { id: `tn${++turnNumber}` } };
+      },
+    });
+    await primeThread(fake);
+    const tagged = () =>
+      runCodexAgent(
+        params({
+          resumeThreadId: 'old-thread',
+          messageProvenance: { v: 1, delivery_id: 'd', source: 'flow', kind: 'message' },
+        }),
+      );
+    failNext = true;
+    await drain(tagged()).catch(() => {});
+    const retry = tagged();
+    await retry.next();
+    await retry.next();
+    fake.fire('turn/completed', { turn: { status: 'completed' } });
+    await drain(retry);
+    const rules = turnStartContexts(fake).map(
+      (context) => context?.frink_message_rule !== undefined,
+    );
+    expect(rules).toEqual([true, true]);
+  });
+
+  it('delivers Flow provenance as native context and defines it once on the thread', async () => {
+    const fake = startedFakeClient();
+    const gen = runCodexAgent(
+      params({
+        messageProvenance: {
+          v: 1,
+          delivery_id: 'delivery-1',
+          source: 'person',
+          kind: 'message',
+        },
+      }),
+    );
+    await gen.next();
+    await gen.next();
+    expect(fake.sent.find((s) => s.method === 'thread/start')?.params).toMatchObject({
+      developerInstructions: MESSAGE_PROVENANCE_RULE,
+    });
+    expect(fake.sent.find((s) => s.method === 'turn/start')?.params).toMatchObject({
+      input: [{ type: 'text', text: 'do it' }],
+      additionalContext: {
+        frink_message: {
+          kind: 'application',
+          value: expect.stringContaining('"delivery_id":"delivery-1"'),
+        },
+      },
+    });
+    fake.fire('turn/completed', { turn: { status: 'completed' } });
+    await drain(gen);
+  });
+
   it('yields a binary-missing error when codex is not installed', async () => {
     vi.mocked(resolveCodexBinary).mockReturnValue(null);
     const chunks = await drain(runCodexAgent(params()));

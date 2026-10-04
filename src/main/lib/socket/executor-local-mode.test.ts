@@ -140,6 +140,7 @@ vi.mock('../db/repos/sub-chats', () => ({
 
 vi.mock('../db/repos/flow-runs', () => ({
   getFlowRun: flowProviderPreflightMocks.getFlowRun,
+  getNewestFlowRunForSubChat: vi.fn(async () => null),
   isFlowRunSignalDead: flowProviderPreflightMocks.isFlowRunSignalDead,
 }));
 

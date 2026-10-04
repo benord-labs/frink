@@ -136,6 +136,9 @@ import {
   applyApprovedPlanContextToPrompt,
   formatPromptWithHistory,
 } from './execution/prompt-prefix';
+import type { MessageDelivery } from './execution/message-provenance/origin';
+import { provenanceForTurn, recordProvenanceResume } from './execution/message-provenance';
+import { renderFlowBriefingSection } from './execution/prompt-prefix/flow-briefing-section';
 import { logAdoptedTurnEnd, turnEndMustDispose } from './execution/wake-hold-signal';
 import type { WakePump } from './execution/wake-pump-types';
 import {
@@ -143,7 +146,7 @@ import {
   resolveFlowSignalArming,
   finalizeFlowSignalBeforeSessionDisposition as settleSignal,
 } from './flow-signal';
-import { buildOperatorReminders, wrapRemindersForPrompt } from './operator-reminders';
+import { prepareTurnReminders } from './operator-reminders';
 import { shouldDropPostPlanChunkFromHistory } from './plan-mode-halt';
 import { acquireRuntimeSlot } from './runtime-gate';
 import { reportIfControlChannelClosed } from './stream-closed-sentinel';
@@ -517,6 +520,8 @@ type ExecuteRequestPayload = {
    * only that window's agents on reload/crash).
    */
   sourceWebContentsId?: number;
+  /** Main-owned delivery facts, absent on unclassified entrypoints. */
+  delivery?: MessageDelivery;
   /** Main-only send admission acknowledgement; never accepted from an IPC/network schema. */
   onExecutionStarted?: (error?: Error) => void;
 };
@@ -777,11 +782,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
     strictSignalFinalization = requiresStrictSignalFinalization(armed);
     const prefetchedSignalTask = armed.prefetchedSignalTask;
     effectiveSignalTaskId = armed.effectiveSignalTaskId;
-    // Flow Briefing rides the SESSION system-prompt channel (injected once, prompt-cached, like
-    // CLAUDE.md), not the per-turn message. Resolved from the newest flow task on this sub-chat (any
-    // status) so it persists for the chat's life — including a manual follow-up typed after the flow
-    // completes. Kept in its OWN try so a briefing-read fault never disarms the flow-signal logic
-    // above; stays '' for interactive (non-flow) chats and on any fault (fail-open).
+    // Briefings persist for the chat's life, including follow-ups after the Flow completes.
     let sessionFlowBriefing = '';
     if (subChatId) {
       try {
@@ -801,6 +802,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
     // today's armed behavior (fail-open).
     const signalTaskId = taskSignalDisarmed ? null : (effectiveSignalTaskId ?? taskIdForExecution);
     linkedTaskSignalTaskId = signalTaskId;
+    const provenance = provenanceForTurn(armed, payload.delivery ?? {}, signalTaskId);
     // Auto-approve plan node: once the plan card is emitted the agent implements in-turn, so flip the
     // sub-chat out of plan mode (input-bar label reflects the real execution state). One-time + called
     // from every card-emit path (inline ExitPlanMode + post-stream fallbacks) so the label is correct
@@ -809,11 +811,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       sendSubChatModeChange({ chatId, subChatId, mode: 'agent' }),
     );
     const resumeTaskOnFollowUpMessage = async (forceFreshRead = false) => {
-      // Resume the FLOW-DRIVING task (signalTaskId), NOT the chat's pinned/first task. For a flow the
-      // pinned task is an already-completed upstream node; the parked task that the agent's next
-      // signal lands on is the driving one. Flipping it → running is what lets that signal be
-      // accepted (canApplyTaskSignalForStatus requires 'running'), not silently dropped. Interactive
-      // (non-flow) turns have signalTaskId === taskIdForExecution, so behaviour is unchanged.
+      // Resume the driving step, since the chat's pinned task may belong to an upstream node.
       const resumeTargetTaskId = signalTaskId;
       if (!resumeTargetTaskId) return;
       const { getDatabase } = await import('../db');
@@ -827,7 +825,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
           restartInterruptedFlowRunId,
           subChatId,
         );
-        return;
+        return provenance && recordProvenanceResume(provenance, false, armed.revivedTask);
       }
       // The race-recovery retry must NOT trust the turn-start prefetch: the sweep's park happened
       // after that snapshot, so a cached 'running' row would make the retry a silent no-op.
@@ -837,7 +835,8 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
         forceFreshRead ? null : prefetchedSignalTask,
       );
       if (!latestTask) return;
-      await resumeParkedTaskInPlace(latestTask, 'follow_up_message', subChatId);
+      const resumed = await resumeParkedTaskInPlace(latestTask, 'follow_up_message', subChatId);
+      if (provenance) await recordProvenanceResume(provenance, resumed, latestTask);
     };
     const prepareLinkedTaskForExecution = async (): Promise<void> => {
       if (linkedTaskPreparedForExecution) return;
@@ -997,30 +996,20 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
     let fullPrompt = willReplayHistoryViaResume
       ? message
       : formatPromptWithHistory(message, history);
-    // Operator reminders to inject this turn (mode-exit transitions + the disarmed task-signal notice).
-    // Gating + copy live in ./operator-reminders. Claude delivers them as an in-conversation system
-    // prompt via the UserPromptSubmit hook (the session's callbacks); Codex has no such channel
-    // yet (sc-996) and gets a <system-reminder> prompt prepend.
-    const { reminders: pendingReminders, isExitingDebugMode } = buildOperatorReminders({
+    const turnReminders = prepareTurnReminders({
       mode,
       previousMode: lastExecutedModeBySubChat.get(subChatId),
       hasResumeSession,
       taskSignalDisarmed,
       agentSawPriorTurns: willReplayHistoryViaResume || (history?.length ?? 0) > 0,
       planOwesNoFinishSignal: mode === 'plan' && Boolean(signalTaskId) && !isFlowExecutionTurn,
+      agentRuntime,
+      subChatId,
+      prompt: fullPrompt,
     });
+    fullPrompt = turnReminders.prompt;
     // Debug-exit cleanup: drop the ingest debug session. Side effect kept here, out of the pure util.
-    if (isExitingDebugMode) releaseClaudeDebugSession(subChatId);
-    if (pendingReminders.length > 0) {
-      if (agentRuntime !== 'claude') {
-        fullPrompt = `${wrapRemindersForPrompt(pendingReminders)}\n\n${fullPrompt}`;
-      }
-      log.info(
-        `[Socket Executor] ${pendingReminders.length} operator reminder(s) for ${subChatId} via ${
-          agentRuntime === 'claude' ? 'UserPromptSubmit hook' : 'prompt prepend'
-        }`,
-      );
-    }
+    if (turnReminders.isExitingDebugMode) releaseClaudeDebugSession(subChatId);
     // Inject approved plan context at the start of execution turns.
     // This is the compression-safe handoff — the agent always knows what plan was approved
     // even when provider session memory is stale or missing.
@@ -1038,10 +1027,10 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
           : fullPrompt
         : undefined;
     if (sessionFlowBriefing && agentRuntime !== 'claude' && !hasResumeSession) {
-      fullPrompt = `## Flow Briefing\n\n${sessionFlowBriefing}\n\n---\n\n${fullPrompt}`;
+      fullPrompt = `${renderFlowBriefingSection(sessionFlowBriefing)}\n\n---\n\n${fullPrompt}`;
     }
     if (sessionFlowBriefing && codexFreshThreadFallbackPrompt !== undefined) {
-      codexFreshThreadFallbackPrompt = `## Flow Briefing\n\n${sessionFlowBriefing}\n\n---\n\n${codexFreshThreadFallbackPrompt}`;
+      codexFreshThreadFallbackPrompt = `${renderFlowBriefingSection(sessionFlowBriefing)}\n\n---\n\n${codexFreshThreadFallbackPrompt}`;
     }
     const { dynamicChatMcpUrl } = workspace;
     // Independent of the dynamic-chat MCP mount (gated on 2+ projects): an unsignalled linked task
@@ -1116,6 +1105,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
         flowResources.assertLive(abortController.signal, 'Codex');
         for await (const chunk of runCodexAgent({
           prompt: codexFullPrompt,
+          messageProvenance: provenance,
           freshThreadFallbackPrompt: codexFreshFallbackPrompt,
           cwd: projectPath,
           // Registry key component: stable per-account. label is the account identity
@@ -1246,6 +1236,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       dynamicChatMcpUrl,
       multiProjectPrefix: workspace.multiProjectPrefix,
       sessionFlowBriefing,
+      flowRunLive: Boolean(armed.liveFlowRunId),
       signalTaskId,
       isFlowExecutionTurn,
       flowPlanAutoApprove,
@@ -1285,12 +1276,8 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
     };
     const ownExecution = turn.execution;
 
-    // The session's streaming-input queue (its stdin / permission control channel) lives on the
-    // registry session and is closed ONLY by endClaudeSession — never at a turn boundary. Closing
-    // early is the "Stream closed" bug AND kills pending background work (the CLI stops
-    // backgrounded tasks on stdin close), so turn-end disposition is decided post-stream:
-    // pending work → wake pump holds the session; a clean end → retained; else endClaudeSession.
-
+    // The session's input queue is closed ONLY by endClaudeSession, never at a turn boundary: closing
+    // early is the "Stream closed" bug and kills pending background work. Disposition is post-stream.
     const isExecutionAborted = (): boolean => abortController.signal.aborted;
     turn.isAborted = isExecutionAborted;
 
@@ -1311,7 +1298,8 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
     let claudeResultErrored = false; // the last result read is the turn's own
     turn.lastCollectedChunks = collectedChunks;
     turn.nextMessageIndex = () => messageIndex++;
-    turn.pendingReminders = pendingReminders;
+    turn.pendingReminders = turnReminders.reminders;
+    turn.messageProvenance = provenance;
 
     const shouldResumeClaudeSession = Boolean(persistedSessionId);
     const delivery = trackUserMessageDelivery(subChatId, msgId, () => fullPrompt.length);
