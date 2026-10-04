@@ -1,7 +1,7 @@
 import Constants from 'expo-constants';
-import type { ReactNode } from 'react';
+import { Fragment, type ReactNode } from 'react';
 import { Platform, Pressable, ScrollView, View } from 'react-native';
-import { LogOut } from 'lucide-react-native';
+import { Check, LogOut } from 'lucide-react-native';
 import { useConnection } from '../../lib/connection';
 import { useNotifications } from '../../lib/notifications';
 import { useOverview } from '../../lib/overview';
@@ -10,7 +10,7 @@ import { ListRow, RowSeparator } from '../../ui/list';
 import { ResourceStatus } from '../../ui/resource-status';
 import { Screen } from '../../ui/screen';
 import { Text } from '../../ui/text';
-import { GUTTER, space, useTheme } from '../../ui/theme';
+import { GUTTER, space, useAppearance, useTheme } from '../../ui/theme';
 import { Card } from './card';
 import { confirmForget } from './confirm-forget';
 import { Computers } from './Computers';
@@ -40,6 +40,9 @@ export function SettingsScreen() {
           name={overview.data?.machineName ?? connection?.machineName ?? 'Your Mac'}
           status={macStatus(overview)}
         />
+        <Group title="Appearance">
+          <AppearanceSettings />
+        </Group>
         <Group title="Computers">
           <Computers />
         </Group>
@@ -69,6 +72,47 @@ export function SettingsScreen() {
         </Group>
       </ScrollView>
     </Screen>
+  );
+}
+
+const APPEARANCES = [
+  { id: 'system', label: 'System' },
+  { id: 'light', label: 'Light' },
+  { id: 'dark', label: 'Dark' },
+] as const;
+
+function AppearanceSettings() {
+  const t = useTheme();
+  const { mode, setMode } = useAppearance();
+  return (
+    <Card testID="settings-appearance">
+      <View accessibilityRole="radiogroup" accessibilityLabel="Appearance">
+        {APPEARANCES.map((item, index) => (
+          <Fragment key={item.id}>
+            {index > 0 && <RowSeparator inset={GUTTER} />}
+            <Pressable
+              accessibilityRole="radio"
+              accessibilityLabel={item.label}
+              accessibilityState={{ checked: mode === item.id }}
+              aria-checked={mode === item.id}
+              onPress={() => setMode(item.id)}
+              style={({ pressed }) => ({
+                minHeight: 52,
+                paddingHorizontal: GUTTER,
+                paddingVertical: space.md,
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                backgroundColor: pressed ? t.pressed : 'transparent',
+              })}
+            >
+              <Text variant="row">{item.label}</Text>
+              {mode === item.id && <Check size={20} color={t.accent} />}
+            </Pressable>
+          </Fragment>
+        ))}
+      </View>
+    </Card>
   );
 }
 
