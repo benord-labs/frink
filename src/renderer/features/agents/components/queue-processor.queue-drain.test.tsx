@@ -10,7 +10,7 @@ import type { ReactElement } from 'react';
 import { flushSync } from 'react-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runLiveAtomFamily, runSettlingAtomFamily } from '@/lib/stores/active-transport-registry';
-import { createQueueItem, FLOW_DISPATCH_SOURCE } from '../lib/queue-utils';
+import { createQueueItem, FLOW_DISPATCH_SOURCE, queueItemToSendMessage } from '../lib/queue-utils';
 import { toast } from 'sonner';
 import { useMessageQueueStore } from '../stores/message-queue-store';
 import { useStreamingStatusStore } from '../stores/streaming-status-store';
@@ -298,6 +298,45 @@ describe('QueueProcessor — multi-item queue drain', () => {
     });
     expect(mockSendMessage).toHaveBeenCalledTimes(2);
     expect(mockSendMessage.mock.calls[1][0]).not.toHaveProperty('metadata');
+  });
+
+  it('sends exactly what the shared builder produces for the item', async () => {
+    const item = {
+      ...createQueueItem(
+        'q-full',
+        'see attached',
+        [{ id: 'i', url: 'blob:img', mediaType: 'image/png' }],
+        [{ id: 'f', url: 'blob:file', filename: 'notes.txt' }],
+      ),
+      source: FLOW_DISPATCH_SOURCE,
+      dispatchTaskId: 'task-1',
+    };
+    useMessageQueueStore.setState({ queues: { [SUB_CHAT_ID]: [item] } });
+    useStreamingStatusStore.getState().setStatus(SUB_CHAT_ID, 'ready');
+
+    renderQueueProcessor();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(QUEUE_PROCESS_DELAY_MS);
+    });
+
+    expect(mockSendMessage).toHaveBeenCalledExactlyOnceWith(queueItemToSendMessage(item).message);
+  });
+
+  it('does not send a turn that holds only files, and does not requeue it', async () => {
+    const item = createQueueItem('q-files', '', undefined, [
+      { id: 'f', url: 'blob:file', filename: 'notes.txt' },
+    ]);
+    useMessageQueueStore.setState({ queues: { [SUB_CHAT_ID]: [item] } });
+    useStreamingStatusStore.getState().setStatus(SUB_CHAT_ID, 'ready');
+
+    renderQueueProcessor();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(QUEUE_PROCESS_DELAY_MS);
+    });
+
+    expect(mockSendMessage).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith('A queued message was empty and was not sent.');
+    expect(useMessageQueueStore.getState().queues[SUB_CHAT_ID] ?? []).toEqual([]);
   });
 
   it('does not duplicate send when second item is enqueued while first send is in flight (processingRef)', async () => {

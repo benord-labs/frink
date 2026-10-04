@@ -3,7 +3,6 @@ import { hashKey, useQueryClient } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import { useEffect, useRef } from 'react';
 import { toast } from 'sonner';
-import { buildQueuedMessageText } from '@/lib/mentions/queued-message-text';
 import { runLiveAtomFamily } from '@/lib/stores/active-transport-registry';
 import {
   isLiveRunHydrationComplete,
@@ -22,7 +21,7 @@ import {
   pendingModeIntentAtomFamily,
   setLoading,
 } from '../atoms';
-import type { AgentQueueItem } from '../lib/queue-utils';
+import { type AgentQueueItem, queueItemToSendMessage } from '../lib/queue-utils';
 import { invalidateTaskQueries } from '../main/active-chat/utils/task-query';
 import { agentChatStore, onChatRegistered } from '../stores/agent-chat-store';
 import { useMessageQueueStore } from '../stores/message-queue-store';
@@ -306,48 +305,10 @@ export function QueueProcessor() {
       }
 
       try {
-        // Build message parts from queued item
-        const parts: Array<
-          | {
-              type: 'data-image';
-              data: { url?: string; mediaType?: string; filename?: string; base64Data?: string };
-            }
-          | {
-              type: 'data-file';
-              data: { url?: string; mediaType?: string; filename?: string; size?: number };
-            }
-          | { type: 'text'; text: string }
-        > = [
-          ...(item.images || []).map((img) => ({
-            type: 'data-image' as const,
-            data: {
-              url: img.url,
-              mediaType: img.mediaType,
-              filename: img.filename,
-              base64Data: img.base64Data,
-            },
-          })),
-          ...(item.files || []).map((f) => ({
-            type: 'data-file' as const,
-            data: {
-              url: f.url,
-              mediaType: f.mediaType,
-              filename: f.filename,
-              size: f.size,
-            },
-          })),
-        ];
-
-        // Same serializer as the queue card's Send: attached contexts become mention tokens, so an
-        // item whose content is only a pasted chip or quote still reaches the agent (sc-3666).
-        const text = buildQueuedMessageText(item);
-        if (text.trim()) {
-          parts.push({ type: 'text', text });
-        }
-
         // Nothing sendable: never dispatch an empty turn (it reads as a delivered message that
         // carried nothing), and never requeue it — that would retry forever. Say so and move on.
-        if (parts.length === 0) {
+        const { message, sendable } = queueItemToSendMessage(item);
+        if (!sendable) {
           toast.error('A queued message was empty and was not sent.');
           return;
         }
@@ -382,20 +343,9 @@ export function QueueProcessor() {
           );
         }
 
-        // Flow-dispatched prompts carry their source in metadata so the transport does not read
-        // them as approve-then-execute replies to a parked plan card (decision
-        // `flow-agent-node-mode`); dispatchTaskId lets main bind the turn's mode to the
-        // dispatching task by identity. Auto Mode is not carried here — the Flow seeds the
-        // chat's own setting on dispatch instead.
-        const metadata = {
-          ...(item.source ? { source: item.source } : {}),
-          ...(item.dispatchTaskId ? { dispatchTaskId: item.dispatchTaskId } : {}),
-        };
-        await chat.sendMessage({
-          role: 'user',
-          parts,
-          ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
-        });
+        // Auto Mode is not carried on the message — the Flow seeds the chat's own setting on
+        // dispatch instead.
+        await chat.sendMessage(message);
       } catch (_error) {
         disarmFailedPlanApproval(subChatId, item);
         // Requeue the item at the front so it can be retried
