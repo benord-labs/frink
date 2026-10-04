@@ -1,4 +1,5 @@
 import { useRoute, type RouteProp } from '@react-navigation/native';
+import { useState } from 'react';
 import { ActivityIndicator, RefreshControl, ScrollView, View } from 'react-native';
 import type { MobileFlow } from '@frink/shared/types/remote/mobile';
 import { useResource } from '../../lib/connection';
@@ -10,10 +11,9 @@ import { ResourceStatus } from '../../ui/resource-status';
 import { Screen } from '../../ui/screen';
 import { Text } from '../../ui/text';
 import { GUTTER, space, useTheme } from '../../ui/theme';
-import { StatusTile } from '../Flows/StatusTile';
 import { FlowControls } from './FlowControls';
 import { FlowOutline } from './FlowOutline';
-import { flowAttention } from './flow-view';
+import { currentRunId, flowAttention } from './flow-view';
 import { READINESS } from './readiness';
 import { RecentRuns } from './RecentRuns';
 
@@ -21,13 +21,12 @@ import { RecentRuns } from './RecentRuns';
 function Attention({ flow }: { flow: MobileFlow }) {
   const navigation = useRootNavigation();
   const attention = flowAttention(flow);
-  if (!attention) return null;
+  if (!attention || currentRunId(flow)) return null;
   return (
     <View style={{ paddingBottom: space.lg }}>
       <ListRow
         testID="flow-attention"
         accessibilityLabel={`${attention.title}, ${attention.subtitle}`}
-        leading={<StatusTile status={attention.status} />}
         title={attention.title}
         subtitle={attention.subtitle}
         onPress={() => navigation.navigate('Run', { id: attention.runId })}
@@ -39,6 +38,7 @@ function Attention({ flow }: { flow: MobileFlow }) {
 /** One Flow: run it, turn it on or off, see its recent runs and how it is built. */
 export function FlowScreen() {
   const t = useTheme();
+  const [stepsOpen, setStepsOpen] = useState(false);
   const { params } = useRoute<RouteProp<RootRoutes, 'Flow'>>();
   const runs = useWindow(5, 10, 100);
   const resource = useResource(
@@ -78,8 +78,13 @@ export function FlowScreen() {
             />
             <SectionHeader title="Recent runs" />
             <RecentRuns flow={data.flow} runs={data.runs} onMore={runs.more} loadingMore={stale} />
-            <SectionHeader title="Steps" count={data.definition?.nodes.length} />
-            <FlowOutline definition={data.definition} />
+            <SectionHeader
+              title="Steps"
+              count={data.definition?.nodes.length}
+              action={stepsOpen ? 'Hide steps' : 'Show steps'}
+              onAction={() => setStepsOpen((shown) => !shown)}
+            />
+            {stepsOpen && <FlowOutline definition={data.definition} />}
           </View>
         )}
       </ScrollView>

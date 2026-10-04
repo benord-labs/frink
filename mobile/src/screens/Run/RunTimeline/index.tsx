@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { Check, MessageSquare, SkipForward } from 'lucide-react-native';
 import type { MobileRunNode } from '@frink/shared/types/remote/mobile';
@@ -7,7 +8,7 @@ import { StatusGlyph } from '../../../ui/glyphs';
 import { Markdown } from '../../../ui/Markdown';
 import { Text } from '../../../ui/text';
 import { GUTTER, space, useTheme } from '../../../ui/theme';
-import { plainDetail, stepStatus, stepTrailing, TONE_TEXT } from '../run-view';
+import { needsDecision, plainDetail, stepStatus, stepTrailing, TONE_TEXT } from '../run-view';
 
 export type Resume = (node: MobileRunNode, action: 'approve' | 'skip') => void;
 /** What every step needs to offer its decision: whether the Mac can act, and the last failure. */
@@ -20,12 +21,31 @@ type DecisionState = {
 
 // Steps that need a decision show their detail in full: it is what the user is deciding on.
 function Detail({ node, full }: { node: MobileRunNode; full: boolean }) {
+  const [expanded, setExpanded] = useState(false);
   if (!node.detail) return null;
   if (full) return <Markdown content={node.detail} />;
   return (
-    <Text variant="secondary" color="muted" numberOfLines={2}>
-      {plainDetail(node.detail)}
-    </Text>
+    <View>
+      {expanded ? (
+        <Markdown content={node.detail} />
+      ) : (
+        <Text variant="secondary" color="muted" numberOfLines={2}>
+          {plainDetail(node.detail)}
+        </Text>
+      )}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`${expanded ? 'Hide' : 'Show'} result for ${node.label}`}
+        accessibilityState={{ expanded }}
+        aria-expanded={expanded}
+        onPress={() => setExpanded((shown) => !shown)}
+        style={{ minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' }}
+      >
+        <Text variant="secondary" color="accent">
+          {expanded ? 'Hide result' : 'Show result'}
+        </Text>
+      </Pressable>
+    </View>
   );
 }
 
@@ -106,7 +126,7 @@ function Step({ node, last, state }: { node: MobileRunNode; last: boolean; state
   const t = useTheme();
   const status = stepStatus(node);
   const trailing = stepTrailing(node);
-  const decide = node.actions.length > 0 || node.status === 'failed';
+  const decide = needsDecision(node) || node.status === 'failed';
   return (
     <View
       testID={`run-step-${node.id}`}

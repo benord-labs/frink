@@ -27,7 +27,6 @@ import { Markdown } from '../../../ui/Markdown';
 import { EmptyState, RowSeparator } from '../../../ui/list';
 import { Text } from '../../../ui/text';
 import { GUTTER, radius, space, useTheme } from '../../../ui/theme';
-import { IconTile } from '../../Flows/Tile';
 import { outlineSteps, type OutlineLine, type OutlineStep } from '../outline';
 
 const BLOCK_ICONS: Record<string, LucideIcon> = {
@@ -51,8 +50,7 @@ const LINE_ICONS: Record<OutlineLine['kind'], LucideIcon | null> = {
   jump: ArrowRight,
   note: null,
 };
-/** Text column inset: the row gutter, the 38pt tile and its gap. */
-const TEXT_INSET = GUTTER + 38 + space.md;
+const TEXT_INSET = GUTTER + 20 + space.md;
 
 function Line({ line }: { line: OutlineLine }) {
   const t = useTheme();
@@ -73,6 +71,7 @@ function Step({ step }: { step: OutlineStep }) {
   const [open, setOpen] = useState(false);
   const instructions = step.node.instructions?.trim();
   const Chevron = open ? ChevronUp : ChevronDown;
+  const Icon = BLOCK_ICONS[step.node.blockType] ?? Box;
   return (
     <View testID={`outline-step-${step.node.id}`} style={{ paddingVertical: 10, gap: space.sm }}>
       <Pressable
@@ -82,7 +81,7 @@ function Step({ step }: { step: OutlineStep }) {
           instructions ? `${open ? 'Hide' : 'Show'} instructions for ${step.node.label}` : undefined
         }
         aria-expanded={instructions ? open : undefined}
-        onPress={() => setOpen(!open)}
+        onPress={() => setOpen((shown) => !shown)}
         style={({ pressed }) => ({
           flexDirection: 'row',
           alignItems: 'center',
@@ -91,7 +90,7 @@ function Step({ step }: { step: OutlineStep }) {
           opacity: pressed ? 0.6 : 1,
         })}
       >
-        <IconTile icon={BLOCK_ICONS[step.node.blockType] ?? Box} />
+        <Icon size={20} color={t.secondary} />
         <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
           <Text variant="row">{step.node.label}</Text>
           <Text variant="secondary" color="muted">

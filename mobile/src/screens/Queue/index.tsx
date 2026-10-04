@@ -1,12 +1,11 @@
 import { useState } from 'react';
-import { ActivityIndicator, RefreshControl, SectionList, View } from 'react-native';
-import { CircleCheck } from 'lucide-react-native';
+import { ActivityIndicator, RefreshControl, ScrollView, View } from 'react-native';
 import type { MobileTaskAction } from '@frink/shared/types/remote/mobile';
 import { useConnection, useResource } from '../../lib/connection';
 import { useOverview } from '../../lib/overview';
 import { useRootNavigation } from '../../navigation/routes';
 import { useTabHeader } from '../../navigation/tab-header';
-import { EmptyState, RowSeparator, SectionHeader } from '../../ui/list';
+import { EmptyState, ListGroup, SectionHeader } from '../../ui/list';
 import { ResourceStatus } from '../../ui/resource-status';
 import { Screen } from '../../ui/screen';
 import { tell } from '../../ui/tell';
@@ -80,17 +79,11 @@ export function QueueScreen() {
     // The tab badge counts from the shared poll, which an expanded Queue doesn't refresh.
     if (grown) shared.refresh();
   };
-  const listSections = sections.map((section) => ({
-    ...section,
-    data: expanded.has(section.key) ? section.rows : section.rows.slice(0, COLLAPSED_ROWS),
-  }));
   return (
     <Screen>
-      <SectionList
-        sections={listSections}
-        keyExtractor={(row) => row.key}
+      <ScrollView
+        testID="queue-screen"
         contentInsetAdjustmentBehavior="automatic"
-        stickySectionHeadersEnabled={false}
         contentContainerStyle={{ paddingBottom: 120 }}
         refreshControl={
           <RefreshControl
@@ -99,41 +92,44 @@ export function QueueScreen() {
             tintColor={t.muted}
           />
         }
-        ListHeaderComponent={
-          <View>
-            {header}
-            <ResourceStatus {...resource} refresh={resource.pull} />
-            {data && !data.executionReady && <NotReadyNotice />}
-          </View>
-        }
-        renderSectionHeader={({ section }) => (
-          <SectionHeader
-            title={section.title}
-            count={section.total}
-            action={sectionAction(section, expanded.has(section.key))}
-            onAction={() => toggle(section.key)}
-          />
-        )}
-        renderItem={({ item }) => (
-          <QueueListRow
-            row={item}
-            onOpen={item.target ? () => open(item.target!) : undefined}
-            onAction={(action) => void act(item.key, action)}
-          />
-        )}
-        ItemSeparatorComponent={() => <RowSeparator />}
-        ListEmptyComponent={
-          data ? (
+      >
+        {header}
+        <ResourceStatus {...resource} refresh={resource.pull} />
+        {data && !data.executionReady && <NotReadyNotice />}
+        {sections.map((section) => {
+          const all = expanded.has(section.key);
+          const rows = all ? section.rows : section.rows.slice(0, COLLAPSED_ROWS);
+          return (
+            <View key={section.key}>
+              <SectionHeader
+                title={section.title}
+                count={section.total}
+                action={sectionAction(section, all)}
+                onAction={() => toggle(section.key)}
+              />
+              <ListGroup>
+                {rows.map((row) => (
+                  <QueueListRow
+                    key={row.key}
+                    row={row}
+                    onOpen={row.target ? () => open(row.target!) : undefined}
+                    onAction={(action) => void act(row.key, action)}
+                  />
+                ))}
+              </ListGroup>
+            </View>
+          );
+        })}
+        {!sections.length &&
+          (data ? (
             <EmptyState
-              icon={CircleCheck}
               title="You’re all caught up"
               detail="Questions, approvals and finished work from your Mac will show up here."
             />
-          ) : error ? null : (
-            <ActivityIndicator color={t.muted} style={{ marginTop: space.xxl * 2 }} />
-          )
-        }
-      />
+          ) : (
+            !error && <ActivityIndicator color={t.muted} style={{ marginTop: space.xxl * 2 }} />
+          ))}
+      </ScrollView>
     </Screen>
   );
 }

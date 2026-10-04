@@ -1,15 +1,7 @@
 import * as Crypto from 'expo-crypto';
 import { useEffect, useRef, useState } from 'react';
 import { View } from 'react-native';
-import {
-  Activity,
-  CalendarClock,
-  CircleCheckBig,
-  Play,
-  Power,
-  Webhook,
-  type LucideIcon,
-} from 'lucide-react-native';
+import { Activity, Play } from 'lucide-react-native';
 import type { MobileFlow } from '@frink/shared/types/remote/mobile';
 import { useAction } from '../../../lib/connection';
 import { useRootNavigation } from '../../../navigation/routes';
@@ -18,15 +10,9 @@ import { ListRow } from '../../../ui/list';
 import { Switch } from '../../../ui/switch';
 import { Text } from '../../../ui/text';
 import { GUTTER, space } from '../../../ui/theme';
-import { IconTile } from '../../Flows/Tile';
-import { isLive } from '../../Run/run-view';
-import { enabledHint, runNowBlocker } from '../flow-view';
-
-const TRIGGER_ICONS: Record<string, LucideIcon> = {
-  schedule_trigger: CalendarClock,
-  webhook_trigger: Webhook,
-  post_task_trigger: CircleCheckBig,
-};
+import { flowStatus } from '../../Flows/flow-list';
+import { isTerminal } from '../../Run/run-view';
+import { currentRunId, enabledHint, runNowBlocker } from '../flow-view';
 
 function EnabledRow({ flow, onChanged }: { flow: MobileFlow; onChanged: () => void }) {
   const action = useAction();
@@ -44,7 +30,6 @@ function EnabledRow({ flow, onChanged }: { flow: MobileFlow; onChanged: () => vo
   return (
     <View>
       <ListRow
-        leading={<IconTile icon={TRIGGER_ICONS[flow.trigger] ?? Power} />}
         title="Enabled"
         subtitle={enabledHint({ enabled, trigger: flow.trigger })}
         trailing={
@@ -78,8 +63,11 @@ function RunNow({
   const action = useAction();
   // One id per intended run: a retry after a lost answer can't start a second run.
   const requestId = useRef(Crypto.randomUUID());
-  const blocker = runNowBlocker(flow, executionReady);
-  const current = isLive(flow.status) ? flow.latestRunId : null;
+  const current = currentRunId(flow);
+  const blocker =
+    flow.status && !isTerminal(flow.status) && !current
+      ? 'Refresh to find the current run.'
+      : runNowBlocker(flow, executionReady);
   async function start() {
     const result = await action.run({
       type: 'startFlow',
@@ -94,12 +82,11 @@ function RunNow({
   }
   if (current)
     return (
-      <View style={{ paddingHorizontal: GUTTER }}>
-        <Button
-          variant="secondary"
-          icon={Activity}
-          onPress={() => navigation.navigate('Run', { id: current })}
-        >
+      <View style={{ paddingHorizontal: GUTTER, gap: space.sm }}>
+        <Text variant="secondary" color="secondary">
+          {flowStatus(flow).word}
+        </Text>
+        <Button icon={Activity} onPress={() => navigation.navigate('Run', { id: current })}>
           View current run
         </Button>
       </View>

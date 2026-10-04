@@ -9,6 +9,9 @@ export const isTerminal = (status: string) => TERMINAL.has(status);
 /** Work is under way (not waiting on you, not paused, not over). */
 export const isLive = (status: string | null | undefined) => !!status && LIVE.has(status);
 
+export const needsDecision = (node: MobileRunNode) =>
+  node.actions.length > 0 || node.status === 'awaiting_input';
+
 /** A step the engine has not reached yet is "pending" too, but it is not starting. */
 export function stepStatus(node: Pick<MobileRunNode, 'status' | 'startedAt'>): Status {
   if (node.status === 'pending' && !node.startedAt)
@@ -82,8 +85,7 @@ export function plainDetail(text: string): string {
 /** The run's state as a person sees it. The engine parks a run at "paused" both while it waits on
  *  a decision and while an agent step works, so the steps tell which it is. */
 export function runHeadline(run: Pick<MobileRun, 'status' | 'nodes'>): Status {
-  if (run.nodes.some((node) => node.actions.length > 0 || node.status === 'awaiting_input'))
-    return runStatus('awaiting_input');
+  if (run.nodes.some(needsDecision)) return runStatus('awaiting_input');
   if (run.status === 'paused' && run.nodes.some((node) => node.status === 'running'))
     return runStatus('running');
   return runStatus(run.status);

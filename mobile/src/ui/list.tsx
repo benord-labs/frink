@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { Children, Fragment, type ReactNode } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { Text } from './text';
@@ -19,6 +19,7 @@ export function ListRow({
   accessibilityLabel,
   dimmed = false,
   titleLines = 1,
+  compact = false,
 }: {
   leading?: ReactNode;
   title: string;
@@ -30,6 +31,7 @@ export function ListRow({
   accessibilityLabel?: string;
   dimmed?: boolean;
   titleLines?: number;
+  compact?: boolean;
 }) {
   const t = useTheme();
   return (
@@ -44,7 +46,7 @@ export function ListRow({
         flexDirection: 'row',
         alignItems: 'center',
         gap: space.md,
-        minHeight: 64,
+        minHeight: compact ? 48 : 64,
         paddingHorizontal: GUTTER,
         paddingVertical: 10,
         backgroundColor: pressed ? t.pressed : 'transparent',
@@ -66,6 +68,40 @@ export function ListRow({
       </View>
       {trailing && <View style={{ alignItems: 'flex-end', gap: 2 }}>{trailing}</View>}
     </Pressable>
+  );
+}
+
+/** Rows on one inset card, hairlines between them, as iOS groups a list: each section reads as
+ *  one block on the page instead of a run of lines. */
+export function ListGroup({ children }: { children: ReactNode }) {
+  const t = useTheme();
+  const rows = Children.toArray(children);
+  return (
+    <View
+      style={{
+        marginHorizontal: GUTTER,
+        borderRadius: radius.lg,
+        overflow: 'hidden',
+        backgroundColor: t.solidCard,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: t.borderSubtle,
+      }}
+    >
+      {rows.map((row, index) => (
+        <Fragment key={index}>
+          {index > 0 && (
+            <View
+              style={{
+                height: StyleSheet.hairlineWidth,
+                marginLeft: space.lg,
+                backgroundColor: t.border,
+              }}
+            />
+          )}
+          {row}
+        </Fragment>
+      ))}
+    </View>
   );
 }
 
@@ -136,7 +172,14 @@ export function EmptyState({
 }) {
   const t = useTheme();
   return (
-    <View style={{ alignItems: 'center', paddingHorizontal: space.xxl, paddingVertical: 56, gap: space.sm }}>
+    <View
+      style={{
+        alignItems: 'center',
+        paddingHorizontal: space.xxl,
+        paddingVertical: 56,
+        gap: space.sm,
+      }}
+    >
       {Icon && (
         <View
           style={{

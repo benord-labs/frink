@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MobileFlow } from '@frink/shared/types/remote/mobile';
-import { enabledHint, flowAttention, runNowBlocker } from './flow-view';
+import { currentRunId, enabledHint, flowAttention, runNowBlocker } from './flow-view';
 
 describe('enabledHint', () => {
   it('names automatic triggers and manual Flows plainly', () => {
@@ -41,6 +41,15 @@ describe('flowAttention', () => {
     status: null,
     lastRun: null,
   };
+
+  it('keeps the existing run as primary for human waits and user pauses', () => {
+    expect(currentRunId({ ...flow, status: 'awaiting_input' })).toBe('live');
+    expect(currentRunId({ ...flow, status: 'paused' })).toBe('live');
+    expect(currentRunId({ ...flow, status: 'running' })).toBe('live');
+    expect(currentRunId({ ...flow, status: 'completed' })).toBeNull();
+    expect(currentRunId(flow)).toBeNull();
+    expect(currentRunId({ ...flow, status: 'running', latestRunId: null })).toBeNull();
+  });
 
   it('points a wait at the live run', () => {
     const waiting = {

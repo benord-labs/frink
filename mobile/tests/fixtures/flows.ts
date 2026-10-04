@@ -156,3 +156,42 @@ export function waitingRun(): MobileRun {
     ],
   };
 }
+
+/** Per-ID native previews keep the tapped Flow and its run's contents consistent. */
+export function runFor(id: string): MobileRun {
+  if (id === 'run-3') return waitingRun();
+  const flow = macFlows().find((item) => item.latestRunId === id || item.lastRun?.id === id);
+  const run = runFixture();
+  if (!flow) return { ...run, id };
+  const status = flow.lastRun?.status ?? run.status;
+  const finished = TERMINAL.has(status);
+  const nodes = finished
+    ? run.nodes.slice(0, 2).map((node, index) => ({
+        ...node,
+        status: index === 1 ? status : 'completed',
+        label:
+          index === 0
+            ? 'Start flow'
+            : status === 'failed'
+              ? 'Check incoming issues'
+              : 'Prepare digest',
+        detail:
+          index === 0
+            ? ''
+            : status === 'failed'
+              ? 'GitHub rate limit reached. Open the chat to inspect the failed step.'
+              : '## Inbox summary\n\n- Reviewed 18 new support messages.\n- Flagged 3 billing questions for follow-up.\n- Sent the digest to the support team.',
+        actions: [],
+        completedAt: flow.lastRun?.at ?? ago(1),
+      }))
+    : run.nodes;
+  return {
+    ...run,
+    id,
+    flowId: flow.id,
+    flowName: flow.name,
+    status,
+    nodes,
+    completedAt: finished ? (flow.lastRun?.at ?? ago(1)) : null,
+  };
+}

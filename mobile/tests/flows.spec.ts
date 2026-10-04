@@ -33,6 +33,7 @@ async function openFlows(page: Page, options: Parameters<typeof openApp>[1] = {}
 
 async function openFlow(page: Page, id: string, options: Parameters<typeof openApp>[1] = {}) {
   const state = await openFlows(page, options);
+  await page.getByRole('tab', { name: 'Library', exact: true }).click();
   await page.getByTestId(`flow-row-${id}`).click();
   return state;
 }
@@ -41,36 +42,72 @@ const lastOf = (state: AppState, type: string) =>
   state.requests.filter((request) => request.type === type).at(-1);
 
 test.describe('Flows tab', () => {
-  test('groups Flows like the desktop list, with one state per row', async ({ page }) => {
+  test('separates activity from the library and preserves the selected view', async ({ page }) => {
     await openFlows(page);
     const sections = page.getByRole('heading');
-    await expect(sections.filter({ hasText: 'Needs you' })).toContainText('2');
-    await expect(sections.filter({ hasText: 'Enabled' })).toContainText('2');
-    await expect(sections.filter({ hasText: 'Disabled' })).toContainText('1');
-    const order = await page
-      .locator('[data-testid^="flow-row-"]')
-      .evaluateAll((rows) => rows.map((row) => row.getAttribute('data-testid')));
-    // Needs you (waiting, failed), Enabled (running, done), Disabled.
-    expect(order).toEqual([
+    await expect(sections.filter({ hasText: 'Needs you' })).toContainText('1');
+    await expect(sections.filter({ hasText: 'Running' })).toContainText('1');
+    await expect(sections.filter({ hasText: 'Recent results' })).toContainText('2');
+    await expect(page.locator('[data-testid^="flow-row-"]')).toHaveCount(0);
+    const ids = (prefix: string) =>
+      page
+        .locator(`[data-testid^="${prefix}"]`)
+        .evaluateAll((rows) => rows.map((row) => row.getAttribute('data-testid')));
+    // Only the human wait needs you. Finished failures are results.
+    expect(await ids('flow-activity-')).toEqual([
+      'flow-activity-flow-3',
+      'flow-activity-flow-1',
+      'flow-activity-flow-2',
+      'flow-activity-flow-4',
+    ]);
+    await expect(page.getByTestId('flow-activity-flow-1')).toContainText('Running');
+    await expect(page.getByTestId('flow-activity-flow-2')).toContainText('Failed');
+    await expect(page.getByTestId('flow-activity-flow-3')).toContainText('Waiting for you');
+    await expect(page.getByTestId('flow-activity-flow-4')).toContainText('7h');
+    await page.getByRole('tab', { name: 'Library', exact: true }).click();
+    expect(await ids('flow-row-')).toEqual([
+      'flow-row-flow-1',
       'flow-row-flow-2',
       'flow-row-flow-3',
-      'flow-row-flow-1',
       'flow-row-flow-4',
       'flow-row-flow-5',
     ]);
-    await expect(page.getByTestId('flow-row-flow-1')).toContainText('Running');
-    await expect(page.getByTestId('flow-row-flow-2')).toContainText('Failed');
-    await expect(page.getByTestId('flow-row-flow-3')).toContainText('Waiting for you');
-    await expect(page.getByTestId('flow-row-flow-4')).toContainText('7h');
     await expect(page.getByTestId('flow-row-flow-5')).toContainText('Off');
     await expect(page.getByTestId('flow-row-flow-4')).toContainText('Summarises support email');
     await shot(page, 'list-dark');
     await page.emulateMedia({ colorScheme: 'light' });
     await shot(page, 'list-light');
+    await page.getByTestId('flow-row-flow-4').click();
+    await page.getByRole('link', { name: 'Tabs, back' }).click();
+    await expect(page.getByRole('tab', { name: 'Library', exact: true })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+  });
+
+  test('an activity row opens its run; a library row opens the Flow', async ({ page }) => {
+    const state = await openFlows(page);
+    await page.getByTestId('flow-activity-flow-2').click();
+    await expect.poll(() => lastOf(state, 'run')).toEqual({ type: 'run', id: 'run-2' });
+  });
+
+  test('no runs yet offers the saved library without starting work', async ({ page }) => {
+    const flows = macFlows().map((flow) => ({
+      ...flow,
+      status: null,
+      latestRunId: null,
+      lastRun: null,
+    }));
+    const state = await openFlows(page, { data: { flows } });
+    await expect(page.getByText('No runs yet', { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Browse flows' }).click();
+    await expect(page.locator('[data-testid^="flow-row-"]')).toHaveCount(5);
+    expect(lastOf(state, 'startFlow')).toBeUndefined();
   });
 
   test('searches names and descriptions, and recovers from no matches', async ({ page }) => {
     await openFlows(page);
+    await page.getByRole('tab', { name: 'Library', exact: true }).click();
     const search = page.getByRole('textbox', { name: 'Search flows' });
     await search.fill('github');
     await expect(page.getByTestId('flow-row-flow-2')).toBeVisible();
@@ -85,12 +122,13 @@ test.describe('Flows tab', () => {
   test('explains where Flows come from when there are none', async ({ page }) => {
     await openFlows(page, { data: { flows: [] } });
     await expect(page.getByText('No Flows yet')).toBeVisible();
-    await expect(page.getByText(/automations you build in Frink on your Mac/)).toBeVisible();
+    await expect(page.getByText(/Create a flow in Frink on your Mac/)).toBeVisible();
     await shot(page, 'empty-dark');
   });
 
   test('keeps the list and says so when the Mac goes offline', async ({ page }) => {
     const state = await openFlows(page);
+    await page.getByRole('tab', { name: 'Library', exact: true }).click();
     await expect(page.getByTestId('flow-row-flow-1')).toBeVisible();
     state.offline = true;
     await page.clock.runFor(6000);
@@ -135,15 +173,21 @@ test.describe('Flow detail', () => {
 
   test('a Flow waiting on you says so and opens the run to decide', async ({ page }) => {
     const state = await openFlows(page, { data: { run: waitingRun() } });
+    await page.getByRole('tab', { name: 'Library', exact: true }).click();
     const waiting = page.getByTestId('flow-row-flow-3');
     await expect(waiting).toContainText('Waiting for you');
-    await expect(waiting).toHaveAttribute('aria-label', 'Release checklist, Waiting for you');
-    await waiting.click();
-    await expect(page.getByTestId('flow-attention')).toContainText('Open the run to decide');
+    await expect(waiting).toHaveAttribute(
+      'aria-label',
+      'Release checklist, Enabled, Waiting for you',
+    );
+    // From the activity list straight to the run; from the library, through the Flow.
+    await page.getByTestId('flow-row-flow-3').click();
+    await expect(page.getByRole('button', { name: 'Run now' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'View current run' })).toHaveCount(1);
     // The engine calls this run "paused"; the history row reads as the Flow does.
     await expect(page.getByTestId('run-row-run-3')).toContainText('Waiting for you');
     await shot(page, 'detail-waiting-dark');
-    await page.getByTestId('flow-attention').click();
+    await page.getByRole('button', { name: 'View current run' }).click();
     await expect.poll(() => lastOf(state, 'run')).toEqual({ type: 'run', id: 'run-3' });
     await expect(page.getByTestId('run-summary')).toContainText('Waiting for you');
   });
@@ -160,6 +204,20 @@ test.describe('Flow detail', () => {
     await shot(page, 'detail-failed-light');
     await page.getByTestId('flow-attention').click();
     await expect.poll(() => lastOf(state, 'run')).toEqual({ type: 'run', id: 'run-2' });
+  });
+
+  test('a missing current-run ID blocks starting over live work', async ({ page }) => {
+    await openFlow(page, 'flow-1', {
+      respond: (input) =>
+        input.type === 'flow'
+          ? {
+              ...flowFor('flow-1'),
+              flow: { ...flowFor('flow-1').flow, latestRunId: null },
+            }
+          : undefined,
+    });
+    await expect(page.getByRole('button', { name: 'Run now' })).toBeDisabled();
+    await expect(page.getByText('Refresh to find the current run.')).toBeVisible();
   });
 
   test('Run now waits for Frink to be open on the Mac', async ({ page }) => {
@@ -184,6 +242,8 @@ test.describe('Flow detail', () => {
 
   test('outlines branches, loops and joins, and expands instructions', async ({ page }) => {
     await openFlow(page, 'flow-2');
+    await expect(page.locator('[data-testid^="outline-step-"]')).toHaveCount(0);
+    await page.getByRole('button', { name: 'Show steps', exact: true }).click();
     const decision = page.getByTestId('outline-step-decision');
     await expect(decision).toContainText('Needs changes · Returns to Check incoming issues');
     await expect(decision).toContainText('No work needed: Publish summary');
@@ -193,7 +253,10 @@ test.describe('Flow detail', () => {
     const show = page.getByRole('button', { name: 'Show instructions for Check incoming issues' });
     await expect(show).toHaveAttribute('aria-expanded', 'false');
     await show.click();
-    await expect(page.getByText('Is it actionable?', { exact: true })).toBeVisible();
+    await expect(page.getByTestId('outline-step-review')).toContainText('Is it actionable?');
+    await expect(
+      page.getByRole('button', { name: 'Hide instructions for Check incoming issues' }),
+    ).toHaveAttribute('aria-expanded', 'true');
     const layout = await page
       .locator('[data-testid^="outline-step-"]')
       .evaluateAll((steps) => steps.map((step) => step.scrollWidth - step.clientWidth));
@@ -208,6 +271,7 @@ test.describe('Flow detail', () => {
       respond: (input) =>
         input.type === 'flow' ? { ...flowFor('flow-4'), definition: null } : undefined,
     });
+    await page.getByRole('button', { name: 'Show steps', exact: true }).click();
     await expect(page.getByText('Steps can’t be shown here')).toBeVisible();
     await expect(page.locator('[data-testid^="outline-step-"]')).toHaveCount(0);
   });
@@ -249,6 +313,10 @@ test.describe('Run detail', () => {
     const state = await openFlow(page, 'flow-3', { data: { run: waitingRun() } });
     await page.getByTestId('run-row-run-3').click();
     await expect(page.getByText('Announcement plan')).toBeVisible();
+    await expect(page.locator('[data-testid^="run-step-"]').first()).toHaveAttribute(
+      'data-testid',
+      'run-step-nr-plan',
+    );
     await expect(page.getByTestId('run-summary')).toContainText('Waiting for you');
     await tallShot(page, 'run-waiting-dark');
     await page.emulateMedia({ colorScheme: 'light' });
@@ -273,11 +341,22 @@ test.describe('Run detail', () => {
     await expect(page.getByTestId('run-step-nr-plan')).toBeHidden();
   });
 
+  test('a run with only a waiting step does not promise a first step', async ({ page }) => {
+    const run = waitingRun();
+    run.nodes = run.nodes.filter((node) => node.id === 'nr-plan');
+    await openFlow(page, 'flow-3', { data: { run } });
+    await page.getByRole('button', { name: 'View current run' }).click();
+    await expect(page.getByText('Announcement plan')).toBeVisible();
+    await expect(page.getByText('Timeline', { exact: true })).toHaveCount(0);
+    await expect(page.getByText('Frink is getting the first step ready.')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Approve Plan the announcement' })).toBeVisible();
+  });
+
   test('decisions wait for Frink to be open on the Mac', async ({ page }) => {
     const state = await openFlow(page, 'flow-3', {
       data: { run: waitingRun(), overview: { ...overviewFixture(), executionReady: false } },
     });
-    await page.getByTestId('flow-attention').click();
+    await page.getByRole('button', { name: 'View current run' }).click();
     const step = page.getByTestId('run-step-nr-plan');
     await expect(step).toContainText('Open Frink on your Mac to continue this run.');
     await expect(
@@ -339,6 +418,11 @@ test.describe('Run detail', () => {
     // A finished decision keeps one calm line: its heading, not the list run together.
     const plan = page.getByTestId('run-step-nr-plan');
     await expect(plan).toContainText('Announcement plan');
+    await expect(plan).not.toContainText('Post the release notes');
+    await page.getByRole('button', { name: 'Show result for Plan the announcement' }).click();
+    await expect(plan).toContainText('Post the release notes');
+    await expect(plan).toContainText('Email beta testers');
+    await page.getByRole('button', { name: 'Hide result for Plan the announcement' }).click();
     await expect(plan).not.toContainText('Post the release notes');
     await expect(page.getByRole('button', { name: 'Stop run', exact: true })).toHaveCount(0);
     await tallShot(page, 'run-done-dark');
