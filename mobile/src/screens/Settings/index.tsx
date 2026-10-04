@@ -29,7 +29,7 @@ export function SettingsScreen() {
   const overview = useOverview();
   const { connection } = useConnection();
   return (
-    <Screen atmosphere>
+    <Screen>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={{ paddingBottom: TAB_BAR_CLEARANCE }}

@@ -75,6 +75,12 @@ function CompanionScreens() {
   const t = useTheme();
   const reduceMotion = useReduceMotion();
   const base = t.dark ? DarkTheme : DefaultTheme;
+  // A bar in the page's colour: the page scrolls away under its title instead of through it.
+  const solid = {
+    title: '',
+    headerTransparent: false,
+    headerStyle: { backgroundColor: t.background },
+  };
   return (
     <>
       <StatusBar barStyle={t.dark ? 'light-content' : 'dark-content'} />
@@ -96,8 +102,6 @@ function CompanionScreens() {
             animation: reduceMotion ? 'none' : 'default',
             contentStyle: { backgroundColor: t.background },
             headerTransparent: ios,
-            // Content scrolls under the transparent bar; the material keeps it from showing through the title.
-            headerBlurEffect: 'systemChromeMaterial',
             headerTintColor: t.accent,
             headerBackButtonDisplayMode: 'minimal',
             headerTitleAlign: 'center',
@@ -107,9 +111,14 @@ function CompanionScreens() {
           }}
         >
           <Stack.Screen name="Tabs" component={TabsScreen} options={{ headerShown: false }} />
-          <Stack.Screen name="Chat" component={ChatScreen} options={{ title: '' }} />
-          <Stack.Screen name="Flow" component={FlowScreen} options={{ title: '' }} />
-          <Stack.Screen name="Run" component={RunScreen} options={{ title: '' }} />
+          {/* The transcript scrolls under the bar, so a material keeps it from showing through. */}
+          <Stack.Screen
+            name="Chat"
+            component={ChatScreen}
+            options={{ title: '', headerBlurEffect: 'systemChromeMaterial' }}
+          />
+          <Stack.Screen name="Flow" component={FlowScreen} options={solid} />
+          <Stack.Screen name="Run" component={RunScreen} options={solid} />
         </Stack.Navigator>
       </NavigationContainer>
     </>

@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, RefreshControl, ScrollView, View } from 'react-native';
 import type { MobileRun, MobileRunNode } from '@frink/shared/types/remote/mobile';
 import { useAction, useResource } from '../../lib/connection';
-import { useLargeTitle } from '../../navigation/large-title';
+import { usePageTitle } from '../../navigation/page-title';
 import type { RootRoutes } from '../../navigation/routes';
 import { StatusGlyph } from '../../ui/glyphs';
 import { SectionHeader } from '../../ui/list';
@@ -68,7 +68,7 @@ export function RunScreen() {
   const terminal = !!run && isTerminal(run.status);
   useEffect(() => setFinished(terminal), [terminal]);
   const title = run?.flowName;
-  const heading = useLargeTitle(title);
+  const heading = usePageTitle(title);
   const waiting = run && !terminal ? run.nodes.filter(needsDecision) : [];
   const timeline = run?.nodes.filter((node) => !waiting.includes(node)) ?? [];
   const decisionState = {

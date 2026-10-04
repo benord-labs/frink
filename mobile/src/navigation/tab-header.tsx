@@ -12,8 +12,8 @@ import { useRootNavigation } from './routes';
 const native = Platform.OS === 'ios';
 
 /**
- * A tab root's title, search and compose button. iOS gets them in the native large-title header
- * (Liquid Glass buttons, the system search bar); web renders the same pieces as the list header.
+ * A tab root's title, search and compose button. iOS gets them in the native header (the title
+ * and Liquid Glass buttons on one row, the system search bar); web renders them as the list header.
  * Returns the query and the element to place at the top of the list (null on iOS).
  */
 export function useTabHeader({
@@ -37,6 +37,20 @@ export function useTabHeader({
   useLayoutEffect(() => {
     if (!native) return;
     navigation.setOptions({
+      // The page's name sits in the bar beside its button, not on a row of its own below it.
+      headerTitle: '',
+      unstable_headerLeftItems: () => [
+        {
+          type: 'custom',
+          element: (
+            // The bar's height is fixed, so the title grows only a little with the system text size.
+            <Text variant="largeTitle" accessibilityRole="header" maxFontSizeMultiplier={1.2}>
+              {title}
+            </Text>
+          ),
+          hidesSharedBackground: true,
+        },
+      ],
       headerSearchBarOptions: search
         ? {
             placeholder: search,
@@ -93,7 +107,7 @@ function WebHeader({
   onCompose?: () => void;
   composeDisabled?: boolean;
 }) {
-  // Below the status bar and Dynamic Island, where iOS puts a large title.
+  // Below the status bar and Dynamic Island, where iOS puts its bar.
   const { top } = useSafeAreaInsets();
   return (
     <View style={{ paddingHorizontal: GUTTER, paddingTop: top + space.md, gap: space.md }}>

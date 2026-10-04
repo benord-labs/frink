@@ -71,7 +71,7 @@ export function GlassSurface({
   );
 }
 
-/** The chat/onboarding/settings backdrop: desktop's violet glow and green floor. Lists stay flat. */
+/** The chat and onboarding backdrop: desktop's violet glow and green floor. Lists stay flat. */
 export function Atmosphere() {
   const t = useTheme();
   return (

@@ -7,7 +7,7 @@ import { TABS } from './tab-screens';
 
 const Tab = createNativeBottomTabNavigator<TabRoutes>();
 
-/** iOS: the system tab bar (Liquid Glass on iOS 26+), with native large-title headers. */
+/** iOS: the system tab bar (Liquid Glass on iOS 26+), with native headers. */
 export function Tabs() {
   const t = useTheme();
   const needsYou = needsYouCount(useOverview().data);
@@ -17,12 +17,12 @@ export function Tabs() {
         tabBarActiveTintColor: t.accent,
         // The floating dock shrinks while reading a list and returns on scroll up.
         tabBarMinimizeBehavior: 'onScrollDown',
-        // Native tab screens hide their header unless asked; the large title, search bar and
-        // New chat button all live in it.
+        // Native tab screens hide their header unless asked; the title, search bar and New chat
+        // button all live in it.
         headerShown: true,
-        headerLargeTitleEnabled: true,
-        headerTransparent: true,
-        headerLargeTitleShadowVisible: false,
+        // Solid in the page's colour: rows slide away under the title row instead of through it.
+        headerStyle: { backgroundColor: t.background },
+        headerShadowVisible: false,
         headerTintColor: t.accent,
       }}
     >

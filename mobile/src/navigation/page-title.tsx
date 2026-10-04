@@ -7,13 +7,13 @@ import { GUTTER, space } from '../ui/theme';
 const ios = Platform.OS === 'ios';
 
 /**
- * A pushed page's name as an iOS large title: big under the back button, folding into the bar as
- * you scroll. The web preview has no native large titles, so it gets the same heading in content.
+ * A pushed page's name. iOS shows it in the navigation bar; the web preview's bar has no title, so
+ * it gets the name as a heading in content.
  */
-export function useLargeTitle(title: string | undefined): ReactNode {
+export function usePageTitle(title: string | undefined): ReactNode {
   const navigation = useNavigation();
   useLayoutEffect(() => {
-    navigation.setOptions(ios ? { title: title ?? '', headerLargeTitleEnabled: true } : { title: '' });
+    navigation.setOptions({ title: ios ? (title ?? '') : '' });
   }, [navigation, title]);
   if (ios || !title) return null;
   return (
