@@ -21,7 +21,7 @@ const EXPECTED_MANIFEST = Object.freeze({
   normalizedCargoLockSha256: 'df88a71b82843c6f092610fb07589f7a40032ddc25f50718354546ca541eb9b7',
   rust: '1.95.0',
   patch: 'frink-host-tool-permission-v1.patch',
-  patchSha256: 'aaca9d04e33b1f6b99b365db9d77632af22fbb3e618900ed419b6f460a5d7a48',
+  patchSha256: '5af8795f63311f953a943b8f056058cdde90528b6cecf5acf220d75ff1447540',
 });
 
 const TARGETS = {

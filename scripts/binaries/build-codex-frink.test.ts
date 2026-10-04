@@ -24,7 +24,7 @@ const manifest = {
   normalizedCargoLockSha256: 'df88a71b82843c6f092610fb07589f7a40032ddc25f50718354546ca541eb9b7',
   rust: '1.95.0',
   patch: 'frink-host-tool-permission-v1.patch',
-  patchSha256: 'aaca9d04e33b1f6b99b365db9d77632af22fbb3e618900ed419b6f460a5d7a48',
+  patchSha256: '5af8795f63311f953a943b8f056058cdde90528b6cecf5acf220d75ff1447540',
   upstream: 'https://github.com/openai/codex',
 };
 
@@ -78,7 +78,7 @@ describe('permission-aware Codex source build', () => {
 
 describe('codexVersionStamp', () => {
   it('carries the patch identity so a stale bundled binary is detectable at runtime', () => {
-    expect(codexVersionStamp(manifest)).toBe('rust-v0.155.1+frink.aaca9d04e33b');
+    expect(codexVersionStamp(manifest)).toBe('rust-v0.155.1+frink.5af8795f6331');
     expect(codexVersionStamp({ ...manifest, patchSha256: 'a'.repeat(64) })).toBe(
       'rust-v0.155.1+frink.aaaaaaaaaaaa',
     );
