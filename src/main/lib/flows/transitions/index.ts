@@ -11,6 +11,7 @@ export {
 export { insertNodeRunIfFenced, type RunFence, readRunFence, setFencedRunStatus } from './fence';
 export { cancelRunRows } from './run-rows';
 export {
+  isPlanApprovalResume,
   type ParkedTask,
   type ResumedBy,
   resumeParkedTaskCommand,
