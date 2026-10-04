@@ -144,3 +144,118 @@ describe('dispatchAdmittedTerminalResume (registered dispatcher)', () => {
     expect(mocks.dispatchAndAdvance).not.toHaveBeenCalled();
   });
 });
+
+describe('Fan Out branch failure — the resume re-dispatches the whole item (sc-716)', () => {
+  const FAN_GRAPH: FlowGraph = {
+    nodes: [
+      { id: 'fan', blockType: 'fan_out', position: { x: 0, y: 0 } },
+      { id: 'a', blockType: 'agent', parentId: 'fan', position: { x: 0, y: 1 } },
+      { id: 'b', blockType: 'agent', parentId: 'fan', position: { x: 1, y: 1 } },
+      { id: 'after', blockType: 'agent', position: { x: 0, y: 2 } },
+    ],
+    edges: [
+      { id: 'e1', source: 'fan', target: 'a' },
+      { id: 'e2', source: 'fan', target: 'b' },
+      { id: 'e3', source: 'a', target: 'after' },
+      { id: 'e4', source: 'b', target: 'after' },
+    ],
+  };
+
+  async function seedFailedItem(order: 'failed-first' | 'failed-last') {
+    db = freshDb();
+    mocks.db = db;
+    ({ flowRunId } = await seedFlowRun(db, FAN_GRAPH));
+    ticket = seedActiveAdmission(db, flowRunId);
+    const fan = await createNodeRun(db, {
+      flowRunId,
+      nodeId: 'fan',
+      blockType: 'fan_out',
+      status: 'completed',
+    });
+    const lane = { laneIndex: 0, parentFanOutNodeRunId: fan.id };
+    const failed = () =>
+      createNodeRun(db, {
+        flowRunId,
+        nodeId: 'a',
+        blockType: 'agent',
+        status: 'failed',
+        nodeOutput: {
+          status: 'failed',
+          outputs: {},
+          artifacts: [],
+          durationMs: 0,
+          error: { message: 'boom' },
+        },
+        ...lane,
+      });
+    // The sibling the failure's run-terminal sweep cancelled: no error of its own.
+    const swept = () =>
+      createNodeRun(db, {
+        flowRunId,
+        nodeId: 'b',
+        blockType: 'agent',
+        status: 'cancelled',
+        ...lane,
+      });
+    const failedRun = order === 'failed-first' ? await failed() : (await swept(), await failed());
+    if (order === 'failed-first') await swept();
+    return { failedRun, fanRunId: fan.id };
+  }
+
+  it('waits for every branch dispatch before surfacing one that threw', async () => {
+    const { failedRun } = await seedFailedItem('failed-first');
+    let siblingSettled = false;
+    mocks.dispatchAndAdvance.mockImplementation(async (...args: unknown[]) => {
+      if ((args[1] as { id: string }).id === 'a') throw new Error('anchor dispatch blew up');
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      siblingSettled = true;
+    });
+
+    try {
+      await expect(
+        mocks.registered?.(
+          { version: 1, action: 'resume', flow_run_id: flowRunId, node_run_id: failedRun.id },
+          ticket,
+        ),
+      ).rejects.toThrow('anchor dispatch blew up');
+      expect(siblingSettled).toBe(true);
+    } finally {
+      mocks.dispatchAndAdvance.mockImplementation(async () => {});
+    }
+  });
+
+  it.each(['failed-first', 'failed-last'] as const)(
+    'anchors Retry on the failed branch and re-dispatches the swept sibling too (%s)',
+    async (order) => {
+      const { failedRun, fanRunId } = await seedFailedItem(order);
+
+      await expect(retryTerminalFlowRun(db, flowRunId)).resolves.toBe(true);
+      expect(mocks.requestTerminalFlowResume).toHaveBeenCalledWith({
+        flowRunId,
+        nodeRunId: failedRun.id,
+        continuation: true,
+      });
+
+      await mocks.registered?.(
+        {
+          version: 1,
+          action: 'resume',
+          flow_run_id: flowRunId,
+          node_run_id: failedRun.id,
+          continuation: true,
+        },
+        ticket,
+      );
+
+      const calls = mocks.dispatchAndAdvance.mock.calls.map((call) => ({
+        nodeId: (call[1] as { id: string }).id,
+        options: call[5],
+      }));
+      const scope = { laneIndex: 0, parentFanOutNodeRunId: fanRunId };
+      expect(calls).toEqual([
+        { nodeId: 'a', options: { resumeKind: 'continuation', ...scope } },
+        { nodeId: 'b', options: { resumeKind: 'redispatch', ...scope } },
+      ]);
+    },
+  );
+});

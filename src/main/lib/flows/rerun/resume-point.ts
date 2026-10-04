@@ -8,11 +8,31 @@ import { isTriggerBlockType } from '../../../../shared/lib/block-registry';
 import type { NodeRun } from '../../db/schema';
 import { type ParsedFlowGraph, pickNextTargetNodeId } from '../graph';
 
-/** The last node_run that did not finish successfully; undefined when every node completed/skipped. */
+const isUnfinished = (nr: NodeRun): boolean => nr.status !== 'completed' && nr.status !== 'skipped';
+
+/** Cancelled by the run-terminal sweep, which writes only the status: the row's own output never
+ * says cancelled (a restart marker or a user Stop does). */
+function isSwept(nr: NodeRun): boolean {
+  if (nr.status !== 'cancelled') return false;
+  const output = nr.nodeOutput as { status?: unknown } | null | undefined;
+  return output?.status !== 'cancelled';
+}
+
+const attemptSlot = (nr: NodeRun): string =>
+  `${nr.nodeId}\u0000${nr.parentFanOutNodeRunId ?? ''}\u0000${nr.laneIndex ?? ''}`;
+
+/** The node_run that stopped the run: the newest unfinished latest attempt that the sweep did not
+ * cancel, else the newest unfinished row; undefined when every node completed/skipped. */
 export function lastUnfinishedNodeRun(nodeRunsForRun: NodeRun[]): NodeRun | undefined {
-  return [...nodeRunsForRun]
-    .reverse()
-    .find((nr) => nr.status !== 'completed' && nr.status !== 'skipped');
+  const newestFirst = [...nodeRunsForRun].reverse();
+  const seenSlots = new Set<string>();
+  const cause = newestFirst.find((nr) => {
+    const slot = attemptSlot(nr);
+    const latestAttempt = !seenSlots.has(slot);
+    seenSlots.add(slot);
+    return latestAttempt && isUnfinished(nr) && !isSwept(nr);
+  });
+  return cause ?? newestFirst.find(isUnfinished);
 }
 
 /**
