@@ -37,14 +37,7 @@ export function normalizeCursor(cursor: FolderCursor | null): FolderCursor | nul
   return { updatedAt, id };
 }
 
-export function extractErrorMessage(error: unknown): string | null {
-  if (error instanceof Error && error.message) return error.message;
-  if (typeof error === 'object' && error !== null && 'message' in error) {
-    const message = (error as { message?: unknown }).message;
-    if (typeof message === 'string' && message.length > 0) return message;
-  }
-  return null;
-}
+export { extractErrorMessage } from '../../../lib/utils/error-message/extract-error-message';
 
 export function mergeChatsById(chats: SidebarChatListItem[]): SidebarChatListItem[] {
   const map = new Map<string, SidebarChatListItem>();

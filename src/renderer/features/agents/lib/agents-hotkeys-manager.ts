@@ -6,7 +6,7 @@
 
 import * as React from 'react';
 import { useCallback, useMemo } from 'react';
-import type { CustomHotkeysConfig, SettingsTab } from '../../../lib/atoms';
+import type { CustomHotkeysConfig } from '../../../lib/atoms';
 import {
   ALL_SHORTCUT_ACTIONS,
   getResolvedHotkey,
@@ -49,59 +49,11 @@ export { matchesHotkey };
 // TYPES
 // ============================================================================
 
-type AgentsHotkeysManagerConfig = {
+/** Everything an action can read or call, plus what only the manager itself consumes. */
+type AgentsHotkeysManagerConfig = AgentActionContext & {
   /** Prepare a destination before its action mutates chat/files/split state. */
   onBeforeAction?: (actionId: string) => boolean | Promise<boolean>;
-  setSelectedChatId?: (id: string | null) => void;
-  setShowNewChatForm?: (show: boolean) => void;
-  setSidebarOpen?: (open: boolean | ((prev: boolean) => boolean)) => void;
-  setFilesSidebarOpen?: (open: boolean | ((prev: boolean) => boolean)) => void;
-  setSettingsDialogOpen?: (open: boolean) => void;
-  setSettingsActiveTab?: (tab: SettingsTab) => void;
-  setFileSearchDialogOpen?: (open: boolean) => void;
-  activateFilesSidebarSearch?: () => void;
-  activateActivePaneFileSearch?: () => void;
-  toggleChatSearch?: () => void;
-  /** True when a local project is selected and Browse files is available */
-  canShowFilesSidebar?: boolean;
-  /** Whether the files sidebar is currently open */
-  isFilesSidebarOpen?: boolean;
-  /** Toggle the active pane's file tree in split view */
-  toggleActivePaneFileTree?: () => void;
-  /** Close all open text files in the code editor */
-  closeAllEditorFiles?: () => void;
-  /** Cycle code editor layout (top -> left -> right) when editor is open */
-  toggleEditorLayout?: () => void;
-  /** Focus the sidebar tree container for keyboard navigation */
-  focusSidebar?: () => void;
   customHotkeysConfig?: CustomHotkeysConfig;
-  /** Split view callbacks */
-  addEmptyPane?: () => void;
-  newChatAtPane?: (index: number) => void;
-  activePaneIndex?: number;
-  setActivePaneIndex?: (index: number) => void;
-  isSplitActive?: boolean;
-  paneCount?: number;
-  /** Cycle through valid pane layouts */
-  cycleLayout?: () => void;
-  /** Grow active pane (Cmd+Alt+Right/Down) */
-  growPane?: () => void;
-  /** Shrink active pane (Cmd+Alt+Left/Up) */
-  shrinkPane?: () => void;
-  /** Reset pane sizes to equal (Cmd+Alt+R) */
-  resetPaneSizes?: () => void;
-  /** Reset all pane zoom to 1x (Cmd+Alt+0) */
-  resetPaneZoom?: () => void;
-  /** Window zoom in (for Cmd+Shift+Plus combo) */
-  zoomIn?: () => void | Promise<void>;
-  /** Window zoom out (for Cmd+Shift+Minus combo) */
-  zoomOut?: () => void | Promise<void>;
-  /** Zoom in current pane only */
-  zoomPaneIn?: () => void;
-  /** Zoom out current pane only */
-  zoomPaneOut?: () => void;
-  /** Whether the visible destination can show the unified sidebar */
-  canToggleUnifiedSidebar?: boolean;
 };
 
 type UseAgentsHotkeysOptions = {
@@ -161,6 +113,10 @@ const GLOBAL_HOTKEYS = new Set([
   'reorder-pane-right',
 ]);
 
+// Destructive actions run once per key press: auto-repeat while the chord is held must not archive
+// whichever chat takes focus next.
+const NON_REPEATING_HOTKEYS = new Set(['archive-agent']);
+
 // Early-capture hotkeys (handled before general loop so they work from code editor / inputs)
 const EARLY_HOTKEY_BINDINGS: Array<{ shortcutId: ShortcutActionId; actionId: string }> = [
   { shortcutId: 'toggle-sidebar', actionId: 'toggle-sidebar' },
@@ -211,6 +167,7 @@ export function useAgentsHotkeys(
       paneCount: config.paneCount,
       toggleActivePaneFileTree: config.toggleActivePaneFileTree,
       focusSidebar: config.focusSidebar,
+      archiveFocusedChat: config.archiveFocusedChat,
       cycleLayout: config.cycleLayout,
       growPane: config.growPane,
       shrinkPane: config.shrinkPane,
@@ -245,6 +202,7 @@ export function useAgentsHotkeys(
       config.paneCount,
       config.toggleActivePaneFileTree,
       config.focusSidebar,
+      config.archiveFocusedChat,
       config.cycleLayout,
       config.growPane,
       config.shrinkPane,
@@ -357,6 +315,9 @@ export function useAgentsHotkeys(
 
     for (const action of actionsWithHotkeys) {
       const shortcutId = ACTION_TO_SHORTCUT_MAP[action.id];
+      // A null binding resolves to no hotkey everywhere else (Settings shows it unbound), so the
+      // action's built-in default must not come back here as a fallback.
+      if (shortcutId != null && customConfig.bindings[shortcutId] === null) continue;
       const resolved = shortcutId != null ? getResolvedHotkey(shortcutId, customConfig) : null;
       const hotkeys = resolved
         ? [resolved]
@@ -378,6 +339,11 @@ export function useAgentsHotkeys(
   React.useEffect(() => {
     if (!enabled) return;
 
+    const runUnlessRepeat = (e: KeyboardEvent, actionId: string) => {
+      if (e.repeat && NON_REPEATING_HOTKEYS.has(actionId)) return;
+      handleHotkeyAction(actionId);
+    };
+
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
       const isInInput =
@@ -392,7 +358,7 @@ export function useAgentsHotkeys(
               e.preventDefault();
               e.stopPropagation();
             }
-            handleHotkeyAction(mapping.actionId);
+            runUnlessRepeat(e, mapping.actionId);
             return;
           }
         }

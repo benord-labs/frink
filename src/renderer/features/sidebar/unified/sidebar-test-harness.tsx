@@ -8,9 +8,13 @@
  * `jotai` (e.g. `./UnifiedSidebar`) re-enters that in-flight factory. App modules load lazily in
  * `setupHarness()`, which runs in `beforeAll`. */
 import { cleanup, render } from '@testing-library/react';
+import type { Atom } from 'jotai';
 import { expect, vi } from 'vitest';
 import type { ChatSelectionChipProps } from './components/ChatSelection';
 import { makeSidebarComponentsMock } from './sidebar-components-test-harness';
+
+/** Type-only: erased at build, so it does not re-enter the jotai mock factory. */
+type AnyAtom = Atom<unknown>;
 
 type ActiveTaskStub = {
   id: string;
@@ -179,6 +183,10 @@ export const hoisted = {
   capturedGroupedProjectsParams: null as null | Record<string, unknown>,
 };
 
+/** activeOverlayAtom's identity and value for the jotai mock; a null value is the chat destination. */
+type OverlayStub = { atom: AnyAtom | null; value: null | 'workqueue' | 'settings' | 'flows' };
+export const overlayStub: OverlayStub = { atom: null, value: null };
+
 /** Real atom identities, resolved in `setupHarness` so the jotai mock can match on them. */
 export const atomRefs = {
   splitViewChatIdsAtom: null as unknown,
@@ -189,7 +197,10 @@ export const atomRefs = {
 
 export const makeJotaiMock = (actual: typeof import('jotai')) => ({
   ...actual,
-  useAtom: () => [null, hoisted.setSelectedChatIdMock],
+  useAtom: (atom: AnyAtom) =>
+    atom === overlayStub.atom
+      ? [overlayStub.value, vi.fn()]
+      : [null, hoisted.setSelectedChatIdMock],
   useAtomValue: (a: unknown) => {
     if (a === atomRefs.splitViewChatIdsAtom) {
       return hoisted.state.splitViewState.splitView.chatIds;
@@ -363,6 +374,7 @@ export async function setupHarness() {
   atomRefs.splitViewActivePaneIndexAtom = atoms.splitViewActivePaneIndexAtom;
   atomRefs.splitViewQuickActionsChromeAtom = atoms.splitViewQuickActionsChromeAtom;
   atomRefs.pendingPlanApprovalsAtom = atoms.pendingPlanApprovalsAtom;
+  overlayStub.atom = (await import('../../../lib/atoms')).activeOverlayAtom;
   SidebarUnderTest = (await import('./UnifiedSidebar')).UnifiedSidebar;
 }
 
@@ -447,6 +459,7 @@ export function resetHarness() {
   hoisted.state.localProjectsData = [];
   hoisted.state.persistedPendingPlanApprovals = [];
   hoisted.state.livePendingPlanApprovals = new Map();
+  overlayStub.value = null;
   hoisted.capturedGroupedProjectsParams = null;
   hoisted.state.splitViewState = {
     splitView: { chatIds: [null], activePaneIndex: 0 },
