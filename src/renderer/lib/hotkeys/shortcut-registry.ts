@@ -137,7 +137,7 @@ export const ALL_SHORTCUT_ACTIONS: ShortcutAction[] = [
     id: 'archive-agent',
     label: 'Archive current agent',
     category: 'agents',
-    defaultKeys: ['cmd', 'W'],
+    defaultKeys: ['cmd', 'shift', 'D'],
   },
   {
     id: 'focus-input',
@@ -673,28 +673,17 @@ export function isCustomHotkey(actionId: ShortcutActionId, config: CustomHotkeys
   return config.bindings[actionId] !== undefined;
 }
 
-/**
- * Normalize a hotkey string for comparison
- * Handles modifier order and case
- */
+/** Canonical modifier order; `alt`/`meta` collapse onto `opt`/`cmd` when normalized. */
+const MODIFIER_ORDER = ['cmd', 'meta', 'ctrl', 'opt', 'alt', 'shift'];
+const canonicalModifier = (m: string) => (m === 'alt' ? 'opt' : m === 'meta' ? 'cmd' : m);
+
+/** Normalize a hotkey string for comparison (modifier order, case, alt/meta aliases). */
 export function normalizeHotkey(hotkey: string): string {
   const parts = hotkey.toLowerCase().split('+');
-
-  // Define modifier order
-  const modifierOrder = ['cmd', 'meta', 'ctrl', 'opt', 'alt', 'shift'];
-
-  const modifiers = parts.filter((p) => ['cmd', 'meta', 'ctrl', 'opt', 'alt', 'shift'].includes(p));
-  const key = parts.filter((p) => !['cmd', 'meta', 'ctrl', 'opt', 'alt', 'shift'].includes(p))[0];
-
-  // Sort modifiers
-  modifiers.sort((a, b) => modifierOrder.indexOf(a) - modifierOrder.indexOf(b));
-
-  // Normalize alt/opt
-  const normalizedMods = modifiers.map((m) => (m === 'alt' ? 'opt' : m));
-  // Normalize meta to cmd
-  const finalMods = normalizedMods.map((m) => (m === 'meta' ? 'cmd' : m));
-
-  return [...finalMods, key].join('+');
+  const modifiers = parts.filter((p) => MODIFIER_ORDER.includes(p));
+  const key = parts.find((p) => !MODIFIER_ORDER.includes(p));
+  modifiers.sort((a, b) => MODIFIER_ORDER.indexOf(a) - MODIFIER_ORDER.indexOf(b));
+  return [...modifiers.map(canonicalModifier), key].join('+');
 }
 
 /**

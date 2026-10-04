@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { cleanup, render, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getEditorTabCycleDirection } from '@/lib/code-editor/tabs';
 import type { CustomHotkeysConfig } from '@/lib/hotkeys';
@@ -167,6 +167,61 @@ describe('useAgentsHotkeys', () => {
     expect(toggles).toHaveLength(1);
   });
 
+  // Archive is a soft delete, so it sits on a deliberate two-modifier chord rather than the
+  // reflexive Cmd+W.
+  it('archives the focused chat with Cmd+Shift+D while typing in the composer', () => {
+    const archiveFocusedChat = vi.fn();
+    render(
+      <>
+        <textarea data-testid="composer" />
+        <HotkeysHarness canShowFilesSidebar={true} archiveFocusedChat={archiveFocusedChat} />
+      </>,
+    );
+    const composer = screen.getByTestId('composer');
+    composer.focus();
+
+    const keydown = new KeyboardEvent('keydown', {
+      key: 'D',
+      metaKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    composer.dispatchEvent(keydown);
+
+    expect(archiveFocusedChat).toHaveBeenCalledTimes(1);
+    expect(keydown.defaultPrevented).toBe(true);
+  });
+
+  // Holding the chord auto-repeats keydown. A repeat must not archive whichever chat takes focus
+  // after the first one is gone.
+  it('archives once while Cmd+Shift+D is held', () => {
+    const archiveFocusedChat = vi.fn();
+    render(<HotkeysHarness canShowFilesSidebar={true} archiveFocusedChat={archiveFocusedChat} />);
+    const held = { key: 'D', metaKey: true, shiftKey: true };
+
+    window.dispatchEvent(new KeyboardEvent('keydown', held));
+    window.dispatchEvent(new KeyboardEvent('keydown', { ...held, repeat: true }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { ...held, repeat: true }));
+
+    expect(archiveFocusedChat).toHaveBeenCalledTimes(1);
+  });
+
+  // Cmd+W is "Close editor tab" (editor-close-tab), and Cmd+Shift+W closes the active pane.
+  // Neither may archive, and Cmd+D alone must not either.
+  it.each<[string, KeyboardEventInit]>([
+    ['Cmd+W', { key: 'w', metaKey: true }],
+    ['Cmd+Shift+W', { key: 'W', metaKey: true, shiftKey: true }],
+    ['Cmd+D', { key: 'd', metaKey: true }],
+  ])('does not archive on %s', (_label, init) => {
+    const archiveFocusedChat = vi.fn();
+    render(<HotkeysHarness canShowFilesSidebar={true} archiveFocusedChat={archiveFocusedChat} />);
+
+    window.dispatchEvent(new KeyboardEvent('keydown', init));
+
+    expect(archiveFocusedChat).not.toHaveBeenCalled();
+  });
+
   it('does not toggle archived chats on Shift+A alone', () => {
     const dispatchSpy = vi.spyOn(window, 'dispatchEvent');
     render(<HotkeysHarness canShowFilesSidebar={true} />);
@@ -197,6 +252,31 @@ describe('useAgentsHotkeys', () => {
 
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'g', metaKey: true, shiftKey: true }));
     expect(activateFilesSidebarSearch).toHaveBeenCalledTimes(1);
+  });
+
+  // A null binding resolves to no hotkey, and Settings shows it unbound. The action's built-in
+  // default must not come back as a fallback, least of all for a destructive action.
+  it('does not run an action whose binding is unbound', () => {
+    const archiveFocusedChat = vi.fn();
+    const activateFilesSidebarSearch = vi.fn();
+    render(
+      <HotkeysHarness
+        canShowFilesSidebar={true}
+        archiveFocusedChat={archiveFocusedChat}
+        activateFilesSidebarSearch={activateFilesSidebarSearch}
+        customHotkeysConfig={{
+          version: 1,
+          bindings: { 'archive-agent': null, 'find-in-files': null },
+        }}
+      />,
+    );
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'D', metaKey: true, shiftKey: true }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'D', ctrlKey: true, shiftKey: true }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'g', metaKey: true, shiftKey: true }));
+
+    expect(archiveFocusedChat).not.toHaveBeenCalled();
+    expect(activateFilesSidebarSearch).not.toHaveBeenCalled();
   });
 });
 

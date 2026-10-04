@@ -31,6 +31,7 @@ import { useUpdateChecker } from '../../lib/hooks/use-update-checker';
 import { useWindowEvent } from '../../lib/hooks/use-window-event';
 import { appStore } from '../../lib/jotai-store';
 import { trpc, trpcClient } from '../../lib/trpc';
+import { focusedChatOwnsShortcuts } from '../../lib/work-queue/chat-owns-keyboard-shortcuts';
 import { useWorkQueueDestination } from '../../lib/work-queue/use-work-queue-destination';
 import { useAgentRequestMoveChat } from '../agents';
 import {
@@ -215,6 +216,11 @@ export function AgentsLayout() {
   const focusSidebar = useCallback(() => {
     sidebarRef.current?.focus();
   }, []);
+  const archiveFocusedChat = useCallback(() => {
+    if (focusedChatOwnsShortcuts(isSplitActive ? activePaneIndex : undefined)) {
+      sidebarRef.current?.archiveFocusedChat();
+    }
+  }, [isSplitActive, activePaneIndex]);
   const exitWorkQueueForNavigation = useSetAtom(exitTransientDestinationForNavigationAtom);
 
   const {
@@ -332,6 +338,7 @@ export function AgentsLayout() {
     paneCount,
     toggleActivePaneFileTree,
     focusSidebar,
+    archiveFocusedChat: viewPolicy.canArchiveFocusedChat ? archiveFocusedChat : undefined,
     cycleLayout,
     growPane: growActivePane,
     shrinkPane: shrinkActivePane,

@@ -22,6 +22,8 @@ import {
   flowsDashboardActiveAtom,
 } from '../../../lib/atoms/agent-navigation-atoms';
 import { cleanupChatScopedState } from '../../../lib/atoms/atom-family-factory';
+import { useArchiveWindowEvents } from '../../../lib/hooks/sidebar-chat-archive/use-chat-archive-actions';
+import { useTaskAwareArchive } from '../../../lib/hooks/sidebar-chat-archive/use-chat-archive-actions';
 import { usePendingPlanIds } from '../../../lib/hooks/use-sidebar-pending-plan-ids';
 import { useWindowEvent } from '../../../lib/hooks/use-window-event';
 import { createIdSelectionStore } from '../../../lib/tree-navigation';
@@ -84,7 +86,12 @@ import { useSidebarNavigation } from './hooks/use-sidebar-navigation';
 import { useTaskAwareChatActions } from './hooks/use-task-aware-chat-actions';
 /** Handle exposed by UnifiedSidebar for programmatic focus */
 import { sidebarChatActivityBumpAtom } from './sidebar-chat-activity';
-import type { FolderDescriptor, TaskAwareActionDialogState, UnifiedSidebarProps } from './types';
+import type {
+  FolderDescriptor,
+  TaskAwareActionDialogState,
+  UnifiedSidebarHandle,
+  UnifiedSidebarProps,
+} from './types';
 import type { FolderCursor, SidebarChatListItem, SidebarPolledTask } from './utils';
 import {
   buildChatReasonMap,
@@ -99,13 +106,7 @@ import {
 import { unifiedSidebarPropsAreEqual } from './utils/chat-equality';
 import { createFolderLoadMoreSyncGuard } from './utils/folder-load-more-sync-guard';
 
-export type UnifiedSidebarHandle = {
-  /** Focus the tree container for keyboard navigation */
-  focus: () => void;
-  /** Restore focus to the Work Queue destination trigger after dismissal. */
-  focusWorkQueueTrigger: () => void;
-};
-
+export type { UnifiedSidebarHandle } from './types';
 const GENERAL_FOLDER_KEY = STRINGS.GENERAL_CHATS;
 const SIDEBAR_CHAT_LOAD_TOAST_ID = 'sidebar-chat-load-error';
 const CHAT_LOAD_TOAST_COOLDOWN_MS = 5000;
@@ -220,6 +221,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
       focusWorkQueueTrigger: () => {
         workQueueTriggerRef.current?.focus();
       },
+      archiveFocusedChat: () => archiveFocusedChat(),
     }));
 
     // Atoms
@@ -1159,7 +1161,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
         removeChatsFromLoadedFolders([chatId]);
         // The local map patch above covers folder + pinned; batch views drop the chat on refetch.
         const u = utilsRef.current;
-        await Promise.all([
+        await Promise.allSettled([
           u.chats.list.invalidate(),
           invalidateBatchViews(u),
           syncSidebarCountsOrFullRefresh('Chat archived'),
@@ -1207,34 +1209,8 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
       [getActiveLinkedTasksForChatIdsWithFallback],
     );
 
-    const handleChatArchive = useCallback(
-      async (chatId: string) => {
-        if (await deferToTaskAwareDialog(chatId, 'archive')) return;
+    const handleChatArchive = useTaskAwareArchive(deferToTaskAwareDialog, archiveSingleChat);
 
-        try {
-          await archiveSingleChat(chatId);
-        } catch (error) {
-          toast.error('Failed to archive chat', {
-            description: extractErrorMessage(error) ?? 'Unable to archive this chat right now.',
-          });
-        }
-      },
-      [deferToTaskAwareDialog, archiveSingleChat],
-    );
-
-    // Bridge for the chat view's "Complete & Archive" (TaskAcceptBar): it completes the task, then
-    // asks the sidebar to archive. Archives directly (not handleChatArchive) — the task is already
-    // completed, so there is no active task to warn about, and archiveSingleChat owns the
-    // pane-clear + deselect navigation that closes the open chat cleanly.
-    useWindowEvent('sidebar:archive-chat', (event) => {
-      const chatId = (event as CustomEvent<{ chatId?: string }>).detail?.chatId;
-      if (!chatId) return;
-      void archiveSingleChat(chatId).catch((error) => {
-        toast.error('Failed to archive chat', {
-          description: extractErrorMessage(error) ?? 'Unable to archive this chat right now.',
-        });
-      });
-    });
     const deleteSingleChat = useCallback(
       async (chatId: string, checkActiveTasks = false) => {
         if (checkActiveTasks && (await deferToTaskAwareDialog(chatId, 'delete'))) return;
@@ -1385,6 +1361,14 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
         transformedProjects,
       ],
     );
+
+    const archiveFocusedChat = useArchiveWindowEvents({
+      focusedChatId: effectiveSelectedChatId === NEW_CHAT_PANE ? null : effectiveSelectedChatId,
+      isChatCovered: activeOverlay !== null,
+      deferToTaskAwareDialog,
+      archiveSingleChat,
+      restoreChat: handleChatRestore,
+    });
 
     const bulk = useBulkChatActions({
       selection: chatSelection,

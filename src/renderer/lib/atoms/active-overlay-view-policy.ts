@@ -9,6 +9,8 @@ export type ActiveOverlayViewPolicy = {
   isUnifiedSidebarOpen: boolean;
   showFilesSidebar: boolean;
   showFileSearch: boolean;
+  /** Chat-pane shortcuts that act on the focused chat belong to the visible desktop chat only. */
+  canArchiveFocusedChat: boolean;
 };
 
 type ActiveOverlayViewPolicyOptions = {
@@ -56,5 +58,6 @@ export function getActiveOverlayViewPolicy({
     isUnifiedSidebarOpen,
     showFilesSidebar,
     showFileSearch: isChat,
+    canArchiveFocusedChat: isChat && !isMobile,
   };
 }

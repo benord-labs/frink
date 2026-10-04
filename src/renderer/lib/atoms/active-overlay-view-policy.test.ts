@@ -31,6 +31,7 @@ const POLICY_CASES: PolicyCase[] = [
       isUnifiedSidebarOpen: true,
       showFilesSidebar: true,
       showFileSearch: true,
+      canArchiveFocusedChat: true,
     },
   },
   {
@@ -48,6 +49,7 @@ const POLICY_CASES: PolicyCase[] = [
       isUnifiedSidebarOpen: false,
       showFilesSidebar: false,
       showFileSearch: true,
+      canArchiveFocusedChat: true,
     },
   },
   {
@@ -64,6 +66,7 @@ const POLICY_CASES: PolicyCase[] = [
       isUnifiedSidebarOpen: false,
       showFilesSidebar: true,
       showFileSearch: true,
+      canArchiveFocusedChat: true,
     },
   },
   {
@@ -80,6 +83,7 @@ const POLICY_CASES: PolicyCase[] = [
       isUnifiedSidebarOpen: false,
       showFilesSidebar: true,
       showFileSearch: true,
+      canArchiveFocusedChat: false,
     },
   },
   {
@@ -97,6 +101,7 @@ const POLICY_CASES: PolicyCase[] = [
       isUnifiedSidebarOpen: false,
       showFilesSidebar: true,
       showFileSearch: true,
+      canArchiveFocusedChat: false,
     },
   },
   {
@@ -113,6 +118,7 @@ const POLICY_CASES: PolicyCase[] = [
       isUnifiedSidebarOpen: true,
       showFilesSidebar: false,
       showFileSearch: false,
+      canArchiveFocusedChat: false,
     },
   },
   {
@@ -130,6 +136,7 @@ const POLICY_CASES: PolicyCase[] = [
       isUnifiedSidebarOpen: false,
       showFilesSidebar: false,
       showFileSearch: false,
+      canArchiveFocusedChat: false,
     },
   },
   {
@@ -146,6 +153,7 @@ const POLICY_CASES: PolicyCase[] = [
       isUnifiedSidebarOpen: false,
       showFilesSidebar: false,
       showFileSearch: false,
+      canArchiveFocusedChat: false,
     },
   },
   {
@@ -162,6 +170,7 @@ const POLICY_CASES: PolicyCase[] = [
       isUnifiedSidebarOpen: false,
       showFilesSidebar: false,
       showFileSearch: false,
+      canArchiveFocusedChat: false,
     },
   },
   {
@@ -179,6 +188,7 @@ const POLICY_CASES: PolicyCase[] = [
       isUnifiedSidebarOpen: true,
       showFilesSidebar: false,
       showFileSearch: false,
+      canArchiveFocusedChat: false,
     },
   },
   {
@@ -195,6 +205,7 @@ const POLICY_CASES: PolicyCase[] = [
       isUnifiedSidebarOpen: false,
       showFilesSidebar: false,
       showFileSearch: false,
+      canArchiveFocusedChat: false,
     },
   },
   {
@@ -211,6 +222,7 @@ const POLICY_CASES: PolicyCase[] = [
       isUnifiedSidebarOpen: false,
       showFilesSidebar: false,
       showFileSearch: false,
+      canArchiveFocusedChat: false,
     },
   },
   {
@@ -227,6 +239,7 @@ const POLICY_CASES: PolicyCase[] = [
       isUnifiedSidebarOpen: false,
       showFilesSidebar: false,
       showFileSearch: false,
+      canArchiveFocusedChat: false,
     },
   },
 ];

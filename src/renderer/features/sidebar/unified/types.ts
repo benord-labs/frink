@@ -75,3 +75,13 @@ export type TaskAwareActionDialogState = {
   taskIds: string[];
   totalChats: number;
 };
+
+/** Handle exposed by UnifiedSidebar to the layout. */
+export type UnifiedSidebarHandle = {
+  /** Focus the tree container for keyboard navigation */
+  focus: () => void;
+  /** Restore focus to the Work Queue destination trigger after dismissal. */
+  focusWorkQueueTrigger: () => void;
+  /** Archive the focused chat (the archive shortcut). Stops everything under it, without a dialog. */
+  archiveFocusedChat: () => void;
+};

@@ -106,7 +106,7 @@ describe('agents-actions', () => {
     expect(event.type).toBe('sidebar:toggle-archived');
   });
 
-  // These five actions are built by one factory, so a mis-wired argument would swap two
+  // These actions are built by one factory, so a mis-wired argument would swap two
   // event names without breaking anything else. Pin each id to its event.
   it('keeps every event-dispatch action pointed at its own event', async () => {
     const expected = [
@@ -123,6 +123,25 @@ describe('agents-actions', () => {
       expect((dispatchSpy.mock.calls.at(-1)?.[0] as CustomEvent).type).toBe(eventName);
       dispatchSpy.mockRestore();
     }
+  });
+
+  // Archive is a chat-pane shortcut: the layout wires its handler only while the chat destination
+  // is visible on desktop, so Work Queue, Flows, Settings and mobile never own or run it.
+  describe('archive-agent', () => {
+    it('archives through the handler the chat destination wired', async () => {
+      const archiveFocusedChat = vi.fn();
+
+      const result = await executeAgentAction('archive-agent', { archiveFocusedChat }, 'hotkey');
+
+      expect(result.success).toBe(true);
+      expect(archiveFocusedChat).toHaveBeenCalledTimes(1);
+    });
+
+    it('is unavailable when no destination wired a handler', async () => {
+      const result = await executeAgentAction('archive-agent', {}, 'hotkey');
+
+      expect(result.success).toBe(false);
+    });
   });
 
   // Both sidebar shortcuts share one destination capability, so neither can write persisted

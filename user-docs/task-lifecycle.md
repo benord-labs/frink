@@ -94,6 +94,8 @@ Removing a chat can also affect its linked task. How Frink handles this depends 
 
 Those rules apply to regular chats whether you delete or archive them. Archiving is recoverable — restore it from the Archived view.
 
+**The archive shortcut follows the same rules.** Pressing **Archive current agent** (Cmd+Shift+D by default; you can change it in Settings → Keyboard) archives the chat you are looking at. If its linked task is still actively working, Frink asks first, exactly as above. Otherwise the chat is archived straight away, and its running replies, flow runs, and terminals are stopped. The shortcut only works while a chat is on screen on desktop; it does nothing in Work Queue, Flows, or Settings.
+
 Flow chats follow the Flow lifecycle instead. Permanently deleting a flow chat stops its linked run and removes that chat's work-queue tasks, including Needs Attention rows. Archiving keeps parked work available so you can restore the chat and continue.
 
 ## How runtime errors map to status
