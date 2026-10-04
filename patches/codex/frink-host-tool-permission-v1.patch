@@ -8842,6 +8842,287 @@ index b03dbf737..9165c0897 100644
          self.pending_request_permissions.clear();
          self.pending_user_input.clear();
          self.pending_elicitations.clear();
+diff --git a/codex-rs/core/src/tools/approvals.rs b/codex-rs/core/src/tools/approvals.rs
+index 8675ead36..9ae057b3e 100644
+--- a/codex-rs/core/src/tools/approvals.rs
++++ b/codex-rs/core/src/tools/approvals.rs
+@@ -501,15 +501,25 @@ impl Session {
+         )
+         .await
+         {
+-            Some(PermissionRequestDecision::Allow) => ApprovalResolution {
+-                decision: ReviewDecision::Approved,
+-                source: ApprovalResolutionSource::Hook,
+-            },
++            // While Frink's host permission check gates the turn, a hook may deny a request
++            // but not approve it in the reviewer's place.
++            Some(PermissionRequestDecision::Allow)
++                if !crate::frink_host_permissions::enabled_for(
++                    ctx.review_context.turn().app_server_client_name.as_deref(),
++                ) =>
++            {
++                ApprovalResolution {
++                    decision: ReviewDecision::Approved,
++                    source: ApprovalResolutionSource::Hook,
++                }
++            }
+             Some(PermissionRequestDecision::Deny { message }) => ApprovalResolution {
+                 decision: ReviewDecision::denied(message),
+                 source: ApprovalResolutionSource::Hook,
+             },
+-            None => self.request_reviewer_approval(action, &ctx).await,
++            Some(PermissionRequestDecision::Allow) | None => {
++                self.request_reviewer_approval(action, &ctx).await
++            }
+         };
+         // Network approvals record their final telemetry after validation and persistence.
+         if !is_network_approval {
+diff --git a/codex-rs/core/src/tools/approvals_tests.rs b/codex-rs/core/src/tools/approvals_tests.rs
+index 4ecd7460b..c729b0914 100644
+--- a/codex-rs/core/src/tools/approvals_tests.rs
++++ b/codex-rs/core/src/tools/approvals_tests.rs
+@@ -235,3 +235,241 @@ async fn explicit_mcp_reviewer_override_takes_precedence_over_action_context() {
+         }
+     }
+ }
++
++/// Sets the process-wide Frink host-permission capability and clears it when dropped.
++struct FrinkCapability;
++
++impl FrinkCapability {
++    fn set(enabled: bool) -> Self {
++        crate::frink_host_permissions::set_enabled(enabled);
++        Self
++    }
++}
++
++impl Drop for FrinkCapability {
++    fn drop(&mut self) {
++        crate::frink_host_permissions::set_enabled(false);
++    }
++}
++
++struct HookedApproval {
++    session: Arc<Session>,
++    action: ApprovalAction,
++    context: ApprovalContext,
++    events: async_channel::Receiver<codex_protocol::protocol::Event>,
++    hook_log: PathBuf,
++}
++
++impl HookedApproval {
++    /// A user-reviewed command approval on a turn whose trusted PermissionRequest hook
++    /// answers `hook_decision`.
++    async fn new(client_name: &str, hook_decision: serde_json::Value) -> anyhow::Result<Self> {
++        use anyhow::Context;
++        use std::os::unix::fs::PermissionsExt;
++
++        let (session, mut turn, events) = make_session_and_context_with_rx().await;
++        Arc::get_mut(&mut turn)
++            .context("turn is uniquely owned")?
++            .app_server_client_name = Some(client_name.to_string());
++        let codex_home = &turn.config.codex_home;
++        std::fs::create_dir_all(codex_home)?;
++        let script_path = codex_home.join("permission_request_hook.sh");
++        let hook_log = codex_home
++            .join("permission_request_hook_log.json")
++            .to_path_buf();
++        let response = serde_json::json!({
++            "hookSpecificOutput": {
++                "hookEventName": "PermissionRequest",
++                "decision": hook_decision,
++            },
++        });
++        std::fs::write(
++            &script_path,
++            format!(
++                "#!/bin/sh\ncat > {log}\nprintf '%s\\n' {response}\n",
++                log = shlex::try_quote(hook_log.to_string_lossy().as_ref())?,
++                response = shlex::try_quote(&response.to_string())?,
++            ),
++        )?;
++        std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755))?;
++        std::fs::write(
++            codex_home.join("hooks.json"),
++            serde_json::json!({
++                "hooks": {
++                    "PermissionRequest": [{
++                        "hooks": [{
++                            "type": "command",
++                            "command": script_path.display().to_string(),
++                        }]
++                    }]
++                }
++            })
++            .to_string(),
++        )?;
++        let hook_list = codex_hooks::list_hooks(codex_hooks::HooksConfig {
++            feature_enabled: true,
++            config_layer_stack: Some(turn.config.config_layer_stack.clone()),
++            ..Default::default()
++        });
++        assert_eq!(hook_list.hooks.len(), 1);
++        let trusted_config_layer_stack = turn.config.config_layer_stack.with_user_config(
++            &codex_home.join(codex_config::CONFIG_TOML_FILE),
++            serde_json::from_value(serde_json::json!({
++                "hooks": {
++                    "state": {
++                        hook_list.hooks[0].key.clone(): {
++                            "trusted_hash": hook_list.hooks[0].current_hash.clone(),
++                        },
++                    },
++                },
++            }))?,
++        )?;
++        let mut shell_args = session
++            .user_shell()
++            .derive_exec_args("", /*use_login_shell*/ false);
++        let shell_program = shell_args.remove(0);
++        let _ = shell_args.pop();
++        let hooks = session.hooks().reconfigured(codex_hooks::HooksConfig {
++            feature_enabled: true,
++            config_layer_stack: Some(trusted_config_layer_stack),
++            shell_program: Some(shell_program),
++            shell_args,
++            ..Default::default()
++        });
++        session.services.hooks.store(Arc::new(hooks));
++        *session.active_turn.lock().await = Some(crate::state::ActiveTurn::default());
++
++        let mut review_context = GuardianReviewContext::from(&turn);
++        review_context.approval_policy = AskForApproval::OnRequest;
++        review_context.approvals_reviewer = ApprovalsReviewer::User;
++        let context = ApprovalContext {
++            review_context,
++            cancellation_token: None,
++            call_id: "hooked-approval".to_string(),
++            tool_name: ToolName::plain("exec_command"),
++            strict_auto_review: false,
++            approval_reason: None,
++            retry_reason: None,
++            network_approval_context: None,
++        };
++        let action = ApprovalAction::ExecCommand {
++            id: context.call_id.clone(),
++            environment_id: codex_exec_server::LOCAL_ENVIRONMENT_ID.to_string(),
++            command: vec!["npm".to_string(), "install".to_string()],
++            hook_command: "npm install".to_string(),
++            cwd: PathUri::from_abs_path(&AbsolutePathBuf::try_from(std::env::temp_dir())?),
++            sandbox_permissions: SandboxPermissions::RequireEscalated,
++            additional_permissions: None,
++            justification: None,
++            tty: false,
++            proposed_execpolicy_amendment: None,
++        };
++        Ok(Self {
++            session,
++            action,
++            context,
++            events,
++            hook_log,
++        })
++    }
++
++    /// Runs the approval to completion, failing if the reviewer is asked instead.
++    async fn resolve_without_reviewer(self) -> anyhow::Result<Result<ReviewDecision, ToolError>> {
++        let result = tokio::time::timeout(
++            std::time::Duration::from_secs(10),
++            self.session.request_approval(self.action, self.context),
++        )
++        .await?;
++        assert!(
++            self.hook_log.exists(),
++            "the PermissionRequest hook should run"
++        );
++        while let Ok(event) = self.events.try_recv() {
++            assert!(
++                !matches!(
++                    event.msg,
++                    codex_protocol::protocol::EventMsg::ExecApprovalRequest(_)
++                ),
++                "the reviewer should not be asked"
++            );
++        }
++        Ok(result)
++    }
++}
++
++#[tokio::test]
++#[serial_test::serial(frink_host_permissions)]
++async fn frink_capability_sends_a_hook_allow_to_the_reviewer() -> anyhow::Result<()> {
++    let _capability = FrinkCapability::set(/*enabled*/ true);
++    let approval = HookedApproval::new("frink", serde_json::json!({ "behavior": "allow" })).await?;
++    let request_approval = tokio::time::timeout(
++        std::time::Duration::from_secs(10),
++        approval
++            .session
++            .request_approval(approval.action, approval.context),
++    );
++    tokio::pin!(request_approval);
++    let request = loop {
++        tokio::select! {
++            biased;
++            result = &mut request_approval => {
++                panic!("expected the hook allow to reach the reviewer, got {result:?}")
++            }
++            event = approval.events.recv() => {
++                if let codex_protocol::protocol::EventMsg::ExecApprovalRequest(request) = event?.msg {
++                    break request;
++                }
++            }
++        }
++    };
++    assert!(
++        approval.hook_log.exists(),
++        "the PermissionRequest hook should still run"
++    );
++    approval
++        .session
++        .notify_approval(&request.call_id, ReviewDecision::denied("reviewer said no"))
++        .await;
++
++    assert!(matches!(
++        request_approval.await?,
++        Err(ToolError::Rejected(rejection)) if rejection == "reviewer said no"
++    ));
++    Ok(())
++}
++
++#[test_case::test_case("codex-tui", true; "another client")]
++#[test_case::test_case("frink", false; "capability not negotiated")]
++#[tokio::test]
++#[serial_test::serial(frink_host_permissions)]
++async fn frink_capability_inactive_keeps_hook_allow_as_the_approval(
++    client_name: &str,
++    capability_enabled: bool,
++) -> anyhow::Result<()> {
++    let _capability = FrinkCapability::set(capability_enabled);
++    let approval =
++        HookedApproval::new(client_name, serde_json::json!({ "behavior": "allow" })).await?;
++
++    assert!(matches!(
++        approval.resolve_without_reviewer().await?,
++        Ok(ReviewDecision::Approved)
++    ));
++    Ok(())
++}
++
++#[tokio::test]
++#[serial_test::serial(frink_host_permissions)]
++async fn frink_capability_keeps_a_hook_deny() -> anyhow::Result<()> {
++    let _capability = FrinkCapability::set(/*enabled*/ true);
++    let approval = HookedApproval::new(
++        "frink",
++        serde_json::json!({ "behavior": "deny", "message": "hook said no" }),
++    )
++    .await?;
++
++    assert!(matches!(
++        approval.resolve_without_reviewer().await?,
++        Err(ToolError::Rejected(rejection)) if rejection == "hook said no"
++    ));
++    Ok(())
++}
 diff --git a/codex-rs/core/src/tools/events.rs b/codex-rs/core/src/tools/events.rs
 index 8da8b0528..2ed63c1c8 100644
 --- a/codex-rs/core/src/tools/events.rs
