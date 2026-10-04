@@ -1,14 +1,21 @@
-import { useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, Platform, SectionList, View } from 'react-native';
-import { MessageSquare, SearchX } from 'lucide-react-native';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Platform,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  View,
+} from 'react-native';
+import { ChevronDown, ChevronRight, Folder, Plus, SearchX, SquarePen } from 'lucide-react-native';
 import type { MobileChatSummary } from '@frink/shared/types/remote/mobile';
 import { useConnection, useResource } from '../../lib/connection';
 import { useOverview } from '../../lib/overview';
 import { useWindow } from '../../lib/use-window';
 import { useRootNavigation } from '../../navigation/routes';
 import { useTabHeader } from '../../navigation/tab-header';
-import { Button } from '../../ui/button';
-import { EmptyState, RowSeparator, SectionHeader } from '../../ui/list';
+import { Button, IconButton } from '../../ui/button';
+import { EmptyState, ListGroup } from '../../ui/list';
 import { ResourceStatus } from '../../ui/resource-status';
 import { Screen } from '../../ui/screen';
 import { Text } from '../../ui/text';
@@ -16,7 +23,7 @@ import { GUTTER, space, useTheme } from '../../ui/theme';
 import { confirmChatDeletion } from '../Chat/confirm';
 import { NOT_READY } from '../NewChat/new-chat-options';
 import { ChatRow } from './chat-row';
-import { chatSections } from './chat-sections';
+import { chatSections, type ChatSection } from './chat-sections';
 import { tell } from '../../ui/tell';
 import { useDebounced } from './use-debounced';
 
@@ -39,11 +46,11 @@ function ChatList() {
   const { query, header } = useTabHeader({
     title: 'Chats',
     search: 'Search chats',
-    compose: true,
-    composeDisabled: !ready,
   });
   const search = useDebounced(query, 250);
   const page = useWindow(30);
+  // The page a scroll already asked to extend: scroll events outrun the render that loads the next.
+  const grown = useRef<unknown>(null);
   // A new search starts from its first page. Resetting during render (not in an effect) means the
   // first request for the new search already asks for that page.
   const [searched, setSearched] = useState(search);
@@ -56,6 +63,7 @@ function ChatList() {
     { keep: true },
   );
   const sections = useMemo(() => chatSections(chats.data?.items ?? []), [chats.data]);
+  const [collapsed, setCollapsed] = useState(new Set<string>());
   const { refresh } = chats;
 
   const open = useCallback(
@@ -88,15 +96,12 @@ function ChatList() {
       );
     return (
       <EmptyState
-        icon={MessageSquare}
         title="No chats yet"
         detail={
-          ready
-            ? 'Ask Frink to fix a bug, build a feature or look into a question.'
-            : NOT_READY
+          ready ? 'Ask Frink to fix a bug, build a feature or look into a question.' : NOT_READY
         }
         action={
-          <Button small disabled={!ready} onPress={() => root.navigate('NewChat')}>
+          <Button small disabled={!ready} onPress={() => root.navigate('Chat')}>
             Start a chat
           </Button>
         }
@@ -105,47 +110,150 @@ function ChatList() {
   }
 
   return (
-    <SectionList
-      sections={sections}
-      keyExtractor={(chat) => chat.id}
-      renderItem={({ item }) => (
-        <ChatRow chat={item} onOpen={open} onDelete={(chat) => void remove(chat)} />
-      )}
-      renderSectionHeader={({ section }) => <SectionHeader title={section.title} />}
-      ItemSeparatorComponent={RowSeparator}
-      stickySectionHeadersEnabled={false}
+    <ScrollView
       contentInsetAdjustmentBehavior="automatic"
       keyboardDismissMode="on-drag"
       keyboardShouldPersistTaps="handled"
-      refreshing={chats.refreshing}
-      onRefresh={chats.pull}
-      onEndReachedThreshold={0.6}
-      onEndReached={() => {
-        if (chats.data?.hasMore && !chats.stale && !page.atMax) page.more();
+      refreshControl={<RefreshControl refreshing={chats.refreshing} onRefresh={chats.pull} />}
+      scrollEventThrottle={100}
+      onScroll={({ nativeEvent: { contentOffset, contentSize, layoutMeasurement } }) => {
+        const nearEnd = contentOffset.y + layoutMeasurement.height * 1.6 >= contentSize.height;
+        const grow = nearEnd && chats.data?.hasMore && !chats.stale && !page.atMax;
+        if (!grow || grown.current === chats.data) return;
+        grown.current = chats.data;
+        page.more();
       }}
-      ListHeaderComponent={
-        <View testID="chats-header">
-          {header}
-          <ResourceStatus {...chats} />
-        </View>
-      }
-      ListEmptyComponent={empty()}
-      ListFooterComponent={
-        <View style={{ paddingTop: space.lg, paddingBottom: TAB_BAR_CLEARANCE }}>
-          {chats.stale && sections.length > 0 && (
-            <ActivityIndicator accessibilityLabel="Loading more chats" color={t.muted} />
+    >
+      <View testID="chats-header">
+        {header}
+        <ResourceStatus {...chats} />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="New chat"
+          accessibilityState={{ disabled: !ready }}
+          disabled={!ready}
+          onPress={() => root.navigate('Chat')}
+          style={({ pressed }) => ({
+            minHeight: 52,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: space.md,
+            paddingHorizontal: GUTTER,
+            marginTop: space.sm,
+            backgroundColor: pressed ? t.pressed : 'transparent',
+            opacity: ready ? 1 : 0.4,
+          })}
+        >
+          <SquarePen size={20} color={t.text} />
+          <Text variant="row">New chat</Text>
+        </Pressable>
+      </View>
+      {sections.map((section) => (
+        <View key={section.key}>
+          <ProjectHeader
+            section={section}
+            collapsed={collapsed.has(section.key)}
+            onToggle={() =>
+              setCollapsed((current) => {
+                const next = new Set(current);
+                if (next.has(section.key)) next.delete(section.key);
+                else next.add(section.key);
+                return next;
+              })
+            }
+            onCreate={
+              section.projectId
+                ? () => root.navigate('Chat', { projectId: section.projectId! })
+                : undefined
+            }
+            ready={ready}
+          />
+          {!collapsed.has(section.key) && (
+            <ListGroup>
+              {section.data.map((chat) => (
+                <ChatRow
+                  key={chat.id}
+                  chat={chat}
+                  onOpen={open}
+                  onDelete={(chat) => void remove(chat)}
+                />
+              ))}
+            </ListGroup>
           )}
-          {page.atMax && chats.data?.hasMore && (
-            <Text
-              variant="secondary"
-              color="muted"
-              style={{ paddingHorizontal: GUTTER, textAlign: 'center' }}
-            >
-              {`Showing your latest ${page.limit} chats.\nSearch to find older ones.`}
-            </Text>
-          )}
         </View>
-      }
-    />
+      ))}
+      {sections.length === 0 && empty()}
+      <View style={{ paddingTop: space.lg, paddingBottom: TAB_BAR_CLEARANCE }}>
+        {chats.stale && sections.length > 0 && (
+          <ActivityIndicator accessibilityLabel="Loading more chats" color={t.muted} />
+        )}
+        {page.atMax && chats.data?.hasMore && (
+          <Text
+            variant="secondary"
+            color="muted"
+            style={{ paddingHorizontal: GUTTER, textAlign: 'center' }}
+          >
+            {`Showing your latest ${page.limit} chats.\nSearch to find older ones.`}
+          </Text>
+        )}
+      </View>
+    </ScrollView>
+  );
+}
+
+function ProjectHeader({
+  section,
+  collapsed,
+  onToggle,
+  onCreate,
+  ready,
+}: {
+  section: ChatSection;
+  collapsed: boolean;
+  onToggle: () => void;
+  onCreate?: () => void;
+  ready: boolean;
+}) {
+  const t = useTheme();
+  const Chevron = collapsed ? ChevronRight : ChevronDown;
+  return (
+    <View
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: GUTTER,
+        paddingTop: space.xl,
+        paddingBottom: space.xs,
+        gap: space.sm,
+      }}
+    >
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`${section.title}, project`}
+        accessibilityState={{ expanded: !collapsed }}
+        onPress={onToggle}
+        style={{
+          flex: 1,
+          minHeight: 44,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: space.sm,
+        }}
+      >
+        <Folder size={18} color={t.muted} />
+        <Text variant="headline" numberOfLines={1} style={{ flexShrink: 1 }}>
+          {section.title}
+        </Text>
+        <Chevron size={16} color={t.muted} />
+      </Pressable>
+      {onCreate && (
+        <IconButton
+          icon={Plus}
+          label={`New chat in ${section.title}`}
+          onPress={onCreate}
+          disabled={!ready}
+        />
+      )}
+    </View>
   );
 }

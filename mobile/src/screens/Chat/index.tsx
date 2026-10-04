@@ -21,8 +21,10 @@ import { GlassSurface } from '../../ui/material';
 import { ResourceStatus } from '../../ui/resource-status';
 import { Screen } from '../../ui/screen';
 import { GUTTER, space, useTheme } from '../../ui/theme';
+import { NewChat } from '../NewChat';
 import { chatPollInterval, decisionStillOpen, showsComposer } from './chat-state';
 import { Composer, useComposerAttachments, useComposerState } from './Composer';
+import { useExecutionReady, useKeyboardShown } from './environment';
 import { SubChatTabs, useChatHeader } from './header';
 import { LatestChip, Transcript } from './transcript';
 import { useChatActions } from './use-chat-actions';
@@ -31,21 +33,6 @@ import { useTranscriptScroll } from './use-transcript-scroll';
 import { useTurnClock } from './use-turn-clock';
 
 const ios = Platform.OS === 'ios';
-
-/** The home-indicator gap only applies while the keyboard is down. */
-function useKeyboardShown() {
-  const [shown, setShown] = useState(false);
-  useEffect(() => {
-    if (!ios) return;
-    const show = Keyboard.addListener('keyboardWillShow', () => setShown(true));
-    const hide = Keyboard.addListener('keyboardWillHide', () => setShown(false));
-    return () => {
-      show.remove();
-      hide.remove();
-    };
-  }, []);
-  return shown;
-}
 
 /** Busy chats poll faster; the interval follows the last activity the computer reported. */
 function useChatResource(id: string, subChatId: string | undefined) {
@@ -57,15 +44,6 @@ function useChatResource(id: string, subChatId: string | undefined) {
   const latest = resource.data?.activity;
   useEffect(() => setActivity(latest), [latest]);
   return resource;
-}
-
-/** Only whether the Mac can run chats is needed here, so the overview's lists stay one row long. */
-function useExecutionReady() {
-  const overview = useResource(
-    { type: 'overview', limits: { attention: 1, running: 1, inbox: 1 } },
-    { interval: 10_000 },
-  );
-  return overview.data?.executionReady ?? true;
 }
 
 /**
@@ -302,17 +280,21 @@ function ChatView({
   );
 }
 
-/** A conversation pushed above the tabs: native header, transcript and floating composer. */
+/** A conversation pushed above the tabs: an existing chat, or a blank one when no chat is named. */
 export function ChatScreen() {
   const { params } = useRoute<RouteProp<RootRoutes, 'Chat'>>();
   return (
     <Screen atmosphere>
-      <ChatView
-        key={params.id}
-        id={params.id}
-        initialSubChatId={params.subChatId}
-        decisionTarget={params.decisionTarget}
-      />
+      {params?.id ? (
+        <ChatView
+          key={params.id}
+          id={params.id}
+          initialSubChatId={params.subChatId}
+          decisionTarget={params.decisionTarget}
+        />
+      ) : (
+        <NewChat requestedProjectId={params?.projectId} />
+      )}
     </Screen>
   );
 }

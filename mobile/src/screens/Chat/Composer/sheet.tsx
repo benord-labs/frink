@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Text } from '../../../ui/text';
 import { GUTTER, radius, space, useTheme } from '../../../ui/theme';
 
-/** A native page sheet for one composer choice: centred title, Done, and flat grouped rows. */
+/** A native page sheet for one composer choice: title, Done, and flat grouped rows. */
 export function Sheet({
   title,
   onClose,
@@ -22,13 +22,15 @@ export function Sheet({
       <View style={{ flex: 1, backgroundColor: t.popover }}>
         <View
           style={{
-            height: 58,
+            minHeight: 58,
+            paddingVertical: space.md,
+            paddingHorizontal: GUTTER,
             flexDirection: 'row',
             alignItems: 'center',
-            justifyContent: 'center',
+            gap: space.md,
           }}
         >
-          <Text accessibilityRole="header" variant="headline">
+          <Text accessibilityRole="header" variant="headline" style={{ flex: 1 }}>
             {title}
           </Text>
           <Pressable
@@ -37,8 +39,8 @@ export function Sheet({
             onPress={onClose}
             hitSlop={10}
             style={({ pressed }) => ({
-              position: 'absolute',
-              right: GUTTER,
+              minHeight: 44,
+              justifyContent: 'center',
               opacity: pressed ? 0.6 : 1,
             })}
           >
@@ -90,8 +92,9 @@ export function SheetSection({
 
 const ICON_TILE = 32;
 
-function IconTile({ icon: Icon, active }: { icon: LucideIcon; active: boolean }) {
+function IconTile({ icon: Icon, active }: { icon?: LucideIcon; active: boolean }) {
   const t = useTheme();
+  if (!Icon) return null;
   return (
     <View
       style={{
@@ -121,7 +124,7 @@ function Separator() {
   );
 }
 
-/** One pickable row: tile, name over a one-line explanation, and a check when chosen. */
+/** One pickable row: an optional tile, name over a one-line explanation, and a check when chosen. */
 export function OptionRow({
   icon,
   title,
@@ -131,7 +134,7 @@ export function OptionRow({
   separator = false,
   onPress,
 }: {
-  icon: LucideIcon;
+  icon?: LucideIcon;
   title: string;
   subtitle?: string;
   selected?: boolean;

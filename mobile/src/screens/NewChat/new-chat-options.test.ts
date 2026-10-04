@@ -1,11 +1,27 @@
 import { describe, expect, it } from 'vitest';
-import { chosenProject, filterProjects } from './new-chat-options';
+import { chosenProject, creationChoiceChanged, filterProjects } from './new-chat-options';
 
 const projects = [
   { id: 'a', name: 'frink', lastActiveAt: null },
   { id: 'b', name: 'Marketing-Site', lastActiveAt: null },
   { id: 'c', name: 'billing-api', lastActiveAt: null },
 ];
+
+describe('creation choice ownership', () => {
+  const choice = { projectId: 'a', useWorktree: true, mode: 'agent' as const };
+  it('retires an unpublished agent creation when Plan is picked', () => {
+    expect(creationChoiceChanged(choice, { ...choice, mode: 'plan' }, false)).toBe(true);
+  });
+  it('keeps a published chat whose mode can be changed in place', () => {
+    expect(creationChoiceChanged(choice, { ...choice, mode: 'plan' }, true)).toBe(false);
+  });
+  it.each([
+    { ...choice, projectId: 'b' },
+    { ...choice, useWorktree: false },
+  ])('retires even a published chat when its project or work location changes', (next) =>
+    expect(creationChoiceChanged(choice, next, true)).toBe(true),
+  );
+});
 
 describe('filterProjects', () => {
   it('matches names case-insensitively and keeps the order', () => {

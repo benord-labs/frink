@@ -28,6 +28,8 @@ export function useComposerState(chatId: string, subChatId: string | undefined) 
   const [error, setError] = useState<string | null>(null);
   const queue = useRef<Promise<void>>(Promise.resolve());
   const inFlight = useRef(0);
+  // Whether the latest answered change for this conversation was refused.
+  const failed = useRef(false);
   // Bumped per conversation, so a late answer for the previous one can't show on this one.
   const generation = useRef(0);
   const refresh = resource.refresh;
@@ -39,6 +41,7 @@ export function useComposerState(chatId: string, subChatId: string | undefined) 
   useEffect(() => {
     generation.current += 1;
     inFlight.current = 0;
+    failed.current = false;
     setOptimistic(null);
     setError(null);
   }, [chatId, subChatId]);
@@ -57,10 +60,12 @@ export function useComposerState(chatId: string, subChatId: string | undefined) 
         const current = () => generation.current === mine;
         try {
           const saved = await request({ ...next, chatId, subChatId });
+          if (current()) failed.current = false;
           // Only the last answer may settle the view; an earlier one would hide later taps.
           if (current() && inFlight.current === 1) setOptimistic(saved);
         } catch (failure) {
           if (!current()) return;
+          failed.current = true;
           setError(failure instanceof Error ? failure.message : 'Could not save the change.');
           setOptimistic(null);
         } finally {
@@ -74,5 +79,12 @@ export function useComposerState(chatId: string, subChatId: string | undefined) 
     [base, chatId, subChatId, request, refresh],
   );
 
-  return { composer: optimistic ?? base, change, error };
+  /** Once every change, including any made while waiting, is answered: whether the last one took. */
+  const settled = useCallback(async () => {
+    let seen: Promise<void>;
+    do await (seen = queue.current);
+    while (seen !== queue.current);
+    return !failed.current;
+  }, []);
+  return { composer: optimistic ?? base, change, error, settled };
 }

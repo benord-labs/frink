@@ -33,7 +33,7 @@ export function useTabHeader({
   const navigation = useNavigation();
   const root = useRootNavigation();
   const [query, setQuery] = useState('');
-  const newChat = () => root.navigate('NewChat');
+  const newChat = () => root.navigate('Chat');
   useLayoutEffect(() => {
     if (!native) return;
     navigation.setOptions({

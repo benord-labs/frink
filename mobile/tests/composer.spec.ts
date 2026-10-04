@@ -3,9 +3,10 @@ import { openApp } from './fixtures/app';
 import { conversation, messageBox, openChat, requestsOf } from './fixtures/chat';
 import { composerFixture } from './fixtures/data';
 
-/** Opens the Model sheet and waits for its slide-up to settle, so clicks and screenshots are stable. */
+/** Opens the model's full settings from its menu and waits for the slide-up to settle. */
 async function openModelSheet(page: import('@playwright/test').Page, label: string) {
   await page.getByRole('button', { name: `Model: ${label}`, exact: true }).click();
+  await page.getByRole('radio', { name: 'More settings…', exact: true }).click();
   const done = page.getByRole('button', { name: 'Done', exact: true });
   await expect
     .poll(async () => {
@@ -16,17 +17,17 @@ async function openModelSheet(page: import('@playwright/test').Page, label: stri
     .toBe(true);
 }
 
-test('two chips carry the composer; every model setting is saved from its sheet', async ({
+test('the model and mode are menus on the composer; rarer settings are saved from the sheet', async ({
   page,
 }) => {
   const state = await openApp(page, { data: { chat: conversation() } });
   await openChat(page);
   await expect(page.getByRole('button', { name: 'Mode: Agent', exact: true })).toBeVisible();
-  // No toggles beside the box: Auto, Thinking and the account live in the Model sheet.
+  // No toggles beside the box: Auto, Thinking and the account live in the model's settings.
   await expect(page.getByRole('switch')).toHaveCount(0);
   await page.screenshot({ path: 'test-results/composer-idle-dark.png' });
 
-  await openModelSheet(page, 'Sonnet · Thinking');
+  await openModelSheet(page, 'Sonnet');
   await expect(page.getByRole('radio', { name: 'Sonnet', exact: true })).toHaveAttribute(
     'aria-checked',
     'true',
@@ -57,7 +58,7 @@ test('two chips carry the composer; every model setting is saved from its sheet'
   await page.getByRole('button', { name: 'Done', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Model: Opus 4.8', exact: true })).toBeVisible();
 
-  // Mode closes its sheet on pick.
+  // A menu closes on pick.
   await page.getByRole('button', { name: 'Mode: Agent', exact: true }).click();
   await page.getByRole('radio', { name: 'Plan', exact: true }).click();
   await expect.poll(() => requestsOf(state, 'setMode').at(-1)).toMatchObject({ mode: 'plan' });
@@ -101,7 +102,7 @@ test('a Codex chat runs Fast or Ultrafast, never both, and each shows its credit
 
   await page.getByRole('button', { name: 'Done', exact: true }).click();
   await expect(
-    page.getByRole('button', { name: 'Model: GPT-6 Astra · Ultrafast', exact: true }),
+    page.getByRole('button', { name: 'Model: GPT-6 Astra', exact: true }),
   ).toBeVisible();
 });
 
@@ -116,7 +117,7 @@ test('quick taps on several switches are all saved, in order, while the computer
       await new Promise((resolve) => setTimeout(resolve, 400));
     await route.fallback();
   });
-  await openModelSheet(page, 'Sonnet · Thinking');
+  await openModelSheet(page, 'Sonnet');
   await page.getByRole('switch', { name: 'Auto Mode', exact: true }).click();
   await page.getByRole('switch', { name: 'Thinking', exact: true }).click();
   await expect
