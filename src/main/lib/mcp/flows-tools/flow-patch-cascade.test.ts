@@ -228,6 +228,130 @@ describe('applyPatchOperations — add_node parent ownership', () => {
   });
 });
 
+describe('applyPatchOperations — a Fan Out inside another Fan Out', () => {
+  /** FAN_OUT_GRAPH plus a second Fan Out owned by the first, which itself owns a step. */
+  const NESTED_GRAPH: FlowGraph = {
+    nodes: [
+      ...FAN_OUT_GRAPH.nodes,
+      { id: 'inner', blockType: 'fan_out', parentId: 'fan' },
+      { id: 'leaf', blockType: 'agent', parentId: 'inner', config: { instructions: 'x' } },
+    ],
+    edges: FAN_OUT_GRAPH.edges,
+  };
+
+  it('fails only the nested add_node, so the orphaning removal can never be reached', () => {
+    const r = applyPatchOperations(BASE_GRAPH, [
+      { op: 'add_node', node: { id: 'outer', blockType: 'fan_out' } },
+      { op: 'add_node', node: { id: 'inner', blockType: 'fan_out', parentId: 'outer' } },
+      { op: 'add_node', node: { id: 'leaf', blockType: 'agent', parentId: 'inner' } },
+      { op: 'update_settings', settings: { briefing: 'still saved' } },
+    ]);
+
+    expect(r.status).toBe('partial');
+    if (r.status !== 'partial') return;
+    expect(r.applied).toEqual([0, 3]);
+    const nested = r.failed.find((f) => f.index === 1);
+    expect(nested?.error).toMatch(/Fan Out 'inner' cannot sit inside another Fan Out/);
+    expect(nested?.code).toBeUndefined();
+    expect(r.failed.find((f) => f.index === 2)?.code).toBe('stale-parent');
+    expect(r.graph.nodes.map((n) => n.id)).not.toContain('inner');
+  });
+
+  it('fails an update_node that would move a Fan Out into another, naming that Fan Out', () => {
+    const twoFanOuts: FlowGraph = {
+      nodes: [
+        ...FAN_OUT_GRAPH.nodes,
+        { id: 'other', blockType: 'fan_out' },
+        { id: 'leaf', blockType: 'agent', parentId: 'other', config: { instructions: 'x' } },
+      ],
+      edges: FAN_OUT_GRAPH.edges,
+    };
+    const r = applyPatchOperations(twoFanOuts, [
+      { op: 'update_node', nodeId: 'other', parentId: 'fan' },
+      { op: 'update_settings', settings: { briefing: 'still saved' } },
+    ]);
+
+    expect(r.status).toBe('partial');
+    if (r.status !== 'partial') return;
+    expect(r.applied).toEqual([1]);
+    expect(r.failed[0]?.error).toMatch(/Fan Out 'other' cannot sit inside another Fan Out/);
+    expect(r.graph.nodes.find((n) => n.id === 'other')?.parentId).toBeUndefined();
+  });
+
+  it.each([
+    ['a container that does not exist', 'missing'],
+    ['itself', 'inner'],
+  ])('explains the nesting, not a missing container, when a new Fan Out names %s', (_l, parentId) => {
+    const r = applyPatchOperations(BASE_GRAPH, [
+      { op: 'add_node', node: { id: 'inner', blockType: 'fan_out', parentId } },
+      { op: 'update_settings', settings: { briefing: 'still saved' } },
+    ]);
+
+    expect(r.status).toBe('partial');
+    if (r.status !== 'partial') return;
+    expect(r.failed).toHaveLength(1);
+    expect(r.failed[0]?.error).toMatch(/Fan Out 'inner' cannot sit inside another Fan Out/);
+    expect(r.failed[0]?.code).toBeUndefined();
+  });
+
+  it('saves nothing when a nested Fan Out is the only operation', () => {
+    const r = applyPatchOperations(FAN_OUT_GRAPH, [
+      { op: 'add_node', node: { id: 'inner', blockType: 'fan_out', parentId: 'fan' } },
+    ]);
+
+    expect(r.status).toBe('failure');
+    if (r.status !== 'failure') return;
+    expect(r.error).toMatch(/Fan Out 'inner' cannot sit inside another Fan Out/);
+  });
+
+  it('fails an update_node that would make a Fan Out its own container', () => {
+    const r = applyPatchOperations(FAN_OUT_GRAPH, [
+      { op: 'update_node', nodeId: 'fan', parentId: 'fan' },
+      { op: 'update_settings', settings: { briefing: 'still saved' } },
+    ]);
+
+    expect(r.status).toBe('partial');
+    if (r.status !== 'partial') return;
+    expect(r.failed[0]?.error).toMatch(/Fan Out 'fan' cannot sit inside another Fan Out/);
+    expect(r.graph.nodes.find((n) => n.id === 'fan')?.parentId).toBeUndefined();
+  });
+
+  it('still lets an ordinary step move from one Fan Out to another', () => {
+    const twoFanOuts: FlowGraph = {
+      nodes: [...FAN_OUT_GRAPH.nodes, { id: 'other', blockType: 'fan_out' }],
+      edges: FAN_OUT_GRAPH.edges,
+    };
+    const r = applyPatchOperations(twoFanOuts, [
+      { op: 'remove_edge', edgeId: 'e-body' },
+      { op: 'update_node', nodeId: 'body', parentId: 'other' },
+      { op: 'update_node', nodeId: 'other', label: 'Renamed container' },
+    ]);
+
+    expect(r.status).toBe('success');
+    if (r.status !== 'success') return;
+    expect(r.graph.nodes.find((n) => n.id === 'body')?.parentId).toBe('other');
+  });
+
+  it('rejects any patch to a graph that already nests, until the inner Fan Out is repaired', () => {
+    const r = applyPatchOperations(NESTED_GRAPH, [
+      { op: 'update_settings', settings: { briefing: 'unrelated' } },
+    ]);
+
+    expect(r.status).toBe('failure');
+    if (r.status !== 'failure') return;
+    expect(r.error).toMatch(/\(id "inner"\) cannot sit inside another Fan Out/);
+  });
+
+  it.each([
+    ['removing the inner Fan Out', { op: 'remove_node', nodeId: 'inner' }],
+    ['clearing its parentId', { op: 'update_node', nodeId: 'inner', parentId: null }],
+  ] as const)('repairs an already nested graph by %s', (_label, op) => {
+    const r = applyPatchOperations(NESTED_GRAPH, [op]);
+
+    expect(r.status).toBe('success');
+  });
+});
+
 describe('applyPatchOperations — implicit edge removal (remove_node cascade)', () => {
   it('treats a later remove_edge of a cascade-removed edge as satisfied', () => {
     const r = applyPatchOperations(BASE_GRAPH, [

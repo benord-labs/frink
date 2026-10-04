@@ -31,6 +31,21 @@ describe('describeFlowRunBlockers', () => {
     installed({});
   });
 
+  it('blocks the run for a saved draft that has a Fan Out inside another Fan Out', () => {
+    const graph = {
+      nodes: [
+        { id: 't', blockType: 'manual_trigger' },
+        { id: 'outer', blockType: 'fan_out' },
+        { id: 'inner', blockType: 'fan_out', parentId: 'outer' },
+      ],
+      edges: [{ id: 'e', source: 't', target: 'outer' }],
+    } as FlowGraph;
+
+    expect(describeFlowRunBlockers(graph)).toContain(
+      '(id "inner") cannot sit inside another Fan Out',
+    );
+  });
+
   it('returns null for a flow whose custom node declares no inputs', () => {
     expect(describeFlowRunBlockers(graphWith({}))).toBeNull();
   });
