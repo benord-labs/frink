@@ -47,10 +47,10 @@ import {
 } from './permissions';
 import { buildSpawnArgs } from './spawn-args';
 import {
-  MESSAGE_PROVENANCE_RULE,
   codexMessageContext,
   type MessageProvenance,
 } from '../../../../shared/lib/message-markers/message-provenance';
+import * as provenanceRule from './provenance-rule';
 
 /**
  * Approval policy that makes the server ask the host on each privileged action.
@@ -82,13 +82,6 @@ const STREAM_METHODS = [
 ] as const;
 
 const resumableThreadsByClient = new WeakMap<CodexAppServerClient, Set<string>>();
-/** Threads that already carry MESSAGE_PROVENANCE_RULE; any other thread gets it with its tag. */
-const ruledThreads = new WeakMap<CodexAppServerClient, Set<string>>();
-function markRuled(client: CodexAppServerClient, threadId: string): void {
-  const ruled = ruledThreads.get(client) ?? new Set<string>();
-  ruledThreads.set(client, ruled.add(threadId));
-}
-
 export type CodexRunnerParams = {
   messageProvenance?: MessageProvenance;
   prompt: string;
@@ -154,10 +147,13 @@ function registerStreamHandlers(
   onChunk: (chunk: UIMessageChunk) => void,
   fileChangeCache: Map<string, FileChange[]>,
   commandOutputs: CodexCommandOutputs,
+  onCompaction: () => void,
 ): void {
   for (const method of STREAM_METHODS) {
     sub.onNotification(method, (raw) => {
       traceNotification(method, raw);
+      if (method === 'item/completed' && provenanceRule.compaction.safeParse(raw).success)
+        onCompaction();
       // Before the chunks, so the command's card already has output to read when it mounts.
       recordCodexCommandOutput(commandOutputs, method, raw);
       // Cache the per-file paths off the fileChange item so the matching approval
@@ -206,13 +202,14 @@ async function startFreshThread(
   params: CodexRunnerParams,
 ): Promise<string> {
   const { cwd, model } = params;
+  const developerInstructions = await provenanceRule.developerInstructions(client, params);
   const started = await client.sendRequest<ThreadStartResponse>('thread/start', {
     cwd,
     ...(model && { model }),
     // Keep Frink's threads in memory only: a durable thread writes a rollout + state row into
     // ~/.codex, which the user's own Codex app lists as one of their chats.
     ephemeral: true,
-    ...(params.messageProvenance && { developerInstructions: MESSAGE_PROVENANCE_RULE }),
+    ...(developerInstructions && { developerInstructions }),
     approvalPolicy: CODEX_APPROVAL_POLICY,
     sandbox: CODEX_SANDBOX_MODE,
     approvalsReviewer: params.autoReview ? CODEX_AUTO_REVIEWER : CODEX_USER_REVIEWER,
@@ -220,7 +217,7 @@ async function startFreshThread(
   });
   const threadId = started.thread?.id;
   if (!threadId) throw new Error('Codex did not return a thread id');
-  if (params.messageProvenance) markRuled(client, threadId);
+  if (developerInstructions) provenanceRule.markDurable(client, threadId);
   return threadId;
 }
 
@@ -232,12 +229,12 @@ async function startTurn(
   prompt: string,
 ): Promise<string> {
   const { model, effort, serviceTier } = params;
-  const needsRule = Boolean(params.messageProvenance) && !ruledThreads.get(client)?.has(threadId);
+  const rule = provenanceRule.beginTurn(client, threadId, Boolean(params.messageProvenance));
   const turn = await client.sendRequest<TurnStartResponse>('turn/start', {
     threadId,
     input: [{ type: 'text', text: prompt }],
     ...(params.messageProvenance && {
-      additionalContext: codexMessageContext(params.messageProvenance, needsRule),
+      additionalContext: codexMessageContext(params.messageProvenance, rule.carriesRule),
     }),
     ...(model && { model }),
     // effort + serviceTier live on TurnStartParams, not on thread/start|resume (v2 protocol).
@@ -256,8 +253,8 @@ async function startTurn(
   recordCodexTurnStart();
   const turnId = turn.turn?.id;
   if (!turnId) throw new Error('Codex did not return a turn id');
-  // Latch only once the turn that carried the rule really started, so a failed start retries it.
-  if (needsRule) markRuled(client, threadId);
+  // Settled only once the turn really started, so a failed start retries the rule.
+  rule.settle();
   return turnId;
 }
 
@@ -292,7 +289,7 @@ async function openTurn(
   // sub-chat. A count, not a flag: a command and a file-change approval can be open at once, and
   // the first answer must not unpark the turn while the other still waits on a human.
   let openApprovals = 0;
-  const register = (s: CodexThreadSubscription) => {
+  const register = (s: CodexThreadSubscription, threadId: string) => {
     // Wrapped so the steer gate can see a turn parked on a human decision: codex approvals never
     // reach Claude's pendingToolApprovals, so without this the gate would have nothing to read.
     const gatedCheckApproval: CodexApprovalCheck = async (request) => {
@@ -310,11 +307,12 @@ async function openTurn(
       makeChunkSink(queue, openTextIds, thinking),
       fileChangeCache,
       commandOutputs,
+      () => provenanceRule.forgetOnCompaction(client, threadId),
     );
   };
   const openOn = async (threadId: string, prompt: string) => {
     const sub = client.forThread(threadId);
-    register(sub);
+    register(sub, threadId);
     sub.expectTurnStart();
     try {
       const turnId = await startTurn(client, params, threadId, prompt);

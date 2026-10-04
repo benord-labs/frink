@@ -220,7 +220,8 @@ function registerDisarmedTests({
 }
 
 function deliveredRecord(call: ClaudeQueryInput): MessageProvenance | undefined {
-  const match = firedReminders.get(call)?.match(/<frink_message>(.*?)<\/frink_message>/s);
+  // Greedy lead-in: the record is the last element, and a rule before it names the tag in prose.
+  const match = firedReminders.get(call)?.match(/.*<frink_message>(.*?)<\/frink_message>/s);
   return match ? JSON.parse(match[1]!) : undefined;
 }
 
@@ -247,12 +248,27 @@ function registerHumanMarkTests({
         signal_cleared: true,
       },
     });
+    expect(firedReminders.get(call)).not.toContain(MESSAGE_PROVENANCE_RULE);
     expect(call.options.systemPrompt.append).toContain(MESSAGE_PROVENANCE_RULE);
     expect(resumeParkedTaskInPlace).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'flow-step-task' }),
       'follow_up_message',
       basePayload.subChatId,
     );
+  });
+
+  it('defines the record through the hook on a resumed session, whose recorded prompt may predate the Flow', async () => {
+    mockParkedPartialFlowStep('sess-resumed');
+    await handleRemoteExecute({
+      ...basePayload,
+      sessionId: 'sess-pre-flow',
+      message: 'I edited the ticket',
+      delivery: { messageOrigin: { source: 'person', kind: 'message' } },
+    });
+    const call = claudeQueryMock.mock.calls[0][0];
+    expect(call.options.resume).toBe('sess-pre-flow');
+    expect(firedReminders.get(call)).toContain(MESSAGE_PROVENANCE_RULE);
+    expect(deliveredRecord(call)).toMatchObject({ source: 'person', kind: 'message' });
   });
 
   it('does not claim signal clearing when resume did not apply', async () => {

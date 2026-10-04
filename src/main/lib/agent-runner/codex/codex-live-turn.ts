@@ -6,6 +6,7 @@ import type { CodexAppServerClient } from './app-server-client';
 import { randomUUID } from 'node:crypto';
 import { codexMessageContext } from '../../../../shared/lib/message-markers/message-provenance';
 import type { CodexCommandOutputs } from './command-output';
+import * as provenanceRule from './provenance-rule';
 
 /**
  * The live Codex turn for one sub-chat, published so a STEER can reach it.
@@ -114,6 +115,7 @@ export async function steerCodexTurn(subChatId: string, text: string): Promise<C
       }),
     });
     steerSupport.set(live.client, true);
+    provenanceRule.recordSteer(live.client, live.threadId);
     return 'delivered';
   } catch (err) {
     if (isMethodNotFound(err)) {

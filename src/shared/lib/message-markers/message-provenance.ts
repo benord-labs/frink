@@ -23,7 +23,7 @@ export function boundStepName(name: string): string {
 }
 
 /** Keep user-authored titles inside the JSON value, never in the surrounding element. */
-export function serializeMessageProvenance(record: MessageProvenance): string {
+function serializeMessageProvenance(record: MessageProvenance): string {
   const bounded = record.step?.name
     ? { ...record, step: { ...record.step, name: boundStepName(record.step.name) } }
     : record;

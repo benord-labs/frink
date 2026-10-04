@@ -144,6 +144,27 @@ const turnStartParams = z.object({
   additionalContext: z.record(z.string(), z.object({ value: z.string() })).optional(),
 });
 
+/** Run one tagged turn to completion and return the native context its turn/start carried. */
+async function taggedTurnOn(
+  fake: ReturnType<typeof makeFakeClient>,
+  resumeThreadId: string | undefined,
+  deliveryId: string,
+  compacts = false,
+) {
+  const gen = runCodexAgent(
+    params({
+      resumeThreadId,
+      messageProvenance: { v: 1, delivery_id: deliveryId, source: 'flow', kind: 'message' },
+    }),
+  );
+  await gen.next();
+  await gen.next();
+  if (compacts) fake.fire('item/completed', { item: { type: 'contextCompaction', id: 'c1' } });
+  fake.fire('turn/completed', { turn: { status: 'completed' } });
+  await drain(gen);
+  return turnStartContexts(fake).at(-1);
+}
+
 /** The native context each turn/start carried, oldest first. */
 function turnStartContexts(fake: ReturnType<typeof makeFakeClient>) {
   return fake.sent
@@ -154,6 +175,7 @@ function turnStartContexts(fake: ReturnType<typeof makeFakeClient>) {
 /** Fake client wired into the registry mock; standard thread/start + turn/start responses by default. */
 function startedFakeClient(
   responses: Parameters<typeof makeFakeClient>[0] = {
+    'config/read': { config: {} },
     'thread/start': { thread: { id: 'th1' } },
     'turn/start': { turn: { id: 'tn1' } },
   },
@@ -280,25 +302,97 @@ describe('runCodexAgent', () => {
       'turn/start': () => ({ turn: { id: `tn${++turnNumber}` } }),
     });
     await primeThread(fake);
-    const taggedTurn = async (deliveryId: string) => {
-      const gen = runCodexAgent(
-        params({
-          resumeThreadId: 'old-thread',
-          messageProvenance: { v: 1, delivery_id: deliveryId, source: 'flow', kind: 'message' },
-        }),
-      );
-      await gen.next();
-      await gen.next();
-      fake.fire('turn/completed', { turn: { status: 'completed' } });
-      await drain(gen);
-      return turnStartContexts(fake).at(-1);
-    };
+    const taggedTurn = (deliveryId: string) => taggedTurnOn(fake, 'old-thread', deliveryId);
     const first = await taggedTurn('d-1');
     expect(first?.frink_message_rule?.value).toBe(MESSAGE_PROVENANCE_RULE);
     expect(first?.frink_message?.value).toContain('"delivery_id":"d-1"');
     const second = await taggedTurn('d-2');
     expect(second?.frink_message_rule).toBeUndefined();
     expect(second?.frink_message?.value).toContain('"delivery_id":"d-2"');
+  });
+
+  it('restates the rule after a compaction dropped it from an adopted thread', async () => {
+    let turnNumber = 0;
+    const fake = startedFakeClient({
+      'thread/start': { thread: { id: 'old-thread' } },
+      'turn/start': () => ({ turn: { id: `tn${++turnNumber}` } }),
+    });
+    await primeThread(fake);
+    const ruled = async (deliveryId: string, compacts = false) =>
+      (await taggedTurnOn(fake, 'old-thread', deliveryId, compacts))?.frink_message_rule !==
+      undefined;
+    expect(await ruled('d-1')).toBe(true);
+    expect(await ruled('d-2', true)).toBe(false);
+    expect(await ruled('d-3')).toBe(true);
+    expect(await ruled('d-4')).toBe(false);
+  });
+
+  it('waits one turn to restate the rule when Codex still retains the dropped copy', async () => {
+    let turnNumber = 0;
+    const fake = startedFakeClient({
+      'thread/start': { thread: { id: 'old-thread' } },
+      'turn/start': () => ({ turn: { id: `tn${++turnNumber}` } }),
+    });
+    await primeThread(fake);
+    const ruled = async (deliveryId: string, compacts = false) =>
+      (await taggedTurnOn(fake, 'old-thread', deliveryId, compacts))?.frink_message_rule !==
+      undefined;
+    // Compacted in the very turn that carried the rule: an identical entry would be deduplicated.
+    expect(await ruled('d-1', true)).toBe(true);
+    expect(await ruled('d-2')).toBe(false);
+    expect(await ruled('d-3')).toBe(true);
+  });
+
+  it('restates the rule when the compaction lands while the turn carrying it is still starting', async () => {
+    let turnNumber = 0;
+    const fake = startedFakeClient({
+      'thread/start': { thread: { id: 'old-thread' } },
+      'turn/start': () => {
+        // Only the first tagged turn compacts, before Codex has answered its turn/start.
+        if (turnNumber === 1) {
+          fake.fire('item/completed', { item: { type: 'contextCompaction', id: 'c1' } });
+        }
+        return { turn: { id: `tn${++turnNumber}` } };
+      },
+    });
+    await primeThread(fake);
+    const ruled = async (deliveryId: string) =>
+      (await taggedTurnOn(fake, 'old-thread', deliveryId))?.frink_message_rule !== undefined;
+    expect([await ruled('d-1'), await ruled('d-2'), await ruled('d-3')]).toEqual([
+      true,
+      false,
+      true,
+    ]);
+  });
+
+  it('keeps the configured developer instructions on a fresh Flow thread and adds the rule', async () => {
+    const fake = startedFakeClient({
+      'config/read': { config: { developer_instructions: ' Use tabs. ' } },
+      'thread/start': { thread: { id: 'th1' } },
+      'turn/start': { turn: { id: 'tn1' } },
+    });
+    expect((await taggedTurnOn(fake, undefined, 'd-1', true))?.frink_message_rule).toBeUndefined();
+    expect(fake.sent.find((s) => s.method === 'config/read')?.params).toEqual({ cwd: '/repo' });
+    expect(fake.sent.find((s) => s.method === 'thread/start')?.params).toMatchObject({
+      developerInstructions: `Use tabs.\n\n${MESSAGE_PROVENANCE_RULE}`,
+    });
+    // Developer instructions survive compaction, so the next turn does not restate the rule.
+    expect((await taggedTurnOn(fake, 'th1', 'd-2'))?.frink_message_rule).toBeUndefined();
+  });
+
+  it('sends the rule with the first record when the configured instructions cannot be read', async () => {
+    const fake = startedFakeClient({
+      'config/read': () => {
+        throw new Error('method not found');
+      },
+      'thread/start': { thread: { id: 'th1' } },
+      'turn/start': { turn: { id: 'tn1' } },
+    });
+    const first = await taggedTurnOn(fake, undefined, 'd-1');
+    expect(first?.frink_message_rule?.value).toBe(MESSAGE_PROVENANCE_RULE);
+    expect(fake.sent.find((s) => s.method === 'thread/start')?.params).not.toHaveProperty(
+      'developerInstructions',
+    );
   });
 
   it('sends the rule again when the turn that first carried it never started', async () => {

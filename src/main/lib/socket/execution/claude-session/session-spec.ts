@@ -423,7 +423,9 @@ export function spawnClaudeSession(
       ref: spawned,
     },
   );
-  // A session spawned before its chat's Flow began lacks the rule; the hook then sends it once.
-  session.provenanceRuleKnown = options.systemPrompt.append.includes(MESSAGE_PROVENANCE_RULE);
+  // A resumed session keeps the prompt recorded on its first request, so only a fresh one is known
+  // to hold the rule; for any other the hook sends it once.
+  session.provenanceRuleKnown =
+    !options.resume && options.systemPrompt.append.includes(MESSAGE_PROVENANCE_RULE);
   return session;
 }
