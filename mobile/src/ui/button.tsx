@@ -70,7 +70,10 @@ export function Button({
       ) : (
         Icon && <Icon size={small ? 16 : 18} color={fg} strokeWidth={2.2} />
       )}
-      <Text variant={small ? 'secondary' : 'headline'} style={{ color: fg, fontWeight: '600' }}>
+      <Text
+        variant={small ? 'secondary' : 'headline'}
+        style={{ color: fg, fontWeight: '600', flexShrink: 1, textAlign: 'center' }}
+      >
         {children}
       </Text>
     </Pressable>

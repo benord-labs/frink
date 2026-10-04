@@ -103,7 +103,6 @@ export function Onboarding({ link, onDone }: { link: string | null; onDone: () =
       >
         <ScrollView
           keyboardShouldPersistTaps="handled"
-          automaticallyAdjustKeyboardInsets
           contentContainerStyle={{
             flexGrow: 1,
             width: '100%',
