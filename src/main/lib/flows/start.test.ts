@@ -144,6 +144,7 @@ describe('startFlowRun — trigger selection is position-independent', () => {
       idempotencyKey: 'queued-key',
       batchId: 'batch-1',
       batchStageRunId: 'bsr-1',
+      batchStageId: null,
     });
     expect(mocks.emitRunStarted).not.toHaveBeenCalled();
   });

@@ -22,6 +22,15 @@ export class StageAtConcurrencyLimitError extends Error {
   }
 }
 
+/** Thrown inside the admission transaction when a member was reassigned to another stage after the
+ * dispatcher read it; the dispatcher leaves it `pending` for its new stage instead of failing it. */
+export class StageRunMovedError extends Error {
+  constructor(batchStageRunId: string, expectedStageId: string) {
+    super(`Batch stage run ${batchStageRunId} is no longer in stage ${expectedStageId}`);
+    this.name = 'StageRunMovedError';
+  }
+}
+
 /** The stage ceiling a member's own pinned flow version declares; null for a run outside a batch. */
 export function stageConcurrencyLimit(
   db: Db,

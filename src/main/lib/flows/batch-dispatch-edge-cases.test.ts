@@ -21,7 +21,9 @@ import { listRunsForStage } from '../db/repos/batch-stage-runs';
 import { getBatchStage, settleStageIfQuiescent } from '../db/repos/batch-stages';
 import { batchStageRuns, batchStages, flowRuns } from '../db/schema';
 import { freshDb, type TestDb } from '../db/test-utils/fresh-db';
+import { StageRunMovedError } from './admission/batch-promotion';
 import { onBatchRunTerminal, recoverBatchStages, startFlowBatchLocal } from './batch-dispatch';
+import { reassignStageRunLocal } from './batch-mutations';
 import {
   makeStartFlowRunMock,
   runId,
@@ -560,5 +562,284 @@ describe('stages defined after the batch started (cross-call dependsOn)', () => 
         { id: s2?.id, stageNumber: 2, name: null, runCount: 1, dependsOnStageNumbers: [1] },
       ],
     });
+  });
+});
+
+async function getRun(id: string) {
+  const [row] = await db.select().from(batchStageRuns).where(eq(batchStageRuns.id, id));
+  return row;
+}
+
+const stageStatus = async (id: string) => (await getBatchStage(db, id))?.status;
+
+/** One-slot root with X dispatched and P waiting behind it. */
+async function seedBusyRoot() {
+  await seedFlow({ maxBatchConcurrency: 1 });
+  const root = await seedStage({ stageNumber: 1, runCount: 2 });
+  const next = await seedStage({ stageNumber: 2, runCount: 0, dependsOnStageIds: [root.id] });
+  await startFlowBatchLocal(flowId, BATCH);
+  const runs = await listRunsForStage(db, root.id);
+  const x = runs.find((r) => r.status === 'dispatched');
+  const p = runs.find((r) => r.status === 'pending');
+  if (!x || !p) throw new Error('expected one dispatched and one pending run');
+  return { root, next, x, p };
+}
+
+describe('reassign eligibility', () => {
+  it('rejects a run that is already dispatched or queued', async () => {
+    const { root, next, x, p } = await seedBusyRoot();
+
+    await expect(reassignStageRunLocal(flowId, x.id, next.id)).rejects.toMatchObject({
+      code: 'CONFLICT',
+    });
+    await db.update(batchStageRuns).set({ status: 'queued' }).where(eq(batchStageRuns.id, p.id));
+    await expect(reassignStageRunLocal(flowId, p.id, next.id)).rejects.toMatchObject({
+      code: 'CONFLICT',
+    });
+
+    expect((await getRun(x.id)).stageId).toBe(root.id);
+    expect((await getRun(p.id)).stageId).toBe(root.id);
+  });
+
+  it('rejects a pending run that already carries a flow run link', async () => {
+    const { root, next, x, p } = await seedBusyRoot();
+    await db.update(batchStageRuns).set({ flowRunId: null }).where(eq(batchStageRuns.id, x.id));
+    await db
+      .update(batchStageRuns)
+      .set({ flowRunId: x.flowRunId })
+      .where(eq(batchStageRuns.id, p.id));
+
+    await expect(reassignStageRunLocal(flowId, p.id, next.id)).rejects.toMatchObject({
+      code: 'CONFLICT',
+    });
+    expect((await getRun(p.id)).stageId).toBe(root.id);
+  });
+
+  it.each(['completed', 'failed', 'cancelled'])('rejects a %s target stage', async (status) => {
+    const { root, next, p } = await seedBusyRoot();
+    await db.update(batchStages).set({ status }).where(eq(batchStages.id, next.id));
+
+    await expect(reassignStageRunLocal(flowId, p.id, next.id)).rejects.toMatchObject({
+      code: 'CONFLICT',
+    });
+    expect((await getRun(p.id)).stageId).toBe(root.id);
+  });
+
+  it('reports an unknown run or target stage as not found', async () => {
+    const { root, next, p } = await seedBusyRoot();
+
+    await expect(reassignStageRunLocal(flowId, 'no-such-run', next.id)).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+      message: 'Stage run not found',
+    });
+    await expect(reassignStageRunLocal(flowId, p.id, 'no-such-stage')).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+      message: 'Target stage not found',
+    });
+    expect((await getRun(p.id)).stageId).toBe(root.id);
+  });
+
+  it("treats a move to the run's own stage as a no-op that dispatches nothing", async () => {
+    const { root, x } = await seedBusyRoot();
+    mocks.startFlowRun.mockClear();
+
+    const result = await reassignStageRunLocal(flowId, x.id, root.id);
+
+    expect(result).toEqual({ runId: x.id, sourceStageId: root.id, targetStageId: root.id });
+    expect(mocks.startFlowRun).not.toHaveBeenCalled();
+    expect(await getRun(x.id)).toMatchObject({ stageId: root.id, status: 'dispatched' });
+  });
+
+  it('rejects a run whose own stage has already finished', async () => {
+    const { root, next, p } = await seedBusyRoot();
+    // Cascade cancel flips the stage first and cancels its pending runs a tick later.
+    await db.update(batchStages).set({ status: 'cancelled' }).where(eq(batchStages.id, root.id));
+
+    await expect(reassignStageRunLocal(flowId, p.id, next.id)).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'This stage has already finished',
+    });
+    expect((await getRun(p.id)).stageId).toBe(root.id);
+  });
+
+  it('rejects a target stage from another batch', async () => {
+    const { root, p } = await seedBusyRoot();
+    const foreign = await seedBatchStage(db, 'other-batch', { stageNumber: 1, runCount: 0 });
+
+    await expect(reassignStageRunLocal(flowId, p.id, foreign.id)).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+    expect((await getRun(p.id)).stageId).toBe(root.id);
+  });
+});
+
+describe('re-settle after a move', () => {
+  it('finalizes a running source left with nothing active and promotes its successor', async () => {
+    const { root, next, x, p } = await seedBusyRoot();
+    // X settled with no terminal event delivered: the source is running with only P left.
+    await db.update(batchStageRuns).set({ status: 'completed' }).where(eq(batchStageRuns.id, x.id));
+
+    await reassignStageRunLocal(flowId, p.id, next.id);
+
+    expect(await stageStatus(root.id)).toBe('completed');
+    expect(await stageStatus(next.id)).toBe('running');
+    expect(await getRun(p.id)).toMatchObject({ stageId: next.id, status: 'dispatched' });
+  });
+
+  it('dispatches a run moved into a running stage with a free slot', async () => {
+    await seedFlow();
+    const rootA = await seedStage({ stageNumber: 1, runCount: 1 });
+    const rootB = await seedStage({ stageNumber: 2, runCount: 1 });
+    const later = await seedStage({ stageNumber: 3, runCount: 1, dependsOnStageIds: [rootA.id] });
+    await startFlowBatchLocal(flowId, BATCH);
+    const [p] = await listRunsForStage(db, later.id);
+
+    await reassignStageRunLocal(flowId, p.id, rootB.id);
+
+    expect(await getRun(p.id)).toMatchObject({ stageId: rootB.id, status: 'dispatched' });
+  });
+
+  it('keeps a run moved to a waiting stage pending until that stage starts', async () => {
+    const { root, next, x, p } = await seedBusyRoot();
+
+    await reassignStageRunLocal(flowId, p.id, next.id);
+
+    // The source still has X in flight: it does not wait on the moved run.
+    expect(await stageStatus(root.id)).toBe('running');
+    expect(await getRun(p.id)).toMatchObject({ stageId: next.id, status: 'pending' });
+    expect(mocks.startFlowRun).toHaveBeenCalledTimes(1);
+
+    await setRunStatus(db, runId(x), 'completed');
+    await onBatchRunTerminal(runId(x), 'completed');
+
+    expect(await stageStatus(root.id)).toBe('completed');
+    expect(await stageStatus(next.id)).toBe('running');
+    expect(await getRun(p.id)).toMatchObject({ stageId: next.id, status: 'dispatched' });
+  });
+});
+
+describe('re-settle boundaries', () => {
+  it('holds a run moved into a full running stage until a slot frees', async () => {
+    await seedFlow({ maxBatchConcurrency: 1 });
+    const rootA = await seedStage({ stageNumber: 1, runCount: 2 });
+    const rootB = await seedStage({ stageNumber: 2, runCount: 1 });
+    await startFlowBatchLocal(flowId, BATCH);
+    const p = (await listRunsForStage(db, rootA.id)).find((r) => r.status === 'pending');
+    const [occupant] = await listRunsForStage(db, rootB.id);
+    if (!p) throw new Error('expected a pending run behind the busy slot');
+    mocks.startFlowRun.mockClear();
+
+    await reassignStageRunLocal(flowId, p.id, rootB.id);
+
+    expect(await getRun(p.id)).toMatchObject({ stageId: rootB.id, status: 'pending' });
+    expect(mocks.startFlowRun).not.toHaveBeenCalled();
+
+    await setRunStatus(db, runId(occupant), 'completed');
+    await onBatchRunTerminal(runId(occupant), 'completed');
+
+    expect(await getRun(p.id)).toMatchObject({ stageId: rootB.id, status: 'dispatched' });
+    expect(await stageStatus(rootB.id)).toBe('running');
+  });
+
+  it.each(['deleted-flow', 'other-flow'])(
+    'moves nothing when %s does not own the batch',
+    async (kind) => {
+      const { root, next, p } = await seedBusyRoot();
+      const foreign = kind === 'other-flow' ? (await seedBatchFlow(db)).flowId : 'deleted-flow';
+      mocks.startFlowRun.mockClear();
+
+      await expect(reassignStageRunLocal(foreign, p.id, next.id)).rejects.toMatchObject({
+        code: 'NOT_FOUND',
+        message: 'Batch not found for this flow',
+      });
+
+      expect(await getRun(p.id)).toMatchObject({ stageId: root.id, status: 'pending' });
+      expect(mocks.startFlowRun).not.toHaveBeenCalled();
+    },
+  );
+
+  it('moves a run in a batch with no runs yet without dispatching anything', async () => {
+    await seedFlow();
+    const source = await seedStage({ stageNumber: 1, runCount: 1 });
+    const target = await seedStage({ stageNumber: 2, runCount: 0 });
+    // A running stage with no run on record has no verified owner to dispatch under.
+    await db.update(batchStages).set({ status: 'running' }).where(eq(batchStages.id, target.id));
+    const [p] = await listRunsForStage(db, source.id);
+
+    await reassignStageRunLocal(flowId, p.id, target.id);
+
+    expect(await getRun(p.id)).toMatchObject({ stageId: target.id, status: 'pending' });
+    expect(mocks.startFlowRun).not.toHaveBeenCalled();
+  });
+
+  it('completes the re-settle when a move whose re-settle failed is retried', async () => {
+    const { root, next, x, p } = await seedBusyRoot();
+    await db.update(batchStageRuns).set({ status: 'completed' }).where(eq(batchStageRuns.id, x.id));
+    // The move and the ownership lookup each ask for the database before the re-settle does.
+    mocks.getDatabase
+      .mockReturnValueOnce(db)
+      .mockReturnValueOnce(db)
+      .mockImplementationOnce(() => {
+        throw new Error('database unavailable');
+      });
+
+    await expect(reassignStageRunLocal(flowId, p.id, next.id)).rejects.toThrow(
+      'database unavailable',
+    );
+    expect(await getRun(p.id)).toMatchObject({ stageId: next.id, status: 'pending' });
+    expect(await stageStatus(root.id)).toBe('running');
+
+    await reassignStageRunLocal(flowId, p.id, next.id);
+
+    expect(await stageStatus(root.id)).toBe('completed');
+    expect(await getRun(p.id)).toMatchObject({ stageId: next.id, status: 'dispatched' });
+  });
+
+  it('lets the later of two panes moving the same run win, with the run in one stage', async () => {
+    const { root, next, p } = await seedBusyRoot();
+    const other = await seedStage({ stageNumber: 3, runCount: 0, dependsOnStageIds: [root.id] });
+
+    const [first, second] = await Promise.all([
+      reassignStageRunLocal(flowId, p.id, next.id),
+      reassignStageRunLocal(flowId, p.id, other.id),
+    ]);
+
+    expect(first).toMatchObject({ sourceStageId: root.id, targetStageId: next.id });
+    expect(second).toMatchObject({ sourceStageId: next.id, targetStageId: other.id });
+    expect(await getRun(p.id)).toMatchObject({ stageId: other.id, status: 'pending' });
+    expect(await listRunsForStage(db, next.id)).toHaveLength(0);
+    expect(await stageStatus(root.id)).toBe('running');
+  });
+});
+
+describe('move during dispatch', () => {
+  it('leaves a run moved mid-loop pending in its new stage instead of failing it', async () => {
+    await seedFlow();
+    const root = await seedStage({ stageNumber: 1, runCount: 2 });
+    const next = await seedStage({ stageNumber: 2, runCount: 0, dependsOnStageIds: [root.id] });
+    const [first, second] = await listRunsForStage(db, root.id);
+    const start = makeStartFlowRunMock(db, () => versionId);
+    mocks.startFlowRun.mockImplementation(
+      async (input: Parameters<typeof start>[0] & { batchStageId?: string }) => {
+        const member = await getRun(input.batchStageRunId ?? '');
+        // Stands in for the admission guard, which the mocked startFlowRun bypasses.
+        if (member.stageId !== input.batchStageId) {
+          throw new StageRunMovedError(member.id, input.batchStageId ?? '');
+        }
+        const other = member.id === first.id ? second : first;
+        await db
+          .update(batchStageRuns)
+          .set({ stageId: next.id })
+          .where(eq(batchStageRuns.id, other.id));
+        return start(input);
+      },
+    );
+
+    await startFlowBatchLocal(flowId, BATCH);
+
+    const stayed = await listRunsForStage(db, root.id);
+    const moved = await listRunsForStage(db, next.id);
+    expect(stayed.map((r) => r.status)).toEqual(['dispatched']);
+    expect(moved.map((r) => r.status)).toEqual(['pending']);
   });
 });

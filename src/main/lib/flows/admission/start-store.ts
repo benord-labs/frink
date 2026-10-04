@@ -11,13 +11,15 @@ import {
   flowRuns,
   type NewFlowRun,
 } from '../../db/schema';
-import { assertStageHasSlot } from './batch-promotion';
+import { assertStageHasSlot, StageRunMovedError } from './batch-promotion';
 import { enqueueFlowAdmission, type FlowRunAdmission, liveAdmissionForRun } from './store';
 
 type Db = ReturnType<typeof getDatabase>;
 
 export type EnqueueFlowStartInput = Omit<NewFlowRun, 'status' | 'startedAt' | 'completedAt'> & {
   batchStageRunId?: string | null;
+  /** The stage the dispatcher read the member from; admission refuses a member moved since. */
+  batchStageId?: string | null;
   requestedAt?: Date;
 };
 
@@ -37,7 +39,7 @@ function existingRunForStart(db: Db, idempotencyKey: string | null | undefined):
 
 function createPendingRun(
   db: Db,
-  input: Omit<EnqueueFlowStartInput, 'batchStageRunId' | 'requestedAt'>,
+  input: Omit<EnqueueFlowStartInput, 'batchStageRunId' | 'batchStageId' | 'requestedAt'>,
 ): FlowRun {
   return db
     .insert(flowRuns)
@@ -53,6 +55,23 @@ function createPendingRun(
 
 function isProvenUnstarted(run: FlowRun): boolean {
   return run.status === 'pending' && run.startedAt === null;
+}
+
+/** A member moved since the dispatcher read it is its new stage's to admit, even on a replay. */
+function assertStillInStage(
+  db: Db,
+  batchStageRunId: string | null | undefined,
+  expectedStageId: string | null | undefined,
+): void {
+  if (!batchStageRunId || !expectedStageId) return;
+  const member = db
+    .select({ stageId: batchStageRuns.stageId })
+    .from(batchStageRuns)
+    .where(eq(batchStageRuns.id, batchStageRunId))
+    .get();
+  if (member && member.stageId !== expectedStageId) {
+    throw new StageRunMovedError(batchStageRunId, expectedStageId);
+  }
 }
 
 function queueBatchMember(db: Db, batchStageRunId: string, run: FlowRun): void {
@@ -85,6 +104,7 @@ function queueBatchMember(db: Db, batchStageRunId: string, run: FlowRun): void {
     .where(
       and(
         eq(batchStageRuns.id, batchStageRunId),
+        eq(batchStageRuns.stageId, current.stageId),
         eq(batchStageRuns.status, 'pending'),
         isNull(batchStageRuns.flowRunId),
       ),
@@ -98,7 +118,8 @@ function queueBatchMember(db: Db, batchStageRunId: string, run: FlowRun): void {
 
 /** Must run inside the controller's BEGIN IMMEDIATE transaction. */
 export function enqueueFlowStart(db: Db, input: EnqueueFlowStartInput): EnqueueFlowStartResult {
-  const { batchStageRunId, requestedAt, ...runInput } = input;
+  const { batchStageRunId, batchStageId, requestedAt, ...runInput } = input;
+  assertStillInStage(db, batchStageRunId, batchStageId);
   const existing = existingRunForStart(db, input.idempotencyKey);
   const run = existing ?? createPendingRun(db, runInput);
   const isReplay = Boolean(existing);

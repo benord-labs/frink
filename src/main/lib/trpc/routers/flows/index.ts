@@ -534,7 +534,7 @@ export const flowsRouter = router({
     )
     .mutation(async ({ input }) => {
       const { reassignStageRunLocal } = await import('../../../flows/batch-mutations');
-      return reassignStageRunLocal(input.runId, input.targetStageId);
+      return reassignStageRunLocal(input.flowId, input.runId, input.targetStageId);
     }),
 
   fetchAttachmentDataUrl: publicProcedureRaw
