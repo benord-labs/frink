@@ -1165,6 +1165,12 @@ describe('node_run cleanup on terminal flow_runs', () => {
       blockType: 'agent',
       status: 'completed',
     });
+    const retried = await createNodeRun(db, {
+      flowRunId,
+      nodeId: 'd',
+      blockType: 'agent',
+      status: 'superseded',
+    });
 
     expect(await cancelRemainingNodeRunsForRun(db, flowRunId)).toBe(2);
     const rows = await db.select().from(nodeRuns).where(eq(nodeRuns.flowRunId, flowRunId));
@@ -1172,6 +1178,7 @@ describe('node_run cleanup on terminal flow_runs', () => {
     expect(byId.get(awaiting.id)).toBe('cancelled');
     expect(byId.get(pending.id)).toBe('cancelled');
     expect(byId.get(done.id)).toBe('completed');
+    expect(byId.get(retried.id)).toBe('superseded');
   });
 
   it('cleanupNodeRunsForTerminalFlows sweeps a failed run but leaves an active run untouched', async () => {

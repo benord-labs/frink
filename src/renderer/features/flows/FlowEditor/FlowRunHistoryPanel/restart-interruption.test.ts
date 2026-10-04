@@ -66,4 +66,12 @@ describe('findRestartInterruptedNodeRun', () => {
     // 'b' is skipped → skipped; 'a' is the interrupted node and carries the marker.
     expect(result?.id).toBe('a');
   });
+
+  it('looks past an attempt a retry superseded to the interrupted replacement', () => {
+    const result = findRestartInterruptedNodeRun([
+      nodeRun({ id: 'b', node_id: 'agent-1', status: 'cancelled', node_output: restartMarker }),
+      nodeRun({ id: 'c', node_id: 'agent-2', status: 'superseded' }),
+    ]);
+    expect(result?.id).toBe('b');
+  });
 });

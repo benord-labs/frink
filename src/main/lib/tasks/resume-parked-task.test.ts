@@ -12,6 +12,10 @@ vi.mock('../db', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../db')>()),
   getDatabase: () => holder.db,
 }));
+vi.mock('../socket/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../socket/client')>()),
+  broadcastTaskSignalPersisted: vi.fn(),
+}));
 vi.mock('../sentry/init', () => ({
   captureMainException: holder.capture,
   captureMainMessage: holder.capture,
@@ -20,6 +24,9 @@ vi.mock('../sentry/init', () => ({
 import { FlowAdmissionController } from '../flows/admission/controller';
 import { _setFlowAdmissionControllerForTests } from '../flows/admission/runtime';
 import { cancelFlowRun } from '../flows/engine';
+import { resumeFlowRun } from '../flows/resume';
+import { persistLinkedTaskSignal } from '../trpc/routers/frink-task-signal-persist';
+import { resolveTaskSignalTransition } from '../trpc/routers/frink-task-signal';
 import { subscribeFlowEvents } from '../flows/events';
 import { resumeParkedTaskInPlace } from './resume-parked-task';
 
@@ -38,7 +45,7 @@ let unsubscribe: () => void;
 
 /** A task parked with its node and run, as the watcher leaves them; `slot` seeds an active admission. */
 async function seedParkedTask(
-  status: 'needs_attention' | 'failed',
+  status: 'needs_attention' | 'failed' | 'plan_ready',
   { slot = true, result = QUIET_PARK as Record<string, unknown> } = {},
 ): Promise<Task> {
   ({ flowRunId } = await seedFlowRun(db, GRAPH));
@@ -224,5 +231,188 @@ describe('resumeParkedTaskInPlace — wake burst', () => {
       task: 'needs_attention',
     });
     expect(cancelled).toHaveLength(1);
+  });
+});
+
+describe('resumeParkedTaskInPlace — chat reply approving a strict plan park', () => {
+  const PLAN_PARK = { subChatId: 'sub-1', startMode: 'plan', skipReview: false };
+
+  it('resumes the task in execute mode with its node and run', async () => {
+    const task = await seedParkedTask('plan_ready', { result: PLAN_PARK });
+
+    expect(await resumeParkedTaskInPlace(task, 'follow_up_message', 'sub-1')).toBe(true);
+    expect(await statuses(task.id)).toEqual({ run: 'running', node: 'running', task: 'running' });
+    const resumed = await getTaskById(db, task.id);
+    expect(resumed?.result).toMatchObject({
+      subChatId: 'sub-1',
+      startMode: 'execute',
+      skipReview: false,
+      resumedBy: 'follow_up_message',
+      previousStatus: 'plan_ready',
+    });
+    // The agent's done now finishes the task instead of asking for approval again.
+    if (!resumed) throw new Error('task missing');
+    expect(resolveTaskSignalTransition(resumed, { state: 'done', summary: 'built' }).status).toBe(
+      'done',
+    );
+  });
+
+  it('writes nothing when the run panel already approved the plan', async () => {
+    const task = await seedParkedTask('plan_ready', { result: PLAN_PARK });
+    await setNodeRunStatus(db, nodeRunId, 'completed', { completedAt: new Date() });
+    await setFlowRunStatus(db, flowRunId, 'running');
+
+    expect(await resumeParkedTaskInPlace(task, 'follow_up_message', 'sub-1')).toBe(false);
+    expect(await getTaskById(db, task.id)).toEqual(task);
+    expect(await statuses(task.id)).toEqual({
+      run: 'running',
+      node: 'completed',
+      task: 'plan_ready',
+    });
+  });
+
+  it('leaves a flow-less plan review to its own path', async () => {
+    const task = await createTask(db, { description: 'manual', source: 'manual' });
+    await updateTaskStatus(db, task.id, 'running');
+    const parked = await updateTaskStatus(db, task.id, 'plan_ready', { result: PLAN_PARK });
+    if (!parked) throw new Error('park failed');
+
+    expect(await resumeParkedTaskInPlace(parked, 'follow_up_message', 'sub-1')).toBe(false);
+    expect((await getTaskById(db, task.id))?.status).toBe('plan_ready');
+  });
+
+  it('a wake never approves a plan', async () => {
+    const task = await seedParkedTask('plan_ready', { result: PLAN_PARK });
+
+    expect(await resumeParkedTaskInPlace(task, 'wake_burst', 'sub-1')).toBe(false);
+    expect(await getTaskById(db, task.id)).toEqual(task);
+    expect(await statuses(task.id)).toEqual({
+      run: 'paused',
+      node: 'awaiting_input',
+      task: 'plan_ready',
+    });
+  });
+});
+
+describe('resumeParkedTaskInPlace — plan approval edge cases', () => {
+  const PLAN_PARK = { subChatId: 'sub-1', startMode: 'plan', skipReview: false };
+
+  it("the agent's done lands through the real signal write and finishes the task", async () => {
+    const task = await seedParkedTask('plan_ready', { result: PLAN_PARK });
+    await resumeParkedTaskInPlace(task, 'follow_up_message', 'sub-1');
+
+    const applied = await persistLinkedTaskSignal({
+      taskIdForExecution: task.id,
+      signal: { state: 'done', summary: 'built' },
+    });
+
+    expect(applied).toBe(true);
+    expect((await getTaskById(db, task.id))?.status).toBe('done');
+  });
+
+  it('a real panel Approve that lands first makes the reply a no-op', async () => {
+    const task = await seedParkedTask('plan_ready', { result: PLAN_PARK });
+    await resumeFlowRun(flowRunId, 'approve', nodeRunId);
+    const afterApprove = await statuses(task.id);
+
+    expect(await resumeParkedTaskInPlace(task, 'follow_up_message', 'sub-1')).toBe(false);
+    expect(await getTaskById(db, task.id)).toEqual(task);
+    expect(await statuses(task.id)).toEqual(afterApprove);
+  });
+
+  it('a panel Approve that loses to the reply is declined and advances nothing', async () => {
+    const task = await seedParkedTask('plan_ready', { result: PLAN_PARK });
+    expect(await resumeParkedTaskInPlace(task, 'follow_up_message', 'sub-1')).toBe(true);
+
+    await expect(resumeFlowRun(flowRunId, 'approve', nodeRunId)).rejects.toMatchObject({
+      code: 'PRECONDITION_FAILED',
+    });
+    expect(await statuses(task.id)).toEqual({ run: 'running', node: 'running', task: 'running' });
+  });
+
+  it('two replies from different panes resume once', async () => {
+    const task = await seedParkedTask('plan_ready', { result: PLAN_PARK });
+
+    const results = await Promise.all([
+      resumeParkedTaskInPlace(task, 'follow_up_message', 'sub-1'),
+      resumeParkedTaskInPlace(task, 'follow_up_message', 'sub-1'),
+    ]);
+
+    expect(results.filter(Boolean)).toHaveLength(1);
+    expect(await statuses(task.id)).toEqual({ run: 'running', node: 'running', task: 'running' });
+  });
+
+  it('rolls the task back when the run lost its admission slot', async () => {
+    const task = await seedParkedTask('plan_ready', { result: PLAN_PARK, slot: false });
+
+    expect(await resumeParkedTaskInPlace(task, 'follow_up_message', 'sub-1')).toBe(false);
+    expect(await getTaskById(db, task.id)).toEqual(task);
+    expect(await statuses(task.id)).toEqual({
+      run: 'paused',
+      node: 'awaiting_input',
+      task: 'plan_ready',
+    });
+  });
+
+  it('rolls the task back when it has no node to unpark', async () => {
+    const seeded = await seedParkedTask('plan_ready', { result: PLAN_PARK });
+    const task = { ...seeded, nodeRunId: null };
+
+    expect(await resumeParkedTaskInPlace(task, 'follow_up_message', 'sub-1')).toBe(false);
+    expect((await getTaskById(db, task.id))?.status).toBe('plan_ready');
+    expect(await statuses(task.id)).toEqual({
+      run: 'paused',
+      node: 'awaiting_input',
+      task: 'plan_ready',
+    });
+  });
+
+  it('a reply after a Cancel never revives the plan', async () => {
+    const task = await seedParkedTask('plan_ready', { result: PLAN_PARK });
+    await cancelFlowRun(flowRunId);
+    const afterCancel = await statuses(task.id);
+
+    expect(await resumeParkedTaskInPlace(task, 'follow_up_message', 'sub-1')).toBe(false);
+    expect(await statuses(task.id)).toEqual(afterCancel);
+    expect(afterCancel.task).not.toBe('running');
+  });
+});
+
+describe('resumeParkedTaskInPlace — a declined plan approval', () => {
+  const PLAN_PARK = { subChatId: 'sub-1', startMode: 'plan', skipReview: false };
+
+  /** A flow task with no node_run: nothing for an approval to un-park. */
+  async function seedSteplessTask(status: 'running' | 'plan_ready'): Promise<Task> {
+    await seedParkedTask('plan_ready', { result: PLAN_PARK });
+    const task = await createTask(db, { description: 'agent', source: 'flow', flowRunId });
+    const running = await updateTaskStatus(db, task.id, 'running');
+    const row =
+      status === 'running'
+        ? running
+        : await updateTaskStatus(db, task.id, 'plan_ready', { result: PLAN_PARK });
+    if (!row) throw new Error('seed failed');
+    return row;
+  }
+
+  it('refuses the turn when the plan task has no flow step to resume', async () => {
+    const parked = await seedSteplessTask('plan_ready');
+
+    await expect(resumeParkedTaskInPlace(parked, 'follow_up_message', 'sub-1')).rejects.toThrow(
+      /no flow step to resume/,
+    );
+    expect(await getTaskById(db, parked.id)).toEqual(parked);
+  });
+
+  it('lets the turn run when the stepless task left plan_ready meanwhile', async () => {
+    const running = await seedSteplessTask('running');
+    const stale = { ...running, status: 'plan_ready' as const };
+
+    expect(await resumeParkedTaskInPlace(stale, 'follow_up_message', 'sub-1')).toBe(false);
+  });
+
+  it('a wake on a stepless plan task still just declines', async () => {
+    const parked = await seedSteplessTask('plan_ready');
+
+    expect(await resumeParkedTaskInPlace(parked, 'wake_burst', 'sub-1')).toBe(false);
   });
 });

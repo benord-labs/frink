@@ -1048,81 +1048,72 @@ describe('socket file permission edge cases', () => {
     expect(vi.mocked(socketClient.sendErrorDirect)).not.toHaveBeenCalled();
   });
 
-  it('flow follow-up resumes the DRIVING plan task (not the pinned task) and keeps plan mode', async () => {
-    vi.mocked(dynamicChatServer.getLatestTaskSignal).mockReturnValueOnce(undefined);
-    // Pinned/first task on the chat is an already-completed upstream node.
-    vi.mocked(getChatWithProjectAccount).mockResolvedValueOnce({
-      chat: { taskId: 'pinned-evaluate-task' },
-      account: null,
-    } as Awaited<ReturnType<typeof getChatWithProjectAccount>>);
-    // The flow is actively driving THIS sub-chat via a different (plan) task.
-    vi.mocked(getFlowDriveInfoForSubChat).mockResolvedValueOnce({
-      active: true,
-      autoApprovePlan: false,
-      taskId: 'driving-plan-task',
-    });
-    vi.mocked(getTaskById).mockResolvedValueOnce({
-      id: 'driving-plan-task',
-      status: 'needs_attention',
-      flowRunId: 'fr-1',
-      nodeRunId: 'nr-1',
-      result: {
-        startMode: 'plan',
-        agentSignal: { state: 'awaiting_input', summary: 'Which package manager should I assume?' },
-      },
-    } as Awaited<ReturnType<typeof getTaskById>>);
-    claudeQueryMock.mockImplementationOnce(async function* () {
-      yield { chunks: [{ type: 'finish', messageMetadata: { sessionId: 'sess-flow-resume' } }] };
-      yield { type: 'result' };
-    });
+  // Resume targets the DRIVING task, never the pinned one; answering keeps the mode, and plan_ready
+  // resumes only on the renderer's reply-as-approval agent turn (`flow-agent-node-mode`).
+  it.each([
+    { status: 'needs_attention', startMode: 'plan', mode: 'agent', resumes: true },
+    { status: 'needs_attention', startMode: 'debug', mode: 'agent', resumes: true },
+    { status: 'plan_ready', startMode: 'plan', mode: 'agent', resumes: true },
+    { status: 'plan_ready', startMode: 'plan', mode: 'plan', resumes: false },
+    { status: 'plan_ready', startMode: 'plan', mode: 'debug', resumes: false },
+    { status: 'plan_ready', startMode: 'plan', mode: 'agent', resumes: true, codex: true },
+  ] as const)(
+    'flow follow-up on a $status $startMode park in $mode mode resumes: $resumes',
+    async ({ status, startMode, mode, resumes, ...row }) => {
+      const codex = 'codex' in row;
+      if (codex) {
+        vi.mocked(getDefaultClaudeCodeToken).mockResolvedValueOnce({
+          token: null,
+          isApiKey: false,
+          type: 'codex',
+          label: 'codex-test',
+          passthrough: true,
+        });
+      }
+      vi.mocked(dynamicChatServer.getLatestTaskSignal).mockReturnValueOnce(undefined);
+      vi.mocked(getChatWithProjectAccount).mockResolvedValueOnce({
+        chat: { taskId: 'pinned-task' },
+        account: null,
+      } as Awaited<ReturnType<typeof getChatWithProjectAccount>>);
+      vi.mocked(getFlowDriveInfoForSubChat).mockResolvedValueOnce({
+        active: true,
+        autoApprovePlan: false,
+        taskId: 'driving-task',
+      });
+      vi.mocked(getTaskById).mockResolvedValueOnce({
+        id: 'driving-task',
+        status,
+        flowRunId: 'fr-1',
+        nodeRunId: 'nr-1',
+        result: { subChatId: basePayload.subChatId, startMode, skipReview: false },
+      } as Awaited<ReturnType<typeof getTaskById>>);
+      claudeQueryMock.mockImplementationOnce(async function* () {
+        yield { chunks: [{ type: 'finish', messageMetadata: { sessionId: 'sess-flow-resume' } }] };
+        yield { type: 'result' };
+      });
+      const runner = vi.mocked(runCodexAgent);
+      if (codex) {
+        runner.mockImplementationOnce(async function* () {
+          yield { type: 'finish', messageMetadata: { sessionId: 'codex-s' } } as UIMessageChunk;
+        });
+      }
 
-    await handleRemoteExecute({ ...basePayload, message: 'bun' });
+      await handleRemoteExecute({ ...basePayload, mode, message: 'go ahead' });
 
-    // Resume targets the DRIVING task, never the pinned (already-done) one. Answering a question is
-    // NOT plan approval, so the sub-chat's plan permission-mode persists.
-    expect(vi.mocked(resumeParkedTaskInPlace)).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ id: 'driving-plan-task' }),
-      'follow_up_message',
-      basePayload.subChatId,
-    );
-    expect(vi.mocked(updateSubChatMode)).not.toHaveBeenCalled();
-  });
-
-  it('flow follow-up on a debug-mode park also keeps the mode (mode persists generally)', async () => {
-    vi.mocked(dynamicChatServer.getLatestTaskSignal).mockReturnValueOnce(undefined);
-    vi.mocked(getChatWithProjectAccount).mockResolvedValueOnce({
-      chat: { taskId: 'pinned-task' },
-      account: null,
-    } as Awaited<ReturnType<typeof getChatWithProjectAccount>>);
-    vi.mocked(getFlowDriveInfoForSubChat).mockResolvedValueOnce({
-      active: true,
-      autoApprovePlan: false,
-      taskId: 'driving-debug-task',
-    });
-    vi.mocked(getTaskById).mockResolvedValueOnce({
-      id: 'driving-debug-task',
-      status: 'needs_attention',
-      flowRunId: 'fr-1',
-      nodeRunId: 'nr-1',
-      result: {
-        startMode: 'debug',
-        agentSignal: { state: 'awaiting_input', summary: 'Can you reproduce the crash?' },
-      },
-    } as Awaited<ReturnType<typeof getTaskById>>);
-    claudeQueryMock.mockImplementationOnce(async function* () {
-      yield { chunks: [{ type: 'finish', messageMetadata: { sessionId: 'sess-debug-resume' } }] };
-      yield { type: 'result' };
-    });
-
-    await handleRemoteExecute({ ...basePayload, message: 'yes, on save' });
-
-    expect(vi.mocked(resumeParkedTaskInPlace)).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'driving-debug-task' }),
-      'follow_up_message',
-      basePayload.subChatId,
-    );
-    expect(vi.mocked(updateSubChatMode)).not.toHaveBeenCalled();
-  });
+      if (!resumes) expect(vi.mocked(resumeParkedTaskInPlace)).not.toHaveBeenCalled();
+      else
+        expect(vi.mocked(resumeParkedTaskInPlace)).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({ id: 'driving-task', status }),
+          'follow_up_message',
+          basePayload.subChatId,
+        );
+      if (codex)
+        expect(vi.mocked(resumeParkedTaskInPlace).mock.invocationCallOrder[0]).toBeLessThan(
+          runner.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+        );
+      expect(vi.mocked(updateSubChatMode)).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     {

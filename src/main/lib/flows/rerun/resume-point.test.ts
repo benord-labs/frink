@@ -60,6 +60,12 @@ describe('lastUnfinishedNodeRun', () => {
     ).toBe('b');
   });
 
+  it('skips an attempt a retry superseded once its replacement finished', () => {
+    expect(
+      lastUnfinishedNodeRun([nr('a', 'superseded'), nr('a', 'completed'), nr('b', 'completed')]),
+    ).toBeUndefined();
+  });
+
   it('picks the trailing failed node when it is last', () => {
     expect(
       lastUnfinishedNodeRun([nr('a', 'completed'), nr('b', 'completed'), nr('c', 'failed')])

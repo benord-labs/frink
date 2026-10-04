@@ -811,7 +811,8 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       sendSubChatModeChange({ chatId, subChatId, mode: 'agent' }),
     );
     const resumeTaskOnFollowUpMessage = async (forceFreshRead = false) => {
-      // Resume the driving step, since the chat's pinned task may belong to an upstream node.
+      // Resume the FLOW-DRIVING task, not the pinned upstream one: the agent's signal lands there
+      // and drops unless 'running'. plan_ready resumes only on the reply-as-approval agent turn.
       const resumeTargetTaskId = signalTaskId;
       if (!resumeTargetTaskId) return;
       const { getDatabase } = await import('../db');
@@ -835,6 +836,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
         forceFreshRead ? null : prefetchedSignalTask,
       );
       if (!latestTask) return;
+      if (latestTask.status === 'plan_ready' && mode !== 'agent') return;
       const resumed = await resumeParkedTaskInPlace(latestTask, 'follow_up_message', subChatId);
       if (provenance) await recordProvenanceResume(provenance, resumed, latestTask);
     };
