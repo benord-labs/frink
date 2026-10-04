@@ -45,11 +45,14 @@ jobs:
       - name: Install root dependencies
         run: bun install --frozen-lockfile
 
+      # Both sides collect coverage so instrumentation slows them equally. reportOnFailure keeps the
+      # summary when tests fail; the floor is checked by its own step, never through Vitest's exit code.
       - name: Run full suite and preserve its report
         shell: bash
         run: |
           set +e
-          bun run test:run --reporter=json --outputFile="$RUNNER_TEMP/vitest.json"
+          bun run test:run --reporter=json --outputFile="$RUNNER_TEMP/vitest.json" \
+            --coverage.enabled --coverage.reportOnFailure --coverage.reporter=json-summary
           STATUS=$?
           set -e
           test -f "$RUNNER_TEMP/vitest.json" || {
@@ -68,6 +71,10 @@ jobs:
             ${{ runner.temp }}/exit-code.txt
           if-no-files-found: error
           retention-days: 5
+
+      - name: Coverage floor
+        if: ${{ !cancelled() && matrix.side == 'head' }}
+        run: node scripts/testing/check-coverage-floor.mjs coverage/coverage-summary.json
 
   compare-pull-request-suite:
     if: always() && github.event_name == 'pull_request'
@@ -153,4 +160,8 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Run full suite
-        run: bun run test:run
+        run: bun run test:run --coverage.enabled --coverage.reportOnFailure --coverage.reporter=json-summary
+
+      - name: Coverage floor
+        if: ${{ !cancelled() }}
+        run: node scripts/testing/check-coverage-floor.mjs coverage/coverage-summary.json

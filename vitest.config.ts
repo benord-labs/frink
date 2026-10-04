@@ -7,10 +7,7 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['json'],
       reportsDirectory: './coverage',
-      thresholds: {
-        statements: 65,
-        functions: 63,
-      },
+      // No thresholds here: CI enforces the floor in scripts/testing/check-coverage-floor.mjs.
     },
     // Heavy main-process suites (tRPC, fs hooks) time out under default CPU saturation on dev machines/CI.
     maxWorkers: 2,
