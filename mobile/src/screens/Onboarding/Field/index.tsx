@@ -22,7 +22,7 @@ export function Field({
         accessibilityLabel={label}
         placeholderTextColor={t.muted}
         selectionColor={t.accent}
-        maxFontSizeMultiplier={1.6}
+        maxFontSizeMultiplier={2}
         {...input}
         onFocus={(event) => {
           setFocused(true);

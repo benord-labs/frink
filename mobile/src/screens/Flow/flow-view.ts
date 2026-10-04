@@ -1,6 +1,12 @@
 import type { MobileFlow } from '@frink/shared/types/remote/mobile';
 import type { Status } from '../../lib/status';
 import { flowStatus } from '../Flows/flow-list';
+import { isTerminal } from '../Run/run-view';
+
+/** A parked run still owns this Flow's primary action. Never start over it. */
+export function currentRunId(flow: MobileFlow): string | null {
+  return flow.status && !isTerminal(flow.status) ? flow.latestRunId : null;
+}
 
 const AUTOMATIC: Record<string, string> = {
   schedule_trigger: 'Runs on a schedule',

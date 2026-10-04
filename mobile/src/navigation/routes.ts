@@ -11,10 +11,12 @@ export type TabRoutes = {
 };
 export type RootRoutes = {
   Tabs: NavigatorScreenParams<TabRoutes> | undefined;
-  Chat: { id: string; subChatId?: string; decisionTarget?: DecisionTarget };
+  /** No `id` is a new chat: a blank conversation that is made on the Mac when it is first used. */
+  Chat:
+    | { id?: string; subChatId?: string; decisionTarget?: DecisionTarget; projectId?: string }
+    | undefined;
   Flow: { id: string };
   Run: { id: string };
-  NewChat: { projectId?: string } | undefined;
 };
 
 /** Every screen navigates through the root stack: details push above the tab bar. */

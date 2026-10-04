@@ -69,6 +69,22 @@ The UI tests run the React Native web rendering at phone sizes through the real 
 
 The desktop bridge and domain tests are part of the repository-root `bun run test:run:coverage` suite. Mobile CI runs its own type check, transport tests, phone UI tests, and iOS bundle export.
 
+### Review on the iOS simulator against fixture data
+
+The web preview has no native navigation bar or menus, so judge layout on the simulator. `tests/fixtures/sim-relay.ts` stands in for a Mac: it speaks the phone's real channel protocol over TLS on 127.0.0.1 and answers with the UI tests' fixture data. Use a simulator that is not paired to your real Mac, since pairing replaces that pairing.
+
+```sh
+mkdir -p /tmp/frink-sim-relay && cd /tmp/frink-sim-relay
+openssl req -x509 -newkey rsa:2048 -nodes -days 365 -keyout key.pem -out cert.pem \
+  -subj "/CN=Frink fixture relay" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" \
+  -addext "basicConstraints=critical,CA:TRUE" -addext "extendedKeyUsage=serverAuth"
+xcrun simctl keychain <udid> add-root-cert cert.pem
+cd - && SIM_RELAY_PORT=18443 bun tests/fixtures/sim-relay.ts   # prints the pairing link
+xcrun simctl openurl <udid> "<printed frink-mobile://pair link>"
+```
+
+The desktop key is saved beside the certificate, so restarting the relay keeps the pairing. Requests that change something are appended to `/tmp/frink-sim-relay/requests.log`.
+
 ## MVP boundaries
 
 Foreground polling refreshes the queue, runs, and chats; the only push alerts are the ones above. There is no offline execution, Flow canvas editing, terminal access. Complex presentation/consent requests remain on desktop. A sleeping or disconnected computer cannot execute work. Transcripts display text; rich tool cards remain available on desktop.

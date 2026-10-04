@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   Platform,
@@ -25,7 +25,7 @@ import {
 } from '../chat-state';
 import { Note } from '../note';
 import { ACTION, AttachButton, AttachmentTray, type Attachments } from './attach';
-import { ComposerControls, type ComposerPatch } from './controls';
+import { ModeMenu, ModelMenus, type ComposerPatch } from './controls';
 import { LINE, messageInputSizing } from './input-sizing';
 
 export { useComposerAttachments } from './use-attachments';
@@ -33,7 +33,7 @@ export { useComposerState } from './use-composer-state';
 export type { ComposerPatch } from './controls';
 
 // iOS scales lineHeight with Dynamic Type, so every height derived from LINE scales with it too.
-const MAX_FONT_SCALE = 1.6;
+const MAX_FONT_SCALE = 2;
 /** Web inputs draw a focus outline React Native has no prop for. */
 export const bareInput: TextStyle =
   Platform.OS === 'web' ? ({ outlineStyle: 'none' } as unknown as TextStyle) : {};
@@ -103,6 +103,10 @@ export function Composer({
   onSend,
   onStop,
   composer,
+  inline,
+  below,
+  attach = true,
+  autoFocus = false,
   attachments,
   onUpdate,
   onMode,
@@ -119,10 +123,16 @@ export function Composer({
   onSend: () => void;
   onStop: () => void;
   composer?: MobileComposer;
+  /** Stand in for the model menus and the row under the box, for a chat that doesn't exist yet. */
+  inline?: ReactNode;
+  below?: ReactNode;
+  /** Uploads belong to a chat, so a blank one takes files once it exists. */
+  attach?: boolean;
+  autoFocus?: boolean;
   attachments: Attachments;
   onUpdate: (patch: ComposerPatch) => void;
   onMode: (mode: MobileChatMode) => void;
-  onAccount: (accountId: string) => void;
+  onAccount?: (accountId: string) => void;
 }) {
   const t = useTheme();
   const line = useLine();
@@ -135,7 +145,7 @@ export function Composer({
     flowRun,
   );
   // Any message that can start a turn takes files, so Attach stays put as Stop turns into Send.
-  const attachable = acceptsMessage(activity, executionReady, flowRun);
+  const attachable = attach && acceptsMessage(activity, executionReady, flowRun);
   const enabled =
     !busy &&
     actionEnabled(mode, {
@@ -144,8 +154,20 @@ export function Composer({
       uploading: attachments.uploading,
       failed: attachments.failed,
     });
-  // The box holds only what you type and its controls; live state is in the header, and a note
-  // is one short caption above the box.
+  const choosing = activity === 'idle' && executionReady;
+  const settings = inline ?? (composer && (
+    <ModelMenus composer={composer} disabled={busy} onUpdate={onUpdate} onAccount={onAccount} />
+  ));
+  const context = below ?? (composer && (
+    <ModeMenu
+      mode={composer.mode}
+      debugAvailable={composer.debugAvailable}
+      disabled={busy}
+      onMode={onMode}
+    />
+  ));
+  // One card: what you type, then Attach, the model and Send in a row. How and where Frink works
+  // sits under the card; live state is in the header, and a note is one short caption above.
   return (
     <View style={{ gap: 6 }}>
       {note && (
@@ -155,21 +177,10 @@ export function Composer({
       )}
       <GlassSurface
         interactive
-        style={{ borderRadius: 26, paddingHorizontal: 10, paddingTop: 8, paddingBottom: 8, gap: 6 }}
+        style={{ borderRadius: 26, paddingHorizontal: 12, paddingTop: 10, paddingBottom: 8, gap: 6 }}
       >
-      {activity === 'idle' && executionReady && composer && (
-        <ComposerControls
-          composer={composer}
-          disabled={busy}
-          onUpdate={onUpdate}
-          onMode={onMode}
-          onAccount={onAccount}
-        />
-      )}
-      {attachable && <AttachmentTray attachments={attachments} />}
-      <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: space.sm }}>
-        {attachable && <AttachButton attachments={attachments} disabled={busy} />}
-        <View style={{ flex: 1, minWidth: 0, paddingLeft: attachable ? 0 : 4 }}>
+        {attachable && <AttachmentTray attachments={attachments} />}
+        <View style={{ paddingHorizontal: 4 }}>
           <TextInput
             accessibilityLabel="Message"
             placeholder={composerPlaceholder(activity, executionReady, flowRun)}
@@ -178,6 +189,7 @@ export function Composer({
             value={value}
             onChangeText={onChange}
             editable={!busy && mode !== 'unavailable'}
+            autoFocus={autoFocus}
             multiline
             maxLength={32000}
             maxFontSizeMultiplier={MAX_FONT_SCALE}
@@ -188,22 +200,42 @@ export function Composer({
                 : undefined
             }
             style={[
-              { padding: 0, marginVertical: (ACTION - line) / 2, fontSize: 16, color: t.text },
+              { padding: 0, fontSize: 16, color: t.text },
               sizing.style,
               bareInput,
             ]}
           />
         </View>
-        <ActionButton
-          mode={mode}
-          enabled={enabled}
-          busy={busy || (mode === 'send' && attachments.uploading)}
-          stopLabel={flowRun ? 'Stop run' : 'Stop'}
-          onSend={onSend}
-          onStop={onStop}
-        />
-      </View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.md }}>
+          {attachable && <AttachButton attachments={attachments} disabled={busy} />}
+          <View
+            style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: space.md }}
+          >
+            {choosing && settings}
+          </View>
+          <ActionButton
+            mode={mode}
+            enabled={enabled}
+            busy={busy || (mode === 'send' && attachments.uploading)}
+            stopLabel={flowRun ? 'Stop run' : 'Stop'}
+            onSend={onSend}
+            onStop={onStop}
+          />
+        </View>
       </GlassSurface>
+      {choosing && context && (
+        <View
+          style={{
+            flexDirection: 'row',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            columnGap: space.lg,
+            paddingHorizontal: space.lg,
+          }}
+        >
+          {context}
+        </View>
+      )}
     </View>
   );
 }

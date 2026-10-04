@@ -1,4 +1,10 @@
-import { Text as NativeText, type StyleProp, type TextProps, type TextStyle } from 'react-native';
+import {
+  Text as NativeText,
+  useWindowDimensions,
+  type StyleProp,
+  type TextProps,
+  type TextStyle,
+} from 'react-native';
 import { type as ramp, useTheme, type TypeVariant } from './theme';
 
 type Color = 'text' | 'secondary' | 'muted' | 'accent' | 'live' | 'attention' | 'danger';
@@ -11,9 +17,12 @@ export function Text({
   ...props
 }: TextProps & { variant?: TypeVariant; color?: Color; style?: StyleProp<TextStyle> }) {
   const t = useTheme();
+  // Native text keeps its old measurements when the system text size changes; a new key remeasures.
+  const { fontScale } = useWindowDimensions();
   return (
     <NativeText
-      maxFontSizeMultiplier={1.6}
+      key={fontScale}
+      maxFontSizeMultiplier={2}
       {...props}
       style={[ramp[variant], { color: t[color] }, style]}
     />

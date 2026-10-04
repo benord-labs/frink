@@ -11,7 +11,6 @@ import { OverviewProvider } from '../lib/overview';
 import { onQueueLink } from '../lib/pairing-link';
 import { ChatScreen } from '../screens/Chat';
 import { FlowScreen } from '../screens/Flow';
-import { NewChatScreen } from '../screens/NewChat';
 import { RunScreen } from '../screens/Run';
 import { useReduceMotion } from '../ui/glyphs';
 import { useTheme } from '../ui/theme';
@@ -111,17 +110,6 @@ function CompanionScreens() {
           <Stack.Screen name="Chat" component={ChatScreen} options={{ title: '' }} />
           <Stack.Screen name="Flow" component={FlowScreen} options={{ title: '' }} />
           <Stack.Screen name="Run" component={RunScreen} options={{ title: '' }} />
-          <Stack.Screen
-            name="NewChat"
-            component={NewChatScreen}
-            options={{
-              title: 'New chat',
-              presentation: ios ? 'formSheet' : 'modal',
-              sheetAllowedDetents: [1],
-              sheetGrabberVisible: true,
-              headerTransparent: false,
-            }}
-          />
         </Stack.Navigator>
       </NavigationContainer>
     </>

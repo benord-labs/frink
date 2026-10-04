@@ -1,4 +1,19 @@
 import type { MobileProject } from '@frink/shared/types/remote/mobile';
+import type { NewChatPreferences } from '../../lib/preferences';
+
+/** Once published, mode changes go through setMode; an unpublished create must be retired. */
+export function creationChoiceChanged(
+  previous: NewChatPreferences | null,
+  next: NewChatPreferences,
+  published: boolean,
+) {
+  if (!previous) return true;
+  return (
+    previous.projectId !== next.projectId ||
+    previous.useWorktree !== next.useWorktree ||
+    (!published && previous.mode !== next.mode)
+  );
+}
 
 /** One plain line per choice, for people who have never heard of a git worktree. */
 export const WORK_HELP = {

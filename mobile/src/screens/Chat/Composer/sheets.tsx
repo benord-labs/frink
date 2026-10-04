@@ -75,7 +75,8 @@ export function ModelSheet({
   composer: MobileComposer;
   onClose: () => void;
   onUpdate: (patch: ComposerPatch) => void;
-  onAccount: (accountId: string) => void;
+  /** Absent on a new chat: its account is the project's, fixed when the chat is made. */
+  onAccount?: (accountId: string) => void;
 }) {
   const families = groupPickerModels(composer.models);
   const current = findPickerSelection(families, composer.settings.modelId);
@@ -140,13 +141,15 @@ export function ModelSheet({
           onChange={(autoMode) => onUpdate({ autoMode })}
         />
       </SheetSection>
-      {composer.accounts.length > 0 && <AccountSection composer={composer} onAccount={onAccount} />}
+      {onAccount && composer.accounts.length > 0 && (
+        <AccountSection composer={composer} onAccount={onAccount} />
+      )}
     </Sheet>
   );
 }
 
 /** The window's row for `modelId`, whether Ultra is on or off. */
-function selectedTier(window: Window, modelId: string): MobilePickerModel | undefined {
+export function selectedTier(window: Window, modelId: string): MobilePickerModel | undefined {
   return [...window.tiers, ...window.ultraTiers].find((tier) => tier.id === modelId);
 }
 

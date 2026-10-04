@@ -1,5 +1,5 @@
 import { requireOptionalNativeModule } from 'expo';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import { Platform } from 'react-native';
 import { MOBILE_MAX_ATTACHMENTS } from '@frink/shared/types/remote/mobile';
 import { uploadAttachment } from '../../../lib/api';
@@ -17,6 +17,8 @@ export type ComposerAttachment = {
 };
 
 type Picked = { uri: string; name: string; mimeType?: string | null; kind: 'image' | 'file' };
+type Target = { chatId: string; subChatId: string };
+type EnsureTarget = () => Promise<Target | undefined> | undefined;
 
 // Formats Claude accepts as-is. Anything else (HEIC, oversized) is re-encoded first.
 const PASSTHROUGH_IMAGE = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
@@ -74,54 +76,136 @@ async function prepareImage(asset: ImageAsset): Promise<Picked> {
   return { uri: saved.uri, name, mimeType: 'image/jpeg', kind: 'image' };
 }
 
+/** The blank composer creates its destination lazily, shared by all picked files. */
+async function requireTarget(target: Target | null, ensureTarget?: EnsureTarget) {
+  if (target) return target;
+  if (!(await ensureTarget?.())) throw new Error('Could not prepare the chat. Tap to retry.');
+  // The target-change effect resets upload ownership. Let React publish it before sending bytes.
+  return undefined;
+}
+
+function releaseUpload(
+  live: Map<string, AbortController>,
+  key: string,
+  controller: AbortController,
+) {
+  // An aborted upload must not remove the controller of its replacement.
+  if (live.get(key) === controller) live.delete(key);
+}
+
+function uploadFailure(error: unknown): Partial<ComposerAttachment> {
+  return { status: 'failed', error: error instanceof Error ? error.message : 'Could not upload.' };
+}
+
+function startPendingUploads(
+  items: ComposerAttachment[],
+  live: Map<string, AbortController>,
+  upload: (key: string, source: Picked) => Promise<void>,
+) {
+  for (const item of items)
+    if (item.status === 'uploading' && !live.has(item.key)) void upload(item.key, item.source);
+}
+
+function targetIsReady(targetKey: string, itemsTargetKey: string, ensureTarget?: EnsureTarget) {
+  return itemsTargetKey === targetKey && Boolean(targetKey || ensureTarget);
+}
+
+function resetAttachments(
+  items: ComposerAttachment[],
+  retainPicked: boolean,
+): ComposerAttachment[] {
+  return retainPicked
+    ? items.map((item) => ({ ...item, status: 'uploading', id: undefined, error: undefined }))
+    : [];
+}
+
+function attachmentState(items: ComposerAttachment[], targetMatches: boolean) {
+  return {
+    /** Ids belong only to the destination that stored them, in pick order. */
+    ids: targetMatches
+      ? items.flatMap((item) => (item.status === 'ready' && item.id ? [item.id] : []))
+      : [],
+    uploading:
+      items.some((item) => item.status === 'uploading') || (items.length > 0 && !targetMatches),
+    failed: items.some((item) => item.status === 'failed'),
+    full: items.length >= MOBILE_MAX_ATTACHMENTS,
+  };
+}
+
+function useAttachmentUpload(
+  target: Target | null,
+  ensureTarget: EnsureTarget | undefined,
+  live: RefObject<Map<string, AbortController>>,
+  patch: (key: string, next: Partial<ComposerAttachment>) => void,
+) {
+  const { connection } = useConnection();
+  const targetRef = useRef(target);
+  targetRef.current = target;
+  const ensureRef = useRef(ensureTarget);
+  ensureRef.current = ensureTarget;
+
+  return useCallback(
+    async (key: string, source: Picked) => {
+      if (!connection) return;
+      const controller = new AbortController();
+      live.current.set(key, controller);
+      patch(key, { status: 'uploading', error: undefined });
+      const update = (next: Partial<ComposerAttachment>) => {
+        if (!controller.signal.aborted) patch(key, next);
+      };
+      try {
+        const target = await requireTarget(targetRef.current, ensureRef.current);
+        if (!target || controller.signal.aborted) return;
+        const stored = await uploadAttachment(connection, target, source, controller.signal);
+        update({ status: 'ready', id: stored.id, kind: stored.kind });
+      } catch (error) {
+        update(uploadFailure(error));
+      } finally {
+        releaseUpload(live.current, key, controller);
+      }
+    },
+    [connection, patch],
+  );
+}
+
 /** Picked, prepared and uploaded attachments for one conversation's composer. */
-export function useComposerAttachments(target: { chatId: string; subChatId: string } | null) {
+export function useComposerAttachments(
+  target: Target | null,
+  {
+    retainPicked = false,
+    ensureTarget,
+  }: {
+    retainPicked?: boolean;
+    ensureTarget?: EnsureTarget;
+  } = {},
+) {
   const { connection } = useConnection();
   const [items, setItems] = useState<ComposerAttachment[]>([]);
   const targetKey = target ? `${target.chatId}:${target.subChatId}` : '';
+  const [itemsTargetKey, setItemsTargetKey] = useState(targetKey);
   const live = useRef(new Map<string, AbortController>());
-  const targetRef = useRef(target);
-  targetRef.current = target;
-
-  // Uploads belong to one conversation; switching drops them (the computer expires unsent ones).
+  // A blank conversation keeps local picks when its project changes, but uploaded ids never move.
   useEffect(() => {
     const uploads = live.current;
-    setItems([]);
+    setItemsTargetKey(targetKey);
+    setItems((current) => resetAttachments(current, retainPicked));
     return () => {
       for (const controller of uploads.values()) controller.abort();
       uploads.clear();
     };
-  }, [targetKey]);
+  }, [targetKey, retainPicked]);
 
   const patch = useCallback((key: string, next: Partial<ComposerAttachment>) => {
     setItems((current) => current.map((item) => (item.key === key ? { ...item, ...next } : item)));
   }, []);
 
-  const upload = useCallback(
-    // Reason: Upload, cancellation and failure share one attachment's lifecycle.
-    // fallow-ignore-next-line complexity
-    async (key: string, source: Picked) => {
-      const target = targetRef.current;
-      if (!connection || !target) return;
-      const controller = new AbortController();
-      live.current.set(key, controller);
-      patch(key, { status: 'uploading', error: undefined });
-      try {
-        const stored = await uploadAttachment(connection, target, source, controller.signal);
-        if (!controller.signal.aborted)
-          patch(key, { status: 'ready', id: stored.id, kind: stored.kind });
-      } catch (error) {
-        if (!controller.signal.aborted)
-          patch(key, {
-            status: 'failed',
-            error: error instanceof Error ? error.message : 'Could not upload.',
-          });
-      } finally {
-        live.current.delete(key);
-      }
-    },
-    [connection, patch],
-  );
+  const upload = useAttachmentUpload(target, ensureTarget, live, patch);
+
+  const canUpload = targetIsReady(targetKey, itemsTargetKey, ensureTarget);
+  useEffect(() => {
+    if (!connection || !canUpload) return;
+    startPendingUploads(items, live.current, upload);
+  }, [items, canUpload, connection, upload]);
 
   const add = useCallback(
     (picked: Picked[]) => {
@@ -134,10 +218,8 @@ export function useComposerAttachments(target: { chatId: string; subChatId: stri
         source,
       }));
       setItems((current) => [...current, ...accepted]);
-      // Eager: uploading while the user types means Send is usually instant.
-      for (const item of accepted) void upload(item.key, item.source);
     },
-    [items.length, upload],
+    [items.length],
   );
 
   const pickPhotos = useCallback(async () => {
@@ -203,11 +285,7 @@ export function useComposerAttachments(target: { chatId: string; subChatId: stri
 
   return {
     items,
-    /** Ids of everything the computer has stored, in the order it was attached. */
-    ids: items.flatMap((item) => (item.status === 'ready' && item.id ? [item.id] : [])),
-    uploading: items.some((item) => item.status === 'uploading'),
-    failed: items.some((item) => item.status === 'failed'),
-    full: items.length >= MOBILE_MAX_ATTACHMENTS,
+    ...attachmentState(items, itemsTargetKey === targetKey),
     pickPhotos,
     pickFiles,
     remove,

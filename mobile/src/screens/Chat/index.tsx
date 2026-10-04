@@ -1,4 +1,5 @@
 import { useRoute, type RouteProp } from '@react-navigation/native';
+import { useHeaderHeight } from '@react-navigation/elements';
 import { useAnimatedHeaderHeight } from '@react-navigation/native-stack';
 import { useEffect, useState, type ReactNode, type RefObject } from 'react';
 import {
@@ -20,8 +21,10 @@ import { GlassSurface } from '../../ui/material';
 import { ResourceStatus } from '../../ui/resource-status';
 import { Screen } from '../../ui/screen';
 import { GUTTER, space, useTheme } from '../../ui/theme';
+import { NewChat } from '../NewChat';
 import { chatPollInterval, decisionStillOpen, showsComposer } from './chat-state';
 import { Composer, useComposerAttachments, useComposerState } from './Composer';
+import { useExecutionReady, useKeyboardShown } from './environment';
 import { SubChatTabs, useChatHeader } from './header';
 import { LatestChip, Transcript } from './transcript';
 import { useChatActions } from './use-chat-actions';
@@ -30,21 +33,6 @@ import { useTranscriptScroll } from './use-transcript-scroll';
 import { useTurnClock } from './use-turn-clock';
 
 const ios = Platform.OS === 'ios';
-
-/** The home-indicator gap only applies while the keyboard is down. */
-function useKeyboardShown() {
-  const [shown, setShown] = useState(false);
-  useEffect(() => {
-    if (!ios) return;
-    const show = Keyboard.addListener('keyboardWillShow', () => setShown(true));
-    const hide = Keyboard.addListener('keyboardWillHide', () => setShown(false));
-    return () => {
-      show.remove();
-      hide.remove();
-    };
-  }, []);
-  return shown;
-}
 
 /** Busy chats poll faster; the interval follows the last activity the computer reported. */
 function useChatResource(id: string, subChatId: string | undefined) {
@@ -56,15 +44,6 @@ function useChatResource(id: string, subChatId: string | undefined) {
   const latest = resource.data?.activity;
   useEffect(() => setActivity(latest), [latest]);
   return resource;
-}
-
-/** Only whether the Mac can run chats is needed here, so the overview's lists stay one row long. */
-function useExecutionReady() {
-  const overview = useResource(
-    { type: 'overview', limits: { attention: 1, running: 1, inbox: 1 } },
-    { interval: 10_000 },
-  );
-  return overview.data?.executionReady ?? true;
 }
 
 /**
@@ -131,6 +110,7 @@ function ChatView({
   const t = useTheme();
   const navigation = useRootNavigation();
   const insets = useSafeAreaInsets();
+  const headerHeight = useHeaderHeight();
   const keyboard = useKeyboardShown();
   const [composerHeight, setComposerHeight] = useState(0);
   const [subChatId, setSubChatId] = useState(initialSubChatId);
@@ -159,6 +139,15 @@ function ChatView({
   // reader's place (or the newest message in view) rather than letting the text jump.
   const { restorePosition } = scrolling;
   useEffect(() => void restorePosition(), [stripHeight]);
+  useEffect(() => {
+    if (!ios) return;
+    const subscriptions = ['keyboardDidShow', 'keyboardDidHide'].map((event) =>
+      Keyboard.addListener(event as 'keyboardDidShow' | 'keyboardDidHide', () =>
+        void restorePosition(),
+      ),
+    );
+    return () => subscriptions.forEach((subscription) => subscription.remove());
+  }, [restorePosition]);
   const clock = useTurnClock(data?.activity, `${id}:${data?.subChatId}`, resource.updatedAt);
   const actions = useChatActions({
     chatId: id,
@@ -174,7 +163,13 @@ function ChatView({
     onDeleted: () => navigation.goBack(),
   });
   useChatHeader(
-    { name: data?.chat.name ?? '', kind, project, activity: data?.activity, elapsed: clock.elapsed },
+    {
+      name: data?.chat.name ?? '',
+      kind,
+      project,
+      activity: data?.activity,
+      elapsed: clock.elapsed,
+    },
     data ? actions.remove : null,
   );
   function switchConversation(next: string) {
@@ -189,101 +184,117 @@ function ChatView({
     actions.note ?? (composerState.error ? { text: composerState.error, error: true } : null);
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={ios ? 'padding' : undefined}>
-      <ScrollView
-        ref={scrolling.scrollRef}
-        {...scrolling.scrollProps}
-        contentInsetAdjustmentBehavior="automatic"
-        keyboardDismissMode="interactive"
-        keyboardShouldPersistTaps="handled"
-        refreshControl={
-          <RefreshControl
-            refreshing={resource.refreshing}
-            onRefresh={resource.pull}
-            tintColor={t.muted}
-          />
-        }
-        contentContainerStyle={{
-          paddingTop: stripHeight,
-          // iOS already insets the scroll view by the home indicator ("automatic" adjustment).
-          paddingBottom: (composer ? composerHeight : 0) + space.xl + (ios ? space.sm : bottom),
-        }}
-      >
-        <View
-          style={{
-            width: '100%',
-            maxWidth: 720,
-            alignSelf: 'center',
-            paddingHorizontal: GUTTER,
-            paddingTop: space.lg,
+      <View style={{ flex: 1 }}>
+        <ScrollView
+          ref={scrolling.scrollRef}
+          {...scrolling.scrollProps}
+          contentInsetAdjustmentBehavior="never"
+          automaticallyAdjustsScrollIndicatorInsets={false}
+          scrollIndicatorInsets={{ top: (ios ? headerHeight : 0) + stripHeight, bottom }}
+          onLayout={() => void scrolling.restorePosition()}
+          keyboardDismissMode="interactive"
+          keyboardShouldPersistTaps="handled"
+          refreshControl={
+            <RefreshControl
+              refreshing={resource.refreshing}
+              onRefresh={resource.pull}
+              tintColor={t.muted}
+            />
+          }
+          contentContainerStyle={{
+            // Native scrollToEnd clamps to zero, so the glass bar's clearance belongs to content.
+            paddingTop: (ios ? headerHeight : 0) + stripHeight,
+            paddingBottom: (composer ? composerHeight : 0) + space.xl + bottom,
           }}
         >
-          {data ? (
-            <Transcript
-              data={data}
-              messages={history.messages}
-              history={history}
-              scrolling={scrolling}
-              targetResolved={!!target && !targetOpen}
-              onAnswered={resource.refresh}
-            />
-          ) : (
-            !resource.error && <ActivityIndicator color={t.muted} style={{ paddingTop: 120 }} />
+          <View
+            style={{
+              width: '100%',
+              maxWidth: 720,
+              alignSelf: 'center',
+              paddingHorizontal: GUTTER,
+              paddingTop: space.lg,
+            }}
+          >
+            {data ? (
+              <Transcript
+                data={data}
+                messages={history.messages}
+                history={history}
+                scrolling={scrolling}
+                targetResolved={!!target && !targetOpen}
+                onAnswered={resource.refresh}
+              />
+            ) : (
+              !resource.error && <ActivityIndicator color={t.muted} style={{ paddingTop: 120 }} />
+            )}
+          </View>
+        </ScrollView>
+        <PinnedStrip edgeRef={scrolling.edgeRef} onHeight={setStripHeight}>
+          {(resource.error || tabs) && (
+            <>
+              <ResourceStatus {...resource} />
+              {data && <SubChatTabs data={data} onChange={switchConversation} />}
+            </>
+          )}
+        </PinnedStrip>
+        <View
+          pointerEvents="box-none"
+          style={{
+            position: 'absolute',
+            left: 0,
+            right: 0,
+            bottom,
+            paddingHorizontal: 10,
+            gap: 10,
+          }}
+        >
+          {scrolling.showLatest && <LatestChip onPress={scrolling.latest} />}
+          {composer && (
+            <View
+              testID="composer"
+              onLayout={(event) => setComposerHeight(event.nativeEvent.layout.height)}
+              style={{ width: '100%', maxWidth: 720, alignSelf: 'center' }}
+            >
+              <Composer
+                activity={data.activity}
+                executionReady={executionReady}
+                flowRun={flowRun}
+                busy={actions.busy}
+                note={note}
+                value={draft.value}
+                onChange={draft.update}
+                onSend={actions.submit}
+                onStop={actions.stop}
+                composer={composerState.composer}
+                attachments={attachments}
+                onUpdate={(patch) => composerState.change({ type: 'updateComposer', patch })}
+                onMode={(mode) => composerState.change({ type: 'setMode', mode })}
+                onAccount={(accountId) => composerState.change({ type: 'setAccount', accountId })}
+              />
+            </View>
           )}
         </View>
-      </ScrollView>
-      <PinnedStrip edgeRef={scrolling.edgeRef} onHeight={setStripHeight}>
-        {(resource.error || tabs) && (
-          <>
-            <ResourceStatus {...resource} />
-            {data && <SubChatTabs data={data} onChange={switchConversation} />}
-          </>
-        )}
-      </PinnedStrip>
-      <View
-        pointerEvents="box-none"
-        style={{ position: 'absolute', left: 0, right: 0, bottom, paddingHorizontal: 10, gap: 10 }}
-      >
-        {scrolling.showLatest && <LatestChip onPress={scrolling.latest} />}
-        {composer && (
-          <View
-            testID="composer"
-            onLayout={(event) => setComposerHeight(event.nativeEvent.layout.height)}
-            style={{ width: '100%', maxWidth: 720, alignSelf: 'center' }}
-          >
-            <Composer
-              activity={data.activity}
-              executionReady={executionReady}
-              flowRun={flowRun}
-              busy={actions.busy}
-              note={note}
-              value={draft.value}
-              onChange={draft.update}
-              onSend={actions.submit}
-              onStop={actions.stop}
-              composer={composerState.composer}
-              attachments={attachments}
-              onUpdate={(patch) => composerState.change({ type: 'updateComposer', patch })}
-              onMode={(mode) => composerState.change({ type: 'setMode', mode })}
-              onAccount={(accountId) => composerState.change({ type: 'setAccount', accountId })}
-            />
-          </View>
-        )}
       </View>
     </KeyboardAvoidingView>
   );
 }
 
-/** A conversation pushed above the tabs: native header, transcript and floating composer. */
+/** A conversation pushed above the tabs: an existing chat, or a blank one when no chat is named. */
 export function ChatScreen() {
   const { params } = useRoute<RouteProp<RootRoutes, 'Chat'>>();
   return (
     <Screen atmosphere>
-      <ChatView
-        key={params.id}
-        id={params.id}
-        initialSubChatId={params.subChatId}
-        decisionTarget={params.decisionTarget}
-      />
+      {params?.id ? (
+        <ChatView
+          key={params.id}
+          id={params.id}
+          initialSubChatId={params.subChatId}
+          decisionTarget={params.decisionTarget}
+        />
+      ) : (
+        <NewChat requestedProjectId={params?.projectId} />
+      )}
     </Screen>
   );
 }

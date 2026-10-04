@@ -2,7 +2,8 @@ import { expect, test, type Page } from '@playwright/test';
 import { openApp, type AppState } from './fixtures/app';
 import { NOW, overviewFixture } from './fixtures/data';
 
-const messageBox = (page: Page) => page.getByRole('textbox', { name: 'New chat message' });
+const messageBox = (page: Page) => page.getByRole('textbox', { name: 'Message', exact: true });
+const send = (page: Page) => page.getByRole('button', { name: 'Send message', exact: true });
 const created = { chatId: 'chat-new', subChatId: 'sub-new' };
 
 async function openNewChat(page: Page, options: Parameters<typeof openApp>[1] = {}) {
@@ -13,64 +14,127 @@ async function openNewChat(page: Page, options: Parameters<typeof openApp>[1] = 
   return state;
 }
 
-/** Opens the picker from the project chip, whatever it currently names, and picks `name`. */
+/** Opens the picker from the project control, whatever it currently names, and picks `name`. */
 async function pickProject(page: Page, name: string) {
   await page.getByRole('button', { name: /^Project: / }).click();
   await page.getByRole('button', { name, exact: true }).click();
   await expect(page.getByRole('button', { name: `Project: ${name}` })).toBeVisible();
 }
 
-const mutations = (state: AppState) =>
-  state.requests.filter((input) => input.type === 'createChat' || input.type === 'sendMessage');
+/** Opens one of the message box's menus and picks an option. */
+async function pick(page: Page, menu: string | RegExp, option: string) {
+  await page.getByRole('button', { name: menu }).click();
+  await page.getByRole('radio', { name: option, exact: true }).click();
+}
 
-test('a first message starts a chat with the chosen project, location and mode', async ({
-  page,
-}) => {
+const mutations = (state: AppState) =>
+  state.requests.filter((input) =>
+    ['createChat', 'sendMessage', 'deleteChat'].includes(input.type),
+  );
+
+test('a new chat is a blank conversation whose first message starts it', async ({ page }) => {
   const state = await openNewChat(page);
+  // The same message box as any chat, not a sheet: nothing to cancel, nothing made yet.
+  await expect(page.getByRole('button', { name: 'Cancel', exact: true })).toHaveCount(0);
   await expect(messageBox(page)).toBeFocused();
   // Nothing remembered yet: the most recently active project is already chosen.
   await expect(page.getByRole('button', { name: 'Project: frink' })).toBeVisible();
   await expect(page.getByText('Worktree: a separate copy, safe to experiment.')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Start chat' })).toBeDisabled();
-  await page.screenshot({ path: 'test-results/new-chat-open-dark.png' });
+  await expect(send(page)).toBeDisabled();
   await messageBox(page).fill('Tighten the hero copy on the pricing page');
-  await expect(page.getByRole('button', { name: 'Start chat' })).toBeEnabled();
 
   await pickProject(page, 'marketing-site');
-
-  await page.getByRole('button', { name: 'Work in: Worktree' }).click();
+  await pick(page, 'Work in: Worktree', 'Local');
   await expect(page.getByText('Local: works directly in your project folder.')).toBeVisible();
-  await page.getByRole('button', { name: 'Mode: Agent' }).click();
+  await pick(page, 'Mode: Agent', 'Plan');
   await expect(page.getByRole('button', { name: 'Mode: Plan' })).toBeVisible();
-  await page.screenshot({ path: 'test-results/new-chat-ready-dark.png' });
+  expect(mutations(state)).toEqual([]);
 
-  await page.getByRole('button', { name: 'Start chat' }).click();
+  await send(page).click();
   await expect.poll(() => mutations(state).length).toBe(2);
-  const [create, send] = mutations(state);
+  const [create, first] = mutations(state);
   expect(create).toEqual({
     type: 'createChat',
     projectId: 'project-2',
     useWorktree: false,
     mode: 'plan',
   });
-  expect(send).toMatchObject({
+  expect(first).toMatchObject({
     type: 'sendMessage',
     ...created,
     text: 'Tighten the hero copy on the pricing page',
     requestId: expect.stringMatching(/^[0-9a-f-]{36}$/),
   });
-  // The sheet gives way to the new chat.
-  await expect(messageBox(page)).toHaveCount(0);
+  // The blank page gives way to the chat it started.
+  await expect(page.getByTestId('chat-subtitle')).toBeVisible();
+});
+
+test('the model is chosen in the message box before the first message', async ({ page }) => {
+  const state = await openNewChat(page);
+  // The model list belongs to a chat, so asking for it makes the chat; then the menus are live.
+  await page.getByRole('button', { name: 'Choose model' }).click();
+  await pick(page, /^Model: /, 'Opus 4.8');
+  await expect(page.getByRole('button', { name: 'Model: Opus 4.8' })).toBeVisible();
+  expect(state.requests.filter((input) => input.type === 'updateComposer')).toEqual([
+    expect.objectContaining(created),
+  ]);
+
+  await messageBox(page).fill('Profile the cold start');
+  await send(page).click();
+  await expect(page.getByTestId('chat-subtitle')).toBeVisible();
+  // One chat, made once, and kept because it was used.
+  expect(mutations(state).map((input) => input.type)).toEqual(['createChat', 'sendMessage']);
+});
+
+test("a new chat offers no account choice: it runs on the project's account", async ({ page }) => {
+  const state = await openNewChat(page);
+  await page.getByRole('button', { name: 'Choose model' }).click();
+  await pick(page, /^Model: /, 'More settings…');
+  await expect(page.getByRole('switch', { name: 'Auto Mode', exact: true })).toBeVisible();
+  await expect(page.getByRole('radio', { name: 'Personal', exact: true })).toHaveCount(0);
+  expect(state.requests.filter((input) => input.type === 'setAccount')).toEqual([]);
+});
+
+test('looking at the models and leaving does not strand an empty chat', async ({ page }) => {
+  const state = await openNewChat(page);
+  await page.getByRole('button', { name: 'Choose model' }).click();
+  await expect(page.getByRole('button', { name: /^Model: / })).toBeVisible();
+  await page.getByRole('link', { name: /back/i }).click();
+  await expect
+    .poll(() => mutations(state))
+    .toEqual([
+      expect.objectContaining({ type: 'createChat' }),
+      { type: 'deleteChat', chatId: created.chatId },
+    ]);
+});
+
+test('changing the project after looking at the models starts over in the new project', async ({
+  page,
+}) => {
+  const state = await openNewChat(page);
+  await page.getByRole('button', { name: 'Choose model' }).click();
+  await expect(page.getByRole('button', { name: /^Model: / })).toBeVisible();
+  await pickProject(page, 'billing-api');
+  // The chat made for the first project is removed; the next one is made where it was asked for.
+  await messageBox(page).fill('Retry failed webhooks');
+  await send(page).click();
+  await expect(page.getByTestId('chat-subtitle')).toBeVisible();
+  expect(mutations(state).map((input) => [input.type, input.projectId ?? input.chatId])).toEqual([
+    ['createChat', 'project-1'],
+    ['deleteChat', created.chatId],
+    ['createChat', 'project-3'],
+    ['sendMessage', created.chatId],
+  ]);
 });
 
 test('the next new chat starts where the last one did', async ({ page }) => {
   await openNewChat(page);
   await pickProject(page, 'billing-api');
-  await page.getByRole('button', { name: 'Work in: Worktree' }).click();
-  await page.getByRole('button', { name: 'Mode: Agent' }).click();
+  await pick(page, 'Work in: Worktree', 'Local');
+  await pick(page, 'Mode: Agent', 'Plan');
   await messageBox(page).fill('Retry failed webhooks');
-  await page.getByRole('button', { name: 'Start chat' }).click();
-  await expect(messageBox(page)).toHaveCount(0);
+  await send(page).click();
+  await expect(page.getByTestId('chat-subtitle')).toBeVisible();
 
   await page.goto('/');
   await page.getByTestId('tab-chats').click();
@@ -94,16 +158,7 @@ test('the project picker lists every project and searches a long list', async ({
     },
   });
   await page.getByRole('button', { name: 'Project: frink' }).click();
-  // The sheet's own header becomes the picker's: one title, one way back, no Send.
-  await expect(page.getByText('Choose a project', { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Start chat' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'frink, chosen' })).toBeVisible();
-  await page.screenshot({ path: 'test-results/new-chat-picker-dark.png' });
-  await page.getByRole('button', { name: 'Back', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Project: frink' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Cancel', exact: true })).toBeVisible();
-
-  await page.getByRole('button', { name: 'Project: frink' }).click();
   await page.getByRole('textbox', { name: 'Search projects' }).fill('rel');
   await expect(page.getByRole('button', { name: 'relay', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'frink', exact: true })).toHaveCount(0);
@@ -121,17 +176,15 @@ test('a failed first message keeps the text and reuses the chat on retry', async
     },
   });
   await messageBox(page).fill('Bump the Electron version');
-  await page.getByRole('button', { name: 'Start chat' }).click();
-  // A plain cause and fix first, then what the Mac said.
-  await expect(page.getByText('Your chat was made, but the first message didn’t send.')).toBeVisible();
+  await send(page).click();
   await expect(page.getByText('Frink is busy. Try again.')).toBeVisible();
   await expect(messageBox(page)).toHaveValue('Bump the Electron version');
-  await expect(page.getByRole('button', { name: 'Open the new chat' })).toBeVisible();
-  await page.screenshot({ path: 'test-results/new-chat-error-dark.png' });
+  // The message may have arrived, so the chat is kept and its project can no longer change.
+  await expect(page.getByRole('button', { name: /^Project: / })).toBeDisabled();
 
   failSend = false;
-  await page.getByRole('button', { name: 'Start chat' }).click();
-  await expect(messageBox(page)).toHaveCount(0);
+  await send(page).click();
+  await expect(page.getByTestId('chat-subtitle')).toBeVisible();
   expect(mutations(state).map((input) => input.type)).toEqual([
     'createChat',
     'sendMessage',
@@ -146,20 +199,124 @@ test('without Frink running on the Mac, a chat cannot start', async ({ page }) =
   await openApp(page, { data: { overview: { ...overviewFixture(), executionReady: false } } });
   await page.getByTestId('tab-chats').click();
   await expect(page.getByRole('button', { name: 'New chat', exact: true })).toBeDisabled();
-  await page.screenshot({ path: 'test-results/new-chat-not-ready-dark.png' });
 });
 
-test('light appearance', async ({ page }) => {
-  await page.emulateMedia({ colorScheme: 'light' });
-  await openNewChat(page);
-  await messageBox(page).fill('Write release notes for 0.0.13');
-  await page.screenshot({ path: 'test-results/new-chat-ready-light.png' });
-});
-
-test('with no projects on the Mac, the sheet says where to add one', async ({ page }) => {
-  await openNewChat(page, { data: { projects: [] } });
+test('with no projects on the Mac, the page says where to add one', async ({ page }) => {
+  const state = await openNewChat(page, { data: { projects: [] } });
   await messageBox(page).fill('Set up CI');
   await expect(page.getByText('Add a project in Frink on your Mac to start a chat.')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Start chat' })).toBeDisabled();
-  await page.screenshot({ path: 'test-results/new-chat-no-projects-dark.png' });
+  await expect(page.getByRole('button', { name: 'Choose model' })).toBeDisabled();
+  await send(page).click();
+  expect(mutations(state)).toEqual([]);
+});
+
+test('Back during chat creation removes the empty chat when creation finishes', async ({
+  page,
+}) => {
+  const state = await openNewChat(page);
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let creating = false;
+  await page.route('**/api', async (route) => {
+    if (route.request().postDataJSON()?.type === 'createChat') {
+      creating = true;
+      await held;
+    }
+    await route.fallback();
+  });
+  await page.getByRole('button', { name: 'Choose model' }).click();
+  await expect.poll(() => creating).toBe(true);
+  await page.getByRole('link', { name: /back/i }).click();
+  release();
+  await expect
+    .poll(() => mutations(state).map((input) => input.type))
+    .toEqual(['createChat', 'deleteChat']);
+});
+
+test('picked files survive changing project and work location on a blank chat', async ({
+  page,
+}) => {
+  let sequence = 0;
+  const state = await openNewChat(page, {
+    respond: (input) =>
+      input.type === 'createChat'
+        ? { chatId: `new-${++sequence}`, subChatId: `sub-${sequence}` }
+        : undefined,
+  });
+  const targets: string[] = [];
+  await page.route('**/api/attachments', async (route) => {
+    targets.push(route.request().headers()['x-frink-chat']);
+    await route.fallback();
+  });
+  await page.getByRole('button', { name: 'Attach', exact: true }).click();
+  const chooser = page.waitForEvent('filechooser');
+  await page.getByRole('radio', { name: 'Files', exact: true }).click();
+  await (
+    await chooser
+  ).setFiles({ name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('keep me') });
+  await expect(page.getByTestId('composer-attachment')).toContainText('notes.txt');
+  await expect(send(page)).toBeEnabled();
+  await expect.poll(() => targets).toEqual(['new-1']);
+
+  await pickProject(page, 'marketing-site');
+  await expect(page.getByTestId('composer-attachment')).toContainText('notes.txt');
+  await expect.poll(() => targets).toEqual(['new-1', 'new-2']);
+  await expect(send(page)).toBeEnabled();
+  await pick(page, 'Work in: Worktree', 'Local');
+  await expect(page.getByTestId('composer-attachment')).toContainText('notes.txt');
+  await expect.poll(() => targets).toEqual(['new-1', 'new-2', 'new-3']);
+  await expect(send(page)).toBeEnabled();
+  const uploaded = state.requests.findLastIndex((input) => String(input.type) === 'upload') + 1;
+
+  await send(page).click();
+  await expect(page.getByTestId('chat-subtitle')).toBeVisible();
+  expect(state.requests.filter((input) => input.type === 'createChat')).toEqual([
+    { type: 'createChat', projectId: 'project-1', useWorktree: true, mode: 'agent' },
+    { type: 'createChat', projectId: 'project-2', useWorktree: true, mode: 'agent' },
+    { type: 'createChat', projectId: 'project-2', useWorktree: false, mode: 'agent' },
+  ]);
+  expect(
+    state.requests.filter((input) => input.type === 'deleteChat').map((input) => input.chatId),
+  ).toEqual(['new-1', 'new-2']);
+  expect(state.requests.find((input) => input.type === 'sendMessage')).toMatchObject({
+    chatId: 'new-3',
+    subChatId: 'sub-3',
+    text: '',
+    attachments: [`att-${uploaded}`],
+  });
+});
+
+test('picking multiple files prepares only one chat and sends every file to it', async ({
+  page,
+}) => {
+  const state = await openNewChat(page);
+  await page.route('**/api', async (route) => {
+    if (route.request().postDataJSON()?.type === 'createChat')
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    await route.fallback();
+  });
+  const targets: string[] = [];
+  await page.route('**/api/attachments', async (route) => {
+    targets.push(route.request().headers()['x-frink-chat']);
+    await route.fallback();
+  });
+  await page.getByRole('button', { name: 'Attach', exact: true }).click();
+  const chooser = page.waitForEvent('filechooser');
+  await page.getByRole('radio', { name: 'Files', exact: true }).click();
+  await (
+    await chooser
+  ).setFiles([
+    { name: 'one.txt', mimeType: 'text/plain', buffer: Buffer.from('one') },
+    { name: 'two.txt', mimeType: 'text/plain', buffer: Buffer.from('two') },
+  ]);
+  await expect(page.getByTestId('composer-attachment')).toHaveCount(2);
+  await expect(send(page)).toBeEnabled();
+  expect(state.requests.filter((input) => input.type === 'createChat')).toHaveLength(1);
+  expect(targets).toEqual([created.chatId, created.chatId]);
+  await send(page).click();
+  await expect
+    .poll(() => state.requests.find((input) => input.type === 'sendMessage'))
+    .toMatchObject({ ...created, attachments: [expect.any(String), expect.any(String)] });
 });

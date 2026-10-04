@@ -6,7 +6,7 @@ import { useRootNavigation } from '../../../navigation/routes';
 import { ListRow, RowSeparator } from '../../../ui/list';
 import { Text } from '../../../ui/text';
 import { GUTTER, space } from '../../../ui/theme';
-import { StatusTile } from '../../Flows/StatusTile';
+import { StatusGlyph } from '../../../ui/glyphs';
 import { runElapsed, runWhen, TONE_TEXT } from '../../Run/run-view';
 
 type Run = MobileResponses['flow']['runs']['items'][number];
@@ -20,7 +20,7 @@ function RunRow({ run, shown }: { run: Run; shown: string }) {
     <ListRow
       testID={`run-row-${run.id}`}
       accessibilityLabel={`${when}, ${status.word}${took ? `, ${took}` : ''}`}
-      leading={<StatusTile status={status} />}
+      leading={<StatusGlyph glyph={status.glyph} tone={status.tone} size={18} />}
       title={when}
       subtitle={
         <Text variant="secondary" color={TONE_TEXT[status.tone]} numberOfLines={1}>
@@ -79,7 +79,7 @@ export function RecentRuns({
           style={({ pressed }) => ({
             minHeight: 44,
             justifyContent: 'center',
-            paddingLeft: GUTTER + 38 + space.md,
+            paddingLeft: GUTTER + 18 + space.md,
             opacity: pressed ? 0.6 : 1,
           })}
         >

@@ -12,7 +12,15 @@ import { Screen } from '../../ui/screen';
 import { Text } from '../../ui/text';
 import { GUTTER, space, useTheme } from '../../ui/theme';
 import { READINESS } from '../Flow/readiness';
-import { isTerminal, runElapsed, runHeadline, runProgress, runWhen, TONE_TEXT } from './run-view';
+import {
+  isTerminal,
+  needsDecision,
+  runElapsed,
+  runHeadline,
+  runProgress,
+  runWhen,
+  TONE_TEXT,
+} from './run-view';
 import { RunTimeline } from './RunTimeline';
 import { StopRun } from './StopRun';
 
@@ -61,6 +69,14 @@ export function RunScreen() {
   useEffect(() => setFinished(terminal), [terminal]);
   const title = run?.flowName;
   const heading = useLargeTitle(title);
+  const waiting = run && !terminal ? run.nodes.filter(needsDecision) : [];
+  const timeline = run?.nodes.filter((node) => !waiting.includes(node)) ?? [];
+  const decisionState = {
+    busy: action.busy,
+    ready: readiness.data?.executionReady !== false,
+    error: acted ? { nodeId: acted, text: action.error } : null,
+    resume: (node: MobileRunNode, operation: 'approve' | 'skip') => void resume(node, operation),
+  };
   async function resume(node: MobileRunNode, operation: 'approve' | 'skip') {
     setActed(node.id);
     const done = await action.run({
@@ -92,14 +108,18 @@ export function RunScreen() {
         ) : (
           <View style={{ paddingTop: space.lg }}>
             <RunSummary run={run} />
-            <SectionHeader title="Steps" count={run.nodes.length || undefined} />
-            <RunTimeline
-              nodes={run.nodes}
-              busy={action.busy}
-              ready={readiness.data?.executionReady !== false}
-              error={acted ? { nodeId: acted, text: action.error } : null}
-              resume={(node, operation) => void resume(node, operation)}
-            />
+            {waiting.length > 0 && (
+              <>
+                <SectionHeader title="Needs you" count={waiting.length} />
+                <RunTimeline nodes={waiting} {...decisionState} />
+              </>
+            )}
+            {(timeline.length > 0 || waiting.length === 0) && (
+              <>
+                <SectionHeader title="Timeline" count={timeline.length || undefined} />
+                <RunTimeline nodes={timeline} {...decisionState} />
+              </>
+            )}
             {!isTerminal(run.status) && (
               <View style={{ paddingTop: space.xxl }}>
                 <StopRun busy={action.busy} error={acted ? null : action.error} onStop={stop} />

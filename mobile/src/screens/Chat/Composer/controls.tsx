@@ -1,113 +1,193 @@
 import { useState } from 'react';
-import { Pressable, View } from 'react-native';
-import { ChevronDown, Sparkles, type LucideIcon } from 'lucide-react-native';
-import type { MobileChatMode, MobileComposer } from '@frink/shared/types/remote/mobile';
-import { Text } from '../../../ui/text';
-import { radius, space, useTheme } from '../../../ui/theme';
-import { MODES, ModeSheet, ModelSheet, modelLabel, type ComposerPatch } from './sheets';
+import {
+  EFFORT_LABEL,
+  findPickerSelection,
+  groupPickerModels,
+  pickInWindow,
+  type PickerFamily,
+  type PickerWindow,
+} from '@frink/shared/lib/model-picker-label/groups';
+import type {
+  MobileChatMode,
+  MobileComposer,
+  MobilePickerModel,
+} from '@frink/shared/types/remote/mobile';
+import { MenuChip } from './menu';
+import { MODES, ModelSheet, modelLabel, selectedTier, type ComposerPatch } from './sheets';
 
 export type { ComposerPatch } from './sheets';
 
-/** A compact pill that opens the sheet for one choice. */
-function Chip({
-  icon: Icon,
-  label,
-  onPress,
-  disabled,
-  accessibilityLabel,
-}: {
-  icon: LucideIcon;
-  label: string;
-  onPress: () => void;
-  disabled: boolean;
-  accessibilityLabel: string;
-}) {
-  const t = useTheme();
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel}
-      accessibilityState={{ disabled }}
-      disabled={disabled}
-      onPress={onPress}
-      hitSlop={{ top: 6, bottom: 6 }}
-      style={({ pressed }) => ({
-        height: 30,
-        flexShrink: 1,
-        minWidth: 0,
-        paddingHorizontal: 10,
-        borderRadius: radius.pill,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 5,
-        backgroundColor: t.fill,
-        opacity: disabled ? 0.45 : pressed ? 0.7 : 1,
-      })}
-    >
-      <Icon size={14} color={t.secondary} strokeWidth={2.1} />
-      <Text
-        variant="secondary"
-        numberOfLines={1}
-        maxFontSizeMultiplier={1.3}
-        style={{ flexShrink: 1, fontWeight: '500' }}
-      >
-        {label}
-      </Text>
-      <ChevronDown size={13} color={t.muted} strokeWidth={2.2} />
-    </Pressable>
-  );
-}
+const MORE = 'more';
 
-/** The model chip names the one switch that changes how it answers: Thinking, or Codex's speed. */
-function modelChipLabel(composer: MobileComposer): string {
-  const name = modelLabel(composer.models.find((m) => m.id === composer.settings.modelId));
-  if (composer.provider === 'claude' && composer.settings.thinkingEnabled)
-    return `${name} · Thinking`;
-  const speed = composer.settings.codexSpeed;
-  if (composer.provider === 'codex' && speed !== 'standard')
-    return `${name} · ${speed === 'fast' ? 'Fast' : 'Ultrafast'}`;
-  return name;
-}
+type Family = PickerFamily<MobilePickerModel>;
+type Selection = { family: Family; window: PickerWindow<MobilePickerModel> };
+type Tier = ReturnType<typeof selectedTier>;
 
-/** Two chips above the message box: how Frink works (mode) and what answers (model, with its
- *  switches and account in the sheet). Changes are saved on the computer, so the desktop follows. */
-export function ComposerControls({
+const familyName = (family: Family) =>
+  modelLabel({ ...family.defaultWindow.defaultTier, detail: undefined });
+
+/** Model and effort, inside the message box beside Attach. The rarer settings (context window,
+ *  Thinking, speed, Auto, account) stay one tap further, in the sheet. */
+export function ModelMenus({
   composer,
   disabled,
   onUpdate,
-  onMode,
   onAccount,
 }: {
   composer: MobileComposer;
   disabled: boolean;
   onUpdate: (patch: ComposerPatch) => void;
-  onMode: (mode: MobileChatMode) => void;
-  onAccount: (accountId: string) => void;
+  onAccount?: (accountId: string) => void;
 }) {
-  const [open, setOpen] = useState<'mode' | 'model' | null>(null);
-  const mode = MODES.find((candidate) => candidate.id === composer.mode) ?? MODES[0];
-  const model = modelChipLabel(composer);
-  const close = () => setOpen(null);
+  const [sheet, setSheet] = useState(false);
+  const families = groupPickerModels(composer.models);
+  const current = findPickerSelection(families, composer.settings.modelId);
+  const tier = current ? selectedTier(current.window, composer.settings.modelId) : undefined;
   return (
-    <View style={{ flexDirection: 'row', gap: 6 }}>
-      <Chip
-        icon={mode.icon}
-        label={mode.label}
+    <>
+      <FamilyMenu
+        families={families}
+        current={current}
+        tier={tier}
+        title={composer.provider === 'claude' ? 'Claude' : 'Codex'}
         disabled={disabled}
-        accessibilityLabel={`Mode: ${mode.label}`}
-        onPress={() => setOpen('mode')}
+        onUpdate={onUpdate}
+        onMore={() => setSheet(true)}
       />
-      <Chip
-        icon={Sparkles}
-        label={model}
-        disabled={disabled}
-        accessibilityLabel={`Model: ${model}`}
-        onPress={() => setOpen('model')}
-      />
-      {open === 'mode' && <ModeSheet composer={composer} onClose={close} onMode={onMode} />}
-      {open === 'model' && (
-        <ModelSheet composer={composer} onClose={close} onUpdate={onUpdate} onAccount={onAccount} />
+      {current && (
+        <EffortMenu
+          current={current}
+          tier={tier}
+          xhigh={composer.xhighSupported}
+          disabled={disabled}
+          onUpdate={onUpdate}
+        />
       )}
-    </View>
+      {sheet && (
+        <ModelSheet
+          composer={composer}
+          onClose={() => setSheet(false)}
+          onUpdate={onUpdate}
+          onAccount={onAccount}
+        />
+      )}
+    </>
+  );
+}
+
+function FamilyMenu({
+  families,
+  current,
+  tier,
+  title,
+  disabled,
+  onUpdate,
+  onMore,
+}: {
+  families: Family[];
+  current: Selection | undefined;
+  tier: Tier;
+  title: string;
+  disabled: boolean;
+  onUpdate: (patch: ComposerPatch) => void;
+  onMore: () => void;
+}) {
+  const model = current ? familyName(current.family) : 'Model';
+  return (
+    <MenuChip
+      label={model}
+      accessibilityLabel={`Model: ${model}`}
+      disabled={disabled}
+      groups={[
+        {
+          title,
+          value: current?.family.key,
+          options: families.map((family) => ({ id: family.key, label: familyName(family) })),
+          onPick: (key) => {
+            const family = families.find((candidate) => candidate.key === key);
+            if (family)
+              onUpdate({
+                modelId: pickInWindow(family.defaultWindow, tier?.effort, Boolean(tier?.ultra)).id,
+              });
+          },
+        },
+        { options: [{ id: MORE, label: 'More settings…' }], onPick: onMore },
+      ]}
+    />
+  );
+}
+
+function EffortMenu({
+  current,
+  tier,
+  xhigh,
+  disabled,
+  onUpdate,
+}: {
+  current: Selection;
+  tier: Tier;
+  xhigh: boolean;
+  disabled: boolean;
+  onUpdate: (patch: ComposerPatch) => void;
+}) {
+  const efforts = current.window.tiers.filter(
+    (candidate) => candidate.effort && (xhigh || candidate.effort !== 'xhigh'),
+  );
+  if (!tier?.effort || efforts.length < 2) return null;
+  const effort = EFFORT_LABEL[tier.effort];
+  return (
+    <MenuChip
+      label={effort}
+      accessibilityLabel={`Effort: ${effort}`}
+      disabled={disabled}
+      groups={[
+        {
+          title: 'Effort',
+          value: tier.effort,
+          options: efforts.map((candidate) => ({
+            id: candidate.effort!,
+            label: EFFORT_LABEL[candidate.effort!],
+          })),
+          onPick: (id) => {
+            const picked = efforts.find((candidate) => candidate.effort === id);
+            if (picked)
+              onUpdate({
+                modelId: pickInWindow(current.window, picked.effort, Boolean(tier.ultra)).id,
+              });
+          },
+        },
+      ]}
+    />
+  );
+}
+
+/** How Frink works in this chat, in the quiet row under the message box. */
+export function ModeMenu({
+  mode,
+  debugAvailable,
+  disabled,
+  onMode,
+}: {
+  mode: MobileChatMode;
+  debugAvailable: boolean;
+  disabled: boolean;
+  onMode: (mode: MobileChatMode) => void;
+}) {
+  const modes = MODES.filter((candidate) => candidate.id !== 'debug' || debugAvailable);
+  const label = modes.find((candidate) => candidate.id === mode)?.label ?? MODES[0].label;
+  return (
+    <MenuChip
+      label={label}
+      accessibilityLabel={`Mode: ${label}`}
+      disabled={disabled}
+      groups={[
+        {
+          title: 'Mode',
+          value: mode,
+          options: modes.map(({ id, label }) => ({ id, label })),
+          onPick: (id) => onMode(id as MobileChatMode),
+        },
+      ]}
+    />
   );
 }

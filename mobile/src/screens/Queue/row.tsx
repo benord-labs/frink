@@ -1,15 +1,13 @@
 import { View } from 'react-native';
-import { Check, Inbox, MonitorOff, Play, RotateCcw } from 'lucide-react-native';
+import { Check, MonitorOff, Play, RotateCcw } from 'lucide-react-native';
 import type { MobileTaskAction } from '@frink/shared/types/remote/mobile';
 import { shortAge } from '../../lib/status';
-import { KindTile, PulseDot, toneColor } from '../../ui/glyphs';
+import { PulseDot, toneColor } from '../../ui/glyphs';
 import { ListRow } from '../../ui/list';
 import { SwipeAction, type SwipeActionItem } from '../../ui/swipe-action';
 import { Text } from '../../ui/text';
 import { GUTTER, radius, space, useTheme } from '../../ui/theme';
 import type { QueueRow } from './queue-view';
-
-const TILE = 38;
 
 /** The desktop Work Queue's labels, so a task reads the same on both. */
 export const ACTION_ITEMS: Record<MobileTaskAction, Pick<SwipeActionItem, 'label' | 'icon' | 'fill'>> = {
@@ -17,27 +15,6 @@ export const ACTION_ITEMS: Record<MobileTaskAction, Pick<SwipeActionItem, 'label
   continueTask: { label: 'Carry on task', icon: RotateCcw, fill: 'primary' },
   completeTask: { label: 'Mark complete', icon: Check, fill: 'confirm' },
 };
-
-/** Work that isn't a chat or a Flow yet (an inbox item waiting to start). */
-function InboxTile() {
-  const t = useTheme();
-  return (
-    <View
-      style={{
-        width: TILE,
-        height: TILE,
-        borderRadius: radius.md,
-        backgroundColor: t.fill,
-        borderWidth: 1,
-        borderColor: t.borderSubtle,
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}
-    >
-      <Inbox size={TILE * 0.47} color={t.secondary} strokeWidth={1.9} />
-    </View>
-  );
-}
 
 /** The fixed right slot: the state in its colour over how long ago it last changed. */
 function StatusSlot({ row }: { row: QueueRow }) {
@@ -81,7 +58,6 @@ export function QueueListRow({
       <ListRow
         titleLines={row.emphasis ? 2 : 1}
         testID={`queue-row-${row.key}`}
-        leading={row.kind === 'inbox' ? <InboxTile /> : <KindTile kind={row.kind} size={TILE} />}
         title={row.title}
         subtitle={row.detail}
         trailing={<StatusSlot row={row} />}
