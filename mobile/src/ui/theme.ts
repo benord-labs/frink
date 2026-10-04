@@ -8,7 +8,7 @@ import {
 } from 'react';
 import { AccessibilityInfo, Platform, useColorScheme, type TextStyle } from 'react-native';
 
-// Native counterparts of src/renderer/styles/globals.css, not a separate brand palette.
+// Neutral surfaces mirror desktop; the mobile accent uses a quieter violet.
 // Colour is spent on state only: running (primary), live (green), needs you (amber), failed (red).
 export const themes = {
   dark: {
@@ -24,16 +24,16 @@ export const themes = {
     solidField: '#1A1A1A',
     rim: 'rgba(255,255,255,0.19)',
     sheen: 'rgba(255,255,255,0.05)',
-    glint: 'rgba(167,139,250,0.13)',
-    glow: 'rgba(167,139,250,0.06)',
+    glint: 'rgba(182,167,205,0.13)',
+    glow: 'rgba(182,167,205,0.06)',
     floor: 'rgba(125,240,168,0.03)',
     text: '#E8E8E8',
     secondary: '#B8B8B8',
     muted: '#8C8C8C',
     border: '#2E2E2E',
     borderSubtle: '#232323',
-    accent: '#A78BFA',
-    accentSoft: 'rgba(167,139,250,0.14)',
+    accent: '#B6A7CD',
+    accentSoft: 'rgba(182,167,205,0.14)',
     onAccent: '#0A0A0A',
     live: '#86EFAC',
     liveSoft: 'rgba(134,239,172,0.10)',
@@ -60,16 +60,16 @@ export const themes = {
     solidField: '#F4F4F5',
     rim: 'rgba(255,255,255,0.65)',
     sheen: 'rgba(255,255,255,0.24)',
-    glint: 'rgba(124,58,237,0.08)',
-    glow: 'rgba(124,58,237,0.028)',
+    glint: 'rgba(112,91,141,0.08)',
+    glow: 'rgba(112,91,141,0.028)',
     floor: 'rgba(101,217,146,0.012)',
     text: '#0A0A0A',
     secondary: '#3F3F46',
     muted: '#6C6C75',
     border: '#E4E4E7',
     borderSubtle: '#EFEFF1',
-    accent: '#7C3AED',
-    accentSoft: 'rgba(124,58,237,0.10)',
+    accent: '#705B8D',
+    accentSoft: 'rgba(112,91,141,0.10)',
     onAccent: '#FFFFFF',
     live: '#1B6A35',
     liveSoft: 'rgba(27,106,53,0.09)',

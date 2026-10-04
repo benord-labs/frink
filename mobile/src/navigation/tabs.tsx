@@ -15,6 +15,7 @@ export function Tabs() {
     <Tab.Navigator
       screenOptions={{
         tabBarActiveTintColor: t.accent,
+        tabBarLabelStyle: { fontSize: 12, fontWeight: '600' },
         // The floating dock shrinks while reading a list and returns on scroll up.
         tabBarMinimizeBehavior: 'onScrollDown',
         // Native tab screens hide their header unless asked; the title, search bar and New chat
@@ -33,7 +34,10 @@ export function Tabs() {
           component={tab.component}
           options={{
             title: tab.title,
-            tabBarIcon: { type: 'sfSymbol', name: tab.symbol },
+            tabBarIcon: ({ focused }) => ({
+              type: 'image',
+              source: focused ? tab.selectedIcon : tab.icon,
+            }),
             tabBarBadge: tab.name === 'Queue' && needsYou ? needsYou : undefined,
             tabBarBadgeStyle: { backgroundColor: t.attentionSolid },
           }}
