@@ -9,6 +9,17 @@ export async function resumeParkedTaskInPlace(
   resumedBy: ResumedBy,
   subChatId: string,
 ): Promise<boolean> {
+  const resumed = await resumeInPlace(task, resumedBy, subChatId);
+  const declinedApproval = !resumed && task.status === 'plan_ready';
+  if (declinedApproval && resumedBy === 'follow_up_message') await assertPlanNotStranded(task.id);
+  return resumed;
+}
+
+async function resumeInPlace(
+  task: ParkedTask,
+  resumedBy: ResumedBy,
+  subChatId: string,
+): Promise<boolean> {
   const { isPlanApprovalResume, resumeParkedTaskCommand } = await import('../flows/transitions');
   const parked = task.status === 'failed' || task.status === 'needs_attention';
   if (!parked && !isPlanApprovalResume(task, resumedBy)) return false;
@@ -49,6 +60,19 @@ export async function resumeParkedTaskInPlace(
       error: error instanceof Error ? error.message : String(error),
     });
     return false;
+  }
+}
+
+/** Refuses the turn after a declined plan approval whose flow task has no step to un-park: the
+ * agent would run a plan that stays parked. A panel-approved task keeps its step, so it passes. */
+async function assertPlanNotStranded(taskId: string): Promise<void> {
+  const { getDatabase } = await import('../db');
+  const { getTaskById } = await import('../db/repos/tasks');
+  const task = await getTaskById(getDatabase(), taskId);
+  if (task?.flowRunId && task.status === 'plan_ready' && task.nodeRunId === null) {
+    throw new Error(
+      `Plan task ${taskId} is still awaiting approval and has no flow step to resume`,
+    );
   }
 }
 

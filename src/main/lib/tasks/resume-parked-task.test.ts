@@ -377,3 +377,42 @@ describe('resumeParkedTaskInPlace — plan approval edge cases', () => {
     expect(afterCancel.task).not.toBe('running');
   });
 });
+
+describe('resumeParkedTaskInPlace — a declined plan approval', () => {
+  const PLAN_PARK = { subChatId: 'sub-1', startMode: 'plan', skipReview: false };
+
+  /** A flow task with no node_run: nothing for an approval to un-park. */
+  async function seedSteplessTask(status: 'running' | 'plan_ready'): Promise<Task> {
+    await seedParkedTask('plan_ready', { result: PLAN_PARK });
+    const task = await createTask(db, { description: 'agent', source: 'flow', flowRunId });
+    const running = await updateTaskStatus(db, task.id, 'running');
+    const row =
+      status === 'running'
+        ? running
+        : await updateTaskStatus(db, task.id, 'plan_ready', { result: PLAN_PARK });
+    if (!row) throw new Error('seed failed');
+    return row;
+  }
+
+  it('refuses the turn when the plan task has no flow step to resume', async () => {
+    const parked = await seedSteplessTask('plan_ready');
+
+    await expect(resumeParkedTaskInPlace(parked, 'follow_up_message', 'sub-1')).rejects.toThrow(
+      /no flow step to resume/,
+    );
+    expect(await getTaskById(db, parked.id)).toEqual(parked);
+  });
+
+  it('lets the turn run when the stepless task left plan_ready meanwhile', async () => {
+    const running = await seedSteplessTask('running');
+    const stale = { ...running, status: 'plan_ready' as const };
+
+    expect(await resumeParkedTaskInPlace(stale, 'follow_up_message', 'sub-1')).toBe(false);
+  });
+
+  it('a wake on a stepless plan task still just declines', async () => {
+    const parked = await seedSteplessTask('plan_ready');
+
+    expect(await resumeParkedTaskInPlace(parked, 'wake_burst', 'sub-1')).toBe(false);
+  });
+});
