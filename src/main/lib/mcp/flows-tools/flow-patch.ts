@@ -194,11 +194,15 @@ function nodeIdSet(nodes: FlowNode[]): Set<string> {
   return new Set(nodes.map((n) => n.id));
 }
 
+/** Mirrors the save-mode nesting rule, so one bad op fails instead of the whole batch. */
+const nestsFanOut = (blockType: string, parentId: unknown): boolean =>
+  blockType === 'fan_out' && typeof parentId === 'string';
+
 /**
  * Removes a node, the nodes it owns, and every edge touching them.
  *
- * Ownership is flat by design: a `parentId` must reference a Fan Out and Fan Outs cannot
- * nest, so every owned body node points directly at its container and one level is complete.
+ * Ownership is flat by design: `validateGraph` rejects a `parentId` that is not a Fan Out and
+ * a Fan Out that has one, so every owned node points at its container and one level is complete.
  */
 function removeNodeAndOwnedChildren(
   graph: FlowGraph,
@@ -331,6 +335,8 @@ export function applyPatchOperations(graph: FlowGraph, operations: PatchOperatio
           opError = `${prefix}: node '${op.nodeId}' not found${
             removedAt === undefined ? '' : ` (removed by remove_node at operation ${removedAt})`
           }`;
+        } else if (nestsFanOut(node.blockType, op.parentId)) {
+          opError = `${prefix}: Fan Out '${op.nodeId}' cannot sit inside another Fan Out`;
         } else {
           applyNodeUpdate(node, op);
         }
@@ -340,6 +346,8 @@ export function applyPatchOperations(graph: FlowGraph, operations: PatchOperatio
         const { node: raw } = op;
         if (next.nodes.some((n) => n.id === raw.id)) {
           opError = `${prefix}: node id '${raw.id}' already exists — use update_node to modify`;
+        } else if (nestsFanOut(raw.blockType, raw.parentId)) {
+          opError = `${prefix}: Fan Out '${raw.id}' cannot sit inside another Fan Out`;
         } else if (
           raw.parentId !== undefined &&
           next.nodes.find((n) => n.id === raw.parentId)?.blockType !== 'fan_out'
