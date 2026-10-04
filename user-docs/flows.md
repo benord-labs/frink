@@ -20,6 +20,15 @@ Open a flow row's **⋯** menu and choose **Duplicate** to copy its latest saved
 
 Copies always start paused, even when the source flow is active. Agent invocation permission is preserved. Trigger-binding configuration is also preserved, but every copied binding starts inactive and must be explicitly reactivated before it can fire.
 
+## When a flow changes while you are editing it
+
+An agent (through `frink_flows_patch`) or another window can save a new version of a flow you have open. The editor hears about it straight away.
+
+- **No unsaved edits:** the editor switches to the new version on its own.
+- **Unsaved edits:** your edits are kept and a notice stays on screen until you choose. **Reload latest** drops your edits and shows the new version. **Overwrite with mine** saves your copy as the newest version, replacing what was saved meanwhile (earlier versions are still kept). The notice goes away once your copy matches a saved version again.
+
+If you press Save on a copy that has fallen behind, the same two choices appear in a dialog. A draft of unsaved edits survives a crash, including edits you made while a save was in progress.
+
 ## Project defaults
 
 Steps that run in a project (`start_task`, `run_command`, your own custom nodes) resolve their project as **node override → flow default** (`graph.settings.defaultProjectId`, set in **flow settings → Project**). A node override may be a `{{…}}` template, letting an upstream step decide the target project at run time; the flow default then applies only when the node's field is left blank — an override that renders to nothing fails the step rather than inheriting it. Picking a project when creating a flow seeds the flow default automatically, so new steps inherit it without per-node setup. When a step has no project from either source, its amber warning and the node config panel both link straight to the flow settings Project field. Integration steps from an installed plugin are the exception: they run through the plugin's connected account, take no project, and show no project field or warning. Agents creating flows via MCP get the same behavior: the creation `projectId` (or, when omitted, the chat session's project) becomes the flow default.
@@ -89,29 +98,29 @@ Template variables let you inject dynamic data into block configs. They use doub
 
 There are four scopes:
 
-| Scope | Available where | What it contains |
-|-------|----------------|-----------------|
-| `{{trigger.*}}` | Every block in the flow | Context from whatever triggered the flow (event payload, task result, etc.) |
-| `{{previous.*}}` | Any block with a predecessor | Outputs from the **immediately preceding block only** |
-| `{{loop.*}}` | Blocks inside a fan_out body | Current iteration item, index, and count |
+| Scope            | Available where              | What it contains                                                            |
+| ---------------- | ---------------------------- | --------------------------------------------------------------------------- |
+| `{{trigger.*}}`  | Every block in the flow      | Context from whatever triggered the flow (event payload, task result, etc.) |
+| `{{previous.*}}` | Any block with a predecessor | Outputs from the **immediately preceding block only**                       |
+| `{{loop.*}}`     | Blocks inside a fan_out body | Current iteration item, index, and count                                    |
 
 There is no `{{flow.*}}` scope: the [Flow briefing](#flow-briefing) is delivered once per session as a system prompt to every agent, so you never reference it in instructions.
 
-**Rendering rules:** Scalar values expand as text. **Object/array leaves** (e.g. `{{trigger.payload}}` when payload is an object) expand as **JSON**. A placeholder naming a field that **isn't there** — a step's optional output that this run didn't produce, or a typo — renders as an **empty string**; it never leaves the `{{...}}` text in place, because that text is not empty and reads like real data. (Where a missing value would be silently wrong or destructive — a project, a branch, a **shell command**, or a request **URL** — the step fails instead and names the variable, so a missing `{{previous.dir}}` never turns `rm -rf /tmp/work/{{previous.dir}}` into `rm -rf /tmp/work/`. A project, a branch, or a URL *path* also fails on a value that is present but blank; a shell command does not, so guard destructive commands against blank values yourself.) Very large serialized values (about 50KB+ per placeholder) and **circular** objects do not expand (the placeholder stays as written, so nothing is silently dropped). **Shell commands** (`run_command`) shell-escape each resolved value automatically and cap total rendered length (about 256KB total) to avoid oversized argv. Leave placeholders bare and quote only static literal text: `echo prefix {{previous.summary}}` is correct. Frink context-escapes existing quoted placeholders for compatibility, but older versions could let untrusted trigger or webhook values escape the intended quote boundary and become executable shell syntax. Placeholders inside syntax Frink cannot confidently analyze (command substitution, backticks, heredocs, unclosed quotes) are **not** substituted — they stay literal, and the flow editor warns about them.
+**Rendering rules:** Scalar values expand as text. **Object/array leaves** (e.g. `{{trigger.payload}}` when payload is an object) expand as **JSON**. A placeholder naming a field that **isn't there** — a step's optional output that this run didn't produce, or a typo — renders as an **empty string**; it never leaves the `{{...}}` text in place, because that text is not empty and reads like real data. (Where a missing value would be silently wrong or destructive — a project, a branch, a **shell command**, or a request **URL** — the step fails instead and names the variable, so a missing `{{previous.dir}}` never turns `rm -rf /tmp/work/{{previous.dir}}` into `rm -rf /tmp/work/`. A project, a branch, or a URL _path_ also fails on a value that is present but blank; a shell command does not, so guard destructive commands against blank values yourself.) Very large serialized values (about 50KB+ per placeholder) and **circular** objects do not expand (the placeholder stays as written, so nothing is silently dropped). **Shell commands** (`run_command`) shell-escape each resolved value automatically and cap total rendered length (about 256KB total) to avoid oversized argv. Leave placeholders bare and quote only static literal text: `echo prefix {{previous.summary}}` is correct. Frink context-escapes existing quoted placeholders for compatibility, but older versions could let untrusted trigger or webhook values escape the intended quote boundary and become executable shell syntax. Placeholders inside syntax Frink cannot confidently analyze (command substitution, backticks, heredocs, unclosed quotes) are **not** substituted — they stay literal, and the flow editor warns about them.
 
 ### Which config fields support template variables?
 
 Not every field in a block's config is template-rendered. Only these fields resolve `{{...}}` at runtime:
 
-| Block type | Template-rendered fields |
-|-----------|------------------------|
+| Block type            | Template-rendered fields                                                                                                                               |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Flow settings (graph) | `briefing` — delivered once per session as a system prompt to every agent; rendered against `{{trigger.*}}` only (see [Flow briefing](#flow-briefing)) |
-| `agent` | `instructions` |
-| `run_command` | `command`, `projectId` |
-| `start_task` | `label`, `branch`, `projectId` |
-| `chat_reply` | `messageTemplate` in Text mode, or `artifactTitleTemplate` and `artifactBodyHtmlTemplate` in Interactive view mode |
-| `http_request` | `url`, each string `headers` value, and `body` (the body is not sent for GET) |
-| Custom node | Every declared top-level input (resolved text is converted to the input's declared type) |
+| `agent`               | `instructions`                                                                                                                                         |
+| `run_command`         | `command`, `projectId`                                                                                                                                 |
+| `start_task`          | `label`, `branch`, `projectId`                                                                                                                         |
+| `chat_reply`          | `messageTemplate` in Text mode, or `artifactTitleTemplate` and `artifactBodyHtmlTemplate` in Interactive view mode                                     |
+| `http_request`        | `url`, each string `headers` value, and `body` (the body is not sent for GET)                                                                          |
+| Custom node           | Every declared top-level input (resolved text is converted to the input's declared type)                                                               |
 
 Other fields (like `method` and nested strings) are used as-is.
 
@@ -124,7 +133,7 @@ projects fails the step with a message naming the value. Custom nodes are unchan
 
 A **Chat Reply** block posts a templated message into an existing Frink chat. At run time the engine needs a **`chatId`**. The graph validator enforces one of:
 
-1. **Post-Task trigger** — the completed task’s chat is in the trigger context (`trigger.chatId`), or  
+1. **Post-Task trigger** — the completed task’s chat is in the trigger context (`trigger.chatId`), or
 2. **Upstream Start Task** on the same path — Start Task creates the flow chat before any Chat Reply on that branch.
 
 So **`manual_trigger → run_command → chat_reply`** is invalid unless you insert **Start Task** before the reply (or use a post-task flow). Use **End** or **HTTP Request** if you only need to stop or call an external URL without a chat.
@@ -165,16 +174,16 @@ This is why `run_command → condition → chat_reply` preserves the run_command
 
 ### What each block type outputs
 
-| Block type | `{{previous.*}}` fields available to the next node |
-|-----------|---------------------------------------------------|
-| `run_command` | `exitCode` (always). If stdout is valid JSON: all top-level JSON keys. If not JSON: `_rawStdout`. |
-| `condition` | Everything from its predecessor + `result` (pass-through) |
-| `start_task` | `chatId`, `projectId`, `worktreePath`, `branch`, `baseBranch`, `configured` |
-| `agent` | `summary`, `details`, `chatId`, `worktreePath`, `branch`, `baseBranch`, `spawnedTaskId`, `fireAndForget` |
-| `http_request` | `status`, `body`, `headers` |
-| `chat_reply` | `chatId`, `subChatId`, `delivered`, `message`, `contentType`; an Interactive view also returns `artifactId` and `title` |
-| `fan_out` | `currentItem` (the array element for this iteration) |
-| `approval` | Nothing (pauses the flow) |
+| Block type     | `{{previous.*}}` fields available to the next node                                                                      |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `run_command`  | `exitCode` (always). If stdout is valid JSON: all top-level JSON keys. If not JSON: `_rawStdout`.                       |
+| `condition`    | Everything from its predecessor + `result` (pass-through)                                                               |
+| `start_task`   | `chatId`, `projectId`, `worktreePath`, `branch`, `baseBranch`, `configured`                                             |
+| `agent`        | `summary`, `details`, `chatId`, `worktreePath`, `branch`, `baseBranch`, `spawnedTaskId`, `fireAndForget`                |
+| `http_request` | `status`, `body`, `headers`                                                                                             |
+| `chat_reply`   | `chatId`, `subChatId`, `delivered`, `message`, `contentType`; an Interactive view also returns `artifactId` and `title` |
+| `fan_out`      | `currentItem` (the array element for this iteration)                                                                    |
+| `approval`     | Nothing (pauses the flow)                                                                                               |
 
 ## Exporting custom variables from `run_command`
 
@@ -187,6 +196,7 @@ echo '{"timestamp": "2026-04-01", "count": 42, "status": "healthy"}'
 ```
 
 This makes three variables available downstream:
+
 - `{{previous.timestamp}}` → `"2026-04-01"`
 - `{{previous.count}}` → `42`
 - `{{previous.status}}` → `"healthy"`
@@ -235,34 +245,34 @@ What's available depends on the trigger type:
 
 ### post_task_trigger
 
-| Field | Description |
-|-------|------------|
-| `trigger.taskId` | UUID of the completed task |
-| `trigger.taskTitle` | Title of the completed task |
-| `trigger.taskStatus` | Final status |
-| `trigger.result` | Result summary |
-| `trigger.branch` | Git branch the task ran on |
-| `trigger.baseBranch` | Base branch the task branched from |
+| Field                  | Description                        |
+| ---------------------- | ---------------------------------- |
+| `trigger.taskId`       | UUID of the completed task         |
+| `trigger.taskTitle`    | Title of the completed task        |
+| `trigger.taskStatus`   | Final status                       |
+| `trigger.result`       | Result summary                     |
+| `trigger.branch`       | Git branch the task ran on         |
+| `trigger.baseBranch`   | Base branch the task branched from |
 | `trigger.worktreePath` | Absolute path to the task worktree |
-| `trigger.projectId` | UUID of the project |
-| `trigger.chatId` | Chat session ID |
-| `trigger.projectPath` | Main project directory path |
-| `trigger.source` | How the task was created |
+| `trigger.projectId`    | UUID of the project                |
+| `trigger.chatId`       | Chat session ID                    |
+| `trigger.projectPath`  | Main project directory path        |
+| `trigger.source`       | How the task was created           |
 
 ### schedule_trigger
 
-| Field | Description |
-|-------|------------|
+| Field                 | Description                                  |
+| --------------------- | -------------------------------------------- |
 | `trigger.scheduledAt` | ISO timestamp of when this run was scheduled |
 
 ### webhook_trigger
 
-| Field | Description |
-|-------|------------|
-| `trigger.event` | Webhook / integration event type (alias of stored `eventType`) |
-| `trigger.payload` | Raw integration payload (alias of stored `fullContent`; object — at a leaf, expands as JSON, or use dot notation e.g. `trigger.payload.story.name`) |
-| `trigger.eventType` | Same as `trigger.event` (stored field name) |
-| `trigger.fullContent` | Same as `trigger.payload` (stored field name) |
+| Field                 | Description                                                                                                                                         |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `trigger.event`       | Webhook / integration event type (alias of stored `eventType`)                                                                                      |
+| `trigger.payload`     | Raw integration payload (alias of stored `fullContent`; object — at a leaf, expands as JSON, or use dot notation e.g. `trigger.payload.story.name`) |
+| `trigger.eventType`   | Same as `trigger.event` (stored field name)                                                                                                         |
+| `trigger.fullContent` | Same as `trigger.payload` (stored field name)                                                                                                       |
 
 For other integration-specific top-level fields (`triggerRuleName`, `sourceAccountName`, `timestamp`, `relatedContext.*`, etc.), use the paths shown in the Available Variables panel.
 
@@ -295,11 +305,11 @@ When the batch engine dispatches a run, the trigger block is **bypassed entirely
 
 Common CEO-set fields:
 
-| Field | Example value | Description |
-|-------|---------------|-------------|
-| `trigger.ticketId` | `"sc-123"` | Shortcut story ID |
-| `trigger.label` | `"Navigation & Stepper"` | Human-readable run label shown in the Monitor |
-| `trigger.workstreamId` | `"nav"` | Workstream grouping for colour-coding |
+| Field                        | Example value              | Description                                                              |
+| ---------------------------- | -------------------------- | ------------------------------------------------------------------------ |
+| `trigger.ticketId`           | `"sc-123"`                 | Shortcut story ID                                                        |
+| `trigger.label`              | `"Navigation & Stepper"`   | Human-readable run label shown in the Monitor                            |
+| `trigger.workstreamId`       | `"nav"`                    | Workstream grouping for colour-coding                                    |
 | `trigger.customInstructions` | `"Focus on accessibility"` | User-edited override (see [Per-run instructions](#per-run-instructions)) |
 
 The trigger **type** (manual, webhook, cron) has no effect on batch execution. A Manual Trigger block on a batch flow is just a structural entry point — it does not fire, and its type does not restrict what `{{trigger.*}}` fields the CEO can supply.
@@ -310,11 +320,11 @@ The trigger **type** (manual, webhook, cron) has no effect on batch execution. A
 
 Available only inside nodes contained by a `fan_out`. The canvas shows these blocks inside the **For each item** container.
 
-| Field | Description |
-|-------|------------|
-| `loop.currentItem` | The current array element (use dot notation for objects: `loop.currentItem.title`) |
-| `loop.currentIndex` | Zero-based index of the current iteration |
-| `loop.totalCount` | Total number of items being iterated |
+| Field               | Description                                                                        |
+| ------------------- | ---------------------------------------------------------------------------------- |
+| `loop.currentItem`  | The current array element (use dot notation for objects: `loop.currentItem.title`) |
+| `loop.currentIndex` | Zero-based index of the current iteration                                          |
+| `loop.totalCount`   | Total number of items being iterated                                               |
 
 ## Common patterns
 
@@ -402,7 +412,7 @@ When every slot is occupied, another Flow is accepted as **Queued** and starts a
 
 Open **Work Queue** to see waiting runs under **Queued to run**. Resumptions always stay ahead of fresh starts. Within either group, drag a row or use its keyboard-accessible **Move up** and **Move down** controls to change which run is admitted next. Reordering queued work never interrupts an active run.
 
-To hold everything that is waiting, choose **Pause queue** in the Work Queue header. While the queue is paused, no queued run is admitted on this machine, resumptions included; each one stays in **Queued to run**, marked *On hold*, and you can still reorder or remove it. Runs that are already active keep going. The pause survives restarting Frink. A banner at the top of the Work Queue shows the queue is paused and holds the **Resume queue** button, which starts admitting queued runs again in their current order.
+To hold everything that is waiting, choose **Pause queue** in the Work Queue header. While the queue is paused, no queued run is admitted on this machine, resumptions included; each one stays in **Queued to run**, marked _On hold_, and you can still reorder or remove it. Runs that are already active keep going. The pause survives restarting Frink. A banner at the top of the Work Queue shows the queue is paused and holds the **Resume queue** button, which starts admitting queued runs again in their current order.
 
 Each row also has a **Remove from queue** control, which takes that work out of the queue rather than stopping anything already underway — if the run was admitted between the panel refreshing and your confirming, Frink reports that it already started and leaves it running. Removing a queued **Starting** row cancels a run that never began; its trigger details cannot be replayed, so re-run the flow to try again, and note that a removed start cannot currently be re-triggered under the same idempotency key. Removing a queued **Resuming** row leaves the finished run exactly as it is, back in **Attention** for a later retry. If the removed run is one member of a batch stage, it counts as a failed member, which can fail that stage and cancel the stages waiting on it.
 
@@ -441,11 +451,11 @@ When a stage completes, the engine collects the git branches produced by **all**
 
 This means successor stages always build on the **complete accumulated work** from every parallel run upstream, not just the most recently completed one.
 
-| Branches collected | What the successor run receives |
-|---|---|
-| 0 (non-worktree flow) | `trigger_context` unchanged |
-| 1 unique branch | `trigger.baseBranch` = that branch, `trigger.baseBranches` = `[branch]` |
-| 2+ unique branches | `trigger.baseBranch` = most-recent, `trigger.baseBranches` = all (most-recent first), `trigger.mergeStrategy` = `"most-recent"` |
+| Branches collected    | What the successor run receives                                                                                                 |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| 0 (non-worktree flow) | `trigger_context` unchanged                                                                                                     |
+| 1 unique branch       | `trigger.baseBranch` = that branch, `trigger.baseBranches` = `[branch]`                                                         |
+| 2+ unique branches    | `trigger.baseBranch` = most-recent, `trigger.baseBranches` = all (most-recent first), `trigger.mergeStrategy` = `"most-recent"` |
 
 **Deduplication:** if two node runs within the same flow run carry the same branch string (e.g. Start Task and Agent in one run), only one entry is counted.
 
@@ -492,7 +502,7 @@ If `customInstructions` is empty for a run, the placeholder resolves to an empty
 
 ### Re-running a terminal batch
 
-Recovery is per member, from that member's chat, with the same **Retry** and **Carry on** every flow has: Retry re-runs the member from its last step through the normal run queue and re-opens its stage; Carry on resumes a paused member's session in place. A member whose stage has already settled — completed on a tolerated failure, or cancelled — can't be retried, and the button says so: the batch has moved on. A stage that is at its concurrency limit makes a retry wait for a member to finish. Successor stages the failure had cancelled run again once the retried member completes its stage. There is no whole-batch "retry everything" action; the Flow editor's run button only starts a batch that has never run. Restart-interrupted members, like other runs, continue on their own after a restart (see *Restart recovery*).
+Recovery is per member, from that member's chat, with the same **Retry** and **Carry on** every flow has: Retry re-runs the member from its last step through the normal run queue and re-opens its stage; Carry on resumes a paused member's session in place. A member whose stage has already settled — completed on a tolerated failure, or cancelled — can't be retried, and the button says so: the batch has moved on. A stage that is at its concurrency limit makes a retry wait for a member to finish. Successor stages the failure had cancelled run again once the retried member completes its stage. There is no whole-batch "retry everything" action; the Flow editor's run button only starts a batch that has never run. Restart-interrupted members, like other runs, continue on their own after a restart (see _Restart recovery_).
 
 ## Pausing and stopping a flow from the chat
 
@@ -639,13 +649,13 @@ When a flow is paused on failure, expand the run in the **Run history** panel. E
 A failed or parked task shows one recovery row with two controls, under the last response. Read the pair as **"continue" vs "start over"**:
 
 - **Carry on** — continues the resumed agent session in the same chat and worktree; the agent picks up from where it left off, so finished work is never redone and nothing is rolled back. If in doubt and it's available, carry on.
-- **Retry** — for a **standalone task**, this is the "start over" option: a fresh session, behind a confirmation that spells out what is abandoned. For a **Flow run**, Retry is gentler: it re-enters Flow admission and retries the last invoked step *continuation-first* — a surviving session picks up with its prior work, todo state, and current mode intact (no repeated instructions, no reset back to plan mode); only a step with nothing left to continue is re-run from its full instructions.
+- **Retry** — for a **standalone task**, this is the "start over" option: a fresh session, behind a confirmation that spells out what is abandoned. For a **Flow run**, Retry is gentler: it re-enters Flow admission and retries the last invoked step _continuation-first_ — a surviving session picks up with its prior work, todo state, and current mode intact (no repeated instructions, no reset back to plan mode); only a step with nothing left to continue is re-run from its full instructions.
 
-**For a Flow task the two are never active together.** The run's state picks the live control — a *paused* run that still holds its admission slot offers **Carry on**; a *settled* run (failed, cancelled, or completed), whose slot is gone, offers **Retry** — and the other button's tooltip explains why it's disabled. Only a failed *standalone* task genuinely offers both at once, where they mean continue vs start over. Want a deliberate clean re-run of a Flow step regardless of whether its session survived? That's **Re-run step** / **Re-run from previous node** in the Flow surfaces, which always restart from the instructions.
+**For a Flow task the two are never active together.** The run's state picks the live control — a _paused_ run that still holds its admission slot offers **Carry on**; a _settled_ run (failed, cancelled, or completed), whose slot is gone, offers **Retry** — and the other button's tooltip explains why it's disabled. Only a failed _standalone_ task genuinely offers both at once, where they mean continue vs start over. Want a deliberate clean re-run of a Flow step regardless of whether its session survived? That's **Re-run step** / **Re-run from previous node** in the Flow surfaces, which always restart from the instructions.
 
-If the chat the flow started in has been **deleted**, Retry is refused with "This run's chat was deleted — start the flow again to re-run it." Deleting the chat abandons the run, so start a fresh run instead. An *archived* chat still retries, because archiving can be undone.
+If the chat the flow started in has been **deleted**, Retry is refused with "This run's chat was deleted — start the flow again to re-run it." Deleting the chat abandons the run, so start a fresh run instead. An _archived_ chat still retries, because archiving can be undone.
 
-Work Queue opens the Flow chat for these slot-sensitive actions rather than duplicating Carry on. Both controls work for batch members too: a retried member re-enters the run queue and its stage, subject to the stage's concurrency limit (see *Re-running a terminal batch*).
+Work Queue opens the Flow chat for these slot-sensitive actions rather than duplicating Carry on. Both controls work for batch members too: a retried member re-enters the run queue and its stage, subject to the stage's concurrency limit (see _Re-running a terminal batch_).
 
 ### Usage-limit and API-error pauses
 
@@ -687,21 +697,21 @@ On macOS, closing Frink's window without quitting the app leaves a main-owned st
 
 If the app or machine restarts (or a window reloads) while a flow's agent is mid-run, that run is marked **cancelled** with a recovery marker — a restart is treated as a recoverable interruption, not a failure, so it never surfaces an alarming red badge. The work up to the interrupted node (its worktree and the prior nodes' outputs) survives on the same run.
 
-**Finding one.** Interrupted runs appear under **Active → Needs attention** in the work queue, marked *Interrupted* — the same place you look for any run waiting on you, alongside runs paused for your input. They are deliberately kept out of History: an interrupted run is work still waiting on you, not a finished record, and History is where you would never look for it. Opening the card takes you to the run's chat, where you resume it. An interrupted run stays in Needs attention until you resume it — or, if you'd rather abandon it, choose **Cancel** from its row menu: the run moves to History as *Cancelled* (deletable there like any other cancelled row) while staying under **Flows → Runs** history. Deleting its chat clears it as well. (Before this existed, an interrupted run sat in History labelled "Cancelled" and was only reachable if you already knew which chat it was.) A run interrupted inside a **parallel/fan-out step** is the one exception — those can't be resumed, so they stay in History as *Cancelled*, same as before.
+**Finding one.** Interrupted runs appear under **Active → Needs attention** in the work queue, marked _Interrupted_ — the same place you look for any run waiting on you, alongside runs paused for your input. They are deliberately kept out of History: an interrupted run is work still waiting on you, not a finished record, and History is where you would never look for it. Opening the card takes you to the run's chat, where you resume it. An interrupted run stays in Needs attention until you resume it — or, if you'd rather abandon it, choose **Cancel** from its row menu: the run moves to History as _Cancelled_ (deletable there like any other cancelled row) while staying under **Flows → Runs** history. Deleting its chat clears it as well. (Before this existed, an interrupted run sat in History labelled "Cancelled" and was only reachable if you already knew which chat it was.) A run interrupted inside a **parallel/fan-out step** is the one exception — those can't be resumed, so they stay in History as _Cancelled_, same as before.
 
 **Continuing automatically.** After an app restart, Frink carries every interrupted agent step on by itself: the run re-enters the run queue as a resumption — ahead of any fresh starts that were waiting — in the same chat and worktree. How the step continues depends on how far it got:
 
 - **The agent had already started the step** (its session received and answered the step's instructions): the agent wakes up where it stopped. A tool call that was cut off mid-flight may run again — the same as pressing Carry on yourself.
 - **The step's instructions never reached the agent** (for example, the app stopped between one step finishing and the next one being sent, or the agent's session didn't survive): the step is sent its full instructions, exactly as if it were starting fresh. Nothing is skipped — Frink never tells an agent to "carry on" with a step it was never given.
 
-While it waits for a free slot the chat shows *Waiting for a free slot to resume this step* instead of a button; cancelling the run from the work queue during that wait still works and stops the resumption. Steps that can't be continued this way (a non-agent step, a batch member whose stage already settled, a parallel/fan-out lane) stay *Interrupted* and wait for you, as below.
+While it waits for a free slot the chat shows _Waiting for a free slot to resume this step_ instead of a button; cancelling the run from the work queue during that wait still works and stops the resumption. Steps that can't be continued this way (a non-agent step, a batch member whose stage already settled, a parallel/fan-out lane) stay _Interrupted_ and wait for you, as below.
 
 **Continuing one by hand.** In the flow's chat, a button appears just above the message box, next to a "Flow run interrupted" note. It reads one of two ways, depending on what can actually be recovered:
 
-- **Re-run step** — offered whenever Resume can't be: the agent's session is gone, *or* the run lost its place in the run queue. The step restarts from its instructions in the same worktree — the run re-enters the run queue properly first, so it can't collide with the concurrency limit. You'll see the step's prompt in the chat again, and any work the step already did may happen again.
-- **Resume** — offered when the interrupted agent's session survives, the agent had already received this step's instructions, *and* the run still holds its place in the run queue (in practice: the interruption was caught before the run's slot was released). The agent simply wakes up and carries on in the same chat and worktree, with nothing repeated. Sending a follow-up message does the same thing here, and lets you add new instructions while you're at it.
+- **Re-run step** — offered whenever Resume can't be: the agent's session is gone, _or_ the run lost its place in the run queue. The step restarts from its instructions in the same worktree — the run re-enters the run queue properly first, so it can't collide with the concurrency limit. You'll see the step's prompt in the chat again, and any work the step already did may happen again.
+- **Resume** — offered when the interrupted agent's session survives, the agent had already received this step's instructions, _and_ the run still holds its place in the run queue (in practice: the interruption was caught before the run's slot was released). The agent simply wakes up and carries on in the same chat and worktree, with nothing repeated. Sending a follow-up message does the same thing here, and lets you add new instructions while you're at it.
 
-Either way, typing into the chat is never a dead end — and when the run has *lost* its place in the queue but its session survived (the usual case a while after a restart), typing is the better option: the button above reads **Re-run step** and would repeat the step from its instructions, but a typed message instead re-enters the run queue and *continues* the surviving session with your message, nothing repeated. Only when no session survived, or the agent never received this step's instructions, does a typed message get a "This flow run has ended" notice pointing you to **Re-run step** — continuing would have the agent carry on a step it was never given.
+Either way, typing into the chat is never a dead end — and when the run has _lost_ its place in the queue but its session survived (the usual case a while after a restart), typing is the better option: the button above reads **Re-run step** and would repeat the step from its instructions, but a typed message instead re-enters the run queue and _continues_ the surviving session with your message, nothing repeated. Only when no session survived, or the agent never received this step's instructions, does a typed message get a "This flow run has ended" notice pointing you to **Re-run step** — continuing would have the agent carry on a step it was never given.
 
 The **Re-run from previous node** button in the run-history panel always re-runs from instructions, whichever behaviour the chat offers. It needs the run's chat: if that chat was deleted, the re-run is refused with the same "chat was deleted" message and the run stays as it was.
 

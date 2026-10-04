@@ -4,11 +4,6 @@
 
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
-import {
-  flowGraphEdgeSchema,
-  flowGraphNodeSchema,
-} from '../../../../../shared/types/flow-graph-schema';
-import { flowSettingsSchema } from '../../../../../shared/types/flow';
 import { flowResumeSnapshotSchema } from '../../../../../shared/types/flow-run/resume';
 import type { BatchRunRow } from '../../../cloud/flows';
 import type {
@@ -35,7 +30,7 @@ import {
   listChatIdsWithActiveFlowRun,
   listIncompleteFlowRunIdsForChat,
 } from '../../../db/repos/flow-runs';
-import { createFlowVersion, getLatestVersion, getVersion } from '../../../db/repos/flow-versions';
+import { getLatestVersion, getVersion } from '../../../db/repos/flow-versions';
 import {
   createFlow as createFlowLocal,
   getFlowById,
@@ -47,7 +42,6 @@ import {
   toDbBriefingStash,
   toDbFlow,
   toDbFlowRunWithNodeRuns,
-  toDbFlowVersion,
   toDbFlowWithLatestVersion,
 } from '../../../flows/adapters';
 import { flowRunAdmissionSnapshotsForRuns } from '../../../flows/admission/visibility';
@@ -69,16 +63,13 @@ import { flowAdmissionSettingsProcedures } from './admission-settings';
 import { createFlowCopyProcedures } from './copy';
 import { createFlowListProcedures, flowGraphMeta } from './list';
 import { flowStartResponse, mapEngineError, retrySettledFlowRun } from './run-actions';
+import { createFlowVersionProcedures } from './versions';
 
-const flowGraphSchema = z.object({
-  nodes: z.array(flowGraphNodeSchema),
-  edges: z.array(flowGraphEdgeSchema),
-  settings: flowSettingsSchema,
-});
 export const flowsRouter = router({
   ...createFlowListProcedures(),
   ...createFlowCopyProcedures(),
   ...flowAdmissionQueueProcedures(),
+  ...createFlowVersionProcedures(),
   get: publicProcedureRaw.input(z.object({ id: z.string().min(1) })).query(async ({ input }) => {
     const db = getDatabase();
     const row = await getFlowById(db, input.id);
@@ -159,28 +150,6 @@ export const flowsRouter = router({
       const { deleteFlow: deleteFlowLocal } = await import('../../../flows/deletion');
       if (!(await deleteFlowLocal(input.id))) throw new TRPCError({ code: 'NOT_FOUND' });
       return { ok: true as const };
-    }),
-
-  saveVersion: publicProcedureRaw
-    .input(
-      z.object({
-        flowId: z.string().min(1),
-        graph: flowGraphSchema,
-        expectedVersionNumber: z.number().int().min(0).optional(),
-      }),
-    )
-    .mutation(async ({ input }) => {
-      const db = getDatabase();
-      try {
-        const row = await createFlowVersion(db, {
-          flowId: input.flowId,
-          graph: input.graph,
-          expectedVersionNumber: input.expectedVersionNumber,
-        });
-        return toDbFlowVersion(row);
-      } catch (e) {
-        mapEngineError(e);
-      }
     }),
 
   startRun: publicProcedureRaw
