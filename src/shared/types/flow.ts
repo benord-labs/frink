@@ -92,6 +92,12 @@ export const FLOW_DRIVING_STATUSES = [
 export const RESUME_ACTIONABLE_NODE_STATUSES = ['failed', 'awaiting_input', 'blocked'] as const;
 
 /**
+ * Terminal node_run status for an attempt a user Retry replaced: the retry inserts a fresh row
+ * (attempt + 1) and this one stays as history. Readers deriving a node's CURRENT state skip it.
+ */
+export const SUPERSEDED_NODE_STATUS = 'superseded';
+
+/**
  * Stamped on the interrupted node's output (and the linked task's result) by the boot recovery
  * sweep when the app/process restarts mid-flow. The run goes `cancelled` (neutral — a restart is
  * not a flow error); this marker is the discriminator the run panel keys "Re-run from previous

@@ -397,6 +397,8 @@ export async function dispatchAndAdvance(
     resumeKind?: 'continuation' | 'redispatch';
     laneIndex?: number;
     parentFanOutNodeRunId?: string;
+    /** A user Retry: the attempt this dispatch replaces (see insertNodeRunIfFenced). */
+    supersedesNodeRunId?: string;
   },
 ): Promise<void> {
   const db = getDatabase();
@@ -409,14 +411,19 @@ export async function dispatchAndAdvance(
   // The insert and the abort registration share one tick: a Cancel that commits first makes the
   // insert decline, and one that commits later finds this controller to abort.
   const inserted = runTransition(db, () =>
-    insertNodeRunIfFenced(db, fence, {
-      nodeId: node.id,
-      blockType: node.blockType,
-      status: 'running',
-      startedAt: new Date(),
-      laneIndex: options?.laneIndex,
-      parentFanOutNodeRunId: options?.parentFanOutNodeRunId,
-    }),
+    insertNodeRunIfFenced(
+      db,
+      fence,
+      {
+        nodeId: node.id,
+        blockType: node.blockType,
+        status: 'running',
+        startedAt: new Date(),
+        laneIndex: options?.laneIndex,
+        parentFanOutNodeRunId: options?.parentFanOutNodeRunId,
+      },
+      options?.supersedesNodeRunId,
+    ),
   );
   if (!inserted) return;
   const controller = new AbortController();

@@ -213,6 +213,34 @@ describe('EC11: paused run', () => {
 // EC12: Retried node
 // ---------------------------------------------------------------------------
 
+describe('EC12b: a lane retried after failing', () => {
+  it('counts the lane by its replacement attempt, not the superseded failure', () => {
+    const fanOutRunId = 'fo-retry';
+    const lane = (id: string, status: string, attempt: number) => ({
+      ...makeNodeRun(id, { status, attempt_number: attempt }),
+      parent_fan_out_node_run_id: fanOutRunId,
+      lane_index: 0,
+    });
+    const summarize = (retryStatus: string) =>
+      mapFlowRunToSummary(
+        makeRun({
+          nodeRuns: [
+            { ...makeNodeRun(fanOutRunId), block_type: 'fan_out', status: 'completed' },
+            lane('old', 'superseded', 1),
+            lane('new', retryStatus, 2),
+          ],
+        }),
+      ).nodes.find(isFanOutSummary);
+
+    expect(summarize('completed')).toMatchObject({ completedLanes: 1, failedLanes: 0 });
+    expect(summarize('failed')).toMatchObject({
+      completedLanes: 0,
+      failedLanes: 1,
+      failedLaneNodeRunIds: ['new'],
+    });
+  });
+});
+
 describe('EC12: retried node', () => {
   it('shows attemptNumber=2 for a retried node', () => {
     const run = makeRun({
