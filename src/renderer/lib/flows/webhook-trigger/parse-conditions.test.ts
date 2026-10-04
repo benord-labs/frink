@@ -20,6 +20,19 @@ describe('parseConditions', () => {
     );
   });
 
+  // A ClickUp rule saved before the event offered an assignee has none stored; reading it as "me"
+  // would narrow it the next time the editor packs its conditions.
+  it('reads a ClickUp assignee rule with no stored assignee as anyone, and keeps a stored choice', () => {
+    expect(parseConditions({}, 'task_assignee_changed', 'clickup').assigneeMode).toBe('anyone');
+    expect(
+      parseConditions({ assignee: 'me' }, 'task_assignee_changed', 'clickup').assigneeMode,
+    ).toBe('me');
+    // Only the assignee event carries the choice; a stored one elsewhere is not honoured.
+    expect(parseConditions({ assignee: 'anyone' }, 'task_created', 'clickup').assigneeMode).toBe(
+      'me',
+    );
+  });
+
   it('parses assignee mode for assignee events', () => {
     const result = parseConditions({ assignee: 'anyone' }, 'story_assigned', 'shortcut');
     expect(result.assigneeMode).toBe('anyone');

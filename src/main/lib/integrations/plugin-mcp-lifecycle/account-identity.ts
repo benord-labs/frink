@@ -40,9 +40,11 @@ function payloadOf(result: IdentityPayload): IdentityPayload {
   }
 }
 
-/** The id at the declared dot path. Numeric ids (GitHub-style) become strings; anything else is no id. */
+/** The id at the declared dot path; a numeric segment indexes a list. Numeric ids (GitHub-style)
+ * become strings; anything else is no id. */
 export function readIdentityId(result: IdentityPayload, idPath: string): string | undefined {
   const value = idPath.split('.').reduce<IdentityPayload>((node, key) => {
+    if (Array.isArray(node)) return /^\d+$/.test(key) ? (node[Number(key)] ?? null) : null;
     const object = JSON_OBJECT.safeParse(node);
     return object.success ? (object.data[key] ?? null) : null;
   }, payloadOf(result));
@@ -58,16 +60,22 @@ function unavailable(pluginId: string, reason: string): undefined {
   return undefined;
 }
 
-async function lookUpIdentity(pluginId: string): Promise<string | undefined> {
+/** How a lookup reaches the plugin's server. */
+const SERVER = { resolvePluginServerTarget, callServerTool };
+
+export async function lookUpIdentity(
+  pluginId: string,
+  server = SERVER,
+): Promise<string | undefined> {
   const declared = catalogIdentity(pluginId);
   if (!declared) return undefined;
-  const resolved = await resolvePluginServerTarget(pluginId, declared.server);
+  const resolved = await server.resolvePluginServerTarget(pluginId, declared.server);
   if (!resolved.ok) return unavailable(pluginId, resolved.reason);
-  const called = await callServerTool(
+  const called = await server.callServerTool(
     resolved.target.config,
     resolved.target.credentials,
     declared.tool,
-    {},
+    declared.args ?? {},
   );
   if (!called.ok) return unavailable(pluginId, called.reason);
   return (
@@ -82,6 +90,7 @@ export async function ensureLocalAccountIdentity(
   db: Db,
   pluginId: string,
   accountId?: string,
+  lookUp: (pluginId: string) => Promise<string | undefined> = lookUpIdentity,
 ): Promise<void> {
   if (!catalogIdentity(pluginId)) return;
   try {
@@ -91,7 +100,7 @@ export async function ensureLocalAccountIdentity(
         row.provider === pluginId && !row.externalUserId && (!accountId || row.id === accountId),
     );
     if (pending.length === 0) return;
-    const externalUserId = await lookUpIdentity(pluginId);
+    const externalUserId = await lookUp(pluginId);
     if (!externalUserId) return;
     for (const account of pending)
       await setLocalIntegrationExternalUserId(db, account.id, externalUserId);
