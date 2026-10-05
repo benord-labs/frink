@@ -73,6 +73,8 @@ export const MAIN_LIB_DOMAINS = [
   'mobile',
   'permissions',
   'platform',
+  // Project creation and GitHub cloning: insert-or-adopt by path, one clone per repo.
+  'projects',
   'provider',
   'sentry',
   'skills',
