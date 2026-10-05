@@ -28,6 +28,31 @@ describe('checkEdit — tier-1c (bypass-immune)', () => {
       reason: { kind: 'safety:path', path: nodePath.join(nodeOs.homedir(), '.ssh', 'id_rsa') },
     });
   });
+
+  describe('case variants (macOS APFS is case-insensitive)', () => {
+    const realPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    const withPlatform = (value: NodeJS.Platform): void => {
+      Object.defineProperty(process, 'platform', { value, configurable: true });
+    };
+    afterEach(() => {
+      Object.defineProperty(process, 'platform', realPlatform);
+    });
+    const readAll = { policy: noRules, project: noRules, user: { ...noRules, allow: ['Read'] } };
+
+    it('darwin: Read(~/.SSH/id_rsa) and Read(.ENV) deny even with a tool-wide Read allow', () => {
+      withPlatform('darwin');
+      for (const file_path of ['~/.SSH/id_rsa', '/project/.ENV']) {
+        const r = checkEdit({ file_path }, readAll, root, 'Read');
+        expect(r, file_path).toMatchObject({ decision: 'deny', reason: { kind: 'safety:path' } });
+      }
+    });
+
+    it('linux: .ENV is a distinct file, so no safety deny', () => {
+      withPlatform('linux');
+      const r = checkEdit({ file_path: '/project/.ENV' }, EMPTY_DOCS, root, 'Read');
+      expect(r).not.toMatchObject({ reason: { kind: 'safety:path' } });
+    });
+  });
 });
 
 describe('checkEdit — rule eval', () => {
