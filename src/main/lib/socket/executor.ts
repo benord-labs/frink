@@ -136,7 +136,7 @@ import {
   applyApprovedPlanContextToPrompt,
   formatPromptWithHistory,
 } from './execution/prompt-prefix';
-import { logAdoptedTurnEnd, turnEndMustDispose } from './execution/wake-hold-signal';
+import { logAdoptedTurnEnd, turnEndDisposition } from './execution/wake-hold-signal';
 import type { WakePump } from './execution/wake-pump-types';
 import {
   requiresStrictSignalFinalization,
@@ -524,24 +524,6 @@ type ExecuteRequestPayload = {
 /**
  * Format conversation history as context for Claude
  */
-type TasksRepo = typeof import('../db/repos/tasks');
-type SignalTaskRow = Awaited<ReturnType<TasksRepo['getTaskById']>>;
-
-/**
- * Resume reads reuse the disarm-check prefetch when it already holds the target row, so a
- * follow-up turn does a single task read; a different target (the flow-driving task) fetches
- * its own row.
- */
-async function getTaskRowForResume(
-  db: Parameters<TasksRepo['getTaskById']>[0],
-  targetTaskId: string,
-  prefetched: SignalTaskRow,
-): Promise<SignalTaskRow> {
-  if (prefetched?.id === targetTaskId) return prefetched;
-  const { getTaskById } = await import('../db/repos/tasks');
-  return getTaskById(db, targetTaskId);
-}
-
 export {
   buildPlanFallbackSends,
   emitPlanFallbackSends,
@@ -826,13 +808,11 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
         );
         return;
       }
-      // The race-recovery retry must NOT trust the turn-start prefetch: the sweep's park happened
+      // Reuse the prefetch only for its own row. The race-recovery retry must NOT: the sweep parked
       // after that snapshot, so a cached 'running' row would make the retry a silent no-op.
-      const latestTask = await getTaskRowForResume(
-        db,
-        resumeTargetTaskId,
-        forceFreshRead ? null : prefetchedSignalTask,
-      );
+      const reuse = !forceFreshRead && prefetchedSignalTask?.id === resumeTargetTaskId;
+      const { getTaskById } = await import('../db/repos/tasks');
+      const latestTask = reuse ? prefetchedSignalTask : await getTaskById(db, resumeTargetTaskId);
       if (!latestTask) return;
       if (latestTask.status === 'plan_ready' && mode !== 'agent') return;
       await resumeParkedTaskInPlace(latestTask, 'follow_up_message', subChatId);
@@ -1774,15 +1754,12 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       // Superseded (a duplicate-request registered its own session under this key) → the
       // successor owns disposition; touching the key here would destroy its live session.
       if (!session || getClaudeSession(subChatId) !== session) return;
-      const pendingWork = session.stopHook?.lastPendingWork ?? null;
-      // Plan turns hold like any turn (bursts inherit the plan locks). A submitted plan never holds,
-      // but with no pending work it is kept idle so the approval reuses this CLI.
-      const mustDispose = turnEndMustDispose(subChatId, session, turn, abortController.signal);
-      if (!pendingWork || mustDispose) {
-        const flowTurn = flowResources.admitted || isFlowExecutionTurn;
-        // Never kept: an error result, a dropped follower, or a steer the turn may not have read.
-        const unclean = claudeResultErrored || session.stopHook?.droppedFollower || turn.steered;
-        if (mustDispose || flowTurn || unclean) endClaudeSession(subChatId);
+      // Never kept idle: a Flow turn or an error result (a steer and a dropped follower too).
+      const noKeep = flowResources.admitted || isFlowExecutionTurn || claudeResultErrored;
+      const verdict = turnEndDisposition(subChatId, session, turn, abortController.signal, noKeep);
+      const { pendingWork } = verdict;
+      if (verdict.disposition !== 'hold' || !pendingWork) {
+        if (verdict.disposition === 'end') endClaudeSession(subChatId);
         else {
           // The registry's now: this execute's teardown must not end it or a later send's claim.
           retainClaudeSession(session);

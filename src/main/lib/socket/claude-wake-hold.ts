@@ -31,7 +31,6 @@
  */
 
 import log from 'electron-log';
-import type { TaskSignalPayload } from '../../../shared/types/task-signal';
 import type { WakeHoldEndReason, WakeHoldState } from '../../../shared/types/wake-hold';
 import { createTransformer } from '../claude';
 import { clearPendingApprovals } from '../claude/ask-user-question-approval';
@@ -52,20 +51,21 @@ import {
   partsSnapshot,
   partsStateFromChunks,
 } from './claude-turn-context';
-// Type-only — erased at compile time, so it does not reintroduce the client↔executor runtime cycle
-// this module is kept out of.
-import type { MessagePart } from './client';
 import { settleClaudeWakeHold } from './execution/claude-provider-cleanup';
 import { armIdle } from './execution/claude-session-loop';
 import type { ExecutionSettlementBarrier } from './execution/execution-settlement-barrier';
 import {
   logDroppedPendingWork,
+  lostWorkNotice,
   resumeQuietIdleParkOnBurst,
   settleBurstSignal,
   summarizePendingWork,
 } from './execution/wake-hold-signal';
-import type { WakePump } from './execution/wake-pump-types';
+import type { WakeHoldIo, WakePump } from './execution/wake-pump-types';
+
+export type { WakeHoldIo };
 import { backfillDeniedTools } from './streaming/burst-chunks';
+import { buildNoticeChunks } from './streaming/plan-fallback';
 
 /** A held session's pump plus the arming turn's execution bindings — an adopting turn keeps only
  * whether the session listed `frink_task_signal` (adoptHeldExecution). */
@@ -99,6 +99,11 @@ export type WakeHold = {
    * deliberately KEEPS it so the live pump stays adoptable.
    */
   retracted: boolean;
+  /** A teardown the user did not ask for owes a notice; until it lands (retracting finishes the
+   * live stream it needs) this blocks the burst-end republish, as `retracted` does otherwise. */
+  lostWorkCause?: string;
+  /** Post the lost-work notice for `cause` into the arming message, at most once per hold. */
+  announceLostWork: (cause: string) => Promise<void>;
 };
 
 const activeWakeHolds = new Map<string, WakeHold>();
@@ -243,8 +248,21 @@ export function releaseWakeHold(
     // the keystroke rather than after the stream unwinds; `pump.done`'s dropHold repeats it. The
     // latch is what keeps it retracted: closing the queue does not truncate an in-flight burst, so
     // its burst end still runs and would otherwise re-advertise the wait the user just ended.
-    retractHold(hold);
-    logDroppedPendingWork(subChatId, hold.session.stopHook?.lastPendingWork ?? null, reason);
+    const pending = hold.session.stopHook?.lastPendingWork ?? null;
+    // An unrequested teardown posts its notice first, not from the pump's settle: a CLI still
+    // running a Workflow after stdin closes may not end its stream for a long time.
+    if (lostWorkNotice(pending, reason) && !hold.retracted) {
+      hold.lostWorkCause ??= reason;
+      void hold
+        .announceLostWork(reason)
+        .catch((error) =>
+          captureMainException(error, { surface: 'claude-wake-hold', stage: 'lost-work-notice' }),
+        )
+        .finally(() => retractHold(hold));
+    } else {
+      retractHold(hold);
+    }
+    logDroppedPendingWork(subChatId, pending, reason);
     endClaudeSession(subChatId);
   } else if (!hold.settling) {
     dropHold(subChatId, hold);
@@ -258,35 +276,6 @@ export function releaseNonFlowClaudeSessions(reason: string): void {
   for (const [subChatId, hold] of [...activeWakeHolds]) {
     if (!hold.releaseFlowResourceActivity) releaseWakeHold(subChatId, reason);
   }
-}
-
-/** Executor-injected adapters — each closes over the executor's typed senders/builders. */
-export interface WakeHoldIo {
-  chatId: string;
-  /** Stream one wake-burst chunk with the burst's cumulative parts snapshot. */
-  streamChunk: (
-    msgId: string,
-    chunk: UIMessageChunk,
-    parts: MessagePart[],
-    messageIndex: number,
-  ) => void;
-  /** Surface a plan this burst finished as a pending-approval card, calling `onSubmitted` only if
-   * one reached the transcript. */
-  emitPlanCard: (
-    msgId: string,
-    chunks: UIMessageChunk[],
-    startIndex: number,
-    deniedToolIdsWithMessages: Map<string, string>,
-    turn: { onSubmitted: () => void; planAlreadySubmitted: boolean; waitStartedMs: number },
-  ) => Promise<void>;
-  /** Finalize the merged assistant message. `chunks` spans the whole wait, so `hadContent` — not
-   * its length — says whether anything new was said. Awaitable before the session is disposed. */
-  completeBurst: (msgId: string, chunks: UIMessageChunk[], hadContent: boolean) => Promise<void>;
-  /** Publish whether this chat is waiting on background work, and on what (see {@link setHold}). */
-  setHeld: (held: boolean, pending?: WakeHoldState, endReason?: WakeHoldEndReason) => void;
-  clearPendingApprovals: (reason: string, subChatId: string) => void;
-  getLatestTaskSignal: (executionContextId: string) => TaskSignalPayload | null | undefined;
-  clearCurrentExecutionChat: (executionContextId: string) => void;
 }
 
 export interface ArmWakePumpParams {
@@ -432,10 +421,25 @@ export function armWakePump(params: ArmWakePumpParams): WakeHold {
       // Re-read after the await, so a Stop, takeover or user task stop landing during it wins; a
       // falsy read ends the wait. `waitOverDeclared` keeps this burst from advertising one last wait.
       const latest = session.stopHook?.lastPendingWork;
-      if (latest && !hold.retracted && !waitOverDeclared)
+      if (latest && !hold.retracted && !hold.lostWorkCause && !waitOverDeclared)
         io.setHeld(true, summarizePendingWork(latest));
     },
   });
+  /** The one notice in flight or posted. A second caller (the settle after a release) awaits it,
+   * so its retract can never overtake the notice. */
+  let announcing: Promise<void> | null = null;
+  const announceLostWork = (cause: string): Promise<void> => {
+    if (announcing) return announcing;
+    const text = lostWorkNotice(session.stopHook?.lastPendingWork ?? null, cause);
+    // After the wait-over latch the work was declared finished, and a retracted hold was ended by
+    // the user (Stop, pause) or already handed to a turn. Neither lost anything unannounced.
+    if (!text || waitOver || hold.retracted) return Promise.resolve();
+    log.info(`[Socket Executor] Posting lost-work notice for ${subChatId} (${cause})`);
+    for (const chunk of buildNoticeChunks(text)) emitChunk(chunk);
+    partsState = partsStateFromChunks(chunks);
+    announcing = Promise.resolve(io.completeBurst(msgId, chunks, true));
+    return announcing;
+  };
   const hold: WakeHold = {
     pump,
     chatId: io.chatId,
@@ -447,6 +451,7 @@ export function armWakePump(params: ArmWakePumpParams): WakeHold {
     unregisterFlowRunAbort: params.unregisterFlowRunAbort,
     retracted: false,
     settling: false,
+    announceLostWork,
   };
   setHold(subChatId, hold, pendingWork);
   hold.executionSettlement = params.executionSettlement?.retain();
@@ -469,6 +474,7 @@ export function armWakePump(params: ArmWakePumpParams): WakeHold {
           const own = activeWakeHolds.get(subChatId);
           if (own?.pump === pump) dropHold(subChatId, own);
         },
+        announceLostWork,
         takeCutShortBurst: () => {
           const cutShort = burst;
           burst = null;

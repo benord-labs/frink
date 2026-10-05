@@ -15,7 +15,7 @@ import { shouldSuppressPlanTextChunk } from './plan-mode-suppression';
  * The AI SDK stream reducer rejects a lone `text-delta`, and `text-end` is the checkpoint that
  * carries the `parts` payload to the observer lane — so a notice needs its own start/end wrapper.
  */
-function buildNoticeChunks(text: string): UIMessageChunk[] {
+export function buildNoticeChunks(text: string): UIMessageChunk[] {
   const id = crypto.randomUUID();
   return [
     { type: 'text-start', id },

@@ -119,6 +119,7 @@ describe('settleClaudeWakeHold — reporting the background work a pump exit dro
   const stopHook: TaskStopHook = Object.assign(async () => ({}), {
     reset: () => {},
     lastPendingWork: liveWork,
+    carryForwardPendingWork: () => liveWork,
   });
 
   beforeEach(() => {
