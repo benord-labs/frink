@@ -1,12 +1,18 @@
-import type { BackgroundTaskSummary, SessionCronSummary } from '@anthropic-ai/claude-agent-sdk';
+import type {
+  BackgroundTaskSummary,
+  SessionCronSummary,
+  StopHookInput,
+} from '@anthropic-ai/claude-agent-sdk';
 import log from 'electron-log';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as sentry from '../../sentry/init';
 import { retireRetainedSession } from '../claude-session-registry';
-import type { StopPendingWork, TaskStopHook } from '../../task-stop-hook';
+import { createTaskStopHook, type StopPendingWork, type TaskStopHook } from '../../task-stop-hook';
 import {
   logAdoptedTurnEnd,
   logDroppedPendingWork,
+  lostWorkNotice,
+  readTurnEndPendingWork,
   summarizePendingWork,
   turnEndMustDispose,
 } from './wake-hold-signal';
@@ -239,4 +245,100 @@ describe('summarizePendingWork', () => {
       expect(item).toMatchObject({ label: 'Background task', stoppable: false });
     },
   );
+});
+
+describe('lostWorkNotice', () => {
+  const workflowTask: BackgroundTaskSummary = {
+    id: 'w1',
+    type: 'workflow',
+    status: 'running',
+    description: 'Build the iPhone redesign',
+    name: 'frink-mobile-build',
+  };
+
+  it('says a crashed CLI ended a Workflow and how to resume it', () => {
+    const text = lostWorkNotice(
+      { backgroundTasks: [workflowTask], sessionCrons: [] },
+      'wake-pump-exit:stream-ended',
+    );
+    expect(text).toContain('the Claude process for this chat exited unexpectedly');
+    expect(text).toContain('Workflow “frink-mobile-build”');
+    expect(text).toContain('Ask me to resume it');
+  });
+
+  it('names every lost item, and offers a rerun when no Workflow was lost', () => {
+    const text = lostWorkNotice(
+      { backgroundTasks: [shellTask], sessionCrons: [cron] },
+      'provider-switch:codex',
+    );
+    expect(text).toContain('this chat switched to another agent provider');
+    expect(text).toContain('Command “Full test suite with coverage”');
+    expect(text).toContain('Scheduled wake “check the deploy”');
+    expect(text).toContain('Ask me to run it again');
+  });
+
+  it('stays silent for a teardown the user asked for', () => {
+    for (const cause of ['user-pause', 'remote-stop', 'chat deleted', 'app-quit']) {
+      expect(lostWorkNotice(pendingWork, cause)).toBeNull();
+    }
+  });
+
+  it('stays silent when nothing was pending', () => {
+    expect(lostWorkNotice(null, 'wake-pump-exit:stream-ended')).toBeNull();
+  });
+
+  it('shortens a long description', () => {
+    const long = { ...shellTask, description: 'x'.repeat(200) };
+    const text = lostWorkNotice(
+      { backgroundTasks: [long], sessionCrons: [] },
+      'wake-pump-exit:sink-error',
+    );
+    expect(text).toContain(`“${'x'.repeat(79)}…”`);
+  });
+});
+
+describe('readTurnEndPendingWork', () => {
+  const stopListing = (tasks: BackgroundTaskSummary[]): StopHookInput => ({
+    hook_event_name: 'Stop',
+    stop_hook_active: false,
+    background_tasks: tasks,
+    session_id: 'sess',
+    transcript_path: '',
+    cwd: '',
+  });
+  /** A hook whose last Stop listed `tasks`, then reset by an adopting turn that ran no Stop. */
+  const adoptedWithoutStop = async (tasks: BackgroundTaskSummary[]) => {
+    const hook = createTaskStopHook({ hasSignal: () => true, isAborted: () => false });
+    await hook(stopListing(tasks));
+    hook.reset();
+    return { stopHook: hook };
+  };
+  const turn = (planHalted: boolean) => ({ planSubmissionHalt: () => planHalted });
+
+  it('carries the held work forward when an adopted turn ends with no Stop', async () => {
+    const session = await adoptedWithoutStop([shellTask]);
+    expect(readTurnEndPendingWork(session, turn(false))?.backgroundTasks).toEqual([shellTask]);
+  });
+
+  // A plan halt runs no Stop. Carried work there would trip the `plan submitted` disposal and kill
+  // the held Workflow; uncarried, the session stays idle for the approval to claim.
+  it('does not carry it into a turn that submitted a plan, which would dispose the session', async () => {
+    const session = await adoptedWithoutStop([shellTask]);
+    expect(readTurnEndPendingWork(session, turn(true))).toBeNull();
+    // Still set aside, so the approval turn that claims the session carries it.
+    session.stopHook.reset();
+    expect(session.stopHook.carryForwardPendingWork()?.backgroundTasks).toEqual([shellTask]);
+  });
+
+  it('still reports a plan turn’s own Stop, so that case disposes as before', async () => {
+    const hook = createTaskStopHook({ hasSignal: () => true, isAborted: () => false });
+    await hook(stopListing([shellTask]));
+    expect(readTurnEndPendingWork({ stopHook: hook }, turn(true))?.backgroundTasks).toEqual([
+      shellTask,
+    ]);
+  });
+
+  it('reads nothing without a Stop hook', () => {
+    expect(readTurnEndPendingWork({ stopHook: null }, turn(false))).toBeNull();
+  });
 });
