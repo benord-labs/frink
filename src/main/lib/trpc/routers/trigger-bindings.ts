@@ -3,6 +3,13 @@
 
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
+import {
+  type BindingConfigTriggerType,
+  bindingConfigSchemaFor,
+  isBindingConfigTriggerType,
+  postTaskBindingConfigSchema,
+  scheduleBindingConfigSchema,
+} from '../../../../shared/types/flows/flow-trigger-binding-config';
 import type { DbFlowTriggerBinding } from '../../cloud/trigger-bindings';
 import { getDatabase } from '../../db';
 import * as bindingsRepo from '../../db/repos/flow-trigger-bindings';
@@ -13,7 +20,36 @@ import {
 import { toRawDbFlowTriggerBinding } from '../../integrations/adapters';
 import { publicProcedure, router } from '../index';
 
-const triggerTypeSchema = z.enum(['post_task_trigger', 'schedule_trigger']);
+const bindingScope = {
+  flowId: z.string().min(1),
+  projectId: z.string().min(1).nullable(),
+};
+
+/** Each trigger type carries its own config shape, so a wrong-shape config is rejected before it is stored. */
+const createBindingInputSchema = z.discriminatedUnion('triggerType', [
+  z.object({
+    ...bindingScope,
+    triggerType: z.literal('post_task_trigger'),
+    config: postTaskBindingConfigSchema,
+  }),
+  z.object({
+    ...bindingScope,
+    triggerType: z.literal('schedule_trigger'),
+    config: scheduleBindingConfigSchema,
+  }),
+]);
+
+/** An update names no trigger type, so its config is checked against the stored row's type. */
+async function storedTriggerTypeOf(
+  db: ReturnType<typeof getDatabase>,
+  id: string,
+): Promise<BindingConfigTriggerType | null> {
+  const existing = await bindingsRepo.getById(db, id);
+  if (!existing) {
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'Trigger binding not found' });
+  }
+  return isBindingConfigTriggerType(existing.triggerType) ? existing.triggerType : null;
+}
 
 function mapRepoError(e: unknown): never {
   if (e instanceof TriggerTypeNotSupportedError) {
@@ -43,14 +79,7 @@ export const triggerBindingsRouter = router({
     }),
 
   create: publicProcedure
-    .input(
-      z.object({
-        flowId: z.string().min(1),
-        projectId: z.string().min(1).nullable(),
-        triggerType: triggerTypeSchema,
-        config: z.record(z.string(), z.unknown()),
-      }),
-    )
+    .input(createBindingInputSchema)
     .mutation(async ({ input }): Promise<DbFlowTriggerBinding> => {
       const db = getDatabase();
       try {
@@ -95,9 +124,20 @@ export const triggerBindingsRouter = router({
     )
     .mutation(async ({ input }): Promise<DbFlowTriggerBinding> => {
       const db = getDatabase();
+      if (input.config !== undefined) {
+        const triggerType = await storedTriggerTypeOf(db, input.id);
+        const parsed = triggerType && bindingConfigSchemaFor(triggerType).safeParse(input.config);
+        if (parsed && !parsed.success) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: `Config does not match what a ${triggerType} binding expects`,
+            cause: parsed.error,
+          });
+        }
+      }
       const row = await bindingsRepo
         .update(db, input.id, {
-          config: input.config as Record<string, unknown> | undefined,
+          config: input.config,
           isActive: input.isActive,
           clearLastError: input.clearLastError,
         })
