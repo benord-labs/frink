@@ -1,5 +1,6 @@
 import path from 'node:path';
 import type { Settings } from '@anthropic-ai/claude-agent-sdk';
+import { z } from 'zod';
 import { isPlainObject } from '../../../../shared/lib/case-converter';
 import type {
   HookBinding,
@@ -14,7 +15,14 @@ type Reason = Pick<HookRefusal, 'code'> & { reason: string };
 type FieldRule = null | { ignored: string } | Reason;
 type Ignored = Extract<HookBinding, { status: 'supported' }>['ignored'];
 
-const BACKGROUND = 'a background hook cannot gate anything';
+const TEXT = z.string();
+const NOT_YET = 'not supported by Frink yet';
+const POWERSHELL: Reason = {
+  code: 'field-unsupported',
+  reason: `it runs in PowerShell, which is ${NOT_YET}`,
+};
+/** Claude itself refuses to run a settings hook that uses one of these plugin placeholders. */
+const PLUGIN_ONLY = ['${CLAUDE_PLUGIN_ROOT}', '${CLAUDE_PLUGIN_DATA}'];
 
 const UNSUPPORTED_TYPES = {
   prompt: 'asks Claude to judge a prompt',
@@ -35,19 +43,23 @@ const COMMAND_FIELD_RULES = {
       ? { ignored: 'spinner text only; it changes nothing the hook decides' }
       : { code: 'malformed', reason: 'its statusMessage is not text' },
   shell: (v) =>
-    unless(
-      v === 'bash',
-      'field-unsupported',
-      'it sets "shell": Frink runs hooks with a POSIX shell',
-    ),
-  if: () => unless(false, 'field-unsupported', 'it sets "if", a filter Frink cannot evaluate'),
+    v === 'powershell'
+      ? POWERSHELL
+      : unless(v === 'bash', 'malformed', 'its shell is neither "bash" nor "powershell"'),
+  if: (v) => unless(TEXT.safeParse(v).success, 'malformed', 'its "if" is not text'),
+  // The hooks reference: `once` is honoured only in skill frontmatter, ignored in settings files.
   once: (v) =>
-    unless(v === false, 'field-unsupported', 'it sets "once": Frink does not track run-once hooks'),
-  async: (v) => unless(v === false, 'async', `it sets "async": ${BACKGROUND}`),
-  asyncRewake: (v) => unless(v === false, 'async', `it sets "asyncRewake": ${BACKGROUND}`),
+    v === true
+      ? { ignored: 'Claude honours it only in skill frontmatter, not in a settings file' }
+      : unless(v === false, 'malformed', notFlag('once')),
+  async: (v) =>
+    v === true ? background('async') : unless(v === false, 'malformed', notFlag('async')),
+  asyncRewake: (v) =>
+    v === true
+      ? background('asyncRewake')
+      : unless(v === false, 'malformed', notFlag('asyncRewake')),
 } satisfies Record<keyof SdkCommandHook, (value: unknown) => FieldRule>;
 
-const PROVIDER_VARIABLE = /\bCLAUDE_[A-Z0-9_]+/g;
 const PROJECT_REF = /CLAUDE_PROJECT_DIR\}?"?\/[\w./@-]+/;
 const SIMPLE_COMMAND = /^[\w./~-]+(?: +[\w@%+=:,./-]+)*$/;
 
@@ -72,13 +84,22 @@ function hookLabel(handlerType: string, words: string[]): string {
   return SIMPLE_COMMAND.test(text) ? path.basename(text.split(' ', 1)[0]) : 'inline shell script';
 }
 
-/** One reason per `CLAUDE_` variable named, apart from the project directory. Matches by text. */
-function providerVariableReasons(words: string[]): Reason[] {
-  const names = new Set(words.join('\n').match(PROVIDER_VARIABLE));
-  names.delete('CLAUDE_PROJECT_DIR');
-  return [...names].map((name) => ({
+function notFlag(field: string): string {
+  return `its "${field}" is not true or false`;
+}
+
+function background(field: string): Reason {
+  return {
+    code: 'async',
+    reason: `it sets "${field}" to run in the background, which is ${NOT_YET}`,
+  };
+}
+
+/** One reason per plugin placeholder in the command or its arguments, matched as Claude does. */
+function pluginPlaceholderReasons(words: string[]): Reason[] {
+  return PLUGIN_ONLY.filter((name) => words.some((word) => word.includes(name))).map((name) => ({
     code: 'provider-variable',
-    reason: `it uses ${name}, which only Claude provides`,
+    reason: `it uses ${name}, which Claude fills in only for a plugin's own hooks`,
   }));
 }
 
@@ -94,9 +115,12 @@ function commandReasons(raw: Record<string, unknown>, words: string[], ignored: 
       : { code: 'field-unknown', reason: `it sets "${field}", which Frink does not know` };
     if (verdict === null) continue;
     if ('ignored' in verdict) ignored.push({ field, reason: verdict.ignored });
-    else reasons.push(verdict);
+    // Claude does not read `shell` when `args` makes the hook exec form, which runs without one.
+    else if (verdict === POWERSHELL && Object.hasOwn(raw, 'args')) {
+      ignored.push({ field, reason: 'a hook with args runs without a shell' });
+    } else reasons.push(verdict);
   }
-  return [...reasons, ...providerVariableReasons(words)];
+  return [...reasons, ...pluginPlaceholderReasons(words)];
 }
 
 /** Why the handler itself cannot run, apart from where it is registered. */
@@ -106,8 +130,11 @@ function handlerReasons(raw: Record<string, unknown>, words: string[], ignored: 
   if (raw.type === 'command') return commandReasons(raw, words, ignored);
   const what = Object.hasOwn(UNSUPPORTED_TYPES, raw.type)
     ? UNSUPPORTED_TYPES[raw.type as keyof typeof UNSUPPORTED_TYPES]
-    : 'is a kind Frink does not know';
-  return [{ code: 'handler-type', reason: `it ${what}, and Frink only runs command hooks` }];
+    : undefined;
+  const reason = what
+    ? `it ${what}, which is ${NOT_YET}`
+    : 'it is a kind of handler Claude does not define';
+  return [{ code: 'handler-type', reason }];
 }
 
 /** Every reason one handler cannot run in Frink, or that it runs as written. Pure. */
@@ -118,7 +145,7 @@ export function classifyHook(input: {
   handler: unknown;
 }): Pick<
   HookRegistration,
-  'handlerType' | 'label' | 'command' | 'args' | 'timeoutSec' | 'binding'
+  'handlerType' | 'label' | 'command' | 'args' | 'if' | 'timeoutSec' | 'binding'
 > {
   const raw = isPlainObject(input.handler) ? input.handler : {};
   const handlerType = typeof raw.type === 'string' && raw.type.trim() ? raw.type : 'unknown';
@@ -144,6 +171,7 @@ export function classifyHook(input: {
     label,
     command,
     ...(args ? { args } : {}),
+    if: TEXT.safeParse(raw.if).data,
     ...(isSeconds(raw.timeout) ? { timeoutSec: raw.timeout } : {}),
     binding: refusals.length ? { status: 'refused', refusals } : { status: 'supported', ignored },
   };
