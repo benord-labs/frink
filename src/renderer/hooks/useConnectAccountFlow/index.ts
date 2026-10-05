@@ -11,6 +11,18 @@ import { trpc } from '../../lib/trpc';
 
 export type ConnectFlowState = 'idle' | 'connecting' | 'error';
 
+/**
+ * Detection-query options shared by the Claude/Codex connect pages. Refetch on focus only while
+ * no login is detected — that's the "run `claude auth login` in Terminal, come back" case. Once a
+ * login is found, every return would re-run a blocking `security -w` keychain read (and can
+ * re-prompt users who clicked "Allow" rather than "Always Allow"). The explicit "Check for Login"
+ * button calls `refetch()`, which bypasses this.
+ */
+export const DETECTION_QUERY_OPTIONS = {
+  refetchOnWindowFocus: (query: { state: { data?: { available: boolean } } }) =>
+    query.state.data?.available !== true,
+};
+
 /** Minimal shape of the detection `useQuery` result both connect pages depend on. */
 type DetectionQuery<TDetection> = {
   data: TDetection | undefined;
