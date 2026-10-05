@@ -240,6 +240,8 @@ export async function buildClaudeSessionSpec(inputs: ClaudeSessionSpecInputs) {
       type: 'preset' as const,
       preset: 'claude_code' as const,
       append: `\n\n${frinkSystemPromptAppend}`,
+      // A changed append recreates the CLI with `resume`; a recorded prompt would ignore it there.
+      snapshot: false,
     },
     // Load skills and hooks from project (.claude/) and user (~/.claude/) directories
     // This enables Claude to use skills via the Skill tool and hooks for lifecycle events
