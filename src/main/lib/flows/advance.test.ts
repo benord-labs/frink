@@ -19,6 +19,7 @@ import {
   createNodeRun,
   getNodeRun,
   listNodeRunsForFlowRun,
+  readParkedOutput,
   setNodeRunStatus,
 } from '../db/repos/node-runs';
 import {
@@ -72,6 +73,7 @@ import { deleteFlow, settleChatOwnedFlowDeletion } from './deletion';
 import { dispatchNode } from './dispatch';
 import { cancelFlowRun, cancelFlowRunForChatDeletion, cancelFlowRunsForChat } from './engine';
 import { subscribeFlowEvents } from './events';
+import { approvedOutputFrom } from './resume';
 import { tick } from './task-completion-watcher';
 import { type RunFence, readRunFence } from './transitions';
 import { loadBodyMember, loadFanOutState, saveBodyMembers, saveFanOutState } from './fan-out-state';
@@ -228,6 +230,28 @@ describe('advanceFlowRun — idempotent across restart (the 203 duplicate-dispat
     expect((await getFlowRun(db, flowRunId))?.status).toBe('cancelled');
     expect((await getNodeRun(db, agentNode.id))?.status).toBe('cancelled');
     expect((await getTaskById(db, stray.id))?.status).toBe('cancelled'); // no orphan outliving its run
+  });
+
+  // An approve reads the parked output and calls advanceFlowRun in one tick; an await ahead of this
+  // write would let a re-park land in between.
+  it('writes the node before it first yields, and hands an approved park on downstream', async () => {
+    vi.mocked(dispatchNode).mockResolvedValue({ type: 'awaiting_input', reason: 'paused' });
+    const parked = { ...awaitingInputOutput, outputs: { summary: 'Ready', taskId: 'task-1' } };
+    const evalNode = await createNodeRun(db, {
+      flowRunId,
+      nodeId: 'evaluate',
+      blockType: 'agent',
+      status: 'awaiting_input',
+      nodeOutput: parked,
+    });
+    const approved = approvedOutputFrom(readParkedOutput(db, evalNode.id));
+
+    const advancing = advanceFlowRun(flowRunId, evalNode.id, approved);
+    expect(readParkedOutput(db, evalNode.id).outputs).toEqual(approved.outputs);
+    await advancing;
+
+    expect(approved.outputs).toEqual({ summary: 'Ready', taskId: 'task-1', approved: true });
+    expect(vi.mocked(dispatchNode).mock.calls[0][0].previousOutput).toEqual(approved);
   });
 
   it('two advances of the same live node dispatch the next node EXACTLY once (tick races recursion)', async () => {
