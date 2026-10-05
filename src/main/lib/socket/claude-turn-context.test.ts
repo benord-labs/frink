@@ -10,6 +10,7 @@ import {
   createClaudeTurnContext,
   createPartsState,
   createWakeBurstTurn,
+  notePreplanSignal,
   partsSnapshot,
   sessionIdFromFrame,
 } from './claude-turn-context';
@@ -248,9 +249,54 @@ describe('createWakeBurstTurn', () => {
     expect(burst.deniedToolIdsWithMessages).not.toBe(arming.deniedToolIdsWithMessages);
   });
 
+  it('carries the pre-plan park, so a burst after the plan still refuses only that stale signal', () => {
+    // Without it, a post-plan burst would either settle on the drafting park or chase a genuine
+    // fresh one.
+    const arming = armingTurn();
+    const park = { state: 'awaiting_input' as const, summary: 'Which API?', at: 'now' };
+    notePreplanSignal(arming, park);
+    arming.planSubmitted = true;
+
+    const burst = burstOf(arming);
+
+    expect(burst.planSubmitted).toBe(true);
+    expect(burst.preplanSignal).toBe(park);
+  });
+
   it("runs under the arming turn's execution, so a burst's signal and questions stay its own", () => {
     const arming = armingTurn();
     expect(burstOf(arming).execution).toBe(arming.execution);
+  });
+});
+
+describe('notePreplanSignal', () => {
+  it('keeps the drafting park on record as ExitPlanMode is requested', () => {
+    const turn = createClaudeTurnContext();
+    expect(turn.preplanSignal).toBeNull();
+    const park = { state: 'awaiting_input' as const, summary: 'q', at: 'now' };
+
+    notePreplanSignal(turn, park);
+
+    expect(turn.preplanSignal).toBe(park);
+  });
+
+  it('never snapshots a terminal: only a drafting park can be stale', () => {
+    // An agent-mode `done` before a mid-turn EnterPlanMode is finished work; snapshotting it would
+    // make the Stop hook chase it.
+    const turn = createClaudeTurnContext();
+    notePreplanSignal(turn, { state: 'done', summary: 'shipped', at: 'now' });
+    expect(turn.preplanSignal).toBeNull();
+  });
+
+  it('a repeated request replaces the snapshot, so it tracks the submission that landed', () => {
+    // Keeping the first park would let the second, equally stale, park settle the turn.
+    const turn = createClaudeTurnContext();
+    notePreplanSignal(turn, { state: 'awaiting_input', summary: 'first', at: 'now' });
+    const second = { state: 'awaiting_input' as const, summary: 'second', at: 'now' };
+    notePreplanSignal(turn, second);
+    expect(turn.preplanSignal).toBe(second);
+    notePreplanSignal(turn, undefined);
+    expect(turn.preplanSignal).toBeNull();
   });
 });
 

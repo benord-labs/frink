@@ -646,32 +646,38 @@ describe('recordLinkedTaskSignal', () => {
 describe('hasLatestTaskSignalFor', () => {
   beforeEach(() => mockGetLatestTaskSignal.mockReset());
 
+  const draftingPark = { state: 'awaiting_input' as const, summary: 'q', at: 'now' };
+
   it('reports no signal when the context has none', async () => {
     mockGetLatestTaskSignal.mockReturnValue(undefined);
     await expect(hasLatestTaskSignalFor('exec-1')).resolves.toBe(false);
-    await expect(hasLatestTaskSignalFor('exec-1', true)).resolves.toBe(false);
+    await expect(hasLatestTaskSignalFor('exec-1', draftingPark)).resolves.toBe(false);
   });
 
   it('accepts a park as a turn ending when no plan was submitted this turn', async () => {
     // The default path, including every ordinary agent turn: awaiting_input IS a legitimate way to
     // end. Demanding a terminal here would nag an agent that correctly parked.
-    mockGetLatestTaskSignal.mockReturnValue({ state: 'awaiting_input', summary: 'q', at: 'now' });
+    mockGetLatestTaskSignal.mockReturnValue(draftingPark);
     await expect(hasLatestTaskSignalFor('exec-1')).resolves.toBe(true);
   });
 
-  it('refuses a drafting-phase park as the implementation phase terminal', async () => {
-    // The two-phase turn: an auto-approve node parks with awaiting_input while DRAFTING, then
-    // submits its plan and implements in the SAME turn. The context keeps only the latest signal
-    // and never clears it, so without this the stale park satisfies the mandatory terminal — the
-    // run stops unchased and persists the obsolete question over finished work.
-    mockGetLatestTaskSignal.mockReturnValue({ state: 'awaiting_input', summary: 'q', at: 'now' });
-    await expect(hasLatestTaskSignalFor('exec-1', true)).resolves.toBe(false);
+  it('refuses the drafting-phase park as the implementation phase signal', async () => {
+    // The context never clears its latest signal mid-turn, so a drafting park would otherwise
+    // settle the implementation phase and persist an obsolete question over finished work.
+    mockGetLatestTaskSignal.mockReturnValue(draftingPark);
+    await expect(hasLatestTaskSignalFor('exec-1', draftingPark)).resolves.toBe(false);
+  });
+
+  it('accepts a fresh park sent after the plan, even with the same timestamp', async () => {
+    // Chasing a genuine post-plan park pushed agents to flip it into `blocked`.
+    mockGetLatestTaskSignal.mockReturnValue({ ...draftingPark, summary: 'need the push branch' });
+    await expect(hasLatestTaskSignalFor('exec-1', draftingPark)).resolves.toBe(true);
   });
 
   it('accepts a real terminal from the implementation phase', async () => {
     for (const state of ['done', 'partial', 'blocked', 'failed'] as const) {
       mockGetLatestTaskSignal.mockReturnValue({ state, summary: 's', at: 'now' });
-      await expect(hasLatestTaskSignalFor('exec-1', true), state).resolves.toBe(true);
+      await expect(hasLatestTaskSignalFor('exec-1', draftingPark), state).resolves.toBe(true);
     }
   });
 });
