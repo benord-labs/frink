@@ -219,7 +219,7 @@ describe('readHookInventory', () => {
           {
             hooks: [
               { type: 'http', url: 'https://example.com/hook' },
-              { type: 'command', command: 'echo A=1 >> "$CLAUDE_ENV_FILE"' },
+              { type: 'command', command: 'node "${CLAUDE_PLUGIN_ROOT}/hook.js"' },
             ],
           },
         ],
