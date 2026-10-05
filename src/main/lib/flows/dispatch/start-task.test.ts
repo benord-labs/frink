@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FlowGraph } from '../../../../shared/lib/validate-flow-graph';
 import type { NodeOutput } from '../../../../shared/types/flow';
 import type { DispatchResult } from './types';
-import { createChat, getChatById, getOrCreateFlowChat } from '../../db/repos/chats';
+import { createChat, getChatById, getOrCreateFlowChat, listAllChats } from '../../db/repos/chats';
 import { createNodeRun } from '../../db/repos/node-runs';
 import { createProject } from '../../db/repos/projects';
 import { getSubChatById } from '../../db/repos/sub-chats';
@@ -719,5 +719,48 @@ describe('start_task inherited dependency branches (sc-3845)', () => {
 
     expect(shellInput().baseBranches).toBeUndefined();
     expect(shellInput().mergeStrategy).toBeUndefined();
+  });
+
+  // Inherited branches never force a worktree: a dependent stage opts in with startInWorktree.
+  it('ignores inherited baseBranches when no worktree is cut', async () => {
+    const res = await dispatchStartTask(
+      ctxFor({
+        node: { id: 'st', blockType: 'start_task', config: { projectId } },
+        triggerContext: { baseBranches: ['dep-b', 'dep-a'], mergeStrategy: 'most-recent' },
+      }),
+    );
+
+    expect(res.type).toBe('completed');
+    expect(h.executeShellStep).not.toHaveBeenCalled();
+    expect(outputsOf(res).worktreePath).toBe('');
+  });
+
+  // A converging-merge conflict comes back as awaiting_input; the run must park, not complete.
+  it.each([
+    ['the reported error', { error: 'merge conflict in dep-a' }, 'merge conflict in dep-a'],
+    [
+      'a fallback when the executor reports no error',
+      { mergeConflict: true, conflictingBranch: 'dep-a' },
+      'start_task awaiting input (merge conflict)',
+    ],
+    [
+      'a fallback when the reported error is not text',
+      { error: { code: 1 } },
+      'start_task awaiting input (merge conflict)',
+    ],
+  ])('parks a conflicting merge as awaiting_input with %s', async (_label, outputs, reason) => {
+    h.executeShellStep.mockResolvedValue({
+      status: 'awaiting_input',
+      outputs,
+      artifacts: [],
+      durationMs: 0,
+    });
+
+    const res = await dispatchStartTask(
+      ctxFor({ triggerContext: { baseBranches: ['dep-b', 'dep-a'] } }),
+    );
+
+    expect(res).toEqual({ type: 'awaiting_input', reason });
+    expect(await listAllChats(db)).toHaveLength(0);
   });
 });
