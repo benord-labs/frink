@@ -11,11 +11,14 @@ export function backgroundImage(value: string): ViewStyle {
 }
 
 /** Frink Glass lighting: a white rim top-left, a faint primary glint bottom-right, a sheen. */
-export function glassLighting(t: Theme): ViewStyle {
+export function glassLighting(t: Theme, rim: 'all' | 'right' = 'all'): ViewStyle {
   if (t.solid) return {};
   return {
     ...backgroundImage(`radial-gradient(ellipse at 0% 0%, ${t.sheen}, transparent 56%)`),
-    boxShadow: `inset 1px 1px 0 ${t.rim}, inset -1px -1px 0 ${t.glint}`,
+    boxShadow:
+      rim === 'right'
+        ? `inset -1px 0 0 ${t.rim}`
+        : `inset 1px 1px 0 ${t.rim}, inset -1px -1px 0 ${t.glint}`,
   };
 }
 
@@ -23,19 +26,17 @@ export function glassLighting(t: Theme): ViewStyle {
 export function GlassSurface({
   children,
   style,
+  rim = 'all',
 }: {
   children?: ReactNode;
   style?: StyleProp<ViewStyle>;
+  rim?: 'all' | 'right';
 }) {
   const t = useTheme();
+  const borders = rim === 'right' ? { borderRightWidth: 1 } : { borderWidth: 1 };
   if (t.solid)
     return (
-      <View
-        style={[
-          { backgroundColor: t.solidSurface, borderWidth: 1, borderColor: t.border },
-          style,
-        ]}
-      >
+      <View style={[{ backgroundColor: t.solidSurface, ...borders, borderColor: t.border }, style]}>
         {children}
       </View>
     );
@@ -47,9 +48,7 @@ export function GlassSurface({
     backdropFilter: `blur(${t.blur}px) saturate(${t.saturation})`,
   };
   return (
-    <View
-      style={[{ overflow: 'hidden', borderWidth: 1, borderColor: t.borderSubtle }, style]}
-    >
+    <View style={[{ overflow: 'hidden', ...borders, borderColor: t.borderSubtle }, style]}>
       {Platform.OS === 'web' ? (
         <View pointerEvents="none" style={[layer, webBlur]} />
       ) : (
@@ -62,7 +61,7 @@ export function GlassSurface({
       )}
       <View
         pointerEvents="none"
-        style={[layer, { backgroundColor: t.surface }, glassLighting(t)]}
+        style={[layer, { backgroundColor: t.surface }, glassLighting(t, rim)]}
       />
       {children}
     </View>

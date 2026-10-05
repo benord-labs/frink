@@ -8,6 +8,7 @@ test('conversation first, with Queue one tap away and tools in History', async (
   const state = await openApp(page);
   await expect(messageBox(page)).toBeVisible();
   await expect(messageBox(page)).not.toBeFocused();
+  await expect(page.getByTestId('new-chat')).toHaveCount(0);
   await expect(page.getByTestId('queue-open')).toContainText('5');
   state.data.overview = { ...overviewFixture(), queue: [], questions: [], permissions: [] };
   await page.clock.runFor(3500);
@@ -90,7 +91,9 @@ test('rapid New chat presses from a Queue review preserve one return path', asyn
 test('New chat at the root opens a blank composer without a return route', async ({ page }) => {
   await openApp(page, { data: { chat: conversation() } });
   await openChat(page);
+  await expect(page.getByTestId('new-chat')).toBeVisible();
   await page.getByTestId('new-chat').click();
+  await expect(page.getByTestId('new-chat')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Choose model', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Chat options', exact: true })).toHaveCount(0);
   await expect(messageBox(page)).toHaveValue('');
@@ -98,3 +101,30 @@ test('New chat at the root opens a blank composer without a return route', async
   await openHistory(page);
   await expect(page.getByTestId('chat-row-chat-1')).toBeVisible();
 });
+
+for (const viewport of [
+  { width: 375, height: 812 },
+  { width: 440, height: 956 },
+]) {
+  test(`History fills the screen height and meets the left edge at ${viewport.width}pt`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(viewport);
+    await openApp(page);
+    await openHistory(page);
+    const panel = page.getByTestId('history-panel');
+    const bounds = await panel.boundingBox();
+    expect(bounds).not.toBeNull();
+    expect(bounds!.x).toBe(0);
+    expect(bounds!.y).toBe(0);
+    expect(bounds!.height).toBe(viewport.height);
+    await expect(page.getByRole('button', { name: 'Close history', exact: true })).toBeInViewport();
+    await expect(page.getByRole('button', { name: 'Settings', exact: true })).toBeInViewport();
+    await page.screenshot({ path: `test-results/history-flush-${viewport.width}.png` });
+    await page
+      .getByTestId('history-scrim')
+      .click({ position: { x: viewport.width - 5, y: viewport.height / 2 } });
+    await expect(panel).toHaveCount(0);
+    await expect(page.getByTestId('history-open')).toBeFocused();
+  });
+}

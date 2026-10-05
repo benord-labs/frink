@@ -52,12 +52,11 @@ export function HistoryScreen() {
         style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.26)' }]}
       />
       <GlassSurface
+        rim="right"
         style={{
           flex: 1,
           width: Math.round(width * 0.88),
-          marginLeft: 7,
-          marginVertical: 8,
-          borderRadius: 24,
+          borderRadius: 0,
           overflow: 'hidden',
         }}
       >
@@ -72,7 +71,9 @@ export function HistoryScreen() {
           style={{
             flex: 1,
             minHeight: 0,
-            paddingTop: Math.max(insets.top - 8, 16),
+            paddingTop: Math.max(insets.top, 16),
+            paddingLeft: insets.left,
+            paddingRight: insets.right,
           }}
         >
           <View
@@ -120,7 +121,7 @@ export function HistoryScreen() {
             </Pressable>
           </View>
           <ChatsScreen selectedId={selectedId} />
-          <HistoryFooter bottom={Math.max(insets.bottom - 8, 12)} />
+          <HistoryFooter bottom={Math.max(insets.bottom, 12)} />
         </View>
       </GlassSurface>
     </KeyboardAvoidingView>
