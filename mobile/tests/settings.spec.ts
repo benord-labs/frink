@@ -1,3 +1,4 @@
+import { openDestination } from './fixtures/navigation';
 import { expect, test, type Page } from '@playwright/test';
 import { computers, openApp } from './fixtures/app';
 import { conversation, messageBox, openChat } from './fixtures/chat';
@@ -8,9 +9,14 @@ const shot = (page: Page, state: string, scheme = 'dark') =>
 
 async function openSettings(page: Page, options: Parameters<typeof openApp>[1] = {}) {
   const state = await openApp(page, options);
-  await page.getByTestId('tab-settings').click();
+  await openDestination(page, 'Settings');
   await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
   return state;
+}
+
+async function setAppearance(page: Page, mode: 'System' | 'Light' | 'Dark') {
+  await page.getByRole('button', { name: /^Appearance: / }).click();
+  await page.getByRole('radio', { name: mode, exact: true }).click();
 }
 
 test('shows the paired Mac, both versions and how to forget it, in framed cards', async ({
@@ -97,7 +103,7 @@ test('lists every paired computer and switches to another with a tap', async ({ 
   await expect(list.getByText(/^Paired .*2026$/).first()).toBeVisible();
   await shot(page, 'computers');
   await list.getByRole('button', { name: 'Studio Mac' }).click();
-  await page.getByTestId('tab-settings').click();
+  await openDestination(page, 'Settings');
   await expect(
     page.getByTestId('settings-computers').getByLabel('Studio Mac, shown'),
   ).toBeVisible();
@@ -117,8 +123,8 @@ test('forgetting the shown computer moves to the other one', async ({ page }) =>
   await openSettings(page, { second: true });
   page.once('dialog', (dialog) => void dialog.accept());
   await page.getByRole('button', { name: 'Forget this Mac' }).click();
-  await expect(page.getByTestId('tab-queue')).toBeVisible();
-  await page.getByTestId('tab-settings').click();
+  await expect(page.getByTestId('history-open')).toBeVisible();
+  await openDestination(page, 'Settings');
   const list = page.getByTestId('settings-computers');
   await expect(list.getByLabel('Studio Mac, shown')).toBeVisible();
   await expect(list.getByText("Benji's MacBook Pro")).toHaveCount(0);
@@ -135,29 +141,28 @@ test('manual appearance overrides the device and survives navigation, computer c
   page,
 }) => {
   await openSettings(page, { second: true });
-  const appearance = page.getByTestId('settings-appearance');
   const title = page.getByRole('heading', { name: 'Settings', exact: true });
-  await expect(appearance.getByRole('radio', { name: 'System', exact: true })).toBeChecked();
-  await appearance.getByRole('radio', { name: 'Light', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Appearance: System', exact: true })).toBeVisible();
+  await setAppearance(page, 'Light');
   await expect(title).toHaveCSS('color', 'rgb(10, 10, 10)');
   await page.emulateMedia({ colorScheme: 'light' });
   await shot(page, 'manual', 'light');
-  await appearance.getByRole('radio', { name: 'Dark', exact: true }).click();
+  await setAppearance(page, 'Dark');
   await expect(title).toHaveCSS('color', 'rgb(232, 232, 232)');
   await page.emulateMedia({ colorScheme: 'dark' });
   await shot(page, 'manual', 'dark');
-  await page.getByTestId('tab-queue').click();
+  await openDestination(page, 'Queue');
   await expect(page.getByRole('heading', { name: 'Queue', exact: true })).toHaveCSS(
     'color',
     'rgb(232, 232, 232)',
   );
-  await page.getByTestId('tab-settings').click();
+  await openDestination(page, 'Settings');
   await page.getByTestId('settings-computers').getByRole('button', { name: 'Studio Mac' }).click();
-  await page.getByTestId('tab-settings').click();
-  await expect(appearance.getByRole('radio', { name: 'Dark', exact: true })).toBeChecked();
+  await openDestination(page, 'Settings');
+  await expect(page.getByRole('button', { name: 'Appearance: Dark', exact: true })).toBeVisible();
   await page.reload();
-  await page.getByTestId('tab-settings').click();
-  await expect(appearance.getByRole('radio', { name: 'Dark', exact: true })).toBeChecked();
+  await openDestination(page, 'Settings');
+  await expect(page.getByRole('button', { name: 'Appearance: Dark', exact: true })).toBeVisible();
   await expect(title).toHaveCSS('color', 'rgb(232, 232, 232)');
 });
 
@@ -166,12 +171,11 @@ test('System restores the current device appearance and follows later device cha
 }) => {
   await page.emulateMedia({ colorScheme: 'light' });
   await openSettings(page);
-  const appearance = page.getByTestId('settings-appearance');
   const title = page.getByRole('heading', { name: 'Settings', exact: true });
-  await appearance.getByRole('radio', { name: 'Dark', exact: true }).click();
+  await setAppearance(page, 'Dark');
   await expect(title).toHaveCSS('color', 'rgb(232, 232, 232)');
-  await appearance.getByRole('radio', { name: 'System', exact: true }).click();
-  await expect(appearance.getByRole('radio', { name: 'System', exact: true })).toBeChecked();
+  await setAppearance(page, 'System');
+  await expect(page.getByRole('button', { name: 'Appearance: System', exact: true })).toBeVisible();
   await expect(title).toHaveCSS('color', 'rgb(10, 10, 10)');
   await page.emulateMedia({ colorScheme: 'dark' });
   await expect(title).toHaveCSS('color', 'rgb(232, 232, 232)');
@@ -180,9 +184,7 @@ test('System restores the current device appearance and follows later device cha
 test('an invalid saved appearance falls back to the device appearance', async ({ page }) => {
   await page.addInitScript(() => sessionStorage.setItem('frink.mobile.appearance.v1', 'invalid'));
   await openSettings(page);
-  await expect(
-    page.getByTestId('settings-appearance').getByRole('radio', { name: 'System', exact: true }),
-  ).toBeChecked();
+  await expect(page.getByRole('button', { name: 'Appearance: System', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toHaveCSS(
     'color',
     'rgb(232, 232, 232)',
@@ -207,10 +209,9 @@ test('appearance remains usable when preference storage cannot be read or writte
     };
   });
   await openSettings(page);
-  const appearance = page.getByTestId('settings-appearance');
-  await expect(appearance.getByRole('radio', { name: 'System', exact: true })).toBeChecked();
-  await appearance.getByRole('radio', { name: 'Light', exact: true }).click();
-  await expect(appearance.getByRole('radio', { name: 'Light', exact: true })).toBeChecked();
+  await expect(page.getByRole('button', { name: 'Appearance: System', exact: true })).toBeVisible();
+  await setAppearance(page, 'Light');
+  await expect(page.getByRole('button', { name: 'Appearance: Light', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toHaveCSS(
     'color',
     'rgb(10, 10, 10)',
@@ -242,13 +243,34 @@ test('a half-typed message survives switching to another computer and back', asy
   await openApp(page, { second: true, data: { chat: conversation() } });
   await openChat(page);
   await messageBox(page).fill('Half-typed note');
-  await page.getByRole('link', { name: 'Tabs, back', exact: true }).click();
   const switchTo = async (name: string) => {
-    await page.getByTestId('tab-settings').click();
+    await openDestination(page, 'Settings');
     await page.getByTestId('settings-computers').getByRole('button', { name }).click();
   };
   await switchTo('Studio Mac');
   await switchTo("Benji's MacBook Pro");
   await openChat(page);
   await expect(messageBox(page)).toHaveValue('Half-typed note');
+});
+
+test('all five glass levels can be selected, and the preference survives reload', async ({
+  page,
+}) => {
+  await openSettings(page);
+  await expect(page.getByRole('button', { name: 'Transparency: 50%', exact: true })).toBeVisible();
+  for (const level of [0, 25, 50, 75, 100]) {
+    await page.getByRole('button', { name: /^Transparency: / }).click();
+    await page
+      .getByRole('radio', { name: level === 0 ? '0% (Solid)' : `${level}%`, exact: true })
+      .click();
+    await expect(
+      page.getByRole('button', { name: `Transparency: ${level}%`, exact: true }),
+    ).toBeVisible();
+    await expect
+      .poll(() => page.evaluate(() => sessionStorage.getItem('frink.mobile.transparency.v1')))
+      .toBe(String(level));
+  }
+  await page.reload();
+  await openDestination(page, 'Settings');
+  await expect(page.getByRole('button', { name: 'Transparency: 100%', exact: true })).toBeVisible();
 });

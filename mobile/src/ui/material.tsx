@@ -1,5 +1,4 @@
 import { BlurView } from 'expo-blur';
-import { GlassView, isLiquidGlassAvailable } from 'expo-glass-effect';
 import type { ReactNode } from 'react';
 import { Platform, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import { useTheme, type Theme } from './theme';
@@ -20,58 +19,57 @@ export function glassLighting(t: Theme): ViewStyle {
   };
 }
 
-const nativeGlass = Platform.OS === 'ios' && isLiquidGlassAvailable();
-
-/**
- * One material for everything that floats over moving content (composer, pills, sheets' chrome).
- * iOS 26+ gets Apple's Liquid Glass; older iOS and web get a backdrop blur with Frink's rim;
- * Reduce Transparency gets a solid fill.
- */
+/** Frink's shared tint and rim over backdrop blur; reduced transparency uses an opaque fill. */
 export function GlassSurface({
   children,
   style,
-  interactive = false,
 }: {
   children?: ReactNode;
   style?: StyleProp<ViewStyle>;
-  interactive?: boolean;
 }) {
   const t = useTheme();
   if (t.solid)
     return (
-      <View style={[{ backgroundColor: t.popover, borderWidth: 1, borderColor: t.border }, style]}>
-        {children}
-      </View>
-    );
-  if (nativeGlass)
-    return (
-      <GlassView
-        glassEffectStyle="regular"
-        isInteractive={interactive}
-        colorScheme={t.dark ? 'dark' : 'light'}
-        style={style}
+      <View
+        style={[
+          { backgroundColor: t.solidSurface, borderWidth: 1, borderColor: t.border },
+          style,
+        ]}
       >
         {children}
-      </GlassView>
+      </View>
     );
   // The blur and the rim are separate layers: each takes the surface's corners, or the rim
   // runs straight across a rounded edge.
   const { borderRadius } = StyleSheet.flatten(style) ?? {};
   const layer = [StyleSheet.absoluteFill, { borderRadius }];
+  const webBlur: ViewStyle & { backdropFilter: string } = {
+    backdropFilter: `blur(${t.blur}px) saturate(${t.saturation})`,
+  };
   return (
-    <View style={[{ overflow: 'hidden', borderWidth: 1, borderColor: t.borderSubtle }, style]}>
-      <BlurView
-        tint={t.dark ? 'dark' : 'light'}
-        intensity={60}
-        style={[layer, { backgroundColor: t.surface }]}
+    <View
+      style={[{ overflow: 'hidden', borderWidth: 1, borderColor: t.borderSubtle }, style]}
+    >
+      {Platform.OS === 'web' ? (
+        <View pointerEvents="none" style={[layer, webBlur]} />
+      ) : (
+        <BlurView
+          pointerEvents="none"
+          tint={t.dark ? 'dark' : 'light'}
+          intensity={t.blur * 5}
+          style={layer}
+        />
+      )}
+      <View
+        pointerEvents="none"
+        style={[layer, { backgroundColor: t.surface }, glassLighting(t)]}
       />
-      <View pointerEvents="none" style={[layer, glassLighting(t)]} />
       {children}
     </View>
   );
 }
 
-/** The chat and onboarding backdrop: desktop's violet glow and green floor. Lists stay flat. */
+/** The chat and onboarding backdrop: desktop's violet glow and green floor. Its strength stays fixed across transparency levels. */
 export function Atmosphere() {
   const t = useTheme();
   return (
@@ -80,16 +78,15 @@ export function Atmosphere() {
       style={[
         StyleSheet.absoluteFill,
         { backgroundColor: t.background },
-        !t.solid &&
-          backgroundImage(
-            [
-              `radial-gradient(ellipse at 92% 92%, ${t.glow}, transparent 52%)`,
-              `radial-gradient(ellipse at 50% 108%, ${t.floor}, transparent 45%)`,
-              'radial-gradient(ellipse at 6% 10%, rgba(255,255,255,0.045), transparent 46%)',
-              'radial-gradient(ellipse at 80% 4%, rgba(255,255,255,0.035), transparent 50%)',
-              'linear-gradient(180deg, rgba(255,255,255,0.04), transparent 24%)',
-            ].join(', '),
-          ),
+        backgroundImage(
+          [
+            `radial-gradient(ellipse at 92% 92%, ${t.glow}, transparent 52%)`,
+            `radial-gradient(ellipse at 50% 108%, ${t.floor}, transparent 45%)`,
+            'radial-gradient(ellipse at 6% 10%, rgba(255,255,255,0.045), transparent 46%)',
+            'radial-gradient(ellipse at 80% 4%, rgba(255,255,255,0.035), transparent 50%)',
+            'linear-gradient(180deg, rgba(255,255,255,0.04), transparent 24%)',
+          ].join(', '),
+        ),
       ]}
     />
   );

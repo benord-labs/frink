@@ -155,19 +155,22 @@ export function Composer({
       failed: attachments.failed,
     });
   const choosing = activity === 'idle' && executionReady;
-  const settings = inline ?? (composer && (
-    <ModelMenus composer={composer} disabled={busy} onUpdate={onUpdate} onAccount={onAccount} />
-  ));
-  const context = below ?? (composer && (
-    <ModeMenu
-      mode={composer.mode}
-      debugAvailable={composer.debugAvailable}
-      disabled={busy}
-      onMode={onMode}
-    />
-  ));
-  // One card: what you type, then Attach, the model and Send in a row. How and where Frink works
-  // sits under the card; live state is in the header, and a note is one short caption above.
+  const settings =
+    inline ??
+    (composer && (
+      <ModelMenus composer={composer} disabled={busy} onUpdate={onUpdate} onAccount={onAccount} />
+    ));
+  const context =
+    below ??
+    (composer && (
+      <ModeMenu
+        mode={composer.mode}
+        debugAvailable={composer.debugAvailable}
+        disabled={busy}
+        onMode={onMode}
+      />
+    ));
+  // Context stays above the floating composer; the model and Send share its lower row.
   return (
     <View style={{ gap: 6 }}>
       {note && (
@@ -175,10 +178,20 @@ export function Composer({
           <Note error={note.error}>{note.text}</Note>
         </View>
       )}
-      <GlassSurface
-        interactive
-        style={{ borderRadius: 26, paddingHorizontal: 12, paddingTop: 10, paddingBottom: 8, gap: 6 }}
-      >
+      {choosing && context && (
+        <View
+          style={{
+            flexDirection: 'row',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            columnGap: space.lg,
+            paddingHorizontal: space.lg,
+          }}
+        >
+          {context}
+        </View>
+      )}
+      <GlassSurface style={{ borderRadius: 25, padding: 12, gap: 10 }}>
         {attachable && <AttachmentTray attachments={attachments} />}
         <View style={{ paddingHorizontal: 4 }}>
           <TextInput
@@ -199,17 +212,19 @@ export function Composer({
                 ? (event) => setContentHeight(event.nativeEvent.contentSize.height)
                 : undefined
             }
-            style={[
-              { padding: 0, fontSize: 16, color: t.text },
-              sizing.style,
-              bareInput,
-            ]}
+            style={[{ padding: 0, fontSize: 17, color: t.text }, sizing.style, bareInput]}
           />
         </View>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.md }}>
+        <View style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: space.md }}>
           {attachable && <AttachButton attachments={attachments} disabled={busy} />}
           <View
-            style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: space.md }}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: space.md,
+            }}
           >
             {choosing && settings}
           </View>
@@ -223,19 +238,6 @@ export function Composer({
           />
         </View>
       </GlassSurface>
-      {choosing && context && (
-        <View
-          style={{
-            flexDirection: 'row',
-            flexWrap: 'wrap',
-            alignItems: 'center',
-            columnGap: space.lg,
-            paddingHorizontal: space.lg,
-          }}
-        >
-          {context}
-        </View>
-      )}
     </View>
   );
 }

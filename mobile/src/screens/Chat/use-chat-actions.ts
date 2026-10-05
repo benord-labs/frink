@@ -113,6 +113,6 @@ export function useChatActions({
     note,
     submit: () => void (running ? steer() : send()),
     stop: () => void stop(),
-    remove: () => void remove(),
+    remove,
   };
 }

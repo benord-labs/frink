@@ -1,3 +1,4 @@
+import { openHistory } from './fixtures/navigation';
 import { expect, test, type Page } from '@playwright/test';
 import { openApp, type AppState } from './fixtures/app';
 import { NOW, overviewFixture } from './fixtures/data';
@@ -8,8 +9,6 @@ const created = { chatId: 'chat-new', subChatId: 'sub-new' };
 
 async function openNewChat(page: Page, options: Parameters<typeof openApp>[1] = {}) {
   const state = await openApp(page, { ...options, data: { createChat: created, ...options.data } });
-  await page.getByTestId('tab-chats').click();
-  await page.getByRole('button', { name: 'New chat', exact: true }).click();
   await expect(messageBox(page)).toBeVisible();
   return state;
 }
@@ -36,7 +35,7 @@ test('a new chat is a blank conversation whose first message starts it', async (
   const state = await openNewChat(page);
   // The same message box as any chat, not a sheet: nothing to cancel, nothing made yet.
   await expect(page.getByRole('button', { name: 'Cancel', exact: true })).toHaveCount(0);
-  await expect(messageBox(page)).toBeFocused();
+  await expect(messageBox(page)).not.toBeFocused();
   // Nothing remembered yet: the most recently active project is already chosen.
   await expect(page.getByRole('button', { name: 'Project: frink' })).toBeVisible();
   await expect(page.getByText('Worktree: a separate copy, safe to experiment.')).toBeVisible();
@@ -66,7 +65,7 @@ test('a new chat is a blank conversation whose first message starts it', async (
     requestId: expect.stringMatching(/^[0-9a-f-]{36}$/),
   });
   // The blank page gives way to the chat it started.
-  await expect(page.getByTestId('chat-subtitle')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Chat options', exact: true })).toBeVisible();
 });
 
 test('the model is chosen in the message box before the first message', async ({ page }) => {
@@ -81,7 +80,7 @@ test('the model is chosen in the message box before the first message', async ({
 
   await messageBox(page).fill('Profile the cold start');
   await send(page).click();
-  await expect(page.getByTestId('chat-subtitle')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Chat options', exact: true })).toBeVisible();
   // One chat, made once, and kept because it was used.
   expect(mutations(state).map((input) => input.type)).toEqual(['createChat', 'sendMessage']);
 });
@@ -99,7 +98,8 @@ test('looking at the models and leaving does not strand an empty chat', async ({
   const state = await openNewChat(page);
   await page.getByRole('button', { name: 'Choose model' }).click();
   await expect(page.getByRole('button', { name: /^Model: / })).toBeVisible();
-  await page.getByRole('link', { name: /back/i }).click();
+  await openHistory(page);
+  await page.getByTestId('chat-row-chat-1').click();
   await expect
     .poll(() => mutations(state))
     .toEqual([
@@ -118,7 +118,7 @@ test('changing the project after looking at the models starts over in the new pr
   // The chat made for the first project is removed; the next one is made where it was asked for.
   await messageBox(page).fill('Retry failed webhooks');
   await send(page).click();
-  await expect(page.getByTestId('chat-subtitle')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Chat options', exact: true })).toBeVisible();
   expect(mutations(state).map((input) => [input.type, input.projectId ?? input.chatId])).toEqual([
     ['createChat', 'project-1'],
     ['deleteChat', created.chatId],
@@ -134,11 +134,9 @@ test('the next new chat starts where the last one did', async ({ page }) => {
   await pick(page, 'Mode: Agent', 'Plan');
   await messageBox(page).fill('Retry failed webhooks');
   await send(page).click();
-  await expect(page.getByTestId('chat-subtitle')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Chat options', exact: true })).toBeVisible();
 
   await page.goto('/');
-  await page.getByTestId('tab-chats').click();
-  await page.getByRole('button', { name: 'New chat', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Project: billing-api' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Work in: Local' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Mode: Plan' })).toBeVisible();
@@ -184,7 +182,7 @@ test('a failed first message keeps the text and reuses the chat on retry', async
 
   failSend = false;
   await send(page).click();
-  await expect(page.getByTestId('chat-subtitle')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Chat options', exact: true })).toBeVisible();
   expect(mutations(state).map((input) => input.type)).toEqual([
     'createChat',
     'sendMessage',
@@ -197,7 +195,7 @@ test('a failed first message keeps the text and reuses the chat on retry', async
 
 test('without Frink running on the Mac, a chat cannot start', async ({ page }) => {
   await openApp(page, { data: { overview: { ...overviewFixture(), executionReady: false } } });
-  await page.getByTestId('tab-chats').click();
+  await openHistory(page);
   await expect(page.getByRole('button', { name: 'New chat', exact: true })).toBeDisabled();
 });
 
@@ -210,7 +208,7 @@ test('with no projects on the Mac, the page says where to add one', async ({ pag
   expect(mutations(state)).toEqual([]);
 });
 
-test('Back during chat creation removes the empty chat when creation finishes', async ({
+test('Leaving during chat creation removes the empty chat when creation finishes', async ({
   page,
 }) => {
   const state = await openNewChat(page);
@@ -228,7 +226,8 @@ test('Back during chat creation removes the empty chat when creation finishes', 
   });
   await page.getByRole('button', { name: 'Choose model' }).click();
   await expect.poll(() => creating).toBe(true);
-  await page.getByRole('link', { name: /back/i }).click();
+  await openHistory(page);
+  await page.getByTestId('chat-row-chat-1').click();
   release();
   await expect
     .poll(() => mutations(state).map((input) => input.type))
@@ -271,7 +270,7 @@ test('picked files survive changing project and work location on a blank chat', 
   const uploaded = state.requests.findLastIndex((input) => String(input.type) === 'upload') + 1;
 
   await send(page).click();
-  await expect(page.getByTestId('chat-subtitle')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Chat options', exact: true })).toBeVisible();
   expect(state.requests.filter((input) => input.type === 'createChat')).toEqual([
     { type: 'createChat', projectId: 'project-1', useWorktree: true, mode: 'agent' },
     { type: 'createChat', projectId: 'project-2', useWorktree: true, mode: 'agent' },
@@ -319,4 +318,19 @@ test('picking multiple files prepares only one chat and sends every file to it',
   await expect
     .poll(() => state.requests.find((input) => input.type === 'sendMessage'))
     .toMatchObject({ ...created, attachments: [expect.any(String), expect.any(String)] });
+});
+
+test('a project-specific New chat replaces the previous project selection', async ({ page }) => {
+  await openNewChat(page);
+  await expect(page.getByRole('button', { name: 'Project: frink', exact: true })).toBeVisible();
+  await openHistory(page);
+  await page.getByRole('tab', { name: 'Projects', exact: true }).click();
+  await page.getByRole('button', { name: 'New chat in marketing-site', exact: true }).click();
+  await expect(
+    page.getByRole('button', { name: 'Project: marketing-site', exact: true }),
+  ).toBeVisible();
+  await openHistory(page);
+  await page.getByRole('tab', { name: 'Projects', exact: true }).click();
+  await page.getByRole('button', { name: 'New chat in frink', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Project: frink', exact: true })).toBeVisible();
 });

@@ -10,6 +10,12 @@ const shot = (page: Page, state: string, scheme = 'dark') =>
   page.screenshot({ path: `test-results/queue-${state}-${scheme}.png` });
 const row = (page: Page, key: string) => page.getByTestId(`queue-row-${key}`);
 
+async function openQueue(page: Page, options: Parameters<typeof openApp>[1] = {}) {
+  const state = await openApp(page, options);
+  await page.getByTestId('queue-open').click();
+  return state;
+}
+
 /** Eight running Flow steps: more than a collapsed section shows. */
 function busyOverview() {
   const overview = overviewFixture();
@@ -34,7 +40,7 @@ function busyOverview() {
 }
 
 test('shows what needs you, what is running, what is ready and what is next', async ({ page }) => {
-  await openApp(page);
+  await openQueue(page);
   await expect(row(page, 'question:question-1')).toContainText(
     'Should I switch the CI cache to the lockfile hash?',
   );
@@ -56,7 +62,9 @@ test('shows what needs you, what is running, what is ready and what is next', as
   for (const title of ['Needs you', 'Running', 'Ready for review', 'Up next'])
     await expect(page.getByRole('heading', { name: new RegExp(`^${title}`) })).toBeVisible();
   // Question + permission + plan ready + failed, and the finished task the phone can complete.
-  await expect(page.getByTestId('tab-queue')).toContainText('5');
+  await page.getByRole('link', { name: /back/i }).click();
+  await expect(page.getByTestId('queue-open')).toContainText('5');
+  await page.getByTestId('queue-open').click();
   await expect(page.getByText("Benji's MacBook Pro")).toBeVisible();
   await shot(page, 'sections');
   await page.mouse.wheel(0, 600);
@@ -70,7 +78,7 @@ test('shows what needs you, what is running, what is ready and what is next', as
 test('opens a decision at its question, a Flow at its run and a task at its chat', async ({
   page,
 }) => {
-  const state = await openApp(page);
+  const state = await openQueue(page);
   const opened = (type: string, id: string) =>
     expect.poll(() => state.requests.some((r) => r.type === type && r.id === id)).toBe(true);
   // Each tap starts from a fresh Queue: the web preview keeps no navigation history.
@@ -80,13 +88,14 @@ test('opens a decision at its question, a Flow at its run and a task at its chat
     ['task-plan', 'chat', 'chat-4'],
   ]) {
     await page.reload();
+    await page.getByTestId('queue-open').click();
     await row(page, key).click();
     await opened(type, id);
   }
 });
 
 test('Show all grows the section with a larger server page', async ({ page }) => {
-  const state = await openApp(page, { data: { overview: busyOverview() } });
+  const state = await openQueue(page, { data: { overview: busyOverview() } });
   await expect(page.locator('[data-testid^="queue-row-busy-"]')).toHaveCount(5);
   await shot(page, 'collapsed');
   await page.getByRole('button', { name: 'Show all' }).click();
@@ -110,16 +119,18 @@ test('says you are all caught up when nothing is waiting', async ({ page }) => {
     permissions: [],
     counts: { attention: 0, running: 0, inbox: 0 },
   };
-  await openApp(page, { data: { overview } });
+  await openQueue(page, { data: { overview } });
   await expect(page.getByText('You’re all caught up')).toBeVisible();
-  await expect(page.getByTestId('tab-queue')).not.toContainText(/\d/);
+  await page.getByRole('link', { name: /back/i }).click();
+  await expect(page.getByTestId('queue-open')).not.toContainText(/\d/);
+  await page.getByTestId('queue-open').click();
   await shot(page, 'empty');
   await page.emulateMedia({ colorScheme: 'light' });
   await shot(page, 'empty', 'light');
 });
 
 test('keeps the last queue on screen when the Mac stops answering', async ({ page }) => {
-  const state = await openApp(page);
+  const state = await openQueue(page);
   await expect(row(page, 'task-plan')).toBeVisible();
   state.offline = true;
   await page.clock.runFor(4000);
@@ -129,7 +140,7 @@ test('keeps the last queue on screen when the Mac stops answering', async ({ pag
 });
 
 test('explains that Frink must be open on the Mac to run chats', async ({ page }) => {
-  await openApp(page, { data: { overview: { ...overviewFixture(), executionReady: false } } });
+  await openQueue(page, { data: { overview: { ...overviewFixture(), executionReady: false } } });
   await expect(page.getByText('Open Frink on your Mac to run chats')).toBeVisible();
   await expect(row(page, 'task-plan')).toBeVisible();
   await shot(page, 'not-ready');
@@ -158,7 +169,7 @@ function parkedOverview() {
 async function swipeOpen(page: Page, key: string, label: string) {
   const action = page.getByRole('button', { name: label, exact: true });
   await expect(action).toBeAttached();
-  // Centred, so the row sits clear of the floating tab bar.
+  // Centred, so the row sits clear of the screen edge.
   await row(page, key).evaluate((node) => node.scrollIntoView({ block: 'center' }));
   await expect(action).not.toBeInViewport();
   // react-native-web replaces scrollTo, so set scrollLeft directly.
@@ -175,7 +186,7 @@ const sent = (state: Awaited<ReturnType<typeof openApp>>) =>
   state.requests.filter((r) => ['completeTask', 'continueTask', 'startTask'].includes(r.type));
 
 test('swiping a task offers the desktop’s actions and sends the chosen one', async ({ page }) => {
-  const state = await openApp(page, { data: { overview: parkedOverview() } });
+  const state = await openQueue(page, { data: { overview: parkedOverview() } });
   const title = 'Migrate the billing webhooks to v2';
   const carryOn = await swipeOpen(page, 'task-parked', `Carry on task: ${title}`);
   await expect(page.getByRole('button', { name: `Mark complete: ${title}` })).toBeInViewport();
@@ -212,7 +223,7 @@ test('swiping a task offers the desktop’s actions and sends the chosen one', a
 });
 
 test('decisions, a failed Flow and running work have no swipe actions', async ({ page }) => {
-  await openApp(page, { data: { overview: parkedOverview() } });
+  await openQueue(page, { data: { overview: parkedOverview() } });
   await expect(page.getByRole('button', { name: /^Carry on task: / })).toBeAttached();
   for (const key of ['question:question-1', 'task-failed', 'task-run-flow', 'task-plan'])
     await expect(row(page, key)).toBeVisible();
@@ -224,7 +235,7 @@ test('decisions, a failed Flow and running work have no swipe actions', async ({
 
 test('an action the computer refuses explains why', async ({ page }) => {
   const reason = 'This item changed. Refresh and try again.';
-  await openApp(page, {
+  await openQueue(page, {
     respond: (input) => (input.type === 'completeTask' ? new Error(reason) : undefined),
   });
   const complete = await swipeOpen(

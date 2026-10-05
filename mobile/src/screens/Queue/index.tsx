@@ -1,10 +1,11 @@
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useState } from 'react';
 import { ActivityIndicator, RefreshControl, ScrollView, View } from 'react-native';
 import type { MobileTaskAction } from '@frink/shared/types/remote/mobile';
 import { useConnection, useResource } from '../../lib/connection';
 import { useOverview } from '../../lib/overview';
 import { useRootNavigation } from '../../navigation/routes';
-import { useTabHeader } from '../../navigation/tab-header';
+import { useScreenHeader } from '../../navigation/screen-header';
 import { EmptyState, ListGroup, SectionHeader } from '../../ui/list';
 import { ResourceStatus } from '../../ui/resource-status';
 import { Screen } from '../../ui/screen';
@@ -21,7 +22,7 @@ import {
 import { ACTION_ITEMS, MacEyebrow, NotReadyNotice, QueueListRow } from './row';
 
 /**
- * The shared overview poll serves the collapsed Queue (and the tab badge). Once a section is
+ * The shared overview poll serves the collapsed Queue (and the Queue badge). Once a section is
  * expanded the Queue polls its own, larger overview, keeping the old rows while it loads.
  */
 function useQueueOverview() {
@@ -32,7 +33,9 @@ function useQueueOverview() {
   const grown = Object.keys(limits).length > 0;
   const own = useResource({ type: 'overview', limits }, { enabled: grown, keep: true });
   // `keep` bridges a growing window; rows left from an earlier expansion are older than the shared poll.
-  const resource = grown ? { ...own, data: own.stale ? shared.data : (own.data ?? shared.data) } : shared;
+  const resource = grown
+    ? { ...own, data: own.stale ? shared.data : (own.data ?? shared.data) }
+    : shared;
   const sections = resource.data ? queueSections(resource.data) : [];
   const toggle = (key: QueueSectionKey) => {
     const next = new Set(expanded);
@@ -44,12 +47,13 @@ function useQueueOverview() {
 }
 
 export function QueueScreen() {
+  const insets = useSafeAreaInsets();
   const t = useTheme();
   const navigation = useRootNavigation();
   const { connection, request } = useConnection();
   const { resource, shared, grown, sections, expanded, toggle } = useQueueOverview();
   const { data, error } = resource;
-  const { header } = useTabHeader({
+  const { header } = useScreenHeader({
     title: 'Queue',
     eyebrow: (
       <MacEyebrow
@@ -57,8 +61,6 @@ export function QueueScreen() {
         online={!!data && !error}
       />
     ),
-    compose: true,
-    composeDisabled: data?.executionReady === false,
   });
   const open = (target: QueueTarget) =>
     target.screen === 'Run'
@@ -73,18 +75,21 @@ export function QueueScreen() {
     try {
       await request({ type: action, id });
     } catch (error) {
-      tell(`Couldn’t ${ACTION_ITEMS[action].label.toLowerCase()}`, error instanceof Error ? error.message : '');
+      tell(
+        `Couldn’t ${ACTION_ITEMS[action].label.toLowerCase()}`,
+        error instanceof Error ? error.message : '',
+      );
     }
     resource.refresh();
-    // The tab badge counts from the shared poll, which an expanded Queue doesn't refresh.
+    // The Queue badge counts from the shared poll, which an expanded Queue doesn't refresh.
     if (grown) shared.refresh();
   };
   return (
-    <Screen>
+    <Screen atmosphere>
       <ScrollView
         testID="queue-screen"
         contentInsetAdjustmentBehavior="automatic"
-        contentContainerStyle={{ paddingBottom: 120 }}
+        contentContainerStyle={{ paddingBottom: insets.bottom + space.xl }}
         refreshControl={
           <RefreshControl
             refreshing={resource.refreshing}
