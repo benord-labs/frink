@@ -28,6 +28,28 @@ function nodeWithConfig(id: string, blockType: string, config: unknown): FlowNod
   return { id, blockType, config } as unknown as FlowNode;
 }
 
+describe('analyzeFlow — custom node "template": false inputs (sc-3251)', () => {
+  const graph: FlowGraph = {
+    nodes: [
+      { id: 't', blockType: 'manual_trigger' },
+      { id: 'cn', blockType: 'check-new-prs', config: { query: '{"q":"{{field}}"}' } },
+    ],
+    edges: [{ id: 'e1', source: 't', target: 'cn' }],
+  };
+  const templateRules = (inputs?: CustomNodeInputsByType) =>
+    analyzeFlow(graph, inputs)
+      .filter((f) => f.nodeId === 'cn' && f.rule.startsWith('template.'))
+      .map((f) => f.rule);
+
+  it('flags a non-flow placeholder in a rendered input', () => {
+    expect(templateRules(new Map([['check-new-prs', { query: {} }]]))).toHaveLength(1);
+  });
+
+  it('threads manifest declarations to the template check, so an opted-out input is clean', () => {
+    expect(templateRules(new Map([['check-new-prs', { query: { template: false } }]]))).toEqual([]);
+  });
+});
+
 describe('analyzeFlow — boundary shapes', () => {
   it('an empty graph yields no findings and does not throw', () => {
     expect(analyzeFlow({ nodes: [], edges: [] })).toEqual([]);

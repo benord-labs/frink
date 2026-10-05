@@ -554,6 +554,51 @@ describe('flow-step-executor', () => {
     );
   });
 
+  it('passes a "template": false input to the script as authored, under the manifest it runs (sc-3251)', async () => {
+    const manifest = {
+      name: 'jinja-node',
+      entrypoint: 'run.js',
+      timeout: 30,
+      nodePath: '/home/.frink/nodes/jinja-node',
+      credentials: {},
+      inputs: { body: { type: 'string', template: false }, repo: { type: 'string' } },
+    };
+    discoverCustomNodesMock.mockReturnValue({
+      valid: [manifest],
+      manifestWarnings: [],
+      errors: [],
+    });
+    runCustomNodeProcessMock.mockResolvedValueOnce({
+      stdout: '{}',
+      stderr: '',
+      exitCode: 0,
+      timedOut: false,
+      cancelled: false,
+    });
+
+    await executeFlowStepLocal(
+      {
+        nodeRunId: nid(),
+        flowRunId: 'fr-opt-out',
+        projectId: 'p1',
+        blockType: 'jinja-node',
+        workingDirectory: 'project_root',
+        timeoutMs: 30_000,
+        // Dispatch rendered every string; the executor restores the opted-out one from the
+        // authored config using the manifest it holds the lease on.
+        config: { body: 'Hi ', repo: 'org/frink' },
+        authoredConfig: { body: 'Hi {{name}}', repo: 'org/{{trigger.name}}' },
+      },
+      new AbortController().signal,
+    );
+
+    expect(runCustomNodeProcessMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        args: [JSON.stringify({ body: 'Hi {{name}}', repo: 'org/frink' })],
+      }),
+    );
+  });
+
   it('passes declared credentials to a custom node without leaking host env secrets', async () => {
     const manifest = {
       name: 'cred-node',

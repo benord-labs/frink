@@ -1,4 +1,8 @@
 import { isCustomNodeBlockType } from '../block-registry';
+import {
+  isTemplateRenderedInput,
+  type ManifestInputDeclarations,
+} from './custom-node-required-inputs';
 
 const TEMPLATE_RENDERED_FIELDS: Readonly<Record<string, readonly string[]>> = {
   run_command: ['command', 'projectId'],
@@ -6,10 +10,11 @@ const TEMPLATE_RENDERED_FIELDS: Readonly<Record<string, readonly string[]>> = {
   agent: ['instructions', 'agentInstructions'],
 };
 
-/** Fields whose string values are rendered as Flow templates at runtime. */
+/** Fields rendered as Flow templates at runtime; `declarations` drop `"template": false` inputs. */
 export function getTemplateRenderedFields(
   blockType: string,
   config: Record<string, unknown> | undefined,
+  declarations?: ManifestInputDeclarations,
 ): readonly string[] {
   if (blockType === 'chat_reply') {
     return config?.contentType === 'html_artifact'
@@ -19,7 +24,8 @@ export function getTemplateRenderedFields(
   const builtInFields = TEMPLATE_RENDERED_FIELDS[blockType];
   if (builtInFields) return builtInFields;
   if (!isCustomNodeBlockType(blockType) || !config) return [];
-  // Every top-level key except projectId, which custom-node dispatch reads statically. Callers
-  // only ask about values they have already narrowed to strings, so no value check is needed.
-  return Object.keys(config).filter((field) => field !== 'projectId');
+  // Every top-level key except projectId (read statically) and inputs the manifest opts out.
+  return Object.keys(config).filter(
+    (field) => field !== 'projectId' && isTemplateRenderedInput(declarations?.[field]),
+  );
 }

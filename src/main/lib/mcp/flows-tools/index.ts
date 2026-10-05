@@ -14,9 +14,9 @@
 import { TRPCError } from '@trpc/server';
 import log from 'electron-log';
 import { z } from 'zod';
-import { manifestOutputsToSchema } from '../../../../shared/lib/output-schemas';
 import { type FlowGraph, validateGraph } from '../../../../shared/lib/validate-flow-graph';
 import { refuseIfAwaitingConsent } from './gating/flow-invocation-consent';
+import { patchTemplateWarnings } from './patch-template-warnings';
 import {
   addStageRunsLimiter,
   defineStagesLimiter,
@@ -39,13 +39,7 @@ export {
   resetStartBatchCount,
 } from './gating/session-call-limiters';
 
-import {
-  computeNodeVariables,
-  validateFlowTemplateVariables,
-} from '../../../../shared/lib/validate-flow-templates';
 import { getCommandContent, listCommands } from '../../commands';
-import { discoverCustomNodes } from '../../custom-nodes/discovery';
-import { listPluginNodes } from '../../integrations/plugin-node-derivation';
 import { getDatabase } from '../../db';
 import { getProjectById } from '../../db/repos/projects';
 import {
@@ -1152,13 +1146,7 @@ async function handlePatch(
           );
         }
 
-        // Plugin nodes are derived, never in `valid`; reading only `valid` broke {{previous.*}} (sc-2508).
-        const { valid } = discoverCustomNodes();
-        const customNodeOutputs = new Map(
-          [...valid, ...listPluginNodes()].map((m) => [m.name, manifestOutputsToSchema(m.outputs)]),
-        );
-        const nodeVariables = computeNodeVariables(applied.graph, { customNodeOutputs });
-        const patchTemplateWarnings = validateFlowTemplateVariables(applied.graph, nodeVariables);
+        const templateWarnings = patchTemplateWarnings(applied.graph);
         const webhookSetup = collectWebhookSetupHints(applied.graph);
 
         persistenceAttempted = true;
@@ -1190,7 +1178,7 @@ async function handlePatch(
           operationCount: operations.length,
           creationProjectNote,
           createdFlow: Boolean(createdFlowId),
-          templateWarnings: patchTemplateWarnings,
+          templateWarnings,
           webhookSetup,
         });
       }
