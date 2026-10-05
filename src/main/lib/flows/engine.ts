@@ -30,6 +30,7 @@ import {
 import type { FlowRun, NodeRun } from '../db/schema';
 import { clearActiveFlowTaskForChat } from '../task-executor';
 import { loadRunContext } from './advance';
+import { settleStageAfterUnpromotedRetry } from './admission/activity';
 import { dropStagedContinuation } from './admission/terminal-resume/continuation';
 import { abortFlowRun } from './cancel-registry';
 import { emitRunTerminal } from './event-emit';
@@ -79,8 +80,8 @@ async function emitCancelledFlowRun(flowRunId: string): Promise<void> {
  * imposing one — a replacement admission promoted onto the same run while the clicked ticket was
  * being cancelled keeps its work, because no run status, node run or task is written here.
  *
- * The terminal event still fires for the run the transaction did cancel: it is the only live driver
- * of batch stage advancement.
+ * The terminal event still fires for the run the transaction did cancel. The batch stage settles from
+ * committed state when it arrives, so an event a Retry has overtaken settles nothing.
  */
 async function dequeuedFlowRun(
   flowRunId: string,
@@ -90,14 +91,12 @@ async function dequeuedFlowRun(
   if (!cancelledBeforeDispatch) return null;
   const updated = (await getFlowRunRow(getDatabase(), flowRunId)) ?? run;
   // Only for a run THIS dequeue terminalized. A queued resume's run was already terminal and has
-  // already emitted its own terminal event; emitting again would settle its batch stage twice.
-  if (isTerminalFlowRun(run) || updated.status !== 'cancelled') return updated;
-  // A replacement admission enqueued between that cancellation and this emit owns the run now — a
-  // retry racing the removal. Its own terminal event settles the batch stage when it finishes;
-  // emitting here would settle the stage while that replacement is still waiting to run.
-  const admissionRuntime = await import('./admission/runtime');
-  if (await admissionRuntime.hasLiveFlowAdmission(flowRunId)) return updated;
-  await emitCancelledFlowRun(flowRunId);
+  // already emitted its own terminal event; replaying it would announce the same ending twice.
+  if (isTerminalFlowRun(run)) {
+    await settleStageAfterUnpromotedRetry(flowRunId);
+    return updated;
+  }
+  if (updated.status === 'cancelled') await emitCancelledFlowRun(flowRunId);
   return updated;
 }
 
@@ -129,6 +128,7 @@ async function commitCancel<T extends CancelRunOutcome>(
   });
   if (outcome?.droppedTicket) void admissionRuntime.drainFlowAdmissions().catch(() => undefined);
   if (outcome?.cancelled) await emitCancelledFlowRun(flowRunId);
+  else if (outcome?.droppedTicket) await settleStageAfterUnpromotedRetry(flowRunId);
   return outcome;
 }
 
@@ -191,7 +191,10 @@ async function finalizeChatOwnedFlowCancellation(
     },
   );
   if (droppedTicket) void admissionRuntime.drainFlowAdmissions().catch(() => undefined);
-  if (outcome !== 'cancelled') return;
+  if (outcome !== 'cancelled') {
+    if (droppedTicket) await settleStageAfterUnpromotedRetry(flowRunId);
+    return;
+  }
   await emitCancelledFlowRun(flowRunId);
   await releaseFlowAdmission(flowRunId, liveTicket);
 }

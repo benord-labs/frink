@@ -12,7 +12,7 @@ type ClaimResult = Awaited<ReturnType<FlowAdmissionController['claimEligible']>>
 export type FlowAdmissionDrainOps = {
   claimEligible: () => Promise<ClaimResult>;
   dispatchClaim: (ticket: number) => Promise<void>;
-  notifyFailedStartAdmission: (admission: ClaimResult['failed'][number]) => Promise<void>;
+  notifyFailedAdmission: (admission: ClaimResult['failed'][number]) => Promise<void>;
 };
 
 export type FlowAdmissionDrainer = {
@@ -55,7 +55,7 @@ export function createFlowAdmissionDrainer(ops: FlowAdmissionDrainOps): FlowAdmi
   async function drainBatch(errors: unknown[]): Promise<boolean> {
     const claimed = await ops.claimEligible();
     for (const failed of claimed.failed) {
-      await attempt(errors, () => ops.notifyFailedStartAdmission(failed));
+      await attempt(errors, () => ops.notifyFailedAdmission(failed));
     }
     for (const { ticket } of claimed.admissions) {
       // A claim whose dispatch threw stays `claimed`; keep it for the next pass to re-dispatch.
