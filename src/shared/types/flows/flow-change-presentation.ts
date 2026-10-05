@@ -83,6 +83,8 @@ export type FlowChangePhase =
   | 'unchanged'
   | 'failed'
   | 'unconfirmed'
+  /** The tool returned a result the harness would not hand over, so its outcome is unread. */
+  | 'unread'
   | 'denied'
   | 'stale'
   | 'interrupted';
