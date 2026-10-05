@@ -12,6 +12,7 @@ import { filterCanonicalPlanParts } from '../../../shared/plan-parts-filter';
 import type { ToolPartState } from '../../../shared/types/assistant-message';
 import { buildFrinkPlanChunks } from '../agent-runner/plan-document';
 import type { UIMessageChunk } from '../claude/types';
+import type { RecordedTaskSignal } from '../mcp/task-signal-tool';
 import type { MessagePart } from './client';
 
 /** `MessagePart.state` is an untyped index-signature field; this is the one typed writer for it. */
@@ -76,9 +77,12 @@ export interface ClaudeTurnContext {
   /** Plan restrictions still in force (plan mode, plan not yet submitted): refuses terminal
    * `frink_task_signal` states so plan mode finishes only through ExitPlanMode. */
   planTerminalsLocked: boolean;
-  /** This turn submitted a plan (ExitPlanMode called), so any signal recorded BEFORE that point
-   * belongs to the drafting phase — see hasLatestTaskSignalFor's `requireTerminal`. */
+  /** This turn submitted a plan (ExitPlanMode called), so the signal in {@link preplanSignal}
+   * belongs to the drafting phase and may not settle the implementation phase. */
   planSubmitted: boolean;
+  /** The drafting `awaiting_input` on record when ExitPlanMode was requested, else null. Once the
+   * plan is submitted, the Stop hook accepts any signal except this exact object. */
+  preplanSignal: RecordedTaskSignal | null;
   /** The plan this turn's ExitPlanMode submitted (hook input): the card is built from this text. */
   submittedPlan: { path: string; text: string } | null;
   /** Records that canUseTool persisted the task signal mid-stream (skips the post-stream write). */
@@ -122,6 +126,7 @@ export function createClaudeTurnContext(): ClaudeTurnContext {
     setPlanSubmissionHalt: () => {},
     planTerminalsLocked: false,
     planSubmitted: false,
+    preplanSignal: null,
     submittedPlan: null,
     setHasExplicitTaskSignal: () => {},
     deniedToolIdsWithMessages: new Map(),
@@ -142,6 +147,15 @@ export function createClaudeTurnContext(): ClaudeTurnContext {
       sendChunk: () => {},
     },
   };
+}
+
+/** Snapshot the drafting park as ExitPlanMode is requested; a terminal on record is real work, never
+ * stale. A repeated request overwrites it, so it tracks the submission that landed. */
+export function notePreplanSignal(
+  turn: ClaudeTurnContext,
+  latestSignal: RecordedTaskSignal | null | undefined,
+): void {
+  turn.preplanSignal = latestSignal?.state === 'awaiting_input' ? latestSignal : null;
 }
 
 /** An adopting execute's bindings on the held session: all its own, except whether the session
@@ -189,6 +203,7 @@ export function createWakeBurstTurn(
   wakeTurn.waitForExecutionSettlement = burst.waitForExecutionSettlement;
   wakeTurn.planTerminalsLocked = arming.planTerminalsLocked;
   wakeTurn.planSubmitted = arming.planSubmitted;
+  wakeTurn.preplanSignal = arming.preplanSignal;
   wakeTurn.planSubmissionHalt = arming.planSubmissionHalt;
   wakeTurn.setPlanSubmissionHalt = arming.setPlanSubmissionHalt;
   wakeTurn.planAutoReview = arming.planAutoReview;

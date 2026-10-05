@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { SDKBackgroundTasksChangedMessage } from '@anthropic-ai/claude-agent-sdk';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getTaskById } from '../../db/repos/tasks';
 import * as dynamicChatServer from '../../mcp/dynamic-chat-server';
@@ -41,6 +42,7 @@ let payload: ClaudeSessionCallbackHarness['basePayload'];
 const UNKEPT_TURN_END = [TURN_END[0], UNCLEAN_RESULT];
 const todoWrite = { hook_event_name: 'PreToolUse', tool_name: 'TodoWrite', tool_input: {} };
 const mcpShip = { hook_event_name: 'PreToolUse', tool_name: 'mcp__deploy__ship', tool_input: {} };
+const exitPlanMode = { hook_event_name: 'PreToolUse', tool_name: 'ExitPlanMode', tool_input: {} };
 // SAFETY: the seam consumes only decision/prompt; this is the dispatcher's ask shape.
 const ASK = { decision: 'ask', prompt: { reason: 'no-matching-rule' } } as Awaited<
   ReturnType<typeof checkPermission>
@@ -85,6 +87,7 @@ export function registerClaudeSessionCallbackTests(harness: ClaudeSessionCallbac
     });
 
     itGatesRosterVerdictOnLiveSession(harness);
+    itStopsOnFreshPostPlanPark(harness);
 
     // sc-2771: the signal target check must see the task the flow DRIVES; the pinned first-node
     // task is terminal, so checking it would refuse every later node's live `done`.
@@ -226,11 +229,13 @@ function itGatesRosterVerdictOnLiveSession(harness: ClaudeSessionCallbackHarness
       command: 'tail -f /tmp/x/sess1/tasks/ship9.output',
     };
     const stopWith = { ...stopInput([follower]), session_id: 'sess1' };
-    const changed = {
+    const changed: SDKBackgroundTasksChangedMessage = {
       type: 'system',
       subtype: 'background_tasks_changed',
       tasks: [{ task_id: 'tail1', task_type: 'local_bash', description: 'follow' }],
-    } as unknown as Parameters<typeof noteSubagentTaskFrame>[1];
+      uuid: randomUUID(),
+      session_id: 'sess1',
+    };
     const published: unknown[] = [];
     claudeQueryMock.mockImplementationOnce(async function* (input: { options: SessionOptions }) {
       const session = getSession(payload.subChatId);
@@ -252,5 +257,44 @@ function itGatesRosterVerdictOnLiveSession(harness: ClaudeSessionCallbackHarness
     setBackgroundRosterPublisher(null);
 
     expect(published).toEqual([0, { subChatId: payload.subChatId, tasks: [] }]);
+  });
+}
+
+/** An auto-approve plan node that parked while drafting may still park genuinely after its plan;
+ * chasing that second park pushed agents to flip a correct pause into `blocked`. */
+function itStopsOnFreshPostPlanPark(harness: ClaudeSessionCallbackHarness): void {
+  const { claudeQueryMock, handleRemoteExecute } = harness;
+  it('a turn past its plan is chased off its drafting park but stops on a fresh one', async () => {
+    const decisions: unknown[] = [];
+    const draftingPark = { state: 'awaiting_input' as const, summary: 'Which API?', at: 'now' };
+    const latestSignal = vi.mocked(dynamicChatServer.getLatestTaskSignal);
+    mcpMounted(true);
+    pinTask('task-plan-node');
+    claudeQueryMock.mockImplementationOnce(async function* (input: { options: SessionOptions }) {
+      const stop = input.options.hooks.Stop[0].hooks[0];
+      const turn = getSession(payload.subChatId)?.currentTurn;
+      if (!turn) throw new Error('no turn attached');
+      // Drafting on an auto-approve node, parked: the real PreToolUse path snapshots the park.
+      turn.planTerminalsLocked = true;
+      turn.execution = { ...turn.execution, flowPlanAutoApprove: true };
+      latestSignal.mockReturnValue(draftingPark);
+      await getPreToolUseHook(input)(exitPlanMode, 'exit-1');
+      // The executor's ExitPlanMode completion on an auto-approve node: unlock, mark submitted.
+      turn.planTerminalsLocked = false;
+      turn.planSubmitted = true;
+      decisions.push((await stop(stopInput())).decision);
+      // Same `at` on purpose: only identity tells the two parks apart.
+      latestSignal.mockReturnValue({ ...draftingPark, summary: 'Need the push branch' });
+      decisions.push((await stop(stopInput())).decision);
+      yield* UNKEPT_TURN_END;
+    });
+
+    try {
+      await handleRemoteExecute({ ...payload, message: 'implement the plan' });
+    } finally {
+      latestSignal.mockReset();
+    }
+
+    expect(decisions).toEqual(['block', undefined]);
   });
 }
