@@ -419,8 +419,7 @@ function discoverCustomNodesUncached(nodesDir: string): DiscoveryResult {
 
 /**
  * Scan `nodesDir` for custom node manifests. For the default `CUSTOM_NODES_DIR`, results are
- * cached briefly (same TTL idea as `projectCache` in flow-step-executor) and refreshed when
- * `invalidateCustomNodesDiscoveryCache` runs (after sync).
+ * cached briefly and refreshed when `invalidateCustomNodesDiscoveryCache` runs (after sync).
  * Other paths are always scanned (used by tests and non-default dirs).
  */
 export function discoverCustomNodes(nodesDir: string = CUSTOM_NODES_DIR): DiscoveryResult {
