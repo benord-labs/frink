@@ -24,6 +24,26 @@ export async function createProject(db: Db, input: NewProject): Promise<Project>
   return row;
 }
 
+/** Insert-or-adopt by UNIQUE path, in one sync transaction so a concurrent delete can't land
+ * between the conflict and the lookup. `createProject` stays strict — scaffoldBuild needs its throw. */
+export async function createOrGetProjectByPath(
+  db: Db,
+  input: NewProject,
+): Promise<{ project: Project; created: boolean }> {
+  return db.transaction(() => {
+    const row = db
+      .insert(projects)
+      .values(input)
+      .onConflictDoNothing({ target: projects.path })
+      .returning()
+      .get();
+    if (row) return { project: row, created: true };
+    const existing = db.select().from(projects).where(eq(projects.path, input.path)).get();
+    if (!existing) throw new Error(`Project for path ${input.path} vanished after conflict`);
+    return { project: existing, created: false };
+  });
+}
+
 export async function getProjectById(db: Db, id: string): Promise<Project | null> {
   const [row] = await db.select().from(projects).where(eq(projects.id, id)).limit(1);
   return row ?? null;
