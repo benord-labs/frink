@@ -40,6 +40,7 @@ import { resolveScopes } from './lib/permissions/v2/scope-resolver';
 import { captureMainException, initSentry } from './lib/sentry/init';
 import { assertRigHomeIsolated } from './lib/platform/frink-home';
 import { startLoginShellEnvResolve } from './lib/platform/login-shell-env';
+import { assertRigRendererBundled } from './lib/platform/rig-renderer';
 import './lib/socket';
 import { initTaskExecutor } from './lib/task-executor';
 import { getTaskPoller } from './lib/task-poller';
@@ -75,6 +76,8 @@ if (IS_DEV) {
 initSentry();
 // An isolated instance must own its home before any path resolves under it (sc-2903).
 assertRigHomeIsolated();
+// The rig bundle must render its own out-qa renderer, never an inherited dev server.
+assertRigRendererBundled();
 
 // URL configuration (exported for use in other modules)
 export function getAppUrl(): string {

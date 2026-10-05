@@ -5,7 +5,7 @@ import { connectPage, sleep, stamp } from './cdp.mjs';
 const [promptFile, chatId = 'qa-fixture-chat-seeded', subChatId = 'qa-fixture-subchat-1'] = process.argv.slice(2);
 if (!promptFile) { console.error('usage: send-prompt.mjs <prompt-file> [chatId] [subChatId]'); process.exit(2); }
 const prompt = readFileSync(promptFile, 'utf8').trim();
-const page = await connectPage();
+const page = await connectPage(undefined, { renderer: 'vite' }); // imports Vite-served modules below
 await page.call('Page.enable');
 // The renderer caches a failed account resolution (a signed-out machine, since signed in); a reload clears it.
 await page.call('Page.reload');
