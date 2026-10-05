@@ -1,14 +1,9 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import type { MobileQuestion } from '@frink/shared/types/remote/mobile';
-import { openApp } from './fixtures/app';
-import {
-  conversation,
-  messageBox,
-  openChat,
-  requestsOf,
-  scrollTranscript,
-} from './fixtures/chat';
+import { openApp, type AppState } from './fixtures/app';
+import { conversation, messageBox, openChat, requestsOf, scrollTranscript } from './fixtures/chat';
 import { overviewFixture } from './fixtures/data';
+import { openDestination } from './fixtures/navigation';
 
 const send = (page: import('@playwright/test').Page) =>
   page.getByRole('button', { name: 'Send message', exact: true });
@@ -27,7 +22,7 @@ test.describe('reading a chat', () => {
       page.on('pageerror', (error) => errors.push(error.message));
       await openApp(page, { data: { chat: conversation() } });
       await openChat(page);
-      await expect(page.getByTestId('chat-subtitle')).toHaveText('Chat · frink');
+      await expect(page.getByTestId('chat-subtitle')).toHaveText('frink');
       await expect(page.getByText('Steered', { exact: true })).toBeVisible();
       await expect(
         page.getByText('Use the existing waitForFrame helper instead of a new one.'),
@@ -49,10 +44,12 @@ test.describe('reading a chat', () => {
     await openApp(page, { data: { chat: conversation({}, 'running') } });
     await openChat(page);
     // Opened mid-turn: the phone never saw the start, so no made-up duration.
-    await expect(page.getByTestId('chat-subtitle')).toHaveText('Chat · frink·Running');
+    await expect(page.getByTestId('chat-subtitle')).toHaveText('frink·Running');
     // The live state is in the header; the box itself only invites a steer.
     await expect(messageBox(page)).toHaveAttribute('placeholder', 'Guide Frink while it works');
-    await expect(page.getByRole('button', { name: 'Working · Running a command', exact: true })).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: 'Working · Running a command', exact: true }),
+    ).toBeVisible();
     await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeEnabled();
     await expect(page.getByRole('button', { name: 'Attach', exact: true })).toHaveCount(0);
   });
@@ -60,7 +57,7 @@ test.describe('reading a chat', () => {
   test('a message sent during a background wait takes it over, as on desktop', async ({ page }) => {
     const state = await openApp(page, { data: { chat: conversation({}, 'background') } });
     await openChat(page);
-    await expect(page.getByTestId('chat-subtitle')).toHaveText('Chat · frink·Background');
+    await expect(page.getByTestId('chat-subtitle')).toHaveText('frink·Background');
     await expect(messageBox(page)).toHaveAttribute('placeholder', 'Message Frink while it waits');
     // Empty, the box stops the work; typing turns Stop into Send beside the same attach button.
     await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeEnabled();
@@ -85,14 +82,17 @@ test.describe('reading a chat', () => {
       ]);
     expect(requestsOf(state, 'steerMessage')).toHaveLength(0);
     await expect(messageBox(page)).toHaveValue('');
-    await expect(page.getByTestId('chat-subtitle')).toHaveText('Chat · frink·Running');
+    await expect(page.getByTestId('chat-subtitle')).toHaveText('frink·Running');
   });
 
   test('a Flow step waiting on background work only offers Stop run', async ({ page }) => {
     await openApp(page, { data: { chat: conversation({ kind: 'flow' }, 'background') } });
     await openChat(page);
     await expect(page.getByTestId('chat-subtitle')).toHaveText('Flow · frink·Background');
-    await expect(messageBox(page)).toHaveAttribute('placeholder', 'Frink is waiting on background work');
+    await expect(messageBox(page)).toHaveAttribute(
+      'placeholder',
+      'Frink is waiting on background work',
+    );
     await messageBox(page).fill('Also check the staging logs');
     await expect(page.getByText('Kept until the background work finishes.')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Stop run', exact: true })).toBeEnabled();
@@ -298,7 +298,7 @@ test.describe('sending and steering', () => {
     await send(page).click();
     await expect(messageBox(page)).toHaveAttribute('placeholder', 'Guide Frink while it works');
     await page.clock.fastForward(72_000);
-    await expect(page.getByTestId('chat-subtitle')).toHaveText(/Chat · frink·Running 1m 1\ds/);
+    await expect(page.getByTestId('chat-subtitle')).toHaveText(/frink·Running 1m 1\ds/);
     await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
     await messageBox(page).fill('Use the existing waitForFrame helper');
     await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0);
@@ -385,6 +385,15 @@ test.describe('sending and steering', () => {
   });
 });
 
+/** Opens the actual Queue decision, including a stale row whose question was already answered. */
+async function openQuestion(page: Page, state: AppState, question: MobileQuestion) {
+  state.data.overview = { ...overviewFixture(), queue: [], questions: [question], permissions: [] };
+  await page.clock.runFor(3500);
+  await openDestination(page, 'Queue');
+  await page.getByTestId(`queue-row-question:${question.id}`).click();
+  await expect(page.getByTestId('chat-transcript').filter({ visible: true })).toBeVisible();
+}
+
 test.describe('questions and permissions', () => {
   const question: MobileQuestion = {
     id: 'q1',
@@ -411,7 +420,7 @@ test.describe('questions and permissions', () => {
       const state = await openApp(page, {
         data: { chat: conversation({ questions: [question] }) },
       });
-      await openChat(page, { id: 'chat-1', decisionTarget: { type: 'question', id: 'q1' } });
+      await openQuestion(page, state, question);
       const card = page.getByTestId('decision-question-q1');
       // Opening from the Queue lands on the question itself, not the top of the transcript.
       await expect(card).toBeInViewport({ ratio: 0.95 });
@@ -437,11 +446,11 @@ test.describe('questions and permissions', () => {
       title: 'Which environment?',
     };
     const state = await openApp(page, { data: { chat: conversation({ questions: [prose] }) } });
-    await openChat(page, { id: 'chat-1', decisionTarget: { type: 'question', id: 'q1' } });
+    await openQuestion(page, state, question);
     const reply = page.getByRole('textbox', { name: 'Reply to your agent', exact: true });
     await reply.fill('Run the staging smoke tests.');
-    await page.getByRole('link', { name: 'Tabs, back', exact: true }).click();
-    await openChat(page, { id: 'chat-1', decisionTarget: { type: 'question', id: 'q1' } });
+    await page.getByRole('link', { name: /back/i }).click();
+    await openQuestion(page, state, question);
     await expect(reply).toHaveValue('Run the staging smoke tests.');
     await page.getByRole('button', { name: 'Send answer', exact: true }).click();
     await expect
@@ -452,8 +461,8 @@ test.describe('questions and permissions', () => {
   });
 
   test('a question already answered on the Mac says so', async ({ page }) => {
-    await openApp(page, { data: { chat: conversation() } });
-    await openChat(page, { id: 'chat-1', decisionTarget: { type: 'question', id: 'gone' } });
+    const state = await openApp(page, { data: { chat: conversation() } });
+    await openQuestion(page, state, { ...question, id: 'gone' });
     await expect(
       page.getByText('This was already answered on your Mac. The chat is up to date.'),
     ).toBeVisible();
@@ -501,15 +510,18 @@ test('deleting a chat from its header asks first, then leaves the chat', async (
     prompts.push(dialog.message());
     void dialog.dismiss();
   });
+  await page.getByRole('button', { name: 'Chat options', exact: true }).click();
   await page.getByRole('button', { name: 'Delete chat', exact: true }).click();
   await expect
     .poll(() => prompts)
     .toEqual([expect.stringContaining('Delete “Fix flaky checkout tests”?')]);
   expect(requestsOf(state, 'deleteChat')).toHaveLength(0);
   page.once('dialog', (dialog) => void dialog.accept());
+  await page.getByRole('button', { name: 'Chat options', exact: true }).click();
   await page.getByRole('button', { name: 'Delete chat', exact: true }).click();
   await expect
     .poll(() => requestsOf(state, 'deleteChat'))
     .toEqual([{ type: 'deleteChat', chatId: 'chat-1' }]);
-  await expect(page.getByTestId('chat-transcript')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Chat options', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Choose model', exact: true })).toBeVisible();
 });

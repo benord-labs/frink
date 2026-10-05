@@ -1,9 +1,10 @@
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useMemo, useState } from 'react';
 import { ActivityIndicator, RefreshControl, ScrollView, View } from 'react-native';
 import type { MobileFlow } from '@frink/shared/types/remote/mobile';
 import { useResource } from '../../lib/connection';
 import { useRootNavigation } from '../../navigation/routes';
-import { useTabHeader } from '../../navigation/tab-header';
+import { useScreenHeader } from '../../navigation/screen-header';
 import { StatusGlyph } from '../../ui/glyphs';
 import { Button } from '../../ui/button';
 import { EmptyState, ListGroup, ListRow, SectionHeader } from '../../ui/list';
@@ -158,23 +159,25 @@ function FlowContent({
 
 /** Supervise current work, or choose a saved Flow to inspect and run. */
 export function FlowsScreen() {
+  const insets = useSafeAreaInsets();
   const t = useTheme();
   const resource = useResource({ type: 'flows' }, { interval: 5000 });
   const { data, error, refreshing, pull } = resource;
-  const { query, header } = useTabHeader({ title: 'Flows', search: 'Search flows' });
+  const { query, header } = useScreenHeader({ title: 'Flows', search: 'Search flows' });
   const [view, setView] = useState<FlowView>('activity');
   return (
-    <Screen>
+    <Screen atmosphere>
       <ScrollView
         testID="flows-screen"
         contentInsetAdjustmentBehavior="automatic"
         keyboardDismissMode="on-drag"
-        contentContainerStyle={{ paddingBottom: 120 }}
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={{ paddingBottom: insets.bottom + space.xl }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={pull} />}
       >
         {header}
         <View style={{ paddingHorizontal: GUTTER, paddingTop: space.md }}>
-          <Segmented items={VIEWS} value={view} onChange={setView} />
+          <Segmented tabs items={VIEWS} value={view} onChange={setView} />
         </View>
         <ResourceStatus {...resource} />
         {data ? (

@@ -1,58 +1,154 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, View } from 'react-native';
 import {
-  ActivityIndicator,
-  Platform,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  View,
-} from 'react-native';
-import { ChevronDown, ChevronRight, Folder, Plus, SearchX, SquarePen } from 'lucide-react-native';
+  ChevronDown,
+  ChevronRight,
+  GitBranch,
+  Inbox,
+  Plus,
+  SearchX,
+  SquarePen,
+} from 'lucide-react-native';
 import type { MobileChatSummary } from '@frink/shared/types/remote/mobile';
 import { useConnection, useResource } from '../../lib/connection';
 import { useOverview } from '../../lib/overview';
 import { useWindow } from '../../lib/use-window';
 import { useRootNavigation } from '../../navigation/routes';
-import { useTabHeader } from '../../navigation/tab-header';
-import { Button, IconButton } from '../../ui/button';
-import { EmptyState, ListGroup } from '../../ui/list';
+import { afterChatDeletion } from '../../navigation/after-chat-deletion';
+import { Button } from '../../ui/button';
+import { EmptyState } from '../../ui/list';
 import { ResourceStatus } from '../../ui/resource-status';
-import { Screen } from '../../ui/screen';
+import { SearchField } from '../../ui/search-field';
+import { Segmented } from '../../ui/segmented';
 import { Text } from '../../ui/text';
-import { GUTTER, space, useTheme } from '../../ui/theme';
+import { radius, space, useTheme } from '../../ui/theme';
 import { confirmChatDeletion } from '../Chat/confirm';
 import { NOT_READY } from '../NewChat/new-chat-options';
+import { needsYouCount } from '../Queue/queue-view';
 import { ChatRow } from './chat-row';
-import { chatSections, type ChatSection } from './chat-sections';
+import { chatSections, recentSections, type ChatSection } from './chat-sections';
 import { tell } from '../../ui/tell';
 import { useDebounced } from './use-debounced';
 
-// The web preview's tab bar floats over the list; iOS insets for its native tab bar itself.
-const TAB_BAR_CLEARANCE = Platform.OS === 'web' ? 96 : space.xl;
+const VIEWS = [
+  { id: 'recent', label: 'Recent' },
+  { id: 'projects', label: 'Projects' },
+] as const;
 
-export function ChatsScreen() {
+/** One history query serves Recent, Projects and search in the retained conversation drawer. */
+export function ChatsScreen({ selectedId }: { selectedId?: string }) {
+  const t = useTheme();
+  const root = useRootNavigation();
+  const overview = useOverview();
+  const ready = overview.data?.executionReady !== false;
+  const needsYou = needsYouCount(overview.data);
+  const [query, setQuery] = useState('');
+  const [view, setView] = useState<'recent' | 'projects'>('recent');
   return (
-    <Screen>
-      <ChatList />
-    </Screen>
+    <View style={{ flex: 1, minHeight: 0 }}>
+      <View style={{ paddingHorizontal: 15, gap: space.sm }}>
+        <SearchField value={query} onChangeText={setQuery} placeholder="Search chats" />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="New chat"
+          accessibilityState={{ disabled: !ready }}
+          disabled={!ready}
+          onPress={() => root.popTo('Chat', undefined)}
+          style={({ pressed }) => ({
+            minHeight: 44,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 10,
+            paddingHorizontal: 10,
+            borderRadius: radius.sm,
+            backgroundColor: pressed ? t.pressed : 'transparent',
+            opacity: ready ? 1 : 0.4,
+          })}
+        >
+          <SquarePen size={20} color={t.text} />
+          <Text variant="row">New chat</Text>
+        </Pressable>
+        <View
+          accessibilityLabel="Work"
+          style={{
+            borderWidth: 1,
+            borderColor: t.borderSubtle,
+            borderRadius: radius.md,
+            backgroundColor: t.fill,
+            overflow: 'hidden',
+          }}
+        >
+          {(
+            [
+              { name: 'Queue', icon: Inbox },
+              { name: 'Flows', icon: GitBranch },
+            ] as const
+          ).map(({ name, icon: Icon }, index) => (
+            <Pressable
+              key={name}
+              accessibilityRole="button"
+              accessibilityLabel={
+                name === 'Queue' && needsYou ? `Queue, ${needsYou} need you` : name
+              }
+              onPress={() => root.replace(name)}
+              style={({ pressed }) => ({
+                minHeight: 44,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 10,
+                paddingHorizontal: 11,
+                borderTopWidth: index ? 1 : 0,
+                borderTopColor: t.borderSubtle,
+                backgroundColor: pressed ? t.pressed : 'transparent',
+              })}
+            >
+              <Icon size={19} color={t.secondary} />
+              <Text variant="secondary" style={{ flex: 1 }}>
+                {name}
+              </Text>
+              {name === 'Queue' && needsYou > 0 ? (
+                <Text
+                  variant="secondary"
+                  color="attention"
+                  style={{
+                    paddingHorizontal: 6,
+                    borderRadius: 5,
+                    backgroundColor: t.attentionSoft,
+                  }}
+                >
+                  {needsYou}
+                </Text>
+              ) : (
+                <ChevronRight size={16} color={t.muted} />
+              )}
+            </Pressable>
+          ))}
+        </View>
+        <Segmented items={VIEWS} value={view} onChange={setView} tabs />
+      </View>
+      <ChatList query={query} view={view} selectedId={selectedId} ready={ready} />
+    </View>
   );
 }
 
-function ChatList() {
+function ChatList({
+  query,
+  view,
+  selectedId,
+  ready,
+}: {
+  query: string;
+  view: 'recent' | 'projects';
+  selectedId?: string;
+  ready: boolean;
+}) {
   const t = useTheme();
   const root = useRootNavigation();
   const { request } = useConnection();
-  const ready = useOverview().data?.executionReady !== false;
-  const { query, header } = useTabHeader({
-    title: 'Chats',
-    search: 'Search chats',
-  });
   const search = useDebounced(query, 250);
   const page = useWindow(30);
-  // The page a scroll already asked to extend: scroll events outrun the render that loads the next.
+  // Scroll events can outrun the render that loads the next page.
   const grown = useRef<unknown>(null);
-  // A new search starts from its first page. Resetting during render (not in an effect) means the
-  // first request for the new search already asks for that page.
   const [searched, setSearched] = useState(search);
   if (searched !== search) {
     setSearched(search);
@@ -62,12 +158,14 @@ function ChatList() {
     { type: 'chats', limit: page.limit, ...(search ? { query: search } : {}) },
     { keep: true },
   );
-  const sections = useMemo(() => chatSections(chats.data?.items ?? []), [chats.data]);
+  const sections = useMemo(
+    () => (view === 'projects' ? chatSections : recentSections)(chats.data?.items ?? []),
+    [chats.data, view],
+  );
   const [collapsed, setCollapsed] = useState(new Set<string>());
   const { refresh } = chats;
-
   const open = useCallback(
-    (chat: MobileChatSummary) => root.navigate('Chat', { id: chat.id }),
+    (chat: MobileChatSummary) => root.popTo('Chat', { id: chat.id }),
     [root],
   );
   const remove = useCallback(
@@ -75,43 +173,20 @@ function ChatList() {
       if (!(await confirmChatDeletion(chat.name || 'Untitled chat'))) return;
       try {
         await request({ type: 'deleteChat', chatId: chat.id });
+        root.reset(afterChatDeletion(root.getState(), chat.id));
         refresh();
       } catch (error) {
-        // The computer refuses chats a task or Flow owns, and says why.
         tell('Couldn’t delete this chat', error instanceof Error ? error.message : '');
       }
     },
-    [request, refresh],
+    [request, refresh, root],
   );
-
-  function empty() {
-    if (!chats.data) return chats.error ? null : <ActivityIndicator style={{ padding: 48 }} />;
-    if (search)
-      return (
-        <EmptyState
-          icon={SearchX}
-          title={`No chats match “${search}”`}
-          detail="Try another chat or project name."
-        />
-      );
-    return (
-      <EmptyState
-        title="No chats yet"
-        detail={
-          ready ? 'Ask Frink to fix a bug, build a feature or look into a question.' : NOT_READY
-        }
-        action={
-          <Button small disabled={!ready} onPress={() => root.navigate('Chat')}>
-            Start a chat
-          </Button>
-        }
-      />
-    );
-  }
 
   return (
     <ScrollView
-      contentInsetAdjustmentBehavior="automatic"
+      testID="history-list"
+      style={{ flex: 1 }}
+      contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: space.lg }}
       keyboardDismissMode="on-drag"
       keyboardShouldPersistTaps="handled"
       refreshControl={<RefreshControl refreshing={chats.refreshing} onRefresh={chats.pull} />}
@@ -124,66 +199,72 @@ function ChatList() {
         page.more();
       }}
     >
-      <View testID="chats-header">
-        {header}
-        <ResourceStatus {...chats} />
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="New chat"
-          accessibilityState={{ disabled: !ready }}
-          disabled={!ready}
-          onPress={() => root.navigate('Chat')}
-          style={({ pressed }) => ({
-            minHeight: 52,
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: space.md,
-            paddingHorizontal: GUTTER,
-            marginTop: space.sm,
-            backgroundColor: pressed ? t.pressed : 'transparent',
-            opacity: ready ? 1 : 0.4,
-          })}
-        >
-          <SquarePen size={20} color={t.text} />
-          <Text variant="row">New chat</Text>
-        </Pressable>
-      </View>
+      <ResourceStatus {...chats} />
       {sections.map((section) => (
         <View key={section.key}>
-          <ProjectHeader
-            section={section}
-            collapsed={collapsed.has(section.key)}
-            onToggle={() =>
-              setCollapsed((current) => {
-                const next = new Set(current);
-                if (next.has(section.key)) next.delete(section.key);
-                else next.add(section.key);
-                return next;
-              })
-            }
-            onCreate={
-              section.projectId
-                ? () => root.navigate('Chat', { projectId: section.projectId! })
-                : undefined
-            }
-            ready={ready}
-          />
-          {!collapsed.has(section.key) && (
-            <ListGroup>
-              {section.data.map((chat) => (
-                <ChatRow
-                  key={chat.id}
-                  chat={chat}
-                  onOpen={open}
-                  onDelete={(chat) => void remove(chat)}
-                />
-              ))}
-            </ListGroup>
+          {view === 'projects' ? (
+            <ProjectHeader
+              section={section}
+              collapsed={collapsed.has(section.key)}
+              onToggle={() =>
+                setCollapsed((current) => {
+                  const next = new Set(current);
+                  if (next.has(section.key)) next.delete(section.key);
+                  else next.add(section.key);
+                  return next;
+                })
+              }
+              onCreate={
+                section.projectId
+                  ? () => root.popTo('Chat', { projectId: section.projectId! })
+                  : undefined
+              }
+              ready={ready}
+            />
+          ) : (
+            <Text
+              variant="secondary"
+              color="muted"
+              style={{ paddingHorizontal: 10, paddingTop: space.lg, paddingBottom: space.xs }}
+            >
+              {section.title}
+            </Text>
           )}
+          {(view === 'recent' || !collapsed.has(section.key)) &&
+            section.data.map((chat) => (
+              <ChatRow
+                key={chat.id}
+                chat={chat}
+                selected={chat.id === selectedId}
+                onOpen={open}
+                onDelete={(chat) => void remove(chat)}
+              />
+            ))}
         </View>
       ))}
-      {sections.length === 0 && empty()}
-      <View style={{ paddingTop: space.lg, paddingBottom: TAB_BAR_CLEARANCE }}>
+      {!chats.data && !chats.error && <ActivityIndicator style={{ padding: 48 }} />}
+      {chats.data &&
+        sections.length === 0 &&
+        (search ? (
+          <EmptyState
+            icon={SearchX}
+            title={`No chats match “${search}”`}
+            detail="Try another chat or project name."
+          />
+        ) : (
+          <EmptyState
+            title="No chats yet"
+            detail={
+              ready ? 'Ask Frink to fix a bug, build a feature or look into a question.' : NOT_READY
+            }
+            action={
+              <Button disabled={!ready} onPress={() => root.popTo('Chat', undefined)}>
+                Start a chat
+              </Button>
+            }
+          />
+        ))}
+      <View style={{ paddingTop: space.lg }}>
         {chats.stale && sections.length > 0 && (
           <ActivityIndicator accessibilityLabel="Loading more chats" color={t.muted} />
         )}
@@ -191,10 +272,8 @@ function ChatList() {
           <Text
             variant="secondary"
             color="muted"
-            style={{ paddingHorizontal: GUTTER, textAlign: 'center' }}
-          >
-            {`Showing your latest ${page.limit} chats.\nSearch to find older ones.`}
-          </Text>
+            style={{ textAlign: 'center' }}
+          >{`Showing your latest ${page.limit} chats.\nSearch to find older ones.`}</Text>
         )}
       </View>
     </ScrollView>
@@ -221,9 +300,8 @@ function ProjectHeader({
       style={{
         flexDirection: 'row',
         alignItems: 'center',
-        paddingHorizontal: GUTTER,
-        paddingTop: space.xl,
-        paddingBottom: space.xs,
+        paddingHorizontal: 10,
+        paddingTop: space.sm,
         gap: space.sm,
       }}
     >
@@ -240,19 +318,29 @@ function ProjectHeader({
           gap: space.sm,
         }}
       >
-        <Folder size={18} color={t.muted} />
-        <Text variant="headline" numberOfLines={1} style={{ flexShrink: 1 }}>
+        <Text variant="secondary" style={{ flexShrink: 1, fontWeight: '600' }}>
           {section.title}
         </Text>
-        <Chevron size={16} color={t.muted} />
+        <Chevron size={15} color={t.muted} />
       </Pressable>
       {onCreate && (
-        <IconButton
-          icon={Plus}
-          label={`New chat in ${section.title}`}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`New chat in ${section.title}`}
+          accessibilityState={{ disabled: !ready }}
           onPress={onCreate}
           disabled={!ready}
-        />
+          style={({ pressed }) => ({
+            width: 44,
+            height: 44,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: pressed ? t.pressed : 'transparent',
+            opacity: ready ? 1 : 0.4,
+          })}
+        >
+          <Plus size={18} color={t.muted} />
+        </Pressable>
       )}
     </View>
   );

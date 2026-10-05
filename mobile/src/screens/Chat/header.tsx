@@ -1,12 +1,24 @@
-import { useNavigation } from '@react-navigation/native';
+import { StackActions, useNavigationState, useRoute } from '@react-navigation/native';
 import type { NativeStackNavigationOptions } from '@react-navigation/native-stack';
 import { useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { Platform, Pressable, ScrollView, View } from 'react-native';
-import { Trash2 } from 'lucide-react-native';
+import { Keyboard, Platform, Pressable, ScrollView, View } from 'react-native';
+import {
+  ChevronDown,
+  Inbox,
+  PanelLeft,
+  SquarePen,
+  Trash2,
+  type LucideIcon,
+} from 'lucide-react-native';
 import type { MobileActivity, MobileChatDetail } from '@frink/shared/types/remote/mobile';
+import { useOverview } from '../../lib/overview';
+import { useRootNavigation } from '../../navigation/routes';
+import { IconButton } from '../../ui/button';
 import { PulseDot } from '../../ui/glyphs';
 import { Text } from '../../ui/text';
 import { GUTTER, radius, space, useTheme } from '../../ui/theme';
+import { needsYouCount } from '../Queue/queue-view';
+import { Sheet } from './Composer/sheet';
 
 function activityWords(activity: MobileActivity, elapsed: string): string | null {
   if (activity === 'running') return elapsed ? `Running ${elapsed}` : 'Running';
@@ -27,7 +39,13 @@ export type TitleInfo = {
  * Frink works, and re-setting options that often would rebuild the native header (and its menu).
  */
 function createTitleStore() {
-  let value: TitleInfo = { name: '', kind: undefined, project: undefined, activity: undefined, elapsed: '' };
+  let value: TitleInfo = {
+    name: '',
+    kind: undefined,
+    project: undefined,
+    activity: undefined,
+    elapsed: '',
+  };
   const listeners = new Set<() => void>();
   return {
     get: () => value,
@@ -51,80 +69,174 @@ function Dot() {
   );
 }
 
-/** Two lines in the navigation bar: the chat's name, then Chat or Flow, its project and state.
- *  Violet and the pulse mean running; parked background work stays calm grey, as in the list. */
-function ChatTitle({ store }: { store: TitleStore }) {
+// Reason: Header states have browser tests; CRAP estimates zero without their coverage map.
+// fallow-ignore-next-line complexity
+function ChatSubtitle({ kind, project, activity, elapsed }: Omit<TitleInfo, 'name'>) {
   const t = useTheme();
-  const { name, kind, project, activity, elapsed } = useSyncExternalStore(
-    store.subscribe,
-    store.get,
-  );
   const state = activity ? activityWords(activity, elapsed) : null;
-  const words = [kind && (kind === 'flow' ? 'Flow' : 'Chat'), project].filter(Boolean);
+  const words = [kind === 'flow' && 'Flow', project].filter(Boolean);
+  if (!words.length && !state) return null;
   return (
-    <View
-      accessibilityRole="header"
-      style={{ alignItems: Platform.OS === 'ios' ? 'center' : 'flex-start', maxWidth: 250 }}
-    >
-      <Text variant="headline" numberOfLines={1}>
-        {name}
-      </Text>
-      {(words.length > 0 || state) && (
-        <View
-          testID="chat-subtitle"
-          style={{ flexDirection: 'row', alignItems: 'center', gap: 5, maxWidth: '100%' }}
+    <View testID="chat-subtitle" style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+      {words.length > 0 && (
+        <Text
+          variant="label"
+          color="muted"
+          numberOfLines={1}
+          style={{ fontWeight: '500', flexShrink: 1 }}
         >
-          {words.length > 0 && (
-            <Text
-              variant="label"
-              color="muted"
-              numberOfLines={1}
-              style={{ fontWeight: '500', flexShrink: 1 }}
-            >
-              {words.join(' · ')}
-            </Text>
-          )}
-          {words.length > 0 && state && <Dot />}
-          {activity === 'running' && <PulseDot color={t.accent} size={6} />}
-          {state && (
-            <Text
-              variant="label"
-              color={activity === 'running' ? 'accent' : 'secondary'}
-              style={{ fontWeight: '500' }}
-            >
-              {state}
-            </Text>
-          )}
-        </View>
+          {words.join(' · ')}
+        </Text>
+      )}
+      {words.length > 0 && state && <Dot />}
+      {activity === 'running' && <PulseDot color={t.accent} size={6} />}
+      {state && (
+        <Text
+          variant="label"
+          color={activity === 'running' ? 'accent' : 'secondary'}
+          style={{ fontWeight: '500' }}
+        >
+          {state}
+        </Text>
       )}
     </View>
   );
 }
 
-function DeleteButton({ onDelete }: { onDelete: () => void }) {
+/** The conversation title opens its actions; project and live status stay visible underneath. */
+function ChatTitle({
+  store,
+  onDelete,
+}: {
+  store: TitleStore;
+  onDelete?: () => Promise<void> | undefined;
+}) {
   const t = useTheme();
+  const [open, setOpen] = useState(false);
+  const title = useSyncExternalStore(store.subscribe, store.get);
+  const { name } = title;
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel="Delete chat"
-      onPress={onDelete}
-      hitSlop={6}
-      style={({ pressed }) => ({
-        width: 40,
-        height: 40,
-        alignItems: 'center',
-        justifyContent: 'center',
-        opacity: pressed ? 0.6 : 1,
-      })}
-    >
-      <Trash2 size={19} color={t.secondary} strokeWidth={2} />
-    </Pressable>
+    <>
+      <Pressable
+        accessible
+        accessibilityRole={onDelete ? 'button' : 'header'}
+        accessibilityLabel={onDelete ? 'Chat options' : name}
+        accessibilityHint={onDelete ? `${name}. Opens conversation actions.` : undefined}
+        disabled={!onDelete}
+        onPress={() => setOpen(true)}
+        style={{ justifyContent: 'center', minHeight: 44, maxWidth: 210 }}
+      >
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Text variant="headline" numberOfLines={1} style={{ flexShrink: 1 }}>
+            {name}
+          </Text>
+          {onDelete && <ChevronDown size={12} color={t.muted} />}
+        </View>
+        <ChatSubtitle {...title} />
+      </Pressable>
+      {open && (
+        <Sheet title="Chat options" onClose={() => setOpen(false)}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Delete chat"
+            onPress={async () => {
+              await onDelete?.();
+              setOpen(false);
+            }}
+            style={({ pressed }) => ({
+              minHeight: 52,
+              paddingHorizontal: GUTTER,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: space.md,
+              opacity: pressed ? 0.6 : 1,
+            })}
+          >
+            <Trash2 size={20} color={t.danger} />
+            <Text color="danger">Delete chat</Text>
+          </Pressable>
+        </Sheet>
+      )}
+    </>
   );
 }
 
-/** The native header for a chat: two-line title and a menu whose one item deletes the chat. */
-export function useChatHeader(title: TitleInfo, onDelete: (() => void) | null) {
-  const navigation = useNavigation();
+function HeaderAction({
+  label,
+  icon: Icon,
+  testID,
+  count = 0,
+  onPress,
+}: {
+  label: string;
+  icon: LucideIcon;
+  testID: string;
+  count?: number;
+  onPress: () => void;
+}) {
+  const t = useTheme();
+  return (
+    <IconButton
+      testID={testID}
+      icon={Icon}
+      label={label}
+      tone="plain"
+      size={44}
+      accessibilityHint={count ? `${count} items need you` : undefined}
+      onPress={() => {
+        Keyboard.dismiss();
+        onPress();
+      }}
+    >
+      {count > 0 && (
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            left: 4,
+            bottom: 3,
+            minWidth: 18,
+            minHeight: 18,
+            paddingHorizontal: 3,
+            borderRadius: 10,
+            backgroundColor: t.attentionSolid,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <Text variant="label" maxFontSizeMultiplier={1.2} style={{ color: '#FFFFFF' }}>
+            {count > 99 ? '99+' : count}
+          </Text>
+        </View>
+      )}
+    </IconButton>
+  );
+}
+
+function ConversationActions({ onNewChat }: { onNewChat: () => void }) {
+  const navigation = useRootNavigation();
+  const count = needsYouCount(useOverview().data);
+  return (
+    <View style={{ flexDirection: 'row' }}>
+      <HeaderAction
+        label="Queue"
+        icon={Inbox}
+        testID="queue-open"
+        count={count}
+        onPress={() => navigation.navigate('Queue')}
+      />
+      <HeaderAction label="New chat" icon={SquarePen} testID="new-chat" onPress={onNewChat} />
+    </View>
+  );
+}
+
+/** Root conversations open History; pushed conversations retain their native return path. */
+export function useChatHeader(title: TitleInfo, onDelete: (() => Promise<void>) | null) {
+  const navigation = useRootNavigation();
+  const t = useTheme();
+  const count = needsYouCount(useOverview().data);
+  const route = useRoute();
+  const isRoot = useNavigationState((state) => state.routes[0]?.key === route.key);
   const [store] = useState(createTitleStore);
   const deleteRef = useRef(onDelete);
   deleteRef.current = onDelete;
@@ -133,39 +245,87 @@ export function useChatHeader(title: TitleInfo, onDelete: (() => void) | null) {
   useLayoutEffect(() => {
     store.set({ name, kind, project, activity, elapsed });
   }, [store, name, kind, project, activity, elapsed]);
-  // `title` names the screen for the back button and the web tab; the bar shows ChatTitle.
   useLayoutEffect(() => {
     navigation.setOptions({ title: name });
   }, [navigation, name]);
   useLayoutEffect(() => {
-    const remove = () => deleteRef.current?.();
-    const options: NativeStackNavigationOptions = {
-      headerTitle: () => <ChatTitle store={store} />,
+    const newChat = () => {
+      Keyboard.dismiss();
+      const state = navigation.getState();
+      const current = state.routes[state.index];
+      if (current.key !== route.key) return;
+      navigation.dispatch(
+        state.index > 0 && current.name === 'Chat' && current.params?.id
+          ? StackActions.push('Chat')
+          : StackActions.popTo('Chat'),
+      );
     };
-    if (Platform.OS === 'ios')
-      options.unstable_headerRightItems = canDelete
-        ? () => [
-            {
-              type: 'menu',
-              label: 'Chat options',
-              icon: { type: 'sfSymbol', name: 'ellipsis' },
-              menu: {
-                items: [
-                  {
-                    type: 'action',
-                    label: 'Delete chat',
-                    icon: { type: 'sfSymbol', name: 'trash' },
-                    destructive: true,
-                    onPress: remove,
-                  },
-                ],
+    const history = () => (
+      <HeaderAction
+        label="History"
+        icon={PanelLeft}
+        testID="history-open"
+        onPress={() => navigation.navigate('History')}
+      />
+    );
+    const actions = () => <ConversationActions onNewChat={newChat} />;
+    const options: NativeStackNavigationOptions = {
+      headerTitle: () => (
+        <ChatTitle store={store} onDelete={canDelete ? () => deleteRef.current?.() : undefined} />
+      ),
+      headerLeft: isRoot ? history : undefined,
+      headerRight: actions,
+      ...(Platform.OS === 'ios' && {
+        unstable_headerLeftItems: isRoot
+          ? () => [
+              {
+                type: 'button',
+                label: 'History',
+                accessibilityLabel: 'History',
+                icon: { type: 'sfSymbol', name: 'sidebar.left' },
+                width: 44,
+                hidesSharedBackground: true,
+                tintColor: t.text,
+                onPress: () => {
+                  Keyboard.dismiss();
+                  navigation.navigate('History');
+                },
               },
+            ]
+          : undefined,
+        unstable_headerRightItems: () => [
+          {
+            type: 'button',
+            label: 'Queue',
+            accessibilityLabel: 'Queue',
+            accessibilityHint: count ? `${count} items need you` : undefined,
+            icon: { type: 'sfSymbol', name: 'tray' },
+            width: 44,
+            hidesSharedBackground: true,
+            tintColor: t.text,
+            badge: count
+              ? { value: count, style: { backgroundColor: t.attentionSolid, color: '#FFFFFF' } }
+              : undefined,
+            onPress: () => {
+              Keyboard.dismiss();
+              navigation.navigate('Queue');
             },
-          ]
-        : undefined;
-    else options.headerRight = canDelete ? () => <DeleteButton onDelete={remove} /> : undefined;
+          },
+          {
+            type: 'button',
+            label: 'New chat',
+            accessibilityLabel: 'New chat',
+            icon: { type: 'sfSymbol', name: 'square.and.pencil' },
+            width: 44,
+            hidesSharedBackground: true,
+            tintColor: t.text,
+            onPress: newChat,
+          },
+        ],
+      }),
+    };
     navigation.setOptions(options);
-  }, [navigation, store, canDelete]);
+  }, [navigation, route.key, store, canDelete, isRoot, count, t.text, t.attentionSolid]);
 }
 
 /** One tab per conversation in the chat. A filled dot marks a running one, a ring one parked on

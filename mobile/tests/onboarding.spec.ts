@@ -1,3 +1,4 @@
+import { openDestination } from './fixtures/navigation';
 import { expect, test, type Page, type Route } from '@playwright/test';
 import {
   computers,
@@ -48,14 +49,16 @@ test('pairs by pasting a code, naming the Mac before connecting', async ({ page 
   );
   await page.getByRole('textbox', { name: 'Pairing code', exact: true }).fill(pairingCode());
   await expect(page.getByRole('heading', { name: 'Connect to mobile-fixture?' })).toBeVisible();
-  await expect(page.getByText('End-to-end encrypted via mobile-fixture.example.test', { exact: true })).toBeVisible();
+  await expect(
+    page.getByText('End-to-end encrypted via mobile-fixture.example.test', { exact: true }),
+  ).toBeVisible();
   await expect(page.getByText('Only connect if this is your Mac.')).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'This iPhone’s name' })).toHaveValue('My iPhone');
   await shot(page, 'confirm');
   await page.getByRole('textbox', { name: 'This iPhone’s name' }).fill('Benji’s iPhone');
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
   expect((await pairBody).postDataJSON()).toEqual({ code: 'a'.repeat(43), name: 'Benji’s iPhone' });
-  await expect(page.getByTestId('tab-queue')).toBeVisible();
+  await expect(page.getByTestId('history-open')).toBeVisible();
 });
 
 test('a pairing link opens straight onto confirming the Mac, and connects only on Connect', async ({
@@ -72,18 +75,20 @@ test('a pairing link opens straight onto confirming the Mac, and connects only o
   expect(pairs).toBe(0);
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
   await expect.poll(() => pairs).toBe(1);
-  await expect(page.getByTestId('tab-queue')).toBeVisible();
+  await expect(page.getByTestId('history-open')).toBeVisible();
 });
 
-test('a pairing link on a paired iPhone adds the computer and keeps the first', async ({ page }) => {
+test('a pairing link on a paired iPhone adds the computer and keeps the first', async ({
+  page,
+}) => {
   await openApp(page, { path: secondLink() });
   await expect(page.getByRole('heading', { name: 'Connect to Studio Mac?' })).toBeVisible();
   await expect(page.getByText(OVERLAP)).toHaveCount(0);
   await page.waitForTimeout(500); // the sheet's slide-in
   await shot(page, 'link-add');
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
-  await expect(page.getByTestId('tab-queue')).toBeVisible();
-  await page.getByTestId('tab-settings').click();
+  await expect(page.getByTestId('history-open')).toBeVisible();
+  await openDestination(page, 'Settings');
   const list = page.getByTestId('settings-computers');
   await expect(list.getByText("Benji's MacBook Pro")).toBeVisible();
   // The newly added computer is the one shown.
@@ -94,7 +99,7 @@ test('Cancel on a pairing link keeps the app as it was', async ({ page }) => {
   await openApp(page, { path: secondLink() });
   await expect(page.getByRole('heading', { name: 'Connect to Studio Mac?' })).toBeVisible();
   await page.getByRole('button', { name: 'Cancel' }).click();
-  await expect(page.getByTestId('tab-queue')).toBeVisible();
+  await expect(page.getByTestId('history-open')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Connect to Studio Mac?' })).toHaveCount(0);
 });
 
@@ -121,11 +126,11 @@ test('a reset computer with the same name replaces its old pairing unless both a
   await expect(page.getByText("Keeps both Benji's MacBook Pro pairings")).toBeVisible();
   await page.getByRole('button', { name: 'Replace it instead' }).click();
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
-  await expect(page.getByTestId('tab-queue')).toBeVisible();
-  await page.getByTestId('tab-settings').click();
-  await expect(
-    page.getByTestId('settings-computers').getByText("Benji's MacBook Pro"),
-  ).toHaveCount(1);
+  await expect(page.getByTestId('history-open')).toBeVisible();
+  await openDestination(page, 'Settings');
+  await expect(page.getByTestId('settings-computers').getByText("Benji's MacBook Pro")).toHaveCount(
+    1,
+  );
 });
 
 test('a broken pairing link says what is wrong', async ({ page }) => {
@@ -156,7 +161,9 @@ test('an unreachable Mac is named in plain words and the code is kept to retry',
   await pasteCode(page);
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
   await expect(
-    page.getByText('Can’t reach your Mac. Keep Frink open and your Mac awake and online, then try again.'),
+    page.getByText(
+      'Can’t reach your Mac. Keep Frink open and your Mac awake and online, then try again.',
+    ),
   ).toBeVisible();
   await expect(page.getByRole('button', { name: 'Connect', exact: true })).toBeEnabled();
   await shot(page, 'unreachable');
@@ -194,7 +201,7 @@ test('a Mac on another Frink version asks for an update', async ({ page }) => {
 
 test('a revoked iPhone lands back on pairing with the reason', async ({ page }) => {
   await openApp(page);
-  await expect(page.getByTestId('tab-queue')).toBeVisible();
+  await expect(page.getByTestId('history-open')).toBeVisible();
   await page.route(`${fixtureHost}/api`, (route) =>
     route.request().method() === 'OPTIONS'
       ? route.fulfill({ status: 204, headers: cors })
@@ -203,15 +210,17 @@ test('a revoked iPhone lands back on pairing with the reason', async ({ page }) 
   await page.clock.runFor(3500);
   await expect(page.getByText('This iPhone was disconnected')).toBeVisible();
   await expect(
-    page.getByText('Your Mac stopped accepting it. Make a new code in Frink on your Mac: Settings → Mobile.'),
+    page.getByText(
+      'Your Mac stopped accepting it. Make a new code in Frink on your Mac: Settings → Mobile.',
+    ),
   ).toBeVisible();
-  await expect(page.getByTestId('tab-queue')).toHaveCount(0);
+  await expect(page.getByTestId('history-open')).toHaveCount(0);
   await shot(page, 'revoked');
 });
 
 test('a revoked computer is dropped even when this iPhone can’t store that', async ({ page }) => {
   await openApp(page);
-  await expect(page.getByTestId('tab-queue')).toBeVisible();
+  await expect(page.getByTestId('history-open')).toBeVisible();
   await page.evaluate(() => {
     Storage.prototype.setItem = () => {
       throw new Error('storage full');
@@ -224,14 +233,14 @@ test('a revoked computer is dropped even when this iPhone can’t store that', a
   );
   await page.clock.runFor(3500);
   await expect(page.getByText('This iPhone was disconnected')).toBeVisible();
-  await expect(page.getByTestId('tab-queue')).toHaveCount(0);
+  await expect(page.getByTestId('history-open')).toHaveCount(0);
 });
 
 test('a computer that revokes this iPhone is dropped, naming it, and the next one is shown', async ({
   page,
 }) => {
   await openApp(page, { second: true });
-  await expect(page.getByTestId('tab-queue')).toBeVisible();
+  await expect(page.getByTestId('history-open')).toBeVisible();
   await page.route(`${fixtureHost}/api`, (route) =>
     route.request().method() === 'OPTIONS'
       ? route.fulfill({ status: 204, headers: cors })
@@ -244,7 +253,7 @@ test('a computer that revokes this iPhone is dropped, naming it, and the next on
   const dialog = await notice;
   expect(dialog.message()).toMatch(/^Benji's MacBook Pro stopped accepting this iPhone/);
   await dialog.accept();
-  await page.getByTestId('tab-settings').click();
+  await openDestination(page, 'Settings');
   const list = page.getByTestId('settings-computers');
   await expect(list.getByText('Studio Mac')).toBeVisible();
   await expect(list.getByText("Benji's MacBook Pro")).toHaveCount(0);
@@ -287,7 +296,9 @@ test.describe('on a small iPhone', () => {
   test('the pasted code and its problem stay above where the keyboard opens', async ({ page }) => {
     await openApp(page, { paired: false });
     await pasteCode(page, 'not a code');
-    const field = await page.getByRole('textbox', { name: 'Pairing code', exact: true }).boundingBox();
+    const field = await page
+      .getByRole('textbox', { name: 'Pairing code', exact: true })
+      .boundingBox();
     const problem = await page.getByText(/This isn’t a full pairing code/).boundingBox();
     expect(field!.y + field!.height).toBeLessThan(380);
     expect(problem!.y).toBeLessThan(380);

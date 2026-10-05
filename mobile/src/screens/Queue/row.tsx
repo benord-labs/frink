@@ -16,25 +16,20 @@ export const ACTION_ITEMS: Record<MobileTaskAction, Pick<SwipeActionItem, 'label
   completeTask: { label: 'Mark complete', icon: Check, fill: 'confirm' },
 };
 
-/** The fixed right slot: the state in its colour over how long ago it last changed. */
+/** State and project details share a quiet line below the task's full-width title. */
 function StatusSlot({ row }: { row: QueueRow }) {
   const t = useTheme();
   const color = toneColor(t, row.status.tone);
   const live = row.status.glyph === 'live';
-  const age = shortAge(row.activityAt);
   return (
-    <View style={{ minWidth: 64, maxWidth: 120, alignItems: 'flex-end', gap: 2 }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-        {live && <PulseDot color={color} size={7} />}
-        <Text variant="secondary" numberOfLines={1} style={{ color, fontWeight: '600', lineHeight: 21 }}>
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+      {live && <PulseDot color={color} size={7} />}
+      <Text variant="secondary" color="muted" style={{ flex: 1 }}>
+        <Text variant="secondary" style={{ color }}>
           {row.status.word}
         </Text>
-      </View>
-      {!!age && (
-        <Text variant="secondary" color="muted" numberOfLines={1}>
-          {age}
-        </Text>
-      )}
+        {row.detail ? ` · ${row.detail}` : ''}
+      </Text>
     </View>
   );
 }
@@ -59,8 +54,8 @@ export function QueueListRow({
         titleLines={row.emphasis ? 2 : 1}
         testID={`queue-row-${row.key}`}
         title={row.title}
-        subtitle={row.detail}
-        trailing={<StatusSlot row={row} />}
+        subtitle={<StatusSlot row={row} />}
+        trailing={row.activityAt ? <Text variant="label" color="muted">{shortAge(row.activityAt)}</Text> : undefined}
         onPress={onOpen}
       />
     </SwipeAction>
