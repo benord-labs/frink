@@ -9,8 +9,7 @@ export type HookRefusal = {
     | 'event-unsupported'
     | 'provider-variable'
     | 'async'
-    | 'field-unsupported'
-    | 'field-unknown';
+    | 'field-unsupported';
   detail: string;
 };
 

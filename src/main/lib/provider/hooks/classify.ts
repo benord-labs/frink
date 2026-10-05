@@ -16,6 +16,8 @@ type FieldRule = null | { ignored: string } | Reason;
 type Ignored = Extract<HookBinding, { status: 'supported' }>['ignored'];
 
 const TEXT = z.string();
+/** Claude strips a key its schema does not define and runs the hook without it. */
+const UNKNOWN_FIELD = 'Claude does not define it and runs the hook without it';
 const NOT_YET = 'not supported by Frink yet';
 const POWERSHELL: Reason = {
   code: 'field-unsupported',
@@ -112,7 +114,7 @@ function commandReasons(raw: Record<string, unknown>, words: string[], ignored: 
     // hasOwn, not an index lookup: a key named `constructor` must not find a prototype member.
     const verdict: FieldRule = Object.hasOwn(COMMAND_FIELD_RULES, field)
       ? COMMAND_FIELD_RULES[field as keyof SdkCommandHook](value)
-      : { code: 'field-unknown', reason: `it sets "${field}", which Frink does not know` };
+      : { ignored: UNKNOWN_FIELD };
     if (verdict === null) continue;
     if ('ignored' in verdict) ignored.push({ field, reason: verdict.ignored });
     // Claude does not read `shell` when `args` makes the hook exec form, which runs without one.
@@ -153,11 +155,8 @@ export function classifyHook(input: {
   const args = isStringList(raw.args) ? raw.args : undefined;
   const words = command ? [command, ...(args ?? [])] : [];
   const label = hookLabel(handlerType, words);
-  const ignored: Ignored = [];
-  const reasons: Reason[] = input.extraGroupKeys.map((key) => ({
-    code: 'field-unknown',
-    reason: `its matcher group sets "${key}", which Frink does not know`,
-  }));
+  const ignored: Ignored = input.extraGroupKeys.map((field) => ({ field, reason: UNKNOWN_FIELD }));
+  const reasons: Reason[] = [];
   if (!input.knownEvents.has(input.event)) {
     reasons.push({ code: 'event-unsupported', reason: 'Frink does not know that hook event' });
   }
