@@ -26,4 +26,12 @@ describe('getTemplateRenderedFields', () => {
       }),
     ).toEqual(['artifactTitleTemplate', 'artifactBodyHtmlTemplate']);
   });
+
+  it('drops custom-node inputs the manifest declares "template": false (sc-3251)', () => {
+    const config = { query: '{{field}}', repo: '{{trigger.repo}}' };
+    expect(getTemplateRenderedFields('check-new-prs', config)).toEqual(['query', 'repo']);
+    expect(
+      getTemplateRenderedFields('check-new-prs', config, { query: { template: false } }),
+    ).toEqual(['repo']);
+  });
 });

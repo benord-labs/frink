@@ -111,9 +111,11 @@ Not every field in a block's config is template-rendered. Only these fields reso
 | `start_task` | `label`, `branch`, `projectId` |
 | `chat_reply` | `messageTemplate` in Text mode, or `artifactTitleTemplate` and `artifactBodyHtmlTemplate` in Interactive view mode |
 | `http_request` | `url`, each string `headers` value, and `body` (the body is not sent for GET) |
-| Custom node | Every declared top-level input (resolved text is converted to the input's declared type) |
+| Custom node | Every declared top-level input (resolved text is converted to the input's declared type), except an input whose manifest declaration sets `"template": false` — that value reaches the script exactly as written |
 
 Other fields (like `method` and nested strings) are used as-is.
+
+A placeholder that is not a Flow variable (such as `{{column}}`) renders as an **empty string** in a rendered field. If a custom node input carries the script's **own** template syntax — Handlebars, Jinja, or a JSON body with `{{...}}` — declare `"template": false` on that input in the node's `manifest.json`. Frink then passes the value through untouched, and the flow editor warns about non-Flow placeholders in inputs that are still rendered.
 
 A rendered `projectId` is matched against your registered projects by id **or by exact name**, so a
 trigger payload can route a run to the project it names (`{{trigger.project}}` → `devkit`). It never

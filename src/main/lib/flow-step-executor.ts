@@ -4,6 +4,7 @@
 import log from 'electron-log';
 import {
   acquireCustomNodeReadLease,
+  applyTemplateOptOuts,
   buildCustomNodeInputConfig,
   CUSTOM_NODES_DIR,
   type CustomNodeProcessResult,
@@ -118,6 +119,8 @@ type FlowExecuteStepPayload = {
   timeoutMs: number;
   /** custom nodes: the block config to pass as JSON argv */
   config?: Record<string, unknown>;
+  /** custom nodes: `config` before template rendering, for inputs declared `"template": false` */
+  authoredConfig?: FlowExecuteStepPayload['config'];
   /** start_task: branch to checkout in the worktree (when startInWorktree is true) */
   branch?: string;
   /**
@@ -280,7 +283,10 @@ async function executeCustomNode(
     if (!cwdResult.ok) {
       return stepFailure(cwdResult.error);
     }
-    const configValues = buildCustomNodeInputConfig(manifest.inputs, payload.config ?? {});
+    const configValues = buildCustomNodeInputConfig(
+      manifest.inputs,
+      applyTemplateOptOuts(manifest.inputs, payload.config ?? {}, payload.authoredConfig),
+    );
     if (!configValues.ok) {
       return stepFailure('', `Custom node "${payload.blockType}" ${configValues.error}`);
     }
