@@ -14,8 +14,8 @@ import { and, inArray, isNotNull } from 'drizzle-orm';
 import log from 'electron-log';
 import { getDatabase } from '../db';
 import { getFlowRunByIdempotencyKey } from '../db/repos/flow-runs';
-import { listActiveForType } from '../db/repos/flow-trigger-bindings';
-import type { Task } from '../db/schema';
+import { isBlankProjectId, listActiveForType } from '../db/repos/flow-trigger-bindings';
+import type { FlowTriggerBinding, Task } from '../db/schema';
 import { tasks } from '../db/schema';
 import { startFlowRun } from './start';
 
@@ -32,10 +32,24 @@ const TERMINAL_STATUSES: Task['status'][] = [
 // In-memory dedup. Persisted protection sits in the flow_runs unique
 // idempotencyKey index — this set just spares the DB hit for repeat ticks.
 const firedKeys = new Set<string>();
+// Project-less bindings can never match a task; warn once per binding rather than every tick.
+const warnedUnscopedBindings = new Set<string>();
 
 let interval: NodeJS.Timeout | null = null;
 
-async function runPostTaskTriggerTick(): Promise<{ fired: number; skipped: number }> {
+function warnUnscopedBindingsOnce(bindings: readonly FlowTriggerBinding[]): void {
+  for (const binding of bindings) {
+    if (!isBlankProjectId(binding.projectId) || warnedUnscopedBindings.has(binding.id)) continue;
+    warnedUnscopedBindings.add(binding.id);
+    log.warn('[PostTaskTrigger] skipping binding with no projectId', {
+      bindingId: binding.id,
+      flowId: binding.flowId,
+    });
+  }
+}
+
+/** @internal exported for tests */
+export async function runPostTaskTriggerTick(): Promise<{ fired: number; skipped: number }> {
   const db = getDatabase();
   const bindings = await listActiveForType(db, 'post_task_trigger').catch((err) => {
     log.warn('[PostTaskTrigger] listActiveForType failed', {
@@ -45,14 +59,12 @@ async function runPostTaskTriggerTick(): Promise<{ fired: number; skipped: numbe
   });
   if (bindings.length === 0) return { fired: 0, skipped: 0 };
 
+  warnUnscopedBindingsOnce(bindings);
+
   // Fetch terminal tasks scoped to projects referenced by any binding. Keep
   // the query narrow so unrelated tasks don't pull rows.
   const projectIds = Array.from(
-    new Set(
-      bindings
-        .map((b) => b.projectId)
-        .filter((p): p is string => typeof p === 'string' && p.length > 0),
-    ),
+    new Set(bindings.map((b) => b.projectId).filter((p): p is string => !isBlankProjectId(p))),
   );
   if (projectIds.length === 0) return { fired: 0, skipped: 0 };
 
@@ -129,4 +141,5 @@ export function stopPostTaskTriggerLoop(): void {
   if (interval) clearInterval(interval);
   interval = null;
   firedKeys.clear();
+  warnedUnscopedBindings.clear();
 }
