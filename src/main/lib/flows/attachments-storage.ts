@@ -13,6 +13,7 @@
  *   the resolved absolute path stays under the attachments root.
  */
 
+import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, resolve, sep } from 'node:path';
 import { app } from 'electron';
@@ -37,7 +38,8 @@ export class AttachmentPathError extends Error {
   }
 }
 
-function attachmentsRoot(): string {
+/** Root of every run's attachment directory; callers may pass another root (tests). */
+export function attachmentsRoot(): string {
   return join(app.getPath('userData'), 'flow-attachments');
 }
 
@@ -49,10 +51,9 @@ function assertSafeSegment(segment: string, label: 'runId' | 'filename'): void {
   }
 }
 
-function getAttachmentPath(runId: string, filename: string): string {
+function getAttachmentPath(runId: string, filename: string, root: string): string {
   assertSafeSegment(runId, 'runId');
   assertSafeSegment(filename, 'filename');
-  const root = attachmentsRoot();
   const full = resolve(join(root, runId, filename));
   if (!isAbsolute(full) || !full.startsWith(`${resolve(root)}${sep}`)) {
     throw new AttachmentPathError(`resolved path escapes attachments root: ${full}`);
@@ -66,6 +67,28 @@ function buildAttachmentUrl(runId: string, filename: string): string {
   return `${ATTACHMENT_PROTOCOL}://${runId}/${filename}`;
 }
 
+const EXT_BY_MIME = new Map([
+  ['image/png', 'png'],
+  ['image/jpeg', 'jpg'],
+  ['image/webp', 'webp'],
+]);
+
+/** Unique on-disk name per upload; the client's filename is kept only as the label. */
+export function storedAttachmentFilename(mimeType: string): string {
+  const ext = EXT_BY_MIME.get(mimeType);
+  return ext ? `${randomUUID()}.${ext}` : randomUUID();
+}
+
+/** Split a `frink-attachment://<runId>/<filename>` URL; null for foreign or unsafe URLs. */
+export function parseAttachmentUrl(url: string): { runId: string; filename: string } | null {
+  const prefix = `${ATTACHMENT_PROTOCOL}://`;
+  if (!url.startsWith(prefix)) return null;
+  const [runId, filename, ...rest] = url.slice(prefix.length).split('/');
+  if (rest.length > 0 || !runId || !filename) return null;
+  if (!SAFE_NAME_RE.test(runId) || !SAFE_NAME_RE.test(filename)) return null;
+  return { runId, filename };
+}
+
 export type WriteAttachmentResult = {
   url: string;
   filename: string;
@@ -76,16 +99,21 @@ export async function writeAttachment(
   runId: string,
   filename: string,
   base64Data: string,
+  root = attachmentsRoot(),
 ): Promise<WriteAttachmentResult> {
-  const target = getAttachmentPath(runId, filename);
+  const target = getAttachmentPath(runId, filename, root);
   const buffer = Buffer.from(base64Data, 'base64');
-  await mkdir(join(attachmentsRoot(), runId), { recursive: true });
+  await mkdir(join(root, runId), { recursive: true });
   await writeFile(target, buffer);
   return { url: buildAttachmentUrl(runId, filename), filename, byteLength: buffer.byteLength };
 }
 
-export async function readAttachment(runId: string, filename: string): Promise<Buffer> {
-  const target = getAttachmentPath(runId, filename);
+export async function readAttachment(
+  runId: string,
+  filename: string,
+  root = attachmentsRoot(),
+): Promise<Buffer> {
+  const target = getAttachmentPath(runId, filename, root);
   return readFile(target);
 }
 
@@ -104,7 +132,10 @@ export type ReadAttachmentImageResult =
  * Read a `frink-attachment://<runId>/<filename>` URL as base64, capped at 5MB.
  * `message` is shown to the user as-is, so it is a whole sentence in plain words.
  */
-export async function readAttachmentImage(rawUrl: string): Promise<ReadAttachmentImageResult> {
+export async function readAttachmentImage(
+  rawUrl: string,
+  root = attachmentsRoot(),
+): Promise<ReadAttachmentImageResult> {
   let parsed: URL | undefined;
   try {
     parsed = new URL(rawUrl);
@@ -121,7 +152,7 @@ export async function readAttachmentImage(rawUrl: string): Promise<ReadAttachmen
   const filename = parsed.pathname.replace(LEADING_SLASH_RE, '');
   let buffer: Buffer;
   try {
-    buffer = await readAttachment(parsed.hostname, filename);
+    buffer = await readAttachment(parsed.hostname, filename, root);
   } catch {
     return {
       ok: false,
@@ -138,7 +169,11 @@ export async function readAttachmentImage(rawUrl: string): Promise<ReadAttachmen
  * Delete a single attachment file (rollback on post-write validation failure).
  * No-op if file doesn't exist.
  */
-export async function deleteAttachmentFile(runId: string, filename: string): Promise<void> {
-  const target = getAttachmentPath(runId, filename);
+export async function deleteAttachmentFile(
+  runId: string,
+  filename: string,
+  root = attachmentsRoot(),
+): Promise<void> {
+  const target = getAttachmentPath(runId, filename, root);
   await rm(target, { force: true });
 }

@@ -1,16 +1,19 @@
 import { and, eq, isNull } from 'drizzle-orm';
+import { z } from 'zod';
 import {
   type FlowAdmissionIntentV1,
   isFlowAdmissionIntentV1,
 } from '../../../../shared/lib/flow-admission';
 import type { getDatabase } from '../../db';
 import {
+  type BatchStageRun,
   batchStageRuns,
   batchStages,
   type FlowRun,
   flowRuns,
   type NewFlowRun,
 } from '../../db/schema';
+import { parseRunTriggerContext } from '../../db/repos/batch-stage-runs';
 import { assertStageHasSlot } from './batch-promotion';
 import { enqueueFlowAdmission, type FlowRunAdmission, liveAdmissionForRun } from './store';
 
@@ -55,13 +58,37 @@ function isProvenUnstarted(run: FlowRun): boolean {
   return run.status === 'pending' && run.startedAt === null;
 }
 
-function queueBatchMember(db: Db, batchStageRunId: string, run: FlowRun): void {
+const memberAttachmentsSchema = z.object({ attachments: z.array(z.unknown()) });
+
+/** Uploads append only while the member is pending, so this read is final for its run. */
+function withMemberAttachments(
+  db: Db,
+  run: FlowRun,
+  memberContext: BatchStageRun['triggerContext'],
+): FlowRun {
+  // Only a real list replaces the snapshot; a malformed value must not erase it.
+  const member = memberAttachmentsSchema.safeParse(memberContext);
+  if (!member.success) return run;
+  const triggerContext = {
+    ...parseRunTriggerContext(run.triggerContext),
+    attachments: member.data.attachments,
+  };
+  return db
+    .update(flowRuns)
+    .set({ triggerContext })
+    .where(eq(flowRuns.id, run.id))
+    .returning()
+    .get();
+}
+
+function queueBatchMember(db: Db, batchStageRunId: string, run: FlowRun): FlowRun {
   const current = db
     .select({
       status: batchStageRuns.status,
       flowRunId: batchStageRuns.flowRunId,
       stageId: batchStageRuns.stageId,
       batchId: batchStages.batchId,
+      triggerContext: batchStageRuns.triggerContext,
     })
     .from(batchStageRuns)
     .innerJoin(batchStages, eq(batchStages.id, batchStageRuns.stageId))
@@ -72,7 +99,7 @@ function queueBatchMember(db: Db, batchStageRunId: string, run: FlowRun): void {
     current.flowRunId === run.id &&
     current.batchId === run.batchId
   ) {
-    return;
+    return run;
   }
   if (!run.batchId || current?.batchId !== run.batchId) {
     throw new Error(`Batch stage run ${batchStageRunId} is not eligible for admission`);
@@ -94,26 +121,27 @@ function queueBatchMember(db: Db, batchStageRunId: string, run: FlowRun): void {
   if (!linked) {
     throw new Error(`Batch stage run ${batchStageRunId} is not eligible for admission`);
   }
+  return withMemberAttachments(db, run, current.triggerContext);
 }
 
 /** Must run inside the controller's BEGIN IMMEDIATE transaction. */
 export function enqueueFlowStart(db: Db, input: EnqueueFlowStartInput): EnqueueFlowStartResult {
   const { batchStageRunId, requestedAt, ...runInput } = input;
   const existing = existingRunForStart(db, input.idempotencyKey);
-  const run = existing ?? createPendingRun(db, runInput);
+  const created = existing ?? createPendingRun(db, runInput);
   const isReplay = Boolean(existing);
-  if (!isProvenUnstarted(run)) return { run, isReplay, admission: null };
+  if (!isProvenUnstarted(created)) return { run: created, isReplay, admission: null };
 
-  const live = liveAdmissionForRun(db, run.id);
+  const live = liveAdmissionForRun(db, created.id);
   if (
     live &&
     batchStageRunId &&
     (!isFlowAdmissionIntentV1(live.intentJson) ||
       live.intentJson.batch_stage_run_id !== batchStageRunId)
   ) {
-    throw new Error(`Flow run ${run.id} already has a different live start admission`);
+    throw new Error(`Flow run ${created.id} already has a different live start admission`);
   }
-  if (batchStageRunId) queueBatchMember(db, batchStageRunId, run);
+  const run = batchStageRunId ? queueBatchMember(db, batchStageRunId, created) : created;
   if (live) return { run, isReplay, admission: live };
 
   const intent: FlowAdmissionIntentV1 = {
