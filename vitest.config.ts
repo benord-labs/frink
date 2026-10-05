@@ -34,6 +34,8 @@ export default defineConfig({
       NODE_ENV: 'test',
       // FRINK_HOME + FRINK_CUSTOM_NODES_DIR: per-file temp home, set in vitest.setup.ts.
     },
+    // Installs relay/ and live-activity-forwarder/ deps for runs that bypass the npm pre-hooks (sc-4357).
+    globalSetup: ['./scripts/dev/ensure-package-deps.mjs'],
     setupFiles: ['./vitest.setup.ts'],
     include: [
       'src/**/*.{test,spec}.{ts,tsx}',
