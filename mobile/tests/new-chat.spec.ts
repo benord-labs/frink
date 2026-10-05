@@ -33,6 +33,7 @@ const mutations = (state: AppState) =>
 
 test('a new chat is a blank conversation whose first message starts it', async ({ page }) => {
   const state = await openNewChat(page);
+  await expect(page.getByTestId('new-chat')).toHaveCount(0);
   // The same message box as any chat, not a sheet: nothing to cancel, nothing made yet.
   await expect(page.getByRole('button', { name: 'Cancel', exact: true })).toHaveCount(0);
   await expect(messageBox(page)).not.toBeFocused();
@@ -65,6 +66,7 @@ test('a new chat is a blank conversation whose first message starts it', async (
     requestId: expect.stringMatching(/^[0-9a-f-]{36}$/),
   });
   // The blank page gives way to the chat it started.
+  await expect(page.getByTestId('new-chat')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Chat options', exact: true })).toBeVisible();
 });
 
@@ -326,6 +328,7 @@ test('a project-specific New chat replaces the previous project selection', asyn
   await openHistory(page);
   await page.getByRole('tab', { name: 'Projects', exact: true }).click();
   await page.getByRole('button', { name: 'New chat in marketing-site', exact: true }).click();
+  await expect(page.getByTestId('new-chat')).toHaveCount(0);
   await expect(
     page.getByRole('button', { name: 'Project: marketing-site', exact: true }),
   ).toBeVisible();
