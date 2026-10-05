@@ -279,7 +279,72 @@ describe('run_command guard edge shapes', () => {
     // SAFETY: rcCtx supplies every DispatchContext field this dispatcher reads.
     const res = await dispatchRunCommand(rcCtx({ command: persisted }) as never);
 
+    expect(res.type).toBe('error');
+    expect(h.executeShellStep).not.toHaveBeenCalled();
+  });
+});
+
+describe('run_command refuses an empty command', () => {
+  it.each([
+    ['missing', undefined],
+    ['null', null],
+    ['an empty string', ''],
+    ['whitespace only', ' \n\t '],
+  ])('fails naming the node when the command is %s', async (_name, command) => {
+    await seedStartTask('/wt/abc');
+
+    const res = await dispatchRunCommand(
+      // SAFETY: rcCtx supplies every DispatchContext field this dispatcher reads.
+      rcCtx({ command, workingDirectory: 'trigger_worktree' }) as never,
+    );
+
+    expect(res.type).toBe('error');
+    // SAFETY: asserted above that res.type === 'error', the variant carrying `message`.
+    expect((res as { message: string }).message).toBe(
+      'run_command "Run": the command is empty, so nothing was run',
+    );
+    expect(h.executeShellStep).not.toHaveBeenCalled();
+  });
+
+  it('names the node by id when it has no label', async () => {
+    const ctx = rcCtx({ command: '' });
+
+    // SAFETY: rcCtx supplies every DispatchContext field this dispatcher reads; the override only
+    // drops the node's label.
+    const res = await dispatchRunCommand({
+      ...ctx,
+      node: { ...ctx.node, label: undefined },
+    } as never);
+
+    // SAFETY: an empty command yields the 'error' variant, which carries `message`.
+    expect((res as { message: string }).message).toContain('run_command "rc"');
+  });
+
+  // A placeholder that did not resolve is a different mistake from a blank command field; the
+  // author must be told which placeholder, not that the command is empty.
+  it('reports the placeholder, not an empty command, when the whole command is a missing key', async () => {
+    const res = await dispatchRunCommand(
+      // SAFETY: rcCtx supplies every DispatchContext field this dispatcher reads.
+      rcCtx({ command: '{{previous.missing}}' }) as never,
+    );
+
+    expect(res.type).toBe('error');
+    // SAFETY: asserted above that res.type === 'error', the variant carrying `message`.
+    const { message } = res as { message: string };
+    expect(message).toContain('{{previous.missing}}');
+    expect(message).not.toContain('the command is empty');
+  });
+
+  it('still runs a command that is only a placeholder whose value is present but empty', async () => {
+    // SAFETY: rcCtx supplies every DispatchContext field this dispatcher reads; the override only
+    // swaps in outputs where `result` is present but empty.
+    const res = await dispatchRunCommand({
+      ...rcCtx({ command: '{{previous.result}}' }),
+      previousOutput: { ...CONDITION_PREV, outputs: { result: '' } },
+    } as never);
+
     expect(res.type).toBe('completed');
+    expect(h.executeShellStep.mock.calls[0]?.[0]).toMatchObject({ command: "''" });
   });
 });
 
