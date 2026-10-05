@@ -255,6 +255,33 @@ describe('handleFlowsToolCall — frink_flows_patch × custom node outputs', () 
     expect(warnedPlaceholders(body)).not.toContain('{{previous.exitCode}}');
   });
 
+  it('honours a manifest "template": false input when warning about templates (sc-3251)', async () => {
+    state.discoverCustomNodes.mockReturnValue({
+      valid: [
+        mockManifest({
+          name: 'jinja-node',
+          inputs: { body: { type: 'string', template: false }, title: { type: 'string' } },
+        }),
+      ],
+      manifestWarnings: [],
+      errors: [],
+    });
+    const body = await patchAndGetBody('exec-patch-template-opt-out', [
+      {
+        op: 'add_node',
+        node: {
+          id: 'cn3',
+          blockType: 'jinja-node',
+          config: { body: 'Hi {{name}}', title: 'Re: {{subject}}' },
+        },
+      },
+      { op: 'add_edge', edge: { id: 'e6', source: 'n2', target: 'cn3' } },
+    ]);
+    // The opted-out input passes {{name}} through; the rendered sibling would erase {{subject}}.
+    expect(warnedPlaceholders(body)).not.toContain('{{name}}');
+    expect(warnedPlaceholders(body)).toContain('{{subject}}');
+  });
+
   it("reads a plugin node's catalog-declared outputs, not the generic fallback (sc-2508)", async () => {
     // Plugin nodes are derived, never in `valid`; reading only `valid` left them on
     // [exitCode, _rawStdout] and flagged their real fields as undeclared.
