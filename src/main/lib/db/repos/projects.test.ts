@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import * as schema from '../schema';
 import { freshDb, type TestDb } from '../test-utils/fresh-db';
-import { listProjectsByRecentActivity } from './projects';
+import { listProjectsByRecentActivity, listRealProjects } from './projects';
 
 let db: TestDb;
 const at = (iso: string) => new Date(iso);
@@ -61,5 +61,41 @@ describe('listProjectsByRecentActivity', () => {
 
     expect(rows.map((r) => r.id)).toEqual(['added-late', 'used', 'added-early']);
     expect(rows.find((r) => r.id === 'added-late')?.lastActiveAt).toBeNull();
+  });
+});
+
+describe('listRealProjects', () => {
+  beforeEach(() => {
+    db = freshDb();
+  });
+
+  it('excludes virtual folders and keeps newest-updated first', async () => {
+    await seedProject('older', at('2026-01-01T00:00:00.000Z'));
+    await seedProject('newer', at('2026-02-01T00:00:00.000Z'));
+    await db.insert(schema.projects).values({
+      id: 'folder',
+      name: 'Work',
+      path: 'virtual://folders/123-work',
+      createdAt: at('2026-03-01T00:00:00.000Z'),
+      updatedAt: at('2026-03-01T00:00:00.000Z'),
+    });
+
+    const rows = await listRealProjects(db);
+
+    expect(rows.map((r) => r.id)).toEqual(['newer', 'older']);
+  });
+
+  it('keeps a real project whose path merely contains the virtual prefix', async () => {
+    await db.insert(schema.projects).values({
+      id: 'nested',
+      name: 'nested',
+      path: '/repos/virtual://folders/not-a-folder',
+      createdAt: at('2026-01-01T00:00:00.000Z'),
+      updatedAt: at('2026-01-01T00:00:00.000Z'),
+    });
+
+    const rows = await listRealProjects(db);
+
+    expect(rows.map((r) => r.id)).toEqual(['nested']);
   });
 });

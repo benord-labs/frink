@@ -1,4 +1,4 @@
-import { and, desc, eq, or, sql } from 'drizzle-orm';
+import { and, desc, eq, notLike, or, sql } from 'drizzle-orm';
 import type { getDatabase } from '../index';
 import { chats, type NewProject, type Project, projects, subChats } from '../schema';
 import {
@@ -54,6 +54,16 @@ export async function findProjectsByIdOrName(
 /** All projects, newest-updated first. Single-user — every row belongs to the current user. */
 export async function listProjects(db: Db): Promise<Project[]> {
   return db.select().from(projects).orderBy(desc(projects.updatedAt));
+}
+
+/** `listProjects` minus virtual folders (`virtual://` paths): those group chats and have no
+ * on-disk path, so they are never a codebase an agent can be pointed at. */
+export async function listRealProjects(db: Db): Promise<Project[]> {
+  return db
+    .select()
+    .from(projects)
+    .where(notLike(projects.path, 'virtual://%'))
+    .orderBy(desc(projects.updatedAt));
 }
 
 /** Projects by last chat activity (any `sub_chats` write: messages, streams, renames, mode). Not

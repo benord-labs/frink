@@ -23,7 +23,7 @@ import {
 } from '../db/repos/chats';
 import {
   getProjectById as getProjectByIdLocal,
-  listProjects as listProjectsLocal,
+  listRealProjects,
 } from '../db/repos/projects';
 import { gitCache } from '../git/cache';
 import { resolveTargetWorktreeForMove } from '../git/resolve-target-worktree';
@@ -451,13 +451,13 @@ async function handleToolsCall(
       return toolResult(`Invalid arguments: ${parsed.error.message}`, true);
     }
     const query = parsed.data.query;
-    const rows = await listProjectsLocal(getDatabase());
+    const rows = await listRealProjects(getDatabase());
     const list = filterProjectsByQuery(rows, query, 10);
     return toolResult(JSON.stringify({ projects: list }, null, 2));
   }
 
   if (name === 'fetchAllProjects') {
-    const rows = await listProjectsLocal(getDatabase());
+    const rows = await listRealProjects(getDatabase());
     const list = rows.map((p) => ({
       id: p.id,
       name: p.name,

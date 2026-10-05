@@ -139,7 +139,7 @@ vi.mock('../db/repos/chats', async (importOriginal) => {
 // mock; specific tests override this to assert enriched output.
 vi.mock('../db/repos/projects', () => ({
   getProjectById: state.getProjectByIdLocal,
-  listProjects: state.listProjectsLocal,
+  listRealProjects: state.listProjectsLocal,
 }));
 
 vi.mock('../git/cache', () => ({
