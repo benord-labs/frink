@@ -20,6 +20,7 @@ import {
   captureFlowAdmissionException,
   hasFlowResourceActivity,
   setFlowAdmissionLifecycleHooks,
+  settleStageAfterUnpromotedRetry,
   withFlowResourceCleanup,
 } from './activity';
 import type { FlowAdmissionConfigPatch } from './config';
@@ -69,11 +70,15 @@ async function emitAdmissionRunFailed(flowRunId: string, summary: string): Promi
   );
 }
 
-async function notifyFailedStartAdmission(
+async function notifyFailedAdmission(
   admission: Awaited<ReturnType<FlowAdmissionController['getByTicket']>>,
 ): Promise<void> {
-  if (admission?.state !== 'failed' || admission.priorityClass !== 'start') return;
-  await emitAdmissionRunFailed(admission.flowRunId, admission.error ?? 'Flow admission failed');
+  if (admission?.state !== 'failed') return;
+  if (admission.priorityClass === 'start') {
+    await emitAdmissionRunFailed(admission.flowRunId, admission.error ?? 'Flow admission failed');
+    return;
+  }
+  await settleStageAfterUnpromotedRetry(admission.flowRunId);
 }
 
 async function failStartedAdmission(flowRunId: string, error: unknown): Promise<void> {
@@ -174,7 +179,7 @@ export function registerTerminalFlowResumeDispatcher(
 async function dispatchClaim(ticket: number): Promise<void> {
   const active = await admissionController().beginDispatch(ticket);
   if (!active) {
-    await notifyFailedStartAdmission(await admissionController().getByTicket(ticket));
+    await notifyFailedAdmission(await admissionController().getByTicket(ticket));
     return;
   }
   const intent = isFlowAdmissionIntentV1(active.intentJson) ? active.intentJson : null;
@@ -214,7 +219,7 @@ async function dispatchClaim(ticket: number): Promise<void> {
 const drainer = createFlowAdmissionDrainer({
   claimEligible: () => admissionController().claimEligible(),
   dispatchClaim,
-  notifyFailedStartAdmission,
+  notifyFailedAdmission,
 });
 
 export function drainFlowAdmissions(): Promise<void> {

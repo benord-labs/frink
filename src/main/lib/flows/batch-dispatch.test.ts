@@ -46,7 +46,7 @@ const seedStage = (input: Parameters<typeof seedBatchStage>[2]) => seedBatchStag
 /** Drive a dispatched run to terminal the way the engine would: row + event hook. */
 async function finishRun(flowRunId: string, status: 'completed' | 'failed' | 'cancelled') {
   await setRunStatus(db, flowRunId, status);
-  await onBatchRunTerminal(flowRunId, status);
+  await onBatchRunTerminal(flowRunId);
 }
 
 beforeEach(async () => {
@@ -241,7 +241,7 @@ describe('stage advancement', () => {
       .values({ flowVersionId: versionId, status: 'completed' })
       .returning();
 
-    await expect(onBatchRunTerminal(plain.id, 'completed')).resolves.toBeUndefined();
+    await expect(onBatchRunTerminal(plain.id)).resolves.toBeUndefined();
   });
 
   it('reconciles a standalone admission on its later terminal event', async () => {
