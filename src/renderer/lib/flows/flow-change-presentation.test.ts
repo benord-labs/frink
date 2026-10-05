@@ -532,4 +532,208 @@ describe('buildFlowChangePresentation', () => {
 
     expect(presentation.graph).toEqual({ nodes: [], edges: [] });
   });
+
+  describe('a result the harness spilled to disk', () => {
+    // Literal harness text from claude-agent-sdk 0.3.278. Re-check when the SDK is upgraded.
+    const SPILL =
+      'Error: result (87,548 characters) exceeds maximum allowed tokens. Output has been saved to /sessions/abc/tool-results/mcp-frink_flows_patch-1.txt. Format: JSON with schema: {status: string}';
+    const input = {
+      flowId: 'flow-1',
+      operations: [
+        { op: 'add_node', node: { id: 'review', blockType: 'agent', label: 'Review' } },
+        { op: 'update_node', nodeId: 'review', label: 'Review changes' },
+        { op: 'update_settings', settings: { pauseOnFailure: true } },
+      ],
+    };
+
+    it.each([
+      { label: 'an error part', part: { state: 'output-error', errorText: SPILL } },
+      { label: 'an available string output', part: { state: 'output-available', output: SPILL } },
+      {
+        label: 'an available text block output',
+        part: { state: 'output-available', output: [{ type: 'text', text: SPILL }] },
+      },
+      { label: 'a persisted result', part: { state: 'output-available', result: SPILL } },
+    ])('reads $label as finished but unread, not unconfirmed', ({ part }) => {
+      const presentation = buildFlowChangePresentation({ ...part, input });
+
+      expect(presentation.phase).toBe('unread');
+      expect(presentation.changes).toHaveLength(3);
+      expect(presentation.changes.map((change) => change.status)).toEqual([
+        'unknown',
+        'unknown',
+        'unknown',
+      ]);
+      expect(presentation.flowId).toBe('flow-1');
+      expect(presentation.versionNumber).toBeUndefined();
+    });
+
+    it('keeps an error it cannot recognise as unconfirmed', () => {
+      expect(
+        buildFlowChangePresentation({
+          state: 'output-error',
+          input,
+          errorText: 'Error: result exceeds maximum allowed tokens.',
+        }).phase,
+      ).toBe('unconfirmed');
+      expect(
+        buildFlowChangePresentation({ state: 'output-available', input, output: 'ok' }).phase,
+      ).toBe('unconfirmed');
+    });
+
+    it.each([
+      {
+        label: 'a no-write failure',
+        receipt: { status: 'failure', persistence: 'none', message: SPILL },
+        phase: 'failed',
+      },
+      {
+        label: 'a denial',
+        receipt: { status: 'failure', persistence: 'none', permissionDenied: true, message: SPILL },
+        phase: 'denied',
+      },
+      {
+        label: 'a version conflict',
+        receipt: { errorCode: 'FLOW_VERSION_CONFLICT', message: SPILL },
+        phase: 'stale',
+      },
+      {
+        label: 'a failure without no-write proof',
+        receipt: { status: 'failure', message: SPILL },
+        phase: 'unconfirmed',
+      },
+    ])('lets $label that quotes the spill text win', ({ receipt, phase }) => {
+      expect(
+        buildFlowChangePresentation({
+          state: 'output-error',
+          input,
+          errorText: JSON.stringify(receipt),
+        }).phase,
+      ).toBe(phase);
+    });
+
+    it.each([
+      {
+        label: 'an indexed text block (post JSON round-trip)',
+        output: { '0': { type: 'text', text: SPILL } },
+      },
+      {
+        label: 'a CallToolResult content envelope',
+        output: { content: [{ type: 'text', text: SPILL }] },
+      },
+      {
+        label: 'the persisted-output note',
+        output:
+          '<persisted-output>\nOutput too large (112.4KB). Full output saved to: /sessions/abc/tool-results/toolu_1.txt\n\nPreview (first 2KB):\n{"status":"success"',
+      },
+    ])('reads $label as unread', ({ output }) => {
+      expect(buildFlowChangePresentation({ state: 'output-available', input, output }).phase).toBe(
+        'unread',
+      );
+    });
+
+    it.each([
+      { label: 'a string error field', output: { error: SPILL } },
+      { label: 'an error message object', output: { error: { message: SPILL } } },
+      {
+        label: 'a status-less wrapper that also carries a message',
+        output: { error: SPILL, message: 'x' },
+      },
+    ])('reads a spill nested as $label in an error part as unread', ({ output }) => {
+      expect(buildFlowChangePresentation({ state: 'output-error', input, output }).phase).toBe(
+        'unread',
+      );
+    });
+
+    it.each([
+      {
+        label: 'a failure receipt',
+        output: { status: 'failure', error: SPILL },
+        phase: 'unconfirmed',
+      },
+      {
+        label: 'a no-write failure receipt',
+        output: { status: 'failure', persistence: 'none', error: SPILL },
+        phase: 'failed',
+      },
+      {
+        label: 'a success receipt',
+        output: { status: 'success', persistence: 'saved', flowId: 'flow-1', error: SPILL },
+        phase: 'applied',
+      },
+    ])('lets $label win over a nested spill error', ({ output, phase }) => {
+      expect(buildFlowChangePresentation({ state: 'output-available', input, output }).phase).toBe(
+        phase,
+      );
+    });
+
+    it('keeps a spill unread when the chat was interrupted after the result arrived', () => {
+      expect(
+        buildFlowChangePresentation(
+          { state: 'output-available', input, output: SPILL },
+          { interrupted: true },
+        ).phase,
+      ).toBe('unread');
+    });
+
+    it('reads a spill with no operations as unread with nothing listed', () => {
+      const presentation = buildFlowChangePresentation({
+        state: 'output-available',
+        input: { flowId: 'flow-1', operations: [] },
+        output: SPILL,
+      });
+
+      expect(presentation.phase).toBe('unread');
+      expect(presentation.changes).toEqual([]);
+    });
+
+    it('does not duplicate a step that the spilled write already saved to the Flow', () => {
+      // After a successful spilled write the only base available is the Flow as it is now.
+      const presentation = buildFlowChangePresentation(
+        {
+          state: 'output-available',
+          input: {
+            flowId: 'flow-1',
+            operations: [
+              { op: 'add_node', node: { id: 'review', blockType: 'agent', label: 'Review' } },
+              { op: 'add_edge', edge: { id: 'start-review', source: 'start', target: 'review' } },
+            ],
+          },
+          output: SPILL,
+        },
+        {
+          baseFlow: {
+            id: 'flow-1',
+            name: 'Release train',
+            graph: {
+              nodes: [
+                { id: 'start', blockType: 'manual_trigger', label: 'Start' },
+                { id: 'review', blockType: 'agent', label: 'Review' },
+              ],
+              edges: [{ id: 'start-review', source: 'start', target: 'review' }],
+            },
+            versionNumber: 9,
+          },
+        },
+      );
+
+      expect(presentation.phase).toBe('unread');
+      expect(presentation.graph?.nodes.map((node) => node.id)).toEqual(['start', 'review']);
+      expect(presentation.graph?.edges.map((edge) => edge.id)).toEqual(['start-review']);
+      expect(presentation.versionNumber).toBeUndefined();
+      expect(presentation.name).toBe('Release train');
+    });
+
+    it('does not invent a Flow id for a spilled create', () => {
+      const presentation = buildFlowChangePresentation({
+        state: 'output-available',
+        input: { name: 'Release train', operations: input.operations },
+        output: SPILL,
+      });
+
+      expect(presentation.phase).toBe('unread');
+      expect(presentation.mode).toBe('create');
+      expect(presentation.flowId).toBeUndefined();
+    });
+  });
 });

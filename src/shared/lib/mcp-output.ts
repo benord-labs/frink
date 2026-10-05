@@ -123,3 +123,24 @@ function tryParseJson(text: string): unknown {
     return text;
   }
 }
+
+/** Absolute POSIX, Windows drive or Windows UNC path of the file the CLI wrote the result to. */
+const SAVED_FILE = String.raw`(?:\/|[A-Za-z]:[\\/]|\\\\[^\\\s][^\\\n]*\\[^\\\n]+\\)\S`;
+
+/**
+ * Whole-note shape the Claude CLI leaves in place of a result above its token cap: its prefix,
+ * a saved-file path, and the clause the CLI always writes after that path.
+ */
+const SPILL_MARKERS: readonly RegExp[] = [
+  new RegExp(
+    String.raw`^Error: result \([^)]*\) exceeds maximum allowed tokens\. Output has been saved to ${SAVED_FILE}[^\n]*?\. Format: `,
+  ),
+  new RegExp(
+    String.raw`^(?:<persisted-output>\s*)?Output too large \([^)]*\)\. Full output saved to:\s*${SAVED_FILE}[^\n]*\n\s*Preview \(`,
+  ),
+];
+
+export function isSpilledToolResultText(text: string): boolean {
+  const note = text.trimStart();
+  return SPILL_MARKERS.some((marker) => marker.test(note));
+}

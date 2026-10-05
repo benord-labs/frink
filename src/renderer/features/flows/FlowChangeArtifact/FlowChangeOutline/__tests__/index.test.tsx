@@ -125,6 +125,7 @@ const OUTLINE: FlowChangeOutlineModel = {
   synopsis: 'Run manually → Review changes',
   totalNodeCount: 4,
   branchCount: 2,
+  resultUnread: false,
 };
 
 describe('FlowChangeOutline', () => {
@@ -248,5 +249,29 @@ describe('FlowChangeOutline', () => {
     expect(screen.getByRole('heading', { name: 'Removed from Flow' })).toBeTruthy();
     expect(screen.queryByRole('heading', { name: 'Needs attention' })).toBeNull();
     expect(screen.getByText('Removed from this Flow')).toBeTruthy();
+  });
+
+  it('lists changes from an unread result as requests rather than problems', () => {
+    render(
+      <FlowChangeOutline
+        outline={{
+          ...OUTLINE,
+          heading: 'Requested changes',
+          scope: 'changes-only',
+          routes: [],
+          totalNodeCount: 0,
+          branchCount: 0,
+          resultUnread: true,
+          unplacedChanges: [
+            change(6, { action: 'remove', kind: 'node', status: 'unknown', label: 'Retired task' }),
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByRole('heading', { name: 'Requested changes', level: 5 })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Needs attention' })).toBeNull();
+    expect(screen.getByText('Requested: removal from this Flow')).toBeTruthy();
+    expect(screen.queryByText(/Could not confirm/)).toBeNull();
   });
 });
