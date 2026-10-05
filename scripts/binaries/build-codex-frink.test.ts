@@ -1,8 +1,13 @@
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import pinnedManifestJson from '../../patches/codex/manifest.json';
 import threadItems from '../../patches/codex/thread-item-variants.json';
 import { FRINK_HOST_TOOL_PERMISSION_VERSION } from '../../src/main/lib/agent-runner/codex/codex-host-permissions';
 import {
   assertHandshakeResult,
+  assertPinnedPatch,
   assertMcpReplaceConsumed,
   assertPinnedThreadItems,
   codexVersionStamp,
@@ -15,6 +20,8 @@ import {
   validateManifest,
   validateRemoteTagOutput,
 } from './build-codex-frink.mjs';
+
+const ROOT_DIR = path.resolve(__dirname, '..', '..');
 
 const manifest = {
   version: 'rust-v0.155.1',
@@ -82,6 +89,45 @@ describe('codexVersionStamp', () => {
     expect(codexVersionStamp({ ...manifest, patchSha256: 'a'.repeat(64) })).toBe(
       'rust-v0.155.1+frink.aaaaaaaaaaaa',
     );
+  });
+});
+
+describe('pinned Codex patch bytes', () => {
+  const pinnedManifest = validateManifest(pinnedManifestJson);
+  const patchRelPath = `patches/codex/${pinnedManifest.patch}`;
+  const patchBytes = fs.readFileSync(path.join(ROOT_DIR, patchRelPath));
+
+  // The hash checks below see this OS's checkout, which never converts on macOS/Linux; only the
+  // attribute proves a Windows checkout (core.autocrlf=true) leaves the bytes alone.
+  it('is checked out without line-ending conversion on every OS', () => {
+    const attr = execFileSync('git', ['check-attr', 'text', '--', patchRelPath], {
+      cwd: ROOT_DIR,
+      encoding: 'utf8',
+    });
+    expect(attr.trim()).toBe(`${patchRelPath}: text: unset`);
+  });
+
+  it('accepts the committed LF patch the manifest pins', () => {
+    expect(patchBytes.includes(0x0d)).toBe(false);
+    expect(() => assertPinnedPatch(pinnedManifest, patchBytes)).not.toThrow();
+  });
+
+  it('names a CRLF checkout and its remedy instead of a bare mismatch', () => {
+    const crlf = Buffer.from(patchBytes.toString('utf8').replace(/\n/g, '\r\n'), 'utf8');
+    // The remedy must restore from HEAD: after `git rm --cached` the index is empty, so a plain
+    // `git checkout --` has nothing to restore and leaves the CRLF bytes plus a staged deletion.
+    expect(() => assertPinnedPatch(pinnedManifest, crlf)).toThrow(
+      'git rm -rq --cached patches/codex && git checkout HEAD -- patches/codex',
+    );
+    expect(() => assertPinnedPatch(pinnedManifest, crlf)).toThrow(/SHA-256 mismatch.*CRLF/);
+  });
+
+  it('rejects other altered bytes without blaming line endings', () => {
+    const altered = Buffer.concat([patchBytes, Buffer.from('\n')]);
+    expect(() => assertPinnedPatch(pinnedManifest, altered)).toThrow(
+      'Codex provider patch SHA-256 mismatch',
+    );
+    expect(() => assertPinnedPatch(pinnedManifest, altered)).not.toThrow(/CRLF/);
   });
 });
 
