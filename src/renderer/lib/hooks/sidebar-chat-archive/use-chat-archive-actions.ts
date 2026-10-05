@@ -3,15 +3,13 @@ import { toast } from 'sonner';
 import { extractErrorMessage } from '../../utils/error-message/extract-error-message';
 import { useWindowEvent } from '../use-window-event';
 
-type DeferToTaskAwareDialog = (chatId: string, operation: 'archive') => Promise<boolean>;
-type ArchiveSingleChat = (chatId: string, options?: { killTerminals?: boolean }) => Promise<void>;
+type ArchiveSingleChat = (chatId: string) => Promise<void>;
 
 type UseArchiveWindowEventsOptions = {
   /** Active split pane's chat, else the selected chat. The new-chat pane's sentinel is not a chat. */
   focusedChatId: string | null;
   /** Work Queue / Flows / Settings cover the chat but keep its selection. */
   isChatCovered: boolean;
-  deferToTaskAwareDialog: DeferToTaskAwareDialog;
   archiveSingleChat: ArchiveSingleChat;
   restoreChat: (chatId: string) => Promise<void>;
 };
@@ -21,19 +19,17 @@ const reportArchiveFailure = (reason: string | null) =>
     description: reason ?? 'Unable to archive this chat right now.',
   });
 
-/** Row-action archive: hands off to the task-aware dialog when live linked tasks would be affected. */
-export function useTaskAwareArchive(
-  deferToTaskAwareDialog: DeferToTaskAwareDialog,
+/** Row-action archive; the main process stops the chat's linked task or refuses the archive. */
+export function useChatArchive(
   archiveSingleChat: ArchiveSingleChat,
 ): (chatId: string) => Promise<void> {
   return useCallback(
     async (chatId: string) => {
-      if (await deferToTaskAwareDialog(chatId, 'archive')) return;
       await archiveSingleChat(chatId).catch((error) =>
         reportArchiveFailure(extractErrorMessage(error)),
       );
     },
-    [deferToTaskAwareDialog, archiveSingleChat],
+    [archiveSingleChat],
   );
 }
 
@@ -46,9 +42,9 @@ export function useArchiveWindowEvents(options: UseArchiveWindowEventsOptions): 
     latest.current = options;
   });
 
-  // TaskAcceptBar's "Complete & Archive": its task is already completed, so this skips the
-  // task-aware path; archiveSingleChat owns the pane-clear + deselect that closes the chat.
+  // TaskAcceptBar's "Complete & Archive"; archiveSingleChat owns the pane-clear + deselect.
   useWindowEvent('sidebar:archive-chat', (event) => {
+    // SAFETY: this event is only ever dispatched as a CustomEvent whose detail carries `chatId`.
     const chatId = (event as CustomEvent<{ chatId?: string }>).detail?.chatId;
     if (!chatId) return;
     void latest.current
@@ -62,10 +58,8 @@ export function useArchiveWindowEvents(options: UseArchiveWindowEventsOptions): 
   const archiveFromHotkey = useCallback(async (chatId: string) => {
     if (inFlightRef.current) return;
     inFlightRef.current = true;
-    const { deferToTaskAwareDialog, archiveSingleChat, restoreChat } = latest.current;
+    const { archiveSingleChat, restoreChat } = latest.current;
     try {
-      // Same rule as the row action: a chat whose linked task is still working asks first.
-      if (await deferToTaskAwareDialog(chatId, 'archive')) return;
       await archiveSingleChat(chatId);
       toast.success('Chat archived', {
         action: { label: 'Restore', onClick: () => void restoreChat(chatId) },

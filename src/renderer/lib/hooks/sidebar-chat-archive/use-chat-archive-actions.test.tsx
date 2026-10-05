@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
-import { cleanup, render, waitFor } from '@testing-library/react';
+import { cleanup, render, renderHook, waitFor } from '@testing-library/react';
 import { toast } from 'sonner';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { useArchiveWindowEvents } from './use-chat-archive-actions';
+import { useArchiveWindowEvents, useChatArchive } from './use-chat-archive-actions';
 
 type ProbeProps = {
   focusedChatId: string | null;
@@ -17,7 +17,6 @@ function Probe({ focusedChatId, isChatCovered, archiveSingleChat, onHandler }: P
     useArchiveWindowEvents({
       focusedChatId,
       isChatCovered,
-      deferToTaskAwareDialog: async () => false,
       archiveSingleChat,
       restoreChat: async () => {},
     }),
@@ -81,5 +80,28 @@ describe('useArchiveWindowEvents', () => {
     handlers[0]?.();
 
     await waitFor(() => expect(archiveSingleChat).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe('useChatArchive', () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it('archives straight away and toasts the reason when archive refuses', async () => {
+    const errorSpy = vi.spyOn(toast, 'error').mockReturnValue('toast-id');
+    const archiveSingleChat = vi.fn(async () => {});
+    archiveSingleChat.mockRejectedValueOnce(
+      new Error("Could not stop this chat's task, so the chat was not archived."),
+    );
+    const { result } = renderHook(() => useChatArchive(archiveSingleChat));
+
+    await result.current('chat-a');
+
+    expect(archiveSingleChat).toHaveBeenCalledWith('chat-a');
+    expect(errorSpy).toHaveBeenCalledWith('Failed to archive chat', {
+      description: "Could not stop this chat's task, so the chat was not archived.",
+    });
   });
 });

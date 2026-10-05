@@ -69,6 +69,38 @@ describe('carryOnFlowTask', () => {
     expect(await taskStatus(taskId)).toBe('pending');
   });
 
+  it('refuses to carry on into an archived chat, linked by result or by the chat anchor', async () => {
+    const byResult = await seedTask('session-1');
+    await db
+      .update(tasks)
+      .set({ result: { subChatId: 'sub-1', chatId: 'chat-1' } })
+      .where(eq(tasks.id, byResult));
+    await db.update(chats).set({ archivedAt: new Date() }).where(eq(chats.id, 'chat-1'));
+    const byAnchor = await seedTask('session-2');
+    await db
+      .update(chats)
+      .set({ taskId: byAnchor, archivedAt: new Date() })
+      .where(eq(chats.id, 'chat-2'));
+
+    for (const taskId of [byResult, byAnchor]) {
+      await expect(carryOnFlowTask(db, taskId)).resolves.toEqual({
+        ok: false,
+        reason: 'chat-archived',
+      });
+      expect(await taskStatus(taskId)).toBe('failed');
+    }
+  });
+
+  it('carries on when the linked chat is live', async () => {
+    const taskId = await seedTask('session-1');
+    await db
+      .update(tasks)
+      .set({ result: { subChatId: 'sub-1', chatId: 'chat-1' } })
+      .where(eq(tasks.id, taskId));
+
+    await expect(carryOnFlowTask(db, taskId)).resolves.toMatchObject({ ok: true });
+  });
+
   it('returns not-found for a missing task', async () => {
     await expect(carryOnFlowTask(db, 'missing')).resolves.toEqual({
       ok: false,

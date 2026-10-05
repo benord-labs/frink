@@ -103,6 +103,11 @@ describe('mobile task actions', () => {
     await expect(runMobileTaskAction({ type: 'continueTask', id: 'failed' })).rejects.toMatchObject(
       { status: 409, message: expect.stringContaining('can’t carry on where it stopped') },
     );
+
+    fixture.carryOn.mockResolvedValueOnce({ ok: false, reason: 'chat-archived' });
+    await expect(runMobileTaskAction({ type: 'continueTask', id: 'failed' })).rejects.toMatchObject(
+      { status: 409, message: expect.stringContaining('chat is archived. Restore it') },
+    );
   });
 
   it('starts a waiting task once, as an agent, through the task executor', async () => {

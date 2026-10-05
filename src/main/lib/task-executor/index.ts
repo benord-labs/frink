@@ -68,6 +68,7 @@ import {
   resolveTaskAccountType,
   type TaskExecutionAccountType,
 } from './execution-account';
+import { cancelIfChatArchived, unparkRetriedFlowRun } from './pre-dispatch-guards';
 import { extractTrailingUserReply } from './trailing-reply';
 import { createWorktreeForBranch, createWorktreeForChat } from '../git/worktree';
 import { createWorktreeWithMergedBases } from '../git/worktree-converge';
@@ -899,34 +900,6 @@ async function executeStartTaskFallback(task: DbTask): Promise<void> {
 }
 
 /**
- * Un-fail a retried flow task's node_run/flow_run so the watcher accepts the agent's next `done`
- * (a terminal run would discard it). Non-batch only — resumeFailedFlowInPlace refuses batch runs
- * whose stage-run wasn't pre-opened, deliberately-cancelled runs (no restart marker), fan-out
- * lanes. Returns whether the run is now accepting the agent's `done`: on `false` the caller must
- * NOT dispatch — the turn would stream into a terminal run and stall silently. Never throws.
- */
-async function unparkRetriedFlowRun(taskId: string, flowRunId: string): Promise<boolean> {
-  try {
-    const { resumeFailedFlowInPlace } = await import('../flows/resume');
-    const resumed = await resumeFailedFlowInPlace(flowRunId, taskId);
-    if (!resumed) {
-      log.warn('[TaskExecutor] resumeFailedFlowInPlace did not unpark the flow run', {
-        taskId,
-        flowRunId,
-      });
-    }
-    return resumed;
-  } catch (error) {
-    log.warn('[TaskExecutor] resumeFailedFlowInPlace failed', {
-      taskId,
-      flowRunId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return false;
-  }
-}
-
-/**
  * Handle a claimed task - create chat and notify renderer
  * Task stays 'running' - renderer will update status when done
  */
@@ -962,6 +935,7 @@ async function handleClaimedTask(task: DbTask): Promise<void> {
     } = await createChatForTask(task);
     // Cancelled while being prepared: there was no session to abort, so don't start one.
     if ((await getTaskById(getDatabase(), task.id))?.status !== 'running') return;
+    if (await cancelIfChatArchived(task, chatId)) return;
 
     // Unpark keys on the tasks.retry claim ONLY — a deliberate re-dispatch (isRetry may be true)
     // has already flipped its run back to `running` before dispatch, so unparking would refuse
