@@ -161,23 +161,21 @@ describe('classifyHook', () => {
     ['statusMessage', 5, 'malformed', 'its statusMessage is not text'],
     ['args', '--fix', 'malformed', 'its args are not a list of strings'],
     ['args', ['--fix', 1], 'malformed', 'its args are not a list of strings'],
-    ['retries', false, 'field-unknown', 'it sets "retries", which Frink does not know'],
-    ['constructor', 'x', 'field-unknown', 'it sets "constructor", which Frink does not know'],
   ])('decides the command field %s = %s', (field, value, code, text = '') => {
     expect(classify(command({ [field]: value })).binding).toEqual(
       code ? refusedFor(code, text) : { status: 'supported', ignored: [] },
     );
   });
 
-  it('names every unknown handler or group key instead of dropping it', () => {
-    const start = 'The Stop hook "lint-all" cannot run in Frink:';
-    expect(classify(command({ retries: 2 }), 'Stop', ['description', 'note']).binding).toEqual({
-      status: 'refused',
-      refusals: [
-        `${start} its matcher group sets "description", which Frink does not know.`,
-        `${start} its matcher group sets "note", which Frink does not know.`,
-        `${start} it sets "retries", which Frink does not know.`,
-      ].map((detail) => ({ code: 'field-unknown', detail })),
+  it('runs a hook with unknown handler or group keys and lists them as ignored, as Claude does', () => {
+    const reason = 'Claude does not define it and runs the hook without it';
+    const handler = command({ retries: 2, constructor: 'x' });
+    expect(classify(handler, 'Stop', ['description', 'note']).binding).toEqual({
+      status: 'supported',
+      ignored: ['description', 'note', 'retries', 'constructor'].map((field) => ({
+        field,
+        reason,
+      })),
     });
   });
 

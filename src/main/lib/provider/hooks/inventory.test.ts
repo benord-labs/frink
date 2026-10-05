@@ -234,7 +234,7 @@ describe('readHookInventory', () => {
       'project:PreToolUse:0:1': ['handler-type'],
       'project:PreToolUse:0:2': ['malformed'],
       'project:PreToolUse:0:3': ['malformed'],
-      'project:PreToolUse:2:0': ['field-unknown'],
+      'project:PreToolUse:2:0': 'supported',
       'project:Invented:0:0': ['event-unsupported'],
       'project:SessionStart:0:0': ['handler-type'],
       'project:SessionStart:0:1': ['provider-variable'],
