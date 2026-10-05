@@ -2,7 +2,7 @@ import { TRPCError } from '@trpc/server';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 import type { FlowGraph } from '../../../shared/lib/validate-flow-graph';
-import { RESTART_INTERRUPTION_REASON } from '../../../shared/types/flow';
+import { type NodeOutput, RESTART_INTERRUPTION_REASON } from '../../../shared/types/flow';
 import type { FlowResumeSnapshot } from '../../../shared/types/flow-run/resume';
 import { getFlowRun, setFlowRunStatus } from '../db/repos/flow-runs';
 import { createNodeRun, getNodeRun, setNodeRunStatus } from '../db/repos/node-runs';
@@ -14,7 +14,14 @@ import {
   updateTaskStatus,
 } from '../db/repos/tasks';
 import { abandonRestartInterruption } from '../db/repos/task-parking/abandon-marker';
-import { batchStageRuns, batchStages, flowRunAdmissions, flowRuns, tasks } from '../db/schema';
+import {
+  batchStageRuns,
+  batchStages,
+  flowRunAdmissions,
+  flowRuns,
+  type NewNodeRun,
+  tasks,
+} from '../db/schema';
 import { seedActiveAdmission, seedFlowRun } from '../db/test-utils/flow-fixtures';
 import { freshDb, type TestDb } from '../db/test-utils/fresh-db';
 import { unparkFlowInPlace } from '../tasks';
@@ -52,6 +59,7 @@ vi.mock('./admission/runtime', async (importOriginal) => ({
 import { _setFlowAdmissionControllerForTests } from './admission/runtime';
 import { advanceFlowRun, dispatchAndAdvance, loadRunContext } from './advance';
 import {
+  approvedOutputFrom,
   isRunRestartInterrupted,
   rerunFlowRunFromInterruption,
   resumeFailedFlowInPlace,
@@ -68,6 +76,180 @@ const GRAPH: FlowGraph = {
   ],
   edges: [{ id: 'e1', source: 't', target: 'a' }],
 };
+const SIGNALLED_PARK: NodeOutput = {
+  status: 'awaiting_input',
+  outputs: {
+    summary: 'Ready to push',
+    details: 'Two files changed',
+    verification: { shouldProceed: true },
+    taskId: 'task-1',
+  },
+  artifacts: [{ type: 'log', uri: 'out.md' }],
+  durationMs: 4200,
+  signal: 'awaiting_input',
+};
+const APPROVED_ALONE: NodeOutput = {
+  status: 'completed',
+  outputs: { approved: true },
+  artifacts: [],
+  durationMs: 0,
+};
+
+describe('approvedOutputFrom', () => {
+  const parked = (outputs: NodeOutput['outputs'], signalled = true) => ({
+    outputs,
+    artifacts: SIGNALLED_PARK.artifacts,
+    durationMs: 4200,
+    signalled,
+  });
+
+  it('keeps what a signalled park stored and marks it approved', () => {
+    expect(approvedOutputFrom(parked(SIGNALLED_PARK.outputs))).toEqual({
+      status: 'completed',
+      outputs: { ...SIGNALLED_PARK.outputs, approved: true },
+      artifacts: SIGNALLED_PARK.artifacts,
+      durationMs: 4200,
+    });
+  });
+
+  // The stored row drops an absent `details`; the bag handed downstream must agree with it.
+  it('adds no summary or details key the signalled park did not store', () => {
+    const { details: _details, ...outputs } = SIGNALLED_PARK.outputs;
+    expect(Object.keys(approvedOutputFrom(parked(outputs)).outputs)).toEqual([
+      'summary',
+      'verification',
+      'taskId',
+      'approved',
+    ]);
+  });
+
+  it('leaves the needs-attention marker behind', () => {
+    const outputs = { ...SIGNALLED_PARK.outputs, taskStatus: 'needs_attention' };
+    expect(approvedOutputFrom(parked(outputs)).outputs).not.toHaveProperty('taskStatus');
+  });
+
+  it('does not pass a pause message on as the result of a park with no agent signal', () => {
+    const outputs = { summary: 'Paused by user', details: 'Paused', taskId: 'task-1' };
+    expect(approvedOutputFrom(parked(outputs, false)).outputs).toEqual({
+      taskId: 'task-1',
+      approved: true,
+    });
+  });
+
+  it('approves a bag that says it was not approved', () => {
+    expect(approvedOutputFrom(parked({ approved: false })).outputs).toEqual({ approved: true });
+  });
+});
+
+describe('resumeFlowRun — approve keeps the parked output (sc-3255)', () => {
+  let db: TestDb;
+
+  beforeEach(() => {
+    db = freshDb();
+    holder.db = db;
+    vi.mocked(loadRunContext).mockReset();
+    vi.mocked(loadRunContext, { partial: true }).mockResolvedValue({ graph: GRAPH });
+    vi.mocked(advanceFlowRun).mockReset();
+    setFlowAdmissionLifecycleHooks({
+      reconcile: vi.fn(async () => {}),
+      requestRelease: vi.fn(async () => {}),
+    });
+  });
+
+  async function seedParkedNode(nodeOutput?: NewNodeRun['nodeOutput']) {
+    const { flowRunId } = await seedFlowRun(db, GRAPH);
+    await setFlowRunStatus(db, flowRunId, 'paused');
+    const node = await createNodeRun(db, {
+      flowRunId,
+      nodeId: 'a',
+      blockType: 'agent',
+      status: 'awaiting_input',
+      nodeOutput,
+    });
+    seedActiveAdmission(db, flowRunId);
+    return { flowRunId, nodeRunId: node.id };
+  }
+
+  const advancedWith = () => vi.mocked(advanceFlowRun).mock.calls[0][2];
+
+  it('advances with the summary, details and verification the node parked with', async () => {
+    const { flowRunId, nodeRunId } = await seedParkedNode(SIGNALLED_PARK);
+
+    await resumeFlowRun(flowRunId, 'approve', nodeRunId);
+
+    expect(advancedWith()).toEqual({
+      status: 'completed',
+      outputs: { ...SIGNALLED_PARK.outputs, approved: true },
+      artifacts: SIGNALLED_PARK.artifacts,
+      durationMs: 4200,
+    });
+  });
+
+  // An approval block parks with no output and is documented as emitting nothing but `approved`.
+  it.each([
+    ['no stored output', undefined],
+    ['a stored output that is not an object', 'oops'],
+    ['a stored output with no bag', { status: 'awaiting_input', outputs: null }],
+  ])('advances with approved alone for %s', async (_label, stored) => {
+    const { flowRunId, nodeRunId } = await seedParkedNode(stored);
+
+    await resumeFlowRun(flowRunId, 'approve', nodeRunId);
+
+    expect(advancedWith()).toEqual(APPROVED_ALONE);
+  });
+
+  it('still skips with an empty bag', async () => {
+    const { flowRunId, nodeRunId } = await seedParkedNode(SIGNALLED_PARK);
+
+    await resumeFlowRun(flowRunId, 'skip', nodeRunId);
+
+    expect(advancedWith()).toEqual({
+      status: 'skipped',
+      outputs: {},
+      artifacts: [],
+      durationMs: 0,
+    });
+  });
+
+  it('merges the bag of a re-park that landed while the resume was loading', async () => {
+    const { flowRunId, nodeRunId } = await seedParkedNode(SIGNALLED_PARK);
+    vi.mocked(loadRunContext, { partial: true }).mockImplementationOnce(async () => {
+      await setNodeRunStatus(db, nodeRunId, 'awaiting_input', {
+        nodeOutput: {
+          ...SIGNALLED_PARK,
+          outputs: { ...SIGNALLED_PARK.outputs, summary: 'Second question' },
+        },
+      });
+      return { graph: GRAPH };
+    });
+
+    await resumeFlowRun(flowRunId, 'approve', nodeRunId);
+
+    expect(advancedWith().outputs.summary).toBe('Second question');
+  });
+
+  it('merges the reviewed bag when the approve carries a matching snapshot', async () => {
+    const { flowRunId, nodeRunId } = await seedParkedNode(SIGNALLED_PARK);
+    const snapshot: FlowResumeSnapshot = {
+      status: 'awaiting_input',
+      nodeOutput: SIGNALLED_PARK,
+      startedAt: null,
+      completedAt: null,
+      attemptIds: [nodeRunId],
+    };
+
+    await resumeFlowRun(flowRunId, 'approve', nodeRunId, snapshot);
+
+    expect(advanceFlowRun).toHaveBeenCalledWith(
+      flowRunId,
+      nodeRunId,
+      expect.objectContaining({ outputs: { ...SIGNALLED_PARK.outputs, approved: true } }),
+      undefined,
+      snapshot,
+    );
+  });
+});
+
 describe('resumeFlowRun — admission lease', () => {
   let db: TestDb;
 
