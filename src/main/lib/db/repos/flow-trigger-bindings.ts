@@ -164,3 +164,12 @@ export async function upsertScheduleBindingForFlow(
     { behavior: 'immediate' },
   );
 }
+
+export async function getById(db: Db, id: string): Promise<FlowTriggerBinding | null> {
+  const [row] = await db
+    .select()
+    .from(flowTriggerBindings)
+    .where(eq(flowTriggerBindings.id, id))
+    .limit(1);
+  return row ?? null;
+}
