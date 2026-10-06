@@ -9,14 +9,14 @@
 </p>
 
 <p align="center">
-  <strong>Frink turns a ticket into a PR while you're away.</strong><br/>
-  Build the loop once as a Flow. It runs on your own Claude Code or Codex login.
+  <strong>Build your agent workflow once. Frink runs it every time.</strong><br/>
+  A ticket arrives, an error fires or the clock hits 9am: your Flow runs the steps you chose and stops where it needs you.
 </p>
 
 <p align="center">
-  Start a Flow from a schedule, a Linear or Shortcut ticket, a Sentry error, a PostHog event or any webhook.<br/>
+  Triggers from Linear, Jira, Shortcut, ClickUp, Sentry, PostHog, Vercel and more, plus any webhook or a schedule.<br/>
   Stuck agents wait in the Work Queue for your yes, on your Mac or from your iPhone (beta).<br/>
-  It runs on your machine, with no Frink account.
+  It runs on your machine with your own Claude Code or Codex login. No Frink account.
 </p>
 
 <p align="center">
