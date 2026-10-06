@@ -35,7 +35,8 @@ import {
 } from './graph';
 import { withSlot } from './scheduler';
 import {
-  insertNodeRunIfFenced,
+  dispatchCeilingFailure,
+  insertNodeRunUnderCeiling,
   type RunFence,
   readRunFence,
   runTransition,
@@ -410,22 +411,14 @@ export async function dispatchAndAdvance(
 
   // The insert and the abort registration share one tick: a Cancel that commits first makes the
   // insert decline, and one that commits later finds this controller to abort.
-  const inserted = runTransition(db, () =>
-    insertNodeRunIfFenced(
-      db,
-      fence,
-      {
-        nodeId: node.id,
-        blockType: node.blockType,
-        status: 'running',
-        startedAt: new Date(),
-        laneIndex: options?.laneIndex,
-        parentFanOutNodeRunId: options?.parentFanOutNodeRunId,
-      },
-      options?.supersedesNodeRunId,
-    ),
-  );
-  if (!inserted) return;
+  const admitted = runTransition(db, () => insertNodeRunUnderCeiling(db, fence, node, options));
+  if (!admitted) return;
+  const inserted = admitted.row;
+  // Kept and failed rather than skipped: the over-limit row is the anchor a Retry resumes from.
+  if (admitted.overLimit) {
+    await advanceFlowRun(flowRunId, inserted.id, dispatchCeilingFailure(node));
+    return;
+  }
   const controller = new AbortController();
   registerNodeAbort(flowRunId, controller);
 
