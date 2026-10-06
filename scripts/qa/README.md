@@ -16,8 +16,17 @@ bash scripts/qa/build.sh && bash scripts/qa/seed.sh && bash scripts/qa/boot.sh
 - `boot.sh` — takes the run lock, launches the PREBUILT app (`out-qa/main/index.js` directly) on an
   isolated port/profile — fails loudly if `build.sh` hasn't run yet.
 - `seed-db.ts` / `fixtures/` — the deterministic fixture workspace (`fixtures/index.ts` seeds it).
+- The seeded Claude account (`QA Claude`) resolves through an empty marker file that `seed-db.ts` writes
+  into the rig home, so the composer stays available without a Claude login on the machine. Because it
+  always resolves, `boot.sh` runs the scripted fake `claude` by default: sends cost nothing. To run the
+  real CLI on your own Claude login (and spend its quota), boot with `QA_REAL_CLAUDE=1 bash
+  scripts/qa/boot.sh`. Either way, the first time the account resolves the app reads your
+  `~/.claude.json` and stores that email on the fixture row, where Settings → Models shows it — keep
+  that page out of screenshots you share.
 - `use-fake-claude.sh` / `fake-bin/` — swaps the QA build's `claude` for a scripted fake that speaks the
-  SDK protocol and answers fixed requests with no model call. Run after `build.sh`.
+  SDK protocol and answers fixed requests with no model call. `boot.sh` applies it on every boot.
+- `use-real-claude.sh` — the reverse: links the checkout's real bundled CLIs back in. `boot.sh` runs it
+  under `QA_REAL_CLAUDE=1`, and it refuses when the checkout has no bundled `claude`.
 - `fixtures/background-work.ts` / `wake-background-chats.ts` — three seeded QA Fixture chats (long tests,
   a Workflow, three commands). After boot on the fake, `bun scripts/qa/wake-background-chats.ts` sends
   each its request so it holds live background work; that state is in memory, so wake after every boot.
