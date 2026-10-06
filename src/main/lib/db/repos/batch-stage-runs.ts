@@ -1,4 +1,6 @@
 import { and, asc, eq, inArray } from 'drizzle-orm';
+import { z } from 'zod';
+import type { RunAttachment } from '../../../../shared/types/run-attachment';
 import type { getDatabase } from '../index';
 import { type BatchStageRun, batchStageRuns, type NewBatchStageRun } from '../schema';
 
@@ -35,6 +37,59 @@ export async function listRunsForStage(db: Db, stageId: string): Promise<BatchSt
 export async function getBatchStageRun(db: Db, id: string): Promise<BatchStageRun | null> {
   const [row] = await db.select().from(batchStageRuns).where(eq(batchStageRuns.id, id)).limit(1);
   return row ?? null;
+}
+
+/** A run's trigger_context; only the attachment list is typed, other keys pass through. */
+export const stageRunTriggerContextSchema = z
+  .looseObject({
+    attachments: z
+      .array(
+        z.looseObject({
+          url: z.string(),
+          type: z.string(),
+          label: z.string().optional(),
+          mimeType: z.string().optional(),
+        }),
+      )
+      .default([]),
+  })
+  .nullable()
+  .transform((tc) => tc ?? { attachments: [] });
+
+export type StageRunTriggerContext = z.infer<typeof stageRunTriggerContextSchema>;
+
+export type AppendAttachmentResult =
+  | { ok: true; triggerContext: StageRunTriggerContext }
+  | { ok: false; reason: 'not_found' | 'cap' | 'invalid' };
+
+/**
+ * Append one attachment under `max` in a single transaction, building on the
+ * current trigger_context so concurrent uploads and edits are never lost.
+ */
+export function appendStageRunAttachment(
+  db: Db,
+  runId: string,
+  attachment: RunAttachment,
+  max: number,
+): AppendAttachmentResult {
+  return db.transaction((tx): AppendAttachmentResult => {
+    const row = tx
+      .select({ triggerContext: batchStageRuns.triggerContext })
+      .from(batchStageRuns)
+      .where(eq(batchStageRuns.id, runId))
+      .get();
+    if (!row) return { ok: false, reason: 'not_found' };
+    // Refuse rather than rewrite a context we cannot read: that would drop its attachments.
+    const parsed = stageRunTriggerContextSchema.safeParse(row.triggerContext);
+    if (!parsed.success) return { ok: false, reason: 'invalid' };
+    if (parsed.data.attachments.length >= max) return { ok: false, reason: 'cap' };
+    const next = { ...parsed.data, attachments: [...parsed.data.attachments, attachment] };
+    tx.update(batchStageRuns)
+      .set({ triggerContext: next })
+      .where(eq(batchStageRuns.id, runId))
+      .run();
+    return { ok: true, triggerContext: next };
+  });
 }
 
 export async function setStageRunStatus(
