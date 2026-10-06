@@ -48,6 +48,7 @@ import { discoverCustomNodes } from '../../custom-nodes/discovery';
 import { listPluginNodes } from '../../integrations/plugin-node-derivation';
 import { getDatabase } from '../../db';
 import { getProjectById } from '../../db/repos/projects';
+import { type BatchStatusBuckets, bucketBatchStatusCounts } from '../../flows/batch';
 import {
   addStageRuns,
   type BatchRunRow,
@@ -625,7 +626,7 @@ export const FLOWS_TOOLS = [
   {
     name: 'frink_flows_get_batch',
     description:
-      'Inspect batch/run execution state for a flow. Three modes: (1) omit batchId — list the flow’s recent runs (status, batch_id, timing); (2) pass batchId — batch summary with completed/failed/active counts + per-run status (optional status filter); (3) pass batchId with include:["stages"] — the staged-batch stage breakdown (per-stage run counts + dependencies), for monitoring frink_flows_define_stages. Rate limit: 40 calls per chat session.',
+      'Inspect batch/run execution state for a flow. Three modes: (1) omit batchId — list the flow’s recent runs (status, batch_id, timing); (2) pass batchId — batch summary with completed/failed/active counts + per-run status (optional status filter). The counts and batch_total always cover every run in the batch, whatever limit and status are; total is the number of runs matching the status filter, and runs is one page of them; (3) pass batchId with include:["stages"] — the staged-batch stage breakdown (per-stage run counts + dependencies), for monitoring frink_flows_define_stages. Rate limit: 40 calls per chat session.',
     annotations: { readOnlyHint: true },
     inputSchema: {
       type: 'object' as const,
@@ -1629,28 +1630,26 @@ async function handleGetBatch(args: Record<string, unknown>): Promise<McpToolRes
 
   let runs: BatchRunRow[];
   let total: number;
+  let counts: BatchStatusBuckets;
   try {
     // listFlowBatchRuns is a plain DB read — an unknown batchId yields an empty result, never a throw.
     const result = await listFlowBatchRuns(flowId, batchId, { status, limit });
     runs = result.runs;
     total = result.total;
+    counts = bucketBatchStatusCounts(result.statusCounts);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return toolResult(`Failed to fetch batch: ${message}`, true);
   }
 
-  const statusCounts = runs.reduce<Record<string, number>>((acc, r) => {
-    acc[r.status] = (acc[r.status] ?? 0) + 1;
-    return acc;
-  }, {});
-
   const data = {
     flowId,
     batchId,
     total,
-    completed: statusCounts.completed ?? 0,
-    failed: (statusCounts.failed ?? 0) + (statusCounts.cancelled ?? 0),
-    active: (statusCounts.running ?? 0) + (statusCounts.paused ?? 0) + (statusCounts.pending ?? 0),
+    batch_total: counts.total,
+    completed: counts.completed,
+    failed: counts.failed,
+    active: counts.active,
     runs: runs.map((r) => ({
       id: r.id,
       status: r.status,

@@ -162,7 +162,11 @@ describe('frink_flows_get_batch (dispatch routing)', () => {
     mockListFlowBatchRuns.mockReset();
     mockListFlowBatchStages.mockReset();
     mockListFlowRuns.mockResolvedValue([makeDbFlowRun()]);
-    mockListFlowBatchRuns.mockResolvedValue({ runs: [makeBatchRunRow()], total: 1 });
+    mockListFlowBatchRuns.mockResolvedValue({
+      runs: [makeBatchRunRow()],
+      total: 1,
+      statusCounts: { running: 1 },
+    });
     mockListFlowBatchStages.mockResolvedValue({ stages: [] });
   });
 
@@ -223,6 +227,7 @@ describe('frink_flows_get_batch', () => {
         makeBatchRunRow({ id: RUN_ID_2, status: 'failed' }),
       ],
       total: 2,
+      statusCounts: { completed: 1, failed: 1 },
     });
 
     const result = await callTool('frink_flows_get_batch', {
@@ -249,6 +254,7 @@ describe('frink_flows_get_batch', () => {
         makeBatchRunRow({ status: 'pending', id: 'e0eebc99-9c0b-4ef8-bb6d-6bb9bd380a55' }),
       ],
       total: 3,
+      statusCounts: { running: 1, paused: 1, pending: 1 },
     });
 
     const result = await callTool('frink_flows_get_batch', {
@@ -269,6 +275,7 @@ describe('frink_flows_get_batch', () => {
         makeBatchRunRow({ status: 'cancelled', id: RUN_ID_2 }),
       ],
       total: 2,
+      statusCounts: { failed: 1, cancelled: 1 },
     });
 
     const result = await callTool('frink_flows_get_batch', {
@@ -280,12 +287,16 @@ describe('frink_flows_get_batch', () => {
     expect(data.failed).toBe(2);
   });
 
-  it('total reflects full batch even when runs list is paged', async () => {
+  it('counts every run in the batch, not just the returned page', async () => {
     const pageRuns = Array.from({ length: 20 }, (_, i) => ({
       ...makeBatchRunRow({ status: 'completed' }),
       id: `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
     }));
-    mockListFlowBatchRuns.mockResolvedValueOnce({ runs: pageRuns, total: 150 });
+    mockListFlowBatchRuns.mockResolvedValueOnce({
+      runs: pageRuns,
+      total: 150,
+      statusCounts: { completed: 100, failed: 10, cancelled: 5, running: 20, paused: 5, pending: 10 },
+    });
 
     const result = await callTool('frink_flows_get_batch', {
       flowId: FLOW_ID,
@@ -295,11 +306,35 @@ describe('frink_flows_get_batch', () => {
     const data = parseToolResultJson(result);
     expect(data.total).toBe(150);
     expect(data.runs).toHaveLength(20);
-    expect(data.completed).toBe(20); // only from returned page
+    expect(data.batch_total).toBe(150);
+    expect(data.completed).toBe(100);
+    expect(data.failed).toBe(15);
+    expect(data.active).toBe(35);
+    expect(data.completed + data.failed + data.active).toBe(data.total);
+  });
+
+  it('keeps the counts whole-batch under a status filter, where total is the filtered count', async () => {
+    mockListFlowBatchRuns.mockResolvedValueOnce({
+      runs: [makeBatchRunRow({ status: 'failed' })],
+      total: 5,
+      statusCounts: { completed: 40, failed: 5, running: 15 },
+    });
+
+    const result = await callTool('frink_flows_get_batch', {
+      flowId: FLOW_ID,
+      batchId: BATCH_ID,
+      status: 'failed',
+      limit: 1,
+    });
+
+    const data = parseToolResultJson(result);
+    expect(data.total).toBe(5);
+    expect(data.batch_total).toBe(60);
+    expect([data.completed, data.failed, data.active]).toEqual([40, 5, 15]);
   });
 
   it('passes status filter to listFlowBatchRuns', async () => {
-    mockListFlowBatchRuns.mockResolvedValueOnce({ runs: [], total: 0 });
+    mockListFlowBatchRuns.mockResolvedValueOnce({ runs: [], total: 0, statusCounts: {} });
 
     await callTool('frink_flows_get_batch', {
       flowId: FLOW_ID,
@@ -363,7 +398,7 @@ describe('frink_flows_get_batch', () => {
   });
 
   it('enforces the shared rate limit of 40 per session', async () => {
-    mockListFlowBatchRuns.mockResolvedValue({ runs: [], total: 0 });
+    mockListFlowBatchRuns.mockResolvedValue({ runs: [], total: 0, statusCounts: {} });
     const session = 'rate-limit-test-batch';
     for (let i = 0; i < 40; i++) {
       await callTool('frink_flows_get_batch', { flowId: FLOW_ID, batchId: BATCH_ID }, session);
@@ -380,7 +415,7 @@ describe('frink_flows_get_batch', () => {
   });
 
   it('different sessions have independent rate limits', async () => {
-    mockListFlowBatchRuns.mockResolvedValue({ runs: [], total: 0 });
+    mockListFlowBatchRuns.mockResolvedValue({ runs: [], total: 0, statusCounts: {} });
     const session1 = 'batch-session-a';
     const session2 = 'batch-session-b';
     for (let i = 0; i < 40; i++) {
@@ -400,6 +435,7 @@ describe('frink_flows_get_batch', () => {
     mockListFlowBatchRuns.mockResolvedValueOnce({
       runs: [makeBatchRunRow({ chat_id: CHAT_ID })],
       total: 1,
+      statusCounts: { running: 1 },
     });
 
     const result = await callTool('frink_flows_get_batch', {
