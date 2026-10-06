@@ -50,17 +50,9 @@ jobs:
             platformKey: linux-x64
             cargoTarget: x86_64-unknown-linux-gnu
             testArgs: '--test'
-          - os: macos-15
-            platformKey: darwin-arm64
-            cargoTarget: aarch64-apple-darwin
-            testArgs: ''
-          - os: macos-15-intel
-            platformKey: darwin-x64
-            cargoTarget: x86_64-apple-darwin
-            testArgs: ''
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
-    steps:
+    steps: &codex-native-steps
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
@@ -86,8 +78,30 @@ jobs:
           if-no-files-found: error
           retention-days: 2
 
+  # Same build + handshake for macOS. Nothing needs it: `build` has no mac leg, and mac releases
+  # build Codex locally (`bun run release`), so the slow Intel leg cannot hold up Linux packaging.
+  codex-native-mac:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            platformKey: darwin-arm64
+            cargoTarget: aarch64-apple-darwin
+            testArgs: ''
+          - os: macos-15-intel
+            platformKey: darwin-x64
+            cargoTarget: x86_64-apple-darwin
+            testArgs: ''
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps: *codex-native-steps
+
   build:
     needs: codex-native
+    # Run each leg even when another OS's Codex leg failed: it downloads only its own artifact, and
+    # download-artifact fails that leg alone when the artifact is missing.
+    if: ${{ !cancelled() }}
     strategy:
       # One OS failing must NOT cancel the other leg.
       fail-fast: false
@@ -160,6 +174,11 @@ jobs:
         with:
           name: frink-codex-${{ matrix.platformKey }}
           path: resources/bin/${{ matrix.platformKey }}/
+
+      - name: Restore the Codex executable bit
+        # Artifacts drop file modes, and electron-builder packages the mode it finds.
+        if: runner.os != 'Windows'
+        run: chmod +x resources/bin/${{ matrix.platformKey }}/codex
 
       - name: Assert release update feed
         # A tag build that publishes to R2 is an official release: it must bake in the update feed,
@@ -277,6 +296,10 @@ jobs:
         run: |
           ls release/*.AppImage >/dev/null 2>&1 || { echo "::error::no .AppImage produced"; exit 1; }
           ls release/*.deb >/dev/null 2>&1 || { echo "::error::no .deb produced"; exit 1; }
+          # Each installer must ship the codex the app spawns as an executable.
+          dpkg-deb -c release/*.deb | grep -E '^-rwx.*/resources/bin/codex$' || { echo "::error::.deb ships a non-executable codex"; exit 1; }
+          (cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE"/release/*.AppImage --appimage-extract >/dev/null)
+          test -x "$RUNNER_TEMP/squashfs-root/resources/bin/codex" || { echo "::error::AppImage ships a non-executable codex"; exit 1; }
 
       - name: Assert Windows installers produced
         if: runner.os == 'Windows'

@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { downloadToFile, sha256File } from './http-download.mjs';
 
@@ -217,12 +218,17 @@ export function assertPinnedThreadItems(manifest, declared, upstream) {
   );
 }
 
+/** A response to request 1. The server numbers its own requests too, and those carry `method`. */
+function isInitializeReply(message) {
+  return message?.id === 1 && message.method === undefined;
+}
+
 /** The `initialize` reply from an app-server stdout transcript, which also carries notifications. */
 export function parseInitializeResult(stdout) {
   for (const line of stdout.split(LINE_BREAK_PATTERN)) {
     if (line.trim().length === 0) continue;
     const message = JSON.parse(line);
-    if (message.id === 1) return message.result ?? null;
+    if (isInitializeReply(message)) return message.result ?? null;
   }
   return null;
 }
@@ -246,8 +252,76 @@ export function assertHandshakeResult(manifest, result) {
   }
 }
 
-/** Drives one real `initialize` round trip; closing stdin ends the app-server, so this stays sync. */
-function verifyBundledHandshake(manifest, binaryPath, tempRoot) {
+function isInitializeReplyLine(line) {
+  try {
+    return isInitializeReply(JSON.parse(line));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Writes `request` to the app-server and resolves its stdout once it has answered id 1 and exited.
+ * Stdin closes only after that reply: on EOF the app-server can exit without answering.
+ */
+export function runInitializeHandshake(
+  command,
+  args,
+  request,
+  { env, timeoutMs = HANDSHAKE_TIMEOUT_MS } = {},
+) {
+  return new Promise((resolve, reject) => {
+    // Piped so the app-server's untrusted-project warning stays out of the build log; a failed
+    // handshake still surfaces its stderr below.
+    const child = spawn(command, args, { env, stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    let answered = false;
+    let timedOut = false;
+    const kill = () => {
+      timedOut = true;
+      // SIGKILL: a server that ignores SIGTERM would otherwise outlive the failed check.
+      child.kill('SIGKILL');
+    };
+    let timer = setTimeout(kill, timeoutMs);
+    child.stderr.setEncoding('utf8').on('data', (chunk) => {
+      stderr += chunk;
+    });
+    readline.createInterface({ input: child.stdout }).on('line', (line) => {
+      stdout += `${line}\n`;
+      if (!answered && isInitializeReplyLine(line)) {
+        answered = true;
+        // A late reply gets its own window to exit, so it is never misreported as no answer.
+        clearTimeout(timer);
+        timer = setTimeout(kill, timeoutMs);
+        child.stdin.end();
+      }
+    });
+    // An early exit breaks the pipe; 'close' reports that failure with the stderr.
+    child.stdin.on('error', () => {});
+    child.on('error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    // A timeout also settles here, once the child is gone, so callers never clean up under it.
+    child.on('close', (code, signal) => {
+      clearTimeout(timer);
+      if (answered && code === 0) return resolve(stdout);
+      if (timedOut) {
+        const step = answered ? 'exit after answering' : 'answer';
+        return reject(
+          new Error(`Codex app-server did not ${step} initialize within ${timeoutMs}ms`),
+        );
+      }
+      const when = answered ? '' : ' before answering initialize';
+      reject(new Error(`Codex app-server exited (${code ?? signal})${when}: ${stderr.trim()}`));
+    });
+    child.stdin.write(`${request}\n`);
+  });
+}
+
+/** Drives one real `initialize` round trip against the binary this script just built. */
+async function verifyBundledHandshake(manifest, binaryPath, tempRoot) {
   const codexHome = fs.mkdtempSync(path.join(tempRoot, 'handshake-'));
   const request = JSON.stringify({
     jsonrpc: '2.0',
@@ -261,14 +335,8 @@ function verifyBundledHandshake(manifest, binaryPath, tempRoot) {
       },
     },
   });
-  const stdout = execFileSync(binaryPath, ['app-server'], {
-    input: `${request}\n`,
-    encoding: 'utf8',
-    timeout: HANDSHAKE_TIMEOUT_MS,
+  const stdout = await runInitializeHandshake(binaryPath, ['app-server'], request, {
     env: { ...process.env, CODEX_HOME: codexHome },
-    // Piped so the app-server's untrusted-project warning stays out of the build log; a process
-    // failure still surfaces its stderr through the thrown error.
-    stdio: ['pipe', 'pipe', 'pipe'],
   });
   assertHandshakeResult(manifest, parseInitializeResult(stdout));
 }
@@ -422,7 +490,8 @@ export async function buildCodexFrink({
     assertRustVersion(rustc, manifest.rust);
     if (runProviderTests) runProviderRegressionTests(cargo, rustc, cargoRoot);
 
-    return uniqueTargetKeys.map((key) => {
+    const binaries = [];
+    for (const key of uniqueTargetKeys) {
       const binaryPath = buildCodexTarget({
         key,
         target: TARGETS[key],
@@ -435,11 +504,12 @@ export async function buildCodexFrink({
       });
       // A cross-compiled target cannot run here; its own CI leg handshakes the build it produces.
       if (key === platformKey()) {
-        verifyBundledHandshake(manifest, binaryPath, tempRoot);
+        await verifyBundledHandshake(manifest, binaryPath, tempRoot);
         verifyEmptyHomeMcpReplace(binaryPath, tempRoot);
       }
-      return binaryPath;
-    });
+      binaries.push(binaryPath);
+    }
+    return binaries;
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
