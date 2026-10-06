@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import threadItems from '../../patches/codex/thread-item-variants.json';
 import { FRINK_HOST_TOOL_PERMISSION_VERSION } from '../../src/main/lib/agent-runner/codex/codex-host-permissions';
@@ -12,6 +15,7 @@ import {
   parseThreadItemVariants,
   platformKey,
   releaseTargetKeys,
+  runInitializeHandshake,
   validateManifest,
   validateRemoteTagOutput,
 } from './build-codex-frink.mjs';
@@ -144,10 +148,12 @@ describe('built-binary handshake', () => {
     capabilities: { frinkHostToolPermission: FRINK_HOST_TOOL_PERMISSION_VERSION },
   };
 
-  it('finds the initialize reply among the notifications sharing stdout', () => {
+  it('finds the initialize reply among the notifications and server requests sharing stdout', () => {
     const transcript = [
       JSON.stringify({ method: 'configWarning', params: {} }),
       '',
+      // The server numbers its own requests from 1 too; only a message without `method` is a reply.
+      JSON.stringify({ id: 1, method: 'item/tool/requestUserInput', params: {} }),
       JSON.stringify({ id: 1, result: good }),
     ].join('\n');
     expect(parseInitializeResult(transcript)).toEqual(good);
@@ -186,6 +192,63 @@ describe('built-binary handshake', () => {
     expect(() =>
       assertHandshakeResult(manifest, { ...good, userAgent: 'frink-build-check/0.149.0 (Mac OS)' }),
     ).toThrow('expected it to start "frink-build-check/0.155.1 "');
+  });
+
+  const reply = JSON.stringify(JSON.stringify({ id: 1, result: good }));
+  // Like `codex app-server`, this fake exits on stdin EOF, so it can only answer while stdin is open.
+  const slowAppServer = `process.stdin.on('end', () => process.exit(0));
+    process.stdin.once('data', () => {
+      console.log('{"method":"configWarning"}');
+      console.log('{"id":1,"method":"item/tool/requestUserInput"}');
+      setTimeout(() => console.log(${reply}), 200);
+    });`;
+
+  it('keeps stdin open past notifications and server requests until the delayed reply', async () => {
+    const stdout = await runInitializeHandshake(
+      process.execPath,
+      ['-e', slowAppServer],
+      '{"id":1}',
+    );
+    expect(parseInitializeResult(stdout)).toEqual(good);
+  });
+
+  it('gives a reply that lands near the deadline its own window to exit', async () => {
+    // Answers at half the timeout, then takes 0.6 of it to exit: past a single shared deadline.
+    const lateAppServer = `process.stdin.on('end', () => setTimeout(() => process.exit(0), 1200));
+      process.stdin.once('data', () => setTimeout(() => console.log(${reply}), 1000));`;
+    const stdout = await runInitializeHandshake(
+      process.execPath,
+      ['-e', lateAppServer],
+      '{"id":1}',
+      { timeoutMs: 2000 },
+    );
+    expect(parseInitializeResult(stdout)).toEqual(good);
+  });
+
+  it('fails a timeout only once the app-server is dead, even one that ignores SIGTERM', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-handshake-'));
+    const pidFile = path.join(dir, 'pid');
+    const hung = [
+      '-e',
+      "process.on('SIGTERM', () => {}); require('fs').writeFileSync(process.argv[1], String(process.pid)); setInterval(() => {}, 1000)",
+      pidFile,
+    ];
+    try {
+      await expect(
+        runInitializeHandshake(process.execPath, hung, '{"id":1}', { timeoutMs: 2000 }),
+      ).rejects.toThrow('did not answer initialize within 2000ms');
+      const pid = Number(fs.readFileSync(pidFile, 'utf8'));
+      expect(() => process.kill(pid, 0)).toThrow('ESRCH');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('surfaces the stderr of an app-server that exits without answering', async () => {
+    const crash = ['-e', "console.error('config load failed'); process.exitCode = 3"];
+    await expect(runInitializeHandshake(process.execPath, crash, '{"id":1}')).rejects.toThrow(
+      'exited (3) before answering initialize: config load failed',
+    );
   });
 });
 
