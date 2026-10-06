@@ -6,7 +6,10 @@ import { type Edge, MarkerType, type Node } from '@xyflow/react';
 import { useMemo } from 'react';
 import type { FlowGraph } from '../../../../../shared/lib/validate-flow-graph';
 import { backEdgeLoopMaxIterations } from '../../../../lib/flows/edge-loop-config';
-import { computeDagreLayoutPositions, fanOutContainerDimensions } from './compute-dagre-positions';
+import {
+  computeDagreLayoutPositions,
+  fanOutContainerDimensions,
+} from '../../../../../shared/lib/flows/canvas-layout';
 
 export type FlowStepNodeData = {
   kind: 'step';
