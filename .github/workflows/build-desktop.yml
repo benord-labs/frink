@@ -22,6 +22,7 @@ on:
       - 'bun.lock'
       - 'scripts/binaries/**'
       - 'patches/codex/**'
+      - '.gitattributes'
       - 'scripts/skills/build-skill-content.ts'
       - 'scripts/smoke/smoke-native.cjs'
       - '.github/workflows/build-desktop.yml'
