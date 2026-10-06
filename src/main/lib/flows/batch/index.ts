@@ -4,3 +4,4 @@
  */
 
 export { mergeDependencyBranches, resolveDependencyBranches } from './dependency-branches';
+export { type BatchStatusBuckets, bucketBatchStatusCounts } from './status-buckets';

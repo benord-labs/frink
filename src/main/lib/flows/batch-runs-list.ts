@@ -2,7 +2,8 @@
  * listBatchRuns read query — flow_runs filtered by batchId, optionally further
  * narrowed by status / stageId. A run belongs to a stage through batch_stage_runs.
  *
- * Returns { runs: BatchRunRow[]; total: number } where BatchRunRow = DbFlowRun + chat_id.
+ * Returns { runs, total, statusCounts } where BatchRunRow = DbFlowRun + chat_id. statusCounts
+ * covers every run in the batch, whatever the filters and the page.
  */
 
 import { and, desc, sql as drizzleSql, eq, exists, inArray, isNotNull } from 'drizzle-orm';
@@ -65,7 +66,7 @@ export async function listBatchRunsForBatch(
   batchId: string,
   opts: ListBatchRunsOptions = {},
   db: Db = getDatabase(),
-): Promise<{ runs: BatchRunRow[]; total: number }> {
+): Promise<{ runs: BatchRunRow[]; total: number; statusCounts: Record<string, number> }> {
   const limit = opts.limit ?? 50;
   const offset = opts.offset ?? 0;
 
@@ -89,9 +90,9 @@ export async function listBatchRunsForBatch(
   }
   const where = and(...filters);
 
-  // One transaction, one snapshot: a run inserted or re-statused between the two reads cannot
-  // leave the total disagreeing with the page.
-  const { rows, total } = db.transaction((tx) => ({
+  // One transaction, one snapshot: a run inserted or re-statused between the reads cannot leave
+  // the total or the status counts disagreeing with the page.
+  const { rows, total, statusRows } = db.transaction((tx) => ({
     rows: tx
       .select()
       .from(flowRuns)
@@ -109,12 +110,19 @@ export async function listBatchRunsForBatch(
         .where(where)
         .get()?.c ?? 0,
     ),
+    statusRows: tx
+      .select({ status: flowRuns.status, c: drizzleSql<number>`count(*)`.as('c') })
+      .from(flowRuns)
+      .where(eq(flowRuns.batchId, batchId))
+      .groupBy(flowRuns.status)
+      .all(),
   }));
+  const statusCounts = Object.fromEntries(statusRows.map((r) => [r.status, Number(r.c)]));
 
   const chatIds = await resolveBatchRunChatIds(
     db,
     rows.map((r) => ({ flowRunId: r.id, triggerContext: r.triggerContext })),
   );
   const runs: BatchRunRow[] = rows.map((r, i) => ({ ...toDbFlowRun(r), chat_id: chatIds[i] }));
-  return { runs, total };
+  return { runs, total, statusCounts };
 }
