@@ -46,8 +46,14 @@ import { setFlowRunStatus } from '../../../db/repos/flow-runs';
 import { createNodeRun, setNodeRunStatus } from '../../../db/repos/node-runs';
 import { abandonRestartInterruption } from '../../../db/repos/task-parking/abandon-marker';
 import { chats, subChatMessages, subChats, tasks } from '../../../db/schema';
-import { seedActiveAdmission, seedFlowRun } from '../../../db/test-utils/flow-fixtures';
+import {
+  seedActiveAdmission,
+  seedCompletedNodeRun,
+  seedFlowRun,
+} from '../../../db/test-utils/flow-fixtures';
 import { freshDb, type TestDb } from '../../../db/test-utils/fresh-db';
+import { iterationOutput } from '../../fan-out';
+import { saveFanOutState } from '../../fan-out-state';
 import { retryTerminalFlowRun } from './dispatcher';
 import { type EnqueueTerminalFlowResumeInput, TerminalResumeAdmissionError } from './resume-store';
 
@@ -278,6 +284,34 @@ describe('dispatchAdmittedTerminalResume (registered dispatcher)', () => {
     expect(mocks.dispatchAndAdvance.mock.calls[0][5]).toEqual({ resumeKind: undefined });
   });
 
+  it('resumes an anchor with no persisted predecessor with no previous output', async () => {
+    await mocks.registered?.(intent(), ticket);
+    expect(mocks.dispatchAndAdvance.mock.calls[0][2]).toBeUndefined();
+  });
+
+  it('re-dispatches the anchor with the output its predecessor handed it (sc-2762)', async () => {
+    const startOutput = {
+      status: 'completed',
+      outputs: { summary: 'from start_task' },
+      artifacts: [],
+      durationMs: 0,
+    };
+    await seedCompletedNodeRun(db, {
+      flowRunId,
+      nodeId: 'st',
+      blockType: 'start_task',
+      nodeOutput: startOutput,
+    });
+    // The newest unfinished attempt is the anchor; the predecessor ran before it.
+    nodeRunId = (
+      await createNodeRun(db, { flowRunId, nodeId: 'work', blockType: 'agent', status: 'failed' })
+    ).id;
+
+    await mocks.registered?.(intent(), ticket);
+
+    expect(mocks.dispatchAndAdvance.mock.calls[0][2]).toEqual(startOutput);
+  });
+
   it('forwards the persisted Fan Out branch scope', async () => {
     const parent = await createNodeRun(db, {
       flowRunId,
@@ -432,4 +466,58 @@ describe('Fan Out branch failure — the resume re-dispatches the whole item (sc
       ]);
     },
   );
+
+  it("hands the anchor and its swept sibling their own item's output in a later item (sc-2762)", async () => {
+    db = freshDb();
+    mocks.db = db;
+    let flowId: string;
+    ({ flowRunId, flowId } = await seedFlowRun(db, FAN_GRAPH));
+    ticket = seedActiveAdmission(db, flowRunId);
+    const fan = await createNodeRun(db, {
+      flowRunId,
+      nodeId: 'fan',
+      blockType: 'fan_out',
+      status: 'completed',
+    });
+    const state = {
+      items: ['first', 'second'],
+      currentIndex: 1,
+      totalCount: 2,
+      maxIterations: 50,
+      completedOutputs: [{}],
+      arrayField: 'items',
+      branches: [
+        { rootNodeId: 'a', tailNodeId: 'a', nodeIds: ['a'] },
+        { rootNodeId: 'b', tailNodeId: 'b', nodeIds: ['b'] },
+      ],
+    };
+    await saveFanOutState(flowId, flowRunId, 'fan', state);
+    const lane = { laneIndex: 1, parentFanOutNodeRunId: fan.id };
+    const failedRun = await createNodeRun(db, {
+      flowRunId,
+      nodeId: 'a',
+      blockType: 'agent',
+      status: 'failed',
+      ...lane,
+    });
+    await createNodeRun(db, {
+      flowRunId,
+      nodeId: 'b',
+      blockType: 'agent',
+      status: 'cancelled',
+      ...lane,
+    });
+
+    await mocks.registered?.(
+      { version: 1, action: 'resume', flow_run_id: flowRunId, node_run_id: failedRun.id },
+      ticket,
+    );
+
+    // The live state is read once and must reach the sibling too, not just the anchor.
+    const expected = iterationOutput(state, 1);
+    expect(mocks.dispatchAndAdvance.mock.calls.map((call) => call.slice(1, 3))).toEqual([
+      [expect.objectContaining({ id: 'a' }), expected],
+      [expect.objectContaining({ id: 'b' }), expected],
+    ]);
+  });
 });

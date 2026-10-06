@@ -4,12 +4,15 @@ import type { RecoveryKind } from '../../../../../shared/types/flow-run/resume';
 import { getDatabase } from '../../../db';
 import { listNodeRunsForFlowRun } from '../../../db/repos/node-runs';
 import { dispatchAndAdvance, loadRunContext } from '../../advance';
+import type { NodeOutput } from '../../../../../shared/types/flow';
 import { emitRunStarted } from '../../event-emit';
+import { loadOwningFanOutState } from '../../fan-out-step';
 import { findNodeById } from '../../graph';
 import {
   type SiblingBranchResumeTarget,
   siblingBranchResumeTargets,
 } from '../../rerun/fan-out-lane-resume';
+import { reconstructPreviousOutput } from '../../rerun/predecessor-output';
 import { recoveryChangedError, stepRecoveryKind } from '../../rerun/recovery-kind';
 import { lastUnfinishedNodeRun, resolveRerunStartNode } from '../../rerun/resume-point';
 import { isUserCancelled, type RunFence, readNodeRuns, readRunFence } from '../../transitions';
@@ -33,6 +36,8 @@ type TerminalResumeTarget = {
   nodeRunId: string;
   /** The anchor's session answered its prompt, so the resume continues it instead of re-running. */
   continues: boolean;
+  /** What the anchor was first dispatched with, so {{previous.*}} resolves on the resume. */
+  previousOutput?: NodeOutput;
   fanOutScope?: {
     laneIndex: number;
     parentFanOutNodeRunId: string;
@@ -66,9 +71,22 @@ export async function resolveTerminalResumeTarget(
           parentFanOutNodeRunId: anchor.parentFanOutNodeRunId,
         }
       : undefined;
-  const siblings = fanOutScope ? siblingBranchResumeTargets(ctx.graph, attempts, anchor) : [];
+  const fanOutState = fanOutScope
+    ? await loadOwningFanOutState(ctx.meta.flowId, flowRunId, node)
+    : undefined;
+  const previousOutput = reconstructPreviousOutput({
+    graph: ctx.graph,
+    nodeRuns: attempts,
+    nodeId,
+    scope: fanOutScope,
+    beforeNodeRunId: anchor.id,
+    fanOutState,
+  });
+  const siblings = fanOutScope
+    ? siblingBranchResumeTargets(ctx.graph, attempts, anchor, fanOutState)
+    : [];
   const continues = stepRecoveryKind(db, anchor.id) === 'continue';
-  return { ctx, node, nodeRunId: anchor.id, continues, fanOutScope, siblings };
+  return { ctx, node, nodeRunId: anchor.id, continues, previousOutput, fanOutScope, siblings };
 }
 
 const USER_CANCELLED_RUN =
@@ -122,7 +140,14 @@ export async function dispatchTerminalResumeTarget(
   };
   // allSettled: the caller settles the ticket once this returns, so no branch may still be advancing.
   const results = await Promise.allSettled([
-    dispatchAndAdvance(fence, target.node, undefined, target.ctx, undefined, anchorOptions),
+    dispatchAndAdvance(
+      fence,
+      target.node,
+      target.previousOutput,
+      target.ctx,
+      undefined,
+      anchorOptions,
+    ),
     ...target.siblings.map((sibling) =>
       dispatchAndAdvance(
         fence,
