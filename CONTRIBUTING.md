@@ -47,6 +47,8 @@ the way belongs in a follow-up issue, not in the same branch.
 ## Where things live
 
 - `user-docs/` — end-user guides.
+- `patches/codex/` — the patch Frink applies to its bundled Codex. It is generated; see
+  [`patches/codex/README.md`](patches/codex/README.md) before changing it.
 
 ## Conduct
 
