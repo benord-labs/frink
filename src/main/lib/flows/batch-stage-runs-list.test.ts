@@ -12,8 +12,12 @@ const { mocks } = vi.hoisted(() => ({
 
 vi.mock('../db', () => ({ getDatabase: mocks.getDatabase }));
 
-import { createBatchStageRun } from '../db/repos/batch-stage-runs';
-import { createBatchStage } from '../db/repos/batch-stages';
+import {
+  type BatchStageRunStatus,
+  createBatchStageRun,
+  setStageRunStatus,
+} from '../db/repos/batch-stage-runs';
+import { createBatchStage, insertBatchStagesWithRuns } from '../db/repos/batch-stages';
 import { createNodeRun, listHumanWaitFlowRunIds } from '../db/repos/node-runs';
 import { chats, flowRuns, tasks } from '../db/schema';
 import { freshDb, type TestDb } from '../db/test-utils/fresh-db';
@@ -38,12 +42,17 @@ async function seedFlowRun(): Promise<string> {
   return run.id;
 }
 
-async function seedStageRun(flowRunId: string | null): Promise<string> {
+async function seedStageRun(
+  flowRunId: string | null,
+  input: { id?: string; status?: string; createdAt?: Date } = {},
+): Promise<string> {
   const run = await createBatchStageRun(db, {
+    id: input.id,
     stageId,
-    status: flowRunId ? 'dispatched' : 'pending',
+    status: input.status ?? (flowRunId ? 'dispatched' : 'pending'),
     triggerContext: { label: 'r' },
-    ...(flowRunId ? { flowRunId } : {}),
+    flowRunId,
+    createdAt: input.createdAt,
   });
   return run.id;
 }
@@ -277,6 +286,85 @@ describe('batch stage read paths', () => {
 
       const past = await listBatchStageRunsForStage(stageId, { limit: 2, offset: 10 });
       expect(past).toEqual({ runs: [], total: 3 });
+    });
+
+    it('pages stage runs that share a created_at second once each, in insert order', async () => {
+      // Ids out of insert order, and mixed statuses so the (stage_id, status) index scans them
+      // out of insert order too: only an insert-order tiebreaker gives the expected order.
+      const inserted = ['bsr-c', 'bsr-a', 'bsr-e', 'bsr-b', 'bsr-d'];
+      const statuses = ['dispatched', 'pending', 'completed', 'pending', 'failed'];
+      const sameSecond = new Date('2026-07-11T10:00:00Z');
+      for (const [i, id] of inserted.entries()) {
+        await seedStageRun(null, { id, status: statuses[i], createdAt: sameSecond });
+      }
+
+      const paged: string[] = [];
+      for (let offset = 0; offset < inserted.length; offset += 2) {
+        const page = await listBatchStageRunsForStage(stageId, { limit: 2, offset });
+        expect(page.total).toBe(inserted.length);
+        paged.push(...page.runs.map((r) => r.id));
+      }
+
+      expect(paged).toEqual(inserted);
+    });
+
+    it('pages a stage in member order while dispatch re-statuses its same-second runs', async () => {
+      // The real writer: one multi-row insert, every run pending, all in one second.
+      const members = ['m0', 'm1', 'm2', 'm3', 'm4'];
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-07-11T10:00:00Z'));
+      let stageIds = new Map<number, string>();
+      try {
+        stageIds = insertBatchStagesWithRuns(db, 'batch-1', [
+          { stageNumber: 2, runs: members.map((label) => ({ triggerContext: { label } })) },
+        ]);
+      } finally {
+        vi.useRealTimers();
+      }
+      const dispatchedStage = stageIds.get(2) ?? '';
+      // Re-statusing moves rows around the (stage_id, status) index without changing insert order.
+      const restatus = new Map<unknown, BatchStageRunStatus>([
+        ['m0', 'queued'],
+        ['m1', 'dispatched'],
+        ['m3', 'completed'],
+      ]);
+      for (const r of (await listBatchStageRunsForStage(dispatchedStage)).runs) {
+        const status = restatus.get(r.trigger_context?.label);
+        if (status) await setStageRunStatus(db, r.id, status);
+      }
+
+      const paged: unknown[] = [];
+      for (let offset = 0; offset < members.length; offset += 2) {
+        const page = await listBatchStageRunsForStage(dispatchedStage, { limit: 2, offset });
+        paged.push(...page.runs.map((r) => r.trigger_context?.label));
+      }
+
+      expect(paged).toEqual(members);
+    });
+
+    it('puts a stage run added between page reads after the rows already paged', async () => {
+      const sameSecond = new Date('2026-07-11T10:00:00Z');
+      const original = [];
+      for (const id of ['bsr-c', 'bsr-a', 'bsr-b']) {
+        original.push(await seedStageRun(null, { id, createdAt: sameSecond }));
+      }
+
+      const first = await listBatchStageRunsForStage(stageId, { limit: 2 });
+      const added = await seedStageRun(null, { id: 'bsr-0', createdAt: sameSecond });
+      const second = await listBatchStageRunsForStage(stageId, { limit: 2, offset: 2 });
+
+      expect(first.runs.map((r) => r.id)).toEqual(original.slice(0, 2));
+      expect(second.runs.map((r) => r.id)).toEqual([original[2], added]);
+    });
+
+    it('orders stage runs from different seconds by created_at, not by insert order', async () => {
+      const latest = await seedStageRun(null, { createdAt: new Date('2026-07-11T10:02:00Z') });
+      const earliest = await seedStageRun(null, { createdAt: new Date('2026-07-11T10:00:00Z') });
+      const middle = await seedStageRun(null, { createdAt: new Date('2026-07-11T10:01:00Z') });
+
+      const { runs } = await listBatchStageRunsForStage(stageId);
+
+      expect(runs.map((r) => r.id)).toEqual([earliest, middle, latest]);
     });
 
     it('reads the page and the total inside one transaction', async () => {
