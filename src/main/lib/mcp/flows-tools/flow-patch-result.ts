@@ -1,4 +1,5 @@
 import log from 'electron-log';
+import { diagnoseLayout } from '../../../../shared/lib/flows/canvas-layout/layout-diagnostics';
 import { agentProseGraphWarnings } from '../../../../shared/lib/flows/agent-prose-limit';
 import { type FlowGraph, formatFlowNodeLabel } from '../../../../shared/lib/validate-flow-graph';
 import type { TemplateVariableWarning } from '../../../../shared/lib/validate-flow-templates';
@@ -49,6 +50,8 @@ type BuildFlowPatchResultParams = {
   createdFlow: boolean;
   templateWarnings: TemplateVariableWarning[];
   webhookSetup: string[];
+  /** True when an operation set a node position or reset the layout. */
+  positionsTouched?: boolean;
 };
 
 type RollbackCreatedFlowParams = {
@@ -166,16 +169,43 @@ function sessionFootprintNote(graph: FlowGraph): string | null {
   return `This flow has ${startTasks.length} Start Tasks: ${names.join(', ')}. Each one that runs opens its own sidebar chat; add one only for a separate project, a separate branch/PR, isolated per-item context, or when the user asked for separate chats (frink-flows skill → Sessions).`;
 }
 
+/** True when a patch places nodes itself or resets the layout. */
+export function operationsTouchPositions(operations: PatchOperation[]): boolean {
+  return operations.some(
+    (op) =>
+      op.op === 'auto_layout' ||
+      (op.op === 'update_node' && op.position !== undefined) ||
+      (op.op === 'add_node' && op.node.position !== undefined),
+  );
+}
+
+/**
+ * The agent cannot see the canvas, so report where nodes land — when it moved them, or whenever
+ * the saved arrangement has a collision it could fix.
+ */
+function layoutReport(graph: FlowGraph, positionsTouched = false): Record<string, unknown> {
+  const layout = diagnoseLayout(graph);
+  if (!positionsTouched && layout.overlaps.count === 0 && layout.upwardEdges.count === 0) return {};
+  return {
+    layout: {
+      ...layout,
+      note: 'Computed from nominal node sizes; a card with long content renders taller. Samples list at most 10 items.',
+    },
+  };
+}
+
 function optionalPresentationFields(
   templateWarnings: Array<string | TemplateVariableWarning>,
   webhookSetup: string[],
   graph: FlowGraph,
+  positionsTouched?: boolean,
 ): Record<string, unknown> {
   const sessions = sessionFootprintNote(graph);
   return {
     ...(templateWarnings.length > 0 ? { templateWarnings } : {}),
     ...(webhookSetup.length > 0 ? { webhookSetup } : {}),
     ...(sessions ? { sessions } : {}),
+    ...layoutReport(graph, positionsTouched),
   };
 }
 
@@ -216,6 +246,7 @@ function buildPartialFlowPatchResult(params: BuildFlowPatchResultParams): McpToo
           partialWarnings(params.templateWarnings, retryOps.length > 0),
           params.webhookSetup,
           patch.graph,
+          params.positionsTouched,
         ),
       },
       null,
@@ -254,7 +285,12 @@ function buildSuccessfulFlowPatchResult(params: BuildFlowPatchResultParams): Mcp
         skipped: patch.skipped,
         ...(params.createdFlow ? { agentInvocable: false } : {}),
         message: `Flow "${params.name}" ${action} successfully (${versionMessage}).${params.creationProjectNote ? ` ${params.creationProjectNote}` : ''}${runHint} A visual flow preview is already rendered in the chat automatically — do NOT describe the flow layout, draw a Mermaid diagram, or list the nodes/edges again. Just confirm what changed.`,
-        ...optionalPresentationFields(params.templateWarnings, params.webhookSetup, patch.graph),
+        ...optionalPresentationFields(
+          params.templateWarnings,
+          params.webhookSetup,
+          patch.graph,
+          params.positionsTouched,
+        ),
       },
       null,
       2,

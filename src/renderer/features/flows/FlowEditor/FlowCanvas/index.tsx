@@ -42,7 +42,7 @@ import { CanvasControls } from '../CanvasControls';
 import { CanvasMiniMap } from '../CanvasMiniMap';
 import { useCanvasFitView } from '../hooks/useCanvasFitView';
 import type { FlowNodeCanvasContext } from '../nodeSummary';
-import { fanOutFitDimensions } from './compute-dagre-positions';
+import { fanOutFitDimensions } from '../../../../../shared/lib/flows/canvas-layout';
 import { FLOW_CANVAS_DOT_SIZE, FLOW_CANVAS_GRID_SIZE } from './constants';
 import { FlowConnectionLine } from './FlowConnectionLine';
 import { FlowGraphEdge, type FlowGraphEdgeData } from './FlowGraphEdge';

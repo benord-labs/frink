@@ -80,7 +80,7 @@ import { resolveFlowEditorEscapeAction } from '../flow-editor-escape-stack';
 import { BlockConfigPanel, type NodePatch } from './BlockConfig';
 import { FLOW_ADDABLE_BLOCK_TYPES, FLOW_TRIGGER_TYPES } from './constants';
 import { FlowCanvas } from './FlowCanvas';
-import { embedMissingPositionsFromDagre } from './FlowCanvas/compute-dagre-positions';
+import { embedMissingPositionsFromDagre } from '../../../../shared/lib/flows/canvas-layout';
 import { FlowEditorHeader } from './FlowEditorHeader';
 import { FlowRunsTab } from './FlowRunsTab';
 import { FlowSettingsPanel } from './FlowSettingsPanel';
