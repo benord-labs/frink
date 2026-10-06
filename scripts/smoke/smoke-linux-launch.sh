@@ -62,8 +62,6 @@ check_deb() {
   # Installing runs electron-builder's after-install, which adds that profile and sets chrome-sandbox's mode.
   sudo apt-get install -y -q ./release/*.deb
   [ -f /etc/apparmor.d/frink ] || fail "deb: the install did not add the AppArmor profile /etc/apparmor.d/frink"
-  # TEMPORARY negative proof, reverted in the next commit: without the profile the launch must fail.
-  sudo apparmor_parser -R /etc/apparmor.d/frink && sudo rm /etc/apparmor.d/frink
   stat -c '%A %U %n' /opt/Frink/chrome-sandbox
   launch deb /opt/Frink/frink
   local procs="$OUT/deb/processes.txt"
