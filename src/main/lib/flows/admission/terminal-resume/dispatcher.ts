@@ -1,12 +1,15 @@
 import { getDatabase } from '../../../db';
 import { listNodeRunsForFlowRun } from '../../../db/repos/node-runs';
 import { dispatchAndAdvance, loadRunContext } from '../../advance';
+import type { NodeOutput } from '../../../../../shared/types/flow';
 import { emitRunStarted } from '../../event-emit';
+import { loadOwningFanOutState } from '../../fan-out-step';
 import { findNodeById } from '../../graph';
 import {
   type SiblingBranchResumeTarget,
   siblingBranchResumeTargets,
 } from '../../rerun/fan-out-lane-resume';
+import { reconstructPreviousOutput } from '../../rerun/predecessor-output';
 import { lastUnfinishedNodeRun, resolveRerunStartNode } from '../../rerun/resume-point';
 import { type RunFence, readRunFence } from '../../transitions';
 import { registerTerminalFlowResumeDispatcher, requestTerminalFlowResume } from '../runtime';
@@ -19,6 +22,8 @@ type TerminalResumeTarget = {
   ctx: RunContext;
   node: RunContext['graph']['nodes'][number];
   nodeRunId: string;
+  /** What the anchor was first dispatched with, so {{previous.*}} resolves on the resume. */
+  previousOutput?: NodeOutput;
   fanOutScope?: {
     laneIndex: number;
     parentFanOutNodeRunId: string;
@@ -52,8 +57,21 @@ export async function resolveTerminalResumeTarget(
           parentFanOutNodeRunId: anchor.parentFanOutNodeRunId,
         }
       : undefined;
-  const siblings = fanOutScope ? siblingBranchResumeTargets(ctx.graph, attempts, anchor) : [];
-  return { ctx, node, nodeRunId: anchor.id, fanOutScope, siblings };
+  const fanOutState = fanOutScope
+    ? await loadOwningFanOutState(ctx.meta.flowId, flowRunId, node)
+    : undefined;
+  const previousOutput = reconstructPreviousOutput({
+    graph: ctx.graph,
+    nodeRuns: attempts,
+    nodeId,
+    scope: fanOutScope,
+    beforeNodeRunId: anchor.id,
+    fanOutState,
+  });
+  const siblings = fanOutScope
+    ? siblingBranchResumeTargets(ctx.graph, attempts, anchor, fanOutState)
+    : [];
+  return { ctx, node, nodeRunId: anchor.id, previousOutput, fanOutScope, siblings };
 }
 
 export async function retryTerminalFlowRun(db: Db, flowRunId: string): Promise<boolean> {
@@ -74,7 +92,7 @@ export async function dispatchTerminalResumeTarget(
 ): Promise<void> {
   // allSettled: the caller settles the ticket once this returns, so no branch may still be advancing.
   const results = await Promise.allSettled([
-    dispatchAndAdvance(fence, target.node, undefined, target.ctx, undefined, {
+    dispatchAndAdvance(fence, target.node, target.previousOutput, target.ctx, undefined, {
       resumeKind: continuation ? 'continuation' : 'redispatch',
       ...target.fanOutScope,
     }),

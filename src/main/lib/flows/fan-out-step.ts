@@ -1,7 +1,6 @@
 /** Persisted Fan Out branch barrier and sequential item advancement. */
 
 import log from 'electron-log';
-import { z } from 'zod';
 import type { NodeOutput } from '../../../shared/types/flow';
 import { getDatabase } from '../db';
 import { getFlowRun } from '../db/repos/flow-runs';
@@ -15,6 +14,7 @@ import {
   loadBodyMember,
   loadFanOutState,
 } from './fan-out-state';
+import { iterationOutput, laneItemOutputs } from './fan-out';
 import { findNodeById, type ParsedFlowGraph } from './graph';
 
 type FanOutRootNode = {
@@ -29,10 +29,6 @@ type FlowLoopContext = {
   currentIndex: number;
   totalCount: number;
 };
-
-const nodeRunOutputSchema = z.object({
-  outputs: z.record(z.string(), z.unknown()),
-});
 
 export type FanOutStepResult =
   | {
@@ -50,31 +46,6 @@ export type FanOutStepResult =
     }
   | { kind: 'waiting' }
   | { kind: 'not-fan-out' };
-
-function iterationOutput(state: FanOutIterationState, index: number): NodeOutput {
-  const outputs: NodeOutput['outputs'] = {
-    currentItem: state.items[index],
-    currentIndex: index,
-    totalCount: state.totalCount,
-    _fanOutState: 'iterating',
-    arrayField: state.arrayField,
-  };
-  if (state.truncated) {
-    outputs.truncated = true;
-    outputs.originalCount = state.originalCount;
-  }
-  return {
-    status: 'completed',
-    outputs,
-    artifacts: [],
-    durationMs: 0,
-  };
-}
-
-function nodeRunOutputs<T>(value: T): NodeOutput['outputs'] {
-  const parsed = nodeRunOutputSchema.safeParse(value);
-  return parsed.success ? parsed.data.outputs : {};
-}
 
 export async function maybeAdvanceFanOut(args: {
   flowRunId: string;
@@ -119,12 +90,7 @@ export async function maybeAdvanceFanOut(args: {
   );
   if (completedTails.length !== state.branches.length) return { kind: 'waiting' };
 
-  const itemOutputs = Object.fromEntries(
-    state.branches.map((branch) => {
-      const tail = completedTails.find((nodeRun) => nodeRun.nodeId === branch.tailNodeId);
-      return [branch.rootNodeId, nodeRunOutputs(tail?.nodeOutput)];
-    }),
-  );
+  const itemOutputs = laneItemOutputs(state.branches, completedTails);
   const nextIndex = state.currentIndex + 1;
   const nextState = {
     ...state,
@@ -193,4 +159,14 @@ export async function buildLoopContextFor(
     currentIndex: state.currentIndex,
     totalCount: state.totalCount,
   };
+}
+
+/** Live iteration state of the Fan Out owning a body node; undefined outside one or after teardown. */
+export async function loadOwningFanOutState(
+  flowId: string,
+  flowRunId: string,
+  node: { parentId?: string },
+): Promise<FanOutIterationState | undefined> {
+  if (!node.parentId) return undefined;
+  return (await loadFanOutState(flowId, flowRunId, node.parentId)) ?? undefined;
 }

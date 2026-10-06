@@ -101,4 +101,24 @@ describe('siblingBranchResumeTargets', () => {
     ];
     expect(targetIds(runs, anchor)).toEqual(['b1']);
   });
+
+  it('hands a stopped or never-started sibling what its first dispatch received (sc-2762)', () => {
+    const anchor = laneRun('a1', 'a', 'failed');
+    const b1Output = { status: 'completed', outputs: { y: 2 }, artifacts: [], durationMs: 0 };
+    const state = { items: ['i0', 'i1', 'i2'], totalCount: 3, arrayField: 'items' };
+    const runs = [
+      laneRun('b1-1', 'b1', 'completed', { nodeOutput: b1Output }),
+      laneRun('b2-1', 'b2', 'cancelled'),
+      anchor,
+    ];
+    expect(siblingBranchResumeTargets(GRAPH, runs, anchor, state)).toEqual([
+      { node: expect.objectContaining({ id: 'b2' }), previousOutput: b1Output },
+      {
+        node: expect.objectContaining({ id: 'c' }),
+        previousOutput: expect.objectContaining({
+          outputs: expect.objectContaining({ currentItem: 'i2', currentIndex: 2 }),
+        }),
+      },
+    ]);
+  });
 });
