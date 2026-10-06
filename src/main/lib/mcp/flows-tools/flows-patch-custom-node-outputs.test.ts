@@ -166,7 +166,7 @@ function mockManifest(
 
 /** The slice of a patch receipt these tests assert on. Warnings are objects, not strings. */
 type PatchBody = {
-  templateWarnings?: { placeholder: string; message: string }[];
+  templateWarnings?: { nodeId?: string; field?: string; placeholder: string; message: string }[];
   nodeVariables?: Record<string, { previous: { key: string }[] }>;
 };
 
@@ -338,5 +338,28 @@ describe('handleFlowsToolCall — frink_flows_patch × custom node outputs', () 
     ]);
     expect(warnedPlaceholders(body)).not.toContain('{{previous.prCount}}');
     expect(warnedPlaceholders(body)).not.toContain('{{previous.ts}}');
+  });
+
+  it('warns on an unknown placeholder in an http_request url (sc-3172)', async () => {
+    // http_request is a built-in block, but its rendered url is validated through this same call site.
+    const body = await patchAndGetBody('exec-patch-http-template', [
+      {
+        op: 'add_node',
+        node: { id: 'h1', blockType: 'http_request', config: { url: 'https://example.com' } },
+      },
+      { op: 'add_edge', edge: { id: 'e2', source: 'n2', target: 'h1' } },
+      {
+        op: 'add_node',
+        node: {
+          id: 'h2',
+          blockType: 'http_request',
+          config: { url: 'https://example.com/items/{{previous.idd}}' },
+        },
+      },
+      { op: 'add_edge', edge: { id: 'e3', source: 'h1', target: 'h2' } },
+    ]);
+    expect(body.templateWarnings).toMatchObject([
+      { nodeId: 'h2', field: 'url', placeholder: '{{previous.idd}}' },
+    ]);
   });
 });
