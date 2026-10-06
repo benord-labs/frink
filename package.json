@@ -38,6 +38,8 @@
     "test": "vitest",
     "pretest:run": "node ./scripts/dev/ensure-package-deps.mjs",
     "test:run": "vitest run",
+    "pretest:compiled": "node ./scripts/dev/ensure-package-deps.mjs",
+    "test:compiled": "vitest run --project compiled",
     "pretest:run:coverage": "node ./scripts/dev/ensure-package-deps.mjs",
     "test:run:coverage": "vitest run --coverage",
     "prets:check": "node ./scripts/dev/ensure-package-deps.mjs",
