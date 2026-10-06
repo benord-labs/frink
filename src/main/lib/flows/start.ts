@@ -1,7 +1,7 @@
 /**
  * startFlowRun — replaces the Phase 2 skeleton's immediate-fail behaviour with
  * real execution. Picks the trigger node from the latest version's graph,
- * inserts the first node_run, dispatches, recurses via advanceFlowRun.
+ * inserts the first node_run, dispatches, then walks forward (advance.ts).
  */
 
 import { TRPCError } from '@trpc/server';

@@ -1,7 +1,8 @@
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 import type { FlowGraph } from '../../../shared/lib/validate-flow-graph';
 import {
+  CONDITION_TRUE_RESULT,
   type FlowExecutionEvent,
   type NodeOutput,
   RESTART_INTERRUPTION_REASON,
@@ -27,7 +28,7 @@ import {
   getTaskById,
   updateTaskStatus,
 } from '../db/repos/tasks';
-import { flowRunAdmissions, flowRuns } from '../db/schema';
+import { flowRunAdmissions, flowRuns, flowVersions } from '../db/schema';
 import {
   seedActiveAdmission,
   seedCompletedNodeRun,
@@ -230,9 +231,9 @@ describe('advanceFlowRun — idempotent across restart (the 203 duplicate-dispat
     expect((await getTaskById(db, stray.id))?.status).toBe('cancelled'); // no orphan outliving its run
   });
 
-  it('two advances of the same live node dispatch the next node EXACTLY once (tick races recursion)', async () => {
+  it('two advances of the same live node dispatch the next node EXACTLY once (tick races the walk)', async () => {
     // Models a 2s watcher tick firing the same completed task that the in-process
-    // dispatchAndAdvance recursion is already advancing (or two panes racing). The
+    // dispatchAndAdvance walk is already advancing (or two panes racing). The
     // downstream node (`cond`) pauses so the chain stops after one dispatch.
     (dispatchNode as Mock).mockReturnValue({ type: 'awaiting_input', reason: 'paused' });
     const evalNode = await createNodeRun(db, {
@@ -438,10 +439,8 @@ describe('dispatchAndAdvance — a thrown dispatcher terminalizes its node', () 
     expect(abortFlowRun(flowRunId)).toBe(0);
   });
 
-  // advanceFlowRun recurses into dispatchAndAdvance for the next node (advance.ts), so a
-  // downstream throw unwinds through the upstream frame's try. The failure must be attributed to
-  // the node that actually threw — the CAS guard (expectStatuses) is what stops the upstream
-  // frame's catch from re-terminalizing an already-completed node.
+  // The failure must be attributed to the node that actually threw: each dispatch catches its own
+  // throw and turns it into that node's failed output, so a completed predecessor is never touched.
   it('attributes a downstream throw to the node that threw, not its completed predecessor', async () => {
     (dispatchNode as Mock).mockImplementation(async (args: { node: { id: string } }) => {
       if (args.node.id === 'evaluate') return { type: 'completed', output: completedOutput };
@@ -456,9 +455,8 @@ describe('dispatchAndAdvance — a thrown dispatcher terminalizes its node', () 
     expect(evaluate?.status).toBe('completed'); // untouched by the downstream failure
     expect(cond?.status).toBe('failed');
 
-    // Reported EXACTLY once. The frame that catches terminalizes and returns normally rather than
-    // rethrowing, so the throw never reaches the upstream frame's catch — no duplicate report as
-    // the recursion unwinds, and no need for an is-reported marker on the error.
+    // Reported EXACTLY once: the dispatch that catches records the failure and returns normally
+    // rather than rethrowing, so there is no need for an is-reported marker on the error.
     expect(captureContainedMock).toHaveBeenCalledTimes(1);
     expect(captureContainedMock).toHaveBeenCalledWith(expect.any(Error), {
       surface: 'flow-dispatch',
@@ -466,11 +464,8 @@ describe('dispatchAndAdvance — a thrown dispatcher terminalizes its node', () 
     });
   });
 
-  // The three-frame version of the same property, because the recursion depth is what makes
-  // duplicate reporting plausible: evaluate -> cond -> 6805, failing on the LAST node, so the
-  // throw would have to pass through two upstream dispatchAndAdvance frames to be double-counted.
-  // It does not: the owning frame terminalizes and returns normally instead of rethrowing, so the
-  // upstream frames' try blocks complete and their catches never run.
+  // The three-node version of the same property: evaluate -> cond -> 6805, failing on the LAST
+  // node, with two completed nodes behind it that must be neither re-terminalized nor reported.
   it('reports one event for one fault across a three-node chain, tagged with the failing node', async () => {
     (dispatchNode as Mock).mockImplementation(async (args: { node: { id: string } }) => {
       if (args.node.id === 'evaluate') return { type: 'completed', output: completedOutput };
@@ -574,6 +569,273 @@ describe('dispatchAndAdvance — a thrown dispatcher terminalizes its node', () 
       surface: 'flow-condition-result',
       blockType: 'condition',
     });
+  });
+});
+
+/** The fence a seeded, admitted run holds. */
+function liveFence(db: TestDb, flowRunId: string): RunFence {
+  const fence = readRunFence(db, flowRunId);
+  if (!fence) throw new Error(`run ${flowRunId} has no live fence`);
+  return fence;
+}
+
+describe('advance walk — a throw after the node write fails the run', () => {
+  const LINEAR: FlowGraph = {
+    nodes: ['a', 'b', 'c'].map((id, y) => ({
+      id,
+      blockType: 'run_command',
+      config: { command: 'true' },
+      position: { x: 0, y },
+    })),
+    edges: [
+      { id: 'e1', source: 'a', target: 'b' },
+      { id: 'e2', source: 'b', target: 'c' },
+    ],
+  };
+
+  let db: TestDb;
+  let flowRunId: string;
+  let fence: RunFence;
+  let unsubscribe: () => void = () => {};
+  beforeEach(async () => {
+    db = freshDb();
+    holder.db = db;
+    vi.mocked(dispatchNode).mockReset();
+    captureContainedMock.mockReset();
+    vi.mocked(dispatchNode).mockResolvedValue({ type: 'completed', output: completedOutput });
+    ({ flowRunId } = await seedFlowRun(db, LINEAR));
+    seedActiveAdmission(db, flowRunId);
+    fence = liveFence(db, flowRunId);
+  });
+  afterEach(() => unsubscribe());
+
+  /** b's node_completed fires after b is already written `completed`; `before` runs first. */
+  const throwOnBCompleted = (before: () => void = () => {}) => {
+    unsubscribe = subscribeFlowEvents((e) => {
+      if (e.eventType !== 'node_completed' || e.nodeId !== 'b') return;
+      before();
+      throw new Error('listener blew up');
+    });
+  };
+  const walkFromA = async () => {
+    const ctx = await loadRunContext(flowRunId);
+    if (!ctx) throw new Error('no run context');
+    await dispatchAndAdvance(fence, LINEAR.nodes[0], undefined, ctx);
+  };
+
+  // The node's own status write has already landed, so re-advancing it as failed matches no row:
+  // the run itself has to be failed, or it sits in 'running' with nothing left to move it.
+  it('fails the run when a listener throws on a mid-walk node_completed', async () => {
+    throwOnBCompleted();
+
+    await walkFromA();
+
+    expect((await getFlowRun(db, flowRunId))?.status).toBe('failed');
+    const nodeRuns = await listNodeRunsForFlowRun(db, flowRunId);
+    expect(nodeRuns.map((n) => [n.nodeId, n.status])).toEqual([
+      ['a', 'completed'],
+      ['b', 'completed'],
+    ]);
+    expect(captureContainedMock).toHaveBeenCalledTimes(1);
+    expect(captureContainedMock).toHaveBeenCalledWith(expect.any(Error), {
+      surface: 'flow-advance',
+      blockType: 'run_command',
+    });
+    expect(abortFlowRun(flowRunId)).toBe(0);
+  });
+
+  // The task-completion watcher advances a node directly, with no dispatch frame to catch for it —
+  // and while an agent is in flight the run it advances is `paused`, not `running`.
+  it.each<'running' | 'paused'>(['running', 'paused'])(
+    'fails a %s run when the throw happens under a direct advanceFlowRun',
+    async (status) => {
+      await setFlowRunStatus(db, flowRunId, status);
+      const b = await createNodeRun(db, {
+        flowRunId,
+        nodeId: 'b',
+        blockType: 'run_command',
+        status: 'running',
+      });
+      throwOnBCompleted();
+
+      await expect(advanceFlowRun(flowRunId, b.id, completedOutput)).resolves.toBe(true);
+
+      expect((await getFlowRun(db, flowRunId))?.status).toBe('failed');
+      expect(dispatchNode).not.toHaveBeenCalled();
+    },
+  );
+
+  // Failing the run emits too, so a listener that throws on everything throws again there. The
+  // status write has landed by then: the walk must settle, not reject into an unhandled catch.
+  it('still fails the run, without rejecting, when the listener also throws on run_failed', async () => {
+    unsubscribe = subscribeFlowEvents((e) => {
+      if (e.eventType === 'node_started') return;
+      throw new Error('listener blew up');
+    });
+
+    await expect(walkFromA()).resolves.toBeUndefined();
+
+    expect((await getFlowRun(db, flowRunId))?.status).toBe('failed');
+    expect(abortFlowRun(flowRunId)).toBe(0);
+  });
+
+  // A stored graph that no longer parses throws out of loadRunContext, after the node write and
+  // with no context to emit from. The run is failed in the database all the same.
+  it('fails the run when its context cannot be loaded after the node write', async () => {
+    const b = await createNodeRun(db, {
+      flowRunId,
+      nodeId: 'b',
+      blockType: 'run_command',
+      status: 'running',
+    });
+    db.update(flowVersions)
+      .set({ graph: { nodes: 'not-a-list' } })
+      .run();
+
+    await expect(advanceFlowRun(flowRunId, b.id, completedOutput)).resolves.toBe(true);
+
+    expect((await getFlowRun(db, flowRunId))?.status).toBe('failed');
+    expect((await getNodeRun(db, b.id))?.status).toBe('completed');
+  });
+
+  // An output that cannot be stored throws out of the node write itself, leaving the node
+  // 'running': the failure is then recorded as that node's outcome.
+  it('fails the node when its output cannot be recorded', async () => {
+    const circular = { items: [completedOutput.outputs] };
+    circular.items.push(circular);
+    vi.mocked(dispatchNode).mockResolvedValue({
+      type: 'completed',
+      output: { ...completedOutput, outputs: circular },
+    });
+
+    await walkFromA();
+
+    const [a] = await listNodeRunsForFlowRun(db, flowRunId);
+    expect(a?.status).toBe('failed');
+    expect(a?.nodeOutput).toMatchObject({ error: { message: expect.stringMatching(/circular/i) } });
+    expect((await getFlowRun(db, flowRunId))?.status).toBe('failed');
+    expect(dispatchNode).toHaveBeenCalledTimes(1);
+  });
+
+  // Starting the next node happens after the previous one is written but before a node run exists
+  // to carry the failure. `a` stays completed and the run, not a node, takes the failure.
+  it('fails the run when the next node run cannot be inserted', async () => {
+    db.run(sql`CREATE TRIGGER fail_b BEFORE INSERT ON node_runs WHEN NEW.node_id = 'b'
+      BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`);
+
+    await expect(walkFromA()).resolves.toBeUndefined();
+
+    expect((await getFlowRun(db, flowRunId))?.status).toBe('failed');
+    const nodeRuns = await listNodeRunsForFlowRun(db, flowRunId);
+    expect(nodeRuns.map((n) => [n.nodeId, n.status])).toEqual([['a', 'completed']]);
+    expect(captureContainedMock).toHaveBeenCalledTimes(1);
+    expect(abortFlowRun(flowRunId)).toBe(0);
+  });
+
+  it('leaves a run cancelled mid-advance as cancelled', async () => {
+    throwOnBCompleted(() => {
+      db.update(flowRuns).set({ status: 'cancelled' }).where(eq(flowRuns.id, flowRunId)).run();
+    });
+
+    await walkFromA();
+
+    expect((await getFlowRun(db, flowRunId))?.status).toBe('cancelled');
+  });
+});
+
+describe('advance walk — a long in-process walk holds nothing for finished nodes', () => {
+  // cmd -> cond, whose false edge loops back to cmd and whose true edge leaves the loop.
+  const LOOP: FlowGraph = {
+    nodes: [
+      {
+        id: 'cmd',
+        blockType: 'run_command',
+        config: { command: 'true' },
+        position: { x: 0, y: 0 },
+      },
+      { id: 'cond', blockType: 'condition', position: { x: 0, y: 1 } },
+      {
+        id: 'done',
+        blockType: 'run_command',
+        config: { command: 'true' },
+        position: { x: 0, y: 2 },
+      },
+    ],
+    edges: [
+      { id: 'e1', source: 'cmd', target: 'cond' },
+      { id: 'e2', source: 'cond', target: 'cmd', sourceHandle: 'false' },
+      { id: 'e3', source: 'cond', target: 'done', sourceHandle: 'true' },
+    ],
+  };
+
+  let db: TestDb;
+  let flowRunId: string;
+  let fence: RunFence;
+  beforeEach(async () => {
+    db = freshDb();
+    holder.db = db;
+    vi.mocked(dispatchNode).mockReset();
+    ({ flowRunId } = await seedFlowRun(db, LOOP));
+    seedActiveAdmission(db, flowRunId);
+    fence = liveFence(db, flowRunId);
+  });
+
+  /** Loops `iterations` times; `onLastCond` runs inside the final condition's dispatch. */
+  const runLoop = async (iterations: number, onLastCond: () => void) => {
+    let condDispatches = 0;
+    vi.mocked(dispatchNode).mockImplementation(async (args: { node: { id: string } }) => {
+      if (args.node.id !== 'cond') return { type: 'completed', output: completedOutput };
+      condDispatches += 1;
+      const last = condDispatches === iterations;
+      if (last) onLastCond();
+      return {
+        type: 'completed',
+        output: { ...completedOutput, outputs: { result: last ? CONDITION_TRUE_RESULT : 'stop' } },
+      };
+    });
+    const ctx = await loadRunContext(flowRunId);
+    if (!ctx) throw new Error('no run context');
+    await dispatchAndAdvance(fence, LOOP.nodes[0], undefined, ctx);
+  };
+
+  it('keeps only the running node’s abort controller registered', async () => {
+    let live = -1;
+
+    await runLoop(40, () => {
+      live = abortFlowRun(flowRunId);
+    });
+
+    expect(live).toBe(1);
+  });
+
+  // A loop that never exits on its own: the only way out is a Cancel landing in the turn the walk
+  // gives the event loop, after which the next node insert declines on the fence.
+  it('stops a never-ending loop once a Cancel lands', async () => {
+    setImmediate(() => {
+      db.update(flowRuns).set({ status: 'cancelled' }).where(eq(flowRuns.id, flowRunId)).run();
+    });
+
+    await runLoop(Number.POSITIVE_INFINITY, () => {});
+
+    expect((await getFlowRun(db, flowRunId))?.status).toBe('cancelled');
+    const nodeRuns = await listNodeRunsForFlowRun(db, flowRunId);
+    expect(nodeRuns.filter((n) => n.status === 'running')).toEqual([]);
+    expect(abortFlowRun(flowRunId)).toBe(0);
+  });
+
+  it('lets the event loop run during the walk', async () => {
+    let serviced = false;
+    let servicedByLastHop = false;
+    setImmediate(() => {
+      serviced = true;
+    });
+
+    await runLoop(300, () => {
+      servicedByLastHop = serviced;
+    });
+
+    expect(servicedByLastHop).toBe(true);
+    expect((await getFlowRun(db, flowRunId))?.status).toBe('completed');
   });
 });
 
