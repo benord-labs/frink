@@ -12,6 +12,7 @@ import { TRPCError } from '@trpc/server';
 import type { FlowResumeSnapshot } from '../../../shared/types/flow-run/resume';
 import { type NodeOutput, RESUME_ACTIONABLE_NODE_STATUSES } from '../../../shared/types/flow';
 import { getDatabase } from '../db';
+import type { NodeRun } from '../db/schema';
 import { getFlowRun, getLatestFlowRunForChat } from '../db/repos/flow-runs';
 import {
   getNodeRun,
@@ -26,8 +27,10 @@ import {
   TerminalResumeAdmissionError,
   TerminalResumeChatDeletedError,
 } from './admission/terminal-resume/resume-store';
-import { advanceFlowRun, dispatchAndAdvance, loadRunContext } from './advance';
-import { findNodeById } from './graph';
+import { advanceFlowRun, dispatchAndAdvance, loadRunContext, type RunContext } from './advance';
+import { loadOwningFanOutState } from './fan-out-step';
+import { type FlowGraphNode, findNodeById } from './graph';
+import { type FanOutLaneScope, reconstructPreviousOutput } from './rerun/predecessor-output';
 import { lastUnfinishedNodeRun } from './rerun/resume-point';
 import { sessionAnsweredTaskNode } from './rerun/session-resume';
 import { commitUnpark } from './rerun/unpark-node-run';
@@ -162,6 +165,30 @@ const REOPEN_DECLINED: Record<ReopenDeclined, string> = {
   'no-slot': 'This paused Flow lost its place in the run queue. Cancel it and start it again.',
 };
 
+/** The Fan Out item and previous output a retried node was first dispatched with. */
+async function retryDispatchInput(
+  ctx: RunContext,
+  nodeRun: NodeRun,
+  retryNode: FlowGraphNode,
+): Promise<{ fanOutScope?: FanOutLaneScope; previousOutput?: NodeOutput }> {
+  const fanOutScope =
+    nodeRun.parentFanOutNodeRunId && nodeRun.laneIndex !== null
+      ? { laneIndex: nodeRun.laneIndex, parentFanOutNodeRunId: nodeRun.parentFanOutNodeRunId }
+      : undefined;
+  const fanOutState = fanOutScope
+    ? await loadOwningFanOutState(ctx.meta.flowId, nodeRun.flowRunId, retryNode)
+    : undefined;
+  const previousOutput = reconstructPreviousOutput({
+    graph: ctx.graph,
+    nodeRuns: await listNodeRunsForFlowRun(getDatabase(), nodeRun.flowRunId),
+    nodeId: retryNode.id,
+    scope: fanOutScope,
+    beforeNodeRunId: nodeRun.id,
+    fanOutState,
+  });
+  return { fanOutScope, previousOutput };
+}
+
 export async function resumeFlowRun(
   flowRunId: string,
   action: ResumeAction,
@@ -211,6 +238,8 @@ export async function resumeFlowRun(
       message: `Node ${nodeRun.nodeId} no longer in graph; can't retry.`,
     });
   }
+  // Read before the reopen so a failed read leaves the run paused, not `running` with nothing dispatched.
+  const retry = retryNode ? await retryDispatchInput(ctx, nodeRun, retryNode) : undefined;
   // Another client may have advanced this node and paused at a later step while the context loaded.
   const allowed: readonly string[] =
     action === 'approve' ? ['awaiting_input'] : RESUME_ACTIONABLE_NODE_STATUSES;
@@ -224,16 +253,9 @@ export async function resumeFlowRun(
 
   await withFlowResourceCleanup(flowRunId, async () => {
     if (retryNode) {
-      const fanOutScope =
-        nodeRun.parentFanOutNodeRunId && nodeRun.laneIndex !== null
-          ? {
-              laneIndex: nodeRun.laneIndex,
-              parentFanOutNodeRunId: nodeRun.parentFanOutNodeRunId,
-            }
-          : undefined;
       // The retry is a new attempt: the paused row goes `superseded` in the insert's own tick.
-      await dispatchAndAdvance(fence, retryNode, undefined, ctx, undefined, {
-        ...fanOutScope,
+      await dispatchAndAdvance(fence, retryNode, retry?.previousOutput, ctx, undefined, {
+        ...retry?.fanOutScope,
         supersedesNodeRunId: nodeRunId,
       });
       return;

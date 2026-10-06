@@ -2,7 +2,7 @@ import { TRPCError } from '@trpc/server';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 import type { FlowGraph } from '../../../shared/lib/validate-flow-graph';
-import { RESTART_INTERRUPTION_REASON } from '../../../shared/types/flow';
+import { type NodeOutput, RESTART_INTERRUPTION_REASON } from '../../../shared/types/flow';
 import type { FlowResumeSnapshot } from '../../../shared/types/flow-run/resume';
 import { getFlowRun, setFlowRunStatus } from '../db/repos/flow-runs';
 import { createNodeRun, getNodeRun, setNodeRunStatus } from '../db/repos/node-runs';
@@ -75,7 +75,8 @@ describe('resumeFlowRun — admission lease', () => {
     db = freshDb();
     holder.db = db;
     (loadRunContext as Mock).mockReset();
-    (loadRunContext as Mock).mockResolvedValue({ graph: GRAPH });
+    // SAFETY: resumeFlowRun reads only graph and meta.flowId from the run context.
+    (loadRunContext as Mock).mockResolvedValue({ graph: GRAPH, meta: { flowId: 'flow-1' } });
     (advanceFlowRun as Mock).mockReset();
     setFlowAdmissionLifecycleHooks({
       reconcile: vi.fn(async () => {}),
@@ -315,6 +316,72 @@ describe('resumeFlowRun — admission lease', () => {
       { supersedesNodeRunId: nodeRun.id },
     );
     expect(hasFlowResourceActivity(flowRunId)).toBe(false);
+  });
+
+  it('re-dispatches a retry with the output its predecessor handed it (sc-2762)', async () => {
+    const { flowRunId } = await seedFlowRun(db, GRAPH);
+    await setFlowRunStatus(db, flowRunId, 'paused');
+    const triggerOutput: NodeOutput = {
+      status: 'completed',
+      outputs: { summary: 'from the trigger' },
+      artifacts: [],
+      durationMs: 0,
+    };
+    await createNodeRun(db, {
+      flowRunId,
+      nodeId: 't',
+      blockType: 'manual_trigger',
+      status: 'completed',
+      nodeOutput: triggerOutput,
+    });
+    const nodeRun = await createNodeRun(db, {
+      flowRunId,
+      nodeId: 'a',
+      blockType: 'agent',
+      status: 'failed',
+    });
+    const ticket = seedActiveAdmission(db, flowRunId);
+    vi.mocked(dispatchAndAdvance).mockReset().mockResolvedValue(undefined);
+
+    await resumeFlowRun(flowRunId, 'retry', nodeRun.id);
+
+    expect(dispatchAndAdvance).toHaveBeenCalledWith(
+      { flowRunId, ticket },
+      GRAPH.nodes[1],
+      triggerOutput,
+      expect.anything(),
+      undefined,
+      { supersedesNodeRunId: nodeRun.id },
+    );
+  });
+
+  it('leaves the run paused when rebuilding the previous output fails', async () => {
+    const { flowRunId } = await seedFlowRun(db, GRAPH);
+    await setFlowRunStatus(db, flowRunId, 'paused');
+    const parent = await createNodeRun(db, {
+      flowRunId,
+      nodeId: 'fan',
+      blockType: 'fan_out',
+      status: 'completed',
+    });
+    const nodeRun = await createNodeRun(db, {
+      flowRunId,
+      nodeId: 'a',
+      blockType: 'agent',
+      status: 'failed',
+      laneIndex: 1,
+      parentFanOutNodeRunId: parent.id,
+    });
+    seedActiveAdmission(db, flowRunId);
+    vi.mocked(dispatchAndAdvance).mockReset().mockResolvedValue(undefined);
+    // SAFETY: a context without meta makes the Fan Out state read throw, standing in for any failed read.
+    (loadRunContext as Mock).mockResolvedValueOnce({ graph: GRAPH });
+
+    await expect(resumeFlowRun(flowRunId, 'retry', nodeRun.id)).rejects.toThrow();
+
+    expect((await getFlowRun(db, flowRunId))?.status).toBe('paused');
+    expect((await getNodeRun(db, nodeRun.id))?.status).toBe('failed');
+    expect(dispatchAndAdvance).not.toHaveBeenCalled();
   });
 
   it('preserves the Fan Out item scope when retrying one branch', async () => {
