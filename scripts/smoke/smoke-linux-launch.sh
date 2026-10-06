@@ -2,7 +2,8 @@
 # Launch smoke for the packaged Linux app. The .deb and the AppImage must each map a Frink window under
 # Xvfb (the .deb with Chromium's sandbox on), and the bundled CLIs must run on the oldest supported distros.
 #
-# Run from the repo root after `bun run package:linux`; logs land in $FRINK_SMOKE_OUT:
+# Run from the repo root after `bun run package:linux`; logs land in $FRINK_SMOKE_OUT, and an arm64 build
+# sets FRINK_SMOKE_UNPACKED=release/linux-arm64-unpacked:
 #   bash scripts/smoke/smoke-linux-launch.sh [deb] [appimage] [old-distros]   # no argument runs all three
 # Needs xvfb, xdotool, fuse3 and procps; `deb` also needs sudo, apt and AppArmor, and `old-distros` needs docker.
 #
@@ -17,6 +18,7 @@ set -euo pipefail
 [ -n "${FRINK_SMOKE_IN_XVFB:-}" ] || FRINK_SMOKE_IN_XVFB=1 exec xvfb-run -a -s '-screen 0 1440x900x24' bash "$0" "$@"
 
 OUT="${FRINK_SMOKE_OUT:-${RUNNER_TEMP:-/tmp}/linux-launch-smoke}"
+UNPACKED="${FRINK_SMOKE_UNPACKED:-release/linux-unpacked}"
 FATAL_STDERR='FATAL|No usable sandbox|error while loading shared libraries'
 APP_SID=''
 
@@ -86,7 +88,7 @@ DISTRO_PROBE='ldconfig -p | grep -q libssl.so.3 || { apt-get update -qq && apt-g
 check_old_distros() {
   local image
   for image in ubuntu:22.04 debian:12; do
-    docker run --rm -v "$PWD/release/linux-unpacked/resources/bin:/frink-bin:ro" "$image" sh -c "$DISTRO_PROBE" \
+    docker run --rm -v "$PWD/$UNPACKED/resources/bin:/frink-bin:ro" "$image" sh -c "$DISTRO_PROBE" \
       || fail "the bundled codex/claude do not run on $image"
     echo "codex/claude --version OK on $image"
   done
