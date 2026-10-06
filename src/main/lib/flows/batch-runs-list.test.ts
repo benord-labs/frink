@@ -248,9 +248,10 @@ describe('listBatchRunsForBatch', () => {
       });
 
       for (const opts of [{}, { stageId }]) {
-        const { runs, total } = await listBatchRunsForBatch(BATCH_ID, opts, db);
+        const { runs, total, statusCounts } = await listBatchRunsForBatch(BATCH_ID, opts, db);
         expect(runs.map((r) => r.id)).toEqual([runId]);
         expect(total).toBe(1);
+        expect(statusCounts).toEqual({ running: 1 });
       }
     });
 
@@ -288,7 +289,7 @@ describe('listBatchRunsForBatch', () => {
       expect(second.total).toBe(3);
 
       const past = await listBatchRunsForBatch(BATCH_ID, { limit: 2, offset: 10 }, db);
-      expect(past).toEqual({ runs: [], total: 3 });
+      expect(past).toEqual({ runs: [], total: 3, statusCounts: { running: 3 } });
     });
 
     // The status filter can steer SQLite onto flow_runs_status_idx, a different scan order again.
@@ -346,22 +347,78 @@ describe('listBatchRunsForBatch', () => {
       await expect(listBatchRunsForBatch('batch-unknown', {}, db)).resolves.toEqual({
         runs: [],
         total: 0,
+        statusCounts: {},
       });
     });
 
     it.each([
       ['unfiltered', () => ({})],
       ['filtered by stage', () => ({ stageId })],
-    ])('reads the page and the total inside one transaction (%s)', async (_name, opts) => {
-      await seedBatchRun();
-      const prepared = recordPrepares(db);
+    ])(
+      'reads the page, the total and the status counts inside one transaction (%s)',
+      async (_name, opts) => {
+        await seedBatchRun();
+        const prepared = recordPrepares(db);
 
-      await listBatchRunsForBatch(BATCH_ID, opts(), db);
+        await listBatchRunsForBatch(BATCH_ID, opts(), db);
 
-      const statements = pageAndCountStatements(prepared);
-      expect(statements).toHaveLength(2);
-      expect(statements.map((s) => s.inTransaction)).toEqual([true, true]);
-      expect(db.$client.inTransaction).toBe(false);
+        const statements = pageAndCountStatements(prepared);
+        expect(statements).toHaveLength(3);
+        expect(statements.map((s) => s.inTransaction)).toEqual([true, true, true]);
+        expect(db.$client.inTransaction).toBe(false);
+      },
+    );
+  });
+
+  describe('statusCounts', () => {
+    const SPREAD: Array<[string, number]> = [
+      ['completed', 40],
+      ['failed', 3],
+      ['cancelled', 2],
+      ['running', 8],
+      ['paused', 4],
+      ['pending', 3],
+    ];
+    const WHOLE_BATCH = Object.fromEntries(SPREAD);
+
+    let otherStage: string;
+
+    /** 60 runs across every status; the failed ones sit in a second stage. */
+    beforeEach(async () => {
+      otherStage = await seedStage(2);
+      for (const [status, n] of SPREAD) {
+        for (let i = 0; i < n; i += 1) {
+          await seedBatchRun({ status, inStage: status === 'failed' ? otherStage : stageId });
+        }
+      }
+      await seedBatchRun({ status: 'completed', batchId: 'batch-other' });
+    });
+
+    it('counts every run in the batch when the page is smaller than the batch', async () => {
+      const { runs, total, statusCounts } = await listBatchRunsForBatch(
+        BATCH_ID,
+        { limit: 20 },
+        db,
+      );
+
+      expect(runs).toHaveLength(20);
+      expect(total).toBe(60);
+      expect(statusCounts).toEqual(WHOLE_BATCH);
+      expect(Object.values(statusCounts).reduce((sum, n) => sum + n, 0)).toBe(total);
+    });
+
+    it('stays whole-batch when the list is filtered by status, by stage, or paged past the end', async () => {
+      const byStatus = await listBatchRunsForBatch(BATCH_ID, { status: 'failed' }, db);
+      expect(byStatus.total).toBe(3);
+      expect(byStatus.statusCounts).toEqual(WHOLE_BATCH);
+
+      const byStage = await listBatchRunsForBatch(BATCH_ID, { stageId: otherStage }, db);
+      expect(byStage.total).toBe(3);
+      expect(byStage.statusCounts).toEqual(WHOLE_BATCH);
+
+      const past = await listBatchRunsForBatch(BATCH_ID, { offset: 100 }, db);
+      expect(past.runs).toEqual([]);
+      expect(past.statusCounts).toEqual(WHOLE_BATCH);
     });
   });
 });
