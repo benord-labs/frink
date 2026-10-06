@@ -55,6 +55,7 @@ import {
 } from './custom-nodes/installation-coordinator';
 import type { FlowExecuteStepPayload, ParsedStepOutput } from './flow-step-executor';
 import { executeFlowStepLocal } from './flow-step-executor';
+import { LoginShellEnvResolver, setLoginShellEnvResolver } from './platform/login-shell-env';
 
 const PROJECT = { id: 'p1', path: '/repo', machine_id: 'm1', name: 'test', git_remote: null };
 
@@ -101,9 +102,23 @@ function nid() {
   return `nr-exec-${++_counter}`;
 }
 
+/** Answer the login-shell wait from a fake shell; `gate` holds the answer until released. */
+function loginShellAnswers(gate?: Promise<void>): void {
+  setLoginShellEnvResolver(
+    new LoginShellEnvResolver({
+      spawnShell: async () => {
+        await gate;
+        return { ok: true, env: { PATH: process.env.PATH ?? '' } };
+      },
+      extendPath: (p) => p ?? '',
+    }),
+  );
+}
+
 describe('flow-step-executor', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    loginShellAnswers();
     getProjectByIdMock.mockResolvedValue(PROJECT);
     runShellCommandMock.mockResolvedValue(makeOkShellResult('hello'));
     runCustomNodeProcessMock.mockResolvedValue({
@@ -209,6 +224,27 @@ describe('flow-step-executor', () => {
     expect(outputs.baseBranch).toBe('main');
   });
 
+  it('runs no step before the login-shell PATH is ready (a flow firing right after launch)', async () => {
+    let release: () => void = () => {};
+    loginShellAnswers(new Promise<void>((resolve) => (release = resolve)));
+
+    const driver = makeStepDriver();
+    const pending = driver._trigger('execute', {
+      nodeRunId: nid(),
+      flowRunId: 'fr-1',
+      projectId: 'p1',
+      blockType: 'run_command',
+      command: 'bun test',
+      timeoutMs: 5000,
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(runShellCommandMock).not.toHaveBeenCalled();
+
+    release();
+    await pending;
+    expect(runShellCommandMock).toHaveBeenCalledOnce();
+  });
+
   it('emits failed flow:step-result when start_task worktree creation fails', async () => {
     createWorktreeForBranchMock.mockResolvedValueOnce({
       success: false,
@@ -230,6 +266,30 @@ describe('flow-step-executor', () => {
     const p = result?.[1] as Record<string, unknown>;
     expect(p.status).toBe('failed');
     expect(String(p.error)).toContain('git worktree add failed');
+  });
+
+  it('keeps the cause of a failed setup command in the start_task error, not just the command (sc-4724)', async () => {
+    // The node error is the first line of the failure, clipped to 500 chars. A long setup command
+    // used to fill that line and push "bun: command not found" out of what the run reports.
+    const cmd = `bun install && ${'bun run build:something-long && '.repeat(30)}true`;
+    createWorktreeForBranchMock.mockResolvedValueOnce({
+      success: false,
+      error: `Worktree setup failed: /bin/sh: bun: command not found (exit 127) — while running: ${cmd}`,
+    });
+
+    const driver = makeStepDriver();
+    await driver._trigger('execute', {
+      nodeRunId: nid(),
+      flowRunId: 'fr-1',
+      projectId: 'p1',
+      blockType: 'start_task',
+      timeoutMs: 5000,
+    });
+
+    expect(driver._emitted.find(([e]) => e === 'result')?.[1]).toMatchObject({
+      status: 'failed',
+      error: expect.stringContaining('bun: command not found'),
+    });
   });
 
   // Worktree setup is interruptible, so a cancel surfaces as a setup FAILURE. Reporting that as

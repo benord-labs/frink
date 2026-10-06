@@ -534,31 +534,25 @@ describe('platform providers', () => {
     });
 
     // NVM wildcard paths (e.g. ~/.nvm/versions/node/*/bin) are literal strings —
-    // shells do not expand globs in PATH. These entries are unreachable and should
-    // not be included in the extended PATH. `it.fails` = expected red until fixed.
-    it.fails('does not add unresolvable wildcard paths to the extended PATH on darwin', () => {
+    // shells do not expand globs in PATH, so such an entry can never find node/npx.
+    it('does not add unresolvable wildcard paths to the extended PATH on darwin', () => {
       const provider = new DarwinPlatformProvider();
       const result = provider.buildExtendedPath(undefined);
       expect(result).not.toContain('*');
     });
 
-    it.fails('does not add unresolvable wildcard paths to the extended PATH on linux', () => {
+    it('does not add unresolvable wildcard paths to the extended PATH on linux', () => {
       const provider = new LinuxPlatformProvider();
       const result = provider.buildExtendedPath(undefined);
       expect(result).not.toContain('*');
     });
 
-    it('does not deduplicate wildcard NVM path against a resolved NVM version path', () => {
-      // Documents the knock-on effect of the bug: a user whose $PATH already contains
-      // a real NVM path like ~/.nvm/versions/node/v20.0.0/bin ends up with both the
-      // wildcard and the resolved path in their extended PATH.
+    it('keeps a resolved NVM version path already on PATH without adding a wildcard beside it', () => {
       const provider = new DarwinPlatformProvider();
       const resolvedNvmBin = path.join(MOCK_HOME, '.nvm', 'versions', 'node', 'v20.0.0', 'bin');
-      const result = provider.buildExtendedPath(resolvedNvmBin);
-      const parts = result.split(':');
-      const wildcardPath = path.join(MOCK_HOME, '.nvm', 'versions', 'node', '*', 'bin');
-      expect(parts).toContain(wildcardPath);
+      const parts = provider.buildExtendedPath(resolvedNvmBin).split(':');
       expect(parts).toContain(resolvedNvmBin);
+      expect(parts.filter((p) => p.includes('.nvm'))).toEqual([resolvedNvmBin]);
     });
   });
 

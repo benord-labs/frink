@@ -178,6 +178,38 @@ vi.mock('../../../../shared/launch-flags', () => ({ LAUNCH_FLAGS: launchFlagsMoc
 
 beforeEach(() => {});
 
+describe('claudeCodeRouter.hasExistingCliConfig', () => {
+  it('reads the API proxy from the login shell once it has answered, not the launch env', async () => {
+    // Called by onboarding right after launch, while the shell is usually still resolving.
+    const { LoginShellEnvResolver, setLoginShellEnvResolver } =
+      await import('../../platform/login-shell-env');
+    let answer: () => void = () => {};
+    const answered = new Promise<void>((resolve) => (answer = resolve));
+    setLoginShellEnvResolver(
+      new LoginShellEnvResolver({
+        spawnShell: async () => {
+          await answered;
+          return {
+            ok: true,
+            env: { PATH: process.env.PATH ?? '', ANTHROPIC_BASE_URL: 'https://proxy.example' },
+          };
+        },
+        extendPath: (p) => p ?? '',
+      }),
+    );
+    const { claudeCodeRouter } = await import('./claude-code');
+    const caller = claudeCodeRouter.createCaller({ getWindow: () => null });
+
+    const pending = caller.hasExistingCliConfig();
+    answer();
+
+    await expect(pending).resolves.toMatchObject({
+      hasConfig: true,
+      baseUrl: 'https://proxy.example',
+    });
+  });
+});
+
 describe('claudeCodeRouter project account ownership', () => {
   beforeEach(() => {
     getProjectAiAccountMock.mockReset();

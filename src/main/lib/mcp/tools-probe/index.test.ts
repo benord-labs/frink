@@ -58,6 +58,7 @@ vi.mock('../claude-tools-cache', () => ({ refreshClaudeToolsCache: vi.fn() }));
 vi.mock('../../sentry/init', () => ({ captureMainMessage: captureMainMessageMock }));
 
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
+import { LoginShellEnvResolver, setLoginShellEnvResolver } from '../../platform/login-shell-env';
 import type { FrinkMcpServerConfig } from '../types';
 import {
   _resetMcpPaginationCaptureForTests,
@@ -97,6 +98,21 @@ beforeEach(() => {
   connectMock.mockResolvedValue(undefined);
 });
 
+/** Answer the login-shell resolver from a fake shell; `gate` holds the answer until released. */
+function loginShellAnswers(gate?: Promise<void>): void {
+  setLoginShellEnvResolver(
+    new LoginShellEnvResolver({
+      spawnShell: async () => {
+        await gate;
+        return { ok: true, env: { PATH: process.env.PATH ?? '' } };
+      },
+      extendPath: (p) => p ?? '',
+    }),
+  );
+}
+
+beforeEach(() => loginShellAnswers());
+
 describe('fetchMcpToolDescriptors / fetchMcpToolDescriptorsStdio', () => {
   it('preserves description and inputSchema over HTTP, passing headers through', async () => {
     listToolsMock.mockResolvedValue({ tools: [sampleTool] });
@@ -108,6 +124,26 @@ describe('fetchMcpToolDescriptors / fetchMcpToolDescriptorsStdio', () => {
       requestInit: { headers: { Authorization: 'Bearer x' } },
     });
     expect(closeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['tool-list probe', () => fetchMcpToolDescriptorsStdio({ command: 'npx' })],
+    ['one-shot tool call', () => callMcpToolStdio({ command: 'npx' }, 'search', {})],
+  ])('waits for the login-shell PATH before spawning a stdio server (%s, sc-4724)', async (_, run) => {
+    // A probe at startup (MCP cache warm-up, Settings → test) would otherwise spawn npx on the
+    // GUI launch PATH and report the server as broken.
+    listToolsMock.mockResolvedValue({ tools: [] });
+    callToolMock.mockResolvedValue({ content: [] });
+    let release: () => void = () => {};
+    loginShellAnswers(new Promise<void>((resolve) => (release = resolve)));
+
+    const pending = run();
+    await Promise.resolve();
+    expect(stdioTransportMock).not.toHaveBeenCalled();
+
+    release();
+    await pending;
+    expect(stdioTransportMock).toHaveBeenCalledTimes(1);
   });
 
   it('preserves inputSchema over stdio and filters blocked env vars from the spawn', async () => {
