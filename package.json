@@ -382,6 +382,9 @@
       "category": "Development",
       "maintainer": "Benji Norval <noreply@frink.dev>"
     },
+    "toolsets": {
+      "appimage": "1.0.3"
+    },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,

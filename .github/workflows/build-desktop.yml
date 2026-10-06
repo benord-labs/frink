@@ -278,6 +278,13 @@ jobs:
           ls release/*.AppImage >/dev/null 2>&1 || { echo "::error::no .AppImage produced"; exit 1; }
           ls release/*.deb >/dev/null 2>&1 || { echo "::error::no .deb produced"; exit 1; }
 
+      - name: Assert AppImage ships the static runtime
+        if: runner.os == 'Linux'
+        # package.json `build.toolsets.appimage` selects the static type2 runtime; without it
+        # electron-builder falls back to the legacy runtime that dlopens libfuse.so.2, which stock
+        # Ubuntu 22.04+/Fedora no longer install — and nothing else in the build would notice.
+        run: node scripts/publish/assert-appimage-runtime.mjs release
+
       - name: Assert Windows installers produced
         if: runner.os == 'Windows'
         shell: bash
