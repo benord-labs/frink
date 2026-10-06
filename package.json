@@ -27,6 +27,7 @@
     "claude:download": "node scripts/binaries/download-claude-binary.mjs",
     "claude:download:all": "node scripts/binaries/download-claude-binary.mjs --all",
     "codex:build": "node scripts/binaries/build-codex-frink.mjs",
+    "codex:patch": "node scripts/binaries/codex-patch-workspace.mjs",
     "codex:download": "node scripts/binaries/download-codex-binary.mjs",
     "electron:download": "node scripts/binaries/ensure-electron-binary.mjs",
     "kill:worktree-electron": "node scripts/dev/kill-worktree-electron.mjs",
