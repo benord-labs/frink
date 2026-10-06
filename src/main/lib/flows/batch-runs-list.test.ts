@@ -35,6 +35,7 @@ type RunContext = { label?: string; chatId?: string };
 /** A batch flow run linked to one stage run, the way dispatch leaves it. */
 async function seedBatchRun(
   input: {
+    id?: string;
     status?: string;
     createdAt?: Date;
     triggerContext?: RunContext;
@@ -46,6 +47,7 @@ async function seedBatchRun(
   const [run] = await db
     .insert(flowRuns)
     .values({
+      id: input.id,
       flowVersionId: versionId,
       status: input.status ?? 'running',
       batchId: input.batchId ?? BATCH_ID,
@@ -287,6 +289,55 @@ describe('listBatchRunsForBatch', () => {
 
       const past = await listBatchRunsForBatch(BATCH_ID, { limit: 2, offset: 10 }, db);
       expect(past).toEqual({ runs: [], total: 3 });
+    });
+
+    // The status filter can steer SQLite onto flow_runs_status_idx, a different scan order again.
+    it.each([
+      ['unfiltered', () => ({})],
+      ['filtered by stage', () => ({ stageId })],
+      ['filtered by status', () => ({ status: 'running' })],
+    ])(
+      'pages runs that share a created_at second once each, newest insert first (%s)',
+      async (_name, opts) => {
+        // Ids out of insert order, so only an insert-order tiebreaker gives the expected order.
+        const inserted = ['run-c', 'run-a', 'run-e', 'run-b', 'run-d', 'run-f', 'run-g'];
+        const statuses = [
+          'running',
+          'completed',
+          'running',
+          'failed',
+          'running',
+          'completed',
+          'running',
+        ];
+        const sameSecond = new Date('2026-07-11T09:00:00Z');
+        for (const [i, id] of inserted.entries()) {
+          await seedBatchRun({ id, status: statuses[i], createdAt: sameSecond });
+        }
+        const filter = opts();
+        const expected = inserted
+          .filter((_id, i) => !('status' in filter) || statuses[i] === filter.status)
+          .reverse();
+
+        const paged: string[] = [];
+        for (let offset = 0; offset < expected.length; offset += 2) {
+          const page = await listBatchRunsForBatch(BATCH_ID, { ...filter, limit: 2, offset }, db);
+          expect(page.total).toBe(expected.length);
+          paged.push(...page.runs.map((r) => r.id));
+        }
+
+        expect(paged).toEqual(expected);
+      },
+    );
+
+    it('orders runs from different seconds by created_at, not by insert order', async () => {
+      const newest = await seedBatchRun({ createdAt: new Date('2026-07-11T09:02:00Z') });
+      const oldest = await seedBatchRun({ createdAt: new Date('2026-07-11T09:00:00Z') });
+      const middle = await seedBatchRun({ createdAt: new Date('2026-07-11T09:01:00Z') });
+
+      const { runs } = await listBatchRunsForBatch(BATCH_ID, {}, db);
+
+      expect(runs.map((r) => r.id)).toEqual([newest, middle, oldest]);
     });
 
     it('returns an empty result for a batch with no runs', async () => {

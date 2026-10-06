@@ -1,7 +1,7 @@
 /** One stage's batch_stage_runs, paginated, as BatchStageRunRow: start_task fields (merge conflicts),
  * needs_input (listHumanWaitFlowRunIds), chat_id and timestamps from the linked flow_run. */
 
-import { sql as drizzleSql, eq } from 'drizzle-orm';
+import { asc, sql as drizzleSql, eq } from 'drizzle-orm';
 import type { BatchStageRunRow } from '../../../shared/types/flow';
 import { getDatabase } from '../db';
 import {
@@ -74,7 +74,9 @@ function readStageRunPage(
       .from(batchStageRuns)
       .leftJoin(flowRuns, eq(batchStageRuns.flowRunId, flowRuns.id))
       .where(eq(batchStageRuns.stageId, stageId))
-      .orderBy(batchStageRuns.createdAt)
+      // created_at is second-precision; rowid (insert order) breaks ties so OFFSET pages never
+      // repeat or skip a row. Table-qualified: the flow_runs join has a rowid too.
+      .orderBy(asc(batchStageRuns.createdAt), asc(drizzleSql`${batchStageRuns}.rowid`))
       .limit(limit)
       .offset(offset)
       .all(),
