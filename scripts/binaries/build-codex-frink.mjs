@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -58,6 +58,9 @@ const HANDSHAKE_CLIENT_NAME = 'frink-build-check';
 /** Fixed, never the pin: no manifest value may enter the request the version assertion reads back. */
 const HANDSHAKE_CLIENT_VERSION = '0';
 const HANDSHAKE_TIMEOUT_MS = 60_000;
+/** After the reply, how long the app-server gets to exit on stdin EOF before it is killed. */
+const HANDSHAKE_KILL_GRACE_MS = 2_000;
+const TRANSCRIPT_TAIL_CHARS = 4_000;
 const MCP_REPLACE_SENTINEL = '__frink_replace';
 
 export function platformKey(platform = process.platform, arch = process.arch) {
@@ -217,14 +220,93 @@ export function assertPinnedThreadItems(manifest, declared, upstream) {
   );
 }
 
-/** The `initialize` reply from an app-server stdout transcript, which also carries notifications. */
-export function parseInitializeResult(stdout) {
-  for (const line of stdout.split(LINE_BREAK_PATTERN)) {
-    if (line.trim().length === 0) continue;
-    const message = JSON.parse(line);
-    if (message.id === 1) return message.result ?? null;
+function transcriptTail(text) {
+  if (text.length === 0) return '(empty)';
+  return text.length > TRANSCRIPT_TAIL_CHARS ? `…${text.slice(-TRANSCRIPT_TAIL_CHARS)}` : text;
+}
+
+/** What the binary wrote on both streams, so a failed check shows its evidence in the CI log. */
+export function describeTranscript({ stdout, stderr }) {
+  return `\n--- app-server stdout ---\n${transcriptTail(stdout)}\n--- app-server stderr ---\n${transcriptTail(stderr)}`;
+}
+
+function parseJsonLine(line) {
+  try {
+    return JSON.parse(line);
+  } catch {
+    return null;
   }
-  return null;
+}
+
+/**
+ * Sends `input` and keeps stdin open until the `id: 1` reply arrives: the app-server shuts down on
+ * stdin EOF, so closing it with the request raced the reply and sometimes lost it (sc-4465). Stdout
+ * also carries notifications and is read line by line across chunk boundaries.
+ */
+export function runInitializeHandshake(command, args, { input, env, timeoutMs }) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { env, stdio: ['pipe', 'pipe', 'pipe'] });
+    const transcript = { stdout: '', stderr: '' };
+    let pendingLine = '';
+    let settled = false;
+
+    const settle = (error, message) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.stdin.end();
+      if (child.exitCode === null && child.signalCode === null) {
+        const grace = setTimeout(() => child.kill('SIGKILL'), HANDSHAKE_KILL_GRACE_MS);
+        grace.unref();
+        child.once('exit', () => clearTimeout(grace));
+      }
+      if (error) reject(error);
+      else resolve({ message, ...transcript });
+    };
+    const fail = (reason) => settle(new Error(`${reason}${describeTranscript(transcript)}`));
+    const readLine = (line) => {
+      const message = parseJsonLine(line);
+      if (message?.id === 1) settle(null, message);
+    };
+
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      fail(`Built Codex app-server did not answer initialize within ${timeoutMs}ms`);
+    }, timeoutMs);
+
+    // A child that has already exited makes the write fail with EPIPE; its exit reports the cause.
+    child.stdin.on('error', () => {});
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => {
+      transcript.stdout += chunk;
+      const lines = `${pendingLine}${chunk}`.split(LINE_BREAK_PATTERN);
+      pendingLine = lines.pop();
+      for (const line of lines) readLine(line);
+    });
+    child.stderr.on('data', (chunk) => {
+      transcript.stderr += chunk;
+    });
+    child.on('error', (error) => fail(`Could not run built Codex app-server: ${error.message}`));
+    // `close` waits for stdout to drain, so a reply written just before exit is still read.
+    child.on('close', (code, signal) => {
+      readLine(pendingLine);
+      fail(
+        `Built Codex app-server exited (${signal ? `signal ${signal}` : `code ${code}`}) before answering initialize`,
+      );
+    });
+    child.stdin.write(input);
+  });
+}
+
+/** An `id: 1` error reply is its own failure, not a reply that merely lacks the capability. */
+export function initializeResultFromMessage(message, transcript) {
+  if (message.error !== undefined) {
+    throw new Error(
+      `Built Codex rejected initialize: ${JSON.stringify(message.error)}${describeTranscript(transcript)}`,
+    );
+  }
+  return message.result ?? null;
 }
 
 /**
@@ -232,22 +314,23 @@ export function parseInitializeResult(stdout) {
  * `userAgent` can: codex builds it as `<client name>/<ITS OWN version> (os) (<client name>; <client
  * version>)`, so the leading segment is binary-owned and the echoed client half is never read.
  */
-export function assertHandshakeResult(manifest, result) {
+export function assertHandshakeResult(manifest, result, transcript) {
+  const evidence = transcript ? describeTranscript(transcript) : '';
   if (result?.capabilities?.frinkHostToolPermission !== FRINK_HOST_PERMISSION_VERSION) {
     throw new Error(
-      `Built Codex does not advertise frinkHostToolPermission v${FRINK_HOST_PERMISSION_VERSION}: ${JSON.stringify(result?.capabilities ?? null)}`,
+      `Built Codex does not advertise frinkHostToolPermission v${FRINK_HOST_PERMISSION_VERSION}: ${JSON.stringify(result?.capabilities ?? null)}${evidence}`,
     );
   }
   const expected = `${HANDSHAKE_CLIENT_NAME}/${manifest.version.replace(RUST_TAG_PREFIX, '')} `;
   if (!String(result.userAgent ?? '').startsWith(expected)) {
     throw new Error(
-      `Built Codex reports "${result.userAgent}", expected it to start "${expected}"`,
+      `Built Codex reports "${result.userAgent}", expected it to start "${expected}"${evidence}`,
     );
   }
 }
 
-/** Drives one real `initialize` round trip; closing stdin ends the app-server, so this stays sync. */
-function verifyBundledHandshake(manifest, binaryPath, tempRoot) {
+/** Drives one real `initialize` round trip against the binary just built. */
+export async function verifyBundledHandshake(manifest, binaryPath, tempRoot) {
   const codexHome = fs.mkdtempSync(path.join(tempRoot, 'handshake-'));
   const request = JSON.stringify({
     jsonrpc: '2.0',
@@ -261,16 +344,14 @@ function verifyBundledHandshake(manifest, binaryPath, tempRoot) {
       },
     },
   });
-  const stdout = execFileSync(binaryPath, ['app-server'], {
+  // Stderr is captured, not inherited, so the app-server's untrusted-project warning stays out of
+  // the build log unless the check fails and prints it as evidence.
+  const { message, ...transcript } = await runInitializeHandshake(binaryPath, ['app-server'], {
     input: `${request}\n`,
-    encoding: 'utf8',
-    timeout: HANDSHAKE_TIMEOUT_MS,
     env: { ...process.env, CODEX_HOME: codexHome },
-    // Piped so the app-server's untrusted-project warning stays out of the build log; a process
-    // failure still surfaces its stderr through the thrown error.
-    stdio: ['pipe', 'pipe', 'pipe'],
+    timeoutMs: HANDSHAKE_TIMEOUT_MS,
   });
-  assertHandshakeResult(manifest, parseInitializeResult(stdout));
+  assertHandshakeResult(manifest, initializeResultFromMessage(message, transcript), transcript);
 }
 
 /** Rejects a config load that kept Frink's MCP replace sentinel instead of consuming it. */
@@ -422,7 +503,8 @@ export async function buildCodexFrink({
     assertRustVersion(rustc, manifest.rust);
     if (runProviderTests) runProviderRegressionTests(cargo, rustc, cargoRoot);
 
-    return uniqueTargetKeys.map((key) => {
+    const binaries = [];
+    for (const key of uniqueTargetKeys) {
       const binaryPath = buildCodexTarget({
         key,
         target: TARGETS[key],
@@ -435,11 +517,12 @@ export async function buildCodexFrink({
       });
       // A cross-compiled target cannot run here; its own CI leg handshakes the build it produces.
       if (key === platformKey()) {
-        verifyBundledHandshake(manifest, binaryPath, tempRoot);
+        await verifyBundledHandshake(manifest, binaryPath, tempRoot);
         verifyEmptyHomeMcpReplace(binaryPath, tempRoot);
       }
-      return binaryPath;
-    });
+      binaries.push(binaryPath);
+    }
+    return binaries;
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
