@@ -18,7 +18,13 @@ import { dirname, join, resolve } from 'node:path';
 import { drizzle } from 'drizzle-orm/bun-sqlite';
 import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 import * as schema from '../../src/main/lib/db/schema';
-import { FIXTURE_MCP_CONFIG, seedFixtures, verifyFixtures } from './fixtures';
+import {
+  FIXTURE_CLAUDE_SOURCE_MARKER,
+  FIXTURE_MCP_CONFIG,
+  fixtureSourceUri,
+  seedFixtures,
+  verifyFixtures,
+} from './fixtures';
 
 function argValue(flag: string): string {
   const idx = process.argv.indexOf(flag);
@@ -52,6 +58,11 @@ const mcpDir = join(frinkHome, '.frink', 'mcp');
 mkdirSync(mcpDir, { recursive: true });
 writeFileSync(join(mcpDir, 'config.json'), `${JSON.stringify(FIXTURE_MCP_CONFIG, null, 2)}\n`);
 
+// The seeded Claude account resolves by finding this file, so it never depends on the operator's
+// own Claude login. Empty on purpose: the probe checks presence only.
+const claudeSourceMarker = join(resolve(frinkHome), FIXTURE_CLAUDE_SOURCE_MARKER);
+writeFileSync(claudeSourceMarker, '');
+
 const sqlite = new Database(dbPath);
 sqlite.exec('PRAGMA journal_mode = WAL');
 sqlite.exec('PRAGMA foreign_keys = ON');
@@ -60,7 +71,11 @@ const db = drizzle(sqlite, { schema });
 migrate(db, { migrationsFolder });
 // SAFETY: the drizzle types for the bun-sqlite and better-sqlite3 drivers share the sync
 // BaseSQLiteDatabase surface fixtures/ is written against.
-seedFixtures(db as Parameters<typeof seedFixtures>[0], projectPath);
+seedFixtures(
+  db as Parameters<typeof seedFixtures>[0],
+  projectPath,
+  fixtureSourceUri(claudeSourceMarker),
+);
 
 const check = verifyFixtures(db as Parameters<typeof verifyFixtures>[0]);
 if (!check.ok) {

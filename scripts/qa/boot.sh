@@ -43,6 +43,15 @@ if [ ! -s "out-qa/main/index.js" ]; then
   exit 1
 fi
 
+# The seeded Claude account always resolves, so whichever `claude` this build runs answers every
+# send. Default to the scripted fake (no model call, no quota); the real CLI on the operator's own
+# login is an explicit opt-in. Announced, so a log shows which one a run used.
+if [ "${QA_REAL_CLAUDE:-}" = "1" ]; then
+  bash scripts/qa/use-real-claude.sh
+else
+  bash scripts/qa/use-fake-claude.sh
+fi
+
 # Provision Electron's app binary. electron@43 declares NO install lifecycle script, so the binary
 # is absent after a clean install and launching electron dies with "Electron uninstall". Doing it
 # inline in the recipe's install step (`bun install && node …/install.js`) races frink's own
