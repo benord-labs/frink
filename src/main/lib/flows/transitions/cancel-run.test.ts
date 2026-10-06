@@ -21,10 +21,10 @@ vi.mock('./index', async (original) => {
   const actual = await original<typeof import('./index')>();
   return {
     ...actual,
-    insertNodeRunIfFenced: (...args: Parameters<typeof actual.insertNodeRunIfFenced>) => {
-      const row = actual.insertNodeRunIfFenced(...args);
-      if (row) holder.afterInsert?.();
-      return row;
+    insertNodeRunUnderCeiling: (...args: Parameters<typeof actual.insertNodeRunUnderCeiling>) => {
+      const admitted = actual.insertNodeRunUnderCeiling(...args);
+      if (admitted) holder.afterInsert?.();
+      return admitted;
     },
   };
 });
@@ -537,6 +537,38 @@ describe('advance fenced on the admission ticket', () => {
     });
     return { ticket, work };
   }
+
+  // The ceiling fails the run itself, through the same fenced endRun: a Cancel that commits while
+  // the over-limit row is being failed must still own the run's terminal state.
+  it('a Cancel committed while the dispatch ceiling fails a node wins over the failure', async () => {
+    await setFlowRunStatus(db, flowRunId, 'running');
+    const ticket = seedActiveAdmission(db, flowRunId);
+    for (let i = 0; i < 50; i++) {
+      await createNodeRun(db, {
+        flowRunId,
+        nodeId: 'work',
+        blockType: 'agent',
+        status: 'completed',
+        admissionTicket: ticket,
+      });
+    }
+    const ctx = await loadRunContext(flowRunId);
+    const fence = readRunFence(db, flowRunId);
+    if (!ctx || !fence) throw new Error('run is not live');
+    // Fires on the advance's context read, after the over-limit row was written failed.
+    holder.onVersionRead = async () => {
+      const rows = await listNodeRunsForFlowRun(db, flowRunId);
+      if (rows.at(-1)?.status !== 'failed') return;
+      holder.onVersionRead = null;
+      await cancelFlowRun(flowRunId);
+    };
+
+    await dispatchAndAdvance(fence, GRAPH.nodes[0], undefined, ctx);
+
+    expect(dispatchNode).not.toHaveBeenCalled();
+    expect(await runStatus()).toBe('cancelled');
+    expect(terminal).toEqual(['run_cancelled']);
+  });
 
   it.each([
     ['a terminal write', GRAPH, COMPLETED, 'completed'],

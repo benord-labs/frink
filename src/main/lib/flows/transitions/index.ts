@@ -8,6 +8,13 @@ export {
   type HeldQuestionTask,
   parkHeldQuestionCommand,
 } from './held-question';
+export {
+  countSlotDispatches,
+  type DispatchSlot,
+  dispatchCeilingFailure,
+  insertNodeRunUnderCeiling,
+  MAX_NODE_DISPATCHES_PER_ADMISSION,
+} from './dispatch-ceiling';
 export { insertNodeRunIfFenced, type RunFence, readRunFence, setFencedRunStatus } from './fence';
 export { cancelRunRows } from './run-rows';
 export {

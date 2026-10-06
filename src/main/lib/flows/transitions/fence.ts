@@ -99,7 +99,7 @@ export function insertNodeRunIfFenced(
     .where(fenceHolds(db, fence, DISPATCHABLE_RUN_STATUSES))
     .get();
   if (!live) return null;
-  const values = { ...input, flowRunId: fence.flowRunId };
+  const values = { ...input, flowRunId: fence.flowRunId, admissionTicket: fence.ticket };
   if (supersedesNodeRunId === undefined)
     return db.insert(nodeRuns).values(values).returning().get();
   // The attempt stopped being actionable since the Retry was decided (a late completion advanced

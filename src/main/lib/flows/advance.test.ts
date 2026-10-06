@@ -67,6 +67,7 @@ vi.mock('../sentry', () => ({
 
 import { advanceFlowRun, dispatchAndAdvance, loadRunContext } from './advance';
 import { _setFlowAdmissionControllerForTests } from './admission/runtime';
+import { resolveTerminalResumeTarget } from './admission/terminal-resume/dispatcher';
 import { abortFlowRun, registerNodeAbort } from './cancel-registry';
 import { deleteFlow, settleChatOwnedFlowDeletion } from './deletion';
 import { dispatchNode } from './dispatch';
@@ -1662,5 +1663,261 @@ describe('loadRunContext — batchId threading (member-suppression seam)', () =>
     await db.update(flowRuns).set({ batchId: 'batch-ctx' }).where(eq(flowRuns.id, flowRunId));
     const member = await loadRunContext(flowRunId);
     expect(member?.meta.batchId).toBe('batch-ctx');
+  });
+});
+
+describe('dispatchAndAdvance — per-node dispatch ceiling', () => {
+  // evaluate → cond; cond's true edge loops back to evaluate, its false edge exits to done.
+  const LOOP: FlowGraph = {
+    nodes: [
+      {
+        id: 'evaluate',
+        blockType: 'agent',
+        label: 'Evaluate',
+        config: { instructions: 'e' },
+        position: { x: 0, y: 0 },
+      },
+      { id: 'cond', blockType: 'condition', position: { x: 0, y: 1 } },
+      { id: 'done', blockType: 'agent', config: { instructions: 'd' }, position: { x: 0, y: 2 } },
+    ],
+    edges: [
+      { id: 'e0', source: 'evaluate', target: 'cond' },
+      { id: 'et', source: 'cond', target: 'evaluate', sourceHandle: 'true' },
+      { id: 'ef', source: 'cond', target: 'done', sourceHandle: 'false' },
+    ],
+  };
+  const LIMIT = 50;
+
+  /** The loop keeps going until `cond` has run `exitAfter` times; `Infinity` never exits. */
+  const mockLoop = (exitAfter: number) => {
+    let condRuns = 0;
+    const dispatched: string[] = [];
+    vi.mocked(dispatchNode).mockReset();
+    vi.mocked(dispatchNode).mockImplementation(async (args: { node: { id: string } }) => {
+      dispatched.push(args.node.id);
+      if (args.node.id !== 'cond') return { type: 'completed', output: completedOutput };
+      condRuns += 1;
+      const result = condRuns >= exitAfter ? 'stop' : 'continue';
+      return { type: 'completed', output: { ...completedOutput, outputs: { result } } };
+    });
+    return dispatched;
+  };
+
+  const setup = async (graph: FlowGraph = LOOP) => {
+    const db = freshDb();
+    holder.db = db;
+    const { flowRunId } = await seedFlowRun(db, graph);
+    const ticket = seedActiveAdmission(db, flowRunId);
+    const ctx = await loadRunContext(flowRunId);
+    if (!ctx) throw new Error('no run context');
+    const fence = () => {
+      const live = readRunFence(db, flowRunId);
+      if (!live) throw new Error('run lost its fence');
+      return live;
+    };
+    return { db, flowRunId, ticket, ctx, fence };
+  };
+
+  const rowsFor = async (db: TestDb, flowRunId: string, nodeId: string) =>
+    (await listNodeRunsForFlowRun(db, flowRunId)).filter((nr) => nr.nodeId === nodeId);
+
+  it('fails the run, naming the node and the limit, when a loop never exits', async () => {
+    const { db, flowRunId, ctx, fence } = await setup();
+    const dispatched = mockLoop(Number.POSITIVE_INFINITY);
+    const events: FlowExecutionEvent[] = [];
+    const unsubscribe = subscribeFlowEvents((e) => {
+      if (e.eventType === 'run_failed' || e.eventType === 'node_failed') events.push(e);
+    });
+    try {
+      await dispatchAndAdvance(fence(), LOOP.nodes[0], undefined, ctx);
+    } finally {
+      unsubscribe();
+    }
+
+    expect((await getFlowRun(db, flowRunId))?.status).toBe('failed');
+    expect(dispatched.filter((id) => id === 'evaluate')).toHaveLength(LIMIT);
+    const evaluateRows = await rowsFor(db, flowRunId, 'evaluate');
+    expect(evaluateRows).toHaveLength(LIMIT + 1);
+    expect(evaluateRows.at(-1)?.status).toBe('failed');
+    expect(dispatched).not.toContain('done');
+    const runFailed = events.find((e) => e.eventType === 'run_failed');
+    expect(runFailed?.summary).toContain('"Evaluate"');
+    expect(runFailed?.summary).toContain(`${LIMIT}`);
+    expect(events.some((e) => e.eventType === 'node_failed' && e.nodeId === 'evaluate')).toBe(true);
+  });
+
+  it('lets a loop that exits within the limit complete', async () => {
+    const { db, flowRunId, ctx, fence } = await setup();
+    const dispatched = mockLoop(10);
+
+    await dispatchAndAdvance(fence(), LOOP.nodes[0], undefined, ctx);
+
+    expect(dispatched.filter((id) => id === 'evaluate')).toHaveLength(10);
+    expect(dispatched.at(-1)).toBe('done');
+    expect((await getFlowRun(db, flowRunId))?.status).not.toBe('failed');
+  });
+
+  it('allows exactly the limit before tripping', async () => {
+    const { db, flowRunId, ctx, fence } = await setup();
+    const dispatched = mockLoop(LIMIT);
+
+    await dispatchAndAdvance(fence(), LOOP.nodes[0], undefined, ctx);
+
+    expect(dispatched.filter((id) => id === 'evaluate')).toHaveLength(LIMIT);
+    expect(dispatched.at(-1)).toBe('done');
+    expect((await getFlowRun(db, flowRunId))?.status).not.toBe('failed');
+  });
+
+  it('gives a new admission (a Retry or rerun) a fresh budget', async () => {
+    const { db, flowRunId, ticket, ctx, fence } = await setup();
+    mockLoop(Number.POSITIVE_INFINITY);
+    await dispatchAndAdvance(fence(), LOOP.nodes[0], undefined, ctx);
+    expect((await getFlowRun(db, flowRunId))?.status).toBe('failed');
+    // Retry resumes from the over-limit row, not from the top of the flow.
+    const overLimit = (await rowsFor(db, flowRunId, 'evaluate')).at(-1);
+    const target = await resolveTerminalResumeTarget(db, flowRunId);
+    expect(target?.node.id).toBe('evaluate');
+    expect(target?.nodeRunId).toBe(overLimit?.id);
+
+    // What a terminal Retry does: the old ticket settles, a new one goes live, the run re-opens.
+    db.update(flowRunAdmissions)
+      .set({ state: 'released', settledAt: new Date() })
+      .where(eq(flowRunAdmissions.ticket, ticket))
+      .run();
+    seedActiveAdmission(db, flowRunId);
+    await setFlowRunStatus(db, flowRunId, 'running');
+    const dispatched = mockLoop(5);
+
+    await dispatchAndAdvance(fence(), LOOP.nodes[0], undefined, ctx, undefined, {
+      resumeKind: 'redispatch',
+    });
+
+    expect(dispatched.filter((id) => id === 'evaluate')).toHaveLength(5);
+    expect(dispatched.at(-1)).toBe('done');
+    expect((await getFlowRun(db, flowRunId))?.status).not.toBe('failed');
+  });
+
+  it('does not count attempts a Retry superseded', async () => {
+    const { db, flowRunId, ticket, ctx, fence } = await setup();
+    for (let i = 0; i < LIMIT; i++) {
+      await createNodeRun(db, {
+        flowRunId,
+        nodeId: 'evaluate',
+        blockType: 'agent',
+        status: 'superseded',
+        admissionTicket: ticket,
+      });
+    }
+    const dispatched = mockLoop(1);
+
+    await dispatchAndAdvance(fence(), LOOP.nodes[0], undefined, ctx);
+
+    expect(dispatched).toEqual(['evaluate', 'cond', 'done']);
+    expect((await getFlowRun(db, flowRunId))?.status).not.toBe('failed');
+  });
+
+  it('carries the count across watcher-driven advances, not just the in-process walk', async () => {
+    const { db, flowRunId, ctx, fence } = await setup();
+    // evaluate hands off to an agent each pass; the watcher later reports it completed.
+    vi.mocked(dispatchNode).mockReset();
+    vi.mocked(dispatchNode).mockImplementation(async (args: { node: { id: string } }) => {
+      if (args.node.id === 'evaluate') return { type: 'awaiting_input', reason: 'agent' };
+      return { type: 'completed', output: { ...completedOutput, outputs: { result: 'continue' } } };
+    });
+
+    await dispatchAndAdvance(fence(), LOOP.nodes[0], undefined, ctx);
+    for (let hop = 0; hop < LIMIT + 5; hop++) {
+      const parked = (await rowsFor(db, flowRunId, 'evaluate')).find(
+        (nr) => nr.status === 'awaiting_input',
+      );
+      if (!parked) break;
+      await advanceFlowRun(flowRunId, parked.id, completedOutput);
+    }
+
+    expect((await getFlowRun(db, flowRunId))?.status).toBe('failed');
+    const evaluateRows = await rowsFor(db, flowRunId, 'evaluate');
+    expect(evaluateRows).toHaveLength(LIMIT + 1);
+    expect(evaluateRows.at(-1)?.status).toBe('failed');
+  });
+
+  describe('inside a Fan Out', () => {
+    const FAN: FlowGraph = {
+      nodes: [
+        { id: 'fan', blockType: 'fan_out' },
+        { id: 'body', blockType: 'agent', parentId: 'fan', label: 'Body' },
+      ],
+      edges: [{ id: 'e1', source: 'fan', target: 'body' }],
+    };
+
+    const parkBody = () =>
+      vi
+        .mocked(dispatchNode)
+        .mockReset()
+        .mockResolvedValue({ type: 'awaiting_input', reason: 'test' });
+
+    it('gives each item its own budget, so 50 items of one pass never trip', async () => {
+      const { db, flowRunId, ctx, fence } = await setup(FAN);
+      const fanRun = await createNodeRun(db, {
+        flowRunId,
+        nodeId: 'fan',
+        blockType: 'fan_out',
+        status: 'running',
+      });
+      parkBody();
+
+      for (let laneIndex = 0; laneIndex < LIMIT; laneIndex++) {
+        await dispatchAndAdvance(
+          fence(),
+          FAN.nodes[1],
+          undefined,
+          ctx,
+          {},
+          {
+            laneIndex,
+            parentFanOutNodeRunId: fanRun.id,
+          },
+        );
+      }
+
+      expect(dispatchNode).toHaveBeenCalledTimes(LIMIT);
+      expect((await getFlowRun(db, flowRunId))?.status).not.toBe('failed');
+    });
+
+    it('still bounds a loop within one item', async () => {
+      const { db, flowRunId, ticket, ctx, fence } = await setup(FAN);
+      const fanRun = await createNodeRun(db, {
+        flowRunId,
+        nodeId: 'fan',
+        blockType: 'fan_out',
+        status: 'running',
+      });
+      for (let i = 0; i < LIMIT; i++) {
+        await createNodeRun(db, {
+          flowRunId,
+          nodeId: 'body',
+          blockType: 'agent',
+          status: 'completed',
+          laneIndex: 0,
+          parentFanOutNodeRunId: fanRun.id,
+          admissionTicket: ticket,
+        });
+      }
+      parkBody();
+
+      await dispatchAndAdvance(
+        fence(),
+        FAN.nodes[1],
+        undefined,
+        ctx,
+        {},
+        {
+          laneIndex: 0,
+          parentFanOutNodeRunId: fanRun.id,
+        },
+      );
+
+      expect(dispatchNode).not.toHaveBeenCalled();
+      expect((await getFlowRun(db, flowRunId))?.status).toBe('failed');
+    });
   });
 });

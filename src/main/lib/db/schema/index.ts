@@ -330,10 +330,8 @@ export const flowRunsRelations = relations(flowRuns, ({ one, many }) => ({
   nodeRuns: many(nodeRuns),
 }));
 export const flowRunAdmissions = defineFlowRunAdmissions(flowRuns);
-// Per-node execution row. Block type CHECK constraint relaxed (validation is application-level).
-// laneIndex / parentFanOutNodeRunId support parallel fan-out lanes (cloud 0050).
-// socket_dispatch_lease_until / dispatch_machine_id (cloud 0048) intentionally omitted —
-// single-process locally needs no lease.
+// Per-node execution row; block type validated in-app. laneIndex/parentFanOutNodeRunId: fan-out lanes
+// (cloud 0050). Lease columns (cloud 0048) omitted: single-process locally needs no lease.
 export const nodeRuns = sqliteTable(
   'node_runs',
   {
@@ -351,12 +349,14 @@ export const nodeRuns = sqliteTable(
     attemptNumber: integer('attempt_number').notNull().default(1),
     laneIndex: integer('lane_index'),
     parentFanOutNodeRunId: text('parent_fan_out_node_run_id'),
+    admissionTicket: integer('admission_ticket'), // ran-under ticket; scopes the dispatch ceiling
     startedAt: integer('started_at', { mode: 'timestamp' }),
     completedAt: integer('completed_at', { mode: 'timestamp' }),
     createdAt: integer('created_at', { mode: 'timestamp' }).$defaultFn(() => new Date()),
   },
   (table) => [
     index('node_runs_flow_run_idx').on(table.flowRunId, table.status),
+    index('node_runs_dispatch_slot_idx').on(table.flowRunId, table.nodeId, table.admissionTicket),
     index('node_runs_parent_fan_out_idx').on(table.parentFanOutNodeRunId),
     // Partial unique: only one running row per (flow_run, node, lane). NULL lane_index treated as
     // a distinct slot in SQLite by default — sequential runs can't double-run the same node either.
