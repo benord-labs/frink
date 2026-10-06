@@ -149,6 +149,18 @@ describe('platform providers', () => {
         expect(pm).toContain(path.join(MOCK_HOME, '.bun', 'bin'));
         expect(pm).toContain(path.join(MOCK_HOME, '.cargo', 'bin'));
       });
+
+      it('includes the fnm, volta, mise and asdf node directories', () => {
+        const pm = provider.getPathConfig().packageManagerPaths;
+        expect(pm).toContain(path.join(MOCK_HOME, '.local/share/fnm/aliases/default/bin'));
+        expect(pm).toContain(path.join(MOCK_HOME, '.fnm/aliases/default/bin'));
+        expect(pm).toContain(
+          path.join(MOCK_HOME, 'Library/Application Support/fnm/aliases/default/bin'),
+        );
+        expect(pm).toContain(path.join(MOCK_HOME, '.volta', 'bin'));
+        expect(pm).toContain(path.join(MOCK_HOME, '.local/share/mise/shims'));
+        expect(pm).toContain(path.join(MOCK_HOME, '.asdf', 'shims'));
+      });
     });
 
     describe('getEnvironmentConfig', () => {
@@ -307,6 +319,15 @@ describe('platform providers', () => {
         expect(provider.getPathConfig().packageManagerPaths).toContain(
           path.join(MOCK_HOME, '.asdf', 'shims'),
         );
+      });
+
+      it('includes the fnm, volta and mise node directories', () => {
+        const pm = provider.getPathConfig().packageManagerPaths;
+        expect(pm).toContain(path.join(MOCK_HOME, '.local/share/fnm/aliases/default/bin'));
+        expect(pm).toContain(path.join(MOCK_HOME, '.fnm/aliases/default/bin'));
+        expect(pm).toContain(path.join(MOCK_HOME, '.volta', 'bin'));
+        expect(pm).toContain(path.join(MOCK_HOME, '.local/share/mise/shims'));
+        expect(pm.some((entry) => entry.includes('Application Support'))).toBe(false);
       });
 
       it('includes Linuxbrew path', () => {
@@ -491,6 +512,36 @@ describe('platform providers', () => {
   });
 
   describe('buildExtendedPath (BasePlatformProvider)', () => {
+    it.each([
+      ['darwin', () => new DarwinPlatformProvider(), '/opt/homebrew/bin'],
+      ['linux', () => new LinuxPlatformProvider(), '/home/linuxbrew/.linuxbrew/bin'],
+    ])('ranks mise and asdf shims after every other node source on %s', (_name, create, brew) => {
+      // A mise or asdf shim fails outright when no global version is set, so anything that can
+      // still supply a working node has to be found first.
+      const entries = create().buildExtendedPath('').split(':');
+      const positions = [
+        brew,
+        path.join(MOCK_HOME, '.bun/bin'),
+        path.join(MOCK_HOME, '.local/share/fnm/aliases/default/bin'),
+        path.join(MOCK_HOME, '.volta/bin'),
+        path.join(MOCK_HOME, '.local/share/mise/shims'),
+        path.join(MOCK_HOME, '.asdf/shims'),
+      ].map((entry) => entries.indexOf(entry));
+
+      expect(positions).not.toContain(-1);
+      expect(positions.slice(2)).toEqual([...positions.slice(2)].sort((x, y) => x - y));
+      expect(Math.max(positions[0], positions[1])).toBeLessThan(positions[2]);
+      expect(entries.at(-1)).toBe(path.join(MOCK_HOME, '.asdf/bin'));
+    });
+
+    it('keeps a version manager directory with a space as one PATH entry on darwin', () => {
+      const provider = new DarwinPlatformProvider();
+      const entries = provider.buildExtendedPath('/existing/path').split(':');
+      expect(entries).toContain(
+        path.join(MOCK_HOME, 'Library/Application Support/fnm/aliases/default/bin'),
+      );
+    });
+
     it('prepends new paths before existing ones on darwin', () => {
       const provider = new DarwinPlatformProvider();
       const result = provider.buildExtendedPath('/existing/path');
