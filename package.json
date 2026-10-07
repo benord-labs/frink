@@ -44,7 +44,7 @@
     "pretest:run:coverage": "node ./scripts/dev/ensure-package-deps.mjs",
     "test:run:coverage": "vitest run --coverage",
     "prets:check": "node ./scripts/dev/ensure-package-deps.mjs",
-    "ts:check": "node ./node_modules/@typescript/native/bin/tsc --noEmit && node ./node_modules/@typescript/native/bin/tsc --noEmit -p relay/tsconfig.test.json && node ./node_modules/@typescript/native/bin/tsc --noEmit -p live-activity-forwarder/tsconfig.json",
+    "ts:check": "node ./scripts/dev/ts-check.mjs",
     "lint:structure": "node --preserve-symlinks node_modules/eslint/bin/eslint.js src relay live-activity-forwarder",
     "knip": "knip",
     "knip:fix": "knip --fix",
