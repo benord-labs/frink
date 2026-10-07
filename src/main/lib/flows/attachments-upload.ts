@@ -12,6 +12,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { TRPCError } from '@trpc/server';
+import { decodedBytes } from '../../../shared/utils/base64';
 import {
   ALLOWED_ATTACHMENT_MIME_TYPES,
   MAX_ATTACHMENT_URL_LENGTH,
@@ -101,9 +102,9 @@ export async function uploadAttachmentToStageRun(
     throw capExceeded();
   }
 
-  // Approximate decoded size from base64 length (overshoots by up to 2 bytes).
-  const approxBytes = Math.floor((input.data.length * 3) / 4);
-  if (approxBytes > MAX_IMAGE_BYTES) {
+  // Reject oversized payloads before touching disk. Exact for well-formed base64;
+  // the post-decode check below stays authoritative.
+  if (decodedBytes(input.data) > MAX_IMAGE_BYTES) {
     throw new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: 'Image must be 5MB or smaller' });
   }
 

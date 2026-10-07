@@ -4,6 +4,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RunAttachment } from '../../../../../../shared/types/run-attachment';
+import { decodedBytes } from '../../../../../../shared/utils/base64';
 
 // ── Mocks ──────────────────────────────────────────────────────────────────────
 
@@ -105,6 +106,32 @@ describe('RunAttachmentsSection', () => {
       });
       expect(trpcMocks.uploadMutateAsync).not.toHaveBeenCalled();
       expect(onAttachmentsChange).not.toHaveBeenCalled();
+    });
+
+    // The server accepts exactly 5MB of decoded bytes, so the client must send it — as raw
+    // padded base64 whose decoded size is the file size, not a data URL.
+    it('uploads a file of exactly 5 MB as raw base64', async () => {
+      let data = '';
+      trpcMocks.uploadMutateAsync.mockImplementationOnce(async (input: { data: string }) => {
+        data = input.data;
+        return {
+          url: 'frink-attachment://run/edge.png',
+          filename: 'edge.png',
+          run: { id: RUN_ID },
+        };
+      });
+      const { fileInput } = renderSection();
+
+      const size = 5 * 1024 * 1024;
+      const file = new File([new Uint8Array(size)], 'edge.png', { type: 'image/png' });
+      fireEvent.change(fileInput, { target: { files: [file] } });
+
+      await waitFor(() => {
+        expect(trpcMocks.uploadMutateAsync).toHaveBeenCalledTimes(1);
+      });
+      expect(data.startsWith('data:')).toBe(false);
+      expect(decodedBytes(data)).toBe(size);
+      expect(screen.queryByText(/5MB or smaller/i)).not.toBeInTheDocument();
     });
 
     it('reports file size in the error message', async () => {
