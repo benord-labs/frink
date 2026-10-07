@@ -7,6 +7,7 @@ import { TRPCError } from '@trpc/server';
 import { and, eq } from 'drizzle-orm';
 import type { RunAttachment } from '../../../shared/types/run-attachment';
 import { getDatabase } from '../db';
+import { updateRunTriggerContext } from '../db/repos/batch-stage-runs';
 import { batchStageRuns, batchStages } from '../db/schema';
 
 export type PatchStageDepsResult = {
@@ -99,34 +100,28 @@ export type UpdateStageRunInput = {
 
 export async function updateStageRunLocal(
   input: UpdateStageRunInput,
+  db = getDatabase(),
 ): Promise<{ run: { id: string; trigger_context: Record<string, unknown> } }> {
-  const db = getDatabase();
-  const [existing] = await db
-    .select()
-    .from(batchStageRuns)
-    .where(eq(batchStageRuns.id, input.runId))
-    .limit(1);
-  if (!existing) {
+  const next = updateRunTriggerContext(db, input.runId, (tc) => {
+    const patched = { ...tc };
+    if (input.label !== undefined) patched.label = input.label;
+    if (input.customInstructions !== undefined) {
+      patched.customInstructions = input.customInstructions;
+    }
+    if (input.attachments !== undefined) patched.attachments = input.attachments;
+    if (input.configOverrides !== undefined) {
+      patched._config = {
+        ...(typeof tc._config === 'object' && tc._config !== null
+          ? (tc._config as Record<string, unknown>)
+          : {}),
+        ...input.configOverrides,
+      };
+    }
+    return patched;
+  });
+  if (!next) {
     throw new TRPCError({ code: 'NOT_FOUND', message: 'Stage run not found' });
   }
-  const tc: Record<string, unknown> =
-    (existing.triggerContext as Record<string, unknown> | null) ?? {};
-  const next: Record<string, unknown> = { ...tc };
-  if (input.label !== undefined) next.label = input.label;
-  if (input.customInstructions !== undefined) next.customInstructions = input.customInstructions;
-  if (input.attachments !== undefined) next.attachments = input.attachments;
-  if (input.configOverrides !== undefined) {
-    next._config = {
-      ...(typeof tc._config === 'object' && tc._config !== null
-        ? (tc._config as Record<string, unknown>)
-        : {}),
-      ...input.configOverrides,
-    };
-  }
-  await db
-    .update(batchStageRuns)
-    .set({ triggerContext: next })
-    .where(eq(batchStageRuns.id, input.runId));
   return { run: { id: input.runId, trigger_context: next } };
 }
 

@@ -1,4 +1,6 @@
 import { and, asc, eq, inArray } from 'drizzle-orm';
+import { z } from 'zod';
+import type { RunAttachment } from '../../../../shared/types/run-attachment';
 import type { getDatabase } from '../index';
 import { type BatchStageRun, batchStageRuns, type NewBatchStageRun } from '../schema';
 
@@ -35,6 +37,70 @@ export async function listRunsForStage(db: Db, stageId: string): Promise<BatchSt
 export async function getBatchStageRun(db: Db, id: string): Promise<BatchStageRun | null> {
   const [row] = await db.select().from(batchStageRuns).where(eq(batchStageRuns.id, id)).limit(1);
   return row ?? null;
+}
+
+/** Stored trigger_context: open-ended keys, plus an attachments list that is reset when malformed. */
+const runTriggerContextSchema = z.looseObject({
+  attachments: z.array(z.unknown()).optional().catch([]),
+});
+
+export type RunTriggerContext = z.infer<typeof runTriggerContextSchema>;
+
+/** Parse a stored trigger_context column; a null column reads as empty. */
+export function parseRunTriggerContext(stored: BatchStageRun['triggerContext']): RunTriggerContext {
+  return runTriggerContextSchema.parse(stored ?? {});
+}
+
+export type AppendRunAttachmentResult =
+  | { kind: 'ok'; triggerContext: RunTriggerContext }
+  | { kind: 'not_found' }
+  | { kind: 'not_pending' }
+  | { kind: 'cap_exceeded' };
+
+/**
+ * One transaction: re-read, then append only to a pending run under `max`. Writes
+ * trigger_context only, so a status set since the caller's read is never undone.
+ */
+export function appendRunAttachment(
+  db: Db,
+  runId: string,
+  attachment: RunAttachment,
+  max: number,
+): AppendRunAttachmentResult {
+  return db.transaction(() => {
+    const row = db
+      .select({ status: batchStageRuns.status, triggerContext: batchStageRuns.triggerContext })
+      .from(batchStageRuns)
+      .where(eq(batchStageRuns.id, runId))
+      .get();
+    if (!row) return { kind: 'not_found' } as const;
+    if (row.status !== 'pending') return { kind: 'not_pending' } as const;
+    const current = parseRunTriggerContext(row.triggerContext);
+    const existing = current.attachments ?? [];
+    if (existing.length >= max) return { kind: 'cap_exceeded' } as const;
+    const triggerContext = { ...current, attachments: [...existing, attachment] };
+    db.update(batchStageRuns).set({ triggerContext }).where(eq(batchStageRuns.id, runId)).run();
+    return { kind: 'ok', triggerContext } as const;
+  });
+}
+
+/** Read-modify-write trigger_context in one transaction; null when the run is missing. */
+export function updateRunTriggerContext(
+  db: Db,
+  runId: string,
+  patch: (current: RunTriggerContext) => RunTriggerContext,
+): RunTriggerContext | null {
+  return db.transaction(() => {
+    const row = db
+      .select({ triggerContext: batchStageRuns.triggerContext })
+      .from(batchStageRuns)
+      .where(eq(batchStageRuns.id, runId))
+      .get();
+    if (!row) return null;
+    const triggerContext = patch(parseRunTriggerContext(row.triggerContext));
+    db.update(batchStageRuns).set({ triggerContext }).where(eq(batchStageRuns.id, runId)).run();
+    return triggerContext;
+  });
 }
 
 export async function setStageRunStatus(
