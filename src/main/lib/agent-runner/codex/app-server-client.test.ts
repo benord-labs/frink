@@ -637,7 +637,63 @@ describe('CodexAppServerClient lifecycle guards', () => {
   });
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllEnvs();
     vi.clearAllMocks();
+  });
+
+  it('handles a spawn error (missing binary) instead of crashing, then times out initialize', async () => {
+    // An unlistened child 'error' (ENOENT/EACCES) would throw and take down the main process.
+    vi.useFakeTimers();
+    const { default: log } = await import('electron-log');
+    const client = new CodexAppServerClient({ binary: 'codex', clientInfo: CLIENT_INFO });
+    const started = client.start();
+    const assertion = expect(started).rejects.toThrow(/did not respond to initialize/);
+    await vi.advanceTimersByTimeAsync(0);
+    const enoent = Object.assign(new Error('spawn codex ENOENT'), { code: 'ENOENT' });
+
+    expect(() => child.emit('error', enoent)).not.toThrow();
+    expect(log.error).toHaveBeenCalledWith('[Codex app-server] spawn error', enoent);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await assertion;
+    client.dispose();
+  });
+
+  it('keeps a child error after dispose() harmless (a failed SIGTERM surfaces as an error event)', async () => {
+    // Node emits 'error' on the child when kill() fails; dispose() sends that kill, so the listener
+    // must outlive dispose or the late error becomes an uncaughtException.
+    answerInitialize(child);
+    const client = new CodexAppServerClient({ binary: 'codex', clientInfo: CLIENT_INFO });
+    await client.start();
+    client.dispose();
+
+    const eperm = Object.assign(new Error('kill EPERM'), { code: 'EPERM' });
+    expect(() => child.emit('error', eperm)).not.toThrow();
+  });
+
+  it('drains child stderr so a chatty app-server cannot fill the pipe and stall', async () => {
+    vi.stubEnv('DEBUG_CODEX_APP_SERVER', '');
+    const { default: log } = await import('electron-log');
+    answerInitialize(child);
+    const client = new CodexAppServerClient({ binary: 'codex', clientInfo: CLIENT_INFO });
+    await client.start();
+
+    expect(child.stderr.readableFlowing).toBe(true);
+    child.stderr.write('noise');
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(log.info).not.toHaveBeenCalledWith(expect.stringContaining('[Codex app-server stderr]'));
+    client.dispose();
+  });
+
+  it('logs app-server stderr only when DEBUG_CODEX_APP_SERVER is set', async () => {
+    vi.stubEnv('DEBUG_CODEX_APP_SERVER', '1');
+    const { default: log } = await import('electron-log');
+    answerInitialize(child);
+    const client = new CodexAppServerClient({ binary: 'codex', clientInfo: CLIENT_INFO });
+    await client.start();
+
+    child.stderr.write('boom');
+    await settle(() => expect(log.info).toHaveBeenCalledWith('[Codex app-server stderr] boom'));
+    client.dispose();
   });
 
   it('throws on every connection-bound method before start()', () => {
