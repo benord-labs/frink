@@ -301,6 +301,46 @@ jobs:
           (cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE"/release/*.AppImage --appimage-extract >/dev/null)
           test -x "$RUNNER_TEMP/squashfs-root/resources/bin/codex" || { echo "::error::AppImage ships a non-executable codex"; exit 1; }
 
+      - name: Assert Linux desktop entries match the window
+        if: runner.os == 'Linux'
+        shell: bash
+        # Electron's app_id/WM_CLASS comes from package.json desktopName ("frink"). Each installer's
+        # entry must match it and claim frink:// links, or the dock and the OAuth callback break.
+        run: |
+          dpkg-deb -x release/*.deb "$RUNNER_TEMP/deb"
+          DEB_ENTRY="$RUNNER_TEMP/deb/usr/share/applications/frink.desktop"
+          APP_ENTRY="$RUNNER_TEMP/squashfs-root/frink.desktop"
+          for entry in "$DEB_ENTRY" "$APP_ENTRY"; do
+            grep -qx 'StartupWMClass=frink' "$entry" && grep -qx 'MimeType=x-scheme-handler/frink;' "$entry" \
+              || { echo "::error::$entry does not match the window or the frink:// handler"; cat "$entry"; exit 1; }
+          done
+          # AppRun adds --no-sandbox only when user namespaces are blocked; the entry must not force it.
+          ! grep -q -- '--no-sandbox' "$APP_ENTRY" || { echo "::error::AppImage entry forces --no-sandbox"; exit 1; }
+
+      - name: Assert the AppImage runs without libfuse2
+        if: runner.os == 'Linux'
+        shell: bash
+        # Ubuntu 22.04+ and Fedora no longer install libfuse2; the static runtime only needs fusermount3.
+        run: |
+          sudo apt-get remove -y libfuse2t64 || true
+          sudo apt-get remove -y libfuse2 || true
+          # No grep -q on piped input: under pipefail its early exit SIGPIPEs the producer.
+          if ldconfig -p | grep 'libfuse\.so\.2'; then echo "::error::libfuse2 is still installed"; exit 1; fi
+          command -v fusermount3 >/dev/null || { sudo apt-get update -q && sudo apt-get install -y -q fuse3; }
+          APPIMAGE="$(ls release/*.AppImage)"
+          file -L "$APPIMAGE" | grep 'static' || { echo "::error::AppImage uses the dynamic FUSE2 runtime"; file -L "$APPIMAGE"; exit 1; }
+          "$APPIMAGE" --appimage-version
+          "$APPIMAGE" --appimage-mount > "$RUNNER_TEMP/mount.txt" &
+          MOUNT_PID=$!
+          MOUNTED=0
+          for _ in $(seq 30); do
+            MNT="$(head -n1 "$RUNNER_TEMP/mount.txt")"
+            if [ -n "$MNT" ] && [ -x "$MNT/AppRun" ]; then MOUNTED=1; break; fi
+            sleep 1
+          done
+          kill "$MOUNT_PID" || true
+          [ "$MOUNTED" = 1 ] || { echo "::error::AppImage did not mount without libfuse2"; exit 1; }
+
       - name: Assert Windows installers produced
         if: runner.os == 'Windows'
         shell: bash

@@ -125,7 +125,7 @@ Bring your own subscription or API key — Frink runs the agent, you keep the ac
 
 Download the AppImage or the `.deb` from [frink.dev/download](https://frink.dev/download). Both update themselves. Linux builds appear there from the first release that includes them; until then, build from source.
 
-- **AppImage** (any distro): `chmod +x Frink-X.Y.Z.AppImage && ./Frink-X.Y.Z.AppImage`, with `X.Y.Z` the version you downloaded. It needs FUSE 2: install `libfuse2t64` (Ubuntu 24.04+, Debian 13+) or `libfuse2` (older releases), or start it with `--appimage-extract-and-run`. Keep it in a folder you can write to, such as `~/Applications`, so updates can replace it.
+- **AppImage** (any distro): `chmod +x Frink-X.Y.Z.AppImage && ./Frink-X.Y.Z.AppImage`, with `X.Y.Z` the version you downloaded. It does not need libfuse2: it mounts itself with `fusermount3` from the `fuse3` package. If it will not start, install `fuse3` or start it with `--appimage-extract-and-run`. Keep it in a folder you can write to, such as `~/Applications`, so updates can replace it.
 - **.deb** (Debian/Ubuntu): `sudo apt install ./frink_X.Y.Z_amd64.deb`. Updates ask for your password in a system prompt.
 
 Frink saves API keys and MCP credentials only when it can encrypt them with a desktop keyring (GNOME Keyring or KWallet). Without one it does not save them, so install one and relaunch Frink before adding accounts.
