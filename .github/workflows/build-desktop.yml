@@ -17,6 +17,17 @@ on:
     # such a tag turns this verify matrix into a RELEASE: it (signs +) publishes win/linux to R2.
     tags:
       - '[0-9]*.[0-9]*.[0-9]*'
+    # A merge to main that changes what goes into the Codex binary re-seeds the Codex cache (see the
+    # Codex jobs). GitHub never applies `paths` to tag pushes, so every release tag still runs.
+    branches:
+      - main
+    paths:
+      - 'patches/codex/**'
+      - 'scripts/binaries/build-codex-frink.mjs'
+      - '.github/workflows/build-desktop.yml'
+  # Weekly, so the main-scoped Codex cache is read before GitHub evicts it after 7 days unused.
+  schedule:
+    - cron: '0 6 * * 1'
   pull_request:
     paths:
       - 'package.json'
@@ -38,6 +49,10 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # One pin for every Codex toolchain install and for the Codex cache key below.
+  CODEX_RUST_TOOLCHAIN: '1.95.0'
+
 jobs:
   # One Codex job and one packaging job per OS, each packaging job needing only its own Codex job
   # (plus the shared provider tests).
@@ -58,23 +73,36 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      # The finished binary (~330 MB), not the build tree (~6 GB): it depends only on the pinned
+      # source and patch (patches/codex/**, which holds the manifest), the build script, the
+      # toolchain and the runner image, so a hit skips the whole compile. Restored on every run;
+      # saved only by a seeding run on main, because GitHub lets a PR or tag read main's caches
+      # but never another PR's, and only main runs can write what a release then trusts.
+      - name: Restore the built Codex
+        id: codex-bin
+        uses: actions/cache/restore@v4
+        with:
+          path: resources/bin/${{ matrix.platformKey }}
+          key: codex-bin-${{ matrix.os }}-${{ matrix.platformKey }}-rust${{ env.CODEX_RUST_TOOLCHAIN }}-${{ hashFiles('patches/codex/**', 'scripts/binaries/build-codex-frink.mjs') }}
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        if: steps.codex-bin.outputs.cache-hit != 'true'
         with:
-          toolchain: 1.95.0
+          toolchain: ${{ env.CODEX_RUST_TOOLCHAIN }}
           targets: ${{ matrix.cargoTarget }}
-      # Keyed by runner image too: C objects cached on a newer image would drag its glibc symbols in.
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            .codex-target
-          key: codex-rust-v0.155.1-${{ matrix.os }}-${{ matrix.platformKey }}-${{ hashFiles('patches/codex/**', 'scripts/binaries/build-codex-frink.mjs') }}
       - name: Build permission-aware Codex
+        if: steps.codex-bin.outputs.cache-hit != 'true'
         run: node scripts/binaries/build-codex-frink.mjs --target ${{ matrix.platformKey }}
-        env:
-          CARGO_TARGET_DIR: ${{ github.workspace }}/.codex-target
-      - uses: actions/upload-artifact@v4
+      # A seeding run is a push to main or the weekly schedule; it exists to write this cache.
+      - name: Save the built Codex
+        if: >-
+          steps.codex-bin.outputs.cache-hit != 'true'
+          && (github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+        uses: actions/cache/save@v4
+        with:
+          path: resources/bin/${{ matrix.platformKey }}
+          key: ${{ steps.codex-bin.outputs.cache-primary-key }}
+      - if: ${{ !(github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
+        uses: actions/upload-artifact@v4
         with:
           name: frink-codex-${{ matrix.platformKey }}
           path: resources/bin/${{ matrix.platformKey }}/
@@ -109,10 +137,11 @@ jobs:
   # The Codex provider regression tests, beside the Codex builds instead of before one. They take about
   # 11 min against 35+ min for any OS's build, so every packaging job waits for them at no wall-clock
   # cost and no OS can package or release a Codex whose provider tests fail. Arch-independent, so one
-  # Linux run covers every OS; their debug build took the arm runner down mid-compile. No cache: it
-  # would share only ~/.cargo with the builds.
+  # Linux run covers every OS; their debug build took the arm runner down mid-compile.
   codex-provider-tests:
     name: Codex provider tests
+    # Seeding runs (main push, weekly schedule) only refresh the Codex cache.
+    if: ${{ !(github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     steps:
@@ -121,7 +150,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
         with:
-          toolchain: 1.95.0
+          toolchain: ${{ env.CODEX_RUST_TOOLCHAIN }}
       - name: Run the Codex provider regression tests
         run: node scripts/binaries/build-codex-frink.mjs --test-only
 
@@ -146,6 +175,7 @@ jobs:
   build-win32-x64:
     name: Package (${{ matrix.platformKey }})
     needs: [codex-native-win32-x64, codex-provider-tests]
+    if: ${{ !(github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
     strategy:
       matrix:
         include:
@@ -467,6 +497,7 @@ jobs:
   build-linux-x64:
     name: Package (${{ matrix.platformKey }})
     needs: [codex-native-linux-x64, codex-provider-tests]
+    if: ${{ !(github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
     strategy:
       matrix:
         include:
@@ -486,6 +517,7 @@ jobs:
   build-linux-arm64:
     name: Package (${{ matrix.platformKey }})
     needs: [codex-native-linux-arm64, codex-provider-tests]
+    if: ${{ !(github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
     strategy:
       matrix:
         include:
