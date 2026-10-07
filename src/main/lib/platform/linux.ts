@@ -8,6 +8,7 @@ import * as path from 'node:path';
 import { promisify } from 'node:util';
 import log from 'electron-log';
 import { BasePlatformProvider } from './base';
+import { nodeVersionManagerPaths } from './node-version-manager-paths';
 import type { CliConfig, EnvironmentConfig, PathConfig, ShellConfig } from './types';
 
 const execFileAsync = promisify(execFile);
@@ -55,11 +56,11 @@ export class LinuxPlatformProvider extends BasePlatformProvider {
         path.join(home, '.deno', 'bin'),
         // NVM managed Node.js
         path.join(home, '.nvm', 'versions', 'node', '*', 'bin'),
-        // ASDF version manager
-        path.join(home, '.asdf', 'shims'),
         // Linuxbrew
         path.join(home, '.linuxbrew', 'bin'),
         '/home/linuxbrew/.linuxbrew/bin',
+        // Last: a mise or asdf shim must not outrank a working node above.
+        ...nodeVersionManagerPaths(home, 'linux'),
       ],
     };
   }
