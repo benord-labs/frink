@@ -793,72 +793,19 @@ describe('frink_flows_define_stages', () => {
     expect(result?.content[0].text).toMatch(/Failed to define batch stages/);
   });
 
-  it('sc-647: returns partial success shape with retry guidance when server returns 207', async () => {
-    mockDefineFlowBatchStages.mockResolvedValueOnce({
-      partial: true,
-      stages: [
-        { id: 'stage-1-id', stageNumber: 1, name: 'Planning', status: 'running', runCount: 1 },
-      ],
-      rootStageCount: 1,
-      maxDepth: 1,
-      failedStages: [{ stageNumber: 2, error: 'stage_insert_failed' }],
-    });
+  it('passes the rejection reason through so the agent can see how to recover', async () => {
+    const reason =
+      'Stage(s) 1 already exist for batch b; use frink_flows_add_stage_runs to add runs';
+    mockDefineFlowBatchStages.mockRejectedValueOnce(new Error(reason));
 
     const result = await callTool('frink_flows_define_stages', {
       flowId: FLOW_ID,
       batchId: BATCH_ID,
-      stages: [
-        { stageNumber: 1, runs: [STAGE_1_RUN] },
-        { stageNumber: 2, runs: [STAGE_2_RUN] },
-      ],
+      stages: [{ stageNumber: 1, runs: [STAGE_1_RUN] }],
     });
 
-    expect(result?.isError).toBe(false);
-    const data = parseToolResultJson(result);
-    expect(data.success).toBe('partial');
-    expect(data.stageCount).toBe(1);
-    expect(data.stages[0].stageNumber).toBe(1);
-    expect(data.stages[0].status).toBe('running');
-    expect(data.failedStages).toHaveLength(1);
-    expect(data.failedStages[0].stageNumber).toBe(2);
-    expect(data.failedStages[0].error).toBe('stage_insert_failed');
-    expect(data.message).toMatch(/1 stage\(s\) defined, 1 failed/);
-    expect(data.message).toMatch(/\[2\]/);
-    expect(data.message).toMatch(/full run list/);
-    expect(data.message).toMatch(/will be replaced/);
-  });
-
-  it('sc-647: partial success maps every failedStages entry with per-stage error codes', async () => {
-    mockDefineFlowBatchStages.mockResolvedValueOnce({
-      partial: true,
-      stages: [
-        { id: 'stage-1-id', stageNumber: 1, name: 'Planning', status: 'running', runCount: 1 },
-      ],
-      rootStageCount: 1,
-      maxDepth: 1,
-      failedStages: [
-        { stageNumber: 2, error: 'stage_insert_failed' },
-        { stageNumber: 5, error: 'stage_insert_failed' },
-      ],
-    });
-
-    const result = await callTool('frink_flows_define_stages', {
-      flowId: FLOW_ID,
-      batchId: BATCH_ID,
-      stages: [
-        { stageNumber: 1, runs: [STAGE_1_RUN] },
-        { stageNumber: 2, runs: [STAGE_2_RUN] },
-        { stageNumber: 5, runs: [STAGE_2_RUN] },
-      ],
-    });
-
-    expect(result?.isError).toBe(false);
-    const data = parseToolResultJson(result);
-    expect(data.success).toBe('partial');
-    expect(data.failedStages).toHaveLength(2);
-    expect(data.failedStages[0]).toEqual({ stageNumber: 2, error: 'stage_insert_failed' });
-    expect(data.failedStages[1]).toEqual({ stageNumber: 5, error: 'stage_insert_failed' });
-    expect(data.message).toMatch(/\[2, 5\]/);
+    expect(result?.isError).toBe(true);
+    expect(result?.content[0].text).toBe(`Failed to define batch stages: ${reason}`);
   });
 });
 

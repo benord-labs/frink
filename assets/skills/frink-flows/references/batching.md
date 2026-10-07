@@ -39,7 +39,7 @@ Example tool arguments (replace ids with discovered values):
 | frink_flows_get_batch | 40 calls across all modes |
 
 For >50 stages, define in multiple calls: `dependsOn` can reference stage numbers from earlier calls. Keep the returned stageNumber→UUID map; use UUIDs when patching dependencies. Fan-in ≤10, no depth limit, cycles rejected.
-If define returns `success: "partial"` (207), retry only the `failedStages` stage numbers with their **full run lists**. Existing runs for those failed stages are replaced; partial rows are cancelled and stages reset to pending. Do not start an incomplete batch.
+A define call that returns an error saved nothing from that call; stages from earlier successful calls are unchanged. Fix the input and re-send the same stages. A stage number that already exists is rejected and cannot be replaced through define; add runs with `frink_flows_add_stage_runs` while the stage is pending. Define a dependency in the same or an earlier call than the stage that depends on it. Do not start an incomplete batch.
 
 ## Branch inheritance and PRs
 

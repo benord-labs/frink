@@ -561,4 +561,24 @@ describe('stages defined after the batch started (cross-call dependsOn)', () => 
       ],
     });
   });
+
+  it('a define call with one bad stage saves nothing, and the corrected call then succeeds', async () => {
+    // A BigInt cannot be JSON-serialised, so stage 2's run insert throws after stage 1's row exists.
+    await expect(
+      defineFlowBatchStages(flowId, BATCH, [
+        { stageNumber: 1, runs: [{}] },
+        { stageNumber: 2, dependsOn: [1], runs: [{ triggerContext: { n: BigInt(1) } }] },
+      ]),
+    ).rejects.toThrow();
+    expect(await stageByNumber(1)).toBeUndefined();
+    expect(await stageByNumber(2)).toBeUndefined();
+
+    const result = await defineFlowBatchStages(flowId, BATCH, [
+      { stageNumber: 1, runs: [{}] },
+      { stageNumber: 2, dependsOn: [1], runs: [{ triggerContext: { n: 1 } }] },
+    ]);
+
+    expect(result.stages.map((s) => s.stageNumber)).toEqual([1, 2]);
+    expect(await listRunsForStage(db, (await stageByNumber(2))?.id ?? '')).toHaveLength(1);
+  });
 });

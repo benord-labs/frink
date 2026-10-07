@@ -683,7 +683,7 @@ export const FLOWS_TOOLS = [
   {
     name: 'frink_flows_define_stages',
     description:
-      'Define staged execution for a batch, with optional DAG dependencies between stages. All stages start as pending — call frink_flows_start_batch after planning is complete to begin execution. This allows multi-call DAG assembly (up to 50 stages per call) for large epics without starting work prematurely. The server validates the flow graph in run mode before creating stages. Non-root stages fire automatically when all their dependencies complete after the batch is started. Omit dependsOn for linear execution. Use dependsOn: [stageNumber, ...] for arbitrary dependency graphs. failureThreshold: 0 = any failure blocks dependent stages; -1 = never block. On partial failure use success: "partial" with failedStages — re-call with full run list for failed numbers.',
+      'Define staged execution for a batch, with optional DAG dependencies between stages. All stages start as pending — call frink_flows_start_batch after planning is complete to begin execution. This allows multi-call DAG assembly (up to 50 stages per call) for large epics without starting work prematurely. The server validates the flow graph in run mode before creating stages. Non-root stages fire automatically when all their dependencies complete after the batch is started. Omit dependsOn for linear execution. Use dependsOn: [stageNumber, ...] for arbitrary dependency graphs. failureThreshold: 0 = any failure blocks dependent stages; -1 = never block. A call that returns an error saved nothing from that call — fix the input and re-send the same stages.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -1726,25 +1726,6 @@ async function handleDefineStages(
       runCount: s.runCount,
       dependsOnStageNumbers: s.dependsOnStageNumbers,
     }));
-
-    if (result.partial && result.failedStages?.length) {
-      const failedNums = result.failedStages.map((f) => f.stageNumber).join(', ');
-      return toolResult(
-        JSON.stringify(
-          {
-            success: 'partial',
-            stageCount: result.stages.length,
-            rootStageCount: result.rootStageCount,
-            maxDepth: result.maxDepth,
-            stages: stageSummary,
-            failedStages: result.failedStages,
-            message: `${result.stages.length} stage(s) defined, ${result.failedStages.length} failed. Re-call frink_flows_define_stages with the full run list for failed stage numbers: [${failedNums}]. Existing runs for those stages will be replaced.`,
-          },
-          null,
-          2,
-        ),
-      );
-    }
 
     return toolResult(
       JSON.stringify(

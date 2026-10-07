@@ -1,18 +1,18 @@
 {
-  "generatedAt": "content-da1177c46c0b",
-  "version": "content-da1177c46c0b",
+  "generatedAt": "content-1bd80a765b8a",
+  "version": "content-1bd80a765b8a",
   "files": {
     "SKILL.md": {
       "sha256": "043c22803c300f94ed809b02efec9bf5e9b2e4c07d164b4e864b619f56704c68",
       "bytes": 4685
     },
     "references/batching.md": {
-      "sha256": "d77dc9bf32fc316e2c7da6127dc96043708b1d04906b1936b163c5871d297bc6",
-      "bytes": 5787
+      "sha256": "1b86062ab99fc1c5b995ad500348589aff58c2ca248595e2bf20e3562bbbed0e",
+      "bytes": 5962
     },
     "references/blocks-actions.md": {
-      "sha256": "1e4c1a0d7a5bfb8331aa47dd2e29d928415f99a21a2e0cdcd300a7e18d625be1",
-      "bytes": 7900
+      "sha256": "7d2b6a8be2b4e209e176544a5ec24863c567878d46874ff6945494c9055defcb",
+      "bytes": 7893
     },
     "references/blocks-logic.md": {
       "sha256": "584bf231a226bb1b35fe606dd857a5d7b1c015ffc944d2dabf240e5e1ec26689",
@@ -35,8 +35,8 @@
       "bytes": 2626
     },
     "references/template-variables.md": {
-      "sha256": "5858f649f509eb1e2855f02207ac9ec77b753ecb9b06360cbae31fadeea72c15",
-      "bytes": 3373
+      "sha256": "6a6ae3f4cbf7b998438fabed98d24ac646affb21ade0bba09f4aa8fa42ea5a9b",
+      "bytes": 3606
     },
     "references/webhook-aliases.md": {
       "sha256": "ff03d7f28e3097b56c60f5de5fc0613cceef90815d8c8462566af01d480ed482",
