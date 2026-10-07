@@ -39,7 +39,8 @@ permissions:
   contents: read
 
 jobs:
-  # One Codex job and one packaging job per OS, each packaging job needing only its own Codex job.
+  # One Codex job and one packaging job per OS, each packaging job needing only its own Codex job
+  # (plus the shared provider tests).
   # `needs` waits for every leg of a matrix, so a shared matrix would hold each OS's packaging until
   # the slowest Codex build anywhere finished. One-row matrices keep the shared step lists' matrix.*
   # references working unchanged; YAML anchors keep the per-OS jobs from drifting.
@@ -51,7 +52,6 @@ jobs:
           - os: windows-2022
             platformKey: win32-x64
             cargoTarget: x86_64-pc-windows-msvc
-            testArgs: ''
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
     steps: &codex-native-steps
@@ -71,7 +71,7 @@ jobs:
             .codex-target
           key: codex-rust-v0.153.3-${{ matrix.os }}-${{ matrix.platformKey }}-${{ hashFiles('patches/codex/**', 'scripts/binaries/build-codex-frink.mjs') }}
       - name: Build permission-aware Codex
-        run: node scripts/binaries/build-codex-frink.mjs --target ${{ matrix.platformKey }} ${{ matrix.testArgs }}
+        run: node scripts/binaries/build-codex-frink.mjs --target ${{ matrix.platformKey }}
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/.codex-target
       - uses: actions/upload-artifact@v4
@@ -90,7 +90,6 @@ jobs:
           - os: ubuntu-22.04
             platformKey: linux-x64
             cargoTarget: x86_64-unknown-linux-gnu
-            testArgs: '--test'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
     steps: *codex-native-steps
@@ -100,15 +99,31 @@ jobs:
     strategy:
       matrix:
         include:
-          # No --test: the provider tests are arch-independent and run on linux-x64, and their debug build
-          # took the arm runner down mid-compile (shutdown signal).
           - os: ubuntu-22.04-arm
             platformKey: linux-arm64
             cargoTarget: aarch64-unknown-linux-gnu
-            testArgs: ''
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
     steps: *codex-native-steps
+
+  # The Codex provider regression tests, beside the Codex builds instead of before one. They take about
+  # 11 min against 35+ min for any OS's build, so every packaging job waits for them at no wall-clock
+  # cost and no OS can package or release a Codex whose provider tests fail. Arch-independent, so one
+  # Linux run covers every OS; their debug build took the arm runner down mid-compile. No cache: it
+  # would share only ~/.cargo with the builds.
+  codex-provider-tests:
+    name: Codex provider tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: 1.95.0
+      - name: Run the Codex provider regression tests
+        run: node scripts/binaries/build-codex-frink.mjs --test-only
 
   # Same build + handshake for macOS. Nothing needs it: there is no mac packaging job, and mac
   # releases build Codex locally (`bun run release`), so the slow Intel leg holds up no packaging.
@@ -121,18 +136,16 @@ jobs:
           - os: macos-15
             platformKey: darwin-arm64
             cargoTarget: aarch64-apple-darwin
-            testArgs: ''
           - os: macos-15-intel
             platformKey: darwin-x64
             cargoTarget: x86_64-apple-darwin
-            testArgs: ''
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
     steps: *codex-native-steps
 
   build-win32-x64:
     name: Package (${{ matrix.platformKey }})
-    needs: codex-native-win32-x64
+    needs: [codex-native-win32-x64, codex-provider-tests]
     strategy:
       matrix:
         include:
@@ -443,7 +456,7 @@ jobs:
 
   build-linux-x64:
     name: Package (${{ matrix.platformKey }})
-    needs: codex-native-linux-x64
+    needs: [codex-native-linux-x64, codex-provider-tests]
     strategy:
       matrix:
         include:
@@ -462,7 +475,7 @@ jobs:
 
   build-linux-arm64:
     name: Package (${{ matrix.platformKey }})
-    needs: codex-native-linux-arm64
+    needs: [codex-native-linux-arm64, codex-provider-tests]
     strategy:
       matrix:
         include:

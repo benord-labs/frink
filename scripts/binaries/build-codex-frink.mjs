@@ -73,10 +73,17 @@ export function releaseTargetKeys(platform = process.platform, arch = process.ar
 export function parseBuildArguments(args) {
   const targetKeys = [];
   let runProviderTests = false;
+  let testOnly = false;
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === '--test') {
       runProviderTests = true;
+      continue;
+    }
+    // The provider tests alone, so CI can run them beside the release build instead of before it.
+    if (argument === '--test-only') {
+      runProviderTests = true;
+      testOnly = true;
       continue;
     }
     if (argument === '--target') {
@@ -88,7 +95,10 @@ export function parseBuildArguments(args) {
     }
     throw new Error(`Unknown Codex build argument: ${argument}`);
   }
-  return { targetKeys, runProviderTests };
+  if (testOnly && targetKeys.length > 0) {
+    throw new Error('--test-only builds no binary, so it cannot take --target');
+  }
+  return { targetKeys, runProviderTests, testOnly };
 }
 
 export function normalizeWorkspaceVersions(lockfile, version) {
@@ -479,6 +489,26 @@ function buildCodexTarget({
   return outputBinary;
 }
 
+/** Downloads, patches and checks the pinned source, ready for cargo. */
+async function preparedCodexWorkspace(tempRoot, manifest) {
+  const sourceDir = await prepareCodexSource(tempRoot, manifest);
+  assertPinnedThreadItems(
+    manifest,
+    JSON.parse(fs.readFileSync(THREAD_ITEMS_PATH, 'utf8')),
+    parseThreadItemVariants(
+      fs.readFileSync(path.join(sourceDir, ...THREAD_ITEM_SCHEMA_PATH), 'utf8'),
+    ),
+  );
+  const rustc = rustcExecutable();
+  assertRustVersion(rustc, manifest.rust);
+  return {
+    sourceDir,
+    cargoRoot: path.join(sourceDir, 'codex-rs'),
+    cargo: cargoExecutable(),
+    rustc,
+  };
+}
+
 export async function buildCodexFrink({
   outputRoot = path.join(ROOT_DIR, 'resources', 'bin'),
   targetKeys = [platformKey()],
@@ -489,18 +519,7 @@ export async function buildCodexFrink({
 
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'frink-codex-build-'));
   try {
-    const sourceDir = await prepareCodexSource(tempRoot, manifest);
-    assertPinnedThreadItems(
-      manifest,
-      JSON.parse(fs.readFileSync(THREAD_ITEMS_PATH, 'utf8')),
-      parseThreadItemVariants(
-        fs.readFileSync(path.join(sourceDir, ...THREAD_ITEM_SCHEMA_PATH), 'utf8'),
-      ),
-    );
-    const cargo = cargoExecutable();
-    const rustc = rustcExecutable();
-    const cargoRoot = path.join(sourceDir, 'codex-rs');
-    assertRustVersion(rustc, manifest.rust);
+    const { sourceDir, cargoRoot, cargo, rustc } = await preparedCodexWorkspace(tempRoot, manifest);
     if (runProviderTests) runProviderRegressionTests(cargo, rustc, cargoRoot);
 
     const binaries = [];
@@ -528,8 +547,24 @@ export async function buildCodexFrink({
   }
 }
 
+/** The provider regression tests alone, on the same pinned and patched source a build uses. */
+async function runCodexProviderTests() {
+  const manifest = readManifest();
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'frink-codex-tests-'));
+  try {
+    const { cargoRoot, cargo, rustc } = await preparedCodexWorkspace(tempRoot, manifest);
+    runProviderRegressionTests(cargo, rustc, cargoRoot);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+}
+
 async function main(args) {
-  const { targetKeys, runProviderTests } = parseBuildArguments(args);
+  const { targetKeys, runProviderTests, testOnly } = parseBuildArguments(args);
+  if (testOnly) {
+    await runCodexProviderTests();
+    return 'Codex provider regression tests passed';
+  }
   const binaries = await buildCodexFrink({
     targetKeys: targetKeys.length > 0 ? targetKeys : [platformKey()],
     runProviderTests,

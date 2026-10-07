@@ -12,6 +12,16 @@ const WORKFLOW_PATH = resolve(__dirname, '../../.github/workflows/build-desktop.
 
 type Job = { key: string; lines: string[] };
 
+const TESTS_JOB = 'codex-provider-tests';
+
+/** `needs: a` or `needs: [a, b]` as a list of job keys. */
+const needsList = (needs: string | undefined) =>
+  (needs ?? '')
+    .replace(/^\[|\]$/g, '')
+    .split(',')
+    .map((key) => key.trim())
+    .filter(Boolean);
+
 function jobsOf(workflow: string): Job[] {
   const lines = workflow.replace(/\r\n/g, '\n').split('\n');
   const start = lines.indexOf('jobs:');
@@ -64,8 +74,9 @@ function perOsProblems(workflow: string): string[] {
     const os = build.key.slice('build-'.length);
     const codexKey = `codex-native-${os}`;
     const needs = field(build, 'needs');
-    if (needs !== codexKey)
-      problems.push(`${build.key} needs "${needs ?? ''}" instead of only ${codexKey}`);
+    const expected = [codexKey, TESTS_JOB];
+    if (needsList(needs).toSorted().join() !== expected.toSorted().join())
+      problems.push(`${build.key} needs "${needs ?? ''}" instead of only [${expected.join(', ')}]`);
     if (!byKey.has(codexKey)) problems.push(`${build.key} has no ${codexKey} job to package from`);
     for (const job of [build, byKey.get(codexKey)]) {
       const keys = job ? platformKeys(job) : [];
@@ -80,6 +91,16 @@ function perOsProblems(workflow: string): string[] {
     const os = codex.key.slice('codex-native-'.length);
     if (os !== 'mac' && !byKey.has(`build-${os}`))
       problems.push(`${codex.key} has no build-${os} job packaging it`);
+  }
+
+  // The provider tests gate packaging from beside the builds, never from inside one: a build job
+  // that runs them again serialises the ~11 min debug build back in front of its OS's packaging.
+  const testsJob = byKey.get(TESTS_JOB);
+  if (!testsJob?.lines.some((line) => /build-codex-frink\.mjs --test-only\b/.test(line)))
+    problems.push(`no ${TESTS_JOB} job running build-codex-frink.mjs --test-only`);
+  for (const job of jobs) {
+    if (job.lines.some((line) => /build-codex-frink\.mjs\b.*\s--test(?!-only)\b/.test(line)))
+      problems.push(`${job.key} runs the provider tests in front of a build`);
   }
 
   const sharedSteps = (prefix: string, anchor: string) => {
@@ -111,13 +132,19 @@ const build = (os: string, needs: string, steps: string) =>
     `build-${os}`,
     `    needs: ${needs}\n    strategy:\n      matrix:\n        include:\n          - os: runner\n            platformKey: ${os}\n    steps: ${steps}\n`,
   );
+const gated = (os: string) => `[codex-native-${os}, codex-provider-tests]`;
+const TESTS = job(
+  'codex-provider-tests',
+  '    runs-on: runner\n    steps:\n      - run: node scripts/binaries/build-codex-frink.mjs --test-only\n',
+);
 const workflowOf = (...jobs: string[]) => `name: Build Desktop\n\njobs:\n${jobs.join('\n')}`;
 
 const GOOD = workflowOf(
   codex('win32-x64', '&codex-native-steps\n      - run: build'),
   codex('linux-x64', '*codex-native-steps'),
-  build('win32-x64', 'codex-native-win32-x64', '&build-steps\n      - run: package'),
-  build('linux-x64', 'codex-native-linux-x64', '*build-steps'),
+  TESTS,
+  build('win32-x64', gated('win32-x64'), '&build-steps\n      - run: package'),
+  build('linux-x64', gated('linux-x64'), '*build-steps'),
 );
 
 describe('build-desktop.yml per-OS packaging', () => {
@@ -151,20 +178,21 @@ describe('perOsProblems', () => {
       'no per-OS build-<os> packaging jobs',
       'codex-native builds 3 platforms; a dependant would wait for all of them',
       'build builds 2 platforms; a dependant would wait for all of them',
+      'no codex-provider-tests job running build-codex-frink.mjs --test-only',
     ]);
   });
 
   it('flags a packaging job wired to another OS Codex job', () => {
-    const crossed = GOOD.replace('needs: codex-native-linux-x64', 'needs: codex-native-win32-x64');
+    const crossed = GOOD.replace(gated('linux-x64'), gated('win32-x64'));
     expect(perOsProblems(crossed)).toEqual([
-      'build-linux-x64 needs "codex-native-win32-x64" instead of only codex-native-linux-x64',
+      `build-linux-x64 needs "${gated('win32-x64')}" instead of only ${gated('linux-x64')}`,
     ]);
   });
 
   it('flags a packaging job that waits on every Codex job again', () => {
     const all = GOOD.replace(
-      'needs: codex-native-linux-x64',
-      'needs: [codex-native-win32-x64, codex-native-linux-x64]',
+      gated('linux-x64'),
+      '[codex-native-win32-x64, codex-native-linux-x64, codex-provider-tests]',
     );
     expect(perOsProblems(all)).toHaveLength(1);
   });
@@ -202,10 +230,10 @@ describe('perOsProblems', () => {
   it('flags a new OS packaging job without its own Codex job', () => {
     const orphan = workflowOf(
       GOOD.split('jobs:\n')[1],
-      build('linux-arm64', 'codex-native-linux-x64', '*build-steps'),
+      build('linux-arm64', gated('linux-x64'), '*build-steps'),
     );
     expect(perOsProblems(orphan)).toEqual([
-      'build-linux-arm64 needs "codex-native-linux-x64" instead of only codex-native-linux-arm64',
+      `build-linux-arm64 needs "${gated('linux-x64')}" instead of only ${gated('linux-arm64')}`,
       'build-linux-arm64 has no codex-native-linux-arm64 job to package from',
     ]);
   });
@@ -224,6 +252,30 @@ describe('perOsProblems', () => {
     const forked = GOOD.replace('steps: *build-steps', 'steps:\n      - run: package');
     expect(perOsProblems(forked)).toEqual([
       'build-linux-x64 does not share the build-steps step list',
+    ]);
+  });
+
+  // The release gate: no OS may package a Codex whose provider tests have not passed.
+  it('flags a packaging job that no longer waits for the provider tests', () => {
+    const ungated = GOOD.replace(gated('linux-x64'), 'codex-native-linux-x64');
+    expect(perOsProblems(ungated)).toEqual([
+      `build-linux-x64 needs "codex-native-linux-x64" instead of only ${gated('linux-x64')}`,
+    ]);
+  });
+
+  it('flags a workflow that lost the provider tests job', () => {
+    expect(perOsProblems(GOOD.replace(TESTS, ''))).toEqual([
+      'no codex-provider-tests job running build-codex-frink.mjs --test-only',
+    ]);
+  });
+
+  it('flags provider tests moved back in front of a Codex build', () => {
+    const serial = GOOD.replace(
+      '&codex-native-steps\n      - run: build',
+      '&codex-native-steps\n      - run: node scripts/binaries/build-codex-frink.mjs --target linux-x64 --test',
+    );
+    expect(perOsProblems(serial)).toEqual([
+      'codex-native-win32-x64 runs the provider tests in front of a build',
     ]);
   });
 
