@@ -1,7 +1,7 @@
 name: Build Desktop
 
-# Builds Frink for Windows (windows-2022 → nsis + portable) and Linux (ubuntu-latest →
-# AppImage + deb) via one matrix, and verifies the PACKAGED native modules (better-sqlite3,
+# Builds Frink for Windows (windows-2022 → nsis + portable) and Linux x64 + arm64 (ubuntu-latest /
+# ubuntu-24.04-arm → AppImage + deb) via one matrix, and verifies the PACKAGED native modules (better-sqlite3,
 # node-pty) load under Electron's ABI plus that the bundled agent binaries (claude, codex)
 # are present and runnable. The Linux leg also launches both installers under Xvfb.
 #
@@ -52,6 +52,12 @@ jobs:
             platformKey: linux-x64
             cargoTarget: x86_64-unknown-linux-gnu
             testArgs: '--test'
+          # No --test: the provider tests are arch-independent and run above, and their debug build
+          # took the arm runner down mid-compile (shutdown signal).
+          - os: ubuntu-22.04-arm
+            platformKey: linux-arm64
+            cargoTarget: aarch64-unknown-linux-gnu
+            testArgs: ''
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
     steps: &codex-native-steps
@@ -123,6 +129,16 @@ jobs:
             binExt: ''
             pkg: package:linux
             artifactName: frink-linux-installers
+            artifactGlob: |
+              release/*.AppImage
+              release/*.deb
+          # electron-builder packages for the host arch, so the arm64 installers come from an arm64 runner.
+          - os: ubuntu-24.04-arm
+            platformKey: linux-arm64
+            unpacked: linux-arm64-unpacked
+            binExt: ''
+            pkg: package:linux
+            artifactName: frink-linux-arm64-installers
             artifactGlob: |
               release/*.AppImage
               release/*.deb
@@ -304,6 +320,26 @@ jobs:
           (cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE"/release/*.AppImage --appimage-extract >/dev/null)
           test -x "$RUNNER_TEMP/squashfs-root/resources/bin/codex" || { echo "::error::AppImage ships a non-executable codex"; exit 1; }
 
+      - name: Assert Linux release names and binary arch
+        if: runner.os == 'Linux'
+        shell: bash
+        # x64 and arm64 publish side by side on R2, so each leg must keep its own installer and feed names.
+        run: |
+          ls -l release/
+          VER="$(node -p "require('./package.json').version")"
+          case "${{ matrix.platformKey }}" in
+            linux-x64) ELF=x86-64; FILES="Frink-$VER.AppImage frink_${VER}_amd64.deb latest-linux.yml" ;;
+            linux-arm64) ELF=aarch64; FILES="Frink-$VER-arm64.AppImage frink_${VER}_arm64.deb latest-linux-arm64.yml" ;;
+            *) echo "::error::no expected release names for ${{ matrix.platformKey }}"; exit 1 ;;
+          esac
+          for f in $FILES; do test -f "release/$f" || { echo "::error::release/$f missing"; exit 1; }; done
+          UNPACKED="release/${{ matrix.unpacked }}"
+          for bin in "$UNPACKED/frink" "$UNPACKED/resources/bin/codex" "$UNPACKED/resources/bin/claude"; do
+            INFO="$(file -L "$bin")"
+            echo "$INFO"
+            [[ "$INFO" == *"$ELF"* ]] || { echo "::error::$bin is not $ELF"; exit 1; }
+          done
+
       - name: Assert Linux desktop entries match the window
         if: runner.os == 'Linux'
         shell: bash
@@ -355,12 +391,14 @@ jobs:
         # or shared-library regression fails here instead of on a user's first launch.
         timeout-minutes: 5
         run: bash scripts/smoke/smoke-linux-launch.sh
+        env:
+          FRINK_SMOKE_UNPACKED: release/${{ matrix.unpacked }}
 
       - name: Upload the Linux launch smoke logs
         if: failure() && runner.os == 'Linux'
         uses: actions/upload-artifact@v4
         with:
-          name: linux-launch-smoke-logs
+          name: linux-launch-smoke-logs-${{ matrix.platformKey }}
           path: |
             ${{ runner.temp }}/linux-launch-smoke/*/*.log
             ${{ runner.temp }}/linux-launch-smoke/*/processes.txt
@@ -377,8 +415,8 @@ jobs:
 
       - name: Publish to R2
         # Release tags only, AND only once the R2 creds exist (skip — don't fail — a tag pushed before
-        # secrets are set). Each OS leg uploads its own release/ slice (win → *.exe + latest.yml; linux
-        # → *.AppImage/*.deb + latest-linux.yml) to the shared frink-releases bucket; per-OS feeds, no collision.
+        # secrets are set). Each leg uploads its own release/ slice (win → *.exe + latest.yml; linux →
+        # *.AppImage/*.deb + latest-linux.yml or latest-linux-arm64.yml) to the shared bucket; per-leg feeds, no collision.
         # All three R2 creds required — upload-to-r2.mjs exits non-zero unless all are set, so a
         # partial set must skip (not fail) the release job.
         if: >-
