@@ -48,6 +48,21 @@ describe('handleTaskSignalToolCall — signal target check (sc-2771)', () => {
     expect(ctx.taskSignalEnabled).toBe(true);
   });
 
+  it('records every accepted signal as a new object, even an identical repeat', async () => {
+    // The Stop hook tells a stale drafting park from a later one by identity; an in-place update
+    // would make every later signal look stale.
+    state.getTaskById.mockResolvedValue(task('running'));
+    const ctx = contextFor();
+    const park = { state: 'awaiting_input', summary: 'Which API?' };
+
+    await handleTaskSignalToolCall(ctx, park);
+    const first = ctx.latestTaskSignal;
+    await handleTaskSignalToolCall(ctx, park);
+
+    expect(first).toBeDefined();
+    expect(ctx.latestTaskSignal).not.toBe(first);
+  });
+
   it('refuses a signal whose task or run can no longer consume it, and disarms the tool', async () => {
     state.getTaskById.mockResolvedValue(task('cancelled'));
     state.isSignalTargetDead.mockResolvedValue(true);

@@ -1,4 +1,5 @@
 import type { TaskSignalPayload } from '../../../../shared/types/task-signal';
+import type { RecordedTaskSignal } from '../../mcp/task-signal-tool';
 import { captureMainException } from '../../sentry/init';
 import {
   canApplyTaskSignalForStatus,
@@ -154,6 +155,7 @@ export async function finalizeLinkedTaskSignalFromContext(params: {
       // ignored the Stop hook's chase settles on its drafting-phase question instead of the work it
       // actually did. The node still parks (so this is a wrong-park, not a hang), but the park text
       // is stale — capture it rather than let it look like a normal user-facing pause.
+      // Over-reports a genuine post-plan park: this seam sees only `planSubmitted`, not the snapshot.
       if (params.planSubmitted && signal.state === 'awaiting_input') {
         const { captureMainMessage } = await import('../../sentry/init');
         captureMainMessage('Flow node parked on a stale pre-plan question', 'warning', {
@@ -278,29 +280,26 @@ export async function clearLinkedTaskQuietEnd(
   }
 }
 
-/**
- * Whether the execution context has recorded a frink_task_signal this turn (Stop-hook hasSignal).
- *
- * `requireTerminal` covers the ONE turn shape that spans two signal phases: an auto-approve plan
- * node may park with `awaiting_input` while DRAFTING, then submit its plan and implement in the
- * SAME turn. The context keeps only the latest signal and never clears it mid-turn, so that
- * drafting park would otherwise satisfy the implementation phase's mandatory terminal — the run
- * would stop unchased and persist the stale question over finished work. Callers pass the turn's
- * live `planSubmitted`, never a turn-start mode: a follow-up turn can re-enter plan mode mid-stream,
- * and only the boundary fact sees that. Post-plan the agent is told to finish on
- * done/partial/blocked/failed, so `awaiting_input` cannot settle it.
- */
+/** Whether the execution context recorded a frink_task_signal (Stop-hook hasSignal). Any signal
+ * counts except `stalePreplanSignal`, matched by identity since two signals can share a timestamp. */
 export async function hasLatestTaskSignalFor(
   executionContextId: string | undefined,
-  requireTerminal = false,
+  stalePreplanSignal: RecordedTaskSignal | null = null,
 ): Promise<boolean> {
   // Deliberate dynamic import: dynamic-chat-server → executor → here forms a static cycle,
   // broken at runtime by loading the server module lazily (same pattern as socket/client below).
   const { getLatestTaskSignal } = await import('../../mcp/dynamic-chat-server');
   const signal = getLatestTaskSignal(executionContextId);
-  if (!signal) return false;
-  // Same carve-out as refusePlanModeTerminalSignal: awaiting_input parks, every other state ends.
-  return !requireTerminal || signal.state !== 'awaiting_input';
+  return Boolean(signal) && signal !== stalePreplanSignal;
+}
+
+/** The signal recorded on this execution context right now — the Stop hook's pre-plan snapshot
+ * source. Lazy for the same dynamic-chat-server cycle as {@link hasLatestTaskSignalFor}. */
+export async function latestTaskSignalFor(
+  executionContextId: string | undefined,
+): Promise<RecordedTaskSignal | undefined> {
+  const { getLatestTaskSignal } = await import('../../mcp/dynamic-chat-server');
+  return getLatestTaskSignal(executionContextId);
 }
 
 /** The tool refused a dead target and disarmed itself this turn; the Stop hook treats that as
