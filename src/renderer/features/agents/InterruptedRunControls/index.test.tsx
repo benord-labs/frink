@@ -205,7 +205,7 @@ describe('InterruptedRunControls', () => {
     fireEvent.click(screen.getByRole('button', { name: RETRY_NAME }));
     expect(rerunMutate).not.toHaveBeenCalled();
     expect(screen.getByRole('alert')).toHaveTextContent(
-      'This step was mid-run. Running it again may repeat its side effects.',
+      'This step was interrupted partway through. Running it again may repeat actions it already took.',
     );
 
     fireEvent.click(screen.getByRole('button', { name: /Retry anyway/ }));

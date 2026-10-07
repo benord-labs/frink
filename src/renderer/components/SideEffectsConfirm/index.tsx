@@ -4,7 +4,8 @@ import { type ReactElement, type RefObject, useEffect, useRef } from 'react';
 import { cn } from '../../lib/utils';
 import type { ConfirmOptions } from '../ui/use-confirm';
 
-const SIDE_EFFECTS_WARNING = 'This step was mid-run. Running it again may repeat its side effects.';
+const SIDE_EFFECTS_WARNING =
+  'This step was interrupted partway through. Running it again may repeat actions it already took.';
 
 /** The same ask as a useConfirm dialog, for a Retry that lives in a menu or a status row. */
 export const SIDE_EFFECTS_CONFIRM: ConfirmOptions = {

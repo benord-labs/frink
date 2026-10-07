@@ -631,7 +631,7 @@ frink_flows_patch({
 
 When a flow is paused on failure, expand the run in the **Run history** panel. Each failed node shows two buttons:
 
-- **Continue** or **Retry** — the run's stopped step reads **Continue** when its agent had already answered the step (the session picks up where it stopped, nothing is redone) and **Retry** otherwise (re-dispatches the node from its instructions, preserving fan-out state so iteration position is maintained). Retrying a command or HTTP step that had already started asks you to confirm first, because it may repeat its side effects.
+- **Continue** or **Retry** — the run's stopped step reads **Continue** when its agent had already answered the step (the session picks up where it stopped, nothing is redone) and **Retry** otherwise (re-dispatches the node from its instructions, preserving fan-out state so iteration position is maintained). Retrying a command or HTTP step that had already started asks you to confirm first, because running it again may repeat actions it already took.
 - **Skip** — marks the node as skipped and advances the flow as if the node completed with no outputs. Downstream `{{previous.*}}` references will resolve to empty. Use this when the step is non-critical and you want the flow to continue regardless.
 
 ### Continue or Retry in the agent's chat
@@ -699,7 +699,7 @@ While it waits for a free slot the chat shows *Waiting for a free slot to resume
 **Continuing one by hand.** In the flow's chat, one button appears just above the message box, next to a "Flow run interrupted" note:
 
 - **Continue** — the agent had already answered this step's instructions and its session survived. The agent wakes up where it stopped in the same chat and worktree, with nothing repeated. Typing a message does the same and lets you add new instructions while you're at it.
-- **Retry** — the agent never answered the instructions, its session is gone, or the step isn't an agent step. The step restarts from its instructions in the same worktree, after the run re-enters the run queue, so it can't collide with the concurrency limit. A command or HTTP step that had already started asks you to confirm first, because running it again may repeat its side effects.
+- **Retry** — the agent never answered the instructions, its session is gone, or the step isn't an agent step. The step restarts from its instructions in the same worktree, after the run re-enters the run queue, so it can't collide with the concurrency limit. A command or HTTP step that had already started asks you to confirm first, because running it again may repeat actions it already took.
 
 The message box hint says which applies. On a Retry step, a typed message gets a "This flow run has ended" notice pointing you to the button — continuing would have the agent carry on a step it was never given.
 

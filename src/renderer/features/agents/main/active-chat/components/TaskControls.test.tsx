@@ -277,7 +277,9 @@ describe('TaskControls', () => {
 
     it('asks to confirm before it sends anything', () => {
       clickSideEffectsRetry();
-      expect(screen.getByRole('alertdialog')).toHaveTextContent('may repeat its side effects');
+      expect(screen.getByRole('alertdialog')).toHaveTextContent(
+        'may repeat actions it already took',
+      );
       expect(recoverMutate).not.toHaveBeenCalled();
     });
 

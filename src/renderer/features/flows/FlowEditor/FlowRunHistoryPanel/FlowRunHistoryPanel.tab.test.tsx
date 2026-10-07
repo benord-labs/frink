@@ -446,7 +446,7 @@ describe('RunDetailPane — restart-interrupted recovery', () => {
 
     await user.click(screen.getByRole('button', RETRY));
     expect(snap.retryRunMutate).not.toHaveBeenCalled();
-    expect(screen.getByRole('alert')).toHaveTextContent('may repeat its side effects');
+    expect(screen.getByRole('alert')).toHaveTextContent('may repeat actions it already took');
     await user.click(screen.getByRole('button', { name: /Retry anyway/ }));
     expect(snap.retryRunMutate).toHaveBeenCalledWith({ runId: RUN_ID, kind: 'retry' });
   });

@@ -241,7 +241,9 @@ describe('WorkQueue ActionMenu', () => {
 
     it('asks to confirm before it sends anything', () => {
       const props = renderSideEffectsRetry();
-      expect(screen.getByRole('alertdialog')).toHaveTextContent('may repeat its side effects');
+      expect(screen.getByRole('alertdialog')).toHaveTextContent(
+        'may repeat actions it already took',
+      );
       expect(props.onRetryTask).not.toHaveBeenCalled();
     });
 
