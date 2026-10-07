@@ -80,6 +80,13 @@ export function hasActiveExecutions(): boolean {
   return activeExecutions.size > 0;
 }
 
+/** Sub-chats with a live execution for this chat — readable without the DB, unlike the sub-chat list. */
+export function listSubChatIdsForChat(chatId: string): string[] {
+  return [...activeExecutions]
+    .filter(([, record]) => record.chatId === chatId)
+    .map(([subChatId]) => subChatId);
+}
+
 export function listExecutionsForWebContents(
   webContentsId: number,
 ): Array<[string, ActiveExecutionRecord]> {
@@ -136,8 +143,9 @@ export function _registerExecutionForTests(
   subChatId: string,
   controller: AbortController,
   localRendererWebContentsId?: number,
+  presentation?: ExecutionPresentation,
 ): void {
-  setActiveExecution(subChatId, controller, localRendererWebContentsId);
+  setActiveExecution(subChatId, controller, localRendererWebContentsId, presentation);
 }
 
 /** Test-only: probe the activeExecutions map. */

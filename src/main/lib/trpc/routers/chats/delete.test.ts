@@ -38,10 +38,16 @@ vi.mock('../../../git/cache', () => ({
 vi.mock('../../../socket/executor', () => ({
   clearCodexSession: vi.fn(),
   abortActiveExecutionsForSubChats: vi.fn(),
+  collectLiveSubChatIdsForChat: vi.fn(() => []),
 }));
 
 import { advanceFlowRun } from '../../../flows/advance';
 import { cancelFlowRun } from '../../../flows/engine';
+import { createSubChat, listSubChatsByChat } from '../../../db/repos/sub-chats';
+import {
+  abortActiveExecutionsForSubChats,
+  collectLiveSubChatIdsForChat,
+} from '../../../socket/executor';
 import { deleteRouter } from './delete';
 
 const GRAPH = { nodes: [{ id: 'st', blockType: 'start_task' }], edges: [] };
@@ -64,6 +70,37 @@ describe('deleteRouter (local-first)', () => {
     expect(result?.id).toBe(chat.id);
     expect(await getChatById(db, chat.id)).toBeNull();
     expect(trackWorkspaceDeletedMock).toHaveBeenCalledWith(chat.id);
+  });
+
+  it("aborts the chat's live turns even when its sub-chat lookup fails", async () => {
+    const chat = await createChat(db, { name: 'C' });
+    // A real read failure: the sub-chat table is gone, so listSubChatsByChat throws.
+    db.run(sql`ALTER TABLE sub_chats RENAME TO sub_chats_unreadable`);
+    await expect(listSubChatsByChat(db, chat.id)).rejects.toThrow();
+    vi.mocked(collectLiveSubChatIdsForChat).mockReturnValueOnce(['sub-live']);
+
+    await caller().delete({ id: chat.id });
+
+    expect(collectLiveSubChatIdsForChat).toHaveBeenCalledWith(chat.id);
+    expect(abortActiveExecutionsForSubChats).toHaveBeenCalledWith(['sub-live'], 'chat deleted');
+    // The abort lands before the row goes, so nothing streams into a deleted chat.
+    expect(vi.mocked(abortActiveExecutionsForSubChats).mock.invocationCallOrder[0]).toBeLessThan(
+      trackWorkspaceDeletedMock.mock.invocationCallOrder[0],
+    );
+    expect(await getChatById(db, chat.id)).toBeNull();
+  });
+
+  it('still aborts the listed sub-chats, alongside the live ones, when the lookup succeeds', async () => {
+    const chat = await createChat(db, { name: 'C' });
+    const sub = await createSubChat(db, { chatId: chat.id });
+    vi.mocked(collectLiveSubChatIdsForChat).mockReturnValueOnce([sub.id, 'sub-live']);
+
+    await caller().delete({ id: chat.id });
+
+    expect(abortActiveExecutionsForSubChats).toHaveBeenCalledWith(
+      [sub.id, 'sub-live'],
+      'chat deleted',
+    );
   });
 
   it('returns null when the chat is missing', async () => {

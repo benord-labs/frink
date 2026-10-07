@@ -117,6 +117,7 @@ import {
   applyApprovedPlanContextToPrompt,
   formatPromptWithHistory,
 } from './execution/prompt-prefix';
+import { listWakeHoldSubChatIdsForChat } from './execution/wake-hold-registry-view';
 import { logAdoptedTurnEnd, turnEndMustDispose } from './execution/wake-hold-signal';
 import type { WakePump } from './execution/wake-pump-types';
 import {
@@ -135,6 +136,7 @@ import {
   getExecutionStreamEpoch,
   hasActiveExecutions,
   listExecutionsForWebContents,
+  listSubChatIdsForChat,
   setActiveExecution,
 } from './streaming/execution-registry';
 
@@ -1926,6 +1928,14 @@ export function handleRemoteStop(payload: { chatId: string; subChatId: string })
     record.controller.abort();
     deleteActiveExecution(payload.subChatId);
   }
+}
+
+/** A chat's sub-chats with a live turn or wake hold, read from memory so abort survives a DB failure. */
+export function collectLiveSubChatIdsForChat(
+  chatId: string,
+  listWakeHolds: (chatId: string) => string[] = listWakeHoldSubChatIdsForChat,
+): string[] {
+  return [...new Set([...listSubChatIdsForChat(chatId), ...listWakeHolds(chatId)])];
 }
 
 /**
