@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
@@ -11,7 +11,12 @@ import {
 } from '../db/repos/batch-stage-runs';
 import { batchStageRuns } from '../db/schema';
 import { freshDb, type TestDb } from '../db/test-utils/fresh-db';
-import { deleteAttachmentFile, readAttachmentImage, writeAttachment } from './attachments-storage';
+import {
+  MAX_IMAGE_BYTES,
+  deleteAttachmentFile,
+  readAttachmentImage,
+  writeAttachment,
+} from './attachments-storage';
 import { uploadAttachmentToStageRun } from './attachments-upload';
 import { seedBatchStage } from './batch-test-factories';
 
@@ -44,9 +49,9 @@ async function seedRun(triggerContext: SeedTriggerContext = {}): Promise<string>
   return run.id;
 }
 
-const upload = (runId: string, filename: string, mimeType = 'image/png') =>
+const upload = (runId: string, filename: string, mimeType = 'image/png', data = PNG) =>
   uploadAttachmentToStageRun(
-    { flowId: 'f', runId, data: PNG, filename, mimeType },
+    { flowId: 'f', runId, data, filename, mimeType },
     {
       db,
       writeAttachment: async (r, f, data) => {
@@ -187,5 +192,43 @@ describe('uploadAttachmentToStageRun — real-world filenames', () => {
       ok: true,
       mime: 'image/webp',
     });
+  });
+});
+
+describe('uploadAttachmentToStageRun — size limit', () => {
+  const bytes = (size: number) => Buffer.alloc(size, 0x5a).toString('base64');
+
+  it('accepts a file of exactly the limit', async () => {
+    const runId = await seedRun();
+
+    await upload(runId, 'shot.png', 'image/png', bytes(MAX_IMAGE_BYTES));
+
+    const [stored] = filesOnDisk(runId);
+    expect(statSync(join(root, runId, stored)).size).toBe(MAX_IMAGE_BYTES);
+    expect(await storedAttachments(runId)).toHaveLength(1);
+  });
+
+  it('rejects a file one byte over the limit before writing anything', async () => {
+    const runId = await seedRun();
+
+    await expect(
+      upload(runId, 'shot.png', 'image/png', bytes(MAX_IMAGE_BYTES + 1)),
+    ).rejects.toMatchObject({ code: 'PAYLOAD_TOO_LARGE' });
+
+    expect(existsSync(join(root, runId))).toBe(false);
+    expect(await storedAttachments(runId)).toHaveLength(0);
+  });
+
+  // Stray padding makes the pre-write size read 2 bytes small, so an oversized payload
+  // reaches disk; the post-decode check has to reject it and remove the written file.
+  it('rolls back an oversized file that slipped past the pre-write check', async () => {
+    const runId = await seedRun();
+
+    await expect(
+      upload(runId, 'shot.png', 'image/png', `${bytes(MAX_IMAGE_BYTES + 1)}==`),
+    ).rejects.toMatchObject({ code: 'PAYLOAD_TOO_LARGE' });
+
+    expect(filesOnDisk(runId)).toHaveLength(0);
+    expect(await storedAttachments(runId)).toHaveLength(0);
   });
 });
