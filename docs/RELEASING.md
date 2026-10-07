@@ -22,8 +22,8 @@ Anything left unset means that feature is off in the build.
 |------|------|---------|---------|
 | `MAIN_VITE_UPDATE_FEED_URL` | `.env` (mac) | build, release gate | Generic electron-updater feed. Must be https, with no quotes and no credentials. Unset = auto-update off. |
 | `UPDATE_FEED_URL` | repo **variable** | CI build, release gate | CI value for `MAIN_VITE_UPDATE_FEED_URL`. |
-| `MAIN_VITE_POSTHOG_KEY` / `VITE_POSTHOG_KEY` | `.env` / repo secret | build | PostHog project key for main / renderer. Unset = no analytics. |
-| `MAIN_VITE_POSTHOG_HOST` / `VITE_POSTHOG_HOST` | `.env` / repo variable | build | PostHog host. Unset = `https://us.i.posthog.com`. |
+| `MAIN_VITE_POSTHOG_KEY` | `.env` / repo secret | build | PostHog project key. Only the main process sends usage events ([what Frink sends](../user-docs/telemetry.md)). Unset = no analytics. |
+| `MAIN_VITE_POSTHOG_HOST` | `.env` / repo variable | build | PostHog host. Unset = `https://us.i.posthog.com`. |
 | `MAIN_VITE_SENTRY_DSN` / `RENDERER_VITE_SENTRY_DSN` | `.env` / repo secret | build | Sentry DSN for main / renderer. Unset = no crash reporting. |
 | `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, `SENTRY_PROJECT` | `.env` / repo secrets | build | Source-map upload on release builds (`SENTRY_UPLOAD=1`). |
 | `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ACCOUNT_ID` | `.env` / repo secrets | upload | R2 credentials. If all three are missing, CI tag builds skip publishing (and the feed gate). |

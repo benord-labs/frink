@@ -12,7 +12,7 @@ configureMainLog();
 // Regex pattern for extracting PID from singleton lock target
 const PID_REGEX = /-(\d+)$/;
 
-import { initAnalytics, shutdown as shutdownAnalytics, trackAppOpened } from './lib/analytics';
+import { initAnalytics, shutdown as shutdownAnalytics } from './lib/analytics';
 import {
   buildUpdateMenuItem,
   checkForUpdates,
@@ -582,7 +582,6 @@ if (gotTheLock) {
     buildMenu();
 
     initAnalytics();
-    trackAppOpened();
 
     // Initialize database
     try {
