@@ -871,22 +871,11 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       return;
     }
 
-    // Codex is machine-local passthrough: confirm the `codex` binary is actually
-    // logged in on THIS machine before doing any work. Catches a cross-machine
-    // project account and a login that lapsed after connect — a clean message
-    // instead of a cryptic deep app-server spawn failure. Runs before the runtime
-    // slot so an unauthenticated codex never holds one.
     if (storedCredential.type === 'codex') {
-      const { detectCodexAccount } = await import('../credentials/detect-codex');
-      if (!detectCodexAccount().available) {
-        log.error('[Socket Executor] Codex is not authenticated on this machine');
-        sendRunErrorDirect({
-          chatId,
-          subChatId,
-          assistantMessageId: msgId,
-          error:
-            'Codex isn’t authenticated on this machine. Run `codex login` (or use this project on a machine where Codex is signed in).',
-        });
+      const { codexLoginMissingError } = await import('../credentials/codex-spawn-gate');
+      const error = await codexLoginMissingError();
+      if (error) {
+        sendRunErrorDirect({ chatId, subChatId, assistantMessageId: msgId, error });
         return;
       }
     }

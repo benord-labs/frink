@@ -86,7 +86,7 @@ vi.mock('../agent-runner', () => ({
 
 // oxlint-disable-next-line anti-slop/no-module-mocking -- same Codex auth probe stub as executor.test.ts; this harness mocks every collaborator
 vi.mock('../credentials/detect-codex', () => ({
-  detectCodexAccount: vi.fn(() => ({
+  detectCodexAccount: vi.fn(async () => ({
     available: true,
     displayName: 'Codex',
     sourcePath: 'codex-passthrough://local',
@@ -822,6 +822,35 @@ describe('local-only dispatch with unresolved machineId', () => {
     await handleRemoteExecute({ ...basePayload, message: 'answer quietly' });
 
     await expect(quietEndMarkerWritten()).resolves.toBe(true);
+  });
+
+  it('stops a Codex run with a sign-in message when the login is gone at spawn time (sc-3811)', async () => {
+    // The gate awaits the async, presence-only detector: an un-awaited promise would
+    // either block every Codex run or let this one through.
+    const { detectCodexAccount } = await import('../credentials/detect-codex');
+    vi.mocked(detectCodexAccount).mockResolvedValueOnce({
+      available: false,
+      hint: 'No Codex login found. Run `codex login` and try again.',
+    });
+    vi.mocked(getDefaultClaudeCodeToken).mockResolvedValueOnce({
+      token: null,
+      isApiKey: false,
+      type: 'codex',
+      label: 'codex-test',
+      passthrough: true,
+    });
+    vi.mocked(runCodexAgent).mockClear();
+
+    await handleRemoteExecute({ ...basePayload, message: 'codex run with no login' });
+
+    expect(vi.mocked(socketClient.sendErrorDirect)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatId: basePayload.chatId,
+        subChatId: basePayload.subChatId,
+        error: expect.stringContaining('authenticated on this machine'),
+      }),
+    );
+    expect(vi.mocked(runCodexAgent)).not.toHaveBeenCalled();
   });
 
   describe('user-message delivery (sc-3666)', () => {

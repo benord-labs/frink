@@ -7,7 +7,7 @@ Frink runs your chats through Claude (Anthropic, via Claude Code) or OpenAI (via
 ### Use your Claude Code or Codex sign-in (recommended)
 
 1. Sign in once in your terminal: `claude auth login` or `codex login`.
-2. In Frink, open a new chat and click **Connect Claude** or **Connect OpenAI**, or go to Settings → AI providers → **Add an account** → **Sign in with Claude** / **Sign in with OpenAI**. Frink names the account after the sign-in's email; rename it any time from the account's ⋯ menu.
+2. In Frink, open a new chat and click **Connect Claude** or **Connect OpenAI**, or go to Settings → AI providers → **Add an account** → **Sign in with Claude** / **Sign in with OpenAI**. Frink names the account after the sign-in's email; rename it any time from the account's ⋯ menu. A Codex sign-in kept in the macOS keychain is named "OpenAI" instead: Frink only checks that it exists and never reads it, so it can't see the email.
 
 That's it. **Frink never reads or stores your token.** It only checks that the sign-in exists; the `claude` or `codex` program Frink launches reads its own credential and refreshes it itself, exactly as it does in your terminal.
 

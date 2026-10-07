@@ -14,17 +14,17 @@
  *   - keyring: macOS Keychain generic-password — service "Codex Auth",
  *              account `cli|<sha256(canonical CODEX_HOME)[:16]>`.
  * `auto` (codex default) prefers keyring, else file. We read the file when present
- * and probe the keychain on macOS as a fallback.
+ * and, on macOS, otherwise check only that the keychain item exists (so no email).
  */
 
-import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
+import { realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import log from 'electron-log';
 import { sanitizeError } from './detect';
-import { KEYCHAIN_READ_TIMEOUT_MS } from './keychain-shared';
+import { probeDarwinKeychainItem } from './keychain-probe';
 
 export const CODEX_KEYCHAIN_SERVICE = 'Codex Auth';
 
@@ -50,12 +50,12 @@ export function resolveCodexHome(): string {
 /**
  * Stable keyring account key the `codex` CLI derives from CODEX_HOME:
  * `cli|<first-16-hex-of-sha256(canonical-path)>`. Mirrors
- * `login/src/auth/storage.rs::compute_store_key`. We can't canonicalize a path
- * that may not exist, so we hash the resolved absolute path — codex falls back to
- * the same un-canonicalized path on its `unwrap_or_else` branch.
+ * `login/src/auth/storage.rs::compute_store_key`: the home is canonicalized (a symlinked
+ * ~/.codex hashes its target), falling back to the path as given when that fails.
  */
-export function codexKeyringAccount(codexHome: string): string {
-  const digest = createHash('sha256').update(codexHome).digest('hex');
+export async function codexKeyringAccount(codexHome: string): Promise<string> {
+  const canonical = await realpath(codexHome).catch(() => codexHome);
+  const digest = createHash('sha256').update(canonical).digest('hex');
   return `cli|${digest.slice(0, 16)}`;
 }
 
@@ -102,49 +102,32 @@ export function parseCodexAuthBlob(raw: string): { email?: string; apiKey: boole
   return { email, apiKey };
 }
 
-/** Probe the macOS "Codex Auth" keychain entry (keyring backend). */
-function readCodexMacOSKeychain(codexHome: string): string | null {
-  try {
-    return execFileSync(
-      'security',
-      [
-        'find-generic-password',
-        '-s',
-        CODEX_KEYCHAIN_SERVICE,
-        '-a',
-        codexKeyringAccount(codexHome),
-        '-w',
-      ],
-      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], timeout: KEYCHAIN_READ_TIMEOUT_MS },
-    ).trim();
-  } catch {
-    return null;
-  }
-}
+const NO_LOGIN_HINT = 'No Codex login found. Run `codex login` and try again.';
 
 /**
- * Public entrypoint. Synchronous to match {@link detectClaudeAccount}.
+ * Public entrypoint. A file-stored login is parsed for its identity; a keychain-stored
+ * one is confirmed by presence only.
  */
-export function detectCodexAccount(): DetectCodexAccountResult {
+export async function detectCodexAccount(): Promise<DetectCodexAccountResult> {
   try {
     const codexHome = resolveCodexHome();
     const authFile = join(codexHome, 'auth.json');
 
-    let blob: string | null = null;
-    if (existsSync(authFile)) {
-      blob = readFileSync(authFile, 'utf-8');
-    } else if (process.platform === 'darwin') {
-      blob = readCodexMacOSKeychain(codexHome);
+    if (!existsSync(authFile)) {
+      if (process.platform !== 'darwin') return { available: false, hint: NO_LOGIN_HINT };
+      const probe = await probeDarwinKeychainItem(
+        CODEX_KEYCHAIN_SERVICE,
+        await codexKeyringAccount(codexHome),
+      );
+      // 'denied' (locked keychain, probe timeout) says nothing about the login, so it is
+      // not reported as logged out. Credential resolution still holds a send while it lasts.
+      if ('error' in probe && probe.error !== 'denied') {
+        return { available: false, hint: NO_LOGIN_HINT };
+      }
+      return { available: true, displayName: 'OpenAI', sourcePath: 'codex-passthrough://local' };
     }
 
-    if (!blob) {
-      return {
-        available: false,
-        hint: 'No Codex login found. Run `codex login` and try again.',
-      };
-    }
-
-    const parsed = parseCodexAuthBlob(blob);
+    const parsed = parseCodexAuthBlob(readFileSync(authFile, 'utf-8'));
     if (!parsed) {
       return {
         available: false,
