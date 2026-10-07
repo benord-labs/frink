@@ -11,6 +11,7 @@ import { createAppRouter } from '../lib/trpc/routers';
 import { registerArtifactPreviewIpc } from '.';
 import { attachAgentAbortOnRendererLifecycle } from './navigation-abort';
 import { attachMainWindowNavigationGuard, resolveRendererEntryUrl } from './navigation-guard';
+import { revealWhenReady } from './reveal';
 import { windowManager } from './window-manager';
 
 // Default zoom factor — the app was designed at this zoom level
@@ -322,8 +323,7 @@ export function createMainWindow(): BrowserWindow {
     });
   }
 
-  // Show window when ready
-  window.on('ready-to-show', () => {
+  revealWhenReady(window, () => {
     // Apply persisted zoom factor (or default)
     window.webContents.setZoomFactor(getPersistedZoomFactor());
 
