@@ -9,7 +9,6 @@ import {
   resolveRecoveryKind,
   resolveRecoveryKinds,
   resolveRunRecoveries,
-  sessionAnsweredTask,
   stepRecoveryKind,
   resolveSettledRunRecoveries,
   withRecoveryKind,
@@ -95,11 +94,15 @@ describe('resolveRecoveryKind', () => {
 
   // Two attempts of node `a`: the session answered the first, so only a continuation of it resumes.
   it('retries a fresh re-dispatch of a node an earlier attempt got answered', async () => {
-    await seedTask('t-first', { nodeRunId: await seedNodeRun('a'), answered: true });
+    const first = await seedTask('t-first', { nodeRunId: await seedNodeRun('a'), answered: true });
     const retry = await seedTask('t-retry', {
       nodeRunId: await seedNodeRun('a2', { nodeId: 'a' }),
     });
     expect(resolveRecoveryKind(db, retry)).toBe('retry');
+    expect(Object.fromEntries(resolveRecoveryKinds(db, [first, retry]))).toEqual({
+      't-first': 'continue',
+      't-retry': 'retry',
+    });
   });
 
   it('continues an unsent continuation attempt of the node the session answered', async () => {
@@ -113,6 +116,17 @@ describe('resolveRecoveryKind', () => {
     const task = await seedTask('t1', { nodeRunId: await seedNodeRun('a'), answered: true });
     await db.update(subChats).set({ sessionId: '' }).where(eq(subChats.id, 'sub-1'));
     expect(await resolveRecoveryKind(db, task)).toBe('retry');
+  });
+
+  it('reads the session and transcript in one transaction, so a rollback is never half-seen', async () => {
+    const task = await seedTask('t1', { answered: true });
+    const transaction = db.transaction.bind(db);
+    vi.spyOn(db, 'transaction').mockImplementationOnce((command, config) => {
+      db.update(subChats).set({ sessionId: '' }).where(eq(subChats.id, 'sub-1')).run();
+      return transaction(command, config);
+    });
+
+    expect(resolveRecoveryKind(db, task)).toBe('retry');
   });
 
   it('continues a non-flow task its session answered', async () => {
@@ -163,26 +177,6 @@ describe('withRecoveryKind', () => {
     expect(withRecoveryKind(db, task.id, 'retry', write)).toBeNull();
     expect(write).not.toHaveBeenCalled();
     expect(withRecoveryKind(db, task.id, 'continue', write)).toBe('written');
-  });
-});
-
-describe('sessionAnsweredTask', () => {
-  it('reads the session and transcript in one transaction, so a rollback is never half-seen', async () => {
-    await seedTask('t1', { answered: true });
-    const transaction = db.transaction.bind(db);
-    vi.spyOn(db, 'transaction').mockImplementationOnce((command, config) => {
-      db.update(subChats).set({ sessionId: '' }).where(eq(subChats.id, 'sub-1')).run();
-      return transaction(command, config);
-    });
-
-    expect(sessionAnsweredTask(db, 'sub-1', 't1')).toBe(false);
-  });
-
-  it("is true only for the attempt whose prompt the tab's session answered", async () => {
-    await seedTask('t-first', { nodeRunId: await seedNodeRun('a'), answered: true });
-    await seedTask('t-second', { nodeRunId: await seedNodeRun('a2', { nodeId: 'a' }) });
-    expect(sessionAnsweredTask(db, 'sub-1', 't-first')).toBe(true);
-    expect(sessionAnsweredTask(db, 'sub-1', 't-second')).toBe(false);
   });
 });
 
