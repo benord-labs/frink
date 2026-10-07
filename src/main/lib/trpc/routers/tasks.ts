@@ -31,11 +31,9 @@ import {
   reassignTaskDetailed,
   retryTaskDetailed,
   startExecutionFromReviewDetailed,
-  type TaskMutationFailureReason,
   updateTaskStatus,
 } from '../../db/repos/tasks';
 import type { FlowRun, Task } from '../../db/schema';
-import type { CarryOnFlowTaskResult } from '../../flows/rerun';
 import {
   isDispatchPending,
   listUndeliveredDispatches,
@@ -43,6 +41,7 @@ import {
 import { getTaskPoller } from '../../task-poller';
 import { cancelWorkQueueTask } from '../../tasks/cancel-work-queue-task';
 import { publicProcedure, router } from '../index';
+import { throwCarryOnReason, throwTaskMutationReason } from './task-refusals';
 import {
   assertRecoveryStep,
   getTaskWithRunOutcome,
@@ -86,41 +85,6 @@ const deleteMatchingInputSchema = z.object({
   statuses: z.array(bulkDeleteTaskStatusSchema).min(1),
 });
 const paginatedCursorSchema = z.object({ createdAt: z.string(), id: z.string() });
-
-function throwTaskMutationReason(
-  reason: TaskMutationFailureReason | undefined,
-  messages: {
-    notFound: string;
-    invalidState: string;
-    fallback: string;
-    flowShellNotReassignable?: string;
-  },
-): never {
-  if (reason === 'not_found') throw new Error(messages.notFound);
-  if (reason === 'flow_shell_not_reassignable') {
-    throw new Error(
-      messages.flowShellNotReassignable ??
-        'This task is a flow-linked shell task and cannot be reassigned',
-    );
-  }
-  if (reason === 'invalid_state') throw new Error(messages.invalidState);
-  throw new Error(messages.fallback);
-}
-
-/** Maps a `carryOnFlowTask` failure to its user-facing message. */
-function throwCarryOnReason(
-  reason: Exclude<Extract<CarryOnFlowTaskResult, { ok: false }>['reason'], 'no-session'>,
-): never {
-  const messages: Record<typeof reason, string> = {
-    'not-found': 'Task not found',
-    'invalid-state': 'Only failed or attention-parked tasks can be retried',
-    'chat-archived': "This task's chat is archived. Restore the chat to continue it.",
-    'admission-required':
-      'This paused Flow lost its place in the run queue. Cancel it and start it again.',
-    superseded: 'This attempt was replaced by a newer one. Recover from the latest attempt.',
-  };
-  throw new Error(messages[reason]);
-}
 
 /** Continues the stopped session; carryOnFlowTask re-checks the kind itself (`no-session`). */
 async function continueTask(db: Db, taskId: string): Promise<void> {
@@ -192,7 +156,7 @@ export async function recoverTask(
   flowRuns: FlowRunRecoveries = flowRunRecoveries,
 ): Promise<void> {
   const task = await getTaskById(db, taskId);
-  if (!task) throw new Error('Task not found');
+  if (!task) throw new TRPCError({ code: 'NOT_FOUND', message: 'Task not found' });
   const run = task.flowRunId ? await getFlowRun(db, task.flowRunId) : null;
   if (kind === 'continue' && (!task.flowRunId || run?.status === 'paused')) {
     return continueTask(db, taskId);

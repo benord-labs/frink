@@ -237,23 +237,40 @@ describe('tasksRouter status schema', () => {
       carryOnFlowTaskMock.mockResolvedValueOnce({ ok: false, reason: 'not-found' });
       await expect(
         (await caller()).recover({ taskId: 'task-1', kind: 'continue' }),
-      ).rejects.toThrow('Task not found');
+      ).rejects.toMatchObject({ code: 'NOT_FOUND', message: 'Task not found' });
+
+      carryOnFlowTaskMock.mockResolvedValueOnce({ ok: false, reason: 'invalid-state' });
+      await expect(
+        (await caller()).recover({ taskId: 'task-1', kind: 'continue' }),
+      ).rejects.toMatchObject({
+        code: 'CONFLICT',
+        message: 'Only failed or attention-parked tasks can be retried',
+      });
 
       // No Retry is offered beside a Continue, so the copy names the action that still works.
       carryOnFlowTaskMock.mockResolvedValueOnce({ ok: false, reason: 'admission-required' });
       await expect(
         (await caller()).recover({ taskId: 'task-1', kind: 'continue' }),
-      ).rejects.toThrow(/Cancel it and start it again/);
+      ).rejects.toMatchObject({
+        code: 'PRECONDITION_FAILED',
+        message: expect.stringMatching(/Cancel it and start it again/),
+      });
 
       carryOnFlowTaskMock.mockResolvedValueOnce({ ok: false, reason: 'chat-archived' });
       await expect(
         (await caller()).recover({ taskId: 'task-1', kind: 'continue' }),
-      ).rejects.toThrow(/chat is archived\. Restore the chat to continue it/);
+      ).rejects.toMatchObject({
+        code: 'PRECONDITION_FAILED',
+        message: expect.stringMatching(/chat is archived\. Restore the chat to continue it/),
+      });
 
       carryOnFlowTaskMock.mockResolvedValueOnce({ ok: false, reason: 'superseded' });
       await expect(
         (await caller()).recover({ taskId: 'task-1', kind: 'continue' }),
-      ).rejects.toThrow(/replaced by a newer one/);
+      ).rejects.toMatchObject({
+        code: 'CONFLICT',
+        message: expect.stringMatching(/replaced by a newer one/),
+      });
     });
 
     it('restarts a non-flow task fresh on retry, mapping its refusal', async () => {
@@ -265,9 +282,18 @@ describe('tasksRouter status schema', () => {
       expect(carryOnFlowTaskMock).not.toHaveBeenCalled();
 
       retryTaskDetailedMock.mockReturnValueOnce({ task: null, reason: 'invalid_state' });
-      await expect((await caller()).recover({ taskId: 'task-4', kind: 'retry' })).rejects.toThrow(
-        /Only failed or attention-parked tasks/,
-      );
+      await expect(
+        (await caller()).recover({ taskId: 'task-4', kind: 'retry' }),
+      ).rejects.toMatchObject({
+        code: 'CONFLICT',
+        message: expect.stringMatching(/Only failed or attention-parked tasks/),
+      });
+
+      // A refusal with no reason is a fault, not an expected refusal: it stays a 500.
+      retryTaskDetailedMock.mockReturnValueOnce({ task: null });
+      await expect(
+        (await caller()).recover({ taskId: 'task-4', kind: 'retry' }),
+      ).rejects.toMatchObject({ code: 'INTERNAL_SERVER_ERROR', message: 'Could not retry task' });
     });
 
     it('continues a paused flow run through carryOnFlowTask', async () => {
@@ -325,9 +351,9 @@ describe('tasksRouter status schema', () => {
 
     it('rejects a missing task', async () => {
       getTaskByIdMock.mockResolvedValue(null);
-      await expect((await caller()).recover({ taskId: 'gone', kind: 'retry' })).rejects.toThrow(
-        'Task not found',
-      );
+      await expect(
+        (await caller()).recover({ taskId: 'gone', kind: 'retry' }),
+      ).rejects.toMatchObject({ code: 'NOT_FOUND', message: 'Task not found' });
       nothingRan();
     });
   });
@@ -817,7 +843,11 @@ describe('tasksRouter status schema', () => {
       task: null,
       reason: 'invalid_state',
     });
-    await expect(caller.startExecution({ taskId })).rejects.toThrow(ONLY_REVIEWED_PLANS_REGEX);
+    // Typed, so the phone's plan approval (mobile chat.ts) answers it 409, not a reported 500.
+    await expect(caller.startExecution({ taskId })).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: expect.stringMatching(ONLY_REVIEWED_PLANS_REGEX),
+    });
   });
 
   it('rejects Flow plan execution before mutation when its admission is gone', async () => {
@@ -883,14 +913,17 @@ describe('tasksRouter status schema', () => {
   });
 
   it.each([
-    ['not_found', 'Task not found'],
-    ['invalid_state', 'cannot be cancelled'],
-  ])('cancel refused (%s) throws', async (reason, message) => {
+    ['not_found', 'NOT_FOUND', 'Task not found'],
+    ['invalid_state', 'CONFLICT', 'cannot be cancelled'],
+  ])('cancel refused (%s) throws %s', async (reason, code, message) => {
     const { tasksRouter } = await import('./tasks');
     const caller = tasksRouter.createCaller({ getWindow: () => null });
     cancelWorkQueueTaskMock.mockResolvedValueOnce({ task: null, reason });
 
-    await expect(caller.cancel('task-1')).rejects.toThrow(message);
+    await expect(caller.cancel('task-1')).rejects.toMatchObject({
+      code,
+      message: expect.stringContaining(message),
+    });
   });
 
   it('cancel rethrows non-5xx ApiRequestError', async () => {

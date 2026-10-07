@@ -80,6 +80,34 @@ describe('executeMobileRequest', () => {
     expect(fixture.capture).not.toHaveBeenCalled();
   });
 
+  it('answers a refused Retry that lost no race 404 / 409, reporting only a fault', async () => {
+    const retry = { type: 'continueTask', id: 'task', kind: 'retry' } as const;
+    fixture.taskAction.mockRejectedValueOnce(
+      new TRPCError({ code: 'NOT_FOUND', message: 'Task not found' }),
+    );
+    await expect(executeMobileRequest(retry)).rejects.toMatchObject({
+      status: 404,
+      message: 'This item no longer exists.',
+    });
+    fixture.taskAction.mockRejectedValueOnce(
+      new TRPCError({ code: 'CONFLICT', message: 'Only failed or attention-parked tasks' }),
+    );
+    await expect(executeMobileRequest(retry)).rejects.toMatchObject({
+      status: 409,
+      message: 'This item changed. Refresh and try again.',
+    });
+    expect(fixture.capture).not.toHaveBeenCalled();
+
+    // createCaller wraps a plain Error thrown by the procedure as INTERNAL_SERVER_ERROR.
+    const fault = new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'disk full' });
+    fixture.taskAction.mockRejectedValueOnce(fault);
+    await expect(executeMobileRequest(retry)).rejects.toMatchObject({ status: 500 });
+    expect(fixture.capture).toHaveBeenCalledWith(fault, {
+      surface: 'mobile-api',
+      stage: 'continueTask',
+    });
+  });
+
   it('reports an unexpected fault it masks, and not an expected refusal', async () => {
     const refusal = new MobileApiError(409, 'This chat belongs to a task or Flow.');
     fixture.deleteChat.mockRejectedValueOnce(refusal);
