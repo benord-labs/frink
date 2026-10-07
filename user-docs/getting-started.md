@@ -18,8 +18,8 @@ Frink has no model of its own. It runs your Claude or Codex, so you connect an a
 
 You'll need the matching CLI installed and logged in first: the `claude` CLI for Claude, the `codex` CLI for Codex.
 
-- **Claude (recommended).** On the empty state, click **Connect Claude (subscription)**. If you've already run `claude auth login` in your terminal, Frink hands that login to the agents it runs — there's no token to store, and the `claude` CLI keeps it fresh itself, so a token rotation can't knock out a running agent. On macOS you'll be asked for keychain access once, while connecting. Click **Always Allow**. Or click **Add API key** to paste an Anthropic key (`sk-ant-api…`) instead.
-- **Codex.** Run `codex login` in your terminal, then add a Codex account in Settings. Frink reads that login the same way, at chat-time, and stores no token.
+- **Claude (recommended).** On the empty state, click **Connect** next to Claude. If you've already run `claude auth login` in your terminal, Frink hands that login to the agents it runs — there's no token to store, and the `claude` CLI keeps it fresh itself, so a token rotation can't knock out a running agent. On macOS you'll be asked for keychain access once, while connecting. Click **Always Allow**. Or click **Add it in Settings**, under the list, to paste an Anthropic key (`sk-ant-api…`) instead.
+- **Codex.** Run `codex login` in your terminal, then click **Connect** next to OpenAI on the empty state (or add a Codex account in Settings). Frink reads that login the same way, at chat-time, and stores no token.
 - **Windows.** Claude's terminal login is macOS and Linux only. On Windows, connect Claude with an Anthropic API key.
 
 For more on accounts (multiple logins, what gets stored, using more than one machine), see [AI accounts](./ai-accounts.md).
