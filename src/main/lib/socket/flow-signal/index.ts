@@ -111,11 +111,11 @@ export async function resolveFlowSignalArming(
     armed.effectiveSignalTaskId =
       driveInfo.active && driveInfo.taskId ? driveInfo.taskId : taskIdForExecution;
 
-    const revived = driveInfo.active ? null : await restartInterruptedTarget(subChatId);
-    if (revived) {
-      // Retarget the signal at the revived task and stay ARMED — its next `done` advances the flow.
-      armed.effectiveSignalTaskId = revived.id;
-      armed.restartInterruptedFlowRunId = revived.flowRunId;
+    const interrupted = driveInfo.active ? null : await restartInterruptedTarget(subChatId);
+    if (interrupted) {
+      // Target the interrupted task and stay ARMED — the preflight turns the reply into a resume.
+      armed.effectiveSignalTaskId = interrupted.id;
+      armed.restartInterruptedFlowRunId = interrupted.flowRunId;
       return armed;
     }
 
@@ -142,7 +142,7 @@ export async function resolveFlowSignalArming(
 }
 
 /**
- * The `cancelled` driving task a chat follow-up should REVIVE in place rather than treat as a dead
+ * The `cancelled` driving task a follow-up arms for the preflight to convert, not a dead
  * chat: its run was interrupted by a restart/reload, so it carries the marker. `null` for a
  * deliberate user cancel (no marker) — status alone never separates the two.
  */

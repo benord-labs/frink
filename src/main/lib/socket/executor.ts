@@ -71,7 +71,6 @@ import {
   latchAbortReason,
   resolveErrorPayloadCategory,
   resumeParkedTaskInPlace,
-  reviveRestartInterruptedFlow,
   stampedErrorCategory,
 } from '../tasks';
 import { broadcastWriteToolFileChangedIpc } from '../trpc/routers/claude-file-changed';
@@ -783,20 +782,11 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       // Resume the FLOW-DRIVING task, not the pinned upstream one: the agent's signal lands there
       // and drops unless 'running'. plan_ready resumes only on the reply-as-approval agent turn.
       const resumeTargetTaskId = signalTaskId;
-      if (!resumeTargetTaskId) return;
+      // A restart-interrupted run is never revived in place: its provider preflight declines this
+      // turn and converts it into a resume ticket that continues the session.
+      if (!resumeTargetTaskId || restartInterruptedFlowRunId) return;
       const { getDatabase } = await import('../db');
       const db = getDatabase();
-      // Restart-recovery: the driving task is a `cancelled` row whose run was interrupted by a
-      // restart/reload. THIS follow-up turn is the continuation, so revive it in place (helper keeps
-      // the closure's complexity in check; see reviveRestartInterruptedFlow).
-      if (restartInterruptedFlowRunId) {
-        await reviveRestartInterruptedFlow(
-          resumeTargetTaskId,
-          restartInterruptedFlowRunId,
-          subChatId,
-        );
-        return;
-      }
       // The race-recovery retry must NOT trust the turn-start prefetch: the sweep's park happened
       // after that snapshot, so a cached 'running' row would make the retry a silent no-op.
       const latestTask = await getTaskRowForResume(

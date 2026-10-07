@@ -5,13 +5,9 @@
 
 import { trpc } from '../trpc';
 
-export function useComposerPlaceholder(
-  parentChatId: string,
-  subChatId: string,
-  isStreaming: boolean,
-): string {
+export function useComposerPlaceholder(parentChatId: string, isStreaming: boolean): string {
   const { data } = trpc.flows.interruptedRunForChat.useQuery(
-    { chatId: parentChatId, subChatId },
+    { chatId: parentChatId },
     { enabled: !!parentChatId, staleTime: 30000 },
   );
   if (isStreaming) return 'Add to the queue';

@@ -15,7 +15,6 @@ export {
   type ParkedTask,
   type ResumedBy,
   resumeParkedTaskCommand,
-  reviveInPlaceCommand,
 } from './resume-task';
 export {
   type DrivingTaskRow,

@@ -177,7 +177,6 @@ vi.mock('../flows/resume', () => ({
 vi.mock('../tasks', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../tasks')>()),
   resumeParkedTaskInPlace: vi.fn(async () => true),
-  reviveRestartInterruptedFlow: vi.fn(async () => undefined),
 }));
 
 vi.mock('../db/repos/chats', () => ({
@@ -311,7 +310,7 @@ import {
 import { isRunRestartInterrupted } from '../flows/resume';
 import { getMultiProjectContext } from '../multi-project-prompt';
 import { checkPermission } from '../permissions/v2/check';
-import { resumeParkedTaskInPlace, reviveRestartInterruptedFlow } from '../tasks';
+import { resumeParkedTaskInPlace } from '../tasks';
 import type { TaskStopHook } from '../task-stop-hook';
 import { clearActiveFlowTaskForChatIfMatches, setActiveFlowTaskForChat } from '../task-executor';
 import { armWakePump, type WakeHold } from './claude-wake-hold';
@@ -539,7 +538,7 @@ describe('local-only dispatch with unresolved machineId', () => {
     );
   });
 
-  it('does not revive restart-interrupted Flow work before credential validation', async () => {
+  it('does not touch restart-interrupted Flow work before credential validation', async () => {
     const activity = await import('../flows/admission/activity');
     vi.mocked(getLatestFlowTaskForSubChat).mockResolvedValueOnce({
       id: 'restart-task',
@@ -561,7 +560,6 @@ describe('local-only dispatch with unresolved machineId', () => {
 
     expect(flowProviderPreflightMocks.registerNodeAbort).toHaveBeenCalledOnce();
     expect(updateTaskStatus).not.toHaveBeenCalled();
-    expect(reviveRestartInterruptedFlow).not.toHaveBeenCalled();
     expect(claudeQueryMock).not.toHaveBeenCalled();
   });
 

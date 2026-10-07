@@ -399,7 +399,7 @@ export const ChatInputArea = memo(function ChatInputArea({
       { enabled: !!parentChatId, staleTime: 30000 },
     );
   const isCodexAccount = resolvedAccount?.type === 'codex';
-  const composerPlaceholder = useComposerPlaceholder(parentChatId, subChatId, isStreaming);
+  const composerPlaceholder = useComposerPlaceholder(parentChatId, isStreaming);
   const stopEndsBackgroundWork = useAtomValue(wakeHoldAdoptedAtomFamily(subChatId));
   const { chatMode, commitModeChange } = useChatMode(subChatId, parentChatId);
 

@@ -19,15 +19,13 @@ import {
   listNodeRunsForFlowRun,
   nodeMatchesResumeSnapshot,
 } from '../db/repos/node-runs';
-import { getSubChatById } from '../db/repos/sub-chats';
 import { parkFlowTaskForSubChat } from '../db/repos';
-import { getLatestFlowTaskForSubChat } from '../db/repos/tasks';
 import { withFlowResourceCleanup } from './admission/activity';
+import { hasStagedContinuation } from './admission/terminal-resume/continuation';
 import { advanceFlowRun, dispatchAndAdvance, loadRunContext } from './advance';
 import { findNodeById } from './graph';
-import { recoveryChangedError, sessionAnsweredTask, stepRecoveryKind } from './rerun/recovery-kind';
+import { recoveryChangedError, stepRecoveryKind } from './rerun/recovery-kind';
 import { lastUnfinishedNodeRun } from './rerun/resume-point';
-import { resolveSessionResumeSeed } from './rerun/session-resume';
 import { commitUnpark } from './rerun/unpark-node-run';
 import {
   isRestartInterrupted,
@@ -48,11 +46,9 @@ export async function isRunRestartInterrupted(flowRunId: string): Promise<boolea
   return isRestartInterrupted(getDatabase(), flowRunId);
 }
 
-/**
- * How the in-chat interrupted-run row recovers: wake this tab's live `session`, re-admit to
- * `continue` the answering session (resolveSessionResumeSeed), `retry` the step, or wait `queued`.
- */
-type InterruptedResumeMode = 'session' | 'continue' | 'retry' | 'queued';
+/** How the in-chat interrupted-run row recovers, always through a resume ticket; `queued` while a
+ * continuation already owns the run. */
+type InterruptedResumeMode = 'continue' | 'retry' | 'queued';
 
 export type InterruptedResume = {
   resumeMode: InterruptedResumeMode;
@@ -62,10 +58,7 @@ export type InterruptedResume = {
   nodeRunId: string | null;
 };
 
-export async function resolveInterruptedResumeMode(
-  flowRunId: string,
-  subChatId: string,
-): Promise<InterruptedResume> {
+export async function resolveInterruptedResumeMode(flowRunId: string): Promise<InterruptedResume> {
   const db = getDatabase();
   const admission = await probeAdmission(flowRunId);
   // The resume target: the run's last unfinished step (resolveTerminalResumeTarget's anchor).
@@ -75,49 +68,22 @@ export async function resolveInterruptedResumeMode(
       target !== undefined && target.blockType !== 'agent' && target.startedAt != null,
     nodeRunId: target?.id ?? null,
   };
-  // A queued/claimed resume ticket (boot carry-on, typed reply) already owns the continuation; a
-  // second enqueue would be refused, so the row waits instead of offering a button that errors.
-  if (admission?.queuedResume) return { resumeMode: 'queued', ...step };
+  // A queued ticket, or a stage a live admission will still fire, already owns the continuation.
+  if (admission?.queuedResume || (admission?.live && hasStagedContinuation(flowRunId))) {
+    return { resumeMode: 'queued', ...step };
+  }
   // The same rule the Retry/Continue mutations re-check, so the row never offers a refused kind.
   if (!target || stepRecoveryKind(db, target.id) === 'retry') {
     return { resumeMode: 'retry', ...step };
   }
-  const subChat = await getSubChatById(db, subChatId);
-  const seed = subChat
-    ? await resolveSessionResumeSeed(db, {
-        chatId: subChat.chatId,
-        flowRunId,
-        nodeId: target.nodeId,
-        configuredStartMode: undefined,
-      })
-    : null;
-  // Only the tab whose session a resume would continue can be woken by a message.
-  const wakesInPlace =
-    seed?.config.resumeSubChatId === subChatId &&
-    admission?.active === true &&
-    (await cancelledDriverAnsweredRun(db, flowRunId, subChatId));
-  return { resumeMode: wakesInPlace ? 'session' : 'continue', ...step };
-}
-
-/** The tab's newest flow task is this run's cancelled driver and its session answered that
- * attempt: the executor's revive predicate, so a wake the row offers is one a message can deliver. */
-async function cancelledDriverAnsweredRun(
-  db: ReturnType<typeof getDatabase>,
-  flowRunId: string,
-  subChatId: string,
-): Promise<boolean> {
-  const latestFlowTask = await getLatestFlowTaskForSubChat(db, subChatId);
-  if (latestFlowTask?.status !== 'cancelled' || latestFlowTask.flowRunId !== flowRunId) {
-    return false;
-  }
-  return sessionAnsweredTask(db, subChatId, latestFlowTask.id);
+  return { resumeMode: 'continue', ...step };
 }
 
 /** `null` on a probe failure (e.g. the admission store not yet ready at boot): callers degrade to
  * a resume ticket, which re-admits from scratch and never needs the probe. */
 async function probeAdmission(
   flowRunId: string,
-): Promise<{ queuedResume: boolean; active: boolean } | null> {
+): Promise<{ queuedResume: boolean; live: boolean } | null> {
   try {
     const { probeFlowAdmission } = await import('./admission/runtime');
     return await probeFlowAdmission(flowRunId);
@@ -136,7 +102,6 @@ async function probeAdmission(
  */
 export async function describeInterruptedRunForChat(
   chatId: string,
-  subChatId: string,
 ): Promise<({ runId: string; resumable: boolean } & InterruptedResume) | null> {
   const run = await getLatestFlowRunForChat(getDatabase(), chatId);
   if (run?.status !== 'cancelled') return null;
@@ -153,7 +118,7 @@ export async function describeInterruptedRunForChat(
   return {
     runId: run.id,
     resumable: true,
-    ...(await resolveInterruptedResumeMode(run.id, subChatId)),
+    ...(await resolveInterruptedResumeMode(run.id)),
   };
 }
 

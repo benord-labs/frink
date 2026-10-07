@@ -1,4 +1,5 @@
 import log from 'electron-log';
+import type { RecoveryKind } from '../../../../../shared/types/flow-run/resume';
 import { getDatabase } from '../../../db';
 import { getFlowRun } from '../../../db/repos/flow-runs';
 import { getLatestFlowTaskForRun } from '../../../db/repos/tasks';
@@ -10,6 +11,8 @@ type Db = ReturnType<typeof getDatabase>;
 export type PendingContinuationResume = {
   flowRunId: string;
   nodeRunId: string;
+  /** The label the user clicked; unset for a typed reply or boot carry-on (the claim decides). */
+  kind?: RecoveryKind;
   /** Checked inside the enqueue transaction, so a Cancel that lands first wins by construction. */
   admit?: (db: Db) => boolean;
 };
@@ -51,8 +54,14 @@ export function stageContinuationResume(
   emitCorrective: (message: string) => void,
   watch: ContinuationWatch = {},
 ): void {
-  // A later stage for the same run (a typed reply after boot carry-on) must keep the abandon guard.
-  const admit = pending.admit ?? staged.get(pending.flowRunId)?.pending.admit;
+  // A later stage for the same run (a typed reply or Continue after boot carry-on) must keep the
+  // earlier abandon guard beside its own.
+  const earlierAdmit = staged.get(pending.flowRunId)?.pending.admit;
+  const ownAdmit = pending.admit;
+  const admit =
+    ownAdmit && earlierAdmit
+      ? (db: Db) => ownAdmit(db) && earlierAdmit(db)
+      : (ownAdmit ?? earlierAdmit);
   const generation = dropGenerations.get(pending.flowRunId) ?? 0;
   staged.set(pending.flowRunId, {
     pending: { ...pending, admit },
@@ -60,6 +69,37 @@ export function stageContinuationResume(
     watch,
     generation,
   });
+}
+
+/** A click on a run still holding its active slot would be refused as a second admission, so it is
+ * staged for that slot's settle to enqueue. False when no slot is held: enqueue directly. */
+export async function stageBehindHeldAdmission(
+  pending: PendingContinuationResume,
+  ops: ContinuationAdmissionOps,
+): Promise<boolean> {
+  const { flowRunId } = pending;
+  const held = await ops.getLiveAdmissionState(flowRunId);
+  if (held !== 'active') {
+    // An entry the settle missed has no admission left to fire it: drop it, so it cannot fire
+    // after the run this click re-admits.
+    if (held === null && staged.has(flowRunId)) dropStagedContinuation(flowRunId);
+    return false;
+  }
+  stageContinuationResume(pending, (message) => {
+    log.warn('[Flow Admission] staged recovery failed', { flowRunId, message });
+    captureFlowAdmissionException(new Error(message), 'recovery-stage');
+  });
+  // The held admission may have settled between the probe and the stage, leaving no settle to
+  // fire the entry: fire it here (it enqueues on a free run and steps aside for a newer ticket).
+  const state = await ops.getLiveAdmissionState(flowRunId);
+  if (state !== 'active' && state !== 'releasing')
+    await fireStagedContinuationResume(flowRunId, ops);
+  return true;
+}
+
+/** A continuation waits in memory for the run's held admission to settle; the row reads it as queued. */
+export function hasStagedContinuation(flowRunId: string): boolean {
+  return staged.has(flowRunId);
 }
 
 /** A Cancel drops the run's staged continuation in its commit tick, including one a fire or settle

@@ -86,7 +86,6 @@ const rows = (opts?: RowOpts) => (
     subChatId="sc1"
     pinnedTaskId={null}
     chatId={opts?.chatId === undefined ? 'c1' : opts.chatId}
-    guardedSend={() => true}
     isTurnActive={opts?.isTurnActive ?? false}
     flowSurfaceOwnsStop={opts?.flowSurfaceOwnsStop ?? false}
   />

@@ -225,7 +225,7 @@ export function flowStillRunning(db: Db, flowRunId: string, nodeRunId: string | 
 }
 
 /** Revives a restart-interrupted (cancelled + marker) run's marked node in place. */
-export function reviveMarkedNode(db: Db, flowRunId: string): NodeRun | null {
+function reviveMarkedNode(db: Db, flowRunId: string): NodeRun | null {
   const marked = restartMarkedNode(db, flowRunId);
   if (!marked) return null;
   return unparkNode(db, flowRunId, marked.id, {

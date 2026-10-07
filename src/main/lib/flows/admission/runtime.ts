@@ -33,7 +33,9 @@ import {
 import type { FlowRunAdmission } from './store';
 import {
   fireStagedContinuationResume,
+  type PendingContinuationResume,
   settleWithStagedContinuation,
+  stageBehindHeldAdmission,
 } from './terminal-resume/continuation';
 import {
   type EnqueueTerminalFlowResumeInput,
@@ -336,19 +338,24 @@ export async function hasLiveFlowAdmission(flowRunId: string): Promise<boolean> 
   return live !== null && (FLOW_ADMISSION_LIVE_STATES as readonly string[]).includes(live.state);
 }
 
-/** ONE read: `queuedResume` = a resume ticket (queued/claimed/releasing) already owns the run's continuation. */
+/** ONE read: `queuedResume` = a resume ticket (queued/claimed/releasing) already owns the run's
+ * continuation; `live` = any admission is left whose settle would fire a staged one. */
 export async function probeFlowAdmission(
   flowRunId: string,
-): Promise<{ active: boolean; queuedResume: boolean }> {
+): Promise<{ active: boolean; queuedResume: boolean; live: boolean }> {
   const live = await admissionController().getLiveForRun(flowRunId);
   const active = live?.state === 'active';
-  return { active, queuedResume: !active && live?.priorityClass === 'resume' };
+  return { active, queuedResume: !active && live?.priorityClass === 'resume', live: live != null };
 }
 
 export async function hasActiveFlowAdmission(flowRunId: string): Promise<boolean> {
   const live = await admissionController().getLiveForRun(flowRunId);
   return live?.state === 'active';
 }
+
+/** A recovery clicked while the run still holds its slot is staged behind it; false: enqueue it. */
+export const stageResumeBehindHeldAdmission = (pending: PendingContinuationResume) =>
+  stageBehindHeldAdmission(pending, continuationOps);
 
 export async function requestFlowAdmissionRelease(
   flowRunId: string,
