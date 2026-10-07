@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 /** Internal resume precondition; mobile callers receive only its opaque action token. */
-export const flowResumeSnapshotSchema = z.object({
+const flowResumeSnapshotSchema = z.object({
   status: z.string(),
   nodeOutput: z.unknown(),
   startedAt: z.string().nullable(),

@@ -52,7 +52,7 @@ export async function isRunRestartInterrupted(flowRunId: string): Promise<boolea
  * How the in-chat interrupted-run row recovers: wake this tab's live `session`, re-admit to
  * `continue` the answering session (resolveSessionResumeSeed), `retry` the step, or wait `queued`.
  */
-export type InterruptedResumeMode = 'session' | 'continue' | 'retry' | 'queued';
+type InterruptedResumeMode = 'session' | 'continue' | 'retry' | 'queued';
 
 export type InterruptedResume = {
   resumeMode: InterruptedResumeMode;
