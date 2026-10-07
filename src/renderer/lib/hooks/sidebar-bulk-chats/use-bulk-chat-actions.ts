@@ -18,7 +18,7 @@ type SidebarChatUtils = {
 type BatchTaskAwareDialog = {
   open: true;
   mode: 'batch';
-  operation: 'delete_batch' | 'archive_batch';
+  operation: 'delete_batch';
   chatIds: string[];
   taskIds: string[];
   totalChats: number;
@@ -41,7 +41,7 @@ type BulkChatActionsParams = {
   deleteMutRef: { current: { mutateAsync: (input: { id: string }) => ChatMutationResult } };
   archiveMutRef: {
     current: {
-      mutateAsync: (input: { id: string; killTerminals?: boolean }) => ChatMutationResult;
+      mutateAsync: (input: { id: string }) => ChatMutationResult;
     };
   };
   moveOne: (chatId: string, targetProjectId: string | null) => Promise<void>;
@@ -169,10 +169,10 @@ export function useBulkChatActions({
   );
 
   const archiveChatsBatch = useCallback(
-    async (chatIds: string[], killTerminals?: boolean) => {
+    async (chatIds: string[]) => {
       const archived = await runChatsBatch(
         chatIds.map((id) => ({ id })),
-        (id) => archiveMutRef.current.mutateAsync({ id, killTerminals }),
+        (id) => archiveMutRef.current.mutateAsync({ id }),
         { clearPanesBefore: true, onPartialFailure: toastPartialFailure('Archived') },
       );
       await utilsRef.current.chats.list.invalidate();
@@ -181,9 +181,9 @@ export function useBulkChatActions({
     [runChatsBatch, archiveMutRef, utilsRef, setShowArchived],
   );
 
-  /** True when a live linked task hands the action to the task-aware dialog instead. */
+  /** True when a live linked task hands the delete to the task-aware dialog instead. */
   const deferToTaskAwareDialog = useCallback(
-    async (chatIds: string[], operation: 'delete_batch' | 'archive_batch') => {
+    async (chatIds: string[]) => {
       const { activeTasks, unresolvedTaskLinks } = await getActiveLinkedTasks(chatIds);
       if (unresolvedTaskLinks > 0) {
         toast.warning('Some linked task details were unavailable', {
@@ -194,7 +194,7 @@ export function useBulkChatActions({
       openTaskAwareDialog({
         open: true,
         mode: 'batch',
-        operation,
+        operation: 'delete_batch',
         chatIds,
         taskIds: activeTasks.map((task) => task.taskId),
         totalChats: chatIds.length,
@@ -210,7 +210,7 @@ export function useBulkChatActions({
       // Held through the task check only: the confirm dialog that follows is modal.
       bulkBusyRef.current = true;
       try {
-        if (await deferToTaskAwareDialog(chatIds, 'delete_batch')) return;
+        if (await deferToTaskAwareDialog(chatIds)) return;
         setPendingDeleteIds(chatIds);
       } finally {
         bulkBusyRef.current = false;
@@ -238,13 +238,12 @@ export function useBulkChatActions({
       if (chatIds.length === 0 || bulkBusyRef.current) return;
       bulkBusyRef.current = true;
       try {
-        if (await deferToTaskAwareDialog(chatIds, 'archive_batch')) return;
         await archiveChatsBatch(chatIds);
       } finally {
         bulkBusyRef.current = false;
       }
     },
-    [deferToTaskAwareDialog, archiveChatsBatch],
+    [archiveChatsBatch],
   );
 
   /** Dropping a selected row moves the whole selection. Every move, across drops too, runs one at a

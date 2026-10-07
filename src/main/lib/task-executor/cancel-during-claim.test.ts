@@ -1,7 +1,10 @@
 // sc-3263: a Cancel landing while a claimed task is still being prepared must survive the
 // executor's `running` stamp and must not be dispatched (no live session existed to abort).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Task as DbTask } from '../db/schema';
+import { eq } from 'drizzle-orm';
+import { getDatabase } from '../db';
+import { type Task as DbTask, chats, tasks } from '../db/schema';
+import { freshDb, type TestDb } from '../db/test-utils/fresh-db';
 
 // ── Hoisted mocks ──────────────────────────────────────────────────────────────
 
@@ -182,5 +185,56 @@ describe('handleClaimedTask — cancel during the claim window', () => {
     await handleClaimedTask(claimedTask());
 
     expect(chatReadySent()).toBe(true);
+  });
+
+  describe('linked chat archived after the task was parked', () => {
+    let db: TestDb;
+    const storedStatus = () => db.select().from(tasks).where(eq(tasks.id, 'task-cancel-1')).get();
+
+    beforeEach(() => {
+      db = freshDb();
+      vi.mocked(getDatabase).mockReturnValue(db);
+      db.insert(chats).values({ id: 'chat-1', name: 'archived', archivedAt: new Date() }).run();
+    });
+
+    afterEach(() => {
+      vi.mocked(getDatabase).mockReset();
+    });
+
+    it('cancels the claimed task instead of dispatching into the archived chat', async () => {
+      db.insert(tasks)
+        .values({ ...claimedTask(), triggerContext: null })
+        .run();
+
+      await handleClaimedTask(claimedTask());
+
+      expect(chatReadySent()).toBe(false);
+      expect(storedStatus()?.status).toBe('cancelled');
+    });
+
+    it('leaves a flow task to its run', async () => {
+      // The guard reads only the task's own flowRunId, so the run row itself is not needed.
+      db.$client.pragma('foreign_keys = OFF');
+      const flowTask = { ...claimedTask(), source: 'flow', flowRunId: 'run-1' };
+      db.insert(tasks)
+        .values({ ...flowTask, triggerContext: null })
+        .run();
+
+      await handleClaimedTask(flowTask);
+
+      expect(storedStatus()?.status).toBe('running');
+    });
+
+    it('still dispatches when the chat is live', async () => {
+      db.update(chats).set({ archivedAt: null }).where(eq(chats.id, 'chat-1')).run();
+      db.insert(tasks)
+        .values({ ...claimedTask(), triggerContext: null })
+        .run();
+
+      await handleClaimedTask(claimedTask());
+
+      expect(chatReadySent()).toBe(true);
+      expect(storedStatus()?.status).toBe('running');
+    });
   });
 });

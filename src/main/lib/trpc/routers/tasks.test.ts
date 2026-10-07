@@ -183,6 +183,16 @@ describe('tasksRouter status schema', () => {
       );
     });
 
+    it("asks for a restore when the task's chat is archived", async () => {
+      const { tasksRouter } = await import('./tasks');
+      const caller = tasksRouter.createCaller({ getWindow: () => null });
+      carryOnFlowTaskMock.mockResolvedValueOnce({ ok: false, reason: 'chat-archived' });
+
+      await expect(caller.retry({ taskId: 'task-5', mode: 'continue' })).rejects.toThrow(
+        /chat is archived\. Restore the chat to carry on/,
+      );
+    });
+
     it('directs a released Flow carry-on to the Flow retry action', async () => {
       const { tasksRouter } = await import('./tasks');
       const caller = tasksRouter.createCaller({ getWindow: () => null });

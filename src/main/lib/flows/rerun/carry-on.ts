@@ -8,6 +8,7 @@
 import type { getDatabase } from '../../db';
 import { getFlowRun } from '../../db/repos/flow-runs';
 import { getSubChatById } from '../../db/repos/sub-chats';
+import { isTaskChatArchived } from '../../db/repos/task-queries/chat-archive-tasks';
 import { getTaskById, parseResultRecord, retryTaskDetailed } from '../../db/repos/tasks';
 import type { Task } from '../../db/schema';
 import { withFlowResourceCleanup } from '../admission/activity';
@@ -19,7 +20,7 @@ export type CarryOnFlowTaskResult =
   | { ok: true; task: Task }
   | {
       ok: false;
-      reason: 'not-found' | 'no-session' | 'invalid-state' | 'admission-required';
+      reason: 'not-found' | 'no-session' | 'invalid-state' | 'admission-required' | 'chat-archived';
     };
 
 /**
@@ -41,6 +42,8 @@ export async function carryOnFlowTask(db: Db, taskId: string): Promise<CarryOnFl
   if (existing.status !== 'failed' && existing.status !== 'needs_attention') {
     return { ok: false, reason: 'invalid-state' };
   }
+  // Archiving stopped the chat's work; a turn into it would only be declined.
+  if (isTaskChatArchived(db, existing)) return { ok: false, reason: 'chat-archived' };
 
   const continueTask = async (requirePausedFlowRunId?: string): Promise<CarryOnFlowTaskResult> => {
     const prior = parseResultRecord(existing.result);
