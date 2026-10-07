@@ -1,5 +1,5 @@
 import type { BrowserWindow, MenuItemConstructorOptions } from 'electron';
-import { buildUpdateMenuItem } from './auto-updater';
+import { buildUpdateMenuItem } from '../lib/auto-updater';
 
 /**
  * The submenu under the app's name: About, the update item, and the standard macOS roles.
