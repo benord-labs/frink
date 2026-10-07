@@ -35,6 +35,7 @@ export async function fetchOAuthMetadata(
 export type OAuthConfig = {
   mcpBaseUrl: string; // e.g., http://localhost:3000/v1/links/abc123
   redirectUri?: string; // Optional custom redirect URI for deeplinks
+  state?: string; // Caller-minted state, for a loopback listener bound before the auth URL exists
   // RFC 8707 Resource Indicator — binds the access token's audience to this
   // resource URI. Required for some MCPs (e.g., Cloudflare's mcp.cloudflare.com)
   // whose downstream tool calls check the token `aud` claim.
@@ -793,8 +794,7 @@ export class CraftOAuth {
   }
 
   /**
-   * Start OAuth flow without waiting for callback (for deeplink-based flows)
-   * Returns the authorization URL and state/verifier for later token exchange
+   * Start OAuth without awaiting the callback: returns auth URL, state and verifier for the exchange
    * @param preloadedMetadata - Optional pre-fetched OAuth metadata to avoid duplicate fetch
    */
   async startAuthFlow(preloadedMetadata?: OAuthMetadata): Promise<{
@@ -820,7 +820,7 @@ export class CraftOAuth {
     }
 
     const pkce = generatePKCE();
-    const state = generateState();
+    const state = this.config.state ?? generateState();
     const redirectUri =
       this.config.redirectUri || `http://localhost:${CALLBACK_PORT}${CALLBACK_PATH}`;
 
