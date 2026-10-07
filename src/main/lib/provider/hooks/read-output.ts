@@ -232,7 +232,9 @@ function readOtherExit(
     const text = `Announced async, then failed with status code ${exit}: ${stderr}`;
     return failed(rule, 'failure', text);
   }
-  if (exit !== 0) return failed(rule, 'failure', `Failed with non-blocking status code: ${stderr}`);
+  // The notice shows only the first line of stderr.
+  const shown = `Failed with non-blocking status code: ${stderr.split('\n', 1)[0]}`;
+  if (exit !== 0) return failed(rule, 'failure', shown);
   if (rule.stdout !== 'context' || !stdout.text) return {};
   return { context: stdout.text, ...overCap({ context: stdout.text }) };
 }
