@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { downloadToFile, sha256File } from './http-download.mjs';
+import { installStaged, stagingPath, sweepStaging } from './install-file.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 export const ROOT_DIR = path.dirname(path.dirname(path.dirname(SCRIPT_PATH)));
@@ -403,12 +404,16 @@ function buildCodexTarget({
     target.binary,
   );
   const outputBinary = path.join(outputDir, target.binary);
-  fs.copyFileSync(builtBinary, outputBinary);
-  if (process.platform !== 'win32') fs.chmodSync(outputBinary, 0o755);
+  // Staged beside (not inside) the packaged per-platform dir and renamed in only after it is
+  // verified: copying onto the live binary would leave macOS's per-vnode signature cache stale.
+  const stagedName = `${key}-${target.binary}`;
+  sweepStaging(outputRoot, stagedName);
+  const staged = stagingPath(outputRoot, stagedName);
+  fs.copyFileSync(builtBinary, staged);
+  if (process.platform !== 'win32') fs.chmodSync(staged, 0o755);
   fs.copyFileSync(path.join(sourceDir, 'LICENSE'), path.join(outputDir, 'codex-LICENSE.txt'));
   fs.copyFileSync(path.join(sourceDir, 'NOTICE'), path.join(outputDir, 'codex-NOTICE.txt'));
-  fs.writeFileSync(path.join(outputDir, 'CODEX_VERSION'), `${codexVersionStamp(manifest)}\n`);
-  return outputBinary;
+  return { staged, outputBinary };
 }
 
 export async function buildCodexFrink({
@@ -436,7 +441,7 @@ export async function buildCodexFrink({
     if (runProviderTests) runProviderRegressionTests(cargo, rustc, cargoRoot);
 
     return uniqueTargetKeys.map((key) => {
-      const binaryPath = buildCodexTarget({
+      const { staged, outputBinary } = buildCodexTarget({
         key,
         target: TARGETS[key],
         manifest,
@@ -447,11 +452,23 @@ export async function buildCodexFrink({
         outputRoot,
       });
       // A cross-compiled target cannot run here; its own CI leg handshakes the build it produces.
-      if (key === platformKey()) {
-        verifyBundledHandshake(manifest, binaryPath, tempRoot);
-        verifyEmptyHomeMcpReplace(binaryPath, tempRoot);
+      try {
+        if (key === platformKey()) {
+          verifyBundledHandshake(manifest, staged, tempRoot);
+          verifyEmptyHomeMcpReplace(staged, tempRoot);
+        }
+        installStaged(staged, outputBinary);
+        // Stamped only once the verified binary is in place: ensure-codex-binary and
+        // codex-binary.ts read CODEX_VERSION as freshness, so a stamp ahead of a failed build
+        // would mark the old binary current and it would never be rebuilt.
+        fs.writeFileSync(
+          path.join(path.dirname(outputBinary), 'CODEX_VERSION'),
+          `${codexVersionStamp(manifest)}\n`,
+        );
+      } finally {
+        fs.rmSync(staged, { force: true });
       }
-      return binaryPath;
+      return outputBinary;
     });
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
