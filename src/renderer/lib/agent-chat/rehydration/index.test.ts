@@ -26,11 +26,11 @@ const candidate = (
   existingMessages: UIMessage[],
   fetchedMessages: UIMessage[],
   overrides: Partial<{
-    isActiveSubChat: boolean;
+    isWakeHeld: boolean;
     isExistingChatStreaming: boolean;
   }> = {},
 ) => ({
-  isActiveSubChat: true,
+  isWakeHeld: false,
   isExistingChatStreaming: false,
   existingMessages,
   fetchedMessages,
@@ -104,6 +104,42 @@ describe('classifyDurableMessageRehydration', () => {
     const durable = [userMessage(), assistantMessage('durable output')];
 
     expect(classifyDurableMessageRehydration(candidate(local, durable))).toBe('preserve');
+  });
+});
+
+// A hold's bursts end idle without a settle, so nothing refreshes the cached page until it ends.
+describe('classifyDurableMessageRehydration during a wake hold', () => {
+  const held = { isWakeHeld: true };
+
+  it('keeps burst content the cached page has not caught up with', () => {
+    const live = [userMessage(), assistantMessage('arming reply, then the whole burst reply')];
+    const stalePage = [userMessage(), assistantMessage('arming reply, then')];
+
+    expect(classifyDurableMessageRehydration(candidate(live, stalePage))).toBe('replace');
+    expect(classifyDurableMessageRehydration(candidate(live, stalePage, held))).toBe('preserve');
+  });
+
+  it('keeps burst content when the stale page is a shifted tail window of a long chat', () => {
+    const live = Array.from({ length: 22 }, (_, index) => durableMessage(`m${index + 1}`));
+    const stalePage = [...live.slice(2, -1), { ...durableMessage('m22'), parts: [] }];
+
+    expect(classifyDurableMessageRehydration(candidate(live, stalePage))).toBe('replace');
+    expect(classifyDurableMessageRehydration(candidate(live, stalePage, held))).toBe('preserve');
+  });
+
+  it('still takes a page that ends at a message the live chat lacks', () => {
+    const live = [userMessage(), assistantMessage('burst reply')];
+    const advanced = [...live, durableMessage('flow-reply')];
+
+    expect(classifyDurableMessageRehydration(candidate(live, advanced, held))).toBe('replace');
+  });
+
+  it('lets the same page replace the chat once the hold is released', () => {
+    const live = [userMessage(), assistantMessage('checkpoint')];
+    const page = [userMessage(), assistantMessage('finalised')];
+
+    expect(classifyDurableMessageRehydration(candidate(live, page, held))).toBe('preserve');
+    expect(classifyDurableMessageRehydration(candidate(live, page))).toBe('replace');
   });
 });
 
