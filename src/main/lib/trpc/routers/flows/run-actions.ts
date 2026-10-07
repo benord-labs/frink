@@ -12,6 +12,7 @@ import {
   TerminalResumeAdmissionError,
   TerminalResumeChatDeletedError,
 } from '../../../flows/admission/terminal-resume';
+import type { TerminalResumeAdmission } from '../../../flows/admission/terminal-resume/dispatcher';
 import { flowRunAdmissionSnapshotsForRuns } from '../../../flows/admission/visibility';
 import {
   getFlowRunWithNodeRuns,
@@ -74,26 +75,28 @@ export async function retryRunFromLastNode(
   db: ReturnType<typeof getDatabase>,
   run: Pick<FlowRun, 'id' | 'status'>,
   kind: RecoveryKind,
-): Promise<void> {
+): Promise<TerminalResumeAdmission> {
   if (run.status !== 'failed' && run.status !== 'cancelled' && run.status !== 'completed') {
     throw new TRPCError({
       code: 'PRECONDITION_FAILED',
       message: `Flow run is ${run.status}; retry requires a settled run — use Continue instead.`,
     });
   }
-  if (!(await retrySettledFlowRun(db, run.id, kind))) {
+  const admission = await retrySettledFlowRun(db, run.id, kind);
+  if (!admission) {
     throw new TRPCError({
       code: 'PRECONDITION_FAILED',
       message: 'Flow run context unavailable; flow or version may have been deleted.',
     });
   }
+  return admission;
 }
 
 async function retrySettledFlowRun(
   db: ReturnType<typeof getDatabase>,
   flowRunId: string,
   kind: RecoveryKind,
-): Promise<boolean> {
+): Promise<TerminalResumeAdmission | null> {
   try {
     const { retryTerminalFlowRun } =
       await import('../../../flows/admission/terminal-resume/dispatcher');

@@ -3,9 +3,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   db: null as unknown,
   dispatchAndAdvance: vi.fn(async (..._args: unknown[]) => {}),
-  requestTerminalFlowResume: vi.fn(async (_input: EnqueueTerminalFlowResumeInput) => ({
-    created: true,
-  })),
+  requestTerminalFlowResume: vi.fn(
+    async (
+      _input: EnqueueTerminalFlowResumeInput,
+    ): Promise<{ admission: { state: string }; created: boolean }> => ({
+      admission: { state: 'active' },
+      created: true,
+    }),
+  ),
   stageResumeBehindHeldAdmission: vi.fn(async (_input: EnqueueTerminalFlowResumeInput) => false),
   registered: null as null | ((intent: unknown, ticket: number) => Promise<void>),
 }));
@@ -52,6 +57,9 @@ const GRAPH: FlowGraph = {
   ],
   edges: [{ id: 'e1', source: 'st', target: 'work' }],
 };
+
+/** The admission the mocked enqueue reports: a fresh ticket that took a free slot. */
+const ADMITTED = { state: 'active', created: true };
 
 let db: TestDb;
 let flowRunId: string;
@@ -123,9 +131,21 @@ async function interruptByRestart(): Promise<void> {
 }
 
 describe('retryTerminalFlowRun', () => {
+  it("reports the ticket's admission state, and whether it merged into a live resume", async () => {
+    await setFlowRunStatus(db, flowRunId, 'failed');
+    mocks.requestTerminalFlowResume.mockResolvedValueOnce({
+      admission: { state: 'queued' },
+      created: false,
+    });
+    await expect(retryTerminalFlowRun(db, flowRunId, 'retry')).resolves.toEqual({
+      state: 'queued',
+      created: false,
+    });
+  });
+
   it('re-admits a failed run, refusing it in the enqueue once a concurrent Cancel took it', async () => {
     await setFlowRunStatus(db, flowRunId, 'failed');
-    await expect(retryTerminalFlowRun(db, flowRunId, 'retry')).resolves.toBe(true);
+    await expect(retryTerminalFlowRun(db, flowRunId, 'retry')).resolves.toEqual(ADMITTED);
     const request = lastEnqueued();
     expect(request).toMatchObject({ flowRunId, nodeRunId });
     expect(request.admit(db)).toBe(true);
@@ -136,13 +156,13 @@ describe('retryTerminalFlowRun', () => {
   it('anchors a completed run to its last step attempt', async () => {
     await setNodeRunStatus(db, nodeRunId, 'completed', { completedAt: new Date() });
     await setFlowRunStatus(db, flowRunId, 'completed');
-    await expect(retryTerminalFlowRun(db, flowRunId, 'retry')).resolves.toBe(true);
+    await expect(retryTerminalFlowRun(db, flowRunId, 'retry')).resolves.toEqual(ADMITTED);
     expect(lastEnqueued()).toMatchObject({ flowRunId, nodeRunId });
   });
 
   it('admits a restart-interrupted run only while the enqueue still sees its marker', async () => {
     await interruptByRestart();
-    await expect(retryTerminalFlowRun(db, flowRunId, 'retry')).resolves.toBe(true);
+    await expect(retryTerminalFlowRun(db, flowRunId, 'retry')).resolves.toEqual(ADMITTED);
     const { admit } = lastEnqueued();
     expect(admit(db)).toBe(true);
     abandonRestartInterruption(db, flowRunId);
@@ -152,7 +172,7 @@ describe('retryTerminalFlowRun', () => {
   // The enqueue transaction re-checks the label the user clicked before any admission is written.
   it('refuses in the enqueue a step that no longer recovers as the clicked kind', async () => {
     await setFlowRunStatus(db, flowRunId, 'failed');
-    await expect(retryTerminalFlowRun(db, flowRunId, 'continue')).resolves.toBe(true);
+    await expect(retryTerminalFlowRun(db, flowRunId, 'continue')).resolves.toEqual(ADMITTED);
     const { admit, kind } = lastEnqueued();
     expect(kind).toBe('continue');
     expect(() => admit(db)).toThrow(
@@ -168,7 +188,11 @@ describe('retryTerminalFlowRun', () => {
   it('stages behind a held admission instead of enqueueing', async () => {
     await interruptByRestart();
     mocks.stageResumeBehindHeldAdmission.mockResolvedValueOnce(true);
-    await expect(retryTerminalFlowRun(db, flowRunId, 'retry')).resolves.toBe(true);
+    // It waits for the held slot to settle, so a bulk Continue all reports it as queued.
+    await expect(retryTerminalFlowRun(db, flowRunId, 'retry')).resolves.toEqual({
+      state: 'queued',
+      created: true,
+    });
     expect(mocks.requestTerminalFlowResume).not.toHaveBeenCalled();
     const staged = mocks.stageResumeBehindHeldAdmission.mock.lastCall?.[0];
     expect(staged).toMatchObject({ flowRunId, nodeRunId, kind: 'retry' });
@@ -373,7 +397,7 @@ describe('Fan Out branch failure — the resume re-dispatches the whole item (sc
     async (order) => {
       const { failedRun, fanRunId } = await seedFailedItem(order);
 
-      await expect(retryTerminalFlowRun(db, flowRunId, 'retry')).resolves.toBe(true);
+      await expect(retryTerminalFlowRun(db, flowRunId, 'retry')).resolves.toEqual(ADMITTED);
       expect(mocks.requestTerminalFlowResume).toHaveBeenCalledWith({
         flowRunId,
         nodeRunId: failedRun.id,

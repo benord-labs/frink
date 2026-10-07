@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import type { FlowAdmissionState } from '../../../../../shared/lib/flow-admission';
 import type { RecoveryKind } from '../../../../../shared/types/flow-run/resume';
 import { getDatabase } from '../../../db';
 import { listNodeRunsForFlowRun } from '../../../db/repos/node-runs';
@@ -76,32 +77,36 @@ const USER_CANCELLED_RUN =
 const userCancelledRun = (cause?: unknown) =>
   new TRPCError({ code: 'PRECONDITION_FAILED', message: USER_CANCELLED_RUN, cause });
 
+/** Where a resume ticket stands after its enqueue; `created` is false when it merged into a resume
+ * already live for the same step. */
+export type TerminalResumeAdmission = { state: FlowAdmissionState; created: boolean };
+
 /**
  * Re-admit a settled run from its resume target. The enqueue transaction refuses a run the user
- * cancelled, or whose step no longer recovers as `kind`. False when its flow or version is gone.
+ * cancelled, or whose step no longer recovers as `kind`. Null when its flow or version is gone.
  * A run that still holds its admission is staged behind it instead, never refused.
  */
 export async function retryTerminalFlowRun(
   db: Db,
   flowRunId: string,
   kind: RecoveryKind,
-): Promise<boolean> {
+): Promise<TerminalResumeAdmission | null> {
   if (isUserCancelled(db, flowRunId)) throw userCancelledRun();
   const target = await resolveTerminalResumeTarget(db, flowRunId);
-  if (!target) return false;
+  if (!target) return null;
   const admit = (tx: Db) => {
     if (stepRecoveryKind(tx, target.nodeRunId) !== kind) throw recoveryChangedError();
     return !isUserCancelled(tx, flowRunId);
   };
   const request = { flowRunId, nodeRunId: target.nodeRunId, kind, admit };
   // A run still holding its slot refuses a second admission; the slot's settle enqueues this one.
-  if (await stageResumeBehindHeldAdmission(request)) return true;
-  await requestTerminalFlowResume(request).catch((error) => {
+  if (await stageResumeBehindHeldAdmission(request)) return { state: 'queued', created: true };
+  const { admission, created } = await requestTerminalFlowResume(request).catch((error) => {
     const cancelledMeanwhile =
       error instanceof TerminalResumeAdmissionError && isUserCancelled(db, flowRunId);
     throw cancelledMeanwhile ? userCancelledRun(error) : error;
   });
-  return true;
+  return { state: admission.state, created };
 }
 
 /** Re-dispatch the anchor and, inside a Fan Out item, every sibling branch it must finish beside.

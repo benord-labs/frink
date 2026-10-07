@@ -1139,7 +1139,7 @@ describe('flowsRouter (local)', () => {
         completedAt: new Date('2024-01-01T00:01:00.000Z'),
         createdAt: new Date('2024-01-01T00:00:00.000Z'),
       });
-      retryTerminalFlowRunMock.mockResolvedValueOnce(true);
+      retryTerminalFlowRunMock.mockResolvedValueOnce({ state: 'active', created: true });
       const caller = flowsRouter.createCaller({ getWindow: () => null });
 
       await expect(caller.retryRunFromLastNode({ runId, kind: 'retry' })).resolves.toEqual({

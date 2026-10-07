@@ -2,7 +2,19 @@ import { hostname } from 'node:os';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getDatabase } from '../../db';
 import type { TaskResultRecord } from '../../db/repos/tasks';
-import { chats, type FlowRun, subChatMessages, subChats, type Task, tasks } from '../../db/schema';
+import { RESTART_INTERRUPTION_REASON } from '../../../../shared/types/flow';
+import {
+  chats,
+  type FlowRun,
+  flowRuns,
+  flows,
+  flowVersions,
+  nodeRuns,
+  subChatMessages,
+  subChats,
+  type Task,
+  tasks,
+} from '../../db/schema';
 import { freshDb } from '../../db/test-utils/fresh-db';
 import type { FlowRunRecoveries } from './tasks';
 
@@ -27,6 +39,7 @@ const getSubChatByIdMock = vi.fn();
 const getSubChatModeMock = vi.fn();
 const carryOnFlowTaskMock = vi.fn();
 const hasActiveFlowAdmissionMock = vi.fn();
+const queuedResumeMock = vi.fn(async (_flowRunId: string) => false);
 class MockApiRequestError extends Error {
   status: number;
 
@@ -88,6 +101,11 @@ vi.mock('../../flows/rerun', () => ({
 
 vi.mock('../../flows/admission/runtime', () => ({
   hasActiveFlowAdmission: hasActiveFlowAdmissionMock,
+  probeFlowAdmission: async (flowRunId: string) => ({
+    active: false,
+    live: false,
+    queuedResume: await queuedResumeMock(flowRunId),
+  }),
 }));
 
 vi.mock('../../tasks/cancel-work-queue-task', () => ({
@@ -179,6 +197,7 @@ describe('tasksRouter status schema', () => {
     db.delete(tasks).run();
     vi.mocked(getDatabase).mockReturnValue(db);
     hasActiveFlowAdmissionMock.mockReset();
+    queuedResumeMock.mockReset().mockResolvedValue(false);
   });
 
   // Routing only: Continue's gates (carryOnFlowTask) are covered in flows/rerun, the run-level
@@ -188,7 +207,10 @@ describe('tasksRouter status schema', () => {
       (await import('./tasks')).tasksRouter.createCaller({ getWindow: () => null });
     const flowRuns = {
       retryPausedStep: vi.fn<FlowRunRecoveries['retryPausedStep']>(async () => {}),
-      readmitRun: vi.fn<FlowRunRecoveries['readmitRun']>(async () => {}),
+      readmitRun: vi.fn<FlowRunRecoveries['readmitRun']>(async () => ({
+        state: 'active',
+        created: true,
+      })),
     };
     const recoverFlowTask = async (kind: 'continue' | 'retry') =>
       (await import('./tasks')).recoverTask(db, 'task-f', kind, flowRuns);
@@ -338,6 +360,22 @@ describe('tasksRouter status schema', () => {
         expect(flowRuns.retryPausedStep).not.toHaveBeenCalled();
       },
     );
+
+    // The bulk action reports each run's outcome from the admission its re-admit produced.
+    it.each([
+      [{ state: 'active', created: true }, 'resumed'],
+      [{ state: 'claimed', created: true }, 'resumed'],
+      [{ state: 'queued', created: true }, 'queued'],
+      [{ state: 'queued', created: false }, 'already-queued'],
+    ] as const)('reports a re-admit of %o as %s', async (admission, outcome) => {
+      seed(
+        { id: 'task-f', flowRunId: 'run-1', sourceId: 'nr-1' },
+        { id: 'run-1', status: 'cancelled' },
+      );
+      flowRuns.readmitRun.mockResolvedValueOnce(admission);
+
+      await expect(recoverFlowTask('retry')).resolves.toBe(outcome);
+    });
 
     it('refuses a stale Retry once the step can be continued', async () => {
       await seedAnsweredSession('task-3');
@@ -499,6 +537,126 @@ describe('tasksRouter status schema', () => {
         flowRunId: null,
         recoveryKind: 'retry',
       });
+    });
+  });
+
+  describe('interruptedRuns', () => {
+    /** A run a restart cancelled mid agent step, as the sweep leaves it. Returns its run id. */
+    async function seedInterruptedRun(key: string): Promise<string> {
+      const flowRunId = `run-${key}`;
+      if (!db.select().from(flows).all().length) {
+        db.insert(flows).values({ id: 'flow-1', name: 'F' }).run();
+        db.insert(flowVersions)
+          .values({ id: 'version-1', flowId: 'flow-1', versionNumber: 1, graph: {} })
+          .run();
+      }
+      db.insert(flowRuns)
+        .values({ id: flowRunId, flowVersionId: 'version-1', status: 'cancelled' })
+        .run();
+      db.insert(nodeRuns)
+        .values({
+          id: `nr-${key}`,
+          flowRunId,
+          nodeId: 'work',
+          blockType: 'agent',
+          status: 'cancelled',
+          nodeOutput: { error: { message: RESTART_INTERRUPTION_REASON } },
+        })
+        .run();
+      return flowRunId;
+    }
+    const row = (id: string, flowRunId: string | null) => ({
+      id,
+      description: `Task ${id}`,
+      status: 'cancelled',
+      flowRunId,
+      flowRunStatus: flowRunId ? 'cancelled' : null,
+      effectiveStatus: 'interrupted',
+      projectId: 'p1',
+      projectName: 'devkit',
+      result: {},
+    });
+
+    it('lists the runs Continue all can recover, oldest first, minus those already queued', async () => {
+      const { tasksRouter } = await import('./tasks');
+      const caller = tasksRouter.createCaller({ getWindow: () => null });
+      const older = await seedInterruptedRun('older');
+      const newer = await seedInterruptedRun('newer');
+      const queued = await seedInterruptedRun('queued');
+      queuedResumeMock.mockImplementation(async (flowRunId) => flowRunId === queued);
+      // The queue lists newest first.
+      getTasksWithProjectPaginatedMock.mockResolvedValueOnce({
+        items: [row('t-queued', queued), row('t-newer', newer), row('t-older', older)],
+        hasMore: false,
+        nextCursor: null,
+      });
+
+      const runs = await caller.interruptedRuns();
+
+      expect(runs).toEqual([
+        expect.objectContaining({ taskId: 't-older', flowRunId: older, recoveryKind: 'retry' }),
+        expect.objectContaining({
+          taskId: 't-newer',
+          recoveryNodeRunId: 'nr-newer',
+          confirmSideEffects: false,
+          description: 'Task t-newer',
+          projectName: 'devkit',
+        }),
+      ]);
+      expect(getTasksWithProjectPaginatedMock).toHaveBeenCalledWith(
+        db,
+        expect.objectContaining({ status: 'interrupted', collapseByFlow: true }),
+      );
+    });
+
+    // The procedure wires the bulk module to the same recovery the row button runs, and to the
+    // live-ticket check that keeps it from enqueueing a second ticket beside startup's.
+    it('recovers confirmed runs through the row recovery and skips one startup already queued', async () => {
+      const ready = await seedInterruptedRun('ready');
+      const queued = await seedInterruptedRun('queued-at-boot');
+      const taskOf = (id: string, flowRunId: string) => ({
+        id,
+        status: 'cancelled',
+        flowRunId,
+        sourceId: `nr-${id}`,
+        result: {},
+      });
+      getTaskByIdMock.mockImplementation(async (_db: typeof db, id: string) =>
+        taskOf(id, id === 't-ready' ? ready : queued),
+      );
+      getFlowRunMock.mockImplementation(async (_db: typeof db, id: string) => ({
+        id,
+        status: 'cancelled',
+      }));
+      const flowRuns = {
+        retryPausedStep: vi.fn<FlowRunRecoveries['retryPausedStep']>(async () => {}),
+        readmitRun: vi.fn<FlowRunRecoveries['readmitRun']>(async () => ({
+          state: 'queued',
+          created: true,
+        })),
+      };
+      const hasQueuedResume = async (flowRunId: string) => flowRunId === queued;
+
+      const { recoverInterruptedTasks } = await import('./tasks-recovery');
+      const results = await recoverInterruptedTasks(
+        db,
+        [
+          { taskId: 't-queued', kind: 'retry' },
+          { taskId: 't-ready', kind: 'retry', recoveryNodeRunId: 'nr-ready' },
+        ],
+        { flowRuns, hasQueuedResume },
+      );
+
+      expect(results).toEqual([
+        { taskId: 't-queued', flowRunId: queued, outcome: 'already-queued' },
+        { taskId: 't-ready', flowRunId: ready, outcome: 'queued' },
+      ]);
+      expect(flowRuns.readmitRun).toHaveBeenCalledTimes(1);
+      expect(flowRuns.readmitRun).toHaveBeenCalledWith(
+        db,
+        { id: ready, status: 'cancelled' },
+        'retry',
+      );
     });
   });
 

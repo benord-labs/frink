@@ -84,11 +84,11 @@ describe('qa seed fixtures', () => {
     expect(project?.path).toBe('/tmp/qa-fixture-checkout');
 
     // Empty chat + seeded chat + long transcript + the parked-flow, paused-flow, running-flow,
-    // interrupted-flow, two batch-member and three background-work chats under the fixture project,
-    // plus the Codex chat.
+    // interrupted-flow, two batch-member, three background-work and three Continue all chats under the
+    // fixture project, plus the Codex chat and the Codex project's Continue all chat.
     const chatRows = db.select().from(chats).all();
-    expect(chatRows.filter((c) => c.projectId === FIXTURE_PROJECT_ID)).toHaveLength(12);
-    expect(chatRows.filter((c) => c.projectId === CODEX_FIXTURE.projectId)).toHaveLength(1);
+    expect(chatRows.filter((c) => c.projectId === FIXTURE_PROJECT_ID)).toHaveLength(15);
+    expect(chatRows.filter((c) => c.projectId === CODEX_FIXTURE.projectId)).toHaveLength(2);
 
     const [subChat] = db.select().from(subChats).all();
     expect(subChat?.id).toBe(FIXTURE_SUB_CHAT_ID);
@@ -137,8 +137,9 @@ describe('qa seed fixtures', () => {
     expect(verifyFixtures(db).ok).toBe(true);
 
     const taskRows = db.select().from(tasks).all();
-    // plan_ready + completed/cancelled History examples + 2 parked-flow + paused/running/interrupted.
-    expect(taskRows).toHaveLength(8);
+    // plan_ready + completed/cancelled History examples + 2 parked-flow + paused/running/interrupted +
+    // 4 Continue all runs.
+    expect(taskRows).toHaveLength(12);
 
     // plan_ready (not running): survives the boot-time orphan-task recovery and is never auto-run.
     expect(taskRows.find((t) => t.id === FIXTURE_TASK_ID)?.status).toBe('plan_ready');
@@ -272,8 +273,8 @@ describe('qa seed fixtures', () => {
     seedFixtures(db, '/tmp/qa-fixture-checkout', CLAUDE_SOURCE);
 
     const taskRows = db.select().from(tasks).all();
-    // plan_ready + 2 History + 2 parked-flow + paused-flow + running-flow + interrupted-flow
-    expect(taskRows).toHaveLength(8);
+    // plan_ready + 2 History + 2 parked-flow + paused/running/interrupted-flow + 4 Continue all runs
+    expect(taskRows).toHaveLength(12);
     expect(taskRows.some((t) => t.id === FIXTURE_TASK_ID)).toBe(true);
 
     // First node terminal, later node parked — ParkedQuestionsBar must resolve the LATER (driving) one.
@@ -350,8 +351,8 @@ describe('qa seed fixtures', () => {
   it('seeds every task and chat the visual surfaces need', () => {
     const db = freshDb();
     seedFixtures(db, '/tmp/qa-fixture-checkout', CLAUDE_SOURCE);
-    expect(db.select().from(tasks).all()).toHaveLength(8);
-    expect(db.select().from(chats).all()).toHaveLength(13);
+    expect(db.select().from(tasks).all()).toHaveLength(12);
+    expect(db.select().from(chats).all()).toHaveLength(17);
   });
 
   // The interrupted fixture is the only way any QA run can reach InterruptedRunControls, and each of

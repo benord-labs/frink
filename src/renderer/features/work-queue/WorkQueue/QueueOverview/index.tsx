@@ -9,6 +9,7 @@ import {
   getAttentionCopy,
 } from '../AttentionCarousel';
 import { InboxTaskList } from '../InboxTaskList';
+import { InterruptedRunsBanner } from '../InterruptedRunsBanner';
 import { QueuedAdmissions } from '../QueuedAdmissions';
 import { QueuePausedBanner } from '../QueuePausedBanner';
 import { QueueProgressSummary } from '../QueueProgressSummary';
@@ -17,7 +18,12 @@ import { OtherAttentionTasks } from './OtherAttentionTasks';
 
 type Props = {
   attentionTasks: Task[];
-  pagination?: Record<'attention' | 'inbox' | 'running', LanePagination>;
+  /** Per-lane paging, plus `refresh` to reload every lane (e.g. after Continue all). */
+  pagination?: Record<'attention' | 'inbox' | 'running', LanePagination> & {
+    refresh?: () => Promise<void>;
+  };
+  /** The interrupted-runs banner; replaced in tests that do not exercise it. */
+  interruptedRuns?: ReactElement | null;
   queuedAdmissions?: ReactElement;
   queuedCount: number;
   reviewCount: number;
@@ -57,6 +63,7 @@ function LoadOlderTasks({ label, pagination }: { label: string; pagination?: Lan
 export const QueueOverview = memo(function QueueOverview({
   attentionTasks,
   pagination,
+  interruptedRuns = <InterruptedRunsBanner onRecovered={() => void pagination?.refresh?.()} />,
   queuedAdmissions = <QueuedAdmissions />,
   queuedCount,
   reviewCount,
@@ -89,6 +96,7 @@ export const QueueOverview = memo(function QueueOverview({
   return (
     <>
       <QueuePausedBanner />
+      {interruptedRuns}
       {openTaskCount > 0 && (
         <div className="mb-4 shrink-0">
           <QueueProgressSummary
