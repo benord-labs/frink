@@ -49,10 +49,9 @@ function assertSafeSegment(segment: string, label: 'runId' | 'filename'): void {
   }
 }
 
-function getAttachmentPath(runId: string, filename: string): string {
+function getAttachmentPath(runId: string, filename: string, root: string): string {
   assertSafeSegment(runId, 'runId');
   assertSafeSegment(filename, 'filename');
-  const root = attachmentsRoot();
   const full = resolve(join(root, runId, filename));
   if (!isAbsolute(full) || !full.startsWith(`${resolve(root)}${sep}`)) {
     throw new AttachmentPathError(`resolved path escapes attachments root: ${full}`);
@@ -76,16 +75,21 @@ export async function writeAttachment(
   runId: string,
   filename: string,
   base64Data: string,
+  root: string = attachmentsRoot(),
 ): Promise<WriteAttachmentResult> {
-  const target = getAttachmentPath(runId, filename);
+  const target = getAttachmentPath(runId, filename, root);
   const buffer = Buffer.from(base64Data, 'base64');
-  await mkdir(join(attachmentsRoot(), runId), { recursive: true });
+  await mkdir(join(root, runId), { recursive: true });
   await writeFile(target, buffer);
   return { url: buildAttachmentUrl(runId, filename), filename, byteLength: buffer.byteLength };
 }
 
-export async function readAttachment(runId: string, filename: string): Promise<Buffer> {
-  const target = getAttachmentPath(runId, filename);
+export async function readAttachment(
+  runId: string,
+  filename: string,
+  root: string = attachmentsRoot(),
+): Promise<Buffer> {
+  const target = getAttachmentPath(runId, filename, root);
   return readFile(target);
 }
 
@@ -104,7 +108,10 @@ export type ReadAttachmentImageResult =
  * Read a `frink-attachment://<runId>/<filename>` URL as base64, capped at 5MB.
  * `message` is shown to the user as-is, so it is a whole sentence in plain words.
  */
-export async function readAttachmentImage(rawUrl: string): Promise<ReadAttachmentImageResult> {
+export async function readAttachmentImage(
+  rawUrl: string,
+  root: string = attachmentsRoot(),
+): Promise<ReadAttachmentImageResult> {
   let parsed: URL | undefined;
   try {
     parsed = new URL(rawUrl);
@@ -121,7 +128,7 @@ export async function readAttachmentImage(rawUrl: string): Promise<ReadAttachmen
   const filename = parsed.pathname.replace(LEADING_SLASH_RE, '');
   let buffer: Buffer;
   try {
-    buffer = await readAttachment(parsed.hostname, filename);
+    buffer = await readAttachment(parsed.hostname, filename, root);
   } catch {
     return {
       ok: false,
@@ -138,7 +145,11 @@ export async function readAttachmentImage(rawUrl: string): Promise<ReadAttachmen
  * Delete a single attachment file (rollback on post-write validation failure).
  * No-op if file doesn't exist.
  */
-export async function deleteAttachmentFile(runId: string, filename: string): Promise<void> {
-  const target = getAttachmentPath(runId, filename);
+export async function deleteAttachmentFile(
+  runId: string,
+  filename: string,
+  root: string = attachmentsRoot(),
+): Promise<void> {
+  const target = getAttachmentPath(runId, filename, root);
   await rm(target, { force: true });
 }
