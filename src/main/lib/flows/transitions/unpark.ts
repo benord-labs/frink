@@ -29,7 +29,7 @@ type UnparkTarget = {
 
 const PARKED_NODE_STATUSES: NodeRunStatus[] = ['awaiting_input', 'blocked'];
 
-const hasActiveSlot = (db: Db, flowRunId: string): boolean =>
+export const hasActiveSlot = (db: Db, flowRunId: string): boolean =>
   liveAdmissionForRun(db, flowRunId)?.state === 'active';
 
 /** A run's node_runs, oldest first, read synchronously for a transaction. */

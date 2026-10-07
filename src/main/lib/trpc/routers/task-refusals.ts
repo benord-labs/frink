@@ -6,6 +6,9 @@ import type { CarryOnFlowTaskResult } from '../../flows/rerun';
 
 type Refusal = [code: TRPCError['code'], message: string];
 
+const FLOW_ADMISSION_LOST_MESSAGE =
+  'This Flow run lost its place in the run queue. Open the Flow run and use Continue or Retry there.';
+
 /** Throws the refusal for `reason`; with no reason the failure is a fault, a plain Error. */
 export function throwTaskMutationReason(
   reason: TaskMutationFailureReason | undefined,
@@ -24,6 +27,8 @@ export function throwTaskMutationReason(
       messages.flowShellNotReassignable ??
         'This task is a flow-linked shell task and cannot be reassigned',
     ],
+    // A refusal, not a fault: the phone answers it 409 and does not report it.
+    flow_admission_lost: ['PRECONDITION_FAILED', FLOW_ADMISSION_LOST_MESSAGE],
   } satisfies Record<TaskMutationFailureReason, Refusal>;
   if (!reason) throw new Error(messages.fallback);
   const [code, message] = refusals[reason];
