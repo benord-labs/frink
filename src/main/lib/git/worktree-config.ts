@@ -167,6 +167,89 @@ function describeSetupFailure(failure: ExecFailure): string {
   return failure.message.split('\n')[0];
 }
 
+/** The non-empty setup commands to run, or why setup is skipped. */
+async function loadSetupCommands(
+  mainRepoPath: string,
+): Promise<{ commands: string[] } | { skipMessage: string }> {
+  const detected = await detectWorktreeConfig(mainRepoPath);
+  if (detected.unreadable) {
+    // Skipped, not failed: failing would roll back flow worktrees. Settings shows the error.
+    log.warn(`[Worktree] ${UNREADABLE_CONFIG_MESSAGE}`);
+    return { skipMessage: UNREADABLE_CONFIG_MESSAGE };
+  }
+  if (!detected.config) {
+    return { skipMessage: 'No worktree config found, skipping setup' };
+  }
+
+  const commands = (detected.config['setup-worktree'] ?? []).filter((cmd) => cmd.trim());
+  if (commands.length === 0) {
+    return { skipMessage: 'No setup commands configured' };
+  }
+  return { commands };
+}
+
+/**
+ * Whether the next command may start, and the time it may take. The clock is read once here so the
+ * check and the exec timeout agree: a timeout of 0 would mean no timeout at all.
+ */
+function checkBeforeCommand(
+  cmd: string,
+  signal: AbortSignal | undefined,
+  deadline: number | null,
+): { stop: string } | { remainingMs: number } {
+  if (signal?.aborted) return { stop: `Cancelled before: ${cmd}` };
+
+  const remainingMs = deadline === null ? SETUP_COMMAND_TIMEOUT_MS : deadline - Date.now();
+  if (remainingMs <= 0) return { stop: `Setup budget exhausted before: ${cmd}` };
+  return { remainingMs };
+}
+
+type SetupCommandContext = {
+  worktreePath: string;
+  mainRepoPath: string;
+  shell: string | undefined;
+  signal: AbortSignal | undefined;
+};
+
+/** Run one setup command, recording its output or failure on `result`. Never throws. */
+async function runSetupCommand(
+  cmd: string,
+  remainingMs: number,
+  ctx: SetupCommandContext,
+  result: WorktreeSetupResult,
+): Promise<void> {
+  try {
+    result.output.push(`$ ${cmd}`);
+
+    const { stdout, stderr } = await execAsync(cmd, {
+      cwd: ctx.worktreePath,
+      env: {
+        ...process.env,
+        ROOT_WORKTREE_PATH: ctx.mainRepoPath,
+      },
+      timeout: Math.min(SETUP_COMMAND_TIMEOUT_MS, remainingMs),
+      signal: ctx.signal,
+      // exec falls back to its default shell when this is undefined.
+      shell: ctx.shell,
+    });
+
+    if (stdout) {
+      result.output.push(stdout.trim());
+    }
+    if (stderr) {
+      result.output.push(`[stderr] ${stderr.trim()}`);
+    }
+
+    result.commandsRun++;
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    const failure = ExecFailureSchema.safeParse(error);
+    const reason = failure.success ? describeSetupFailure(failure.data) : errorMsg;
+    result.errors.push(`${reason} — while running: ${cmd}`);
+    result.output.push(`[error] ${errorMsg}`);
+  }
+}
+
 /**
  * Execute worktree setup commands
  * Runs after worktree creation to install deps, copy envs, etc.
@@ -183,22 +266,9 @@ export async function executeWorktreeSetup(
     errors: [],
   };
 
-  // Detect config from main repo
-  const detected = await detectWorktreeConfig(mainRepoPath);
-  if (detected.unreadable) {
-    // Skipped, not failed: failing would roll back flow worktrees. Settings shows the error.
-    log.warn(`[Worktree] ${UNREADABLE_CONFIG_MESSAGE}`);
-    result.output.push(UNREADABLE_CONFIG_MESSAGE);
-    return result;
-  }
-  if (!detected.config) {
-    result.output.push('No worktree config found, skipping setup');
-    return result;
-  }
-
-  const commandList = (detected.config['setup-worktree'] ?? []).filter((cmd) => cmd.trim());
-  if (commandList.length === 0) {
-    result.output.push('No setup commands configured');
+  const loaded = await loadSetupCommands(mainRepoPath);
+  if ('skipMessage' in loaded) {
+    result.output.push(loaded.skipMessage);
     return result;
   }
 
@@ -207,49 +277,16 @@ export async function executeWorktreeSetup(
   // login-shell PATH before the first one runs, not the GUI launch PATH.
   await ensureLoginShellEnv();
   const deadline = options.budgetMs === undefined ? null : Date.now() + options.budgetMs;
+  const ctx: SetupCommandContext = { worktreePath, mainRepoPath, shell, signal: options.signal };
 
-  for (const cmd of commandList) {
-    if (options.signal?.aborted) {
-      result.errors.push(`Cancelled before: ${cmd}`);
+  // A failed command doesn't stop the rest; only cancellation or the budget does.
+  for (const cmd of loaded.commands) {
+    const check = checkBeforeCommand(cmd, options.signal, deadline);
+    if ('stop' in check) {
+      result.errors.push(check.stop);
       break;
     }
-
-    const remainingMs = deadline === null ? SETUP_COMMAND_TIMEOUT_MS : deadline - Date.now();
-    if (remainingMs <= 0) {
-      result.errors.push(`Setup budget exhausted before: ${cmd}`);
-      break;
-    }
-
-    try {
-      result.output.push(`$ ${cmd}`);
-
-      const { stdout, stderr } = await execAsync(cmd, {
-        cwd: worktreePath,
-        env: {
-          ...process.env,
-          ROOT_WORKTREE_PATH: mainRepoPath,
-        },
-        timeout: Math.min(SETUP_COMMAND_TIMEOUT_MS, remainingMs),
-        signal: options.signal,
-        ...(shell ? { shell } : {}),
-      });
-
-      if (stdout) {
-        result.output.push(stdout.trim());
-      }
-      if (stderr) {
-        result.output.push(`[stderr] ${stderr.trim()}`);
-      }
-
-      result.commandsRun++;
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      const failure = ExecFailureSchema.safeParse(error);
-      const reason = failure.success ? describeSetupFailure(failure.data) : errorMsg;
-      result.errors.push(`${reason} — while running: ${cmd}`);
-      result.output.push(`[error] ${errorMsg}`);
-      // Continue with next command, don't fail entirely
-    }
+    await runSetupCommand(cmd, check.remainingMs, ctx, result);
   }
 
   result.success = result.errors.length === 0;

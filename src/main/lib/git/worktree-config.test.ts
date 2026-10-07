@@ -312,4 +312,116 @@ describe('executeWorktreeSetup', () => {
     );
     expect(result.output).not.toContain('$ echo never');
   });
+
+  it('skips setup without failing when there is no worktree config', async () => {
+    const projectPath = await createTempProjectDir();
+    const worktreePath = await createTempProjectDir();
+
+    const result = await executeWorktreeSetup(worktreePath, projectPath);
+
+    expect(result.success).toBe(true);
+    expect(result.commandsRun).toBe(0);
+    expect(result.output).toEqual(['No worktree config found, skipping setup']);
+  });
+
+  it('skips setup without failing when every configured command is blank', async () => {
+    const projectPath = await createTempProjectDir();
+    const worktreePath = await createTempProjectDir();
+    await writeFrinkConfig(projectPath, { 'setup-worktree': ['  ', ''] });
+
+    const result = await executeWorktreeSetup(worktreePath, projectPath);
+
+    expect(result.success).toBe(true);
+    expect(result.commandsRun).toBe(0);
+    expect(result.output).toEqual(['No setup commands configured']);
+  });
+
+  it("records a passing command's stdout and stderr after the command line", async () => {
+    const projectPath = await createTempProjectDir();
+    const worktreePath = await createTempProjectDir();
+    const cmd = 'echo out; echo warn >&2';
+    await writeFrinkConfig(projectPath, { 'setup-worktree': [cmd] });
+
+    const result = await executeWorktreeSetup(worktreePath, projectPath);
+
+    expect(result.success).toBe(true);
+    expect(result.output).toEqual([`$ ${cmd}`, 'out', '[stderr] warn']);
+  });
+
+  it('reports cancellation, not the budget, when both stop the next command', async () => {
+    const projectPath = await createTempProjectDir();
+    const worktreePath = await createTempProjectDir();
+    await writeFrinkConfig(projectPath, { 'setup-worktree': ['echo one'] });
+
+    const controller = new AbortController();
+    controller.abort();
+    const result = await executeWorktreeSetup(worktreePath, projectPath, {
+      signal: controller.signal,
+      budgetMs: 0,
+    });
+
+    expect(result.errors).toEqual(['Cancelled before: echo one']);
+    expect(result.output).toEqual([]);
+  });
+
+  // Catches cwd and ROOT_WORKTREE_PATH being swapped: both are plain strings on the command context.
+  it('exposes the main repo as ROOT_WORKTREE_PATH while running in the worktree', async () => {
+    const projectPath = await createTempProjectDir();
+    const worktreePath = await createTempProjectDir();
+    await writeFrinkConfig(projectPath, {
+      'setup-worktree': ['echo "$ROOT_WORKTREE_PATH" > root.txt'],
+    });
+
+    const result = await executeWorktreeSetup(worktreePath, projectPath);
+
+    expect(result.errors).toEqual([]);
+    expect((await readFile(join(worktreePath, 'root.txt'), 'utf-8')).trim()).toBe(projectPath);
+  });
+
+  it('keeps running later commands after one fails', async () => {
+    const projectPath = await createTempProjectDir();
+    const worktreePath = await createTempProjectDir();
+    await writeFrinkConfig(projectPath, { 'setup-worktree': ['exit 1', 'echo after'] });
+
+    const result = await executeWorktreeSetup(worktreePath, projectPath);
+
+    expect(result.success).toBe(false);
+    expect(result.errors).toHaveLength(1);
+    expect(result.commandsRun).toBe(1);
+    expect(result.output).toContain('after');
+  });
+
+  // The budget test above passes even with no exec timeout: its sleep ends on its own. This one
+  // would hang for the full sleep if the remaining budget never reached the exec timeout.
+  it('kills a command that outlives the remaining budget', async () => {
+    const projectPath = await createTempProjectDir();
+    const worktreePath = await createTempProjectDir();
+    await writeFrinkConfig(projectPath, { 'setup-worktree': ['exec sleep 10'] });
+
+    const startedAt = Date.now();
+    const result = await executeWorktreeSetup(worktreePath, projectPath, { budgetMs: 300 });
+
+    expect(Date.now() - startedAt).toBeLessThan(5_000);
+    expect(result.errors).toEqual(['Command failed (timed out) — while running: exec sleep 10']);
+  });
+
+  it('cancels the running command when the signal aborts mid-command, then skips the rest', async () => {
+    const projectPath = await createTempProjectDir();
+    const worktreePath = await createTempProjectDir();
+    await writeFrinkConfig(projectPath, { 'setup-worktree': ['exec sleep 10', 'echo never'] });
+
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 200);
+    const startedAt = Date.now();
+    const result = await executeWorktreeSetup(worktreePath, projectPath, {
+      signal: controller.signal,
+    });
+
+    expect(Date.now() - startedAt).toBeLessThan(5_000);
+    expect(result.errors).toEqual([
+      'Command failed (cancelled) — while running: exec sleep 10',
+      'Cancelled before: echo never',
+    ]);
+    expect(result.output).not.toContain('$ echo never');
+  });
 });
