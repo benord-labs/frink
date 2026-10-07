@@ -127,6 +127,24 @@ describe('staged continuation resume', () => {
     },
   );
 
+  // A slot mid-release still refuses a second admission, so the click waits for its settle too.
+  it('stages behind a slot that is releasing rather than enqueueing into it', async () => {
+    const ops = makeOps();
+    ops.getLiveAdmissionState.mockResolvedValue('releasing');
+    await expect(stageBehindHeldAdmission(PENDING, ops)).resolves.toBe(true);
+    expect(hasStagedContinuation(PENDING.flowRunId)).toBe(true);
+    expect(ops.requestTerminalFlowResume).not.toHaveBeenCalled();
+    dropStagedContinuation(PENDING.flowRunId);
+  });
+
+  // A release that kept a cleanup error never settles on its own, so nothing would fire the stage.
+  it('refuses a click behind a release that kept a cleanup error, staging nothing', async () => {
+    const ops = makeOps();
+    ops.getLiveAdmissionState.mockResolvedValue('retained');
+    await expect(stageBehindHeldAdmission(PENDING, ops)).rejects.toThrow(/failed cleanup/);
+    expect(hasStagedContinuation(PENDING.flowRunId)).toBe(false);
+  });
+
   it('reports a staged continuation until it fires or a Cancel drops it', async () => {
     const ops = makeOps();
     expect(hasStagedContinuation(PENDING.flowRunId)).toBe(false);
@@ -209,18 +227,23 @@ describe('staged continuation resume', () => {
     });
   });
 
-  it('a prior admission still RELEASING at fire time keeps the continuation staged — the settle-bailing reconcile is not the one that freed the run; a later fire delivers it', async () => {
-    const ops = makeOps();
-    ops.getLiveAdmissionState.mockResolvedValueOnce('releasing');
-    const emit = vi.fn();
-    stageContinuationResume(PENDING, emit, FAST_WATCH);
-    await fireStagedContinuationResume(PENDING.flowRunId, ops);
-    expect(ops.requestTerminalFlowResume).not.toHaveBeenCalled();
-    expect(emit).not.toHaveBeenCalled();
-    // The next final release re-enters with the run actually free — the entry survived.
-    await fireStagedContinuationResume(PENDING.flowRunId, ops);
-    expect(ops.requestTerminalFlowResume).toHaveBeenCalledWith(expect.objectContaining(PENDING));
-  });
+  // `retained` (a release that kept a cleanup error) must stay staged too, not read as a newer
+  // admission that supersedes the entry.
+  it.each(['releasing', 'retained'])(
+    'a prior admission still %s at fire time keeps the continuation staged — the settle-bailing reconcile is not the one that freed the run; a later fire delivers it',
+    async (state) => {
+      const ops = makeOps();
+      ops.getLiveAdmissionState.mockResolvedValueOnce(state);
+      const emit = vi.fn();
+      stageContinuationResume(PENDING, emit, FAST_WATCH);
+      await fireStagedContinuationResume(PENDING.flowRunId, ops);
+      expect(ops.requestTerminalFlowResume).not.toHaveBeenCalled();
+      expect(emit).not.toHaveBeenCalled();
+      // The next final release re-enters with the run actually free — the entry survived.
+      await fireStagedContinuationResume(PENDING.flowRunId, ops);
+      expect(ops.requestTerminalFlowResume).toHaveBeenCalledWith(expect.objectContaining(PENDING));
+    },
+  );
 
   it("a queued/claimed admission for the run supersedes the staged continuation silently — that admission's own claim delivers the reply", async () => {
     const ops = makeOps();

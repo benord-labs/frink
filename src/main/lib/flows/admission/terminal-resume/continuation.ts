@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import log from 'electron-log';
 import type { RecoveryKind } from '../../../../../shared/types/flow-run/resume';
 import { getDatabase } from '../../../db';
@@ -23,7 +24,8 @@ type ContinuationWatch = { intervalMs?: number; attempts?: number };
 type ContinuationAdmissionOps = {
   requestTerminalFlowResume: (input: PendingContinuationResume) => Promise<object>;
   hasLiveFlowAdmission: (flowRunId: string) => Promise<boolean>;
-  /** State of the run's live admission row, or null when none — the fire pre-flight. */
+  /** State of the run's live admission row, or null when none — the fire pre-flight. A release that
+   * kept a cleanup error reads `retained`: it never settles on its own, so nothing would fire a stage. */
   getLiveAdmissionState: (flowRunId: string) => Promise<string | null>;
 };
 
@@ -71,15 +73,23 @@ export function stageContinuationResume(
   });
 }
 
-/** A click on a run still holding its active slot would be refused as a second admission, so it is
- * staged for that slot's settle to enqueue. False when no slot is held: enqueue directly. */
+const RETAINED_RELEASE_MESSAGE =
+  'This run is still holding its slot after a failed cleanup — restart Frink to recover it.';
+
+const holdsSlot = (state: string | null) => state === 'active' || state === 'releasing';
+
+/** A click on a run still holding its slot (active, or releasing it) would be refused as a second
+ * admission, so it is staged for that slot's settle to enqueue. False when no slot is held: enqueue directly. */
 export async function stageBehindHeldAdmission(
   pending: PendingContinuationResume,
   ops: ContinuationAdmissionOps,
 ): Promise<boolean> {
   const { flowRunId } = pending;
   const held = await ops.getLiveAdmissionState(flowRunId);
-  if (held !== 'active') {
+  if (held === 'retained') {
+    throw new TRPCError({ code: 'PRECONDITION_FAILED', message: RETAINED_RELEASE_MESSAGE });
+  }
+  if (!holdsSlot(held)) {
     // An entry the settle missed has no admission left to fire it: drop it, so it cannot fire
     // after the run this click re-admits.
     if (held === null && staged.has(flowRunId)) dropStagedContinuation(flowRunId);
@@ -91,8 +101,7 @@ export async function stageBehindHeldAdmission(
   });
   // The held admission may have settled between the probe and the stage, leaving no settle to
   // fire the entry: fire it here (it enqueues on a free run and steps aside for a newer ticket).
-  const state = await ops.getLiveAdmissionState(flowRunId);
-  if (state !== 'active' && state !== 'releasing')
+  if (!holdsSlot(await ops.getLiveAdmissionState(flowRunId)))
     await fireStagedContinuationResume(flowRunId, ops);
   return true;
 }
@@ -119,23 +128,42 @@ function continuationInput(entry: StagedContinuation) {
   return { ...pending, admit };
 }
 
+type SettleController = Pick<FlowAdmissionController, 'settle' | 'settleWithContinuation'>;
+type SettleOutcome = Parameters<FlowAdmissionController['settle']>[1];
+
 /**
  * Settle the prior admission and enqueue the run's staged continuation in ONE transaction, so the
  * freed slot cannot go to a queued start first. False when nothing settled (the entry stays staged).
  */
 export async function settleWithStagedContinuation(
-  controller: Pick<FlowAdmissionController, 'settle' | 'settleWithContinuation'>,
+  controller: SettleController,
   ticket: number,
-  outcome: Parameters<FlowAdmissionController['settle']>[1],
+  outcome: SettleOutcome,
   flowRunId: string,
   ops: ContinuationAdmissionOps,
 ): Promise<boolean> {
   const entry = staged.get(flowRunId);
-  if (!entry) return (await controller.settle(ticket, outcome)) !== null;
+  const settled = entry
+    ? await settleConsuming(controller, ticket, outcome, entry, ops)
+    : (await controller.settle(ticket, outcome)) !== null;
+  // A click staged while the settle awaited missed the read above, and its own re-probe still saw
+  // the slot held: fire it now the run is free (a no-op when nothing is staged).
+  if (settled) await fireStagedContinuationResume(flowRunId, ops);
+  return settled;
+}
+
+async function settleConsuming(
+  controller: SettleController,
+  ticket: number,
+  outcome: SettleOutcome,
+  entry: StagedContinuation,
+  ops: ContinuationAdmissionOps,
+): Promise<boolean> {
+  const { flowRunId } = entry.pending;
   // The entry leaves the map only once the settle committed: a thrown transaction keeps it staged.
   const result = await controller.settleWithContinuation(ticket, outcome, continuationInput(entry));
   if (!result.settled) return false;
-  // Only this entry is consumed: a newer stage that landed during the await stays for the next fire.
+  // Only this entry is consumed: a newer stage that landed during the await is fired after.
   if (staged.get(flowRunId) === entry) staged.delete(flowRunId);
   if (result.declined instanceof ResumeAdmitDeclinedError) {
     log.info('[Flow Admission] staged continuation declined', {
@@ -192,7 +220,8 @@ export async function fireStagedContinuationResume(
     return;
   }
   const liveState = await ops.getLiveAdmissionState(flowRunId);
-  if (liveState === 'releasing') {
+  // A retained release keeps the entry too: the cleanup-failure fire above abandons it visibly.
+  if (liveState === 'releasing' || liveState === 'retained') {
     // The reconcile that invoked us did NOT settle the prior admission — a concurrent
     // activity registration landed inside its async window, so its settle bailed. Stay
     // staged: that activity's own final release re-enters this hook once the run is
