@@ -45,10 +45,24 @@ function isIdenticalToLatest(graph: unknown, latest: FlowVersion | undefined): b
   return Boolean(latest) && flowGraphsEqual(graph as FlowGraph, latest?.graph as FlowGraph);
 }
 
+export type CreateFlowVersionResult = {
+  row: FlowVersion;
+  /** False when the graph matched the latest version and no row was appended. */
+  inserted: boolean;
+};
+
 export async function createFlowVersion(
   db: Db,
   input: { flowId: string; graph: unknown; expectedVersionNumber?: number },
 ): Promise<FlowVersion> {
+  return (await createFlowVersionWithResult(db, input)).row;
+}
+
+/** `createFlowVersion`, plus whether a row was actually appended. */
+export async function createFlowVersionWithResult(
+  db: Db,
+  input: { flowId: string; graph: unknown; expectedVersionNumber?: number },
+): Promise<CreateFlowVersionResult> {
   return db.transaction(
     (tx) => {
       const latestRow = tx
@@ -70,7 +84,7 @@ export async function createFlowVersion(
       // return the existing row so identical saves don't append redundant immutable versions.
       // Checked after the conflict guard, so a stale client still gets a typed conflict.
       if (isIdenticalToLatest(input.graph, latestRow[0])) {
-        return latestRow[0];
+        return { row: latestRow[0], inserted: false };
       }
       const newRow: NewFlowVersion = {
         flowId: input.flowId,
@@ -78,7 +92,7 @@ export async function createFlowVersion(
         graph: input.graph,
       };
       const inserted = tx.insert(flowVersions).values(newRow).returning().all();
-      return inserted[0];
+      return { row: inserted[0], inserted: true };
     },
     { behavior: 'immediate' },
   );

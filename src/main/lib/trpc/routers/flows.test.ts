@@ -60,6 +60,10 @@ vi.mock('../../db/repos/flow-versions', async (importOriginal) => {
   return {
     ...actual,
     createFlowVersion: (...args: unknown[]) => createFlowVersionMock(...args),
+    createFlowVersionWithResult: async (...args: unknown[]) => ({
+      row: await createFlowVersionMock(...args),
+      inserted: true,
+    }),
     getLatestVersion: (...args: unknown[]) => getLatestVersionMock(...args),
     getVersion: (...args: unknown[]) => getVersionMock(...args),
   };
@@ -420,6 +424,48 @@ describe('flowsRouter (local)', () => {
       await expect(caller.cancelWorkQueueAdmission({ ticket: 12 })).resolves.toEqual({
         status: 'stale',
       });
+    });
+  });
+
+  describe('onVersionCommitted', () => {
+    const FLOW_ID = '550e8400-e29b-41d4-a716-446655440000';
+    const saveInput = (flowId: string) => ({
+      flowId,
+      graph: {
+        nodes: [
+          { id: 'a', blockType: 'manual_trigger' as const },
+          { id: 'b', blockType: 'agent' as const, config: { instructions: 'step' } },
+        ],
+        edges: [{ id: 'e-ab', source: 'a', target: 'b' }],
+      },
+      expectedVersionNumber: 0,
+    });
+    const versionRow = (flowId: string, versionNumber: number) => ({
+      id: `v-${versionNumber}`,
+      flowId,
+      versionNumber,
+      graph: { nodes: [], edges: [] },
+      createdAt: new Date(),
+    });
+
+    it('pushes a saved version to a subscriber of that flow only, until it unsubscribes', async () => {
+      const caller = flowsRouter.createCaller({ getWindow: () => null });
+      const received: unknown[] = [];
+      const stream = await caller.onVersionCommitted({ flowId: FLOW_ID });
+      const subscription = stream.subscribe({ next: (event) => received.push(event) });
+
+      createFlowVersionMock.mockResolvedValueOnce(versionRow('some-other-flow', 9));
+      await caller.saveVersion(saveInput('some-other-flow'));
+      expect(received).toEqual([]);
+
+      createFlowVersionMock.mockResolvedValueOnce(versionRow(FLOW_ID, 4));
+      await caller.saveVersion(saveInput(FLOW_ID));
+      expect(received).toEqual([{ flow_id: FLOW_ID, version_number: 4, source: 'ui' }]);
+
+      subscription.unsubscribe();
+      createFlowVersionMock.mockResolvedValueOnce(versionRow(FLOW_ID, 5));
+      await caller.saveVersion(saveInput(FLOW_ID));
+      expect(received).toHaveLength(1);
     });
   });
 
