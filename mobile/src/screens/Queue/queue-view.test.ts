@@ -182,6 +182,21 @@ describe('queueSections', () => {
     expect(section(overview, 'needsYou')?.rows.map((row) => row.actions)).toEqual([[], [], [], []]);
   });
 
+  it('labels a recovery swipe by the computer’s kind, carrying on when an older one sends none', () => {
+    const failed = { status: 'failed', chatId: 'c', actions: ['continueTask' as const] };
+    const data = {
+      ...overview,
+      queue: [
+        item({ ...failed, id: 'retry', recoveryKind: 'retry' }),
+        item({ ...failed, id: 'continue', recoveryKind: 'continue' }),
+        item({ ...failed, id: 'older' }),
+      ],
+    };
+    const rows = section(data, 'needsYou')!.rows;
+    const kinds = Object.fromEntries(rows.map((row) => [row.key, row.recoveryKind]));
+    expect(kinds).toMatchObject({ retry: 'retry', continue: 'continue', older: 'continue' });
+  });
+
   it('counts the rows it was sent and offers more when the computer holds more', () => {
     const paged = {
       ...overview,

@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fixture = vi.hoisted(() => ({
@@ -57,6 +58,26 @@ describe('executeMobileRequest', () => {
       await expect(executeMobileRequest({ type, id: 'task' })).resolves.toEqual({ ok: true });
       expect(fixture.taskAction).toHaveBeenLastCalledWith({ type, id: 'task' });
     }
+  });
+
+  it('keeps a recovery kind through the request schema, so Retry never runs as Continue', async () => {
+    fixture.taskAction.mockResolvedValue({ ok: true });
+    await executeMobileRequest({ type: 'continueTask', id: 'task', kind: 'retry' });
+    expect(fixture.taskAction).toHaveBeenLastCalledWith({
+      type: 'continueTask',
+      id: 'task',
+      kind: 'retry',
+    });
+  });
+
+  it('tells the phone a recovery whose kind changed to refresh, without reporting it', async () => {
+    fixture.taskAction.mockRejectedValueOnce(
+      new TRPCError({ code: 'PRECONDITION_FAILED', message: 'This step changed' }),
+    );
+    await expect(
+      executeMobileRequest({ type: 'continueTask', id: 'task', kind: 'retry' }),
+    ).rejects.toMatchObject({ status: 409, message: 'This item changed. Refresh and try again.' });
+    expect(fixture.capture).not.toHaveBeenCalled();
   });
 
   it('reports an unexpected fault it masks, and not an expected refusal', async () => {

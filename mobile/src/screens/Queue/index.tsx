@@ -15,11 +15,12 @@ import {
   COLLAPSED_ROWS,
   expandedLimits,
   queueSections,
+  type QueueRow,
   type QueueSection,
   type QueueSectionKey,
   type QueueTarget,
 } from './queue-view';
-import { ACTION_ITEMS, MacEyebrow, NotReadyNotice, QueueListRow } from './row';
+import { actionItem, MacEyebrow, NotReadyNotice, QueueListRow } from './row';
 
 /**
  * The shared overview poll serves the collapsed Queue (and the Queue badge). Once a section is
@@ -71,12 +72,16 @@ export function QueueScreen() {
           decisionTarget: target.decisionTarget,
         });
   // The computer re-checks each action, so a row that changed since the last poll says so.
-  const act = async (id: string, action: MobileTaskAction) => {
+  const act = async (row: QueueRow, action: MobileTaskAction) => {
     try {
-      await request({ type: action, id });
+      await request(
+        action === 'continueTask'
+          ? { type: action, id: row.key, kind: row.recoveryKind }
+          : { type: action, id: row.key },
+      );
     } catch (error) {
       tell(
-        `Couldn’t ${ACTION_ITEMS[action].label.toLowerCase()}`,
+        `Couldn’t ${actionItem(action, row.recoveryKind).label.toLowerCase()}`,
         error instanceof Error ? error.message : '',
       );
     }
@@ -118,7 +123,7 @@ export function QueueScreen() {
                     key={row.key}
                     row={row}
                     onOpen={row.target ? () => open(row.target!) : undefined}
-                    onAction={(action) => void act(row.key, action)}
+                    onAction={(action) => void act(row, action)}
                   />
                 ))}
               </ListGroup>

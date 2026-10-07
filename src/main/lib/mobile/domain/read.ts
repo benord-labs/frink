@@ -42,7 +42,8 @@ export async function readMobileOverview({
     page.items.map((task): MobileQueueItem => {
       const result = record(task.result);
       const signal = record(result.agentSignal);
-      return {
+      const actions = mobileTaskActions(task, task.effectiveStatus);
+      const item: MobileQueueItem = {
         id: task.id,
         title: task.description,
         summary: text(signal.summary),
@@ -53,8 +54,12 @@ export async function readMobileOverview({
         flowRunId: task.flowRunId,
         projectName: task.projectName,
         activityAt: (task.completedAt ?? task.startedAt ?? task.createdAt).toISOString(),
-        actions: mobileTaskActions(task, task.effectiveStatus),
+        actions,
       };
+      // Labels the row's Continue / Retry exactly as desktop's Work Queue does.
+      if (actions.includes('continueTask') && task.recoveryKind)
+        item.recoveryKind = task.recoveryKind;
+      return item;
     }),
   );
   const pendingIds = listPendingQuestionSubChatIds();

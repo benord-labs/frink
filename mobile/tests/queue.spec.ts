@@ -146,7 +146,7 @@ test('explains that Frink must be open on the Mac to run chats', async ({ page }
   await shot(page, 'not-ready');
 });
 
-/** A chat task parked on a usage limit: it can carry on or be marked complete. */
+/** A chat task parked on a usage limit: it continues its session or is marked complete. */
 function parkedOverview() {
   const overview = overviewFixture();
   const parked: MobileQueueItem = {
@@ -161,8 +161,26 @@ function parkedOverview() {
     projectName: 'billing-api',
     activityAt: new Date(NOW - 20 * 60_000).toISOString(),
     actions: ['continueTask', 'completeTask'],
+    recoveryKind: 'continue',
   };
   return { ...overview, queue: [parked, ...overview.queue] };
+}
+
+/** Adds a chat task that failed before it started: it has no session, so it can only run again. */
+function recoveryOverview() {
+  const overview = parkedOverview();
+  const neverStarted: MobileQueueItem = {
+    ...overview.queue[0],
+    id: 'task-never-started',
+    title: 'Rotate the staging API keys',
+    summary: 'Could not start',
+    status: 'failed',
+    chatId: 'chat-8',
+    subChatId: 'sub-8',
+    actions: ['continueTask'],
+    recoveryKind: 'retry',
+  };
+  return { ...overview, queue: [neverStarted, ...overview.queue] };
 }
 
 /** Swipes a row open by scrolling its own horizontal scroller to the end. */
@@ -186,16 +204,29 @@ const sent = (state: Awaited<ReturnType<typeof openApp>>) =>
   state.requests.filter((r) => ['completeTask', 'continueTask', 'startTask'].includes(r.type));
 
 test('swiping a task offers the desktop’s actions and sends the chosen one', async ({ page }) => {
-  const state = await openQueue(page, { data: { overview: parkedOverview() } });
+  const state = await openQueue(page, { data: { overview: recoveryOverview() } });
   const title = 'Migrate the billing webhooks to v2';
-  const carryOn = await swipeOpen(page, 'task-parked', `Carry on task: ${title}`);
+  const carryOn = await swipeOpen(page, 'task-parked', `Continue task: ${title}`);
   await expect(page.getByRole('button', { name: `Mark complete: ${title}` })).toBeInViewport();
   await page.mouse.move(0, 0);
   await page.screenshot({ path: 'test-results/sc4143-swipe-two-dark.png' });
   await page.emulateMedia({ colorScheme: 'light' });
   await page.screenshot({ path: 'test-results/sc4143-swipe-two-light.png' });
   await carryOn.click();
-  await expect.poll(() => sent(state)).toEqual([{ type: 'continueTask', id: 'task-parked' }]);
+  await expect
+    .poll(() => sent(state))
+    .toEqual([{ type: 'continueTask', id: 'task-parked', kind: 'continue' }]);
+  // The same swipe on a task with no session to resume runs it again, as desktop's does.
+  await page.waitForTimeout(500);
+  const retry = await swipeOpen(
+    page,
+    'task-never-started',
+    'Retry task: Rotate the staging API keys',
+  );
+  await retry.click();
+  await expect
+    .poll(() => sent(state).slice(1))
+    .toEqual([{ type: 'continueTask', id: 'task-never-started', kind: 'retry' }]);
 
   await page.emulateMedia({ colorScheme: 'dark' });
   const complete = await swipeOpen(
@@ -215,7 +246,7 @@ test('swiping a task offers the desktop’s actions and sends the chosen one', a
   await page.screenshot({ path: 'test-results/sc4143-swipe-start-dark.png' });
   await start.click();
   await expect
-    .poll(() => sent(state).slice(1))
+    .poll(() => sent(state).slice(2))
     .toEqual([
       { type: 'completeTask', id: 'task-done' },
       { type: 'startTask', id: 'task-inbox' },
@@ -224,12 +255,12 @@ test('swiping a task offers the desktop’s actions and sends the chosen one', a
 
 test('decisions, a failed Flow and running work have no swipe actions', async ({ page }) => {
   await openQueue(page, { data: { overview: parkedOverview() } });
-  await expect(page.getByRole('button', { name: /^Carry on task: / })).toBeAttached();
+  await expect(page.getByRole('button', { name: /^Continue task: / })).toBeAttached();
   for (const key of ['question:question-1', 'task-failed', 'task-run-flow', 'task-plan'])
     await expect(row(page, key)).toBeVisible();
   // Only the parked, finished and inbox tasks carry actions.
   await expect(
-    page.getByRole('button', { name: /^(Start task|Carry on task|Mark complete): / }),
+    page.getByRole('button', { name: /^(Start task|Continue task|Retry task|Mark complete): / }),
   ).toHaveCount(4);
 });
 

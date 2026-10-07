@@ -4,6 +4,7 @@ import type {
   MobileQueueSection,
   MobileTaskAction,
 } from '@frink/shared/types/remote/mobile';
+import type { RecoveryKind } from '@frink/shared/types/flow-run/resume';
 import { taskStatus, type Status } from '../../lib/status';
 
 export type QueueSectionKey = 'needsYou' | 'running' | 'review' | 'upNext';
@@ -28,6 +29,8 @@ export type QueueRow = {
   target: QueueTarget | null;
   /** What a swipe offers, as the computer allows it. */
   actions: MobileTaskAction[];
+  /** Whether its recovery swipe continues or retries; an older computer only carries on. */
+  recoveryKind: RecoveryKind;
 };
 export type QueueSection = {
   key: QueueSectionKey;
@@ -98,6 +101,7 @@ function itemRow(
     activityAt: item.activityAt,
     target: itemTarget(item),
     actions: item.actions,
+    recoveryKind: item.recoveryKind ?? 'continue',
   };
 }
 
@@ -171,6 +175,7 @@ function decisionRow(decision: Decision, queue: MobileQueueItem[]): QueueRow {
       decisionTarget: { type: decision.type, id: decision.id },
     },
     actions: [],
+    recoveryKind: 'continue',
   };
 }
 

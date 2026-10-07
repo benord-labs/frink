@@ -1,4 +1,5 @@
 import { eq } from 'drizzle-orm';
+import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { mobileRequestSchema } from '../../../../shared/types/remote/mobile';
 import { chats, tasks } from '../../db/schema';
@@ -9,12 +10,13 @@ const fixture = vi.hoisted(() => ({
   complete: vi.fn(),
   ready: vi.fn(),
   carryOn: vi.fn(),
+  recover: vi.fn(async () => {}),
   handleClaimed: vi.fn(async () => {}),
 }));
 vi.mock('./context', async () => ({
   MobileApiError: (await import('./errors')).MobileApiError,
   requireExecutionReady: fixture.ready,
-  mobileCallers: { tasks: { complete: fixture.complete } },
+  mobileCallers: { tasks: { complete: fixture.complete, recover: fixture.recover } },
 }));
 vi.mock('../../db', () => ({ getDatabase: () => fixture.db }));
 vi.mock('../../flows/rerun', () => ({ carryOnFlowTask: fixture.carryOn }));
@@ -68,6 +70,12 @@ describe('mobile task actions', () => {
       expect(mobileRequestSchema.safeParse({ type, id: 'task' }).success).toBe(true);
     expect(mobileRequestSchema.safeParse({ type: 'completeTask', id: '' }).success).toBe(false);
     expect(mobileRequestSchema.safeParse({ type: 'retryTask', id: 'task' }).success).toBe(false);
+    for (const kind of ['continue', 'retry']) {
+      const parsed = mobileRequestSchema.safeParse({ type: 'continueTask', id: 'task', kind });
+      expect(parsed.success).toBe(true);
+    }
+    const unknown = { type: 'continueTask', id: 'task', kind: 'restart' };
+    expect(mobileRequestSchema.safeParse(unknown).success).toBe(false);
   });
 
   it('marks a finished task complete, keeping its result', async () => {
@@ -108,6 +116,60 @@ describe('mobile task actions', () => {
     await expect(runMobileTaskAction({ type: 'continueTask', id: 'failed' })).rejects.toMatchObject(
       { status: 409, message: expect.stringContaining('chat is archived. Restore it') },
     );
+  });
+
+  it('retries a task that never started through desktop’s recover, not carry on', async () => {
+    await seed('failed', 'failed');
+    const retry = { type: 'continueTask', id: 'failed', kind: 'retry' } as const;
+    await runMobileTaskAction(retry);
+    expect(fixture.ready).toHaveBeenCalled();
+    expect(fixture.recover).toHaveBeenCalledWith({ taskId: 'failed', kind: 'retry' });
+    expect(fixture.carryOn).not.toHaveBeenCalled();
+
+    // recover re-checks the kind; a task that now continues refuses, for the phone to refresh.
+    const changed = new TRPCError({ code: 'PRECONDITION_FAILED', message: 'changed' });
+    fixture.recover.mockRejectedValueOnce(changed);
+    await expect(runMobileTaskAction(retry)).rejects.toBe(changed);
+  });
+
+  it('refuses, rather than faults, a Retry that lost a race to another Retry', async () => {
+    await seed('failed', 'failed');
+    const retry = { type: 'continueTask', id: 'failed', kind: 'retry' } as const;
+    // A double tap, or desktop's Retry: the other attempt restarts the task between our gate
+    // and recover's write, so recover finds it no longer stopped.
+    fixture.recover.mockImplementationOnce(async () => {
+      await db.update(tasks).set({ status: 'running' }).where(eq(tasks.id, 'failed'));
+      throw new Error('Only failed or attention-parked tasks can be retried');
+    });
+    await expect(runMobileTaskAction(retry)).rejects.toMatchObject({
+      status: 409,
+      message: 'This item changed. Refresh and try again.',
+    });
+
+    // The other attempt may already have stopped again: a new attempt, so still a lost race.
+    await db.update(tasks).set({ status: 'failed' }).where(eq(tasks.id, 'failed'));
+    fixture.recover.mockImplementationOnce(async () => {
+      const restarted = { status: 'failed', result: { retryRequestedAt: 'now', error: 'boom' } };
+      await db.update(tasks).set(restarted).where(eq(tasks.id, 'failed'));
+      throw new Error('Only failed or attention-parked tasks can be retried');
+    });
+    await expect(runMobileTaskAction(retry)).rejects.toMatchObject({ status: 409 });
+
+    // A fault that left the task's attempt as it was is not a race: it stays a fault for Sentry.
+    const fault = new Error('disk full');
+    fixture.recover.mockRejectedValueOnce(fault);
+    await expect(runMobileTaskAction(retry)).rejects.toBe(fault);
+  });
+
+  it('refreshes a Continue whose session is gone, since the row now retries', async () => {
+    await seed('failed', 'failed');
+    fixture.carryOn.mockResolvedValueOnce({ ok: false, reason: 'no-session' });
+    const proceed = { type: 'continueTask', id: 'failed', kind: 'continue' } as const;
+    await expect(runMobileTaskAction(proceed)).rejects.toMatchObject({
+      status: 409,
+      message: 'This item changed. Refresh and try again.',
+    });
+    expect(fixture.recover).not.toHaveBeenCalled();
   });
 
   it('starts a waiting task once, as an agent, through the task executor', async () => {
