@@ -11,6 +11,7 @@ vi.mock('./app-server-client', () => ({
 }));
 
 import { getRuntimeTopologySnapshot } from '../../diagnostics/provider-topology';
+import { ensureLoginShellEnv } from '../../platform/login-shell-env';
 import { CodexAppServerClient } from './app-server-client';
 import {
   codexAppServerCount,
@@ -75,6 +76,36 @@ describe('getCodexAppServer', () => {
     expect(CodexAppServerClient).toHaveBeenCalledTimes(1);
     expect(codexAppServerCount()).toBe(1);
     expect(getRuntimeTopologySnapshot().codexAppServerCount).toBe(1);
+  });
+
+  it('starts the client only after the login-shell PATH is ready (sc-4724)', async () => {
+    await getCodexAppServer('/repo', 'cred1', OPTS);
+    expect(vi.mocked(CodexAppServerClient).mock.calls[0][0]).toMatchObject({
+      ...OPTS,
+      beforeSpawn: ensureLoginShellEnv,
+    });
+  });
+
+  it('keeps the replacement when a superseded client fails to start late', async () => {
+    // Client A is still waiting for the login-shell PATH when its turn is aborted and the next
+    // turn starts client B under the same key; A's late rejection must not evict B.
+    let rejectA: (e: Error) => void = () => {};
+    const slowStart = new Promise((_, reject) => (rejectA = reject));
+    slowStart.catch(() => {});
+    // SAFETY: the registry only calls start/dispose/onClose/onError, all present on this fake.
+    vi.mocked(CodexAppServerClient).mockImplementationOnce(function SlowClient() {
+      return { ...fakeClientImpl()(), start: vi.fn(() => slowStart) };
+    } as never);
+    const a = getCodexAppServer('/repo', 'cred1', OPTS, 'sub-a');
+    disposeCodexAppServerSession('/repo', 'cred1', 'sub-a');
+    const b = await getCodexAppServer('/repo', 'cred1', OPTS, 'sub-a');
+
+    rejectA(new Error('disposed before it started'));
+    await expect(a).rejects.toThrow('disposed before it started');
+
+    expect(codexAppServerCount()).toBe(1);
+    expect(await getCodexAppServer('/repo', 'cred1', OPTS, 'sub-a')).toBe(b);
+    expect(CodexAppServerClient).toHaveBeenCalledTimes(2);
   });
 
   it('never shares a server between sub-chats in one project+credential', async () => {

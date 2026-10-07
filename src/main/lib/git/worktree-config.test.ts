@@ -1,7 +1,8 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { LoginShellEnvResolver, setLoginShellEnvResolver } from '../platform/login-shell-env';
 import {
   detectWorktreeConfig,
   executeWorktreeSetup,
@@ -29,7 +30,23 @@ async function writeFrinkFile(projectPath: string, content: string): Promise<str
   return frinkPath;
 }
 
+/** Setup waits for the login shell first; answer it from a fake shell, never the real profile. */
+function loginShellAnswers(path: string): void {
+  setLoginShellEnvResolver(
+    new LoginShellEnvResolver({
+      spawnShell: async () => ({ ok: true, env: { PATH: path } }),
+      extendPath: (p) => p ?? '',
+    }),
+  );
+}
+
+beforeEach(() => {
+  vi.stubEnv('PATH', process.env.PATH ?? '');
+  loginShellAnswers(process.env.PATH ?? '');
+});
+
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
@@ -201,6 +218,69 @@ describe('executeWorktreeSetup', () => {
 
     expect(result.success).toBe(false);
     expect(result.errors[0]).toContain('exit 3');
+  });
+
+  it("leads the error with the command's own stderr, ahead of the command text (sc-4724)", async () => {
+    const projectPath = await createTempProjectDir();
+    const worktreePath = await createTempProjectDir();
+    const cmd = 'frink-no-such-binary-4724 install';
+    await writeFrinkConfig(projectPath, { 'setup-worktree': [cmd] });
+
+    const result = await executeWorktreeSetup(worktreePath, projectPath);
+
+    expect(result.success).toBe(false);
+    const [firstLine] = result.errors[0].split('\n');
+    expect(firstLine).toMatch(/not found/);
+    expect(firstLine).toContain('(exit 127)');
+    expect(firstLine.indexOf('not found')).toBeLessThan(firstLine.indexOf('while running'));
+    expect(firstLine.endsWith(`while running: ${cmd}`)).toBe(true);
+  });
+
+  it('strips terminal colour codes from the stderr it reports', async () => {
+    // bun and pnpm colour their errors; escape codes in a flow node error are unreadable noise.
+    const projectPath = await createTempProjectDir();
+    const worktreePath = await createTempProjectDir();
+    await writeFrinkConfig(projectPath, {
+      'setup-worktree': ["printf '\\033[31merror:\\033[0m lockfile had changes\\n' >&2; exit 1"],
+    });
+
+    const result = await executeWorktreeSetup(worktreePath, projectPath);
+
+    expect(result.errors[0]).toMatch(/^error: lockfile had changes \(exit 1\)/);
+    expect(result.errors[0]).not.toContain('\u001b');
+  });
+
+  it('keeps the last stderr lines of a noisy failure, bounded, so the cause survives the 500-char node error', async () => {
+    const projectPath = await createTempProjectDir();
+    const worktreePath = await createTempProjectDir();
+    await writeFrinkConfig(projectPath, {
+      'setup-worktree': [
+        'i=0; while [ $i -lt 80 ]; do echo "warn: peer dependency $i is unmet" >&2; i=$((i+1)); done; echo \'error: EACCES /usr/lib\' >&2; exit 2',
+      ],
+    });
+
+    const result = await executeWorktreeSetup(worktreePath, projectPath);
+
+    const cause = result.errors[0].split(' — while running: ')[0];
+    expect(cause).toContain('error: EACCES /usr/lib (exit 2)');
+    expect(cause.length).toBeLessThanOrEqual(320);
+  });
+
+  it('runs commands on process.env PATH once the login-shell environment is ready (sc-4724)', async () => {
+    const projectPath = await createTempProjectDir();
+    const worktreePath = await createTempProjectDir();
+    const binDir = await createTempProjectDir();
+    await writeFile(join(binDir, 'frink-shell-only-tool'), '#!/bin/sh\necho from-shell-path\n', {
+      mode: 0o755,
+    });
+    await writeFrinkConfig(projectPath, { 'setup-worktree': ['frink-shell-only-tool'] });
+    // The tool is only on the login shell's PATH, not the launch PATH.
+    loginShellAnswers(`${binDir}:${process.env.PATH}`);
+
+    const result = await executeWorktreeSetup(worktreePath, projectPath);
+
+    expect(result.errors).toEqual([]);
+    expect(result.output).toContain('from-shell-path');
   });
 
   it('skips remaining commands once the signal aborts', async () => {

@@ -1,20 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-// PATH extension and default-shell resolution are the platform module's job.
+// PATH extension is the platform module's job.
 const buildExtendedPath = vi.fn((p?: string) => `EXTENDED::${p ?? ''}`);
-const platformDefaultShell = vi.fn(() => '/bin/zsh');
 
 vi.mock('../platform', () => ({
-  getDefaultShell: platformDefaultShell,
   platform: { buildExtendedPath },
 }));
 
-// Stub the login-shell spawn so the posix branch never touches a real shell.
-const execFileMock = vi.fn(
-  (_cmd: string, _args: string[], _opts: unknown, cb: (e: unknown, r: unknown) => void) => {
-    cb(null, { stdout: 'PATH=/login/path\n', stderr: '' });
-  },
-);
+const execFileMock = vi.fn();
 vi.mock('node:child_process', () => ({
   execFile: (...args: unknown[]) => (execFileMock as unknown as (...a: unknown[]) => void)(...args),
 }));
@@ -28,7 +21,26 @@ afterEach(() => {
   Object.defineProperty(process, 'platform', { value: realPlatform, configurable: true });
   vi.clearAllMocks();
   vi.resetModules();
+  vi.unstubAllEnvs();
 });
+
+/** Import shell-env with the login shell answering `PATH` (null: the shell is unavailable). */
+async function importWithLoginShell(path: string | null) {
+  vi.resetModules();
+  vi.stubEnv('PATH', process.env.PATH ?? '');
+  const { LoginShellEnvResolver, setLoginShellEnvResolver } =
+    await import('../platform/login-shell-env');
+  setLoginShellEnvResolver(
+    new LoginShellEnvResolver({
+      spawnShell: async () =>
+        path === null
+          ? { ok: false, failure: { message: 'no shell', code: 1, signal: null, stderr: '' } }
+          : { ok: true, env: { PATH: path } },
+      extendPath: (p) => p ?? '',
+    }),
+  );
+  return import('./shell-env');
+}
 
 describe('git shell-env consolidation (SC-84)', () => {
   it('win32: derives PATH via platform.buildExtendedPath instead of a local buildWindowsPath', async () => {
@@ -52,18 +64,49 @@ describe('git shell-env consolidation (SC-84)', () => {
     expect(env.PATH).not.toContain('EXTENDED::');
   });
 
-  it('posix: spawns the platform default shell as the login shell', async () => {
+  it('posix: git gets the shared login-shell PATH on top of process.env', async () => {
     withPlatform('darwin');
-    vi.resetModules();
-    const { getGitEnv } = await import('./shell-env');
+    const { getGitEnv } = await importWithLoginShell('/login/path');
 
-    await getGitEnv();
-    expect(platformDefaultShell).toHaveBeenCalled();
-    expect(execFileMock).toHaveBeenCalledWith(
-      '/bin/zsh',
-      ['-lc', 'env'],
-      expect.anything(),
-      expect.anything(),
-    );
+    const env = await getGitEnv();
+    expect(env.PATH?.split(':')[0]).toBe('/login/path');
+    expect(env.HOME).toBe(process.env.HOME);
+  });
+
+  it('posix: keeps process.env PATH while the login shell is unavailable', async () => {
+    withPlatform('darwin');
+    const { getGitEnv } = await importWithLoginShell(null);
+
+    expect((await getGitEnv()).PATH).toBe(process.env.PATH);
+  });
+});
+
+describe('execWithShellEnv', () => {
+  type Callback = (error: Error | null, result?: { stdout: string; stderr: string }) => void;
+  type ExecArgs = [cmd: string, args: string[], options: object, cb: Callback];
+  const enoent = Object.assign(new Error('spawn gh ENOENT'), { code: 'ENOENT' });
+
+  it('retries a command that was not found with the login-shell PATH', async () => {
+    withPlatform('darwin');
+    execFileMock
+      .mockImplementationOnce((...[, , , cb]: ExecArgs) => cb(enoent))
+      .mockImplementationOnce((...[, , , cb]: ExecArgs) => cb(null, { stdout: 'ok', stderr: '' }));
+    const { execWithShellEnv } = await importWithLoginShell('/login/path');
+
+    const result = await execWithShellEnv('gh', ['--version'], { env: { GH_TOKEN: 't' } });
+
+    expect(result.stdout).toBe('ok');
+    expect(execFileMock.mock.calls[1][2]).toMatchObject({
+      env: { PATH: expect.stringMatching(/^\/login\/path(:|$)/), GH_TOKEN: 't' },
+    });
+  });
+
+  it('rethrows the original error when the login shell is unavailable', async () => {
+    withPlatform('darwin');
+    execFileMock.mockImplementationOnce((...[, , , cb]: ExecArgs) => cb(enoent));
+    const { execWithShellEnv } = await importWithLoginShell(null);
+
+    await expect(execWithShellEnv('gh', ['--version'])).rejects.toBe(enoent);
+    expect(execFileMock).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,17 +1,4 @@
-import { execFileSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
-// getClaudeShellEnvironment() shells out to an interactive LOGIN shell (`zsh -ilc`), which costs
-// ~0.7s and yields whatever the developer's profile happens to export. Every other consumer of
-// this module mocks it away; this file tests it directly, so it stubs the subprocess instead.
-// Without this the 13 tests below spawn 13 real shells — slow, machine-dependent, and enough CPU
-// load to time out sibling suites sharing the worker pool.
-vi.mock('node:child_process', () => ({
-  execFileSync: vi.fn(
-    () =>
-      '_CLAUDE_ENV_DELIMITER_HOME=/mock/home\nUSER=testuser\nPATH=/mock/bin\n_CLAUDE_ENV_DELIMITER_',
-  ),
-}));
 
 vi.mock('electron', () => ({
   app: { isPackaged: false, getAppPath: () => '/mock/app' },
@@ -29,6 +16,11 @@ vi.mock('../platform', () => ({
 
 import { isWindows } from '../platform';
 import {
+  LoginShellEnvResolver,
+  type ShellEnv,
+  setLoginShellEnvResolver,
+} from '../platform/login-shell-env';
+import {
   computeClaudeSessionKey,
   diffKeyParts,
 } from '../socket/execution/claude-session/session-key';
@@ -39,6 +31,25 @@ import {
   getBundledClaudeBinaryPath,
   getClaudeShellEnvironment,
 } from './env';
+
+/** Resolve the shared login-shell env to `env` from a fake shell — no real profile is sourced. */
+async function resolveShellAs(env: ShellEnv): Promise<void> {
+  const resolver = new LoginShellEnvResolver({
+    spawnShell: async () => ({ ok: true, env }),
+    extendPath: (p) => p ?? '',
+  });
+  setLoginShellEnvResolver(resolver);
+  await resolver.resolve();
+}
+
+beforeEach(async () => {
+  vi.stubEnv('PATH', '/usr/bin:/bin');
+  await resolveShellAs({ HOME: '/mock/home', USER: 'testuser', PATH: '/mock/bin' });
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe('buildClaudeEnv', () => {
   afterEach(() => {
@@ -100,73 +111,48 @@ describe('buildClaudeEnv', () => {
   });
 });
 
-describe('getClaudeShellEnvironment caching', () => {
+describe('getClaudeShellEnvironment', () => {
   beforeEach(() => {
-    clearClaudeEnvCache();
-    vi.mocked(execFileSync).mockClear();
     vi.mocked(isWindows).mockReturnValue(false);
   });
   afterEach(() => {
-    clearClaudeEnvCache();
     // Restore the default so a Windows opt-in never leaks into a sibling describe.
     vi.mocked(isWindows).mockReturnValue(false);
   });
 
-  it('reuses the cached shell env across buildClaudeEnv calls (one login-shell spawn)', () => {
-    // Distinct returns per spawn so a cache hit is provable, not just a spawn count: a broken
-    // cache would spawn twice and surface '/second/bin' on the second call.
-    vi.mocked(execFileSync)
-      .mockReturnValueOnce('_CLAUDE_ENV_DELIMITER_PATH=/first/bin\n_CLAUDE_ENV_DELIMITER_')
-      .mockReturnValueOnce('_CLAUDE_ENV_DELIMITER_PATH=/second/bin\n_CLAUDE_ENV_DELIMITER_');
-
-    const first = buildClaudeEnv();
-    const second = buildClaudeEnv();
-
-    expect(execFileSync).toHaveBeenCalledTimes(1);
-    expect(second.PATH).toBe(first.PATH);
-    expect(second.PATH).toBe('/first/bin');
-  });
-
-  it('re-spawns the shell after clearClaudeEnvCache', () => {
-    buildClaudeEnv();
-    clearClaudeEnvCache();
-    buildClaudeEnv();
-
-    expect(execFileSync).toHaveBeenCalledTimes(2);
-  });
-
-  it('caches the buildEnvironment fallback after a spawn failure so it does not re-spawn', () => {
-    // A failed login shell is memoized like a success: the catch branch caches the fallback, so a
-    // transient failure degrades the whole process (no automatic retry) until the cache is cleared.
-    vi.mocked(execFileSync).mockImplementationOnce(() => {
-      throw new Error('shell spawn failed');
+  it('uses the platform fallback until the login shell has resolved, without pinning it', async () => {
+    // A slow or failed shell at startup used to be memoized for the whole process, leaving every
+    // later Claude spawn (and its npx MCP servers) on the fallback PATH.
+    const resolver = new LoginShellEnvResolver({
+      spawnShell: async () => ({ ok: true, env: { PATH: '/mock/bin' } }),
+      extendPath: (p) => p ?? '',
     });
+    setLoginShellEnvResolver(resolver);
+    const before = getClaudeShellEnvironment();
+    expect(before.HOME).toBe('/mock/home');
+    expect(before.PATH).toBeUndefined();
 
-    const first = getClaudeShellEnvironment();
-    const second = getClaudeShellEnvironment();
-
-    expect(first.HOME).toBe('/mock/home'); // served from the buildEnvironment fallback
-    expect(execFileSync).toHaveBeenCalledTimes(1); // the failed spawn is not retried
-    expect(second).toEqual(first);
+    await resolver.resolve();
+    expect(getClaudeShellEnvironment().PATH?.split(':')[0]).toBe('/mock/bin');
   });
 
-  it('returns a copy so a caller mutating the result cannot corrupt the cache', () => {
-    const first = getClaudeShellEnvironment();
-    first.PATH = 'CORRUPTED';
-
-    const second = getClaudeShellEnvironment();
-
-    expect(second.PATH).toBe('/mock/bin'); // cache is unaffected by the caller's mutation
+  it('carries the login-shell PATH into buildClaudeEnv ahead of the launch PATH', () => {
+    expect(buildClaudeEnv().PATH).toBe('/mock/bin:/usr/bin:/bin');
   });
 
-  it('derives the env from the platform provider on Windows without spawning a shell, and caches it', () => {
+  it('strips provider keys that would interfere with Claude auth resolution', async () => {
+    await resolveShellAs({ PATH: '/mock/bin', OPENAI_API_KEY: 'sk-other' });
+
+    expect(getClaudeShellEnvironment()).not.toHaveProperty('OPENAI_API_KEY');
+  });
+
+  it('derives the env from the platform provider on Windows, ignoring any shell env', () => {
     vi.mocked(isWindows).mockReturnValue(true);
 
-    const first = getClaudeShellEnvironment();
-    getClaudeShellEnvironment();
+    const env = getClaudeShellEnvironment();
 
-    expect(execFileSync).not.toHaveBeenCalled(); // no interactive login shell on Windows
-    expect(first.HOME).toBe('/mock/home');
+    expect(env.PATH).toBeUndefined(); // the resolved /mock/bin is not consulted
+    expect(env.HOME).toBe('/mock/home');
   });
 });
 

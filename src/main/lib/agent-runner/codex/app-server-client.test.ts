@@ -118,6 +118,59 @@ describe('CodexAppServerClient', () => {
     vi.clearAllMocks();
   });
 
+  it('never spawns when disposed while beforeSpawn was pending', async () => {
+    // The registry supersedes a client whose spawn args changed; spawning after that would leave
+    // an app server running outside the registry.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const client = new CodexAppServerClient({
+      binary: 'codex',
+      clientInfo: CLIENT_INFO,
+      beforeSpawn: () => gate,
+    });
+    const started = client.start();
+    client.dispose();
+    release();
+
+    await expect(started).rejects.toThrow('disposed before it started');
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it('spawns only once beforeSpawn has settled (sc-4724)', async () => {
+    // The registry waits for the login-shell PATH here: the app server is reused for the session
+    // and its MCP servers inherit its env, so spawning on the GUI launch PATH would stick.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    attachMockPeer(child, (msg, peer) => {
+      if (msg.method === 'initialize') {
+        peer.write({
+          id: msg.id,
+          result: {
+            userAgent: 'mock',
+            codexHome: '/home/.codex',
+            platformFamily: 'unix',
+            platformOs: 'macos',
+            capabilities: HOST_CAPABILITIES,
+          },
+        });
+      }
+    });
+
+    const client = new CodexAppServerClient({
+      binary: 'codex',
+      clientInfo: CLIENT_INFO,
+      beforeSpawn: () => gate,
+    });
+    const started = client.start();
+    await Promise.resolve();
+    expect(spawnMock).not.toHaveBeenCalled();
+
+    release();
+    await started;
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    client.dispose();
+  });
+
   it('performs the initialize handshake and sends the initialized notification', async () => {
     let initializeId: unknown;
     let initializeParams: unknown;

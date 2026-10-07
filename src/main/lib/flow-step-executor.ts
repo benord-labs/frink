@@ -19,6 +19,7 @@ import { createWorktreeForBranch } from './git/worktree';
 import { createWorktreeWithMergedBases } from './git/worktree-converge';
 import { sanitizeProjectName } from './git/worktree-naming';
 import { validateWorktreeForReuse } from './git/worktree-validation';
+import { ensureLoginShellEnv } from './platform/login-shell-env';
 import { runShellCommand, SHELL_TASK_MAX_BUFFER } from './shell-executor';
 import { buildSafeEnv } from './terminal/env';
 
@@ -435,6 +436,8 @@ export async function executeFlowStepLocal(
     };
   }
 
+  // Every step spawns the user's tools; a flow that fires right after launch must not race the PATH.
+  await ensureLoginShellEnv();
   let result: ShellResult;
   if (payload.blockType === 'start_task') {
     result = await executeStartTask(payload, project.path, project.name, signal);

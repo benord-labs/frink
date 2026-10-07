@@ -27,6 +27,7 @@ import { buildFrinkSystemPromptAppend } from '../../../frink-system-prompt';
 import { withChannelQuery } from '../../../mcp/execution-identity';
 import { resolveFrinkMcpServers } from '../../../mcp/runtime';
 import { createClaudeMcpConfigTransport } from '../../../mcp/runtime/mcp-config-transport';
+import { ensureLoginShellEnv } from '../../../platform/login-shell-env';
 import { captureMainException } from '../../../sentry/init';
 import { getAllAgentsForSdk } from '../../../trpc/routers/agent-utils';
 import { type ClaudeSession, createSession } from '../../claude-session-registry';
@@ -137,6 +138,9 @@ type ClaudeSessionSpec = Awaited<ReturnType<typeof buildClaudeSessionSpec>>;
 export async function buildClaudeSessionSpec(inputs: ClaudeSessionSpecInputs) {
   const { subChatId, projectPath, mode, settings, storedCredential, signalTaskId } = inputs;
   const { nativeAutoReview, planAutoReview, dynamicChatMcpUrl, persistedSessionId } = inputs;
+  // The CLI spawns stdio MCP servers (npx, uvx...) from this env; wait for the login-shell PATH
+  // rather than start the first session after launch on the fallback one.
+  await ensureLoginShellEnv();
   const baseEnv = buildClaudeEnv({
     enableTasks: settings?.enableTasks ?? true,
   });

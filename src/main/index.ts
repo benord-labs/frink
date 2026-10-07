@@ -39,6 +39,7 @@ import { setDocsLoader } from './lib/permissions/v2/check';
 import { resolveScopes } from './lib/permissions/v2/scope-resolver';
 import { captureMainException, initSentry } from './lib/sentry/init';
 import { assertRigHomeIsolated } from './lib/platform/frink-home';
+import { startLoginShellEnvResolve } from './lib/platform/login-shell-env';
 import './lib/socket';
 import { initTaskExecutor } from './lib/task-executor';
 import { getTaskPoller } from './lib/task-poller';
@@ -356,6 +357,8 @@ if (gotTheLock) {
   // App ready
   app.whenReady().then(async () => {
     startHeapWatch();
+    // GUI launches get a minimal PATH; resolve the user's shell PATH in the background.
+    startLoginShellEnvResolve();
 
     // Set dev mode app name (userData path was already set before requestSingleInstanceLock)
     if (IS_DEV) {

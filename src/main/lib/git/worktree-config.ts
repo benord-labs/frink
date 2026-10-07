@@ -1,10 +1,11 @@
 import { exec } from 'node:child_process';
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { promisify } from 'node:util';
+import { promisify, stripVTControlCharacters } from 'node:util';
 import log from 'electron-log';
 import { z } from 'zod';
 import { resolveCommandShell } from '../platform/command-shell';
+import { ensureLoginShellEnv } from '../platform/login-shell-env';
 
 const execAsync = promisify(exec);
 
@@ -131,6 +132,41 @@ const SETUP_COMMAND_TIMEOUT_MS = 300_000;
  */
 const AWAITED_SETUP_BUDGET_MS = 600_000;
 
+const SETUP_STDERR_TAIL_CHARS = 300;
+
+/** The fields Node's child_process `exec` puts on the error it rejects with. */
+const ExecFailureSchema = z.object({
+  message: z.string(),
+  name: z.string().optional(),
+  stderr: z.string().optional(),
+  code: z.union([z.number(), z.string()]).nullish(),
+  killed: z.boolean().optional(),
+  signal: z.string().nullish(),
+});
+type ExecFailure = z.infer<typeof ExecFailureSchema>;
+
+function failureStatus(failure: ExecFailure): string {
+  if (Number.isInteger(failure.code)) return `exit ${failure.code}`;
+  if (failure.name === 'AbortError') return 'cancelled';
+  if (failure.killed) return 'timed out';
+  return failure.signal ? `signal ${failure.signal}` : '';
+}
+
+/** Why a setup command failed, on one line with its own stderr first: callers keep only the start. */
+function describeSetupFailure(failure: ExecFailure): string {
+  const stderr = stripVTControlCharacters(failure.stderr ?? '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(' | ')
+    .slice(-SETUP_STDERR_TAIL_CHARS);
+  const status = failureStatus(failure);
+
+  if (stderr) return status ? `${stderr} (${status})` : stderr;
+  if (status) return `Command failed (${status})`;
+  return failure.message.split('\n')[0];
+}
+
 /**
  * Execute worktree setup commands
  * Runs after worktree creation to install deps, copy envs, etc.
@@ -167,6 +203,9 @@ export async function executeWorktreeSetup(
   }
 
   const shell = await resolveCommandShell();
+  // Setup commands are the user's own tools (bun, pnpm, uv...): make sure process.env carries the
+  // login-shell PATH before the first one runs, not the GUI launch PATH.
+  await ensureLoginShellEnv();
   const deadline = options.budgetMs === undefined ? null : Date.now() + options.budgetMs;
 
   for (const cmd of commandList) {
@@ -205,7 +244,9 @@ export async function executeWorktreeSetup(
       result.commandsRun++;
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      result.errors.push(`Command failed: ${cmd}\n${errorMsg}`);
+      const failure = ExecFailureSchema.safeParse(error);
+      const reason = failure.success ? describeSetupFailure(failure.data) : errorMsg;
+      result.errors.push(`${reason} — while running: ${cmd}`);
       result.output.push(`[error] ${errorMsg}`);
       // Continue with next command, don't fail entirely
     }

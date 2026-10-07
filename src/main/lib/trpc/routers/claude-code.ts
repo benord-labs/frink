@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { LAUNCH_FLAGS } from '../../../../shared/launch-flags';
 import { isAnthropicApiKey } from '../../../../shared/lib/anthropic-token';
 import { getClaudeShellEnvironment } from '../../claude';
+import { ensureLoginShellEnv } from '../../platform/login-shell-env';
 import { runClaudeOAuthBrowser } from '../../claude-oauth-browser';
 import {
   decryptToken,
@@ -293,11 +294,10 @@ export const claudeCodeRouter = router({
    * If true, user can skip OAuth onboarding
    * Based on PR #29 by @sa4hnd
    */
-  hasExistingCliConfig: publicProcedure.query(() => {
-    const shellEnv = getClaudeShellEnvironment();
-    const hasConfig = !!(shellEnv.ANTHROPIC_API_KEY || shellEnv.ANTHROPIC_BASE_URL);
+  hasExistingCliConfig: publicProcedure.query(async () => {
+    const shellEnv = await ensureLoginShellEnv().then(getClaudeShellEnvironment); // profile keys
     return {
-      hasConfig,
+      hasConfig: !!(shellEnv.ANTHROPIC_API_KEY || shellEnv.ANTHROPIC_BASE_URL),
       hasApiKey: !!shellEnv.ANTHROPIC_API_KEY,
       baseUrl: shellEnv.ANTHROPIC_BASE_URL || null,
     };

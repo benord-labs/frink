@@ -8,6 +8,7 @@ import * as path from 'node:path';
 import { promisify } from 'node:util';
 import log from 'electron-log';
 import { BasePlatformProvider } from './base';
+import { cachedNvmBinDirs } from './nvm';
 import type { CliConfig, EnvironmentConfig, PathConfig, ShellConfig } from './types';
 
 const execFileAsync = promisify(execFile);
@@ -54,7 +55,7 @@ export class LinuxPlatformProvider extends BasePlatformProvider {
         path.join(home, '.cargo', 'bin'),
         path.join(home, '.deno', 'bin'),
         // NVM managed Node.js
-        path.join(home, '.nvm', 'versions', 'node', '*', 'bin'),
+        ...cachedNvmBinDirs(home),
         // ASDF version manager
         path.join(home, '.asdf', 'shims'),
         // Linuxbrew
