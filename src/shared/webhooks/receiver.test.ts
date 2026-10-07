@@ -4,7 +4,8 @@ import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRIGGER_SAMPLES } from '../integrations/trigger-samples';
 import { standardWebhooksSecret } from '../integrations/webhook-secret';
-import { jsonObject } from './extractors/generic';
+import { matchesConditions } from '../lib/webhook-match';
+import { type JsonObject, jsonObject } from './extractors/generic';
 import type { WebhookHeaders } from './extractors/types';
 import { WEBHOOK_BODY_MAX_BYTES } from './content-limits';
 import { receiveWebhook, type WebhookReceiverDeps } from './receiver';
@@ -341,6 +342,69 @@ describe('paste_url webhook handler — forward to machine', () => {
     expect(deps.forwardWebhookEvent).toHaveBeenCalledWith(
       expect.objectContaining({ deliveryId: 'sample-1' }),
     );
+  });
+});
+
+describe('paste_url webhook handler — a ClickUp assignee change', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function clickupReq(body: JsonObject) {
+    const rawBody = JSON.stringify(body);
+    return makeReq({
+      provider: 'clickup',
+      rawBody,
+      signature: null,
+      headers: { 'x-signature': crypto.createHmac('sha256', SECRET).update(rawBody).digest('hex') },
+    });
+  }
+  /** The nth event the machine was handed. */
+  function forwarded(index = 0) {
+    const event = deps.forwardWebhookEvent.mock.calls[index]?.[0];
+    if (!event) throw new Error(`no event ${index} was forwarded`);
+    return event;
+  }
+  const isMine = (event: ReturnType<typeof forwarded>) =>
+    matchesConditions({ assignee: 'me' }, event.eventData, event.ownerExternalId ?? undefined);
+  const assigned = (id: number) => ({
+    event: 'taskAssigneeUpdated',
+    task_id: '86a123',
+    webhook_id: 'hook-1',
+    history_items: [{ id: 'h1', field: 'assignee_add', before: null, after: { id } }],
+  });
+
+  it('hands the machine the added member and the account owner as the same kind of id', async () => {
+    deps.getWebhookEndpointByPathToken.mockResolvedValue(makeEndpoint('183', 'clickup'));
+    const res = makeRes();
+    await call(clickupReq(assigned(183)), res);
+    expect(res.status).toHaveBeenCalledWith(202);
+    const event = forwarded();
+    expect(event.eventType).toBe('task_assignee_changed');
+    expect(event.eventData.ownerIds).toEqual(['183']);
+    expect(event.ownerExternalId).toBe('183');
+    expect(isMine(event)).toBe(true);
+  });
+
+  it('gives a second, different assignment its own delivery id and no match for the owner', async () => {
+    deps.getWebhookEndpointByPathToken.mockResolvedValue(makeEndpoint('183', 'clickup'));
+    await call(clickupReq(assigned(183)), makeRes());
+    await call(clickupReq(assigned(42)), makeRes());
+    await call(clickupReq(assigned(183)), makeRes());
+    const [mine, theirs, replay] = [forwarded(0), forwarded(1), forwarded(2)];
+    expect(theirs.deliveryId).not.toBe(mine.deliveryId);
+    // An identical redelivery carries the same id, which is what stops a second run.
+    expect(replay.deliveryId).toBe(mine.deliveryId);
+    expect(isMine(theirs)).toBe(false);
+  });
+
+  it('never matches "me" for an account whose owner is unknown', async () => {
+    deps.getWebhookEndpointByPathToken.mockResolvedValue(makeEndpoint(null, 'clickup'));
+    await call(clickupReq(assigned(183)), makeRes());
+    const event = forwarded();
+    expect(event.ownerExternalId).toBeNull();
+    expect(isMine(event)).toBe(false);
+    expect(matchesConditions({ assignee: 'anyone' }, event.eventData, undefined)).toBe(true);
   });
 });
 

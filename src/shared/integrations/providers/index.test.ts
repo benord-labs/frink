@@ -61,6 +61,7 @@ describe('provider catalog', () => {
     });
     expect(clickup.webhook_payload).toEqual({
       event_type_path: 'event',
+      owner_ids: { list_path: 'history_items', id_path: 'after.id' },
       signature: { hex_hmac_header: 'x-signature' },
     });
     expect(clickup.events.map((event) => event.vendor_events?.[0])).toEqual([
