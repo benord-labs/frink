@@ -6,6 +6,8 @@ import {
   ensureLoginShellEnv,
   getLoginShellEnvSync,
   LoginShellEnvResolver,
+  loginShellCandidates,
+  readLoginShellEnv,
   resolveLoginShellEnv,
   type ShellEnv,
   type ShellOutcome,
@@ -30,12 +32,23 @@ const succeeds = (env: ShellEnv): (() => Promise<ShellOutcome>) =>
 const fails = (): (() => Promise<ShellOutcome>) =>
   vi.fn(async () => ({
     ok: false as const,
-    failure: { message: 'timed out', code: null, signal: 'SIGKILL', stderr: 'slow rc' },
+    failure: {
+      message: 'timed out',
+      code: null,
+      signal: 'SIGKILL',
+      stderr: 'slow rc',
+      timedOut: true,
+    },
   }));
 const extendPath = (p: string | undefined) => `/fallback/bin:${p ?? ''}`;
 
 function install(spawnShell: () => Promise<ShellOutcome>): void {
   setLoginShellEnvResolver(new LoginShellEnvResolver({ spawnShell, extendPath }));
+}
+
+/** Resolve by really spawning these stand-in shells, in order — never the developer's own. */
+function installAsking(...shells: string[]): void {
+  install(() => readLoginShellEnv(shells));
 }
 
 const realPlatform = process.platform;
@@ -58,14 +71,13 @@ describe('the real login-shell spawn', () => {
   const runsCommandWith = (exports: string) => `${exports}\neval "$2"`;
 
   it.skipIf(realPlatform === 'win32')(
-    'runs $SHELL as an interactive login shell and reads the env it prints',
+    'runs the shell as an interactive login shell and reads the env it prints',
     async () => {
       const shell = fakeShell(
         'ok-shell',
         `echo 'motd noise'\n${runsCommandWith("export PATH='/Users/me/.bun/bin:/usr/bin:/bin' EQ='a=b'")}`,
       );
-      vi.stubEnv('SHELL', shell.path);
-      setLoginShellEnvResolver(new LoginShellEnvResolver());
+      installAsking(shell.path);
 
       const env = await resolveLoginShellEnv();
 
@@ -90,8 +102,7 @@ describe('the real login-shell spawn', () => {
           ].join('\n'),
         ),
       );
-      vi.stubEnv('SHELL', shell.path);
-      setLoginShellEnvResolver(new LoginShellEnvResolver());
+      installAsking(shell.path);
 
       const env = await resolveLoginShellEnv();
 
@@ -105,8 +116,7 @@ describe('the real login-shell spawn', () => {
   it.skipIf(realPlatform === 'win32')(
     'reports a failing shell as no env, leaving PATH alone',
     async () => {
-      vi.stubEnv('SHELL', fakeShell('bad-shell', "echo 'zshrc: parse error' >&2; exit 1").path);
-      setLoginShellEnvResolver(new LoginShellEnvResolver());
+      installAsking(fakeShell('bad-shell', "echo 'zshrc: parse error' >&2; exit 1").path);
 
       expect(await resolveLoginShellEnv()).toBeNull();
       expect(process.env.PATH).toBe('/usr/bin:/bin');
@@ -116,12 +126,96 @@ describe('the real login-shell spawn', () => {
   it.skipIf(realPlatform === 'win32')(
     'treats output with no env section as a failure',
     async () => {
-      vi.stubEnv('SHELL', fakeShell('silent-shell', "echo 'HOME=/Users/me'").path);
-      setLoginShellEnvResolver(new LoginShellEnvResolver());
+      installAsking(fakeShell('silent-shell', "echo 'HOME=/Users/me'").path);
 
       expect(await resolveLoginShellEnv()).toBeNull();
     },
   );
+});
+
+describe('choosing which shell to ask', () => {
+  const runsCommand = (exports: string) => `${exports}\neval "$2"`;
+
+  it('asks $SHELL, then the account shell, then the stock shell, each once', () => {
+    expect(loginShellCandidates('/opt/homebrew/bin/fish', '/bin/zsh', 'darwin')).toEqual([
+      '/opt/homebrew/bin/fish',
+      '/bin/zsh',
+    ]);
+    // A GUI launch can arrive with no $SHELL at all.
+    expect(loginShellCandidates(undefined, null, 'darwin')).toEqual(['/bin/zsh']);
+    expect(loginShellCandidates('  ', '/bin/zsh', 'linux')).toEqual(['/bin/zsh', '/bin/bash']);
+  });
+
+  it('still offers the stock shell when $SHELL is set but unusable', () => {
+    // The stock shell must not be derived from $SHELL, or a bad $SHELL is the only candidate.
+    expect(loginShellCandidates('/gone/shell', '/gone/shell', 'darwin')).toEqual([
+      '/gone/shell',
+      '/bin/zsh',
+    ]);
+    expect(loginShellCandidates('/gone/shell', null, 'linux')).toEqual([
+      '/gone/shell',
+      '/bin/bash',
+    ]);
+  });
+
+  it.skipIf(realPlatform === 'win32')(
+    'falls through a shell that is missing or errors to the next one that answers',
+    async () => {
+      const broken = fakeShell('broken-shell', "echo 'bad option: -i' >&2; exit 2");
+      const working = fakeShell('working-shell', runsCommand("export PATH='/second/bin:/usr/bin'"));
+      installAsking(join(scratch, 'no-such-shell'), broken.path, working.path);
+
+      const env = await resolveLoginShellEnv();
+
+      expect(env?.PATH.split(':')[0]).toBe('/second/bin');
+      expect(readFileSync(broken.argsFile, 'utf8').split('\n')[0]).toBe('-ilc');
+    },
+  );
+
+  it.skipIf(realPlatform === 'win32')(
+    'does not ask another shell after a timeout: a slow profile would be waited on again',
+    async () => {
+      const slow = fakeShell('slow-shell', 'exec sleep 5');
+      const next = fakeShell('never-asked-shell', runsCommand("export PATH='/next/bin'"));
+      install(() => readLoginShellEnv([slow.path, next.path], 200));
+
+      expect(await resolveLoginShellEnv()).toBeNull();
+      expect(() => readFileSync(next.argsFile, 'utf8')).toThrow();
+    },
+  );
+
+  it.skipIf(realPlatform === 'win32')(
+    'does ask the next shell when one is killed by something other than the timeout',
+    async () => {
+      const killed = fakeShell('killed-shell', 'kill -9 $$');
+      const next = fakeShell('asked-after-kill', runsCommand("export PATH='/next/bin:/usr/bin'"));
+      installAsking(killed.path, next.path);
+
+      expect((await resolveLoginShellEnv())?.PATH.split(':')[0]).toBe('/next/bin');
+    },
+  );
+});
+
+describe('the SSH agent socket', () => {
+  it('adopts the socket the shell profile exports, replacing the launch one', async () => {
+    // 1Password / gpg-agent users export SSH_AUTH_SOCK in their profile; a Dock launch has the
+    // system agent's socket instead, so `git push` over SSH fails only from the app.
+    vi.stubEnv('SSH_AUTH_SOCK', '/private/tmp/com.apple.launchd.x/Listeners');
+    install(succeeds({ PATH: '/shell/bin', SSH_AUTH_SOCK: '/Users/me/.1password/agent.sock' }));
+
+    await resolveLoginShellEnv();
+
+    expect(process.env.SSH_AUTH_SOCK).toBe('/Users/me/.1password/agent.sock');
+  });
+
+  it('leaves the launch socket alone when the profile sets none', async () => {
+    vi.stubEnv('SSH_AUTH_SOCK', '/private/tmp/com.apple.launchd.x/Listeners');
+    install(succeeds({ PATH: '/shell/bin' }));
+
+    await resolveLoginShellEnv();
+
+    expect(process.env.SSH_AUTH_SOCK).toBe('/private/tmp/com.apple.launchd.x/Listeners');
+  });
 });
 
 describe('resolveLoginShellEnv', () => {
@@ -207,7 +301,13 @@ describe('resolveLoginShellEnv', () => {
             failStartup = () =>
               resolve({
                 ok: false,
-                failure: { message: 'slow', code: null, signal: 'SIGKILL', stderr: '' },
+                failure: {
+                  message: 'slow',
+                  code: null,
+                  signal: 'SIGKILL',
+                  stderr: '',
+                  timedOut: true,
+                },
               });
           }),
       )

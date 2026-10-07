@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import os from 'node:os';
 import log from 'electron-log';
-import { getDefaultShell, platform } from './index';
+import { platform } from './index';
 import { warmNvmBinDirs } from './nvm';
 
 /**
@@ -19,6 +19,8 @@ export type ShellFailure = {
   code: string | number | null;
   signal: string | null;
   stderr: string;
+  /** Ended by our own timeout, as opposed to exiting or being killed by something else. */
+  timedOut: boolean;
 };
 
 export type ShellOutcome = { ok: true; env: ShellEnv } | { ok: false; failure: ShellFailure };
@@ -48,8 +50,54 @@ function parseEnvOutput(output: string, delimiter: string): ShellEnv {
   return Object.fromEntries(entries);
 }
 
-function spawnLoginShell(): Promise<ShellOutcome> {
-  const shell = getDefaultShell();
+/** The shell every install of the platform has, whatever $SHELL says. */
+export function stockShell(platformId: NodeJS.Platform): string {
+  return platformId === 'darwin' ? '/bin/zsh' : '/bin/bash';
+}
+
+/** Shells to ask, in order: $SHELL, the account's login shell, then the platform's stock shell. */
+export function loginShellCandidates(
+  envShell: string | undefined,
+  accountLoginShell: string | null | undefined,
+  platformId: NodeJS.Platform,
+): string[] {
+  const named = [envShell, accountLoginShell, stockShell(platformId)].map((s) => s?.trim() ?? '');
+  return [...new Set(named.filter(Boolean))];
+}
+
+/** The first candidate that prints an environment; otherwise the last failure. */
+export async function readLoginShellEnv(
+  shells: string[],
+  timeoutMs = RESOLVE_TIMEOUT_MS,
+): Promise<ShellOutcome> {
+  let outcome: ShellOutcome = {
+    ok: false,
+    failure: {
+      message: 'no login shell to ask',
+      code: null,
+      signal: null,
+      stderr: '',
+      timedOut: false,
+    },
+  };
+  for (const shell of shells) {
+    outcome = await spawnLoginShell(shell, timeoutMs);
+    // A timeout is the profile being slow; the next shell would wait on it all over again.
+    if (outcome.ok || outcome.failure.timedOut) return outcome;
+    log.warn(`[shell-env] ${shell} gave no environment`, outcome.failure);
+  }
+  return outcome;
+}
+
+function accountShell(): string | null {
+  try {
+    return os.userInfo().shell;
+  } catch {
+    return null;
+  }
+}
+
+function spawnLoginShell(shell: string, timeoutMs: number): Promise<ShellOutcome> {
   // Random per spawn, so no environment value can contain it.
   const delimiter = `_FRINK_ENV_${randomUUID().replaceAll('-', '')}_`;
   const command = `printf '%s' '${delimiter}'; env -0; printf '%s' '${delimiter}'; exit`;
@@ -61,7 +109,7 @@ function spawnLoginShell(): Promise<ShellOutcome> {
       ['-ilc', command],
       {
         encoding: 'utf8',
-        timeout: RESOLVE_TIMEOUT_MS,
+        timeout: timeoutMs,
         // An interactive zsh ignores SIGTERM, so the timeout has to kill outright.
         killSignal: 'SIGKILL',
         env: {
@@ -86,6 +134,8 @@ function spawnLoginShell(): Promise<ShellOutcome> {
             message: error?.message ?? 'login shell printed no PATH',
             code: error?.code ?? null,
             signal: error?.signal ?? null,
+            // Node sets `killed` only when it ended the child itself, which here is the timeout.
+            timedOut: error?.killed === true,
             stderr: stderr.slice(-STDERR_TAIL_CHARS),
           },
         });
@@ -111,14 +161,17 @@ export class LoginShellEnvResolver {
 
   constructor(
     private readonly deps: LoginShellEnvDeps = {
-      spawnShell: spawnLoginShell,
+      spawnShell: () =>
+        readLoginShellEnv(
+          loginShellCandidates(process.env.SHELL, accountShell(), process.platform),
+        ),
       extendPath: (currentPath) => platform.buildExtendedPath(currentPath),
     },
   ) {}
 
   /**
    * Spawns the shell at most once at a time; null on Windows, on failure, and in the cooldown after
-   * one unless `force`. A success puts the shell PATH — and only PATH — on `process.env`.
+   * one unless `force`. A success puts only the shell's PATH and SSH agent socket on `process.env`.
    */
   resolve(options?: { force?: boolean }): Promise<ShellEnv | null> {
     if (process.platform === 'win32') return Promise.resolve(null);
@@ -142,6 +195,10 @@ export class LoginShellEnvResolver {
         this.lastFailureAt = 0;
         this.consecutiveFailures = 0;
         process.env.PATH = env.PATH;
+        // The shell runs on a bare env, so an agent socket here is one the profile chose (1Password,
+        // gpg-agent): git and ssh spawned from the app must use it, as they do in a terminal.
+        const agentSocket = outcome.env.SSH_AUTH_SOCK;
+        if (agentSocket) process.env.SSH_AUTH_SOCK = agentSocket;
         log.info(`[shell-env] Loaded ${Object.keys(env).length} variables from shell`);
         return { ...env };
       })
