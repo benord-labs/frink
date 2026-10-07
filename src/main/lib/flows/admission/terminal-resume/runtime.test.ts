@@ -798,6 +798,29 @@ describe('boot carry-on — staged from the startup sweep, fired ahead of queued
         );
         expect(hasStagedContinuation(flowRunId)).toBe(false);
       });
+
+      // The release keeps its cleanup error after the click's first probe, so the reconcile hook's
+      // cleanup fire never saw this stage: the re-probe must read the real row as retained and refuse.
+      it('refuses a click whose held slot keeps a cleanup error while it is staged', async () => {
+        const { flowRunId, nodeRunId, taskId } = await seedInterruptedAgentRun();
+        answerStep(taskId);
+        await settleInterruption(flowRunId, nodeRunId, true, false);
+        const getLiveForRun = controller.getLiveForRun.bind(controller);
+        vi.spyOn(controller, 'getLiveForRun')
+          .mockImplementationOnce(getLiveForRun)
+          .mockImplementationOnce(async (id) => {
+            const live = await getLiveForRun(id);
+            await controller.beginRelease(live!.ticket);
+            await controller.recordReleaseFailure(live!.ticket, 'cleanup failed');
+            return getLiveForRun(id);
+          });
+
+        await expect(stageResumeBehindHeldAdmission(request(flowRunId, nodeRunId))).rejects.toThrow(
+          /failed cleanup/,
+        );
+        expect(hasStagedContinuation(flowRunId)).toBe(false);
+        expect(mocks.resumeDispatcher).not.toHaveBeenCalled();
+      });
     });
   });
 });

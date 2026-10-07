@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -176,6 +177,16 @@ describe('retryTerminalFlowRun', () => {
     // The staged click keeps the enqueue's gate: a Work Queue Cancel before the settle wins.
     abandonRestartInterruption(db, flowRunId);
     expect(staged?.admit?.(db)).toBe(false);
+  });
+
+  // A held slot that kept a cleanup error refuses the click while staging; that refusal must reach
+  // the user as-is, never fall through to a direct enqueue into the still-held slot.
+  it('passes a staging refusal through without enqueueing', async () => {
+    await interruptByRestart();
+    const refused = new TRPCError({ code: 'PRECONDITION_FAILED', message: 'failed cleanup' });
+    mocks.stageResumeBehindHeldAdmission.mockRejectedValueOnce(refused);
+    await expect(retryTerminalFlowRun(db, flowRunId, 'retry')).rejects.toBe(refused);
+    expect(mocks.requestTerminalFlowResume).not.toHaveBeenCalled();
   });
 
   it('refuses a run the user cancelled (no restart marker) before enqueueing', async () => {
