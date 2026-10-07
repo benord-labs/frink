@@ -41,6 +41,8 @@ import { _setFlowAdmissionControllerForTests } from '../flows/admission/runtime'
 import { stageContinuationResume } from '../flows/admission/terminal-resume/continuation';
 import { ResumeAdmitDeclinedError } from '../flows/admission/terminal-resume/resume-store';
 import { registerNodeAbort } from '../flows/cancel-registry';
+import { deleteFlow } from '../flows/deletion';
+import { cancelFlowRunsForChat } from '../flows/engine';
 import { subscribeFlowEvents } from '../flows/events';
 import { rerunFlowRunFromInterruption } from '../flows/resume';
 import { cancelWorkQueueRunCommand, isRestartInterrupted } from '../flows/transitions';
@@ -64,6 +66,7 @@ const MARKED_OUTPUT = {
 let db: TestDb;
 let controller: FlowAdmissionController;
 let flowRunId: string;
+let flowId: string;
 let cancelledEvents: FlowExecutionEvent[];
 let unsubscribe: () => void;
 
@@ -91,7 +94,7 @@ beforeEach(async () => {
   };
   controller = new FlowAdmissionController(db, async () => config);
   _setFlowAdmissionControllerForTests(controller);
-  ({ flowRunId } = await seedFlowRun(db, GRAPH));
+  ({ flowRunId, flowId } = await seedFlowRun(db, GRAPH));
   cancelledEvents = [];
   unsubscribe = subscribeFlowEvents((event) => {
     if (event.eventType === 'run_cancelled') cancelledEvents.push(event);
@@ -265,7 +268,7 @@ describe('cancelWorkQueueTask', () => {
 });
 
 /** A send into the run: its preflight declines and records a continuation (typed-reply v1). */
-async function sendTurn(canonicalTaskId: string) {
+async function sendTurn(canonicalTaskId: string, turnController = new AbortController()) {
   const registration = await registerFlowProviderExecution({
     provenance: {
       prefetchedSignalTask: { id: canonicalTaskId, source: 'flow', flowRunId, status: 'cancelled' },
@@ -273,7 +276,7 @@ async function sendTurn(canonicalTaskId: string) {
       provenanceLookupError: null,
       restartInterruptedFlowRunId: null,
     },
-    controller: new AbortController(),
+    controller: turnController,
     chatId: 'chat-1',
   });
   if (!registration) throw new Error('turn was not registered');
@@ -291,8 +294,9 @@ async function settleTurn(
   registration: Awaited<ReturnType<typeof sendTurn>>,
   emitCorrective = vi.fn(),
   watch = FAST_WATCH,
+  abortReason?: string,
 ) {
-  const pending = registration.takePendingContinuationResume();
+  const pending = registration.takePendingContinuationResume(abortReason);
   if (pending) stageContinuationResume(pending, emitCorrective, watch);
   registration.unregisterAbort();
   registration.release();
@@ -317,7 +321,7 @@ async function seedTypedReplyTarget(seedRun: typeof interruptedRun) {
 describe.each([
   ['interrupted', interruptedRun],
   ['failed', failedRun],
-])('a Cancel against a typed reply into a %s run', (_, seedRun) => {
+])('a typed reply into a %s run', (_, seedRun) => {
   let taskId: string;
   beforeEach(async () => {
     taskId = await seedTypedReplyTarget(seedRun);
@@ -378,6 +382,50 @@ describe.each([
 
     await vi.waitFor(() => expect(resumeTickets()).toHaveLength(1));
   });
+
+  it('keeps a continuation whose turn was stopped without a Cancel', async () => {
+    const stop = new AbortController();
+    const turn = await sendTurn(taskId, stop);
+    stop.abort(); // chat Stop, pause or window close: no drop-generation bump
+    await settleTurn(turn, vi.fn(), FAST_WATCH, 'user-pause');
+
+    await vi.waitFor(() => expect(resumeTickets()).toHaveLength(1));
+  });
+
+  it.each(['chat deleted', 'chat archived', 'chat archived (batch)', 'project deleted'])(
+    'drops a continuation whose turn was stopped by %s',
+    async (reason) => {
+      const turn = await sendTurn(taskId);
+      await settleTurn(turn, vi.fn(), FAST_WATCH, reason);
+
+      expect(resumeTickets()).toEqual([]);
+    },
+  );
+
+  it('keeps a continuation when another chat of the run is archived', async () => {
+    const start = await createNodeRun(db, { flowRunId, nodeId: 'start', blockType: 'start_task' });
+    await setNodeRunStatus(db, start.id, 'completed', {
+      nodeOutput: { outputs: { chatId: 'chat-2' } },
+    });
+    const turn = await sendTurn(taskId);
+    await cancelFlowRunsForChat('chat-2');
+    await settleTurn(turn);
+
+    await vi.waitFor(() => expect(resumeTickets()).toHaveLength(1));
+  });
+});
+
+it("drops a typed reply's continuation when its Flow is deleted mid-turn", async () => {
+  const taskId = await seedTypedReplyTarget(interruptedRun);
+  const emitCorrective = vi.fn();
+  const turn = await sendTurn(taskId);
+  expect(await deleteFlow(flowId)).toBe(true);
+  await settleTurn(turn, emitCorrective);
+  await drainTimers();
+
+  expect(resumeTickets()).toEqual([]);
+  expect(emitCorrective).not.toHaveBeenCalled();
+  expect(holder.capture).not.toHaveBeenCalled();
 });
 
 describe('a Cancel after an interrupted run enqueued its continuation', () => {

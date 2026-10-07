@@ -47,6 +47,14 @@ type FlowResourceProvenance = {
   taskSignalDisarmed: boolean;
 };
 const flowTaskTeardownPersistence = new WeakMap<AbortController, Promise<void>>();
+/** abortActiveExecutionsForSubChats reasons for removing the turn's own chat: like a Cancel,
+ * they drop its typed-reply continuation. */
+const CHAT_REMOVAL_ABORTS = new Set([
+  'chat deleted',
+  'chat archived',
+  'chat archived (batch)',
+  'project deleted',
+]);
 async function reconcileFlowTaskOnTeardown(subChatId: string, interrupted: boolean): Promise<void> {
   try {
     const { getDatabase } = await import('../../db');
@@ -103,8 +111,9 @@ export type FlowProviderExecutionRegistration = {
    * The continuation re-admission a FLOW_RUN_RESUMING decline recorded, if any. The
    * executor stages it (stageContinuationResume) before settling this turn; the run's
    * final activity release fires it once the prior admission has actually settled.
+   * `abortReason` is the turn's stamped abort source, if it was aborted.
    */
-  takePendingContinuationResume: () => PendingContinuationResume | null;
+  takePendingContinuationResume: (abortReason?: string) => PendingContinuationResume | null;
 };
 
 export type FlowProviderExecutionInput = {
@@ -282,8 +291,13 @@ export async function registerFlowProviderExecution(
   const identity = await resolveFlowProviderIdentity(params);
   if (!identity) return null;
 
-  const { registerNodeAbort, unregisterNodeAbort } = await import('../../flows/cancel-registry');
+  const [{ registerNodeAbort, unregisterNodeAbort }, { continuationDropGeneration }] =
+    await Promise.all([
+      import('../../flows/cancel-registry'),
+      import('../../flows/admission/terminal-resume/continuation'),
+    ]);
   registerNodeAbort(identity.flowRunId, params.controller);
+  const dropGeneration = continuationDropGeneration(identity.flowRunId);
   const release = beginFlowResourceActivity(identity.flowRunId);
   let registeredController: AbortController | null = params.controller;
   const rebindAbort = (controller: AbortController): void => {
@@ -322,11 +336,14 @@ export async function registerFlowProviderExecution(
     })();
     return providerPreflight;
   };
-  const takePendingContinuationResume = (): PendingContinuationResume | null => {
+  const takePendingContinuationResume = (
+    abortReason?: string,
+  ): PendingContinuationResume | null => {
     const pending = pendingContinuationResume;
     pendingContinuationResume = null;
-    // A Cancel that aborted this turn owns the run: its continuation must not be staged.
-    return registeredController?.signal.aborted ? null : pending;
+    // A Cancel or Flow deletion since registration, or removing this turn's own chat, drops it.
+    const dropped = continuationDropGeneration(identity.flowRunId) !== dropGeneration;
+    return dropped || CHAT_REMOVAL_ABORTS.has(abortReason ?? '') ? null : pending;
   };
   return {
     release,

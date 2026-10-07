@@ -2089,10 +2089,9 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
     }
     await claudeMcpConfig?.clear();
     const fallbackSignalFailure: { current: { cause: unknown } | null } = { current: null };
-    // Typed-reply decline-and-convert: staged BEFORE settle — the run's final activity
-    // release (the reconcile that retires the prior admission) fires it, so the enqueue
-    // never races an admission that is still active/releasing.
-    const pendingResume = flowResources.takePendingContinuationResume();
+    // Typed-reply decline-and-convert, staged BEFORE settle: the run's final activity release
+    // fires it once the prior admission retired, so the enqueue never races a live admission.
+    const pendingResume = flowResources.takePendingContinuationResume(abortReason());
     if (pendingResume) {
       // The corrective is delayed and carries no assistantMessageId, so it must never land
       // on a LIVE turn (a newer send/Retry owns the surface; its own outcome supersedes).
