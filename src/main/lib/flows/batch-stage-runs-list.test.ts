@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Real in-memory SQLite (freshDb): under test are the batch read queries' enrichment — start_task
-// (latest attempt, merge-conflict surfacing, absence) and the needs_input / attention_count readouts.
+// (latest attempt, merge-conflict surfacing, absence), the needs_input / attention_count readouts,
+// each row's chat_id and the page/total snapshot.
 
 const { mocks } = vi.hoisted(() => ({
   mocks: {
@@ -14,11 +15,12 @@ vi.mock('../db', () => ({ getDatabase: mocks.getDatabase }));
 import { createBatchStageRun } from '../db/repos/batch-stage-runs';
 import { createBatchStage } from '../db/repos/batch-stages';
 import { createNodeRun, listHumanWaitFlowRunIds } from '../db/repos/node-runs';
-import { flowRuns, tasks } from '../db/schema';
+import { chats, flowRuns, tasks } from '../db/schema';
 import { freshDb, type TestDb } from '../db/test-utils/fresh-db';
 import { listBatchStageDetail } from './batch-stage-detail';
+import { listBatchRunsForBatch } from './batch-runs-list';
 import { listBatchStageRunsForStage } from './batch-stage-runs-list';
-import { seedBatchFlow } from './batch-test-factories';
+import { pageAndCountStatements, recordPrepares, seedBatchFlow } from './batch-test-factories';
 
 let db: TestDb;
 let stageId: string;
@@ -183,6 +185,111 @@ describe('batch stage read paths', () => {
     expect(runs[0].start_task_status).toBe('completed');
     expect(runs[0].merge_conflict).toBeUndefined();
     expect(runs[0].merged_branches).toEqual(['feat/a']);
+  });
+
+  describe('chat_id', () => {
+    it('is the chat the run start_task created', async () => {
+      await db.insert(chats).values({ id: 'chat-1' });
+      const flowRunId = await seedFlowRun();
+      await seedStageRun(flowRunId);
+      await seedStartTask(flowRunId, {
+        nodeId: 'st',
+        status: 'completed',
+        outputs: { chatId: 'chat-1' },
+        createdAt: new Date('2026-07-11T10:01:00Z'),
+      });
+
+      const { runs } = await listBatchStageRunsForStage(stageId);
+      expect(runs[0].chat_id).toBe('chat-1');
+    });
+
+    it('is null for a run-less row and for a run whose start_task has not completed', async () => {
+      await seedStageRun(null);
+      const flowRunId = await seedFlowRun();
+      await seedStageRun(flowRunId);
+      await seedStartTask(flowRunId, {
+        nodeId: 'st',
+        status: 'awaiting_input',
+        outputs: { chatId: 'chat-early' },
+        createdAt: new Date('2026-07-11T10:01:00Z'),
+      });
+
+      const { runs } = await listBatchStageRunsForStage(stageId);
+      expect(runs.map((r) => r.chat_id)).toEqual([null, null]);
+    });
+
+    it('falls back to a chatId the stage run trigger context carries', async () => {
+      await db.insert(chats).values({ id: 'chat-ctx' });
+      await createBatchStageRun(db, {
+        stageId,
+        status: 'pending',
+        triggerContext: { chatId: 'chat-ctx' },
+      });
+
+      const { runs } = await listBatchStageRunsForStage(stageId);
+      expect(runs[0].chat_id).toBe('chat-ctx');
+    });
+
+    it('is null once the chat it names has been deleted', async () => {
+      const flowRunId = await seedFlowRun();
+      await seedStageRun(flowRunId);
+      await seedStartTask(flowRunId, {
+        nodeId: 'st',
+        status: 'completed',
+        outputs: { chatId: 'chat-gone' },
+        createdAt: new Date('2026-07-11T10:01:00Z'),
+      });
+
+      const { runs } = await listBatchStageRunsForStage(stageId);
+      expect(runs.map((r) => r.chat_id)).toEqual([null]);
+    });
+
+    // Both readers describe the same run; the batch list is called as production calls it, with no db.
+    it('agrees with the batch run list on a run both of them return', async () => {
+      await db.insert(chats).values({ id: 'chat-shared' });
+      const [run] = await db
+        .insert(flowRuns)
+        .values({ flowVersionId: versionId, status: 'running', batchId: 'batch-1' })
+        .returning();
+      await seedStageRun(run.id);
+      await seedStartTask(run.id, {
+        nodeId: 'st',
+        status: 'completed',
+        outputs: { chatId: 'chat-shared' },
+        createdAt: new Date('2026-07-11T10:01:00Z'),
+      });
+
+      const stageList = await listBatchStageRunsForStage(stageId);
+      const batchList = await listBatchRunsForBatch('batch-1', { stageId });
+
+      expect(batchList.runs.map((r) => [r.id, r.chat_id])).toEqual([[run.id, 'chat-shared']]);
+      expect(stageList.runs.map((r) => r.chat_id)).toEqual(['chat-shared']);
+    });
+  });
+
+  describe('page and total', () => {
+    it('keeps the whole-stage total on every page, including one past the end', async () => {
+      for (let i = 0; i < 3; i += 1) await seedStageRun(null);
+
+      const first = await listBatchStageRunsForStage(stageId, { limit: 2 });
+      expect(first.runs).toHaveLength(2);
+      expect(first.total).toBe(3);
+
+      const past = await listBatchStageRunsForStage(stageId, { limit: 2, offset: 10 });
+      expect(past).toEqual({ runs: [], total: 3 });
+    });
+
+    it('reads the page and the total inside one transaction', async () => {
+      await seedStageRun(await seedFlowRun());
+      const prepared = recordPrepares(db);
+
+      await listBatchStageRunsForStage(stageId);
+
+      const statements = pageAndCountStatements(prepared);
+      expect(statements).toHaveLength(2);
+      expect(statements.map((s) => s.inTransaction)).toEqual([true, true]);
+      expect(db.$client.inTransaction).toBe(false);
+    });
   });
 
   describe('waiting on a human', () => {
