@@ -41,7 +41,11 @@ import {
 } from 'vscode-jsonrpc/node';
 import { lowerChildPriority } from '../../platform/lower-child-priority';
 import { captureMainException } from '../../sentry/init';
-import { createChildProcessCloseBarrier } from '../process-settlement';
+import {
+  createChildProcessCloseBarrier,
+  rejectOnHandshakeFailure,
+  withTimeout,
+} from '../process-settlement';
 import { APPROVAL_REQUEST_METHODS, declineApprovalResponse } from './codex-events';
 import { recordCodexSkillRootsRpcOutcome } from './skill-roots';
 import {
@@ -222,24 +226,6 @@ function canDeliverToTurn(sub: SubState, turnId: string | null): boolean {
   return sub.turnId === null || turnId === null || sub.turnId === turnId;
 }
 
-/** Reject `promise` if it doesn't settle within `ms` (the timer never holds the event loop). */
-export function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(message)), ms);
-    timer.unref?.();
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (err) => {
-        clearTimeout(timer);
-        reject(err);
-      },
-    );
-  });
-}
-
 /**
  * A live connection to one `codex app-server`. Wraps the JSON-RPC connection
  * with the codex handshake (initialize + the `initialized` notification) and a
@@ -294,11 +280,14 @@ export class CodexAppServerClient {
     connection.listen();
     this.connection = connection;
 
+    // A dead child rejects at once; the timeout is left for a live but silent (hung) binary.
     const result = (await withTimeout(
-      connection.sendRequest('initialize', {
-        clientInfo: this.options.clientInfo,
-        capabilities: { frinkHostToolPermission: FRINK_HOST_TOOL_PERMISSION_VERSION },
-      }),
+      rejectOnHandshakeFailure('codex app-server', child, connection, () =>
+        connection.sendRequest('initialize', {
+          clientInfo: this.options.clientInfo,
+          capabilities: { frinkHostToolPermission: FRINK_HOST_TOOL_PERMISSION_VERSION },
+        }),
+      ),
       INITIALIZE_TIMEOUT_MS,
       'codex app-server did not respond to initialize (wrong binary or hung process)',
     )) as CodexInitializeResult;

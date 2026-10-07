@@ -3,7 +3,7 @@
 
 import type { BackgroundTaskSummary } from '@anthropic-ai/claude-agent-sdk';
 import log from 'electron-log';
-import { withTimeout } from '../../../agent-runner/codex/app-server-client';
+import { withTimeout } from '../../../agent-runner/process-settlement';
 import { forgetPendingTask, type StopPendingWork } from '../../../task-stop-hook';
 import type { ClaudeSession } from '../../claude-session-registry';
 import { readWakeHolds, type WakeHold } from '../../claude-wake-hold';
