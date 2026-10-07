@@ -8,7 +8,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Chat, Task } from '../../../db/schema';
 import type { getDatabase } from '../../../db';
-import { makeLocalChat, makeLocalTask } from './test-factories';
+import { makeLocalChat, makeLocalSubChat, makeLocalTask } from './test-factories';
 
 const archiveChatLocalMock = vi.fn();
 /** What the archive transaction hands back: the archived row and the tasks it cancelled. */
@@ -41,6 +41,8 @@ vi.mock('../../../analytics', () => ({ trackWorkspaceArchived: trackWorkspaceArc
 vi.mock('../../../socket/executor', () => ({
   clearCodexSession: clearCodexSessionMock,
   abortActiveExecutionsForSubChats: vi.fn(),
+  // Inline factory, same reason as listSubChatsByChat above.
+  collectLiveSubChatIdsForChat: vi.fn(() => []),
 }));
 vi.mock('../../../terminal/manager', () => ({
   terminalManager: { killByWorkspaceId: killByWorkspaceIdMock },
@@ -94,6 +96,25 @@ describe('archiveRouter (local-first)', () => {
     });
     expect(result).toBeNull();
     expect(cancelFlowRunsForChatMock).not.toHaveBeenCalled();
+  });
+
+  it("still aborts the chat's live turns when its own row can't be read", async () => {
+    getChatByIdLocalMock.mockRejectedValue(new Error('database is locked'));
+    archiveChatLocalMock.mockReturnValue(
+      archivedRow(makeLocalChat({ id: 'c1', archivedAt: new Date() })),
+    );
+    const { abortActiveExecutionsForSubChats, collectLiveSubChatIdsForChat } =
+      await import('../../../socket/executor');
+    vi.mocked(collectLiveSubChatIdsForChat).mockReturnValue(['sub-live']);
+
+    const { archiveRouter } = await import('./archive');
+    const caller = archiveRouter.createCaller({ getWindow: () => null });
+    await caller.archive({ id: 'c1', deleteWorktree: true, killTerminals: false });
+
+    // The row is archived anyway, so its turns must not keep streaming into it.
+    expect(archiveChatLocalMock).toHaveBeenCalledWith(expect.anything(), 'c1');
+    expect(abortActiveExecutionsForSubChats).toHaveBeenCalledWith(['sub-live'], 'chat archived');
+    expect(tearDownChatWorktreeMock).not.toHaveBeenCalled();
   });
 
   it('restore unarchives via the local repo', async () => {
@@ -247,14 +268,40 @@ describe('archiveRouter (local-first)', () => {
     it('aborts running executions before tearing the worktree down even if the sub-chat lookup fails', async () => {
       const { listSubChatsByChat } = await import('../../../db/repos/sub-chats');
       vi.mocked(listSubChatsByChat).mockRejectedValue(new Error('database is locked'));
+      const { abortActiveExecutionsForSubChats, collectLiveSubChatIdsForChat } =
+        await import('../../../socket/executor');
+      vi.mocked(collectLiveSubChatIdsForChat).mockReturnValue(['sub-live']);
       tearDownChatWorktreeMock.mockResolvedValue(true);
 
       await archiveWithWorktree(worktreeChat());
       await new Promise((resolve) => setTimeout(resolve, 0));
 
-      // A failed lookup means we cannot know which executions are live, and aborting an empty list
-      // is a no-op — so removing the worktree would yank it from under a still-streaming agent.
+      // The live turn is found in memory, so it is stopped without the DB list.
+      expect(collectLiveSubChatIdsForChat).toHaveBeenCalledWith('c1');
+      expect(abortActiveExecutionsForSubChats).toHaveBeenCalledWith(['sub-live'], 'chat archived');
+      // Idle sessions of sub-chats we couldn't list are still unknown, so the worktree stays.
       expect(tearDownChatWorktreeMock).not.toHaveBeenCalled();
+    });
+
+    it('aborts the listed and live sub-chats once each when the lookup succeeds', async () => {
+      const { listSubChatsByChat } = await import('../../../db/repos/sub-chats');
+      vi.mocked(listSubChatsByChat).mockResolvedValue([
+        makeLocalSubChat({ id: 'sub-a', chatId: 'c1' }),
+        makeLocalSubChat({ id: 'sub-b', chatId: 'c1' }),
+      ]);
+      const { abortActiveExecutionsForSubChats, collectLiveSubChatIdsForChat } =
+        await import('../../../socket/executor');
+      vi.mocked(collectLiveSubChatIdsForChat).mockReturnValue(['sub-b']);
+      tearDownChatWorktreeMock.mockResolvedValue(true);
+
+      await archiveWithWorktree(worktreeChat());
+      await flushTeardown();
+
+      expect(abortActiveExecutionsForSubChats).toHaveBeenCalledWith(
+        ['sub-a', 'sub-b'],
+        'chat archived',
+      );
+      expect(tearDownChatWorktreeMock).toHaveBeenCalled();
     });
 
     it('makes restore wait for a running teardown instead of unarchiving into it', async () => {
@@ -306,6 +353,26 @@ describe('archiveRouter (local-first)', () => {
   });
 
   describe('archiveBatch edge cases', () => {
+    it("aborts every chat's live turns even when its sub-chat lookup fails", async () => {
+      const { listSubChatsByChat } = await import('../../../db/repos/sub-chats');
+      vi.mocked(listSubChatsByChat).mockRejectedValue(new Error('database is locked'));
+      const { abortActiveExecutionsForSubChats, collectLiveSubChatIdsForChat } =
+        await import('../../../socket/executor');
+      vi.mocked(collectLiveSubChatIdsForChat).mockImplementation((chatId) => [`${chatId}-live`]);
+      archiveChatLocalMock.mockImplementation((_db, id: string) =>
+        archivedRow(makeLocalChat({ id, archivedAt: new Date() })),
+      );
+
+      const { archiveRouter } = await import('./archive');
+      const caller = archiveRouter.createCaller({ getWindow: () => null });
+      await caller.archiveBatch({ chatIds: ['c1', 'c2'] });
+
+      expect(abortActiveExecutionsForSubChats).toHaveBeenCalledWith(
+        ['c1-live', 'c2-live'],
+        'chat archived (batch)',
+      );
+    });
+
     it('archives a chat once when the same id appears twice in the batch', async () => {
       archiveChatLocalMock.mockReturnValue(
         archivedRow(makeLocalChat({ id: 'c1', archivedAt: new Date() })),

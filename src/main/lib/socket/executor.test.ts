@@ -367,8 +367,10 @@ import {
   _hasActiveExecutionForTests,
   _registerExecutionForTests,
   _resetExecutorStateForTests,
+  abortActiveExecutionsForSubChats,
   abortActiveExecutionsForWebContents,
   buildPlanFallbackSends,
+  collectLiveSubChatIdsForChat,
   drainPendingPermissions,
   emitPlanFallbackSends,
   extractNativePlanPathFromChunks,
@@ -7163,6 +7165,36 @@ describe('active execution abort (window-scoped)', () => {
       'mp-win-b',
       expect.anything(),
     );
+  });
+
+  it("collects a chat's live sub-chats from memory so delete/archive can stop them without the DB", () => {
+    const presentation = (chatId: string) => ({ chatId, assistantMessageId: 'm' });
+    const a = new AbortController();
+    const b = new AbortController();
+    const other = new AbortController();
+    _registerExecutionForTests('sub-a', a, undefined, presentation('chat-1'));
+    _registerExecutionForTests('sub-b', b, undefined, presentation('chat-1'));
+    _registerExecutionForTests('sub-other', other, undefined, presentation('chat-2'));
+
+    const live = collectLiveSubChatIdsForChat('chat-1');
+    expect(live).toEqual(['sub-a', 'sub-b']);
+
+    abortActiveExecutionsForSubChats(live, 'chat deleted');
+    expect(a.signal.aborted).toBe(true);
+    expect(b.signal.aborted).toBe(true);
+    expect(other.signal.aborted).toBe(false);
+  });
+
+  it("includes a held chat's sub-chats, which have no active execution between bursts", () => {
+    _registerExecutionForTests('sub-a', new AbortController(), undefined, {
+      chatId: 'chat-1',
+      assistantMessageId: 'm',
+    });
+    // 'sub-a' is in both lists: an adopting turn and its hold briefly overlap.
+    const listWakeHolds = vi.fn(() => ['sub-held', 'sub-a']);
+
+    expect(collectLiveSubChatIdsForChat('chat-1', listWakeHolds)).toEqual(['sub-a', 'sub-held']);
+    expect(listWakeHolds).toHaveBeenCalledWith('chat-1');
   });
 });
 

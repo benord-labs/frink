@@ -8,7 +8,11 @@ import { deleteChatWithFlowQueueTasks } from '../../../db/repos/task-queries/cha
 import { settleChatOwnedFlowDeletion } from '../../../flows/deletion';
 import { cancelFlowRunsForChatOrThrow } from '../../../flows/engine';
 import { gitCache } from '../../../git/cache';
-import { abortActiveExecutionsForSubChats, clearCodexSession } from '../../../socket/executor';
+import {
+  abortActiveExecutionsForSubChats,
+  clearCodexSession,
+  collectLiveSubChatIdsForChat,
+} from '../../../socket/executor';
 import { terminalManager } from '../../../terminal/manager';
 import { publicProcedure, router } from '../../index';
 import { mapLocalChatResponse } from './map-chat-response';
@@ -39,10 +43,14 @@ export const deleteRouter = router({
 
     // Phase 1 ship-blocker fix (commit 6056c8): abort any active executions BEFORE we
     // flip the local row + remove the worktree. Without this, the SDK keeps streaming
-    // and tool-calling against a worktree we're about to yank from under it.
-    const subChats = await listSubChatsByChatLocal(db, chat.id).catch(() => []);
+    // and tool-calling against a worktree we're about to yank from under it. The live
+    // sub-chats come from memory, so a failed DB lookup still stops every running turn.
+    const subChats = await listSubChatsByChatLocal(db, chat.id).catch((error) => {
+      log.warn('[chats.delete] listSubChatsByChat failed; aborting live turns only', error);
+      return [];
+    });
     abortActiveExecutionsForSubChats(
-      subChats.map((sc) => sc.id),
+      [...new Set([...subChats.map((sc) => sc.id), ...collectLiveSubChatIdsForChat(chat.id)])],
       'chat deleted',
     );
     clearCodexSession(input.id);

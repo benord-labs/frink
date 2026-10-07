@@ -4,6 +4,7 @@ import {
   _clearActiveExecutionsForTests,
   deleteActiveExecution,
   getExecutionOwner,
+  listSubChatIdsForChat,
   releaseExecutionOwnershipForWebContents,
   setActiveExecution,
 } from './execution-registry';
@@ -62,5 +63,19 @@ describe('ownerless execution count', () => {
 
     expect(ownerless()).toBe(0);
     expect(active()).toBe(0);
+  });
+});
+
+// Chat delete/archive stop a chat's turns from this list when the DB sub-chat lookup fails.
+describe('listSubChatIdsForChat', () => {
+  it("returns only that chat's live sub-chats", () => {
+    const presentation = (chatId: string) => ({ chatId, assistantMessageId: 'm' });
+    setActiveExecution('sub-a', new AbortController(), undefined, presentation('c1'));
+    setActiveExecution('sub-b', new AbortController(), undefined, presentation('c1'));
+    setActiveExecution('sub-other', new AbortController(), undefined, presentation('c2'));
+    setActiveExecution('sub-untagged', new AbortController());
+
+    expect(listSubChatIdsForChat('c1')).toEqual(['sub-a', 'sub-b']);
+    expect(listSubChatIdsForChat('c3')).toEqual([]);
   });
 });
