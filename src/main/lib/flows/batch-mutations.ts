@@ -4,10 +4,13 @@
  */
 
 import { TRPCError } from '@trpc/server';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray, isNull, ne, notExists } from 'drizzle-orm';
 import type { RunAttachment } from '../../../shared/types/run-attachment';
 import { getDatabase } from '../db';
-import { batchStageRuns, batchStages } from '../db/schema';
+import { ACTIVE_BSR_STATUSES } from '../db/repos/batch-stage-runs';
+import { batchStageRuns, batchStages, flowRuns, flowVersions } from '../db/schema';
+import { ctxIfOwnedBatch } from './batch-context';
+import { resettleStagesAfterMove } from './batch-dispatch';
 
 export type PatchStageDepsResult = {
   updated: number;
@@ -130,34 +133,127 @@ export async function updateStageRunLocal(
   return { run: { id: input.runId, trigger_context: next } };
 }
 
-export async function reassignStageRunLocal(
+/** Stages a pending run may move between: a finished one neither releases nor dispatches a run. */
+const REASSIGNABLE_STAGE_STATUSES: readonly string[] = ['pending', 'running'];
+
+type ReassignResult = { runId: string; sourceStageId: string; targetStageId: string };
+
+/** Checks and move share ONE synchronous transaction so admission cannot interleave: a run that
+ * already holds a slot or a flow_run link keeps the stage its terminal event will settle. */
+function moveStageRun(
+  flowId: string,
   runId: string,
   targetStageId: string,
-): Promise<{ runId: string; sourceStageId: string; targetStageId: string }> {
+): ReassignResult & { batchId: string } {
   const db = getDatabase();
-  const [existing] = await db
-    .select({ stageId: batchStageRuns.stageId })
-    .from(batchStageRuns)
-    .where(eq(batchStageRuns.id, runId))
-    .limit(1);
-  if (!existing) {
-    throw new TRPCError({ code: 'NOT_FOUND', message: 'Stage run not found' });
-  }
-  const sourceStageId = existing.stageId;
-  if (sourceStageId === targetStageId) {
-    return { runId, sourceStageId, targetStageId };
-  }
-  const [target] = await db
+  return db.transaction(() => {
+    const existing = db
+      .select({
+        stageId: batchStageRuns.stageId,
+        batchId: batchStages.batchId,
+        stageStatus: batchStages.status,
+      })
+      .from(batchStageRuns)
+      .innerJoin(batchStages, eq(batchStages.id, batchStageRuns.stageId))
+      .where(eq(batchStageRuns.id, runId))
+      .get();
+    if (!existing) {
+      throw new TRPCError({ code: 'NOT_FOUND', message: 'Stage run not found' });
+    }
+    // Checked in the move's own transaction: a first run for another flow cannot land in between.
+    const foreign = db
+      .select({ id: flowRuns.id })
+      .from(flowRuns)
+      .innerJoin(flowVersions, eq(flowVersions.id, flowRuns.flowVersionId))
+      .where(and(eq(flowRuns.batchId, existing.batchId), ne(flowVersions.flowId, flowId)))
+      .limit(1)
+      .get();
+    if (foreign) {
+      throw new TRPCError({ code: 'NOT_FOUND', message: 'Batch not found for this flow' });
+    }
+    const moved = {
+      runId,
+      sourceStageId: existing.stageId,
+      targetStageId,
+      batchId: existing.batchId,
+    };
+    if (existing.stageId === targetStageId) return moved;
+    // A cancelled source cancels its pending runs a tick later; one must not escape into a live stage.
+    if (!REASSIGNABLE_STAGE_STATUSES.includes(existing.stageStatus)) {
+      throw new TRPCError({ code: 'CONFLICT', message: 'This stage has already finished' });
+    }
+    const target = db
+      .select({ status: batchStages.status })
+      .from(batchStages)
+      .where(and(eq(batchStages.id, targetStageId), eq(batchStages.batchId, existing.batchId)))
+      .get();
+    if (!target) {
+      throw new TRPCError({ code: 'NOT_FOUND', message: 'Target stage not found' });
+    }
+    if (!REASSIGNABLE_STAGE_STATUSES.includes(target.status)) {
+      throw new TRPCError({ code: 'CONFLICT', message: 'Target stage has already finished' });
+    }
+    const updated = db
+      .update(batchStageRuns)
+      .set({ stageId: targetStageId })
+      .where(
+        and(
+          eq(batchStageRuns.id, runId),
+          eq(batchStageRuns.status, 'pending'),
+          isNull(batchStageRuns.flowRunId),
+        ),
+      )
+      .returning({ id: batchStageRuns.id })
+      .get();
+    if (!updated) {
+      throw new TRPCError({ code: 'CONFLICT', message: 'Only pending runs can be moved' });
+    }
+    return moved;
+  });
+}
+
+/** Running stages of the batch with nothing active left: a move whose re-settle failed leaves its
+ * source among them, and nothing else will finalize it before a restart. One query, not one per stage. */
+function quiescentRunningStageIds(batchId: string): string[] {
+  const db = getDatabase();
+  return db
     .select({ id: batchStages.id })
     .from(batchStages)
-    .where(eq(batchStages.id, targetStageId))
-    .limit(1);
-  if (!target) {
-    throw new TRPCError({ code: 'NOT_FOUND', message: 'Target stage not found' });
-  }
-  await db
-    .update(batchStageRuns)
-    .set({ stageId: targetStageId })
-    .where(eq(batchStageRuns.id, runId));
-  return { runId, sourceStageId, targetStageId };
+    .where(
+      and(
+        eq(batchStages.batchId, batchId),
+        eq(batchStages.status, 'running'),
+        notExists(
+          db
+            .select({ id: batchStageRuns.id })
+            .from(batchStageRuns)
+            .where(
+              and(
+                eq(batchStageRuns.stageId, batchStages.id),
+                inArray(batchStageRuns.status, [...ACTIVE_BSR_STATUSES]),
+              ),
+            ),
+        ),
+      ),
+    )
+    .all()
+    .map((row) => row.id);
+}
+
+export async function reassignStageRunLocal(
+  flowId: string,
+  runId: string,
+  targetStageId: string,
+): Promise<ReassignResult> {
+  const { batchId, ...moved } = moveStageRun(flowId, runId, targetStageId);
+  const ctx = await ctxIfOwnedBatch(getDatabase(), flowId, batchId);
+  if (!ctx) return moved;
+  // A repeated move is a no-op here, so it is the retry path for a re-settle that failed: the old
+  // source is unknown by then, so settle whichever running stages were left with nothing active.
+  const stageIds =
+    moved.sourceStageId === targetStageId
+      ? [targetStageId, ...quiescentRunningStageIds(batchId)]
+      : [moved.sourceStageId, targetStageId];
+  await resettleStagesAfterMove(ctx, [...new Set(stageIds)]);
+  return moved;
 }
