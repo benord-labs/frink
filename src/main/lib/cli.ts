@@ -1,14 +1,11 @@
 /**
- * CLI command support for Frink
- * Allows users to open Frink from terminal with: frink . or frink /path/to/project
+ * Launch-directory parsing for Frink
+ * Handles a directory argument on cold start, e.g. `frink .` or `frink /path/to/project`
  *
  * Based on upstream PR #16 by @caffeinum (Aleksey Bykhun)
  */
 
 import { existsSync, lstatSync } from 'node:fs';
-import { join } from 'node:path';
-import { app } from 'electron';
-import { platform } from './platform';
 
 // Launch directory from CLI (e.g., `frink /path/to/project`)
 let launchDirectory: string | null = null;
@@ -48,35 +45,4 @@ export function parseLaunchDirectory(): void {
       }
     }
   }
-}
-
-function getCliSourcePath(): string {
-  const cliName = platform.getCliConfig().scriptName;
-  if (app.isPackaged) {
-    return join(process.resourcesPath, 'cli', cliName);
-  }
-  return join(__dirname, '..', '..', 'resources', 'cli', cliName);
-}
-
-/**
- * Check if the CLI command is installed
- */
-export function isCliInstalled(): boolean {
-  return platform.isCliInstalled(getCliSourcePath());
-}
-
-/**
- * Install the CLI command.
- * Platform-specific behavior is handled by the platform provider.
- */
-export async function installCli(): Promise<{ success: boolean; error?: string }> {
-  return platform.installCli(getCliSourcePath());
-}
-
-/**
- * Uninstall the CLI command.
- * Platform-specific behavior is handled by the platform provider.
- */
-export async function uninstallCli(): Promise<{ success: boolean; error?: string }> {
-  return platform.uninstallCli();
 }

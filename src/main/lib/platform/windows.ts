@@ -2,12 +2,9 @@
  * Windows Platform Provider
  */
 
-import { existsSync } from 'node:fs';
-import { copyFile, mkdir, rmdir, unlink } from 'node:fs/promises';
 import * as path from 'node:path';
-import log from 'electron-log';
 import { BasePlatformProvider } from './base';
-import type { CliConfig, EnvironmentConfig, PathConfig, ShellConfig } from './types';
+import type { EnvironmentConfig, PathConfig, ShellConfig } from './types';
 
 export class WindowsPlatformProvider extends BasePlatformProvider {
   readonly platform = 'win32' as const;
@@ -52,18 +49,6 @@ export class WindowsPlatformProvider extends BasePlatformProvider {
     };
   }
 
-  getCliConfig(): CliConfig {
-    // Install to ~/.local/bin which is already included in buildExtendedPath()
-    // This avoids needing to modify the system PATH
-    const home = this.getHome();
-
-    return {
-      installPath: path.join(home, '.local', 'bin', 'frink.cmd'),
-      scriptName: 'frink.cmd',
-      requiresAdmin: false, // Install to user directory, no admin needed
-    };
-  }
-
   getEnvironmentConfig(): EnvironmentConfig {
     const home = this.getHome();
 
@@ -101,82 +86,5 @@ export class WindowsPlatformProvider extends BasePlatformProvider {
 
     // Could query Windows locale via PowerShell, but for simplicity use default
     return 'en_US.UTF-8';
-  }
-
-  async installCli(
-    sourcePath: string,
-  ): Promise<{ success: boolean; error?: string; pathHint?: string }> {
-    const cliConfig = this.getCliConfig();
-    const installPath = cliConfig.installPath;
-    const installDir = path.dirname(installPath);
-
-    if (!existsSync(sourcePath)) {
-      return { success: false, error: 'CLI script not found in app bundle' };
-    }
-
-    try {
-      // Create directory and copy file
-      await mkdir(installDir, { recursive: true });
-      await copyFile(sourcePath, installPath);
-
-      // Note: We intentionally do NOT use `setx PATH` here because:
-      // 1. setx has a 1024 character limit that silently truncates PATH
-      // 2. It can corrupt the user's PATH environment variable
-      // Instead, the install directory is included in buildExtendedPath()
-      // which ensures the CLI is found when running from the app.
-      //
-      // For terminal usage, users can manually add to PATH:
-      // $env:Path += ";${installDir}"
-
-      log.info('[CLI] Installed frink command to', installPath);
-      log.info('[CLI] To use from terminal, add to PATH:', `$env:Path += ";${installDir}"`);
-
-      return {
-        success: true,
-        pathHint: `To use frink from terminal, add to your PATH: ${installDir}`,
-      };
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Installation failed';
-      log.error('[CLI] Failed to install:', error);
-      return { success: false, error: errorMessage };
-    }
-  }
-
-  async uninstallCli(): Promise<{ success: boolean; error?: string }> {
-    const cliConfig = this.getCliConfig();
-    const installPath = cliConfig.installPath;
-
-    try {
-      if (!existsSync(installPath)) {
-        log.info('[CLI] CLI command not installed, nothing to uninstall');
-        return { success: true };
-      }
-
-      await unlink(installPath);
-
-      // Try to remove directory if empty
-      try {
-        await rmdir(path.dirname(installPath));
-      } catch {
-        // Directory not empty or other error, that's okay
-      }
-
-      log.info('[CLI] Uninstalled frink command');
-      return { success: true };
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Uninstallation failed';
-      log.error('[CLI] Failed to uninstall:', error);
-      return { success: false, error: errorMessage };
-    }
-  }
-
-  isCliInstalled(_sourcePath: string): boolean {
-    const cliConfig = this.getCliConfig();
-    try {
-      // Windows: just check if the file exists
-      return existsSync(cliConfig.installPath);
-    } catch {
-      return false;
-    }
   }
 }

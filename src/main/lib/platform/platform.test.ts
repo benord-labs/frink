@@ -93,18 +93,10 @@ describe('platform providers', () => {
       expect(provider.displayName).toBe('macOS');
     });
 
-    describe('getCliConfig', () => {
-      it('returns correct install path', () => {
-        expect(provider.getCliConfig().installPath).toBe('/usr/local/bin/frink');
-      });
-
-      it('uses "frink" as script name', () => {
-        expect(provider.getCliConfig().scriptName).toBe('frink');
-      });
-
-      it('requires admin privileges', () => {
-        expect(provider.getCliConfig().requiresAdmin).toBe(true);
-      });
+    it('exposes no CLI install API', () => {
+      for (const method of ['getCliConfig', 'installCli', 'uninstallCli', 'isCliInstalled']) {
+        expect(method in provider).toBe(false);
+      }
     });
 
     describe('getShellConfig', () => {
@@ -272,14 +264,10 @@ describe('platform providers', () => {
       expect(provider.displayName).toBe('Linux');
     });
 
-    describe('getCliConfig', () => {
-      it('installs to /usr/local/bin/frink', () => {
-        expect(provider.getCliConfig().installPath).toBe('/usr/local/bin/frink');
-      });
-
-      it('requires admin privileges', () => {
-        expect(provider.getCliConfig().requiresAdmin).toBe(true);
-      });
+    it('exposes no CLI install API', () => {
+      for (const method of ['getCliConfig', 'installCli', 'uninstallCli', 'isCliInstalled']) {
+        expect(method in provider).toBe(false);
+      }
     });
 
     describe('getShellConfig', () => {
@@ -400,17 +388,10 @@ describe('platform providers', () => {
       expect(provider.displayName).toBe('Windows');
     });
 
-    describe('getCliConfig', () => {
-      it('installs to user local bin (no admin required)', () => {
-        const config = provider.getCliConfig();
-        expect(config.requiresAdmin).toBe(false);
-        expect(config.installPath).toContain(MOCK_HOME);
-        expect(config.installPath).toContain('frink.cmd');
-      });
-
-      it('uses frink.cmd as script name', () => {
-        expect(provider.getCliConfig().scriptName).toBe('frink.cmd');
-      });
+    it('exposes no CLI install API', () => {
+      for (const method of ['getCliConfig', 'installCli', 'uninstallCli', 'isCliInstalled']) {
+        expect(method in provider).toBe(false);
+      }
     });
 
     describe('getShellConfig', () => {

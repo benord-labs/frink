@@ -2,16 +2,10 @@
  * Linux Platform Provider
  */
 
-import { execFile } from 'node:child_process';
-import { existsSync, lstatSync, readlinkSync } from 'node:fs';
 import * as path from 'node:path';
-import { promisify } from 'node:util';
-import log from 'electron-log';
 import { BasePlatformProvider } from './base';
 import { cachedNvmBinDirs } from './nvm';
-import type { CliConfig, EnvironmentConfig, PathConfig, ShellConfig } from './types';
-
-const execFileAsync = promisify(execFile);
+import type { EnvironmentConfig, PathConfig, ShellConfig } from './types';
 
 // getent passwd format: user:x:uid:gid:name:home:shell — match shell (last field)
 const GETENT_SHELL_REGEX = /:([^:]+)$/;
@@ -65,14 +59,6 @@ export class LinuxPlatformProvider extends BasePlatformProvider {
     };
   }
 
-  getCliConfig(): CliConfig {
-    return {
-      installPath: '/usr/local/bin/frink',
-      scriptName: 'frink',
-      requiresAdmin: true, // Usually needs sudo, but we try without first
-    };
-  }
-
   getEnvironmentConfig(): EnvironmentConfig {
     const home = this.getHome();
 
@@ -105,77 +91,4 @@ export class LinuxPlatformProvider extends BasePlatformProvider {
   }
 
   // detectLocale is inherited from BasePlatformProvider (shared Unix `locale` detection).
-
-  async installCli(sourcePath: string): Promise<{ success: boolean; error?: string }> {
-    const cliConfig = this.getCliConfig();
-    const installPath = cliConfig.installPath;
-
-    if (!existsSync(sourcePath)) {
-      return { success: false, error: 'CLI script not found in app bundle' };
-    }
-
-    try {
-      // Remove existing if present (argv avoids command injection)
-      if (existsSync(installPath)) {
-        try {
-          await execFileAsync('rm', ['-f', installPath]);
-        } catch {
-          await execFileAsync('sudo', ['rm', '-f', installPath]);
-        }
-      }
-
-      // Create symlink - try without sudo first (argv avoids command injection)
-      try {
-        await execFileAsync('ln', ['-s', sourcePath, installPath]);
-      } catch {
-        await execFileAsync('sudo', ['ln', '-s', sourcePath, installPath]);
-      }
-
-      log.info('[CLI] Installed frink command to', installPath);
-      return { success: true };
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Installation failed';
-      log.error('[CLI] Failed to install:', error);
-      return { success: false, error: errorMessage };
-    }
-  }
-
-  async uninstallCli(): Promise<{ success: boolean; error?: string }> {
-    const cliConfig = this.getCliConfig();
-    const installPath = cliConfig.installPath;
-
-    try {
-      if (!existsSync(installPath)) {
-        log.info('[CLI] CLI command not installed, nothing to uninstall');
-        return { success: true };
-      }
-
-      // Try without sudo first (argv avoids command injection)
-      try {
-        await execFileAsync('rm', ['-f', installPath]);
-      } catch {
-        await execFileAsync('sudo', ['rm', '-f', installPath]);
-      }
-
-      log.info('[CLI] Uninstalled frink command');
-      return { success: true };
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Uninstallation failed';
-      log.error('[CLI] Failed to uninstall:', error);
-      return { success: false, error: errorMessage };
-    }
-  }
-
-  isCliInstalled(sourcePath: string): boolean {
-    const cliConfig = this.getCliConfig();
-    try {
-      if (!existsSync(cliConfig.installPath)) return false;
-      const stat = lstatSync(cliConfig.installPath);
-      if (!stat.isSymbolicLink()) return false;
-      const target = readlinkSync(cliConfig.installPath);
-      return target === sourcePath;
-    } catch {
-      return false;
-    }
-  }
 }
