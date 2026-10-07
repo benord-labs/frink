@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { getLaunchDirectory, parseLaunchDirectory } from './cli';
+import { getLaunchDirectory, parseLaunchDirectory } from '.';
 
 describe('launch directory', () => {
   const originalArgv = process.argv;

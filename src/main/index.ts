@@ -12,7 +12,7 @@ configureMainLog();
 const PID_REGEX = /-(\d+)$/;
 
 import { initAnalytics, shutdown as shutdownAnalytics } from './lib/analytics';
-import { buildAppSubmenu } from './lib/app-menu';
+import { buildAppSubmenu } from './windows/app-menu';
 import { checkForUpdates, initAutoUpdater, setupFocusUpdateCheck } from './lib/auto-updater';
 import { getBundledClaudeVersion } from './lib/claude';
 import { parseLaunchDirectory } from './lib/cli';

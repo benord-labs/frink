@@ -57,6 +57,8 @@ export const MAIN_LIB_DOMAINS = [
   // Per-chat composer settings (model / Auto / Fast / Thinking) main owns for every window + phone.
   'chat-composer',
   'claude',
+  // Command-line launch arguments (`frink <dir>`) parsed at startup.
+  'cli',
   'cloud',
   'commands',
   'credentials',
