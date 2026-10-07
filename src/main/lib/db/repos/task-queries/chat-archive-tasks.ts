@@ -9,7 +9,7 @@ type Db = ReturnType<typeof getDatabase>;
 
 /** The statuses the old "Stop task + archive" stopped. `needs_attention` stays reachable from the
  * Work Queue, as user-docs/task-lifecycle.md documents. */
-export const ARCHIVE_STOPPED_TASK_STATUSES = ['pending', 'running', 'plan_ready'] as const;
+const ARCHIVE_STOPPED_TASK_STATUSES = ['pending', 'running', 'plan_ready'] as const;
 
 export type ArchiveChatResult = {
   chat: Chat | null;

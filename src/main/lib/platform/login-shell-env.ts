@@ -14,7 +14,7 @@ import { warmNvmBinDirs } from './nvm';
 export type ShellEnv = Record<string, string>;
 
 /** Why the login shell gave no environment. */
-export type ShellFailure = {
+type ShellFailure = {
   message: string;
   code: string | number | null;
   signal: string | null;
@@ -51,7 +51,7 @@ function parseEnvOutput(output: string, delimiter: string): ShellEnv {
 }
 
 /** The shell every install of the platform has, whatever $SHELL says. */
-export function stockShell(platformId: NodeJS.Platform): string {
+function stockShell(platformId: NodeJS.Platform): string {
   return platformId === 'darwin' ? '/bin/zsh' : '/bin/bash';
 }
 

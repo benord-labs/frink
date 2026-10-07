@@ -4,7 +4,7 @@ import type { SettingsTab } from '../../../lib/atoms';
 
 export type AgentActionSource = 'hotkey' | 'ui_button' | 'context-menu';
 
-export type AgentActionCategory = 'general' | 'navigation' | 'chat' | 'view';
+type AgentActionCategory = 'general' | 'navigation' | 'chat' | 'view';
 
 export type AgentActionContext = {
   // Navigation

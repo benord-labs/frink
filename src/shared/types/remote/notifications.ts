@@ -11,22 +11,24 @@ export const notificationRegistrationSchema = z
     activityToken: liveActivityTokenSchema.nullable().optional(),
   })
   .strict();
-export const completionNotificationSchema = z.object({
+const completionNotificationSchema = z.object({
   type: z.literal('session-completed'),
   deviceId: z.string().min(1).max(200),
   chatId: z.string().min(1).max(200),
   subChatId: z.string().min(1).max(200),
 });
 /** A chat (or, without a chatId, a Queue task) is waiting on the user. */
-export const needsYouNotificationSchema = z.object({
+const needsYouNotificationSchema = z.object({
   type: z.literal('needs-you'),
   deviceId: z.string().min(1).max(200),
   chatId: z.string().min(1).max(200).optional(),
   subChatId: z.string().min(1).max(200).optional(),
 });
+/** @public Read by the mobile app. */
 export const alertNotificationSchema = z.discriminatedUnion('type', [
   completionNotificationSchema,
   needsYouNotificationSchema,
 ]);
 export type NotificationRegistration = z.infer<typeof notificationRegistrationSchema>;
+/** @public Read by the mobile app. */
 export type NotificationStatus = { enabled: boolean; error: string | null };
