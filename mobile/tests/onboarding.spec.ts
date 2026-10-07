@@ -292,6 +292,8 @@ test.describe('with a clipboard', () => {
 
 test.describe('on a small iPhone', () => {
   test.use({ viewport: { width: 375, height: 667 } });
+  // Where wrapped text lands depends on the host's system font; only macOS renders the iPhone's.
+  test.skip(process.platform !== 'darwin', 'Layout heights need Apple system font metrics.');
 
   test('the pasted code and its problem stay above where the keyboard opens', async ({ page }) => {
     await openApp(page, { paired: false });
