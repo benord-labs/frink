@@ -26,7 +26,7 @@ import { type RunFence, setFencedRunStatus } from '../transitions';
 type Db = ReturnType<typeof getDatabase>;
 
 export type DispatchOptions = {
-  resumeKind?: 'continuation' | 'redispatch';
+  resumeKind?: 'continuation';
   laneIndex?: number;
   parentFanOutNodeRunId?: string;
   /** A user Retry: the attempt this dispatch replaces (see insertNodeRunIfFenced). */

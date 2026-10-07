@@ -388,6 +388,7 @@ describe('typed-reply decline-and-convert', () => {
       ctx: {},
       node: { id: 'work', blockType: 'agent' },
       nodeRunId: 'node-run-1',
+      continues: true,
     });
     conversionMocks.resolveSessionResumeSeed.mockResolvedValue({
       config: { resumeSession: true, resumeSubChatId: 'sub-1' },
@@ -409,6 +410,20 @@ describe('typed-reply decline-and-convert', () => {
 
   it('declines as FLOW_RUN_ENDED when the session gate fails, recording nothing', async () => {
     conversionMocks.resolveSessionResumeSeed.mockResolvedValue(null);
+    const { registration, outcome } = await declineWith('chat-1');
+    expect(outcome?.category).toBe('FLOW_RUN_ENDED');
+    expect(registration?.takePendingContinuationResume()).toBeNull();
+    registration?.unregisterAbort();
+    registration?.release();
+  });
+
+  // The session answered an earlier attempt of the node, but not the step's own prompt.
+  it('declines as FLOW_RUN_ENDED on a Retry step even when a seed exists', async () => {
+    conversionMocks.resolveTerminalResumeTarget.mockResolvedValue({
+      node: { id: 'work', blockType: 'agent' },
+      nodeRunId: 'node-run-1',
+      continues: false,
+    });
     const { registration, outcome } = await declineWith('chat-1');
     expect(outcome?.category).toBe('FLOW_RUN_ENDED');
     expect(registration?.takePendingContinuationResume()).toBeNull();

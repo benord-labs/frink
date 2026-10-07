@@ -63,7 +63,9 @@ vi.mock('./admission/runtime', () => ({
   requestTerminalFlowResume: mocks.requestTerminalFlowResume,
 }));
 
-import { retryTerminalFlowRun } from './admission/terminal-resume/dispatcher';
+import { getDatabase } from '../db';
+import { freshDb } from '../db/test-utils/fresh-db';
+import './admission/terminal-resume/dispatcher';
 import { startFlowRun } from './start';
 
 const WEBHOOK = {
@@ -183,7 +185,6 @@ const RERUN_CTX = {
   userId: 'u',
 };
 const nr = (nodeId: string, status: string) => ({ id: `run-${nodeId}`, nodeId, status });
-const db = {} as Parameters<typeof retryTerminalFlowRun>[0];
 
 describe('admitted Flow start dispatch', () => {
   it('starts the run only while its promoted ticket is still live', async () => {
@@ -204,44 +205,14 @@ describe('admitted Flow start dispatch', () => {
   });
 });
 
-describe('terminal Flow retry admission', () => {
+describe('admitted terminal Flow retry dispatch', () => {
   beforeEach(() => {
+    vi.mocked(getDatabase).mockReturnValue(freshDb());
     mocks.loadRunContext.mockResolvedValue(RERUN_CTX);
     mocks.listNodeRunsForFlowRun.mockResolvedValue([
       nr('setup', 'completed'),
       nr('work', 'failed'),
     ]);
-    mocks.requestTerminalFlowResume.mockResolvedValue({
-      created: true,
-      admission: { ticket: 7, state: 'queued' },
-    });
-  });
-
-  it('queues the terminal retry without mutating or dispatching the run', async () => {
-    await expect(retryTerminalFlowRun(db, 'run-1')).resolves.toBe(true);
-
-    expect(mocks.requestTerminalFlowResume).toHaveBeenCalledWith({
-      flowRunId: 'run-1',
-      nodeRunId: 'run-work',
-      continuation: true,
-    });
-    expect(mocks.setFlowRunStatus).not.toHaveBeenCalled();
-    expect(mocks.dispatchAndAdvance).not.toHaveBeenCalled();
-  });
-
-  it('anchors a completed run to the prior fallback-node attempt', async () => {
-    mocks.listNodeRunsForFlowRun.mockResolvedValue([
-      nr('setup', 'completed'),
-      nr('work', 'completed'),
-    ]);
-
-    await expect(retryTerminalFlowRun(db, 'run-1')).resolves.toBe(true);
-
-    expect(mocks.requestTerminalFlowResume).toHaveBeenCalledWith({
-      flowRunId: 'run-1',
-      nodeRunId: 'run-work',
-      continuation: true,
-    });
   });
 
   it('dispatches an admitted retry only from its durable node-run anchor', async () => {
@@ -259,8 +230,8 @@ describe('terminal Flow retry admission', () => {
       undefined,
       RERUN_CTX,
       undefined,
-      // A plain resume intent (no continuation flag) is the deliberate re-run lane.
-      { resumeKind: 'redispatch' },
+      // No session answered the step, so it re-runs rather than continuing.
+      { resumeKind: undefined },
     );
   });
 

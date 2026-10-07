@@ -725,10 +725,8 @@ const ChatViewInner = memo(function ChatViewInner({
   if (!isStreaming) messageTokenSnapshotRef.current = computedMessageTokenData;
   const messageTokenData = messageTokenSnapshotRef.current;
 
-  // Carry on: resume the persisted session and continue from where the turn stopped — a hidden
-  // wake message (never rendered; the executor strips the marker before the model sees it). The
-  // failed partial response is KEPT (unlike Retry, which drops it and re-runs the turn). Default
-  // recovery after a transient failure (usage limit reset, API error).
+  // Continue: send a hidden wake message (marker stripped by executor) to resume the session,
+  // KEEPING the failed partial response unlike Retry; offered whenever the turn produced output.
   const handleCarryOnChat = useCallback(() => {
     // Keep the pending-retry state recoverable: it is the ONLY affordance left on a failed turn,
     // so it must not be cleared unless the wake message actually goes out (restored if it rejects).

@@ -77,7 +77,7 @@ export const ERROR_TOAST_CONFIG: Record<
   },
   FLOW_RUN_ENDED: {
     title: 'This flow run has ended',
-    description: 'Use Re-run step (or Resume) above the composer to continue this flow.',
+    description: 'Use Continue or Retry above the composer to pick this flow back up.',
     toastId: 'flow-run-ended',
   },
   FLOW_RUN_RESUMING: {
@@ -105,7 +105,7 @@ const NON_RETRYABLE_CHAT_ERROR_CATEGORIES = new Set([
   'AUTH_FAILED_SDK',
   'INVALID_API_KEY_SDK',
   // A send declined because the flow run already ended can only fail identically on retry;
-  // recovery is the interrupted-run controls (Re-run step), not a resend.
+  // recovery is the interrupted-run controls (Continue / Retry), not a resend.
   'FLOW_RUN_ENDED',
   // Decline-and-convert: the message is already the continuation payload — the re-admitted
   // run delivers it; a resend would fail identically and then double-deliver.

@@ -4,12 +4,13 @@
  *
  * - approve: the paused node transitions to `completed` with empty outputs;
  *   engine walks to the next node.
- * - retry: the node is re-dispatched with the same config (new attempt).
+ * - retry: the node is re-dispatched with the same config (new attempt), continuing its agent
+ *   session when the click was Continue (its session already answered the step).
  * - skip: the paused node transitions to `skipped`; engine walks past it.
  */
 
 import { TRPCError } from '@trpc/server';
-import type { FlowResumeSnapshot } from '../../../shared/types/flow-run/resume';
+import type { FlowResumeSnapshot, RecoveryKind } from '../../../shared/types/flow-run/resume';
 import { type NodeOutput, RESUME_ACTIONABLE_NODE_STATUSES } from '../../../shared/types/flow';
 import { getDatabase } from '../db';
 import { getFlowRun, getLatestFlowRunForChat } from '../db/repos/flow-runs';
@@ -22,66 +23,98 @@ import { getSubChatById } from '../db/repos/sub-chats';
 import { parkFlowTaskForSubChat } from '../db/repos';
 import { getLatestFlowTaskForSubChat } from '../db/repos/tasks';
 import { withFlowResourceCleanup } from './admission/activity';
-import {
-  TerminalResumeAdmissionError,
-  TerminalResumeChatDeletedError,
-} from './admission/terminal-resume/resume-store';
 import { advanceFlowRun, dispatchAndAdvance, loadRunContext } from './advance';
 import { findNodeById } from './graph';
+import { recoveryChangedError, sessionAnsweredTask, stepRecoveryKind } from './rerun/recovery-kind';
 import { lastUnfinishedNodeRun } from './rerun/resume-point';
-import { sessionAnsweredTaskNode } from './rerun/session-resume';
+import { resolveSessionResumeSeed } from './rerun/session-resume';
 import { commitUnpark } from './rerun/unpark-node-run';
 import {
   isRestartInterrupted,
   type ReopenDeclined,
   reopenPausedRunCommand,
-  restartMarkedNode,
+  type RunFence,
   setFencedRunStatus,
   unparkFailedRunCommand,
 } from './transitions';
 
 export type ResumeAction = 'approve' | 'retry' | 'skip';
 
-const USER_CANCELLED_RUN =
-  'Run was cancelled by the user, not interrupted — start a fresh run instead.';
-
 /**
  * True when a flow run is `cancelled` BUT recoverable — interrupted by a restart/reload (carries the
- * marker), not deliberately cancelled by the user. Drives the in-chat banner's "Resume flow" CTA.
+ * marker), not deliberately cancelled by the user. Gates the in-chat interrupted-run recovery.
  */
 export async function isRunRestartInterrupted(flowRunId: string): Promise<boolean> {
   return isRestartInterrupted(getDatabase(), flowRunId);
 }
 
-/** `queued`: a resume ticket already owns the run's continuation and is waiting for a slot. */
-export type InterruptedResumeMode = 'session' | 'redispatch' | 'queued';
+/**
+ * How the in-chat interrupted-run row recovers: wake this tab's live `session`, re-admit to
+ * `continue` the answering session (resolveSessionResumeSeed), `retry` the step, or wait `queued`.
+ */
+type InterruptedResumeMode = 'session' | 'continue' | 'retry' | 'queued';
 
-/** `queued` when a resume ticket owns the run; `session` when the session answered the driving task's
- * node and the run holds an `active` slot; else `redispatch` ("Re-run step"). */
+export type InterruptedResume = {
+  resumeMode: InterruptedResumeMode;
+  /** The step is not an agent and had started, so running it again may repeat its side effects. */
+  confirmSideEffects: boolean;
+  /** The step a recovery would act on; a confirmation is for this step only. */
+  nodeRunId: string | null;
+};
+
 export async function resolveInterruptedResumeMode(
   flowRunId: string,
   subChatId: string,
-): Promise<InterruptedResumeMode> {
+): Promise<InterruptedResume> {
   const db = getDatabase();
   const admission = await probeAdmission(flowRunId);
+  // The resume target: the run's last unfinished step (resolveTerminalResumeTarget's anchor).
+  const target = lastUnfinishedNodeRun(await listNodeRunsForFlowRun(db, flowRunId));
+  const step = {
+    confirmSideEffects:
+      target !== undefined && target.blockType !== 'agent' && target.startedAt != null,
+    nodeRunId: target?.id ?? null,
+  };
   // A queued/claimed resume ticket (boot carry-on, typed reply) already owns the continuation; a
   // second enqueue would be refused, so the row waits instead of offering a button that errors.
-  if (admission?.queuedResume) return 'queued';
-  const latestFlowTask = await getLatestFlowTaskForSubChat(db, subChatId);
-  if (latestFlowTask?.status !== 'cancelled' || latestFlowTask.flowRunId !== flowRunId) {
-    return 'redispatch';
+  if (admission?.queuedResume) return { resumeMode: 'queued', ...step };
+  // The same rule the Retry/Continue mutations re-check, so the row never offers a refused kind.
+  if (!target || stepRecoveryKind(db, target.id) === 'retry') {
+    return { resumeMode: 'retry', ...step };
   }
   const subChat = await getSubChatById(db, subChatId);
-  if (!subChat?.sessionId || !admission?.active) return 'redispatch';
-  // A shared flow sub-chat has a session from earlier nodes; waking it is only right when it
-  // actually answered the interrupted node's prompt, else the agent would redo the previous node.
-  return (await sessionAnsweredTaskNode(db, subChatId, latestFlowTask.id))
-    ? 'session'
-    : 'redispatch';
+  const seed = subChat
+    ? await resolveSessionResumeSeed(db, {
+        chatId: subChat.chatId,
+        flowRunId,
+        nodeId: target.nodeId,
+        configuredStartMode: undefined,
+      })
+    : null;
+  // Only the tab whose session a resume would continue can be woken by a message.
+  const wakesInPlace =
+    seed?.config.resumeSubChatId === subChatId &&
+    admission?.active === true &&
+    (await cancelledDriverAnsweredRun(db, flowRunId, subChatId));
+  return { resumeMode: wakesInPlace ? 'session' : 'continue', ...step };
+}
+
+/** The tab's newest flow task is this run's cancelled driver and its session answered that
+ * attempt: the executor's revive predicate, so a wake the row offers is one a message can deliver. */
+async function cancelledDriverAnsweredRun(
+  db: ReturnType<typeof getDatabase>,
+  flowRunId: string,
+  subChatId: string,
+): Promise<boolean> {
+  const latestFlowTask = await getLatestFlowTaskForSubChat(db, subChatId);
+  if (latestFlowTask?.status !== 'cancelled' || latestFlowTask.flowRunId !== flowRunId) {
+    return false;
+  }
+  return sessionAnsweredTask(db, subChatId, latestFlowTask.id);
 }
 
 /** `null` on a probe failure (e.g. the admission store not yet ready at boot): callers degrade to
- * redispatch, the mode that re-admits from scratch and never needs the probe. */
+ * a resume ticket, which re-admits from scratch and never needs the probe. */
 async function probeAdmission(
   flowRunId: string,
 ): Promise<{ queuedResume: boolean; active: boolean } | null> {
@@ -104,17 +137,23 @@ async function probeAdmission(
 export async function describeInterruptedRunForChat(
   chatId: string,
   subChatId: string,
-): Promise<{ runId: string; resumable: boolean; resumeMode: InterruptedResumeMode } | null> {
+): Promise<({ runId: string; resumable: boolean } & InterruptedResume) | null> {
   const run = await getLatestFlowRunForChat(getDatabase(), chatId);
   if (run?.status !== 'cancelled') return null;
   // A user-cancelled run renders no row, so the mechanism probe would be wasted work.
   if (!(await isRunRestartInterrupted(run.id))) {
-    return { runId: run.id, resumable: false, resumeMode: 'redispatch' };
+    return {
+      runId: run.id,
+      resumable: false,
+      resumeMode: 'retry',
+      confirmSideEffects: false,
+      nodeRunId: null,
+    };
   }
   return {
     runId: run.id,
     resumable: true,
-    resumeMode: await resolveInterruptedResumeMode(run.id, subChatId),
+    ...(await resolveInterruptedResumeMode(run.id, subChatId)),
   };
 }
 
@@ -162,11 +201,40 @@ const REOPEN_DECLINED: Record<ReopenDeclined, string> = {
   'no-slot': 'This paused Flow lost its place in the run queue. Cancel it and start it again.',
 };
 
+/**
+ * Reopens the paused run. Another client may have advanced the node meanwhile; a Retry also
+ * re-checks, in the same transition, that its step still recovers as the `kind` the user clicked.
+ */
+async function reopenForResume(
+  flowRunId: string,
+  nodeRunId: string,
+  action: ResumeAction,
+  expectedSnapshot: FlowResumeSnapshot | undefined,
+  kind: RecoveryKind | undefined,
+): Promise<RunFence> {
+  const db = getDatabase();
+  const allowed: readonly string[] =
+    action === 'approve' ? ['awaiting_input'] : RESUME_ACTIONABLE_NODE_STATUSES;
+  const { transitionFlowRun } = await import('./admission/runtime');
+  const fence = await transitionFlowRun(() =>
+    action === 'retry' && stepRecoveryKind(db, nodeRunId) !== kind
+      ? 'kind-changed'
+      : reopenPausedRunCommand(db, flowRunId, nodeRunId, allowed, expectedSnapshot),
+  );
+  if (fence === 'kind-changed') throw recoveryChangedError();
+  if (typeof fence === 'string') {
+    throw new TRPCError({ code: 'PRECONDITION_FAILED', message: REOPEN_DECLINED[fence] });
+  }
+  return fence;
+}
+
+/** `kind` is the recovery a Retry click showed; a step that no longer recovers that way is refused. */
 export async function resumeFlowRun(
   flowRunId: string,
   action: ResumeAction,
   nodeRunId: string,
   expectedSnapshot?: FlowResumeSnapshot,
+  kind?: RecoveryKind,
 ): Promise<void> {
   if (expectedSnapshot && action === 'retry') {
     throw new TRPCError({
@@ -211,16 +279,7 @@ export async function resumeFlowRun(
       message: `Node ${nodeRun.nodeId} no longer in graph; can't retry.`,
     });
   }
-  // Another client may have advanced this node and paused at a later step while the context loaded.
-  const allowed: readonly string[] =
-    action === 'approve' ? ['awaiting_input'] : RESUME_ACTIONABLE_NODE_STATUSES;
-  const { transitionFlowRun } = await import('./admission/runtime');
-  const fence = await transitionFlowRun(() =>
-    reopenPausedRunCommand(db, flowRunId, nodeRunId, allowed, expectedSnapshot),
-  );
-  if (typeof fence === 'string') {
-    throw new TRPCError({ code: 'PRECONDITION_FAILED', message: REOPEN_DECLINED[fence] });
-  }
+  const fence = await reopenForResume(flowRunId, nodeRunId, action, expectedSnapshot, kind);
 
   await withFlowResourceCleanup(flowRunId, async () => {
     if (retryNode) {
@@ -231,10 +290,12 @@ export async function resumeFlowRun(
               parentFanOutNodeRunId: nodeRun.parentFanOutNodeRunId,
             }
           : undefined;
-      // The retry is a new attempt: the paused row goes `superseded` in the insert's own tick.
+      // Either kind is a new attempt: the paused row goes `superseded` in the insert's own tick.
+      // Continue picks the answering session up where it stopped; Retry re-sends the instructions.
       await dispatchAndAdvance(fence, retryNode, undefined, ctx, undefined, {
         ...fanOutScope,
         supersedesNodeRunId: nodeRunId,
+        resumeKind: kind === 'continue' ? 'continuation' : undefined,
       });
       return;
     }
@@ -260,45 +321,4 @@ export async function resumeFlowRun(
       });
     }
   });
-}
-
-export async function rerunFlowRunFromInterruption(flowRunId: string): Promise<void> {
-  const db = getDatabase();
-  const run = await getFlowRun(db, flowRunId);
-  if (!run) throw new TRPCError({ code: 'NOT_FOUND', message: 'Flow run not found' });
-  if (run.status !== 'cancelled') {
-    throw new TRPCError({
-      code: 'PRECONDITION_FAILED',
-      message: `Flow run is ${run.status}; re-run requires an interrupted (cancelled) run.`,
-    });
-  }
-
-  // Resume point = the last node_run that did not finish successfully (the interrupted node),
-  // gated on the restart marker. Shared with the in-place + banner paths so all three agree.
-  const interrupted = restartMarkedNode(db, flowRunId);
-  if (!interrupted) {
-    const message = lastUnfinishedNodeRun(await listNodeRunsForFlowRun(db, flowRunId))
-      ? USER_CANCELLED_RUN
-      : 'No interrupted node to re-run.';
-    throw new TRPCError({ code: 'PRECONDITION_FAILED', message });
-  }
-
-  const { requestTerminalFlowResume } = await import('./admission/runtime');
-  // Re-read in the enqueue transaction, so a Work Queue Cancel that clears the marker first wins.
-  const admit = (tx: typeof db) => isRestartInterrupted(tx, flowRunId);
-  await requestTerminalFlowResume({ flowRunId, nodeRunId: interrupted.id, admit }).catch(
-    (error) => {
-      if (error instanceof TerminalResumeChatDeletedError) {
-        throw new TRPCError({ code: 'PRECONDITION_FAILED', message: error.message, cause: error });
-      }
-      // A Cancel that cleared the marker, before the enqueue or while it drained, is the user's call.
-      if (!(error instanceof TerminalResumeAdmissionError) || isRestartInterrupted(db, flowRunId))
-        throw error;
-      throw new TRPCError({
-        code: 'PRECONDITION_FAILED',
-        message: USER_CANCELLED_RUN,
-        cause: error,
-      });
-    },
-  );
 }

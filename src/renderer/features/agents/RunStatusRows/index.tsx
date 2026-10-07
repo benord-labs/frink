@@ -1,7 +1,7 @@
 /**
  * RunStatusRows — the full end-of-run stack for a sub-chat, in one mount: accept
- * (TaskAcceptBar), Retry/Carry-on (TaskControls) and Resume (InterruptedRunControls), all
- * RunStatusRow grammar. Their states are mutually exclusive (accept + retry share one
+ * (TaskAcceptBar), a stopped task's Continue/Retry (TaskControls) and an interrupted run's
+ * (InterruptedRunControls), all RunStatusRow grammar. Their states are mutually exclusive (accept + retry share one
  * sub-chat-scoped task resolver; resume is marker-gated), so at most one row renders.
  */
 

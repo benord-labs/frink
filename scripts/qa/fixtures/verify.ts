@@ -3,9 +3,35 @@ import { existsSync } from 'node:fs';
 import * as schema from '../../../src/main/lib/db/schema';
 import { RESTART_INTERRUPTION_REASON } from '../../../src/shared/types/flow';
 import { verifyCodexFixture } from './codex';
-import { FIXTURE_ACCOUNT_ID, FIXTURE_CHAT_SEEDED_ID, FIXTURE_HISTORY_CANCELLED_ID, FIXTURE_HISTORY_COMPLETED_ID, FIXTURE_PROJECT_ID, FIXTURE_TASK_ID, type SqliteDb } from './base';
-import { FIXTURE_INTERRUPTED, FIXTURE_PAUSED_CHAT_ID, FIXTURE_PAUSED_MODEL_ID, FIXTURE_PAUSED_RUN_ID, FIXTURE_PAUSED_SUB_CHAT_ID, FIXTURE_PAUSED_TASK_ID, FIXTURE_QUEUED_RESUME_RUN_ID, FIXTURE_QUEUED_START_RUN_ID, FIXTURE_RUNNING_CHAT_ID, FIXTURE_RUNNING_MODEL_ID, FIXTURE_RUNNING_RUN_ID, FIXTURE_RUNNING_SUB_CHAT_ID, FIXTURE_RUNNING_TASK_ID } from './flows';
-import { FIXTURE_FLOW_CHAT_ID, FIXTURE_FLOW_TASK_DONE_ID, FIXTURE_FLOW_TASK_PARKED_ID } from './messages';
+import {
+  FIXTURE_ACCOUNT_ID,
+  FIXTURE_CHAT_SEEDED_ID,
+  FIXTURE_HISTORY_CANCELLED_ID,
+  FIXTURE_HISTORY_COMPLETED_ID,
+  FIXTURE_PROJECT_ID,
+  FIXTURE_TASK_ID,
+  type SqliteDb,
+} from './base';
+import {
+  FIXTURE_INTERRUPTED,
+  FIXTURE_PAUSED_CHAT_ID,
+  FIXTURE_PAUSED_MODEL_ID,
+  FIXTURE_PAUSED_RUN_ID,
+  FIXTURE_PAUSED_SUB_CHAT_ID,
+  FIXTURE_PAUSED_TASK_ID,
+  FIXTURE_QUEUED_RESUME_RUN_ID,
+  FIXTURE_QUEUED_START_RUN_ID,
+  FIXTURE_RUNNING_CHAT_ID,
+  FIXTURE_RUNNING_MODEL_ID,
+  FIXTURE_RUNNING_RUN_ID,
+  FIXTURE_RUNNING_SUB_CHAT_ID,
+  FIXTURE_RUNNING_TASK_ID,
+} from './flows';
+import {
+  FIXTURE_FLOW_CHAT_ID,
+  FIXTURE_FLOW_TASK_DONE_ID,
+  FIXTURE_FLOW_TASK_PARKED_ID,
+} from './messages';
 
 const FILE_SCHEME = 'file://';
 
@@ -125,7 +151,7 @@ function verifyRunningFlow(r: FixtureRows): boolean {
 
 /**
  * The marker and the session are asserted explicitly: without the marker the row does not render at
- * all, and without the session it silently downgrades from "Resume" to "Re-run step".
+ * all, and without the session the step can only ever recover as "Retry", never "Continue".
  */
 function verifyInterruptedFlow(r: FixtureRows): boolean {
   const task = r.tasks.find((t) => t.id === FIXTURE_INTERRUPTED.taskId);

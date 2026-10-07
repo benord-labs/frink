@@ -100,8 +100,8 @@ export const SUPERSEDED_NODE_STATUS = 'superseded';
 /**
  * Stamped on the interrupted node's output (and the linked task's result) by the boot recovery
  * sweep when the app/process restarts mid-flow. The run goes `cancelled` (neutral — a restart is
- * not a flow error); this marker is the discriminator the run panel keys "Re-run from previous
- * node" on, separating a restart interruption from a user-initiated cancel (e.g. a deleted chat,
+ * not a flow error); this marker is the discriminator the run panel keys its Continue / Retry
+ * recovery on, separating a restart interruption from a user-initiated cancel (e.g. a deleted chat,
  * whose worktree/chat may be gone). See docs/decisions/flow-run-cancel-on-chat-removal.md.
  */
 export const RESTART_INTERRUPTION_REASON = 'Interrupted by app restart';

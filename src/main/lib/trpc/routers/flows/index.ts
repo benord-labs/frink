@@ -9,7 +9,10 @@ import {
   flowGraphNodeSchema,
 } from '../../../../../shared/types/flow-graph-schema';
 import { flowSettingsSchema } from '../../../../../shared/types/flow';
-import { flowResumeSnapshotSchema } from '../../../../../shared/types/flow-run/resume';
+import {
+  recoveryKindSchema,
+  resumeRunInputSchema,
+} from '../../../../../shared/types/flow-run/resume';
 import type { BatchRunRow } from '../../../cloud/flows';
 import type {
   BatchStageDetail,
@@ -55,10 +58,9 @@ import { validateDag } from '../../../flows/dag-validation';
 import {
   cancelFlowRun as cancelFlowRunLocal,
   getFlowRunWithNodeRuns,
-  rerunFlowRunFromInterruption as rerunFlowRunLocal,
-  resumeFlowRun as resumeFlowRunLocal,
   startFlowRun as startFlowRunLocal,
 } from '../../../flows/engine';
+import { resolveRunRecoveries } from '../../../flows/rerun';
 import { describeInterruptedRunForChat, pauseFlowRunForSubChat } from '../../../flows/resume';
 import { pauseActiveExecutionForSubChat } from '../../../socket/executor';
 // Flows use snake_case DTOs end-to-end (cloud-API contract); opt out of the
@@ -68,7 +70,12 @@ import { flowAdmissionQueueProcedures } from './admission-queue';
 import { flowAdmissionSettingsProcedures } from './admission-settings';
 import { createFlowCopyProcedures } from './copy';
 import { createFlowListProcedures, flowGraphMeta } from './list';
-import { flowStartResponse, mapEngineError, retrySettledFlowRun } from './run-actions';
+import {
+  flowStartResponse,
+  mapEngineError,
+  resumeRunAndReload,
+  retryRunFromLastNode,
+} from './run-actions';
 
 const flowGraphSchema = z.object({
   nodes: z.array(flowGraphNodeSchema),
@@ -100,7 +107,8 @@ export const flowsRouter = router({
     }),
   // Drives the in-chat interrupted-run row (describeInterruptedRunForChat owns the rules). Note the
   // sub-chat scope: the run is chat-wide, but only the tab whose session drives the interrupted node
-  // can be woken by a message — the rest resolve `redispatch`. Polled like hasIncompleteRunForChat.
+  // can be woken by a message — the rest resolve `continue` or `retry`. Polled like
+  // hasIncompleteRunForChat.
   interruptedRunForChat: publicProcedureRaw
     .input(z.object({ chatId: z.string().min(1), subChatId: z.string().min(1) }))
     .query(({ input }) => describeInterruptedRunForChat(input.chatId, input.subChatId)),
@@ -214,7 +222,10 @@ export const flowsRouter = router({
       const graph = version?.graph ?? null;
       const snapshot = flowRunAdmissionSnapshotsForRuns(db, [detail.run.id]).get(detail.run.id);
       const run = { ...detail.run, status: snapshot?.runStatus ?? detail.run.status };
-      return toDbFlowRunWithNodeRuns(run, detail.nodeRuns, graph, snapshot?.admission ?? null);
+      return {
+        ...toDbFlowRunWithNodeRuns(run, detail.nodeRuns, graph, snapshot?.admission ?? null),
+        recoveries: await resolveRunRecoveries(db, run, detail.nodeRuns),
+      };
     }),
 
   cancelRun: publicProcedureRaw
@@ -235,60 +246,16 @@ export const flowsRouter = router({
     ),
 
   resumeRun: publicProcedureRaw
-    .input(
-      z.object({
-        runId: z.string().min(1),
-        action: z.enum(['approve', 'retry', 'skip']),
-        nodeRunId: z.string().min(1),
-        expectedSnapshot: flowResumeSnapshotSchema.optional(),
-      }),
-    )
-    .mutation(async ({ input: { runId, action, nodeRunId, expectedSnapshot } }) => {
-      try {
-        await resumeFlowRunLocal(runId, action, nodeRunId, expectedSnapshot);
-        const detail = await getFlowRunWithNodeRuns(runId);
-        if (!detail) throw new TRPCError({ code: 'NOT_FOUND', message: 'Flow run not found' });
-        const version = await getVersion(getDatabase(), detail.run.flowVersionId);
-        return toDbFlowRunWithNodeRuns(detail.run, detail.nodeRuns, version?.graph ?? null);
-      } catch (e) {
-        mapEngineError(e);
-      }
-    }),
-
-  rerunRun: publicProcedureRaw
-    .input(z.object({ runId: z.string().min(1) }))
-    .mutation(async ({ input }) => {
-      try {
-        await rerunFlowRunLocal(input.runId);
-        const detail = await getFlowRunWithNodeRuns(input.runId);
-        if (!detail) throw new TRPCError({ code: 'NOT_FOUND', message: 'Flow run not found' });
-        const db = getDatabase();
-        const version = await getVersion(db, detail.run.flowVersionId);
-        return toDbFlowRunWithNodeRuns(detail.run, detail.nodeRuns, version?.graph ?? null);
-      } catch (e) {
-        mapEngineError(e);
-      }
-    }),
+    .input(resumeRunInputSchema)
+    .mutation(({ input }) => resumeRunAndReload(input)),
 
   retryRunFromLastNode: publicProcedureRaw
-    .input(z.object({ runId: z.string().min(1) }))
+    .input(z.object({ runId: z.string().min(1), kind: recoveryKindSchema }))
     .mutation(async ({ input }) => {
       const db = getDatabase();
       const run = await getFlowRun(db, input.runId);
       if (!run) throw new TRPCError({ code: 'NOT_FOUND', message: 'Flow run not found' });
-      if (run.status !== 'failed' && run.status !== 'cancelled' && run.status !== 'completed') {
-        throw new TRPCError({
-          code: 'PRECONDITION_FAILED',
-          message: `Flow run is ${run.status}; retry requires a settled run — use Carry on instead.`,
-        });
-      }
-      const ok = await retrySettledFlowRun(db, input.runId);
-      if (!ok) {
-        throw new TRPCError({
-          code: 'PRECONDITION_FAILED',
-          message: 'Flow run context unavailable; flow or version may have been deleted.',
-        });
-      }
+      await retryRunFromLastNode(db, run, input.kind);
       return { ok: true };
     }),
 

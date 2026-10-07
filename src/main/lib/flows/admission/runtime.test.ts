@@ -648,7 +648,6 @@ describe('Flow admission runtime recovery', () => {
       expect.objectContaining({
         action: 'resume',
         node_run_id: 'resume-node-run',
-        continuation: true,
       }),
       expect.any(Number),
     );

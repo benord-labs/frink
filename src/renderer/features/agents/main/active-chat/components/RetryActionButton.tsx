@@ -11,7 +11,7 @@ type Props = {
   ariaBusy?: boolean;
   tooltipText?: string;
   label?: string;
-  /** Leading glyph — defaults to the retry arrow; e.g. Play for a Carry on action. */
+  /** Leading glyph — defaults to the retry arrow; e.g. Play for a Continue action. */
   icon?: ComponentType<{ className?: string }>;
 };
 

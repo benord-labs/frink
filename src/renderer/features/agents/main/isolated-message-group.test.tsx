@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import type { ComponentType } from 'react';
+import { type ComponentType, type ReactNode, useLayoutEffect } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRIGGER_BUBBLE_MARKER } from '../../../../shared/lib/trigger-bubble-marker';
 import { PLAN_APPROVAL_EXECUTION_TRIGGER_TEXT } from '../../../../shared/types/plan';
@@ -9,11 +9,30 @@ import { TooltipProvider } from '../../../components/ui/tooltip';
 import { COMPACTING_PENDING } from '../../../lib/agent-chat/planning/planning-status-message';
 import { type IsolatedChatToolRegistry, IsolatedMessageGroup } from './isolated-message-group';
 
-const atomValues = new Map<string, unknown>();
+/** Stubbed atoms are keys: strings for the mocked families, symbols for derived atoms. */
+type AtomKey = string | symbol;
+/** What the stubbed atoms hold: flags, id lists, messages, retry state and handlers. */
+type AtomValue = boolean | string[] | object | undefined;
+type DerivedRead = (get: (key: AtomKey) => AtomValue) => AtomValue;
+
+// Hoisted: imported modules create derived atoms while the jotai stub is being loaded.
+const { atomValues, derivedReads, deferredLogin } = vi.hoisted(() => ({
+  atomValues: new Map<AtomKey, AtomValue>(),
+  derivedReads: new Map<AtomKey, DerivedRead>(),
+  // The recovery a login-switch click hands its mutation, which runs it once the switch lands.
+  deferredLogin: { onRetry: () => {} },
+}));
 
 vi.mock('jotai', () => ({
-  useAtomValue: (atom: string) => atomValues.get(atom),
-  atom: () => 'inert-atom',
+  useAtomValue: (atom: AtomKey) => {
+    const read = derivedReads.get(atom);
+    return read ? read((key) => atomValues.get(key)) : atomValues.get(atom);
+  },
+  atom: (read: DerivedRead) => {
+    const key = Symbol('derived atom');
+    derivedReads.set(key, read);
+    return key;
+  },
   createStore: () => ({ get: () => new Set<string>(), set: () => {} }),
 }));
 
@@ -78,10 +97,25 @@ vi.mock('../ui/account-indicator', () => ({
   ContinueAfterUsageLimit: ({
     chatId,
     usageLimited,
+    onRetry,
   }: {
     chatId: string;
     usageLimited: boolean;
-  }) => <span data-testid="continue-after-usage-limit">{`${chatId}/${usageLimited}`}</span>,
+    onRetry: () => void;
+  }) => (
+    <>
+      <button type="button" data-testid="continue-after-usage-limit" onClick={onRetry}>
+        {`${chatId}/${usageLimited}`}
+      </button>
+      <button
+        type="button"
+        data-testid="switch-login-pending"
+        onClick={() => {
+          deferredLogin.onRetry = onRetry;
+        }}
+      />
+    </>
+  ),
 }));
 
 vi.mock('../ui/message-json-display', () => ({
@@ -91,6 +125,12 @@ vi.mock('../ui/message-json-display', () => ({
 vi.mock('../../../lib/utils', () => ({
   cn: (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(' '),
 }));
+
+/** Runs the pending login switch's recovery in its commit, as a mutation settling then would. */
+function LandSwitchOnCommit() {
+  useLayoutEffect(() => deferredLogin.onRetry());
+  return null;
+}
 
 const UserBubbleComponent = ({
   textContent,
@@ -247,78 +287,108 @@ describe('IsolatedMessageGroup orphan anchor rendering', () => {
     expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
   });
 
-  it('renders Carry on beside Retry and wires its handler (recovery must never be retry-only)', () => {
-    const orphanId = '__orphan_anchor__sub-1';
+  const ORPHAN_ID = '__orphan_anchor__sub-1';
+  // Stable component types, so a rerender updates the group in place instead of remounting it.
+  const NoTool = () => null;
+  const PassThrough = ({ children }: { children: ReactNode }) => <>{children}</>;
+
+  function seedFailedOrphan(assistantParts: Array<{ type: string; text?: string }> | null) {
     atomValues.set('show-message-json', false);
-    atomValues.set(`message:${orphanId}`, undefined);
-    atomValues.set(`assistant-ids:sub-1:${orphanId}`, []);
-    atomValues.set(`is-last-user:sub-1:${orphanId}`, true);
+    atomValues.set(`message:${ORPHAN_ID}`, undefined);
+    atomValues.set(`assistant-ids:sub-1:${ORPHAN_ID}`, assistantParts ? ['asst-1'] : []);
+    if (assistantParts) {
+      atomValues.set('message:asst-1', { id: 'asst-1', role: 'assistant', parts: assistantParts });
+    }
+    atomValues.set(`is-last-user:sub-1:${ORPHAN_ID}`, true);
     atomValues.set('is-streaming:sub-1', false);
     atomValues.set('pending-retry:sub-1', { errorCategory: 'RATE_LIMIT_SDK' });
-    const onCarryOn = vi.fn();
+  }
 
-    render(
-      <TooltipProvider>
-        <IsolatedMessageGroup
-          userMsgId={orphanId}
-          subChatId="sub-1"
-          chatId="chat-1"
-          taskId={null}
-          isMobile={false}
-          sandboxSetupStatus="ready"
-          stickyTopClass=""
-          UserBubbleComponent={UserBubbleComponent}
-          ToolCallComponent={() => null}
-          MessageGroupWrapper={({ children }) => <>{children}</>}
-          toolRegistry={toolRegistryWithPlanning}
-          showChatRetryControl={true}
-          retryInFlight={false}
-          onRetryChat={() => {}}
-          onCarryOnChat={onCarryOn}
-          chatRetryTooltipText={null}
-        />
-      </TooltipProvider>,
-    );
+  const failedOrphanGroup = (
+    onCarryOnChat: (() => void) | null,
+    onRetryChat: () => void,
+    chatRetryTooltipText: string | null = null,
+  ) => (
+    <TooltipProvider>
+      <IsolatedMessageGroup
+        userMsgId={ORPHAN_ID}
+        subChatId="sub-1"
+        chatId="chat-1"
+        taskId={null}
+        isMobile={false}
+        sandboxSetupStatus="ready"
+        stickyTopClass=""
+        UserBubbleComponent={UserBubbleComponent}
+        ToolCallComponent={NoTool}
+        MessageGroupWrapper={PassThrough}
+        toolRegistry={toolRegistryWithPlanning}
+        showChatRetryControl={true}
+        retryInFlight={false}
+        onRetryChat={onRetryChat}
+        onCarryOnChat={onCarryOnChat}
+        chatRetryTooltipText={chatRetryTooltipText}
+      />
+    </TooltipProvider>
+  );
 
-    const carryOn = screen.getByRole('button', { name: /carry on/i });
-    fireEvent.click(carryOn);
-    expect(onCarryOn).toHaveBeenCalledTimes(1);
+  function renderFailedOrphanGroup(
+    assistantParts: Array<{ type: string; text?: string }> | null,
+    onCarryOnChat: (() => void) | null,
+    onRetryChat: () => void = () => {},
+  ) {
+    seedFailedOrphan(assistantParts);
+    return render(failedOrphanGroup(onCarryOnChat, onRetryChat));
+  }
+
+  it('offers only Continue when the failed turn produced output and a session exists', () => {
+    const onContinue = vi.fn();
+    renderFailedOrphanGroup([{ type: 'text', text: 'Half done' }], onContinue);
+
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }));
+    expect(onContinue).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument();
     expect(screen.getByTestId('continue-after-usage-limit')).toHaveTextContent('chat-1/true');
+    // Switching login recovers the same way the row's one button does: it keeps the partial output.
+    fireEvent.click(screen.getByTestId('continue-after-usage-limit'));
+    expect(onContinue).toHaveBeenCalledTimes(2);
   });
 
-  it('omits Carry on when there is no session to resume, leaving Retry alone', () => {
-    const orphanId = '__orphan_anchor__sub-1';
-    atomValues.set('show-message-json', false);
-    atomValues.set(`message:${orphanId}`, undefined);
-    atomValues.set(`assistant-ids:sub-1:${orphanId}`, []);
-    atomValues.set(`is-last-user:sub-1:${orphanId}`, true);
-    atomValues.set('is-streaming:sub-1', false);
+  it('offers only Retry when the send failed before any reply, even with a session', () => {
+    const onRetry = vi.fn();
+    renderFailedOrphanGroup([{ type: 'step-start' }], () => {}, onRetry);
 
-    render(
-      <TooltipProvider>
-        <IsolatedMessageGroup
-          userMsgId={orphanId}
-          subChatId="sub-1"
-          chatId="chat-1"
-          taskId={null}
-          isMobile={false}
-          sandboxSetupStatus="ready"
-          stickyTopClass=""
-          UserBubbleComponent={UserBubbleComponent}
-          ToolCallComponent={() => null}
-          MessageGroupWrapper={({ children }) => <>{children}</>}
-          toolRegistry={toolRegistryWithPlanning}
-          showChatRetryControl={true}
-          retryInFlight={false}
-          onRetryChat={() => {}}
-          onCarryOnChat={null}
-          chatRetryTooltipText={null}
-        />
-      </TooltipProvider>,
+    fireEvent.click(screen.getByRole('button', { name: /retry/i }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('button', { name: /continue/i })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('continue-after-usage-limit'));
+    expect(onRetry).toHaveBeenCalledTimes(2);
+  });
+
+  it('continues, not retries, when output arrives before a login switch lands', () => {
+    const onContinue = vi.fn();
+    const onRetry = vi.fn();
+    const view = renderFailedOrphanGroup([{ type: 'step-start' }], onContinue, onRetry);
+    fireEvent.click(screen.getByTestId('switch-login-pending'));
+
+    seedFailedOrphan([{ type: 'text', text: 'Started' }]);
+    // A changed prop stands in for the store update that re-renders past memo(); the switch lands
+    // in that same commit, before any of its passive effects run.
+    view.rerender(
+      <>
+        {failedOrphanGroup(onContinue, onRetry, 'refreshed')}
+        <LandSwitchOnCommit />
+      </>,
     );
 
+    expect(onContinue).toHaveBeenCalledTimes(1);
+    expect(onRetry).not.toHaveBeenCalled();
+  });
+
+  it('offers only Retry when there is no session to resume, even with output', () => {
+    renderFailedOrphanGroup([{ type: 'tool-Bash' }], null);
+
     expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /carry on/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /continue/i })).not.toBeInTheDocument();
   });
 
   it('shows retry as in-flight with Retrying label and disabled when retryInFlight is true', () => {

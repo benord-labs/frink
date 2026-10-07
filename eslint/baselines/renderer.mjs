@@ -380,7 +380,6 @@ export const rendererStructureBaseline = [
   "features/flows/FlowEditor/FlowRunHistoryPanel/node-run-row.tsx",
   "features/flows/FlowEditor/FlowRunHistoryPanel/node-run-status-icon.tsx",
   "features/flows/FlowEditor/FlowRunHistoryPanel/node-run-tooltip.ts",
-  "features/flows/FlowEditor/FlowRunHistoryPanel/restart-interruption.ts",
   "features/flows/FlowEditor/FlowRunHistoryPanel/run-history-batch-view.ts",
   "features/flows/FlowEditor/FlowRunHistoryPanel/should-paint-expanded-run-on-canvas.ts",
   "features/flows/FlowEditor/FlowRunHistoryPanel/use-periodic-now.ts",

@@ -4,6 +4,7 @@ import {
   isFlowAdmissionIntentV1,
 } from '../../../../../shared/lib/flow-admission';
 import type { FlowRunStatus } from '../../../../../shared/types/flow';
+import type { RecoveryKind } from '../../../../../shared/types/flow-run/resume';
 import type { getDatabase } from '../../../db';
 import { batchStageRuns, type flowRunAdmissions, flowRuns, nodeRuns } from '../../../db/schema';
 import {
@@ -30,12 +31,20 @@ export type TerminalFlowResumeIntent = FlowAdmissionIntentV1 & {
 export type EnqueueTerminalFlowResumeInput = {
   flowRunId: string;
   nodeRunId: string;
-  /** Continue the surviving session instead of re-instructing (user Retry only). */
-  continuation?: true;
+  /** The recovery the user clicked, re-checked when the ticket is claimed. */
+  kind?: RecoveryKind;
   /** Runs inside the enqueue transaction; false declines it (e.g. the run was cancelled meanwhile). */
   admit?: (db: Db) => boolean;
   requestedAt?: Date;
 };
+
+type ResumeTargetRefusal = (db: Db, intent: TerminalFlowResumeIntent) => string | null;
+/** Registered by the dispatcher, which owns the resume resolvers, keeping this module acyclic. */
+let resumeTargetRefusal: ResumeTargetRefusal = () => null;
+
+export function registerResumeTargetRefusal(refusal: ResumeTargetRefusal): void {
+  resumeTargetRefusal = refusal;
+}
 
 export class TerminalResumeAdmissionError extends Error {
   override name = 'TerminalResumeAdmissionError';
@@ -105,10 +114,8 @@ function isSameResumeTarget(row: FlowRunAdmission, intent: TerminalFlowResumeInt
     row.priorityClass === 'resume' &&
     existing?.flow_run_id === intent.flow_run_id &&
     existing.node_run_id === intent.node_run_id &&
-    // Resume KIND is part of the target: a Retry (continuation) racing a deliberate
-    // Re-run (full redispatch) on the same node must not silently coalesce into
-    // whichever enqueued first — the loser gets the different-admission error instead.
-    (existing.continuation === true) === (intent.continuation === true)
+    // A ticket of the other kind is refused at claim, so it must not absorb this request.
+    existing.recovery_kind === intent.recovery_kind
   );
 }
 
@@ -184,19 +191,19 @@ export function enqueueTerminalFlowResume(
     action: 'resume',
     flow_run_id: input.flowRunId,
     node_run_id: input.nodeRunId,
-    ...(input.continuation ? { continuation: true } : {}),
+    recovery_kind: input.kind,
   };
+  // Before coalescing too: a request joining a live ticket must still respect a Cancel since.
+  if (input.admit && !input.admit(db)) {
+    throw new ResumeAdmitDeclinedError(
+      `Flow run ${input.flowRunId} declined its resume admit check`,
+    );
+  }
   const live = ops.live(db, input.flowRunId);
   if (live) {
     if (isSameResumeTarget(live, intent)) return { admission: live, created: false };
     throw new TerminalResumeAdmissionError(
       `Flow run ${input.flowRunId} already has a different live admission`,
-    );
-  }
-
-  if (input.admit && !input.admit(db)) {
-    throw new ResumeAdmitDeclinedError(
-      `Flow run ${input.flowRunId} declined its resume admit check`,
     );
   }
   const eligibility = resumeEligibility(db, input.flowRunId, input.nodeRunId);
@@ -212,6 +219,9 @@ export function validateTerminalResumeAdmission(
   if (!intent) {
     return { ok: false, error: `Admission ${row.ticket} is not a terminal node resume intent` };
   }
+  // Read in the promotion's transaction: a step that changed while queued keeps its terminal status.
+  const refused = resumeTargetRefusal(db, intent);
+  if (refused) return { ok: false, error: refused };
   return resumeEligibility(db, row.flowRunId, intent.node_run_id);
 }
 

@@ -35,7 +35,9 @@ import {
   requestFlowStart,
   requestTerminalFlowResume,
 } from '../runtime';
+import { isUserCancelled } from '../../transitions';
 import { stageRestartContinuations } from './boot-continuation';
+import { ResumeAdmitDeclinedError } from './resume-store';
 
 let db: TestDb;
 let controller: FlowAdmissionController;
@@ -308,31 +310,6 @@ describe('terminal Flow resume admission runtime', () => {
     );
   });
 
-  it('carries the continuation flag through the durable intent to the dispatcher (user Retry), and omits it otherwise', async () => {
-    maxConcurrentRuns = 2;
-    const nodeRunId = persistTerminalResume('continuation-resume');
-    await requestTerminalFlowResume({
-      flowRunId: 'continuation-resume',
-      nodeRunId,
-      continuation: true,
-    });
-    await vi.waitFor(() => expect(mocks.resumeDispatcher).toHaveBeenCalledOnce());
-    expect(mocks.resumeDispatcher.mock.calls[0][0]).toMatchObject({
-      action: 'resume',
-      flow_run_id: 'continuation-resume',
-      continuation: true,
-    });
-
-    // The deliberate re-run surfaces (flows.rerunRun) never set it.
-    mocks.resumeDispatcher.mockClear();
-    const plainNodeRunId = persistTerminalResume('plain-resume');
-    await requestTerminalFlowResume({ flowRunId: 'plain-resume', nodeRunId: plainNodeRunId });
-    await vi.waitFor(() => expect(mocks.resumeDispatcher).toHaveBeenCalledOnce());
-    expect(
-      (mocks.resumeDispatcher.mock.calls[0][0] as { continuation?: true }).continuation,
-    ).toBeUndefined();
-  });
-
   it('deduplicates simultaneous retry requests before dispatch', async () => {
     const nodeRunId = persistTerminalResume('concurrent-resume');
 
@@ -346,6 +323,23 @@ describe('terminal Flow resume admission runtime', () => {
     expect(
       db.select().from(flowRuns).where(eq(flowRuns.id, 'concurrent-resume')).get()?.status,
     ).toBe('running');
+  });
+
+  // A Retry landing on a live ticket would otherwise report success for a run the user cancelled.
+  it('refuses to coalesce onto a live ticket once a user Cancel lands', async () => {
+    const flowRunId = 'coalesce-cancelled';
+    const nodeRunId = persistTerminalResume(flowRunId);
+    const first = await controller.enqueueTerminalResume({ flowRunId, nodeRunId });
+    const admit = (tx: Parameters<typeof isUserCancelled>[0]) => !isUserCancelled(tx, flowRunId);
+    await expect(
+      controller.enqueueTerminalResume({ flowRunId, nodeRunId, admit }),
+    ).resolves.toEqual({ admission: first.admission, created: false });
+
+    db.update(flowRuns).set({ status: 'cancelled' }).where(eq(flowRuns.id, flowRunId)).run();
+
+    await expect(
+      controller.enqueueTerminalResume({ flowRunId, nodeRunId, admit }),
+    ).rejects.toBeInstanceOf(ResumeAdmitDeclinedError);
   });
 
   it('settles a failed resume after cleanup, then drains the next start', async () => {
@@ -470,7 +464,6 @@ describe('boot carry-on — staged from the startup sweep, fired ahead of queued
       expect.objectContaining({
         flow_run_id: flowRunId,
         node_run_id: nodeRunId,
-        continuation: true,
       }),
       expect.any(Number),
     );

@@ -17,27 +17,18 @@ import { BrowserWindow } from 'electron';
 import log from 'electron-log';
 import { buildHiddenWakeMessage } from '../../../shared/lib/message-markers/hidden-wake-marker';
 import { CLAUDE_MODEL_IDS } from '../../../shared/lib/models';
-import { buildTriggerBubbleMessage } from '../../../shared/lib/trigger-bubble-marker';
 import {
-  extractRawTriggerConfig,
   type ResolvedTaskStartMode,
   resolveTaskExecutionMetadata,
   resolveTaskStartInWorktreeFromConfig,
   toChatMode,
 } from '../../../shared/lib/trigger-rule-config';
-import { buildTriggerSummary } from '../../../shared/lib/trigger-summary';
 import type { CodexSpeed } from '../../../shared/types/execution';
 import type {
   TaskChatImageAttachment,
   TaskChatReadyData,
 } from '../../../shared/types/task-chat-ready';
-import {
-  isValidTriggerContext,
-  TRIGGER_START_MODES,
-  type TriggerContext,
-  type TriggerStartMode,
-  withTriggerContextDefaults,
-} from '../../../shared/types/trigger-context';
+import { TRIGGER_START_MODES, type TriggerStartMode } from '../../../shared/types/trigger-context';
 import { getDatabase } from '../db';
 import { createChat, updateChat } from '../db/repos/chats';
 import { getProjectById as getLocalProjectById } from '../db/repos/projects';
@@ -46,7 +37,6 @@ import {
   getTaskById,
   parseResultRecord,
   taskResultSchema,
-  type TaskResultRecord,
   updateTaskStatus as updateTaskStatusLocal,
 } from '../db/repos/tasks';
 import type { Task as DbTask } from '../db/schema';
@@ -69,6 +59,13 @@ import {
   type TaskExecutionAccountType,
 } from './execution-account';
 import { cancelIfChatArchived, unparkRetriedFlowRun } from './pre-dispatch-guards';
+import {
+  buildRetryContinuationPrompt,
+  buildTaskPrompt,
+  extractTaskTriggerConfig,
+  parseTriggerContext,
+  parseTriggerContextRootRecord,
+} from './task-prompt';
 import { extractTrailingUserReply } from './trailing-reply';
 import { createWorktreeForBranch, createWorktreeForChat } from '../git/worktree';
 import { createWorktreeWithMergedBases } from '../git/worktree-converge';
@@ -187,31 +184,6 @@ export async function resolveSubChatIdForExistingChat(params: {
     messages: '[]',
   });
   return { subChatId: subChat.id, startMode };
-}
-
-function parseTriggerContextOrNull(
-  triggerContext: DbTask['triggerContext'],
-): TriggerContext | null {
-  return isValidTriggerContext(triggerContext) ? withTriggerContextDefaults(triggerContext) : null;
-}
-
-/**
- * Coerce trigger_context to a plain object for root-level fields (e.g. `baseBranches` from
- * flowTriggerContext spread in node-dispatch). Returns the full object — not only `_config`.
- */
-function parseTriggerContextRootRecord(
-  triggerContext: DbTask['triggerContext'],
-): TaskResultRecord | undefined {
-  const parsed = taskResultSchema.safeParse(triggerContext);
-  return parsed.success ? parsed.data : undefined;
-}
-
-function extractTaskTriggerConfig(triggerContext: DbTask['triggerContext']) {
-  return extractRawTriggerConfig(parseTriggerContextRootRecord(triggerContext));
-}
-
-function parseTriggerContext(task: DbTask): TriggerContext | null {
-  return parseTriggerContextOrNull(task.triggerContext);
 }
 
 /**
@@ -389,50 +361,6 @@ export function resolveTaskStartInWorktree(task: DbTask): boolean {
 }
 
 /**
- * Build the prompt for a task
- *
- * NOTE: Claude Code has its own system prompt - we only add:
- * 1. Trigger context (if from external trigger) with UI marker
- * 2. Task description
- *
- * The project name is intentionally NOT prepended: Claude Code's own system prompt already carries
- * the working directory, and Frink's platform block / multi-project context establish the project —
- * a `**Project**: <name>` line in the message just duplicated that in every task turn.
- */
-function buildTaskPrompt(task: DbTask): string {
-  const parts: string[] = [];
-
-  const triggerContext = parseTriggerContext(task);
-  const rawConfig = extractTaskTriggerConfig(task.triggerContext);
-  const showTriggerCardFromFlow = rawConfig?.showTriggerCard;
-
-  // Trigger UI bubble only when flow agent opted in (showTriggerCard true) or flag absent (standalone webhook).
-  // Flow tasks with showTriggerCard false omit the bubble — instructions do not reference {{trigger.*}}.
-  if (triggerContext && showTriggerCardFromFlow !== false) {
-    parts.push(buildTriggerBubbleMessage(buildTriggerSummary(triggerContext), triggerContext));
-  }
-
-  if (task.description) {
-    parts.push(task.description);
-  }
-
-  return parts.join('\n\n');
-}
-
-/**
- * Continuation prompt for a retried failed attempt whose Claude session will be RESUMED
- * (sub_chats.session_id → SDK resume): the full task prompt would duplicate the context the
- * session already holds. Asks the agent to re-derive what remains rather than "continue where
- * you left off" — after session compaction the done/remaining split may be lost.
- */
-function buildRetryContinuationPrompt(priorError: string | null): string {
-  const stopLine = priorError
-    ? `Your previous attempt stopped with an error: ${priorError}`
-    : 'Your previous attempt stopped before finishing.';
-  return `${stopLine}\n\nThe session has been resumed. Any tool call that never returned a result did NOT complete, and files it was writing may be half-applied. Re-read the original task requirements and your checklist/todo state, work out what remains, and continue from there. Finish with your task signal as usual.`;
-}
-
-/**
  * Create a chat linked to a task via cloud-client
  * Does NOT execute the task - that happens in the renderer
  *
@@ -456,7 +384,7 @@ async function createChatForTask(task: DbTask): Promise<{
    * flow re-dispatch — both legitimately re-send a prompt that already exists in the chat.
    */
   isRetry: boolean;
-  /** True only for a user-requested tasks.retry claim (result.retryMode) — drives the unpark gate. */
+  /** True only for a user-requested tasks.recover claim (result.retryMode) — drives the unpark gate. */
   isUserRetryClaim: boolean;
 }> {
   // Get project info (if task has a project)
@@ -672,7 +600,7 @@ async function createChatForTask(task: DbTask): Promise<{
   const attachmentImages = await fetchAttachmentImages(rawTc?.attachments, promptWarnings);
 
   let prompt = buildTaskPrompt(task);
-  // Session continuation (Carry on's continue-retry AND a continuation terminal-resume
+  // Session continuation (a Continue recovery AND a continuation terminal-resume
   // dispatch): both gate on a resumable session existing, so the resumed session holds the
   // task context — send only the hidden continuation nudge, never a visible re-prompt. (If
   // the session goes stale between gate and claim, the executor's resume-failure fallback
@@ -937,7 +865,7 @@ async function handleClaimedTask(task: DbTask): Promise<void> {
     if ((await getTaskById(getDatabase(), task.id))?.status !== 'running') return;
     if (await cancelIfChatArchived(task, chatId)) return;
 
-    // Unpark keys on the tasks.retry claim ONLY — a deliberate re-dispatch (isRetry may be true)
+    // Unpark keys on the tasks.recover claim ONLY — a deliberate re-dispatch (isRetry may be true)
     // has already flipped its run back to `running` before dispatch, so unparking would refuse
     // and wrongly fail the freshly re-dispatched task.
     if (isUserRetryClaim && task.flowRunId) {
@@ -1034,9 +962,4 @@ export function initTaskExecutor(): void {
   });
 }
 
-export {
-  buildRetryContinuationPrompt,
-  buildTaskPrompt,
-  handleClaimedTask,
-  isStartTaskFallbackMode,
-};
+export { handleClaimedTask, isStartTaskFallbackMode };

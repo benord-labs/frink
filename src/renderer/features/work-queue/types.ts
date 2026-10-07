@@ -2,6 +2,7 @@
  * Work Queue Types
  */
 
+import type { RecoveryKind } from '../../../shared/types/flow-run/resume';
 import type { AgentUserQuestion, TaskSignalState } from '../../../shared/types/task-signal';
 import type { TriggerContext, TriggerStartMode } from '../../../shared/types/trigger-context';
 
@@ -63,4 +64,13 @@ export type Task = {
   linkedChatId?: string | null;
   flowRunId?: string | null;
   triggerContext?: TriggerContext | null;
+  /** The one recovery action of a stopped (failed / attention-parked) task. */
+  recoveryKind?: RecoveryKind;
+  /** Its Retry re-runs a started non-agent step, so it confirms first. */
+  confirmSideEffects?: boolean;
+  /** The step attempt a run-level recovery acts on. */
+  recoveryNodeRunId?: string;
 };
+
+/** A Retry the user confirmed, pinned to the step attempt its dialog showed. */
+export type ConfirmedRecovery = { kind: RecoveryKind; recoveryNodeRunId?: string };

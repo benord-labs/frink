@@ -1,3 +1,5 @@
+import { type RecoveryKind, recoveryKindSchema } from '../../types/flow-run/resume';
+
 // Durable activation states shared by main-process admission and later renderer contracts.
 export const FLOW_ADMISSION_STATES = [
   'queued',
@@ -33,12 +35,8 @@ export type FlowAdmissionIntentV1 = {
   sub_chat_id?: string;
   message_id?: string;
   batch_stage_run_id?: string;
-  /**
-   * A resume that should CONTINUE the driving sub-chat's surviving session (hidden
-   * continuation nudge, live mode) instead of re-dispatching the node's instructions.
-   * Only user-Retry mints it; the deliberate re-run surfaces never do.
-   */
-  continuation?: true;
+  /** The recovery a terminal resume was admitted as; its claim refuses a step that changed. */
+  recovery_kind?: RecoveryKind;
 };
 
 const INTENT_V1_KEYS = new Set([
@@ -50,7 +48,7 @@ const INTENT_V1_KEYS = new Set([
   'sub_chat_id',
   'message_id',
   'batch_stage_run_id',
-  'continuation',
+  'recovery_kind',
 ]);
 
 const isOptionalId = (value: unknown): value is string | undefined =>
@@ -90,7 +88,7 @@ export function isFlowAdmissionIntentV1(value: unknown): value is FlowAdmissionI
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Record<string, unknown>;
   if (Object.keys(candidate).some((key) => !INTENT_V1_KEYS.has(key))) return false;
-  if (candidate.continuation !== undefined && candidate.continuation !== true) return false;
+  if (!recoveryKindSchema.optional().safeParse(candidate.recovery_kind).success) return false;
   return (
     hasIntentHeader(candidate) && hasValidOptionalIds(candidate) && hasValidReferences(candidate)
   );

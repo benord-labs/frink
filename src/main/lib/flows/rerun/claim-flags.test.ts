@@ -115,7 +115,7 @@ describe('deriveTaskClaimFlags', () => {
     });
   });
 
-  it('tasks.retry claim → both flags', () => {
+  it('tasks.recover claim → both flags', () => {
     expect(deriveTaskClaimFlags('continue', {})).toEqual({
       isRetry: true,
       isUserRetryClaim: true,
@@ -137,7 +137,7 @@ describe('deriveTaskClaimFlags', () => {
 describe('resolveClaimResume', () => {
   const PINNED = { resumeSession: true, resumeSubChatId: 'sub-1' };
 
-  it('tasks.retry continue claim → continues with its own prior error (no pin needed — the row carries its sub-chat)', () => {
+  it('tasks.recover continue claim → continues with its own prior error (no pin needed — the row carries its sub-chat)', () => {
     expect(resolveClaimResume('continue', 'prior boom', {}, null)).toEqual({
       continueSession: true,
       priorError: 'prior boom',

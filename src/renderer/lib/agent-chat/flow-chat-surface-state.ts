@@ -103,7 +103,7 @@ function readTaskAgentInfo(
  * Which park answer surface a parked driving task should render: structured `questions` get the
  * clickable card; every OTHER user-input park gets a summary + free-text reply box, so no park is
  * ever left without an in-chat answer affordance. Two carve-outs return `none`: transient parks
- * (usage limit / API error — TaskControls owns their Carry on / Retry) and user-pause parks
+ * (usage limit / API error — TaskControls owns their Continue / Retry) and user-pause parks
  * (the paused bar owns those).
  */
 export function deriveParkSurfaceState(task: ParkedTask): ParkSurfaceState {
@@ -155,11 +155,11 @@ export function deriveFlowChatBottomSurface(data: FlowChatSurfaceData): FlowChat
       return { kind: 'paused', flowRunId: run.id, ...readTaskAgentInfo(task, subChatMode) };
     }
     // Transient parks derive to 'none' — those keep the composer (TaskControls owns their
-    // Carry on / Retry), so the chat is never left input-less.
+    // Continue / Retry), so the chat is never left input-less.
     return deriveParkSurfaceState(task).kind === 'none' ? { kind: 'composer' } : { kind: 'park' };
   }
   // States that own a recovery/approval affordance elsewhere, which the strip must not hide: the
-  // plan card approves plan_ready; TaskControls owns failed (Carry on / Retry); a restart-interrupted
+  // plan card approves plan_ready; TaskControls owns failed (Continue / Retry); a restart-interrupted
   // run resumes via a chat reply + InterruptedRunControls (decision flow-run-restart-recovery) and
   // reaches here LIVE, because the boot sweep cancels the TASK while its flow_run stays `paused`.
   if (task?.status === 'plan_ready' || task?.status === 'failed' || task?.status === 'cancelled') {
@@ -192,7 +192,7 @@ export function getFlowSurfaceRefetchInterval(data: FlowChatSurfaceData): number
   }
   // `cancelled` joins `needs_attention` as a poll-worthy dead state. A restart-interrupted run is
   // cancelled (terminal), so there is no live run and the surface correctly shows the composer +
-  // Resume — but the RESUME runs in the main process (the executor's follow-up turn, or rerunRun),
+  // Resume — but the RESUME runs in the main process (the executor's follow-up turn, or retryRunFromLastNode),
   // and the renderer has no invalidation for it. Stopping the poll here means the run going live
   // again is never observed and the composer sticks for the rest of the session. The docstring's
   // "invalidations keep things fresh" holds for a finished run, not for a resumable one.

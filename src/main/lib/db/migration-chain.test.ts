@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { isFlowAdmissionIntentV1 } from '../../../shared/lib/flow-admission';
 import { NodeSqliteDatabase } from './node-sqlite-driver';
 import { freshDb } from './test-utils/fresh-db';
 
@@ -675,6 +676,42 @@ describe('database migration chain', () => {
       }
       sqlite.exec("DELETE FROM sub_chats WHERE id = 'metadata'");
       expect(count(sqlite, "sub_chat_messages WHERE sub_chat_id = 'metadata'")).toBe(0);
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it('strips the retired continuation flag from queued resume intents', () => {
+    const tag = '0112_resume_intent_continuation';
+    const resume = { version: 1, action: 'resume', flow_run_id: 'run-1', node_run_id: 'nr-1' };
+    const sqlite = new NodeSqliteDatabase(':memory:');
+    try {
+      sqlite.pragma('foreign_keys = ON');
+      for (const entry of readJournalEntries()) {
+        if (entry.tag === tag) break;
+        sqlite.exec(readFileSync(join(drizzleDir, `${entry.tag}.sql`), 'utf-8'));
+      }
+      sqlite.exec(`
+        INSERT INTO flows (id, name) VALUES ('flow-1', 'F');
+        INSERT INTO flow_versions (id, flow_id, version_number, graph) VALUES ('ver-1', 'flow-1', 1, '{}');
+        INSERT INTO flow_runs (id, flow_version_id, status)
+          VALUES ('run-1', 'ver-1', 'failed'), ('run-2', 'ver-1', 'failed');
+      `);
+      const insert = sqlite.prepare(
+        "INSERT INTO flow_run_admissions (flow_run_id, priority_class, intent_version, intent_json, requested_at) VALUES (?, 'resume', 1, ?, 1)",
+      );
+      insert.run('run-1', JSON.stringify({ ...resume, continuation: true }));
+      insert.run('run-2', JSON.stringify({ ...resume, flow_run_id: 'run-2' }));
+
+      sqlite.exec(readFileSync(join(drizzleDir, `${tag}.sql`), 'utf-8'));
+
+      // SAFETY: this projection returns the seeded admissions' TEXT intent_json column.
+      const rows = sqlite
+        .prepare('SELECT intent_json FROM flow_run_admissions ORDER BY flow_run_id')
+        .all() as Array<{ intent_json: string }>;
+      const intents: unknown[] = rows.map((row) => JSON.parse(row.intent_json));
+      expect(intents).toEqual([resume, { ...resume, flow_run_id: 'run-2' }]);
+      expect(intents.every(isFlowAdmissionIntentV1)).toBe(true);
     } finally {
       sqlite.close();
     }

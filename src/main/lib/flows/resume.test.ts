@@ -1,4 +1,3 @@
-import { TRPCError } from '@trpc/server';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 import type { FlowGraph } from '../../../shared/lib/validate-flow-graph';
@@ -13,17 +12,20 @@ import {
   recoverOrphanedTasks,
   updateTaskStatus,
 } from '../db/repos/tasks';
-import { abandonRestartInterruption } from '../db/repos/task-parking/abandon-marker';
-import { batchStageRuns, batchStages, flowRunAdmissions, flowRuns, tasks } from '../db/schema';
+import {
+  batchStageRuns,
+  batchStages,
+  chats,
+  flowRunAdmissions,
+  flowRuns,
+  subChatMessages,
+  subChats,
+  tasks,
+} from '../db/schema';
 import { seedActiveAdmission, seedFlowRun } from '../db/test-utils/flow-fixtures';
 import { freshDb, type TestDb } from '../db/test-utils/fresh-db';
 import { unparkFlowInPlace } from '../tasks';
-import { isRestartInterrupted } from './transitions';
 import { hasFlowResourceActivity, setFlowAdmissionLifecycleHooks } from './admission/activity';
-import {
-  TerminalResumeAdmissionError,
-  TerminalResumeChatDeletedError,
-} from './admission/terminal-resume/resume-store';
 
 // The engine reads its db via the getDatabase() singleton; point it at the per-test
 // in-memory db so the guard reads (getFlowRun / listNodeRunsForFlowRun) hit seeded rows.
@@ -51,12 +53,7 @@ vi.mock('./admission/runtime', async (importOriginal) => ({
 
 import { _setFlowAdmissionControllerForTests } from './admission/runtime';
 import { advanceFlowRun, dispatchAndAdvance, loadRunContext } from './advance';
-import {
-  isRunRestartInterrupted,
-  rerunFlowRunFromInterruption,
-  resumeFailedFlowInPlace,
-  resumeFlowRun,
-} from './resume';
+import { isRunRestartInterrupted, resumeFailedFlowInPlace, resumeFlowRun } from './resume';
 import { forgetAdvancedTask, stopTaskCompletionWatcher, tick } from './task-completion-watcher';
 
 beforeEach(() => _setFlowAdmissionControllerForTests(null));
@@ -165,7 +162,9 @@ describe('resumeFlowRun — admission lease', () => {
     });
     seedActiveAdmission(db, flowRunId);
 
-    await expect(resumeFlowRun(flowRunId, 'retry', old.id)).rejects.toThrow('already changed');
+    await expect(resumeFlowRun(flowRunId, 'retry', old.id, undefined, 'retry')).rejects.toThrow(
+      'already changed',
+    );
     expect((await getFlowRun(db, flowRunId))?.status).toBe('paused');
     expect((await getNodeRun(db, replacement.id))?.status).toBe('awaiting_input');
     expect(dispatchAndAdvance).not.toHaveBeenCalled();
@@ -281,7 +280,7 @@ describe('resumeFlowRun — admission lease', () => {
       return { graph: GRAPH };
     });
 
-    await expect(resumeFlowRun(flowRunId, 'retry', nodeRun.id)).rejects.toThrow(
+    await expect(resumeFlowRun(flowRunId, 'retry', nodeRun.id, undefined, 'retry')).rejects.toThrow(
       /changed while it was being resumed/,
     );
 
@@ -303,7 +302,7 @@ describe('resumeFlowRun — admission lease', () => {
       expect(hasFlowResourceActivity(flowRunId)).toBe(true);
     });
 
-    await resumeFlowRun(flowRunId, 'retry', nodeRun.id);
+    await resumeFlowRun(flowRunId, 'retry', nodeRun.id, undefined, 'retry');
 
     expect(dispatchAndAdvance).toHaveBeenCalledOnce();
     expect(dispatchAndAdvance).toHaveBeenCalledWith(
@@ -312,9 +311,86 @@ describe('resumeFlowRun — admission lease', () => {
       undefined,
       expect.anything(),
       undefined,
+      // A Retry re-sends the step's instructions; only a Continue resumes the session.
       { supersedesNodeRunId: nodeRun.id },
     );
     expect(hasFlowResourceActivity(flowRunId)).toBe(false);
+  });
+
+  describe('the recovery kind the user clicked', () => {
+    /** A paused agent step whose task's session (`sub-1`) has or has not answered it yet. */
+    async function seedStep(answered: boolean) {
+      const { flowRunId } = await seedFlowRun(db, GRAPH);
+      await setFlowRunStatus(db, flowRunId, 'paused');
+      const node = await createNodeRun(db, {
+        flowRunId,
+        nodeId: 'a',
+        blockType: 'agent',
+        status: 'failed',
+      });
+      seedActiveAdmission(db, flowRunId);
+      db.insert(chats).values({ id: 'chat-1' }).run();
+      db.insert(subChats).values({ id: 'sub-1', chatId: 'chat-1', sessionId: 'sess-1' }).run();
+      const task = await createTask(db, {
+        description: 'agent step',
+        source: 'flow',
+        sourceId: node.id,
+        nodeRunId: node.id,
+        flowRunId,
+        result: { subChatId: 'sub-1' },
+      });
+      if (answered) answer(task.id);
+      return { flowRunId, nodeRunId: node.id, taskId: task.id };
+    }
+    function answer(taskId: string) {
+      const prompt = {
+        id: `u-${taskId}`,
+        role: 'user',
+        parts: [],
+        metadata: { dispatchTaskId: taskId },
+      };
+      db.insert(subChatMessages)
+        .values([
+          { subChatId: 'sub-1', seq: 0, message: JSON.stringify(prompt) },
+          { subChatId: 'sub-1', seq: 1, message: '{"id":"a1","role":"assistant","parts":[]}' },
+        ])
+        .run();
+    }
+
+    beforeEach(() => vi.mocked(dispatchAndAdvance).mockReset().mockResolvedValue(undefined));
+
+    it('continues the answering session when the click was Continue', async () => {
+      const { flowRunId, nodeRunId } = await seedStep(true);
+      await resumeFlowRun(flowRunId, 'retry', nodeRunId, undefined, 'continue');
+      expect(vi.mocked(dispatchAndAdvance).mock.calls[0]?.[5]).toEqual({
+        supersedesNodeRunId: nodeRunId,
+        resumeKind: 'continuation',
+      });
+    });
+
+    // The re-check shares the transaction that reopens the run, so an answer landing first wins.
+    it('refuses a Retry whose session answered the step as the reopen began', async () => {
+      const { flowRunId, nodeRunId, taskId } = await seedStep(false);
+      const transaction = db.transaction.bind(db);
+      vi.spyOn(db, 'transaction').mockImplementationOnce((command, config) => {
+        answer(taskId);
+        return transaction(command, config);
+      });
+
+      await expect(
+        resumeFlowRun(flowRunId, 'retry', nodeRunId, undefined, 'retry'),
+      ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED', message: /refresh/ });
+      expect((await getFlowRun(db, flowRunId))?.status).toBe('paused');
+      expect(dispatchAndAdvance).not.toHaveBeenCalled();
+    });
+
+    it('refuses a retry that carries no kind', async () => {
+      const { flowRunId, nodeRunId } = await seedStep(false);
+      await expect(resumeFlowRun(flowRunId, 'retry', nodeRunId)).rejects.toMatchObject({
+        code: 'PRECONDITION_FAILED',
+      });
+      expect((await getFlowRun(db, flowRunId))?.status).toBe('paused');
+    });
   });
 
   it('preserves the Fan Out item scope when retrying one branch', async () => {
@@ -337,7 +413,7 @@ describe('resumeFlowRun — admission lease', () => {
     const ticket = seedActiveAdmission(db, flowRunId);
     vi.mocked(dispatchAndAdvance).mockReset().mockResolvedValue(undefined);
 
-    await resumeFlowRun(flowRunId, 'retry', nodeRun.id);
+    await resumeFlowRun(flowRunId, 'retry', nodeRun.id, undefined, 'retry');
 
     expect(dispatchAndAdvance).toHaveBeenCalledWith(
       { flowRunId, ticket },
@@ -424,165 +500,6 @@ describe('recoverOrphanedTasks — restart interruption is neutral, not an error
 
     expect(await recoverOrphanedTasks(db, new Date())).toEqual([]);
     expect((await getTaskById(db, task.id))?.status).toBe('running');
-  });
-});
-
-describe('rerunFlowRunFromInterruption — guards', () => {
-  let db: TestDb;
-  beforeEach(() => {
-    db = freshDb();
-    holder.db = db;
-    holder.requestTerminalFlowResume.mockReset();
-    (loadRunContext as Mock).mockReset();
-    (dispatchAndAdvance as Mock).mockReset();
-  });
-
-  async function seedCancelledRun(): Promise<string> {
-    const { flowRunId } = await seedFlowRun(db, GRAPH);
-    await setFlowRunStatus(db, flowRunId, 'cancelled', { completedAt: new Date() });
-    return flowRunId;
-  }
-
-  async function seedInterruptedNode(flowRunId: string): Promise<string> {
-    const node = await createNodeRun(db, {
-      flowRunId,
-      nodeId: 'a',
-      blockType: 'agent',
-      status: 'running',
-    });
-    await setNodeRunStatus(db, node.id, 'cancelled', {
-      nodeOutput: {
-        status: 'cancelled',
-        outputs: {},
-        artifacts: [],
-        durationMs: 0,
-        error: { message: RESTART_INTERRUPTION_REASON, retryable: true },
-      },
-      completedAt: new Date(),
-    });
-    return node.id;
-  }
-
-  it('queues the marked interrupted node without reviving it', async () => {
-    const flowRunId = await seedCancelledRun();
-    const nodeRunId = await seedInterruptedNode(flowRunId);
-    holder.requestTerminalFlowResume.mockResolvedValue({
-      created: true,
-      admission: { ticket: 9, state: 'queued' },
-    });
-
-    await rerunFlowRunFromInterruption(flowRunId);
-
-    expect(holder.requestTerminalFlowResume).toHaveBeenCalledWith({
-      flowRunId,
-      nodeRunId,
-      admit: expect.any(Function),
-    });
-    expect(loadRunContext).not.toHaveBeenCalled();
-    expect(dispatchAndAdvance).not.toHaveBeenCalled();
-    expect((await getFlowRun(db, flowRunId))?.status).toBe('cancelled');
-  });
-
-  it('reports a Cancel that lands while the enqueue drains as the user cancelling', async () => {
-    const flowRunId = await seedCancelledRun();
-    await seedInterruptedNode(flowRunId);
-    const dropped = new TerminalResumeAdmissionError('Flow resume admission cancelled');
-    holder.requestTerminalFlowResume.mockImplementation(async () => {
-      abandonRestartInterruption(db, flowRunId);
-      throw dropped;
-    });
-    await expect(rerunFlowRunFromInterruption(flowRunId)).rejects.toThrow(/cancelled by the user/i);
-  });
-
-  it('passes an admission failure through while the run is still interrupted', async () => {
-    const flowRunId = await seedCancelledRun();
-    await seedInterruptedNode(flowRunId);
-    const failed = new TerminalResumeAdmissionError('Flow resume admission failed');
-    holder.requestTerminalFlowResume.mockRejectedValue(failed);
-    await expect(rerunFlowRunFromInterruption(flowRunId)).rejects.toBe(failed);
-  });
-
-  it('refuses a run whose chat was deleted in plain words, keeping its interruption marker', async () => {
-    const flowRunId = await seedCancelledRun();
-    await seedInterruptedNode(flowRunId);
-    holder.requestTerminalFlowResume.mockRejectedValue(new TerminalResumeChatDeletedError());
-    await expect(rerunFlowRunFromInterruption(flowRunId)).rejects.toSatisfy(
-      (error: unknown) =>
-        error instanceof TRPCError &&
-        error.code === 'PRECONDITION_FAILED' &&
-        error.message === "This run's chat was deleted — start the flow again to re-run it.",
-    );
-    expect(isRestartInterrupted(db, flowRunId)).toBe(true);
-  });
-
-  it('rejects a run that does not exist', async () => {
-    await expect(rerunFlowRunFromInterruption('nope')).rejects.toThrow(/not found/i);
-  });
-
-  it('rejects a run that is not cancelled (still running)', async () => {
-    const { flowRunId } = await seedFlowRun(db, GRAPH); // running
-    await expect(rerunFlowRunFromInterruption(flowRunId)).rejects.toThrow(
-      /interrupted \(cancelled\)/i,
-    );
-  });
-
-  it('rejects a cancelled run with no interrupted node', async () => {
-    const flowRunId = await seedCancelledRun();
-    await expect(rerunFlowRunFromInterruption(flowRunId)).rejects.toThrow(/no interrupted node/i);
-  });
-
-  it('rejects a user-cancelled run (interrupted node lacks the restart marker)', async () => {
-    const flowRunId = await seedCancelledRun();
-    const node = await createNodeRun(db, {
-      flowRunId,
-      nodeId: 'a',
-      blockType: 'agent',
-      status: 'running',
-    });
-    await setNodeRunStatus(db, node.id, 'cancelled', {
-      nodeOutput: { status: 'cancelled', outputs: {}, artifacts: [], durationMs: 0 },
-      completedAt: new Date(),
-    });
-    await expect(rerunFlowRunFromInterruption(flowRunId)).rejects.toThrow(/cancelled by the user/i);
-  });
-
-  it('queues re-run from a contained Fan Out node', async () => {
-    const flowRunId = await seedCancelledRun();
-    const parent = await createNodeRun(db, {
-      flowRunId,
-      nodeId: 'fan',
-      blockType: 'fan_out',
-      status: 'completed',
-    });
-    const lane = await createNodeRun(db, {
-      flowRunId,
-      nodeId: 'a',
-      blockType: 'agent',
-      status: 'running',
-      parentFanOutNodeRunId: parent.id,
-      laneIndex: 0,
-    });
-    await setNodeRunStatus(db, parent.id, 'completed', { completedAt: new Date() });
-    await setNodeRunStatus(db, lane.id, 'cancelled', {
-      nodeOutput: {
-        status: 'cancelled',
-        outputs: {},
-        artifacts: [],
-        durationMs: 0,
-        error: { message: RESTART_INTERRUPTION_REASON, retryable: true },
-      },
-      completedAt: new Date(),
-    });
-    holder.requestTerminalFlowResume.mockResolvedValue({
-      created: true,
-      admission: { ticket: 10, state: 'queued' },
-    });
-    await rerunFlowRunFromInterruption(flowRunId);
-    expect(holder.requestTerminalFlowResume).toHaveBeenCalledWith({
-      flowRunId,
-      nodeRunId: lane.id,
-      admit: expect.any(Function),
-    });
   });
 });
 

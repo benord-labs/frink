@@ -1,37 +1,18 @@
 /**
- * InterruptedRunControls — chat-level resume affordance for a flow run that was interrupted by an
- * app/process restart (the run is `cancelled` but carries the restart marker, so its worktree +
- * upstream outputs are intact). Pinned above the composer, mirroring TaskAcceptBar, because the
- * interrupted agent may have died before streaming its first frame — there is no assistant message
- * to anchor message-level controls (TaskControls) to.
- *
- * Why it exists: a restart-interrupted flow chat is otherwise a dead-end from the chat surface —
- * the "Re-run from previous node" control lives only in the FlowEditor run-history panel. A run
- * cancelled deliberately by the user (no marker) is NOT resumable, so the row stays hidden for it.
- *
- * TWO mechanisms behind one row, chosen server-side by `resumeMode` (flows/resume.ts):
- *  - `session` — the common case. "Resume" sends a HIDDEN wake message down the same follow-up pipe
- *    a typed reply uses, so the agent simply wakes and continues in place. Deliberately NOT a
- *    re-dispatch: that re-sends the node's full instructions as a visible bubble the transcript
- *    already contains, which reads to the user as the flow asking twice and to the agent as a
- *    contradiction against the session it just resumed.
- *  - `redispatch` — a non-agent node was interrupted, or this sub-chat has no resumable session, so
- *    there is nothing to wake. Falls back to the run-scoped `flows.rerunRun` and RENAMES itself to
- *    "Re-run step", because that genuinely re-runs the step from its instructions. Never call that
- *    "Resume" — a resume that silently re-runs is the masquerade this surface exists to avoid.
+ * InterruptedRunControls — pinned recovery row for a run cancelled by an app restart (marker set),
+ * hidden for user cancels; Continue/Retry is chosen server-side by `resumeMode` (flows/resume.ts).
  */
 
-import { Button } from '@benord-labs/frink-primitives';
-import { Play, RotateCw } from 'lucide-react';
-import { memo, useEffect, useRef } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { buildHiddenWakeMessage } from '../../../../shared/lib/message-markers/hidden-wake-marker';
-import { Tooltip, TooltipContent, TooltipTrigger } from '../../../components/ui/tooltip';
+import type { RecoveryKind } from '../../../../shared/types/flow-run/resume';
 import { RESUME_INTERRUPTED_WAKE_TEXT } from '../../../lib/agent-chat/resume-wake-text';
 import { useFlowResumeLock } from '../../../lib/agent-chat/use-flow-resume-lock';
 import { trpc } from '../../../lib/trpc';
 import { clearFlowRunEndedErrorSignal } from '../main/active-chat/utils';
 import { RunStatusRow } from '../RunStatusRow';
+import { RecoverRow } from './RecoverRow';
 
 type InterruptedRunControlsProps = {
   chatId: string | null;
@@ -43,18 +24,13 @@ type InterruptedRunControlsProps = {
   isTurnActive: boolean;
 };
 
-/** A resume ticket (boot carry-on, typed reply, or Re-run step) already owns the run and waits for a slot. */
+/** A resume ticket (boot continuation, typed reply, or a Continue/Retry click) already owns the run and waits for a slot. */
 function QueuedResumeRow() {
   return (
     <RunStatusRow dotClassName="bg-[hsl(var(--status-warning))]" label="Flow run interrupted">
       <span className="px-2 text-xs text-muted-foreground">Queued to resume this step…</span>
     </RunStatusRow>
   );
-}
-
-function buttonText(pending: boolean, isSessionResume: boolean, label: string): string {
-  if (!pending) return label;
-  return isSessionResume ? 'Resuming…' : 'Re-running…';
 }
 
 export const InterruptedRunControls = memo(function InterruptedRunControls({
@@ -75,17 +51,31 @@ export const InterruptedRunControls = memo(function InterruptedRunControls({
     },
   );
 
-  const rerunMutation = trpc.flows.rerunRun.useMutation({
-    onSuccess: () => {
+  // Keyed on tab + run + step + mode: the row is reused across all, so a confirm is for one Retry.
+  const [confirmingFor, setConfirmingFor] = useState<string | null>(null);
+  // Switching any of them drops the confirmation, so returning never reopens a stale one.
+  const confirmTarget = data
+    ? `${subChatId}:${data.runId}:${data.nodeRunId}:${data.resumeMode}`
+    : null;
+  if (confirmingFor !== null && confirmingFor !== confirmTarget) setConfirmingFor(null);
+  // Set on submit, so a second click before `isPending` renders cannot send a second request.
+  const rerunInFlight = useRef(false);
+  const rerunMutation = trpc.flows.retryRunFromLastNode.useMutation({
+    // Awaited (also after a refusal), so the button stays disabled until the refetched row lands.
+    onSettled: async () => {
+      rerunInFlight.current = false;
+      setConfirmingFor(null);
       if (!chatId) return;
-      void utils.flows.interruptedRunForChat.invalidate({ chatId, subChatId });
-      void utils.flows.hasIncompleteRunForChat.invalidate({ chatId });
+      await Promise.all([
+        utils.flows.interruptedRunForChat.invalidate({ chatId, subChatId }),
+        utils.flows.hasIncompleteRunForChat.invalidate({ chatId }),
+      ]);
     },
     // No global mutationCache.onError — without this a server precondition throw (run already
-    // advanced / cancelled meanwhile) would be silently swallowed. Only the re-dispatch branch
-    // fires this mutation; a failed wake is reported by the resume lock instead.
+    // advanced / cancelled meanwhile) would be silently swallowed. Only the re-admit branch fires
+    // this mutation; a failed wake is reported by the resume lock instead.
     onError: (error) =>
-      toast.error('Could not re-run the step', {
+      toast.error('Could not recover the step', {
         description: error.message || 'Please try again in a moment.',
       }),
   });
@@ -119,62 +109,38 @@ export const InterruptedRunControls = memo(function InterruptedRunControls({
   // here (resumable === false renders nothing — the user stopped it on purpose).
   if (!data?.resumable) return null;
 
-  // Nothing to click while the ticket waits (boot carry-on / typed reply); a second request would be refused.
+  // Nothing to click while the ticket waits (boot continuation / typed reply); a second request would be refused.
   if (data.resumeMode === 'queued') return <QueuedResumeRow />;
 
   const isSessionResume = data.resumeMode === 'session';
+  const isRetry = data.resumeMode === 'retry';
   const pending = isSessionResume ? resumePending : rerunMutation.isPending;
-  const label = isSessionResume ? 'Resume' : 'Re-run step';
-  // An ELEMENT, not a component reference: a lowercase JSX tag would render an unknown HTML
-  // element, and the naming rule forbids the capitalised const a component reference needs.
-  const icon = isSessionResume ? (
-    <Play className="h-3.5 w-3.5" aria-hidden />
-  ) : (
-    <RotateCw className="h-3.5 w-3.5" aria-hidden />
-  );
+  const recover = (kind: RecoveryKind) => {
+    // Clear a latched FLOW_RUN_ENDED send failure on intent: a re-admitted step streams into a
+    // sub-chat whose start chunk may never reach the transport that latched it.
+    clearFlowRunEndedErrorSignal(subChatId);
+    if (kind === 'continue' && isSessionResume) {
+      start(() => guardedSend(buildHiddenWakeMessage(RESUME_INTERRUPTED_WAKE_TEXT)));
+      return;
+    }
+    if (rerunInFlight.current) return;
+    rerunInFlight.current = true;
+    rerunMutation.mutate({ runId: data.runId, kind });
+  };
 
   return (
-    <RunStatusRow dotClassName="bg-[hsl(var(--status-warning))]" label="Flow run interrupted">
-      <Tooltip delayDuration={300}>
-        <TooltipTrigger asChild>
-          {/* span keeps the tooltip alive while the button is disabled (disabled elements
-                don't fire pointer events). */}
-          <span className="inline-flex">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-7 px-2 gap-1 text-xs text-muted-foreground hover:text-foreground rounded-md"
-              disabled={pending}
-              onClick={() => {
-                // A latched FLOW_RUN_ENDED send failure must not outlive the user's recovery
-                // action — cleared here, on intent, because a redispatch continuation streams
-                // into a sub-chat whose start chunk may never reach the transport that latched it.
-                clearFlowRunEndedErrorSignal(subChatId);
-                if (isSessionResume) {
-                  start(() => guardedSend(buildHiddenWakeMessage(RESUME_INTERRUPTED_WAKE_TEXT)));
-                  return;
-                }
-                rerunMutation.mutate({ runId: data.runId });
-              }}
-              aria-label={
-                isSessionResume
-                  ? 'Resume interrupted flow run'
-                  : 'Re-run the interrupted step of this flow run'
-              }
-              aria-busy={pending || undefined}
-            >
-              {icon}
-              <span>{buttonText(pending, isSessionResume, label)}</span>
-            </Button>
-          </span>
-        </TooltipTrigger>
-        <TooltipContent>
-          {isSessionResume
-            ? 'This flow run was interrupted by a restart. Resume wakes the agent where it stopped — same chat and worktree, no repeated instructions. Typing a message also resumes it.'
-            : 'This step cannot be picked up mid-flight, so it restarts from its instructions in the same worktree. Any work it already did may happen again.'}
-        </TooltipContent>
-      </Tooltip>
-    </RunStatusRow>
+    <RecoverRow
+      isRetry={isRetry}
+      pending={pending}
+      confirming={confirmingFor === confirmTarget}
+      onTrigger={() =>
+        isRetry && data.confirmSideEffects
+          ? setConfirmingFor(confirmTarget)
+          : recover(isRetry ? 'retry' : 'continue')
+      }
+      // The confirm only ever retries; the server refuses it if the step has since changed.
+      onConfirm={() => recover('retry')}
+      onCancel={() => setConfirmingFor(null)}
+    />
   );
 });
