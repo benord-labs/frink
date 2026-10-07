@@ -14,7 +14,6 @@ import {
 } from '@/lib/code-editor/state';
 import { commandFetcher } from '@/lib/commands/command-fetcher';
 import { expandSlashCommand } from '@/lib/commands/expand-slash-command';
-import { buildQueuedMessageText } from '@/lib/mentions/queued-message-text';
 // SplitViewContainer moved to agents-content.tsx for top-level chat splitting
 import { buildAnswerMessage } from '../../../../shared/lib/agent-questions/answered-questions';
 import { buildHiddenWakeMessage } from '../../../../shared/lib/message-markers/hidden-wake-marker';
@@ -50,7 +49,6 @@ import {
   clearCodeSelectionContextAtomFamily,
   codeSelectionContextAtomFamily,
 } from '../../code-editor';
-import { notifySidebarChatActivity } from '../../sidebar/unified/sidebar-chat-activity';
 import { terminalSidebarOpenAtomFamily } from '../../terminal/atoms';
 import { TerminalBottomPanelGate } from '../../terminal/terminal-bottom-panel-gate';
 import type { AgentUserQuestionHandle } from '../AgentUserQuestion';
@@ -155,6 +153,7 @@ import {
 } from './active-chat/hooks';
 import { shouldReleaseEdit } from './active-chat/hooks/use-queue-edit';
 import { useRealtimeSync } from './active-chat/hooks/useRealtimeSync';
+import { useSendFromQueue } from './active-chat/hooks/use-send-from-queue';
 import type { ChatViewInnerProps, ChatViewProps } from './active-chat/types';
 import {
   accountGateRefetchInterval,
@@ -389,7 +388,6 @@ const ChatViewInner = memo(function ChatViewInner({
   const queue = useMessageQueueStore((s) => s.getVisibleQueue(subChatId));
   const addToQueueStore = useMessageQueueStore((s) => s.addToQueue);
   const removeFromQueue = useMessageQueueStore((s) => s.removeFromQueue);
-  const popItemFromQueue = useMessageQueueStore((s) => s.popItem);
   const reorderQueue = useMessageQueueStore((s) => s.reorderVisibleQueue);
   const editingItemId = useMessageQueueStore((s) => s.editingItemIds[subChatId] ?? null);
   const setEditingItemId = useMessageQueueStore((s) => s.setEditingItemId);
@@ -1049,122 +1047,22 @@ const ChatViewInner = memo(function ChatViewInner({
     [reorderQueue, subChatId],
   );
 
-  // Delivers into the RUNNING turn, else queues — never a direct send (that aborts the turn).
   const steerOrQueue = useSteerOrQueue(subChatId);
-
-  // Queue handlers for sending queued messages
-  const handleSendFromQueue = useCallback(
-    async (itemId: string, canSteer: boolean) => {
-      if (!isResolvedExecutionAccountReady) {
-        showAccountNotReadyToast(unauthAccount, setPendingAccountAuth);
-        return;
-      }
-      const item = popItemFromQueue(subChatId, itemId);
-      if (!item) return;
-
-      // If the popped item was the one being edited, clear the editing flag so we don't
-      // leave a stale "Editing…" badge or lock another row.
-      if (useMessageQueueStore.getState().editingItemIds[subChatId] === itemId) {
-        handleAbandonEdit();
-      }
-
-      // Snapshot send function before async gaps to prevent stale ref reads
-      const snapshotSendMessage = sendMessageRef.current;
-      if (!snapshotSendMessage) return;
-
-      try {
-        // Build message parts from queued item
-        const parts: Array<
-          | {
-              type: 'data-image';
-              data: { url: string; mediaType?: string; filename?: string; base64Data?: string };
-            }
-          | { type: 'text'; text: string }
-        > = [
-          ...(item.images || [])
-            .filter((img) => img.url || img.base64Data)
-            .map((img) => ({
-              type: 'data-image' as const,
-              data: {
-                url: img.url,
-                mediaType: img.mediaType,
-                filename: img.filename,
-                base64Data: img.base64Data,
-              },
-            })),
-        ];
-
-        // Mention tokens for the item's attached contexts, with `/compact` left at position 0
-        // (see buildQueuedMessageText).
-        const queuedText = buildQueuedMessageText(item);
-        if (queuedText) {
-          parts.push({ type: 'text', text: queuedText });
-        }
-
-        // Track message sent
-        trackMessageSent({
-          workspaceId: subChatId,
-          messageLength: item.message.length,
-          mode: chatModeRef.current,
-        });
-
-        // Update timestamps
-        useAgentSubChatStore.getState().updateSubChatTimestamp(subChatId);
-        if (parentChatId) {
-          notifySidebarChatActivity(parentChatId);
-        }
-
-        // After async gaps, bail out if component unmounted
-        if (!isMountedRef.current) {
-          // Requeue the item so it is not lost on unmount.
-          useMessageQueueStore.getState().prependItem(subChatId, item);
-          return;
-        }
-
-        // Re-arm stick-to-bottom and jump to the message just sent.
-        scrollToBottom();
-
-        clearExpiredQuestionsForSubChat();
-
-        if (isRunBusy(subChatId, isStreamingRef.current)) {
-          // Busy only because live runs are still hydrating: nothing to steer yet, so it waits.
-          if (!isStreamingRef.current) {
-            useMessageQueueStore.getState().prependItem(subChatId, item);
-            return;
-          }
-          // Steer (or requeue) rather than abort; only a turn this view shows streaming is stopped.
-          if (canSteer) {
-            const text = parts.find((p) => p.type === 'text')?.text ?? '';
-            await steerOrQueue(text, item.images, () =>
-              useMessageQueueStore.getState().prependItem(subChatId, item),
-            );
-            return;
-          }
-          // No steer channel on this runtime, so the card shows "Send now" — honour it by
-          // interrupting first. The executor's duplicate-request guard settles the overlap.
-          await handleStop();
-        }
-
-        await snapshotSendMessage({ role: 'user', parts });
-      } catch (_error) {
-        // Requeue the item so it is not lost on send failures.
-        useMessageQueueStore.getState().prependItem(subChatId, item);
-      }
-    },
-    [
-      subChatId,
-      parentChatId,
-      popItemFromQueue,
-      steerOrQueue,
-      handleStop,
-      scrollToBottom, // Enable auto-scroll and immediately scroll to bottom
-      clearExpiredQuestionsForSubChat,
-      isResolvedExecutionAccountReady,
-      unauthAccount,
-      setPendingAccountAuth,
-      handleAbandonEdit,
-    ],
-  );
+  const handleSendFromQueue = useSendFromQueue({
+    subChatId,
+    parentChatId,
+    chatModeRef,
+    isStreamingRef,
+    isMountedRef,
+    sendMessageRef,
+    steerOrQueue,
+    handleStop,
+    handleAbandonEdit,
+    scrollToBottom,
+    clearExpiredQuestionsForSubChat,
+    isResolvedExecutionAccountReady,
+    unauthAccount,
+  });
 
   const handleRemoveFromQueue = useCallback(
     (itemId: string) => {

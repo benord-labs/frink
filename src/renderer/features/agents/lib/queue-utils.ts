@@ -3,6 +3,7 @@
  * Adapted from canvas chat queue implementation
  */
 
+import { buildQueuedMessageText } from '@/lib/mentions/queued-message-text';
 import type { ApprovedPlanContext } from '../../../../shared/types/plan';
 import type { UploadedFile, UploadedImage } from '../hooks/use-agents-file-upload';
 
@@ -138,6 +139,70 @@ export type AgentQueueItem = {
 
 export function isInternalQueueItem(item: AgentQueueItem | undefined): boolean {
   return item?.approvedPlanContext !== undefined;
+}
+
+/** Enqueued by a task or Flow dispatch, so it must be sent with its dispatch metadata. */
+export function isDispatchQueueItem(item: AgentQueueItem): boolean {
+  return Boolean(item.source || item.dispatchTaskId);
+}
+
+type QueuedMessagePart =
+  | {
+      type: 'data-image';
+      data: { url: string; mediaType?: string; filename?: string; base64Data?: string };
+    }
+  | {
+      type: 'data-file';
+      data: { url: string; mediaType?: string; filename: string; size?: number };
+    }
+  | { type: 'text'; text: string };
+
+type QueuedSendMetadata = { source?: typeof FLOW_DISPATCH_SOURCE; dispatchTaskId?: string };
+
+export type QueuedSendMessage = {
+  role: 'user';
+  parts: QueuedMessagePart[];
+  metadata?: QueuedSendMetadata;
+};
+
+/**
+ * The one `sendMessage` argument for a queued item, shared by the auto-drain and the manual send.
+ * `sendable` is false when the turn would carry nothing; callers must not dispatch it.
+ */
+export function queueItemToSendMessage(item: AgentQueueItem) {
+  // An image restored after a reload has inline data but no url; one with neither is unusable.
+  const images = (item.images ?? []).filter((img) => img.url || img.base64Data);
+  const parts: QueuedMessagePart[] = [
+    ...images.map((img) => ({
+      type: 'data-image' as const,
+      data: {
+        url: img.url,
+        mediaType: img.mediaType,
+        filename: img.filename,
+        base64Data: img.base64Data,
+      },
+    })),
+    ...(item.files ?? []).map((f) => ({
+      type: 'data-file' as const,
+      data: { url: f.url, mediaType: f.mediaType, filename: f.filename, size: f.size },
+    })),
+  ];
+
+  // Attached contexts ride the text as mention tokens, so a context-only item still has text.
+  const text = buildQueuedMessageText(item);
+  const hasText = text.trim().length > 0;
+  if (hasText) parts.push({ type: 'text', text });
+
+  const message: QueuedSendMessage = { role: 'user', parts };
+  // The transport reads the source to tell a dispatched prompt from a reply to a parked plan
+  // card, and main binds the turn's mode to the dispatching task by its id.
+  const metadata: QueuedSendMetadata = {};
+  if (item.source) metadata.source = item.source;
+  if (item.dispatchTaskId) metadata.dispatchTaskId = item.dispatchTaskId;
+  if (item.source || item.dispatchTaskId) message.metadata = metadata;
+
+  // Only text and inline image data reach the agent: files, and an image with just a url, do not.
+  return { message, sendable: hasText || images.some((img) => img.base64Data) };
 }
 
 /** Images to load into the composer when editing a queued turn: a reload-restored image previews
