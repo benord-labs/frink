@@ -116,7 +116,8 @@ vi.mock('../credentials', () => ({
 
 // ── Import after mocks ─────────────────────────────────────────────────────────
 
-import { handleClaimedTask } from './index';
+import { getTaskPoller } from '../task-poller';
+import { handleClaimedTask, initTaskExecutor } from './index';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -190,6 +191,23 @@ describe('handleClaimedTask — start_task offline fallback', () => {
     expect(updateTaskStatusMock).toHaveBeenCalledWith(expect.anything(), 'task-st-1', 'done', {
       result: { configured: true, exitCode: 0 },
     });
+  });
+
+  it('initTaskExecutor runs a task the poller emits as task:claimed', async () => {
+    initTaskExecutor();
+
+    const onClaimed = vi
+      .mocked(getTaskPoller)
+      .mock.results.flatMap((result) => vi.mocked(result.value.on).mock.calls)
+      .find(([event]) => event === 'task:claimed')?.[1];
+    expect(onClaimed).toBeTypeOf('function');
+    onClaimed?.(BASE_TASK);
+
+    await vi.waitFor(() =>
+      expect(updateTaskStatusMock).toHaveBeenCalledWith(expect.anything(), 'task-st-1', 'done', {
+        result: { configured: true, exitCode: 0 },
+      }),
+    );
   });
 
   it('updateChat is called BEFORE updateTaskStatus (signal-bridge reads worktree from chat JOIN)', async () => {
