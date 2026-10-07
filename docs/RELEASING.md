@@ -15,10 +15,15 @@ so they would be stranded on that version. See [update-feed-ownership](decisions
 
 ## Linux
 
-The tag build runs on `ubuntu-latest` and publishes x64 only: `Frink-<version>.AppImage`,
-`frink_<version>_amd64.deb` and `latest-linux.yml`. electron-builder writes one feed per Linux
-arch, and electron-updater reads the one for `process.arch`: `latest-linux.yml` for x64,
-`latest-linux-arm64.yml` for arm64. An arm64 leg can therefore share the bucket without a clash.
+The tag build publishes both architectures:
+
+- x64, built on `ubuntu-latest`: `Frink-<version>.AppImage`, `frink_<version>_amd64.deb` and
+  `latest-linux.yml`.
+- arm64, built on `ubuntu-24.04-arm`: `Frink-<version>-arm64.AppImage`,
+  `frink_<version>_arm64.deb` and `latest-linux-arm64.yml`.
+
+electron-builder writes one feed per Linux arch, and electron-updater reads the one for
+`process.arch`, so the two legs share the bucket without a clash.
 
 Both formats auto-update from that feed:
 
