@@ -9,9 +9,12 @@
  */
 
 import { hostname } from 'node:os';
+import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
+import type { RecoveryKind } from '../../../../shared/types/flow-run/resume';
 import type { TaskChatReadyData } from '../../../../shared/types/task-chat-ready';
 import { getDatabase } from '../../db';
+import { getFlowRun } from '../../db/repos/flow-runs';
 import { getWorkQueueOverviewCounts } from '../../db/repos/task-queries/work-queue-overview-counts';
 import {
   cancelAllPendingTasks,
@@ -31,7 +34,7 @@ import {
   type TaskMutationFailureReason,
   updateTaskStatus,
 } from '../../db/repos/tasks';
-import type { Task } from '../../db/schema';
+import type { FlowRun, Task } from '../../db/schema';
 import type { CarryOnFlowTaskResult } from '../../flows/rerun';
 import {
   isDispatchPending,
@@ -41,10 +44,15 @@ import { getTaskPoller } from '../../task-poller';
 import { cancelWorkQueueTask } from '../../tasks/cancel-work-queue-task';
 import { publicProcedure, router } from '../index';
 import {
+  assertRecoveryStep,
   getTaskWithRunOutcome,
+  recoverTaskInputSchema,
   type TaskWithRunOutcome,
   taskSubChatProcedures,
+  withStoppedTaskRecoveries,
 } from './tasks-subchat';
+
+type Db = ReturnType<typeof getDatabase>;
 
 const taskSourceSchema = z.string().min(1).max(50);
 const workQueueSectionSchema = z.enum(['attention', 'inbox', 'running']);
@@ -99,21 +107,97 @@ function throwTaskMutationReason(
   throw new Error(messages.fallback);
 }
 
-/** Maps a `carryOnFlowTask` failure to the same user-facing message each retry surface showed. */
+/** Maps a `carryOnFlowTask` failure to its user-facing message. */
 function throwCarryOnReason(
-  reason: Extract<CarryOnFlowTaskResult, { ok: false }>['reason'],
+  reason: Exclude<Extract<CarryOnFlowTaskResult, { ok: false }>['reason'], 'no-session'>,
 ): never {
   const messages: Record<typeof reason, string> = {
     'not-found': 'Task not found',
-    'no-session':
-      'Nothing to carry on — the failed attempt has no resumable session. Use Retry to run it again.',
     'invalid-state': 'Only failed or attention-parked tasks can be retried',
-    'chat-archived': "This task's chat is archived. Restore the chat to carry on, or use Retry.",
+    'chat-archived': "This task's chat is archived. Restore the chat to continue it.",
     'admission-required':
-      "Carry on isn't available for this run anymore — it lost its place in the run queue. Use Retry to continue from the last step.",
-    superseded: 'This attempt was replaced by a newer one. Carry on from the latest attempt.',
+      'This paused Flow lost its place in the run queue. Cancel it and start it again.',
+    superseded: 'This attempt was replaced by a newer one. Recover from the latest attempt.',
   };
   throw new Error(messages[reason]);
+}
+
+/** Continues the stopped session; carryOnFlowTask re-checks the kind itself (`no-session`). */
+async function continueTask(db: Db, taskId: string): Promise<void> {
+  const { carryOnFlowTask } = await import('../../flows/rerun');
+  const res = await carryOnFlowTask(db, taskId);
+  if (res.ok) return;
+  if (res.reason !== 'no-session') throwCarryOnReason(res.reason);
+  const { recoveryChangedError } = await import('../../flows/rerun/recovery-kind');
+  throw recoveryChangedError();
+}
+
+/** Restarts a non-Flow task fresh from its instructions, re-checking Retry in the same write. */
+async function restartTask(db: Db, task: Task): Promise<void> {
+  const { recoveryChangedError, withRecoveryKind } =
+    await import('../../flows/rerun/recovery-kind');
+  const outcome = withRecoveryKind(db, task.id, 'retry', () =>
+    retryTaskDetailed(db, task.id, 'restart'),
+  );
+  if (!outcome) throw recoveryChangedError();
+  if (outcome.task) return;
+  throwTaskMutationReason(outcome.reason, {
+    notFound: 'Task not found',
+    invalidState: 'Only failed or attention-parked tasks can be retried',
+    fallback: 'Could not retry task',
+  });
+}
+
+/** A Flow task's run-level recoveries; each re-checks `kind`. Injectable, so tests pass fakes. */
+export type FlowRunRecoveries = {
+  retryPausedStep: (runId: string, nodeRunId: string, kind: RecoveryKind) => Promise<void>;
+  readmitRun: (db: Db, run: FlowRun, kind: RecoveryKind) => Promise<void>;
+};
+
+const flowRunRecoveries: FlowRunRecoveries = {
+  retryPausedStep: async (runId, nodeRunId, kind) => {
+    const { resumeFlowRun } = await import('../../flows/resume');
+    await resumeFlowRun(runId, 'retry', nodeRunId, undefined, kind);
+  },
+  readmitRun: async (db, run, kind) => {
+    const { retryRunFromLastNode } = await import('./flows/run-actions');
+    await retryRunFromLastNode(db, run, kind);
+  },
+};
+
+/** Re-dispatches the step of a paused run, else re-admits a settled run from its last step. */
+async function recoverFlowTask(
+  db: Db,
+  task: Task,
+  run: FlowRun | null,
+  kind: RecoveryKind,
+  flowRuns: FlowRunRecoveries,
+): Promise<void> {
+  // sourceId is the node_run the task was minted for.
+  if (run?.status === 'paused' && task.sourceId) {
+    return flowRuns.retryPausedStep(run.id, task.sourceId, kind);
+  }
+  if (!run) throw new TRPCError({ code: 'NOT_FOUND', message: 'Flow run not found' });
+  return flowRuns.readmitRun(db, run, kind);
+}
+
+/**
+ * Routes a recovery: continue the session or restart fresh (non-Flow task); continue or
+ * re-dispatch the step (paused Flow run); re-admit from the last unfinished step (settled run).
+ */
+export async function recoverTask(
+  db: Db,
+  taskId: string,
+  kind: RecoveryKind,
+  flowRuns: FlowRunRecoveries = flowRunRecoveries,
+): Promise<void> {
+  const task = await getTaskById(db, taskId);
+  if (!task) throw new Error('Task not found');
+  const run = task.flowRunId ? await getFlowRun(db, task.flowRunId) : null;
+  if (kind === 'continue' && (!task.flowRunId || run?.status === 'paused')) {
+    return continueTask(db, taskId);
+  }
+  return task.flowRunId ? recoverFlowTask(db, task, run, kind, flowRuns) : restartTask(db, task);
 }
 
 async function requireActiveFlowAdmissionForTask(task: Task | null): Promise<void> {
@@ -121,7 +205,7 @@ async function requireActiveFlowAdmissionForTask(task: Task | null): Promise<voi
   const { hasActiveFlowAdmission } = await import('../../flows/admission/runtime');
   if (!(await hasActiveFlowAdmission(task.flowRunId))) {
     throw new Error(
-      'This Flow run lost its place in the run queue. Open the Flow run and use Resume or Retry there.',
+      'This Flow run lost its place in the run queue. Open the Flow run and use Continue or Retry there.',
     );
   }
 }
@@ -214,37 +298,15 @@ export const tasksRouter = router({
     }),
 
   /**
-   * User-requested retry of a failed/parked task. Server-side so the scrub + CAS live in one
-   * place (repos/tasks.ts retryTaskDetailed) and the claim path can read `retryMode` to resume
-   * the persisted Claude session ('continue') or provision fresh ('restart').
+   * One recovery action of a stopped task, re-resolved here so a stale label never does the other
+   * thing: `continue` resumes the answering session, `retry` re-runs from instructions.
    */
-  retry: publicProcedure
-    .input(
-      z.object({
-        taskId: z.string().min(1),
-        mode: z.enum(['continue', 'restart']).default('continue'),
-      }),
-    )
-    .mutation(async ({ input }): Promise<Task> => {
-      const db = getDatabase();
-      // Carry on = session-resume + batch bookkeeping + task flip, all in one shared primitive so the
-      // chat and batch surfaces stay in lockstep. Restart provisions fresh via retryTaskDetailed.
-      // Dynamic import mirrors this router's other flows/rerun uses (avoids a static import cycle).
-      if (input.mode === 'continue') {
-        const { carryOnFlowTask } = await import('../../flows/rerun');
-        const res = await carryOnFlowTask(db, input.taskId);
-        if (!res.ok) throwCarryOnReason(res.reason);
-        return res.task;
-      }
-      const { task, reason } = await retryTaskDetailed(db, input.taskId, input.mode);
-      if (!task) {
-        throwTaskMutationReason(reason, {
-          notFound: 'Task not found',
-          invalidState: 'Only failed or attention-parked tasks can be retried',
-          fallback: 'Could not retry task',
-        });
-      }
-      return task;
+  recover: publicProcedure
+    .input(recoverTaskInputSchema)
+    .mutation(async ({ input }): Promise<{ ok: true }> => {
+      await assertRecoveryStep(getDatabase(), input.taskId, input.recoveryNodeRunId);
+      await recoverTask(getDatabase(), input.taskId, input.kind);
+      return { ok: true };
     }),
 
   complete: publicProcedure
@@ -327,7 +389,8 @@ export const tasksRouter = router({
         }),
     )
     .query(async ({ input }) => {
-      return listTasksWithProjectPaginated(getDatabase(), {
+      const db = getDatabase();
+      const page = await listTasksWithProjectPaginated(db, {
         status: input.status,
         statuses: input.statuses,
         limit: input.limit,
@@ -335,6 +398,7 @@ export const tasksRouter = router({
         collapseByFlow: input.collapseByFlow,
         workQueueSection: input.workQueueSection,
       });
+      return { ...page, items: await withStoppedTaskRecoveries(db, page.items) };
     }),
 
   listCounts: publicProcedure

@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 /**
  * Behaviour tests for the Runs-tab master/detail pair: the rail (batch/run selection,
- * Active chip, Stop) and the RunDetailPane (View on canvas, restart-interrupted re-run,
+ * Active chip, Stop) and the RunDetailPane (View on canvas, restart-interrupted recovery,
  * plan-approval gating).
  */
 
@@ -26,10 +26,12 @@ const snap = vi.hoisted(() => ({
   resumeRunVariables: undefined as
     | { runId?: string; action?: string; nodeRunId?: string }
     | undefined,
-  rerunRunMutate: vi.fn(),
-  rerunRunIsPending: false,
-  rerunRunVariables: undefined as { runId?: string } | undefined,
-  rerunRunOptions: undefined as { onError?: (err: { message: string }) => void } | undefined,
+  retryRunMutate: vi.fn(),
+  retryRunIsPending: false,
+  retryRunUseMutation: vi.fn((_options: { onError?: (err: { message: string }) => void }) => ({
+    mutate: snap.retryRunMutate,
+    isPending: snap.retryRunIsPending,
+  })),
   getRunData: undefined as unknown,
   isListRunsLoading: false,
   isListRunsError: false,
@@ -69,21 +71,12 @@ vi.mock('../../../../lib/trpc', () => ({
       },
       resumeRun: {
         useMutation: () => ({
-          mutate: snap.resumeRunMutate,
+          mutateAsync: snap.resumeRunMutate,
           isPending: snap.resumeRunIsPending,
           variables: snap.resumeRunVariables,
         }),
       },
-      rerunRun: {
-        useMutation: (options: { onError?: (err: { message: string }) => void }) => {
-          snap.rerunRunOptions = options;
-          return {
-            mutate: snap.rerunRunMutate,
-            isPending: snap.rerunRunIsPending,
-            variables: snap.rerunRunVariables,
-          };
-        },
-      },
+      retryRunFromLastNode: { useMutation: snap.retryRunUseMutation },
     },
     useUtils: () => ({
       flows: {
@@ -261,8 +254,8 @@ afterEach(() => {
   snap.listBatchesData = [];
   snap.getRunData = undefined;
   snap.cancelRunMutate.mockReset();
-  snap.resumeRunMutate.mockReset();
-  snap.rerunRunMutate.mockReset();
+  snap.resumeRunMutate.mockReset().mockResolvedValue(undefined);
+  snap.retryRunMutate.mockReset();
   snap.invalidate.mockReset();
   snap.isListRunsLoading = false;
   snap.isListRunsError = false;
@@ -353,14 +346,22 @@ describe('FlowRunHistoryPanel rail — selection', () => {
 });
 
 // ---------------------------------------------------------------------------
-// RunDetailPane — View on canvas, restart-interrupted re-run, approval gating
+// RunDetailPane — View on canvas, restart-interrupted recovery, approval gating
 // ---------------------------------------------------------------------------
 
 const RESTART_REASON = 'Interrupted by app restart';
 
-function cancelledDetail(markerOnNode: boolean) {
+function cancelledDetail(
+  markerOnNode: boolean,
+  recovery: { kind: 'continue' | 'retry'; confirmSideEffects: boolean } = {
+    kind: 'continue',
+    confirmSideEffects: false,
+  },
+) {
   return {
     ...runRow(RUN_ID, 'cancelled'),
+    // The server reports a recovery only for a restart-marked run.
+    recoveries: markerOnNode ? [{ nodeRunId: 'nr-a', ...recovery }] : [],
     graph: { nodes: [{ id: 'a', blockType: 'agent', label: 'Triage' }], edges: [] },
     nodeRuns: [
       {
@@ -414,19 +415,40 @@ describe('RunDetailPane — View on canvas', () => {
   });
 });
 
-describe('RunDetailPane — Re-run from previous node', () => {
-  it('shows the re-run affordance for a restart-interrupted run and fires rerunRun on confirm', async () => {
+describe('RunDetailPane — restart-interrupted recovery', () => {
+  const CONTINUE = { name: /^Continue$/ };
+  const RETRY = { name: /^Retry$/ };
+
+  it('offers one Continue button that recovers the run straight away', async () => {
     const user = userEvent.setup();
     snap.getRunData = cancelledDetail(true);
     renderPane();
 
-    const trigger = screen.getByRole('button', { name: /Re-run from previous node/i });
-    await user.click(trigger);
+    expect(screen.queryByRole('button', RETRY)).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', CONTINUE));
+    expect(snap.retryRunMutate).toHaveBeenCalledWith({ runId: RUN_ID, kind: 'continue' });
+  });
 
-    // Two-step confirm — mutation must NOT fire until "Confirm re-run".
-    expect(snap.rerunRunMutate).not.toHaveBeenCalled();
-    await user.click(screen.getByRole('button', { name: /Confirm re-run/i }));
-    expect(snap.rerunRunMutate).toHaveBeenCalledWith({ runId: RUN_ID });
+  it('retries an agent step that never started without a confirm', async () => {
+    const user = userEvent.setup();
+    snap.getRunData = cancelledDetail(true, { kind: 'retry', confirmSideEffects: false });
+    renderPane();
+
+    expect(screen.queryByRole('button', CONTINUE)).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', RETRY));
+    expect(snap.retryRunMutate).toHaveBeenCalledWith({ runId: RUN_ID, kind: 'retry' });
+  });
+
+  it('confirms before retrying a started step that may repeat its side effects', async () => {
+    const user = userEvent.setup();
+    snap.getRunData = cancelledDetail(true, { kind: 'retry', confirmSideEffects: true });
+    renderPane();
+
+    await user.click(screen.getByRole('button', RETRY));
+    expect(snap.retryRunMutate).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toHaveTextContent('may repeat its side effects');
+    await user.click(screen.getByRole('button', { name: /Retry anyway/ }));
+    expect(snap.retryRunMutate).toHaveBeenCalledWith({ runId: RUN_ID, kind: 'retry' });
   });
 
   it("toasts the server's plain refusal when the run's chat was deleted", async () => {
@@ -434,7 +456,7 @@ describe('RunDetailPane — Re-run from previous node', () => {
     snap.getRunData = cancelledDetail(true);
     renderPane();
 
-    snap.rerunRunOptions?.onError?.({
+    snap.retryRunUseMutation.mock.lastCall?.[0].onError?.({
       message: "This run's chat was deleted — start the flow again to re-run it.",
     });
 
@@ -443,13 +465,11 @@ describe('RunDetailPane — Re-run from previous node', () => {
     );
   });
 
-  it('hides the re-run affordance for a user-cancelled run (no restart marker)', () => {
+  it('hides recovery for a user-cancelled run (no restart marker)', () => {
     snap.getRunData = cancelledDetail(false);
     renderPane();
 
-    expect(
-      screen.queryByRole('button', { name: /Re-run from previous node/i }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', CONTINUE)).not.toBeInTheDocument();
   });
 
   it('shows queued detail and hides terminal recovery while its resume waits', () => {
@@ -465,9 +485,7 @@ describe('RunDetailPane — Re-run from previous node', () => {
 
     expect(screen.getByText('queued · #2')).toBeInTheDocument();
     expect(screen.getByText('Queued 1m ago')).toBeInTheDocument();
-    expect(
-      screen.queryByRole('button', { name: /Re-run from previous node/i }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', CONTINUE)).not.toBeInTheDocument();
   });
 
   it('keeps manual recovery available for a crash-recovered claimed resume', () => {
@@ -479,7 +497,7 @@ describe('RunDetailPane — Re-run from previous node', () => {
     };
     renderPane();
 
-    expect(screen.getByRole('button', { name: /Re-run from previous node/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', CONTINUE)).toBeInTheDocument();
   });
 });
 

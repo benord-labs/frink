@@ -125,7 +125,7 @@ function verifyRunningFlow(r: FixtureRows): boolean {
 
 /**
  * The marker and the session are asserted explicitly: without the marker the row does not render at
- * all, and without the session it silently downgrades from "Resume" to "Re-run step".
+ * all, and without the session the step can only ever recover as "Retry", never "Continue".
  */
 function verifyInterruptedFlow(r: FixtureRows): boolean {
   const task = r.tasks.find((t) => t.id === FIXTURE_INTERRUPTED.taskId);

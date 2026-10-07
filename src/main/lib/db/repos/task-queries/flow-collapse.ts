@@ -80,7 +80,7 @@ export const isFlowRepresentative: SQL = drizzleSql`(${tasks.flowRunId} IS NULL 
  * so in a multi-node flow an earlier `done` node wins that slot while the marker sits on the
  * interrupted node — testing the representative's own `result` misses it (the feature's primary case).
  *
- * Not "any historical row": a re-dispatch (`rerunFlowRunFromInterruption`) reuses the same flow_run
+ * Not "any historical row": a terminal resume (`retryTerminalFlowRun`) reuses the same flow_run
  * and mints a NEW task + node_run, leaving the old interrupted-and-marked rows untouched forever. An
  * unscoped EXISTS would then keep reporting `interrupted` even after the user re-runs and then
  * deliberately Stops — misfiling a real Stop into Active with a Resume it can never leave. So we read

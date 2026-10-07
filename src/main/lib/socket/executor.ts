@@ -185,12 +185,10 @@ import { buildFinalPartsForPersist, emitPlanFallbackSends } from './streaming/pl
 import { resolvePlanModeChunkSuppression } from './streaming/plan-mode-suppression';
 import { buildWakeHoldIo } from './streaming/wake-hold-io';
 import { storedExecutionSettings } from '../chat-composer';
+import { getCodexSession, setCodexSession } from './codex-session';
 
-// Provider session cache: subChatId → sessionId for native resume on follow-up messages.
-// Capped to prevent unbounded growth over long-running sessions.
-const codexSessionCache = new Map<string, string>();
-const codexSessionParentChat = new Map<string, string>();
-const SESSION_CACHE_MAX = 100;
+export { clearCodexSession } from './codex-session';
+
 export const executionAbortSources = new Map<string, string>();
 
 /**
@@ -242,7 +240,7 @@ const USER_VISIBLE_CHUNK_TYPES = new Set<UIMessageChunk['type']>([
 ]);
 
 /** Fire-and-forget persist of the first session id a stream announces — a turn that dies
- * mid-stream never reaches the finish-path persist, and Carry on then has no session to resume. */
+ * mid-stream never reaches the finish-path persist, and Continue then has no session to resume. */
 function persistEarlySessionId(subChatId: string, sessionId: string): void {
   void import('../db/repos/sub-chats')
     .then(({ updateSubChatSession }) => updateSubChatSession(getDatabase(), subChatId, sessionId))
@@ -252,33 +250,6 @@ function persistEarlySessionId(subChatId: string, sessionId: string): void {
 }
 
 const PLAN_MUTATION_TOOLS = new Set(['Write', 'Edit', 'MultiEdit']);
-
-/** Clear the cached Codex resume thread for a chat (e.g., when the chat is deleted). */
-export function clearCodexSession(chatId: string): void {
-  for (const [subChatId, parentChatId] of codexSessionParentChat.entries()) {
-    if (parentChatId !== chatId) continue;
-    codexSessionParentChat.delete(subChatId);
-    codexSessionCache.delete(subChatId);
-  }
-}
-
-/** Cache a Codex resume thread, evicting the oldest entry if at capacity. LRU: delete-then-set refreshes insertion order. */
-function setCodexSession(chatId: string, subChatId: string, sessionId: string): void {
-  const sizeBefore = codexSessionCache.size;
-  codexSessionCache.delete(subChatId); // Refresh insertion order for LRU
-  if (codexSessionCache.size >= SESSION_CACHE_MAX) {
-    const oldest = codexSessionCache.keys().next().value;
-    if (oldest) {
-      codexSessionCache.delete(oldest);
-      codexSessionParentChat.delete(oldest);
-      log.info(
-        `[Socket Executor] Session cache eviction: removed oldest subChatId=${oldest}, inserted subChatId=${subChatId} (sizeBefore=${sizeBefore}, sizeAfterEvict=${codexSessionCache.size}, max=${SESSION_CACHE_MAX})`,
-      );
-    }
-  }
-  codexSessionParentChat.set(subChatId, chatId);
-  codexSessionCache.set(subChatId, sessionId);
-}
 
 // Dynamic import for Claude SDK (ESM module)
 let cachedClaudeQuery: typeof import('@anthropic-ai/claude-agent-sdk').query | null = null;
@@ -985,7 +956,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
     // Native Codex/Claude resumes already own the transcript; shipping Frink history duplicates it.
     const codexResumeThreadId =
       agentRuntime === 'codex'
-        ? (codexSessionCache.get(subChatId) ?? persistedSessionId ?? undefined)
+        ? (getCodexSession(subChatId) ?? persistedSessionId ?? undefined)
         : undefined;
     const willReplayHistoryViaResume =
       agentRuntime === 'codex'
@@ -1349,7 +1320,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
         ? { suppressNativePlanTools: true, suppressPlanText: true }
         : null;
       // Session id normally persists at stream FINISH; a turn dying mid-stream leaves
-      // sub_chats.session_id NULL and Carry on has nothing to resume — persist on first
+      // sub_chats.session_id NULL and Continue has nothing to resume — persist on first
       // announcement instead (the finish-path persist stays the authoritative overwrite).
       let earlySessionIdPersisted = false;
       /** tool-input bookkeeping + plan-mode stream tracking: records name/input for the broadcast

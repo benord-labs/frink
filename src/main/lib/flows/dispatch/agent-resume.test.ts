@@ -141,9 +141,8 @@ describe('continuation terminal-resume dispatch (resumeKind: continuation)', () 
     expect(cfg.resumeStartMode).toBe('execute');
     // Review semantics stay keyed on the CONFIGURED mode (plan+autoApprove), not the seed.
     expect(cfg.skipReview).toBe(true);
-    // The task row remains the honest record — no framing, no nudge here.
+    // The task row remains the honest record — the instructions, no nudge here.
     expect(description).toContain('do it');
-    expect(description).not.toContain('re-run from its instructions');
   });
 
   it('live session still in plan mode → no mode override (configured plan kept)', async () => {
@@ -154,25 +153,23 @@ describe('continuation terminal-resume dispatch (resumeKind: continuation)', () 
     expect(cfg.resumeStartMode).toBeUndefined();
   });
 
-  it('no surviving session → full re-dispatch, no resumeSession, configured mode kept, no framing', async () => {
+  it('no surviving session → full re-dispatch, no resumeSession, configured mode kept', async () => {
     await seedPriorAttempt({ sessionId: null });
-    const { description, cfg } = await dispatched({ resumeKind: 'continuation' });
+    const { cfg } = await dispatched({ resumeKind: 'continuation' });
     expect(cfg.resumeSession).toBeUndefined();
     expect(cfg.startMode).toBe('plan');
-    expect(description.startsWith('This step is being re-run')).toBe(false);
   });
 
-  it("this node's prompt never reached the session (app died between dispatch and send) → its full instructions, no nudge, no framing", async () => {
+  it("this node's prompt never reached the session (app died between dispatch and send) → its full instructions, no nudge", async () => {
     await seedPriorAttempt({ answered: false });
     const { description, cfg } = await dispatched({ resumeKind: 'continuation' });
     expect(cfg.resumeSession).toBeUndefined();
-    expect(description.startsWith('This step is being re-run')).toBe(false);
     expect(description).toContain('do it');
   });
 
-  it('session exists but its newest task drove a DIFFERENT node → no resumeSession AND no framing (the session holds unrelated work — disowning it would be a false claim)', async () => {
+  it('session exists but its newest task drove a DIFFERENT node → no resumeSession (the session holds unrelated work)', async () => {
     await seedPriorAttempt({ taskNodeId: 'st' });
-    // ag1 itself also ran before (that is what makes this dispatch a redispatch).
+    // ag1 itself also ran before, so this dispatch is a node re-dispatch.
     await db.insert(nodeRuns).values({
       id: 'nr-ag1-old',
       flowRunId,
@@ -184,40 +181,16 @@ describe('continuation terminal-resume dispatch (resumeKind: continuation)', () 
     const { description, cfg } = await dispatched({ resumeKind: 'continuation' });
 
     expect(cfg.resumeSession).toBeUndefined();
-    expect(description.startsWith('This step is being re-run')).toBe(false);
     expect(description).toContain('do it');
   });
 });
 
-describe('deliberate re-run dispatch (resumeKind: redispatch)', () => {
-  it('surviving session holding THIS node+run → restart framing prefixed, never resumeSession', async () => {
-    await seedPriorAttempt({});
-    const { description, cfg } = await dispatched({ resumeKind: 'redispatch' });
-    expect(cfg.resumeSession).toBeUndefined();
-    expect(cfg.startMode).toBe('plan');
-    expect(description.startsWith('This step is being re-run')).toBe(true);
-  });
-
-  it('no surviving session → no framing (nothing to contradict)', async () => {
-    await seedPriorAttempt({ sessionId: null });
-    const { description } = await dispatched({ resumeKind: 'redispatch' });
-    expect(description.startsWith('This step is being re-run')).toBe(false);
-  });
-
-  it('session last driven by a different node → no framing (same gate as the seed)', async () => {
-    await seedPriorAttempt({ taskNodeId: 'st' });
-    const { description } = await dispatched({ resumeKind: 'redispatch' });
-    expect(description.startsWith('This step is being re-run')).toBe(false);
-  });
-});
-
 describe('engine advances carry no resumeKind and are untouched', () => {
-  it('loop-style re-dispatch (prior node_run, live session, NO resumeKind) → no seed, no framing', async () => {
+  it('loop-style re-dispatch (prior node_run, live session, NO resumeKind) → no seed', async () => {
     await seedPriorAttempt({});
     const { description, cfg } = await dispatched({});
     expect(cfg.resumeSession).toBeUndefined();
     expect(cfg.isNodeRedispatch).toBe(true);
-    expect(description.startsWith('This step is being re-run')).toBe(false);
     expect(description).toContain('do it');
   });
 });

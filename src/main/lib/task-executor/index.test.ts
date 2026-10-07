@@ -4,13 +4,12 @@ import type { Task as DbTask } from '../db/schema';
 import {
   assertReuseWorktreeHasPath,
   buildInitialTaskChatName,
-  buildRetryContinuationPrompt,
-  buildTaskPrompt,
   isStartTaskFallbackMode,
   resolveTaskExecutionOptions,
   resolveTaskStartInWorktree,
   shouldForwardTaskModel,
 } from './index';
+import { buildRetryContinuationPrompt, buildTaskPrompt } from './task-prompt';
 import { toTaskAccountType } from './execution-account';
 
 const WAIT_MODE_ERROR_REGEX = /must remain queued/i;

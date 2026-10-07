@@ -64,14 +64,6 @@ const MAX_FLOW_CHAIN_DEPTH = 5;
  */
 const FLOW_TEMPLATE_USES_TRIGGER = /\{\{\s*trigger\./;
 
-/**
- * Deliberate re-run into a surviving session: the session already holds these
- * instructions plus the partial work, so an unframed re-send reads as a contradiction
- * to the agent. One directive line marks it as a redo.
- */
-const RERUN_INTO_SESSION_FRAMING =
-  "This step is being re-run from its instructions. Disregard this session's previous attempt at it and start the step over.\n\n---\n\n";
-
 type AgentConfig = {
   instructions?: string;
   agentInstructions?: string;
@@ -114,34 +106,24 @@ async function loadFlowMeta(
 }
 
 /**
- * Continuation seed + restart framing for a terminal-resume dispatch. Both absent for
- * engine advances (loop/fan-out iterations carry no resumeKind). BOTH key on the same
- * two-half session gate — the surviving session must hold THIS node's turn of THIS run:
- * 'continuation' continues it; 'redispatch' re-instructs it, framed as a deliberate redo
- * so the agent doesn't reconcile a contradiction. A session last driven by a different
- * node or run gets neither (framing there would falsely disown unrelated work).
+ * Seed for a recovery dispatch: its session continues only if it already answered THIS node in
+ * THIS run (resolveSessionResumeSeed); engine advances never set one.
  */
-async function resolveResumePresentation(
+async function resolveResumeSeed(
   db: ReturnType<typeof getDatabase>,
   ctx: Parameters<Dispatcher>[0],
   chatId: string,
   // Wider than TriggerStartMode: the inherited value is the start_task node_run's
   // persisted output, an untyped string.
   configuredStartMode: string | undefined,
-): Promise<{ resume: SessionResumeSeed | null; framingPrefix: string }> {
-  const seed = ctx.resumeKind
-    ? await resolveSessionResumeSeed(db, {
-        chatId,
-        flowRunId: ctx.flowRunId,
-        nodeId: ctx.node.id,
-        configuredStartMode,
-      })
-    : null;
-  return {
-    resume: ctx.resumeKind === 'continuation' ? seed : null,
-    framingPrefix:
-      ctx.resumeKind === 'redispatch' && seed !== null ? RERUN_INTO_SESSION_FRAMING : '',
-  };
+): Promise<SessionResumeSeed | null> {
+  if (ctx.resumeKind !== 'continuation') return null;
+  return resolveSessionResumeSeed(db, {
+    chatId,
+    flowRunId: ctx.flowRunId,
+    nodeId: ctx.node.id,
+    configuredStartMode,
+  });
 }
 
 /**
@@ -341,12 +323,7 @@ export const dispatchAgent: Dispatcher = async (ctx) => {
   const isNodeRedispatch = priorNodeRuns.some(
     (nodeRun) => nodeRun.nodeId === ctx.node.id && nodeRun.id !== ctx.nodeRunId,
   );
-  const { resume, framingPrefix } = await resolveResumePresentation(
-    db,
-    ctx,
-    chatId,
-    configuredStartMode,
-  );
+  const resume = await resolveResumeSeed(db, ctx, chatId, configuredStartMode);
   const triggerContext: Record<string, unknown> = {
     // Carry the flow run's webhook envelope (source/eventType/fullContent/triggeredBy/timestamp/
     // sourceAccountId) onto the task so its trigger_context is a valid TriggerContext — this is what
@@ -374,8 +351,8 @@ export const dispatchAgent: Dispatcher = async (ctx) => {
       // applied only when the claim lands on the pinned sub-chat.
       ...(configuredStartMode ? { startMode: configuredStartMode } : {}),
       ...(autoApproveSkipReview ? { skipReview: true } : {}),
-      // Continuation-first Retry: flips the executor's prompt to the hidden continuation
-      // nudge (resolveClaimResume) — the instructions in `description` are NOT re-sent.
+      // A continuation flips the executor's prompt to the hidden continuation nudge
+      // (resolveClaimResume) — the instructions in `description` are NOT re-sent.
       ...(resume?.config ?? {}),
       ...resolveAgentWorktreeConfig(stc),
     },
@@ -391,7 +368,7 @@ export const dispatchAgent: Dispatcher = async (ctx) => {
     // row matches the chat name. Falls back to 'Flow: Agent' only for runs whose start_task
     // completed before stc.label existed.
     title: stc.label || 'Flow: Agent',
-    description: `${framingPrefix}${description}`,
+    description,
     source: 'flow',
     sourceId: ctx.nodeRunId, // idempotency: one task per node_run via partial unique
     requiresFilesystem: true,

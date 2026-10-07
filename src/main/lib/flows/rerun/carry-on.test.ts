@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FlowGraph } from '../../../../shared/lib/validate-flow-graph';
-import { chats, subChats, tasks } from '../../db/schema';
+import { chats, subChatMessages, subChats, tasks } from '../../db/schema';
 import { seedFlowRun } from '../../db/test-utils/flow-fixtures';
 import { freshDb, type TestDb } from '../../db/test-utils/fresh-db';
 import { carryOnFlowTask } from './carry-on';
@@ -19,7 +19,15 @@ beforeEach(() => {
   sequence = 0;
 });
 
-async function seedTask(sessionId: string | null): Promise<string> {
+const dispatchedPrompt = (taskId: string) => ({
+  id: `u-${taskId}`,
+  role: 'user',
+  parts: [],
+  metadata: { dispatchTaskId: taskId },
+});
+
+/** A failed manual task; `answered` persists its prompt (stamped with its id) and the session's reply. */
+async function seedTask(sessionId: string | null, answered = true): Promise<string> {
   sequence += 1;
   const chatId = `chat-${sequence}`;
   const subChatId = `sub-${sequence}`;
@@ -33,6 +41,14 @@ async function seedTask(sessionId: string | null): Promise<string> {
     status: 'failed',
     result: { subChatId },
   });
+  if (answered) {
+    const prompt = dispatchedPrompt(taskId);
+    const reply = { id: 'a1', role: 'assistant', parts: [] };
+    await db.insert(subChatMessages).values([
+      { subChatId, seq: 0, message: JSON.stringify(prompt) },
+      { subChatId, seq: 1, message: JSON.stringify(reply) },
+    ]);
+  }
   return taskId;
 }
 
@@ -59,6 +75,13 @@ describe('carryOnFlowTask', () => {
       ok: false,
       reason: 'no-session',
     });
+    expect(await taskStatus(taskId)).toBe('failed');
+  });
+
+  it('rejects a regular task whose prompt its session never answered', async () => {
+    const taskId = await seedTask('session-1', false);
+
+    await expect(carryOnFlowTask(db, taskId)).resolves.toEqual({ ok: false, reason: 'no-session' });
     expect(await taskStatus(taskId)).toBe('failed');
   });
 
@@ -117,5 +140,52 @@ describe('carryOnFlowTask', () => {
       reason: 'invalid-state',
     });
     expect(await taskStatus(taskId)).toBe('done');
+  });
+
+  // The check and the write share one transaction, so a change landing before the write is seen.
+  it.each([
+    ['a rollback empties the session', () => db.update(subChats).set({ sessionId: '' }).run()],
+    [
+      'a newer turn answers in the same session',
+      () =>
+        db
+          .insert(subChatMessages)
+          .values([
+            { subChatId: 'sub-1', seq: 2, message: JSON.stringify(dispatchedPrompt('newer')) },
+            { subChatId: 'sub-1', seq: 3, message: '{"id":"a2","role":"assistant","parts":[]}' },
+          ])
+          .run(),
+    ],
+    [
+      'a newer attempt moves the task to an unanswered session',
+      () => {
+        db.insert(subChats).values({ id: 'sub-new', chatId: 'chat-1', sessionId: 's2' }).run();
+        db.update(tasks)
+          .set({ result: { subChatId: 'sub-new' } })
+          .where(eq(tasks.id, 'task-1'))
+          .run();
+      },
+    ],
+  ])('keeps the task stopped when %s before the write', async (_case, change) => {
+    const taskId = await seedTask('session-1');
+    const transaction = db.transaction.bind(db);
+    vi.spyOn(db, 'transaction').mockImplementationOnce((command, config) => {
+      change();
+      return transaction(command, config);
+    });
+
+    await expect(carryOnFlowTask(db, taskId)).resolves.toEqual({ ok: false, reason: 'no-session' });
+    expect(await taskStatus(taskId)).toBe('failed');
+  });
+
+  it('returns not-found when the task is deleted before the write', async () => {
+    const taskId = await seedTask('session-1');
+    const transaction = db.transaction.bind(db);
+    vi.spyOn(db, 'transaction').mockImplementation((command, config) => {
+      db.delete(tasks).where(eq(tasks.id, taskId)).run();
+      return transaction(command, config);
+    });
+
+    await expect(carryOnFlowTask(db, taskId)).resolves.toEqual({ ok: false, reason: 'not-found' });
   });
 });

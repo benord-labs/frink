@@ -19,6 +19,7 @@ import {
   tasks,
 } from '../../../src/main/lib/db/schema';
 import { freshDb } from '../../../src/main/lib/db/test-utils/fresh-db';
+import { terminalFlowResumeIntent } from '../../../src/main/lib/flows/admission/terminal-resume/resume-store';
 import { CODEX_FIXTURE } from './codex';
 import { RESTART_INTERRUPTION_REASON } from '../../../src/shared/types/flow';
 import {
@@ -355,7 +356,7 @@ describe('qa seed fixtures', () => {
 
   // The interrupted fixture is the only way any QA run can reach InterruptedRunControls, and each of
   // its four rows fails SILENTLY on its own — so pin the two that decide what the user sees.
-  it('seeds a restart-interrupted run whose marker and session make the row read "Resume"', () => {
+  it('seeds a restart-interrupted run whose marker makes the recovery row render', () => {
     const db = freshDb();
     seedFixtures(db, '/tmp/qa-fixture-checkout', CLAUDE_SOURCE);
     expect(verifyFixtures(db).ok).toBe(true);
@@ -404,13 +405,29 @@ describe('qa seed fixtures', () => {
     const db = freshDb();
     seedFixtures(db, '/tmp/qa-fixture-checkout', CLAUDE_SOURCE);
 
-    // A session-less sub-chat still renders a row, but as "Re-run step" — a silently different
-    // surface from the one this fixture exists to photograph.
+    // A session-less sub-chat still renders a row, but one that can only ever "Retry" — a
+    // silently different surface from the session-resumable run this fixture stands for.
     db.update(subChats)
       .set({ sessionId: null })
       .where(eq(subChats.id, FIXTURE_INTERRUPTED.subChatId))
       .run();
     expect(verifyFixtures(db).ok).toBe(false);
+  });
+
+  // A stale key makes the strict reader reject the ticket: a recovery click then throws instead
+  // of joining it, and a drain fails the run as an unsupported intent.
+  it('seeds the interrupted run a resume ticket a recovery click can join', () => {
+    const db = freshDb();
+    seedFixtures(db, '/tmp/qa-fixture-checkout');
+
+    const ticket = db
+      .select()
+      .from(flowRunAdmissions)
+      .all()
+      .find((a) => a.flowRunId === FIXTURE_INTERRUPTED.runId);
+    expect(terminalFlowResumeIntent(ticket?.intentJson)?.node_run_id).toBe(
+      FIXTURE_INTERRUPTED.nodeRunId,
+    );
   });
 });
 

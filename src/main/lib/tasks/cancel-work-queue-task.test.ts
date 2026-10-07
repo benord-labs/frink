@@ -39,10 +39,10 @@ import {
 } from '../flows/admission/controller';
 import { _setFlowAdmissionControllerForTests } from '../flows/admission/runtime';
 import { stageContinuationResume } from '../flows/admission/terminal-resume/continuation';
+import { retryTerminalFlowRun } from '../flows/admission/terminal-resume/dispatcher';
 import { ResumeAdmitDeclinedError } from '../flows/admission/terminal-resume/resume-store';
 import { registerNodeAbort } from '../flows/cancel-registry';
 import { subscribeFlowEvents } from '../flows/events';
-import { rerunFlowRunFromInterruption } from '../flows/resume';
 import { cancelWorkQueueRunCommand, isRestartInterrupted } from '../flows/transitions';
 import { registerFlowProviderExecution } from '../socket/execution/flow-resource-cleanup';
 import { cancelWorkQueueTask } from './cancel-work-queue-task';
@@ -309,7 +309,11 @@ const resumeTickets = () =>
 
 async function seedTypedReplyTarget(seedRun: typeof interruptedRun) {
   const { node, task } = await seedRun();
-  holder.resolveTarget.mockResolvedValue({ node: { id: 'work' }, nodeRunId: node.id });
+  holder.resolveTarget.mockResolvedValue({
+    node: { id: 'work' },
+    nodeRunId: node.id,
+    continues: true,
+  });
   holder.resolveSeed.mockResolvedValue({ config: { resumeSession: true } });
   return task.id;
 }
@@ -432,7 +436,7 @@ it("keeps a failed run's enqueued continuation when its row is cancelled, and a 
   expect(holder.capture).not.toHaveBeenCalled();
 });
 
-describe('Re-run step against a Work Queue Cancel', () => {
+describe('Retry of an interrupted run against a Work Queue Cancel', () => {
   it('declines the enqueue once the Cancel cleared the marker first', async () => {
     const { task } = await interruptedRun();
     const enqueue = controller.enqueueTerminalResume.bind(controller);
@@ -441,10 +445,10 @@ describe('Re-run step against a Work Queue Cancel', () => {
       return enqueue(input);
     });
 
-    const error = await rerunFlowRunFromInterruption(flowRunId).catch((e) => e);
-
-    expect(error).toMatchObject({ code: 'PRECONDITION_FAILED' });
-    expect(error.cause).toBeInstanceOf(ResumeAdmitDeclinedError);
+    await expect(retryTerminalFlowRun(db, flowRunId, 'retry')).rejects.toMatchObject({
+      code: 'PRECONDITION_FAILED',
+      cause: expect.any(ResumeAdmitDeclinedError),
+    });
     expect(liveTickets()).toEqual([]);
   });
 
@@ -456,10 +460,10 @@ describe('Re-run step against a Work Queue Cancel', () => {
       return getByTicket(ticket);
     });
 
-    const error = await rerunFlowRunFromInterruption(flowRunId).catch((e) => e);
-
-    expect(error).toMatchObject({ code: 'PRECONDITION_FAILED' });
-    expect(error.message).toMatch(/cancelled by the user/i);
+    await expect(retryTerminalFlowRun(db, flowRunId, 'retry')).rejects.toMatchObject({
+      code: 'PRECONDITION_FAILED',
+      message: expect.stringMatching(/cancelled by the user/i),
+    });
     expect(liveTickets()).toEqual([]);
   });
 });

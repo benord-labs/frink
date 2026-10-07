@@ -113,7 +113,7 @@ export async function getLatestFlowTaskForSubChat(
 
 /**
  * The newest flow task ON A FLOW RUN regardless of status — the driving task to resume for a batch
- * member Carry-on, keyed on `flowRunId` (the caller has the run, not the sub-chat). Same latest-wins
+ * member's Continue, keyed on `flowRunId` (the caller has the run, not the sub-chat). Same latest-wins
  * ordering as {@link getLatestFlowTaskForSubChat}: a run's later `failed`/`cancelled` driving task
  * outranks an upstream node's earlier `done`. `null` for a run with no flow task.
  */
@@ -747,13 +747,13 @@ export function parseResultRecord(result: Task['result']): TaskResultRecord {
  * same worktree; 'restart' drops `chatId`/`subChatId` so a fresh chat + worktree is provisioned.
  * The prior error text is preserved (truncated) as `retryPriorError` for the continuation prompt.
  */
-export async function retryTaskDetailed(
+export function retryTaskDetailed(
   db: Db,
   taskId: string,
   mode: RetryMode,
   requirePausedFlowRunId?: string,
-): Promise<TaskMutationResult> {
-  const existing = await getTaskById(db, taskId);
+): TaskMutationResult {
+  const existing = db.select().from(tasks).where(eq(tasks.id, taskId)).get();
   if (!existing) return { task: null, reason: 'not_found' };
   if (existing.status !== 'failed' && existing.status !== 'needs_attention') {
     return { task: null, reason: 'invalid_state' };
@@ -782,7 +782,7 @@ export async function retryTaskDetailed(
 
   const guard = retryableAttempt(requirePausedFlowRunId);
 
-  const [updated] = await db
+  const updated = db
     .update(tasks)
     .set({
       status: 'pending',
@@ -796,9 +796,9 @@ export async function retryTaskDetailed(
       },
     })
     .where(and(eq(tasks.id, taskId), inArray(tasks.status, RETRYABLE_TASK_STATUSES), guard))
-    .returning();
-  if (!updated) return { task: null, reason: 'invalid_state' };
-  return { task: updated };
+    .returning()
+    .get();
+  return updated ? { task: updated } : { task: null, reason: 'invalid_state' };
 }
 
 /** Boot sweep: tasks still 'running' from a prior process become cancelled + the restart marker (not an
@@ -844,8 +844,8 @@ export async function cancelFlowLinkedTasksForRun(db: Db, flowRunId: string): Pr
  * the next restart. Cancelling the task lets the task-completion-watcher advance the flow at once.
  *
  * `interrupted` controls recoverability: an *interrupted* teardown (reload/crash) stamps
- * RESTART_INTERRUPTION_REASON so the run panel offers "Re-run from previous node"; a deliberate Stop
- * (`interrupted: false`) omits the marker so re-run is correctly NOT offered. No-op for an interactive
+ * RESTART_INTERRUPTION_REASON so the run panel offers its Continue / Retry recovery; a deliberate
+ * Stop (`interrupted: false`) omits the marker so recovery is correctly NOT offered. No-op for an interactive
  * (non-flow) chat — `getFlowDriveInfoForSubChat` returns no task. The status CAS in the WHERE avoids
  * clobbering a task that raced to terminal between the read and the write. Returns the cancelled id.
  */

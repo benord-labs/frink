@@ -29,9 +29,9 @@ const db = {} as Parameters<NonNullable<PendingContinuationResume['admit']>>[0];
 const FAST_WATCH = { intervalMs: 1, attempts: 3 };
 
 const makeOps = () => ({
-  requestTerminalFlowResume: vi.fn<
-    (input: PendingContinuationResume & { continuation: true }) => Promise<object>
-  >(async () => ({})),
+  requestTerminalFlowResume: vi.fn<(input: PendingContinuationResume) => Promise<object>>(
+    async () => ({}),
+  ),
   hasLiveFlowAdmission: vi.fn<(flowRunId: string) => Promise<boolean>>(async () => false),
   getLiveAdmissionState: vi.fn<(flowRunId: string) => Promise<string | null>>(async () => null),
 });
@@ -58,9 +58,7 @@ describe('staged continuation resume', () => {
     await fireStagedContinuationResume(PENDING.flowRunId, ops);
     await fireStagedContinuationResume(PENDING.flowRunId, ops);
     expect(ops.requestTerminalFlowResume).toHaveBeenCalledTimes(1);
-    expect(ops.requestTerminalFlowResume).toHaveBeenCalledWith(
-      expect.objectContaining({ ...PENDING, continuation: true }),
-    );
+    expect(ops.requestTerminalFlowResume).toHaveBeenCalledWith(expect.objectContaining(PENDING));
   });
 
   it('an admit decline from a guarded entry is logged, never surfaced as a corrective', async () => {
@@ -165,9 +163,7 @@ describe('staged continuation resume', () => {
     expect(emit).not.toHaveBeenCalled();
     // The next final release re-enters with the run actually free — the entry survived.
     await fireStagedContinuationResume(PENDING.flowRunId, ops);
-    expect(ops.requestTerminalFlowResume).toHaveBeenCalledWith(
-      expect.objectContaining({ ...PENDING, continuation: true }),
-    );
+    expect(ops.requestTerminalFlowResume).toHaveBeenCalledWith(expect.objectContaining(PENDING));
   });
 
   it("a queued/claimed admission for the run supersedes the staged continuation silently — that admission's own claim delivers the reply", async () => {
@@ -190,7 +186,7 @@ describe('staged continuation resume', () => {
     stageContinuationResume(PENDING, emit, FAST_WATCH);
     await fireStagedContinuationResume(PENDING.flowRunId, ops, new Error('teardown failed'));
     expect(ops.requestTerminalFlowResume).not.toHaveBeenCalled();
-    expect(emit).toHaveBeenCalledWith(expect.stringContaining('Re-run step'));
+    expect(emit).toHaveBeenCalledWith(expect.stringContaining('Continue or Retry'));
     expect(captureFlowAdmissionException).toHaveBeenCalledWith(
       expect.any(Error),
       'continuation-cleanup-failed',
@@ -203,7 +199,7 @@ describe('staged continuation resume', () => {
     const emit = vi.fn();
     stageContinuationResume(PENDING, emit, FAST_WATCH);
     await fireStagedContinuationResume(PENDING.flowRunId, ops);
-    expect(emit).toHaveBeenCalledWith(expect.stringContaining('Re-run step'));
+    expect(emit).toHaveBeenCalledWith(expect.stringContaining('Continue or Retry'));
     expect(captureFlowAdmissionException).toHaveBeenCalledWith(
       expect.any(Error),
       'continuation-enqueue',
@@ -218,7 +214,7 @@ describe('staged continuation resume', () => {
     stageContinuationResume(PENDING, emit, FAST_WATCH);
     await fireStagedContinuationResume(PENDING.flowRunId, ops);
     await vi.waitFor(() =>
-      expect(emit).toHaveBeenCalledWith(expect.stringContaining('Re-run step')),
+      expect(emit).toHaveBeenCalledWith(expect.stringContaining('Continue or Retry')),
     );
   });
 
@@ -277,7 +273,7 @@ describe('staged continuation resume', () => {
     stageContinuationResume(PENDING, emit, FAST_WATCH);
     await fireStagedContinuationResume(PENDING.flowRunId, ops);
     await vi.waitFor(() =>
-      expect(emit).toHaveBeenCalledWith(expect.stringContaining('Re-run step')),
+      expect(emit).toHaveBeenCalledWith(expect.stringContaining('Continue or Retry')),
     );
   });
 
@@ -307,7 +303,7 @@ describe('staged continuation resume', () => {
     stageContinuationResume(PENDING, emit, FAST_WATCH);
     await fireStagedContinuationResume(PENDING.flowRunId, ops);
     await vi.waitFor(() =>
-      expect(emit).toHaveBeenCalledWith(expect.stringContaining('Re-run step')),
+      expect(emit).toHaveBeenCalledWith(expect.stringContaining('Continue or Retry')),
     );
   });
 });

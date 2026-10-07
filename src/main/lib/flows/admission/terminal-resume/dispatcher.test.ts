@@ -3,7 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   db: null as unknown,
   dispatchAndAdvance: vi.fn(async (..._args: unknown[]) => {}),
-  requestTerminalFlowResume: vi.fn(async () => ({ created: true })),
+  requestTerminalFlowResume: vi.fn(async (_input: EnqueueTerminalFlowResumeInput) => ({
+    created: true,
+  })),
   registered: null as null | ((intent: unknown, ticket: number) => Promise<void>),
 }));
 
@@ -31,10 +33,15 @@ vi.mock('../../event-emit', async (orig) => ({
 }));
 
 import type { FlowGraph } from '../../../../../shared/lib/validate-flow-graph';
-import { createNodeRun } from '../../../db/repos/node-runs';
+import { RESTART_INTERRUPTION_REASON } from '../../../../../shared/types/flow';
+import { setFlowRunStatus } from '../../../db/repos/flow-runs';
+import { createNodeRun, setNodeRunStatus } from '../../../db/repos/node-runs';
+import { abandonRestartInterruption } from '../../../db/repos/task-parking/abandon-marker';
+import { chats, subChatMessages, subChats, tasks } from '../../../db/schema';
 import { seedActiveAdmission, seedFlowRun } from '../../../db/test-utils/flow-fixtures';
 import { freshDb, type TestDb } from '../../../db/test-utils/fresh-db';
 import { retryTerminalFlowRun } from './dispatcher';
+import { type EnqueueTerminalFlowResumeInput, TerminalResumeAdmissionError } from './resume-store';
 
 const GRAPH: FlowGraph = {
   nodes: [
@@ -64,39 +71,159 @@ beforeEach(async () => {
   ticket = seedActiveAdmission(db, flowRunId);
 });
 
+/** The request the latest retry enqueued, with the gate its enqueue transaction runs. */
+function lastEnqueued() {
+  const request = mocks.requestTerminalFlowResume.mock.lastCall?.[0];
+  if (!request?.admit) throw new Error('No terminal resume was enqueued with an admit gate');
+  return { ...request, admit: request.admit };
+}
+
+/** A task that drove `stepId` in sub-1, its prompt sent and, when `answered`, replied to. */
+async function seedStepTask(stepId: string, answered: boolean): Promise<void> {
+  if ((await db.select().from(subChats)).length === 0) {
+    await db.insert(chats).values({ id: 'chat-1', name: 'chat' });
+    await db.insert(subChats).values({ id: 'sub-1', chatId: 'chat-1', sessionId: 'sess-1' });
+  }
+  const id = `task-${stepId}`;
+  await db.insert(tasks).values({
+    id,
+    description: id,
+    source: 'flow',
+    status: 'failed',
+    result: { subChatId: 'sub-1' },
+    flowRunId,
+    sourceId: stepId,
+    nodeRunId: stepId,
+  });
+  const prompt = { id: `u-${id}`, role: 'user', parts: [], metadata: { dispatchTaskId: id } };
+  const reply = { id: `a-${id}`, role: 'assistant', parts: [] };
+  const seq = (await db.select().from(subChatMessages)).length;
+  for (const [i, message] of (answered ? [prompt, reply] : [prompt]).entries()) {
+    await db
+      .insert(subChatMessages)
+      .values({ subChatId: 'sub-1', seq: seq + i, message: JSON.stringify(message) });
+  }
+}
+
+/** The run as a restart leaves it: `cancelled`, its unfinished step carrying the restart marker. */
+async function interruptByRestart(): Promise<void> {
+  await setNodeRunStatus(db, nodeRunId, 'cancelled', {
+    completedAt: new Date(),
+    nodeOutput: {
+      status: 'cancelled',
+      outputs: {},
+      artifacts: [],
+      durationMs: 0,
+      error: { message: RESTART_INTERRUPTION_REASON, retryable: true },
+    },
+  });
+  await setFlowRunStatus(db, flowRunId, 'cancelled');
+}
+
 describe('retryTerminalFlowRun', () => {
-  it('mints a continuation resume intent (the user-Retry surface)', async () => {
-    await expect(retryTerminalFlowRun(db, flowRunId)).resolves.toBe(true);
-    expect(mocks.requestTerminalFlowResume).toHaveBeenCalledWith({
-      flowRunId,
-      nodeRunId,
-      continuation: true,
+  it('re-admits a failed run, refusing it in the enqueue once a concurrent Cancel took it', async () => {
+    await setFlowRunStatus(db, flowRunId, 'failed');
+    await expect(retryTerminalFlowRun(db, flowRunId, 'retry')).resolves.toBe(true);
+    const request = lastEnqueued();
+    expect(request).toMatchObject({ flowRunId, nodeRunId });
+    expect(request.admit(db)).toBe(true);
+    await setFlowRunStatus(db, flowRunId, 'cancelled');
+    expect(request.admit(db)).toBe(false);
+  });
+
+  it('anchors a completed run to its last step attempt', async () => {
+    await setNodeRunStatus(db, nodeRunId, 'completed', { completedAt: new Date() });
+    await setFlowRunStatus(db, flowRunId, 'completed');
+    await expect(retryTerminalFlowRun(db, flowRunId, 'retry')).resolves.toBe(true);
+    expect(lastEnqueued()).toMatchObject({ flowRunId, nodeRunId });
+  });
+
+  it('admits a restart-interrupted run only while the enqueue still sees its marker', async () => {
+    await interruptByRestart();
+    await expect(retryTerminalFlowRun(db, flowRunId, 'retry')).resolves.toBe(true);
+    const { admit } = lastEnqueued();
+    expect(admit(db)).toBe(true);
+    abandonRestartInterruption(db, flowRunId);
+    expect(admit(db)).toBe(false);
+  });
+
+  // The enqueue transaction re-checks the label the user clicked before any admission is written.
+  it('refuses in the enqueue a step that no longer recovers as the clicked kind', async () => {
+    await setFlowRunStatus(db, flowRunId, 'failed');
+    await expect(retryTerminalFlowRun(db, flowRunId, 'continue')).resolves.toBe(true);
+    const { admit, kind } = lastEnqueued();
+    expect(kind).toBe('continue');
+    expect(() => admit(db)).toThrow(
+      expect.objectContaining({
+        code: 'PRECONDITION_FAILED',
+        message: expect.stringMatching(/refresh/),
+      }),
+    );
+  });
+
+  it('refuses a run the user cancelled (no restart marker) before enqueueing', async () => {
+    await setFlowRunStatus(db, flowRunId, 'cancelled');
+    await expect(retryTerminalFlowRun(db, flowRunId, 'retry')).rejects.toMatchObject({
+      code: 'PRECONDITION_FAILED',
+      message: expect.stringMatching(/cancelled by the user/i),
     });
+    expect(mocks.requestTerminalFlowResume).not.toHaveBeenCalled();
+  });
+
+  it('reports a Work Queue Cancel that cleared the marker during the enqueue as the user cancelling', async () => {
+    await interruptByRestart();
+    const declined = new TerminalResumeAdmissionError('Flow resume admission cancelled');
+    mocks.requestTerminalFlowResume.mockImplementationOnce(async () => {
+      abandonRestartInterruption(db, flowRunId);
+      throw declined;
+    });
+    await expect(retryTerminalFlowRun(db, flowRunId, 'retry')).rejects.toMatchObject({
+      code: 'PRECONDITION_FAILED',
+      cause: declined,
+    });
+  });
+
+  it('passes an admission failure through while the run is still interrupted', async () => {
+    await interruptByRestart();
+    const failed = new TerminalResumeAdmissionError('Flow resume admission failed');
+    mocks.requestTerminalFlowResume.mockRejectedValueOnce(failed);
+    await expect(retryTerminalFlowRun(db, flowRunId, 'retry')).rejects.toBe(failed);
   });
 });
 
 describe('dispatchAdmittedTerminalResume (registered dispatcher)', () => {
-  function intent(continuation?: true) {
-    return {
-      version: 1,
-      action: 'resume',
-      flow_run_id: flowRunId,
-      node_run_id: nodeRunId,
-      ...(continuation ? { continuation } : {}),
-    };
-  }
-
-  it("forwards a continuation intent as resumeKind 'continuation'", async () => {
-    await mocks.registered?.(intent(true), ticket);
-    expect(mocks.dispatchAndAdvance).toHaveBeenCalledOnce();
-    expect(mocks.dispatchAndAdvance.mock.calls[0][0]).toEqual({ flowRunId, ticket });
-    expect(mocks.dispatchAndAdvance.mock.calls[0][5]).toEqual({ resumeKind: 'continuation' });
+  const intent = () => ({
+    version: 1,
+    action: 'resume',
+    flow_run_id: flowRunId,
+    node_run_id: nodeRunId,
   });
 
-  it("forwards a plain intent (flows.rerunRun — the honest re-run surfaces) as resumeKind 'redispatch'", async () => {
+  it('continues an anchor its session answered, and re-runs one no session answered', async () => {
     await mocks.registered?.(intent(), ticket);
     expect(mocks.dispatchAndAdvance).toHaveBeenCalledOnce();
-    expect(mocks.dispatchAndAdvance.mock.calls[0][5]).toEqual({ resumeKind: 'redispatch' });
+    expect(mocks.dispatchAndAdvance.mock.calls[0][0]).toEqual({ flowRunId, ticket });
+    expect(mocks.dispatchAndAdvance.mock.calls[0][5]).toEqual({ resumeKind: undefined });
+
+    await seedStepTask(nodeRunId, true);
+    await mocks.registered?.(intent(), ticket);
+    expect(mocks.dispatchAndAdvance.mock.calls[1][5]).toEqual({ resumeKind: 'continuation' });
+  });
+
+  // The session answered the node's first attempt; the second's prompt was sent but never answered.
+  it('re-runs a fresh attempt of a node an earlier attempt got answered', async () => {
+    await seedStepTask(nodeRunId, true);
+    const second = await createNodeRun(db, {
+      flowRunId,
+      nodeId: 'work',
+      blockType: 'agent',
+      status: 'failed',
+    });
+    await seedStepTask(second.id, false);
+
+    await mocks.registered?.({ ...intent(), node_run_id: second.id }, ticket);
+
+    expect(mocks.dispatchAndAdvance.mock.calls[0][5]).toEqual({ resumeKind: undefined });
   });
 
   it('forwards the persisted Fan Out branch scope', async () => {
@@ -116,7 +243,7 @@ describe('dispatchAdmittedTerminalResume (registered dispatcher)', () => {
     await mocks.registered?.(intent(), ticket);
 
     expect(mocks.dispatchAndAdvance.mock.calls[0][5]).toEqual({
-      resumeKind: 'redispatch',
+      resumeKind: undefined,
       laneIndex: 3,
       parentFanOutNodeRunId: parent.id,
     });
@@ -127,7 +254,7 @@ describe('dispatchAdmittedTerminalResume (registered dispatcher)', () => {
     const { eq } = await import('drizzle-orm');
     await db.update(flowRuns).set({ status: 'cancelled' }).where(eq(flowRuns.id, flowRunId));
 
-    await expect(mocks.registered?.(intent(true), ticket)).resolves.toBeUndefined();
+    await expect(mocks.registered?.(intent(), ticket)).resolves.toBeUndefined();
     expect(mocks.dispatchAndAdvance).not.toHaveBeenCalled();
   });
 
@@ -140,7 +267,7 @@ describe('dispatchAdmittedTerminalResume (registered dispatcher)', () => {
       .where(eq(flowRunAdmissions.ticket, ticket));
     seedActiveAdmission(db, flowRunId);
 
-    await expect(mocks.registered?.(intent(true), ticket)).resolves.toBeUndefined();
+    await expect(mocks.registered?.(intent(), ticket)).resolves.toBeUndefined();
     expect(mocks.dispatchAndAdvance).not.toHaveBeenCalled();
   });
 });
@@ -229,21 +356,16 @@ describe('Fan Out branch failure — the resume re-dispatches the whole item (sc
     async (order) => {
       const { failedRun, fanRunId } = await seedFailedItem(order);
 
-      await expect(retryTerminalFlowRun(db, flowRunId)).resolves.toBe(true);
+      await expect(retryTerminalFlowRun(db, flowRunId, 'retry')).resolves.toBe(true);
       expect(mocks.requestTerminalFlowResume).toHaveBeenCalledWith({
         flowRunId,
         nodeRunId: failedRun.id,
-        continuation: true,
+        kind: 'retry',
+        admit: expect.any(Function),
       });
 
       await mocks.registered?.(
-        {
-          version: 1,
-          action: 'resume',
-          flow_run_id: flowRunId,
-          node_run_id: failedRun.id,
-          continuation: true,
-        },
+        { version: 1, action: 'resume', flow_run_id: flowRunId, node_run_id: failedRun.id },
         ticket,
       );
 
@@ -253,8 +375,8 @@ describe('Fan Out branch failure — the resume re-dispatches the whole item (sc
       }));
       const scope = { laneIndex: 0, parentFanOutNodeRunId: fanRunId };
       expect(calls).toEqual([
-        { nodeId: 'a', options: { resumeKind: 'continuation', ...scope } },
-        { nodeId: 'b', options: { resumeKind: 'redispatch', ...scope } },
+        { nodeId: 'a', options: { resumeKind: undefined, ...scope } },
+        { nodeId: 'b', options: { resumeKind: 'continuation', ...scope } },
       ]);
     },
   );

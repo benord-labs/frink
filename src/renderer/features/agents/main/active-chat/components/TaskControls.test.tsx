@@ -1,14 +1,14 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { createElement, type ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TooltipProvider } from '../../../../../components/ui/tooltip';
 import { TaskControls } from './TaskControls';
 
-const tasksRetryMutate = vi.fn();
-const retryNodeMutate = vi.fn();
-let retryNodeOptions: { onError?: (error: { message?: string }) => void } | undefined;
+const recoverMutate = vi.fn();
+let recoverOptions: { onError?: (error: { message?: string }) => void } | undefined;
+const invalidateActionable = vi.fn();
 const toastError = vi.fn();
 
 vi.mock('sonner', () => ({ toast: { error: (...args: unknown[]) => toastError(...args) } }));
@@ -26,7 +26,10 @@ let taskData: {
     | 'cancelled';
   result?: Record<string, unknown>;
   flowRunId?: string | null;
+  recoveryKind?: 'continue' | 'retry';
+  confirmSideEffects?: boolean;
   flowRunStatus?: string;
+  recoveryNodeRunId?: string;
 } | null = null;
 
 // Captured so tests can assert the sub-chat resolution inputs (latest flow task vs fallback
@@ -42,7 +45,7 @@ vi.mock('../../../../../lib/trpc', () => ({
         listCounts: { invalidate: vi.fn() },
         getById: { invalidate: vi.fn() },
         getDrivingTaskForSubChat: { invalidate: vi.fn() },
-        getActionableTaskForSubChat: { invalidate: vi.fn() },
+        getActionableTaskForSubChat: { invalidate: invalidateActionable },
       },
     }),
     tasks: {
@@ -52,21 +55,11 @@ vi.mock('../../../../../lib/trpc', () => ({
           return { data: taskData };
         },
       },
-      retry: {
-        useMutation: () => ({ mutate: tasksRetryMutate, isPending: false }),
-      },
-    },
-    flows: {
-      retryRunFromLastNode: {
+      recover: {
         useMutation: (options: { onError?: (error: { message?: string }) => void }) => {
-          retryNodeOptions = options;
-          return { mutate: retryNodeMutate, isPending: false };
+          recoverOptions = options;
+          return { mutate: recoverMutate, isPending: false };
         },
-      },
-    },
-    chats: {
-      get: {
-        useQuery: () => ({ data: undefined }),
       },
     },
     claudeCode: {
@@ -77,7 +70,8 @@ vi.mock('../../../../../lib/trpc', () => ({
   },
 }));
 
-const retryWithProps = vi.fn();
+const retryWithProps =
+  vi.fn<(props: { chatId: string; usageLimited: boolean; onRetry: () => void }) => void>();
 
 vi.mock('../../../ui/account-indicator', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../ui/account-indicator')>()),
@@ -95,8 +89,8 @@ vi.mock('../../../ui/account-indicator', async (importOriginal) => ({
   },
 }));
 
-const CARRY_ON_NAME = /Carry on task/;
-const RETRY_NAME = /Retry task/;
+const CONTINUE_NAME = 'Continue task';
+const RETRY_NAME = 'Retry task';
 
 function renderControls(pinnedTaskId: string | null = null) {
   return render(<TaskControls subChatId="sub-1" pinnedTaskId={pinnedTaskId} />, {
@@ -111,8 +105,9 @@ describe('TaskControls', () => {
   beforeEach(() => {
     taskData = null;
     capturedQueryInput = undefined;
-    tasksRetryMutate.mockReset();
-    retryNodeMutate.mockReset();
+    recoverMutate.mockReset();
+    invalidateActionable.mockReset();
+    toastError.mockReset();
     retryWithProps.mockReset();
     resolvedAccount = undefined;
   });
@@ -122,156 +117,107 @@ describe('TaskControls', () => {
   });
 
   it('resolves its acting task per SUB-CHAT (with the pinned task as fallback), not per chat', () => {
-    taskData = { id: 'task-3', status: 'failed', result: { error: 'boom' } };
+    taskData = { id: 'task-3', status: 'failed', result: { error: 'boom' }, recoveryKind: 'retry' };
     renderControls('pinned-task');
 
     expect(capturedQueryInput).toEqual({ subChatId: 'sub-1', fallbackTaskId: 'pinned-task' });
   });
 
-  it('hides the controls while the task is not failed', () => {
+  it('hides the controls while the task is not stopped', () => {
     taskData = { id: 'task-3', status: 'running', result: { skipReview: false } };
     const { queryByRole } = renderControls();
 
-    expect(queryByRole('button', { name: CARRY_ON_NAME })).toBeNull();
-    expect(queryByRole('button', { name: RETRY_NAME })).toBeNull();
-  });
-
-  it('hides the controls immediately when the task resumes from failed to running', () => {
-    taskData = { id: 'task-resume-1', status: 'failed', result: { error: 'Transient failure' } };
-    const { queryByRole, unmount } = renderControls();
-
-    expect(queryByRole('button', { name: CARRY_ON_NAME })).toBeInTheDocument();
-
-    taskData = {
-      id: 'task-resume-1',
-      status: 'running',
-      result: { resumedBy: 'follow_up_message' },
-    };
-    unmount();
-    const { queryByRole: queryAfterResume } = renderControls();
-
-    expect(queryAfterResume('button', { name: CARRY_ON_NAME })).toBeNull();
+    expect(queryByRole('button')).toBeNull();
   });
 
   it('renders as a status row with the failure label (chat-level grammar)', () => {
-    taskData = { id: 'task-row', status: 'failed', result: { error: 'boom' } };
+    taskData = {
+      id: 'task-row',
+      status: 'failed',
+      result: { error: 'boom' },
+      recoveryKind: 'retry',
+    };
     renderControls();
 
     expect(screen.getByRole('status')).toHaveTextContent('Task failed');
   });
 
-  it('Carry on is the primary action — resumes the session via tasks.retry continue', () => {
-    taskData = { id: 'task-4', status: 'failed', result: { error: 'Transient failure' } };
-    renderControls();
+  // Exactly one recovery button per kind, so the row never offers two verbs for one stopped task.
+  it.each([
+    ['continue', CONTINUE_NAME, RETRY_NAME],
+    ['retry', RETRY_NAME, CONTINUE_NAME],
+  ] as const)(
+    'a %s task shows only its one button and recovers with that kind',
+    (kind, shown, hidden) => {
+      taskData = {
+        id: 'task-4',
+        status: 'failed',
+        result: { error: 'boom' },
+        flowRunId: 'run-1',
+        recoveryKind: kind,
+      };
+      renderControls();
 
-    fireEvent.click(screen.getByRole('button', { name: CARRY_ON_NAME }));
+      expect(screen.queryByRole('button', { name: hidden })).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: shown }));
+      expect(recoverMutate).toHaveBeenCalledWith({ taskId: 'task-4', kind });
+    },
+  );
 
-    expect(tasksRetryMutate).toHaveBeenCalledWith({ taskId: 'task-4', mode: 'continue' });
-  });
-
-  it('enables Carry on for a batch member whose run is paused — same rule as any Flow run', () => {
+  // The newest agent task finished or was swept, so the run's stopped step is what recovers.
+  it('offers the recovery of a failed run that stopped on a step other than its task', () => {
     taskData = {
-      id: 'task-batch',
-      status: 'failed',
-      result: { error: 'boom' },
-      flowRunId: 'run-1',
-      flowRunStatus: 'paused',
-    };
-    renderControls();
-
-    const carryOn = screen.getByRole('button', { name: CARRY_ON_NAME });
-    expect(carryOn).toBeEnabled();
-    fireEvent.click(carryOn);
-    expect(tasksRetryMutate).toHaveBeenCalledWith({ taskId: 'task-batch', mode: 'continue' });
-  });
-
-  it('Retry on a flow task re-runs from the last invoked node', () => {
-    taskData = { id: 'task-flow', status: 'failed', result: { error: 'boom' }, flowRunId: 'run-9' };
-    renderControls();
-
-    fireEvent.click(screen.getByRole('button', { name: RETRY_NAME }));
-
-    expect(retryNodeMutate).toHaveBeenCalledWith({ runId: 'run-9' });
-    expect(tasksRetryMutate).not.toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: CARRY_ON_NAME })).toBeDisabled();
-  });
-
-  it("shows the server's plain refusal when a Retry's run chat was deleted", () => {
-    taskData = { id: 'task-flow', status: 'failed', result: { error: 'boom' }, flowRunId: 'run-9' };
-    renderControls();
-
-    retryNodeOptions?.onError?.({
-      message: "This run's chat was deleted — start the flow again to re-run it.",
-    });
-
-    expect(toastError).toHaveBeenCalledWith('Could not retry task', {
-      description: "This run's chat was deleted — start the flow again to re-run it.",
-    });
-  });
-
-  it('enables Retry on a batch member whose run has settled to failed', () => {
-    taskData = {
-      id: 'task-batch-retry',
-      status: 'failed',
-      result: { error: 'boom' },
+      id: 'task-swept',
+      status: 'cancelled',
       flowRunId: 'run-1',
       flowRunStatus: 'failed',
+      recoveryKind: 'continue',
+      recoveryNodeRunId: 'node-b',
     };
     renderControls();
 
-    fireEvent.click(screen.getByRole('button', { name: RETRY_NAME }));
-
-    expect(retryNodeMutate).toHaveBeenCalledWith({ runId: 'run-1' });
-  });
-
-  it('keeps Retry disabled for a batch member whose run is paused — the run is not settled', () => {
-    taskData = {
-      id: 'task-batch-paused',
-      status: 'needs_attention',
-      result: { apiError: { message: 'API Error: 529', status: 529 } },
-      flowRunId: 'run-1',
-      flowRunStatus: 'paused',
-    };
-    renderControls();
-
-    expect(screen.getByRole('button', { name: RETRY_NAME })).toBeDisabled();
-    expect(retryNodeMutate).not.toHaveBeenCalled();
-  });
-
-  it('Retry on a NON-flow task confirms first (fresh re-run abandons the failed attempt)', () => {
-    taskData = { id: 'task-nonflow', status: 'failed', result: { error: 'boom' } };
-    renderControls();
-
-    fireEvent.click(screen.getByRole('button', { name: RETRY_NAME }));
-    // Two-step confirm: nothing dispatched until the explicit confirm.
-    expect(tasksRetryMutate).not.toHaveBeenCalled();
-
-    fireEvent.click(screen.getByRole('button', { name: /Confirm re-run/ }));
-    expect(tasksRetryMutate).toHaveBeenCalledWith({ taskId: 'task-nonflow', mode: 'restart' });
-  });
-
-  it('keeps Carry on enabled for lease-expired failures', () => {
-    taskData = {
-      id: 'task-lease-expired',
-      status: 'failed',
-      result: {
-        failureCode: 'EXECUTION_LEASE_EXPIRED',
-        error: 'Execution lease expired (no heartbeat)',
-      },
-    };
-    renderControls();
-
-    const carryOnButton = screen.getByRole('button', { name: CARRY_ON_NAME });
-    expect(carryOnButton).toBeEnabled();
-    fireEvent.click(carryOnButton);
-
-    expect(tasksRetryMutate).toHaveBeenCalledWith({
-      taskId: 'task-lease-expired',
-      mode: 'continue',
+    expect(screen.getByRole('status')).toHaveTextContent('Task failed');
+    fireEvent.click(screen.getByRole('button', { name: CONTINUE_NAME }));
+    expect(recoverMutate).toHaveBeenCalledWith({
+      taskId: 'task-swept',
+      kind: 'continue',
+      recoveryNodeRunId: 'node-b',
     });
   });
 
-  it('disables both controls for blocked credential failures', () => {
+  it('retries a non-flow task straight away, with no confirm', () => {
+    taskData = {
+      id: 'task-nonflow',
+      status: 'failed',
+      result: { error: 'boom' },
+      recoveryKind: 'retry',
+    };
+    renderControls();
+
+    fireEvent.click(screen.getByRole('button', { name: RETRY_NAME }));
+    expect(recoverMutate).toHaveBeenCalledWith({ taskId: 'task-nonflow', kind: 'retry' });
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  // The server refuses a kind that no longer holds; the toast explains and the refetch relabels.
+  it('toasts a refused recovery and refetches the task so the label updates', () => {
+    taskData = {
+      id: 'task-flow',
+      status: 'failed',
+      result: { error: 'boom' },
+      recoveryKind: 'continue',
+    };
+    renderControls();
+
+    recoverOptions?.onError?.({ message: 'This step can no longer be continued' });
+
+    expect(toastError).toHaveBeenCalledWith('Could not continue task', {
+      description: 'This step can no longer be continued',
+    });
+    expect(invalidateActionable).toHaveBeenCalled();
+  });
+
+  it('disables the button for blocked credential failures', () => {
     taskData = {
       id: 'task-5',
       status: 'failed',
@@ -279,26 +225,90 @@ describe('TaskControls', () => {
         dispatchErrorCode: 'MISSING_PAT',
         dispatchErrorRemediation: 'Add PAT',
       },
+      recoveryKind: 'continue',
     };
     renderControls();
 
-    expect(screen.getByRole('button', { name: CARRY_ON_NAME })).toBeDisabled();
-    expect(screen.getByRole('button', { name: RETRY_NAME })).toBeDisabled();
-    expect(tasksRetryMutate).not.toHaveBeenCalled();
+    const button = screen.getByRole('button', { name: CONTINUE_NAME });
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(recoverMutate).not.toHaveBeenCalled();
   });
 
-  it('E2E: shows controls disabled for invalid model with remediation tooltip', () => {
-    taskData = {
-      id: 'task-6',
-      status: 'failed',
-      result: {
-        dispatchErrorCode: 'INVALID_MODEL',
-        dispatchErrorRemediation: 'Select a valid model (haiku, sonnet, or opus).',
-      },
-    };
+  it('cools down after a click so a double-click recovers once', () => {
+    taskData = { id: 'task-6', status: 'failed', result: { error: 'boom' }, recoveryKind: 'retry' };
     renderControls();
 
-    expect(screen.getByRole('button', { name: CARRY_ON_NAME })).toBeDisabled();
+    const button = screen.getByRole('button', { name: RETRY_NAME });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(recoverMutate).toHaveBeenCalledTimes(1);
+    expect(button).toBeDisabled();
+  });
+
+  // Two clicks in one tick both see the pre-click render, so only the submit-time lock holds.
+  it('sends one request for two clicks in the same tick', () => {
+    taskData = { id: 'task-6', status: 'failed', result: { error: 'boom' }, recoveryKind: 'retry' };
+    renderControls();
+
+    const button = screen.getByRole('button', { name: RETRY_NAME });
+    act(() => {
+      button.click();
+      button.click();
+    });
+    expect(recoverMutate).toHaveBeenCalledTimes(1);
+  });
+
+  describe('Retry of a started non-agent step', () => {
+    const clickSideEffectsRetry = () => {
+      taskData = {
+        id: 'task-cmd',
+        status: 'failed',
+        result: { error: 'boom' },
+        flowRunId: 'run-1',
+        recoveryKind: 'retry',
+        confirmSideEffects: true,
+        recoveryNodeRunId: 'cmd-1',
+      };
+      const view = renderControls();
+      fireEvent.click(screen.getByRole('button', { name: RETRY_NAME }));
+      return view;
+    };
+
+    it('asks to confirm before it sends anything', () => {
+      clickSideEffectsRetry();
+      expect(screen.getByRole('alertdialog')).toHaveTextContent('may repeat its side effects');
+      expect(recoverMutate).not.toHaveBeenCalled();
+    });
+
+    it('sends nothing when the confirm is cancelled', async () => {
+      clickSideEffectsRetry();
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+      await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+      expect(recoverMutate).not.toHaveBeenCalled();
+    });
+
+    it('discards an open confirm when a refetch changes the recovery', async () => {
+      const view = clickSideEffectsRetry();
+      taskData = { ...taskData, id: 'task-cmd', status: 'failed', recoveryKind: 'continue' };
+      // A changed prop stands in for the refetch that re-renders past memo().
+      view.rerender(<TaskControls subChatId="sub-1" pinnedTaskId="task-cmd" />);
+      await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+      expect(recoverMutate).not.toHaveBeenCalled();
+    });
+
+    // The step shown is sent with the confirm, so the server refuses it once the step moved on.
+    it('retries once confirmed, pinned to the step it showed', async () => {
+      clickSideEffectsRetry();
+      fireEvent.click(screen.getByRole('button', { name: 'Retry anyway' }));
+      await waitFor(() =>
+        expect(recoverMutate).toHaveBeenCalledWith({
+          taskId: 'task-cmd',
+          kind: 'retry',
+          recoveryNodeRunId: 'cmd-1',
+        }),
+      );
+    });
   });
 
   it('shows controls for an api-error/usage-limit park, not for other needs_attention parks', () => {
@@ -306,42 +316,30 @@ describe('TaskControls', () => {
       id: 'task-parked',
       status: 'needs_attention',
       result: { apiError: { message: 'API Error: 401', status: 401 } },
+      recoveryKind: 'continue',
     };
     const { unmount } = renderControls();
-    expect(screen.getByRole('button', { name: CARRY_ON_NAME })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: CONTINUE_NAME })).toBeInTheDocument();
     unmount();
 
     // An AskUserQuestion-style park expects an answer, not a retry.
-    taskData = { id: 'task-parked-2', status: 'needs_attention', result: { awaitingInput: true } };
-    const { queryByRole } = renderControls();
-    expect(queryByRole('button', { name: CARRY_ON_NAME })).toBeNull();
-  });
-
-  it('keeps Carry on available while a non-batch paused Flow retains admission', () => {
-    // A usage-limit/api-error park pauses the run; redispatching a paused run would be refused.
     taskData = {
-      id: 'task-paused',
+      id: 'task-parked-2',
       status: 'needs_attention',
-      result: { apiError: { message: 'API Error: 529', status: 529 } },
-      flowRunId: 'run-paused',
-      flowRunStatus: 'paused',
+      result: { awaitingInput: true },
+      recoveryKind: 'continue',
     };
-    renderControls();
-
-    const carryOn = screen.getByRole('button', { name: CARRY_ON_NAME });
-    expect(carryOn).toBeEnabled();
-    fireEvent.click(carryOn);
-    expect(tasksRetryMutate).toHaveBeenCalledWith({ taskId: 'task-paused', mode: 'continue' });
-    expect(screen.getByRole('button', { name: RETRY_NAME })).toBeDisabled();
+    const { queryByRole } = renderControls();
+    expect(queryByRole('button', { name: CONTINUE_NAME })).toBeNull();
   });
 
-  it("offers Retry with another login on a parked run, then carries on in the run's chat", () => {
+  it("offers Retry with another login on a parked run, then recovers with the task's kind", () => {
     taskData = {
       id: 'task-limit',
       status: 'needs_attention',
       result: { chatId: 'chat-1', usageLimit: { message: "You've hit your limit" } },
       flowRunId: 'run-paused',
-      flowRunStatus: 'paused',
+      recoveryKind: 'continue',
     };
     renderControls();
 
@@ -349,33 +347,38 @@ describe('TaskControls', () => {
       expect.objectContaining({ chatId: 'chat-1', usageLimited: true }),
     );
     fireEvent.click(screen.getByRole('button', { name: 'Retry with Backup' }));
-    expect(tasksRetryMutate).toHaveBeenCalledWith({ taskId: 'task-limit', mode: 'continue' });
+    expect(recoverMutate).toHaveBeenCalledWith({ taskId: 'task-limit', kind: 'continue' });
   });
 
-  it('hides Retry with while the carry-on it would trigger cannot run', () => {
+  it('recovers with the kind current when a login switch lands, not the one at its click', () => {
     taskData = {
       id: 'task-limit',
       status: 'needs_attention',
       result: { chatId: 'chat-1', usageLimit: { message: "You've hit your limit" } },
       flowRunId: 'run-paused',
-      flowRunStatus: 'paused',
+      recoveryKind: 'retry',
     };
-    renderControls();
+    const view = renderControls();
+    const landSwitch = retryWithProps.mock.calls[0]?.[0].onRetry;
 
-    fireEvent.click(screen.getByRole('button', { name: CARRY_ON_NAME }));
-    expect(screen.queryByRole('button', { name: 'Retry with Backup' })).toBeNull();
+    taskData = { ...taskData, recoveryKind: 'continue' };
+    // A changed prop stands in for the refetch that re-renders past memo().
+    view.rerender(<TaskControls subChatId="sub-1" pinnedTaskId="task-limit" />);
+    landSwitch?.();
+    expect(recoverMutate).toHaveBeenCalledWith({ taskId: 'task-limit', kind: 'continue' });
   });
 
-  it('offers no Retry with on a parked task whose Flow run is not paused', () => {
+  it('hides Retry with while the recovery it would trigger cannot run', () => {
     taskData = {
       id: 'task-limit',
       status: 'needs_attention',
       result: { chatId: 'chat-1', usageLimit: { message: "You've hit your limit" } },
-      flowRunId: 'run-live',
-      flowRunStatus: 'running',
+      flowRunId: 'run-paused',
+      recoveryKind: 'continue',
     };
     renderControls();
 
+    fireEvent.click(screen.getByRole('button', { name: CONTINUE_NAME }));
     expect(screen.queryByRole('button', { name: 'Retry with Backup' })).toBeNull();
   });
 
@@ -386,7 +389,7 @@ describe('TaskControls', () => {
       status: 'needs_attention',
       result: { chatId: 'chat-1', apiError: { message: "This chat's login was removed" } },
       flowRunId: 'run-paused',
-      flowRunStatus: 'paused',
+      recoveryKind: 'continue',
     };
     renderControls();
 
@@ -396,8 +399,27 @@ describe('TaskControls', () => {
     );
   });
 
+  // The server offers no recovery kind while the task's Flow run is still in flight.
+  it('offers no button and no Retry with on a parked task without a recovery kind', () => {
+    taskData = {
+      id: 'task-limit',
+      status: 'needs_attention',
+      result: { chatId: 'chat-1', usageLimit: { message: "You've hit your limit" } },
+      flowRunId: 'run-live',
+    };
+    renderControls();
+
+    expect(screen.queryByRole('button')).toBeNull();
+    expect(retryWithProps).not.toHaveBeenCalled();
+  });
+
   it('offers no Retry with on a failed task', () => {
-    taskData = { id: 'task-failed', status: 'failed', result: { chatId: 'chat-1', error: 'boom' } };
+    taskData = {
+      id: 'task-failed',
+      status: 'failed',
+      result: { chatId: 'chat-1', error: 'boom' },
+      recoveryKind: 'retry',
+    };
     renderControls();
 
     expect(screen.queryByRole('button', { name: 'Retry with Backup' })).toBeNull();

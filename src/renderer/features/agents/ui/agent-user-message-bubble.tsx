@@ -137,7 +137,7 @@ export const AgentUserMessageBubble = memo(function AgentUserMessageBubble({
 }: AgentUserMessageBubbleProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
-  // System-generated wake prompts (e.g. the Carry on continuation nudge) reach the agent but
+  // System-generated wake prompts (e.g. the Continue nudge) reach the agent but
   // never render — the user just sees the agent resume.
   const isHiddenWake = isHiddenWakeMessage(textContent);
 

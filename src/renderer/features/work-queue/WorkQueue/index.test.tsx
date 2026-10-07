@@ -5,6 +5,7 @@ vi.mock('./QueuePauseControl', () => ({ QueuePauseControl: () => null }));
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeAll, describe, expect, it, type Mock, vi } from 'vitest';
 import { useAgentSubChatStore } from '../../agents/stores/sub-chat-store';
+import type { ConfirmedRecovery } from '../types';
 import { buildFailedRetryRow, reviewedPlanMessages } from './test-fixtures';
 
 const overviewLaneSpy = vi.fn();
@@ -492,15 +493,15 @@ vi.mock('../../../lib/trpc', () => ({
           isPending: false,
         }),
       },
-      retry: {
+      recover: {
         useMutation: (options?: {
-          onSuccess?: (data: unknown, variables: { taskId: string; mode: string }) => void;
+          onSuccess?: (data: { ok: true }, variables: { taskId: string; kind: string }) => void;
           onError?: (error: Error) => void;
         }) => ({
           mutate: (
-            variables: { taskId: string; mode: string },
+            variables: { taskId: string; kind: string },
             mutateOptions?: {
-              onSuccess?: (data: unknown, variables: { taskId: string; mode: string }) => void;
+              onSuccess?: (data: { ok: true }, variables: { taskId: string; kind: string }) => void;
               onError?: (error: Error) => void;
             },
           ) => {
@@ -512,8 +513,8 @@ vi.mock('../../../lib/trpc', () => ({
               options?.onError?.(error);
               return;
             }
-            options?.onSuccess?.(undefined, variables);
-            mutateOptions?.onSuccess?.(undefined, variables);
+            options?.onSuccess?.({ ok: true }, variables);
+            mutateOptions?.onSuccess?.({ ok: true }, variables);
           },
           isPending: false,
         }),
@@ -1145,30 +1146,38 @@ describe('WorkQueue mapTask trigger context', () => {
     expect(getOverviewLaneProps<{ tasks: unknown[] }>('running').tasks).toEqual([]);
     expect(screen.queryByRole('tab')).not.toBeInTheDocument();
   });
-  it('retries a failed Overview task in resume mode', () => {
-    overviewLaneSpy.mockClear();
-    updateTaskStatusMutateMock.mockReset();
-    const failedRow = buildFailedRetryRow('task-failed-retry', '2026-03-10T01:20:00.000Z');
-    workQueueRows.push(failedRow);
-    try {
-      renderWorkQueue();
-      const failedProps = getOverviewLaneProps<{
-        onRetryTask: (taskId: string) => void;
-      }>('failed');
-      failedProps.onRetryTask('task-failed-retry');
-      expect(retryTaskMutateMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          taskId: 'task-failed-retry',
-          mode: 'continue',
-        }),
-        expect.objectContaining({
-          onError: expect.any(Function),
-        }),
-      );
-    } finally {
-      workQueueRows.pop();
-    }
-  });
+  it.each([
+    ['a standalone', null, 'continue'],
+    ['a Flow-linked', 'run-1', 'retry'],
+  ] as const)(
+    "recovers %s failed Overview task with the row's recovery kind",
+    (_, flowRunId, kind) => {
+      overviewLaneSpy.mockClear();
+      updateTaskStatusMutateMock.mockReset();
+      retryTaskMutateMock.mockReset();
+      const failedRow = {
+        ...buildFailedRetryRow('task-failed-retry', '2026-03-10T01:20:00.000Z'),
+        flowRunId,
+        recoveryKind: kind,
+      };
+      workQueueRows.push(failedRow);
+      try {
+        renderWorkQueue();
+        const failedProps = getOverviewLaneProps<{
+          onRetryTask: (taskId: string) => void;
+        }>('failed');
+        failedProps.onRetryTask('task-failed-retry');
+        expect(retryTaskMutateMock).toHaveBeenCalledWith(
+          expect.objectContaining({ taskId: 'task-failed-retry', kind }),
+          expect.objectContaining({
+            onError: expect.any(Function),
+          }),
+        );
+      } finally {
+        workQueueRows.pop();
+      }
+    },
+  );
   it('keeps waiting Overview rows deduplicated while repeated retries await refetch', () => {
     overviewLaneSpy.mockClear();
     updateTaskStatusMutateMock.mockReset();
@@ -1215,11 +1224,11 @@ describe('WorkQueue mapTask trigger context', () => {
       }>('failed');
       failedProps.onRetryTask('task-failed-retry-error');
       expect(retryTaskMutateMock).toHaveBeenCalledWith(
-        expect.objectContaining({ taskId: 'task-failed-retry-error', mode: 'continue' }),
+        expect.objectContaining({ taskId: 'task-failed-retry-error', kind: 'continue' }),
         expect.objectContaining({ onError: expect.any(Function) }),
       );
       expect(toastErrorMock).toHaveBeenCalledWith(
-        'Could not retry task',
+        'Could not continue task',
         expect.objectContaining({ description: 'network failed' }),
       );
       expect(overviewRefetchMocks.attention).toHaveBeenCalledTimes(1);
@@ -1300,6 +1309,70 @@ describe('WorkQueue mapTask trigger context', () => {
       const needsAttention = getOverviewLaneProps<{ tasks: { id: string }[] }>('needs-attention');
       expect(needsAttention.tasks.some((t) => t.id === 'task-interrupted-fold')).toBe(true);
       expect(findOverviewLaneProps('interrupted')).toBeUndefined();
+    } finally {
+      workQueueRows.pop();
+    }
+  });
+  // Its raw row is an earlier `done` step, which the failed-task retry check would refuse.
+  it.each([
+    ['an interrupted run', 'interrupted', 'needs-attention'],
+    ['a run failed on a later non-agent step', 'failed', 'failed'],
+  ] as const)(
+    "recovers %s with its row's kind, skipping the failed-task check",
+    (_, status, key) => {
+      overviewLaneSpy.mockClear();
+      retryTaskMutateMock.mockReset();
+      toastErrorMock.mockReset();
+      workQueueRows.push({
+        ...buildFailedRetryRow('task-interrupted-recover', '2026-03-10T02:01:00.000Z'),
+        status: 'done' as const,
+        effectiveStatus: status,
+        flowRunId: 'run-int',
+        recoveryKind: 'retry' as const,
+        confirmSideEffects: true,
+      });
+      try {
+        renderWorkQueue();
+        const lane = getOverviewLaneProps<{
+          tasks: Array<{ id: string; confirmSideEffects?: boolean }>;
+          onRetryTask: (taskId: string) => void;
+        }>(key);
+        // The row menu reads this flag to confirm before a Retry that may repeat side effects.
+        expect(
+          lane.tasks.find((t) => t.id === 'task-interrupted-recover')?.confirmSideEffects,
+        ).toBe(true);
+        lane.onRetryTask('task-interrupted-recover');
+        expect(toastErrorMock).not.toHaveBeenCalled();
+        expect(retryTaskMutateMock).toHaveBeenCalledWith(
+          { taskId: 'task-interrupted-recover', kind: 'retry' },
+          expect.objectContaining({ onError: expect.any(Function) }),
+        );
+      } finally {
+        workQueueRows.pop();
+      }
+    },
+  );
+  // The server refuses a confirmed Retry once the row's step is no longer the one confirmed.
+  it('sends a confirmed Retry pinned to the step its dialog showed', () => {
+    overviewLaneSpy.mockClear();
+    retryTaskMutateMock.mockReset();
+    workQueueRows.push({
+      ...buildFailedRetryRow('task-confirmed', '2026-03-10T02:02:00.000Z'),
+      flowRunId: 'run-confirmed',
+      recoveryKind: 'retry' as const,
+      confirmSideEffects: true,
+      recoveryNodeRunId: 'nr-newer',
+    });
+    try {
+      renderWorkQueue();
+      const lane = getOverviewLaneProps<{
+        onRetryTask: (taskId: string, confirmed: ConfirmedRecovery) => void;
+      }>('failed');
+      lane.onRetryTask('task-confirmed', { kind: 'retry', recoveryNodeRunId: 'nr-shown' });
+      expect(retryTaskMutateMock).toHaveBeenCalledWith(
+        { taskId: 'task-confirmed', kind: 'retry', recoveryNodeRunId: 'nr-shown' },
+        expect.objectContaining({ onError: expect.any(Function) }),
+      );
     } finally {
       workQueueRows.pop();
     }

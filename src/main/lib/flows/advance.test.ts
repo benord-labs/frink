@@ -1780,7 +1780,7 @@ describe('Retry after a branched Fan Out failure (sc-716)', () => {
           type: 'completed',
           output: { ...completedOutput, outputs: { result: args.node.id } },
         }));
-      await dispatchTerminalResumeTarget(fence, target, true);
+      await dispatchTerminalResumeTarget(fence, target);
 
       const dispatched = vi.mocked(dispatchNode).mock.calls.map(([args]) => args.node.id);
       expect(dispatched.filter((id) => id !== 'after').sort()).toEqual(['a', 'b']);
@@ -1865,7 +1865,7 @@ describe('Retry after a branched Fan Out failure — edge cases (sc-716)', () =>
         type: 'completed',
         output: { ...completedOutput, outputs: { result: `${args.node.id}-retried` } },
       }));
-    await dispatchTerminalResumeTarget(fence, target, true);
+    await dispatchTerminalResumeTarget(fence, target);
     return vi.mocked(dispatchNode).mock.calls.map(([args]) => args);
   }
 

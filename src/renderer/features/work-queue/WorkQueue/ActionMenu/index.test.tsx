@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { createStore, Provider } from 'jotai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -170,7 +170,139 @@ describe('WorkQueue ActionMenu', () => {
     expect(screen.queryByRole('menuitem', { name: 'Delete' })).not.toBeInTheDocument();
   });
 
-  it('does not offer task-level Carry on for Flow-linked work', () => {
+  it.each([
+    ['continue', 'Continue task', 'Retry task'],
+    ['retry', 'Retry task', 'Continue task'],
+  ] as const)('offers one %s item for a stopped task', (recoveryKind, shown, hidden) => {
+    const props = createBaseProps();
+    render(
+      <ActionMenu
+        {...props}
+        task={createTask({ status: 'failed', recoveryKind })}
+        status="failed"
+      />,
+    );
+
+    openMenu();
+    expect(screen.queryByRole('menuitem', { name: hidden })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('menuitem', { name: shown }));
+    expect(props.onRetryTask).toHaveBeenCalledWith('task-1');
+  });
+
+  it('offers the recovery of Flow-linked work too', () => {
+    const props = createBaseProps();
+    render(
+      <ActionMenu
+        {...props}
+        task={createTask({
+          status: 'failed',
+          source: 'flow',
+          flowRunId: 'run-1',
+          recoveryKind: 'continue',
+        })}
+        status="failed"
+      />,
+    );
+
+    openMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Continue task' }));
+    expect(props.onRetryTask).toHaveBeenCalledWith('task-1');
+  });
+
+  it.each([
+    ['continue', 'Continue task'],
+    ['retry', 'Retry task'],
+  ] as const)('offers %s beside Cancel on a restart-interrupted run', (recoveryKind, shown) => {
+    const props = createBaseProps();
+    const task = createTask({ status: 'cancelled', flowRunId: 'run-1', recoveryKind });
+    render(<ActionMenu {...props} task={task} status="interrupted" />);
+
+    openMenu();
+    expect(screen.getByRole('menuitem', { name: 'Cancel' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('menuitem', { name: shown }));
+    expect(props.onRetryTask).toHaveBeenCalledWith('task-1');
+  });
+
+  describe('Retry of a started non-agent step', () => {
+    const renderSideEffectsRetry = () => {
+      const props = createBaseProps();
+      const task = createTask({
+        status: 'cancelled',
+        flowRunId: 'run-1',
+        recoveryKind: 'retry',
+        confirmSideEffects: true,
+        recoveryNodeRunId: 'nr-1',
+      });
+      const view = render(<ActionMenu {...props} task={task} status="interrupted" />);
+      openMenu();
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Retry task' }));
+      return { ...props, task, rerender: view.rerender };
+    };
+
+    it('asks to confirm before it sends anything', () => {
+      const props = renderSideEffectsRetry();
+      expect(screen.getByRole('alertdialog')).toHaveTextContent('may repeat its side effects');
+      expect(props.onRetryTask).not.toHaveBeenCalled();
+    });
+
+    it('sends nothing when the confirm is cancelled', async () => {
+      const props = renderSideEffectsRetry();
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+      await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+      expect(props.onRetryTask).not.toHaveBeenCalled();
+    });
+
+    // The confirm names the exact recovery and step, so a row that moved meanwhile is refused.
+    it('retries once confirmed, as the Retry of the step that was confirmed', async () => {
+      const props = renderSideEffectsRetry();
+      fireEvent.click(screen.getByRole('button', { name: 'Retry anyway' }));
+      await waitFor(() =>
+        expect(props.onRetryTask).toHaveBeenCalledWith('task-1', {
+          kind: 'retry',
+          recoveryNodeRunId: 'nr-1',
+        }),
+      );
+    });
+
+    it("discards an open confirm when a refetch changes the row's recovery", async () => {
+      const { rerender, task, ...props } = renderSideEffectsRetry();
+      rerender(
+        <ActionMenu {...props} task={{ ...task, recoveryKind: 'continue' }} status="interrupted" />,
+      );
+      await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+      expect(props.onRetryTask).not.toHaveBeenCalled();
+    });
+
+    // Same status and kind, but another run, chat, or attempt (another window retried meanwhile).
+    it.each([
+      ['rebound to another run', { flowRunId: 'run-2' }, {}],
+      ['rebound to another chat', {}, { chatId: 'chat-2' }],
+      ['retried elsewhere, stopped again', { recoveryNodeRunId: 'nr-2' }, {}],
+    ])('discards an open confirm when the row is %s', async (_, taskChange, propChange) => {
+      const { rerender, task, ...props } = renderSideEffectsRetry();
+      rerender(
+        <ActionMenu
+          {...props}
+          {...propChange}
+          task={{ ...task, ...taskChange }}
+          status="interrupted"
+        />,
+      );
+      await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+      expect(props.onRetryTask).not.toHaveBeenCalled();
+    });
+  });
+
+  it('offers only Cancel on an interrupted run the server gave no recovery', () => {
+    const task = createTask({ status: 'cancelled', flowRunId: 'run-1' });
+    render(<ActionMenu {...createBaseProps()} task={task} status="interrupted" />);
+
+    openMenu();
+    expect(screen.getByRole('menuitem', { name: 'Cancel' })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: /task$/ })).not.toBeInTheDocument();
+  });
+
+  it('offers no recovery when the server sent none (a run still in flight)', () => {
     render(
       <ActionMenu
         {...createBaseProps()}
@@ -180,7 +312,7 @@ describe('WorkQueue ActionMenu', () => {
     );
 
     openMenu();
-    expect(screen.queryByRole('menuitem', { name: 'Carry on task' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Retry task' })).not.toBeInTheDocument();
   });
 
   it('deletes without a confirmation dialog', () => {

@@ -42,7 +42,7 @@ export class LocalEngineNotImplementedError extends Error {
   }
 }
 
-export { rerunFlowRunFromInterruption, resumeFlowRun } from './resume';
+export { resumeFlowRun } from './resume';
 export { startFlowRun } from './start';
 
 const TERMINAL_FLOW_STATUSES = new Set<FlowRun['status']>(['completed', 'failed', 'cancelled']);

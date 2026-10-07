@@ -1,8 +1,10 @@
 import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ZodError } from 'zod';
+import { getDatabase } from '../../db';
 import { FlowVersionConflictError } from '../../db/repos/flow-versions';
 import { FlowCopyNoSavedVersionError, FlowCopyNotFoundError } from '../../db/repos/flows';
+import { freshDb } from '../../db/test-utils/fresh-db';
 import {
   TerminalResumeAdmissionError,
   TerminalResumeChatDeletedError,
@@ -39,6 +41,7 @@ const updateFlowAdmissionSettingsMock = vi.fn();
 const moveQueuedFlowAdmissionMock = vi.fn();
 const kickStalledFlowAdmissionDrainMock = vi.fn();
 const retryTerminalFlowRunMock = vi.fn();
+const resumeFlowRunMock = vi.fn();
 
 vi.mock('electron', () => ({
   app: { getPath: (name: string) => (name === 'home' ? '/mock/home' : '/mock') },
@@ -129,7 +132,7 @@ vi.mock('../../flows/engine', async (importOriginal) => {
     cancelFlowRun: (...args: unknown[]) => cancelFlowRunMock(...args),
     getFlowRunWithNodeRuns: (...args: unknown[]) => getFlowRunWithNodeRunsMock(...args),
     startFlowRun: (...args: unknown[]) => startFlowRunMock(...args),
-    resumeFlowRun: vi.fn(),
+    resumeFlowRun: (...args: unknown[]) => resumeFlowRunMock(...args),
   };
 });
 
@@ -211,6 +214,7 @@ describe('flowsRouter (local)', () => {
     moveQueuedFlowAdmissionMock.mockReset();
     kickStalledFlowAdmissionDrainMock.mockReset();
     retryTerminalFlowRunMock.mockReset();
+    resumeFlowRunMock.mockReset();
   });
 
   describe('copy', () => {
@@ -798,6 +802,11 @@ describe('flowsRouter (local)', () => {
   });
 
   describe('getRun', () => {
+    // Recovery resolution reads the restart marker and step tasks from a real, empty database.
+    beforeEach(() => {
+      vi.mocked(getDatabase).mockReturnValueOnce(freshDb());
+    });
+
     it('returns admission visibility for selected queued details', async () => {
       const run = {
         id: 'run-1',
@@ -868,6 +877,36 @@ describe('flowsRouter (local)', () => {
       await expect(
         flowsRouter.createCaller({ getWindow: () => null }).getRun({ runId: run.id }),
       ).resolves.toMatchObject({ status: 'running', admission_state: 'active' });
+    });
+
+    it("carries the run's recovery actions, resolved against its visible status", async () => {
+      const run = {
+        id: 'run-1',
+        flowVersionId: 'version-1',
+        status: 'running',
+        triggerContext: null,
+        idempotencyKey: null,
+        batchId: null,
+        startedAt: null,
+        completedAt: null,
+        createdAt: new Date('2026-08-01T09:00:00Z'),
+      };
+      // A started non-agent step with no session to continue: Retry, behind a side-effects check.
+      const nodeRuns = [
+        { id: 'nr-1', blockType: 'run_command', status: 'awaiting_input', startedAt: new Date() },
+      ];
+      getFlowRunWithNodeRunsMock.mockResolvedValueOnce({ run, nodeRuns });
+      flowRunAdmissionSnapshotsForRunsMock.mockReturnValueOnce(
+        new Map([[run.id, { runStatus: 'paused', admission: null }]]),
+      );
+
+      await expect(
+        flowsRouter.createCaller({ getWindow: () => null }).getRun({ runId: run.id }),
+      ).resolves.toMatchObject({
+        recoveries: [{ nodeRunId: 'nr-1', kind: 'retry', confirmSideEffects: true }],
+      });
+      // The steps getRun already read are reused, not queried a second time.
+      expect(listNodeRunsForFlowRunMock).not.toHaveBeenCalled();
     });
   });
 
@@ -985,6 +1024,51 @@ describe('flowsRouter (local)', () => {
     });
   });
 
+  describe('resumeRun', () => {
+    const runId = '550e8400-e29b-41d4-a716-446655440030';
+    const input = { runId, action: 'retry', nodeRunId: 'nr-1', kind: 'continue' } as const;
+
+    it('forwards the displayed recovery kind and returns the refreshed run', async () => {
+      const run = {
+        id: runId,
+        flowVersionId: '550e8400-e29b-41d4-a716-446655440031',
+        status: 'running',
+        triggerContext: null,
+        idempotencyKey: null,
+        batchId: null,
+        startedAt: new Date('2024-01-01T00:00:00.000Z'),
+        completedAt: null,
+        createdAt: new Date('2024-01-01T00:00:00.000Z'),
+      };
+      getFlowRunWithNodeRunsMock.mockResolvedValueOnce({ run, nodeRuns: [] });
+      const caller = flowsRouter.createCaller({ getWindow: () => null });
+
+      await expect(caller.resumeRun(input)).resolves.toMatchObject({
+        id: runId,
+        status: 'running',
+        nodeRuns: [],
+      });
+      expect(resumeFlowRunMock).toHaveBeenCalledWith(runId, 'retry', 'nr-1', undefined, 'continue');
+      expect(getVersionMock).toHaveBeenCalledWith(expect.anything(), run.flowVersionId);
+    });
+
+    it('throws NOT_FOUND when the run vanished after resuming', async () => {
+      getFlowRunWithNodeRunsMock.mockResolvedValueOnce(null);
+      const caller = flowsRouter.createCaller({ getWindow: () => null });
+
+      await expect(caller.resumeRun(input)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    });
+
+    it('passes a PRECONDITION_FAILED refusal through unchanged', async () => {
+      const refusal = new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Step moved on' });
+      resumeFlowRunMock.mockRejectedValueOnce(refusal);
+      const caller = flowsRouter.createCaller({ getWindow: () => null });
+
+      await expect(caller.resumeRun(input)).rejects.toBe(refusal);
+      expect(getFlowRunWithNodeRunsMock).not.toHaveBeenCalled();
+    });
+  });
+
   describe('retryRunFromLastNode', () => {
     it('maps terminal admission rejection to PRECONDITION_FAILED', async () => {
       const runId = '550e8400-e29b-41d4-a716-446655440020';
@@ -1004,14 +1088,12 @@ describe('flowsRouter (local)', () => {
       );
       const caller = flowsRouter.createCaller({ getWindow: () => null });
 
-      await expect(caller.retryRunFromLastNode({ runId })).rejects.toSatisfy((error: unknown) => {
-        return (
-          error instanceof TRPCError &&
-          error.code === 'PRECONDITION_FAILED' &&
-          error.message === 'Flow retry could not be admitted: resume admission was cancelled'
-        );
+      await expect(caller.retryRunFromLastNode({ runId, kind: 'retry' })).rejects.toMatchObject({
+        name: 'TRPCError',
+        code: 'PRECONDITION_FAILED',
+        message: 'Flow retry could not be admitted: resume admission was cancelled',
       });
-      expect(retryTerminalFlowRunMock).toHaveBeenCalledWith(expect.anything(), runId);
+      expect(retryTerminalFlowRunMock).toHaveBeenCalledWith(expect.anything(), runId, 'retry');
     });
 
     it("surfaces a deleted chat's refusal in plain words, without the admission prefix", async () => {
@@ -1020,7 +1102,7 @@ describe('flowsRouter (local)', () => {
       retryTerminalFlowRunMock.mockRejectedValueOnce(new TerminalResumeChatDeletedError());
       const caller = flowsRouter.createCaller({ getWindow: () => null });
 
-      await expect(caller.retryRunFromLastNode({ runId })).rejects.toSatisfy(
+      await expect(caller.retryRunFromLastNode({ runId, kind: 'retry' })).rejects.toSatisfy(
         (error: unknown) =>
           error instanceof TRPCError &&
           error.code === 'PRECONDITION_FAILED' &&
@@ -1035,7 +1117,7 @@ describe('flowsRouter (local)', () => {
       retryTerminalFlowRunMock.mockRejectedValueOnce(fault);
       const caller = flowsRouter.createCaller({ getWindow: () => null });
 
-      await expect(caller.retryRunFromLastNode({ runId })).rejects.toSatisfy(
+      await expect(caller.retryRunFromLastNode({ runId, kind: 'retry' })).rejects.toSatisfy(
         (error: unknown) =>
           error instanceof TRPCError &&
           error.code === 'INTERNAL_SERVER_ERROR' &&
@@ -1060,8 +1142,10 @@ describe('flowsRouter (local)', () => {
       retryTerminalFlowRunMock.mockResolvedValueOnce(true);
       const caller = flowsRouter.createCaller({ getWindow: () => null });
 
-      await expect(caller.retryRunFromLastNode({ runId })).resolves.toEqual({ ok: true });
-      expect(retryTerminalFlowRunMock).toHaveBeenCalledWith(expect.anything(), runId);
+      await expect(caller.retryRunFromLastNode({ runId, kind: 'retry' })).resolves.toEqual({
+        ok: true,
+      });
+      expect(retryTerminalFlowRunMock).toHaveBeenCalledWith(expect.anything(), runId, 'retry');
     });
   });
 

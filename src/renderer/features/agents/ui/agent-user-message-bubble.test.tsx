@@ -108,7 +108,7 @@ describe('AgentUserMessageBubble', () => {
     extractTaskBubbleDataMock.mockReturnValue({ taskData: null, fullPrompt: '' });
   });
 
-  it('renders nothing for a hidden wake message (e.g. the Carry on nudge)', () => {
+  it('renders nothing for a hidden wake message (e.g. the Continue nudge)', () => {
     const { container } = render(
       <AgentUserMessageBubble
         messageId="m-wake"

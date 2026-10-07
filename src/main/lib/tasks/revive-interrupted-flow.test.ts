@@ -175,6 +175,28 @@ describe('reviveRestartInterruptedFlow', () => {
     expect(await statuses()).toEqual({ run: 'cancelled', node: 'cancelled', task: 'cancelled' });
   });
 
+  // The session answered the node's earlier attempt; this attempt's prompt was sent, never answered.
+  it('writes nothing when only an earlier attempt of the node was answered', async () => {
+    await seedInterruptedRun(MARKED_OUTPUT, false);
+    const earlier = await createNodeRun(db, { flowRunId, nodeId: 'a', blockType: 'agent' });
+    const first = await createTask(db, {
+      description: 'agent',
+      source: 'flow',
+      sourceId: earlier.id,
+      flowRunId,
+      nodeRunId: earlier.id,
+    });
+    const prompt = { id: 'u0', role: 'user', parts: [], metadata: { dispatchTaskId: first.id } };
+    await db.insert(subChatMessages).values([
+      { subChatId: 'sub-1', seq: -2, message: JSON.stringify(prompt) },
+      { subChatId: 'sub-1', seq: -1, message: '{"id":"a0","role":"assistant","parts":[]}' },
+    ]);
+
+    await reviveRestartInterruptedFlow(taskId, flowRunId, 'sub-1');
+
+    expect(await statuses()).toEqual({ run: 'cancelled', node: 'cancelled', task: 'cancelled' });
+  });
+
   // Continuing in place skips re-admission, so a slot that already began releasing (a settle, or a
   // teardown cleanup error) must decline and leave the run on the Re-run path.
   it('writes nothing once the slot is no longer active', async () => {

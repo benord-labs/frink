@@ -18,9 +18,7 @@ type ContinuationWatch = { intervalMs?: number; attempts?: number };
 
 /** Injected by runtime's lifecycle hook — the only caller — to keep this module cycle-free. */
 type ContinuationAdmissionOps = {
-  requestTerminalFlowResume: (
-    input: PendingContinuationResume & { continuation: true },
-  ) => Promise<object>;
+  requestTerminalFlowResume: (input: PendingContinuationResume) => Promise<object>;
   hasLiveFlowAdmission: (flowRunId: string) => Promise<boolean>;
   /** State of the run's live admission row, or null when none — the fire pre-flight. */
   getLiveAdmissionState: (flowRunId: string) => Promise<string | null>;
@@ -37,7 +35,7 @@ type StagedContinuation = {
 // Both surfacing lanes render ERROR_TOAST_CONFIG's copy over this once category:'FLOW_RUN_ENDED'
 // is set — kept in sync with that entry so the stored signal is never a contradicting fallback.
 const CONTINUATION_CORRECTIVE_MESSAGE =
-  'Use Re-run step (or Resume) above the composer to continue this flow.';
+  'Use Continue or Retry above the composer to pick this flow back up.';
 
 const staged = new Map<string, StagedContinuation>();
 const dropGenerations = new Map<string, number>();
@@ -78,7 +76,7 @@ function droppedSinceStaged({ pending, generation }: StagedContinuation): boolea
 function continuationInput(entry: StagedContinuation) {
   const { pending } = entry;
   const admit = (db: Db) => !droppedSinceStaged(entry) && (pending.admit?.(db) ?? true);
-  return { ...pending, admit, continuation: true as const };
+  return { ...pending, admit };
 }
 
 /**

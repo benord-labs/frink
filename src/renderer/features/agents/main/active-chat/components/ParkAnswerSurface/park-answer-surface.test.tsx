@@ -165,7 +165,7 @@ describe('ParkAnswerSurface', () => {
     expect(onSubmitAnswer).not.toHaveBeenCalled();
   });
 
-  it('renders nothing for a transient park (usage limit) — TaskControls owns Carry on/Retry', () => {
+  it('renders nothing for a transient park (usage limit) — TaskControls owns Continue/Retry', () => {
     taskData = {
       id: 'driver1',
       status: 'needs_attention',
