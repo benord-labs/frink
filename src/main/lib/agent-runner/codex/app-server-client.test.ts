@@ -671,6 +671,7 @@ describe('CodexAppServerClient lifecycle guards', () => {
   });
 
   it('drains child stderr so a chatty app-server cannot fill the pipe and stall', async () => {
+    vi.stubEnv('DEBUG_CODEX_APP_SERVER', '');
     const { default: log } = await import('electron-log');
     answerInitialize(child);
     const client = new CodexAppServerClient({ binary: 'codex', clientInfo: CLIENT_INFO });
