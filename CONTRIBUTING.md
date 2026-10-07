@@ -26,11 +26,12 @@ bun run dev
 
 ```bash
 bun run test:run            # full suite
-bun run test:run:coverage   # suite + coverage gate
+bun run test:run:coverage   # suite + coverage report
 ```
 
-Coverage thresholds live in `vitest.config.ts`: 65% statements, 63% functions. Use the coverage
-form for anything that changes behaviour; `test:run` is enough for docs and config.
+CI enforces the coverage floor on every pull request; the values live in
+`scripts/testing/check-coverage-floor.mjs`. You don't need a full coverage run before committing:
+run the tests for what you changed, and run the coverage form when you want to see the numbers.
 
 The app's renderer is built with the React Compiler; tests are not, unless the file is named
 `*.compiled.test.ts` or `.tsx` under `src/renderer` (`bun run test:compiled` runs only those). Put any assertion about render
