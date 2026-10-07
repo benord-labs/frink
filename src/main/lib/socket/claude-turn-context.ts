@@ -12,6 +12,7 @@ import { filterCanonicalPlanParts } from '../../../shared/plan-parts-filter';
 import type { ToolPartState } from '../../../shared/types/assistant-message';
 import { buildFrinkPlanChunks } from '../agent-runner/plan-document';
 import type { UIMessageChunk } from '../claude/types';
+import type { TurnHooks } from '../provider/hooks/dispatch';
 import type { MessagePart } from './client';
 
 /** `MessagePart.state` is an untyped index-signature field; this is the one typed writer for it. */
@@ -41,6 +42,8 @@ export interface ClaudeTurnExecution {
   flowPlanAutoApprove: boolean;
   abortController: AbortController;
   sendChunk: TurnChunkSend;
+  /** The user's own hooks, bound once for the send; absent means none run. */
+  userHooks?: TurnHooks;
 }
 
 /**

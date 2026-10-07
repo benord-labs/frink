@@ -17,6 +17,9 @@ export type HookRunContext = Pick<
   'cwd' | 'sessionCwd' | 'projectRoot' | 'env' | 'signal'
 >;
 
+/** One send's bound hooks and where they run; each dispatch adds its own signal. */
+export type TurnHooks = { hooks: HookRegistration[]; context: Omit<HookRunContext, 'signal'> };
+
 /** One finished hook; `command` is how Claude names it in a message. */
 type HookRan = { hook: HookRegistration; command: string; reading: HookReading };
 

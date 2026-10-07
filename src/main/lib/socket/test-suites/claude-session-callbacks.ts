@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { HookRegistration } from '../../../../shared/types/hook-inventory';
 import { getTaskById } from '../../db/repos/tasks';
 import * as dynamicChatServer from '../../mcp/dynamic-chat-server';
 import { checkPermission } from '../../permissions/v2/check';
@@ -9,14 +10,14 @@ import {
   endSession,
   getSession,
 } from '../claude-session-registry';
-import { createClaudeTurnContext } from '../claude-turn-context';
+import { type ClaudeTurnContext, createClaudeTurnContext } from '../claude-turn-context';
 import * as socketClient from '../client';
 import { drainPendingPermissions } from '../executor';
 import {
   noteSubagentTaskFrame,
   setBackgroundRosterPublisher,
 } from '../streaming/subagent-task-status';
-import { getPreToolUseHook } from '../test-utils';
+import { getPreToolUseHook, type PreToolUseHook } from '../test-utils';
 import {
   expireQuestion,
   flowDriven,
@@ -31,6 +32,7 @@ import {
 import { UNCLEAN_RESULT } from './claude-turn-abort';
 import type { ExecutorPermissionHarness } from './executor-codex-permissions';
 
+type ToolCallInput = Parameters<PreToolUseHook>[0];
 type ClaudeSessionCallbackHarness = Pick<
   ExecutorPermissionHarness,
   'basePayload' | 'handleRemoteExecute'
@@ -45,6 +47,43 @@ const mcpShip = { hook_event_name: 'PreToolUse', tool_name: 'mcp__deploy__ship',
 const ASK = { decision: 'ask', prompt: { reason: 'no-matching-rule' } } as Awaited<
   ReturnType<typeof checkPermission>
 >;
+
+const planInput = (text: string) => ({ planFilePath: '/mock/home/.claude/plans/p.md', plan: text });
+
+/** Binds a hook that rewrites the plan to "new", calls the gate with plan "old", and returns the
+ * gate's decision with the plan the turn submitted for review. */
+async function submitRewrittenPlan(
+  turn: ClaudeTurnContext,
+  // The shared hook type omits the SDK's signal argument, which bound hooks need.
+  gate: (...call: [ToolCallInput, string, { signal: AbortSignal }]) => ReturnType<PreToolUseHook>,
+) {
+  const output = {
+    hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: planInput('new') },
+  };
+  const hook: HookRegistration = {
+    id: 'h',
+    scope: 'project',
+    file: '/f',
+    event: 'PreToolUse',
+    label: 'h',
+    handlerType: 'command',
+    command: `printf '%s' '${JSON.stringify(output)}'`,
+    binding: { status: 'supported', ignored: [] },
+  };
+  const context = { cwd: '/tmp', sessionCwd: '/tmp', projectRoot: '/tmp', env: {} };
+  turn.execution.userHooks = { hooks: [hook], context };
+  turn.planTerminalsLocked = true;
+  const call = {
+    hook_event_name: 'PreToolUse',
+    tool_name: 'ExitPlanMode',
+    tool_input: planInput('old'),
+  };
+  const answer = await gate(call, 'tool-1', { signal: new AbortController().signal });
+  return {
+    decision: answer.hookSpecificOutput?.permissionDecision,
+    plan: turn.submittedPlan?.text,
+  };
+}
 
 /** Registers the cases proving a session's callbacks act only for the turn attached to the session
  * they were spawned for: none attached denies tools, and a successor's turn is never theirs. */
@@ -140,6 +179,42 @@ export function registerClaudeSessionCallbackTests(harness: ClaudeSessionCallbac
         },
         { behavior: 'allow', updatedInput: {} },
       ]);
+    });
+
+    it("starts a turn with none of the user's hooks bound, and only Frink's own callbacks", async () => {
+      const seen = vi.fn();
+      claudeQueryMock.mockImplementationOnce(async function* (input: { options: SessionOptions }) {
+        const turn = getSession(payload.subChatId)?.currentTurn;
+        if (!turn) throw new Error('no turn is attached');
+        seen({
+          bound: turn.execution.userHooks,
+          events: Object.keys(input.options.hooks),
+          gates: input.options.hooks.PreToolUse?.length,
+        });
+        yield* UNKEPT_TURN_END;
+      });
+
+      await handleRemoteExecute({ ...payload, message: 'do the work' });
+
+      expect(seen).toHaveBeenCalledExactlyOnceWith({
+        bound: undefined,
+        events: ['PreToolUse', 'Stop', 'UserPromptSubmit'],
+        gates: 2,
+      });
+    });
+
+    it('submits for review the plan a hook rewrote', async () => {
+      let submitted: unknown;
+      claudeQueryMock.mockImplementationOnce(async function* (input: { options: SessionOptions }) {
+        const turn = getSession(payload.subChatId)?.currentTurn;
+        if (!turn) throw new Error('no turn is attached');
+        submitted = await submitRewrittenPlan(turn, getPreToolUseHook(input));
+        yield* UNKEPT_TURN_END;
+      });
+
+      await handleRemoteExecute({ ...payload, message: 'plan it' });
+
+      expect(submitted).toEqual({ decision: 'deny', plan: 'new' });
     });
 
     it('canUseTool still enforces an MCP deny rule', async () => {
