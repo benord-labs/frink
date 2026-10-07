@@ -13,14 +13,10 @@ configureMainLog();
 const PID_REGEX = /-(\d+)$/;
 
 import { initAnalytics, shutdown as shutdownAnalytics } from './lib/analytics';
-import {
-  buildUpdateMenuItem,
-  checkForUpdates,
-  initAutoUpdater,
-  setupFocusUpdateCheck,
-} from './lib/auto-updater';
+import { buildAppSubmenu } from './lib/app-menu';
+import { checkForUpdates, initAutoUpdater, setupFocusUpdateCheck } from './lib/auto-updater';
 import { getBundledClaudeVersion } from './lib/claude';
-import { installCli, isCliInstalled, parseLaunchDirectory, uninstallCli } from './lib/cli';
+import { parseLaunchDirectory } from './lib/cli';
 import { closeDatabase, getDatabase, getDatabasePath, initDatabase } from './lib/db';
 import {
   markDiagnosticsCleanShutdown,
@@ -410,55 +406,10 @@ if (gotTheLock) {
       const template: Electron.MenuItemConstructorOptions[] = [
         {
           label: app.name,
-          submenu: [
-            { role: 'about', label: 'About Frink' },
-            buildUpdateMenuItem(getWindow, {
-              available: updateAvailable,
-              version: availableVersion,
-            }),
-            { type: 'separator' },
-            {
-              label: isCliInstalled()
-                ? "Uninstall 'frink' Command..."
-                : "Install 'frink' Command in PATH...",
-              click: async () => {
-                if (isCliInstalled()) {
-                  const result = await uninstallCli();
-                  if (result.success) {
-                    dialog.showMessageBox({
-                      type: 'info',
-                      message: 'CLI command uninstalled',
-                      detail: "The 'frink' command has been removed from your PATH.",
-                    });
-                    buildMenu();
-                  } else {
-                    dialog.showErrorBox('Uninstallation Failed', result.error || 'Unknown error');
-                  }
-                } else {
-                  const result = await installCli();
-                  if (result.success) {
-                    dialog.showMessageBox({
-                      type: 'info',
-                      message: 'CLI command installed',
-                      detail:
-                        "You can now use 'frink .' in any terminal to open Frink in that directory.",
-                    });
-                    buildMenu();
-                  } else {
-                    dialog.showErrorBox('Installation Failed', result.error || 'Unknown error');
-                  }
-                }
-              },
-            },
-            { type: 'separator' },
-            { role: 'services' },
-            { type: 'separator' },
-            { role: 'hide' },
-            { role: 'hideOthers' },
-            { role: 'unhide' },
-            { type: 'separator' },
-            { role: 'quit' },
-          ],
+          submenu: buildAppSubmenu(getWindow, {
+            available: updateAvailable,
+            version: availableVersion,
+          }),
         },
         {
           label: 'File',
