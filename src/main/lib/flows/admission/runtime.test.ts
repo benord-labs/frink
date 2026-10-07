@@ -31,9 +31,11 @@ import {
   registerTerminalFlowResumeDispatcher,
   requestFlowAdmissionRelease,
   requestFlowStart,
+  transitionFlowRun,
   updateFlowAdmissionSettings,
 } from './runtime';
 import { stageContinuationResume } from './terminal-resume/continuation';
+import { startPlanExecutionCommand } from '../transitions';
 
 let queuePaused = false;
 let maxConcurrentRuns = 1;
@@ -947,5 +949,56 @@ describe('beginTerminalRelease', () => {
     const newer = admit(settled.flowRunId, 'active');
     expect(beginTerminalRelease(db, settled.ticket)).toBeNull();
     expect(slot(newer)?.state).toBe('active');
+  });
+});
+
+describe('starting a reviewed Flow plan (sc-4986)', () => {
+  async function planReadyRun(key: string) {
+    mocks.dispatcher.mockImplementationOnce(async (flowRunId) =>
+      persistWait(flowRunId, 'plan_ready'),
+    );
+    const { run } = await requestFlowStart(startInput(key));
+    await vi.waitFor(async () => expect(await hasActiveFlowAdmission(run.id)).toBe(true));
+    return { flowRunId: run.id, taskId: `${run.id}-task` };
+  }
+  const taskStatus = (taskId: string) =>
+    db.select().from(tasks).where(eq(tasks.id, taskId)).get()?.status;
+  const startPlan = (taskId: string) =>
+    transitionFlowRun(() => startPlanExecutionCommand(db, taskId, 'machine'));
+
+  it('refuses a plan whose admission is lost after the check and before the write', async () => {
+    const { flowRunId, taskId } = await planReadyRun('lost-between');
+    // The old router's separate check passes here...
+    expect(await hasActiveFlowAdmission(flowRunId)).toBe(true);
+    // ...then a Cancel commits and releases before the write.
+    db.update(flowRuns).set({ status: 'cancelled' }).where(eq(flowRuns.id, flowRunId)).run();
+    await requestFlowAdmissionRelease(flowRunId);
+    expect(await hasActiveFlowAdmission(flowRunId)).toBe(false);
+
+    await expect(startPlan(taskId)).resolves.toEqual({
+      task: null,
+      reason: 'flow_admission_lost',
+    });
+    expect(taskStatus(taskId)).toBe('plan_ready');
+  });
+
+  it('refuses a paused run whose slot was released, with the run itself still live', async () => {
+    const { flowRunId, taskId } = await planReadyRun('paused-release');
+    // Release takes an active slot whatever the run status; the paused run stays un-terminal.
+    await requestFlowAdmissionRelease(flowRunId);
+    expect(await controller.getLiveForRun(flowRunId)).toMatchObject({ state: 'releasing' });
+    expect(db.select().from(flowRuns).where(eq(flowRuns.id, flowRunId)).get()?.status).toBe(
+      'paused',
+    );
+
+    await expect(startPlan(taskId)).resolves.toMatchObject({ reason: 'flow_admission_lost' });
+    expect(taskStatus(taskId)).toBe('plan_ready');
+  });
+
+  it('starts the plan while the paused run still holds its slot', async () => {
+    const { flowRunId, taskId } = await planReadyRun('held');
+    const { task } = await startPlan(taskId);
+    expect(task).toMatchObject({ status: 'running' });
+    expect(await hasActiveFlowAdmission(flowRunId)).toBe(true);
   });
 });

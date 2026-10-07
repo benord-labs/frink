@@ -164,17 +164,10 @@ export async function recoverTask(
   return task.flowRunId ? recoverFlowTask(db, task, run, kind, flowRuns) : restartTask(db, task);
 }
 
-async function requireActiveFlowAdmissionForTask(task: Task | null): Promise<void> {
-  if (!task?.flowRunId) return;
-  const { hasActiveFlowAdmission } = await import('../../flows/admission/runtime');
-  if (!(await hasActiveFlowAdmission(task.flowRunId))) {
-    // A refusal, not a fault: the phone answers it 409 and does not report it.
-    throw new TRPCError({
-      code: 'PRECONDITION_FAILED',
-      message:
-        'This Flow run lost its place in the run queue. Open the Flow run and use Continue or Retry there.',
-    });
-  }
+async function startFlowPlanExecution(db: ReturnType<typeof getDatabase>, taskId: string) {
+  const { transitionFlowRun } = await import('../../flows/admission/runtime');
+  const { startPlanExecutionCommand } = await import('../../flows/transitions');
+  return transitionFlowRun(() => startPlanExecutionCommand(db, taskId, hostname()));
 }
 
 export const tasksRouter = router({
@@ -322,8 +315,12 @@ export const tasksRouter = router({
     .input(z.object({ taskId: z.string().min(1) }))
     .mutation(async ({ input }): Promise<Task | null> => {
       const db = getDatabase();
-      await requireActiveFlowAdmissionForTask(await getTaskById(db, input.taskId));
-      const { task, reason } = await startExecutionFromReviewDetailed(db, input.taskId, hostname());
+      const existing = await getTaskById(db, input.taskId);
+      // A Flow task's admission check and its write commit together, so a release cannot land
+      // between them. A task with no Flow must not wait behind admission work.
+      const { task, reason } = existing?.flowRunId
+        ? await startFlowPlanExecution(db, input.taskId)
+        : await startExecutionFromReviewDetailed(db, input.taskId, hostname());
       if (!task) {
         throwTaskMutationReason(reason, {
           notFound: 'Task not found',

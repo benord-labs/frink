@@ -575,7 +575,8 @@ export async function listTasksWithProjectPaginated(
 export type TaskMutationFailureReason =
   | 'not_found'
   | 'invalid_state'
-  | 'flow_shell_not_reassignable';
+  | 'flow_shell_not_reassignable'
+  | 'flow_admission_lost';
 
 export type TaskMutationResult = {
   task: Task | null;
@@ -708,27 +709,10 @@ export async function reassignTaskDetailed(
   return { task: updated };
 }
 
-/**
- * plan_ready → running guarded transition. Returns invalid_state when the task
- * isn't in plan_ready (already running, completed, etc.).
- */
-export async function startExecutionFromReviewDetailed(
-  db: Db,
-  taskId: string,
-  machineId: string | null,
-): Promise<TaskMutationResult> {
-  // Atomic plan_ready → running: WHERE pins source status to prevent racing
-  // the poller / a concurrent cancel.
-  const updated = await db
-    .update(tasks)
-    .set({ status: 'running', startedAt: new Date(), executedBy: machineId ?? null })
-    .where(and(eq(tasks.id, taskId), eq(tasks.status, 'plan_ready')))
-    .returning();
-  if (updated.length > 0) return { task: updated[0] };
-  const existing = await getTaskById(db, taskId);
-  if (!existing) return { task: null, reason: 'not_found' };
-  return { task: null, reason: 'invalid_state' };
-}
+export {
+  startExecutionFromReviewCommand,
+  startExecutionFromReviewDetailed,
+} from './task-queries/start-execution';
 
 export type RetryMode = 'continue' | 'restart';
 const RETRYABLE_TASK_STATUSES = ['failed', 'needs_attention'] as const;

@@ -26,7 +26,7 @@ const retryTaskDetailedMock = vi.fn();
 const getSubChatByIdMock = vi.fn();
 const getSubChatModeMock = vi.fn();
 const carryOnFlowTaskMock = vi.fn();
-const hasActiveFlowAdmissionMock = vi.fn();
+const transitionFlowRunMock = vi.fn();
 class MockApiRequestError extends Error {
   status: number;
 
@@ -87,7 +87,7 @@ vi.mock('../../flows/rerun', () => ({
 }));
 
 vi.mock('../../flows/admission/runtime', () => ({
-  hasActiveFlowAdmission: hasActiveFlowAdmissionMock,
+  transitionFlowRun: transitionFlowRunMock,
 }));
 
 vi.mock('../../tasks/cancel-work-queue-task', () => ({
@@ -178,7 +178,7 @@ describe('tasksRouter status schema', () => {
     db.delete(chats).run();
     db.delete(tasks).run();
     vi.mocked(getDatabase).mockReturnValue(db);
-    hasActiveFlowAdmissionMock.mockReset();
+    transitionFlowRunMock.mockReset();
   });
 
   // Routing only: Continue's gates (carryOnFlowTask) are covered in flows/rerun, the run-level
@@ -854,7 +854,7 @@ describe('tasksRouter status schema', () => {
     const { tasksRouter } = await import('./tasks');
     const caller = tasksRouter.createCaller({ getWindow: () => null });
     getTaskByIdMock.mockResolvedValueOnce({ id: 'task-flow', flowRunId: 'run-1' });
-    hasActiveFlowAdmissionMock.mockResolvedValueOnce(false);
+    transitionFlowRunMock.mockResolvedValueOnce({ task: null, reason: 'flow_admission_lost' });
 
     await expect(caller.startExecution({ taskId: 'task-flow' })).rejects.toMatchObject({
       code: 'PRECONDITION_FAILED',
@@ -863,14 +863,25 @@ describe('tasksRouter status schema', () => {
     expect(startExecutionFromReviewDetailedMock).not.toHaveBeenCalled();
   });
 
-  it('starts Flow plan execution while its run still holds admission', async () => {
+  it('starts Flow plan execution under the admission transition', async () => {
     const { tasksRouter } = await import('./tasks');
     const caller = tasksRouter.createCaller({ getWindow: () => null });
     getTaskByIdMock.mockResolvedValueOnce({ id: 'task-flow', flowRunId: 'run-1' });
-    hasActiveFlowAdmissionMock.mockResolvedValueOnce(true);
+    const running = { id: 'task-flow', status: 'running' };
+    transitionFlowRunMock.mockResolvedValueOnce({ task: running });
 
-    await caller.startExecution({ taskId: 'task-flow' });
-    expect(hasActiveFlowAdmissionMock).toHaveBeenCalledWith('run-1');
+    await expect(caller.startExecution({ taskId: 'task-flow' })).resolves.toEqual(running);
+    expect(transitionFlowRunMock).toHaveBeenCalledExactlyOnceWith(expect.any(Function));
+    expect(startExecutionFromReviewDetailedMock).not.toHaveBeenCalled();
+  });
+
+  it('starts a non-Flow plan without waiting on the admission transition', async () => {
+    const { tasksRouter } = await import('./tasks');
+    const caller = tasksRouter.createCaller({ getWindow: () => null });
+    getTaskByIdMock.mockResolvedValueOnce({ id: 'task-1', flowRunId: null });
+
+    await caller.startExecution({ taskId: 'task-1' });
+    expect(transitionFlowRunMock).not.toHaveBeenCalled();
     expect(startExecutionFromReviewDetailedMock).toHaveBeenCalled();
   });
 
