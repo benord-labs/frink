@@ -20,7 +20,7 @@ import { registerNodeAbort, unregisterNodeAbort } from './cancel-registry';
 import { dispatchNode } from './dispatch';
 import { emitNodeStarted, emitRunPaused } from './event-emit';
 import { buildLoopContextFor } from './fan-out-step';
-import { loadRunContext, type RunContext } from './advance-walk/run-context';
+import { loadRunContext, loadRunMeta, type RunContext } from './advance-walk/run-context';
 import { withSlot } from './scheduler';
 import {
   insertNodeRunIfFenced,
@@ -74,6 +74,20 @@ function parkAwaitingInput(
   return setFencedRunStatus(db, fence, 'paused') !== null;
 }
 
+/** The run's event meta when its context could not be loaded. Null, never a throw, when the rows
+ * cannot be read either: the run is then failed in the database with no event. */
+async function loadMetaContained(fence: RunFence) {
+  try {
+    return await loadRunMeta(fence.flowRunId);
+  } catch (err) {
+    log.error('[FlowsEngine] run meta unreadable, failing the run without an event', {
+      flowRunId: fence.flowRunId,
+      err,
+    });
+    return null;
+  }
+}
+
 /** Fails the run without ever rejecting: this is the last resort of a catch. */
 async function failRunContained(
   db: Db,
@@ -82,7 +96,7 @@ async function failRunContained(
   message: string,
 ): Promise<void> {
   try {
-    await endRun(db, fence, 'failed', ctx, message);
+    await endRun(db, fence, 'failed', ctx?.meta ?? (await loadMetaContained(fence)), message);
   } catch (endErr) {
     // endRun writes the status first, so the run is failed even when its sweep or emit throws.
     log.error('[FlowsEngine] failing the run after an advance threw also threw', {
@@ -265,6 +279,30 @@ async function applyDispatchedOutput(
   }
 }
 
+/** Applies a dispatched node's output without ever rejecting. If recording the failure throws as
+ * well, the node cannot carry it, so the run is failed and the walk ends there. */
+async function applyOutputOrFailRun(
+  fence: RunFence,
+  ctx: RunContext,
+  step: NextDispatch,
+  dispatched: { nodeRunId: string; output: NodeOutput },
+): Promise<AppliedOutput> {
+  try {
+    return await applyDispatchedOutput(fence.flowRunId, step, dispatched);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log.error('[FlowsEngine] recording a failed node output also threw', {
+      flowRunId: fence.flowRunId,
+      nodeId: step.node.id,
+      blockType: step.node.blockType,
+      err,
+    });
+    captureContained(err, { surface: 'flow-advance', blockType: step.node.blockType });
+    await failRunContained(getDatabase(), fence, ctx, message);
+    return { advanced: true };
+  }
+}
+
 /** Dispatches `steps` and everything that follows them. A single successor continues in the
  * loop; several (Fan Out branches) each get a walk of their own, awaited together. */
 async function walk(
@@ -296,7 +334,7 @@ async function walk(
       return;
     }
     if (!dispatched) return;
-    const applied = await applyDispatchedOutput(fence.flowRunId, step, dispatched);
+    const applied = await applyOutputOrFailRun(fence, ctx, step, dispatched);
     if (!applied.continuation) return;
     ({ fence, ctx, next: steps } = applied.continuation);
 

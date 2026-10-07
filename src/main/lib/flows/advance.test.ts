@@ -594,6 +594,8 @@ describe('advance walk — a throw after the node write fails the run', () => {
   };
 
   let db: TestDb;
+  let flowId: string;
+  let versionId: string;
   let flowRunId: string;
   let fence: RunFence;
   let unsubscribe: () => void = () => {};
@@ -603,7 +605,7 @@ describe('advance walk — a throw after the node write fails the run', () => {
     vi.mocked(dispatchNode).mockReset();
     captureContainedMock.mockReset();
     vi.mocked(dispatchNode).mockResolvedValue({ type: 'completed', output: completedOutput });
-    ({ flowRunId } = await seedFlowRun(db, LINEAR));
+    ({ flowId, versionId, flowRunId } = await seedFlowRun(db, LINEAR));
     seedActiveAdmission(db, flowRunId);
     fence = liveFence(db, flowRunId);
   });
@@ -680,7 +682,8 @@ describe('advance walk — a throw after the node write fails the run', () => {
   });
 
   // A stored graph that no longer parses throws out of loadRunContext, after the node write and
-  // with no context to emit from. The run is failed in the database all the same.
+  // with no context to emit from. The run is failed all the same, and says so: its event meta
+  // loads without the graph.
   it('fails the run when its context cannot be loaded after the node write', async () => {
     const b = await createNodeRun(db, {
       flowRunId,
@@ -690,12 +693,25 @@ describe('advance walk — a throw after the node write fails the run', () => {
     });
     db.update(flowVersions)
       .set({ graph: { nodes: 'not-a-list' } })
+      .where(eq(flowVersions.id, versionId))
       .run();
+    const runEvents: FlowExecutionEvent[] = [];
+    unsubscribe = subscribeFlowEvents((e) => {
+      if (e.eventType.startsWith('run_')) runEvents.push(e);
+    });
 
     await expect(advanceFlowRun(flowRunId, b.id, completedOutput)).resolves.toBe(true);
 
     expect((await getFlowRun(db, flowRunId))?.status).toBe('failed');
     expect((await getNodeRun(db, b.id))?.status).toBe('completed');
+    expect(runEvents).toHaveLength(1);
+    expect(runEvents[0]).toMatchObject({
+      eventType: 'run_failed',
+      flowRunId,
+      flowId,
+      flowName: 'F',
+    });
+    expect(runEvents[0].batchId).toBeUndefined();
   });
 
   // An output that cannot be stored throws out of the node write itself, leaving the node
@@ -714,6 +730,20 @@ describe('advance walk — a throw after the node write fails the run', () => {
     expect(a?.status).toBe('failed');
     expect(a?.nodeOutput).toMatchObject({ error: { message: expect.stringMatching(/circular/i) } });
     expect((await getFlowRun(db, flowRunId))?.status).toBe('failed');
+    expect(dispatchNode).toHaveBeenCalledTimes(1);
+  });
+
+  // A database that stays broken throws from the fallback write too. The walk must still settle
+  // and fail the run, or it rejects into its caller and leaves node and run 'running' for good.
+  it('fails the run, without rejecting, when recording the failed output throws as well', async () => {
+    db.run(sql`CREATE TRIGGER fail_node_writes BEFORE UPDATE ON node_runs
+      BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`);
+
+    await expect(walkFromA()).resolves.toBeUndefined();
+
+    expect((await getFlowRun(db, flowRunId))?.status).toBe('failed');
+    const nodeRuns = await listNodeRunsForFlowRun(db, flowRunId);
+    expect(nodeRuns.map((n) => [n.nodeId, n.status])).toEqual([['a', 'running']]);
     expect(dispatchNode).toHaveBeenCalledTimes(1);
   });
 

@@ -28,7 +28,7 @@ export type ParsedFlowGraph = {
   settings?: Record<string, unknown>;
 };
 
-class FlowGraphParseError extends Error {
+export class FlowGraphParseError extends Error {
   constructor(detail: string) {
     super(`flow graph: ${detail}`);
     this.name = 'FlowGraphParseError';

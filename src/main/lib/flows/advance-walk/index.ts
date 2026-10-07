@@ -20,7 +20,7 @@ import {
   pickNextTargetNodeId,
   resolveFanOutStructure,
 } from '../graph';
-import type { RunContext } from './run-context';
+import type { FlowMeta, RunContext } from './run-context';
 import { type RunFence, setFencedRunStatus } from '../transitions';
 
 type Db = ReturnType<typeof getDatabase>;
@@ -190,12 +190,12 @@ async function handleFanOutProgress(
 }
 
 /** Terminal write gated on the fence, so a Cancel that committed mid-advance is never overwritten
- * and only the winning write sweeps and emits. `ctx` is null only when it could not be loaded. */
+ * and only the winning write sweeps and emits. `meta` is null only when it could not be loaded. */
 export async function endRun(
   db: Db,
   fence: RunFence,
   status: 'failed' | 'cancelled',
-  ctx: RunContext | null,
+  meta: FlowMeta | null,
   summary?: string,
 ): Promise<void> {
   const { flowRunId } = fence;
@@ -203,7 +203,7 @@ export async function endRun(
   if (status === 'failed') abortFlowRun(flowRunId);
   await cancelRemainingNodeRunsForRun(db, flowRunId);
   await cancelFlowLinkedTasksForRun(db, flowRunId);
-  if (ctx) emitRunTerminal(ctx.meta, flowRunId, status, { summary });
+  if (meta) emitRunTerminal(meta, flowRunId, status, { summary });
 }
 
 async function completeRun(db: Db, fence: RunFence, ctx: RunContext): Promise<void> {
@@ -236,7 +236,7 @@ async function handleNonProgressOutput(
   }
 
   if (output.status === 'failed') {
-    await endRun(db, fence, 'failed', ctx, output.error?.message);
+    await endRun(db, fence, 'failed', ctx.meta, output.error?.message);
     return true;
   }
   if (output.status === 'awaiting_input' || output.status === 'blocked') {
@@ -250,7 +250,7 @@ async function handleNonProgressOutput(
     return true;
   }
   if (output.status !== 'cancelled') return false;
-  await endRun(db, fence, 'cancelled', ctx);
+  await endRun(db, fence, 'cancelled', ctx.meta);
   return true;
 }
 
@@ -284,7 +284,7 @@ export async function nextDispatchesAfter(
   const nextNode = findNodeById(ctx.graph.nodes, nextNodeId);
   if (!nextNode) {
     log.warn('[FlowsEngine] next node id not found in graph', { flowRunId, nextNodeId });
-    await endRun(db, fence, 'failed', ctx, `Edge target ${nextNodeId} not in graph`);
+    await endRun(db, fence, 'failed', ctx.meta, `Edge target ${nextNodeId} not in graph`);
     return [];
   }
 
