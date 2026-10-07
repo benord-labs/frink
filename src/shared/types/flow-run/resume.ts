@@ -37,3 +37,31 @@ export const resumeRunInputSchema = z.intersection(
 /** A run's recovery for step `nodeRunId`; `confirmSideEffects` when a started non-agent step would
  * repeat what it did if run again. */
 export type RunRecovery = { nodeRunId: string; kind: RecoveryKind; confirmSideEffects: boolean };
+
+/** What a recovery did: ran now, waits behind the concurrency cap, or merged into a resume that was
+ * already queued for the same step. */
+export type RecoverOutcome = 'resumed' | 'queued' | 'already-queued';
+
+/** One run's result in a bulk recovery. `needs-confirmation`: a started non-agent step that is
+ * never re-run without its own confirm; `refused` carries why. */
+export type BulkRecoverOutcome = RecoverOutcome | 'refused' | 'needs-confirmation';
+
+export const recoverInterruptedInputSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        taskId: z.string().min(1),
+        kind: recoveryKindSchema,
+        recoveryNodeRunId: z.string().min(1).optional(),
+      }),
+    )
+    .min(1)
+    .max(500),
+});
+
+export type BulkRecoverResult = {
+  taskId: string;
+  flowRunId: string | null;
+  outcome: BulkRecoverOutcome;
+  reason?: string;
+};

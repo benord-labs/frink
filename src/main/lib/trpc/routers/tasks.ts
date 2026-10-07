@@ -11,10 +11,8 @@
 import { hostname } from 'node:os';
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
-import type { RecoveryKind } from '../../../../shared/types/flow-run/resume';
 import type { TaskChatReadyData } from '../../../../shared/types/task-chat-ready';
 import { getDatabase } from '../../db';
-import { getFlowRun } from '../../db/repos/flow-runs';
 import { getWorkQueueOverviewCounts } from '../../db/repos/task-queries/work-queue-overview-counts';
 import {
   cancelAllPendingTasks,
@@ -29,11 +27,10 @@ import {
   getTaskCounts,
   listTasksWithProjectPaginated,
   reassignTaskDetailed,
-  retryTaskDetailed,
   startExecutionFromReviewDetailed,
   updateTaskStatus,
 } from '../../db/repos/tasks';
-import type { FlowRun, Task } from '../../db/schema';
+import type { Task } from '../../db/schema';
 import {
   isDispatchPending,
   listUndeliveredDispatches,
@@ -41,17 +38,16 @@ import {
 import { getTaskPoller } from '../../task-poller';
 import { cancelWorkQueueTask } from '../../tasks/cancel-work-queue-task';
 import { publicProcedure, router } from '../index';
-import { throwCarryOnReason, throwTaskMutationReason } from './task-refusals';
+import { throwTaskMutationReason } from './task-refusals';
+import { taskRecoveryProcedures } from './tasks-recovery';
 import {
-  assertRecoveryStep,
   getTaskWithRunOutcome,
-  recoverTaskInputSchema,
   type TaskWithRunOutcome,
   taskSubChatProcedures,
   withStoppedTaskRecoveries,
 } from './tasks-subchat';
 
-type Db = ReturnType<typeof getDatabase>;
+export { type FlowRunRecoveries, recoverTask } from './tasks-recovery';
 
 const taskSourceSchema = z.string().min(1).max(50);
 const workQueueSectionSchema = z.enum(['attention', 'inbox', 'running']);
@@ -85,85 +81,6 @@ const deleteMatchingInputSchema = z.object({
   statuses: z.array(bulkDeleteTaskStatusSchema).min(1),
 });
 const paginatedCursorSchema = z.object({ createdAt: z.string(), id: z.string() });
-
-/** Continues the stopped session; carryOnFlowTask re-checks the kind itself (`no-session`). */
-async function continueTask(db: Db, taskId: string): Promise<void> {
-  const { carryOnFlowTask } = await import('../../flows/rerun');
-  const res = await carryOnFlowTask(db, taskId);
-  if (res.ok) return;
-  if (res.reason !== 'no-session') throwCarryOnReason(res.reason);
-  const { recoveryChangedError } = await import('../../flows/rerun/recovery-kind');
-  throw recoveryChangedError();
-}
-
-/** Restarts a non-Flow task fresh from its instructions, re-checking Retry in the same write. */
-async function restartTask(db: Db, task: Task): Promise<void> {
-  const { recoveryChangedError, withRecoveryKind } =
-    await import('../../flows/rerun/recovery-kind');
-  const outcome = withRecoveryKind(db, task.id, 'retry', () =>
-    retryTaskDetailed(db, task.id, 'restart'),
-  );
-  if (!outcome) throw recoveryChangedError();
-  if (outcome.task) return;
-  throwTaskMutationReason(outcome.reason, {
-    notFound: 'Task not found',
-    invalidState: 'Only failed or attention-parked tasks can be retried',
-    fallback: 'Could not retry task',
-  });
-}
-
-/** A Flow task's run-level recoveries; each re-checks `kind`. Injectable, so tests pass fakes. */
-export type FlowRunRecoveries = {
-  retryPausedStep: (runId: string, nodeRunId: string, kind: RecoveryKind) => Promise<void>;
-  readmitRun: (db: Db, run: FlowRun, kind: RecoveryKind) => Promise<void>;
-};
-
-const flowRunRecoveries: FlowRunRecoveries = {
-  retryPausedStep: async (runId, nodeRunId, kind) => {
-    const { resumeFlowRun } = await import('../../flows/resume');
-    await resumeFlowRun(runId, 'retry', nodeRunId, undefined, kind);
-  },
-  readmitRun: async (db, run, kind) => {
-    const { retryRunFromLastNode } = await import('./flows/run-actions');
-    await retryRunFromLastNode(db, run, kind);
-  },
-};
-
-/** Re-dispatches the step of a paused run, else re-admits a settled run from its last step. */
-async function recoverFlowTask(
-  db: Db,
-  task: Task,
-  run: FlowRun | null,
-  kind: RecoveryKind,
-  flowRuns: FlowRunRecoveries,
-): Promise<void> {
-  // sourceId is the node_run the task was minted for.
-  if (run?.status === 'paused' && task.sourceId) {
-    return flowRuns.retryPausedStep(run.id, task.sourceId, kind);
-  }
-  if (!run) throw new TRPCError({ code: 'NOT_FOUND', message: 'Flow run not found' });
-  return flowRuns.readmitRun(db, run, kind);
-}
-
-/**
- * Routes a recovery: continue the session or restart fresh (non-Flow task); continue or
- * re-dispatch the step (paused Flow run); re-admit from the last unfinished step (settled run).
- */
-export async function recoverTask(
-  db: Db,
-  taskId: string,
-  kind: RecoveryKind,
-  flowRuns: FlowRunRecoveries = flowRunRecoveries,
-): Promise<void> {
-  const task = await getTaskById(db, taskId);
-  if (!task) throw new TRPCError({ code: 'NOT_FOUND', message: 'Task not found' });
-  const run = task.flowRunId ? await getFlowRun(db, task.flowRunId) : null;
-  if (kind === 'continue' && (!task.flowRunId || run?.status === 'paused')) {
-    return continueTask(db, taskId);
-  }
-  return task.flowRunId ? recoverFlowTask(db, task, run, kind, flowRuns) : restartTask(db, task);
-}
-
 async function requireActiveFlowAdmissionForTask(task: Task | null): Promise<void> {
   if (!task?.flowRunId) return;
   const { hasActiveFlowAdmission } = await import('../../flows/admission/runtime');
@@ -179,6 +96,7 @@ async function requireActiveFlowAdmissionForTask(task: Task | null): Promise<voi
 
 export const tasksRouter = router({
   ...taskSubChatProcedures,
+  ...taskRecoveryProcedures,
   create: publicProcedure
     .input(
       z.object({
@@ -262,18 +180,6 @@ export const tasksRouter = router({
         executedBy: hostname(),
       });
       return task;
-    }),
-
-  /**
-   * One recovery action of a stopped task, re-resolved here so a stale label never does the other
-   * thing: `continue` resumes the answering session, `retry` re-runs from instructions.
-   */
-  recover: publicProcedure
-    .input(recoverTaskInputSchema)
-    .mutation(async ({ input }): Promise<{ ok: true }> => {
-      await assertRecoveryStep(getDatabase(), input.taskId, input.recoveryNodeRunId);
-      await recoverTask(getDatabase(), input.taskId, input.kind);
-      return { ok: true };
     }),
 
   complete: publicProcedure

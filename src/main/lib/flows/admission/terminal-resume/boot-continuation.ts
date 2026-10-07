@@ -13,12 +13,23 @@ import { type FlowGraphNode, findNodeById, parseGraph } from '../../graph';
 import { lastUnfinishedNodeRun } from '../../rerun/resume-point';
 import { isRestartInterrupted } from '../../transitions';
 import { captureFlowAdmissionException } from '../activity';
-import { hasActiveFlowAdmission } from '../runtime';
+import {
+  hasActiveFlowAdmission,
+  hasLiveFlowAdmission,
+  requestTerminalFlowResume,
+} from '../runtime';
 import { chatExists } from './chat-gate';
 import { stageContinuationResume } from './continuation';
 
 type Db = ReturnType<typeof getDatabase>;
 type InterruptedTask = Pick<Task, 'flowRunId' | 'nodeRunId' | 'result'>;
+type SettledSlotTurn = { flowRunId: string; nodeRunId: string; chatId: string };
+
+/**
+ * Turns swept at this boot whose run held no admission at all: nothing will settle to fire a
+ * staged entry, so they get a resume ticket of their own once admission recovery has run.
+ */
+let settledSlotTurns: SettledSlotTurn[] = [];
 
 /** The chat linkage dispatchAgent stamped on the task; it survives the cancel because the marker is merged. */
 const taskLinkageSchema = z.object({ chatId: z.string() });
@@ -72,9 +83,6 @@ async function continuableAgentTarget(
   flowRunId: string,
   nodeRunId: string,
 ): Promise<FlowGraphNode | null> {
-  // Only an `active` admission reaches the settle that fires a staged entry; a `releasing` row or
-  // an already-settled run would leave the entry staged forever with no signal.
-  if (!(await hasActiveFlowAdmission(flowRunId))) return null;
   const run = await getFlowRun(db, flowRunId);
   if (!run) return null;
   const unfinished = lastUnfinishedNodeRun(await listNodeRunsForFlowRun(db, flowRunId));
@@ -87,16 +95,31 @@ function agentNode(version: FlowVersion | null, nodeId: string): FlowGraphNode |
   return node?.blockType === 'agent' ? node : null;
 }
 
+/** How the run's admission lets boot re-queue it: staged behind its `active` slot's settle, a
+ * ticket of its own when it holds none, or neither while a ticket is mid-lifecycle. */
+async function bootResumePath(flowRunId: string): Promise<'stage' | 'enqueue' | null> {
+  if (await hasActiveFlowAdmission(flowRunId)) return 'stage';
+  // A `releasing` row settles without the staged-entry hook, and a queued or claimed ticket
+  // already owns the run's next step.
+  return (await hasLiveFlowAdmission(flowRunId)) ? null : 'enqueue';
+}
+
 async function stageRestartContinuation(
   db: Db,
   flowRunId: string,
   nodeRunId: string,
   result: Task['result'],
 ): Promise<boolean> {
-  const node = await continuableAgentTarget(db, flowRunId, nodeRunId);
   const linkage = taskLinkageSchema.safeParse(result);
-  if (!node || !linkage.success) return false;
+  const path = linkage.success ? await bootResumePath(flowRunId) : null;
+  if (!path || !linkage.success) return false;
+  const node = await continuableAgentTarget(db, flowRunId, nodeRunId);
+  if (!node) return false;
   const { chatId } = linkage.data;
+  if (path === 'enqueue') {
+    settledSlotTurns.push({ flowRunId, nodeRunId, chatId });
+    return false;
+  }
   // Re-checked inside the enqueue transaction, so an abandon that lands first wins by construction.
   stageContinuationResume(
     { flowRunId, nodeRunId, admit: (tx) => stillInterrupted(tx, flowRunId, chatId) },
@@ -106,4 +129,27 @@ async function stageRestartContinuation(
     },
   );
   return true;
+}
+
+/** Boot step after admission recovery: a resume ticket for each swept turn whose run held no slot. */
+export async function resumeSettledSlotTurns(db: Db): Promise<number> {
+  const turns = settledSlotTurns;
+  settledSlotTurns = [];
+  let queued = 0;
+  for (const { flowRunId, nodeRunId, chatId } of turns) {
+    try {
+      if (!stillInterrupted(db, flowRunId, chatId)) continue;
+      await requestTerminalFlowResume({
+        flowRunId,
+        nodeRunId,
+        admit: (tx) => stillInterrupted(tx, flowRunId, chatId),
+      });
+      queued += 1;
+    } catch (error) {
+      log.warn('[FlowAdmission] boot resume skipped a run', { flowRunId, error });
+      captureFlowAdmissionException(error, 'boot-carry-on-enqueue');
+    }
+  }
+  if (queued > 0) log.info('[FlowAdmission] boot resume queued', { count: queued });
+  return queued;
 }

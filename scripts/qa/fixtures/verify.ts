@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import * as schema from '../../../src/main/lib/db/schema';
 import { RESTART_INTERRUPTION_REASON } from '../../../src/shared/types/flow';
 import { verifyCodexFixture } from './codex';
+import { verifyContinueAllFixture } from './continue-all';
 import {
   FIXTURE_ACCOUNT_ID,
   FIXTURE_CHAT_SEEDED_ID,
@@ -212,10 +213,10 @@ export function verifyFixtures(db: SqliteDb): { ok: boolean; detail: string } {
     flowRunAdmissions: db.select().from(schema.flowRunAdmissions).all(),
     nodeRuns: db.select().from(schema.nodeRuns).all(),
   };
-  // Every fixture seeds on every run: 13 chats (incl. two batch members and three background-work
-  // chats) / 10 sub-chats / 8 tasks
-  // (2 parked + 1 paused + 1 running + 1 interrupted, the plan-ready task, two History examples).
-  const expectedCounts = { projects: 2, chats: 13, subChats: 10, tasks: 8 };
+  // Every fixture seeds on every run: 17 chats (incl. two batch members, three background-work
+  // chats and four Continue all runs) / 14 sub-chats / 12 tasks (2 parked + 1 paused + 1 running +
+  // 1 interrupted + 4 Continue all, the plan-ready task, two History examples).
+  const expectedCounts = { projects: 2, chats: 17, subChats: 14, tasks: 12 };
   const ok =
     projects.length === expectedCounts.projects &&
     projects[0]?.id === FIXTURE_PROJECT_ID &&
@@ -230,6 +231,7 @@ export function verifyFixtures(db: SqliteDb): { ok: boolean; detail: string } {
     verifyInterruptedFlow(r) &&
     verifyQueuedAdmissions(r) &&
     verifyCodexFixture(db) &&
+    verifyContinueAllFixture(db) &&
     isSeededAccountShapeOk(accounts.find((a) => a.id === FIXTURE_ACCOUNT_ID));
   return {
     ok,

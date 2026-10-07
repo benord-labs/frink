@@ -39,7 +39,8 @@ import {
   stageResumeBehindHeldAdmission,
 } from '../runtime';
 import { isUserCancelled } from '../../transitions';
-import { stageRestartContinuations } from './boot-continuation';
+import { listInterruptedRuns } from '../../../trpc/routers/tasks-recovery';
+import { resumeSettledSlotTurns, stageRestartContinuations } from './boot-continuation';
 import { hasStagedContinuation, stageContinuationResume } from './continuation';
 import { ResumeAdmitDeclinedError } from './resume-store';
 
@@ -383,6 +384,32 @@ describe('terminal Flow resume admission runtime', () => {
   });
 });
 
+// The bulk Continue all enqueues one ticket per run in order; the cap decides which run now.
+describe('terminal resumes enqueued one after another', () => {
+  it('admits up to the cap and queues the rest, promoting them in enqueue order', async () => {
+    maxConcurrentRuns = 2;
+    const runs = ['bulk-1', 'bulk-2', 'bulk-3', 'bulk-4', 'bulk-5'];
+    const states: string[] = [];
+    for (const flowRunId of runs) {
+      const nodeRunId = persistTerminalResume(flowRunId);
+      const { admission } = await requestTerminalFlowResume({ flowRunId, nodeRunId });
+      states.push(admission.state);
+    }
+    expect(states.filter((state) => state === 'queued')).toHaveLength(3);
+    expect(states.slice(2)).toEqual(['queued', 'queued', 'queued']);
+    await vi.waitFor(() => expect(mocks.resumeDispatcher).toHaveBeenCalledTimes(2));
+
+    // The first resumed run ends, freeing its slot for the oldest queued ticket.
+    db.update(flowRuns)
+      .set({ status: 'completed', completedAt: new Date() })
+      .where(eq(flowRuns.id, 'bulk-1'))
+      .run();
+    await requestFlowAdmissionRelease('bulk-1');
+    await vi.waitFor(() => expect(mocks.resumeDispatcher).toHaveBeenCalledTimes(3));
+    expect(mocks.resumeDispatcher.mock.calls[2]?.[0]).toMatchObject({ flow_run_id: 'bulk-3' });
+  });
+});
+
 describe('boot carry-on — staged from the startup sweep, fired ahead of queued starts', () => {
   const BOOT_GRAPH = {
     nodes: [
@@ -570,7 +597,7 @@ describe('boot carry-on — staged from the startup sweep, fired ahead of queued
     expect(await stageRestartContinuations(db, swept)).toBe(1);
   });
 
-  it('stays manual for a run with no active admission, and a non-flow task', async () => {
+  it('stages nothing for a run with no active admission, and a non-flow task', async () => {
     const { flowRunId, swept } = await seedInterruptedAgentRun();
     await requestFlowAdmissionRelease(flowRunId);
     expect(await stageRestartContinuations(db, swept)).toBe(0);
@@ -578,6 +605,48 @@ describe('boot carry-on — staged from the startup sweep, fired ahead of queued
     expect(
       await stageRestartContinuations(db, [{ flowRunId: null, nodeRunId: null, result: null }]),
     ).toBe(0);
+  });
+
+  // Nothing settles to fire a staged entry for a run with no slot, so it gets a ticket of its own.
+  it('queues its own resume for a swept turn whose run held no admission', async () => {
+    const { flowRunId, nodeRunId, swept } = await seedInterruptedAgentRun();
+    await settleInterruption(flowRunId, nodeRunId, true);
+    expect(await stageRestartContinuations(db, swept)).toBe(0);
+
+    expect(await resumeSettledSlotTurns(db)).toBe(1);
+    await vi.waitFor(() =>
+      expect(mocks.resumeDispatcher).toHaveBeenCalledWith(
+        expect.objectContaining({ flow_run_id: flowRunId, node_run_id: nodeRunId }),
+        expect.any(Number),
+      ),
+    );
+    // One boot's turns are queued once.
+    expect(await resumeSettledSlotTurns(db)).toBe(0);
+  });
+
+  // Admission recovery owns a ticket that outlived the crash; a second one would be refused as a
+  // different live admission and reported as a boot failure.
+  it('leaves a swept turn alone when a resume ticket for its run is already queued', async () => {
+    const { flowRunId, nodeRunId, swept } = await seedInterruptedAgentRun();
+    await settleInterruption(flowRunId, nodeRunId, true);
+    // A start holds the only slot, so the resume waits in the queue.
+    await requestFlowStart(startInput('holds-the-slot'));
+    await requestTerminalFlowResume({ flowRunId, nodeRunId, kind: 'retry' });
+    expect((await controller.getLiveForRun(flowRunId))?.state).toBe('queued');
+
+    expect(await stageRestartContinuations(db, swept)).toBe(0);
+    expect(await resumeSettledSlotTurns(db)).toBe(0);
+  });
+
+  it('queues no resume for a settled-slot turn whose chat was deleted before admission recovery', async () => {
+    const { flowRunId, nodeRunId, swept } = await seedInterruptedAgentRun();
+    await settleInterruption(flowRunId, nodeRunId, true);
+    await stageRestartContinuations(db, swept);
+    db.delete(chats).where(eq(chats.id, 'chat-boot')).run();
+
+    expect(await resumeSettledSlotTurns(db)).toBe(0);
+    expect(mocks.resumeDispatcher).not.toHaveBeenCalled();
+    expect(await controller.getLiveForRun(flowRunId)).toBeNull();
   });
 
   it('stages but never dispatches an interrupted member whose stage already settled', async () => {
@@ -642,6 +711,19 @@ describe('boot carry-on — staged from the startup sweep, fired ahead of queued
         expect.any(Number),
       );
       expect(hasStagedContinuation(flowRunId)).toBe(false);
+    });
+
+    // Holding a slot is not a queued resume: Continue all must still offer the run, and stop
+    // offering it once a click has staged one, so the banner never lists a run already waiting.
+    it('stays listed for Continue all until a click stages its resume', async () => {
+      const { flowRunId, nodeRunId } = await seedInterruptedAgentRun();
+      await settleInterruption(flowRunId, nodeRunId, true, false);
+      const listed = async () =>
+        (await listInterruptedRuns(db)).some((row) => row.flowRunId === flowRunId);
+
+      expect(await listed()).toBe(true);
+      await stageResumeBehindHeldAdmission({ flowRunId, nodeRunId, kind: 'retry' });
+      expect(await listed()).toBe(false);
     });
 
     it('dispatches once when Continue is clicked again before the slot settles', async () => {
