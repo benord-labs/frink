@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import pinnedManifest from '../../patches/codex/manifest.json';
 import threadItems from '../../patches/codex/thread-item-variants.json';
 import { FRINK_HOST_TOOL_PERMISSION_VERSION } from '../../src/main/lib/agent-runner/codex/codex-host-permissions';
@@ -10,6 +10,7 @@ import {
   assertHandshakeResult,
   assertMcpReplaceConsumed,
   assertPinnedThreadItems,
+  buildCodexTarget,
   codexVersionStamp,
   normalizeCargoLock,
   normalizeWorkspaceVersions,
@@ -17,8 +18,10 @@ import {
   parseInitializeResult,
   parseThreadItemVariants,
   platformKey,
+  releaseProfileEnv,
   releaseTargetKeys,
   runInitializeHandshake,
+  TARGETS,
   validateManifest,
   validateRemoteTagOutput,
 } from './build-codex-frink.mjs';
@@ -199,6 +202,70 @@ describe('codexVersionStamp', () => {
       'rust-v0.155.1+frink.aaaaaaaaaaaa',
     );
   });
+});
+
+describe('Linux debug-info strip (sc-4794)', () => {
+  // Driven by the real target table, so a new Linux key whose triple escapes the match fails here.
+  it('strips every Linux target and leaves the macOS and Windows profiles upstream', () => {
+    for (const [key, { cargoTarget }] of Object.entries(TARGETS)) {
+      expect(releaseProfileEnv(cargoTarget), key).toEqual(
+        key.startsWith('linux-') ? { CARGO_PROFILE_RELEASE_STRIP: 'debuginfo' } : {},
+      );
+    }
+  });
+
+  // The wiring, not the helper: a fake cargo records the env the release build actually ran with.
+  it.skipIf(process.platform === 'win32')(
+    'hands the strip to the cargo release build, over any strip inherited from the shell',
+    () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'frink-codex-strip-'));
+      const sourceDir = path.join(root, 'source');
+      fs.mkdirSync(sourceDir);
+      fs.writeFileSync(path.join(sourceDir, 'LICENSE'), 'license');
+      fs.writeFileSync(path.join(sourceDir, 'NOTICE'), 'notice');
+      const seen = path.join(root, 'strip-seen');
+      const cargo = path.join(root, 'cargo');
+      // Argument 7 is the --target triple; cargo's own output path is <target dir>/<triple>/release.
+      fs.writeFileSync(
+        cargo,
+        [
+          '#!/bin/sh',
+          'out="$CARGO_TARGET_DIR/$7/release"',
+          'mkdir -p "$out" && echo built > "$out/codex" && echo built > "$out/codex.exe"',
+          `echo "$7=\${CARGO_PROFILE_RELEASE_STRIP-unset}" >> "${seen}"`,
+        ].join('\n'),
+        { mode: 0o755 },
+      );
+      vi.stubEnv('RUSTUP', 'true');
+      vi.stubEnv('CARGO_TARGET_DIR', path.join(root, 'target'));
+      vi.stubEnv('CARGO_PROFILE_RELEASE_STRIP', 'false');
+      try {
+        for (const [key, target] of Object.entries(TARGETS)) {
+          const binary = buildCodexTarget({
+            key,
+            target,
+            manifest,
+            sourceDir,
+            cargoRoot: root,
+            cargo,
+            rustc: 'rustc',
+            outputRoot: path.join(root, 'out'),
+          });
+          expect(fs.readFileSync(binary, 'utf8')).toBe('built\n');
+        }
+        expect(fs.readFileSync(seen, 'utf8').trim().split('\n')).toEqual([
+          'aarch64-apple-darwin=false',
+          'x86_64-apple-darwin=false',
+          'x86_64-unknown-linux-gnu=debuginfo',
+          'aarch64-unknown-linux-gnu=debuginfo',
+          'x86_64-pc-windows-msvc=false',
+        ]);
+      } finally {
+        vi.unstubAllEnvs();
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 describe('pinned ThreadItem union', () => {
