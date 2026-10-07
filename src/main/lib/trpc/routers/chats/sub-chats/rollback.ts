@@ -9,6 +9,7 @@ import {
   updateSubChatSession as updateSubChatSessionLocal,
 } from '../../../../db/repos/sub-chats';
 import { applyRollbackStash, type RollbackResult } from '../../../../git/stash';
+import { clearCodexSubChatSession } from '../../../../socket/codex-session';
 import { withAdmissionHeld } from '../../../../socket/execution/send-admission';
 import { hasArmedWakeHold } from '../../../../socket/execution/wake-hold-registry-view';
 import { getActiveExecution } from '../../../../socket/streaming/execution-registry';
@@ -108,6 +109,8 @@ async function rollbackToMessage(input: RollbackInput): Promise<RollbackOutcome>
   // updateSubChatSession requires a non-null string in current signature; pass empty
   // string and let the column hold "" (Drizzle accepts it). Renderer treats empty as none.
   await updateSubChatSessionLocal(db, input.subChatId, '', 'rollback');
+  // Codex resume reads this cache before the persisted session, so it must forget the thread too.
+  clearCodexSubChatSession(input.subChatId);
 
   let targetGone = false;
   const updated = await updateSubChatMessagesLocal(db, input.subChatId, (fresh) => {
