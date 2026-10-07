@@ -612,16 +612,19 @@ describe('CodexAppServerClient stdin errors (sc-966)', () => {
     expect(errored).not.toHaveBeenCalled();
   });
 
-  it('does not throw when stdin breaks during the initialize handshake (child exited at once)', async () => {
-    // A wrong or instantly-crashing binary breaks the pipe before initialize is answered.
+  it('rejects start() at once when stdin breaks during the initialize handshake (child exited at once)', async () => {
+    // A wrong or instantly-crashing binary breaks the pipe before initialize is answered. Catches a
+    // start() that ignores the broken pipe and makes the user wait out the 30s initialize timeout.
     vi.useFakeTimers();
     try {
       const client = new CodexAppServerClient({ binary: 'codex', clientInfo: CLIENT_INFO });
       const started = client.start();
-      started.catch(() => {});
+      const assertion = expect(started).rejects.toThrow(
+        /pipe failed during the initialize handshake: write EPIPE/,
+      );
+      await vi.advanceTimersByTimeAsync(0);
       expect(() => child.stdin.emit('error', epipe())).not.toThrow();
-      await vi.advanceTimersByTimeAsync(31_000);
-      await expect(started).rejects.toThrow('did not respond to initialize');
+      await assertion;
       client.dispose();
     } finally {
       vi.useRealTimers();
@@ -641,21 +644,109 @@ describe('CodexAppServerClient lifecycle guards', () => {
     vi.clearAllMocks();
   });
 
-  it('handles a spawn error (missing binary) instead of crashing, then times out initialize', async () => {
-    // An unlistened child 'error' (ENOENT/EACCES) would throw and take down the main process.
+  it('rejects start() at once with the spawn error (missing binary) instead of crashing or timing out', async () => {
+    // An unlistened child 'error' (ENOENT/EACCES) would throw and take down the main process; a
+    // listened-but-ignored one would leave start() pending for the full 30s initialize timeout.
     vi.useFakeTimers();
     const { default: log } = await import('electron-log');
     const client = new CodexAppServerClient({ binary: 'codex', clientInfo: CLIENT_INFO });
     const started = client.start();
-    const assertion = expect(started).rejects.toThrow(/did not respond to initialize/);
+    const assertion = expect(started).rejects.toThrow(
+      /failed during the initialize handshake: spawn codex ENOENT/,
+    );
     await vi.advanceTimersByTimeAsync(0);
     const enoent = Object.assign(new Error('spawn codex ENOENT'), { code: 'ENOENT' });
 
     expect(() => child.emit('error', enoent)).not.toThrow();
     expect(log.error).toHaveBeenCalledWith('[Codex app-server] spawn error', enoent);
-    await vi.advanceTimersByTimeAsync(30_000);
+    await assertion;
+    await expect(started).rejects.toMatchObject({ cause: enoent });
+    client.dispose();
+  });
+
+  it.each([
+    // code 0 catches a truthiness check that would print "exit status unknown" for a clean exit.
+    { code: 0, signal: null, expected: '(code 0)' },
+    { code: 1, signal: null, expected: '(code 1)' },
+    { code: null, signal: 'SIGKILL', expected: '(signal SIGKILL)' },
+    { code: null, signal: null, expected: '(exit status unknown)' },
+  ])(
+    'rejects start() at once with $expected when the child exits before answering initialize',
+    async ({ code, signal, expected }) => {
+      // Catches a crash-on-start binary surfacing as a 30s "did not respond" instead of its exit status.
+      vi.useFakeTimers();
+      const client = new CodexAppServerClient({ binary: 'codex', clientInfo: CLIENT_INFO });
+      const started = client.start();
+      const assertion = expect(started).rejects.toThrow(
+        `codex app-server exited during the initialize handshake ${expected}`,
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      child.emit('exit', code, signal);
+      await assertion;
+      // A failed handshake must not leave its race listeners on the child either.
+      expect(child.listenerCount('exit')).toBe(0);
+      expect(child.listenerCount('error')).toBe(1);
+      client.dispose();
+    },
+  );
+
+  it('rejects start() when the child answers initialize and then exits at once (dead, never cached)', async () => {
+    // Deliberate: the reply is still queued in vscode-jsonrpc when 'exit' fires; resolving would
+    // let the registry cache a dead client.
+    attachMockPeer(child, (msg, peer) => {
+      if (msg.method !== 'initialize') return;
+      peer.write({ id: msg.id, result: { capabilities: HOST_CAPABILITIES } });
+      child.emit('exit', 0, null);
+    });
+    const client = new CodexAppServerClient({ binary: 'codex', clientInfo: CLIENT_INFO });
+    await expect(client.start()).rejects.toThrow('exited during the initialize handshake (code 0)');
+    client.dispose();
+  });
+
+  it('rejects start() cleanly when the client is disposed mid-handshake (superseded)', async () => {
+    // The registry disposes a superseded client while its start() is in flight. Catches the race
+    // cleanup throwing on an already-disposed connection, which would leave start() never settling.
+    const client = new CodexAppServerClient({ binary: 'codex', clientInfo: CLIENT_INFO });
+    const started = client.start();
+    await new Promise((resolve) => setImmediate(resolve));
+    client.dispose();
+    await expect(started).rejects.toThrow(
+      'Pending response rejected since connection got disposed',
+    );
+    expect(child.listenerCount('exit')).toBe(0);
+    expect(() => child.emit('exit', null, 'SIGTERM')).not.toThrow();
+  });
+
+  it('rejects start() at once when the child stdout closes before answering initialize', async () => {
+    // vscode-jsonrpc marks the connection closed but never rejects the pending initialize itself.
+    vi.useFakeTimers();
+    const client = new CodexAppServerClient({ binary: 'codex', clientInfo: CLIENT_INFO });
+    const started = client.start();
+    const assertion = expect(started).rejects.toThrow(
+      /closed its stdout during the initialize handshake/,
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    child.stdout.emit('end');
     await assertion;
     client.dispose();
+  });
+
+  it('leaves no handshake listeners behind after a successful start()', async () => {
+    // Catches the handshake race leaking a child listener per start(), or turning a later crash
+    // into a stray rejection.
+    answerInitialize(child);
+    const client = new CodexAppServerClient({ binary: 'codex', clientInfo: CLIENT_INFO });
+    await client.start();
+
+    expect(child.listenerCount('error')).toBe(1); // the permanent spawn-error logger only
+    expect(child.listenerCount('exit')).toBe(0);
+    const closed = vi.fn();
+    client.onClose(closed);
+    expect(() => child.emit('exit', 0, null)).not.toThrow();
+    child.stdout.emit('end');
+    await settle(() => expect(closed).toHaveBeenCalledOnce());
+    client.dispose();
+    expect(() => child.emit('error', new Error('kill EPERM'))).not.toThrow();
   });
 
   it('keeps a child error after dispose() harmless (a failed SIGTERM surfaces as an error event)', async () => {
@@ -1112,5 +1203,53 @@ describe('CodexAppServerClient threadId demux', () => {
     await settle(() => expect(live).toEqual(['x']));
     expect(seen).toEqual([]);
     client.dispose();
+  });
+});
+
+describe('CodexAppServerClient against a real spawned process (sc-4974)', () => {
+  // The fake child models one event at a time; these pin how Node actually orders a spawn failure
+  // or an instant exit against the initialize write, on whichever OS the suite runs.
+  beforeEach(async () => {
+    const actual = await vi.importActual<typeof import('node:child_process')>('node:child_process');
+    spawnMock.mockImplementation(actual.spawn);
+  });
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('rejects with the ENOENT spawn error well inside the initialize timeout', async () => {
+    const client = new CodexAppServerClient({
+      binary: '/nonexistent/frink-test/codex',
+      clientInfo: CLIENT_INFO,
+    });
+    const startedAt = Date.now();
+    await expect(client.start()).rejects.toThrow(
+      /failed during the initialize handshake: spawn \/nonexistent\/frink-test\/codex ENOENT/,
+    );
+    expect(Date.now() - startedAt).toBeLessThan(2000);
+    await client.disposeAndWait();
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'rejects with the EACCES spawn error for a non-executable binary',
+    async () => {
+      const { mkdtempSync, writeFileSync } = await import('node:fs');
+      const { tmpdir } = await import('node:os');
+      const { join } = await import('node:path');
+      const binary = join(mkdtempSync(join(tmpdir(), 'frink-codex-')), 'codex');
+      writeFileSync(binary, '#!/bin/sh\n', { mode: 0o644 });
+      const client = new CodexAppServerClient({ binary, clientInfo: CLIENT_INFO });
+      await expect(client.start()).rejects.toThrow(/spawn .* EACCES/);
+      await client.disposeAndWait();
+    },
+  );
+
+  it('rejects promptly when the binary exits instead of serving (wrong binary)', async () => {
+    // `node app-server` exits 1 (no such script) without ever answering initialize.
+    const client = new CodexAppServerClient({ binary: process.execPath, clientInfo: CLIENT_INFO });
+    const startedAt = Date.now();
+    await expect(client.start()).rejects.toThrow(/during the initialize handshake/);
+    expect(Date.now() - startedAt).toBeLessThan(5000);
+    await client.disposeAndWait();
   });
 });
