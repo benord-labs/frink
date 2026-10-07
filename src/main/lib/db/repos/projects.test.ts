@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import * as schema from '../schema';
 import { freshDb, type TestDb } from '../test-utils/fresh-db';
-import { listProjectsByRecentActivity } from './projects';
+import { createOrGetProjectByPath, createProject, listProjectsByRecentActivity } from './projects';
 
 let db: TestDb;
 const at = (iso: string) => new Date(iso);
@@ -61,5 +61,39 @@ describe('listProjectsByRecentActivity', () => {
 
     expect(rows.map((r) => r.id)).toEqual(['added-late', 'used', 'added-early']);
     expect(rows.find((r) => r.id === 'added-late')?.lastActiveAt).toBeNull();
+  });
+});
+
+describe('createOrGetProjectByPath', () => {
+  beforeEach(() => {
+    db = freshDb();
+  });
+
+  it('inserts a new row when the path is free', async () => {
+    const { project, created } = await createOrGetProjectByPath(db, {
+      name: 'a',
+      path: '/repos/a',
+    });
+    expect(created).toBe(true);
+    expect(project.path).toBe('/repos/a');
+  });
+
+  it('adopts the existing row on a path conflict without overwriting it', async () => {
+    const first = await createProject(db, { name: 'winner', path: '/repos/same' });
+    const { project, created } = await createOrGetProjectByPath(db, {
+      name: 'loser',
+      path: '/repos/same',
+    });
+    expect(created).toBe(false);
+    expect(project.id).toBe(first.id);
+    expect(project.name).toBe('winner');
+    expect(await db.select().from(schema.projects)).toHaveLength(1);
+  });
+
+  it('leaves createProject strict on a taken path (scaffoldBuild relies on the throw)', async () => {
+    await createProject(db, { name: 'a', path: '/repos/taken' });
+    await expect(createProject(db, { name: 'b', path: '/repos/taken' })).rejects.toThrow(
+      /UNIQUE constraint failed: projects\.path/,
+    );
   });
 });
