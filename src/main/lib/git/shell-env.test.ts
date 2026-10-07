@@ -34,7 +34,10 @@ async function importWithLoginShell(path: string | null) {
     new LoginShellEnvResolver({
       spawnShell: async () =>
         path === null
-          ? { ok: false, failure: { message: 'no shell', code: 1, signal: null, stderr: '' } }
+          ? {
+              ok: false,
+              failure: { message: 'no shell', code: 1, signal: null, stderr: '', timedOut: false },
+            }
           : { ok: true, env: { PATH: path } },
       extendPath: (p) => p ?? '',
     }),
