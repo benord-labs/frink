@@ -1,5 +1,8 @@
 import os from 'node:os';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { PromptData } from '../../../../shared/types/permissions';
+import type { PermissionResult } from '../../permissions/v2/types';
+import type { HookPermission } from '../../provider/hooks/pre-tool-use';
 import * as socketClient from '../client';
 import {
   _clearActiveExecutionsForTests,
@@ -47,6 +50,155 @@ export function registerValidateToolPermissionTests(harness: PermissionBridgeHar
     registerPermissionDbUnavailableTests({ ...harness, validateWithNativeReview });
     registerDispatcherDecisionTests(harness);
     registerPromptContextTests(harness);
+    registerHookDecisionTests(harness);
+  });
+}
+
+const PUSH = { command: 'git push' };
+const RULE_ASK: PromptData = {
+  tool: 'Bash',
+  input: PUSH,
+  reason: 'rule:ask',
+  matchedRule: 'Bash(git push:*)',
+  matchedTier: 'user',
+};
+
+type CardAnswer = { duration: 'once' | 'always'; scope?: 'project'; ruleString?: string };
+
+/** A Bash call carrying a user hook's decision; Flow turns and Auto review are opt-in. */
+function validateWithHook(hook: HookPermission, opts: { flow?: boolean; auto?: boolean } = {}) {
+  return validateToolPermission(
+    'Bash',
+    PUSH,
+    '/proj',
+    'c1',
+    's1',
+    undefined,
+    undefined,
+    opts.flow ?? false,
+    opts.auto ?? false,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    hook,
+  );
+}
+
+async function rulesSay(result: PermissionResult) {
+  const { checkPermission } = await import('../../permissions/v2/check');
+  vi.mocked(checkPermission).mockResolvedValueOnce(result);
+}
+
+function registerHookDecisionTests({ clientPermissionBridge }: PermissionBridgeHarness): void {
+  const allow: HookPermission = { decision: 'allow' };
+  const ask: HookPermission = { decision: 'ask', reason: 'Pushing needs a look' };
+  const denyRule: PermissionResult = {
+    decision: 'deny',
+    reason: { kind: 'rule:deny', rule: 'Bash', tier: 'user' },
+  };
+  const answerCard = (approval: CardAnswer) =>
+    vi.mocked(socketClient.sendPermissionRequest).mockImplementationOnce((payload) => {
+      clientPermissionBridge.lastResponseHandler?.({ ...payload, approved: true, ...approval });
+    });
+
+  it.each([
+    [false, { allowed: true }],
+    [true, { allowed: null }],
+  ])(
+    'a hook allow skips the card when no rule matched; Auto %s keeps its review',
+    async (auto, verdict) => {
+      await rulesSay({ decision: 'ask', prompt: { ...RULE_ASK, reason: 'no-matching-rule' } });
+      expect(await validateWithHook(allow, { auto })).toEqual(verdict);
+      expect(socketClient.sendPermissionRequest).not.toHaveBeenCalled();
+    },
+  );
+
+  it('a hook ask is refused, not allowed, when there is no project path', async () => {
+    const verdict = await validateToolPermission(
+      'Bash',
+      PUSH,
+      '',
+      'c1',
+      's1',
+      undefined,
+      undefined,
+      false,
+      false,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      ask,
+    );
+    expect(verdict).toEqual({ allowed: false, message: 'Pushing needs a look' });
+    expect(await validateToolPermission('Bash', PUSH, '', 'c1', 's1')).toEqual({ allowed: true });
+  });
+
+  it('a hook allow lets through a call the rules allow, with no card', async () => {
+    await rulesSay({ decision: 'allow' });
+    expect(await validateWithHook(allow)).toEqual({ allowed: true });
+    expect(socketClient.sendPermissionRequest).not.toHaveBeenCalled();
+  });
+
+  it('a hook allow still denies on a deny rule', async () => {
+    await rulesSay(denyRule);
+    expect(await validateWithHook(allow)).toMatchObject({ allowed: false });
+  });
+
+  it.each<[string, PromptData]>([
+    ['a rule that asks', RULE_ASK],
+    ['a command over 50 parts', { ...RULE_ASK, reason: 'over-50-subcommands' }],
+  ])('a hook allow still shows the card, and saves the chosen rule, for %s', async (_, prompt) => {
+    const { persistApprovedRule } = await import('../../permissions/v2/persist-approved-rule');
+    vi.mocked(persistApprovedRule).mockClear();
+    await rulesSay({ decision: 'ask', prompt });
+    answerCard({ duration: 'always', ruleString: 'Bash(git push:*)' });
+    expect(await validateWithHook(allow)).toEqual({ allowed: true });
+    expect(socketClient.sendPermissionRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt }),
+    );
+    expect(persistApprovedRule).toHaveBeenCalled();
+  });
+
+  it('a hook allow leaves an asking rule to Auto review, as with no hook', async () => {
+    await rulesSay({ decision: 'ask', prompt: RULE_ASK });
+    expect(await validateWithHook(allow, { auto: true })).toEqual({ allowed: null });
+    expect(socketClient.sendPermissionRequest).not.toHaveBeenCalled();
+  });
+
+  it.each<[string, PermissionResult, PromptData]>([
+    ['allow', { decision: 'allow' }, { tool: 'Bash', input: PUSH, reason: 'hook:ask' }],
+    ['ask', { decision: 'ask', prompt: RULE_ASK }, RULE_ASK],
+  ])('a hook ask shows the card with its reason when the rules %s', async (_, rules, base) => {
+    await rulesSay(rules);
+    answerCard({ duration: 'once' });
+    expect(await validateWithHook(ask, { auto: true })).toEqual({ allowed: true });
+    expect(socketClient.sendPermissionRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: { ...base, hookAsk: { reason: 'Pushing needs a look' } } }),
+    );
+  });
+
+  it('approving a hook-asked card saves no rule, whatever the card sends', async () => {
+    const { persistApprovedRule } = await import('../../permissions/v2/persist-approved-rule');
+    vi.mocked(persistApprovedRule).mockClear();
+    answerCard({ duration: 'always', scope: 'project', ruleString: 'Bash(git push:*)' });
+    expect(await validateWithHook(ask)).toEqual({ allowed: true });
+    expect(persistApprovedRule).not.toHaveBeenCalled();
+  });
+
+  it('a hook ask on a deny rule denies without a card', async () => {
+    await rulesSay(denyRule);
+    expect(await validateWithHook(ask)).toMatchObject({ allowed: false });
+    expect(socketClient.sendPermissionRequest).not.toHaveBeenCalled();
+  });
+
+  it.each<[string, HookPermission, unknown]>([
+    ['its reason', ask, 'Pushing needs a look'],
+    ['a stock line', { decision: 'ask' }, expect.stringContaining('could not ask the user')],
+  ])('a hook ask on a Flow turn denies at once with %s', async (_, hook, message) => {
+    expect(await validateWithHook(hook, { flow: true })).toEqual({ allowed: false, message });
+    expect(socketClient.sendPermissionRequest).not.toHaveBeenCalled();
   });
 }
 

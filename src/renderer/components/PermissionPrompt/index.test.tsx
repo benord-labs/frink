@@ -2,6 +2,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { parseRule } from '../../../shared/lib/rule-parser';
+import type { PromptData } from '../../../shared/types/permissions';
 import type { PermissionRequest } from '../../hooks/usePermissionPrompts';
 import { PermissionPrompt } from './index';
 import { buildFallbackRule } from './RuleStringDropdown';
@@ -304,6 +305,49 @@ describe('PermissionPrompt — DenyReasonBanner', () => {
     render(<PermissionPrompt request={makeBashRequest()} onApprove={vi.fn()} onDeny={vi.fn()} />);
     expect(screen.queryByText(/Asking because of rule/i)).toBeNull();
     expect(screen.queryByText(/Compound command has too many parts/i)).toBeNull();
+  });
+
+  it("shows a hook's ask with its reason above the rule line, and offers no saved rule", () => {
+    const req = makeBashRequest({
+      prompt: {
+        tool: 'Bash',
+        input: { command: 'npm test' },
+        reason: 'rule:ask',
+        matchedRule: 'Bash(npm:*)',
+        matchedTier: 'project',
+        suggestedRules: ['Bash(npm:*)'],
+        hookAsk: { reason: 'Tests touch the shared database' },
+      },
+    });
+    render(<PermissionPrompt request={req} onApprove={vi.fn()} onDeny={vi.fn()} />);
+    expect(screen.getByText(/asks you to confirm this call/i)).toBeTruthy();
+    expect(screen.getByText('Tests touch the shared database')).toBeTruthy();
+    expect(screen.getByText(/Asking because of rule/i)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Allow this time' })).toBeTruthy();
+    expect(screen.queryByText('Always allow')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'In this project' })).toBeNull();
+  });
+
+  it('asks about a file the rules allowed without calling its path external', () => {
+    const prompt: PromptData = { tool: 'Edit', input: {}, reason: 'hook:ask', hookAsk: {} };
+    const req = { ...makeFileOpRequest('Edit', 'in-current-project'), prompt };
+    render(<PermissionPrompt request={req} onApprove={vi.fn()} onDeny={vi.fn()} />);
+    expect(screen.getByText(/asks you to confirm this call/i)).toBeTruthy();
+    expect(screen.queryByText(/external path/i)).toBeNull();
+    expect(screen.getByRole('button', { name: /Allow this time/i })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Allow Edit for/i })).toBeNull();
+  });
+
+  it('names a tool Frink has no rules for when a hook asks about it', () => {
+    const prompt: PromptData = { tool: 'TodoWrite', input: {}, reason: 'hook:ask', hookAsk: {} };
+    render(
+      <PermissionPrompt
+        request={{ ...makeBashRequest(), path: '', operation: 'read', prompt }}
+        onApprove={vi.fn()}
+        onDeny={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('TodoWrite')).toBeTruthy();
   });
 });
 

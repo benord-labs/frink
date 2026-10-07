@@ -8,10 +8,14 @@ import { combineHookReadings, dispatchHooks, type HookDispatch, type TurnHooks }
 
 type OwnOutput = Omit<PreToolUseHookSpecificOutput, 'hookEventName' | 'additionalContext'>;
 
+/** A hook's allow or ask, which Frink's permission rules and card act on. */
+export type HookPermission = { decision: 'allow' | 'ask'; reason?: string };
+
 /** What one tool call's user hooks came to, in the terms Frink's permission gate acts on. */
 export type PreToolUseHooks = {
-  /** A hook denied the call, exited 2 or asked to confirm it, or the call was cancelled. */
+  /** A hook denied the call or exited 2, or the call was cancelled. */
   deny?: string;
+  permission?: HookPermission;
   /** Replaces the whole tool input: every later check judges it and it is what runs. */
   updatedInput?: PreToolUseHookSpecificOutput['updatedInput'];
   additionalContext?: string;
@@ -21,7 +25,6 @@ export type PreToolUseHooks = {
 
 export const NO_HOOKS: PreToolUseHooks = { common: {} };
 const CANCELLED = 'This tool call was cancelled while its hooks were running.';
-const UNANSWERED = 'A hook asked to confirm this call, which Frink cannot prompt for yet.';
 
 /** A hook that blocks never counts as deferring: its block stands whatever its JSON says. */
 function defers({ reading }: HookDispatch['ran'][number]): boolean {
@@ -31,11 +34,11 @@ function defers({ reading }: HookDispatch['ran'][number]): boolean {
   return deferred && !reading.block;
 }
 
-/** Why the hooks stop the call, if they do. Frink has no prompt for a hook's "ask" yet. */
-function denial({ blocks, permission }: HookDispatch): string | undefined {
-  if (blocks.length > 0) return blocks.join('\n');
-  if (permission?.decision !== 'ask') return undefined;
-  return permission.reason ? `${UNANSWERED} Its reason: ${permission.reason}` : UNANSWERED;
+/** The winning allow or ask; `continue: false` outranks every decision, so the rules decide alone. */
+function hookPermission({ permission, stop }: HookDispatch): HookPermission | undefined {
+  const decision = permission?.decision;
+  if (stop || (decision !== 'allow' && decision !== 'ask')) return undefined;
+  return { decision, reason: permission?.reason };
 }
 
 /** The user's warnings: each hook's own message, then Claude's "hook error" notice per failure. */
@@ -59,7 +62,8 @@ export function readPreToolUseDispatch(toolName: string, dispatch: HookDispatch)
   const { permission, stop } = dispatch;
   const warnings = notices(toolName, dispatch);
   return {
-    deny: denial(dispatch),
+    deny: dispatch.blocks.join('\n') || undefined,
+    permission: hookPermission(dispatch),
     updatedInput: permission?.updatedInput,
     additionalContext: dispatch.context.join('\n') || undefined,
     common: {

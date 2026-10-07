@@ -41,6 +41,15 @@ function FileQuestion({
 }: Omit<FilePromptProps, 'requestPath'>): ReactElement {
   const toolName = prompt.tool.toLowerCase();
 
+  // A hook-only card carries no path classification, so it names the tool without one.
+  if (prompt.reason === 'hook:ask') {
+    return (
+      <span className="text-xs text-foreground leading-relaxed">
+        Allow <strong>{toolName}</strong>?
+      </span>
+    );
+  }
+
   if (!isPathInCurrentProject) {
     return (
       <span className="text-xs text-foreground leading-relaxed">
@@ -121,6 +130,6 @@ export const PromptContent = memo(function PromptContent({
       if (mcpFriendlyName) return <McpPrompt name={mcpFriendlyName} />;
       return <CommandPrompt command={requestPath} />;
     default:
-      return <CommandPrompt command={requestPath} />;
+      return <CommandPrompt command={requestPath || prompt.tool} />;
   }
 });

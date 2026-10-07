@@ -2,7 +2,9 @@ import type { CanUseTool, PreToolUseHookInput } from '@anthropic-ai/claude-agent
 import { isClaudePermissionGatedTool, resolveToolPermissionPath } from '../../../permissions';
 import { createSubagentAllowlistHook } from '../../../permissions/subagent-allowlist-hook';
 import {
+  type HookPermission,
   NO_HOOKS,
+  type PreToolUseHooks,
   preToolUseOutput,
   runPreToolUseHooks,
 } from '../../../provider/hooks/pre-tool-use';
@@ -55,6 +57,8 @@ type ToolVerdict = Awaited<ReturnType<typeof validateToolPermission>>;
 
 const NO_ACTIVE_TURN = 'No turn is active on this session; no tools may run.';
 const PLAN_SUBMITTED = 'Plan submitted — awaiting user approval; no tools may run.';
+/** Frink's question and plan-review flows answer these whatever a hook decides. */
+const OWN_FLOW_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode']);
 
 /** A session's SDK callbacks. Every per-turn read goes through the turn attached to the session
  * they were built for; with no turn attached, tools are denied and Stop allows. */
@@ -127,7 +131,7 @@ function createPreToolUseHook(scope: ClaudeSessionScope, activeTurn: ActiveTurn)
       if (submitted) return denyToolUse(submitted);
     }
 
-    const verdict = await judgeToolCall(scope, turn, toolName, finalInput);
+    const verdict = await judgeToolCall(scope, turn, toolName, finalInput, hookFor(toolName, user));
     if (verdict.allowed === null) {
       return preToolUseOutput(user, { updatedInput: user.updatedInput });
     }
@@ -136,15 +140,22 @@ function createPreToolUseHook(scope: ClaudeSessionScope, activeTurn: ActiveTurn)
   };
 }
 
-/** Frink's answer for one call; `null` leaves it to Claude, as for a tool Frink has no rules for. */
+function hookFor(toolName: string, hooks: PreToolUseHooks): HookPermission | undefined {
+  return OWN_FLOW_TOOLS.has(toolName) ? undefined : hooks.permission;
+}
+
+/** Frink's answer for one call; `null` leaves it to Claude, as for a tool Frink has no rules for
+ * and no hook decided on. */
 async function judgeToolCall(
   scope: ClaudeSessionScope,
   turn: ClaudeTurnContext,
   toolName: string,
   toolInput: Parameters<typeof validateToolPermission>[1],
+  hook: HookPermission | undefined,
 ): Promise<ToolVerdict> {
-  if (toolName === 'mcp__frink_dynamic_chat__frink_register_node') return { allowed: true };
-  if (!isClaudePermissionGatedTool(toolName) && !toolName.startsWith('mcp__')) {
+  const registersNode = toolName === 'mcp__frink_dynamic_chat__frink_register_node';
+  if (registersNode && hook?.decision !== 'ask') return { allowed: true };
+  if (!hook && !isClaudePermissionGatedTool(toolName) && !toolName.startsWith('mcp__')) {
     return { allowed: null };
   }
   const { permissionProjectPath } = scope;
@@ -164,6 +175,11 @@ async function judgeToolCall(
     permissionPathOverride,
     turn.execution.isFlowTurn,
     turn.autoReviewTools,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    hook,
   );
 }
 

@@ -26,7 +26,6 @@ function pre(fields: Omit<PreToolUseHookSpecificOutput, 'hookEventName'>): HookR
   return { hookSpecificOutput: { hookEventName: 'PreToolUse', ...fields } };
 }
 
-const UNANSWERED = 'A hook asked to confirm this call, which Frink cannot prompt for yet.';
 const defer = pre({ permissionDecision: 'defer', updatedInput: { command: 'deferred' } });
 const allow = pre({ permissionDecision: 'allow', updatedInput: { command: 'rewritten' } });
 
@@ -35,15 +34,28 @@ describe('readPreToolUseDispatch', () => {
     ['first', [defer, allow]],
     ['last', [allow, defer]],
   ])('ignores a deferring hook that finished %s; the other hooks still count', (_name, ran) => {
-    expect(read(...ran)).toEqual({ updatedInput: { command: 'rewritten' }, common: {} });
+    expect(read(...ran)).toEqual({
+      permission: { decision: 'allow' },
+      updatedInput: { command: 'rewritten' },
+      common: {},
+    });
   });
 
-  it.each([
-    ['check this', `${UNANSWERED} Its reason: check this`],
-    [undefined, UNANSWERED],
-  ])('refuses a call a hook asks to confirm, with its reason %s', (reason, deny) => {
-    const ask = pre({ permissionDecision: 'ask', permissionDecisionReason: reason });
-    expect(read(ask, allow)).toMatchObject({ deny });
+  it('hands the gate an ask with its reason, outranking an allow, and denies nothing', () => {
+    const ask = pre({ permissionDecision: 'ask', permissionDecisionReason: 'check this' });
+    expect(read(allow, ask)).toEqual({
+      permission: { decision: 'ask', reason: 'check this' },
+      updatedInput: { command: 'rewritten' },
+      common: {},
+    });
+  });
+
+  it('drops the decision when a hook stops the turn, since continue: false outranks it', () => {
+    const stopping = { ...pre({ permissionDecision: 'ask' }), continue: false };
+    expect(read(allow, stopping)).toEqual({
+      updatedInput: { command: 'rewritten' },
+      common: { continue: false, stopReason: undefined },
+    });
   });
 
   it("joins every block reason, a deferring hook's included, and ignores a deferring hook's stop", () => {
@@ -56,8 +68,12 @@ describe('readPreToolUseDispatch', () => {
     expect(result).toEqual({ deny: 'one\ntwo', common: {} });
   });
 
-  it('keeps the rewrite of a hook that allows, and approves nothing on its say-so', () => {
-    expect(read(allow)).toEqual({ updatedInput: { command: 'rewritten' }, common: {} });
+  it('hands the gate an allow with its rewrite, leaving the rules to judge it', () => {
+    expect(read(allow)).toEqual({
+      permission: { decision: 'allow' },
+      updatedInput: { command: 'rewritten' },
+      common: {},
+    });
   });
 
   it('joins the context of several hooks, and their warnings with the hook error notices', () => {

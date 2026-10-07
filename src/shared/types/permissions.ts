@@ -119,7 +119,10 @@ export type PermissionPresentation = CustomNodeRegistrationPresentation;
 export type PromptData = {
   tool: string;
   input: unknown;
-  reason: 'no-matching-rule' | 'over-50-subcommands' | 'rule:ask';
+  /** `hook:ask`: the rules allowed the call and only a user hook asked to confirm it. */
+  reason: 'no-matching-rule' | 'over-50-subcommands' | 'rule:ask' | 'hook:ask';
+  /** A user hook asked to confirm; approving such a card saves no rule. */
+  hookAsk?: { reason?: string };
   matchedRule?: string;
   matchedTier?: PermissionTier;
   suggestedRules?: string[];

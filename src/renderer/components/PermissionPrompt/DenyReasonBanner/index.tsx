@@ -6,6 +6,22 @@ type DenyReasonBannerProps = {
 };
 
 export const DenyReasonBanner = memo(function DenyReasonBanner({ prompt }: DenyReasonBannerProps) {
+  if (!prompt.hookAsk) return <RuleReason prompt={prompt} />;
+  return (
+    <>
+      <p className="text-[10px] text-muted-foreground leading-relaxed">
+        Hook <span className="font-medium text-foreground">[settings]</span> asks you to confirm
+        this call.
+        {prompt.hookAsk.reason && (
+          <span className="block text-foreground">{prompt.hookAsk.reason}</span>
+        )}
+      </p>
+      <RuleReason prompt={prompt} />
+    </>
+  );
+});
+
+function RuleReason({ prompt }: DenyReasonBannerProps) {
   if (prompt.reason === 'rule:ask') {
     if (!prompt.matchedRule || !prompt.matchedTier) return null;
     return (
@@ -24,4 +40,4 @@ export const DenyReasonBanner = memo(function DenyReasonBanner({ prompt }: DenyR
     );
   }
   return null;
-});
+}

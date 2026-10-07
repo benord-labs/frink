@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { app } from 'electron';
 import log from 'electron-log';
-import type { PermissionPresentation } from '../../../../../shared/types/permissions';
+import type { PermissionPresentation, PromptData } from '../../../../../shared/types/permissions';
 import {
   getClaudeSessionPlansDir,
   isValidSubChatIdForSessionPaths,
@@ -20,6 +20,8 @@ import { buildPermissionDecisionInput } from '../../../permissions/v2';
 import { checkPermission } from '../../../permissions/v2/check';
 import { formatDenyReason } from '../../../permissions/v2/deny-reason-format';
 import { persistApprovedRule } from '../../../permissions/v2/persist-approved-rule';
+import type { PermissionResult } from '../../../permissions/v2/types';
+import type { HookPermission } from '../../../provider/hooks/pre-tool-use';
 import {
   onPermissionResponse,
   type PermissionRequestPayload,
@@ -37,6 +39,13 @@ const permissionRequests = createPendingPermissionRequestBroker({
 });
 export const drainPendingPermissions = permissionRequests.drain;
 export const hasPendingPermissionRequest = permissionRequests.hasPending;
+
+type ToolPermissionVerdict =
+  | { allowed: true }
+  | { allowed: false; message: string }
+  | { allowed: null };
+
+const HOOK_ASK_UNANSWERED = 'A hook asked to confirm this call, and Frink could not ask the user.';
 
 /**
  * Ask the user whether an agent may run a specific flow.
@@ -92,13 +101,15 @@ export async function validateToolPermission(
   trustedFrinkOwnedMcp?: boolean,
   mcpIdentity?: { server: string; tool: string },
   presentation?: PermissionPresentation,
-): Promise<{ allowed: true } | { allowed: false; message: string } | { allowed: null }> {
+  hook?: HookPermission,
+): Promise<ToolPermissionVerdict> {
   if (!isValidPermissionPresentation(toolName, presentation)) {
     log.error('[executor] Rejected invalid permission presentation', { toolName });
     return { allowed: false, message: 'Invalid permission presentation — tool blocked' };
   }
 
-  if (!projectPath) return { allowed: true };
+  // Without a project there are no rules, but a hook's ask must still never pass silently.
+  if (!projectPath) return hook?.decision === 'ask' ? hookAskRefused(hook) : { allowed: true };
 
   // From here every tool call is decided by the permission rules, which prompt when
   // no rule matches and deny outright when the rule store cannot be read.
@@ -142,14 +153,13 @@ export async function validateToolPermission(
     trustedFrinkOwnedMcp,
     mcpIdentity,
   });
-  if (result.decision === 'allow') return { allowed: true };
-  if (result.decision === 'deny') {
-    return { allowed: false, message: formatDenyReason(result.reason) };
-  }
-
-  // Provider Auto Mode reviews the remaining `ask` bucket, uniformly across every tool
-  // class — vendor plugin MCP servers included (auto-mode-tool-approval 2026-09-03 Target).
-  if (deferAskToProvider) return { allowed: null };
+  const settled = answerWithoutCard(result, hook, deferAskToProvider, isFlowDrivenTurn);
+  if (settled) return settled;
+  const prompt = cardPrompt(result, hook, {
+    tool: toolName,
+    input: decisionInput,
+    reason: 'hook:ask',
+  });
 
   // ask → prompt the renderer in-process, persist + (for bash) sync cursor on approval.
   const isBash = toolName === 'Bash';
@@ -172,7 +182,7 @@ export async function validateToolPermission(
         ? 'bash'
         : (getOperationFromToolName(toolName) ?? 'read'),
     reason: reason ?? `Tool: ${toolName}`,
-    prompt: presentation ? { ...result.prompt, presentation } : result.prompt,
+    prompt: presentation ? { ...prompt, presentation } : prompt,
     // projectPath enables the "Allow for project" button in FourButtonView
     // (`hasProject = !!request.projectPath`). Omitted when no project row
     // matches (general chat / virtual folder, where projectPath is the home
@@ -195,20 +205,62 @@ export async function validateToolPermission(
     return { allowed: false, message: 'User denied permission' };
   }
 
-  // The user approved this call; a failed rule write only means the next call prompts
-  // again, so it must not turn the approval into a deny or a rejected promise.
+  await saveApprovedRule({ projectPath, project: project ?? null, promptResult, isBash }, hook);
+  return { allowed: true };
+}
+
+/** The answer that needs no card, if any. A deny rule always stands; a hook's ask always cards,
+ * or denies on a Flow turn; a hook's allow stands in for a missing rule, never an asking one. */
+function answerWithoutCard(
+  result: PermissionResult,
+  hook: HookPermission | undefined,
+  deferAskToProvider: boolean,
+  isFlowDrivenTurn: boolean | undefined,
+): ToolPermissionVerdict | undefined {
+  if (result.decision === 'deny') {
+    return { allowed: false, message: formatDenyReason(result.reason) };
+  }
+  if (hook?.decision === 'ask') return hookAskAnswer(hook, isFlowDrivenTurn);
+  if (result.decision === 'allow') return { allowed: true };
+  // Provider Auto Mode reviews the remaining `ask` bucket, uniformly across every tool
+  // class — vendor plugin MCP servers included (auto-mode-tool-approval 2026-09-03 Target).
+  if (deferAskToProvider) return { allowed: null };
+  return hook && result.prompt.reason === 'no-matching-rule' ? { allowed: true } : undefined;
+}
+
+/** A hook's ask shows the card, except on a Flow turn, where no one can answer it. */
+function hookAskAnswer(
+  hook: HookPermission,
+  isFlowDrivenTurn: boolean | undefined,
+): ToolPermissionVerdict | undefined {
+  return isFlowDrivenTurn ? hookAskRefused(hook) : undefined;
+}
+
+function hookAskRefused(hook: HookPermission): ToolPermissionVerdict {
+  return { allowed: false, message: hook.reason || HOOK_ASK_UNANSWERED };
+}
+
+/** The card's prompt: the rules' own when they asked, marked when a hook asked too. */
+function cardPrompt(
+  result: PermissionResult,
+  hook: HookPermission | undefined,
+  hookOnly: PromptData,
+): PromptData {
+  const prompt = result.decision === 'ask' ? result.prompt : hookOnly;
+  return hook?.decision === 'ask' ? { ...prompt, hookAsk: { reason: hook.reason } } : prompt;
+}
+
+/** Saves the rule the user chose. A hook's card saves none: no rule can silence a hook. */
+async function saveApprovedRule(
+  params: Omit<Parameters<typeof persistApprovedRule>[0], 'db' | 'logTag'>,
+  hook: HookPermission | undefined,
+): Promise<void> {
+  if (hook?.decision === 'ask') return;
+  // A failed rule write only means the next call prompts again, so it must not turn the
+  // approval into a deny or a rejected promise.
   try {
-    await persistApprovedRule({
-      db: getDatabase(),
-      projectPath,
-      project: project ?? null,
-      promptResult,
-      isBash,
-      logTag: '[executor]',
-    });
+    await persistApprovedRule({ ...params, db: getDatabase(), logTag: '[executor]' });
   } catch (err) {
     log.warn('[executor] Could not persist approved rule', err);
   }
-
-  return { allowed: true };
 }

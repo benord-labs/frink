@@ -45,7 +45,9 @@ export const FourButtonView = memo(function FourButtonView({
   const projectDisplayName = trimmedProjectName ? trimmedProjectName : 'this project';
   const hasProject = !!request.projectPath;
   const isPathInCurrentProject = prompt.pathLocation === 'in-current-project';
-  const canPersistFileOp = isFileOpTool && hasProject && isPathInCurrentProject;
+  // A saved rule cannot silence a hook, so a hook's card offers no persistent approval.
+  const canPersist = !prompt.hookAsk;
+  const canPersistFileOp = canPersist && isFileOpTool && hasProject && isPathInCurrentProject;
 
   // For file-op tools the rule is always tool-wide (just `Read`, `Edit`, etc.).
   // For Bash / MCP / other we fall back to the existing dropdown-driven behavior.
@@ -64,7 +66,7 @@ export const FourButtonView = memo(function FourButtonView({
 
   // An empty (not absent) suggestion list is the dispatcher saying no rule can
   // express this command, so a fabricated fallback would never match on replay.
-  const canPersistRule = !isBash || prompt.suggestedRules?.length !== 0;
+  const canPersistRule = canPersist && (!isBash || prompt.suggestedRules?.length !== 0);
 
   const [selectedRule, setSelectedRule] = useState(defaultRule);
 

@@ -16,7 +16,6 @@ import { buildClaudeSessionCallbacks } from './session-callbacks';
 
 type Verdict = Awaited<ReturnType<typeof validateToolPermission>>;
 
-const ASKED = 'A hook asked to confirm this call, which Frink cannot prompt for yet.';
 const signal = new AbortController().signal;
 
 function toolCall(tool_name: string, tool_input: PreToolUseHookInput['tool_input']) {
@@ -85,6 +84,7 @@ function gate(hooks: HookRegistration[] | undefined, rules: () => Verdict) {
 }
 
 const bash = toolCall('Bash', { command: 'ls' });
+const registerNode = toolCall('mcp__frink_dynamic_chat__frink_register_node', {});
 const allowRule = (): Verdict => ({ allowed: true });
 const allowed = pre({ permissionDecision: 'allow', updatedInput: { command: 'ls' } });
 
@@ -163,12 +163,15 @@ describe("the user's PreToolUse hooks inside Frink's gate", () => {
   });
 
   it('passes a rewrite and a stop on to Claude without denying a tool Frink has no rules for', async () => {
+    // A stop outranks the hook's ask, so Frink's rules decide alone: here, nothing to decide.
     const stop = { continue: false, stopReason: 'halt' };
-    const { run } = gate([prints({ ...pre({ updatedInput: { todos: [] } }), ...stop })], allowRule);
+    const asks = pre({ permissionDecision: 'ask', updatedInput: { todos: [] } });
+    const { run, validate } = gate([prints({ ...asks, ...stop })], allowRule);
     expect(await run(toolCall('TodoWrite', {}))).toEqual({
       ...pre({ updatedInput: { todos: [] } }),
       ...stop,
     });
+    expect(validate).not.toHaveBeenCalled();
   });
 
   it("denies a rewrite Frink's rules deny, still sending the hooks' context and stop", async () => {
@@ -200,13 +203,36 @@ describe("the user's PreToolUse hooks inside Frink's gate", () => {
     expect(validate).not.toHaveBeenCalled();
   });
 
-  it('refuses a call a hook asks to confirm, because no prompt can be shown for it yet', async () => {
+  it.each([
+    ['a gated tool', bash],
+    ['a tool Frink has no rules for', toolCall('TodoWrite', {})],
+    ['frink_register_node', registerNode],
+  ])("hands a hook's ask on %s to the rules and card, with its reason", async (_, call) => {
     const asks = pre({ permissionDecision: 'ask', permissionDecisionReason: 'check this' });
     const { run, validate } = gate([prints(asks)], allowRule);
-    expect((await run(bash)).hookSpecificOutput).toMatchObject({
+    expect((await run(call)).hookSpecificOutput).toMatchObject({ permissionDecision: 'allow' });
+    expect(validate.mock.calls[0][13]).toEqual({ decision: 'ask', reason: 'check this' });
+  });
+
+  it("allows a tool Frink has no rules for on a hook's allow, unless the rules deny it", async () => {
+    const allows = prints(pre({ permissionDecision: 'allow' }));
+    const { run, validate } = gate([allows], allowRule);
+    const todo = toolCall('TodoWrite', {});
+    expect((await run(todo)).hookSpecificOutput).toMatchObject({ permissionDecision: 'allow' });
+    expect(validate.mock.calls[0][13]).toEqual({ decision: 'allow' });
+    const denied = gate([allows], () => ({ allowed: false, message: 'Denied by rule' }));
+    expect((await denied.run(todo)).hookSpecificOutput).toMatchObject({
       permissionDecision: 'deny',
-      permissionDecisionReason: `${ASKED} Its reason: check this`,
     });
+  });
+
+  it.each([
+    ['AskUserQuestion', toolCall('AskUserQuestion', {})],
+    ['ExitPlanMode', toolCall('ExitPlanMode', {})],
+  ])("leaves %s to its own flow whatever a hook's ask says", async (_, call) => {
+    const asks = pre({ permissionDecision: 'ask', permissionDecisionReason: 'check this' });
+    const { run, validate } = gate([prints(asks)], allowRule);
+    expect(await run(call)).toEqual({});
     expect(validate).not.toHaveBeenCalled();
   });
 });
