@@ -125,12 +125,6 @@ export function resolveRecoveryKinds(
   return new Map(stopped.map((task) => [task.id, kinds.get(task.id) ?? 'retry']));
 }
 
-/** Whether `subChatId`'s session answered this task's own attempt: the gate every continue-in-place
- * entrance shares, so none wakes an agent on a prompt it never received. */
-export function sessionAnsweredTask(db: Db, subChatId: string, taskId: string): boolean {
-  return recoveryKindsBySubChat(db, new Map([[taskId, subChatId]])).get(taskId) === 'continue';
-}
-
 export function resolveRecoveryKind(db: Db, task: StoppedTask): RecoveryKind {
   return resolveRecoveryKinds(db, [task]).get(task.id) ?? 'retry';
 }
