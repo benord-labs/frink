@@ -160,3 +160,43 @@ describe('QA rig home isolation', () => {
     expect(boot).toMatch(/echo .*FRINK_LOG_DIR=\$QA_LOG_DIR/);
   });
 });
+
+// An agent shell carries the host's electron-vite dev env; inherited, it silently swaps in the host's code.
+describe('QA rig host dev-env isolation', () => {
+  const boot = read('boot.sh');
+  const build = read('build.sh');
+  const scrubCall = /^qa_scrub_host_dev_env$/m;
+
+  it('scrubs the inherited dev env before building, so out-qa is a production bundle', () => {
+    expect(build).toContain('. "$(dirname "$0")/scrub-host-env.sh"');
+    expect(build.search(scrubCall)).toBeGreaterThan(-1);
+    expect(build.search(scrubCall)).toBeLessThan(build.indexOf('bun run build'));
+  });
+
+  it("scrubs before exporting the rig's own MAIN_VITE_ port, which the scrub would otherwise drop", () => {
+    // The scrub removes every MAIN_VITE_*. Reordered after the export, the bundle would bake the
+    // default port and so the operator's real "Frink Dev" userData dir instead of the rig's -21399.
+    const exportAt = build.indexOf('export MAIN_VITE_AUTH_SERVER_PORT=21399');
+    expect(exportAt).toBeGreaterThan(-1);
+    expect(build.search(scrubCall)).toBeLessThan(exportAt);
+  });
+
+  it("scrubs before loading the worktree's .env, so .env keys survive and host ones do not", () => {
+    expect(boot).toContain('. "$(dirname "$0")/scrub-host-env.sh"');
+    const scrubAt = boot.search(scrubCall);
+    expect(scrubAt).toBeGreaterThan(-1);
+    expect(scrubAt).toBeLessThan(boot.indexOf('if [ -f .env ]'));
+    expect(scrubAt).toBeLessThan(boot.indexOf('node_modules/.bin/electron out-qa/main/index.js'));
+  });
+
+  it('marks the launch as the rig bundle, so main refuses a leaked dev-server URL', () => {
+    expect(boot).toContain('FRINK_QA_BUNDLE=1 \\');
+  });
+
+  it('names the same marker the main process checks, and main runs that check at startup', () => {
+    // Each side is unit-tested alone; a rename on one side, or a dropped call, would disarm the guard silently.
+    const src = (path) => readFileSync(join(qaDir, '../../src/main', path), 'utf-8');
+    expect(src('lib/platform/rig-renderer.ts')).toContain('process.env.FRINK_QA_BUNDLE');
+    expect(src('index.ts')).toMatch(/^assertRigRendererBundled\(\);$/m);
+  });
+});

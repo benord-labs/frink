@@ -15,6 +15,10 @@ bash scripts/qa/build.sh && bash scripts/qa/seed.sh && bash scripts/qa/boot.sh
 - `seed.sh` — wipes the QA profile, seeds fixtures.
 - `boot.sh` — takes the run lock, launches the PREBUILT app (`out-qa/main/index.js` directly) on an
   isolated port/profile — fails loudly if `build.sh` hasn't run yet.
+- `scrub-host-env.sh` — sourced by `build.sh` and `boot.sh`: strips the host's electron-vite dev env
+  (`ELECTRON_RENDERER_URL`, `NODE_ENV`, `VITE_*`, …) a Frink Dev agent shell carries, so the rig builds
+  a production bundle and renders `out-qa`, not the host's dev server. boot.sh also sets
+  `FRINK_QA_BUNDLE=1`, and main refuses to boot that bundle with a dev-server URL.
 - `seed-db.ts` / `fixtures/` — the deterministic fixture workspace (`fixtures/index.ts` seeds it).
 - The seeded Claude account (`QA Claude`) resolves through an empty marker file that `seed-db.ts` writes
   into the rig home, so the composer stays available without a Claude login on the machine. Because it
