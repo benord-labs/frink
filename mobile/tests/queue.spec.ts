@@ -183,6 +183,26 @@ function recoveryOverview() {
   return { ...overview, queue: [neverStarted, ...overview.queue] };
 }
 
+/** Adds a Flow run that stopped on a started command: its Retry may repeat what it did. */
+function sideEffectsOverview() {
+  const overview = parkedOverview();
+  const command: MobileQueueItem = {
+    ...overview.queue[0],
+    id: 'task-deploy-flow',
+    title: 'Deploy the docs site',
+    summary: 'Stopped on Publish',
+    status: 'failed',
+    chatId: 'chat-9',
+    subChatId: 'sub-9',
+    flowRunId: 'run-9',
+    actions: ['continueTask'],
+    recoveryKind: 'retry',
+    confirmSideEffects: true,
+    recoveryNodeRunId: 'node-publish',
+  };
+  return { ...overview, queue: [command, ...overview.queue] };
+}
+
 /** Swipes a row open by scrolling its own horizontal scroller to the end. */
 async function swipeOpen(page: Page, key: string, label: string) {
   const action = page.getByRole('button', { name: label, exact: true });
@@ -250,6 +270,43 @@ test('swiping a task offers the desktop’s actions and sends the chosen one', a
     .toEqual([
       { type: 'completeTask', id: 'task-done' },
       { type: 'startTask', id: 'task-inbox' },
+    ]);
+});
+
+test('a Flow Retry that may repeat side effects asks first, then pins the step', async ({
+  page,
+}) => {
+  const state = await openQueue(page, { data: { overview: sideEffectsOverview() } });
+  // The phone tells the computer it can ask, or a step like this is never offered to it.
+  await expect
+    .poll(() => state.requests)
+    .toContainEqual(expect.objectContaining({ type: 'overview', confirmsSideEffects: true }));
+  const label = 'Retry task: Deploy the docs site';
+  const prompts: string[] = [];
+  page.once('dialog', (dialog) => {
+    prompts.push(dialog.message());
+    void dialog.dismiss();
+  });
+  await (await swipeOpen(page, 'task-deploy-flow', label)).click();
+  await expect
+    .poll(() => prompts)
+    .toEqual([
+      'Retry this step?\n\nThis step was interrupted partway through. Running it again may repeat actions it already took.',
+    ]);
+  await page.waitForTimeout(500);
+  expect(sent(state)).toEqual([]);
+
+  page.once('dialog', (dialog) => void dialog.accept());
+  await (await swipeOpen(page, 'task-deploy-flow', label)).click();
+  await expect
+    .poll(() => sent(state))
+    .toEqual([
+      {
+        type: 'continueTask',
+        id: 'task-deploy-flow',
+        kind: 'retry',
+        recoveryNodeRunId: 'node-publish',
+      },
     ]);
 });
 

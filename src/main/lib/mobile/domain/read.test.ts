@@ -186,13 +186,25 @@ describe('mobile overview', () => {
               { ...task, id: 'done' },
               { ...task, id: 'new', startedAt: null, completedAt: null, projectName: null },
               { ...task, id: 'failed', effectiveStatus: 'failed', recoveryKind: 'retry' },
-              // Only a row that offers recovery carries its kind.
+              // A Flow row recovers through its run's stopped step, pinned for the request.
               {
                 ...task,
                 id: 'flow',
                 effectiveStatus: 'failed',
                 flowRunId: 'run',
+                recoveryKind: 'continue',
+                confirmSideEffects: false,
+                recoveryNodeRunId: 'step',
+              },
+              // Only a row that offers recovery carries its kind: this phone can't confirm.
+              {
+                ...task,
+                id: 'command',
+                effectiveStatus: 'failed',
+                flowRunId: 'run-2',
                 recoveryKind: 'retry',
+                confirmSideEffects: true,
+                recoveryNodeRunId: 'cmd',
               },
             ],
             hasMore: true,
@@ -220,12 +232,29 @@ describe('mobile overview', () => {
         },
         { id: 'new', section: 'attention', projectName: null, activityAt: at(1000).toISOString() },
         { id: 'failed', actions: ['continueTask'], recoveryKind: 'retry' },
-        { id: 'flow', actions: [] },
+        {
+          id: 'flow',
+          actions: ['continueTask'],
+          recoveryKind: 'continue',
+          recoveryNodeRunId: 'step',
+        },
+        { id: 'command', actions: [] },
       ],
     });
     const item = (id: string) => result.queue.find((entry) => entry.id === id);
     expect(item('done')).not.toHaveProperty('recoveryKind');
-    expect(item('flow')).not.toHaveProperty('recoveryKind');
+    expect(item('flow')).not.toHaveProperty('confirmSideEffects');
+    expect(item('command')).not.toHaveProperty('recoveryKind');
+    expect(item('command')).not.toHaveProperty('recoveryNodeRunId');
+
+    // A phone that asks before a Retry with side effects is offered it, with the step to pin.
+    const confirming = await readMobileOverview({ confirmsSideEffects: true });
+    expect(confirming.queue.find((entry) => entry.id === 'command')).toMatchObject({
+      actions: ['continueTask'],
+      recoveryKind: 'retry',
+      confirmSideEffects: true,
+      recoveryNodeRunId: 'cmd',
+    });
   });
 
   it('batches pending identities without reading transcripts and preserves question order', async () => {

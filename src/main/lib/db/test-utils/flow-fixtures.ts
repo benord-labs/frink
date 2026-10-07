@@ -10,7 +10,14 @@ import { createFlowVersion } from '../repos/flow-versions';
 import { createFlow } from '../repos/flows';
 import { createNodeRun, setNodeRunStatus } from '../repos/node-runs';
 import { createProject } from '../repos/projects';
-import { flowRunAdmissions, type NodeRun } from '../schema';
+import {
+  flowRunAdmissions,
+  type NodeRun,
+  nodeRuns,
+  subChatMessages,
+  type Task,
+  tasks,
+} from '../schema';
 import type { TestDb } from './fresh-db';
 
 /** Creates a project + flow + version(graph) + a running flow_run; returns their ids. */
@@ -85,4 +92,48 @@ export function seedActiveAdmission(db: TestDb, flowRunId: string): number {
     })
     .returning({ ticket: flowRunAdmissions.ticket })
     .get().ticket;
+}
+
+/**
+ * A step of `flowRunId` and the task that drove it, in chat `chat-1` / sub-chat `sub-1` (the caller
+ * seeds those). `answered` persists the task's prompt and the session's reply.
+ */
+export async function seedFlowStep(
+  db: TestDb,
+  flowRunId: string,
+  id: string,
+  status: Task['status'],
+  step: Partial<typeof nodeRuns.$inferInsert>,
+  answered = false,
+): Promise<Task> {
+  await db
+    .insert(nodeRuns)
+    .values({ id, flowRunId, nodeId: id, blockType: 'agent', status: 'completed', ...step });
+  const [task] = await db
+    .insert(tasks)
+    .values({
+      id: `task-${id}`,
+      description: id,
+      source: 'flow',
+      status,
+      result: { chatId: 'chat-1', subChatId: 'sub-1' },
+      flowRunId,
+      sourceId: id,
+      nodeRunId: id,
+    })
+    .returning();
+  if (answered) {
+    const prompt = {
+      id: `u-${id}`,
+      role: 'user',
+      parts: [],
+      metadata: { dispatchTaskId: task.id },
+    };
+    const reply = { id: `a-${id}`, role: 'assistant', parts: [] };
+    await db.insert(subChatMessages).values([
+      { subChatId: 'sub-1', seq: 0, message: JSON.stringify(prompt) },
+      { subChatId: 'sub-1', seq: 1, message: JSON.stringify(reply) },
+    ]);
+  }
+  return task;
 }
