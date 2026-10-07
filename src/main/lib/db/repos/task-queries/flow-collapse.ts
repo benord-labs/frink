@@ -4,8 +4,9 @@
  * schema, and keeping them here holds tasks.ts under its size ratchet.
  */
 
-import { sql as drizzleSql, type SQL, type SQLWrapper } from 'drizzle-orm';
+import { and, sql as drizzleSql, eq, type SQL, type SQLWrapper } from 'drizzle-orm';
 import { RESTART_INTERRUPTION_REASON } from '../../../../../shared/types/flow';
+import type { getDatabase } from '../../index';
 import { flowRuns, nodeRuns, tasks } from '../../schema';
 
 /**
@@ -37,14 +38,28 @@ const flowTaskRank = (statusCol: SQLWrapper): SQL => drizzleSql`CASE ${statusCol
     ELSE 0 END`;
 
 /** A retry left this attempt as history: a newer node_run exists for its node + fan-out lane.
- * In-place revivals reuse their node_run, so an attempt the user can still act on never matches. */
-const isSupersededAttempt = (nodeRunIdCol: SQLWrapper): SQL => drizzleSql`EXISTS (
+ * In-place revivals reuse their node_run, so an attempt the user can still act on never matches.
+ * Carry-on and retry refuse on this same rule, so queue and server agree which attempt is current. */
+export const isSupersededAttempt = (nodeRunIdCol: SQLWrapper): SQL => drizzleSql`EXISTS (
     SELECT 1 FROM ${nodeRuns} cur
       JOIN ${nodeRuns} newer ON newer.flow_run_id = cur.flow_run_id
        AND newer.node_id = cur.node_id
        AND newer.lane_index IS cur.lane_index
        AND (newer.created_at, newer.rowid) > (cur.created_at, cur.rowid)
      WHERE cur.id = ${nodeRunIdCol})`;
+
+/** Has a retry replaced this task's attempt? A task with no node_run (a manual task) never has. */
+export async function isSupersededTask(
+  db: ReturnType<typeof getDatabase>,
+  taskId: string,
+): Promise<boolean> {
+  const rows = await db
+    .select({ id: tasks.id })
+    .from(tasks)
+    .where(and(eq(tasks.id, taskId), isSupersededAttempt(tasks.nodeRunId)))
+    .limit(1);
+  return rows.length > 0;
+}
 
 const attemptRank = (statusCol: SQLWrapper, nodeRunIdCol: SQLWrapper): SQL =>
   drizzleSql`CASE WHEN ${isSupersededAttempt(nodeRunIdCol)} THEN 0 ELSE ${flowTaskRank(statusCol)} END`;
