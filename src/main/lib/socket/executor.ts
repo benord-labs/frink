@@ -185,7 +185,7 @@ import { buildFinalPartsForPersist, emitPlanFallbackSends } from './streaming/pl
 import { resolvePlanModeChunkSuppression } from './streaming/plan-mode-suppression';
 import { buildWakeHoldIo } from './streaming/wake-hold-io';
 import { storedExecutionSettings } from '../chat-composer';
-import { getCodexSession, setCodexSession } from './codex-session';
+import { beginCodexTurn, endCodexTurn, getCodexSession, setCodexSession } from './codex-session';
 
 export { clearCodexSession } from './codex-session';
 
@@ -634,6 +634,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
     });
     await linkedTaskSignalFinalization;
   };
+  const codexTurn = beginCodexTurn(chatId);
   try {
     /** Bind to a local BrowserWindow only when the request carried an originating window. */
     const localRendererWebContentsId: number | undefined =
@@ -1132,7 +1133,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
         );
 
         const codexSessionId = codexMetadata.sessionId;
-        if (codexSessionId) setCodexSession(chatId, subChatId, codexSessionId);
+        if (codexSessionId) setCodexSession(chatId, subChatId, codexSessionId, codexTurn);
         sendExecuteCompleteDeferred({
           chatId,
           subChatId,
@@ -2054,6 +2055,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       });
     }
   } finally {
+    endCodexTurn(codexTurn);
     logAdoptedTurnEnd(turn, subChatId, executionFailed ? 'failed' : 'ended without a disposition');
     if (!executionAdmissionAcknowledged) {
       payload.onExecutionStarted?.(new Error('The chat could not start. Refresh and try again.'));

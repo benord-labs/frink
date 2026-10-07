@@ -14,6 +14,7 @@ import {
   registerClaudeTurnBindingTests,
   registerClaudeWarmSessionGuardTests,
   registerClaudeWarmSessionTests,
+  registerCodexSessionCacheTests,
   registerCustomNodeTransportTest,
   registerExecutorPermissionTests,
   registerPermissionDbUnavailableTests,
@@ -173,6 +174,9 @@ vi.mock('../db/repos/tasks', () => ({
   // Teardown reconcile target — returns a task id so the wiring tests can assert the interrupted flag.
   cancelFlowTaskForSubChat: vi.fn(async () => 'flow-task-1'),
   parseResultRecord: (result: TaskResultRecord | null | undefined) => result ?? {},
+  // task-poller binds these into its default deps at import time, so the mock must define them.
+  getPendingTaskIds: vi.fn(async () => []),
+  claimTask: vi.fn(),
 }));
 
 // Interruption-park target — wiring tests assert (subChatId, reason) land on the parking module.
@@ -196,6 +200,10 @@ vi.mock('../flows/resume', () => ({
 // What a resume writes is covered in tasks/*.test.ts; here only which task is resumed, and when.
 vi.mock('../tasks', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../tasks')>()),
+  // A spy over the real disposal, so a test can land an abort inside its await.
+  disposeTrailingStreamErrorChunk: vi.fn(
+    (await importOriginal<typeof import('../tasks')>()).disposeTrailingStreamErrorChunk,
+  ),
   resumeParkedTaskInPlace: vi.fn(async () => true),
   reviveRestartInterruptedFlow: vi.fn(async () => undefined),
 }));
@@ -362,7 +370,6 @@ import {
   _resetExecutorStateForTests,
   abortActiveExecutionsForWebContents,
   buildPlanFallbackSends,
-  clearCodexSession,
   drainPendingPermissions,
   emitPlanFallbackSends,
   extractNativePlanPathFromChunks,
@@ -3749,89 +3756,11 @@ describe('context isolation edge cases', () => {
 
 // The helpers below execute up to five full turns; keep their budget load-safe and their mocks local.
 describe('provider session cache helpers', () => {
-  const machineId = 'machine-1';
-  const project = {
-    id: 'project-1',
-    user_id: 'user-1',
-    name: 'Project One',
-    path: '/tmp/project',
-    git_remote: null,
-    shortcut_project_id: null,
-    is_primary: false,
-    machine_id: machineId,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    description: null,
-    rules: [],
-  };
-  const codexCredential = {
-    token: null,
-    isApiKey: false,
-    type: 'codex' as const,
-    label: 'codex-test',
-    passthrough: true,
-  };
-
-  async function runExecute(
-    chatId: string,
-    subChatId: string,
-    sessionIdFromStream: string,
-  ): Promise<void> {
-    vi.mocked(runCodexAgent).mockImplementation(async function* (input) {
-      yield {
-        type: 'finish',
-        messageMetadata: { sessionId: sessionIdFromStream, resumedFrom: input.resumeThreadId },
-      } as never;
-    });
-    await handleRemoteExecute({
-      chatId,
-      subChatId,
-      projectId: project.id,
-      message: 'hello',
-      mode: 'agent',
-      assistantMessageId: `assistant-${subChatId}`,
-      history: [],
-    });
-  }
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.mocked(runCodexAgent).mockReset();
+  registerCodexSessionCacheTests((machineId, project) => {
     claudeQueryMock.mockReset();
     stubPermissionsStoreDefault();
     applyExecutorMockDefaults(machineId, project);
-    vi.mocked(getDefaultClaudeCodeToken).mockResolvedValue(codexCredential);
   });
-
-  afterEach(() => {
-    clearCodexSession('chat-a');
-    clearCodexSession('chat-b');
-    vi.clearAllMocks();
-  });
-
-  it('stores sessions by sub-chat ID to prevent collisions', async () => {
-    await runExecute('chat-a', 'sub-1', 'sess-1');
-    await runExecute('chat-a', 'sub-2', 'sess-2');
-    await runExecute('chat-a', 'sub-1', 'sess-1b');
-
-    expect(vi.mocked(runCodexAgent).mock.calls[0]?.[0]?.resumeThreadId).toBeUndefined();
-    expect(vi.mocked(runCodexAgent).mock.calls[1]?.[0]?.resumeThreadId).toBeUndefined();
-    expect(vi.mocked(runCodexAgent).mock.calls[2]?.[0]?.resumeThreadId).toBe('sess-1');
-  }, 25_000);
-
-  it('clears all sub-chat sessions for a parent chat ID', async () => {
-    await runExecute('chat-a', 'sub-1', 'sess-1');
-    await runExecute('chat-a', 'sub-2', 'sess-2');
-    await runExecute('chat-b', 'sub-3', 'sess-3');
-
-    clearCodexSession('chat-a');
-
-    await runExecute('chat-a', 'sub-1', 'sess-1-new');
-    await runExecute('chat-b', 'sub-3', 'sess-3-new');
-
-    expect(vi.mocked(runCodexAgent).mock.calls[3]?.[0]?.resumeThreadId).toBeUndefined();
-    expect(vi.mocked(runCodexAgent).mock.calls[4]?.[0]?.resumeThreadId).toBe('sess-3');
-  }, 25_000);
 });
 
 describe('execute-complete payload', () => {
