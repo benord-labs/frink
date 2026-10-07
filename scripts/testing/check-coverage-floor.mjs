@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // Repository-wide coverage floor, enforced in CI. Raise it as coverage improves; never lower it.
-export const FLOOR = { statements: 65, functions: 63 };
+export const FLOOR = { statements: 70, functions: 70 };
 
 /** The `total` block of a Vitest json-summary report, or null when it cannot be read. */
 export function readTotals(path) {
