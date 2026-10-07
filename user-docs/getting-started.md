@@ -8,7 +8,7 @@ Frink runs AI coding agents (Claude Code or Codex CLI) on your machine, against 
 
 ## First launch
 
-The first time you open Frink you get a short "Welcome to Frink." screen. Click **Get started**, or press **Enter**, to dismiss it. You only see it once.
+The first time you open Frink you get a short "Welcome to Frink" screen. Click **Get started**, or press **Enter**, to dismiss it. You only see it once.
 
 After that you land in the app with no AI account connected. Connecting one is the first thing to do.
 
