@@ -4,6 +4,7 @@ import { getDatabase } from '../../db';
 import type { TaskResultRecord } from '../../db/repos/tasks';
 import { chats, type FlowRun, subChatMessages, subChats, type Task, tasks } from '../../db/schema';
 import { freshDb } from '../../db/test-utils/fresh-db';
+import { PhoneSafeRefusal } from './task-refusals';
 import type { FlowRunRecoveries } from './tasks';
 
 const createTaskMock = vi.fn();
@@ -246,6 +247,11 @@ describe('tasksRouter status schema', () => {
         code: 'CONFLICT',
         message: 'Only failed or attention-parked tasks can be retried',
       });
+      // A lost race: the phone keeps its generic refresh text for it.
+      carryOnFlowTaskMock.mockResolvedValueOnce({ ok: false, reason: 'invalid-state' });
+      await expect(
+        (await caller()).recover({ taskId: 'task-1', kind: 'continue' }),
+      ).rejects.not.toBeInstanceOf(PhoneSafeRefusal);
 
       // No Retry is offered beside a Continue, so the copy names the action that still works.
       carryOnFlowTaskMock.mockResolvedValueOnce({ ok: false, reason: 'admission-required' });
@@ -261,7 +267,9 @@ describe('tasksRouter status schema', () => {
         (await caller()).recover({ taskId: 'task-1', kind: 'continue' }),
       ).rejects.toMatchObject({
         code: 'PRECONDITION_FAILED',
-        message: expect.stringMatching(/chat is archived\. Restore the chat to continue it/),
+        message: expect.stringMatching(
+          /chat is archived\. Restore the chat in Frink to continue it/,
+        ),
       });
 
       carryOnFlowTaskMock.mockResolvedValueOnce({ ok: false, reason: 'superseded' });
@@ -271,6 +279,14 @@ describe('tasksRouter status schema', () => {
         code: 'CONFLICT',
         message: expect.stringMatching(/replaced by a newer one/),
       });
+
+      // These refusals tell the user what to do, so the phone shows their own message.
+      for (const reason of ['admission-required', 'chat-archived', 'superseded'] as const) {
+        carryOnFlowTaskMock.mockResolvedValueOnce({ ok: false, reason });
+        await expect(
+          (await caller()).recover({ taskId: 'task-1', kind: 'continue' }),
+        ).rejects.toBeInstanceOf(PhoneSafeRefusal);
+      }
     });
 
     it('restarts a non-flow task fresh on retry, mapping its refusal', async () => {
@@ -853,13 +869,17 @@ describe('tasksRouter status schema', () => {
   it('rejects Flow plan execution before mutation when its admission is gone', async () => {
     const { tasksRouter } = await import('./tasks');
     const caller = tasksRouter.createCaller({ getWindow: () => null });
-    getTaskByIdMock.mockResolvedValueOnce({ id: 'task-flow', flowRunId: 'run-1' });
-    hasActiveFlowAdmissionMock.mockResolvedValueOnce(false);
+    getTaskByIdMock.mockResolvedValue({ id: 'task-flow', flowRunId: 'run-1' });
+    hasActiveFlowAdmissionMock.mockResolvedValue(false);
 
     await expect(caller.startExecution({ taskId: 'task-flow' })).rejects.toMatchObject({
       code: 'PRECONDITION_FAILED',
-      message: expect.stringMatching(/use Continue or Retry there/i),
+      message: expect.stringMatching(/Continue or Retry it from the Queue/),
     });
+    // It survives createCaller as the phone-safe refusal, so the phone shows its guidance.
+    await expect(caller.startExecution({ taskId: 'task-flow' })).rejects.toBeInstanceOf(
+      PhoneSafeRefusal,
+    );
     expect(startExecutionFromReviewDetailedMock).not.toHaveBeenCalled();
   });
 

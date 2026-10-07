@@ -4,7 +4,11 @@ import { TRPCError } from '@trpc/server';
 import type { TaskMutationFailureReason } from '../../db/repos/tasks';
 import type { CarryOnFlowTaskResult } from '../../flows/rerun';
 
-type Refusal = [code: TRPCError['code'], message: string];
+type Refusal = [code: TRPCError['code'], message: string, phoneSafe?: true];
+
+/** An authored refusal whose message the phone may show. Any other TRPCError reaches the phone as
+ *  generic text, so new refusal wording stays an explicit choice. */
+export class PhoneSafeRefusal extends TRPCError {}
 
 /** Throws the refusal for `reason`; with no reason the failure is a fault, a plain Error. */
 export function throwTaskMutationReason(
@@ -39,17 +43,20 @@ export function throwCarryOnReason(
     'invalid-state': ['CONFLICT', 'Only failed or attention-parked tasks can be retried'],
     'chat-archived': [
       'PRECONDITION_FAILED',
-      "This task's chat is archived. Restore the chat to continue it.",
+      "This task's chat is archived. Restore the chat in Frink to continue it.",
+      true,
     ],
     'admission-required': [
       'PRECONDITION_FAILED',
       'This paused Flow lost its place in the run queue. Cancel it and start it again.',
+      true,
     ],
     superseded: [
       'CONFLICT',
       'This attempt was replaced by a newer one. Recover from the latest attempt.',
+      true,
     ],
   } satisfies Record<typeof reason, Refusal>;
-  const [code, message] = refusals[reason];
-  throw new TRPCError({ code, message });
+  const [code, message, phoneSafe]: Refusal = refusals[reason];
+  throw phoneSafe ? new PhoneSafeRefusal({ code, message }) : new TRPCError({ code, message });
 }
