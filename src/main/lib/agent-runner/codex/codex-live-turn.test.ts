@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ResponseError } from 'vscode-jsonrpc/node';
+import { z } from 'zod';
 import { getRuntimeTopologySnapshot } from '../../diagnostics/provider-topology';
 import type { CodexAppServerClient } from './app-server-client';
 import {
@@ -15,8 +16,47 @@ const fakeClient = (
   sendRequest: (m: string, p?: unknown) => Promise<unknown>,
 ): CodexAppServerClient => ({ sendRequest }) as unknown as CodexAppServerClient;
 
+/** A turn/steer request as the app server receives it, with the native context beside the body. */
+const steerRequest = z.object({
+  input: z.array(z.object({ type: z.string(), text: z.string() })),
+  expectedTurnId: z.string(),
+  additionalContext: z.object({
+    frink_message: z.object({ kind: z.string(), value: z.string() }),
+  }),
+});
+
 describe('codex live-turn registry', () => {
   beforeEach(() => __resetCodexLiveTurnsForTest());
+
+  it('gives Flow steers their own native metadata without changing the body', async () => {
+    const args: Array<z.infer<typeof steerRequest>> = [];
+    setCodexLiveTurn('flow', {
+      client: fakeClient(async (_method, params) => {
+        args.push(steerRequest.parse(params));
+        return {};
+      }),
+      threadId: 'th',
+      turnId: 'tn',
+      hasFlowProvenance: true,
+      pushChunk: () => {},
+      hasOpenApproval: () => false,
+      commandOutputs: new Map(),
+    });
+    await steerCodexTurn('flow', 'same note');
+    await steerCodexTurn('flow', 'same note');
+    expect(args[0]).toMatchObject({
+      input: [{ type: 'text', text: 'same note' }],
+      expectedTurnId: 'tn',
+    });
+    expect(JSON.parse(args[0]!.additionalContext.frink_message.value)).toMatchObject({
+      source: 'person',
+      kind: 'steer',
+    });
+    expect(args[0]!.additionalContext.frink_message.kind).toBe('application');
+    expect(args[0]!.additionalContext.frink_message.value).not.toBe(
+      args[1]!.additionalContext.frink_message.value,
+    );
+  });
 
   it('clears only when the entry still describes the same turn', () => {
     const client = fakeClient(async () => ({}));

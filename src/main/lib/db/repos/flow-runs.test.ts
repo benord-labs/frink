@@ -12,6 +12,7 @@ import {
   getLatestFlowRunForChat,
   getLatestRunsForFlows,
   getOrCreateFlowRunByIdempotencyKey,
+  getNewestFlowRunForSubChat,
   listActiveFlowRunIdsForChat,
   listChatIdsWithActiveFlowRun,
   listChatsByBatch,
@@ -105,6 +106,74 @@ describe('getOrCreateFlowRunByIdempotencyKey — exactly-once on replay', () => 
 
 // Chat → flow-run linkage is JSON-only (no FK). chats.delete relies on this lookup to
 // cancel the runs a deleted chat drives (regression: lost in the local-first migration).
+describe('getNewestFlowRunForSubChat — the run that currently owns a sub-chat, in any status', () => {
+  const SUB_CHAT = 'sub-live';
+  let db: TestDb;
+  beforeEach(() => {
+    db = freshDb();
+  });
+
+  /** A run linked to SUB_CHAT the way no task can express: through its trigger context alone. */
+  async function tasklessRun(key: string, status: 'running' | 'completed' | 'failed') {
+    const flow = await createFlow(db, { name: key });
+    const version = await createFlowVersion(db, { flowId: flow.id, graph: GRAPH });
+    const { run } = await getOrCreateFlowRunByIdempotencyKey(db, {
+      flowVersionId: version.id,
+      status: 'running',
+      triggerContext: { subChatId: SUB_CHAT },
+      idempotencyKey: key,
+      startedAt: new Date(),
+    });
+    if (status !== 'running')
+      await setFlowRunStatus(db, run.id, status, { completedAt: new Date() });
+    return run.id;
+  }
+  const taskOnRun = (flowRunId: string) =>
+    createTask(db, {
+      description: 'step',
+      source: 'flow',
+      flowRunId,
+      result: { subChatId: SUB_CHAT },
+    });
+
+  const statusNow = async () => (await getNewestFlowRunForSubChat(db, SUB_CHAT))?.status ?? null;
+
+  it('is null for a sub-chat no run is linked to', async () => {
+    expect(await getNewestFlowRunForSubChat(db, SUB_CHAT)).toBeNull();
+    expect(await getNewestFlowRunForSubChat(db, '')).toBeNull();
+  });
+
+  it('reports the linked run with its current status, ended or not', async () => {
+    const { flowRunId } = await seedFlowRun(db, GRAPH);
+    await taskOnRun(flowRunId);
+    for (const status of ['running', 'paused', 'failed', 'completed', 'cancelled'] as const) {
+      await setFlowRunStatus(db, flowRunId, status);
+      expect(await getNewestFlowRunForSubChat(db, SUB_CHAT)).toEqual({ id: flowRunId, status });
+    }
+  });
+
+  it('finds a run in a taskless window, when only the run itself links to the sub-chat', async () => {
+    const id = await tasklessRun('taskless', 'running');
+    expect(await getNewestFlowRunForSubChat(db, SUB_CHAT)).toEqual({ id, status: 'running' });
+  });
+
+  it('is null once the run row is deleted, even with a task still in a driving status', async () => {
+    const { flowRunId } = await seedFlowRun(db, GRAPH);
+    const task = await taskOnRun(flowRunId);
+    await updateTaskStatus(db, task.id, 'running');
+    await db.delete(flowRuns).where(eq(flowRuns.id, flowRunId));
+    expect(await getNewestFlowRunForSubChat(db, SUB_CHAT)).toBeNull();
+  });
+
+  it('follows the newest run on a reused chat, not an older one', async () => {
+    await tasklessRun('older-failed', 'failed');
+    await tasklessRun('newer-completed', 'completed');
+    expect(await statusNow()).toBe('completed');
+    await tasklessRun('newest-running', 'running');
+    expect(await statusNow()).toBe('running');
+  });
+});
+
 describe('listActiveFlowRunIdsForChat', () => {
   const CHAT = 'chat-abc';
   let db: TestDb;

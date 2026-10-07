@@ -13,6 +13,7 @@ import { drainToResult } from './claude-session/drain-to-result';
 import { logTurnTiming, noteTurnTiming, type TurnTiming } from './claude-session/turn-timing';
 import type { WakePump, WakePumpCallbacks, WakePumpExit } from './wake-pump-types';
 import { settleIfWorkFinished, type WaitOverDrain } from './wake-wait-over';
+import { pushClaudeTurnDelivery } from './message-provenance/claude';
 
 /**
  * The ONE consumer of a session's shared SDK generator, started with the session and living as long
@@ -24,8 +25,7 @@ import { settleIfWorkFinished, type WaitOverDrain } from './wake-wait-over';
  * backpressure is the buffer, so a frame the CLI writes between one registration and the next keeps
  * exactly the timing it has always had. A retained session's reader watches it instead.
  *
- * Imports run one way, registry -> loop: the registry owns session bookkeeping and eviction, which
- * reaches this file only as the pre-bound `session.evict` and `session.retire`.
+ * Registry -> loop imports stay one-way; eviction uses the pre-bound session callbacks.
  */
 
 /** A registered foreground turn. Every frame routes here until the turn's own boundary. */
@@ -215,7 +215,7 @@ async function pushTurn(
     if (session.loop.turn !== sink) return;
     if (prepared === false)
       throw new Error(`runTurn: ${session.subChatId} refused — adopt refused`);
-    session.queue.push(message);
+    pushClaudeTurnDelivery(session, message);
   } catch (err) {
     if (session.loop.turn === sink) endTurn(session, err);
     return;
@@ -320,7 +320,7 @@ async function pushTakeover(session: ClaudeSession, arming: IdleArming): Promise
     }
     // The arming may end while preparation awaits; endArming rejects the unpushed takeover.
     if (arming.ended) return;
-    session.queue.push(takeover.message);
+    pushClaudeTurnDelivery(session, takeover.message);
     takeover.pushedAt = Date.now();
     takeover.onPushed?.();
   } catch (err) {

@@ -53,6 +53,7 @@ vi.mock('../credentials', () => ({
 vi.mock('../tasks/dispatch-cancel-fence', () => ({ abortIfTaskNoLongerRunning: fenceMock }));
 
 import { onExecuteRequest, sendMessage } from './client';
+import type { MessageDelivery } from './execution/message-provenance/origin';
 
 const payload = (over: Record<string, unknown> = {}) =>
   ({
@@ -91,5 +92,32 @@ describe('dispatched turn → dispatch-cancel fence', () => {
   it('never fences a user send (no dispatch task id)', async () => {
     await send({});
     expect(fenceMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('sendMessage → execute request', () => {
+  async function deliveryFor(sent: Parameters<typeof sendMessage>[0]) {
+    let seen: MessageDelivery | undefined;
+    const off = onExecuteRequest((request) => {
+      seen = request.delivery;
+      request.onExecutionStarted?.();
+    });
+    try {
+      await sendMessage(sent).catch(() => {});
+    } finally {
+      off();
+    }
+    return seen;
+  }
+
+  it('computes the delivery in main, ignoring any supplied one', async () => {
+    expect(await deliveryFor(payload())).toEqual({
+      messageOrigin: { source: 'person', kind: 'message' },
+    });
+    const supplied = { messageOrigin: { source: 'person', kind: 'message' } };
+    expect(await deliveryFor(payload({ dispatchTaskId: 'task-9', delivery: supplied }))).toEqual({
+      messageOrigin: { source: 'internal', kind: 'message' },
+      dispatchTaskId: 'task-9',
+    });
   });
 });

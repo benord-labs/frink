@@ -1,15 +1,6 @@
-/**
- * Operator reminders injected mid-conversation — mode-exit transitions (plan→agent, debug→other) and
- * the disarmed task-signal notice. These are delivered as an IN-CONVERSATION SYSTEM PROMPT, NOT as
- * hand-rolled `<system-reminder>` user-turn text:
- *  - Claude path → the SDK's `UserPromptSubmit` hook ({@link buildUserPromptSubmitReminderHook}); the
- *    CLI emits a real `{role:"system"}` message (or its own reminder rendering) per model.
- *  - Codex → no in-conversation system-prompt channel yet (tracked: sc-996); prepend as text
- *    ({@link wrapRemindersForPrompt}), its only current option.
- *
- * Extracted from `executor.ts` to keep that file small and make the gating logic unit-testable in
- * isolation (see `operator-reminders.test.ts`).
- */
+/** Existing mode/availability reminders: Claude hook context, or legacy Codex prompt text.
+ * Per-delivery message provenance uses its own runtime adapters. */
+import log from 'electron-log';
 import { PLAN_MODE_NO_FINISH_SIGNAL } from '../../../shared/lib/task-agent-lifecycle-prompt';
 
 // Worded to be unconditionally TRUE for any agent-mode turn: it fires on unknown history too
@@ -91,7 +82,7 @@ export function buildOperatorReminders(inputs: OperatorReminderInputs): Operator
 
 /**
  * Codex fallback (sc-996): wrap reminders as `<system-reminder>` text for prompt prepend, since
- * that runtime has no in-conversation system-prompt channel.
+ * retained independently of the native channel used for message provenance.
  */
 export function wrapRemindersForPrompt(reminders: string[]): string {
   return reminders
@@ -101,11 +92,35 @@ export function wrapRemindersForPrompt(reminders: string[]): string {
 
 /**
  * Claude path: the UserPromptSubmit callback that injects `reminders` as an in-conversation system
- * message; session-callbacks.ts delegates to it per turn.
+ * context attachment; the CLI chooses system-role or reminder rendering per model.
  */
 export function buildUserPromptSubmitReminderHook(reminders: string[]) {
   const additionalContext = reminders.join('\n\n');
   return async () => ({
     hookSpecificOutput: { hookEventName: 'UserPromptSubmit' as const, additionalContext },
   });
+}
+
+export type TurnReminderInputs = OperatorReminderInputs & {
+  agentRuntime: string;
+  subChatId: string;
+  prompt: string;
+};
+
+/** Existing reminder delivery stays unchanged: a Claude hook or Codex prompt prepend. */
+export function prepareTurnReminders(inputs: TurnReminderInputs): OperatorReminderResult & {
+  prompt: string;
+} {
+  const { agentRuntime, subChatId } = inputs;
+  const result = buildOperatorReminders(inputs);
+  let prompt = inputs.prompt;
+  if (result.reminders.length > 0) {
+    if (agentRuntime !== 'claude')
+      prompt = `${wrapRemindersForPrompt(result.reminders)}\n\n${prompt}`;
+    const via = agentRuntime === 'claude' ? 'UserPromptSubmit hook' : 'prompt prepend';
+    log.info(
+      `[Socket Executor] ${result.reminders.length} operator reminder(s) for ${subChatId} via ${via}`,
+    );
+  }
+  return { ...result, prompt };
 }
