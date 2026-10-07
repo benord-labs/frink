@@ -168,9 +168,12 @@ async function requireActiveFlowAdmissionForTask(task: Task | null): Promise<voi
   if (!task?.flowRunId) return;
   const { hasActiveFlowAdmission } = await import('../../flows/admission/runtime');
   if (!(await hasActiveFlowAdmission(task.flowRunId))) {
-    throw new Error(
-      'This Flow run lost its place in the run queue. Open the Flow run and use Continue or Retry there.',
-    );
+    // A refusal, not a fault: the phone answers it 409 and does not report it.
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message:
+        'This Flow run lost its place in the run queue. Open the Flow run and use Continue or Retry there.',
+    });
   }
 }
 

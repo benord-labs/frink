@@ -856,10 +856,22 @@ describe('tasksRouter status schema', () => {
     getTaskByIdMock.mockResolvedValueOnce({ id: 'task-flow', flowRunId: 'run-1' });
     hasActiveFlowAdmissionMock.mockResolvedValueOnce(false);
 
-    await expect(caller.startExecution({ taskId: 'task-flow' })).rejects.toThrow(
-      /use Continue or Retry there/i,
-    );
+    await expect(caller.startExecution({ taskId: 'task-flow' })).rejects.toMatchObject({
+      code: 'PRECONDITION_FAILED',
+      message: expect.stringMatching(/use Continue or Retry there/i),
+    });
     expect(startExecutionFromReviewDetailedMock).not.toHaveBeenCalled();
+  });
+
+  it('starts Flow plan execution while its run still holds admission', async () => {
+    const { tasksRouter } = await import('./tasks');
+    const caller = tasksRouter.createCaller({ getWindow: () => null });
+    getTaskByIdMock.mockResolvedValueOnce({ id: 'task-flow', flowRunId: 'run-1' });
+    hasActiveFlowAdmissionMock.mockResolvedValueOnce(true);
+
+    await caller.startExecution({ taskId: 'task-flow' });
+    expect(hasActiveFlowAdmissionMock).toHaveBeenCalledWith('run-1');
+    expect(startExecutionFromReviewDetailedMock).toHaveBeenCalled();
   });
 
   it('returns success=true when backend delete succeeds', async () => {

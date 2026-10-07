@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MobileApiError } from './errors';
 import { ChatBusyError, DuplicateMessageError } from '../../socket/execution/send-admission';
@@ -355,6 +356,23 @@ describe('mobile chat actions', () => {
     expect(fixture.startExecution).not.toHaveBeenCalled();
     await sendMobileMessage(request, approval);
     expect(fixture.startExecution).toHaveBeenCalledWith({ taskId: 'task' });
+  });
+
+  it('passes a lost-admission plan approval refusal through unwrapped, for the API to answer 409', async () => {
+    fixture.getDriving.mockResolvedValue({ task: { id: 'task', status: 'plan_ready' }, run: null });
+    const refusal = new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message: 'This Flow run lost its place in the run queue.',
+    });
+    fixture.startExecution.mockRejectedValueOnce(refusal);
+    fixture.send.mockImplementation(async (_payload, options) => options.beforeSend());
+    const request = { ...identity, requestId: 'request', text: 'build it' };
+    await expect(
+      sendMobileMessage(request, {
+        mode: 'agent' as const,
+        approvedPlanContext: { planId: 'p', planText: 'x' },
+      }),
+    ).rejects.toBe(refusal);
   });
 
   it.each([

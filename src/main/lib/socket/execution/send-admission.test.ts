@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   _clearActiveExecutionsForTests,
@@ -77,6 +78,17 @@ describe('non-preempting send admission', () => {
     await expect(
       withMessageAdmission('failure', true, async (started) => started()),
     ).resolves.toBeUndefined();
+  });
+
+  it('rejects with a refused beforeSend error itself, so the phone API can still answer its code', async () => {
+    // As client.ts sendMessage does: acknowledge with the error, then rethrow it.
+    const refusal = new TRPCError({ code: 'PRECONDITION_FAILED', message: 'lost its place' });
+    await expect(
+      withMessageAdmission('refused', true, async (started) => {
+        started(refusal);
+        throw refusal;
+      }),
+    ).rejects.toBe(refusal);
   });
 
   it('rejects a persisted duplicate without claiming execution succeeded or dispatching again', async () => {
