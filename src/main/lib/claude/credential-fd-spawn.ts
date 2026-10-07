@@ -12,7 +12,7 @@ export const CLAUDE_OAUTH_TOKEN_FD_ENV = 'CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTO
 
 /** Every env key a Claude credential can occupy: the raw vars (Windows, or a user's own shell
  * export) and the fd pointers. A retry or a Frink-built child env clears all of them. */
-export const CLAUDE_CREDENTIAL_ENV_KEYS = [
+const CLAUDE_CREDENTIAL_ENV_KEYS = [
   'ANTHROPIC_API_KEY',
   'CLAUDE_CODE_OAUTH_TOKEN',
   CLAUDE_API_KEY_FD_ENV,

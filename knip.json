@@ -3,23 +3,14 @@
   "workspaces": {
     ".": {
       "entry": [
-        "electron.vite.config.ts",
-        "src/main/index.ts",
-        "src/preload/index.ts",
-        "src/renderer/main.tsx",
         "scripts/{dev,skills,testing}/*.{js,mjs,ts}",
         "scripts/binaries/*.mjs",
         "scripts/perf/*.mjs",
         "scripts/publish/*.mjs",
         "scripts/plugin-catalog/generate.ts"
       ],
-      "project": ["src/**/*.{ts,tsx}"],
-      "ignoreDependencies": [
-        "babel-plugin-react-compiler",
-        "path-browserify",
-        "@tailwindcss/typography",
-        "tw-animate-css"
-      ]
+      "project": ["src/**/*.{ts,tsx,css}"],
+      "ignoreDependencies": ["babel-plugin-react-compiler", "path-browserify"]
     },
     "relay": {
       "entry": ["src/index.ts"],
@@ -30,7 +21,8 @@
       "project": ["src/**/*.ts", "tests/**/*.ts"]
     }
   },
-  "ignoreBinaries": ["lsof", "ps", "security"],
+  "ignore": ["mobile/**"],
+  "ignoreBinaries": ["mkfifo", "node-gyp"],
   "ignoreIssues": {
     "src/renderer/features/agents/ui/agent-task-tools.tsx": ["exports"],
     "src/renderer/lib/hotkeys/shortcut-registry.ts": ["exports"]

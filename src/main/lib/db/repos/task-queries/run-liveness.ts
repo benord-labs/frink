@@ -4,7 +4,7 @@ import type { getDatabase } from '../../index';
 import { flowRuns, tasks } from '../../schema';
 import { isSupersededAttempt } from './flow-collapse';
 
-export function pausedFlowRun(flowRunId?: string): SQL | undefined {
+function pausedFlowRun(flowRunId?: string): SQL | undefined {
   return flowRunId
     ? sql`exists (select 1 from ${flowRuns} where ${flowRuns.id} = ${flowRunId} and ${flowRuns.status} = 'paused')`
     : undefined;

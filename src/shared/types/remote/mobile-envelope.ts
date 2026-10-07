@@ -3,12 +3,7 @@ import { decodedBytes } from '../../utils/base64';
 
 /** Decoded body bytes per part, so a part's JSON stays well under the relay's 256 KiB frame cap. */
 export const MOBILE_ENVELOPE_PART_BYTES = 128 * 1024;
-export const MOBILE_ENVELOPE_PATHS = [
-  '/pair',
-  '/api',
-  '/api/notifications',
-  '/api/attachments',
-] as const;
+const MOBILE_ENVELOPE_PATHS = ['/pair', '/api', '/api/notifications', '/api/attachments'] as const;
 
 const id = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const body = z
