@@ -123,7 +123,7 @@ export async function describeInterruptedRunForChat(
 }
 
 /** Retry of a failed flow task: un-park its run in place so the watcher accepts the agent's next
- * `done`. Declines, writing nothing, without the run's active slot. */
+ * `done`. Declines, writing nothing, without the run's active slot or once the run is cancelled. */
 export async function resumeFailedFlowInPlace(
   flowRunId: string,
   drivingTaskId?: string,

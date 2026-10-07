@@ -657,6 +657,34 @@ describe('boot carry-on — staged from the startup sweep, fired ahead of queued
       expect(mocks.resumeDispatcher).toHaveBeenCalledTimes(1);
     });
 
+    // A task-level Retry (tasks.recover → retryTerminalFlowRun) on a step with no answered session.
+    it('stages a Retry behind the held admission and re-admits once it settles, never erroring', async () => {
+      const { flowRunId, nodeRunId } = await seedInterruptedAgentRun();
+      await settleInterruption(flowRunId, nodeRunId, true, false);
+
+      await expect(
+        stageResumeBehindHeldAdmission({ flowRunId, nodeRunId, kind: 'retry' }),
+      ).resolves.toBe(true);
+      expect(hasStagedContinuation(flowRunId)).toBe(true);
+      expect(mocks.resumeDispatcher).not.toHaveBeenCalled();
+      // The click re-admits through the ticket: nothing reopened the cancelled run in place.
+      expect(db.select().from(flowRuns).where(eq(flowRuns.id, flowRunId)).get()?.status).toBe(
+        'cancelled',
+      );
+
+      await requestFlowAdmissionRelease(flowRunId);
+
+      await vi.waitFor(() => expect(mocks.resumeDispatcher).toHaveBeenCalledTimes(1));
+      expect(mocks.resumeDispatcher).toHaveBeenCalledWith(
+        expect.objectContaining({
+          flow_run_id: flowRunId,
+          node_run_id: nodeRunId,
+          recovery_kind: 'retry',
+        }),
+        expect.any(Number),
+      );
+    });
+
     it('leaves a click to enqueue directly once the slot has settled', async () => {
       const { flowRunId, nodeRunId, taskId } = await seedInterruptedAgentRun();
       answerStep(taskId);

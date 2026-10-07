@@ -8,8 +8,7 @@ import type { Task as DbTask } from '../db/schema';
 /**
  * Un-fail a retried flow task's node_run/flow_run so the watcher accepts the agent's next `done`
  * (a terminal run would discard it). Non-batch only — resumeFailedFlowInPlace refuses batch runs
- * whose stage-run wasn't pre-opened, deliberately-cancelled runs (no restart marker), fan-out
- * lanes. Returns whether the run is now accepting the agent's `done`: on `false` the caller must
+ * whose stage-run wasn't pre-opened, cancelled runs (restart-interrupted or not), fan-out lanes. Returns whether the run is now accepting the agent's `done`: on `false` the caller must
  * NOT dispatch — the turn would stream into a terminal run and stall silently. Never throws.
  */
 export async function unparkRetriedFlowRun(taskId: string, flowRunId: string): Promise<boolean> {

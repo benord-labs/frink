@@ -169,11 +169,11 @@ function leavesSiblingBranchesBehind(
   return siblingBranchResumeTargets(parseGraph(version.graph), attempts, anchor).length > 0;
 }
 
-/** Un-parks a failed or paused run's last unfinished node, or a restart-interrupted run's marked
- * node. A batch member only while its stage still waits for it; a deliberate Cancel never. */
+/** Un-parks a failed or paused run's last unfinished node; never a cancelled run. A batch member
+ * only while its stage still waits for it. */
 export function unparkFailedRunCommand(db: Db, flowRunId: string): NodeRun | null {
   const run = readRun(db, flowRunId);
-  if (!run) return null;
+  if (!run || run.status === 'cancelled') return null;
   if (run.batchId != null) {
     const stage = db
       .select({ status: batchStageRuns.status })
@@ -182,7 +182,6 @@ export function unparkFailedRunCommand(db: Db, flowRunId: string): NodeRun | nul
       .get();
     if (stage?.status !== 'dispatched') return null;
   }
-  if (run.status === 'cancelled') return reviveMarkedNode(db, flowRunId);
   const attempts = readNodeRuns(db, flowRunId);
   const last = lastUnfinishedNodeRun(attempts);
   if (!last) return null;
@@ -222,16 +221,6 @@ export function flowStillRunning(db: Db, flowRunId: string, nodeRunId: string | 
   if (!nodeRunId || readRun(db, flowRunId)?.status !== 'running') return false;
   const node = db.select().from(nodeRuns).where(eq(nodeRuns.id, nodeRunId)).get();
   return node?.status === 'running';
-}
-
-/** Revives a restart-interrupted (cancelled + marker) run's marked node in place. */
-function reviveMarkedNode(db: Db, flowRunId: string): NodeRun | null {
-  const marked = restartMarkedNode(db, flowRunId);
-  if (!marked) return null;
-  return unparkNode(db, flowRunId, marked.id, {
-    nodeStatuses: ['cancelled'],
-    runStatuses: ['cancelled'],
-  });
 }
 
 export type ReopenDeclined = 'run-changed' | 'node-changed' | 'no-slot';

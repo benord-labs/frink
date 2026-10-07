@@ -699,10 +699,8 @@ describe('resumeFailedFlowInPlace — failed-run retry unpark (non-batch only)',
     expect(await resumeFailedFlowInPlace(flowRunId)).toBe(false);
   });
 
-  it('revives a boot-sweep-cancelled run (restart marker present) when the user retries its failed task', async () => {
-    // Race: the task failed, then a restart sweep flipped run + node to cancelled before the
-    // user clicked Retry. The sweep stamps the restart marker — that marker is what makes the
-    // cancelled run recoverable here.
+  it('declines a restart-interrupted run (cancelled + marker) — its Retry re-admits through the resume ticket', async () => {
+    // Even with the restart marker and a held slot, nothing revives a cancelled run in place.
     const { flowRunId } = await seedFlowRun(db, GRAPH);
     seedActiveAdmission(db, flowRunId);
     const node = await createNodeRun(db, {
@@ -723,9 +721,9 @@ describe('resumeFailedFlowInPlace — failed-run retry unpark (non-batch only)',
     });
     await setFlowRunStatus(db, flowRunId, 'cancelled', { completedAt: new Date() });
 
-    expect(await resumeFailedFlowInPlace(flowRunId, 'task-1')).toBe(true);
-    expect((await getNodeRun(db, node.id))?.status).toBe('running');
-    expect((await getFlowRun(db, flowRunId))?.status).toBe('running');
+    expect(await resumeFailedFlowInPlace(flowRunId, 'task-1')).toBe(false);
+    expect((await getNodeRun(db, node.id))?.status).toBe('cancelled');
+    expect((await getFlowRun(db, flowRunId))?.status).toBe('cancelled');
   });
 
   it('refuses a DELIBERATELY cancelled run (no restart marker) — retry must not resurrect it', async () => {

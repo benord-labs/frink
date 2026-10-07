@@ -3,7 +3,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { getDatabase } from '../db';
-import { type Task as DbTask, chats, tasks } from '../db/schema';
+import { RESTART_INTERRUPTION_REASON } from '../../../shared/types/flow';
+import { createNodeRun, getNodeRun } from '../db/repos/node-runs';
+import { type Task as DbTask, chats, flowRuns, tasks } from '../db/schema';
+import { getOrCreateFlowRunByIdempotencyKey } from '../db/repos/flow-runs';
+import { createFlowVersion } from '../db/repos/flow-versions';
+import { createFlow } from '../db/repos/flows';
+import { seedActiveAdmission } from '../db/test-utils/flow-fixtures';
 import { freshDb, type TestDb } from '../db/test-utils/fresh-db';
 
 // ── Hoisted mocks ──────────────────────────────────────────────────────────────
@@ -224,6 +230,66 @@ describe('handleClaimedTask — cancel during the claim window', () => {
 
       expect(storedStatus()?.status).toBe('running');
     });
+
+    // A Retry claimed after a restart interrupted its run must not revive the cancelled step in
+    // place: it fails loud and leaves the run to the resume ticket its next Retry goes through.
+    it('fails a Retry claim on a restart-interrupted run without reviving or dispatching it', async () => {
+      // seedFlowRun also creates a project, whose repo this harness mocks; a run needs none.
+      const flow = await createFlow(db, { name: 'F' });
+      const version = await createFlowVersion(db, {
+        flowId: flow.id,
+        graph: { nodes: [{ id: 'a', blockType: 'agent', position: { x: 0, y: 0 } }], edges: [] },
+      });
+      const { run } = await getOrCreateFlowRunByIdempotencyKey(db, {
+        flowVersionId: version.id,
+        status: 'running',
+        triggerContext: null,
+        idempotencyKey: 'retry-claim',
+        startedAt: new Date(),
+      });
+      const flowRunId = run.id;
+      seedActiveAdmission(db, flowRunId);
+      const marked = await createNodeRun(db, {
+        flowRunId,
+        nodeId: 'a',
+        blockType: 'agent',
+        status: 'cancelled',
+        nodeOutput: {
+          status: 'cancelled',
+          outputs: {},
+          artifacts: [],
+          durationMs: 0,
+          error: { message: RESTART_INTERRUPTION_REASON, retryable: true },
+        },
+      });
+      db.update(flowRuns).set({ status: 'cancelled' }).where(eq(flowRuns.id, flowRunId)).run();
+      const retryTask: DbTask = {
+        ...claimedTask(),
+        source: 'flow',
+        flowRunId,
+        nodeRunId: marked.id,
+        result: { retryMode: 'continue' },
+      };
+
+      await handleClaimedTask(retryTask);
+
+      expect(chatReadySent()).toBe(false);
+      expect(updateTaskStatusMock).toHaveBeenCalledWith(
+        expect.anything(),
+        'task-cancel-1',
+        'failed',
+        expect.objectContaining({
+          result: expect.objectContaining({
+            error: expect.stringMatching(/Use Retry on it again/),
+          }),
+        }),
+      );
+      expect((await getNodeRun(db, marked.id))?.status).toBe('cancelled');
+      expect(db.select().from(flowRuns).where(eq(flowRuns.id, flowRunId)).get()?.status).toBe(
+        'cancelled',
+      );
+      // The claim's first dynamic import of the flows layer is slow to transform cold.
+    }, 30_000);
 
     it('still dispatches when the chat is live', async () => {
       db.update(chats).set({ archivedAt: null }).where(eq(chats.id, 'chat-1')).run();

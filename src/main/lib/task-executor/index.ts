@@ -871,13 +871,14 @@ async function handleClaimedTask(task: DbTask): Promise<void> {
     if (isUserRetryClaim && task.flowRunId) {
       const unparked = await unparkRetriedFlowRun(task.id, task.flowRunId);
       if (!unparked) {
-        // The run refused to reopen (already advanced, deliberately cancelled, batch stage not
+        // The run refused to reopen (already advanced, interrupted or cancelled, batch stage not
         // pre-opened…). Dispatching anyway would stream a turn whose `done` the watcher drops —
-        // a silent stall. Fail the task loud instead; the user can retry once the cause clears.
+        // a silent stall. Fail the task loud instead; its next Retry re-admits the run instead.
         await updateTaskStatusLocal(getDatabase(), task.id, 'failed', {
           result: {
             ...parseResultRecord(task.result),
-            error: 'Retry could not reopen the flow run — it may have advanced or been cancelled.',
+            error:
+              'Retry could not reopen the flow run — it may have advanced, or been interrupted or cancelled. Use Retry on it again.',
           },
         });
         return;
