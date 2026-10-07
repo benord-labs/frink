@@ -6,6 +6,7 @@ export { type CancelRunOutcome, cancelRunCommand, cancelWorkQueueRunCommand } fr
 export { HeldQuestionParkDeclined, parkHeldQuestionCommand } from './held-question';
 export { insertNodeRunIfFenced, type RunFence, readRunFence, setFencedRunStatus } from './fence';
 export { cancelRunRows } from './run-rows';
+export { startPlanExecutionCommand } from './start-plan-execution';
 export {
   isPlanApprovalResume,
   type ParkedTask,
