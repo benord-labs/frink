@@ -44,7 +44,7 @@ jobs:
   # the slowest Codex build anywhere finished. One-row matrices keep the shared step lists' matrix.*
   # references working unchanged; YAML anchors keep the per-OS jobs from drifting.
   codex-native-win32-x64:
-    name: Codex (win32-x64)
+    name: Codex (${{ matrix.platformKey }})
     strategy:
       matrix:
         include:
@@ -82,7 +82,7 @@ jobs:
           retention-days: 2
 
   codex-native-linux-x64:
-    name: Codex (linux-x64)
+    name: Codex (${{ matrix.platformKey }})
     strategy:
       matrix:
         include:
@@ -96,7 +96,7 @@ jobs:
     steps: *codex-native-steps
 
   codex-native-linux-arm64:
-    name: Codex (linux-arm64)
+    name: Codex (${{ matrix.platformKey }})
     strategy:
       matrix:
         include:
@@ -131,7 +131,7 @@ jobs:
     steps: *codex-native-steps
 
   build-win32-x64:
-    name: Package (win32-x64)
+    name: Package (${{ matrix.platformKey }})
     needs: codex-native-win32-x64
     strategy:
       matrix:
@@ -442,7 +442,7 @@ jobs:
           retention-days: 5
 
   build-linux-x64:
-    name: Package (linux-x64)
+    name: Package (${{ matrix.platformKey }})
     needs: codex-native-linux-x64
     strategy:
       matrix:
@@ -461,7 +461,7 @@ jobs:
     steps: *build-steps
 
   build-linux-arm64:
-    name: Package (linux-arm64)
+    name: Package (${{ matrix.platformKey }})
     needs: codex-native-linux-arm64
     strategy:
       matrix:
