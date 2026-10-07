@@ -21,7 +21,7 @@ type PendingPermission = {
   settle: (response: PermissionResponse, dismiss: boolean) => void;
 };
 
-/** One process ever runs a broker (executor.ts's singleton); shared here so `list` can read it. */
+/** One process runs one broker (validate-tool-permission.ts); shared here so `list` can read it. */
 const pendingPermissionRequests = new Map<string, PendingPermission>();
 
 /** Renderer-safe recovery view of every outstanding file/bash/mcp_tool permission wait. */

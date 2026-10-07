@@ -20,8 +20,9 @@ import {
   takeQueuedPrewarm,
 } from '../../claude-session-registry';
 import { hasWakeHold } from '../../claude-wake-hold';
-import { executionAbortSources, validateToolPermission } from '../../executor';
+import { executionAbortSources } from '../../executor';
 import { getActiveExecution } from '../../streaming/execution-registry';
+import { validateToolPermission } from '../../streaming/pending-permission/validate-tool-permission';
 import { isAutoReviewSupported, resolveAutoReviewModes } from '../../streaming/plan-auto-approve';
 import { resolveChatWorkspace } from '../chat-workspace';
 import { computeClaudeSessionKey } from './session-key';

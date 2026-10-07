@@ -76,15 +76,11 @@ import { type McpToolResult, toolResult } from './tool-result';
  * have to load without). This file already carries that lazy executor
  * dependency, so adding a third module to the chain only widens the cycle.
  */
-const validateFlowWriteViaExecutor: ValidateFlowWrite = async (...args) => {
-  const { validateToolPermission } = await import('../socket/executor');
-  return validateToolPermission(...args);
-};
-
-const requestFlowConsentViaExecutor: RequestFlowConsent = async (request) => {
-  const { requestFlowInvocationConsent } = await import('../socket/executor');
-  return requestFlowInvocationConsent(request);
-};
+const promptGate = () => import('../socket/streaming/pending-permission/validate-tool-permission');
+const validateFlowWriteViaExecutor: ValidateFlowWrite = async (...args) =>
+  (await promptGate()).validateToolPermission(...args);
+const requestFlowConsentViaExecutor: RequestFlowConsent = async (request) =>
+  (await promptGate()).requestFlowInvocationConsent(request);
 
 const flowConsentStore: FlowConsentStore = {
   getFlow: async (id) => (await import('../flows/mcp-cloud-shim')).getFlow(id),
