@@ -1,9 +1,10 @@
 name: Build Desktop
 
 # Builds Frink for Windows (windows-2022 → nsis + portable) and Linux x64 + arm64 (ubuntu-latest /
-# ubuntu-24.04-arm → AppImage + deb) via one matrix, and verifies the PACKAGED native modules (better-sqlite3,
-# node-pty) load under Electron's ABI plus that the bundled agent binaries (claude, codex)
-# are present and runnable. The Linux leg also launches both installers under Xvfb.
+# ubuntu-24.04-arm → AppImage + deb) through one job per OS sharing a single step list, and verifies
+# the PACKAGED native modules (better-sqlite3, node-pty) load under Electron's ABI plus that the
+# bundled agent binaries (claude, codex) are present and runnable. The Linux jobs also launch both
+# installers under Xvfb.
 #
 # Verification-only and additive: no code signing, no R2 upload, no shipping. Installers are
 # uploaded as CI artifacts. windows-2022 is pinned for a deterministic native compile
@@ -38,25 +39,18 @@ permissions:
   contents: read
 
 jobs:
-  codex-native:
+  # One Codex job and one packaging job per OS, each packaging job needing only its own Codex job.
+  # `needs` waits for every leg of a matrix, so a shared matrix would hold each OS's packaging until
+  # the slowest Codex build anywhere finished. One-row matrices keep the shared step lists' matrix.*
+  # references working unchanged; YAML anchors keep the per-OS jobs from drifting.
+  codex-native-win32-x64:
+    name: Codex (${{ matrix.platformKey }})
     strategy:
-      fail-fast: false
       matrix:
         include:
           - os: windows-2022
             platformKey: win32-x64
             cargoTarget: x86_64-pc-windows-msvc
-            testArgs: ''
-          # Oldest supported LTS: codex links the build host's glibc, so a newer runner strands 22.04 users.
-          - os: ubuntu-22.04
-            platformKey: linux-x64
-            cargoTarget: x86_64-unknown-linux-gnu
-            testArgs: '--test'
-          # No --test: the provider tests are arch-independent and run above, and their debug build
-          # took the arm runner down mid-compile (shutdown signal).
-          - os: ubuntu-22.04-arm
-            platformKey: linux-arm64
-            cargoTarget: aarch64-unknown-linux-gnu
             testArgs: ''
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
@@ -87,9 +81,39 @@ jobs:
           if-no-files-found: error
           retention-days: 2
 
-  # Same build + handshake for macOS. Nothing needs it: `build` has no mac leg, and mac releases
-  # build Codex locally (`bun run release`), so the slow Intel leg cannot hold up Linux packaging.
+  codex-native-linux-x64:
+    name: Codex (${{ matrix.platformKey }})
+    strategy:
+      matrix:
+        include:
+          # Oldest supported LTS: codex links the build host's glibc, so a newer runner strands 22.04 users.
+          - os: ubuntu-22.04
+            platformKey: linux-x64
+            cargoTarget: x86_64-unknown-linux-gnu
+            testArgs: '--test'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps: *codex-native-steps
+
+  codex-native-linux-arm64:
+    name: Codex (${{ matrix.platformKey }})
+    strategy:
+      matrix:
+        include:
+          # No --test: the provider tests are arch-independent and run on linux-x64, and their debug build
+          # took the arm runner down mid-compile (shutdown signal).
+          - os: ubuntu-22.04-arm
+            platformKey: linux-arm64
+            cargoTarget: aarch64-unknown-linux-gnu
+            testArgs: ''
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps: *codex-native-steps
+
+  # Same build + handshake for macOS. Nothing needs it: there is no mac packaging job, and mac
+  # releases build Codex locally (`bun run release`), so the slow Intel leg holds up no packaging.
   codex-native-mac:
+    name: Codex (${{ matrix.platformKey }})
     strategy:
       fail-fast: false
       matrix:
@@ -106,14 +130,10 @@ jobs:
     timeout-minutes: 120
     steps: *codex-native-steps
 
-  build:
-    needs: codex-native
-    # Run each leg even when another OS's Codex leg failed: it downloads only its own artifact, and
-    # download-artifact fails that leg alone when the artifact is missing.
-    if: ${{ !cancelled() }}
+  build-win32-x64:
+    name: Package (${{ matrix.platformKey }})
+    needs: codex-native-win32-x64
     strategy:
-      # One OS failing must NOT cancel the other leg.
-      fail-fast: false
       matrix:
         include:
           - os: windows-2022
@@ -123,31 +143,12 @@ jobs:
             pkg: package:win
             artifactName: frink-windows-installers
             artifactGlob: release/*.exe
-          - os: ubuntu-latest
-            platformKey: linux-x64
-            unpacked: linux-unpacked
-            binExt: ''
-            pkg: package:linux
-            artifactName: frink-linux-installers
-            artifactGlob: |
-              release/*.AppImage
-              release/*.deb
-          # electron-builder packages for the host arch, so the arm64 installers come from an arm64 runner.
-          - os: ubuntu-24.04-arm
-            platformKey: linux-arm64
-            unpacked: linux-arm64-unpacked
-            binExt: ''
-            pkg: package:linux
-            artifactName: frink-linux-arm64-installers
-            artifactGlob: |
-              release/*.AppImage
-              release/*.deb
     runs-on: ${{ matrix.os }}
     # Cap a wedged native compile / stuck pty — otherwise it inherits the 360-min default.
     # 50 covers the real pipeline (~30 min: agent download + from-source native compile +
     # electron-builder + installer). The smoke has its own 3-min step guard.
     timeout-minutes: 50
-    steps:
+    steps: &build-steps
       - uses: actions/checkout@v4
         with:
           # Job only builds + uploads an artifact (never pushes) — don't leave the
@@ -439,3 +440,42 @@ jobs:
           path: ${{ matrix.artifactGlob }}
           if-no-files-found: error
           retention-days: 5
+
+  build-linux-x64:
+    name: Package (${{ matrix.platformKey }})
+    needs: codex-native-linux-x64
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platformKey: linux-x64
+            unpacked: linux-unpacked
+            binExt: ''
+            pkg: package:linux
+            artifactName: frink-linux-installers
+            artifactGlob: |
+              release/*.AppImage
+              release/*.deb
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 50
+    steps: *build-steps
+
+  build-linux-arm64:
+    name: Package (${{ matrix.platformKey }})
+    needs: codex-native-linux-arm64
+    strategy:
+      matrix:
+        include:
+          # electron-builder packages for the host arch, so the arm64 installers come from an arm64 runner.
+          - os: ubuntu-24.04-arm
+            platformKey: linux-arm64
+            unpacked: linux-arm64-unpacked
+            binExt: ''
+            pkg: package:linux
+            artifactName: frink-linux-arm64-installers
+            artifactGlob: |
+              release/*.AppImage
+              release/*.deb
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 50
+    steps: *build-steps
