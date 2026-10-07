@@ -26,7 +26,6 @@ import { useMcpBackgroundPrefetch } from './hooks/use-mcp-background-prefetch';
 import { useMcpImportInvalidation } from './hooks/use-mcp-import-invalidation';
 import { useComposerSettingsSync } from './hooks/use-composer-settings-sync';
 import { useSubChatModeSync } from './hooks/use-sub-chat-mode-sync';
-import { initAnalytics, shutdown } from './lib/analytics';
 import { pendingAccountAuthAtom } from './lib/atoms';
 import { appStore } from './lib/jotai-store';
 import { useSubagentTaskSync } from './lib/stores/use-subagent-task-sync';
@@ -237,11 +236,8 @@ const AppContent = memo(function AppContent() {
 });
 
 export function App() {
-  // Initialize analytics on mount
   useEffect(() => {
-    initAnalytics();
-
-    // Sync analytics opt-out status to main process
+    // Report the saved analytics preference; the main process sends nothing until it has it
     const syncOptOutStatus = async () => {
       try {
         const optOut = localStorage.getItem('preferences:analytics-opt-out') === 'true';
@@ -249,11 +245,6 @@ export function App() {
       } catch (_error) {}
     };
     syncOptOutStatus();
-
-    // Cleanup on unmount
-    return () => {
-      shutdown();
-    };
   }, []);
 
   return (

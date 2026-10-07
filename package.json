@@ -129,7 +129,6 @@
     "path-browserify": "^1.0.1",
     "picomatch": "^4.0.7",
     "pidtree": "^1.0.0",
-    "posthog-js": "^1.434.7",
     "posthog-node": "^5.52.5",
     "qrcode.react": "^4.2.0",
     "react": "^19.3.0",

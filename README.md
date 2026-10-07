@@ -110,7 +110,7 @@ A real editor and terminal for your files, with changes you mark viewed and chec
 - **[Permissions](user-docs/permissions.md)** — every tool call passes a per-project gate first; `~/.ssh`, `~/.aws` and `.env` are always off-limits.
 - **[Plugins & MCP](user-docs/mcp-servers.md)** — connect Linear, Shortcut, ClickUp, GitHub, Notion, Slack, Sentry, PostHog and more, as chat tools and Flow steps.
 - **[Your own AI sign-in](user-docs/ai-accounts.md)** — uses your existing Claude Code or Codex login. Frink never stores the token.
-- **Local-first** — chats, Flows, tasks and permissions live in SQLite on your machine. No account needed.
+- **Local-first** — chats, Flows, tasks and permissions live in SQLite on your machine. No account needed. Official builds send anonymous usage counts and crash reports: [everything Frink sends](user-docs/telemetry.md).
 
 ---
 
