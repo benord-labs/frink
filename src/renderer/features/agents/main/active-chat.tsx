@@ -2067,7 +2067,7 @@ export const ChatView = memo(function ChatView({
 
   // Create or get Chat instance for a sub-chat
   const getOrCreateChat = useCallback(
-    (subChatId: string): Chat<UIMessage> | null => {
+    (subChatId: string, isWakeHeld: boolean): Chat<UIMessage> | null => {
       // Desktop uses worktreePath, web uses sandboxUrl
       if (!agentChat) return null;
       if (!chatWorkingDir) return null;
@@ -2114,7 +2114,7 @@ export const ChatView = memo(function ChatView({
         const rehydrationDecision =
           isActiveSubChat && hasUsableCurrentPageSnapshot
             ? classifyDurableMessageRehydration({
-                isActiveSubChat,
+                isWakeHeld,
                 isExistingChatStreaming,
                 existingMessages: existing.messages,
                 fetchedMessages: subChatMessages.messages,

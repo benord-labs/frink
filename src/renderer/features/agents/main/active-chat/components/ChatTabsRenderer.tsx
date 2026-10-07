@@ -1,8 +1,10 @@
 import type { Chat } from '@ai-sdk/react';
 import { Button } from '@benord-labs/frink-primitives';
 import type { UIMessage } from 'ai';
+import { useAtomValue } from 'jotai';
 import { type ComponentType, memo, type ReactElement, useEffect, useMemo } from 'react';
 import { perfMark } from '../../../../../lib/perf/marks';
+import { heldSubChatsAtom } from '../../../../../lib/stores/active-transport-registry';
 import { agentChatStore } from '../../../stores/agent-chat-store';
 import type { SubChatMeta } from '../../../stores/sub-chat-store';
 import type { UseSubChatMessagesResult } from '../hooks/useSubChatMessages';
@@ -14,7 +16,7 @@ type Props = {
   subChatId: string;
   agentSubChats: SubChatMeta[];
   allSubChats: SubChatMeta[];
-  getOrCreateChat: (subChatId: string) => Chat<UIMessage> | null;
+  getOrCreateChat: (subChatId: string, isWakeHeld: boolean) => Chat<UIMessage> | null;
   /** Paginated messages for the active sub-chat (loadOlder, hasMore, isLoading). */
   subChatMessages: UseSubChatMessagesResult;
   chatId: string;
@@ -95,7 +97,9 @@ export const ChatTabsRenderer = memo(function ChatTabsRenderer({
     return map;
   }, [allSubChats, agentSubChats]);
 
-  const chat = getOrCreateChat(subChatId);
+  // Subscribed here, not read inside getOrCreateChat: the hold ending must re-run its page check.
+  const isWakeHeld = useAtomValue(heldSubChatsAtom).has(subChatId);
+  const chat = getOrCreateChat(subChatId, isWakeHeld);
   const subChatData = agentSubChats.find((sc) => sc.id === subChatId);
 
   if (!chat) {

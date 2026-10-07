@@ -41,6 +41,12 @@ export function listWakeHolds(): Array<{
   });
 }
 
+/** A hold the user has not stopped: its session will wake and write to the transcript again. */
+export function hasArmedWakeHold(subChatId: string): boolean {
+  const hold = readWakeHolds().get(subChatId);
+  return hold !== undefined && !hold.retracted;
+}
+
 /**
  * Whether a Flow successor can enter the Claude provider seam on the slot already owned by its
  * exact live wake hold. This is a read-only preflight: `takeWakeHold` remains the ownership
