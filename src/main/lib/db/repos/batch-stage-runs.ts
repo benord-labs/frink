@@ -2,7 +2,7 @@ import { and, asc, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import type { RunAttachment } from '../../../../shared/types/run-attachment';
 import type { getDatabase } from '../index';
-import { type BatchStageRun, batchStageRuns, type NewBatchStageRun } from '../schema';
+import { type BatchStageRun, batchStageRuns, flowRuns, type NewBatchStageRun } from '../schema';
 
 type Db = ReturnType<typeof getDatabase>;
 
@@ -128,6 +128,25 @@ export async function setStageRunStatusIf(
     .where(and(eq(batchStageRuns.id, id), inArray(batchStageRuns.status, fromStatuses)))
     .returning();
   return row ?? null;
+}
+
+/** Settle an in-flight stage run from its run row, reading and writing in ONE synchronous transaction:
+ * a Retry promoted since the caller looked has the run running again, and must not be settled. */
+export function settleStageRunFromRun(db: Db, id: string, flowRunId: string): void {
+  db.transaction(() => {
+    const run = db
+      .select({ status: flowRuns.status })
+      .from(flowRuns)
+      .where(eq(flowRuns.id, flowRunId))
+      .get();
+    if (!run || !['completed', 'failed', 'cancelled'].includes(run.status)) return;
+    db.update(batchStageRuns)
+      .set({ status: run.status === 'completed' ? 'completed' : 'failed', flowRunId })
+      .where(
+        and(eq(batchStageRuns.id, id), inArray(batchStageRuns.status, [...ACTIVE_BSR_STATUSES])),
+      )
+      .run();
+  });
 }
 
 export async function getStageRunByFlowRunId(
