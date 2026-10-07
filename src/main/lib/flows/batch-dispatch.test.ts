@@ -20,9 +20,10 @@ vi.mock('./start', () => ({
 
 import { listRunsForStage, setStageRunStatusIf } from '../db/repos/batch-stage-runs';
 import { getBatchStage, setStageStatusIf } from '../db/repos/batch-stages';
-import { flowRuns } from '../db/schema';
+import { flowRuns, flowVersions } from '../db/schema';
 import { freshDb, type TestDb } from '../db/test-utils/fresh-db';
 import { setFlowAdmissionLifecycleHooks } from './admission/activity';
+import { buildCtx } from './batch-context';
 import { onBatchRunTerminal, recoverBatchStages, startFlowBatchLocal } from './batch-dispatch';
 import {
   makeStartFlowRunMock,
@@ -261,6 +262,41 @@ describe('stage advancement', () => {
     unsubscribe();
   });
 
+  // The run that fails because its graph no longer parses is the one whose stage must still
+  // settle: reading the batch settings from that same graph used to throw out of the listener.
+  it('settles the stage of a member whose version graph no longer parses', async () => {
+    setFlowAdmissionLifecycleHooks({
+      reconcile: vi.fn(async () => {}),
+      requestRelease: vi.fn(async () => {}),
+    });
+    const stage = await seedStage({ stageNumber: 1, runCount: 1 });
+    await startFlowBatchLocal(flowId, BATCH);
+    const [bsr] = await listRunsForStage(db, stage.id);
+    await corruptVersionGraph();
+    await setRunStatus(db, runId(bsr), 'failed');
+    const { startBatchAdvanceListener } = await import('./batch-dispatch');
+    const { flowEventBus } = await import('./events');
+    const unsubscribe = startBatchAdvanceListener();
+
+    try {
+      flowEventBus.emitFlowEvent({
+        eventType: 'run_failed',
+        flowId,
+        flowName: 'F',
+        flowRunId: runId(bsr),
+        runStatus: 'failed',
+        batchId: BATCH,
+      });
+
+      await vi.waitFor(async () =>
+        expect((await getBatchStage(db, stage.id))?.status).toBe('failed'),
+      );
+      expect((await listRunsForStage(db, stage.id))[0].status).toBe('failed');
+    } finally {
+      unsubscribe();
+    }
+  });
+
   it('releases terminal activity cleanly when batch advancement fails', async () => {
     const reconcile = vi.fn(async () => {});
     setFlowAdmissionLifecycleHooks({ reconcile, requestRelease: vi.fn(async () => {}) });
@@ -282,6 +318,60 @@ describe('stage advancement', () => {
 
     await vi.waitFor(() => expect(reconcile).toHaveBeenCalledWith('failed-advance-run', undefined));
     unsubscribe();
+  });
+});
+
+/** The malformed stored shapes parseGraph rejects. */
+type MalformedGraph = string | { nodes?: string | never[] };
+
+/** Leaves the pinned version with a graph parseGraph rejects. */
+async function corruptVersionGraph(graph: MalformedGraph = { nodes: 'not-a-list' }) {
+  const [version] = await db
+    .update(flowVersions)
+    .set({ graph })
+    .where(eq(flowVersions.id, versionId))
+    .returning();
+  return version;
+}
+
+describe('buildCtx — a version graph that no longer parses', () => {
+  it.each([
+    ['nodes is not a list', { nodes: 'not-a-list' }],
+    ['edges are missing', { nodes: [] }],
+    ['the graph is a string', 'not-a-graph'],
+    ['the graph is an empty object', {}],
+  ])('falls back to the default batch settings when %s', async (_, graph) => {
+    const version = await corruptVersionGraph(graph);
+
+    expect(buildCtx(version, BATCH)).toEqual({
+      flowId,
+      flowVersionId: versionId,
+      batchId: BATCH,
+      limit: 5,
+      declaredTriggerSchema: [],
+    });
+  });
+
+  // The settings are unreadable, the stage is not: its pending members still get dispatched, each
+  // to fail on the same graph and settle in turn, so the stage ends instead of holding them.
+  it('keeps filling slots from pending members and settles the stage once all are terminal', async () => {
+    await seedFlow({ maxBatchConcurrency: 1 });
+    const stage = await seedStage({ stageNumber: 1, runCount: 2 });
+    await startFlowBatchLocal(flowId, BATCH);
+    await corruptVersionGraph();
+
+    const first = (await listRunsForStage(db, stage.id)).find((r) => r.status === 'dispatched');
+    await finishRun(runId(first), 'failed');
+
+    let runs = await listRunsForStage(db, stage.id);
+    expect(runs.map((r) => r.status).sort()).toEqual(['dispatched', 'failed']);
+    expect((await getBatchStage(db, stage.id))?.status).toBe('running');
+
+    await finishRun(runId(runs.find((r) => r.status === 'dispatched')), 'failed');
+
+    runs = await listRunsForStage(db, stage.id);
+    expect(runs.map((r) => r.status)).toEqual(['failed', 'failed']);
+    expect((await getBatchStage(db, stage.id))?.status).toBe('failed');
   });
 });
 
@@ -314,6 +404,23 @@ describe('recoverBatchStages — event-less restart sweep', () => {
     await recoverBatchStages();
 
     expect((await listRunsForStage(db, root.id))[0].status).toBe('completed');
+    expect((await getBatchStage(db, root.id))?.status).toBe('completed');
+    expect((await getBatchStage(db, next.id))?.status).toBe('running');
+  });
+
+  // The sweep reads the batch settings from the same graph. Throwing there left the stage running
+  // across every restart, and stopped the sweep before it reached any later stage.
+  it('settles a stage whose version graph no longer parses, and the stages after it', async () => {
+    const root = await seedStage({ stageNumber: 1, runCount: 1, failureThreshold: -1 });
+    const next = await seedStage({ stageNumber: 2, runCount: 1, dependsOnStageIds: [root.id] });
+    await startFlowBatchLocal(flowId, BATCH);
+    const [bsr] = await listRunsForStage(db, root.id);
+    await corruptVersionGraph();
+    await setRunStatus(db, runId(bsr), 'failed');
+
+    await expect(recoverBatchStages()).resolves.toBe(1);
+
+    expect((await listRunsForStage(db, root.id))[0].status).toBe('failed');
     expect((await getBatchStage(db, root.id))?.status).toBe('completed');
     expect((await getBatchStage(db, next.id))?.status).toBe('running');
   });

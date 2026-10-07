@@ -29,7 +29,7 @@ import {
 } from '../db/repos/task-queries/chat-flow-cleanup';
 import type { FlowRun, NodeRun } from '../db/schema';
 import { clearActiveFlowTaskForChat } from '../task-executor';
-import { loadRunContext } from './advance';
+import { loadRunMeta } from './advance-walk/run-context';
 import { dropStagedContinuation } from './admission/terminal-resume/continuation';
 import { abortFlowRun } from './cancel-registry';
 import { emitRunTerminal } from './event-emit';
@@ -64,9 +64,9 @@ async function emitCancelledFlowRun(flowRunId: string): Promise<void> {
   // Every caller emits after its Cancel committed; a failed delivery must not report it as failed.
   // The startup batch sweep settles the stage this event would have settled.
   try {
-    const ctx = await loadRunContext(flowRunId);
-    if (ctx) emitRunTerminal(ctx.meta, flowRunId, 'cancelled');
-    else log.warn('[FlowsEngine] cancelFlowRun: run context unavailable', { flowRunId });
+    const meta = await loadRunMeta(flowRunId);
+    if (meta) emitRunTerminal(meta, flowRunId, 'cancelled');
+    else log.warn('[FlowsEngine] cancelFlowRun: run meta unavailable', { flowRunId });
   } catch (error) {
     reportCommittedCancelStep(flowRunId, 'terminal-event', error);
   }

@@ -5,6 +5,7 @@
  */
 
 import { TRPCError } from '@trpc/server';
+import log from 'electron-log';
 import type { BatchTriggerSchemaItem } from '../../../shared/types/flow-settings-schema';
 import type { getDatabase } from '../db';
 import { listStagesForBatch } from '../db/repos/batch-stages';
@@ -13,7 +14,7 @@ import { getLatestVersion, getVersion } from '../db/repos/flow-versions';
 import { getFlowById } from '../db/repos/flows';
 import type { BatchStage, FlowRun, FlowVersion } from '../db/schema';
 import { emitBatchCompleted } from './event-emit';
-import { parseGraph } from './graph';
+import { FlowGraphParseError, type ParsedFlowGraph, parseGraph } from './graph';
 
 type Db = ReturnType<typeof getDatabase>;
 
@@ -98,8 +99,24 @@ export type BatchCtx = {
   declaredTriggerSchema: BatchTriggerSchemaItem[];
 };
 
+/** A graph that no longer parses has no readable settings. Its batch still has stages to settle,
+ * so it runs on the defaults instead of throwing out of every settle and recovery. */
+function batchSettingsOf(version: FlowVersion, batchId: string): ParsedFlowGraph['settings'] {
+  try {
+    return parseGraph(version.graph).settings;
+  } catch (err) {
+    if (!(err instanceof FlowGraphParseError)) throw err;
+    log.warn('[BatchDispatch] version graph does not parse, using default batch settings', {
+      flowVersionId: version.id,
+      batchId,
+      err,
+    });
+    return undefined;
+  }
+}
+
 export function buildCtx(version: FlowVersion, batchId: string): BatchCtx {
-  const settings = parseGraph(version.graph).settings ?? {};
+  const settings = batchSettingsOf(version, batchId) ?? {};
   const max = settings.maxBatchConcurrency;
   const limit =
     typeof max === 'number' && Number.isInteger(max) && max >= 1

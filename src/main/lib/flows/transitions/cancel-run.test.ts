@@ -1,4 +1,5 @@
 import { eq } from 'drizzle-orm';
+import log from 'electron-log';
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 const holder = vi.hoisted(() => ({
@@ -607,6 +608,128 @@ describe('advance fenced on the admission ticket', () => {
     expect(terminal).toEqual(['run_completed']);
     const slot = db.select().from(flowRunAdmissions).where(eq(flowRunAdmissions.ticket, ticket));
     expect(slot.get()).toMatchObject({ state: 'releasing', error: expect.any(String) });
+  });
+});
+
+describe('advance whose run context cannot be loaded after the node write', () => {
+  let runEvents: FlowExecutionEvent[];
+  let stop: () => void;
+  beforeEach(() => {
+    runEvents = [];
+    stop = subscribeFlowEvents((event) => {
+      if (event.eventType.startsWith('run_')) runEvents.push(event);
+    });
+  });
+  afterEach(() => {
+    stop();
+    vi.restoreAllMocks();
+  });
+
+  const corruptGraph = () =>
+    db
+      .update(flowVersions)
+      .set({ graph: { nodes: 'not-a-list' } })
+      .where(eq(flowVersions.flowId, flowId))
+      .run();
+  async function liveWork() {
+    await setFlowRunStatus(db, flowRunId, 'running');
+    seedActiveAdmission(db, flowRunId);
+    return createNodeRun(db, { flowRunId, nodeId: 'work', blockType: 'agent', status: 'running' });
+  }
+
+  // The batch listener ignores a run_failed without a batchId, so the stage would never settle.
+  it('emits run_failed carrying the batchId of a batch-member run', async () => {
+    db.update(flowRuns).set({ batchId: 'batch-1' }).where(eq(flowRuns.id, flowRunId)).run();
+    corruptGraph();
+    const work = await liveWork();
+
+    await expect(advanceFlowRun(flowRunId, work.id, COMPLETED)).resolves.toBe(true);
+
+    expect(await runStatus()).toBe('failed');
+    expect((await getNodeRun(db, work.id))?.status).toBe('completed');
+    expect(runEvents).toEqual([
+      expect.objectContaining({
+        eventType: 'run_failed',
+        flowRunId,
+        flowId,
+        flowName: 'F',
+        batchId: 'batch-1',
+        summary: 'flow graph: graph.nodes missing',
+      }),
+    ]);
+  });
+
+  // Fan Out lanes can both find the context unloadable; a second run_failed settles a stage twice.
+  it('emits a single run_failed when two nodes of the run advance at once', async () => {
+    corruptGraph();
+    const first = await liveWork();
+    const second = await createNodeRun(db, {
+      flowRunId,
+      nodeId: 'work',
+      blockType: 'agent',
+      status: 'running',
+    });
+
+    await expect(
+      Promise.all([
+        advanceFlowRun(flowRunId, first.id, COMPLETED),
+        advanceFlowRun(flowRunId, second.id, COMPLETED),
+      ]),
+    ).resolves.toEqual([true, true]);
+
+    expect(await runStatus()).toBe('failed');
+    expect(runEvents.map((event) => event.eventType)).toEqual(['run_failed']);
+  });
+
+  it('emits run_failed when the context read throws once and the meta then loads', async () => {
+    const work = await liveWork();
+    holder.onVersionRead = async () => {
+      holder.onVersionRead = null;
+      throw new Error('disk I/O error');
+    };
+
+    await advanceFlowRun(flowRunId, work.id, COMPLETED);
+
+    expect(await runStatus()).toBe('failed');
+    expect(runEvents).toEqual([
+      expect.objectContaining({ eventType: 'run_failed', flowId, summary: 'disk I/O error' }),
+    ]);
+    expect(dispatchNode).not.toHaveBeenCalled();
+  });
+
+  it('fails the run with no event, without rejecting, when the meta cannot be read either', async () => {
+    const logError = vi.spyOn(log, 'error').mockImplementation(() => {});
+    const work = await liveWork();
+    holder.onVersionRead = async () => {
+      throw new Error('disk I/O error');
+    };
+
+    await expect(advanceFlowRun(flowRunId, work.id, COMPLETED)).resolves.toBe(true);
+    holder.onVersionRead = null;
+
+    expect(await runStatus()).toBe('failed');
+    expect(runEvents).toEqual([]);
+    expect(logError).toHaveBeenCalledWith(
+      '[FlowsEngine] run meta unreadable, failing the run without an event',
+      expect.objectContaining({ flowRunId }),
+    );
+  });
+
+  // The Cancel owns the terminal status and its run_cancelled; no run_failed may follow it.
+  it('leaves only run_cancelled when a Cancel commits before the run is failed', async () => {
+    corruptGraph();
+    const work = await liveWork();
+    holder.onVersionRead = async () => {
+      holder.onVersionRead = null;
+      await cancelFlowRun(flowRunId);
+    };
+
+    await advanceFlowRun(flowRunId, work.id, COMPLETED);
+
+    expect(await runStatus()).toBe('cancelled');
+    expect(runEvents).toEqual([
+      expect.objectContaining({ eventType: 'run_cancelled', flowRunId, flowId, flowName: 'F' }),
+    ]);
   });
 });
 

@@ -11,7 +11,7 @@ import type { DispatchContext } from '../dispatch/types';
 import { type ParsedFlowGraph, parseGraph } from '../graph';
 import { isRecord } from '../rerun/claim-flags';
 
-type FlowMeta = { flowId: string; flowName: string; batchId?: string };
+export type FlowMeta = { flowId: string; flowName: string; batchId?: string };
 
 export type RunContext = {
   meta: FlowMeta;
@@ -19,7 +19,7 @@ export type RunContext = {
   triggerContext: DispatchContext['triggerContext'];
 };
 
-export async function loadRunContext(flowRunId: string): Promise<RunContext | null> {
+async function loadRunRows(flowRunId: string) {
   const db = getDatabase();
   const run = await getFlowRun(db, flowRunId);
   if (!run) return null;
@@ -27,10 +27,28 @@ export async function loadRunContext(flowRunId: string): Promise<RunContext | nu
   if (!version) return null;
   const flow = await getFlowById(db, version.flowId);
   if (!flow) return null;
+  // batchId marks a batch-member run so its events can be told apart from
+  // standalone runs (the renderer keeps members individually silent).
+  const meta: FlowMeta = {
+    flowId: flow.id,
+    flowName: flow.name,
+    batchId: run.batchId ?? undefined,
+  };
+  return { run, version, meta };
+}
+
+/** What a run's events are addressed with. Never parses the graph, so it still loads for a run
+ * whose stored graph no longer does. */
+export async function loadRunMeta(flowRunId: string): Promise<FlowMeta | null> {
+  return (await loadRunRows(flowRunId))?.meta ?? null;
+}
+
+export async function loadRunContext(flowRunId: string): Promise<RunContext | null> {
+  const rows = await loadRunRows(flowRunId);
+  if (!rows) return null;
+  const { run, version, meta } = rows;
   return {
-    // batchId marks a batch-member run so its events can be told apart from
-    // standalone runs (the renderer keeps members individually silent).
-    meta: { flowId: flow.id, flowName: flow.name, batchId: run.batchId ?? undefined },
+    meta,
     graph: parseGraph(version.graph),
     triggerContext: isRecord(run.triggerContext) ? run.triggerContext : null,
   };

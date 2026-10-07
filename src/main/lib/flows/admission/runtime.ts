@@ -5,10 +5,9 @@ import {
 } from '../../../../shared/lib/flow-admission';
 import { getDatabase } from '../../db';
 import { getFlowRun, setFlowRunStatus } from '../../db/repos/flow-runs';
-import { getVersion } from '../../db/repos/flow-versions';
-import { getFlowById } from '../../db/repos/flows';
 import { cancelRemainingNodeRunsForRun } from '../../db/repos/node-runs';
 import { cancelFlowLinkedTasksForRun } from '../../db/repos/tasks';
+import { loadRunMeta } from '../advance-walk/run-context';
 import { emitRunTerminal } from '../event-emit';
 import {
   type CancelAdmissionGuard,
@@ -54,19 +53,8 @@ const cleanupErrorText = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
 async function emitAdmissionRunFailed(flowRunId: string, summary: string): Promise<void> {
-  const db = getDatabase();
-  const run = await getFlowRun(db, flowRunId);
-  if (!run) return;
-  const version = await getVersion(db, run.flowVersionId);
-  if (!version) return;
-  const flow = await getFlowById(db, version.flowId);
-  if (!flow) return;
-  emitRunTerminal(
-    { flowId: flow.id, flowName: flow.name, batchId: run.batchId ?? undefined },
-    flowRunId,
-    'failed',
-    { summary },
-  );
+  const meta = await loadRunMeta(flowRunId);
+  if (meta) emitRunTerminal(meta, flowRunId, 'failed', { summary });
 }
 
 async function notifyFailedStartAdmission(
