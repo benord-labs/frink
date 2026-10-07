@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { claudeVersionSupportsUltra } from '../../claude';
 import { getClaudeCodeTokenById } from '../../credentials';
 import { getChatWithProjectAccount } from '../../db/repos/chats';
+import { getFlowBriefingForSubChat } from '../../db/repos/tasks';
 import { getMultiProjectContext } from '../../multi-project-prompt';
 import {
   __resetSessionsForTest,
@@ -69,6 +70,7 @@ export function registerClaudeWarmSessionGuardTests(harness: WarmSessionGuardHar
       __resetSessionsForTest();
     });
     registerPlanApprovalReuseTests(claudeQueryMock, send);
+    registerBriefingRecreateTests(claudeQueryMock, send);
 
     it('Ultra spawns with the ultracode setting at any effort, and toggling it applies live', async () => {
       const first = mockQuery(claudeQueryMock, answeringCli());
@@ -296,5 +298,33 @@ function registerPlanApprovalReuseTests(
 
     expect(hasWakeHold(payload.subChatId)).toBe(false);
     expect(getSession(payload.subChatId)).toBeUndefined();
+  });
+}
+
+/** A changed system-prompt append reaches the resumed conversation, not just a recreated CLI. */
+function registerBriefingRecreateTests(
+  claudeQueryMock: WarmSessionGuardHarness['claudeQueryMock'],
+  send: (message: string, overrides?: Partial<Payload>) => Promise<void>,
+): void {
+  // A chat held warm before its Flow began must recreate on the briefing, and the resumed CLI must
+  // render it un-recorded, or the SDK replays the first request's briefing-less prompt.
+  it('a Flow Briefing arriving mid-chat recreates the CLI, resuming with the briefing un-recorded', async () => {
+    const first = mockQuery(claudeQueryMock, answeringCli());
+    mockQuery(claudeQueryMock, answeringCli());
+    const spawned = (call: number) => claudeQueryMock.mock.calls[call]?.[0]?.options;
+
+    await send('first');
+    vi.mocked(getFlowBriefingForSubChat).mockResolvedValueOnce('PRD: use strict mode');
+    await send('second', { sessionId: 'sess-held' });
+
+    expect(spawned(0)?.systemPrompt).toMatchObject({ snapshot: false });
+    expect(spawned(0)?.systemPrompt.append).not.toContain('## Flow Briefing');
+    expect(sessionLines('claim')).toEqual(['miss:none', 'miss:key-mismatch:systemPrompt']);
+    expect(first.close).toHaveBeenCalledOnce();
+    expect(spawned(1)?.resume).toBe('sess-held');
+    expect(spawned(1)?.systemPrompt).toMatchObject({
+      snapshot: false,
+      append: expect.stringContaining('## Flow Briefing\n\nPRD: use strict mode'),
+    });
   });
 }
