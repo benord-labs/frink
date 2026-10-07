@@ -203,6 +203,16 @@ describe('tasksRouter status schema', () => {
       );
     });
 
+    it('tells a carry-on of a replaced attempt to use the latest one', async () => {
+      const { tasksRouter } = await import('./tasks');
+      const caller = tasksRouter.createCaller({ getWindow: () => null });
+      carryOnFlowTaskMock.mockResolvedValueOnce({ ok: false, reason: 'superseded' });
+
+      await expect(caller.retry({ taskId: 'task-old', mode: 'continue' })).rejects.toThrow(
+        /replaced by a newer one/i,
+      );
+    });
+
     it('restart mode skips carryOnFlowTask entirely (fresh re-run needs no session)', async () => {
       const { tasksRouter } = await import('./tasks');
       const caller = tasksRouter.createCaller({ getWindow: () => null });

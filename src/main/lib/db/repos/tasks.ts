@@ -17,7 +17,7 @@ import {
   isWaitModeTask,
   type WorkQueueSection,
 } from './task-queries';
-import { drivingFlowTaskOnSubChat, pausedFlowRun } from './task-queries/run-liveness';
+import { drivingFlowTaskOnSubChat, retryableAttempt } from './task-queries/run-liveness';
 import { latestFlowTaskForSubChatId } from './task-queries/subchat-driver';
 
 type Db = ReturnType<typeof getDatabase>;
@@ -780,7 +780,7 @@ export async function retryTaskDetailed(
     delete scrubbed.subChatId;
   }
 
-  const guard = pausedFlowRun(requirePausedFlowRunId);
+  const guard = retryableAttempt(requirePausedFlowRunId);
 
   const [updated] = await db
     .update(tasks)

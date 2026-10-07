@@ -1,12 +1,19 @@
-import { and, eq, inArray, notExists, type SQL, sql } from 'drizzle-orm';
+import { and, eq, inArray, not, notExists, type SQL, sql } from 'drizzle-orm';
 import { FLOW_DRIVING_STATUSES, SIGNAL_DEAD_RUN_STATUSES } from '../../../../../shared/types/flow';
 import type { getDatabase } from '../../index';
 import { flowRuns, tasks } from '../../schema';
+import { isSupersededAttempt } from './flow-collapse';
 
 export function pausedFlowRun(flowRunId?: string): SQL | undefined {
   return flowRunId
     ? sql`exists (select 1 from ${flowRuns} where ${flowRuns.id} = ${flowRunId} and ${flowRuns.status} = 'paused')`
     : undefined;
+}
+
+/** What a retry's write requires of the task row: its run still paused (when the caller names one)
+ * and its attempt still the node's current one, so a retry landing mid-flight cannot revive history. */
+export function retryableAttempt(requirePausedFlowRunId?: string): SQL | undefined {
+  return and(pausedFlowRun(requirePausedFlowRunId), not(isSupersededAttempt(tasks.nodeRunId)));
 }
 
 /**

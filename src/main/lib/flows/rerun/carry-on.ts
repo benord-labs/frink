@@ -9,6 +9,7 @@ import type { getDatabase } from '../../db';
 import { getFlowRun } from '../../db/repos/flow-runs';
 import { getSubChatById } from '../../db/repos/sub-chats';
 import { isTaskChatArchived } from '../../db/repos/task-queries/chat-archive-tasks';
+import { isSupersededTask } from '../../db/repos/task-queries/flow-collapse';
 import { getTaskById, parseResultRecord, retryTaskDetailed } from '../../db/repos/tasks';
 import type { Task } from '../../db/schema';
 import { withFlowResourceCleanup } from '../admission/activity';
@@ -20,13 +21,21 @@ export type CarryOnFlowTaskResult =
   | { ok: true; task: Task }
   | {
       ok: false;
-      reason: 'not-found' | 'no-session' | 'invalid-state' | 'admission-required' | 'chat-archived';
+      reason:
+        | 'not-found'
+        | 'no-session'
+        | 'invalid-state'
+        | 'admission-required'
+        | 'chat-archived'
+        | 'superseded';
     };
 
 /**
  * Carry on ONE failed/parked task: resume its persisted Claude session (the poller re-claims the
  * pending task → the executor resumes + sends the hidden-wake continuation nudge headlessly).
  *
+ *  0. Attempt gate — an attempt a Retry replaced is history: fail `superseded`, ahead of the run
+ *     gates, whose advice (use Retry) would be wrong for it.
  *  1. Session gate — the session id is persisted at stream start, so its absence means the attempt
  *     died before the CLI produced a frame; there is nothing to continue and a silent full re-prompt
  *     would only masquerade as a resume. Fail `no-session` (Retry is the honest action there).
@@ -44,6 +53,7 @@ export async function carryOnFlowTask(db: Db, taskId: string): Promise<CarryOnFl
   }
   // Archiving stopped the chat's work; a turn into it would only be declined.
   if (isTaskChatArchived(db, existing)) return { ok: false, reason: 'chat-archived' };
+  if (await isSupersededTask(db, taskId)) return { ok: false, reason: 'superseded' };
 
   const continueTask = async (requirePausedFlowRunId?: string): Promise<CarryOnFlowTaskResult> => {
     const prior = parseResultRecord(existing.result);
