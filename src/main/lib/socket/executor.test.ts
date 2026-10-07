@@ -197,7 +197,6 @@ vi.mock('../flows/resume', () => ({
 vi.mock('../tasks', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../tasks')>()),
   resumeParkedTaskInPlace: vi.fn(async () => true),
-  reviveRestartInterruptedFlow: vi.fn(async () => undefined),
 }));
 
 vi.mock('../db/repos/chats', () => ({
@@ -330,7 +329,7 @@ import { channelOwner } from '../mcp/execution-identity';
 import { getMultiProjectContext } from '../multi-project-prompt';
 import * as toolValidation from '../permissions/tool-validation';
 import { checkPermission } from '../permissions/v2/check';
-import { resumeParkedTaskInPlace, reviveRestartInterruptedFlow } from '../tasks';
+import { resumeParkedTaskInPlace } from '../tasks';
 import type { MessagePart } from './client';
 import type { PlanFallbackSend } from './executor';
 import { applyApprovedPlanContextToPrompt } from './execution/prompt-prefix/approved-plan-prompt';
@@ -1335,7 +1334,7 @@ describe('socket file permission edge cases', () => {
     );
   });
 
-  it('flow follow-up REVIVES a restart-interrupted (cancelled) run in place — armed, no re-dispatch', async () => {
+  it('flow follow-up to a restart-interrupted (cancelled) run stays armed but never revives it in place', async () => {
     vi.mocked(dynamicChatServer.getLatestTaskSignal).mockReturnValueOnce(undefined);
     vi.mocked(getChatWithProjectAccount).mockResolvedValueOnce({
       chat: { taskId: 'cancelled-driving-task' },
@@ -1364,15 +1363,12 @@ describe('socket file permission edge cases', () => {
 
     await handleRemoteExecute({ ...basePayload, message: 'carry on - limit resolved' });
 
-    // A restart-interrupted resume is NOT a dead chat — the signal apparatus stays armed.
+    // A restart-interrupted run is NOT a dead chat — the signal apparatus stays armed so the
+    // provider preflight can convert the reply into a resume ticket.
     expect(taskSignalEnabledArg(-1)).toBe(true);
-    // Reaching the revive with this run's ids is what this test owns; what the revive then WRITES
-    // (status flip, marker scrub, linkage) is covered directly in revive-interrupted-flow.test.ts.
-    expect(vi.mocked(reviveRestartInterruptedFlow)).toHaveBeenCalledWith(
-      'cancelled-driving-task',
-      'fr-restart',
-      basePayload.subChatId,
-    );
+    // Nothing is revived in place: the cancelled task and run keep their status.
+    expect(vi.mocked(resumeParkedTaskInPlace)).not.toHaveBeenCalled();
+    expect(vi.mocked(updateTaskStatus)).not.toHaveBeenCalled();
   });
 
   it('flow follow-up does NOT revive a USER-cancelled run (no marker) — disarms, no resume', async () => {
@@ -1403,8 +1399,7 @@ describe('socket file permission edge cases', () => {
 
     await handleRemoteExecute({ ...basePayload, message: 'carry on' });
 
-    // Marker gate held: no in-place revive, no task flip, and the dead chat disarms its signal.
-    expect(vi.mocked(reviveRestartInterruptedFlow)).not.toHaveBeenCalled();
+    // Marker gate held: no task flip, and the dead chat disarms its signal.
     expect(vi.mocked(updateTaskStatus)).not.toHaveBeenCalled();
     expect(taskSignalEnabledArg(-1)).toBe(false);
   });

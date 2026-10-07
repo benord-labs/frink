@@ -1462,7 +1462,6 @@ const ChatViewInner = memo(function ChatViewInner({
             subChatId={subChatId}
             pinnedTaskId={taskId ?? null}
             chatId={parentChatId ?? null}
-            guardedSend={guardedFlowSend}
             isTurnActive={isStreaming}
             flowSurfaceOwnsStop={flowSurfaceOwnsStop}
           />

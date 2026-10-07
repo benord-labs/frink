@@ -12,7 +12,11 @@ import {
 import { recoveryChangedError, stepRecoveryKind } from '../../rerun/recovery-kind';
 import { lastUnfinishedNodeRun, resolveRerunStartNode } from '../../rerun/resume-point';
 import { isUserCancelled, type RunFence, readNodeRuns, readRunFence } from '../../transitions';
-import { registerTerminalFlowResumeDispatcher, requestTerminalFlowResume } from '../runtime';
+import {
+  registerTerminalFlowResumeDispatcher,
+  requestTerminalFlowResume,
+  stageResumeBehindHeldAdmission,
+} from '../runtime';
 import {
   registerResumeTargetRefusal,
   type TerminalFlowResumeIntent,
@@ -75,6 +79,7 @@ const userCancelledRun = (cause?: unknown) =>
 /**
  * Re-admit a settled run from its resume target. The enqueue transaction refuses a run the user
  * cancelled, or whose step no longer recovers as `kind`. False when its flow or version is gone.
+ * A run that still holds its admission is staged behind it instead, never refused.
  */
 export async function retryTerminalFlowRun(
   db: Db,
@@ -88,13 +93,14 @@ export async function retryTerminalFlowRun(
     if (stepRecoveryKind(tx, target.nodeRunId) !== kind) throw recoveryChangedError();
     return !isUserCancelled(tx, flowRunId);
   };
-  await requestTerminalFlowResume({ flowRunId, nodeRunId: target.nodeRunId, kind, admit }).catch(
-    (error) => {
-      const cancelledMeanwhile =
-        error instanceof TerminalResumeAdmissionError && isUserCancelled(db, flowRunId);
-      throw cancelledMeanwhile ? userCancelledRun(error) : error;
-    },
-  );
+  const request = { flowRunId, nodeRunId: target.nodeRunId, kind, admit };
+  // A run still holding its slot refuses a second admission; the slot's settle enqueues this one.
+  if (await stageResumeBehindHeldAdmission(request)) return true;
+  await requestTerminalFlowResume(request).catch((error) => {
+    const cancelledMeanwhile =
+      error instanceof TerminalResumeAdmissionError && isUserCancelled(db, flowRunId);
+    throw cancelledMeanwhile ? userCancelledRun(error) : error;
+  });
   return true;
 }
 

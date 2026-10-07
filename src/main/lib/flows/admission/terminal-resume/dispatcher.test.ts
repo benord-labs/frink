@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   requestTerminalFlowResume: vi.fn(async (_input: EnqueueTerminalFlowResumeInput) => ({
     created: true,
   })),
+  stageResumeBehindHeldAdmission: vi.fn(async (_input: EnqueueTerminalFlowResumeInput) => false),
   registered: null as null | ((intent: unknown, ticket: number) => Promise<void>),
 }));
 
@@ -18,7 +19,7 @@ vi.mock('../../advance', async (orig) => ({
   dispatchAndAdvance: mocks.dispatchAndAdvance,
 }));
 // Bare mock on purpose: importing the real runtime would boot the admission controller.
-// dispatcher.ts imports exactly these two names.
+// dispatcher.ts imports exactly these names.
 vi.mock('../runtime', () => ({
   registerTerminalFlowResumeDispatcher: (
     fn: (intent: unknown, ticket: number) => Promise<void>,
@@ -26,6 +27,7 @@ vi.mock('../runtime', () => ({
     mocks.registered = fn;
   },
   requestTerminalFlowResume: mocks.requestTerminalFlowResume,
+  stageResumeBehindHeldAdmission: mocks.stageResumeBehindHeldAdmission,
 }));
 vi.mock('../../event-emit', async (orig) => ({
   ...(await orig<typeof import('../../event-emit')>()),
@@ -159,6 +161,21 @@ describe('retryTerminalFlowRun', () => {
         message: expect.stringMatching(/refresh/),
       }),
     );
+  });
+
+  // A run still holding its slot would refuse a second live admission; the click is staged behind
+  // it with the same gate instead, and nothing is enqueued now.
+  it('stages behind a held admission instead of enqueueing', async () => {
+    await interruptByRestart();
+    mocks.stageResumeBehindHeldAdmission.mockResolvedValueOnce(true);
+    await expect(retryTerminalFlowRun(db, flowRunId, 'retry')).resolves.toBe(true);
+    expect(mocks.requestTerminalFlowResume).not.toHaveBeenCalled();
+    const staged = mocks.stageResumeBehindHeldAdmission.mock.lastCall?.[0];
+    expect(staged).toMatchObject({ flowRunId, nodeRunId, kind: 'retry' });
+    expect(staged?.admit?.(db)).toBe(true);
+    // The staged click keeps the enqueue's gate: a Work Queue Cancel before the settle wins.
+    abandonRestartInterruption(db, flowRunId);
+    expect(staged?.admit?.(db)).toBe(false);
   });
 
   it('refuses a run the user cancelled (no restart marker) before enqueueing', async () => {

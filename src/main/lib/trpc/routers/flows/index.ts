@@ -105,13 +105,11 @@ export const flowsRouter = router({
       const ids = await listIncompleteFlowRunIdsForChat(db, input.chatId);
       return ids.length > 0;
     }),
-  // Drives the in-chat interrupted-run row (describeInterruptedRunForChat owns the rules). Note the
-  // sub-chat scope: the run is chat-wide, but only the tab whose session drives the interrupted node
-  // can be woken by a message — the rest resolve `continue` or `retry`. Polled like
-  // hasIncompleteRunForChat.
+  // Drives the in-chat interrupted-run row (describeInterruptedRunForChat owns the rules). Polled
+  // like hasIncompleteRunForChat.
   interruptedRunForChat: publicProcedureRaw
-    .input(z.object({ chatId: z.string().min(1), subChatId: z.string().min(1) }))
-    .query(({ input }) => describeInterruptedRunForChat(input.chatId, input.subChatId)),
+    .input(z.object({ chatId: z.string().min(1) }))
+    .query(({ input }) => describeInterruptedRunForChat(input.chatId)),
 
   // chatIds that have a non-terminal flow_run — the sidebar polls this to keep a 'Run' badge on a
   // running flow's chat even in taskless windows (pre-first-agent, non-agent nodes) where no tracked

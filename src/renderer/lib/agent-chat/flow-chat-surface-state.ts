@@ -192,7 +192,7 @@ export function getFlowSurfaceRefetchInterval(data: FlowChatSurfaceData): number
   }
   // `cancelled` joins `needs_attention` as a poll-worthy dead state. A restart-interrupted run is
   // cancelled (terminal), so there is no live run and the surface correctly shows the composer +
-  // Resume — but the RESUME runs in the main process (the executor's follow-up turn, or retryRunFromLastNode),
+  // Resume — but the RESUME runs in the main process (a typed reply's or Continue's resume ticket),
   // and the renderer has no invalidation for it. Stopping the poll here means the run going live
   // again is never observed and the composer sticks for the rest of the session. The docstring's
   // "invalidations keep things fresh" holds for a finished run, not for a resumable one.

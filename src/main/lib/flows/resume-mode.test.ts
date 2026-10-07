@@ -20,10 +20,14 @@ vi.mock('../db', async (importOriginal) => ({
   getDatabase: () => holder.db,
 }));
 
-// `session` is only legal while the run still holds its active admission slot (a wake continues
-// the run without re-admitting). Controlled here instead of seeding real admission rows.
-type AdmissionProbe = { active: boolean; queued: boolean; error: Error | null };
-const admission = vi.hoisted((): AdmissionProbe => ({ active: true, queued: false, error: null }));
+// Whether a resume ticket already owns the run. Controlled here instead of seeding real admission rows.
+type AdmissionProbe = { active: boolean; queued: boolean; live: boolean; error: Error | null };
+const admission = vi.hoisted((): AdmissionProbe => ({
+  active: true,
+  queued: false,
+  live: true,
+  error: null,
+}));
 vi.mock('./admission/runtime', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./admission/runtime')>()),
   hasActiveFlowAdmission: async () => {
@@ -32,14 +36,18 @@ vi.mock('./admission/runtime', async (importOriginal) => ({
   },
   probeFlowAdmission: async () => {
     if (admission.error) throw admission.error;
-    return { active: admission.active, queuedResume: admission.queued };
+    return { active: admission.active, queuedResume: admission.queued, live: admission.live };
   },
 }));
 
+import {
+  dropStagedContinuation,
+  stageContinuationResume,
+} from './admission/terminal-resume/continuation';
 import { describeInterruptedRunForChat, resolveInterruptedResumeMode } from './resume';
 
-const mode = async (flowRunId: string, subChatId: string) =>
-  (await resolveInterruptedResumeMode(flowRunId, subChatId)).resumeMode;
+const mode = async (flowRunId: string) =>
+  (await resolveInterruptedResumeMode(flowRunId)).resumeMode;
 
 const SUB_CHAT_ID = 'sc-1';
 
@@ -66,6 +74,7 @@ describe('resolveInterruptedResumeMode', () => {
     holder.db = db;
     admission.active = true;
     admission.queued = false;
+    admission.live = true;
     admission.error = null;
     // One project/flow/version (the fixture's project path is fixed, so it seeds once); extra runs
     // ride the same version — these cases only care about distinct flow_run ids.
@@ -109,16 +118,18 @@ describe('resolveInterruptedResumeMode', () => {
     return task;
   };
 
-  it('wakes in place when the cancelled driving task and a session are both present', async () => {
+  // Never an in-place wake: even while the run still holds its slot, Continue re-admits through a
+  // resume ticket, which continues the answering session.
+  it('continues through a resume ticket while the run still holds its admission slot', async () => {
     await seedDrivingTask(RUN_ID);
-    expect(await mode(RUN_ID, SUB_CHAT_ID)).toBe('session');
+    expect(await mode(RUN_ID)).toBe('continue');
   });
 
   // The shared sub-chat's session is from earlier nodes; waking it would make the agent redo the
   // previous node and complete this one unrun.
   it("retries when the session never answered the interrupted node's prompt", async () => {
     await seedDrivingTask(RUN_ID, false);
-    expect(await mode(RUN_ID, SUB_CHAT_ID)).toBe('retry');
+    expect(await mode(RUN_ID)).toBe('retry');
   });
 
   // No session id means the attempt died before the CLI produced a frame, so a follow-up would
@@ -140,16 +151,41 @@ describe('resolveInterruptedResumeMode', () => {
       result: { subChatId: 'sc-sessionless', cancelled: true },
     });
 
-    expect(await mode(RUN_ID, 'sc-sessionless')).toBe('retry');
+    expect(await mode(RUN_ID)).toBe('retry');
   });
 
   it('reports queued while a resume ticket is already waiting for a slot — no button can help', async () => {
     await seedDrivingTask(RUN_ID);
     admission.active = false;
     admission.queued = true;
-    expect(await mode(RUN_ID, SUB_CHAT_ID)).toBe('queued');
-    // Precedence over continue/retry: a second enqueue would be refused even for another tab.
-    expect(await mode(RUN_ID, 'sc-other')).toBe('queued');
+    expect(await mode(RUN_ID)).toBe('queued');
+  });
+
+  // A continuation staged behind the run's held slot (typed reply, boot carry-on, an earlier click)
+  // lives only in memory, so the admission store cannot report it.
+  it('reports queued while a continuation is staged behind the held slot', async () => {
+    await seedDrivingTask(RUN_ID);
+    stageContinuationResume({ flowRunId: RUN_ID, nodeRunId: 'n-1' }, () => {});
+    try {
+      expect(await mode(RUN_ID)).toBe('queued');
+    } finally {
+      dropStagedContinuation(RUN_ID);
+    }
+    expect(await mode(RUN_ID)).toBe('continue');
+  });
+
+  // No admission is left whose settle would fire the entry, so nothing ever will: waiting on it
+  // would hide the only button until a restart. The click drops it and re-admits instead.
+  it('offers Continue, not queued, for a staged continuation no admission will fire', async () => {
+    await seedDrivingTask(RUN_ID);
+    admission.active = false;
+    admission.live = false;
+    stageContinuationResume({ flowRunId: RUN_ID, nodeRunId: 'n-1' }, () => {});
+    try {
+      expect(await mode(RUN_ID)).toBe('continue');
+    } finally {
+      dropStagedContinuation(RUN_ID);
+    }
   });
 
   // A settled admission ticket would fail a wake turn at provider preflight and strand the run
@@ -158,7 +194,7 @@ describe('resolveInterruptedResumeMode', () => {
     await seedDrivingTask(RUN_ID);
     admission.active = false;
 
-    expect(await mode(RUN_ID, SUB_CHAT_ID)).toBe('continue');
+    expect(await mode(RUN_ID)).toBe('continue');
   });
 
   // A probe failure (admission store not yet initialized when the renderer polls at boot) must
@@ -167,7 +203,7 @@ describe('resolveInterruptedResumeMode', () => {
     await seedDrivingTask(RUN_ID);
     admission.error = new Error('admission store not started');
 
-    expect(await mode(RUN_ID, SUB_CHAT_ID)).toBe('continue');
+    expect(await mode(RUN_ID)).toBe('continue');
   });
 
   // A run_command/http node swept by recoverOrphanedNodeRuns leaves the PRIOR agent node's `done`
@@ -181,33 +217,24 @@ describe('resolveInterruptedResumeMode', () => {
     });
     await updateTaskStatus(db, task.id, 'done', { result: { subChatId: SUB_CHAT_ID } });
 
-    expect(await mode(RUN_ID, SUB_CHAT_ID)).toBe('retry');
+    expect(await mode(RUN_ID)).toBe('retry');
   });
 
-  // The row is chat-scoped but the wake is sub-chat-scoped: a tab holding a DIFFERENT run's task
-  // must not fire a message that does nothing to the interrupted run.
+  // Another run's answered step says nothing about this run's resume target.
   it('retries when the cancelled task belongs to another run', async () => {
     await seedDrivingTask(OTHER_RUN_ID);
-    expect(await mode(RUN_ID, SUB_CHAT_ID)).toBe('retry');
+    expect(await mode(RUN_ID)).toBe('retry');
   });
 
   it('retries when the sub-chat has no flow task at all', async () => {
-    expect(await mode(RUN_ID, SUB_CHAT_ID)).toBe('retry');
+    expect(await mode(RUN_ID)).toBe('retry');
   });
 
   // A rollback empties the session id; an empty id has nothing to continue.
   it("retries when a rollback emptied the sub-chat's session", async () => {
     await seedDrivingTask(RUN_ID);
     await db.update(subChats).set({ sessionId: '' }).where(eq(subChats.id, SUB_CHAT_ID));
-    expect(await mode(RUN_ID, SUB_CHAT_ID)).toBe('retry');
-  });
-
-  // Only the tab whose session a resume would continue can be woken in place; another tab of the
-  // same chat continues through a resume ticket instead of firing a wake that reaches nothing.
-  it('continues (never wakes) from a tab that is not the session a resume would continue', async () => {
-    await seedDrivingTask(RUN_ID);
-    await createSubChat(db, { id: 'sc-2', chatId: 'chat-1', name: 'second', sessionId: 'sess-2' });
-    expect(await mode(RUN_ID, 'sc-2')).toBe('continue');
+    expect(await mode(RUN_ID)).toBe('retry');
   });
 
   describe('confirmSideEffects', () => {
@@ -216,7 +243,7 @@ describe('resolveInterruptedResumeMode', () => {
 
     it('is set when a started non-agent step must run again', async () => {
       const { id } = await interrupt('run_command', new Date());
-      expect(await resolveInterruptedResumeMode(RUN_ID, SUB_CHAT_ID)).toEqual({
+      expect(await resolveInterruptedResumeMode(RUN_ID)).toEqual({
         resumeMode: 'retry',
         confirmSideEffects: true,
         nodeRunId: id,
@@ -225,7 +252,7 @@ describe('resolveInterruptedResumeMode', () => {
 
     it('is clear for a non-agent step that never started', async () => {
       const { id } = await interrupt('http', null);
-      expect(await resolveInterruptedResumeMode(RUN_ID, SUB_CHAT_ID)).toEqual({
+      expect(await resolveInterruptedResumeMode(RUN_ID)).toEqual({
         resumeMode: 'retry',
         confirmSideEffects: false,
         nodeRunId: id,
@@ -234,7 +261,7 @@ describe('resolveInterruptedResumeMode', () => {
 
     it('is clear for an agent step, which a retry re-prompts rather than replays', async () => {
       const { id } = await interrupt('agent', new Date());
-      expect(await resolveInterruptedResumeMode(RUN_ID, SUB_CHAT_ID)).toEqual({
+      expect(await resolveInterruptedResumeMode(RUN_ID)).toEqual({
         resumeMode: 'retry',
         confirmSideEffects: false,
         nodeRunId: id,
@@ -278,23 +305,22 @@ describe('resolveInterruptedResumeMode', () => {
       const { runId, nodeRunId } = await seedCancelledRunForChat('k-int', true);
       await seedDrivingTask(runId, true, nodeRunId);
 
-      expect(await describeInterruptedRunForChat('chat-1', SUB_CHAT_ID)).toEqual({
+      expect(await describeInterruptedRunForChat('chat-1')).toEqual({
         runId,
         resumable: true,
-        resumeMode: 'session',
+        resumeMode: 'continue',
         confirmSideEffects: false,
         nodeRunId,
       });
     });
 
-    // The gate seen through the read the renderer consumes: losing the slot moves the row to a
-    // resume ticket (mode continue) — it must NOT make the row disappear (resumable stays true).
+    // Losing the slot must NOT make the row disappear (resumable stays true).
     it('keeps a slotless interrupted run resumable, via continue', async () => {
       const { runId, nodeRunId } = await seedCancelledRunForChat('k-slotless', true);
       await seedDrivingTask(runId, true, nodeRunId);
       admission.active = false;
 
-      expect(await describeInterruptedRunForChat('chat-1', SUB_CHAT_ID)).toEqual({
+      expect(await describeInterruptedRunForChat('chat-1')).toEqual({
         runId,
         resumable: true,
         resumeMode: 'continue',
@@ -308,7 +334,7 @@ describe('resolveInterruptedResumeMode', () => {
       const { runId, nodeRunId } = await seedCancelledRunForChat('k-stop', false);
       await seedDrivingTask(runId, true, nodeRunId);
 
-      expect(await describeInterruptedRunForChat('chat-1', SUB_CHAT_ID)).toEqual({
+      expect(await describeInterruptedRunForChat('chat-1')).toEqual({
         runId,
         resumable: false,
         resumeMode: 'retry',
@@ -318,11 +344,11 @@ describe('resolveInterruptedResumeMode', () => {
     });
 
     it('returns null while the run is still live (no row needed)', async () => {
-      expect(await describeInterruptedRunForChat('chat-1', SUB_CHAT_ID)).toBeNull();
+      expect(await describeInterruptedRunForChat('chat-1')).toBeNull();
     });
 
     it('returns null for a chat with no flow run', async () => {
-      expect(await describeInterruptedRunForChat('chat-absent', SUB_CHAT_ID)).toBeNull();
+      expect(await describeInterruptedRunForChat('chat-absent')).toBeNull();
     });
   });
 });

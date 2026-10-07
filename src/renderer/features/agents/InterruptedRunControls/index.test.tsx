@@ -3,7 +3,6 @@ import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, render as rtlRender, screen } from '@testing-library/react';
 import type { ReactElement, ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { HIDDEN_WAKE_MARKER } from '../../../../shared/lib/message-markers/hidden-wake-marker';
 import { TooltipProvider } from '../../../components/ui/tooltip';
 import { appStore } from '../../../lib/jotai-store';
 import { taskExecutionErrorAtomFamily } from '../atoms';
@@ -18,11 +17,10 @@ const render = (ui: ReactElement) => rtlRender(ui, { wrapper: Wrapper });
 const rerunMutate = vi.fn();
 const invalidateInterrupted = vi.fn();
 const invalidateIncomplete = vi.fn();
-const guardedSend = vi.fn((_text: string) => true);
 let runData: {
   runId: string;
   resumable: boolean;
-  resumeMode: 'session' | 'continue' | 'retry' | 'queued';
+  resumeMode: 'continue' | 'retry' | 'queued';
   confirmSideEffects?: boolean;
   nodeRunId?: string | null;
 } | null = null;
@@ -61,15 +59,8 @@ vi.mock('../../../lib/trpc', () => ({
 const CONTINUE_NAME = 'Continue the interrupted flow run';
 const RETRY_NAME = 'Retry the interrupted step';
 
-const renderRow = (chatId = 'c1', isTurnActive = false) =>
-  render(
-    <InterruptedRunControls
-      chatId={chatId}
-      subChatId="sc1"
-      guardedSend={guardedSend}
-      isTurnActive={isTurnActive}
-    />,
-  );
+const renderRow = (chatId = 'c1') =>
+  render(<InterruptedRunControls chatId={chatId} subChatId="sc1" />);
 
 describe('InterruptedRunControls', () => {
   beforeEach(() => {
@@ -80,8 +71,6 @@ describe('InterruptedRunControls', () => {
     rerunMutate.mockReset();
     invalidateInterrupted.mockReset();
     invalidateIncomplete.mockReset();
-    guardedSend.mockReset();
-    guardedSend.mockReturnValue(true);
     toastError.mockReset();
   });
 
@@ -101,47 +90,6 @@ describe('InterruptedRunControls', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  // A run this tab can wake in place must use a HIDDEN message, never retryRunFromLastNode, which
-  // would re-send the node's full instructions as a visible bubble the transcript already holds.
-  it('wakes a session-resumable run with a hidden message, never a re-dispatch', () => {
-    runData = { runId: 'r-restart', resumable: true, resumeMode: 'session' };
-    renderRow();
-
-    const button = screen.getByRole('button', { name: CONTINUE_NAME });
-    expect(button).toHaveTextContent('Continue');
-    fireEvent.click(button);
-
-    expect(guardedSend).toHaveBeenCalledTimes(1);
-    expect(guardedSend.mock.calls[0]?.[0]).toMatch(new RegExp(`^${HIDDEN_WAKE_MARKER}`));
-    expect(rerunMutate).not.toHaveBeenCalled();
-  });
-
-  // The lock's ref closes the same-tick window React state alone leaves open; a second send would
-  // be treated as a supersede and abort the very turn the first click started.
-  it('sends once when the resume button is double-clicked', () => {
-    runData = { runId: 'r-restart', resumable: true, resumeMode: 'session' };
-    renderRow();
-
-    const button = screen.getByRole('button', { name: CONTINUE_NAME });
-    fireEvent.click(button);
-    fireEvent.click(button);
-
-    expect(guardedSend).toHaveBeenCalledTimes(1);
-  });
-
-  // A refused send (socket down / account not ready) must release the lock so the user can retry.
-  it('stays clickable when the guarded send refuses', () => {
-    runData = { runId: 'r-restart', resumable: true, resumeMode: 'session' };
-    guardedSend.mockReturnValue(false);
-    renderRow();
-
-    const button = screen.getByRole('button', { name: CONTINUE_NAME });
-    fireEvent.click(button);
-    fireEvent.click(button);
-
-    expect(guardedSend).toHaveBeenCalledTimes(2);
-  });
-
   it('shows a waiting row with no button while a resume ticket is queued for a slot', () => {
     runData = { runId: 'r1', resumable: true, resumeMode: 'queued' };
     renderRow();
@@ -149,9 +97,9 @@ describe('InterruptedRunControls', () => {
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
 
-  // Another tab's session answered the step: the one Continue button re-admits the run, which
-  // continues that session rather than re-sending the step's instructions.
-  it('continues a run this tab cannot wake through the run re-admit', () => {
+  // The step's session answered it: the one Continue button re-admits the run, which continues that
+  // session rather than re-sending the step's instructions. Never a hidden in-place wake.
+  it('continues an answered step through the run re-admit', () => {
     runData = { runId: 'r-restart', resumable: true, resumeMode: 'continue' };
     renderRow();
 
@@ -161,7 +109,16 @@ describe('InterruptedRunControls', () => {
     fireEvent.click(button);
 
     expect(rerunMutate).toHaveBeenCalledWith({ runId: 'r-restart', kind: 'continue' });
-    expect(guardedSend).not.toHaveBeenCalled();
+  });
+
+  it('re-admits once when Continue is double-clicked, until the request settles', async () => {
+    runData = { runId: 'r-restart', resumable: true, resumeMode: 'continue' };
+    renderRow();
+
+    const button = screen.getByRole('button', { name: CONTINUE_NAME });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(rerunMutate).toHaveBeenCalledTimes(1);
   });
 
   // Nothing of the step reached a session: the one button says Retry, and an agent step that never
@@ -220,7 +177,6 @@ describe('InterruptedRunControls', () => {
     ['another run', { runId: 'r-b' }],
     ['another step of the same run', { nodeRunId: 'nr-b' }],
     ['the step now continuable', { resumeMode: 'continue' as const }],
-    ['the step now resumable in this tab', { resumeMode: 'session' as const }],
   ])('drops an open confirmation once the row shows %s, even after returning', (_case, change) => {
     const run = {
       runId: 'r-a',
@@ -234,17 +190,11 @@ describe('InterruptedRunControls', () => {
     fireEvent.click(screen.getByRole('button', { name: RETRY_NAME }));
     expect(screen.getByRole('alert')).toBeInTheDocument();
 
-    // A fresh prop stands in for the query re-render past memo().
+    // A fresh chatId stands in for the query re-render past memo(); the confirm is not keyed on it.
+    let renders = 0;
     const show = (next: typeof runData) => {
       runData = next;
-      rerender(
-        <InterruptedRunControls
-          chatId="c1"
-          subChatId="sc1"
-          guardedSend={(text) => guardedSend(text)}
-          isTurnActive={false}
-        />,
-      );
+      rerender(<InterruptedRunControls chatId={`c1-${++renders}`} subChatId="sc1" />);
     };
     show({ ...run, ...change });
     expect(screen.queryByRole('button', { name: /Retry anyway/ })).not.toBeInTheDocument();
@@ -255,7 +205,7 @@ describe('InterruptedRunControls', () => {
 
   // The row mounts asynchronously (poll surfaces the cancelled run) — it must be a live region.
   it('announces itself via a status live region with the interruption label', () => {
-    runData = { runId: 'r-restart', resumable: true, resumeMode: 'session' };
+    runData = { runId: 'r-restart', resumable: true, resumeMode: 'continue' };
     renderRow();
 
     expect(screen.getByRole('status')).toHaveTextContent('Flow run interrupted');
@@ -271,13 +221,12 @@ describe('InterruptedRunControls', () => {
     expect(button).toHaveTextContent('Retrying');
   });
 
-  it('shows a pending, disabled button while a wake is in flight', () => {
-    runData = { runId: 'r-restart', resumable: true, resumeMode: 'session' };
+  it('shows a pending, disabled button while a continue is in flight', () => {
+    runData = { runId: 'r-restart', resumable: true, resumeMode: 'continue' };
+    rerunPending = true;
     renderRow();
 
     const button = screen.getByRole('button', { name: CONTINUE_NAME });
-    fireEvent.click(button);
-
     expect(button).toBeDisabled();
     expect(button).toHaveTextContent('Continuing');
   });
@@ -299,7 +248,7 @@ describe('InterruptedRunControls', () => {
   // on the recovery click itself — ambient stream chunks deliberately never clear it, so without
   // this the composer would read as failed forever after recovering via this row.
   it('clears a latched task-execution error on either recovery click', () => {
-    for (const resumeMode of ['session', 'retry'] as const) {
+    for (const resumeMode of ['continue', 'retry'] as const) {
       runData = { runId: 'r-restart', resumable: true, resumeMode };
       appStore.set(taskExecutionErrorAtomFamily('sc1'), {
         message: 'Flow task t1 is no longer execution-eligible',
@@ -328,16 +277,9 @@ describe('InterruptedRunControls', () => {
     } as never);
 
     runData = { runId: 'r-restart', resumable: false, resumeMode: 'retry' };
-    // isTurnActive flips to defeat the memo — the mocked query has no subscription, so only a
-    // prop change re-renders; in the app the query observer itself triggers the re-render.
-    view.rerender(
-      <InterruptedRunControls
-        chatId="c1"
-        subChatId="sc1"
-        guardedSend={guardedSend}
-        isTurnActive={true}
-      />,
-    );
+    // chatId changes to defeat the memo — the mocked query has no subscription, so only a prop
+    // change re-renders; in the app the query observer itself triggers the re-render.
+    view.rerender(<InterruptedRunControls chatId="c1-refetched" subChatId="sc1" />);
 
     expect(appStore.get(taskExecutionErrorAtomFamily('sc1'))).toBeNull();
   });
@@ -355,14 +297,7 @@ describe('InterruptedRunControls', () => {
     };
     appStore.set(taskExecutionErrorAtomFamily('sc2'), yLatch as never);
     runData = null;
-    view.rerender(
-      <InterruptedRunControls
-        chatId="c1"
-        subChatId="sc2"
-        guardedSend={guardedSend}
-        isTurnActive={false}
-      />,
-    );
+    view.rerender(<InterruptedRunControls chatId="c1" subChatId="sc2" />);
 
     expect(appStore.get(taskExecutionErrorAtomFamily('sc2'))).toEqual(yLatch);
   });
@@ -374,10 +309,7 @@ describe('InterruptedRunControls', () => {
 
     await act(() => capturedOnSettled?.());
 
-    expect(invalidateInterrupted).toHaveBeenCalledWith({
-      chatId: 'c-success',
-      subChatId: 'sc1',
-    });
+    expect(invalidateInterrupted).toHaveBeenCalledWith({ chatId: 'c-success' });
     expect(invalidateIncomplete).toHaveBeenCalledWith({ chatId: 'c-success' });
   });
 });

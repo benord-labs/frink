@@ -26,10 +26,7 @@ type RunStatusRowsProps = {
   /** The chat's pinned task (chats.taskId) — the acting task for non-flow chats. */
   pinnedTaskId: string | null;
   chatId: string | null;
-  /** Guarded chat send — the Resume row wakes an interrupted run through it. */
-  guardedSend: (text: string) => boolean;
-  /** Streaming state: the Resume row tells a finished wake from a stalled one by it, and the
-   * background-work row hands its Stops to the composer while a turn streams. */
+  /** Streaming state: the background-work row hands its Stops to the composer while a turn streams. */
   isTurnActive: boolean;
   /**
    * True while a flow surface owns the chat's terminal verb — see {@link BackgroundWaitRow}. Also
@@ -187,7 +184,6 @@ export function RunStatusRows({
   subChatId,
   pinnedTaskId,
   chatId,
-  guardedSend,
   isTurnActive,
   flowSurfaceOwnsStop,
 }: RunStatusRowsProps) {
@@ -207,19 +203,13 @@ export function RunStatusRows({
   // them, preserving this surface's one-row-at-a-time grammar.
   if (wakeHold) return row;
 
-  // Unheld, the row only shows mid-turn, beside rows that stay mounted: the Resume row's lock tracks
-  // the turn it started through `isTurnActive`.
+  // Unheld, the row only shows mid-turn, beside rows that stay mounted.
   return (
     <>
       {row}
       <TaskAcceptBar subChatId={subChatId} pinnedTaskId={pinnedTaskId} chatId={chatId} />
       <TaskControls subChatId={subChatId} pinnedTaskId={pinnedTaskId} />
-      <InterruptedRunControls
-        chatId={chatId}
-        subChatId={subChatId}
-        guardedSend={guardedSend}
-        isTurnActive={isTurnActive}
-      />
+      <InterruptedRunControls chatId={chatId} subChatId={subChatId} />
     </>
   );
 }

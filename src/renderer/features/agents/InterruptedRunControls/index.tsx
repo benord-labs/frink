@@ -5,10 +5,7 @@
 
 import { memo, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { buildHiddenWakeMessage } from '../../../../shared/lib/message-markers/hidden-wake-marker';
 import type { RecoveryKind } from '../../../../shared/types/flow-run/resume';
-import { RESUME_INTERRUPTED_WAKE_TEXT } from '../../../lib/agent-chat/resume-wake-text';
-import { useFlowResumeLock } from '../../../lib/agent-chat/use-flow-resume-lock';
 import { trpc } from '../../../lib/trpc';
 import { clearFlowRunEndedErrorSignal } from '../main/active-chat/utils';
 import { RunStatusRow } from '../RunStatusRow';
@@ -16,12 +13,8 @@ import { RecoverRow } from './RecoverRow';
 
 type InterruptedRunControlsProps = {
   chatId: string | null;
-  /** Scopes the wake: only the sub-chat whose session drives the interrupted node can be woken. */
+  /** The tab whose latched run-ended error a recovery clears. */
   subChatId: string;
-  /** Guarded chat send (socket/account checks + autoscroll); false when it refused to send. */
-  guardedSend: (text: string) => boolean;
-  /** Streaming state — the resume lock releases on the turn it started actually ending. */
-  isTurnActive: boolean;
 };
 
 /** A resume ticket (boot continuation, typed reply, or a Continue/Retry click) already owns the run and waits for a slot. */
@@ -36,12 +29,10 @@ function QueuedResumeRow() {
 export const InterruptedRunControls = memo(function InterruptedRunControls({
   chatId,
   subChatId,
-  guardedSend,
-  isTurnActive,
 }: InterruptedRunControlsProps) {
   const utils = trpc.useUtils();
   const { data } = trpc.flows.interruptedRunForChat.useQuery(
-    { chatId: chatId ?? '', subChatId },
+    { chatId: chatId ?? '' },
     {
       enabled: Boolean(chatId),
       // Poll only while a RESUMABLE run lingers, so the row clears once a resume flips the run
@@ -67,13 +58,12 @@ export const InterruptedRunControls = memo(function InterruptedRunControls({
       setConfirmingFor(null);
       if (!chatId) return;
       await Promise.all([
-        utils.flows.interruptedRunForChat.invalidate({ chatId, subChatId }),
+        utils.flows.interruptedRunForChat.invalidate({ chatId }),
         utils.flows.hasIncompleteRunForChat.invalidate({ chatId }),
       ]);
     },
     // No global mutationCache.onError — without this a server precondition throw (run already
-    // advanced / cancelled meanwhile) would be silently swallowed. Only the re-admit branch fires
-    // this mutation; a failed wake is reported by the resume lock instead.
+    // advanced / cancelled meanwhile) would be silently swallowed.
     onError: (error) =>
       toast.error('Could not recover the step', {
         description: error.message || 'Please try again in a moment.',
@@ -99,12 +89,6 @@ export const InterruptedRunControls = memo(function InterruptedRunControls({
     }
   }, [resumable, subChatId]);
 
-  // Single-shot lock shared with the paused bar: its ref closes the same-tick double-click window
-  // that React state alone leaves open. Without it a second click inside the 5s poll window sends a
-  // duplicate request, which the executor treats as a supersede — aborting the very turn the first
-  // click started. It also reports a wake that ended with the run still cancelled.
-  const { resumePending, start } = useFlowResumeLock(data?.runId ?? '', subChatId, isTurnActive);
-
   // Only a recoverable (restart-interrupted) run gets a resume CTA; a user-cancelled run is absent
   // here (resumable === false renders nothing — the user stopped it on purpose).
   if (!data?.resumable) return null;
@@ -112,17 +96,11 @@ export const InterruptedRunControls = memo(function InterruptedRunControls({
   // Nothing to click while the ticket waits (boot continuation / typed reply); a second request would be refused.
   if (data.resumeMode === 'queued') return <QueuedResumeRow />;
 
-  const isSessionResume = data.resumeMode === 'session';
   const isRetry = data.resumeMode === 'retry';
-  const pending = isSessionResume ? resumePending : rerunMutation.isPending;
   const recover = (kind: RecoveryKind) => {
     // Clear a latched FLOW_RUN_ENDED send failure on intent: a re-admitted step streams into a
     // sub-chat whose start chunk may never reach the transport that latched it.
     clearFlowRunEndedErrorSignal(subChatId);
-    if (kind === 'continue' && isSessionResume) {
-      start(() => guardedSend(buildHiddenWakeMessage(RESUME_INTERRUPTED_WAKE_TEXT)));
-      return;
-    }
     if (rerunInFlight.current) return;
     rerunInFlight.current = true;
     rerunMutation.mutate({ runId: data.runId, kind });
@@ -131,7 +109,7 @@ export const InterruptedRunControls = memo(function InterruptedRunControls({
   return (
     <RecoverRow
       isRetry={isRetry}
-      pending={pending}
+      pending={rerunMutation.isPending}
       confirming={confirmingFor === confirmTarget}
       onTrigger={() =>
         isRetry && data.confirmSideEffects

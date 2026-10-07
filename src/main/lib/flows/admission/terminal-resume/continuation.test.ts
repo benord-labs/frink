@@ -18,8 +18,10 @@ vi.mock('../activity', () => ({ captureFlowAdmissionException }));
 import {
   dropStagedContinuation,
   fireStagedContinuationResume,
+  hasStagedContinuation,
   type PendingContinuationResume,
   settleWithStagedContinuation,
+  stageBehindHeldAdmission,
   stageContinuationResume,
 } from './continuation';
 import { ResumeAdmitDeclinedError, TerminalResumeAdmissionError } from './resume-store';
@@ -81,6 +83,60 @@ describe('staged continuation resume', () => {
     await fireStagedContinuationResume(PENDING.flowRunId, ops);
     expect(ops.requestTerminalFlowResume.mock.calls[0][0].admit?.(db)).toBe(false);
     expect(admit).toHaveBeenCalledWith(db);
+  });
+
+  // A Continue clicked after boot carry-on brings its own guard; neither may drop the other.
+  it('a later guarded stage keeps the earlier guard beside its own, and carries its kind', async () => {
+    const ops = makeOps();
+    const earlier = vi.fn(() => false);
+    const own = vi.fn(() => true);
+    stageContinuationResume({ ...PENDING, admit: earlier }, vi.fn(), FAST_WATCH);
+    stageContinuationResume({ ...PENDING, kind: 'continue', admit: own }, vi.fn(), FAST_WATCH);
+    await fireStagedContinuationResume(PENDING.flowRunId, ops);
+    const input = ops.requestTerminalFlowResume.mock.calls[0][0];
+    expect(input.kind).toBe('continue');
+    expect(input.admit?.(db)).toBe(false);
+    expect(own).toHaveBeenCalledWith(db);
+    expect(earlier).toHaveBeenCalledWith(db);
+  });
+
+  // The held admission settles between the probe and the stage: no settle is left to fire the
+  // entry, so staging fires it itself.
+  it('fires a held-slot stage itself when the slot settled during staging', async () => {
+    const ops = makeOps();
+    ops.getLiveAdmissionState.mockResolvedValueOnce('active').mockResolvedValue(null);
+    await expect(stageBehindHeldAdmission({ ...PENDING, kind: 'continue' }, ops)).resolves.toBe(
+      true,
+    );
+    expect(hasStagedContinuation(PENDING.flowRunId)).toBe(false);
+    expect(ops.requestTerminalFlowResume).toHaveBeenCalledWith(
+      expect.objectContaining({ ...PENDING, kind: 'continue' }),
+    );
+  });
+
+  // Still held or mid-release: the settle (or its reconcile hook) fires the entry, not the click.
+  it.each(['active', 'releasing'])(
+    'leaves a held-slot stage for the settle while the slot is %s',
+    async (state) => {
+      const ops = makeOps();
+      ops.getLiveAdmissionState.mockResolvedValueOnce('active').mockResolvedValue(state);
+      await expect(stageBehindHeldAdmission(PENDING, ops)).resolves.toBe(true);
+      expect(hasStagedContinuation(PENDING.flowRunId)).toBe(true);
+      expect(ops.requestTerminalFlowResume).not.toHaveBeenCalled();
+      dropStagedContinuation(PENDING.flowRunId);
+    },
+  );
+
+  it('reports a staged continuation until it fires or a Cancel drops it', async () => {
+    const ops = makeOps();
+    expect(hasStagedContinuation(PENDING.flowRunId)).toBe(false);
+    stageContinuationResume(PENDING, vi.fn(), FAST_WATCH);
+    expect(hasStagedContinuation(PENDING.flowRunId)).toBe(true);
+    await fireStagedContinuationResume(PENDING.flowRunId, ops);
+    expect(hasStagedContinuation(PENDING.flowRunId)).toBe(false);
+    stageContinuationResume(PENDING, vi.fn(), FAST_WATCH);
+    dropStagedContinuation(PENDING.flowRunId);
+    expect(hasStagedContinuation(PENDING.flowRunId)).toBe(false);
   });
 
   it('declines the enqueue of an entry a Cancel dropped while the fire held it', async () => {

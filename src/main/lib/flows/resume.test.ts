@@ -31,7 +31,7 @@ import { hasFlowResourceActivity, setFlowAdmissionLifecycleHooks } from './admis
 // in-memory db so the guard reads (getFlowRun / listNodeRunsForFlowRun) hit seeded rows.
 const holder = vi.hoisted(() => ({
   db: null as unknown,
-  probeFlowAdmission: vi.fn(async () => ({ active: false, queuedResume: false })),
+  probeFlowAdmission: vi.fn(async () => ({ active: false, queuedResume: false, live: false })),
   requestTerminalFlowResume: vi.fn(),
 }));
 vi.mock('../db', async (importOriginal) => ({
