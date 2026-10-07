@@ -1,5 +1,4 @@
 import { hostname } from 'node:os';
-import { TRPCError } from '@trpc/server';
 import { eq } from 'drizzle-orm';
 import { assessTaskRetry } from '../../../../shared/lib/task-retry-policy';
 import type { MobileRequest, MobileTaskAction } from '../../../../shared/types/remote/mobile';
@@ -58,26 +57,15 @@ export async function runMobileTaskAction(request: TaskActionRequest): Promise<{
   }
   requireExecutionReady();
   if (request.type !== 'continueTask') await startTask(task);
-  else if (request.kind === 'retry') await retryTask(task);
+  else if (request.kind === 'retry') await retryTask(task.id);
   else await continueTask(task.id, request.kind === undefined);
   return { ok: true };
 }
 
-/** What a recovery attempt rewrites: a restart stamps a new result and clears the run times. */
-const attemptOf = (task: Task) =>
-  JSON.stringify([task.status, task.startedAt, task.completedAt, task.result]);
-
-/** Desktop's Retry. One that lost a race (a double tap) finds a newer attempt, even one that
- *  already stopped again, so it compares attempts rather than statuses. */
-async function retryTask(task: Task) {
-  try {
-    await mobileCallers.tasks.recover({ taskId: task.id, kind: 'retry' });
-  } catch (error) {
-    if (error instanceof TRPCError) throw error;
-    const current = await getTaskById(getDatabase(), task.id);
-    if (current && attemptOf(current) === attemptOf(task)) throw error;
-    throw new MobileApiError(409, CHANGED);
-  }
+/** Desktop's Retry. Its refusals are typed (a lost race is CONFLICT / PRECONDITION_FAILED, a
+ *  deleted task NOT_FOUND), so the API boundary answers them 409 / 404 and reports only faults. */
+async function retryTask(taskId: string) {
+  await mobileCallers.tasks.recover({ taskId, kind: 'retry' });
 }
 
 /** Continue resumes the task's own session, as desktop's does; without one there is nothing to

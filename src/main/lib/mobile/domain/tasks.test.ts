@@ -132,33 +132,19 @@ describe('mobile task actions', () => {
     await expect(runMobileTaskAction(retry)).rejects.toBe(changed);
   });
 
-  it('refuses, rather than faults, a Retry that lost a race to another Retry', async () => {
+  it("passes recover's typed refusals and faults through, for the API to answer", async () => {
     await seed('failed', 'failed');
     const retry = { type: 'continueTask', id: 'failed', kind: 'retry' } as const;
-    // A double tap, or desktop's Retry: the other attempt restarts the task between our gate
-    // and recover's write, so recover finds it no longer stopped.
-    fixture.recover.mockImplementationOnce(async () => {
-      await db.update(tasks).set({ status: 'running' }).where(eq(tasks.id, 'failed'));
-      throw new Error('Only failed or attention-parked tasks can be retried');
-    });
-    await expect(runMobileTaskAction(retry)).rejects.toMatchObject({
-      status: 409,
-      message: 'This item changed. Refresh and try again.',
-    });
-
-    // The other attempt may already have stopped again: a new attempt, so still a lost race.
-    await db.update(tasks).set({ status: 'failed' }).where(eq(tasks.id, 'failed'));
-    fixture.recover.mockImplementationOnce(async () => {
-      const restarted = { status: 'failed', result: { retryRequestedAt: 'now', error: 'boom' } };
-      await db.update(tasks).set(restarted).where(eq(tasks.id, 'failed'));
-      throw new Error('Only failed or attention-parked tasks can be retried');
-    });
-    await expect(runMobileTaskAction(retry)).rejects.toMatchObject({ status: 409 });
-
-    // A fault that left the task's attempt as it was is not a race: it stays a fault for Sentry.
-    const fault = new Error('disk full');
-    fixture.recover.mockRejectedValueOnce(fault);
-    await expect(runMobileTaskAction(retry)).rejects.toBe(fault);
+    // A double tap or desktop's Retry restarted it first; or the task was deleted meanwhile.
+    // The API answers these 409 / 404; a fault (a plain Error, wrapped by createCaller) is a 500.
+    for (const error of [
+      new TRPCError({ code: 'CONFLICT', message: 'Only failed or attention-parked tasks' }),
+      new TRPCError({ code: 'NOT_FOUND', message: 'Task not found' }),
+      new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'disk full' }),
+    ]) {
+      fixture.recover.mockRejectedValueOnce(error);
+      await expect(runMobileTaskAction(retry)).rejects.toBe(error);
+    }
   });
 
   it('refreshes a Continue whose session is gone, since the row now retries', async () => {
