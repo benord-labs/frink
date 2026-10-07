@@ -3,7 +3,7 @@ name: Build Desktop
 # Builds Frink for Windows (windows-2022 → nsis + portable) and Linux (ubuntu-latest →
 # AppImage + deb) via one matrix, and verifies the PACKAGED native modules (better-sqlite3,
 # node-pty) load under Electron's ABI plus that the bundled agent binaries (claude, codex)
-# are present and runnable.
+# are present and runnable. The Linux leg also launches both installers under Xvfb.
 #
 # Verification-only and additive: no code signing, no R2 upload, no shipping. Installers are
 # uploaded as CI artifacts. windows-2022 is pinned for a deterministic native compile
@@ -24,6 +24,7 @@ on:
       - 'patches/codex/**'
       - 'scripts/skills/build-skill-content.ts'
       - 'scripts/smoke/smoke-native.cjs'
+      - 'scripts/smoke/smoke-linux-launch.sh'
       - '.github/workflows/build-desktop.yml'
 
 # A new push to the same PR cancels the in-flight run (stale builds otherwise double-spend the
@@ -46,7 +47,8 @@ jobs:
             platformKey: win32-x64
             cargoTarget: x86_64-pc-windows-msvc
             testArgs: ''
-          - os: ubuntu-latest
+          # Oldest supported LTS: codex links the build host's glibc, so a newer runner strands 22.04 users.
+          - os: ubuntu-22.04
             platformKey: linux-x64
             cargoTarget: x86_64-unknown-linux-gnu
             testArgs: '--test'
@@ -60,13 +62,14 @@ jobs:
         with:
           toolchain: 1.95.0
           targets: ${{ matrix.cargoTarget }}
+      # Keyed by runner image too: C objects cached on a newer image would drag its glibc symbols in.
       - uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             .codex-target
-          key: codex-rust-v0.153.3-${{ matrix.platformKey }}-${{ hashFiles('patches/codex/**', 'scripts/binaries/build-codex-frink.mjs') }}
+          key: codex-rust-v0.153.3-${{ matrix.os }}-${{ matrix.platformKey }}-${{ hashFiles('patches/codex/**', 'scripts/binaries/build-codex-frink.mjs') }}
       - name: Build permission-aware Codex
         run: node scripts/binaries/build-codex-frink.mjs --target ${{ matrix.platformKey }} ${{ matrix.testArgs }}
         env:
@@ -340,6 +343,29 @@ jobs:
           done
           kill "$MOUNT_PID" || true
           [ "$MOUNTED" = 1 ] || { echo "::error::AppImage did not mount without libfuse2"; exit 1; }
+
+      - name: Install the Linux launch smoke tools
+        if: runner.os == 'Linux'
+        timeout-minutes: 5
+        run: sudo apt-get update -q && sudo apt-get install -y -q xvfb xdotool fuse3
+
+      - name: Smoke — launch the deb and the AppImage under Xvfb
+        if: runner.os == 'Linux'
+        # Runs under the AppArmor user-namespace restriction Ubuntu desktops have, so a sandbox, AppArmor
+        # or shared-library regression fails here instead of on a user's first launch.
+        timeout-minutes: 5
+        run: bash scripts/smoke/smoke-linux-launch.sh
+
+      - name: Upload the Linux launch smoke logs
+        if: failure() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-launch-smoke-logs
+          path: |
+            ${{ runner.temp }}/linux-launch-smoke/*/*.log
+            ${{ runner.temp }}/linux-launch-smoke/*/processes.txt
+          if-no-files-found: ignore
+          retention-days: 5
 
       - name: Assert Windows installers produced
         if: runner.os == 'Windows'
