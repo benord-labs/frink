@@ -77,7 +77,8 @@ function itemKind(item: MobileQueueItem): QueueRow['kind'] {
 // A Flow item opens its run (the whole picture); a plain task opens its chat.
 function itemTarget(item: MobileQueueItem): QueueTarget | null {
   if (item.flowRunId) return { screen: 'Run', id: item.flowRunId };
-  if (item.chatId) return { screen: 'Chat', id: item.chatId, subChatId: item.subChatId ?? undefined };
+  if (item.chatId)
+    return { screen: 'Chat', id: item.chatId, subChatId: item.subChatId ?? undefined };
   return null;
 }
 
@@ -240,7 +241,12 @@ export function queueSections(data: MobileOverview): QueueSection[] {
     review: review.length,
     upNext: data.counts.inbox,
   };
-  const titles = { needsYou: 'Needs you', running: 'Running', review: 'Ready for review', upNext: 'Up next' };
+  const titles = {
+    needsYou: 'Needs you',
+    running: 'Running',
+    review: 'Ready for review',
+    upNext: 'Up next',
+  };
   const rows = { needsYou, running, review, upNext };
   return (Object.keys(titles) as QueueSectionKey[])
     .filter((key) => rows[key].length > 0)

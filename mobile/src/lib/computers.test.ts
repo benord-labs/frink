@@ -39,7 +39,9 @@ it('re-pairing the same desktop replaces its entry instead of adding a second', 
 it('finds a same-named computer with another pairing, and can replace it explicitly', () => {
   const old = addComputer(NO_COMPUTERS, computer(1));
   const reset = computer(2, { machineName: 'Mac 1' });
-  expect(namesake(old.computers, { ...reset, machine: 'Mac 1' })?.deviceId).toBe(computer(1).deviceId);
+  expect(namesake(old.computers, { ...reset, machine: 'Mac 1' })?.deviceId).toBe(
+    computer(1).deviceId,
+  );
   expect(namesake(old.computers, { ...computer(1), machine: 'Mac 1' })).toBeNull();
   expect(addComputer(old, reset, computer(1).deviceId).computers).toEqual([reset]);
   expect(addComputer(old, reset).computers).toHaveLength(2);

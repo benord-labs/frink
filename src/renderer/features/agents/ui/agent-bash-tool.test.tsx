@@ -9,15 +9,22 @@ type PollOptions = {
   enabled: boolean;
   refetchInterval: (query: { state: { data: unknown } }) => number | false;
 };
+type CommandOutputInput = { subChatId: string; commandId: string };
 let pollOptions: PollOptions | undefined;
-const commandOutputQuery = vi.fn((_input: unknown) => ({
+const commandOutputQuery = vi.fn((_input: CommandOutputInput) => ({
   data: { runningForMs: 12_000, text: 'Compiling…\nBuilt in 9s' },
 }));
 vi.mock('../../../lib/trpc', () => ({
-  trpc: { socket: { getCommandOutput: { useQuery: (input: unknown, options: PollOptions) => {
-        pollOptions = options;
-        return commandOutputQuery(input);
-      }, } } },
+  trpc: {
+    socket: {
+      getCommandOutput: {
+        useQuery: (input: CommandOutputInput, options: PollOptions) => {
+          pollOptions = options;
+          return commandOutputQuery(input);
+        },
+      },
+    },
+  },
 }));
 
 const bash = (state: string, output?: unknown) =>

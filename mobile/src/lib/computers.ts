@@ -18,7 +18,9 @@ export function namesake(
   computers: Connection[],
   pairing: Pick<Connection, 'route' | 'key'> & { machine: string },
 ) {
-  return computers.find((c) => c.machineName === pairing.machine && !samePairing(pairing, c)) ?? null;
+  return (
+    computers.find((c) => c.machineName === pairing.machine && !samePairing(pairing, c)) ?? null
+  );
 }
 
 /**
@@ -51,11 +53,12 @@ export function addComputer(state: Computers, computer: Connection, replacing?: 
 /** Drops a computer; when it was the one shown, the next remaining computer is shown instead. */
 export function removeComputer(state: Computers, deviceId: string): Computers {
   const computers = state.computers.filter((c) => c.deviceId !== deviceId);
-  const selected =
-    state.selected === deviceId ? (computers[0]?.deviceId ?? null) : state.selected;
+  const selected = state.selected === deviceId ? (computers[0]?.deviceId ?? null) : state.selected;
   return { computers, selected };
 }
 
 export function selectComputer(state: Computers, deviceId: string): Computers {
-  return state.computers.some((c) => c.deviceId === deviceId) ? { ...state, selected: deviceId } : state;
+  return state.computers.some((c) => c.deviceId === deviceId)
+    ? { ...state, selected: deviceId }
+    : state;
 }

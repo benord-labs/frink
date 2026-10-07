@@ -30,7 +30,7 @@
       "project": ["src/**/*.ts", "tests/**/*.ts"]
     }
   },
-  "ignoreBinaries": ["lsof", "ps", "security"],
+  "ignoreBinaries": ["lsof", "mkfifo", "node-gyp", "ps", "security"],
   "ignoreIssues": {
     "src/renderer/features/agents/ui/agent-task-tools.tsx": ["exports"],
     "src/renderer/lib/hotkeys/shortcut-registry.ts": ["exports"]

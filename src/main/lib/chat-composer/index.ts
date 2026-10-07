@@ -49,7 +49,7 @@ function echo(chatId: string, row: StoredComposerSettings): ChatComposerValues {
   return settings;
 }
 
-export function getThinkingEnabled(): boolean {
+function getThinkingEnabled(): boolean {
   return getPreference<boolean>(getDatabase(), THINKING_KEY) ?? true;
 }
 

@@ -161,7 +161,16 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   const connection = selectedComputer(state);
   return (
     <Context.Provider
-      value={{ computers: state.computers, connection, loading, error, connect, select, forget, request }}
+      value={{
+        computers: state.computers,
+        connection,
+        loading,
+        error,
+        connect,
+        select,
+        forget,
+        request,
+      }}
     >
       {children}
     </Context.Provider>

@@ -1,5 +1,12 @@
 import { View } from 'react-native';
-import { ArrowLeftRight, ChevronLeft, Laptop, RefreshCw, ShieldCheck, X } from 'lucide-react-native';
+import {
+  ArrowLeftRight,
+  ChevronLeft,
+  Laptop,
+  RefreshCw,
+  ShieldCheck,
+  X,
+} from 'lucide-react-native';
 import { Button, IconButton } from '../../../ui/button';
 import { Text } from '../../../ui/text';
 import { radius, space, useTheme } from '../../../ui/theme';
@@ -107,7 +114,8 @@ const REPAIR = (name: string) => ({
 const REPLACE = (name: string) => ({
   icon: ArrowLeftRight,
   title: `Replaces your other ${name}`,
-  detail: 'A computer gets a new code when its mobile access is reset, so the old pairing no longer works.',
+  detail:
+    'A computer gets a new code when its mobile access is reset, so the old pairing no longer works.',
   toggle: 'Keep both',
 });
 const KEEP_BOTH = (name: string) => ({

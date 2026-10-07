@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as schema from '../../db/schema';
 import { freshDb, type TestDb } from '../../db/test-utils/fresh-db';
 
-const { h } = vi.hoisted(() => ({ h: { db: null as unknown } }));
+type DbHolder = { db: TestDb | null };
+const h = vi.hoisted((): DbHolder => ({ db: null }));
 
 vi.mock('../../db', async (orig) => ({
   ...(await orig<typeof import('../../db')>()),

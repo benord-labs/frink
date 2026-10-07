@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { GATE_SCRIPTS } from './collect-quality-gate-findings.mjs';
 
 // Guards .github/workflows/test-suite.yml → deterministic-quality-gates (sc-3887).
 // Every gate must run even when an earlier gate is red, so one failure cannot hide
@@ -98,11 +99,35 @@ describe('deterministic quality gates workflow', () => {
     expect(gateProblems(workflow)).toEqual([]);
   });
 
-  it('still runs on pull requests and on pushes to main', () => {
+  it('holds main to every gate on push', () => {
     const block = jobBlock(workflow, JOB_KEY) ?? '';
     const jobIf = block.split('\n')[1] ?? '';
-    expect(jobIf).toContain("github.event_name == 'pull_request'");
     expect(jobIf).toContain("github.event_name == 'push' && github.ref == 'refs/heads/main'");
+  });
+
+  it('collects exactly the gates the strict job runs, so the pull request delta cannot drift', () => {
+    expect(GATE_SCRIPTS).toEqual(REQUIRED_GATES);
+  });
+
+  it('judges pull requests on introduced findings under the same check name', () => {
+    const collect = jobBlock(workflow, 'pull-request-gates') ?? '';
+    const compare = jobBlock(workflow, 'compare-pull-request-gates') ?? '';
+    expect(collect).toContain("if: github.event_name == 'pull_request'");
+    expect(collect).toContain('collect-quality-gate-findings.mjs');
+    expect(compare).toContain("if: always() && github.event_name == 'pull_request'");
+    expect(compare).toContain('name: Deterministic quality gates');
+    expect(compare).toContain('compare-quality-gates.mjs');
+    expect(`${collect}\n${compare}`).not.toMatch(/continue-on-error/);
+  });
+
+  // A branch cut before main was cleaned still carries main's old findings at its own tip; judged
+  // on that tip, every inherited finding would read as introduced until the branch is rebased.
+  it('judges the merge result, not the pull request tip, against base', () => {
+    const collect = jobBlock(workflow, 'pull-request-gates') ?? '';
+    expect(collect).toContain(
+      "ref: ${{ matrix.side == 'base' && github.event.pull_request.base.sha || github.sha }}",
+    );
+    expect(collect).not.toContain('github.event.pull_request.head.sha');
   });
 });
 

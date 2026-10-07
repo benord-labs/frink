@@ -43,4 +43,7 @@ const result = await page.evaluate(`(async () => {
 stamp('result ' + JSON.stringify(result));
 page.close();
 // A run that never settled (timeout or transport error) is not a measurement; say so in the exit code.
-if (result.status !== 'ready') { console.error(`bench did not settle: status=${result.status} error=${result.error}`); process.exit(5); }
+if (result.status !== 'ready') {
+  console.error(`bench did not settle: status=${result.status} error=${result.error}`);
+  process.exit(5);
+}

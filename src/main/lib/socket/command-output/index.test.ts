@@ -139,7 +139,9 @@ describe('readCommandOutput on a Codex chat', () => {
   it('reads a running command’s output from its live turn', async () => {
     const startedAt = Date.now() - 5000;
     codexTurns.set('sc1', {
-      commandOutputs: new Map([['c1', { startedAt, text: 'ial\n\u001b[1mbuilt\u001b[0m\n', cut: true }]]),
+      commandOutputs: new Map([
+        ['c1', { startedAt, text: 'ial\n\u001b[1mbuilt\u001b[0m\n', cut: true }],
+      ]),
     });
 
     const tail = await readCommandOutput('sc1', 'c1');
@@ -150,7 +152,9 @@ describe('readCommandOutput on a Codex chat', () => {
 
   it('marks a Codex command’s single overlong line as cut', async () => {
     codexTurns.set('sc1', {
-      commandOutputs: new Map([['c1', { startedAt: Date.now(), text: 'x'.repeat(8192), cut: true }]]),
+      commandOutputs: new Map([
+        ['c1', { startedAt: Date.now(), text: 'x'.repeat(8192), cut: true }],
+      ]),
     });
 
     expect((await readCommandOutput('sc1', 'c1'))?.text).toBe(`…${'x'.repeat(8191)}`);
@@ -165,9 +169,9 @@ describe('readCommandOutput on a Codex chat', () => {
 
 describe('cleanOutputTail', () => {
   it('strips colours and keeps a redrawn progress line’s last state', () => {
-    expect(cleanOutputTail('\u001b[32mPASS\u001b[0m a.test\r\n 10%\r 50%\r100%\ndone\n', false)).toBe(
-      'PASS a.test\n100%\ndone',
-    );
+    expect(
+      cleanOutputTail('\u001b[32mPASS\u001b[0m a.test\r\n 10%\r 50%\r100%\ndone\n', false),
+    ).toBe('PASS a.test\n100%\ndone');
   });
 
   it('drops the partial line a cut tail opens with', () => {

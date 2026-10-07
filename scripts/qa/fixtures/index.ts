@@ -14,9 +14,34 @@ import { pluginNodeSchemas } from '../../../src/main/lib/db/schema/plugin-instal
 import { syntheticTranscript } from './synthetic-transcript';
 import { seedBackgroundWorkFixture } from './background-work';
 import { seedCodexFixture } from './codex';
-import { FIXTURE_ACCOUNT_ID, FIXTURE_CHAT_EMPTY_ID, FIXTURE_CHAT_SEEDED_ID, FIXTURE_HISTORY_CANCELLED_ID, FIXTURE_HISTORY_COMPLETED_ID, FIXTURE_LONG_CHAT_ID, FIXTURE_LONG_CHAT_NAME, FIXTURE_LONG_SUB_CHAT_ID, FIXTURE_PROJECT_ID, FIXTURE_SUB_CHAT_ID, FIXTURE_TASK_ID, T0, T1, T2, seedTranscript, type SqliteDb } from './base';
+import {
+  FIXTURE_ACCOUNT_ID,
+  FIXTURE_CHAT_EMPTY_ID,
+  FIXTURE_CHAT_SEEDED_ID,
+  FIXTURE_HISTORY_CANCELLED_ID,
+  FIXTURE_HISTORY_COMPLETED_ID,
+  FIXTURE_LONG_CHAT_ID,
+  FIXTURE_LONG_CHAT_NAME,
+  FIXTURE_LONG_SUB_CHAT_ID,
+  FIXTURE_PROJECT_ID,
+  FIXTURE_SUB_CHAT_ID,
+  FIXTURE_TASK_ID,
+  T0,
+  T1,
+  T2,
+  seedTranscript,
+  type SqliteDb,
+} from './base';
 import { seedInterruptedFlowFixture, seedPausedFlowFixture, seedRunningFlowFixture } from './flows';
-import { FIXTURE_FLOW_CHAT_ID, FIXTURE_FLOW_MESSAGES, FIXTURE_FLOW_SUB_CHAT_ID, FIXTURE_FLOW_TASK_DONE_ID, FIXTURE_FLOW_TASK_PARKED_ID, FIXTURE_MESSAGES, FIXTURE_PARKED_SIGNAL } from './messages';
+import {
+  FIXTURE_FLOW_CHAT_ID,
+  FIXTURE_FLOW_MESSAGES,
+  FIXTURE_FLOW_SUB_CHAT_ID,
+  FIXTURE_FLOW_TASK_DONE_ID,
+  FIXTURE_FLOW_TASK_PARKED_ID,
+  FIXTURE_MESSAGES,
+  FIXTURE_PARKED_SIGNAL,
+} from './messages';
 import { seedPluginNodeFlowFixture } from './plugin-node';
 import { seedBatchGroupFixture, seedQueuedAdmissionFixture } from './queue';
 
@@ -251,7 +276,6 @@ export function seedFixtures(db: SqliteDb, projectPath: string, claudeSourcePath
   seedCodexFixture(db, projectPath);
   seedBackgroundWorkFixture(db, FIXTURE_PROJECT_ID, FIXTURE_ACCOUNT_ID);
 }
-
 
 export * from './base';
 export * from './messages';

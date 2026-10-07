@@ -96,8 +96,10 @@ jobs:
             "$(cat reports/head-suite-report/root.txt)" \
             "$(cat reports/head-suite-report/exit-code.txt)"
 
+  # Pull requests are judged on the findings they add (compare-pull-request-gates below); main itself
+  # is held to every gate absolutely, so inherited debt stays visible here.
   deterministic-quality-gates:
-    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     name: Deterministic quality gates
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -136,6 +138,72 @@ jobs:
       - name: Generated skill content is up to date
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: bun run build:skills:check
+
+  pull-request-gates:
+    if: github.event_name == 'pull_request'
+    name: Quality gate findings (${{ matrix.side }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        side:
+          - base
+          - head
+    steps:
+      # "head" is the merge result (github.sha): a branch cut before main was cleaned must not be
+      # charged with main's old findings. Both sides run head's collector, since base may predate
+      # it, kept outside the workspace so the gates never lint it as part of the checkout under test.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Keep head's collector
+        run: cp scripts/testing/collect-quality-gate-findings.mjs "$RUNNER_TEMP/"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.side == 'base' && github.event.pull_request.base.sha || github.sha }}
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install root dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Collect every gate's findings
+        run: node "$RUNNER_TEMP/collect-quality-gate-findings.mjs" "$RUNNER_TEMP/gates.json"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.side }}-gates-report
+          path: ${{ runner.temp }}/gates.json
+          if-no-files-found: error
+          retention-days: 5
+
+  compare-pull-request-gates:
+    if: always() && github.event_name == 'pull_request'
+    name: Deterministic quality gates
+    needs:
+      - pull-request-gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: '*-gates-report'
+          path: reports
+
+      - name: Block findings the pull request introduces
+        run: |
+          node scripts/testing/compare-quality-gates.mjs \
+            reports/base-gates-report/gates.json \
+            reports/head-gates-report/gates.json
 
   branch-suite:
     if: github.event_name != 'pull_request'

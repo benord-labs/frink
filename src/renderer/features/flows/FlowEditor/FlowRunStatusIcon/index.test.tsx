@@ -8,11 +8,7 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
-import {
-  FlowRunStatusIcon,
-  shouldPollFlowAdmission,
-  shouldShowPausedActions,
-} from './index';
+import { FlowRunStatusIcon, shouldPollFlowAdmission, shouldShowPausedActions } from './index';
 
 afterEach(cleanup);
 

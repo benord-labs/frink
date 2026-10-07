@@ -4,6 +4,7 @@ import type { AgentUserQuestion } from '../task-signal';
 
 const id = z.string().min(1).max(200);
 /** Per message, matching the desktop composer's image cap plus room for files. */
+/** @public Imported by the mobile app through @frink/shared, which knip does not see. */
 export const MOBILE_MAX_ATTACHMENTS = 10;
 const chatIdentity = { chatId: id, subChatId: id };
 /** Lists are a growing window: the phone re-polls the first `limit` rows and raises it to see more. */
@@ -147,6 +148,7 @@ export type MobileQueueItem = {
   actions: MobileTaskAction[];
 };
 export type MobileTaskAction = 'startTask' | 'continueTask' | 'completeTask';
+/** @public Imported by the mobile app through @frink/shared, which knip does not see. */
 export type MobileQueueSection = 'attention' | 'inbox' | 'running';
 /** Chats counted once each: needing the user wins over running. */
 export type MobileAgentCounts = { running: number; needsYou: number };
@@ -266,7 +268,7 @@ export type MobilePickerModel = {
   /** Claude: this row runs Ultra (parallel agents) at its effort. */
   ultra?: true;
 };
-export type MobileAccount = {
+type MobileAccount = {
   id: string;
   label: string;
   type: string;
