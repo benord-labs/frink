@@ -867,6 +867,29 @@ describe('boot carry-on — staged from the startup sweep, fired ahead of queued
         expect(mocks.resumeDispatcher).toHaveBeenCalledTimes(1);
       });
 
+      // The settle committed, so a failed post-settle fire read must not skip the drain
+      // that hands the freed slot to the queued start.
+      it('still drains the freed slot when the post-settle fire read throws', async () => {
+        const { flowRunId, nodeRunId, taskId } = await seedInterruptedAgentRun();
+        answerStep(taskId);
+        await settleInterruption(flowRunId, nodeRunId, true, false);
+        await requestFlowStart(startInput('queued-behind-failed-fire'));
+        const settle = controller.settle.bind(controller);
+        vi.spyOn(controller, 'settle').mockImplementationOnce(async (...args) => {
+          await stageResumeBehindHeldAdmission(request(flowRunId, nodeRunId));
+          const settled = await settle(...args);
+          vi.spyOn(controller, 'getLiveForRun').mockRejectedValueOnce(new Error('sqlite busy'));
+          return settled;
+        });
+
+        await requestFlowAdmissionRelease(flowRunId);
+
+        await vi.waitFor(() => expect(mocks.startDispatcher).toHaveBeenCalledTimes(2));
+        expect(mocks.resumeDispatcher).not.toHaveBeenCalled();
+        // No hook re-fire on this path: the entry waits for the next click to drop and re-admit it.
+        expect(hasStagedContinuation(flowRunId)).toBe(true);
+      });
+
       it('refuses a click behind a release that kept a cleanup error, staging nothing', async () => {
         const { flowRunId, nodeRunId, taskId } = await seedInterruptedAgentRun();
         answerStep(taskId);

@@ -42,6 +42,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   dbMocks.getFlowRun.mockResolvedValue(null);
   dbMocks.getLatestFlowTaskForRun.mockResolvedValue(null);
+  // The staged map is module-global: a failed test must not leave its entry to the next.
+  dropStagedContinuation(PENDING.flowRunId);
 });
 
 // The dispatch runs DETACHED from requestTerminalFlowResume, so the corrective error must
@@ -225,6 +227,65 @@ describe('staged continuation resume', () => {
       await settleWithStagedContinuation(declined, 1, 'failed', PENDING.flowRunId, ops);
       expect(emitCorrective).toHaveBeenCalledTimes(1);
     });
+
+    // The settle committed, so a failed post-settle fire must not reject it: the caller's drain
+    // re-fills the freed slot, and the click staged during the settle waits for a later fire.
+    it('resolves a committed settle when its post-settle fire pre-flight throws', async () => {
+      const ops = makeOps();
+      ops.getLiveAdmissionState.mockRejectedValue(new Error('sqlite busy'));
+      stageContinuationResume(PENDING, vi.fn(), FAST_WATCH);
+      const restaging = stubController(async () => {
+        stageContinuationResume({ ...PENDING, nodeRunId: 'node-run-2' }, vi.fn(), FAST_WATCH);
+        return { settled: true, declined: null };
+      });
+      await expect(
+        settleWithStagedContinuation(restaging, 1, 'cancelled', PENDING.flowRunId, ops),
+      ).resolves.toBe(true);
+      expect(hasStagedContinuation(PENDING.flowRunId)).toBe(true);
+      expect(ops.requestTerminalFlowResume).not.toHaveBeenCalled();
+      expect(captureFlowAdmissionException).toHaveBeenCalledWith(
+        expect.any(Error),
+        'continuation-fire-preflight',
+      );
+      dropStagedContinuation(PENDING.flowRunId);
+    });
+  });
+
+  // Kept, not just present: the reconcile hook's re-fire must still enqueue it, with no corrective.
+  it('keeps the entry fireable when the fire pre-flight read throws', async () => {
+    const ops = makeOps();
+    const emitCorrective = vi.fn();
+    stageContinuationResume(PENDING, emitCorrective, FAST_WATCH);
+    ops.getLiveAdmissionState.mockRejectedValueOnce(new Error('sqlite busy'));
+    await expect(fireStagedContinuationResume(PENDING.flowRunId, ops)).resolves.toBeUndefined();
+    expect(hasStagedContinuation(PENDING.flowRunId)).toBe(true);
+    expect(ops.requestTerminalFlowResume).not.toHaveBeenCalled();
+
+    await fireStagedContinuationResume(PENDING.flowRunId, ops);
+    expect(ops.requestTerminalFlowResume).toHaveBeenCalledWith(expect.objectContaining(PENDING));
+    expect(ops.requestTerminalFlowResume.mock.calls[0][0].admit?.(db)).toBe(true);
+    expect(emitCorrective).not.toHaveBeenCalled();
+  });
+
+  // Only the post-stage fire is guarded: a click whose own probe fails must still see the error.
+  it('rejects a click whose first slot probe throws, staging nothing', async () => {
+    const ops = makeOps();
+    ops.getLiveAdmissionState.mockRejectedValueOnce(new Error('sqlite busy'));
+    await expect(stageBehindHeldAdmission(PENDING, ops)).rejects.toThrow('sqlite busy');
+    expect(hasStagedContinuation(PENDING.flowRunId)).toBe(false);
+  });
+
+  // The re-probe saw the slot free, so no settle is left to fire the entry: a failed fire must
+  // reject the click visibly rather than strand it staged with the optimistic toast up.
+  it('rejects and un-stages a click whose own fire pre-flight throws', async () => {
+    const ops = makeOps();
+    ops.getLiveAdmissionState
+      .mockResolvedValueOnce('active')
+      .mockResolvedValueOnce(null)
+      .mockRejectedValue(new Error('sqlite busy'));
+    await expect(stageBehindHeldAdmission(PENDING, ops)).rejects.toThrow('sqlite busy');
+    expect(hasStagedContinuation(PENDING.flowRunId)).toBe(false);
+    expect(ops.requestTerminalFlowResume).not.toHaveBeenCalled();
   });
 
   // `retained` (a release that kept a cleanup error) must stay staged too, not read as a newer

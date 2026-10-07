@@ -101,8 +101,13 @@ export async function stageBehindHeldAdmission(
   });
   // The held admission may have settled between the probe and the stage, leaving no settle to
   // fire the entry: fire it here (it enqueues on a free run and steps aside for a newer ticket).
-  if (!holdsSlot(await ops.getLiveAdmissionState(flowRunId)))
-    await fireStagedContinuationResume(flowRunId, ops);
+  // Nothing would re-fire it after a failed read, so the click un-stages and rejects instead.
+  try {
+    if (!holdsSlot(await ops.getLiveAdmissionState(flowRunId))) await fireStaged(flowRunId, ops);
+  } catch (error) {
+    staged.delete(flowRunId);
+    throw error;
+  }
   return true;
 }
 
@@ -195,7 +200,8 @@ function reportContinuationEnqueueFailure(entry: StagedContinuation, error: Erro
  * dispatch runs DETACHED from requestTerminalFlowResume (dispatchClaim backgrounds the
  * resume work), so a dispatch failure re-settles the run terminal without rejecting the
  * request — the bounded watch emits the corrective for that class. A successful dispatch
- * mints a new flow task and its turn's start chunk clears the optimistic toast.
+ * mints a new flow task and its turn's start chunk clears the optimistic toast. A failed
+ * pre-flight read keeps the entry staged for a later fire.
  */
 export async function fireStagedContinuationResume(
   flowRunId: string,
@@ -219,6 +225,20 @@ export async function fireStagedContinuationResume(
     entry.emitCorrective(CONTINUATION_CORRECTIVE_MESSAGE);
     return;
   }
+  try {
+    await fireStaged(flowRunId, ops);
+  } catch (error) {
+    // A caller's committed settle must not fail on this read. The entry stays staged for a
+    // later fire (the reconcile hook re-fires it), so no corrective: it is not lost yet.
+    log.warn('[Flow Admission] staged continuation fire pre-flight failed', { flowRunId, error });
+    captureFlowAdmissionException(error, 'continuation-fire-preflight');
+  }
+}
+
+/** The fire itself. Its one unguarded await is the pre-flight read, before the entry leaves the map. */
+async function fireStaged(flowRunId: string, ops: ContinuationAdmissionOps): Promise<void> {
+  const entry = staged.get(flowRunId);
+  if (!entry) return;
   const liveState = await ops.getLiveAdmissionState(flowRunId);
   // A retained release keeps the entry too: the cleanup-failure fire above abandons it visibly.
   if (liveState === 'releasing' || liveState === 'retained') {
