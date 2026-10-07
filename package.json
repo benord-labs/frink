@@ -8,6 +8,7 @@
     "name": "Benji Norval"
   },
   "main": "out/main/index.js",
+  "desktopName": "frink.desktop",
   "engines": {
     "node": ">=22.12"
   },
@@ -379,7 +380,11 @@
       ],
       "icon": "build/icons",
       "category": "Development",
-      "maintainer": "Benji Norval <noreply@frink.dev>"
+      "maintainer": "Benji Norval <noreply@frink.dev>",
+      "syncDesktopName": true
+    },
+    "toolsets": {
+      "appimage": "1.0.3"
     },
     "nsis": {
       "oneClick": false,

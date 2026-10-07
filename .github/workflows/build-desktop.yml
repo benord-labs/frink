@@ -1,9 +1,9 @@
 name: Build Desktop
 
-# Builds Frink for Windows (windows-2022 → nsis + portable) and Linux (ubuntu-latest →
-# AppImage + deb) via one matrix, and verifies the PACKAGED native modules (better-sqlite3,
+# Builds Frink for Windows (windows-2022 → nsis + portable) and Linux x64 + arm64 (ubuntu-latest /
+# ubuntu-24.04-arm → AppImage + deb) via one matrix, and verifies the PACKAGED native modules (better-sqlite3,
 # node-pty) load under Electron's ABI plus that the bundled agent binaries (claude, codex)
-# are present and runnable.
+# are present and runnable. The Linux leg also launches both installers under Xvfb.
 #
 # Verification-only and additive: no code signing, no R2 upload, no shipping. Installers are
 # uploaded as CI artifacts. windows-2022 is pinned for a deterministic native compile
@@ -24,6 +24,7 @@ on:
       - 'patches/codex/**'
       - 'scripts/skills/build-skill-content.ts'
       - 'scripts/smoke/smoke-native.cjs'
+      - 'scripts/smoke/smoke-linux-launch.sh'
       - '.github/workflows/build-desktop.yml'
 
 # A new push to the same PR cancels the in-flight run (stale builds otherwise double-spend the
@@ -46,21 +47,20 @@ jobs:
             platformKey: win32-x64
             cargoTarget: x86_64-pc-windows-msvc
             testArgs: ''
-          - os: ubuntu-latest
+          # Oldest supported LTS: codex links the build host's glibc, so a newer runner strands 22.04 users.
+          - os: ubuntu-22.04
             platformKey: linux-x64
             cargoTarget: x86_64-unknown-linux-gnu
             testArgs: '--test'
-          - os: macos-15
-            platformKey: darwin-arm64
-            cargoTarget: aarch64-apple-darwin
-            testArgs: ''
-          - os: macos-15-intel
-            platformKey: darwin-x64
-            cargoTarget: x86_64-apple-darwin
+          # No --test: the provider tests are arch-independent and run above, and their debug build
+          # took the arm runner down mid-compile (shutdown signal).
+          - os: ubuntu-22.04-arm
+            platformKey: linux-arm64
+            cargoTarget: aarch64-unknown-linux-gnu
             testArgs: ''
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
-    steps:
+    steps: &codex-native-steps
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
@@ -68,13 +68,14 @@ jobs:
         with:
           toolchain: 1.95.0
           targets: ${{ matrix.cargoTarget }}
+      # Keyed by runner image too: C objects cached on a newer image would drag its glibc symbols in.
       - uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             .codex-target
-          key: codex-rust-v0.153.3-${{ matrix.platformKey }}-${{ hashFiles('patches/codex/**', 'scripts/binaries/build-codex-frink.mjs') }}
+          key: codex-rust-v0.153.3-${{ matrix.os }}-${{ matrix.platformKey }}-${{ hashFiles('patches/codex/**', 'scripts/binaries/build-codex-frink.mjs') }}
       - name: Build permission-aware Codex
         run: node scripts/binaries/build-codex-frink.mjs --target ${{ matrix.platformKey }} ${{ matrix.testArgs }}
         env:
@@ -86,8 +87,30 @@ jobs:
           if-no-files-found: error
           retention-days: 2
 
+  # Same build + handshake for macOS. Nothing needs it: `build` has no mac leg, and mac releases
+  # build Codex locally (`bun run release`), so the slow Intel leg cannot hold up Linux packaging.
+  codex-native-mac:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            platformKey: darwin-arm64
+            cargoTarget: aarch64-apple-darwin
+            testArgs: ''
+          - os: macos-15-intel
+            platformKey: darwin-x64
+            cargoTarget: x86_64-apple-darwin
+            testArgs: ''
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps: *codex-native-steps
+
   build:
     needs: codex-native
+    # Run each leg even when another OS's Codex leg failed: it downloads only its own artifact, and
+    # download-artifact fails that leg alone when the artifact is missing.
+    if: ${{ !cancelled() }}
     strategy:
       # One OS failing must NOT cancel the other leg.
       fail-fast: false
@@ -106,6 +129,16 @@ jobs:
             binExt: ''
             pkg: package:linux
             artifactName: frink-linux-installers
+            artifactGlob: |
+              release/*.AppImage
+              release/*.deb
+          # electron-builder packages for the host arch, so the arm64 installers come from an arm64 runner.
+          - os: ubuntu-24.04-arm
+            platformKey: linux-arm64
+            unpacked: linux-arm64-unpacked
+            binExt: ''
+            pkg: package:linux
+            artifactName: frink-linux-arm64-installers
             artifactGlob: |
               release/*.AppImage
               release/*.deb
@@ -160,6 +193,11 @@ jobs:
         with:
           name: frink-codex-${{ matrix.platformKey }}
           path: resources/bin/${{ matrix.platformKey }}/
+
+      - name: Restore the Codex executable bit
+        # Artifacts drop file modes, and electron-builder packages the mode it finds.
+        if: runner.os != 'Windows'
+        run: chmod +x resources/bin/${{ matrix.platformKey }}/codex
 
       - name: Assert release update feed
         # A tag build that publishes to R2 is an official release: it must bake in the update feed,
@@ -275,6 +313,95 @@ jobs:
         run: |
           ls release/*.AppImage >/dev/null 2>&1 || { echo "::error::no .AppImage produced"; exit 1; }
           ls release/*.deb >/dev/null 2>&1 || { echo "::error::no .deb produced"; exit 1; }
+          # Each installer must ship the codex the app spawns as an executable.
+          dpkg-deb -c release/*.deb | grep -E '^-rwx.*/resources/bin/codex$' || { echo "::error::.deb ships a non-executable codex"; exit 1; }
+          (cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE"/release/*.AppImage --appimage-extract >/dev/null)
+          test -x "$RUNNER_TEMP/squashfs-root/resources/bin/codex" || { echo "::error::AppImage ships a non-executable codex"; exit 1; }
+
+      - name: Assert Linux release names and binary arch
+        if: runner.os == 'Linux'
+        shell: bash
+        # x64 and arm64 publish side by side on R2, so each leg must keep its own installer and feed names.
+        run: |
+          ls -l release/
+          VER="$(node -p "require('./package.json').version")"
+          case "${{ matrix.platformKey }}" in
+            linux-x64) ELF=x86-64; FILES="Frink-$VER.AppImage frink_${VER}_amd64.deb latest-linux.yml" ;;
+            linux-arm64) ELF=aarch64; FILES="Frink-$VER-arm64.AppImage frink_${VER}_arm64.deb latest-linux-arm64.yml" ;;
+            *) echo "::error::no expected release names for ${{ matrix.platformKey }}"; exit 1 ;;
+          esac
+          for f in $FILES; do test -f "release/$f" || { echo "::error::release/$f missing"; exit 1; }; done
+          UNPACKED="release/${{ matrix.unpacked }}"
+          for bin in "$UNPACKED/frink" "$UNPACKED/resources/bin/codex" "$UNPACKED/resources/bin/claude"; do
+            INFO="$(file -L "$bin")"
+            echo "$INFO"
+            [[ "$INFO" == *"$ELF"* ]] || { echo "::error::$bin is not $ELF"; exit 1; }
+          done
+
+      - name: Assert Linux desktop entries match the window
+        if: runner.os == 'Linux'
+        shell: bash
+        # Electron's app_id/WM_CLASS comes from package.json desktopName ("frink"). Each installer's
+        # entry must match it and claim frink:// links, or the dock and the OAuth callback break.
+        run: |
+          dpkg-deb -x release/*.deb "$RUNNER_TEMP/deb"
+          DEB_ENTRY="$RUNNER_TEMP/deb/usr/share/applications/frink.desktop"
+          APP_ENTRY="$RUNNER_TEMP/squashfs-root/frink.desktop"
+          for entry in "$DEB_ENTRY" "$APP_ENTRY"; do
+            grep -qx 'StartupWMClass=frink' "$entry" && grep -qx 'MimeType=x-scheme-handler/frink;' "$entry" \
+              || { echo "::error::$entry does not match the window or the frink:// handler"; cat "$entry"; exit 1; }
+          done
+          # AppRun adds --no-sandbox only when user namespaces are blocked; the entry must not force it.
+          ! grep -q -- '--no-sandbox' "$APP_ENTRY" || { echo "::error::AppImage entry forces --no-sandbox"; exit 1; }
+
+      - name: Assert the AppImage runs without libfuse2
+        if: runner.os == 'Linux'
+        shell: bash
+        # Ubuntu 22.04+ and Fedora no longer install libfuse2; the static runtime only needs fusermount3.
+        run: |
+          sudo apt-get remove -y libfuse2t64 || true
+          sudo apt-get remove -y libfuse2 || true
+          # No grep -q on piped input: under pipefail its early exit SIGPIPEs the producer.
+          if ldconfig -p | grep 'libfuse\.so\.2'; then echo "::error::libfuse2 is still installed"; exit 1; fi
+          command -v fusermount3 >/dev/null || { sudo apt-get update -q && sudo apt-get install -y -q fuse3; }
+          APPIMAGE="$(ls release/*.AppImage)"
+          file -L "$APPIMAGE" | grep 'static' || { echo "::error::AppImage uses the dynamic FUSE2 runtime"; file -L "$APPIMAGE"; exit 1; }
+          "$APPIMAGE" --appimage-version
+          "$APPIMAGE" --appimage-mount > "$RUNNER_TEMP/mount.txt" &
+          MOUNT_PID=$!
+          MOUNTED=0
+          for _ in $(seq 30); do
+            MNT="$(head -n1 "$RUNNER_TEMP/mount.txt")"
+            if [ -n "$MNT" ] && [ -x "$MNT/AppRun" ]; then MOUNTED=1; break; fi
+            sleep 1
+          done
+          kill "$MOUNT_PID" || true
+          [ "$MOUNTED" = 1 ] || { echo "::error::AppImage did not mount without libfuse2"; exit 1; }
+
+      - name: Install the Linux launch smoke tools
+        if: runner.os == 'Linux'
+        timeout-minutes: 5
+        run: sudo apt-get update -q && sudo apt-get install -y -q xvfb xdotool fuse3
+
+      - name: Smoke — launch the deb and the AppImage under Xvfb
+        if: runner.os == 'Linux'
+        # Runs under the AppArmor user-namespace restriction Ubuntu desktops have, so a sandbox, AppArmor
+        # or shared-library regression fails here instead of on a user's first launch.
+        timeout-minutes: 5
+        run: bash scripts/smoke/smoke-linux-launch.sh
+        env:
+          FRINK_SMOKE_UNPACKED: release/${{ matrix.unpacked }}
+
+      - name: Upload the Linux launch smoke logs
+        if: failure() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-launch-smoke-logs-${{ matrix.platformKey }}
+          path: |
+            ${{ runner.temp }}/linux-launch-smoke/*/*.log
+            ${{ runner.temp }}/linux-launch-smoke/*/processes.txt
+          if-no-files-found: ignore
+          retention-days: 5
 
       - name: Assert Windows installers produced
         if: runner.os == 'Windows'
@@ -286,8 +413,8 @@ jobs:
 
       - name: Publish to R2
         # Release tags only, AND only once the R2 creds exist (skip — don't fail — a tag pushed before
-        # secrets are set). Each OS leg uploads its own release/ slice (win → *.exe + latest.yml; linux
-        # → *.AppImage/*.deb + latest-linux.yml) to the shared frink-releases bucket; per-OS feeds, no collision.
+        # secrets are set). Each leg uploads its own release/ slice (win → *.exe + latest.yml; linux →
+        # *.AppImage/*.deb + latest-linux.yml or latest-linux-arm64.yml) to the shared bucket; per-leg feeds, no collision.
         # All three R2 creds required — upload-to-r2.mjs exits non-zero unless all are set, so a
         # partial set must skip (not fail) the release job.
         if: >-
