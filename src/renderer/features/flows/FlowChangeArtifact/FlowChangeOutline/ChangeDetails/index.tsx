@@ -1,4 +1,4 @@
-import { memo, type ReactElement } from 'react';
+import { createContext, memo, type ReactElement, useContext } from 'react';
 import type { FlowSemanticChange } from '../../../../../../shared/types/flows/flow-change-presentation';
 import {
   describeFlowChange,
@@ -6,6 +6,9 @@ import {
 } from '../../../../../lib/flows/flow-change-outline';
 
 type Props = { changes: FlowSemanticChange[] };
+
+/** Set by the outline when the tool finished but its result could not be read. */
+export const ResultUnreadContext = createContext(false);
 
 const CHANGE_STATUS_CLASS: Partial<Record<FlowSemanticChange['status'], string>> = {
   applied: 'text-[hsl(var(--status-online-text))]',
@@ -16,6 +19,7 @@ const CHANGE_STATUS_CLASS: Partial<Record<FlowSemanticChange['status'], string>>
 };
 
 export const ChangeDetails = memo(function ChangeDetails({ changes }: Props): ReactElement | null {
+  const resultUnread = useContext(ResultUnreadContext);
   const changesToShow = visibleFlowChanges(changes);
   if (changesToShow.length === 0) return null;
   return (
@@ -25,11 +29,11 @@ export const ChangeDetails = memo(function ChangeDetails({ changes }: Props): Re
     >
       {changesToShow.map((change) => (
         <span
-          className={CHANGE_STATUS_CLASS[change.status]}
+          className={resultUnread ? undefined : CHANGE_STATUS_CLASS[change.status]}
           key={`${change.kind}:${change.operationIndex}`}
           role="listitem"
         >
-          {describeFlowChange(change)}
+          {describeFlowChange(change, { resultUnread })}
         </span>
       ))}
     </div>

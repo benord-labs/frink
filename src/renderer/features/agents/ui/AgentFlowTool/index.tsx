@@ -4,9 +4,10 @@ import { useSetAtom } from 'jotai';
 import { type ReactElement, useMemo } from 'react';
 import { isPlainObject } from '../../../../../shared/lib/case-converter';
 import { describeFlowNodeConfigChange } from '../../../../../shared/lib/flows/flow-change-config-detail';
-import { unwrapMcpOutput } from '../../../../../shared/lib/mcp-output';
+import { isSpilledToolResultText, unwrapMcpOutput } from '../../../../../shared/lib/mcp-output';
 import type { FlowGraph } from '../../../../../shared/lib/validate-flow-graph';
 import { normalizeFlowGraph } from '../../../../../shared/lib/validate-flow-graph';
+import { flowChangeStringValue } from '../../../../../shared/lib/flows/flow-change-text';
 import { useFlowBaseSnapshot } from '../../../../hooks/useFlowBaseSnapshot';
 import { activeOverlayAtom, flowsSelectedFlowIdAtom } from '../../../../lib/atoms';
 import { toSafeFlowChangeGraph } from '../../../../lib/flows/flow-change-graph';
@@ -97,8 +98,12 @@ function receiptChanges(value: unknown): Array<Record<string, unknown> | null> |
 }
 
 /** Stable, redaction-safe revision of only terminal receipt fields rendered by the artifact. */
-function outputPresentationRevision(part: MessagePart): string {
+export function outputPresentationRevision(part: MessagePart): string {
   const unwrapped = unwrapMcpOutput(part.output ?? part.result);
+  // Same reading as the phase, so the key changes exactly when the phase can; never the path.
+  if (isSpilledToolResultText(flowChangeStringValue(unwrapped) ?? '')) {
+    return JSON.stringify({ kind: 'spill' });
+  }
   if (!isPlainObject(unwrapped)) return JSON.stringify({ kind: typeof unwrapped });
   const flowChange = isPlainObject(unwrapped.flowChange) ? unwrapped.flowChange : undefined;
   const error = isPlainObject(unwrapped.error) ? unwrapped.error.message : unwrapped.error;

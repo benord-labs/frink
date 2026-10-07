@@ -6,7 +6,7 @@ import type {
 } from '../../../../shared/types/flows/flow-change-presentation';
 import { markFlowChangeGraph } from '../flow-change-graph';
 import { attachOutlineChanges, buildDisplayGraph, truthfulGraph } from './graph';
-import { buildFlowChangeOutline } from './index';
+import { buildFlowChangeOutline, describeFlowChange } from './index';
 
 function receipt(
   graph: FlowChangeGraph | undefined,
@@ -593,5 +593,48 @@ describe('buildFlowChangeOutline', () => {
     expect(model.heading).toBe('Attempted layout');
     expect(model.routes[0]?.steps[0]?.changes).toEqual([related]);
     expect(model.unplacedChanges).toEqual([missing]);
+  });
+
+  it('describes changes whose result was unread as requests, not doubts', () => {
+    const graph: FlowChangeGraph = {
+      nodes: [{ id: 'context', label: 'Context', blockType: 'agent' }],
+      edges: [],
+    };
+    const changes = [
+      nodeChange(0, 'added', 'add', 'unknown'),
+      nodeChange(1, 'context', 'update', 'unknown'),
+      nodeChange(2, 'gone', 'remove', 'unknown'),
+    ];
+    const model = buildFlowChangeOutline(receipt(graph, changes, { phase: 'unread' }));
+    const copy = changes.map((change) =>
+      describeFlowChange(change, { resultUnread: model.resultUnread }),
+    );
+
+    expect(model.resultUnread).toBe(true);
+    expect(copy).toEqual([
+      'Requested: add this step',
+      'Requested: change to this step',
+      'Requested: removal from this Flow',
+    ]);
+    expect(copy.join(' ')).not.toContain('Could not confirm');
+    expect(changes.map((change) => describeFlowChange(change))).toEqual([
+      'Could not confirm adding this step',
+      'Could not confirm the change to this step',
+      'Could not confirm removal from this Flow',
+    ]);
+  });
+
+  it('heads an unread outline as requested changes and never as a result', () => {
+    const update = nodeChange(0, 'missing', 'update', 'unknown');
+    const unread = buildFlowChangeOutline(receipt(undefined, [update], { phase: 'unread' }));
+    const unconfirmed = buildFlowChangeOutline(
+      receipt(undefined, [update], { phase: 'unconfirmed' }),
+    );
+
+    expect(unread.heading).toBe('Requested changes');
+    expect(unread.synopsis).toBe('Update requested for missing');
+    expect(unconfirmed.heading).toBe('Attempted layout');
+    expect(unconfirmed.synopsis).toBe('Update attempted for missing');
+    expect(unconfirmed.resultUnread).toBe(false);
   });
 });

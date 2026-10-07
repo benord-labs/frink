@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from 'vitest';
 import type { MessagePart } from '../../stores/message-store';
-import { parseOutput } from './index';
+import { outputPresentationRevision, parseOutput } from './index';
 
 const BASE_GRAPH = { nodes: [], edges: [] };
 
@@ -90,5 +90,38 @@ describe('parseOutput', () => {
       const result = parseOutput(part);
       expect(result?.name).toBe('Untitled flow');
     });
+  });
+});
+
+describe('outputPresentationRevision', () => {
+  const SPILL =
+    'Error: result (87,548 characters) exceeds maximum allowed tokens. Output has been saved to /sessions/abc/tool-results/patch.txt. Format: JSON with schema: {status: string}';
+
+  it('changes when a string output becomes a spill note, without carrying its text', () => {
+    const part: MessagePart = {
+      type: 'tool-frink_flows_patch',
+      state: 'output-available',
+      result: 'ok',
+    };
+    const before = outputPresentationRevision(part);
+    part.result = SPILL;
+    const after = outputPresentationRevision(part);
+
+    expect(after).not.toBe(before);
+    expect(after).not.toContain('/sessions/');
+  });
+
+  it('reads the spill through the MCP text-block wrapper', () => {
+    const blocks = makePart({ '0': { type: 'text', text: SPILL } });
+    const plain = makePart({ '0': { type: 'text', text: 'ok' } });
+
+    expect(outputPresentationRevision(blocks)).not.toBe(outputPresentationRevision(plain));
+  });
+
+  it('does not key a non-text body as a spill, matching the phase', () => {
+    const wrapped = { type: 'tool-frink_flows_patch', state: 'output-available', result: [SPILL] };
+    const other = { type: 'tool-frink_flows_patch', state: 'output-available', result: ['ok'] };
+
+    expect(outputPresentationRevision(wrapped)).toBe(outputPresentationRevision(other));
   });
 });
