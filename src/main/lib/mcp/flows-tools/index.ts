@@ -72,10 +72,11 @@ import {
 import { type McpToolResult, toolResult } from '../tool-result';
 import { handleIntegrationsList, handleNodesList, handleProjectsList } from './catalog';
 import { expandAgentCommandsInGraph, formatExpansionFailures } from './expand-commands';
-import { applyPatchOperations, patchArgsSchema, seedDefaultProject } from './flow-patch';
+import { applyPatchOperations, PATCH_OPS, patchArgsSchema, seedDefaultProject } from './flow-patch';
 import {
   buildFlowPatchReceipt,
   buildFlowPatchResult,
+  operationsTouchPositions,
   buildFlowPatchUnexpectedError,
   flowPatchError,
   rollbackCreatedFlow,
@@ -411,21 +412,13 @@ const PATCH_OPERATIONS_INPUT_SCHEMA = {
   minItems: 1,
   maxItems: 50,
   description:
-    'Ordered list of patch operations (max 50). Ops: update_node (nodeId, optional label/config/position/parentId — config merges recursively; null removes keys), add_node (node), remove_node (nodeId, removes contained Fan Out nodes and incident edges), add_edge (edge), remove_edge (edgeId), update_edge (edgeId + label and/or sourceHandle), update_settings (partial flow settings).',
+    'Ordered list of patch operations (max 50). Ops: update_node (nodeId, optional label/config/position/parentId — config merges recursively; null removes keys), add_node (node), remove_node (nodeId, removes contained Fan Out nodes and incident edges), add_edge (edge), remove_edge (edgeId), update_edge (edgeId + label and/or sourceHandle), update_settings (partial flow settings), auto_layout (no fields; once per patch; resets every node to the default top-to-bottom layout after the other ops, discarding manual positions and Fan Out sizes). When positions change or nodes collide the result carries `layout` (bounds, overlaps, upwardEdges).',
   items: {
     type: 'object',
     properties: {
       op: {
         type: 'string',
-        enum: [
-          'update_node',
-          'add_node',
-          'remove_node',
-          'add_edge',
-          'remove_edge',
-          'update_edge',
-          'update_settings',
-        ],
+        enum: PATCH_OPS,
       },
       nodeId: { type: 'string' },
       parentId: {
@@ -1192,6 +1185,7 @@ async function handlePatch(
           createdFlow: Boolean(createdFlowId),
           templateWarnings: patchTemplateWarnings,
           webhookSetup,
+          positionsTouched: operationsTouchPositions(operations),
         });
       }
     }

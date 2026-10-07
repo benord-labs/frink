@@ -5,6 +5,7 @@
 
 import { TRPCError } from '@trpc/server';
 import { and, eq } from 'drizzle-orm';
+import { z } from 'zod';
 import type { RunAttachment } from '../../../shared/types/run-attachment';
 import { getDatabase } from '../db';
 import { batchStageRuns, batchStages } from '../db/schema';
@@ -97,37 +98,40 @@ export type UpdateStageRunInput = {
   configOverrides?: Record<string, unknown>;
 };
 
+/** The keys an edit merges into; everything else in trigger_context passes through. */
+const editableTriggerContextSchema = z
+  .looseObject({ _config: z.looseObject({}).optional().catch(undefined) })
+  .catch({});
+
 export async function updateStageRunLocal(
   input: UpdateStageRunInput,
+  db = getDatabase(),
 ): Promise<{ run: { id: string; trigger_context: Record<string, unknown> } }> {
-  const db = getDatabase();
-  const [existing] = await db
-    .select()
-    .from(batchStageRuns)
-    .where(eq(batchStageRuns.id, input.runId))
-    .limit(1);
-  if (!existing) {
-    throw new TRPCError({ code: 'NOT_FOUND', message: 'Stage run not found' });
-  }
-  const tc: Record<string, unknown> =
-    (existing.triggerContext as Record<string, unknown> | null) ?? {};
-  const next: Record<string, unknown> = { ...tc };
-  if (input.label !== undefined) next.label = input.label;
-  if (input.customInstructions !== undefined) next.customInstructions = input.customInstructions;
-  if (input.attachments !== undefined) next.attachments = input.attachments;
-  if (input.configOverrides !== undefined) {
-    next._config = {
-      ...(typeof tc._config === 'object' && tc._config !== null
-        ? (tc._config as Record<string, unknown>)
-        : {}),
-      ...input.configOverrides,
-    };
-  }
-  await db
-    .update(batchStageRuns)
-    .set({ triggerContext: next })
-    .where(eq(batchStageRuns.id, input.runId));
-  return { run: { id: input.runId, trigger_context: next } };
+  // One transaction, so an upload's attachment append cannot land between this
+  // edit's read and its write and then be overwritten.
+  return db.transaction((tx) => {
+    const row = tx
+      .select({ triggerContext: batchStageRuns.triggerContext })
+      .from(batchStageRuns)
+      .where(eq(batchStageRuns.id, input.runId))
+      .get();
+    if (!row) {
+      throw new TRPCError({ code: 'NOT_FOUND', message: 'Stage run not found' });
+    }
+    const current = editableTriggerContextSchema.parse(row.triggerContext);
+    const next = { ...current };
+    if (input.label !== undefined) next.label = input.label;
+    if (input.customInstructions !== undefined) next.customInstructions = input.customInstructions;
+    if (input.attachments !== undefined) next.attachments = input.attachments;
+    if (input.configOverrides !== undefined) {
+      next._config = { ...current._config, ...input.configOverrides };
+    }
+    tx.update(batchStageRuns)
+      .set({ triggerContext: next })
+      .where(eq(batchStageRuns.id, input.runId))
+      .run();
+    return { run: { id: input.runId, trigger_context: next } };
+  });
 }
 
 export async function reassignStageRunLocal(

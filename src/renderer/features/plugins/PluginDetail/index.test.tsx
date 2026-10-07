@@ -149,6 +149,20 @@ const LIVE_SHORTCUT: ReadonlyArray<PluginConnection> = [
   { id: 'c1', providerId: 'shortcut', accountName: 'Acme', isActive: true },
 ];
 
+/** Shortcut's tools grant as the live status poll reports it; 'unknown' is a poll that has not answered. */
+function mockShortcutTools(tools: 'connected' | 'awaiting' | 'unknown') {
+  const server = { serverName: 'plugin_shortcut_shortcut', pluginName: 'shortcut' };
+  vendorMcpStatusUseQueryMock.mockReturnValue({
+    data:
+      tools === 'unknown'
+        ? undefined
+        : {
+            connected: tools === 'connected' ? [server] : [],
+            awaitingAuth: tools === 'awaiting' ? [server] : [],
+          },
+  });
+}
+
 beforeEach(() => {
   pluginsListUseQueryMock.mockReset();
   vendorMcpStatusUseQueryMock.mockReset();
@@ -307,7 +321,8 @@ describe('PluginDetail', () => {
     expect(connectWebhookOnlyMock).toHaveBeenCalledWith({ provider: 'linear', label: 'Linear' });
   });
 
-  it('offers example prompts only once an account is live, and seeds the composer on click', async () => {
+  it("offers example prompts once Shortcut's chat tools are connected, and seeds the composer on click", async () => {
+    mockShortcutTools('connected');
     mockQuery({ data: listResult(LIVE_SHORTCUT) });
     renderPage();
 
@@ -324,6 +339,7 @@ describe('PluginDetail', () => {
   });
 
   it('drops a stale seed when the user leaves the page before the chunk loads', async () => {
+    mockShortcutTools('connected');
     mockQuery({ data: listResult(LIVE_SHORTCUT) });
     const { unmount } = renderPage();
 
@@ -339,6 +355,7 @@ describe('PluginDetail', () => {
   });
 
   it('seeds only the newest prompt when two are clicked before the chunk loads', async () => {
+    mockShortcutTools('connected');
     mockQuery({ data: listResult(LIVE_SHORTCUT) });
     renderPage();
 
@@ -369,6 +386,153 @@ describe('PluginDetail', () => {
     expect(connectVendorMcpMutateMock).toHaveBeenCalledWith({ pluginName: 'shortcut' });
     expect(onConnect).not.toHaveBeenCalled();
     expect(seededPrompts).toEqual([]);
+  });
+
+  it('keeps prompts locked on a live account until the chat tools are signed in, and a click runs that sign-in', async () => {
+    mockShortcutTools('awaiting');
+    mockQuery({ data: listResult(LIVE_SHORTCUT) });
+    renderPage();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show slide 3 of 5' }));
+    expect(
+      screen.queryByRole('button', { name: /^Use this prompt in chat/ }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: /Connect Shortcut to use this prompt in chat: What is assigned to me/,
+      }),
+    );
+    await vi.dynamicImportSettled();
+    expect(connectVendorMcpMutateMock).toHaveBeenCalledExactlyOnceWith({ pluginName: 'shortcut' });
+    expect(onConnect).not.toHaveBeenCalled();
+    expect(seededPrompts).toEqual([]);
+  });
+
+  it('shows plain examples until the chat tools state settles, then unlocks straight away', () => {
+    mockShortcutTools('unknown');
+    mockQuery({ data: listResult(LIVE_SHORTCUT) });
+    const { rerender } = renderPage();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show slide 3 of 5' }));
+    expect(
+      screen.getByRole('button', { name: /^Example prompt: What is assigned to me/ }),
+    ).toBeDisabled();
+    expect(
+      screen.queryByRole('button', { name: /^Connect Shortcut to use/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /^Use this prompt in chat/ }),
+    ).not.toBeInTheDocument();
+
+    mockShortcutTools('connected');
+    rerender(
+      <PluginDetail
+        pluginId="shortcut"
+        isConnecting={false}
+        onBack={onBack}
+        onConnect={onConnect}
+        onSelectAccount={onSelectAccount}
+      />,
+    );
+    expect(
+      screen.getByRole('button', { name: /^Use this prompt in chat: What is assigned to me/ }),
+    ).toBeEnabled();
+  });
+
+  it('keeps Use in Flow on the live account while the chat tools state is unsettled', () => {
+    mockShortcutTools('unknown');
+    mockQuery({ data: listResult(LIVE_SHORTCUT) });
+    renderPage();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Use in Flow' }));
+    expect(launchFlowMock).toHaveBeenCalledWith(expect.objectContaining({ connectionId: 'c1' }));
+  });
+
+  it('never unlocks prompts from a stale connected answer after the status poll errors', () => {
+    const server = { serverName: 'plugin_shortcut_shortcut', pluginName: 'shortcut' };
+    vendorMcpStatusUseQueryMock.mockReturnValue({
+      isError: true,
+      data: { connected: [server], awaitingAuth: [] },
+    });
+    mockQuery({ data: listResult(LIVE_SHORTCUT) });
+    renderPage();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show slide 3 of 5' }));
+    expect(
+      screen.getByRole('button', { name: /^Example prompt: What is assigned to me/ }),
+    ).toBeDisabled();
+    expect(
+      screen.queryByRole('button', { name: /^Use this prompt in chat/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('locks prompts again when the chat tools grant is lost while the page is open', () => {
+    mockShortcutTools('connected');
+    mockQuery({ data: listResult(LIVE_SHORTCUT) });
+    const { rerender } = renderPage();
+    fireEvent.click(screen.getByRole('button', { name: 'Show slide 3 of 5' }));
+    expect(
+      screen.getByRole('button', { name: /^Use this prompt in chat: What is assigned to me/ }),
+    ).toBeEnabled();
+
+    mockShortcutTools('awaiting');
+    rerender(
+      <PluginDetail
+        pluginId="shortcut"
+        isConnecting={false}
+        onBack={onBack}
+        onConnect={onConnect}
+        onSelectAccount={onSelectAccount}
+      />,
+    );
+    expect(
+      screen.getByRole('button', {
+        name: /^Connect Shortcut to use this prompt in chat: What is assigned to me/,
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it('offers only plain examples on a turned-off plugin, even with its tools connected', async () => {
+    mockShortcutTools('connected');
+    mockQuery({
+      data: {
+        plugins: resolvePlugins({
+          installations: [
+            { ...INSTALLED_LINEAR, id: 'install-shortcut', pluginId: 'shortcut', isEnabled: false },
+          ],
+          connections: LIVE_SHORTCUT,
+        }),
+      },
+    });
+    renderPage();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show slide 3 of 5' }));
+    const example = screen.getByRole('button', {
+      name: /^Example prompt: What is assigned to me/,
+    });
+    expect(example).toBeDisabled();
+    fireEvent.click(example);
+    await vi.dynamicImportSettled();
+    expect(seededPrompts).toEqual([]);
+    expect(connectVendorMcpMutateMock).not.toHaveBeenCalled();
+  });
+
+  it('starts one sign-in when a locked prompt and Finish connecting are clicked in the same tick', () => {
+    mockShortcutTools('awaiting');
+    mockQuery({ data: listResult(LIVE_SHORTCUT) });
+    renderPage();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show slide 3 of 5' }));
+    const locked = screen.getByRole('button', {
+      name: /^Connect Shortcut to use this prompt in chat: What is assigned to me/,
+    });
+    fireEvent.click(locked);
+    fireEvent.click(locked);
+    fireEvent.pointerDown(screen.getByLabelText('More actions for Shortcut'));
+    fireEvent.click(screen.getByRole('menuitem', { name: /Finish connecting/ }));
+
+    expect(connectVendorMcpMutateMock).toHaveBeenCalledExactlyOnceWith({ pluginName: 'shortcut' });
+    expect(onConnect).not.toHaveBeenCalled();
   });
 
   describe('header actions', () => {

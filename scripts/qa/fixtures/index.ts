@@ -32,7 +32,7 @@ import { seedBatchGroupFixture, seedQueuedAdmissionFixture } from './queue';
  * disposable DB (the wiped QA profile, a temp file, an in-memory test DB) —
  * never at a real agents.db.
  */
-export function seedFixtures(db: SqliteDb, projectPath: string): void {
+export function seedFixtures(db: SqliteDb, projectPath: string, claudeSourcePath: string): void {
   db.delete(schema.tasks).run();
   db.delete(schema.subChatMessages).run();
   db.delete(schema.subChats).run();
@@ -48,8 +48,9 @@ export function seedFixtures(db: SqliteDb, projectPath: string): void {
   db.delete(schema.projects).run();
   db.delete(schema.claudeCodeCredentials).run();
 
-  // Passthrough accounts need no stored token; a null needsReauthAt makes the composer available
-  // at once. Claude stays the workspace default; the Codex fixture overrides only its own project.
+  // Passthrough accounts need no stored token, but every resolution probes sourcePath: without one
+  // the first resolution flags the row and the composer gives way to the reconnect card. Claude
+  // stays the workspace default; the Codex fixture overrides only its own project.
   db.insert(schema.claudeCodeCredentials)
     .values({
       id: FIXTURE_ACCOUNT_ID,
@@ -57,6 +58,7 @@ export function seedFixtures(db: SqliteDb, projectPath: string): void {
       accountLabel: 'QA Claude',
       oauthToken: null,
       source: 'claude-passthrough',
+      sourcePath: claudeSourcePath,
       needsReauthAt: null,
       isDefault: true,
       connectedAt: T0,

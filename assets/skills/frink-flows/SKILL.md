@@ -19,8 +19,8 @@ A Flow is a graph: one trigger starts action/logic nodes connected by edges. Use
 
 - Exactly one trigger, ≤50 nodes, unique node/edge ids; edges reference existing ids. Prefer lowercase-hyphen ids. End has no outgoing edges.
 - Edge: `{ "id":"e1", "source":"a", "target":"b" }`. Condition requires true/false sourceHandle branches. Fan-out uses contained linear branches and a shared continuation; read its contract before wiring.
-- Nodes may omit `position` for auto-layout; if supplied, use roughly 200px vertical / 300px horizontal spacing.
-- Patch operations: add/remove/update node or edge, and `update_settings`. `update_node.config` merges recursively (JSON Merge Patch); null removes a key.
+- Nodes may omit `position` for auto-layout. Before placing nodes yourself, read Canvas layout in [Graph and logic](references/blocks-logic.md): nodes are 320px wide, so columns closer than 368px overlap.
+- Patch operations: add/remove/update node or edge, `update_settings`, and `auto_layout` (resets the canvas layout). `update_node.config` merges recursively (JSON Merge Patch); null removes a key.
 - Create `projectId` seeds `settings.defaultProjectId` (otherwise current session project when resolvable). Nodes inherit it; Start Task may set config.projectId explicitly.
 - Fan-out continuation receives `previous.results[itemIndex][branchRootNodeId]` plus totalCount. Generic convergence outside it is OR, not an all-predecessors barrier.
 
@@ -43,7 +43,7 @@ All paths are bundled relative to this file; no source checkout is needed. Confi
 | Choose/configure trigger and its data | [Trigger contracts](references/blocks-triggers.md) |
 | Bind friendly webhook fields | [Provider aliases](references/webhook-aliases.md) |
 | Create tasks/agents, run commands, call HTTP/integrations, reply in text/HTML | [Action contracts](references/blocks-actions.md) |
-| Wire condition, fan-out, approval or end | [Graph and logic](references/blocks-logic.md) |
+| Wire condition, fan-out, approval or end; position nodes on the canvas | [Graph and logic](references/blocks-logic.md) |
 | Carry data between blocks; templates and shared briefing | [Templates and context](references/template-variables.md) |
 | Start from a complete validated patch or common pattern | [Examples](references/examples.md) |
 | Plan many tickets, stages, dependencies, branches and concurrency | [Batch orchestration](references/batching.md) |

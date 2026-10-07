@@ -109,6 +109,7 @@ import { appStore } from '@/lib/jotai-store';
 import { getPaneColor } from '@/lib/pane-colors';
 import { trpc, trpcClient } from '@/lib/trpc';
 import { cn, isMac } from '@/lib/utils';
+import { SymlinkEscapeNotice } from './SymlinkEscapeNotice';
 
 const MARKDOWN_PREVIEW_DEBOUNCE_MS = 200;
 const MARKDOWN_PREVIEW_MAX_CHARS = 200_000;
@@ -1314,6 +1315,7 @@ export function CodeEditorPanel() {
       markFileSaved(activePath); // composite key
       // Invalidate file tree cache to refresh git status indicators
       utils.files.listDirectory.invalidate();
+      utils.files.symlinkEscape.invalidate();
       // Git status is worktree-scoped — a file outside any project has none to refresh.
       if (projectPath) {
         utils.changes.getStatus.invalidate({ worktreePath: projectPath });
@@ -1869,6 +1871,17 @@ export function CodeEditorPanel() {
                 });
               })()}
             </nav>
+          )}
+          {projectPath && activeFile && !activeFile.loadError && (
+            <SymlinkEscapeNotice
+              useEscapeQuery={trpc.files.symlinkEscape.useQuery}
+              projectPath={projectPath}
+              filePath={isOpen ? activeAbsoluteFilePath : null}
+              projectName={
+                projectDisplayNames.get(projectPath) ?? getProjectName(projectPath) ?? projectPath
+              }
+              canSave={isTextEditorFile}
+            />
           )}
 
           {/* Editor area — min-h-0 lets content scroll instead of growing over the header (isolate = stacking) */}

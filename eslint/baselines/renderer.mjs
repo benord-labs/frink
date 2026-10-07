@@ -356,7 +356,6 @@ export const rendererStructureBaseline = [
   "features/flows/FlowEditor/BlockConfig/shared/textarea-mirror-style-keys.ts",
   "features/flows/FlowEditor/BlockConfig/shared/use-textarea-slash-detection.ts",
   "features/flows/FlowEditor/BlockConfig/triggerBindingToasts.ts",
-  "features/flows/FlowEditor/FlowCanvas/compute-dagre-positions.ts",
   "features/flows/FlowEditor/FlowCanvas/flowStepNodeStyles.ts",
   "features/flows/FlowEditor/FlowCanvas/minimapNodeColor.ts",
   "features/flows/FlowEditor/FlowCanvas/useFlowLayout.ts",

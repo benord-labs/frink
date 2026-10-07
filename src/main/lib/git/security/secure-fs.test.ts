@@ -1,4 +1,13 @@
-import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -138,18 +147,46 @@ describe('secureFs inspection and buffer reads', () => {
     await expect(secureFs.exists(worktree, 'escape.txt')).resolves.toBe(false);
   });
 
-  it('flags an escaping symlink so callers can warn the user', async () => {
+  it('reports where an escaping symlink leads so callers can warn the user', async () => {
     const target = join(outside, 'bashrc');
     await writeFile(target, 'x', 'utf8');
     await symlink(target, join(worktree, 'escaping.txt'));
     await writeFile(join(worktree, 'real.txt'), 'x', 'utf8');
     await symlink(join(worktree, 'real.txt'), join(worktree, 'internal.txt'));
 
-    await expect(secureFs.isSymlinkEscaping(worktree, 'escaping.txt')).resolves.toBe(true);
+    await expect(secureFs.escapeTarget(worktree, 'escaping.txt')).resolves.toBe(
+      await realpath(target),
+    );
     // A symlink that stays inside the worktree is not an escape.
-    await expect(secureFs.isSymlinkEscaping(worktree, 'internal.txt')).resolves.toBe(false);
+    await expect(secureFs.escapeTarget(worktree, 'internal.txt')).resolves.toBeNull();
     // A plain file is not a symlink at all.
-    await expect(secureFs.isSymlinkEscaping(worktree, 'real.txt')).resolves.toBe(false);
+    await expect(secureFs.escapeTarget(worktree, 'real.txt')).resolves.toBeNull();
+  });
+
+  it('reports a plain file reached through a symlinked directory', async () => {
+    const target = join(outside, 'notes.md');
+    await writeFile(target, 'x', 'utf8');
+    await symlink(outside, join(worktree, 'docs'));
+
+    // The leaf is an ordinary file; the lie is one level up.
+    await expect(secureFs.escapeTarget(worktree, 'docs/notes.md')).resolves.toBe(
+      await realpath(target),
+    );
+  });
+
+  it('does not report files when the worktree itself is reached through a symlink', async () => {
+    await writeFile(join(worktree, 'real.txt'), 'x', 'utf8');
+    const alias = join(outside, 'alias');
+    await symlink(worktree, alias);
+
+    await expect(secureFs.escapeTarget(alias, 'real.txt')).resolves.toBeNull();
+  });
+
+  it('reports nothing when the target cannot be resolved', async () => {
+    await symlink(join(outside, 'never-created'), join(worktree, 'dangling.txt'));
+
+    await expect(secureFs.escapeTarget(worktree, 'dangling.txt')).resolves.toBeNull();
+    await expect(secureFs.escapeTarget(worktree, 'missing.txt')).resolves.toBeNull();
   });
 });
 

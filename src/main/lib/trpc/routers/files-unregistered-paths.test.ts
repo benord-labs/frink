@@ -1,4 +1,12 @@
-import { mkdir, mkdtemp, readFile as readFileFs, rm, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readFile as readFileFs,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -67,6 +75,49 @@ describe('filesRouter path access', () => {
 
     const entries = await caller.listDirectory({ projectPath: outsidePath, relativePath: '' });
     expect(entries.map((entry) => entry.name)).toContain('note.md');
+  });
+
+  it('saves through a link that leaves the project and says where it went', async () => {
+    const projectPath = await mkdtemp(join(tmpdir(), 'frink-linked-project-'));
+    const target = join(outsidePath, 'bashrc');
+    await writeFile(target, 'before', 'utf8');
+    const filePath = join(projectPath, 'config.yml');
+    await symlink(target, filePath);
+
+    const { filesRouter } = await import('./files');
+    const caller = filesRouter.createCaller({ getWindow: () => null });
+
+    try {
+      // The editor route informs; it never blocks the open or the save.
+      await expect(caller.symlinkEscape({ projectPath, filePath })).resolves.toEqual({
+        escapes: true,
+        realPath: await realpath(target),
+      });
+      await expect(caller.readFile({ filePath })).resolves.toBe('before');
+      await expect(caller.writeFile({ filePath, content: 'after' })).resolves.toEqual({
+        success: true,
+      });
+      await expect(readFileFs(target, 'utf8')).resolves.toBe('after');
+    } finally {
+      await rm(projectPath, { recursive: true, force: true });
+    }
+  });
+
+  it('reports no escape for a file that belongs to no project', async () => {
+    const projectPath = await mkdtemp(join(tmpdir(), 'frink-linked-project-'));
+    const filePath = join(outsidePath, 'plan.md');
+    await writeFile(filePath, '# plan', 'utf8');
+
+    const { filesRouter } = await import('./files');
+    const caller = filesRouter.createCaller({ getWindow: () => null });
+
+    try {
+      await expect(caller.symlinkEscape({ projectPath, filePath })).resolves.toEqual({
+        escapes: false,
+      });
+    } finally {
+      await rm(projectPath, { recursive: true, force: true });
+    }
   });
 
   it('still refuses to move a file out of the project it was given', async () => {

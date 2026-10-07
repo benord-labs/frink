@@ -7,6 +7,7 @@
  */
 
 import { eq } from 'drizzle-orm';
+import { vi } from 'vitest';
 import { createBatchStageRun, setStageRunStatusIf } from '../db/repos/batch-stage-runs';
 import { createBatchStage } from '../db/repos/batch-stages';
 import { createFlowVersion } from '../db/repos/flow-versions';
@@ -106,4 +107,24 @@ export async function setRunStatus(
 export function runId(bsr: { flowRunId: string | null | undefined } | undefined): string {
   if (!bsr?.flowRunId) throw new Error('BSR missing flowRunId');
   return bsr.flowRunId;
+}
+
+export type PreparedStatement = { sql: string; inTransaction: boolean };
+
+/** Logs each statement prepared from here on with whether a transaction was open. The sync session
+ * prepares at execution, so that is the state the statement ran under. Used by the list-reader suites. */
+export function recordPrepares(db: TestDb): PreparedStatement[] {
+  const log: PreparedStatement[] = [];
+  const client = db.$client;
+  const prepare = client.prepare.bind(client);
+  vi.spyOn(client, 'prepare').mockImplementation((sql: string) => {
+    log.push({ sql, inTransaction: client.inTransaction });
+    return prepare(sql);
+  });
+  return log;
+}
+
+/** The page (`limit ?`) and total (`count(*)`) statements of a paginated list read. */
+export function pageAndCountStatements(log: PreparedStatement[]): PreparedStatement[] {
+  return log.filter((s) => /count\(\*\)|\blimit \?/i.test(s.sql));
 }

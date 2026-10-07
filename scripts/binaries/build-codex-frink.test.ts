@@ -1,4 +1,9 @@
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import pinnedManifest from '../../patches/codex/manifest.json';
 import threadItems from '../../patches/codex/thread-item-variants.json';
 import { FRINK_HOST_TOOL_PERMISSION_VERSION } from '../../src/main/lib/agent-runner/codex/codex-host-permissions';
 import {
@@ -6,6 +11,7 @@ import {
   assertMcpReplaceConsumed,
   assertPinnedThreadItems,
   codexVersionStamp,
+  normalizeCargoLock,
   normalizeWorkspaceVersions,
   parseBuildArguments,
   parseInitializeResult,
@@ -15,6 +21,7 @@ import {
   validateManifest,
   validateRemoteTagOutput,
 } from './build-codex-frink.mjs';
+import { sha256File } from './http-download.mjs';
 
 const manifest = {
   version: 'rust-v0.155.1',
@@ -24,7 +31,8 @@ const manifest = {
   normalizedCargoLockSha256: 'df88a71b82843c6f092610fb07589f7a40032ddc25f50718354546ca541eb9b7',
   rust: '1.95.0',
   patch: 'frink-host-tool-permission-v1.patch',
-  patchSha256: '5af8795f63311f953a943b8f056058cdde90528b6cecf5acf220d75ff1447540',
+  // Pinned once, in the manifest: the script and these tests read it rather than repeat it.
+  patchSha256: pinnedManifest.patchSha256,
   upstream: 'https://github.com/openai/codex',
 };
 
@@ -37,9 +45,22 @@ describe('permission-aware Codex source build', () => {
     expect(() => validateManifest({ ...manifest, commit: '0'.repeat(40) })).toThrow(
       'Invalid pinned Codex source manifest field: commit',
     );
-    expect(() => validateManifest({ ...manifest, patchSha256: '0'.repeat(64) })).toThrow(
-      'Invalid pinned Codex source manifest field: patchSha256',
+  });
+
+  it('takes the patch identity from the manifest but rejects one that is not a SHA-256', () => {
+    expect(validateManifest({ ...manifest, patchSha256: 'a'.repeat(64) }).patchSha256).toBe(
+      'a'.repeat(64),
     );
+    for (const patchSha256 of ['deadbeef', 'A'.repeat(64), `${'a'.repeat(64)}0`, undefined]) {
+      expect(() => validateManifest({ ...manifest, patchSha256 })).toThrow(
+        'Invalid pinned Codex source manifest field: patchSha256',
+      );
+    }
+  });
+
+  it('pins the bytes of the committed patch, so a hand edit fails here and not an hour into a build', () => {
+    const patchPath = path.join(__dirname, '../../patches/codex', pinnedManifest.patch);
+    expect(sha256File(patchPath)).toBe(pinnedManifest.patchSha256);
   });
 
   it('requires the exact annotated tag object and peeled commit from upstream', () => {
@@ -76,9 +97,85 @@ describe('permission-aware Codex source build', () => {
   });
 });
 
+describe('normalizeCargoLock', () => {
+  const pristine = 'name = "codex-core"\nversion = "0.0.0"\n';
+  const normalized = 'name = "codex-core"\nversion = "0.155.1"\n';
+
+  function sourceWithLock(lock: string) {
+    const sourceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'frink-codex-lock-'));
+    fs.mkdirSync(path.join(sourceDir, 'codex-rs'));
+    fs.writeFileSync(path.join(sourceDir, 'codex-rs', 'Cargo.lock'), lock);
+    return sourceDir;
+  }
+
+  function pinnedTo(lock: string) {
+    const scratch = sourceWithLock(lock);
+    const sha = sha256File(path.join(scratch, 'codex-rs', 'Cargo.lock'));
+    fs.rmSync(scratch, { recursive: true, force: true });
+    return { ...manifest, normalizedCargoLockSha256: sha };
+  }
+
+  it('rewrites the lockfile in place, and accepts one a previous run already rewrote', () => {
+    const sourceDir = sourceWithLock(pristine);
+    try {
+      normalizeCargoLock(sourceDir, pinnedTo(normalized));
+      expect(fs.readFileSync(path.join(sourceDir, 'codex-rs', 'Cargo.lock'), 'utf8')).toBe(
+        normalized,
+      );
+      expect(() => normalizeCargoLock(sourceDir, pinnedTo(normalized))).not.toThrow();
+    } finally {
+      fs.rmSync(sourceDir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a lockfile that differs from the pin once normalised', () => {
+    const sourceDir = sourceWithLock(`${pristine}[[package]]\n`);
+    try {
+      expect(() => normalizeCargoLock(sourceDir, pinnedTo(normalized))).toThrow(
+        'Normalized Cargo.lock SHA-256 mismatch',
+      );
+    } finally {
+      fs.rmSync(sourceDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('command lines', () => {
+  const run = (script: string, ...args: string[]) =>
+    spawnSync(process.execPath, [path.join(__dirname, script), ...args], { encoding: 'utf8' });
+
+  it('runs the patch workspace modes and fails with their message', () => {
+    const missingDir = run('codex-patch-workspace.mjs', '--write-patch');
+    expect(missingDir.status).toBe(1);
+    expect(missingDir.stderr).toContain('--write-patch requires a directory');
+
+    const unprepared = run(
+      'codex-patch-workspace.mjs',
+      '--write-patch',
+      fs.mkdtempSync(path.join(os.tmpdir(), 'frink-plain-')),
+    );
+    expect(unprepared.status).toBe(1);
+    expect(unprepared.stderr).toContain('is not a Codex workspace prepared by --prepare-source');
+  });
+
+  it('keeps the build script to build arguments', () => {
+    const result = run('build-codex-frink.mjs', '--prepare-source', '/tmp/codex');
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('Unknown Codex build argument: --prepare-source');
+  });
+
+  it('still rejects an unknown build argument', () => {
+    const result = run('build-codex-frink.mjs', '--all');
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('Unknown Codex build argument: --all');
+  });
+});
+
 describe('codexVersionStamp', () => {
   it('carries the patch identity so a stale bundled binary is detectable at runtime', () => {
-    expect(codexVersionStamp(manifest)).toBe('rust-v0.155.1+frink.5af8795f6331');
+    expect(codexVersionStamp(manifest)).toBe(
+      `rust-v0.155.1+frink.${pinnedManifest.patchSha256.slice(0, 12)}`,
+    );
     expect(codexVersionStamp({ ...manifest, patchSha256: 'a'.repeat(64) })).toBe(
       'rust-v0.155.1+frink.aaaaaaaaaaaa',
     );

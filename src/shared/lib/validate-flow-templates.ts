@@ -15,7 +15,11 @@ import { reservedPluginIdForNodeName } from '../integrations/plugin-nodes';
 import { TRIGGER_FIELD_ALIASES } from '../integrations/trigger-field-aliases';
 import { isCustomNodeBlockType } from './block-registry';
 import { resolveFanOutStructure } from './compute-fan-out-body-chain';
-import { getTemplateRenderedFields } from './flows/template-rendered-fields';
+import {
+  getTemplateRenderedFields,
+  getTemplateRenderedStrings,
+  nonRenderedFieldNote,
+} from './flows/template-rendered-fields';
 import {
   CUSTOM_NODE_FALLBACK_OUTPUT_SCHEMA,
   LOOP_CONTEXT_SCHEMA,
@@ -476,7 +480,8 @@ export function computeNodeVariables(
  *
  * Only scans fields that are actually template-rendered at runtime:
  *   run_command.command, start_task.label, start_task.branch,
- *   agent.instructions, chat_reply.messageTemplate, and every top-level string custom-node input
+ *   agent.instructions, chat_reply.messageTemplate, http_request url/headers/body, and every
+ *   top-level string custom-node input
  *
  * Returns advisory warnings — never hard errors. Unknown fields on run_command
  * or custom node predecessors are silently allowed (JSON stdout is dynamic).
@@ -511,10 +516,7 @@ export function validateFlowTemplateVariables(
 
       // Field has template syntax but is NOT template-rendered
       for (const path of paths) {
-        const specialNote =
-          node.blockType === 'run_command' && field === 'customPath'
-            ? 'customPath is intentionally not template-rendered (path traversal prevention)'
-            : `"${field}" is not template-rendered for ${node.blockType} nodes`;
+        const specialNote = nonRenderedFieldNote(node.blockType, field);
 
         warnings.push({
           nodeId: node.id,
@@ -537,10 +539,7 @@ export function validateFlowTemplateVariables(
     const vars = nodeVariables[node.id];
     if (!vars) continue;
 
-    for (const field of renderedFields) {
-      const value = (config as Record<string, unknown>)[field];
-      if (typeof value !== 'string') continue;
-
+    for (const { field, value } of getTemplateRenderedStrings(node.blockType, config)) {
       const paths = extractTemplatePaths(value);
 
       for (const path of paths) {
