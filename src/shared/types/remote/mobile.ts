@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { CODEX_SPEEDS, type CodexSpeed } from '../execution';
+import { type RecoveryKind, recoveryKindSchema } from '../flow-run/resume';
 import type { AgentUserQuestion } from '../task-signal';
 
 const id = z.string().min(1).max(200);
@@ -29,7 +30,8 @@ export const mobileRequestSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('cancelRun'), id }),
   // A Queue task's row actions, gated on the computer by the desktop Work Queue's own rules.
   z.object({ type: z.literal('completeTask'), id }),
-  z.object({ type: z.literal('continueTask'), id }),
+  // Continue or Retry, as the row's recoveryKind labels it. Older phones omit it: carry on.
+  z.object({ type: z.literal('continueTask'), id, kind: recoveryKindSchema.optional() }),
   z.object({ type: z.literal('startTask'), id }),
   z.object({
     type: z.literal('resumeNode'),
@@ -145,6 +147,8 @@ export type MobileQueueItem = {
   activityAt: string;
   /** The row actions the phone may send; a Flow item starts and carries on through its run. */
   actions: MobileTaskAction[];
+  /** What `continueTask` does: resume the session or run again. Older computers omit it. */
+  recoveryKind?: RecoveryKind;
 };
 export type MobileTaskAction = 'startTask' | 'continueTask' | 'completeTask';
 export type MobileQueueSection = 'attention' | 'inbox' | 'running';

@@ -185,6 +185,15 @@ describe('mobile overview', () => {
             items: [
               { ...task, id: 'done' },
               { ...task, id: 'new', startedAt: null, completedAt: null, projectName: null },
+              { ...task, id: 'failed', effectiveStatus: 'failed', recoveryKind: 'retry' },
+              // Only a row that offers recovery carries its kind.
+              {
+                ...task,
+                id: 'flow',
+                effectiveStatus: 'failed',
+                flowRunId: 'run',
+                recoveryKind: 'retry',
+              },
             ],
             hasMore: true,
           }
@@ -210,8 +219,13 @@ describe('mobile overview', () => {
           actions: ['completeTask'],
         },
         { id: 'new', section: 'attention', projectName: null, activityAt: at(1000).toISOString() },
+        { id: 'failed', actions: ['continueTask'], recoveryKind: 'retry' },
+        { id: 'flow', actions: [] },
       ],
     });
+    const item = (id: string) => result.queue.find((entry) => entry.id === id);
+    expect(item('done')).not.toHaveProperty('recoveryKind');
+    expect(item('flow')).not.toHaveProperty('recoveryKind');
   });
 
   it('batches pending identities without reading transcripts and preserves question order', async () => {
