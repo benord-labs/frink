@@ -92,9 +92,27 @@ describe('permission-aware Codex source build', () => {
     expect(parseBuildArguments(['--target', 'darwin-x64', '--test'])).toEqual({
       targetKeys: ['darwin-x64'],
       runProviderTests: true,
+      testOnly: false,
     });
     expect(() => parseBuildArguments(['--target'])).toThrow('--target requires a platform key');
     expect(() => parseBuildArguments(['--all'])).toThrow('Unknown Codex build argument');
+  });
+
+  it('runs the provider tests alone, without building a binary, for the parallel CI job', () => {
+    expect(parseBuildArguments(['--test-only'])).toEqual({
+      targetKeys: [],
+      runProviderTests: true,
+      testOnly: true,
+    });
+  });
+
+  it('refuses --test-only with a target, which would silently skip the build it names', () => {
+    expect(() => parseBuildArguments(['--test-only', '--target', 'linux-x64'])).toThrow(
+      '--test-only builds no binary, so it cannot take --target',
+    );
+    expect(() => parseBuildArguments(['--target', 'linux-x64', '--test-only'])).toThrow(
+      '--test-only builds no binary',
+    );
   });
 });
 
