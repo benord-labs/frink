@@ -80,6 +80,8 @@ export const MAIN_LIB_DOMAINS = [
   'terminal',
   'test-utils',
   'trpc',
+  // Build-time update feed resolution the auto-updater and the release gate share.
+  'updates',
   'webhooks',
   'worktree',
 ];

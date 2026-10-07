@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { agentChatStore } from '../../features/agents/stores/agent-chat-store';
+
+/** The slice of a sub-chat's Chat the lock reads; callers hand it in from the agents store. */
+type SentChat = { status: string } | undefined;
 
 /**
  * Single-shot lock shared by the paused bar's two continuation affordances (Resume and a typed
@@ -16,14 +18,18 @@ import { agentChatStore } from '../../features/agents/stores/agent-chat-store';
  * failed, so it unlocks with an error — except when the user pressed Stop, which is a deliberate end
  * rather than a failure, or when the turn errored, whose own error toast already said why.
  */
-export function useFlowResumeLock(flowRunId: string, subChatId: string, isTurnActive: boolean) {
+export function useFlowResumeLock(
+  flowRunId: string,
+  getSentChat: () => SentChat,
+  isTurnActive: boolean,
+) {
   const [resumePending, setResumePending] = useState(false);
   const lockedRef = useRef(false);
   const sawActiveTurnRef = useRef(false);
   const stopRequestedRef = useRef(false);
   // The Chat that took the continuation: the store may swap in a replacement for this sub-chat
   // before the turn ends, and only this instance's status says how the continuation ended.
-  const sentChatRef = useRef<ReturnType<typeof agentChatStore.get>>(undefined);
+  const sentChatRef = useRef<SentChat>(undefined);
   const previousFlowRunIdRef = useRef(flowRunId);
 
   // A new run under the same mounted bar starts unlocked; otherwise the previous run's lock would
@@ -70,7 +76,7 @@ export function useFlowResumeLock(flowRunId: string, subChatId: string, isTurnAc
       lockedRef.current = false;
       throw error;
     }
-    sentChatRef.current = agentChatStore.get(subChatId);
+    sentChatRef.current = getSentChat();
     sawActiveTurnRef.current = isTurnActive;
     setResumePending(true);
     return true;

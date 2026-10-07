@@ -23,7 +23,13 @@ export function composerFixture(): MobileComposer {
     projectId: 'project-1',
     accounts: [
       { id: 'acc-1', label: 'Work', type: 'claude-code', isDefault: true, isAuthenticated: true },
-      { id: 'acc-2', label: 'Personal', type: 'claude-code', isDefault: false, isAuthenticated: true },
+      {
+        id: 'acc-2',
+        label: 'Personal',
+        type: 'claude-code',
+        isDefault: false,
+        isAuthenticated: true,
+      },
     ],
     models: [
       {
@@ -87,10 +93,13 @@ export function chatsPage(limit = 30): MobileResponses['chats'] {
     const name = chatNames[index % chatNames.length];
     return {
       id: `chat-${index + 1}`,
-      name: index < chatNames.length ? name : `${name} (${Math.floor(index / chatNames.length) + 1})`,
+      name:
+        index < chatNames.length ? name : `${name} (${Math.floor(index / chatNames.length) + 1})`,
       projectId: projects[index % projects.length].id,
       projectName: projects[index % projects.length].name,
-      lastActiveAt: ago([1, 6, 40, 180, 60 * 20, 60 * 30, 60 * 24 * 3, 60 * 24 * 12][index % 8] + index * 3),
+      lastActiveAt: ago(
+        [1, 6, 40, 180, 60 * 20, 60 * 30, 60 * 24 * 3, 60 * 24 * 12][index % 8] + index * 3,
+      ),
       activity: index === 0 ? 'running' : index === 1 ? 'background' : 'idle',
       kind: index === 2 ? 'flow' : 'chat',
     } as const;
@@ -199,7 +208,10 @@ export function overviewFixture(): MobileResponses['overview'] {
             header: 'CI cache',
             multiSelect: false,
             options: [
-              { label: 'Yes, switch it', description: 'Rebuilds the cache when dependencies change' },
+              {
+                label: 'Yes, switch it',
+                description: 'Rebuilds the cache when dependencies change',
+              },
               { label: 'Keep the current key', description: 'No change to CI' },
             ],
           },
@@ -281,18 +293,54 @@ export function flowFixture(): MobileResponses['flow'] {
     runs: {
       items: [
         { id: 'run-1', status: 'running', createdAt: ago(9), startedAt: ago(9), completedAt: null },
-        { id: 'run-0', status: 'completed', createdAt: ago(60 * 24 * 7), startedAt: ago(60 * 24 * 7), completedAt: ago(60 * 24 * 7 - 6) },
-        { id: 'run-00', status: 'failed', createdAt: ago(60 * 24 * 14), startedAt: ago(60 * 24 * 14), completedAt: ago(60 * 24 * 14 - 2) },
+        {
+          id: 'run-0',
+          status: 'completed',
+          createdAt: ago(60 * 24 * 7),
+          startedAt: ago(60 * 24 * 7),
+          completedAt: ago(60 * 24 * 7 - 6),
+        },
+        {
+          id: 'run-00',
+          status: 'failed',
+          createdAt: ago(60 * 24 * 14),
+          startedAt: ago(60 * 24 * 14),
+          completedAt: ago(60 * 24 * 14 - 2),
+        },
       ],
       hasMore: false,
     },
     definition: {
       versionNumber: 3,
       nodes: [
-        { id: 'n1', label: 'Every Monday at 9:00', blockType: 'schedule_trigger', parentId: null, instructions: null },
-        { id: 'n2', label: 'Update packages', blockType: 'agent', parentId: null, instructions: 'Run bun update and fix breaking changes.' },
-        { id: 'n3', label: 'Run tests', blockType: 'agent', parentId: null, instructions: 'Run the full test suite.' },
-        { id: 'n4', label: 'Approve the PR', blockType: 'approval', parentId: null, instructions: null },
+        {
+          id: 'n1',
+          label: 'Every Monday at 9:00',
+          blockType: 'schedule_trigger',
+          parentId: null,
+          instructions: null,
+        },
+        {
+          id: 'n2',
+          label: 'Update packages',
+          blockType: 'agent',
+          parentId: null,
+          instructions: 'Run bun update and fix breaking changes.',
+        },
+        {
+          id: 'n3',
+          label: 'Run tests',
+          blockType: 'agent',
+          parentId: null,
+          instructions: 'Run the full test suite.',
+        },
+        {
+          id: 'n4',
+          label: 'Approve the PR',
+          blockType: 'approval',
+          parentId: null,
+          instructions: null,
+        },
       ],
       edges: [
         { id: 'e1', source: 'n1', target: 'n2', label: null, sourceHandle: null },
@@ -313,10 +361,54 @@ export function runFixture(): MobileResponses['run'] {
     flowId: 'flow-1',
     flowName: 'Weekly dependency update',
     nodes: [
-      { id: 'nr1', label: 'Every Monday at 9:00', status: 'completed', detail: '', chatId: null, subChatId: null, actions: [], actionToken: 'a'.repeat(64), startedAt: ago(9), completedAt: ago(9) },
-      { id: 'nr2', label: 'Update packages', status: 'running', detail: 'Updating 14 packages', chatId: 'chat-9', subChatId: 'sub-9', actions: [], actionToken: 'b'.repeat(64), startedAt: ago(8), completedAt: null },
-      { id: 'nr3', label: 'Run tests', status: 'pending', detail: '', chatId: null, subChatId: null, actions: [], actionToken: 'c'.repeat(64), startedAt: null, completedAt: null },
-      { id: 'nr4', label: 'Approve the PR', status: 'pending', detail: '', chatId: null, subChatId: null, actions: [], actionToken: 'd'.repeat(64), startedAt: null, completedAt: null },
+      {
+        id: 'nr1',
+        label: 'Every Monday at 9:00',
+        status: 'completed',
+        detail: '',
+        chatId: null,
+        subChatId: null,
+        actions: [],
+        actionToken: 'a'.repeat(64),
+        startedAt: ago(9),
+        completedAt: ago(9),
+      },
+      {
+        id: 'nr2',
+        label: 'Update packages',
+        status: 'running',
+        detail: 'Updating 14 packages',
+        chatId: 'chat-9',
+        subChatId: 'sub-9',
+        actions: [],
+        actionToken: 'b'.repeat(64),
+        startedAt: ago(8),
+        completedAt: null,
+      },
+      {
+        id: 'nr3',
+        label: 'Run tests',
+        status: 'pending',
+        detail: '',
+        chatId: null,
+        subChatId: null,
+        actions: [],
+        actionToken: 'c'.repeat(64),
+        startedAt: null,
+        completedAt: null,
+      },
+      {
+        id: 'nr4',
+        label: 'Approve the PR',
+        status: 'pending',
+        detail: '',
+        chatId: null,
+        subChatId: null,
+        actions: [],
+        actionToken: 'd'.repeat(64),
+        startedAt: null,
+        completedAt: null,
+      },
     ],
   };
 }
@@ -331,7 +423,12 @@ export function chatFixture(activity: MobileChatDetail['activity'] = 'running'):
         id: 'm1',
         role: 'user',
         text: 'The checkout tests fail about one run in five on CI. Find out why and fix it.',
-        parts: [{ type: 'text', text: 'The checkout tests fail about one run in five on CI. Find out why and fix it.' }],
+        parts: [
+          {
+            type: 'text',
+            text: 'The checkout tests fail about one run in five on CI. Find out why and fix it.',
+          },
+        ],
       },
       {
         id: 'm2',
@@ -347,7 +444,12 @@ export function chatFixture(activity: MobileChatDetail['activity'] = 'running'):
           },
           { type: 'steer', text: 'Use the existing waitForFrame helper instead of a new one.' },
           { type: 'tool', id: 't4', name: 'Edit', state: 'completed' },
-          { type: 'tool', id: 't5', name: 'Bash', state: activity === 'running' ? 'running' : 'completed' },
+          {
+            type: 'tool',
+            id: 't5',
+            name: 'Bash',
+            state: activity === 'running' ? 'running' : 'completed',
+          },
         ],
       },
     ],

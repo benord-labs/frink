@@ -3,7 +3,8 @@ import { flows } from '../../db/schema';
 import { freshDb, type TestDb } from '../../db/test-utils/fresh-db';
 import type { Context } from '../index';
 
-const { dbRef } = vi.hoisted(() => ({ dbRef: { current: null as unknown } }));
+type DbRef = { current: TestDb | null };
+const dbRef = vi.hoisted((): DbRef => ({ current: null }));
 
 vi.mock('../../db', () => ({
   getDatabase: vi.fn(() => dbRef.current),

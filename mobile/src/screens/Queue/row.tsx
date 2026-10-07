@@ -10,11 +10,11 @@ import { GUTTER, radius, space, useTheme } from '../../ui/theme';
 import type { QueueRow } from './queue-view';
 
 /** The desktop Work Queue's labels, so a task reads the same on both. */
-export const ACTION_ITEMS: Record<MobileTaskAction, Pick<SwipeActionItem, 'label' | 'icon' | 'fill'>> = {
+export const ACTION_ITEMS = {
   startTask: { label: 'Start task', icon: Play, fill: 'primary' },
   continueTask: { label: 'Carry on task', icon: RotateCcw, fill: 'primary' },
   completeTask: { label: 'Mark complete', icon: Check, fill: 'confirm' },
-};
+} satisfies Record<MobileTaskAction, Pick<SwipeActionItem, 'label' | 'icon' | 'fill'>>;
 
 /** State and project details share a quiet line below the task's full-width title. */
 function StatusSlot({ row }: { row: QueueRow }) {
@@ -55,7 +55,13 @@ export function QueueListRow({
         testID={`queue-row-${row.key}`}
         title={row.title}
         subtitle={<StatusSlot row={row} />}
-        trailing={row.activityAt ? <Text variant="label" color="muted">{shortAge(row.activityAt)}</Text> : undefined}
+        trailing={
+          row.activityAt ? (
+            <Text variant="label" color="muted">
+              {shortAge(row.activityAt)}
+            </Text>
+          ) : undefined
+        }
         onPress={onOpen}
       />
     </SwipeAction>
@@ -101,7 +107,12 @@ export function MacEyebrow({ name, online }: { name: string; online: boolean }) 
       style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
     >
       <View
-        style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: online ? t.live : t.offline }}
+        style={{
+          width: 7,
+          height: 7,
+          borderRadius: 4,
+          backgroundColor: online ? t.live : t.offline,
+        }}
       />
       <Text variant="label" color="muted" numberOfLines={1}>
         {name}

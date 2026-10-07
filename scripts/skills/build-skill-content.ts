@@ -130,7 +130,7 @@ async function main(): Promise<void> {
       process.stderr.write(
         `Skill content drift detected:\n${drift.map((d) => `  - ${d}`).join('\n')}\n`,
       );
-      process.stderr.write(`Re-run: bun run scripts/build-skill-content.ts\n`);
+      process.stderr.write(`Re-run: bun run build:skills\n`);
       process.exit(1);
     }
     process.stdout.write(`Skill content in sync (manifest ${baseline.version}).\n`);

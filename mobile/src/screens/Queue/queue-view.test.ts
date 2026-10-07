@@ -33,7 +33,12 @@ const overview: MobileOverview = {
       subChatId: 'sub',
       title: 'Release checks',
       questions: [
-        { header: 'Env', question: 'Which environment should I use?', options: [], multiSelect: false },
+        {
+          header: 'Env',
+          question: 'Which environment should I use?',
+          options: [],
+          multiSelect: false,
+        },
       ],
     },
   ],
@@ -149,7 +154,10 @@ describe('queueSections', () => {
       kind: 'flow',
       detail: 'Flow · design-system · Step 2 of 4',
     });
-    expect(section(overview, 'upNext')?.rows[0]).toMatchObject({ kind: 'inbox', detail: 'From Gmail' });
+    expect(section(overview, 'upNext')?.rows[0]).toMatchObject({
+      kind: 'inbox',
+      detail: 'From Gmail',
+    });
   });
 
   it('keeps line two to what the status word does not already say', () => {
@@ -164,7 +172,10 @@ describe('queueSections', () => {
     const tones = (key: string) => section(overview, key)!.rows.map((row) => row.status.tone);
     expect(tones('needsYou')).toEqual(['attention', 'attention', 'attention', 'danger']);
     expect(tones('running')).toEqual(['live']);
-    expect(section(overview, 'review')?.rows[0].status).toMatchObject({ word: 'Ready', tone: 'quiet' });
+    expect(section(overview, 'review')?.rows[0].status).toMatchObject({
+      word: 'Ready',
+      tone: 'quiet',
+    });
   });
 
   it('gives every Needs you row room for a two-line title', () => {
@@ -204,8 +215,12 @@ describe('expandedLimits', () => {
   });
 
   it('pages the whole attention list for either attention section, whichever expands last', () => {
-    expect(expandedLimits(new Set(['needsYou', 'review'] as const), counts)).toEqual({ attention: 30 });
-    expect(expandedLimits(new Set(['review', 'needsYou'] as const), counts)).toEqual({ attention: 30 });
+    expect(expandedLimits(new Set(['needsYou', 'review'] as const), counts)).toEqual({
+      attention: 30,
+    });
+    expect(expandedLimits(new Set(['review', 'needsYou'] as const), counts)).toEqual({
+      attention: 30,
+    });
   });
 
   it('follows the live count and caps at the largest page', () => {

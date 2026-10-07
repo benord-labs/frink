@@ -1,6 +1,6 @@
 import { type ReactElement, type RefObject, useMemo } from 'react';
-import { type ConfirmOptions, useConfirm } from '../../../../components/ui/use-confirm';
-import { STRINGS } from '../constants';
+import { type ConfirmOptions, useConfirm } from '../../../../../components/ui/use-confirm';
+import { STRINGS } from '../../constants';
 
 const plural = (count: number): string => (count === 1 ? '' : 's');
 
@@ -52,7 +52,7 @@ function batchDeleteCopy(
   };
 }
 
-export type DeleteConfirm = {
+type DeleteConfirm = {
   chat: (
     chatName: string | null | undefined,
     focusAfterClose: RefObject<HTMLElement | null>,
@@ -69,7 +69,10 @@ export type DeleteConfirm = {
  * The sidebar's in-app confirm for tree, project, folder and batch deletes; true only on accept.
  * The archived list keeps its own dialog. Render `confirmDialog` once.
  */
-export function useDeleteConfirm(): { askDelete: DeleteConfirm; confirmDialog: ReactElement } {
+/** The sidebar's delete prompts plus the dialog element that renders them. */
+type DeleteConfirmApi = { askDelete: DeleteConfirm; confirmDialog: ReactElement };
+
+export function useDeleteConfirm(): DeleteConfirmApi {
   const { confirm, confirmDialog } = useConfirm();
   const askDelete = useMemo<DeleteConfirm>(
     () => ({

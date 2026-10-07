@@ -31,7 +31,10 @@ export async function readCommandOutput(
 ): Promise<CommandOutputTail | null> {
   const codex = getCodexLiveTurn(subChatId)?.commandOutputs.get(commandId);
   if (codex) {
-    return { runningForMs: Date.now() - codex.startedAt, text: cleanOutputTail(codex.text, codex.cut) };
+    return {
+      runningForMs: Date.now() - codex.startedAt,
+      text: cleanOutputTail(codex.text, codex.cut),
+    };
   }
   const session = sessionWaitingOnShell(subChatId, commandId);
   if (!session) return null;

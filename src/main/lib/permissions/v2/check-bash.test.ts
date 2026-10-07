@@ -322,7 +322,7 @@ describe('checkBash — bash-Read parity (system-denied paths)', () => {
   // A metachar hiding a DIRECTORY erases the segment the denied list matches on,
   // so the tier-1c kill switch cannot evaluate it. The pipeline must not
   // auto-allow such a path under a prefix rule — it asks instead, the same
-  // treatment `$VAR` gets. A hard deny would refuse `grep foo src/*​/x.ts` too.
+  // treatment `$VAR` gets. A hard deny would refuse `grep foo src/*/x.ts` too.
   it.each(['cat ~/.c*fig/gcloud/creds', 'cat ~/.{config,x}/gcloud/creds', 'cat ~/.ss?/id_rsa'])(
     'metachar-hidden directory %j is not auto-allowed by a prefix rule',
     (command) => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveUpdateFeedUrl as appResolver } from '../../src/main/lib/update-feed-url.ts';
+import { resolveUpdateFeedUrl as appResolver } from '../../src/main/lib/updates/index.ts';
 import { assertReleaseEnv, resolveUpdateFeedUrl } from './assert-release-env.mjs';
 
 // The gate and the app must agree: a value the gate passes but the app rejects ships an

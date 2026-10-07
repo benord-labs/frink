@@ -1,3 +1,4 @@
+/* eslint-disable project-structure/folder-structure -- shared test-only helper; it cannot use a test suffix without Vitest collecting it as a suite. */
 import { act, fireEvent, screen, within } from '@testing-library/react';
 
 /**

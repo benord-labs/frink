@@ -1,7 +1,7 @@
 import { app, type BrowserWindow, ipcMain, type MenuItemConstructorOptions } from 'electron';
 import log from 'electron-log';
 import { autoUpdater, type ProgressInfo, type UpdateInfo } from 'electron-updater';
-import { resolveUpdateFeedUrl } from './update-feed-url';
+import { resolveUpdateFeedUrl } from './updates';
 
 /**
  * IMPORTANT: Do NOT use lazy/dynamic imports for electron-updater!
@@ -264,11 +264,11 @@ export async function checkForUpdates(force = false) {
 }
 
 /** Whether a build is already downloaded and can be installed (restart) from the app menu. */
-export function isUpdateDownloadedPending(): boolean {
+function isUpdateDownloadedPending(): boolean {
   return downloadedUpdateVersion !== null;
 }
 
-export function installDownloadedUpdate(): void {
+function installDownloadedUpdate(): void {
   if (!isUpdateDownloadedPending()) {
     log.warn('[AutoUpdater] quitAndInstall requested but no update download is pending');
     return;

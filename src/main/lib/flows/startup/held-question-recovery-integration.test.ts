@@ -15,7 +15,8 @@ import { seedActiveAdmission, seedFlowRun } from '../../db/test-utils/flow-fixtu
 import { freshDb, type TestDb } from '../../db/test-utils/fresh-db';
 
 // The watcher and the resume path read the db through the getDatabase() singleton.
-const holder = vi.hoisted(() => ({ db: null as unknown }));
+type DbHolder = { db: TestDb | null };
+const holder = vi.hoisted((): DbHolder => ({ db: null }));
 vi.mock('../../db', async (orig) => ({
   ...(await orig<typeof import('../../db')>()),
   getDatabase: () => holder.db,

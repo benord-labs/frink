@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveUpdateFeedUrl } from './update-feed-url';
+import { resolveUpdateFeedUrl } from '.';
 
 describe('resolveUpdateFeedUrl', () => {
   it.each([

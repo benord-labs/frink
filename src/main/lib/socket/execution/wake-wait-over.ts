@@ -36,7 +36,7 @@ export interface WaitOverDrain {
   cancel: () => void;
 }
 
-export function beginWaitOverDrain(params: {
+function beginWaitOverDrain(params: {
   session: ClaudeSession;
   /** Publish held=false on the same lane every other wait end uses. */
   retract: () => void;
