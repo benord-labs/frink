@@ -472,6 +472,7 @@ describe('claude-wake-hold — disposal identity guards (ABA)', () => {
     const stopHook = Object.assign(async () => ({}), {
       reset: () => {},
       lastPendingWork: pendingWork,
+      carryForwardPendingWork: () => pendingWork,
     });
     const held = createSession('w3', () => ch.query, { stopHook });
     armWakePump({
@@ -1602,7 +1603,11 @@ describe('claude-wake-hold — stand-down policy', () => {
     ch.end();
 
     await vi.waitFor(() => expect(releaseFlowResourceActivity).toHaveBeenCalledWith(backfillError));
-    expect(io.completeBurst).toHaveBeenCalledOnce();
+    // Once for the cut-short burst, then once for the notice that the stream death lost the work.
+    expect(io.completeBurst).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(vi.mocked(io.completeBurst).mock.calls[1])).toContain(
+      'Background work stopped',
+    );
   });
 });
 

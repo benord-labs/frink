@@ -369,6 +369,52 @@ describe('createTaskStopHook', () => {
     expect(hook.stoppedSinceReset).toBe(false);
   });
 
+  // ── carryForwardPendingWork(): a Stop-less turn after a reset leaves the listed work running ──
+  const workflow = { id: 'w1', type: 'workflow', status: 'running', description: 'build' };
+
+  it('carries the last Stop’s work across a reset when the next turn ends with no Stop', async () => {
+    const hook = createTaskStopHook({ hasSignal: () => true, isAborted: () => false });
+    await hook(stopInput({ background_tasks: [workflow] }));
+    hook.reset();
+    expect(hook.lastPendingWork).toBeNull(); // mid-turn readers see the turn's own (empty) state
+
+    const carried = { backgroundTasks: [workflow], sessionCrons: [] };
+    expect(hook.carryForwardPendingWork()).toEqual(carried);
+    expect(hook.lastPendingWork).toEqual(carried); // restored, so every later reader agrees
+  });
+
+  it('keeps carrying across several Stop-less turns in a row', async () => {
+    const hook = createTaskStopHook({ hasSignal: () => true, isAborted: () => false });
+    await hook(stopInput({ background_tasks: [workflow] }));
+    hook.reset();
+    hook.reset();
+    hook.reset();
+    expect(hook.carryForwardPendingWork()?.backgroundTasks).toEqual([workflow]);
+  });
+
+  it('lets an empty Stop after the reset win: the work is over', async () => {
+    const hook = createTaskStopHook({ hasSignal: () => true, isAborted: () => false });
+    await hook(stopInput({ background_tasks: [workflow] }));
+    hook.reset();
+    await hook(idleStop());
+    expect(hook.carryForwardPendingWork()).toBeNull();
+    hook.reset(); // and nothing is set aside for the turn after
+    expect(hook.carryForwardPendingWork()).toBeNull();
+  });
+
+  it('lets a newer Stop replace the carried list', async () => {
+    const hook = createTaskStopHook({ hasSignal: () => true, isAborted: () => false });
+    await hook(stopInput({ background_tasks: [workflow] }));
+    hook.reset();
+    await hook(stopInput({ background_tasks: [bgTask] }));
+    expect(hook.carryForwardPendingWork()?.backgroundTasks).toEqual([bgTask]);
+  });
+
+  it('carries nothing on a fresh hook', () => {
+    const hook = createTaskStopHook({ hasSignal: () => true, isAborted: () => false });
+    expect(hook.carryForwardPendingWork()).toBeNull();
+  });
+
   it('abort wins over pending work: allows with onAllow', async () => {
     const onAllow = vi.fn();
     const hook = createTaskStopHook({ hasSignal: () => false, isAborted: () => true, onAllow });

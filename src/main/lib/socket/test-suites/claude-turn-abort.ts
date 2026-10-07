@@ -5,6 +5,7 @@ import type {
   McpServerStatus,
   SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
+import log from 'electron-log';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getTaskById } from '../../db/repos/tasks';
 import { channelOwner, getChannelToken } from '../../mcp/execution-identity';
@@ -148,6 +149,60 @@ export function registerClaudeTurnAbortTests(harness: ClaudeTurnAbortHarness): v
     afterEach(() => releaseWakeHold(payload.subChatId, 'test cleanup'));
     registerAttachedAbortTests(harness);
     registerDetachedAbortTests(harness);
+    registerStoplessAdoptedTurnTests(harness);
+  });
+}
+
+/** A Stop-less adopted turn (StopFailure, interrupt) must not read as "nothing pending": that kept
+ * the session idle, and an idle retirement then killed the Workflow it held. */
+function registerStoplessAdoptedTurnTests(harness: ClaudeTurnAbortHarness): void {
+  const { claudeQueryMock, handleRemoteExecute } = harness;
+
+  it('an adopted turn that ends with no Stop keeps holding on the work it took over', async () => {
+    const info = vi.spyOn(log, 'info');
+    mockQuery(
+      claudeQueryMock,
+      heldCli(async () => {}),
+    );
+    await handleRemoteExecute({ ...payload, message: 'run coverage and wait' });
+    await followUp(harness);
+
+    expect(hasWakeHold(payload.subChatId)).toBe(true);
+    expect(getSession(payload.subChatId)?.retained).toBeNull();
+    expect(info).toHaveBeenCalledWith(
+      `[Socket Executor] Adopted turn ended for ${payload.subChatId}: re-armed from the carried-forward Stop (Command)`,
+    );
+  });
+
+  // The StopFailure shape: an API error ends the adopted turn with an error result and no Stop. Such
+  // a turn used to read as unclean with nothing pending and end the session, Workflow and all.
+  it('an adopted turn that fails with no Stop keeps holding on the work it took over', async () => {
+    mockQuery(claudeQueryMock, async function* (cli) {
+      await cli.prompt.next();
+      await cli.stop([RUNNING_TASK]);
+      yield* TURN_END;
+      await cli.prompt.next();
+      yield UNCLEAN_RESULT;
+      await never();
+    });
+    await handleRemoteExecute({ ...payload, message: 'run coverage and wait' });
+    await followUp(harness);
+
+    expect(hasWakeHold(payload.subChatId)).toBe(true);
+    expect(claudeQueryMock).toHaveBeenCalledOnce();
+  });
+
+  it('an adopted turn whose own Stop lists nothing ends the wait', async () => {
+    mockQuery(
+      claudeQueryMock,
+      heldCli(async (cli) => {
+        await cli.stop([]);
+      }),
+    );
+    await handleRemoteExecute({ ...payload, message: 'run coverage and wait' });
+    await followUp(harness);
+
+    expect(hasWakeHold(payload.subChatId)).toBe(false);
   });
 }
 
@@ -270,7 +325,11 @@ function registerDetachedAbortTests(harness: ClaudeTurnAbortHarness): void {
     let arming: AbortController | undefined;
     mockQuery(claudeQueryMock, async function* (cli) {
       arming = getActiveExecution(payload.subChatId)?.controller;
-      yield* heldCli(async () => {})(cli);
+      // The adopted turn's own Stop reports the work settled, so the wait ends with it. Without a
+      // Stop the turn would carry the held work forward and re-arm.
+      yield* heldCli(async () => {
+        await cli.stop([]);
+      })(cli);
     });
     await handleRemoteExecute({ ...payload, message: 'run coverage and wait' });
     expect(hasWakeHold(payload.subChatId)).toBe(true);
