@@ -56,75 +56,63 @@ describe('NoAccountsEmptyState', () => {
     platformMock.isWindows.mockReturnValue(false);
   });
 
-  describe('first-time mode (no existing account)', () => {
-    it('advertises Claude and OpenAI in the description', () => {
+  describe('no account', () => {
+    it('names both providers and offers each sign-in plus an API key link', () => {
       renderEmptyState();
-      expect(screen.getByText(/Frink supports Claude.*and OpenAI/i)).toBeInTheDocument();
-    });
-
-    it('renders the Claude passthrough CTA AND the API key CTA', () => {
-      renderEmptyState();
-      expect(screen.getByRole('button', { name: /connect claude/i })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /add api key/i })).toBeInTheDocument();
-    });
-
-    it('renders the Codex passthrough CTA and routes to the Codex connect page on click', () => {
-      renderEmptyState();
-      const codexCta = screen.getByRole('button', { name: /connect openai/i });
-      expect(codexCta).toBeInTheDocument();
-      codexCta.click();
-      expect(setPendingAccountAuthMock).toHaveBeenCalledWith(
+      expect(screen.getByText(/your own Claude or OpenAI account/i)).toBeInTheDocument();
+      screen.getByRole('button', { name: 'Connect Claude' }).click();
+      expect(setPendingAccountAuthMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ mode: 'add', provider: 'claude-code' }),
+      );
+      screen.getByRole('button', { name: 'Connect OpenAI' }).click();
+      expect(setPendingAccountAuthMock).toHaveBeenLastCalledWith(
         expect.objectContaining({ mode: 'add', provider: 'codex' }),
       );
+      screen.getByRole('button', { name: 'Add it in Settings' }).click();
+      expect(setSettingsActiveTabMock).toHaveBeenCalledWith('models');
+      expect(setSettingsOpenMock).toHaveBeenCalledWith(true);
     });
 
-    it('Windows hides the Codex Connect CTA and shows the Mac/Linux codex passthrough note', () => {
-      // Codex passthrough is mac/linux-only: the Windows note reads "Claude and OpenAI …", CTA hidden.
+    it('on Windows replaces both sign-ins with an API key button and says why', () => {
+      // Claude and Codex passthrough are macOS/Linux only.
       platformMock.isWindows.mockReturnValue(true);
       renderEmptyState();
-      expect(screen.queryByRole('button', { name: /connect openai/i })).not.toBeInTheDocument();
-      expect(screen.getByText(/Claude and OpenAI passthrough/i)).toBeInTheDocument();
-    });
-
-    it('does not show the reconnect heading', () => {
-      renderEmptyState();
-      expect(screen.queryByText(/Reconnect to keep chatting/i)).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /^Connect/ })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Add an API key' })).toBeInTheDocument();
+      expect(screen.getByText(/Claude or OpenAI needs macOS or Linux/i)).toBeInTheDocument();
     });
   });
 
-  describe('existing-account mode — Claude row needs reauth', () => {
-    it('renders the reconnect heading and surfaces the row label', () => {
-      renderEmptyState({ existingAccount: { label: 'Personal Claude', type: 'claude-code' } });
-      expect(screen.getByText(/Reconnect to keep chatting/i)).toBeInTheDocument();
-      // Visible description + sr-only live-region both contain the label.
-      expect(screen.getAllByText(/Personal Claude/).length).toBeGreaterThanOrEqual(1);
+  describe('signed-out account', () => {
+    const existingAccount = { label: 'Personal Claude', type: 'claude-code' } as const;
+
+    it('re-authenticates that account and offers the other provider as a switch', () => {
+      renderEmptyState({ existingAccount });
+      expect(screen.getByText('Claude · Signed out')).toBeInTheDocument();
+      screen.getByRole('button', { name: 'Sign in again' }).click();
+      expect(setPendingAccountAuthMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ mode: 'reauth', accountLabel: 'Personal Claude' }),
+      );
+      expect(screen.getByRole('button', { name: 'Connect OpenAI' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Connect Claude' })).not.toBeInTheDocument();
     });
 
-    it('renders a Reconnect Claude CTA (not the Connect first-time CTA)', () => {
-      renderEmptyState({ existingAccount: { label: 'Personal Claude', type: 'claude-code' } });
-      expect(screen.getByRole('button', { name: /reconnect claude/i })).toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: /^connect claude/i })).not.toBeInTheDocument();
-    });
-
-    it('does not surface the "Add API key" CTA in reauth mode', () => {
-      renderEmptyState({ existingAccount: { label: 'Personal Claude', type: 'claude-code' } });
-      expect(screen.queryByRole('button', { name: /add api key/i })).not.toBeInTheDocument();
+    it('compact card names the account and keeps the same two actions', () => {
+      renderEmptyState({ compact: true, existingAccount });
+      expect(
+        screen.getByRole('heading', { name: 'Personal Claude was signed out' }),
+      ).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Sign in again' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Connect OpenAI' })).toBeInTheDocument();
     });
   });
 
   // The transcript scrolls under the composer slot, so a card narrower than the composer column
   // would leave message lines sharp on either side of it.
-  it('compact card spans the composer column; the full card keeps its narrow width', () => {
-    const existingAccount = { label: 'Personal Claude', type: 'claude-code' } as const;
-    const { unmount } = renderEmptyState({ compact: true, existingAccount });
-    expect(screen.getByTestId('no-accounts-empty-state').className).not.toMatch(/\bmax-w-/);
-    unmount();
-    renderEmptyState({ existingAccount });
-    expect(screen.getByTestId('no-accounts-empty-state')).toHaveClass('max-w-md');
-  });
-
-  it('compact card is a slot surface, so a stacked card on it squares its top', () => {
+  it('compact card spans the composer column as a slot surface', () => {
     renderEmptyState({ compact: true });
-    expect(screen.getByTestId('no-accounts-empty-state')).toHaveClass('composer-slot-surface');
+    const card = screen.getByTestId('no-accounts-empty-state');
+    expect(card.className).not.toMatch(/\bmax-w-/);
+    expect(card).toHaveClass('composer-slot-surface');
   });
 });
