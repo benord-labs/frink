@@ -104,6 +104,9 @@ function nid() {
 describe('flow-step-executor', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // clearAllMocks keeps queued *Once values and implementations; a test that stops early must not
+    // hand its leftover lookup results to the next test.
+    getProjectByIdMock.mockReset();
     getProjectByIdMock.mockResolvedValue(PROJECT);
     runShellCommandMock.mockResolvedValue(makeOkShellResult('hello'));
     runCustomNodeProcessMock.mockResolvedValue({
@@ -1311,5 +1314,164 @@ describe('flow-step-executor', () => {
     const p = result?.[1] as Record<string, unknown>;
     expect(p.status).toBe('failed');
     expect(String(p.error)).toContain('dependency_branch_not_found');
+  });
+
+  describe('project lookup is read fresh per step', () => {
+    function runCommandStep(projectId: string): Partial<FlowExecuteStepPayload> & {
+      nodeRunId: string;
+    } {
+      return {
+        nodeRunId: nid(),
+        flowRunId: 'fr-fresh',
+        projectId,
+        blockType: 'run_command',
+        command: 'echo test',
+        workingDirectory: 'project_root',
+        timeoutMs: 5000,
+      };
+    }
+
+    function stepResults(driver: ReturnType<typeof makeStepDriver>): StepRecord[] {
+      return driver._emitted.map(([, record]) => record);
+    }
+
+    function customNodeStep(projectId: string): Partial<FlowExecuteStepPayload> & {
+      nodeRunId: string;
+    } {
+      discoverCustomNodesMock.mockReturnValue({
+        valid: [
+          {
+            name: 'local-node',
+            entrypoint: 'run.js',
+            timeout: 30,
+            nodePath: '/home/.frink/nodes/local-node',
+            credentials: {},
+            inputs: {},
+          },
+        ],
+        manifestWarnings: [],
+        errors: [],
+      });
+      return {
+        nodeRunId: nid(),
+        flowRunId: 'fr-fresh',
+        projectId,
+        blockType: 'local-node',
+        workingDirectory: 'project_root',
+        timeoutMs: 30_000,
+        config: {},
+      };
+    }
+
+    it('fails a custom node step once its project has been deleted', async () => {
+      const projectId = 'p-deleted-custom';
+      getProjectByIdMock
+        .mockResolvedValueOnce({ ...PROJECT, id: projectId })
+        .mockResolvedValueOnce(null);
+
+      const driver = makeStepDriver();
+      await driver._trigger('execute', customNodeStep(projectId));
+      await driver._trigger('execute', customNodeStep(projectId));
+
+      const [first, second] = stepResults(driver);
+      expect(first.status).toBe('completed');
+      expect(second.status).toBe('failed');
+      expect(second.error).toBe(`Project ${projectId} not found locally`);
+      expect(runCustomNodeProcessMock).toHaveBeenCalledOnce();
+    });
+
+    it('fails a run_command step once its project has been deleted', async () => {
+      const projectId = 'p-deleted-command';
+      getProjectByIdMock
+        .mockResolvedValueOnce({ ...PROJECT, id: projectId })
+        .mockResolvedValueOnce(null);
+
+      const driver = makeStepDriver();
+      await driver._trigger('execute', runCommandStep(projectId));
+      await driver._trigger('execute', runCommandStep(projectId));
+
+      const [first, second] = stepResults(driver);
+      expect(first.status).toBe('completed');
+      expect(second.status).toBe('failed');
+      expect(second.error).toBe(`Project ${projectId} not found locally`);
+      expect(runShellCommandMock).toHaveBeenCalledOnce();
+    });
+
+    it('runs a step for a project registered after an earlier lookup missed', async () => {
+      const projectId = 'p-registered-late';
+      getProjectByIdMock
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ ...PROJECT, id: projectId });
+
+      const driver = makeStepDriver();
+      await driver._trigger('execute', runCommandStep(projectId));
+      await driver._trigger('execute', runCommandStep(projectId));
+
+      const [first, second] = stepResults(driver);
+      expect(first.status).toBe('failed');
+      expect(second.status).toBe('completed');
+      expect(runShellCommandMock).toHaveBeenCalledOnce();
+      expect(runShellCommandMock.mock.calls[0][1]).toBe('/repo');
+    });
+
+    it('names a start_task worktree after the renamed project', async () => {
+      const projectId = 'p-renamed';
+      getProjectByIdMock
+        .mockResolvedValueOnce({ ...PROJECT, id: projectId })
+        .mockResolvedValueOnce({ ...PROJECT, id: projectId, name: 'renamed' });
+
+      const driver = makeStepDriver();
+      for (let i = 0; i < 2; i++) {
+        await driver._trigger('execute', {
+          nodeRunId: nid(),
+          flowRunId: 'fr-fresh',
+          projectId,
+          blockType: 'start_task',
+          branch: 'feature-x',
+          timeoutMs: 5000,
+        });
+      }
+
+      expect(createWorktreeForBranchMock).toHaveBeenCalledTimes(2);
+      expect(createWorktreeForBranchMock.mock.calls[0][1]).toBe('test');
+      expect(createWorktreeForBranchMock.mock.calls[1][1]).toBe('renamed');
+    });
+
+    // Wiring check: the real repo delete, not a mocked null, is what the next step must observe.
+    it('fails the next custom node step after deleteProject removes the row', async () => {
+      const actual =
+        await vi.importActual<typeof import('./db/repos/projects')>('./db/repos/projects');
+      const { freshDb } = await import('./db/test-utils/fresh-db');
+      const db = freshDb();
+      const project = await actual.createProject(db, { name: 'real', path: '/real-repo' });
+      getProjectByIdMock.mockImplementation((...[, id]: Parameters<typeof actual.getProjectById>) =>
+        actual.getProjectById(db, id),
+      );
+
+      const driver = makeStepDriver();
+      await driver._trigger('execute', customNodeStep(project.id));
+      expect(await actual.deleteProject(db, project.id)).toEqual({ deleted: true });
+      await driver._trigger('execute', customNodeStep(project.id));
+
+      const [first, second] = stepResults(driver);
+      expect(first.status).toBe('completed');
+      expect(runCustomNodeProcessMock.mock.calls[0][0].cwd).toBe('/real-repo');
+      expect(second.status).toBe('failed');
+      expect(second.error).toBe(`Project ${project.id} not found locally`);
+      expect(runCustomNodeProcessMock).toHaveBeenCalledOnce();
+    });
+
+    it('fails the step without throwing when the project lookup rejects', async () => {
+      const projectId = 'p-lookup-throws';
+      getProjectByIdMock.mockRejectedValueOnce(new Error('db unavailable'));
+
+      const driver = makeStepDriver();
+      await driver._trigger('execute', runCommandStep(projectId));
+
+      const [only] = stepResults(driver);
+      expect(only.status).toBe('failed');
+      expect(only.error).toBe(`Project ${projectId} not found locally`);
+      expect(runShellCommandMock).not.toHaveBeenCalled();
+    });
   });
 });

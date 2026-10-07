@@ -137,26 +137,14 @@ type FlowExecuteStepPayload = {
 };
 
 /**
- * Short-lived project cache to avoid repeated HTTP calls for the same project within a session.
- * TTL of 60s — projects change rarely and any staleness is bounded.
+ * Read the project fresh on every step, so a deleted, renamed or newly registered project takes
+ * effect at once. It is a primary-key select on the local database, so there is nothing to cache.
  */
-const projectCache = new Map<
-  string,
-  { project: { id: string; path: string; name: string } | null; expiresAt: number }
->();
-const PROJECT_CACHE_TTL_MS = 60_000;
-
-async function getCachedProject(
+async function findLocalProject(
   projectId: string,
 ): Promise<{ id: string; path: string; name: string } | null> {
-  const cached = projectCache.get(projectId);
-  if (cached && Date.now() < cached.expiresAt) {
-    return cached.project;
-  }
   const project = await getLocalProjectById(getDatabase(), projectId).catch(() => null);
-  const result = project?.path ? { id: project.id, path: project.path, name: project.name } : null;
-  projectCache.set(projectId, { project: result, expiresAt: Date.now() + PROJECT_CACHE_TTL_MS });
-  return result;
+  return project?.path ? { id: project.id, path: project.path, name: project.name } : null;
 }
 
 type ShellResult = CustomNodeProcessResult;
@@ -426,7 +414,7 @@ export async function executeFlowStepLocal(
   payload: FlowExecuteStepPayload,
   signal: AbortSignal,
 ): Promise<ParsedStepOutput> {
-  const project = await getCachedProject(payload.projectId);
+  const project = await findLocalProject(payload.projectId);
   if (!project) {
     return {
       status: 'failed',
