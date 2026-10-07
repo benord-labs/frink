@@ -479,8 +479,10 @@ export function _setFlowAdmissionControllerForTests(value: FlowAdmissionControll
 const continuationOps = {
   requestTerminalFlowResume,
   hasLiveFlowAdmission,
-  getLiveAdmissionState: async (id: string) =>
-    (await admissionController().getLiveForRun(id))?.state ?? null,
+  getLiveAdmissionState: async (id: string) => {
+    const live = await admissionController().getLiveForRun(id);
+    return live?.state === 'releasing' && live.error ? 'retained' : (live?.state ?? null);
+  },
 };
 
 setFlowAdmissionLifecycleHooks({

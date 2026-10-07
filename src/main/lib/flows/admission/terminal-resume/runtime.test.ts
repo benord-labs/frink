@@ -26,6 +26,7 @@ import {
   subChatMessages,
 } from '../../../db/schema';
 import { freshDb, type TestDb } from '../../../db/test-utils/fresh-db';
+import { beginFlowResourceActivity } from '../activity';
 import { _resetFlowAdmissionControllerMutexForTests, FlowAdmissionController } from '../controller';
 import {
   _setFlowAdmissionControllerForTests,
@@ -714,6 +715,89 @@ describe('boot carry-on — staged from the startup sweep, fired ahead of queued
       await requestFlowAdmissionRelease(flowRunId);
       await new Promise((resolve) => setTimeout(resolve, 20));
       expect(mocks.resumeDispatcher).toHaveBeenCalledTimes(1);
+    });
+
+    describe('while the held slot is releasing', () => {
+      /** The run's release began but a resource activity is still registered, so it stays releasing. */
+      async function holdReleasing(flowRunId: string) {
+        const releaseActivity = beginFlowResourceActivity(flowRunId);
+        await requestFlowAdmissionRelease(flowRunId);
+        expect((await controller.getLiveForRun(flowRunId))?.state).toBe('releasing');
+        return releaseActivity;
+      }
+
+      it('stages the click instead of refusing it, and continues once the release settles', async () => {
+        const { flowRunId, nodeRunId, taskId } = await seedInterruptedAgentRun();
+        answerStep(taskId);
+        await settleInterruption(flowRunId, nodeRunId, true, false);
+        const releaseActivity = await holdReleasing(flowRunId);
+
+        await expect(stageResumeBehindHeldAdmission(request(flowRunId, nodeRunId))).resolves.toBe(
+          true,
+        );
+        expect(hasStagedContinuation(flowRunId)).toBe(true);
+        expect(mocks.resumeDispatcher).not.toHaveBeenCalled();
+
+        releaseActivity();
+
+        await vi.waitFor(() => expect(mocks.resumeDispatcher).toHaveBeenCalledTimes(1));
+        expect(mocks.resumeDispatcher).toHaveBeenCalledWith(
+          expect.objectContaining({ flow_run_id: flowRunId, recovery_kind: 'continue' }),
+          expect.any(Number),
+        );
+        expect(hasStagedContinuation(flowRunId)).toBe(false);
+      });
+
+      it('dispatches once when Continue is clicked twice in one releasing window', async () => {
+        const { flowRunId, nodeRunId, taskId } = await seedInterruptedAgentRun();
+        answerStep(taskId);
+        await settleInterruption(flowRunId, nodeRunId, true, false);
+        const releaseActivity = await holdReleasing(flowRunId);
+
+        await stageResumeBehindHeldAdmission(request(flowRunId, nodeRunId));
+        await stageResumeBehindHeldAdmission(request(flowRunId, nodeRunId));
+        releaseActivity();
+
+        await vi.waitFor(() => expect(mocks.resumeDispatcher).toHaveBeenCalledTimes(1));
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(mocks.resumeDispatcher).toHaveBeenCalledTimes(1);
+      });
+
+      // The settle reads the staged map before it commits; a click staged inside that await must
+      // still fire once the commit frees the run, not strand behind a settle that missed it.
+      it('fires a click staged while the settle is committing', async () => {
+        const { flowRunId, nodeRunId, taskId } = await seedInterruptedAgentRun();
+        answerStep(taskId);
+        await settleInterruption(flowRunId, nodeRunId, true, false);
+        const settle = controller.settle.bind(controller);
+        vi.spyOn(controller, 'settle').mockImplementationOnce(async (...args) => {
+          await expect(stageResumeBehindHeldAdmission(request(flowRunId, nodeRunId))).resolves.toBe(
+            true,
+          );
+          return settle(...args);
+        });
+
+        await requestFlowAdmissionRelease(flowRunId);
+
+        await vi.waitFor(() => expect(mocks.resumeDispatcher).toHaveBeenCalledTimes(1));
+        expect(hasStagedContinuation(flowRunId)).toBe(false);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(mocks.resumeDispatcher).toHaveBeenCalledTimes(1);
+      });
+
+      it('refuses a click behind a release that kept a cleanup error, staging nothing', async () => {
+        const { flowRunId, nodeRunId, taskId } = await seedInterruptedAgentRun();
+        answerStep(taskId);
+        await settleInterruption(flowRunId, nodeRunId, true, false);
+        const live = await controller.getLiveForRun(flowRunId);
+        await controller.beginRelease(live!.ticket);
+        await controller.recordReleaseFailure(live!.ticket, 'cleanup failed');
+
+        await expect(stageResumeBehindHeldAdmission(request(flowRunId, nodeRunId))).rejects.toThrow(
+          /failed cleanup/,
+        );
+        expect(hasStagedContinuation(flowRunId)).toBe(false);
+      });
     });
   });
 });
