@@ -408,18 +408,25 @@ describe('executeWorktreeSetup', () => {
   it('cancels the running command when the signal aborts mid-command, then skips the rest', async () => {
     const projectPath = await createTempProjectDir();
     const worktreePath = await createTempProjectDir();
-    await writeFrinkConfig(projectPath, { 'setup-worktree': ['exec sleep 10', 'echo never'] });
+    // The marker proves the command is running before we abort; `exec` keeps sleep as the killed process.
+    const cmd = 'touch .command-started && exec sleep 10';
+    await writeFrinkConfig(projectPath, { 'setup-worktree': [cmd, 'echo never'] });
 
     const controller = new AbortController();
-    setTimeout(() => controller.abort(), 200);
     const startedAt = Date.now();
-    const result = await executeWorktreeSetup(worktreePath, projectPath, {
+    const resultPromise = executeWorktreeSetup(worktreePath, projectPath, {
       signal: controller.signal,
     });
+    try {
+      await vi.waitFor(() => readFile(join(worktreePath, '.command-started')), { timeout: 3_000 });
+    } finally {
+      controller.abort();
+    }
+    const result = await resultPromise;
 
     expect(Date.now() - startedAt).toBeLessThan(5_000);
     expect(result.errors).toEqual([
-      'Command failed (cancelled) — while running: exec sleep 10',
+      `Command failed (cancelled) — while running: ${cmd}`,
       'Cancelled before: echo never',
     ]);
     expect(result.output).not.toContain('$ echo never');
