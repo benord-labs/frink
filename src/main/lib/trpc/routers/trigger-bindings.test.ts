@@ -1,10 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Context } from '../index';
 
-const { updateTriggerBindingMock, deleteBindingMock } = vi.hoisted(() => ({
-  updateTriggerBindingMock: vi.fn(),
-  deleteBindingMock: vi.fn(),
-}));
+const { createBindingMock, getBindingByIdMock, updateTriggerBindingMock, deleteBindingMock } =
+  vi.hoisted(() => ({
+    createBindingMock: vi.fn(),
+    getBindingByIdMock: vi.fn(),
+    updateTriggerBindingMock: vi.fn(),
+    deleteBindingMock: vi.fn(),
+  }));
 
 vi.mock('../../db', () => ({
   getDatabase: vi.fn(() => ({})),
@@ -16,6 +19,8 @@ vi.mock('../../db/repos/flow-trigger-bindings', async () => {
   );
   return {
     ...actual,
+    create: createBindingMock,
+    getById: getBindingByIdMock,
     update: updateTriggerBindingMock,
     deleteBinding: deleteBindingMock,
   };
@@ -30,11 +35,67 @@ const caller: TriggerBindingsCaller = triggerBindingsRouter.createCaller({
 } satisfies Context);
 
 const bindingId = '550e8400-e29b-41d4-a716-446655440000';
+const postTaskConfig = { triggerStates: ['done', 'completed'], filterBySource: ['manual'] };
+
+describe('triggerBindingsRouter create', () => {
+  beforeEach(() => {
+    createBindingMock.mockReset();
+    createBindingMock.mockResolvedValue({ id: bindingId, triggerType: 'post_task_trigger' });
+  });
+
+  const bindingScope = { flowId: 'flow-1', projectId: 'project-1' };
+
+  it('stores the config the post-task editor sends', async () => {
+    await caller.create({
+      ...bindingScope,
+      triggerType: 'post_task_trigger',
+      config: { triggerStates: ['done', 'completed'], filterBySource: ['manual'] },
+    });
+
+    expect(createBindingMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ triggerType: 'post_task_trigger', config: postTaskConfig }),
+    );
+  });
+
+  it('accepts the "all statuses" state and a schedule binding with no config fields', async () => {
+    await caller.create({
+      ...bindingScope,
+      triggerType: 'post_task_trigger',
+      config: { triggerStates: ['all'] },
+    });
+    await caller.create({ ...bindingScope, triggerType: 'schedule_trigger', config: {} });
+
+    expect(createBindingMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ['post_task_trigger', { wrong: 'shape' }],
+    ['post_task_trigger', {}],
+    ['post_task_trigger', { triggerStates: 'done' }],
+    ['post_task_trigger', { triggerStates: ['bogus'] }],
+    ['post_task_trigger', { triggerStates: [] }],
+    ['post_task_trigger', { triggerStates: ['done'], extra: true }],
+    ['post_task_trigger', { triggerStates: ['done'], filterBySource: 'manual' }],
+    ['schedule_trigger', { wrong: 'shape' }],
+    ['schedule_trigger', { cronExpression: 123 }],
+    ['schedule_trigger', { triggerStates: ['done'] }],
+    ['webhook_trigger', {}],
+  ])('rejects a %s binding with config %j without storing it', async (triggerType, config) => {
+    // SAFETY: every row is deliberately outside the input type; the router must reject it at runtime.
+    const invalidInput = { ...bindingScope, triggerType, config } as never;
+
+    await expect(caller.create(invalidInput)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(createBindingMock).not.toHaveBeenCalled();
+  });
+});
 
 describe('triggerBindingsRouter update', () => {
   beforeEach(() => {
     updateTriggerBindingMock.mockReset();
     updateTriggerBindingMock.mockResolvedValue({ id: bindingId });
+    getBindingByIdMock.mockReset();
+    getBindingByIdMock.mockResolvedValue({ id: bindingId, triggerType: 'post_task_trigger' });
   });
 
   it('rejects input with only id (empty patch)', async () => {
@@ -63,14 +124,57 @@ describe('triggerBindingsRouter update', () => {
     );
   });
 
-  it('allows config: {} as a patch', async () => {
-    await caller.update({ id: bindingId, config: {} });
+  it('does not read the stored binding when the patch carries no config', async () => {
+    await caller.update({ id: bindingId, isActive: false });
+
+    expect(getBindingByIdMock).not.toHaveBeenCalled();
+  });
+
+  it('stores a config that matches the stored binding type', async () => {
+    await caller.update({ id: bindingId, config: postTaskConfig, clearLastError: true });
 
     expect(updateTriggerBindingMock).toHaveBeenCalledWith(
       expect.anything(),
       bindingId,
-      expect.objectContaining({ config: {} }),
+      expect.objectContaining({ config: postTaskConfig, clearLastError: true }),
     );
+  });
+
+  it.each([[{}], [{ wrong: 'shape' }], [{ triggerStates: ['bogus'] }]])(
+    'rejects config %j on a post-task binding without writing it',
+    async (config) => {
+      await expect(caller.update({ id: bindingId, config })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: 'Config does not match what a post_task_trigger binding expects',
+      });
+      expect(updateTriggerBindingMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rejects a post-task config on a schedule binding', async () => {
+    getBindingByIdMock.mockResolvedValue({ id: bindingId, triggerType: 'schedule_trigger' });
+
+    await expect(caller.update({ id: bindingId, config: postTaskConfig })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    expect(updateTriggerBindingMock).not.toHaveBeenCalled();
+  });
+
+  it('reports a missing binding without writing when the patch carries config', async () => {
+    getBindingByIdMock.mockResolvedValue(null);
+
+    await expect(caller.update({ id: bindingId, config: postTaskConfig })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+    expect(updateTriggerBindingMock).not.toHaveBeenCalled();
+  });
+
+  it('reports a missing binding when it is deleted between the type check and the write', async () => {
+    updateTriggerBindingMock.mockResolvedValue(null);
+
+    await expect(caller.update({ id: bindingId, config: postTaskConfig })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
   });
 });
 

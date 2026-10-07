@@ -166,14 +166,7 @@ export type ConditionLoopConfig = {
 };
 
 /** post_task_trigger node config (execution uses flow_trigger_bindings + this for UX defaults). */
-export type PostTaskTriggerState =
-  | 'done'
-  | 'completed'
-  | 'failed'
-  | 'cancelled'
-  | 'needs_attention'
-  | 'plan_ready'
-  | 'all';
+export type { PostTaskTriggerState } from './flows/flow-trigger-binding-config';
 
 // --- Flow execution events (socket: flow:execution-event) ---
 
