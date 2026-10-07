@@ -11,8 +11,9 @@ import type {
 import { publicProcedure, router } from '../trpc';
 import { gitCache } from './cache';
 import { secureFs } from './security';
+import { gitLogArgs } from './commit-log';
 import { applyNumstatToFiles } from './utils/apply-numstat';
-import { parseGitLog, parseGitStatus, parseNameStatus } from './utils/parse-status';
+import { GIT_LOG_FORMAT, parseGitLog, parseGitStatus, parseNameStatus } from './utils/parse-status';
 
 // Regex constants
 const WHITESPACE_REGEX = /\s+/;
@@ -493,11 +494,7 @@ async function getBranchComparison(
     behind = Number.parseInt(behindStr || '0', 10);
     ahead = Number.parseInt(aheadStr || '0', 10);
 
-    const logOutput = await git.raw([
-      'log',
-      `origin/${defaultBranch}..HEAD`,
-      '--format=%H|%h|%s|%b|%an|%aI',
-    ]);
+    const logOutput = await git.raw(gitLogArgs(GIT_LOG_FORMAT, `origin/${defaultBranch}..HEAD`));
     commits = parseGitLog(logOutput);
 
     if (ahead > 0) {
