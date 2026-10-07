@@ -26,7 +26,7 @@ const EXPECTED_MANIFEST = Object.freeze({
 /** The patch identity is pinned once, in the manifest; the build checks the patch file against it. */
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 
-const TARGETS = {
+export const TARGETS = {
   'darwin-arm64': { binary: 'codex', cargoTarget: 'aarch64-apple-darwin' },
   'darwin-x64': { binary: 'codex', cargoTarget: 'x86_64-apple-darwin' },
   'linux-x64': { binary: 'codex', cargoTarget: 'x86_64-unknown-linux-gnu' },
@@ -154,6 +154,15 @@ export function rustcExecutable() {
  */
 function cargoTargetDir() {
   return process.env.CARGO_TARGET_DIR || path.join(os.homedir(), '.cache', 'frink-codex-target');
+}
+
+/**
+ * Upstream's release profile keeps DWARF (strip = false, split-debuginfo = off) for packaging to
+ * strip. macOS and MSVC keep it outside the executable, but ELF links it in: ~1 GB of a 1.3 GB
+ * Linux codex (sc-4794). `debuginfo` keeps the symbol table so panic backtraces still name frames.
+ */
+export function releaseProfileEnv(cargoTarget) {
+  return cargoTarget.includes('-linux-') ? { CARGO_PROFILE_RELEASE_STRIP: 'debuginfo' } : {};
 }
 
 function rustupExecutable() {
@@ -441,7 +450,7 @@ async function prepareCodexSource(tempRoot, manifest) {
   return sourceDir;
 }
 
-function buildCodexTarget({
+export function buildCodexTarget({
   key,
   target,
   manifest,
@@ -457,7 +466,12 @@ function buildCodexTarget({
     ['build', '--locked', '--release', '--package', 'codex-cli', '--target', target.cargoTarget],
     {
       cwd: cargoRoot,
-      env: { ...process.env, RUSTC: rustc, CARGO_TARGET_DIR: cargoTargetDir() },
+      env: {
+        ...process.env,
+        RUSTC: rustc,
+        CARGO_TARGET_DIR: cargoTargetDir(),
+        ...releaseProfileEnv(target.cargoTarget),
+      },
       stdio: 'inherit',
     },
   );
