@@ -7,6 +7,8 @@
  * Pure. Ticket 05 of the permissions overhaul.
  */
 
+import { parseRule } from '../../../../shared/lib/rule-parser';
+import type { Signature } from './bash-parser';
 import { matchesRule } from './rule-matcher';
 import type {
   DenyReason,
@@ -123,4 +125,66 @@ export function resultFromCombined(
     matchedTier: combined.tier,
   };
   return { decision: 'ask', prompt };
+}
+
+/**
+ * Drop prefix-wildcard ALLOW rules for an exact-match-only signature: those
+ * signatures keep a base, so nothing else would stop a prefix rule matching.
+ */
+function exactMatchRules(rules: string[] | undefined): string[] {
+  if (!rules) return [];
+  const out: string[] = [];
+  for (const rule of rules) {
+    const parsed = parseRule(rule);
+    if ('error' in parsed) continue;
+    if (parsed.tool !== 'Bash') continue;
+    if (parsed.content === undefined) continue; // tool-wide `Bash` — too permissive for exact-only
+    if (parsed.content === '*') continue; // shortcut wildcard
+    if (parsed.content.endsWith(':*') || parsed.content.endsWith(' *')) continue;
+    out.push(rule);
+  }
+  return out;
+}
+
+/**
+ * Combined decision for one Bash signature across all three scopes. An exact-match-only
+ * signature drops prefix allow rules; deny and ask rules are checked as written.
+ */
+export function evalBash(
+  docs: ScopedDocs,
+  sig: Signature,
+  input: { command: string },
+): CombinedDecision {
+  const ctx: MatchContext = { bashCommandSignature: sig };
+  const scoped = sig.isExactMatchOnly ? mapAllow(docs, exactMatchRules) : docs;
+  return combineScopes(
+    evalScope(scoped.policy, 'Bash', input, ctx),
+    evalScope(scoped.project, 'Bash', input, ctx),
+    evalScope(scoped.user, 'Bash', input, ctx),
+  );
+}
+
+function mapAllow(docs: ScopedDocs, pick: (rules?: PermissionRule[]) => PermissionRule[]) {
+  return {
+    policy: { ...docs.policy, allow: pick(docs.policy.allow) },
+    project: { ...docs.project, allow: pick(docs.project.allow) },
+    user: { ...docs.user, allow: pick(docs.user.allow) },
+  };
+}
+
+/** The same docs with every allow rule dropped, so only deny and ask rules can match. */
+export function withoutAllow(docs: ScopedDocs): ScopedDocs {
+  return mapAllow(docs, () => []);
+}
+
+/** Strength of a match: deny, then a matched ask rule, then allow, then no rule at all. */
+function matchRank(combined: CombinedDecision): number {
+  if (combined.decision === 'deny') return 3;
+  if (combined.decision === 'allow') return 1;
+  return combined.rule ? 2 : 0;
+}
+
+/** The stronger of two matches, keeping the first on a tie. */
+export function strongerMatch(a: CombinedDecision, b: CombinedDecision): CombinedDecision {
+  return matchRank(b) > matchRank(a) ? b : a;
 }

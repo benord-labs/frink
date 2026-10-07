@@ -100,7 +100,7 @@ describe('checkBash — substitution and eval-like heads ask; a prefix rule neve
     '%s asks despite Bash(echo:*) and suggests only its own exact rule',
     (command) => {
       const r = checkBash({ command }, echoPrefixAllowed, root);
-      expect(r).toMatchObject({ decision: 'ask', prompt: { reason: 'no-matching-rule' } });
+      expect(r).toMatchObject({ decision: 'ask', prompt: { reason: 'untraced' } });
       if (r.decision !== 'ask') return;
       expect(r.prompt.suggestedRules).toEqual([`Bash(${command.replace(/[()]/g, '\\$&')})`]);
     },
@@ -701,7 +701,7 @@ EOF
       user: noRules,
     };
     const r = checkBash({ command: CANONICAL_COMMIT }, docs, root);
-    expect(r).toMatchObject({ decision: 'ask', prompt: { reason: 'no-matching-rule' } });
+    expect(r).toMatchObject({ decision: 'ask', prompt: { reason: 'untraced' } });
   });
 
   it('exact rule for the $? echo sub → whole command allows', () => {
@@ -964,5 +964,330 @@ describe('checkBash — sc-3416 edge cases', () => {
       if (after.decision !== 'ask') continue;
       expect(after.prompt.suggestedRules ?? []).not.toContain(rule);
     }
+  });
+});
+
+describe('checkBash — deny and ask rules see through wrappers; allow rules do not', () => {
+  const docsWith = (rules: Partial<PermissionsDoc>) => ({
+    policy: noRules,
+    project: { ...noRules, ...rules },
+    user: noRules,
+  });
+  const promptOf = (command: string, rules: Partial<PermissionsDoc>) => {
+    const r = checkBash({ command }, docsWith(rules), root);
+    return r.decision === 'ask' ? r.prompt : undefined;
+  };
+  const wrapped = [
+    'timeout 30 rm -rf build',
+    'timeout -s KILL -k 5 10 rm -rf build',
+    'timeout --preserve-status 1m rm -rf build',
+    'time rm -rf build',
+    'time -p rm -rf build',
+    'nice rm -rf build',
+    'nice -n 5 rm -rf build',
+    'nohup rm -rf build',
+    'nohup -- rm -rf build',
+    'stdbuf -oL rm -rf build',
+    'stdbuf -o L -e 0 rm -rf build',
+    'command rm -rf build',
+    'command -p rm -rf build',
+    'builtin rm -rf build',
+    'noglob rm -rf build',
+    'xargs rm -rf',
+    'FOO=1 timeout 5 rm -rf build',
+    'nice -n 5 >/dev/null rm -rf build',
+    'nice nohup timeout 5 time rm -rf build',
+    'timeout --signal KILL 5 rm -rf build',
+    'timeout --kill-after 5 10 rm -rf build',
+    'timeout 0.5 rm -rf build',
+    'timeout 5 >/dev/null rm -rf build',
+    'timeout -k 5 >/dev/null rm -rf build',
+    'time -f %e rm -rf build',
+    'time -o out.txt rm -rf build',
+    'time --format %e rm -rf build',
+    'timeout -k 5s 10 rm -rf build',
+    'stdbuf -i 0 rm -rf build',
+    'stdbuf --output L rm -rf build',
+    'nice -n +5 rm -rf build',
+    'nice --adjustment 5 rm -rf build',
+    'stdbuf -o 0 >/dev/null rm -rf build',
+    'timeout 30 \\\n  rm -rf build',
+    '&>log timeout 5 rm -rf build',
+    'timeout 5 &>log nice rm -rf build',
+    'ls |& time rm -rf build',
+    '(nohup rm -rf build &)',
+    '( time rm -rf build ) &',
+    'time --output out.txt rm -rf build',
+    'stdbuf --input 0 rm -rf build',
+    'stdbuf --error 0 rm -rf build',
+    'time FOO=1 nice rm -rf build',
+    'nice FOO=1 BAR=2 nohup rm -rf build',
+  ];
+
+  it.each(wrapped)('%s is denied by Bash(rm:*)', (command) => {
+    const r = checkBash({ command }, docsWith({ deny: ['Bash(rm:*)'] }), root);
+    expect(r).toMatchObject({
+      decision: 'deny',
+      reason: { kind: 'rule:deny', rule: 'Bash(rm:*)' },
+    });
+  });
+
+  it.each(wrapped)('%s asks with rule Bash(rm:*) even when the wrapper is allowed', (command) => {
+    const allow = ['Bash(timeout:*)', 'Bash(time:*)', 'Bash(nice:*)', 'Bash(nohup:*)', 'Bash(*)'];
+    expect(promptOf(command, { ask: ['Bash(rm:*)'], allow })).toMatchObject({
+      reason: 'rule:ask',
+      matchedRule: 'Bash(rm:*)',
+    });
+  });
+
+  it.each([
+    'command -v rm',
+    'command -V rm',
+    'command -pv rm',
+    'nocorrect rm -rf build',
+    'xargs -n1 rm',
+    'xargs -0 rm',
+    'sudo rm -rf build',
+    'bash -c "rm -rf build"',
+    'bash -c rm',
+    'sh -c rm',
+    'env rm -rf build',
+    '/usr/bin/timeout 5 rm -rf build',
+    'eval rm -rf build',
+    'find . -exec rm {} \\;',
+  ])('%s is not unwrapped, so Bash(rm:*) does not match it', (command) => {
+    const r = checkBash({ command }, docsWith({ deny: ['Bash(rm:*)'], ask: ['Bash(rm:*)'] }), root);
+    expect(r.decision).toBe('ask');
+    if (r.decision === 'ask') expect(r.prompt.matchedRule).toBeUndefined();
+  });
+
+  it.each(['timeout 30 npm test', 'nohup npm test', 'xargs npm test', 'command npm test'])(
+    'an allow rule on the inner command does not allow %s',
+    (command) => {
+      expect(promptOf(command, { allow: ['Bash(npm test:*)'] })?.reason).toBe('untraced');
+    },
+  );
+
+  it('a redirect between wrapper and command does not hide rm from a deny', () => {
+    const command = 'nice -n 5 >/dev/null rm -rf npm test ~';
+    const docs = docsWith({ deny: ['Bash(rm:*)'], allow: ['Bash(npm test:*)', 'Bash(nice:*)'] });
+    expect(checkBash({ command }, docs, root).decision).toBe('deny');
+  });
+
+  it('the read-path safety check sees the wrapped command', () => {
+    const r = checkBash(
+      { command: 'timeout 5 cat ~/.ssh/id_rsa' },
+      docsWith({ allow: ['Bash(*)'] }),
+      root,
+    );
+    expect(r).toMatchObject({ decision: 'deny', reason: { kind: 'safety:path' } });
+  });
+
+  it.each([
+    'nice nice nice nice rm -rf build',
+    'nice nice nice nice nice rm -rf build',
+    'nice -n 5 nohup command time -p command rm -rf build',
+  ])('%s past the wrapper bound is still denied under Bash(*)', (command) => {
+    const docs = docsWith({ allow: ['Bash(*)'], deny: ['Bash(rm:*)'] });
+    expect(checkBash({ command }, docs, root)).toMatchObject({ decision: 'deny' });
+  });
+
+  it('a deny on the wrapped command beats an ask on the wrapper', () => {
+    const docs = docsWith({ deny: ['Bash(rm:*)'], ask: ['Bash(timeout:*)'] });
+    expect(checkBash({ command: 'timeout 5 rm -rf build' }, docs, root)).toMatchObject({
+      decision: 'deny',
+      reason: { kind: 'rule:deny', rule: 'Bash(rm:*)' },
+    });
+  });
+
+  it('a deny on a middle wrapper matches up to the wrapper bound', () => {
+    const docs = docsWith({ allow: ['Bash(*)'], deny: ['Bash(nohup:*)'] });
+    const decide = (command: string) => checkBash({ command }, docs, root).decision;
+    expect(decide('nice nohup npm test')).toBe('deny');
+    expect(decide('nice nice nice nohup npm test')).toBe('deny');
+    expect(decide('nice nice nice nice nohup npm test')).toBe('allow');
+  });
+});
+
+describe('checkBash — a matched ask rule outranks any allow', () => {
+  it('ask Bash(npm:*) beats an exact allow in the same scope', () => {
+    const docs = {
+      policy: noRules,
+      project: { ...noRules, allow: ['Bash(npm test)'], ask: ['Bash(npm:*)'] },
+      user: noRules,
+    };
+    expect(checkBash({ command: 'npm test' }, docs, root)).toMatchObject({
+      decision: 'ask',
+      prompt: { reason: 'rule:ask', matchedRule: 'Bash(npm:*)' },
+    });
+  });
+
+  it('a user ask beats a policy allow', () => {
+    const docs = {
+      policy: { ...noRules, allow: ['Bash(git:*)'] },
+      project: noRules,
+      user: { ...noRules, ask: ['Bash(git push:*)'] },
+    };
+    expect(checkBash({ command: 'git push origin main' }, docs, root)).toMatchObject({
+      decision: 'ask',
+      prompt: { reason: 'rule:ask', matchedTier: 'user' },
+    });
+  });
+
+  it('a prefix ask rule still matches an exact-only sub', () => {
+    const docs = { policy: noRules, project: { ...noRules, ask: ['Bash(echo:*)'] }, user: noRules };
+    expect(checkBash({ command: 'echo $HOME' }, docs, root)).toMatchObject({
+      decision: 'ask',
+      prompt: { reason: 'rule:ask', matchedRule: 'Bash(echo:*)' },
+    });
+  });
+
+  it('an ask rule after |& reaches through the wrapper', () => {
+    const project = { ...noRules, allow: ['Bash(*)'], ask: ['Bash(git push:*)'] };
+    const docs = { policy: noRules, project, user: noRules };
+    expect(checkBash({ command: 'ls |& nohup git push origin main' }, docs, root)).toMatchObject({
+      decision: 'ask',
+      prompt: { reason: 'rule:ask', matchedRule: 'Bash(git push:*)' },
+    });
+  });
+});
+
+describe('checkBash — a lone & separates subcommands', () => {
+  const allowing = (...allow: string[]) => ({
+    policy: noRules,
+    project: { ...noRules, allow },
+    user: noRules,
+  });
+
+  it('npm test & cat ~/.ssh/id_rsa is denied by the path check', () => {
+    const r = checkBash({ command: 'npm test & cat ~/.ssh/id_rsa' }, allowing('Bash(npm:*)'), root);
+    expect(r).toMatchObject({ decision: 'deny', reason: { kind: 'safety:path' } });
+  });
+
+  it('a lone & between a read command and its path still trips the path check', () => {
+    const r = checkBash({ command: 'cat & ~/.ssh/id_rsa' }, allowing('Bash(*)'), root);
+    expect(r).toMatchObject({ decision: 'deny', reason: { kind: 'safety:path' } });
+  });
+
+  it.each([
+    ['ls & curl x; git push origin main', ['Bash(ls:*)'], 'Bash(git push:*)'],
+    ['echo hi & echo bye; npm test', ['Bash(echo hi)'], 'Bash(npm test)'],
+    ['ls $X & git push origin main', ['Bash(*)'], 'Bash(git push:*)'],
+  ])('%s keeps the matched ask rule on its card', (command, allow, ask) => {
+    const docs = { policy: noRules, project: { ...noRules, allow, ask: [ask] }, user: noRules };
+    expect(checkBash({ command }, docs, root)).toMatchObject({
+      decision: 'ask',
+      prompt: { reason: 'rule:ask', matchedRule: ask },
+    });
+  });
+
+  it('npm test & rm -rf / no longer rides on Bash(npm test:*)', () => {
+    const r = checkBash({ command: 'npm test & rm -rf /' }, allowing('Bash(npm test:*)'), root);
+    expect(r.decision).toBe('ask');
+  });
+
+  it.each(['(npm run dev > log 2>&1 &)', 'npm run dev > log 2>&1 &'])(
+    '%s is still allowed by Bash(npm run dev:*)',
+    (command) => {
+      expect(checkBash({ command }, allowing('Bash(npm run dev:*)'), root).decision).toBe('allow');
+    },
+  );
+
+  it.each([
+    'npm test 2>&1',
+    'npm test &> log',
+    'npm test >&2',
+    'npm test <&3',
+    'npm test "&" rm',
+    "npm test '&' rm",
+    'npm test \\& rm',
+    'npm run dev & ',
+  ])('%s does not split at its &', (command) => {
+    const docs = allowing('Bash(npm test:*)', 'Bash(npm run dev:*)');
+    expect(checkBash({ command }, docs, root).decision).toBe('allow');
+  });
+
+  it('an & that only closes a group does not split it', () => {
+    const docs = allowing('Bash(npm run dev:*)');
+    expect(checkBash({ command: '(npm run dev & )' }, docs, root).decision).toBe('allow');
+    const r = checkBash({ command: '{ npm run dev & }' }, docs, root);
+    expect(r.decision === 'ask' && r.prompt.suggestedRules).not.toContain('Bash(}:*)');
+  });
+
+  it.each([
+    'npm test $(echo a & echo b)',
+    'npm test ${x:-a & b}',
+    'npm test $((1 & 2))',
+    'npm test $((2 * (1) & 3))',
+    'npm test $( (echo a) & echo b)',
+  ])('%s does not split inside an expansion', (command) => {
+    const exact = `Bash(${command.replace(/[()]/g, '\\$&')})`;
+    expect(checkBash({ command }, allowing(exact), root).decision).toBe('allow');
+  });
+
+  it.each([
+    'echo $(date) & rm -rf build',
+    'echo ${HOME} & rm -rf build',
+    'echo $((1+1)) & rm -rf build',
+    'echo \\\\& rm -rf build',
+  ])('%s still splits after the expansion closes', (command) => {
+    const docs = { policy: noRules, project: { ...noRules, deny: ['Bash(rm:*)'] }, user: noRules };
+    expect(checkBash({ command }, docs, root).decision).toBe('deny');
+  });
+
+  it('both sides of a lone & must be allowed', () => {
+    const docs = allowing('Bash(npm test:*)', 'Bash(npm run build:*)');
+    expect(checkBash({ command: 'npm test & npm run build' }, docs, root).decision).toBe('allow');
+    expect(checkBash({ command: 'npm test & curl x' }, docs, root).decision).toBe('ask');
+  });
+});
+
+describe('checkBash — untraced labels a prompt no rule was proven to cover', () => {
+  const reasonOf = (command: string) => {
+    const r = checkBash({ command }, EMPTY_DOCS, root);
+    return r.decision === 'ask' ? r.prompt.reason : undefined;
+  };
+
+  it.each([
+    'echo $(whoami)',
+    'echo `whoami`',
+    'diff <(ls a) <(ls b)',
+    'tee >(cat) < x',
+    'if true; then echo hi; fi',
+    'for f in a b; do echo $f; done',
+    'while true; do npm test; done',
+    'case x in a) echo ;; esac',
+    'nohup if true',
+    'timeout 5 npm test',
+    'xargs grep foo',
+    'nice nice nice nice nice npm test',
+    'npm test && command ls',
+    'coproc npm test',
+    '! npm test',
+    'function f () ( npm test )',
+    '{ npm test; }',
+    '{ npm test & }',
+    'f() { npm test; }',
+    'git commit -m "$(cat <<\'EOF\'\nfix\nEOF\n)"',
+  ])('%s prompts as untraced', (command) => {
+    expect(reasonOf(command)).toBe('untraced');
+  });
+
+  it.each([
+    'npm test',
+    "echo '$(whoami)'",
+    'xargs -n1 grep foo',
+    'command -v npm',
+    'ls | xargs',
+    'nohup',
+    'find . -name x',
+  ])('%s keeps no-matching-rule', (command) => {
+    expect(reasonOf(command)).toBe('no-matching-rule');
+  });
+
+  it('a matched ask rule keeps its own reason', () => {
+    const docs = { policy: noRules, project: { ...noRules, ask: ['Bash(rm:*)'] }, user: noRules };
+    const r = checkBash({ command: 'timeout 5 rm -rf build' }, docs, root);
+    expect(r).toMatchObject({ decision: 'ask', prompt: { reason: 'rule:ask' } });
   });
 });

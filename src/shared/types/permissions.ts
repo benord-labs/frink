@@ -119,7 +119,8 @@ export type PermissionPresentation = CustomNodeRegistrationPresentation;
 export type PromptData = {
   tool: string;
   input: unknown;
-  reason: 'no-matching-rule' | 'over-50-subcommands' | 'rule:ask';
+  /** `untraced`: Frink could not prove no rule covers the command (a label only). */
+  reason: 'no-matching-rule' | 'over-50-subcommands' | 'rule:ask' | 'untraced';
   matchedRule?: string;
   matchedTier?: PermissionTier;
   suggestedRules?: string[];

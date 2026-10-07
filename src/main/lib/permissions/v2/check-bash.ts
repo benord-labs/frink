@@ -9,11 +9,17 @@
 import type { ParseEntry } from 'shell-quote';
 import { escapeRuleContent, parseRule } from '../../../../shared/lib/rule-parser';
 import { type CommandSignature, generatePatternChoices } from '../command-parser';
-import { extractSignature, type SubCommand, splitCommand } from './bash-parser';
+import {
+  extractSignature,
+  maskSingleQuoted,
+  type SubCommand,
+  splitBackgrounded,
+  splitCommand,
+} from './bash-parser';
 import { expandTilde } from './check-edit';
-import { combineScopes, evalScope, type ScopedDocs } from './eval-rules';
+import { evalBash, type ScopedDocs, strongerMatch, withoutAllow } from './eval-rules';
 import { isSystemDeniedPath } from './system-denied-patterns';
-import type { DenyReason, MatchContext, PermissionResult, PromptData } from './types';
+import type { DenyReason, PermissionResult, PromptData } from './types';
 
 const SUBCOMMAND_CAP = 50;
 /** v1 wildcard signal — trailing ` *` or `*` on a generated pattern. */
@@ -51,6 +57,40 @@ const BARE_SHELL_PREFIXES = new Set([
   'noglob',
   'nocorrect',
 ]);
+
+/** A flag value or duration must look like one: the tokenizer folds `-n 5 >x` into an fd redirect. */
+type WrapperSpec = { valueFlags?: string[]; value?: RegExp; positional?: RegExp; refuse?: RegExp };
+const DURATION = /^\d*\.?\d+[smhd]?$/;
+// Deny and ask rules also match the command a wrapper runs. Unlike Claude Code, allow rules
+// never do, so a mis-read wrapper can never allow a command.
+const WRAPPERS: ReadonlyMap<string, WrapperSpec> = new Map([
+  [
+    'timeout',
+    {
+      valueFlags: ['-s', '--signal', '-k', '--kill-after'],
+      value: /^(\d*\.?\d+[smhd]?|(SIG)?[A-Z][A-Z0-9+]*)$/,
+      positional: DURATION,
+    },
+  ],
+  ['time', { valueFlags: ['-f', '--format', '-o', '--output'] }],
+  ['nice', { valueFlags: ['-n', '--adjustment'], value: /^[-+]?\d+$/ }],
+  ['nohup', {}],
+  [
+    'stdbuf',
+    { valueFlags: ['-i', '-o', '-e', '--input', '--output', '--error'], value: /^(L|\d+\w*)$/ },
+  ],
+  ['command', { refuse: /^-\w*[vV]/ }],
+  ['builtin', {}],
+  ['noglob', {}],
+  ['xargs', { refuse: /^-/ }],
+]);
+/** Peeled forms kept per subcommand; past this only the innermost command is added. */
+const MAX_WRAPPERS = 4;
+/** Nested commands the splitter never reaches, so no rule inside them was matched. */
+const SUBSTITUTION = /\$\(|`|[<>]\(/;
+const CONTROL_FLOW = new Set(
+  'if then elif else fi for while until do done case esac select function coproc { } !'.split(' '),
+);
 
 /**
  * Bash commands that READ a path argument. If any positional arg matches
@@ -258,6 +298,69 @@ function hasUnresolvableDirectory(sub: SubCommand): boolean {
   return extractBashPaths(sub).some(({ path }) => METACHAR_IN_DIRECTORY.test(path));
 }
 
+/** Index of the command the wrapper at or after `start`'s assignments runs, or -1 when there is none. */
+function wrappedCommandIndex(words: string[], start: number): number {
+  let i = start;
+  while (ENV_TOKEN_REGEX.test(words[i] ?? '')) i++;
+  const spec = WRAPPERS.get(words[i]);
+  let j = spec ? skipOptions(spec, words, i + 1) : -1;
+  if (spec?.positional?.test(words[j] ?? '')) j++;
+  return j !== -1 && j < words.length ? j : -1;
+}
+
+/** Index past a wrapper's own options, or -1 when one of them rules the wrapper out. */
+function skipOptions(spec: WrapperSpec, words: string[], start: number): number {
+  let j = start;
+  while (words[j]?.startsWith('-')) {
+    const flag = words[j++];
+    if (spec.refuse?.test(flag)) return -1;
+    if (flag === '--') return j;
+    if (spec.valueFlags?.includes(flag) && (spec.value?.test(words[j]) ?? true)) j++;
+  }
+  return j;
+}
+
+/** The subcommand's words with each stacked wrapper peeled off in turn, bounded by MAX_WRAPPERS. */
+function unwrapForms(sub: SubCommand): SubCommand[] {
+  // Operators (`(`, a leftover `&` from `|&` or `&>`) and empty words are not part of the command.
+  const kept = sub.tokens.filter((t) => tokenAsPathString(t));
+  const words = kept.map((t) => tokenAsPathString(t) ?? '');
+  const starts: number[] = [];
+  let next = wrappedCommandIndex(words, 0);
+  while (next !== -1) {
+    starts.push(next);
+    next = wrappedCommandIndex(words, next);
+  }
+  return starts
+    .filter((_, k) => k < MAX_WRAPPERS - 1 || k === starts.length - 1)
+    .map((start) => ({ ...sub, tokens: kept.slice(start) }));
+}
+
+/** One subcommand's verdict: deny/ask rules and the path check see past wrappers, allow rules do not. */
+function judgeSub(sub: SubCommand, docs: ScopedDocs, input: { command: string }, root: string) {
+  const forms = unwrapForms(sub);
+  const unwrapped = [sub, ...forms].map(extractSignature);
+  // A stack past the bound always has peeled forms, so it is untraced too.
+  const untraced = forms.length > 0 || CONTROL_FLOW.has(unwrapped[0].base);
+  const deniedPath = [sub, ...forms].map((f) => findSystemDeniedPathInSub(f, root)).find(Boolean);
+  // A metachar-hidden directory makes the denied list unevaluable, so a prefix
+  // rule must not auto-allow it — same treatment `$VAR` gets.
+  const sig = hasUnresolvableDirectory(sub)
+    ? { ...unwrapped[0], isExactMatchOnly: true }
+    : unwrapped[0];
+  // Deny and ask rules also match every unwrapped form, and a matched ask outranks any allow.
+  const combined = unwrapped
+    .map((s) => evalBash(withoutAllow(docs), s, input))
+    .reduce(strongerMatch, evalBash(docs, sig, input));
+  return { deniedPath, sig, combined, untraced };
+}
+
+/** The pieces a lone `&` cuts a subcommand into, or none; the whole is judged before them. */
+function backgroundPieces(sub: SubCommand): SubCommand[] {
+  const pieces = splitBackgrounded(sub.raw);
+  return pieces.length > 1 ? pieces.flatMap(splitCommand) : [];
+}
+
 function denyResult(reason: DenyReason): PermissionResult {
   return { decision: 'deny', reason };
 }
@@ -287,25 +390,6 @@ function buildSuggestedRules(signatures: CommandSignature[]): string[] {
     rules.push(`Bash(${stripped}:*)`);
   }
   return rules;
-}
-
-/**
- * Drop prefix-wildcard ALLOW/ASK rules for an exact-match-only signature: those
- * signatures keep a base, so nothing else would stop a prefix rule matching.
- */
-function exactMatchRules(rules: string[] | undefined): string[] {
-  if (!rules) return [];
-  const out: string[] = [];
-  for (const rule of rules) {
-    const parsed = parseRule(rule);
-    if ('error' in parsed) continue;
-    if (parsed.tool !== 'Bash') continue;
-    if (parsed.content === undefined) continue; // tool-wide `Bash` — too permissive for exact-only
-    if (parsed.content === '*') continue; // shortcut wildcard
-    if (parsed.content.endsWith(':*') || parsed.content.endsWith(' *')) continue;
-    out.push(rule);
-  }
-  return out;
 }
 
 export function checkBash(
@@ -345,48 +429,14 @@ export function checkBash(
   // An exact-only sub that got no exact rule cannot be expressed by any rule.
   let unmintableExact = false;
   let askPrompt: PromptData | undefined;
+  let untraced = SUBSTITUTION.test(maskSingleQuoted(input.command));
 
-  for (const sub of subs) {
+  for (const sub of [...subs, ...subs.flatMap(backgroundPieces)]) {
+    const { deniedPath, sig, combined, ...verdict } = judgeSub(sub, docs, input, projectRoot);
+    untraced ||= verdict.untraced;
     // Tier-1c: bash-Read parity. Read-ish/write-ish commands + redirections
     // checked against SYSTEM_DENIED_PATTERNS.
-    const deniedPath = findSystemDeniedPathInSub(sub, projectRoot);
     if (deniedPath) return denyResult({ kind: 'safety:path', path: deniedPath });
-
-    // Rule eval
-    const base = extractSignature(sub);
-    // A metachar-hidden directory makes the denied list unevaluable, so a prefix
-    // rule must not auto-allow it — same treatment `$VAR` gets.
-    const sig = hasUnresolvableDirectory(sub) ? { ...base, isExactMatchOnly: true } : base;
-    const ctx: MatchContext = { bashCommandSignature: sig };
-
-    // Build per-scope docs filtered to exact-match rules when sig demands it.
-    // Tier-1c-deny rules still apply because filtering only removes prefix
-    // wildcards from `allow` and `ask`; deny rules are checked verbatim
-    // (we want `Bash(rm:*)` deny to fire even on an expansion-flagged sub).
-    const docsToUse = sig.isExactMatchOnly
-      ? {
-          policy: {
-            ...docs.policy,
-            allow: exactMatchRules(docs.policy.allow),
-            ask: exactMatchRules(docs.policy.ask),
-          },
-          project: {
-            ...docs.project,
-            allow: exactMatchRules(docs.project.allow),
-            ask: exactMatchRules(docs.project.ask),
-          },
-          user: {
-            ...docs.user,
-            allow: exactMatchRules(docs.user.allow),
-            ask: exactMatchRules(docs.user.ask),
-          },
-        }
-      : docs;
-
-    const policy = evalScope(docsToUse.policy, 'Bash', input, ctx);
-    const project = evalScope(docsToUse.project, 'Bash', input, ctx);
-    const user = evalScope(docsToUse.user, 'Bash', input, ctx);
-    const combined = combineScopes(policy, project, user);
 
     if (combined.decision === 'deny') {
       return denyResult({
@@ -406,6 +456,8 @@ export function checkBash(
         if (exact) exactRules.add(exact);
         else unmintableExact = true;
       }
+      // The first matched ask rule names the card, even after an unmatched sub.
+      if (combined.rule && !askPrompt?.matchedRule) askPrompt = undefined;
       askPrompt ??= {
         tool: 'Bash',
         input,
@@ -418,6 +470,7 @@ export function checkBash(
   }
 
   if (askPrompt) {
+    if (untraced && askPrompt.reason === 'no-matching-rule') askPrompt.reason = 'untraced';
     const rules = [...buildSuggestedRules(askSignatures), ...exactRules];
     // Empty = no rule can express the command. A lone withheld wrapper (`sudo npm i`)
     // stays unset for the card's fallback; an unmintable exact-only sub makes it dead.

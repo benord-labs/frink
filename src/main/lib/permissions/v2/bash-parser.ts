@@ -114,7 +114,7 @@ const EVAL_LIKE_HEADS = new Set([
  * runs are blanked to spaces, so expansion detection honours POSIX
  * single-quote semantics. A backslash inside single quotes is literal.
  */
-function maskSingleQuoted(raw: string): string {
+export function maskSingleQuoted(raw: string): string {
   let out = '';
   let inSingle = false;
   let inDouble = false;
@@ -233,6 +233,33 @@ function splitRaw(command: string): string[] {
   }
   out.push(buf);
   return out.map((s) => s.trim()).filter((s) => s.length > 0);
+}
+
+/** A lone `&` backgrounds its command; `&&`, `>&`, `<&` and `&>` do not, nor one closing a group. */
+const LONE_AMP = /(?<![&<>])&(?![&>]|\s*[)}])/y;
+
+/** One split chunk cut at each lone unquoted `&`, outside `$(…)`, `$((…))` and `${…}`. */
+export function splitBackgrounded(raw: string): string[] {
+  // Escape pairs are blanked whole, so `\\&` still separates while `\&` does not.
+  const masked = maskQuoted(raw).replace(/\\[^]/g, '  ');
+  const pieces: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < masked.length; i++) {
+    const ch = masked[i];
+    LONE_AMP.lastIndex = i;
+    if (ch === '$' && '({'.includes(masked[i + 1] ?? ' ')) {
+      depth++;
+      i++;
+    } else if (depth > 0 && '({'.includes(ch)) depth++;
+    else if (depth > 0 && ')}'.includes(ch)) depth--;
+    else if (depth === 0 && LONE_AMP.test(masked)) {
+      pieces.push(raw.slice(start, i));
+      start = i + 1;
+    }
+  }
+  pieces.push(raw.slice(start));
+  return pieces.map((p) => p.trim()).filter((p) => p.length > 0);
 }
 
 type HeredocOpener = { start: number; end: number; delim: string; stripTabs: boolean };
