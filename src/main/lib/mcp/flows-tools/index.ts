@@ -72,10 +72,11 @@ import {
 import { type McpToolResult, toolResult } from '../tool-result';
 import { handleIntegrationsList, handleNodesList, handleProjectsList } from './catalog';
 import { expandAgentCommandsInGraph, formatExpansionFailures } from './expand-commands';
-import { applyPatchOperations, patchArgsSchema, seedDefaultProject } from './flow-patch';
+import { applyPatchOperations, PATCH_OPS, patchArgsSchema, seedDefaultProject } from './flow-patch';
 import {
   buildFlowPatchReceipt,
   buildFlowPatchResult,
+  operationsTouchPositions,
   buildFlowPatchUnexpectedError,
   flowPatchError,
   rollbackCreatedFlow,
@@ -411,21 +412,13 @@ const PATCH_OPERATIONS_INPUT_SCHEMA = {
   minItems: 1,
   maxItems: 50,
   description:
-    'Ordered list of patch operations (max 50). Ops: update_node (nodeId, optional label/config/position/parentId — config merges recursively; null removes keys), add_node (node), remove_node (nodeId, removes contained Fan Out nodes and incident edges), add_edge (edge), remove_edge (edgeId), update_edge (edgeId + label and/or sourceHandle), update_settings (partial flow settings).',
+    'Ordered list of patch operations (max 50). Ops: update_node (nodeId, optional label/config/position/parentId — config merges recursively; null removes keys), add_node (node), remove_node (nodeId, removes contained Fan Out nodes and incident edges), add_edge (edge), remove_edge (edgeId), update_edge (edgeId + label and/or sourceHandle), update_settings (partial flow settings), auto_layout (no fields; once per patch; resets every node to the default top-to-bottom layout after the other ops, discarding manual positions and Fan Out sizes). When positions change or nodes collide the result carries `layout` (bounds, overlaps, upwardEdges).',
   items: {
     type: 'object',
     properties: {
       op: {
         type: 'string',
-        enum: [
-          'update_node',
-          'add_node',
-          'remove_node',
-          'add_edge',
-          'remove_edge',
-          'update_edge',
-          'update_settings',
-        ],
+        enum: PATCH_OPS,
       },
       nodeId: { type: 'string' },
       parentId: {
@@ -690,7 +683,7 @@ export const FLOWS_TOOLS = [
   {
     name: 'frink_flows_define_stages',
     description:
-      'Define staged execution for a batch, with optional DAG dependencies between stages. All stages start as pending — call frink_flows_start_batch after planning is complete to begin execution. This allows multi-call DAG assembly (up to 50 stages per call) for large epics without starting work prematurely. The server validates the flow graph in run mode before creating stages. Non-root stages fire automatically when all their dependencies complete after the batch is started. Omit dependsOn for linear execution. Use dependsOn: [stageNumber, ...] for arbitrary dependency graphs. failureThreshold: 0 = any failure blocks dependent stages; -1 = never block. On partial failure use success: "partial" with failedStages — re-call with full run list for failed numbers.',
+      'Define staged execution for a batch, with optional DAG dependencies between stages. All stages start as pending — call frink_flows_start_batch after planning is complete to begin execution. This allows multi-call DAG assembly (up to 50 stages per call) for large epics without starting work prematurely. The server validates the flow graph in run mode before creating stages. Non-root stages fire automatically when all their dependencies complete after the batch is started. Omit dependsOn for linear execution. Use dependsOn: [stageNumber, ...] for arbitrary dependency graphs. failureThreshold: 0 = any failure blocks dependent stages; -1 = never block. A call that returns an error saved nothing from that call — fix the input and re-send the same stages.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -1192,6 +1185,7 @@ async function handlePatch(
           createdFlow: Boolean(createdFlowId),
           templateWarnings: patchTemplateWarnings,
           webhookSetup,
+          positionsTouched: operationsTouchPositions(operations),
         });
       }
     }
@@ -1732,25 +1726,6 @@ async function handleDefineStages(
       runCount: s.runCount,
       dependsOnStageNumbers: s.dependsOnStageNumbers,
     }));
-
-    if (result.partial && result.failedStages?.length) {
-      const failedNums = result.failedStages.map((f) => f.stageNumber).join(', ');
-      return toolResult(
-        JSON.stringify(
-          {
-            success: 'partial',
-            stageCount: result.stages.length,
-            rootStageCount: result.rootStageCount,
-            maxDepth: result.maxDepth,
-            stages: stageSummary,
-            failedStages: result.failedStages,
-            message: `${result.stages.length} stage(s) defined, ${result.failedStages.length} failed. Re-call frink_flows_define_stages with the full run list for failed stage numbers: [${failedNums}]. Existing runs for those stages will be replaced.`,
-          },
-          null,
-          2,
-        ),
-      );
-    }
 
     return toolResult(
       JSON.stringify(

@@ -14,6 +14,7 @@ import {
   isChatOnlyPlugin,
   pluginConnectAction,
   pluginSourceUrl,
+  promptsUnlocked,
   resolvePluginStatus,
   toCapabilityRows,
 } from './plugin-view-model';
@@ -661,5 +662,79 @@ describe('connected means every declared grant', () => {
   it('a plugin with nothing to grant offers no Connect', () => {
     const plugin = resolveOne(definition(), [installation()]);
     expect(pluginConnectAction(plugin, resolvePluginStatus(plugin), false)).toBeNull();
+  });
+});
+
+describe('promptsUnlocked', () => {
+  it("unlocks a chat-only plugin's prompts on its tools grant alone, never a webhook account", () => {
+    for (const connections of [NO_ACCOUNT, LIVE_ACCOUNT]) {
+      const plugin = resolveOne(
+        CHAT_ONLY_PLUGIN,
+        [installation({ pluginId: 'wiki' })],
+        connections,
+      );
+      expect(promptsUnlocked(plugin, 'connected')).toBe(true);
+      expect(promptsUnlocked(plugin, 'awaiting')).toBe(false);
+      expect(promptsUnlocked(plugin, 'none')).toBe(false);
+    }
+  });
+
+  it('stays unsettled while a chat-only plugin has no tools state yet', () => {
+    const plugin = resolveOne(CHAT_ONLY_PLUGIN, [installation({ pluginId: 'wiki' })], LIVE_ACCOUNT);
+    expect(promptsUnlocked(plugin, 'unknown')).toBeNull();
+  });
+
+  it('keeps the live-account rule for a plugin without chat tools', () => {
+    expect(
+      promptsUnlocked(resolveOne(CONNECTED_PLUGIN, [installation()], LIVE_ACCOUNT), 'none'),
+    ).toBe(true);
+    expect(
+      promptsUnlocked(resolveOne(CONNECTED_PLUGIN, [installation()], NO_ACCOUNT), 'connected'),
+    ).toBe(false);
+  });
+
+  it('unlocks a two-grant plugin only once both the account and the tools grant are live', () => {
+    const live = resolveOne(TWO_GRANT_PLUGIN, [installation()], LIVE_ACCOUNT);
+    const none = resolveOne(TWO_GRANT_PLUGIN, [installation()], NO_ACCOUNT);
+    expect(promptsUnlocked(live, 'connected')).toBe(true);
+    expect(promptsUnlocked(live, 'unknown')).toBeNull();
+    // The account leg is what a locked click runs.
+    expect(promptsUnlocked(none, 'connected')).toBe(false);
+    expect(promptsUnlocked(none, 'awaiting')).toBe(false);
+    // Account live, tools owed: a locked click runs the connect chain, whose consent leg grants them.
+    expect(promptsUnlocked(live, 'awaiting')).toBe(false);
+    expect(promptsUnlocked(live, 'none')).toBe(false);
+  });
+
+  it('never waits on the tools poll for a plugin without chat tools', () => {
+    // The status poll runs for every page; loading or errored it reads 'unknown'.
+    for (const tools of ['unknown', 'awaiting', 'none'] as const) {
+      expect(
+        promptsUnlocked(resolveOne(CONNECTED_PLUGIN, [installation()], LIVE_ACCOUNT), tools),
+      ).toBe(true);
+    }
+  });
+
+  it('counts only an active account, never a disconnected one', () => {
+    const inactive: ReadonlyArray<PluginConnection> = [{ ...TEST_ACCOUNT, isActive: false }];
+    expect(
+      promptsUnlocked(resolveOne(CONNECTED_PLUGIN, [installation()], inactive), 'none'),
+    ).toBe(false);
+    expect(
+      promptsUnlocked(resolveOne(TWO_GRANT_PLUGIN, [installation()], inactive), 'connected'),
+    ).toBe(false);
+    // A chat-only plugin owes no account, so a stale row neither helps nor hurts.
+    expect(
+      promptsUnlocked(
+        resolveOne(CHAT_ONLY_PLUGIN, [installation({ pluginId: 'wiki' })], inactive),
+        'connected',
+      ),
+    ).toBe(true);
+  });
+
+  it('locks a two-grant plugin owing a pasted token, since a locked click opens that dialog', () => {
+    const live = resolveOne(TOKEN_TWO_GRANT_PLUGIN, [installation()], LIVE_ACCOUNT);
+    expect(promptsUnlocked(live, 'awaiting')).toBe(false);
+    expect(promptsUnlocked(live, 'connected')).toBe(true);
   });
 });

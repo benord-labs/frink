@@ -5,18 +5,28 @@
 <p align="center">
   <a href="https://github.com/benord-labs/frink"><img src="https://img.shields.io/github/stars/benord-labs/frink?style=flat&amp;label=%E2%98%85&amp;color=8B5CF6" alt="GitHub stars" /></a>
   <img src="https://img.shields.io/badge/license-MIT-8B5CF6?style=flat" alt="License: MIT" />
-  <img src="https://img.shields.io/badge/macOS%20%7C%20Windows%20%7C%20Linux-4493F8?style=flat-square" alt="Supported platforms: macOS, Windows, and Linux" />
+  <img src="https://img.shields.io/badge/macOS%2013%2B-4493F8?style=flat-square" alt="Supported platform: macOS 13 or later" />
 </p>
 
 <p align="center">
-  <strong>A friendly AI development tool for everyone.</strong><br/>
-  Start with a chat, save it as a Flow, run agents side by side — each on its own copy of your project.
+  <strong>Build your agent workflow once. Frink runs it every time.</strong><br/>
+  A ticket arrives, an error fires or the clock hits 9am: your Flow runs the steps you chose and stops where it needs you.
+</p>
+
+<p align="center">
+  Triggers from Linear, Jira, Shortcut, ClickUp, Sentry, PostHog, Vercel and more, plus any webhook or a schedule.<br/>
+  Stuck agents wait in the Work Queue for your yes, on your Mac or from your iPhone (beta).<br/>
+  It runs on your machine with your own Claude Code or Codex login. No Frink account.
+</p>
+
+<p align="center">
+  A friendly AI development tool for everyone: start with a chat, save it as a Flow, run agents side by side.
 </p>
 
 <h3 align="center"><a href="https://frink.dev/download"><ins>Download Frink</ins></a></h3>
 
 <p align="center">
-  <a href="user-docs/worktree-setup.md"><picture><source srcset="docs/assets/readme/agents.gif" type="image/gif"><img src="docs/assets/readme/agents.jpg" alt="Four agents working side by side in split panes, each on its own git worktree" width="960" /></picture></a>
+  <a href="user-docs/flows.md"><picture><source srcset="docs/assets/readme/triggers.gif" type="image/gif"><img src="docs/assets/readme/triggers.jpg" alt="Choosing a Flow trigger, then a condition step and an approval step" width="960" /></picture></a>
 </p>
 
 ## Features
@@ -100,7 +110,7 @@ A real editor and terminal for your files, with changes you mark viewed and chec
 - **[Permissions](user-docs/permissions.md)** — every tool call passes a per-project gate first; `~/.ssh`, `~/.aws` and `.env` are always off-limits.
 - **[Plugins & MCP](user-docs/mcp-servers.md)** — connect Linear, Shortcut, ClickUp, GitHub, Notion, Slack, Sentry, PostHog and more, as chat tools and Flow steps.
 - **[Your own AI sign-in](user-docs/ai-accounts.md)** — uses your existing Claude Code or Codex login. Frink never stores the token.
-- **Local-first** — chats, Flows, tasks and permissions live in SQLite on your machine. No account needed.
+- **Local-first** — chats, Flows, tasks and permissions live in SQLite on your machine. No account needed. Official builds send anonymous usage counts and crash reports: [everything Frink sends](user-docs/telemetry.md).
 
 ---
 

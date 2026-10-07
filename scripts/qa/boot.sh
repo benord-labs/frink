@@ -9,6 +9,11 @@
 #   bash scripts/qa/build.sh && bash scripts/qa/seed.sh && bash scripts/qa/boot.sh
 set -euo pipefail
 . "$(dirname "$0")/env.sh"
+. "$(dirname "$0")/scrub-host-env.sh"
+
+# Before the .env load below, so the worktree's own VITE_*/MAIN_VITE_* keys survive. Inherited
+# from an agent shell, ELECTRON_RENDERER_URL would load the host's dev server, not out-qa.
+qa_scrub_host_dev_env
 
 mkdir -p "$QA_HOME"
 
@@ -41,6 +46,15 @@ if [ ! -s "out-qa/main/index.js" ]; then
   rm -rf "$LOCK"
   echo "frink is not built — run: bash scripts/qa/build.sh first (qavis does via the recipe's bootstrap step)." >&2
   exit 1
+fi
+
+# The seeded Claude account always resolves, so whichever `claude` this build runs answers every
+# send. Default to the scripted fake (no model call, no quota); the real CLI on the operator's own
+# login is an explicit opt-in. Announced, so a log shows which one a run used.
+if [ "${QA_REAL_CLAUDE:-}" = "1" ]; then
+  bash scripts/qa/use-real-claude.sh
+else
+  bash scripts/qa/use-fake-claude.sh
 fi
 
 # Provision Electron's app binary. electron@43 declares NO install lifecycle script, so the binary
@@ -87,7 +101,11 @@ echo "[boot.sh] FRINK_HOME=$QA_FRINK_HOME FRINK_LOG_DIR=$QA_LOG_DIR${QAVIS_EVIDE
 # drain freeze reads it from process.env at runtime, so it must be exported here as well.
 # A blank FRINK_WEBHOOK_BASE_URL keeps the rig local-only; unset, every build dials Frink's public relay.
 # The entry is given explicitly: package.json's `main` points at out/, which this build never touches.
+# FRINK_QA_BUNDLE marks this as the prebuilt rig bundle: main refuses to boot it with an
+# ELECTRON_RENDERER_URL, so a launch that skipped the scrub above fails loud instead of silently
+# rendering someone else's dev server.
 env -u ELECTRON_RUN_AS_NODE \
+  FRINK_QA_BUNDLE=1 \
   FRINK_CDP_PORT=9223 \
   FRINK_CUSTOM_NODES_DIR="$QA_USER_DATA/nodes" \
   FRINK_HOME="$QA_FRINK_HOME" \

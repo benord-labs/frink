@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import log from 'electron-log';
 import { z } from 'zod';
 import { trackWorkspaceArchived } from '../../../analytics';
@@ -9,9 +10,11 @@ import {
   updateChat as updateChatLocal,
 } from '../../../db/repos/chats';
 import { listSubChatsByChat as listSubChatsByChatLocal } from '../../../db/repos/sub-chats';
+import type { ArchiveChatResult } from '../../../db/repos/task-queries/chat-archive-tasks';
 import { cancelFlowRunsForChat } from '../../../flows';
 import { gitCache } from '../../../git/cache';
 import { abortActiveExecutionsForSubChats, clearCodexSession } from '../../../socket/executor';
+import { stopTaskSession } from '../../../tasks/abort-task-session';
 import { terminalManager } from '../../../terminal/manager';
 import { publicProcedure, router } from '../../index';
 import { mapLocalChatResponse } from './map-chat-response';
@@ -51,6 +54,13 @@ function startArchivedWorktreeTeardown(db: Db, ref: ChatWorktreeRef): void {
     teardownsInFlight.delete(ref.id);
   });
   teardownsInFlight.set(ref.id, running);
+}
+
+/** Sessions stop only after the archive commits, as the Work Queue's Cancel does. Throws on failure. */
+function archiveChatStoppingTasks(db: Db, chatId: string): ArchiveChatResult {
+  const result = archiveChatLocal(db, chatId);
+  for (const previous of result.cancelledPrevious) stopTaskSession(previous);
+  return result;
 }
 
 /**
@@ -98,7 +108,17 @@ export const archiveRouter = router({
       }
       clearCodexSession(input.id);
 
-      const archivedChat = await archiveChatLocal(db, input.id);
+      let archivedChat: ArchiveChatResult['chat'];
+      try {
+        archivedChat = archiveChatStoppingTasks(db, input.id).chat;
+      } catch (error) {
+        log.warn('[chats.archive] archive with linked-task cancel failed', error);
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: "Could not stop this chat's task, so the chat was not archived.",
+          cause: error,
+        });
+      }
 
       trackWorkspaceArchived(input.id);
 
@@ -159,9 +179,18 @@ export const archiveRouter = router({
       abortActiveExecutionsForSubChats(allSubChatIds, 'chat archived (batch)');
       for (const chatId of chatIds) await cancelFlowRunsForChat(chatId);
 
-      const archivedChats = await Promise.all(
-        chatIds.map((chatId) => archiveChatLocal(db, chatId)),
-      );
+      // Per chat, so one chat whose task can't be stopped doesn't hold back the rest.
+      const archivedChats = chatIds.map((chatId) => {
+        try {
+          return archiveChatStoppingTasks(db, chatId).chat;
+        } catch (error) {
+          log.warn('[chats.archiveBatch] archive with linked-task cancel failed', {
+            chatId,
+            error,
+          });
+          return null;
+        }
+      });
       const result = archivedChats.filter(
         (chat): chat is NonNullable<typeof chat> => chat !== null,
       );

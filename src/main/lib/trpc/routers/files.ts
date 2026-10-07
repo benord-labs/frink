@@ -29,6 +29,7 @@ import { captureMainException } from '../../sentry/init';
 // project path plus a relative path still enforce containment within that project.
 import { publicProcedure, router } from '../index';
 import { readEditorTextFile } from './read-text-file-bounded';
+import { findSymlinkEscape } from './symlink-escape';
 
 // Active copy operations — allows cancellation by operationId
 type ActiveOperation = {
@@ -1109,6 +1110,10 @@ export const filesRouter = router({
   readFile: publicProcedure
     .input(z.object({ filePath: z.string() }))
     .query(({ input }) => readEditorTextFile(input.filePath)),
+
+  symlinkEscape: publicProcedure
+    .input(z.object({ projectPath: z.string(), filePath: z.string() }))
+    .query(({ input }) => findSymlinkEscape(input.projectPath, input.filePath)),
 
   /**
    * Read image file as base64 data URL for display in the code editor panel.

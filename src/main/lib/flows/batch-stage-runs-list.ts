@@ -1,5 +1,5 @@
 /** One stage's batch_stage_runs, paginated, as BatchStageRunRow: start_task fields (merge conflicts),
- * needs_input (listHumanWaitFlowRunIds) and timestamps from the linked flow_run. */
+ * needs_input (listHumanWaitFlowRunIds), chat_id and timestamps from the linked flow_run. */
 
 import { sql as drizzleSql, eq } from 'drizzle-orm';
 import type { BatchStageRunRow } from '../../../shared/types/flow';
@@ -9,6 +9,7 @@ import {
   listLatestStartTaskRunsByFlowRunIds,
 } from '../db/repos/node-runs';
 import { batchStageRuns, flowRuns, type NodeRun } from '../db/schema';
+import { resolveBatchRunChatIds } from './batch-runs-list';
 
 export type ListBatchStageRunsOptions = {
   limit?: number;
@@ -51,46 +52,61 @@ function startTaskRowFields(run: NodeRun | undefined): Partial<BatchStageRunRow>
   };
 }
 
+/** The page and the stage's total in one transaction, one snapshot: a stage run added between the
+ * two reads cannot leave the total disagreeing with the page. */
+function readStageRunPage(
+  db: ReturnType<typeof getDatabase>,
+  stageId: string,
+  limit: number,
+  offset: number,
+) {
+  return db.transaction((tx) => ({
+    rows: tx
+      .select({
+        id: batchStageRuns.id,
+        stageId: batchStageRuns.stageId,
+        status: batchStageRuns.status,
+        triggerContext: batchStageRuns.triggerContext,
+        flowRunId: batchStageRuns.flowRunId,
+        flowRunStartedAt: flowRuns.startedAt,
+        flowRunCompletedAt: flowRuns.completedAt,
+      })
+      .from(batchStageRuns)
+      .leftJoin(flowRuns, eq(batchStageRuns.flowRunId, flowRuns.id))
+      .where(eq(batchStageRuns.stageId, stageId))
+      .orderBy(batchStageRuns.createdAt)
+      .limit(limit)
+      .offset(offset)
+      .all(),
+    total: Number(
+      tx
+        .select({ c: drizzleSql<number>`count(*)`.as('c') })
+        .from(batchStageRuns)
+        .where(eq(batchStageRuns.stageId, stageId))
+        .get()?.c ?? 0,
+    ),
+  }));
+}
+
 export async function listBatchStageRunsForStage(
   stageId: string,
   opts: ListBatchStageRunsOptions = {},
 ): Promise<{ runs: BatchStageRunRow[]; total: number }> {
   const db = getDatabase();
-  const limit = opts.limit ?? 50;
-  const offset = opts.offset ?? 0;
+  const { rows, total } = readStageRunPage(db, stageId, opts.limit ?? 50, opts.offset ?? 0);
 
-  const rows = await db
-    .select({
-      id: batchStageRuns.id,
-      stageId: batchStageRuns.stageId,
-      status: batchStageRuns.status,
-      triggerContext: batchStageRuns.triggerContext,
-      flowRunId: batchStageRuns.flowRunId,
-      flowRunStartedAt: flowRuns.startedAt,
-      flowRunCompletedAt: flowRuns.completedAt,
-    })
-    .from(batchStageRuns)
-    .leftJoin(flowRuns, eq(batchStageRuns.flowRunId, flowRuns.id))
-    .where(eq(batchStageRuns.stageId, stageId))
-    .orderBy(batchStageRuns.createdAt)
-    .limit(limit)
-    .offset(offset);
-
-  const totalRows = await db
-    .select({ c: drizzleSql<number>`count(*)`.as('c') })
-    .from(batchStageRuns)
-    .where(eq(batchStageRuns.stageId, stageId));
-  const total = Number(totalRows[0]?.c ?? 0);
-
+  // Per-row enrichment, keyed by flow run id: read after the snapshot, it cannot change the row count.
   const flowRunIds = rows
     .map((r) => r.flowRunId)
     .filter((id): id is string => typeof id === 'string' && id.length > 0);
   const startTaskRuns = await listLatestStartTaskRunsByFlowRunIds(db, flowRunIds);
   const humanWaitRunIds = await listHumanWaitFlowRunIds(db, flowRunIds);
+  const chatIds = await resolveBatchRunChatIds(db, rows);
 
-  const runs: BatchStageRunRow[] = rows.map((r) => {
+  const runs: BatchStageRunRow[] = rows.map((r, i) => {
     const tc = (r.triggerContext as Record<string, unknown> | null) ?? null;
-    const chatId = tc && typeof tc.chatId === 'string' && tc.chatId.length > 0 ? tc.chatId : null;
+    // A run-less row keys the lookups with '', which no flow run id matches.
+    const runId = r.flowRunId ?? '';
     return {
       id: r.id,
       stage_id: r.stageId,
@@ -98,9 +114,9 @@ export async function listBatchStageRunsForStage(
       trigger_context: tc,
       started_at: r.flowRunStartedAt ? r.flowRunStartedAt.toISOString() : null,
       completed_at: r.flowRunCompletedAt ? r.flowRunCompletedAt.toISOString() : null,
-      chat_id: chatId,
-      needs_input: r.flowRunId ? humanWaitRunIds.has(r.flowRunId) : false,
-      ...startTaskRowFields(r.flowRunId ? startTaskRuns.get(r.flowRunId) : undefined),
+      chat_id: chatIds[i],
+      needs_input: humanWaitRunIds.has(runId),
+      ...startTaskRowFields(startTaskRuns.get(runId)),
     };
   });
   return { runs, total };

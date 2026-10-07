@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest';
 import type { FlowGraph } from '../../../../shared/lib/validate-flow-graph';
 import {
   applyPatchOperations,
-  deepMergePatch,
   type PatchOperation,
   patchArgsSchema,
   seedDefaultProject,
 } from './flow-patch';
+import { deepMergePatch } from './deep-merge-patch';
 
 const MIN_VALID_GRAPH: FlowGraph = {
   nodes: [

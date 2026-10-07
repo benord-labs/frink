@@ -1314,6 +1314,56 @@ describe('parkFlowTaskForSubChat — resumable interruptions park the driving ta
   });
 });
 
+describe('retryTaskDetailed — only the current attempt of a node can be retried', () => {
+  let db: TestDb;
+  beforeEach(() => {
+    db = freshDb();
+  });
+
+  it('refuses the attempt a retry replaced and leaves it failed', async () => {
+    const { flowRunId } = await seedFlowRun(db, GRAPH);
+    const old = await addAttempt(db, flowRunId, 'failed');
+    await addAttempt(db, flowRunId, 'running');
+    await setFlowRunStatus(db, flowRunId, 'paused');
+
+    const { task, reason } = await retryTaskDetailed(db, old.id, 'continue', flowRunId);
+    expect([task, reason]).toEqual([null, 'invalid_state']);
+    expect((await getTaskById(db, old.id))?.status).toBe('failed');
+  });
+
+  it('refuses the replaced attempt as soon as the new node_run exists, before it has a task', async () => {
+    const { flowRunId } = await seedFlowRun(db, GRAPH);
+    const old = await addAttempt(db, flowRunId, 'needs_attention');
+    await createNodeRun(db, { flowRunId, nodeId: 'a', blockType: 'agent' });
+    await setFlowRunStatus(db, flowRunId, 'paused');
+
+    const { task, reason } = await retryTaskDetailed(db, old.id, 'continue', flowRunId);
+    expect([task, reason]).toEqual([null, 'invalid_state']);
+    expect((await getTaskById(db, old.id))?.status).toBe('needs_attention');
+  });
+
+  it('retries the newest attempt of a node that was retried before', async () => {
+    const { flowRunId } = await seedFlowRun(db, GRAPH);
+    await addAttempt(db, flowRunId, 'failed');
+    const newest = await addAttempt(db, flowRunId, 'failed');
+    await setFlowRunStatus(db, flowRunId, 'paused');
+
+    const { task } = await retryTaskDetailed(db, newest.id, 'continue', flowRunId);
+    expect(task?.status).toBe('pending');
+  });
+
+  it('is not blocked by a newer attempt in another fan-out lane or of another node', async () => {
+    const { flowRunId } = await seedFlowRun(db, GRAPH);
+    const lane1 = await addAttempt(db, flowRunId, 'failed', { laneIndex: 1 });
+    await addAttempt(db, flowRunId, 'running', { laneIndex: 2 });
+    await addAttempt(db, flowRunId, 'running', { nodeId: 'b', laneIndex: 1 });
+    await setFlowRunStatus(db, flowRunId, 'paused');
+
+    const { task } = await retryTaskDetailed(db, lane1.id, 'continue', flowRunId);
+    expect(task?.status).toBe('pending');
+  });
+});
+
 describe('retryTaskDetailed — user-requested retry flips failed/parked → pending, scrubbed', () => {
   let db: TestDb;
   beforeEach(() => {

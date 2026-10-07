@@ -9,8 +9,8 @@ import { fileURLToPath } from 'node:url';
 import { downloadToFile, sha256File } from './http-download.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
-const ROOT_DIR = path.dirname(path.dirname(path.dirname(SCRIPT_PATH)));
-const MANIFEST_PATH = path.join(ROOT_DIR, 'patches', 'codex', 'manifest.json');
+export const ROOT_DIR = path.dirname(path.dirname(path.dirname(SCRIPT_PATH)));
+export const MANIFEST_PATH = path.join(ROOT_DIR, 'patches', 'codex', 'manifest.json');
 const LINE_BREAK_PATTERN = /\r?\n/;
 const WHITESPACE_PATTERN = /\s+/;
 const EXPECTED_MANIFEST = Object.freeze({
@@ -22,8 +22,9 @@ const EXPECTED_MANIFEST = Object.freeze({
   normalizedCargoLockSha256: 'df88a71b82843c6f092610fb07589f7a40032ddc25f50718354546ca541eb9b7',
   rust: '1.95.0',
   patch: 'frink-host-tool-permission-v1.patch',
-  patchSha256: '5af8795f63311f953a943b8f056058cdde90528b6cecf5acf220d75ff1447540',
 });
+/** The patch identity is pinned once, in the manifest; the build checks the patch file against it. */
+const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 
 const TARGETS = {
   'darwin-arm64': { binary: 'codex', cargoTarget: 'aarch64-apple-darwin' },
@@ -42,7 +43,7 @@ const PROVIDER_TEST_FILTERS = [
   'write_stdin_permission_target_rejects_reused_process_id',
 ];
 
-const RUST_TAG_PREFIX = /^rust-v/;
+export const RUST_TAG_PREFIX = /^rust-v/;
 const THREAD_ITEMS_PATH = path.join(ROOT_DIR, 'patches', 'codex', 'thread-item-variants.json');
 const THREAD_ITEM_SCHEMA_PATH = [
   'codex-rs',
@@ -108,6 +109,9 @@ export function validateManifest(manifest) {
       throw new Error(`Invalid pinned Codex source manifest field: ${field}`);
     }
   }
+  if (!SHA256_PATTERN.test(manifest.patchSha256)) {
+    throw new Error('Invalid pinned Codex source manifest field: patchSha256');
+  }
   return manifest;
 }
 
@@ -125,22 +129,22 @@ export function validateRemoteTagOutput(manifest, output) {
   }
 }
 
-function readManifest() {
+export function readManifest() {
   return validateManifest(JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf8')));
 }
 
-function assertRustVersion(rustc, expected) {
+export function assertRustVersion(rustc, expected) {
   const actual = execFileSync(rustc, ['--version'], { encoding: 'utf8' }).trim();
   if (!actual.startsWith(`rustc ${expected} `)) {
     throw new Error(`Codex requires rustc ${expected}; found ${actual}`);
   }
 }
 
-function cargoExecutable() {
+export function cargoExecutable() {
   return process.env.CARGO || 'cargo';
 }
 
-function rustcExecutable() {
+export function rustcExecutable() {
   return process.env.RUSTC || 'rustc';
 }
 
@@ -165,7 +169,7 @@ function installRustTarget(cargoTarget, version) {
   });
 }
 
-function runProviderRegressionTests(cargo, rustc, cargoRoot) {
+export function runProviderRegressionTests(cargo, rustc, cargoRoot) {
   for (const filter of PROVIDER_TEST_FILTERS) {
     execFileSync(
       cargo,
@@ -377,7 +381,8 @@ function validateTargetKeys(targetKeys) {
   return uniqueTargetKeys;
 }
 
-async function prepareCodexSource(tempRoot, manifest) {
+/** Download the pinned upstream archive into `destRoot`, verify it, and return the extracted tree. */
+export async function fetchCodexSource(destRoot, manifest) {
   validateRemoteTagOutput(
     manifest,
     execFileSync(
@@ -391,7 +396,7 @@ async function prepareCodexSource(tempRoot, manifest) {
       { encoding: 'utf8' },
     ),
   );
-  const archive = path.join(tempRoot, 'codex.tar.gz');
+  const archive = path.join(destRoot, 'codex.tar.gz');
   const sourceUrl = `https://github.com/openai/codex/archive/refs/tags/${manifest.version}.tar.gz`;
   await downloadToFile(sourceUrl, archive);
   const actualSha = sha256File(archive);
@@ -401,18 +406,12 @@ async function prepareCodexSource(tempRoot, manifest) {
     );
   }
 
-  execFileSync('tar', ['-xzf', archive, '-C', tempRoot], { stdio: 'inherit' });
-  const sourceDir = path.join(tempRoot, `codex-${manifest.version}`);
-  const patchPath = path.join(ROOT_DIR, 'patches', 'codex', manifest.patch);
-  const actualPatchSha = sha256File(patchPath);
-  if (actualPatchSha !== manifest.patchSha256) {
-    throw new Error(
-      `Codex provider patch SHA-256 mismatch: expected ${manifest.patchSha256}, got ${actualPatchSha}`,
-    );
-  }
-  execFileSync('git', ['apply', '--check', patchPath], { cwd: sourceDir, stdio: 'inherit' });
-  execFileSync('git', ['apply', patchPath], { cwd: sourceDir, stdio: 'inherit' });
+  execFileSync('tar', ['-xzf', archive, '-C', destRoot], { stdio: 'inherit' });
+  return path.join(destRoot, `codex-${manifest.version}`);
+}
 
+/** Rewrite the lockfile's placeholder workspace versions in place, as a `--locked` build needs. */
+export function normalizeCargoLock(sourceDir, manifest) {
   const lockPath = path.join(sourceDir, 'codex-rs', 'Cargo.lock');
   const normalizedLock = normalizeWorkspaceVersions(
     fs.readFileSync(lockPath, 'utf8'),
@@ -425,6 +424,20 @@ async function prepareCodexSource(tempRoot, manifest) {
       `Normalized Cargo.lock SHA-256 mismatch: expected ${manifest.normalizedCargoLockSha256}, got ${actualLockSha}`,
     );
   }
+}
+
+async function prepareCodexSource(tempRoot, manifest) {
+  const sourceDir = await fetchCodexSource(tempRoot, manifest);
+  const patchPath = path.join(ROOT_DIR, 'patches', 'codex', manifest.patch);
+  const actualPatchSha = sha256File(patchPath);
+  if (actualPatchSha !== manifest.patchSha256) {
+    throw new Error(
+      `Codex provider patch SHA-256 mismatch: expected ${manifest.patchSha256}, got ${actualPatchSha}`,
+    );
+  }
+  execFileSync('git', ['apply', '--check', patchPath], { cwd: sourceDir, stdio: 'inherit' });
+  execFileSync('git', ['apply', patchPath], { cwd: sourceDir, stdio: 'inherit' });
+  normalizeCargoLock(sourceDir, manifest);
   return sourceDir;
 }
 
@@ -515,13 +528,18 @@ export async function buildCodexFrink({
   }
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === SCRIPT_PATH) {
-  const { targetKeys, runProviderTests } = parseBuildArguments(process.argv.slice(2));
-  buildCodexFrink({
+async function main(args) {
+  const { targetKeys, runProviderTests } = parseBuildArguments(args);
+  const binaries = await buildCodexFrink({
     targetKeys: targetKeys.length > 0 ? targetKeys : [platformKey()],
     runProviderTests,
-  })
-    .then((binaries) => console.log(`Built permission-aware Codex: ${binaries.join(', ')}`))
+  });
+  return `Built permission-aware Codex: ${binaries.join(', ')}`;
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === SCRIPT_PATH) {
+  main(process.argv.slice(2))
+    .then((message) => console.log(message))
     .catch((error) => {
       console.error(error instanceof Error ? error.message : String(error));
       process.exitCode = 1;

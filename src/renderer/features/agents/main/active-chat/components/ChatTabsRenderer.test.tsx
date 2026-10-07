@@ -1,15 +1,20 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
 import type { Chat } from '@ai-sdk/react';
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen } from '@testing-library/react';
 import type { UIMessage } from 'ai';
+import { getDefaultStore } from 'jotai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { heldSubChatsAtom } from '../../../../../lib/stores/active-transport-registry';
 import type { SubChatMeta } from '../../../stores/sub-chat-store';
 import type { UseSubChatMessagesResult } from '../hooks/useSubChatMessages';
 import type { ChatViewInnerProps } from '../types';
 import { ChatTabsRenderer } from './ChatTabsRenderer';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  getDefaultStore().set(heldSubChatsAtom, new Map());
+});
 
 const stubSubChatMessages: UseSubChatMessagesResult = {
   messages: [],
@@ -26,7 +31,7 @@ const stubSubChatMessages: UseSubChatMessagesResult = {
 type RenderParams = {
   agentSubChats: SubChatMeta[];
   allSubChats: SubChatMeta[];
-  getOrCreateChat?: (id: string) => Chat<UIMessage> | null;
+  getOrCreateChat?: (id: string, isWakeHeld: boolean) => Chat<UIMessage> | null;
   subChatMessages?: UseSubChatMessagesResult;
   projectPath?: string;
 };
@@ -120,6 +125,22 @@ describe('ChatTabsRenderer', () => {
     });
 
     expect(screen.getByTestId('inner-project-path')).toHaveTextContent('/tmp/owners-web');
+  });
+
+  it('asks for the chat again when its wake hold ends, so the parked page check re-runs', () => {
+    const store = getDefaultStore();
+    store.set(heldSubChatsAtom, new Map([['subchat-1', 'chat-1']]));
+    const getOrCreateChat = vi.fn((): Chat<UIMessage> | null => null);
+    renderTabsRenderer({
+      agentSubChats: defaultSubChats,
+      allSubChats: defaultSubChats,
+      getOrCreateChat,
+    });
+    expect(getOrCreateChat).toHaveBeenLastCalledWith('subchat-1', true);
+
+    act(() => store.set(heldSubChatsAtom, new Map()));
+
+    expect(getOrCreateChat).toHaveBeenLastCalledWith('subchat-1', false);
   });
 
   describe('loading/error states when chat is null', () => {

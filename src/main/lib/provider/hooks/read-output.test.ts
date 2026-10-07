@@ -164,7 +164,7 @@ describe('readHookOutput', () => {
 
   describe('any other exit code', () => {
     it.each<[string, Given, string]>([
-      ['with stderr', { exitCode: 1, stderr: ' boom\nat line 3\n' }, 'boom\nat line 3'],
+      ['with stderr', { exitCode: 1, stderr: ' boom\nat line 3\n' }, 'boom'],
       ['without stderr', { exitCode: 127 }, 'No stderr output'],
       ['ended by a signal', { exitCode: null, signal: 'SIGKILL' }, 'No stderr output'],
       ['with plain stdout', { exitCode: 1, stdout: 'some context' }, 'No stderr output'],

@@ -186,8 +186,6 @@ export async function defineFlowBatchStages(
   }>;
   rootStageCount: number;
   maxDepth: number;
-  partial?: boolean;
-  failedStages?: Array<{ stageNumber: number; error: string }>;
 }> {
   const stageIdByNumber = insertBatchStagesWithRuns(getDatabase(), batchId, stages);
 

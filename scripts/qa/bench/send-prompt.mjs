@@ -1,13 +1,13 @@
-// send-prompt.mjs <prompt-file> [chatId=qa-fixture-chat-seeded] [subChatId=qa-fixture-subchat-1] — reloads, opens the chat, types into the real composer, sends, waits until a new message is persisted and streaming has stopped (needs enable-real-claude.ts).
+// send-prompt.mjs <prompt-file> [chatId=qa-fixture-chat-seeded] [subChatId=qa-fixture-subchat-1] — reloads, opens the chat, types into the real composer, sends, waits until a new message is persisted and streaming has stopped. The rig answers with the scripted fake by default; boot with QA_REAL_CLAUDE=1 for a real turn on this machine's Claude login (spends its quota).
 import { readFileSync } from 'node:fs';
 import { connectPage, sleep, stamp } from './cdp.mjs';
 
 const [promptFile, chatId = 'qa-fixture-chat-seeded', subChatId = 'qa-fixture-subchat-1'] = process.argv.slice(2);
 if (!promptFile) { console.error('usage: send-prompt.mjs <prompt-file> [chatId] [subChatId]'); process.exit(2); }
 const prompt = readFileSync(promptFile, 'utf8').trim();
-const page = await connectPage();
+const page = await connectPage(undefined, { renderer: 'vite' }); // imports Vite-served modules below
 await page.call('Page.enable');
-// The renderer caches a failed account resolution from before the credential stamp; a reload clears it.
+// The renderer caches a failed account resolution (a signed-out machine, since signed in); a reload clears it.
 await page.call('Page.reload');
 await sleep(45_000);
 const selected = await page.evaluate(`(async () => {

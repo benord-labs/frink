@@ -9,6 +9,7 @@ import { Button } from '@benord-labs/frink-primitives';
 import { BaseEdge, EdgeLabelRenderer, type EdgeProps, getBezierPath } from '@xyflow/react';
 import { Check, Plus, RotateCcw, X } from 'lucide-react';
 import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { BACK_EDGE_CLEARANCE } from '../../../../../../shared/lib/flows/canvas-layout/constants';
 
 const HOVER_LEAVE_MS = 180;
 
@@ -16,7 +17,7 @@ const HOVER_LEAVE_MS = 180;
 const BE_R = 10;
 const BE_STEP = 8;
 const BE_TOP = 20;
-const BE_CLEARANCE = 190; // distance from target center to the vertical stem
+const BE_CLEARANCE = BACK_EDGE_CLEARANCE;
 /** Nudge branch text + loop badge up from the geometric label anchor (screen Y increases downward). */
 const BE_LABEL_BADGE_OFFSET = -20;
 

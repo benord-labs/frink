@@ -719,6 +719,50 @@ describe('AssistantMessageItem streaming thinking', () => {
   });
 });
 
+describe('AssistantMessageItem memoization', () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  // Two store writers can briefly hand the row an older copy as the stream ends; the final copy
+  // must still render even though it repeats content the row showed before the status flip.
+  it('renders the final text after an older copy arrives with the streaming-to-ready flip', () => {
+    const messageId = 'msg-memo-content-flap';
+    const partial = 'STREAM SHOT is in your test window, and';
+    const full = `${partial} Vite reloaded it with no errors.`;
+    const streamingProps = { ...baseProps, isStreaming: true, status: 'streaming' };
+    const readyProps = { ...baseProps, isStreaming: false, status: 'ready' };
+    const { rerender } = render(
+      <AssistantMessageItem
+        {...streamingProps}
+        message={buildAssistantMessage(messageId, [textPart(partial)])}
+      />,
+    );
+
+    rerender(
+      <AssistantMessageItem
+        {...streamingProps}
+        message={buildAssistantMessage(messageId, [textPart(full)])}
+      />,
+    );
+    rerender(
+      <AssistantMessageItem
+        {...readyProps}
+        message={buildAssistantMessage(messageId, [textPart(partial)])}
+      />,
+    );
+    rerender(
+      <AssistantMessageItem
+        {...readyProps}
+        message={buildAssistantMessage(messageId, [textPart(full)])}
+      />,
+    );
+
+    expect(screen.getByText(full)).toBeInTheDocument();
+    expect(screen.queryByText(partial)).not.toBeInTheDocument();
+  });
+});
+
 // The empty-turn loading state is the flavor-phrase planning card alone — the old
 // hardcoded "Thinking…" shimmer was removed (it doubled up with the planning card on
 // turns that stream no thinking, e.g. codex models that emit no reasoning).

@@ -26,11 +26,19 @@ bun run dev
 
 ```bash
 bun run test:run            # full suite
-bun run test:run:coverage   # suite + coverage gate
+bun run test:run:coverage   # suite + coverage report
 ```
 
-Coverage thresholds live in `vitest.config.ts`: 65% statements, 63% functions. Use the coverage
-form for anything that changes behaviour; `test:run` is enough for docs and config.
+CI enforces the coverage floor on every pull request; the values live in
+`scripts/testing/check-coverage-floor.mjs`. You don't need a full coverage run before committing:
+run the tests for what you changed, and run the coverage form when you want to see the numbers.
+
+The app's renderer is built with the React Compiler; tests are not, unless the file is named
+`*.compiled.test.ts` or `.tsx` under `src/renderer` (`bun run test:compiled` runs only those). Put any assertion about render
+counts or object identity in a compiled test file, because the compiler changes exactly those
+results. Count renders of the component itself, never of a mocked child, and include a case that must
+raise the count. A compiled test still does not measure the running app: confirm a "renders less"
+claim against the QA build (`scripts/qa/README.md`).
 
 ## Committing
 
@@ -47,6 +55,8 @@ the way belongs in a follow-up issue, not in the same branch.
 ## Where things live
 
 - `user-docs/` — end-user guides.
+- `patches/codex/` — the patch Frink applies to its bundled Codex. It is generated; see
+  [`patches/codex/README.md`](patches/codex/README.md) before changing it.
 
 ## Conduct
 

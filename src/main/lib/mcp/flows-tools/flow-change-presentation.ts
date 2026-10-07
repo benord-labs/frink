@@ -203,6 +203,8 @@ function describeOperation(
         label: 'Flow settings',
         detail: settingsDetail(op),
       };
+    case 'auto_layout':
+      return { ...common, label: 'Canvas layout', detail: 'Reset to automatic layout' };
   }
 }
 

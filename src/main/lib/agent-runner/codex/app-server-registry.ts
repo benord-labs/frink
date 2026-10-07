@@ -17,6 +17,7 @@
 import type { Disposable } from 'vscode-jsonrpc/node';
 import { registerCodexAppServerCountReader } from '../../diagnostics/provider-topology';
 import { invalidateChannelToken } from '../../mcp/execution-identity';
+import { ensureLoginShellEnv } from '../../platform/login-shell-env';
 import { CodexAppServerClient, type CodexAppServerClientOptions } from './app-server-client';
 
 const IDLE_TEARDOWN_MS = 5 * 60 * 1000;
@@ -125,23 +126,25 @@ export async function getCodexAppServer(
 
   if (!entry) {
     teardownPrefix(prefixFor(cwd, credentialId, sessionKey));
-    const client = new CodexAppServerClient(options);
+    // Long-lived, and its MCP servers and commands inherit its env: start it on the login-shell PATH.
+    const client = new CodexAppServerClient({ ...options, beforeSpawn: ensureLoginShellEnv });
     const startPromise = client.start();
     entry = { client, startPromise, idleTimer: null, subs: [] };
     registry.set(key, entry);
+    const created = entry;
     try {
       await startPromise;
       // Self-evict on crash or broken pipe (every onError source is pipe-level, never a blip) —
       // otherwise the next turn reuses a dead client until the idle TTL.
-      const created = entry;
       const evict = () => {
         if (registry.get(key) === created) teardownEntry(key, created);
       };
       entry.subs.push(client.onClose(evict), client.onError(evict));
     } catch (err) {
-      // A failed handshake must not leave a dead entry cached.
+      // A failed handshake must not leave a dead entry cached — but a client superseded while it
+      // started must not evict the replacement now under its key.
       client.dispose();
-      registry.delete(key);
+      if (registry.get(key) === created) registry.delete(key);
       throw err;
     }
   } else {

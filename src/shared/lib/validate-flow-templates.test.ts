@@ -635,10 +635,9 @@ describe('validateFlowTemplateVariables', () => {
     expect(warnings.every((w) => w.placeholder !== '{{previous.headers.content-type}}')).toBe(true);
   });
 
-  it('does NOT warn for template in http_request.url (not rendered at runtime) (EC2)', () => {
-    // http_request.url is NOT template-rendered — the template variable is invalid at
-    // runtime but validate-flow-templates should not check non-rendered fields for
-    // known-field validation (only for the "field not rendered" warning).
+  it('validates http_request.url as a rendered field (EC2, sc-3172)', () => {
+    // http_request.url IS template-rendered at runtime, so the placeholder is checked against the
+    // run_command predecessor's declared outputs like any other rendered field.
     const graph = makeGraph([
       { id: 't', blockType: 'manual_trigger' },
       { id: 'r', blockType: 'run_command', config: { command: 'echo hi', projectId: 'p1' } },
@@ -648,11 +647,10 @@ describe('validateFlowTemplateVariables', () => {
         config: { url: 'https://example.com/{{previous.status}}' },
       },
     ]);
-    const warnings = validateFlowTemplateVariables(graph);
-    // Should warn that http_request.url is not template-rendered, not that 'status' is invalid
-    const urlWarning = warnings.find((w) => w.field === 'url');
-    expect(urlWarning).toBeDefined();
-    expect(urlWarning?.message).toContain('not template-rendered');
+    const urlWarnings = validateFlowTemplateVariables(graph).filter((w) => w.nodeId === 'h');
+    expect(urlWarnings).toMatchObject([{ field: 'url', placeholder: '{{previous.status}}' }]);
+    expect(urlWarnings[0]?.message).toContain('not a declared output field');
+    expect(urlWarnings[0]?.message).not.toContain('not template-rendered');
   });
 
   it('custom node string inputs are rendered and still validate previous paths (sc-1597)', () => {

@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { type FlowGraph, flowGraphsEqual } from '../../../../../shared/lib/validate-flow-graph';
+import { type FlowGraph, type FlowNode, flowGraphsEqual } from '../../validate-flow-graph';
 import {
   computeDagreLayoutPositions,
   embedMissingPositionsFromDagre,
   fanOutContainerDimensions,
   fanOutFitDimensions,
-} from './compute-dagre-positions';
+} from './index';
 
 describe('computeDagreLayoutPositions', () => {
   it('returns an empty map when there are no nodes', () => {
@@ -82,18 +82,11 @@ describe('fanOutContainerDimensions', () => {
     size?: { width: number; height: number },
     childPosition?: { x: number; y: number },
   ): FlowGraph {
-    return {
-      nodes: [
-        { id: 'fan', blockType: 'fan_out', ...(size ? { size } : {}) },
-        {
-          id: 'a',
-          blockType: 'agent',
-          parentId: 'fan',
-          ...(childPosition ? { position: childPosition } : {}),
-        },
-      ],
-      edges: [{ id: 'e1', source: 'fan', target: 'a' }],
-    };
+    const container: FlowNode = { id: 'fan', blockType: 'fan_out' };
+    if (size) container.size = size;
+    const child: FlowNode = { id: 'a', blockType: 'agent', parentId: 'fan' };
+    if (childPosition) child.position = childPosition;
+    return { nodes: [container, child], edges: [{ id: 'e1', source: 'fan', target: 'a' }] };
   }
 
   it('uses the saved size when it is larger than the fit', () => {

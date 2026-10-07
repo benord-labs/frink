@@ -234,8 +234,6 @@ jobs:
           MAIN_VITE_UPDATE_FEED_URL: ${{ vars.UPDATE_FEED_URL }}
           MAIN_VITE_POSTHOG_KEY: ${{ secrets.MAIN_VITE_POSTHOG_KEY }}
           MAIN_VITE_POSTHOG_HOST: ${{ vars.MAIN_VITE_POSTHOG_HOST }}
-          VITE_POSTHOG_KEY: ${{ secrets.VITE_POSTHOG_KEY }}
-          VITE_POSTHOG_HOST: ${{ vars.VITE_POSTHOG_HOST }}
           MAIN_VITE_SENTRY_DSN: ${{ secrets.MAIN_VITE_SENTRY_DSN }}
           RENDERER_VITE_SENTRY_DSN: ${{ secrets.RENDERER_VITE_SENTRY_DSN }}
 

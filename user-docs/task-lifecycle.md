@@ -89,12 +89,16 @@ Cancelling a flow's task cancels the whole flow run, because the work queue show
 
 Removing a chat can also affect its linked task. How Frink handles this depends on where the task is in its lifecycle:
 
-- **The task is still actively working** (Pending, Running, or Plan Ready) — Frink asks first, since deleting the chat would otherwise leave the task running with nowhere to surface it. You can **stop the task and remove the chat** together, or keep the task running and only remove the chat.
+- **The task is still actively working** (Pending, Running, or Plan Ready):
+  - **Delete** asks first, then stops the task and removes the chat together.
+  - **Archive** doesn't ask. Archiving is a soft delete, so it always stops the linked task as part of archiving the chat. If the task can't be stopped, the chat is not archived and Frink tells you why.
 - **The task has finished or is waiting on you** (Ready for review, Needs Attention, Completed, Failed, or Cancelled) — there's nothing actively running to stop, so the chat is removed right away with no prompt. A task waiting on you (Needs Attention) is left as-is so you can still return to it from the work queue.
 
-Those rules apply to regular chats whether you delete or archive them. Archiving is recoverable — restore it from the Archived view.
+Archiving is recoverable — restore it from the Archived view. Restoring the chat does not restart a task that archiving stopped. To **Carry on** a task whose chat is archived, restore the chat first, or use **Retry** to run the task again in a fresh chat.
 
-**The archive shortcut follows the same rules.** Pressing **Archive current agent** (Cmd+Shift+D by default; you can change it in Settings → Keyboard) archives the chat you are looking at. If its linked task is still actively working, Frink asks first, exactly as above. Otherwise the chat is archived straight away, and its running replies, flow runs, and terminals are stopped. The shortcut only works while a chat is on screen on desktop; it does nothing in Work Queue, Flows, or Settings.
+A flow's task is stopped with its flow run, as before: archiving a chat stops the flow runs it drives.
+
+**The archive shortcut follows the same rules.** Pressing **Archive current agent** (Cmd+Shift+D by default; you can change it in Settings → Keyboard) archives the chat you are looking at straight away, and stops its linked task, running replies, flow runs, and terminals. The shortcut only works while a chat is on screen on desktop; it does nothing in Work Queue, Flows, or Settings.
 
 Flow chats follow the Flow lifecycle instead. Permanently deleting a flow chat stops its linked run and removes that chat's work-queue tasks, including Needs Attention rows. Archiving keeps parked work available so you can restore the chat and continue.
 

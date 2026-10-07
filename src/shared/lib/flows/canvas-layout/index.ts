@@ -3,7 +3,7 @@
  */
 
 import dagre from '@dagrejs/dagre';
-import type { FlowGraph } from '../../../../../shared/lib/validate-flow-graph';
+import type { FlowGraph } from '../../validate-flow-graph';
 import {
   DAGRE_OPTS,
   FAN_OUT_BODY_TOP,
@@ -159,4 +159,16 @@ export function embedMissingPositionsFromDagre(graph: FlowGraph): FlowGraph {
       position: n.position ?? byId.get(n.id) ?? { x: 0, y: 0 },
     })),
   };
+}
+
+/**
+ * Discards every stored position and Fan Out size, then lays the whole graph out again.
+ * Stripping first keeps the result independent of the previous arrangement, so it is idempotent.
+ */
+export function resetLayout(graph: FlowGraph): FlowGraph {
+  const bare: FlowGraph = {
+    ...graph,
+    nodes: graph.nodes.map(({ position: _position, size: _size, ...node }) => node),
+  };
+  return embedMissingPositionsFromDagre(bare);
 }

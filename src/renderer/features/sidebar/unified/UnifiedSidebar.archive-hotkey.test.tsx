@@ -108,11 +108,11 @@ describe('UnifiedSidebar archive-focused-chat hotkey', () => {
     expect(hoisted.archiveChatMutateAsyncMock).not.toHaveBeenCalled();
   });
 
-  // Same rule as the row action: a chat whose linked task is still working asks first, and the
-  // shortcut itself neither archives nor cancels anything.
-  it('opens the task dialog when the chat has an active linked task', async () => {
+  // Archive stops the linked task in the main process, so the shortcut never cancels from a snapshot.
+  it('archives at once when the chat has an active linked task, without the task dialog', async () => {
+    vi.spyOn(toast, 'success').mockReturnValue('toast-id');
     focusPane('chat-task');
-    hoisted.getActiveLinkedTasksForChatIdsWithFallbackMock.mockResolvedValueOnce({
+    hoisted.getActiveLinkedTasksForChatIdsWithFallbackMock.mockResolvedValue({
       activeTasks: [{ taskId: 'task-1', chatId: 'chat-task' }],
       unresolvedTaskLinks: 0,
     });
@@ -121,11 +121,12 @@ describe('UnifiedSidebar archive-focused-chat hotkey', () => {
     await pressArchiveHotkey();
 
     await waitFor(() =>
-      expect(hoisted.capturedSidebarDialogsProps?.taskAwareActionDialog).toEqual(
-        expect.objectContaining({ open: true, operation: 'archive', chatIds: ['chat-task'] }),
-      ),
+      expect(hoisted.archiveChatMutateAsyncMock).toHaveBeenCalledWith({ id: 'chat-task' }),
     );
-    expect(hoisted.archiveChatMutateAsyncMock).not.toHaveBeenCalled();
+    expect(hoisted.capturedSidebarDialogsProps?.taskAwareActionDialog).toMatchObject({
+      open: false,
+    });
+    expect(hoisted.getActiveLinkedTasksForChatIdsWithFallbackMock).not.toHaveBeenCalled();
     expect(hoisted.cancelTasksBestEffortMock).not.toHaveBeenCalled();
   });
 

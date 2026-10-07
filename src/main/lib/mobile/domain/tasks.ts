@@ -66,12 +66,19 @@ async function continueTask(taskId: string) {
   const { carryOnFlowTask } = await import('../../flows/rerun');
   const result = await carryOnFlowTask(getDatabase(), taskId);
   if (result.ok) return;
-  throw new MobileApiError(
-    409,
-    result.reason === 'no-session'
-      ? 'This task can’t carry on where it stopped. Open it in Frink on your computer to run it again.'
-      : CHANGED,
-  );
+  if (result.reason === 'no-session') {
+    throw new MobileApiError(
+      409,
+      'This task can’t carry on where it stopped. Open it in Frink on your computer to run it again.',
+    );
+  }
+  if (result.reason === 'chat-archived') {
+    throw new MobileApiError(
+      409,
+      'This task’s chat is archived. Restore it in Frink on your computer to carry on.',
+    );
+  }
+  throw new MobileApiError(409, CHANGED);
 }
 
 /** Desktop's Start task: the task runs as an agent now, even if its trigger holds it until started.

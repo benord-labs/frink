@@ -66,11 +66,11 @@ export type FolderDescriptor = {
   projectIds: string[] | null;
 };
 
-/** Confirmation state for archive/delete flows that may strand running tasks. */
+/** Confirmation state for deletes that also stop a linked running task. Archive never asks. */
 export type TaskAwareActionDialogState = {
   open: boolean;
   mode: 'single' | 'batch';
-  operation: 'archive' | 'archive_batch' | 'delete' | 'delete_batch';
+  operation: 'delete' | 'delete_batch';
   chatIds: string[];
   taskIds: string[];
   totalChats: number;

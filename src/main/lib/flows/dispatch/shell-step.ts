@@ -29,12 +29,15 @@ export type ShellStepInput = {
   timeoutMs?: number;
 };
 
+export type ShellStepDeps = { executeFlowStepLocal: typeof executeFlowStepLocal };
+
 export async function executeShellStep(
   input: ShellStepInput,
   signal: AbortSignal,
   startedAt: number,
+  deps: ShellStepDeps = { executeFlowStepLocal },
 ): Promise<NodeOutput> {
-  const result: ParsedStepOutput = await executeFlowStepLocal(
+  const result: ParsedStepOutput = await deps.executeFlowStepLocal(
     {
       flowRunId: input.flowRunId,
       nodeRunId: input.nodeRunId,

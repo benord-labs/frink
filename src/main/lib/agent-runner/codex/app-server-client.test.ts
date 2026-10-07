@@ -71,7 +71,9 @@ const wireMethodSchema = z.object({ method: z.string().optional() });
 
 const CLIENT_INFO = { name: 'frink', version: 'test' };
 const HOST_CAPABILITIES = { frinkHostToolPermission: 1 };
-const flush = () => new Promise((r) => setTimeout(r, 5));
+// vscode-jsonrpc dispatches one message per setImmediate, so a fixed sleep races under load.
+// Settle on a positive anchor, then assert "never happened" expectations synchronously.
+const settle = (assertion: () => void) => vi.waitFor(assertion, { timeout: 2000, interval: 5 });
 
 /** Answer the initialize request so start() resolves, regardless of framing under test. */
 function answerInitialize(child: ReturnType<typeof makeFakeChild>): void {
@@ -116,6 +118,59 @@ describe('CodexAppServerClient', () => {
     vi.clearAllMocks();
   });
 
+  it('never spawns when disposed while beforeSpawn was pending', async () => {
+    // The registry supersedes a client whose spawn args changed; spawning after that would leave
+    // an app server running outside the registry.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const client = new CodexAppServerClient({
+      binary: 'codex',
+      clientInfo: CLIENT_INFO,
+      beforeSpawn: () => gate,
+    });
+    const started = client.start();
+    client.dispose();
+    release();
+
+    await expect(started).rejects.toThrow('disposed before it started');
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it('spawns only once beforeSpawn has settled (sc-4724)', async () => {
+    // The registry waits for the login-shell PATH here: the app server is reused for the session
+    // and its MCP servers inherit its env, so spawning on the GUI launch PATH would stick.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    attachMockPeer(child, (msg, peer) => {
+      if (msg.method === 'initialize') {
+        peer.write({
+          id: msg.id,
+          result: {
+            userAgent: 'mock',
+            codexHome: '/home/.codex',
+            platformFamily: 'unix',
+            platformOs: 'macos',
+            capabilities: HOST_CAPABILITIES,
+          },
+        });
+      }
+    });
+
+    const client = new CodexAppServerClient({
+      binary: 'codex',
+      clientInfo: CLIENT_INFO,
+      beforeSpawn: () => gate,
+    });
+    const started = client.start();
+    await Promise.resolve();
+    expect(spawnMock).not.toHaveBeenCalled();
+
+    release();
+    await started;
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    client.dispose();
+  });
+
   it('performs the initialize handshake and sends the initialized notification', async () => {
     let initializeId: unknown;
     let initializeParams: unknown;
@@ -150,9 +205,8 @@ describe('CodexAppServerClient', () => {
       capabilities: { frinkHostToolPermission: 1 },
     });
     expect(result.platformOs).toBe('macos');
-    // Allow the initialized notification (fire-and-forget) to flush.
-    await new Promise((r) => setTimeout(r, 5));
-    expect(sawInitializedNotification).toBe(true);
+    // The initialized notification is fire-and-forget; wait for the peer to see it.
+    await settle(() => expect(sawInitializedNotification).toBe(true));
 
     client.dispose();
     expect(child.kill).toHaveBeenCalled();
@@ -247,8 +301,10 @@ describe('CodexAppServerClient', () => {
       extraSkillRoots: [],
     });
     await client.start();
-    await flush();
-    expect(methods).toEqual(['initialize', 'initialized']);
+    // stdin is ordered: once the sentinel lands, anything sent before it has landed too.
+    await client.sendNotification('test/sentinel');
+    await settle(() => expect(methods).toContain('test/sentinel'));
+    expect(methods).toEqual(['initialize', 'initialized', 'test/sentinel']);
     client.dispose();
   });
 
@@ -357,8 +413,7 @@ describe('CodexAppServerClient', () => {
     }));
     await client.sendRequest('turn/start', { threadId: 't1', input: [] });
 
-    await new Promise((r) => setTimeout(r, 10));
-    expect(approvalResponse).toEqual({ decision: 'accept' });
+    await settle(() => expect(approvalResponse).toEqual({ decision: 'accept' }));
     client.dispose();
   });
 
@@ -436,14 +491,12 @@ describe('CodexAppServerClient NDJSON framing', () => {
     });
     const mid = Math.floor(line.length / 2);
     child.stdout.write(line.slice(0, mid));
-    await flush();
     expect(seen).toHaveLength(0); // nothing dispatched until the newline lands
     child.stdout.write(`${line.slice(mid)}\n`);
-    await flush();
 
     // vscode-jsonrpc consumes the routing `jsonrpc` field; the handler sees the
     // original params (proving the two halves were reassembled into one Message).
-    expect(seen).toEqual([{ threadId: 't1', itemId: 'i1', delta: 'hello' }]);
+    await settle(() => expect(seen).toEqual([{ threadId: 't1', itemId: 'i1', delta: 'hello' }]));
     client.dispose();
   });
 
@@ -462,9 +515,7 @@ describe('CodexAppServerClient NDJSON framing', () => {
     child.stdout.write(
       `${JSON.stringify({ method: 'item/agentMessage/delta', params: { threadId: 't1', delta: 'after-garbage' } })}\n`,
     );
-    await flush();
-
-    expect(seen).toEqual(['after-garbage']);
+    await settle(() => expect(seen).toEqual(['after-garbage']));
     client.dispose();
   });
 
@@ -488,9 +539,7 @@ describe('CodexAppServerClient NDJSON framing', () => {
     });
     // CRLF terminators + a blank line, all in a single data event.
     child.stdout.write(`${a}\r\n\r\n${b}\r\n`);
-    await flush();
-
-    expect(seen).toEqual(['a', 'b']);
+    await settle(() => expect(seen).toEqual(['a', 'b']));
     client.dispose();
   });
 
@@ -504,8 +553,7 @@ describe('CodexAppServerClient NDJSON framing', () => {
     child.stdout.write(
       `${JSON.stringify({ jsonrpc: '2.0', method: 'item/agentMessage/delta', params: { threadId: 't1', delta: 'x' } })}\n`,
     );
-    await flush();
-    expect(seen).toEqual([{ threadId: 't1', delta: 'x' }]);
+    await settle(() => expect(seen).toEqual([{ threadId: 't1', delta: 'x' }]));
     client.dispose();
   });
 
@@ -517,8 +565,7 @@ describe('CodexAppServerClient NDJSON framing', () => {
     const closed = vi.fn();
     client.onClose(closed);
     child.stdout.emit('end'); // process died
-    await flush();
-    expect(closed).toHaveBeenCalled();
+    await settle(() => expect(closed).toHaveBeenCalled());
     client.dispose();
   });
 });
@@ -545,9 +592,7 @@ describe('CodexAppServerClient stdin errors (sc-966)', () => {
     client.onError(errored);
 
     expect(() => child.stdin.emit('error', epipe())).not.toThrow();
-    await flush();
-
-    expect(errored).toHaveBeenCalledOnce();
+    await settle(() => expect(errored).toHaveBeenCalledOnce());
     const [payload] = errored.mock.calls[0] as [[Error, unknown, unknown]];
     expect(payload[0].message).toBe('write EPIPE');
     client.dispose();
@@ -563,7 +608,7 @@ describe('CodexAppServerClient stdin errors (sc-966)', () => {
     client.dispose();
 
     expect(() => child.stdin.emit('error', epipe())).not.toThrow();
-    await flush();
+    // stdin 'error' → onError is synchronous, so no wait is needed for this to be meaningful.
     expect(errored).not.toHaveBeenCalled();
   });
 
@@ -746,9 +791,8 @@ describe('CodexAppServerClient threadId demux', () => {
     const b = deltaSub(client, 'tB');
     notify('tA', 'u1', 'A');
     notify('tB', 'u2', 'B');
-    await flush();
+    await settle(() => expect(b).toEqual(['B']));
     expect(a).toEqual(['A']);
-    expect(b).toEqual(['B']);
     client.dispose();
   });
 
@@ -758,9 +802,8 @@ describe('CodexAppServerClient threadId demux', () => {
     const first = deltaSub(client, 't');
     const second = deltaSub(client, 't');
     notify('t', 'u1', 'x');
-    await flush();
+    await settle(() => expect(second).toEqual(['x']));
     expect(first).toEqual(['x']);
-    expect(second).toEqual(['x']);
     client.dispose();
   });
 
@@ -769,9 +812,8 @@ describe('CodexAppServerClient threadId demux', () => {
     const { a, b } = twoBoundNotifSubs(client, 'item/agentMessage/delta');
     notify('t', 'u1', 'A');
     notify('t', 'u2', 'B');
-    await flush();
-    expect((a as { delta: string }[]).map((p) => p.delta)).toEqual(['A']);
-    expect((b as { delta: string }[]).map((p) => p.delta)).toEqual(['B']);
+    await settle(() => expect(b).toMatchObject([{ delta: 'B' }]));
+    expect(a).toMatchObject([{ delta: 'A' }]);
     client.dispose();
   });
 
@@ -784,9 +826,8 @@ describe('CodexAppServerClient threadId demux', () => {
     child.stdout.write(
       `${JSON.stringify({ method: 'turn/completed', params: { threadId: 't', turn: { id: 'u1', status: 'completed' } } })}\n`,
     );
-    await flush();
-    expect(a).toHaveLength(1); // u1's turn
-    expect(b).toHaveLength(0); // u2 not finished by u1's completion
+    await settle(() => expect(a).toHaveLength(1)); // u1's turn
+    expect(b).toHaveLength(0); // u2 not finished by u1's completion (same dispatch as a)
     client.dispose();
   });
 
@@ -802,8 +843,7 @@ describe('CodexAppServerClient threadId demux', () => {
     child.stdout.write(
       `${JSON.stringify({ id: 50, method: COMMAND_APPROVAL_METHOD, params: { threadId: 'tX', turnId: 'u2', itemId: 'i' } })}\n`,
     );
-    await flush();
-    expect(responses.get(50)).toEqual({ decision: 'decline' }); // u2 → subB
+    await settle(() => expect(responses.get(50)).toEqual({ decision: 'decline' })); // u2 → subB
     client.dispose();
   });
 
@@ -821,10 +861,9 @@ describe('CodexAppServerClient threadId demux', () => {
     child.stdout.write(
       `${JSON.stringify({ id: 52, method: FRINK_HOST_TOOL_PERMISSION_METHOD, params: { threadId: 'tX', turnId: 'u2', itemId: 'i' } })}\n`,
     );
-    await flush();
+    await settle(() => expect(responses.get(52)).toEqual({ decision: 'deny' }));
     expect(gateA).not.toHaveBeenCalled();
     expect(gateB).toHaveBeenCalledTimes(1);
-    expect(responses.get(52)).toEqual({ decision: 'deny' });
     client.dispose();
   });
 
@@ -847,14 +886,15 @@ describe('CodexAppServerClient threadId demux', () => {
     child.stdout.write(
       `${JSON.stringify({ id: 55, method: FRINK_HOST_TOOL_PERMISSION_METHOD, params: { threadId: 'tX', turnId: 'u1', itemId: 'i' } })}\n`,
     );
-    await flush();
-
+    // The reply to 55 is written inside its own dispatch, after turn/started was handled.
+    await settle(() =>
+      expect(responses.get(55)).toEqual({
+        decision: 'deny',
+        reason: 'No matching active Frink turn',
+      }),
+    );
     expect(gateA).not.toHaveBeenCalled();
     expect(gateB).not.toHaveBeenCalled();
-    expect(responses.get(55)).toEqual({
-      decision: 'deny',
-      reason: 'No matching active Frink turn',
-    });
     client.dispose();
   });
 
@@ -871,13 +911,13 @@ describe('CodexAppServerClient threadId demux', () => {
     child.stdout.write(
       `${JSON.stringify({ id: 56, method: FRINK_HOST_TOOL_PERMISSION_METHOD, params: { threadId: 'tX', turnId: 'old', itemId: 'i' } })}\n`,
     );
-    await flush();
-
+    await settle(() =>
+      expect(responses.get(56)).toEqual({
+        decision: 'deny',
+        reason: 'No matching active Frink turn',
+      }),
+    );
     expect(gate).not.toHaveBeenCalled();
-    expect(responses.get(56)).toEqual({
-      decision: 'deny',
-      reason: 'No matching active Frink turn',
-    });
     client.dispose();
   });
 
@@ -892,12 +932,13 @@ describe('CodexAppServerClient threadId demux', () => {
     child.stdout.write(
       `${JSON.stringify({ id: 53, method: FRINK_HOST_TOOL_PERMISSION_METHOD, params: { threadId: 'tX', turnId: 'u1', itemId: 'i' } })}\n`,
     );
-    await flush();
+    await settle(() =>
+      expect(responses.get(53)).toEqual({
+        decision: 'deny',
+        reason: 'No matching active Frink turn',
+      }),
+    );
     expect(gate).not.toHaveBeenCalled();
-    expect(responses.get(53)).toEqual({
-      decision: 'deny',
-      reason: 'No matching active Frink turn',
-    });
     client.dispose();
   });
 
@@ -911,12 +952,13 @@ describe('CodexAppServerClient threadId demux', () => {
     child.stdout.write(
       `${JSON.stringify({ id: 54, method: FRINK_HOST_TOOL_PERMISSION_METHOD, params: { threadId: 'tX', turnId: 'u1', itemId: 'i' } })}\n`,
     );
-    await flush();
+    await settle(() =>
+      expect(responses.get(54)).toEqual({
+        decision: 'deny',
+        reason: 'No matching active Frink turn',
+      }),
+    );
     expect(gate).not.toHaveBeenCalled();
-    expect(responses.get(54)).toEqual({
-      decision: 'deny',
-      reason: 'No matching active Frink turn',
-    });
     client.dispose();
   });
 
@@ -935,8 +977,7 @@ describe('CodexAppServerClient threadId demux', () => {
     child.stdout.write(
       `${JSON.stringify({ id: 51, method: COMMAND_APPROVAL_METHOD, params: { threadId: 'tX', turnId: 'u3', itemId: 'i' } })}\n`,
     );
-    await flush();
-    expect(responses.get(51)).toEqual({ decision: 'decline' });
+    await settle(() => expect(responses.get(51)).toEqual({ decision: 'decline' }));
     expect(gateA).not.toHaveBeenCalled();
     expect(gateB).not.toHaveBeenCalled();
     client.dispose();
@@ -952,9 +993,8 @@ describe('CodexAppServerClient threadId demux', () => {
     child.stdout.write(
       `${JSON.stringify({ id: 61, method: PERMISSIONS_APPROVAL_METHOD, params: { threadId: 'known', turnId: 'u' } })}\n`,
     );
-    await flush();
+    await settle(() => expect(responses.get(61)).toEqual({ decision: 'decline' })); // method frink never gates
     expect(responses.get(60)).toEqual({ decision: 'decline' }); // unknown thread
-    expect(responses.get(61)).toEqual({ decision: 'decline' }); // method frink never gates
     client.dispose();
   });
 
@@ -965,9 +1005,8 @@ describe('CodexAppServerClient threadId demux', () => {
     child.stdout.write(
       `${JSON.stringify({ id: 70, method: 'item/tool/requestUserInput', params: { threadId: 'known', turnId: 'u' } })}\n`,
     );
-    await flush();
+    await settle(() => expect(errors.get(70)).toMatchObject({ code: -32_601 }));
     expect(responses.get(70)).toBeUndefined();
-    expect(errors.get(70)).toMatchObject({ code: -32_601 });
     client.dispose();
   });
 
@@ -978,9 +1017,8 @@ describe('CodexAppServerClient threadId demux', () => {
     child.stdout.write(
       `${JSON.stringify({ id: 71, method: 'mcpServer/elicitation/request', params: { threadId: 'known', turnId: null, serverName: 'github' } })}\n`,
     );
-    await flush();
+    await settle(() => expect(errors.get(71)).toMatchObject({ code: -32_601 }));
     expect(responses.get(71)).toBeUndefined();
-    expect(errors.get(71)).toMatchObject({ code: -32_601 });
     client.dispose();
   });
 
@@ -994,17 +1032,15 @@ describe('CodexAppServerClient threadId demux', () => {
     child.stdout.write(
       `${JSON.stringify({ id: 80, method: 'mcpServer/elicitation/request', params: { threadId: 'tX', turnId: 'u1', serverName: 'github' } })}\n`,
     );
-    await flush();
+    await settle(() => expect(errors.get(80)).toMatchObject({ code: -32_601 }));
     expect(bashGate).not.toHaveBeenCalled();
     expect(responses.get(80)).toBeUndefined();
-    expect(errors.get(80)).toMatchObject({ code: -32_601 });
 
     child.stdout.write(
       `${JSON.stringify({ id: 81, method: COMMAND_APPROVAL_METHOD, params: { threadId: 'tX', turnId: 'u1', itemId: 'i' } })}\n`,
     );
-    await flush();
+    await settle(() => expect(responses.get(81)).toEqual({ decision: 'accept' }));
     expect(bashGate).toHaveBeenCalledTimes(1);
-    expect(responses.get(81)).toEqual({ decision: 'accept' });
     client.dispose();
   });
 
@@ -1014,8 +1050,10 @@ describe('CodexAppServerClient threadId demux', () => {
     const sub = client.forThread('t');
     sub.onNotification('item/agentMessage/delta', (p) => seen.push((p as { delta: string }).delta));
     sub.dispose();
+    // A live sibling on the same thread is fanned out to in the same dispatch — the anchor.
+    const live = deltaSub(client, 't');
     notify('t', 'u1', 'x');
-    await flush();
+    await settle(() => expect(live).toEqual(['x']));
     expect(seen).toEqual([]);
     client.dispose();
   });

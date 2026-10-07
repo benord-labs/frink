@@ -108,8 +108,10 @@ function throwCarryOnReason(
     'no-session':
       'Nothing to carry on — the failed attempt has no resumable session. Use Retry to run it again.',
     'invalid-state': 'Only failed or attention-parked tasks can be retried',
+    'chat-archived': "This task's chat is archived. Restore the chat to carry on, or use Retry.",
     'admission-required':
       "Carry on isn't available for this run anymore — it lost its place in the run queue. Use Retry to continue from the last step.",
+    superseded: 'This attempt was replaced by a newer one. Carry on from the latest attempt.',
   };
   throw new Error(messages[reason]);
 }
