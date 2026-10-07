@@ -5,7 +5,7 @@ import { checkPermission } from '../../permissions/v2/check';
 import { formatDenyReason } from '../../permissions/v2/deny-reason-format';
 import { persistApprovedRule } from '../../permissions/v2/persist-approved-rule';
 import * as socketClient from '../client';
-import { validateToolPermission } from '../executor';
+import { validateToolPermission } from '../streaming/pending-permission/validate-tool-permission';
 import type { ExecutorPermissionHarness } from './executor-codex-permissions';
 
 /** Registers sc-3537 cases inside the parent `validateToolPermission (v2 wrapper)` block,

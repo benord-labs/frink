@@ -21,7 +21,7 @@ import {
   type ClaudeTurnContext,
   createTurnChunkEmitter,
 } from '../../claude-turn-context';
-import type { validateToolPermission } from '../../executor';
+import type { validateToolPermission } from '../../streaming/pending-permission/validate-tool-permission';
 import { buildUserPromptSubmitReminderHook } from '../../operator-reminders';
 import {
   denyPlanTransitionInWakeBurst,

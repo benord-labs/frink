@@ -11,7 +11,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { HookRegistration } from '../../../../../shared/types/hook-inventory';
 import type { ClaudeSession } from '../../claude-session-registry';
 import { createClaudeTurnContext } from '../../claude-turn-context';
-import type { validateToolPermission } from '../../executor';
+import type { validateToolPermission } from '../../streaming/pending-permission/validate-tool-permission';
 import { buildClaudeSessionCallbacks } from './session-callbacks';
 
 type Verdict = Awaited<ReturnType<typeof validateToolPermission>>;

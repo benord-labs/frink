@@ -12,7 +12,7 @@ import {
 } from '../claude-session-registry';
 import { type ClaudeTurnContext, createClaudeTurnContext } from '../claude-turn-context';
 import * as socketClient from '../client';
-import { drainPendingPermissions } from '../executor';
+import { drainPendingPermissions } from '../streaming/pending-permission/validate-tool-permission';
 import {
   noteSubagentTaskFrame,
   setBackgroundRosterPublisher,

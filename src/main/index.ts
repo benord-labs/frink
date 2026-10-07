@@ -592,7 +592,8 @@ if (gotTheLock) {
       const { releaseNonFlowClaudeSessions } = await import('./lib/socket/claude-wake-hold');
       releaseNonFlowClaudeSessions('app-quit');
       // Settle pending permission prompts as timed out before Phase 2 kills their child processes.
-      const { drainPendingPermissions } = await import('./lib/socket/executor');
+      const { drainPendingPermissions } =
+        await import('./lib/socket/streaming/pending-permission/validate-tool-permission');
       drainPendingPermissions();
       // Flow subsystems started in app.whenReady — stop them here so the
       // setInterval timers don't fire into a closed DB during the 5s window.

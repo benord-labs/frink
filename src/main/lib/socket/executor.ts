@@ -16,7 +16,6 @@ import { stripMessageMarkers } from '../../../shared/lib/message-markers/strip-m
 import { isUserAbortErrorMessage } from '../../../shared/lib/user-abort-error';
 import type { ChatMode } from '../../../shared/types/chat-mode';
 import type { ExecutionSettings } from '../../../shared/types/execution';
-import type { PermissionPresentation } from '../../../shared/types/permissions';
 import { runCodexAgent } from '../agent-runner';
 import { createCodexHostPermissionCheck } from '../agent-runner/codex/permissions';
 import { buildCodexDynamicChatMcpUrl } from '../agent-runner/codex/spawn-args';
@@ -45,24 +44,11 @@ import {
 } from '../credentials';
 import { getDatabase } from '../db';
 import { getChatWithProjectAccount } from '../db/repos/chats';
-import { getProjectByPath } from '../db/repos/projects';
 import { projects as projectsTable } from '../db/schema';
 import { stageContinuationResume } from '../flows/admission/terminal-resume/continuation';
 import { createRollbackStash } from '../git/stash';
-import {
-  type FlowConsentDecision,
-  type FlowConsentRequest,
-  readFlowConsentDecision,
-} from '../mcp/flows-tools/gating/flow-invocation-consent';
 import { resolveFrinkMcpServers } from '../mcp/runtime';
 import type { createClaudeMcpConfigTransport } from '../mcp/runtime/mcp-config-transport';
-import { getOperationFromToolName } from '../permissions';
-import { isValidPermissionPresentation } from '../permissions/presentation-schema';
-import { permissionTimeoutMessage } from '../permissions/prompt-timeout';
-import { buildPermissionDecisionInput } from '../permissions/v2';
-import { checkPermission } from '../permissions/v2/check';
-import { formatDenyReason } from '../permissions/v2/deny-reason-format';
-import { persistApprovedRule } from '../permissions/v2/persist-approved-rule';
 import { captureMainMessage } from '../sentry/init';
 import {
   disposeCleanStreamEnd,
@@ -107,11 +93,7 @@ import {
 import { armWakePump, hasWakeHold, releaseWakeHold, takeWakeHold } from './claude-wake-hold';
 import {
   type MessagePart,
-  onPermissionResponse,
-  type PermissionRequestPayload,
   sendExecuteCompleteDirect,
-  sendPermissionDismiss,
-  sendPermissionRequest,
   sendSubChatModeChange,
   sendWakeHoldChanged,
 } from './client';
@@ -166,9 +148,9 @@ export {
 import { extractImagePartsFromMessage, writeImagePartsToTempFiles } from './streaming/image-parts';
 import { recordLiveStreamStart } from './streaming/live-stream';
 import {
-  createPendingPermissionRequestBroker,
-  generatePermissionRequestId,
-} from './streaming/pending-permission/request';
+  hasPendingPermissionRequest,
+  validateToolPermission,
+} from './streaming/pending-permission/validate-tool-permission';
 import {
   adoptedTurnBeforePush,
   armAutoDuringPlan,
@@ -260,195 +242,6 @@ const getClaudeQuery = async () => {
   cachedClaudeQuery = sdk.query;
   return cachedClaudeQuery;
 };
-
-// Permission Types
-// ============================================================================
-
-const permissionRequests = createPendingPermissionRequestBroker({
-  getExecutionSignal: (subChatId) => getActiveExecution(subChatId)?.controller.signal,
-  onResponse: onPermissionResponse,
-  sendDismiss: sendPermissionDismiss,
-  sendRequest: sendPermissionRequest,
-});
-export const drainPendingPermissions = permissionRequests.drain;
-export const hasPendingPermissionRequest = permissionRequests.hasPending;
-
-/**
- * Ask the user whether an agent may run a specific flow.
- *
- * Rides the existing permission transport rather than adding a second approval
- * system: same pending map, same socket event, same timeout and dismissal. It
- * runs strictly AFTER the v2 tool decision, so it can only narrow — a deny rule
- * has already blocked the call before this is reached.
- */
-export async function requestFlowInvocationConsent(
-  request: FlowConsentRequest,
-): Promise<FlowConsentDecision> {
-  const response = await permissionRequests.request(
-    {
-      chatId: request.chatId,
-      subChatId: request.subChatId,
-      requestId: generatePermissionRequestId(),
-      type: 'flow_consent',
-      path: request.flowId,
-      operation: 'flow_consent',
-      reason: `Run flow: ${request.flowName}`,
-      flowConsent: {
-        flowId: request.flowId,
-        flowName: request.flowName,
-        summary: request.summary,
-        allowOnce: request.allowOnce,
-      },
-    },
-    // `null` detaches deliberately; `undefined` would fall back to the live
-    // execution and let an ordinary next turn dismiss the card.
-    request.abortSignal ?? null,
-  );
-  return readFlowConsentDecision(response);
-}
-
-// ============================================================================
-// Permission Scope Resolution
-// ============================================================================
-
-/**
- * Validate tool permission via the v2 dispatcher for provider hooks, MCP calls,
- * and Codex host-permission requests.
- */
-export async function validateToolPermission(
-  toolName: string,
-  toolInput: Record<string, unknown>,
-  projectPath: string | undefined,
-  chatId: string,
-  subChatId: string,
-  reason?: string,
-  permissionPathOverride?: string,
-  isFlowDrivenTurn?: boolean,
-  deferAskToProvider = false,
-  executionSignal?: AbortSignal,
-  trustedFrinkOwnedMcp?: boolean,
-  mcpIdentity?: { server: string; tool: string },
-  presentation?: PermissionPresentation,
-): Promise<{ allowed: true } | { allowed: false; message: string } | { allowed: null }> {
-  if (!isValidPermissionPresentation(toolName, presentation)) {
-    log.error('[executor] Rejected invalid permission presentation', { toolName });
-    return { allowed: false, message: 'Invalid permission presentation — tool blocked' };
-  }
-
-  if (!projectPath) return { allowed: true };
-
-  // From here every tool call is decided by the permission rules, which prompt when
-  // no rule matches and deny outright when the rule store cannot be read.
-
-  // permissionPathOverride is a FILE-level remap (worktree → canonical project
-  // FILE path), not a project-root override. PATH tools feed it into the decision
-  // input (rule matching against the canonical root); Bash/MCP keep it display-only.
-  //
-  // This read runs before checkPermission's own rule-store guard, so it carries the
-  // same posture: a DB we cannot read denies instead of throwing past the gate.
-  let project: Awaited<ReturnType<typeof getProjectByPath>>;
-  try {
-    project = await getProjectByPath(getDatabase(), projectPath);
-  } catch (err) {
-    log.error('[executor] Could not read project for permission check — denying', err);
-    return { allowed: false, message: formatDenyReason({ kind: 'db:unavailable' }) };
-  }
-
-  // Session-dir auto-allow root: THIS chat's CLAUDE_CONFIG_DIR. `check-edit`
-  // short-circuits Reads under its allow-listed subtrees (pasted/ + tool-result
-  // spills) without prompting. Guarded by the same validator as planDirRoot.
-  const sessionDirRoot = isValidSubChatIdForSessionPaths(subChatId)
-    ? path.join(app.getPath('userData'), 'claude-sessions', subChatId)
-    : undefined;
-
-  // Plan-mode auto-allow: the SDK keeps plans under $CLAUDE_CONFIG_DIR/plans,
-  // classified `outside` the project — pass the dir so check-edit short-circuits
-  // plan reads/writes instead of prompting each one.
-  const planDirRoot = isValidSubChatIdForSessionPaths(subChatId)
-    ? getClaudeSessionPlansDir(subChatId)
-    : undefined;
-
-  const decisionInput = buildPermissionDecisionInput(toolName, toolInput, permissionPathOverride);
-  const result = await checkPermission({
-    tool: toolName,
-    input: decisionInput,
-    projectId: project?.id ?? '',
-    projectPath,
-    sessionDirRoot,
-    planDirRoot,
-    trustedFrinkOwnedMcp,
-    mcpIdentity,
-  });
-  if (result.decision === 'allow') return { allowed: true };
-  if (result.decision === 'deny') {
-    return { allowed: false, message: formatDenyReason(result.reason) };
-  }
-
-  // Provider Auto Mode reviews the remaining `ask` bucket, uniformly across every tool
-  // class — vendor plugin MCP servers included (auto-mode-tool-approval 2026-09-03 Target).
-  if (deferAskToProvider) return { allowed: null };
-
-  // ask → prompt the renderer in-process, persist + (for bash) sync cursor on approval.
-  const isBash = toolName === 'Bash';
-  const isMcp = toolName.startsWith('mcp__');
-  const fallbackPath = isBash
-    ? String((toolInput as { command?: string }).command ?? '')
-    : String((toolInput as { file_path?: string }).file_path ?? '');
-  // Apply worktree FILE-path override here only — for prompt rendering + rule.
-  const remappedPath = permissionPathOverride ?? fallbackPath;
-  const requestId = generatePermissionRequestId();
-  const payload: PermissionRequestPayload = {
-    chatId,
-    subChatId,
-    requestId,
-    type: isMcp ? 'mcp_tool' : isBash ? 'bash' : 'file',
-    path: remappedPath,
-    operation: isMcp
-      ? 'mcp_tool'
-      : isBash
-        ? 'bash'
-        : (getOperationFromToolName(toolName) ?? 'read'),
-    reason: reason ?? `Tool: ${toolName}`,
-    prompt: presentation ? { ...result.prompt, presentation } : result.prompt,
-    // projectPath enables the "Allow for project" button in FourButtonView
-    // (`hasProject = !!request.projectPath`). Omitted when no project row
-    // matches (general chat / virtual folder, where projectPath is the home
-    // dir): persistApprovedRule cannot write a project rule there, so the
-    // button must render disabled and steer the user to "On this machine".
-    ...(project ? { projectPath } : {}),
-    ...(project?.name ? { projectName: project.name } : {}),
-    // MCP payloads include the tool name so the renderer can render the full identifier.
-    ...(isMcp ? { toolName } : {}),
-  };
-
-  const promptResult = await permissionRequests.request(payload, executionSignal);
-
-  // Timeout ≠ deny: the user may never have seen the prompt (rule writes gate on duration==='always').
-  if (promptResult.timedOut) {
-    log.info('[executor] Permission request timed out', { remappedPath, toolName, requestId });
-    return { allowed: false, message: permissionTimeoutMessage(remappedPath, isFlowDrivenTurn) };
-  }
-  if (!promptResult.approved) {
-    return { allowed: false, message: 'User denied permission' };
-  }
-
-  // The user approved this call; a failed rule write only means the next call prompts
-  // again, so it must not turn the approval into a deny or a rejected promise.
-  try {
-    await persistApprovedRule({
-      db: getDatabase(),
-      projectPath,
-      project: project ?? null,
-      promptResult,
-      isBash,
-      logTag: '[executor]',
-    });
-  } catch (err) {
-    log.warn('[executor] Could not persist approved rule', err);
-  }
-
-  return { allowed: true };
-}
 
 type ExecuteRequestPayload = {
   chatId: string;
