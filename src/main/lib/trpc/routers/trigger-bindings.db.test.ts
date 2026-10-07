@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { flows } from '../../db/schema';
+import { flows, flowTriggerBindings } from '../../db/schema';
 import { freshDb, type TestDb } from '../../db/test-utils/fresh-db';
 import type { Context } from '../index';
 
@@ -15,7 +15,7 @@ const caller = triggerBindingsRouter.createCaller({ getWindow: () => null } sati
 const flowId = 'flow-sc-3296';
 
 const createPostTaskBinding = () =>
-  caller.create({ flowId, projectId: null, triggerType: 'post_task_trigger', config: {} });
+  caller.create({ flowId, projectId: 'proj-1', triggerType: 'post_task_trigger', config: {} });
 
 describe('triggerBindingsRouter delete against real SQLite', () => {
   let db: TestDb;
@@ -58,5 +58,76 @@ describe('triggerBindingsRouter delete against real SQLite', () => {
     await db.delete(flows);
 
     await expect(caller.delete({ id: binding.id })).resolves.toEqual({ ok: true });
+  });
+});
+
+describe('triggerBindingsRouter project requirement for post_task_trigger (sc-3299)', () => {
+  let db: TestDb;
+
+  beforeEach(async () => {
+    db = freshDb();
+    dbRef.current = db;
+    await db.insert(flows).values({ id: flowId, name: 'Flow' });
+  });
+
+  it.each([null, '', '  '])('rejects a post_task_trigger with project %j', async (projectId) => {
+    await expect(
+      caller.create({ flowId, projectId, triggerType: 'post_task_trigger', config: {} }),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    await expect(caller.list({ flowId })).resolves.toEqual([]);
+  });
+
+  it('still accepts a schedule_trigger without a project', async () => {
+    const binding = await caller.create({
+      flowId,
+      projectId: null,
+      triggerType: 'schedule_trigger',
+      config: {},
+    });
+    expect(binding.projectId).toBeNull();
+  });
+
+  it('refuses to re-activate a project-less binding copied by flow duplication', async () => {
+    await db.insert(flowTriggerBindings).values({
+      id: 'b-dup',
+      flowId,
+      projectId: null,
+      triggerType: 'post_task_trigger',
+      isActive: false,
+    });
+
+    await expect(caller.update({ id: 'b-dup', isActive: true })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    const [row] = await caller.list({ flowId });
+    expect(row.isActive).toBe(false);
+
+    // "Sync config to binding" sends config + clearLastError; it must keep working on the bad row.
+    await expect(
+      caller.update({ id: 'b-dup', config: { triggerStates: ['done'] }, clearLastError: true }),
+    ).resolves.toMatchObject({ config: { triggerStates: ['done'] } });
+    await expect(caller.update({ id: 'b-dup', isActive: false })).resolves.toMatchObject({
+      isActive: false,
+    });
+    await expect(caller.delete({ id: 'b-dup' })).resolves.toEqual({ ok: true });
+  });
+
+  // The guard must stay narrow: a project-less schedule binding is the normal row that
+  // upsertScheduleBindingForFlow writes, and users toggle it off and on from the editor.
+  it.each([
+    { triggerType: 'schedule_trigger' as const, projectId: null },
+    { triggerType: 'post_task_trigger' as const, projectId: 'proj-1' },
+  ])('re-activates an inactive $triggerType with project $projectId', async (scope) => {
+    await db.insert(flowTriggerBindings).values({ id: 'b-ok', flowId, ...scope, isActive: false });
+
+    await expect(caller.update({ id: 'b-ok', isActive: true })).resolves.toMatchObject({
+      isActive: true,
+    });
+  });
+
+  it('still reports NOT_FOUND when re-activating a binding that does not exist', async () => {
+    await expect(caller.update({ id: 'missing', isActive: true })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
   });
 });

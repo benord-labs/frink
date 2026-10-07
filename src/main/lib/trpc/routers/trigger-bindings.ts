@@ -7,6 +7,7 @@ import type { DbFlowTriggerBinding } from '../../cloud/trigger-bindings';
 import { getDatabase } from '../../db';
 import * as bindingsRepo from '../../db/repos/flow-trigger-bindings';
 import {
+  TriggerProjectRequiredError,
   TriggerScopeAlreadyActiveError,
   TriggerTypeNotSupportedError,
 } from '../../db/repos/flow-trigger-bindings';
@@ -18,6 +19,9 @@ const triggerTypeSchema = z.enum(['post_task_trigger', 'schedule_trigger']);
 function mapRepoError(e: unknown): never {
   if (e instanceof TriggerTypeNotSupportedError) {
     throw new TRPCError({ code: 'PRECONDITION_FAILED', message: e.message, cause: e });
+  }
+  if (e instanceof TriggerProjectRequiredError) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: e.message, cause: e });
   }
   if (e instanceof TriggerScopeAlreadyActiveError) {
     throw new TRPCError({ code: 'CONFLICT', message: e.message, cause: e });

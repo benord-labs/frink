@@ -52,6 +52,27 @@ function readFilterArray(cfg: Record<string, unknown> | undefined): string[] | u
   return out.length > 0 ? out : undefined;
 }
 
+/** A binding with no project can never match a task, so say so beside any recorded error. */
+function BindingWarnings({
+  projectId,
+  lastError,
+}: {
+  projectId: string | null;
+  lastError: string | null;
+}): ReactElement {
+  return (
+    <>
+      {!projectId?.trim() ? (
+        <p className="text-xs text-destructive">
+          This automation has no project, so it will never fire. Remove it and enable it again with
+          a project.
+        </p>
+      ) : null}
+      {lastError ? <p className="text-xs text-destructive">{lastError}</p> : null}
+    </>
+  );
+}
+
 type Props = {
   flowId: string;
   flowProjectId: string | null;
@@ -227,9 +248,7 @@ export function PostTaskTriggerConfig({
                 Automation active
               </Label>
             </div>
-            {postBinding.lastError ? (
-              <p className="text-xs text-destructive">{postBinding.lastError}</p>
-            ) : null}
+            <BindingWarnings projectId={postBinding.projectId} lastError={postBinding.lastError} />
             <div className="flex flex-wrap gap-2">
               <Button
                 type="button"
