@@ -171,8 +171,7 @@ function WelcomeHero({ exiting, onDismiss }: { exiting: boolean; onDismiss: () =
           Welcome to Frink
         </h1>
         <p className="mx-auto mt-4 max-w-md text-base leading-relaxed text-muted-foreground text-pretty">
-          A friendly AI development tool. Start with a chat — grow it into automations that run on
-          their own.
+          Fine-tuned automations, for everyone.
         </p>
       </Rise>
       <Rise reduced={reducedMotion} delay={0.45} className="mt-9 flex flex-col items-center gap-4">

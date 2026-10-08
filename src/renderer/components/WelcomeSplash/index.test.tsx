@@ -64,7 +64,7 @@ describe('WelcomeSplash — copy', () => {
     stubReducedMotion(true);
     render(<WelcomeSplash />);
     expect(screen.getByRole('heading', { level: 1, name: HEADLINE })).toBeInTheDocument();
-    expect(screen.getByText(/A friendly AI development tool/)).toBeInTheDocument();
+    expect(screen.getByText('Fine-tuned automations, for everyone.')).toBeInTheDocument();
     expect(screen.getByText(/your own Claude or OpenAI account/)).toBeInTheDocument();
   });
 });
