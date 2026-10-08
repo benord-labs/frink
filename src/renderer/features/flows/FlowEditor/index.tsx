@@ -7,7 +7,7 @@ import { Button } from '@benord-labs/frink-primitives';
 import * as Sentry from '@sentry/electron/renderer';
 import { TRPCClientError } from '@trpc/client';
 import { useAtom, useAtomValue, useSetAtom } from 'jotai';
-import { Loader2 } from 'lucide-react';
+import { AlertTriangle, Loader2 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -1262,27 +1262,19 @@ export function FlowEditor({ flowId, onBack }: FlowEditorProps): ReactElement {
         </AlertDialogContent>
       </AlertDialog>
 
-      {!validation.valid && (
+      {!validation.valid || warnings.length > 0 ? (
         <div
-          role="alert"
+          role={validation.valid ? 'status' : 'alert'}
           aria-live="polite"
-          className="px-4 py-2 text-sm text-amber-700 dark:text-amber-400 bg-amber-500/10 border-b border-amber-500/20"
+          className="flex items-start gap-2 border-b border-border/40 px-4 py-2 text-sm text-muted-foreground"
         >
-          <div>{validation.errors[0] ?? 'Invalid graph'}</div>
-          {warnings.length > 0 ? (
-            <div className="mt-1 border-t border-amber-500/20 pt-1 text-xs opacity-90">
-              {warnings[0]}
-            </div>
-          ) : null}
-        </div>
-      )}
-      {validation.valid && warnings.length > 0 ? (
-        <div
-          role="status"
-          aria-live="polite"
-          className="px-4 py-2 text-sm text-amber-700 dark:text-amber-400 bg-amber-500/10 border-b border-amber-500/20"
-        >
-          {warnings[0]}
+          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
+          <div>
+            {validation.valid ? null : (
+              <div className="text-warning">{validation.errors[0] ?? 'Invalid graph'}</div>
+            )}
+            {warnings[0]}
+          </div>
         </div>
       ) : null}
 
@@ -1342,20 +1334,21 @@ export function FlowEditor({ flowId, onBack }: FlowEditorProps): ReactElement {
                   key="flow-config-panel"
                   className="flex shrink-0 flex-col overflow-hidden bg-transparent pl-1"
                   initial={{ width: 0 }}
-                  animate={{ width: 380 }}
+                  animate={{ width: 440 }}
                   exit={{ width: 0 }}
                   transition={{ duration: 0.28, ease: [0.32, 0.72, 0, 1] }}
                 >
                   <div
                     className={cn(
                       UNIFIED_GLASS_INNER_CLASS,
-                      'flex h-full min-h-0 w-[380px] min-w-[380px] flex-col overflow-hidden rounded-xl',
+                      'flex h-full min-h-0 w-[440px] min-w-[440px] flex-col overflow-hidden rounded-xl',
                     )}
                   >
                     <BlockConfigPanel
                       flowId={flowId}
                       flowProjectId={data?.project_id ?? null}
                       selectedNode={selectedNode}
+                      customBlockIcon={customBlockIcons?.get(selectedNode.blockType)}
                       isLoopCondition={selectedNodeIsLoopCondition}
                       triggerBlockType={triggerBlockType}
                       webhookTriggerIntegrationId={webhookTriggerIntegrationId}
@@ -1404,14 +1397,14 @@ export function FlowEditor({ flowId, onBack }: FlowEditorProps): ReactElement {
               key="flow-settings-panel"
               className="flex shrink-0 flex-col overflow-hidden bg-transparent pl-1"
               initial={{ width: 0 }}
-              animate={{ width: 380 }}
+              animate={{ width: 440 }}
               exit={{ width: 0 }}
               transition={{ duration: 0.28, ease: [0.32, 0.72, 0, 1] }}
             >
               <div
                 className={cn(
                   UNIFIED_GLASS_INNER_CLASS,
-                  'h-full min-h-0 w-[380px] min-w-[380px] rounded-xl',
+                  'h-full min-h-0 w-[440px] min-w-[440px] rounded-xl',
                 )}
               >
                 <FlowSettingsPanel

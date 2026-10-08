@@ -30,7 +30,7 @@ export function FlowStepAddHandle({
       <svg
         width={4}
         height={STUB_HEIGHT}
-        className="shrink-0 overflow-visible text-muted-foreground/55"
+        className="shrink-0 overflow-visible text-muted-foreground/40"
         aria-hidden
       >
         <line
@@ -39,8 +39,8 @@ export function FlowStepAddHandle({
           x2={2}
           y2={STUB_HEIGHT}
           stroke="currentColor"
-          strokeWidth={2}
-          strokeDasharray="5 4"
+          strokeWidth={1.5}
+          strokeDasharray="3 4"
           strokeLinecap="round"
         />
       </svg>
@@ -48,7 +48,7 @@ export function FlowStepAddHandle({
         type="button"
         variant="secondary"
         size="sm"
-        className="h-8 w-8 shrink-0 rounded-full border border-border/50 bg-card shadow-md ring-1 ring-inset ring-border/35"
+        className="h-7 w-7 shrink-0 rounded-full border border-border/70 bg-card text-muted-foreground shadow-sm hover:text-foreground"
         disabled={atCap}
         aria-label="Add new step"
         title="Add new step"
@@ -58,7 +58,7 @@ export function FlowStepAddHandle({
         }}
         iconOnly
       >
-        <Plus className="h-4 w-4" aria-hidden />
+        <Plus className="size-3.5" aria-hidden />
       </Button>
     </div>
   );

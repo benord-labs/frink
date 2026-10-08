@@ -590,7 +590,6 @@ export default [
       '**/__tests__/**',
       // The flow canvas and its nodes stay solid.
       'src/renderer/features/flows/FlowEditor/FlowCanvas/**',
-      'src/renderer/features/flows/FlowEditor/CanvasControls/**',
       'src/renderer/features/flows/FlowEditor/FlowRunHistoryPanel/BatchReportPanel/BatchPlanCanvas/**',
       'src/renderer/features/flows/FlowEditor/BatchMonitor/BatchDagCanvas/**',
       // A hollow timeline dot sits on the rail and must hide it.

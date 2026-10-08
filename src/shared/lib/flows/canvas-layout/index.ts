@@ -3,6 +3,7 @@
  */
 
 import dagre from '@dagrejs/dagre';
+import { findBackEdges } from '../../flow-graph-cycle';
 import type { FlowGraph } from '../../validate-flow-graph';
 import {
   DAGRE_OPTS,
@@ -91,6 +92,19 @@ export function fanOutContainerDimensions(graph: FlowGraph, fanOutId: string): S
   };
 }
 
+/** The edges dagre ranks by, as owner pairs: no self-loops, and no loop back-edges, since those
+ * would pull their target off the column (they are drawn as their own detour lane). */
+function layoutEdges(
+  graph: FlowGraph,
+  ownerId: (nodeId: string) => string,
+): Array<[string, string]> {
+  const backEdges = findBackEdges(graph);
+  return graph.edges
+    .filter((e) => !backEdges.has(e.id))
+    .map((e): [string, string] => [ownerId(e.source), ownerId(e.target)])
+    .filter(([source, target]) => source !== target);
+}
+
 /**
  * Computes top-left React Flow positions for every node id (dagre center → top-left).
  * Matches `useFlowLayout` when `FlowNode.position` is unset.
@@ -118,11 +132,7 @@ export function computeDagreLayoutPositions(
   for (const n of topLevel) {
     g.setNode(n.id, dimensions(n.id));
   }
-  for (const e of graph.edges) {
-    const source = ownerId(e.source);
-    const target = ownerId(e.target);
-    if (source !== target) g.setEdge(source, target);
-  }
+  for (const [source, target] of layoutEdges(graph, ownerId)) g.setEdge(source, target);
 
   dagre.layout(g);
 

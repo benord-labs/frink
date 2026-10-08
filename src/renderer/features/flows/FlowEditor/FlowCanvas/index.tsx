@@ -43,12 +43,15 @@ import { CanvasMiniMap } from '../CanvasMiniMap';
 import { useCanvasFitView } from '../hooks/useCanvasFitView';
 import type { FlowNodeCanvasContext } from '../nodeSummary';
 import { fanOutFitDimensions } from '../../../../../shared/lib/flows/canvas-layout';
-import { FLOW_CANVAS_DOT_SIZE, FLOW_CANVAS_GRID_SIZE } from './constants';
+import {
+  FLOW_CANVAS_DOT_SIZE,
+  FLOW_CANVAS_GRID_SIZE,
+  FLOW_CANVAS_MINIMAP_MIN_NODES,
+} from './constants';
 import { FlowConnectionLine } from './FlowConnectionLine';
 import { FlowGraphEdge, type FlowGraphEdgeData } from './FlowGraphEdge';
 import type { FlowStepRfData } from './FlowNode';
 import { FlowStepRf } from './FlowNode';
-import { minimapNodeColor } from './minimapNodeColor';
 import {
   collectFinishedResizes,
   type ResizeMoves,
@@ -450,6 +453,7 @@ function FlowCanvasInner({
       onEdgesDelete={handleEdgesDelete}
       onSelectionChange={handleSelectionChange}
       onDoubleClick={onWrapperDoubleClick}
+      proOptions={{ hideAttribution: true }}
     >
       <Background
         variant={BackgroundVariant.Dots}
@@ -464,16 +468,14 @@ function FlowCanvasInner({
       <Panel position="top-left" className="max-w-112">
         <GhostRunHeaderStrip onFocusNode={focusNode} />
       </Panel>
-      <CanvasMiniMap
-        nodeColor={(node) => {
-          const data = node.data as FlowStepRfData | undefined;
-          if (data?.node?.blockType) {
-            return minimapNodeColor(data.node.blockType);
+      {graph.nodes.length >= FLOW_CANVAS_MINIMAP_MIN_NODES ? (
+        <CanvasMiniMap
+          nodeColor={(node) =>
+            node.selected ? 'hsl(var(--primary))' : 'hsl(var(--muted-foreground) / 0.4)'
           }
-          return 'hsl(var(--muted-foreground) / 0.45)';
-        }}
-        maskColor="hsl(var(--background) / 0.65)"
-      />
+          maskColor="hsl(var(--background) / 0.65)"
+        />
+      ) : null}
     </ReactFlow>
   );
 }

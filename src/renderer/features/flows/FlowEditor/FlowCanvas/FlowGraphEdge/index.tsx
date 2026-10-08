@@ -7,11 +7,15 @@
 
 import { Button } from '@benord-labs/frink-primitives';
 import { BaseEdge, EdgeLabelRenderer, type EdgeProps, getBezierPath } from '@xyflow/react';
-import { Check, Plus, RotateCcw, X } from 'lucide-react';
+import { Plus, RotateCcw } from 'lucide-react';
 import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BACK_EDGE_CLEARANCE } from '../../../../../../shared/lib/flows/canvas-layout/constants';
+import { EdgeRemoveControl } from '../../EdgeRemoveControl';
 
 const HOVER_LEAVE_MS = 180;
+
+const EDGE_LABEL_CLASS =
+  'nodrag nopan pointer-events-none flex items-center gap-1 rounded-full border border-border/70 bg-card px-2 py-0.5 text-xs font-medium text-muted-foreground';
 
 // Back-edge routing: "true" loops LEFT, "false" loops RIGHT so they're visually distinct.
 const BE_R = 10;
@@ -137,6 +141,7 @@ export function FlowGraphEdge({
     targetPosition,
   ]);
 
+  const hasLabel = Boolean(label);
   const showControls = (hovered || selected || pendingDelete) && (d?.onInsert || d?.onDelete);
 
   const maxIter = d?.loopMaxIterations;
@@ -149,58 +154,35 @@ export function FlowGraphEdge({
       <BaseEdge
         id={id}
         path={edgePath}
-        style={
-          isBackEdge
-            ? {
-                ...style,
-                strokeDasharray: '6 3',
-                stroke: 'hsl(var(--primary) / 0.6)',
-              }
-            : style
-        }
+        style={isBackEdge ? { ...style, strokeDasharray: '5 5' } : style}
         markerEnd={markerEnd}
-        className="react-flow__edge-path flow-graph-edge-animated"
+        className="react-flow__edge-path"
         interactionWidth={28}
       />
-      {typeof label === 'string' && label.length > 0 ? (
+      {isBackEdge || hasLabel ? (
         <EdgeLabelRenderer>
           <div
-            className="nodrag nopan pointer-events-none flex items-center gap-1 rounded-full border border-border/45 bg-card/75 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground shadow-xs ring-1 ring-inset ring-border/30 backdrop-blur-md"
+            className={EDGE_LABEL_CLASS}
             style={{
               position: 'absolute',
-              transform: `translate(-50%, -50%) translate(${labelX}px,${isBackEdge ? labelY + BE_LABEL_BADGE_OFFSET : labelY}px)`,
-            }}
-            title={isBackEdge ? loopTooltip : undefined}
-          >
-            {isBackEdge ? (
-              <>
-                <RotateCcw className="h-2.5 w-2.5 text-primary/70" aria-hidden />
-                <span className="text-primary/70">Loop</span>
-                <span>·</span>
-              </>
-            ) : null}
-            {label}
-          </div>
-        </EdgeLabelRenderer>
-      ) : isBackEdge ? (
-        <EdgeLabelRenderer>
-          <div
-            className="nodrag nopan pointer-events-none flex items-center gap-1 rounded-full border border-border/45 bg-card/75 px-1.5 py-0.5 text-[10px] font-medium text-primary/70 shadow-xs ring-1 ring-inset ring-primary/20 backdrop-blur-md"
-            style={{
-              position: 'absolute',
-              transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+              // A loop's pill hangs outside its lane, so it never sits on the cards it detours around.
+              transform: isBackEdge
+                ? `translate(${backEdgeSide === 'right' ? '10px' : 'calc(-100% - 10px)'}, -50%) translate(${labelX}px,${labelY + BE_LABEL_BADGE_OFFSET}px)`
+                : `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
             }}
             title={loopTooltip}
           >
-            <RotateCcw className="h-2.5 w-2.5" aria-hidden />
-            Loop
+            {isBackEdge ? <RotateCcw className="size-3" aria-hidden /> : null}
+            {isBackEdge ? 'Loop' : null}
+            {isBackEdge && hasLabel ? ' · ' : null}
+            {label}
           </div>
         </EdgeLabelRenderer>
       ) : null}
       {showControls ? (
         <EdgeLabelRenderer>
           <div
-            className="nodrag nopan flex items-center gap-0.5 rounded-lg border border-border/50 bg-card/80 p-0.5 shadow-lg shadow-black/25 ring-1 ring-inset ring-border/35 backdrop-blur-md"
+            className="nodrag nopan flex items-center gap-0.5 rounded-lg border border-border/70 bg-card p-0.5 shadow-lg shadow-black/30"
             style={{
               position: 'absolute',
               transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
@@ -228,67 +210,12 @@ export function FlowGraphEdge({
               </Button>
             ) : null}
             {d?.onDelete ? (
-              pendingDelete ? (
-                <div
-                  role="status"
-                  aria-live="polite"
-                  aria-atomic="true"
-                  className="flex items-center gap-0.5"
-                >
-                  <span className="px-1.5 text-[11px] text-muted-foreground select-none">
-                    Remove?
-                  </span>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    className="h-7 w-7 rounded-[5px] text-destructive hover:text-destructive"
-                    aria-label="Confirm remove connection"
-                    // eslint-disable-next-line jsx-a11y/no-autofocus
-                    autoFocus
-                    onPointerDown={(e) => e.stopPropagation()}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setPendingDelete(false);
-                      d.onDelete?.();
-                    }}
-                    iconOnly
-                  >
-                    <Check className="h-3.5 w-3.5" aria-hidden />
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    className="h-7 w-7 rounded-[5px] text-muted-foreground hover:text-foreground"
-                    aria-label="Cancel remove connection"
-                    onPointerDown={(e) => e.stopPropagation()}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setPendingDelete(false);
-                    }}
-                    iconOnly
-                  >
-                    <X className="h-3.5 w-3.5" aria-hidden />
-                  </Button>
-                </div>
-              ) : (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 w-7 rounded-[5px] text-muted-foreground hover:text-destructive"
-                  aria-label="Remove this connection"
-                  onPointerDown={(e) => e.stopPropagation()}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setPendingDelete(true);
-                  }}
-                  iconOnly
-                >
-                  <X className="h-3.5 w-3.5" aria-hidden />
-                </Button>
-              )
+              <EdgeRemoveControl
+                noun="connection"
+                pending={pendingDelete}
+                onPendingChange={setPendingDelete}
+                onConfirm={() => d.onDelete?.()}
+              />
             ) : null}
           </div>
         </EdgeLabelRenderer>
