@@ -1,15 +1,14 @@
 import { type ReactElement, type RefObject, useMemo } from 'react';
-import { type ConfirmOptions, useConfirm } from '../../../../components/ui/use-confirm';
-import { STRINGS } from '../constants';
+import { type ConfirmOptions, useConfirm } from '../../../components/ui/use-confirm';
 
 const plural = (count: number): string => (count === 1 ? '' : 's');
 
 function chatDeleteCopy(
-  chatName: string | null | undefined,
+  chatName: string,
   focusAfterClose: RefObject<HTMLElement | null>,
 ): ConfirmOptions {
   return {
-    title: `Delete "${chatName || STRINGS.UNTITLED_CHAT}" permanently?`,
+    title: `Delete "${chatName}" permanently?`,
     description: 'The chat, its history and its worktree will be removed.',
     // Confirming unmounts the trigger row, so focus is handed to a surviving element.
     onCloseAutoFocus: (event) => {
@@ -69,16 +68,20 @@ export type DeleteConfirm = {
  * The sidebar's in-app confirm for tree, project, folder and batch deletes; true only on accept.
  * The archived list keeps its own dialog. Render `confirmDialog` once.
  */
-export function useDeleteConfirm(): { askDelete: DeleteConfirm; confirmDialog: ReactElement } {
+export function useDeleteConfirm(untitledChat: string): {
+  askDelete: DeleteConfirm;
+  confirmDialog: ReactElement;
+} {
   const { confirm, confirmDialog } = useConfirm();
   const askDelete = useMemo<DeleteConfirm>(
     () => ({
-      chat: (chatName, focusAfterClose) => confirm(chatDeleteCopy(chatName, focusAfterClose)),
+      chat: (chatName, focusAfterClose) =>
+        confirm(chatDeleteCopy(chatName || untitledChat, focusAfterClose)),
       project: (chatCount) => confirm(projectDeleteCopy(chatCount)),
       folderChats: (chatCount) => confirm(folderChatsDeleteCopy(chatCount)),
       batch: (chatCount, batch) => confirm(batchDeleteCopy(chatCount, batch)),
     }),
-    [confirm],
+    [confirm, untitledChat],
   );
   return { askDelete, confirmDialog };
 }

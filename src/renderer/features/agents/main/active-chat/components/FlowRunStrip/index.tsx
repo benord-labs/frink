@@ -36,6 +36,7 @@ import type { ChatMode } from '../../../../../../../shared/types/chat-mode';
 import type { CodexSpeed } from '../../../../../../../shared/types/execution';
 import { useFlowNoteField } from '../../../../../../lib/agent-chat/use-flow-note-field';
 import { useFlowResumeLock } from '../../../../../../lib/agent-chat/use-flow-resume-lock';
+import { agentChatStore } from '../../../../stores/agent-chat-store';
 import { trpc } from '../../../../../../lib/trpc';
 import { invalidateTaskQueries } from '../../utils';
 import { FlowReplyBox } from '../FlowReplyBox';
@@ -298,7 +299,7 @@ export const FlowPausedBar = memo(function FlowPausedBar({
     resumePending,
     start: startResume,
     markStopRequested,
-  } = useFlowResumeLock(flowRunId, subChatId, isTurnActive);
+  } = useFlowResumeLock(flowRunId, subChatId, isTurnActive, () => agentChatStore.get(subChatId));
 
   return (
     <FlowSurfaceCard

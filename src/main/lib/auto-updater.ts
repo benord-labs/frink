@@ -1,7 +1,7 @@
 import { app, type BrowserWindow, ipcMain, type MenuItemConstructorOptions } from 'electron';
 import log from 'electron-log';
 import { autoUpdater, type ProgressInfo, type UpdateInfo } from 'electron-updater';
-import { resolveUpdateFeedUrl } from './update-feed-url';
+import { resolveUpdateFeedUrl } from './platform/update-feed';
 
 /**
  * IMPORTANT: Do NOT use lazy/dynamic imports for electron-updater!
