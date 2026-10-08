@@ -41,7 +41,6 @@ import { captureMainException, captureMainMessage } from '../sentry/init';
 import type { StopPendingWork } from '../task-stop-hook';
 import {
   type ClaudeSession,
-  endSession as endClaudeSession,
   getSession as getClaudeSession,
   retireRetainedSessions,
 } from './claude-session-registry';
@@ -201,7 +200,7 @@ export function takeWakeHold(
 
 /**
  * Tear down a between-turn wake hold (user Stop/pause, chat delete, provider switch, app quit).
- * Closing the session's queue lets the CLI exit — which stops its backgrounded tasks — and the
+ * Closes the CLI outright, so an in-flight burst, its tools and its backgrounded tasks stop now; the
  * pump exits via its stream-end path (its `done` handler owns the cleanup). No-op without a hold.
  */
 export function releaseWakeHold(
@@ -241,11 +240,11 @@ export function releaseWakeHold(
     // The map entry stays — `pump.done` owns eviction here, and clearing it early would make the
     // still-live pump unadoptable. Retract the wait immediately anyway so the UI reacts to Stop on
     // the keystroke rather than after the stream unwinds; `pump.done`'s dropHold repeats it. The
-    // latch is what keeps it retracted: closing the queue does not truncate an in-flight burst, so
-    // its burst end still runs and would otherwise re-advertise the wait the user just ended.
+    // latch is what keeps it retracted: frames the SDK buffered before `close()` still drain, and a
+    // buffered burst end would otherwise re-advertise the wait the user just ended.
     retractHold(hold);
     logDroppedPendingWork(subChatId, hold.session.stopHook?.lastPendingWork ?? null, reason);
-    endClaudeSession(subChatId);
+    hold.session.retire(reason);
   } else if (!hold.settling) {
     dropHold(subChatId, hold);
   }
