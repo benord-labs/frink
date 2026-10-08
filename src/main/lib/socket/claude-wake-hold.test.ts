@@ -66,6 +66,10 @@ function channelQuery(): { query: Query; emit: (m: SDKMessage) => void; end: () 
     wake?.();
     wake = null;
   };
+  const end = () => {
+    ended = true;
+    release();
+  };
   async function* gen(): AsyncGenerator<SDKMessage, void> {
     while (true) {
       while (buffer.length > 0) yield buffer.shift() as SDKMessage;
@@ -76,10 +80,8 @@ function channelQuery(): { query: Query; emit: (m: SDKMessage) => void; end: () 
     }
   }
   const query = Object.assign(gen(), {
-    interrupt: async () => {
-      ended = true;
-      release();
-    },
+    interrupt: async () => end(),
+    close: end,
   }) as unknown as Query;
   return {
     query,
@@ -87,10 +89,7 @@ function channelQuery(): { query: Query; emit: (m: SDKMessage) => void; end: () 
       buffer.push(m);
       release();
     },
-    end: () => {
-      ended = true;
-      release();
-    },
+    end,
   };
 }
 
@@ -1328,7 +1327,7 @@ describe('claude-wake-hold — wait detail republish', () => {
 
     ch.emit(msg('assistant'));
     releaseWakeHold('d5', 'test-user-stop'); // retracts eagerly, keeps the entry
-    ch.emit(resultMsg()); // closing the queue does not truncate the in-flight burst
+    ch.emit(resultMsg()); // a frame the SDK buffered before close() still drains
     await settle();
 
     // A re-appearing row after Stop reads as "Stop did not work" on the one surface proving it did.

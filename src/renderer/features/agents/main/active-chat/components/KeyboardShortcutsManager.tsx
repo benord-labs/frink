@@ -1,14 +1,12 @@
 import { useEffect, useRef } from 'react';
 import { chatOwnsKeyboardShortcuts } from '../../../../../lib/work-queue/chat-owns-keyboard-shortcuts';
 import type { AgentsMentionsEditorHandle } from '../../../mentions';
-import { agentChatStore } from '../../../stores/agent-chat-store';
 
 type Props = {
   isActive: boolean;
   /** True when this pane is focused. Only the focused pane should handle pane-scoped shortcuts (Escape, Cmd+Enter, Cmd+Down). */
   isPaneActive?: boolean;
   isStreaming: boolean;
-  subChatId: string;
   pendingQuestions: unknown;
   hasUnapprovedPlan: boolean;
   editorRef: React.RefObject<AgentsMentionsEditorHandle | null>;
@@ -32,7 +30,6 @@ export function KeyboardShortcutsManager({
   isActive,
   isPaneActive = true,
   isStreaming,
-  subChatId,
   pendingQuestions,
   hasUnapprovedPlan,
   editorRef,
@@ -115,7 +112,6 @@ export function KeyboardShortcutsManager({
         await handleQuestionsSkip();
       } else if (shouldStop) {
         e.preventDefault();
-        agentChatStore.setManuallyAborted(subChatId, true);
         await stop();
       } else if (shouldAbandonEdit && onAbandonEdit) {
         e.preventDefault();
@@ -130,7 +126,6 @@ export function KeyboardShortcutsManager({
     isPaneActive,
     isStreaming,
     stop,
-    subChatId,
     pendingQuestions,
     handleQuestionsSkip,
     editingItemId,
