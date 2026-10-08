@@ -65,7 +65,7 @@ import {
   useBulkChatActions,
 } from '../../../lib/hooks/sidebar-bulk-chats/use-bulk-chat-actions';
 import { useChatDnd } from './hooks/use-chat-dnd';
-import { useDeleteConfirm } from './hooks/use-delete-confirm';
+import { useDeleteConfirm } from '../../../lib/hooks/sidebar-delete-confirm/use-delete-confirm';
 import { useExpansionState } from './hooks/use-expansion-state';
 import { useGroupedProjects } from './hooks/use-grouped-projects';
 import {
@@ -126,7 +126,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
     const [searchQuery, setSearchQuery] = useState('');
     const searchInputRef = useRef<HTMLInputElement>(null);
     const treeContainerRef = useRef<HTMLDivElement>(null);
-    const { askDelete, confirmDialog } = useDeleteConfirm();
+    const { askDelete, confirmDialog } = useDeleteConfirm(STRINGS.UNTITLED_CHAT);
     const [chatSelection] = useState(createIdSelectionStore);
     const workQueueTriggerRef = useRef<HTMLButtonElement>(null);
     const flowsTriggerRef = useRef<HTMLButtonElement>(null);
