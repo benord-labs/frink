@@ -2,8 +2,12 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { describe, expect, it } from 'vitest';
-import { normalizeSpawnShape } from './spawn-shape';
+import { afterEach, describe, expect, it } from 'vitest';
+import {
+  normalizeSpawnShape,
+  normalizeSpawnShapeAsync,
+  withNpxRegistryDefault,
+} from './spawn-shape';
 
 describe('normalizeSpawnShape', () => {
   it('splits a smushed command (Railway: full shell line in command, empty args)', () => {
@@ -236,5 +240,157 @@ describe('normalizeSpawnShape', () => {
     expect(second.command).toBe(first.command);
     expect(second.args).toEqual(first.args);
     expect(second.rewrites).toEqual([]);
+  });
+
+  it('splits the Cursor Shortcut whole-line command (Cursor fixture)', () => {
+    const result = normalizeSpawnShape('npx -y @shortcut/mcp', []);
+    expect(result.command).toBe('npx');
+    expect(result.args).toEqual(['-y', '@shortcut/mcp']);
+    expect(result.rewrites).toEqual(['command-split']);
+  });
+
+  // shell-quote expands `$VAR` to '' unless given an env callback; an unhandled
+  // ref would silently turn `node $HOME/x.js` into `node /x.js`.
+  it('leaves a command with an env ref unchanged instead of expanding it to empty', () => {
+    const result = normalizeSpawnShape('node $HOME/mcp/index.js', []);
+    expect(result.command).toBe('node $HOME/mcp/index.js');
+    expect(result.args).toEqual([]);
+    expect(result.rewrites).toEqual([]);
+  });
+
+  it('leaves smushed args with an env ref unchanged', () => {
+    const result = normalizeSpawnShape('node', ['${HOME}/mcp/index.js --flag']);
+    expect(result.args).toEqual(['${HOME}/mcp/index.js --flag']);
+    expect(result.rewrites).toEqual([]);
+  });
+});
+
+// Cursor shell-splits `command` and appends `args`, so a package in `command` with paths
+// in `args` is a valid Cursor shape.
+describe('normalizeSpawnShape — whole-line command alongside args', () => {
+  it('splits the command and prepends its tail to the existing args', () => {
+    const result = normalizeSpawnShape('npx -y @modelcontextprotocol/server-filesystem', [
+      '/Users/me/dir',
+    ]);
+    expect(result.command).toBe('npx');
+    expect(result.args).toEqual(['-y', '@modelcontextprotocol/server-filesystem', '/Users/me/dir']);
+    expect(result.rewrites).toEqual(['command-split']);
+  });
+
+  it('does NOT split an existing command path with spaces when args are present', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'My App '));
+    const server = path.join(dir, 'server');
+    fs.writeFileSync(server, '');
+    try {
+      const result = normalizeSpawnShape(server, ['--stdio']);
+      expect(result.command).toBe(server);
+      expect(result.args).toEqual(['--stdio']);
+      expect(result.rewrites).toEqual([]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('is idempotent for the split-with-args shape', () => {
+    const first = normalizeSpawnShape('npx -y pkg', ['/a']);
+    const second = normalizeSpawnShape(first.command, first.args);
+    expect(second).toEqual({ command: first.command, args: first.args, rewrites: [] });
+  });
+});
+
+describe('normalizeSpawnShape — Windows', () => {
+  const originalPlatform = process.platform;
+  const asWindows = () => Object.defineProperty(process, 'platform', { value: 'win32' });
+  afterEach(() => Object.defineProperty(process, 'platform', { value: originalPlatform }));
+
+  // shell-quote treats `\` as an escape, which would turn this into `C:toolssrv.exe`.
+  it('keeps backslashes in an unquoted Windows path when splitting', () => {
+    asWindows();
+    const result = normalizeSpawnShape('C:\\tools\\srv.exe --stdio', []);
+    expect(result.command).toBe('C:\\tools\\srv.exe');
+    expect(result.args).toEqual(['--stdio']);
+  });
+
+  it('keeps a quoted Windows path with spaces as one token', () => {
+    asWindows();
+    const result = normalizeSpawnShape('"C:\\Program Files\\nodejs\\npx.cmd" -y pkg', []);
+    expect(result.command).toBe('C:\\Program Files\\nodejs\\npx.cmd');
+    expect(result.args).toEqual(['-y', 'pkg']);
+  });
+
+  it('treats npx.cmd (bare or full Windows path) as npx', () => {
+    expect(normalizeSpawnShape('npx.cmd', ['pkg']).args).toEqual(['-y', 'pkg']);
+    expect(normalizeSpawnShape('C:\\nodejs\\npx.cmd', ['pkg']).args).toEqual(['-y', 'pkg']);
+    expect(withNpxRegistryDefault('npx.cmd', undefined)).toEqual({
+      npm_config_registry: 'https://registry.npmjs.org/',
+    });
+  });
+});
+
+// The probe/tool-call transport uses the async twin so no sync fs runs on the main
+// process; both must rewrite identically, including the existing-path tie-breaker.
+describe('normalizeSpawnShapeAsync', () => {
+  it('matches normalizeSpawnShape for every shape, including existing paths with spaces', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'My App '));
+    const server = path.join(dir, 'server bin');
+    fs.writeFileSync(server, '');
+    const cases: [string, string[], string?][] = [
+      ['npx -y @shortcut/mcp', []],
+      ['npx -y pkg', ['/dir']],
+      [server, []],
+      [server, ['--stdio']],
+      ['node', [server]],
+      ['node', ['-y firecrawl-mcp']],
+      ['npx foo | tee log', []],
+      ['node $HOME/x.js', []],
+      ['server bin', [], dir],
+      ['npx', ['pkg']],
+      ['', []],
+    ];
+    try {
+      for (const [command, args, cwd] of cases) {
+        expect(await normalizeSpawnShapeAsync(command, args, cwd)).toEqual(
+          normalizeSpawnShape(command, args, cwd),
+        );
+      }
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('withNpxRegistryDefault', () => {
+  it('pins npx to the public registry', () => {
+    expect(withNpxRegistryDefault('npx', { TOKEN: 't' })).toEqual({
+      TOKEN: 't',
+      npm_config_registry: 'https://registry.npmjs.org/',
+    });
+    expect(withNpxRegistryDefault('/usr/local/bin/npx', undefined)).toEqual({
+      npm_config_registry: 'https://registry.npmjs.org/',
+    });
+  });
+
+  it('keeps a registry the MCP env names explicitly', () => {
+    const env = { npm_config_registry: 'https://npm.corp.example/' };
+    expect(withNpxRegistryDefault('npx', env)).toBe(env);
+  });
+
+  // npm reads npm_config_* case-insensitively; adding the lowercase default would
+  // override a registry the user set as NPM_CONFIG_REGISTRY.
+  it('keeps an explicit registry set with an uppercase key', () => {
+    const env = { NPM_CONFIG_REGISTRY: 'https://npm.corp.example/' };
+    expect(withNpxRegistryDefault('npx', env)).toBe(env);
+  });
+
+  it('never mutates the env it is given (it is the stored credentials object)', () => {
+    const env = { TOKEN: 't' };
+    withNpxRegistryDefault('npx', env);
+    expect(env).toEqual({ TOKEN: 't' });
+  });
+
+  it('leaves non-npx commands untouched', () => {
+    expect(withNpxRegistryDefault('node', undefined)).toBeUndefined();
+    const env = { A: '1' };
+    expect(withNpxRegistryDefault('docker', env)).toBe(env);
   });
 });
