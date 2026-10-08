@@ -15,6 +15,8 @@ import {
 } from '../../../claude';
 import { buildClaudeCredentialLaunch } from '../../../claude/credential-fd-spawn';
 import { buildClaudeSdkThinkingPartial } from '../../../claude/sdk-thinking-options';
+import { resolveClaudeAutoMemorySettings } from '../../../claude/auto-memory';
+import { mergeChatMemoriesOnce } from '../../../claude/auto-memory/merge-chat-memories';
 import { stageClaudeConfigDir } from '../../../claude/session-config-dir';
 import type { CredentialResult } from '../../../credentials';
 import {
@@ -272,11 +274,15 @@ export async function buildClaudeSessionSpec(inputs: ClaudeSessionSpecInputs) {
       if (!effort) return {};
       return { effort: effort as import('@anthropic-ai/claude-agent-sdk').Options['effort'] };
     })(),
-    // Ultra: the CLI's `ultracode` orchestration, dropped on an older bundled CLI. Flow turns never
-    // run it: unattended runs have no usage disclosure surface yet.
-    ...(settings?.ultra &&
-      !inputs.isFlowExecutionTurn &&
-      claudeVersionSupportsUltra() && { settings: { ultracode: true } }),
+    settings: {
+      // Auto-memory belongs to the project, as outside Frink, not to this chat's config dir.
+      ...resolveClaudeAutoMemorySettings(projectPath),
+      // Ultra: the CLI's `ultracode` orchestration, dropped on an older bundled CLI. Flow turns
+      // never run it: unattended runs have no usage disclosure surface yet.
+      ...(settings?.ultra &&
+        !inputs.isFlowExecutionTurn &&
+        claudeVersionSupportsUltra() && { ultracode: true }),
+    },
     // SDK betas (e.g. 1M context window: 'context-1m-2025-08-07')
     ...(settings?.betas?.length && {
       betas: settings.betas as import('@anthropic-ai/claude-agent-sdk').SdkBeta[],
@@ -369,6 +375,7 @@ export async function prepareClaudeSpawn(spec: ClaudeSessionSpec): Promise<void>
   // user's skills, agents and CLAUDE.md memory back inside the session dir.
   // Pre-create session plans/ so path checks (realpath) succeed before first Write.
   fs.mkdirSync(path.join(isolatedConfigDir, 'plans'), { recursive: true });
+  await mergeChatMemoriesOnce(path.dirname(isolatedConfigDir));
   stageClaudeConfigDir(isolatedConfigDir, spec.scope.subChatId);
 
   // Write OAuth tokens for HTTP MCPs into the isolated CLAUDE_CONFIG_DIR so the CLI
