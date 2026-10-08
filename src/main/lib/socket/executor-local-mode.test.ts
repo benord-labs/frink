@@ -119,6 +119,8 @@ vi.mock('../cloud-client', () => ({
 }));
 
 vi.mock('../db/repos/tasks', () => ({
+  claimTask: vi.fn(),
+  getPendingTaskIds: vi.fn(async () => []),
   getTaskById: vi.fn(),
   updateTaskStatus: vi.fn(),
   updateTaskResult: vi.fn(),
