@@ -83,6 +83,7 @@ export function registerClaudeWarmSessionGuardTests(harness: WarmSessionGuardHar
       await send('second', { sessionId: 'sess-held', settings: { effort: 'xhigh' } });
 
       expect(spawned(0)?.settings).toMatchObject({ ultracode: true });
+      expect(spawned(0)?.settingSources).toEqual(['project', 'user', 'local']);
       expect(sessionLines('claim')).toEqual(['miss:none', 'hit']);
       expect(claudeQueryMock).toHaveBeenCalledTimes(1);
       expect(first.applyFlagSettings.mock.calls).toEqual([
