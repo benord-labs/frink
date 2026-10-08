@@ -30,6 +30,27 @@ describe('computeDagreLayoutPositions', () => {
     }
   });
 
+  it('keeps a looping chain in one column, as if the loop-back edge were absent', () => {
+    const graph: FlowGraph = {
+      nodes: [
+        { id: 't', blockType: 'manual_trigger' },
+        { id: 'fix', blockType: 'agent' },
+        { id: 'test', blockType: 'run_command' },
+        { id: 'pass', blockType: 'condition' },
+        { id: 'done', blockType: 'end' },
+      ],
+      edges: [
+        { id: 'e1', source: 't', target: 'fix' },
+        { id: 'e2', source: 'fix', target: 'test' },
+        { id: 'e3', source: 'test', target: 'pass' },
+        { id: 'e4', source: 'pass', target: 'done', sourceHandle: 'true' },
+        { id: 'e5', source: 'pass', target: 'fix', sourceHandle: 'false' },
+      ],
+    };
+    const xs = new Set([...computeDagreLayoutPositions(graph).values()].map((p) => p.x));
+    expect(xs.size).toBe(1);
+  });
+
   it('positions Fan Out members relative to their container', () => {
     const graph: FlowGraph = {
       nodes: [

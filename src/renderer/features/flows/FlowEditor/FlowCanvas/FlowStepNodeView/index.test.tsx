@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 /**
  * A plugin step's card must read as its provider, never as Frink's plumbing:
- * the eyebrow states the plugin ("ClickUp"), not the internal `clickup_create_task`
+ * the type line states the plugin ("ClickUp"), not the internal `clickup_create_task`
  * node name, and the chip wears the provider's mark instead of the generic
  * custom-node glyph.
  */
@@ -52,14 +52,14 @@ function renderCard(
 afterEach(cleanup);
 
 describe('FlowStepNodeView plugin steps', () => {
-  it('states the provider in the eyebrow, never the internal node name', () => {
+  it('states the provider as the step type, never the internal node name', () => {
     renderCard('clickup_create_task', 'Create a ClickUp task');
 
     expect(screen.getByText('ClickUp')).toBeInTheDocument();
     expect(screen.queryByText('clickup_create_task')).toBeNull();
   });
 
-  it('keeps the eyebrow after the step is renamed', () => {
+  it('keeps the provider type line after the step is renamed', () => {
     renderCard('clickup_create_task', 'Notify the team');
 
     expect(screen.getByText('Notify the team')).toBeInTheDocument();

@@ -3,7 +3,11 @@
  */
 
 import { findPluginActionByNodeName } from '../../../../shared/integrations/plugin-nodes';
-import { isCustomNodeBlockType } from '../../../../shared/lib/block-registry';
+import { getPluginDefinition } from '../../../../shared/integrations/plugins';
+import {
+  isCustomNodeBlockType,
+  isRegisteredBlockType,
+} from '../../../../shared/lib/block-registry';
 import type { FlowNode } from '../../../../shared/lib/validate-flow-graph';
 import { FLOW_BLOCK_TYPES, type FlowBlockType } from '../../../../shared/types/flow';
 import { FLOW_BLOCK_LABELS } from './constants';
@@ -52,6 +56,21 @@ export function flowNodeNeedsProject(node: FlowNode, flowDefaultProjectId?: stri
   return takesProject(node) && !hasEffectiveProject(node.config, flowDefaultProjectId);
 }
 
+/** A step's name and kind, as both the canvas card and the config panel title it. */
+export type FlowStepIdentity = { name: string; kind: string };
+
+export function flowStepIdentity(node: FlowNode): FlowStepIdentity {
+  // A plugin step's kind IS its provider: "Slack", never the internal `slack_send_message`.
+  const pluginStep = findPluginActionByNodeName(node.blockType);
+  const kind = pluginStep
+    ? (getPluginDefinition(pluginStep.pluginId)?.name ?? pluginStep.pluginId)
+    : isRegisteredBlockType(node.blockType)
+      ? FLOW_BLOCK_LABELS[node.blockType]
+      : node.blockType;
+  // Unlabelled plugin steps arrive from every author but the node picker (patch tool, templates).
+  return { name: node.label?.trim() || pluginStep?.action.label || kind, kind };
+}
+
 export type FlowNodeCanvasContext = {
   /** Cloud catalog descriptions keyed by custom block type name. */
   customDescriptionByBlockType?: ReadonlyMap<string, string>;
@@ -71,31 +90,26 @@ export function flowNodeSummaryLine(
   const block = node.blockType as FlowBlockType;
 
   switch (block) {
-    case 'manual_trigger': {
-      const display = node.label?.trim() || FLOW_BLOCK_LABELS[block];
-      return display;
-    }
+    // The card shows the step's name right above this line, so triggers say what starts them.
+    case 'manual_trigger':
+      return 'Runs when you press Run';
     case 'webhook_trigger': {
       const et = readString(cfg, 'eventType');
-      const display = node.label?.trim() || FLOW_BLOCK_LABELS[block];
-      return et ? `${display} · ${et}` : display;
+      return et ? `On ${et}` : 'Choose an event';
     }
     case 'post_task_trigger': {
-      const display = node.label?.trim() || FLOW_BLOCK_LABELS[block];
       const ts = cfg?.triggerStates;
       const n = Array.isArray(ts) ? ts.length : 0;
-      return n > 0 ? `${display} · ${n} status(es)` : display;
+      return n > 0 ? `Watches ${n} task status${n === 1 ? '' : 'es'}` : 'Runs after a task';
     }
     case 'schedule_trigger': {
-      const display = node.label?.trim() || FLOW_BLOCK_LABELS[block];
       const cron = readString(cfg, 'cronExpression');
-      return cron ? `${display} · ${truncateUiString(cron, 40)}` : display;
+      return cron ? `Runs on ${truncateUiString(cron, 40)}` : 'Set a schedule';
     }
-    case 'start_task': {
-      const display = node.label?.trim() || FLOW_BLOCK_LABELS[block];
-      if (!hasEffectiveProject(cfg, flowDefaultProjectId)) return `${display} · set project`;
-      return display;
-    }
+    case 'start_task':
+      return hasEffectiveProject(cfg, flowDefaultProjectId)
+        ? 'Sets up the project, worktree and branch'
+        : 'Set a project';
     case 'agent': {
       const inst = readString(cfg, 'instructions');
       if (inst) return truncateUiString(inst, 72);
@@ -103,7 +117,7 @@ export function flowNodeSummaryLine(
     }
     case 'run_command': {
       const cmd = readString(cfg, 'command');
-      if (cmd) return `Run: ${truncateUiString(cmd, 56)}`;
+      if (cmd) return truncateUiString(cmd, 72);
       if (!hasEffectiveProject(cfg, flowDefaultProjectId)) return 'Add command and project';
       return 'Add command';
     }

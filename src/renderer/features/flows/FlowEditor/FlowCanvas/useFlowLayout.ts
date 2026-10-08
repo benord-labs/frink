@@ -11,6 +11,9 @@ import {
   fanOutContainerDimensions,
 } from '../../../../../shared/lib/flows/canvas-layout';
 
+/** Condition branches read as words on the canvas; the handle ids stay `true` / `false`. */
+const BRANCH_LABELS = { true: 'True', false: 'False' } as const;
+
 export type FlowStepNodeData = {
   kind: 'step';
   index: number;
@@ -58,27 +61,21 @@ export function useFlowLayout(
     const edges: Edge[] = graph.edges.map((e) => {
       const touchesSelected =
         selectedNodeId !== null && (e.source === selectedNodeId || e.target === selectedNodeId);
-      const isFalse = e.sourceHandle === 'false';
-      const strokeColor = touchesSelected ? 'hsl(var(--primary))' : 'hsl(var(--muted-foreground))';
+      const strokeColor = touchesSelected
+        ? 'hsl(var(--primary))'
+        : 'hsl(var(--muted-foreground) / 0.7)';
       return {
         id: e.id,
         source: e.source,
         target: e.target,
         sourceHandle: e.sourceHandle ?? undefined,
         type: 'flowGraph' as const,
-        label: e.sourceHandle === 'true' || e.sourceHandle === 'false' ? e.sourceHandle : undefined,
-        labelStyle: { fill: 'var(--muted-foreground)', fontSize: 10 },
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: strokeColor,
-          width: 18,
-          height: 18,
-        },
-        style: {
-          stroke: strokeColor,
-          strokeWidth: touchesSelected ? 2.5 : 2,
-          strokeDasharray: isFalse ? '8 4' : '6 3',
-        },
+        label:
+          e.sourceHandle === 'true' || e.sourceHandle === 'false'
+            ? BRANCH_LABELS[e.sourceHandle]
+            : undefined,
+        markerEnd: { type: MarkerType.ArrowClosed, color: strokeColor, width: 14, height: 14 },
+        style: { stroke: strokeColor, strokeWidth: touchesSelected ? 2 : 1.5 },
       };
     });
 

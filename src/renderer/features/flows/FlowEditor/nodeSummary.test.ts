@@ -12,10 +12,10 @@ function node(partial: Partial<FlowNode> & Pick<FlowNode, 'id' | 'blockType'>): 
 }
 
 describe('flowNodeSummaryLine', () => {
-  it('shows manual trigger label', () => {
+  it('says how a manual trigger starts, never repeating its name', () => {
     expect(
       flowNodeSummaryLine(node({ id: '1', blockType: 'manual_trigger', label: 'Start here' })),
-    ).toBe('Start here');
+    ).toBe('Runs when you press Run');
   });
 
   it('summarizes run_command', () => {
@@ -64,7 +64,7 @@ describe('flowNodeSummaryLine', () => {
           config: { triggerStates: ['done', 'failed'] },
         }),
       ),
-    ).toBe('After task · 2 status(es)');
+    ).toBe('Watches 2 task statuses');
   });
 
   it('summarizes schedule_trigger with cron snippet', () => {
@@ -324,10 +324,22 @@ describe('flowNodeSummaryLine extras', () => {
     );
   });
 
-  it('webhook trigger uses label or default', () => {
+  it('webhook trigger names its event, or asks for one', () => {
     expect(
       flowNodeSummaryLine(node({ id: '1', blockType: 'webhook_trigger', label: 'Hook' })),
-    ).toBe('Hook');
+    ).toBe('Choose an event');
+    expect(
+      flowNodeSummaryLine(
+        node({ id: '1', blockType: 'webhook_trigger', config: { eventType: 'issue.created' } }),
+      ),
+    ).toBe('On issue.created');
+  });
+
+  it('start task asks for a project until the step or the flow has one', () => {
+    expect(flowNodeSummaryLine(node({ id: '1', blockType: 'start_task' }))).toBe('Set a project');
+    expect(flowNodeSummaryLine(node({ id: '1', blockType: 'start_task' }), 'p1')).toBe(
+      'Sets up the project, worktree and branch',
+    );
   });
 
   it('agent: shows instructions when present (model/project from Start Task)', () => {
