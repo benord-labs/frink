@@ -84,3 +84,6 @@ Your original tool configs are intact and your tokens stay in your operating sys
 
 **Q: Why don't plugins follow me when everything else does?**
 Because every tool packages plugins its own way, there's no shared format a plugin could travel in. Its useful contents (skills, servers, commands) still follow you everywhere; only the package stays put. Frink's own plugins are no different as plugins — Frink just ships them and handles the account and triggers for you, so those two parts stay yours in every tool. The plugin's **Works in** grid says what else each tool gets.
+
+**Q: Does Claude remember what I taught it in another chat?**
+Yes, per project, exactly as in Claude Code. Every chat in a project — including its worktrees — reads and writes the same auto-memory folder Claude Code uses in your terminal (`~/.claude/projects/…/memory`), so a lesson saved once applies everywhere. Codex keeps its own, separate memory if you've turned it on: Codex chats in Frink read it but don't add to it.
