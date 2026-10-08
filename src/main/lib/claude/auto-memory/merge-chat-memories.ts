@@ -3,6 +3,7 @@ import path from 'node:path';
 import log from 'electron-log';
 import { frinkUserHome } from '../../platform/frink-home';
 import { captureMainException } from '../../sentry/init';
+import { userAutoMemoryDirectory } from '.';
 
 const INDEX_FILE = 'MEMORY.md';
 /** Written in the sessions root once every per-chat memory has been merged. */
@@ -18,20 +19,20 @@ type ChatMemory = {
 
 let mergeRun: Promise<void> | null = null;
 
-async function readText(file: string): Promise<string> {
-  try {
-    return await fs.promises.readFile(file, 'utf-8');
-  } catch {
-    return '';
-  }
+/** Only a missing path reads as absent; any other error fails the run so its marker stays unwritten. */
+function absentAs<T>(fallback: T): (error: NodeJS.ErrnoException) => T {
+  return (error) => {
+    if (error.code === 'ENOENT') return fallback;
+    throw error;
+  };
 }
 
-async function readEntries(dir: string): Promise<fs.Dirent[]> {
-  try {
-    return await fs.promises.readdir(dir, { withFileTypes: true });
-  } catch {
-    return [];
-  }
+function readText(file: string): Promise<string> {
+  return fs.promises.readFile(file, 'utf-8').catch(absentAs(''));
+}
+
+function readEntries(dir: string): Promise<fs.Dirent[]> {
+  return fs.promises.readdir(dir, { withFileTypes: true }).catch(absentAs([]));
 }
 
 /** The source index's line for `file`, else a bare link, so a merged memory stays indexed. */
@@ -42,7 +43,7 @@ function indexLineFor(index: string, file: string): string {
 
 /** One project's memories in one chat dir; a symlinked memory dir or file is never followed. */
 async function readMemoryDir(memoryDir: string, slug: string): Promise<ChatMemory[]> {
-  const stat = await fs.promises.lstat(memoryDir).catch(() => null);
+  const stat = await fs.promises.lstat(memoryDir).catch(absentAs(null));
   if (!stat?.isDirectory()) return [];
   const files = (await readEntries(memoryDir)).filter(
     (entry) => entry.isFile() && entry.name.endsWith('.md') && entry.name !== INDEX_FILE,
@@ -73,9 +74,8 @@ async function collectChatMemories(sessionsRoot: string): Promise<ChatMemory[]> 
   return memories.sort((a, b) => b.mtimeMs - a.mtimeMs);
 }
 
-/** Copy one memory into its project folder unless a file of that name is there; index it if copied. */
-async function copyIntoProject(memory: ChatMemory, claudeHome: string): Promise<boolean> {
-  const targetDir = path.join(claudeHome, 'projects', memory.slug, 'memory');
+/** Copy one memory into `targetDir` unless a file of that name is there; index it if copied. */
+async function copyIntoMemoryDir(memory: ChatMemory, targetDir: string): Promise<boolean> {
   await fs.promises.mkdir(targetDir, { recursive: true });
   try {
     const target = path.join(targetDir, memory.file);
@@ -97,13 +97,16 @@ async function copyIntoProject(memory: ChatMemory, claudeHome: string): Promise<
 async function mergeChatMemories(sessionsRoot: string): Promise<void> {
   const marker = path.join(sessionsRoot, MERGED_MARKER);
   if (fs.existsSync(marker)) return;
-  const claudeHome = path.join(frinkUserHome(), '.claude');
+  // The CLI reads the user's own folder for every project when set, else the project's folder.
+  const userDir = userAutoMemoryDirectory();
+  const projectsDir = path.join(frinkUserHome(), '.claude', 'projects');
   let copied = 0;
   let kept = 0;
   let failed = 0;
   for (const memory of await collectChatMemories(sessionsRoot)) {
     try {
-      if (await copyIntoProject(memory, claudeHome)) copied++;
+      const targetDir = userDir ?? path.join(projectsDir, memory.slug, 'memory');
+      if (await copyIntoMemoryDir(memory, targetDir)) copied++;
       else kept++;
     } catch (error) {
       failed++;

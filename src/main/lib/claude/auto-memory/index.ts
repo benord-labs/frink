@@ -106,6 +106,12 @@ function userMemoryDirectory(directory: string | undefined, home: string): strin
   return path.isAbsolute(directory) ? directory : null;
 }
 
+/** The user's own auto-memory folder, shared by every project, when the CLI would accept it. */
+export function userAutoMemoryDirectory(): string | null {
+  const home = frinkUserHome();
+  return userMemoryDirectory(readUserMemorySettings(home).autoMemoryDirectory, home);
+}
+
 /** Point a chat's CLI at the auto-memory folder Claude Code uses for its project outside Frink, shared
  * by every chat, worktree and terminal session. The user's own folder and off switch win. */
 export function resolveClaudeAutoMemorySettings(cwd: string): AutoMemorySettings {

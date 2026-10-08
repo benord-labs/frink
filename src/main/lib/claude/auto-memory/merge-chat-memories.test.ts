@@ -105,6 +105,33 @@ describe('mergeChatMemoriesOnce', () => {
     expect(fs.existsSync(path.join(sessions, '.auto-memory-merged'))).toBe(false);
   });
 
+  it("merges into the user's own autoMemoryDirectory when one is set", async () => {
+    const home = path.join(tmpRoot, 'home');
+    fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+    fs.writeFileSync(
+      path.join(home, '.claude', 'settings.json'),
+      JSON.stringify({ autoMemoryDirectory: '~/notes' }),
+    );
+    chatMemory('chat-a', 'testing.md', 'frink', 5);
+
+    await mergeChatMemoriesOnce(sessions);
+
+    expect(fs.readFileSync(path.join(home, 'notes', 'testing.md'), 'utf-8')).toBe('frink');
+    expect(fs.existsSync(projectMemory)).toBe(false);
+  });
+
+  it('leaves no marker when a chat memory dir cannot be read, so the next launch retries', async () => {
+    const dir = chatMemory('chat-a', 'testing.md', 'frink', 5);
+    fs.chmodSync(dir, 0o000);
+    try {
+      await mergeChatMemoriesOnce(sessions);
+    } finally {
+      fs.chmodSync(dir, 0o755);
+    }
+
+    expect(fs.existsSync(path.join(sessions, '.auto-memory-merged'))).toBe(false);
+  });
+
   it('reports a failed run and still resolves, so the chat spawns', async () => {
     const warn = vi.spyOn(log, 'warn');
     const notADir = path.join(tmpRoot, 'not-a-dir');
