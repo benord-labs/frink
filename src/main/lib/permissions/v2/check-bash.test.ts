@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { validateRuleString } from '../../../../shared/lib/validate-rule';
 import { checkBash } from './check-bash';
 import { EMPTY_DOCS } from './eval-rules';
@@ -238,6 +238,22 @@ describe('checkBash — the exact rule offered for an exact-only sub is one a us
       decision: 'deny',
       reason: { kind: 'rule:deny', rule: 'Bash(rm:*)' },
     });
+  });
+});
+
+describe('checkBash — bash-Read parity on case-insensitive macOS', () => {
+  const realPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', realPlatform);
+  });
+
+  it('cat of a case-variant secret denies even with Bash(cat:*) allow', () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+    const docs = { policy: noRules, project: { ...noRules, allow: ['Bash(cat:*)'] }, user: noRules };
+    for (const command of ['cat ~/.SSH/id_rsa', 'cat /home/user/project/.ENV']) {
+      const r = checkBash({ command }, docs, root);
+      expect(r, command).toMatchObject({ decision: 'deny', reason: { kind: 'safety:path' } });
+    }
   });
 });
 

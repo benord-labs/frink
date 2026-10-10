@@ -142,6 +142,89 @@ describe('SYSTEM_DENIED_PATTERNS const', () => {
   });
 });
 
+describe('isSystemDeniedPath — case folding on case-insensitive filesystems', () => {
+  const realPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+  const withPlatform = (value: NodeJS.Platform): void => {
+    Object.defineProperty(process, 'platform', { value, configurable: true });
+  };
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', realPlatform);
+  });
+
+  const caseVariants = ['/p/.ENV', '/p/.Env.Local', '/p/ID_RSA', '/p/X.PEM', '/p/.Git/Config'];
+  const dirVariants = ['/p/.SSH/notes', nodePath.join(nodeOs.homedir(), '.SSH', 'notes')];
+
+  it('darwin denies case variants of protected names (APFS aliases them)', () => {
+    withPlatform('darwin');
+    for (const p of [...caseVariants, ...dirVariants]) {
+      expect(isSystemDeniedPath(p, root), p).toBe(true);
+    }
+    expect(isSystemDeniedPath('/p/.SSH/id_rsa', root)).toBe(true);
+    expect(isSystemDeniedPath(nodePath.join(nodeOs.homedir(), '.SSH', 'id_rsa'))).toBe(true);
+  });
+
+  // APFS folds case with full Unicode folding, so these open the ASCII names on a real Mac
+  // (long s ſ→s, ß→ss, ﬁ→fi, ﬆ→st, Kelvin K→k). `toLowerCase` alone leaves ſ/ß/ligatures as-is.
+  const unicodeFoldVariants = [
+    '/p/id_rſa',
+    '/p/.gitconﬁg',
+    '/p/ſecrets.yaml',
+    '/p/.ſſh/notes',
+    '/p/.awſ/notes',
+    '/p/x.Key',
+  ];
+
+  it('darwin denies Unicode case-fold aliases of protected names', () => {
+    withPlatform('darwin');
+    for (const p of unicodeFoldVariants) {
+      expect(isSystemDeniedPath(p, root), p).toBe(true);
+    }
+  });
+
+  it('darwin folding does not widen the patterns themselves', () => {
+    withPlatform('darwin');
+    for (const p of ['/p/.ENVsomething', '/p/.ENV-staging', '/p/src/Index.ts', '/p/.SSH']) {
+      expect(isSystemDeniedPath(p, root), p).toBe(false);
+    }
+  });
+
+  it('win32 still denies case variants', () => {
+    withPlatform('win32');
+    expect(isSystemDeniedPath('/p/.ENV', root)).toBe(true);
+  });
+
+  it('linux keeps case: variants are distinct files and not denied', () => {
+    withPlatform('linux');
+    for (const p of [...caseVariants, ...dirVariants, '/p/id_rſa', '/p/.gitconﬁg']) {
+      expect(isSystemDeniedPath(p, root), p).toBe(false);
+    }
+  });
+
+  describe('.env.example case variants on darwin', () => {
+    let tmpDir: string;
+    beforeEach(() => {
+      tmpDir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'sysdeny-case-'));
+      withPlatform('darwin');
+    });
+    afterEach(() => {
+      nodeFs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it.skipIf(process.platform === 'win32')('.Env.Example → .ENV symlink denied', () => {
+      nodeFs.writeFileSync(nodePath.join(tmpDir, '.ENV'), 'SECRET=1');
+      const link = nodePath.join(tmpDir, '.Env.Example');
+      nodeFs.symlinkSync(nodePath.join(tmpDir, '.ENV'), link);
+      expect(isSystemDeniedPath(link)).toBe(true);
+    });
+
+    it('genuine .Env.Example file allowed', () => {
+      const file = nodePath.join(tmpDir, '.Env.Example');
+      nodeFs.writeFileSync(file, 'FOO=bar');
+      expect(isSystemDeniedPath(file)).toBe(false);
+    });
+  });
+});
+
 describe('isSystemDeniedPath — .env.example symlink chase', () => {
   let tmpDir: string;
   let canSymlink: boolean;

@@ -57,6 +57,14 @@ export const SYSTEM_DENIED_EXACT = [
   nodePath.join(nodeOs.homedir(), '.config/gcloud'),
 ] as const;
 
+/** macOS/Windows filesystems are case-insensitive; APFS also full-folds `ſ`/`ß`/`ﬁ`,
+ * which `toLowerCase` alone misses. Linux keeps case (`.ENV` ≠ `.env`). */
+function foldPathCase(p: string): string {
+  return process.platform === 'darwin' || process.platform === 'win32'
+    ? p.toLowerCase().toUpperCase().toLowerCase()
+    : p;
+}
+
 /**
  * True when `path` matches the hard-coded deny list.
  * - Resolves relative paths against `projectRoot` when supplied; otherwise
@@ -72,9 +80,7 @@ export function isSystemDeniedPath(path: string, projectRoot?: string): boolean 
       ? nodePath.resolve(projectRoot, path)
       : nodePath.resolve(path);
 
-  const basename = nodePath.basename(targetPath);
-  const isWin32 = process.platform === 'win32';
-  const basenameNorm = isWin32 ? basename.toLowerCase() : basename;
+  const basenameNorm = foldPathCase(nodePath.basename(targetPath));
 
   // .env.example is a public template (no secrets) — always allow read/write.
   // Resolve full symlink chain so .env.example -> x/.env.example -> .env cannot bypass.
@@ -94,9 +100,7 @@ export function isSystemDeniedPath(path: string, projectRoot?: string): boolean 
           try {
             const nextStat = nodeFs.lstatSync(next);
             if (!nextStat.isSymbolicLink()) {
-              const finalBasename = nodePath.basename(next);
-              const finalNorm = isWin32 ? finalBasename.toLowerCase() : finalBasename;
-              if (finalNorm !== '.env.example') return true;
+              if (foldPathCase(nodePath.basename(next)) !== '.env.example') return true;
               return false;
             }
             current = next;
@@ -109,9 +113,7 @@ export function isSystemDeniedPath(path: string, projectRoot?: string): boolean 
       }
       if (!nodeFs.existsSync(targetPath)) return false; // Creating new file — allow
       const realPath = nodeFs.realpathSync.native(targetPath);
-      const realBasename = nodePath.basename(realPath);
-      const realBasenameNorm = isWin32 ? realBasename.toLowerCase() : realBasename;
-      if (realBasenameNorm === '.env.example') return false; // Genuine file — allow
+      if (foldPathCase(nodePath.basename(realPath)) === '.env.example') return false; // Genuine file — allow
       // Symlink to something else (e.g. .env) — fall through to deny
     } catch {
       return false; // Path missing (create) — allow
@@ -119,9 +121,9 @@ export function isSystemDeniedPath(path: string, projectRoot?: string): boolean 
   }
 
   // Check exact matches
-  const targetNorm = isWin32 ? nodePath.normalize(targetPath).toLowerCase() : targetPath;
+  const targetNorm = foldPathCase(nodePath.normalize(targetPath));
   for (const denied of SYSTEM_DENIED_EXACT) {
-    const deniedNorm = isWin32 ? denied.toLowerCase() : denied;
+    const deniedNorm = foldPathCase(denied);
     if (targetNorm === deniedNorm || targetNorm.startsWith(`${deniedNorm}${nodePath.sep}`)) {
       return true;
     }
@@ -133,13 +135,12 @@ export function isSystemDeniedPath(path: string, projectRoot?: string): boolean 
   //   2. contains `/` otherwise → exact path-tail (path ends with `/<suffix>`)
   //   3. contains `*`           → basename glob (prefix*suffix on basename)
   //   4. plain                  → basename equality
-  const pathParts = targetPath.split(nodePath.sep);
-  const pathPartsNorm = isWin32 ? pathParts.map((p) => p.toLowerCase()) : pathParts;
+  const pathPartsNorm = foldPathCase(targetPath).split(nodePath.sep);
 
   for (const pattern of SYSTEM_DENIED_PATTERNS) {
     if (!pattern.startsWith('**/')) continue;
     const suffix = pattern.slice(3);
-    const suffixNorm = isWin32 ? suffix.toLowerCase() : suffix;
+    const suffixNorm = foldPathCase(suffix);
 
     // (1) Directory glob: `**/.ssh/**`, `**/.config/gcloud/**`
     if (suffixNorm.endsWith('/**')) {
@@ -164,7 +165,7 @@ export function isSystemDeniedPath(path: string, projectRoot?: string): boolean 
 
     // (2) Exact path-tail with `/`: `**/.git/config`
     if (suffixNorm.includes('/')) {
-      const targetForCompare = isWin32 ? targetPath.toLowerCase() : targetPath;
+      const targetForCompare = foldPathCase(targetPath);
       const sep = nodePath.sep;
       const needle = sep + suffixNorm.split('/').join(sep);
       if (targetForCompare.endsWith(needle)) return true;
