@@ -1,8 +1,8 @@
 /**
  * Claude Code model catalog (UI + id → CLI mapping).
  *
- * **Execution values:** each `cliValue` is either a short alias (`haiku` | `sonnet` |
- * `opus`) or a version-pinned Anthropic model ID (`claude-opus-4-8`, `claude-sonnet-5`, …)
+ * **Execution values:** each `cliValue` is either a short alias (`sonnet` | `opus`) or a
+ * version-pinned Anthropic model ID (`claude-opus-4-8`, `claude-sonnet-5`, …)
  * when the SDK's baked-in prompt must reflect a specific version — see `VALID_MODELS` in
  * [`src/shared/types/execution.ts`](../types/execution.ts) and
  * `settings?.model` gating in `src/main/lib/socket/executor.ts`.
@@ -71,7 +71,7 @@ const DEFAULT_EFFORTS: EffortTier[] = [
 ];
 
 // `xhigh` and `max` are the top tiers (the bundled CLI accepts `low|medium|high|xhigh|max`).
-// Only Fable 5.1 / Fable 5 / Opus 5.5 / 5 / 4.8 / 4.7 / Sonnet 5.5 / 5 support them — the SDK silently downgrades elsewhere.
+// Only Fable 5.1 / Fable 5 / Opus 5.5 / 5 / 4.8 / 4.7 / Sonnet 5.5 / 5 / Haiku 5.5 support them — the SDK silently downgrades elsewhere.
 const XHIGH_TIER: EffortTier = {
   suffix: '-xhigh',
   label: 'Extra High',
@@ -83,7 +83,7 @@ const XHIGH_TIER: EffortTier = {
 // `-ultra` twin. Why: docs/decisions/ultra-effort-tier.md
 export const CLAUDE_ULTRA_SUFFIX = '-ultra';
 
-// Medium-default full ladder (Opus 4.7, Opus 5.5).
+// Medium-default full ladder (Opus 4.7, Opus 5.5, Haiku 5.5).
 const OPUS_47_EFFORTS: EffortTier[] = [
   ...DEFAULT_EFFORTS,
   XHIGH_TIER,
@@ -113,7 +113,7 @@ const DEFAULT_CONTEXTS: ContextTier[] = [
 ];
 
 /**
- * Build context × effort variants for an Opus/Sonnet family.
+ * Build context × effort variants for a model family.
  *
  * Produces C (contexts) × N (efforts) variants. With default contexts + efforts that's 6:
  *   Medium (200k) · Low (200k) · High (200k)
@@ -128,7 +128,7 @@ const DEFAULT_CONTEXTS: ContextTier[] = [
  * Thinking on/off is handled by the global toggle, not by model selection.
  */
 type FamilyConfig = {
-  base: 'opus' | 'sonnet';
+  base: 'opus' | 'sonnet' | 'haiku';
   familyId: string;
   familyName: string;
   version: string;
@@ -324,14 +324,28 @@ export const CLAUDE_CODE_MODELS_CATALOG: ClaudeCodeModel[] = [
     version: '4.6',
     cliValue: 'sonnet',
   }),
-  // ── Haiku 4.5 ────────────────────────────────────────────────────────
+  // ── Haiku 5.5 ── 1M native; adaptive thinking is always on (cannot be disabled), Medium default
+  // with the full ladder. Needs Claude Code CLI ≥ 2.1.293.
+  ...buildFamily({
+    base: 'haiku',
+    familyId: 'haiku-5.5',
+    familyName: 'Haiku 5.5',
+    version: '5.5',
+    cliValue: 'claude-haiku-5-5',
+    efforts: OPUS_47_EFFORTS,
+    idPrefix: 'haiku-5.5',
+    contexts: [{ suffix: '', ctx: '1M context', prefix: '' }],
+    adaptiveThinking: true,
+  }),
+  // ── Haiku 4.5 ── cliValue pins the full model ID: the CLI's `haiku` alias follows the newest
+  // Haiku. The legacy `haiku` id is preserved so saved selections keep resolving.
   {
     id: 'haiku',
     familyId: 'haiku',
     familyName: 'Haiku 4.5',
     variantLabel: '',
     contextWindow: '200k context',
-    cliValue: 'haiku',
+    cliValue: 'claude-haiku-4-5',
     pickerVersion: '4.5',
   },
 ];
