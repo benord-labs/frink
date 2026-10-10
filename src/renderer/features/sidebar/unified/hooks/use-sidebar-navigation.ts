@@ -146,30 +146,21 @@ export function useSidebarNavigation(
   const selectedChatIdRef = useRef(selectedChatId);
   selectedChatIdRef.current = selectedChatId;
 
-  // Auto-highlight the active chat (or first visible item) when the container receives focus
-  // (e.g. via Cmd+;). Prefers the currently active chat so the user lands on their context.
-  useEffect(() => {
+  // Highlight the active chat (or first visible item) on an explicit sidebar focus (Cmd+;). Not a
+  // focus listener: dialogs restoring focus here after a delete must not scroll the tree.
+  const focusActiveItem = useCallback(() => {
     const container = containerRef.current;
     if (!container) return;
+    container.focus();
+    if (focusedItemIdRef.current) return;
 
-    const handleFocus = () => {
-      // Only auto-highlight if nothing is already focused
-      if (focusedItemIdRef.current) return;
+    const items = getVisibleItems(container);
+    if (items.length === 0) return;
 
-      const items = getVisibleItems(container);
-      if (items.length === 0) return;
-
-      // Prefer the currently active chat if it's visible in the sidebar
-      const activeId = selectedChatIdRef.current;
-      const activeItem = activeId ? items.find((item) => item.id === activeId) : null;
-      const targetItem = activeItem ?? items[0];
-
-      setFocusedItemId(targetItem.id);
-      scrollTreeItemIntoView(targetItem.element);
-    };
-
-    container.addEventListener('focus', handleFocus);
-    return () => container.removeEventListener('focus', handleFocus);
+    const activeId = selectedChatIdRef.current;
+    const targetItem = (activeId && items.find((item) => item.id === activeId)) || items[0];
+    setFocusedItemId(targetItem.id);
+    scrollTreeItemIntoView(targetItem.element);
   }, [containerRef]);
 
   // Invalidate cached items and clear focusedItemId when DOM changes.
@@ -368,5 +359,5 @@ export function useSidebarNavigation(
     return () => container.removeEventListener('keydown', handleKeyDown);
   }, [containerRef, handleKeyDown]);
 
-  return { focusedItemId };
+  return { focusedItemId, focusActiveItem };
 }

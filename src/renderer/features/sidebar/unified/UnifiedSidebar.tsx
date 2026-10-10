@@ -215,9 +215,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
     }, []);
 
     useImperativeHandle(ref, () => ({
-      focus: () => {
-        treeContainerRef.current?.focus();
-      },
+      focus: () => focusActiveItem(),
       focusWorkQueueTrigger: () => {
         workQueueTriggerRef.current?.focus();
       },
@@ -1398,7 +1396,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
       () => ({ handleDragStart, handleDragOver, handleDragEnd, handleDragCancel }),
       [handleDragStart, handleDragOver, handleDragEnd, handleDragCancel],
     );
-    const { focusedItemId } = useSidebarNavigation(treeContainerRef, {
+    const { focusedItemId, focusActiveItem } = useSidebarNavigation(treeContainerRef, {
       onSelectChat: wrapWorkQueueExitAction(handleChatSelect),
       onToggleCodebase: toggleCodebase,
       isCodebaseExpanded,
