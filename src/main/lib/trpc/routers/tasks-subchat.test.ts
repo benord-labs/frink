@@ -2,16 +2,8 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RESTART_INTERRUPTION_REASON } from '../../../../shared/types/flow';
 import { setFlowRunStatus } from '../../db/repos/flow-runs';
-import {
-  chats,
-  flowRuns,
-  nodeRuns,
-  subChatMessages,
-  subChats,
-  type Task,
-  tasks,
-} from '../../db/schema';
-import { seedFlowRun } from '../../db/test-utils/flow-fixtures';
+import { chats, flowRuns, nodeRuns, subChats, type Task, tasks } from '../../db/schema';
+import { seedFlowRun, seedFlowStep } from '../../db/test-utils/flow-fixtures';
 import { freshDb, type TestDb } from '../../db/test-utils/fresh-db';
 import {
   assertRecoveryStep,
@@ -40,44 +32,12 @@ beforeEach(async () => {
   await db.insert(subChats).values({ id: 'sub-1', chatId: 'chat-1', sessionId: 'sess-1' });
 });
 
-/** A step of the run and the task that drove it; `answered` persists its prompt and the reply. */
-async function seedStep(
+const seedStep = (
   id: string,
   status: Task['status'],
   step: Partial<typeof nodeRuns.$inferInsert>,
   answered = false,
-): Promise<Task> {
-  await db
-    .insert(nodeRuns)
-    .values({ id, flowRunId, nodeId: id, blockType: 'agent', status: 'completed', ...step });
-  const [task] = await db
-    .insert(tasks)
-    .values({
-      id: `task-${id}`,
-      description: id,
-      source: 'flow',
-      status,
-      result: { chatId: 'chat-1', subChatId: 'sub-1' },
-      flowRunId,
-      sourceId: id,
-      nodeRunId: id,
-    })
-    .returning();
-  if (answered) {
-    const prompt = {
-      id: `u-${id}`,
-      role: 'user',
-      parts: [],
-      metadata: { dispatchTaskId: task.id },
-    };
-    const reply = { id: `a-${id}`, role: 'assistant', parts: [] };
-    await db.insert(subChatMessages).values([
-      { subChatId: 'sub-1', seq: 0, message: JSON.stringify(prompt) },
-      { subChatId: 'sub-1', seq: 1, message: JSON.stringify(reply) },
-    ]);
-  }
-  return task;
-}
+) => seedFlowStep(db, flowRunId, id, status, step, answered);
 
 const row = (task: Task, effectiveStatus: string) => ({
   ...task,

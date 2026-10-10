@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { MobileOverview, MobileQueueItem } from '@frink/shared/types/remote/mobile';
-import { expandedLimits, needsYouCount, queueSections } from './queue-view';
+import {
+  asksBeforeSending,
+  expandedLimits,
+  needsYouCount,
+  queueSections,
+  rowRequest,
+} from './queue-view';
 
 const at = (minutes: number) => new Date(Date.UTC(2026, 8, 29, 12, 60 - minutes)).toISOString();
 
@@ -33,7 +39,12 @@ const overview: MobileOverview = {
       subChatId: 'sub',
       title: 'Release checks',
       questions: [
-        { header: 'Env', question: 'Which environment should I use?', options: [], multiSelect: false },
+        {
+          header: 'Env',
+          question: 'Which environment should I use?',
+          options: [],
+          multiSelect: false,
+        },
       ],
     },
   ],
@@ -149,7 +160,10 @@ describe('queueSections', () => {
       kind: 'flow',
       detail: 'Flow · design-system · Step 2 of 4',
     });
-    expect(section(overview, 'upNext')?.rows[0]).toMatchObject({ kind: 'inbox', detail: 'From Gmail' });
+    expect(section(overview, 'upNext')?.rows[0]).toMatchObject({
+      kind: 'inbox',
+      detail: 'From Gmail',
+    });
   });
 
   it('keeps line two to what the status word does not already say', () => {
@@ -164,7 +178,10 @@ describe('queueSections', () => {
     const tones = (key: string) => section(overview, key)!.rows.map((row) => row.status.tone);
     expect(tones('needsYou')).toEqual(['attention', 'attention', 'attention', 'danger']);
     expect(tones('running')).toEqual(['live']);
-    expect(section(overview, 'review')?.rows[0].status).toMatchObject({ word: 'Ready', tone: 'quiet' });
+    expect(section(overview, 'review')?.rows[0].status).toMatchObject({
+      word: 'Ready',
+      tone: 'quiet',
+    });
   });
 
   it('gives every Needs you row room for a two-line title', () => {
@@ -197,6 +214,64 @@ describe('queueSections', () => {
     expect(kinds).toMatchObject({ retry: 'retry', continue: 'continue', older: 'continue' });
   });
 
+  it('carries the step a Flow recovery pins and whether its Retry must ask first', () => {
+    const failed = { status: 'failed', flowRunId: 'run', actions: ['continueTask' as const] };
+    const data = {
+      ...overview,
+      queue: [
+        item({
+          ...failed,
+          id: 'command',
+          recoveryKind: 'retry',
+          confirmSideEffects: true,
+          recoveryNodeRunId: 'cmd',
+        }),
+        item({ ...failed, id: 'older', recoveryKind: 'retry' }),
+      ],
+    };
+    const rows = section(data, 'needsYou')!.rows;
+    const pick = (key: string) => rows.find((row) => row.key === key);
+    expect(pick('command')).toMatchObject({ confirmSideEffects: true, recoveryNodeRunId: 'cmd' });
+    expect(pick('older')).toMatchObject({ confirmSideEffects: false, recoveryNodeRunId: null });
+  });
+
+  it('asks only before a Retry that may repeat side effects, and pins the step it was shown', () => {
+    const failed = { status: 'failed', flowRunId: 'run', actions: ['continueTask' as const] };
+    const data = {
+      ...overview,
+      queue: [
+        item({
+          ...failed,
+          id: 'command',
+          recoveryKind: 'retry',
+          confirmSideEffects: true,
+          recoveryNodeRunId: 'cmd',
+        }),
+        item({ ...failed, id: 'agent', recoveryKind: 'continue', confirmSideEffects: true }),
+      ],
+    };
+    const rows = section(data, 'needsYou')!.rows;
+    const command = rows.find((row) => row.key === 'command')!;
+    const agent = rows.find((row) => row.key === 'agent')!;
+    expect(asksBeforeSending(command, 'continueTask')).toBe(true);
+    expect(asksBeforeSending(command, 'completeTask')).toBe(false);
+    // A Continue resumes the session, so it never asks.
+    expect(asksBeforeSending(agent, 'continueTask')).toBe(false);
+    expect(rowRequest(command, 'continueTask')).toEqual({
+      type: 'continueTask',
+      id: 'command',
+      kind: 'retry',
+      recoveryNodeRunId: 'cmd',
+    });
+    // A row without a step sends none, as an older computer's rows do.
+    expect(rowRequest(agent, 'continueTask')).toEqual({
+      type: 'continueTask',
+      id: 'agent',
+      kind: 'continue',
+    });
+    expect(rowRequest(command, 'completeTask')).toEqual({ type: 'completeTask', id: 'command' });
+  });
+
   it('counts the rows it was sent and offers more when the computer holds more', () => {
     const paged = {
       ...overview,
@@ -219,8 +294,12 @@ describe('expandedLimits', () => {
   });
 
   it('pages the whole attention list for either attention section, whichever expands last', () => {
-    expect(expandedLimits(new Set(['needsYou', 'review'] as const), counts)).toEqual({ attention: 30 });
-    expect(expandedLimits(new Set(['review', 'needsYou'] as const), counts)).toEqual({ attention: 30 });
+    expect(expandedLimits(new Set(['needsYou', 'review'] as const), counts)).toEqual({
+      attention: 30,
+    });
+    expect(expandedLimits(new Set(['review', 'needsYou'] as const), counts)).toEqual({
+      attention: 30,
+    });
   });
 
   it('follows the live count and caps at the largest page', () => {
