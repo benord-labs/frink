@@ -44,10 +44,19 @@ vi.mock('@dagrejs/dagre', () => {
 
 // ── Minimal React Flow mock ──────────────────────────────────────────────────
 
+// The nodes last handed to React Flow, so tests can read the data each stage node would render from.
+type RenderedNode = {
+  id: string;
+  data: { stage: BatchStageDetail; onOpenChat?: (chatId: string) => void };
+};
+const renderedNodes: RenderedNode[] = [];
+const requestNavSpy = vi.fn();
+
 vi.mock('@xyflow/react', () => ({
-  ReactFlow: ({ children }: { children?: React.ReactNode }) => (
-    <div data-testid="rf-canvas">{children}</div>
-  ),
+  ReactFlow: ({ children, nodes }: { children?: React.ReactNode; nodes: RenderedNode[] }) => {
+    renderedNodes.splice(0, renderedNodes.length, ...nodes);
+    return <div data-testid="rf-canvas">{children}</div>;
+  },
   ReactFlowProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   Background: () => null,
   BackgroundVariant: { Dots: 'dots' },
@@ -94,7 +103,7 @@ vi.mock('./use-batch-edge-editing', () => ({
 vi.mock('../../../../../../hooks/use-dirty-nav-guard', () => ({
   useDirtyNavGuard: () => ({
     showDialog: false,
-    requestNav: vi.fn(),
+    requestNav: requestNavSpy,
     confirmNav: vi.fn(),
     cancelNav: vi.fn(),
   }),
@@ -140,6 +149,7 @@ const STAGE_B = makeStage('s2', 'pending', 2, ['s1']);
 afterEach(() => {
   cleanup();
   dagreLayoutSpy.mockClear();
+  requestNavSpy.mockClear();
 });
 
 // ── EC-3 tests ────────────────────────────────────────────────────────────────
@@ -185,6 +195,43 @@ describe('BatchPlanCanvas — EC-3: dagre layout memoization', () => {
 
     // Dagre must NOT have been re-called — topology key is identical
     expect(dagreLayoutSpy).not.toHaveBeenCalled();
+  });
+
+  it('gives nodes the refetched stage, so a chat linked after mount becomes openable', () => {
+    const onSelectStage = vi.fn();
+    const { rerender } = render(
+      <BatchPlanCanvas
+        stages={[STAGE_A, STAGE_B]}
+        selectedStageId={null}
+        onSelectStage={onSelectStage}
+      />,
+    );
+    expect(renderedNodes[0].data.onOpenChat).toBeUndefined();
+
+    rerender(
+      <BatchPlanCanvas
+        stages={[{ ...STAGE_A, status: 'completed', latest_chat_id: 'chat-1' }, STAGE_B]}
+        selectedStageId={null}
+        onSelectStage={onSelectStage}
+      />,
+    );
+
+    const [first, second] = renderedNodes;
+    expect(first.data.stage).toMatchObject({ status: 'completed', latest_chat_id: 'chat-1' });
+    expect(second.data.onOpenChat).toBeUndefined();
+    first.data.onOpenChat?.('chat-1');
+    expect(requestNavSpy).toHaveBeenCalledWith('chat-1');
+    expect(dagreLayoutSpy).toHaveBeenCalledTimes(1);
+
+    // The chat is deleted and the next refetch reports none: the control goes away again.
+    rerender(
+      <BatchPlanCanvas
+        stages={[{ ...STAGE_A, status: 'completed' }, STAGE_B]}
+        selectedStageId={null}
+        onSelectStage={onSelectStage}
+      />,
+    );
+    expect(renderedNodes[0].data.onOpenChat).toBeUndefined();
   });
 
   it('EC-3b: does NOT re-call dagre when selectedStageId changes (node click)', () => {
