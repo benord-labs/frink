@@ -187,10 +187,6 @@ export const hoisted = {
 type OverlayStub = { atom: AnyAtom | null; value: null | 'workqueue' | 'settings' | 'flows' };
 export const overlayStub: OverlayStub = { atom: null, value: null };
 
-/** selectedAgentChatIdAtom's identity and value for the jotai mock. */
-type SelectedChatStub = { atom: AnyAtom | null; value: string | null };
-export const selectedChatStub: SelectedChatStub = { atom: null, value: null };
-
 /** Real atom identities, resolved in `setupHarness` so the jotai mock can match on them. */
 export const atomRefs = {
   splitViewChatIdsAtom: null as unknown,
@@ -204,10 +200,7 @@ export const makeJotaiMock = (actual: typeof import('jotai')) => ({
   useAtom: (atom: AnyAtom) =>
     atom === overlayStub.atom
       ? [overlayStub.value, vi.fn()]
-      : [
-          atom === selectedChatStub.atom ? selectedChatStub.value : null,
-          hoisted.setSelectedChatIdMock,
-        ],
+      : [null, hoisted.setSelectedChatIdMock],
   useAtomValue: (a: unknown) => {
     if (a === atomRefs.splitViewChatIdsAtom) {
       return hoisted.state.splitViewState.splitView.chatIds;
@@ -377,7 +370,6 @@ let SidebarUnderTest: typeof import('./UnifiedSidebar').UnifiedSidebar | null = 
 /** `beforeAll` body: resolves the real atom identities and the component, after mocks settle. */
 export async function setupHarness() {
   const atoms = await import('../../agents/atoms');
-  selectedChatStub.atom = atoms.selectedAgentChatIdAtom;
   atomRefs.splitViewChatIdsAtom = atoms.splitViewChatIdsAtom;
   atomRefs.splitViewActivePaneIndexAtom = atoms.splitViewActivePaneIndexAtom;
   atomRefs.splitViewQuickActionsChromeAtom = atoms.splitViewQuickActionsChromeAtom;
@@ -468,7 +460,6 @@ export function resetHarness() {
   hoisted.state.persistedPendingPlanApprovals = [];
   hoisted.state.livePendingPlanApprovals = new Map();
   overlayStub.value = null;
-  selectedChatStub.value = null;
   hoisted.capturedGroupedProjectsParams = null;
   hoisted.state.splitViewState = {
     splitView: { chatIds: [null], activePaneIndex: 0 },

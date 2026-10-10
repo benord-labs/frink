@@ -258,11 +258,6 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
     const canOpenInNewPane = canOpenChatInNewPane(chatIds);
     const chatPaneMap = useMemo(() => {
       const map = new Map<string, number>();
-      // Single view is pane 1, so a collapsed project still shows which chat is open.
-      if (!isSplitActive) {
-        if (selectedChatId) map.set(selectedChatId, 1);
-        return map;
-      }
       for (let i = 0; i < chatIds.length; i++) {
         const id = chatIds[i];
         if (id !== null && id !== NEW_CHAT_PANE) {
@@ -270,7 +265,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
         }
       }
       return map;
-    }, [chatIds, isSplitActive, selectedChatId]);
+    }, [chatIds]);
 
     // Show files button when a project is selected AND not in split view.
     const showFilesButton = Boolean(selectedProject?.path) && !isSplitActive;
@@ -1760,7 +1755,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
                 onRenameProject={handleProjectRename}
                 onDeleteAllChatsInFolder={handleDeleteAllChatsInFolder}
                 onDeleteBatch={handleDeleteBatch}
-                chatPaneMap={chatPaneMap}
+                chatPaneMap={isSplitActive ? chatPaneMap : undefined}
                 activeDropTargetId={overProjectId}
                 activeChat={activeChat}
                 dndHandlers={dndHandlers}

@@ -9,7 +9,6 @@ import {
   expectScopedCountsRefetch,
   hoisted,
   resetHarness,
-  selectedChatStub,
   setupHarness,
 } from './sidebar-test-harness';
 import { UnifiedSidebar } from './UnifiedSidebar';
@@ -1898,22 +1897,18 @@ describe('UnifiedSidebar row-action identity', () => {
 });
 
 describe('UnifiedSidebar pane indicators', () => {
-  const paneMap = () => hoisted.capturedProjectsTreeProps?.chatPaneMap;
-
-  it('marks the open chat as pane 1 in single view', () => {
-    selectedChatStub.value = 'chat-open';
+  it('passes no pane map in single view, where panes are unnumbered', () => {
     render(<UnifiedSidebar />);
-    expect(paneMap()).toEqual(new Map([['chat-open', 1]]));
+    expect(hoisted.capturedProjectsTreeProps?.chatPaneMap).toBeUndefined();
   });
 
-  it('maps panes from split state, ignoring the stale selection', () => {
-    selectedChatStub.value = 'chat-stale';
+  it('passes the pane map in split view', () => {
     hoisted.state.splitViewState = {
       splitView: { chatIds: ['chat-a', null, 'chat-b'], activePaneIndex: 0 },
       isSplitActive: true,
     };
     render(<UnifiedSidebar />);
-    expect(paneMap()).toEqual(
+    expect(hoisted.capturedProjectsTreeProps?.chatPaneMap).toEqual(
       new Map([
         ['chat-a', 1],
         ['chat-b', 3],
