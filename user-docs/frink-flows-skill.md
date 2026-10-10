@@ -18,7 +18,7 @@ Nine references cover triggers, webhook aliases, action contracts, graph/logic, 
 | `~/.frink/skills/frink-flows/` | Canonical editable copy |
 | `~/.agents/skills/frink-flows/`, `~/.claude/skills/frink-flows/`, `~/.cursor/skills/frink-flows/` | Real copies projected for agent discovery |
 
-These are real copies, not symlinks. Edit the canonical copy, restart Frink so it projects changes, then start a new agent session. A local edit in a projected provider copy can prevent Frink from replacing that copy; it does not write back to the canonical skill.
+These are real copies, not symlinks. Edit the canonical copy, restart Frink so it projects changes, then start a new agent session. A local edit in a projected provider copy keeps only the edited file; the rest of that copy keeps updating, and the edit does not write back to the canonical skill.
 
 To add a project-specific pattern, add a Markdown reference in the canonical skill and link it from `SKILL.md`. To change block guidance, follow the router to its current reference. Keep an edited router consistent with its references. Do not edit `.baseline.json`; it records shipped hashes used to distinguish your edits from release content.
 
@@ -32,6 +32,8 @@ Frink compares the full shipped content manifest, not just the app version. When
 - Clean files removed from the release are removed; edited retired files survive.
 
 To adopt the shipped version of a canonical file you edited, delete that file and restart Frink. Deleting the baseline instead removes the information needed to merge safely and causes Frink to leave the directory alone. Older whole-skill `-rejected` update directories are obsolete and cleaned up on boot.
+
+Each provider's projected copy follows the same per-file rule against the canonical copy: a file you edited in a provider copy is kept, the other files in that copy keep updating, and Frink logs a warning naming the kept files when it updates around them. To take the canonical version of a file you edited in a provider copy, delete that file and restart Frink.
 
 If guidance stays stale, check whether the canonical file or the provider's projected copy was edited. Restarting a chat alone does not synchronize provider copies. Frink preserves user-authored collisions instead of silently overwriting them.
 
