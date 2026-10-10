@@ -12,10 +12,7 @@ import { useSidebarNavigation } from './use-sidebar-navigation';
  * happens to be on screen, nor drop focus to <body>, where the next Escape reaches the
  * destination's own close handler.
  */
-function mountSidebar(onSelectionKey?: (action: 'clear' | 'delete') => boolean): {
-  container: HTMLDivElement;
-  unmount: () => void;
-} {
+function mountSidebar(onSelectionKey?: (action: 'clear' | 'delete') => boolean) {
   const container = document.createElement('div');
   container.tabIndex = -1;
   const row = document.createElement('button');
@@ -27,15 +24,16 @@ function mountSidebar(onSelectionKey?: (action: 'clear' | 'delete') => boolean):
 
   const ref = createRef<HTMLDivElement>() as { current: HTMLDivElement | null };
   ref.current = container;
-  const { unmount } = renderHook(() =>
+  const { result, unmount } = renderHook(() =>
     useSidebarNavigation(ref, {
       onSelectChat: vi.fn(),
       onToggleCodebase: vi.fn(),
       isCodebaseExpanded: () => false,
       onSelectionKey,
+      selectedChatId: 'chat-1',
     }),
   );
-  return { container, unmount };
+  return { container, row, result, unmount };
 }
 
 /** The chat surface AgentsDestinationPane mounts for chat and Work Queue, but never for Flows. */
@@ -154,6 +152,33 @@ describe('sidebar keys with a multi-selection', () => {
       field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true }));
     });
     expect(onSelectionKey).not.toHaveBeenCalled();
+    unmount();
+  });
+});
+
+describe('sidebar auto-highlight', () => {
+  it('highlights and scrolls to the active chat on an explicit sidebar focus', () => {
+    const { container, row, result, unmount } = mountSidebar();
+    row.scrollIntoView = vi.fn();
+    vi.stubGlobal('matchMedia', () => ({ matches: false }));
+
+    act(() => result.current.focusActiveItem());
+
+    expect(document.activeElement).toBe(container);
+    expect(result.current.focusedItemId).toBe('chat-1');
+    expect(row.scrollIntoView).toHaveBeenCalled();
+    unmount();
+  });
+
+  // A dialog closing after a delete restores focus to the tree; that must not scroll it.
+  it('does not scroll when focus merely returns to the tree', () => {
+    const { container, row, result, unmount } = mountSidebar();
+    row.scrollIntoView = vi.fn();
+
+    act(() => container.focus());
+
+    expect(result.current.focusedItemId).toBeNull();
+    expect(row.scrollIntoView).not.toHaveBeenCalled();
     unmount();
   });
 });
