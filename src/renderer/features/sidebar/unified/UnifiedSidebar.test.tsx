@@ -9,6 +9,7 @@ import {
   expectScopedCountsRefetch,
   hoisted,
   resetHarness,
+  selectedChatStub,
   setupHarness,
 } from './sidebar-test-harness';
 import { UnifiedSidebar } from './UnifiedSidebar';
@@ -1893,5 +1894,30 @@ describe('UnifiedSidebar row-action identity', () => {
     await Promise.all([first, second]);
 
     expect(hoisted.togglePinMutateAsyncMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('UnifiedSidebar pane indicators', () => {
+  const paneMap = () => hoisted.capturedProjectsTreeProps?.chatPaneMap;
+
+  it('marks the open chat as pane 1 in single view', () => {
+    selectedChatStub.value = 'chat-open';
+    render(<UnifiedSidebar />);
+    expect(paneMap()).toEqual(new Map([['chat-open', 1]]));
+  });
+
+  it('maps panes from split state, ignoring the stale selection', () => {
+    selectedChatStub.value = 'chat-stale';
+    hoisted.state.splitViewState = {
+      splitView: { chatIds: ['chat-a', null, 'chat-b'], activePaneIndex: 0 },
+      isSplitActive: true,
+    };
+    render(<UnifiedSidebar />);
+    expect(paneMap()).toEqual(
+      new Map([
+        ['chat-a', 1],
+        ['chat-b', 3],
+      ]),
+    );
   });
 });
