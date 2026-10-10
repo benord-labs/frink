@@ -1895,3 +1895,24 @@ describe('UnifiedSidebar row-action identity', () => {
     expect(hoisted.togglePinMutateAsyncMock).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('UnifiedSidebar pane indicators', () => {
+  it('passes no pane map in single view, where panes are unnumbered', () => {
+    render(<UnifiedSidebar />);
+    expect(hoisted.capturedProjectsTreeProps?.chatPaneMap).toBeUndefined();
+  });
+
+  it('passes the pane map in split view', () => {
+    hoisted.state.splitViewState = {
+      splitView: { chatIds: ['chat-a', null, 'chat-b'], activePaneIndex: 0 },
+      isSplitActive: true,
+    };
+    render(<UnifiedSidebar />);
+    expect(hoisted.capturedProjectsTreeProps?.chatPaneMap).toEqual(
+      new Map([
+        ['chat-a', 1],
+        ['chat-b', 3],
+      ]),
+    );
+  });
+});
