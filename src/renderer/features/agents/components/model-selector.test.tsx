@@ -270,7 +270,7 @@ describe('model list pane', () => {
     const haiku = screen.getByRole('option', { name: 'Haiku 4.5' });
     await waitFor(() => expect(haiku).toHaveFocus());
     fireEvent.keyDown(screen.getByRole('listbox'), { key: 'ArrowUp' });
-    expect(screen.getByRole('option', { name: 'Sonnet 4.6' })).toHaveFocus();
+    expect(screen.getByRole('option', { name: 'Haiku 5.5' })).toHaveFocus();
     fireEvent.keyDown(screen.getByRole('listbox'), { key: 'ArrowDown' });
     expect(haiku).toHaveFocus();
   });

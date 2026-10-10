@@ -124,13 +124,13 @@ export function getClaudeCliModel(modelId: string): string {
   return model?.cliValue ?? CLAUDE_DEFAULT_MODEL;
 }
 
-const CLAUDE_AUTO_MODEL_VERSION_RE = /^claude-(?:opus|sonnet)-(\d+)(?:-(\d+))?/;
+const CLAUDE_AUTO_MODEL_VERSION_RE = /^claude-(?:opus|sonnet|haiku)-(\d+)(?:-(\d+))?/;
 
 function claudeModelSupportsNativeAutoReview(model: string): boolean {
   const normalized = model.toLowerCase();
-  if (normalized.includes('haiku')) return false;
   const version = CLAUDE_AUTO_MODEL_VERSION_RE.exec(normalized);
-  if (!version) return true; // Current aliases (`sonnet`, `opus`) and forward models.
+  // Picker ids, current aliases and forward models pass; `claude-3-*` ids predate Auto.
+  if (!version) return !/^claude-\d/.test(normalized);
   const major = Number(version[1]);
   const minor = Number(version[2] ?? 0);
   return major > 4 || (major === 4 && minor >= 6);
@@ -138,7 +138,7 @@ function claudeModelSupportsNativeAutoReview(model: string): boolean {
 
 /**
  * Whether the selected provider/model has a provider-owned AI approval reviewer.
- * Claude Auto excludes Haiku plus pre-4.6 models.
+ * Claude Auto excludes pre-4.6 models, Haiku 4.5 included.
  * Account/admin eligibility remains provider-owned and is reported at runtime.
  */
 export function supportsNativeAutoReview(
@@ -192,7 +192,7 @@ export function getClaudeSdkEffort(modelId: string): ClaudeSdkEffortLevel | unde
     modelId.startsWith('opus-4.7') ||
     modelId.startsWith('opus-') ||
     modelId.startsWith('sonnet') ||
-    modelId === 'haiku'
+    modelId.startsWith('haiku') // also covers `haiku-5.5`
   ) {
     return 'medium';
   }

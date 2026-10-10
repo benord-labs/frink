@@ -74,8 +74,8 @@ async function getLatestVersion() {
 
   // Fallback floor: must support provider-native Auto Mode for SDK/non-Anthropic gateway use,
   // every `--effort` level in the catalog, and every catalog model. Auto's gateway opt-in is
-  // reliable from 2.1.207, xhigh from 2.1.173; `claude-sonnet-5-5` first ships in 2.1.284.
-  return '2.1.284';
+  // reliable from 2.1.207, xhigh from 2.1.173; `claude-haiku-5-5` first ships in 2.1.293.
+  return '2.1.293';
 }
 
 /**

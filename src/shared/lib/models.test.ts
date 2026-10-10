@@ -38,6 +38,8 @@ describe('supportsNativeAutoReview', () => {
     'claude-opus-5-5',
     'sonnet-5.5',
     'claude-sonnet-5-5',
+    'haiku-5.5',
+    'claude-haiku-5-5',
   ])('supports current Claude model %s', (model) => {
     expect(supportsNativeAutoReview('claude-code', model)).toBe(true);
   });
@@ -233,6 +235,8 @@ describe('CLAUDE_CODE_MODELS data integrity', () => {
       ['opus-1m', '4.6'],
       ['sonnet', '4.6'],
       ['sonnet-1m', '4.6'],
+      ['haiku-5.5', '5.5'],
+      ['haiku-5.5-max', '5.5'],
       ['haiku', '4.5'],
     ] as const) {
       const m = CLAUDE_CODE_MODELS.find((x) => x.id === id);
@@ -273,10 +277,12 @@ describe('Edge Case: Model ID Mapping Gaps (High)', () => {
     expect(getClaudeCliModel('opus-4.7-max')).toBe('claude-opus-4-7');
     expect(getClaudeCliModel('opus-4.7-1m')).toBe('claude-opus-4-7');
     expect(getClaudeCliModel('opus-4.7-1m-max')).toBe('claude-opus-4-7');
-    // Sonnet / Haiku keep short aliases (single-version families)
+    // Sonnet 4.6 keeps its short alias
     expect(getClaudeCliModel('sonnet')).toBe('sonnet');
     expect(getClaudeCliModel('sonnet-1m-high')).toBe('sonnet');
-    expect(getClaudeCliModel('haiku')).toBe('haiku');
+    // The CLI's `haiku` alias follows the newest Haiku, so each Haiku row pins its own id.
+    expect(getClaudeCliModel('haiku')).toBe('claude-haiku-4-5');
+    expect(getClaudeCliModel('haiku-5.5')).toBe('claude-haiku-5-5');
   });
 
   it('CLAUDE_MODEL_ID_MAP pins Opus ids to version-specific Anthropic model IDs', () => {
@@ -310,7 +316,7 @@ describe('Edge Case: Model ID Mapping Gaps (High)', () => {
     expect(CLAUDE_MODEL_ID_MAP.opus).toBe('claude-opus-4-6');
     expect(CLAUDE_MODEL_ID_MAP['opus-4.7']).toBe('claude-opus-4-7');
     expect(CLAUDE_MODEL_ID_MAP.sonnet).toBe('sonnet');
-    expect(CLAUDE_MODEL_ID_MAP.haiku).toBe('haiku');
+    expect(CLAUDE_MODEL_ID_MAP.haiku).toBe('claude-haiku-4-5');
   });
 });
 
@@ -566,6 +572,37 @@ describe.each([
   });
 });
 
+describe('Haiku 5.5 catalog (1M-native, Medium default, full effort ladder)', () => {
+  const haiku55 = () => CLAUDE_CODE_MODELS.filter((m) => m.familyId === 'haiku-5.5' && !m.ultra);
+
+  it('exposes one 1M row per effort, pinned to claude-haiku-5-5', () => {
+    expect(haiku55().map((m) => m.id)).toEqual([
+      'haiku-5.5',
+      'haiku-5.5-low',
+      'haiku-5.5-high',
+      'haiku-5.5-xhigh',
+      'haiku-5.5-max',
+    ]);
+    for (const m of haiku55()) {
+      expect(m.contextWindow).toBe('1M context');
+      expect(claudeModelRequires1M(m.id), m.id).toBe(false);
+      expect(CLAUDE_MODEL_ID_MAP[m.id], m.id).toBe('claude-haiku-5-5');
+    }
+  });
+
+  it('resolves effort: bare → medium, suffixed tiers to their own level', () => {
+    expect(getClaudeSdkEffort('haiku-5.5')).toBe('medium');
+    expect(getClaudeSdkEffort('haiku-5.5-low')).toBe('low');
+    expect(getClaudeSdkEffort('haiku-5.5-xhigh')).toBe('xhigh');
+    expect(getClaudeSdkEffort('haiku-5.5-max')).toBe('max');
+  });
+
+  it('sits directly above Haiku 4.5, which keeps its legacy id', () => {
+    const families = CLAUDE_MODEL_FAMILIES.map((f) => f.id);
+    expect(families.indexOf('haiku-5.5')).toBe(families.indexOf('haiku') - 1);
+  });
+});
+
 describe('claudeModelUsesAdaptiveThinking', () => {
   it('is true for adaptive-thinking families (manual budget_tokens would 400)', () => {
     for (const cli of [
@@ -577,13 +614,14 @@ describe('claudeModelUsesAdaptiveThinking', () => {
       'claude-opus-4-7',
       'claude-sonnet-5-5',
       'claude-sonnet-5',
+      'claude-haiku-5-5',
     ]) {
       expect(claudeModelUsesAdaptiveThinking(cli), cli).toBe(true);
     }
   });
 
   it('is false for manual-thinking families and unknown/cross-provider values', () => {
-    for (const cli of ['sonnet', 'claude-opus-4-6', 'haiku', 'gpt-5.3', '']) {
+    for (const cli of ['sonnet', 'claude-opus-4-6', 'claude-haiku-4-5', 'gpt-5.3', '']) {
       expect(claudeModelUsesAdaptiveThinking(cli), cli).toBe(false);
     }
   });
@@ -949,7 +987,7 @@ describe('splitNewestFamilies', () => {
       'Fable 5.1',
       'Opus 5.5',
       'Sonnet 5.5',
-      'Haiku 4.5',
+      'Haiku 5.5',
     ]);
     expect(names(splitNewestFamilies(CODEX_MODEL_FAMILIES).newest)).toEqual([
       'GPT-6 Astra',
