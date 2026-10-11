@@ -36,6 +36,43 @@ function mountSidebar(onSelectionKey?: (action: 'clear' | 'delete') => boolean) 
   return { container, row, result, unmount };
 }
 
+const repoB = { gitRemote: 'repo-b', displayName: 'repo-b', chats: [{ id: 'chat-2' }] };
+
+/** A tree whose second project, `repo-b`, is collapsed and holds the active chat `chat-2`. */
+function mountCollapsedProject({ rendersChat }: { rendersChat: boolean }) {
+  const { container, row, unmount } = mountSidebar();
+  row.scrollIntoView = vi.fn();
+  const project = document.createElement('button');
+  project.setAttribute('data-sidebar-item', '');
+  project.setAttribute('data-item-id', 'repo-b');
+  project.setAttribute('data-item-type', 'codebase');
+  project.scrollIntoView = vi.fn();
+  container.append(project);
+  unmount();
+
+  const expanded = new Set<string>();
+  const ref = { current: container };
+  const hook = renderHook(() =>
+    useSidebarNavigation(ref, {
+      onSelectChat: vi.fn(),
+      onToggleCodebase: (key) => {
+        expanded.add(key);
+        if (!rendersChat) return;
+        const chat = document.createElement('button');
+        chat.setAttribute('data-sidebar-item', '');
+        chat.setAttribute('data-item-id', 'chat-2');
+        chat.setAttribute('data-item-type', 'chat');
+        chat.scrollIntoView = vi.fn();
+        container.append(chat);
+      },
+      isCodebaseExpanded: (key) => expanded.has(key),
+      codebases: [repoB],
+      selectedChatId: 'chat-2',
+    }),
+  );
+  return { container, result: hook.result, unmount: hook.unmount };
+}
+
 /** The chat surface AgentsDestinationPane mounts for chat and Work Queue, but never for Flows. */
 function mountChatSurface(): HTMLElement {
   const surface = document.createElement('section');
@@ -167,6 +204,42 @@ describe('sidebar auto-highlight', () => {
     expect(document.activeElement).toBe(container);
     expect(result.current.focusedItemId).toBe('chat-1');
     expect(row.scrollIntoView).toHaveBeenCalled();
+    unmount();
+  });
+
+  it('expands the collapsed project holding the active chat and focuses its row', () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: false }));
+    const { container, result, unmount } = mountCollapsedProject({ rendersChat: true });
+
+    act(() => result.current.focusActiveItem());
+
+    expect(document.activeElement).toBe(container);
+    expect(result.current.focusedItemId).toBe('chat-2');
+    unmount();
+  });
+
+  it('lands on the project row when the expanded project does not render the chat', () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: false }));
+    const { result, unmount } = mountCollapsedProject({ rendersChat: false });
+
+    act(() => result.current.focusActiveItem());
+
+    expect(result.current.focusedItemId).toBe('repo-b');
+    unmount();
+  });
+
+  it('moves an existing keyboard highlight to the active chat', () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: false }));
+    const { container, result, unmount } = mountCollapsedProject({ rendersChat: true });
+    act(() => {
+      container.focus();
+      container.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
+    });
+    expect(result.current.focusedItemId).toBe('chat-1');
+
+    act(() => result.current.focusActiveItem());
+
+    expect(result.current.focusedItemId).toBe('chat-2');
     unmount();
   });
 

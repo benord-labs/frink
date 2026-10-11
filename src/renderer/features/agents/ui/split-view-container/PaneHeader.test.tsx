@@ -70,6 +70,26 @@ describe('PaneHeader', () => {
       expect(onActivate).toHaveBeenCalledOnce();
     });
 
+    it('activates the pane and asks the sidebar to reveal its chat on cmd-click', async () => {
+      const onActivate = vi.fn();
+      const onReveal = vi.fn();
+      window.addEventListener('sidebar:reveal-active-chat', onReveal);
+      render(<PaneHeader {...baseProps()} onActivate={onActivate} />);
+      const activateBtn = screen.getByRole('button', { name: FOCUS_PANE_1 });
+
+      await userEvent.click(activateBtn);
+      expect(onReveal).not.toHaveBeenCalled();
+
+      const user = userEvent.setup();
+      await user.keyboard('{Meta>}');
+      await user.click(activateBtn);
+      await user.keyboard('{/Meta}');
+      window.removeEventListener('sidebar:reveal-active-chat', onReveal);
+
+      expect(onActivate).toHaveBeenCalledTimes(2);
+      expect(onReveal).toHaveBeenCalledOnce();
+    });
+
     it('does not render an activate button when onActivate is absent', () => {
       render(<PaneHeader {...baseProps()} />);
 
@@ -191,6 +211,56 @@ describe('PaneHeader', () => {
       render(<PaneHeader {...baseProps()} />);
 
       expect(screen.queryByRole('button', { name: /drag to reorder pane/i })).toBeNull();
+    });
+  });
+
+  describe('header controls', () => {
+    it('removes the pane from the split when the close button is clicked', async () => {
+      const props = baseProps();
+      render(<PaneHeader {...props} />);
+
+      await userEvent.click(screen.getByRole('button', { name: 'Remove pane 1 from split' }));
+
+      expect(props.onClose).toHaveBeenCalledOnce();
+    });
+
+    it('moves the pane with the reorder arrows, named for a stacked layout', async () => {
+      const onMoveLeft = vi.fn();
+      const onMoveRight = vi.fn();
+      render(
+        <PaneHeader
+          {...baseProps()}
+          isVertical
+          canMoveLeft
+          canMoveRight
+          onMoveLeft={onMoveLeft}
+          onMoveRight={onMoveRight}
+        />,
+      );
+
+      await userEvent.click(screen.getByRole('button', { name: 'Move pane 1 up' }));
+      await userEvent.click(screen.getByRole('button', { name: 'Move pane 1 down' }));
+
+      expect(onMoveLeft).toHaveBeenCalledOnce();
+      expect(onMoveRight).toHaveBeenCalledOnce();
+    });
+
+    it('shows a zoomed pane its zoom level and resets it on click', async () => {
+      const onResetPaneZoom = vi.fn();
+      render(
+        <PaneHeader
+          {...baseProps()}
+          zoomFactor={1.25}
+          onResetPaneZoom={onResetPaneZoom}
+          onMoveLeft={vi.fn()}
+        />,
+      );
+
+      await userEvent.click(
+        screen.getByRole('button', { name: 'Reset zoom to 100% (currently 125%)' }),
+      );
+
+      expect(onResetPaneZoom).toHaveBeenCalledOnce();
     });
   });
 });

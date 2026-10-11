@@ -17,7 +17,7 @@ import type { SidebarBatchGroup } from '../../../../../../shared/types/flows/sid
 import type { SidebarTaskStatus } from '../../constants';
 import { STRINGS } from '../../constants';
 import type { CodebaseGroup, ProjectActionHandlers } from '../../types';
-import type { ActiveFolderChat, ChatReason } from '../../utils';
+import { type ActiveFolderChat, type ChatReason, getCodebaseKey } from '../../utils';
 import { ChatListItem } from '../ChatListItem';
 import { ChatSelectionDragBadge } from '../ChatSelection';
 import { CodebaseItem } from '../CodebaseItem';
@@ -122,7 +122,7 @@ function ProjectsTreeComponent({
         {filteredCodebases.length > 0 ? (
           <div className="space-y-0.5">
             {filteredCodebases.map((codebase) => {
-              const key = codebase.gitRemote ?? codebase.displayName;
+              const key = getCodebaseKey(codebase);
               return (
                 <CodebaseItem
                   key={key}

@@ -16,13 +16,20 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { focusChatInput } from '@/lib/focus-chat-input';
 import { scrollTreeItemIntoView } from '@/lib/tree-navigation';
+import type { ChatItem, CodebaseGroup } from '../types';
+import { getCodebaseKey } from '../utils';
 
 type SidebarItemInfo = {
   id: string;
   type: 'codebase' | 'chat';
   element: HTMLElement;
+};
+
+type RevealableCodebase = Pick<CodebaseGroup, 'gitRemote' | 'displayName'> & {
+  chats: readonly Pick<ChatItem, 'id'>[];
 };
 
 type SidebarNavigationCallbacks = {
@@ -36,11 +43,14 @@ type SidebarNavigationCallbacks = {
   isDragging?: boolean;
   /** Currently active chat ID — used to focus the active chat on Cmd+; instead of the first item */
   selectedChatId?: string | null;
+  /** Rendered project groups, so the collapsed project holding the active chat can be expanded */
+  codebases?: readonly RevealableCodebase[];
   /** Esc / Delete while chats are multi-selected. Returns true when it consumed the key. */
   onSelectionKey?: (action: 'clear' | 'delete') => boolean;
 };
 
-const FOCUS_RING_CLASSES = ['ring-2', 'ring-ring/50'];
+// Inset: an outer ring is clipped by the tree's scroll container.
+const FOCUS_RING_CLASSES = ['ring-2', 'ring-inset', 'ring-ring/50'];
 
 /**
  * Query all visible sidebar items from the DOM in document order.
@@ -145,23 +155,36 @@ export function useSidebarNavigation(
   // Keep a ref so the focus handler reads the latest selectedChatId without re-registering.
   const selectedChatIdRef = useRef(selectedChatId);
   selectedChatIdRef.current = selectedChatId;
+  const codebasesRef = useRef(callbacks.codebases);
+  codebasesRef.current = callbacks.codebases;
 
-  // Highlight the active chat (or first visible item) on an explicit sidebar focus (Cmd+;). Not a
+  // Reveal the active chat on an explicit sidebar focus (Cmd+;, pane-header cmd-click). Not a
   // focus listener: dialogs restoring focus here after a delete must not scroll the tree.
   const focusActiveItem = useCallback(() => {
     const container = containerRef.current;
     if (!container) return;
     container.focus();
-    if (focusedItemIdRef.current) return;
+
+    const activeId = selectedChatIdRef.current;
+    const codebase = codebasesRef.current?.find((c) =>
+      c.chats.some((chat) => chat.id === activeId),
+    );
+    const codebaseKey = codebase ? getCodebaseKey(codebase) : null;
+    if (codebaseKey && !isCodebaseExpanded(codebaseKey)) {
+      flushSync(() => onToggleCodebase(codebaseKey));
+    }
 
     const items = getVisibleItems(container);
     if (items.length === 0) return;
 
-    const activeId = selectedChatIdRef.current;
-    const targetItem = (activeId && items.find((item) => item.id === activeId)) || items[0];
+    // The project row stands in when its chat row is not rendered (e.g. a collapsed batch group).
+    const targetItem =
+      items.find((item) => item.id === activeId) ??
+      items.find((item) => item.id === codebaseKey) ??
+      items[0];
     setFocusedItemId(targetItem.id);
     scrollTreeItemIntoView(targetItem.element);
-  }, [containerRef]);
+  }, [containerRef, isCodebaseExpanded, onToggleCodebase]);
 
   // Invalidate cached items and clear focusedItemId when DOM changes.
   // Only observes while keyboard nav is active (focusedItemId !== null) to reduce
