@@ -1,8 +1,6 @@
 export {
   activeFileAtom,
   activeFilePathAtom,
-  chatContextFileAtomFamily,
-  chatContextFileDismissedAtomFamily,
   clearCodeSelectionContextAtomFamily,
   clearPaneContextAtom,
   closeFileAtom,
@@ -35,6 +33,7 @@ export {
   trackPaneTabAtom,
   updateFileContentAtom,
 } from './atoms';
+export { chatContextFileAtomFamily, chatContextFileDismissedAtomFamily } from './chat-context-file';
 export { closesEditorOnEscape } from './close-on-escape';
 export { type CodeEditorLayout, getNextCodeEditorLayout } from './layout-cycle';
 export {

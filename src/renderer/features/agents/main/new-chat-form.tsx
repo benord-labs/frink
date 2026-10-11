@@ -1,11 +1,9 @@
 /* eslint-disable max-lines, max-lines-per-function */
 
-import { Button } from '@benord-labs/frink-primitives';
 import { useAtom, useAtomValue, useSetAtom } from 'jotai';
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { ChatAtmosphereSurface } from '@/components/ChatAtmosphereSurface';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { type NewChatTarget, shouldScaffoldNewProject } from '@/lib/agent-chat/new-chat-target';
 import { newChatTerminalId } from '@/lib/agent-chat/sentinel-ids';
 import {
@@ -16,7 +14,11 @@ import {
 } from '@/lib/code-editor/state';
 import { commandFetcher } from '@/lib/commands/command-fetcher';
 import { expandSlashCommand } from '@/lib/commands/expand-slash-command';
-import { pastedTextMention } from '@/lib/mentions/queued-message-text';
+import {
+  attachedContextFile,
+  openFileMention,
+  pastedTextMention,
+} from '@/lib/mentions/queued-message-text';
 import type { TaskData } from '@/lib/tasks/format-task-message';
 import {
   CLAUDE_CODE_MODELS,
@@ -56,6 +58,7 @@ import {
   SLASH_COMMAND_LISTBOX_ID,
   type SlashCommandOption,
 } from '../commands';
+import { EditorContextChip } from '../components/EditorContextChip';
 import { NewChatFormHeader } from '../components/new-chat-form-header';
 import { NoAccountsEmptyState } from '../components/no-accounts-empty-state';
 import { shouldShowWorktreeBanner, WorktreeBanner } from '../components/worktree-banner';
@@ -129,6 +132,12 @@ export function NewChatForm({
   const chatContextFile = useAtomValue(chatContextFileAtomFamily(NEW_CHAT_PANE));
   const activeFileDismissed = useAtomValue(chatContextFileDismissedAtomFamily(NEW_CHAT_PANE));
   const setActiveFileDismissed = useSetAtom(chatContextFileDismissedAtomFamily(NEW_CHAT_PANE));
+  // One value feeds the composer chip and the send path, so what is shown is what is sent.
+  const attachedFile = attachedContextFile(
+    chatContextFile,
+    activeFileDismissed,
+    codeSelectionContext,
+  );
 
   // TerminalBottomPanel skips its own registration to avoid duplicate active-chat handlers.
   useEffect(() => {
@@ -476,6 +485,8 @@ export function NewChatForm({
       const safeFileName = encodeURIComponent(codeSelectionContext.fileName);
       mentionPrefix = `@[code:${safeFileName}:${codeSelectionContext.startLine}-${codeSelectionContext.endLine}:${preview}:${encodedText}] `;
     }
+    const fileMention = openFileMention(attachedFile, message);
+    if (fileMention) mentionPrefix += `${fileMention} `;
 
     // Add pasted text as pasted mentions (format: pasted:size:preview|filepath)
     // Use "|" as separator since file paths can contain colons.
@@ -566,6 +577,7 @@ export function NewChatForm({
     images,
     pastedTexts,
     codeSelectionContext,
+    attachedFile,
     chatMode,
     utils,
     accountResolved,
@@ -768,62 +780,21 @@ export function NewChatForm({
                         }
                       }}
                     >
-                      {/* Code selection / active file context chip (same UX as chat input) */}
-                      {(codeSelectionContext || (chatContextFile && !activeFileDismissed)) && (
-                        <div className="flex flex-wrap gap-1 mb-2">
-                          {codeSelectionContext ? (
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  onClick={() => {
-                                    clearCodeSelectionContext();
-                                    setActiveFileDismissed(true);
-                                  }}
-                                  className="flex gap-1 min-h-[44px] min-w-[44px] h-auto px-2 py-1 text-xs rounded-md font-normal"
-                                  aria-label={`Remove code selection and file from context: ${codeSelectionContext.fileName} lines ${codeSelectionContext.startLine}-${codeSelectionContext.endLine}`}
-                                >
-                                  <span className="truncate max-w-[100px]">
-                                    {codeSelectionContext.fileName}
-                                  </span>
-                                  <span className="text-muted-foreground/60">
-                                    L{codeSelectionContext.startLine}-{codeSelectionContext.endLine}
-                                  </span>
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                {codeSelectionContext.fileName} (L{codeSelectionContext.startLine}-
-                                {codeSelectionContext.endLine})
-                                <br />
-                                Click to remove selection and file from context
-                              </TooltipContent>
-                            </Tooltip>
-                          ) : chatContextFile ? (
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  onClick={() => setActiveFileDismissed(true)}
-                                  className="flex min-h-[44px] min-w-[44px] h-auto px-2 py-1 text-xs rounded-md font-normal"
-                                  aria-label={`Remove ${chatContextFile.name} from context`}
-                                >
-                                  <span className="truncate max-w-[120px]">
-                                    {chatContextFile.name}
-                                  </span>
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                {chatContextFile.name} — click to remove from context
-                              </TooltipContent>
-                            </Tooltip>
-                          ) : null}
-                        </div>
-                      )}
                       <EditorSection
                         editorRef={editorRef}
                         images={images}
                         pastedTexts={pastedTexts}
                         attachedTask={taskAttachment.attachedTask}
+                        contextChip={
+                          (codeSelectionContext || attachedFile) && (
+                            <EditorContextChip
+                              selection={codeSelectionContext}
+                              fileName={attachedFile?.name}
+                              onRemoveSelection={clearCodeSelectionContext}
+                              onRemoveFile={() => setActiveFileDismissed(true)}
+                            />
+                          )
+                        }
                         isFocused={editorHandlers.isFocused}
                         isDragOver={editorHandlers.isDragOver}
                         isDisabled={createChatMutation.isPending || scaffoldProject.isPending}

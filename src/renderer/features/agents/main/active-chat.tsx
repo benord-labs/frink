@@ -934,16 +934,6 @@ const ChatViewInner = memo(function ChatViewInner({
   const activeFileExcludedRef = useRef(activeFileDismissed);
   activeFileExcludedRef.current = activeFileDismissed;
 
-  // Reset dismissed when user switches to a different file (new file shows again)
-  const prevActiveFilePathRef = useRef<string | null>(chatContextFile?.path ?? null);
-  useEffect(() => {
-    const currentPath = chatContextFile?.path ?? null;
-    if (prevActiveFilePathRef.current !== currentPath) {
-      prevActiveFilePathRef.current = currentPath;
-      setActiveFileDismissed(false);
-    }
-  }, [chatContextFile?.path, setActiveFileDismissed]);
-
   // Stable handler — inlining this as `() => setActiveFileDismissed(true)` in the
   // ChatInputSection JSX busts its memo on every ChatViewInner re-render, pulling
   // the entire input subtree (editor, dropdowns, send button) into the per-chunk

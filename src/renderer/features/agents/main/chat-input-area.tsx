@@ -1,8 +1,8 @@
 /* eslint-disable max-lines, max-lines-per-function */
 
-import { Button } from '@benord-labs/frink-primitives';
 import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai';
 import { memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { attachedContextFile } from '@/lib/mentions/queued-message-text';
 import { handlePasteEvent } from '@/lib/utils/paste-text';
 import {
   CLAUDE_CODE_MODELS,
@@ -18,7 +18,6 @@ import {
   PromptInputActions,
   PromptInputContextItems,
 } from '../../../components/ui/prompt-input';
-import { Tooltip, TooltipContent, TooltipTrigger } from '../../../components/ui/tooltip';
 import { useComposerPlaceholder } from '../../../lib/agent-chat/use-composer-placeholder';
 import {
   agentsSettingsDialogActiveTabAtom,
@@ -41,6 +40,7 @@ import { AttachedTask } from '../components/AttachedTask';
 import { AgentSendButton } from '../components/agent-send-button';
 import { ChatAutoModeToggle } from '../components/auto-mode-toggle';
 import { ComposerAttachButton } from '../components/ComposerAttachButton';
+import { EditorContextChip } from '../components/EditorContextChip';
 import { ModeSelector } from '../components/mode-selector';
 import { ModelSelector } from '../components/model-selector';
 import { useCommandEditor } from '../hooks/use-command-editor';
@@ -687,6 +687,14 @@ export const ChatInputArea = memo(function ChatInputArea({
     [taskAttachment, onAddAttachments, editorRef],
   );
 
+  // The rule the send path reads too, so the chip shows exactly what the next message carries.
+  const attachedFileName = attachedContextFile(
+    activeFileName,
+    activeFileDismissed,
+    codeSelectionContext,
+  );
+  const hasEditorContext = Boolean(codeSelectionContext || attachedFileName);
+
   return (
     <div className="relative z-10 min-w-0 px-2 pb-2" data-chat-composer-root>
       <div className="@container/composer mx-auto w-full max-w-2xl">
@@ -704,6 +712,7 @@ export const ChatInputArea = memo(function ChatInputArea({
               onSubmit={handlePromptInputSubmit}
               contextItems={
                 taskAttachment.attachedTask ||
+                hasEditorContext ||
                 images.length > 0 ||
                 files.length > 0 ||
                 textContexts.length > 0 ||
@@ -716,7 +725,8 @@ export const ChatInputArea = memo(function ChatInputArea({
                         onRemove={taskAttachment.clearTask}
                       />
                     )}
-                    {(images.length > 0 ||
+                    {(hasEditorContext ||
+                      images.length > 0 ||
                       files.length > 0 ||
                       textContexts.length > 0 ||
                       (diffTextContexts?.length ?? 0) > 0 ||
@@ -794,6 +804,12 @@ export const ChatInputArea = memo(function ChatInputArea({
                             }
                           />
                         ))}
+                        <EditorContextChip
+                          selection={codeSelectionContext}
+                          fileName={attachedFileName}
+                          onRemoveSelection={() => onClearCodeSelection?.()}
+                          onRemoveFile={() => onDismissActiveFile?.()}
+                        />
                       </div>
                     )}
                   </div>
@@ -856,52 +872,6 @@ export const ChatInputArea = memo(function ChatInputArea({
                     onOpenModelSettings={openModelSettings}
                     chatId={parentChatId}
                   />
-
-                  {/* Context indicator - shows code selection or active file */}
-                  {codeSelectionContext ? (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          onClick={() => {
-                            onClearCodeSelection?.();
-                            onDismissActiveFile?.();
-                          }}
-                          className="flex gap-1 h-auto px-2 py-1 text-xs rounded-md font-normal @max-[34rem]/composer:sr-only"
-                          aria-label={`Remove code selection and file from context: ${codeSelectionContext.fileName} lines ${codeSelectionContext.startLine}-${codeSelectionContext.endLine}`}
-                        >
-                          <span className="truncate max-w-[100px]">
-                            {codeSelectionContext.fileName}
-                          </span>
-                          <span className="text-muted-foreground/60">
-                            L{codeSelectionContext.startLine}-{codeSelectionContext.endLine}
-                          </span>
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        {codeSelectionContext.fileName} (L{codeSelectionContext.startLine}-
-                        {codeSelectionContext.endLine})
-                        <br />
-                        Click to remove selection and file from context
-                      </TooltipContent>
-                    </Tooltip>
-                  ) : activeFileName && !activeFileDismissed ? (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          onClick={() => onDismissActiveFile?.()}
-                          className="flex h-auto px-2 py-1 text-xs rounded-md font-normal @max-[34rem]/composer:sr-only"
-                          aria-label={`Remove ${activeFileName} from context`}
-                        >
-                          <span className="truncate max-w-[120px]">{activeFileName}</span>
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        {activeFileName} — click to remove from context
-                      </TooltipContent>
-                    </Tooltip>
-                  ) : null}
                 </div>
 
                 <div className="ml-auto flex shrink-0 items-center gap-0.5">
