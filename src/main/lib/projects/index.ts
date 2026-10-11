@@ -142,7 +142,7 @@ function isGitHubName(owner: string, repo: string): boolean {
   );
 }
 
-export function parseGitHubRepo(repoUrl: string): GitHubRepoRef | null {
+function parseGitHubRepo(repoUrl: string): GitHubRepoRef | null {
   const { owner, repo, sshPrefix } = matchRepoUrl(repoUrl.trim());
   const name = repo?.replace(GIT_SUFFIX_REGEX, '');
   return owner && name && isGitHubName(owner, name) ? { owner, repo: name, sshPrefix } : null;
