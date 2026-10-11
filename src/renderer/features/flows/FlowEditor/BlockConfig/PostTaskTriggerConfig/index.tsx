@@ -7,6 +7,7 @@ import { Button, Input } from '@benord-labs/frink-primitives';
 import { type ReactElement, useMemo } from 'react';
 import type { FlowNode } from '../../../../../../shared/lib/validate-flow-graph';
 import type { PostTaskTriggerState } from '../../../../../../shared/types/flow';
+import type { PostTaskBindingConfig } from '../../../../../../shared/types/flows/flow-trigger-binding-config';
 import { Checkbox } from '../../../../../components/ui/checkbox';
 import { Label } from '../../../../../components/ui/label';
 import { trpc } from '../../../../../lib/trpc';
@@ -125,7 +126,7 @@ export function PostTaskTriggerConfig({
     });
   };
 
-  const bindingConfigPayload = (): Record<string, unknown> => ({
+  const bindingConfigPayload = (): PostTaskBindingConfig => ({
     triggerStates: states,
     ...(filterArr && filterArr.length > 0 ? { filterBySource: filterArr } : {}),
   });
