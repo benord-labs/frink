@@ -84,12 +84,30 @@ describe('trigger label', () => {
         <ModelSelector {...base} isOpen={false} onModelChange={vi.fn()} selectedModel={byId(id)} />,
       );
     const { unmount } = renderTrigger('opus-5.5-max');
-    expect(trigger().querySelector('.chroma-text')).toBeNull();
+    expect(trigger().querySelector('.chroma-text, .chroma-fill')).toBeNull();
     unmount();
     renderTrigger('opus-5.5-low-ultra');
-    expect(trigger().querySelector('.chroma-text-animate')).toHaveTextContent('Ultra');
+    const chromaWords = [...trigger().querySelectorAll('.chroma-text')].map((el) => el.textContent);
+    expect(chromaWords).toEqual(['Ultra', 'L']);
     expect(trigger()).toHaveTextContent('Opus 5.5 · Low · Ultra');
     expect(trigger()).toHaveAccessibleName('Model: Opus 5.5 · Low · Ultra — parallel agents on');
+  });
+
+  // Narrow tiers shed the word "Ultra"; its chroma moves to the effort token, the name, the glyph.
+  it('keeps Ultra and the effort readable as the composer narrows', () => {
+    render(
+      <ModelSelector
+        {...base}
+        isOpen={false}
+        onModelChange={vi.fn()}
+        selectedModel={byId('opus-5.5-xhigh-ultra')}
+      />,
+    );
+    expect(within(trigger()).getByText('Opus 5.5')).toHaveClass(
+      '@max-[19.5rem]/composer:chroma-text',
+    );
+    expect(within(trigger()).getByText('XH')).toHaveClass('chroma-text-animate');
+    expect(trigger().querySelector('.chroma-fill.chroma-text-animate')).not.toBeNull();
   });
 
   it('falls back to "Auto" in chat and the inherit label in flow', () => {
