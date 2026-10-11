@@ -5,6 +5,7 @@
 import * as path from 'node:path';
 import { BasePlatformProvider } from './base';
 import { cachedNvmBinDirs } from './nvm';
+import { nodeVersionManagerPaths } from './node-version-manager-paths';
 import type { EnvironmentConfig, PathConfig, ShellConfig } from './types';
 
 const USER_SHELL_REGEX = /UserShell:\s*(.+)/;
@@ -51,6 +52,8 @@ export class DarwinPlatformProvider extends BasePlatformProvider {
         path.join(home, '.deno', 'bin'),
         // NVM managed Node.js
         ...cachedNvmBinDirs(home),
+        // Last: a mise or asdf shim must not outrank a working node above.
+        ...nodeVersionManagerPaths(home, 'darwin'),
       ],
     };
   }
