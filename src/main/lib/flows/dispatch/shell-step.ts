@@ -23,6 +23,8 @@ export type ShellStepInput = {
   baseBranches?: string[];
   mergeStrategy?: string;
   config?: Record<string, unknown>;
+  /** custom nodes: `config` before template rendering, for inputs declared `"template": false` */
+  authoredConfig?: ShellStepInput['config'];
   chatId?: string;
   subChatId?: string;
   taskId?: string;
@@ -51,6 +53,7 @@ export async function executeShellStep(
       baseBranches: input.baseBranches,
       mergeStrategy: input.mergeStrategy,
       config: input.config,
+      authoredConfig: input.authoredConfig,
       chatId: input.chatId,
       subChatId: input.subChatId,
       taskId: input.taskId,
