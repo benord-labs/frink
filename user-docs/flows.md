@@ -20,6 +20,15 @@ Open a flow row's **⋯** menu and choose **Duplicate** to copy its latest saved
 
 Copies always start paused, even when the source flow is active. Agent invocation permission is preserved. Trigger-binding configuration is also preserved, but every copied binding starts inactive and must be explicitly reactivated before it can fire.
 
+## When a flow changes while you are editing it
+
+An agent (through `frink_flows_patch`) or another window can save a new version of a flow you have open. The editor hears about it straight away.
+
+- **No unsaved edits:** the editor switches to the new version on its own.
+- **Unsaved edits:** your edits are kept and a notice stays on screen until you choose. **Reload latest** drops your edits and shows the new version. **Overwrite with mine** saves your copy as the newest version, replacing what was saved meanwhile (earlier versions are still kept). The notice goes away once your copy matches a saved version again.
+
+If you press Save on a copy that has fallen behind, the same two choices appear in a dialog. A draft of unsaved edits survives a crash, including edits you made while a save was in progress.
+
 ## Project defaults
 
 Steps that run in a project (`start_task`, `run_command`, your own custom nodes) resolve their project as **node override → flow default** (`graph.settings.defaultProjectId`, set in **flow settings → Project**). A node override may be a `{{…}}` template, letting an upstream step decide the target project at run time; the flow default then applies only when the node's field is left blank — an override that renders to nothing fails the step rather than inheriting it. Picking a project when creating a flow seeds the flow default automatically, so new steps inherit it without per-node setup. When a step has no project from either source, its amber warning and the node config panel both link straight to the flow settings Project field. Integration steps from an installed plugin are the exception: they run through the plugin's connected account, take no project, and show no project field or warning. Agents creating flows via MCP get the same behavior: the creation `projectId` (or, when omitted, the chat session's project) becomes the flow default.

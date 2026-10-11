@@ -1,21 +1,5 @@
 // @vitest-environment happy-dom
-/**
- * useBatchTriggerSchemaSync — three required behaviours (sc-660) + edge cases:
- *
- * 1. apply-schema   — when hydrated + not dirty + schemas differ → setGraph is called
- *                     and the updater writes batchTriggerSchema into settings.
- * 2. isDirty guard  — when isDirty=true, setGraph is NOT called even when schemas differ.
- * 3. no-dirty mark  — after the effect fires, isDirty remains false (the hook calls the
- *                     raw setGraph setter, not updateGraph, so setDirtyGlobal is never triggered).
- *
- * Edge cases (EC-1 … EC-6):
- *  EC-1  Server schema becomes []        → local batchTriggerSchema is deleted
- *  EC-2  Server schema becomes undefined → local batchTriggerSchema is deleted
- *  EC-3  serverBatchTriggerSchema changes between renders → effect re-fires (polling scenario)
- *  EC-4  Other FlowSettings fields are preserved when batchTriggerSchema is applied
- *  EC-5  isDirty transitions true→false while schemas differ → effect fires on transition
- *  EC-6  Both local and server are undefined (initial state) → no-op
- */
+// Server schema changes apply only while the working copy has no unsaved edits, and never mark it edited.
 
 import { renderHook } from '@testing-library/react';
 import { useState } from 'react';
@@ -37,7 +21,7 @@ describe('useBatchTriggerSchemaSync — apply-schema', () => {
     renderHook(() =>
       useBatchTriggerSchemaSync({
         hydrated: true,
-        isDirty: false,
+        modified: false,
         graph: EMPTY_GRAPH,
         setGraph,
         serverBatchTriggerSchema: SERVER_SCHEMA,
@@ -53,7 +37,7 @@ describe('useBatchTriggerSchemaSync — apply-schema', () => {
     renderHook(() =>
       useBatchTriggerSchemaSync({
         hydrated: true,
-        isDirty: false,
+        modified: false,
         graph: EMPTY_GRAPH,
         setGraph,
         serverBatchTriggerSchema: SERVER_SCHEMA,
@@ -76,7 +60,7 @@ describe('useBatchTriggerSchemaSync — apply-schema', () => {
     renderHook(() =>
       useBatchTriggerSchemaSync({
         hydrated: true,
-        isDirty: false,
+        modified: false,
         graph: graphWithSchema,
         setGraph,
         serverBatchTriggerSchema: SERVER_SCHEMA,
@@ -92,7 +76,7 @@ describe('useBatchTriggerSchemaSync — apply-schema', () => {
     renderHook(() =>
       useBatchTriggerSchemaSync({
         hydrated: false,
-        isDirty: false,
+        modified: false,
         graph: EMPTY_GRAPH,
         setGraph,
         serverBatchTriggerSchema: SERVER_SCHEMA,
@@ -113,7 +97,7 @@ describe('useBatchTriggerSchemaSync — apply-schema', () => {
     renderHook(() =>
       useBatchTriggerSchemaSync({
         hydrated: true,
-        isDirty: false,
+        modified: false,
         graph: graphWithSchema,
         setGraph,
         serverBatchTriggerSchema: [],
@@ -137,7 +121,7 @@ describe('useBatchTriggerSchemaSync — apply-schema', () => {
     renderHook(() =>
       useBatchTriggerSchemaSync({
         hydrated: true,
-        isDirty: false,
+        modified: false,
         graph: graphWithSchema,
         setGraph,
         serverBatchTriggerSchema: undefined,
@@ -163,7 +147,7 @@ describe('useBatchTriggerSchemaSync — apply-schema', () => {
       ({ serverSchema }: { serverSchema: typeof SERVER_SCHEMA }) =>
         useBatchTriggerSchemaSync({
           hydrated: true,
-          isDirty: false,
+          modified: false,
           graph: graphWithSchema1,
           setGraph,
           serverBatchTriggerSchema: serverSchema,
@@ -194,7 +178,7 @@ describe('useBatchTriggerSchemaSync — apply-schema', () => {
     renderHook(() =>
       useBatchTriggerSchemaSync({
         hydrated: true,
-        isDirty: false,
+        modified: false,
         graph: graphWithOtherSettings,
         setGraph,
         serverBatchTriggerSchema: SERVER_SCHEMA,
@@ -215,7 +199,7 @@ describe('useBatchTriggerSchemaSync — apply-schema', () => {
     renderHook(() =>
       useBatchTriggerSchemaSync({
         hydrated: true,
-        isDirty: false,
+        modified: false,
         graph: EMPTY_GRAPH,
         setGraph,
         serverBatchTriggerSchema: undefined,
@@ -227,17 +211,17 @@ describe('useBatchTriggerSchemaSync — apply-schema', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Test 2 — isDirty guard
+// Test 2 — modified guard
 // ---------------------------------------------------------------------------
 
-describe('useBatchTriggerSchemaSync — isDirty guard', () => {
-  it('does NOT call setGraph when isDirty=true even with mismatched schemas', () => {
+describe('useBatchTriggerSchemaSync — modified guard', () => {
+  it('does NOT call setGraph when modified=true even with mismatched schemas', () => {
     const setGraph = vi.fn();
 
     renderHook(() =>
       useBatchTriggerSchemaSync({
         hydrated: true,
-        isDirty: true,
+        modified: true,
         graph: EMPTY_GRAPH,
         setGraph,
         serverBatchTriggerSchema: SERVER_SCHEMA,
@@ -247,24 +231,24 @@ describe('useBatchTriggerSchemaSync — isDirty guard', () => {
     expect(setGraph).not.toHaveBeenCalled();
   });
 
-  it('EC-5: fires when isDirty transitions true→false while schemas differ (save-then-sync)', () => {
+  it('EC-5: fires when modified transitions true→false while schemas differ (save-then-sync)', () => {
     const setGraph = vi.fn();
 
     const { rerender } = renderHook(
-      ({ isDirty }: { isDirty: boolean }) =>
+      ({ modified }: { modified: boolean }) =>
         useBatchTriggerSchemaSync({
           hydrated: true,
-          isDirty,
+          modified,
           graph: EMPTY_GRAPH,
           setGraph,
           serverBatchTriggerSchema: SERVER_SCHEMA,
         }),
-      { initialProps: { isDirty: true } },
+      { initialProps: { modified: true } },
     );
 
     expect(setGraph).not.toHaveBeenCalled();
 
-    rerender({ isDirty: false });
+    rerender({ modified: false });
 
     expect(setGraph).toHaveBeenCalledOnce();
     const updater = setGraph.mock.calls[0][0] as (prev: FlowGraph) => FlowGraph;
@@ -278,25 +262,25 @@ describe('useBatchTriggerSchemaSync — isDirty guard', () => {
 // ---------------------------------------------------------------------------
 
 describe('useBatchTriggerSchemaSync — no-dirty marking', () => {
-  it('isDirty remains false after setGraph fires (hook uses raw setter, not updateGraph)', () => {
+  it('modified remains false after setGraph fires (hook uses raw setter, not updateGraph)', () => {
     function useHarness() {
       const [graph, setGraph] = useState<FlowGraph>(EMPTY_GRAPH);
-      const [isDirty] = useState(false);
+      const [modified] = useState(false);
 
       useBatchTriggerSchemaSync({
         hydrated: true,
-        isDirty,
+        modified,
         graph,
         setGraph,
         serverBatchTriggerSchema: SERVER_SCHEMA,
       });
 
-      return { graph, isDirty };
+      return { graph, modified };
     }
 
     const { result } = renderHook(() => useHarness());
 
     expect(result.current.graph.settings?.batchTriggerSchema).toEqual(SERVER_SCHEMA);
-    expect(result.current.isDirty).toBe(false);
+    expect(result.current.modified).toBe(false);
   });
 });

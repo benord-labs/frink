@@ -13,11 +13,7 @@ import {
   type NewStageWithRuns,
 } from '../db/repos/batch-stages';
 import { getFlowRun as getFlowRunRow, listFlowRunsForFlow } from '../db/repos/flow-runs';
-import {
-  createFlowVersion as createFlowVersionLocal,
-  getLatestVersion,
-  getVersion,
-} from '../db/repos/flow-versions';
+import { getLatestVersion, getVersion } from '../db/repos/flow-versions';
 import {
   createFlow as createFlowLocal,
   getFlowById,
@@ -40,6 +36,7 @@ import { listBatchRunsForBatch } from './batch-runs-list';
 import { listBatchStageDetail } from './batch-stage-detail';
 import type { startFlowRun as engineStartFlowRun } from './start';
 import { startFlowRun as startFlowRunInternal } from './start';
+import { commitFlowVersion } from './version-events';
 
 // ============ flows CRUD ============
 
@@ -108,11 +105,11 @@ export async function createFlowVersion(
   input: { graph: unknown; expectedVersionNumber?: number },
 ) {
   const db = getDatabase();
-  const row = await createFlowVersionLocal(db, {
-    flowId,
-    graph: input.graph,
-    expectedVersionNumber: input.expectedVersionNumber,
-  });
+  const row = await commitFlowVersion(
+    db,
+    { flowId, graph: input.graph, expectedVersionNumber: input.expectedVersionNumber },
+    'agent',
+  );
   return toDbFlowVersion(row);
 }
 

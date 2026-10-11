@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { FlowGraph } from '../../../../shared/lib/validate-flow-graph';
 import { freshDb, type TestDb } from '../test-utils/fresh-db';
-import { createFlowVersion, FlowVersionConflictError, getLatestVersion } from './flow-versions';
+import {
+  createFlowVersion,
+  createFlowVersionWithResult,
+  FlowVersionConflictError,
+  getLatestVersion,
+} from './flow-versions';
 import { createFlow } from './flows';
 
 const graph = (instructions: string): FlowGraph => ({
@@ -37,6 +42,19 @@ describe('createFlowVersion — identical-graph no-op guard', () => {
     expect(v2.id).toBe(v1.id);
     expect(v2.versionNumber).toBe(1);
     expect((await getLatestVersion(db, flowId))?.versionNumber).toBe(1);
+  });
+
+  it('reports whether a row was appended, so a no-op save is not announced', async () => {
+    const first = await createFlowVersionWithResult(db, { flowId, graph: graph('do it') });
+    const repeat = await createFlowVersionWithResult(db, {
+      flowId,
+      graph: graph('do it'),
+      expectedVersionNumber: 1,
+    });
+
+    expect(first.inserted).toBe(true);
+    expect(repeat.inserted).toBe(false);
+    expect(repeat.row.id).toBe(first.row.id);
   });
 
   it('treats key-reordered-but-identical graphs as a no-op', async () => {
