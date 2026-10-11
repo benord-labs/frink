@@ -38,7 +38,7 @@ import {
 import { getTaskPoller } from '../../task-poller';
 import { cancelWorkQueueTask } from '../../tasks/cancel-work-queue-task';
 import { publicProcedure, router } from '../index';
-import { throwTaskMutationReason } from './task-refusals';
+import { PhoneSafeRefusal, throwTaskMutationReason } from './task-refusals';
 import { taskRecoveryProcedures } from './tasks-recovery';
 import {
   getTaskWithRunOutcome,
@@ -85,11 +85,11 @@ async function requireActiveFlowAdmissionForTask(task: Task | null): Promise<voi
   if (!task?.flowRunId) return;
   const { hasActiveFlowAdmission } = await import('../../flows/admission/runtime');
   if (!(await hasActiveFlowAdmission(task.flowRunId))) {
-    // A refusal, not a fault: the phone answers it 409 and does not report it.
-    throw new TRPCError({
+    // A refusal, not a fault: the phone answers it 409 with this message and does not report it.
+    throw new PhoneSafeRefusal({
       code: 'PRECONDITION_FAILED',
       message:
-        'This Flow run lost its place in the run queue. Open the Flow run and use Continue or Retry there.',
+        'This Flow run lost its place in the run queue. Continue or Retry it from the Queue.',
     });
   }
 }
