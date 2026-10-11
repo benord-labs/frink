@@ -7,6 +7,7 @@
  * Validation:
  * - mimeType must be in ALLOWED_ATTACHMENT_MIME_TYPES.
  * - Decoded bytes <= MAX_IMAGE_BYTES (5MB).
+ * - The run is still pending (dispatch copies trigger_context only once).
  * - Existing attachments array length < MAX_ATTACHMENTS_PER_RUN (10).
  */
 
@@ -20,7 +21,9 @@ import {
   type RunAttachment,
 } from '../../../shared/types/run-attachment';
 import { getDatabase } from '../db';
+import type { BatchStageRun } from '../db/schema';
 import {
+  type AppendAttachmentResult,
   appendStageRunAttachment,
   getBatchStageRun,
   type StageRunTriggerContext,
@@ -78,6 +81,57 @@ const capExceeded = () =>
     message: `Stage run already has ${MAX_ATTACHMENTS_PER_RUN} attachments`,
   });
 
+const notPending = () =>
+  new TRPCError({
+    code: 'CONFLICT',
+    message: 'Attachments can only be added before the run starts',
+  });
+
+const tooLarge = () =>
+  new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: 'Image must be 5MB or smaller' });
+
+/** Fast-fail before touching disk; the authoritative checks are in the transactional append. */
+function rejectBeforeWrite(stageRun: BatchStageRun, data: string): void {
+  if (stageRun.status !== 'pending') throw notPending();
+  const current = stageRunTriggerContextSchema.safeParse(stageRun.triggerContext);
+  if (current.success && current.data.attachments.length >= MAX_ATTACHMENTS_PER_RUN) {
+    throw capExceeded();
+  }
+  // Exact for well-formed base64; the post-decode check stays authoritative.
+  if (decodedBytes(data) > MAX_IMAGE_BYTES) throw tooLarge();
+}
+
+function appendRefusal(reason: Exclude<AppendAttachmentResult, { ok: true }>['reason']) {
+  if (reason === 'cap') return capExceeded();
+  if (reason === 'not_pending') return notPending();
+  if (reason === 'invalid') {
+    return new TRPCError({
+      code: 'INTERNAL_SERVER_ERROR',
+      message: 'Stage run attachments could not be read',
+    });
+  }
+  return new TRPCError({ code: 'NOT_FOUND', message: 'Stage run not found' });
+}
+
+/** Append in one transaction; any refusal or error deletes this request's file first. */
+async function appendOrRollback(
+  db: UploadDeps['db'],
+  runId: string,
+  attachment: RunAttachment,
+  rollback: () => Promise<void>,
+): Promise<StageRunTriggerContext> {
+  let appended: AppendAttachmentResult;
+  try {
+    appended = appendStageRunAttachment(db, runId, attachment, MAX_ATTACHMENTS_PER_RUN);
+  } catch (err) {
+    await rollback();
+    throw err;
+  }
+  if (appended.ok) return appended.triggerContext;
+  await rollback();
+  throw appendRefusal(appended.reason);
+}
+
 export async function uploadAttachmentToStageRun(
   input: UploadInput,
   deps: UploadDeps = defaultDeps(),
@@ -89,24 +143,11 @@ export async function uploadAttachmentToStageRun(
     });
   }
 
-  const { db } = deps;
-  const stageRun = await getBatchStageRun(db, input.runId);
+  const stageRun = await getBatchStageRun(deps.db, input.runId);
   if (!stageRun) {
     throw new TRPCError({ code: 'NOT_FOUND', message: 'Stage run not found' });
   }
-
-  // Fast-fail before touching disk; the authoritative cap check is the
-  // transactional append below.
-  const current = stageRunTriggerContextSchema.safeParse(stageRun.triggerContext);
-  if (current.success && current.data.attachments.length >= MAX_ATTACHMENTS_PER_RUN) {
-    throw capExceeded();
-  }
-
-  // Reject oversized payloads before touching disk. Exact for well-formed base64;
-  // the post-decode check below stays authoritative.
-  if (decodedBytes(input.data) > MAX_IMAGE_BYTES) {
-    throw new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: 'Image must be 5MB or smaller' });
-  }
+  rejectBeforeWrite(stageRun, input.data);
 
   const storedName = storedNameFor(input.filename);
   const written = await deps.writeAttachment(input.runId, storedName, input.data);
@@ -116,7 +157,7 @@ export async function uploadAttachmentToStageRun(
   // alone if the run still exists.
   if (written.byteLength > MAX_IMAGE_BYTES) {
     await rollback();
-    throw new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: 'Image must be 5MB or smaller' });
+    throw tooLarge();
   }
   if (written.url.length > MAX_ATTACHMENT_URL_LENGTH) {
     await rollback();
@@ -129,23 +170,11 @@ export async function uploadAttachmentToStageRun(
     label: input.filename,
     mimeType: input.mimeType,
   };
-  // A crash before this commit strands the file until the run is deleted and swept.
-  const appended = appendStageRunAttachment(db, input.runId, attachment, MAX_ATTACHMENTS_PER_RUN);
-  if (!appended.ok) {
-    await rollback();
-    if (appended.reason === 'cap') throw capExceeded();
-    if (appended.reason === 'invalid') {
-      throw new TRPCError({
-        code: 'INTERNAL_SERVER_ERROR',
-        message: 'Stage run attachments could not be read',
-      });
-    }
-    throw new TRPCError({ code: 'NOT_FOUND', message: 'Stage run not found' });
-  }
-
+  // A crash before this commit leaves an unreferenced file for the startup sweep.
+  const triggerContext = await appendOrRollback(deps.db, input.runId, attachment, rollback);
   return {
     url: written.url,
     filename: written.filename,
-    run: { id: input.runId, trigger_context: appended.triggerContext },
+    run: { id: input.runId, trigger_context: triggerContext },
   };
 }
