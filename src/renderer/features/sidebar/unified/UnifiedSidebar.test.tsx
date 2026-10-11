@@ -100,6 +100,26 @@ describe('UnifiedSidebar pending plan approvals', () => {
   });
 });
 
+describe('UnifiedSidebar open chats older than the loaded pages', () => {
+  afterEach(() => {
+    hoisted.state.openChatRows = [];
+  });
+
+  it('lists a chat open in a split pane that no loaded page holds', () => {
+    hoisted.state.splitViewState = {
+      splitView: { chatIds: ['recent-chat', 'old-chat'], activePaneIndex: 0 },
+      isSplitActive: true,
+    };
+    hoisted.state.openChatRows = [
+      { id: 'old-chat', projectId: null, updatedAt: new Date('2025-01-01') },
+    ];
+    render(<UnifiedSidebar />);
+    // SAFETY: the useGroupedProjects double captures the chat list UnifiedSidebar handed it.
+    const chats = hoisted.capturedGroupedProjectsParams?.chats as Array<{ id: string }>;
+    expect(chats.map((chat) => chat.id)).toEqual(['old-chat']);
+  });
+});
+
 describe('UnifiedSidebar folder count-drift self-heal', () => {
   it('re-arms the drift refetch when the folder count advances while the first fetch is in flight', async () => {
     // Disarm-race repro: the header count goes 1 -> 2 (a second chat syncs) WHILE the initial
@@ -1282,6 +1302,13 @@ describe('UnifiedSidebar archive chat (sc-208)', () => {
     ) => string | null;
     expect(updater('chat-arch-selected')).toBeNull();
     expect(updater('chat-other')).toBe('chat-other');
+  });
+
+  it('clears the archived chat from the selection before the sidebar counts resync', async () => {
+    hoisted.chatsListCountsFetchMock.mockReturnValueOnce(new Promise(() => {}));
+    const onChatArchive = getOnChatArchive();
+    void onChatArchive('chat-arch-selected');
+    await waitFor(() => expect(hoisted.setSelectedChatIdMock).toHaveBeenCalled());
   });
 
   it('refetches batch caches + listArchived but skips full folder/pinned refetch', async () => {

@@ -6,6 +6,7 @@ import {
   applyChatRenameToSidebarMaps,
   applyChatRestoreToSidebarMaps,
   applyForkInsertToSidebarMaps,
+  applyOpenChatActivityToSidebarMaps,
   applyPinToggleToSidebarMaps,
   buildChatCountByProjectMap,
   computeChatCountByFolderKey,
@@ -564,5 +565,35 @@ describe('invalidateBatchViews', () => {
 
     expect(utils.chats.listByBatch.invalidate).toHaveBeenCalledTimes(1);
     expect(utils.chats.listBatchGroups.invalidate).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('applyOpenChatActivityToSidebarMaps', () => {
+  type FolderMap = Record<string, SidebarChatListItem[]>;
+  const BUMPED_AT = new Date('2026-05-01');
+  /** Applies activity in `chatId` to `before` and returns the folder map that results. */
+  const applyActivity = (before: FolderMap, openChats: SidebarChatListItem[], chatId: string) => {
+    const setFolders = vi.fn();
+    applyOpenChatActivityToSidebarMaps(setFolders, openChats, [], GENERAL, chatId, BUMPED_AT);
+    // SAFETY: the helper only ever hands the setter an updater function.
+    const update = setFolders.mock.calls[0]?.[0] as ((prev: FolderMap) => FolderMap) | undefined;
+    return update ? update(before) : before;
+  };
+
+  it('adds an open chat no loaded page holds to its folder, as the newest chat', () => {
+    const idle = makeChat({ id: 'idle', updatedAt: new Date('2025-01-01') });
+    const next = applyActivity({ [GENERAL]: [makeChat({ id: 'recent' })] }, [idle], 'idle');
+    expect(next[GENERAL].map((c) => c.id)).toEqual(['idle', 'recent']);
+    expect(next[GENERAL][0].updatedAt).toEqual(BUMPED_AT);
+  });
+
+  it('leaves the lists alone for an open chat a loaded page already holds', () => {
+    const before = { [GENERAL]: [makeChat({ id: 'loaded' })] };
+    expect(applyActivity(before, [makeChat({ id: 'loaded' })], 'loaded')).toBe(before);
+  });
+
+  it('ignores activity in a chat that is not open', () => {
+    const before = { [GENERAL]: [makeChat({ id: 'recent' })] };
+    expect(applyActivity(before, [], 'elsewhere')).toBe(before);
   });
 });

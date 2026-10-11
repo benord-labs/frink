@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { getDatabase } from '../../../db';
 import {
   countChatsByProject,
+  getChatById,
   listAllArchivedChats as listAllArchivedChatsLocal,
   listAllChats as listAllChatsLocal,
   listChatsForProject,
@@ -63,6 +64,15 @@ export const listRouter = router({
   // Active chats with their folder and batch, loaded in the sidebar or not, so a collapsed folder can
   // show their activity. Status still comes from the task poll; this read only places chats.
   listActiveChats: publicProcedure.query(async () => listSidebarActiveChats(getDatabase())),
+
+  // The chats open in panes, so each keeps a sidebar row even when older than the loaded pages.
+  listByIds: publicProcedure
+    .input(z.object({ ids: z.array(z.string()).max(100) }))
+    .query(async ({ input }) => {
+      const found = await Promise.all(input.ids.map((id) => getChatById(getDatabase(), id)));
+      const live = found.flatMap((chat) => (chat && !chat.archivedAt ? [chat] : []));
+      return withBatchIds(live.map(mapLocalChatResponse));
+    }),
 
   listByFolder: publicProcedure
     .input(
