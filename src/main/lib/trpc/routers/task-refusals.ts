@@ -10,6 +10,9 @@ type Refusal = [code: TRPCError['code'], message: string, phoneSafe?: true];
  *  generic text, so new refusal wording stays an explicit choice. */
 export class PhoneSafeRefusal extends TRPCError {}
 
+const FLOW_ADMISSION_LOST_MESSAGE =
+  'This Flow run lost its place in the run queue. Continue or Retry it from the Queue.';
+
 /** Throws the refusal for `reason`; with no reason the failure is a fault, a plain Error. */
 export function throwTaskMutationReason(
   reason: TaskMutationFailureReason | undefined,
@@ -28,10 +31,12 @@ export function throwTaskMutationReason(
       messages.flowShellNotReassignable ??
         'This task is a flow-linked shell task and cannot be reassigned',
     ],
+    // A refusal, not a fault: the phone answers it 409 with this message and does not report it.
+    flow_admission_lost: ['PRECONDITION_FAILED', FLOW_ADMISSION_LOST_MESSAGE, true],
   } satisfies Record<TaskMutationFailureReason, Refusal>;
   if (!reason) throw new Error(messages.fallback);
-  const [code, message] = refusals[reason];
-  throw new TRPCError({ code, message });
+  const [code, message, phoneSafe]: Refusal = refusals[reason];
+  throw phoneSafe ? new PhoneSafeRefusal({ code, message }) : new TRPCError({ code, message });
 }
 
 /** Maps a `carryOnFlowTask` failure to its refusal. */
