@@ -1,5 +1,5 @@
 /**
- * Deterministic fixture workspace for qavis QA runs.
+ * Deterministic fixture workspace for QA rig runs.
  *
  * Every value is fixed — IDs, timestamps, message text — so the rendered UI is
  * identical between the base-ref boot and the head-ref boot of a QA run (and

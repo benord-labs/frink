@@ -1,10 +1,10 @@
 #!/bin/bash
 # Boots the prebuilt QA app on its isolated profile, with CDP on :9223.
 # Boot-only: app-state prep (profile wipe, fixture DB) lives in seed.sh, which
-# qavis runs first — this script owns what must span the app's lifetime: the
+# runs first — this script owns what must span the app's lifetime: the
 # single-run lock and launch. Isolated from the owner's running dev app (own
 # userData/lock/sqlite via AUTH_SERVER_PORT suffix, own CDP port).
-# Launches the bundle build.sh produced (the recipe's `bootstrap` step), not `electron-vite dev`.
+# Launches the bundle build.sh produced, not `electron-vite dev`.
 # Triage: the `frink-qa` skill. Manual run:
 #   bash scripts/qa/build.sh && bash scripts/qa/seed.sh && bash scripts/qa/boot.sh
 set -euo pipefail
@@ -32,7 +32,7 @@ echo $$ > "$LOCK/pid"
 
 DEV_PID=""
 cleanup() {
-  # qavis SIGTERMs the whole process group, so electron is already shutting
+  # A driver SIGTERMs the whole process group, so electron is already shutting
   # down; wait for the dev wrapper to exit before releasing the run lock.
   if [ -n "$DEV_PID" ]; then wait "$DEV_PID" 2>/dev/null || true; fi
   rm -rf "$LOCK"
@@ -44,7 +44,7 @@ cd "$(dirname "$0")/../.."
 # Fail loud when build.sh has not run, rather than let Electron's "module not found" stand in.
 if [ ! -s "out-qa/main/index.js" ]; then
   rm -rf "$LOCK"
-  echo "frink is not built — run: bash scripts/qa/build.sh first (qavis does via the recipe's bootstrap step)." >&2
+  echo "frink is not built — run: bash scripts/qa/build.sh first." >&2
   exit 1
 fi
 
@@ -86,12 +86,12 @@ fi
 
 # QA_FRINK_HOME (env.sh) is the app's own state root; the app refuses to boot if FRINK_HOME is
 # unset or resolves to the real home. seed.sh created and seeded it before this launch.
-# qavis exports QAVIS_EVIDENCE_DIR (its per-run bundle) to `start`; without it — a manual boot, or an
-# older qavis — the log stays profile-local. Announced because a silent fallback would let a run
+# A run that collects evidence exports FRINK_QA_EVIDENCE_DIR; without it — a manual boot — the log
+# stays profile-local. Announced because a silent fallback would let a run
 # "pass" while the log it was meant to capture landed outside the evidence bundle.
-QA_LOG_DIR="${QAVIS_EVIDENCE_DIR:-$QA_USER_DATA/logs}"
+QA_LOG_DIR="${FRINK_QA_EVIDENCE_DIR:-$QA_USER_DATA/logs}"
 mkdir -p "$QA_FRINK_HOME" "$QA_LOG_DIR"
-echo "[boot.sh] FRINK_HOME=$QA_FRINK_HOME FRINK_LOG_DIR=$QA_LOG_DIR${QAVIS_EVIDENCE_DIR:+ (qavis run dir)}" >&2
+echo "[boot.sh] FRINK_HOME=$QA_FRINK_HOME FRINK_LOG_DIR=$QA_LOG_DIR${FRINK_QA_EVIDENCE_DIR:+ (evidence dir)}" >&2
 
 # ELECTRON_RUN_AS_NODE must be unset or electron runs as plain node (no window, no CDP).
 # FRINK_CDP_PORT keeps clear of the owner's 9222; FRINK_CUSTOM_NODES_DIR keeps the node palette on
