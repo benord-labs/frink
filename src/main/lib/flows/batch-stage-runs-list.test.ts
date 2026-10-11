@@ -15,6 +15,7 @@ vi.mock('../db', () => ({ getDatabase: mocks.getDatabase }));
 import { createBatchStageRun } from '../db/repos/batch-stage-runs';
 import { createBatchStage } from '../db/repos/batch-stages';
 import { createNodeRun, listHumanWaitFlowRunIds } from '../db/repos/node-runs';
+import { eq } from 'drizzle-orm';
 import { chats, flowRuns, tasks } from '../db/schema';
 import { freshDb, type TestDb } from '../db/test-utils/fresh-db';
 import { listBatchStageDetail } from './batch-stage-detail';
@@ -264,6 +265,150 @@ describe('batch stage read paths', () => {
 
       expect(batchList.runs.map((r) => [r.id, r.chat_id])).toEqual([[run.id, 'chat-shared']]);
       expect(stageList.runs.map((r) => r.chat_id)).toEqual(['chat-shared']);
+    });
+  });
+
+  describe('latest_chat_id', () => {
+    /** A dispatched member whose top-level start_task completed and created `chatId`. */
+    async function seedMemberWithChat(
+      chatId: string,
+      input: { laneIndex?: number } = {},
+    ): Promise<string> {
+      await db.insert(chats).values({ id: chatId }).onConflictDoNothing();
+      const flowRunId = await seedFlowRun();
+      await createBatchStageRun(db, {
+        stageId,
+        status: 'dispatched',
+        triggerContext: { label: 'r' },
+        flowRunId,
+      });
+      await createNodeRun(db, {
+        flowRunId,
+        nodeId: 'st',
+        blockType: 'start_task',
+        status: 'completed',
+        nodeOutput: { status: 'completed', outputs: { chatId } },
+        createdAt: new Date('2026-07-11T10:01:00Z'),
+        laneIndex: input.laneIndex ?? null,
+      });
+      return flowRunId;
+    }
+
+    async function latestChatId(): Promise<string | null> {
+      const [stage] = await listBatchStageDetail('batch-1');
+      return stage.latest_chat_id;
+    }
+
+    it('is the chat the member start_task created, with none in the trigger context', async () => {
+      await seedMemberWithChat('chat-1');
+
+      expect(await latestChatId()).toBe('chat-1');
+    });
+
+    // Members seeded in one test share a created_at second, as bulk-defined stage runs do.
+    it('takes the most recently dispatched member when members share a created_at', async () => {
+      await seedMemberWithChat('chat-old');
+      await seedMemberWithChat('chat-new');
+
+      expect(await latestChatId()).toBe('chat-new');
+    });
+
+    it('goes by when the run was dispatched before insert order', async () => {
+      const first = await seedMemberWithChat('chat-later-run');
+      await seedMemberWithChat('chat-earlier-run');
+      const later = new Date(Date.now() + 60_000);
+      await db.update(flowRuns).set({ createdAt: later }).where(eq(flowRuns.id, first));
+
+      expect(await latestChatId()).toBe('chat-later-run');
+    });
+
+    it('uses an older member when the newest has no completed start_task', async () => {
+      await seedMemberWithChat('chat-old');
+      const newest = await seedFlowRun();
+      await seedStageRun(newest);
+      await seedStartTask(newest, {
+        nodeId: 'st',
+        status: 'awaiting_input',
+        outputs: { chatId: 'chat-early' },
+        createdAt: new Date('2026-07-11T10:02:00Z'),
+      });
+
+      expect(await latestChatId()).toBe('chat-old');
+    });
+
+    it('skips a deleted chat for the next existing one, and is null when none exist', async () => {
+      await seedMemberWithChat('chat-kept');
+      await seedMemberWithChat('chat-gone');
+      await db.delete(chats).where(eq(chats.id, 'chat-gone'));
+      expect(await latestChatId()).toBe('chat-kept');
+
+      await db.delete(chats).where(eq(chats.id, 'chat-kept'));
+      expect(await latestChatId()).toBeNull();
+    });
+
+    it('ignores a start_task inside a fan-out lane', async () => {
+      await seedMemberWithChat('chat-lane', { laneIndex: 0 });
+
+      expect(await latestChatId()).toBeNull();
+    });
+
+    it('keeps an archived chat, which can still be opened', async () => {
+      await seedMemberWithChat('chat-archived');
+      await db.update(chats).set({ archivedAt: new Date() }).where(eq(chats.id, 'chat-archived'));
+
+      expect(await latestChatId()).toBe('chat-archived');
+    });
+
+    it('falls back to a chatId the run trigger context carries', async () => {
+      await db.insert(chats).values({ id: 'chat-ctx' });
+      const [run] = await db
+        .insert(flowRuns)
+        .values({
+          flowVersionId: versionId,
+          status: 'running',
+          triggerContext: { chatId: 'chat-ctx' },
+        })
+        .returning();
+      await seedStageRun(run.id);
+
+      expect(await latestChatId()).toBe('chat-ctx');
+    });
+
+    it('is null, with the counts intact, when no member has a chat to resolve', async () => {
+      await seedStageRun(null);
+      await seedStageRun(await seedFlowRun());
+
+      const [stage] = await listBatchStageDetail('batch-1');
+      expect(stage).toMatchObject({ latest_chat_id: null, run_count: 2, active_count: 2 });
+    });
+
+    // The chat lookup runs after the snapshot; the counts and the started rows must stay inside it.
+    it('still reads the aggregates and the member rows inside one transaction', async () => {
+      await seedMemberWithChat('chat-1');
+      const prepared = recordPrepares(db);
+
+      await listBatchStageDetail('batch-1');
+
+      const snapshot = prepared.filter((s) => /group by|inner join "flow_runs"/i.test(s.sql));
+      expect(snapshot).toHaveLength(2);
+      expect(snapshot.map((s) => s.inTransaction)).toEqual([true, true]);
+      expect(db.$client.inTransaction).toBe(false);
+    });
+
+    it('resolves each stage from its own members', async () => {
+      await seedMemberWithChat('chat-s1');
+      const second = await createBatchStage(db, {
+        batchId: 'batch-1',
+        stageNumber: 2,
+        name: 's2',
+        status: 'pending',
+        failureThreshold: 0,
+        dependsOnStageIds: [],
+      });
+      await createBatchStageRun(db, { stageId: second.id, status: 'pending', triggerContext: {} });
+
+      const stages = await listBatchStageDetail('batch-1');
+      expect(stages.map((s) => s.latest_chat_id)).toEqual(['chat-s1', null]);
     });
   });
 
