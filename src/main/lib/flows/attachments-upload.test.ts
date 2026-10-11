@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { RunAttachment } from '../../../shared/types/run-attachment';
 import {
@@ -159,6 +159,49 @@ describe('uploadAttachmentToStageRun — concurrent uploads', () => {
     const runId = await seedRun({ attachments: 'not-a-list' });
 
     await expect(upload(runId, 'a.png')).rejects.toMatchObject({ code: 'INTERNAL_SERVER_ERROR' });
+    expect(filesOnDisk(runId)).toHaveLength(0);
+  });
+
+  it.each([
+    ['dispatched', 'flow-run-1'],
+    ['completed', null],
+  ] as const)(
+    'refuses the append and keeps status when the run becomes %s while writing to disk',
+    async (status, flowRunId) => {
+      const runId = await seedRun();
+      afterWrite = () => {
+        db.update(batchStageRuns)
+          .set({ status, flowRunId })
+          .where(eq(batchStageRuns.id, runId))
+          .run();
+      };
+
+      await expect(upload(runId, 'a.png')).rejects.toMatchObject({ code: 'CONFLICT' });
+
+      expect(await getBatchStageRun(db, runId)).toMatchObject({ status, flowRunId });
+      expect(await storedAttachments(runId)).toHaveLength(0);
+      expect(filesOnDisk(runId)).toHaveLength(0);
+    },
+  );
+
+  it.each(['queued', 'dispatched', 'completed', 'failed', 'cancelled'] as const)(
+    'rejects an upload to a %s run without writing',
+    async (status) => {
+      const runId = await seedRun();
+      db.update(batchStageRuns).set({ status }).where(eq(batchStageRuns.id, runId)).run();
+
+      await expect(upload(runId, 'a.png')).rejects.toMatchObject({ code: 'CONFLICT' });
+      expect(existsSync(join(root, runId))).toBe(false);
+    },
+  );
+
+  it('deletes its file when the append itself throws', async () => {
+    const runId = await seedRun();
+    afterWrite = () => {
+      db.run(sql`DROP TABLE batch_stage_runs`);
+    };
+
+    await expect(upload(runId, 'a.png')).rejects.toThrow();
     expect(filesOnDisk(runId)).toHaveLength(0);
   });
 

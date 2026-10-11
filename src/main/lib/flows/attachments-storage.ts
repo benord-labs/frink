@@ -37,7 +37,7 @@ export class AttachmentPathError extends Error {
   }
 }
 
-function attachmentsRoot(): string {
+export function attachmentsRoot(): string {
   return join(app.getPath('userData'), 'flow-attachments');
 }
 
@@ -63,6 +63,16 @@ function buildAttachmentUrl(runId: string, filename: string): string {
   assertSafeSegment(runId, 'runId');
   assertSafeSegment(filename, 'filename');
   return `${ATTACHMENT_PROTOCOL}://${runId}/${filename}`;
+}
+
+/** Split a `frink-attachment://<runId>/<filename>` URL; null for foreign or unsafe URLs. */
+export function parseAttachmentUrl(url: string): { runId: string; filename: string } | null {
+  const prefix = `${ATTACHMENT_PROTOCOL}://`;
+  if (!url.startsWith(prefix)) return null;
+  const [runId, filename, ...rest] = url.slice(prefix.length).split('/');
+  if (rest.length > 0 || !runId || !filename) return null;
+  if (!SAFE_NAME_RE.test(runId) || !SAFE_NAME_RE.test(filename)) return null;
+  return { runId, filename };
 }
 
 export type WriteAttachmentResult = {

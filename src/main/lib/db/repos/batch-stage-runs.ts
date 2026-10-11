@@ -60,11 +60,12 @@ export type StageRunTriggerContext = z.infer<typeof stageRunTriggerContextSchema
 
 export type AppendAttachmentResult =
   | { ok: true; triggerContext: StageRunTriggerContext }
-  | { ok: false; reason: 'not_found' | 'cap' | 'invalid' };
+  | { ok: false; reason: 'not_found' | 'not_pending' | 'cap' | 'invalid' };
 
 /**
  * Append one attachment under `max` in a single transaction, building on the
  * current trigger_context so concurrent uploads and edits are never lost.
+ * Pending runs only: dispatch copies trigger_context once, when it queues the run.
  */
 export function appendStageRunAttachment(
   db: Db,
@@ -74,11 +75,12 @@ export function appendStageRunAttachment(
 ): AppendAttachmentResult {
   return db.transaction((tx): AppendAttachmentResult => {
     const row = tx
-      .select({ triggerContext: batchStageRuns.triggerContext })
+      .select({ status: batchStageRuns.status, triggerContext: batchStageRuns.triggerContext })
       .from(batchStageRuns)
       .where(eq(batchStageRuns.id, runId))
       .get();
     if (!row) return { ok: false, reason: 'not_found' };
+    if (row.status !== 'pending') return { ok: false, reason: 'not_pending' };
     // Refuse rather than rewrite a context we cannot read: that would drop its attachments.
     const parsed = stageRunTriggerContextSchema.safeParse(row.triggerContext);
     if (!parsed.success) return { ok: false, reason: 'invalid' };
