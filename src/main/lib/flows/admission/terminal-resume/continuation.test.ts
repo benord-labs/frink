@@ -145,6 +145,33 @@ describe('staged continuation resume', () => {
     expect(hasStagedContinuation(PENDING.flowRunId)).toBe(false);
   });
 
+  // The release keeps a cleanup error between the probe and the stage: its cleanup fire may already
+  // have run, so the click is refused rather than left staged with nothing to fire it.
+  it.each(['active', 'releasing'])(
+    'refuses a click whose %s slot turns retained while it is staged, staging nothing',
+    async (state) => {
+      const ops = makeOps();
+      ops.getLiveAdmissionState.mockResolvedValueOnce(state).mockResolvedValue('retained');
+      await expect(stageBehindHeldAdmission(PENDING, ops)).rejects.toThrow(/failed cleanup/);
+      expect(hasStagedContinuation(PENDING.flowRunId)).toBe(false);
+      expect(ops.requestTerminalFlowResume).not.toHaveBeenCalled();
+      expect(captureFlowAdmissionException).not.toHaveBeenCalled();
+    },
+  );
+
+  // An earlier stage behind the retained slot is stranded the same way, so it goes with the click —
+  // without a Cancel's generation bump, so a later stage still admits.
+  it('drops an earlier stage with a click refused at the retained re-probe', async () => {
+    const ops = makeOps();
+    stageContinuationResume(PENDING, vi.fn(), FAST_WATCH);
+    ops.getLiveAdmissionState.mockResolvedValueOnce('active').mockResolvedValueOnce('retained');
+    await expect(stageBehindHeldAdmission(PENDING, ops)).rejects.toThrow(/failed cleanup/);
+    expect(hasStagedContinuation(PENDING.flowRunId)).toBe(false);
+    stageContinuationResume(PENDING, vi.fn(), FAST_WATCH);
+    await fireStagedContinuationResume(PENDING.flowRunId, ops);
+    expect(ops.requestTerminalFlowResume.mock.calls[0][0].admit?.(db)).toBe(true);
+  });
+
   it('reports a staged continuation until it fires or a Cancel drops it', async () => {
     const ops = makeOps();
     expect(hasStagedContinuation(PENDING.flowRunId)).toBe(false);

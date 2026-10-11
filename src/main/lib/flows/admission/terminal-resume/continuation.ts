@@ -99,10 +99,16 @@ export async function stageBehindHeldAdmission(
     log.warn('[Flow Admission] staged recovery failed', { flowRunId, message });
     captureFlowAdmissionException(new Error(message), 'recovery-stage');
   });
+  const after = await ops.getLiveAdmissionState(flowRunId);
+  if (after === 'retained') {
+    // The release kept a cleanup error after the probe: its cleanup fire may already have run, so
+    // nothing would fire this stage — refuse the click as the up-front check does.
+    staged.delete(flowRunId);
+    throw new TRPCError({ code: 'PRECONDITION_FAILED', message: RETAINED_RELEASE_MESSAGE });
+  }
   // The held admission may have settled between the probe and the stage, leaving no settle to
   // fire the entry: fire it here (it enqueues on a free run and steps aside for a newer ticket).
-  if (!holdsSlot(await ops.getLiveAdmissionState(flowRunId)))
-    await fireStagedContinuationResume(flowRunId, ops);
+  if (!holdsSlot(after)) await fireStagedContinuationResume(flowRunId, ops);
   return true;
 }
 
@@ -220,7 +226,8 @@ export async function fireStagedContinuationResume(
     return;
   }
   const liveState = await ops.getLiveAdmissionState(flowRunId);
-  // A retained release keeps the entry too: the cleanup-failure fire above abandons it visibly.
+  // A retained release keeps the entry too: the cleanup-failure fire above abandons it visibly, and a
+  // click staged after that fire is refused by stageBehindHeldAdmission's own retained re-probe.
   if (liveState === 'releasing' || liveState === 'retained') {
     // The reconcile that invoked us did NOT settle the prior admission — a concurrent
     // activity registration landed inside its async window, so its settle bailed. Stay
