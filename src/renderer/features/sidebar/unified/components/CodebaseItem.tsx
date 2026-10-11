@@ -523,20 +523,18 @@ export const CodebaseItem = memo(function CodebaseItem({
               ),
             )}
             {canLoadMore && (
-              <div className="py-1 pl-9">
+              // Spacer mirrors DraggableChat's grip so the icon and label line up with chat rows.
+              <div className="flex items-center">
+                <span className="ml-1 size-5 shrink-0" aria-hidden="true" />
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={handleLoadMoreChats}
                   disabled={isLoadingMoreChats && canRequestOlderChats}
-                  className={cn(
-                    'h-auto justify-start text-xs text-muted-foreground hover:bg-transparent hover:text-foreground',
-                    'min-h-[44px] px-2 -ml-0.5',
-                  )}
+                  className="-ml-1 flex-1 justify-start gap-2 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-foreground/5 hover:text-foreground"
                 >
-                  {isLoadingMoreChats && canRequestOlderChats
-                    ? 'Load more chats...'
-                    : 'Load more chats'}
+                  <MoreHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
+                  {isLoadingMoreChats && canRequestOlderChats ? 'Loading…' : 'Show more'}
                 </Button>
               </div>
             )}
