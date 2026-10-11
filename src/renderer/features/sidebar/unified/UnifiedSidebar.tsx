@@ -31,6 +31,7 @@ import { trpc, trpcClient } from '../../../lib/trpc';
 import { hasModifiedFiles } from '../../../lib/utils/git-status';
 import { useWorkQueueExitAction } from '../../../lib/work-queue/use-work-queue-exit-action';
 import {
+  agentsSidebarOpenAtom,
   agentsUnseenChangesAtom,
   loadingSubChatsAtom,
   NEW_CHAT_PANE,
@@ -225,6 +226,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
     // Atoms
     const [selectedChatId, setSelectedChatId] = useAtom(selectedAgentChatIdAtom);
     const setShowNewChatForm = useSetAtom(showNewChatFormAtom);
+    const setSidebarOpen = useSetAtom(agentsSidebarOpenAtom);
     const { openSettings, openSettingsTab } = useSettingsNavigation();
     const [activeOverlay, setActiveOverlay] = useAtom(activeOverlayAtom);
     // Only the Flows dashboard renders beside the sidebar; the editor is a full-width takeover.
@@ -1402,6 +1404,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
       isCodebaseExpanded,
       isDragging: !!activeChat,
       selectedChatId: effectiveSelectedChatId,
+      codebases: filteredCodebases,
       onSelectionKey: (action) => {
         const ids = [...chatSelection.getSnapshot()];
         if (ids.length === 0) return false;
@@ -1409,6 +1412,13 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
         else void bulk.requestDelete(ids);
         return true;
       },
+    });
+
+    // A pane-header cmd-click activates that pane first; wait two frames so its composer autofocus
+    // runs before the sidebar takes focus.
+    useWindowEvent('sidebar:reveal-active-chat', () => {
+      setSidebarOpen(true);
+      requestAnimationFrame(() => requestAnimationFrame(focusActiveItem));
     });
 
     const fetchAllChatsForFolder = useCallback(async (projectIds: string[] | null) => {

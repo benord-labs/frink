@@ -119,6 +119,7 @@ export const hoisted = {
   // SAFETY: starts empty; the useChatDnd double stores the onMoveChat it was given.
   capturedOnMoveChat: null as null | MoveChatHandler,
   capturedProjectsTreeProps: null as null | Record<string, unknown>,
+  focusActiveItemMock: vi.fn(),
   capturedSidebarDialogsProps: null as null | Record<string, unknown>,
   // SAFETY: starts empty; the ChatSelectionChip double assigns the props it was rendered with.
   capturedChatSelectionChipProps: null as null | ChatSelectionChipProps,
@@ -310,7 +311,12 @@ export const groupedProjectsMock = {
     return [];
   },
 };
-export const sidebarNavigationMock = { useSidebarNavigation: () => ({ focusedItemId: null }) };
+export const sidebarNavigationMock = {
+  useSidebarNavigation: () => ({
+    focusedItemId: null,
+    focusActiveItem: hoisted.focusActiveItemMock,
+  }),
+};
 
 export const splitViewMock = {
   MAX_PANES: 4,

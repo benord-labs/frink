@@ -1,6 +1,11 @@
 import { getChatActiveState, SIDEBAR_TASK_PRESENTATION, type SidebarTaskStatus } from './constants';
 import type { ChatItem, CodebaseGroup } from './types';
 
+/** A project group's expansion-state key, also its tree row's `data-item-id`. */
+export function getCodebaseKey(codebase: Pick<CodebaseGroup, 'gitRemote' | 'displayName'>): string {
+  return codebase.gitRemote ?? codebase.displayName;
+}
+
 export type SidebarChatListItem = {
   id: string;
   name: string | null;

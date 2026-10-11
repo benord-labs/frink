@@ -1916,3 +1916,22 @@ describe('UnifiedSidebar pane indicators', () => {
     );
   });
 });
+
+describe('UnifiedSidebar reveal active chat', () => {
+  it('focuses the active chat when a pane header asks for it', () => {
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+    hoisted.focusActiveItemMock.mockClear();
+    render(<UnifiedSidebar />);
+    expect(hoisted.focusActiveItemMock).not.toHaveBeenCalled();
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent('sidebar:reveal-active-chat'));
+    });
+
+    expect(hoisted.focusActiveItemMock).toHaveBeenCalledOnce();
+    vi.unstubAllGlobals();
+  });
+});
