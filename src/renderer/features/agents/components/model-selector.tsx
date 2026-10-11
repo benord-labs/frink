@@ -15,7 +15,11 @@ import { cn } from '../../../lib/utils';
 import {
   COMPOSER_MODEL_CONTROL_CLASS,
   COMPOSER_MODEL_DETAIL_CLASS,
+  COMPOSER_MODEL_EFFORT_CLASS,
   COMPOSER_MODEL_LABEL_CLASS,
+  COMPOSER_PLAIN_GLYPH_CLASS,
+  COMPOSER_ULTRA_GLYPH_CLASS,
+  COMPOSER_ULTRA_NAME_CLASS,
 } from '../main/chat-composer-shell-classes';
 import { ModelPicker } from './ModelPicker';
 import { UltraWord } from './ModelPicker/UltraSwitch';
@@ -25,6 +29,7 @@ const CodexIcon = iconifyComponent(openaiLogo);
 
 /** Provider → trigger icon, keyed by `modelVariant`. */
 const TRIGGER_ICON = { codex: CodexIcon, claude: ClaudeCodeIcon } as const;
+type TriggerIconType = (typeof TRIGGER_ICON)[keyof typeof TRIGGER_ICON];
 
 export type ModelItem = {
   id: string;
@@ -97,21 +102,47 @@ function formatTriggerLabel(m: ModelItem | undefined): string {
 /** How an Ultra row's label ends (see the Claude catalog); the trigger restyles just this word. */
 const ULTRA_LABEL_TAIL = ' · Ultra';
 
+/** The tier's effort as a token for the narrow composer, where the full tier no longer fits. */
+const EFFORT_TOKEN = {
+  low: 'L',
+  medium: 'M',
+  high: 'H',
+  xhigh: 'XH',
+  max: 'Max',
+} satisfies Record<ClaudeSdkEffortLevel, string>;
+
+/** Provider glyph; with Ultra on, an icon-only trigger swaps it for the glyph in Ultra's chroma. */
+function ComposerTriggerGlyph({ icon: Glyph, ultra }: { icon: TriggerIconType; ultra: boolean }) {
+  const plain = <Glyph className={cn('h-4 w-4 shrink-0', ultra && COMPOSER_PLAIN_GLYPH_CLASS)} />;
+  if (!ultra) return plain;
+  return (
+    <>
+      {plain}
+      <span className={COMPOSER_ULTRA_GLYPH_CLASS}>
+        <Glyph mode="mask" width="1rem" height="1rem" className="chroma-fill chroma-text-animate" />
+      </span>
+    </>
+  );
+}
+
 /** Composer trigger text: the name in the foreground and the tier muted. As the composer narrows
- *  the tier and chevron go first; the name goes only when it no longer fits. */
+ *  the tier and chevron go first, leaving an effort token, then the name, which goes only when it
+ *  no longer fits. */
 function ComposerTriggerLabel({
   label,
   suffix,
+  effort,
   ultra,
 }: {
   label: string;
   suffix?: string;
+  effort?: ClaudeSdkEffortLevel;
   ultra: boolean;
 }) {
   return (
     <>
       <span className={COMPOSER_MODEL_LABEL_CLASS}>
-        {label}
+        <span className={cn(ultra && COMPOSER_ULTRA_NAME_CLASS)}>{label}</span>
         {suffix ? (
           <span className={cn('text-muted-foreground/70', COMPOSER_MODEL_DETAIL_CLASS)}>
             {ultra ? (
@@ -123,6 +154,12 @@ function ComposerTriggerLabel({
             ) : (
               suffix
             )}
+          </span>
+        ) : null}
+        {suffix && effort ? (
+          <span className={cn('text-muted-foreground/70', COMPOSER_MODEL_EFFORT_CLASS)}>
+            {' · '}
+            {ultra ? <UltraWord>{EFFORT_TOKEN[effort]}</UltraWord> : EFFORT_TOKEN[effort]}
           </span>
         ) : null}
       </span>
@@ -215,14 +252,19 @@ export function ModelSelector({
                 title: ultra ? `${triggerLabel} — runs many agents in parallel` : triggerLabel,
               })}
         >
-          <TriggerIcon className="h-4 w-4 shrink-0" />
+          <ComposerTriggerGlyph icon={TriggerIcon} ultra={ultra} />
           {isFlow ? (
             <>
               <span className="min-w-0 flex-1 truncate text-left">{triggerLabel}</span>
               <ChevronDown className="h-3 w-3 shrink-0 opacity-50" />
             </>
           ) : (
-            <ComposerTriggerLabel label={chatText.name} suffix={chatText.suffix} ultra={ultra} />
+            <ComposerTriggerLabel
+              label={chatText.name}
+              suffix={chatText.suffix}
+              effort={selectedModel?.effort}
+              ultra={ultra}
+            />
           )}
         </Button>
       </PopoverTrigger>

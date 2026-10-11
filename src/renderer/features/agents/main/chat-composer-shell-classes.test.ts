@@ -7,7 +7,10 @@ import {
   COMPOSER_CONTROL_LABEL_CLASS,
   COMPOSER_MODEL_CONTROL_CLASS,
   COMPOSER_MODEL_DETAIL_CLASS,
+  COMPOSER_MODEL_EFFORT_CLASS,
   COMPOSER_MODEL_LABEL_CLASS,
+  COMPOSER_ULTRA_GLYPH_CLASS,
+  COMPOSER_ULTRA_NAME_CLASS,
 } from './chat-composer-shell-classes';
 
 /** The container width, in rem, below which a tier class hides its element. */
@@ -34,6 +37,17 @@ describe('composer footer contract', () => {
     expect(modelDetail).toBeGreaterThan(modelName);
     expect(COMPOSER_MODEL_CONTROL_CLASS).toContain(`@max-[${modelName}rem]/composer:w-7`);
     expect(COMPOSER_MODEL_CONTROL_CLASS).not.toMatch(/(^|\s)shrink-0\b/);
+  });
+
+  it('shows the effort token only between the tier and name tiers, where Ultra moves onto the name', () => {
+    const modelDetail = hideTierRem(COMPOSER_MODEL_DETAIL_CLASS);
+    const effortToken = hideTierRem(COMPOSER_MODEL_EFFORT_CLASS);
+    const modelName = hideTierRem(COMPOSER_MODEL_LABEL_CLASS);
+    expect(COMPOSER_MODEL_EFFORT_CLASS).toContain(`@max-[${modelDetail}rem]/composer:inline`);
+    expect(modelDetail).toBeGreaterThan(effortToken);
+    expect(effortToken).toBeGreaterThan(modelName);
+    expect(COMPOSER_ULTRA_NAME_CLASS).toContain(`@max-[${effortToken}rem]/composer:chroma-text`);
+    expect(COMPOSER_ULTRA_GLYPH_CLASS).toContain(`@max-[${modelName}rem]/composer:inline-flex`);
   });
 
   it('insets the icon 6px in both states, so it never jumps when a label appears', () => {
