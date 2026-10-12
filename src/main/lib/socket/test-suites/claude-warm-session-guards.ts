@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -18,10 +17,11 @@ import { hasWakeHold, releaseWakeHold } from '../claude-wake-hold';
 import * as socketClient from '../client';
 import { abortActiveExecutionsForSubChats } from '../executor';
 import * as runtimeGate from '../runtime-gate';
-import { mockQuery, never } from './claude-turn-abort';
+import { mockQuery, never } from './claude-query-fake';
 import { flowDriven, RUNNING_TASK, TURN_END } from './claude-turn-bindings';
 import { answeringCli, replies } from './claude-warm-session';
 import type { ExecutorPermissionHarness } from './executor-codex-permissions';
+import { gitAsTestUser as git } from '../../test-utils/git-as-test-user';
 
 type WarmSessionGuardHarness = Pick<
   ExecutorPermissionHarness,
@@ -306,12 +306,6 @@ function registerPlanApprovalReuseTests(
 }
 
 type Send = (message: string, overrides?: Partial<Payload>) => Promise<void>;
-
-const git = (cwd: string, ...args: string[]) =>
-  execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], {
-    cwd,
-    stdio: 'pipe',
-  });
 
 /** One turn from a new chat running in `cwd`; returns its CLI's spawn options. */
 async function sendFromChatIn(

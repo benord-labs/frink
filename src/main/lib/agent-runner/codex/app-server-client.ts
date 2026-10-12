@@ -138,9 +138,7 @@ export type CodexInitializeResult = {
   codexHome: string;
   platformFamily: string;
   platformOs: string;
-  capabilities?: {
-    frinkHostToolPermission?: number;
-  };
+  capabilities?: { frinkHostToolPermission?: number };
 };
 
 export type CodexAppServerClientOptions = {
