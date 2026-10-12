@@ -63,6 +63,7 @@ const state = {
   localProjectsData: new Array<LocalProjectStub>(),
   persistedPendingPlanApprovals: [] as Array<{ subChatId: string; chatId: string }>,
   livePendingPlanApprovals: new Map<string, string>(),
+  openChatRows: new Array<{ id: string; projectId: string | null; updatedAt: Date }>(),
 };
 
 /** Chat-row shape the chat mutations resolve with; per-mutation fixtures differ only by identity. */
@@ -243,6 +244,7 @@ export const trpcMock = {
           fetch: () => hoisted.listPinnedFetchMock(),
         },
         get: { invalidate: hoisted.chatsGetInvalidateMock },
+        listByIds: { invalidate: vi.fn(async () => undefined) },
         getSubChatMessages: { invalidate: hoisted.chatsGetSubChatMessagesInvalidateMock },
         listArchived: { invalidate: hoisted.chatsListArchivedInvalidateMock },
       },
@@ -269,6 +271,7 @@ export const trpcMock = {
       getPendingPlanApprovals: { useQuery: hoisted.getPendingPlanApprovalsUseQueryMock },
       listArchived: { useQuery: () => ({ data: hoisted.archivedChatsData }) },
       listByFolder: { useQuery: () => ({ data: { chats: [], hasMore: false, nextCursor: null } }) },
+      listByIds: { useQuery: () => ({ data: state.openChatRows }) },
       listBatchGroups: { useQuery: () => ({ data: [] }) },
       archive: { useMutation: () => ({ mutateAsync: hoisted.archiveChatMutateAsyncMock }) },
       restore: { useMutation: () => ({ mutateAsync: hoisted.restoreMutateAsyncMock }) },

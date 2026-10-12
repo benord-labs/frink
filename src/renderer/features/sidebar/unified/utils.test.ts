@@ -5,6 +5,7 @@ import {
   buildChatTaskStatusMap,
   buildPendingQuestionChatIds,
   bumpChatUpdatedAtInFolderMap,
+  cutSidebarEntries,
   extractErrorMessage,
   mergeChatsById,
   normalizeCursor,
@@ -583,5 +584,39 @@ describe('sameSidebarTasks', () => {
     const reparked = task({ result: { agentSignal: { summary: 'blocked', details: 'on input' } } });
     expect(sameSidebarTasks([parked], [reparked])).toBe(false);
     expect(sameSidebarTasks([parked], [task({ ...parked })])).toBe(true);
+  });
+});
+
+describe('cutSidebarEntries', () => {
+  type Entry = { type: 'sectionHeader' | 'chat'; id: string };
+  const header = (id: string): Entry => ({ type: 'sectionHeader', id });
+  const row = (id: string): Entry => ({ type: 'chat', id });
+  const ids = (entries: Entry[]) => entries.map((entry) => entry.id);
+  const noneOpen = () => false;
+  const open = (id: string) => (entry: Entry) => entry.id === id;
+
+  it('keeps the first `limit` rows and cuts the rest', () => {
+    const cut = cutSidebarEntries([row('a'), row('b'), row('c')], 2, noneOpen);
+    expect(ids(cut)).toEqual(['a', 'b']);
+  });
+
+  it('keeps an open row past the cut, after the visible page', () => {
+    const cut = cutSidebarEntries([row('a'), row('b'), row('c'), row('d')], 2, open('d'));
+    expect(ids(cut)).toEqual(['a', 'b', 'd']);
+  });
+
+  it('does not count section headers toward the limit', () => {
+    const entries = [header('Pinned'), row('a'), header('Recent'), row('b'), row('c')];
+    expect(ids(cutSidebarEntries(entries, 2, noneOpen))).toEqual(['Pinned', 'a', 'Recent', 'b']);
+  });
+
+  it('drops a header whose rows were all cut', () => {
+    const entries = [header('Pinned'), row('a'), header('Recent'), row('b')];
+    expect(ids(cutSidebarEntries(entries, 1, noneOpen))).toEqual(['Pinned', 'a']);
+  });
+
+  it('keeps a header whose only surviving row is an open one past the cut', () => {
+    const entries = [header('Pinned'), row('a'), header('Recent'), row('b'), row('c')];
+    expect(ids(cutSidebarEntries(entries, 1, open('c')))).toEqual(['Pinned', 'a', 'Recent', 'c']);
   });
 });

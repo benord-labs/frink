@@ -8,6 +8,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useEffectEvent,
   useImperativeHandle,
   useMemo,
   useRef,
@@ -24,6 +25,7 @@ import {
 import { cleanupChatScopedState } from '../../../lib/atoms/atom-family-factory';
 import { useArchiveWindowEvents } from '../../../lib/hooks/sidebar-chat-archive/use-chat-archive-actions';
 import { useChatArchive } from '../../../lib/hooks/sidebar-chat-archive/use-chat-archive-actions';
+import { useOpenChatRows } from '../../../lib/hooks/sidebar-open-chats/use-open-chat-rows';
 import { usePendingPlanIds } from '../../../lib/hooks/use-sidebar-pending-plan-ids';
 import { useWindowEvent } from '../../../lib/hooks/use-window-event';
 import { createIdSelectionStore } from '../../../lib/tree-navigation';
@@ -74,6 +76,7 @@ import {
   applyChatRenameToSidebarMaps,
   applyChatRestoreToSidebarMaps,
   applyForkInsertToSidebarMaps,
+  applyOpenChatActivityToSidebarMaps,
   applyPinToggleToSidebarMaps,
   computeFolderSnapshot,
   forkMutationResultToSidebarItem,
@@ -173,18 +176,6 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
       setFolderLoadingByKey({});
     }, []);
 
-    const activityBump = useAtomValue(sidebarChatActivityBumpAtom);
-    useEffect(() => {
-      if (!activityBump) return;
-      const bumpDate = new Date(activityBump.at);
-      setFolderChatsByKey((prev) =>
-        bumpChatUpdatedAtInFolderMap(prev, activityBump.chatId, bumpDate),
-      );
-      setPinnedChatsByKey((prev) =>
-        bumpChatUpdatedAtInFolderMap(prev, activityBump.chatId, bumpDate),
-      );
-    }, [activityBump]);
-
     // Async chat-name generation: patch in-memory sidebar maps when the main
     // process broadcasts a new title. The tRPC cache invalidation handled by
     // ChatNameUpdateBridge covers consumers like the chat header, but the
@@ -268,6 +259,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
       }
       return map;
     }, [chatIds]);
+    const openChats = useOpenChatRows(isSplitActive ? chatPaneMap : null, selectedChatId, TIMING);
 
     // Show files button when a project is selected AND not in split view.
     const showFilesButton = Boolean(selectedProject?.path) && !isSplitActive;
@@ -324,10 +316,12 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
     const chats = useMemo(
       () =>
         mergeChatsById([
+          // First, so a loaded row (patched locally on rename, pin and activity) wins.
+          ...openChats,
           ...Object.values(folderChatsByKey).flat(),
           ...Object.values(pinnedChatsByKey).flat(),
         ]),
-      [folderChatsByKey, pinnedChatsByKey],
+      [openChats, folderChatsByKey, pinnedChatsByKey],
     );
     const pendingPlanIds = usePendingPlanIds(chats, livePlanApprovals, TIMING);
     const { data: rawArchivedChats } = trpc.chats.listArchived.useQuery(undefined);
@@ -476,6 +470,30 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
       () => (Array.isArray(rawLocalProjects) ? rawLocalProjects : []),
       [rawLocalProjects],
     );
+
+    // An open chat no loaded page holds joins its folder's list as that folder's newest chat.
+    const insertBumpedOpenChat = useEffectEvent((chatId: string, updatedAt: Date) => {
+      applyOpenChatActivityToSidebarMaps(
+        setFolderChatsByKey,
+        openChats,
+        transformedProjects,
+        GENERAL_FOLDER_KEY,
+        chatId,
+        updatedAt,
+      );
+    });
+    const activityBump = useAtomValue(sidebarChatActivityBumpAtom);
+    useEffect(() => {
+      if (!activityBump) return;
+      const bumpDate = new Date(activityBump.at);
+      setFolderChatsByKey((prev) =>
+        bumpChatUpdatedAtInFolderMap(prev, activityBump.chatId, bumpDate),
+      );
+      setPinnedChatsByKey((prev) =>
+        bumpChatUpdatedAtInFolderMap(prev, activityBump.chatId, bumpDate),
+      );
+      insertBumpedOpenChat(activityBump.chatId, bumpDate);
+    }, [activityBump]);
 
     const folderDescriptors = useMemo(() => {
       const byKey = new Map<string, FolderDescriptor>();
@@ -791,6 +809,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
         u.chats.listCounts.invalidate(),
         u.chats.listByFolder.invalidate(),
         u.chats.listPinned.invalidate(),
+        u.chats.listByIds.invalidate(),
         u.chats.listBatchGroups.invalidate(),
         u.chats.listByBatch.invalidate(),
         u.chats.listArchived.invalidate(),
@@ -806,6 +825,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
     const syncSidebarCountsOrFullRefresh = useCallback(
       async (warningTitle: string) => {
         try {
+          void utilsRef.current.chats.listByIds.invalidate();
           await utilsRef.current.chats.listArchived.invalidate();
           await refetchListCountsAndSyncFolderSnapshots(
             utilsRef.current,
@@ -1039,6 +1059,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
         await Promise.all([
           u.chats.list.invalidate(),
           u.chats.get.invalidate({ id: updated.id }),
+          u.chats.listByIds.invalidate(),
           invalidateBatchViews(u),
         ]);
         setChatToRename(null);
@@ -1162,6 +1183,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
           throw error;
         }
         removeChatsFromLoadedFolders([chatId]);
+        setSelectedChatId((current) => (current === chatId ? null : current));
         // The local map patch above covers folder + pinned; batch views drop the chat on refetch.
         const u = utilsRef.current;
         await Promise.allSettled([
@@ -1170,7 +1192,6 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
           syncSidebarCountsOrFullRefresh('Chat archived'),
         ]);
         setShowArchived(true);
-        setSelectedChatId((current) => (current === chatId ? null : current));
         // Last: dropping per-chat atom state while a pane is still mounted on this id
         // would let its next render re-create the entry we just removed.
         cleanupChatScopedState(chatId);
@@ -1217,12 +1238,12 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
         try {
           await deleteChatMutRef.current.mutateAsync({ id: chatId });
           removeChatsFromLoadedFolders([chatId]);
+          setSelectedChatId((current) => (current === chatId ? null : current));
           // A stale batch row outlives its tasks and reads as a grey "cancelled" row.
           await Promise.all([
             invalidateBatchViews(utilsRef.current),
             syncSidebarCountsOrFullRefresh('Chat deleted'),
           ]);
-          setSelectedChatId((current) => (current === chatId ? null : current));
           cleanupChatScopedState(chatId);
         } catch (error) {
           for (const paneIndex of clearedPanes) restorePaneAt(paneIndex, chatId);

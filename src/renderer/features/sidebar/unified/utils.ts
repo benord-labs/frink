@@ -57,6 +57,29 @@ export function mergeChatsById(chats: SidebarChatListItem[]): SidebarChatListIte
 }
 
 /**
+ * A folder's rows above "Show more": the first `limit` chats and batch groups, plus any later one
+ * that `isOpen`, so a chat the user has open never hides behind the cut.
+ */
+export function cutSidebarEntries<E extends { type: string }>(
+  entries: readonly E[],
+  limit: number,
+  isOpen: (entry: E) => boolean,
+): E[] {
+  let counted = 0;
+  const kept = entries.filter((entry) => {
+    if (entry.type === 'sectionHeader') return true;
+    counted += 1;
+    return counted <= limit || isOpen(entry);
+  });
+  // A header stays only while a row of its section follows it.
+  return kept.filter((entry, i) => {
+    if (entry.type !== 'sectionHeader') return true;
+    const next = kept[i + 1];
+    return next !== undefined && next.type !== 'sectionHeader';
+  });
+}
+
+/**
  * Updates `updatedAt` for `chatId` in any loaded folder list and re-sorts each touched list.
  * Returns `folderChatsByKey` unchanged (same reference) if the chat is not present in any folder.
  */

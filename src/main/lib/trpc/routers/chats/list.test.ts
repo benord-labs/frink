@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeLocalChat } from './test-factories';
 
 const {
+  getChatByIdMock,
   pageChatsForProjectsMock,
   countChatsByProjectMock,
   listAllArchivedChatsMock,
@@ -9,6 +10,7 @@ const {
   listChatsByBatchMock,
   listSidebarBatchGroupsMock,
 } = vi.hoisted(() => ({
+  getChatByIdMock: vi.fn(),
   pageChatsForProjectsMock: vi.fn(),
   countChatsByProjectMock: vi.fn(),
   listAllArchivedChatsMock: vi.fn(),
@@ -20,6 +22,7 @@ const {
 vi.mock('../../../db', () => ({ getDatabase: () => ({}) }));
 vi.mock('../../../db/repos/chats', () => ({
   pageChatsForProjects: pageChatsForProjectsMock,
+  getChatById: getChatByIdMock,
   countChatsByProject: countChatsByProjectMock,
   listAllArchivedChats: listAllArchivedChatsMock,
   // Other procedures in listRouter import these; stub so the module loads.
@@ -36,6 +39,8 @@ vi.mock('../../../flows/batch-summaries', () => ({
 }));
 
 import { listRouter } from './list';
+
+type GetChatById = typeof import('../../../db/repos/chats').getChatById;
 
 // Default: no chat belongs to a batch, so withBatchIds leaves batchId at the mapper's null.
 beforeEach(() => getBatchIdByChatIdMock.mockResolvedValue(new Map<string, string>()));
@@ -151,6 +156,27 @@ describe('listRouter.listByFolder', () => {
 
     expect(out.chats.find((c) => c.id === 'c1')?.batchId).toBe('batch-9');
     expect(out.chats.find((c) => c.id === 'c2')?.batchId).toBeNull();
+  });
+});
+
+describe('listRouter.listByIds', () => {
+  it('returns the live chats among the ids, each with its batchId', async () => {
+    const stored = new Map([
+      ['a', makeLocalChat({ id: 'a' })],
+      ['b', makeLocalChat({ id: 'b' })],
+      ['archived', makeLocalChat({ id: 'archived', archivedAt: new Date('2026-01-01') })],
+    ]);
+    getChatByIdMock.mockImplementation(
+      async (...[, id]: Parameters<GetChatById>) => stored.get(id) ?? null,
+    );
+    getBatchIdByChatIdMock.mockResolvedValue(new Map([['b', 'batch-1']]));
+
+    const rows = await caller().listByIds({ ids: ['a', 'b', 'archived', 'deleted'] });
+
+    expect(rows.map((r) => [r.id, r.batchId])).toEqual([
+      ['a', null],
+      ['b', 'batch-1'],
+    ]);
   });
 });
 

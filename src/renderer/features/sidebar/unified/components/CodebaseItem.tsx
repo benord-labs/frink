@@ -27,6 +27,7 @@ import type { ChatItem, CodebaseGroup, ProjectActionHandlers } from '../types';
 import {
   type ActiveFolderChat,
   type ChatReason,
+  cutSidebarEntries,
   getFolderActiveChats,
   getFolderActiveState,
 } from '../utils';
@@ -293,12 +294,17 @@ export const CodebaseItem = memo(function CodebaseItem({
     return withHeaders;
   }, [allChats, batchGroups, isSearchActive]);
 
-  /** Section headers don't count toward pagination; they are layout, not content. */
-  const renderableEntryCount = useMemo(
-    () => sidebarEntries.filter((e) => e.type !== 'sectionHeader').length,
-    [sidebarEntries],
-  );
-  const hasMoreVisibleChats = !isSearchActive && renderableEntryCount > visibleCount;
+  /** Search lists every match; otherwise a page of rows, plus any open chat past the cut. */
+  const visibleEntries = useMemo(() => {
+    if (isSearchActive) return sidebarEntries;
+    const isChatOpen = (id: string) => (chatPaneMap ? chatPaneMap.has(id) : id === selectedChatId);
+    return cutSidebarEntries(sidebarEntries, visibleCount, (entry) =>
+      entry.type === 'chat'
+        ? isChatOpen(entry.chat.id)
+        : entry.type === 'batchGroup' && entry.chats.some((chat) => isChatOpen(chat.id)),
+    );
+  }, [sidebarEntries, isSearchActive, visibleCount, chatPaneMap, selectedChatId]);
+  const hasMoreVisibleChats = visibleEntries.length < sidebarEntries.length;
   const canRequestOlderChats = !isSearchActive && !hasMoreVisibleChats && hasMoreChatsFromServer;
   const canLoadMore = hasMoreVisibleChats || canRequestOlderChats;
 
@@ -446,24 +452,7 @@ export const CodebaseItem = memo(function CodebaseItem({
         {/* Chats and batch groups */}
         {allChats.length > 0 ? (
           <fieldset aria-label={`${codebase.displayName} chats`} className="contents">
-            {(isSearchActive
-              ? sidebarEntries
-              : (() => {
-                  const out: SidebarEntry[] = [];
-                  let renderable = 0;
-                  for (const entry of sidebarEntries) {
-                    if (entry.type !== 'sectionHeader') {
-                      if (renderable >= visibleCount) break;
-                      renderable += 1;
-                    }
-                    out.push(entry);
-                  }
-                  while (out.length > 0 && out[out.length - 1]?.type === 'sectionHeader') {
-                    out.pop();
-                  }
-                  return out;
-                })()
-            ).map((entry) =>
+            {visibleEntries.map((entry) =>
               entry.type === 'sectionHeader' ? (
                 <SidebarSectionLabel
                   key={`section-${entry.label}`}
