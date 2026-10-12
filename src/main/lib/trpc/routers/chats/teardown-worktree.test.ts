@@ -271,7 +271,7 @@ describe('tearDownChatWorktree with the real sibling query', () => {
 
 describe('removeProjectWorktrees', () => {
   it('kills every chat terminal and removes each distinct worktree once', async () => {
-    await removeProjectWorktrees('/repo', [
+    await removeProjectWorktrees(db, '/repo', [
       { id: 'c1', worktreePath: '/repo/a', branch: 'ba' },
       { id: 'c2', worktreePath: '/repo/a', branch: 'ba' }, // shared fork → same path
       { id: 'c3', worktreePath: '/repo/b', branch: 'bb' },
@@ -281,6 +281,37 @@ describe('removeProjectWorktrees', () => {
     expect(removeWorktreeMock).toHaveBeenCalledTimes(2);
     expect(removeWorktreeMock).toHaveBeenCalledWith('/repo', '/repo/a', { branch: 'ba' });
     expect(removeWorktreeMock).toHaveBeenCalledWith('/repo', '/repo/b', { branch: 'bb' });
+  });
+
+  it('keeps a worktree a chat in another project still holds after the cascade', async () => {
+    const actual =
+      await vi.importActual<typeof import('../../../db/repos/chats')>('../../../db/repos/chats');
+    siblingMock.mockImplementation(actual.hasOtherChatsSharingWorktree);
+    const other = await createProject(db, { name: 'Q', path: '/other' });
+    await createChat(db, {
+      id: 'survivor',
+      name: 'G',
+      projectId: other.id,
+      worktreePath: '/repo/shared',
+      branch: 'bs',
+    });
+
+    await removeProjectWorktrees(db, '/repo', [
+      { id: 'gone-1', worktreePath: '/repo/shared', branch: 'bs' },
+      { id: 'gone-2', worktreePath: '/repo/own', branch: 'bo' },
+    ]);
+
+    expect(removeWorktreeMock.mock.calls).toEqual([['/repo', '/repo/own', { branch: 'bo' }]]);
+  });
+
+  it('keeps every worktree when the sibling check cannot answer', async () => {
+    siblingMock.mockRejectedValue(new Error('SQLITE_BUSY'));
+
+    await removeProjectWorktrees(db, '/repo', [
+      { id: 'gone', worktreePath: '/repo/a', branch: 'ba' },
+    ]);
+
+    expect(removeWorktreeMock).not.toHaveBeenCalled();
   });
 });
 

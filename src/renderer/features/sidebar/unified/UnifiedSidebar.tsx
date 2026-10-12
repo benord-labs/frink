@@ -1406,7 +1406,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
       getActiveLinkedTasks: getActiveLinkedTasksForChatIdsWithFallback,
       openTaskAwareDialog: setTaskAwareActionDialog,
     });
-    const { deleteChatsBatch } = bulk;
+    const { deleteChatsBatch, runChatsAtomically } = bulk;
     const {
       activeChat,
       overProjectId,
@@ -1481,52 +1481,39 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
 
     const handleProjectDelete = useCallback(
       async (projectId: string) => {
-        const chatCount = chatCountByProjectRef.current.get(projectId) ?? 0;
-
-        if (!(await askDelete.project(chatCount))) return;
+        if (!(await askDelete.project(chatCountByProjectRef.current.get(projectId) ?? 0))) return;
         try {
-          // Delete chats then the project; refuse while a linked task is still running.
           const { allChats: projectChats } = await fetchAllChatsForFolder([projectId]);
-          const { activeTasks: linkedActiveTasks } =
-            await getActiveLinkedTasksForChatIdsWithFallback(projectChats.map((chat) => chat.id));
-          if (linkedActiveTasks.length > 0) {
+          const chatIds = projectChats.map((chat) => chat.id);
+          const { activeTasks } = await getActiveLinkedTasksForChatIdsWithFallback(chatIds);
+          if (activeTasks.length > 0) {
             toast.error('Project has active task-linked chats', {
               description:
                 'Cancel or finish linked tasks from Work Queue before deleting this project.',
             });
             return;
           }
-          // Optimistic removal: we're committed to deleting now (guards passed), and the
-          // backend delete + chat-batch + folder refresh below can take a moment. Drop the row
-          // from every project-list cache immediately so the sidebar feels instant. The finally
-          // block's invalidate re-fetches the truth — restoring the row if the delete throws.
-          const u = utilsRef.current;
-          const dropDeleted = <T extends { id: string }>(rows: T[] | undefined): T[] | undefined =>
-            Array.isArray(rows) ? rows.filter((p) => p.id !== projectId) : rows;
-          u.projects.list.setData(undefined, dropDeleted);
-
-          await deleteChatsBatch(projectChats, { clearPanesBefore: true });
-          await deleteProjectMutRef.current.mutateAsync({ id: projectId });
+          // Optimistic: drop the row now; `finally` re-fetches it back if the delete throws.
+          utilsRef.current.projects.list.setData(undefined, (rows) =>
+            rows?.filter((p) => p.id !== projectId),
+          );
+          // One transactional delete, never chat-by-chat first; it reports which chats went.
+          const remove = () => deleteProjectMutRef.current.mutateAsync({ id: projectId, chatIds });
+          await runChatsAtomically(projectChats, async () => (await remove()).deletedChatIds);
         } catch (err) {
           const message = err instanceof Error ? err.message : 'Failed to delete project';
-          if (isChatPinListLoadError(err)) {
-            toast.error('Could not load pinned chat list', { description: message });
-            return;
-          }
-          toast.error('Failed to delete project', { description: message });
-          return;
+          const title = isChatPinListLoadError(err)
+            ? 'Could not load pinned chat list'
+            : 'Failed to delete project';
+          toast.error(title, { description: message });
         } finally {
-          // Full reset (not targeted) is required here: deleting a project removes a whole
-          // folder plus N chats at once, so that folder's pagination snapshot is invalid and
-          // refreshSidebarFolders resets it. The optimistic project-list removal above keeps
-          // the UI instant; this re-fetches the truth.
           await invalidateProjectLists();
           await refreshSidebarFolders();
         }
       },
       [
         askDelete,
-        deleteChatsBatch,
+        runChatsAtomically,
         fetchAllChatsForFolder,
         invalidateProjectLists,
         refreshSidebarFolders,

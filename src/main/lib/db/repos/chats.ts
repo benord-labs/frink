@@ -2,6 +2,7 @@ import { and, desc, eq, inArray, isNotNull, isNull, lt, or, sql } from 'drizzle-
 import type { getDatabase } from '../index';
 import { type Chat, chats, type NewChat, type SubChat, subChats } from '../schema';
 import { createId } from '../utils';
+import { assertProjectNotBeingDeleted } from './projects';
 import { getAiAccountType, getChatAiAccount, getNewChatAccountId } from './project-ai-accounts';
 import { copyTranscript } from './sub-chat-messages';
 import { createSubChat, listSubChatsByChat } from './sub-chats';
@@ -275,6 +276,8 @@ export async function moveChatToProjectLocal(
   return db.transaction(() => {
     const current = db.select().from(chats).where(eq(chats.id, id)).get() as Chat | undefined;
     if (!current) return { updated: null, previousWorktreePath: null };
+    assertProjectNotBeingDeleted(current.projectId);
+    assertProjectNotBeingDeleted(opts.projectId);
 
     // Read history fresh inside the transaction (defends against TOCTOU where two moves
     // interleave with a stale parsed-history snapshot). Then drop the stale entry the

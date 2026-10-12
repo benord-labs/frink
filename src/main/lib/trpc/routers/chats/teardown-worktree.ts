@@ -83,24 +83,39 @@ export async function tearDownChatWorktree(db: Db, chat: ChatWorktreeRef): Promi
   return res.success;
 }
 
-/**
- * Project-delete teardown: all the project's chats are going away, so the per-chat sibling check is
- * moot — kill each chat's terminals (release handles) and remove each distinct worktree directly
- * against the project repo. Background; the boot sweep backstops any failures.
- */
+/** After a project's cascade: kill its chats' terminals and remove each distinct worktree no
+ *  surviving chat still holds. Background; the boot sweep backstops any failures. */
 export async function removeProjectWorktrees(
+  db: Db,
   mainRepoPath: string,
   projectChats: Array<{ id: string; worktreePath: string | null; branch: string | null }>,
 ): Promise<void> {
   await Promise.all(
     projectChats.map((c) => terminalManager.killByWorkspaceId(c.id).catch(() => {})),
   );
-  const byPath = new Map<string, string | null>();
+  const byPath = new Map<string, { chatId: string; branch: string }>();
   for (const c of projectChats) {
-    if (c.worktreePath && c.branch) byPath.set(c.worktreePath, c.branch);
+    if (c.worktreePath && c.branch) byPath.set(c.worktreePath, { chatId: c.id, branch: c.branch });
   }
-  for (const [worktreePath, branch] of byPath) {
+  for (const [worktreePath, { chatId, branch }] of byPath) {
+    if (await isWorktreeStillHeld(db, chatId, worktreePath)) continue;
     await removeWorktree(mainRepoPath, worktreePath, { branch });
+  }
+}
+
+/** Same tri-state as tearDownChatWorktree: an indeterminate sibling check keeps the worktree. */
+async function isWorktreeStillHeld(db: Db, chatId: string, worktreePath: string) {
+  try {
+    return await hasOtherChatsSharingWorktree(db, chatId, worktreePath);
+  } catch (error) {
+    log.warn(
+      '[removeProjectWorktrees] sibling check failed — skipping removal, boot sweep will reclaim',
+      {
+        worktreePath,
+        error,
+      },
+    );
+    return true;
   }
 }
 
