@@ -989,6 +989,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       projectId,
       projectPath,
       permissionProjectPath,
+      projectConfigRoot: workspace.projectConfigRoot,
       mode,
       settings,
       storedCredential,
