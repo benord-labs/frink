@@ -205,6 +205,9 @@ type StopHookResult = { decision: 'block'; reason: string } | Record<string, nev
 export type TaskStopHook = ((input: StopHookInput) => Promise<StopHookResult>) & {
   reset: () => void;
   lastPendingWork: StopPendingWork | null;
+  /** The turn-end read: with no Stop since the reset, restore the list it set aside, which a
+   * Stop-less turn never contradicted. Any Stop, even an empty one, wins. */
+  carryForwardPendingWork: () => StopPendingWork | null;
   /** The last Stop dropped a finished follower that is still running: only the CLI's EOF ends it. */
   droppedFollower?: boolean;
   /** A Stop ran since the hook was built or last reset, so its snapshot is the current turn's. */
@@ -214,6 +217,8 @@ export type TaskStopHook = ((input: StopHookInput) => Promise<StopHookResult>) &
 export function createTaskStopHook(opts: TaskStopHookOpts): TaskStopHook {
   const maxRetries = opts.maxRetries ?? 2;
   let retries = 0;
+  /** The snapshot a reset set aside. Only {@link TaskStopHook.carryForwardPendingWork} reads it. */
+  let setAside: StopPendingWork | null = null;
 
   // Funnel every idle allow through here so onAllow (turn-end duties) can never be forgotten
   // on a new allow path, and so it fires exactly once per allow decision.
@@ -265,8 +270,15 @@ export function createTaskStopHook(opts: TaskStopHookOpts): TaskStopHook {
     };
   }) as TaskStopHook;
   hook.lastPendingWork = null;
+  hook.carryForwardPendingWork = (): StopPendingWork | null => {
+    if (!hook.stoppedSinceReset && !hook.lastPendingWork) hook.lastPendingWork = setAside;
+    return hook.lastPendingWork;
+  };
   hook.reset = (): void => {
     retries = 0;
+    // Set aside, not discard: one turn after another can each end with no Stop, so the list carries
+    // forward until a Stop replaces it.
+    setAside = hook.carryForwardPendingWork();
     hook.lastPendingWork = null;
     hook.droppedFollower = false;
     hook.stoppedSinceReset = false;

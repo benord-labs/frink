@@ -451,7 +451,7 @@ function endOnReadFailure(session: ClaudeSession, err: unknown): void {
     endTurn(session, new Error('runTurn: claimed CLI died unserved — adopt refused'));
   else if (turn || !arming) endRegistrationOnError(session, err);
   else if (closeExpected) endArming(session, { reason: 'work-finished', bursts: arming.bursts });
-  else endArming(session, { reason: 'stream-ended' });
+  else endArming(session, { reason: 'stream-ended', error: err });
 }
 
 /** Route one read outcome to the registered sink. */

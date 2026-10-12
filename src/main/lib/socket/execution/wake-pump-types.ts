@@ -1,4 +1,9 @@
 import type { SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { TaskSignalPayload } from '../../../../shared/types/task-signal';
+import type { WakeHoldEndReason, WakeHoldState } from '../../../../shared/types/wake-hold';
+import type { UIMessageChunk } from '../../claude/types';
+// Type-only, so it does not reintroduce the client↔executor runtime cycle.
+import type { MessagePart } from '../client';
 
 /**
  * The wake pump's public contract, split out of `claude-session-registry.ts` so that file stays
@@ -14,7 +19,9 @@ export type WakePumpExit =
   /** The wait ended, stdin closed, and the CLI then finished and ended its own stream. */
   | { reason: 'work-finished'; bursts: number }
   | { reason: 'interrupted' }
-  | { reason: 'stream-ended' }
+  /** The CLI died under a live wait. `error` is the read failure, when there was one: the only clue
+   * that tells a crash from a teardown. */
+  | { reason: 'stream-ended'; error?: unknown }
   | { reason: 'sink-error'; error: unknown };
 
 export interface WakePumpCallbacks {
@@ -71,4 +78,33 @@ export interface WakePump {
   /** Re-check {@link WakePumpCallbacks.isWorkFinished} outside a burst, for a change no turn will
    * follow (a user-stopped shell or workflow). A no-op mid-burst, with a takeover queued, or once over. */
   settleIfWorkFinished: () => void;
+}
+
+/** Executor-injected adapters — each closes over the executor's typed senders/builders. */
+export interface WakeHoldIo {
+  chatId: string;
+  /** Stream one wake-burst chunk with the burst's cumulative parts snapshot. */
+  streamChunk: (
+    msgId: string,
+    chunk: UIMessageChunk,
+    parts: MessagePart[],
+    messageIndex: number,
+  ) => void;
+  /** Surface a plan this burst finished as a pending-approval card, calling `onSubmitted` only if
+   * one reached the transcript. */
+  emitPlanCard: (
+    msgId: string,
+    chunks: UIMessageChunk[],
+    startIndex: number,
+    deniedToolIdsWithMessages: Map<string, string>,
+    turn: { onSubmitted: () => void; planAlreadySubmitted: boolean; waitStartedMs: number },
+  ) => Promise<void>;
+  /** Finalize the merged assistant message. `chunks` spans the whole wait, so `hadContent` — not
+   * its length — says whether anything new was said. Awaitable before the session is disposed. */
+  completeBurst: (msgId: string, chunks: UIMessageChunk[], hadContent: boolean) => Promise<void>;
+  /** Publish whether this chat is waiting on background work, and on what (see `setHold` in claude-wake-hold). */
+  setHeld: (held: boolean, pending?: WakeHoldState, endReason?: WakeHoldEndReason) => void;
+  clearPendingApprovals: (reason: string, subChatId: string) => void;
+  getLatestTaskSignal: (executionContextId: string) => TaskSignalPayload | null | undefined;
+  clearCurrentExecutionChat: (executionContextId: string) => void;
 }

@@ -83,6 +83,45 @@ function alertsOnDroppedWork(cause: string): boolean {
   return ALERTING_DROP_CAUSES.has(head) || isInvoluntaryAbortReason(tail);
 }
 
+/** Why the session ended, in words for the chat. Keyed on the cause's head, then its tail. */
+const LOST_WORK_CAUSE_TEXT = new Map<string, string>([
+  ['stream-ended', 'the Claude process for this chat exited unexpectedly'],
+  ['sink-error', 'Frink hit an error while reading this chat'],
+  ['interrupted', 'the session was interrupted'],
+  ['provider-switch', 'this chat switched to another agent provider'],
+  ['non-flow successor bypassed Flow wake hold', 'a new message replaced the Flow session'],
+  ['successor cannot adopt Flow wake runtime slot', 'a new message replaced the Flow session'],
+  ['renderer-reload', 'the app window reloaded'],
+  ['renderer-crashed', 'the app window closed unexpectedly'],
+]);
+
+function describeLostWorkCause(cause: string): string {
+  const colon = cause.indexOf(':');
+  const [head, tail] = colon === -1 ? [cause, ''] : [cause.slice(0, colon), cause.slice(colon + 1)];
+  return (
+    LOST_WORK_CAUSE_TEXT.get(head) ?? LOST_WORK_CAUSE_TEXT.get(tail) ?? 'the session ended early'
+  );
+}
+
+/** What the chat is told, at once, when Frink ends a session over running background work. Null
+ * when nothing was pending or the user asked for it: the allow-list that decides the alert. */
+export function lostWorkNotice(pendingWork: StopPendingWork | null, cause: string): string | null {
+  if (!pendingWork || !alertsOnDroppedWork(cause)) return null;
+  const items = summarizePendingWork(pendingWork).waitingOn;
+  if (items.length === 0) return null;
+  const named = items.map(({ label, description }) => {
+    const text = description.trim();
+    return text ? `${label} “${text.length > 80 ? `${text.slice(0, 79)}…` : text}”` : label;
+  });
+  const workflow = pendingWork.backgroundTasks.some((task) => task.type === 'workflow');
+  return [
+    `Background work stopped: ${describeLostWorkCause(cause)}, which ended ${named.join(', ')} before it finished.`,
+    workflow
+      ? 'Ask me to resume it. A Workflow picks up from its saved run, so agents that already finished are not run again.'
+      : 'Ask me to run it again if you still need it.',
+  ].join(' ');
+}
+
 /** Name the teardown that dropped pending harness work: closing stdin kills every backgrounded
  * task, and a silent close leaves the kill undiagnosable (decision unattended-wake-budget). */
 export function logDroppedPendingWork(
@@ -119,6 +158,43 @@ export function logAdoptedTurnEnd(
   log.info(`[Socket Executor] Adopted turn ended for ${subChatId}: ${disposition}`);
 }
 
+/** A Stop-less adopted turn carries the held work forward. A plan halt never has a Stop, and
+ * carrying there would dispose the session; its approval turn carries the list instead. */
+export function readTurnEndPendingWork(
+  session: Pick<ClaudeSession, 'stopHook'>,
+  turn: Pick<ClaudeTurnContext, 'planSubmissionHalt'>,
+): StopPendingWork | null {
+  const { stopHook } = session;
+  if (!stopHook) return null;
+  return turn.planSubmissionHalt() ? stopHook.lastPendingWork : stopHook.carryForwardPendingWork();
+}
+
+type TurnEndVerdict = { disposition: 'hold' | 'keep' | 'end'; pendingWork: StopPendingWork | null };
+
+/** `hold` arms the wake pump, `keep` idles the session for the next send, `end` disposes it. A
+ * session not held logs why, so a later kill of live work shows what the turn end knew. */
+export function turnEndDisposition(
+  subChatId: string,
+  session: TurnEndSession,
+  turn: Pick<ClaudeTurnContext, 'adoptedHold' | 'planSubmissionHalt' | 'steered'>,
+  signal: AbortSignal,
+  /** A Flow turn or an error result; an unread steer and a live dropped follower are added here. */
+  neverKeep: boolean,
+): TurnEndVerdict {
+  const pendingWork = readTurnEndPendingWork(session, turn);
+  const mustDispose = turnEndMustDispose(subChatId, session, turn, signal);
+  if (pendingWork && !mustDispose) return { disposition: 'hold', pendingWork };
+  const ends =
+    mustDispose || neverKeep || turn.steered || Boolean(session.stopHook?.droppedFollower);
+  let evidence = 'no Stop snapshot';
+  if (pendingWork) evidence = 'pending work dropped';
+  else if (session.stopHook?.stoppedSinceReset) evidence = 'Stop listed no pending work';
+  log.info(
+    `[Socket Executor] Not holding session for ${subChatId}: ${ends ? 'ended' : 'kept idle'} (${evidence})`,
+  );
+  return { disposition: ends ? 'end' : 'keep', pendingWork };
+}
+
 type TurnEndSession = Pick<
   ClaudeSession,
   'stopHook' | 'queue' | 'busy' | 'subChatId' | 'inputsReadAt'
@@ -143,7 +219,8 @@ function adoptedTurnDisposition(cause: string | null, session: TurnEndSession): 
   if (cause) return `disposed (${cause})`;
   if (pendingWork) {
     const labels = summarizePendingWork(pendingWork).waitingOn.map((item) => item.label);
-    return `re-armed (${labels.join(', ')})`;
+    const carried = session.stopHook?.stoppedSinceReset ? '' : ' from the carried-forward Stop';
+    return `re-armed${carried} (${labels.join(', ')})`;
   }
   const why = session.stopHook?.stoppedSinceReset ? 'no pending work' : 'no Stop snapshot';
   return `not re-armed (${why})`;
