@@ -5,11 +5,11 @@
 <p align="center">
   <a href="https://github.com/benord-labs/frink"><img src="https://img.shields.io/github/stars/benord-labs/frink?style=flat&amp;label=%E2%98%85&amp;color=8B5CF6" alt="GitHub stars" /></a>
   <img src="https://img.shields.io/badge/license-MIT-8B5CF6?style=flat" alt="License: MIT" />
-  <img src="https://img.shields.io/badge/macOS%2013%2B-4493F8?style=flat-square" alt="Supported platform: macOS 13 or later" />
+  <img src="https://img.shields.io/badge/macOS%2013%2B%20%7C%20Linux-4493F8?style=flat-square" alt="Supported platforms: macOS 13 or later, and Linux" />
 </p>
 
 <p align="center">
-  <strong>Build your agent workflow once. Frink runs it every time.</strong><br/>
+  <strong>Turn a Sentry error or Linear ticket into a reviewed PR, on your own machine.</strong><br/>
   A ticket arrives, an error fires or the clock hits 9am: your Flow runs the steps you chose and stops where it needs you.
 </p>
 
