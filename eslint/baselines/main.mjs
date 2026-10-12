@@ -105,7 +105,6 @@ export const mainStructureBaseline = [
   "lib/git/dictionaries/landscapes.ts",
   "lib/git/stash.concurrent.test.ts",
   "lib/git/stash.drain.test.ts",
-  "lib/git/utils/apply-numstat.ts",
   "lib/git/utils/parse-status.ts",
   "lib/goal-slug.test.ts",
   "lib/goal-slug.ts",

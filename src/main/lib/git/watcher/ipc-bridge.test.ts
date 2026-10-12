@@ -23,8 +23,6 @@ const {
     gitCacheMock: {
       invalidateStatus: vi.fn(),
       invalidateParsedDiff: vi.fn(),
-      invalidateAllFileContents: vi.fn(),
-      invalidateFileContentsByPath: vi.fn(),
     },
   };
 });
@@ -68,8 +66,6 @@ describe('registerGitWatcherIPC', () => {
     invalidateFileListCacheMock.mockReset();
     gitCacheMock.invalidateStatus.mockReset();
     gitCacheMock.invalidateParsedDiff.mockReset();
-    gitCacheMock.invalidateAllFileContents.mockReset();
-    gitCacheMock.invalidateFileContentsByPath.mockReset();
     disposeAllMock.mockReset();
   });
 
@@ -355,8 +351,6 @@ describe('registerGitWatcherIPC', () => {
 
     expect(gitCacheMock.invalidateStatus).toHaveBeenCalledWith('/repo/worktree-cache');
     expect(gitCacheMock.invalidateParsedDiff).toHaveBeenCalledWith('/repo/worktree-cache');
-    expect(gitCacheMock.invalidateAllFileContents).toHaveBeenCalledWith('/repo/worktree-cache');
-    expect(gitCacheMock.invalidateFileContentsByPath).not.toHaveBeenCalled();
     expect(invalidateGitStatusCacheMock).toHaveBeenCalledWith('/repo/worktree-cache');
     expect(invalidateFileListCacheMock).toHaveBeenCalledWith('/repo/worktree-cache');
     expect(sendMock).toHaveBeenCalledWith(
@@ -365,77 +359,6 @@ describe('registerGitWatcherIPC', () => {
         worktreePath: '/repo/worktree-cache',
       }),
     );
-  });
-
-  it('invalidates file-contents cache by relative path for non-pointer file updates', async () => {
-    vi.spyOn(Date, 'now').mockImplementation(() => 1000);
-
-    let watcherCallback: WatcherCallback = () => {};
-    subscribeMock.mockImplementation(async (_worktreePath: string, callback: WatcherCallback) => {
-      watcherCallback = callback;
-      return vi.fn();
-    });
-
-    const sendMock = vi.fn();
-    const win = {
-      isDestroyed: () => false,
-      webContents: { send: sendMock },
-    } as const;
-
-    const { registerGitWatcherIPC } = await import('./ipc-bridge');
-    registerGitWatcherIPC(() => win as never);
-
-    const subscribeHandler = handlers.get('git:subscribe-watcher');
-    expect(subscribeHandler).toBeTypeOf('function');
-    await subscribeHandler?.({}, '/repo/worktree-non-pointer');
-
-    watcherCallback({
-      worktreePath: '/repo/worktree-non-pointer',
-      changes: [{ path: '/repo/worktree-non-pointer/src/file.ts', type: 'change' }],
-    });
-
-    expect(gitCacheMock.invalidateAllFileContents).not.toHaveBeenCalled();
-    expect(gitCacheMock.invalidateFileContentsByPath).toHaveBeenCalledWith(
-      '/repo/worktree-non-pointer',
-      'src/file.ts',
-    );
-    expect(sendMock).toHaveBeenCalledWith(
-      'git:status-changed',
-      expect.objectContaining({
-        worktreePath: '/repo/worktree-non-pointer',
-      }),
-    );
-  });
-
-  it('ignores non-pointer changes outside worktree for path-level invalidation', async () => {
-    vi.spyOn(Date, 'now').mockImplementation(() => 1000);
-
-    let watcherCallback: WatcherCallback = () => {};
-    subscribeMock.mockImplementation(async (_worktreePath: string, callback: WatcherCallback) => {
-      watcherCallback = callback;
-      return vi.fn();
-    });
-
-    const sendMock = vi.fn();
-    const win = {
-      isDestroyed: () => false,
-      webContents: { send: sendMock },
-    } as const;
-
-    const { registerGitWatcherIPC } = await import('./ipc-bridge');
-    registerGitWatcherIPC(() => win as never);
-
-    const subscribeHandler = handlers.get('git:subscribe-watcher');
-    expect(subscribeHandler).toBeTypeOf('function');
-    await subscribeHandler?.({}, '/repo/worktree-root');
-
-    watcherCallback({
-      worktreePath: '/repo/worktree-root',
-      changes: [{ path: '/other/location/file.ts', type: 'change' }],
-    });
-
-    expect(gitCacheMock.invalidateFileContentsByPath).not.toHaveBeenCalled();
-    expect(sendMock).toHaveBeenCalledTimes(1);
   });
 
   it('forwards final commit state in rapid add/reset/add/commit sequence', async () => {
