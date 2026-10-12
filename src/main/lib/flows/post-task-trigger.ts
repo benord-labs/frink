@@ -4,20 +4,19 @@
  * 'post_task_trigger', isActive = 1, projectId = task.projectId).
  *
  * Idempotency: each (binding, task) pair fires once via the flow_run
- * idempotency key `post_task:<bindingId>:<taskId>` — prevents cycles where
- * the spawned flow's own terminal task would re-trigger the same binding.
+ * idempotency key `post_task:<bindingId>:<taskId>`, anti-joined in the tick's
+ * query; a binding only sees tasks completed at or after its creation.
  *
  * Single-machine and local-only: the binding fans out in this process, never across machines.
  */
 
-import { and, inArray, isNotNull } from 'drizzle-orm';
+import { and, eq, exists, gte, inArray, isNotNull, notExists, sql } from 'drizzle-orm';
 import log from 'electron-log';
 import { getDatabase } from '../db';
-import { getFlowRunByIdempotencyKey } from '../db/repos/flow-runs';
 import { isBlankProjectId, listActiveForType } from '../db/repos/flow-trigger-bindings';
 import type { FlowTriggerBinding, Task } from '../db/schema';
-import { tasks } from '../db/schema';
-import { startFlowRun } from './start';
+import { flowRuns, flows, flowTriggerBindings, flowVersions, tasks } from '../db/schema';
+import { type StartFlowRunInput, startFlowRun } from './start';
 
 const POLL_INTERVAL_MS = 2_000;
 const TERMINAL_STATUSES: Task['status'][] = [
@@ -29,13 +28,66 @@ const TERMINAL_STATUSES: Task['status'][] = [
   'needs_attention',
 ];
 
-// In-memory dedup. Persisted protection sits in the flow_runs unique
-// idempotencyKey index — this set just spares the DB hit for repeat ticks.
-const firedKeys = new Set<string>();
+/** Must stay in lockstep with `pendingKeySql` below — the anti-join matches on this exact string. */
+export function postTaskIdempotencyKey(bindingId: string, taskId: string): string {
+  return `post_task:${bindingId}:${taskId}`;
+}
+const pendingKeySql = sql`'post_task:' || ${flowTriggerBindings.id} || ':' || ${tasks.id}`;
+
 // Project-less bindings can never match a task; warn once per binding rather than every tick.
 const warnedUnscopedBindings = new Set<string>();
 
 let interval: NodeJS.Timeout | null = null;
+
+type StartPostTaskRun = (input: StartFlowRunInput) => Promise<{ isReplay: boolean }>;
+export type PostTaskTriggerDeps = {
+  db: ReturnType<typeof getDatabase>;
+  startFlowRun: StartPostTaskRun;
+};
+const realDeps = (): PostTaskTriggerDeps => ({ db: getDatabase(), startFlowRun });
+
+/** (task, binding) pairs that should fire now: active binding, startable flow, unfired key. */
+export function selectPendingPairs(db: ReturnType<typeof getDatabase>) {
+  return db
+    .select({
+      taskId: tasks.id,
+      projectId: tasks.projectId,
+      status: tasks.status,
+      title: tasks.title,
+      completedAt: tasks.completedAt,
+      bindingId: flowTriggerBindings.id,
+      flowId: flowTriggerBindings.flowId,
+    })
+    .from(tasks)
+    .innerJoin(
+      flowTriggerBindings,
+      and(
+        eq(flowTriggerBindings.projectId, tasks.projectId),
+        eq(flowTriggerBindings.triggerType, 'post_task_trigger'),
+        eq(flowTriggerBindings.isActive, true),
+      ),
+    )
+    .innerJoin(flows, and(eq(flows.id, flowTriggerBindings.flowId), eq(flows.isEnabled, true)))
+    .where(
+      and(
+        isNotNull(tasks.completedAt),
+        gte(tasks.completedAt, flowTriggerBindings.createdAt),
+        inArray(tasks.status, TERMINAL_STATUSES),
+        exists(
+          db
+            .select({ one: sql`1` })
+            .from(flowVersions)
+            .where(eq(flowVersions.flowId, flows.id)),
+        ),
+        notExists(
+          db
+            .select({ one: sql`1` })
+            .from(flowRuns)
+            .where(eq(flowRuns.idempotencyKey, pendingKeySql)),
+        ),
+      ),
+    );
+}
 
 function warnUnscopedBindingsOnce(bindings: readonly FlowTriggerBinding[]): void {
   for (const binding of bindings) {
@@ -48,90 +100,50 @@ function warnUnscopedBindingsOnce(bindings: readonly FlowTriggerBinding[]): void
   }
 }
 
-/** @internal exported for tests */
-export async function runPostTaskTriggerTick(): Promise<{ fired: number; skipped: number }> {
-  const db = getDatabase();
-  const bindings = await listActiveForType(db, 'post_task_trigger').catch((err) => {
-    log.warn('[PostTaskTrigger] listActiveForType failed', {
-      err: err instanceof Error ? err.message : String(err),
-    });
-    return [];
-  });
-  if (bindings.length === 0) return { fired: 0, skipped: 0 };
-
-  warnUnscopedBindingsOnce(bindings);
-
-  // Fetch terminal tasks scoped to projects referenced by any binding. Keep
-  // the query narrow so unrelated tasks don't pull rows.
-  const projectIds = Array.from(
-    new Set(bindings.map((b) => b.projectId).filter((p): p is string => !isBlankProjectId(p))),
-  );
-  if (projectIds.length === 0) return { fired: 0, skipped: 0 };
-
-  const terminalTasks: Task[] = await db
-    .select()
-    .from(tasks)
-    .where(
-      and(
-        isNotNull(tasks.completedAt),
-        inArray(tasks.status, TERMINAL_STATUSES),
-        inArray(tasks.projectId, projectIds),
-      ),
-    );
+export async function runPostTaskTriggerTick(
+  deps: PostTaskTriggerDeps = realDeps(),
+): Promise<{ fired: number; skipped: number }> {
+  warnUnscopedBindingsOnce(await listActiveForType(deps.db, 'post_task_trigger'));
+  const pairs = await selectPendingPairs(deps.db);
 
   let fired = 0;
   let skipped = 0;
 
-  for (const task of terminalTasks) {
-    for (const binding of bindings) {
-      if (binding.projectId !== task.projectId) continue;
-      const idempotencyKey = `post_task:${binding.id}:${task.id}`;
-      if (firedKeys.has(idempotencyKey)) {
-        skipped += 1;
-        continue;
-      }
-      const replay = await getFlowRunByIdempotencyKey(db, idempotencyKey).catch(() => null);
-      if (replay) {
-        firedKeys.add(idempotencyKey);
-        skipped += 1;
-        continue;
-      }
-
-      try {
-        await startFlowRun({
-          flowId: binding.flowId,
-          triggerContext: {
-            _frinkTrigger: 'post_task_trigger',
-            bindingId: binding.id,
-            taskId: task.id,
-            projectId: task.projectId,
-            taskStatus: task.status,
-            taskTitle: task.title,
-            taskCompletedAt: task.completedAt?.toISOString() ?? null,
-          },
-          idempotencyKey,
-        });
-        firedKeys.add(idempotencyKey);
-        fired += 1;
-      } catch (err) {
-        log.warn('[PostTaskTrigger] startFlowRun failed', {
-          bindingId: binding.id,
-          flowId: binding.flowId,
-          taskId: task.id,
-          err: err instanceof Error ? err.message : String(err),
-        });
-        skipped += 1;
-      }
+  for (const pair of pairs) {
+    const idempotencyKey = postTaskIdempotencyKey(pair.bindingId, pair.taskId);
+    try {
+      await deps.startFlowRun({
+        flowId: pair.flowId,
+        triggerContext: {
+          _frinkTrigger: 'post_task_trigger',
+          bindingId: pair.bindingId,
+          taskId: pair.taskId,
+          projectId: pair.projectId,
+          taskStatus: pair.status,
+          taskTitle: pair.title,
+          taskCompletedAt: pair.completedAt?.toISOString() ?? null,
+        },
+        idempotencyKey,
+      });
+      fired += 1;
+    } catch (err) {
+      log.warn('[PostTaskTrigger] startFlowRun failed', {
+        bindingId: pair.bindingId,
+        flowId: pair.flowId,
+        taskId: pair.taskId,
+        err: err instanceof Error ? err.message : String(err),
+      });
+      skipped += 1;
     }
   }
 
   return { fired, skipped };
 }
 
-export function startPostTaskTriggerLoop(): void {
+export function startPostTaskTriggerLoop(getDeps: () => PostTaskTriggerDeps = realDeps): void {
   if (interval) return;
   interval = setInterval(() => {
-    void runPostTaskTriggerTick().catch((err) => {
+    void runPostTaskTriggerTick(getDeps()).catch((err) => {
       log.warn('[PostTaskTrigger] tick failed', { err });
     });
   }, POLL_INTERVAL_MS);
@@ -140,6 +152,5 @@ export function startPostTaskTriggerLoop(): void {
 export function stopPostTaskTriggerLoop(): void {
   if (interval) clearInterval(interval);
   interval = null;
-  firedKeys.clear();
   warnedUnscopedBindings.clear();
 }
