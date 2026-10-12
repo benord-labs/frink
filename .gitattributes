@@ -1,3 +1,5 @@
 # Patches are hash-pinned or applied verbatim: check them out byte-exact on every OS, never with
 # core.autocrlf's CRLF conversion. Plain -text (not `binary`) keeps their diffs reviewable.
 *.patch -text
+# Generated skill assets are compared byte-for-byte and hashed into .baseline.json; keep them LF on every OS.
+assets/skills/frink-flows/** text eol=lf
