@@ -1,6 +1,6 @@
 {
-  "generatedAt": "content-1bd80a765b8a",
-  "version": "content-1bd80a765b8a",
+  "generatedAt": "content-b9e82740df42",
+  "version": "content-b9e82740df42",
   "files": {
     "SKILL.md": {
       "sha256": "043c22803c300f94ed809b02efec9bf5e9b2e4c07d164b4e864b619f56704c68",
@@ -23,8 +23,8 @@
       "bytes": 4468
     },
     "references/custom-nodes.md": {
-      "sha256": "b1fd69e4458dd80ff6e47a27777e001a3440bbe31f71f10603a3a2711fdd94cd",
-      "bytes": 5688
+      "sha256": "c2d4e976b84e26d2bc7bc56d6fae97909739274f4e29bc9f8045d1fcbc9f8c6f",
+      "bytes": 5982
     },
     "references/examples.md": {
       "sha256": "662c87d3b90b9e239f1a5ee80f4dba1060dc401c5f9af3cdb3ec9c5b872c8916",

@@ -1,6 +1,7 @@
 import log from 'electron-log';
 import { diagnoseLayout } from '../../../../shared/lib/flows/canvas-layout/layout-diagnostics';
 import { agentProseGraphWarnings } from '../../../../shared/lib/flows/agent-prose-limit';
+import { toSafeFlowChangeGraph } from '../../../../shared/lib/flows/flow-change-topology';
 import { type FlowGraph, formatFlowNodeLabel } from '../../../../shared/lib/validate-flow-graph';
 import type { TemplateVariableWarning } from '../../../../shared/lib/validate-flow-templates';
 import type {
@@ -235,7 +236,7 @@ function buildPartialFlowPatchResult(params: BuildFlowPatchResultParams): McpToo
         versionId: params.versionId,
         versionNumber: receipt.versionNumber,
         name: params.name,
-        graph: patch.graph,
+        graph: toSafeFlowChangeGraph(patch.graph),
         flowChange: receipt.flowChange,
         applied: patch.applied,
         failed: patch.failed,
@@ -278,13 +279,13 @@ function buildSuccessfulFlowPatchResult(params: BuildFlowPatchResultParams): Mcp
         versionId: params.versionId,
         versionNumber: receipt.versionNumber,
         name: params.name,
-        graph: patch.graph,
+        graph: toSafeFlowChangeGraph(patch.graph),
         flowChange: receipt.flowChange,
         applied: patch.applied,
         failed: patch.failed,
         skipped: patch.skipped,
         ...(params.createdFlow ? { agentInvocable: false } : {}),
-        message: `Flow "${params.name}" ${action} successfully (${versionMessage}).${params.creationProjectNote ? ` ${params.creationProjectNote}` : ''}${runHint} A visual flow preview is already rendered in the chat automatically — do NOT describe the flow layout, draw a Mermaid diagram, or list the nodes/edges again. Just confirm what changed.`,
+        message: `Flow "${params.name}" ${action} successfully (${versionMessage}).${params.creationProjectNote ? ` ${params.creationProjectNote}` : ''}${runHint} A visual flow preview is already rendered in the chat automatically — do NOT describe the flow layout, draw a Mermaid diagram, or list the nodes/edges again. Just confirm what changed. The graph above is topology only — call frink_flows_get for full node config.`,
         ...optionalPresentationFields(
           params.templateWarnings,
           params.webhookSetup,

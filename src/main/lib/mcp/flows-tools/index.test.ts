@@ -208,9 +208,8 @@ describe('flows-tools', () => {
       });
       const body = JSON.parse(expectMcpText(result));
       expect(body.status).toBe('success');
-      expect(body.graph.nodes.find((n: { id: string }) => n.id === 'n2').config.instructions).toBe(
-        'patched',
-      );
+      // The receipt echoes topology only; the patched config is asserted on the persisted graph.
+      expect(body.graph.nodes.find((n: { id: string }) => n.id === 'n2').config).toBeUndefined();
     });
 
     it('accepts flow with null graph (starts from empty)', async () => {

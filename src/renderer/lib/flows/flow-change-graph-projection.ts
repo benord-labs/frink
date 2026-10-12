@@ -1,14 +1,17 @@
 import { isPlainObject } from '../../../shared/lib/case-converter';
 import { normalizeFlowChangeText } from '../../../shared/lib/flows/flow-change-text';
-import { formatFlowNodeLabel, normalizeFlowGraph } from '../../../shared/lib/validate-flow-graph';
+import {
+  MAX_PRESENTATION_EDGES,
+  MAX_PRESENTATION_NODES,
+  safeEdge,
+  safeNode,
+} from '../../../shared/lib/flows/flow-change-topology';
 import type {
   FlowChangeGraph,
   FlowChangeGraphEdge,
   FlowChangeGraphNode,
 } from '../../../shared/types/flows/flow-change-presentation';
 
-const MAX_PRESENTATION_NODES = 50;
-const MAX_PRESENTATION_EDGES = 200;
 const MAX_PRESENTATION_OPERATIONS = 100;
 
 type UnknownRecord = Record<string, unknown>;
@@ -16,85 +19,6 @@ type ProposalOperationHandler = (graph: FlowChangeGraph, operation: UnknownRecor
 
 function isSafeIdentifier(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
-}
-
-function safeNode(node: { id: string; blockType: string; label?: string }): FlowChangeGraphNode {
-  return {
-    id: node.id,
-    blockType: node.blockType,
-    label: normalizeFlowChangeText(formatFlowNodeLabel(node), 'Untitled step'),
-  };
-}
-
-function safeEdge(edge: {
-  id: string;
-  source: string;
-  target: string;
-  sourceHandle?: string;
-  label?: string;
-}): FlowChangeGraphEdge {
-  return {
-    id: edge.id,
-    source: edge.source,
-    target: edge.target,
-    ...(edge.sourceHandle ? { sourceHandle: edge.sourceHandle } : {}),
-    ...(edge.label ? { label: normalizeFlowChangeText(edge.label, 'Route') } : {}),
-  };
-}
-
-function safeGraphNode(candidate: unknown): FlowChangeGraphNode | undefined {
-  if (!isPlainObject(candidate)) return undefined;
-  if (!isSafeIdentifier(candidate.id) || typeof candidate.blockType !== 'string') {
-    return undefined;
-  }
-  const blockType = normalizeFlowChangeText(candidate.blockType, 'step');
-  const label = typeof candidate.label === 'string' ? candidate.label : undefined;
-  return safeNode({ id: candidate.id, blockType, label });
-}
-
-function safeGraphEdge(
-  candidate: unknown,
-  nodes: Map<string, FlowChangeGraphNode>,
-): FlowChangeGraphEdge | undefined {
-  if (!isPlainObject(candidate)) return undefined;
-  if (
-    !isSafeIdentifier(candidate.id) ||
-    !isSafeIdentifier(candidate.source) ||
-    !isSafeIdentifier(candidate.target)
-  ) {
-    return undefined;
-  }
-  if (!nodes.has(candidate.source) || !nodes.has(candidate.target)) return undefined;
-  return safeEdge({
-    id: candidate.id,
-    source: candidate.source,
-    target: candidate.target,
-    sourceHandle: typeof candidate.sourceHandle === 'string' ? candidate.sourceHandle : undefined,
-    label: typeof candidate.label === 'string' ? candidate.label : undefined,
-  });
-}
-
-function collectFirstUnique<T extends { id: string }>(
-  candidates: unknown[],
-  cap: number,
-  project: (candidate: unknown) => T | undefined,
-): Map<string, T> {
-  const result = new Map<string, T>();
-  for (const candidate of candidates.slice(0, cap)) {
-    const item = project(candidate);
-    if (item && !result.has(item.id)) result.set(item.id, item);
-  }
-  return result;
-}
-
-export function toSafeFlowChangeGraph(value: unknown): FlowChangeGraph | undefined {
-  const graph = normalizeFlowGraph(value);
-  if (!graph) return undefined;
-  const nodes = collectFirstUnique(graph.nodes, MAX_PRESENTATION_NODES, safeGraphNode);
-  const edges = collectFirstUnique(graph.edges, MAX_PRESENTATION_EDGES, (candidate) =>
-    safeGraphEdge(candidate, nodes),
-  );
-  return { nodes: [...nodes.values()], edges: [...edges.values()] };
 }
 
 function canUpsert<T extends { id: string }>(items: T[], id: string, cap: number): boolean {

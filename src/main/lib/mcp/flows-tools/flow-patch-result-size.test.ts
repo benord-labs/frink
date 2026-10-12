@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { toSafeFlowChangeGraph } from '../../../../shared/lib/flows/flow-change-topology';
 import type { FlowGraph } from '../../../../shared/lib/validate-flow-graph';
 import { validateFlowTemplateVariables } from '../../../../shared/lib/validate-flow-templates';
 import type { PatchOperation, PatchResult } from './flow-patch';
@@ -96,8 +97,9 @@ describe('Flow patch result size', () => {
     );
     expect(body.flowChange).toBeDefined();
     // The chat artifact renders from this version-pinned topology rather than refetching the
-    // latest flow, so it must survive any future trimming of the receipt.
-    expect(body.graph).toEqual(LARGE_GRAPH);
+    // latest flow, so every node must stay in it.
+    expect(body.graph).toEqual(toSafeFlowChangeGraph(LARGE_GRAPH));
+    expect((body.graph as FlowGraph).nodes).toHaveLength(LARGE_GRAPH.nodes.length);
   });
 
   it('keeps a partial patch on a large flow within the same budget', () => {
@@ -114,7 +116,57 @@ describe('Flow patch result size', () => {
     expect(body).not.toHaveProperty('nodeVariables');
     expect(body.retryOps).toEqual([0]);
     expect(body.templateWarnings).toEqual([expect.stringContaining('graph is partial')]);
-    expect(body.graph).toEqual(LARGE_GRAPH);
+    expect(body.graph).toEqual(toSafeFlowChangeGraph(LARGE_GRAPH));
+  });
+
+  it('echoes topology only, so instruction bytes do not grow the receipt', () => {
+    const resultWith = (instructions: string, status: 'success' | 'partial') => {
+      const graph: FlowGraph = {
+        ...LARGE_GRAPH,
+        nodes: LARGE_GRAPH.nodes.map((node) =>
+          node.blockType === 'agent' ? { ...node, config: { instructions } } : node,
+        ),
+      };
+      return largeResultFor(
+        status === 'success'
+          ? { status, graph, applied: [0, 1], failed: [], skipped: [] }
+          : { status, graph, applied: [1], failed: [{ index: 0, error: 'missing' }], skipped: [] },
+      );
+    };
+
+    for (const status of ['success', 'partial'] as const) {
+      const heavy = resultWith('x'.repeat(8 * 1024), status);
+      const light = resultWith('Short.', status);
+      const heavyText = heavy.content[0]?.text ?? '';
+      const graph = parseResult(heavy).graph as { nodes: Record<string, unknown>[] };
+
+      expect(heavyText.length).toBeLessThan(MAX_PATCH_RESULT_CHARS);
+      expect(heavyText.length).toBe(light.content[0]?.text.length);
+      expect(graph.nodes).toHaveLength(LARGE_GRAPH.nodes.length);
+      for (const node of graph.nodes) {
+        expect(Object.keys(node).sort()).toEqual(['blockType', 'id', 'label']);
+      }
+    }
+  });
+
+  it('keeps a flow with many long-labelled nodes within the budget', () => {
+    const agents = Array.from({ length: 120 }, (_, index) => ({
+      id: `agent-${index}`,
+      blockType: 'agent',
+      label: `Step ${index} `.repeat(40),
+      config: { instructions: LONG_INSTRUCTIONS },
+    }));
+    const graph: FlowGraph = {
+      nodes: agents,
+      edges: agents.slice(1).map((agent, index) => ({
+        id: `edge-${index}`,
+        source: `agent-${index}`,
+        target: agent.id,
+      })),
+    };
+    const result = largeResultFor({ status: 'success', graph, applied: [0, 1], failed: [], skipped: [] });
+
+    expect(result.content[0]?.text.length).toBeLessThan(MAX_PATCH_RESULT_CHARS);
   });
 });
 

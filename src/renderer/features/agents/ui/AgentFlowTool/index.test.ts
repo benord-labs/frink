@@ -1,5 +1,8 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from 'vitest';
+import type { FlowGraph } from '../../../../../shared/lib/validate-flow-graph';
+import type { FlowChangeGraph } from '../../../../../shared/types/flows/flow-change-presentation';
+import { toSafeFlowChangeGraph } from '../../../../lib/flows/flow-change-graph';
 import type { MessagePart } from '../../stores/message-store';
 import { outputPresentationRevision, parseOutput } from './index';
 
@@ -37,6 +40,58 @@ describe('parseOutput', () => {
       });
       const result = parseOutput(part);
       expect(result?.graph).toEqual(graph);
+    });
+
+    it('keeps a topology-only receipt graph, so no base snapshot is fetched and every node renders', () => {
+      const fullGraph = {
+        nodes: [
+          { id: 'trigger', blockType: 'manual_trigger', label: 'Launch' },
+          ...Array.from({ length: 24 }, (_, index) => ({
+            id: `agent-${index}`,
+            blockType: 'agent',
+            label: `Step ${index}`,
+            config: { instructions: 'x'.repeat(8 * 1024) },
+          })),
+        ],
+        edges: [{ id: 'e0', source: 'trigger', target: 'agent-0' }],
+      };
+      const topology = toSafeFlowChangeGraph(fullGraph);
+      const receipt = (graph: FlowGraph | FlowChangeGraph | undefined) =>
+        makePart({
+          '0': { type: 'text', text: JSON.stringify({ flowId: 'f', name: 'F', graph }) },
+        });
+
+      const parsed = parseOutput(receipt(topology));
+
+      // AgentFlowTool skips the base-snapshot refetch whenever the receipt carries a graph.
+      expect(parsed?.graph).toBeDefined();
+      expect(toSafeFlowChangeGraph(parsed?.graph)?.nodes).toHaveLength(fullGraph.nodes.length);
+      // A message persisted before the receipt was narrowed projects to the same topology.
+      expect(toSafeFlowChangeGraph(parseOutput(receipt(fullGraph))?.graph)).toEqual(
+        toSafeFlowChangeGraph(parsed?.graph),
+      );
+    });
+
+    it('re-projects a server-normalized receipt without changing labels or branch routes', () => {
+      const fullGraph = {
+        nodes: [
+          { id: 'gate', blockType: 'condition', label: `Check\n${'very long label '.repeat(20)}` },
+          { id: 'yes', blockType: 'agent', label: 'Approve' },
+        ],
+        edges: [{ id: 'e-yes', source: 'gate', target: 'yes', sourceHandle: 'true', label: 'Yes' }],
+      };
+      const topology = toSafeFlowChangeGraph(fullGraph);
+      const part = makePart({
+        '0': { type: 'text', text: JSON.stringify({ flowId: 'f', name: 'F', graph: topology }) },
+      });
+
+      // The server truncates and strips control characters once; the renderer's second pass
+      // must be a no-op or the artifact's labels and revision key drift from the receipt.
+      expect(toSafeFlowChangeGraph(parseOutput(part)?.graph)).toEqual(topology);
+      expect(topology?.nodes[0]?.label).toHaveLength(96);
+      expect(topology?.edges).toEqual([
+        { id: 'e-yes', source: 'gate', target: 'yes', sourceHandle: 'true', label: 'Yes' },
+      ]);
     });
 
     it('sets graph to undefined when graph has nodes but no edges (prevents useFlowLayout crash)', () => {
