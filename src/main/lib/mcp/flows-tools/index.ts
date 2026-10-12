@@ -78,6 +78,12 @@ import {
 } from './flow-patch-result';
 import { buildFlowRunLaunchResult } from './flow-run-launch-result';
 import { mapFlowRunToSummary } from './map-flow-run';
+import {
+  claimCreatedFlowName,
+  recordCreatedFlowId,
+  releaseUnsavedFlowName,
+  resetCreatedFlowNames,
+} from './gating/patch-create-names';
 import { handleRegisterNode, REGISTER_NODE_TOOL, type RegisterNodeOptions } from './register-node';
 import { resolveCreationProject } from './resolve-creation-project';
 import { describeFlowRunBlockers } from './run-readiness';
@@ -349,11 +355,22 @@ function releasePatchCreateSlot(sessionKey: string): void {
 }
 
 export function resetFlowsPatchCreateCount(executionId?: string): void {
+  resetCreatedFlowNames(executionId);
   if (executionId === undefined) {
     patchCreateCounts.clear();
     return;
   }
   patchCreateCounts.delete(executionId);
+}
+
+async function flowExists(flowId: string): Promise<boolean> {
+  try {
+    await getFlow(flowId);
+    return true;
+  } catch (err) {
+    if (isTrpcNotFound(err)) return false;
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -497,7 +514,7 @@ export const FLOWS_TOOLS = [
   {
     name: 'frink_flows_patch',
     description:
-      'Create a new flow or modify an existing one using incremental operations. To CREATE: pass name + operations (creates the flow and applies ops to an empty graph). To MODIFY: pass flowId + operations. The graph is saved after each call even with incomplete configs — stricter run-mode validation (URLs, webhooks, agent instructions, etc.) runs when you start the flow and when the server creates batch stages (frink_flows_define_stages), not on every patch. Config on update_node is merged recursively (RFC 7396 / JSON Merge Patch): send only changed keys; set a key to null to remove it. Do not pass blockType on update_node (use remove_node + add_node to change type). Max 50 operations per call; max 5 flow creates and 15 modifications per chat session. Template warnings and a topology-only graph (node ids, labels, block types, edges) are included in every response; call frink_flows_get for full node config. A visual flow preview is rendered in chat when successful — do not redraw Mermaid or list all nodes.',
+      'Create a new flow or modify an existing one using incremental operations. To CREATE: pass name + operations (creates the flow and applies ops to an empty graph). To MODIFY: pass flowId + operations. The graph is saved after each call even with incomplete configs — stricter run-mode validation (URLs, webhooks, agent instructions, etc.) runs when you start the flow and when the server creates batch stages (frink_flows_define_stages), not on every patch. Config on update_node is merged recursively (RFC 7396 / JSON Merge Patch): send only changed keys; set a key to null to remove it. Do not pass blockType on update_node (use remove_node + add_node to change type). Max 50 operations per call; max 5 flow creates and 15 modifications per chat session. Template warnings and a topology-only graph (node ids, labels, block types, edges) are included in every response; call frink_flows_get for full node config. If a result is missing, cut short, or replaced by a note such as \"saved to <path>\", the call may have finished: check with frink_flows_get (or frink_flows_list after a create) before retrying, and never resend a create — a repeated name-create in the same chat is rejected. A visual flow preview is rendered in chat when successful — do not redraw Mermaid or list all nodes.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -1006,6 +1023,8 @@ async function handlePatch(
   let creationProjectNote: string | null = null;
   let persistenceAttempted = false;
   let persistenceCompleted = false;
+  // Session-scoped name claim; skipped without an executionId (the global key spans chats).
+  let claimedName: string | null = null;
 
   try {
     let flowId: string;
@@ -1015,6 +1034,11 @@ async function handlePatch(
     let flowProjectId: string | undefined;
 
     if (name !== undefined) {
+      if (executionId !== undefined) {
+        const claim = await claimCreatedFlowName(executionId, name, flowExists);
+        if (!claim.ok) return flowPatchError(claim.message, 'none');
+        claimedName = name;
+      }
       // Creating a new flow -- check creation sub-limit first
       if (!tryAcquirePatchCreateSlot(sessionKey)) {
         return flowPatchError(
@@ -1040,6 +1064,9 @@ async function handlePatch(
         projectId: resolution.projectId,
       });
       createdFlowId = flow.id;
+      if (claimedName !== null && executionId !== undefined) {
+        recordCreatedFlowId(executionId, claimedName, flow.id);
+      }
       flowId = flow.id;
       flowName = flow.name;
       flowProjectId = resolution.projectId ?? undefined;
@@ -1195,6 +1222,7 @@ async function handlePatch(
     });
   } finally {
     releasePatchInFlight(sessionKey);
+    releaseUnsavedFlowName(sessionKey, claimedName, persistenceCompleted);
   }
 }
 

@@ -12,7 +12,7 @@ A Flow is a graph: one trigger starts action/logic nodes connected by edges. Use
 1. For an existing flow, read it with `frink_flows_get` (discover with `frink_flows_list`). Discover projects, integrations, commands and installed nodes with `frink_flows_list_catalog`; use returned ids/names.
 2. Choose the trigger and required blocks. Every Agent needs an upstream Start Task (a session; see [Sessions](#sessions-start-task)); Chat Reply needs upstream Start Task or Post-Task trigger chat context.
 3. Wire data deliberately: `trigger.*` lasts the run, `previous.*` is one hop, `loop.*` lasts the fan-out body. Only Condition passes predecessor data through; Start Task and Agent replace it.
-4. Save via `frink_flows_patch`. Create with `name` and no flowId; modify with `flowId`. Read returned errors/warnings and correct the cause. Save checks topology; run/define_stages also check execution config.
+4. Save via `frink_flows_patch`. Create with `name` and no flowId; modify with `flowId`. Read returned errors/warnings and correct the cause. Save checks topology; run/define_stages also check execution config. If a patch result is missing, cut short, or replaced by a note such as "saved to <path>", the call may have finished: check with `frink_flows_get` (or `frink_flows_list` after a create) before retrying, and never resend a create.
 5. Run only within the user's requested scope; inspect the returned run id with `frink_flows_get_run`. Batch work follows plan → user confirmation → define → start.
 
 ## Graph and patch essentials
