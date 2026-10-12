@@ -47,7 +47,7 @@ import {
 } from './permissions';
 import { buildSpawnArgs } from './spawn-args';
 import {
-  codexMessageContext,
+  codexTurnContext,
   type MessageProvenance,
 } from '../../../../shared/lib/message-markers/message-provenance';
 import * as provenanceRule from './provenance-rule';
@@ -87,6 +87,8 @@ export type CodexRunnerParams = {
   prompt: string;
   /** Prompt used only when a missing resumed thread is recoverably replaced by a fresh thread. */
   freshThreadFallbackPrompt?: string;
+  /** The Flow-run-ended notice for this turn's own prompt; `onAccepted` runs once turn/start does. */
+  flowRunEnded?: { text: string; onAccepted: () => void };
   cwd: string;
   /** Stable credential id -- part of the app-server registry key. */
   credentialId: string;
@@ -230,12 +232,12 @@ async function startTurn(
 ): Promise<string> {
   const { model, effort, serviceTier } = params;
   const rule = provenanceRule.beginTurn(client, threadId, Boolean(params.messageProvenance));
+  const { messageProvenance: record, flowRunEnded } = params;
+  const additionalContext = codexTurnContext(record, rule.carriesRule, flowRunEnded?.text);
   const turn = await client.sendRequest<TurnStartResponse>('turn/start', {
     threadId,
     input: [{ type: 'text', text: prompt }],
-    ...(params.messageProvenance && {
-      additionalContext: codexMessageContext(params.messageProvenance, rule.carriesRule),
-    }),
+    ...(additionalContext && { additionalContext }),
     ...(model && { model }),
     // effort + serviceTier live on TurnStartParams, not on thread/start|resume (v2 protocol).
     ...(effort && { effort }),
@@ -255,6 +257,7 @@ async function startTurn(
   if (!turnId) throw new Error('Codex did not return a turn id');
   // Settled only once the turn really started, so a failed start retries the rule.
   rule.settle();
+  params.flowRunEnded?.onAccepted();
   return turnId;
 }
 

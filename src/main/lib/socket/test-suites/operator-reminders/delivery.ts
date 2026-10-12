@@ -1,29 +1,30 @@
-import { buildFrinkSystemPromptAppend } from '../../frink-system-prompt';
+import { buildFrinkSystemPromptAppend } from '../../../frink-system-prompt';
 import {
   MESSAGE_PROVENANCE_RULE,
   type MessageProvenance,
-} from '../../../../shared/lib/message-markers/message-provenance';
+} from '../../../../../shared/lib/message-markers/message-provenance';
 import { describe, expect, it, vi } from 'vitest';
-import { runCodexAgent } from '../../agent-runner';
-import type { UIMessageChunk } from '../../claude/types';
-import { getDefaultClaudeCodeToken } from '../../credentials';
-import { getChatWithProjectAccount } from '../../db/repos/chats';
-import { getNewestFlowRunForSubChat } from '../../db/repos/flow-runs';
+import { runCodexAgent } from '../../../agent-runner';
+import type { UIMessageChunk } from '../../../claude/types';
+import { getDefaultClaudeCodeToken } from '../../../credentials';
+import { getChatWithProjectAccount } from '../../../db/repos/chats';
+import { getNewestFlowRunForSubChat } from '../../../db/repos/flow-runs';
+import { FLOW_RUN_ENDED_NOTICE } from '../../flow-signal/flow-run-ended';
 import {
   getFlowDriveInfoForSubChat,
   getLatestFlowTaskForSubChat,
   getTaskById,
-} from '../../db/repos/tasks';
-import * as dynamicChatServer from '../../mcp/dynamic-chat-server';
-import { getMultiProjectContext } from '../../multi-project-prompt';
-import { resumeParkedTaskInPlace } from '../../tasks';
-import type { MessageDelivery } from '../execution/message-provenance/origin';
-import { claudePromptText, userPromptSubmitReminder, type ClaudeQueryCall } from '../test-utils';
-import type { ExecutorPermissionHarness } from './executor-codex-permissions';
+} from '../../../db/repos/tasks';
+import * as dynamicChatServer from '../../../mcp/dynamic-chat-server';
+import { getMultiProjectContext } from '../../../multi-project-prompt';
+import { resumeParkedTaskInPlace } from '../../../tasks';
+import type { MessageDelivery } from '../../execution/message-provenance/origin';
+import { claudePromptText, userPromptSubmitReminder, type ClaudeQueryCall } from '../../test-utils';
+import type { ExecutorPermissionHarness } from '../executor-codex-permissions';
 
 /** Operator-reminder and message-provenance delivery (disarmed notice, source record) per runtime.
  * Registered from executor.test.ts, whose module mocks it relies on. */
-type OperatorReminderHarness = Pick<
+export type OperatorReminderHarness = Pick<
   ExecutorPermissionHarness,
   'basePayload' | 'handleRemoteExecute'
 > & {
@@ -39,15 +40,15 @@ type StopHook = (input: {
 }) => Promise<StopVerdict>;
 type QueuedPrompt = { message: { content: string | Array<{ type: string; text?: string }> } };
 /** One claudeQuery call as these tests read it: the queued prompt plus the registered hooks. */
-type ClaudeQueryInput = ClaudeQueryCall & {
+export type ClaudeQueryInput = ClaudeQueryCall & {
   prompt: AsyncIterable<QueuedPrompt>;
   options?: { hooks?: { Stop?: Array<{ hooks: StopHook[] }> } };
 };
 
 /** What each spawned CLI's UserPromptSubmit hook injected, captured as the CLI reads its prompt. */
-const firedReminders = new WeakMap<ClaudeQueryInput, string | undefined>();
+export const firedReminders = new WeakMap<ClaudeQueryInput, string | undefined>();
 
-function mockPinnedTaskChat(taskId: string, status: string) {
+export function mockPinnedTaskChat(taskId: string, status: string) {
   // SAFETY: arming reads only `chat.taskId` and `account` from this row.
   vi.mocked(getChatWithProjectAccount).mockResolvedValueOnce({
     chat: { taskId },
@@ -69,7 +70,7 @@ function hookPromptText(content: QueuedPrompt['message']['content']): string {
 }
 
 /** Mock one Claude turn whose stream finishes immediately. */
-function mockClaudeFinishTurn(sessionId: string) {
+export function mockClaudeFinishTurn(sessionId: string) {
   harness.claudeQueryMock.mockImplementationOnce(async function* (input: ClaudeQueryInput) {
     const queued = await input.prompt[Symbol.asyncIterator]().next();
     const text = hookPromptText(queued.value?.message.content ?? '');
@@ -219,7 +220,7 @@ function registerDisarmedTests({
   });
 }
 
-function deliveredRecord(call: ClaudeQueryInput): MessageProvenance | undefined {
+export function deliveredRecord(call: ClaudeQueryInput): MessageProvenance | undefined {
   // Greedy lead-in: the record is the last element, and a rule before it names the tag in prose.
   const match = firedReminders.get(call)?.match(/.*<frink_message>(.*?)<\/frink_message>/s);
   return match ? JSON.parse(match[1]!) : undefined;
@@ -353,7 +354,7 @@ function registerHumanMarkTests({
     await handleRemoteExecute({ ...basePayload, ...followUp });
     const call = claudeQueryMock.mock.calls[0][0];
     expect(deliveredRecord(call)).toBeUndefined();
-    expect(firedReminders.get(call)).toContain('intentionally not available');
+    expect(firedReminders.get(call)).toContain(FLOW_RUN_ENDED_NOTICE);
     expect(call.options.systemPrompt.append).not.toContain(MESSAGE_PROVENANCE_RULE);
   });
 

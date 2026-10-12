@@ -459,6 +459,34 @@ describe('runCodexAgent', () => {
     await drain(gen);
   });
 
+  it('delivers the Flow-run-ended notice as native context, accepted only once turn/start is', async () => {
+    let fail = true;
+    const fake = startedFakeClient({
+      'config/read': { config: {} },
+      'thread/start': { thread: { id: 'th1' } },
+      'turn/start': () => {
+        if (fail) throw new Error('transport down');
+        return { turn: { id: 'tn1' } };
+      },
+    });
+    const onAccepted = vi.fn();
+    const ended = () => params({ flowRunEnded: { text: 'run over', onAccepted } });
+    await drain(runCodexAgent(ended())).catch(() => {});
+    expect(onAccepted).not.toHaveBeenCalled();
+
+    fail = false;
+    const gen = runCodexAgent(ended());
+    await gen.next();
+    await gen.next();
+    expect(fake.sent.filter((s) => s.method === 'turn/start').at(-1)?.params).toMatchObject({
+      input: [{ type: 'text', text: 'do it' }],
+      additionalContext: { frink_flow_run_ended: { kind: 'application', value: 'run over' } },
+    });
+    expect(onAccepted).toHaveBeenCalledTimes(1);
+    fake.fire('turn/completed', { turn: { status: 'completed' } });
+    await drain(gen);
+  });
+
   it('yields a binary-missing error when codex is not installed', async () => {
     vi.mocked(resolveCodexBinary).mockReturnValue(null);
     const chunks = await drain(runCodexAgent(params()));

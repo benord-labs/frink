@@ -6,7 +6,10 @@ export { registerClaudeTurnBindingTests } from './claude-turn-bindings';
 export { registerClaudeWarmSessionTests } from './claude-warm-session';
 export { registerClaudeWarmSessionGuardTests } from './claude-warm-session-guards';
 export { registerExecutorPermissionTests } from './executor-codex-permissions';
-export { registerOperatorReminderDeliveryTests } from './operator-reminder-delivery';
+export {
+  registerFlowRunEndedTests,
+  registerOperatorReminderDeliveryTests,
+} from './operator-reminders';
 export { registerCustomNodeTransportTest } from './executor-custom-node-permissions';
 export { registerCodexSessionCacheTests } from './codex-session-cache';
 export { registerValidateToolPermissionTests } from './validate-tool-permission';
