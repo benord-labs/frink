@@ -134,6 +134,8 @@ interface ClaudeSessionSpecInputs extends Omit<ClaudeSessionScope, 'agents'> {
   signalTaskId: string | null;
   isFlowExecutionTurn: boolean;
   flowPlanAutoApprove: boolean;
+  /** Set for a Frink-managed worktree: the main checkout Claude reads project config from. */
+  projectConfigRoot?: string;
 }
 
 type ClaudeSessionSpec = Awaited<ReturnType<typeof buildClaudeSessionSpec>>;
@@ -198,7 +200,7 @@ export async function buildClaudeSessionSpec(inputs: ClaudeSessionSpecInputs) {
   }
 
   // Load ALL agents for SDK registration (Claude can proactively use via Task tool)
-  const allAgents = await getAllAgentsForSdk(projectPath);
+  const allAgents = await getAllAgentsForSdk(inputs.projectConfigRoot ?? projectPath);
   if (Object.keys(allAgents).length > 0) {
     log.info(
       `[Socket Executor] Passing ${Object.keys(allAgents).length} agent(s) to SDK: ${Object.keys(allAgents).join(', ')}`,
@@ -241,6 +243,7 @@ export async function buildClaudeSessionSpec(inputs: ClaudeSessionSpecInputs) {
   };
   const sdkOptions = {
     cwd: projectPath,
+    ...(inputs.projectConfigRoot && { projectConfigRoot: inputs.projectConfigRoot }),
     permissionMode: resolvePermissionMode(mode, nativeAutoReview),
     env: claudeEnv,
     pathToClaudeCodeExecutable: inputs.claudeBinaryPath,

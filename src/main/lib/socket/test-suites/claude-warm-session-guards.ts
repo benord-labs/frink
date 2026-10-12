@@ -8,6 +8,7 @@ import { claudeVersionSupportsUltra } from '../../claude';
 import { getClaudeCodeTokenById } from '../../credentials';
 import { getChatWithProjectAccount } from '../../db/repos/chats';
 import { getMultiProjectContext } from '../../multi-project-prompt';
+import * as toolValidation from '../../permissions/tool-validation';
 import {
   __resetSessionsForTest,
   getSession,
@@ -347,6 +348,29 @@ function registerAutoMemorySpawnTests(
       expect(inCheckout?.env.CLAUDE_CONFIG_DIR).not.toBe(inWorktree?.env.CLAUDE_CONFIG_DIR);
       expect(inCheckout?.settings.autoMemoryDirectory).toBe(projectMemory);
       expect(inWorktree?.settings.autoMemoryDirectory).toBe(projectMemory);
+    } finally {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('a chat in a Frink-managed worktree reads project config from the root checkout', async () => {
+    const tmpRoot = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'frink-config-')));
+    try {
+      const repo = path.join(tmpRoot, 'repo');
+      git(tmpRoot, 'init', '-q', repo);
+      git(repo, 'commit', '-q', '--allow-empty', '-m', 'init');
+      const worktree = path.join(tmpRoot, 'worktrees', 'feature');
+      git(repo, 'worktree', 'add', '-q', worktree);
+      vi.spyOn(toolValidation, 'resolvePermissionProjectPath').mockImplementation((p) =>
+        p === worktree ? repo : p,
+      );
+
+      const inCheckout = await sendFromChatIn(claudeQueryMock, send, repo);
+      const inWorktree = await sendFromChatIn(claudeQueryMock, send, worktree);
+
+      expect(inCheckout?.projectConfigRoot).toBeUndefined();
+      expect(inWorktree?.cwd).toBe(worktree);
+      expect(inWorktree?.projectConfigRoot).toBe(repo);
     } finally {
       fs.rmSync(tmpRoot, { recursive: true, force: true });
     }

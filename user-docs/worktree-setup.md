@@ -40,6 +40,10 @@ If no config file is found, worktree creation is silent — no commands run, not
 
 **Windows:** setup commands run through Git Bash (the one bundled with Git for Windows), so POSIX syntax like `cp` and `$VAR` works as shown above. If Git Bash isn't found next to your git install, commands silently fall back to `cmd.exe`, where that syntax doesn't run as written.
 
+## Claude settings and hooks come from the main checkout
+
+A Claude chat in a worktree uses your main checkout's Claude setup, as Claude Code's own worktree sessions do. Project settings and hooks (including the uncommitted `.claude/settings.local.json`), skills, agents and commands are read from the main checkout, so there is no need to copy them with setup commands. A change to those files on the worktree's branch takes effect once it is in the main checkout. A hook that needs the folder Claude is working in should read `cwd` from its input: `$CLAUDE_PROJECT_DIR` points at the main checkout.
+
 ## Overriding where worktrees are created
 
 By default worktrees are created under `~/.frink/worktrees/` (change that default in **Settings → Preferences**). The project's **Worktrees → Location** field puts that project's new worktrees somewhere else — leave it empty to use the default.

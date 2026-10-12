@@ -133,6 +133,7 @@ async function buildPrewarmSpec({ chatId, subChatId, mode: intent, settings }: P
     projectId: chat.projectId ?? '',
     projectPath: workspace.projectPath,
     permissionProjectPath: workspace.permissionProjectPath,
+    projectConfigRoot: workspace.projectConfigRoot,
     mode,
     settings,
     storedCredential: credential,
