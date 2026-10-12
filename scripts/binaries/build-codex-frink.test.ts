@@ -9,6 +9,7 @@ import { FRINK_HOST_TOOL_PERMISSION_VERSION } from '../../src/main/lib/agent-run
 import {
   assertHandshakeResult,
   assertMcpReplaceConsumed,
+  assertPinnedPatch,
   assertPinnedThreadItems,
   buildCodexTarget,
   codexVersionStamp,
@@ -201,6 +202,44 @@ describe('codexVersionStamp', () => {
     expect(codexVersionStamp({ ...manifest, patchSha256: 'a'.repeat(64) })).toBe(
       'rust-v0.155.1+frink.aaaaaaaaaaaa',
     );
+  });
+});
+
+describe('pinned Codex patch bytes', () => {
+  const patchRelPath = `patches/codex/${pinnedManifest.patch}`;
+  const patchBytes = fs.readFileSync(path.join(__dirname, '../..', patchRelPath));
+
+  // The hash checks below see this OS's checkout, which never converts on macOS/Linux; only the
+  // attribute proves a Windows checkout (core.autocrlf=true) leaves the bytes alone.
+  it('is checked out without line-ending conversion on every OS', () => {
+    const attr = spawnSync('git', ['check-attr', 'text', '--', patchRelPath], {
+      cwd: path.join(__dirname, '../..'),
+      encoding: 'utf8',
+    });
+    expect(attr.stdout.trim()).toBe(`${patchRelPath}: text: unset`);
+  });
+
+  it('accepts the committed LF patch the manifest pins', () => {
+    expect(patchBytes.includes(0x0d)).toBe(false);
+    expect(() => assertPinnedPatch(pinnedManifest, patchBytes)).not.toThrow();
+  });
+
+  it('names a CRLF checkout and its remedy instead of a bare mismatch', () => {
+    const crlf = Buffer.from(patchBytes.toString('utf8').replace(/\n/g, '\r\n'), 'utf8');
+    // The remedy must restore from HEAD: after `git rm --cached` the index is empty, so a plain
+    // `git checkout --` has nothing to restore and leaves the CRLF bytes plus a staged deletion.
+    expect(() => assertPinnedPatch(pinnedManifest, crlf)).toThrow(
+      'git rm -rq --cached patches/codex && git checkout HEAD -- patches/codex',
+    );
+    expect(() => assertPinnedPatch(pinnedManifest, crlf)).toThrow(/SHA-256 mismatch.*CRLF/);
+  });
+
+  it('rejects other altered bytes without blaming line endings', () => {
+    const altered = Buffer.concat([patchBytes, Buffer.from('\n')]);
+    expect(() => assertPinnedPatch(pinnedManifest, altered)).toThrow(
+      'Codex provider patch SHA-256 mismatch',
+    );
+    expect(() => assertPinnedPatch(pinnedManifest, altered)).not.toThrow(/CRLF/);
   });
 });
 

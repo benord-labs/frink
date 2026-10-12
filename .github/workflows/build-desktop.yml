@@ -34,6 +34,7 @@ on:
       - 'bun.lock'
       - 'scripts/binaries/**'
       - 'patches/codex/**'
+      - '.gitattributes'
       - 'scripts/skills/build-skill-content.ts'
       - 'scripts/smoke/smoke-native.cjs'
       - 'scripts/smoke/smoke-linux-launch.sh'

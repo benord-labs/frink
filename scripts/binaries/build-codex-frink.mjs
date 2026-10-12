@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync, spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -137,6 +138,21 @@ export function validateRemoteTagOutput(manifest, output) {
   if (refs.get(tagRef) !== manifest.tagObject || refs.get(`${tagRef}^{}`) !== manifest.commit) {
     throw new Error('Pinned Codex tag identity does not match upstream');
   }
+}
+
+/**
+ * The patch is pinned by its exact bytes. A CRLF checkout (core.autocrlf on Windows) changes those
+ * bytes, so name that cause rather than leave a bare mismatch.
+ */
+export function assertPinnedPatch(manifest, bytes) {
+  const actual = crypto.createHash('sha256').update(bytes).digest('hex');
+  if (actual === manifest.patchSha256) return;
+  const crlfNote = bytes.includes(0x0d)
+    ? '. The patch was checked out with CRLF line endings; re-checkout it byte-exact with `git rm -rq --cached patches/codex && git checkout HEAD -- patches/codex`'
+    : '';
+  throw new Error(
+    `Codex provider patch SHA-256 mismatch: expected ${manifest.patchSha256}, got ${actual}${crlfNote}`,
+  );
 }
 
 export function readManifest() {
@@ -448,12 +464,7 @@ export function normalizeCargoLock(sourceDir, manifest) {
 async function prepareCodexSource(tempRoot, manifest) {
   const sourceDir = await fetchCodexSource(tempRoot, manifest);
   const patchPath = path.join(ROOT_DIR, 'patches', 'codex', manifest.patch);
-  const actualPatchSha = sha256File(patchPath);
-  if (actualPatchSha !== manifest.patchSha256) {
-    throw new Error(
-      `Codex provider patch SHA-256 mismatch: expected ${manifest.patchSha256}, got ${actualPatchSha}`,
-    );
-  }
+  assertPinnedPatch(manifest, fs.readFileSync(patchPath));
   execFileSync('git', ['apply', '--check', patchPath], { cwd: sourceDir, stdio: 'inherit' });
   execFileSync('git', ['apply', patchPath], { cwd: sourceDir, stdio: 'inherit' });
   normalizeCargoLock(sourceDir, manifest);
