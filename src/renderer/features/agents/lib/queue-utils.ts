@@ -136,6 +136,18 @@ export type AgentQueueItem = {
   attachmentsLost?: true;
 };
 
+type QueuedSendMetadata = { source?: typeof FLOW_DISPATCH_SOURCE; dispatchTaskId?: string };
+type QueuedSendFields = { metadata?: QueuedSendMetadata };
+
+/** The metadata a queued item's manual send must carry, as the auto-drain sends it; nothing for a
+ * typed message. */
+export function queuedSendMetadata(item: AgentQueueItem): QueuedSendFields {
+  const metadata: QueuedSendMetadata = {};
+  if (item.source) metadata.source = item.source;
+  if (item.dispatchTaskId) metadata.dispatchTaskId = item.dispatchTaskId;
+  return Object.keys(metadata).length > 0 ? { metadata } : {};
+}
+
 export function isInternalQueueItem(item: AgentQueueItem | undefined): boolean {
   return item?.approvedPlanContext !== undefined;
 }
