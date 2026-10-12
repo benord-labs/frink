@@ -96,7 +96,9 @@ export async function listBatchRunsForBatch(
       .select()
       .from(flowRuns)
       .where(where)
-      .orderBy(desc(flowRuns.createdAt))
+      // created_at is second-precision; rowid (insert order) breaks ties so OFFSET pages never
+      // repeat or skip a row.
+      .orderBy(desc(flowRuns.createdAt), desc(drizzleSql`${flowRuns}.rowid`))
       .limit(limit)
       .offset(offset)
       .all(),
