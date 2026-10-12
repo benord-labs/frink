@@ -3,7 +3,7 @@
  * Shared by buildMentionsInto and resolveMention so serialized hydration matches live resolution.
  */
 
-import { decodeFromMentionToken } from '@/lib/mentions/briefing-base64';
+import { decodeFromMentionToken } from '../../../shared/lib/mentions/mention-token-codec';
 
 const BRIEFING_PREFIX = 'briefing:' as const;
 

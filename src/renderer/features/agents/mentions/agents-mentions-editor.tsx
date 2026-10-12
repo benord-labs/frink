@@ -9,20 +9,19 @@ import {
   useState,
 } from 'react';
 import { CMD_BLOCK_SERIALIZE_REGEX, encodeCommandBlock } from '@/lib/commands/command-block-format';
-import { type FileMentionOption, MENTION_PREFIXES } from '@/lib/mentions/agents-mentions-types';
+import type { FileMentionOption } from '@/lib/mentions/agents-mentions-types';
 import { parseBriefingMentionLabel } from '@/lib/mentions/briefing-mention-from-id';
+import { serializedMentionMatchEndIndex } from '@/lib/mentions/serialized-mention-scan-index';
 import {
-  SERIALIZED_MENTION_PATTERN_SRC,
-  serializedMentionMatchEndIndex,
-} from '@/lib/mentions/serialized-mention-scan-index';
+  MENTION_PREFIXES,
+  MENTION_TOKEN_PATTERN_SRC,
+} from '../../../../shared/lib/mentions/mention-grammar';
 import { cn } from '../../../lib/utils';
 import { createFileIconElement } from './agents-file-mention';
 
 // Threshold for skipping expensive trigger detection (characters)
 // Should be >= MAX_PASTE_LENGTH from paste-text.ts to avoid processing large pasted content
 const LARGE_TEXT_THRESHOLD = 10000;
-
-export { MENTION_PREVIEW_SANITIZE_REGEX } from '@/lib/mentions/agents-mentions-types';
 
 type TriggerPayload = {
   searchText: string;
@@ -160,7 +159,7 @@ function serializeContent(root: HTMLElement): string {
 }
 
 // Regex patterns for parsing mentions - hoisted to module level for performance
-const MENTION_PARSE_REGEX = new RegExp(SERIALIZED_MENTION_PATTERN_SRC, 'g');
+const MENTION_PARSE_REGEX = new RegExp(MENTION_TOKEN_PATTERN_SRC, 'g');
 const WHITESPACE_REGEX = /\s/;
 const COMMAND_INSERT_TRAILING_TEXT = '\n\u200B';
 const ZERO_WIDTH_SPACE_REGEX = /\u200B/g;

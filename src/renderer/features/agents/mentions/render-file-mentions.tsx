@@ -1,9 +1,11 @@
 import mcpLogo from '@iconify-icons/simple-icons/modelcontextprotocol';
 import { iconifyComponent } from '@/lib/utils/iconify-component';
-/* eslint-disable max-lines, max-lines-per-function */
 import React, { useMemo } from 'react';
-import { MENTION_PREFIXES } from '@/lib/mentions/agents-mentions-types';
-import { decodeFromMentionToken } from '@/lib/mentions/briefing-base64';
+import {
+  findMentionTokens,
+  MENTION_PREFIXES,
+} from '../../../../shared/lib/mentions/mention-grammar';
+import { type ParsedMention, parseMention } from '../../../../shared/lib/mentions/parse-mention';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '../../../components/ui/hover-card';
 import {
   FileText,
@@ -18,291 +20,13 @@ import { getFileIconByExtension } from './agents-file-mention';
 
 const OriginalMCPIcon = iconifyComponent(mcpLogo);
 
-// Regex patterns for parsing mentions - hoisted to module level for performance
-const FILE_MENTION_REGEX = /@\[([^\]]+)\]/g;
-const UNDERSCORE_GLOBAL_REGEX = /_/g;
-const WORD_BOUNDARY_CAPITALIZE_REGEX = /\b\w/g;
+// Regex patterns - hoisted to module level for performance
 const ULTRATHINK_SPLIT_REGEX = /(ultrathink)/gi;
 const MULTIPLE_NEWLINES_REGEX = /\n{3,}/g;
 
 // Shared mention-chip styling (theme-adaptive subtle fill)
 const MENTION_CHIP_CLASS =
   'inline-flex items-center gap-1 px-[6px] rounded-[6px] text-sm align-middle bg-black/4 dark:bg-white/8 text-foreground/80 select-none';
-
-type ParsedMention = {
-  id: string;
-  label: string;
-  path: string;
-  repository: string;
-  type:
-    | 'file'
-    | 'folder'
-    | 'skill'
-    | 'agent'
-    | 'tool'
-    | 'quote'
-    | 'diff'
-    | 'code'
-    | 'pasted'
-    | 'briefing';
-  // Extra data for quote/diff/code/pasted/briefing mentions
-  fullText?: string;
-  lineNumber?: number;
-  /** For code: fileName and line range (e.g. "13-26") */
-  lineRange?: string;
-  /** For pasted: size in bytes */
-  size?: number;
-};
-
-/**
- * Parse file/folder/skill/agent/tool/quote/diff mention ID into its components
- * Format: file:owner/repo:path/to/file.tsx or folder:owner/repo:path/to/folder or skill:skill-name or agent:agent-name or tool:mcp__server__toolname
- * Quote format: quote:preview_text:full_text (base64 encoded full text)
- * Diff format: diff:filepath:lineNumber:preview_text:full_text (base64 encoded full text)
- * Code format: code:fileName:startLine-endLine:preview:base64_full_text (from code editor selection)
- */
-const CODE_PREFIX = 'code:';
-function parseMention(id: string): ParsedMention | null {
-  const isFile = id.startsWith(MENTION_PREFIXES.FILE);
-  const isFolder = id.startsWith(MENTION_PREFIXES.FOLDER);
-  const isSkill = id.startsWith(MENTION_PREFIXES.SKILL);
-  const isAgent = id.startsWith(MENTION_PREFIXES.AGENT);
-  const isTool = id.startsWith(MENTION_PREFIXES.TOOL);
-  const isQuote = id.startsWith(MENTION_PREFIXES.QUOTE);
-  const isDiff = id.startsWith(MENTION_PREFIXES.DIFF);
-  const isPasted = id.startsWith(MENTION_PREFIXES.PASTED);
-  const isBriefing = id.startsWith(MENTION_PREFIXES.BRIEFING);
-  const isCode = id.startsWith(CODE_PREFIX);
-
-  if (
-    !isFile &&
-    !isFolder &&
-    !isSkill &&
-    !isAgent &&
-    !isTool &&
-    !isQuote &&
-    !isDiff &&
-    !isCode &&
-    !isPasted &&
-    !isBriefing
-  )
-    return null;
-
-  // Handle code selection mentions (format: code:fileName:startLine-endLine:preview:base64_full_text)
-  if (isCode) {
-    const content = id.slice(CODE_PREFIX.length);
-    const parts = content.split(':');
-    if (parts.length < 4) return null;
-    let fileName = parts[0] || '';
-    try {
-      fileName = decodeURIComponent(fileName);
-    } catch {
-      // Legacy or malformed: use raw value
-    }
-    const lineRange = parts[1] || ''; // e.g. "13-26"
-    const preview = parts.slice(2, -1).join(':'); // may contain colons
-    const encodedText = parts[parts.length - 1] || '';
-    let fullText = preview;
-    try {
-      if (encodedText) {
-        fullText = decodeFromMentionToken(encodedText);
-      }
-    } catch {
-      fullText = preview;
-    }
-    return {
-      id,
-      label: `${fileName} L${lineRange}`,
-      path: fileName,
-      repository: '',
-      type: 'code',
-      fullText,
-      lineRange,
-    };
-  }
-
-  // Handle quote mentions (format: quote:preview_text:base64_full_text)
-  if (isQuote) {
-    const content = id.slice(MENTION_PREFIXES.QUOTE.length);
-    const separatorIdx = content.indexOf(':');
-    if (separatorIdx === -1) {
-      // Simple format without full text
-      return {
-        id,
-        label: content.slice(0, 50) + (content.length > 50 ? '...' : ''),
-        path: '',
-        repository: '',
-        type: 'quote',
-        fullText: content,
-      };
-    }
-    const preview = content.slice(0, separatorIdx);
-    const encodedText = content.slice(separatorIdx + 1);
-    let fullText = preview;
-    try {
-      fullText = decodeFromMentionToken(encodedText);
-    } catch {
-      fullText = preview;
-    }
-    return {
-      id,
-      label: preview,
-      path: '',
-      repository: '',
-      type: 'quote',
-      fullText,
-    };
-  }
-
-  // Handle diff mentions (format: diff:filepath:lineNumber:preview_text:base64_full_text)
-  if (isDiff) {
-    const content = id.slice(MENTION_PREFIXES.DIFF.length);
-    const parts = content.split(':');
-    if (parts.length < 3) return null;
-
-    const filePath = parts[0] || '';
-    const lineNumber = parseInt(parts[1] || '0', 10) || undefined;
-    const preview = parts[2] || '';
-    const encodedText = parts.slice(3).join(':'); // Handle colons in base64
-
-    let fullText = preview;
-    try {
-      if (encodedText) {
-        fullText = decodeFromMentionToken(encodedText);
-      }
-    } catch {
-      fullText = preview;
-    }
-
-    const fileName = filePath.split('/').pop() || filePath;
-    const lineInfo = lineNumber ? `:${lineNumber}` : '';
-
-    return {
-      id,
-      label: `${fileName}${lineInfo}`,
-      path: filePath,
-      repository: '',
-      type: 'diff',
-      fullText,
-      lineNumber,
-    };
-  }
-
-  // Handle pasted mentions (format: pasted:size:preview|filepath)
-  // Use "|" as separator between preview and filepath since filepath can contain colons.
-  if (isPasted) {
-    const content = id.slice(MENTION_PREFIXES.PASTED.length);
-    const pipeIndex = content.lastIndexOf('|');
-    if (pipeIndex === -1) return null;
-
-    const beforePipe = content.slice(0, pipeIndex);
-    const filePath = content.slice(pipeIndex + 1);
-    const colonIndex = beforePipe.indexOf(':');
-    if (colonIndex === -1) return null;
-
-    const size = parseInt(beforePipe.slice(0, colonIndex) || '0', 10);
-    const preview = beforePipe.slice(colonIndex + 1);
-
-    return {
-      id,
-      label: preview,
-      path: filePath,
-      repository: '',
-      type: 'pasted',
-      fullText: preview,
-      size,
-    };
-  }
-
-  // Handle skill mentions (simpler format: skill:name)
-  if (isSkill) {
-    const skillName = id.slice(MENTION_PREFIXES.SKILL.length);
-    return {
-      id,
-      label: skillName,
-      path: '',
-      repository: '',
-      type: 'skill',
-    };
-  }
-
-  // Handle agent mentions (simpler format: agent:name)
-  if (isAgent) {
-    const agentName = id.slice(MENTION_PREFIXES.AGENT.length);
-    return {
-      id,
-      label: agentName,
-      path: '',
-      repository: '',
-      type: 'agent',
-    };
-  }
-
-  // Handle tool mentions (format: tool:mcp__servername__toolname)
-  if (isTool) {
-    const toolPath = id.slice(MENTION_PREFIXES.TOOL.length);
-    // Extract readable name from tool path (e.g., mcp__figma__get_design -> Get design)
-    const parts = toolPath.split('__');
-    const toolName = parts.length >= 3 ? parts.slice(2).join('__') : toolPath;
-    const displayName = toolName
-      .replace(UNDERSCORE_GLOBAL_REGEX, ' ')
-      .replace(WORD_BOUNDARY_CAPITALIZE_REGEX, (c) => c.toUpperCase())
-      .trim();
-    return {
-      id,
-      label: displayName,
-      path: toolPath,
-      repository: '',
-      type: 'tool',
-    };
-  }
-
-  // Handle briefing mentions (format: briefing:<flowId>:<base64Name>:<base64Text>)
-  if (isBriefing) {
-    const content = id.slice(MENTION_PREFIXES.BRIEFING.length);
-    const colonIdx = content.indexOf(':');
-    if (colonIdx === -1) return null;
-    const afterFlowId = content.slice(colonIdx + 1);
-    const secondColonIdx = afterFlowId.indexOf(':');
-    if (secondColonIdx === -1) return null;
-    let flowName = 'Briefing';
-    try {
-      flowName = decodeFromMentionToken(afterFlowId.slice(0, secondColonIdx)) || 'Briefing';
-    } catch {
-      flowName = 'Briefing';
-    }
-    let fullText = '';
-    try {
-      fullText = decodeFromMentionToken(afterFlowId.slice(secondColonIdx + 1)) ?? '';
-    } catch {
-      fullText = '';
-    }
-    return {
-      id,
-      label: flowName,
-      path: '',
-      repository: '',
-      type: 'briefing',
-      fullText,
-    };
-  }
-
-  const parts = id.split(':');
-  if (parts.length < 3) return null;
-
-  const type = parts[0] as 'file' | 'folder';
-  const repository = parts[1];
-  const path = parts.slice(2).join(':'); // Handle paths with colons
-  const name = path.split('/').pop() || path;
-
-  return {
-    id,
-    label: name,
-    path,
-    repository,
-    type,
-  };
-}
 
 /**
  * Component to render a single file/folder/skill/agent/tool/quote/diff mention chip (matching canvas style)
@@ -460,29 +184,26 @@ function useRenderFileMentions(text: string): React.ReactNode[] {
     let lastIndex = 0;
     let key = 0;
 
-    let match: RegExpExecArray | null = FILE_MENTION_REGEX.exec(text);
-    while (match !== null) {
+    for (const token of findMentionTokens(text)) {
       // Add text before mention (with ultrathink highlighting)
-      if (match.index > lastIndex) {
+      if (token.start > lastIndex) {
         nodes.push(
           <span key={`text-${key++}`}>
-            {renderTextWithUltrathink(text.slice(lastIndex, match.index))}
+            {renderTextWithUltrathink(text.slice(lastIndex, token.start))}
           </span>,
         );
       }
 
-      const id = match[1];
-      const mention = parseMention(id);
+      const mention = parseMention(token.id);
 
       if (mention) {
         nodes.push(<MentionChip key={`mention-${key++}`} mention={mention} />);
       } else {
         // Fallback: show as plain text if not a valid mention
-        nodes.push(<span key={`unknown-${key++}`}>{match[0]}</span>);
+        nodes.push(<span key={`unknown-${key++}`}>{text.slice(token.start, token.end)}</span>);
       }
 
-      lastIndex = match.index + match[0].length;
-      match = FILE_MENTION_REGEX.exec(text);
+      lastIndex = token.end;
     }
 
     // Add remaining text (with ultrathink highlighting)
@@ -516,22 +237,19 @@ export function extractTextMentions(text: string): {
   let cleanedText = text;
   const mentionsToRemove: string[] = [];
 
-  let match: RegExpExecArray | null = FILE_MENTION_REGEX.exec(text);
-  while (match !== null) {
-    const id = match[1];
+  for (const { id, start, end } of findMentionTokens(text)) {
     const isQuoteOrDiffOrCodeOrPasted =
       id.startsWith(MENTION_PREFIXES.QUOTE) ||
       id.startsWith(MENTION_PREFIXES.DIFF) ||
-      id.startsWith('code:') ||
+      id.startsWith(MENTION_PREFIXES.CODE) ||
       id.startsWith(MENTION_PREFIXES.PASTED);
     if (isQuoteOrDiffOrCodeOrPasted) {
       const parsed = parseMention(id);
       if (parsed) {
         textMentions.push(parsed);
-        mentionsToRemove.push(match[0]);
+        mentionsToRemove.push(text.slice(start, end));
       }
     }
-    match = FILE_MENTION_REGEX.exec(text);
   }
 
   // Remove the mentions from text

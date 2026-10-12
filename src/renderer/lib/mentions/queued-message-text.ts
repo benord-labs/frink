@@ -1,6 +1,9 @@
 import { isCompactCommand } from '@/lib/commands/expand-slash-command';
-import { encodeForMentionToken } from './briefing-base64';
-import { MENTION_PREFIXES, MENTION_PREVIEW_SANITIZE_REGEX } from './agents-mentions-types';
+import {
+  MENTION_PREFIXES,
+  MENTION_PREVIEW_SANITIZE_REGEX,
+} from '../../../shared/lib/mentions/mention-grammar';
+import { encodeForMentionToken } from '../../../shared/lib/mentions/mention-token-codec';
 
 const PREVIEW_LENGTH = 50;
 

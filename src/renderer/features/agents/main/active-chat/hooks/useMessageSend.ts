@@ -11,6 +11,10 @@ import {
 } from '@/lib/mentions/queued-message-text';
 import { isRunBusy } from '../../../../../lib/agent-chat/steer/run-busy';
 import { isCompactCommand } from '../../../../../../shared/commands/expand-slash-command';
+import {
+  MENTION_PREFIXES,
+  MENTION_PREVIEW_SANITIZE_REGEX,
+} from '../../../../../../shared/lib/mentions/mention-grammar';
 import { stripHiddenWakeMarker } from '../../../../../../shared/lib/message-markers/hidden-wake-marker';
 import type { ChatMode } from '../../../../../../shared/types/chat-mode';
 import { getQueryClient } from '../../../../../contexts/TRPCProvider';
@@ -38,7 +42,6 @@ import {
   toQueuedTextContext,
 } from '../../../lib/queue-utils';
 import type { AgentsMentionsEditorHandle } from '../../../mentions';
-import { MENTION_PREFIXES, MENTION_PREVIEW_SANITIZE_REGEX } from '../../../mentions';
 import { useAgentSubChatStore } from '../../../stores/sub-chat-store';
 import { clearFlowRunEndedErrorSignal, showAccountNotReadyToast, utf8ToBase64 } from '../utils';
 

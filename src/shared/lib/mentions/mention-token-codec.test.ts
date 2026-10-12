@@ -1,11 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { decodeFromMentionToken, encodeForMentionToken } from '@/lib/mentions/briefing-base64';
+import { decodeFromMentionToken, encodeForMentionToken } from './mention-token-codec';
 
 describe('encodeForMentionToken', () => {
-  it('encodes ASCII text to a non-empty base64 string', () => {
-    const encoded = encodeForMentionToken('My Flow');
-    expect(typeof encoded).toBe('string');
-    expect(encoded.length).toBeGreaterThan(0);
+  it('encodes ASCII text to standard base64', () => {
+    expect(encodeForMentionToken('My Flow')).toBe('TXkgRmxvdw==');
   });
 
   it('produces a string decodeable by decodeFromMentionToken (ASCII round-trip)', () => {
@@ -29,10 +27,7 @@ describe('decodeFromMentionToken', () => {
   });
 
   it('decodes Unicode (CJK) correctly — regression: plain atob() produces garbage', () => {
-    // This test is the core regression guard for the bug in agents-mentions-editor.tsx.
-    // Plain atob() returns the raw UTF-8 byte string (Latin-1 interpretation of the bytes),
-    // which JavaScript displays as a sequence of mangled characters — NOT the original Unicode.
-    // decodeFromMentionToken must return the exact original string.
+    // Plain atob() reads the UTF-8 bytes as Latin-1, which garbles non-ASCII text.
     const original = '日本語テスト';
     const encoded = encodeForMentionToken(original);
     const decoded = decodeFromMentionToken(encoded);
