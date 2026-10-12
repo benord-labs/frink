@@ -26,7 +26,7 @@
 <h3 align="center"><a href="https://frink.dev/download"><ins>Download Frink</ins></a></h3>
 
 <p align="center">
-  <a href="user-docs/flows.md"><picture><source srcset="docs/assets/readme/triggers.gif" type="image/gif"><img src="docs/assets/readme/triggers.jpg" alt="Choosing a Flow trigger, then a condition step and an approval step" width="960" /></picture></a>
+  <a href="user-docs/getting-started.md"><picture><source srcset="docs/assets/readme/overview.webp" type="image/webp"><img src="docs/assets/readme/overview.jpg" alt="A sentence typed into Frink becomes a Flow with a schedule and an approval step, a finished task is reviewed from the Work Queue, and four agents work side by side" width="960" /></picture></a>
 </p>
 
 ## Features
@@ -35,23 +35,23 @@
 <tr>
 <td width="50%" valign="middle">
 
-### Start with a chat
+### Run four agents side by side
 
-Describe it the way you would to a colleague. The agent builds it and shows its work as it goes — no setup, no jargon.
+Split the window into up to four panes and give each agent a different job. They work at the same time, and each pane keeps its own model and its own diff to review. Put each one on its own git worktree and they never touch the same files.
 
-[Docs →](user-docs/getting-started.md)
+[Docs →](user-docs/worktree-setup.md)
 
 </td>
 <td width="50%">
-  <a href="user-docs/getting-started.md"><picture><source srcset="docs/assets/readme/chat.gif" type="image/gif"><img src="docs/assets/readme/chat.jpg" alt="Asking an agent to make the customer search case-insensitive and watching it work" width="100%" /></picture></a>
+  <a href="user-docs/worktree-setup.md"><picture><source srcset="docs/assets/readme/agents.gif" type="image/gif"><img src="docs/assets/readme/agents.jpg" alt="Four panes, each with an agent working on a different task in the same project at the same time" width="100%" /></picture></a>
 </td>
 </tr>
 <tr>
 <td width="50%" valign="middle">
 
-### Save it as a Flow
+### One sentence becomes an automation
 
-Turn a one-off chat into a repeatable automation: what sets it off, what the agent does, what happens next. Then it runs itself.
+Type the routine the way you would say it: _"Every weekday at 9am, run the tests. If any fail, have an agent fix them, then wait for my approval before it opens a PR."_ Frink builds it as a Flow and lists every step, so you can read it and change it before it runs.
 
 [Docs →](user-docs/flows.md)
 
@@ -63,9 +63,9 @@ Turn a one-off chat into a repeatable automation: what sets it off, what the age
 <tr>
 <td width="50%" valign="middle">
 
-### Triggers from your tools
+### It starts when something happens
 
-Start a Flow from a schedule, a Linear or Shortcut ticket, a Sentry error, a PostHog event or any webhook. Add a condition, and a step where it stops and asks you.
+A new ticket in Linear, Jira, Shortcut or ClickUp, an error in Sentry, an event in PostHog, any webhook, or a time of day. The Flow checks a condition to pick its path, and waits at an approval step until you say yes.
 
 [Docs →](user-docs/plugins.md)
 
@@ -77,9 +77,9 @@ Start a Flow from a schedule, a Linear or Shortcut ticket, a Sentry error, a Pos
 <tr>
 <td width="50%" valign="middle">
 
-### One place for what needs you
+### Everything that needs you, in one queue
 
-Running, ready for review, queued: every run across your projects, with a badge when one needs your answer. Approve, edit, or send it back.
+Every run from every project shows up in the Work Queue as running, ready for review or queued. A badge appears when a Flow stops for approval or an agent has a question. Read what it did, then approve it or reply to send it back.
 
 [Docs →](user-docs/task-lifecycle.md)
 
@@ -91,22 +91,21 @@ Running, ready for review, queued: every run across your projects, with a badge 
 <tr>
 <td width="50%" valign="middle">
 
-### Or write it yourself
+### Check the work and fix it yourself
 
-A real editor and terminal for your files, with changes you mark viewed and checkpoints to roll back to.
+Every file the agent changes shows as a diff. Open it in the built-in editor, change a line and save, run a command in the terminal, or roll the chat back to an earlier checkpoint.
 
-[Docs →](user-docs/files.md)
+[Docs →](user-docs/changes.md)
 
 </td>
 <td width="50%">
-  <a href="user-docs/files.md"><picture><source srcset="docs/assets/readme/editor.gif" type="image/gif"><img src="docs/assets/readme/editor.jpg" alt="Opening a file from the tree, editing it and saving, with the change shown inline" width="100%" /></picture></a>
+  <a href="user-docs/changes.md"><picture><source srcset="docs/assets/readme/editor.gif" type="image/gif"><img src="docs/assets/readme/editor.jpg" alt="Opening a file from the tree, editing it and saving, with the change shown inline" width="100%" /></picture></a>
 </td>
 </tr>
 </table>
 
 **Also in the box:**
 
-- **[Worktree per chat](user-docs/worktree-setup.md)** — every agent works on its own git worktree, so parallel work never collides.
 - **[Permissions](user-docs/permissions.md)** — every tool call passes a per-project gate first; `~/.ssh`, `~/.aws` and `.env` are always off-limits.
 - **[Plugins & MCP](user-docs/mcp-servers.md)** — connect Linear, Shortcut, ClickUp, GitHub, Notion, Slack, Sentry, PostHog and more, as chat tools and Flow steps.
 - **[Your own AI sign-in](user-docs/ai-accounts.md)** — uses your existing Claude Code or Codex login. Frink never stores the token.
