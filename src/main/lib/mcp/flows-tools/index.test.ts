@@ -1,6 +1,6 @@
 /* eslint-disable max-lines */
 import { TRPCError } from '@trpc/server';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FlowVersionConflictError } from '../../db/repos/flow-versions';
 import { invocableFlowFixture } from './flow-run-test-fixtures';
 import { expectMcpText, type McpToolResultLike } from './test-helpers';
@@ -155,10 +155,10 @@ const OPERATIONS_BUILD_MIN_VALID = [
   { op: 'add_edge' as const, edge: { id: 'e1', source: 'nst', target: 'n2' } },
 ];
 
-/** Deferred import of `./index` (avoids mock hoisting issues; fresh module instance when tests need it). */
-async function getModule() {
-  return import('./index');
-}
+/** Deferred import of `./index` so the vi.mock registrations above apply; cached after the warm-up below. */
+const getModule = () => import('./index');
+// File-level warm-up: a cold import under a loaded suite overran the first test's 5s timeout.
+beforeAll(() => getModule(), 60_000);
 
 // ---------------------------------------------------------------------------
 // Tests

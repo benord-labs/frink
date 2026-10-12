@@ -19,7 +19,7 @@ import { parseGraph } from './graph';
 
 type Db = ReturnType<typeof getDatabase>;
 
-export const TERMINAL_STAGE_STATUSES = new Set(['completed', 'failed', 'cancelled']);
+const TERMINAL_STAGE_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 
 // --- Whole-batch terminal detection -------------------------------------
 // Called by batch-dispatch after any stage finalization; emits
