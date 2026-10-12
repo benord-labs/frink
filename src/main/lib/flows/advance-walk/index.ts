@@ -12,6 +12,7 @@ import { captureContained } from '../../sentry';
 import { abortFlowRun } from '../cancel-registry';
 import type { DispatchContext } from '../dispatch/types';
 import { emitNodeTerminal, emitRunPaused, emitRunTerminal } from '../event-emit';
+import { fanOutCompletedOutput } from '../fan-out';
 import { type FanOutStepResult, maybeAdvanceFanOut } from '../fan-out-step';
 import {
   findNodeById,
@@ -68,17 +69,7 @@ function fanOutContinuationNodeId(
 }
 
 function outputAfterFanOut(step: FanOutStepResult, output: NodeOutput): NodeOutput {
-  if (step.kind !== 'finished') return output;
-  return {
-    status: 'completed',
-    outputs: {
-      results: step.aggregateOutputs,
-      totalCount: step.aggregateOutputs.length,
-      _fanOutState: 'completed',
-    },
-    artifacts: [],
-    durationMs: 0,
-  };
+  return step.kind === 'finished' ? fanOutCompletedOutput(step.aggregateOutputs) : output;
 }
 
 export type AdvancedNode = {
