@@ -75,12 +75,12 @@ export function GitBranchCheckout({
   const [pendingDeleteBranch, setPendingDeleteBranch] = useState<string | null>(null);
 
   const utils = trpc.useUtils();
-  // Keyed to git context, not to the lock: the query is not polled, so keeping it warm through a run
-  // costs nothing and spares the picker a loading tick the moment the lock releases. Deleting also
-  // stays available while locked, and it needs this list.
+  // Loaded only while a branch surface is open: listing every branch and worktree is costly on big
+  // repos, and the current branch shown elsewhere comes from git status instead.
+  const isBranchSurfaceOpen = popoverOpen || createDialogOpen || deleteDialogOpen;
   const { data: branchData, isLoading: isBranchesLoading } = trpc.changes.getBranches.useQuery(
     { worktreePath: worktreePath || '' },
-    { enabled: hasGitContext },
+    { enabled: hasGitContext && isBranchSurfaceOpen, staleTime: 0 },
   );
 
   const switchBranchMutation = trpc.changes.switchBranch.useMutation({
@@ -216,11 +216,17 @@ export function GitBranchCheckout({
         toast.info('No git branch context is available in this chat.');
         return;
       }
-      if (deletableBranches.length === 0) {
-        toast.info('No deletable branches found.');
-        return;
-      }
-      setDeleteDialogOpen(true);
+      // The list loads on demand, so read it before deciding there is nothing to delete
+      void utils.changes.getBranches.fetch({ worktreePath }).then(
+        (data) => {
+          if (!transformBranchData(data).some(isBranchDeletable)) {
+            toast.info('No deletable branches found.');
+            return;
+          }
+          setDeleteDialogOpen(true);
+        },
+        (error: Error) => toast.error(error.message),
+      );
     };
 
     window.addEventListener('branches:open-picker', openBranchPicker);
@@ -229,7 +235,7 @@ export function GitBranchCheckout({
       window.removeEventListener('branches:open-picker', openBranchPicker);
       window.removeEventListener('branches:open-delete-picker', openBranchDeleteDialog);
     };
-  }, [canShowGitPicker, deletableBranches.length, hasGitContext, isActive, locked, worktreePath]);
+  }, [canShowGitPicker, hasGitContext, isActive, isBranchDeletable, locked, utils, worktreePath]);
 
   const branchPicker = canShowGitPicker ? (
     <div className={cn('min-w-0', branchPickerClassName)}>

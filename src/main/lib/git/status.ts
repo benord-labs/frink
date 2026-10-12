@@ -3,14 +3,13 @@ import * as path from 'node:path';
 import simpleGit from 'simple-git';
 import { z } from 'zod';
 import type {
-  GitChangesStatus,
   WorkingFileLineChangeRange,
   WorkingFileLineChangesResponse,
 } from '../../../shared/changes-types';
 import { publicProcedure, router } from '../trpc';
 import { gitCache } from './cache';
 import { secureFs } from './security';
-import { parseGitStatus } from './utils/parse-status';
+import { type GitStatusWithBranch, parseGitStatus } from './utils/parse-status';
 
 // Regex constants
 const HUNK_HEADER_REGEX = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
@@ -264,16 +263,17 @@ export const createStatusRouter = () => {
           worktreePath: z.string(),
         }),
       )
-      .query(async ({ input }): Promise<GitChangesStatus> => {
+      .query(async ({ input }): Promise<GitStatusWithBranch> => {
         // Check cache first
-        const cached = gitCache.getStatus<GitChangesStatus>(input.worktreePath);
+        const cached = gitCache.getStatus<GitStatusWithBranch>(input.worktreePath);
         if (cached) {
           return cached;
         }
+        const generation = gitCache.statusGeneration(input.worktreePath);
         const result = parseGitStatus(await simpleGit(input.worktreePath).status());
 
-        // Store in cache
-        gitCache.setStatus(input.worktreePath, result);
+        // Not cached if the watcher invalidated it while git was running: the result may be stale
+        gitCache.setStatus(input.worktreePath, result, generation);
         return result;
       }),
     getWorkingFileLineChanges: publicProcedure

@@ -220,7 +220,7 @@ function useIsChatLive(chatId: string | undefined): boolean {
 }
 
 export const ChatInputContextBar = memo(function ChatInputContextBar({
-  currentBranch,
+  currentBranch: recordedBranch,
   workspaceFolderName,
   worktreePath,
   isActive = true,
@@ -236,6 +236,13 @@ export const ChatInputContextBar = memo(function ChatInputContextBar({
     { repoPath: worktreePath || '' },
     { enabled: Boolean(worktreePath) },
   );
+
+  // Git status follows the watcher, so it catches a checkout made in a terminal
+  const { data: gitStatus } = trpc.changes.getStatus.useQuery(
+    { worktreePath: worktreePath || '' },
+    { enabled: Boolean(worktreePath), staleTime: 30_000 },
+  );
+  const currentBranch = gitStatus?.branch || recordedBranch;
 
   const locked = useWorkspaceContextLock(chatId, useIsChatLive(chatId));
 

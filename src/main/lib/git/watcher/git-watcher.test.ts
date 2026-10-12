@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Capture the @parcel/watcher subscribe callback so tests can invoke it
 // to simulate the watcher dropping FSEvents.
@@ -68,6 +68,7 @@ describe('shouldProcessWatcherPath', () => {
     expect(shouldProcessWatcherPath('/repos/app/.git/MERGE_HEAD')).toBe(true);
     expect(shouldProcessWatcherPath('/repos/app/.git/CHERRY_PICK_HEAD')).toBe(true);
     expect(shouldProcessWatcherPath('/repos/app/.git/REBASE_HEAD')).toBe(true);
+    expect(shouldProcessWatcherPath('/repos/main/.git/worktrees/chat/MERGE_HEAD')).toBe(true);
   });
 
   it('normalizes windows paths before filtering', async () => {
@@ -156,5 +157,271 @@ describe('gitWatcherRegistry', () => {
 
     unsubscribe();
     await gitWatcherRegistry.dispose(worktreePath);
+  });
+});
+
+describe('GitWatcher ignore filtering', () => {
+  const worktreePath = '/repos/app';
+  type Change = { path: string; type: string };
+  type GitDir = { path: string; outsideWorktree: boolean; worktreeRoot: string };
+
+  /** Paths under this directory count as gitignored unless a test says otherwise. */
+  const keepUnignoredMock = vi.fn(async (paths: string[]) =>
+    paths.filter((filePath) => !filePath.includes('/data/')),
+  );
+  const resetMock = vi.fn();
+  const resolveGitDirMock = vi.fn(async (): Promise<GitDir | null> => ({
+    path: `${worktreePath}/.git`,
+    outsideWorktree: false,
+    worktreeRoot: worktreePath,
+  }));
+
+  beforeEach(() => {
+    capturedCallback = null;
+    vi.resetModules();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    keepUnignoredMock.mockReset();
+    keepUnignoredMock.mockImplementation(async (paths: string[]) =>
+      paths.filter((filePath) => !filePath.includes('/data/')),
+    );
+    resetMock.mockReset();
+    resolveGitDirMock.mockReset();
+    resolveGitDirMock.mockImplementation(async () => ({
+      path: `${worktreePath}/.git`,
+      outsideWorktree: false,
+      worktreeRoot: worktreePath,
+    }));
+  });
+
+  async function watch() {
+    const parcel = await import('@parcel/watcher');
+    const subscribeMock = vi.mocked(parcel.subscribe);
+    subscribeMock.mockClear();
+    const gitDir = await import('./git-dir');
+    vi.spyOn(gitDir, 'resolveGitDir').mockImplementation(resolveGitDirMock);
+    const ignoredPaths = await import('./ignored-paths');
+    vi.spyOn(ignoredPaths, 'createIgnoreFilter').mockImplementation(() => ({
+      keepUnignored: keepUnignoredMock,
+      reset: resetMock,
+    }));
+
+    const { gitWatcherRegistry } = await import('./git-watcher');
+    const batches: Change[][] = [];
+    await gitWatcherRegistry.subscribe(worktreePath, (event) => batches.push(event.changes));
+    const fireEvents = async (events: Array<{ path: string; type: string }>) => {
+      capturedCallback?.(null, events);
+      await vi.advanceTimersByTimeAsync(300);
+    };
+    const fire = (...paths: string[]) =>
+      fireEvents(paths.map((path) => ({ path, type: 'update' })));
+    return {
+      batches,
+      fire,
+      fireEvents,
+      subscribeMock,
+      dispose: () => gitWatcherRegistry.dispose(worktreePath),
+    };
+  }
+
+  it('emits no change event for a batch of ignored paths', async () => {
+    const { batches, fire } = await watch();
+
+    await fire('/repos/app/data/run.jsonl', '/repos/app/data/other.jsonl');
+
+    expect(keepUnignoredMock).toHaveBeenCalledTimes(1);
+    expect(batches).toEqual([]);
+  });
+
+  it('emits only the paths the repository does not ignore', async () => {
+    const { batches, fire } = await watch();
+
+    await fire('/repos/app/data/run.jsonl', '/repos/app/src/a.ts');
+
+    expect(batches).toEqual([[{ path: '/repos/app/src/a.ts', type: 'change' }]]);
+  });
+
+  it('keeps ignored files appearing or going, so the file tree still sees them', async () => {
+    const { batches, fireEvents } = await watch();
+
+    await fireEvents([
+      { path: '/repos/app/data/new.jsonl', type: 'create' },
+      { path: '/repos/app/data/new.jsonl', type: 'update' },
+      { path: '/repos/app/data/old.jsonl', type: 'delete' },
+      { path: '/repos/app/data/run.jsonl', type: 'update' },
+    ]);
+
+    expect(batches).toEqual([
+      [
+        { path: '/repos/app/data/new.jsonl', type: 'add' },
+        { path: '/repos/app/data/old.jsonl', type: 'unlink' },
+      ],
+    ]);
+  });
+
+  it('passes git pointers and IDE config without asking whether they are ignored', async () => {
+    keepUnignoredMock.mockResolvedValue([]);
+    const { batches, fire } = await watch();
+
+    await fire('/repos/app/.git/HEAD', '/repos/app/.claude/skills/x/SKILL.md');
+
+    expect(keepUnignoredMock).toHaveBeenCalledWith([]);
+    expect(batches).toEqual([
+      [
+        { path: '/repos/app/.git/HEAD', type: 'change' },
+        { path: '/repos/app/.claude/skills/x/SKILL.md', type: 'change' },
+      ],
+    ]);
+  });
+
+  it('recognises IDE config by the real path of a project opened through a symlink', async () => {
+    resolveGitDirMock.mockResolvedValue({
+      path: '/real/app/.git',
+      outsideWorktree: false,
+      worktreeRoot: '/real/app',
+    });
+    keepUnignoredMock.mockResolvedValue([]);
+    const { batches, fire } = await watch();
+
+    await fire('/real/app/.claude/agents/reviewer.md');
+
+    expect(batches).toEqual([[{ path: '/real/app/.claude/agents/reviewer.md', type: 'change' }]]);
+  });
+
+  it.each([
+    ['/repos/app/.gitignore'],
+    ['/repos/app/pkg/.gitignore'],
+    ['C:\\repos\\app\\pkg\\.gitignore'],
+    ['/repos/app/.git/index'],
+  ])('forgets cached ignore answers when %s changes', async (rulePath) => {
+    const { fire } = await watch();
+
+    await fire('/repos/app/src/a.ts');
+    expect(resetMock).not.toHaveBeenCalled();
+    await fire(rulePath);
+    expect(resetMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('emits everything and never builds a filter outside a git repository', async () => {
+    resolveGitDirMock.mockResolvedValue(null);
+    const { batches, fire } = await watch();
+
+    await fire('/repos/app/data/run.jsonl');
+
+    expect(keepUnignoredMock).not.toHaveBeenCalled();
+    expect(batches).toEqual([[{ path: '/repos/app/data/run.jsonl', type: 'change' }]]);
+  });
+
+  it('emits nothing when disposed while the ignore check is running', async () => {
+    let finishCheck: (kept: string[]) => void = () => {};
+    keepUnignoredMock.mockImplementation(
+      () =>
+        new Promise<string[]>((resolve) => {
+          finishCheck = resolve;
+        }),
+    );
+    const { batches, fire, dispose } = await watch();
+
+    await fire('/repos/app/src/a.ts');
+    await dispose();
+    finishCheck(['/repos/app/src/a.ts']);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(batches).toEqual([]);
+  });
+
+  it('flushes events that arrive during an ignore check in a following batch', async () => {
+    let finishCheck: (kept: string[]) => void = () => {};
+    keepUnignoredMock.mockImplementationOnce(
+      () =>
+        new Promise<string[]>((resolve) => {
+          finishCheck = resolve;
+        }),
+    );
+    const { batches, fire } = await watch();
+
+    await fire('/repos/app/src/a.ts');
+    await fire('/repos/app/src/b.ts');
+    expect(batches).toEqual([]);
+
+    finishCheck(['/repos/app/src/a.ts']);
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(batches).toEqual([
+      [{ path: '/repos/app/src/a.ts', type: 'change' }],
+      [{ path: '/repos/app/src/b.ts', type: 'change' }],
+    ]);
+  });
+
+  it('also watches a linked worktree git dir and emits only its pointer files', async () => {
+    const gitDir = '/repos/main/.git/worktrees/app';
+    resolveGitDirMock.mockResolvedValue({
+      path: gitDir,
+      outsideWorktree: true,
+      worktreeRoot: worktreePath,
+    });
+    const { batches, dispose, subscribeMock } = await watch();
+
+    // Never the shared git dir: other worktrees' refs, HEADs and indexes are not this chat's
+    expect(subscribeMock.mock.calls.map((call) => call[0])).toEqual([worktreePath, gitDir]);
+    expect(subscribeMock.mock.calls[1][2]).toEqual({ ignore: expect.arrayContaining(['objects']) });
+    const onGitDirEvents = subscribeMock.mock.calls[1][1];
+    onGitDirEvents(
+      null,
+      [`${gitDir}/HEAD`, `${gitDir}/logs/HEAD`, `${gitDir}/index.lock`].map((path) => ({
+        path,
+        type: 'update',
+      })),
+    );
+    await vi.advanceTimersByTimeAsync(300);
+    expect(batches).toEqual([[{ path: `${gitDir}/HEAD`, type: 'change' }]]);
+
+    await dispose();
+    const subscriptions = await Promise.all(
+      subscribeMock.mock.results.map((result) => result.value),
+    );
+    for (const subscription of subscriptions) {
+      expect(subscription.unsubscribe).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  // Submodules and --separate-git-dir: one git dir outside the tree, under any name.
+  it.each([['/super/.git/modules/sub'], ['/store/app.git']])(
+    'reads pointers and refs from a git dir at %s',
+    async (gitDir) => {
+      resolveGitDirMock.mockResolvedValue({
+        path: gitDir,
+        outsideWorktree: true,
+        worktreeRoot: worktreePath,
+      });
+      const { batches, subscribeMock } = await watch();
+
+      expect(subscribeMock.mock.calls.map((call) => call[0])).toEqual([worktreePath, gitDir]);
+      const onGitDirEvents = subscribeMock.mock.calls[1][1];
+      onGitDirEvents(
+        null,
+        ['HEAD', 'refs/heads/x', 'refs/heads/x.lock', 'logs/HEAD', 'config'].map((name) => ({
+          path: `${gitDir}/${name}`,
+          type: 'update',
+        })),
+      );
+      await vi.advanceTimersByTimeAsync(300);
+
+      expect(batches).toEqual([
+        [
+          { path: `${gitDir}/HEAD`, type: 'change' },
+          { path: `${gitDir}/refs/heads/x`, type: 'change' },
+        ],
+      ]);
+    },
+  );
+
+  it('watches only the worktree when its git dir is inside it', async () => {
+    const { subscribeMock } = await watch();
+    expect(subscribeMock.mock.calls.map((call) => call[0])).toEqual([worktreePath]);
   });
 });

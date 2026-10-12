@@ -241,6 +241,8 @@ const CACHE_CONFIGS = {
 class GitCache {
   private statusCache: LRUCache<unknown>;
   private parsedDiffCache: LRUCache<unknown>;
+  /** Bumped by every status invalidation, so a read that started before one cannot cache. */
+  private statusGenerations = new Map<string, number>();
 
   constructor() {
     this.statusCache = new LRUCache(CACHE_CONFIGS.status);
@@ -252,13 +254,24 @@ class GitCache {
     return this.statusCache.get(worktreePath) as T | null;
   }
 
-  setStatus<T>(worktreePath: string, status: T): void {
+  statusGeneration(worktreePath: string): number {
+    return this.statusGenerations.get(worktreePath) ?? 0;
+  }
+
+  /** Drops `status` when the cache was invalidated after `generation` was read. */
+  setStatus<T>(
+    worktreePath: string,
+    status: T,
+    generation = this.statusGeneration(worktreePath),
+  ): void {
+    if (generation !== this.statusGeneration(worktreePath)) return;
     const hash = computeContentHash(JSON.stringify(status));
     this.statusCache.set(worktreePath, status, hash);
   }
 
   invalidateStatus(worktreePath: string): void {
     this.statusCache.delete(worktreePath);
+    this.statusGenerations.set(worktreePath, this.statusGeneration(worktreePath) + 1);
   }
 
   // Parsed diff cache methods
