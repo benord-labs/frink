@@ -2,8 +2,8 @@
  * resumeFlowRun — handles `approve` / `retry` / `skip` from the renderer when
  * a run is paused on an awaiting_input / blocked / failed node.
  *
- * - approve: the paused node transitions to `completed` with empty outputs;
- *   engine walks to the next node.
+ * - approve: the paused node transitions to `completed`, keeping the outputs it
+ *   parked with; engine walks to the next node.
  * - retry: the node is re-dispatched with the same config (new attempt), continuing its agent
  *   session when the click was Continue (its session already answered the step).
  * - skip: the paused node transitions to `skipped`; engine walks past it.
@@ -19,6 +19,8 @@ import {
   getNodeRun,
   listNodeRunsForFlowRun,
   nodeMatchesResumeSnapshot,
+  type ParkedOutput,
+  readParkedOutput,
 } from '../db/repos/node-runs';
 import { parkFlowTaskForSubChat } from '../db/repos';
 import { withFlowResourceCleanup } from './admission/activity';
@@ -220,6 +222,22 @@ async function reopenForResume(
   return fence;
 }
 
+/** An approved node keeps what it parked with, minus the park state: `taskStatus`, and the
+ * `summary`/`details` of an unsignalled park, which hold the pause message rather than a result. */
+export function approvedOutputFrom(parked: ParkedOutput): NodeOutput {
+  const { taskStatus: _taskStatus, ...kept } = parked.outputs;
+  if (!parked.signalled) {
+    delete kept.summary;
+    delete kept.details;
+  }
+  return {
+    status: 'completed',
+    outputs: { ...kept, approved: true },
+    artifacts: parked.artifacts,
+    durationMs: parked.durationMs,
+  };
+}
+
 /** `kind` is the recovery a Retry click showed; a step that no longer recovers that way is refused. */
 export async function resumeFlowRun(
   flowRunId: string,
@@ -287,12 +305,12 @@ export async function resumeFlowRun(
       return;
     }
 
-    const synthetic: NodeOutput = {
-      status: action === 'skip' ? 'skipped' : 'completed',
-      outputs: action === 'approve' ? { approved: true } : {},
-      artifacts: [],
-      durationMs: 0,
-    };
+    // Read in the same tick as advanceFlowRun's write: no await may separate them, or a re-park
+    // in between is overwritten with the bag it replaced.
+    const synthetic: NodeOutput =
+      action === 'skip'
+        ? { status: 'skipped', outputs: {}, artifacts: [], durationMs: 0 }
+        : approvedOutputFrom(readParkedOutput(db, nodeRunId));
     const advanced = await advanceFlowRun(
       flowRunId,
       nodeRunId,
