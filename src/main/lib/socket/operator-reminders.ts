@@ -36,6 +36,8 @@ export type OperatorReminderInputs = {
   agentSawPriorTurns: boolean;
   /** A plan turn with a live task to signal, outside a Flow run (whose prompt states the duty). */
   planOwesNoFinishSignal: boolean;
+  /** This turn carries the Flow-run-ended notice, which already says the signal tool is gone. */
+  flowRunEndedNoticeDue?: boolean;
 };
 
 export type OperatorReminderResult = {
@@ -72,7 +74,12 @@ export function buildOperatorReminders(inputs: OperatorReminderInputs): Operator
   }
   // Skip in plan mode: it's read-only (no Bash/Write/Edit), so the reminder's "other tools remain
   // available" wording would mislead.
-  if (inputs.taskSignalDisarmed && inputs.agentSawPriorTurns && inputs.mode !== 'plan') {
+  if (
+    inputs.taskSignalDisarmed &&
+    inputs.agentSawPriorTurns &&
+    inputs.mode !== 'plan' &&
+    !inputs.flowRunEndedNoticeDue
+  ) {
     reminders.push(TASK_SIGNAL_DISARMED_REMINDER);
   }
   // Per turn rather than in the system prompt, so the prompt (and a warm CLI) stays mode-free.

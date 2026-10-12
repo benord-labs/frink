@@ -29,6 +29,7 @@ import {
 } from '../../claude-turn-context';
 import type { validateToolPermission } from '../../streaming/pending-permission/validate-tool-permission';
 import { buildUserPromptSubmitReminderHook } from '../../operator-reminders';
+import { markFlowRunEndAnnounced } from '../../flow-signal/flow-run-ended';
 import { consumeClaudeDelivery } from '../message-provenance/claude';
 import {
   denyPlanTransitionInWakeBurst,
@@ -77,11 +78,22 @@ export function buildClaudeSessionCallbacks(scope: ClaudeSessionScope, session: 
   const userPromptSubmitReminderHook = async (input: UserPromptSubmitHookInput) => {
     const turn = activeTurn();
     const reminders = turn?.pendingReminders ?? [];
+    // Only a prompt Frink sent: a wake firing first must not take the turn's notice.
+    const fromSdk = input.source === undefined || input.source === 'sdk';
+    const ended = fromSdk ? turn?.pendingFlowRunEnded : undefined;
+    if (ended && turn) {
+      turn.pendingFlowRunEnded = undefined;
+      markFlowRunEndAnnounced(ended.subChatId, ended.runId);
+    }
     const provenance =
       session.current && turn?.messageProvenance
         ? consumeClaudeDelivery(session.current, input)
         : undefined;
-    const texts = [...reminders, ...(provenance ? [provenance] : [])];
+    const texts = [
+      ...(ended ? [ended.text] : []),
+      ...reminders,
+      ...(provenance ? [provenance] : []),
+    ];
     return texts.length ? buildUserPromptSubmitReminderHook(texts)() : {};
   };
   return {

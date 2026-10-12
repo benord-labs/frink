@@ -96,6 +96,8 @@ export interface ClaudeTurnContext {
   /** Operator reminders to deliver via the UserPromptSubmit hook for THIS turn (empty on wake
    * bursts and on turns whose reminders ride the prompt prepend instead). */
   pendingReminders: string[];
+  /** The Flow-run-ended notice, taken by the turn's first prompt hook so later fires skip it. */
+  pendingFlowRunEnded?: { subChatId: string; runId: string; text: string };
   messageProvenance?: MessageProvenance;
   /** Whether this turn delegates Frink's residual `ask` decisions to Claude's native Auto Mode. */
   autoReviewTools: boolean;

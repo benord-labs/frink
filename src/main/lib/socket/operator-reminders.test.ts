@@ -119,6 +119,16 @@ describe('buildOperatorReminders', () => {
     ).toEqual([]);
   });
 
+  it('leaves the disarmed reminder to the Flow-run-ended notice on the turn that carries it', () => {
+    const disarmed = { ...base, taskSignalDisarmed: true, agentSawPriorTurns: true };
+    expect(buildOperatorReminders({ ...disarmed, flowRunEndedNoticeDue: true }).reminders).toEqual(
+      [],
+    );
+    expect(buildOperatorReminders({ ...disarmed, flowRunEndedNoticeDue: false }).reminders).toEqual(
+      [TASK_SIGNAL_DISARMED_REMINDER],
+    );
+  });
+
   it('omits the disarmed reminder in plan mode (read-only — tool-availability wording would mislead)', () => {
     const { reminders } = buildOperatorReminders({
       ...base,

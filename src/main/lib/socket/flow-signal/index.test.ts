@@ -74,21 +74,30 @@ describe('resolveFlowSignalArming durable provenance', () => {
   describe('liveFlowRunId: the run that can still speak in the chat, or null', () => {
     const lastStep = (flowRunId = 'run-1') => ({ id: 'last-step', status: 'done', flowRunId });
     /** A chat whose newest flow task is done, with `newest` as the run that owns the chat. */
-    const liveAfterLastStep = async (newest: { id: string; status: string } | null) => {
+    const armAfterLastStep = async (newest: { id: string; status: string } | null) => {
       taskMocks.getLatestFlowTaskForSubChat.mockResolvedValueOnce(lastStep());
       runMocks.getNewestFlowRunForSubChat.mockResolvedValueOnce(newest);
-      return (await resolveFlowSignalArming('flow-chat', 'last-step')).liveFlowRunId;
+      return resolveFlowSignalArming('flow-chat', 'last-step');
     };
+    const liveAfterLastStep = async (newest: { id: string; status: string } | null) =>
+      (await armAfterLastStep(newest)).liveFlowRunId;
 
     it('is true while the owning run has not ended, including between two steps', async () => {
       for (const status of ['running', 'paused', 'failed']) {
-        expect(await liveAfterLastStep({ id: 'run-1', status })).toBe('run-1');
+        expect(await armAfterLastStep({ id: 'run-1', status })).toMatchObject({
+          liveFlowRunId: 'run-1',
+          endedFlowRunId: null,
+        });
       }
     });
 
-    it('is false once the owning run has completed or been cancelled', async () => {
-      expect(await liveAfterLastStep({ id: 'run-1', status: 'completed' })).toBeNull();
-      expect(await liveAfterLastStep({ id: 'run-1', status: 'cancelled' })).toBeNull();
+    it('is false once the owning run has completed or been cancelled, which names the ended run', async () => {
+      for (const status of ['completed', 'cancelled']) {
+        expect(await armAfterLastStep({ id: 'run-1', status })).toMatchObject({
+          liveFlowRunId: null,
+          endedFlowRunId: 'run-1',
+        });
+      }
     });
 
     it('is false when the run is gone, even for a task still in a driving status', async () => {
@@ -110,7 +119,11 @@ describe('resolveFlowSignalArming durable provenance', () => {
       });
       resumeMocks.isRunRestartInterrupted.mockResolvedValueOnce(true);
       const armed = await resolveFlowSignalArming('restart-chat', 'pinned-task');
-      expect(armed).toMatchObject({ restartInterruptedFlowRunId: 'cut-run', liveFlowRunId: null });
+      expect(armed).toMatchObject({
+        restartInterruptedFlowRunId: 'cut-run',
+        liveFlowRunId: null,
+        endedFlowRunId: null,
+      });
       expect(runMocks.getNewestFlowRunForSubChat).not.toHaveBeenCalled();
     });
 
@@ -124,7 +137,11 @@ describe('resolveFlowSignalArming durable provenance', () => {
       taskMocks.getLatestFlowTaskForSubChat.mockResolvedValueOnce(lastStep());
       runMocks.getNewestFlowRunForSubChat.mockRejectedValueOnce(new Error('db read failed'));
       const armed = await resolveFlowSignalArming('flow-chat', 'last-step');
-      expect(armed).toMatchObject({ liveFlowRunId: null, provenanceLookupError: null });
+      expect(armed).toMatchObject({
+        liveFlowRunId: null,
+        endedFlowRunId: null,
+        provenanceLookupError: null,
+      });
       expect(captureMainException).toHaveBeenCalledWith(expect.any(Error), {
         surface: 'flow-run-live',
       });

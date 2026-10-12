@@ -45,3 +45,12 @@ export function codexMessageContext(record: MessageProvenance, withRule = false)
     ...(withRule && { frink_message_rule: application(MESSAGE_PROVENANCE_RULE) }),
   };
 }
+
+/** A turn's whole Codex native context: its record, and any Flow-run-ended notice. */
+export function codexTurnContext(record?: MessageProvenance, withRule = false, runEnded?: string) {
+  const context = {
+    ...(record && codexMessageContext(record, withRule)),
+    ...(runEnded && { frink_flow_run_ended: { kind: 'application' as const, value: runEnded } }),
+  };
+  return Object.keys(context).length > 0 ? context : undefined;
+}

@@ -129,6 +129,12 @@ import {
   resolveFlowSignalArming,
   finalizeFlowSignalBeforeSessionDisposition as settleSignal,
 } from './flow-signal';
+import {
+  clearFlowRunEndedAnnouncementsForTests,
+  FLOW_RUN_ENDED_NOTICE,
+  isFlowRunEndedNoticeDue,
+  markFlowRunEndAnnounced,
+} from './flow-signal/flow-run-ended';
 import { prepareTurnReminders } from './operator-reminders';
 import { shouldDropPostPlanChunkFromHistory } from './plan-mode-halt';
 import { acquireRuntimeSlot } from './runtime-gate';
@@ -196,6 +202,7 @@ const lastExecutedModeBySubChat = new Map<string, ChatMode>();
 /** Test-only: reset module-level executor state so test order doesn't matter. */
 export function _resetExecutorStateForTests(): void {
   lastExecutedModeBySubChat.clear();
+  clearFlowRunEndedAnnouncementsForTests();
   _resetConfigDirStagingForTests();
   _resetClaudeDebugSessionsForTests();
 }
@@ -725,12 +732,26 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
     let fullPrompt = willReplayHistoryViaResume
       ? message
       : formatPromptWithHistory(message, history);
+    const agentSawPriorTurns = willReplayHistoryViaResume || (history?.length ?? 0) > 0;
+    // Written once the provider accepts the turn: Claude's first prompt hook, Codex's turn/start.
+    const flowRunEnded =
+      armed.endedFlowRunId &&
+      isFlowRunEndedNoticeDue({
+        subChatId,
+        endedFlowRunId: armed.endedFlowRunId,
+        hasResumeSession,
+        agentSawPriorTurns,
+        hasBriefing: Boolean(sessionFlowBriefing),
+      })
+        ? { runId: armed.endedFlowRunId, text: FLOW_RUN_ENDED_NOTICE }
+        : undefined;
     const turnReminders = prepareTurnReminders({
       mode,
       previousMode: lastExecutedModeBySubChat.get(subChatId),
       hasResumeSession,
       taskSignalDisarmed,
-      agentSawPriorTurns: willReplayHistoryViaResume || (history?.length ?? 0) > 0,
+      agentSawPriorTurns,
+      flowRunEndedNoticeDue: Boolean(flowRunEnded),
       planOwesNoFinishSignal: mode === 'plan' && Boolean(signalTaskId) && !isFlowExecutionTurn,
       agentRuntime,
       subChatId,
@@ -836,6 +857,12 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
           prompt: codexFullPrompt,
           messageProvenance: provenance,
           freshThreadFallbackPrompt: codexFreshFallbackPrompt,
+          ...(flowRunEnded && {
+            flowRunEnded: {
+              text: flowRunEnded.text,
+              onAccepted: () => markFlowRunEndAnnounced(subChatId, flowRunEnded.runId),
+            },
+          }),
           cwd: projectPath,
           // Registry key component: stable per-account. label is the account identity
           // (CredentialResult has no id); falls back to a constant so a label-less default still
@@ -1028,6 +1055,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
     turn.lastCollectedChunks = collectedChunks;
     turn.nextMessageIndex = () => messageIndex++;
     turn.pendingReminders = turnReminders.reminders;
+    turn.pendingFlowRunEnded = flowRunEnded && { ...flowRunEnded, subChatId };
     turn.messageProvenance = provenance;
 
     const shouldResumeClaudeSession = Boolean(persistedSessionId);
