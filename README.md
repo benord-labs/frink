@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <strong>Turn a Sentry error or Linear ticket into a reviewed PR, on your own machine.</strong><br/>
+  <strong>Fine-tuned automation for everyone.</strong><br/>
   A ticket arrives, an error fires or the clock hits 9am: your Flow runs the steps you chose and stops where it needs you.
 </p>
 
