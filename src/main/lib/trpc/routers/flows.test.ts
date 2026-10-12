@@ -5,6 +5,7 @@ import { getDatabase } from '../../db';
 import { FlowVersionConflictError } from '../../db/repos/flow-versions';
 import { FlowCopyNoSavedVersionError, FlowCopyNotFoundError } from '../../db/repos/flows';
 import { freshDb } from '../../db/test-utils/fresh-db';
+import * as flowsBatch from '../../flows/batch';
 import {
   TerminalResumeAdmissionError,
   TerminalResumeChatDeletedError,
@@ -33,6 +34,7 @@ const getVersionMock = vi.fn();
 const createBatchPlanTemplateMock = vi.fn();
 const updateStageRunLocalMock = vi.fn();
 const uploadAttachmentToStageRunMock = vi.fn();
+const removeAttachmentFromStageRunMock = vi.spyOn(flowsBatch, 'removeAttachmentFromStageRun');
 const resolveAttachmentToDataUrlMock = vi.fn();
 const parkFlowTaskForSubChatMock = vi.fn();
 const pauseActiveExecutionForSubChatMock = vi.fn();
@@ -210,6 +212,7 @@ describe('flowsRouter (local)', () => {
     createBatchPlanTemplateMock.mockReset();
     updateStageRunLocalMock.mockReset();
     uploadAttachmentToStageRunMock.mockReset();
+    removeAttachmentFromStageRunMock.mockReset();
     resolveAttachmentToDataUrlMock.mockReset();
     parkFlowTaskForSubChatMock.mockReset();
     pauseActiveExecutionForSubChatMock.mockReset();
@@ -1361,74 +1364,45 @@ describe('flowsRouter (local)', () => {
     });
   });
 
-  describe('updateStageRun attachments input validation', () => {
+  describe('removeStageRunAttachment', () => {
     const FLOW_ID = '550e8400-e29b-41d4-a716-446655440001';
     const RUN_ID = '660e8400-e29b-41d4-a716-446655440002';
+    const URL = `frink-attachment://${RUN_ID}/abcd1234-shot.png`;
 
-    it('accepts an empty attachments array', async () => {
-      updateStageRunLocalMock.mockResolvedValueOnce({ run: { id: RUN_ID, trigger_context: {} } });
-      const caller = flowsRouter.createCaller({ getWindow: () => null });
-      await caller.updateStageRun({ flowId: FLOW_ID, runId: RUN_ID, attachments: [] });
-      expect(updateStageRunLocalMock).toHaveBeenCalledOnce();
-    });
-
-    it('accepts a valid attachments array with type string', async () => {
-      updateStageRunLocalMock.mockResolvedValueOnce({ run: { id: RUN_ID, trigger_context: {} } });
-      const caller = flowsRouter.createCaller({ getWindow: () => null });
-      await caller.updateStageRun({
-        flowId: FLOW_ID,
-        runId: RUN_ID,
-        attachments: [
-          { url: 'https://cdn.example.com/img.png', type: 'image/png' },
-          { url: 'https://cdn.example.com/shot.webp', type: 'image/webp', label: 'After' },
-        ],
+    it('removes by URL', async () => {
+      removeAttachmentFromStageRunMock.mockReturnValueOnce({
+        run: { id: RUN_ID, trigger_context: { attachments: [] } },
       });
-      expect(updateStageRunLocalMock).toHaveBeenCalledOnce();
+      const caller = flowsRouter.createCaller({ getWindow: () => null });
+      await caller.removeStageRunAttachment({ flowId: FLOW_ID, runId: RUN_ID, url: URL });
+      expect(removeAttachmentFromStageRunMock).toHaveBeenCalledWith({ runId: RUN_ID, url: URL });
     });
 
-    it('rejects attachments where type is an empty string', async () => {
+    // Catches: an off-by-one rejecting the longest URL an upload is allowed to store,
+    // leaving that attachment impossible to remove.
+    it('accepts a url at the stored-URL limit', async () => {
+      removeAttachmentFromStageRunMock.mockReturnValueOnce({
+        run: { id: RUN_ID, trigger_context: {} },
+      });
+      const url = `https://cdn.example.com/${'a'.repeat(2048 - 'https://cdn.example.com/'.length)}`;
+      const caller = flowsRouter.createCaller({ getWindow: () => null });
+      await caller.removeStageRunAttachment({ flowId: FLOW_ID, runId: RUN_ID, url });
+      expect(removeAttachmentFromStageRunMock).toHaveBeenCalledWith({ runId: RUN_ID, url });
+    });
+
+    it.each([
+      ['empty', ''],
+      ['too long', `https://cdn.example.com/${'a'.repeat(2048)}`],
+    ])('rejects a url that is %s', async (_name, url) => {
       const caller = flowsRouter.createCaller({ getWindow: () => null });
       try {
-        await caller.updateStageRun({
-          flowId: FLOW_ID,
-          runId: RUN_ID,
-          attachments: [{ url: 'https://cdn.example.com/img.png', type: '' }],
-        });
+        await caller.removeStageRunAttachment({ flowId: FLOW_ID, runId: RUN_ID, url });
         expect.fail('expected rejection');
       } catch (e) {
         expect(e).toBeInstanceOf(TRPCError);
         expect((e as TRPCError).cause).toBeInstanceOf(ZodError);
       }
-    });
-
-    it('rejects when url is empty', async () => {
-      const caller = flowsRouter.createCaller({ getWindow: () => null });
-      try {
-        await caller.updateStageRun({
-          flowId: FLOW_ID,
-          runId: RUN_ID,
-          attachments: [{ url: '', type: 'image' }],
-        });
-        expect.fail('expected rejection');
-      } catch (e) {
-        expect(e).toBeInstanceOf(TRPCError);
-        expect((e as TRPCError).cause).toBeInstanceOf(ZodError);
-      }
-    });
-
-    it('rejects when more than 10 attachments provided', async () => {
-      const caller = flowsRouter.createCaller({ getWindow: () => null });
-      const attachments = Array.from({ length: 11 }, (_, i) => ({
-        url: `https://cdn.example.com/img${i}.png`,
-        type: 'image',
-      }));
-      try {
-        await caller.updateStageRun({ flowId: FLOW_ID, runId: RUN_ID, attachments });
-        expect.fail('expected rejection');
-      } catch (e) {
-        expect(e).toBeInstanceOf(TRPCError);
-        expect((e as TRPCError).cause).toBeInstanceOf(ZodError);
-      }
+      expect(removeAttachmentFromStageRunMock).not.toHaveBeenCalled();
     });
   });
 

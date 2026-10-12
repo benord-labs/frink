@@ -7,6 +7,7 @@ import type { RunAttachment } from '../../../shared/types/run-attachment';
 import {
   getBatchStageRun,
   listRunsForStage,
+  removeStageRunAttachment,
   stageRunTriggerContextSchema,
 } from '../db/repos/batch-stage-runs';
 import { batchStageRuns } from '../db/schema';
@@ -143,6 +144,20 @@ describe('uploadAttachmentToStageRun — concurrent uploads', () => {
     expect(tc).toMatchObject({ label: 'run', customInstructions: 'be brief' });
     expect(tc).toEqual(result.run.trigger_context);
     expect(await storedAttachments(runId)).toHaveLength(1);
+  });
+
+  // Catches: a removal sent while an upload is in flight dropping the upload's entry, or
+  // the upload's append resurrecting the removed one (the story's same-pane case).
+  it('keeps an upload and honours a removal that commits while it is writing', async () => {
+    const runId = await seedRun({ attachments: [existingAtt(1), existingAtt(2)] });
+    afterWrite = () => removeStageRunAttachment(db, runId, existingAtt(1).url);
+
+    const result = await upload(runId, 'c.png');
+
+    expect((await storedAttachments(runId)).map((a) => a.url)).toEqual([
+      existingAtt(2).url,
+      result.url,
+    ]);
   });
 
   it('deletes the file when the run disappears before the append', async () => {

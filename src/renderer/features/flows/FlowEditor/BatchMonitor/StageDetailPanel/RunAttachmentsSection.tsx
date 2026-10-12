@@ -3,7 +3,8 @@
  * Image attachments panel for a batch stage run.
  * Supports drag-and-drop, clipboard paste, and file picker.
  * Uploads images atomically (validate + upload blob + save in one request) via tRPC.
- * Removing attachments uses a targeted PATCH on trigger_context.attachments.
+ * Removing an attachment names it by URL, so the server removes only that entry and never
+ * drops one this pane has not seen yet (e.g. uploaded from another pane).
  * Only editable when run status === 'pending'.
  * To reference external URLs (Figma, docs, etc.), add them to Custom Instructions instead.
  */
@@ -63,9 +64,16 @@ export function RunAttachmentsSection({
   const attachmentsRef = useRef<RunAttachment[]>(attachments);
   attachmentsRef.current = attachments;
 
-  const uploadAndAttachImage = trpc.flows.uploadAndAttachImage.useMutation();
-  const removeRun = trpc.flows.updateStageRun.useMutation({
-    onSuccess: () => setError(null),
+  const utils = trpc.useUtils();
+  const refreshRunList = () => void utils.flows.listBatchStageRuns.invalidate({ flowId });
+  const uploadAndAttachImage = trpc.flows.uploadAndAttachImage.useMutation({
+    onSuccess: refreshRunList,
+  });
+  const removeStageRunAttachment = trpc.flows.removeStageRunAttachment.useMutation({
+    onSuccess: () => {
+      setError(null);
+      refreshRunList();
+    },
   });
 
   const canAdd = isPending && attachments.length + uploadingItems.length < MAX_ATTACHMENTS;
@@ -94,17 +102,25 @@ export function RunAttachmentsSection({
     );
   }
 
-  function removeAttachment(index: number) {
-    const next = attachmentsRef.current.filter((_, i) => i !== index);
-    const prev = attachmentsRef.current;
+  // Local edits are by URL, not snapshots, so replies arriving in any order cannot
+  // hide an upload that landed in between.
+  function setAttachments(next: RunAttachment[]) {
     attachmentsRef.current = next;
     onAttachmentsChange(next);
-    removeRun.mutate(
-      { flowId, runId, attachments: next },
+  }
+
+  function addAttachment(attachment: RunAttachment) {
+    if (attachmentsRef.current.some((a) => a.url === attachment.url)) return;
+    setAttachments([...attachmentsRef.current, attachment]);
+  }
+
+  function removeAttachment(target: RunAttachment) {
+    setAttachments(attachmentsRef.current.filter((a) => a.url !== target.url));
+    removeStageRunAttachment.mutate(
+      { flowId, runId, url: target.url },
       {
         onError: (err) => {
-          attachmentsRef.current = prev;
-          onAttachmentsChange(prev);
+          addAttachment(target);
           setError(err.message);
         },
       },
@@ -144,12 +160,12 @@ export function RunAttachmentsSection({
         filename: file.name,
         mimeType: normalizedType,
       });
-      const next: RunAttachment[] = [
-        ...attachmentsRef.current,
-        { url: result.url, type: normalizedType, label: file.name, mimeType: normalizedType },
-      ];
-      attachmentsRef.current = next;
-      onAttachmentsChange(next);
+      addAttachment({
+        url: result.url,
+        type: normalizedType,
+        label: file.name,
+        mimeType: normalizedType,
+      });
       setError(null);
       return true;
     } catch (err) {
@@ -228,7 +244,7 @@ export function RunAttachmentsSection({
         <span className="text-[10px] font-medium text-muted-foreground/60 uppercase tracking-wide">
           Images
         </span>
-        {removeRun.isPending && (
+        {removeStageRunAttachment.isPending && (
           <span className="text-[10px] text-muted-foreground/40 italic">Saving…</span>
         )}
         {error && (
@@ -244,12 +260,12 @@ export function RunAttachmentsSection({
       {/* Existing + in-progress attachments */}
       {(attachments.length > 0 || uploadingItems.length > 0) && (
         <div className="flex flex-col gap-1">
-          {attachments.map((a, i) => (
+          {attachments.map((a) => (
             <AttachmentRow
               key={`${a.url}__${a.type}`}
               attachment={a}
               isPending={isPending}
-              onRemove={() => removeAttachment(i)}
+              onRemove={() => removeAttachment(a)}
             />
           ))}
           {uploadingItems.map((item) => (
