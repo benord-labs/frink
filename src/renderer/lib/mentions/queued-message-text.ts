@@ -45,6 +45,24 @@ export function pastedTextMention(pasted: PastedTextMentionSource): string {
   return `@[${MENTION_PREFIXES.PASTED}${pasted.size}:${safePreview}|${safePath}]`;
 }
 
+/** What the editor adds to the next message: a code selection outranks the open file, and a removed
+ * file adds nothing. The composer chip and every send path read this one rule. */
+export function attachedContextFile<T>(
+  file: T | null | undefined,
+  dismissed: boolean,
+  selection: CodeSelectionMentionSource | null | undefined,
+): T | null {
+  return selection || dismissed ? null : (file ?? null);
+}
+
+/** Open-file token for a message; null for `/compact` (see isCompactCommand) and when `text`
+ * already carries it, as an edited queued message does. */
+export function openFileMention(file: { path: string } | null, text: string): string | null {
+  if (!file || isCompactCommand(text)) return null;
+  const token = `@[${MENTION_PREFIXES.FILE}local:${file.path}]`;
+  return text.includes(token) ? null : token;
+}
+
 /**
  * The text part for a queued message as it drains: attached quote/diff/code/pasted contexts as
  * mention tokens, ahead of the message (the direct-send order). `/compact` is exempt — see isCompactCommand.

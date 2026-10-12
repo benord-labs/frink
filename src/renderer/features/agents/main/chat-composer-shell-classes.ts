@@ -45,8 +45,7 @@ export const COMPOSER_CONTROL_LABEL_CLASS = 'text-sm @max-[34rem]/composer:hidde
 export const COMPOSER_MODEL_CONTROL_CLASS = `${COMPOSER_CONTROL_BASE_CLASS} min-w-0 @max-[16.25rem]/composer:w-7 @max-[16.25rem]/composer:gap-0 @max-[16.25rem]/composer:px-0`;
 export const COMPOSER_MODEL_LABEL_CLASS =
   'min-w-0 truncate text-sm @max-[16.25rem]/composer:hidden';
-/** Tier suffix and chevron go before the name (from 360px). chat-input-area's context chip goes
- *  `sr-only` at 34rem so it never squeezes the name, yet stays dismissable by keyboard. */
+/** Tier suffix and chevron go before the name (from 360px). */
 export const COMPOSER_MODEL_DETAIL_CLASS = '@max-[22.5rem]/composer:hidden';
 /** Between the detail and name tiers the tier reads as a short effort token ("Opus 5.5 · XH");
  *  19.5rem holds it beside every Opus and Fable name (text widths measured in Electron). */

@@ -63,7 +63,6 @@ import {
   activeFilePathAtom,
   type CodeEditorLayout,
   chatContextFileAtomFamily,
-  chatContextFileDismissedAtomFamily,
   closeFileAtom,
   closesEditorOnEscape,
   codeEditorActiveChatIdAtom,
@@ -1256,7 +1255,6 @@ export function CodeEditorPanel() {
 
         if (!selection || selection.isEmpty()) {
           appStore.set(codeSelectionContextAtomFamily(chatId), null);
-          appStore.set(chatContextFileDismissedAtomFamily(chatId), false);
           const currentFile = activeFileRef.current;
           if (currentFile) {
             appStore.set(chatContextFileAtomFamily(chatId), {

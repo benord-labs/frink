@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { buildQueuedMessageText } from './queued-message-text';
+import {
+  attachedContextFile,
+  buildQueuedMessageText,
+  openFileMention,
+} from './queued-message-text';
 
 type Item = Parameters<typeof buildQueuedMessageText>[0];
 const item = (over: Partial<Item>): Item => ({ message: 'do the thing', ...over });
@@ -99,5 +103,50 @@ describe('buildQueuedMessageText', () => {
         item({ message: '/compact', pastedTexts: [{ size: 1, preview: 'p', filePath: '/p' }] }),
       ),
     ).toBe('/compact');
+  });
+});
+
+describe('attachedContextFile', () => {
+  const file = { name: 'notes.md', path: '/repo/notes.md' };
+  const selection = { text: 'const a = 1;', fileName: 'other.ts', startLine: 1, endLine: 2 };
+
+  it('attaches the open file by default', () => {
+    expect(attachedContextFile(file, false, null)).toBe(file);
+  });
+
+  it('attaches nothing once the user removed the file', () => {
+    expect(attachedContextFile(file, true, null)).toBeNull();
+  });
+
+  it('lets a code selection stand in for the file, whichever file it came from', () => {
+    expect(attachedContextFile(file, false, selection)).toBeNull();
+  });
+
+  it('attaches nothing when no file was ever opened', () => {
+    expect(attachedContextFile(null, false, null)).toBeNull();
+    expect(attachedContextFile(undefined, false, null)).toBeNull();
+  });
+});
+
+describe('openFileMention', () => {
+  const file = { path: '/repo/notes.md' };
+  const token = '@[file:local:/repo/notes.md]';
+
+  it('builds the file token for an attached file', () => {
+    expect(openFileMention(file, 'hello')).toBe(token);
+    expect(openFileMention(file, '')).toBe(token);
+  });
+
+  it('returns null when nothing is attached', () => {
+    expect(openFileMention(null, 'hello')).toBeNull();
+  });
+
+  it('keeps /compact context-free', () => {
+    expect(openFileMention(file, '/compact')).toBeNull();
+  });
+
+  it('skips a file the text already mentions, and only that file', () => {
+    expect(openFileMention(file, `${token} hello`)).toBeNull();
+    expect(openFileMention(file, '@[file:local:/repo/other.md] hello')).toBe(token);
   });
 });

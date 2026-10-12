@@ -4,12 +4,16 @@ import { useState } from 'react';
 import { formatFileSize } from '../../file-viewer/utils/file-utils';
 
 type AgentFileItemProps = {
-  id: string;
+  id?: string;
   filename: string;
-  url: string;
+  url?: string;
   size?: number;
+  /** Short muted suffix after the name, such as a line range. */
+  detail?: string;
   isLoading?: boolean;
   onRemove?: () => void;
+  /** Names the remove control and keeps it visible; without it the control shows on hover. */
+  removeLabel?: string;
 };
 
 function getFileIcon(filename: string) {
@@ -53,8 +57,10 @@ export function AgentFileItem({
   filename,
   url: _url,
   size,
+  detail,
   isLoading = false,
   onRemove,
+  removeLabel,
 }: AgentFileItemProps) {
   const [isHovered, setIsHovered] = useState(false);
   // biome-ignore lint/style/useNamingConvention: Renders as a JSX component
@@ -81,18 +87,25 @@ export function AgentFileItem({
           <span className="text-[10px] text-muted-foreground">{formatFileSize(size)}</span>
         )}
       </div>
+      {detail && <span className="shrink-0 text-xs text-muted-foreground">{detail}</span>}
 
       {onRemove && (
         <Button
           variant="ghost"
           size="icon"
+          aria-label={removeLabel}
+          title={removeLabel}
           onClick={(e) => {
             e.stopPropagation();
             onRemove();
           }}
-          className={`absolute -top-1.5 -right-1.5 size-4 rounded-full bg-background border border-border
+          className={
+            removeLabel
+              ? '-mr-1 size-4 shrink-0 rounded-sm text-muted-foreground hover:text-foreground'
+              : `absolute -top-1.5 -right-1.5 size-4 rounded-full bg-background border border-border
                      transition-[opacity,transform] duration-150 ease-out active:scale-[0.97] z-10
-                     ${isHovered ? 'opacity-100' : 'opacity-0'}`}
+                     ${isHovered ? 'opacity-100' : 'opacity-0'}`
+          }
         >
           <X className="size-3" />
         </Button>

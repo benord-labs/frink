@@ -94,10 +94,13 @@ vi.mock('../../../../../lib/analytics', () => ({
 }));
 
 /** An idle composer holding typed text, ready for a direct send. */
-function idleComposerProps(addToQueue = vi.fn()): Parameters<typeof useMessageSend>[0] {
+function idleComposerProps(
+  addToQueue = vi.fn(),
+  typed = 'hello',
+): Parameters<typeof useMessageSend>[0] {
   const editorRef = createRef<AgentsMentionsEditorHandle | null>();
   editorRef.current = {
-    getValue: () => 'hello',
+    getValue: () => typed,
     clear: vi.fn(),
   } as unknown as AgentsMentionsEditorHandle;
   return {
@@ -712,6 +715,115 @@ describe('useMessageSend', () => {
       const sent = calls.at(-1)?.[0];
 
       expect(sent?.parts.find((p) => p.type === 'text')?.text).toBe(drained);
+    });
+  });
+
+  describe('the open file shown in the composer is the file that is sent', () => {
+    afterEach(() => appStore.set(runLiveAtomFamily('sub-1'), false));
+
+    type SendMessage = NonNullable<
+      Parameters<typeof useMessageSend>[0]['sendMessageRef']['current']
+    >;
+    type OpenFile = { name: string; path: string };
+    const file: OpenFile = { name: 'notes.md', path: '/repo/docs/notes.md' };
+    const token = '@[file:local:/repo/docs/notes.md]';
+    const paste = {
+      id: 'pasted_1',
+      filePath: '/sessions/sub-1/pasted/pasted_1.txt',
+      filename: 'pasted_1.txt',
+      size: 6000,
+      preview: 'Build a cron-triggered flow that...',
+      createdAt: new Date(),
+    };
+
+    /** Sends `typed` directly and returns the text part that went out. */
+    async function directText(typed: string, attached: OpenFile | null, pasted = false) {
+      const props = idleComposerProps(vi.fn(), typed);
+      const send = vi.fn<SendMessage>(async () => undefined);
+      props.sendMessageRef.current = send;
+      props.activeFileRef.current = attached;
+      if (pasted) props.pastedTextsRef.current = [paste];
+      const { result } = renderHook(() => useMessageSend(props));
+      await result.current();
+      const parts = send.mock.calls.at(-1)?.[0].parts ?? [];
+      return parts.flatMap((part) => (part.type === 'text' ? [part.text] : []))[0];
+    }
+
+    /** Queues `typed` behind a running turn and returns the text it drains to. */
+    async function queuedText(typed: string, attached: OpenFile | null, pasted = false) {
+      appStore.set(runLiveAtomFamily('sub-1'), true);
+      const addToQueue = vi.fn();
+      const props = idleComposerProps(addToQueue, typed);
+      props.activeFileRef.current = attached;
+      if (pasted) props.pastedTextsRef.current = [paste];
+      const { result } = renderHook(() => useMessageSend(props));
+      await result.current();
+      appStore.set(runLiveAtomFamily('sub-1'), false);
+      // SAFETY: addToQueue is an untyped mock; the hook passes the queue item as its second argument.
+      return buildQueuedMessageText(addToQueue.mock.calls[0][1] as AgentQueueItem);
+    }
+
+    it('puts the attached file once, straight before the typed text', async () => {
+      expect(await directText('hello', file)).toBe(`${token} hello`);
+    });
+
+    it('sends no file token once the file is removed from the composer', async () => {
+      const props = idleComposerProps(vi.fn(), 'hello');
+      const send = vi.fn<SendMessage>(async () => undefined);
+      props.sendMessageRef.current = send;
+      props.activeFileRef.current = file;
+      props.activeFileExcludedRef.current = true;
+      const { result } = renderHook(() => useMessageSend(props));
+      await result.current();
+
+      expect(send.mock.calls.at(-1)?.[0].parts).toEqual([{ type: 'text', text: 'hello' }]);
+    });
+
+    it('lets a code selection stand in for the open file', async () => {
+      const props = idleComposerProps(vi.fn(), 'hello');
+      const send = vi.fn<SendMessage>(async () => undefined);
+      props.sendMessageRef.current = send;
+      props.activeFileRef.current = file;
+      props.codeSelectionContextRef.current = {
+        id: 'sel-1',
+        text: 'const a = 1;',
+        fileName: 'other.ts',
+        filePath: '/repo/other.ts',
+        language: 'typescript',
+        startLine: 3,
+        endLine: 4,
+        preview: 'const a = 1;',
+        createdAt: new Date(0),
+      };
+      const { result } = renderHook(() => useMessageSend(props));
+      await result.current();
+
+      const parts = send.mock.calls.at(-1)?.[0].parts ?? [];
+      const text = parts.flatMap((part) => (part.type === 'text' ? [part.text] : []))[0];
+      expect(text).toContain('@[code:other.ts:3-4:');
+      expect(text).not.toContain(token);
+    });
+
+    it('carries the file on a message queued behind a running turn', async () => {
+      expect(await queuedText('hello', file)).toBe(`${token} hello`);
+      expect(await queuedText('hello', null)).toBe('hello');
+    });
+
+    it('drains a queued message to the text a direct send produces, paste included', async () => {
+      const drained = await queuedText('see above', file, true);
+
+      expect(drained).toContain(token);
+      expect(await directText('see above', file, true)).toBe(drained);
+    });
+
+    it('does not repeat the file when an edited queued message already carries it', async () => {
+      expect(await directText(`${token} hello`, file)).toBe(`${token} hello`);
+      expect(await queuedText(`${token} hello`, file)).toBe(`${token} hello`);
+    });
+
+    it('leaves /compact bare on both paths', async () => {
+      expect(await directText('/compact', file)).toBe('/compact');
+      expect(await queuedText('/compact', file)).toBe('/compact');
     });
   });
 });
