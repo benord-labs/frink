@@ -116,7 +116,12 @@ export function startMobileLiveActivity(
     await Promise.all(
       live.map(({ id, token }) => {
         const candidate = { value: counts, since: now };
-        const state = devices.get(id) ?? { token, candidate, nextAllowedAt: 0, backoffMs: FLOOR_MS };
+        const state = devices.get(id) ?? {
+          token,
+          candidate,
+          nextAllowedAt: 0,
+          backoffMs: FLOOR_MS,
+        };
         devices.set(id, state);
         if (!same(state.candidate.value, counts)) state.candidate = candidate;
         state.zeroSince = counts.running + counts.needsYou ? undefined : (state.zeroSince ?? now);

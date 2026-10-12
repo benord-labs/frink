@@ -21,7 +21,6 @@ export function DraftProvider({ children }: { children: ReactNode }) {
   return <Context.Provider value={store.current}>{children}</Context.Provider>;
 }
 
-
 export function useDraft<T>(name: string, initial: T) {
   const store = useContext(Context);
   if (!store) throw new Error('DraftProvider is missing');

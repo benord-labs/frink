@@ -54,7 +54,8 @@ export function ConnectStep({
         </Text>
         {!pasting && (
           <Text variant="body" color="secondary">
-            Answer Frink’s questions, check on runs and start chats while you’re away from your desk.
+            Answer Frink’s questions, check on runs and start chats while you’re away from your
+            desk.
           </Text>
         )}
       </View>

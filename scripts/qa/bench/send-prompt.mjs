@@ -2,8 +2,12 @@
 import { readFileSync } from 'node:fs';
 import { connectPage, sleep, stamp } from './cdp.mjs';
 
-const [promptFile, chatId = 'qa-fixture-chat-seeded', subChatId = 'qa-fixture-subchat-1'] = process.argv.slice(2);
-if (!promptFile) { console.error('usage: send-prompt.mjs <prompt-file> [chatId] [subChatId]'); process.exit(2); }
+const [promptFile, chatId = 'qa-fixture-chat-seeded', subChatId = 'qa-fixture-subchat-1'] =
+  process.argv.slice(2);
+if (!promptFile) {
+  console.error('usage: send-prompt.mjs <prompt-file> [chatId] [subChatId]');
+  process.exit(2);
+}
 const prompt = readFileSync(promptFile, 'utf8').trim();
 const page = await connectPage(undefined, { renderer: 'vite' }); // imports Vite-served modules below
 await page.call('Page.enable');
@@ -19,13 +23,21 @@ const selected = await page.evaluate(`(async () => {
 stamp(`selected chat ${selected}`);
 await sleep(8_000);
 const COMPOSER = `document.querySelector('[role="textbox"][contenteditable="true"]')`;
-if ((await page.evaluate(`${COMPOSER} ? (${COMPOSER}.focus(), 'ok') : 'none'`)) !== 'ok') { stamp('composer not found'); process.exit(3); }
+if ((await page.evaluate(`${COMPOSER} ? (${COMPOSER}.focus(), 'ok') : 'none'`)) !== 'ok') {
+  stamp('composer not found');
+  process.exit(3);
+}
 await page.call('Input.insertText', { text: prompt });
 await sleep(1500);
 // A CDP key event never reaches the editor's React onKeyDown; a bubbling synthetic keydown does.
-await page.evaluate(`${COMPOSER}.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }))`);
+await page.evaluate(
+  `${COMPOSER}.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }))`,
+);
 await sleep(2000);
-if ((await page.evaluate(`${COMPOSER}.innerText.length`)) > 0) { stamp('send did not clear the composer'); process.exit(4); }
+if ((await page.evaluate(`${COMPOSER}.innerText.length`)) > 0) {
+  stamp('send did not clear the composer');
+  process.exit(4);
+}
 const t0 = Date.now();
 stamp('sent');
 // Settled = the reply row is persisted AND the status store no longer reports streaming; the persisted
@@ -43,9 +55,21 @@ const STATUS = `(async () => {
 const persistedBefore = await page.evaluate(PERSISTED);
 for (;;) {
   await sleep(5_000);
-  const [persisted, statuses] = await Promise.all([page.evaluate(PERSISTED), page.evaluate(STATUS)]);
+  const [persisted, statuses] = await Promise.all([
+    page.evaluate(PERSISTED),
+    page.evaluate(STATUS),
+  ]);
   stamp(`t+${Math.round((Date.now() - t0) / 1000)}s persisted=${persisted} ${statuses}`);
-  if (persisted > persistedBefore && !/streaming/.test(statuses)) { stamp('run finished'); break; }
-  if (Date.now() - t0 > 40 * 60_000) { page.close(); console.error(`run did not settle within 40 min (persisted ${persistedBefore} -> ${persisted})`); process.exit(5); }
+  if (persisted > persistedBefore && !/streaming/.test(statuses)) {
+    stamp('run finished');
+    break;
+  }
+  if (Date.now() - t0 > 40 * 60_000) {
+    page.close();
+    console.error(
+      `run did not settle within 40 min (persisted ${persistedBefore} -> ${persisted})`,
+    );
+    process.exit(5);
+  }
 }
 page.close();

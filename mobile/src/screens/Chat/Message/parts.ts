@@ -1,7 +1,4 @@
-import type {
-  MobileMessage,
-  MobileMessagePart,
-} from '@frink/shared/types/remote/mobile';
+import type { MobileMessage, MobileMessagePart } from '@frink/shared/types/remote/mobile';
 
 export type Tool = Extract<MobileMessagePart, { type: 'tool' }>;
 export type Attachment = Extract<MobileMessagePart, { type: 'attachment' }>;

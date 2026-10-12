@@ -32,10 +32,16 @@ export const BACKGROUND_WORK_CHATS = [
 ] as const;
 
 /** `accountId` binds each chat to the fixture's Claude login: a chat with no login refuses to send. */
-export function seedBackgroundWorkFixture(db: FixtureDb, projectId: string, accountId: string): void {
+export function seedBackgroundWorkFixture(
+  db: FixtureDb,
+  projectId: string,
+  accountId: string,
+): void {
   for (const chat of BACKGROUND_WORK_CHATS) {
     const at = { createdAt: CREATED_AT, updatedAt: CREATED_AT };
-    db.insert(schema.chats).values({ id: chat.chatId, name: chat.name, projectId, accountId, ...at }).run();
+    db.insert(schema.chats)
+      .values({ id: chat.chatId, name: chat.name, projectId, accountId, ...at })
+      .run();
     db.insert(schema.subChats)
       .values({ id: chat.subChatId, name: chat.name, chatId: chat.chatId, mode: 'agent', ...at })
       .run();

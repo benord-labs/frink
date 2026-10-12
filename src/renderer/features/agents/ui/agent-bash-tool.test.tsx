@@ -14,10 +14,16 @@ const commandOutputQuery = vi.fn((_input: unknown) => ({
   data: { runningForMs: 12_000, text: 'Compiling…\nBuilt in 9s' },
 }));
 vi.mock('../../../lib/trpc', () => ({
-  trpc: { socket: { getCommandOutput: { useQuery: (input: unknown, options: PollOptions) => {
-        pollOptions = options;
-        return commandOutputQuery(input);
-      }, } } },
+  trpc: {
+    socket: {
+      getCommandOutput: {
+        useQuery: (input: unknown, options: PollOptions) => {
+          pollOptions = options;
+          return commandOutputQuery(input);
+        },
+      },
+    },
+  },
 }));
 
 const bash = (state: string, output?: unknown) =>

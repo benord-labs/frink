@@ -717,9 +717,9 @@ describe('promptsUnlocked', () => {
 
   it('counts only an active account, never a disconnected one', () => {
     const inactive: ReadonlyArray<PluginConnection> = [{ ...TEST_ACCOUNT, isActive: false }];
-    expect(
-      promptsUnlocked(resolveOne(CONNECTED_PLUGIN, [installation()], inactive), 'none'),
-    ).toBe(false);
+    expect(promptsUnlocked(resolveOne(CONNECTED_PLUGIN, [installation()], inactive), 'none')).toBe(
+      false,
+    );
     expect(
       promptsUnlocked(resolveOne(TWO_GRANT_PLUGIN, [installation()], inactive), 'connected'),
     ).toBe(false);

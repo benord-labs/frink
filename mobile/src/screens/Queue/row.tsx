@@ -69,7 +69,13 @@ export function QueueListRow({
         testID={`queue-row-${row.key}`}
         title={row.title}
         subtitle={<StatusSlot row={row} />}
-        trailing={row.activityAt ? <Text variant="label" color="muted">{shortAge(row.activityAt)}</Text> : undefined}
+        trailing={
+          row.activityAt ? (
+            <Text variant="label" color="muted">
+              {shortAge(row.activityAt)}
+            </Text>
+          ) : undefined
+        }
         onPress={onOpen}
       />
     </SwipeAction>
@@ -115,7 +121,12 @@ export function MacEyebrow({ name, online }: { name: string; online: boolean }) 
       style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
     >
       <View
-        style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: online ? t.live : t.offline }}
+        style={{
+          width: 7,
+          height: 7,
+          borderRadius: 4,
+          backgroundColor: online ? t.live : t.offline,
+        }}
       />
       <Text variant="label" color="muted" numberOfLines={1}>
         {name}

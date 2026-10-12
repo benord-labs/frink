@@ -30,9 +30,13 @@ const GLYPHS: Record<GlyphName, LucideIcon> = {
 };
 
 export function toneColor(t: Theme, tone: StatusTone): string {
-  return { quiet: t.muted, live: t.live, accent: t.accent, attention: t.attention, danger: t.danger }[
-    tone
-  ];
+  return {
+    quiet: t.muted,
+    live: t.live,
+    accent: t.accent,
+    attention: t.attention,
+    danger: t.danger,
+  }[tone];
 }
 
 export function useReduceMotion(): boolean {

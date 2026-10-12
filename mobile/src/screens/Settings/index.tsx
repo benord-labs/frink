@@ -169,13 +169,7 @@ function Group({ title, children }: { title?: string; children: ReactNode }) {
 
 function Value({ children }: { children: string }) {
   return (
-    <Text
-      variant="secondary"
-      color="muted"
-      numberOfLines={1}
-      ellipsizeMode="middle"
-      selectable
-    >
+    <Text variant="secondary" color="muted" numberOfLines={1} ellipsizeMode="middle" selectable>
       {children}
     </Text>
   );

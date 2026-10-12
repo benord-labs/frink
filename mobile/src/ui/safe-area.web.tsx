@@ -10,7 +10,9 @@ export function SafeAreaProvider({ children }: { children: ReactNode }) {
   const { width, height } = useWindowDimensions();
   return (
     <SafeAreaFrameContext.Provider value={{ x: 0, y: 0, width, height }}>
-      <SafeAreaInsetsContext.Provider value={IPHONE_INSETS}>{children}</SafeAreaInsetsContext.Provider>
+      <SafeAreaInsetsContext.Provider value={IPHONE_INSETS}>
+        {children}
+      </SafeAreaInsetsContext.Provider>
     </SafeAreaFrameContext.Provider>
   );
 }

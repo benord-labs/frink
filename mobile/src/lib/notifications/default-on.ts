@@ -33,7 +33,10 @@ function change(edit: (ids: string[]) => string[]) {
 export async function turnOnByDefault(deviceId: string): Promise<boolean> {
   if (Platform.OS === 'web') return false;
   // Read after any queued change, so a quick switch back sees the latest choice.
-  return changes.then(read).then((ids) => !ids.includes(deviceId), () => false);
+  return changes.then(read).then(
+    (ids) => !ids.includes(deviceId),
+    () => false,
+  );
 }
 
 export function markTurnedOn(deviceId: string) {

@@ -249,7 +249,7 @@ function findSystemDeniedPathInSub(sub: SubCommand, projectRoot: string): string
  * True when a subcommand carries a path the denied list cannot evaluate, because
  * a metachar hides a directory segment.
  *
- * The rule pipeline does NOT hard-deny these — `grep foo src/*​/x.ts` is ordinary
+ * The rule pipeline does NOT hard-deny these — `grep foo src/ma*n/x.ts` is ordinary
  * — it makes the signature exact-match-only, so a prefix rule like `Bash(cat:*)`
  * stops auto-allowing and the user is asked. That closes the tier-1c bypass
  * without a hard deny no rule can appeal.
