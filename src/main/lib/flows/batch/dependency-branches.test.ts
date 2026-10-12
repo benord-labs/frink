@@ -62,7 +62,7 @@ async function finishRun(
     });
   }
   await db.update(flowRuns).set({ status, completedAt }).where(eq(flowRuns.id, flowRunId));
-  await onBatchRunTerminal(flowRunId, status);
+  await onBatchRunTerminal(flowRunId);
 }
 
 const at = (seconds: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, seconds));

@@ -2,16 +2,17 @@ import { eq } from 'drizzle-orm';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { FlowGraph } from '../../../../../shared/lib/validate-flow-graph';
 import type { FlowExecutionEvent } from '../../../../../shared/types/flow';
+import { createBatchStageRun } from '../../../db/repos/batch-stage-runs';
+import { createBatchStage, getBatchStage } from '../../../db/repos/batch-stages';
 import { getFlowRun, setFlowRunStatus } from '../../../db/repos/flow-runs';
 import { createTask, getTaskById, updateTaskStatus } from '../../../db/repos/tasks';
-import { flowRunAdmissions, flowRuns } from '../../../db/schema';
+import { batchStageRuns, flowRunAdmissions, flowRuns } from '../../../db/schema';
 import { seedFlowRun } from '../../../db/test-utils/flow-fixtures';
 import { freshDb, type TestDb } from '../../../db/test-utils/fresh-db';
 
 const holder = vi.hoisted(() => ({
   db: null as unknown,
   cancelUndispatched: vi.fn(),
-  hasLive: vi.fn(async () => false),
 }));
 
 vi.mock('../../../db', async (original) => ({
@@ -21,12 +22,14 @@ vi.mock('../../../db', async (original) => ({
 vi.mock('../runtime', async (original) => ({
   ...(await original<typeof import('../runtime')>()),
   cancelUndispatchedFlowAdmission: holder.cancelUndispatched,
-  hasLiveFlowAdmission: holder.hasLive,
 }));
 
-import { cancelFlowRun } from '../../engine';
+import { onBatchRunTerminal } from '../../batch-dispatch';
+import { cancelFlowRun, cancelFlowRunForChatDeletion } from '../../engine';
 import { subscribeFlowEvents } from '../../events';
+import { registerBatchStageSettler } from '../activity';
 import { _setFlowAdmissionControllerForTests } from '../runtime';
+import { recoverFlowAdmissionsAtStartup } from '../startup';
 
 const GRAPH: FlowGraph = {
   nodes: [
@@ -42,23 +45,71 @@ const GRAPH: FlowGraph = {
 
 afterEach(() => {
   holder.cancelUndispatched.mockReset();
-  holder.hasLive.mockReset();
-  holder.hasLive.mockResolvedValue(false);
   _setFlowAdmissionControllerForTests(null);
 });
 
-function seedResumeAdmission(db: TestDb, flowRunId: string, state: 'queued' | 'active'): number {
+function seedAdmission(
+  db: TestDb,
+  flowRunId: string,
+  state: 'queued' | 'claimed' | 'active',
+  action: 'start' | 'resume',
+): number {
   return db
     .insert(flowRunAdmissions)
     .values({
       flowRunId,
       state,
-      priorityClass: 'resume',
+      priorityClass: action,
       intentVersion: 1,
-      intentJson: { version: 1, action: 'resume', flow_run_id: flowRunId },
+      intentJson: { version: 1, action, flow_run_id: flowRunId },
     })
     .returning({ ticket: flowRunAdmissions.ticket })
     .get().ticket;
+}
+
+const seedResumeAdmission = (db: TestDb, flowRunId: string, state: 'queued' | 'active') =>
+  seedAdmission(db, flowRunId, state, 'resume');
+
+/** Makes the run the only member of a running batch stage; returns the stage id. */
+async function seedBatchMembership(
+  db: TestDb,
+  flowRunId: string,
+  member: { run: 'pending' | 'cancelled' | 'failed'; stageRun: 'queued' | 'failed' },
+): Promise<string> {
+  await db
+    .update(flowRuns)
+    .set({ batchId: 'batch-1', status: member.run, startedAt: null })
+    .where(eq(flowRuns.id, flowRunId));
+  const stage = await createBatchStage(db, {
+    batchId: 'batch-1',
+    stageNumber: 1,
+    name: 's1',
+    status: 'running',
+    failureThreshold: 0,
+    dependsOnStageIds: [],
+  });
+  await createBatchStageRun(db, {
+    stageId: stage.id,
+    triggerContext: {},
+    status: member.stageRun,
+    flowRunId,
+  });
+  return stage.id;
+}
+
+const stageStatus = async (db: TestDb, stageId: string) =>
+  (await getBatchStage(db, stageId))?.status;
+
+/** Runs the Cancel with no batch listener attached, returning the terminal events it emitted. */
+async function cancelCollectingEvents(
+  flowRunId: string,
+  options?: Parameters<typeof cancelFlowRun>[1],
+): Promise<FlowExecutionEvent[]> {
+  const seen: FlowExecutionEvent[] = [];
+  const unsubscribe = subscribeFlowEvents((event) => seen.push(event));
+  await cancelFlowRun(flowRunId, options);
+  unsubscribe();
+  return seen;
 }
 
 const admissionState = (db: TestDb, ticket: number) =>
@@ -106,6 +157,89 @@ describe('terminal Flow retry cancellation', () => {
     // The Cancel releases the promoted slot; nothing else holds it.
     expect(admissionState(db, ticket)).toBe('cancelled');
   });
+
+  it('keeps the stage running when a retry re-admits the run before its cancel event lands', async () => {
+    const db = freshDb();
+    holder.db = db;
+    const { flowRunId } = await seedFlowRun(db, GRAPH);
+    const stageId = await seedBatchMembership(db, flowRunId, {
+      run: 'pending',
+      stageRun: 'queued',
+    });
+    const ticket = seedAdmission(db, flowRunId, 'queued', 'start');
+
+    const seen = await cancelCollectingEvents(flowRunId);
+    expect(admissionState(db, ticket)).toBe('cancelled');
+    // The user's Retry is queued before the cancel event reaches the batch listener.
+    seedResumeAdmission(db, flowRunId, 'queued');
+    for (const event of seen) await onBatchRunTerminal(event.flowRunId ?? '');
+
+    expect(seen).toContainEqual(expect.objectContaining({ eventType: 'run_cancelled', flowRunId }));
+    expect(await stageStatus(db, stageId)).toBe('running');
+  });
+
+  it('settles the stage when the queued retry of a finished member is cancelled', async () => {
+    const db = freshDb();
+    holder.db = db;
+    const { flowRunId } = await seedFlowRun(db, GRAPH);
+    const stageId = await seedBatchMembership(db, flowRunId, { run: 'failed', stageRun: 'failed' });
+    const ticket = seedResumeAdmission(db, flowRunId, 'queued');
+
+    const seen = await cancelCollectingEvents(flowRunId);
+
+    expect(admissionState(db, ticket)).toBe('cancelled');
+    // The run was already terminal, so its ending is not announced a second time.
+    expect(seen.filter((event) => event.flowRunId)).toEqual([]);
+    expect(await stageStatus(db, stageId)).toBe('failed');
+  });
+});
+
+describe('a queued retry dropped without a terminal event', () => {
+  it('settles the stage when the chat that owns the finished member is deleted', async () => {
+    const db = freshDb();
+    holder.db = db;
+    const { flowRunId } = await seedFlowRun(db, GRAPH);
+    const stageId = await seedBatchMembership(db, flowRunId, { run: 'failed', stageRun: 'failed' });
+    const ticket = seedResumeAdmission(db, flowRunId, 'queued');
+
+    await cancelFlowRunForChatDeletion(flowRunId, ['chat-1']);
+
+    expect(admissionState(db, ticket)).toBe('cancelled');
+    expect(await stageStatus(db, stageId)).toBe('failed');
+  });
+
+  it('settles the stage at startup once recovery drops a claim a dead process left behind', async () => {
+    const db = freshDb();
+    holder.db = db;
+    const { flowRunId } = await seedFlowRun(db, GRAPH);
+    const stageId = await seedBatchMembership(db, flowRunId, { run: 'failed', stageRun: 'failed' });
+    const ticket = seedAdmission(db, flowRunId, 'claimed', 'resume');
+
+    await recoverFlowAdmissionsAtStartup();
+
+    expect(admissionState(db, ticket)).toBe('failed');
+    expect(await stageStatus(db, stageId)).toBe('failed');
+  });
+
+  it('still reports the Cancel as done when the stage settle fails', async () => {
+    const db = freshDb();
+    holder.db = db;
+    const { flowRunId } = await seedFlowRun(db, GRAPH);
+    const stageId = await seedBatchMembership(db, flowRunId, { run: 'failed', stageRun: 'failed' });
+    const ticket = seedResumeAdmission(db, flowRunId, 'queued');
+    registerBatchStageSettler(async () => {
+      throw new Error('stage settle failed');
+    });
+
+    const result = await cancelFlowRun(flowRunId).finally(() =>
+      registerBatchStageSettler(onBatchRunTerminal),
+    );
+
+    // The ticket is gone either way; the stage is picked up by the next member event or sweep.
+    expect(result?.status).toBe('failed');
+    expect(admissionState(db, ticket)).toBe('cancelled');
+    expect(await stageStatus(db, stageId)).toBe('running');
+  });
 });
 
 describe('Work Queue dequeue', () => {
@@ -129,25 +263,45 @@ describe('Work Queue dequeue', () => {
     expect(result?.status).toBe('cancelled');
   });
 
-  it('withholds the terminal event when a retry has already re-admitted the run', async () => {
+  it('keeps the stage running when a retry re-admits the run before its cancel event lands', async () => {
     const db = freshDb();
     holder.db = db;
     const { flowRunId } = await seedFlowRun(db, GRAPH);
-    await db.update(flowRuns).set({ batchId: 'batch-1' }).where(eq(flowRuns.id, flowRunId));
+    const stageId = await seedBatchMembership(db, flowRunId, {
+      run: 'pending',
+      stageRun: 'queued',
+    });
+    // The dequeue's own transaction: the never-dispatched run and its stage run are terminalized.
     holder.cancelUndispatched.mockImplementationOnce(async () => {
       await setFlowRunStatus(db, flowRunId, 'cancelled');
+      await db
+        .update(batchStageRuns)
+        .set({ status: 'failed' })
+        .where(eq(batchStageRuns.flowRunId, flowRunId));
       return true;
     });
-    // A replacement admission won the run between the cancellation and this emit.
-    holder.hasLive.mockResolvedValueOnce(true);
-    const seen: FlowExecutionEvent[] = [];
-    const unsubscribe = subscribeFlowEvents((event) => seen.push(event));
 
-    await cancelFlowRun(flowRunId, { queuedOnly: QUEUED_ONLY });
-    unsubscribe();
+    const seen = await cancelCollectingEvents(flowRunId, { queuedOnly: QUEUED_ONLY });
+    // The user's Retry is queued before the cancel event reaches the batch listener.
+    seedResumeAdmission(db, flowRunId, 'queued');
+    for (const event of seen) await onBatchRunTerminal(event.flowRunId ?? '');
 
-    // Emitting would settle the batch stage while the replacement is still waiting to run.
-    expect(seen).toEqual([]);
+    expect(seen).toContainEqual(expect.objectContaining({ eventType: 'run_cancelled', flowRunId }));
+    expect(await stageStatus(db, stageId)).toBe('running');
+  });
+
+  it('settles the stage when the queued retry of a finished member is removed', async () => {
+    const db = freshDb();
+    holder.db = db;
+    const { flowRunId } = await seedFlowRun(db, GRAPH);
+    const stageId = await seedBatchMembership(db, flowRunId, { run: 'failed', stageRun: 'failed' });
+    // The removed ticket was the only thing the stage was still waiting on.
+    holder.cancelUndispatched.mockResolvedValueOnce(true);
+
+    const seen = await cancelCollectingEvents(flowRunId, { queuedOnly: QUEUED_ONLY });
+
+    expect(seen.filter((event) => event.flowRunId)).toEqual([]);
+    expect(await stageStatus(db, stageId)).toBe('failed');
   });
 
   it('emits the terminal event a removed batch member needs to settle its stage', async () => {

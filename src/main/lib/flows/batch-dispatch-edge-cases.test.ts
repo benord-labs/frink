@@ -17,11 +17,19 @@ vi.mock('../db', () => ({ getDatabase: mocks.getDatabase }));
 vi.mock('./start', () => ({ startFlowRun: mocks.startFlowRun }));
 
 import type { FlowExecutionEvent } from '../../../shared/types/flow';
-import { listRunsForStage } from '../db/repos/batch-stage-runs';
+import { listRunsForStage, settleStageRunFromRun } from '../db/repos/batch-stage-runs';
 import { getBatchStage, settleStageIfQuiescent } from '../db/repos/batch-stages';
-import { batchStageRuns, batchStages, flowRuns } from '../db/schema';
+import { batchStageRuns, batchStages, flowRunAdmissions, flowRuns } from '../db/schema';
 import { freshDb, type TestDb } from '../db/test-utils/fresh-db';
-import { onBatchRunTerminal, recoverBatchStages, startFlowBatchLocal } from './batch-dispatch';
+import { setFlowAdmissionLifecycleHooks } from './admission/activity';
+import { FlowAdmissionController } from './admission/controller';
+import { _setFlowAdmissionControllerForTests, drainFlowAdmissions } from './admission/runtime';
+import {
+  onBatchRunTerminal,
+  recoverBatchStages,
+  startBatchAdvanceListener,
+  startFlowBatchLocal,
+} from './batch-dispatch';
 import {
   makeStartFlowRunMock,
   runId,
@@ -29,7 +37,7 @@ import {
   seedBatchStage,
   setRunStatus,
 } from './batch-test-factories';
-import { subscribeFlowEvents } from './events';
+import { flowEventBus, subscribeFlowEvents } from './events';
 import { defineFlowBatchStages } from './mcp-cloud-shim';
 
 let db: TestDb;
@@ -46,7 +54,7 @@ const seedStage = (input: Parameters<typeof seedBatchStage>[2]) => seedBatchStag
 
 async function finishRun(flowRunId: string, status: 'completed' | 'failed' | 'cancelled') {
   await setRunStatus(db, flowRunId, status);
-  await onBatchRunTerminal(flowRunId, status);
+  await onBatchRunTerminal(flowRunId);
 }
 
 beforeEach(async () => {
@@ -73,7 +81,7 @@ describe('concurrency races (multi-pane)', () => {
     );
 
     // Both terminal events race into settleStage/promoteSuccessors.
-    await Promise.all(dispatched.map((bsr) => onBatchRunTerminal(runId(bsr), 'completed')));
+    await Promise.all(dispatched.map((bsr) => onBatchRunTerminal(runId(bsr))));
 
     expect((await getBatchStage(db, root.id))?.status).toBe('completed');
     expect((await getBatchStage(db, next.id))?.status).toBe('running');
@@ -104,7 +112,7 @@ describe('concurrency races (multi-pane)', () => {
 
     await finishRun(runId(bsr), 'completed');
     // Stale second event (e.g. a cancel emitted after the watcher already settled).
-    await onBatchRunTerminal(runId(bsr), 'failed');
+    await onBatchRunTerminal(runId(bsr));
 
     expect((await listRunsForStage(db, root.id))[0].status).toBe('completed');
     expect((await getBatchStage(db, root.id))?.status).toBe('completed');
@@ -488,6 +496,258 @@ describe('finalize recounts inside its own transaction', () => {
     });
     expect((await getBatchStage(db, stage.id))?.status).toBe('failed');
     expect(settleStageIfQuiescent(db, { id: stage.id, failureThreshold: 0 })).toBeNull();
+  });
+});
+
+/** A member's admission ticket, as the admission store would have written it. */
+function seedAdmission(
+  flowRunId: string,
+  priorityClass: 'start' | 'resume',
+  state: 'queued' | 'claimed' | 'active',
+): void {
+  db.insert(flowRunAdmissions)
+    .values({
+      flowRunId,
+      state,
+      priorityClass,
+      intentVersion: 1,
+      intentJson: {
+        version: 1,
+        action: priorityClass === 'start' ? 'start' : 'resume',
+        flow_run_id: flowRunId,
+      },
+    })
+    .run();
+}
+
+/** The promotion transaction of a queued Retry: ticket active, run running, member dispatched again. */
+async function promoteRetry(bsrId: string, flowRunId: string): Promise<void> {
+  await db
+    .update(flowRunAdmissions)
+    .set({ state: 'active' })
+    .where(eq(flowRunAdmissions.flowRunId, flowRunId));
+  await db.update(flowRuns).set({ status: 'running' }).where(eq(flowRuns.id, flowRunId));
+  await db.update(batchStageRuns).set({ status: 'dispatched' }).where(eq(batchStageRuns.id, bsrId));
+}
+
+describe('a stage waits for a member whose Retry is still queued', () => {
+  it('settles on a normal completion while the member still holds its own slot', async () => {
+    const stage = await seedStage({ stageNumber: 1, runCount: 1 });
+    await startFlowBatchLocal(flowId, BATCH);
+    const [bsr] = await listRunsForStage(db, stage.id);
+    // The run's own ticket is released only after its terminal event has been handled.
+    seedAdmission(runId(bsr), 'start', 'active');
+
+    await finishRun(runId(bsr), 'completed');
+
+    expect((await getBatchStage(db, stage.id))?.status).toBe('completed');
+  });
+
+  it('ignores a cancel event that a Retry has already overtaken', async () => {
+    const root = await seedStage({ stageNumber: 1, runCount: 1, failureThreshold: 0 });
+    const next = await seedStage({ stageNumber: 2, runCount: 1, dependsOnStageIds: [root.id] });
+    await startFlowBatchLocal(flowId, BATCH);
+    const [bsr] = await listRunsForStage(db, root.id);
+    // The Cancel committed, then the user's Retry was queued, and only now does the event arrive.
+    await setRunStatus(db, runId(bsr), 'cancelled');
+    await db.update(batchStageRuns).set({ status: 'failed' }).where(eq(batchStageRuns.id, bsr.id));
+    seedAdmission(runId(bsr), 'resume', 'queued');
+
+    await onBatchRunTerminal(runId(bsr));
+
+    expect((await getBatchStage(db, root.id))?.status).toBe('running');
+    // Settling would have cascade-cancelled the successor the Retry can still unblock.
+    expect((await getBatchStage(db, next.id))?.status).toBe('pending');
+  });
+
+  it('stays running when a sibling finishes while a Retry is queued', async () => {
+    const stage = await seedStage({ stageNumber: 1, runCount: 2, failureThreshold: 0 });
+    await startFlowBatchLocal(flowId, BATCH);
+    const [bsr1, bsr2] = await listRunsForStage(db, stage.id);
+    await finishRun(runId(bsr1), 'failed');
+    seedAdmission(runId(bsr1), 'resume', 'queued');
+
+    await finishRun(runId(bsr2), 'completed');
+
+    expect((await getBatchStage(db, stage.id))?.status).toBe('running');
+  });
+
+  it('settles from the Retry once it has run, not from the event it overtook', async () => {
+    const stage = await seedStage({ stageNumber: 1, runCount: 1, failureThreshold: 0 });
+    await startFlowBatchLocal(flowId, BATCH);
+    const [bsr] = await listRunsForStage(db, stage.id);
+    await setRunStatus(db, runId(bsr), 'cancelled');
+    await db.update(batchStageRuns).set({ status: 'failed' }).where(eq(batchStageRuns.id, bsr.id));
+    seedAdmission(runId(bsr), 'resume', 'queued');
+    await promoteRetry(bsr.id, runId(bsr));
+
+    // The overtaken cancel event lands on a member that is running again.
+    await onBatchRunTerminal(runId(bsr));
+    expect((await listRunsForStage(db, stage.id))[0].status).toBe('dispatched');
+    expect((await getBatchStage(db, stage.id))?.status).toBe('running');
+
+    await finishRun(runId(bsr), 'completed');
+    expect((await listRunsForStage(db, stage.id))[0].status).toBe('completed');
+    expect((await getBatchStage(db, stage.id))?.status).toBe('completed');
+  });
+
+  it('settles once a queued Retry is dropped without ever running', async () => {
+    const stage = await seedStage({ stageNumber: 1, runCount: 1, failureThreshold: 0 });
+    await startFlowBatchLocal(flowId, BATCH);
+    const [bsr] = await listRunsForStage(db, stage.id);
+    await setRunStatus(db, runId(bsr), 'failed');
+    await db.update(batchStageRuns).set({ status: 'failed' }).where(eq(batchStageRuns.id, bsr.id));
+    seedAdmission(runId(bsr), 'resume', 'queued');
+    await onBatchRunTerminal(runId(bsr));
+    expect((await getBatchStage(db, stage.id))?.status).toBe('running');
+
+    await db
+      .update(flowRunAdmissions)
+      .set({ state: 'cancelled' })
+      .where(eq(flowRunAdmissions.flowRunId, runId(bsr)));
+    await onBatchRunTerminal(runId(bsr));
+
+    expect((await getBatchStage(db, stage.id))?.status).toBe('failed');
+  });
+
+  it('settles at the next startup sweep once a Retry claim left by a dead process is dropped', async () => {
+    const stage = await seedStage({ stageNumber: 1, runCount: 1, failureThreshold: 0 });
+    await startFlowBatchLocal(flowId, BATCH);
+    const [bsr] = await listRunsForStage(db, stage.id);
+    await setRunStatus(db, runId(bsr), 'failed');
+    await db.update(batchStageRuns).set({ status: 'failed' }).where(eq(batchStageRuns.id, bsr.id));
+    seedAdmission(runId(bsr), 'resume', 'claimed');
+
+    await recoverBatchStages();
+    expect((await getBatchStage(db, stage.id))?.status).toBe('running');
+
+    // Admission recovery fails the stranded claim; the sweep that follows it settles the stage.
+    await db
+      .update(flowRunAdmissions)
+      .set({ state: 'failed' })
+      .where(eq(flowRunAdmissions.flowRunId, runId(bsr)));
+    await recoverBatchStages();
+
+    expect((await getBatchStage(db, stage.id))?.status).toBe('failed');
+  });
+
+  it('settles once a queued Retry is refused at claim', async () => {
+    const stage = await seedStage({ stageNumber: 1, runCount: 1, failureThreshold: 0 });
+    await startFlowBatchLocal(flowId, BATCH);
+    const [bsr] = await listRunsForStage(db, stage.id);
+    await finishRun(runId(bsr), 'failed');
+    await db.update(batchStages).set({ status: 'running' }).where(eq(batchStages.id, stage.id));
+    // The node run this Retry points at is gone, so claim validation refuses the ticket.
+    db.insert(flowRunAdmissions)
+      .values({
+        flowRunId: runId(bsr),
+        state: 'queued',
+        priorityClass: 'resume',
+        intentVersion: 1,
+        intentJson: {
+          version: 1,
+          action: 'resume',
+          flow_run_id: runId(bsr),
+          node_run_id: 'missing-node-run',
+        },
+      })
+      .run();
+    _setFlowAdmissionControllerForTests(new FlowAdmissionController(db));
+
+    await drainFlowAdmissions();
+    _setFlowAdmissionControllerForTests(null);
+
+    const [ticket] = db.select().from(flowRunAdmissions).all();
+    expect(ticket.state).toBe('failed');
+    expect((await getBatchStage(db, stage.id))?.status).toBe('failed');
+  });
+
+  it('leaves a member alone when its run is running again by the time of the write', async () => {
+    const stage = await seedStage({ stageNumber: 1, runCount: 1 });
+    await startFlowBatchLocal(flowId, BATCH);
+    const [bsr] = await listRunsForStage(db, stage.id);
+
+    // The caller saw a terminal run; a Retry promotion committed before this write.
+    settleStageRunFromRun(db, bsr.id, runId(bsr));
+    expect((await listRunsForStage(db, stage.id))[0].status).toBe('dispatched');
+
+    await setRunStatus(db, runId(bsr), 'cancelled');
+    settleStageRunFromRun(db, bsr.id, runId(bsr));
+    expect((await listRunsForStage(db, stage.id))[0].status).toBe('failed');
+  });
+
+  it('does not hold a stage open for a Retry queued in a different stage', async () => {
+    const stageA = await seedStage({ stageNumber: 1, runCount: 1, failureThreshold: 0 });
+    const stageB = await seedStage({ stageNumber: 2, runCount: 1, failureThreshold: 0 });
+    await startFlowBatchLocal(flowId, BATCH);
+    const [bsrA] = await listRunsForStage(db, stageA.id);
+    const [bsrB] = await listRunsForStage(db, stageB.id);
+    await setRunStatus(db, runId(bsrB), 'failed');
+    await db.update(batchStageRuns).set({ status: 'failed' }).where(eq(batchStageRuns.id, bsrB.id));
+    seedAdmission(runId(bsrB), 'resume', 'queued');
+
+    await finishRun(runId(bsrA), 'completed');
+
+    expect((await getBatchStage(db, stageA.id))?.status).toBe('completed');
+    expect((await getBatchStage(db, stageB.id))?.status).toBe('running');
+  });
+
+  it('stays running when both members race in while one has a queued Retry', async () => {
+    const root = await seedStage({ stageNumber: 1, runCount: 2, failureThreshold: 0 });
+    const next = await seedStage({ stageNumber: 2, runCount: 1, dependsOnStageIds: [root.id] });
+    await startFlowBatchLocal(flowId, BATCH);
+    const [bsr1, bsr2] = await listRunsForStage(db, root.id);
+    await setRunStatus(db, runId(bsr1), 'cancelled');
+    await setRunStatus(db, runId(bsr2), 'completed');
+    seedAdmission(runId(bsr1), 'resume', 'queued');
+
+    // The overtaken cancel event and the sibling's completion are handled in the same tick.
+    await Promise.all([onBatchRunTerminal(runId(bsr1)), onBatchRunTerminal(runId(bsr2))]);
+    expect((await getBatchStage(db, root.id))?.status).toBe('running');
+    expect((await getBatchStage(db, next.id))?.status).toBe('pending');
+
+    await promoteRetry(bsr1.id, runId(bsr1));
+    await finishRun(runId(bsr1), 'completed');
+    expect((await getBatchStage(db, root.id))?.status).toBe('completed');
+    expect((await getBatchStage(db, next.id))?.status).toBe('running');
+    expect(mocks.startFlowRun).toHaveBeenCalledTimes(3); // 2 members + the successor, once
+  });
+
+  it('settles from the run row when the delivered event names a different outcome', async () => {
+    setFlowAdmissionLifecycleHooks({
+      reconcile: vi.fn(async () => {}),
+      requestRelease: vi.fn(async () => {}),
+    });
+    const stage = await seedStage({ stageNumber: 1, runCount: 1, failureThreshold: 0 });
+    await startFlowBatchLocal(flowId, BATCH);
+    const [bsr] = await listRunsForStage(db, stage.id);
+    await setRunStatus(db, runId(bsr), 'failed');
+    const unsubscribe = startBatchAdvanceListener();
+    const event = { flowId, flowName: 'F', flowRunId: runId(bsr), batchId: BATCH };
+
+    // A pause is not an ending, whatever the run row says.
+    flowEventBus.emitFlowEvent({ ...event, eventType: 'run_paused', runStatus: 'paused' });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect((await listRunsForStage(db, stage.id))[0].status).toBe('dispatched');
+
+    flowEventBus.emitFlowEvent({ ...event, eventType: 'run_completed', runStatus: 'completed' });
+    await vi.waitFor(async () =>
+      expect((await getBatchStage(db, stage.id))?.status).toBe('failed'),
+    );
+    unsubscribe();
+
+    expect((await listRunsForStage(db, stage.id))[0].status).toBe('failed');
+  });
+
+  it.each(['queued', 'claimed'] as const)('is not quiescent with a %s Retry', async (state) => {
+    const stage = await seedStage({ stageNumber: 1, runCount: 1, failureThreshold: 0 });
+    await startFlowBatchLocal(flowId, BATCH);
+    const [bsr] = await listRunsForStage(db, stage.id);
+    await db.update(batchStageRuns).set({ status: 'failed' }).where(eq(batchStageRuns.id, bsr.id));
+    seedAdmission(runId(bsr), 'resume', state);
+
+    expect(settleStageIfQuiescent(db, { id: stage.id, failureThreshold: 0 })).toBeNull();
+    expect((await getBatchStage(db, stage.id))?.status).toBe('running');
   });
 });
 

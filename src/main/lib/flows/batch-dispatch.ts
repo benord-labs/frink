@@ -20,6 +20,7 @@ import {
   listRunsForStage,
   setStageRunStatus,
   setStageRunStatusIf,
+  settleStageRunFromRun,
 } from '../db/repos/batch-stage-runs';
 import {
   getBatchStage,
@@ -36,7 +37,11 @@ import {
 } from '../db/repos/flow-runs';
 import { getVersion } from '../db/repos/flow-versions';
 import type { BatchStage, BatchStageRun } from '../db/schema';
-import { captureFlowAdmissionException, withFlowResourceCleanup } from './admission/activity';
+import {
+  captureFlowAdmissionException,
+  registerBatchStageSettler,
+  withFlowResourceCleanup,
+} from './admission/activity';
 import {
   occupiedStageSlots,
   settleTerminalBatchReplay,
@@ -64,6 +69,7 @@ type Db = ReturnType<typeof getDatabase>;
 const CASCADE_ROUND_LIMIT = 50;
 
 const TERMINAL_RUN_STATUSES = new Set(['completed', 'failed', 'cancelled']);
+const TERMINAL_RUN_EVENTS = new Set(['run_completed', 'run_failed', 'run_cancelled']);
 
 /**
  * A pending BSR linked to a terminal flow_run is ambiguous begun work, not a first dispatch.
@@ -379,10 +385,7 @@ export async function startFlowBatchLocal(
  * BSR up by flow_run_id with an idempotencyKey fallback — the dispatch loop's
  * link UPDATE can lose the race against a fast synchronous run.
  */
-export async function onBatchRunTerminal(
-  flowRunId: string,
-  runStatus: 'completed' | 'failed' | 'cancelled',
-): Promise<void> {
+export async function onBatchRunTerminal(flowRunId: string): Promise<void> {
   const db = getDatabase();
   const run = await getFlowRun(db, flowRunId);
   if (!run?.batchId) return; // not a batch run — zero overhead for normal flows
@@ -391,13 +394,7 @@ export async function onBatchRunTerminal(
   if (!bsr && run.idempotencyKey) bsr = await getBatchStageRun(db, run.idempotencyKey);
   if (!bsr) return;
 
-  await setStageRunStatusIf(
-    db,
-    bsr.id,
-    [...ACTIVE_BSR_STATUSES],
-    runStatus === 'completed' ? 'completed' : 'failed',
-    run.id,
-  );
+  settleStageRunFromRun(db, bsr.id, run.id);
 
   const stage = await getBatchStage(db, bsr.stageId);
   if (stage?.status !== 'running') return;
@@ -406,21 +403,15 @@ export async function onBatchRunTerminal(
   await settleStage(db, stage.id, ctx);
 }
 
+registerBatchStageSettler(onBatchRunTerminal);
+
 /** Subscribe stage advancement to run-terminal events. Returns the unsubscribe. */
 export function startBatchAdvanceListener(): () => void {
   return subscribeFlowEvents((event) => {
-    if (
-      event.eventType !== 'run_completed' &&
-      event.eventType !== 'run_failed' &&
-      event.eventType !== 'run_cancelled'
-    ) {
-      return;
-    }
-    if (!event.flowRunId) return; // run_* events always carry a run id
-    const flowRunId = event.flowRunId;
-    const runStatus = event.eventType.replace('run_', '') as 'completed' | 'failed' | 'cancelled';
+    const { flowRunId } = event;
+    if (!TERMINAL_RUN_EVENTS.has(event.eventType) || !flowRunId) return;
     const advance = withFlowResourceCleanup(flowRunId, () =>
-      event.batchId ? onBatchRunTerminal(flowRunId, runStatus) : undefined,
+      event.batchId ? onBatchRunTerminal(flowRunId) : undefined,
     );
     void advance.catch((err) => {
       log.warn('[BatchDispatch] stage advance failed', { flowRunId, err });
