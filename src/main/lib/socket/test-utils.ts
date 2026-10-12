@@ -93,21 +93,28 @@ export function stopHookQuery(opts: {
   return handle;
 }
 
+type SubmitHookInput = { hook_event_name: 'UserPromptSubmit'; source: 'sdk'; prompt: string };
+type SubmitHookOutput = { hookSpecificOutput?: { additionalContext?: string } };
+type SubmitHook = (input: SubmitHookInput) => Promise<SubmitHookOutput>;
+/** The part of one claudeQuery call that carries the hooks the executor registered. */
+export type ClaudeQueryCall = {
+  options?: { hooks?: { UserPromptSubmit?: Array<{ hooks?: SubmitHook[] }> } };
+};
+
 /**
  * Operator reminders (mode-exit, disarmed task-signal) are delivered on the Claude path as an
  * in-conversation system prompt via the SDK's UserPromptSubmit hook — NOT prepended to the user
  * prompt. Returns the hook's `additionalContext` for a given claudeQuery call, or undefined when no
  * reminder hook was registered that turn. Assertions check this instead of `call.prompt`.
  */
-export async function userPromptSubmitReminder(call: unknown): Promise<string | undefined> {
-  const hook = (
-    call as {
-      options?: { hooks?: { UserPromptSubmit?: Array<{ hooks?: Array<() => Promise<unknown>> }> } };
-    }
-  )?.options?.hooks?.UserPromptSubmit?.[0]?.hooks?.[0];
-  if (typeof hook !== 'function') return undefined;
-  const out = (await hook()) as { hookSpecificOutput?: { additionalContext?: string } };
-  return out?.hookSpecificOutput?.additionalContext;
+export async function userPromptSubmitReminder(
+  call: ClaudeQueryCall,
+  prompt = '',
+): Promise<string | undefined> {
+  const hook = call.options?.hooks?.UserPromptSubmit?.[0]?.hooks?.[0];
+  if (!hook) return undefined;
+  const out = await hook({ hook_event_name: 'UserPromptSubmit', source: 'sdk', prompt });
+  return out.hookSpecificOutput?.additionalContext;
 }
 
 /** Extract the text of one user-message `content` (a bare string, or an array of content blocks). */

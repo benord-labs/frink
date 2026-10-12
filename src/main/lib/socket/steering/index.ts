@@ -13,6 +13,8 @@ import { buildClaudeUserMessage } from '../claude-input-queue';
 import { getSession } from '../claude-session-registry';
 import type { ClaudeTurnContext } from '../claude-turn-context';
 import { emitSteerMarker } from './emitter';
+import { registerClaudeDelivery } from '../execution/message-provenance/claude';
+import { createMessageProvenance } from '../execution/message-provenance';
 
 /**
  * The steer's own trace in the transcript, rendered as a card INSIDE the running assistant message.
@@ -81,12 +83,20 @@ function steerClaudeTurn(subChatId: string, message: SteerMessage): SteerOutcome
   // A steer is a bare push onto the queue the SDK is already draining. The CLI splices it into the
   // running turn at its next model invocation and still emits exactly ONE `result` for the whole
   // turn (verified against the CLI), so the turn loop needs no knowledge of this.
-  session.queue.push(
-    buildClaudeUserMessage(message.text, message.imageParts ?? [], 'agent', {
-      uuid: randomUUID() as SDKUserMessage['uuid'],
-      priority: 'next',
-    }),
-  );
+  const input = buildClaudeUserMessage(message.text, message.imageParts ?? [], 'agent', {
+    uuid: randomUUID() as SDKUserMessage['uuid'],
+    priority: 'next',
+  });
+  const activeTurn = session.currentTurn;
+  if (activeTurn?.messageProvenance) {
+    registerClaudeDelivery(
+      session,
+      input,
+      createMessageProvenance({ source: 'person', kind: 'steer' }),
+      activeTurn,
+    );
+  }
+  session.queue.push(input);
   if (session.currentTurn) session.currentTurn.steered = true;
   return 'delivered';
 }

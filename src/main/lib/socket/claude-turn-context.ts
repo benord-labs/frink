@@ -15,6 +15,7 @@ import type { UIMessageChunk } from '../claude/types';
 import type { RecordedTaskSignal } from '../mcp/task-signal-tool';
 import type { TurnHooks } from '../provider/hooks/dispatch';
 import type { MessagePart } from './client';
+import type { MessageProvenance } from '../../../shared/lib/message-markers/message-provenance';
 
 /** `MessagePart.state` is an untyped index-signature field; this is the one typed writer for it. */
 function setToolPartState(part: MessagePart, state: ToolPartState): void {
@@ -95,6 +96,7 @@ export interface ClaudeTurnContext {
   /** Operator reminders to deliver via the UserPromptSubmit hook for THIS turn (empty on wake
    * bursts and on turns whose reminders ride the prompt prepend instead). */
   pendingReminders: string[];
+  messageProvenance?: MessageProvenance;
   /** Whether this turn delegates Frink's residual `ask` decisions to Claude's native Auto Mode. */
   autoReviewTools: boolean;
   /** Auto may review THIS turn's plan-drafting phase (resolveAutoReviewModes). On the turn because
@@ -212,6 +214,7 @@ export function createWakeBurstTurn(
   wakeTurn.planAutoReview = arming.planAutoReview;
   wakeTurn.isWakeBurst = true;
   wakeTurn.execution = arming.execution;
+  wakeTurn.messageProvenance = arming.messageProvenance;
   return wakeTurn;
 }
 

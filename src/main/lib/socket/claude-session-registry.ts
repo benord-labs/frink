@@ -7,6 +7,7 @@ import {
 import { retireChannelToken, setChannelToken } from '../mcp/execution-identity';
 import { captureMainMessage } from '../sentry/init';
 import type { TaskStopHook } from '../task-stop-hook';
+import type { registerClaudeDelivery } from './execution/message-provenance/claude';
 import type { ClaudeTurnContext } from './claude-turn-context';
 import { diffKeyParts } from './execution/claude-session/session-key';
 import {
@@ -58,6 +59,8 @@ export interface ClaudeSession {
   /** The ACTIVE turn's state, read by the session's SDK callbacks (session-callbacks.ts). Null
    * means no turn is attached: they deny tools and Stop allows. */
   currentTurn: ClaudeTurnContext | null;
+  pendingDeliveries: Parameters<typeof registerClaudeDelivery>[0]['pendingDeliveries'];
+  provenanceRuleKnown?: boolean;
   /** Drop this session from the registry once its query is dead. Bound at creation so the reader
    * loop can evict without importing the registry back. */
   evict: () => void;
@@ -152,6 +155,7 @@ export function createSession(
     interruptExpected: false,
     turnSettled: null,
     currentTurn: null,
+    pendingDeliveries: [],
     evict: () => evictIfCurrent(session),
     retire: (reason) => retireSession(session, reason),
     loop: createSessionLoop(),
@@ -170,6 +174,7 @@ export function endSession(subChatId: string): void {
   sessions.delete(subChatId);
   clearSubagentTasks(subChatId);
   stopSessionLoop(session);
+  session.pendingDeliveries = [];
   if (!session.queue.closed) session.queue.close();
 }
 
@@ -255,6 +260,7 @@ export function retainSession(session: ClaudeSession, { prewarm = false } = {}):
   };
   retained.timer.unref();
   session.retained = retained;
+  session.pendingDeliveries = [];
   session.currentTurn = null;
   evictOverCap(session);
   if (session.retained === retained) watchRetainedSession(session);

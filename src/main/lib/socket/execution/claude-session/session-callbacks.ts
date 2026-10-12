@@ -1,4 +1,8 @@
-import type { CanUseTool, PreToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
+import type {
+  CanUseTool,
+  PreToolUseHookInput,
+  UserPromptSubmitHookInput,
+} from '@anthropic-ai/claude-agent-sdk';
 import { isClaudePermissionGatedTool, resolveToolPermissionPath } from '../../../permissions';
 import { createSubagentAllowlistHook } from '../../../permissions/subagent-allowlist-hook';
 import {
@@ -25,6 +29,7 @@ import {
 } from '../../claude-turn-context';
 import type { validateToolPermission } from '../../streaming/pending-permission/validate-tool-permission';
 import { buildUserPromptSubmitReminderHook } from '../../operator-reminders';
+import { consumeClaudeDelivery } from '../message-provenance/claude';
 import {
   denyPlanTransitionInWakeBurst,
   isPlanAutoDenyFloorActive,
@@ -69,13 +74,15 @@ export function buildClaudeSessionCallbacks(scope: ClaudeSessionScope, session: 
     projectPath: scope.projectPath,
     markDenied: (id, reason) => activeTurn()?.deniedToolIdsWithMessages.set(id, reason),
   });
-  const userPromptSubmitReminderHook = async (...hookArgs: unknown[]) => {
-    const reminders = activeTurn()?.pendingReminders ?? [];
-    if (reminders.length === 0) return {};
-    const delegate = buildUserPromptSubmitReminderHook(reminders) as (
-      ...args: unknown[]
-    ) => Promise<unknown>;
-    return delegate(...hookArgs);
+  const userPromptSubmitReminderHook = async (input: UserPromptSubmitHookInput) => {
+    const turn = activeTurn();
+    const reminders = turn?.pendingReminders ?? [];
+    const provenance =
+      session.current && turn?.messageProvenance
+        ? consumeClaudeDelivery(session.current, input)
+        : undefined;
+    const texts = [...reminders, ...(provenance ? [provenance] : [])];
+    return texts.length ? buildUserPromptSubmitReminderHook(texts)() : {};
   };
   return {
     stopHook,

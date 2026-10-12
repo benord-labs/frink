@@ -1,3 +1,4 @@
+import { createMessageProvenance } from '../execution/message-provenance';
 import type { Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { __resetCodexLiveTurnsForTest } from '../../agent-runner/codex/codex-live-turn';
@@ -60,6 +61,23 @@ describe('steerActiveTurn', () => {
   });
   afterEach(() => {
     pendingToolApprovals.clear();
+  });
+
+  it('registers a Flow steer separately and clears pending metadata when the turn ends', async () => {
+    const { finish, done } = await startBusyTurn('flow-provenance');
+    const live = getSession('flow-provenance')!;
+    const turn = createClaudeTurnContext();
+    turn.messageProvenance = createMessageProvenance({ source: 'flow', kind: 'message' });
+    live.currentTurn = turn;
+    expect(await steerActiveTurn('flow-provenance', { text: 'person note' })).toBe('delivered');
+    expect(live.pendingDeliveries).toHaveLength(1);
+    expect(live.pendingDeliveries[0]?.record).toMatchObject({ source: 'person', kind: 'steer' });
+    expect(live.pendingDeliveries[0]?.record.delivery_id).not.toBe(
+      turn.messageProvenance.delivery_id,
+    );
+    finish();
+    await done;
+    expect(live.pendingDeliveries).toEqual([]);
   });
 
   it('pushes into the live Claude session without starting a turn', async () => {

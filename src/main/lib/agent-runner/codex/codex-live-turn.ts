@@ -3,7 +3,10 @@ import { ResponseError } from 'vscode-jsonrpc/node';
 import type { UIMessageChunk } from '../../claude/types';
 import { registerCodexLiveTurnCountReader } from '../../diagnostics/provider-topology';
 import type { CodexAppServerClient } from './app-server-client';
+import { randomUUID } from 'node:crypto';
+import { codexMessageContext } from '../../../../shared/lib/message-markers/message-provenance';
 import type { CodexCommandOutputs } from './command-output';
+import * as provenanceRule from './provenance-rule';
 
 /**
  * The live Codex turn for one sub-chat, published so a STEER can reach it.
@@ -16,6 +19,7 @@ import type { CodexCommandOutputs } from './command-output';
  */
 export type CodexLiveTurn = {
   client: CodexAppServerClient;
+  hasFlowProvenance?: boolean;
   threadId: string;
   turnId: string;
   /** The turn's own chunk sink, so a delivered steer can leave a marker in the assistant message it
@@ -101,8 +105,17 @@ export async function steerCodexTurn(subChatId: string, text: string): Promise<C
       threadId: live.threadId,
       expectedTurnId: live.turnId,
       input: [{ type: 'text', text }],
+      ...(live.hasFlowProvenance && {
+        additionalContext: codexMessageContext({
+          v: 1,
+          delivery_id: randomUUID(),
+          source: 'person',
+          kind: 'steer',
+        }),
+      }),
     });
     steerSupport.set(live.client, true);
+    provenanceRule.recordSteer(live.client, live.threadId);
     return 'delivered';
   } catch (err) {
     if (isMethodNotFound(err)) {
