@@ -30,7 +30,7 @@ import {
   TURN_END,
   toolCall,
 } from './claude-turn-bindings';
-import { UNCLEAN_RESULT } from './claude-turn-abort';
+import { UNCLEAN_RESULT } from './claude-query-fake';
 import type { ExecutorPermissionHarness } from './executor-codex-permissions';
 
 type ToolCallInput = Parameters<PreToolUseHook>[0];

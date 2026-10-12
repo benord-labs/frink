@@ -191,9 +191,7 @@ const armFlowHold = (subChatId: string, canClearPendingApprovals?: () => boolean
 };
 
 describe('claude-wake-hold — disposal identity guards (ABA)', () => {
-  beforeEach(() => {
-    __resetSessionsForTest();
-  });
+  beforeEach(() => __resetSessionsForTest());
 
   it('handles cancellation persistence rejection before hold classification', async () => {
     const missingError = new Error('missing hold persistence failed');
@@ -547,9 +545,7 @@ describe('claude-wake-hold — disposal identity guards (ABA)', () => {
 });
 
 describe('claude-wake-hold — Flow resource ownership', () => {
-  beforeEach(() => {
-    __resetSessionsForTest();
-  });
+  beforeEach(() => __resetSessionsForTest());
 
   it('releases after normal pump and MCP cleanup', async () => {
     const { ch, io, releaseFlowResourceActivity, releaseRuntimeSlot, unregisterFlowRunAbort } =
@@ -884,9 +880,7 @@ describe('claude-wake-hold — Flow resource ownership', () => {
 });
 
 describe('claude-wake-hold — burst streaming', () => {
-  beforeEach(() => {
-    __resetSessionsForTest();
-  });
+  beforeEach(() => __resetSessionsForTest());
 
   it('ships a cumulative parts snapshot with each chunk', async () => {
     const ch = channelQuery();
@@ -1052,9 +1046,7 @@ describe('claude-wake-hold — burst streaming', () => {
  * claiming to be busy, with nothing able to clear it short of a restart.
  */
 describe('claude-wake-hold — held-state publication', () => {
-  beforeEach(() => {
-    __resetSessionsForTest();
-  });
+  beforeEach(() => __resetSessionsForTest());
 
   const arm = (subChatId: string, io: WakeHoldIo, session: ReturnType<typeof createSession>) =>
     armWakePump({
@@ -1191,9 +1183,7 @@ describe('claude-wake-hold — held-state publication', () => {
  * never retracts); a Stop is too (it deliberately keeps the entry so the live pump stays adoptable).
  */
 describe('claude-wake-hold — wait detail republish', () => {
-  beforeEach(() => {
-    __resetSessionsForTest();
-  });
+  beforeEach(() => __resetSessionsForTest());
 
   const stopHookWith = (work: unknown): TaskStopHook =>
     ({ lastPendingWork: work, reset: () => {} }) as unknown as TaskStopHook;
@@ -1838,9 +1828,7 @@ describe('claude-wake-hold — standing down on a declared done', () => {
 });
 
 describe('claude-wake-hold — app-quit sweep', () => {
-  beforeEach(() => {
-    __resetSessionsForTest();
-  });
+  beforeEach(() => __resetSessionsForTest());
 
   it('stands a plain chat hold down through its session queue', () => {
     const { io } = armChatHold('quit-chat');
@@ -1894,9 +1882,7 @@ describe('claude-wake-hold — app-quit sweep', () => {
 });
 
 describe('claude-wake-hold — enumerating live holds for a booting renderer', () => {
-  beforeEach(() => {
-    __resetSessionsForTest();
-  });
+  beforeEach(() => __resetSessionsForTest());
 
   const stopHookWith = (work: unknown): TaskStopHook =>
     ({ lastPendingWork: work, reset: () => {} }) as unknown as TaskStopHook;

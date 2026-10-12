@@ -25,7 +25,7 @@ import {
   _registerExecutionForTests,
 } from '../streaming/execution-registry';
 import { answeringCli, replies } from './claude-warm-session';
-import { mockQuery, never } from './claude-turn-abort';
+import { mockQuery, never } from './claude-query-fake';
 import type { ExecutorPermissionHarness } from './executor-codex-permissions';
 
 type PrewarmHarness = Pick<ExecutorPermissionHarness, 'basePayload' | 'handleRemoteExecute'> & {

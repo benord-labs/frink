@@ -10,7 +10,7 @@ import { createSession, getSession, retainSession } from '../claude-session-regi
 import * as socketClient from '../client';
 import { runTurn } from '../execution/claude-session-loop';
 import { abortActiveExecutionsForSubChats } from '../executor';
-import { mockQuery, never } from './claude-turn-abort';
+import { mockQuery, never } from './claude-query-fake';
 import { TURN_END } from './claude-turn-bindings';
 import type { ExecutorPermissionHarness } from './executor-codex-permissions';
 

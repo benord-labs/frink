@@ -1,18 +1,12 @@
-import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { claudeMemoryProjectRoot, claudeProjectDirName, resolveClaudeAutoMemorySettings } from '.';
+import { gitAsTestUser as git } from '../../test-utils/git-as-test-user';
 
 let tmpRoot: string;
 let home: string;
-
-const git = (cwd: string, ...args: string[]) =>
-  execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], {
-    cwd,
-    stdio: 'pipe',
-  });
 
 /** A repo with one commit, so worktrees and clones can be made from it. */
 function makeRepo(name: string): string {

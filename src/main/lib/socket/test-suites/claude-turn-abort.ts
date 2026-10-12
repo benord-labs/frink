@@ -1,15 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import type {
-  BackgroundTaskSummary,
-  CanUseTool,
-  McpServerStatus,
-  SDKUserMessage,
-} from '@anthropic-ai/claude-agent-sdk';
 import log from 'electron-log';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getTaskById } from '../../db/repos/tasks';
 import { channelOwner, getChannelToken } from '../../mcp/execution-identity';
-import type { TaskStopHook } from '../../task-stop-hook';
 import { getSession } from '../claude-session-registry';
 import { hasWakeHold, releaseWakeHold } from '../claude-wake-hold';
 import * as socketClient from '../client';
@@ -22,9 +15,16 @@ import {
   flowDriven,
   RUNNING_TASK,
   runningTask,
-  stopInput,
   TURN_END,
 } from './claude-turn-bindings';
+import {
+  type Cli,
+  type CliScript,
+  type Frame,
+  mockQuery,
+  never,
+  UNCLEAN_RESULT,
+} from './claude-query-fake';
 import type { ExecutorPermissionHarness } from './executor-codex-permissions';
 
 type ClaudeTurnAbortHarness = Pick<
@@ -34,77 +34,7 @@ type ClaudeTurnAbortHarness = Pick<
   claudeQueryMock: ReturnType<typeof vi.fn>;
 };
 
-type QueryInput = {
-  prompt: AsyncIterable<SDKUserMessage>;
-  options: {
-    abortController?: AbortController;
-    hooks: { Stop: Array<{ hooks: TaskStopHook[] }> };
-    canUseTool: CanUseTool;
-  };
-};
-type Cli = {
-  prompt: AsyncIterator<SDKUserMessage>;
-  options: QueryInput['options'];
-  stop: (backgroundTasks?: BackgroundTaskSummary[]) => ReturnType<TaskStopHook>;
-};
-/** An SDK message as the suite's transformer mock reads it. */
-type Frame = { type?: string; chunks?: object[] };
-/** The CLI's side of one fake session: reads prompts, fires hooks, and yields frames. */
-type CliScript = (cli: Cli) => AsyncGenerator<Frame>;
-
-const DONE = { done: true, value: undefined } as const;
-/** A tool call that never answers, like a CLI blocked in a silent tool. */
-export const never = () => new Promise<never>(() => {});
-/** A result the CLI flags `is_error` without failing the turn (usage-limit or API-error text). */
-export const UNCLEAN_RESULT = { type: 'result', subtype: 'success', is_error: true, result: '' };
 const tick = () => new Promise((resolve) => setTimeout(resolve, 10));
-
-/** Registers the next SDK query. Like the real `Query`, `close()`/`return()` end the pending read
- * at once and an aborted `abortController` option fails it as a user abort. */
-export function mockQuery(
-  claudeQueryMock: ClaudeTurnAbortHarness['claudeQueryMock'],
-  cli: CliScript,
-) {
-  let ended = false;
-  let end: (error?: Error) => void = () => {};
-  const stopped = new Promise<IteratorResult<Frame>>((resolve, reject) => {
-    end = (error) => {
-      ended = true;
-      if (error) reject(error);
-      else resolve(DONE);
-    };
-  });
-  stopped.catch(() => {});
-  const query = {
-    close: vi.fn(() => end()),
-    return: vi.fn(async () => {
-      end();
-      await new Promise((resolve) => setImmediate(resolve));
-      return DONE;
-    }),
-    interrupt: vi.fn(async () => {}),
-    setPermissionMode: vi.fn(async () => {}),
-    setModel: vi.fn(async (_model?: string) => {}),
-    applyFlagSettings: vi.fn(async (_settings: Record<string, unknown>) => {}),
-    initializationResult: vi.fn(async () => ({})),
-    mcpServerStatus: vi.fn(async (): Promise<McpServerStatus[]> => []),
-  };
-  claudeQueryMock.mockImplementationOnce(({ prompt, options }: QueryInput) => {
-    options.abortController?.signal.addEventListener('abort', () =>
-      end(new Error('Claude Code process aborted by user')),
-    );
-    const stop = (backgroundTasks: BackgroundTaskSummary[] = []) =>
-      options.hooks.Stop[0].hooks[0](stopInput(backgroundTasks));
-    const frames = cli({ prompt: prompt[Symbol.asyncIterator](), options, stop });
-    return Object.assign(query, {
-      next: () => (ended ? stopped : Promise.race([frames.next(), stopped])),
-      [Symbol.asyncIterator]() {
-        return this;
-      },
-    });
-  });
-  return query;
-}
 
 /** Turn 1 leaves background work running so the session is held; `adopted` plays the CLI through
  * the follow-up turn that takes the hold over. */
