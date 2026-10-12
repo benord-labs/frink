@@ -1,3 +1,5 @@
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -26,6 +28,7 @@ vi.mock('node:os', async (importOriginal) => {
 import { DarwinPlatformProvider } from './darwin';
 import { getPlatformProvider } from './index';
 import { LinuxPlatformProvider } from './linux';
+import { warmNvmBinDirs } from './nvm';
 import { WindowsPlatformProvider } from './windows';
 
 describe('platform providers', () => {
@@ -585,6 +588,22 @@ describe('platform providers', () => {
       const parts = provider.buildExtendedPath(resolvedNvmBin).split(':');
       expect(parts).toContain(resolvedNvmBin);
       expect(parts.filter((p) => p.includes('.nvm'))).toEqual([resolvedNvmBin]);
+    });
+
+    it.each([
+      ['darwin', () => new DarwinPlatformProvider()],
+      ['linux', () => new LinuxPlatformProvider()],
+    ])('puts a warmed ~/.config/nvm bin on the %s fallback PATH', async (_os, makeProvider) => {
+      const home = mkdtempSync(path.join(tmpdir(), 'frink-platform-nvm-'));
+      try {
+        const bin = path.join(home, '.config', 'nvm', 'versions', 'node', 'v22.20.0', 'bin');
+        mkdirSync(bin, { recursive: true });
+        homedirMock.mockReturnValue(home);
+        await warmNvmBinDirs(home);
+        expect(makeProvider().buildExtendedPath(undefined).split(':')).toContain(bin);
+      } finally {
+        rmSync(home, { recursive: true, force: true });
+      }
     });
   });
 

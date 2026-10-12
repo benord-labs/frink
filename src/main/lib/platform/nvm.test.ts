@@ -6,22 +6,37 @@ import { cachedNvmBinDirs, warmNvmBinDirs } from './nvm';
 
 const homes: string[] = [];
 
-function makeHome(versions: string[], aliases: Record<string, string> = {}): string {
-  const home = mkdtempSync(join(tmpdir(), 'frink-nvm-'));
-  homes.push(home);
+const XDG_NVM = join('.config', 'nvm');
+
+function installNvm(
+  home: string,
+  nvmDir: string,
+  versions: string[],
+  aliases: Record<string, string> = {},
+): void {
   for (const version of versions) {
-    mkdirSync(join(home, '.nvm', 'versions', 'node', version, 'bin'), { recursive: true });
+    mkdirSync(join(home, nvmDir, 'versions', 'node', version, 'bin'), { recursive: true });
   }
   for (const [name, target] of Object.entries(aliases)) {
-    const file = join(home, '.nvm', 'alias', name);
+    const file = join(home, nvmDir, 'alias', name);
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, `${target}\n`);
   }
+}
+
+function makeHome(
+  versions: string[],
+  aliases: Record<string, string> = {},
+  nvmDir = '.nvm',
+): string {
+  const home = mkdtempSync(join(tmpdir(), 'frink-nvm-'));
+  homes.push(home);
+  installNvm(home, nvmDir, versions, aliases);
   return home;
 }
 
-const binOf = (home: string, version: string) =>
-  join(home, '.nvm', 'versions', 'node', version, 'bin');
+const binOf = (home: string, version: string, nvmDir = '.nvm') =>
+  join(home, nvmDir, 'versions', 'node', version, 'bin');
 
 afterEach(() => {
   for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
@@ -81,6 +96,23 @@ describe('resolveNvmBinDirs (sc-4724)', () => {
 
     const looped = makeHome(['v20.18.0', 'v22.20.0'], { default: 'a', a: 'b', b: 'a' });
     expect(await warmNvmBinDirs(looped)).toEqual([binOf(looped, 'v22.20.0')]);
+  });
+
+  it('finds an install under ~/.config/nvm', async () => {
+    const home = makeHome(['v20.18.0', 'v22.20.0'], { default: '20' }, XDG_NVM);
+    expect(await warmNvmBinDirs(home)).toEqual([binOf(home, 'v20.18.0', XDG_NVM)]);
+  });
+
+  it('prefers ~/.nvm when both ~/.nvm and ~/.config/nvm hold installs', async () => {
+    const home = makeHome(['v18.19.1']);
+    installNvm(home, XDG_NVM, ['v22.20.0']);
+    expect(await warmNvmBinDirs(home)).toEqual([binOf(home, 'v18.19.1')]);
+  });
+
+  it('skips a ~/.nvm with no installed versions', async () => {
+    const home = makeHome([], { default: 'v18.19.1' });
+    installNvm(home, XDG_NVM, ['v22.20.0']);
+    expect(await warmNvmBinDirs(home)).toEqual([binOf(home, 'v22.20.0', XDG_NVM)]);
   });
 
   it('serves the warmed dir from memory, and nothing before warming', async () => {
