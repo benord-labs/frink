@@ -11,6 +11,7 @@ import { turnOwesTerminalSignal } from '../../../trpc/routers/frink-task-signal'
 import {
   hasLatestTaskSignalFor,
   isTaskSignalDisarmedFor,
+  latestTaskSignalFor,
   markQuietEndIfUnsignaled,
   recordTaskSignalFromToolCall,
   suppressQuietEndForPlanTurn,
@@ -20,6 +21,7 @@ import {
   buildPartsFromChunks,
   type ClaudeTurnContext,
   createTurnChunkEmitter,
+  notePreplanSignal,
 } from '../../claude-turn-context';
 import type { validateToolPermission } from '../../streaming/pending-permission/validate-tool-permission';
 import { buildUserPromptSubmitReminderHook } from '../../operator-reminders';
@@ -123,6 +125,8 @@ function createPreToolUseHook(scope: ClaudeSessionScope, activeTurn: ActiveTurn)
     const burstDeny = denyPlanTransitionInWakeBurst(toolName, turn);
     if (burstDeny) return denyToolUse(burstDeny.message);
     if (toolName === 'ExitPlanMode' && turn.planTerminalsLocked) {
+      // Still drafting: whatever park is on record now is the one the implementation can't settle on.
+      notePreplanSignal(turn, await latestTaskSignalFor(turn.execution.executionContextId));
       const submitted = submitPlanForReview(finalInput, turn, scope.subChatId);
       if (submitted) return denyToolUse(submitted);
     }
@@ -185,7 +189,10 @@ function createClaudeStopHook(
         !execution.taskSignalReady ||
         !execution.signalTaskId ||
         !turnOwesTerminalSignal(execution.isPlanMode, execution.flowPlanAutoApprove, turn) ||
-        (await hasLatestTaskSignalFor(execution.executionContextId, turn.planSubmitted)) ||
+        (await hasLatestTaskSignalFor(
+          execution.executionContextId,
+          turn.planSubmitted ? turn.preplanSignal : null,
+        )) ||
         // The handler refused a dead target and disarmed the tool — nothing left to chase.
         (await isTaskSignalDisarmedFor(execution.executionContextId))
       );
