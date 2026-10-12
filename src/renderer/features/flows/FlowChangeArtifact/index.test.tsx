@@ -371,4 +371,49 @@ describe('FlowChangeArtifact', () => {
     expect(details.className).toContain('max-h-[min(340px,52vh)]');
     expect(details.className).toContain('overflow-y-auto');
   });
+
+  it('tells an unread result apart from a failed and an unconfirmed write', () => {
+    const copyFor = (phase: FlowChangePresentation['phase']) => {
+      const { container } = render(
+        <FlowChangeArtifact onOpenFlow={vi.fn()} presentation={{ ...PRESENTATION, phase }} />,
+      );
+      const copy = container.querySelector('[aria-live="polite"]')?.textContent ?? '';
+      cleanup();
+      return copy;
+    };
+
+    const unread = copyFor('unread');
+    expect(unread).toContain('Flow change finished');
+    expect(unread).toContain(
+      'Result too large to show here. Open the Flow to see its current version.',
+    );
+    expect(unread).not.toMatch(/saved|unknown|not updated/i);
+    expect(new Set([unread, copyFor('failed'), copyFor('unconfirmed')]).size).toBe(3);
+  });
+
+  it('warns against retrying an unread result that has no Flow to open', () => {
+    render(
+      <FlowChangeArtifact
+        presentation={{ ...PRESENTATION, flowId: undefined, mode: 'create', phase: 'unread' }}
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: 'Open Flow' })).toBeNull();
+    expect(
+      screen.getByText('Result too large to show here. Check your Flows before retrying.'),
+    ).toBeTruthy();
+  });
+
+  it('shows an unread result with no listed changes without an empty outline', () => {
+    render(
+      <FlowChangeArtifact
+        onOpenFlow={vi.fn()}
+        presentation={{ ...PRESENTATION, phase: 'unread', changes: [], graph: undefined }}
+      />,
+    );
+
+    expect(screen.getByText('Flow change finished')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Flow steps/i })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Open Flow' })).toBeTruthy();
+  });
 });

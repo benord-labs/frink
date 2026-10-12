@@ -8,7 +8,7 @@ import {
   visibleFlowChanges,
 } from '../../../../lib/flows/flow-change-outline';
 import { cn } from '../../../../lib/utils';
-import { ChangeDetails } from './ChangeDetails';
+import { ChangeDetails, ResultUnreadContext } from './ChangeDetails';
 import { Omission, RouteTerminal } from './RouteAnnotations';
 
 type Props = { outline: FlowChangeOutlineModel };
@@ -196,7 +196,8 @@ function countText(outline: FlowChangeOutlineModel): string {
   return outline.branchCount > 0 ? `${stepCopy}, ${pathCopy}` : stepCopy;
 }
 
-function unplacedHeading(changes: FlowSemanticChange[]): string {
+function unplacedHeading(changes: FlowSemanticChange[], resultUnread: boolean): string {
+  if (resultUnread) return 'Requested changes';
   if (changes.some((change) => ATTENTION_STATUSES.has(change.status))) return 'Needs attention';
   if (changes.every((change) => change.status === 'applied' && change.action === 'remove')) {
     return 'Removed from Flow';
@@ -235,45 +236,47 @@ export const FlowChangeOutline = memo(function FlowChangeOutline({ outline }: Pr
     outline.settingsChanges.length > 0 ||
     outline.unplacedChanges.length > 0;
   return (
-    <section
-      aria-labelledby={headingId}
-      className="min-w-0 px-3.5 pt-2.5 pb-3.5 text-foreground @max-[420px]:px-2.5"
-      data-scope={outline.scope}
-    >
-      <header className="flex min-w-0 items-baseline justify-between gap-2.5 border-b border-border/45 pb-2">
-        <h4 className="m-0 text-[11px] font-semibold leading-4 text-foreground" id={headingId}>
-          {heading}
-        </h4>
-        {outline.totalNodeCount > 0 && outline.scope !== 'changes-only' ? (
-          <span className="text-right text-[10px] leading-[14px] text-muted-foreground">
-            {countText(outline)}
-          </span>
-        ) : null}
-      </header>
+    <ResultUnreadContext.Provider value={outline.resultUnread}>
+      <section
+        aria-labelledby={headingId}
+        className="min-w-0 px-3.5 pt-2.5 pb-3.5 text-foreground @max-[420px]:px-2.5"
+        data-scope={outline.scope}
+      >
+        <header className="flex min-w-0 items-baseline justify-between gap-2.5 border-b border-border/45 pb-2">
+          <h4 className="m-0 text-[11px] font-semibold leading-4 text-foreground" id={headingId}>
+            {heading}
+          </h4>
+          {outline.totalNodeCount > 0 && outline.scope !== 'changes-only' ? (
+            <span className="text-right text-[10px] leading-[14px] text-muted-foreground">
+              {countText(outline)}
+            </span>
+          ) : null}
+        </header>
 
-      {outline.omittedRouteCount > 0 ? (
-        <p className="mt-1.5 mb-0 text-[10px] leading-[14px] text-muted-foreground">
-          {omittedRouteText(outline.omittedRouteCount)}
-        </p>
-      ) : null}
-      {outline.routes.map((route, index) => (
-        <Route
-          key={route.id}
-          route={route}
-          routeNumber={index + 1}
-          showHeading={outline.routes.length > 1}
+        {outline.omittedRouteCount > 0 ? (
+          <p className="mt-1.5 mb-0 text-[10px] leading-[14px] text-muted-foreground">
+            {omittedRouteText(outline.omittedRouteCount)}
+          </p>
+        ) : null}
+        {outline.routes.map((route, index) => (
+          <Route
+            key={route.id}
+            route={route}
+            routeNumber={index + 1}
+            showHeading={outline.routes.length > 1}
+          />
+        ))}
+        <ChangeSection changes={outline.settingsChanges} heading="Flow settings" />
+        <ChangeSection
+          changes={outline.unplacedChanges}
+          heading={unplacedHeading(outline.unplacedChanges, outline.resultUnread)}
         />
-      ))}
-      <ChangeSection changes={outline.settingsChanges} heading="Flow settings" />
-      <ChangeSection
-        changes={outline.unplacedChanges}
-        heading={unplacedHeading(outline.unplacedChanges)}
-      />
-      {!hasContent ? (
-        <p className="m-0 pt-[7px] text-[11px] leading-[15px] text-muted-foreground">
-          No flow structure was available.
-        </p>
-      ) : null}
-    </section>
+        {!hasContent ? (
+          <p className="m-0 pt-[7px] text-[11px] leading-[15px] text-muted-foreground">
+            No flow structure was available.
+          </p>
+        ) : null}
+      </section>
+    </ResultUnreadContext.Provider>
   );
 });

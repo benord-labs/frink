@@ -41,6 +41,7 @@ const FLOW_STATUS_BY_PHASE: Record<Exclude<FlowChangePhase, 'applied'>, string> 
   denied: 'Flow not updated',
   stale: 'Flow changed elsewhere',
   unconfirmed: 'Check this Flow',
+  unread: 'Flow change finished',
   interrupted: 'Check this Flow',
 };
 
@@ -88,6 +89,13 @@ function uncertainSummary({ canOpenFlow }: SummaryContext): string {
     : 'Outcome unknown. Verify before retrying.';
 }
 
+/** The tool finished; only its result is missing. Says so without claiming what was saved. */
+function unreadSummary({ canOpenFlow }: SummaryContext): string {
+  return canOpenFlow
+    ? 'Result too large to show here. Open the Flow to see its current version.'
+    : 'Result too large to show here. Check your Flows before retrying.';
+}
+
 const SUMMARY_FOR_PHASE: Record<FlowChangePhase, (context: SummaryContext) => string> = {
   proposed: ({ scope, synopsis }) => synopsis ?? `${scope} proposed`,
   applying: ({ scope, synopsis }) => synopsis ?? `${scope} in progress`,
@@ -100,6 +108,7 @@ const SUMMARY_FOR_PHASE: Record<FlowChangePhase, (context: SummaryContext) => st
   denied: ({ presentation }) => presentation.denialReason ?? 'Nothing changed',
   stale: () => 'Changed elsewhere. Refresh before retrying',
   unconfirmed: uncertainSummary,
+  unread: unreadSummary,
   interrupted: uncertainSummary,
 };
 
