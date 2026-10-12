@@ -19,6 +19,7 @@ const execAsync = promisify(exec);
 export * from './github';
 // Re-export worktree utilities
 export * from './worktree';
+export { getWorktreeDiff } from './worktree/diff';
 export * from './worktree-naming';
 
 export const createGitRouter = () => {

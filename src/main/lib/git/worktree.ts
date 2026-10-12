@@ -2,7 +2,6 @@
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdir, readFile, stat } from 'node:fs/promises';
-import { devNull } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import log from 'electron-log';
@@ -710,18 +709,17 @@ export async function getCurrentBranch(repoPath: string): Promise<string | null>
 
 /**
  * Checks if a git ref exists locally (without network access).
- * Uses --verify --quiet to only check exit code without output.
  * @param repoPath - Path to the repository
  * @param ref - The ref to check (e.g., "main", "origin/main")
  * @returns true if the ref exists locally, false otherwise
  */
-async function refExistsLocally(repoPath: string, ref: string): Promise<boolean> {
+export async function refExistsLocally(repoPath: string, ref: string): Promise<boolean> {
   const git = simpleGit(repoPath);
   try {
-    // Use --verify --quiet to check if ref exists without output
-    // Append ^{commit} to ensure it resolves to a commit-ish
-    await git.raw(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
-    return true;
+    // Append ^{commit} to ensure it resolves to a commit-ish. A missing ref exits non-zero with
+    // nothing on stderr, which simple-git resolves as empty output instead of throwing.
+    const sha = await git.raw(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
+    return sha.trim() !== '';
   } catch {
     return false;
   }
@@ -873,116 +871,6 @@ export async function createWorktreeForChat(
     startWorktreeSetup(worktreePath, projectPath);
 
     return { success: true, worktreePath, branch, baseBranch };
-  } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
-    };
-  }
-}
-
-/** Untracked files above this are listed as binary instead of diffed: a multi-hundred-MB file
- * makes each `git diff --no-index` run for minutes, and every refresh starts another. */
-const MAX_UNTRACKED_DIFF_SIZE = 1024 * 1024;
-
-/**
- * Get diff for a worktree compared to its base branch
- * @param worktreePath - Path to the worktree
- * @param baseBranch - The base branch to compare against (if not provided, uses default branch)
- */
-export async function getWorktreeDiff(
-  worktreePath: string,
-  baseBranch?: string,
-  options?: { onlyUncommitted?: boolean },
-): Promise<{ success: boolean; diff?: string; error?: string }> {
-  try {
-    const git = simpleGit(worktreePath);
-    const status = await git.status();
-    const _currentBranch = status.current;
-
-    // Has uncommitted changes - diff against HEAD
-    if (!status.isClean()) {
-      const exclusionArgs = [
-        ':!*.lock',
-        ':!*-lock.*',
-        ':!package-lock.json',
-        ':!pnpm-lock.yaml',
-        ':!yarn.lock',
-      ];
-
-      const workingDiff = await git.diff(['HEAD', '--no-color', '--', ...exclusionArgs]);
-
-      const untrackedFiles = status.not_added.filter((file) => {
-        if (file.endsWith('.lock')) return false;
-        if (file.includes('-lock.')) return false;
-        if (file.endsWith('package-lock.json')) return false;
-        if (file.endsWith('pnpm-lock.yaml')) return false;
-        if (file.endsWith('yarn.lock')) return false;
-        return true;
-      });
-
-      // git diff --no-index only accepts 2 paths, so we need to diff each file separately
-      // Also, git diff --no-index returns exit code 1 when files differ, which simple-git treats as error
-      // So we use raw() to get the output regardless of exit code
-      const untrackedDiffs: string[] = [];
-      for (const file of untrackedFiles) {
-        try {
-          if ((await stat(join(worktreePath, file))).size > MAX_UNTRACKED_DIFF_SIZE) {
-            untrackedDiffs.push(
-              `diff --git a/${file} b/${file}\nnew file mode 100644\nBinary files /dev/null and b/${file} differ`,
-            );
-            continue;
-          }
-          const fileDiff = await git.raw(['diff', '--no-color', '--no-index', devNull, file]);
-          if (fileDiff) {
-            untrackedDiffs.push(fileDiff);
-          }
-        } catch (error: unknown) {
-          // git diff --no-index returns exit code 1 when files differ
-          // simple-git throws but includes the diff output in the error
-          const gitError = error as { message?: string };
-          if (gitError.message?.includes('diff --git')) {
-            // Extract the diff from the error message
-            const diffStart = gitError.message.indexOf('diff --git');
-            if (diffStart !== -1) {
-              untrackedDiffs.push(gitError.message.substring(diffStart));
-            }
-          }
-        }
-      }
-      const untrackedDiff = untrackedDiffs.join('\n');
-
-      const combinedDiff = [workingDiff, untrackedDiff].filter(Boolean).join('\n');
-
-      return { success: true, diff: combinedDiff };
-    }
-
-    // All committed - if onlyUncommitted mode, return empty diff
-    if (options?.onlyUncommitted) {
-      return { success: true, diff: '' };
-    }
-
-    // All committed - diff against base branch
-    const targetBranch = baseBranch || (await getDefaultBranch(worktreePath));
-    const baseRef = (await refExistsLocally(worktreePath, `origin/${targetBranch}`))
-      ? `origin/${targetBranch}`
-      : targetBranch;
-
-    try {
-      const diff = await git.diff([
-        `${baseRef}...HEAD`,
-        '--no-color',
-        '--',
-        ':!*.lock',
-        ':!*-lock.*',
-        ':!package-lock.json',
-        ':!pnpm-lock.yaml',
-        ':!yarn.lock',
-      ]);
-      return { success: true, diff: diff || '' };
-    } catch {
-      return { success: true, diff: '' };
-    }
   } catch (error) {
     return {
       success: false,
