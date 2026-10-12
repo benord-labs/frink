@@ -5,6 +5,7 @@ import { FLOW_BLOCK_DISPLAY_LABELS } from './flow-block-display-labels';
 import { findBackEdges } from './flow-graph-cycle';
 import {
   type FlowGraph,
+  type FlowNode,
   flowGraphsEqual,
   linearFlowGraph,
   MAX_FLOW_GRAPH_NODES,
@@ -422,6 +423,139 @@ describe('validateGraph — loop-back rules', () => {
     }
   });
 
+  describe('condition-only loops', () => {
+    const upstream = {
+      predicate: { field: 'exitCode', operator: 'eq', value: 0 },
+    };
+    const cond = (id: string, label: string, config: FlowNode['config'] = upstream) => ({
+      id,
+      blockType: 'condition',
+      label,
+      config,
+    });
+    const step = (id: string) => ({
+      id,
+      blockType: 'run_command',
+      config: { ...TEST_RUN_STEP },
+    });
+    const errorsOf = (r: ReturnType<typeof validateGraph>) => (r.valid ? [] : r.errors);
+
+    const twoConditionLoop = {
+      nodes: [
+        { id: 't', blockType: 'manual_trigger' },
+        step('a'),
+        cond('c1', 'First'),
+        cond('c2', 'Second'),
+        step('x1'),
+        step('x2'),
+      ],
+      edges: [
+        { id: 'e1', source: 't', target: 'a' },
+        { id: 'e2', source: 'a', target: 'c1' },
+        { id: 'e3', source: 'c1', target: 'c2', sourceHandle: 'false' },
+        { id: 'e4', source: 'c2', target: 'c1', sourceHandle: 'false' },
+        { id: 'e5', source: 'c1', target: 'x1', sourceHandle: 'true' },
+        { id: 'e6', source: 'c2', target: 'x2', sourceHandle: 'true' },
+      ],
+    };
+
+    const selfLoop = (config?: FlowNode['config']) => ({
+      nodes: [
+        { id: 't', blockType: 'manual_trigger' },
+        step('a'),
+        cond('c', 'Check', config),
+        step('x'),
+      ],
+      edges: [
+        { id: 'e1', source: 't', target: 'a' },
+        { id: 'e2', source: 'a', target: 'c' },
+        { id: 'e3', source: 'c', target: 'c', sourceHandle: 'false' },
+        { id: 'e4', source: 'c', target: 'x', sourceHandle: 'true' },
+      ],
+    });
+
+    it('rejects a two-condition loop in run mode, naming both nodes', () => {
+      const r = validateGraph(twoConditionLoop, { mode: 'run' });
+      expect(r.valid).toBe(false);
+      expect(errorsOf(r)).toContain(
+        'Condition-only loop "First" → "Second" has no step inside it, so it can loop forever — add a step inside the loop',
+      );
+    });
+
+    it('only warns about it in save mode, ahead of other warnings and without the generic loop warning', () => {
+      const r = validateGraph(twoConditionLoop);
+      expect(r.valid).toBe(true);
+      expect(r.warnings?.[0]).toMatch(
+        /^Condition-only loop "First" → "Second".*\(fix it before running\)$/,
+      );
+      expect(r.warnings?.some((w) => w.includes('creates a loop'))).toBe(false);
+    });
+
+    it('rejects a condition that loops back to itself in run mode', () => {
+      const r = validateGraph(selfLoop(), { mode: 'run' });
+      expect(r.valid).toBe(false);
+      expect(errorsOf(r).some((e) => e.startsWith('Condition "Check" loops back to itself'))).toBe(
+        true,
+      );
+    });
+
+    it('rejects a condition-only loop that sits inside a larger loop with a step', () => {
+      const graph = {
+        nodes: [
+          { id: 't', blockType: 'manual_trigger' },
+          step('a'),
+          cond('c1', 'First'),
+          cond('c2', 'Second'),
+          step('run'),
+        ],
+        edges: [
+          { id: 'e1', source: 't', target: 'a' },
+          { id: 'e2', source: 'a', target: 'c1' },
+          { id: 'e3', source: 'c1', target: 'c2', sourceHandle: 'false' },
+          { id: 'e4', source: 'c2', target: 'c1', sourceHandle: 'false' },
+          { id: 'e5', source: 'c2', target: 'run', sourceHandle: 'true' },
+          { id: 'e6', source: 'run', target: 'c1' },
+        ],
+      };
+      const r = validateGraph(graph, { mode: 'run' });
+      expect(errorsOf(r).some((e) => e.includes('Condition-only loop "First" → "Second"'))).toBe(
+        true,
+      );
+    });
+
+    // Reading `result`/`passed` does not make a loop safe: `passed eq true` and
+    // `result eq 'continue'` settle on the loop edge and spin forever, so every such loop errors.
+    it.each([
+      ['passed eq true', { predicate: { field: 'passed', operator: 'eq', value: true } }],
+      ['result eq continue', { predicate: { field: 'result', operator: 'eq', value: 'continue' } }],
+      [
+        'outputs.passed eq false',
+        { predicate: { field: 'outputs.passed', operator: 'eq', value: false } },
+      ],
+      ['an upstream field', { predicate: { field: 'passedCount', operator: 'gt', value: 0 } }],
+      ['no predicate at all', {}],
+    ])('rejects a condition self-loop whose predicate is %s', (_label, config) => {
+      const r = validateGraph(selfLoop(config), { mode: 'run' });
+      expect(errorsOf(r).some((e) => e.includes('loops back to itself'))).toBe(true);
+    });
+
+    it('still accepts a loop that contains a step, with the existing warning', () => {
+      const graph = {
+        nodes: [{ id: 't', blockType: 'manual_trigger' }, step('a'), cond('c', 'Check'), step('x')],
+        edges: [
+          { id: 'e1', source: 't', target: 'a' },
+          { id: 'e2', source: 'a', target: 'c' },
+          { id: 'e3', source: 'c', target: 'a', sourceHandle: 'false' },
+          { id: 'e4', source: 'c', target: 'x', sourceHandle: 'true' },
+        ],
+      };
+      const r = validateGraph(graph, { mode: 'run' });
+      expect(r.valid).toBe(true);
+      expect(r.warnings?.some((w) => w.includes('"Check" creates a loop'))).toBe(true);
+      expect(r.warnings?.some((w) => w.includes('can loop forever'))).toBe(false);
+    });
+  });
+
   it('rejects loop.maxIterations outside 1–50', () => {
     const graph = {
       nodes: [
@@ -446,6 +580,28 @@ describe('validateGraph — loop-back rules', () => {
     if (!r.valid) {
       expect(r.errors.some((e) => e.includes('loop.maxIterations'))).toBe(true);
     }
+  });
+
+  // These checks moved into flows/condition-loops; both messages must still reach validateGraph.
+  it.each([
+    ['a non-object loop config', 'nope', 'loop config must be an object'],
+    ['an unknown onMaxReached', { maxIterations: 5, onMaxReached: 'retry' }, 'loop.onMaxReached'],
+  ])('rejects %s', (_label, loop, message) => {
+    const graph = {
+      nodes: [
+        { id: 't', blockType: 'manual_trigger' },
+        { id: 'c', blockType: 'condition', config: { loop } },
+        { id: 'x', blockType: 'run_command', config: { ...TEST_RUN_STEP } },
+      ],
+      edges: [
+        { id: 'e1', source: 't', target: 'c' },
+        { id: 'e2', source: 'c', target: 'x', sourceHandle: 'true' },
+      ],
+    };
+    const r = validateGraph(graph);
+    expect(r.valid ? [] : r.errors).toEqual(
+      expect.arrayContaining([expect.stringContaining(message)]),
+    );
   });
 
   it('accepts valid loop config', () => {

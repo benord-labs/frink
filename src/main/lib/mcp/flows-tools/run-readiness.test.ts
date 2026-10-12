@@ -58,6 +58,29 @@ describe('describeFlowRunBlockers', () => {
     );
   });
 
+  it('blocks the run for a loop made only of condition nodes', () => {
+    const predicate = { field: 'exitCode', operator: 'eq', value: 0 };
+    const graph = {
+      nodes: [
+        { id: 't', blockType: 'manual_trigger' },
+        { id: 'c1', blockType: 'condition', label: 'First', config: { predicate } },
+        { id: 'c2', blockType: 'condition', label: 'Second', config: { predicate } },
+        { id: 'x', blockType: 'run_command', config: { projectId: 'p1', command: 'echo x' } },
+      ],
+      edges: [
+        { id: 'e1', source: 't', target: 'c1' },
+        { id: 'e2', source: 'c1', target: 'c2', sourceHandle: 'false' },
+        { id: 'e3', source: 'c2', target: 'c1', sourceHandle: 'false' },
+        { id: 'e4', source: 'c1', target: 'x', sourceHandle: 'true' },
+        { id: 'e5', source: 'c2', target: 'x', sourceHandle: 'true' },
+      ],
+    } as FlowGraph;
+
+    expect(describeFlowRunBlockers(graph)).toContain(
+      'Condition-only loop "First" → "Second" has no step inside it',
+    );
+  });
+
   it('returns null for a flow whose custom node declares no inputs', () => {
     expect(describeFlowRunBlockers(graphWith({}))).toBeNull();
   });

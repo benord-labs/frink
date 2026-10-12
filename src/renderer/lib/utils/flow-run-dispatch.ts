@@ -11,6 +11,13 @@
  * without rendering the FlowEditor component.
  */
 
+import { stuckConditionLoops } from '../../../shared/lib/flows/graph/condition-loops';
+import {
+  formatFlowNodeLabel,
+  normalizeFlowGraph,
+  validateGraph,
+} from '../../../shared/lib/validate-flow-graph';
+
 export type FlowRunDispatchHandlers = {
   startBatch: (batchId: string, hadUnsavedChanges: boolean) => void;
   runSingle: (hadUnsavedChanges: boolean) => void;
@@ -54,4 +61,40 @@ export function runStartedMessage({
   if (!hadUnsavedChanges) return verb;
   const target = versionNumber != null ? `saved v${versionNumber}` : 'the saved version';
   return `${verb} on ${target} — ${UNSAVED_SUFFIX}`;
+}
+
+/**
+ * Stuck-loop blocker from the graphs that may be the saved version Run executes (never the draft).
+ * Unloaded or invalid graphs are skipped; the server rejects those anyway.
+ */
+export function savedVersionRunBlocker(...savedGraphs: unknown[]): string | null {
+  for (const raw of savedGraphs) {
+    const graph = normalizeFlowGraph(raw);
+    if (!graph || !validateGraph(graph).valid) continue;
+    const [message] = stuckConditionLoops(graph.nodes, graph.edges, formatFlowNodeLabel).messages;
+    if (message) return message;
+  }
+  return null;
+}
+
+/** What the editor knows when Run (button or hotkey) is asked to start. */
+export type EditorRunState = {
+  hasManualTrigger: boolean;
+  /** Saved version number; 0 until the flow is first saved. */
+  baselineVersion: number;
+  flowEnabled: boolean;
+  /** Graphs that may be the version Run executes (see `savedVersionRunBlocker`). */
+  savedGraphs: unknown[];
+};
+
+/** Why the editor's Run must not start, as the toast to show; null when it may. */
+export function editorRunBlocker(state: EditorRunState): string | null {
+  if (!state.hasManualTrigger) {
+    return 'Run is only available for flows that start with a manual trigger.';
+  }
+  if (state.baselineVersion < 1) return 'Save your flow before running.';
+  if (!state.flowEnabled) {
+    return 'This flow is paused. Enable it in Flow settings or the flows list to run.';
+  }
+  return savedVersionRunBlocker(...state.savedGraphs);
 }
