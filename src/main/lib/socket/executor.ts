@@ -36,6 +36,7 @@ import {
   claudeErrorText,
   isResumeFailureText,
 } from '../claude/stream-classifiers';
+import { recoverSpilledFlowPatchChunk } from '../claude/tool-result-spill';
 import type { MessageMetadata, UIMessageChunk } from '../claude/types';
 import {
   getClaudeCodeTokenById,
@@ -1229,7 +1230,12 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
           await armAutoDuringPlan(session);
         }
 
-        for (const chunk of transform(sdkMessage)) {
+        for (const rawChunk of transform(sdkMessage)) {
+          const chunk = recoverSpilledFlowPatchChunk(rawChunk, {
+            subChatId,
+            toolName:
+              'toolCallId' in rawChunk ? toolNameByCallId.get(rawChunk.toolCallId) : undefined,
+          });
           if (!earlySessionIdPersisted) {
             const chunkSessionId = sessionIdFromFrame(sdkMessage, chunk);
             if (chunkSessionId) {

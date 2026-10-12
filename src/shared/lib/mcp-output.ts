@@ -133,14 +133,23 @@ const SAVED_FILE = String.raw`(?:\/|[A-Za-z]:[\\/]|\\\\[^\\\s][^\\\n]*\\[^\\\n]+
  */
 const SPILL_MARKERS: readonly RegExp[] = [
   new RegExp(
-    String.raw`^Error: result \([^)]*\) exceeds maximum allowed tokens\. Output has been saved to ${SAVED_FILE}[^\n]*?\. Format: `,
+    String.raw`^Error: result \([^)]*\) exceeds maximum allowed tokens\. Output has been saved to (${SAVED_FILE}[^\n]*?)\. Format: `,
   ),
   new RegExp(
-    String.raw`^(?:<persisted-output>\s*)?Output too large \([^)]*\)\. Full output saved to:\s*${SAVED_FILE}[^\n]*\n\s*Preview \(`,
+    String.raw`^(?:<persisted-output>\s*)?Output too large \([^)]*\)\. Full output saved to:\s*(${SAVED_FILE}[^\n]*)\n\s*Preview \(`,
   ),
 ];
 
 export function isSpilledToolResultText(text: string): boolean {
+  return spilledToolResultPath(text) !== undefined;
+}
+
+/** The file a spill note names, or undefined when the text is not a whole spill note. */
+export function spilledToolResultPath(text: string): string | undefined {
   const note = text.trimStart();
-  return SPILL_MARKERS.some((marker) => marker.test(note));
+  for (const marker of SPILL_MARKERS) {
+    const path = marker.exec(note)?.[1]?.trim();
+    if (path) return path;
+  }
+  return undefined;
 }

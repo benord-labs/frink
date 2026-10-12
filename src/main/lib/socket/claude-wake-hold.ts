@@ -35,6 +35,7 @@ import type { TaskSignalPayload } from '../../../shared/types/task-signal';
 import type { WakeHoldEndReason, WakeHoldState } from '../../../shared/types/wake-hold';
 import { createTransformer } from '../claude';
 import { clearPendingApprovals } from '../claude/ask-user-question-approval';
+import { recoverSpilledFlowPatchChunk, toolNameInChunks } from '../claude/tool-result-spill';
 import type { UIMessageChunk } from '../claude/types';
 import type { FlowResourceActivityRelease } from '../flows/admission/activity';
 import { captureMainException, captureMainMessage } from '../sentry/init';
@@ -395,7 +396,10 @@ export function armWakePump(params: ArmWakePumpParams): WakeHold {
     onMessage: (m) => {
       if (!burst) return;
       for (const chunk of burst.transform(m)) {
-        emitChunk(chunk);
+        const isOutput =
+          chunk.type === 'tool-output-available' || chunk.type === 'tool-output-error';
+        const toolName = isOutput ? toolNameInChunks(chunks, chunk.toolCallId) : undefined;
+        emitChunk(recoverSpilledFlowPatchChunk(chunk, { subChatId, toolName }));
       }
     },
     onBurstEnd: async () => {

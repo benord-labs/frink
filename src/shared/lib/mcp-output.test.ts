@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isSpilledToolResultText, unwrapMcpOutput } from './mcp-output';
+import { isSpilledToolResultText, spilledToolResultPath, unwrapMcpOutput } from './mcp-output';
 
 describe('unwrapMcpOutput', () => {
   it('parses joined text from an array of content blocks', () => {
@@ -194,5 +194,36 @@ describe('isSpilledToolResultText', () => {
     ['a result that only mentions the sentence', `Saved. ${TOKEN_CAP_SPILL.slice(7)}`],
   ])('does not treat %s as a spill', (_label, text) => {
     expect(isSpilledToolResultText(text)).toBe(false);
+  });
+});
+
+describe('spilledToolResultPath', () => {
+  it.each([
+    [
+      'a token-cap spill',
+      TOKEN_CAP_SPILL,
+      '/Users/me/claude-sessions/abc/projects/-p/tool-results/mcp-frink-frink_flows_patch-1.txt',
+    ],
+    [
+      'a macOS path with spaces',
+      TOKEN_CAP_SPILL.replace('/Users/me', '/Users/me/Library/Application Support/Frink'),
+      '/Users/me/Library/Application Support/Frink/claude-sessions/abc/projects/-p/tool-results/mcp-frink-frink_flows_patch-1.txt',
+    ],
+    [
+      'a Windows UNC path',
+      TOKEN_CAP_SPILL.replace(/\/Users\/me\S*/, '\\\\server\\share\\tool-results\\result.txt.'),
+      '\\\\server\\share\\tool-results\\result.txt',
+    ],
+    [
+      'a persisted-output spill',
+      PERSISTED_OUTPUT_SPILL,
+      '/Users/me/claude-sessions/abc/tool-results/toolu_1.txt',
+    ],
+  ])('reads the saved file from %s', (_label, text, path) => {
+    expect(spilledToolResultPath(text)).toBe(path);
+  });
+
+  it('names no file for prose that only quotes the note', () => {
+    expect(spilledToolResultPath(`Documentation: ${TOKEN_CAP_SPILL}`)).toBeUndefined();
   });
 });
