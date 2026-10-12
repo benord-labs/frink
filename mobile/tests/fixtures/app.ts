@@ -155,7 +155,10 @@ export async function openApp(
       });
     }
     if (request.url().endsWith('/api/attachments'))
-      return route.fulfill({ headers: corsHeaders, json: { data: recordUpload(request, state.requests) } });
+      return route.fulfill({
+        headers: corsHeaders,
+        json: { data: recordUpload(request, state.requests) },
+      });
     if (request.url().endsWith('/api/notifications')) {
       const alert = request.postDataJSON() as { token?: string | null };
       state.alerts.push(alert);
@@ -167,10 +170,14 @@ export async function openApp(
     const custom = state.respond?.(input);
     if (custom instanceof Error)
       return route.fulfill({ status: 409, headers: corsHeaders, json: { error: custom.message } });
-    if (custom !== undefined) return route.fulfill({ headers: corsHeaders, json: { data: custom } });
+    if (custom !== undefined)
+      return route.fulfill({ headers: corsHeaders, json: { data: custom } });
     const saved = applyComposerChange(state.data.composer as ComposerLike, input);
     if (saved) return route.fulfill({ headers: corsHeaders, json: { data: saved } });
-    return route.fulfill({ headers: corsHeaders, json: { data: state.data[input.type] ?? { ok: true } } });
+    return route.fulfill({
+      headers: corsHeaders,
+      json: { data: state.data[input.type] ?? { ok: true } },
+    });
   });
   await page.goto(path);
   return state;

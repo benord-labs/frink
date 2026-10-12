@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MobileChatSummary } from '@frink/shared/types/remote/mobile';
-import {
-  acceptsMessage,
-  actionEnabled,
-  chatPollInterval,
-  composerMode,
-} from './chat-state';
+import { acceptsMessage, actionEnabled, chatPollInterval, composerMode } from './chat-state';
 
 describe('composerMode', () => {
   const typed = { text: 'Also this', files: 0 };

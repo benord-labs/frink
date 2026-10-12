@@ -13,7 +13,10 @@ import { readSavedComputers } from './storage';
 
 it('loads the saved computers even when cleaning up single-computer keys fails', async () => {
   const deviceId = '00000000-0000-4000-8000-000000000001';
-  keychain.set('frink.mobile.computers.v2', JSON.stringify({ selected: deviceId, ids: [deviceId] }));
+  keychain.set(
+    'frink.mobile.computers.v2',
+    JSON.stringify({ selected: deviceId, ids: [deviceId] }),
+  );
   keychain.set(
     `frink.mobile.computer.${deviceId}`,
     JSON.stringify({

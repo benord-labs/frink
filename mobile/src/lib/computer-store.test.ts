@@ -95,7 +95,10 @@ it('a failed save is retried by the next one instead of being taken as stored', 
 
 it('after queued forgets fail part-way, the next save from the stored state stays consistent', async () => {
   const { store, values, interruptAfter } = memory();
-  const all = addComputer(addComputer(addComputer(NO_COMPUTERS, computer(1)), computer(2)), computer(3));
+  const all = addComputer(
+    addComputer(addComputer(NO_COMPUTERS, computer(1)), computer(2)),
+    computer(3),
+  );
   const saver = computerSaver(store, NO_COMPUTERS);
   await saver.save(all);
   // Each forget writes the kept entries and the index, then fails while deleting.
@@ -103,9 +106,9 @@ it('after queued forgets fail part-way, the next save from the stored state stay
   const first = saver.save(removeComputer(all, computer(1).deviceId)).catch(() => {});
   await first;
   interruptAfter(2);
-  await saver.save(removeComputer(removeComputer(all, computer(1).deviceId), computer(2).deviceId)).catch(
-    () => {},
-  );
+  await saver
+    .save(removeComputer(removeComputer(all, computer(1).deviceId), computer(2).deviceId))
+    .catch(() => {});
   interruptAfter(Infinity);
   await saver.save(selectComputer(saver.stored(), computer(1).deviceId));
   expect(indexIsBacked(values)).toBe(true);

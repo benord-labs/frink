@@ -101,9 +101,7 @@ test('a Codex chat runs Fast or Ultrafast, never both, and each shows its credit
   await page.screenshot({ path: 'test-results/composer-codex-ultrafast-dark.png' });
 
   await page.getByRole('button', { name: 'Done', exact: true }).click();
-  await expect(
-    page.getByRole('button', { name: 'Model: GPT-6 Astra', exact: true }),
-  ).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Model: GPT-6 Astra', exact: true })).toBeVisible();
 });
 
 test('quick taps on several switches are all saved, in order, while the computer is slow', async ({

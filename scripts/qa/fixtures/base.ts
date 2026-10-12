@@ -42,7 +42,11 @@ export const FIXTURE_HTML_ARTIFACT_ID = 'qa-fixture-customer-message-digest';
 export const FIXTURE_HTML_ARTIFACT_TITLE = 'Customer message digest · 18–22 Aug';
 
 /** A transcript is one `sub_chat_messages` row per message, in order. */
-export function seedTranscript(db: SqliteDb, subChatId: string, messages: readonly unknown[]): void {
+export function seedTranscript(
+  db: SqliteDb,
+  subChatId: string,
+  messages: readonly unknown[],
+): void {
   db.insert(schema.subChatMessages)
     .values(messages.map((message, seq) => ({ subChatId, seq, message: JSON.stringify(message) })))
     .run();

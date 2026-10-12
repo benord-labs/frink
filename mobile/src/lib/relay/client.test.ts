@@ -49,7 +49,10 @@ class Socket {
   async emitWithAck(_name: string, bytes: Uint8Array) {
     this.frames.push(bytes);
     if (!this.session) {
-      const ready = answerHandshake(bytes, this.wrongKey ? generateDesktopKeyPair() : this.keyPair)!;
+      const ready = answerHandshake(
+        bytes,
+        this.wrongKey ? generateDesktopKeyPair() : this.keyPair,
+      )!;
       this.session = ready.session;
       this.handlers.get('frame')?.(ready.ready, () => {});
     } else {
