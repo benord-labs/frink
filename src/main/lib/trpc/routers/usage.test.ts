@@ -174,7 +174,7 @@ describe('usageRouter.getCodexUsage', () => {
     email: 'me@home.com',
     available: true,
     updatedAt: 5,
-    speedTiers: { 'gpt-6-astra': ['fast' as const] },
+    catalog: { tiers: { 'gpt-6-astra': ['fast' as const] }, defaultSlug: 'gpt-6-astra' },
   };
   const codexProbe = vi.fn(async (): Promise<CodexUsageSnapshot> => codexSnapshot);
   const connectCodex = () =>
@@ -212,42 +212,42 @@ describe('usageRouter.getCodexUsage', () => {
     expect(getDefaultCredentialForType).toHaveBeenCalledWith('codex');
   });
 
-  it("returns the account's speed tiers with their slugs intact", async () => {
+  it("returns the account's catalog with its slugs intact", async () => {
     connectCodex();
-    expect(await caller.getCodexSpeedTiers()).toEqual({ 'gpt-6-astra': ['fast'] });
+    expect(await caller.getCodexAccountCatalog()).toEqual(codexSnapshot.catalog);
   });
 
-  it('reports unknown speed tiers without spawning when no Codex account is connected', async () => {
+  it('reports an unknown catalog without spawning when no Codex account is connected', async () => {
     asMock(getDefaultCredentialForType).mockResolvedValue({ token: null, type: 'codex' });
-    expect(await caller.getCodexSpeedTiers()).toBeNull();
+    expect(await caller.getCodexAccountCatalog()).toBeNull();
     expect(codexProbe).not.toHaveBeenCalled();
   });
 
-  it('retries a read that missed the speed tiers well inside the TTL, keeping its usage', async () => {
+  it('retries a read that missed the catalog well inside the TTL, keeping its usage', async () => {
     connectCodex();
-    codexProbe.mockResolvedValueOnce({ ...codexSnapshot, speedTiers: null });
-    expect(await caller.getCodexSpeedTiers()).toBeNull();
+    codexProbe.mockResolvedValueOnce({ ...codexSnapshot, catalog: null });
+    expect(await caller.getCodexAccountCatalog()).toBeNull();
     expect((await caller.getCodexUsage()).windows).toEqual(codexSnapshot.windows);
     clock += 10_000;
-    await caller.getCodexSpeedTiers();
+    await caller.getCodexAccountCatalog();
     expect(codexProbe).toHaveBeenCalledTimes(1);
     clock += 30_000;
-    await caller.getCodexSpeedTiers();
+    await caller.getCodexAccountCatalog();
     expect(codexProbe).toHaveBeenCalledTimes(2);
     await vi.waitFor(async () =>
-      expect(await caller.getCodexSpeedTiers()).toEqual({ 'gpt-6-astra': ['fast'] }),
+      expect(await caller.getCodexAccountCatalog()).toEqual(codexSnapshot.catalog),
     );
   });
 
   it('retries a failed read well inside the TTL, since it hides the paid speeds', async () => {
     connectCodex();
     codexProbe.mockRejectedValueOnce(new Error('Codex did not answer account/read'));
-    expect(await caller.getCodexSpeedTiers()).toBeNull();
+    expect(await caller.getCodexAccountCatalog()).toBeNull();
     clock += 10_000;
-    await caller.getCodexSpeedTiers();
+    await caller.getCodexAccountCatalog();
     expect(codexProbe).toHaveBeenCalledTimes(1);
     clock += 30_000;
-    expect(await caller.getCodexSpeedTiers()).toEqual({ 'gpt-6-astra': ['fast'] });
+    expect(await caller.getCodexAccountCatalog()).toEqual(codexSnapshot.catalog);
     expect(codexProbe).toHaveBeenCalledTimes(2);
   });
 });

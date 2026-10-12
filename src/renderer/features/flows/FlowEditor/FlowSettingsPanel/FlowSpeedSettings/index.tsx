@@ -10,7 +10,7 @@ import type { FlowNode } from '../../../../../../shared/lib/validate-flow-graph'
 import type { FlowSettings } from '../../../../../../shared/types/flow';
 import { Label } from '../../../../../components/ui/label';
 import { Switch } from '../../../../../components/ui/switch';
-import { trpc } from '../../../../../lib/trpc';
+import { useCodexAccountCatalog } from '../../../../../lib/codex/use-codex-account-catalog';
 import { patch } from '../patch';
 
 /** Copy for the Flow-level Fast switch; keeps speed and ChatGPT credit use as separate axes. */
@@ -61,10 +61,7 @@ export function FlowSpeedSettings({
 }): ReactElement {
   const modelId = settings?.defaultModel?.trim() || undefined;
   const speed = settings?.codexSpeed ?? 'standard';
-  const { data: accountTiers } = trpc.usage.getCodexSpeedTiers.useQuery(undefined, {
-    staleTime: 60_000,
-  });
-  const tiers = accountTiers ?? {};
+  const tiers = useCodexAccountCatalog(true)?.tiers ?? {};
   const offersFast = Object.values(tiers).some((speeds) => speeds.includes('fast'));
   const ultrafastCredits = flowUltrafastCredits(modelId, nodes, tiers);
   const toggle = (option: CodexSpeed) => (on: boolean) =>

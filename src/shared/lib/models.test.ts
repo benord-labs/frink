@@ -92,6 +92,36 @@ describe('normalizeModelIdForExecutionAccount', () => {
     expect(normalizeModelIdForExecutionAccount(true, 'sonnet')).toBe(CODEX_DEFAULT_MODEL_ID);
   });
 
+  describe('with a free account catalog (no GPT-6 Astra)', () => {
+    const free = { tiers: { 'gpt-6-luna': [], 'gpt-5.5': [] }, defaultSlug: 'gpt-6-luna' };
+
+    it("snaps a non-Codex id to the account's default", () => {
+      expect(normalizeModelIdForExecutionAccount(true, 'sonnet', free)).toBe(
+        'codex-gpt-6-luna-medium',
+      );
+    });
+
+    it("snaps a model the account can't use, for a new chat", () => {
+      expect(normalizeModelIdForExecutionAccount(true, CODEX_DEFAULT_MODEL_ID, free)).toBe(
+        'codex-gpt-6-luna-medium',
+      );
+    });
+
+    it("keeps a saved model the account can't use when asked to", () => {
+      expect(
+        normalizeModelIdForExecutionAccount(true, CODEX_DEFAULT_MODEL_ID, free, {
+          keepUnavailable: true,
+        }),
+      ).toBe(CODEX_DEFAULT_MODEL_ID);
+    });
+
+    it('keeps a model the account lists', () => {
+      expect(normalizeModelIdForExecutionAccount(true, 'codex-gpt-5.5-high', free)).toBe(
+        'codex-gpt-5.5-high',
+      );
+    });
+  });
+
   it('preserves a valid Codex id for a Codex account', () => {
     const id = CODEX_MODELS[0]?.id;
     expect(id).toBeDefined();

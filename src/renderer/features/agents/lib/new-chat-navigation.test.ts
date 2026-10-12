@@ -112,6 +112,18 @@ describe('seedNewChatNavigation', () => {
     expect(store.get(lastSelectedModelIdAtomFamily('chat-cx2'))).toBe('codex-gpt-5.5-high');
   });
 
+  it("starts a free account's chat on its own default, not a model it can't use", () => {
+    const store = freshStore();
+    store.set(lastSelectedModelIdAtom, CODEX_DEFAULT_MODEL_ID); // GPT-6 Astra
+    seedNewChatNavigation(store.get, store.set, 'chat-free', {
+      isCodexAccount: true,
+      codexCatalog: { tiers: { 'gpt-6-luna': [], 'gpt-5.5': [] }, defaultSlug: 'gpt-6-luna' },
+    });
+    expect(store.get(lastSelectedModelIdAtomFamily('chat-free'))).toBe('codex-gpt-6-luna-medium');
+    // The new-chat preference itself is kept, for an account that can use it.
+    expect(store.get(lastSelectedModelIdAtom)).toBe(CODEX_DEFAULT_MODEL_ID);
+  });
+
   it('split-pane: fills the NEW_CHAT_PANE pane and clears that pane index map', () => {
     const store = freshStore();
     store.set(splitViewAtom, (prev: SplitViewState) => ({

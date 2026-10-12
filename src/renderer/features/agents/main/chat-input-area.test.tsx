@@ -1,12 +1,18 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { observable } from '@trpc/server/observable';
+import { Provider } from 'jotai';
 import type { ComponentProps } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TooltipProvider } from '../../../components/ui/tooltip';
+import { CODEX_DEFAULT_MODEL_ID } from '../../../../shared/lib/codex-cli-models';
+import { writeComposerCache } from '../../../lib/atoms/atom-family-factory';
+import { appStore } from '../../../lib/jotai-store';
+import { renderWithTrpc } from '../../../lib/test-utils/render-with-trpc';
 import { trpc } from '../../../lib/trpc';
+import { lastSelectedModelIdAtomFamily } from '../atoms';
 import { ChatInputArea } from './chat-input-area';
 
 // `lib/trpc` wires its ipc client at import time, so the preload bridge must exist first.
@@ -127,5 +133,50 @@ describe('ChatInputArea editor context', () => {
     );
     expect(props.onClearCodeSelection).toHaveBeenCalledOnce();
     expect(props.onDismissActiveFile).toHaveBeenCalledOnce();
+  });
+});
+
+describe('ChatInputArea on a free Codex account (its model/list has no GPT-6 Astra)', () => {
+  /** Answers the account as Codex and its catalog as a free login's (or fails that query); every
+   *  other query stays loading. */
+  function renderFreeCodexComposer(catalogQueryFails = false) {
+    const account = { type: 'codex', label: 'Codex', isAuthenticated: true };
+    const catalog = { tiers: { 'gpt-6-luna': [], 'gpt-5.5': [] }, defaultSlug: 'gpt-6-luna' };
+    renderWithTrpc(
+      <Provider store={appStore}>
+        <TooltipProvider>
+          <ChatInputArea {...composerProps()} />
+        </TooltipProvider>
+      </Provider>,
+      ({ path }) => {
+        if (path === 'claudeCode.getResolvedAccount') return Promise.resolve(account);
+        if (path === 'usage.getCodexAccountCatalog') {
+          return catalogQueryFails
+            ? Promise.reject(new Error('main unavailable'))
+            : Promise.resolve(catalog);
+        }
+        return new Promise(() => {});
+      },
+    );
+  }
+
+  it("names a saved model the plan lacks, rather than showing a model it won't send", async () => {
+    writeComposerCache('chat-1', { modelId: 'codex-gpt-6-astra-medium' });
+    renderFreeCodexComposer();
+
+    const note = "GPT-6 Astra isn't available on your ChatGPT plan — pick another model";
+    const trigger = await waitFor(() => screen.getByRole('button', { name: `Model: ${note}` }));
+    fireEvent.click(trigger);
+    expect(screen.getByRole('option', { name: 'GPT-6 Luna' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'GPT-6 Astra' })).toBeNull();
+  });
+
+  it('still moves a saved Claude model to a Codex one when the account list query fails', async () => {
+    writeComposerCache('chat-1', { modelId: 'sonnet' });
+    renderFreeCodexComposer(true);
+
+    await waitFor(() =>
+      expect(appStore.get(lastSelectedModelIdAtomFamily('chat-1'))).toBe(CODEX_DEFAULT_MODEL_ID),
+    );
   });
 });

@@ -318,6 +318,7 @@ vi.mock('./client', () => ({
 
 import { filterCanonicalPlanParts } from '../../../shared/plan-parts-filter';
 import { runCodexAgent } from '../agent-runner';
+import { codexPlanUsage } from '../agent-runner/codex/usage';
 import { createTransformer, getBundledClaudeBinaryPath } from '../claude';
 import type { UIMessageChunk } from '../claude/types';
 import { getClaudeCodeTokenById, getDefaultClaudeCodeToken } from '../credentials';
@@ -1475,6 +1476,84 @@ describe('socket file permission edge cases', () => {
     expect(codexPrompt).toContain('intentionally not available');
     // Codex does not use the Claude SDK hook path.
     expect(claudeQueryMock).not.toHaveBeenCalled();
+  });
+
+  describe('on a free Codex account (its model/list has no GPT-6 Astra)', () => {
+    const codexCredential: Awaited<ReturnType<typeof getDefaultClaudeCodeToken>> = {
+      token: null,
+      isApiKey: false,
+      type: 'codex',
+      label: 'codex-test',
+      passthrough: true,
+    };
+    const finish: UIMessageChunk = { type: 'finish', messageMetadata: { sessionId: 'sess-free' } };
+    function freeCatalogCached() {
+      vi.spyOn(codexPlanUsage, 'get').mockResolvedValueOnce({
+        windows: {},
+        subscriptionType: 'free',
+        email: null,
+        available: true,
+        updatedAt: 0,
+        catalog: { tiers: { 'gpt-6-luna': [], 'gpt-5.5': [] }, defaultSlug: 'gpt-6-luna' },
+      });
+    }
+
+    it('refuses a chosen model the plan lacks with a plain message, never starting Codex', async () => {
+      vi.mocked(getDefaultClaudeCodeToken).mockResolvedValueOnce(codexCredential);
+      freeCatalogCached();
+      freeCatalogCached(); // the fresh read a refusal is confirmed against
+      vi.mocked(runCodexAgent).mockClear();
+
+      await handleRemoteExecute({
+        ...basePayload,
+        message: 'hello',
+        settings: { model: 'codex-gpt-6-astra-medium' },
+      });
+
+      expect(vi.mocked(runCodexAgent)).not.toHaveBeenCalled();
+      expect(vi.mocked(socketClient.sendErrorDirect)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error:
+            "GPT-6 Astra isn't available on your ChatGPT plan. Pick another model from the model menu.",
+        }),
+      );
+    });
+
+    it('never starts Codex when the turn is stopped while the account list is being read', async () => {
+      vi.mocked(getDefaultClaudeCodeToken).mockResolvedValueOnce(codexCredential);
+      vi.mocked(runCodexAgent).mockClear();
+      vi.spyOn(codexPlanUsage, 'get').mockImplementationOnce(async () => {
+        handleRemoteStop({ chatId: basePayload.chatId, subChatId: basePayload.subChatId });
+        return null;
+      });
+
+      await handleRemoteExecute({
+        ...basePayload,
+        message: 'hello',
+        settings: { model: 'sonnet' },
+      });
+
+      expect(vi.mocked(runCodexAgent)).not.toHaveBeenCalled();
+    });
+
+    it("runs a send with no Codex model (phone, Flow step) on the account's default", async () => {
+      vi.mocked(getDefaultClaudeCodeToken).mockResolvedValueOnce(codexCredential);
+      freeCatalogCached();
+      vi.mocked(runCodexAgent).mockClear();
+      vi.mocked(runCodexAgent).mockImplementationOnce(async function* () {
+        yield finish;
+      });
+
+      await handleRemoteExecute({
+        ...basePayload,
+        message: 'hello',
+        settings: { model: 'sonnet' },
+      });
+
+      expect(vi.mocked(runCodexAgent)).toHaveBeenCalledWith(
+        expect.objectContaining({ model: 'gpt-6-luna', effort: 'medium' }),
+      );
+    });
   });
 
   it('hides frink_task_signal for plain chats with no task link', async () => {

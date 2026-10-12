@@ -5,10 +5,76 @@ import {
   CODEX_FAST_SPEED_MULTIPLIER,
   CODEX_MODEL_SLUGS,
   type CodexReasoningEffort,
+  CodexModelUnavailableError,
+  codexDefaultModelIdForAccount,
   codexFastTierCredits,
+  codexModelsForAccount,
   codexTierCredits,
+  isCodexModelUnavailable,
   resolveCodexCliModel,
 } from './codex-cli-models';
+
+/** A free ChatGPT login's model/list (bundled Codex 0.155.1): no GPT-6 Astra. */
+const FREE = {
+  tiers: {
+    'gpt-6-luna': [],
+    'gpt-5.6-terra': [],
+    'gpt-5.6-luna': [],
+    'gpt-5.5': [],
+    'gpt-reserve': [],
+    'codex-auto-review': [],
+  },
+  defaultSlug: 'gpt-6-luna',
+};
+/** Every Frink model listed, as a paid plan's catalog. */
+const ALL = {
+  tiers: Object.fromEntries(CODEX_MODEL_SLUGS.map((m) => [m.slug, []])),
+  defaultSlug: 'gpt-6-astra',
+};
+
+describe('account catalog', () => {
+  it('lists only the Frink models a free account can use', () => {
+    const slugs = new Set(codexModelsForAccount(FREE).map((m) => m.cliValue));
+    expect([...slugs]).toEqual(['gpt-6-luna', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5']);
+  });
+
+  it('lists every Frink model for an account that has them all', () => {
+    expect(codexModelsForAccount(ALL)).toEqual(CODEX_CLI_MODELS);
+  });
+
+  it('falls back to the full list when the catalog is unknown or shares nothing with Frink', () => {
+    expect(codexModelsForAccount(null)).toEqual(CODEX_CLI_MODELS);
+    expect(codexModelsForAccount({ tiers: { 'gpt-9': [] }, defaultSlug: 'gpt-9' })).toEqual(
+      CODEX_CLI_MODELS,
+    );
+  });
+
+  it("defaults to the account's own default, else the first model Frink knows it lists", () => {
+    expect(codexDefaultModelIdForAccount(FREE)).toBe('codex-gpt-6-luna-medium');
+    expect(codexDefaultModelIdForAccount({ ...FREE, defaultSlug: 'gpt-reserve' })).toBe(
+      'codex-gpt-6-luna-medium',
+    );
+    expect(codexDefaultModelIdForAccount(ALL)).toBe(CODEX_DEFAULT_MODEL_ID);
+    expect(codexDefaultModelIdForAccount(null)).toBe(CODEX_DEFAULT_MODEL_ID);
+  });
+
+  it('marks only a known model missing from a known catalog as unavailable', () => {
+    expect(isCodexModelUnavailable(CODEX_DEFAULT_MODEL_ID, FREE)).toBe(true);
+    expect(isCodexModelUnavailable('codex-gpt-5.5-low', FREE)).toBe(false);
+    expect(isCodexModelUnavailable(CODEX_DEFAULT_MODEL_ID, null)).toBe(false);
+    expect(isCodexModelUnavailable('sonnet', FREE)).toBe(false);
+    // A catalog of only models Frink doesn't know (a renamed lineup) must never block every send.
+    expect(
+      isCodexModelUnavailable(CODEX_DEFAULT_MODEL_ID, {
+        tiers: { 'gpt-9': [] },
+        defaultSlug: null,
+      }),
+    ).toBe(false);
+    expect(() =>
+      resolveCodexCliModel(CODEX_DEFAULT_MODEL_ID, undefined, { tiers: {}, defaultSlug: null }),
+    ).not.toThrow();
+  });
+});
 
 describe('CODEX_CLI_MODELS (codex-specific data rules)', () => {
   // Generic catalog integrity (no-dup ids, cliValue present, id→slug map, family dedup)
@@ -90,6 +156,28 @@ describe('CODEX_DEFAULT_MODEL_ID', () => {
 });
 
 describe('resolveCodexCliModel', () => {
+  it("runs a turn with no Codex model on the account's default", () => {
+    expect(resolveCodexCliModel(undefined, undefined, FREE)).toEqual({
+      model: 'gpt-6-luna',
+      effort: 'medium',
+      serviceTier: null,
+    });
+    expect(resolveCodexCliModel('sonnet', 'standard', FREE).model).toBe('gpt-6-luna');
+  });
+
+  it("refuses a chosen model the account can't use, naming it", () => {
+    expect(() => resolveCodexCliModel(CODEX_DEFAULT_MODEL_ID, undefined, FREE)).toThrow(
+      new CodexModelUnavailableError('GPT-6 Astra'),
+    );
+    expect(() => resolveCodexCliModel(CODEX_DEFAULT_MODEL_ID, undefined, FREE)).toThrow(
+      "GPT-6 Astra isn't available on your ChatGPT plan.",
+    );
+  });
+
+  it('resolves as before while the catalog is unknown', () => {
+    expect(resolveCodexCliModel(CODEX_DEFAULT_MODEL_ID, undefined, null).model).toBe('gpt-6-astra');
+  });
+
   it('splits a picker id into the slug (model) + effort', () => {
     expect(resolveCodexCliModel('codex-gpt-5.6-sol-high')).toEqual({
       model: 'gpt-5.6-sol',

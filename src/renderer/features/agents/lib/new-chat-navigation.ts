@@ -1,5 +1,6 @@
 /* eslint-disable project-structure/folder-structure */
 import { atom, type Getter, type Setter } from 'jotai';
+import type { CodexAccountCatalog } from '../../../../shared/lib/codex-cli-models';
 import { normalizeModelIdForExecutionAccount } from '../../../../shared/lib/models';
 import type { CodexSpeed } from '../../../../shared/types/execution';
 import { leaveOverlayStackForChatSurfaceAtom } from '../../../lib/atoms';
@@ -28,6 +29,8 @@ import { newChatDraftKey, replaceDraftText } from './drafts';
 type SeedOptions = {
   /** Whether the resolved execution account is a Codex account (coerces the seeded model id). */
   isCodexAccount: boolean;
+  /** The Codex account's catalog: a model it can't use seeds as its default instead. */
+  codexCatalog?: CodexAccountCatalog | null;
   /** First sub-chat id, if present — seeds its mode before the tRPC query hydrates the store. */
   subChatId?: string;
   /** Staged manual Auto Mode state from New Chat. Defaults on for all fresh chats. */
@@ -61,7 +64,13 @@ export function seedNewChatNavigation(
   get: Getter,
   set: Setter,
   chatId: string,
-  { isCodexAccount, subChatId, autoModeEnabled = true, codexSpeed = 'standard' }: SeedOptions,
+  {
+    isCodexAccount,
+    codexCatalog = null,
+    subChatId,
+    autoModeEnabled = true,
+    codexSpeed = 'standard',
+  }: SeedOptions,
 ): void {
   set(selectedAgentChatIdAtom, chatId);
 
@@ -75,7 +84,7 @@ export function seedNewChatNavigation(
   const rawModelId = getEffectiveModelIdForPane(get, filledPaneIndex);
   set(
     lastSelectedModelIdAtomFamily(chatId),
-    normalizeModelIdForExecutionAccount(isCodexAccount, rawModelId),
+    normalizeModelIdForExecutionAccount(isCodexAccount, rawModelId, codexCatalog),
   );
   set(chatModeAtomFamily(chatId), effectiveChatMode);
   set(autoModePerChatAtomFamily(chatId), autoModeEnabled);

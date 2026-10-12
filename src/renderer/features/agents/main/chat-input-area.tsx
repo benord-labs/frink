@@ -5,6 +5,10 @@ import { memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { attachedContextFile } from '@/lib/mentions/queued-message-text';
 import { handlePasteEvent } from '@/lib/utils/paste-text';
 import {
+  codexModelsForAccount,
+  isCodexModelUnavailable,
+} from '../../../../shared/lib/codex-cli-models';
+import {
   CLAUDE_CODE_MODELS,
   CODEX_MODELS,
   claudeModelToPickerItem,
@@ -19,6 +23,7 @@ import {
   PromptInputContextItems,
 } from '../../../components/ui/prompt-input';
 import { useComposerPlaceholder } from '../../../lib/agent-chat/use-composer-placeholder';
+import { useCodexAccountCatalog } from '../../../lib/codex/use-codex-account-catalog';
 import {
   agentsSettingsDialogActiveTabAtom,
   agentsSettingsDialogOpenAtom,
@@ -385,13 +390,6 @@ export const ChatInputArea = memo(function ChatInputArea({
     hiddenModelFamilies,
     lastSelectedModelId,
   );
-  const codexModels = useVisibleProviderModels(
-    CODEX_MODELS,
-    isCodexModelVisible,
-    codexModelToPickerItem,
-    hiddenModelFamilies,
-    lastSelectedModelId,
-  );
 
   const { data: resolvedAccount, isSuccess: accountResolved } =
     trpc.claudeCode.getResolvedAccount.useQuery(
@@ -399,6 +397,23 @@ export const ChatInputArea = memo(function ChatInputArea({
       { enabled: !!parentChatId, staleTime: 30000 },
     );
   const isCodexAccount = resolvedAccount?.type === 'codex';
+  const codexCatalog = useCodexAccountCatalog(isCodexAccount);
+  const codexAccountModels = useMemo(() => codexModelsForAccount(codexCatalog), [codexCatalog]);
+  const codexModels = useVisibleProviderModels(
+    codexAccountModels,
+    isCodexModelVisible,
+    codexModelToPickerItem,
+    hiddenModelFamilies,
+    lastSelectedModelId,
+  );
+  // A saved model the account can't use stays selected and named, so the trigger shows what a send
+  // would carry; the send itself is refused with a plain message.
+  const codexUnavailableModel = isCodexModelUnavailable(lastSelectedModelId, codexCatalog)
+    ? CODEX_MODELS.find((m) => m.id === lastSelectedModelId)
+    : undefined;
+  const codexSelected = codexUnavailableModel
+    ? codexModelToPickerItem(codexUnavailableModel)
+    : codexModels.selected;
   const composerPlaceholder = useComposerPlaceholder(parentChatId, isStreaming);
   const stopEndsBackgroundWork = useAtomValue(wakeHoldAdoptedAtomFamily(subChatId));
   const { chatMode, commitModeChange } = useChatMode(subChatId, parentChatId);
@@ -438,6 +453,7 @@ export const ChatInputArea = memo(function ChatInputArea({
     lastSelectedModelId,
     setLastSelectedModelId,
     accountResolved,
+    codexCatalog,
   );
 
   // Content change handler
@@ -863,7 +879,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                   />
 
                   <ModelSelector
-                    selectedModel={isCodexAccount ? codexModels.selected : claudeModels.selected}
+                    selectedModel={isCodexAccount ? codexSelected : claudeModels.selected}
                     availableModels={isCodexAccount ? codexModels.items : claudeModels.items}
                     onModelChange={(m) => setLastSelectedModelId(m.id)}
                     modelVariant={isCodexAccount ? 'codex' : 'claude'}
@@ -871,6 +887,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                     onOpenChange={setIsModelDropdownOpen}
                     onOpenModelSettings={openModelSettings}
                     chatId={parentChatId}
+                    unavailable={isCodexAccount && codexUnavailableModel !== undefined}
                   />
                 </div>
 

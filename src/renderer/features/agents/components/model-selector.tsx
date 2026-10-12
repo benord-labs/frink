@@ -10,6 +10,7 @@ import {
 import type { CodexSpeed, ClaudeSdkEffortLevel } from '../../../../shared/types/execution';
 import { ChevronDown } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '../../../components/ui/popover';
+import { useCodexAccountCatalog } from '../../../lib/codex/use-codex-account-catalog';
 import { trpc } from '../../../lib/trpc';
 import { cn } from '../../../lib/utils';
 import {
@@ -73,6 +74,8 @@ type ModelSelectorProps = {
   chatId?: string;
   /** New Chat: the form's staged speed, applied to the chat it creates. */
   newChatSpeedRef?: { current: CodexSpeed };
+  /** Chat: the selected model is one the signed-in account can't use; its send will be refused. */
+  unavailable?: boolean;
 };
 
 /** Codex speed controls, or none for a model without a paid tier (incl. Claude) or with nowhere
@@ -181,6 +184,14 @@ function chatTriggerText(m: ModelItem | undefined) {
   return { label: name + suffix, name, suffix };
 }
 
+/** Chat trigger hover text: what is selected, and why a send would be refused. */
+function chatTitle(label: string, ultra: boolean, unavailableName: string | null): string {
+  if (unavailableName !== null) {
+    return `${unavailableName} isn't available on your ChatGPT plan — pick another model`;
+  }
+  return ultra ? `${label} — runs many agents in parallel` : label;
+}
+
 function flowTriggerText(
   selectedModel: ModelItem | undefined,
   staleModelId: string | undefined,
@@ -210,6 +221,7 @@ export function ModelSelector({
   triggerId,
   chatId,
   newChatSpeedRef,
+  unavailable = false,
 }: ModelSelectorProps) {
   const isFlow = mode === 'flow';
   // Grey the Claude Extra High tier when the bundled CLI can't run `--effort xhigh` (< 2.1.173).
@@ -221,10 +233,7 @@ export function ModelSelector({
       staleTime: Number.POSITIVE_INFINITY,
     },
   );
-  const { data: codexTiers } = trpc.usage.getCodexSpeedTiers.useQuery(undefined, {
-    enabled: modelVariant === 'codex' && !isFlow,
-    staleTime: 60_000,
-  });
+  const codexCatalog = useCodexAccountCatalog(modelVariant === 'codex' && !isFlow);
   const xhighSupported = claudeCaps?.supportsXhigh ?? true;
   const ultraSupported = claudeCaps?.supportsUltra ?? true;
   // Ultra is a mode: its word takes the animated chroma used for power keywords.
@@ -243,6 +252,7 @@ export function ModelSelector({
   const triggerLabel = isFlow
     ? flowTriggerText(selectedModel, staleModelId, flowInheritLabel)
     : chatText.label;
+  const title = chatTitle(triggerLabel, ultra, unavailable ? chatText.name : null);
 
   return (
     <Popover open={isOpen} onOpenChange={onOpenChange}>
@@ -254,13 +264,16 @@ export function ModelSelector({
           className={cn(
             isFlow ? FLOW_FORM_TRIGGER_CLASS : chatTriggerClass,
             isFlow && 'text-foreground hover:bg-background',
+            unavailable && 'text-warning',
             triggerClassName,
           )}
           {...(isFlow
             ? {}
             : {
-                'aria-label': `Model: ${triggerLabel}${ultra ? ' — parallel agents on' : ''}`,
-                title: ultra ? `${triggerLabel} — runs many agents in parallel` : triggerLabel,
+                'aria-label': unavailable
+                  ? `Model: ${title}`
+                  : `Model: ${triggerLabel}${ultra ? ' — parallel agents on' : ''}`,
+                title,
               })}
         >
           <ComposerTriggerGlyph icon={TriggerIcon} ultra={ultra} />
@@ -293,7 +306,9 @@ export function ModelSelector({
           hideXhigh={modelVariant === 'claude' && !xhighSupported}
           hideUltra={modelVariant === 'claude' && !ultraSupported}
           speed={
-            isFlow ? undefined : speedScope(selectedModel?.id, chatId, newChatSpeedRef, codexTiers)
+            isFlow
+              ? undefined
+              : speedScope(selectedModel?.id, chatId, newChatSpeedRef, codexCatalog?.tiers)
           }
           inherit={
             isFlow

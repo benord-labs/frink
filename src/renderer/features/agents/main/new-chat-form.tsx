@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { ChatAtmosphereSurface } from '@/components/ChatAtmosphereSurface';
 import { type NewChatTarget, shouldScaffoldNewProject } from '@/lib/agent-chat/new-chat-target';
 import { newChatTerminalId } from '@/lib/agent-chat/sentinel-ids';
+import { useCodexAccountCatalog } from '@/lib/codex/use-codex-account-catalog';
 import {
   chatContextFileAtomFamily,
   chatContextFileDismissedAtomFamily,
@@ -27,7 +28,9 @@ import {
   codexModelToPickerItem,
   isClaudeModelVisible,
   isCodexModelVisible,
+  normalizeModelIdForExecutionAccount,
 } from '../../../../shared/lib/models';
+import { codexModelsForAccount } from '../../../../shared/lib/codex-cli-models';
 import type { ChatMode } from '../../../../shared/types/chat-mode';
 import { usePersistedToggle } from '../../../hooks/use-persisted-toggle';
 import {
@@ -251,10 +254,14 @@ export function NewChatForm({
     [visibleClaudeModels],
   );
 
-  // Codex models: filter by visibility and map to picker items
+  // Codex models: those the signed-in account can use, filtered by visibility
+  const codexCatalog = useCodexAccountCatalog(isCodexAccount);
   const visibleCodexModels = useMemo(
-    () => CODEX_MODELS.filter((m) => isCodexModelVisible(m, hiddenModelFamilies)),
-    [hiddenModelFamilies],
+    () =>
+      codexModelsForAccount(codexCatalog).filter((m) =>
+        isCodexModelVisible(m, hiddenModelFamilies),
+      ),
+    [codexCatalog, hiddenModelFamilies],
   );
   const codexModelsList = useMemo(
     () => visibleCodexModels.map(codexModelToPickerItem),
@@ -262,9 +269,16 @@ export function NewChatForm({
   );
 
   const modelsList = isCodexAccount ? codexModelsList : claudeModelsList;
+  // What the new chat will start on: the stored choice, or the account's default when the account
+  // can't use it. The stored preference itself is kept for an account that can.
+  const codexNewChatModelId = normalizeModelIdForExecutionAccount(
+    true,
+    lastSelectedModelId,
+    codexCatalog,
+  );
   const selectedModel = isCodexAccount
     ? codexModelToPickerItem(
-        visibleCodexModels.find((m) => m.id === lastSelectedModelId) ??
+        visibleCodexModels.find((m) => m.id === codexNewChatModelId) ??
           visibleCodexModels[0] ??
           CODEX_MODELS[0],
       )
@@ -276,6 +290,7 @@ export function NewChatForm({
     lastSelectedModelId,
     setLastSelectedModelId,
     accountResolved,
+    codexCatalog,
   );
 
   // Editor and file input refs
@@ -377,6 +392,7 @@ export function NewChatForm({
       // Navigate + seed per-chat atoms (shared with the goal-first build flow).
       seedNewChatNavigation(appStore.get, appStore.set, data.id, {
         isCodexAccount,
+        codexCatalog,
         subChatId: data.subChats?.[0]?.id,
         autoModeEnabled: staging.pending.autoMode,
         codexSpeed: staging.pending.codexSpeed,
@@ -836,7 +852,9 @@ export function NewChatForm({
                             autoModeRef: staging.autoMode,
                             accountResolved,
                             account: resolvedAccount,
-                            selectedModelId: lastSelectedModelId,
+                            selectedModelId: isCodexAccount
+                              ? codexNewChatModelId
+                              : lastSelectedModelId,
                           }}
                           selectedModel={selectedModel}
                           availableModels={modelsList}

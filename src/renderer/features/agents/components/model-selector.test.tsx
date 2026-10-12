@@ -26,13 +26,17 @@ type AccountTiersStub = { tiers: CodexAccountTiers | null | undefined };
 const account = vi.hoisted((): AccountTiersStub => ({ tiers: undefined }));
 
 // Stub the trpc client (the real module creates a client at load needing the electronTRPC preload
-// global, absent in tests). Only the bundled-CLI capability and Codex speed-tier queries are consumed.
+// global, absent in tests). Only the bundled-CLI capability and Codex catalog queries are consumed.
 vi.mock('../../../lib/trpc', () => ({
   trpc: {
     claudeSettings: {
       getBundledClaudeCapabilities: { useQuery: () => ({ data: capabilities }) },
     },
-    usage: { getCodexSpeedTiers: { useQuery: () => ({ data: account.tiers }) } },
+    usage: {
+      getCodexAccountCatalog: {
+        useQuery: () => ({ data: account.tiers && { tiers: account.tiers, defaultSlug: null } }),
+      },
+    },
   },
 }));
 
@@ -385,6 +389,14 @@ describe('provider controls', () => {
     renderPicker(codex('codex-gpt-6-astra-medium', 'chat-1'));
     expect(screen.getByRole('switch', { name: /^Fast mode/ })).toBeInTheDocument();
     expect(screen.queryByRole('switch', { name: /Ultrafast/ })).toBeNull();
+  });
+
+  it("names a saved model the account can't use, and says why on the trigger", () => {
+    account.tiers = { 'gpt-5.5': [] };
+    renderPicker({ ...codex('codex-gpt-6-astra-medium', 'chat-1'), unavailable: true });
+    const note = "GPT-6 Astra isn't available on your ChatGPT plan — pick another model";
+    expect(trigger()).toHaveAccessibleName(`Model: ${note}`);
+    expect(trigger()).toHaveAttribute('title', note);
   });
 
   it('offers no paid speed until the account tiers are known', () => {

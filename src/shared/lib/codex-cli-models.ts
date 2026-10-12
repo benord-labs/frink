@@ -92,6 +92,9 @@ const WIRE_TIER = { standard: null, fast: 'priority', ultrafast: 'ultrafast' } a
 /** Paid speeds the signed-in account can use, keyed by model slug, as Codex's `model/list` reports. */
 export type CodexAccountTiers = Record<string, Exclude<CodexSpeed, 'standard'>[]>;
 
+/** The signed-in account's own `model/list`: `tiers` has one key per model it lists. */
+export type CodexAccountCatalog = { tiers: CodexAccountTiers; defaultSlug: string | null };
+
 const CODEX_CONTEXT_WINDOW = 'Large context (varies by account tier)';
 
 /** Full list for the model picker; `cliValue` is the slug, `reasoningEffort` the separate field. */
@@ -125,6 +128,53 @@ export const CODEX_DEFAULT_MODEL_ID: string = (() => {
 
 const CODEX_MODEL_BY_ID = new Map(CODEX_CLI_MODELS.map((m) => [m.id, m]));
 
+/** Frink's models the account lists, or `null` when that is unknown (no catalog, or no overlap). */
+function accountModels(catalog: CodexAccountCatalog | null | undefined): CodexCliModel[] | null {
+  if (!catalog) return null;
+  const listed = CODEX_CLI_MODELS.filter((m) => m.cliValue in catalog.tiers);
+  return listed.length > 0 ? listed : null;
+}
+
+/** Picker rows for the signed-in account; the full static list while its catalog is unknown. */
+export function codexModelsForAccount(
+  catalog: CodexAccountCatalog | null | undefined,
+): CodexCliModel[] {
+  return accountModels(catalog) ?? CODEX_CLI_MODELS;
+}
+
+/** The id a chat with no usable Codex model starts on: the account's own default when Frink knows
+ *  it, else the first Frink model it lists, at the default effort. */
+export function codexDefaultModelIdForAccount(
+  catalog: CodexAccountCatalog | null | undefined,
+): string {
+  const listed = accountModels(catalog);
+  if (!listed) return CODEX_DEFAULT_MODEL_ID;
+  const slug =
+    listed.find((m) => m.cliValue === catalog?.defaultSlug)?.cliValue ?? listed[0].cliValue;
+  const effort = CODEX_EFFORT_TIERS.find((t) => t.isDefault)?.effort ?? 'medium';
+  return `codex-${slug}-${effort}`;
+}
+
+/** A Codex model Frink knows that the signed-in account's catalog does not list. */
+export function isCodexModelUnavailable(
+  pickerId: string | undefined,
+  catalog: CodexAccountCatalog | null | undefined,
+): boolean {
+  const model = pickerId ? CODEX_MODEL_BY_ID.get(pickerId) : undefined;
+  const listed = accountModels(catalog);
+  return Boolean(model && listed && !listed.includes(model));
+}
+
+/** A send on a model the account cannot use, worded for the person who picked it. */
+export class CodexModelUnavailableError extends Error {
+  constructor(familyName: string) {
+    super(
+      `${familyName} isn't available on your ChatGPT plan. Pick another model from the model menu.`,
+    );
+    this.name = 'CodexModelUnavailableError';
+  }
+}
+
 /**
  * Credit multiplier to disclose on the Fast control for a picker id, or `null` when that model has
  * no priority tier. Returns `null` for Claude / unknown ids too (they miss the catalog),
@@ -151,7 +201,7 @@ export function codexTierCredits(
  * wants: `model` (the slug, sent on thread/turn), `effort` (reasoning effort) and `serviceTier`.
  * The executor is the single conversion boundary — the picker id is stored/forwarded raw, then
  * resolved here right before `runCodexAgent`. An unknown or missing id falls back to
- * {@link CODEX_DEFAULT_MODEL_ID} (default slug + `medium`) so codex never crashes on a stale value.
+ * the account's default so codex never crashes on a stale value; a model it lacks throws instead.
  *
  * `serviceTier` is set only when a non-standard speed is requested AND the RESOLVED slug advertises
  * that tier — so a chat left on Fast while switching to a model without it degrades to standard instead
@@ -162,15 +212,18 @@ export function codexTierCredits(
 export function resolveCodexCliModel(
   pickerId: string | undefined,
   speed?: CodexSpeed,
+  catalog?: CodexAccountCatalog | null,
 ): {
   model: string;
   effort: CodexReasoningEffort;
   serviceTier: CodexServiceTier;
 } {
   const m =
-    (pickerId && CODEX_MODEL_BY_ID.get(pickerId)) || CODEX_MODEL_BY_ID.get(CODEX_DEFAULT_MODEL_ID);
-  // CODEX_DEFAULT_MODEL_ID is always a real catalog id, so m is defined; assert for the type.
+    (pickerId && CODEX_MODEL_BY_ID.get(pickerId)) ||
+    CODEX_MODEL_BY_ID.get(codexDefaultModelIdForAccount(catalog));
+  // The account default is always a real catalog id, so m is defined; assert for the type.
   if (!m) throw new Error('Codex default model id is not in the catalog');
+  if (isCodexModelUnavailable(m.id, catalog)) throw new CodexModelUnavailableError(m.familyName);
   const supported = speed && speed !== 'standard' && CODEX_TIER_CREDITS[speed][m.cliValue];
   return {
     model: m.cliValue,

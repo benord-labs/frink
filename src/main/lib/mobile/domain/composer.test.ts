@@ -41,6 +41,7 @@ import {
   type CodexAccountTiers,
   CODEX_DEFAULT_MODEL_ID,
 } from '../../../../shared/lib/codex-cli-models';
+import type { CodexUsageSnapshot } from '../../agent-runner/codex/usage/codex-usage';
 import { codexPlanUsage } from '../../agent-runner/codex/usage';
 import {
   readMobileComposer,
@@ -65,17 +66,27 @@ function withChat(projectId: string | null) {
   });
 }
 
-/** The signed-in Codex account's speed tiers, as the usage probe would report them. */
-function codexTiers(speedTiers: CodexAccountTiers): void {
-  vi.spyOn(codexPlanUsage, 'get').mockResolvedValue({
+/** The signed-in Codex account's catalog, as the usage probe would report it. */
+function codexTiers(tiers: CodexAccountTiers, defaultSlug: string | null = null): void {
+  const snapshot: CodexUsageSnapshot = {
     windows: {},
     subscriptionType: 'plus',
     email: null,
     available: true,
     updatedAt: 0,
-    speedTiers,
-  });
+    catalog: { tiers, defaultSlug },
+  };
+  vi.spyOn(codexPlanUsage, 'get').mockResolvedValue(snapshot);
 }
+
+/** A free ChatGPT login's model/list (bundled Codex 0.155.1): no GPT-6 Astra, no paid speeds. */
+const FREE_TIERS: CodexAccountTiers = {
+  'gpt-6-luna': [],
+  'gpt-5.6-terra': [],
+  'gpt-5.6-luna': [],
+  'gpt-5.5': [],
+  'codex-auto-review': [],
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -173,6 +184,49 @@ describe('phone composer', () => {
       await updateMobileComposer({ type: 'updateComposer', ...identity, patch: { codexSpeed } });
       expect(fixture.update).toHaveBeenLastCalledWith('chat', { codexSpeed });
     }
+  });
+
+  it("lists only the models a free account can use, keeping a saved one it can't", async () => {
+    fixture.resolved.mockResolvedValue({ ...claudeAccount, type: 'codex' });
+    fixture.read.mockReturnValue({ modelId: CODEX_DEFAULT_MODEL_ID, codexSpeed: 'standard' });
+    codexTiers(FREE_TIERS, 'gpt-6-luna');
+
+    const composer = await readMobileComposer({ type: 'composer', ...identity });
+
+    expect(composer.models.some((m) => m.id.startsWith('codex-gpt-6-astra'))).toBe(false);
+    expect(composer.models.some((m) => m.id === 'codex-gpt-6-luna-medium')).toBe(true);
+    expect(composer.settings.modelId).toBe(CODEX_DEFAULT_MODEL_ID);
+  });
+
+  it('starts a Codex chat with no Codex model on the account default', async () => {
+    fixture.resolved.mockResolvedValue({ ...claudeAccount, type: 'codex' });
+    codexTiers(FREE_TIERS, 'gpt-6-luna');
+
+    const composer = await readMobileComposer({ type: 'composer', ...identity });
+
+    expect(composer.settings.modelId).toBe('codex-gpt-6-luna-medium');
+  });
+
+  it('lists every Codex model while the account catalog is unknown', async () => {
+    fixture.resolved.mockResolvedValue({ ...claudeAccount, type: 'codex' });
+    vi.spyOn(codexPlanUsage, 'get').mockResolvedValue(null);
+
+    const composer = await readMobileComposer({ type: 'composer', ...identity });
+
+    expect(composer.models.some((m) => m.id === CODEX_DEFAULT_MODEL_ID)).toBe(true);
+  });
+
+  it("refuses a Codex model the account can't use", async () => {
+    codexTiers(FREE_TIERS);
+
+    await expect(
+      updateMobileComposer({
+        type: 'updateComposer',
+        ...identity,
+        patch: { modelId: CODEX_DEFAULT_MODEL_ID },
+      }),
+    ).rejects.toMatchObject({ status: 400 });
+    expect(fixture.update).not.toHaveBeenCalled();
   });
 
   it('refuses a model id that is in neither catalog', async () => {
