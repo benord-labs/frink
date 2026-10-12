@@ -198,6 +198,81 @@ describe('UnifiedSidebar delete all chats in folder (pinned preserved)', () => {
   });
 });
 
+describe('UnifiedSidebar project delete in split view (sc-3279)', () => {
+  async function deleteProjectWithBothPanesOpen(deleteResult: () => Promise<object>) {
+    hoisted.state.splitViewState = {
+      splitView: { chatIds: ['proj-a', 'proj-b'], activePaneIndex: 0 },
+      isSplitActive: true,
+    };
+    hoisted.chatsListByFolderFetchMock.mockResolvedValue({
+      chats: [
+        { id: 'proj-a', projectId: 'cloud-p1' },
+        { id: 'proj-b', projectId: 'cloud-p1' },
+      ],
+      hasMore: false,
+      nextCursor: null,
+    });
+    hoisted.listPinnedFetchMock.mockResolvedValue([]);
+    hoisted.projectsDeleteMutateAsyncMock.mockImplementationOnce(deleteResult);
+    render(<UnifiedSidebar />);
+    // SAFETY: the ProjectsTree double records the props UnifiedSidebar rendered it with.
+    const props = hoisted.capturedProjectsTreeProps as {
+      onProjectDelete?: (projectId: string) => Promise<void>;
+    } | null;
+    if (!props?.onProjectDelete) throw new Error('onProjectDelete not found in ProjectsTree props');
+    const onProjectDelete = props.onProjectDelete;
+    await answerConfirm(() => onProjectDelete('local-p1'), 'confirm');
+  }
+
+  it('restores both panes and keeps both chats’ state when the delete fails', async () => {
+    const toastError = vi.spyOn(toast, 'error').mockReturnValue('toast-id');
+    const family = createRuntimeAtomFamily<string>('default');
+    appStore.set(family('proj-a'), 'a-state');
+    appStore.set(family('proj-b'), 'b-state');
+
+    await deleteProjectWithBothPanesOpen(() => Promise.reject(new Error('database is locked')));
+
+    expect(hoisted.clearPaneAtMock.mock.calls.map(([index]) => index)).toEqual([0, 1]);
+    expect(hoisted.restorePaneAtMock.mock.calls).toEqual([
+      [0, 'proj-a'],
+      [1, 'proj-b'],
+    ]);
+    expect(appStore.get(family('proj-a'))).toBe('a-state');
+    expect(appStore.get(family('proj-b'))).toBe('b-state');
+    expect(hoisted.chatDeleteMutateAsyncMock).not.toHaveBeenCalled();
+    toastError.mockRestore();
+  });
+
+  it('clears both panes and both chats’ state once the delete succeeds', async () => {
+    const family = createRuntimeAtomFamily<string>('default');
+    appStore.set(family('proj-a'), 'a-state');
+    appStore.set(family('proj-b'), 'b-state');
+
+    await deleteProjectWithBothPanesOpen(() =>
+      Promise.resolve({ id: 'local-p1', deletedChatIds: ['proj-a', 'proj-b'] }),
+    );
+
+    expect(hoisted.clearPaneAtMock.mock.calls.map(([index]) => index)).toEqual([0, 1]);
+    expect(hoisted.restorePaneAtMock).not.toHaveBeenCalled();
+    expect(appStore.get(family('proj-a'))).toBe('default');
+    expect(appStore.get(family('proj-b'))).toBe('default');
+  });
+
+  it('keeps the pane and state of a chat moved out of the project before the delete', async () => {
+    const family = createRuntimeAtomFamily<string>('default');
+    appStore.set(family('proj-a'), 'a-state');
+    appStore.set(family('proj-b'), 'b-state');
+
+    await deleteProjectWithBothPanesOpen(() =>
+      Promise.resolve({ id: 'local-p1', deletedChatIds: ['proj-b'] }),
+    );
+
+    expect(hoisted.restorePaneAtMock.mock.calls).toEqual([[0, 'proj-a']]);
+    expect(appStore.get(family('proj-a'))).toBe('a-state');
+    expect(appStore.get(family('proj-b'))).toBe('default');
+  });
+});
+
 /**
  * The row memos compare these by reference, so a handler re-created on an unrelated render
  * re-renders every row. Poll-shaped, because the 5s poll is what churned them the last two times.

@@ -115,20 +115,28 @@ export async function updateProject(
   return row ?? null;
 }
 
-export async function deleteProject(db: Db, id: string): Promise<DeleteChatsResult> {
+type DeletedProjectChat = { id: string; worktreePath: string | null; branch: string | null };
+
+/** `deletedChats` is what the cascade really dropped (read in the same transaction); `removed` is
+ *  false when a concurrent delete already took the row, so the caller skips its cleanup. */
+export type DeleteProjectResult =
+  | Exclude<DeleteChatsResult, { deleted: true }>
+  | { deleted: true; removed: boolean; deletedChats: DeletedProjectChat[] };
+
+export async function deleteProject(db: Db, id: string): Promise<DeleteProjectResult> {
   return db.transaction(
     () => {
-      const chatIds = db
-        .select({ id: chats.id })
+      const deletedChats = db
+        .select({ id: chats.id, worktreePath: chats.worktreePath, branch: chats.branch })
         .from(chats)
         .where(eq(chats.projectId, id))
-        .all()
-        .map((chat) => chat.id);
+        .all();
+      const chatIds = deletedChats.map((chat) => chat.id);
       const unsettledRunIds = listUnsettledFlowRunIdsForChats(db, chatIds);
       if (unsettledRunIds.length > 0) return { deleted: false, unsettledRunIds, chatIds };
       deleteFlowQueueTasksForChats(db, chatIds);
-      db.delete(projects).where(eq(projects.id, id)).run();
-      return { deleted: true };
+      const gone = db.delete(projects).where(eq(projects.id, id)).returning({ id: projects.id });
+      return { deleted: true, removed: gone.all().length > 0, deletedChats };
     },
     { behavior: 'immediate' },
   );
@@ -151,4 +159,36 @@ export async function renameProjectIfPlaceholder(
     .where(and(eq(projects.id, id), eq(projects.name, expectedCurrentName)))
     .returning();
   return row ?? null;
+}
+
+/**
+ * Projects whose delete is in flight. projects.delete stops its chats' executors and Flow runs
+ * before the cascade, so a chat must not leave (or join) the project in between.
+ */
+const deletingProjectIds = new Map<string, number>(); // count: concurrent deletes of one project
+
+export class ProjectDeletionInProgressError extends Error {
+  constructor(projectId: string) {
+    super(`Project ${projectId} is being deleted; its chats can't be moved right now.`);
+    this.name = 'ProjectDeletionInProgressError';
+  }
+}
+
+/** Marks `projectId` as being deleted; call the returned release once the delete settles. */
+export function beginProjectDeletion(projectId: string): () => void {
+  deletingProjectIds.set(projectId, (deletingProjectIds.get(projectId) ?? 0) + 1);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const left = (deletingProjectIds.get(projectId) ?? 1) - 1;
+    if (left > 0) deletingProjectIds.set(projectId, left);
+    else deletingProjectIds.delete(projectId);
+  };
+}
+
+export function assertProjectNotBeingDeleted(projectId: string | null): void {
+  if (projectId && deletingProjectIds.has(projectId)) {
+    throw new ProjectDeletionInProgressError(projectId);
+  }
 }

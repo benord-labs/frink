@@ -1555,7 +1555,11 @@ describe('flow-step-executor', () => {
 
       const driver = makeStepDriver();
       await driver._trigger('execute', customNodeStep(project.id));
-      expect(await actual.deleteProject(db, project.id)).toEqual({ deleted: true });
+      expect(await actual.deleteProject(db, project.id)).toEqual({
+        deleted: true,
+        removed: true,
+        deletedChats: [],
+      });
       await driver._trigger('execute', customNodeStep(project.id));
 
       const [first, second] = stepResults(driver);

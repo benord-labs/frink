@@ -1424,7 +1424,7 @@ describe('UnifiedSidebar archive chat (sc-208)', () => {
 });
 
 describe('UnifiedSidebar project delete (complete) includes pinned in wipe', () => {
-  it('deleteCompletely: task preflight and deleteChat receive all project chat ids including pinned', async () => {
+  it('deleteCompletely: task preflight covers all project chat ids including pinned; one project delete', async () => {
     hoisted.chatsListCountsForSidebarData = [{ projectId: 'cloud-p1', count: 2 }];
     hoisted.chatsListByFolderFetchMock.mockResolvedValue({
       chats: [
@@ -1460,10 +1460,42 @@ describe('UnifiedSidebar project delete (complete) includes pinned in wipe', () 
       (args) => args[0].length === 2 && args[0].includes('unp-1') && args[0].includes('pin-1'),
     );
     expect(callWithAllChats).toBeDefined();
-    expect(hoisted.chatDeleteMutateAsyncMock).toHaveBeenCalledWith({ id: 'unp-1' });
-    expect(hoisted.chatDeleteMutateAsyncMock).toHaveBeenCalledWith({ id: 'pin-1' });
-    expect(hoisted.projectsDeleteMutateAsyncMock).toHaveBeenCalledWith({ id: 'local-p1' });
+    // The project delete's FK cascade drops the chats in one transaction.
+    expect(hoisted.chatDeleteMutateAsyncMock).not.toHaveBeenCalled();
+    expect(hoisted.projectsDeleteMutateAsyncMock).toHaveBeenCalledTimes(1);
+    expect(hoisted.projectsDeleteMutateAsyncMock).toHaveBeenCalledWith({
+      id: 'local-p1',
+      chatIds: ['unp-1', 'pin-1'],
+    });
     vi.unstubAllGlobals();
+  });
+
+  it('a failed project delete never deletes its chats first (sc-3279)', async () => {
+    const toastErrorSpy = vi.spyOn(toast, 'error').mockReturnValue('toast-id');
+    hoisted.chatsListByFolderFetchMock.mockResolvedValue({
+      chats: [{ id: 'unp-1', projectId: 'cloud-p1' }],
+      hasMore: false,
+      nextCursor: null,
+    });
+    hoisted.listPinnedFetchMock.mockResolvedValue([]);
+    hoisted.projectsDeleteMutateAsyncMock.mockRejectedValueOnce(new Error('database is locked'));
+
+    render(<UnifiedSidebar />);
+    // SAFETY: the ProjectsTree double records the props UnifiedSidebar rendered it with.
+    const props = hoisted.capturedProjectsTreeProps as {
+      onProjectDelete?: (projectId: string) => Promise<void>;
+    } | null;
+    if (!props?.onProjectDelete) throw new Error('onProjectDelete not found in ProjectsTree props');
+
+    const onProjectDelete = props.onProjectDelete;
+    await answerConfirm(() => onProjectDelete('local-p1'), 'confirm');
+
+    expect(hoisted.chatDeleteMutateAsyncMock).not.toHaveBeenCalled();
+    expect(toastErrorSpy).toHaveBeenCalledWith(
+      'Failed to delete project',
+      expect.objectContaining({ description: 'database is locked' }),
+    );
+    toastErrorSpy.mockRestore();
   });
 });
 

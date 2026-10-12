@@ -3,11 +3,13 @@ import { eq, inArray } from 'drizzle-orm';
 import { app, BrowserWindow, dialog } from 'electron';
 import log from 'electron-log';
 import { z } from 'zod';
-import { trackProjectOpened } from '../../analytics';
+import { trackProjectOpened, trackWorkspaceDeleted } from '../../analytics';
 import { getLaunchDirectory } from '../../cli';
 import { getDatabase } from '../../db';
 import {
   createProject as createProjectLocal,
+  beginProjectDeletion,
+  type DeleteProjectResult,
   deleteProject as deleteProjectLocal,
   getProjectById as getProjectByIdLocal,
   listProjects as listProjectsLocal,
@@ -18,6 +20,7 @@ import { chats, subChats } from '../../db/schema';
 import { settleChatOwnedFlowDeletion } from '../../flows/deletion';
 import { cancelFlowRunsForChatOrThrow } from '../../flows/engine';
 import { getGitRemoteInfo } from '../../git';
+import { gitCache } from '../../git/cache';
 import {
   createGitHubCloner,
   createProjectAtPath,
@@ -25,10 +28,78 @@ import {
   spawnGit,
 } from '../../projects';
 import { removeManagedBuildFolder, scaffoldBuild } from '../../project-scaffold';
-import { abortActiveExecutionsForSubChats } from '../../socket/executor';
+import { abortActiveExecutionsForSubChats, clearCodexSession } from '../../socket/executor';
 import { publicProcedure, router } from '../index';
 import { removeProjectWorktrees } from './chats/teardown-worktree';
 import { frinkUserHome } from '../../platform/frink-home';
+
+/** `chatIds`: the caller's snapshot of the project's chats, so the answer covers all of them. */
+const deleteInput = z.object({ id: z.string(), chatIds: z.array(z.string()).optional() });
+
+/** Which of `chatIds` no longer exist: the authoritative answer, whoever deleted them. */
+async function goneChatIds(db: ReturnType<typeof getDatabase>, chatIds: string[] = []) {
+  if (chatIds.length === 0) return [];
+  const rows = await db.select({ id: chats.id }).from(chats).where(inArray(chats.id, chatIds));
+  const remaining = new Set(rows.map((row) => row.id));
+  return chatIds.filter((id) => !remaining.has(id));
+}
+
+/** The delete itself, run while the project is marked as being deleted. */
+async function deleteExistingProject(
+  db: ReturnType<typeof getDatabase>,
+  existing: NonNullable<Awaited<ReturnType<typeof getProjectByIdLocal>>>,
+  chatIds: string[] | undefined,
+) {
+  // Capture chats (+ worktree refs) and abort their executor streams before the FK cascade nukes the rows.
+  const projectChats = await db
+    .select({ id: chats.id, worktreePath: chats.worktreePath, branch: chats.branch })
+    .from(chats)
+    .where(eq(chats.projectId, existing.id));
+  if (projectChats.length > 0) {
+    const subChatRows = await db
+      .select({ id: subChats.id })
+      .from(subChats)
+      .where(
+        inArray(
+          subChats.chatId,
+          projectChats.map((c) => c.id),
+        ),
+      );
+    abortActiveExecutionsForSubChats(
+      subChatRows.map((r) => r.id),
+      'project deleted',
+    );
+    // Cancel the flow runs these chats drive (JSON link, no FK cascade — else they keep running).
+    for (const c of projectChats) await cancelFlowRunsForChatOrThrow(c.id);
+  }
+
+  const attempts: DeleteProjectResult[] = [];
+  await settleChatOwnedFlowDeletion(async () => {
+    const result = await deleteProjectLocal(db, existing.id);
+    attempts.push(result);
+    return result;
+  });
+  // A concurrent delete already took the row (and ran the cleanup below): nothing left to do.
+  const final = attempts.at(-1);
+  const deletedChats = final?.deleted && final.removed ? final.deletedChats : undefined;
+  if (!deletedChats) return { project: null, deletedChatIds: await goneChatIds(db, chatIds) };
+  // Clean up the chats the cascade really dropped, not the pre-delete snapshot: a chat moved to
+  // another project in between survives, and keeps its session, cache and worktree.
+  for (const c of deletedChats) {
+    clearCodexSession(c.id);
+    trackWorkspaceDeleted(c.id);
+    if (c.worktreePath) {
+      gitCache.invalidateStatus(c.worktreePath);
+      gitCache.invalidateParsedDiff(c.worktreePath);
+    }
+  }
+  // Frink-managed builds live under ~/.frink/builds — remove the folder too (no-op for user dirs).
+  await removeManagedBuildFolder(existing.path, frinkUserHome());
+  void removeProjectWorktrees(db, existing.path, deletedChats);
+  const cascaded = deletedChats.map((c) => c.id);
+  const alsoGone = await goneChatIds(db, chatIds);
+  return { project: existing, deletedChatIds: [...new Set([...cascaded, ...alsoGone])] };
+}
 
 /** Local-first projects router: every read/write goes through `db/repos/projects.ts`. */
 
@@ -206,39 +277,17 @@ export const projectsRouter = router({
    * Aborts active executor streams BEFORE the delete so the SDK doesn't keep tool-calling
    * against rows we're about to cascade-nuke (mirrors the chats.delete fix, commit 6056c8).
    */
-  delete: publicProcedure.input(z.object({ id: z.string() })).mutation(async ({ input }) => {
+  delete: publicProcedure.input(deleteInput).mutation(async ({ input }) => {
     const db = getDatabase();
     const existing = await getProjectByIdLocal(db, input.id);
-    if (!existing) return null;
-
-    // Capture chats (+ worktree refs) and abort their executor streams before the FK cascade nukes the rows.
-    const projectChats = await db
-      .select({ id: chats.id, worktreePath: chats.worktreePath, branch: chats.branch })
-      .from(chats)
-      .where(eq(chats.projectId, input.id));
-    if (projectChats.length > 0) {
-      const subChatRows = await db
-        .select({ id: subChats.id })
-        .from(subChats)
-        .where(
-          inArray(
-            subChats.chatId,
-            projectChats.map((c) => c.id),
-          ),
-        );
-      abortActiveExecutionsForSubChats(
-        subChatRows.map((r) => r.id),
-        'project deleted',
-      );
-      // Cancel the flow runs these chats drive (JSON link, no FK cascade — else they keep running).
-      for (const c of projectChats) await cancelFlowRunsForChatOrThrow(c.id);
+    if (!existing) return { project: null, deletedChatIds: await goneChatIds(db, input.chatIds) };
+    // Held from before the snapshot until the cascade: no chat moves in or out in between.
+    const release = beginProjectDeletion(input.id);
+    try {
+      return await deleteExistingProject(db, existing, input.chatIds);
+    } finally {
+      release();
     }
-
-    await settleChatOwnedFlowDeletion(() => deleteProjectLocal(db, input.id));
-    // Frink-managed builds live under ~/.frink/builds — remove the folder too (no-op for user dirs).
-    await removeManagedBuildFolder(existing.path, frinkUserHome());
-    void removeProjectWorktrees(existing.path, projectChats);
-    return existing;
   }),
 
   /**
