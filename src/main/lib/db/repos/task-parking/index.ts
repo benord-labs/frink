@@ -39,7 +39,7 @@ const PARK_STALE_RESULT_KEYS = [
 /**
  * Resumable interruption reasons a flow task can park on. `user-pause` is the chat Pause button:
  * unlike the transient kinds it is NOT retryable-parked (isRetryableParkedResult stays false), so
- * the paused chat shows the resume surface, not Carry on/Retry. An `api-error` with `status: null`
+ * the paused chat shows the resume surface, not Continue / Retry. An `api-error` with `status: null`
  * is an UNCLASSIFIED stream error (crash, exit-code, unanchored text) parked by the executor's
  * fallback — resumable like the classified kinds, distinguishable for telemetry.
  */

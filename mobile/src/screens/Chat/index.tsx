@@ -11,11 +11,13 @@ import {
   RefreshControl,
   ScrollView,
   View,
+  type KeyboardEventName,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { MobileActivity } from '@frink/shared/types/remote/mobile';
 import { useResource } from '../../lib/connection';
 import { useDraft } from '../../lib/drafts';
+import { afterChatDeletion } from '../../navigation/after-chat-deletion';
 import { useRootNavigation, type DecisionTarget, type RootRoutes } from '../../navigation/routes';
 import { GlassSurface } from '../../ui/material';
 import { ResourceStatus } from '../../ui/resource-status';
@@ -141,10 +143,9 @@ function ChatView({
   useEffect(() => void restorePosition(), [stripHeight]);
   useEffect(() => {
     if (!ios) return;
-    const subscriptions = ['keyboardDidShow', 'keyboardDidHide'].map((event) =>
-      Keyboard.addListener(event as 'keyboardDidShow' | 'keyboardDidHide', () =>
-        void restorePosition(),
-      ),
+    const events = ['keyboardDidShow', 'keyboardDidHide'] satisfies KeyboardEventName[];
+    const subscriptions = events.map((event) =>
+      Keyboard.addListener(event, () => void restorePosition()),
     );
     return () => subscriptions.forEach((subscription) => subscription.remove());
   }, [restorePosition]);
@@ -160,11 +161,11 @@ function ChatView({
       if (data?.activity === 'idle') clock.started();
       scrolling.latest();
     },
-    onDeleted: () => navigation.goBack(),
+    onDeleted: () => navigation.reset(afterChatDeletion(navigation.getState(), id)),
   });
   useChatHeader(
     {
-      name: data?.chat.name ?? '',
+      name: data?.chat.name ?? 'Frink',
       kind,
       project,
       activity: data?.activity,
@@ -280,7 +281,7 @@ function ChatView({
   );
 }
 
-/** A conversation pushed above the tabs: an existing chat, or a blank one when no chat is named. */
+/** An existing conversation, or the blank composer when no chat is named. */
 export function ChatScreen() {
   const { params } = useRoute<RouteProp<RootRoutes, 'Chat'>>();
   return (
@@ -293,7 +294,7 @@ export function ChatScreen() {
           decisionTarget={params.decisionTarget}
         />
       ) : (
-        <NewChat requestedProjectId={params?.projectId} />
+        <NewChat key={params?.projectId ?? 'new'} requestedProjectId={params?.projectId} />
       )}
     </Screen>
   );

@@ -1,4 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  clearCodexSession,
+  getCodexSession,
+  setCodexSession,
+} from '../../../../socket/codex-session';
 
 const getSubChatByIdMock = vi.fn();
 const getChatByIdMock = vi.fn();
@@ -57,6 +62,9 @@ function resetMocks(): void {
   clearStreamIdMock.mockReset();
   writeOrder.length = 0;
   freshRowOverride = undefined;
+  // The real in-memory Codex resume cache, seeded as if sub-1 had finished a Codex turn.
+  clearCodexSession('chat-1');
+  setCodexSession('chat-1', 'sub-1', 'codex-thread-1');
   // Re-arm the order log after the reset — a test that overrides one of these (e.g. to throw)
   // must not leak its implementation into the next.
   updateSubChatMessagesMock.mockImplementation(applyTransformToFreshRow);
@@ -102,6 +110,24 @@ describe('subChatRollbackRouter.rollbackToMessage', () => {
     );
     // stream_id must clear too, else an in-flight chunk re-appends the rolled-back message.
     expect(clearStreamIdMock).toHaveBeenCalledWith(expect.anything(), 'sub-1');
+    // The in-memory Codex resume cache is read before the persisted session, so it must clear too.
+    expect(getCodexSession('sub-1')).toBeUndefined();
+  });
+
+  it('leaves the session and Codex resume cache intact when the git rollback fails', async () => {
+    getSubChatByIdMock.mockResolvedValue({
+      id: 'sub-1',
+      chatId: 'chat-1',
+      messages: [{ metadata: { sdkMessageUuid: 'm-1' } }, { metadata: { sdkMessageUuid: 'm-2' } }],
+    });
+    getChatByIdMock.mockResolvedValue({ id: 'chat-1', worktreePath: '/tmp/project' });
+    applyRollbackStashMock.mockResolvedValue({ success: false, checkpointFound: true });
+
+    const result = await callRollback({ subChatId: 'sub-1', sdkMessageUuid: 'm-2' });
+
+    expect(result).toEqual({ success: false, error: 'Git rollback failed' });
+    expect(writeOrder).toEqual([]);
+    expect(getCodexSession('sub-1')).toBe('codex-thread-1');
   });
 
   it('skips git rollback entirely when mode is "chat"', async () => {
@@ -605,6 +631,7 @@ describe('subChatRollbackRouter — concurrent writers during the git await', ()
     });
     // Session and stream_id stay intact alongside the intact transcript — nothing is stranded.
     expect(writeOrder).toEqual([]);
+    expect(getCodexSession('sub-1')).toBe('codex-thread-1');
   });
 
   it('fails before any teardown write when the row was deleted during the git await', async () => {

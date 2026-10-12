@@ -40,7 +40,7 @@ export type IsolatedChatSharedProps = {
   showChatRetryControl: boolean;
   retryInFlight: boolean;
   onRetryChat: () => void;
-  /** null when the sub-chat has no session to resume — the failed group renders Retry alone. */
+  /** Continues a failed turn; null with no session to resume, so the row reads Retry. */
   onCarryOnChat: (() => void) | null;
   chatRetryTooltipText: string | null;
 };

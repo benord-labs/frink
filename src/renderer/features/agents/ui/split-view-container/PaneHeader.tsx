@@ -5,6 +5,7 @@ import { Kbd } from '../../../../components/ui/kbd';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../../components/ui/tooltip';
 import { getPaneColor } from '../../../../lib/pane-colors';
 import { cn } from '../../../../lib/utils';
+import { isMacOS } from '../../../../lib/utils/platform';
 import { CompactPaneDigitBadge } from './pane-number-badge';
 import { PaneReorderHandleButton } from './pane-reorder-dnd';
 
@@ -64,6 +65,63 @@ function ReorderArrowButton({
   );
 }
 
+/** The pane's number badge, its label with tooltip, and the "Active" chip. */
+function PaneBadgeAndLabel({
+  paneNumber,
+  paneIndex,
+  isActive,
+  displayLabel,
+  tooltipLabel,
+  showRevealHint,
+}: {
+  paneNumber: number;
+  paneIndex: number;
+  isActive: boolean;
+  displayLabel: string;
+  tooltipLabel: string;
+  /** Whether the header is clickable, so a cmd-click can show the chat in the sidebar. */
+  showRevealHint: boolean;
+}) {
+  const color = getPaneColor(paneIndex);
+  return (
+    <>
+      <CompactPaneDigitBadge paneIndex={paneIndex} paneNumber={paneNumber} />
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className={cn(
+              'text-xs truncate',
+              isActive ? 'text-foreground' : 'text-muted-foreground',
+            )}
+          >
+            {displayLabel}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">
+          {tooltipLabel}
+          {showRevealHint && (
+            <span className="block text-muted-foreground">
+              {isMacOS() ? '⌘' : 'Ctrl'}-click to show in sidebar
+            </span>
+          )}
+        </TooltipContent>
+      </Tooltip>
+      {isActive && (
+        <span
+          className={cn(
+            'inline-flex items-center h-3.5 px-1 rounded text-[9px] font-medium tracking-wide uppercase shrink-0 @max-[30rem]/pane:hidden',
+            color.badgeBg,
+            color.badgeText,
+          )}
+          aria-hidden="true"
+        >
+          Active
+        </span>
+      )}
+    </>
+  );
+}
+
 export function PaneHeader({
   paneNumber,
   paneIndex,
@@ -119,6 +177,9 @@ export function PaneHeader({
       // activate button doesn't fire a second activation through the section handler.
       e.stopPropagation();
       onActivate?.();
+      if (e.metaKey || e.ctrlKey) {
+        window.dispatchEvent(new CustomEvent('sidebar:reveal-active-chat'));
+      }
     },
     [onActivate],
   );
@@ -130,34 +191,14 @@ export function PaneHeader({
   );
 
   const badgeAndLabel = (
-    <>
-      <CompactPaneDigitBadge paneIndex={paneIndex} paneNumber={paneNumber} />
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span
-            className={cn(
-              'text-xs truncate',
-              isActive ? 'text-foreground' : 'text-muted-foreground',
-            )}
-          >
-            {displayLabel}
-          </span>
-        </TooltipTrigger>
-        <TooltipContent side="bottom">{label ?? 'Chat'}</TooltipContent>
-      </Tooltip>
-      {isActive && (
-        <span
-          className={cn(
-            'inline-flex items-center h-3.5 px-1 rounded text-[9px] font-medium tracking-wide uppercase shrink-0 @max-[30rem]/pane:hidden',
-            color.badgeBg,
-            color.badgeText,
-          )}
-          aria-hidden="true"
-        >
-          Active
-        </span>
-      )}
-    </>
+    <PaneBadgeAndLabel
+      paneNumber={paneNumber}
+      paneIndex={paneIndex}
+      isActive={isActive}
+      displayLabel={displayLabel}
+      tooltipLabel={label ?? 'Chat'}
+      showRevealHint={!!onActivate}
+    />
   );
 
   return (

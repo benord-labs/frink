@@ -3,21 +3,27 @@
  * columns are omitted because startup recovery owns orphaned running tasks in this process. */
 
 import { and, desc, sql as drizzleSql, eq, inArray, isNull, lt, or, type SQL } from 'drizzle-orm';
-import { alias } from 'drizzle-orm/sqlite-core';
 import { FLOW_DRIVING_STATUSES } from '../../../../shared/types/flow';
 import { taskResultSchema, type TaskResultRecord } from '../../../../shared/types/task-result';
 import type { getDatabase } from '../index';
-import { flowRuns, type NewTask, projects, type Task, tasks } from '../schema';
+import { flowRuns, type NewTask, type Task, tasks } from '../schema';
 import { cancelResultPatch } from './task-parking/cancel-marker';
 import { RETRY_STALE_RESULT_KEYS } from './task-parking/resume-scrub';
 import {
+  beforeQueueCursor,
   effectiveStatusExpr,
   getWorkQueueSectionFilter,
   isFlowRepresentative,
   isWaitModeTask,
+  selectQueueTaskRows,
+  type TaskListCursor,
+  type TaskWithProjectRow,
+  toQueueTaskRow,
   type WorkQueueSection,
 } from './task-queries';
-import { drivingFlowTaskOnSubChat, pausedFlowRun } from './task-queries/run-liveness';
+
+export type { TaskWithProjectRow } from './task-queries';
+import { drivingFlowTaskOnSubChat, retryableAttempt } from './task-queries/run-liveness';
 import { latestFlowTaskForSubChatId } from './task-queries/subchat-driver';
 
 type Db = ReturnType<typeof getDatabase>;
@@ -113,7 +119,7 @@ export async function getLatestFlowTaskForSubChat(
 
 /**
  * The newest flow task ON A FLOW RUN regardless of status — the driving task to resume for a batch
- * member Carry-on, keyed on `flowRunId` (the caller has the run, not the sub-chat). Same latest-wins
+ * member's Continue, keyed on `flowRunId` (the caller has the run, not the sub-chat). Same latest-wins
  * ordering as {@link getLatestFlowTaskForSubChat}: a run's later `failed`/`cancelled` driving task
  * outranks an upstream node's earlier `done`. `null` for a run with no flow task.
  */
@@ -440,7 +446,7 @@ export async function getTaskCounts(
   return counts;
 }
 
-export type TaskListCursor = { createdAt: string; id: string };
+export type { TaskListCursor } from './task-queries';
 
 /** Derived (computed, never stored) statuses — the source for the filter-status union and runtime
  *  set just below, keeping those two co-located uses in lockstep. See task-queries/flow-collapse. */
@@ -466,21 +472,6 @@ export type ListTasksOptions = {
   workQueueSection?: WorkQueueSection;
 };
 
-export type TaskWithProjectRow = Task & {
-  projectName: string | null;
-  linkedChatId: string | null;
-  flowRunStatus: string | null;
-  /**
-   * Per-flow-collapse display status (see effectiveStatusExpr): the flow's LIVE status for a flow
-   * representative, else the task's own status. Renderer buckets/sorts/icons by this; mutations
-   * still use raw `status`.
-   */
-  effectiveStatus: string;
-};
-
-/**
- * Paginated tasks + project metadata. `linkedChatId` = coalesce(anchor `chats.taskId`, per-task
- * `result->>'chatId'`); `flowRunStatus` joins flow_runs (sidebar suppresses stale `done`). */
 /**
  * The status WHERE-clause for a list query, or undefined when no status filter was asked for.
  * Extracted from listTasksWithProjectPaginated to keep that function under its cognitive budget.
@@ -516,13 +507,7 @@ function buildStatusFilter(options: ListTasksOptions): SQL | undefined {
   return getWorkQueueSectionFilter(options.workQueueSection);
 }
 
-export async function listTasksWithProjectPaginated(
-  db: Db,
-  options: ListTasksOptions,
-): Promise<{ items: TaskWithProjectRow[]; hasMore: boolean; nextCursor: TaskListCursor | null }> {
-  const { chats } = await import('../schema');
-  const resultChat = alias(chats, 'result_chat');
-  const limit = options.limit ?? 50;
+function listTaskFilters(options: ListTasksOptions): SQL[] {
   // Work-queue per-flow collapse (opt-in): keep only the flow representative, then filter on the
   // flow's EFFECTIVE status (so a running flow's `done` anchor still buckets into Active). Both
   // happen in WHERE — before limit/cursor — so pagination counts representatives, not raw rows.
@@ -531,41 +516,27 @@ export async function listTasksWithProjectPaginated(
   if (options.collapseByFlow && !options.workQueueSection) filters.push(isFlowRepresentative);
   const statusFilter = buildStatusFilter(options);
   if (statusFilter) filters.push(statusFilter);
-  if (options.cursor) {
-    const cursorDate = new Date(options.cursor.createdAt);
-    const cursorFilter = or(
-      lt(tasks.createdAt, cursorDate),
-      and(eq(tasks.createdAt, cursorDate), lt(tasks.id, options.cursor.id)),
-    );
-    if (cursorFilter) filters.push(cursorFilter);
-  }
+  const cursorFilter = options.cursor && beforeQueueCursor(options.cursor);
+  if (cursorFilter) filters.push(cursorFilter);
+  return filters;
+}
 
-  const rows = await db
-    .select({
-      task: tasks,
-      projectName: projects.name,
-      linkedChatId: drizzleSql<string | null>`coalesce(${chats.id}, ${resultChat.id})`,
-      flowRunStatus: flowRuns.status,
-      effectiveStatus: effectiveStatusExpr.as('effective_status'),
-    })
-    .from(tasks)
-    .leftJoin(projects, eq(tasks.projectId, projects.id))
-    .leftJoin(chats, eq(chats.taskId, tasks.id))
-    .leftJoin(resultChat, eq(resultChat.id, drizzleSql`json_extract(${tasks.result}, '$.chatId')`))
-    .leftJoin(flowRuns, eq(flowRuns.id, tasks.flowRunId))
-    .where(and(...filters))
+/**
+ * Paginated tasks + project metadata. `linkedChatId` = coalesce(anchor `chats.taskId`, per-task
+ * `result->>'chatId'`); `flowRunStatus` joins flow_runs (sidebar suppresses stale `done`). */
+export async function listTasksWithProjectPaginated(
+  db: Db,
+  options: ListTasksOptions,
+): Promise<{ items: TaskWithProjectRow[]; hasMore: boolean; nextCursor: TaskListCursor | null }> {
+  const limit = options.limit ?? 50;
+  const filters = listTaskFilters(options);
+  const rows = await selectQueueTaskRows(db, and(...filters))
     .orderBy(desc(tasks.createdAt), desc(tasks.id))
     .limit(limit + 1);
 
   const hasMore = rows.length > limit;
   const visible = hasMore ? rows.slice(0, limit) : rows;
-  const items: TaskWithProjectRow[] = visible.map((r) => ({
-    ...r.task,
-    projectName: r.projectName ?? null,
-    linkedChatId: r.linkedChatId ?? null,
-    flowRunStatus: r.flowRunStatus ?? null,
-    effectiveStatus: String(r.effectiveStatus ?? r.task.status),
-  }));
+  const items = visible.map(toQueueTaskRow);
   const last = items[items.length - 1];
   const nextCursor: TaskListCursor | null =
     hasMore && last ? { createdAt: last.createdAt.toISOString(), id: last.id } : null;
@@ -575,7 +546,8 @@ export async function listTasksWithProjectPaginated(
 export type TaskMutationFailureReason =
   | 'not_found'
   | 'invalid_state'
-  | 'flow_shell_not_reassignable';
+  | 'flow_shell_not_reassignable'
+  | 'flow_admission_lost';
 
 export type TaskMutationResult = {
   task: Task | null;
@@ -708,27 +680,10 @@ export async function reassignTaskDetailed(
   return { task: updated };
 }
 
-/**
- * plan_ready → running guarded transition. Returns invalid_state when the task
- * isn't in plan_ready (already running, completed, etc.).
- */
-export async function startExecutionFromReviewDetailed(
-  db: Db,
-  taskId: string,
-  machineId: string | null,
-): Promise<TaskMutationResult> {
-  // Atomic plan_ready → running: WHERE pins source status to prevent racing
-  // the poller / a concurrent cancel.
-  const updated = await db
-    .update(tasks)
-    .set({ status: 'running', startedAt: new Date(), executedBy: machineId ?? null })
-    .where(and(eq(tasks.id, taskId), eq(tasks.status, 'plan_ready')))
-    .returning();
-  if (updated.length > 0) return { task: updated[0] };
-  const existing = await getTaskById(db, taskId);
-  if (!existing) return { task: null, reason: 'not_found' };
-  return { task: null, reason: 'invalid_state' };
-}
+export {
+  startExecutionFromReviewCommand,
+  startExecutionFromReviewDetailed,
+} from './task-queries/start-execution';
 
 export type RetryMode = 'continue' | 'restart';
 const RETRYABLE_TASK_STATUSES = ['failed', 'needs_attention'] as const;
@@ -747,13 +702,13 @@ export function parseResultRecord(result: Task['result']): TaskResultRecord {
  * same worktree; 'restart' drops `chatId`/`subChatId` so a fresh chat + worktree is provisioned.
  * The prior error text is preserved (truncated) as `retryPriorError` for the continuation prompt.
  */
-export async function retryTaskDetailed(
+export function retryTaskDetailed(
   db: Db,
   taskId: string,
   mode: RetryMode,
   requirePausedFlowRunId?: string,
-): Promise<TaskMutationResult> {
-  const existing = await getTaskById(db, taskId);
+): TaskMutationResult {
+  const existing = db.select().from(tasks).where(eq(tasks.id, taskId)).get();
   if (!existing) return { task: null, reason: 'not_found' };
   if (existing.status !== 'failed' && existing.status !== 'needs_attention') {
     return { task: null, reason: 'invalid_state' };
@@ -780,9 +735,9 @@ export async function retryTaskDetailed(
     delete scrubbed.subChatId;
   }
 
-  const guard = pausedFlowRun(requirePausedFlowRunId);
+  const guard = retryableAttempt(requirePausedFlowRunId);
 
-  const [updated] = await db
+  const updated = db
     .update(tasks)
     .set({
       status: 'pending',
@@ -796,9 +751,9 @@ export async function retryTaskDetailed(
       },
     })
     .where(and(eq(tasks.id, taskId), inArray(tasks.status, RETRYABLE_TASK_STATUSES), guard))
-    .returning();
-  if (!updated) return { task: null, reason: 'invalid_state' };
-  return { task: updated };
+    .returning()
+    .get();
+  return updated ? { task: updated } : { task: null, reason: 'invalid_state' };
 }
 
 /** Boot sweep: tasks still 'running' from a prior process become cancelled + the restart marker (not an
@@ -844,8 +799,8 @@ export async function cancelFlowLinkedTasksForRun(db: Db, flowRunId: string): Pr
  * the next restart. Cancelling the task lets the task-completion-watcher advance the flow at once.
  *
  * `interrupted` controls recoverability: an *interrupted* teardown (reload/crash) stamps
- * RESTART_INTERRUPTION_REASON so the run panel offers "Re-run from previous node"; a deliberate Stop
- * (`interrupted: false`) omits the marker so re-run is correctly NOT offered. No-op for an interactive
+ * RESTART_INTERRUPTION_REASON so the run panel offers its Continue / Retry recovery; a deliberate
+ * Stop (`interrupted: false`) omits the marker so recovery is correctly NOT offered. No-op for an interactive
  * (non-flow) chat — `getFlowDriveInfoForSubChat` returns no task. The status CAS in the WHERE avoids
  * clobbering a task that raced to terminal between the read and the write. Returns the cancelled id.
  */

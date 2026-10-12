@@ -50,6 +50,9 @@ export interface WebhookPayloadSpec {
   event_id_path?: string;
   /** Path to the vendor-side id of the person the event concerns (`externalUserId`). */
   owner_path?: string;
+  /** Where an assignee event lists who was assigned: the path to a list in the body, and the path
+   * to the id inside each item. An item with no id there (a removal) adds nobody. */
+  owner_ids?: { list_path: string; id_path: string };
   /** The signature required on every delivery; absent means the receiver forwards nothing. Each
    * variant names the scheme its verifier in `src/shared/webhooks/signatures/` implements. */
   signature?:

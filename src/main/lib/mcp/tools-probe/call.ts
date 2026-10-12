@@ -6,6 +6,7 @@
  * from a tool-level error.
  */
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { ensureLoginShellEnv } from '../../platform/login-shell-env';
 import type { McpFailure, McpStdioServerSpec } from './transport';
 import {
   createHttpTransport,
@@ -33,7 +34,10 @@ export async function callMcpTool(
   const outcome = await withMcpClient(
     { kind: 'http', serverName, operationTimeoutMs: MCP_CALL_TIMEOUT_MS },
     () => createHttpTransport(serverUrl, headers),
-    (client, options) => client.callTool({ name: toolName, arguments: args }, undefined, options),
+    (client, request) =>
+      request((options) =>
+        client.callTool({ name: toolName, arguments: args }, undefined, options),
+      ),
   );
   return outcome.ok ? { ok: true, result: outcome.value } : outcome;
 }
@@ -45,10 +49,15 @@ export async function callMcpToolStdio(
   args: Record<string, unknown>,
   serverName?: string,
 ): Promise<McpToolCallResult> {
+  // The spawn takes the login-shell PATH (npx, uvx...); a call right after launch must not race it.
+  await ensureLoginShellEnv();
   const outcome = await withMcpClient(
     { kind: 'stdio', serverName, operationTimeoutMs: MCP_CALL_TIMEOUT_MS },
     () => createStdioTransport(config),
-    (client, options) => client.callTool({ name: toolName, arguments: args }, undefined, options),
+    (client, request) =>
+      request((options) =>
+        client.callTool({ name: toolName, arguments: args }, undefined, options),
+      ),
   );
   return outcome.ok ? { ok: true, result: outcome.value } : outcome;
 }

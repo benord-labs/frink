@@ -131,6 +131,16 @@ function describeSettingsChange(
   };
 }
 
+function describeLayoutReset(common: FallbackChangeCommon): FlowSemanticChange {
+  return {
+    ...common,
+    action: 'update',
+    kind: 'settings',
+    label: 'Canvas layout',
+    detail: 'Reset to automatic layout',
+  };
+}
+
 type FallbackChangeHandler = (
   operation: Record<string, unknown>,
   common: FallbackChangeCommon,
@@ -145,6 +155,7 @@ const FALLBACK_CHANGE_HANDLERS = new Map<string, FallbackChangeHandler>([
   ['update_edge', describeExistingEdge],
   ['remove_edge', describeExistingEdge],
   ['update_settings', describeSettingsChange],
+  ['auto_layout', (_operation, common) => describeLayoutReset(common)],
 ]);
 
 export function describeFallbackFlowChange(

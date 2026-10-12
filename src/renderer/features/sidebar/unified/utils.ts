@@ -1,6 +1,11 @@
 import { getChatActiveState, SIDEBAR_TASK_PRESENTATION, type SidebarTaskStatus } from './constants';
 import type { ChatItem, CodebaseGroup } from './types';
 
+/** A project group's expansion-state key, also its tree row's `data-item-id`. */
+export function getCodebaseKey(codebase: Pick<CodebaseGroup, 'gitRemote' | 'displayName'>): string {
+  return codebase.gitRemote ?? codebase.displayName;
+}
+
 export type SidebarChatListItem = {
   id: string;
   name: string | null;
@@ -37,14 +42,7 @@ export function normalizeCursor(cursor: FolderCursor | null): FolderCursor | nul
   return { updatedAt, id };
 }
 
-export function extractErrorMessage(error: unknown): string | null {
-  if (error instanceof Error && error.message) return error.message;
-  if (typeof error === 'object' && error !== null && 'message' in error) {
-    const message = (error as { message?: unknown }).message;
-    if (typeof message === 'string' && message.length > 0) return message;
-  }
-  return null;
-}
+export { extractErrorMessage } from '../../../lib/utils/error-message/extract-error-message';
 
 export function mergeChatsById(chats: SidebarChatListItem[]): SidebarChatListItem[] {
   const map = new Map<string, SidebarChatListItem>();
@@ -55,6 +53,29 @@ export function mergeChatsById(chats: SidebarChatListItem[]): SidebarChatListIte
     const byTime = b.updatedAt.getTime() - a.updatedAt.getTime();
     if (byTime !== 0) return byTime;
     return b.id.localeCompare(a.id);
+  });
+}
+
+/**
+ * A folder's rows above "Show more": the first `limit` chats and batch groups, plus any later one
+ * that `isOpen`, so a chat the user has open never hides behind the cut.
+ */
+export function cutSidebarEntries<E extends { type: string }>(
+  entries: readonly E[],
+  limit: number,
+  isOpen: (entry: E) => boolean,
+): E[] {
+  let counted = 0;
+  const kept = entries.filter((entry) => {
+    if (entry.type === 'sectionHeader') return true;
+    counted += 1;
+    return counted <= limit || isOpen(entry);
+  });
+  // A header stays only while a row of its section follows it.
+  return kept.filter((entry, i) => {
+    if (entry.type !== 'sectionHeader') return true;
+    const next = kept[i + 1];
+    return next !== undefined && next.type !== 'sectionHeader';
   });
 }
 

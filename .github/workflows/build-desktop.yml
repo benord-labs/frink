@@ -1,9 +1,10 @@
 name: Build Desktop
 
-# Builds Frink for Windows (windows-2022 → nsis + portable) and Linux (ubuntu-latest →
-# AppImage + deb) via one matrix, and verifies the PACKAGED native modules (better-sqlite3,
-# node-pty) load under Electron's ABI plus that the bundled agent binaries (claude, codex)
-# are present and runnable.
+# Builds Frink for Windows (windows-2022 → nsis + portable) and Linux x64 + arm64 (ubuntu-latest /
+# ubuntu-24.04-arm → AppImage + deb) through one job per OS sharing a single step list, and verifies
+# the PACKAGED native modules (better-sqlite3, node-pty) load under Electron's ABI plus that the
+# bundled agent binaries (claude, codex) are present and runnable. The Linux jobs also launch both
+# installers under Xvfb.
 #
 # Verification-only and additive: no code signing, no R2 upload, no shipping. Installers are
 # uploaded as CI artifacts. windows-2022 is pinned for a deterministic native compile
@@ -16,14 +17,27 @@ on:
     # such a tag turns this verify matrix into a RELEASE: it (signs +) publishes win/linux to R2.
     tags:
       - '[0-9]*.[0-9]*.[0-9]*'
+    # A merge to main that changes what goes into the Codex binary re-seeds the Codex cache (see the
+    # Codex jobs). GitHub never applies `paths` to tag pushes, so every release tag still runs.
+    branches:
+      - main
+    paths:
+      - 'patches/codex/**'
+      - 'scripts/binaries/build-codex-frink.mjs'
+      - '.github/workflows/build-desktop.yml'
+  # Weekly, so the main-scoped Codex cache is read before GitHub evicts it after 7 days unused.
+  schedule:
+    - cron: '0 6 * * 1'
   pull_request:
     paths:
       - 'package.json'
       - 'bun.lock'
       - 'scripts/binaries/**'
       - 'patches/codex/**'
+      - '.gitattributes'
       - 'scripts/skills/build-skill-content.ts'
       - 'scripts/smoke/smoke-native.cjs'
+      - 'scripts/smoke/smoke-linux-launch.sh'
       - '.github/workflows/build-desktop.yml'
 
 # A new push to the same PR cancels the in-flight run (stale builds otherwise double-spend the
@@ -36,61 +50,134 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # One pin for every Codex toolchain install and for the Codex cache key below.
+  CODEX_RUST_TOOLCHAIN: '1.95.0'
+
 jobs:
-  codex-native:
+  # One Codex job and one packaging job per OS, each packaging job needing only its own Codex job
+  # (plus the shared provider tests).
+  # `needs` waits for every leg of a matrix, so a shared matrix would hold each OS's packaging until
+  # the slowest Codex build anywhere finished. One-row matrices keep the shared step lists' matrix.*
+  # references working unchanged; YAML anchors keep the per-OS jobs from drifting.
+  codex-native-win32-x64:
+    name: Codex (${{ matrix.platformKey }})
     strategy:
-      fail-fast: false
       matrix:
         include:
           - os: windows-2022
             platformKey: win32-x64
             cargoTarget: x86_64-pc-windows-msvc
-            testArgs: ''
-          - os: ubuntu-latest
-            platformKey: linux-x64
-            cargoTarget: x86_64-unknown-linux-gnu
-            testArgs: '--test'
-          - os: macos-15
-            platformKey: darwin-arm64
-            cargoTarget: aarch64-apple-darwin
-            testArgs: ''
-          - os: macos-15-intel
-            platformKey: darwin-x64
-            cargoTarget: x86_64-apple-darwin
-            testArgs: ''
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
-    steps:
+    steps: &codex-native-steps
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      # The finished binary (~330 MB), not the build tree (~6 GB): it depends only on the pinned
+      # source and patch (patches/codex/**, which holds the manifest), the build script, the
+      # toolchain and the runner image, so a hit skips the whole compile. Restored on every run;
+      # saved only by a seeding run on main, because GitHub lets a PR or tag read main's caches
+      # but never another PR's, and only main runs can write what a release then trusts.
+      - name: Restore the built Codex
+        id: codex-bin
+        uses: actions/cache/restore@v4
+        with:
+          path: resources/bin/${{ matrix.platformKey }}
+          key: codex-bin-${{ matrix.os }}-${{ matrix.platformKey }}-rust${{ env.CODEX_RUST_TOOLCHAIN }}-${{ hashFiles('patches/codex/**', 'scripts/binaries/build-codex-frink.mjs') }}
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        if: steps.codex-bin.outputs.cache-hit != 'true'
         with:
-          toolchain: 1.95.0
+          toolchain: ${{ env.CODEX_RUST_TOOLCHAIN }}
           targets: ${{ matrix.cargoTarget }}
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            .codex-target
-          key: codex-rust-v0.153.3-${{ matrix.platformKey }}-${{ hashFiles('patches/codex/**', 'scripts/binaries/build-codex-frink.mjs') }}
       - name: Build permission-aware Codex
-        run: node scripts/binaries/build-codex-frink.mjs --target ${{ matrix.platformKey }} ${{ matrix.testArgs }}
-        env:
-          CARGO_TARGET_DIR: ${{ github.workspace }}/.codex-target
-      - uses: actions/upload-artifact@v4
+        if: steps.codex-bin.outputs.cache-hit != 'true'
+        run: node scripts/binaries/build-codex-frink.mjs --target ${{ matrix.platformKey }}
+      # A seeding run is a push to main or the weekly schedule; it exists to write this cache.
+      - name: Save the built Codex
+        if: >-
+          steps.codex-bin.outputs.cache-hit != 'true'
+          && (github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+        uses: actions/cache/save@v4
+        with:
+          path: resources/bin/${{ matrix.platformKey }}
+          key: ${{ steps.codex-bin.outputs.cache-primary-key }}
+      - if: ${{ !(github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
+        uses: actions/upload-artifact@v4
         with:
           name: frink-codex-${{ matrix.platformKey }}
           path: resources/bin/${{ matrix.platformKey }}/
           if-no-files-found: error
           retention-days: 2
 
-  build:
-    needs: codex-native
+  codex-native-linux-x64:
+    name: Codex (${{ matrix.platformKey }})
     strategy:
-      # One OS failing must NOT cancel the other leg.
+      matrix:
+        include:
+          # Oldest supported LTS: codex links the build host's glibc, so a newer runner strands 22.04 users.
+          - os: ubuntu-22.04
+            platformKey: linux-x64
+            cargoTarget: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps: *codex-native-steps
+
+  codex-native-linux-arm64:
+    name: Codex (${{ matrix.platformKey }})
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-22.04-arm
+            platformKey: linux-arm64
+            cargoTarget: aarch64-unknown-linux-gnu
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps: *codex-native-steps
+
+  # The Codex provider regression tests, beside the Codex builds instead of before one. They take about
+  # 11 min against 35+ min for any OS's build, so every packaging job waits for them at no wall-clock
+  # cost and no OS can package or release a Codex whose provider tests fail. Arch-independent, so one
+  # Linux run covers every OS; their debug build took the arm runner down mid-compile.
+  codex-provider-tests:
+    name: Codex provider tests
+    # Seeding runs (main push, weekly schedule) only refresh the Codex cache.
+    if: ${{ !(github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: ${{ env.CODEX_RUST_TOOLCHAIN }}
+      - name: Run the Codex provider regression tests
+        run: node scripts/binaries/build-codex-frink.mjs --test-only
+
+  # Same build + handshake for macOS. Nothing needs it: there is no mac packaging job, and mac
+  # releases build Codex locally (`bun run release`), so the slow Intel leg holds up no packaging.
+  codex-native-mac:
+    name: Codex (${{ matrix.platformKey }})
+    strategy:
       fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            platformKey: darwin-arm64
+            cargoTarget: aarch64-apple-darwin
+          - os: macos-15-intel
+            platformKey: darwin-x64
+            cargoTarget: x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps: *codex-native-steps
+
+  build-win32-x64:
+    name: Package (${{ matrix.platformKey }})
+    needs: [codex-native-win32-x64, codex-provider-tests]
+    if: ${{ !(github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
+    strategy:
       matrix:
         include:
           - os: windows-2022
@@ -100,21 +187,12 @@ jobs:
             pkg: package:win
             artifactName: frink-windows-installers
             artifactGlob: release/*.exe
-          - os: ubuntu-latest
-            platformKey: linux-x64
-            unpacked: linux-unpacked
-            binExt: ''
-            pkg: package:linux
-            artifactName: frink-linux-installers
-            artifactGlob: |
-              release/*.AppImage
-              release/*.deb
     runs-on: ${{ matrix.os }}
     # Cap a wedged native compile / stuck pty — otherwise it inherits the 360-min default.
     # 50 covers the real pipeline (~30 min: agent download + from-source native compile +
     # electron-builder + installer). The smoke has its own 3-min step guard.
     timeout-minutes: 50
-    steps:
+    steps: &build-steps
       - uses: actions/checkout@v4
         with:
           # Job only builds + uploads an artifact (never pushes) — don't leave the
@@ -161,6 +239,11 @@ jobs:
           name: frink-codex-${{ matrix.platformKey }}
           path: resources/bin/${{ matrix.platformKey }}/
 
+      - name: Restore the Codex executable bit
+        # Artifacts drop file modes, and electron-builder packages the mode it finds.
+        if: runner.os != 'Windows'
+        run: chmod +x resources/bin/${{ matrix.platformKey }}/codex
+
       - name: Assert release update feed
         # A tag build that publishes to R2 is an official release: it must bake in the update feed,
         # or every user who installs it is stranded with auto-update off (sc-3780). Fork tag builds
@@ -196,8 +279,6 @@ jobs:
           MAIN_VITE_UPDATE_FEED_URL: ${{ vars.UPDATE_FEED_URL }}
           MAIN_VITE_POSTHOG_KEY: ${{ secrets.MAIN_VITE_POSTHOG_KEY }}
           MAIN_VITE_POSTHOG_HOST: ${{ vars.MAIN_VITE_POSTHOG_HOST }}
-          VITE_POSTHOG_KEY: ${{ secrets.VITE_POSTHOG_KEY }}
-          VITE_POSTHOG_HOST: ${{ vars.VITE_POSTHOG_HOST }}
           MAIN_VITE_SENTRY_DSN: ${{ secrets.MAIN_VITE_SENTRY_DSN }}
           RENDERER_VITE_SENTRY_DSN: ${{ secrets.RENDERER_VITE_SENTRY_DSN }}
 
@@ -277,6 +358,105 @@ jobs:
         run: |
           ls release/*.AppImage >/dev/null 2>&1 || { echo "::error::no .AppImage produced"; exit 1; }
           ls release/*.deb >/dev/null 2>&1 || { echo "::error::no .deb produced"; exit 1; }
+          # Each installer must ship the codex the app spawns as an executable.
+          dpkg-deb -c release/*.deb | grep -E '^-rwx.*/resources/bin/codex$' || { echo "::error::.deb ships a non-executable codex"; exit 1; }
+          (cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE"/release/*.AppImage --appimage-extract >/dev/null)
+          test -x "$RUNNER_TEMP/squashfs-root/resources/bin/codex" || { echo "::error::AppImage ships a non-executable codex"; exit 1; }
+
+      - name: Assert Linux release names and binary arch
+        if: runner.os == 'Linux'
+        shell: bash
+        # x64 and arm64 publish side by side on R2, so each leg must keep its own installer and feed names.
+        run: |
+          ls -l release/
+          VER="$(node -p "require('./package.json').version")"
+          case "${{ matrix.platformKey }}" in
+            linux-x64) ELF=x86-64; FILES="Frink-$VER.AppImage frink_${VER}_amd64.deb latest-linux.yml" ;;
+            linux-arm64) ELF=aarch64; FILES="Frink-$VER-arm64.AppImage frink_${VER}_arm64.deb latest-linux-arm64.yml" ;;
+            *) echo "::error::no expected release names for ${{ matrix.platformKey }}"; exit 1 ;;
+          esac
+          for f in $FILES; do test -f "release/$f" || { echo "::error::release/$f missing"; exit 1; }; done
+          UNPACKED="release/${{ matrix.unpacked }}"
+          for bin in "$UNPACKED/frink" "$UNPACKED/resources/bin/codex" "$UNPACKED/resources/bin/claude"; do
+            INFO="$(file -L "$bin")"
+            echo "$INFO"
+            [[ "$INFO" == *"$ELF"* ]] || { echo "::error::$bin is not $ELF"; exit 1; }
+          done
+          # Unstripped, upstream's DWARF made codex 1.3 GB of every installer and update (sc-4794).
+          CODEX="$UNPACKED/resources/bin/codex"
+          SIZE="$(stat -c %s "$CODEX")"
+          echo "codex: $SIZE bytes"
+          # Captured first so a readelf failure fails the step instead of reading as "no DWARF".
+          SECTIONS="$(readelf -S --wide "$CODEX")"
+          # Exact section names ("  [13] .name TYPE ..."), so the one exemption cannot hide a longer name.
+          # .debug_gdb_scripts is a loaded rustc section (gdb pretty-printer paths), not DWARF; strip keeps it.
+          if sed -n 's/^ *\[ *[0-9]*\] \([^ ]*\).*/\1/p' <<<"$SECTIONS" | grep -E '^\.debug_' | grep -vxF '.debug_gdb_scripts'; then echo "::error::codex still carries DWARF sections"; exit 1; fi
+          [ "$SIZE" -lt 367001600 ] || { echo "::error::codex is $SIZE bytes, over 350 MiB: try strip = symbols"; exit 1; }
+
+      - name: Assert Linux desktop entries match the window
+        if: runner.os == 'Linux'
+        shell: bash
+        # Electron's app_id/WM_CLASS comes from package.json desktopName ("frink"). Each installer's
+        # entry must match it and claim frink:// links, or the dock and the OAuth callback break.
+        run: |
+          dpkg-deb -x release/*.deb "$RUNNER_TEMP/deb"
+          DEB_ENTRY="$RUNNER_TEMP/deb/usr/share/applications/frink.desktop"
+          APP_ENTRY="$RUNNER_TEMP/squashfs-root/frink.desktop"
+          for entry in "$DEB_ENTRY" "$APP_ENTRY"; do
+            grep -qx 'StartupWMClass=frink' "$entry" && grep -qx 'MimeType=x-scheme-handler/frink;' "$entry" \
+              || { echo "::error::$entry does not match the window or the frink:// handler"; cat "$entry"; exit 1; }
+          done
+          # AppRun adds --no-sandbox only when user namespaces are blocked; the entry must not force it.
+          ! grep -q -- '--no-sandbox' "$APP_ENTRY" || { echo "::error::AppImage entry forces --no-sandbox"; exit 1; }
+
+      - name: Assert the AppImage runs without libfuse2
+        if: runner.os == 'Linux'
+        shell: bash
+        # Ubuntu 22.04+ and Fedora no longer install libfuse2; the static runtime only needs fusermount3.
+        run: |
+          sudo apt-get remove -y libfuse2t64 || true
+          sudo apt-get remove -y libfuse2 || true
+          # No grep -q on piped input: under pipefail its early exit SIGPIPEs the producer.
+          if ldconfig -p | grep 'libfuse\.so\.2'; then echo "::error::libfuse2 is still installed"; exit 1; fi
+          command -v fusermount3 >/dev/null || { sudo apt-get update -q && sudo apt-get install -y -q fuse3; }
+          APPIMAGE="$(ls release/*.AppImage)"
+          file -L "$APPIMAGE" | grep 'static' || { echo "::error::AppImage uses the dynamic FUSE2 runtime"; file -L "$APPIMAGE"; exit 1; }
+          "$APPIMAGE" --appimage-version
+          "$APPIMAGE" --appimage-mount > "$RUNNER_TEMP/mount.txt" &
+          MOUNT_PID=$!
+          MOUNTED=0
+          for _ in $(seq 30); do
+            MNT="$(head -n1 "$RUNNER_TEMP/mount.txt")"
+            if [ -n "$MNT" ] && [ -x "$MNT/AppRun" ]; then MOUNTED=1; break; fi
+            sleep 1
+          done
+          kill "$MOUNT_PID" || true
+          [ "$MOUNTED" = 1 ] || { echo "::error::AppImage did not mount without libfuse2"; exit 1; }
+
+      - name: Install the Linux launch smoke tools
+        if: runner.os == 'Linux'
+        timeout-minutes: 5
+        run: sudo apt-get update -q && sudo apt-get install -y -q xvfb xdotool fuse3
+
+      - name: Smoke — launch the deb and the AppImage under Xvfb
+        if: runner.os == 'Linux'
+        # Runs under the AppArmor user-namespace restriction Ubuntu desktops have, so a sandbox, AppArmor
+        # or shared-library regression fails here instead of on a user's first launch.
+        timeout-minutes: 5
+        run: bash scripts/smoke/smoke-linux-launch.sh
+        env:
+          FRINK_SMOKE_UNPACKED: release/${{ matrix.unpacked }}
+
+      - name: Upload the Linux launch smoke logs
+        if: failure() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-launch-smoke-logs-${{ matrix.platformKey }}
+          path: |
+            ${{ runner.temp }}/linux-launch-smoke/*/*.log
+            ${{ runner.temp }}/linux-launch-smoke/*/processes.txt
+          if-no-files-found: ignore
+          retention-days: 5
 
       - name: Assert Windows installers produced
         if: runner.os == 'Windows'
@@ -288,8 +468,8 @@ jobs:
 
       - name: Publish to R2
         # Release tags only, AND only once the R2 creds exist (skip — don't fail — a tag pushed before
-        # secrets are set). Each OS leg uploads its own release/ slice (win → *.exe + latest.yml; linux
-        # → *.AppImage/*.deb + latest-linux.yml) to the shared frink-releases bucket; per-OS feeds, no collision.
+        # secrets are set). Each leg uploads its own release/ slice (win → *.exe + latest.yml; linux →
+        # *.AppImage/*.deb + latest-linux.yml or latest-linux-arm64.yml) to the shared bucket; per-leg feeds, no collision.
         # All three R2 creds required — upload-to-r2.mjs exits non-zero unless all are set, so a
         # partial set must skip (not fail) the release job.
         if: >-
@@ -314,3 +494,44 @@ jobs:
           path: ${{ matrix.artifactGlob }}
           if-no-files-found: error
           retention-days: 5
+
+  build-linux-x64:
+    name: Package (${{ matrix.platformKey }})
+    needs: [codex-native-linux-x64, codex-provider-tests]
+    if: ${{ !(github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platformKey: linux-x64
+            unpacked: linux-unpacked
+            binExt: ''
+            pkg: package:linux
+            artifactName: frink-linux-installers
+            artifactGlob: |
+              release/*.AppImage
+              release/*.deb
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 50
+    steps: *build-steps
+
+  build-linux-arm64:
+    name: Package (${{ matrix.platformKey }})
+    needs: [codex-native-linux-arm64, codex-provider-tests]
+    if: ${{ !(github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
+    strategy:
+      matrix:
+        include:
+          # electron-builder packages for the host arch, so the arm64 installers come from an arm64 runner.
+          - os: ubuntu-24.04-arm
+            platformKey: linux-arm64
+            unpacked: linux-arm64-unpacked
+            binExt: ''
+            pkg: package:linux
+            artifactName: frink-linux-arm64-installers
+            artifactGlob: |
+              release/*.AppImage
+              release/*.deb
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 50
+    steps: *build-steps

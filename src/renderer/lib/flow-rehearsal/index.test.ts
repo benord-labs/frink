@@ -134,6 +134,29 @@ describe('analyzeFlow — each rule fires on a crafted bad node', () => {
     );
     expect(analyzeFlow(g).some((f) => f.rule.startsWith('template.'))).toBe(true);
   });
+
+  it('one bad placeholder in two http_request headers yields two distinct findings (sc-3172)', () => {
+    // Rule ids double as React keys, so both headers must keep their own field in the id.
+    const g = linear(
+      TRIGGER,
+      { id: 'up', blockType: 'http_request', config: { url: 'https://example.com' } },
+      {
+        id: 'h',
+        blockType: 'http_request',
+        config: {
+          url: 'https://example.com',
+          headers: { Authorization: '{{previous.idd}}', 'X-Id': '{{previous.idd}}' },
+        },
+      },
+    );
+    const rules = analyzeFlow(g)
+      .filter((f) => f.nodeId === 'h' && f.rule.startsWith('template.'))
+      .map((f) => f.rule);
+    expect(rules).toEqual([
+      'template.headers.Authorization.{{previous.idd}}',
+      'template.headers.X-Id.{{previous.idd}}',
+    ]);
+  });
 });
 
 describe('riskiestNodeId / nodeSeverity', () => {

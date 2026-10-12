@@ -8,9 +8,13 @@
  * `jotai` (e.g. `./UnifiedSidebar`) re-enters that in-flight factory. App modules load lazily in
  * `setupHarness()`, which runs in `beforeAll`. */
 import { cleanup, render } from '@testing-library/react';
+import type { Atom } from 'jotai';
 import { expect, vi } from 'vitest';
 import type { ChatSelectionChipProps } from './components/ChatSelection';
 import { makeSidebarComponentsMock } from './sidebar-components-test-harness';
+
+/** Type-only: erased at build, so it does not re-enter the jotai mock factory. */
+type AnyAtom = Atom<unknown>;
 
 type ActiveTaskStub = {
   id: string;
@@ -59,6 +63,7 @@ const state = {
   localProjectsData: new Array<LocalProjectStub>(),
   persistedPendingPlanApprovals: [] as Array<{ subChatId: string; chatId: string }>,
   livePendingPlanApprovals: new Map<string, string>(),
+  openChatRows: new Array<{ id: string; projectId: string | null; updatedAt: Date }>(),
 };
 
 /** Chat-row shape the chat mutations resolve with; per-mutation fixtures differ only by identity. */
@@ -115,6 +120,7 @@ export const hoisted = {
   // SAFETY: starts empty; the useChatDnd double stores the onMoveChat it was given.
   capturedOnMoveChat: null as null | MoveChatHandler,
   capturedProjectsTreeProps: null as null | Record<string, unknown>,
+  focusActiveItemMock: vi.fn(),
   capturedSidebarDialogsProps: null as null | Record<string, unknown>,
   // SAFETY: starts empty; the ChatSelectionChip double assigns the props it was rendered with.
   capturedChatSelectionChipProps: null as null | ChatSelectionChipProps,
@@ -179,6 +185,10 @@ export const hoisted = {
   capturedGroupedProjectsParams: null as null | Record<string, unknown>,
 };
 
+/** activeOverlayAtom's identity and value for the jotai mock; a null value is the chat destination. */
+type OverlayStub = { atom: AnyAtom | null; value: null | 'workqueue' | 'settings' | 'flows' };
+export const overlayStub: OverlayStub = { atom: null, value: null };
+
 /** Real atom identities, resolved in `setupHarness` so the jotai mock can match on them. */
 export const atomRefs = {
   splitViewChatIdsAtom: null as unknown,
@@ -189,7 +199,10 @@ export const atomRefs = {
 
 export const makeJotaiMock = (actual: typeof import('jotai')) => ({
   ...actual,
-  useAtom: () => [null, hoisted.setSelectedChatIdMock],
+  useAtom: (atom: AnyAtom) =>
+    atom === overlayStub.atom
+      ? [overlayStub.value, vi.fn()]
+      : [null, hoisted.setSelectedChatIdMock],
   useAtomValue: (a: unknown) => {
     if (a === atomRefs.splitViewChatIdsAtom) {
       return hoisted.state.splitViewState.splitView.chatIds;
@@ -231,6 +244,7 @@ export const trpcMock = {
           fetch: () => hoisted.listPinnedFetchMock(),
         },
         get: { invalidate: hoisted.chatsGetInvalidateMock },
+        listByIds: { invalidate: vi.fn(async () => undefined) },
         getSubChatMessages: { invalidate: hoisted.chatsGetSubChatMessagesInvalidateMock },
         listArchived: { invalidate: hoisted.chatsListArchivedInvalidateMock },
       },
@@ -257,6 +271,7 @@ export const trpcMock = {
       getPendingPlanApprovals: { useQuery: hoisted.getPendingPlanApprovalsUseQueryMock },
       listArchived: { useQuery: () => ({ data: hoisted.archivedChatsData }) },
       listByFolder: { useQuery: () => ({ data: { chats: [], hasMore: false, nextCursor: null } }) },
+      listByIds: { useQuery: () => ({ data: state.openChatRows }) },
       listBatchGroups: { useQuery: () => ({ data: [] }) },
       archive: { useMutation: () => ({ mutateAsync: hoisted.archiveChatMutateAsyncMock }) },
       restore: { useMutation: () => ({ mutateAsync: hoisted.restoreMutateAsyncMock }) },
@@ -299,7 +314,12 @@ export const groupedProjectsMock = {
     return [];
   },
 };
-export const sidebarNavigationMock = { useSidebarNavigation: () => ({ focusedItemId: null }) };
+export const sidebarNavigationMock = {
+  useSidebarNavigation: () => ({
+    focusedItemId: null,
+    focusActiveItem: hoisted.focusActiveItemMock,
+  }),
+};
 
 export const splitViewMock = {
   MAX_PANES: 4,
@@ -363,6 +383,7 @@ export async function setupHarness() {
   atomRefs.splitViewActivePaneIndexAtom = atoms.splitViewActivePaneIndexAtom;
   atomRefs.splitViewQuickActionsChromeAtom = atoms.splitViewQuickActionsChromeAtom;
   atomRefs.pendingPlanApprovalsAtom = atoms.pendingPlanApprovalsAtom;
+  overlayStub.atom = (await import('../../../lib/atoms')).activeOverlayAtom;
   SidebarUnderTest = (await import('./UnifiedSidebar')).UnifiedSidebar;
 }
 
@@ -447,6 +468,7 @@ export function resetHarness() {
   hoisted.state.localProjectsData = [];
   hoisted.state.persistedPendingPlanApprovals = [];
   hoisted.state.livePendingPlanApprovals = new Map();
+  overlayStub.value = null;
   hoisted.capturedGroupedProjectsParams = null;
   hoisted.state.splitViewState = {
     splitView: { chatIds: [null], activePaneIndex: 0 },

@@ -7,6 +7,7 @@ import { Button, Input } from '@benord-labs/frink-primitives';
 import { type ReactElement, useMemo } from 'react';
 import type { FlowNode } from '../../../../../../shared/lib/validate-flow-graph';
 import type { PostTaskTriggerState } from '../../../../../../shared/types/flow';
+import type { PostTaskBindingConfig } from '../../../../../../shared/types/flows/flow-trigger-binding-config';
 import { Checkbox } from '../../../../../components/ui/checkbox';
 import { Label } from '../../../../../components/ui/label';
 import { trpc } from '../../../../../lib/trpc';
@@ -50,6 +51,27 @@ function readFilterArray(cfg: Record<string, unknown> | undefined): string[] | u
   if (!Array.isArray(raw)) return undefined;
   const out = raw.filter((x): x is string => typeof x === 'string');
   return out.length > 0 ? out : undefined;
+}
+
+/** A binding with no project can never match a task, so say so beside any recorded error. */
+function BindingWarnings({
+  projectId,
+  lastError,
+}: {
+  projectId: string | null;
+  lastError: string | null;
+}): ReactElement {
+  return (
+    <>
+      {!projectId?.trim() ? (
+        <p className="text-xs text-destructive">
+          This automation has no project, so it will never fire. Remove it and enable it again with
+          a project.
+        </p>
+      ) : null}
+      {lastError ? <p className="text-xs text-destructive">{lastError}</p> : null}
+    </>
+  );
 }
 
 type Props = {
@@ -125,7 +147,7 @@ export function PostTaskTriggerConfig({
     });
   };
 
-  const bindingConfigPayload = (): Record<string, unknown> => ({
+  const bindingConfigPayload = (): PostTaskBindingConfig => ({
     triggerStates: states,
     ...(filterArr && filterArr.length > 0 ? { filterBySource: filterArr } : {}),
   });
@@ -227,9 +249,7 @@ export function PostTaskTriggerConfig({
                 Automation active
               </Label>
             </div>
-            {postBinding.lastError ? (
-              <p className="text-xs text-destructive">{postBinding.lastError}</p>
-            ) : null}
+            <BindingWarnings projectId={postBinding.projectId} lastError={postBinding.lastError} />
             <div className="flex flex-wrap gap-2">
               <Button
                 type="button"

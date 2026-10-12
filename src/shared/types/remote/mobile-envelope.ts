@@ -1,20 +1,11 @@
 import { z } from 'zod';
+import { decodedBytes } from '../../utils/base64';
 
 /** Decoded body bytes per part, so a part's JSON stays well under the relay's 256 KiB frame cap. */
 export const MOBILE_ENVELOPE_PART_BYTES = 128 * 1024;
-export const MOBILE_ENVELOPE_PATHS = [
-  '/pair',
-  '/api',
-  '/api/notifications',
-  '/api/attachments',
-] as const;
+const MOBILE_ENVELOPE_PATHS = ['/pair', '/api', '/api/notifications', '/api/attachments'] as const;
 
 const id = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
-/** Bytes a base64 string decodes to, from its length and padding alone. */
-function decodedBytes(value: string): number {
-  const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0;
-  return Math.floor((value.length * 3) / 4) - padding;
-}
 const body = z
   .base64()
   .max(Math.ceil(MOBILE_ENVELOPE_PART_BYTES / 3) * 4)

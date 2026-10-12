@@ -17,8 +17,8 @@ import { getDatabase, projects } from '../../db';
  * - Rejects absolute paths and ".." traversal segments
  *
  * SYMLINK PROTECTION (secure-fs.ts):
- * - Writes: Block if realpath escapes the worktree the caller named
- * - Reads: Caller can check isSymlinkEscaping() to warn users
+ * - Git routes: block reads, writes and deletes whose realpath escapes the worktree
+ * - Editor route: never blocked; escapeTarget() feeds a notice naming the real path
  */
 
 /**

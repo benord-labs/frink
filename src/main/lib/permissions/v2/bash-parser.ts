@@ -282,7 +282,7 @@ function findHeredocOpener(line: string): HeredocOpener | null {
  * Conservative: no opener / no closer / >1 opener per line → returned unchanged,
  * so the command keeps today's exact-match-only treatment.
  */
-export function exciseHeredocBodies(command: string): string {
+function exciseHeredocBodies(command: string): string {
   if (!command.includes('<<')) return command;
   const lines = command.split('\n');
   const out: string[] = [];

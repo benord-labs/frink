@@ -7,5 +7,5 @@
   "normalizedCargoLockSha256": "df88a71b82843c6f092610fb07589f7a40032ddc25f50718354546ca541eb9b7",
   "rust": "1.95.0",
   "patch": "frink-host-tool-permission-v1.patch",
-  "patchSha256": "5af8795f63311f953a943b8f056058cdde90528b6cecf5acf220d75ff1447540"
+  "patchSha256": "a5c9117a42d5fc792b6a2ddba28d857538511f644fe645f79320558f53046e28"
 }

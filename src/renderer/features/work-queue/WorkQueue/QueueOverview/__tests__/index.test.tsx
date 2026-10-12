@@ -51,6 +51,7 @@ describe('QueueOverview', () => {
     });
     render(
       <QueueOverview
+        interruptedRuns={null}
         queuedAdmissions={queuedAdmissionsStub}
         attentionTasks={[reviewTask, questionTask]}
         runningTasks={[makeTask()]}
@@ -123,6 +124,7 @@ describe('QueueOverview', () => {
     const task = makeTask();
     render(
       <QueueOverview
+        interruptedRuns={null}
         queuedAdmissions={queuedAdmissionsStub}
         attentionTasks={[]}
         runningTasks={[task]}
@@ -168,6 +170,7 @@ describe('QueueOverview', () => {
     const secondTask = makeTask({ id: 'second', title: 'Second review', status: 'plan_ready' });
     const renderOverview = (attentionTasks: Task[]) => (
       <QueueOverview
+        interruptedRuns={null}
         queuedAdmissions={queuedAdmissionsStub}
         attentionTasks={attentionTasks}
         runningTasks={[]}
@@ -205,6 +208,7 @@ describe('QueueOverview', () => {
     const task = makeTask({ result: null, linkedChatId: null });
     render(
       <QueueOverview
+        interruptedRuns={null}
         queuedAdmissions={queuedAdmissionsStub}
         attentionTasks={[]}
         runningTasks={[task]}
@@ -229,6 +233,7 @@ describe('QueueOverview', () => {
     const runningLoad = vi.fn(async () => undefined);
     render(
       <QueueOverview
+        interruptedRuns={null}
         queuedAdmissions={queuedAdmissionsStub}
         attentionTasks={[makeTask({ id: 'review', status: 'plan_ready' })]}
         pagination={{

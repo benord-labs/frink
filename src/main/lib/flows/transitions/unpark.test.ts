@@ -175,3 +175,29 @@ describe('Fan Out runs that stopped mid-item (sc-716 edge cases)', () => {
     expect(unparkFailedRunCommand(db, flowRunId)?.id).toBe(parked.id);
   });
 });
+
+describe('unparkFailedRunCommand — restart-interrupted runs', () => {
+  it('never revives a cancelled run in place, even with the restart marker and a held slot', async () => {
+    const { db, flowRunId } = await seedFailedRun(FAN_GRAPH);
+    await db.update(flowRuns).set({ status: 'cancelled' }).where(eq(flowRuns.id, flowRunId));
+    const marked = await createNodeRun(db, {
+      flowRunId,
+      nodeId: 'after',
+      blockType: 'agent',
+      status: 'cancelled',
+      nodeOutput: {
+        status: 'cancelled',
+        outputs: {},
+        artifacts: [],
+        durationMs: 0,
+        error: { message: RESTART_INTERRUPTION_REASON, retryable: true },
+      },
+    });
+    expect(isRestartInterrupted(db, flowRunId)).toBe(true);
+
+    expect(unparkFailedRunCommand(db, flowRunId)).toBeNull();
+    expect((await getNodeRun(db, marked.id))?.status).toBe('cancelled');
+    const run = db.select().from(flowRuns).where(eq(flowRuns.id, flowRunId)).get();
+    expect(run?.status).toBe('cancelled');
+  });
+});

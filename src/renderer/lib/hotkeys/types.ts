@@ -125,7 +125,8 @@ export type ShortcutAction = {
  */
 export type CustomHotkeysConfig = {
   version: 1;
-  /** Map of actionId to custom hotkey string (e.g., "cmd+shift+n") or null for default */
+  /** Map of actionId to a custom hotkey string (e.g., "cmd+shift+n"), or null for unbound. An
+   *  absent key means the default. */
   bindings: Record<string, string | null>;
 };
 

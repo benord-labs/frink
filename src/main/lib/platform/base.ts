@@ -7,13 +7,7 @@ import { execFile } from 'node:child_process';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { promisify } from 'node:util';
-import type {
-  CliConfig,
-  EnvironmentConfig,
-  PathConfig,
-  PlatformProvider,
-  ShellConfig,
-} from './types';
+import type { EnvironmentConfig, PathConfig, PlatformProvider, ShellConfig } from './types';
 
 const execFileAsync = promisify(execFile);
 
@@ -23,7 +17,6 @@ export abstract class BasePlatformProvider implements PlatformProvider {
 
   abstract getShellConfig(): ShellConfig;
   abstract getPathConfig(): PathConfig;
-  abstract getCliConfig(): CliConfig;
   abstract getEnvironmentConfig(): EnvironmentConfig;
 
   /**
@@ -196,9 +189,4 @@ export abstract class BasePlatformProvider implements PlatformProvider {
     });
     return { stdout, stderr };
   }
-
-  // Abstract methods that must be implemented by each platform
-  abstract installCli(sourcePath: string): Promise<{ success: boolean; error?: string }>;
-  abstract uninstallCli(): Promise<{ success: boolean; error?: string }>;
-  abstract isCliInstalled(sourcePath: string): boolean;
 }

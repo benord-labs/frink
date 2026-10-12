@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import type { Settings } from '@anthropic-ai/claude-agent-sdk';
 import log from 'electron-log';
 import { LAUNCH_FLAGS } from '../../../shared/launch-flags';
 import { stageVendorPluginsIntoConfigDir } from './vendor-plugins';
@@ -99,6 +100,23 @@ export function stageClaudeConfigDir(isolatedConfigDir: string, cacheKey: string
     // Non-fatal — skills/agents just won't be discovered
     captureStagingFailure(error, 'staging');
   }
+}
+
+/** The hooks in ~/.claude/settings.json, which the isolated config dir hides; read at every spawn
+ * like CLAUDE.md and passed through the SDK's settings option so Claude runs them natively. */
+export function readUserHookSettings(): Pick<Settings, 'hooks' | 'disableAllHooks'> {
+  const file = path.join(frinkUserHome(), '.claude', 'settings.json');
+  const settings: Pick<Settings, 'hooks' | 'disableAllHooks'> = {};
+  if (!fs.existsSync(file)) return settings;
+  try {
+    const { hooks, disableAllHooks }: Settings = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (hooks) settings.hooks = hooks;
+    if (disableAllHooks !== undefined) settings.disableAllHooks = disableAllHooks;
+  } catch (error) {
+    // Non-fatal: the session runs without the user's hooks, as Claude does with an unreadable file.
+    captureStagingFailure(error, 'user-hooks');
+  }
+  return settings;
 }
 
 /**

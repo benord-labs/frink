@@ -1,10 +1,11 @@
 import { exec } from 'node:child_process';
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { promisify } from 'node:util';
+import { promisify, stripVTControlCharacters } from 'node:util';
 import log from 'electron-log';
 import { z } from 'zod';
 import { resolveCommandShell } from '../platform/command-shell';
+import { ensureLoginShellEnv, refreshLoginShellEnv } from '../platform/login-shell-env';
 
 const execAsync = promisify(exec);
 
@@ -131,6 +132,134 @@ const SETUP_COMMAND_TIMEOUT_MS = 300_000;
  */
 const AWAITED_SETUP_BUDGET_MS = 600_000;
 
+const SETUP_STDERR_TAIL_CHARS = 300;
+
+/** The fields Node's child_process `exec` puts on the error it rejects with. */
+const ExecFailureSchema = z.object({
+  message: z.string(),
+  name: z.string().optional(),
+  stderr: z.string().optional(),
+  code: z.union([z.number(), z.string()]).nullish(),
+  killed: z.boolean().optional(),
+  signal: z.string().nullish(),
+});
+type ExecFailure = z.infer<typeof ExecFailureSchema>;
+
+const COMMAND_NOT_FOUND_EXIT_CODE = 127;
+export const SETUP_COMMAND_NOT_FOUND_HINT =
+  '[hint] Command not found — re-reading your shell PATH. If you just installed it, retry setup.';
+
+function failureStatus(failure: ExecFailure): string {
+  if (Number.isInteger(failure.code)) return `exit ${failure.code}`;
+  if (failure.name === 'AbortError') return 'cancelled';
+  if (failure.killed) return 'timed out';
+  return failure.signal ? `signal ${failure.signal}` : '';
+}
+
+/** Why a setup command failed, on one line with its own stderr first: callers keep only the start. */
+function describeSetupFailure(failure: ExecFailure): string {
+  const stderr = stripVTControlCharacters(failure.stderr ?? '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(' | ')
+    .slice(-SETUP_STDERR_TAIL_CHARS);
+  const status = failureStatus(failure);
+
+  if (stderr) return status ? `${stderr} (${status})` : stderr;
+  if (status) return `Command failed (${status})`;
+  return failure.message.split('\n')[0];
+}
+
+/** The non-empty setup commands to run, or why setup is skipped. */
+async function loadSetupCommands(
+  mainRepoPath: string,
+): Promise<{ commands: string[] } | { skipMessage: string }> {
+  const detected = await detectWorktreeConfig(mainRepoPath);
+  if (detected.unreadable) {
+    // Skipped, not failed: failing would roll back flow worktrees. Settings shows the error.
+    log.warn(`[Worktree] ${UNREADABLE_CONFIG_MESSAGE}`);
+    return { skipMessage: UNREADABLE_CONFIG_MESSAGE };
+  }
+  if (!detected.config) {
+    return { skipMessage: 'No worktree config found, skipping setup' };
+  }
+
+  const commands = (detected.config['setup-worktree'] ?? []).filter((cmd) => cmd.trim());
+  if (commands.length === 0) {
+    return { skipMessage: 'No setup commands configured' };
+  }
+  return { commands };
+}
+
+/**
+ * Whether the next command may start, and the time it may take. The clock is read once here so the
+ * check and the exec timeout agree: a timeout of 0 would mean no timeout at all.
+ */
+function checkBeforeCommand(
+  cmd: string,
+  signal: AbortSignal | undefined,
+  deadline: number | null,
+): { stop: string } | { remainingMs: number } {
+  if (signal?.aborted) return { stop: `Cancelled before: ${cmd}` };
+
+  const remainingMs = deadline === null ? SETUP_COMMAND_TIMEOUT_MS : deadline - Date.now();
+  if (remainingMs <= 0) return { stop: `Setup budget exhausted before: ${cmd}` };
+  return { remainingMs };
+}
+
+type SetupCommandContext = {
+  worktreePath: string;
+  mainRepoPath: string;
+  shell: string | undefined;
+  signal: AbortSignal | undefined;
+};
+
+/** Run one setup command, recording its output or failure on `result`. Never throws. */
+async function runSetupCommand(
+  cmd: string,
+  remainingMs: number,
+  ctx: SetupCommandContext,
+  result: WorktreeSetupResult,
+): Promise<void> {
+  try {
+    result.output.push(`$ ${cmd}`);
+
+    const { stdout, stderr } = await execAsync(cmd, {
+      cwd: ctx.worktreePath,
+      env: {
+        ...process.env,
+        ROOT_WORKTREE_PATH: ctx.mainRepoPath,
+      },
+      timeout: Math.min(SETUP_COMMAND_TIMEOUT_MS, remainingMs),
+      signal: ctx.signal,
+      // exec falls back to its default shell when this is undefined.
+      shell: ctx.shell,
+    });
+
+    if (stdout) {
+      result.output.push(stdout.trim());
+    }
+    if (stderr) {
+      result.output.push(`[stderr] ${stderr.trim()}`);
+    }
+
+    result.commandsRun++;
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    const failure = ExecFailureSchema.safeParse(error);
+    const reason = failure.success ? describeSetupFailure(failure.data) : errorMsg;
+    result.errors.push(`${reason} — while running: ${cmd}`);
+    result.output.push(`[error] ${errorMsg}`);
+    // 127 is the shell's "command not found". Never re-run (the command may have half run), but
+    // re-read the login-shell PATH so a retry finds a tool installed since it was last read.
+    if (failure.success && failure.data.code === COMMAND_NOT_FOUND_EXIT_CODE) {
+      void refreshLoginShellEnv();
+      result.output.push(SETUP_COMMAND_NOT_FOUND_HINT);
+    }
+  }
+}
+
 /**
  * Execute worktree setup commands
  * Runs after worktree creation to install deps, copy envs, etc.
@@ -147,68 +276,27 @@ export async function executeWorktreeSetup(
     errors: [],
   };
 
-  // Detect config from main repo
-  const detected = await detectWorktreeConfig(mainRepoPath);
-  if (detected.unreadable) {
-    // Skipped, not failed: failing would roll back flow worktrees. Settings shows the error.
-    log.warn(`[Worktree] ${UNREADABLE_CONFIG_MESSAGE}`);
-    result.output.push(UNREADABLE_CONFIG_MESSAGE);
-    return result;
-  }
-  if (!detected.config) {
-    result.output.push('No worktree config found, skipping setup');
-    return result;
-  }
-
-  const commandList = (detected.config['setup-worktree'] ?? []).filter((cmd) => cmd.trim());
-  if (commandList.length === 0) {
-    result.output.push('No setup commands configured');
+  const loaded = await loadSetupCommands(mainRepoPath);
+  if ('skipMessage' in loaded) {
+    result.output.push(loaded.skipMessage);
     return result;
   }
 
   const shell = await resolveCommandShell();
+  // Setup commands are the user's own tools (bun, pnpm, uv...): make sure process.env carries the
+  // login-shell PATH before the first one runs, not the GUI launch PATH.
+  await ensureLoginShellEnv();
   const deadline = options.budgetMs === undefined ? null : Date.now() + options.budgetMs;
+  const ctx: SetupCommandContext = { worktreePath, mainRepoPath, shell, signal: options.signal };
 
-  for (const cmd of commandList) {
-    if (options.signal?.aborted) {
-      result.errors.push(`Cancelled before: ${cmd}`);
+  // A failed command doesn't stop the rest; only cancellation or the budget does.
+  for (const cmd of loaded.commands) {
+    const check = checkBeforeCommand(cmd, options.signal, deadline);
+    if ('stop' in check) {
+      result.errors.push(check.stop);
       break;
     }
-
-    const remainingMs = deadline === null ? SETUP_COMMAND_TIMEOUT_MS : deadline - Date.now();
-    if (remainingMs <= 0) {
-      result.errors.push(`Setup budget exhausted before: ${cmd}`);
-      break;
-    }
-
-    try {
-      result.output.push(`$ ${cmd}`);
-
-      const { stdout, stderr } = await execAsync(cmd, {
-        cwd: worktreePath,
-        env: {
-          ...process.env,
-          ROOT_WORKTREE_PATH: mainRepoPath,
-        },
-        timeout: Math.min(SETUP_COMMAND_TIMEOUT_MS, remainingMs),
-        signal: options.signal,
-        ...(shell ? { shell } : {}),
-      });
-
-      if (stdout) {
-        result.output.push(stdout.trim());
-      }
-      if (stderr) {
-        result.output.push(`[stderr] ${stderr.trim()}`);
-      }
-
-      result.commandsRun++;
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      result.errors.push(`Command failed: ${cmd}\n${errorMsg}`);
-      result.output.push(`[error] ${errorMsg}`);
-      // Continue with next command, don't fail entirely
-    }
+    await runSetupCommand(cmd, check.remainingMs, ctx, result);
   }
 
   result.success = result.errors.length === 0;

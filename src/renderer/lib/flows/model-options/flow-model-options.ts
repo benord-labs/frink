@@ -7,7 +7,8 @@ export const CLAUDE_MODEL_OPTIONS = [
       .filter(Boolean)
       .join(' · ');
     // Add cost hints for base variants only
-    if (model.id === 'haiku') return { value: model.id, label: `${label} (fastest, lowest cost)` };
+    if (model.id === 'haiku-5.5')
+      return { value: model.id, label: `${label} (fastest, lowest cost)` };
     if (model.id === 'sonnet') return { value: model.id, label: `${label} (balanced default)` };
     if (model.id === 'opus')
       return { value: model.id, label: `${label} (highest quality, highest cost)` };

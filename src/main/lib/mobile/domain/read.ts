@@ -24,6 +24,7 @@ import { mobileTaskActions } from './tasks';
 const sections = ['attention', 'inbox', 'running'] as const;
 export async function readMobileOverview({
   limits = {},
+  confirmsSideEffects,
 }: Omit<Extract<MobileRequest, { type: 'overview' }>, 'type'> = {}): Promise<MobileOverview> {
   const [counts, pages, agents] = await Promise.all([
     mobileCallers.tasks.workQueueOverviewCounts(),
@@ -42,7 +43,8 @@ export async function readMobileOverview({
     page.items.map((task): MobileQueueItem => {
       const result = record(task.result);
       const signal = record(result.agentSignal);
-      return {
+      const actions = mobileTaskActions(task, task.effectiveStatus, { confirmsSideEffects });
+      const item: MobileQueueItem = {
         id: task.id,
         title: task.description,
         summary: text(signal.summary),
@@ -53,8 +55,16 @@ export async function readMobileOverview({
         flowRunId: task.flowRunId,
         projectName: task.projectName,
         activityAt: (task.completedAt ?? task.startedAt ?? task.createdAt).toISOString(),
-        actions: mobileTaskActions(task, task.effectiveStatus),
+        actions,
       };
+      // Labels the row's Continue / Retry exactly as desktop's Work Queue does, with the step it
+      // recovers through for the request to pin.
+      if (actions.includes('continueTask') && task.recoveryKind) {
+        item.recoveryKind = task.recoveryKind;
+        if (task.confirmSideEffects) item.confirmSideEffects = true;
+        if (task.recoveryNodeRunId) item.recoveryNodeRunId = task.recoveryNodeRunId;
+      }
+      return item;
     }),
   );
   const pendingIds = listPendingQuestionSubChatIds();

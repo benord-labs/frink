@@ -1,10 +1,18 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  FORCED_REFRESH_MIN_INTERVAL_MS,
+  LoginShellEnvResolver,
+  refreshLoginShellEnv,
+  resolveLoginShellEnv,
+  setLoginShellEnvResolver,
+} from '../platform/login-shell-env';
 import {
   detectWorktreeConfig,
   executeWorktreeSetup,
+  SETUP_COMMAND_NOT_FOUND_HINT,
   updateWorktreeConfig,
   type WorktreeConfig,
 } from './worktree-config';
@@ -29,7 +37,24 @@ async function writeFrinkFile(projectPath: string, content: string): Promise<str
   return frinkPath;
 }
 
+/** Setup waits for the login shell first; answer it from a fake shell, never the real profile. */
+function loginShellAnswers(path: string): void {
+  setLoginShellEnvResolver(
+    new LoginShellEnvResolver({
+      spawnShell: async () => ({ ok: true, env: { PATH: path } }),
+      extendPath: (p) => p ?? '',
+    }),
+  );
+}
+
+beforeEach(() => {
+  vi.stubEnv('PATH', process.env.PATH ?? '');
+  loginShellAnswers(process.env.PATH ?? '');
+});
+
 afterEach(async () => {
+  vi.useRealTimers();
+  vi.unstubAllEnvs();
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
@@ -203,6 +228,104 @@ describe('executeWorktreeSetup', () => {
     expect(result.errors[0]).toContain('exit 3');
   });
 
+  it("leads the error with the command's own stderr, ahead of the command text (sc-4724)", async () => {
+    const projectPath = await createTempProjectDir();
+    const worktreePath = await createTempProjectDir();
+    const cmd = 'frink-no-such-binary-4724 install';
+    await writeFrinkConfig(projectPath, { 'setup-worktree': [cmd] });
+
+    const result = await executeWorktreeSetup(worktreePath, projectPath);
+
+    expect(result.success).toBe(false);
+    const [firstLine] = result.errors[0].split('\n');
+    expect(firstLine).toMatch(/not found/);
+    expect(firstLine).toContain('(exit 127)');
+    expect(firstLine.indexOf('not found')).toBeLessThan(firstLine.indexOf('while running'));
+    expect(firstLine.endsWith(`while running: ${cmd}`)).toBe(true);
+  });
+
+  it('strips terminal colour codes from the stderr it reports', async () => {
+    // bun and pnpm colour their errors; escape codes in a flow node error are unreadable noise.
+    const projectPath = await createTempProjectDir();
+    const worktreePath = await createTempProjectDir();
+    await writeFrinkConfig(projectPath, {
+      'setup-worktree': ["printf '\\033[31merror:\\033[0m lockfile had changes\\n' >&2; exit 1"],
+    });
+
+    const result = await executeWorktreeSetup(worktreePath, projectPath);
+
+    expect(result.errors[0]).toMatch(/^error: lockfile had changes \(exit 1\)/);
+    expect(result.errors[0]).not.toContain('\u001b');
+  });
+
+  it('keeps the last stderr lines of a noisy failure, bounded, so the cause survives the 500-char node error', async () => {
+    const projectPath = await createTempProjectDir();
+    const worktreePath = await createTempProjectDir();
+    await writeFrinkConfig(projectPath, {
+      'setup-worktree': [
+        'i=0; while [ $i -lt 80 ]; do echo "warn: peer dependency $i is unmet" >&2; i=$((i+1)); done; echo \'error: EACCES /usr/lib\' >&2; exit 2',
+      ],
+    });
+
+    const result = await executeWorktreeSetup(worktreePath, projectPath);
+
+    const cause = result.errors[0].split(' — while running: ')[0];
+    expect(cause).toContain('error: EACCES /usr/lib (exit 2)');
+    expect(cause.length).toBeLessThanOrEqual(320);
+  });
+
+  it('runs commands on process.env PATH once the login-shell environment is ready (sc-4724)', async () => {
+    const projectPath = await createTempProjectDir();
+    const worktreePath = await createTempProjectDir();
+    const binDir = await createTempProjectDir();
+    await writeFile(join(binDir, 'frink-shell-only-tool'), '#!/bin/sh\necho from-shell-path\n', {
+      mode: 0o755,
+    });
+    await writeFrinkConfig(projectPath, { 'setup-worktree': ['frink-shell-only-tool'] });
+    // The tool is only on the login shell's PATH, not the launch PATH.
+    loginShellAnswers(`${binDir}:${process.env.PATH}`);
+
+    const result = await executeWorktreeSetup(worktreePath, projectPath);
+
+    expect(result.errors).toEqual([]);
+    expect(result.output).toContain('from-shell-path');
+  });
+
+  it('finds a tool installed while Frink runs on the next setup, without a restart (sc-4772)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const projectPath = await createTempProjectDir();
+    const worktreePath = await createTempProjectDir();
+    const binDir = await createTempProjectDir();
+    await writeFrinkConfig(projectPath, { 'setup-worktree': ['frink-new-tool-4772'] });
+    const launchPath = process.env.PATH ?? '';
+    const profile = { PATH: launchPath };
+    setLoginShellEnvResolver(
+      new LoginShellEnvResolver({
+        spawnShell: async () => ({ ok: true, env: { PATH: profile.PATH } }),
+        extendPath: (p) => p ?? '',
+      }),
+    );
+    await resolveLoginShellEnv();
+
+    // Later, the user installs the tool into a new directory their profile puts on PATH.
+    vi.advanceTimersByTime(FORCED_REFRESH_MIN_INTERVAL_MS);
+    await writeFile(join(binDir, 'frink-new-tool-4772'), '#!/bin/sh\necho new-tool\n', {
+      mode: 0o755,
+    });
+    profile.PATH = `${binDir}:${launchPath}`;
+
+    // Setup runs on the env read before the install: not found, and says a retry will re-read it.
+    const first = await executeWorktreeSetup(worktreePath, projectPath);
+    expect(first.errors[0]).toContain('(exit 127)');
+    expect(first.output).toContain(SETUP_COMMAND_NOT_FOUND_HINT);
+
+    await refreshLoginShellEnv(); // joins the refresh the failure started
+    const retry = await executeWorktreeSetup(worktreePath, projectPath);
+
+    expect(retry.errors).toEqual([]);
+    expect(retry.output).toContain('new-tool');
+  });
+
   it('skips remaining commands once the signal aborts', async () => {
     const projectPath = await createTempProjectDir();
     const worktreePath = await createTempProjectDir();
@@ -230,6 +353,125 @@ describe('executeWorktreeSetup', () => {
     expect(result.errors.some((e) => e.includes('budget exhausted') || e.includes('sleep'))).toBe(
       true,
     );
+    expect(result.output).not.toContain('$ echo never');
+  });
+
+  it('skips setup without failing when there is no worktree config', async () => {
+    const projectPath = await createTempProjectDir();
+    const worktreePath = await createTempProjectDir();
+
+    const result = await executeWorktreeSetup(worktreePath, projectPath);
+
+    expect(result.success).toBe(true);
+    expect(result.commandsRun).toBe(0);
+    expect(result.output).toEqual(['No worktree config found, skipping setup']);
+  });
+
+  it('skips setup without failing when every configured command is blank', async () => {
+    const projectPath = await createTempProjectDir();
+    const worktreePath = await createTempProjectDir();
+    await writeFrinkConfig(projectPath, { 'setup-worktree': ['  ', ''] });
+
+    const result = await executeWorktreeSetup(worktreePath, projectPath);
+
+    expect(result.success).toBe(true);
+    expect(result.commandsRun).toBe(0);
+    expect(result.output).toEqual(['No setup commands configured']);
+  });
+
+  it("records a passing command's stdout and stderr after the command line", async () => {
+    const projectPath = await createTempProjectDir();
+    const worktreePath = await createTempProjectDir();
+    const cmd = 'echo out; echo warn >&2';
+    await writeFrinkConfig(projectPath, { 'setup-worktree': [cmd] });
+
+    const result = await executeWorktreeSetup(worktreePath, projectPath);
+
+    expect(result.success).toBe(true);
+    expect(result.output).toEqual([`$ ${cmd}`, 'out', '[stderr] warn']);
+  });
+
+  it('reports cancellation, not the budget, when both stop the next command', async () => {
+    const projectPath = await createTempProjectDir();
+    const worktreePath = await createTempProjectDir();
+    await writeFrinkConfig(projectPath, { 'setup-worktree': ['echo one'] });
+
+    const controller = new AbortController();
+    controller.abort();
+    const result = await executeWorktreeSetup(worktreePath, projectPath, {
+      signal: controller.signal,
+      budgetMs: 0,
+    });
+
+    expect(result.errors).toEqual(['Cancelled before: echo one']);
+    expect(result.output).toEqual([]);
+  });
+
+  // Catches cwd and ROOT_WORKTREE_PATH being swapped: both are plain strings on the command context.
+  it('exposes the main repo as ROOT_WORKTREE_PATH while running in the worktree', async () => {
+    const projectPath = await createTempProjectDir();
+    const worktreePath = await createTempProjectDir();
+    await writeFrinkConfig(projectPath, {
+      'setup-worktree': ['echo "$ROOT_WORKTREE_PATH" > root.txt'],
+    });
+
+    const result = await executeWorktreeSetup(worktreePath, projectPath);
+
+    expect(result.errors).toEqual([]);
+    expect((await readFile(join(worktreePath, 'root.txt'), 'utf-8')).trim()).toBe(projectPath);
+  });
+
+  it('keeps running later commands after one fails', async () => {
+    const projectPath = await createTempProjectDir();
+    const worktreePath = await createTempProjectDir();
+    await writeFrinkConfig(projectPath, { 'setup-worktree': ['exit 1', 'echo after'] });
+
+    const result = await executeWorktreeSetup(worktreePath, projectPath);
+
+    expect(result.success).toBe(false);
+    expect(result.errors).toHaveLength(1);
+    expect(result.commandsRun).toBe(1);
+    expect(result.output).toContain('after');
+  });
+
+  // The budget test above passes even with no exec timeout: its sleep ends on its own. This one
+  // would hang for the full sleep if the remaining budget never reached the exec timeout.
+  it('kills a command that outlives the remaining budget', async () => {
+    const projectPath = await createTempProjectDir();
+    const worktreePath = await createTempProjectDir();
+    await writeFrinkConfig(projectPath, { 'setup-worktree': ['exec sleep 10'] });
+
+    const startedAt = Date.now();
+    const result = await executeWorktreeSetup(worktreePath, projectPath, { budgetMs: 300 });
+
+    expect(Date.now() - startedAt).toBeLessThan(5_000);
+    expect(result.errors).toEqual(['Command failed (timed out) — while running: exec sleep 10']);
+  });
+
+  it('cancels the running command when the signal aborts mid-command, then skips the rest', async () => {
+    const projectPath = await createTempProjectDir();
+    const worktreePath = await createTempProjectDir();
+    // The marker proves the command is running before we abort; `exec` keeps sleep as the killed process.
+    const cmd = 'touch .command-started && exec sleep 10';
+    await writeFrinkConfig(projectPath, { 'setup-worktree': [cmd, 'echo never'] });
+
+    const controller = new AbortController();
+    const startedAt = Date.now();
+    const resultPromise = executeWorktreeSetup(worktreePath, projectPath, {
+      signal: controller.signal,
+    });
+    try {
+      await vi.waitFor(() => readFile(join(worktreePath, '.command-started')), { timeout: 3_000 });
+    } finally {
+      controller.abort();
+    }
+    const result = await resultPromise;
+
+    expect(Date.now() - startedAt).toBeLessThan(5_000);
+    expect(result.errors).toEqual([
+      `Command failed (cancelled) — while running: ${cmd}`,
+      'Cancelled before: echo never',
+    ]);
     expect(result.output).not.toContain('$ echo never');
   });
 });

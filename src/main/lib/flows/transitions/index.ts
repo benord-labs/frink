@@ -3,27 +3,28 @@
 import type { getDatabase } from '../../db';
 
 export { type CancelRunOutcome, cancelRunCommand, cancelWorkQueueRunCommand } from './cancel-run';
-export {
-  HeldQuestionParkDeclined,
-  type HeldQuestionTask,
-  parkHeldQuestionCommand,
-} from './held-question';
+export { HeldQuestionParkDeclined, parkHeldQuestionCommand } from './held-question';
 export { insertNodeRunIfFenced, type RunFence, readRunFence, setFencedRunStatus } from './fence';
 export { cancelRunRows } from './run-rows';
+export { startPlanExecutionCommand } from './start-plan-execution';
 export {
   isPlanApprovalResume,
   type ParkedTask,
   type ResumedBy,
   resumeParkedTaskCommand,
-  reviveInPlaceCommand,
 } from './resume-task';
 export {
   type DrivingTaskRow,
   flowStillRunning,
   isRestartInterrupted,
+  isUserCancelled,
+  readNodeRuns,
   type ReopenDeclined,
   reopenPausedRunCommand,
   restartMarkedNode,
+  type SettledRun,
+  settledStopNodes,
+  type StopNode,
   unparkFailedRunCommand,
   unparkFlowCommand,
 } from './unpark';

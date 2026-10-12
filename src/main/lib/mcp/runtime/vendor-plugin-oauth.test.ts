@@ -1,8 +1,9 @@
+import { Server } from 'node:http';
 import { connect as netConnect, createServer } from 'node:net';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GLOBAL_MCP_PATH, updateClaudeConfigAtomic, updateMcpServerConfig } from '../../claude-config';
-import { handleMcpOAuthCallback, startMcpOAuth } from '../../mcp-auth';
+import { cancelAllPendingOAuth, handleMcpOAuthCallback, startMcpOAuth } from '../../mcp-auth';
 import { __resetSessionsForTest, createSession, retainSession } from '../../socket/claude-session-registry';
 import type { FrinkMcpCredentialsFile } from '../types';
 import { hasStoredVendorPluginMcpCredential, vendorPluginMcpStatus } from './vendor-plugin-mcp-status';
@@ -480,6 +481,161 @@ describe('an MCP change retires idle Claude CLIs spawned on the old config', () 
       expect(close).toHaveBeenCalledOnce();
     } finally {
       vendor.restore();
+    }
+  });
+});
+
+describe('startMcpOAuth loopback (Settings → MCP)', () => {
+  const url = 'https://mcp.settings.test/mcp';
+  const refused = (port: number) =>
+    new Promise<boolean>((resolve) => {
+      const socket = netConnect(port, '127.0.0.1');
+      socket.once('connect', () => {
+        socket.destroy();
+        resolve(false);
+      });
+      socket.once('error', () => resolve(true));
+    });
+  /** Start a flow and return the redirect_uri and state the browser was sent with. */
+  const begin = async (serverName: string) => {
+    openExternalMock.mockClear();
+    await updateClaudeConfigAtomic((c) => updateMcpServerConfig(c, GLOBAL_MCP_PATH, serverName, { url }));
+    const signIn = startMcpOAuth(serverName, GLOBAL_MCP_PATH);
+    await vi.waitFor(() => expect(openExternalMock).toHaveBeenCalled());
+    const authorize = new URL(openExternalMock.mock.calls[0]![0]);
+    return {
+      signIn,
+      redirect: new URL(authorize.searchParams.get('redirect_uri') ?? ''),
+      state: authorize.searchParams.get('state') ?? '',
+    };
+  };
+
+  it('listens on the redirect_uri it sends, with no dev server, and completes from a real browser hit', async () => {
+    const vendor = mockAuthServer({ origin: 'https://mcp.settings.test', registration: true });
+    try {
+      const { signIn, redirect, state } = await begin('settings-a');
+      expect(redirect.protocol).toBe('http:');
+      expect(redirect.hostname).toBe('127.0.0.1');
+      expect(redirect.pathname).toBe('/callback');
+      const port = Number(redirect.port);
+
+      const page = await fetch(`${redirect.origin}/callback?code=code-a&state=${state}`, browser);
+      expect(page.status).toBe(200);
+      expect(await signIn).toEqual({ success: true });
+      expect(await refused(port)).toBe(true);
+
+      // One redirect_uri across registration, authorize and the token exchange.
+      const registered = vendor.calls.find((c) => c.url.endsWith('/register'));
+      expect(JSON.parse(registered!.body).redirect_uris).toEqual([redirect.href]);
+      expect(new URLSearchParams(vendor.tokenCalls()[0]!.body).get('redirect_uri')).toBe(redirect.href);
+    } finally {
+      vendor.restore();
+    }
+  });
+
+  it('settles a vendor denial at once instead of waiting out the timeout', async () => {
+    const vendor = mockAuthServer({ origin: 'https://mcp.settings.test' });
+    try {
+      const { signIn, redirect, state } = await begin('settings-deny');
+      await fetch(`${redirect.origin}/callback?error=access_denied&state=${state}`, browser);
+      expect(await signIn).toEqual({ success: false, error: 'access_denied' });
+      expect(vendor.tokenCalls()).toHaveLength(0);
+      expect(await refused(Number(redirect.port))).toBe(true);
+    } finally {
+      vendor.restore();
+    }
+  });
+
+  it('gives concurrent flows their own ports, and cancelAllPendingOAuth releases them', async () => {
+    const vendor = mockAuthServer({ origin: 'https://mcp.settings.test' });
+    try {
+      const first = await begin('settings-b');
+      const second = await begin('settings-c');
+      expect(first.redirect.port).not.toBe(second.redirect.port);
+
+      cancelAllPendingOAuth();
+      expect(await first.signIn).toEqual({ success: false, error: 'Cancelled' });
+      expect(await second.signIn).toEqual({ success: false, error: 'Cancelled' });
+      expect(await refused(Number(first.redirect.port))).toBe(true);
+      expect(await refused(Number(second.redirect.port))).toBe(true);
+    } finally {
+      vendor.restore();
+    }
+  });
+
+  it('a callback that lands by the deep link first closes the loopback and exchanges exactly once', async () => {
+    const vendor = mockAuthServer({ origin: 'https://mcp.settings.test' });
+    try {
+      const { signIn, redirect, state } = await begin('settings-deeplink');
+      await handleMcpOAuthCallback('code-deeplink', state);
+      expect(await signIn).toEqual({ success: true });
+      expect(await refused(Number(redirect.port))).toBe(true);
+      // A late duplicate delivery of the same state is not a second flow.
+      await handleMcpOAuthCallback('code-deeplink', state);
+      expect(vendor.tokenCalls()).toHaveLength(1);
+    } finally {
+      vendor.restore();
+    }
+  });
+
+  it('a cancel that lands during discovery, before the flow is pending, never opens the browser', async () => {
+    const vendor = mockAuthServer({ origin: 'https://mcp.settings.test' });
+    const route = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    let release!: () => void;
+    const discovery = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+      await discovery;
+      return route(input, init);
+    });
+    try {
+      openExternalMock.mockClear();
+      await updateClaudeConfigAtomic((c) => updateMcpServerConfig(c, GLOBAL_MCP_PATH, 'settings-quit', { url }));
+      const signIn = startMcpOAuth('settings-quit', GLOBAL_MCP_PATH);
+      await vi.waitFor(() => expect(globalThis.fetch).toHaveBeenCalled());
+      cancelAllPendingOAuth();
+      release();
+      expect(await signIn).toEqual({ success: false, error: 'Cancelled' });
+      expect(openExternalMock).not.toHaveBeenCalled();
+    } finally {
+      vendor.restore();
+    }
+  });
+
+  it('fails fast without opening the browser or registering when the loopback cannot bind', async () => {
+    const vendor = mockAuthServer({ origin: 'https://mcp.settings.test', registration: true });
+    const listen = vi.spyOn(Server.prototype, 'listen').mockImplementationOnce(function (this: Server) {
+      process.nextTick(() => this.emit('error', Object.assign(new Error('listen EACCES'), { code: 'EACCES' })));
+      return this;
+    });
+    try {
+      openExternalMock.mockClear();
+      await updateClaudeConfigAtomic((c) => updateMcpServerConfig(c, GLOBAL_MCP_PATH, 'settings-nobind', { url }));
+      expect(await startMcpOAuth('settings-nobind', GLOBAL_MCP_PATH)).toEqual({
+        success: false,
+        error: 'listen EACCES',
+      });
+      expect(openExternalMock).not.toHaveBeenCalled();
+      expect(vendor.calls).toHaveLength(0);
+    } finally {
+      listen.mockRestore();
+      vendor.restore();
+    }
+  });
+
+  it('fails fast without opening the browser when discovery fails', async () => {
+    openExternalMock.mockClear();
+    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('down', { status: 500 }));
+    try {
+      await updateClaudeConfigAtomic((c) =>
+        updateMcpServerConfig(c, GLOBAL_MCP_PATH, 'settings-down', { url }),
+      );
+      const result = await startMcpOAuth('settings-down', GLOBAL_MCP_PATH);
+      expect(result.success).toBe(false);
+      expect(openExternalMock).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
     }
   });
 });

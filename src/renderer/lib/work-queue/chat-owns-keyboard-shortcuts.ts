@@ -17,6 +17,12 @@ export function splitPaneChat(paneIndex: number | undefined): Element | null {
   return document.querySelector(`[data-pane-index="${paneIndex}"] [data-pane-chat]`);
 }
 
+/** Whether the focused chat is on screen: the active split pane's chat, else the single pane's.
+ *  A compact pane's side panel hides its chat, and a hidden chat must not be acted on. */
+export function focusedChatOwnsShortcuts(activePaneIndex: number | undefined): boolean {
+  return chatOwnsKeyboardShortcuts(splitPaneChat(activePaneIndex));
+}
+
 /** Transfer destination ownership before a retained chat shortcut performs its action. */
 export function runChatShortcutAction(store: Store, canRun: boolean, action: () => void): boolean {
   if (!canRun) return false;

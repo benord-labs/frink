@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { getCustomNodesGuideline } from '../../src/main/lib/mcp/flows-tools/guidelines';
 import { computeBaseline } from './build-skill-content';
 
 type VersionContextBuilder = (
@@ -45,5 +46,14 @@ describe('build-skill-content baseline', () => {
       before.files['references/topic.md']?.sha256,
     );
     expect(after.version).not.toBe(before.version);
+  });
+});
+
+describe('custom-nodes guideline source', () => {
+  it('documents the template opt-out that agents need for script-owned {{...}} syntax', () => {
+    const guideline = getCustomNodesGuideline();
+
+    expect(guideline).toContain('`listOptions`, `template` |');
+    expect(guideline).toContain('Set `"template": false`');
   });
 });

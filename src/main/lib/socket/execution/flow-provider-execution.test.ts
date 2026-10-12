@@ -119,21 +119,23 @@ describe('Flow provider execution preflight', () => {
     await vi.waitFor(() => expect(hasFlowResourceActivity('flow-run')).toBe(false));
   });
 
-  it('registers restart recovery before revival, then validates the revived task and run', async () => {
-    let revived = false;
-    providerPreflightMocks.getTaskById.mockImplementation(async () => ({
+  // Nothing revives a restart-interrupted run in place, so a reply while it holds its slot converts.
+  it('converts a restart-interrupted reply into a resume while the run still holds its slot', async () => {
+    providerPreflightMocks.getTaskById.mockResolvedValue({
       id: 'flow-task',
       source: 'flow',
       flowRunId: 'flow-run',
-      status: revived ? 'running' : 'cancelled',
-    }));
-    providerPreflightMocks.getFlowRun.mockImplementation(async () => ({
-      id: 'flow-run',
-      status: revived ? 'running' : 'cancelled',
-    }));
+      status: 'cancelled',
+    });
+    providerPreflightMocks.getFlowRun.mockResolvedValue({ id: 'flow-run', status: 'cancelled' });
+    conversionMocks.resolveTerminalResumeTarget.mockResolvedValue({
+      node: { id: 'work', blockType: 'agent' },
+      nodeRunId: 'node-run-1',
+      continues: true,
+    });
+    conversionMocks.resolveSessionResumeSeed.mockResolvedValue({ config: { resumeSession: true } });
     const prepareForExecution = vi.fn(async () => {
       expect(providerPreflightMocks.registerNodeAbort).toHaveBeenCalledOnce();
-      revived = true;
     });
 
     const registration = await registerFlowProviderExecution({
@@ -145,13 +147,17 @@ describe('Flow provider execution preflight', () => {
         effectiveSignalTaskId: 'flow-task',
       },
       controller: new AbortController(),
+      chatId: 'chat-1',
     });
 
     expect(prepareForExecution).not.toHaveBeenCalled();
-    await registration?.prepareAndValidate(prepareForExecution);
-    expect(prepareForExecution).toHaveBeenCalledOnce();
-    expect(providerPreflightMocks.getTaskById).toHaveBeenCalledOnce();
-    expect(providerPreflightMocks.getFlowRun).toHaveBeenCalledOnce();
+    await expect(registration?.prepareAndValidate(prepareForExecution)).rejects.toMatchObject({
+      category: 'FLOW_RUN_RESUMING',
+    });
+    expect(registration?.takePendingContinuationResume()).toEqual({
+      flowRunId: 'flow-run',
+      nodeRunId: 'node-run-1',
+    });
     registration?.unregisterAbort();
     registration?.release();
     await vi.waitFor(() => expect(hasFlowResourceActivity('flow-run')).toBe(false));
@@ -388,6 +394,7 @@ describe('typed-reply decline-and-convert', () => {
       ctx: {},
       node: { id: 'work', blockType: 'agent' },
       nodeRunId: 'node-run-1',
+      continues: true,
     });
     conversionMocks.resolveSessionResumeSeed.mockResolvedValue({
       config: { resumeSession: true, resumeSubChatId: 'sub-1' },
@@ -409,6 +416,20 @@ describe('typed-reply decline-and-convert', () => {
 
   it('declines as FLOW_RUN_ENDED when the session gate fails, recording nothing', async () => {
     conversionMocks.resolveSessionResumeSeed.mockResolvedValue(null);
+    const { registration, outcome } = await declineWith('chat-1');
+    expect(outcome?.category).toBe('FLOW_RUN_ENDED');
+    expect(registration?.takePendingContinuationResume()).toBeNull();
+    registration?.unregisterAbort();
+    registration?.release();
+  });
+
+  // The session answered an earlier attempt of the node, but not the step's own prompt.
+  it('declines as FLOW_RUN_ENDED on a Retry step even when a seed exists', async () => {
+    conversionMocks.resolveTerminalResumeTarget.mockResolvedValue({
+      node: { id: 'work', blockType: 'agent' },
+      nodeRunId: 'node-run-1',
+      continues: false,
+    });
     const { registration, outcome } = await declineWith('chat-1');
     expect(outcome?.category).toBe('FLOW_RUN_ENDED');
     expect(registration?.takePendingContinuationResume()).toBeNull();

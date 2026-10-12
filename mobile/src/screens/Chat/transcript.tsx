@@ -162,7 +162,6 @@ export function LatestChip({ onPress }: { onPress: () => void }) {
       style={({ pressed }) => ({ alignSelf: 'center', opacity: pressed ? 0.8 : 1 })}
     >
       <GlassSurface
-        interactive
         style={{
           height: 36,
           paddingHorizontal: 14,

@@ -1,11 +1,10 @@
-import { eq } from 'drizzle-orm';
 import { type TaskResultRecord, taskResultSchema } from '../../../../shared/types/task-result';
 import type { getDatabase } from '../../db';
 import { resumeQuietIdlePark } from '../../db/repos/task-parking/quiet-marker';
 import { scrubResumedResult } from '../../db/repos/task-parking/resume-scrub';
 import { parseResultRecord, updateTaskStatus } from '../../db/repos/tasks';
-import { type NodeRun, type Task, tasks } from '../../db/schema';
-import { flowStillRunning, reviveMarkedNode, unparkFlowCommand } from './unpark';
+import type { NodeRun, Task } from '../../db/schema';
+import { flowStillRunning, unparkFlowCommand } from './unpark';
 
 type Db = ReturnType<typeof getDatabase>;
 
@@ -41,26 +40,6 @@ function resumedResult(
     resumedAt: now.toISOString(),
     previousStatus: task.status,
   });
-}
-
-/** Revives a restart-interrupted run in place for a chat follow-up: its cancelled driving task and
- * marked node back to running. The follow-up turn continues the work, so nothing is re-dispatched. */
-export function reviveInPlaceCommand(
-  db: Db,
-  taskId: string,
-  flowRunId: string,
-  now = new Date(),
-): NodeRun | null {
-  const task = db.select().from(tasks).where(eq(tasks.id, taskId)).get();
-  if (task?.status !== 'cancelled') return null;
-  const node = reviveMarkedNode(db, flowRunId);
-  if (node) {
-    updateTaskStatus(db, taskId, 'running', {
-      result: resumedResult(task, 'follow_up_message', now),
-      expectStatuses: ['cancelled'],
-    });
-  }
-  return node;
 }
 
 /** A parked task back to running together with its flow; null when the task left its park. A

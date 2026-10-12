@@ -15,7 +15,7 @@ const chatId = z.string().min(1);
 // Flow can seed ids outside the visible catalog.
 const modelId = z.string().min(1).max(200);
 
-export const composerPatchSchema = z
+const composerPatchSchema = z
   .object({
     modelId: modelId.optional(),
     autoMode: z.boolean().optional(),

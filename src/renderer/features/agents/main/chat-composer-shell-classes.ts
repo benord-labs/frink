@@ -45,9 +45,17 @@ export const COMPOSER_CONTROL_LABEL_CLASS = 'text-sm @max-[34rem]/composer:hidde
 export const COMPOSER_MODEL_CONTROL_CLASS = `${COMPOSER_CONTROL_BASE_CLASS} min-w-0 @max-[16.25rem]/composer:w-7 @max-[16.25rem]/composer:gap-0 @max-[16.25rem]/composer:px-0`;
 export const COMPOSER_MODEL_LABEL_CLASS =
   'min-w-0 truncate text-sm @max-[16.25rem]/composer:hidden';
-/** Tier suffix and chevron go before the name (from 360px). chat-input-area's context chip goes
- *  `sr-only` at 34rem so it never squeezes the name, yet stays dismissable by keyboard. */
+/** Tier suffix and chevron go before the name (from 360px). */
 export const COMPOSER_MODEL_DETAIL_CLASS = '@max-[22.5rem]/composer:hidden';
+/** Between the detail and name tiers the tier reads as a short effort token ("Opus 5.5 · XH");
+ *  19.5rem holds it beside every Opus and Fable name (text widths measured in Electron). */
+export const COMPOSER_MODEL_EFFORT_CLASS =
+  'hidden @max-[22.5rem]/composer:inline @max-[19.5rem]/composer:hidden';
+/** Once the word "Ultra" is gone its chroma moves onto what is left: the name, then the glyph. */
+export const COMPOSER_ULTRA_NAME_CLASS =
+  '@max-[19.5rem]/composer:chroma-text @max-[19.5rem]/composer:chroma-text-animate';
+export const COMPOSER_ULTRA_GLYPH_CLASS = 'hidden @max-[16.25rem]/composer:inline-flex';
+export const COMPOSER_PLAIN_GLYPH_CLASS = '@max-[16.25rem]/composer:hidden';
 
 /** Tiniest widths shed reference before controls: the context ring first, then attach. Sums of
  *  28px boxes: the icon row needs 188px with both, 158px without the ring. */

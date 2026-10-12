@@ -155,13 +155,16 @@ function useAttachmentUpload(
       };
       try {
         const target = await requireTarget(targetRef.current, ensureRef.current);
-        if (!target || controller.signal.aborted) return;
+        if (!target || controller.signal.aborted) {
+          releaseUpload(live.current, key, controller);
+          return;
+        }
+        // A settled upload keeps its key until the target resets: its result is only queued state,
+        // and an effect flushed before that lands would still see 'uploading' and send it again.
         const stored = await uploadAttachment(connection, target, source, controller.signal);
         update({ status: 'ready', id: stored.id, kind: stored.kind });
       } catch (error) {
         update(uploadFailure(error));
-      } finally {
-        releaseUpload(live.current, key, controller);
       }
     },
     [connection, patch],

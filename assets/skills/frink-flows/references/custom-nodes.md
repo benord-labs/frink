@@ -24,7 +24,8 @@ Names use lowercase letters, digits and hyphens. `inputs`, `outputs`, `credentia
 
 | Manifest member | Contract |
 |---|---|
-| inputs | Types `string`, `number`, `boolean`; optional `label`, `description`, `default`, `required`, `listOptions` |
+| inputs | Types `string`, `number`, `boolean`; optional `label`, `description`, `default`, `required`, `listOptions`, `template` |
+| template | String inputs render `{{trigger.*}}`/`{{previous.*}}`/`{{loop.*}}` by default; any other `{{...}}` renders empty. Set `"template": false` when the value is the script's own template syntax (Handlebars, Jinja, JSON with `{{field}}`) so it reaches the script verbatim. |
 | required input | Required only for literal `required: true`. Missing value without default blocks execution/test; rendered empty string is missing. Optional inputs may be empty. |
 | credentials | e.g. `{"github":{"required":true,"label":"GitHub token","helpUrl":"https://github.com/settings/tokens"}}`; required unless explicitly `false` |
 | outputs | Types `string`, `number`, `boolean`, `object`, `array`; optional description. For arrays of objects, `items` describes element fields (≤3 levels); omit for primitive arrays. |

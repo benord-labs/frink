@@ -1,5 +1,6 @@
 import { View } from 'react-native';
 import { Check, MonitorOff, Play, RotateCcw } from 'lucide-react-native';
+import type { RecoveryKind } from '@frink/shared/types/flow-run/resume';
 import type { MobileTaskAction } from '@frink/shared/types/remote/mobile';
 import { shortAge } from '../../lib/status';
 import { PulseDot, toneColor } from '../../ui/glyphs';
@@ -9,32 +10,37 @@ import { Text } from '../../ui/text';
 import { GUTTER, radius, space, useTheme } from '../../ui/theme';
 import type { QueueRow } from './queue-view';
 
-/** The desktop Work Queue's labels, so a task reads the same on both. */
-export const ACTION_ITEMS: Record<MobileTaskAction, Pick<SwipeActionItem, 'label' | 'icon' | 'fill'>> = {
-  startTask: { label: 'Start task', icon: Play, fill: 'primary' },
-  continueTask: { label: 'Carry on task', icon: RotateCcw, fill: 'primary' },
-  completeTask: { label: 'Mark complete', icon: Check, fill: 'confirm' },
-};
+type ActionItem = Pick<SwipeActionItem, 'label' | 'icon' | 'fill'>;
 
-/** The fixed right slot: the state in its colour over how long ago it last changed. */
+/** The desktop Work Queue's labels, so a task reads the same on both. */
+const ACTION_ITEMS = {
+  startTask: { label: 'Start task', icon: Play, fill: 'primary' },
+  completeTask: { label: 'Mark complete', icon: Check, fill: 'confirm' },
+} satisfies Record<Exclude<MobileTaskAction, 'continueTask'>, ActionItem>;
+/** A stopped task's one recovery, as desktop's RecoveryMenuItem labels it. */
+const RECOVERY_ITEMS = {
+  continue: { label: 'Continue task', icon: Play, fill: 'primary' },
+  retry: { label: 'Retry task', icon: RotateCcw, fill: 'primary' },
+} satisfies Record<RecoveryKind, ActionItem>;
+
+export function actionItem(action: MobileTaskAction, recoveryKind: RecoveryKind): ActionItem {
+  return action === 'continueTask' ? RECOVERY_ITEMS[recoveryKind] : ACTION_ITEMS[action];
+}
+
+/** State and project details share a quiet line below the task's full-width title. */
 function StatusSlot({ row }: { row: QueueRow }) {
   const t = useTheme();
   const color = toneColor(t, row.status.tone);
   const live = row.status.glyph === 'live';
-  const age = shortAge(row.activityAt);
   return (
-    <View style={{ minWidth: 64, maxWidth: 120, alignItems: 'flex-end', gap: 2 }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-        {live && <PulseDot color={color} size={7} />}
-        <Text variant="secondary" numberOfLines={1} style={{ color, fontWeight: '600', lineHeight: 21 }}>
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+      {live && <PulseDot color={color} size={7} />}
+      <Text variant="secondary" color="muted" style={{ flex: 1 }}>
+        <Text variant="secondary" style={{ color }}>
           {row.status.word}
         </Text>
-      </View>
-      {!!age && (
-        <Text variant="secondary" color="muted" numberOfLines={1}>
-          {age}
-        </Text>
-      )}
+        {row.detail ? ` · ${row.detail}` : ''}
+      </Text>
     </View>
   );
 }
@@ -48,19 +54,22 @@ export function QueueListRow({
   onOpen?: () => void;
   onAction: (action: MobileTaskAction) => void;
 }) {
-  const actions = row.actions.map((action) => ({
-    ...ACTION_ITEMS[action],
-    accessibilityLabel: `${ACTION_ITEMS[action].label}: ${row.title}`,
-    onPress: () => onAction(action),
-  }));
+  const actions = row.actions.map((action) => {
+    const item = actionItem(action, row.recoveryKind);
+    return {
+      ...item,
+      accessibilityLabel: `${item.label}: ${row.title}`,
+      onPress: () => onAction(action),
+    };
+  });
   return (
     <SwipeAction actions={actions}>
       <ListRow
         titleLines={row.emphasis ? 2 : 1}
         testID={`queue-row-${row.key}`}
         title={row.title}
-        subtitle={row.detail}
-        trailing={<StatusSlot row={row} />}
+        subtitle={<StatusSlot row={row} />}
+        trailing={row.activityAt ? <Text variant="label" color="muted">{shortAge(row.activityAt)}</Text> : undefined}
         onPress={onOpen}
       />
     </SwipeAction>

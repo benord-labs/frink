@@ -2,8 +2,10 @@ import type {
   MobileOverview,
   MobileQueueItem,
   MobileQueueSection,
+  MobileRequest,
   MobileTaskAction,
 } from '@frink/shared/types/remote/mobile';
+import type { RecoveryKind } from '@frink/shared/types/flow-run/resume';
 import { taskStatus, type Status } from '../../lib/status';
 
 export type QueueSectionKey = 'needsYou' | 'running' | 'review' | 'upNext';
@@ -28,6 +30,12 @@ export type QueueRow = {
   target: QueueTarget | null;
   /** What a swipe offers, as the computer allows it. */
   actions: MobileTaskAction[];
+  /** Whether its recovery swipe continues or retries; an older computer only carries on. */
+  recoveryKind: RecoveryKind;
+  /** Its Retry may repeat a started step's side effects, so it confirms first. */
+  confirmSideEffects: boolean;
+  /** The Flow step the recovery acts on, pinned in the request. */
+  recoveryNodeRunId: string | null;
 };
 export type QueueSection = {
   key: QueueSectionKey;
@@ -77,7 +85,8 @@ function itemKind(item: MobileQueueItem): QueueRow['kind'] {
 // A Flow item opens its run (the whole picture); a plain task opens its chat.
 function itemTarget(item: MobileQueueItem): QueueTarget | null {
   if (item.flowRunId) return { screen: 'Run', id: item.flowRunId };
-  if (item.chatId) return { screen: 'Chat', id: item.chatId, subChatId: item.subChatId ?? undefined };
+  if (item.chatId)
+    return { screen: 'Chat', id: item.chatId, subChatId: item.subChatId ?? undefined };
   return null;
 }
 
@@ -98,6 +107,9 @@ function itemRow(
     activityAt: item.activityAt,
     target: itemTarget(item),
     actions: item.actions,
+    recoveryKind: item.recoveryKind ?? 'continue',
+    confirmSideEffects: item.confirmSideEffects === true,
+    recoveryNodeRunId: item.recoveryNodeRunId ?? null,
   };
 }
 
@@ -171,6 +183,9 @@ function decisionRow(decision: Decision, queue: MobileQueueItem[]): QueueRow {
       decisionTarget: { type: decision.type, id: decision.id },
     },
     actions: [],
+    recoveryKind: 'continue',
+    confirmSideEffects: false,
+    recoveryNodeRunId: null,
   };
 }
 
@@ -240,7 +255,12 @@ export function queueSections(data: MobileOverview): QueueSection[] {
     review: review.length,
     upNext: data.counts.inbox,
   };
-  const titles = { needsYou: 'Needs you', running: 'Running', review: 'Ready for review', upNext: 'Up next' };
+  const titles = {
+    needsYou: 'Needs you',
+    running: 'Running',
+    review: 'Ready for review',
+    upNext: 'Up next',
+  };
   const rows = { needsYou, running, review, upNext };
   return (Object.keys(titles) as QueueSectionKey[])
     .filter((key) => rows[key].length > 0)
@@ -251,4 +271,17 @@ export function queueSections(data: MobileOverview): QueueSection[] {
       total: Math.max(totals[key], rows[key].length),
       hasMore: rows[key].length > COLLAPSED_ROWS || data.more[SOURCE[key]],
     }));
+}
+
+/** A Retry that may repeat a started step's side effects confirms before it is sent. */
+export function asksBeforeSending(row: QueueRow, action: MobileTaskAction): boolean {
+  return action === 'continueTask' && row.recoveryKind === 'retry' && row.confirmSideEffects;
+}
+
+/** The row action's request; a recovery carries its kind and the step it was shown for. */
+export function rowRequest(row: QueueRow, action: MobileTaskAction): MobileRequest {
+  if (action !== 'continueTask') return { type: action, id: row.key };
+  const recovery: MobileRequest = { type: action, id: row.key, kind: row.recoveryKind };
+  if (row.recoveryNodeRunId) recovery.recoveryNodeRunId = row.recoveryNodeRunId;
+  return recovery;
 }

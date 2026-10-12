@@ -7,36 +7,28 @@
  * (sole subscriber — BatchMonitor and RunDetailPane rely on its invalidations).
  */
 
-import { Button } from '@benord-labs/frink-primitives';
 import { TRPCClientError } from '@trpc/client';
 import { useAtomValue } from 'jotai';
-import { ChevronLeft, Eye, Loader2, RotateCcw, XCircle } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { Loader2, RotateCcw, XCircle } from 'lucide-react';
+import { useEffect, useRef } from 'react';
 import { toast } from 'sonner';
 import type { DbFlowRun, DbFlowRunWithNodeRuns } from '../../../../../shared/types/flow-run';
 import { trpc } from '../../../../lib/trpc';
-import { cn } from '../../../../lib/utils';
 import { isDesktopApp } from '../../../../lib/utils/platform';
 import { flowLoopProgressAtomFamily } from '../../atoms';
-import {
-  FlowRunStatusIcon,
-  shouldPollFlowAdmission,
-  shouldShowPausedActions,
-} from '../FlowRunStatusIcon';
+import { shouldPollFlowAdmission, shouldShowPausedActions } from '../FlowRunStatusIcon';
 import { BatchGroup } from './BatchGroup';
 import {
   createNodeBurstRefreshScheduler,
   handleFlowExecutionSocketEvent,
   NODE_BURST_DEBOUNCE_MS,
 } from './flow-run-history-socket-refresh';
-import { formatDuration } from './format-duration';
 import { NodeRunList } from './node-run-list';
 import { PausedRunActions } from './PausedRunActions';
+import { RecoverInterruptedAction } from './RecoverInterruptedAction';
+import { RunDetailHeader } from './RunDetailHeader';
 import { RunRow, runPresentation } from './RunRow';
-import { RunStatusLabel } from './RunStatusLabel';
-import { findRestartInterruptedNodeRun } from './restart-interruption';
 import { buildRunHistoryBatchView } from './run-history-batch-view';
-import { shouldPaintExpandedRunOnCanvas } from './should-paint-expanded-run-on-canvas';
 
 /** Same window as `listRuns` so `listBatches` returns API summaries for batches in the visible run list (fewer synthetic fallbacks in `buildRunHistoryBatchView`). */
 const FLOW_RUN_HISTORY_PAGE_SIZE = 20;
@@ -259,7 +251,7 @@ type RunDetailPaneProps = {
 
 /**
  * The Runs tab's main-pane detail for one selected run: meta header, step list, and
- * recovery actions (approve/retry/skip, restart-interruption re-run, view on canvas).
+ * recovery actions (approve/retry/skip, restart-interruption Continue/Retry, view on canvas).
  */
 export function RunDetailPane({
   flowId,
@@ -273,29 +265,18 @@ export function RunDetailPane({
   const { data: detail, isLoading } = trpc.flows.getRun.useQuery({ runId }, { staleTime: 30_000 });
 
   const resumeRunMutation = trpc.flows.resumeRun.useMutation({
-    onSuccess: (_data, variables) => {
-      void utils.flows.listRuns.invalidate({ flowId });
-      void utils.flows.listBatches.invalidate({ flowId });
-      void utils.flows.listBatchRuns.invalidate({ flowId });
-      void utils.flows.listBatchStages.invalidate({ flowId });
-      void utils.flows.getRun.invalidate({ runId: variables.runId });
-    },
     onError: (err) => {
       toast.error(err.message || 'Could not resume run');
     },
-  });
-
-  const rerunRunMutation = trpc.flows.rerunRun.useMutation({
-    onSuccess: (_data, variables) => {
-      toast.success('Re-running from the interrupted step');
-      void utils.flows.listRuns.invalidate({ flowId });
-      void utils.flows.list.invalidate();
-      void utils.flows.get.invalidate({ id: flowId });
-      void utils.flows.getRun.invalidate({ runId: variables.runId });
-    },
-    onError: (err) => {
-      toast.error(err.message || 'Could not re-run flow');
-    },
+    // Awaited (also after a refusal), so the actions stay disabled until the refetched run lands.
+    onSettled: (_data, _err, variables) =>
+      Promise.all([
+        utils.flows.listRuns.invalidate({ flowId }),
+        utils.flows.listBatches.invalidate({ flowId }),
+        utils.flows.listBatchRuns.invalidate({ flowId }),
+        utils.flows.listBatchStages.invalidate({ flowId }),
+        utils.flows.getRun.invalidate({ runId: variables.runId }),
+      ]),
   });
 
   if (isLoading) {
@@ -320,57 +301,14 @@ export function RunDetailPane({
 
   return (
     <div className="flex flex-1 min-h-0 flex-col">
-      {/* Run meta header */}
-      <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-border/30 px-4 py-2.5">
-        {onBack && (
-          <>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              className="h-7 gap-1 pl-1.5 pr-2.5 text-xs shrink-0"
-              onClick={onBack}
-            >
-              <ChevronLeft className="h-3.5 w-3.5" aria-hidden />
-              {backLabel ?? 'Go back'}
-            </Button>
-            <div className="w-px h-4 bg-border/60 shrink-0" aria-hidden />
-          </>
-        )}
-        <div
-          className="flex min-w-0 items-center gap-3"
-          role={presentation.liveMode ? 'status' : undefined}
-          aria-live={presentation.liveMode}
-          aria-atomic={presentation.liveAtomic}
-        >
-          <FlowRunStatusIcon status={presentation.displayStatus} size="md" labelled={false} />
-          <RunStatusLabel status={presentation.displayStatus} suffix={presentation.queueSuffix} />
-          {presentation.detailTimeLabel && (
-            <span className={cn('text-[11px]', presentation.detailTimeClassName)}>
-              {presentation.detailTimeLabel}
-            </span>
-          )}
-          {presentation.durationMs != null && (
-            <span className="text-[11px] text-muted-foreground/60">
-              · {formatDuration(presentation.durationMs)}
-            </span>
-          )}
-        </div>
-        <div className="ml-auto flex items-center gap-1.5">
-          {onViewOnCanvas && shouldPaintExpandedRunOnCanvas(runId, visibleDetail) && (
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary"
-              className="h-6 gap-1 text-[11px]"
-              onClick={() => onViewOnCanvas(visibleDetail)}
-            >
-              <Eye className="h-3 w-3" aria-hidden />
-              View on canvas
-            </Button>
-          )}
-        </div>
-      </div>
+      <RunDetailHeader
+        runId={runId}
+        run={visibleDetail}
+        presentation={presentation}
+        onViewOnCanvas={onViewOnCanvas}
+        onBack={onBack}
+        backLabel={backLabel}
+      />
 
       {/* Steps + recovery actions */}
       <div className="min-h-0 flex-1 overflow-y-auto scrollbar-thin px-4 pb-4 pt-2">
@@ -386,8 +324,12 @@ export function RunDetailPane({
         ) && (
           <PausedRunActions
             detail={visibleDetail}
-            onResumeRun={(action, nodeRunId) =>
-              resumeRunMutation.mutate({ runId: visibleDetail.id, action, nodeRunId })
+            // Settles once onSettled's refetch lands; a failure is already toasted by onError.
+            onResumeRun={(request) =>
+              resumeRunMutation.mutateAsync({ runId: visibleDetail.id, ...request }).then(
+                () => undefined,
+                () => undefined,
+              )
             }
             resumePending={resumeRunMutation.isPending}
             pendingResumeAction={
@@ -399,98 +341,9 @@ export function RunDetailPane({
           />
         )}
         {presentation.recoveryStatus === 'cancelled' && (
-          <RerunInterruptedAction
-            detail={visibleDetail}
-            onRerunRun={(rid) => rerunRunMutation.mutate({ runId: rid })}
-            rerunPending={rerunRunMutation.isPending}
-          />
+          <RecoverInterruptedAction flowId={flowId} run={visibleDetail} />
         )}
       </div>
-    </div>
-  );
-}
-
-type RerunInterruptedActionProps = {
-  detail: DbFlowRunWithNodeRuns;
-  onRerunRun: (runId: string) => void;
-  rerunPending: boolean;
-};
-
-/**
- * "Re-run from previous node" for a run cancelled by an app restart. Renders only when the run
- * carries the restart marker (findRestartInterruptedNodeRun) — never for a user-initiated cancel.
- * A two-step inline confirm warns that side-effecting steps re-run from scratch (the work up to
- * here is preserved on the same run; the interrupted node and everything after it re-execute).
- */
-function RerunInterruptedAction({ detail, onRerunRun, rerunPending }: RerunInterruptedActionProps) {
-  const [confirming, setConfirming] = useState(false);
-  const confirmRef = useRef<HTMLButtonElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const wasConfirming = useRef(false);
-  // Move focus to the confirm button on swap (the trigger unmounts → focus would drop to body,
-  // WCAG 2.4.3), and back to the trigger on cancel.
-  useEffect(() => {
-    if (confirming) confirmRef.current?.focus();
-    else if (wasConfirming.current) triggerRef.current?.focus();
-    wasConfirming.current = confirming;
-  }, [confirming]);
-  const interrupted = findRestartInterruptedNodeRun(detail.nodeRuns);
-  if (!interrupted) return null;
-
-  const nodeLabel =
-    detail.graph?.nodes.find((n) => n.id === interrupted.node_id)?.label ?? interrupted.block_type;
-
-  return (
-    <div className="mt-2 space-y-1.5 border-t border-border/35 pt-2">
-      {confirming ? (
-        <div className="space-y-1.5" role="alert">
-          <p className="text-[11px] text-muted-foreground">
-            Re-runs <span className="font-medium text-foreground">{nodeLabel}</span> and the steps
-            after it. Side-effecting steps (commands, requests) run again from scratch; an agent
-            continues in its existing worktree.
-          </p>
-          <div className="flex items-center gap-1.5">
-            <Button
-              ref={confirmRef}
-              type="button"
-              size="sm"
-              variant="secondary"
-              className="h-6 gap-1 text-[11px]"
-              disabled={rerunPending}
-              onClick={() => onRerunRun(detail.id)}
-            >
-              {rerunPending ? (
-                <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
-              ) : (
-                <RotateCcw className="h-3 w-3" aria-hidden />
-              )}
-              Confirm re-run
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              className="h-6 text-[11px] text-muted-foreground"
-              disabled={rerunPending}
-              onClick={() => setConfirming(false)}
-            >
-              Cancel
-            </Button>
-          </div>
-        </div>
-      ) : (
-        <Button
-          ref={triggerRef}
-          type="button"
-          size="sm"
-          variant="secondary"
-          className="h-6 gap-1 text-[11px]"
-          onClick={() => setConfirming(true)}
-        >
-          <RotateCcw className="h-3 w-3" aria-hidden />
-          Re-run from previous node
-        </Button>
-      )}
     </div>
   );
 }

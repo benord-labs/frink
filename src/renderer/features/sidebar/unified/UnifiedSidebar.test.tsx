@@ -3,7 +3,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { toast } from 'sonner';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { answerConfirm } from './sidebar-confirm-test-harness';
+import { answerConfirm } from '../../../lib/test-utils/sidebar-confirm';
 import {
   captureChatAction,
   expectScopedCountsRefetch,
@@ -97,6 +97,26 @@ describe('UnifiedSidebar pending plan approvals', () => {
     expect([...(pendingPlans as Set<string>)]).toEqual(
       expect.arrayContaining(['chat-live', 'chat-persisted']),
     );
+  });
+});
+
+describe('UnifiedSidebar open chats older than the loaded pages', () => {
+  afterEach(() => {
+    hoisted.state.openChatRows = [];
+  });
+
+  it('lists a chat open in a split pane that no loaded page holds', () => {
+    hoisted.state.splitViewState = {
+      splitView: { chatIds: ['recent-chat', 'old-chat'], activePaneIndex: 0 },
+      isSplitActive: true,
+    };
+    hoisted.state.openChatRows = [
+      { id: 'old-chat', projectId: null, updatedAt: new Date('2025-01-01') },
+    ];
+    render(<UnifiedSidebar />);
+    // SAFETY: the useGroupedProjects double captures the chat list UnifiedSidebar handed it.
+    const chats = hoisted.capturedGroupedProjectsParams?.chats as Array<{ id: string }>;
+    expect(chats.map((chat) => chat.id)).toEqual(['old-chat']);
   });
 });
 
@@ -1221,89 +1241,48 @@ describe('UnifiedSidebar archive chat (sc-208)', () => {
     return captureChatAction('onChatArchive');
   }
 
-  /**
-   * Drives the archive dropdown up to the point the task-aware confirm dialog is showing, and
-   * returns its captured callbacks. A non-empty activeTasks list is what defers the archive; zero
-   * unresolved links keeps the warning toast out of the way.
-   */
-  async function openTaskAwareArchiveDialog(chatId: string) {
-    hoisted.getActiveLinkedTasksForChatIdsWithFallbackMock.mockImplementation(
-      async (chatIds: string[]) =>
-        chatIds.length === 1 && chatIds[0] === chatId
-          ? {
-              activeTasks: [{ taskId: 'task-taw', chatId }],
-              unresolvedTaskLinks: 0,
-            }
-          : { activeTasks: [], unresolvedTaskLinks: 0 },
-    );
+  // Archive stops the linked task in the main process, so the renderer never cancels from a snapshot.
+  it('archives at once when the chat has a live linked task, without the task dialog', async () => {
+    hoisted.getActiveLinkedTasksForChatIdsWithFallbackMock.mockResolvedValue({
+      activeTasks: [{ taskId: 'task-taw', chatId: 'chat-taw' }],
+      unresolvedTaskLinks: 0,
+    });
     const onChatArchive = getOnChatArchive();
     await act(async () => {
-      await onChatArchive(chatId);
+      await onChatArchive('chat-taw');
     });
-    // The dialog must have rendered before its callbacks are read: executeTaskAwareAction
-    // early-returns unless the ref it assigns during render says the dialog is open.
+
+    expect(hoisted.archiveChatMutateAsyncMock).toHaveBeenCalledWith({ id: 'chat-taw' });
     const props = hoisted.capturedSidebarDialogsProps as {
       taskAwareActionDialog?: { open?: boolean };
-      onTaskAwareActionKeepRunning?: () => void;
-      onTaskAwareActionCancelAndContinue?: () => void;
     } | null;
-    expect(props?.taskAwareActionDialog?.open).toBe(true);
-    expect(hoisted.archiveChatMutateAsyncMock).not.toHaveBeenCalled();
-    return props!;
-  }
-
-  it('cancels the linked tasks and kills terminals on cancel-and-continue', async () => {
-    const props = await openTaskAwareArchiveDialog('chat-taw-cancel');
-    await act(async () => {
-      props.onTaskAwareActionCancelAndContinue?.();
-    });
-
-    await waitFor(() => expect(hoisted.archiveChatMutateAsyncMock).toHaveBeenCalled());
-    expect(hoisted.abortTaskChatStreamsBestEffortMock).toHaveBeenCalledWith(['chat-taw-cancel']);
-    expect(hoisted.cancelTasksBestEffortMock).toHaveBeenCalledWith(['task-taw']);
-    expect(hoisted.archiveChatMutateAsyncMock).toHaveBeenCalledWith({
-      id: 'chat-taw-cancel',
-      killTerminals: true,
-    });
-  });
-
-  // Keeping a task running means its terminals must survive the archive, or the task it is still
-  // executing loses the shell out from under it.
-  it('leaves the linked tasks running and the terminals alive on keep-running', async () => {
-    const props = await openTaskAwareArchiveDialog('chat-taw-keep');
-    await act(async () => {
-      props.onTaskAwareActionKeepRunning?.();
-    });
-
-    await waitFor(() => expect(hoisted.archiveChatMutateAsyncMock).toHaveBeenCalled());
-    expect(hoisted.abortTaskChatStreamsBestEffortMock).not.toHaveBeenCalled();
+    expect(props?.taskAwareActionDialog?.open).toBe(false);
+    expect(hoisted.getActiveLinkedTasksForChatIdsWithFallbackMock).not.toHaveBeenCalled();
     expect(hoisted.cancelTasksBestEffortMock).not.toHaveBeenCalled();
-    expect(hoisted.archiveChatMutateAsyncMock).toHaveBeenCalledWith({
-      id: 'chat-taw-keep',
-      killTerminals: false,
-    });
   });
 
-  // A cancellation that fails must not strand the chat: the user asked to archive, so the archive
-  // still has to happen — the failure is reported, not treated as a blocker.
-  it('still archives when some task cancellations fail', async () => {
-    const toastWarningSpy = vi.spyOn(toast, 'warning').mockReturnValue('toast-id');
-    hoisted.cancelTasksBestEffortMock.mockResolvedValueOnce({ failed: 2 });
-    const props = await openTaskAwareArchiveDialog('chat-taw-partial');
+  // A refused archive leaves the chat live, so its pane must come back.
+  it('reopens the cleared panes and reports the reason when archive refuses', async () => {
+    const errorSpy = vi.spyOn(toast, 'error').mockReturnValue('toast-id');
+    hoisted.archiveChatMutateAsyncMock.mockRejectedValueOnce(
+      new Error("Could not stop this chat's task, so the chat was not archived."),
+    );
+    hoisted.state.splitViewState = {
+      splitView: { chatIds: ['chat-other', 'chat-refused'], activePaneIndex: 1 },
+      isSplitActive: true,
+    };
+    const onChatArchive = getOnChatArchive();
     await act(async () => {
-      props.onTaskAwareActionCancelAndContinue?.();
+      await onChatArchive('chat-refused');
     });
 
-    await waitFor(() => expect(hoisted.archiveChatMutateAsyncMock).toHaveBeenCalled());
-    expect(toastWarningSpy).toHaveBeenCalledWith(
-      'Some task cancellations failed',
-      expect.objectContaining({ description: expect.stringContaining('2 tasks') }),
-    );
-    expect(hoisted.archiveChatMutateAsyncMock).toHaveBeenCalledWith({
-      id: 'chat-taw-partial',
-      killTerminals: true,
+    expect(errorSpy).toHaveBeenCalledWith('Failed to archive chat', {
+      description: "Could not stop this chat's task, so the chat was not archived.",
     });
-    toastWarningSpy.mockRestore();
+    expect(screen.queryByTestId('archived-chats')).toBeNull();
+    // The pane archive cleared eagerly comes back, since the chat is still live.
+    expect(hoisted.restorePaneAtMock).toHaveBeenCalledWith(1, 'chat-refused');
+    errorSpy.mockRestore();
   });
 
   it('switches to archived mode and clears the selection only if it was the archived chat', async () => {
@@ -1323,6 +1302,13 @@ describe('UnifiedSidebar archive chat (sc-208)', () => {
     ) => string | null;
     expect(updater('chat-arch-selected')).toBeNull();
     expect(updater('chat-other')).toBe('chat-other');
+  });
+
+  it('clears the archived chat from the selection before the sidebar counts resync', async () => {
+    hoisted.chatsListCountsFetchMock.mockReturnValueOnce(new Promise(() => {}));
+    const onChatArchive = getOnChatArchive();
+    void onChatArchive('chat-arch-selected');
+    await waitFor(() => expect(hoisted.setSelectedChatIdMock).toHaveBeenCalled());
   });
 
   it('refetches batch caches + listArchived but skips full folder/pinned refetch', async () => {
@@ -1934,5 +1920,45 @@ describe('UnifiedSidebar row-action identity', () => {
     await Promise.all([first, second]);
 
     expect(hoisted.togglePinMutateAsyncMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('UnifiedSidebar pane indicators', () => {
+  it('passes no pane map in single view, where panes are unnumbered', () => {
+    render(<UnifiedSidebar />);
+    expect(hoisted.capturedProjectsTreeProps?.chatPaneMap).toBeUndefined();
+  });
+
+  it('passes the pane map in split view', () => {
+    hoisted.state.splitViewState = {
+      splitView: { chatIds: ['chat-a', null, 'chat-b'], activePaneIndex: 0 },
+      isSplitActive: true,
+    };
+    render(<UnifiedSidebar />);
+    expect(hoisted.capturedProjectsTreeProps?.chatPaneMap).toEqual(
+      new Map([
+        ['chat-a', 1],
+        ['chat-b', 3],
+      ]),
+    );
+  });
+});
+
+describe('UnifiedSidebar reveal active chat', () => {
+  it('focuses the active chat when a pane header asks for it', () => {
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+    hoisted.focusActiveItemMock.mockClear();
+    render(<UnifiedSidebar />);
+    expect(hoisted.focusActiveItemMock).not.toHaveBeenCalled();
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent('sidebar:reveal-active-chat'));
+    });
+
+    expect(hoisted.focusActiveItemMock).toHaveBeenCalledOnce();
+    vi.unstubAllGlobals();
   });
 });

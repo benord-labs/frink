@@ -23,15 +23,6 @@ export type PathConfig = {
   packageManagerPaths: string[];
 };
 
-export type CliConfig = {
-  /** Path where CLI command should be installed */
-  installPath: string;
-  /** CLI script filename */
-  scriptName: string;
-  /** Whether admin/elevated privileges are required */
-  requiresAdmin: boolean;
-};
-
 export type EnvironmentConfig = {
   /** Home directory environment variable name */
   homeVar: string;
@@ -57,9 +48,6 @@ export type PlatformProvider = {
 
   /** PATH configuration */
   getPathConfig(): PathConfig;
-
-  /** CLI installation configuration */
-  getCliConfig(): CliConfig;
 
   /** Environment configuration */
   getEnvironmentConfig(): EnvironmentConfig;
@@ -97,26 +85,6 @@ export type PlatformProvider = {
    * @returns Environment object with platform-specific additions
    */
   buildEnvironment(baseEnv?: Record<string, string>): Record<string, string>;
-
-  /**
-   * Install CLI command to system
-   * @param sourcePath - Path to CLI script source
-   * @returns Promise with success status and optional error
-   */
-  installCli(sourcePath: string): Promise<{ success: boolean; error?: string }>;
-
-  /**
-   * Uninstall CLI command from system
-   * @returns Promise with success status and optional error
-   */
-  uninstallCli(): Promise<{ success: boolean; error?: string }>;
-
-  /**
-   * Check if CLI command is installed
-   * @param sourcePath - Path to CLI script source (for symlink verification)
-   * @returns Whether CLI is properly installed
-   */
-  isCliInstalled(sourcePath: string): boolean;
 
   /**
    * Execute a command and get output

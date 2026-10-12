@@ -2,27 +2,13 @@
  * macOS Platform Provider
  */
 
-import { execFile } from 'node:child_process';
-import { existsSync, lstatSync, readlinkSync } from 'node:fs';
 import * as path from 'node:path';
-import { promisify } from 'node:util';
-import log from 'electron-log';
 import { BasePlatformProvider } from './base';
-import type { CliConfig, EnvironmentConfig, PathConfig, ShellConfig } from './types';
-
-const execFileAsync = promisify(execFile);
+import { cachedNvmBinDirs } from './nvm';
+import { nodeVersionManagerPaths } from './node-version-manager-paths';
+import type { EnvironmentConfig, PathConfig, ShellConfig } from './types';
 
 const USER_SHELL_REGEX = /UserShell:\s*(.+)/;
-
-/** Escape path for safe use inside a bash command (single-quote style). */
-function escapePathForBash(pathStr: string): string {
-  return `'${pathStr.replace(/'/g, "'\"'\"'")}'`;
-}
-
-/** Escape a bash command for use inside AppleScript "do shell script \"...\"". */
-function escapeForAppleScript(bashCommand: string): string {
-  return bashCommand.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-}
 
 export class DarwinPlatformProvider extends BasePlatformProvider {
   readonly platform = 'darwin' as const;
@@ -64,17 +50,11 @@ export class DarwinPlatformProvider extends BasePlatformProvider {
         path.join(home, '.bun', 'bin'),
         path.join(home, '.cargo', 'bin'),
         path.join(home, '.deno', 'bin'),
-        // NVM managed Node.js (common pattern)
-        path.join(home, '.nvm', 'versions', 'node', '*', 'bin'),
+        // NVM managed Node.js
+        ...cachedNvmBinDirs(home),
+        // Last: a mise or asdf shim must not outrank a working node above.
+        ...nodeVersionManagerPaths(home, 'darwin'),
       ],
-    };
-  }
-
-  getCliConfig(): CliConfig {
-    return {
-      installPath: '/usr/local/bin/frink',
-      scriptName: 'frink',
-      requiresAdmin: true, // /usr/local/bin requires admin on macOS
     };
   }
 
@@ -103,73 +83,4 @@ export class DarwinPlatformProvider extends BasePlatformProvider {
   }
 
   // detectLocale is inherited from BasePlatformProvider (shared Unix `locale` detection).
-
-  async installCli(sourcePath: string): Promise<{ success: boolean; error?: string }> {
-    const cliConfig = this.getCliConfig();
-    const installPath = cliConfig.installPath;
-
-    if (!existsSync(sourcePath)) {
-      return { success: false, error: 'CLI script not found in app bundle' };
-    }
-
-    try {
-      const safeInstall = escapePathForBash(installPath);
-      const safeSource = escapePathForBash(sourcePath);
-      // Remove existing if present (escaped for bash then AppleScript)
-      if (existsSync(installPath)) {
-        const rmCmd = `rm -f ${safeInstall}`;
-        const rmScript = `do shell script "${escapeForAppleScript(rmCmd)}" with administrator privileges`;
-        await execFileAsync('osascript', ['-e', rmScript]);
-      }
-
-      // Create symlink with admin privileges (escaped for bash then AppleScript)
-      const lnCmd = `ln -s ${safeSource} ${safeInstall}`;
-      const lnScript = `do shell script "${escapeForAppleScript(lnCmd)}" with administrator privileges`;
-      await execFileAsync('osascript', ['-e', lnScript]);
-
-      log.info('[CLI] Installed frink command to', installPath);
-      return { success: true };
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Installation failed';
-      log.error('[CLI] Failed to install:', error);
-      return { success: false, error: errorMessage };
-    }
-  }
-
-  async uninstallCli(): Promise<{ success: boolean; error?: string }> {
-    const cliConfig = this.getCliConfig();
-    const installPath = cliConfig.installPath;
-
-    try {
-      if (!existsSync(installPath)) {
-        log.info('[CLI] CLI command not installed, nothing to uninstall');
-        return { success: true };
-      }
-
-      const safeInstall = escapePathForBash(installPath);
-      const rmCmd = `rm -f ${safeInstall}`;
-      const rmScript = `do shell script "${escapeForAppleScript(rmCmd)}" with administrator privileges`;
-      await execFileAsync('osascript', ['-e', rmScript]);
-
-      log.info('[CLI] Uninstalled frink command');
-      return { success: true };
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Uninstallation failed';
-      log.error('[CLI] Failed to uninstall:', error);
-      return { success: false, error: errorMessage };
-    }
-  }
-
-  isCliInstalled(sourcePath: string): boolean {
-    const cliConfig = this.getCliConfig();
-    try {
-      if (!existsSync(cliConfig.installPath)) return false;
-      const stat = lstatSync(cliConfig.installPath);
-      if (!stat.isSymbolicLink()) return false;
-      const target = readlinkSync(cliConfig.installPath);
-      return target === sourcePath;
-    } catch {
-      return false;
-    }
-  }
 }

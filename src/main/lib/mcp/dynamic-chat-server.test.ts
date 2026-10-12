@@ -139,7 +139,7 @@ vi.mock('../db/repos/chats', async (importOriginal) => {
 // mock; specific tests override this to assert enriched output.
 vi.mock('../db/repos/projects', () => ({
   getProjectById: state.getProjectByIdLocal,
-  listProjects: state.listProjectsLocal,
+  listRealProjects: state.listProjectsLocal,
 }));
 
 vi.mock('../git/cache', () => ({
@@ -155,13 +155,13 @@ vi.mock('../git/resolve-target-worktree', () => ({
 
 // `frink_navigation_context` derives the live branch from disk; default null keeps
 // existing tests unaware, the navigation-context tests override to assert enrichment.
-vi.mock('../git/worktree', () => ({
-  getCurrentBranch: state.getCurrentBranch,
-}));
+vi.mock('../git/worktree', () => ({ getCurrentBranch: state.getCurrentBranch }));
 
 vi.mock('../socket/executor', () => ({
   clearCodexSession: (...args: unknown[]) => state.clearCodexSession(...args),
   handleRemoteStop: (...args: unknown[]) => state.handleRemoteStop(...args),
+}));
+vi.mock('../socket/streaming/pending-permission/validate-tool-permission', () => ({
   validateToolPermission: state.validateToolPermission,
 }));
 

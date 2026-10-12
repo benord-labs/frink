@@ -15,7 +15,9 @@ import {
 } from '../../../claude';
 import { buildClaudeCredentialLaunch } from '../../../claude/credential-fd-spawn';
 import { buildClaudeSdkThinkingPartial } from '../../../claude/sdk-thinking-options';
-import { stageClaudeConfigDir } from '../../../claude/session-config-dir';
+import { resolveClaudeAutoMemorySettings } from '../../../claude/auto-memory';
+import { mergeChatMemoriesOnce } from '../../../claude/auto-memory/merge-chat-memories';
+import { readUserHookSettings, stageClaudeConfigDir } from '../../../claude/session-config-dir';
 import type { CredentialResult } from '../../../credentials';
 import {
   registerDebugSession,
@@ -27,6 +29,7 @@ import { buildFrinkSystemPromptAppend } from '../../../frink-system-prompt';
 import { withChannelQuery } from '../../../mcp/execution-identity';
 import { resolveFrinkMcpServers } from '../../../mcp/runtime';
 import { createClaudeMcpConfigTransport } from '../../../mcp/runtime/mcp-config-transport';
+import { ensureLoginShellEnv } from '../../../platform/login-shell-env';
 import { captureMainException } from '../../../sentry/init';
 import { getAllAgentsForSdk } from '../../../trpc/routers/agent-utils';
 import { type ClaudeSession, createSession } from '../../claude-session-registry';
@@ -140,6 +143,9 @@ type ClaudeSessionSpec = Awaited<ReturnType<typeof buildClaudeSessionSpec>>;
 export async function buildClaudeSessionSpec(inputs: ClaudeSessionSpecInputs) {
   const { subChatId, projectPath, mode, settings, storedCredential, signalTaskId } = inputs;
   const { nativeAutoReview, planAutoReview, dynamicChatMcpUrl, persistedSessionId } = inputs;
+  // The CLI spawns stdio MCP servers (npx, uvx...) from this env; wait for the login-shell PATH
+  // rather than start the first session after launch on the fallback one.
+  await ensureLoginShellEnv();
   const baseEnv = buildClaudeEnv({
     enableTasks: settings?.enableTasks ?? true,
   });
@@ -223,6 +229,16 @@ export async function buildClaudeSessionSpec(inputs: ClaudeSessionSpecInputs) {
   });
 
   const shouldResumeClaudeSession = Boolean(persistedSessionId);
+  const flagSettings = {
+    ...readUserHookSettings(),
+    // Auto-memory belongs to the project, as outside Frink, not to this chat's config dir.
+    ...resolveClaudeAutoMemorySettings(projectPath),
+    // Ultra: the CLI's `ultracode` orchestration, dropped on an older bundled CLI. Flow turns never
+    // run it: unattended runs have no usage disclosure surface yet.
+    ...(settings?.ultra &&
+      !inputs.isFlowExecutionTurn &&
+      claudeVersionSupportsUltra() && { ultracode: true }),
+  };
   const sdkOptions = {
     cwd: projectPath,
     permissionMode: resolvePermissionMode(mode, nativeAutoReview),
@@ -244,9 +260,9 @@ export async function buildClaudeSessionSpec(inputs: ClaudeSessionSpecInputs) {
       preset: 'claude_code' as const,
       append: `\n\n${frinkSystemPromptAppend}`,
     },
-    // Load skills and hooks from project (.claude/) and user (~/.claude/) directories
-    // This enables Claude to use skills via the Skill tool and hooks for lifecycle events
-    settingSources: ['project' as const, 'user' as const],
+    // Skills and hooks from every native settings file Claude Code reads; the user tier resolves to
+    // the isolated config dir, so ~/.claude hooks arrive through `settings` below.
+    settingSources: ['project' as const, 'user' as const, 'local' as const],
     // Agents from ~/.claude/agents/ and .claude/agents/ (Claude can use proactively)
     ...(Object.keys(allAgents).length > 0 && { agents: allAgents }),
     ...(claudeMcpConfig && { extraArgs: claudeMcpConfig.extraArgs }),
@@ -271,11 +287,7 @@ export async function buildClaudeSessionSpec(inputs: ClaudeSessionSpecInputs) {
       if (!effort) return {};
       return { effort: effort as import('@anthropic-ai/claude-agent-sdk').Options['effort'] };
     })(),
-    // Ultra: the CLI's `ultracode` orchestration, dropped on an older bundled CLI. Flow turns never
-    // run it: unattended runs have no usage disclosure surface yet.
-    ...(settings?.ultra &&
-      !inputs.isFlowExecutionTurn &&
-      claudeVersionSupportsUltra() && { settings: { ultracode: true } }),
+    settings: flagSettings,
     // SDK betas (e.g. 1M context window: 'context-1m-2025-08-07')
     ...(settings?.betas?.length && {
       betas: settings.betas as import('@anthropic-ai/claude-agent-sdk').SdkBeta[],
@@ -369,6 +381,7 @@ export async function prepareClaudeSpawn(spec: ClaudeSessionSpec): Promise<void>
   // user's skills, agents and CLAUDE.md memory back inside the session dir.
   // Pre-create session plans/ so path checks (realpath) succeed before first Write.
   fs.mkdirSync(path.join(isolatedConfigDir, 'plans'), { recursive: true });
+  await mergeChatMemoriesOnce(path.dirname(isolatedConfigDir));
   stageClaudeConfigDir(isolatedConfigDir, spec.scope.subChatId);
 
   // Write OAuth tokens for HTTP MCPs into the isolated CLAUDE_CONFIG_DIR so the CLI

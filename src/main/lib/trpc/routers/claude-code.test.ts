@@ -178,6 +178,38 @@ vi.mock('../../../../shared/launch-flags', () => ({ LAUNCH_FLAGS: launchFlagsMoc
 
 beforeEach(() => {});
 
+describe('claudeCodeRouter.hasExistingCliConfig', () => {
+  it('reads the API proxy from the login shell once it has answered, not the launch env', async () => {
+    // Called by onboarding right after launch, while the shell is usually still resolving.
+    const { LoginShellEnvResolver, setLoginShellEnvResolver } =
+      await import('../../platform/login-shell-env');
+    let answer: () => void = () => {};
+    const answered = new Promise<void>((resolve) => (answer = resolve));
+    setLoginShellEnvResolver(
+      new LoginShellEnvResolver({
+        spawnShell: async () => {
+          await answered;
+          return {
+            ok: true,
+            env: { PATH: process.env.PATH ?? '', ANTHROPIC_BASE_URL: 'https://proxy.example' },
+          };
+        },
+        extendPath: (p) => p ?? '',
+      }),
+    );
+    const { claudeCodeRouter } = await import('./claude-code');
+    const caller = claudeCodeRouter.createCaller({ getWindow: () => null });
+
+    const pending = caller.hasExistingCliConfig();
+    answer();
+
+    await expect(pending).resolves.toMatchObject({
+      hasConfig: true,
+      baseUrl: 'https://proxy.example',
+    });
+  });
+});
+
 describe('claudeCodeRouter project account ownership', () => {
   beforeEach(() => {
     getProjectAiAccountMock.mockReset();
@@ -916,7 +948,7 @@ describe('claudeCodeRouter connectCodexPassthrough — dark-launch creation gate
     transactionSpy.mockReset();
     detectCodexAccountMock.mockReset();
     launchFlagsMock.codexAccounts = true; // default ON; the guard test flips it off
-    detectCodexAccountMock.mockReturnValue({
+    detectCodexAccountMock.mockResolvedValue({
       available: true,
       email: 'me@openai.example',
       displayName: 'me@openai.example',
@@ -940,7 +972,7 @@ describe('claudeCodeRouter connectCodexPassthrough — dark-launch creation gate
   });
 
   it('throws the detector hint when the codex binary is not logged in on this machine', async () => {
-    detectCodexAccountMock.mockReturnValue({
+    detectCodexAccountMock.mockResolvedValue({
       available: false,
       hint: 'No Codex login found. Run `codex login` and try again.',
     });
@@ -978,6 +1010,29 @@ describe('claudeCodeRouter connectCodexPassthrough — dark-launch creation gate
     expect(transactionSpy).toHaveBeenCalled(); // SELECT+INSERT atomic (one-per-machine safety)
   });
 
+  it('connects a keychain-stored login, which is confirmed by presence and has no email (sc-3811)', async () => {
+    detectCodexAccountMock.mockResolvedValue({
+      available: true,
+      displayName: 'OpenAI',
+      sourcePath: 'codex-passthrough://local',
+    });
+    selectGetMock.mockReturnValueOnce(undefined).mockReturnValueOnce(undefined);
+    const { claudeCodeRouter } = await import('./claude-code');
+    const caller = claudeCodeRouter.createCaller({ getWindow: () => null });
+
+    const result = await caller.connectCodexPassthrough({ accountLabel: 'OpenAI' });
+
+    expect(result).toMatchObject({ status: 'created' });
+    expect(insertValuesMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'codex',
+        accountLabel: 'OpenAI',
+        source: 'codex-passthrough',
+        expectedEmail: null,
+      }),
+    );
+  });
+
   it('updates the existing codex row in place — one codex login per machine, never a second row', async () => {
     selectGetMock.mockReturnValueOnce({ id: 'codex-existing' }); // existing codex-passthrough row
     const { claudeCodeRouter } = await import('./claude-code');
@@ -1013,7 +1068,7 @@ describe('claudeCodeRouter — codex account-type recognition in the selection r
     });
 
     it('returns the detector result when the flag is on', async () => {
-      detectCodexAccountMock.mockReturnValue({
+      detectCodexAccountMock.mockResolvedValue({
         available: true,
         email: 'me@openai.example',
         sourcePath: 'codex-passthrough://local',

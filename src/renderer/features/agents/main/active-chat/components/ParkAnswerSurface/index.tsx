@@ -6,7 +6,7 @@
  * box. Either path submits as a normal follow-up message (`onSubmitAnswer`), which the executor's
  * resumeTaskOnFollowUpMessage turns into a resume for both standalone and flow tasks — no bespoke
  * resume path. Transient parks (usage limit / API error) render nothing here: TaskControls owns
- * their Carry on / Retry. Hidden while a live AskUserQuestion is pending (`suppressed`) so two
+ * their Continue / Retry. Hidden while a live AskUserQuestion is pending (`suppressed`) so two
  * cards never stack.
  */
 import { memo, useRef } from 'react';

@@ -1,6 +1,23 @@
 import { hostname } from 'node:os';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { getDatabase } from '../../db';
 import type { TaskResultRecord } from '../../db/repos/tasks';
+import { RESTART_INTERRUPTION_REASON } from '../../../../shared/types/flow';
+import {
+  chats,
+  type FlowRun,
+  flowRuns,
+  flows,
+  flowVersions,
+  nodeRuns,
+  subChatMessages,
+  subChats,
+  type Task,
+  tasks,
+} from '../../db/schema';
+import { freshDb } from '../../db/test-utils/fresh-db';
+import { PhoneSafeRefusal } from './task-refusals';
+import type { FlowRunRecoveries } from './tasks';
 
 const createTaskMock = vi.fn();
 const getTasksWithProjectPaginatedMock = vi.fn();
@@ -22,7 +39,8 @@ const retryTaskDetailedMock = vi.fn();
 const getSubChatByIdMock = vi.fn();
 const getSubChatModeMock = vi.fn();
 const carryOnFlowTaskMock = vi.fn();
-const hasActiveFlowAdmissionMock = vi.fn();
+const transitionFlowRunMock = vi.fn();
+const queuedResumeMock = vi.fn(async (_flowRunId: string) => false);
 class MockApiRequestError extends Error {
   status: number;
 
@@ -83,7 +101,12 @@ vi.mock('../../flows/rerun', () => ({
 }));
 
 vi.mock('../../flows/admission/runtime', () => ({
-  hasActiveFlowAdmission: hasActiveFlowAdmissionMock,
+  transitionFlowRun: transitionFlowRunMock,
+  probeFlowAdmission: async (flowRunId: string) => ({
+    active: false,
+    live: false,
+    queuedResume: await queuedResumeMock(flowRunId),
+  }),
 }));
 
 vi.mock('../../tasks/cancel-work-queue-task', () => ({
@@ -99,6 +122,23 @@ vi.mock('../../task-poller', () => ({
     resume: vi.fn(),
   }),
 }));
+
+const db = freshDb();
+
+/** A live session on `sub-1` whose newest answered prompt dispatched `taskId`: it continues. */
+async function seedAnsweredSession(taskId: string): Promise<void> {
+  await db.insert(chats).values({ id: 'chat-1', name: 'chat' });
+  await db.insert(subChats).values({ id: 'sub-1', chatId: 'chat-1', sessionId: 'sess-1' });
+  const prompt = { id: 'u-1', role: 'user', parts: [], metadata: { dispatchTaskId: taskId } };
+  const reply = { id: 'a-1', role: 'assistant', parts: [] };
+  await db.insert(subChatMessages).values(
+    [prompt, reply].map((message, seq) => ({
+      subChatId: 'sub-1',
+      seq,
+      message: JSON.stringify(message),
+    })),
+  );
+}
 
 describe('tasksRouter status schema', () => {
   beforeEach(() => {
@@ -151,57 +191,224 @@ describe('tasksRouter status schema', () => {
     getSubChatByIdMock.mockReset();
     getSubChatModeMock.mockReset().mockResolvedValue(null);
     carryOnFlowTaskMock.mockReset();
-    hasActiveFlowAdmissionMock.mockReset();
+    // The recovery rule runs for real, against no sessions unless a test seeds one.
+    db.delete(subChatMessages).run();
+    db.delete(subChats).run();
+    db.delete(chats).run();
+    db.delete(tasks).run();
+    vi.mocked(getDatabase).mockReturnValue(db);
+    transitionFlowRunMock.mockReset();
+    queuedResumeMock.mockReset().mockResolvedValue(false);
   });
 
-  // The continue path delegates to carryOnFlowTask (its session and Flow-provenance gates live in
-  // flows/rerun/carry-on.test.ts). Here we only verify the router maps its result → the right
-  // surface: the carried-on task on success, or the matching message on each failure reason.
-  describe('retry (Carry on) — result mapping', () => {
-    it('returns the carried-on task on success', async () => {
-      const { tasksRouter } = await import('./tasks');
-      const caller = tasksRouter.createCaller({ getWindow: () => null });
-      carryOnFlowTaskMock.mockResolvedValueOnce({
-        ok: true,
-        task: { id: 'task-3', status: 'pending' },
+  // Routing only: Continue's gates (carryOnFlowTask) are covered in flows/rerun, the run-level
+  // recoveries in their own modules. Every row of the routing table plus the stale-label refusal.
+  describe('recover — routing', () => {
+    const caller = async () =>
+      (await import('./tasks')).tasksRouter.createCaller({ getWindow: () => null });
+    const flowRuns = {
+      retryPausedStep: vi.fn<FlowRunRecoveries['retryPausedStep']>(async () => {}),
+      readmitRun: vi.fn<FlowRunRecoveries['readmitRun']>(async () => ({
+        state: 'active',
+        created: true,
+      })),
+    };
+    const recoverFlowTask = async (kind: 'continue' | 'retry') =>
+      (await import('./tasks')).recoverTask(db, 'task-f', kind, flowRuns);
+    const seed = (task: Partial<Task>, run?: Pick<FlowRun, 'id' | 'status'>) => {
+      getTaskByIdMock.mockResolvedValue({ status: 'failed', result: {}, ...task });
+      getFlowRunMock.mockResolvedValue(run ?? null);
+      // Retry re-reads a non-flow task's real row in the transaction that writes it.
+      if (task.id && !task.flowRunId) {
+        const { id, result } = task;
+        db.insert(tasks)
+          .values({ id, description: id, source: 'manual', status: 'failed', result })
+          .run();
+      }
+    };
+    const nothingRan = () => {
+      expect(carryOnFlowTaskMock).not.toHaveBeenCalled();
+      expect(retryTaskDetailedMock).not.toHaveBeenCalled();
+      expect(flowRuns.retryPausedStep).not.toHaveBeenCalled();
+      expect(flowRuns.readmitRun).not.toHaveBeenCalled();
+    };
+
+    beforeEach(() => {
+      flowRuns.retryPausedStep.mockClear();
+      flowRuns.readmitRun.mockClear();
+    });
+
+    it('continues a non-flow task through carryOnFlowTask', async () => {
+      seed({ id: 'task-3', flowRunId: null });
+      carryOnFlowTaskMock.mockResolvedValueOnce({ ok: true, task: { id: 'task-3' } });
+
+      await expect(
+        (await caller()).recover({ taskId: 'task-3', kind: 'continue' }),
+      ).resolves.toEqual({ ok: true });
+      expect(carryOnFlowTaskMock).toHaveBeenCalledWith(expect.anything(), 'task-3');
+      expect(retryTaskDetailedMock).not.toHaveBeenCalled();
+    });
+
+    it("maps Continue's refusals to their messages", async () => {
+      seed({ id: 'task-1', flowRunId: null });
+      // A Continue whose step no longer continues is the stale-label refusal every path shares.
+      carryOnFlowTaskMock.mockResolvedValueOnce({ ok: false, reason: 'no-session' });
+      await expect(
+        (await caller()).recover({ taskId: 'task-1', kind: 'continue' }),
+      ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+
+      carryOnFlowTaskMock.mockResolvedValueOnce({ ok: false, reason: 'not-found' });
+      await expect(
+        (await caller()).recover({ taskId: 'task-1', kind: 'continue' }),
+      ).rejects.toMatchObject({ code: 'NOT_FOUND', message: 'Task not found' });
+
+      carryOnFlowTaskMock.mockResolvedValueOnce({ ok: false, reason: 'invalid-state' });
+      await expect(
+        (await caller()).recover({ taskId: 'task-1', kind: 'continue' }),
+      ).rejects.toMatchObject({
+        code: 'CONFLICT',
+        message: 'Only failed or attention-parked tasks can be retried',
+      });
+      // A lost race: the phone keeps its generic refresh text for it.
+      carryOnFlowTaskMock.mockResolvedValueOnce({ ok: false, reason: 'invalid-state' });
+      await expect(
+        (await caller()).recover({ taskId: 'task-1', kind: 'continue' }),
+      ).rejects.not.toBeInstanceOf(PhoneSafeRefusal);
+
+      // No Retry is offered beside a Continue, so the copy names the action that still works.
+      carryOnFlowTaskMock.mockResolvedValueOnce({ ok: false, reason: 'admission-required' });
+      await expect(
+        (await caller()).recover({ taskId: 'task-1', kind: 'continue' }),
+      ).rejects.toMatchObject({
+        code: 'PRECONDITION_FAILED',
+        message: expect.stringMatching(/Cancel it and start it again/),
       });
 
-      const result = await caller.retry({ taskId: 'task-3', mode: 'continue' });
+      carryOnFlowTaskMock.mockResolvedValueOnce({ ok: false, reason: 'chat-archived' });
+      await expect(
+        (await caller()).recover({ taskId: 'task-1', kind: 'continue' }),
+      ).rejects.toMatchObject({
+        code: 'PRECONDITION_FAILED',
+        message: expect.stringMatching(
+          /chat is archived\. Restore the chat in Frink to continue it/,
+        ),
+      });
 
-      expect(carryOnFlowTaskMock).toHaveBeenCalledWith(expect.anything(), 'task-3');
-      expect(result).toMatchObject({ id: 'task-3', status: 'pending' });
-      expect(retryTaskDetailedMock).not.toHaveBeenCalled(); // continue routes through carryOnFlowTask
+      carryOnFlowTaskMock.mockResolvedValueOnce({ ok: false, reason: 'superseded' });
+      await expect(
+        (await caller()).recover({ taskId: 'task-1', kind: 'continue' }),
+      ).rejects.toMatchObject({
+        code: 'CONFLICT',
+        message: expect.stringMatching(/replaced by a newer one/),
+      });
+
+      // These refusals tell the user what to do, so the phone shows their own message.
+      for (const reason of ['admission-required', 'chat-archived', 'superseded'] as const) {
+        carryOnFlowTaskMock.mockResolvedValueOnce({ ok: false, reason });
+        await expect(
+          (await caller()).recover({ taskId: 'task-1', kind: 'continue' }),
+        ).rejects.toBeInstanceOf(PhoneSafeRefusal);
+      }
     });
 
-    it('rejects with "Nothing to carry on" when there is no resumable session', async () => {
-      const { tasksRouter } = await import('./tasks');
-      const caller = tasksRouter.createCaller({ getWindow: () => null });
-      carryOnFlowTaskMock.mockResolvedValueOnce({ ok: false, reason: 'no-session' });
+    it('restarts a non-flow task fresh on retry, mapping its refusal', async () => {
+      seed({ id: 'task-4', flowRunId: null });
+      retryTaskDetailedMock.mockReturnValueOnce({ task: { id: 'task-4', status: 'pending' } });
 
-      await expect(caller.retry({ taskId: 'task-1', mode: 'continue' })).rejects.toThrow(
-        /Nothing to carry on/i,
-      );
-    });
-
-    it('directs a released Flow carry-on to the Flow retry action', async () => {
-      const { tasksRouter } = await import('./tasks');
-      const caller = tasksRouter.createCaller({ getWindow: () => null });
-      carryOnFlowTaskMock.mockResolvedValueOnce({ ok: false, reason: 'admission-required' });
-
-      await expect(caller.retry({ taskId: 'task-flow', mode: 'continue' })).rejects.toThrow(
-        /lost its place in the run queue/i,
-      );
-    });
-
-    it('restart mode skips carryOnFlowTask entirely (fresh re-run needs no session)', async () => {
-      const { tasksRouter } = await import('./tasks');
-      const caller = tasksRouter.createCaller({ getWindow: () => null });
-      retryTaskDetailedMock.mockResolvedValueOnce({ task: { id: 'task-4', status: 'pending' } });
-
-      await caller.retry({ taskId: 'task-4', mode: 'restart' });
-
-      expect(carryOnFlowTaskMock).not.toHaveBeenCalled();
+      await (await caller()).recover({ taskId: 'task-4', kind: 'retry' });
       expect(retryTaskDetailedMock).toHaveBeenCalledWith(expect.anything(), 'task-4', 'restart');
+      expect(carryOnFlowTaskMock).not.toHaveBeenCalled();
+
+      retryTaskDetailedMock.mockReturnValueOnce({ task: null, reason: 'invalid_state' });
+      await expect(
+        (await caller()).recover({ taskId: 'task-4', kind: 'retry' }),
+      ).rejects.toMatchObject({
+        code: 'CONFLICT',
+        message: expect.stringMatching(/Only failed or attention-parked tasks/),
+      });
+
+      // A refusal with no reason is a fault, not an expected refusal: it stays a 500.
+      retryTaskDetailedMock.mockReturnValueOnce({ task: null });
+      await expect(
+        (await caller()).recover({ taskId: 'task-4', kind: 'retry' }),
+      ).rejects.toMatchObject({ code: 'INTERNAL_SERVER_ERROR', message: 'Could not retry task' });
+    });
+
+    it('continues a paused flow run through carryOnFlowTask', async () => {
+      seed(
+        { id: 'task-f', flowRunId: 'run-1', sourceId: 'nr-1' },
+        { id: 'run-1', status: 'paused' },
+      );
+      carryOnFlowTaskMock.mockResolvedValueOnce({ ok: true, task: { id: 'task-f' } });
+
+      await recoverFlowTask('continue');
+      expect(carryOnFlowTaskMock).toHaveBeenCalledWith(db, 'task-f');
+      expect(flowRuns.retryPausedStep).not.toHaveBeenCalled();
+    });
+
+    it("retries a paused flow run's step on its node_run", async () => {
+      seed(
+        { id: 'task-f', flowRunId: 'run-1', sourceId: 'nr-1' },
+        { id: 'run-1', status: 'paused' },
+      );
+
+      await recoverFlowTask('retry');
+      expect(flowRuns.retryPausedStep).toHaveBeenCalledWith('run-1', 'nr-1', 'retry');
+      expect(carryOnFlowTaskMock).not.toHaveBeenCalled();
+    });
+
+    // A run that failed on a later non-agent step recovers through its earlier `done` row.
+    it.each([
+      ['failed', 'continue', 'cancelled'],
+      ['failed', 'retry', 'cancelled'],
+      ['failed', 'retry', 'done'],
+      ['cancelled', 'continue', 'cancelled'],
+      ['cancelled', 'retry', 'cancelled'],
+    ] as const)(
+      're-admits a %s run from its last step on %s (%s row)',
+      async (status, kind, row) => {
+        const run = { id: 'run-1', status };
+        seed({ id: 'task-f', flowRunId: 'run-1', sourceId: 'nr-1', status: row }, run);
+
+        await recoverFlowTask(kind);
+        expect(flowRuns.readmitRun).toHaveBeenCalledWith(db, run, kind);
+        expect(carryOnFlowTaskMock).not.toHaveBeenCalled();
+        expect(flowRuns.retryPausedStep).not.toHaveBeenCalled();
+      },
+    );
+
+    // The bulk action reports each run's outcome from the admission its re-admit produced.
+    it.each([
+      [{ state: 'active', created: true }, 'resumed'],
+      [{ state: 'claimed', created: true }, 'resumed'],
+      [{ state: 'queued', created: true }, 'queued'],
+      [{ state: 'queued', created: false }, 'already-queued'],
+    ] as const)('reports a re-admit of %o as %s', async (admission, outcome) => {
+      seed(
+        { id: 'task-f', flowRunId: 'run-1', sourceId: 'nr-1' },
+        { id: 'run-1', status: 'cancelled' },
+      );
+      flowRuns.readmitRun.mockResolvedValueOnce(admission);
+
+      await expect(recoverFlowTask('retry')).resolves.toBe(outcome);
+    });
+
+    it('refuses a stale Retry once the step can be continued', async () => {
+      await seedAnsweredSession('task-3');
+      seed({ id: 'task-3', flowRunId: null, result: { subChatId: 'sub-1' } });
+
+      await expect(
+        (await caller()).recover({ taskId: 'task-3', kind: 'retry' }),
+      ).rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+      nothingRan();
+    });
+
+    it('rejects a missing task', async () => {
+      getTaskByIdMock.mockResolvedValue(null);
+      await expect(
+        (await caller()).recover({ taskId: 'gone', kind: 'retry' }),
+      ).rejects.toMatchObject({ code: 'NOT_FOUND', message: 'Task not found' });
+      nothingRan();
     });
   });
 
@@ -299,6 +506,8 @@ describe('tasksRouter status schema', () => {
         id: 'member-failed',
         flowRunStatus: 'running',
       });
+      // The run is still in flight, so the server could not carry out a recovery yet: none offered.
+      expect(result).not.toHaveProperty('recoveryKind');
     });
 
     it('with NO live run, the newest terminal flow task is the retry target', async () => {
@@ -337,7 +546,170 @@ describe('tasksRouter status schema', () => {
         fallbackTaskId: 'pinned',
       });
 
-      expect(result).toEqual({ id: 'pinned', status: 'failed', flowRunId: null });
+      // A stopped task carries its one recovery action.
+      expect(result).toEqual({
+        id: 'pinned',
+        status: 'failed',
+        flowRunId: null,
+        recoveryKind: 'retry',
+      });
+    });
+  });
+
+  describe('interruptedRuns', () => {
+    /** A run a restart cancelled mid agent step, as the sweep leaves it. Returns its run id. */
+    async function seedInterruptedRun(key: string): Promise<string> {
+      const flowRunId = `run-${key}`;
+      if (!db.select().from(flows).all().length) {
+        db.insert(flows).values({ id: 'flow-1', name: 'F' }).run();
+        db.insert(flowVersions)
+          .values({ id: 'version-1', flowId: 'flow-1', versionNumber: 1, graph: {} })
+          .run();
+      }
+      db.insert(flowRuns)
+        .values({ id: flowRunId, flowVersionId: 'version-1', status: 'cancelled' })
+        .run();
+      db.insert(nodeRuns)
+        .values({
+          id: `nr-${key}`,
+          flowRunId,
+          nodeId: 'work',
+          blockType: 'agent',
+          status: 'cancelled',
+          nodeOutput: { error: { message: RESTART_INTERRUPTION_REASON } },
+        })
+        .run();
+      return flowRunId;
+    }
+    const row = (id: string, flowRunId: string | null) => ({
+      id,
+      description: `Task ${id}`,
+      status: 'cancelled',
+      flowRunId,
+      flowRunStatus: flowRunId ? 'cancelled' : null,
+      effectiveStatus: 'interrupted',
+      projectId: 'p1',
+      projectName: 'devkit',
+      result: {},
+    });
+
+    it('lists the runs Continue all can recover, oldest first, minus those already queued', async () => {
+      const { tasksRouter } = await import('./tasks');
+      const caller = tasksRouter.createCaller({ getWindow: () => null });
+      const older = await seedInterruptedRun('older');
+      const newer = await seedInterruptedRun('newer');
+      const queued = await seedInterruptedRun('queued');
+      queuedResumeMock.mockImplementation(async (flowRunId) => flowRunId === queued);
+      // The queue lists newest first.
+      getTasksWithProjectPaginatedMock.mockResolvedValueOnce({
+        items: [row('t-queued', queued), row('t-newer', newer), row('t-older', older)],
+        hasMore: false,
+        nextCursor: null,
+      });
+
+      const runs = await caller.interruptedRuns();
+
+      expect(runs).toEqual([
+        expect.objectContaining({ taskId: 't-older', flowRunId: older, recoveryKind: 'retry' }),
+        expect.objectContaining({
+          taskId: 't-newer',
+          recoveryNodeRunId: 'nr-newer',
+          confirmSideEffects: false,
+          description: 'Task t-newer',
+          projectName: 'devkit',
+        }),
+      ]);
+      expect(getTasksWithProjectPaginatedMock).toHaveBeenCalledWith(
+        db,
+        expect.objectContaining({ status: 'interrupted', collapseByFlow: true }),
+      );
+    });
+
+    // The procedure wires the bulk module to the same recovery the row button runs, and to the
+    // live-ticket check that keeps it from enqueueing a second ticket beside startup's.
+    it('recovers confirmed runs through the row recovery and skips one startup already queued', async () => {
+      const ready = await seedInterruptedRun('ready');
+      const queued = await seedInterruptedRun('queued-at-boot');
+      const taskOf = (id: string, flowRunId: string) => ({
+        id,
+        status: 'cancelled',
+        flowRunId,
+        sourceId: `nr-${id}`,
+        result: {},
+      });
+      getTaskByIdMock.mockImplementation(async (_db: typeof db, id: string) =>
+        taskOf(id, id === 't-ready' ? ready : queued),
+      );
+      getFlowRunMock.mockImplementation(async (_db: typeof db, id: string) => ({
+        id,
+        status: 'cancelled',
+      }));
+      const flowRuns = {
+        retryPausedStep: vi.fn<FlowRunRecoveries['retryPausedStep']>(async () => {}),
+        readmitRun: vi.fn<FlowRunRecoveries['readmitRun']>(async () => ({
+          state: 'queued',
+          created: true,
+        })),
+      };
+      const hasQueuedResume = async (flowRunId: string) => flowRunId === queued;
+
+      const { recoverInterruptedTasks } = await import('./tasks-recovery');
+      const results = await recoverInterruptedTasks(
+        db,
+        [
+          { taskId: 't-queued', kind: 'retry' },
+          { taskId: 't-ready', kind: 'retry', recoveryNodeRunId: 'nr-ready' },
+        ],
+        { flowRuns, hasQueuedResume },
+      );
+
+      expect(results).toEqual([
+        { taskId: 't-queued', flowRunId: queued, outcome: 'already-queued' },
+        { taskId: 't-ready', flowRunId: ready, outcome: 'queued' },
+      ]);
+      expect(flowRuns.readmitRun).toHaveBeenCalledTimes(1);
+      expect(flowRuns.readmitRun).toHaveBeenCalledWith(
+        db,
+        { id: ready, status: 'cancelled' },
+        'retry',
+      );
+    });
+  });
+
+  describe('listPaginated recoveryKind', () => {
+    it('stamps the recovery kind on stopped rows whose run is not in flight, in one batch', async () => {
+      const { tasksRouter } = await import('./tasks');
+      const caller = tasksRouter.createCaller({ getWindow: () => null });
+      getTasksWithProjectPaginatedMock.mockResolvedValueOnce({
+        items: [
+          {
+            id: 'stopped',
+            status: 'needs_attention',
+            flowRunId: null,
+            result: { subChatId: 'sub-1' },
+          },
+          { id: 'live', status: 'running', flowRunId: null, result: {} },
+          { id: 'flow-stopped', status: 'failed', flowRunId: 'run-1', flowRunStatus: 'failed' },
+          {
+            id: 'member-parked',
+            status: 'needs_attention',
+            flowRunId: 'run-2',
+            flowRunStatus: 'running',
+          },
+        ],
+        hasMore: false,
+        nextCursor: null,
+      });
+      await seedAnsweredSession('stopped');
+
+      const { items } = await caller.listPaginated({});
+
+      expect(items.map((item) => [item.id, item.recoveryKind])).toEqual([
+        ['stopped', 'continue'],
+        ['live', undefined],
+        ['flow-stopped', 'retry'],
+        ['member-parked', undefined],
+      ]);
     });
   });
 
@@ -645,19 +1017,50 @@ describe('tasksRouter status schema', () => {
       task: null,
       reason: 'invalid_state',
     });
-    await expect(caller.startExecution({ taskId })).rejects.toThrow(ONLY_REVIEWED_PLANS_REGEX);
+    // Typed, so the phone's plan approval (mobile chat.ts) answers it 409, not a reported 500.
+    await expect(caller.startExecution({ taskId })).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: expect.stringMatching(ONLY_REVIEWED_PLANS_REGEX),
+    });
   });
 
   it('rejects Flow plan execution before mutation when its admission is gone', async () => {
     const { tasksRouter } = await import('./tasks');
     const caller = tasksRouter.createCaller({ getWindow: () => null });
-    getTaskByIdMock.mockResolvedValueOnce({ id: 'task-flow', flowRunId: 'run-1' });
-    hasActiveFlowAdmissionMock.mockResolvedValueOnce(false);
+    getTaskByIdMock.mockResolvedValue({ id: 'task-flow', flowRunId: 'run-1' });
+    transitionFlowRunMock.mockResolvedValue({ task: null, reason: 'flow_admission_lost' });
 
-    await expect(caller.startExecution({ taskId: 'task-flow' })).rejects.toThrow(
-      /use Resume or Retry there/i,
+    await expect(caller.startExecution({ taskId: 'task-flow' })).rejects.toMatchObject({
+      code: 'PRECONDITION_FAILED',
+      message: expect.stringMatching(/Continue or Retry it from the Queue/),
+    });
+    // It survives createCaller as the phone-safe refusal, so the phone shows its guidance.
+    await expect(caller.startExecution({ taskId: 'task-flow' })).rejects.toBeInstanceOf(
+      PhoneSafeRefusal,
     );
     expect(startExecutionFromReviewDetailedMock).not.toHaveBeenCalled();
+  });
+
+  it('starts Flow plan execution under the admission transition', async () => {
+    const { tasksRouter } = await import('./tasks');
+    const caller = tasksRouter.createCaller({ getWindow: () => null });
+    getTaskByIdMock.mockResolvedValueOnce({ id: 'task-flow', flowRunId: 'run-1' });
+    const running = { id: 'task-flow', status: 'running' };
+    transitionFlowRunMock.mockResolvedValueOnce({ task: running });
+
+    await expect(caller.startExecution({ taskId: 'task-flow' })).resolves.toEqual(running);
+    expect(transitionFlowRunMock).toHaveBeenCalledExactlyOnceWith(expect.any(Function));
+    expect(startExecutionFromReviewDetailedMock).not.toHaveBeenCalled();
+  });
+
+  it('starts a non-Flow plan without waiting on the admission transition', async () => {
+    const { tasksRouter } = await import('./tasks');
+    const caller = tasksRouter.createCaller({ getWindow: () => null });
+    getTaskByIdMock.mockResolvedValueOnce({ id: 'task-1', flowRunId: null });
+
+    await caller.startExecution({ taskId: 'task-1' });
+    expect(transitionFlowRunMock).not.toHaveBeenCalled();
+    expect(startExecutionFromReviewDetailedMock).toHaveBeenCalled();
   });
 
   it('returns success=true when backend delete succeeds', async () => {
@@ -711,14 +1114,17 @@ describe('tasksRouter status schema', () => {
   });
 
   it.each([
-    ['not_found', 'Task not found'],
-    ['invalid_state', 'cannot be cancelled'],
-  ])('cancel refused (%s) throws', async (reason, message) => {
+    ['not_found', 'NOT_FOUND', 'Task not found'],
+    ['invalid_state', 'CONFLICT', 'cannot be cancelled'],
+  ])('cancel refused (%s) throws %s', async (reason, code, message) => {
     const { tasksRouter } = await import('./tasks');
     const caller = tasksRouter.createCaller({ getWindow: () => null });
     cancelWorkQueueTaskMock.mockResolvedValueOnce({ task: null, reason });
 
-    await expect(caller.cancel('task-1')).rejects.toThrow(message);
+    await expect(caller.cancel('task-1')).rejects.toMatchObject({
+      code,
+      message: expect.stringContaining(message),
+    });
   });
 
   it('cancel rethrows non-5xx ApiRequestError', async () => {
@@ -863,7 +1269,10 @@ describe('tasksRouter status schema', () => {
 
     await expect(
       caller.listPaginated({ workQueueSection: 'inbox', limit: 10, cursor }),
-    ).resolves.toEqual(rows);
+    ).resolves.toEqual({
+      ...rows,
+      items: [{ id: 'task-2', status: 'pending', confirmSideEffects: false }],
+    });
     expect(getTasksWithProjectPaginatedMock).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({

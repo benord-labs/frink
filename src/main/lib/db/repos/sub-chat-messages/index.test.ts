@@ -5,6 +5,8 @@ import { createSubChat, getSubChatById } from '../sub-chats';
 import {
   copyTranscript,
   latestAnsweredDispatchTaskId,
+  latestAnsweredDispatchTaskIds,
+  latestDispatchTaskIds,
   readTranscripts,
   transcriptHasMessage,
   transcriptUnchanged,
@@ -100,5 +102,28 @@ describe('latestAnsweredDispatchTaskId', () => {
     expect(latestAnsweredDispatchTaskId(db, 'sub-1')).toBeNull();
     await seed([reply('a0'), dispatched('u1', 'task-a')]);
     expect(latestAnsweredDispatchTaskId(db, 'sub-d')).toBeNull();
+  });
+
+  it('resolves many sub-chats in one call, each to its own newest answered prompt', async () => {
+    await seed([dispatched('u1', 'task-a'), reply('a1'), dispatched('u2', 'task-b'), reply('a2')]);
+    await createSubChat(db, {
+      id: 'sub-e',
+      chatId: 'chat-1',
+      messages: JSON.stringify([
+        dispatched('u1', 'task-c'),
+        reply('a1'),
+        dispatched('u2', 'task-d'),
+      ]),
+    });
+    const answered = latestAnsweredDispatchTaskIds(db, ['sub-d', 'sub-e', 'sub-1']);
+    expect([...answered]).toEqual([
+      ['sub-d', 'task-b'],
+      ['sub-e', 'task-c'],
+    ]);
+  });
+
+  it("reads each sub-chat's newest dispatched prompt, answered or not", async () => {
+    await seed([dispatched('u1', 'task-a'), reply('a1'), dispatched('u2', 'task-b'), typed('u3')]);
+    expect([...latestDispatchTaskIds(db, ['sub-d', 'sub-1'])]).toEqual([['sub-d', 'task-b']]);
   });
 });

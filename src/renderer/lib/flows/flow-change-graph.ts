@@ -6,7 +6,8 @@ import type {
   FlowSemanticChange,
 } from '../../../shared/types/flows/flow-change-presentation';
 
-export { projectProposedFlowGraph, toSafeFlowChangeGraph } from './flow-change-graph-projection';
+export { toSafeFlowChangeGraph } from '../../../shared/lib/flows/flow-change-topology';
+export { projectProposedFlowGraph } from './flow-change-graph-projection';
 
 const STATUS_PRIORITY: Record<FlowChangeOperationStatus, number> = {
   applied: 0,

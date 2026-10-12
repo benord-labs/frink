@@ -59,6 +59,8 @@ describe('useAgentSubChatStore.setChatId', () => {
 describe('useAgentSubChatStore.updateSubChatMode', () => {
   beforeEach(() => {
     useAgentSubChatStore.getState().reset();
+    // Not agentChatStore.delete: it starts a lazy transport import that nothing here awaits.
+    agentChatStore.clear();
   });
 
   it('updates mode for a sub-chat that already exists in the store', () => {
@@ -91,7 +93,6 @@ describe('useAgentSubChatStore.updateSubChatMode', () => {
     useAgentSubChatStore.getState().updateSubChatMode('sc-orphan', 'plan');
 
     expect(subChatsFor('chat-a').map((sc) => sc.id)).toEqual(['sc-orphan']);
-    agentChatStore.delete('sc-orphan');
   });
 
   it('preserves an upserted mode toggle when the list hydrates afterwards', () => {

@@ -38,3 +38,9 @@ export function ProviderTile({
     </span>
   );
 }
+
+/** The provider's bare mark, for inline use in a button: Claude in its brand colour, OpenAI in ink. */
+export function ProviderMark({ type }: { type: AccountType }): ReactElement {
+  const Mark = type === 'codex' ? OpenAiMark : ClaudeMark;
+  return <Mark className={cn('size-3.5 shrink-0', type === 'claude-code' && 'text-[#D97757]')} />;
+}

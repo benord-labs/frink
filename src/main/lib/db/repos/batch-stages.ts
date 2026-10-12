@@ -1,12 +1,40 @@
-import { and, asc, eq, isNull } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
 import type { getDatabase } from '../index';
-import { type BatchStage, batchStageRuns, batchStages, type NewBatchStage } from '../schema';
+import {
+  type BatchStage,
+  batchStageRuns,
+  batchStages,
+  flowRunAdmissions,
+  type NewBatchStage,
+} from '../schema';
 import { ACTIVE_BSR_STATUSES } from './batch-stage-runs';
 
 type Db = ReturnType<typeof getDatabase>;
 
+/** A member's Retry that has not been promoted yet. Its run row and stage run still read as settled, so the
+ * ticket is the only record that the member has work coming. */
+function hasUnpromotedResume(db: Db, stageId: string): boolean {
+  return Boolean(
+    db
+      .select({ ticket: flowRunAdmissions.ticket })
+      .from(batchStageRuns)
+      .innerJoin(
+        flowRunAdmissions,
+        and(
+          eq(flowRunAdmissions.flowRunId, batchStageRuns.flowRunId),
+          eq(flowRunAdmissions.priorityClass, 'resume'),
+          inArray(flowRunAdmissions.state, ['queued', 'claimed']),
+        ),
+      )
+      .where(eq(batchStageRuns.stageId, stageId))
+      .limit(1)
+      .get(),
+  );
+}
+
 /** Settle a running stage in ONE synchronous transaction that recounts its runs first: a member a Retry
- * re-admitted since the caller's read keeps the stage running instead of being stranded under a settled one. */
+ * re-admitted since the caller's read keeps the stage running instead of being stranded under a settled one.
+ * That holds from the moment the Retry is queued, so whichever terminal event asks, the stage waits for it. */
 export function settleStageIfQuiescent(
   db: Db,
   stage: Pick<BatchStage, 'id' | 'failureThreshold'>,
@@ -19,6 +47,7 @@ export function settleStageIfQuiescent(
       .where(eq(batchStageRuns.stageId, stage.id))
       .all();
     if (statuses.some((r) => active.has(r.status))) return null;
+    if (hasUnpromotedResume(db, stage.id)) return null;
     const failedCount = statuses.filter((r) => r.status === 'failed').length;
     const failed = stage.failureThreshold >= 0 && failedCount > stage.failureThreshold;
     const won = db

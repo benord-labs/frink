@@ -2,7 +2,7 @@ import log from 'electron-log';
 import { captureMainException } from '../../../sentry/init';
 
 /** Wire category for a turn that settled without its prompt reaching the CLI (sc-3666). */
-export const MESSAGE_NOT_DELIVERED_CATEGORY = 'MESSAGE_NOT_DELIVERED';
+const MESSAGE_NOT_DELIVERED_CATEGORY = 'MESSAGE_NOT_DELIVERED';
 
 /** Tracks whether one run's prompt actually landed on the CLI input queue, across its attempts. */
 export function trackUserMessageDelivery(

@@ -5,12 +5,13 @@
 import { Button } from '@benord-labs/frink-primitives';
 import { X } from 'lucide-react';
 import { type ReactElement, type ReactNode, useCallback } from 'react';
-import { findPluginActionByNodeName } from '../../../../../shared/integrations/plugin-nodes';
 import type { RunCommandExpectedOutputs } from '../../../../../shared/lib/output-schemas';
 import type { FlowNode } from '../../../../../shared/lib/validate-flow-graph';
 import type { NodeVariables } from '../../../../../shared/lib/validate-flow-templates';
 import type { FlowBlockType, FlowSettings } from '../../../../../shared/types/flow';
-import { FLOW_BLOCK_LABELS, FLOW_TRIGGER_TYPES } from '../constants';
+import { FLOW_TRIGGER_TYPES } from '../constants';
+import { FlowBlockTile } from '../FlowBlockIcon';
+import { flowStepIdentity } from '../nodeSummary';
 import { AgentConfig } from './AgentConfig';
 import { ApprovalConfig } from './ApprovalConfig';
 import { ChatReplyConfig } from './ChatReplyConfig';
@@ -39,6 +40,8 @@ type BlockConfigPanelProps = {
   flowProjectId: string | null;
   flowSettings: FlowSettings | undefined;
   selectedNode: FlowNode | null;
+  /** Manifest icon key when the selected step is a custom node. */
+  customBlockIcon?: string;
   /** True when the selected condition node has a back-edge (loop). */
   isLoopCondition?: boolean;
   /** Block type of the flow's trigger node (used to conditionally show execution context options). */
@@ -244,6 +247,7 @@ export function BlockConfigPanel({
   flowProjectId,
   flowSettings,
   selectedNode,
+  customBlockIcon,
   isLoopCondition,
   triggerBlockType,
   webhookTriggerIntegrationId,
@@ -280,10 +284,7 @@ export function BlockConfigPanel({
   if (!selectedNode) return null;
 
   const block = selectedNode.blockType as FlowBlockType;
-  const title =
-    FLOW_BLOCK_LABELS[block] ??
-    findPluginActionByNodeName(selectedNode.blockType)?.action.label ??
-    selectedNode.blockType;
+  const { name, kind } = flowStepIdentity(selectedNode);
   const isTrigger = FLOW_TRIGGER_TYPES.has(block);
 
   const body = renderBlockConfigBody(block, {
@@ -309,29 +310,28 @@ export function BlockConfigPanel({
 
   return (
     <aside className="flex h-full min-h-0 min-w-0 w-full flex-1 flex-col overflow-hidden bg-transparent">
-      <div className="shrink-0 border-b border-border/40 px-3 pb-2.5 pt-3">
-        <div className="flex items-start justify-between gap-2">
-          <h2
-            className="text-sm font-semibold leading-tight truncate min-w-0"
-            id="flow-block-config-title"
-          >
-            {title}
+      <div className="flex shrink-0 items-center gap-3 border-b border-border/40 px-4 py-3">
+        <FlowBlockTile type={selectedNode.blockType} customBlockIcon={customBlockIcon} />
+        <div className="min-w-0 flex-1">
+          <h2 className="truncate text-sm font-medium text-foreground" id="flow-block-config-title">
+            {name}
           </h2>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground"
-            aria-label="Close configuration panel"
-            onClick={onClose}
-            iconOnly
-          >
-            <X className="h-4 w-4" aria-hidden />
-          </Button>
+          {kind !== name ? <p className="truncate text-sm text-muted-foreground">{kind}</p> : null}
         </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground"
+          aria-label="Close configuration panel"
+          onClick={onClose}
+          iconOnly
+        >
+          <X className="h-4 w-4" aria-hidden />
+        </Button>
       </div>
       <div
-        className="min-h-0 min-w-0 flex-1 space-y-4 overflow-x-hidden overflow-y-auto px-3 py-3 scrollbar-thin"
+        className="min-h-0 min-w-0 flex-1 space-y-5 overflow-x-hidden overflow-y-auto px-4 py-4 scrollbar-thin"
         role="region"
         aria-labelledby="flow-block-config-title"
       >

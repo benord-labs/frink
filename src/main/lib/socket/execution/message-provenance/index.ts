@@ -51,7 +51,7 @@ export function provenanceForTurn(
   armed: Pick<
     FlowSignalArming,
     'liveFlowRunId' | 'isFlowDrivenExecution' | 'restartInterruptedFlowRunId'
-  > & { prefetchedSignalTask?: SignalTask | null; revivedTask?: SignalTask | null },
+  > & { prefetchedSignalTask?: SignalTask | null },
   delivery: { messageOrigin?: MessageOrigin; dispatchTaskId?: string },
   signalTaskId: string | null,
 ): MessageProvenance | undefined {
@@ -60,8 +60,7 @@ export function provenanceForTurn(
   if (!armed.liveFlowRunId) return undefined;
   const { messageOrigin, dispatchTaskId } = delivery;
   const isFlowTurn = armed.isFlowDrivenExecution || armed.restartInterruptedFlowRunId !== null;
-  const task =
-    isFlowTurn && signalTaskId ? (armed.prefetchedSignalTask ?? armed.revivedTask) : null;
+  const task = isFlowTurn && signalTaskId ? armed.prefetchedSignalTask : null;
   // On a reused chat a step can belong to an older run: only the live run's step is described.
   const step = task?.flowRunId === armed.liveFlowRunId ? task : null;
   // Task identity decides a dispatch: only the step that drives this chat speaks as the Flow, so a

@@ -82,26 +82,6 @@ export const codeSelectionContextAtomFamily = registerChatScopedFamily(
 /** Which chat id should receive the next code selection from the editor (set by layout; null = e.g. new-chat pane) */
 export const codeEditorActiveChatIdAtom = atom<string | null>(null);
 
-// ---- Per-chat context file tracking ----
-// Each chat panel tracks which file it last opened (for context indicator in chat input).
-//
-// Intentional UX: context persists per-chat across chat switches. When the user
-// opens a file from Chat A's tree, that file stays as Chat A's context even after
-// switching to Chat B and back. This matches the mental model of "I opened that
-// file from this chat" and avoids losing context on accidental tab switches.
-// The dismiss state (`chatContextFileDismissedAtomFamily`) resets when the file
-// path changes, so stale dismissals don't carry over if a new file is opened.
-
-/** Per-chat: the file that was last opened from this chat's file tree */
-export const chatContextFileAtomFamily = registerChatScopedFamily(
-  atomFamily((_chatId: string) => atom<{ name: string; path: string } | null>(null)),
-);
-
-/** Per-chat: whether the user dismissed the active file from context */
-export const chatContextFileDismissedAtomFamily = registerChatScopedFamily(
-  atomFamily((_chatId: string) => atom<boolean>(false)),
-);
-
 // List of open files (tabs)
 export const openFilesAtom = atom<OpenFile[]>([]);
 

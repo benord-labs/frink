@@ -152,13 +152,19 @@ function classifyMcpFailure(
 }
 
 /**
- * Connect, run ONE operation, tear down in a finally — a stdio child is spawned per
- * invocation and reaped on close. Only `context.kind === 'stdio'` can be `spawn_failed`.
+ * Sends ONE SDK request under its own operation budget and outer guard, so an operation of
+ * several requests (paginated `tools/list`) never shares one budget across them.
+ */
+export type McpRequestRunner = <R>(send: (options: RequestOptions) => Promise<R>) => Promise<R>;
+
+/**
+ * Connect, run ONE operation of guarded requests (any failing fails it), tear down in a finally —
+ * a stdio child is spawned per invocation and reaped on close; only stdio can be `spawn_failed`.
  */
 export async function withMcpClient<T>(
   context: McpClientContext,
   createTransport: () => Transport,
-  operation: (client: Client, options: RequestOptions) => Promise<T>,
+  operation: (client: Client, request: McpRequestRunner) => Promise<T>,
 ): Promise<{ ok: true; value: T } | McpFailure> {
   let transport: Transport | null = null;
   let step: McpStep = 'connect';
@@ -174,10 +180,15 @@ export async function withMcpClient<T>(
     );
     step = 'operation';
     stepStartedAt = Date.now();
-    const value = await withOuterGuard(
-      operation(client, { timeout: context.operationTimeoutMs }),
-      outerGuardMs(context.operationTimeoutMs),
-    );
+    const request: McpRequestRunner = (send) => {
+      // Each request is timed from its own start, so elapsed_ms stays per-request.
+      stepStartedAt = Date.now();
+      return withOuterGuard(
+        send({ timeout: context.operationTimeoutMs }),
+        outerGuardMs(context.operationTimeoutMs),
+      );
+    };
+    const value = await operation(client, request);
     return { ok: true, value };
   } catch (error) {
     return classifyMcpFailure(error, context, step, Date.now() - stepStartedAt);
@@ -213,7 +224,6 @@ export type McpStdioServerSpec = {
   args?: string[];
   env?: Record<string, string>;
 };
-
 
 /**
  * Spawn transport for a stdio MCP server, on the user's shell environment so

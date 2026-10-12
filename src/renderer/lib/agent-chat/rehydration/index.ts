@@ -2,7 +2,8 @@ import type { UIMessage } from 'ai';
 import { canonicalStringify } from '../../../../shared/lib/canonical-stringify';
 
 type RehydrationCandidate = {
-  isActiveSubChat: boolean;
+  /** Held on background work between wake bursts. */
+  isWakeHeld: boolean;
   isExistingChatStreaming: boolean;
   existingMessages: UIMessage[];
   fetchedMessages: UIMessage[];
@@ -77,21 +78,24 @@ function hasDurableContentChange(existing: UIMessage[], fetched: UIMessage[]): b
  * No revision floor is needed against a pre-commit fetch landing after a stream settles: streaming
  * status stays live through settling (the app-level lane drives it), and the committed
  * `socket:stream-settled` handler invalidates this query, which cancels any fetch still in flight.
+ *
+ * A wake hold breaks that: its bursts end idle with no settle, so the cached page goes stale under
+ * the live Chat. While held, a page ending at the Chat's own last message never replaces it.
  */
 export function classifyDurableMessageRehydration({
-  isActiveSubChat,
+  isWakeHeld,
   isExistingChatStreaming,
   existingMessages,
   fetchedMessages,
 }: RehydrationCandidate): DurableMessageRehydrationDecision {
   if (
-    !isActiveSubChat ||
     isExistingChatStreaming ||
     hasTransientMessage(existingMessages) ||
     fetchedMessages.length === 0
   ) {
     return 'preserve';
   }
+  if (isWakeHeld && fetchedMessages.at(-1)?.id === existingMessages.at(-1)?.id) return 'preserve';
   // A Chat built from this page holds the page's own array.
   if (existingMessages === fetchedMessages) return 'preserve';
   const memo = decisionByPage.get(fetchedMessages);

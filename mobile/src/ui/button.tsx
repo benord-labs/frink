@@ -59,8 +59,7 @@ export function Button({
           justifyContent: 'center',
           gap: space.sm,
           opacity: disabled ? 0.4 : pressed ? 0.8 : 1,
-          boxShadow:
-            variant === 'primary' ? 'inset 0 1px 0 rgba(255,255,255,0.25)' : undefined,
+          boxShadow: variant === 'primary' ? 'inset 0 1px 0 rgba(255,255,255,0.25)' : undefined,
         },
         style,
       ]}
@@ -84,6 +83,7 @@ export function Button({
 export function IconButton({
   icon: Icon,
   label,
+  accessibilityHint,
   onPress,
   tone = 'neutral',
   size = 36,
@@ -93,8 +93,9 @@ export function IconButton({
 }: {
   icon: LucideIcon;
   label: string;
+  accessibilityHint?: string;
   onPress: () => void;
-  tone?: 'neutral' | 'accent' | 'danger' | 'inverse';
+  tone?: 'neutral' | 'accent' | 'danger' | 'inverse' | 'plain';
   size?: number;
   disabled?: boolean;
   testID?: string;
@@ -102,6 +103,7 @@ export function IconButton({
 }) {
   const t = useTheme();
   const colors = {
+    plain: { fg: t.text, bg: 'transparent' },
     neutral: { fg: t.text, bg: t.fill },
     accent: { fg: t.onAccent, bg: t.accent },
     danger: { fg: t.danger, bg: t.dangerSoft },
@@ -112,6 +114,7 @@ export function IconButton({
       testID={testID}
       accessibilityRole="button"
       accessibilityLabel={label}
+      accessibilityHint={accessibilityHint}
       accessibilityState={{ disabled }}
       disabled={disabled}
       onPress={onPress}

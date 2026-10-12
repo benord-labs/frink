@@ -135,7 +135,7 @@ function CollapsibleSteps({
   );
 }
 
-// Assistant message item — memoized by message id + parts length.
+// Assistant message item — plain memo: the message store writes a new object on every change.
 
 type AssistantMessageItemProps = {
   message: Message;
@@ -154,74 +154,6 @@ const isHoistedFromCollapse = (part: MessagePart): boolean =>
   part.type === 'tool-AskUserQuestion' ||
   part.type === 'tool-ImageGeneration' ||
   FlowPatch.isRootFlowPatchToolPart(part);
-
-// Cache for tracking previous message state per message (to detect AI SDK in-place mutations)
-// Stores both text lengths and tool states for complete change detection
-type MessageStateSnapshot = {
-  textLengths: number[];
-  partStates: (string | undefined)[];
-  lastPartInputJson: string | undefined;
-  /** Metadata-only change: an involuntary teardown can stamp the reason without adding a part. */
-  interruptedBy: string | undefined;
-};
-const messageStateCache = new Map<string, MessageStateSnapshot>();
-
-/** Every prop that is cheap to compare by identity. `message` is excluded — the AI SDK mutates it
- * in place, so it needs the snapshot comparison below. */
-const SCALAR_PROPS = [
-  'status',
-  'isStreaming',
-  'isLastMessage',
-  'isLastAssistantMessage',
-  'isMobile',
-  'subChatId',
-  'chatId',
-  'sandboxSetupStatus',
-] as const satisfies readonly (keyof AssistantMessageItemProps)[];
-
-// Custom comparison - check if message content actually changed
-// CRITICAL: AI SDK mutates objects in-place! So prev.message.parts[i].text === next.message.parts[i].text
-// even when text HAS changed (they're the same mutated object).
-// Solution: Cache state externally and compare those.
-function areMessagePropsEqual(
-  prev: AssistantMessageItemProps,
-  next: AssistantMessageItemProps,
-): boolean {
-  if (prev.message?.id !== next.message?.id) return false;
-  if (SCALAR_PROPS.some((key) => prev[key] !== next[key])) return false;
-
-  const msgId = next.message?.id;
-  const current = snapshotMessageState(next);
-  const cached = msgId ? messageStateCache.get(msgId) : undefined;
-  if (cached && sameMessageState(cached, current)) return true;
-
-  if (msgId) messageStateCache.set(msgId, current);
-  return false;
-}
-
-function snapshotMessageState(props: AssistantMessageItemProps): MessageStateSnapshot {
-  const parts = props.message?.parts || [];
-  const lastPart = parts[parts.length - 1];
-  return {
-    textLengths: parts.map((p: MessagePart) => (p.type === 'text' ? p.text?.length || 0 : -1)),
-    // ALL part states — critical for detecting Edit plan file streaming.
-    partStates: parts.map((p: MessagePart) => p.state),
-    // Tool input changes — critical for tool streaming.
-    lastPartInputJson: lastPart?.input ? JSON.stringify(lastPart.input) : undefined,
-    interruptedBy: (props.message?.metadata as AgentMessageMetadata | undefined)?.interruptedBy,
-  };
-}
-
-function sameMessageState(a: MessageStateSnapshot, b: MessageStateSnapshot): boolean {
-  return (
-    // Metadata-only: a teardown stamps its reason without touching any part, so nothing below sees it.
-    a.interruptedBy === b.interruptedBy &&
-    a.lastPartInputJson === b.lastPartInputJson &&
-    a.textLengths.length === b.textLengths.length &&
-    a.textLengths.every((len, i) => len === b.textLengths[i]) &&
-    a.partStates.every((state, i) => state === b.partStates[i])
-  );
-}
 
 /**
  * Dev-only: isolates showMessageJson subscription from the main message body.
@@ -757,4 +689,4 @@ export const AssistantMessageItem = memo(function AssistantMessageItem({
       {import.meta.env.DEV && <AssistantMessageJsonDebug message={message} />}
     </div>
   );
-}, areMessagePropsEqual);
+});

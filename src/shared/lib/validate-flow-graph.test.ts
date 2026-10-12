@@ -1149,6 +1149,91 @@ describe('validateGraph — loop-back rules', () => {
       expect(save.warnings?.some((warning) => warning.includes('continuation'))).toBe(true);
       expect(validateGraph(g, { mode: 'run' }).valid).toBe(false);
     });
+
+    describe('a Fan Out inside another Fan Out', () => {
+      const NESTED_NODES = [
+        { id: 't', blockType: 'manual_trigger' },
+        { id: 'outer', blockType: 'fan_out' },
+        { id: 'inner', blockType: 'fan_out', parentId: 'outer' },
+        { id: 'leaf', blockType: 'run_command', parentId: 'inner', config: { ...TEST_RUN_STEP } },
+      ];
+      const nestingErrors = (r: ReturnType<typeof validateGraph>): string[] =>
+        r.valid ? [] : r.errors.filter((e) => e.includes('cannot sit inside another Fan Out'));
+
+      it.each(['save', 'run'] as const)('rejects an unwired nested draft in %s mode', (mode) => {
+        const g = { nodes: NESTED_NODES, edges: [{ id: 'e1', source: 't', target: 'outer' }] };
+        const r = validateGraph(g, { mode });
+        expect(r.valid).toBe(false);
+        expect(nestingErrors(r)).toEqual([
+          'Fan Out "Fan Out" (id "inner") cannot sit inside another Fan Out — remove it or clear its parentId',
+        ]);
+      });
+
+      it('names the inner Fan Out once when the nested graph is wired', () => {
+        const g = {
+          nodes: NESTED_NODES,
+          edges: [
+            { id: 'e1', source: 't', target: 'outer' },
+            { id: 'e2', source: 'outer', target: 'inner' },
+            { id: 'e3', source: 'inner', target: 'leaf' },
+          ],
+        };
+        const r = validateGraph(g);
+        expect(nestingErrors(r)).toHaveLength(1);
+        expect(nestingErrors(r)[0]).toContain('(id "inner")');
+      });
+
+      it('names a labelled nested Fan Out by both its label and its id', () => {
+        const g = {
+          nodes: NESTED_NODES.map((n) => (n.id === 'inner' ? { ...n, label: 'Per repo' } : n)),
+          edges: [{ id: 'e1', source: 't', target: 'outer' }],
+        };
+        expect(nestingErrors(validateGraph(g))[0]).toContain('Fan Out "Per repo" (id "inner")');
+      });
+
+      it('reports every nested Fan Out in a three-deep chain', () => {
+        const g = {
+          nodes: [
+            { id: 't', blockType: 'manual_trigger' },
+            { id: 'outer', blockType: 'fan_out' },
+            { id: 'mid', blockType: 'fan_out', parentId: 'outer' },
+            { id: 'deep', blockType: 'fan_out', parentId: 'mid' },
+          ],
+          edges: [{ id: 'e1', source: 't', target: 'outer' }],
+        };
+        const found = nestingErrors(validateGraph(g));
+        expect(found).toHaveLength(2);
+        expect(found.join(' ')).toContain('(id "mid")');
+        expect(found.join(' ')).toContain('(id "deep")');
+      });
+
+      it('rejects a Fan Out that names itself as its container', () => {
+        const g = {
+          nodes: [
+            { id: 't', blockType: 'manual_trigger' },
+            { id: 'self', blockType: 'fan_out', parentId: 'self' },
+          ],
+          edges: [{ id: 'e1', source: 't', target: 'self' }],
+        };
+        expect(nestingErrors(validateGraph(g))).toHaveLength(1);
+      });
+
+      it('reports only the bad reference when the container is not a Fan Out', () => {
+        const g = {
+          nodes: [
+            { id: 't', blockType: 'manual_trigger' },
+            { id: 'step', blockType: 'run_command', config: { ...TEST_RUN_STEP } },
+            { id: 'fan', blockType: 'fan_out', parentId: 'step' },
+          ],
+          edges: [{ id: 'e1', source: 't', target: 'step' }],
+        };
+        const r = validateGraph(g);
+        expect(nestingErrors(r)).toEqual([]);
+        expect(r.valid ? [] : r.errors).toEqual([
+          'Node "fan" parentId must reference a Fan Out node',
+        ]);
+      });
+    });
   });
 });
 

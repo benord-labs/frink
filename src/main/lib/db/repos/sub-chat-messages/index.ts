@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, exists, gte, inArray, type SQL, sql } from 'drizzle-orm';
+import { and, asc, eq, exists, gte, inArray, type SQL, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import type { getDatabase } from '../../index';
 import { subChatMessages, subChats } from '../../schema';
@@ -123,37 +123,54 @@ export function transcriptHasMessage(
 /** The task of the newest dispatch-stamped user row whose very next row is an assistant reply. A
  * prompt nothing answered, or one a later turn's prompt and reply followed, is skipped. */
 export function latestAnsweredDispatchTaskId(db: Db, subChatId: string): string | null {
+  return latestAnsweredDispatchTaskIds(db, [subChatId]).get(subChatId) ?? null;
+}
+
+/** {@link latestAnsweredDispatchTaskId} for many sub-chats in one query; unanswered ones are absent. */
+export function latestAnsweredDispatchTaskIds(
+  db: Db,
+  subChatIds: readonly string[],
+): Map<string, string> {
   const reply = alias(subChatMessages, 'reply');
-  const taskId = sql<
-    string | null
-  >`json_extract(${subChatMessages.message}, '$.metadata.dispatchTaskId')`;
-  const row = db
-    .select({ taskId })
+  const answered = exists(
+    db
+      .select({ one: sql`1` })
+      .from(reply)
+      .where(
+        and(
+          eq(reply.subChatId, subChatMessages.subChatId),
+          eq(reply.seq, sql`${subChatMessages.seq} + 1`),
+          sql`json_extract(${reply.message}, '$.role') = 'assistant'`,
+        ),
+      ),
+  );
+  return latestDispatchTaskIds(db, subChatIds, answered);
+}
+
+/** The task of each sub-chat's newest dispatch-stamped prompt (answered or not, unless `where`
+ * narrows it), in one query. */
+export function latestDispatchTaskIds(
+  db: Db,
+  subChatIds: readonly string[],
+  where?: SQL,
+): Map<string, string> {
+  const taskId = sql<string>`json_extract(${subChatMessages.message}, '$.metadata.dispatchTaskId')`;
+  const rows = db
+    // SQLite takes a bare column's value from the row max() picked: each sub-chat's newest match.
+    .select({ subChatId: subChatMessages.subChatId, taskId, seq: sql`max(${subChatMessages.seq})` })
     .from(subChatMessages)
     .where(
       and(
-        eq(subChatMessages.subChatId, subChatId),
+        inArray(subChatMessages.subChatId, [...subChatIds]),
         // Cheap substring prefilter so json_extract only parses candidate rows.
         sql`instr(${subChatMessages.message}, '"dispatchTaskId"') > 0`,
         sql`${taskId} IS NOT NULL`,
-        exists(
-          db
-            .select({ one: sql`1` })
-            .from(reply)
-            .where(
-              and(
-                eq(reply.subChatId, subChatId),
-                eq(reply.seq, sql`${subChatMessages.seq} + 1`),
-                sql`json_extract(${reply.message}, '$.role') = 'assistant'`,
-              ),
-            ),
-        ),
+        where,
       ),
     )
-    .orderBy(desc(subChatMessages.seq))
-    .limit(1)
-    .get();
-  return row?.taskId ?? null;
+    .groupBy(subChatMessages.subChatId)
+    .all();
+  return new Map(rows.map((row) => [row.subChatId, row.taskId]));
 }
 
 /** SQL that holds while the sub-chat exists and its transcript still equals `messages`. */

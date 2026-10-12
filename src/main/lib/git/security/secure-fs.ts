@@ -369,35 +369,25 @@ export const secureFs = {
   },
 
   /**
-   * Check if a file is a symlink that points outside the worktree.
+   * The real path of a file that resolves outside the worktree, else null.
+   * Both sides are realpath'd, so a symlinked ancestor directory counts too.
    *
-   * WARNING: This is a best-effort helper for UI warnings only.
-   * It returns `false` on errors, so it is NOT suitable as a security gate.
-   * For security enforcement, use the read/write methods which call
-   * assertRealpathInWorktree internally.
-   *
-   * @returns true if the file is definitely a symlink escaping the worktree,
-   *          false if not escaping OR if we can't determine (errors)
+   * WARNING: best-effort, for UI notices only. It returns null on errors and
+   * cannot see a link swapped in after the check, so it is NOT a security gate;
+   * the read/write methods above enforce via assertRealpathInWorktree.
    */
-  async isSymlinkEscaping(worktreePath: string, filePath: string): Promise<boolean> {
+  async escapeTarget(worktreePath: string, filePath: string): Promise<string | null> {
     try {
       const fullPath = resolvePathInWorktree(worktreePath, filePath);
 
-      // Check if it's a symlink first
-      const stats = await lstat(fullPath);
-      if (!stats.isSymbolicLink()) {
-        return false;
-      }
-
-      // Check if realpath escapes worktree
       const real = await realpath(fullPath);
       const worktreeReal = await realpath(worktreePath);
 
-      return !isPathWithinWorktree(worktreeReal, real);
+      return isPathWithinWorktree(worktreeReal, real) ? null : real;
     } catch {
       // If we can't determine, assume not escaping (file may not exist)
       // NOTE: This makes this method unsuitable as a security gate
-      return false;
+      return null;
     }
   },
 };

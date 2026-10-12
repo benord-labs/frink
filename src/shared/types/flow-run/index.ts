@@ -1,6 +1,7 @@
 import type { FlowAdmissionState } from '../../lib/flow-admission';
 import type { FlowGraph } from '../../lib/validate-flow-graph';
 import type { NodeOutput } from '../flow';
+import type { RunRecovery } from './resume';
 
 export type DbFlowRun = {
   id: string;
@@ -39,4 +40,6 @@ export type DbFlowRunWithNodeRuns = DbFlowRun & {
   nodeRuns: DbNodeRun[];
   /** Version snapshot for this run; the run's `flow_versions.graph`. */
   graph: FlowGraph | null;
+  /** Set by the run-detail read: one entry per step the run offers to recover (empty when none). */
+  recoveries?: RunRecovery[];
 };

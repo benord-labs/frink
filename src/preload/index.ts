@@ -59,11 +59,6 @@ contextBridge.exposeInMainWorld('webUtils', {
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
 });
 
-// Expose analytics force flag for testing
-if (process.env.FORCE_ANALYTICS === 'true') {
-  contextBridge.exposeInMainWorld('__FORCE_ANALYTICS__', true);
-}
-
 // Expose desktop-specific APIs
 /**
  * execute-complete payload. `finalParts` is authoritative for the exact main-minted stream epoch.

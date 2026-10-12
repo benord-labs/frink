@@ -173,41 +173,13 @@ describe('provenanceForTurn', () => {
     expect(provenanceForTurn(live, legacy, 'step-1')?.source).toBe('internal');
   });
 
-  it('describes a restart-revived step from its revived row', () => {
-    const revived = {
-      liveFlowRunId: 'run-1',
-      isFlowDrivenExecution: false,
-      restartInterruptedFlowRunId: 'run-1',
-      prefetchedSignalTask: null,
-      revivedTask: {
-        id: 't9',
-        title: 'Build',
-        status: 'cancelled',
-        result: {},
-        flowRunId: 'run-1',
-      },
-    };
-    expect(provenanceForTurn(revived, person, 't9')?.step).toEqual({
-      name: 'Build',
-      was_paused: false,
-    });
-  });
-
   describe('a step whose task belongs to a run other than the live one (reused chat)', () => {
     const otherRun = { ...parked, flowRunId: 'older-run' };
 
-    it('gives the record no step facts, whether the step is driving or being revived', () => {
+    it('gives the record no step facts', () => {
       const driving = { ...live, prefetchedSignalTask: otherRun };
       expect(provenanceForTurn(driving, person, 'step-1')).toMatchObject({ source: 'person' });
       expect(provenanceForTurn(driving, person, 'step-1')?.step).toBeUndefined();
-      const revived = {
-        liveFlowRunId: 'run-1',
-        isFlowDrivenExecution: false,
-        restartInterruptedFlowRunId: 'older-run',
-        prefetchedSignalTask: null,
-        revivedTask: { ...otherRun, status: 'cancelled' },
-      };
-      expect(provenanceForTurn(revived, person, 'step-1')?.step).toBeUndefined();
     });
 
     it('does not call its dispatch flow either', () => {
@@ -219,11 +191,6 @@ describe('provenanceForTurn', () => {
       expect(provenanceForTurn(stale, dispatch, 'step-1')?.source).toBe('internal');
       expect(provenanceForTurn(live, dispatch, 'step-1')?.source).toBe('flow');
     });
-  });
-
-  it('treats a restart-revived step as a flow turn too', () => {
-    const revived = { ...live, isFlowDrivenExecution: false, restartInterruptedFlowRunId: 'run-1' };
-    expect(provenanceForTurn(revived, person, 'step-1')?.step).toMatchObject({ name: 'Triage' });
   });
 
   it('never promotes a resume nudge or regenerate to flow', () => {

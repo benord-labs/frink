@@ -61,7 +61,7 @@ test.describe('a plan waiting for review', () => {
       const errors: string[] = [];
       page.on('pageerror', (error) => errors.push(error.message));
       await openApp(page, { data: { chat: planChat() } });
-      await openChat(page, { id: 'chat-4', subChatId: 'sub-4' });
+      await openChat(page, { id: 'chat-4' });
       await expect(card(page).getByText('Plan ready for your review')).toBeVisible();
       await expect(button(page, 'Approve')).toBeVisible();
       // Deciding is the next step, so the message box steps aside as it does for a question.
@@ -79,7 +79,7 @@ test.describe('a plan waiting for review', () => {
 
   test('Approve asks the Mac to build this exact plan', async ({ page }) => {
     const state = await openApp(page, { data: { chat: planChat() } });
-    await openChat(page, { id: 'chat-4', subChatId: 'sub-4' });
+    await openChat(page, { id: 'chat-4' });
     await button(page, 'Approve').click();
     await expect.poll(() => requestsOf(state, 'approvePlan').length).toBe(1);
     expect(requestsOf(state, 'approvePlan')[0]).toMatchObject({
@@ -98,7 +98,7 @@ test.describe('a plan waiting for review', () => {
           ? new Error('This plan changed. Refresh to see the latest one.')
           : undefined,
     });
-    await openChat(page, { id: 'chat-4', subChatId: 'sub-4' });
+    await openChat(page, { id: 'chat-4' });
     await button(page, 'Approve').click();
     await expect(page.getByText('This plan changed. Refresh to see the latest one.')).toBeVisible();
     await button(page, 'Send back').click();
@@ -120,7 +120,7 @@ test.describe('a plan waiting for review', () => {
     page,
   }) => {
     await openApp(page, { data: { chat: planChat(false) } });
-    await openChat(page, { id: 'chat-4', subChatId: 'sub-4' });
+    await openChat(page, { id: 'chat-4' });
     await expect(card(page).getByText('Plan', { exact: true })).toBeVisible();
     await expect(button(page, 'Approve')).toHaveCount(0);
     // Copy covers the plan too, so it sits under the card rather than between prose and plan.
@@ -134,6 +134,7 @@ test.describe('a plan waiting for review', () => {
 
   test('the Queue’s Plan ready row opens the plan', async ({ page }) => {
     const state = await openApp(page, { data: { chat: planChat() } });
+    await page.getByTestId('queue-open').click();
     await page.getByTestId('queue-row-task-plan').click();
     await expect.poll(() => requestsOf(state, 'chat').some((r) => r.id === 'chat-4')).toBe(true);
     await expect(button(page, 'Approve')).toBeInViewport();

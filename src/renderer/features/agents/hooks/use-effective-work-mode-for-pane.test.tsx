@@ -51,23 +51,23 @@ describe('useEffectiveWorkModeForPane — split view isolation', () => {
       wrapper: storeWrapper(store),
     });
 
-    // Both panes start on the global default ('worktree')
-    expect(pane0.current.workMode).toBe('worktree');
+    // Both panes start on the global default ('local')
+    expect(pane0.current.workMode).toBe('local');
 
-    // Pane 0 explicitly switches to 'local'
+    // Pane 0 explicitly switches to 'worktree'
     act(() => {
-      pane0.current.setWorkMode('local');
+      pane0.current.setWorkMode('worktree');
     });
 
-    // Pane 0 now shows 'local'
-    expect(pane0.current.workMode).toBe('local');
+    // Pane 0 now shows 'worktree'
+    expect(pane0.current.workMode).toBe('worktree');
 
     // Pane 1 has NO explicit per-pane entry — must not have been written
     const map = store.get(newChatPaneWorkModeMapAtom);
     expect(1 in map).toBe(false);
 
-    // Global preference is unchanged — pane 1 still inherits 'worktree'
-    expect(store.get(lastSelectedWorkModeAtom)).toBe('worktree');
+    // Global preference is unchanged — pane 1 still inherits 'local'
+    expect(store.get(lastSelectedWorkModeAtom)).toBe('local');
   });
 
   it('falls back to global work mode when no per-pane entry exists', () => {

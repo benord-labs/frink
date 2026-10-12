@@ -20,6 +20,7 @@ import {
   captureFlowAdmissionException,
   hasFlowResourceActivity,
   setFlowAdmissionLifecycleHooks,
+  settleStageAfterUnpromotedRetry,
   withFlowResourceCleanup,
 } from './activity';
 import type { FlowAdmissionConfigPatch } from './config';
@@ -33,7 +34,9 @@ import {
 import type { FlowRunAdmission } from './store';
 import {
   fireStagedContinuationResume,
+  type PendingContinuationResume,
   settleWithStagedContinuation,
+  stageBehindHeldAdmission,
 } from './terminal-resume/continuation';
 import {
   type EnqueueTerminalFlowResumeInput,
@@ -69,11 +72,11 @@ async function emitAdmissionRunFailed(flowRunId: string, summary: string): Promi
   );
 }
 
-async function notifyFailedStartAdmission(
-  admission: Awaited<ReturnType<FlowAdmissionController['getByTicket']>>,
-): Promise<void> {
-  if (admission?.state !== 'failed' || admission.priorityClass !== 'start') return;
-  await emitAdmissionRunFailed(admission.flowRunId, admission.error ?? 'Flow admission failed');
+async function notifyFailedAdmission(admission: LiveAdmission): Promise<void> {
+  if (admission?.state !== 'failed') return;
+  const { flowRunId, error } = admission;
+  if (admission.priorityClass !== 'start') return settleStageAfterUnpromotedRetry(flowRunId);
+  await emitAdmissionRunFailed(flowRunId, error ?? 'Flow admission failed');
 }
 
 async function failStartedAdmission(flowRunId: string, error: unknown): Promise<void> {
@@ -174,7 +177,7 @@ export function registerTerminalFlowResumeDispatcher(
 async function dispatchClaim(ticket: number): Promise<void> {
   const active = await admissionController().beginDispatch(ticket);
   if (!active) {
-    await notifyFailedStartAdmission(await admissionController().getByTicket(ticket));
+    await notifyFailedAdmission(await admissionController().getByTicket(ticket));
     return;
   }
   const intent = isFlowAdmissionIntentV1(active.intentJson) ? active.intentJson : null;
@@ -214,7 +217,7 @@ async function dispatchClaim(ticket: number): Promise<void> {
 const drainer = createFlowAdmissionDrainer({
   claimEligible: () => admissionController().claimEligible(),
   dispatchClaim,
-  notifyFailedStartAdmission,
+  notifyFailedAdmission,
 });
 
 export function drainFlowAdmissions(): Promise<void> {
@@ -336,19 +339,24 @@ export async function hasLiveFlowAdmission(flowRunId: string): Promise<boolean> 
   return live !== null && (FLOW_ADMISSION_LIVE_STATES as readonly string[]).includes(live.state);
 }
 
-/** ONE read: `queuedResume` = a resume ticket (queued/claimed/releasing) already owns the run's continuation. */
+/** ONE read: `queuedResume` = a resume ticket (queued/claimed/releasing) already owns the run's
+ * continuation; `live` = any admission is left whose settle would fire a staged one. */
 export async function probeFlowAdmission(
   flowRunId: string,
-): Promise<{ active: boolean; queuedResume: boolean }> {
+): Promise<{ active: boolean; queuedResume: boolean; live: boolean }> {
   const live = await admissionController().getLiveForRun(flowRunId);
   const active = live?.state === 'active';
-  return { active, queuedResume: !active && live?.priorityClass === 'resume' };
+  return { active, queuedResume: !active && live?.priorityClass === 'resume', live: live != null };
 }
 
 export async function hasActiveFlowAdmission(flowRunId: string): Promise<boolean> {
   const live = await admissionController().getLiveForRun(flowRunId);
   return live?.state === 'active';
 }
+
+/** A recovery clicked while the run still holds its slot is staged behind it; false: enqueue it. */
+export const stageResumeBehindHeldAdmission = (pending: PendingContinuationResume) =>
+  stageBehindHeldAdmission(pending, continuationOps);
 
 export async function requestFlowAdmissionRelease(
   flowRunId: string,
@@ -472,8 +480,10 @@ export function _setFlowAdmissionControllerForTests(value: FlowAdmissionControll
 const continuationOps = {
   requestTerminalFlowResume,
   hasLiveFlowAdmission,
-  getLiveAdmissionState: async (id: string) =>
-    (await admissionController().getLiveForRun(id))?.state ?? null,
+  getLiveAdmissionState: async (id: string) => {
+    const live = await admissionController().getLiveForRun(id);
+    return live?.state === 'releasing' && live.error ? 'retained' : (live?.state ?? null);
+  },
 };
 
 setFlowAdmissionLifecycleHooks({

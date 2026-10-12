@@ -635,10 +635,9 @@ describe('validateFlowTemplateVariables', () => {
     expect(warnings.every((w) => w.placeholder !== '{{previous.headers.content-type}}')).toBe(true);
   });
 
-  it('does NOT warn for template in http_request.url (not rendered at runtime) (EC2)', () => {
-    // http_request.url is NOT template-rendered — the template variable is invalid at
-    // runtime but validate-flow-templates should not check non-rendered fields for
-    // known-field validation (only for the "field not rendered" warning).
+  it('validates http_request.url as a rendered field (EC2, sc-3172)', () => {
+    // http_request.url IS template-rendered at runtime, so the placeholder is checked against the
+    // run_command predecessor's declared outputs like any other rendered field.
     const graph = makeGraph([
       { id: 't', blockType: 'manual_trigger' },
       { id: 'r', blockType: 'run_command', config: { command: 'echo hi', projectId: 'p1' } },
@@ -648,11 +647,10 @@ describe('validateFlowTemplateVariables', () => {
         config: { url: 'https://example.com/{{previous.status}}' },
       },
     ]);
-    const warnings = validateFlowTemplateVariables(graph);
-    // Should warn that http_request.url is not template-rendered, not that 'status' is invalid
-    const urlWarning = warnings.find((w) => w.field === 'url');
-    expect(urlWarning).toBeDefined();
-    expect(urlWarning?.message).toContain('not template-rendered');
+    const urlWarnings = validateFlowTemplateVariables(graph).filter((w) => w.nodeId === 'h');
+    expect(urlWarnings).toMatchObject([{ field: 'url', placeholder: '{{previous.status}}' }]);
+    expect(urlWarnings[0]?.message).toContain('not a declared output field');
+    expect(urlWarnings[0]?.message).not.toContain('not template-rendered');
   });
 
   it('custom node string inputs are rendered and still validate previous paths (sc-1597)', () => {
@@ -709,6 +707,89 @@ describe('validateFlowTemplateVariables', () => {
     expect(warnings).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ nodeId: 'consumer', field: 'nested' })]),
     );
+  });
+
+  describe('custom node non-flow placeholders (sc-3251)', () => {
+    const graph = {
+      nodes: [
+        { id: 't', blockType: 'manual_trigger', config: {} },
+        {
+          id: 'cn',
+          blockType: 'check-new-prs',
+          config: { query: '{"q":"{{field}}"}', note: '{{ name }}', repo: 'org/x' },
+        },
+      ],
+      edges: [{ id: 'e1', source: 't', target: 'cn' }],
+    };
+
+    it('warns that a non-flow root in a rendered input renders empty, pointing at the opt-out', () => {
+      const warnings = validateFlowTemplateVariables(graph);
+      const query = warnings.find((w) => w.field === 'query');
+      expect(query?.placeholder).toBe('{{field}}');
+      expect(query?.message).toContain('"template": false');
+      expect(warnings.find((w) => w.field === 'note')?.placeholder).toBe('{{name}}');
+    });
+
+    it('stays silent on inputs the manifest opts out', () => {
+      const customNodeInputs = new Map([
+        ['check-new-prs', { query: { template: false }, note: { template: false } }],
+      ]);
+      const warnings = validateFlowTemplateVariables(graph, undefined, { customNodeInputs });
+      expect(warnings.filter((w) => w.nodeId === 'cn')).toEqual([]);
+    });
+
+    it('does not point a plugin node at a manifest opt-out it does not have', () => {
+      // Plugin nodes pass isCustomNodeBlockType but have no user manifest, and plugin-node
+      // dispatch never reads "template": false — the advice would send the author nowhere.
+      const pluginGraph = {
+        nodes: [
+          { id: 't', blockType: 'manual_trigger', config: {} },
+          { id: 'sc', blockType: 'shortcut_create_story', config: { name: 'Fix {{field}}' } },
+        ],
+        edges: [{ id: 'e1', source: 't', target: 'sc' }],
+      };
+      const warning = validateFlowTemplateVariables(pluginGraph).find((w) => w.field === 'name');
+      expect(warning?.placeholder).toBe('{{field}}');
+      expect(warning?.message).toContain('empty');
+      expect(warning?.message).not.toContain('"template": false');
+    });
+
+    it('warns when an opted-out input holds a trigger/previous placeholder that will not resolve', () => {
+      const optedOut = {
+        nodes: [
+          { id: 't', blockType: 'manual_trigger', config: {} },
+          {
+            id: 'cn',
+            blockType: 'check-new-prs',
+            config: {
+              body: '{"repo":"{{trigger.repo}}","prev":"{{previous.x}}","col":"{{field}}"}',
+              jinja: '{% for x in xs %}{{ loop.index }}{% endfor %}',
+            },
+          },
+        ],
+        edges: [{ id: 'e1', source: 't', target: 'cn' }],
+      };
+      const customNodeInputs = new Map([
+        ['check-new-prs', { body: { template: false }, jinja: { template: false } }],
+      ]);
+      const warnings = validateFlowTemplateVariables(optedOut, undefined, { customNodeInputs });
+      const placeholders = warnings.filter((w) => w.nodeId === 'cn').map((w) => w.placeholder);
+      // A flow variable the author likely meant to render reaches the script as literal text.
+      expect(placeholders).toEqual(['{{trigger.repo}}', '{{previous.x}}']);
+      expect(warnings[0]?.message).toContain('"template": false');
+      // The script's own syntax (non-flow roots, Jinja's loop.*) is the point of opting out.
+    });
+
+    it('does not warn about non-flow roots in agent instructions', () => {
+      const agentGraph = {
+        nodes: [
+          { id: 't', blockType: 'manual_trigger', config: {} },
+          { id: 'ag', blockType: 'agent', config: { instructions: 'Use {{field}} syntax' } },
+        ],
+        edges: [{ id: 'e1', source: 't', target: 'ag' }],
+      };
+      expect(validateFlowTemplateVariables(agentGraph)).toEqual([]);
+    });
   });
 
   it('warns that run_command.customPath is not template-rendered (EC3)', () => {

@@ -1,9 +1,10 @@
 import { z } from 'zod';
 import { CODEX_SPEEDS, type CodexSpeed } from '../execution';
+import { type RecoveryKind, recoveryKindSchema } from '../flow-run/resume';
 import type { AgentUserQuestion } from '../task-signal';
 
 const id = z.string().min(1).max(200);
-/** Per message, matching the desktop composer's image cap plus room for files. */
+/** @public Per message, matching the desktop composer's image cap plus room for files. */
 export const MOBILE_MAX_ATTACHMENTS = 10;
 const chatIdentity = { chatId: id, subChatId: id };
 /** Lists are a growing window: the phone re-polls the first `limit` rows and raises it to see more. */
@@ -20,6 +21,8 @@ export const mobileRequestSchema = z.discriminatedUnion('type', [
       })
       .strict()
       .optional(),
+    // The phone confirms a Retry that may repeat a step's side effects; older phones omit it.
+    confirmsSideEffects: z.literal(true).optional(),
   }),
   z.object({ type: z.literal('flows') }),
   z.object({ type: z.literal('flow'), id, runLimit: z.number().int().min(1).max(100).optional() }),
@@ -29,7 +32,14 @@ export const mobileRequestSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('cancelRun'), id }),
   // A Queue task's row actions, gated on the computer by the desktop Work Queue's own rules.
   z.object({ type: z.literal('completeTask'), id }),
-  z.object({ type: z.literal('continueTask'), id }),
+  // Continue or Retry, as the row's recoveryKind labels it. Older phones omit it: carry on.
+  // `recoveryNodeRunId` pins the Flow step the user saw (and confirmed), as the row listed it.
+  z.object({
+    type: z.literal('continueTask'),
+    id,
+    kind: recoveryKindSchema.optional(),
+    recoveryNodeRunId: id.optional(),
+  }),
   z.object({ type: z.literal('startTask'), id }),
   z.object({
     type: z.literal('resumeNode'),
@@ -143,10 +153,17 @@ export type MobileQueueItem = {
   projectName: string | null;
   /** Latest of completion, start or creation: when this item last changed state. */
   activityAt: string;
-  /** The row actions the phone may send; a Flow item starts and carries on through its run. */
+  /** The row actions the phone may send; a Flow item starts through its run. */
   actions: MobileTaskAction[];
+  /** What `continueTask` does: resume the session or run again. Older computers omit it. */
+  recoveryKind?: RecoveryKind;
+  /** Its Retry re-runs a started non-agent step that may repeat what it did, so it confirms. */
+  confirmSideEffects?: boolean;
+  /** The Flow step `continueTask` recovers through; the request pins it. */
+  recoveryNodeRunId?: string;
 };
 export type MobileTaskAction = 'startTask' | 'continueTask' | 'completeTask';
+/** @public Read by the mobile app. */
 export type MobileQueueSection = 'attention' | 'inbox' | 'running';
 /** Chats counted once each: needing the user wins over running. */
 export type MobileAgentCounts = { running: number; needsYou: number };
@@ -266,7 +283,7 @@ export type MobilePickerModel = {
   /** Claude: this row runs Ultra (parallel agents) at its effort. */
   ultra?: true;
 };
-export type MobileAccount = {
+type MobileAccount = {
   id: string;
   label: string;
   type: string;

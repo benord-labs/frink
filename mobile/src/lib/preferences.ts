@@ -37,3 +37,57 @@ export async function savePreferences(value: NewChatPreferences): Promise<void> 
     else await SecureStore.setItemAsync(KEY, json);
   } catch {}
 }
+
+const appearanceSchema = z.enum(['system', 'light', 'dark']);
+export type AppearanceMode = z.infer<typeof appearanceSchema>;
+const APPEARANCE_KEY = 'frink.mobile.appearance.v1';
+let appearanceWrites: Promise<void> = Promise.resolve();
+
+export async function readAppearance(): Promise<AppearanceMode> {
+  try {
+    const saved = web
+      ? sessionStorage.getItem(APPEARANCE_KEY)
+      : await SecureStore.getItemAsync(APPEARANCE_KEY);
+    const parsed = appearanceSchema.safeParse(saved);
+    return parsed.success ? parsed.data : 'system';
+  } catch {
+    return 'system';
+  }
+}
+
+/** Keep rapid choices in order; unavailable storage must not prevent switching appearance. */
+export function saveAppearance(mode: AppearanceMode): Promise<void> {
+  appearanceWrites = appearanceWrites
+    .then(async () => {
+      if (web) sessionStorage.setItem(APPEARANCE_KEY, mode);
+      else await SecureStore.setItemAsync(APPEARANCE_KEY, mode);
+    })
+    .catch(() => undefined);
+  return appearanceWrites;
+}
+
+export const TRANSPARENCY_LEVELS = [0, 25, 50, 75, 100] as const;
+export type Transparency = (typeof TRANSPARENCY_LEVELS)[number];
+const TRANSPARENCY_KEY = 'frink.mobile.transparency.v1';
+let transparencyWrites: Promise<void> = Promise.resolve();
+
+export async function readTransparency(): Promise<Transparency> {
+  try {
+    const saved = web
+      ? sessionStorage.getItem(TRANSPARENCY_KEY)
+      : await SecureStore.getItemAsync(TRANSPARENCY_KEY);
+    return TRANSPARENCY_LEVELS.find((value) => String(value) === saved) ?? 50;
+  } catch {
+    return 50;
+  }
+}
+
+export function saveTransparency(level: Transparency): Promise<void> {
+  transparencyWrites = transparencyWrites
+    .then(async () => {
+      if (web) sessionStorage.setItem(TRANSPARENCY_KEY, String(level));
+      else await SecureStore.setItemAsync(TRANSPARENCY_KEY, String(level));
+    })
+    .catch(() => undefined);
+  return transparencyWrites;
+}

@@ -78,7 +78,14 @@ const headerName = z.string().regex(/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/, 'HTTP head
 /** How Frink learns which vendor user signed in: one read-only tool call and a dot path to the id.
  * That id is what an event's assignee is compared against, so a trigger can watch "assigned to me". */
 const identitySchema = z
-  .object({ server: slug, tool: z.string().min(1), idPath: z.string().min(1) })
+  .object({
+    server: slug,
+    tool: z.string().min(1),
+    /** For a server that names the signed-in user only through a lookup that takes input. */
+    args: z.record(z.string(), z.json()).optional(),
+    /** A numeric segment indexes a list. */
+    idPath: z.string().min(1),
+  })
   .strict();
 
 export type PluginIdentityLookup = z.infer<typeof identitySchema>;

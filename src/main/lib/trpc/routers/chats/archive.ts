@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import log from 'electron-log';
 import { z } from 'zod';
 import { trackWorkspaceArchived } from '../../../analytics';
@@ -9,9 +10,15 @@ import {
   updateChat as updateChatLocal,
 } from '../../../db/repos/chats';
 import { listSubChatsByChat as listSubChatsByChatLocal } from '../../../db/repos/sub-chats';
+import type { ArchiveChatResult } from '../../../db/repos/task-queries/chat-archive-tasks';
 import { cancelFlowRunsForChat } from '../../../flows';
 import { gitCache } from '../../../git/cache';
-import { abortActiveExecutionsForSubChats, clearCodexSession } from '../../../socket/executor';
+import {
+  abortActiveExecutionsForSubChats,
+  clearCodexSession,
+  collectLiveSubChatIdsForChat,
+} from '../../../socket/executor';
+import { stopTaskSession } from '../../../tasks/abort-task-session';
 import { terminalManager } from '../../../terminal/manager';
 import { publicProcedure, router } from '../../index';
 import { mapLocalChatResponse } from './map-chat-response';
@@ -53,6 +60,13 @@ function startArchivedWorktreeTeardown(db: Db, ref: ChatWorktreeRef): void {
   teardownsInFlight.set(ref.id, running);
 }
 
+/** Sessions stop only after the archive commits, as the Work Queue's Cancel does. Throws on failure. */
+function archiveChatStoppingTasks(db: Db, chatId: string): ArchiveChatResult {
+  const result = archiveChatLocal(db, chatId);
+  for (const previous of result.cancelledPrevious) stopTaskSession(previous);
+  return result;
+}
+
 /**
  * Chat archive operations.
  *
@@ -81,16 +95,25 @@ export const archiveRouter = router({
       // this chat's sub-chats BEFORE flipping archived_at + tearing down the worktree.
       // Otherwise the SDK keeps streaming + tool-calling against a worktree that's about
       // to vanish. Mirrors the delete path.
-      // Null (not []) when the lookup fails: an empty abort is indistinguishable from "nothing was
-      // running", and we must not force-remove a worktree an agent may still be streaming into.
+      // Null (not []) when the lookup fails: live turns still stop (found in memory), but idle
+      // sessions of unlisted sub-chats don't, so the worktree is kept.
       let abortedSubChats = chat !== null;
+      let listedSubChatIds: string[] = [];
       if (chat) {
-        const subChats = await listSubChatsByChatLocal(db, chat.id).catch(() => null);
+        const subChats = await listSubChatsByChatLocal(db, chat.id).catch((error) => {
+          log.warn('[chats.archive] listSubChatsByChat failed; aborting live turns only', error);
+          return null;
+        });
         abortedSubChats = subChats !== null;
-        abortActiveExecutionsForSubChats(
-          (subChats ?? []).map((sc) => sc.id),
-          'chat archived',
-        );
+        listedSubChatIds = (subChats ?? []).map((sc) => sc.id);
+      }
+      // Keyed on input.id, not the row: a failed chat read still archives below, so its live turns
+      // must stop too.
+      abortActiveExecutionsForSubChats(
+        [...new Set([...listedSubChatIds, ...collectLiveSubChatIdsForChat(input.id)])],
+        'chat archived',
+      );
+      if (chat) {
         // Archiving removes the chat from view and can tear down its worktree — stop the
         // flow runs it drives too, same as delete (else the run keeps going / the worktree
         // is yanked from under a live flow agent).
@@ -98,7 +121,17 @@ export const archiveRouter = router({
       }
       clearCodexSession(input.id);
 
-      const archivedChat = await archiveChatLocal(db, input.id);
+      let archivedChat: ArchiveChatResult['chat'];
+      try {
+        archivedChat = archiveChatStoppingTasks(db, input.id).chat;
+      } catch (error) {
+        log.warn('[chats.archive] archive with linked-task cancel failed', error);
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: "Could not stop this chat's task, so the chat was not archived.",
+          cause: error,
+        });
+      }
 
       trackWorkspaceArchived(input.id);
 
@@ -150,18 +183,34 @@ export const archiveRouter = router({
       const db = getDatabase();
 
       // Phase 1 ship-blocker fix: abort each chat's active executions before flipping
-      // archived_at, same reasoning as the single-chat path above.
-      const allSubChatIds: string[] = [];
+      // archived_at, same reasoning as the single-chat path above (live ids survive a failed lookup).
+      const allSubChatIds = new Set<string>();
       for (const chatId of chatIds) {
-        const subChats = await listSubChatsByChatLocal(db, chatId).catch(() => []);
-        allSubChatIds.push(...subChats.map((sc) => sc.id));
+        const subChats = await listSubChatsByChatLocal(db, chatId).catch((error) => {
+          log.warn('[chats.archiveBatch] listSubChatsByChat failed; aborting live turns only', {
+            chatId,
+            error,
+          });
+          return [];
+        });
+        for (const sc of subChats) allSubChatIds.add(sc.id);
+        for (const id of collectLiveSubChatIdsForChat(chatId)) allSubChatIds.add(id);
       }
-      abortActiveExecutionsForSubChats(allSubChatIds, 'chat archived (batch)');
+      abortActiveExecutionsForSubChats([...allSubChatIds], 'chat archived (batch)');
       for (const chatId of chatIds) await cancelFlowRunsForChat(chatId);
 
-      const archivedChats = await Promise.all(
-        chatIds.map((chatId) => archiveChatLocal(db, chatId)),
-      );
+      // Per chat, so one chat whose task can't be stopped doesn't hold back the rest.
+      const archivedChats = chatIds.map((chatId) => {
+        try {
+          return archiveChatStoppingTasks(db, chatId).chat;
+        } catch (error) {
+          log.warn('[chats.archiveBatch] archive with linked-task cancel failed', {
+            chatId,
+            error,
+          });
+          return null;
+        }
+      });
       const result = archivedChats.filter(
         (chat): chat is NonNullable<typeof chat> => chat !== null,
       );

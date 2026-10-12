@@ -1,6 +1,4 @@
-/**
- * Re-running / re-dispatching flow runs: Carry on (resume a persisted session in place), plus the
- * shared resume-point helper. See docs/decisions/flow-run-restart-recovery.md.
- */
+/** Recovering stopped steps: the Continue-or-Retry rule, and Continue (resume in place). */
 
 export { type CarryOnFlowTaskResult, carryOnFlowTask } from './carry-on';
+export { resolveRunRecoveries } from './recovery-kind';

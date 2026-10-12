@@ -8,6 +8,7 @@ import {
   installVendorPlugin,
   installVendorPluginFromLocalClaudeCache,
   listStagedVendorPluginCodexSkillRoots,
+  readUserHookSettings,
   removeVendorPlugin,
   restageVendorPlugin,
   stageClaudeConfigDir,
@@ -49,6 +50,16 @@ describe('stageClaudeConfigDir', () => {
     stageClaudeConfigDir(configDir, uniqueKey());
 
     expect(fs.readFileSync(path.join(configDir, 'CLAUDE.md'), 'utf-8')).toBe('# global rules');
+  });
+
+  it("reads only the hooks keys of the user's ~/.claude/settings.json", () => {
+    const hooks = { Stop: [{ hooks: [{ type: 'command', command: 'notify' }] }] };
+    const file = path.join(fakeHome, '.claude', 'settings.json');
+    expect(readUserHookSettings()).toEqual({});
+    fs.writeFileSync(file, JSON.stringify({ hooks, disableAllHooks: false, model: 'opus' }));
+    expect(readUserHookSettings()).toEqual({ hooks, disableAllHooks: false });
+    fs.writeFileSync(file, '{ not json');
+    expect(readUserHookSettings()).toEqual({});
   });
 
   it('stages skills and agents alongside memory', () => {

@@ -4,10 +4,9 @@
  */
 
 import { Button } from '@benord-labs/frink-primitives';
-import * as Sentry from '@sentry/electron/renderer';
 import { TRPCClientError } from '@trpc/client';
 import { useAtom, useAtomValue, useSetAtom } from 'jotai';
-import { Loader2 } from 'lucide-react';
+import { AlertTriangle, Loader2 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -45,16 +44,6 @@ import type {
   RunCommandBlockConfig,
 } from '../../../../shared/types/flow';
 import { FLOW_BLOCK_TYPES } from '../../../../shared/types/flow';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '../../../components/ui/alert-dialog';
 import { Kbd } from '../../../components/ui/kbd';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../components/ui/tooltip';
 import { useFlowCanvasExecution } from '../../../hooks/use-flow-canvas-execution';
@@ -70,6 +59,7 @@ import { trpc } from '../../../lib/trpc';
 import { cn } from '../../../lib/utils';
 import { resolveDefaultSelectedBatchId } from '../../../lib/utils/default-selected-batch';
 import { dispatchFlowRun } from '../../../lib/utils/flow-run-dispatch';
+import { persistDraftAfterSave } from '../../../lib/flows/editor-sync/resolve-draft-after-save';
 import { resolveServerAdoption } from '../../../lib/flows/editor-sync/resolve-server-adoption';
 import { resolveInitialGraph } from '../../../utils/flow-initial-graph';
 import { codeEditorOpenAtom } from '../../code-editor';
@@ -80,11 +70,13 @@ import { resolveFlowEditorEscapeAction } from '../flow-editor-escape-stack';
 import { BlockConfigPanel, type NodePatch } from './BlockConfig';
 import { FLOW_ADDABLE_BLOCK_TYPES, FLOW_TRIGGER_TYPES } from './constants';
 import { FlowCanvas } from './FlowCanvas';
-import { embedMissingPositionsFromDagre } from './FlowCanvas/compute-dagre-positions';
+import { embedMissingPositionsFromDagre } from '../../../../shared/lib/flows/canvas-layout';
 import { FlowEditorHeader } from './FlowEditorHeader';
 import { FlowRunsTab } from './FlowRunsTab';
 import { FlowSettingsPanel } from './FlowSettingsPanel';
 import { useBatchTriggerSchemaSync } from './hooks/useBatchTriggerSchemaSync';
+import { useRemoteVersionSync } from './hooks/use-remote-version-sync';
+import { StaleVersionDialog } from './StaleVersionDialog';
 import { applyCreatorPick } from '../../../lib/flows/node-creator/pick';
 import { type NodeCreatorMode, NodeCreatorPanel } from './NodeCreatorPanel';
 import type { FlowNodeCanvasContext } from './nodeSummary';
@@ -129,7 +121,6 @@ function buildGraphToSaveWithSchema(
 }
 
 export function FlowEditor({ flowId, onBack }: FlowEditorProps): ReactElement {
-  const isDirty = useAtomValue(flowEditorDirtyAtom);
   const setDirtyGlobal = useSetAtom(flowEditorDirtyAtom);
 
   // Ghost Run (Rehearse) overlay toggle — see src/renderer/lib/flow-rehearsal.
@@ -368,8 +359,6 @@ export function FlowEditor({ flowId, onBack }: FlowEditorProps): ReactElement {
     }
   }, [data, hydrated, setDirtyGlobal, flowId]);
 
-  useBatchTriggerSchemaSync({ hydrated, isDirty, graph, setGraph, serverBatchTriggerSchema });
-
   useEffect(() => {
     setSelectedNodeIds((ids) => {
       const next = ids.filter((id) => graph.nodes.some((n) => n.id === id));
@@ -491,6 +480,14 @@ export function FlowEditor({ flowId, onBack }: FlowEditorProps): ReactElement {
     () => baselineGraphToCompare === null || !flowGraphsEqual(graphToSave, baselineGraphToCompare),
     [graphToSave, baselineGraphToCompare],
   );
+
+  useBatchTriggerSchemaSync({
+    hydrated,
+    modified: locallyModified,
+    graph,
+    setGraph,
+    serverBatchTriggerSchema,
+  });
 
   // Adopt a newer server version WITH its graph; the version alone stranded the working copy.
   useEffect(() => {
@@ -812,33 +809,24 @@ export function FlowEditor({ flowId, onBack }: FlowEditorProps): ReactElement {
     [flowId, setDirtyGlobal],
   );
 
-  const handleConflictReload = useCallback(() => {
-    setConflictReloadOpen(false);
-    void (async () => {
-      try {
-        const fresh = await utils.flows.get.fetch({ id: flowId });
-        applyServerSnapshot(fresh);
-        setTitle(fresh.name);
-        setLastSavedAt(null);
-      } catch (fetchErr) {
-        Sentry.captureException(fetchErr, {
-          tags: { source: 'FlowEditor', area: 'flow-editor-conflict-reload' },
-          extra: { flowId },
-        });
-        toast.error('Could not reload the latest version. Try again or reopen the flow.');
-      }
-    })();
-  }, [flowId, utils.flows.get, applyServerSnapshot, setTitle]);
-
   const saveMutation = trpc.flows.saveVersion.useMutation({
     onSuccess: (version, variables) => {
       setBaselineVersion(version.version_number);
       setBaselineGraph(variables.graph);
-      setDirtyGlobal(false);
+      const keptDraft = persistDraftAfterSave(flowId, {
+        currentGraph: graphRef.current,
+        currentGraphToSave: buildGraphToSaveWithSchema(
+          graphRef.current,
+          serverBatchTriggerSchemaRef.current,
+        ),
+        savedGraph: variables.graph,
+        savedVersion: version.version_number,
+        now: Date.now(),
+      });
+      setDirtyGlobal(keptDraft);
       setSaveError(null);
       setLastSavedAt(new Date());
       setDraftRestored(false);
-      deleteFlowDraft(flowId);
       toast.success('Flow saved');
       void utils.flows.get.invalidate({ id: flowId });
       void utils.flows.list.invalidate();
@@ -896,6 +884,23 @@ export function FlowEditor({ flowId, onBack }: FlowEditorProps): ReactElement {
       expectedVersionNumber: baselineVersion,
     });
   }, [validation.valid, saveMutation, hasChanges, graphToSave, flowId, baselineVersion]);
+
+  const remoteVersion = useRemoteVersionSync({
+    flowId,
+    data,
+    hydrated,
+    locallyModified,
+    baselineVersion,
+    savePending: saveMutation.isPending,
+    canSave: validation.valid,
+    workingCopy: graph,
+    onReloaded: (fresh) => {
+      applyServerSnapshot(fresh);
+      setTitle(fresh.name);
+      setLastSavedAt(null);
+    },
+    saveOver: () => saveMutation.mutateAsync({ flowId, graph: graphToSave }).then(() => undefined),
+  });
 
   const saveHotkeyRef = useRef<() => void>(() => {});
   saveHotkeyRef.current = dispatchSave;
@@ -1132,7 +1137,7 @@ export function FlowEditor({ flowId, onBack }: FlowEditorProps): ReactElement {
 
   // Save-status UI reflects hasChanges (true content diff), NOT isDirty ("edited since load").
   // Editing then reverting to the saved state must clear "Unsaved changes" \u2014 the same signal that
-  // gates the Save button. isDirty stays for nav-guard/beforeUnload (warn on any in-progress edit).
+  // gates the Save button. The shared dirty atom stays for nav-guard/beforeUnload (warn on any in-progress edit).
   const saveStatusLabel = useMemo(() => {
     if (saveMutation.isPending) return 'Saving\u2026';
     if (hasChanges) return draftRestored ? 'Draft \u00b7 unsaved changes' : 'Unsaved changes';
@@ -1246,43 +1251,26 @@ export function FlowEditor({ flowId, onBack }: FlowEditorProps): ReactElement {
         }}
       />
 
-      <AlertDialog open={conflictReloadOpen} onOpenChange={setConflictReloadOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Flow modified elsewhere</AlertDialogTitle>
-            <AlertDialogDescription>
-              This flow was modified from another location. Reload the latest version? Your local
-              unsaved edits will be lost.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Keep my edits</AlertDialogCancel>
-            <AlertDialogAction onClick={handleConflictReload}>Reload latest</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <StaleVersionDialog
+        open={conflictReloadOpen}
+        onOpenChange={setConflictReloadOpen}
+        onReload={remoteVersion.reload}
+        onOverwrite={remoteVersion.overwrite}
+      />
 
-      {!validation.valid && (
+      {!validation.valid || warnings.length > 0 ? (
         <div
-          role="alert"
+          role={validation.valid ? 'status' : 'alert'}
           aria-live="polite"
-          className="px-4 py-2 text-sm text-amber-700 dark:text-amber-400 bg-amber-500/10 border-b border-amber-500/20"
+          className="flex items-start gap-2 border-b border-border/40 px-4 py-2 text-sm text-muted-foreground"
         >
-          <div>{validation.errors[0] ?? 'Invalid graph'}</div>
-          {warnings.length > 0 ? (
-            <div className="mt-1 border-t border-amber-500/20 pt-1 text-xs opacity-90">
-              {warnings[0]}
-            </div>
-          ) : null}
-        </div>
-      )}
-      {validation.valid && warnings.length > 0 ? (
-        <div
-          role="status"
-          aria-live="polite"
-          className="px-4 py-2 text-sm text-amber-700 dark:text-amber-400 bg-amber-500/10 border-b border-amber-500/20"
-        >
-          {warnings[0]}
+          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
+          <div>
+            {validation.valid ? null : (
+              <div className="text-warning">{validation.errors[0] ?? 'Invalid graph'}</div>
+            )}
+            {warnings[0]}
+          </div>
         </div>
       ) : null}
 
@@ -1342,20 +1330,21 @@ export function FlowEditor({ flowId, onBack }: FlowEditorProps): ReactElement {
                   key="flow-config-panel"
                   className="flex shrink-0 flex-col overflow-hidden bg-transparent pl-1"
                   initial={{ width: 0 }}
-                  animate={{ width: 380 }}
+                  animate={{ width: 440 }}
                   exit={{ width: 0 }}
                   transition={{ duration: 0.28, ease: [0.32, 0.72, 0, 1] }}
                 >
                   <div
                     className={cn(
                       UNIFIED_GLASS_INNER_CLASS,
-                      'flex h-full min-h-0 w-[380px] min-w-[380px] flex-col overflow-hidden rounded-xl',
+                      'flex h-full min-h-0 w-[440px] min-w-[440px] flex-col overflow-hidden rounded-xl',
                     )}
                   >
                     <BlockConfigPanel
                       flowId={flowId}
                       flowProjectId={data?.project_id ?? null}
                       selectedNode={selectedNode}
+                      customBlockIcon={customBlockIcons?.get(selectedNode.blockType)}
                       isLoopCondition={selectedNodeIsLoopCondition}
                       triggerBlockType={triggerBlockType}
                       webhookTriggerIntegrationId={webhookTriggerIntegrationId}
@@ -1404,14 +1393,14 @@ export function FlowEditor({ flowId, onBack }: FlowEditorProps): ReactElement {
               key="flow-settings-panel"
               className="flex shrink-0 flex-col overflow-hidden bg-transparent pl-1"
               initial={{ width: 0 }}
-              animate={{ width: 380 }}
+              animate={{ width: 440 }}
               exit={{ width: 0 }}
               transition={{ duration: 0.28, ease: [0.32, 0.72, 0, 1] }}
             >
               <div
                 className={cn(
                   UNIFIED_GLASS_INNER_CLASS,
-                  'h-full min-h-0 w-[380px] min-w-[380px] rounded-xl',
+                  'h-full min-h-0 w-[440px] min-w-[440px] rounded-xl',
                 )}
               >
                 <FlowSettingsPanel

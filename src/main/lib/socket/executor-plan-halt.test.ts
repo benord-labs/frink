@@ -101,6 +101,8 @@ vi.mock('../cloud-client', () => ({
 }));
 
 vi.mock('../db/repos/tasks', () => ({
+  claimTask: vi.fn(),
+  getPendingTaskIds: vi.fn(async () => []),
   getTaskById: vi.fn(),
   updateTaskStatus: vi.fn(),
   updateTaskResult: vi.fn(),
@@ -247,8 +249,9 @@ import {
 import { findUnapprovedPlanPart } from '../../../shared/types/plan';
 import { buildPartsFromChunks } from './claude-turn-context';
 import type { MessagePart } from './client';
-import { handleRemoteExecute, validateToolPermission } from './executor';
+import { handleRemoteExecute } from './executor';
 import { emitBurstPlanCard } from './streaming/burst-chunks';
+import { validateToolPermission } from './streaming/pending-permission/validate-tool-permission';
 import { PLAN_SUBMITTED_FOR_REVIEW } from './streaming/plan-auto-approve';
 import { claudePromptText } from './test-utils';
 

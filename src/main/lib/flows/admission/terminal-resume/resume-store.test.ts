@@ -11,6 +11,7 @@ import {
 } from '../../../db/schema';
 import { freshDb, type TestDb } from '../../../db/test-utils/fresh-db';
 import { _resetFlowAdmissionControllerMutexForTests, FlowAdmissionController } from '../controller';
+import './dispatcher';
 import { promoteTerminalResumeRun } from './resume-store';
 
 type TerminalStatus = 'completed' | 'failed' | 'cancelled';
@@ -99,32 +100,8 @@ describe('terminal Flow resume admission store', () => {
     await expect(
       controller.enqueueTerminalResume({ flowRunId: 'dedupe', nodeRunId: 'node-2' }),
     ).rejects.toThrow(/different live admission/);
-  });
-
-  it('treats resume KIND as part of the target: a Retry (continuation) never coalesces with a deliberate Re-run', async () => {
-    const db = freshDb();
-    seedRun(db, 'kind-clash');
-    seedNode(db, 'kind-clash', 'node-1');
-    const controller = admissionController(db);
-
-    const retry = await controller.enqueueTerminalResume({
-      flowRunId: 'kind-clash',
-      nodeRunId: 'node-1',
-      continuation: true,
-    });
-    expect(retry.created).toBe(true);
-
-    // Same kind re-request coalesces...
-    const again = await controller.enqueueTerminalResume({
-      flowRunId: 'kind-clash',
-      nodeRunId: 'node-1',
-      continuation: true,
-    });
-    expect(again).toMatchObject({ created: false, admission: { ticket: retry.admission.ticket } });
-
-    // ...a different kind on the same node errs instead of silently winning/losing the race.
     await expect(
-      controller.enqueueTerminalResume({ flowRunId: 'kind-clash', nodeRunId: 'node-1' }),
+      controller.enqueueTerminalResume({ flowRunId: 'dedupe', nodeRunId: 'node-1', kind: 'retry' }),
     ).rejects.toThrow(/different live admission/);
   });
 
@@ -193,6 +170,56 @@ describe('terminal Flow resume admission store', () => {
       state: 'failed',
       error: expect.stringContaining('Missing node run'),
     });
+  });
+
+  // Admitted as Continue, but nothing the session answered remains when the ticket is claimed.
+  it('fails a claimed resume whose step no longer recovers as its admitted kind', async () => {
+    const db = freshDb();
+    seedRun(db, 'changed');
+    seedNode(db, 'changed', 'changed-node');
+    const controller = admissionController(db);
+    const queued = await controller.enqueueTerminalResume({
+      flowRunId: 'changed',
+      nodeRunId: 'changed-node',
+      kind: 'continue',
+    });
+
+    expect((await controller.claimEligible()).admissions).toEqual([]);
+    expect(await controller.getByTicket(queued.admission.ticket)).toMatchObject({
+      state: 'failed',
+      error: expect.stringMatching(/refresh/),
+    });
+    expect(db.select().from(flowRuns).where(eq(flowRuns.id, 'changed')).get()?.status).toBe(
+      'failed',
+    );
+  });
+
+  it('declines a claim once a newer attempt failed, leaving the run terminal', async () => {
+    const db = freshDb();
+    seedRun(db, 'moved');
+    seedNode(db, 'moved', 'attempt-a');
+    const controller = admissionController(db);
+    const queued = await controller.enqueueTerminalResume({
+      flowRunId: 'moved',
+      nodeRunId: 'attempt-a',
+      kind: 'retry',
+    });
+    db.insert(nodeRuns)
+      .values({
+        id: 'attempt-b',
+        flowRunId: 'moved',
+        nodeId: 'attempt-a',
+        blockType: 'agent',
+        status: 'failed',
+      })
+      .run();
+
+    expect((await controller.claimEligible()).admissions).toEqual([]);
+    expect(await controller.getByTicket(queued.admission.ticket)).toMatchObject({
+      state: 'failed',
+      error: expect.stringMatching(/refresh/),
+    });
+    expect(db.select().from(flowRuns).where(eq(flowRuns.id, 'moved')).get()?.status).toBe('failed');
   });
 
   it.each(['dispatch', 'cancel'] as const)(

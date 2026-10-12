@@ -1,5 +1,5 @@
 diff --git a/codex-rs/app-server-client/src/lib.rs b/codex-rs/app-server-client/src/lib.rs
-index c5840e4d4..b5a365c6f 100644
+index c5840e4d4c1bc28d922a09b880a09f01f2bfc85c..b5a365c6fc48976f49cd7dd08c0dc7fc14966c9e 100644
 --- a/codex-rs/app-server-client/src/lib.rs
 +++ b/codex-rs/app-server-client/src/lib.rs
 @@ -223,6 +223,7 @@ impl InProcessClientStartArgs {
@@ -11,7 +11,7 @@ index c5840e4d4..b5a365c6f 100644
  
          InitializeParams {
 diff --git a/codex-rs/app-server-client/src/remote.rs b/codex-rs/app-server-client/src/remote.rs
-index 8a31b266b..07845526c 100644
+index 8a31b266b4240f341deab53f80ba736d7f9afcbd..07845526c0e8059234b75c263b0d735f9669f648 100644
 --- a/codex-rs/app-server-client/src/remote.rs
 +++ b/codex-rs/app-server-client/src/remote.rs
 @@ -101,6 +101,7 @@ impl RemoteAppServerConnectArgs {
@@ -23,7 +23,7 @@ index 8a31b266b..07845526c 100644
  
          InitializeParams {
 diff --git a/codex-rs/app-server-protocol/schema/json/ClientRequest.json b/codex-rs/app-server-protocol/schema/json/ClientRequest.json
-index 35f5b33bc..145cd7758 100644
+index 35f5b33bcb8e186302ace9998b2a9b0b7b9c4efb..145cd77584db8dfc75dd0c434f3eb81a651c79d8 100644
 --- a/codex-rs/app-server-protocol/schema/json/ClientRequest.json
 +++ b/codex-rs/app-server-protocol/schema/json/ClientRequest.json
 @@ -1598,6 +1598,15 @@
@@ -44,7 +44,7 @@ index 35f5b33bc..145cd7758 100644
            "type": "boolean"
 diff --git a/codex-rs/app-server-protocol/schema/json/FrinkToolPermissionParams.json b/codex-rs/app-server-protocol/schema/json/FrinkToolPermissionParams.json
 new file mode 100644
-index 000000000..ebea4980b
+index 0000000000000000000000000000000000000000..ebea4980bb43d0d922cafafe6e31318743642318
 --- /dev/null
 +++ b/codex-rs/app-server-protocol/schema/json/FrinkToolPermissionParams.json
 @@ -0,0 +1,120 @@
@@ -171,7 +171,7 @@ index 000000000..ebea4980b
 \ No newline at end of file
 diff --git a/codex-rs/app-server-protocol/schema/json/FrinkToolPermissionResponse.json b/codex-rs/app-server-protocol/schema/json/FrinkToolPermissionResponse.json
 new file mode 100644
-index 000000000..00e7a2373
+index 0000000000000000000000000000000000000000..00e7a23738107a03c0c341e507341975a6e62f3c
 --- /dev/null
 +++ b/codex-rs/app-server-protocol/schema/json/FrinkToolPermissionResponse.json
 @@ -0,0 +1,29 @@
@@ -206,7 +206,7 @@ index 000000000..00e7a2373
 +}
 \ No newline at end of file
 diff --git a/codex-rs/app-server-protocol/schema/json/ServerRequest.json b/codex-rs/app-server-protocol/schema/json/ServerRequest.json
-index 3b849caba..d873e6191 100644
+index 3b849cabaaf2a4addd868afa106ff8ce5c34a99c..d873e619114e56b4c9ecab46d1ba06c87b5153f3 100644
 --- a/codex-rs/app-server-protocol/schema/json/ServerRequest.json
 +++ b/codex-rs/app-server-protocol/schema/json/ServerRequest.json
 @@ -1,6 +1,10 @@
@@ -372,7 +372,7 @@ index 3b849caba..d873e6191 100644
        "description": "NEW APIs Sent when approval is requested for a specific command execution. This request is used for Turns started via turn/start.",
        "properties": {
 diff --git a/codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.schemas.json b/codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.schemas.json
-index fbc821957..285d98b00 100644
+index fbc82195702ebfe7aae86cea1c4737ebea911a15..285d98b00ef8e1be5e1d2096246783d947457286 100644
 --- a/codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.schemas.json
 +++ b/codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.schemas.json
 @@ -3154,6 +3154,214 @@
@@ -677,7 +677,7 @@ index fbc821957..285d98b00 100644
            "description": "NEW APIs Sent when approval is requested for a specific command execution. This request is used for Turns started via turn/start.",
            "properties": {
 diff --git a/codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.v2.schemas.json b/codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.v2.schemas.json
-index ffd953c16..b11363c0f 100644
+index ffd953c165b18eedea28898a8aff7f756cd7defc..b11363c0f7c9fc31d7643abb854d76b6a30b3114 100644
 --- a/codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.v2.schemas.json
 +++ b/codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.v2.schemas.json
 @@ -9452,6 +9452,15 @@
@@ -697,7 +697,7 @@ index ffd953c16..b11363c0f 100644
            "description": "Legacy opt-in for the `openai/form` MCP extension.\n\nNew clients should declare `openai/form` in [`Self::extensions`].",
            "type": "boolean"
 diff --git a/codex-rs/app-server-protocol/schema/json/v1/InitializeParams.json b/codex-rs/app-server-protocol/schema/json/v1/InitializeParams.json
-index 7acc76386..d90c4fd0d 100644
+index 7acc76386c6cdeb534160fc9854e79495f199841..d90c4fd0d57e6252483d61fa796dd62c2780b839 100644
 --- a/codex-rs/app-server-protocol/schema/json/v1/InitializeParams.json
 +++ b/codex-rs/app-server-protocol/schema/json/v1/InitializeParams.json
 @@ -38,6 +38,15 @@
@@ -717,7 +717,7 @@ index 7acc76386..d90c4fd0d 100644
            "description": "Legacy opt-in for the `openai/form` MCP extension.\n\nNew clients should declare `openai/form` in [`Self::extensions`].",
            "type": "boolean"
 diff --git a/codex-rs/app-server-protocol/schema/json/v1/InitializeResponse.json b/codex-rs/app-server-protocol/schema/json/v1/InitializeResponse.json
-index 1de65f82f..2d856cf6e 100644
+index 1de65f82f4df9fa810fbda3ff199eca49430a29f..2d856cf6e95d45dac42fadd2edf140a8780836b8 100644
 --- a/codex-rs/app-server-protocol/schema/json/v1/InitializeResponse.json
 +++ b/codex-rs/app-server-protocol/schema/json/v1/InitializeResponse.json
 @@ -4,9 +4,25 @@
@@ -6551,7 +6551,7 @@ zELy9{8{Qq045n~S#`tHH-xRS54#~LEhw*RvWR6g_VQYJeGnPPXL)@VjfRK1ltCfrn
 Qi7ijZR#mjoLjtEKrFO2;LjV8(
 
 diff --git a/codex-rs/app-server-protocol/schema/typescript/InitializeCapabilities.ts b/codex-rs/app-server-protocol/schema/typescript/InitializeCapabilities.ts
-index 6b4afd166..fb5a50650 100644
+index 6b4afd166b9fcb7997c27fb9edcbe682b6fa8208..fb5a50650a408d8616e365033dabbd71b6d169ad 100644
 --- a/codex-rs/app-server-protocol/schema/typescript/InitializeCapabilities.ts
 +++ b/codex-rs/app-server-protocol/schema/typescript/InitializeCapabilities.ts
 @@ -29,4 +29,8 @@ optOutNotificationMethods?: Array<string> | null,
@@ -6565,7 +6565,7 @@ index 6b4afd166..fb5a50650 100644
 + */
 +frinkHostToolPermission?: number, };
 diff --git a/codex-rs/app-server-protocol/schema/typescript/InitializeResponse.ts b/codex-rs/app-server-protocol/schema/typescript/InitializeResponse.ts
-index f1f79d173..bff502d60 100644
+index f1f79d173c77778057e223f5cac0e7ef2b113135..bff502d602db50c0f81f401e31bb2c8a09430dab 100644
 --- a/codex-rs/app-server-protocol/schema/typescript/InitializeResponse.ts
 +++ b/codex-rs/app-server-protocol/schema/typescript/InitializeResponse.ts
 @@ -2,6 +2,7 @@
@@ -6584,7 +6584,7 @@ index f1f79d173..bff502d60 100644
 +platformOs: string, capabilities: InitializeResponseCapabilities, };
 diff --git a/codex-rs/app-server-protocol/schema/typescript/InitializeResponseCapabilities.ts b/codex-rs/app-server-protocol/schema/typescript/InitializeResponseCapabilities.ts
 new file mode 100644
-index 000000000..1baa57309
+index 0000000000000000000000000000000000000000..1baa57309223c38f397afd73bf711b1f65bc7fb8
 --- /dev/null
 +++ b/codex-rs/app-server-protocol/schema/typescript/InitializeResponseCapabilities.ts
 @@ -0,0 +1,5 @@
@@ -6594,7 +6594,7 @@ index 000000000..1baa57309
 +
 +export type InitializeResponseCapabilities = { frinkHostToolPermission: number, };
 diff --git a/codex-rs/app-server-protocol/schema/typescript/ServerRequest.ts b/codex-rs/app-server-protocol/schema/typescript/ServerRequest.ts
-index 89a544005..7eac019c3 100644
+index 89a544005648918444561e165b3fb545244921fe..7eac019c33509b80a994c9f442601e92677f076a 100644
 --- a/codex-rs/app-server-protocol/schema/typescript/ServerRequest.ts
 +++ b/codex-rs/app-server-protocol/schema/typescript/ServerRequest.ts
 @@ -9,6 +9,7 @@ import type { ChatgptAuthTokensRefreshParams } from "./v2/ChatgptAuthTokensRefre
@@ -6612,7 +6612,7 @@ index 89a544005..7eac019c3 100644
 -export type ServerRequest ={ "method": "item/commandExecution/requestApproval", id: RequestId, params: CommandExecutionRequestApprovalParams, } | { "method": "item/fileChange/requestApproval", id: RequestId, params: FileChangeRequestApprovalParams, } | { "method": "item/tool/requestUserInput", id: RequestId, params: ToolRequestUserInputParams, } | { "method": "mcpServer/elicitation/request", id: RequestId, params: McpServerElicitationRequestParams, } | { "method": "item/permissions/requestApproval", id: RequestId, params: PermissionsRequestApprovalParams, } | { "method": "item/tool/call", id: RequestId, params: DynamicToolCallParams, } | { "method": "account/chatgptAuthTokens/refresh", id: RequestId, params: ChatgptAuthTokensRefreshParams, } | { "method": "attestation/generate", id: RequestId, params: AttestationGenerateParams, } | { "method": "applyPatchApproval", id: RequestId, params: ApplyPatchApprovalParams, } | { "method": "execCommandApproval", id: RequestId, params: ExecCommandApprovalParams, };
 +export type ServerRequest ={ "method": "frink/toolPermission/request", id: RequestId, params: FrinkToolPermissionRequest, } | { "method": "item/commandExecution/requestApproval", id: RequestId, params: CommandExecutionRequestApprovalParams, } | { "method": "item/fileChange/requestApproval", id: RequestId, params: FileChangeRequestApprovalParams, } | { "method": "item/tool/requestUserInput", id: RequestId, params: ToolRequestUserInputParams, } | { "method": "mcpServer/elicitation/request", id: RequestId, params: McpServerElicitationRequestParams, } | { "method": "item/permissions/requestApproval", id: RequestId, params: PermissionsRequestApprovalParams, } | { "method": "item/tool/call", id: RequestId, params: DynamicToolCallParams, } | { "method": "account/chatgptAuthTokens/refresh", id: RequestId, params: ChatgptAuthTokensRefreshParams, } | { "method": "attestation/generate", id: RequestId, params: AttestationGenerateParams, } | { "method": "applyPatchApproval", id: RequestId, params: ApplyPatchApprovalParams, } | { "method": "execCommandApproval", id: RequestId, params: ExecCommandApprovalParams, };
 diff --git a/codex-rs/app-server-protocol/schema/typescript/index.ts b/codex-rs/app-server-protocol/schema/typescript/index.ts
-index 5f128f7dc..0ebee0e0c 100644
+index 5f128f7dc6b505739512cfd61c9ce207f2751752..0ebee0e0c7e0ef277e1949b86cd39b0a7bac1962 100644
 --- a/codex-rs/app-server-protocol/schema/typescript/index.ts
 +++ b/codex-rs/app-server-protocol/schema/typescript/index.ts
 @@ -43,6 +43,7 @@ export type { ImageGenerationItem } from "./ImageGenerationItem";
@@ -6625,7 +6625,7 @@ index 5f128f7dc..0ebee0e0c 100644
  export type { InternalSessionSource } from "./InternalSessionSource";
 diff --git a/codex-rs/app-server-protocol/schema/typescript/v2/FrinkHostToolPermissionKind.ts b/codex-rs/app-server-protocol/schema/typescript/v2/FrinkHostToolPermissionKind.ts
 new file mode 100644
-index 000000000..b9d5fa272
+index 0000000000000000000000000000000000000000..b9d5fa27258e143b58c18374142fde9cafd10542
 --- /dev/null
 +++ b/codex-rs/app-server-protocol/schema/typescript/v2/FrinkHostToolPermissionKind.ts
 @@ -0,0 +1,5 @@
@@ -6636,7 +6636,7 @@ index 000000000..b9d5fa272
 +export type FrinkHostToolPermissionKind = "command" | "writeStdin" | "applyPatch" | "mcp";
 diff --git a/codex-rs/app-server-protocol/schema/typescript/v2/FrinkMcpIdentity.ts b/codex-rs/app-server-protocol/schema/typescript/v2/FrinkMcpIdentity.ts
 new file mode 100644
-index 000000000..ce41d4606
+index 0000000000000000000000000000000000000000..ce41d460692037b283c1d1d9f616d110fd46a6b8
 --- /dev/null
 +++ b/codex-rs/app-server-protocol/schema/typescript/v2/FrinkMcpIdentity.ts
 @@ -0,0 +1,5 @@
@@ -6647,7 +6647,7 @@ index 000000000..ce41d4606
 +export type FrinkMcpIdentity = { server: string, tool: string, };
 diff --git a/codex-rs/app-server-protocol/schema/typescript/v2/FrinkPatchEffect.ts b/codex-rs/app-server-protocol/schema/typescript/v2/FrinkPatchEffect.ts
 new file mode 100644
-index 000000000..3cd40e0ac
+index 0000000000000000000000000000000000000000..3cd40e0acad8760246d009665c6a3187e9e6ad43
 --- /dev/null
 +++ b/codex-rs/app-server-protocol/schema/typescript/v2/FrinkPatchEffect.ts
 @@ -0,0 +1,5 @@
@@ -6658,7 +6658,7 @@ index 000000000..3cd40e0ac
 +export type FrinkPatchEffect = { operation: string, path: string, destination?: string, };
 diff --git a/codex-rs/app-server-protocol/schema/typescript/v2/FrinkToolPermissionDecision.ts b/codex-rs/app-server-protocol/schema/typescript/v2/FrinkToolPermissionDecision.ts
 new file mode 100644
-index 000000000..a2f78f0ce
+index 0000000000000000000000000000000000000000..a2f78f0ce9636a1e19b001ff10b91531f38c2aca
 --- /dev/null
 +++ b/codex-rs/app-server-protocol/schema/typescript/v2/FrinkToolPermissionDecision.ts
 @@ -0,0 +1,5 @@
@@ -6669,7 +6669,7 @@ index 000000000..a2f78f0ce
 +export type FrinkToolPermissionDecision = "allow" | "deny" | "defer";
 diff --git a/codex-rs/app-server-protocol/schema/typescript/v2/FrinkToolPermissionRequest.ts b/codex-rs/app-server-protocol/schema/typescript/v2/FrinkToolPermissionRequest.ts
 new file mode 100644
-index 000000000..b0b6607a4
+index 0000000000000000000000000000000000000000..b0b6607a4a2ab36cfa490a996d229b06e1ceaa5f
 --- /dev/null
 +++ b/codex-rs/app-server-protocol/schema/typescript/v2/FrinkToolPermissionRequest.ts
 @@ -0,0 +1,10 @@
@@ -6685,7 +6685,7 @@ index 000000000..b0b6607a4
 +export type FrinkToolPermissionRequest = { protocolVersion: number, threadId: string, turnId: string, itemId: string, approvalId?: string, kind: FrinkHostToolPermissionKind, toolName: string, input: JsonValue, cwd?: AbsolutePathBuf, patchEffects?: Array<FrinkPatchEffect>, mcp?: FrinkMcpIdentity, };
 diff --git a/codex-rs/app-server-protocol/schema/typescript/v2/FrinkToolPermissionResponse.ts b/codex-rs/app-server-protocol/schema/typescript/v2/FrinkToolPermissionResponse.ts
 new file mode 100644
-index 000000000..a98daafd6
+index 0000000000000000000000000000000000000000..a98daafd6110a4c21374649c97c28b4067475cce
 --- /dev/null
 +++ b/codex-rs/app-server-protocol/schema/typescript/v2/FrinkToolPermissionResponse.ts
 @@ -0,0 +1,6 @@
@@ -6696,7 +6696,7 @@ index 000000000..a98daafd6
 +
 +export type FrinkToolPermissionResponse = { decision: FrinkToolPermissionDecision, reason?: string, };
 diff --git a/codex-rs/app-server-protocol/schema/typescript/v2/index.ts b/codex-rs/app-server-protocol/schema/typescript/v2/index.ts
-index e3df4541a..c6d1b0e75 100644
+index e3df4541a4e2beac44b404f1af6fe6f7dd384b5c..c6d1b0e753be44acc7beb8988b75b823dcaeafba 100644
 --- a/codex-rs/app-server-protocol/schema/typescript/v2/index.ts
 +++ b/codex-rs/app-server-protocol/schema/typescript/v2/index.ts
 @@ -173,6 +173,12 @@ export type { FileSystemSandboxEntry } from "./FileSystemSandboxEntry";
@@ -6713,7 +6713,7 @@ index e3df4541a..c6d1b0e75 100644
  export type { FsCopyParams } from "./FsCopyParams";
  export type { FsCopyResponse } from "./FsCopyResponse";
 diff --git a/codex-rs/app-server-protocol/src/lib.rs b/codex-rs/app-server-protocol/src/lib.rs
-index eb2b76de0..23e542923 100644
+index eb2b76de07971fdc13c8a470415aa70a8a6cf120..23e5429231edea18750feaa5ceb387eed592d3e5 100644
 --- a/codex-rs/app-server-protocol/src/lib.rs
 +++ b/codex-rs/app-server-protocol/src/lib.rs
 @@ -43,6 +43,7 @@ pub use protocol::v1::GitSha;
@@ -6725,7 +6725,7 @@ index eb2b76de0..23e542923 100644
  pub use protocol::v1::LoginApiKeyParams;
  pub use protocol::v1::SandboxSettings;
 diff --git a/codex-rs/app-server-protocol/src/protocol/common.rs b/codex-rs/app-server-protocol/src/protocol/common.rs
-index 70954a3d6..fcfdfa3d8 100644
+index 70954a3d602d9f1abbbc65fcc126ad7e0db55839..fcfdfa3d89c525bd2e016e468a476212fde3958d 100644
 --- a/codex-rs/app-server-protocol/src/protocol/common.rs
 +++ b/codex-rs/app-server-protocol/src/protocol/common.rs
 @@ -1750,6 +1750,12 @@ impl TryFrom<JSONRPCRequest> for ServerRequest {
@@ -6758,7 +6758,7 @@ index 70954a3d6..fcfdfa3d8 100644
                              "thread/started".to_string(),
                              "item/agentMessage/delta".to_string(),
 diff --git a/codex-rs/app-server-protocol/src/protocol/common_tests.rs b/codex-rs/app-server-protocol/src/protocol/common_tests.rs
-index 1a10dc0e4..4d6df63b6 100644
+index 1a10dc0e492d9d08ad9e79f65edbbe34850ba246..4d6df63b6b97602b973550e4b4576d2138b9cd2a 100644
 --- a/codex-rs/app-server-protocol/src/protocol/common_tests.rs
 +++ b/codex-rs/app-server-protocol/src/protocol/common_tests.rs
 @@ -4,6 +4,29 @@ use codex_protocol::protocol::TurnAbortReason;
@@ -6907,7 +6907,7 @@ index 1a10dc0e4..4d6df63b6 100644
 +    Ok(())
 +}
 diff --git a/codex-rs/app-server-protocol/src/protocol/v1.rs b/codex-rs/app-server-protocol/src/protocol/v1.rs
-index 17013b528..ce4c67f8a 100644
+index 17013b528f92e67dcbef37731989a21dbd3d1108..ce4c67f8ab8dc4b7675a344795a55dbdef88052b 100644
 --- a/codex-rs/app-server-protocol/src/protocol/v1.rs
 +++ b/codex-rs/app-server-protocol/src/protocol/v1.rs
 @@ -63,6 +63,16 @@ pub struct InitializeCapabilities {
@@ -6936,7 +6936,7 @@ index 17013b528..ce4c67f8a 100644
  
  #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
 diff --git a/codex-rs/app-server-protocol/src/protocol/v2/item.rs b/codex-rs/app-server-protocol/src/protocol/v2/item.rs
-index f56386cae..b9f05b58b 100644
+index f56386cae66f59a1260e73d55329fa24f8b93219..b9f05b58ba0ce33c2836d65d5fcf7ddf778b1480 100644
 --- a/codex-rs/app-server-protocol/src/protocol/v2/item.rs
 +++ b/codex-rs/app-server-protocol/src/protocol/v2/item.rs
 @@ -58,6 +58,80 @@ use std::collections::HashMap;
@@ -7021,7 +7021,7 @@ index f56386cae..b9f05b58b 100644
  #[serde(rename_all = "camelCase")]
  #[ts(export_to = "v2/")]
 diff --git a/codex-rs/app-server-test-client/src/lib.rs b/codex-rs/app-server-test-client/src/lib.rs
-index 27b8a341f..e92004229 100644
+index 27b8a341fe26bdaf64c1c466367be47266e5e961..e9200422925006cbcd2f9cf5f1b9342cf4eab58b 100644
 --- a/codex-rs/app-server-test-client/src/lib.rs
 +++ b/codex-rs/app-server-test-client/src/lib.rs
 @@ -1762,6 +1762,7 @@ impl CodexClient {
@@ -7033,7 +7033,7 @@ index 27b8a341f..e92004229 100644
              },
          };
 diff --git a/codex-rs/app-server/src/bespoke_event_handling.rs b/codex-rs/app-server/src/bespoke_event_handling.rs
-index be146d82c..506739f44 100644
+index be146d82c75c86ecf31b142d2d03a7bd64098687..506739f44a60d32456df5917e566acb7c590c7ca 100644
 --- a/codex-rs/app-server/src/bespoke_event_handling.rs
 +++ b/codex-rs/app-server/src/bespoke_event_handling.rs
 @@ -29,9 +29,16 @@ use codex_app_server_protocol::DynamicToolCallParams;
@@ -7190,7 +7190,7 @@ index be146d82c..506739f44 100644
      SystemTime::now()
          .duration_since(UNIX_EPOCH)
 diff --git a/codex-rs/app-server/src/request_processors.rs b/codex-rs/app-server/src/request_processors.rs
-index 6ec3567f2..38011ded3 100644
+index 6ec3567f2fd3c4e6d7ad1aab6a93a940ecfc9bc8..38011ded3950d813f9dd5002fb24dee6a21ae93c 100644
 --- a/codex-rs/app-server/src/request_processors.rs
 +++ b/codex-rs/app-server/src/request_processors.rs
 @@ -75,6 +75,7 @@ use codex_app_server_protocol::ExperimentalFeature as ApiExperimentalFeature;
@@ -7210,7 +7210,7 @@ index 6ec3567f2..38011ded3 100644
  use codex_app_server_protocol::JSONRPCErrorError;
  use codex_app_server_protocol::ListMcpServerStatusParams;
 diff --git a/codex-rs/app-server/src/request_processors/initialize_processor.rs b/codex-rs/app-server/src/request_processors/initialize_processor.rs
-index d6c77f12e..64084504b 100644
+index d6c77f12ebadcf6d6210530bbbad2c1f7ef84061..64084504bf797f518e11737cf6beeb699d366ef0 100644
 --- a/codex-rs/app-server/src/request_processors/initialize_processor.rs
 +++ b/codex-rs/app-server/src/request_processors/initialize_processor.rs
 @@ -80,6 +80,7 @@ impl InitializeRequestProcessor {
@@ -7242,7 +7242,7 @@ index d6c77f12e..64084504b 100644
  
          self.outgoing
 diff --git a/codex-rs/app-server/tests/suite/v2/attestation.rs b/codex-rs/app-server/tests/suite/v2/attestation.rs
-index 8b6b30b51..a47aeef3b 100644
+index 8b6b30b5196d9df5b3a8c5fa8649980e683a9c79..a47aeef3b2ab399152eb2d0c0732b31e7e3c3f9f 100644
 --- a/codex-rs/app-server/tests/suite/v2/attestation.rs
 +++ b/codex-rs/app-server/tests/suite/v2/attestation.rs
 @@ -85,6 +85,7 @@ async fn attestation_generate_round_trip_adds_header_to_responses_websocket_hand
@@ -7254,7 +7254,7 @@ index 8b6b30b51..a47aeef3b 100644
              }),
          ),
 diff --git a/codex-rs/app-server/tests/suite/v2/experimental_api.rs b/codex-rs/app-server/tests/suite/v2/experimental_api.rs
-index 70abf5a37..1b91237d3 100644
+index 70abf5a372a9fa2fa0b55fb5916e664d4096fb3d..1b91237d3bd15a10c3de08accc2edf17ee7fa302 100644
 --- a/codex-rs/app-server/tests/suite/v2/experimental_api.rs
 +++ b/codex-rs/app-server/tests/suite/v2/experimental_api.rs
 @@ -44,6 +44,7 @@ async fn mock_experimental_method_requires_experimental_api_capability() -> Resu
@@ -7322,7 +7322,7 @@ index 70abf5a37..1b91237d3 100644
              }),
          )
 diff --git a/codex-rs/app-server/tests/suite/v2/initialize.rs b/codex-rs/app-server/tests/suite/v2/initialize.rs
-index 923bb4153..9c3b772c8 100644
+index 923bb4153594c943120deff90c9b4225b9c05aa9..9c3b772c85b339f2a0b66aad2d9ce5cf554524c7 100644
 --- a/codex-rs/app-server/tests/suite/v2/initialize.rs
 +++ b/codex-rs/app-server/tests/suite/v2/initialize.rs
 @@ -59,6 +59,7 @@ async fn initialize_uses_client_info_name_as_originator() -> Result<()> {
@@ -7350,7 +7350,7 @@ index 923bb4153..9c3b772c8 100644
              }),
          ),
 diff --git a/codex-rs/app-server/tests/suite/v2/mcp_tool.rs b/codex-rs/app-server/tests/suite/v2/mcp_tool.rs
-index 8c884a61d..841e3352d 100644
+index 8c884a61dcdff3ffae8f6e3fb795c5bbbfa64a1f..841e3352d21a92ac90aa1658bf4bc4ff028aa049 100644
 --- a/codex-rs/app-server/tests/suite/v2/mcp_tool.rs
 +++ b/codex-rs/app-server/tests/suite/v2/mcp_tool.rs
 @@ -262,6 +262,7 @@ async fn mcp_server_tool_call_forwards_only_server_extensions() -> Result<()> {
@@ -7370,7 +7370,7 @@ index 8c884a61d..841e3352d 100644
              extensions: Some(std::collections::HashMap::from([(
                  "io.modelcontextprotocol/ui".to_string(),
 diff --git a/codex-rs/app-server/tests/suite/v2/thread_revert.rs b/codex-rs/app-server/tests/suite/v2/thread_revert.rs
-index a8a9cc8a4..d057131b2 100644
+index a8a9cc8a493e1aedb7d7973d0778f465cf6bb5e6..d057131b280aa8e6a610250c96fa3a9ac373e027 100644
 --- a/codex-rs/app-server/tests/suite/v2/thread_revert.rs
 +++ b/codex-rs/app-server/tests/suite/v2/thread_revert.rs
 @@ -659,6 +659,7 @@ async fn initialize_experimental(mcp: &mut TestAppServer) -> Result<()> {
@@ -7382,7 +7382,7 @@ index a8a9cc8a4..d057131b2 100644
              }),
          ),
 diff --git a/codex-rs/app-server/tests/suite/v2/thread_status.rs b/codex-rs/app-server/tests/suite/v2/thread_status.rs
-index 9c51958f9..08dea17ab 100644
+index 9c51958f970dacc55b742fa77388f36db7a45ac0..08dea17abfd80fe4afe005e6d1a5e2fc75524b0b 100644
 --- a/codex-rs/app-server/tests/suite/v2/thread_status.rs
 +++ b/codex-rs/app-server/tests/suite/v2/thread_status.rs
 @@ -152,6 +152,7 @@ async fn thread_status_changed_can_be_opted_out() -> Result<()> {
@@ -7394,7 +7394,7 @@ index 9c51958f9..08dea17ab 100644
              }),
          ),
 diff --git a/codex-rs/config/src/merge.rs b/codex-rs/config/src/merge.rs
-index 15fde6a..be2dccb 100644
+index 15fde6a37ce2b83dad1f641831a698b216403482..be2dccb632047236404ea5ac147c1686a69b15ad 100644
 --- a/codex-rs/config/src/merge.rs
 +++ b/codex-rs/config/src/merge.rs
 @@ -72,7 +72,33 @@ pub fn is_structured_feature_path<S: AsRef<str>>(path: &[S]) -> bool {
@@ -7440,7 +7440,7 @@ index 15fde6a..be2dccb 100644
              }
              path.pop();
 diff --git a/codex-rs/config/src/merge_tests.rs b/codex-rs/config/src/merge_tests.rs
-index 024d263..59d85ac 100644
+index 024d2639fd4fd1b3bde7bb9830d7850d559db7b9..59d85ac5a173b4394dd187f0290095e2f2868c1e 100644
 --- a/codex-rs/config/src/merge_tests.rs
 +++ b/codex-rs/config/src/merge_tests.rs
 @@ -690,3 +690,239 @@ exclude = []
@@ -7684,7 +7684,7 @@ index 024d263..59d85ac 100644
 +    assert_eq!(base, overlay);
 +}
 diff --git a/codex-rs/core/src/codex_thread.rs b/codex-rs/core/src/codex_thread.rs
-index 7177740fe..1b4c6d278 100644
+index 7177740feae69c44bd7c15ee98f8c526ce5d9682..1b4c6d278c056da243eb97fc257ad816b852d7c6 100644
 --- a/codex-rs/core/src/codex_thread.rs
 +++ b/codex-rs/core/src/codex_thread.rs
 @@ -67,6 +67,7 @@ use codex_utils_absolute_path::AbsolutePathBuf;
@@ -7889,7 +7889,7 @@ index 7177740fe..1b4c6d278 100644
 +}
 diff --git a/codex-rs/core/src/frink_host_permissions.rs b/codex-rs/core/src/frink_host_permissions.rs
 new file mode 100644
-index 000000000..41fbd41bb
+index 0000000000000000000000000000000000000000..41fbd41bbdc2395c5d1cee281a6f8f278c5108b0
 --- /dev/null
 +++ b/codex-rs/core/src/frink_host_permissions.rs
 @@ -0,0 +1,31 @@
@@ -7925,7 +7925,7 @@ index 000000000..41fbd41bb
 +    }
 +}
 diff --git a/codex-rs/core/src/lib.rs b/codex-rs/core/src/lib.rs
-index 55d1f474e..45624ac8d 100644
+index 55d1f474e51b33b0ecfdede491ba2beb72741037..45624ac8d2942d965d485d631a160dfcca9294e8 100644
 --- a/codex-rs/core/src/lib.rs
 +++ b/codex-rs/core/src/lib.rs
 @@ -64,6 +64,7 @@ mod environment_selection;
@@ -7937,7 +7937,7 @@ index 55d1f474e..45624ac8d 100644
  mod git_info_tests;
  mod guardian;
 diff --git a/codex-rs/core/src/mcp_tool_call.rs b/codex-rs/core/src/mcp_tool_call.rs
-index d4f8211d5..7ceb74f28 100644
+index d4f8211d598f4f480e8a146d37330ba9e13ceb32..7ceb74f289a9f053e22d7a4884f50d1876bf7290 100644
 --- a/codex-rs/core/src/mcp_tool_call.rs
 +++ b/codex-rs/core/src/mcp_tool_call.rs
 @@ -6,6 +6,7 @@ use crate::config::Config;
@@ -8303,7 +8303,7 @@ index d4f8211d5..7ceb74f28 100644
          &config.config_layer_stack,
          step_context
 diff --git a/codex-rs/core/src/mcp_tool_call_tests.rs b/codex-rs/core/src/mcp_tool_call_tests.rs
-index 3b44bafec..467ca6f69 100644
+index 3b44bafecd5f5a057d598ea0fbd6a63476461151..467ca6f6965b62bdff1f55fc143b5211e50184f0 100644
 --- a/codex-rs/core/src/mcp_tool_call_tests.rs
 +++ b/codex-rs/core/src/mcp_tool_call_tests.rs
 @@ -1165,7 +1165,8 @@ async fn mcp_tool_call_request_meta_includes_turn_metadata_for_custom_server() {
@@ -8435,7 +8435,7 @@ index 3b44bafec..467ca6f69 100644
  fn approval_elicitation_meta_includes_connector_source_for_codex_apps() {
      assert_eq!(
 diff --git a/codex-rs/core/src/session/mod.rs b/codex-rs/core/src/session/mod.rs
-index 98bfa792b..05680a8a9 100644
+index 98bfa792b2843b940e2aecadea54f1b80df0d199..05680a8a9240a1f08010730689e1b6568bae68da 100644
 --- a/codex-rs/core/src/session/mod.rs
 +++ b/codex-rs/core/src/session/mod.rs
 @@ -355,6 +355,10 @@ use codex_protocol::protocol::DeprecationNoticeEvent;
@@ -8713,7 +8713,7 @@ index 98bfa792b..05680a8a9 100644
              }
              separate_developer_sections.push(
 diff --git a/codex-rs/core/src/session/tests.rs b/codex-rs/core/src/session/tests.rs
-index aa828752a..fd17f7536 100644
+index aa828752a3dd491e5d874a97a5b575819b4e6d0e..fd17f7536418cc68e1ec0fa2e3bb35c07b0a6f98 100644
 --- a/codex-rs/core/src/session/tests.rs
 +++ b/codex-rs/core/src/session/tests.rs
 @@ -1454,6 +1454,7 @@ async fn danger_full_access_tool_attempts_do_not_enforce_managed_network() -> an
@@ -8768,7 +8768,7 @@ index aa828752a..fd17f7536 100644
  async fn workspace_write_turns_continue_to_expose_managed_network_proxy() -> anyhow::Result<()> {
      let permission_profile = PermissionProfile::workspace_write();
 diff --git a/codex-rs/core/src/session/tests/guardian_tests.rs b/codex-rs/core/src/session/tests/guardian_tests.rs
-index 5a4c79a98..fe0e4e9ee 100644
+index 5a4c79a98aac8e75f035d350867b7ec49aa44898..fe0e4e9ee42532a0b5c2b7d6d04200b65913b257 100644
 --- a/codex-rs/core/src/session/tests/guardian_tests.rs
 +++ b/codex-rs/core/src/session/tests/guardian_tests.rs
 @@ -985,7 +985,12 @@ async fn sandbox_denied_retry_uses_the_action_policy_and_reviewer() {
@@ -8786,7 +8786,7 @@ index 5a4c79a98..fe0e4e9ee 100644
      );
      assert_eq!(
 diff --git a/codex-rs/core/src/session/turn.rs b/codex-rs/core/src/session/turn.rs
-index 5d5fa3a0a..6b96fcd64 100644
+index 5d5fa3a0aa34e4e1c0bd11e5fc54fa49b543d1ea..6b96fcd64408a75e1b24f01c874feb9cb79f061c 100644
 --- a/codex-rs/core/src/session/turn.rs
 +++ b/codex-rs/core/src/session/turn.rs
 @@ -2035,6 +2035,7 @@ pub(super) fn realtime_text_for_event(msg: &EventMsg) -> Option<(String, Option<
@@ -8798,7 +8798,7 @@ index 5d5fa3a0a..6b96fcd64 100644
          | EventMsg::DynamicToolCallResponse(_)
          | EventMsg::GuardianAssessment(_)
 diff --git a/codex-rs/core/src/state/turn.rs b/codex-rs/core/src/state/turn.rs
-index b03dbf737..9165c0897 100644
+index b03dbf737fa9f1e642ec0d9bb7386083bf35c945..9165c0897d97958b71c79c9eb82459fcdcf225bf 100644
 --- a/codex-rs/core/src/state/turn.rs
 +++ b/codex-rs/core/src/state/turn.rs
 @@ -18,6 +18,7 @@ use rmcp::model::RequestId;
@@ -8843,7 +8843,7 @@ index b03dbf737..9165c0897 100644
          self.pending_user_input.clear();
          self.pending_elicitations.clear();
 diff --git a/codex-rs/core/src/tools/approvals.rs b/codex-rs/core/src/tools/approvals.rs
-index 8675ead36..9ae057b3e 100644
+index 8675ead36dbae60c3717da3c1d302a2ae534a728..9ae057b3ef48a089cea9005467b30e8e66ae64a5 100644
 --- a/codex-rs/core/src/tools/approvals.rs
 +++ b/codex-rs/core/src/tools/approvals.rs
 @@ -501,15 +501,25 @@ impl Session {
@@ -8878,7 +8878,7 @@ index 8675ead36..9ae057b3e 100644
          // Network approvals record their final telemetry after validation and persistence.
          if !is_network_approval {
 diff --git a/codex-rs/core/src/tools/approvals_tests.rs b/codex-rs/core/src/tools/approvals_tests.rs
-index 4ecd7460b..c729b0914 100644
+index 4ecd7460bf58d50dbdb32446568e09b90519d220..c729b09143ebfb162040cce7973067012786f59b 100644
 --- a/codex-rs/core/src/tools/approvals_tests.rs
 +++ b/codex-rs/core/src/tools/approvals_tests.rs
 @@ -235,3 +235,241 @@ async fn explicit_mcp_reviewer_override_takes_precedence_over_action_context() {
@@ -9124,7 +9124,7 @@ index 4ecd7460b..c729b0914 100644
 +    Ok(())
 +}
 diff --git a/codex-rs/core/src/tools/events.rs b/codex-rs/core/src/tools/events.rs
-index 8da8b0528..2ed63c1c8 100644
+index 8da8b052889b84bd18af69e9be729e1e350140ad..2ed63c1c89cbfa5233c093b6e527db598b7a66aa 100644
 --- a/codex-rs/core/src/tools/events.rs
 +++ b/codex-rs/core/src/tools/events.rs
 @@ -378,6 +378,24 @@ impl ToolEmitter {
@@ -9222,7 +9222,7 @@ index 8da8b0528..2ed63c1c8 100644
      async fn net_zero_patch_emits_empty_turn_diff() {
          let (session, turn, rx_event) =
 diff --git a/codex-rs/core/src/tools/handlers/apply_patch.rs b/codex-rs/core/src/tools/handlers/apply_patch.rs
-index 5ab666628..32d45bb64 100644
+index 5ab6666283044a903710be5c1e6ce068098f7c10..32d45bb64583919f4b0c5e5edbbff292344e5d3c 100644
 --- a/codex-rs/core/src/tools/handlers/apply_patch.rs
 +++ b/codex-rs/core/src/tools/handlers/apply_patch.rs
 @@ -8,6 +8,7 @@ use tokio_util::sync::CancellationToken;
@@ -9363,7 +9363,7 @@ index 5ab666628..32d45bb64 100644
          .map(|result| result.output);
      let (result, delta) = match result {
 diff --git a/codex-rs/core/src/tools/handlers/apply_patch_tests.rs b/codex-rs/core/src/tools/handlers/apply_patch_tests.rs
-index f2c07293c..53730c2fb 100644
+index f2c07293cd14a7c108c87cec24a0f150ffd5122e..53730c2fb72d321505f045acdf919d2ef93cdc6b 100644
 --- a/codex-rs/core/src/tools/handlers/apply_patch_tests.rs
 +++ b/codex-rs/core/src/tools/handlers/apply_patch_tests.rs
 @@ -42,6 +42,15 @@ fn sample_patch() -> &'static str {
@@ -9406,7 +9406,7 @@ index f2c07293c..53730c2fb 100644
  
  #[test]
 diff --git a/codex-rs/core/src/tools/handlers/mcp_resource.rs b/codex-rs/core/src/tools/handlers/mcp_resource.rs
-index d6577f30d..897607254 100644
+index d6577f30d6797f8ab5f5323eb9794d3cf074f224..89760725495f38a08b7a592c8c5fdc5b6f4ddcfb 100644
 --- a/codex-rs/core/src/tools/handlers/mcp_resource.rs
 +++ b/codex-rs/core/src/tools/handlers/mcp_resource.rs
 @@ -24,6 +24,7 @@ use serde::Deserialize;
@@ -9580,7 +9580,7 @@ index d6577f30d..897607254 100644
  struct ResourceWithServer<T> {
      server: String,
 diff --git a/codex-rs/core/src/tools/handlers/mcp_resource/list_mcp_resource_templates.rs b/codex-rs/core/src/tools/handlers/mcp_resource/list_mcp_resource_templates.rs
-index 46a9297cc..372e973eb 100644
+index 46a9297cc03f0bb00d6721f9c173c937146d0fe0..372e973ebe5fd032ad716fa0f85d46042c38ee55 100644
 --- a/codex-rs/core/src/tools/handlers/mcp_resource/list_mcp_resource_templates.rs
 +++ b/codex-rs/core/src/tools/handlers/mcp_resource/list_mcp_resource_templates.rs
 @@ -10,10 +10,15 @@ use codex_tools::ToolSpec;
@@ -9647,7 +9647,7 @@ index 46a9297cc..372e973eb 100644
                      server_name,
                      result,
 diff --git a/codex-rs/core/src/tools/handlers/mcp_resource/list_mcp_resources.rs b/codex-rs/core/src/tools/handlers/mcp_resource/list_mcp_resources.rs
-index ea39895d3..ad722bee3 100644
+index ea39895d3048a0c1b1f78be7e6e1cfacf837adb1..ad722bee39b29c0bd1f119f3a34b11c80e3ca259 100644
 --- a/codex-rs/core/src/tools/handlers/mcp_resource/list_mcp_resources.rs
 +++ b/codex-rs/core/src/tools/handlers/mcp_resource/list_mcp_resources.rs
 @@ -10,10 +10,15 @@ use codex_tools::ToolSpec;
@@ -9710,7 +9710,7 @@ index ea39895d3..ad722bee3 100644
                      server_name,
                      result,
 diff --git a/codex-rs/core/src/tools/handlers/mcp_resource/read_mcp_resource.rs b/codex-rs/core/src/tools/handlers/mcp_resource/read_mcp_resource.rs
-index 8a5ac7f32..b6fc26755 100644
+index 8a5ac7f324edb78f0efc196906999a13a9bbcc0c..b6fc267553c492c06572aa0a3a558340be4f6b02 100644
 --- a/codex-rs/core/src/tools/handlers/mcp_resource/read_mcp_resource.rs
 +++ b/codex-rs/core/src/tools/handlers/mcp_resource/read_mcp_resource.rs
 @@ -10,13 +10,17 @@ use codex_tools::ToolSpec;
@@ -9762,7 +9762,7 @@ index 8a5ac7f32..b6fc26755 100644
              Ok(ReadResourcePayload {
                  server,
 diff --git a/codex-rs/core/src/tools/handlers/unified_exec/exec_command.rs b/codex-rs/core/src/tools/handlers/unified_exec/exec_command.rs
-index 37c0f3c82..635e26b1a 100644
+index 37c0f3c823aecafbe9b182288ccd18ddc39bf651..635e26b1a7b92d6e5b6f3d324b0b5b00e9c31fb1 100644
 --- a/codex-rs/core/src/tools/handlers/unified_exec/exec_command.rs
 +++ b/codex-rs/core/src/tools/handlers/unified_exec/exec_command.rs
 @@ -4,12 +4,15 @@ use std::time::Duration;
@@ -9856,7 +9856,7 @@ index 37c0f3c82..635e26b1a 100644
              prefix_rule,
          };
 diff --git a/codex-rs/core/src/tools/handlers/unified_exec/write_stdin.rs b/codex-rs/core/src/tools/handlers/unified_exec/write_stdin.rs
-index 5f9d9cf8c..13881eed5 100644
+index 5f9d9cf8ca424a177d3f79b773a9f4838d10e8ed..13881eed57e775004016cd2190e92392a82d5c24 100644
 --- a/codex-rs/core/src/tools/handlers/unified_exec/write_stdin.rs
 +++ b/codex-rs/core/src/tools/handlers/unified_exec/write_stdin.rs
 @@ -1,3 +1,4 @@
@@ -10021,7 +10021,7 @@ index 5f9d9cf8c..13881eed5 100644
          Ok(boxed_tool_output(response))
      }
 diff --git a/codex-rs/core/src/tools/handlers/unified_exec_tests.rs b/codex-rs/core/src/tools/handlers/unified_exec_tests.rs
-index f75b57d21..a4421eb2c 100644
+index f75b57d213869048813a2ebf8da8f49ac69eb32f..a4421eb2cfed7fdb5d78b73ac09573c7da998ad1 100644
 --- a/codex-rs/core/src/tools/handlers/unified_exec_tests.rs
 +++ b/codex-rs/core/src/tools/handlers/unified_exec_tests.rs
 @@ -26,6 +26,22 @@ use tokio::sync::Mutex;
@@ -10048,7 +10048,7 @@ index f75b57d21..a4421eb2c 100644
      tool_name: &str,
      call_id: &str,
 diff --git a/codex-rs/core/src/tools/mod.rs b/codex-rs/core/src/tools/mod.rs
-index 7a65bc95a..5a222ac19 100644
+index 7a65bc95a3fdf6191d8c5d779efa875886d1b9d9..5a222ac19b13be28f81a9e99db3ceade1fba00f0 100644
 --- a/codex-rs/core/src/tools/mod.rs
 +++ b/codex-rs/core/src/tools/mod.rs
 @@ -79,15 +79,42 @@ pub(crate) fn requested_tool_mode(turn_context: &TurnContext, model_info: &Model
@@ -10099,7 +10099,7 @@ index 7a65bc95a..5a222ac19 100644
  /// Format the combined exec output for sending back to the model.
  /// Includes exit code and duration metadata; truncates large bodies safely.
 diff --git a/codex-rs/core/src/tools/orchestrator.rs b/codex-rs/core/src/tools/orchestrator.rs
-index ec5be4612..6af7650e8 100644
+index ec5be4612536a335d7f6bb859c3d7ee3029497ac..6af7650e8683b1b5099aece9a51b33059a1fbabc 100644
 --- a/codex-rs/core/src/tools/orchestrator.rs
 +++ b/codex-rs/core/src/tools/orchestrator.rs
 @@ -39,6 +39,49 @@ use std::time::Instant;
@@ -10290,7 +10290,7 @@ index ec5be4612..6af7650e8 100644
                          retry_reason: Some(retry_reason),
                          network_approval_context: network_approval_context.clone(),
 diff --git a/codex-rs/core/src/unified_exec/mod.rs b/codex-rs/core/src/unified_exec/mod.rs
-index 8dc8f359d..15520bfe8 100644
+index 8dc8f359d4e09cc5db417a67e2923b80323a59c9..15520bfe8cb843fa1264b20bdf8e4b1fa30080d6 100644
 --- a/codex-rs/core/src/unified_exec/mod.rs
 +++ b/codex-rs/core/src/unified_exec/mod.rs
 @@ -45,6 +45,7 @@ use crate::session::turn_context::TurnContext;
@@ -10352,7 +10352,7 @@ index 8dc8f359d..15520bfe8 100644
  
  impl Default for UnifiedExecProcessManager {
 diff --git a/codex-rs/core/src/unified_exec/mod_tests.rs b/codex-rs/core/src/unified_exec/mod_tests.rs
-index a6f488689..214a617b7 100644
+index a6f488689be66b09c4bb7bfc9e0d0cf7c43d9040..214a617b740c8d899152b0dcd236c5aed8d58c81 100644
 --- a/codex-rs/core/src/unified_exec/mod_tests.rs
 +++ b/codex-rs/core/src/unified_exec/mod_tests.rs
 @@ -590,6 +590,118 @@ async fn reusing_completed_process_returns_unknown_process() -> anyhow::Result<(
@@ -10475,7 +10475,7 @@ index a6f488689..214a617b7 100644
  async fn terminating_initial_exec_command_rechecks_initial_response_state() -> anyhow::Result<()> {
      let (session, turn) = test_session_and_turn().await;
 diff --git a/codex-rs/core/src/unified_exec/process_manager.rs b/codex-rs/core/src/unified_exec/process_manager.rs
-index c04c1a897..3f8957413 100644
+index c04c1a897a4e97a852181a203113c513c722b350..3f8957413e795e0e21763b9ebcabe1b90e1ed8e0 100644
 --- a/codex-rs/core/src/unified_exec/process_manager.rs
 +++ b/codex-rs/core/src/unified_exec/process_manager.rs
 @@ -54,6 +54,7 @@ use crate::unified_exec::UnifiedExecContext;
@@ -10558,7 +10558,7 @@ index c04c1a897..3f8957413 100644
              .map(|result| (result.output, result.deferred_network_approval))
              .map_err(|err| match err {
 diff --git a/codex-rs/core/src/unified_exec/process_manager_tests.rs b/codex-rs/core/src/unified_exec/process_manager_tests.rs
-index 29f9e8839..c20b5a9f0 100644
+index 29f9e8839cd1ffa5d05e7879ee5042c2c4934a56..c20b5a9f0dbb73f9ceeb3513fb10dfdf8fac8d50 100644
 --- a/codex-rs/core/src/unified_exec/process_manager_tests.rs
 +++ b/codex-rs/core/src/unified_exec/process_manager_tests.rs
 @@ -460,6 +460,7 @@ async fn failed_initial_end_for_unstored_process_uses_fallback_output() {
@@ -10570,7 +10570,7 @@ index 29f9e8839..c20b5a9f0 100644
          prefix_rule: None,
      };
 diff --git a/codex-rs/exec/src/lib.rs b/codex-rs/exec/src/lib.rs
-index c7c54fe83..31f8c0adf 100644
+index c7c54fe8339c67c4287e10c2deb1bda45d6d5434..31f8c0adf44e9987afd4c32a1a5c8aef2d5b14c9 100644
 --- a/codex-rs/exec/src/lib.rs
 +++ b/codex-rs/exec/src/lib.rs
 @@ -2108,6 +2108,18 @@ async fn handle_server_request(
@@ -10593,7 +10593,7 @@ index c7c54fe83..31f8c0adf 100644
  
      if let Err(err) = handle_result {
 diff --git a/codex-rs/hooks/src/engine/discovery.rs b/codex-rs/hooks/src/engine/discovery.rs
-index 5003dbd24..991cf2f7b 100644
+index 5003dbd24f081d1bc56a2f897fa51ef557a8caab..991cf2f7b0bf4650aa847171a40d01a7fc792782 100644
 --- a/codex-rs/hooks/src/engine/discovery.rs
 +++ b/codex-rs/hooks/src/engine/discovery.rs
 @@ -675,8 +675,11 @@ fn append_matcher_groups(
@@ -10668,7 +10668,7 @@ index 5003dbd24..991cf2f7b 100644
      #[test]
      fn pre_tool_use_treats_star_matcher_as_match_all() {
 diff --git a/codex-rs/protocol/src/approvals.rs b/codex-rs/protocol/src/approvals.rs
-index 3325a9053..fbcecc438 100644
+index 3325a905396e6d0ccd8151a95a8599859fa636f1..fbcecc438ac950b9c89e68125f4713d5fb594b86 100644
 --- a/codex-rs/protocol/src/approvals.rs
 +++ b/codex-rs/protocol/src/approvals.rs
 @@ -333,6 +333,54 @@ pub struct ExecApprovalRequestEvent {
@@ -10727,7 +10727,7 @@ index 3325a9053..fbcecc438 100644
      pub fn effective_approval_id(&self) -> String {
          self.approval_id
 diff --git a/codex-rs/protocol/src/protocol.rs b/codex-rs/protocol/src/protocol.rs
-index e25cce88a..73cda0228 100644
+index e25cce88a059b6497f0519c30dbb0bcdcf18d9cd..73cda0228b3c05144e57b6e80c77b82485d2872e 100644
 --- a/codex-rs/protocol/src/protocol.rs
 +++ b/codex-rs/protocol/src/protocol.rs
 @@ -84,6 +84,10 @@ pub use crate::approvals::ApplyPatchApprovalRequestEvent;
@@ -10751,7 +10751,7 @@ index e25cce88a..73cda0228 100644
  
      RequestUserInput(RequestUserInputEvent),
 diff --git a/codex-rs/rollout-trace/src/protocol_event.rs b/codex-rs/rollout-trace/src/protocol_event.rs
-index dadc4bb0a..3cff4e3bb 100644
+index dadc4bb0acf9563cf2c39156ac129ac2fba5a4e0..3cff4e3bb25c7c76cdebc7debfa01e15facdeed4 100644
 --- a/codex-rs/rollout-trace/src/protocol_event.rs
 +++ b/codex-rs/rollout-trace/src/protocol_event.rs
 @@ -402,6 +402,7 @@ pub(crate) fn tool_runtime_trace_event(event: &EventMsg) -> Option<ToolRuntimeTr
@@ -10771,7 +10771,7 @@ index dadc4bb0a..3cff4e3bb 100644
          | EventMsg::RequestUserInput(_)
          | EventMsg::DynamicToolCallRequest(_)
 diff --git a/codex-rs/rollout/src/policy.rs b/codex-rs/rollout/src/policy.rs
-index c82b5ce95..62bab82fe 100644
+index c82b5ce958c81b10c57d829951bf8fdee7efef6e..62bab82fec43823a97b93d0d7cf6fa390d508752 100644
 --- a/codex-rs/rollout/src/policy.rs
 +++ b/codex-rs/rollout/src/policy.rs
 @@ -174,6 +174,7 @@ pub fn should_persist_event_msg(ev: &EventMsg, history_mode: ThreadHistoryMode)
@@ -10783,7 +10783,7 @@ index c82b5ce95..62bab82fe 100644
          | EventMsg::RequestUserInput(_)
          | EventMsg::ElicitationRequest(_)
 diff --git a/codex-rs/tui/src/app/app_server_event_targets.rs b/codex-rs/tui/src/app/app_server_event_targets.rs
-index 0054f7924..a00defd04 100644
+index 0054f79248a4076e0a9eef531cd6763523d03c86..a00defd04630c773928084911888c0f4fac5b12b 100644
 --- a/codex-rs/tui/src/app/app_server_event_targets.rs
 +++ b/codex-rs/tui/src/app/app_server_event_targets.rs
 @@ -27,6 +27,9 @@ pub(super) fn server_request_thread_id(request: &ServerRequest) -> Option<Thread
@@ -10797,7 +10797,7 @@ index 0054f7924..a00defd04 100644
          | ServerRequest::AttestationGenerate { .. }
          | ServerRequest::ApplyPatchApproval { .. }
 diff --git a/codex-rs/tui/src/app/app_server_requests.rs b/codex-rs/tui/src/app/app_server_requests.rs
-index 1c6a9b00f..5c9e8f81c 100644
+index 1c6a9b00f65710643a292366a154d0b853d0af6a..5c9e8f81c03dff42296663bb1998eb0bc5af523f 100644
 --- a/codex-rs/tui/src/app/app_server_requests.rs
 +++ b/codex-rs/tui/src/app/app_server_requests.rs
 @@ -188,6 +188,12 @@ impl PendingAppServerRequests {
@@ -10822,7 +10822,7 @@ index 1c6a9b00f..5c9e8f81c 100644
              | ServerRequest::ExecCommandApproval { .. } => false,
          }
 diff --git a/codex-rs/tui/src/app/side.rs b/codex-rs/tui/src/app/side.rs
-index b1e56429b..4e9a09441 100644
+index b1e56429b0afa7a6032a6849de50b1c7256ad855..4e9a09441a68f7c16d6873843932549038cf91f7 100644
 --- a/codex-rs/tui/src/app/side.rs
 +++ b/codex-rs/tui/src/app/side.rs
 @@ -102,6 +102,7 @@ impl SideParentStatus {
@@ -10834,7 +10834,7 @@ index b1e56429b..4e9a09441 100644
          }
      }
 diff --git a/codex-rs/tui/src/chatwidget/protocol_requests.rs b/codex-rs/tui/src/chatwidget/protocol_requests.rs
-index 89f78ea6e..42df5982b 100644
+index 89f78ea6e2625118e8848218dd1769c5e77afb45..42df5982bd7ce4b59cc9bdc9ad253a6fcc2175c7 100644
 --- a/codex-rs/tui/src/chatwidget/protocol_requests.rs
 +++ b/codex-rs/tui/src/chatwidget/protocol_requests.rs
 @@ -51,6 +51,7 @@ impl ChatWidget {

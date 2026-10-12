@@ -28,6 +28,16 @@ export const FIXTURE_TASK_ID = 'qa-fixture-task-1';
 export const FIXTURE_HISTORY_COMPLETED_ID = 'qavis-history-completed';
 export const FIXTURE_HISTORY_CANCELLED_ID = 'qavis-history-cancelled';
 export const FIXTURE_ACCOUNT_ID = 'qa-fixture-account-1';
+/** An empty file in the rig home that stands in for the Claude login the account's probe looks for. */
+export const FIXTURE_CLAUDE_SOURCE_MARKER = 'qa-claude-login-marker';
+
+/**
+ * The `source_path` for a file on disk. Never percent-encode: the probe checks the path exactly as
+ * stored, and the rig home has spaces in it.
+ */
+export function fixtureSourceUri(absolutePath: string): string {
+  return `file://${absolutePath}`;
+}
 export const FIXTURE_HTML_ARTIFACT_ID = 'qa-fixture-customer-message-digest';
 export const FIXTURE_HTML_ARTIFACT_TITLE = 'Customer message digest · 18–22 Aug';
 

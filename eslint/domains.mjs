@@ -14,6 +14,7 @@
 /** First-level domains under src/renderer/lib/ (renderer-process logic, by concern). */
 export const RENDERER_LIB_DOMAINS = [
   'agent-chat',
+  'analytics',
   'atoms',
   'audio',
   'code-editor',
@@ -52,9 +53,12 @@ export const MAIN_ROOT_FOLDERS = ['lib', 'windows'];
 export const MAIN_LIB_DOMAINS = [
   'agent-runner',
   'agents',
+  'analytics',
   // Per-chat composer settings (model / Auto / Fast / Thinking) main owns for every window + phone.
   'chat-composer',
   'claude',
+  // Command-line launch arguments (`frink <dir>`) parsed at startup.
+  'cli',
   'cloud',
   'commands',
   'credentials',
@@ -69,6 +73,8 @@ export const MAIN_LIB_DOMAINS = [
   'mobile',
   'permissions',
   'platform',
+  // Project creation and GitHub cloning: insert-or-adopt by path, one clone per repo.
+  'projects',
   'provider',
   'sentry',
   'skills',

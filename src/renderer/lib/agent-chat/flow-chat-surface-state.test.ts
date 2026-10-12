@@ -180,7 +180,7 @@ describe('deriveFlowChatBottomSurface', () => {
     ).toEqual({ kind: 'park' });
   });
 
-  it('a transient park (api error) keeps the composer — TaskControls owns Carry on', () => {
+  it('a transient park (api error) keeps the composer — TaskControls owns Continue / Retry', () => {
     expect(
       surface(RUN, {
         status: 'needs_attention',
@@ -195,7 +195,7 @@ describe('deriveFlowChatBottomSurface', () => {
     });
   });
 
-  it('failed keeps the composer (TaskControls owns Carry on / Retry)', () => {
+  it('failed keeps the composer (TaskControls owns Continue / Retry)', () => {
     expect(surface(RUN, { status: 'failed', result: {} })).toEqual({
       kind: 'composer',
     });
@@ -404,7 +404,7 @@ describe('getFlowSurfaceRefetchInterval', () => {
 
   // A restart-interrupted run is CANCELLED, so there is no live run and the surface shows the
   // composer + Resume. The resume itself happens in the main process (the executor's follow-up turn,
-  // or rerunRun) with no renderer invalidation — so if the poll switches off here, the run going
+  // or retryRunFromLastNode) with no renderer invalidation — so if the poll switches off here, the run going
   // live again is never observed and the composer sticks for the rest of the session.
   it('keeps polling a cancelled task with no live run, so a resume is picked up', () => {
     expect(
@@ -423,7 +423,7 @@ describe('getFlowSurfaceRefetchInterval', () => {
       null, // taskless window between two nodes
       { status: 'done', result: {} }, // the node that just finished
       { status: 'plan_ready', result: {} }, // plan gate — composer, but still live
-      { status: 'failed', result: {} }, // TaskControls' Carry on — still live
+      { status: 'failed', result: {} }, // TaskControls' Continue / Retry — still live
       { status: 'cancelled', result: {} }, // restart-interrupted — resumable, still live
       { status: 'needs_attention', result: { apiError: { status: 500 } } }, // transient park
     ];

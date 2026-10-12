@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import type { SDKBackgroundTasksChangedMessage } from '@anthropic-ai/claude-agent-sdk';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { HookRegistration } from '../../../../shared/types/hook-inventory';
 import { getTaskById } from '../../db/repos/tasks';
 import * as dynamicChatServer from '../../mcp/dynamic-chat-server';
 import { checkPermission } from '../../permissions/v2/check';
@@ -9,14 +11,14 @@ import {
   endSession,
   getSession,
 } from '../claude-session-registry';
-import { createClaudeTurnContext } from '../claude-turn-context';
+import { type ClaudeTurnContext, createClaudeTurnContext } from '../claude-turn-context';
 import * as socketClient from '../client';
-import { drainPendingPermissions } from '../executor';
+import { drainPendingPermissions } from '../streaming/pending-permission/validate-tool-permission';
 import {
   noteSubagentTaskFrame,
   setBackgroundRosterPublisher,
 } from '../streaming/subagent-task-status';
-import { getPreToolUseHook } from '../test-utils';
+import { getPreToolUseHook, type PreToolUseHook } from '../test-utils';
 import {
   expireQuestion,
   flowDriven,
@@ -31,6 +33,7 @@ import {
 import { UNCLEAN_RESULT } from './claude-turn-abort';
 import type { ExecutorPermissionHarness } from './executor-codex-permissions';
 
+type ToolCallInput = Parameters<PreToolUseHook>[0];
 type ClaudeSessionCallbackHarness = Pick<
   ExecutorPermissionHarness,
   'basePayload' | 'handleRemoteExecute'
@@ -41,10 +44,48 @@ let payload: ClaudeSessionCallbackHarness['basePayload'];
 const UNKEPT_TURN_END = [TURN_END[0], UNCLEAN_RESULT];
 const todoWrite = { hook_event_name: 'PreToolUse', tool_name: 'TodoWrite', tool_input: {} };
 const mcpShip = { hook_event_name: 'PreToolUse', tool_name: 'mcp__deploy__ship', tool_input: {} };
+const exitPlanMode = { hook_event_name: 'PreToolUse', tool_name: 'ExitPlanMode', tool_input: {} };
 // SAFETY: the seam consumes only decision/prompt; this is the dispatcher's ask shape.
 const ASK = { decision: 'ask', prompt: { reason: 'no-matching-rule' } } as Awaited<
   ReturnType<typeof checkPermission>
 >;
+
+const planInput = (text: string) => ({ planFilePath: '/mock/home/.claude/plans/p.md', plan: text });
+
+/** Binds a hook that rewrites the plan to "new", calls the gate with plan "old", and returns the
+ * gate's decision with the plan the turn submitted for review. */
+async function submitRewrittenPlan(
+  turn: ClaudeTurnContext,
+  // The shared hook type omits the SDK's signal argument, which bound hooks need.
+  gate: (...call: [ToolCallInput, string, { signal: AbortSignal }]) => ReturnType<PreToolUseHook>,
+) {
+  const output = {
+    hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: planInput('new') },
+  };
+  const hook: HookRegistration = {
+    id: 'h',
+    scope: 'project',
+    file: '/f',
+    event: 'PreToolUse',
+    label: 'h',
+    handlerType: 'command',
+    command: `printf '%s' '${JSON.stringify(output)}'`,
+    binding: { status: 'supported', ignored: [] },
+  };
+  const context = { cwd: '/tmp', sessionCwd: '/tmp', projectRoot: '/tmp', env: {} };
+  turn.execution.userHooks = { hooks: [hook], context };
+  turn.planTerminalsLocked = true;
+  const call = {
+    hook_event_name: 'PreToolUse',
+    tool_name: 'ExitPlanMode',
+    tool_input: planInput('old'),
+  };
+  const answer = await gate(call, 'tool-1', { signal: new AbortController().signal });
+  return {
+    decision: answer.hookSpecificOutput?.permissionDecision,
+    plan: turn.submittedPlan?.text,
+  };
+}
 
 /** Registers the cases proving a session's callbacks act only for the turn attached to the session
  * they were spawned for: none attached denies tools, and a successor's turn is never theirs. */
@@ -85,6 +126,7 @@ export function registerClaudeSessionCallbackTests(harness: ClaudeSessionCallbac
     });
 
     itGatesRosterVerdictOnLiveSession(harness);
+    itStopsOnFreshPostPlanPark(harness);
 
     // sc-2771: the signal target check must see the task the flow DRIVES; the pinned first-node
     // task is terminal, so checking it would refuse every later node's live `done`.
@@ -140,6 +182,42 @@ export function registerClaudeSessionCallbackTests(harness: ClaudeSessionCallbac
         },
         { behavior: 'allow', updatedInput: {} },
       ]);
+    });
+
+    it("starts a turn with none of the user's hooks bound, and only Frink's own callbacks", async () => {
+      const seen = vi.fn();
+      claudeQueryMock.mockImplementationOnce(async function* (input: { options: SessionOptions }) {
+        const turn = getSession(payload.subChatId)?.currentTurn;
+        if (!turn) throw new Error('no turn is attached');
+        seen({
+          bound: turn.execution.userHooks,
+          events: Object.keys(input.options.hooks),
+          gates: input.options.hooks.PreToolUse?.length,
+        });
+        yield* UNKEPT_TURN_END;
+      });
+
+      await handleRemoteExecute({ ...payload, message: 'do the work' });
+
+      expect(seen).toHaveBeenCalledExactlyOnceWith({
+        bound: undefined,
+        events: ['PreToolUse', 'Stop', 'UserPromptSubmit'],
+        gates: 2,
+      });
+    });
+
+    it('submits for review the plan a hook rewrote', async () => {
+      let submitted: unknown;
+      claudeQueryMock.mockImplementationOnce(async function* (input: { options: SessionOptions }) {
+        const turn = getSession(payload.subChatId)?.currentTurn;
+        if (!turn) throw new Error('no turn is attached');
+        submitted = await submitRewrittenPlan(turn, getPreToolUseHook(input));
+        yield* UNKEPT_TURN_END;
+      });
+
+      await handleRemoteExecute({ ...payload, message: 'plan it' });
+
+      expect(submitted).toEqual({ decision: 'deny', plan: 'new' });
     });
 
     it('canUseTool still enforces an MCP deny rule', async () => {
@@ -226,11 +304,13 @@ function itGatesRosterVerdictOnLiveSession(harness: ClaudeSessionCallbackHarness
       command: 'tail -f /tmp/x/sess1/tasks/ship9.output',
     };
     const stopWith = { ...stopInput([follower]), session_id: 'sess1' };
-    const changed = {
+    const changed: SDKBackgroundTasksChangedMessage = {
       type: 'system',
       subtype: 'background_tasks_changed',
       tasks: [{ task_id: 'tail1', task_type: 'local_bash', description: 'follow' }],
-    } as unknown as Parameters<typeof noteSubagentTaskFrame>[1];
+      uuid: randomUUID(),
+      session_id: 'sess1',
+    };
     const published: unknown[] = [];
     claudeQueryMock.mockImplementationOnce(async function* (input: { options: SessionOptions }) {
       const session = getSession(payload.subChatId);
@@ -252,5 +332,44 @@ function itGatesRosterVerdictOnLiveSession(harness: ClaudeSessionCallbackHarness
     setBackgroundRosterPublisher(null);
 
     expect(published).toEqual([0, { subChatId: payload.subChatId, tasks: [] }]);
+  });
+}
+
+/** An auto-approve plan node that parked while drafting may still park genuinely after its plan;
+ * chasing that second park pushed agents to flip a correct pause into `blocked`. */
+function itStopsOnFreshPostPlanPark(harness: ClaudeSessionCallbackHarness): void {
+  const { claudeQueryMock, handleRemoteExecute } = harness;
+  it('a turn past its plan is chased off its drafting park but stops on a fresh one', async () => {
+    const decisions: unknown[] = [];
+    const draftingPark = { state: 'awaiting_input' as const, summary: 'Which API?', at: 'now' };
+    const latestSignal = vi.mocked(dynamicChatServer.getLatestTaskSignal);
+    mcpMounted(true);
+    pinTask('task-plan-node');
+    claudeQueryMock.mockImplementationOnce(async function* (input: { options: SessionOptions }) {
+      const stop = input.options.hooks.Stop[0].hooks[0];
+      const turn = getSession(payload.subChatId)?.currentTurn;
+      if (!turn) throw new Error('no turn attached');
+      // Drafting on an auto-approve node, parked: the real PreToolUse path snapshots the park.
+      turn.planTerminalsLocked = true;
+      turn.execution = { ...turn.execution, flowPlanAutoApprove: true };
+      latestSignal.mockReturnValue(draftingPark);
+      await getPreToolUseHook(input)(exitPlanMode, 'exit-1');
+      // The executor's ExitPlanMode completion on an auto-approve node: unlock, mark submitted.
+      turn.planTerminalsLocked = false;
+      turn.planSubmitted = true;
+      decisions.push((await stop(stopInput())).decision);
+      // Same `at` on purpose: only identity tells the two parks apart.
+      latestSignal.mockReturnValue({ ...draftingPark, summary: 'Need the push branch' });
+      decisions.push((await stop(stopInput())).decision);
+      yield* UNKEPT_TURN_END;
+    });
+
+    try {
+      await handleRemoteExecute({ ...payload, message: 'implement the plan' });
+    } finally {
+      latestSignal.mockReset();
+    }
+
+    expect(decisions).toEqual(['block', undefined]);
   });
 }

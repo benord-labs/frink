@@ -2,7 +2,7 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { toast } from 'sonner';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { answerConfirm } from './sidebar-confirm-test-harness';
+import { answerConfirm } from '../../../lib/test-utils/sidebar-confirm';
 import { captureChatAction, hoisted, resetHarness, setupHarness } from './sidebar-test-harness';
 
 vi.mock('jotai', async (importOriginal) =>

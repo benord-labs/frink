@@ -9,13 +9,50 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
+const STOP_KEYS = [
+  ['Escape', { key: 'Escape' }],
+  ['Ctrl+C', { key: 'c', code: 'KeyC', ctrlKey: true }],
+  ['Cmd+Shift+Backspace', { key: 'Backspace', metaKey: true, shiftKey: true }],
+  ['Ctrl+Shift+Backspace', { key: 'Backspace', ctrlKey: true, shiftKey: true }],
+] as const;
+
 describe('KeyboardShortcutsManager', () => {
-  it.each([
-    ['Escape', { key: 'Escape' }],
-    ['Ctrl+C', { key: 'c', code: 'KeyC', ctrlKey: true }],
-    ['Cmd+Shift+Backspace', { key: 'Backspace', metaKey: true, shiftKey: true }],
-    ['Ctrl+Shift+Backspace', { key: 'Backspace', ctrlKey: true, shiftKey: true }],
-  ])(
+  it.each(STOP_KEYS)(
+    'stops a streaming chat for %s, but never while a flow run owns Stop',
+    async (_name, key) => {
+      const stop = vi.fn(async () => undefined);
+      const manager = (suppressRawStop: boolean) => (
+        <KeyboardShortcutsManager
+          isActive={true}
+          isPaneActive={true}
+          isStreaming={true}
+          pendingQuestions={null}
+          hasUnapprovedPlan={false}
+          editorRef={createRef()}
+          stop={stop}
+          handleQuestionsSkip={vi.fn(async () => undefined)}
+          handleApprovePlan={vi.fn()}
+          scrollToBottom={vi.fn()}
+          suppressRawStop={suppressRawStop}
+        />
+      );
+      const press = () =>
+        act(async () => {
+          fireEvent.keyDown(document.body, key);
+          await Promise.resolve();
+        });
+
+      const { rerender } = render(manager(true));
+      await press();
+      expect(stop).not.toHaveBeenCalled();
+
+      rerender(manager(false));
+      await press();
+      expect(stop).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each(STOP_KEYS)(
     'does not stop a streaming chat for %s while Work Queue owns shortcuts',
     async (_name, key) => {
       const stop = vi.fn(async () => undefined);
@@ -28,7 +65,6 @@ describe('KeyboardShortcutsManager', () => {
             isActive={true}
             isPaneActive={true}
             isStreaming={true}
-            subChatId="sub-chat-1"
             pendingQuestions={null}
             hasUnapprovedPlan={false}
             editorRef={createRef()}
@@ -61,7 +97,6 @@ describe('KeyboardShortcutsManager', () => {
           isActive={true}
           isPaneActive={true}
           isStreaming={true}
-          subChatId="sub-chat-1"
           pendingQuestions={null}
           hasUnapprovedPlan={false}
           editorRef={createRef()}
@@ -93,7 +128,6 @@ describe('KeyboardShortcutsManager', () => {
           isActive={true}
           isPaneActive={true}
           isStreaming={true}
-          subChatId="sub-chat-1"
           pendingQuestions={{}}
           hasUnapprovedPlan={true}
           editorRef={createRef()}
@@ -126,7 +160,6 @@ describe('KeyboardShortcutsManager', () => {
           isActive={true}
           isPaneActive={true}
           isStreaming={false}
-          subChatId="sub-chat-1"
           pendingQuestions={null}
           hasUnapprovedPlan={true}
           editorRef={createRef()}
@@ -164,7 +197,6 @@ describe('KeyboardShortcutsManager', () => {
         isActive={true}
         isPaneActive={true}
         isStreaming={false}
-        subChatId="sub-chat-1"
         pendingQuestions={null}
         hasUnapprovedPlan={true}
         editorRef={createRef()}

@@ -20,6 +20,7 @@ import {
   listRunsForStage,
   setStageRunStatus,
   setStageRunStatusIf,
+  settleStageRunFromRun,
 } from '../db/repos/batch-stage-runs';
 import {
   getBatchStage,
@@ -36,15 +37,21 @@ import {
 } from '../db/repos/flow-runs';
 import { getVersion } from '../db/repos/flow-versions';
 import type { BatchStage, BatchStageRun } from '../db/schema';
-import { captureFlowAdmissionException, withFlowResourceCleanup } from './admission/activity';
+import {
+  captureFlowAdmissionException,
+  registerBatchStageSettler,
+  withFlowResourceCleanup,
+} from './admission/activity';
 import {
   occupiedStageSlots,
   settleTerminalBatchReplay,
   StageAtConcurrencyLimitError,
+  StageRunMovedError,
 } from './admission/batch-promotion';
 import {
   type BatchCtx,
   buildCtx,
+  cascadeCancelBlockedStages,
   ctxFromRun,
   evaluateDepGate,
   maybeEmitBatchCompleted,
@@ -52,7 +59,6 @@ import {
   resolveBatchCtx,
   stageDeps,
   startableStages,
-  TERMINAL_STAGE_STATUSES,
   validateDeclaredTriggerTypes,
 } from './batch-context';
 import { mergeDependencyBranches, resolveDependencyBranches } from './batch';
@@ -61,9 +67,8 @@ import { startFlowRun } from './start';
 
 type Db = ReturnType<typeof getDatabase>;
 
-const CASCADE_ROUND_LIMIT = 50;
-
 const TERMINAL_RUN_STATUSES = new Set(['completed', 'failed', 'cancelled']);
+const TERMINAL_RUN_EVENTS = new Set(['run_completed', 'run_failed', 'run_cancelled']);
 
 /**
  * A pending BSR linked to a terminal flow_run is ambiguous begun work, not a first dispatch.
@@ -119,6 +124,7 @@ async function dispatchPendingStageRun(
       flowVersionId: ctx.flowVersionId,
       batchId: ctx.batchId,
       batchStageRunId: bsr.id,
+      batchStageId: stageId,
     });
     if (await settleTerminalBatchReplay(db, bsr, run, isReplay)) {
       // Crash-replay of an already-finished run has no new terminal event.
@@ -135,6 +141,14 @@ async function dispatchPendingStageRun(
       // stays pending and the next settle dispatches it. Captured so a hot stage is visible.
       captureFlowAdmissionException(err, 'batch-stage-slot-race');
       log.info('[BatchDispatch] stage slot taken by a resume promotion; member left pending', {
+        stageRunId: bsr.id,
+        stageId,
+      });
+      return { inFlight: 0, progressed: 0 };
+    }
+    if (err instanceof StageRunMovedError) {
+      // Reassigned to another stage mid-loop: it stays pending there and that stage dispatches it.
+      log.info('[BatchDispatch] stage run moved before dispatch; left pending', {
         stageRunId: bsr.id,
         stageId,
       });
@@ -281,39 +295,6 @@ async function promoteOneSuccessor(
   return false;
 }
 
-/**
- * Fixpoint cancel of transitively-blocked pending stages: deps all terminal
- * with at least one non-completed. One DAG layer per round; converges in
- * O(depth) rounds (cloud parity, same round cap).
- */
-async function cascadeCancelBlockedStages(db: Db, batchId: string): Promise<void> {
-  for (let round = 0; round < CASCADE_ROUND_LIMIT; round += 1) {
-    const stages = await listStagesForBatch(db, batchId);
-    const byId = new Map(stages.map((s) => [s.id, s]));
-    const blocked = stages.filter((s) => {
-      if (s.status !== 'pending') return false;
-      const deps = stageDeps(s)
-        .map((id) => byId.get(id))
-        .filter((d): d is BatchStage => Boolean(d));
-      if (deps.length === 0) return false;
-      return (
-        deps.every((d) => TERMINAL_STAGE_STATUSES.has(d.status)) &&
-        deps.some((d) => d.status !== 'completed')
-      );
-    });
-    if (blocked.length === 0) return;
-    for (const stage of blocked) {
-      if (await setStageStatusIf(db, stage.id, 'pending', 'cancelled')) {
-        await cancelUndispatchedRunsForStage(db, stage.id);
-      }
-    }
-  }
-  log.warn('[BatchDispatch] cascade cancel hit round limit — deep stages may stay pending', {
-    batchId,
-    rounds: CASCADE_ROUND_LIMIT,
-  });
-}
-
 /** Real local startBatch: promote pending root (and late-ready) stages and create actual flow_runs
  * for their BSRs. totalEnqueued counts runs genuinely dispatched. */
 export async function startFlowBatchLocal(
@@ -379,10 +360,7 @@ export async function startFlowBatchLocal(
  * BSR up by flow_run_id with an idempotencyKey fallback — the dispatch loop's
  * link UPDATE can lose the race against a fast synchronous run.
  */
-export async function onBatchRunTerminal(
-  flowRunId: string,
-  runStatus: 'completed' | 'failed' | 'cancelled',
-): Promise<void> {
+export async function onBatchRunTerminal(flowRunId: string): Promise<void> {
   const db = getDatabase();
   const run = await getFlowRun(db, flowRunId);
   if (!run?.batchId) return; // not a batch run — zero overhead for normal flows
@@ -391,13 +369,7 @@ export async function onBatchRunTerminal(
   if (!bsr && run.idempotencyKey) bsr = await getBatchStageRun(db, run.idempotencyKey);
   if (!bsr) return;
 
-  await setStageRunStatusIf(
-    db,
-    bsr.id,
-    [...ACTIVE_BSR_STATUSES],
-    runStatus === 'completed' ? 'completed' : 'failed',
-    run.id,
-  );
+  settleStageRunFromRun(db, bsr.id, run.id);
 
   const stage = await getBatchStage(db, bsr.stageId);
   if (stage?.status !== 'running') return;
@@ -406,21 +378,22 @@ export async function onBatchRunTerminal(
   await settleStage(db, stage.id, ctx);
 }
 
+registerBatchStageSettler(onBatchRunTerminal);
+
+/** No terminal event follows a reassignment, so re-drive the stages it touched: an emptied source
+ * finalizes and a target with a free slot dispatches the moved run. */
+export async function resettleStagesAfterMove(ctx: BatchCtx, stageIds: string[]): Promise<void> {
+  const db = getDatabase();
+  for (const stageId of stageIds) await settleStage(db, stageId, ctx);
+}
+
 /** Subscribe stage advancement to run-terminal events. Returns the unsubscribe. */
 export function startBatchAdvanceListener(): () => void {
   return subscribeFlowEvents((event) => {
-    if (
-      event.eventType !== 'run_completed' &&
-      event.eventType !== 'run_failed' &&
-      event.eventType !== 'run_cancelled'
-    ) {
-      return;
-    }
-    if (!event.flowRunId) return; // run_* events always carry a run id
-    const flowRunId = event.flowRunId;
-    const runStatus = event.eventType.replace('run_', '') as 'completed' | 'failed' | 'cancelled';
+    const { flowRunId } = event;
+    if (!TERMINAL_RUN_EVENTS.has(event.eventType) || !flowRunId) return;
     const advance = withFlowResourceCleanup(flowRunId, () =>
-      event.batchId ? onBatchRunTerminal(flowRunId, runStatus) : undefined,
+      event.batchId ? onBatchRunTerminal(flowRunId) : undefined,
     );
     void advance.catch((err) => {
       log.warn('[BatchDispatch] stage advance failed', { flowRunId, err });

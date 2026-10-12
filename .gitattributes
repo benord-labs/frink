@@ -1,0 +1,3 @@
+# Patches are hash-pinned or applied verbatim: check them out byte-exact on every OS, never with
+# core.autocrlf's CRLF conversion. Plain -text (not `binary`) keeps their diffs reviewable.
+*.patch -text

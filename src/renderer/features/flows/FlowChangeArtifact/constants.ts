@@ -24,6 +24,7 @@ export const PHASE_META: Record<FlowChangePhase, PhaseMeta> = {
   unchanged: { icon: CheckCircle2, label: 'Already current' },
   failed: { icon: OctagonX, label: 'Failed' },
   unconfirmed: { icon: CircleHelp, label: 'Unconfirmed' },
+  unread: { icon: CircleHelp, label: 'Result not shown' },
   denied: { icon: Ban, label: 'Not approved' },
   stale: { icon: GitCompareArrows, label: 'Out of date' },
   interrupted: { icon: CircleHelp, label: 'Unconfirmed' },

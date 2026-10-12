@@ -16,7 +16,6 @@ import { stripMessageMarkers } from '../../../shared/lib/message-markers/strip-m
 import { isUserAbortErrorMessage } from '../../../shared/lib/user-abort-error';
 import type { ChatMode } from '../../../shared/types/chat-mode';
 import type { ExecutionSettings } from '../../../shared/types/execution';
-import type { PermissionPresentation } from '../../../shared/types/permissions';
 import { runCodexAgent } from '../agent-runner';
 import { createCodexHostPermissionCheck } from '../agent-runner/codex/permissions';
 import { buildCodexDynamicChatMcpUrl } from '../agent-runner/codex/spawn-args';
@@ -37,6 +36,7 @@ import {
   claudeErrorText,
   isResumeFailureText,
 } from '../claude/stream-classifiers';
+import { recoverSpilledFlowPatchChunk } from '../claude/tool-result-spill';
 import type { MessageMetadata, UIMessageChunk } from '../claude/types';
 import {
   getClaudeCodeTokenById,
@@ -45,24 +45,11 @@ import {
 } from '../credentials';
 import { getDatabase } from '../db';
 import { getChatWithProjectAccount } from '../db/repos/chats';
-import { getProjectByPath } from '../db/repos/projects';
 import { projects as projectsTable } from '../db/schema';
 import { stageContinuationResume } from '../flows/admission/terminal-resume/continuation';
 import { createRollbackStash } from '../git/stash';
-import {
-  type FlowConsentDecision,
-  type FlowConsentRequest,
-  readFlowConsentDecision,
-} from '../mcp/flows-tools/gating/flow-invocation-consent';
 import { resolveFrinkMcpServers } from '../mcp/runtime';
 import type { createClaudeMcpConfigTransport } from '../mcp/runtime/mcp-config-transport';
-import { getOperationFromToolName } from '../permissions';
-import { isValidPermissionPresentation } from '../permissions/presentation-schema';
-import { permissionTimeoutMessage } from '../permissions/prompt-timeout';
-import { buildPermissionDecisionInput } from '../permissions/v2';
-import { checkPermission } from '../permissions/v2/check';
-import { formatDenyReason } from '../permissions/v2/deny-reason-format';
-import { persistApprovedRule } from '../permissions/v2/persist-approved-rule';
 import { captureMainMessage } from '../sentry/init';
 import {
   disposeCleanStreamEnd,
@@ -71,7 +58,6 @@ import {
   latchAbortReason,
   resolveErrorPayloadCategory,
   resumeParkedTaskInPlace,
-  reviveRestartInterruptedFlow,
   stampedErrorCategory,
 } from '../tasks';
 import { broadcastWriteToolFileChangedIpc } from '../trpc/routers/claude-file-changed';
@@ -108,11 +94,7 @@ import {
 import { armWakePump, hasWakeHold, releaseWakeHold, takeWakeHold } from './claude-wake-hold';
 import {
   type MessagePart,
-  onPermissionResponse,
-  type PermissionRequestPayload,
   sendExecuteCompleteDirect,
-  sendPermissionDismiss,
-  sendPermissionRequest,
   sendSubChatModeChange,
   sendWakeHoldChanged,
 } from './client';
@@ -139,6 +121,7 @@ import {
 import type { MessageDelivery } from './execution/message-provenance/origin';
 import { provenanceForTurn, recordProvenanceResume } from './execution/message-provenance';
 import { renderFlowBriefingSection } from './execution/prompt-prefix/flow-briefing-section';
+import { listWakeHoldSubChatIdsForChat } from './execution/wake-hold-registry-view';
 import { logAdoptedTurnEnd, turnEndMustDispose } from './execution/wake-hold-signal';
 import type { WakePump } from './execution/wake-pump-types';
 import {
@@ -157,6 +140,7 @@ import {
   getExecutionStreamEpoch,
   hasActiveExecutions,
   listExecutionsForWebContents,
+  listSubChatIdsForChat,
   setActiveExecution,
 } from './streaming/execution-registry';
 
@@ -170,9 +154,9 @@ export {
 import { extractImagePartsFromMessage, writeImagePartsToTempFiles } from './streaming/image-parts';
 import { recordLiveStreamStart } from './streaming/live-stream';
 import {
-  createPendingPermissionRequestBroker,
-  generatePermissionRequestId,
-} from './streaming/pending-permission/request';
+  hasPendingPermissionRequest,
+  validateToolPermission,
+} from './streaming/pending-permission/validate-tool-permission';
 import {
   adoptedTurnBeforePush,
   armAutoDuringPlan,
@@ -188,12 +172,10 @@ import { buildFinalPartsForPersist, emitPlanFallbackSends } from './streaming/pl
 import { resolvePlanModeChunkSuppression } from './streaming/plan-mode-suppression';
 import { buildWakeHoldIo } from './streaming/wake-hold-io';
 import { storedExecutionSettings } from '../chat-composer';
+import { beginCodexTurn, endCodexTurn, getCodexSession, setCodexSession } from './codex-session';
 
-// Provider session cache: subChatId → sessionId for native resume on follow-up messages.
-// Capped to prevent unbounded growth over long-running sessions.
-const codexSessionCache = new Map<string, string>();
-const codexSessionParentChat = new Map<string, string>();
-const SESSION_CACHE_MAX = 100;
+export { clearCodexSession } from './codex-session';
+
 export const executionAbortSources = new Map<string, string>();
 
 /**
@@ -245,7 +227,7 @@ const USER_VISIBLE_CHUNK_TYPES = new Set<UIMessageChunk['type']>([
 ]);
 
 /** Fire-and-forget persist of the first session id a stream announces — a turn that dies
- * mid-stream never reaches the finish-path persist, and Carry on then has no session to resume. */
+ * mid-stream never reaches the finish-path persist, and Continue then has no session to resume. */
 function persistEarlySessionId(subChatId: string, sessionId: string): void {
   void import('../db/repos/sub-chats')
     .then(({ updateSubChatSession }) => updateSubChatSession(getDatabase(), subChatId, sessionId))
@@ -255,33 +237,6 @@ function persistEarlySessionId(subChatId: string, sessionId: string): void {
 }
 
 const PLAN_MUTATION_TOOLS = new Set(['Write', 'Edit', 'MultiEdit']);
-
-/** Clear the cached Codex resume thread for a chat (e.g., when the chat is deleted). */
-export function clearCodexSession(chatId: string): void {
-  for (const [subChatId, parentChatId] of codexSessionParentChat.entries()) {
-    if (parentChatId !== chatId) continue;
-    codexSessionParentChat.delete(subChatId);
-    codexSessionCache.delete(subChatId);
-  }
-}
-
-/** Cache a Codex resume thread, evicting the oldest entry if at capacity. LRU: delete-then-set refreshes insertion order. */
-function setCodexSession(chatId: string, subChatId: string, sessionId: string): void {
-  const sizeBefore = codexSessionCache.size;
-  codexSessionCache.delete(subChatId); // Refresh insertion order for LRU
-  if (codexSessionCache.size >= SESSION_CACHE_MAX) {
-    const oldest = codexSessionCache.keys().next().value;
-    if (oldest) {
-      codexSessionCache.delete(oldest);
-      codexSessionParentChat.delete(oldest);
-      log.info(
-        `[Socket Executor] Session cache eviction: removed oldest subChatId=${oldest}, inserted subChatId=${subChatId} (sizeBefore=${sizeBefore}, sizeAfterEvict=${codexSessionCache.size}, max=${SESSION_CACHE_MAX})`,
-      );
-    }
-  }
-  codexSessionParentChat.set(subChatId, chatId);
-  codexSessionCache.set(subChatId, sessionId);
-}
 
 // Dynamic import for Claude SDK (ESM module)
 let cachedClaudeQuery: typeof import('@anthropic-ai/claude-agent-sdk').query | null = null;
@@ -293,195 +248,6 @@ const getClaudeQuery = async () => {
   cachedClaudeQuery = sdk.query;
   return cachedClaudeQuery;
 };
-
-// Permission Types
-// ============================================================================
-
-const permissionRequests = createPendingPermissionRequestBroker({
-  getExecutionSignal: (subChatId) => getActiveExecution(subChatId)?.controller.signal,
-  onResponse: onPermissionResponse,
-  sendDismiss: sendPermissionDismiss,
-  sendRequest: sendPermissionRequest,
-});
-export const drainPendingPermissions = permissionRequests.drain;
-export const hasPendingPermissionRequest = permissionRequests.hasPending;
-
-/**
- * Ask the user whether an agent may run a specific flow.
- *
- * Rides the existing permission transport rather than adding a second approval
- * system: same pending map, same socket event, same timeout and dismissal. It
- * runs strictly AFTER the v2 tool decision, so it can only narrow — a deny rule
- * has already blocked the call before this is reached.
- */
-export async function requestFlowInvocationConsent(
-  request: FlowConsentRequest,
-): Promise<FlowConsentDecision> {
-  const response = await permissionRequests.request(
-    {
-      chatId: request.chatId,
-      subChatId: request.subChatId,
-      requestId: generatePermissionRequestId(),
-      type: 'flow_consent',
-      path: request.flowId,
-      operation: 'flow_consent',
-      reason: `Run flow: ${request.flowName}`,
-      flowConsent: {
-        flowId: request.flowId,
-        flowName: request.flowName,
-        summary: request.summary,
-        allowOnce: request.allowOnce,
-      },
-    },
-    // `null` detaches deliberately; `undefined` would fall back to the live
-    // execution and let an ordinary next turn dismiss the card.
-    request.abortSignal ?? null,
-  );
-  return readFlowConsentDecision(response);
-}
-
-// ============================================================================
-// Permission Scope Resolution
-// ============================================================================
-
-/**
- * Validate tool permission via the v2 dispatcher for provider hooks, MCP calls,
- * and Codex host-permission requests.
- */
-export async function validateToolPermission(
-  toolName: string,
-  toolInput: Record<string, unknown>,
-  projectPath: string | undefined,
-  chatId: string,
-  subChatId: string,
-  reason?: string,
-  permissionPathOverride?: string,
-  isFlowDrivenTurn?: boolean,
-  deferAskToProvider = false,
-  executionSignal?: AbortSignal,
-  trustedFrinkOwnedMcp?: boolean,
-  mcpIdentity?: { server: string; tool: string },
-  presentation?: PermissionPresentation,
-): Promise<{ allowed: true } | { allowed: false; message: string } | { allowed: null }> {
-  if (!isValidPermissionPresentation(toolName, presentation)) {
-    log.error('[executor] Rejected invalid permission presentation', { toolName });
-    return { allowed: false, message: 'Invalid permission presentation — tool blocked' };
-  }
-
-  if (!projectPath) return { allowed: true };
-
-  // From here every tool call is decided by the permission rules, which prompt when
-  // no rule matches and deny outright when the rule store cannot be read.
-
-  // permissionPathOverride is a FILE-level remap (worktree → canonical project
-  // FILE path), not a project-root override. PATH tools feed it into the decision
-  // input (rule matching against the canonical root); Bash/MCP keep it display-only.
-  //
-  // This read runs before checkPermission's own rule-store guard, so it carries the
-  // same posture: a DB we cannot read denies instead of throwing past the gate.
-  let project: Awaited<ReturnType<typeof getProjectByPath>>;
-  try {
-    project = await getProjectByPath(getDatabase(), projectPath);
-  } catch (err) {
-    log.error('[executor] Could not read project for permission check — denying', err);
-    return { allowed: false, message: formatDenyReason({ kind: 'db:unavailable' }) };
-  }
-
-  // Session-dir auto-allow root: THIS chat's CLAUDE_CONFIG_DIR. `check-edit`
-  // short-circuits Reads under its allow-listed subtrees (pasted/ + tool-result
-  // spills) without prompting. Guarded by the same validator as planDirRoot.
-  const sessionDirRoot = isValidSubChatIdForSessionPaths(subChatId)
-    ? path.join(app.getPath('userData'), 'claude-sessions', subChatId)
-    : undefined;
-
-  // Plan-mode auto-allow: the SDK keeps plans under $CLAUDE_CONFIG_DIR/plans,
-  // classified `outside` the project — pass the dir so check-edit short-circuits
-  // plan reads/writes instead of prompting each one.
-  const planDirRoot = isValidSubChatIdForSessionPaths(subChatId)
-    ? getClaudeSessionPlansDir(subChatId)
-    : undefined;
-
-  const decisionInput = buildPermissionDecisionInput(toolName, toolInput, permissionPathOverride);
-  const result = await checkPermission({
-    tool: toolName,
-    input: decisionInput,
-    projectId: project?.id ?? '',
-    projectPath,
-    sessionDirRoot,
-    planDirRoot,
-    trustedFrinkOwnedMcp,
-    mcpIdentity,
-  });
-  if (result.decision === 'allow') return { allowed: true };
-  if (result.decision === 'deny') {
-    return { allowed: false, message: formatDenyReason(result.reason) };
-  }
-
-  // Provider Auto Mode reviews the remaining `ask` bucket, uniformly across every tool
-  // class — vendor plugin MCP servers included (auto-mode-tool-approval 2026-09-03 Target).
-  if (deferAskToProvider) return { allowed: null };
-
-  // ask → prompt the renderer in-process, persist + (for bash) sync cursor on approval.
-  const isBash = toolName === 'Bash';
-  const isMcp = toolName.startsWith('mcp__');
-  const fallbackPath = isBash
-    ? String((toolInput as { command?: string }).command ?? '')
-    : String((toolInput as { file_path?: string }).file_path ?? '');
-  // Apply worktree FILE-path override here only — for prompt rendering + rule.
-  const remappedPath = permissionPathOverride ?? fallbackPath;
-  const requestId = generatePermissionRequestId();
-  const payload: PermissionRequestPayload = {
-    chatId,
-    subChatId,
-    requestId,
-    type: isMcp ? 'mcp_tool' : isBash ? 'bash' : 'file',
-    path: remappedPath,
-    operation: isMcp
-      ? 'mcp_tool'
-      : isBash
-        ? 'bash'
-        : (getOperationFromToolName(toolName) ?? 'read'),
-    reason: reason ?? `Tool: ${toolName}`,
-    prompt: presentation ? { ...result.prompt, presentation } : result.prompt,
-    // projectPath enables the "Allow for project" button in FourButtonView
-    // (`hasProject = !!request.projectPath`). Omitted when no project row
-    // matches (general chat / virtual folder, where projectPath is the home
-    // dir): persistApprovedRule cannot write a project rule there, so the
-    // button must render disabled and steer the user to "On this machine".
-    ...(project ? { projectPath } : {}),
-    ...(project?.name ? { projectName: project.name } : {}),
-    // MCP payloads include the tool name so the renderer can render the full identifier.
-    ...(isMcp ? { toolName } : {}),
-  };
-
-  const promptResult = await permissionRequests.request(payload, executionSignal);
-
-  // Timeout ≠ deny: the user may never have seen the prompt (rule writes gate on duration==='always').
-  if (promptResult.timedOut) {
-    log.info('[executor] Permission request timed out', { remappedPath, toolName, requestId });
-    return { allowed: false, message: permissionTimeoutMessage(remappedPath, isFlowDrivenTurn) };
-  }
-  if (!promptResult.approved) {
-    return { allowed: false, message: 'User denied permission' };
-  }
-
-  // The user approved this call; a failed rule write only means the next call prompts
-  // again, so it must not turn the approval into a deny or a rejected promise.
-  try {
-    await persistApprovedRule({
-      db: getDatabase(),
-      projectPath,
-      project: project ?? null,
-      promptResult,
-      isBash,
-      logTag: '[executor]',
-    });
-  } catch (err) {
-    log.warn('[executor] Could not persist approved rule', err);
-  }
-
-  return { allowed: true };
-}
 
 type ExecuteRequestPayload = {
   chatId: string;
@@ -668,6 +434,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
     });
     await linkedTaskSignalFinalization;
   };
+  const codexTurn = beginCodexTurn(chatId);
   try {
     /** Bind to a local BrowserWindow only when the request carried an originating window. */
     const localRendererWebContentsId: number | undefined =
@@ -814,20 +581,11 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       // Resume the FLOW-DRIVING task, not the pinned upstream one: the agent's signal lands there
       // and drops unless 'running'. plan_ready resumes only on the reply-as-approval agent turn.
       const resumeTargetTaskId = signalTaskId;
-      if (!resumeTargetTaskId) return;
+      // A restart-interrupted run is never revived in place: its provider preflight declines this
+      // turn and converts it into a resume ticket that continues the session.
+      if (!resumeTargetTaskId || restartInterruptedFlowRunId) return;
       const { getDatabase } = await import('../db');
       const db = getDatabase();
-      // Restart-recovery: the driving task is a `cancelled` row whose run was interrupted by a
-      // restart/reload. THIS follow-up turn is the continuation, so revive it in place (helper keeps
-      // the closure's complexity in check; see reviveRestartInterruptedFlow).
-      if (restartInterruptedFlowRunId) {
-        await reviveRestartInterruptedFlow(
-          resumeTargetTaskId,
-          restartInterruptedFlowRunId,
-          subChatId,
-        );
-        return provenance && recordProvenanceResume(provenance, false, armed.revivedTask);
-      }
       // The race-recovery retry must NOT trust the turn-start prefetch: the sweep's park happened
       // after that snapshot, so a cached 'running' row would make the retry a silent no-op.
       const latestTask = await getTaskRowForResume(
@@ -912,22 +670,11 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       return;
     }
 
-    // Codex is machine-local passthrough: confirm the `codex` binary is actually
-    // logged in on THIS machine before doing any work. Catches a cross-machine
-    // project account and a login that lapsed after connect — a clean message
-    // instead of a cryptic deep app-server spawn failure. Runs before the runtime
-    // slot so an unauthenticated codex never holds one.
     if (storedCredential.type === 'codex') {
-      const { detectCodexAccount } = await import('../credentials/detect-codex');
-      if (!detectCodexAccount().available) {
-        log.error('[Socket Executor] Codex is not authenticated on this machine');
-        sendRunErrorDirect({
-          chatId,
-          subChatId,
-          assistantMessageId: msgId,
-          error:
-            'Codex isn’t authenticated on this machine. Run `codex login` (or use this project on a machine where Codex is signed in).',
-        });
+      const { codexLoginMissingError } = await import('../credentials/codex-spawn-gate');
+      const error = await codexLoginMissingError();
+      if (error) {
+        sendRunErrorDirect({ chatId, subChatId, assistantMessageId: msgId, error });
         return;
       }
     }
@@ -988,7 +735,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
     // Native Codex/Claude resumes already own the transcript; shipping Frink history duplicates it.
     const codexResumeThreadId =
       agentRuntime === 'codex'
-        ? (codexSessionCache.get(subChatId) ?? persistedSessionId ?? undefined)
+        ? (getCodexSession(subChatId) ?? persistedSessionId ?? undefined)
         : undefined;
     const willReplayHistoryViaResume =
       agentRuntime === 'codex'
@@ -1155,7 +902,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
         );
 
         const codexSessionId = codexMetadata.sessionId;
-        if (codexSessionId) setCodexSession(chatId, subChatId, codexSessionId);
+        if (codexSessionId) setCodexSession(chatId, subChatId, codexSessionId, codexTurn);
         sendExecuteCompleteDeferred({
           chatId,
           subChatId,
@@ -1341,7 +1088,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
         ? { suppressNativePlanTools: true, suppressPlanText: true }
         : null;
       // Session id normally persists at stream FINISH; a turn dying mid-stream leaves
-      // sub_chats.session_id NULL and Carry on has nothing to resume — persist on first
+      // sub_chats.session_id NULL and Continue has nothing to resume — persist on first
       // announcement instead (the finish-path persist stays the authoritative overwrite).
       let earlySessionIdPersisted = false;
       /** tool-input bookkeeping + plan-mode stream tracking: records name/input for the broadcast
@@ -1475,7 +1222,12 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
           await armAutoDuringPlan(session);
         }
 
-        for (const chunk of transform(sdkMessage)) {
+        for (const rawChunk of transform(sdkMessage)) {
+          const chunk = recoverSpilledFlowPatchChunk(rawChunk, {
+            subChatId,
+            toolName:
+              'toolCallId' in rawChunk ? toolNameByCallId.get(rawChunk.toolCallId) : undefined,
+          });
           if (!earlySessionIdPersisted) {
             const chunkSessionId = sessionIdFromFrame(sdkMessage, chunk);
             if (chunkSessionId) {
@@ -2075,6 +1827,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       });
     }
   } finally {
+    endCodexTurn(codexTurn);
     logAdoptedTurnEnd(turn, subChatId, executionFailed ? 'failed' : 'ended without a disposition');
     if (!executionAdmissionAcknowledged) {
       payload.onExecutionStarted?.(new Error('The chat could not start. Refresh and try again.'));
@@ -2162,6 +1915,14 @@ export function handleRemoteStop(payload: { chatId: string; subChatId: string })
     record.controller.abort();
     deleteActiveExecution(payload.subChatId);
   }
+}
+
+/** A chat's sub-chats with a live turn or wake hold, read from memory so abort survives a DB failure. */
+export function collectLiveSubChatIdsForChat(
+  chatId: string,
+  listWakeHolds: (chatId: string) => string[] = listWakeHoldSubChatIdsForChat,
+): string[] {
+  return [...new Set([...listSubChatIdsForChat(chatId), ...listWakeHolds(chatId)])];
 }
 
 /**

@@ -55,7 +55,7 @@ ${buildOutputSchemasSection('run_command')}
   headers?: Record<string,string>, body?: string }
 \`\`\`
 
-Method defaults GET; body is not sent for GET/DELETE.
+Method defaults GET; body is not sent for GET.
 
 ${buildOutputSchemasSection('http_request')}
 

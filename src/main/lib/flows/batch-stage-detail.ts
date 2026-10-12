@@ -11,17 +11,41 @@
  *   pending_count    the not-yet-dispatched part of active_count
  *   attention_count  started members (queued/dispatched) waiting on a person
  *
- * latest_chat_id   from the most-recent flow_run.trigger_context.chatId joined
- *                  to the stage's runs.
+ * latest_chat_id   existing chat of the stage's most recently dispatched run that has one
+ *                  (start_task chat, else trigger_context.chatId).
  *
  * workstream_ids   distinct trigger_context.workstreamId across stage_runs.
  */
 
-import { desc, sql as drizzleSql, eq } from 'drizzle-orm';
+import { sql as drizzleSql, eq } from 'drizzle-orm';
 import type { BatchStageDetail } from '../../../shared/types/flows/flow-batch';
 import { getDatabase } from '../db';
 import { listHumanWaitFlowRunIds } from '../db/repos/node-runs';
 import { batchStageRuns, batchStages, flowRuns } from '../db/schema';
+import { resolveBatchRunChatIds } from './batch-runs-list';
+
+type DispatchedRun = { stageId: string; runCreatedAt: Date | null; runSeq: number };
+type RunChat = { chatId: string; at: number; seq: number };
+
+// created_at is second-precision; the run's rowid (insert order) breaks ties.
+const isNewerRun = (a: RunChat, b: RunChat): boolean =>
+  a.at > b.at || (a.at === b.at && a.seq > b.seq);
+
+/** Per stage, the chat of the newest dispatched run that has one. One pass, no sort. */
+function pickLatestChatByStage(
+  rows: DispatchedRun[],
+  chatIds: Array<string | null>,
+): Map<string, string> {
+  const newest = new Map<string, RunChat>();
+  rows.forEach((r, i) => {
+    const chatId = chatIds[i];
+    if (!chatId) return;
+    const candidate = { chatId, at: r.runCreatedAt?.getTime() ?? 0, seq: r.runSeq };
+    const best = newest.get(r.stageId);
+    if (!best || isNewerRun(candidate, best)) newest.set(r.stageId, candidate);
+  });
+  return new Map([...newest].map(([stageId, run]) => [stageId, run.chatId]));
+}
 
 export async function listBatchStageDetail(batchId: string): Promise<BatchStageDetail[]> {
   const db = getDatabase();
@@ -74,26 +98,20 @@ export async function listBatchStageDetail(batchId: string): Promise<BatchStageD
         status: batchStageRuns.status,
         flowRunId: flowRuns.id,
         triggerContext: flowRuns.triggerContext,
-        createdAt: batchStageRuns.createdAt,
+        runCreatedAt: flowRuns.createdAt,
+        runSeq: drizzleSql<number>`${flowRuns}.rowid`,
       })
       .from(batchStageRuns)
       .innerJoin(flowRuns, eq(batchStageRuns.flowRunId, flowRuns.id))
       .where(stageIdFilter)
-      // Newest first, so the first-encountered guard below picks the latest chatId per stage
-      // instead of an arbitrary row in SQLite's implementation-defined order.
-      .orderBy(desc(batchStageRuns.createdAt))
       .all(),
   }));
   const aggByStage = new Map(aggRows.map((r) => [r.stageId, r]));
 
-  const latestChatByStage = new Map<string, string>();
-  for (const r of chatRows) {
-    const tc = (r.triggerContext as Record<string, unknown> | null) ?? {};
-    const chatId = typeof tc.chatId === 'string' ? tc.chatId : null;
-    if (!chatId) continue;
-    const existing = latestChatByStage.get(r.stageId);
-    if (!existing) latestChatByStage.set(r.stageId, chatId);
-  }
+  const latestChatByStage = pickLatestChatByStage(
+    chatRows,
+    await resolveBatchRunChatIds(db, chatRows),
+  );
 
   // Counted off the same BSR statuses as active_count, so attention_count is always a
   // subset of it: a member whose run waits on a person still occupies its stage slot.

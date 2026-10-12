@@ -23,8 +23,10 @@ import {
   flows,
   flowVersions,
   nodeRuns,
+  subChatMessages,
 } from '../../../db/schema';
 import { freshDb, type TestDb } from '../../../db/test-utils/fresh-db';
+import { beginFlowResourceActivity } from '../activity';
 import { _resetFlowAdmissionControllerMutexForTests, FlowAdmissionController } from '../controller';
 import {
   _setFlowAdmissionControllerForTests,
@@ -34,8 +36,13 @@ import {
   requestFlowAdmissionRelease,
   requestFlowStart,
   requestTerminalFlowResume,
+  stageResumeBehindHeldAdmission,
 } from '../runtime';
-import { stageRestartContinuations } from './boot-continuation';
+import { isUserCancelled } from '../../transitions';
+import { listInterruptedRuns } from '../../../trpc/routers/tasks-recovery';
+import { resumeSettledSlotTurns, stageRestartContinuations } from './boot-continuation';
+import { hasStagedContinuation, stageContinuationResume } from './continuation';
+import { ResumeAdmitDeclinedError } from './resume-store';
 
 let db: TestDb;
 let controller: FlowAdmissionController;
@@ -308,31 +315,6 @@ describe('terminal Flow resume admission runtime', () => {
     );
   });
 
-  it('carries the continuation flag through the durable intent to the dispatcher (user Retry), and omits it otherwise', async () => {
-    maxConcurrentRuns = 2;
-    const nodeRunId = persistTerminalResume('continuation-resume');
-    await requestTerminalFlowResume({
-      flowRunId: 'continuation-resume',
-      nodeRunId,
-      continuation: true,
-    });
-    await vi.waitFor(() => expect(mocks.resumeDispatcher).toHaveBeenCalledOnce());
-    expect(mocks.resumeDispatcher.mock.calls[0][0]).toMatchObject({
-      action: 'resume',
-      flow_run_id: 'continuation-resume',
-      continuation: true,
-    });
-
-    // The deliberate re-run surfaces (flows.rerunRun) never set it.
-    mocks.resumeDispatcher.mockClear();
-    const plainNodeRunId = persistTerminalResume('plain-resume');
-    await requestTerminalFlowResume({ flowRunId: 'plain-resume', nodeRunId: plainNodeRunId });
-    await vi.waitFor(() => expect(mocks.resumeDispatcher).toHaveBeenCalledOnce());
-    expect(
-      (mocks.resumeDispatcher.mock.calls[0][0] as { continuation?: true }).continuation,
-    ).toBeUndefined();
-  });
-
   it('deduplicates simultaneous retry requests before dispatch', async () => {
     const nodeRunId = persistTerminalResume('concurrent-resume');
 
@@ -346,6 +328,23 @@ describe('terminal Flow resume admission runtime', () => {
     expect(
       db.select().from(flowRuns).where(eq(flowRuns.id, 'concurrent-resume')).get()?.status,
     ).toBe('running');
+  });
+
+  // A Retry landing on a live ticket would otherwise report success for a run the user cancelled.
+  it('refuses to coalesce onto a live ticket once a user Cancel lands', async () => {
+    const flowRunId = 'coalesce-cancelled';
+    const nodeRunId = persistTerminalResume(flowRunId);
+    const first = await controller.enqueueTerminalResume({ flowRunId, nodeRunId });
+    const admit = (tx: Parameters<typeof isUserCancelled>[0]) => !isUserCancelled(tx, flowRunId);
+    await expect(
+      controller.enqueueTerminalResume({ flowRunId, nodeRunId, admit }),
+    ).resolves.toEqual({ admission: first.admission, created: false });
+
+    db.update(flowRuns).set({ status: 'cancelled' }).where(eq(flowRuns.id, flowRunId)).run();
+
+    await expect(
+      controller.enqueueTerminalResume({ flowRunId, nodeRunId, admit }),
+    ).rejects.toBeInstanceOf(ResumeAdmitDeclinedError);
   });
 
   it('settles a failed resume after cleanup, then drains the next start', async () => {
@@ -382,6 +381,32 @@ describe('terminal Flow resume admission runtime', () => {
       'failed',
       expect.objectContaining({ summary: 'resume provider failed' }),
     );
+  });
+});
+
+// The bulk Continue all enqueues one ticket per run in order; the cap decides which run now.
+describe('terminal resumes enqueued one after another', () => {
+  it('admits up to the cap and queues the rest, promoting them in enqueue order', async () => {
+    maxConcurrentRuns = 2;
+    const runs = ['bulk-1', 'bulk-2', 'bulk-3', 'bulk-4', 'bulk-5'];
+    const states: string[] = [];
+    for (const flowRunId of runs) {
+      const nodeRunId = persistTerminalResume(flowRunId);
+      const { admission } = await requestTerminalFlowResume({ flowRunId, nodeRunId });
+      states.push(admission.state);
+    }
+    expect(states.filter((state) => state === 'queued')).toHaveLength(3);
+    expect(states.slice(2)).toEqual(['queued', 'queued', 'queued']);
+    await vi.waitFor(() => expect(mocks.resumeDispatcher).toHaveBeenCalledTimes(2));
+
+    // The first resumed run ends, freeing its slot for the oldest queued ticket.
+    db.update(flowRuns)
+      .set({ status: 'completed', completedAt: new Date() })
+      .where(eq(flowRuns.id, 'bulk-1'))
+      .run();
+    await requestFlowAdmissionRelease('bulk-1');
+    await vi.waitFor(() => expect(mocks.resumeDispatcher).toHaveBeenCalledTimes(3));
+    expect(mocks.resumeDispatcher.mock.calls[2]?.[0]).toMatchObject({ flow_run_id: 'bulk-3' });
   });
 });
 
@@ -439,11 +464,28 @@ describe('boot carry-on — staged from the startup sweep, fired ahead of queued
     await updateTaskStatus(db, task.id, 'running', { result });
     db.update(flowRuns).set({ status: 'paused' }).where(eq(flowRuns.id, flowRunId)).run();
     const swept = await recoverOrphanedTasks(db, new Date(Date.now() + 10_000));
-    return { flowRunId, nodeRunId: nodeRun.id, swept };
+    return { flowRunId, nodeRunId: nodeRun.id, taskId: task.id, swept };
+  }
+
+  /** The session answered the step's prompt, so its recovery is Continue. */
+  function answerStep(taskId: string) {
+    const prompt = { id: 'u1', role: 'user', parts: [], metadata: { dispatchTaskId: taskId } };
+    const reply = { id: 'a1', role: 'assistant', parts: [] };
+    db.insert(subChatMessages)
+      .values([
+        { subChatId: 'sc-boot', seq: 0, message: JSON.stringify(prompt) },
+        { subChatId: 'sc-boot', seq: 1, message: JSON.stringify(reply) },
+      ])
+      .run();
   }
 
   /** What the completion watcher leaves once it advances the swept task, ending in the release. */
-  async function settleInterruption(flowRunId: string, nodeRunId: string, withMarker: boolean) {
+  async function settleInterruption(
+    flowRunId: string,
+    nodeRunId: string,
+    withMarker: boolean,
+    release = true,
+  ) {
     db.update(nodeRuns)
       .set({
         status: 'cancelled',
@@ -455,7 +497,7 @@ describe('boot carry-on — staged from the startup sweep, fired ahead of queued
       .set({ status: 'cancelled', completedAt: new Date() })
       .where(eq(flowRuns.id, flowRunId))
       .run();
-    await requestFlowAdmissionRelease(flowRunId);
+    if (release) await requestFlowAdmissionRelease(flowRunId);
   }
 
   it('re-admits the interrupted run as a continuation before a queued start takes its slot', async () => {
@@ -470,7 +512,6 @@ describe('boot carry-on — staged from the startup sweep, fired ahead of queued
       expect.objectContaining({
         flow_run_id: flowRunId,
         node_run_id: nodeRunId,
-        continuation: true,
       }),
       expect.any(Number),
     );
@@ -556,7 +597,7 @@ describe('boot carry-on — staged from the startup sweep, fired ahead of queued
     expect(await stageRestartContinuations(db, swept)).toBe(1);
   });
 
-  it('stays manual for a run with no active admission, and a non-flow task', async () => {
+  it('stages nothing for a run with no active admission, and a non-flow task', async () => {
     const { flowRunId, swept } = await seedInterruptedAgentRun();
     await requestFlowAdmissionRelease(flowRunId);
     expect(await stageRestartContinuations(db, swept)).toBe(0);
@@ -564,6 +605,48 @@ describe('boot carry-on — staged from the startup sweep, fired ahead of queued
     expect(
       await stageRestartContinuations(db, [{ flowRunId: null, nodeRunId: null, result: null }]),
     ).toBe(0);
+  });
+
+  // Nothing settles to fire a staged entry for a run with no slot, so it gets a ticket of its own.
+  it('queues its own resume for a swept turn whose run held no admission', async () => {
+    const { flowRunId, nodeRunId, swept } = await seedInterruptedAgentRun();
+    await settleInterruption(flowRunId, nodeRunId, true);
+    expect(await stageRestartContinuations(db, swept)).toBe(0);
+
+    expect(await resumeSettledSlotTurns(db)).toBe(1);
+    await vi.waitFor(() =>
+      expect(mocks.resumeDispatcher).toHaveBeenCalledWith(
+        expect.objectContaining({ flow_run_id: flowRunId, node_run_id: nodeRunId }),
+        expect.any(Number),
+      ),
+    );
+    // One boot's turns are queued once.
+    expect(await resumeSettledSlotTurns(db)).toBe(0);
+  });
+
+  // Admission recovery owns a ticket that outlived the crash; a second one would be refused as a
+  // different live admission and reported as a boot failure.
+  it('leaves a swept turn alone when a resume ticket for its run is already queued', async () => {
+    const { flowRunId, nodeRunId, swept } = await seedInterruptedAgentRun();
+    await settleInterruption(flowRunId, nodeRunId, true);
+    // A start holds the only slot, so the resume waits in the queue.
+    await requestFlowStart(startInput('holds-the-slot'));
+    await requestTerminalFlowResume({ flowRunId, nodeRunId, kind: 'retry' });
+    expect((await controller.getLiveForRun(flowRunId))?.state).toBe('queued');
+
+    expect(await stageRestartContinuations(db, swept)).toBe(0);
+    expect(await resumeSettledSlotTurns(db)).toBe(0);
+  });
+
+  it('queues no resume for a settled-slot turn whose chat was deleted before admission recovery', async () => {
+    const { flowRunId, nodeRunId, swept } = await seedInterruptedAgentRun();
+    await settleInterruption(flowRunId, nodeRunId, true);
+    await stageRestartContinuations(db, swept);
+    db.delete(chats).where(eq(chats.id, 'chat-boot')).run();
+
+    expect(await resumeSettledSlotTurns(db)).toBe(0);
+    expect(mocks.resumeDispatcher).not.toHaveBeenCalled();
+    expect(await controller.getLiveForRun(flowRunId)).toBeNull();
   });
 
   it('stages but never dispatches an interrupted member whose stage already settled', async () => {
@@ -585,5 +668,264 @@ describe('boot carry-on — staged from the startup sweep, fired ahead of queued
     // The decline frees the slot for the queued start instead of the continuation.
     await vi.waitFor(() => expect(mocks.startDispatcher).toHaveBeenCalledTimes(2));
     expect(mocks.resumeDispatcher).not.toHaveBeenCalled();
+  });
+
+  describe('a Continue clicked while the interrupted run still holds its slot', () => {
+    const request = (flowRunId: string, nodeRunId: string) => ({
+      flowRunId,
+      nodeRunId,
+      kind: 'continue' as const,
+    });
+
+    // The original refusal: the held slot is a different live admission, so a direct enqueue fails.
+    it('refuses a direct enqueue while the slot is held', async () => {
+      const { flowRunId, nodeRunId, taskId } = await seedInterruptedAgentRun();
+      answerStep(taskId);
+      await settleInterruption(flowRunId, nodeRunId, true, false);
+
+      await expect(requestTerminalFlowResume(request(flowRunId, nodeRunId))).rejects.toThrow(
+        /different live admission/,
+      );
+    });
+
+    it('stages behind the held admission and continues once it settles, never erroring', async () => {
+      const { flowRunId, nodeRunId, taskId } = await seedInterruptedAgentRun();
+      answerStep(taskId);
+      await settleInterruption(flowRunId, nodeRunId, true, false);
+
+      await expect(stageResumeBehindHeldAdmission(request(flowRunId, nodeRunId))).resolves.toBe(
+        true,
+      );
+      expect(hasStagedContinuation(flowRunId)).toBe(true);
+      expect(mocks.resumeDispatcher).not.toHaveBeenCalled();
+
+      await requestFlowAdmissionRelease(flowRunId);
+
+      await vi.waitFor(() => expect(mocks.resumeDispatcher).toHaveBeenCalledTimes(1));
+      expect(mocks.resumeDispatcher).toHaveBeenCalledWith(
+        expect.objectContaining({
+          flow_run_id: flowRunId,
+          node_run_id: nodeRunId,
+          recovery_kind: 'continue',
+        }),
+        expect.any(Number),
+      );
+      expect(hasStagedContinuation(flowRunId)).toBe(false);
+    });
+
+    // Holding a slot is not a queued resume: Continue all must still offer the run, and stop
+    // offering it once a click has staged one, so the banner never lists a run already waiting.
+    it('stays listed for Continue all until a click stages its resume', async () => {
+      const { flowRunId, nodeRunId } = await seedInterruptedAgentRun();
+      await settleInterruption(flowRunId, nodeRunId, true, false);
+      const listed = async () =>
+        (await listInterruptedRuns(db)).some((row) => row.flowRunId === flowRunId);
+
+      expect(await listed()).toBe(true);
+      await stageResumeBehindHeldAdmission({ flowRunId, nodeRunId, kind: 'retry' });
+      expect(await listed()).toBe(false);
+    });
+
+    it('dispatches once when Continue is clicked again before the slot settles', async () => {
+      const { flowRunId, nodeRunId, taskId } = await seedInterruptedAgentRun();
+      answerStep(taskId);
+      await settleInterruption(flowRunId, nodeRunId, true, false);
+
+      await stageResumeBehindHeldAdmission(request(flowRunId, nodeRunId));
+      await stageResumeBehindHeldAdmission(request(flowRunId, nodeRunId));
+      await requestFlowAdmissionRelease(flowRunId);
+
+      await vi.waitFor(() => expect(mocks.resumeDispatcher).toHaveBeenCalledTimes(1));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(mocks.resumeDispatcher).toHaveBeenCalledTimes(1);
+    });
+
+    // A task-level Retry (tasks.recover → retryTerminalFlowRun) on a step with no answered session.
+    it('stages a Retry behind the held admission and re-admits once it settles, never erroring', async () => {
+      const { flowRunId, nodeRunId } = await seedInterruptedAgentRun();
+      await settleInterruption(flowRunId, nodeRunId, true, false);
+
+      await expect(
+        stageResumeBehindHeldAdmission({ flowRunId, nodeRunId, kind: 'retry' }),
+      ).resolves.toBe(true);
+      expect(hasStagedContinuation(flowRunId)).toBe(true);
+      expect(mocks.resumeDispatcher).not.toHaveBeenCalled();
+      // The click re-admits through the ticket: nothing reopened the cancelled run in place.
+      expect(db.select().from(flowRuns).where(eq(flowRuns.id, flowRunId)).get()?.status).toBe(
+        'cancelled',
+      );
+
+      await requestFlowAdmissionRelease(flowRunId);
+
+      await vi.waitFor(() => expect(mocks.resumeDispatcher).toHaveBeenCalledTimes(1));
+      expect(mocks.resumeDispatcher).toHaveBeenCalledWith(
+        expect.objectContaining({
+          flow_run_id: flowRunId,
+          node_run_id: nodeRunId,
+          recovery_kind: 'retry',
+        }),
+        expect.any(Number),
+      );
+    });
+
+    it('leaves a click to enqueue directly once the slot has settled', async () => {
+      const { flowRunId, nodeRunId, taskId } = await seedInterruptedAgentRun();
+      answerStep(taskId);
+      await settleInterruption(flowRunId, nodeRunId, true);
+
+      await expect(stageResumeBehindHeldAdmission(request(flowRunId, nodeRunId))).resolves.toBe(
+        false,
+      );
+      expect(hasStagedContinuation(flowRunId)).toBe(false);
+    });
+
+    // A stage the settle missed has no admission left to fire it; the next click must not leave it
+    // behind to fire after the run it re-admits.
+    it('drops a staged entry no admission will fire, so the click re-admits exactly once', async () => {
+      const { flowRunId, nodeRunId, taskId } = await seedInterruptedAgentRun();
+      answerStep(taskId);
+      await settleInterruption(flowRunId, nodeRunId, true);
+      stageContinuationResume({ flowRunId, nodeRunId }, vi.fn());
+
+      await expect(stageResumeBehindHeldAdmission(request(flowRunId, nodeRunId))).resolves.toBe(
+        false,
+      );
+      expect(hasStagedContinuation(flowRunId)).toBe(false);
+      await requestTerminalFlowResume(request(flowRunId, nodeRunId));
+
+      await vi.waitFor(() => expect(mocks.resumeDispatcher).toHaveBeenCalledTimes(1));
+      await requestFlowAdmissionRelease(flowRunId);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(mocks.resumeDispatcher).toHaveBeenCalledTimes(1);
+    });
+
+    describe('while the held slot is releasing', () => {
+      /** The run's release began but a resource activity is still registered, so it stays releasing. */
+      async function holdReleasing(flowRunId: string) {
+        const releaseActivity = beginFlowResourceActivity(flowRunId);
+        await requestFlowAdmissionRelease(flowRunId);
+        expect((await controller.getLiveForRun(flowRunId))?.state).toBe('releasing');
+        return releaseActivity;
+      }
+
+      it('stages the click instead of refusing it, and continues once the release settles', async () => {
+        const { flowRunId, nodeRunId, taskId } = await seedInterruptedAgentRun();
+        answerStep(taskId);
+        await settleInterruption(flowRunId, nodeRunId, true, false);
+        const releaseActivity = await holdReleasing(flowRunId);
+
+        await expect(stageResumeBehindHeldAdmission(request(flowRunId, nodeRunId))).resolves.toBe(
+          true,
+        );
+        expect(hasStagedContinuation(flowRunId)).toBe(true);
+        expect(mocks.resumeDispatcher).not.toHaveBeenCalled();
+
+        releaseActivity();
+
+        await vi.waitFor(() => expect(mocks.resumeDispatcher).toHaveBeenCalledTimes(1));
+        expect(mocks.resumeDispatcher).toHaveBeenCalledWith(
+          expect.objectContaining({ flow_run_id: flowRunId, recovery_kind: 'continue' }),
+          expect.any(Number),
+        );
+        expect(hasStagedContinuation(flowRunId)).toBe(false);
+      });
+
+      it('dispatches once when Continue is clicked twice in one releasing window', async () => {
+        const { flowRunId, nodeRunId, taskId } = await seedInterruptedAgentRun();
+        answerStep(taskId);
+        await settleInterruption(flowRunId, nodeRunId, true, false);
+        const releaseActivity = await holdReleasing(flowRunId);
+
+        await stageResumeBehindHeldAdmission(request(flowRunId, nodeRunId));
+        await stageResumeBehindHeldAdmission(request(flowRunId, nodeRunId));
+        releaseActivity();
+
+        await vi.waitFor(() => expect(mocks.resumeDispatcher).toHaveBeenCalledTimes(1));
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(mocks.resumeDispatcher).toHaveBeenCalledTimes(1);
+      });
+
+      // The settle reads the staged map before it commits; a click staged inside that await must
+      // still fire once the commit frees the run, not strand behind a settle that missed it.
+      it('fires a click staged while the settle is committing', async () => {
+        const { flowRunId, nodeRunId, taskId } = await seedInterruptedAgentRun();
+        answerStep(taskId);
+        await settleInterruption(flowRunId, nodeRunId, true, false);
+        const settle = controller.settle.bind(controller);
+        vi.spyOn(controller, 'settle').mockImplementationOnce(async (...args) => {
+          await expect(stageResumeBehindHeldAdmission(request(flowRunId, nodeRunId))).resolves.toBe(
+            true,
+          );
+          return settle(...args);
+        });
+
+        await requestFlowAdmissionRelease(flowRunId);
+
+        await vi.waitFor(() => expect(mocks.resumeDispatcher).toHaveBeenCalledTimes(1));
+        expect(hasStagedContinuation(flowRunId)).toBe(false);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(mocks.resumeDispatcher).toHaveBeenCalledTimes(1);
+      });
+
+      // The settle committed, so a failed post-settle fire read must not skip the drain
+      // that hands the freed slot to the queued start.
+      it('still drains the freed slot when the post-settle fire read throws', async () => {
+        const { flowRunId, nodeRunId, taskId } = await seedInterruptedAgentRun();
+        answerStep(taskId);
+        await settleInterruption(flowRunId, nodeRunId, true, false);
+        await requestFlowStart(startInput('queued-behind-failed-fire'));
+        const settle = controller.settle.bind(controller);
+        vi.spyOn(controller, 'settle').mockImplementationOnce(async (...args) => {
+          await stageResumeBehindHeldAdmission(request(flowRunId, nodeRunId));
+          const settled = await settle(...args);
+          vi.spyOn(controller, 'getLiveForRun').mockRejectedValueOnce(new Error('sqlite busy'));
+          return settled;
+        });
+
+        await requestFlowAdmissionRelease(flowRunId);
+
+        await vi.waitFor(() => expect(mocks.startDispatcher).toHaveBeenCalledTimes(2));
+        expect(mocks.resumeDispatcher).not.toHaveBeenCalled();
+        // No hook re-fire on this path: the entry waits for the next click to drop and re-admit it.
+        expect(hasStagedContinuation(flowRunId)).toBe(true);
+      });
+
+      it('refuses a click behind a release that kept a cleanup error, staging nothing', async () => {
+        const { flowRunId, nodeRunId, taskId } = await seedInterruptedAgentRun();
+        answerStep(taskId);
+        await settleInterruption(flowRunId, nodeRunId, true, false);
+        const live = await controller.getLiveForRun(flowRunId);
+        await controller.beginRelease(live!.ticket);
+        await controller.recordReleaseFailure(live!.ticket, 'cleanup failed');
+
+        await expect(stageResumeBehindHeldAdmission(request(flowRunId, nodeRunId))).rejects.toThrow(
+          /failed cleanup/,
+        );
+        expect(hasStagedContinuation(flowRunId)).toBe(false);
+      });
+
+      // The release keeps its cleanup error after the click's first probe, so the reconcile hook's
+      // cleanup fire never saw this stage: the re-probe must read the real row as retained and refuse.
+      it('refuses a click whose held slot keeps a cleanup error while it is staged', async () => {
+        const { flowRunId, nodeRunId, taskId } = await seedInterruptedAgentRun();
+        answerStep(taskId);
+        await settleInterruption(flowRunId, nodeRunId, true, false);
+        const getLiveForRun = controller.getLiveForRun.bind(controller);
+        vi.spyOn(controller, 'getLiveForRun')
+          .mockImplementationOnce(getLiveForRun)
+          .mockImplementationOnce(async (id) => {
+            const live = await getLiveForRun(id);
+            await controller.beginRelease(live!.ticket);
+            await controller.recordReleaseFailure(live!.ticket, 'cleanup failed');
+            return getLiveForRun(id);
+          });
+
+        await expect(stageResumeBehindHeldAdmission(request(flowRunId, nodeRunId))).rejects.toThrow(
+          /failed cleanup/,
+        );
+        expect(hasStagedContinuation(flowRunId)).toBe(false);
+        expect(mocks.resumeDispatcher).not.toHaveBeenCalled();
+      });
+    });
   });
 });

@@ -1,20 +1,32 @@
-import { describe, expect, it } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
+import pinnedManifest from '../../patches/codex/manifest.json';
 import threadItems from '../../patches/codex/thread-item-variants.json';
 import { FRINK_HOST_TOOL_PERMISSION_VERSION } from '../../src/main/lib/agent-runner/codex/codex-host-permissions';
 import {
   assertHandshakeResult,
   assertMcpReplaceConsumed,
+  assertPinnedPatch,
   assertPinnedThreadItems,
+  buildCodexTarget,
   codexVersionStamp,
+  normalizeCargoLock,
   normalizeWorkspaceVersions,
   parseBuildArguments,
   parseInitializeResult,
   parseThreadItemVariants,
   platformKey,
+  releaseProfileEnv,
   releaseTargetKeys,
+  runInitializeHandshake,
+  TARGETS,
   validateManifest,
   validateRemoteTagOutput,
 } from './build-codex-frink.mjs';
+import { sha256File } from './http-download.mjs';
 
 const manifest = {
   version: 'rust-v0.155.1',
@@ -24,7 +36,8 @@ const manifest = {
   normalizedCargoLockSha256: 'df88a71b82843c6f092610fb07589f7a40032ddc25f50718354546ca541eb9b7',
   rust: '1.95.0',
   patch: 'frink-host-tool-permission-v1.patch',
-  patchSha256: '5af8795f63311f953a943b8f056058cdde90528b6cecf5acf220d75ff1447540',
+  // Pinned once, in the manifest: the script and these tests read it rather than repeat it.
+  patchSha256: pinnedManifest.patchSha256,
   upstream: 'https://github.com/openai/codex',
 };
 
@@ -37,9 +50,22 @@ describe('permission-aware Codex source build', () => {
     expect(() => validateManifest({ ...manifest, commit: '0'.repeat(40) })).toThrow(
       'Invalid pinned Codex source manifest field: commit',
     );
-    expect(() => validateManifest({ ...manifest, patchSha256: '0'.repeat(64) })).toThrow(
-      'Invalid pinned Codex source manifest field: patchSha256',
+  });
+
+  it('takes the patch identity from the manifest but rejects one that is not a SHA-256', () => {
+    expect(validateManifest({ ...manifest, patchSha256: 'a'.repeat(64) }).patchSha256).toBe(
+      'a'.repeat(64),
     );
+    for (const patchSha256 of ['deadbeef', 'A'.repeat(64), `${'a'.repeat(64)}0`, undefined]) {
+      expect(() => validateManifest({ ...manifest, patchSha256 })).toThrow(
+        'Invalid pinned Codex source manifest field: patchSha256',
+      );
+    }
+  });
+
+  it('pins the bytes of the committed patch, so a hand edit fails here and not an hour into a build', () => {
+    const patchPath = path.join(__dirname, '../../patches/codex', pinnedManifest.patch);
+    expect(sha256File(patchPath)).toBe(pinnedManifest.patchSha256);
   });
 
   it('requires the exact annotated tag object and peeled commit from upstream', () => {
@@ -70,19 +96,215 @@ describe('permission-aware Codex source build', () => {
     expect(parseBuildArguments(['--target', 'darwin-x64', '--test'])).toEqual({
       targetKeys: ['darwin-x64'],
       runProviderTests: true,
+      testOnly: false,
     });
     expect(() => parseBuildArguments(['--target'])).toThrow('--target requires a platform key');
     expect(() => parseBuildArguments(['--all'])).toThrow('Unknown Codex build argument');
+  });
+
+  it('runs the provider tests alone, without building a binary, for the parallel CI job', () => {
+    expect(parseBuildArguments(['--test-only'])).toEqual({
+      targetKeys: [],
+      runProviderTests: true,
+      testOnly: true,
+    });
+  });
+
+  it('refuses --test-only with a target, which would silently skip the build it names', () => {
+    expect(() => parseBuildArguments(['--test-only', '--target', 'linux-x64'])).toThrow(
+      '--test-only builds no binary, so it cannot take --target',
+    );
+    expect(() => parseBuildArguments(['--target', 'linux-x64', '--test-only'])).toThrow(
+      '--test-only builds no binary',
+    );
+  });
+});
+
+describe('normalizeCargoLock', () => {
+  const pristine = 'name = "codex-core"\nversion = "0.0.0"\n';
+  const normalized = 'name = "codex-core"\nversion = "0.155.1"\n';
+
+  function sourceWithLock(lock: string) {
+    const sourceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'frink-codex-lock-'));
+    fs.mkdirSync(path.join(sourceDir, 'codex-rs'));
+    fs.writeFileSync(path.join(sourceDir, 'codex-rs', 'Cargo.lock'), lock);
+    return sourceDir;
+  }
+
+  function pinnedTo(lock: string) {
+    const scratch = sourceWithLock(lock);
+    const sha = sha256File(path.join(scratch, 'codex-rs', 'Cargo.lock'));
+    fs.rmSync(scratch, { recursive: true, force: true });
+    return { ...manifest, normalizedCargoLockSha256: sha };
+  }
+
+  it('rewrites the lockfile in place, and accepts one a previous run already rewrote', () => {
+    const sourceDir = sourceWithLock(pristine);
+    try {
+      normalizeCargoLock(sourceDir, pinnedTo(normalized));
+      expect(fs.readFileSync(path.join(sourceDir, 'codex-rs', 'Cargo.lock'), 'utf8')).toBe(
+        normalized,
+      );
+      expect(() => normalizeCargoLock(sourceDir, pinnedTo(normalized))).not.toThrow();
+    } finally {
+      fs.rmSync(sourceDir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a lockfile that differs from the pin once normalised', () => {
+    const sourceDir = sourceWithLock(`${pristine}[[package]]\n`);
+    try {
+      expect(() => normalizeCargoLock(sourceDir, pinnedTo(normalized))).toThrow(
+        'Normalized Cargo.lock SHA-256 mismatch',
+      );
+    } finally {
+      fs.rmSync(sourceDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('command lines', () => {
+  const run = (script: string, ...args: string[]) =>
+    spawnSync(process.execPath, [path.join(__dirname, script), ...args], { encoding: 'utf8' });
+
+  it('runs the patch workspace modes and fails with their message', () => {
+    const missingDir = run('codex-patch-workspace.mjs', '--write-patch');
+    expect(missingDir.status).toBe(1);
+    expect(missingDir.stderr).toContain('--write-patch requires a directory');
+
+    const unprepared = run(
+      'codex-patch-workspace.mjs',
+      '--write-patch',
+      fs.mkdtempSync(path.join(os.tmpdir(), 'frink-plain-')),
+    );
+    expect(unprepared.status).toBe(1);
+    expect(unprepared.stderr).toContain('is not a Codex workspace prepared by --prepare-source');
+  });
+
+  it('keeps the build script to build arguments', () => {
+    const result = run('build-codex-frink.mjs', '--prepare-source', '/tmp/codex');
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('Unknown Codex build argument: --prepare-source');
+  });
+
+  it('still rejects an unknown build argument', () => {
+    const result = run('build-codex-frink.mjs', '--all');
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('Unknown Codex build argument: --all');
   });
 });
 
 describe('codexVersionStamp', () => {
   it('carries the patch identity so a stale bundled binary is detectable at runtime', () => {
-    expect(codexVersionStamp(manifest)).toBe('rust-v0.155.1+frink.5af8795f6331');
+    expect(codexVersionStamp(manifest)).toBe(
+      `rust-v0.155.1+frink.${pinnedManifest.patchSha256.slice(0, 12)}`,
+    );
     expect(codexVersionStamp({ ...manifest, patchSha256: 'a'.repeat(64) })).toBe(
       'rust-v0.155.1+frink.aaaaaaaaaaaa',
     );
   });
+});
+
+describe('pinned Codex patch bytes', () => {
+  const patchRelPath = `patches/codex/${pinnedManifest.patch}`;
+  const patchBytes = fs.readFileSync(path.join(__dirname, '../..', patchRelPath));
+
+  // The hash checks below see this OS's checkout, which never converts on macOS/Linux; only the
+  // attribute proves a Windows checkout (core.autocrlf=true) leaves the bytes alone.
+  it('is checked out without line-ending conversion on every OS', () => {
+    const attr = spawnSync('git', ['check-attr', 'text', '--', patchRelPath], {
+      cwd: path.join(__dirname, '../..'),
+      encoding: 'utf8',
+    });
+    expect(attr.stdout.trim()).toBe(`${patchRelPath}: text: unset`);
+  });
+
+  it('accepts the committed LF patch the manifest pins', () => {
+    expect(patchBytes.includes(0x0d)).toBe(false);
+    expect(() => assertPinnedPatch(pinnedManifest, patchBytes)).not.toThrow();
+  });
+
+  it('names a CRLF checkout and its remedy instead of a bare mismatch', () => {
+    const crlf = Buffer.from(patchBytes.toString('utf8').replace(/\n/g, '\r\n'), 'utf8');
+    // The remedy must restore from HEAD: after `git rm --cached` the index is empty, so a plain
+    // `git checkout --` has nothing to restore and leaves the CRLF bytes plus a staged deletion.
+    expect(() => assertPinnedPatch(pinnedManifest, crlf)).toThrow(
+      'git rm -rq --cached patches/codex && git checkout HEAD -- patches/codex',
+    );
+    expect(() => assertPinnedPatch(pinnedManifest, crlf)).toThrow(/SHA-256 mismatch.*CRLF/);
+  });
+
+  it('rejects other altered bytes without blaming line endings', () => {
+    const altered = Buffer.concat([patchBytes, Buffer.from('\n')]);
+    expect(() => assertPinnedPatch(pinnedManifest, altered)).toThrow(
+      'Codex provider patch SHA-256 mismatch',
+    );
+    expect(() => assertPinnedPatch(pinnedManifest, altered)).not.toThrow(/CRLF/);
+  });
+});
+
+describe('Linux debug-info strip (sc-4794)', () => {
+  // Driven by the real target table, so a new Linux key whose triple escapes the match fails here.
+  it('strips every Linux target and leaves the macOS and Windows profiles upstream', () => {
+    for (const [key, { cargoTarget }] of Object.entries(TARGETS)) {
+      expect(releaseProfileEnv(cargoTarget), key).toEqual(
+        key.startsWith('linux-') ? { CARGO_PROFILE_RELEASE_STRIP: 'debuginfo' } : {},
+      );
+    }
+  });
+
+  // The wiring, not the helper: a fake cargo records the env the release build actually ran with.
+  it.skipIf(process.platform === 'win32')(
+    'hands the strip to the cargo release build, over any strip inherited from the shell',
+    () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'frink-codex-strip-'));
+      const sourceDir = path.join(root, 'source');
+      fs.mkdirSync(sourceDir);
+      fs.writeFileSync(path.join(sourceDir, 'LICENSE'), 'license');
+      fs.writeFileSync(path.join(sourceDir, 'NOTICE'), 'notice');
+      const seen = path.join(root, 'strip-seen');
+      const cargo = path.join(root, 'cargo');
+      // Argument 7 is the --target triple; cargo's own output path is <target dir>/<triple>/release.
+      fs.writeFileSync(
+        cargo,
+        [
+          '#!/bin/sh',
+          'out="$CARGO_TARGET_DIR/$7/release"',
+          'mkdir -p "$out" && echo built > "$out/codex" && echo built > "$out/codex.exe"',
+          `echo "$7=\${CARGO_PROFILE_RELEASE_STRIP-unset}" >> "${seen}"`,
+        ].join('\n'),
+        { mode: 0o755 },
+      );
+      vi.stubEnv('RUSTUP', 'true');
+      vi.stubEnv('CARGO_TARGET_DIR', path.join(root, 'target'));
+      vi.stubEnv('CARGO_PROFILE_RELEASE_STRIP', 'false');
+      try {
+        for (const [key, target] of Object.entries(TARGETS)) {
+          const { staged } = buildCodexTarget({
+            key,
+            target,
+            manifest,
+            sourceDir,
+            cargoRoot: root,
+            cargo,
+            rustc: 'rustc',
+            outputRoot: path.join(root, 'out'),
+          });
+          expect(fs.readFileSync(staged, 'utf8')).toBe('built\n');
+        }
+        expect(fs.readFileSync(seen, 'utf8').trim().split('\n')).toEqual([
+          'aarch64-apple-darwin=false',
+          'x86_64-apple-darwin=false',
+          'x86_64-unknown-linux-gnu=debuginfo',
+          'aarch64-unknown-linux-gnu=debuginfo',
+          'x86_64-pc-windows-msvc=false',
+        ]);
+      } finally {
+        vi.unstubAllEnvs();
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 describe('pinned ThreadItem union', () => {
@@ -144,10 +366,12 @@ describe('built-binary handshake', () => {
     capabilities: { frinkHostToolPermission: FRINK_HOST_TOOL_PERMISSION_VERSION },
   };
 
-  it('finds the initialize reply among the notifications sharing stdout', () => {
+  it('finds the initialize reply among the notifications and server requests sharing stdout', () => {
     const transcript = [
       JSON.stringify({ method: 'configWarning', params: {} }),
       '',
+      // The server numbers its own requests from 1 too; only a message without `method` is a reply.
+      JSON.stringify({ id: 1, method: 'item/tool/requestUserInput', params: {} }),
       JSON.stringify({ id: 1, result: good }),
     ].join('\n');
     expect(parseInitializeResult(transcript)).toEqual(good);
@@ -186,6 +410,63 @@ describe('built-binary handshake', () => {
     expect(() =>
       assertHandshakeResult(manifest, { ...good, userAgent: 'frink-build-check/0.149.0 (Mac OS)' }),
     ).toThrow('expected it to start "frink-build-check/0.155.1 "');
+  });
+
+  const reply = JSON.stringify(JSON.stringify({ id: 1, result: good }));
+  // Like `codex app-server`, this fake exits on stdin EOF, so it can only answer while stdin is open.
+  const slowAppServer = `process.stdin.on('end', () => process.exit(0));
+    process.stdin.once('data', () => {
+      console.log('{"method":"configWarning"}');
+      console.log('{"id":1,"method":"item/tool/requestUserInput"}');
+      setTimeout(() => console.log(${reply}), 200);
+    });`;
+
+  it('keeps stdin open past notifications and server requests until the delayed reply', async () => {
+    const stdout = await runInitializeHandshake(
+      process.execPath,
+      ['-e', slowAppServer],
+      '{"id":1}',
+    );
+    expect(parseInitializeResult(stdout)).toEqual(good);
+  });
+
+  it('gives a reply that lands near the deadline its own window to exit', async () => {
+    // Answers at half the timeout, then takes 0.6 of it to exit: past a single shared deadline.
+    const lateAppServer = `process.stdin.on('end', () => setTimeout(() => process.exit(0), 1200));
+      process.stdin.once('data', () => setTimeout(() => console.log(${reply}), 1000));`;
+    const stdout = await runInitializeHandshake(
+      process.execPath,
+      ['-e', lateAppServer],
+      '{"id":1}',
+      { timeoutMs: 2000 },
+    );
+    expect(parseInitializeResult(stdout)).toEqual(good);
+  });
+
+  it('fails a timeout only once the app-server is dead, even one that ignores SIGTERM', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-handshake-'));
+    const pidFile = path.join(dir, 'pid');
+    const hung = [
+      '-e',
+      "process.on('SIGTERM', () => {}); require('fs').writeFileSync(process.argv[1], String(process.pid)); setInterval(() => {}, 1000)",
+      pidFile,
+    ];
+    try {
+      await expect(
+        runInitializeHandshake(process.execPath, hung, '{"id":1}', { timeoutMs: 2000 }),
+      ).rejects.toThrow('did not answer initialize within 2000ms');
+      const pid = Number(fs.readFileSync(pidFile, 'utf8'));
+      expect(() => process.kill(pid, 0)).toThrow('ESRCH');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('surfaces the stderr of an app-server that exits without answering', async () => {
+    const crash = ['-e', "console.error('config load failed'); process.exitCode = 3"];
+    await expect(runInitializeHandshake(process.execPath, crash, '{"id":1}')).rejects.toThrow(
+      'exited (3) before answering initialize: config load failed',
+    );
   });
 });
 

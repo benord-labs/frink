@@ -10,6 +10,7 @@ import {
 import {
   capabilityCounts,
   pluginConnectAction,
+  promptsUnlocked,
   resolvePluginStatus,
   toCapabilityRows,
 } from '../../../../lib/plugins/plugin-view-model';
@@ -86,8 +87,9 @@ export function PluginBody({
     connect && status.id !== 'connected' ? plugin.definition.beforeYouConnect : undefined;
   const rows = toCapabilityRows(plugin, onSelectAccount, grant.chat.state);
   const liveAccount = plugin.connections.find((connection) => connection.isActive);
-  // For a chat-only plugin the chat grant is the account: prompts unlock on it and a locked click runs it.
-  const unlocked = Boolean(liveAccount) || grant.granted;
+  // For a chat-only plugin the tools grant is what a prompt runs on: a webhook account alone
+  // never unlocks it, and a locked click runs that grant.
+  const prompts = promptsUnlocked(plugin, grant.chat.state);
   const { onUseInFlow, onUsePrompt } = bandHandlers(
     {
       plugin,
@@ -95,7 +97,8 @@ export function PluginBody({
       onConnect: grant.connect,
       // A Flow needs the endpoint row, so wherever this machine can mint one "Use in Flow" mints it.
       onConnectForFlow: endpointSetup.offered ? endpointSetup.create : grant.connect,
-      unlocked,
+      flowRoutable: Boolean(liveAccount) || grant.granted,
+      prompts,
     },
     launchFlow,
     store,
@@ -124,7 +127,7 @@ export function PluginBody({
         onUseInFlow={onUseInFlow}
         prompts={bandPrompts(plugin)}
         onUsePrompt={onUsePrompt}
-        promptsLocked={!unlocked}
+        promptsLocked={prompts === false}
       />
 
       <PluginTriggers
@@ -241,12 +244,13 @@ type BandActionDeps = {
   /** What "Use in Flow" runs without a Flow account: the connect chain, or the endpoint mint where that is the account. */
   onConnectForFlow: (pluginId: string) => void;
   /** A live Flow account, or the chat grant of a chat-only plugin. */
-  unlocked: boolean;
+  flowRoutable: boolean;
+  /** Whether a prompt can run in chat; `null` while that is still unsettled. */
+  prompts: boolean | null;
 };
 
-// A gated provider (not yet authorizable) gets no handler on any band action:
-// every one of them routes to Connect without an account, and that Connect
-// would be refused.
+// A gated provider (not yet authorizable) gets no handler on a band action it
+// cannot run: that action routes to Connect, and that Connect would be refused.
 function bandHandlers(
   deps: BandActionDeps,
   launchFlow: ReturnType<typeof usePluginFlowLaunch>,
@@ -254,13 +258,14 @@ function bandHandlers(
   seedRequest: RefObject<number>,
 ) {
   // Turned-off is paused — no flow launches or chat seeds until re-enabled; never-installed still routes to Connect.
-  const canRoute =
-    deps.plugin.installation?.isEnabled !== false &&
-    (deps.unlocked || deps.plugin.definition.availability === 'available');
-  if (!canRoute) return { onUseInFlow: undefined, onUsePrompt: undefined };
+  const enabled = deps.plugin.installation?.isEnabled !== false;
+  const available = deps.plugin.definition.availability === 'available';
+  // An unsettled prompt gets no handler: a neutral example, never a lock it may then lift.
+  const promptRoutable = enabled && deps.prompts !== null && (deps.prompts || available);
   return {
-    onUseInFlow: makeUseInFlow(deps, launchFlow),
-    onUsePrompt: makeUsePrompt(deps, store, seedRequest),
+    onUseInFlow:
+      enabled && (deps.flowRoutable || available) ? makeUseInFlow(deps, launchFlow) : undefined,
+    onUsePrompt: promptRoutable ? makeUsePrompt(deps, store, seedRequest) : undefined,
   };
 }
 
@@ -287,17 +292,17 @@ function makeUseInFlow(
   };
 }
 
-// With no live account a prompt cannot run, so the click routes to Connect —
+// A locked prompt cannot run, so the click routes to Connect —
 // the same never-dead-end contract Use in Flow keeps. Seeding uses a deferred
 // import (the agents barrel carries the whole chat surface; a static import
 // would drag it into everything that renders the detail page).
 function makeUsePrompt(
-  { plugin, unlocked, onConnect }: BandActionDeps,
+  { plugin, prompts, onConnect }: BandActionDeps,
   store: ReturnType<typeof useStore>,
   seedRequest: RefObject<number>,
 ) {
   return (prompt: string) => {
-    if (!unlocked) {
+    if (!prompts) {
       onConnect(plugin.definition.id);
       return;
     }

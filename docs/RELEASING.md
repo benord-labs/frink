@@ -13,6 +13,34 @@ the auto-update feed is missing or unusable. An official build without a feed sh
 auto-update turned off. The only way for its users to get updates is a build that knows the feed,
 so they would be stranded on that version. See [update-feed-ownership](decisions/update-feed-ownership.md).
 
+## Linux
+
+The tag build publishes both architectures:
+
+- x64, built on `ubuntu-latest`: `Frink-<version>.AppImage`, `frink_<version>_amd64.deb` and
+  `latest-linux.yml`.
+- arm64, built on `ubuntu-24.04-arm`: `Frink-<version>-arm64.AppImage`,
+  `frink_<version>_arm64.deb` and `latest-linux-arm64.yml`.
+
+electron-builder writes one feed per Linux arch, and electron-updater reads the one for
+`process.arch`, so the two legs share the bucket without a clash.
+
+Both formats auto-update from that feed:
+
+- **AppImage** replaces itself in place. The new file goes over the running `$APPIMAGE`, or is
+  saved under the new version's name if the old file name had a version in it. This needs a
+  folder the user can write to.
+- **.deb** updates through a polkit prompt. Because `build.publish` is set, electron-builder writes
+  `resources/package-type` = `deb` into the package, so electron-updater uses its `DebUpdater`.
+  That takes the `.deb` listed in the same feed and installs it with `dpkg -i`, falling back to
+  `apt-get install -f`. It runs this through the first of `gksudo`, `kdesudo`, `pkexec` or
+  `beesu` that it finds, which on a normal desktop is `pkexec`. With none of them it falls back
+  to plain `sudo`, which cannot prompt from a GUI, so the user has to install the update by hand.
+
+This replaces the earlier [windows-support](decisions/windows-support.md) note that called .deb
+updates manual. The decision log records the correction as its 2026-10-05 note. Only the Windows
+portable build is updated by hand.
+
 ## Configuration
 
 Build-time `MAIN_VITE_*` / `VITE_*` / `RENDERER_VITE_*` values are baked into the app bundle.
@@ -22,8 +50,8 @@ Anything left unset means that feature is off in the build.
 |------|------|---------|---------|
 | `MAIN_VITE_UPDATE_FEED_URL` | `.env` (mac) | build, release gate | Generic electron-updater feed. Must be https, with no quotes and no credentials. Unset = auto-update off. |
 | `UPDATE_FEED_URL` | repo **variable** | CI build, release gate | CI value for `MAIN_VITE_UPDATE_FEED_URL`. |
-| `MAIN_VITE_POSTHOG_KEY` / `VITE_POSTHOG_KEY` | `.env` / repo secret | build | PostHog project key for main / renderer. Unset = no analytics. |
-| `MAIN_VITE_POSTHOG_HOST` / `VITE_POSTHOG_HOST` | `.env` / repo variable | build | PostHog host. Unset = `https://us.i.posthog.com`. |
+| `MAIN_VITE_POSTHOG_KEY` | `.env` / repo secret | build | PostHog project key. Only the main process sends usage events ([what Frink sends](../user-docs/telemetry.md)). Unset = no analytics. |
+| `MAIN_VITE_POSTHOG_HOST` | `.env` / repo variable | build | PostHog host. Unset = `https://us.i.posthog.com`. |
 | `MAIN_VITE_SENTRY_DSN` / `RENDERER_VITE_SENTRY_DSN` | `.env` / repo secret | build | Sentry DSN for main / renderer. Unset = no crash reporting. |
 | `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, `SENTRY_PROJECT` | `.env` / repo secrets | build | Source-map upload on release builds (`SENTRY_UPLOAD=1`). |
 | `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ACCOUNT_ID` | `.env` / repo secrets | upload | R2 credentials. If all three are missing, CI tag builds skip publishing (and the feed gate). |

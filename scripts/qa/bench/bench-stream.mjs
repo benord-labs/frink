@@ -2,7 +2,7 @@
 import { connectPage, stamp } from './cdp.mjs';
 
 const [deltas = 5000, outputs = 20, outputKb = 100] = process.argv.slice(2).map(Number);
-const page = await connectPage();
+const page = await connectPage(undefined, { renderer: 'vite' }); // imports Vite-served modules below
 stamp(`bench on ${page.url}: deltas=${deltas} outputs=${outputs} outputKB=${outputKb}`);
 const result = await page.evaluate(`(async () => {
   const { Chat } = await import('/@id/@ai-sdk/react');

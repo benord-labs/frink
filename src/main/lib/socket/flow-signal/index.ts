@@ -26,8 +26,6 @@ export type FlowSignalArming = {
   /** The chat's newest Flow run, when it had not ended as this turn was admitted; else null. Read
    * once, on purpose: a record describes the delivery as admitted, even if the run ends mid-turn. */
   liveFlowRunId?: string | null;
-  /** The restart-interrupted row being revived, for provenance only; `prefetchedSignalTask` stays null. */
-  revivedTask?: SignalTaskRow;
   /** A flow task is live on this sub-chat — suppresses the in-chat plan-card Approve. */
   isFlowDrivenExecution: boolean;
   /** The driving node is a plan node with skipReview: emit the card `approved` and auto-advance. */
@@ -121,20 +119,16 @@ export async function resolveFlowSignalArming(
     const latest = driveInfo.active
       ? null
       : await getLatestFlowTaskForSubChat(getDatabase(), subChatId);
-    const revived = latest ? await restartInterruptedTarget(latest) : null;
-    // The briefing and every step reach a chat through a Flow task: with none, even under a linked
-    // live run, nothing can be mistaken for a step, so the chat stays untagged and skips the read.
-    if (driveInfo.active || latest)
-      armed.liveFlowRunId = await readLiveFlowRunId(subChatId, revived);
-    if (revived) {
-      // Retarget the signal at the revived task and stay ARMED — its next `done` advances the flow.
-      armed.effectiveSignalTaskId = revived.id;
-      armed.restartInterruptedFlowRunId = revived.flowRunId;
-      // Keep the status seen at detection: a concurrent revive can flip the row before this read.
-      const row = await getTaskById(getDatabase(), revived.id);
-      armed.revivedTask = row && { ...row, status: latest?.status ?? row.status };
+    const interrupted = latest ? await restartInterruptedTarget(latest) : null;
+    if (interrupted) {
+      // Target the interrupted task and stay ARMED — the preflight turns the reply into a resume.
+      armed.effectiveSignalTaskId = interrupted.id;
+      armed.restartInterruptedFlowRunId = interrupted.flowRunId;
       return armed;
     }
+    // The briefing and every step reach a chat through a Flow task: with none, even under a linked
+    // live run, nothing can be mistaken for a step, so the chat stays untagged and skips the read.
+    if (driveInfo.active || latest) armed.liveFlowRunId = await readLiveFlowRunId(subChatId);
 
     if (armed.effectiveSignalTaskId) {
       armed.prefetchedSignalTask = await getTaskById(getDatabase(), armed.effectiveSignalTaskId);
@@ -159,18 +153,15 @@ export async function resolveFlowSignalArming(
 }
 
 /**
- * The id of the run that owns the chat, when it has not ended or is the restart-interrupted run
- * being revived. Decided from the run row, never a task: a driving task can outlive a deleted run.
+ * The id of the run that owns the chat, when it has not ended. Decided from the run row, never a
+ * task: a driving task can outlive a deleted run.
  */
-async function readLiveFlowRunId(
-  subChatId: string,
-  revived: { flowRunId: string } | null,
-): Promise<string | null> {
+async function readLiveFlowRunId(subChatId: string): Promise<string | null> {
   try {
     const newest = await getNewestFlowRunForSubChat(getDatabase(), subChatId);
     if (!newest) return null;
     const ended = SIGNAL_DEAD_RUN_STATUSES.some((status) => status === newest.status);
-    return !ended || newest.id === revived?.flowRunId ? newest.id : null;
+    return ended ? null : newest.id;
   } catch (err) {
     // Feeds message provenance only: a read fault costs this turn its record, never the turn.
     log.warn('[Socket Executor] flow-run liveness read failed; sending no provenance', {
@@ -182,7 +173,7 @@ async function readLiveFlowRunId(
 }
 
 /**
- * The `cancelled` driving task a chat follow-up should REVIVE in place rather than treat as a dead
+ * The `cancelled` driving task a follow-up arms for the preflight to convert, not a dead
  * chat: its run was interrupted by a restart/reload, so it carries the marker. `null` for a
  * deliberate user cancel (no marker) — status alone never separates the two.
  */

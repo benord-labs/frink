@@ -4,100 +4,20 @@
  * Actions can be triggered via hotkeys or UI buttons
  */
 
-import type { SettingsTab } from '../../../lib/atoms';
 import { focusChatInput } from '../../../lib/focus-chat-input';
+import type {
+  AgentActionContext,
+  AgentActionDefinition,
+  AgentActionResult,
+  AgentActionSource,
+} from './types';
 
-// ============================================================================
-// TYPES
-// ============================================================================
-
-export type AgentActionSource = 'hotkey' | 'ui_button' | 'context-menu';
-
-type AgentActionCategory = 'general' | 'navigation' | 'chat' | 'view';
-
-export type AgentActionContext = {
-  // Navigation
-  setSelectedChatId?: (id: string | null) => void;
-  setShowNewChatForm?: (show: boolean) => void;
-
-  // UI states
-  setSidebarOpen?: (open: boolean | ((prev: boolean) => boolean)) => void;
-  setFilesSidebarOpen?: (open: boolean | ((prev: boolean) => boolean)) => void;
-  setSettingsDialogOpen?: (open: boolean) => void;
-  setSettingsActiveTab?: (tab: SettingsTab) => void;
-  setFileSearchDialogOpen?: (open: boolean) => void;
-  activateFilesSidebarSearch?: () => void;
-  activateActivePaneFileSearch?: () => void;
-  toggleChatSearch?: () => void;
-
-  /** True when a local project is selected and the Browse files sidebar can be shown */
-  canShowFilesSidebar?: boolean;
-
-  /** Whether the files sidebar is currently open */
-  isFilesSidebarOpen?: boolean;
-
-  /** Toggle the active pane's file tree in split view */
-  toggleActivePaneFileTree?: () => void;
-
-  /** Close all open text files in the code editor */
-  closeAllEditorFiles?: () => void;
-
-  /** Cycle code editor layout (top -> left -> right) when editor is open */
-  toggleEditorLayout?: () => void;
-
-  /** Focus the sidebar tree container for keyboard navigation */
-  focusSidebar?: () => void;
-
-  // Split view
-  addEmptyPane?: () => void;
-  newChatAtPane?: (index: number) => void;
-  activePaneIndex?: number;
-  setActivePaneIndex?: (index: number) => void;
-  isSplitActive?: boolean;
-  paneCount?: number;
-
-  /** Cycle through valid pane layouts (horizontal ↔ vertical, etc.) */
-  cycleLayout?: () => void;
-
-  /** Grow the active pane (take space from neighbors). Cmd+Alt+Right/Down. */
-  growPane?: () => void;
-  /** Shrink the active pane (give space to neighbors). Cmd+Alt+Left/Up. */
-  shrinkPane?: () => void;
-  /** Reset pane sizes to equal (snap to grid). Cmd+Alt+R. */
-  resetPaneSizes?: () => void;
-  /** Reset all pane zoom factors to 1x. Cmd+Alt+0. */
-  resetPaneZoom?: () => void;
-  /** Window zoom in (Electron webContents). Used with grow for Cmd+Shift+Plus. */
-  zoomIn?: () => void | Promise<void>;
-  /** Window zoom out. Used with shrink for Cmd+Shift+Minus. */
-  zoomOut?: () => void | Promise<void>;
-  /** Zoom in the current pane only (per-pane scale). Cmd+Alt+Plus. */
-  zoomPaneIn?: () => void;
-  /** Zoom out the current pane only. Cmd+Alt+Minus. */
-  zoomPaneOut?: () => void;
-  /** Whether the visible destination can show the unified sidebar (see ActiveOverlayViewPolicy). */
-  canToggleUnifiedSidebar?: boolean;
-};
-
-export type AgentActionResult = {
-  success: boolean;
-  error?: string;
-};
-
-type AgentActionHandler = (
-  context: AgentActionContext,
-  source: AgentActionSource,
-) => Promise<AgentActionResult> | AgentActionResult;
-
-export type AgentActionDefinition = {
-  id: string;
-  label: string;
-  description?: string;
-  category: AgentActionCategory;
-  hotkey?: string | string[];
-  handler: AgentActionHandler;
-  isAvailable?: (context: AgentActionContext) => boolean;
-};
+export type {
+  AgentActionContext,
+  AgentActionDefinition,
+  AgentActionResult,
+  AgentActionSource,
+} from './types';
 
 // ============================================================================
 // ACTION HANDLERS
@@ -244,40 +164,51 @@ const createEventAction = (event: string, action: EventActionInput): AgentAction
   },
 });
 
-const openFileInEditorAction = createEventAction('file-viewer:open-in-editor', {
-  id: 'open-file-in-editor',
-  label: 'Open file in editor',
-  description: 'Open the currently previewed file in external editor',
-  hotkey: ['cmd+shift+o', 'ctrl+shift+o'],
-});
+const EVENT_ACTIONS: AgentActionDefinition[] = [
+  createEventAction('file-viewer:open-in-editor', {
+    id: 'open-file-in-editor',
+    label: 'Open file in editor',
+    description: 'Open the currently previewed file in external editor',
+    hotkey: ['cmd+shift+o', 'ctrl+shift+o'],
+  }),
+  createEventAction('branches:open-picker', {
+    id: 'open-branch-picker',
+    label: 'Open branch picker',
+    description: 'Open the current chat branch picker',
+    hotkey: ['cmd+shift+b', 'ctrl+shift+b'],
+  }),
+  createEventAction('branches:open-delete-picker', {
+    id: 'open-branch-delete-picker',
+    label: 'Delete branch picker',
+    description: 'Open the branch delete picker for the current chat',
+    hotkey: ['cmd+shift+backspace', 'ctrl+shift+backspace'],
+  }),
+  createEventAction('sidebar:collapse-all', {
+    id: 'collapse-all-sidebar',
+    label: 'Collapse all sidebar folders',
+    description: 'Collapse all expanded folders in the sidebar',
+    hotkey: ['cmd+shift+e', 'ctrl+shift+e'],
+  }),
+  createEventAction('sidebar:toggle-archived', {
+    id: 'toggle-archived',
+    label: 'Toggle archived chats',
+    description: 'Show or hide the sidebar archived chats list',
+    hotkey: ['cmd+shift+a', 'ctrl+shift+a'],
+  }),
+];
 
-const openBranchPickerAction = createEventAction('branches:open-picker', {
-  id: 'open-branch-picker',
-  label: 'Open branch picker',
-  description: 'Open the current chat branch picker',
-  hotkey: ['cmd+shift+b', 'ctrl+shift+b'],
-});
-
-const openBranchDeletePickerAction = createEventAction('branches:open-delete-picker', {
-  id: 'open-branch-delete-picker',
-  label: 'Delete branch picker',
-  description: 'Open the branch delete picker for the current chat',
-  hotkey: ['cmd+shift+backspace', 'ctrl+shift+backspace'],
-});
-
-const collapseAllSidebarAction = createEventAction('sidebar:collapse-all', {
-  id: 'collapse-all-sidebar',
-  label: 'Collapse all sidebar folders',
-  description: 'Collapse all expanded folders in the sidebar',
-  hotkey: ['cmd+shift+e', 'ctrl+shift+e'],
-});
-
-const toggleArchivedAction = createEventAction('sidebar:toggle-archived', {
-  id: 'toggle-archived',
-  label: 'Toggle archived chats',
-  description: 'Show or hide the sidebar archived chats list',
-  hotkey: ['cmd+shift+a', 'ctrl+shift+a'],
-});
+// A chat-pane shortcut: the layout wires it only while the chat destination, which owns it, shows.
+const archiveAgentAction: AgentActionDefinition = {
+  id: 'archive-agent',
+  label: 'Archive current agent',
+  category: 'chat',
+  hotkey: ['cmd+shift+d', 'ctrl+shift+d'],
+  isAvailable: (context) => context.archiveFocusedChat !== undefined,
+  handler: (context) => {
+    context.archiveFocusedChat?.();
+    return { success: true };
+  },
+};
 
 const closeAllEditorFilesAction: AgentActionDefinition = {
   id: 'close-all-editor-files',
@@ -589,11 +520,8 @@ export const AGENT_ACTIONS: Record<string, AgentActionDefinition> = {
   'toggle-files': toggleFilesAction,
   'file-search': fileSearchAction,
   'find-in-files': findInFilesAction,
-  'open-file-in-editor': openFileInEditorAction,
-  'open-branch-picker': openBranchPickerAction,
-  'open-branch-delete-picker': openBranchDeletePickerAction,
-  'collapse-all-sidebar': collapseAllSidebarAction,
-  'toggle-archived': toggleArchivedAction,
+  ...Object.fromEntries(EVENT_ACTIONS.map((action) => [action.id, action])),
+  'archive-agent': archiveAgentAction,
   'close-all-editor-files': closeAllEditorFilesAction,
   'toggle-editor-layout': toggleEditorLayoutAction,
   'next-pane-group': nextPaneGroupAction,

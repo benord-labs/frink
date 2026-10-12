@@ -32,7 +32,7 @@ type StartRunPrimary = 'start' | 'running' | 'unavailable' | undefined;
 
 const PRIMARY_TITLE: Partial<Record<Exclude<StartRunPrimary, undefined>, string>> = {
   running: 'Batch is running',
-  unavailable: 'This batch already has runs — use Retry or Carry on above, per run',
+  unavailable: 'This batch already has runs — use Continue or Retry above, per run',
 };
 
 function startRunLabel(primary: StartRunPrimary, isBatchDeferred: boolean): string {
@@ -71,7 +71,7 @@ function StartRunButton({
       )}
       {unavailable && (
         <span role="status" className="sr-only">
-          This batch already has runs. Use Retry or Carry on for each run above — there is no
+          This batch already has runs. Use Continue or Retry for each run above — there is no
           whole-batch recovery.
         </span>
       )}

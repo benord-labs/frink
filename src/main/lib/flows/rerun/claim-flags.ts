@@ -44,7 +44,7 @@ function extractTaskTriggerConfig(triggerContext: DbTask['triggerContext']) {
  * True when the task was minted by a deliberate flow re-dispatch (resume/retry paths create a
  * fresh node_run for a node that already ran — dispatchAgent stamps `_config.isNodeRedispatch`).
  * Widens the renderer's `isRetry` dedup bypass so the re-dispatched prompt, already persisted as a
- * user message in the reused chat, is re-sent instead of swallowed. Distinct from a `tasks.retry`
+ * user message in the reused chat, is re-sent instead of swallowed. Distinct from a `tasks.recover`
  * claim (result.retryMode), which alone drives the flow-run unpark.
  */
 export function isDeliberateRedispatch(rawFlowConfig: unknown): boolean {
@@ -56,7 +56,7 @@ export function isDeliberateRedispatch(rawFlowConfig: unknown): boolean {
 /**
  * The two flags derived per task claim. They MUST stay split: `isRetry` (the renderer's
  * alreadySent-dedup bypass) widens to deliberate re-dispatches, while `isUserRetryClaim` (the
- * flow-run unpark gate) keys on the tasks.retry claim ONLY — a re-dispatch has already flipped its
+ * flow-run unpark gate) keys on the tasks.recover claim ONLY — a re-dispatch has already flipped its
  * run back to `running` before dispatch, so unparking would refuse and wrongly fail the fresh task.
  */
 export function deriveTaskClaimFlags(
@@ -72,7 +72,7 @@ export function deriveTaskClaimFlags(
 /**
  * Whether this claim should CONTINUE the sub-chat's resumed session (hidden nudge)
  * instead of sending the task's full prompt, and the prior-attempt error the nudge
- * names. Two writers, one reader: a `tasks.retry` claim carries `result.retryMode`;
+ * names. Two writers, one reader: a `tasks.recover` claim carries `result.retryMode`;
  * a continuation terminal-resume dispatch stamps `_config.resumeSession` (+
  * `resumeSubChatId` + `resumePriorError`) at mint because a fresh task cannot carry a
  * retryMode — routing it through retryMode would trip `isUserRetryClaim`'s unpark,

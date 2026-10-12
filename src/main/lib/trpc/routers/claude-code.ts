@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { LAUNCH_FLAGS } from '../../../../shared/launch-flags';
 import { isAnthropicApiKey } from '../../../../shared/lib/anthropic-token';
 import { getClaudeShellEnvironment } from '../../claude';
+import { ensureLoginShellEnv } from '../../platform/login-shell-env';
 import { runClaudeOAuthBrowser } from '../../claude-oauth-browser';
 import {
   decryptToken,
@@ -293,11 +294,10 @@ export const claudeCodeRouter = router({
    * If true, user can skip OAuth onboarding
    * Based on PR #29 by @sa4hnd
    */
-  hasExistingCliConfig: publicProcedure.query(() => {
-    const shellEnv = getClaudeShellEnvironment();
-    const hasConfig = !!(shellEnv.ANTHROPIC_API_KEY || shellEnv.ANTHROPIC_BASE_URL);
+  hasExistingCliConfig: publicProcedure.query(async () => {
+    const shellEnv = await ensureLoginShellEnv().then(getClaudeShellEnvironment); // profile keys
     return {
-      hasConfig,
+      hasConfig: !!(shellEnv.ANTHROPIC_API_KEY || shellEnv.ANTHROPIC_BASE_URL),
       hasApiKey: !!shellEnv.ANTHROPIC_API_KEY,
       baseUrl: shellEnv.ANTHROPIC_BASE_URL || null,
     };
@@ -403,11 +403,11 @@ export const claudeCodeRouter = router({
    * unavailable, so the (gated) UI never probes and `connectCodexPassthrough` stays the one
    * creation surface. No multi-entry picker — codex auth is one-per-device, machine-local.
    */
-  detectCodexAccount: publicProcedure.query(() => {
+  detectCodexAccount: publicProcedure.query(async () => {
     if (!LAUNCH_FLAGS.codexAccounts) {
       return { available: false as const, hint: 'Codex accounts are not enabled.' };
     }
-    return detectCodexAccount();
+    return await detectCodexAccount();
   }),
 
   /**
@@ -625,9 +625,9 @@ export const claudeCodeRouter = router({
       }
 
       // Confirm the codex CLI is actually logged in on this machine (identity only —
-      // no token; the binary owns auth). Synchronous, no keychain shell-out timeout to
-      // worry about. Fail with the detector's hint if not.
-      const detection = detectCodexAccount();
+      // no token; the binary owns auth). A keychain-stored login is confirmed by presence
+      // and carries no email. Fail with the detector's hint if not.
+      const detection = await detectCodexAccount();
       if (!detection.available) {
         throw new Error(detection.hint ?? 'No Codex login found. Run `codex login` and try again.');
       }

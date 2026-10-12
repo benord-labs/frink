@@ -44,6 +44,23 @@ export function readPathString(body: JsonObject, path: string | undefined): stri
   return value?.success ? value.data : undefined;
 }
 
+const ownerId = z.union([z.string().trim().min(1), z.number().transform(String)]);
+
+/** The ids an assignee event names, as the strings the machine-side matcher compares: vendors send
+ * numbers or strings, and an item without an id (a removal) names nobody. */
+function readOwnerIds(
+  body: JsonObject,
+  spec: NonNullable<PayloadDrivenWebhookProvider['webhook_payload']['owner_ids']>,
+): string[] {
+  const list = readPath(body, spec.list_path);
+  if (!Array.isArray(list)) return [];
+  const ids = list.flatMap((item: JsonValue) => {
+    const id = ownerId.safeParse(isJsonObject(item) ? readPath(item, spec.id_path) : undefined);
+    return id.success ? [id.data] : [];
+  });
+  return [...new Set(ids)];
+}
+
 /** The row behind an endpoint's provider id, when the shared receiver owns it. */
 export function webhookOnlyProvider(providerId: string): PayloadDrivenWebhookProvider | undefined {
   return PROVIDERS.filter(isPayloadDrivenWebhookProvider).find(
@@ -73,9 +90,16 @@ export function pasteUrlExtractor(provider: PayloadDrivenWebhookProvider): Paylo
       const fromPaths = filters.flatMap((field) =>
         field.path === undefined ? [] : [[field.id, readPath(flat, field.path)] as const],
       );
+      // Only an event the row marks as carrying assignees names them: the same list holds other
+      // changes on other events, whose ids are not people.
+      const assignee = events.find((event) => event.id === ctx.eventType)?.assignee === true;
+      const ownerIds = assignee && spec.owner_ids ? readOwnerIds(flat, spec.owner_ids) : undefined;
+      // Both spellings, because the matcher reads the snake_case one first and the body is spread.
+      const owners = ownerIds ? { owner_ids: ownerIds, ownerIds } : {};
       return {
         ...flat,
         ...Object.fromEntries(fromPaths),
+        ...owners,
         eventType: ctx.eventType,
         provider: provider.id,
         externalUserId: ctx.externalUserId,

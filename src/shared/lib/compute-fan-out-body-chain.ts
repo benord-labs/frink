@@ -116,6 +116,12 @@ export function resolveFanOutStructure(
   edges: FlowEdge[],
   fanOutNodeId: string,
 ): FanOutStructureResolution {
+  // Ownership is one level deep: removal and the runtimes only ever look at direct members.
+  if (nodes.some((node) => node.id === fanOutNodeId && node.parentId)) {
+    return failure(
+      `(id "${fanOutNodeId}") cannot sit inside another Fan Out — remove it or clear its parentId`,
+    );
+  }
   const members = nodes.filter((node) => node.parentId === fanOutNodeId);
   if (members.length === 0) return failure('has no body members', true);
   const memberIds = new Set(members.map((node) => node.id));

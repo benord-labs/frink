@@ -10,6 +10,7 @@ describe('flowPatchOperationShape', () => {
     ['update_edge', { action: 'update', kind: 'edge' }],
     ['remove_edge', { action: 'remove', kind: 'edge' }],
     ['update_settings', { action: 'update', kind: 'settings' }],
+    ['auto_layout', { action: 'update', kind: 'settings' }],
   ] as const)('maps %s to its semantic change shape', (operation, expected) => {
     expect(flowPatchOperationShape(operation)).toEqual(expected);
   });

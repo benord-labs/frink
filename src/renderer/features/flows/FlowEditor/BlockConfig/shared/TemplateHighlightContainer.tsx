@@ -181,7 +181,11 @@ export function TemplateHighlightContainer({
       'aria-invalid': ariaInvalid ?? child.props['aria-invalid'],
       'aria-describedby':
         [ariaDescribedBy, child.props['aria-describedby']].filter(Boolean).join(' ') || undefined,
-      className: cn('relative z-10 bg-transparent caret-foreground', child.props.className),
+      // Grows with its text, so long templates read in full instead of scrolling a small box.
+      className: cn(
+        'relative z-10 bg-transparent caret-foreground field-sizing-content min-h-24 max-h-[60vh]',
+        child.props.className,
+      ),
       onScroll: (e: React.UIEvent<HTMLTextAreaElement>) => {
         onTextareaScroll();
         (child.props as React.TextareaHTMLAttributes<HTMLTextAreaElement>).onScroll?.(e);

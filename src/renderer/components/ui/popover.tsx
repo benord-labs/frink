@@ -1,11 +1,6 @@
 import * as PopoverPrimitive from '@radix-ui/react-popover';
 import * as React from 'react';
-import {
-  overlayAnimation,
-  overlayContentBase,
-  overlayMaxHeight,
-  overlaySlideIn,
-} from '../../lib/overlay-styles';
+import { overlayAnimation, overlayContentBase, overlaySlideIn } from '../../lib/overlay-styles';
 import { cn } from '../../lib/utils';
 
 const Popover = PopoverPrimitive.Root;
@@ -25,7 +20,8 @@ const PopoverContent = React.forwardRef<
       sideOffset={sideOffset}
       className={cn(
         overlayContentBase,
-        overlayMaxHeight,
+        // Fit the room beside the trigger and scroll; the 16rem floor makes a cramped side flip instead.
+        'max-h-[max(var(--radix-popover-content-available-height),16rem)]',
         overlayAnimation,
         overlaySlideIn,
         'min-w-[200px] py-1',

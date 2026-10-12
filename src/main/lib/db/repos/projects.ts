@@ -1,4 +1,4 @@
-import { and, desc, eq, or, sql } from 'drizzle-orm';
+import { and, desc, eq, notLike, or, sql } from 'drizzle-orm';
 import type { getDatabase } from '../index';
 import { chats, type NewProject, type Project, projects, subChats } from '../schema';
 import {
@@ -22,6 +22,26 @@ type Db = ReturnType<typeof getDatabase>;
 export async function createProject(db: Db, input: NewProject): Promise<Project> {
   const [row] = await db.insert(projects).values(input).returning();
   return row;
+}
+
+/** Insert-or-adopt by UNIQUE path, in one sync transaction so a concurrent delete can't land
+ * between the conflict and the lookup. `createProject` stays strict — scaffoldBuild needs its throw. */
+export async function createOrGetProjectByPath(
+  db: Db,
+  input: NewProject,
+): Promise<{ project: Project; created: boolean }> {
+  return db.transaction(() => {
+    const row = db
+      .insert(projects)
+      .values(input)
+      .onConflictDoNothing({ target: projects.path })
+      .returning()
+      .get();
+    if (row) return { project: row, created: true };
+    const existing = db.select().from(projects).where(eq(projects.path, input.path)).get();
+    if (!existing) throw new Error(`Project for path ${input.path} vanished after conflict`);
+    return { project: existing, created: false };
+  });
 }
 
 export async function getProjectById(db: Db, id: string): Promise<Project | null> {
@@ -54,6 +74,16 @@ export async function findProjectsByIdOrName(
 /** All projects, newest-updated first. Single-user — every row belongs to the current user. */
 export async function listProjects(db: Db): Promise<Project[]> {
   return db.select().from(projects).orderBy(desc(projects.updatedAt));
+}
+
+/** `listProjects` minus virtual folders (`virtual://` paths): those group chats and have no
+ * on-disk path, so they are never a codebase an agent can be pointed at. */
+export async function listRealProjects(db: Db): Promise<Project[]> {
+  return db
+    .select()
+    .from(projects)
+    .where(notLike(projects.path, 'virtual://%'))
+    .orderBy(desc(projects.updatedAt));
 }
 
 /** Projects by last chat activity (any `sub_chats` write: messages, streams, renames, mode). Not

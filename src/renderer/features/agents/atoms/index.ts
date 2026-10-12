@@ -417,7 +417,7 @@ export const taskExecutionErrorAtomFamily = atomFamily((_subChatId: string) =>
 export type WorkMode = 'local' | 'worktree';
 export const lastSelectedWorkModeAtom = atomWithStorage<WorkMode>(
   'agents:lastSelectedWorkMode',
-  'worktree', // default to worktree for current behavior
+  'local',
   undefined,
   { getOnInit: true },
 );

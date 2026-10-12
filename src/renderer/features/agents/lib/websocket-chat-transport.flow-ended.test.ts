@@ -172,7 +172,7 @@ describe('FLOW_RUN_ENDED socket error', () => {
     expect(toast.error).toHaveBeenCalledWith(
       'This flow run has ended',
       expect.objectContaining({
-        description: 'Use Re-run step (or Resume) above the composer to continue this flow.',
+        description: 'Use Continue or Retry above the composer to pick this flow back up.',
         // Dedup id is per sub-chat: concurrent declines in two chats must keep both toasts.
         id: 'flow-run-ended:fre-toast',
       }),

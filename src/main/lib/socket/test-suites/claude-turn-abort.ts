@@ -118,6 +118,31 @@ const heldCli = (adopted: (cli: Cli) => Promise<void>) =>
     await never();
   };
 
+/** Turn 1 leaves background work running so the chat holds; `wake()` then has the CLI run `burst`
+ * on its own, as a wake burst streaming into the arming message. */
+function wakingCli(burst: (cli: Cli) => AsyncGenerator<Frame>) {
+  let wake = () => {};
+  const woke = new Promise<void>((resolve) => {
+    wake = resolve;
+  });
+  const script: CliScript = async function* (cli) {
+    await cli.prompt.next();
+    await cli.stop([RUNNING_TASK]);
+    yield* TURN_END;
+    await woke;
+    yield* burst(cli);
+    await never();
+  };
+  return { script, wake };
+}
+
+const streamed = () => JSON.stringify(vi.mocked(socketClient.sendStreamChunkDirect).mock.calls);
+const completes = () =>
+  vi
+    .mocked(socketClient.sendExecuteCompleteDirect)
+    .mock.calls.map(([complete]) => complete)
+    .filter((complete) => complete.subChatId === payload.subChatId);
+
 /** Resolves once the CLI script reaches the silent tool call. */
 function silentTool() {
   let reach = () => {};
@@ -315,11 +340,85 @@ function registerDetachedAbortTests(harness: ClaudeTurnAbortHarness): void {
 
     await followUp(harness);
 
-    // Stop only closed the held CLI's stdin: it may still be mid-burst, making MCP calls.
-    expect(held.close).not.toHaveBeenCalled();
+    // Stop closed the held CLI outright, so it cannot keep running a burst beside the new one.
+    expect(held.close).toHaveBeenCalled();
     expect(claudeQueryMock).toHaveBeenCalledTimes(2);
     expect(channelOwner(heldChannel)).toBeUndefined();
     expect(getChannelToken(payload.subChatId, 'claude')).not.toBe(heldChannel);
+  });
+
+  it('Stop mid-burst on a held chat closes the CLI: nothing after Stop streams, the burst persists', async () => {
+    let enterTool = () => {};
+    const inTool = new Promise<void>((resolve) => {
+      enterTool = resolve;
+    });
+    let finishTool = () => {};
+    const toolDone = new Promise<void>((resolve) => {
+      finishTool = resolve;
+    });
+    const cli = wakingCli(async function* () {
+      yield {
+        type: 'assistant',
+        chunks: [{ type: 'text-delta', id: 'b', delta: 'checking build' }],
+      };
+      enterTool();
+      await toolDone; // a long foreground tool that outlives the Stop
+      yield { type: 'assistant', chunks: [{ type: 'text-delta', id: 'l', delta: 'after stop' }] };
+      yield* TURN_END;
+    });
+    const query = mockQuery(claudeQueryMock, cli.script);
+    await handleRemoteExecute({ ...payload, message: 'run coverage and wait' });
+    await vi.waitFor(() => expect(completes().some((c) => c.continuesWakeHold)).toBe(true));
+    cli.wake();
+    await inTool;
+
+    handleRemoteStop(payload);
+    finishTool();
+    await tick();
+
+    expect(query.close).toHaveBeenCalled();
+    expect(streamed()).toContain('checking build');
+    expect(streamed()).not.toContain('after stop');
+    const burst = completes().find((c) => c.wakeBurst);
+    expect(JSON.stringify(burst?.finalParts)).toContain('checking build');
+    expect(burst?.continuesWakeHold).toBe(false);
+    expect(hasWakeHold(payload.subChatId)).toBe(false);
+    expect(socketClient.sendWakeHoldChanged).not.toHaveBeenCalledWith(
+      expect.objectContaining({ endReason: 'failed' }),
+    );
+    expect(socketClient.sendErrorDirect).not.toHaveBeenCalled();
+  });
+
+  it('a chat delete closes a held CLI too, not just Stop', async () => {
+    const query = mockQuery(claudeQueryMock, heldCli(never));
+    await handleRemoteExecute({ ...payload, message: 'run coverage and wait' });
+
+    abortActiveExecutionsForSubChats([payload.subChatId], 'chat-deleted');
+    await tick();
+
+    expect(query.close).toHaveBeenCalled();
+    expect(hasWakeHold(payload.subChatId)).toBe(false);
+  });
+
+  it('a wait that ends on its own only closes stdin, so an answer written after EOF still lands', async () => {
+    const cli = wakingCli(async function* (wakingCliSide) {
+      yield {
+        type: 'assistant',
+        chunks: [{ type: 'text-delta', id: 'w', delta: 'coverage done' }],
+      };
+      await wakingCliSide.stop([]); // nothing left in flight: the wait is over
+      yield { type: 'result' };
+      yield { type: 'assistant', chunks: [{ type: 'text-delta', id: 'f', delta: 'final answer' }] };
+      yield { type: 'result' };
+    });
+    const query = mockQuery(claudeQueryMock, cli.script);
+    await handleRemoteExecute({ ...payload, message: 'run coverage and wait' });
+    cli.wake();
+    await tick();
+
+    expect(getSession(payload.subChatId)?.queue.closed).toBe(true);
+    expect(query.close).not.toHaveBeenCalled();
+    expect(streamed()).toContain('final answer');
   });
 
   it('a question park on an adopted flow turn ends the session once; the abort after it closes nothing', async () => {

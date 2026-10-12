@@ -14,9 +14,9 @@
 import { TRPCError } from '@trpc/server';
 import log from 'electron-log';
 import { z } from 'zod';
-import { manifestOutputsToSchema } from '../../../../shared/lib/output-schemas';
 import { type FlowGraph, validateGraph } from '../../../../shared/lib/validate-flow-graph';
 import { refuseIfAwaitingConsent } from './gating/flow-invocation-consent';
+import { patchTemplateWarnings } from './patch-template-warnings';
 import {
   addStageRunsLimiter,
   defineStagesLimiter,
@@ -39,13 +39,7 @@ export {
   resetStartBatchCount,
 } from './gating/session-call-limiters';
 
-import {
-  computeNodeVariables,
-  validateFlowTemplateVariables,
-} from '../../../../shared/lib/validate-flow-templates';
 import { getCommandContent, listCommands } from '../../commands';
-import { discoverCustomNodes } from '../../custom-nodes/discovery';
-import { listPluginNodes } from '../../integrations/plugin-node-derivation';
 import { getDatabase } from '../../db';
 import { getProjectById } from '../../db/repos/projects';
 import {
@@ -72,10 +66,11 @@ import {
 import { type McpToolResult, toolResult } from '../tool-result';
 import { handleIntegrationsList, handleNodesList, handleProjectsList } from './catalog';
 import { expandAgentCommandsInGraph, formatExpansionFailures } from './expand-commands';
-import { applyPatchOperations, patchArgsSchema, seedDefaultProject } from './flow-patch';
+import { applyPatchOperations, PATCH_OPS, patchArgsSchema, seedDefaultProject } from './flow-patch';
 import {
   buildFlowPatchReceipt,
   buildFlowPatchResult,
+  operationsTouchPositions,
   buildFlowPatchUnexpectedError,
   flowPatchError,
   rollbackCreatedFlow,
@@ -83,6 +78,12 @@ import {
 } from './flow-patch-result';
 import { buildFlowRunLaunchResult } from './flow-run-launch-result';
 import { mapFlowRunToSummary } from './map-flow-run';
+import {
+  claimCreatedFlowName,
+  recordCreatedFlowId,
+  releaseUnsavedFlowName,
+  resetCreatedFlowNames,
+} from './gating/patch-create-names';
 import { handleRegisterNode, REGISTER_NODE_TOOL, type RegisterNodeOptions } from './register-node';
 import { resolveCreationProject } from './resolve-creation-project';
 import { describeFlowRunBlockers } from './run-readiness';
@@ -354,11 +355,22 @@ function releasePatchCreateSlot(sessionKey: string): void {
 }
 
 export function resetFlowsPatchCreateCount(executionId?: string): void {
+  resetCreatedFlowNames(executionId);
   if (executionId === undefined) {
     patchCreateCounts.clear();
     return;
   }
   patchCreateCounts.delete(executionId);
+}
+
+async function flowExists(flowId: string): Promise<boolean> {
+  try {
+    await getFlow(flowId);
+    return true;
+  } catch (err) {
+    if (isTrpcNotFound(err)) return false;
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -411,21 +423,13 @@ const PATCH_OPERATIONS_INPUT_SCHEMA = {
   minItems: 1,
   maxItems: 50,
   description:
-    'Ordered list of patch operations (max 50). Ops: update_node (nodeId, optional label/config/position/parentId — config merges recursively; null removes keys), add_node (node), remove_node (nodeId, removes contained Fan Out nodes and incident edges), add_edge (edge), remove_edge (edgeId), update_edge (edgeId + label and/or sourceHandle), update_settings (partial flow settings).',
+    'Ordered list of patch operations (max 50). Ops: update_node (nodeId, optional label/config/position/parentId — config merges recursively; null removes keys), add_node (node), remove_node (nodeId, removes contained Fan Out nodes and incident edges), add_edge (edge), remove_edge (edgeId), update_edge (edgeId + label and/or sourceHandle), update_settings (partial flow settings), auto_layout (no fields; once per patch; resets every node to the default top-to-bottom layout after the other ops, discarding manual positions and Fan Out sizes). When positions change or nodes collide the result carries `layout` (bounds, overlaps, upwardEdges).',
   items: {
     type: 'object',
     properties: {
       op: {
         type: 'string',
-        enum: [
-          'update_node',
-          'add_node',
-          'remove_node',
-          'add_edge',
-          'remove_edge',
-          'update_edge',
-          'update_settings',
-        ],
+        enum: PATCH_OPS,
       },
       nodeId: { type: 'string' },
       parentId: {
@@ -510,7 +514,7 @@ export const FLOWS_TOOLS = [
   {
     name: 'frink_flows_patch',
     description:
-      'Create a new flow or modify an existing one using incremental operations. To CREATE: pass name + operations (creates the flow and applies ops to an empty graph). To MODIFY: pass flowId + operations. The graph is saved after each call even with incomplete configs — stricter run-mode validation (URLs, webhooks, agent instructions, etc.) runs when you start the flow and when the server creates batch stages (frink_flows_define_stages), not on every patch. Config on update_node is merged recursively (RFC 7396 / JSON Merge Patch): send only changed keys; set a key to null to remove it. Do not pass blockType on update_node (use remove_node + add_node to change type). Max 50 operations per call; max 5 flow creates and 15 modifications per chat session. Template warnings and per-node available variables are included in every response. A visual flow preview is rendered in chat when successful — do not redraw Mermaid or list all nodes.',
+      'Create a new flow or modify an existing one using incremental operations. To CREATE: pass name + operations (creates the flow and applies ops to an empty graph). To MODIFY: pass flowId + operations. The graph is saved after each call even with incomplete configs — stricter run-mode validation (URLs, webhooks, agent instructions, etc.) runs when you start the flow and when the server creates batch stages (frink_flows_define_stages), not on every patch. Config on update_node is merged recursively (RFC 7396 / JSON Merge Patch): send only changed keys; set a key to null to remove it. Do not pass blockType on update_node (use remove_node + add_node to change type). Max 50 operations per call; max 5 flow creates and 15 modifications per chat session. Template warnings and a topology-only graph (node ids, labels, block types, edges) are included in every response; call frink_flows_get for full node config. If a result is missing, cut short, or replaced by a note such as \"saved to <path>\", the call may have finished: check with frink_flows_get (or frink_flows_list after a create) before retrying, and never resend a create — a repeated name-create in the same chat is rejected. A visual flow preview is rendered in chat when successful — do not redraw Mermaid or list all nodes.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -690,7 +694,7 @@ export const FLOWS_TOOLS = [
   {
     name: 'frink_flows_define_stages',
     description:
-      'Define staged execution for a batch, with optional DAG dependencies between stages. All stages start as pending — call frink_flows_start_batch after planning is complete to begin execution. This allows multi-call DAG assembly (up to 50 stages per call) for large epics without starting work prematurely. The server validates the flow graph in run mode before creating stages. Non-root stages fire automatically when all their dependencies complete after the batch is started. Omit dependsOn for linear execution. Use dependsOn: [stageNumber, ...] for arbitrary dependency graphs. failureThreshold: 0 = any failure blocks dependent stages; -1 = never block. On partial failure use success: "partial" with failedStages — re-call with full run list for failed numbers.',
+      'Define staged execution for a batch, with optional DAG dependencies between stages. All stages start as pending — call frink_flows_start_batch after planning is complete to begin execution. This allows multi-call DAG assembly (up to 50 stages per call) for large epics without starting work prematurely. The server validates the flow graph in run mode before creating stages. Non-root stages fire automatically when all their dependencies complete after the batch is started. Omit dependsOn for linear execution. Use dependsOn: [stageNumber, ...] for arbitrary dependency graphs. failureThreshold: 0 = any failure blocks dependent stages; -1 = never block. A call that returns an error saved nothing from that call — fix the input and re-send the same stages.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -1019,6 +1023,8 @@ async function handlePatch(
   let creationProjectNote: string | null = null;
   let persistenceAttempted = false;
   let persistenceCompleted = false;
+  // Session-scoped name claim; skipped without an executionId (the global key spans chats).
+  let claimedName: string | null = null;
 
   try {
     let flowId: string;
@@ -1028,6 +1034,11 @@ async function handlePatch(
     let flowProjectId: string | undefined;
 
     if (name !== undefined) {
+      if (executionId !== undefined) {
+        const claim = await claimCreatedFlowName(executionId, name, flowExists);
+        if (!claim.ok) return flowPatchError(claim.message, 'none');
+        claimedName = name;
+      }
       // Creating a new flow -- check creation sub-limit first
       if (!tryAcquirePatchCreateSlot(sessionKey)) {
         return flowPatchError(
@@ -1053,6 +1064,9 @@ async function handlePatch(
         projectId: resolution.projectId,
       });
       createdFlowId = flow.id;
+      if (claimedName !== null && executionId !== undefined) {
+        recordCreatedFlowId(executionId, claimedName, flow.id);
+      }
       flowId = flow.id;
       flowName = flow.name;
       flowProjectId = resolution.projectId ?? undefined;
@@ -1152,13 +1166,7 @@ async function handlePatch(
           );
         }
 
-        // Plugin nodes are derived, never in `valid`; reading only `valid` broke {{previous.*}} (sc-2508).
-        const { valid } = discoverCustomNodes();
-        const customNodeOutputs = new Map(
-          [...valid, ...listPluginNodes()].map((m) => [m.name, manifestOutputsToSchema(m.outputs)]),
-        );
-        const nodeVariables = computeNodeVariables(applied.graph, { customNodeOutputs });
-        const patchTemplateWarnings = validateFlowTemplateVariables(applied.graph, nodeVariables);
+        const templateWarnings = patchTemplateWarnings(applied.graph);
         const webhookSetup = collectWebhookSetupHints(applied.graph);
 
         persistenceAttempted = true;
@@ -1190,8 +1198,9 @@ async function handlePatch(
           operationCount: operations.length,
           creationProjectNote,
           createdFlow: Boolean(createdFlowId),
-          templateWarnings: patchTemplateWarnings,
+          templateWarnings,
           webhookSetup,
+          positionsTouched: operationsTouchPositions(operations),
         });
       }
     }
@@ -1213,6 +1222,7 @@ async function handlePatch(
     });
   } finally {
     releasePatchInFlight(sessionKey);
+    releaseUnsavedFlowName(sessionKey, claimedName, persistenceCompleted);
   }
 }
 
@@ -1732,25 +1742,6 @@ async function handleDefineStages(
       runCount: s.runCount,
       dependsOnStageNumbers: s.dependsOnStageNumbers,
     }));
-
-    if (result.partial && result.failedStages?.length) {
-      const failedNums = result.failedStages.map((f) => f.stageNumber).join(', ');
-      return toolResult(
-        JSON.stringify(
-          {
-            success: 'partial',
-            stageCount: result.stages.length,
-            rootStageCount: result.rootStageCount,
-            maxDepth: result.maxDepth,
-            stages: stageSummary,
-            failedStages: result.failedStages,
-            message: `${result.stages.length} stage(s) defined, ${result.failedStages.length} failed. Re-call frink_flows_define_stages with the full run list for failed stage numbers: [${failedNums}]. Existing runs for those stages will be replaced.`,
-          },
-          null,
-          2,
-        ),
-      );
-    }
 
     return toolResult(
       JSON.stringify(

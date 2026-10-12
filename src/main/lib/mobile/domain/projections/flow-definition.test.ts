@@ -199,6 +199,15 @@ describe('mobile current Flow definition', () => {
     expect(projectMobileFlowDefinition(graph, 1)).toBeNull();
   });
 
+  it('withholds a draft only because one Fan Out sits inside another', () => {
+    const outer = { id: 'outer', blockType: 'fan_out' };
+    const sideBySide = saved([outer, { id: 'inner', blockType: 'fan_out' }]);
+    const nested = saved([outer, { id: 'inner', blockType: 'fan_out', parentId: 'outer' }]);
+
+    expect(projectMobileFlowDefinition(sideBySide, 1)).not.toBeNull();
+    expect(projectMobileFlowDefinition(nested, 1)).toBeNull();
+  });
+
   it.each([null, undefined, '1', 0, -1, 1.5])(
     'requires the actual saved version number: %s',
     (version) => {

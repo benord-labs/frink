@@ -66,12 +66,22 @@ export type FolderDescriptor = {
   projectIds: string[] | null;
 };
 
-/** Confirmation state for archive/delete flows that may strand running tasks. */
+/** Confirmation state for deletes that also stop a linked running task. Archive never asks. */
 export type TaskAwareActionDialogState = {
   open: boolean;
   mode: 'single' | 'batch';
-  operation: 'archive' | 'archive_batch' | 'delete' | 'delete_batch';
+  operation: 'delete' | 'delete_batch';
   chatIds: string[];
   taskIds: string[];
   totalChats: number;
+};
+
+/** Handle exposed by UnifiedSidebar to the layout. */
+export type UnifiedSidebarHandle = {
+  /** Focus the tree container for keyboard navigation */
+  focus: () => void;
+  /** Restore focus to the Work Queue destination trigger after dismissal. */
+  focusWorkQueueTrigger: () => void;
+  /** Archive the focused chat (the archive shortcut). Stops everything under it, without a dialog. */
+  archiveFocusedChat: () => void;
 };

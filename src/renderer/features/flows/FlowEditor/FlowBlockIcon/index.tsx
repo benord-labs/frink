@@ -42,12 +42,16 @@ import {
   Wrench,
   Zap,
 } from 'lucide-react';
-import type { ReactElement } from 'react';
+import type { ReactElement, ReactNode } from 'react';
+import { findPluginActionByNodeName } from '../../../../../shared/integrations/plugin-nodes';
 import {
   type CustomNodeIconKey,
   isKnownCustomNodeIconKey,
 } from '../../../../../shared/lib/custom-node-icon-allowlist';
 import type { FlowBlockType } from '../../../../../shared/types/flow';
+import { BRAND_TILE_RIM_STYLE, ProviderIcon } from '../../../../components/ProviderIcon';
+import { cn } from '../../../../lib/utils';
+import { blockIconSurfaceClass } from '../FlowCanvas/flowStepNodeStyles';
 
 /** Curated manifest icons — keys match `CUSTOM_NODE_ICON_KEY_LIST` (lowercase kebab). */
 const CUSTOM_BLOCK_ICONS = {
@@ -133,4 +137,41 @@ export function FlowBlockIcon({
       return <CustomIcon className={className} aria-hidden />;
     }
   }
+}
+
+type FlowBlockTileProps = {
+  type: FlowBlockType | string;
+  customBlockIcon?: string | null;
+  /** The smaller tile that sits in a canvas card's header. */
+  compact?: boolean;
+  /** Status badges pinned to the tile's corners. */
+  children?: ReactNode;
+};
+
+/** A step's identity tile: the provider's own mark for a plugin step, else the block-type icon. */
+export function FlowBlockTile({
+  type,
+  customBlockIcon,
+  compact = false,
+  children,
+}: FlowBlockTileProps): ReactElement {
+  const providerId = findPluginActionByNodeName(type)?.pluginId;
+  const iconSize = compact ? 'size-4' : 'size-[18px]';
+  return (
+    <div
+      className={cn(
+        'relative flex shrink-0 items-center justify-center',
+        compact ? 'size-7 rounded-lg' : 'size-9 rounded-[10px]',
+        !providerId && blockIconSurfaceClass(type),
+      )}
+      style={providerId ? BRAND_TILE_RIM_STYLE : undefined}
+    >
+      {providerId ? (
+        <ProviderIcon providerId={providerId} appearance="tile" className={iconSize} />
+      ) : (
+        <FlowBlockIcon type={type} customBlockIcon={customBlockIcon} className={iconSize} />
+      )}
+      {children}
+    </div>
+  );
 }

@@ -51,13 +51,19 @@ describe('classifyHook', () => {
     ['a relative script', { command: './scripts/check.sh' }, 'check.sh'],
     ['a script path that runs into shell text', { command: '$CLAUDE_PROJECT_DIR/x.sh;ls' }, 'x.sh'],
     [
-      'a variable that only contains the Claude prefix',
-      { command: 'curl -H "x: $MY_CLAUDE_TOKEN" https://example.com' },
+      'a variable Claude sets on some events',
+      { command: 'echo A=1 >> "$CLAUDE_ENV_FILE"' },
       'inline shell script',
     ],
     [
-      'a lookalike variable with a lowercase suffix',
-      { command: 'echo "$CLAUDE_foo"' },
+      'a plugin variable written without braces, which Claude runs',
+      { command: 'ls "$CLAUDE_PLUGIN_ROOT" "$CLAUDE_PLUGIN_DATA"' },
+      'inline shell script',
+    ],
+    ['the "if" filter, carried as written', { command: 'lint-all', if: 'Bash(git *)' }, 'lint-all'],
+    [
+      'any other variable whose name holds CLAUDE',
+      { command: 'curl -H "x: $MY_CLAUDE_TOKEN" -d "$CLAUDE_2FA" "$CLAUDE_PROJECT_DIR_BACKUP"' },
       'inline shell script',
     ],
   ])('supports %s as written', (_name, fields, label) => {
@@ -86,51 +92,48 @@ describe('classifyHook', () => {
 
   it.each<[string, Record<string, unknown>, string]>([
     [
-      'its command, twice',
-      { command: 'echo A=1 >> "$CLAUDE_ENV_FILE"; cat "$CLAUDE_ENV_FILE"' },
-      'CLAUDE_ENV_FILE',
-    ],
-    [
       'the program of an exec form',
       { command: '${CLAUDE_PLUGIN_DATA}/bin/hook', args: ['--fix'] },
-      'CLAUDE_PLUGIN_DATA',
+      '${CLAUDE_PLUGIN_DATA}',
     ],
     [
       'an exec argument',
       { command: 'node', args: ['${CLAUDE_PLUGIN_ROOT}/hook.js'] },
-      'CLAUDE_PLUGIN_ROOT',
+      '${CLAUDE_PLUGIN_ROOT}',
     ],
     [
-      'a longer name that starts like the project variable',
-      { command: 'node "$CLAUDE_PROJECT_DIR_BACKUP/x.mjs"' },
-      'CLAUDE_PROJECT_DIR_BACKUP',
+      'a shell command, once however often it is used',
+      { command: 'node "${CLAUDE_PLUGIN_ROOT}/a.js" "${CLAUDE_PLUGIN_ROOT}/b.js"' },
+      '${CLAUDE_PLUGIN_ROOT}',
     ],
-    ['a name with a digit', { command: 'echo "$CLAUDE_2FA"' }, 'CLAUDE_2FA'],
     [
-      'a command that also names a lowercase lookalike',
-      { command: 'echo "$CLAUDE_foo" >> "$CLAUDE_ENV_FILE"' },
-      'CLAUDE_ENV_FILE',
+      'the program and an argument, once for both',
+      { command: '${CLAUDE_PLUGIN_ROOT}/bin/hook', args: ['${CLAUDE_PLUGIN_ROOT}/conf'] },
+      '${CLAUDE_PLUGIN_ROOT}',
     ],
-  ])('refuses a hook that uses a provider-only variable in %s', (_name, fields, variable) => {
+  ])('refuses a plugin placeholder, as Claude does, in %s', (_name, fields, placeholder) => {
     expect(classify({ type: 'command', ...fields }, 'SessionStart').binding).toEqual(
-      refusedFor('provider-variable', `it uses ${variable}, which only Claude provides.`),
+      refusedFor(
+        'provider-variable',
+        `: it uses ${placeholder}, which Claude fills in only for a plugin's own hooks.`,
+      ),
     );
   });
 
   it.each([
-    ['prompt', 'prompt', 'asks Claude to judge a prompt'],
-    ['agent', 'agent', 'starts a Claude verifier agent'],
-    ['http', 'http', 'posts to a URL'],
-    ['mcp_tool', 'mcp_tool', 'calls an MCP tool'],
-    ['webhook', 'webhook', 'is a kind Frink does not know'],
-    ['constructor', 'constructor', 'is a kind Frink does not know'],
-    [' ', 'unknown', 'is a kind Frink does not know'],
+    ['prompt', 'prompt', 'asks Claude to judge a prompt, which is not supported by Frink yet'],
+    ['agent', 'agent', 'starts a Claude verifier agent, which is not supported by Frink yet'],
+    ['http', 'http', 'posts to a URL, which is not supported by Frink yet'],
+    ['mcp_tool', 'mcp_tool', 'calls an MCP tool, which is not supported by Frink yet'],
+    ['webhook', 'webhook', 'is a kind of handler Claude does not define'],
+    ['constructor', 'constructor', 'is a kind of handler Claude does not define'],
+    [' ', 'unknown', 'is a kind of handler Claude does not define'],
   ])('refuses a "%s" handler without judging its fields', (type, handlerType, what) => {
     const handler = { type, prompt: 'Is this safe?', url: 'https://example.com', async: true };
     expect(classify(handler)).toEqual({
       handlerType,
       label: `${handlerType} handler`,
-      binding: refusedFor('handler-type', `: it ${what}, and Frink only runs command hooks.`),
+      binding: refusedFor('handler-type', `: it ${what}.`),
     });
   });
 
@@ -142,42 +145,43 @@ describe('classifyHook', () => {
     ['timeout', -1, 'malformed', 'its timeout is not a positive number of seconds'],
     ['timeout', Infinity, 'malformed', 'its timeout is not a positive number of seconds'],
     ['shell', 'bash'],
-    ['shell', 'powershell', 'field-unsupported', 'it sets "shell": Frink runs hooks with a POSIX'],
-    ['if', 'Bash(git *)', 'field-unsupported', 'it sets "if", a filter Frink cannot evaluate'],
+    ['shell', 'powershell', 'field-unsupported', 'PowerShell, which is not supported by Frink yet'],
+    ['shell', 'zsh', 'malformed', 'its shell is neither "bash" nor "powershell"'],
+    ['if', 'Bash(git *)'],
+    ['if', 5, 'malformed', 'its "if" is not text'],
     ['once', false],
-    ['once', true, 'field-unsupported', 'it sets "once": Frink does not track run-once hooks'],
-    ['once', null, 'field-unsupported', 'it sets "once": Frink does not track run-once hooks'],
+    ['once', 'yes', 'malformed', 'its "once" is not true or false'],
+    ['once', null, 'malformed', 'its "once" is not true or false'],
     ['async', false],
-    ['async', true, 'async', 'it sets "async": a background hook cannot gate anything'],
-    ['async', 0, 'async', 'it sets "async": a background hook cannot gate anything'],
+    ['async', true, 'async', 'it sets "async" to run in the background, which is not supported by'],
+    ['async', 0, 'malformed', 'its "async" is not true or false'],
     ['asyncRewake', false],
-    ['asyncRewake', true, 'async', 'it sets "asyncRewake": a background hook cannot gate'],
-    ['asyncRewake', null, 'async', 'it sets "asyncRewake": a background hook cannot gate'],
+    ['asyncRewake', true, 'async', 'in the background, which is not supported by Frink yet'],
+    ['asyncRewake', null, 'malformed', 'its "asyncRewake" is not true or false'],
     ['statusMessage', 5, 'malformed', 'its statusMessage is not text'],
     ['args', '--fix', 'malformed', 'its args are not a list of strings'],
     ['args', ['--fix', 1], 'malformed', 'its args are not a list of strings'],
-    ['retries', false, 'field-unknown', 'it sets "retries", which Frink does not know'],
-    ['constructor', 'x', 'field-unknown', 'it sets "constructor", which Frink does not know'],
   ])('decides the command field %s = %s', (field, value, code, text = '') => {
     expect(classify(command({ [field]: value })).binding).toEqual(
       code ? refusedFor(code, text) : { status: 'supported', ignored: [] },
     );
   });
 
-  it('names every unknown handler or group key instead of dropping it', () => {
-    const start = 'The Stop hook "lint-all" cannot run in Frink:';
-    expect(classify(command({ retries: 2 }), 'Stop', ['description', 'note']).binding).toEqual({
-      status: 'refused',
-      refusals: [
-        `${start} its matcher group sets "description", which Frink does not know.`,
-        `${start} its matcher group sets "note", which Frink does not know.`,
-        `${start} it sets "retries", which Frink does not know.`,
-      ].map((detail) => ({ code: 'field-unknown', detail })),
+  it('runs a hook with unknown handler or group keys and lists them as ignored, as Claude does', () => {
+    const reason = 'Claude does not define it and runs the hook without it';
+    const handler = command({ retries: 2, constructor: 'x' });
+    expect(classify(handler, 'Stop', ['description', 'note']).binding).toEqual({
+      status: 'supported',
+      ignored: ['description', 'note', 'retries', 'constructor'].map((field) => ({
+        field,
+        reason,
+      })),
     });
   });
 
-  it('carries the timeout and lists the status message as ignored', () => {
-    expect(classify(command({ timeout: 30, statusMessage: 'Checking' }))).toMatchObject({
+  it('carries the timeout and lists the fields Claude ignores for this hook', () => {
+    const fields = { timeout: 30, statusMessage: 'Checking', once: true };
+    expect(classify(command(fields))).toMatchObject({
       timeoutSec: 30,
       binding: {
         status: 'supported',
@@ -186,8 +190,20 @@ describe('classifyHook', () => {
             field: 'statusMessage',
             reason: 'spinner text only; it changes nothing the hook decides',
           },
+          {
+            field: 'once',
+            reason: 'Claude honours it only in skill frontmatter, not in a settings file',
+          },
         ],
       },
+    });
+  });
+
+  it('lists a PowerShell "shell" as ignored on a hook that has args, as Claude ignores it', () => {
+    const execForm = command({ command: 'lint-all', args: [], shell: 'powershell' });
+    expect(classify(execForm).binding).toEqual({
+      status: 'supported',
+      ignored: [{ field: 'shell', reason: 'a hook with args runs without a shell' }],
     });
   });
 
@@ -224,11 +240,16 @@ describe('classifyHook', () => {
   });
 
   it('collects every refusal on one hook', () => {
-    const handler = command({ command: 'cat "$CLAUDE_ENV_FILE"', async: true, if: 'Bash(git *)' });
+    const handler = command({
+      command: 'node "${CLAUDE_PLUGIN_ROOT}/hook.js" "${CLAUDE_PLUGIN_DATA}"',
+      async: true,
+      shell: 'powershell',
+    });
     expect(codes(handler, 'Invented')).toEqual([
       'event-unsupported',
       'async',
       'field-unsupported',
+      'provider-variable',
       'provider-variable',
     ]);
   });

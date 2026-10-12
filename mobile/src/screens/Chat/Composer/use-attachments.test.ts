@@ -49,14 +49,14 @@ vi.mock('expo-document-picker', () => ({
 import { useComposerAttachments } from './use-attachments';
 
 const target = { chatId: 'new-chat', subChatId: 'new-sub' };
-function draw(destination: typeof target | null) {
+function draw(destination: typeof target | null, { runEffects = true } = {}) {
   render.cursor = 0;
   // eslint-disable-next-line react-hooks/rules-of-hooks -- Controlled render timing is the regression.
   const value = useComposerAttachments(destination, {
     retainPicked: true,
     ensureTarget: render.ensure,
   });
-  for (const effect of render.effects.splice(0)) effect();
+  if (runEffects) for (const effect of render.effects.splice(0)) effect();
   return value;
 }
 async function flush() {
@@ -84,4 +84,55 @@ it('uploads once after a lazily created chat publishes through React', async () 
   expect(draw(target).ids).toEqual(['stored-1']);
   await flush();
   expect(render.upload).toHaveBeenCalledTimes(1);
+});
+
+it('does not upload a file again when a stale render flushes after its upload settles', async () => {
+  let settle!: (stored: { id: string; kind: 'file' }) => void;
+  render.upload.mockReturnValueOnce(new Promise((resolve) => (settle = resolve)));
+  await draw(target).pickFiles();
+  draw(target);
+  await flush();
+  expect(render.upload).toHaveBeenCalledTimes(1);
+  // React rendered while the upload was in flight but has not flushed that render's effects yet.
+  draw(target, { runEffects: false });
+  settle({ id: 'stored-1', kind: 'file' });
+  await flush();
+  for (const effect of render.effects.splice(0)) effect();
+  await flush();
+  expect(render.upload).toHaveBeenCalledTimes(1);
+  expect(draw(target).ids).toEqual(['stored-1']);
+});
+
+// Settled uploads keep their key; a destination change must still free them to upload again.
+it('uploads a settled file once more to a new destination after the target changes', async () => {
+  const other = { chatId: 'other-chat', subChatId: 'other-sub' };
+  await draw(target).pickFiles();
+  draw(target);
+  await flush();
+  expect(draw(target).ids).toEqual(['stored-1']);
+  render.upload.mockResolvedValueOnce({ id: 'stored-2', kind: 'file' });
+  draw(other);
+  draw(other);
+  await flush();
+  expect(render.upload).toHaveBeenCalledTimes(2);
+  expect(render.upload.mock.calls[1][1]).toEqual(other);
+  expect(draw(other).ids).toEqual(['stored-2']);
+  await flush();
+  expect(render.upload).toHaveBeenCalledTimes(2);
+});
+
+// A failed upload keeps its key too; retrying must replace it and send exactly once.
+it('retries a failed upload exactly once', async () => {
+  render.upload.mockRejectedValueOnce(new Error('Mac went to sleep'));
+  await draw(target).pickFiles();
+  draw(target);
+  await flush();
+  const [failed] = draw(target).items;
+  expect(failed).toMatchObject({ status: 'failed', error: 'Mac went to sleep' });
+  draw(target).retry(failed.key);
+  await flush();
+  draw(target);
+  await flush();
+  expect(render.upload).toHaveBeenCalledTimes(2);
+  expect(draw(target).ids).toEqual(['stored-1']);
 });

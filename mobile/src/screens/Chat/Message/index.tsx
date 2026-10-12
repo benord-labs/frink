@@ -3,8 +3,8 @@ import { useState, type ReactNode } from 'react';
 import { Pressable, View } from 'react-native';
 import { Check, Copy, CornerDownRight, FileText, Image as ImageIcon } from 'lucide-react-native';
 import type { MobileMessage } from '@frink/shared/types/remote/mobile';
+import { GlassSurface } from '../../../ui/material';
 import { Markdown } from '../../../ui/Markdown';
-import { glassLighting } from '../../../ui/material';
 import { Text } from '../../../ui/text';
 import { radius, space, useTheme } from '../../../ui/theme';
 import { Note } from '../note';
@@ -12,24 +12,19 @@ import { PlanCard, type PendingPlan } from '../plan';
 import { attachmentsOf, contentGroups, copyText, type Attachment, type Group } from './parts';
 import { ToolRun } from './tool-run';
 
-/** The phone's own words: a right-aligned bubble on a faint lit fill. */
+/** The phone's own words: a right-aligned bubble on the shared glass material. */
 function Bubble({ children, compact = false }: { children: ReactNode; compact?: boolean }) {
-  const t = useTheme();
   return (
-    <View
-      style={[
-        {
-          maxWidth: '84%',
-          paddingHorizontal: compact ? space.md : 14,
-          paddingVertical: compact ? space.sm : 10,
-          borderRadius: compact ? radius.lg : radius.xl,
-          backgroundColor: t.dark ? 'rgba(255,255,255,0.08)' : t.field,
-        },
-        glassLighting(t),
-      ]}
+    <GlassSurface
+      style={{
+        maxWidth: '84%',
+        paddingHorizontal: compact ? space.md : 14,
+        paddingVertical: compact ? space.sm : 10,
+        borderRadius: compact ? radius.lg : radius.xl,
+      }}
     >
       {children}
-    </View>
+    </GlassSurface>
   );
 }
 

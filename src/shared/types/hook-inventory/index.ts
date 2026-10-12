@@ -9,8 +9,7 @@ export type HookRefusal = {
     | 'event-unsupported'
     | 'provider-variable'
     | 'async'
-    | 'field-unsupported'
-    | 'field-unknown';
+    | 'field-unsupported';
   detail: string;
 };
 
@@ -34,6 +33,8 @@ export type HookRegistration = {
   command?: string;
   /** Exec form: `command` is the program and these are its arguments, with no shell. */
   args?: string[];
+  /** A permission rule, as written: the hook runs only for a tool call that matches it. */
+  if?: string;
   timeoutSec?: number;
   binding: HookBinding;
 };

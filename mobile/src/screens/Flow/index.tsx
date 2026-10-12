@@ -4,7 +4,7 @@ import { ActivityIndicator, RefreshControl, ScrollView, View } from 'react-nativ
 import type { MobileFlow } from '@frink/shared/types/remote/mobile';
 import { useResource } from '../../lib/connection';
 import { useWindow } from '../../lib/use-window';
-import { useLargeTitle } from '../../navigation/large-title';
+import { usePageTitle } from '../../navigation/page-title';
 import { useRootNavigation, type RootRoutes } from '../../navigation/routes';
 import { ListRow, SectionHeader } from '../../ui/list';
 import { ResourceStatus } from '../../ui/resource-status';
@@ -48,7 +48,7 @@ export function FlowScreen() {
   const readiness = useResource(READINESS, { interval: 10000 });
   const { data, error, stale, refreshing, pull, refresh } = resource;
   const name = data?.flow.name;
-  const heading = useLargeTitle(name);
+  const heading = usePageTitle(name);
   return (
     <Screen>
       <ScrollView

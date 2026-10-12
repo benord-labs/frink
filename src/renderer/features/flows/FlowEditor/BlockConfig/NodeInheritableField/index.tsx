@@ -1,9 +1,8 @@
 /**
  * Shared shell for flow node fields that inherit a flow default with Override / Reset.
  *
- * Exports:
- *  - NodeFieldCard  — stateless card row (icon + label + badge + optional action)
- *  - NodeInheritableField — stateful shell (card ↔ picker toggle, inherited/override/reset logic)
+ * NodeFieldCard is the stateless card row (icon + label + badge + optional action);
+ * NodeInheritableField is the stateful shell (card ↔ picker toggle, inherited/override/reset logic).
  */
 
 import { Button } from '@benord-labs/frink-primitives';
@@ -17,7 +16,7 @@ type NodeFieldCardProps = {
   action?: ReactNode;
 };
 
-export function NodeFieldCard({ icon, label, badge, action }: NodeFieldCardProps): ReactElement {
+function NodeFieldCard({ icon, label, badge, action }: NodeFieldCardProps): ReactElement {
   return (
     <div className={BLOCK_CONFIG_FIELD_CARD_CLASS}>
       <div className="flex min-w-0 items-center gap-1.5">

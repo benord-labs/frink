@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import * as schema from '../schema';
 import { freshDb, type TestDb } from '../test-utils/fresh-db';
-import { listProjectsByRecentActivity } from './projects';
+import {
+  createOrGetProjectByPath,
+  createProject,
+  listProjectsByRecentActivity,
+  listRealProjects,
+} from './projects';
 
 let db: TestDb;
 const at = (iso: string) => new Date(iso);
@@ -61,5 +66,75 @@ describe('listProjectsByRecentActivity', () => {
 
     expect(rows.map((r) => r.id)).toEqual(['added-late', 'used', 'added-early']);
     expect(rows.find((r) => r.id === 'added-late')?.lastActiveAt).toBeNull();
+  });
+});
+
+describe('listRealProjects', () => {
+  beforeEach(() => {
+    db = freshDb();
+  });
+
+  it('excludes virtual folders and keeps newest-updated first', async () => {
+    await seedProject('older', at('2026-01-01T00:00:00.000Z'));
+    await seedProject('newer', at('2026-02-01T00:00:00.000Z'));
+    await db.insert(schema.projects).values({
+      id: 'folder',
+      name: 'Work',
+      path: 'virtual://folders/123-work',
+      createdAt: at('2026-03-01T00:00:00.000Z'),
+      updatedAt: at('2026-03-01T00:00:00.000Z'),
+    });
+
+    const rows = await listRealProjects(db);
+
+    expect(rows.map((r) => r.id)).toEqual(['newer', 'older']);
+  });
+
+  it('keeps a real project whose path merely contains the virtual prefix', async () => {
+    await db.insert(schema.projects).values({
+      id: 'nested',
+      name: 'nested',
+      path: '/repos/virtual://folders/not-a-folder',
+      createdAt: at('2026-01-01T00:00:00.000Z'),
+      updatedAt: at('2026-01-01T00:00:00.000Z'),
+    });
+
+    const rows = await listRealProjects(db);
+
+    expect(rows.map((r) => r.id)).toEqual(['nested']);
+  });
+});
+
+describe('createOrGetProjectByPath', () => {
+  beforeEach(() => {
+    db = freshDb();
+  });
+
+  it('inserts a new row when the path is free', async () => {
+    const { project, created } = await createOrGetProjectByPath(db, {
+      name: 'a',
+      path: '/repos/a',
+    });
+    expect(created).toBe(true);
+    expect(project.path).toBe('/repos/a');
+  });
+
+  it('adopts the existing row on a path conflict without overwriting it', async () => {
+    const first = await createProject(db, { name: 'winner', path: '/repos/same' });
+    const { project, created } = await createOrGetProjectByPath(db, {
+      name: 'loser',
+      path: '/repos/same',
+    });
+    expect(created).toBe(false);
+    expect(project.id).toBe(first.id);
+    expect(project.name).toBe('winner');
+    expect(await db.select().from(schema.projects)).toHaveLength(1);
+  });
+
+  it('leaves createProject strict on a taken path (scaffoldBuild relies on the throw)', async () => {
+    await createProject(db, { name: 'a', path: '/repos/taken' });
+    await expect(createProject(db, { name: 'b', path: '/repos/taken' })).rejects.toThrow(
+      /UNIQUE constraint failed: projects\.path/,
+    );
   });
 });

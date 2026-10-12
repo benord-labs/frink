@@ -35,7 +35,8 @@ describe('MODEL_ID_MAP edge cases', () => {
       expect(MODEL_ID_MAP['opus-5']).toBe('claude-opus-5');
       expect(MODEL_ID_MAP['fable-5.1']).toBe('claude-fable-5-1');
       expect(MODEL_ID_MAP.sonnet).toBe('sonnet');
-      expect(MODEL_ID_MAP.haiku).toBe('haiku');
+      expect(MODEL_ID_MAP.haiku).toBe('claude-haiku-4-5');
+      expect(MODEL_ID_MAP['haiku-5.5']).toBe('claude-haiku-5-5');
     });
 
     it('has no undefined or null values', () => {
@@ -63,7 +64,7 @@ describe('MODEL_ID_MAP edge cases', () => {
       const legacyMappings: Record<string, string> = {
         opus: 'claude-opus-4-6',
         sonnet: 'sonnet',
-        haiku: 'haiku',
+        haiku: 'claude-haiku-4-5',
       };
 
       for (const [id, expected] of Object.entries(legacyMappings)) {

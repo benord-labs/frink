@@ -21,15 +21,10 @@ export type DispatchContext = {
   /** Abort controller for this node — registered in cancel-registry. */
   signal: AbortSignal;
   /**
-   * Set only by the terminal-resume admission dispatcher; absent on every engine-advance
-   * dispatch (including loop/fan-out iterations ≥2, which are NOT re-runs and must see
-   * neither behavior). 'continuation' = user Retry — the agent dispatcher may continue
-   * the sub-chat's surviving session instead of re-instructing. 'redispatch' = the
-   * deliberate "Re-run step"/"Re-run from previous node" surfaces — full re-run, but a
-   * surviving session gets an explicit restart framing so the agent reads the repeated
-   * instructions as a redo, not a contradiction.
+   * Set only by recovery dispatches, never by engine advances: lets the agent dispatcher continue
+   * a session that already answered this step instead of re-sending its instructions.
    */
-  resumeKind?: 'continuation' | 'redispatch';
+  resumeKind?: 'continuation';
 };
 
 /**

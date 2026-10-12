@@ -243,6 +243,21 @@ export function applyForkInsertToSidebarMaps(
   });
 }
 
+/** On activity, an open chat that no loaded page holds joins its folder's list as its newest chat. */
+export function applyOpenChatActivityToSidebarMaps(
+  setFolderChatsByKey: Dispatch<SetStateAction<Record<string, SidebarChatListItem[]>>>,
+  openChats: readonly SidebarChatListItem[],
+  projects: SidebarProjectForFolderKey[],
+  generalFolderKey: string,
+  chatId: string,
+  updatedAt: Date,
+): void {
+  const chat = openChats.find((c) => c.id === chatId);
+  if (!chat) return;
+  const folderKey = resolveSidebarFolderKeyForProjectId(chat.projectId, projects, generalFolderKey);
+  applyForkInsertToSidebarMaps(setFolderChatsByKey, folderKey, { ...chat, updatedAt });
+}
+
 type ForkOutput = inferRouterOutputs<AppRouter>['chats']['fork'];
 
 export function forkMutationResultToSidebarItem(forked: ForkOutput): SidebarChatListItem {

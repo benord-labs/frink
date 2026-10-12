@@ -18,6 +18,7 @@ vi.mock('simple-git', () => ({
 }));
 
 vi.mock('./utils/parse-status', () => ({
+  GIT_LOG_FORMAT: '--format=%H',
   parseGitStatus: parseGitStatusMock,
   parseGitLog: vi.fn(() => []),
   parseNameStatus: vi.fn(() => []),

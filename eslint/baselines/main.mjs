@@ -33,7 +33,6 @@ export const mainStructureBaseline = [
   "lib/claude-config.test.ts",
   "lib/claude-config.ts",
   "lib/claude-oauth-browser.ts",
-  "lib/cli.ts",
   "lib/cloud-client.ts",
   "lib/cloud/core.test.ts",
   "lib/cloud/core.ts",

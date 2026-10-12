@@ -3,7 +3,12 @@ import { useSetAtom } from 'jotai';
 import { useCallback, useEffect, useRef } from 'react';
 import { commandFetcher } from '@/lib/commands/command-fetcher';
 import { expandSlashCommand } from '@/lib/commands/expand-slash-command';
-import { codeSelectionMention, pastedTextMention } from '@/lib/mentions/queued-message-text';
+import {
+  attachedContextFile,
+  codeSelectionMention,
+  openFileMention,
+  pastedTextMention,
+} from '@/lib/mentions/queued-message-text';
 import { isRunBusy } from '../../../../../lib/agent-chat/steer/run-busy';
 import { isCompactCommand } from '../../../../../../shared/commands/expand-slash-command';
 import { stripHiddenWakeMarker } from '../../../../../../shared/lib/message-markers/hidden-wake-marker';
@@ -157,6 +162,12 @@ export function useMessageSend({
     const currentTextContexts = textContextsRef.current ?? [];
     const currentCodeSelection = codeSelectionContextRef.current;
     const currentPastedTexts = pastedTextsRef.current ?? [];
+    // The same rule the composer chip reads, so what is shown is what is sent.
+    const attachedFile = attachedContextFile(
+      activeFileRef.current,
+      activeFileExcludedRef.current,
+      currentCodeSelection,
+    );
     const hasImages = currentImages.filter((img) => !img.isLoading && img.url).length > 0;
     const hasTextContexts = currentTextContexts.length > 0;
     const hasCodeSelection = currentCodeSelection !== null;
@@ -180,9 +191,10 @@ export function useMessageSend({
       const queuedDiffTextContexts = (diffTextContextsRef.current ?? []).map(
         toQueuedDiffTextContext,
       );
+      const queuedText = inputValue.trim();
       const item = createQueueItem(
         generateQueueId(),
-        inputValue.trim(),
+        [openFileMention(attachedFile, queuedText), queuedText].filter(Boolean).join(' '),
         queuedImages.length > 0 ? queuedImages : undefined,
         queuedFiles.length > 0 ? queuedFiles : undefined,
         queuedTextContexts.length > 0 ? queuedTextContexts : undefined,
@@ -272,14 +284,8 @@ export function useMessageSend({
 
     // Add text contexts as mention tokens
     const currentDiffTextContexts = diffTextContextsRef.current ?? [];
-    const currentActiveFile = activeFileRef.current;
+    const fileMention = openFileMention(attachedFile, finalText);
     let mentionPrefix: string = '';
-
-    // Include active file context if viewing a file (and no code selection from that file, and user hasn't excluded it)
-    const shouldIncludeActiveFile =
-      currentActiveFile &&
-      !activeFileExcludedRef.current &&
-      (!currentCodeSelection || currentCodeSelection.filePath !== currentActiveFile.path);
 
     // Mention tokens would push `/compact` off position 0 — see isCompactCommand.
     if (
@@ -287,7 +293,7 @@ export function useMessageSend({
       (currentTextContexts.length > 0 ||
         currentDiffTextContexts.length > 0 ||
         currentCodeSelection ||
-        shouldIncludeActiveFile ||
+        fileMention ||
         currentPastedTexts.length > 0)
     ) {
       const quoteMentions = currentTextContexts.map((tc) => {
@@ -306,14 +312,11 @@ export function useMessageSend({
       // Add code selection as mention token
       const codeMentions = currentCodeSelection ? [codeSelectionMention(currentCodeSelection)] : [];
 
-      // Add active file as context (if not already included via code selection)
-      const activeFileMention = shouldIncludeActiveFile
-        ? [`@[${MENTION_PREFIXES.FILE}local:${currentActiveFile.path}]`]
-        : [];
-
       const pastedTextMentions = currentPastedTexts.map(pastedTextMention);
 
-      mentionPrefix = `${[...quoteMentions, ...diffMentions, ...codeMentions, ...activeFileMention, ...pastedTextMentions].join(' ')} `;
+      // The open file goes last, next to the typed text: the order a queued message drains in.
+      const mentions = [...quoteMentions, ...diffMentions, ...codeMentions, ...pastedTextMentions];
+      mentionPrefix = `${[...mentions, ...(fileMention ? [fileMention] : [])].join(' ')} `;
     }
 
     if (finalText || mentionPrefix) {

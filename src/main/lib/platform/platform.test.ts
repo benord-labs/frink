@@ -1,3 +1,5 @@
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -26,6 +28,7 @@ vi.mock('node:os', async (importOriginal) => {
 import { DarwinPlatformProvider } from './darwin';
 import { getPlatformProvider } from './index';
 import { LinuxPlatformProvider } from './linux';
+import { warmNvmBinDirs } from './nvm';
 import { WindowsPlatformProvider } from './windows';
 
 describe('platform providers', () => {
@@ -93,18 +96,10 @@ describe('platform providers', () => {
       expect(provider.displayName).toBe('macOS');
     });
 
-    describe('getCliConfig', () => {
-      it('returns correct install path', () => {
-        expect(provider.getCliConfig().installPath).toBe('/usr/local/bin/frink');
-      });
-
-      it('uses "frink" as script name', () => {
-        expect(provider.getCliConfig().scriptName).toBe('frink');
-      });
-
-      it('requires admin privileges', () => {
-        expect(provider.getCliConfig().requiresAdmin).toBe(true);
-      });
+    it('exposes no CLI install API', () => {
+      for (const method of ['getCliConfig', 'installCli', 'uninstallCli', 'isCliInstalled']) {
+        expect(method in provider).toBe(false);
+      }
     });
 
     describe('getShellConfig', () => {
@@ -148,6 +143,18 @@ describe('platform providers', () => {
         const pm = provider.getPathConfig().packageManagerPaths;
         expect(pm).toContain(path.join(MOCK_HOME, '.bun', 'bin'));
         expect(pm).toContain(path.join(MOCK_HOME, '.cargo', 'bin'));
+      });
+
+      it('includes the fnm, volta, mise and asdf node directories', () => {
+        const pm = provider.getPathConfig().packageManagerPaths;
+        expect(pm).toContain(path.join(MOCK_HOME, '.local/share/fnm/aliases/default/bin'));
+        expect(pm).toContain(path.join(MOCK_HOME, '.fnm/aliases/default/bin'));
+        expect(pm).toContain(
+          path.join(MOCK_HOME, 'Library/Application Support/fnm/aliases/default/bin'),
+        );
+        expect(pm).toContain(path.join(MOCK_HOME, '.volta', 'bin'));
+        expect(pm).toContain(path.join(MOCK_HOME, '.local/share/mise/shims'));
+        expect(pm).toContain(path.join(MOCK_HOME, '.asdf', 'shims'));
       });
     });
 
@@ -272,14 +279,10 @@ describe('platform providers', () => {
       expect(provider.displayName).toBe('Linux');
     });
 
-    describe('getCliConfig', () => {
-      it('installs to /usr/local/bin/frink', () => {
-        expect(provider.getCliConfig().installPath).toBe('/usr/local/bin/frink');
-      });
-
-      it('requires admin privileges', () => {
-        expect(provider.getCliConfig().requiresAdmin).toBe(true);
-      });
+    it('exposes no CLI install API', () => {
+      for (const method of ['getCliConfig', 'installCli', 'uninstallCli', 'isCliInstalled']) {
+        expect(method in provider).toBe(false);
+      }
     });
 
     describe('getShellConfig', () => {
@@ -307,6 +310,15 @@ describe('platform providers', () => {
         expect(provider.getPathConfig().packageManagerPaths).toContain(
           path.join(MOCK_HOME, '.asdf', 'shims'),
         );
+      });
+
+      it('includes the fnm, volta and mise node directories', () => {
+        const pm = provider.getPathConfig().packageManagerPaths;
+        expect(pm).toContain(path.join(MOCK_HOME, '.local/share/fnm/aliases/default/bin'));
+        expect(pm).toContain(path.join(MOCK_HOME, '.fnm/aliases/default/bin'));
+        expect(pm).toContain(path.join(MOCK_HOME, '.volta', 'bin'));
+        expect(pm).toContain(path.join(MOCK_HOME, '.local/share/mise/shims'));
+        expect(pm.some((entry) => entry.includes('Application Support'))).toBe(false);
       });
 
       it('includes Linuxbrew path', () => {
@@ -400,17 +412,10 @@ describe('platform providers', () => {
       expect(provider.displayName).toBe('Windows');
     });
 
-    describe('getCliConfig', () => {
-      it('installs to user local bin (no admin required)', () => {
-        const config = provider.getCliConfig();
-        expect(config.requiresAdmin).toBe(false);
-        expect(config.installPath).toContain(MOCK_HOME);
-        expect(config.installPath).toContain('frink.cmd');
-      });
-
-      it('uses frink.cmd as script name', () => {
-        expect(provider.getCliConfig().scriptName).toBe('frink.cmd');
-      });
+    it('exposes no CLI install API', () => {
+      for (const method of ['getCliConfig', 'installCli', 'uninstallCli', 'isCliInstalled']) {
+        expect(method in provider).toBe(false);
+      }
     });
 
     describe('getShellConfig', () => {
@@ -491,6 +496,36 @@ describe('platform providers', () => {
   });
 
   describe('buildExtendedPath (BasePlatformProvider)', () => {
+    it.each([
+      ['darwin', () => new DarwinPlatformProvider(), '/opt/homebrew/bin'],
+      ['linux', () => new LinuxPlatformProvider(), '/home/linuxbrew/.linuxbrew/bin'],
+    ])('ranks mise and asdf shims after every other node source on %s', (_name, create, brew) => {
+      // A mise or asdf shim fails outright when no global version is set, so anything that can
+      // still supply a working node has to be found first.
+      const entries = create().buildExtendedPath('').split(':');
+      const positions = [
+        brew,
+        path.join(MOCK_HOME, '.bun/bin'),
+        path.join(MOCK_HOME, '.local/share/fnm/aliases/default/bin'),
+        path.join(MOCK_HOME, '.volta/bin'),
+        path.join(MOCK_HOME, '.local/share/mise/shims'),
+        path.join(MOCK_HOME, '.asdf/shims'),
+      ].map((entry) => entries.indexOf(entry));
+
+      expect(positions).not.toContain(-1);
+      expect(positions.slice(2)).toEqual([...positions.slice(2)].sort((x, y) => x - y));
+      expect(Math.max(positions[0], positions[1])).toBeLessThan(positions[2]);
+      expect(entries.at(-1)).toBe(path.join(MOCK_HOME, '.asdf/bin'));
+    });
+
+    it('keeps a version manager directory with a space as one PATH entry on darwin', () => {
+      const provider = new DarwinPlatformProvider();
+      const entries = provider.buildExtendedPath('/existing/path').split(':');
+      expect(entries).toContain(
+        path.join(MOCK_HOME, 'Library/Application Support/fnm/aliases/default/bin'),
+      );
+    });
+
     it('prepends new paths before existing ones on darwin', () => {
       const provider = new DarwinPlatformProvider();
       const result = provider.buildExtendedPath('/existing/path');
@@ -534,31 +569,41 @@ describe('platform providers', () => {
     });
 
     // NVM wildcard paths (e.g. ~/.nvm/versions/node/*/bin) are literal strings —
-    // shells do not expand globs in PATH. These entries are unreachable and should
-    // not be included in the extended PATH. `it.fails` = expected red until fixed.
-    it.fails('does not add unresolvable wildcard paths to the extended PATH on darwin', () => {
+    // shells do not expand globs in PATH, so such an entry can never find node/npx.
+    it('does not add unresolvable wildcard paths to the extended PATH on darwin', () => {
       const provider = new DarwinPlatformProvider();
       const result = provider.buildExtendedPath(undefined);
       expect(result).not.toContain('*');
     });
 
-    it.fails('does not add unresolvable wildcard paths to the extended PATH on linux', () => {
+    it('does not add unresolvable wildcard paths to the extended PATH on linux', () => {
       const provider = new LinuxPlatformProvider();
       const result = provider.buildExtendedPath(undefined);
       expect(result).not.toContain('*');
     });
 
-    it('does not deduplicate wildcard NVM path against a resolved NVM version path', () => {
-      // Documents the knock-on effect of the bug: a user whose $PATH already contains
-      // a real NVM path like ~/.nvm/versions/node/v20.0.0/bin ends up with both the
-      // wildcard and the resolved path in their extended PATH.
+    it('keeps a resolved NVM version path already on PATH without adding a wildcard beside it', () => {
       const provider = new DarwinPlatformProvider();
       const resolvedNvmBin = path.join(MOCK_HOME, '.nvm', 'versions', 'node', 'v20.0.0', 'bin');
-      const result = provider.buildExtendedPath(resolvedNvmBin);
-      const parts = result.split(':');
-      const wildcardPath = path.join(MOCK_HOME, '.nvm', 'versions', 'node', '*', 'bin');
-      expect(parts).toContain(wildcardPath);
+      const parts = provider.buildExtendedPath(resolvedNvmBin).split(':');
       expect(parts).toContain(resolvedNvmBin);
+      expect(parts.filter((p) => p.includes('.nvm'))).toEqual([resolvedNvmBin]);
+    });
+
+    it.each([
+      ['darwin', () => new DarwinPlatformProvider()],
+      ['linux', () => new LinuxPlatformProvider()],
+    ])('puts a warmed ~/.config/nvm bin on the %s fallback PATH', async (_os, makeProvider) => {
+      const home = mkdtempSync(path.join(tmpdir(), 'frink-platform-nvm-'));
+      try {
+        const bin = path.join(home, '.config', 'nvm', 'versions', 'node', 'v22.20.0', 'bin');
+        mkdirSync(bin, { recursive: true });
+        homedirMock.mockReturnValue(home);
+        await warmNvmBinDirs(home);
+        expect(makeProvider().buildExtendedPath(undefined).split(':')).toContain(bin);
+      } finally {
+        rmSync(home, { recursive: true, force: true });
+      }
     });
   });
 

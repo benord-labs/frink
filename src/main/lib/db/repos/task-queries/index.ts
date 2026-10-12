@@ -9,3 +9,11 @@ export {
   isWaitModeTask,
   type WorkQueueSection,
 } from './work-queue-overview-filter';
+export {
+  beforeQueueCursor,
+  getQueueTaskRow,
+  selectQueueTaskRows,
+  type TaskListCursor,
+  type TaskWithProjectRow,
+  toQueueTaskRow,
+} from './queue-row';

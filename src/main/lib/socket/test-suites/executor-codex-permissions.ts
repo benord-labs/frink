@@ -9,6 +9,7 @@ const BASH_DENY_MESSAGE_RE = /user.*Bash\(rm:\*\)/;
 const DELETE_MESSAGE_RE = /Delete/;
 
 type ExecutorModule = typeof import('../executor');
+type PermissionModule = typeof import('../streaming/pending-permission/validate-tool-permission');
 type AgentRunnerModule = typeof import('../../agent-runner');
 type CredentialModule = typeof import('../../credentials');
 type ChatRepoModule = typeof import('../../db/repos/chats');
@@ -37,7 +38,7 @@ export type ExecutorPermissionHarness = {
   toolValidation: Pick<ToolValidationModule, 'resolvePermissionProjectPath'>;
   parkFlowTaskOnClaudeInterruption: TaskParkingModule['parkFlowTaskOnClaudeInterruption'];
   clientPermissionBridge: { lastResponseHandler: PermissionResponseHandler | null };
-  validateToolPermission: ExecutorModule['validateToolPermission'];
+  validateToolPermission: PermissionModule['validateToolPermission'];
   basePayload: Omit<Parameters<ExecutorModule['handleRemoteExecute']>[0], 'message'>;
   codexCredential: NonNullable<Awaited<ReturnType<CredentialModule['getDefaultClaudeCodeToken']>>>;
   project: { path: string };

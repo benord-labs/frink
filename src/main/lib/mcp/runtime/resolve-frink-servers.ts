@@ -139,10 +139,7 @@ function oauthRefreshInput(
   credentials: FrinkMcpCredentials | undefined,
 ): OAuthRefreshInput | undefined {
   const oauth = credentials?.oauth;
-  const needsRefresh =
-    !!oauth?.accessToken &&
-    !!oauth.expiresAt &&
-    Date.now() >= oauth.expiresAt - OAUTH_REFRESH_WINDOW_MS;
+  const needsRefresh = !!oauth?.accessToken && !hasUsableOAuth(credentials);
   if (!needsRefresh || !config.url || !hasRefreshMaterial(oauth)) return undefined;
   return {
     url: config.url,

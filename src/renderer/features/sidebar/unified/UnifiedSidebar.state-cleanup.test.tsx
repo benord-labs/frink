@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createRuntimeAtomFamily } from '../../../lib/atoms/atom-family-factory';
 import { appStore } from '../../../lib/jotai-store';
-import { answerConfirm } from './sidebar-confirm-test-harness';
+import { answerConfirm } from '../../../lib/test-utils/sidebar-confirm';
 import { captureChatAction, hoisted, resetHarness, setupHarness } from './sidebar-test-harness';
 import { UnifiedSidebar } from './UnifiedSidebar';
 

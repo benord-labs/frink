@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fixture = vi.hoisted(() => ({
@@ -22,6 +23,7 @@ vi.mock('./context', async () => ({
   requireExecutionReady: vi.fn(),
 }));
 vi.mock('../../sentry', () => ({ captureContained: fixture.capture }));
+import { PhoneSafeRefusal } from '../../trpc/routers/task-refusals';
 import { MobileApiError } from './errors';
 import { executeMobileRequest } from './api';
 
@@ -57,6 +59,86 @@ describe('executeMobileRequest', () => {
       await expect(executeMobileRequest({ type, id: 'task' })).resolves.toEqual({ ok: true });
       expect(fixture.taskAction).toHaveBeenLastCalledWith({ type, id: 'task' });
     }
+  });
+
+  it('keeps a recovery kind through the request schema, so Retry never runs as Continue', async () => {
+    fixture.taskAction.mockResolvedValue({ ok: true });
+    await executeMobileRequest({ type: 'continueTask', id: 'task', kind: 'retry' });
+    expect(fixture.taskAction).toHaveBeenLastCalledWith({
+      type: 'continueTask',
+      id: 'task',
+      kind: 'retry',
+    });
+  });
+
+  it('tells the phone a recovery whose kind changed to refresh, without reporting it', async () => {
+    fixture.taskAction.mockRejectedValueOnce(
+      new TRPCError({ code: 'PRECONDITION_FAILED', message: 'This step changed' }),
+    );
+    await expect(
+      executeMobileRequest({ type: 'continueTask', id: 'task', kind: 'retry' }),
+    ).rejects.toMatchObject({ status: 409, message: 'This item changed. Refresh and try again.' });
+    expect(fixture.capture).not.toHaveBeenCalled();
+  });
+
+  it('shows the phone a phone-safe refusal with its own message, without reporting it', async () => {
+    const retry = { type: 'continueTask', id: 'task', kind: 'retry' } as const;
+    const lostAdmission =
+      'This Flow run lost its place in the run queue. Continue or Retry it from the Queue.';
+    fixture.taskAction.mockRejectedValueOnce(
+      new PhoneSafeRefusal({ code: 'PRECONDITION_FAILED', message: lostAdmission }),
+    );
+    await expect(executeMobileRequest(retry)).rejects.toMatchObject({
+      status: 409,
+      message: lostAdmission,
+    });
+    const superseded = 'This attempt was replaced by a newer one.';
+    fixture.taskAction.mockRejectedValueOnce(
+      new PhoneSafeRefusal({ code: 'CONFLICT', message: superseded }),
+    );
+    await expect(executeMobileRequest(retry)).rejects.toMatchObject({
+      status: 409,
+      message: superseded,
+    });
+    expect(fixture.capture).not.toHaveBeenCalled();
+  });
+
+  it('keeps an unmarked refusal generic, so its text never reaches the phone', async () => {
+    fixture.taskAction.mockRejectedValueOnce(
+      new TRPCError({ code: 'PRECONDITION_FAILED', message: 'internal detail' }),
+    );
+    await expect(executeMobileRequest({ type: 'continueTask', id: 'task' })).rejects.toMatchObject({
+      status: 409,
+      message: 'This item changed. Refresh and try again.',
+    });
+  });
+
+  it('answers a refused Retry that lost no race 404 / 409, reporting only a fault', async () => {
+    const retry = { type: 'continueTask', id: 'task', kind: 'retry' } as const;
+    fixture.taskAction.mockRejectedValueOnce(
+      new TRPCError({ code: 'NOT_FOUND', message: 'Task not found' }),
+    );
+    await expect(executeMobileRequest(retry)).rejects.toMatchObject({
+      status: 404,
+      message: 'This item no longer exists.',
+    });
+    fixture.taskAction.mockRejectedValueOnce(
+      new TRPCError({ code: 'CONFLICT', message: 'Only failed or attention-parked tasks' }),
+    );
+    await expect(executeMobileRequest(retry)).rejects.toMatchObject({
+      status: 409,
+      message: 'This item changed. Refresh and try again.',
+    });
+    expect(fixture.capture).not.toHaveBeenCalled();
+
+    // createCaller wraps a plain Error thrown by the procedure as INTERNAL_SERVER_ERROR.
+    const fault = new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'disk full' });
+    fixture.taskAction.mockRejectedValueOnce(fault);
+    await expect(executeMobileRequest(retry)).rejects.toMatchObject({ status: 500 });
+    expect(fixture.capture).toHaveBeenCalledWith(fault, {
+      surface: 'mobile-api',
+      stage: 'continueTask',
+    });
   });
 
   it('reports an unexpected fault it masks, and not an expected refusal', async () => {

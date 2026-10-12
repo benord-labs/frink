@@ -18,7 +18,12 @@ vi.mock('../config', () => ({
   updateMcpCredentialsAtomic: mocks.updateMcpCredentialsAtomic,
 }));
 
-import { resolveFrinkMcpServers } from './resolve-frink-servers';
+import {
+  hasUsableOAuth,
+  refreshNearExpiryOAuth,
+  resolveFrinkMcpServers,
+  usableOrRefreshableOAuth,
+} from './resolve-frink-servers';
 
 function server(overrides: Partial<FrinkMcpServerConfig>): FrinkMcpServerConfig {
   return {
@@ -41,6 +46,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   delete process.env.FRINK_RESOLVER_TEST_PARENT;
   delete process.env.FRINK_RESOLVER_REQUIRED;
 });
@@ -225,6 +231,63 @@ describe('resolveFrinkMcpServers', () => {
     });
   });
 
+  it.each([
+    { label: 'a zero deadline', expiresAt: 0 },
+    { label: 'a null deadline', expiresAt: null as unknown as number },
+  ])('refreshes a credential with $label before projecting it', async ({ expiresAt }) => {
+    mocks.getGlobalMcpServers.mockResolvedValue({
+      remote: server({ name: 'remote', type: 'cloud_api', url: 'https://example.test/mcp' }),
+    });
+    mocks.getMcpCredentials.mockResolvedValue({
+      oauth: { accessToken: 'stale-token', refreshToken: 'refresh-token', clientId: 'client-id', expiresAt },
+    });
+    mocks.refreshAccessToken.mockResolvedValue({
+      accessToken: 'fresh-token',
+      expiresAt: Date.now() + 3_600_000,
+    });
+
+    const result = await resolveFrinkMcpServers({ projectPath: '/work/project' });
+
+    expect(mocks.refreshAccessToken).toHaveBeenCalledOnce();
+    expect(result.servers?.remote).toMatchObject({
+      headers: { Authorization: 'Bearer fresh-token' },
+      _oauth: expect.objectContaining({ accessToken: 'fresh-token' }),
+    });
+  });
+
+  it('projects a zero-deadline credential untouched when refresh material is incomplete', async () => {
+    mocks.getGlobalMcpServers.mockResolvedValue({
+      remote: server({ name: 'remote', type: 'cloud_api', url: 'https://example.test/mcp' }),
+    });
+    mocks.getMcpCredentials.mockResolvedValue({
+      oauth: { accessToken: 'stale-token', refreshToken: 'refresh-token', expiresAt: 0 },
+    });
+
+    const result = await resolveFrinkMcpServers({ projectPath: '/work/project' });
+
+    expect(mocks.refreshAccessToken).not.toHaveBeenCalled();
+    expect(mocks.updateMcpCredentialsAtomic).not.toHaveBeenCalled();
+    expect(result.servers?.remote).toMatchObject({
+      _oauth: expect.objectContaining({ accessToken: 'stale-token' }),
+    });
+  });
+
+  it('does not refresh a credential the server granted without an expiry', async () => {
+    mocks.getGlobalMcpServers.mockResolvedValue({
+      remote: server({ name: 'remote', type: 'cloud_api', url: 'https://example.test/mcp' }),
+    });
+    mocks.getMcpCredentials.mockResolvedValue({
+      oauth: { accessToken: 'eternal-token', refreshToken: 'refresh-token', clientId: 'client-id' },
+    });
+
+    const result = await resolveFrinkMcpServers({ projectPath: '/work/project' });
+
+    expect(mocks.refreshAccessToken).not.toHaveBeenCalled();
+    expect(result.servers?.remote).toMatchObject({
+      _oauth: expect.objectContaining({ accessToken: 'eternal-token' }),
+    });
+  });
+
   it('does not overwrite a credential reconnected while refresh is in flight', async () => {
     const stale = {
       oauth: {
@@ -339,5 +402,106 @@ describe('resolveFrinkMcpServers', () => {
       type: 'http',
       url: 'http://127.0.0.1:4312/mcp?channel=trusted',
     });
+  });
+});
+
+describe('OAuth expiry predicates', () => {
+  const renewable = { refreshToken: 'refresh-token', clientId: 'client-id' };
+
+  it('reads a zero deadline as expired and a missing one as no expiry', () => {
+    expect(hasUsableOAuth({ oauth: { accessToken: 'token', expiresAt: 0 } })).toBe(false);
+    expect(hasUsableOAuth({ oauth: { accessToken: 'token' } })).toBe(true);
+  });
+
+  it('counts a zero-deadline credential as connected only when it can be renewed', () => {
+    expect(usableOrRefreshableOAuth({ oauth: { accessToken: 'token', expiresAt: 0, ...renewable } })).toBe(true);
+    expect(usableOrRefreshableOAuth({ oauth: { accessToken: 'token', expiresAt: 0 } })).toBe(false);
+  });
+});
+
+describe('refreshNearExpiryOAuth deadline handling', () => {
+  const NOW = 1_800_000_000_000;
+  const REFRESH_WINDOW_MS = 5 * 60 * 1000;
+  const remote = server({ name: 'remote', type: 'cloud_api', url: 'https://example.test/mcp' });
+  const credential = (expiresAt: number | undefined) => ({
+    oauth: { accessToken: 'stale-token', refreshToken: 'refresh-token', clientId: 'client-id', expiresAt },
+  });
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'], now: NOW });
+    mocks.refreshAccessToken.mockResolvedValue({ accessToken: 'fresh-token', expiresAt: NOW + 3_600_000 });
+  });
+
+  it.each([
+    { label: 'a negative deadline', expiresAt: -1 },
+    { label: 'an unparseable deadline', expiresAt: Number.NaN },
+    { label: 'a deadline already passed', expiresAt: NOW - 1 },
+    { label: 'a deadline exactly on the refresh window', expiresAt: NOW + REFRESH_WINDOW_MS },
+  ])('refreshes $label', async ({ expiresAt }) => {
+    const stored = credential(expiresAt);
+    mocks.getMcpCredentials.mockResolvedValue(stored);
+
+    const result = await refreshNearExpiryOAuth('remote', remote, stored);
+
+    expect(mocks.refreshAccessToken).toHaveBeenCalledOnce();
+    expect(result?.oauth?.accessToken).toBe('fresh-token');
+  });
+
+  it.each([
+    { label: 'a deadline one millisecond outside the refresh window', expiresAt: NOW + REFRESH_WINDOW_MS + 1 },
+    { label: 'a far-future deadline', expiresAt: NOW + 3_600_000 },
+    { label: 'the largest safe deadline', expiresAt: Number.MAX_SAFE_INTEGER },
+  ])('leaves $label alone', async ({ expiresAt }) => {
+    const stored = credential(expiresAt);
+
+    const result = await refreshNearExpiryOAuth('remote', remote, stored);
+
+    expect(mocks.refreshAccessToken).not.toHaveBeenCalled();
+    expect(result).toBe(stored);
+  });
+
+  it('does not refresh a zero-deadline credential on a server with no url', async () => {
+    const stored = credential(0);
+
+    const result = await refreshNearExpiryOAuth('local', server({ name: 'local', command: 'local-mcp' }), stored);
+
+    expect(mocks.refreshAccessToken).not.toHaveBeenCalled();
+    expect(result).toBe(stored);
+  });
+
+  it('keeps the stale zero-deadline credential when the refresh is rejected', async () => {
+    const stored = credential(0);
+    mocks.getMcpCredentials.mockResolvedValue(stored);
+    mocks.refreshAccessToken.mockRejectedValue(new Error('invalid_grant'));
+
+    const result = await refreshNearExpiryOAuth('remote', remote, stored);
+
+    expect(result).toBe(stored);
+    expect(mocks.updateMcpCredentialsAtomic).not.toHaveBeenCalled();
+    expect(mocks.log.warn).toHaveBeenCalledWith(expect.stringContaining('reconnect is required'));
+  });
+
+  it('adopts a credential reconnected while a zero-deadline refresh was failing', async () => {
+    const stored = credential(0);
+    const reconnected = credential(NOW + 3_600_000);
+    mocks.getMcpCredentials.mockResolvedValue(reconnected);
+    mocks.refreshAccessToken.mockRejectedValue(new Error('invalid_grant'));
+
+    const result = await refreshNearExpiryOAuth('remote', remote, stored);
+
+    expect(result).toBe(reconnected);
+    expect(mocks.log.warn).not.toHaveBeenCalled();
+  });
+
+  it('retries a zero-deadline refresh on the next call after a rejection', async () => {
+    const stored = credential(0);
+    mocks.getMcpCredentials.mockResolvedValue(stored);
+    mocks.refreshAccessToken.mockRejectedValueOnce(new Error('temporarily_unavailable'));
+
+    await refreshNearExpiryOAuth('remote', remote, stored);
+    const second = await refreshNearExpiryOAuth('remote', remote, stored);
+
+    expect(mocks.refreshAccessToken).toHaveBeenCalledTimes(2);
+    expect(second?.oauth?.accessToken).toBe('fresh-token');
   });
 });

@@ -10,7 +10,7 @@ import { MobileApiError, requireChat } from './context';
 
 /** Claude rejects larger images; the phone resizes before upload so this is a backstop. */
 export const MOBILE_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
-export const MOBILE_FILE_MAX_BYTES = 20 * 1024 * 1024;
+const MOBILE_FILE_MAX_BYTES = 20 * 1024 * 1024;
 /** An upload that is never sent is deleted after this long. */
 const UPLOAD_TTL_MS = 60 * 60 * 1000;
 

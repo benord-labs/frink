@@ -43,6 +43,7 @@ const DECLARATION_SCHEMA = z.object({
   type: z.string().optional(),
   required: z.boolean().optional(),
   default: JSON_VALUE_SCHEMA.optional(),
+  template: z.boolean().optional(),
 });
 
 /** One input as a manifest declares it, once parsed. */
@@ -51,6 +52,8 @@ export type ManifestInputDeclaration = {
   type?: string;
   required?: boolean;
   default?: JsonValue;
+  /** `false` hands the configured value to the script verbatim: no `{{...}}` rendering at all. */
+  template?: boolean;
 };
 
 /** Declared inputs of one custom node, keyed by input name. */
@@ -84,12 +87,21 @@ const SALVAGED_DECLARATION_SCHEMA = z.object({
   type: z.string().optional().catch(undefined),
   required: z.literal(true).optional().catch(undefined),
   default: JSON_VALUE_SCHEMA.optional(),
+  // Only an explicit false opts out; anything malformed keeps the default (rendered).
+  template: z.literal(false).optional().catch(undefined),
 });
 
 /** The well-formed fields of a malformed declaration; `{}` for non-objects. */
 function salvageDeclaration(rawSchema: JsonValue): ManifestInputDeclaration {
   const salvaged = SALVAGED_DECLARATION_SCHEMA.safeParse(rawSchema);
   return salvaged.success ? salvaged.data : {};
+}
+
+/** Rendering is the default; `"template": false` keeps the script's own `{{...}}` syntax intact. */
+export function isTemplateRenderedInput(
+  declaration: ManifestInputDeclaration | undefined,
+): boolean {
+  return declaration?.template !== false;
 }
 
 /**

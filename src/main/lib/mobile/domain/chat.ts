@@ -71,7 +71,7 @@ function toolState(part: Record<string, unknown>, streamStatus?: StreamStatus): 
 const PASTED_MENTION = /@\[pasted:\d+:([^|\]]*)\|[^\]]*\]\s?/g;
 
 /** Pulls pasted-file mentions out of text so the phone shows them as attachments, not tokens. */
-export function splitPastedMentions(body: string): { text: string; names: string[] } {
+function splitPastedMentions(body: string): { text: string; names: string[] } {
   const names: string[] = [];
   const text = body.replace(PASTED_MENTION, (_match, name: string) => {
     names.push(name || 'Attachment');

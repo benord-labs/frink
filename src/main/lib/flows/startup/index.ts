@@ -70,6 +70,12 @@ export async function runStartupRecoveryAndLoops(): Promise<void> {
     const { recoverFlowAdmissionsAtStartup } = await import('../admission/startup');
     await recoverFlowAdmissionsAtStartup();
   });
+  // After admission recovery, so a turn whose run held no slot queues behind recovered tickets.
+  await step('flows resume settled-slot turns', async () => {
+    const { resumeSettledSlotTurns } =
+      await import('../admission/terminal-resume/boot-continuation');
+    await resumeSettledSlotTurns(getDatabase());
+  });
 
   // Worktree recovery sweep: prune stale git registrations + remove worktrees no active chat
   // references (the guaranteed backstop for fire-and-forget teardown failures).

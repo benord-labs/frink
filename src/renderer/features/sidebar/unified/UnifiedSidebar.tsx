@@ -8,6 +8,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useEffectEvent,
   useImperativeHandle,
   useMemo,
   useRef,
@@ -22,6 +23,9 @@ import {
   flowsDashboardActiveAtom,
 } from '../../../lib/atoms/agent-navigation-atoms';
 import { cleanupChatScopedState } from '../../../lib/atoms/atom-family-factory';
+import { useArchiveWindowEvents } from '../../../lib/hooks/sidebar-chat-archive/use-chat-archive-actions';
+import { useChatArchive } from '../../../lib/hooks/sidebar-chat-archive/use-chat-archive-actions';
+import { useOpenChatRows } from '../../../lib/hooks/sidebar-open-chats/use-open-chat-rows';
 import { usePendingPlanIds } from '../../../lib/hooks/use-sidebar-pending-plan-ids';
 import { useWindowEvent } from '../../../lib/hooks/use-window-event';
 import { createIdSelectionStore } from '../../../lib/tree-navigation';
@@ -29,6 +33,7 @@ import { trpc, trpcClient } from '../../../lib/trpc';
 import { hasModifiedFiles } from '../../../lib/utils/git-status';
 import { useWorkQueueExitAction } from '../../../lib/work-queue/use-work-queue-exit-action';
 import {
+  agentsSidebarOpenAtom,
   agentsUnseenChangesAtom,
   loadingSubChatsAtom,
   NEW_CHAT_PANE,
@@ -63,7 +68,7 @@ import {
   useBulkChatActions,
 } from '../../../lib/hooks/sidebar-bulk-chats/use-bulk-chat-actions';
 import { useChatDnd } from './hooks/use-chat-dnd';
-import { useDeleteConfirm } from './hooks/use-delete-confirm';
+import { useDeleteConfirm } from '../../../lib/hooks/sidebar-delete-confirm/use-delete-confirm';
 import { useExpansionState } from './hooks/use-expansion-state';
 import { useGroupedProjects } from './hooks/use-grouped-projects';
 import {
@@ -71,6 +76,7 @@ import {
   applyChatRenameToSidebarMaps,
   applyChatRestoreToSidebarMaps,
   applyForkInsertToSidebarMaps,
+  applyOpenChatActivityToSidebarMaps,
   applyPinToggleToSidebarMaps,
   computeFolderSnapshot,
   forkMutationResultToSidebarItem,
@@ -84,7 +90,12 @@ import { useSidebarNavigation } from './hooks/use-sidebar-navigation';
 import { useTaskAwareChatActions } from './hooks/use-task-aware-chat-actions';
 /** Handle exposed by UnifiedSidebar for programmatic focus */
 import { sidebarChatActivityBumpAtom } from './sidebar-chat-activity';
-import type { FolderDescriptor, TaskAwareActionDialogState, UnifiedSidebarProps } from './types';
+import type {
+  FolderDescriptor,
+  TaskAwareActionDialogState,
+  UnifiedSidebarHandle,
+  UnifiedSidebarProps,
+} from './types';
 import type { FolderCursor, SidebarChatListItem, SidebarPolledTask } from './utils';
 import {
   buildChatReasonMap,
@@ -99,13 +110,7 @@ import {
 import { unifiedSidebarPropsAreEqual } from './utils/chat-equality';
 import { createFolderLoadMoreSyncGuard } from './utils/folder-load-more-sync-guard';
 
-export type UnifiedSidebarHandle = {
-  /** Focus the tree container for keyboard navigation */
-  focus: () => void;
-  /** Restore focus to the Work Queue destination trigger after dismissal. */
-  focusWorkQueueTrigger: () => void;
-};
-
+export type { UnifiedSidebarHandle } from './types';
 const GENERAL_FOLDER_KEY = STRINGS.GENERAL_CHATS;
 const SIDEBAR_CHAT_LOAD_TOAST_ID = 'sidebar-chat-load-error';
 const CHAT_LOAD_TOAST_COOLDOWN_MS = 5000;
@@ -125,7 +130,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
     const [searchQuery, setSearchQuery] = useState('');
     const searchInputRef = useRef<HTMLInputElement>(null);
     const treeContainerRef = useRef<HTMLDivElement>(null);
-    const { askDelete, confirmDialog } = useDeleteConfirm();
+    const { askDelete, confirmDialog } = useDeleteConfirm(STRINGS.UNTITLED_CHAT);
     const [chatSelection] = useState(createIdSelectionStore);
     const workQueueTriggerRef = useRef<HTMLButtonElement>(null);
     const flowsTriggerRef = useRef<HTMLButtonElement>(null);
@@ -151,7 +156,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
     const [taskAwareActionDialog, setTaskAwareActionDialog] = useState<TaskAwareActionDialogState>({
       open: false,
       mode: 'single',
-      operation: 'archive',
+      operation: 'delete',
       chatIds: [],
       taskIds: [],
       totalChats: 0,
@@ -170,18 +175,6 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
       setFolderCountSnapshotByKey({});
       setFolderLoadingByKey({});
     }, []);
-
-    const activityBump = useAtomValue(sidebarChatActivityBumpAtom);
-    useEffect(() => {
-      if (!activityBump) return;
-      const bumpDate = new Date(activityBump.at);
-      setFolderChatsByKey((prev) =>
-        bumpChatUpdatedAtInFolderMap(prev, activityBump.chatId, bumpDate),
-      );
-      setPinnedChatsByKey((prev) =>
-        bumpChatUpdatedAtInFolderMap(prev, activityBump.chatId, bumpDate),
-      );
-    }, [activityBump]);
 
     // Async chat-name generation: patch in-memory sidebar maps when the main
     // process broadcasts a new title. The tRPC cache invalidation handled by
@@ -214,17 +207,17 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
     }, []);
 
     useImperativeHandle(ref, () => ({
-      focus: () => {
-        treeContainerRef.current?.focus();
-      },
+      focus: () => focusActiveItem(),
       focusWorkQueueTrigger: () => {
         workQueueTriggerRef.current?.focus();
       },
+      archiveFocusedChat: () => archiveFocusedChat(),
     }));
 
     // Atoms
     const [selectedChatId, setSelectedChatId] = useAtom(selectedAgentChatIdAtom);
     const setShowNewChatForm = useSetAtom(showNewChatFormAtom);
+    const setSidebarOpen = useSetAtom(agentsSidebarOpenAtom);
     const { openSettings, openSettingsTab } = useSettingsNavigation();
     const [activeOverlay, setActiveOverlay] = useAtom(activeOverlayAtom);
     // Only the Flows dashboard renders beside the sidebar; the editor is a full-width takeover.
@@ -266,6 +259,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
       }
       return map;
     }, [chatIds]);
+    const openChats = useOpenChatRows(isSplitActive ? chatPaneMap : null, selectedChatId, TIMING);
 
     // Show files button when a project is selected AND not in split view.
     const showFilesButton = Boolean(selectedProject?.path) && !isSplitActive;
@@ -322,10 +316,12 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
     const chats = useMemo(
       () =>
         mergeChatsById([
+          // First, so a loaded row (patched locally on rename, pin and activity) wins.
+          ...openChats,
           ...Object.values(folderChatsByKey).flat(),
           ...Object.values(pinnedChatsByKey).flat(),
         ]),
-      [folderChatsByKey, pinnedChatsByKey],
+      [openChats, folderChatsByKey, pinnedChatsByKey],
     );
     const pendingPlanIds = usePendingPlanIds(chats, livePlanApprovals, TIMING);
     const { data: rawArchivedChats } = trpc.chats.listArchived.useQuery(undefined);
@@ -474,6 +470,30 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
       () => (Array.isArray(rawLocalProjects) ? rawLocalProjects : []),
       [rawLocalProjects],
     );
+
+    // An open chat no loaded page holds joins its folder's list as that folder's newest chat.
+    const insertBumpedOpenChat = useEffectEvent((chatId: string, updatedAt: Date) => {
+      applyOpenChatActivityToSidebarMaps(
+        setFolderChatsByKey,
+        openChats,
+        transformedProjects,
+        GENERAL_FOLDER_KEY,
+        chatId,
+        updatedAt,
+      );
+    });
+    const activityBump = useAtomValue(sidebarChatActivityBumpAtom);
+    useEffect(() => {
+      if (!activityBump) return;
+      const bumpDate = new Date(activityBump.at);
+      setFolderChatsByKey((prev) =>
+        bumpChatUpdatedAtInFolderMap(prev, activityBump.chatId, bumpDate),
+      );
+      setPinnedChatsByKey((prev) =>
+        bumpChatUpdatedAtInFolderMap(prev, activityBump.chatId, bumpDate),
+      );
+      insertBumpedOpenChat(activityBump.chatId, bumpDate);
+    }, [activityBump]);
 
     const folderDescriptors = useMemo(() => {
       const byKey = new Map<string, FolderDescriptor>();
@@ -789,6 +809,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
         u.chats.listCounts.invalidate(),
         u.chats.listByFolder.invalidate(),
         u.chats.listPinned.invalidate(),
+        u.chats.listByIds.invalidate(),
         u.chats.listBatchGroups.invalidate(),
         u.chats.listByBatch.invalidate(),
         u.chats.listArchived.invalidate(),
@@ -804,6 +825,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
     const syncSidebarCountsOrFullRefresh = useCallback(
       async (warningTitle: string) => {
         try {
+          void utilsRef.current.chats.listByIds.invalidate();
           await utilsRef.current.chats.listArchived.invalidate();
           await refetchListCountsAndSyncFolderSnapshots(
             utilsRef.current,
@@ -1037,6 +1059,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
         await Promise.all([
           u.chats.list.invalidate(),
           u.chats.get.invalidate({ id: updated.id }),
+          u.chats.listByIds.invalidate(),
           invalidateBatchViews(u),
         ]);
         setChatToRename(null);
@@ -1149,55 +1172,54 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
     );
 
     const archiveSingleChat = useCallback(
-      async (chatId: string, options?: { killTerminals?: boolean }) => {
+      async (chatId: string) => {
         // Clear panes eagerly before async mutation to avoid stale splitView snapshot
-        clearPanesForChat(chatId);
-        await archiveChatMutRef.current.mutateAsync({
-          id: chatId,
-          ...(options?.killTerminals !== undefined ? { killTerminals: options.killTerminals } : {}),
-        });
+        const clearedPanes = clearPanesForChat(chatId);
+        try {
+          await archiveChatMutRef.current.mutateAsync({ id: chatId });
+        } catch (error) {
+          // Archive refuses when it can't stop the chat's task; the chat is still live, so reopen it.
+          for (const paneIndex of clearedPanes) restorePaneAt(paneIndex, chatId);
+          throw error;
+        }
         removeChatsFromLoadedFolders([chatId]);
+        setSelectedChatId((current) => (current === chatId ? null : current));
         // The local map patch above covers folder + pinned; batch views drop the chat on refetch.
         const u = utilsRef.current;
-        await Promise.all([
+        await Promise.allSettled([
           u.chats.list.invalidate(),
           invalidateBatchViews(u),
           syncSidebarCountsOrFullRefresh('Chat archived'),
         ]);
         setShowArchived(true);
-        setSelectedChatId((current) => (current === chatId ? null : current));
         // Last: dropping per-chat atom state while a pane is still mounted on this id
         // would let its next render re-create the entry we just removed.
         cleanupChatScopedState(chatId);
       },
       [
         clearPanesForChat,
+        restorePaneAt,
         removeChatsFromLoadedFolders,
         syncSidebarCountsOrFullRefresh,
         setSelectedChatId,
       ],
     );
 
-    /**
-     * Warns when a chat's task links can't be resolved, and hands off to the task-aware
-     * confirm dialog when live tasks would be affected. Returns true when the dialog has
-     * taken over, meaning the caller must not proceed with the destructive action.
-     */
+    /** Delete only: true when the task-aware dialog took over, so the caller must not delete. */
     const deferToTaskAwareDialog = useCallback(
-      async (chatId: string, operation: 'archive' | 'delete'): Promise<boolean> => {
+      async (chatId: string): Promise<boolean> => {
         const { activeTasks, unresolvedTaskLinks } =
           await getActiveLinkedTasksForChatIdsWithFallback([chatId]);
-        const verb = operation === 'archive' ? 'Archiving' : 'Deleting';
         if (unresolvedTaskLinks > 0) {
           toast.warning('Linked task details unavailable', {
-            description: `${verb} chat only. Open Work Queue to manage task state manually.`,
+            description: 'Deleting chat only. Open Work Queue to manage task state manually.',
           });
         }
         if (activeTasks.length === 0) return false;
         setTaskAwareActionDialog({
           open: true,
           mode: 'single',
-          operation,
+          operation: 'delete',
           chatIds: [chatId],
           taskIds: activeTasks.map((task) => task.taskId),
           totalChats: 1,
@@ -1207,47 +1229,21 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
       [getActiveLinkedTasksForChatIdsWithFallback],
     );
 
-    const handleChatArchive = useCallback(
-      async (chatId: string) => {
-        if (await deferToTaskAwareDialog(chatId, 'archive')) return;
+    const handleChatArchive = useChatArchive(archiveSingleChat);
 
-        try {
-          await archiveSingleChat(chatId);
-        } catch (error) {
-          toast.error('Failed to archive chat', {
-            description: extractErrorMessage(error) ?? 'Unable to archive this chat right now.',
-          });
-        }
-      },
-      [deferToTaskAwareDialog, archiveSingleChat],
-    );
-
-    // Bridge for the chat view's "Complete & Archive" (TaskAcceptBar): it completes the task, then
-    // asks the sidebar to archive. Archives directly (not handleChatArchive) — the task is already
-    // completed, so there is no active task to warn about, and archiveSingleChat owns the
-    // pane-clear + deselect navigation that closes the open chat cleanly.
-    useWindowEvent('sidebar:archive-chat', (event) => {
-      const chatId = (event as CustomEvent<{ chatId?: string }>).detail?.chatId;
-      if (!chatId) return;
-      void archiveSingleChat(chatId).catch((error) => {
-        toast.error('Failed to archive chat', {
-          description: extractErrorMessage(error) ?? 'Unable to archive this chat right now.',
-        });
-      });
-    });
     const deleteSingleChat = useCallback(
       async (chatId: string, checkActiveTasks = false) => {
-        if (checkActiveTasks && (await deferToTaskAwareDialog(chatId, 'delete'))) return;
+        if (checkActiveTasks && (await deferToTaskAwareDialog(chatId))) return;
         const clearedPanes = clearPanesForChat(chatId);
         try {
           await deleteChatMutRef.current.mutateAsync({ id: chatId });
           removeChatsFromLoadedFolders([chatId]);
+          setSelectedChatId((current) => (current === chatId ? null : current));
           // A stale batch row outlives its tasks and reads as a grey "cancelled" row.
           await Promise.all([
             invalidateBatchViews(utilsRef.current),
             syncSidebarCountsOrFullRefresh('Chat deleted'),
           ]);
-          setSelectedChatId((current) => (current === chatId ? null : current));
           cleanupChatScopedState(chatId);
         } catch (error) {
           for (const paneIndex of clearedPanes) restorePaneAt(paneIndex, chatId);
@@ -1386,6 +1382,13 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
       ],
     );
 
+    const archiveFocusedChat = useArchiveWindowEvents({
+      focusedChatId: effectiveSelectedChatId === NEW_CHAT_PANE ? null : effectiveSelectedChatId,
+      isChatCovered: activeOverlay !== null,
+      archiveSingleChat,
+      restoreChat: handleChatRestore,
+    });
+
     const bulk = useBulkChatActions({
       selection: chatSelection,
       utilsRef,
@@ -1416,12 +1419,13 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
       () => ({ handleDragStart, handleDragOver, handleDragEnd, handleDragCancel }),
       [handleDragStart, handleDragOver, handleDragEnd, handleDragCancel],
     );
-    const { focusedItemId } = useSidebarNavigation(treeContainerRef, {
+    const { focusedItemId, focusActiveItem } = useSidebarNavigation(treeContainerRef, {
       onSelectChat: wrapWorkQueueExitAction(handleChatSelect),
       onToggleCodebase: toggleCodebase,
       isCodebaseExpanded,
       isDragging: !!activeChat,
       selectedChatId: effectiveSelectedChatId,
+      codebases: filteredCodebases,
       onSelectionKey: (action) => {
         const ids = [...chatSelection.getSnapshot()];
         if (ids.length === 0) return false;
@@ -1429,6 +1433,13 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
         else void bulk.requestDelete(ids);
         return true;
       },
+    });
+
+    // A pane-header cmd-click activates that pane first; wait two frames so its composer autofocus
+    // runs before the sidebar takes focus.
+    useWindowEvent('sidebar:reveal-active-chat', () => {
+      setSidebarOpen(true);
+      requestAnimationFrame(() => requestAnimationFrame(focusActiveItem));
     });
 
     const fetchAllChatsForFolder = useCallback(async (projectIds: string[] | null) => {
@@ -1657,67 +1668,41 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
       setTaskAwareActionDialog((current) => ({ ...current, open: false }));
     }, []);
 
-    const executeTaskAwareAction = useCallback(
-      async (cancelLinkedTasks: boolean) => {
-        const currentDialog = taskAwareActionDialogRef.current;
-        if (!currentDialog.open) return;
+    const executeTaskAwareAction = useCallback(async () => {
+      const currentDialog = taskAwareActionDialogRef.current;
+      if (!currentDialog.open) return;
 
-        closeTaskAwareActionDialog();
+      closeTaskAwareActionDialog();
 
-        const isDeleteOp =
-          currentDialog.operation === 'delete' || currentDialog.operation === 'delete_batch';
-        const shouldCancelTasks = isDeleteOp || cancelLinkedTasks;
-        const keepsTasksRunning = currentDialog.taskIds.length > 0 && !shouldCancelTasks;
-
-        if (shouldCancelTasks && currentDialog.taskIds.length > 0) {
-          await abortTaskChatStreamsBestEffort(currentDialog.chatIds);
-          const { failed } = await cancelTasksBestEffort(currentDialog.taskIds);
-          if (failed > 0) {
-            toast.warning('Some task cancellations failed', {
-              description: `${failed} task${failed === 1 ? '' : 's'} could not be cancelled.`,
-            });
-          }
+      if (currentDialog.taskIds.length > 0) {
+        await abortTaskChatStreamsBestEffort(currentDialog.chatIds);
+        const { failed } = await cancelTasksBestEffort(currentDialog.taskIds);
+        if (failed > 0) {
+          toast.warning('Some task cancellations failed', {
+            description: `${failed} task${failed === 1 ? '' : 's'} could not be cancelled.`,
+          });
         }
+      }
 
-        if (currentDialog.mode === 'single') {
-          const chatId = currentDialog.chatIds[0];
-          if (!chatId) return;
+      if (currentDialog.mode === 'single') {
+        const chatId = currentDialog.chatIds[0];
+        if (!chatId) return;
+        await deleteSingleChat(chatId);
+        return;
+      }
 
-          if (currentDialog.operation === 'archive') {
-            try {
-              await archiveSingleChat(chatId, { killTerminals: !keepsTasksRunning });
-            } catch (error) {
-              toast.error('Failed to archive chat', {
-                description: extractErrorMessage(error) ?? 'Unable to archive this chat right now.',
-              });
-            }
-            return;
-          }
-
-          await deleteSingleChat(chatId);
-          return;
-        }
-
-        if (currentDialog.operation === 'archive_batch') {
-          await bulk.archiveChatsBatch(currentDialog.chatIds, !keepsTasksRunning);
-          return;
-        }
-        const batchChats = currentDialog.chatIds.map((id) => ({ id }));
-        await deleteChatsBatch(batchChats, {
-          clearPanesBefore: true,
-          onPartialFailure: toastPartialFailure('Deleted'),
-        });
-      },
-      [
-        closeTaskAwareActionDialog,
-        abortTaskChatStreamsBestEffort,
-        cancelTasksBestEffort,
-        archiveSingleChat,
-        deleteSingleChat,
-        deleteChatsBatch,
-        bulk.archiveChatsBatch,
-      ],
-    );
+      const batchChats = currentDialog.chatIds.map((id) => ({ id }));
+      await deleteChatsBatch(batchChats, {
+        clearPanesBefore: true,
+        onPartialFailure: toastPartialFailure('Deleted'),
+      });
+    }, [
+      closeTaskAwareActionDialog,
+      abortTaskChatStreamsBestEffort,
+      cancelTasksBestEffort,
+      deleteSingleChat,
+      deleteChatsBatch,
+    ]);
 
     // ========== Render ==========
     return (
@@ -1801,7 +1786,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
                 onRenameProject={handleProjectRename}
                 onDeleteAllChatsInFolder={handleDeleteAllChatsInFolder}
                 onDeleteBatch={handleDeleteBatch}
-                chatPaneMap={chatPaneMap}
+                chatPaneMap={isSplitActive ? chatPaneMap : undefined}
                 activeDropTargetId={overProjectId}
                 activeChat={activeChat}
                 dndHandlers={dndHandlers}
@@ -1849,8 +1834,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
           onNewFolderClose={() => setIsNewFolderDialogOpen(false)}
           onNewFolderConfirm={handleNewFolder}
           taskAwareActionDialog={taskAwareActionDialog}
-          onTaskAwareActionKeepRunning={() => executeTaskAwareAction(false)}
-          onTaskAwareActionCancelAndContinue={() => executeTaskAwareAction(true)}
+          onTaskAwareActionCancelAndContinue={() => void executeTaskAwareAction()}
           onTaskAwareActionClose={closeTaskAwareActionDialog}
         />
         {confirmDialog}

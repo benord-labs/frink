@@ -5,6 +5,10 @@ import { createId } from '../utils';
 import { getAiAccountType, getChatAiAccount, getNewChatAccountId } from './project-ai-accounts';
 import { copyTranscript } from './sub-chat-messages';
 import { createSubChat, listSubChatsByChat } from './sub-chats';
+import {
+  type ArchiveChatResult,
+  archiveChatCancellingLinkedTasks,
+} from './task-queries/chat-archive-tasks';
 
 type Db = ReturnType<typeof getDatabase>;
 
@@ -299,8 +303,9 @@ export async function moveChatToProjectLocal(
   });
 }
 
-export async function archiveChat(db: Db, id: string): Promise<Chat | null> {
-  return updateChat(db, id, { archivedAt: new Date() });
+/** Archive stops the chat's live manual task too; see archiveChatCancellingLinkedTasks. */
+export function archiveChat(db: Db, id: string): ArchiveChatResult {
+  return archiveChatCancellingLinkedTasks(db, id);
 }
 
 export async function unarchiveChat(db: Db, id: string): Promise<Chat | null> {

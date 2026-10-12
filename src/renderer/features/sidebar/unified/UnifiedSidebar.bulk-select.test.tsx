@@ -52,7 +52,6 @@ afterEach(resetHarness);
 
 type DialogProps = {
   taskAwareActionDialog: { open: boolean; mode: string; operation: string; chatIds: string[] };
-  onTaskAwareActionKeepRunning: () => Promise<void>;
   onTaskAwareActionCancelAndContinue: () => Promise<void>;
 };
 
@@ -82,7 +81,8 @@ describe('UnifiedSidebar multi-select bulk actions', () => {
     expect(chipProps().pendingDeleteCount).toBe(0);
   });
 
-  it('stops the linked tasks and kills terminals when bulk archive is confirmed with "Stop task"', async () => {
+  // Archive stops linked tasks in the main process, so bulk archive never cancels from a snapshot.
+  it('archives every selected chat at once, even with a live linked task', async () => {
     hoisted.getActiveLinkedTasksForChatIdsWithFallbackMock.mockResolvedValue({
       activeTasks: [{ taskId: 'task-1', chatId: 'chat-a' }],
       unresolvedTaskLinks: 0,
@@ -90,42 +90,12 @@ describe('UnifiedSidebar multi-select bulk actions', () => {
     render(<UnifiedSidebar />);
     await act(() => chipProps().onArchive(['chat-a', 'chat-b']));
 
-    await act(() => dialogProps().onTaskAwareActionCancelAndContinue());
-
     await waitFor(() => expect(hoisted.archiveChatMutateAsyncMock).toHaveBeenCalledTimes(2));
-    expect(hoisted.cancelTasksBestEffortMock).toHaveBeenCalledWith(['task-1']);
-    expect(hoisted.archiveChatMutateAsyncMock).toHaveBeenCalledWith({
-      id: 'chat-b',
-      killTerminals: true,
-    });
-    expect(hoisted.chatDeleteMutateAsyncMock).not.toHaveBeenCalled();
-  });
-
-  // The task-aware dialog's batch branch deletes; a bulk archive routed through it must archive.
-  it('archives, never deletes, when a live linked task sends bulk archive through the dialog', async () => {
-    hoisted.getActiveLinkedTasksForChatIdsWithFallbackMock.mockResolvedValue({
-      activeTasks: [{ taskId: 'task-1', chatId: 'chat-a' }],
-      unresolvedTaskLinks: 0,
-    });
-    render(<UnifiedSidebar />);
-    await act(() => chipProps().onArchive(['chat-a', 'chat-b']));
-
-    expect(dialogProps().taskAwareActionDialog).toMatchObject({
-      open: true,
-      mode: 'batch',
-      operation: 'archive_batch',
-      chatIds: ['chat-a', 'chat-b'],
-    });
-    expect(hoisted.archiveChatMutateAsyncMock).not.toHaveBeenCalled();
-
-    await act(() => dialogProps().onTaskAwareActionKeepRunning());
-
-    await waitFor(() => expect(hoisted.archiveChatMutateAsyncMock).toHaveBeenCalledTimes(2));
-    expect(hoisted.archiveChatMutateAsyncMock).toHaveBeenCalledWith({
-      id: 'chat-a',
-      killTerminals: false,
-    });
-    expect(hoisted.chatDeleteMutateAsyncMock).not.toHaveBeenCalled();
+    expect(hoisted.archiveChatMutateAsyncMock).toHaveBeenCalledWith({ id: 'chat-a' });
+    expect(hoisted.archiveChatMutateAsyncMock).toHaveBeenCalledWith({ id: 'chat-b' });
+    expect(dialogProps().taskAwareActionDialog.open).toBe(false);
+    expect(hoisted.getActiveLinkedTasksForChatIdsWithFallbackMock).not.toHaveBeenCalled();
     expect(hoisted.cancelTasksBestEffortMock).not.toHaveBeenCalled();
+    expect(hoisted.chatDeleteMutateAsyncMock).not.toHaveBeenCalled();
   });
 });

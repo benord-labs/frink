@@ -1,7 +1,7 @@
 /**
  * startFlowRun — replaces the Phase 2 skeleton's immediate-fail behaviour with
  * real execution. Picks the trigger node from the latest version's graph,
- * inserts the first node_run, dispatches, recurses via advanceFlowRun.
+ * inserts the first node_run, dispatches, then walks forward (advance.ts).
  */
 
 import { TRPCError } from '@trpc/server';
@@ -28,6 +28,8 @@ export type StartFlowRunInput = {
   batchId?: string | null;
   /** Atomically move this eligible batch member from pending into global admission. */
   batchStageRunId?: string | null;
+  /** The stage that member was read from; admission leaves a member moved since for its new stage. */
+  batchStageId?: string | null;
 };
 
 async function loadStartDefinition(db: Db, input: StartFlowRunInput) {
@@ -78,6 +80,7 @@ export async function startFlowRun(input: StartFlowRunInput): Promise<{
     idempotencyKey: input.idempotencyKey ?? null,
     batchId: input.batchId ?? null,
     batchStageRunId: input.batchStageRunId ?? null,
+    batchStageId: input.batchStageId ?? null,
   });
   const admittedVersion = result.isReplay
     ? ((await getVersion(db, result.run.flowVersionId)) ?? version)

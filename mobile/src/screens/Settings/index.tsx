@@ -1,16 +1,19 @@
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Constants from 'expo-constants';
-import type { ReactNode } from 'react';
-import { Platform, Pressable, ScrollView, View } from 'react-native';
+import { type ReactNode } from 'react';
+import { Pressable, ScrollView, View } from 'react-native';
 import { LogOut } from 'lucide-react-native';
 import { useConnection } from '../../lib/connection';
 import { useNotifications } from '../../lib/notifications';
 import { useOverview } from '../../lib/overview';
-import { useTabHeader } from '../../navigation/tab-header';
+import { useScreenHeader } from '../../navigation/screen-header';
 import { ListRow, RowSeparator } from '../../ui/list';
 import { ResourceStatus } from '../../ui/resource-status';
 import { Screen } from '../../ui/screen';
 import { Text } from '../../ui/text';
-import { GUTTER, space, useTheme } from '../../ui/theme';
+import { GUTTER, space, useAppearance, useTransparency, useTheme } from '../../ui/theme';
+import { TRANSPARENCY_LEVELS } from '../../lib/preferences';
+import { MenuChip } from '../Chat/Composer/menu';
 import { Card } from './card';
 import { confirmForget } from './confirm-forget';
 import { Computers } from './Computers';
@@ -18,21 +21,20 @@ import { MacIdentity } from './MacIdentity';
 import { Notifications } from './Notifications';
 import { macStatus, sourceLine } from './settings-view';
 
-// Web previews draw the tab bar over the page; iOS insets content under its native bar itself.
-const TAB_BAR_CLEARANCE = Platform.OS === 'web' ? 96 : space.xl;
 const APP_VERSION = Constants.expoConfig?.version ?? 'Unknown';
 // Where the running JavaScript came from helps while developing; it is jargon to everyone else.
 const SOURCE = __DEV__ ? sourceLine(Constants.expoConfig?.extra?.source) : null;
 
 export function SettingsScreen() {
-  const { header } = useTabHeader({ title: 'Settings' });
+  const insets = useSafeAreaInsets();
+  const { header } = useScreenHeader({ title: 'Settings' });
   const overview = useOverview();
   const { connection } = useConnection();
   return (
     <Screen atmosphere>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
-        contentContainerStyle={{ paddingBottom: TAB_BAR_CLEARANCE }}
+        contentContainerStyle={{ paddingBottom: insets.bottom + space.xl }}
       >
         {header}
         <ResourceStatus {...overview} />
@@ -40,6 +42,9 @@ export function SettingsScreen() {
           name={overview.data?.machineName ?? connection?.machineName ?? 'Your Mac'}
           status={macStatus(overview)}
         />
+        <Group title="Appearance">
+          <AppearanceSettings />
+        </Group>
         <Group title="Computers">
           <Computers />
         </Group>
@@ -72,18 +77,86 @@ export function SettingsScreen() {
   );
 }
 
+const APPEARANCES = [
+  { id: 'system', label: 'System' },
+  { id: 'light', label: 'Light' },
+  { id: 'dark', label: 'Dark' },
+] as const;
+
+function AppearanceSettings() {
+  const { mode, setMode } = useAppearance();
+  const { level, setLevel } = useTransparency();
+  return (
+    <Card testID="settings-appearance">
+      <PreferenceRow label="Appearance">
+        <MenuChip
+          label={APPEARANCES.find((item) => item.id === mode)!.label}
+          accessibilityLabel={`Appearance: ${APPEARANCES.find((item) => item.id === mode)!.label}`}
+          groups={[
+            {
+              value: mode,
+              options: [...APPEARANCES],
+              onPick: (id) => {
+                const option = APPEARANCES.find((item) => item.id === id);
+                if (option) setMode(option.id);
+              },
+            },
+          ]}
+        />
+      </PreferenceRow>
+      <RowSeparator inset={GUTTER} />
+      <PreferenceRow label="Transparency">
+        <MenuChip
+          label={`${level}%`}
+          accessibilityLabel={`Transparency: ${level}%`}
+          groups={[
+            {
+              value: String(level),
+              options: TRANSPARENCY_LEVELS.map((value) => ({
+                id: String(value),
+                label: value === 0 ? '0% (Solid)' : `${value}%`,
+              })),
+              onPick: (id) => {
+                const option = TRANSPARENCY_LEVELS.find((value) => String(value) === id);
+                if (option !== undefined) setLevel(option);
+              },
+            },
+          ]}
+        />
+      </PreferenceRow>
+    </Card>
+  );
+}
+
+function PreferenceRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <View
+      style={{
+        minHeight: 52,
+        paddingHorizontal: GUTTER,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: space.md,
+      }}
+    >
+      <Text variant="row">{label}</Text>
+      {children}
+    </View>
+  );
+}
+
 function Group({ title, children }: { title?: string; children: ReactNode }) {
   return (
     <View style={{ paddingTop: space.xl }}>
       {title && (
         <Text
-          variant="label"
-          color="muted"
+          variant="secondary"
           accessibilityRole="header"
           style={{
-            paddingHorizontal: GUTTER * 2,
+            paddingHorizontal: GUTTER,
             paddingBottom: space.xs,
-            textTransform: 'uppercase',
+            fontWeight: '600',
           }}
         >
           {title}
@@ -96,7 +169,13 @@ function Group({ title, children }: { title?: string; children: ReactNode }) {
 
 function Value({ children }: { children: string }) {
   return (
-    <Text variant="secondary" color="muted" numberOfLines={1} ellipsizeMode="middle" selectable>
+    <Text
+      variant="secondary"
+      color="muted"
+      numberOfLines={1}
+      ellipsizeMode="middle"
+      selectable
+    >
       {children}
     </Text>
   );

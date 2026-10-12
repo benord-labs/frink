@@ -1,15 +1,8 @@
-import { execFileSync } from 'node:child_process';
 import os from 'node:os';
-import { stripVTControlCharacters } from 'node:util';
 import { getBundledBinaryPath } from '../agent-runner/bundled-binary';
 import { buildEnvironment, getDefaultShell, isWindows } from '../platform';
+import { getLoginShellEnvSync, resetLoginShellEnvForTests } from '../platform/login-shell-env';
 import { buildClaudeCredentialLaunch, type ClaudeCredentialLaunch } from './credential-fd-spawn';
-
-// Cache the shell environment
-let cachedShellEnv: Record<string, string> | null = null;
-
-// Delimiter for parsing env output
-const DELIMITER = '_CLAUDE_ENV_DELIMITER_';
 
 // Keys to strip (prevent interference from unrelated providers).
 // ANTHROPIC_BASE_URL is kept on purpose, so an existing API-proxy setup keeps working.
@@ -18,6 +11,8 @@ const DELIMITER = '_CLAUDE_ENV_DELIMITER_';
 // sites via buildOneShotClaudeLaunch. Leaving them in the base env would let an exported shell
 // token silently outrank the selected account. Based on PR #29 by @sa4hnd.
 const STRIPPED_ENV_KEYS = ['OPENAI_API_KEY', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX'];
+// Stripping runs on every read now that nothing is cached here; log each key once.
+const loggedStrippedKeys = new Set<string>();
 
 // Cache the bundled binary path (only compute once)
 let cachedBinaryPath: string | null = null;
@@ -46,89 +41,29 @@ export function getBundledClaudeBinaryPath(): string {
 }
 
 /**
- * Parse environment variables from shell output
- */
-function parseEnvOutput(output: string): Record<string, string> {
-  const envSection = output.split(DELIMITER)[1];
-  if (!envSection) return {};
-
-  const env: Record<string, string> = {};
-  for (const line of stripVTControlCharacters(envSection).split('\n').filter(Boolean)) {
-    const separatorIndex = line.indexOf('=');
-    if (separatorIndex > 0) {
-      const key = line.substring(0, separatorIndex);
-      const value = line.substring(separatorIndex + 1);
-      env[key] = value;
-    }
-  }
-  return env;
-}
-
-/**
  * Strip sensitive keys from environment
  */
 function stripSensitiveKeys(env: Record<string, string>): void {
   for (const key of STRIPPED_ENV_KEYS) {
     if (key in env) {
-      // biome-ignore lint/suspicious/noConsole: backend
-      console.log(`[claude-env] Stripped ${key} from shell environment`);
+      if (!loggedStrippedKeys.has(key)) {
+        loggedStrippedKeys.add(key);
+        // biome-ignore lint/suspicious/noConsole: backend
+        console.log(`[claude-env] Stripped ${key} from shell environment`);
+      }
       delete env[key];
     }
   }
 }
 
-/**
- * Load full shell environment using interactive login shell.
- * This captures PATH, HOME, and all shell profile configurations.
- * Results are cached for the lifetime of the process.
- */
+/** The user's shell environment for Claude spawns. Never spawns: the login-shell env once resolved,
+ * the platform fallback until then — never pinned, so a slow shell at startup is not permanent. */
 export function getClaudeShellEnvironment(): Record<string, string> {
-  if (cachedShellEnv !== null) {
-    return { ...cachedShellEnv };
-  }
-
   // Windows: avoid shell spawning and derive from platform provider.
-  if (isWindows()) {
-    const env = buildEnvironment();
-    stripSensitiveKeys(env);
-    cachedShellEnv = env;
-    return { ...env };
-  }
-
-  const shell = getDefaultShell();
-  const command = `echo -n "${DELIMITER}"; env; echo -n "${DELIMITER}"; exit`;
-
-  try {
-    const output = execFileSync(shell, ['-ilc', command], {
-      encoding: 'utf8',
-      timeout: 5000,
-      env: {
-        // Prevent Oh My Zsh from blocking with auto-update prompts
-        DISABLE_AUTO_UPDATE: 'true',
-        // Minimal env to bootstrap the shell
-        HOME: os.homedir(),
-        USER: os.userInfo().username,
-        SHELL: shell,
-      },
-    });
-
-    const env = parseEnvOutput(output);
-
-    // Strip keys that could interfere with Claude's auth resolution
-    stripSensitiveKeys(env);
-
-    // biome-ignore lint/suspicious/noConsole: backend
-    console.log(`[claude-env] Loaded ${Object.keys(env).length} environment variables from shell`);
-    cachedShellEnv = env;
-    return { ...env };
-  } catch {
-    // biome-ignore lint/suspicious/noConsole: backend
-    console.error('[claude-env] Failed to load shell environment');
-    const fallback = buildEnvironment();
-    stripSensitiveKeys(fallback);
-    cachedShellEnv = fallback;
-    return { ...fallback };
-  }
+  const env = (isWindows() ? null : getLoginShellEnvSync()) ?? buildEnvironment();
+  // Strip keys that could interfere with Claude's auth resolution
+  stripSensitiveKeys(env);
+  return env;
 }
 
 /**
@@ -222,5 +157,5 @@ export function buildOneShotClaudeLaunch(credential: {
  * Clear cached shell environment (useful for testing)
  */
 export function clearClaudeEnvCache(): void {
-  cachedShellEnv = null;
+  resetLoginShellEnvForTests();
 }

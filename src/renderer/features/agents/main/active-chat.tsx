@@ -92,7 +92,12 @@ import { useTextContextSelection } from '../hooks/use-text-context-selection';
 import { useToggleFocusOnCmdEsc } from '../hooks/use-toggle-focus-on-cmd-esc';
 import { createAgentChat } from '../lib/create-agent-chat';
 import { clearSubChatDraft, getSubChatDraftFull } from '../lib/drafts';
-import { createQueueItem, generateQueueId, toQueuedImage } from '../lib/queue-utils';
+import {
+  createQueueItem,
+  generateQueueId,
+  queuedSendMetadata,
+  toQueuedImage,
+} from '../lib/queue-utils';
 import { requestClaudePrewarm } from '../lib/websocket-chat-transport';
 import { type AgentsMentionsEditorHandle } from '../mentions';
 import { RunStatusRows } from '../RunStatusRows';
@@ -725,10 +730,8 @@ const ChatViewInner = memo(function ChatViewInner({
   if (!isStreaming) messageTokenSnapshotRef.current = computedMessageTokenData;
   const messageTokenData = messageTokenSnapshotRef.current;
 
-  // Carry on: resume the persisted session and continue from where the turn stopped — a hidden
-  // wake message (never rendered; the executor strips the marker before the model sees it). The
-  // failed partial response is KEPT (unlike Retry, which drops it and re-runs the turn). Default
-  // recovery after a transient failure (usage limit reset, API error).
+  // Continue: send a hidden wake message (marker stripped by executor) to resume the session,
+  // KEEPING the failed partial response unlike Retry; offered whenever the turn produced output.
   const handleCarryOnChat = useCallback(() => {
     // Keep the pending-retry state recoverable: it is the ONLY affordance left on a failed turn,
     // so it must not be cleared unless the wake message actually goes out (restored if it rejects).
@@ -936,16 +939,6 @@ const ChatViewInner = memo(function ChatViewInner({
   const activeFileExcludedRef = useRef(activeFileDismissed);
   activeFileExcludedRef.current = activeFileDismissed;
 
-  // Reset dismissed when user switches to a different file (new file shows again)
-  const prevActiveFilePathRef = useRef<string | null>(chatContextFile?.path ?? null);
-  useEffect(() => {
-    const currentPath = chatContextFile?.path ?? null;
-    if (prevActiveFilePathRef.current !== currentPath) {
-      prevActiveFilePathRef.current = currentPath;
-      setActiveFileDismissed(false);
-    }
-  }, [chatContextFile?.path, setActiveFileDismissed]);
-
   // Stable handler — inlining this as `() => setActiveFileDismissed(true)` in the
   // ChatInputSection JSX busts its memo on every ChatViewInner re-render, pulling
   // the entire input subtree (editor, dropdowns, send button) into the per-chunk
@@ -1134,7 +1127,13 @@ const ChatViewInner = memo(function ChatViewInner({
             useMessageQueueStore.getState().prependItem(subChatId, item);
             return;
           }
-          // Steer (or requeue) rather than abort; only a turn this view shows streaming is stopped.
+          // Steer (or requeue) rather than abort. A steer carries no metadata, so a dispatched item
+          // waits in the queue for the turn to end instead.
+          if (canSteer && item.dispatchTaskId) {
+            useMessageQueueStore.getState().prependItem(subChatId, item);
+            toast.info('This prompt will be sent when the current step finishes.');
+            return;
+          }
           if (canSteer) {
             const text = parts.find((p) => p.type === 'text')?.text ?? '';
             await steerOrQueue(text, item.images, () =>
@@ -1147,7 +1146,7 @@ const ChatViewInner = memo(function ChatViewInner({
           await handleStop();
         }
 
-        await snapshotSendMessage({ role: 'user', parts });
+        await snapshotSendMessage({ role: 'user', parts, ...queuedSendMetadata(item) });
       } catch (_error) {
         // Requeue the item so it is not lost on send failures.
         useMessageQueueStore.getState().prependItem(subChatId, item);
@@ -1368,7 +1367,7 @@ const ChatViewInner = memo(function ChatViewInner({
         hasUnapprovedPlan={hasUnapprovedPlan}
         chatMode={chatMode}
         editorRef={editorRef}
-        stop={stop}
+        stop={handleStop}
         handleQuestionsSkip={handleDisplayQuestionsSkip}
         handleApprovePlan={handleApprovePlanSingleShot}
         scrollToBottom={scrollToBottom}
@@ -1464,7 +1463,6 @@ const ChatViewInner = memo(function ChatViewInner({
             subChatId={subChatId}
             pinnedTaskId={taskId ?? null}
             chatId={parentChatId ?? null}
-            guardedSend={guardedFlowSend}
             isTurnActive={isStreaming}
             flowSurfaceOwnsStop={flowSurfaceOwnsStop}
           />
@@ -2067,7 +2065,7 @@ export const ChatView = memo(function ChatView({
 
   // Create or get Chat instance for a sub-chat
   const getOrCreateChat = useCallback(
-    (subChatId: string): Chat<UIMessage> | null => {
+    (subChatId: string, isWakeHeld: boolean): Chat<UIMessage> | null => {
       // Desktop uses worktreePath, web uses sandboxUrl
       if (!agentChat) return null;
       if (!chatWorkingDir) return null;
@@ -2114,7 +2112,7 @@ export const ChatView = memo(function ChatView({
         const rehydrationDecision =
           isActiveSubChat && hasUsableCurrentPageSnapshot
             ? classifyDurableMessageRehydration({
-                isActiveSubChat,
+                isWakeHeld,
                 isExistingChatStreaming,
                 existingMessages: existing.messages,
                 fetchedMessages: subChatMessages.messages,

@@ -52,6 +52,8 @@ type Props = {
   slashActiveDescendantId?: string;
   /** ID of the slash command listbox element (for aria-controls). */
   slashCommandListboxId?: string;
+  /** Editor-context chip for the attachment strip; null when nothing from the editor is sent. */
+  contextChip?: React.ReactNode;
   children?: React.ReactNode;
 };
 
@@ -82,6 +84,7 @@ export function EditorSection({
   onBlur,
   slashActiveDescendantId,
   slashCommandListboxId,
+  contextChip,
   children,
 }: Props): ReactElement {
   return (
@@ -97,7 +100,9 @@ export function EditorSection({
           onRemoveImage={onRemoveImage}
           onRemovePastedText={onRemovePastedText}
           onRemoveTask={onRemoveTask}
-        />
+        >
+          {contextChip}
+        </ContextItems>
       }
     >
       <PromptInputContextItems />

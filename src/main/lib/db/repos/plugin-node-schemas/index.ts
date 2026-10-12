@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import type { ManifestInputsProjection } from '../../../../../shared/lib/flows/json-schema-to-manifest-inputs';
 import type { getDatabase } from '../..';
 import { pluginNodeSchemas } from '../../schema/plugin-installations';
@@ -35,4 +35,24 @@ export function listPluginNodeSchemas(db: Db, pluginId: string): Map<string, Plu
       { inputs: row.inputs, unsupportedFields: row.unsupportedFields },
     ]),
   );
+}
+
+/** Several plugins' schemas in one query, keyed by plugin then action; a plugin with no rows is absent. */
+export function listPluginNodeSchemasByPlugin(
+  db: Db,
+  pluginIds: readonly string[],
+): Map<string, Map<string, PluginNodeSchema>> {
+  const grouped = new Map<string, Map<string, PluginNodeSchema>>();
+  if (pluginIds.length === 0) return grouped;
+  const rows = db
+    .select()
+    .from(pluginNodeSchemas)
+    .where(inArray(pluginNodeSchemas.pluginId, [...pluginIds]))
+    .all();
+  for (const row of rows) {
+    const actions = grouped.get(row.pluginId) ?? new Map<string, PluginNodeSchema>();
+    actions.set(row.actionId, { inputs: row.inputs, unsupportedFields: row.unsupportedFields });
+    grouped.set(row.pluginId, actions);
+  }
+  return grouped;
 }

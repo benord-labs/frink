@@ -3,14 +3,21 @@
  * approval nodes get Approve; a non-plan awaiting_input park is a QUESTION and gets the Answer
  * jump to the driving chat (ParkAnswerSurface renders it there). A blocked park (agent signalled
  * blocked/partial) gets the same Answer jump — the chat reply is the context-preserving resume —
- * plus Retry/Skip; failed keeps Retry/Skip only.
+ * plus Retry/Skip; failed keeps Retry/Skip only. The run's recovery step reads Continue instead of
+ * Retry when its agent session already answered it, and a started non-agent step confirms first.
  */
 import { Button } from '@benord-labs/frink-primitives';
-import { Loader2, MessageSquare, RotateCcw, SkipForward } from 'lucide-react';
-import { useState } from 'react';
+import { Loader2, MessageSquare, Play, RotateCcw, SkipForward } from 'lucide-react';
+import { useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { RESUME_ACTIONABLE_NODE_STATUSES } from '../../../../../../shared/types/flow';
+import type {
+  RecoveryKind,
+  ResumeStepRequest,
+  RunRecovery,
+} from '../../../../../../shared/types/flow-run/resume';
 import { ReasonTooltip } from '../../../../../components/ReasonTooltip';
+import { SideEffectsConfirm } from '../../../../../components/SideEffectsConfirm';
 import { useDirtyNavGuard } from '../../../../../hooks/use-dirty-nav-guard';
 import { resolveEffectiveAgentMode } from '../../../../../lib/flows/resolve-effective-agent-mode';
 import { trpc } from '../../../../../lib/trpc';
@@ -41,6 +48,7 @@ type PausedRunDetail = {
     // FlowGraph verbatim), this only declares them.
     edges?: Array<{ source: string; target: string }>;
   } | null;
+  recoveries?: RunRecovery[];
 };
 
 /**
@@ -76,7 +84,8 @@ function nodeRunHasAgentSignal(nodeOutput: Record<string, unknown> | null): bool
 
 type PausedRunActionsProps = {
   detail: PausedRunDetail;
-  onResumeRun: (action: 'approve' | 'retry' | 'skip', nodeRunId: string) => void;
+  /** A Retry's `kind` is the recovery the button showed, so the server can refuse a stale one. */
+  onResumeRun: (request: ResumeStepRequest) => Promise<void>;
   resumePending: boolean;
   pendingResumeAction?: 'approve' | 'retry' | 'skip';
   pendingResumeNodeRunId?: string;
@@ -92,6 +101,14 @@ export function PausedRunActions({
   const utils = trpc.useUtils();
   const { showDialog, requestNav, confirmNav, cancelNav } = useDirtyNavGuard();
   const [answeringNodeRunId, setAnsweringNodeRunId] = useState<string | null>(null);
+  const [confirmingNodeRunId, setConfirmingNodeRunId] = useState<string | null>(null);
+  const confirmTriggerRef = useRef<HTMLButtonElement>(null);
+  // Set on submit, so a second click before `resumePending` renders cannot resubmit the step.
+  const recoverInFlight = useRef(false);
+  const recoveryByNodeRun = useMemo(
+    () => new Map(detail.recoveries?.map((r) => [r.nodeRunId, r])),
+    [detail.recoveries],
+  );
 
   // Jump to the chat driving the parked node — answering happens there (ParkAnswerSurface), the
   // Runs tab only carries the jump affordance (agent-user-question-mechanism: quick-pick or jump).
@@ -120,10 +137,24 @@ export function PausedRunActions({
     (nr) => nr.block_type !== 'approval' && actionableStatuses.includes(nr.status),
   );
 
+  // A confirmation belongs to one run's step: drop it once that step leaves view, so it never reopens.
+  if (confirmingNodeRunId && !actionableNodes.some((nr) => nr.id === confirmingNodeRunId)) {
+    setConfirmingNodeRunId(null);
+  }
+
   if (approvalNodes.length === 0 && actionableNodes.length === 0) return null;
 
   const isResumeLoadingFor = (action: 'approve' | 'retry' | 'skip', nodeRunId: string) =>
     resumePending && pendingResumeAction === action && pendingResumeNodeRunId === nodeRunId;
+  // `kind` is the one the user chose, so a poll mid-confirmation can't swap it (the server refuses).
+  const recoverStep = (nodeRunId: string, kind: RecoveryKind) => {
+    setConfirmingNodeRunId(null);
+    if (recoverInFlight.current) return;
+    recoverInFlight.current = true;
+    void onResumeRun({ action: 'retry', nodeRunId, kind }).finally(() => {
+      recoverInFlight.current = false;
+    });
+  };
 
   return (
     <div className="mt-2 space-y-1.5 border-t border-border/35 pt-2">
@@ -142,7 +173,7 @@ export function PausedRunActions({
               variant="secondary"
               className="h-6 gap-1 text-[11px] shrink-0"
               disabled={resumePending}
-              onClick={() => onResumeRun('approve', nr.id)}
+              onClick={() => onResumeRun({ action: 'approve', nodeRunId: nr.id })}
             >
               {isResumeLoadingFor('approve', nr.id) ? (
                 <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
@@ -186,6 +217,8 @@ export function PausedRunActions({
         // The agent's ask (summary) is the most actionable line; fall back to the node label.
         const lineText =
           reason.summary?.trim() || (isPlanApproval ? `${label} — plan ready` : label);
+        const recovery = recoveryByNodeRun.get(nr.id);
+        const isContinue = recovery?.kind === 'continue';
         return (
           <div key={nr.id} className="flex items-center justify-between gap-2">
             <ReasonTooltip summary={reason.summary} details={reason.details}>
@@ -199,7 +232,7 @@ export function PausedRunActions({
                   variant="secondary"
                   className="h-6 gap-1 text-[11px]"
                   disabled={resumePending}
-                  onClick={() => onResumeRun('approve', nr.id)}
+                  onClick={() => onResumeRun({ action: 'approve', nodeRunId: nr.id })}
                   title="Approve the plan and continue to the next step."
                 >
                   {isResumeLoadingFor('approve', nr.id) ? (
@@ -246,19 +279,26 @@ export function PausedRunActions({
                     </Button>
                   ) : null}
                   <Button
+                    ref={confirmingNodeRunId === nr.id ? confirmTriggerRef : undefined}
                     type="button"
                     size="sm"
                     variant="secondary"
                     className="h-6 text-[11px]"
                     disabled={resumePending}
-                    onClick={() => onResumeRun('retry', nr.id)}
+                    onClick={() =>
+                      recovery?.confirmSideEffects
+                        ? setConfirmingNodeRunId(nr.id)
+                        : recoverStep(nr.id, recovery?.kind ?? 'retry')
+                    }
                   >
                     {isResumeLoadingFor('retry', nr.id) ? (
                       <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                    ) : isContinue ? (
+                      <Play className="h-3 w-3" aria-hidden />
                     ) : (
                       <RotateCcw className="h-3 w-3" aria-hidden />
                     )}
-                    Retry
+                    {isContinue ? 'Continue' : 'Retry'}
                   </Button>
                   <Button
                     type="button"
@@ -266,7 +306,7 @@ export function PausedRunActions({
                     variant="ghost"
                     className="h-6 text-[11px] text-muted-foreground"
                     disabled={resumePending}
-                    onClick={() => onResumeRun('skip', nr.id)}
+                    onClick={() => onResumeRun({ action: 'skip', nodeRunId: nr.id })}
                   >
                     {isResumeLoadingFor('skip', nr.id) ? (
                       <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
@@ -281,6 +321,14 @@ export function PausedRunActions({
           </div>
         );
       })}
+      {confirmingNodeRunId ? (
+        <SideEffectsConfirm
+          pending={resumePending}
+          onConfirm={() => recoverStep(confirmingNodeRunId, 'retry')}
+          onCancel={() => setConfirmingNodeRunId(null)}
+          returnFocusRef={confirmTriggerRef}
+        />
+      ) : null}
       <DirtyNavAlertDialog showDialog={showDialog} onConfirm={confirmNav} onCancel={cancelNav} />
     </div>
   );

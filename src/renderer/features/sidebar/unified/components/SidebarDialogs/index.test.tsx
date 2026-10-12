@@ -43,7 +43,6 @@ function renderDialogs(overrides?: Partial<ComponentProps<typeof SidebarDialogs>
       taskIds: ['task-1'],
       totalChats: 1,
     },
-    onTaskAwareActionKeepRunning: vi.fn(),
     onTaskAwareActionCancelAndContinue: vi.fn(),
     onTaskAwareActionClose: vi.fn(),
     ...overrides,
@@ -102,37 +101,6 @@ describe('SidebarDialogs', () => {
       expect(screen.getByText('Back')).toBeTruthy();
       expect(screen.getByText('Stop task + delete')).toBeTruthy();
       expect(screen.queryByText('Delete chats only')).toBeNull();
-    });
-  });
-
-  describe('archive operation', () => {
-    it('shows keep-running button', () => {
-      const props = renderDialogs({
-        taskAwareActionDialog: {
-          open: true,
-          mode: 'single',
-          operation: 'archive',
-          taskIds: ['task-1'],
-          totalChats: 1,
-        },
-      });
-      fireEvent.click(screen.getByText('Archive only'));
-      expect(props.onTaskAwareActionKeepRunning).toHaveBeenCalledTimes(1);
-    });
-
-    it('shows all three buttons', () => {
-      renderDialogs({
-        taskAwareActionDialog: {
-          open: true,
-          mode: 'single',
-          operation: 'archive',
-          taskIds: ['task-1'],
-          totalChats: 1,
-        },
-      });
-      expect(screen.getByText('Back')).toBeTruthy();
-      expect(screen.getByText('Archive only')).toBeTruthy();
-      expect(screen.getByText('Stop task + archive')).toBeTruthy();
     });
   });
 });

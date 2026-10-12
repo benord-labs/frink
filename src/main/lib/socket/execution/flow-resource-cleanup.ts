@@ -205,7 +205,8 @@ async function resolveContinuationConversion(
       await import('../../flows/admission/terminal-resume/dispatcher');
     const { resolveSessionResumeSeed } = await import('../../flows/rerun/session-resume');
     const target = await resolveTerminalResumeTarget(db, identity.flowRunId);
-    if (!target) return null;
+    // A Retry step declines: continuing would carry on a prompt the agent never received.
+    if (!target?.continues) return null;
     const seed = await resolveSessionResumeSeed(db, {
       chatId,
       flowRunId: identity.flowRunId,

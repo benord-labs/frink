@@ -1,11 +1,21 @@
-import type { CanUseTool, UserPromptSubmitHookInput } from '@anthropic-ai/claude-agent-sdk';
+import type {
+  CanUseTool,
+  PreToolUseHookInput,
+  UserPromptSubmitHookInput,
+} from '@anthropic-ai/claude-agent-sdk';
 import { isClaudePermissionGatedTool, resolveToolPermissionPath } from '../../../permissions';
 import { createSubagentAllowlistHook } from '../../../permissions/subagent-allowlist-hook';
+import {
+  NO_HOOKS,
+  preToolUseOutput,
+  runPreToolUseHooks,
+} from '../../../provider/hooks/pre-tool-use';
 import { createTaskStopHook, type TaskStopHook } from '../../../task-stop-hook';
 import { turnOwesTerminalSignal } from '../../../trpc/routers/frink-task-signal';
 import {
   hasLatestTaskSignalFor,
   isTaskSignalDisarmedFor,
+  latestTaskSignalFor,
   markQuietEndIfUnsignaled,
   recordTaskSignalFromToolCall,
   suppressQuietEndForPlanTurn,
@@ -15,8 +25,9 @@ import {
   buildPartsFromChunks,
   type ClaudeTurnContext,
   createTurnChunkEmitter,
+  notePreplanSignal,
 } from '../../claude-turn-context';
-import type { validateToolPermission } from '../../executor';
+import type { validateToolPermission } from '../../streaming/pending-permission/validate-tool-permission';
 import { buildUserPromptSubmitReminderHook } from '../../operator-reminders';
 import { consumeClaudeDelivery } from '../message-provenance/claude';
 import {
@@ -47,7 +58,7 @@ interface ClaudeSessionRef {
 }
 
 type ActiveTurn = () => ClaudeTurnContext | null;
-type PreToolUseInput = { hook_event_name: string; tool_name: string; tool_input: unknown };
+type ToolVerdict = Awaited<ReturnType<typeof validateToolPermission>>;
 
 const NO_ACTIVE_TURN = 'No turn is active on this session; no tools may run.';
 const PLAN_SUBMITTED = 'Plan submitted — awaiting user approval; no tools may run.';
@@ -93,71 +104,78 @@ export function buildClaudeSessionCallbacks(scope: ClaudeSessionScope, session: 
 
 /** Frink's permission gate for gated built-in tools and every MCP call. */
 function createPreToolUseHook(scope: ClaudeSessionScope, activeTurn: ActiveTurn) {
-  const { chatId, subChatId, projectPath, permissionProjectPath } = scope;
-  return async (hookInput: PreToolUseInput, toolUseId: string) => {
+  return async (
+    hookInput: PreToolUseHookInput,
+    toolUseId: string,
+    options: { signal: AbortSignal },
+  ) => {
     const turn = activeTurn();
+    let user = NO_HOOKS;
     const denyToolUse = (reason: string) => {
       turn?.deniedToolIdsWithMessages.set(toolUseId, reason);
-      return {
-        hookSpecificOutput: {
-          hookEventName: hookInput.hook_event_name,
-          permissionDecision: 'deny' as const,
-          permissionDecisionReason: reason,
-        },
-      };
+      return preToolUseOutput(user, {
+        permissionDecision: 'deny',
+        permissionDecisionReason: reason,
+      });
     };
     if (!turn) return denyToolUse(NO_ACTIVE_TURN);
 
+    // The user's own hooks run first, so every check below judges the input they leave.
+    user = await runPreToolUseHooks(turn.execution.userHooks, hookInput, options);
+    if (turn.planSubmissionHalt()) return denyToolUse(PLAN_SUBMITTED);
+    if (user.deny !== undefined) return denyToolUse(user.deny);
     const toolName = hookInput.tool_name;
     const toolInput = (hookInput.tool_input || {}) as Record<string, unknown>;
-    if (turn.planSubmissionHalt()) return denyToolUse(PLAN_SUBMITTED);
+    const finalInput = user.updatedInput ?? toolInput;
 
     // Auto mode can resolve a tool before canUseTool runs, but a PreToolUse deny always wins.
     const burstDeny = denyPlanTransitionInWakeBurst(toolName, turn);
     if (burstDeny) return denyToolUse(burstDeny.message);
     if (toolName === 'ExitPlanMode' && turn.planTerminalsLocked) {
-      const submitted = submitPlanForReview(toolInput, turn, subChatId);
+      // Still drafting: whatever park is on record now is the one the implementation can't settle on.
+      notePreplanSignal(turn, await latestTaskSignalFor(turn.execution.executionContextId));
+      const submitted = submitPlanForReview(finalInput, turn, scope.subChatId);
       if (submitted) return denyToolUse(submitted);
     }
 
-    const isRegisterNodeTransport = toolName === 'mcp__frink_dynamic_chat__frink_register_node';
-    if (
-      !isRegisterNodeTransport &&
-      !isClaudePermissionGatedTool(toolName) &&
-      !toolName.startsWith('mcp__')
-    ) {
-      return {};
+    const verdict = await judgeToolCall(scope, turn, toolName, finalInput);
+    if (verdict.allowed === null) {
+      return preToolUseOutput(user, { updatedInput: user.updatedInput });
     }
-    if (!isRegisterNodeTransport) {
-      const permissionPathOverride = resolveToolPermissionPath(
-        toolName,
-        toolInput,
-        projectPath,
-        permissionProjectPath,
-      );
-      const permResult = await scope.validateToolPermission(
-        toolName,
-        toolInput,
-        permissionProjectPath,
-        chatId,
-        subChatId,
-        `Tool: ${toolName}`,
-        permissionPathOverride,
-        turn.execution.isFlowTurn,
-        turn.autoReviewTools,
-      );
-      if (permResult.allowed === null) return {};
-      if (!permResult.allowed) return denyToolUse(permResult.message);
-    }
-
-    return {
-      hookSpecificOutput: {
-        hookEventName: hookInput.hook_event_name,
-        permissionDecision: 'allow' as const,
-        updatedInput: toolInput,
-      },
-    };
+    if (!verdict.allowed) return denyToolUse(verdict.message);
+    return preToolUseOutput(user, { permissionDecision: 'allow', updatedInput: finalInput });
   };
+}
+
+/** Frink's answer for one call; `null` leaves it to Claude, as for a tool Frink has no rules for. */
+async function judgeToolCall(
+  scope: ClaudeSessionScope,
+  turn: ClaudeTurnContext,
+  toolName: string,
+  toolInput: Parameters<typeof validateToolPermission>[1],
+): Promise<ToolVerdict> {
+  if (toolName === 'mcp__frink_dynamic_chat__frink_register_node') return { allowed: true };
+  if (!isClaudePermissionGatedTool(toolName) && !toolName.startsWith('mcp__')) {
+    return { allowed: null };
+  }
+  const { permissionProjectPath } = scope;
+  const permissionPathOverride = resolveToolPermissionPath(
+    toolName,
+    toolInput,
+    scope.projectPath,
+    permissionProjectPath,
+  );
+  return scope.validateToolPermission(
+    toolName,
+    toolInput,
+    permissionProjectPath,
+    scope.chatId,
+    scope.subChatId,
+    `Tool: ${toolName}`,
+    permissionPathOverride,
+    turn.execution.isFlowTurn,
+    turn.autoReviewTools,
+  );
 }
 
 /** Stop hook judged on the active turn: a turn owing frink_task_signal continues (≤2 retries), a
@@ -178,7 +196,10 @@ function createClaudeStopHook(
         !execution.taskSignalReady ||
         !execution.signalTaskId ||
         !turnOwesTerminalSignal(execution.isPlanMode, execution.flowPlanAutoApprove, turn) ||
-        (await hasLatestTaskSignalFor(execution.executionContextId, turn.planSubmitted)) ||
+        (await hasLatestTaskSignalFor(
+          execution.executionContextId,
+          turn.planSubmitted ? turn.preplanSignal : null,
+        )) ||
         // The handler refused a dead target and disarmed the tool — nothing left to chase.
         (await isTaskSignalDisarmedFor(execution.executionContextId))
       );

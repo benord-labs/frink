@@ -89,7 +89,7 @@ describe('AgentsModelsTab', () => {
     listAccountsQuery.isFetched = true;
     render(<AgentsModelsTab />);
 
-    expect(screen.getByText('Haiku 4.5')).toBeInTheDocument();
+    expect(screen.getByText('Haiku 5.5')).toBeInTheDocument();
     expect(screen.getByText('GPT-5.5')).toBeInTheDocument();
   });
 
@@ -99,7 +99,7 @@ describe('AgentsModelsTab', () => {
     listAccountsQuery.isFetched = true;
     render(<AgentsModelsTab />);
 
-    expect(screen.getByText('Haiku 4.5')).toBeInTheDocument();
+    expect(screen.getByText('Haiku 5.5')).toBeInTheDocument();
     expect(screen.queryByText('GPT-5.5')).not.toBeInTheDocument();
   });
 
@@ -111,7 +111,7 @@ describe('AgentsModelsTab', () => {
     render(<AgentsModelsTab />);
 
     expect(screen.getByText('GPT-5.5')).toBeInTheDocument();
-    expect(screen.queryByText('Haiku 4.5')).not.toBeInTheDocument(); // Claude gated out
+    expect(screen.queryByText('Haiku 5.5')).not.toBeInTheDocument(); // Claude gated out
   });
 
   it('keeps Codex models hidden when a codex account exists but is not authenticated', () => {
@@ -132,7 +132,7 @@ describe('AgentsModelsTab', () => {
     const { rerender } = render(<AgentsModelsTab />);
 
     expect(screen.getByText('GPT-5.5')).toBeInTheDocument();
-    expect(screen.getByText('Haiku 4.5')).toBeInTheDocument();
+    expect(screen.getByText('Haiku 5.5')).toBeInTheDocument();
     expect(
       screen.queryByText('Add an account above to choose its models.'),
     ).not.toBeInTheDocument();
@@ -142,7 +142,7 @@ describe('AgentsModelsTab', () => {
     listAccountsQuery.isFetched = true;
     rerender(<AgentsModelsTab />);
 
-    expect(screen.getByText('Haiku 4.5')).toBeInTheDocument();
+    expect(screen.getByText('Haiku 5.5')).toBeInTheDocument();
     expect(screen.queryByText('GPT-5.5')).not.toBeInTheDocument();
   });
 
@@ -156,7 +156,7 @@ describe('AgentsModelsTab', () => {
     render(<AgentsModelsTab />);
 
     expect(screen.getByText('Add an account above to choose its models.')).toBeInTheDocument();
-    expect(screen.queryByText('Haiku 4.5')).not.toBeInTheDocument();
+    expect(screen.queryByText('Haiku 5.5')).not.toBeInTheDocument();
     expect(screen.queryByText('GPT-5.5')).not.toBeInTheDocument();
   });
 
@@ -167,7 +167,7 @@ describe('AgentsModelsTab', () => {
     render(<AgentsModelsTab />);
 
     expect(screen.getByText('Add an account above to choose its models.')).toBeInTheDocument();
-    expect(screen.queryByText('Haiku 4.5')).not.toBeInTheDocument();
+    expect(screen.queryByText('Haiku 5.5')).not.toBeInTheDocument();
     expect(screen.queryByText('GPT-5.5')).not.toBeInTheDocument();
   });
 
@@ -178,7 +178,7 @@ describe('AgentsModelsTab', () => {
     listAccountsQuery.isError = false;
     render(<AgentsModelsTab />);
 
-    expect(screen.getByText('Haiku 4.5')).toBeInTheDocument();
+    expect(screen.getByText('Haiku 5.5')).toBeInTheDocument();
     expect(screen.getByText('GPT-5.5')).toBeInTheDocument();
     expect(
       screen.queryByText('Add an account above to choose its models.'),
@@ -201,7 +201,7 @@ describe('AgentsModelsTab', () => {
     expect(screen.getByText(/Could not load accounts/i, { exact: false })).toBeInTheDocument();
     const retryButtons = screen.getAllByRole('button', { name: 'Retry' });
     expect(retryButtons.length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText('Haiku 4.5')).toBeInTheDocument();
+    expect(screen.getByText('Haiku 5.5')).toBeInTheDocument();
     expect(screen.getByText('GPT-5.5')).toBeInTheDocument();
 
     const firstRetry = retryButtons[0];

@@ -11,6 +11,26 @@ import { mobilePairingLink } from '../../../../../shared/types/remote/mobile';
 import { SettingsTabHeader } from '../SettingsTabHeader';
 import { SETTINGS_TAB_PAGE_CLASS } from '../settings-tab-surface';
 
+/** Frink's own page, so the install destination (TestFlight, later the App Store) changes without a desktop release. */
+const IPHONE_APP_URL = 'https://www.frink.dev/ios';
+
+function GetIPhoneApp() {
+  return (
+    <SettingsSection
+      title="Get the iPhone app"
+      description="Scan with your iPhone camera to install Frink for iPhone, or open frink.dev/ios on your phone."
+    >
+      <SettingsCard>
+        <div className="px-4 py-4">
+          <div className="w-fit rounded-xl bg-white p-3">
+            <QRCodeSVG value={IPHONE_APP_URL} size={128} title="Scan to get Frink for iPhone" />
+          </div>
+        </div>
+      </SettingsCard>
+    </SettingsSection>
+  );
+}
+
 async function copyText(value: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(value);
@@ -115,6 +135,7 @@ export function MobileSettingsTab() {
         title="Mobile"
         description="Keep your Flows moving, answer questions and chat from your iPhone."
       />
+      <GetIPhoneApp />
       {status.isLoading ? (
         <p role="status" className="text-sm text-muted-foreground">
           Loading mobile access…

@@ -1,5 +1,5 @@
 /**
- * Hidden "wake" messages — system-generated prompts (e.g. the Carry on continuation nudge) that
+ * Hidden "wake" messages — system-generated prompts (e.g. the Continue nudge) that
  * must reach the agent but never render as a user bubble. The marker rides on the persisted
  * message text: the renderer hides marked messages (agent-user-message-bubble), and the executor
  * strips the marker before the text reaches the model.

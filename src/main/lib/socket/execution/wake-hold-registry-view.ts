@@ -42,6 +42,22 @@ export function listWakeHolds(): Array<{
 }
 
 /**
+ * Every hold this chat owns, retracted and settling ones included: a stopped hold keeps its live
+ * pump, and `releaseWakeHold` is what disposes it whatever its state.
+ */
+export function listWakeHoldSubChatIdsForChat(chatId: string): string[] {
+  return [...readWakeHolds()]
+    .filter(([, hold]) => hold.chatId === chatId)
+    .map(([subChatId]) => subChatId);
+}
+
+/** A hold the user has not stopped: its session will wake and write to the transcript again. */
+export function hasArmedWakeHold(subChatId: string): boolean {
+  const hold = readWakeHolds().get(subChatId);
+  return hold !== undefined && !hold.retracted;
+}
+
+/**
  * Whether a Flow successor can enter the Claude provider seam on the slot already owned by its
  * exact live wake hold. This is a read-only preflight: `takeWakeHold` remains the ownership
  * transfer boundary and rechecks both session identity and pump liveness. A hold whose wait is

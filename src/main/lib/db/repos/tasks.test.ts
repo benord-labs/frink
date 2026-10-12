@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { FlowGraph } from '../../../../shared/lib/validate-flow-graph';
 import { RESTART_INTERRUPTION_REASON } from '../../../../shared/types/flow';
-import { flowRuns } from '../schema';
+import { flowRuns, tasks } from '../schema';
 import { seedFlowRun } from '../test-utils/flow-fixtures';
 import { freshDb, type TestDb } from '../test-utils/fresh-db';
 import {
@@ -14,15 +14,18 @@ import { createNodeRun, setNodeRunStatus } from './node-runs';
 import { parkFlowTaskForSubChat } from './task-parking';
 import {
   cancelFlowTaskForSubChat,
+  claimTask,
   completeAllDoneTasks,
   completeDoneTasksForFlowRun,
   createTask,
+  type CreateTaskInput,
   deleteTasksMatchingStatuses,
   getFlowBriefingForSubChat,
   getFlowChatForNodeRun,
   getFlowDriveInfoForSubChat,
   getLatestFlowTaskForRun,
   getLatestFlowTaskForSubChat,
+  getPendingTaskIds,
   getTaskById,
   getTaskCounts,
   isTerminalFinalTaskStatus,
@@ -1314,6 +1317,56 @@ describe('parkFlowTaskForSubChat — resumable interruptions park the driving ta
   });
 });
 
+describe('retryTaskDetailed — only the current attempt of a node can be retried', () => {
+  let db: TestDb;
+  beforeEach(() => {
+    db = freshDb();
+  });
+
+  it('refuses the attempt a retry replaced and leaves it failed', async () => {
+    const { flowRunId } = await seedFlowRun(db, GRAPH);
+    const old = await addAttempt(db, flowRunId, 'failed');
+    await addAttempt(db, flowRunId, 'running');
+    await setFlowRunStatus(db, flowRunId, 'paused');
+
+    const { task, reason } = await retryTaskDetailed(db, old.id, 'continue', flowRunId);
+    expect([task, reason]).toEqual([null, 'invalid_state']);
+    expect((await getTaskById(db, old.id))?.status).toBe('failed');
+  });
+
+  it('refuses the replaced attempt as soon as the new node_run exists, before it has a task', async () => {
+    const { flowRunId } = await seedFlowRun(db, GRAPH);
+    const old = await addAttempt(db, flowRunId, 'needs_attention');
+    await createNodeRun(db, { flowRunId, nodeId: 'a', blockType: 'agent' });
+    await setFlowRunStatus(db, flowRunId, 'paused');
+
+    const { task, reason } = await retryTaskDetailed(db, old.id, 'continue', flowRunId);
+    expect([task, reason]).toEqual([null, 'invalid_state']);
+    expect((await getTaskById(db, old.id))?.status).toBe('needs_attention');
+  });
+
+  it('retries the newest attempt of a node that was retried before', async () => {
+    const { flowRunId } = await seedFlowRun(db, GRAPH);
+    await addAttempt(db, flowRunId, 'failed');
+    const newest = await addAttempt(db, flowRunId, 'failed');
+    await setFlowRunStatus(db, flowRunId, 'paused');
+
+    const { task } = await retryTaskDetailed(db, newest.id, 'continue', flowRunId);
+    expect(task?.status).toBe('pending');
+  });
+
+  it('is not blocked by a newer attempt in another fan-out lane or of another node', async () => {
+    const { flowRunId } = await seedFlowRun(db, GRAPH);
+    const lane1 = await addAttempt(db, flowRunId, 'failed', { laneIndex: 1 });
+    await addAttempt(db, flowRunId, 'running', { laneIndex: 2 });
+    await addAttempt(db, flowRunId, 'running', { nodeId: 'b', laneIndex: 1 });
+    await setFlowRunStatus(db, flowRunId, 'paused');
+
+    const { task } = await retryTaskDetailed(db, lane1.id, 'continue', flowRunId);
+    expect(task?.status).toBe('pending');
+  });
+});
+
 describe('retryTaskDetailed — user-requested retry flips failed/parked → pending, scrubbed', () => {
   let db: TestDb;
   beforeEach(() => {
@@ -1463,5 +1516,49 @@ describe('terminal-final task statuses (signal disarm predicate)', () => {
     for (const status of ['failed', 'needs_attention', 'running', 'pending', 'plan_ready']) {
       expect(isTerminalFinalTaskStatus(status)).toBe(false);
     }
+  });
+});
+
+describe('getPendingTaskIds + claimTask — what the task poller may claim', () => {
+  let db: TestDb;
+  beforeEach(() => {
+    db = freshDb();
+  });
+
+  /** created_at has one-second resolution, so pin it to make the queue order deterministic. */
+  async function addPendingTask(
+    description: string,
+    createdAtSec: number,
+    triggerContext?: CreateTaskInput['triggerContext'],
+  ) {
+    const t = await createTask(db, { description, source: 'flow', triggerContext });
+    await db
+      .update(tasks)
+      .set({ createdAt: new Date(createdAtSec * 1000) })
+      .where(eq(tasks.id, t.id));
+    return t;
+  }
+
+  it('returns pending tasks oldest first, skipping wait-mode and non-pending rows', async () => {
+    const newer = await addPendingTask('newer', 2_000);
+    await addPendingTask('waiting', 500, { _config: { startMode: 'wait' } });
+    const running = await addPendingTask('running', 100);
+    await updateTaskStatus(db, running.id, 'running');
+    const older = await addPendingTask('older', 1_000, { _config: { startMode: 'execute' } });
+
+    expect(await getPendingTaskIds(db)).toEqual([{ id: older.id }, { id: newer.id }]);
+    expect(await getPendingTaskIds(db, 1)).toEqual([{ id: older.id }]);
+  });
+
+  it('claims a pending task once: the first claim wins, a repeat claim gets null', async () => {
+    const t = await addPendingTask('claim me', 1_000);
+
+    const claimed = await claimTask(db, t.id, 'host-a');
+    expect(claimed).toMatchObject({ id: t.id, status: 'running', executedBy: 'host-a' });
+    expect(claimed?.startedAt).toBeInstanceOf(Date);
+
+    expect(await claimTask(db, t.id, 'host-b')).toBeNull();
+    expect(await getTaskById(db, t.id)).toMatchObject({ executedBy: 'host-a' });
+    expect(await getPendingTaskIds(db)).toEqual([]);
   });
 });

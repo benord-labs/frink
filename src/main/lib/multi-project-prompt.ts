@@ -6,7 +6,7 @@
 
 import { dedupeByCodebase } from '../../shared/lib/project-codebase';
 import { getDatabase } from './db';
-import { listProjects } from './db/repos/projects';
+import { listRealProjects } from './db/repos/projects';
 import type { Project } from './db/schema';
 
 const MAX_PROMPT_PROJECTS = 6;
@@ -132,7 +132,7 @@ export async function getMultiProjectContext(
 ): Promise<MultiProjectContext> {
   let projects: Project[] = [];
   try {
-    projects = await listProjects(getDatabase());
+    projects = await listRealProjects(getDatabase());
   } catch {
     // leave projects empty — multi-project block silently disables
   }

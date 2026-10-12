@@ -81,7 +81,7 @@ A leading `/command` in instructions expands at save time. Discover names with `
   headers?: Record<string,string>, body?: string }
 ```
 
-Method defaults GET; body is not sent for GET/DELETE.
+Method defaults GET; body is not sent for GET.
 
 | output | type | guaranteed | description |
 |---|---|---|---|

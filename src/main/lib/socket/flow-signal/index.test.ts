@@ -102,36 +102,16 @@ describe('resolveFlowSignalArming durable provenance', () => {
       expect(armed).toMatchObject({ isFlowDrivenExecution: true, liveFlowRunId: null });
     });
 
-    describe('a restart-interrupted step being revived', () => {
-      const interrupted = () => {
-        taskMocks.getLatestFlowTaskForSubChat.mockResolvedValueOnce({
-          id: 'cut-step',
-          status: 'cancelled',
-          flowRunId: 'cut-run',
-        });
-        resumeMocks.isRunRestartInterrupted.mockResolvedValueOnce(true);
-      };
-      const liveWith = async (newest: { id: string; status: string } | null) => {
-        interrupted();
-        runMocks.getNewestFlowRunForSubChat.mockResolvedValueOnce(newest);
-        return (await resolveFlowSignalArming('restart-chat', 'pinned-task')).liveFlowRunId;
-      };
-
-      it('counts its own cancelled run as live', async () => {
-        expect(await liveWith({ id: 'cut-run', status: 'cancelled' })).toBe('cut-run');
+    it('reads nothing for a restart-interrupted reply, which the preflight converts instead of running', async () => {
+      taskMocks.getLatestFlowTaskForSubChat.mockResolvedValueOnce({
+        id: 'cut-step',
+        status: 'cancelled',
+        flowRunId: 'cut-run',
       });
-
-      it('does not, once that run has been deleted', async () => {
-        expect(await liveWith(null)).toBeNull();
-      });
-
-      it('does not override a newer run on a reused chat that has already ended', async () => {
-        expect(await liveWith({ id: 'newer-run', status: 'completed' })).toBeNull();
-      });
-
-      it('names the newer run, not its own, when that newer run is the live one', async () => {
-        expect(await liveWith({ id: 'newer-run', status: 'running' })).toBe('newer-run');
-      });
+      resumeMocks.isRunRestartInterrupted.mockResolvedValueOnce(true);
+      const armed = await resolveFlowSignalArming('restart-chat', 'pinned-task');
+      expect(armed).toMatchObject({ restartInterruptedFlowRunId: 'cut-run', liveFlowRunId: null });
+      expect(runMocks.getNewestFlowRunForSubChat).not.toHaveBeenCalled();
     });
 
     it('never queries for a chat with no flow task, which stays untagged', async () => {
@@ -170,19 +150,11 @@ describe('resolveFlowSignalArming durable provenance', () => {
       flowRunId: 'interrupted-run',
     });
     resumeMocks.isRunRestartInterrupted.mockResolvedValueOnce(true);
-    // Another window may revive the row before this read; provenance keeps the detected status.
-    taskMocks.getTaskById.mockResolvedValueOnce({ id: 'cancelled-flow-task', status: 'running' });
-    runMocks.getNewestFlowRunForSubChat.mockResolvedValueOnce({
-      id: 'interrupted-run',
-      status: 'cancelled',
-    });
 
     await expect(resolveFlowSignalArming('restart-chat', 'pinned-task')).resolves.toMatchObject({
       effectiveSignalTaskId: 'cancelled-flow-task',
       prefetchedSignalTask: null,
       restartInterruptedFlowRunId: 'interrupted-run',
-      liveFlowRunId: 'interrupted-run',
-      revivedTask: { id: 'cancelled-flow-task', status: 'cancelled' },
       provenanceLookupError: null,
     });
   });
