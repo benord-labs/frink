@@ -41,11 +41,15 @@ export async function throughLink(target: string, rel: string): Promise<boolean>
 }
 
 let scratchCount = 0;
-/** A scratch path beside the copy, named as crash debris so a later sweep removes it. */
+/** A scratch path beside the copy, named as crash debris so a later sweep removes it. Only for
+ *  content Frink made itself: a user's entry moved aside must never be swept. */
 function scratchPath(target: string): string {
   scratchCount += 1;
   return `${target}.staging-${process.pid}-${Date.now()}${scratchCount}`;
 }
+
+/** Where a user's entry waits while it is checked; no sweep ever matches this name. */
+const asidePath = (target: string): string => `${target}.frink-aside-${randomUUID()}`;
 
 /**
  * Move `from` (a file, symlink or empty folder) to `dest` only if nothing is at `dest`, using
@@ -55,11 +59,21 @@ async function placeIfFree(from: string, dest: string): Promise<boolean> {
   // The parent may have been removed meanwhile; mkdir never replaces anything already there.
   await mkdir(dirname(dest), { recursive: true });
   const st = await lstatOrNull(from);
+  // A folder is moved whole, never recreated and deleted, so nothing inside it can be lost.
+  if (st?.isDirectory()) {
+    if (await lstatOrNull(dest)) return false;
+    // Like the file branch: losing the path to something new is "taken", not an error.
+    return rename(from, dest).then(
+      () => true,
+      async (err) => {
+        if (await lstatOrNull(dest)) return false;
+        throw err;
+      },
+    );
+  }
   const create = st?.isSymbolicLink()
     ? async () => symlink(await readlink(from), dest)
-    : st?.isDirectory()
-      ? () => mkdir(dest)
-      : () => link(from, dest);
+    : () => link(from, dest);
   const placed = await create().then(
     () => true,
     async (err) => {
@@ -67,7 +81,7 @@ async function placeIfFree(from: string, dest: string): Promise<boolean> {
       throw err;
     },
   );
-  if (placed) await rm(from, { recursive: true, force: true });
+  if (placed) await rm(from, { force: true });
   return placed;
 }
 
@@ -95,7 +109,7 @@ const goneAs = (expected: string | undefined) => (expected === undefined ? 'abse
 
 /** Rename `dest` to a scratch path; null if it vanished first. Any other failure throws. */
 export async function moveAside(target: string, dest: string): Promise<string | null> {
-  const aside = scratchPath(target);
+  const aside = asidePath(target);
   try {
     await rename(dest, aside);
     return aside;

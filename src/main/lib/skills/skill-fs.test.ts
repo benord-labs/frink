@@ -2,7 +2,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { dirHash, dirStatSig } from './skill-fs';
+import { copyFiles, dirHash, dirStatSig } from './skill-fs';
 
 describe('skill-fs', () => {
   let tmp: string;
@@ -11,6 +11,21 @@ describe('skill-fs', () => {
   });
   afterEach(async () => {
     await fs.rm(tmp, { recursive: true, force: true });
+  });
+
+  describe('copyFiles', () => {
+    it('leaves an existing destination alone with overwrite: false, and copies the rest', async () => {
+      const from = path.join(tmp, 'from');
+      const into = path.join(tmp, 'into');
+      await fs.mkdir(path.join(from, 'sub'), { recursive: true });
+      await fs.writeFile(path.join(from, 'a.md'), 'shipped\n');
+      await fs.writeFile(path.join(from, 'sub', 'b.md'), 'b\n');
+      await fs.mkdir(into);
+      await fs.writeFile(path.join(into, 'a.md'), 'theirs\n');
+      await copyFiles(from, into, ['a.md', 'sub/b.md'], { overwrite: false });
+      expect(await fs.readFile(path.join(into, 'a.md'), 'utf8')).toBe('theirs\n');
+      expect(await fs.readFile(path.join(into, 'sub', 'b.md'), 'utf8')).toBe('b\n');
+    });
   });
 
   describe('dirHash — large assets take the stream path (>256KB)', () => {

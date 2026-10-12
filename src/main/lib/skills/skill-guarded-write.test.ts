@@ -4,10 +4,13 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { sha256 } from './skill-fs';
+import { ORPHAN_NAME } from './skill-projection';
 import {
   dropFile,
   linkExpectation,
   lstatOrNull,
+  moveAside,
+  putBack,
   replaceFile,
   replaceFolder,
   throughLink,
@@ -208,6 +211,23 @@ describe('guarded writes into a projected copy', () => {
       expect(await read(copy, 'a.md')).toBe('old\n');
     },
   );
+
+  it('puts back a folder that was moved aside with everything still inside it', async () => {
+    await fs.rm(path.join(copy, 'a.md'));
+    await fs.mkdir(path.join(copy, 'a.md'));
+    await fs.writeFile(path.join(copy, 'a.md', 'notes.md'), 'mine\n');
+    const aside = await moveAside(copy, path.join(copy, 'a.md'));
+    expect(aside).not.toBeNull();
+    await putBack(aside ?? '', path.join(copy, 'a.md'));
+    expect(await read(copy, 'a.md/notes.md')).toBe('mine\n');
+  });
+
+  it('never gives a moved-aside entry a name the crash-debris sweep removes', async () => {
+    const aside = await moveAside(copy, path.join(copy, 'a.md'));
+    expect(aside).not.toBeNull();
+    expect(ORPHAN_NAME.test(path.basename(aside ?? ''))).toBe(false);
+    await putBack(aside ?? '', path.join(copy, 'a.md'));
+  });
 
   it('spots a symlinked folder on the way to a path, but not the path itself', async () => {
     await fs.symlink(path.join(base, 'elsewhere'), path.join(copy, 'linked'), 'dir');

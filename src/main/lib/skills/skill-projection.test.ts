@@ -352,6 +352,28 @@ describe('projectSkill (PCH-2)', () => {
       expect(siblings).toEqual(['reviewer']);
     });
 
+    it.each(['constructor', 'toString', '__proto__'])(
+      'adds a source file named %s once the copy already exists',
+      async (name) => {
+        await projectSkill('reviewer', srcSkill);
+        await fs.writeFile(path.join(srcSkill, name), `${name}\n`);
+        await projectSkill('reviewer', srcSkill);
+        for (const t of allTargets()) expect(await read(t, name)).toBe(`${name}\n`);
+        expect((await readMarker(claudeTarget())).files[name]).toEqual(expect.any(String));
+      },
+    );
+
+    it.each(['constructor', 'toString', '__proto__'])(
+      'keeps updating a source file named %s after it was first projected',
+      async (name) => {
+        await fs.writeFile(path.join(srcSkill, name), 'v1\n');
+        await projectSkill('reviewer', srcSkill);
+        await fs.writeFile(path.join(srcSkill, name), 'v2\n');
+        await projectSkill('reviewer', srcSkill);
+        for (const t of allTargets()) expect(await read(t, name)).toBe('v2\n');
+      },
+    );
+
     it('removes a dropped file whose name is also a built-in object key', async () => {
       await fs.writeFile(path.join(srcSkill, 'toString'), 'x\n');
       await projectSkill('reviewer', srcSkill);
