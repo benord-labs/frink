@@ -34,7 +34,19 @@ export class TriggerScopeAlreadyActiveError extends Error {
   }
 }
 
+/** post_task_trigger matches tasks by project, so a binding without one could never fire. */
+export class TriggerProjectRequiredError extends Error {
+  constructor() {
+    super('A post-task trigger needs a project; tasks are matched by project');
+    this.name = 'TriggerProjectRequiredError';
+  }
+}
+
 const BINDING_SCOPE_TAKEN_REGEX = /flow_trigger_bindings_uq/i;
+
+export function isBlankProjectId(projectId: string | null | undefined): boolean {
+  return !projectId?.trim();
+}
 
 function assertTriggerTypeAllowed(t: string): asserts t is LocalTriggerType {
   if (!ALLOWED_TRIGGER_TYPES.has(t)) {
@@ -69,6 +81,9 @@ export async function listActiveForType(
 
 export async function create(db: Db, input: NewFlowTriggerBinding): Promise<FlowTriggerBinding> {
   assertTriggerTypeAllowed(input.triggerType);
+  if (input.triggerType === 'post_task_trigger' && isBlankProjectId(input.projectId)) {
+    throw new TriggerProjectRequiredError();
+  }
   const [row] = await db
     .insert(flowTriggerBindings)
     .values({ ...input, updatedAt: new Date() })
@@ -83,6 +98,20 @@ export async function update(
     clearLastError?: boolean;
   },
 ): Promise<FlowTriggerBinding | null> {
+  // A duplicated flow copies a project-less binding inactive; re-activating it would bring back the
+  // silent no-op, so only deactivating, config edits and clearing errors are allowed on such rows.
+  if (patch.isActive === true) {
+    const [existing] = await db
+      .select({
+        triggerType: flowTriggerBindings.triggerType,
+        projectId: flowTriggerBindings.projectId,
+      })
+      .from(flowTriggerBindings)
+      .where(eq(flowTriggerBindings.id, id));
+    if (existing?.triggerType === 'post_task_trigger' && isBlankProjectId(existing.projectId)) {
+      throw new TriggerProjectRequiredError();
+    }
+  }
   const set: Partial<FlowTriggerBinding> = { updatedAt: new Date() };
   if (patch.config !== undefined) set.config = patch.config;
   if (patch.isActive !== undefined) set.isActive = patch.isActive;
