@@ -74,6 +74,7 @@ export default defineConfig({
       NODE_ENV: 'test',
       // FRINK_HOME + FRINK_CUSTOM_NODES_DIR: per-file temp home, set in vitest.setup.ts.
     },
+    globalSetup: ['./scripts/dev/ensure-package-deps.mjs'],
     projects: [
       { extends: true, ...unitProject },
       { extends: true, ...compiledProject },
