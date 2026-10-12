@@ -3,20 +3,26 @@
  * columns are omitted because startup recovery owns orphaned running tasks in this process. */
 
 import { and, desc, sql as drizzleSql, eq, inArray, isNull, lt, or, type SQL } from 'drizzle-orm';
-import { alias } from 'drizzle-orm/sqlite-core';
 import { FLOW_DRIVING_STATUSES } from '../../../../shared/types/flow';
 import { taskResultSchema, type TaskResultRecord } from '../../../../shared/types/task-result';
 import type { getDatabase } from '../index';
-import { flowRuns, type NewTask, projects, type Task, tasks } from '../schema';
+import { flowRuns, type NewTask, type Task, tasks } from '../schema';
 import { cancelResultPatch } from './task-parking/cancel-marker';
 import { RETRY_STALE_RESULT_KEYS } from './task-parking/resume-scrub';
 import {
+  beforeQueueCursor,
   effectiveStatusExpr,
   getWorkQueueSectionFilter,
   isFlowRepresentative,
   isWaitModeTask,
+  selectQueueTaskRows,
+  type TaskListCursor,
+  type TaskWithProjectRow,
+  toQueueTaskRow,
   type WorkQueueSection,
 } from './task-queries';
+
+export type { TaskWithProjectRow } from './task-queries';
 import { drivingFlowTaskOnSubChat, retryableAttempt } from './task-queries/run-liveness';
 import { latestFlowTaskForSubChatId } from './task-queries/subchat-driver';
 
@@ -440,7 +446,7 @@ export async function getTaskCounts(
   return counts;
 }
 
-export type TaskListCursor = { createdAt: string; id: string };
+export type { TaskListCursor } from './task-queries';
 
 /** Derived (computed, never stored) statuses — the source for the filter-status union and runtime
  *  set just below, keeping those two co-located uses in lockstep. See task-queries/flow-collapse. */
@@ -466,21 +472,6 @@ export type ListTasksOptions = {
   workQueueSection?: WorkQueueSection;
 };
 
-export type TaskWithProjectRow = Task & {
-  projectName: string | null;
-  linkedChatId: string | null;
-  flowRunStatus: string | null;
-  /**
-   * Per-flow-collapse display status (see effectiveStatusExpr): the flow's LIVE status for a flow
-   * representative, else the task's own status. Renderer buckets/sorts/icons by this; mutations
-   * still use raw `status`.
-   */
-  effectiveStatus: string;
-};
-
-/**
- * Paginated tasks + project metadata. `linkedChatId` = coalesce(anchor `chats.taskId`, per-task
- * `result->>'chatId'`); `flowRunStatus` joins flow_runs (sidebar suppresses stale `done`). */
 /**
  * The status WHERE-clause for a list query, or undefined when no status filter was asked for.
  * Extracted from listTasksWithProjectPaginated to keep that function under its cognitive budget.
@@ -516,13 +507,7 @@ function buildStatusFilter(options: ListTasksOptions): SQL | undefined {
   return getWorkQueueSectionFilter(options.workQueueSection);
 }
 
-export async function listTasksWithProjectPaginated(
-  db: Db,
-  options: ListTasksOptions,
-): Promise<{ items: TaskWithProjectRow[]; hasMore: boolean; nextCursor: TaskListCursor | null }> {
-  const { chats } = await import('../schema');
-  const resultChat = alias(chats, 'result_chat');
-  const limit = options.limit ?? 50;
+function listTaskFilters(options: ListTasksOptions): SQL[] {
   // Work-queue per-flow collapse (opt-in): keep only the flow representative, then filter on the
   // flow's EFFECTIVE status (so a running flow's `done` anchor still buckets into Active). Both
   // happen in WHERE — before limit/cursor — so pagination counts representatives, not raw rows.
@@ -531,41 +516,27 @@ export async function listTasksWithProjectPaginated(
   if (options.collapseByFlow && !options.workQueueSection) filters.push(isFlowRepresentative);
   const statusFilter = buildStatusFilter(options);
   if (statusFilter) filters.push(statusFilter);
-  if (options.cursor) {
-    const cursorDate = new Date(options.cursor.createdAt);
-    const cursorFilter = or(
-      lt(tasks.createdAt, cursorDate),
-      and(eq(tasks.createdAt, cursorDate), lt(tasks.id, options.cursor.id)),
-    );
-    if (cursorFilter) filters.push(cursorFilter);
-  }
+  const cursorFilter = options.cursor && beforeQueueCursor(options.cursor);
+  if (cursorFilter) filters.push(cursorFilter);
+  return filters;
+}
 
-  const rows = await db
-    .select({
-      task: tasks,
-      projectName: projects.name,
-      linkedChatId: drizzleSql<string | null>`coalesce(${chats.id}, ${resultChat.id})`,
-      flowRunStatus: flowRuns.status,
-      effectiveStatus: effectiveStatusExpr.as('effective_status'),
-    })
-    .from(tasks)
-    .leftJoin(projects, eq(tasks.projectId, projects.id))
-    .leftJoin(chats, eq(chats.taskId, tasks.id))
-    .leftJoin(resultChat, eq(resultChat.id, drizzleSql`json_extract(${tasks.result}, '$.chatId')`))
-    .leftJoin(flowRuns, eq(flowRuns.id, tasks.flowRunId))
-    .where(and(...filters))
+/**
+ * Paginated tasks + project metadata. `linkedChatId` = coalesce(anchor `chats.taskId`, per-task
+ * `result->>'chatId'`); `flowRunStatus` joins flow_runs (sidebar suppresses stale `done`). */
+export async function listTasksWithProjectPaginated(
+  db: Db,
+  options: ListTasksOptions,
+): Promise<{ items: TaskWithProjectRow[]; hasMore: boolean; nextCursor: TaskListCursor | null }> {
+  const limit = options.limit ?? 50;
+  const filters = listTaskFilters(options);
+  const rows = await selectQueueTaskRows(db, and(...filters))
     .orderBy(desc(tasks.createdAt), desc(tasks.id))
     .limit(limit + 1);
 
   const hasMore = rows.length > limit;
   const visible = hasMore ? rows.slice(0, limit) : rows;
-  const items: TaskWithProjectRow[] = visible.map((r) => ({
-    ...r.task,
-    projectName: r.projectName ?? null,
-    linkedChatId: r.linkedChatId ?? null,
-    flowRunStatus: r.flowRunStatus ?? null,
-    effectiveStatus: String(r.effectiveStatus ?? r.task.status),
-  }));
+  const items = visible.map(toQueueTaskRow);
   const last = items[items.length - 1];
   const nextCursor: TaskListCursor | null =
     hasMore && last ? { createdAt: last.createdAt.toISOString(), id: last.id } : null;

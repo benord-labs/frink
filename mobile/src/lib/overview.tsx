@@ -5,7 +5,7 @@ type Overview = ReturnType<typeof useOverviewResource>;
 const OverviewContext = createContext<Overview | null>(null);
 
 function useOverviewResource() {
-  return useResource({ type: 'overview' });
+  return useResource({ type: 'overview', confirmsSideEffects: true });
 }
 
 /** One overview poll for the whole tab bar: the Queue badge, the Queue tab and Settings share it. */

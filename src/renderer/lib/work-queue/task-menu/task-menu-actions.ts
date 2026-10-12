@@ -1,14 +1,13 @@
-import { assessTaskRetry } from '../../../../shared/lib/task-retry-policy';
-import type { RecoveryKind } from '../../../../shared/types/flow-run/resume';
-import type { TaskStatus } from '../../../../shared/types/task-status';
+import type { TaskMenuStatus } from '../../../../shared/lib/task-recovery/menu-gate';
 
-/** A queue row's DISPLAY status: the persisted TaskStatus plus derived `interrupted`. */
-export type TaskMenuStatus = TaskStatus | 'interrupted';
+export {
+  assessRowRetry,
+  type TaskMenuStatus,
+  taskMenuRecovery,
+} from '../../../../shared/lib/task-recovery/menu-gate';
 
-type RecoverableTask = { status?: string; result?: unknown; recoveryKind?: RecoveryKind };
 type MenuTask = { result?: { chatId?: string } | null; linkedChatId?: string | null };
 
-const RETRYABLE: ReadonlySet<TaskMenuStatus> = new Set(['failed', 'needs_attention']);
 const CANCELLABLE: ReadonlySet<TaskMenuStatus> = new Set([
   'running',
   'plan_ready',
@@ -21,25 +20,6 @@ const DELETABLE: ReadonlySet<TaskMenuStatus> = new Set([
   'failed',
   'done',
 ]);
-
-/** The one recovery a row offers, if any. An interrupted row's kind is its run's marked step's. */
-export function taskMenuRecovery(
-  task: RecoverableTask,
-  status: TaskMenuStatus,
-): RecoveryKind | undefined {
-  const canRecover =
-    status === 'interrupted' || (RETRYABLE.has(status) && assessTaskRetry(task).canRetry);
-  return canRecover ? task.recoveryKind : undefined;
-}
-
-/** A row its run recovers (interrupted, or failed on a later step) shows an earlier step's raw
- * status, so only a row whose own task stopped is assessed. */
-export function assessRowRetry(
-  row: RecoverableTask & { status: TaskMenuStatus; effectiveStatus?: TaskMenuStatus },
-): ReturnType<typeof assessTaskRetry> {
-  const ownTaskStopped = row.effectiveStatus !== 'interrupted' && RETRYABLE.has(row.status);
-  return ownTaskStopped ? assessTaskRetry(row) : { canRetry: true, remediation: null };
-}
 
 function taskHasChat(task: MenuTask): boolean {
   return !!task.result?.chatId || !!task.linkedChatId;

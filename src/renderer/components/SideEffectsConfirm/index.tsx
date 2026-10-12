@@ -1,17 +1,15 @@
 import { Button } from '@benord-labs/frink-primitives';
 import { Loader2, RotateCcw } from 'lucide-react';
 import { type ReactElement, type RefObject, useEffect, useRef } from 'react';
+import { SIDE_EFFECTS_RETRY } from '../../../shared/lib/task-recovery/side-effects-confirm';
 import { cn } from '../../lib/utils';
 import type { ConfirmOptions } from '../ui/use-confirm';
 
-const SIDE_EFFECTS_WARNING =
-  'This step was interrupted partway through. Running it again may repeat actions it already took.';
-
 /** The same ask as a useConfirm dialog, for a Retry that lives in a menu or a status row. */
 export const SIDE_EFFECTS_CONFIRM: ConfirmOptions = {
-  title: 'Retry this step?',
-  description: SIDE_EFFECTS_WARNING,
-  confirmLabel: 'Retry anyway',
+  title: SIDE_EFFECTS_RETRY.title,
+  description: SIDE_EFFECTS_RETRY.warning,
+  confirmLabel: SIDE_EFFECTS_RETRY.confirmLabel,
 };
 
 type SideEffectsConfirmProps = {
@@ -39,7 +37,7 @@ export function SideEffectsConfirm({
   useEffect(() => confirmRef.current?.focus(), []);
   return (
     <div className={cn('space-y-1.5', className)} role="alert">
-      <p className="text-[11px] text-muted-foreground">{SIDE_EFFECTS_WARNING}</p>
+      <p className="text-[11px] text-muted-foreground">{SIDE_EFFECTS_RETRY.warning}</p>
       <div className="flex items-center gap-1.5">
         <Button
           ref={confirmRef}
@@ -55,7 +53,7 @@ export function SideEffectsConfirm({
           ) : (
             <RotateCcw className="h-3 w-3" aria-hidden />
           )}
-          Retry anyway
+          {SIDE_EFFECTS_RETRY.confirmLabel}
         </Button>
         <Button
           type="button"
