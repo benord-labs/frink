@@ -13,6 +13,7 @@ import {
 } from './git-factory';
 import { isUpstreamMissingError } from './git-utils';
 import { fetchGitHubPRStatus } from './github';
+import { COMMIT_HISTORY_FORMAT, gitLogArgs, parseCommitHistory } from './commit-log';
 
 /** Regex pattern for GitHub repository URLs */
 const GITHUB_REPO_REGEX = /github\.com[:/](.+?)(?:\.git)?$/;
@@ -93,32 +94,8 @@ export const createGitOperationsRouter = () => {
           }>
         > => {
           const git = createGit(input.worktreePath);
-          const logOutput = await git.raw([
-            'log',
-            `-${input.limit}`,
-            '--format=%H|%h|%s|%an|%ae|%aI',
-          ]);
-
-          if (!logOutput.trim()) return [];
-
-          return logOutput
-            .trim()
-            .split('\n')
-            .map((line) => {
-              const [hash, shortHash, message, author, email, dateStr] = line.split('|');
-              const parsedDate = new Date(dateStr || '');
-              const safeIsoDate = Number.isNaN(parsedDate.getTime())
-                ? new Date().toISOString()
-                : parsedDate.toISOString();
-              return {
-                hash: hash || '',
-                shortHash: shortHash || '',
-                message: message || '',
-                author: author || '',
-                email: email || '',
-                date: safeIsoDate,
-              };
-            });
+          const logOutput = await git.raw(gitLogArgs(COMMIT_HISTORY_FORMAT, `-${input.limit}`));
+          return parseCommitHistory(logOutput);
         },
       ),
 

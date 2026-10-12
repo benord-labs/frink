@@ -5,6 +5,7 @@ import type {
   FileStatus,
   GitChangesStatus,
 } from '../../../../shared/changes-types';
+import { logFormat, splitLogRecords, toSafeIsoDate } from '../commit-log';
 
 // Regex constants
 const RENAME_REGEX = /^(.+) => (.+)$/;
@@ -72,37 +73,16 @@ export function parseGitStatus(
   };
 }
 
+/** `git log` format consumed by parseGitLog: hash, shortHash, subject, body, author, date. */
+export const GIT_LOG_FORMAT = logFormat('%H', '%h', '%s', '%b', '%an', '%aI');
+
 export function parseGitLog(logOutput: string): CommitInfo[] {
-  if (!logOutput.trim()) return [];
-
   const commits: CommitInfo[] = [];
-  const lines = logOutput.trim().split('\n');
 
-  for (const line of lines) {
-    if (!line.trim()) continue;
-
-    // Format: hash|shortHash|message|description|author|date
-    // Use slice to preserve '|' characters in commit messages/descriptions
-    const parts = line.split('|');
-    if (parts.length < 6) continue;
-
-    const hash = parts[0]?.trim();
-    const shortHash = parts[1]?.trim();
-    const message = parts[2]?.trim();
-    // Description is between message and last 2 parts (author, date)
-    const description = parts.slice(3, -2).join('|').trim();
-    const author = parts[parts.length - 2]?.trim();
-    const dateStr = parts[parts.length - 1]?.trim();
+  for (const fields of splitLogRecords(logOutput, 6)) {
+    const [hash, shortHash, message, description, author, dateStr] = fields.map((f) => f.trim());
 
     if (!hash || !shortHash) continue;
-
-    let date: string;
-    if (dateStr) {
-      const parsed = new Date(dateStr);
-      date = Number.isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString();
-    } else {
-      date = new Date().toISOString();
-    }
 
     commits.push({
       hash,
@@ -110,7 +90,7 @@ export function parseGitLog(logOutput: string): CommitInfo[] {
       message: message || '',
       description: description || undefined,
       author: author || '',
-      date,
+      date: toSafeIsoDate(dateStr),
       files: [],
     });
   }
