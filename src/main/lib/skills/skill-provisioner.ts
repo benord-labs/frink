@@ -162,7 +162,8 @@ async function restoreMissingFiles(
   shipped: Baseline,
 ): Promise<string[]> {
   const missing = Object.keys(shipped.files).filter((rel) => !existsSync(join(dest, rel)));
-  await copyFiles(src, dest, missing);
+  // A file the user puts there meanwhile wins: the restore never overwrites.
+  await copyFiles(src, dest, missing, { overwrite: false });
   return missing;
 }
 

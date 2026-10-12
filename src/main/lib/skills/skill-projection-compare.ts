@@ -1,10 +1,46 @@
-/** Pure comparisons a projection reconcile is built from: kept entries, leftover links, and
- *  path clashes. No writes. */
+/** What a projection reconcile reads and compares: its marker, kept entries, leftover links
+ *  and path clashes. No writes. */
 
-import { readlink, realpath } from 'node:fs/promises';
+import { readFile, readlink, realpath } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
+import { z } from 'zod';
+import { dirHashOf, fileMap } from './skill-fs';
 
 type FileHashes = Record<string, string>;
+
+const hashSchema = z.string().regex(/^[0-9a-f]{64}$/);
+/** `files` that is not a map of hashes reads as absent, like a marker written before it existed. */
+const provenanceSchema = z.object({
+  // A marker whose hash is not a real hash is as unreadable as no marker at all.
+  hash: hashSchema,
+  sig: z.string().optional().catch(undefined),
+  srcSig: z.string().optional().catch(undefined),
+  files: z.record(z.string(), hashSchema).optional().catch(undefined),
+  /** Empty folders the source had, so one it later removes can be removed here too. */
+  folders: z.array(z.string()).optional().catch(undefined),
+});
+export type Provenance = z.infer<typeof provenanceSchema>;
+
+/** The projection marker at `markerPath`, or null when it is missing, unreadable or invalid. */
+export async function readProvenance(markerPath: string): Promise<Provenance | null> {
+  try {
+    const raw = JSON.parse(await readFile(markerPath, 'utf8'));
+    const parsed = provenanceSchema.safeParse(raw).data;
+    if (!parsed?.files) return parsed ?? null;
+    // The record parse drops a `__proto__` key, so the map is rebuilt from the raw entries.
+    const rawFiles = raw.files;
+    const files = fileMap();
+    if (Object(rawFiles) === rawFiles && !Array.isArray(rawFiles)) {
+      for (const [rel, hash] of Object.entries(rawFiles)) {
+        const valid = hashSchema.safeParse(hash);
+        if (valid.success) files[rel] = valid.data;
+      }
+    }
+    return { ...parsed, files };
+  } catch {
+    return null;
+  }
+}
 
 /** `taken`, except each `kept` file carries its `previous` entry (or none) so it stays edited. */
 export function withKeptEntries(
@@ -13,7 +49,7 @@ export function withKeptEntries(
   previous: FileHashes,
 ): FileHashes {
   const keep = new Set(kept);
-  return Object.fromEntries([
+  return fileMap([
     ...Object.entries(taken).filter(([rel]) => !keep.has(rel)),
     ...Object.entries(previous).filter(([rel]) => keep.has(rel)),
   ]);
@@ -27,7 +63,7 @@ export async function leftoverLinks(
   links: string[],
 ): Promise<FileHashes> {
   const resolved = (path: string) => realpath(path).catch(() => undefined);
-  const leftovers: FileHashes = {};
+  const leftovers = fileMap();
   for (const rel of links) {
     // Read once and resolve from that text, so a link retargeted meanwhile is never matched by
     // its old resolution; the swap later re-checks the same text.
@@ -47,14 +83,18 @@ export async function leftoverLinks(
 export function splitLeftovers(leftovers: FileHashes, sourceFiles: FileHashes) {
   const entries = Object.entries(leftovers);
   return {
-    fileLeftovers: Object.fromEntries(entries.filter(([rel]) => Object.hasOwn(sourceFiles, rel))),
-    folderLeftovers: Object.fromEntries(
-      entries.filter(([rel]) => !Object.hasOwn(sourceFiles, rel)),
-    ),
+    fileLeftovers: fileMap(entries.filter(([rel]) => Object.hasOwn(sourceFiles, rel))),
+    folderLeftovers: fileMap(entries.filter(([rel]) => !Object.hasOwn(sourceFiles, rel))),
   };
 }
 
 /** True when `rel` and a kept path cannot both exist: one is a folder the other lives in. */
 export function clashesWithKept(rel: string, kept: string[]): boolean {
   return kept.some((path) => path.startsWith(`${rel}/`) || rel.startsWith(`${path}/`));
+}
+
+/** The `dirHash` of a tree from its `readTree` entries: regular files only, as `dirHash` sees it. */
+export function contentHash(files: FileHashes, links: string[]): string {
+  const link = new Set(links);
+  return dirHashOf(fileMap(Object.entries(files).filter(([rel]) => !link.has(rel))));
 }

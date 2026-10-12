@@ -42,16 +42,16 @@ export async function hashFile(abs: string): Promise<string> {
 }
 
 /** Copy `relPaths` from `from` into `into`, creating parent dirs; `dereference` copies what
- *  a symlink points to instead of the link. */
+ *  a symlink points to, and `overwrite: false` leaves anything already at a destination alone. */
 export async function copyFiles(
   from: string,
   into: string,
   relPaths: string[],
-  { dereference = false } = {},
+  { dereference = false, overwrite = true } = {},
 ): Promise<void> {
   for (const relPath of relPaths) {
     await mkdir(dirname(join(into, relPath)), { recursive: true });
-    await cp(join(from, relPath), join(into, relPath), { dereference });
+    await cp(join(from, relPath), join(into, relPath), { dereference, force: overwrite });
   }
 }
 
@@ -131,6 +131,14 @@ async function walkFiles(
   return { pairs, links: found.links, unreadable: found.unreadable, empty: found.empty };
 }
 
+/** A path → hash map with no prototype, so a file named `constructor`, `toString` or
+ *  `__proto__` is an ordinary entry: reading a missing one gives undefined, writing one stores it. */
+export function fileMap(entries: Iterable<[string, string]> = []): Record<string, string> {
+  const map: Record<string, string> = Object.create(null);
+  for (const [rel, value] of entries) map[rel] = value;
+  return map;
+}
+
 /** Order-independent digest of `[relpath, value]` pairs. */
 function digest(pairs: [string, string][]): string {
   return sha256(
@@ -159,7 +167,7 @@ export async function readTree(
     hashFile,
     follow ? 'follow' : 'list',
   );
-  return { files: Object.fromEntries(pairs), links, unreadable, empty };
+  return { files: fileMap(pairs), links, unreadable, empty };
 }
 
 /** The `dirHash` of a tree whose per-file hashes are already known — no file reads. */

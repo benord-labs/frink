@@ -12,22 +12,10 @@
  */
 
 import { existsSync } from 'node:fs';
-import {
-  cp,
-  lstat,
-  mkdir,
-  readdir,
-  readFile,
-  rename,
-  rm,
-  rmdir,
-  stat,
-  writeFile,
-} from 'node:fs/promises';
+import { cp, lstat, mkdir, readdir, rename, rm, rmdir, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { Mutex } from 'async-mutex';
 import log from 'electron-log';
-import { z } from 'zod';
 import { getUniversalSkillDirs } from '../frink-skills-dir';
 import { ensureDirExistsAsync } from '../fs-helpers';
 import {
@@ -42,11 +30,22 @@ import {
 } from './skill-guarded-write';
 import {
   clashesWithKept,
+  contentHash,
   leftoverLinks,
   splitLeftovers,
   withKeptEntries,
+  type Provenance,
+  readProvenance,
 } from './skill-projection-compare';
-import { copyFiles, dirHash, dirHashOf, dirStatSig, readTree, replaceDir } from './skill-fs';
+import {
+  copyFiles,
+  dirHash,
+  dirHashOf,
+  dirStatSig,
+  fileMap,
+  readTree,
+  replaceDir,
+} from './skill-fs';
 
 /**
  * Marker file written INSIDE a projected skill dir, recording at projection time:
@@ -80,28 +79,6 @@ export function isFrinkShipped(dir: string): boolean {
 }
 
 type FileHashes = Record<string, string>;
-
-/** `files` that is not a map of hashes reads as absent, like a marker written before it existed. */
-const SHA256 = /^[0-9a-f]{64}$/;
-const provenanceSchema = z.object({
-  // A marker whose hash is not a real hash is as unreadable as no marker at all.
-  hash: z.string().regex(SHA256),
-  sig: z.string().optional().catch(undefined),
-  srcSig: z.string().optional().catch(undefined),
-  files: z.record(z.string(), z.string().regex(SHA256)).optional().catch(undefined),
-  /** Empty folders the source had, so one it later removes can be removed here too. */
-  folders: z.array(z.string()).optional().catch(undefined),
-});
-type Provenance = z.infer<typeof provenanceSchema>;
-
-async function readProvenance(dir: string): Promise<Provenance | null> {
-  try {
-    const raw = JSON.parse(await readFile(join(dir, PROVENANCE_MARKER), 'utf8'));
-    return provenanceSchema.safeParse(raw).data ?? null;
-  } catch {
-    return null;
-  }
-}
 
 /** Write the marker atomically: a torn marker would read as missing and re-project everything.
  *  The temp file sits beside the copy under the crash-debris name, so a sweep removes it. */
@@ -166,12 +143,6 @@ function unreadableSource(paths: string[]): Error {
   return new Error(`cannot read source file(s): ${paths.join(', ')}`);
 }
 
-/** The `dirHash` of a tree from its `readTree` entries: regular files only, as `dirHash` sees it. */
-function contentHash(files: FileHashes, links: string[]): string {
-  const link = new Set(links);
-  return dirHashOf(Object.fromEntries(Object.entries(files).filter(([rel]) => !link.has(rel))));
-}
-
 /** Baseline for a marker without `files`: every file of a copy matching the recorded hash,
  *  else the files untouched since that marker was written. Change time, unlike modification
  *  time, cannot be set back, so an edit with a restored timestamp still counts as touched. */
@@ -188,7 +159,7 @@ async function legacyBaseline(
     const { mtimeMs, ctimeMs } = await lstat(join(target, rel));
     if (Math.max(mtimeMs, ctimeMs) <= projectedAt) untouched.push([rel, hash]);
   }
-  return Object.fromEntries(untouched);
+  return fileMap(untouched);
 }
 
 /** What a per-file comparison of an existing projection against its source concluded. */
@@ -314,7 +285,7 @@ const underFolderLeftovers = (r: Reconciled): string[] =>
 
 /** Starting point for `Progress`: settled paths as finally recorded, pending ones as compared. */
 function startProgress(r: Reconciled): Progress {
-  const files = { ...r.files };
+  const files = fileMap(Object.entries(r.files));
   for (const rel of [...r.stale, ...r.dropped, ...underFolderLeftovers(r)]) {
     if (r.baseline[rel] === undefined) delete files[rel];
     else files[rel] = r.baseline[rel];
@@ -427,7 +398,10 @@ async function projectToTarget(
   } else if (lst) {
     // A marker that cannot be read or parsed tells nothing about edits, not even when it was
     // written, so every file that differs from the source is kept; missing ones are restored.
-    const stored = (await readProvenance(target)) ?? { hash: '', files: {} };
+    const stored = (await readProvenance(join(target, PROVENANCE_MARKER))) ?? {
+      hash: '',
+      files: {},
+    };
     return updateProjection(skillName, sourceDir, target, stored);
   }
   await sweepOrphans(baseDir); // clear crash debris before we stage a new copy
