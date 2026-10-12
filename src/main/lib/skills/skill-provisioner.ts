@@ -18,8 +18,8 @@
  *
  * Because the per-tool copies are now independent of the canonical store, an
  * edit to a projected copy diverges from `~/.frink/skills` (a symlink edit used
- * to write through to it). A shipped update then preserves+warns on the edited
- * copy rather than overwriting it (see `skill-projection` reconcile). The copy
+ * to write through to it). A shipped update then keeps the edited files of that
+ * copy and updates the rest of it (see `skill-projection` reconcile). The copy
  * path also needs no Windows symlink/Developer-Mode permission, removing a prior
  * silent "skipped" failure mode.
  *
@@ -28,15 +28,15 @@
  */
 
 import { existsSync } from 'node:fs';
-import { cp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { dirname, join, relative, resolve } from 'node:path';
+import { cp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { join, relative, resolve } from 'node:path';
 import log from 'electron-log';
 import { canonicalStringify } from '../../../shared/lib/canonical-stringify';
 import { getFrinkSkillsDir } from '../frink-skills-dir';
 import { ensureDirExistsAsync } from '../fs-helpers';
 import { resolveElectronResourcePath } from '../platform/electron-resource-path';
 import { captureContained } from '../sentry';
-import { replaceDir, sha256 } from './skill-fs';
+import { copyFiles, replaceDir, sha256 } from './skill-fs';
 import { projectSkill } from './skill-projection';
 
 const SKILLS_TO_PROVISION: readonly string[] = ['frink-flows'];
@@ -164,14 +164,6 @@ async function restoreMissingFiles(
   const missing = Object.keys(shipped.files).filter((rel) => !existsSync(join(dest, rel)));
   await copyFiles(src, dest, missing);
   return missing;
-}
-
-/** Copy `relPaths` from `from` into `into`, creating parent dirs. */
-async function copyFiles(from: string, into: string, relPaths: string[]): Promise<void> {
-  for (const relPath of relPaths) {
-    await mkdir(dirname(join(into, relPath)), { recursive: true });
-    await cp(join(from, relPath), join(into, relPath));
-  }
 }
 
 /**
