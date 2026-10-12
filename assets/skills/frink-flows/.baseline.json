@@ -1,14 +1,14 @@
 {
-  "generatedAt": "content-5de2ec7b677b",
-  "version": "content-5de2ec7b677b",
+  "generatedAt": "content-52fbd712ab9d",
+  "version": "content-52fbd712ab9d",
   "files": {
     "SKILL.md": {
       "sha256": "862a86c23fd6e128e3bcfef81f8b602bbb9ebed65d10640162efecbd5f83153b",
       "bytes": 4915
     },
     "references/batching.md": {
-      "sha256": "1b86062ab99fc1c5b995ad500348589aff58c2ca248595e2bf20e3562bbbed0e",
-      "bytes": 5962
+      "sha256": "c859a9135978177aab2f994c53cc40441dec6d3045af38f58f5639ff15593bca",
+      "bytes": 6150
     },
     "references/blocks-actions.md": {
       "sha256": "7d2b6a8be2b4e209e176544a5ec24863c567878d46874ff6945494c9055defcb",

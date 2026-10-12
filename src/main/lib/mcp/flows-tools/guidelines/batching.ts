@@ -63,7 +63,7 @@ Machine-wide Flow admission is independent: Settings → Preferences → Flows d
 
 ## Inspect and correct, when requested
 
-- \`frink_flows_get_batch({ flowId })\` lists runs; add \`batchId\` for summary and \`include: ["stages"]\` for stages.
+- \`frink_flows_get_batch({ flowId })\` lists runs; add \`batchId\` for summary and \`include: ["stages"]\` for stages. Summary counts (\`completed\`, \`failed\`, \`active\`, \`batch_total\`) cover the whole batch; \`total\` counts the runs matching the \`status\` filter, and \`runs\` is one page of them, up to \`limit\`.
 - \`frink_flows_get_run({ runId, wait: false })\` drills into a run.
 - \`frink_batch_message({ flowId, batchId, message })\` sends a correction; add \`flowRunId\` to target one. Active runs queue a continuation; terminal runs get one immediately.
 - Clear briefing with an \`update_settings\` patch when finished to close the grouping for new runs.
