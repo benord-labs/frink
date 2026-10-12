@@ -138,6 +138,29 @@ describe('probeCodexPassthroughSource', () => {
     expect(execFileMock).not.toHaveBeenCalled();
   });
 
+  it("returns ok for a keychain-only login, asking for the CLI's own account and never the secret", async () => {
+    // Same answer detectCodexAccount gives at connect time: "found" must be usable.
+    const original = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+    execFileSyncMock.mockReturnValue('');
+    try {
+      const { probeCodexPassthroughSource } = await import('./source-readers');
+      const { codexKeyringAccount } = await import('./detect-codex');
+
+      await expect(probeCodexPassthroughSource()).resolves.toEqual({ ok: true });
+      expect(execFileMock).toHaveBeenCalledTimes(1);
+      expect(execFileMock.mock.calls[0]?.[1]).toEqual([
+        'find-generic-password',
+        '-s',
+        'Codex Auth',
+        '-a',
+        await codexKeyringAccount(codexHome),
+      ]);
+    } finally {
+      Object.defineProperty(process, 'platform', { value: original, configurable: true });
+    }
+  });
+
   it('returns missing when neither auth.json nor a keychain item exists', async () => {
     execFileSyncMock.mockImplementation(() => {
       throw Object.assign(new Error('SecKeychainSearchCopyNext: not found'), { status: 44 });
