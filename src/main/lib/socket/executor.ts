@@ -19,6 +19,7 @@ import type { ExecutionSettings } from '../../../shared/types/execution';
 import { runCodexAgent } from '../agent-runner';
 import { createCodexHostPermissionCheck } from '../agent-runner/codex/permissions';
 import { buildCodexDynamicChatMcpUrl } from '../agent-runner/codex/spawn-args';
+import { codexCatalogForModel } from '../agent-runner/codex/usage';
 import { createTransformer, getBundledClaudeBinaryPath } from '../claude';
 import { clearPendingApprovals } from '../claude/ask-user-question-approval';
 import { relaunchWithCredential } from '../claude/credential-fd-spawn';
@@ -847,12 +848,18 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       let codexMetadata: MessageMetadata = {}; // session id + latest token usage, persisted below
       // settings.model carries the RAW codex picker id (e.g. codex-gpt-5.3-codex-high); the executor
       // is the single conversion boundary that splits it into the slug, effort and service tier the
-      // v2 app-server wants.
-      const codexModel = resolveCodexCliModel(settings?.model, settings?.codexSpeed);
+      // v2 app-server wants. A model the account can't use throws into the catch below.
       const codexId = storedCredential.label ?? 'codex-default';
       const unbindCodex = flowResources.bindCodex(abortController, projectPath, codexId, subChatId);
       try {
+        const codexCatalog = await codexCatalogForModel(settings?.model);
+        // After the read: a cancel during a first read must not start the turn.
         flowResources.assertLive(abortController.signal, 'Codex');
+        const codexModel = resolveCodexCliModel(
+          settings?.model,
+          settings?.codexSpeed,
+          codexCatalog,
+        );
         for await (const chunk of runCodexAgent({
           prompt: codexFullPrompt,
           messageProvenance: provenance,

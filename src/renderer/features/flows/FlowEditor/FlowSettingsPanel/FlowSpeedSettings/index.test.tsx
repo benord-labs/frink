@@ -80,12 +80,12 @@ describe('flowUltrafastCredits', () => {
 });
 
 describe('FlowSpeedSettings', () => {
-  /** Renders against a Codex account with `tiers`, resolving once its speed-tier read has landed. */
+  /** Renders against a Codex account with `tiers`, resolving once its catalog read has landed. */
   async function renderSpeeds(tiers: CodexAccountTiers | null, codexSpeed?: 'fast' | 'ultrafast') {
     const answered = vi.fn();
     const answer = (op: Operation) => {
       answered(op.path);
-      return Promise.resolve(tiers);
+      return Promise.resolve(tiers && { tiers, defaultSlug: null });
     };
     renderWithTrpc(
       <FlowSpeedSettings
@@ -95,7 +95,7 @@ describe('FlowSpeedSettings', () => {
       />,
       answer,
     );
-    await waitFor(() => expect(answered).toHaveBeenCalledWith('usage.getCodexSpeedTiers'));
+    await waitFor(() => expect(answered).toHaveBeenCalledWith('usage.getCodexAccountCatalog'));
     await act(async () => {});
   }
   const row = (name: RegExp) => screen.queryByRole('switch', { name });
@@ -109,8 +109,11 @@ describe('FlowSpeedSettings', () => {
 
   it.each(cases)('offers %s only the speeds it has', async (_, tiers, fast, ultrafast) => {
     await renderSpeeds(tiers);
-    expect(row(/^Fast mode/) !== null).toBe(fast);
-    expect(row(/^Ultrafast mode/) !== null).toBe(ultrafast);
+    // A loaded machine can land the catalog after the one flush renderSpeeds gives it.
+    await waitFor(() => {
+      expect(row(/^Fast mode/) !== null).toBe(fast);
+      expect(row(/^Ultrafast mode/) !== null).toBe(ultrafast);
+    });
   });
 
   it('keeps a speed that is already on, so it can be turned off', async () => {

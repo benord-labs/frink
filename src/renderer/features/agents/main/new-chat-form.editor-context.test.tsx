@@ -9,9 +9,11 @@ import {
   chatContextFileAtomFamily,
   chatContextFileDismissedAtomFamily,
 } from '@/lib/code-editor/state';
+import type { CodexAccountCatalog } from '../../../../shared/lib/codex-cli-models';
 import { TooltipProvider } from '../../../components/ui/tooltip';
+import { appStore } from '../../../lib/jotai-store';
 import { trpc } from '../../../lib/trpc';
-import { NEW_CHAT_PANE } from '../atoms';
+import { lastSelectedModelIdAtom, lastSelectedModelIdAtomFamily, NEW_CHAT_PANE } from '../atoms';
 import { NewChatForm } from './new-chat-form';
 
 // `lib/trpc` wires its ipc client at import time, so the preload bridge must exist first.
@@ -25,9 +27,31 @@ type CreateChatInput = Parameters<ReturnType<typeof trpc.chats.create.useMutatio
 
 const createChat = vi.fn<(input: CreateChatInput) => void>();
 
-/** A real trpc client: queries stay loading, a scaffolded project is a fixed folder, and chat
- *  creation is recorded and left pending so nothing navigates away. */
-function createTestClient() {
+/** Query answers a test names; any query left out stays loading. */
+type TestAnswers = {
+  account?: { type: 'codex'; label: string; isAuthenticated: boolean };
+  codexCatalog?: CodexAccountCatalog;
+  createdChat?: { id: string; subChats: [] };
+};
+
+function answerFor(path: string, answers: TestAnswers) {
+  switch (path) {
+    case 'projects.scaffold':
+      return { id: 'project-1', path: '/repo' };
+    case 'claudeCode.getResolvedAccount':
+      return answers.account;
+    case 'usage.getCodexAccountCatalog':
+      return answers.codexCatalog;
+    case 'chats.create':
+      return answers.createdChat;
+    default:
+      return undefined;
+  }
+}
+
+/** A real trpc client: queries stay loading unless `answers` names them, a scaffolded project is a
+ *  fixed folder, and chat creation is recorded and left pending (or answered, when named). */
+function createTestClient(answers: TestAnswers = {}) {
   return trpc.createClient({
     links: [
       () =>
@@ -38,8 +62,9 @@ function createTestClient() {
               const input = op.input as CreateChatInput;
               createChat(input);
             }
-            if (op.path !== 'projects.scaffold') return;
-            observer.next({ result: { data: { id: 'project-1', path: '/repo' } } });
+            const data = answerFor(op.path, answers);
+            if (data === undefined) return;
+            observer.next({ result: { data } });
             observer.complete();
           }),
     ],
@@ -53,12 +78,11 @@ afterEach(() => {
 
 const notes = { name: 'notes.md', path: '/repo/docs/notes.md' };
 
-function renderNewChat() {
-  const store = createStore();
+function renderNewChat(store = createStore(), answers: TestAnswers = {}) {
   store.set(chatContextFileAtomFamily(NEW_CHAT_PANE), notes);
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const view = render(
-    <trpc.Provider client={createTestClient()} queryClient={queryClient}>
+    <trpc.Provider client={createTestClient(answers)} queryClient={queryClient}>
       <QueryClientProvider client={queryClient}>
         <Provider store={store}>
           <TooltipProvider>
@@ -97,5 +121,34 @@ describe('NewChatForm editor context', () => {
     expect(createChat.mock.calls[0][0].initialMessageParts).toEqual([
       { type: 'text', text: '@[file:local:/repo/docs/notes.md] summarise this' },
     ]);
+  });
+});
+
+describe('NewChatForm on a free Codex account (its model/list has no GPT-6 Astra)', () => {
+  afterEach(() => appStore.set(lastSelectedModelIdAtom, 'sonnet'));
+
+  it('starts the chat on a model the account has, without the user changing it', async () => {
+    // The app's own store: new-chat seeding reads and writes it directly.
+    appStore.set(lastSelectedModelIdAtom, 'codex-gpt-6-astra-medium');
+    const { container } = renderNewChat(appStore, {
+      account: { type: 'codex', label: 'Codex', isAuthenticated: true },
+      codexCatalog: { tiers: { 'gpt-6-luna': [], 'gpt-5.5': [] }, defaultSlug: 'gpt-6-luna' },
+      createdChat: { id: 'chat-free', subChats: [] },
+    });
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /^Model: GPT-6 Luna/ })).toBeInTheDocument(),
+    );
+    const editor = container.querySelector<HTMLElement>('[contenteditable="true"]');
+    if (!editor) throw new Error('composer editor not found');
+    editor.textContent = 'hello';
+    fireEvent.input(editor);
+
+    fireEvent.keyDown(editor, { key: 'Enter' });
+
+    await waitFor(() =>
+      expect(appStore.get(lastSelectedModelIdAtomFamily('chat-free'))).toBe(
+        'codex-gpt-6-luna-medium',
+      ),
+    );
   });
 });

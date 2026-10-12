@@ -5,7 +5,7 @@
 
 import { Button, Textarea } from '@benord-labs/frink-primitives';
 import { FileText, X } from 'lucide-react';
-import { type ReactElement, useEffect, useMemo, useState } from 'react';
+import { type ReactElement, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import type { FlowNode } from '../../../../../shared/lib/validate-flow-graph';
 import type { FlowSettings } from '../../../../../shared/types/flow';
@@ -16,8 +16,7 @@ import { trpc } from '../../../../lib/trpc';
 import { cn } from '../../../../lib/utils';
 import { ModelSelector } from '../../../agents/components/model-selector';
 import { FlowProjectField } from '../BlockConfig/FlowProjectField';
-import { flowModelVariant, getFlowPickerModels } from '../hooks/flow-picker-models';
-import { useProjectModelOptions } from '../hooks/use-project-model-options';
+import { flowModelVariant, useFlowDefaultModelPicker } from '../hooks/flow-picker-models';
 import { BatchTriggerVariables } from './BatchTriggerVariables';
 import { BriefingStashControls } from './BriefingStashControls';
 import { FlowSpeedSettings } from './FlowSpeedSettings';
@@ -97,17 +96,10 @@ export function FlowSettingsPanel({
   });
 
   const projectId = settings?.defaultProjectId ?? '';
-  const defaultModelId = settings?.defaultModel?.trim() ?? '';
-
-  const { isCodexProject } = useProjectModelOptions(projectId.trim() ? projectId : undefined, {
-    model: settings?.defaultModel,
-    onClearModel: () => onSettingsChange(patch(settings, { defaultModel: undefined })),
-  });
-  const availableModels = useMemo(() => getFlowPickerModels(isCodexProject), [isCodexProject]);
-  const selectedPickerModel = defaultModelId
-    ? availableModels.find((m) => m.id === defaultModelId)
-    : undefined;
-  const staleModelId = defaultModelId && !selectedPickerModel ? defaultModelId : undefined;
+  const { isCodexProject, availableModels, selectedPickerModel, staleModelId } =
+    useFlowDefaultModelPicker(settings, () =>
+      onSettingsChange(patch(settings, { defaultModel: undefined })),
+    );
 
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
 

@@ -1,7 +1,10 @@
 // @vitest-environment happy-dom
 import { act, renderHook } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { CODEX_DEFAULT_MODEL_ID } from '../../../../shared/lib/codex-cli-models';
+import {
+  CODEX_DEFAULT_MODEL_ID,
+  type CodexAccountCatalog,
+} from '../../../../shared/lib/codex-cli-models';
 import { useModelNormalization } from './use-model-normalization';
 
 describe('useModelNormalization', () => {
@@ -85,8 +88,10 @@ describe('useModelNormalization', () => {
 
   it('resets a stale model ID to the Codex default when switching to Codex account', () => {
     const setModel = vi.fn();
+    // A paid catalog that lists GPT-6 Astra as its default.
+    const paid: CodexAccountCatalog = { tiers: { 'gpt-6-astra': [] }, defaultSlug: 'gpt-6-astra' };
     const { rerender } = renderHook(
-      ({ isCodex, modelId }) => useModelNormalization(isCodex, modelId, setModel),
+      ({ isCodex, modelId }) => useModelNormalization(isCodex, modelId, setModel, true, paid),
       { initialProps: { isCodex: false, modelId: 'sonnet' } },
     );
     act(() => {
@@ -116,5 +121,60 @@ describe('useModelNormalization', () => {
     });
     expect(setA).not.toHaveBeenCalled();
     expect(setB).not.toHaveBeenCalled();
+  });
+
+  describe('with a free account catalog (no GPT-6 Astra)', () => {
+    const free: CodexAccountCatalog = {
+      tiers: { 'gpt-6-luna': [], 'gpt-5.5': [] },
+      defaultSlug: 'gpt-6-luna',
+    };
+    /** `undefined` while the catalog loads, `null` once it is known to be unavailable. */
+    type CatalogProps = { catalog: CodexAccountCatalog | null | undefined };
+
+    it("keeps a saved model the account can't use, so the chat can say so", () => {
+      const setModel = vi.fn();
+      renderHook(() => useModelNormalization(true, CODEX_DEFAULT_MODEL_ID, setModel, true, free));
+      expect(setModel).not.toHaveBeenCalled();
+    });
+
+    it("never rewrites a saved model when the account's catalog arrives later", () => {
+      const setModel = vi.fn();
+      const { rerender } = renderHook<void, CatalogProps>(
+        ({ catalog }) =>
+          useModelNormalization(true, CODEX_DEFAULT_MODEL_ID, setModel, true, catalog),
+        { initialProps: { catalog: null } },
+      );
+      act(() => {
+        rerender({ catalog: free });
+      });
+      expect(setModel).not.toHaveBeenCalled();
+    });
+
+    it("waits for the account's catalog before choosing a default, never saving one it can't use", () => {
+      // The catalog query only starts once the account resolves as Codex, so it is still loading
+      // on the render that first sees the switch.
+      const setModel = vi.fn();
+      const { rerender } = renderHook<void, CatalogProps>(
+        ({ catalog }) => useModelNormalization(true, 'sonnet', setModel, true, catalog),
+        { initialProps: { catalog: undefined } },
+      );
+      act(() => {
+        rerender({ catalog: free });
+      });
+      expect(setModel).not.toHaveBeenCalledWith(CODEX_DEFAULT_MODEL_ID);
+      expect(setModel).toHaveBeenCalledExactlyOnceWith('codex-gpt-6-luna-medium');
+    });
+
+    it('still moves a Claude id to a Codex model when the account list could not be read', () => {
+      const setModel = vi.fn();
+      renderHook(() => useModelNormalization(true, 'sonnet', setModel, true, null));
+      expect(setModel).toHaveBeenCalledExactlyOnceWith(CODEX_DEFAULT_MODEL_ID);
+    });
+
+    it("moves a Claude id to the account's default on a switch to Codex", () => {
+      const setModel = vi.fn();
+      renderHook(() => useModelNormalization(true, 'sonnet', setModel, true, free));
+      expect(setModel).toHaveBeenCalledWith('codex-gpt-6-luna-medium');
+    });
   });
 });

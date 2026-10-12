@@ -1,10 +1,17 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   CLAUDE_PICKER_MODELS,
   CODEX_MODELS,
   codexModelToPickerItem,
 } from '../../../../../shared/lib/models';
 import { flowModelVariant, getFlowPickerModels } from './flow-picker-models';
+
+// `lib/trpc` wires its ipc client at import time, so the preload bridge must exist first.
+vi.hoisted(() => {
+  Object.assign(globalThis, {
+    electronTRPC: { onMessage: () => () => undefined, sendMessage: () => undefined },
+  });
+});
 
 describe('getFlowPickerModels', () => {
   it('returns Claude picker models without the composer-only Ultra rows when not Codex', () => {
@@ -17,6 +24,13 @@ describe('getFlowPickerModels', () => {
     const codex = getFlowPickerModels(true);
     expect(codex.length).toBe(CODEX_MODELS.length);
     expect(codex[0]).toEqual(codexModelToPickerItem(CODEX_MODELS[0]));
+  });
+
+  it('offers an unattended step only the models the signed-in Codex account can use', () => {
+    const free = { tiers: { 'gpt-6-luna': [], 'gpt-5.5': [] }, defaultSlug: 'gpt-6-luna' };
+    const ids = getFlowPickerModels(true, free).map((m) => m.id);
+    expect(ids).toContain('codex-gpt-6-luna-medium');
+    expect(ids.some((id) => id.startsWith('codex-gpt-6-astra'))).toBe(false);
   });
 });
 

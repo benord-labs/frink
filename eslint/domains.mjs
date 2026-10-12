@@ -17,6 +17,8 @@ export const RENDERER_LIB_DOMAINS = [
   'analytics',
   'atoms',
   'audio',
+  // The signed-in Codex account as the chat composer and Flows both read it (models, paid speeds).
+  'codex',
   'code-editor',
   'commands',
   'flow-rehearsal',

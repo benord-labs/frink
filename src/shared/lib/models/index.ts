@@ -1,6 +1,12 @@
 import { LAUNCH_FLAGS } from '../../launch-flags';
 import type { ClaudeSdkEffortLevel } from '../../types/execution';
-import { CODEX_CLI_MODELS, CODEX_DEFAULT_MODEL_ID, type CodexCliModel } from '../codex-cli-models';
+import {
+  CODEX_CLI_MODELS,
+  type CodexAccountCatalog,
+  type CodexCliModel,
+  codexDefaultModelIdForAccount,
+  isCodexModelUnavailable,
+} from '../codex-cli-models';
 import {
   CLAUDE_CODE_MODELS_CATALOG,
   CLAUDE_ULTRA_SUFFIX,
@@ -219,13 +225,19 @@ export const CLAUDE_PICKER_MODELS = CLAUDE_CODE_MODELS.map(claudeModelToPickerIt
  * Coerce a picker model id to one valid for the resolved execution account (Codex / Claude).
  * Shared by `useModelNormalization` and new-chat seeding — keep catalog rules in one place. An account
  * switch (e.g. Claude → Codex) leaves a stale cross-provider id that must snap to that provider's default.
+ * A Codex id the account's `catalog` does not list snaps too, unless `keepUnavailable`: a saved chat
+ * keeps its choice, and the send reports it rather than swapping it.
  */
 export function normalizeModelIdForExecutionAccount(
   isCodexAccount: boolean,
   modelId: string,
+  catalog: CodexAccountCatalog | null = null,
+  { keepUnavailable = false }: { keepUnavailable?: boolean } = {},
 ): string {
   if (isCodexAccount) {
-    return CODEX_MODELS.some((m) => m.id === modelId) ? modelId : CODEX_DEFAULT_MODEL_ID;
+    const known = CODEX_MODELS.some((m) => m.id === modelId);
+    const usable = keepUnavailable || !isCodexModelUnavailable(modelId, catalog);
+    return known && usable ? modelId : codexDefaultModelIdForAccount(catalog);
   }
   if (!CLAUDE_MODEL_IDS.includes(modelId)) return CLAUDE_DEFAULT_MODEL;
   return modelId;
