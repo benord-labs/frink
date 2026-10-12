@@ -45,13 +45,18 @@ async function resolveDefaultVersion(nvmDir: string, installed: string[]): Promi
 
 const resolvedByHome = new Map<string, string[]>();
 
-/** Read nvm's active bin dir for `home` off the request path; `cachedNvmBinDirs` then serves it. */
+/** Read nvm's active bin dir for `home` off the request path; `cachedNvmBinDirs` then serves it.
+ * nvm installs to ~/.nvm, or ~/.config/nvm when XDG_CONFIG_HOME was set at install time. */
 export async function warmNvmBinDirs(home: string): Promise<string[]> {
-  const nvmDir = path.join(home, '.nvm');
-  const versionsDir = path.join(nvmDir, 'versions', 'node');
-  const installed = await listInstalledVersions(versionsDir);
-  const version = (await resolveDefaultVersion(nvmDir, installed)) ?? installed.at(-1);
-  const dirs = version ? [path.join(versionsDir, version, 'bin')] : [];
+  let dirs: string[] = [];
+  for (const nvmDir of [path.join(home, '.nvm'), path.join(home, '.config', 'nvm')]) {
+    const versionsDir = path.join(nvmDir, 'versions', 'node');
+    const installed = await listInstalledVersions(versionsDir);
+    if (installed.length === 0) continue;
+    const version = (await resolveDefaultVersion(nvmDir, installed)) ?? installed.at(-1);
+    dirs = version ? [path.join(versionsDir, version, 'bin')] : [];
+    break;
+  }
   resolvedByHome.set(home, dirs);
   return [...dirs];
 }
