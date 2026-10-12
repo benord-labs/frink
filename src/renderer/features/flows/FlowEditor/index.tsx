@@ -58,7 +58,7 @@ import { appStore } from '../../../lib/jotai-store';
 import { trpc } from '../../../lib/trpc';
 import { cn } from '../../../lib/utils';
 import { resolveDefaultSelectedBatchId } from '../../../lib/utils/default-selected-batch';
-import { dispatchFlowRun } from '../../../lib/utils/flow-run-dispatch';
+import { dispatchFlowRun, editorRunBlocker } from '../../../lib/utils/flow-run-dispatch';
 import { persistDraftAfterSave } from '../../../lib/flows/editor-sync/resolve-draft-after-save';
 import { resolveServerAdoption } from '../../../lib/flows/editor-sync/resolve-server-adoption';
 import { resolveInitialGraph } from '../../../utils/flow-initial-graph';
@@ -613,8 +613,7 @@ export function FlowEditor({ flowId, onBack }: FlowEditorProps): ReactElement {
       }
       let nextGraph = result.graph;
       // When a new back-edge is created from a condition node, auto-persist the
-      // default loop config so the UI and engine agree on maxIterations (10 vs
-      // the engine's fallback cap of 50).
+      // default loop config (maxIterations 10). The engine does not enforce it yet.
       const oldEdgeIds = new Set(graph.edges.map((e) => e.id));
       const newEdge = nextGraph.edges.find((e) => !oldEdgeIds.has(e.id));
       if (newEdge && findBackEdges(nextGraph).has(newEdge.id)) {
@@ -1059,35 +1058,31 @@ export function FlowEditor({ flowId, onBack }: FlowEditorProps): ReactElement {
     return nodeVariablesByNodeId[selectedNodeId] ?? null;
   }, [selectedNodeId, nodeVariablesByNodeId]);
 
+  // Run executes the saved version, not the draft: baselineGraph is our own save before the
+  // data.graph refetch lands, and data.graph may be newer when a save elsewhere was not adopted.
+  const savedGraphs = useMemo(() => [baselineGraph, data?.graph], [baselineGraph, data?.graph]);
+  const runBlocker = useMemo(
+    () =>
+      editorRunBlocker({
+        hasManualTrigger: !!triggerNode,
+        baselineVersion,
+        flowEnabled,
+        savedGraphs,
+      }),
+    [triggerNode, baselineVersion, flowEnabled, savedGraphs],
+  );
+
+  // The hotkey stays silent when Run is blocked; the button explains why.
   useEffect(() => {
     runHotkeyRef.current = () => {
-      const isRunPending = singleRun.isPending || headerBatch.isPending;
-      if (!triggerNode || baselineVersion < 1 || isRunPending || !flowEnabled) return;
+      if (singleRun.isPending || headerBatch.isPending || runBlocker) return;
       runPrimary();
     };
-  }, [
-    triggerNode,
-    baselineVersion,
-    singleRun.isPending,
-    headerBatch.isPending,
-    flowEnabled,
-    runPrimary,
-  ]);
+  }, [runBlocker, singleRun.isPending, headerBatch.isPending, runPrimary]);
 
   const handleRun = () => {
-    if (!triggerNode) {
-      toast.error('Run is only available for flows that start with a manual trigger.');
-      return;
-    }
-    if (baselineVersion < 1) {
-      toast.error('Save your flow before running.');
-      return;
-    }
-    if (!flowEnabled) {
-      toast.error('This flow is paused. Enable it in Flow settings or the flows list to run.');
-      return;
-    }
-    runPrimary();
+    if (runBlocker) toast.error(runBlocker);
+    else runPrimary();
   };
 
   const handleBlurTitle = () => {

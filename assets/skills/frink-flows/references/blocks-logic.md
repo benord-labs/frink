@@ -13,7 +13,7 @@ Use a structured predicate, not JavaScript; `field` addresses predecessor output
 [{"id":"yes","source":"check","target":"report","sourceHandle":"true"},{"id":"no","source":"check","target":"done","sourceHandle":"false"}]
 ```
 
-Condition preserves upstream outputs and adds/overwrites `result`: `{ ...upstream, result }`. Only condition nodes may originate back-edges. Loop `maxIterations` is 1–50; there is also an engine per-node iteration guard (default 10).
+Condition preserves upstream outputs and adds/overwrites `result` and `passed`: `{ ...upstream, result, passed }`. Only condition nodes may originate back-edges. Loop `maxIterations` must be 1–50, but the engine does not enforce it, so every loop needs a real exit. A loop made only of condition nodes is rejected at run time — put a step inside the loop.
 
 | output | type | guaranteed | description |
 |---|---|---|---|

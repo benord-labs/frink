@@ -22,6 +22,7 @@ import {
   findUpstreamSession,
 } from './flow-upstream-session';
 import { LAUNCH_FLAGS } from '../launch-flags';
+import { conditionLoopConfigErrors, stuckConditionLoops } from './flows/graph/condition-loops';
 import {
   chatReplyTemplateWarnings,
   parseChatReplyTemplateConfig,
@@ -80,6 +81,7 @@ export function formatFlowNodeLabel(n: FlowNode): string {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
+export { isRecord };
 
 function reachableFromTrigger(
   triggerId: string,
@@ -382,6 +384,11 @@ export function validateGraph(
     }
   }
 
+  // SAFETY: node shape errors returned above, so every entry is a FlowNode.
+  const stuck = stuckConditionLoops(nodes as FlowNode[], edges, formatFlowNodeLabel);
+  if (isRunMode) errors.push(...stuck.messages);
+  else warnings.unshift(...stuck.messages.map((m) => `${m} (fix it before running)`));
+
   // For each condition node that participates in a loop, warn unless it also has
   // a forward (non-looping) exit path; error if BOTH handles loop back.
   for (const n of nodes as FlowNode[]) {
@@ -394,35 +401,13 @@ export function validateGraph(
     const name = formatFlowNodeLabel(n);
     if (trueLoops && falseLoops) {
       errors.push(`Condition node "${name}" has no exit path — both branches loop back`);
-    } else if (trueLoops || falseLoops) {
+    } else if ((trueLoops || falseLoops) && !stuck.nodeIds.has(n.id)) {
       warnings.push(
         `Condition node "${name}" creates a loop — make sure your condition has an exit path`,
       );
     }
 
-    // Validate loop config when present
-    const loopCfg = isRecord(n.config) ? n.config.loop : undefined;
-    if (loopCfg !== undefined) {
-      if (!isRecord(loopCfg)) {
-        errors.push(`Condition node "${name}" loop config must be an object`);
-      } else {
-        const maxIter = loopCfg.maxIterations;
-        if (
-          typeof maxIter !== 'number' ||
-          !Number.isInteger(maxIter) ||
-          maxIter < 1 ||
-          maxIter > 50
-        ) {
-          errors.push(
-            `Condition node "${name}" loop.maxIterations must be an integer between 1 and 50`,
-          );
-        }
-        const onMax = loopCfg.onMaxReached;
-        if (onMax !== undefined && onMax !== 'fail' && onMax !== 'continue') {
-          errors.push(`Condition node "${name}" loop.onMaxReached must be "fail" or "continue"`);
-        }
-      }
-    }
+    errors.push(...conditionLoopConfigErrors(name, n.config));
   }
 
   const seen = reachableFromTrigger(triggerId, nodeIds, edges);
