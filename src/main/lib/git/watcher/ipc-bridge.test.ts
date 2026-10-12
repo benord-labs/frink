@@ -322,6 +322,100 @@ describe('registerGitWatcherIPC', () => {
     expect(sendMock).toHaveBeenCalledTimes(4);
   });
 
+  // A submodule or separate-git-dir HEAD is not a `/.git/` pointer path, so it is throttled like
+  // a file edit; the renderer still needs to see it to refresh the branch list.
+  it('keeps every held-back path when later events arrive inside the window', async () => {
+    const nowRef = { value: 1000 };
+    vi.spyOn(Date, 'now').mockImplementation(() => nowRef.value);
+
+    let watcherCallback: WatcherCallback = () => {};
+    subscribeMock.mockImplementation(async (_worktreePath: string, callback: WatcherCallback) => {
+      watcherCallback = callback;
+      return vi.fn();
+    });
+
+    const sendMock = vi.fn();
+    const win = {
+      isDestroyed: () => false,
+      webContents: { send: sendMock },
+    };
+
+    const { registerGitWatcherIPC } = await import('./ipc-bridge');
+    // SAFETY: the bridge only reads isDestroyed and webContents.send from the window.
+    registerGitWatcherIPC(() => win as never);
+    await handlers.get('git:subscribe-watcher')?.({}, '/repo/held');
+
+    const fire = (path: string) =>
+      watcherCallback({ worktreePath: '/repo/held', changes: [{ path, type: 'change' }] });
+    fire('/repo/held/src/a.ts');
+    nowRef.value = 1100;
+    fire('/store/held.git/HEAD');
+    nowRef.value = 1200;
+    fire('/repo/held/src/b.ts');
+    vi.advanceTimersByTime(500);
+
+    expect(sendMock).toHaveBeenLastCalledWith('git:status-changed', {
+      worktreePath: '/repo/held',
+      changes: [
+        { path: '/store/held.git/HEAD', type: 'change' },
+        { path: '/repo/held/src/b.ts', type: 'change' },
+      ],
+    });
+
+    // A pointer event that jumps the queue carries the held-back paths with it.
+    nowRef.value = 1800;
+    fire('/repo/held/src/c.ts');
+    nowRef.value = 1900;
+    fire('/store/held.git/refs/heads/feature');
+    nowRef.value = 2000;
+    fire('/repo/held/.git/index');
+
+    expect(sendMock).toHaveBeenLastCalledWith('git:status-changed', {
+      worktreePath: '/repo/held',
+      changes: [
+        { path: '/store/held.git/refs/heads/feature', type: 'change' },
+        { path: '/repo/held/.git/index', type: 'change' },
+      ],
+    });
+    const sends = sendMock.mock.calls.length;
+    vi.advanceTimersByTime(500);
+    expect(sendMock).toHaveBeenCalledTimes(sends);
+  });
+
+  it('announces an IDE config change under a skills directory', async () => {
+    vi.spyOn(Date, 'now').mockImplementation(() => 1000);
+
+    let watcherCallback: WatcherCallback = () => {};
+    subscribeMock.mockImplementation(async (_worktreePath: string, callback: WatcherCallback) => {
+      watcherCallback = callback;
+      return vi.fn();
+    });
+
+    const sendMock = vi.fn();
+    const win = {
+      isDestroyed: () => false,
+      webContents: { send: sendMock },
+    };
+
+    const { registerGitWatcherIPC } = await import('./ipc-bridge');
+    // SAFETY: the bridge only reads isDestroyed and webContents.send from the window.
+    registerGitWatcherIPC(() => win as never);
+    await handlers.get('git:subscribe-watcher')?.({}, '/repo/ide');
+
+    watcherCallback({
+      worktreePath: '/repo/ide',
+      changes: [
+        { path: '/repo/ide/.claude/skills/x/SKILL.md', type: 'add' },
+        { path: '/repo/ide/.cursor/mcp.json', type: 'change' },
+      ],
+    });
+
+    expect(sendMock).toHaveBeenCalledWith('ide-config:changed', {
+      worktreePath: '/repo/ide',
+      changes: [{ resourceType: 'skills', origin: 'claude', type: 'add' }],
+    });
+  });
+
   it('invalidates status, diff, git cache, and file list cache when forwarding events', async () => {
     vi.spyOn(Date, 'now').mockImplementation(() => 1000);
 

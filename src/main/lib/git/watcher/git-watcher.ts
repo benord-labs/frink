@@ -1,7 +1,10 @@
 import { EventEmitter } from 'node:events';
-import type { AsyncSubscription } from '@parcel/watcher';
+import type { AsyncSubscription, SubscribeCallback } from '@parcel/watcher';
 import log from 'electron-log';
-import { isGitPointerRelatedPath } from './git-head-path';
+import { isGitDirPointerFile, resolveGitDir } from './git-dir';
+import { isGitIndexPath, isGitPointerRelatedPath } from './git-head-path';
+import { findIdeConfigPattern } from './ide-config-path';
+import { createIgnoreFilter, type IgnoreFilter } from './ignored-paths';
 
 // Simple debounce implementation to avoid lodash-es dependency in main process
 function debounce<T extends (...args: unknown[]) => unknown>(
@@ -30,6 +33,9 @@ export type GitWatchEvent = {
 };
 
 const BACKSLASH_RE = /\\/g;
+const GITIGNORE_FILE_RE = /(?:^|\/)\.gitignore$/;
+/** Git dir contents no watcher consumer reads; skipped so object writes cost nothing. */
+const GIT_DIR_IGNORES = ['objects', 'worktrees', 'logs', 'lfs', 'modules'];
 const IGNORED_WATCHER_PATH_SEGMENTS = [
   '/node_modules/',
   '/.git/',
@@ -72,6 +78,13 @@ type GitWatcherConfig = {
  */
 class GitWatcher extends EventEmitter {
   private watcher: AsyncSubscription | null = null;
+  /** A linked worktree's HEAD and index live in the main repository, outside the watched tree. */
+  private gitDirWatcher: AsyncSubscription | null = null;
+  /** Null outside a git repository, where nothing can be ignored. */
+  private ignoreFilter: IgnoreFilter | null = null;
+  private isFlushing = false;
+  /** Symlink-resolved worktree path, the form event paths arrive in. */
+  private worktreeRoot: string;
   private worktreePath: string;
   private pendingChanges: Map<string, FileChangeType> = new Map();
   private isDisposed = false;
@@ -82,61 +95,109 @@ class GitWatcher extends EventEmitter {
   constructor(config: GitWatcherConfig) {
     super();
     this.worktreePath = config.worktreePath;
+    this.worktreeRoot = config.worktreePath;
     this.debounceMs = config.debounceMs ?? 300; // 300ms debounce for file changes (VS Code uses ~200-500ms)
 
-    // Create debounced flush function
     this.flushChanges = debounce(() => {
-      if (this.isDisposed || this.pendingChanges.size === 0) return;
+      void this.flush();
+    }, this.debounceMs);
 
-      const changes: FileChange[] = Array.from(this.pendingChanges.entries()).map(
-        ([path, type]) => ({
-          path,
-          type,
-        }),
-      );
+    this.initPromise = this.initWatcher(config);
+  }
 
-      this.pendingChanges.clear();
+  /** Emits the pending batch minus the paths the repository ignores. One flush runs at a time. */
+  private async flush(): Promise<void> {
+    if (this.isDisposed || this.isFlushing || this.pendingChanges.size === 0) return;
+    this.isFlushing = true;
+    const batch = this.pendingChanges;
+    this.pendingChanges = new Map();
 
+    const changes = await this.dropIgnoredChanges(batch);
+    this.isFlushing = false;
+    if (this.isDisposed) return;
+
+    if (changes.length > 0) {
       const event: GitWatchEvent = {
         type: 'batch',
         changes,
         timestamp: Date.now(),
         worktreePath: this.worktreePath,
       };
-
       this.emit('change', event);
-    }, this.debounceMs);
+    }
+    // Events that arrived during the ignore check
+    if (this.pendingChanges.size > 0) this.flushChanges();
+  }
 
-    this.initPromise = this.initWatcher(config);
+  private async dropIgnoredChanges(batch: Map<string, FileChangeType>): Promise<FileChange[]> {
+    const changes: FileChange[] = Array.from(batch.entries()).map(([path, type]) => ({
+      path,
+      type,
+    }));
+    const ignoreFilter = this.ignoreFilter;
+    if (!ignoreFilter) return changes;
+
+    // Git pointers and IDE config drive more than git status, so they pass even when ignored.
+    const alwaysPasses = (filePath: string) =>
+      isGitPointerRelatedPath(filePath) ||
+      findIdeConfigPattern(this.worktreeRoot, filePath) !== null;
+    const changesIgnoreRules = (filePath: string) =>
+      isGitIndexPath(filePath) || GITIGNORE_FILE_RE.test(filePath.replace(BACKSLASH_RE, '/'));
+
+    if (changes.some((change) => changesIgnoreRules(change.path))) ignoreFilter.reset();
+    // Only edits are dropped: an ignored file appearing or going still changes the file tree.
+    const candidates = new Set(
+      changes
+        .filter((change) => change.type === 'change' && !alwaysPasses(change.path))
+        .map((change) => change.path),
+    );
+    const kept = new Set(await ignoreFilter.keepUnignored([...candidates]));
+    return changes.filter((change) => !candidates.has(change.path) || kept.has(change.path));
   }
 
   private async initWatcher(config: GitWatcherConfig): Promise<void> {
     // Use @parcel/watcher - same as VS Code
     const watcher = await import('@parcel/watcher');
 
-    // Watch entire worktree (subscribe: dir, callback; options omitted for type compatibility)
-    const subscription = await watcher.subscribe(config.worktreePath, (err, events) => {
-      if (err) {
-        this.emit('error', err);
-        return;
-      }
+    const onEvents =
+      (accepts: (filePath: string) => boolean): SubscribeCallback =>
+      (err, events) => {
+        if (err) {
+          this.emit('error', err);
+          return;
+        }
 
-      // Filter out ignored paths at the application level (parcel-watcher has no ignore option).
-      const filteredEvents = events.filter((event) => shouldProcessWatcherPath(event.path));
+        // Cheap path filter first; the repository's own ignore rules apply at flush.
+        const filteredEvents = events.filter((event) => accepts(event.path));
 
-      if (filteredEvents.length === 0) return;
+        if (filteredEvents.length === 0) return;
 
-      // Map parcel-watcher events to our event types
-      for (const event of filteredEvents) {
-        const type: FileChangeType =
-          event.type === 'create' ? 'add' : event.type === 'update' ? 'change' : 'unlink';
-        this.pendingChanges.set(event.path, type);
-      }
+        // Map parcel-watcher events to our event types
+        for (const event of filteredEvents) {
+          const type: FileChangeType =
+            event.type === 'create' ? 'add' : event.type === 'update' ? 'change' : 'unlink';
+          // A file created and then written in one batch still counts as created
+          const isFollowUpWrite =
+            type === 'change' && this.pendingChanges.get(event.path) === 'add';
+          this.pendingChanges.set(event.path, isFollowUpWrite ? 'add' : type);
+        }
 
-      this.flushChanges();
-    });
+        this.flushChanges();
+      };
 
-    this.watcher = subscription;
+    this.watcher = await watcher.subscribe(config.worktreePath, onEvents(shouldProcessWatcherPath));
+
+    const gitDir = await resolveGitDir(config.worktreePath);
+    if (!gitDir) return;
+    this.worktreeRoot = gitDir.worktreeRoot;
+    this.ignoreFilter = createIgnoreFilter(gitDir.worktreeRoot);
+    if (!gitDir.outsideWorktree) return;
+    // Linked worktrees, submodules and separate git dirs keep HEAD, index and refs elsewhere
+    this.gitDirWatcher = await watcher.subscribe(
+      gitDir.path,
+      onEvents((filePath) => isGitDirPointerFile(gitDir.path, filePath)),
+      { ignore: GIT_DIR_IGNORES },
+    );
   }
 
   /**
@@ -158,6 +219,7 @@ class GitWatcher extends EventEmitter {
     await this.initPromise.catch(() => {});
 
     await this.watcher?.unsubscribe();
+    await this.gitDirWatcher?.unsubscribe();
     this.pendingChanges.clear();
     this.removeAllListeners();
   }

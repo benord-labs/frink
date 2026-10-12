@@ -51,6 +51,7 @@ const DEFAULT_BRANCH_DATA = {
 };
 
 let mockBranchData = DEFAULT_BRANCH_DATA;
+let mockGitStatus: { branch: string | null } | undefined;
 let mockWorktrees: Array<{
   path: string;
   branch: string | null;
@@ -170,7 +171,7 @@ vi.mock('@/lib/trpc', () => ({
   trpc: {
     useUtils: () => ({
       changes: {
-        getBranches: { invalidate: invalidateBranches },
+        getBranches: { invalidate: invalidateBranches, fetch: async () => mockBranchData },
         getStatus: { invalidate: invalidateStatus },
       },
     }),
@@ -184,6 +185,7 @@ vi.mock('@/lib/trpc', () => ({
           isLoading: false,
         }),
       },
+      getStatus: { useQuery: () => ({ data: mockGitStatus }) },
       getWorktrees: {
         useQuery: () => ({
           data: mockWorktrees,
@@ -252,6 +254,7 @@ afterEach(() => {
   toastError.mockClear();
   toastSuccess.mockClear();
   mockBranchData = DEFAULT_BRANCH_DATA;
+  mockGitStatus = undefined;
   mockWorktrees = [];
   mockWorktreesLoading = false;
   mockWorktreesError = false;
@@ -515,7 +518,7 @@ describe('ChatInputContextBar', () => {
       expect(toastInfo).toHaveBeenCalledWith('No git branch context is available in this chat.');
     });
 
-    it('shows info toast when delete picker shortcut has no deletable branches', () => {
+    it('shows info toast when delete picker shortcut has no deletable branches', async () => {
       mockBranchData = {
         ...DEFAULT_BRANCH_DATA,
         local: [{ branch: 'main', lastCommitDate: Date.now() }],
@@ -528,7 +531,9 @@ describe('ChatInputContextBar', () => {
         />,
       );
       window.dispatchEvent(new Event('branches:open-delete-picker'));
-      expect(toastInfo).toHaveBeenCalledWith('No deletable branches found.');
+      await vi.waitFor(() =>
+        expect(toastInfo).toHaveBeenCalledWith('No deletable branches found.'),
+      );
     });
 
     it('shows custom unmerged branch message when backend returns not fully merged', () => {
@@ -628,6 +633,29 @@ describe('ChatInputContextBar', () => {
       expect(screen.getByText('project')).toHaveClass('truncate');
     });
 
+    // A checkout made in a terminal reaches git status before the chat's recorded branch
+    it('treats the branch git status reports as current, over the recorded one', () => {
+      mockGitStatus = { branch: 'feature/local' };
+      renderBar(
+        <ChatInputContextBar
+          worktreePath="/tmp/project"
+          currentBranch="main"
+          workspaceFolderName="project"
+        />,
+      );
+
+      const branch = {
+        type: 'local' as const,
+        protected: false,
+        isDefault: false,
+        checkedOutIn: null,
+      };
+      expect(
+        lastBranchSelectorProps?.isBranchDeletable?.({ ...branch, name: 'feature/local' }),
+      ).toBe(false);
+      expect(lastBranchSelectorProps?.isBranchDeletable?.({ ...branch, name: 'main' })).toBe(true);
+    });
+
     it('treats only eligible local branches as deletable', () => {
       renderBar(
         <ChatInputContextBar
@@ -724,6 +752,26 @@ describe('ChatInputContextBar', () => {
         />,
       );
     }
+
+    it('labels the read-only chip with the branch git status reports', () => {
+      mockGitStatus = { branch: 'feature/live' };
+      renderLocked();
+
+      expect(
+        screen.getByLabelText(
+          'Branch: feature/live — Locked while this chat has a run in progress.',
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it('keeps the recorded branch on the chip while HEAD is detached', () => {
+      mockGitStatus = { branch: null };
+      renderLocked();
+
+      expect(
+        screen.getByLabelText('Branch: main — Locked while this chat has a run in progress.'),
+      ).toBeInTheDocument();
+    });
 
     it('degrades the branch picker to a read-only chip carrying the reason', () => {
       renderLocked();

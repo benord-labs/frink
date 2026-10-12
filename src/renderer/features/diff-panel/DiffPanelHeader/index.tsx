@@ -134,7 +134,7 @@ export function DiffPanelHeader({
     refetchInterval: 30_000,
   });
   const [layout, setLayout] = useAtom(diffPanelLayoutAtom);
-  const { data: branches } = trpc.changes.getBranches.useQuery(
+  const { data: gitStatus } = trpc.changes.getStatus.useQuery(
     { worktreePath },
     { staleTime: 30_000 },
   );
@@ -146,7 +146,7 @@ export function DiffPanelHeader({
       </IconButton>
       <div className="flex min-w-0 flex-1 items-center gap-1.5 text-xs text-muted-foreground">
         <GitBranch className="size-3.5 shrink-0" />
-        <span className="truncate text-foreground">{branches?.current || 'No branch'}</span>
+        <span className="truncate text-foreground">{gitStatus?.branch || 'No branch'}</span>
         {pr && isAllowedShellOpenExternalUrl(pr.url) && (
           <a
             href={pr.url}

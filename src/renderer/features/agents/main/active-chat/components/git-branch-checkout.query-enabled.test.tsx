@@ -1,17 +1,24 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
-import { render } from '@testing-library/react';
+import { act, render } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-const { getBranchesUseQuery } = vi.hoisted(() => ({
-  getBranchesUseQuery: vi.fn(() => ({ data: undefined, isLoading: false })),
+const { getBranchesUseQuery, fetchBranches } = vi.hoisted(() => ({
+  getBranchesUseQuery: vi.fn(
+    (_input: { worktreePath: string }, _options: { enabled: boolean }) => ({
+      data: undefined,
+      isLoading: false,
+    }),
+  ),
+  // transformBranchData is stubbed below to pass this list through as-is
+  fetchBranches: vi.fn(async () => [{ name: 'old', type: 'local' }]),
 }));
 
 vi.mock('@/lib/trpc', () => ({
   trpc: {
     useUtils: () => ({
       changes: {
-        getBranches: { invalidate: vi.fn() },
+        getBranches: { invalidate: vi.fn(), fetch: fetchBranches },
         getStatus: { invalidate: vi.fn() },
       },
     }),
@@ -27,8 +34,9 @@ vi.mock('@/lib/trpc', () => ({
   },
 }));
 
+const { toastInfo } = vi.hoisted(() => ({ toastInfo: vi.fn() }));
 vi.mock('sonner', () => ({
-  toast: { info: vi.fn(), error: vi.fn() },
+  toast: { info: toastInfo, error: vi.fn() },
 }));
 
 vi.mock('../../../../../lib/branch-normalization', () => ({
@@ -61,8 +69,10 @@ vi.mock('@/components/ui/alert-dialog', () => {
 
 import { GitBranchCheckout } from './git-branch-checkout';
 
+const lastEnabled = () => getBranchesUseQuery.mock.lastCall?.[1].enabled;
+
 describe('GitBranchCheckout getBranches query enabled', () => {
-  it('tracks git context: disabled without non-empty currentBranch, enabled once branch is set', () => {
+  it('stays off without git context, and loads only once the picker opens', () => {
     getBranchesUseQuery.mockClear();
 
     const { rerender } = render(
@@ -70,45 +80,54 @@ describe('GitBranchCheckout getBranches query enabled', () => {
         {() => null}
       </GitBranchCheckout>,
     );
-
-    expect(getBranchesUseQuery).toHaveBeenLastCalledWith(
-      { worktreePath: '/repo' },
-      expect.objectContaining({ enabled: false }),
-    );
-
-    rerender(
-      <GitBranchCheckout worktreePath="/repo" currentBranch="" isActive>
-        {() => null}
-      </GitBranchCheckout>,
-    );
-    expect(getBranchesUseQuery).toHaveBeenLastCalledWith(
-      { worktreePath: '/repo' },
-      expect.objectContaining({ enabled: false }),
-    );
+    expect(lastEnabled()).toBe(false);
 
     rerender(
       <GitBranchCheckout worktreePath="/repo" currentBranch="main" isActive>
         {() => null}
       </GitBranchCheckout>,
     );
-    expect(getBranchesUseQuery).toHaveBeenLastCalledWith(
-      { worktreePath: '/repo' },
-      expect.objectContaining({ enabled: true }),
-    );
+    // Listing every branch and worktree is costly; nothing on screen needs it until the picker opens
+    expect(lastEnabled()).toBe(false);
+
+    act(() => {
+      window.dispatchEvent(new Event('branches:open-picker'));
+    });
+    expect(lastEnabled()).toBe(true);
   });
 
-  it('stays enabled while locked, so unlocking costs no loading tick and delete keeps its list', () => {
-    getBranchesUseQuery.mockClear();
+  it('reads the list before opening the delete picker from the keyboard, even while locked', async () => {
+    fetchBranches.mockClear();
+    fetchBranches.mockResolvedValueOnce([]);
+    toastInfo.mockClear();
 
     render(
       <GitBranchCheckout worktreePath="/repo" currentBranch="main" isActive locked>
         {() => null}
       </GitBranchCheckout>,
     );
+    await act(async () => {
+      window.dispatchEvent(new Event('branches:open-delete-picker'));
+    });
 
-    expect(getBranchesUseQuery).toHaveBeenLastCalledWith(
-      { worktreePath: '/repo' },
-      expect.objectContaining({ enabled: true }),
+    expect(fetchBranches).toHaveBeenCalledWith({ worktreePath: '/repo' });
+    expect(toastInfo).toHaveBeenCalledWith('No deletable branches found.');
+  });
+
+  it('opens the delete picker once the list shows a deletable branch', async () => {
+    getBranchesUseQuery.mockClear();
+    fetchBranches.mockClear();
+
+    render(
+      <GitBranchCheckout worktreePath="/repo" currentBranch="main" isActive>
+        {() => null}
+      </GitBranchCheckout>,
     );
+    await act(async () => {
+      window.dispatchEvent(new Event('branches:open-delete-picker'));
+    });
+
+    expect(fetchBranches).toHaveBeenCalledOnce();
+    expect(lastEnabled()).toBe(true);
   });
 });

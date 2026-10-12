@@ -17,7 +17,8 @@ const GIT_REMOTE_REF_RE = /\/\.git\/refs\/remotes\/.+$/;
 /** Matches packed refs updates used by some git operations. */
 const GIT_PACKED_REFS_RE = /\/\.git\/packed-refs$/;
 /** Matches git operation heads used by merge/cherry-pick/rebase flows. */
-const GIT_OPERATION_HEAD_RE = /\/\.git\/(?:MERGE_HEAD|CHERRY_PICK_HEAD|REBASE_HEAD)$/;
+const GIT_OPERATION_HEAD_RE =
+  /\/\.git(?:\/worktrees\/[^/]+)?\/(?:MERGE_HEAD|CHERRY_PICK_HEAD|REBASE_HEAD)$/;
 
 function matchesGitPath(filePath: string, matcher: RegExp): boolean {
   return matcher.test(normalizePathSlashes(filePath));
@@ -28,7 +29,7 @@ function isGitHeadPath(filePath: string): boolean {
   return matchesGitPath(filePath, GIT_WORKTREE_HEAD_RE);
 }
 
-function isGitIndexPath(filePath: string): boolean {
+export function isGitIndexPath(filePath: string): boolean {
   return matchesGitPath(filePath, GIT_INDEX_RE);
 }
 

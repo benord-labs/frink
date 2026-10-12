@@ -17,7 +17,10 @@ function toChangedFile(path: string, gitIndex: string, gitWorking: string): Chan
   };
 }
 
-export function parseGitStatus(status: StatusResult): GitChangesStatus {
+/** Status plus the checked-out branch from `git status -b`; null when HEAD is detached. */
+export type GitStatusWithBranch = GitChangesStatus & { branch: string | null };
+
+export function parseGitStatus(status: StatusResult): GitStatusWithBranch {
   const staged: ChangedFile[] = [];
   const unstaged: ChangedFile[] = [];
   const untracked: ChangedFile[] = [];
@@ -42,6 +45,8 @@ export function parseGitStatus(status: StatusResult): GitChangesStatus {
   }
 
   return {
+    // simple-git reports a detached HEAD as the branch name `HEAD`
+    branch: status.detached ? null : status.current,
     staged,
     unstaged,
     untracked,
