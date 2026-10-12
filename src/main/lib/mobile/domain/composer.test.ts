@@ -37,7 +37,11 @@ vi.mock('../../claude', () => ({
   claudeVersionSupportsXhigh: () => true,
 }));
 
-import { CODEX_DEFAULT_MODEL_ID } from '../../../../shared/lib/codex-cli-models';
+import {
+  type CodexAccountTiers,
+  CODEX_DEFAULT_MODEL_ID,
+} from '../../../../shared/lib/codex-cli-models';
+import { codexPlanUsage } from '../../agent-runner/codex/usage';
 import {
   readMobileComposer,
   setMobileAccount,
@@ -61,6 +65,18 @@ function withChat(projectId: string | null) {
   });
 }
 
+/** The signed-in Codex account's speed tiers, as the usage probe would report them. */
+function codexTiers(speedTiers: CodexAccountTiers): void {
+  vi.spyOn(codexPlanUsage, 'get').mockResolvedValue({
+    windows: {},
+    subscriptionType: 'plus',
+    email: null,
+    available: true,
+    updatedAt: 0,
+    speedTiers,
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   withChat('project');
@@ -75,6 +91,7 @@ beforeEach(() => {
     thinkingEnabled: true,
   });
   fixture.update.mockReturnValue({});
+  codexTiers({ 'gpt-6-astra': ['fast', 'ultrafast'] });
 });
 
 describe('phone composer', () => {
@@ -118,6 +135,26 @@ describe('phone composer', () => {
     expect(composer.codexSpeedCredits).toEqual({ fast: 2.5, ultrafast: 8 });
     expect(composer.models.every((m) => m.id !== 'opus-4.8')).toBe(true);
     expect(fixture.update).not.toHaveBeenCalled();
+  });
+
+  it("offers only the account's paid speeds, keeping the one the chat is on", async () => {
+    fixture.resolved.mockResolvedValue({ ...claudeAccount, type: 'codex' });
+    codexTiers({ 'gpt-6-astra': [] });
+
+    const composer = await readMobileComposer({ type: 'composer', ...identity });
+
+    // The stored chat is on Ultrafast, so it stays switchable-off; Fast is not offered.
+    expect(composer.codexSpeedCredits).toEqual({ fast: null, ultrafast: 8 });
+  });
+
+  it('offers no paid speed when the account tiers could not be read', async () => {
+    fixture.resolved.mockResolvedValue({ ...claudeAccount, type: 'codex' });
+    fixture.read.mockReturnValue({ modelId: CODEX_DEFAULT_MODEL_ID, codexSpeed: 'standard' });
+    vi.spyOn(codexPlanUsage, 'get').mockResolvedValue(null);
+
+    const composer = await readMobileComposer({ type: 'composer', ...identity });
+
+    expect(composer.codexSpeedCredits).toEqual({ fast: null, ultrafast: null });
   });
 
   it('writes settings through main and Thinking app-wide', async () => {

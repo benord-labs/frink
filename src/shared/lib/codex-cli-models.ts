@@ -89,6 +89,9 @@ const CODEX_TIER_CREDITS: Record<Exclude<CodexSpeed, 'standard'>, Record<string,
 
 const WIRE_TIER = { standard: null, fast: 'priority', ultrafast: 'ultrafast' } as const;
 
+/** Paid speeds the signed-in account can use, keyed by model slug, as Codex's `model/list` reports. */
+export type CodexAccountTiers = Record<string, Exclude<CodexSpeed, 'standard'>[]>;
+
 const CODEX_CONTEXT_WINDOW = 'Large context (varies by account tier)';
 
 /** Full list for the model picker; `cliValue` is the slug, `reasoningEffort` the separate field. */
@@ -131,13 +134,16 @@ export function codexFastTierCredits(pickerId: string | undefined): number | nul
   return codexTierCredits(pickerId, 'fast');
 }
 
-/** Credit multiplier of `speed` for a picker id, or `null` when that model does not offer it. */
+/** Credit multiplier of `speed` for a picker id, or `null` when that model does not offer it —
+ *  or, given `accountTiers`, when the signed-in account cannot use it on that model. */
 export function codexTierCredits(
   pickerId: string | undefined,
   speed: Exclude<CodexSpeed, 'standard'>,
+  accountTiers?: CodexAccountTiers,
 ): number | null {
   const slug = pickerId ? CODEX_MODEL_BY_ID.get(pickerId)?.cliValue : undefined;
-  return (slug ? CODEX_TIER_CREDITS[speed][slug] : undefined) ?? null;
+  if (!slug || (accountTiers && !accountTiers[slug]?.includes(speed))) return null;
+  return CODEX_TIER_CREDITS[speed][slug] ?? null;
 }
 
 /**

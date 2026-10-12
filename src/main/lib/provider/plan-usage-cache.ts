@@ -9,35 +9,50 @@ export const planUsageClock = { now: (): number => Date.now() };
 
 /** The latest read for one login. A new login gets a new entry, so an older login's probe
  * finishing late writes only to its own, discarded entry. */
-type Entry = {
+type Entry<S> = {
   login: string | null;
   at: number;
-  snapshot: RateLimitSnapshot | null;
+  snapshot: S | null;
   pull: Promise<void>;
   inFlight: boolean;
 };
 
-type PlanUsageProbe<C> = (credential: C, login: string | null) => Promise<RateLimitSnapshot>;
+type PlanUsageProbe<C, S> = (credential: C, login: string | null) => Promise<S>;
 
-/** Plan usage read by `probe` at most once per TTL (failures included), concurrent callers sharing
- * one read. A stale read returns at once; a `login` change waits for its own read. */
-export function createPlanUsageCache<C>(probe: PlanUsageProbe<C>, sentrySurface: string) {
-  let current: Entry | null = null;
+/** Re-read after `afterMs` instead of the TTL when the probe fails or `incomplete` says so. */
+type RetrySoon<S> = { afterMs: number; incomplete: (snapshot: S) => boolean };
 
-  function startPull(entry: Entry, credential: C): void {
+/** Plan usage read by `probe` at most once per TTL (sooner per `retrySoon`), callers sharing one
+ * read. A stale read returns at once; a `login` change waits for its own read. */
+export function createPlanUsageCache<C, S extends RateLimitSnapshot = RateLimitSnapshot>(
+  probe: PlanUsageProbe<C, S>,
+  sentrySurface: string,
+  retrySoon?: RetrySoon<S>,
+) {
+  let current: Entry<S> | null = null;
+
+  function scheduleRetrySoon(entry: Entry<S>): void {
+    if (retrySoon) entry.at = planUsageClock.now() - PLAN_USAGE_TTL_MS + retrySoon.afterMs;
+  }
+
+  function startPull(entry: Entry<S>, credential: C): void {
     entry.inFlight = true;
     entry.pull = probe(credential, entry.login)
       .then((snapshot) => {
         entry.snapshot = snapshot;
+        if (retrySoon?.incomplete(snapshot)) scheduleRetrySoon(entry);
       })
-      .catch((err) => captureMainException(err, { surface: sentrySurface }))
+      .catch((err) => {
+        captureMainException(err, { surface: sentrySurface });
+        scheduleRetrySoon(entry);
+      })
       .finally(() => {
         entry.inFlight = false;
       });
   }
 
   return {
-    async get(credential: C, login: string | null = null): Promise<RateLimitSnapshot | null> {
+    async get(credential: C, login: string | null = null): Promise<S | null> {
       const now = planUsageClock.now();
       if (current === null || current.login !== login) {
         current = { login, at: now, snapshot: null, pull: Promise.resolve(), inFlight: false };
@@ -50,7 +65,7 @@ export function createPlanUsageCache<C>(probe: PlanUsageProbe<C>, sentrySurface:
       if (!entry.snapshot) await entry.pull;
       return entry.snapshot;
     },
-    /** Test-only: forget the cached read between cases. */
+    /** Forget the cached read, so the next `get` probes again (an account change, or between tests). */
     reset(): void {
       current = null;
     },

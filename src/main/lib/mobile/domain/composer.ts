@@ -1,7 +1,7 @@
 /** The phone's composer controls, reading and writing the values main owns through the desktop's
  *  own paths, so each window follows the phone live. */
 import { getAutoModeUnavailableReason } from '../../../../shared/lib/auto-mode-availability';
-import { codexTierCredits } from '../../../../shared/lib/codex-cli-models';
+import { type CodexAccountTiers, codexTierCredits } from '../../../../shared/lib/codex-cli-models';
 import {
   CLAUDE_CODE_MODELS,
   CODEX_MODELS,
@@ -11,12 +11,14 @@ import {
   isCodexModelVisible,
   normalizeModelIdForExecutionAccount,
 } from '../../../../shared/lib/models';
+import type { CodexSpeed } from '../../../../shared/types/execution';
 import type {
   MobileChatMode,
   MobileComposer,
   MobilePickerModel,
   MobileRequest,
 } from '../../../../shared/types/remote/mobile';
+import { codexPlanUsage } from '../../agent-runner/codex/usage';
 import {
   broadcastComposerChange,
   readComposerSettings,
@@ -64,6 +66,17 @@ function ultraSupported(): boolean {
   }
 }
 
+/** A paid speed's multiplier on the phone: offered when the account can use it, or kept while it is
+ *  on so it can be turned off. Unknown account tiers offer nothing. */
+function phoneSpeedCredits(
+  modelId: string,
+  speed: Exclude<CodexSpeed, 'standard'>,
+  current: CodexSpeed | undefined,
+  accountTiers: CodexAccountTiers,
+): number | null {
+  return codexTierCredits(modelId, speed, current === speed ? undefined : accountTiers);
+}
+
 export async function readMobileComposer(input: ComposerRequest): Promise<MobileComposer> {
   const { chat, subChat } = await requireChat(input.chatId, input.subChatId);
   const [account, accounts] = await Promise.all([
@@ -76,6 +89,7 @@ export async function readMobileComposer(input: ComposerRequest): Promise<Mobile
   // Shown normalized (as the desktop picker does) but never stored normalized: flipping the
   // account back must not lose the other provider's choice.
   const modelId = normalizeModelIdForExecutionAccount(provider === 'codex', stored.modelId);
+  const tiers = provider === 'codex' ? ((await codexPlanUsage.get())?.speedTiers ?? {}) : null;
   return {
     mode: (subChat.mode as MobileChatMode) ?? 'agent',
     debugAvailable: Boolean(chat.projectId),
@@ -106,8 +120,8 @@ export async function readMobileComposer(input: ComposerRequest): Promise<Mobile
       selectedModelId: modelId,
     }),
     codexSpeedCredits: {
-      fast: provider === 'codex' ? codexTierCredits(modelId, 'fast') : null,
-      ultrafast: provider === 'codex' ? codexTierCredits(modelId, 'ultrafast') : null,
+      fast: tiers ? phoneSpeedCredits(modelId, 'fast', stored.codexSpeed, tiers) : null,
+      ultrafast: tiers ? phoneSpeedCredits(modelId, 'ultrafast', stored.codexSpeed, tiers) : null,
     },
     xhighSupported: xhighSupported(),
     ultraSupported: ultraSupported(),

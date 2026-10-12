@@ -1,9 +1,10 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { createStore, Provider } from 'jotai';
 import type { ComponentProps } from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { type CodexAccountTiers, CODEX_MODEL_SLUGS } from '../../../../shared/lib/codex-cli-models';
 import {
   CLAUDE_PICKER_MODELS,
   CODEX_MODELS,
@@ -15,14 +16,23 @@ import { codexSpeedAtomFamily } from '../../../lib/atoms/codex-speed';
 import { type ModelItem, ModelSelector } from './model-selector';
 
 const capabilities = vi.hoisted(() => ({ supportsXhigh: true, supportsUltra: true }));
+/** The signed-in Codex account's paid speeds per slug; defaults to every tier the catalog has. */
+const BOTH_SPEEDS: CodexAccountTiers[string] = ['fast', 'ultrafast'];
+const ALL_TIERS: CodexAccountTiers = Object.fromEntries(
+  CODEX_MODEL_SLUGS.map(({ slug }) => [slug, BOTH_SPEEDS]),
+);
+/** What the stubbed speed-tier query returns; undefined while loading. */
+type AccountTiersStub = { tiers: CodexAccountTiers | null | undefined };
+const account = vi.hoisted((): AccountTiersStub => ({ tiers: undefined }));
 
 // Stub the trpc client (the real module creates a client at load needing the electronTRPC preload
-// global, absent in tests). Only the bundled-CLI capability query is consumed here.
+// global, absent in tests). Only the bundled-CLI capability and Codex speed-tier queries are consumed.
 vi.mock('../../../lib/trpc', () => ({
   trpc: {
     claudeSettings: {
       getBundledClaudeCapabilities: { useQuery: () => ({ data: capabilities }) },
     },
+    usage: { getCodexSpeedTiers: { useQuery: () => ({ data: account.tiers }) } },
   },
 }));
 
@@ -59,6 +69,10 @@ const focusedSlider = async () => {
   await waitFor(() => expect(slider()).toHaveFocus());
   return slider();
 };
+
+beforeEach(() => {
+  account.tiers = ALL_TIERS;
+});
 
 afterEach(() => {
   cleanup();
@@ -359,6 +373,35 @@ describe('provider controls', () => {
 
     renderPicker(codex('codex-gpt-6.1-sol-medium', 'chat-u'));
     expect(screen.queryByRole('switch', { name: /Ultrafast/ })).toBeNull();
+  });
+
+  it('offers a free account no paid speed, and a Plus account Fast only', () => {
+    account.tiers = { 'gpt-5.5': [] };
+    renderPicker(codex('codex-gpt-6-astra-medium', 'chat-1'));
+    expect(screen.queryByRole('switch', { name: /Fast mode/ })).toBeNull();
+    cleanup();
+
+    account.tiers = { 'gpt-6-astra': ['fast'] };
+    renderPicker(codex('codex-gpt-6-astra-medium', 'chat-1'));
+    expect(screen.getByRole('switch', { name: /^Fast mode/ })).toBeInTheDocument();
+    expect(screen.queryByRole('switch', { name: /Ultrafast/ })).toBeNull();
+  });
+
+  it('offers no paid speed until the account tiers are known', () => {
+    account.tiers = undefined;
+    renderPicker(codex('codex-gpt-6-astra-medium', 'chat-1'));
+    expect(screen.queryByRole('switch', { name: /Fast mode/ })).toBeNull();
+  });
+
+  it('keeps a speed that is already on, so an account without it can still turn it off', () => {
+    account.tiers = { 'gpt-6-astra': [] };
+    const { store } = renderPicker(codex('codex-gpt-6-astra-medium', 'chat-f'));
+    act(() => store.set(codexSpeedAtomFamily('chat-f'), 'fast'));
+    const fast = screen.getByRole('switch', { name: /^Fast mode/ });
+    expect(fast).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(fast);
+    expect(store.get(codexSpeedAtomFamily('chat-f'))).toBe('standard');
+    expect(screen.queryByRole('switch', { name: /Fast mode/ })).toBeNull();
   });
 
   it('omits Fast for a model with no priority tier — never a live-but-inert control', () => {

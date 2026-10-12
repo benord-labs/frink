@@ -2,7 +2,7 @@ import claudeLogo from '@iconify-icons/simple-icons/claude';
 import openaiLogo from '@iconify-icons/ri/openai-fill';
 import { iconifyComponent } from '@/lib/utils/iconify-component';
 import { Button } from '@benord-labs/frink-primitives';
-import { codexTierCredits } from '../../../../shared/lib/codex-cli-models';
+import { type CodexAccountTiers, codexTierCredits } from '../../../../shared/lib/codex-cli-models';
 import {
   formatModelPickerLabel,
   formatModelPickerLabelParts,
@@ -76,18 +76,25 @@ type ModelSelectorProps = {
 };
 
 /** Codex speed controls, or none for a model without a paid tier (incl. Claude) or with nowhere
- *  to keep the choice — never a live-but-inert control. Ultrafast is only offered beside Fast. */
+ *  to keep the choice — never a live-but-inert control. Ultrafast is only offered beside Fast.
+ *  `offered` is what the account can use; unknown tiers (loading, failed read) offer nothing. */
 function speedScope(
   modelId: string | undefined,
   chatId: string | undefined,
   newChatSpeedRef: { current: CodexSpeed } | undefined,
+  accountTiers: CodexAccountTiers | null | undefined,
 ) {
   const credits = {
     fast: codexTierCredits(modelId, 'fast'),
     ultrafast: codexTierCredits(modelId, 'ultrafast'),
   };
   if (credits.fast === null || (!chatId && !newChatSpeedRef)) return undefined;
-  return { chatId, newChatSpeedRef, credits };
+  const tiers = accountTiers ?? {};
+  const offered = {
+    fast: codexTierCredits(modelId, 'fast', tiers) !== null,
+    ultrafast: codexTierCredits(modelId, 'ultrafast', tiers) !== null,
+  };
+  return { chatId, newChatSpeedRef, credits, offered };
 }
 
 /** Flow form: middle label must shrink so long model names truncate (min-w-0 + flex-1). */
@@ -214,6 +221,10 @@ export function ModelSelector({
       staleTime: Number.POSITIVE_INFINITY,
     },
   );
+  const { data: codexTiers } = trpc.usage.getCodexSpeedTiers.useQuery(undefined, {
+    enabled: modelVariant === 'codex' && !isFlow,
+    staleTime: 60_000,
+  });
   const xhighSupported = claudeCaps?.supportsXhigh ?? true;
   const ultraSupported = claudeCaps?.supportsUltra ?? true;
   // Ultra is a mode: its word takes the animated chroma used for power keywords.
@@ -281,7 +292,9 @@ export function ModelSelector({
           variant={modelVariant}
           hideXhigh={modelVariant === 'claude' && !xhighSupported}
           hideUltra={modelVariant === 'claude' && !ultraSupported}
-          speed={isFlow ? undefined : speedScope(selectedModel?.id, chatId, newChatSpeedRef)}
+          speed={
+            isFlow ? undefined : speedScope(selectedModel?.id, chatId, newChatSpeedRef, codexTiers)
+          }
           inherit={
             isFlow
               ? {
