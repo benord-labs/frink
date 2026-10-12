@@ -704,6 +704,7 @@ describe('pre-warmed sessions: TTL, cap, teardown fence, claim', () => {
   });
 
   it('a teardown of its chat while a pre-warm spawns retires the CLI as it lands', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] }); // frozen: a loaded run's clock tick must not unfence it
     let land = () => {};
     let landed: ReturnType<typeof prewarmed> | undefined;
     const done = runPrewarm('pw-gone', async () => {
@@ -719,7 +720,6 @@ describe('pre-warmed sessions: TTL, cap, teardown fence, claim', () => {
     expect(landed?.query.close).toHaveBeenCalledOnce();
     expect(getSession('pw-gone')).toBeUndefined();
     expect(retires()).toEqual(['[Claude Session] retire sub=pw-gone reason=delete']);
-    vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(Date.now() + 1); // a pre-warm reading its inputs after the teardown is kept
     expect(prewarmed('pw-gone').retained?.prewarm).toBe(true);
   });
