@@ -280,7 +280,7 @@ describe('Linux debug-info strip (sc-4794)', () => {
       vi.stubEnv('CARGO_PROFILE_RELEASE_STRIP', 'false');
       try {
         for (const [key, target] of Object.entries(TARGETS)) {
-          const binary = buildCodexTarget({
+          const { staged } = buildCodexTarget({
             key,
             target,
             manifest,
@@ -290,7 +290,7 @@ describe('Linux debug-info strip (sc-4794)', () => {
             rustc: 'rustc',
             outputRoot: path.join(root, 'out'),
           });
-          expect(fs.readFileSync(binary, 'utf8')).toBe('built\n');
+          expect(fs.readFileSync(staged, 'utf8')).toBe('built\n');
         }
         expect(fs.readFileSync(seen, 'utf8').trim().split('\n')).toEqual([
           'aarch64-apple-darwin=false',

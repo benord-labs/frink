@@ -14,8 +14,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { findMissingLiterals, REQUIRED_CLAUDE_BINARY_ENV } from './binary-capabilities.mjs';
 import { downloadToFile, fetchUrl, sha256File } from './http-download.mjs';
+import { installStaged, stagingPath, sweepStaging, writeFileAtomic } from './install-file.mjs';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const SCRIPT_PATH = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(SCRIPT_PATH);
 const ROOT_DIR = path.join(__dirname, '..', '..');
 const BIN_DIR = path.join(ROOT_DIR, 'resources', 'bin');
 
@@ -79,20 +81,30 @@ async function getLatestVersion() {
 }
 
 /**
- * Download binary for a specific platform
+ * Download binary for a specific platform.
+ *
+ * The live binary is never written in place: macOS caches a signed Mach-O's code signature per
+ * vnode, so a truncate-and-rewrite gets every later exec SIGKILLed. The new file is staged in
+ * `binDir` (outside the packaged per-platform dir), verified there, then renamed over the target.
  */
-async function downloadPlatform(version, platformKey, manifest) {
+export async function downloadPlatform(
+  version,
+  platformKey,
+  manifest,
+  { binDir = BIN_DIR, download = downloadFile } = {},
+) {
   const platform = PLATFORMS[platformKey];
   if (!platform) {
     console.error(`Unknown platform: ${platformKey}`);
     return false;
   }
 
-  const targetDir = path.join(BIN_DIR, platformKey);
+  const targetDir = path.join(binDir, platformKey);
   const targetPath = path.join(targetDir, platform.binary);
 
   // Create directory
   fs.mkdirSync(targetDir, { recursive: true });
+  sweepStaging(binDir, platform.binary);
 
   // Get expected hash from manifest
   const platformManifest = manifest.platforms[platform.dir];
@@ -108,42 +120,48 @@ async function downloadPlatform(version, platformKey, manifest) {
   console.log(`  URL: ${downloadUrl}`);
   console.log(`  Size: ${(platformManifest.size / 1024 / 1024).toFixed(1)} MB`);
 
-  // Check if already downloaded with correct hash
-  if (fs.existsSync(targetPath)) {
-    const existingHash = calculateSha256(targetPath);
-    if (existingHash === expectedHash) {
-      // Capability-check the CACHED binary too: a hash match only proves it is the file the
-      // manifest names, not that it supports the env var frink's auth model depends on.
-      if (!rejectIfMissingCapability(targetPath)) return false;
-      console.log(`  Already downloaded and verified`);
-      return true;
+  const staged = stagingPath(binDir, platform.binary);
+  try {
+    // Check if already downloaded with correct hash
+    if (fs.existsSync(targetPath)) {
+      const existingHash = calculateSha256(targetPath);
+      if (existingHash === expectedHash) {
+        // Capability-check the CACHED binary too: a hash match only proves it is the file the
+        // manifest names, not that it supports the env var frink's auth model depends on.
+        if (!rejectIfMissingCapability(targetPath)) return false;
+        // Re-link at a fresh inode: a binary an older version of this script rewrote in place
+        // has the right bytes but is still SIGKILLed, and this heals it. Skipped on Windows, which
+        // has no such cache and refuses to replace an executable that is running.
+        if (process.platform !== 'win32') {
+          fs.copyFileSync(targetPath, staged, fs.constants.COPYFILE_FICLONE);
+          installStaged(staged, targetPath, { mode: 0o755 });
+        }
+        console.log(`  Already downloaded and verified`);
+        return true;
+      }
+      console.log(`  Existing file has wrong hash, re-downloading...`);
     }
-    console.log(`  Existing file has wrong hash, re-downloading...`);
+
+    await download(downloadUrl, staged);
+
+    // Verify hash
+    const actualHash = calculateSha256(staged);
+    if (actualHash !== expectedHash) {
+      console.error(`  Hash mismatch!`);
+      console.error(`    Expected: ${expectedHash}`);
+      console.error(`    Actual:   ${actualHash}`);
+      return false;
+    }
+    console.log(`  Verified SHA256: ${actualHash.substring(0, 16)}...`);
+
+    if (!rejectIfMissingCapability(staged)) return false;
+
+    installStaged(staged, targetPath, { mode: 0o755 });
+    console.log(`  Saved to: ${targetPath}`);
+    return true;
+  } finally {
+    fs.rmSync(staged, { force: true });
   }
-
-  // Download
-  await downloadFile(downloadUrl, targetPath);
-
-  // Verify hash
-  const actualHash = calculateSha256(targetPath);
-  if (actualHash !== expectedHash) {
-    console.error(`  Hash mismatch!`);
-    console.error(`    Expected: ${expectedHash}`);
-    console.error(`    Actual:   ${actualHash}`);
-    fs.unlinkSync(targetPath);
-    return false;
-  }
-  console.log(`  Verified SHA256: ${actualHash.substring(0, 16)}...`);
-
-  if (!rejectIfMissingCapability(targetPath)) return false;
-
-  // Make executable (Unix)
-  if (process.platform !== 'win32') {
-    fs.chmodSync(targetPath, 0o755);
-  }
-
-  console.log(`  Saved to: ${targetPath}`);
-  return true;
 }
 
 /**
@@ -224,9 +242,6 @@ async function main() {
   // Create bin directory
   fs.mkdirSync(BIN_DIR, { recursive: true });
 
-  // Write version file
-  fs.writeFileSync(path.join(BIN_DIR, 'VERSION'), `${version}\n${new Date().toISOString()}\n`);
-
   // Download each platform
   let success = true;
   for (const platform of platformsToDownload) {
@@ -235,6 +250,9 @@ async function main() {
   }
 
   if (success) {
+    // Written last, and only when every binary landed: the app reads VERSION at runtime to gate
+    // CLI flags, so it must never describe a binary that is not there.
+    writeFileAtomic(path.join(BIN_DIR, 'VERSION'), `${version}\n${new Date().toISOString()}\n`);
     console.log('\n✓ All downloads completed successfully!');
   } else {
     console.error('\n✗ Some downloads failed');
@@ -242,7 +260,9 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error('Fatal error:', error);
-  process.exit(1);
-});
+if (process.argv[1] && path.resolve(process.argv[1]) === SCRIPT_PATH) {
+  main().catch((error) => {
+    console.error('Fatal error:', error);
+    process.exit(1);
+  });
+}
