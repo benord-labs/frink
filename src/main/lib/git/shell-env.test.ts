@@ -22,6 +22,7 @@ afterEach(() => {
   vi.clearAllMocks();
   vi.resetModules();
   vi.unstubAllEnvs();
+  vi.useRealTimers();
 });
 
 /** Import shell-env with the login shell answering `PATH` (null: the shell is unavailable). */
@@ -43,6 +44,20 @@ async function importWithLoginShell(path: string | null) {
     }),
   );
   return import('./shell-env');
+}
+
+/** Import shell-env with a login shell whose profile PATH the test edits between spawns. */
+async function importWithEditableProfile(initialPath: string) {
+  vi.resetModules();
+  vi.stubEnv('PATH', '/usr/bin:/bin');
+  const loginShell = await import('../platform/login-shell-env');
+  const profile = { PATH: initialPath };
+  const spawnShell = vi.fn(async () => ({ ok: true as const, env: { PATH: profile.PATH } }));
+  loginShell.setLoginShellEnvResolver(
+    new loginShell.LoginShellEnvResolver({ spawnShell, extendPath: (p) => p ?? '' }),
+  );
+  await loginShell.resolveLoginShellEnv();
+  return { ...(await import('./shell-env')), profile, spawnShell, loginShell };
 }
 
 describe('git shell-env consolidation (SC-84)', () => {
@@ -111,5 +126,44 @@ describe('execWithShellEnv', () => {
 
     await expect(execWithShellEnv('gh', ['--version'])).rejects.toBe(enoent);
     expect(execFileMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('finds a tool installed after the shell env was read, without a restart (sc-4772)', async () => {
+    withPlatform('darwin');
+    vi.useFakeTimers();
+    const { execWithShellEnv, profile, loginShell } = await importWithEditableProfile('/old/bin');
+    // `brew install gh` into a new directory while Frink runs.
+    profile.PATH = '/new/bin:/old/bin';
+    vi.advanceTimersByTime(loginShell.FORCED_REFRESH_MIN_INTERVAL_MS);
+    execFileMock
+      .mockImplementationOnce((...[, , , cb]: ExecArgs) => cb(enoent))
+      .mockImplementationOnce((...[, , , cb]: ExecArgs) => cb(null, { stdout: 'ok', stderr: '' }));
+
+    const result = await execWithShellEnv('gh', ['--version']);
+
+    expect(result.stdout).toBe('ok');
+    expect(execFileMock.mock.calls[1][2]).toMatchObject({
+      env: { PATH: '/new/bin:/old/bin:/usr/bin:/bin' },
+    });
+    expect(process.env.PATH).toBe('/new/bin:/old/bin:/usr/bin:/bin');
+  });
+
+  it('rethrows at once for a tool that is genuinely missing, re-reading the shell at most once', async () => {
+    withPlatform('darwin');
+    vi.useFakeTimers();
+    const { execWithShellEnv, spawnShell, loginShell } =
+      await importWithEditableProfile('/old/bin');
+    vi.advanceTimersByTime(loginShell.FORCED_REFRESH_MIN_INTERVAL_MS);
+    execFileMock
+      .mockImplementationOnce((...[, , , cb]: ExecArgs) => cb(enoent))
+      .mockImplementationOnce((...[, , , cb]: ExecArgs) => cb(enoent));
+
+    await expect(execWithShellEnv('gh', ['--version'])).rejects.toBe(enoent);
+    await expect(execWithShellEnv('gh', ['--version'])).rejects.toBe(enoent);
+
+    // The refreshed PATH matched the one that failed: no retry exec, and the second call is inside
+    // the forced-refresh throttle, so no second shell either.
+    expect(execFileMock).toHaveBeenCalledTimes(2);
+    expect(spawnShell).toHaveBeenCalledTimes(2);
   });
 });

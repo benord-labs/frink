@@ -4,10 +4,15 @@ import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ensureLoginShellEnv,
+  FORCED_REFRESH_MIN_INTERVAL_MS,
   getLoginShellEnvSync,
   LoginShellEnvResolver,
   loginShellCandidates,
+  REFRESH_MAX_AGE_MS,
+  REFRESH_MIN_INTERVAL_MS,
   readLoginShellEnv,
+  refreshLoginShellEnv,
+  refreshLoginShellEnvInBackground,
   resolveLoginShellEnv,
   type ShellEnv,
   type ShellOutcome,
@@ -412,5 +417,206 @@ describe('startLoginShellEnvResolve', () => {
 
     // The startup attempt plus one retry per delay (5s, 30s, 2min), then no more.
     expect(spawnShell).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe('refreshing the resolved environment (sc-4772)', () => {
+  /** A fake shell whose profile the test edits between spawns, as a user would mid-session. */
+  function editableProfile(env: ShellEnv, socketExists?: (path: string) => boolean) {
+    const profile = { env };
+    const spawnShell = vi.fn(async (): Promise<ShellOutcome> => ({
+      ok: true,
+      env: { ...profile.env },
+    }));
+    setLoginShellEnvResolver(new LoginShellEnvResolver({ spawnShell, extendPath, socketExists }));
+    return { profile, spawnShell };
+  }
+
+  it('serves a stale env at once and refreshes it once in the background', async () => {
+    vi.useFakeTimers();
+    let answer: (outcome: ShellOutcome) => void = () => {};
+    const spawnShell = vi
+      .fn<() => Promise<ShellOutcome>>()
+      .mockImplementationOnce(succeeds({ PATH: '/shell/bin' }))
+      .mockImplementationOnce(
+        () =>
+          new Promise<ShellOutcome>((resolve) => {
+            answer = resolve;
+          }),
+      );
+    install(spawnShell);
+    await resolveLoginShellEnv();
+    vi.advanceTimersByTime(REFRESH_MAX_AGE_MS);
+
+    // The refresh is still pending: no caller may wait on it while an env exists.
+    expect((await resolveLoginShellEnv())?.PATH).toBe('/shell/bin:/usr/bin:/bin');
+    await ensureLoginShellEnv();
+    expect(spawnShell).toHaveBeenCalledTimes(2);
+
+    answer({ ok: true, env: { PATH: '/new/bin:/shell/bin' } });
+    await vi.advanceTimersByTimeAsync(0);
+
+    const refreshed = '/new/bin:/shell/bin:/usr/bin:/bin';
+    expect(process.env.PATH).toBe(refreshed);
+    expect(getLoginShellEnvSync()?.PATH).toBe(refreshed);
+    expect((await resolveLoginShellEnv())?.PATH).toBe(refreshed);
+    expect(spawnShell).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not re-read a freshly resolved env', async () => {
+    vi.useFakeTimers();
+    const { spawnShell } = editableProfile({ PATH: '/shell/bin' });
+    await resolveLoginShellEnv();
+
+    for (let i = 0; i < 5; i++) await ensureLoginShellEnv();
+    expect(spawnShell).toHaveBeenCalledTimes(1);
+  });
+
+  it('refreshes on focus at most once a minute, and never on Windows', async () => {
+    vi.useFakeTimers();
+    const { spawnShell } = editableProfile({ PATH: '/shell/bin' });
+    await resolveLoginShellEnv();
+    vi.advanceTimersByTime(REFRESH_MIN_INTERVAL_MS);
+
+    for (let i = 0; i < 5; i++) {
+      refreshLoginShellEnvInBackground();
+      await vi.advanceTimersByTimeAsync(2_000);
+    }
+    expect(spawnShell).toHaveBeenCalledTimes(2);
+
+    vi.advanceTimersByTime(REFRESH_MIN_INTERVAL_MS);
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    refreshLoginShellEnvInBackground();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(spawnShell).toHaveBeenCalledTimes(2);
+  });
+
+  it('joins the startup resolve when the first window gains focus during it', async () => {
+    // The first window's focus fires at launch, while the startup shell is still loading.
+    vi.useFakeTimers();
+    let answer: (outcome: ShellOutcome) => void = () => {};
+    const spawnShell = vi.fn(
+      () =>
+        new Promise<ShellOutcome>((resolve) => {
+          answer = resolve;
+        }),
+    );
+    install(spawnShell);
+
+    startLoginShellEnvResolve();
+    refreshLoginShellEnvInBackground();
+    const forced = refreshLoginShellEnv();
+    answer({ ok: true, env: { PATH: '/shell/bin' } });
+
+    // start() extended the launch PATH first; the shell's entries go ahead of it.
+    expect((await forced)?.PATH).toBe('/shell/bin:/fallback/bin:/usr/bin:/bin');
+    expect(spawnShell).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the last good env when a refresh fails, and backs off before the next', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('SSH_AUTH_SOCK', '/agent.sock');
+    const spawnShell = vi
+      .fn<() => Promise<ShellOutcome>>()
+      .mockImplementationOnce(succeeds({ PATH: '/shell/bin' }))
+      .mockImplementation(fails());
+    install(spawnShell);
+    const good = await resolveLoginShellEnv();
+    vi.advanceTimersByTime(REFRESH_MAX_AGE_MS);
+
+    await resolveLoginShellEnv();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(spawnShell).toHaveBeenCalledTimes(2);
+    expect(getLoginShellEnvSync()).toEqual(good);
+    expect(process.env.PATH).toBe('/shell/bin:/usr/bin:/bin');
+    expect(process.env.SSH_AUTH_SOCK).toBe('/agent.sock');
+    // A failed refresh is no failure to resolve: long-lived spawns still get the good env at once.
+    expect(await refreshLoginShellEnv()).toEqual(good);
+    await ensureLoginShellEnv();
+    expect(spawnShell).toHaveBeenCalledTimes(2);
+
+    vi.advanceTimersByTime(REFRESH_MIN_INTERVAL_MS);
+    await resolveLoginShellEnv();
+    expect(spawnShell).toHaveBeenCalledTimes(3);
+  });
+
+  it('rebuilds PATH from the launch PATH: no growth, and removed entries drop out', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('PATH', '/venv/bin:/usr/bin');
+    const { profile } = editableProfile({ PATH: '/old/bin:/usr/bin' });
+    await resolveLoginShellEnv();
+    expect(process.env.PATH).toBe('/old/bin:/usr/bin:/venv/bin');
+
+    for (let i = 0; i < 10; i++) {
+      vi.advanceTimersByTime(FORCED_REFRESH_MIN_INTERVAL_MS);
+      await refreshLoginShellEnv();
+    }
+    expect(process.env.PATH).toBe('/old/bin:/usr/bin:/venv/bin');
+
+    profile.env = { PATH: '/usr/bin' };
+    vi.advanceTimersByTime(FORCED_REFRESH_MIN_INTERVAL_MS);
+    await refreshLoginShellEnv();
+
+    // The launch-only venv entry stays, after the shell's.
+    expect(process.env.PATH).toBe('/usr/bin:/venv/bin');
+    expect(getLoginShellEnvSync()?.PATH).toBe('/usr/bin:/venv/bin');
+  });
+
+  it('keeps the env as it was when only per-shell values change', async () => {
+    // atuin and starship export a fresh value in every interactive shell; a changed env would
+    // recreate every warm Claude session keyed on it.
+    vi.useFakeTimers();
+    const { profile, spawnShell } = editableProfile({ PATH: '/shell/bin', ATUIN_SESSION: 'a' });
+    const before = await resolveLoginShellEnv();
+
+    profile.env = { PATH: '/shell/bin', ATUIN_SESSION: 'b' };
+    vi.advanceTimersByTime(FORCED_REFRESH_MIN_INTERVAL_MS);
+    await refreshLoginShellEnv();
+
+    expect(spawnShell).toHaveBeenCalledTimes(2);
+    expect(getLoginShellEnvSync()).toEqual(before);
+  });
+
+  it('keeps the current agent socket on refresh until it is gone', async () => {
+    // An `eval $(ssh-agent)` profile starts a fresh, keyless agent on every spawn.
+    vi.useFakeTimers();
+    let alive = true;
+    const { profile } = editableProfile(
+      { PATH: '/shell/bin', SSH_AUTH_SOCK: '/agent/one' },
+      () => alive,
+    );
+    await resolveLoginShellEnv();
+    expect(process.env.SSH_AUTH_SOCK).toBe('/agent/one');
+
+    profile.env = { PATH: '/shell/bin', SSH_AUTH_SOCK: '/agent/two' };
+    vi.advanceTimersByTime(FORCED_REFRESH_MIN_INTERVAL_MS);
+    await refreshLoginShellEnv();
+    expect(process.env.SSH_AUTH_SOCK).toBe('/agent/one');
+    expect(getLoginShellEnvSync()?.SSH_AUTH_SOCK).toBe('/agent/one');
+
+    alive = false;
+    vi.advanceTimersByTime(FORCED_REFRESH_MIN_INTERVAL_MS);
+    await refreshLoginShellEnv();
+    expect(process.env.SSH_AUTH_SOCK).toBe('/agent/two');
+    expect(getLoginShellEnvSync()?.SSH_AUTH_SOCK).toBe('/agent/two');
+  });
+
+  it('shares one forced refresh between concurrent callers and throttles the next', async () => {
+    vi.useFakeTimers();
+    const { profile, spawnShell } = editableProfile({ PATH: '/shell/bin' });
+    await resolveLoginShellEnv();
+    profile.env = { PATH: '/new/bin' };
+    vi.advanceTimersByTime(FORCED_REFRESH_MIN_INTERVAL_MS);
+
+    const [a, b] = await Promise.all([refreshLoginShellEnv(), refreshLoginShellEnv()]);
+    expect(a?.PATH).toBe('/new/bin:/usr/bin:/bin');
+    expect(b).toEqual(a);
+    await refreshLoginShellEnv();
+    expect(spawnShell).toHaveBeenCalledTimes(2);
+
+    vi.advanceTimersByTime(FORCED_REFRESH_MIN_INTERVAL_MS);
+    await refreshLoginShellEnv();
+    expect(spawnShell).toHaveBeenCalledTimes(3);
   });
 });

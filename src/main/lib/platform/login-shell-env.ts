@@ -1,12 +1,13 @@
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import os from 'node:os';
 import log from 'electron-log';
 import { platform } from './index';
 import { warmNvmBinDirs } from './nvm';
 
 /**
- * The user's login-shell environment, resolved once in the background and shared by every spawn
+ * The user's login-shell environment, resolved in the background and shared by every spawn
  * path. A failed attempt is never kept: callers get the platform fallback until one succeeds.
  */
 
@@ -28,6 +29,8 @@ export type ShellOutcome = { ok: true; env: ShellEnv } | { ok: false; failure: S
 export type LoginShellEnvDeps = {
   spawnShell: () => Promise<ShellOutcome>;
   extendPath: (currentPath: string | undefined) => string;
+  /** Whether an SSH agent socket path still exists; defaults to the filesystem. */
+  socketExists?: (path: string) => boolean;
 };
 
 // Generous: an nvm / oh-my-zsh profile can take several seconds to load on a cold start.
@@ -38,6 +41,14 @@ const STARTUP_RETRY_DELAYS_MS = [5_000, 30_000, 120_000];
 // A caller about to start a long-lived process (session, app server) forces a fresh attempt rather
 // than inherit a fallback PATH it would keep — until the shell has failed this many times running.
 const MAX_FORCED_ATTEMPTS = STARTUP_RETRY_DELAYS_MS.length + 1;
+// A resolved env older than this is refreshed in the background by the next resolve/ensure.
+export const REFRESH_MAX_AGE_MS = 5 * 60_000;
+// Least time between background refreshes (age, window focus) — also the backoff after a failed
+// one. Each refresh runs an interactive shell, which sources .zshrc and its plugins.
+export const REFRESH_MIN_INTERVAL_MS = 60_000;
+// Least time between forced refreshes (a command not found), so a tool that is genuinely missing
+// does not cost a shell spawn on every call.
+export const FORCED_REFRESH_MIN_INTERVAL_MS = 15_000;
 const STDERR_TAIL_CHARS = 500;
 
 /** `env -0` output between two copies of `delimiter`; NUL-separated, so values may hold newlines. */
@@ -154,7 +165,13 @@ function mergePath(shellPath: string, currentPath: string | undefined): string {
 
 export class LoginShellEnvResolver {
   private resolvedEnv: ShellEnv | null = null;
+  // When resolvedEnv was last resolved or confirmed by a refresh.
+  private resolvedAt = 0;
+  // The launch PATH, captured at the first success: process.env.PATH already holds the last merge.
+  private basePath: string | null = null;
   private inFlight: Promise<ShellEnv | null> | null = null;
+  private lastSpawnAt = 0;
+  // These two drive the no-env path (cooldown, forced attempts); a failed refresh never touches them.
   private lastFailureAt = 0;
   private consecutiveFailures = 0;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -172,40 +189,91 @@ export class LoginShellEnvResolver {
   /**
    * Spawns the shell at most once at a time; null on Windows, on failure, and in the cooldown after
    * one unless `force`. A success puts only the shell's PATH and SSH agent socket on `process.env`.
+   * Once resolved, returns that env at once — and, when it is stale, refreshes it in the background.
    */
   resolve(options?: { force?: boolean }): Promise<ShellEnv | null> {
     if (process.platform === 'win32') return Promise.resolve(null);
-    if (this.resolvedEnv) return Promise.resolve({ ...this.resolvedEnv });
+    if (this.resolvedEnv) {
+      if (Date.now() - this.resolvedAt >= REFRESH_MAX_AGE_MS) {
+        void this.refresh(REFRESH_MIN_INTERVAL_MS);
+      }
+      return Promise.resolve({ ...this.resolvedEnv });
+    }
     if (this.inFlight) return this.inFlight;
     const coolingDown = this.lastFailureAt && Date.now() - this.lastFailureAt < FAILURE_COOLDOWN_MS;
     if (!options?.force && coolingDown) return Promise.resolve(null);
+    return this.spawn();
+  }
 
+  /**
+   * Re-read the shell even though an env is resolved, unless one was read under `minIntervalMs`
+   * ago. Joins a spawn in flight. A failed refresh keeps, and returns, the last good env.
+   */
+  refresh(minIntervalMs: number): Promise<ShellEnv | null> {
+    if (process.platform === 'win32') return Promise.resolve(null);
+    if (!this.resolvedEnv) return this.resolve();
+    if (this.inFlight) return this.inFlight;
+    if (Date.now() - this.lastSpawnAt < minIntervalMs) return Promise.resolve(this.current());
+    return this.spawn();
+  }
+
+  private spawn(): Promise<ShellEnv | null> {
+    this.lastSpawnAt = Date.now();
     this.inFlight = this.deps
       .spawnShell()
       .then((outcome) => {
-        if (!outcome.ok) {
-          this.lastFailureAt = Date.now();
-          this.consecutiveFailures += 1;
-          log.warn('[shell-env] Failed to load login-shell environment', outcome.failure);
-          return null;
+        if (outcome.ok) return this.commit(outcome.env);
+        if (this.resolvedEnv) {
+          log.warn('[shell-env] Failed to refresh login-shell environment', outcome.failure);
+          return this.current();
         }
-        // Readers (Claude, git) take PATH from here, so it must carry the launch-only entries too.
-        const env = { ...outcome.env, PATH: mergePath(outcome.env.PATH, process.env.PATH) };
-        this.resolvedEnv = env;
-        this.lastFailureAt = 0;
-        this.consecutiveFailures = 0;
-        process.env.PATH = env.PATH;
-        // The shell runs on a bare env, so an agent socket here is one the profile chose (1Password,
-        // gpg-agent): git and ssh spawned from the app must use it, as they do in a terminal.
-        const agentSocket = outcome.env.SSH_AUTH_SOCK;
-        if (agentSocket) process.env.SSH_AUTH_SOCK = agentSocket;
-        log.info(`[shell-env] Loaded ${Object.keys(env).length} variables from shell`);
-        return { ...env };
+        this.lastFailureAt = Date.now();
+        this.consecutiveFailures += 1;
+        log.warn('[shell-env] Failed to load login-shell environment', outcome.failure);
+        return null;
       })
       .finally(() => {
         this.inFlight = null;
       });
     return this.inFlight;
+  }
+
+  private commit(shellEnv: ShellEnv) {
+    const previous = this.resolvedEnv;
+    this.basePath ??= process.env.PATH ?? '';
+    // Readers (Claude, git) take PATH from here, so it must carry the launch-only entries too.
+    const path = mergePath(shellEnv.PATH, this.basePath);
+    const socket = this.chooseAgentSocket(shellEnv.SSH_AUTH_SOCK, previous === null);
+    this.resolvedAt = Date.now();
+    this.lastFailureAt = 0;
+    this.consecutiveFailures = 0;
+    // Same PATH and socket: keep the env as it was. Interactive shells export per-shell values
+    // (atuin, starship), and a changed env would recreate every warm Claude session keyed on it.
+    if (previous && previous.PATH === path && socket === process.env.SSH_AUTH_SOCK) {
+      return { ...previous };
+    }
+
+    const fromShell = { ...shellEnv };
+    if (fromShell.SSH_AUTH_SOCK && socket) fromShell.SSH_AUTH_SOCK = socket;
+    const env = { ...fromShell, PATH: path };
+    this.resolvedEnv = env;
+    process.env.PATH = path;
+    if (socket) process.env.SSH_AUTH_SOCK = socket;
+    log.info(
+      previous
+        ? '[shell-env] Refreshed login-shell environment: PATH or agent socket changed'
+        : `[shell-env] Loaded ${Object.keys(env).length} variables from shell`,
+    );
+    return { ...env };
+  }
+
+  /** A refresh keeps a live socket: an `eval $(ssh-agent)` profile starts a keyless agent per spawn. */
+  private chooseAgentSocket(shellSocket: string | undefined, initial: boolean): string | undefined {
+    const current = process.env.SSH_AUTH_SOCK;
+    if (!shellSocket || shellSocket === current) return current;
+    if (initial || !current) return shellSocket;
+    const socketExists = this.deps.socketExists ?? existsSync;
+    return socketExists(current) ? current : shellSocket;
   }
 
   /** Before starting a process that keeps its env: wait for a fresh attempt, not the cooldown. */
@@ -231,7 +299,10 @@ export class LoginShellEnvResolver {
 
   reset(): void {
     this.resolvedEnv = null;
+    this.resolvedAt = 0;
+    this.basePath = null;
     this.inFlight = null;
+    this.lastSpawnAt = 0;
     this.lastFailureAt = 0;
     this.consecutiveFailures = 0;
     if (this.retryTimer) clearTimeout(this.retryTimer);
@@ -270,6 +341,16 @@ export function getLoginShellEnvSync(): ShellEnv | null {
 /** Wait for the login-shell environment before spawning something that keeps its env. */
 export async function ensureLoginShellEnv(): Promise<void> {
   await activeResolver.ensure();
+}
+
+/** A command was not found: re-read the shell now (throttled) in case the tool was just installed. */
+export function refreshLoginShellEnv(): Promise<ShellEnv | null> {
+  return activeResolver.refresh(FORCED_REFRESH_MIN_INTERVAL_MS);
+}
+
+/** Refresh in the background (e.g. on window focus, after the user installed a tool in a terminal). */
+export function refreshLoginShellEnvInBackground(): void {
+  void activeResolver.refresh(REFRESH_MIN_INTERVAL_MS);
 }
 
 export function startLoginShellEnvResolve(): void {

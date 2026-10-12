@@ -2,10 +2,17 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { LoginShellEnvResolver, setLoginShellEnvResolver } from '../platform/login-shell-env';
+import {
+  FORCED_REFRESH_MIN_INTERVAL_MS,
+  LoginShellEnvResolver,
+  refreshLoginShellEnv,
+  resolveLoginShellEnv,
+  setLoginShellEnvResolver,
+} from '../platform/login-shell-env';
 import {
   detectWorktreeConfig,
   executeWorktreeSetup,
+  SETUP_COMMAND_NOT_FOUND_HINT,
   updateWorktreeConfig,
   type WorktreeConfig,
 } from './worktree-config';
@@ -46,6 +53,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  vi.useRealTimers();
   vi.unstubAllEnvs();
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
@@ -281,6 +289,41 @@ describe('executeWorktreeSetup', () => {
 
     expect(result.errors).toEqual([]);
     expect(result.output).toContain('from-shell-path');
+  });
+
+  it('finds a tool installed while Frink runs on the next setup, without a restart (sc-4772)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const projectPath = await createTempProjectDir();
+    const worktreePath = await createTempProjectDir();
+    const binDir = await createTempProjectDir();
+    await writeFrinkConfig(projectPath, { 'setup-worktree': ['frink-new-tool-4772'] });
+    const launchPath = process.env.PATH ?? '';
+    const profile = { PATH: launchPath };
+    setLoginShellEnvResolver(
+      new LoginShellEnvResolver({
+        spawnShell: async () => ({ ok: true, env: { PATH: profile.PATH } }),
+        extendPath: (p) => p ?? '',
+      }),
+    );
+    await resolveLoginShellEnv();
+
+    // Later, the user installs the tool into a new directory their profile puts on PATH.
+    vi.advanceTimersByTime(FORCED_REFRESH_MIN_INTERVAL_MS);
+    await writeFile(join(binDir, 'frink-new-tool-4772'), '#!/bin/sh\necho new-tool\n', {
+      mode: 0o755,
+    });
+    profile.PATH = `${binDir}:${launchPath}`;
+
+    // Setup runs on the env read before the install: not found, and says a retry will re-read it.
+    const first = await executeWorktreeSetup(worktreePath, projectPath);
+    expect(first.errors[0]).toContain('(exit 127)');
+    expect(first.output).toContain(SETUP_COMMAND_NOT_FOUND_HINT);
+
+    await refreshLoginShellEnv(); // joins the refresh the failure started
+    const retry = await executeWorktreeSetup(worktreePath, projectPath);
+
+    expect(retry.errors).toEqual([]);
+    expect(retry.output).toContain('new-tool');
   });
 
   it('skips remaining commands once the signal aborts', async () => {
