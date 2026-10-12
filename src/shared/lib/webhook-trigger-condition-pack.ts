@@ -10,9 +10,12 @@ export type WebhookConditionFilterForPack = {
   value: string | string[];
 };
 
-/** The assignee mode a new rule starts on: a Shortcut story event starts on anyone, every other event on me. */
+const STARTS_ON_ANYONE = new Set(['story_assigned', 'story_created', 'task_assignee_changed']);
+
+/** The assignee mode a rule starts on, new or stored without one: anyone for those events, me
+ * otherwise. An event that gains the choice later starts on anyone, or its saved rules narrow. */
 export function defaultWebhookAssignee(eventType: string): 'anyone' | 'me' {
-  return eventType === 'story_assigned' || eventType === 'story_created' ? 'anyone' : 'me';
+  return STARTS_ON_ANYONE.has(eventType) ? 'anyone' : 'me';
 }
 
 export function packWebhookTriggerConditions(o: {

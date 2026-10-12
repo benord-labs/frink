@@ -86,6 +86,13 @@ describe('rows with no vendor code drive the shared extractor', () => {
         if (named.length > 0) expect(provider.webhook_payload.event_type_path).toBeDefined();
       });
 
+      // An assignee choice the row cannot back never fires: "anyone" needs ids, "me" needs a match.
+      it('offers an assignee choice only where the row says where its people are', () => {
+        const flagged = provider.events.filter((event) => event.assignee === true);
+        if (flagged.length > 0) expect(provider.webhook_payload.owner_ids).toBeDefined();
+        if (provider.webhook_payload.owner_ids) expect(flagged.length).toBeGreaterThan(0);
+      });
+
       it('flattens every offered filter from a declared path, so the matcher can read it', () => {
         const offered = new Set(provider.events.flatMap((event) => event.filter_field_ids));
         for (const field of provider.filter_fields.filter((f) => offered.has(f.id))) {

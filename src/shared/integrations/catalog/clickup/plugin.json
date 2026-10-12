@@ -11,6 +11,12 @@
   },
   "frink": {
     "keywords": ["tasks", "projects", "standups"],
+    "identity": {
+      "server": "clickup",
+      "tool": "clickup_resolve_assignees",
+      "args": { "assignees": ["me"] },
+      "idPath": "userIds.0"
+    },
     "actions": [
       {
         "id": "clickup.search",

@@ -30,7 +30,7 @@ export const TICKETING_TRIGGER_SAMPLES = {
       history_items: [
         {
           id: 'history-assignee',
-          field: 'assignee',
+          field: 'assignee_add',
           before: null,
           after: { id: 183, username: 'Alex' },
         },

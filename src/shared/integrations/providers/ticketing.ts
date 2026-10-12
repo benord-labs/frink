@@ -102,6 +102,7 @@ export const TICKETING_PROVIDERS: ReadonlyArray<Provider> = [
         label: 'Task assignees changed',
         description: 'Runs when an assignee is added to or removed from a task.',
         filter_field_ids: [],
+        assignee: true,
         vendor_events: ['taskAssigneeUpdated'],
       },
       {
@@ -132,7 +133,13 @@ export const TICKETING_PROVIDERS: ReadonlyArray<Provider> = [
         'Copy the secret returned by ClickUp into Frink’s signing secret field',
       ],
     },
-    webhook_payload: { event_type_path: 'event', signature: { hex_hmac_header: 'x-signature' } },
+    // Each change on a task is a history item; an added assignee is its `after`, a removed one
+    // leaves `after` null, so only people who gained the task are named.
+    webhook_payload: {
+      event_type_path: 'event',
+      owner_ids: { list_path: 'history_items', id_path: 'after.id' },
+      signature: { hex_hmac_header: 'x-signature' },
+    },
     payload_extractor: 'generic',
   },
   {
