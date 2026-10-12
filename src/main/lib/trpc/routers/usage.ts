@@ -1,3 +1,4 @@
+import type { CodexAccountTiers } from '../../../../shared/lib/codex-cli-models';
 import type { RateLimitSnapshot } from '../../../../shared/types/rate-limit';
 import { codexPlanUsage } from '../../agent-runner/codex/usage';
 import { claudePlanUsage } from '../../claude/usage';
@@ -35,5 +36,12 @@ export const usageRouter = router({
       return emptyUsage(false);
     }
     return (await codexPlanUsage.get()) ?? emptyUsage(true);
+  }),
+
+  /** Paid Codex speeds the signed-in account can use per model slug; null when unknown. Raw, so the
+   *  slug keys (`gpt-6-astra`) reach the renderer as Codex spells them. */
+  getCodexSpeedTiers: publicProcedureRaw.query(async (): Promise<CodexAccountTiers | null> => {
+    if (!isResolvedCredential(await getDefaultCredentialForType('codex'))) return null;
+    return (await codexPlanUsage.get())?.speedTiers ?? null;
   }),
 });

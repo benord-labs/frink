@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { type CodexAccountResponse, codexUsageToSnapshot, probeCodexUsage } from './codex-usage';
+import {
+  type CodexAccountResponse,
+  codexSpeedTiers,
+  codexUsageToSnapshot,
+  probeCodexUsage,
+} from './codex-usage';
 
 const NOW = 1_700_000_000_000;
 const chatgpt = { type: 'chatgpt' as const, email: 'me@home.com', planType: 'plus' };
@@ -98,6 +103,30 @@ describe('codexUsageToSnapshot', () => {
   });
 });
 
+describe('codexSpeedTiers', () => {
+  it("maps each model's Codex tier ids to Frink's speeds, leaving unknown ids out", () => {
+    expect(
+      codexSpeedTiers({
+        data: [
+          { model: 'gpt-6-astra', serviceTiers: [{ id: 'priority' }, { id: 'ultrafast' }] },
+          { model: 'gpt-5.5', serviceTiers: [{ id: 'priority' }, { id: 'flex' }] },
+          { model: 'gpt-6-luna', serviceTiers: [] },
+          { model: 'gpt-5.4-mini' },
+        ],
+      }),
+    ).toEqual({
+      'gpt-6-astra': ['fast', 'ultrafast'],
+      'gpt-5.5': ['fast'],
+      'gpt-6-luna': [],
+      'gpt-5.4-mini': [],
+    });
+  });
+
+  it('gives an empty catalog no tiers', () => {
+    expect(codexSpeedTiers({ data: [] })).toEqual({});
+  });
+});
+
 describe('probeCodexUsage', () => {
   const weekly = { rateLimits: { primary: { usedPercent: 5, windowDurationMins: 300 } } };
 
@@ -106,24 +135,39 @@ describe('probeCodexUsage', () => {
       start: vi.fn(async () => {}),
       readAccount: vi.fn(async () => ({ account })),
       readRateLimits: vi.fn(async () => weekly),
+      readModels: vi.fn(async () => ({
+        data: [{ model: 'gpt-6-astra', serviceTiers: [{ id: 'priority' }] }],
+      })),
       disposeAndWait: vi.fn(async () => {}),
     };
   }
 
-  it('reads identity and limits from one process, then shuts it down', async () => {
+  it('reads identity, limits and speed tiers from one process, then shuts it down', async () => {
     const client = fakeClient(chatgpt);
     const snap = await probeCodexUsage(client);
     expect(snap).toMatchObject({
       email: 'me@home.com',
       windows: { five_hour: { utilization: 5 } },
+      speedTiers: { 'gpt-6-astra': ['fast'] },
     });
     expect(client.disposeAndWait).toHaveBeenCalledTimes(1);
   });
 
-  it('never asks an API-key login for plan limits', async () => {
+  it('never asks an API-key login for plan limits, but still reads its speed tiers', async () => {
     const client = fakeClient({ type: 'apiKey' });
-    await probeCodexUsage(client);
+    expect((await probeCodexUsage(client)).speedTiers).toEqual({ 'gpt-6-astra': ['fast'] });
     expect(client.readRateLimits).not.toHaveBeenCalled();
+  });
+
+  it('keeps the usage when only model/list fails, leaving the speed tiers unknown', async () => {
+    const client = {
+      ...fakeClient(chatgpt),
+      readModels: vi.fn(async () => {
+        throw new Error('model/list failed');
+      }),
+    };
+    const snap = await probeCodexUsage(client);
+    expect(snap).toMatchObject({ windows: { five_hour: { utilization: 5 } }, speedTiers: null });
   });
 
   it('gives up on a request Codex never answers and still shuts the process down', async () => {

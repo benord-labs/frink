@@ -2,6 +2,7 @@ import type { ReactElement } from 'react';
 import {
   CODEX_FAST_SPEED_MULTIPLIER,
   CODEX_ULTRAFAST_SPEED_MULTIPLIER,
+  type CodexAccountTiers,
   codexTierCredits,
 } from '../../../../../../shared/lib/codex-cli-models';
 import type { CodexSpeed } from '../../../../../../shared/types/execution';
@@ -9,6 +10,7 @@ import type { FlowNode } from '../../../../../../shared/lib/validate-flow-graph'
 import type { FlowSettings } from '../../../../../../shared/types/flow';
 import { Label } from '../../../../../components/ui/label';
 import { Switch } from '../../../../../components/ui/switch';
+import { trpc } from '../../../../../lib/trpc';
 import { patch } from '../patch';
 
 /** Copy for the Flow-level Fast switch; keeps speed and ChatGPT credit use as separate axes. */
@@ -31,22 +33,23 @@ export function ultrafastDescription(credits: number | null): string {
   return `Runs every Agent step up to ${CODEX_ULTRAFAST_SPEED_MULTIPLIER}× faster for ${credits}× ChatGPT credits per turn, even when nobody is watching. Pro 500 and eligible Enterprise/Edu plans only.`;
 }
 
-/** Ultrafast's credit multiplier if the flow default or any step's own model offers it, else null.
- *  A step without a model runs on the default, so the two together cover every step. */
+/** Ultrafast's credit multiplier if the flow default or any step's own model offers it to the
+ *  account, else null. A step without a model runs on the default, so the two cover every step. */
 export function flowUltrafastCredits(
   defaultModelId: string | undefined,
   nodes: readonly FlowNode[],
+  accountTiers: CodexAccountTiers,
 ): number | null {
   const stepModels = nodes.map((n) => n.config?.model).filter((m) => typeof m === 'string');
   for (const id of [defaultModelId, ...stepModels]) {
-    const credits = codexTierCredits(id, 'ultrafast');
+    const credits = codexTierCredits(id, 'ultrafast', accountTiers);
     if (credits !== null) return credits;
   }
   return null;
 }
 
-/** Flow-wide Codex speed: Fast, plus Ultrafast where a step's model offers it (or it is already
- *  on, so it can be turned off). Turning one on replaces the other. */
+/** Flow-wide Codex speed: each paid speed the Codex account can use (or that is already on, so it
+ *  can be turned off). Unknown account tiers offer neither. Turning one on replaces the other. */
 export function FlowSpeedSettings({
   settings,
   nodes,
@@ -58,18 +61,25 @@ export function FlowSpeedSettings({
 }): ReactElement {
   const modelId = settings?.defaultModel?.trim() || undefined;
   const speed = settings?.codexSpeed ?? 'standard';
-  const ultrafastCredits = flowUltrafastCredits(modelId, nodes);
+  const { data: accountTiers } = trpc.usage.getCodexSpeedTiers.useQuery(undefined, {
+    staleTime: 60_000,
+  });
+  const tiers = accountTiers ?? {};
+  const offersFast = Object.values(tiers).some((speeds) => speeds.includes('fast'));
+  const ultrafastCredits = flowUltrafastCredits(modelId, nodes, tiers);
   const toggle = (option: CodexSpeed) => (on: boolean) =>
     onSettingsChange(patch(settings, { codexSpeed: on ? option : undefined }));
   return (
     <>
-      <SpeedRow
-        id="flow-settings-codex-fast"
-        label="Fast mode"
-        description={fastModeDescription(modelId)}
-        checked={speed === 'fast'}
-        onCheckedChange={toggle('fast')}
-      />
+      {(offersFast || speed === 'fast') && (
+        <SpeedRow
+          id="flow-settings-codex-fast"
+          label="Fast mode"
+          description={fastModeDescription(modelId)}
+          checked={speed === 'fast'}
+          onCheckedChange={toggle('fast')}
+        />
+      )}
       {(ultrafastCredits !== null || speed === 'ultrafast') && (
         <SpeedRow
           id="flow-settings-codex-ultrafast"

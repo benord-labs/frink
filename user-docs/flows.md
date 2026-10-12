@@ -612,7 +612,7 @@ frink_flows_patch({
 
 **Fast mode** asks Codex for its **priority** service tier on this flow's Agent steps. For ChatGPT-authenticated Codex it provides **1.5× model speed** and uses **2.5× ChatGPT credits** on GPT-6 Astra, Sol and Luna, GPT-6.1 Sol, GPT-5.6 and GPT-5.5 or **2× ChatGPT credits** on GPT-5.4. API-key priority pricing is separate and may differ. It is **off** unless you turn it on, and the Settings panel labels speed and credit use separately for the flow's default model.
 
-It applies only to Codex models that advertise the tier; steps on any other model — including GPT-5.4 Mini and Claude — run normally and are unaffected. Direct command and custom-node steps are unaffected too.
+The switch appears only when your signed-in Codex account offers Fast (a free ChatGPT plan does not). It applies only to Codex models that advertise the tier; steps on any other model — including GPT-5.4 Mini and Claude — run normally and are unaffected. Direct command and custom-node steps are unaffected too.
 
 The setting is flow-wide, deliberately: there is no per-step override, so a flow's spending rate stays readable from one place instead of hiding in an individual node. While a run is driving a chat, the status strip's **Fast** chip shows it is active (see the status strip section above) — the chat's own Fast switch is hidden behind the run surface at that point.
 
@@ -629,7 +629,7 @@ frink_flows_patch({
 
 **Ultrafast mode** asks Codex for its **ultrafast** service tier: up to **8× model speed** for **8× ChatGPT credits** on GPT-6 Astra. It needs a ChatGPT Pro 500 plan or an eligible Enterprise/Edu plan; on other accounts Codex runs the steps at standard speed. Fast and Ultrafast replace each other, and both are off unless you turn them on.
 
-The switch appears under **Fast mode** when the flow's default model is GPT-6 Astra. Remember that it applies to every Agent step of every run, even when nobody is watching. A step on a model without Ultrafast runs at standard speed, never quietly at Fast. While a run drives a chat, the status strip shows an **Ultrafast** chip with its credit cost.
+The switch appears under **Fast mode** when the flow's default model, or a step's model, is GPT-6 Astra and your signed-in Codex account offers Ultrafast. Remember that it applies to every Agent step of every run, even when nobody is watching. A step on a model without Ultrafast runs at standard speed, never quietly at Fast. While a run drives a chat, the status strip shows an **Ultrafast** chip with its credit cost.
 
 ```
 frink_flows_patch({

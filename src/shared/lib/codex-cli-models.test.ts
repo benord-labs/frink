@@ -183,6 +183,28 @@ describe('Ultrafast', () => {
   });
 });
 
+describe('codexTierCredits with the account tiers', () => {
+  const astra = 'codex-gpt-6-astra-high';
+
+  it('offers only the speeds the account lists for the model', () => {
+    const plus = { 'gpt-6-astra': ['fast' as const] };
+    expect(codexTierCredits(astra, 'fast', plus)).toBe(2.5);
+    expect(codexTierCredits(astra, 'ultrafast', plus)).toBeNull();
+  });
+
+  it('offers nothing to an account whose models list no tiers', () => {
+    const free = { 'gpt-5.5': [] };
+    expect(codexTierCredits(astra, 'fast', free)).toBeNull();
+    expect(codexTierCredits('codex-gpt-5.5-medium', 'fast', free)).toBeNull();
+  });
+
+  it('still needs the credit map to disclose a multiplier', () => {
+    expect(
+      codexTierCredits('codex-gpt-5.4-mini-medium', 'fast', { 'gpt-5.4-mini': ['fast'] }),
+    ).toBeNull();
+  });
+});
+
 describe('codexFastTierCredits', () => {
   it('keeps the advertised speed separate from model-specific ChatGPT credit use', () => {
     expect(CODEX_FAST_SPEED_MULTIPLIER).toBe(1.5);

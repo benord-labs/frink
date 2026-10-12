@@ -1,11 +1,15 @@
+import type { CodexAccountTiers } from '../../../../../shared/lib/codex-cli-models';
 import type { RateLimitSnapshot, RateLimitWindow } from '../../../../../shared/types/rate-limit';
 import { createPlanUsageCache, planUsageClock } from '../../../provider/plan-usage-cache';
+import { captureMainException } from '../../../sentry/init';
 import { CodexAppServerClient, withTimeout } from '../app-server-client';
 import { resolveCodexBinary } from '../codex-binary';
 
 const REQUEST_TIMEOUT_MS = 10_000;
 const WEEK_MINS = 7 * 24 * 60;
 const MONTH_MINS = 30 * 24 * 60;
+/** Unknown speed tiers hide the paid speeds, so a read without them retries well inside the TTL. */
+const FAILURE_RETRY_MS = 30_000;
 
 type CodexWindow = {
   usedPercent?: number | null;
@@ -30,6 +34,30 @@ export type CodexRateLimitsResponse = {
   rateLimits: CodexLimitSnapshot;
   rateLimitsByLimitId?: Record<string, CodexLimitSnapshot> | null;
 };
+
+/** `model/list` (codex-rs app-server-protocol v2/model.rs): the signed-in account's own catalog. */
+export type CodexModelListResponse = {
+  data: { model: string; serviceTiers?: { id: string }[] | null }[];
+};
+
+/** A Codex read: plan usage plus the paid speeds the same login can use. */
+export type CodexUsageSnapshot = RateLimitSnapshot & { speedTiers: CodexAccountTiers | null };
+
+/** Codex's tier ids, as Frink names the speed. */
+const SPEED_BY_TIER_ID = new Map<string, CodexAccountTiers[string][number]>([
+  ['priority', 'fast'],
+  ['ultrafast', 'ultrafast'],
+]);
+
+/** Each listed model's paid speeds; an unknown tier id is left out. */
+export function codexSpeedTiers({ data }: CodexModelListResponse): CodexAccountTiers {
+  return Object.fromEntries(
+    data.map(({ model, serviceTiers }) => [
+      model,
+      (serviceTiers ?? []).flatMap(({ id }) => SPEED_BY_TIER_ID.get(id) ?? []),
+    ]),
+  );
+}
 
 /** Windows are keyed by length, not position: a Pro Lite plan's `primary` is its weekly window. */
 function windowKey(mins: number): string {
@@ -91,6 +119,7 @@ type UsageClient = {
   start(): Promise<void>;
   readAccount(): Promise<CodexAccountResponse>;
   readRateLimits(): Promise<CodexRateLimitsResponse>;
+  readModels(): Promise<CodexModelListResponse>;
   disposeAndWait(): Promise<void>;
 };
 
@@ -107,16 +136,18 @@ function newUsageClient(): UsageClient {
     },
     readAccount: () => client.sendRequest<CodexAccountResponse>('account/read', {}),
     readRateLimits: () => client.sendRequest<CodexRateLimitsResponse>('account/rateLimits/read'),
+    readModels: () =>
+      client.sendRequest<CodexModelListResponse>('model/list', { includeHidden: true }),
     disposeAndWait: () => client.disposeAndWait(),
   };
 }
 
-/** Read the active Codex login's limits from a short-lived app-server. No thread is started, so no
- * session is written; the process is always shut down. */
+/** Read the active Codex login's limits and speed tiers from a short-lived app-server. No thread is
+ * started, so no session is written; the process is always shut down. */
 export async function probeCodexUsage(
   client: UsageClient = newUsageClient(),
   timeoutMs = REQUEST_TIMEOUT_MS,
-): Promise<RateLimitSnapshot> {
+): Promise<CodexUsageSnapshot> {
   try {
     await client.start();
     const { account } = await withTimeout(
@@ -132,17 +163,28 @@ export async function probeCodexUsage(
             'Codex did not answer account/rateLimits/read',
           )
         : null;
-    return codexUsageToSnapshot(account, limits, planUsageClock.now());
+    // A failed model/list leaves the speed tiers unknown (no paid speed offered), never the usage.
+    let speedTiers: CodexAccountTiers | null = null;
+    try {
+      speedTiers = codexSpeedTiers(
+        await withTimeout(client.readModels(), timeoutMs, 'Codex did not answer model/list'),
+      );
+    } catch (err) {
+      captureMainException(err, { surface: 'usage-codex-speed-tiers' });
+    }
+    return { ...codexUsageToSnapshot(account, limits, planUsageClock.now()), speedTiers };
   } finally {
     await client.disposeAndWait().catch(() => {});
   }
 }
 
 /** Injection seam for tests; production keeps the default. */
-export const codexUsageDeps = { probe: (): Promise<RateLimitSnapshot> => probeCodexUsage() };
+export const codexUsageDeps = { probe: (): Promise<CodexUsageSnapshot> => probeCodexUsage() };
 
-/** Codex plan usage. Unkeyed: the login is only known from the read itself, which carries both. */
-export const codexPlanUsage = createPlanUsageCache<void>(
+/** Codex plan usage and speed tiers. Unkeyed: the login is only known from the read itself, so
+ * a login switch shows within the TTL. */
+export const codexPlanUsage = createPlanUsageCache<void, CodexUsageSnapshot>(
   () => codexUsageDeps.probe(),
   'usage-codex-rate-limit-pull',
+  { afterMs: FAILURE_RETRY_MS, incomplete: (snapshot) => snapshot.speedTiers === null },
 );
