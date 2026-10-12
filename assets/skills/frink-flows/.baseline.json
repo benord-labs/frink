@@ -1,10 +1,10 @@
 {
-  "generatedAt": "content-b9e82740df42",
-  "version": "content-b9e82740df42",
+  "generatedAt": "content-5de2ec7b677b",
+  "version": "content-5de2ec7b677b",
   "files": {
     "SKILL.md": {
-      "sha256": "043c22803c300f94ed809b02efec9bf5e9b2e4c07d164b4e864b619f56704c68",
-      "bytes": 4685
+      "sha256": "862a86c23fd6e128e3bcfef81f8b602bbb9ebed65d10640162efecbd5f83153b",
+      "bytes": 4915
     },
     "references/batching.md": {
       "sha256": "1b86062ab99fc1c5b995ad500348589aff58c2ca248595e2bf20e3562bbbed0e",
