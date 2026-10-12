@@ -8,6 +8,7 @@ import {
   recoveryKindSchema,
   resumeRunInputSchema,
 } from '../../../../../shared/types/flow-run/resume';
+import { MAX_ATTACHMENT_URL_LENGTH } from '../../../../../shared/types/run-attachment';
 import type { BatchRunRow } from '../../../cloud/flows';
 import type {
   BatchStageDetail,
@@ -433,29 +434,26 @@ export const flowsRouter = router({
         runId: z.string().min(1),
         label: z.string().optional(),
         customInstructions: z.string().max(10_000).optional(),
-        attachments: z
-          .array(
-            z.object({
-              url: z.string().min(1).max(2048),
-              type: z.string().min(1),
-              label: z.string().optional(),
-              mimeType: z.string().optional(),
-            }),
-          )
-          .max(10)
-          .optional(),
         configOverrides: z.record(z.string(), z.unknown()).optional(),
       }),
     )
     .mutation(async ({ input }) => {
       const { updateStageRunLocal } = await import('../../../flows/batch-mutations');
-      return updateStageRunLocal({
-        runId: input.runId,
-        label: input.label,
-        customInstructions: input.customInstructions,
-        attachments: input.attachments,
-        configOverrides: input.configOverrides,
-      });
+      return updateStageRunLocal(input);
+    }),
+
+  /** Remove one attachment by its URL; a run's attachment list is never replaced wholesale. */
+  removeStageRunAttachment: publicProcedureRaw
+    .input(
+      z.object({
+        flowId: z.string().min(1),
+        runId: z.string().min(1),
+        url: z.string().min(1).max(MAX_ATTACHMENT_URL_LENGTH),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const { removeAttachmentFromStageRun } = await import('../../../flows/batch');
+      return removeAttachmentFromStageRun({ runId: input.runId, url: input.url });
     }),
 
   reassignStageRun: publicProcedureRaw

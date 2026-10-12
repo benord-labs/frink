@@ -94,6 +94,54 @@ export function appendStageRunAttachment(
   });
 }
 
+/** Entries keep whatever shape their writer gave them: an MCP tool may omit the upload's fields. */
+const removableTriggerContextSchema = z
+  .looseObject({ attachments: z.array(z.unknown()).optional().catch(undefined) })
+  .catch({});
+const attachmentUrlSchema = z.looseObject({ url: z.unknown() });
+
+export type RemovableTriggerContext = z.infer<typeof removableTriggerContextSchema>;
+
+export type RemoveAttachmentResult =
+  | { ok: true; triggerContext: RemovableTriggerContext; removed: boolean }
+  | { ok: false; reason: 'not_found' | 'not_pending' };
+
+/** Removes against the stored list, so a stale caller cannot drop a newer upload. Refuses a run
+ * admission has queued or started (not pending, or linked to a flow run): its entry was copied. */
+export function removeStageRunAttachment(
+  db: Db,
+  runId: string,
+  url: string,
+): RemoveAttachmentResult {
+  return db.transaction((tx): RemoveAttachmentResult => {
+    const row = tx
+      .select({
+        status: batchStageRuns.status,
+        flowRunId: batchStageRuns.flowRunId,
+        triggerContext: batchStageRuns.triggerContext,
+      })
+      .from(batchStageRuns)
+      .where(eq(batchStageRuns.id, runId))
+      .get();
+    if (!row) return { ok: false, reason: 'not_found' };
+    if (row.status !== 'pending' || row.flowRunId !== null) {
+      return { ok: false, reason: 'not_pending' };
+    }
+    const current = removableTriggerContextSchema.parse(row.triggerContext);
+    const existing = current.attachments ?? [];
+    const kept = existing.filter((entry) => attachmentUrlSchema.safeParse(entry).data?.url !== url);
+    if (kept.length === existing.length) {
+      return { ok: true, triggerContext: current, removed: false };
+    }
+    const next = { ...current, attachments: kept };
+    tx.update(batchStageRuns)
+      .set({ triggerContext: next })
+      .where(eq(batchStageRuns.id, runId))
+      .run();
+    return { ok: true, triggerContext: next, removed: true };
+  });
+}
+
 export async function setStageRunStatus(
   db: Db,
   id: string,

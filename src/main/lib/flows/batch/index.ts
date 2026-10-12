@@ -5,3 +5,4 @@
 
 export { mergeDependencyBranches, resolveDependencyBranches } from './dependency-branches';
 export { type BatchStatusBuckets, bucketBatchStatusCounts } from './status-buckets';
+export { removeAttachmentFromStageRun } from './attachment-remove';

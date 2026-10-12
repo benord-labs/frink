@@ -1,8 +1,16 @@
+import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { RunAttachment } from '../../../../shared/types/run-attachment';
 import { seedBatchStage } from '../../flows/batch-test-factories';
+import { batchStageRuns } from '../schema';
 import { freshDb, type TestDb } from '../test-utils/fresh-db';
-import { appendStageRunAttachment, getBatchStageRun, listRunsForStage } from './batch-stage-runs';
+import {
+  appendStageRunAttachment,
+  getBatchStageRun,
+  listRunsForStage,
+  removeStageRunAttachment,
+  setStageRunStatus,
+} from './batch-stage-runs';
 
 let db: TestDb;
 
@@ -76,6 +84,93 @@ describe('appendStageRunAttachment', () => {
 
   it('reports a missing run', () => {
     expect(appendStageRunAttachment(db, 'nope', att(1), 10)).toEqual({
+      ok: false,
+      reason: 'not_found',
+    });
+  });
+});
+
+describe('removeStageRunAttachment', () => {
+  const stored = async (runId: string) => (await getBatchStageRun(db, runId))?.triggerContext;
+
+  it('removes only the named attachment, even one a stale client never knew was stored', async () => {
+    // Stored [A, B, C]; a client that only saw [A, B] removes A.
+    const runId = await seedRun({ label: 'x', attachments: [att(1), att(2), att(3)] });
+
+    const result = removeStageRunAttachment(db, runId, att(1).url);
+
+    const expected = { label: 'x', attachments: [att(2), att(3)] };
+    expect(result).toEqual({ ok: true, triggerContext: expected, removed: true });
+    expect(await stored(runId)).toEqual(expected);
+  });
+
+  it('leaves the row unchanged when the URL is not stored', async () => {
+    const runId = await seedRun({ attachments: [att(1)] });
+
+    const result = removeStageRunAttachment(db, runId, att(9).url);
+
+    expect(result).toEqual({ ok: true, triggerContext: { attachments: [att(1)] }, removed: false });
+    expect(await stored(runId)).toEqual({ attachments: [att(1)] });
+  });
+
+  it('treats a context with no attachments list as nothing to remove', async () => {
+    const runId = await seedRun({ label: 'x' });
+
+    expect(removeStageRunAttachment(db, runId, att(1).url)).toMatchObject({ removed: false });
+    expect(await stored(runId)).toEqual({ label: 'x' });
+  });
+
+  // Catches: tool-written entries (no type, null, a bare string) making the removal throw
+  // or being dropped as a side effect.
+  it('removes and keeps entries written without the upload fields', async () => {
+    const bare = { url: 'https://example.com/a.png' };
+    const other = { url: 'https://example.com/b.png', note: 'from a tool' };
+    const runId = await seedRun({ attachments: [bare, null, 'https://example.com/c.png', other] });
+
+    removeStageRunAttachment(db, runId, bare.url);
+
+    expect(await stored(runId)).toEqual({
+      attachments: [null, 'https://example.com/c.png', other],
+    });
+  });
+
+  it('removes every entry that shares the URL', async () => {
+    const runId = await seedRun({ attachments: [att(1), att(2), att(1)] });
+
+    removeStageRunAttachment(db, runId, att(1).url);
+
+    expect(await stored(runId)).toEqual({ attachments: [att(2)] });
+  });
+
+  it('refuses a run that is no longer pending and leaves it unchanged', async () => {
+    const runId = await seedRun({ attachments: [att(1), att(2)] });
+    await setStageRunStatus(db, runId, 'dispatched');
+
+    expect(removeStageRunAttachment(db, runId, att(1).url)).toEqual({
+      ok: false,
+      reason: 'not_pending',
+    });
+    expect(await stored(runId)).toEqual({ attachments: [att(1), att(2)] });
+  });
+
+  // Catches: a pending run already linked to a flow run (begun work awaiting recovery) being
+  // treated as unstarted, so its copied context points at a file the removal deleted.
+  it('refuses a pending run that is already linked to a flow run', async () => {
+    const runId = await seedRun({ attachments: [att(1)] });
+    await db
+      .update(batchStageRuns)
+      .set({ flowRunId: 'flow-run-1' })
+      .where(eq(batchStageRuns.id, runId));
+
+    expect(removeStageRunAttachment(db, runId, att(1).url)).toEqual({
+      ok: false,
+      reason: 'not_pending',
+    });
+    expect(await stored(runId)).toEqual({ attachments: [att(1)] });
+  });
+
+  it('reports a missing run', () => {
+    expect(removeStageRunAttachment(db, 'nope', att(1).url)).toEqual({
       ok: false,
       reason: 'not_found',
     });

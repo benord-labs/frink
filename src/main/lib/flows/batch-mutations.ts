@@ -6,7 +6,6 @@
 import { TRPCError } from '@trpc/server';
 import { and, eq, inArray, isNull, ne, notExists } from 'drizzle-orm';
 import { z } from 'zod';
-import type { RunAttachment } from '../../../shared/types/run-attachment';
 import { getDatabase } from '../db';
 import { ACTIVE_BSR_STATUSES } from '../db/repos/batch-stage-runs';
 import { batchStageRuns, batchStages, flowRuns, flowVersions } from '../db/schema';
@@ -97,7 +96,6 @@ export type UpdateStageRunInput = {
   runId: string;
   label?: string;
   customInstructions?: string;
-  attachments?: RunAttachment[];
   configOverrides?: Record<string, unknown>;
 };
 
@@ -125,7 +123,6 @@ export async function updateStageRunLocal(
     const next = { ...current };
     if (input.label !== undefined) next.label = input.label;
     if (input.customInstructions !== undefined) next.customInstructions = input.customInstructions;
-    if (input.attachments !== undefined) next.attachments = input.attachments;
     if (input.configOverrides !== undefined) {
       next._config = { ...current._config, ...input.configOverrides };
     }

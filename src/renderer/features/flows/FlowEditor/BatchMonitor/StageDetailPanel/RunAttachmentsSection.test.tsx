@@ -1,16 +1,21 @@
 // @vitest-environment happy-dom
 
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RunAttachment } from '../../../../../../shared/types/run-attachment';
 import { decodedBytes } from '../../../../../../shared/utils/base64';
 
 // ── Mocks ──────────────────────────────────────────────────────────────────────
 
+type RemoveInput = { flowId: string; runId: string; url: string };
+type RemoveCallbacks = { onError?: (err: Error) => void };
+
 const trpcMocks = vi.hoisted(() => ({
   uploadMutateAsync: vi.fn(),
-  removeMutate: vi.fn(),
+  removeMutate: vi.fn<(input: RemoveInput, callbacks?: RemoveCallbacks) => void>(),
+  invalidateRunList: vi.fn(),
   /** Default: idle preview query (no image loaded). */
   previewUseQuery: vi.fn(() => ({
     data: undefined as { dataUrl: string } | undefined,
@@ -21,13 +26,16 @@ const trpcMocks = vi.hoisted(() => ({
 
 vi.mock('../../../../../lib/trpc', () => ({
   trpc: {
+    useUtils: () => ({
+      flows: { listBatchStageRuns: { invalidate: trpcMocks.invalidateRunList } },
+    }),
     flows: {
       uploadAndAttachImage: {
         useMutation: () => ({
           mutateAsync: trpcMocks.uploadMutateAsync,
         }),
       },
-      updateStageRun: {
+      removeStageRunAttachment: {
         useMutation: (_opts?: { onSuccess?: () => void }) => ({
           mutate: trpcMocks.removeMutate,
           isPending: false,
@@ -79,6 +87,7 @@ describe('RunAttachmentsSection', () => {
       run: { id: RUN_ID, trigger_context: {} },
     });
     trpcMocks.removeMutate.mockReset();
+    trpcMocks.invalidateRunList.mockReset();
     trpcMocks.previewUseQuery.mockReset();
     trpcMocks.previewUseQuery.mockImplementation(() => ({
       data: undefined,
@@ -319,6 +328,92 @@ describe('RunAttachmentsSection', () => {
         expect(screen.getByText(/Maximum 10/i)).toBeInTheDocument();
       });
       expect(trpcMocks.uploadMutateAsync).not.toHaveBeenCalled();
+      expect(onAttachmentsChange).not.toHaveBeenCalled();
+    });
+  });
+  describe('removing an attachment', () => {
+    const att = (n: number): RunAttachment => ({
+      url: `frink-attachment://${RUN_ID}/0000000${n}-${n}.png`,
+      type: 'image/png',
+      label: `${n}.png`,
+    });
+
+    it('names the attachment by URL instead of sending the remaining list', () => {
+      const { onAttachmentsChange } = renderSection([att(1), att(2)]);
+
+      fireEvent.click(screen.getByLabelText('Remove 1.png'));
+
+      expect(trpcMocks.removeMutate).toHaveBeenCalledWith(
+        { flowId: FLOW_ID, runId: RUN_ID, url: att(1).url },
+        expect.anything(),
+      );
+      expect(onAttachmentsChange).toHaveBeenLastCalledWith([att(2)]);
+    });
+
+    it('puts back only the removed attachment when the server refuses', () => {
+      const { onAttachmentsChange } = renderSection([att(1), att(2)]);
+
+      fireEvent.click(screen.getByLabelText('Remove 1.png'));
+      const callbacks = trpcMocks.removeMutate.mock.calls[0]?.[1];
+      act(() =>
+        callbacks?.onError?.(new Error('Images can only be removed before the run starts')),
+      );
+
+      expect(onAttachmentsChange).toHaveBeenLastCalledWith([att(2), att(1)]);
+      expect(
+        screen.getByText('Images can only be removed before the run starts'),
+      ).toBeInTheDocument();
+    });
+
+    // Catches: a failed removal restoring the list it saw before, which drops an upload
+    // that finished while the removal was in flight.
+    it('keeps an upload that finished while a failed removal was in flight', async () => {
+      const uploaded = att(3);
+      trpcMocks.uploadMutateAsync.mockResolvedValueOnce({
+        url: uploaded.url,
+        filename: '3.png',
+        run: { id: RUN_ID, trigger_context: {} },
+      });
+      function StatefulParent() {
+        const [list, setList] = useState<RunAttachment[]>([att(1), att(2)]);
+        return (
+          <RunAttachmentsSection
+            flowId={FLOW_ID}
+            runId={RUN_ID}
+            attachments={list}
+            isPending
+            onAttachmentsChange={setList}
+          />
+        );
+      }
+      render(<StatefulParent />);
+
+      fireEvent.click(screen.getByLabelText('Remove 1.png'));
+      const file = new File([pngMagicBytes()], '3.png', { type: 'image/png' });
+      fireEvent.change(screen.getByLabelText('Upload image attachment'), {
+        target: { files: [file] },
+      });
+      await screen.findByLabelText('Remove 3.png');
+      const callbacks = trpcMocks.removeMutate.mock.calls[0]?.[1];
+      act(() => callbacks?.onError?.(new Error('offline')));
+
+      for (const label of ['1.png', '2.png', '3.png']) {
+        expect(screen.getByLabelText(`Remove ${label}`)).toBeInTheDocument();
+      }
+    });
+
+    it('does not list an upload twice when its URL is already shown', async () => {
+      trpcMocks.uploadMutateAsync.mockResolvedValueOnce({
+        url: att(1).url,
+        filename: '1.png',
+        run: { id: RUN_ID, trigger_context: {} },
+      });
+      const { onAttachmentsChange, fileInput } = renderSection([att(1)]);
+
+      const file = new File([pngMagicBytes()], '1.png', { type: 'image/png' });
+      fireEvent.change(fileInput, { target: { files: [file] } });
+
+      await waitFor(() => expect(trpcMocks.uploadMutateAsync).toHaveBeenCalledOnce());
       expect(onAttachmentsChange).not.toHaveBeenCalled();
     });
   });
