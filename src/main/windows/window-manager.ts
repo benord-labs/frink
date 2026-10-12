@@ -1,4 +1,5 @@
 import { BrowserWindow } from 'electron';
+import { refreshLoginShellEnvInBackground } from '../lib/platform/login-shell-env';
 
 /**
  * Tracks the application's windows (Frink is single-window) for focus resolution and lookup.
@@ -15,6 +16,8 @@ class WindowManager {
     // Track focus
     window.on('focus', () => {
       this.focusedWindowId = electronId;
+      // The user may have installed a tool in a terminal meanwhile.
+      refreshLoginShellEnvInBackground();
     });
 
     // Clean up on close

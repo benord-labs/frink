@@ -2,7 +2,11 @@ import { type ExecFileOptionsWithStringEncoding, execFile } from 'node:child_pro
 import os from 'node:os';
 import { promisify } from 'node:util';
 import { platform as platformProvider } from '../platform';
-import { resolveLoginShellEnv, type ShellEnv } from '../platform/login-shell-env';
+import {
+  refreshLoginShellEnv,
+  resolveLoginShellEnv,
+  type ShellEnv,
+} from '../platform/login-shell-env';
 
 const execFileAsync = promisify(execFile);
 
@@ -97,8 +101,11 @@ export async function execWithShellEnv(
       throw error;
     }
 
-    const shellEnv = await resolveLoginShellEnv();
-    if (!shellEnv) throw error;
+    // The tool may have been installed since the shell env was read: re-read it (throttled), and
+    // retry only if that changed PATH — a genuinely missing tool fails at once with the original error.
+    const failedPath = options?.env ? options.env.PATH : process.env.PATH;
+    const shellEnv = await refreshLoginShellEnv();
+    if (!shellEnv || shellEnv.PATH === failedPath) throw error;
 
     // Retry with fixed env (respect caller's other env vars, force the shell PATH)
     return await execFileAsync(cmd, args, {

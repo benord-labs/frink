@@ -5,7 +5,7 @@ import { promisify, stripVTControlCharacters } from 'node:util';
 import log from 'electron-log';
 import { z } from 'zod';
 import { resolveCommandShell } from '../platform/command-shell';
-import { ensureLoginShellEnv } from '../platform/login-shell-env';
+import { ensureLoginShellEnv, refreshLoginShellEnv } from '../platform/login-shell-env';
 
 const execAsync = promisify(exec);
 
@@ -145,6 +145,10 @@ const ExecFailureSchema = z.object({
 });
 type ExecFailure = z.infer<typeof ExecFailureSchema>;
 
+const COMMAND_NOT_FOUND_EXIT_CODE = 127;
+export const SETUP_COMMAND_NOT_FOUND_HINT =
+  '[hint] Command not found — re-reading your shell PATH. If you just installed it, retry setup.';
+
 function failureStatus(failure: ExecFailure): string {
   if (Number.isInteger(failure.code)) return `exit ${failure.code}`;
   if (failure.name === 'AbortError') return 'cancelled';
@@ -247,6 +251,12 @@ async function runSetupCommand(
     const reason = failure.success ? describeSetupFailure(failure.data) : errorMsg;
     result.errors.push(`${reason} — while running: ${cmd}`);
     result.output.push(`[error] ${errorMsg}`);
+    // 127 is the shell's "command not found". Never re-run (the command may have half run), but
+    // re-read the login-shell PATH so a retry finds a tool installed since it was last read.
+    if (failure.success && failure.data.code === COMMAND_NOT_FOUND_EXIT_CODE) {
+      void refreshLoginShellEnv();
+      result.output.push(SETUP_COMMAND_NOT_FOUND_HINT);
+    }
   }
 }
 
