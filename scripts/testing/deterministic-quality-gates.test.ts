@@ -9,14 +9,9 @@ import { describe, expect, it } from 'vitest';
 const WORKFLOW_PATH = resolve(__dirname, '../../.github/workflows/test-suite.yml');
 const JOB_KEY = 'deterministic-quality-gates';
 const GATE_CONDITION = "if: ${{ !cancelled() && steps.install.outcome == 'success' }}";
-const REQUIRED_GATES = [
-  'format:check',
-  'lint:oxlint',
-  'lint:structure',
-  'ts:check',
-  'knip',
-  'build:skills:check',
-];
+const REQUIRED_GATES = ['format:check', 'lint:oxlint', 'lint:structure', 'ts:check', 'knip'];
+// The skill drift check has its own job so it can be a required check while other gates are red.
+const SKILL_DRIFT_JOB_KEY = 'skill-content-drift';
 
 function jobBlock(workflow: string, jobKey: string): string | null {
   const lines = workflow.replace(/\r\n/g, '\n').split('\n');
@@ -74,6 +69,28 @@ function gateProblems(workflow: string): string[] {
   return problems;
 }
 
+/** Every reason the standalone skill drift job would pass without checking generated content. */
+function skillDriftProblems(workflow: string): string[] {
+  const block = jobBlock(workflow, SKILL_DRIFT_JOB_KEY);
+  if (!block) return [`job ${SKILL_DRIFT_JOB_KEY} not found`];
+
+  const problems: string[] = [];
+  const steps = jobSteps(block);
+  const installIndex = steps.findIndex((step) => /run: bun install\b/.test(step));
+  const checkIndex = steps.findIndex((step) => /run: bun run build:skills:check$/m.test(step));
+  if (checkIndex === -1) problems.push('build:skills:check never runs');
+  else if (installIndex === -1 || checkIndex < installIndex) {
+    problems.push('build:skills:check runs before install');
+  }
+  if (/continue-on-error/.test(block)) {
+    problems.push('continue-on-error would turn skill drift green');
+  }
+  if (/^\s*if:/m.test(steps.join('\n'))) {
+    problems.push('a step condition could skip the drift check');
+  }
+  return problems;
+}
+
 const GOOD_JOB = `jobs:
   ${JOB_KEY}:
     name: Deterministic quality gates
@@ -85,6 +102,16 @@ const GOOD_JOB = `jobs:
         run: bun install --frozen-lockfile
 
 ${REQUIRED_GATES.map((gate) => `      - name: ${gate}\n        ${GATE_CONDITION}\n        run: bun run ${gate}`).join('\n\n')}
+
+  ${SKILL_DRIFT_JOB_KEY}:
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install root dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Check generated skill content
+        run: bun run build:skills:check
 
   branch-suite:
     steps:
@@ -98,11 +125,48 @@ describe('deterministic quality gates workflow', () => {
     expect(gateProblems(workflow)).toEqual([]);
   });
 
-  it('still runs on pull requests and on pushes to main', () => {
-    const block = jobBlock(workflow, JOB_KEY) ?? '';
-    const jobIf = block.split('\n')[1] ?? '';
-    expect(jobIf).toContain("github.event_name == 'pull_request'");
-    expect(jobIf).toContain("github.event_name == 'push' && github.ref == 'refs/heads/main'");
+  it.each([JOB_KEY, SKILL_DRIFT_JOB_KEY])(
+    '%s still runs on pull requests and on pushes to main',
+    (jobKey) => {
+      const block = jobBlock(workflow, jobKey) ?? '';
+      const jobIf = block.split('\n')[1] ?? '';
+      expect(jobIf).toContain("github.event_name == 'pull_request'");
+      expect(jobIf).toContain("github.event_name == 'push' && github.ref == 'refs/heads/main'");
+    },
+  );
+
+  it('checks generated skill content in its own job', () => {
+    expect(skillDriftProblems(workflow)).toEqual([]);
+  });
+});
+
+describe('skillDriftProblems', () => {
+  it('accepts a correctly ordered drift job', () => {
+    expect(skillDriftProblems(GOOD_JOB)).toEqual([]);
+  });
+
+  it('flags a missing drift job', () => {
+    const renamed = GOOD_JOB.replace(`  ${SKILL_DRIFT_JOB_KEY}:`, '  renamed-job:');
+    expect(skillDriftProblems(renamed)).toEqual([`job ${SKILL_DRIFT_JOB_KEY} not found`]);
+  });
+
+  it('flags a drift job that no longer runs the check', () => {
+    const dropped = GOOD_JOB.replace(
+      '        run: bun run build:skills:check',
+      '        run: echo ok',
+    );
+    expect(skillDriftProblems(dropped)).toEqual(['build:skills:check never runs']);
+  });
+
+  it('flags continue-on-error or a step condition that would let drift pass', () => {
+    const soft = GOOD_JOB.replace(
+      '        run: bun run build:skills:check',
+      "        if: github.actor == 'nobody'\n        continue-on-error: true\n        run: bun run build:skills:check",
+    );
+    expect(skillDriftProblems(soft)).toEqual([
+      'continue-on-error would turn skill drift green',
+      'a step condition could skip the drift check',
+    ]);
   });
 });
 
@@ -153,8 +217,8 @@ describe('gateProblems', () => {
 
   it('flags a new gate step added without the condition', () => {
     const extra = GOOD_JOB.replace(
-      '\n\n  branch-suite:',
-      '\n\n      - name: Lint\n        run: bun run lint\n\n  branch-suite:',
+      `\n\n  ${SKILL_DRIFT_JOB_KEY}:`,
+      `\n\n      - name: Lint\n        run: bun run lint\n\n  ${SKILL_DRIFT_JOB_KEY}:`,
     );
     expect(gateProblems(extra)).toEqual([
       '- name: Lint runs after install without the independent-run condition',
@@ -170,8 +234,8 @@ describe('gateProblems', () => {
   });
 
   it('flags a required gate that was removed or duplicated', () => {
-    const removed = GOOD_JOB.replace(/\n\n {6}- name: build:skills:check\n[^\n]*\n[^\n]*/, '');
-    expect(gateProblems(removed)).toEqual(['gate build:skills:check appears 0 times']);
+    const removed = GOOD_JOB.replace(/\n\n {6}- name: knip\n[^\n]*\n[^\n]*/, '');
+    expect(gateProblems(removed)).toEqual(['gate knip appears 0 times']);
   });
 
   it('does not count steps from the next job', () => {
