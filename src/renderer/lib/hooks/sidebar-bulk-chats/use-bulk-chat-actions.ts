@@ -191,7 +191,14 @@ function useChatsBatchRunner({
       }
       // A chat moved to another project before the delete landed survives it.
       restorePanes((chatId) => !goneIds.has(chatId));
-      await finishChatsBatch(goneIds);
+      try {
+        await finishChatsBatch(goneIds);
+      } catch (error) {
+        // The delete already committed, so a refresh failure is not a failed delete.
+        toast.warning('Deleted; refreshing sidebar', {
+          description: error instanceof Error ? error.message : undefined,
+        });
+      }
     },
     [clearPanesForChat, restorePaneAt, finishChatsBatch],
   );

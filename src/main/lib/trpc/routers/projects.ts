@@ -95,7 +95,9 @@ async function deleteExistingProject(
   }
   // Frink-managed builds live under ~/.frink/builds — remove the folder too (no-op for user dirs).
   await removeManagedBuildFolder(existing.path, frinkUserHome());
-  void removeProjectWorktrees(db, existing.path, deletedChats);
+  void removeProjectWorktrees(db, existing.path, deletedChats).catch((error) =>
+    log.warn('[projects.delete] worktree cleanup failed; boot sweep will reclaim', error),
+  );
   const cascaded = deletedChats.map((c) => c.id);
   const alsoGone = await goneChatIds(db, chatIds);
   return { project: existing, deletedChatIds: [...new Set([...cascaded, ...alsoGone])] };

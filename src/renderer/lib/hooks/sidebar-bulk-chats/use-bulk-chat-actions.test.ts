@@ -329,16 +329,20 @@ describe('useBulkChatActions runChatsAtomically', () => {
     expect(deps.removeChatsFromLoadedFolders).toHaveBeenCalledWith(new Set());
   });
 
-  it('clears selection and state of gone chats even when the post-delete refresh fails', async () => {
+  it('warns instead of failing when the refresh after a committed delete fails', async () => {
+    const toastWarning = vi.spyOn(toast, 'warning').mockImplementation(() => '');
     const { result, deps } = setup({
       invalidateBatchViews: async () => {
         throw new Error('refetch failed');
       },
     });
 
-    await expect(
-      act(() => result.current.runChatsAtomically([{ id: 'a' }], async () => ['a'])),
-    ).rejects.toThrow('refetch failed');
+    await act(() => result.current.runChatsAtomically([{ id: 'a' }], async () => ['a']));
+
+    expect(toastWarning).toHaveBeenCalledWith('Deleted; refreshing sidebar', {
+      description: 'refetch failed',
+    });
+    toastWarning.mockRestore();
 
     expect(deps.removeChatsFromLoadedFolders).toHaveBeenCalledWith(new Set(['a']));
     expect(deps.restorePaneAt).not.toHaveBeenCalled();

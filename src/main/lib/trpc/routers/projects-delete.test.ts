@@ -5,6 +5,7 @@
  */
 
 import { eq } from 'drizzle-orm';
+import log from 'electron-log';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as analyticsModule from '../../analytics';
 import { createChat, getChatById, moveChatToProjectLocal } from '../../db/repos/chats';
@@ -244,5 +245,22 @@ describe('projectsRouter.delete', () => {
     await expect(caller().delete({ id: project.id })).rejects.toThrow('database is locked');
 
     expect((await moveTo(chat.id, other.id)).updated?.projectId).toBe(other.id);
+  });
+
+  it('logs, rather than leaks, a rejection from the background worktree cleanup', async () => {
+    const failure = new Error('git env failed');
+    vi.spyOn(teardown, 'removeProjectWorktrees').mockRejectedValue(failure);
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {});
+    const project = await createProject(db, { name: 'P', path: '/tmp/p-wt-reject' });
+    const chat = await createChat(db, { name: 'C', projectId: project.id });
+
+    const result = await caller().delete({ id: project.id });
+    await vi.waitFor(() => expect(warn).toHaveBeenCalled());
+
+    expect(result.deletedChatIds).toEqual([chat.id]);
+    expect(warn).toHaveBeenCalledWith(
+      '[projects.delete] worktree cleanup failed; boot sweep will reclaim',
+      failure,
+    );
   });
 });
