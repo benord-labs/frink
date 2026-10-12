@@ -92,7 +92,12 @@ import { useTextContextSelection } from '../hooks/use-text-context-selection';
 import { useToggleFocusOnCmdEsc } from '../hooks/use-toggle-focus-on-cmd-esc';
 import { createAgentChat } from '../lib/create-agent-chat';
 import { clearSubChatDraft, getSubChatDraftFull } from '../lib/drafts';
-import { createQueueItem, generateQueueId, toQueuedImage } from '../lib/queue-utils';
+import {
+  createQueueItem,
+  generateQueueId,
+  queuedSendMetadata,
+  toQueuedImage,
+} from '../lib/queue-utils';
 import { requestClaudePrewarm } from '../lib/websocket-chat-transport';
 import { type AgentsMentionsEditorHandle } from '../mentions';
 import { RunStatusRows } from '../RunStatusRows';
@@ -1122,7 +1127,13 @@ const ChatViewInner = memo(function ChatViewInner({
             useMessageQueueStore.getState().prependItem(subChatId, item);
             return;
           }
-          // Steer (or requeue) rather than abort; only a turn this view shows streaming is stopped.
+          // Steer (or requeue) rather than abort. A steer carries no metadata, so a dispatched item
+          // waits in the queue for the turn to end instead.
+          if (canSteer && item.dispatchTaskId) {
+            useMessageQueueStore.getState().prependItem(subChatId, item);
+            toast.info('This prompt will be sent when the current step finishes.');
+            return;
+          }
           if (canSteer) {
             const text = parts.find((p) => p.type === 'text')?.text ?? '';
             await steerOrQueue(text, item.images, () =>
@@ -1135,7 +1146,7 @@ const ChatViewInner = memo(function ChatViewInner({
           await handleStop();
         }
 
-        await snapshotSendMessage({ role: 'user', parts });
+        await snapshotSendMessage({ role: 'user', parts, ...queuedSendMetadata(item) });
       } catch (_error) {
         // Requeue the item so it is not lost on send failures.
         useMessageQueueStore.getState().prependItem(subChatId, item);
