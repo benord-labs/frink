@@ -1,4 +1,5 @@
 import type { Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import log from 'electron-log';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../claude', () => ({
@@ -1740,6 +1741,7 @@ describe('claude-wake-hold — standing down on a declared done', () => {
   };
 
   it('stands down on the burst that declared it, with work still listed', async () => {
+    const warn = vi.spyOn(log, 'warn');
     const { ch, io, declare } = armSignalled('sig1', stopHookWith(pendingWork));
     await wake(ch);
     expect(hasWakeHold('sig1')).toBe(true);
@@ -1749,6 +1751,10 @@ describe('claude-wake-hold — standing down on a declared done', () => {
     await wake(ch);
     await new Promise((r) => setTimeout(r, 0));
     expect(heldCalls(io).at(-1)).toBe(false);
+    // Closing stdin ends the listed task, so the stand-down names it — once.
+    const drops = warn.mock.calls.map(([l]) => String(l)).filter((l) => l.includes('(wait-over)'));
+    warn.mockRestore();
+    expect(drops).toEqual([expect.stringContaining('sig1')]);
   });
 
   it('does not re-advertise the wait on that burst', async () => {

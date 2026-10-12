@@ -363,6 +363,7 @@ export function armWakePump(params: ArmWakePumpParams): WakeHold {
       waitOverDeclared || (Boolean(session.stopHook) && !session.stopHook?.lastPendingWork),
     onWaitOver: () => {
       waitOver = true;
+      logDroppedPendingWork(subChatId, session.stopHook?.lastPendingWork ?? null, 'wait-over');
       retractHold(hold, 'wait-over');
     },
     onBurstStart: () => {
