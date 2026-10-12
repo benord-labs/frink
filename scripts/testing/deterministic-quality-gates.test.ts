@@ -126,10 +126,14 @@ describe('deterministic quality gates workflow', () => {
     expect(gateProblems(workflow)).toEqual([]);
   });
 
-  it('holds main to every gate on push', () => {
+  // The nightly run re-flags a red main even on days nothing merges.
+  it('holds main to every gate on push and on the nightly schedule', () => {
     const block = jobBlock(workflow, JOB_KEY) ?? '';
     const jobIf = block.split('\n')[1] ?? '';
     expect(jobIf).toContain("github.event_name == 'push' && github.ref == 'refs/heads/main'");
+    expect(jobIf).toContain("github.event_name == 'schedule'");
+    expect(jobIf).not.toContain("'pull_request'");
+    expect(workflow).toMatch(/^ {2}schedule:\n {4}- cron: /m);
   });
 
   it('still runs the skill drift job on pull requests and on pushes to main', () => {

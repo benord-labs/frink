@@ -4,7 +4,12 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { GATE_SCRIPTS } from './collect-quality-gate-findings.mjs';
-import { compareGateReports, formatSummary, validateGateRun } from './compare-quality-gates.mjs';
+import {
+  compareGateReports,
+  formatInheritedWarnings,
+  formatSummary,
+  validateGateRun,
+} from './compare-quality-gates.mjs';
 
 type GateRecord = {
   status: 'ran' | 'absent';
@@ -202,6 +207,32 @@ describe('validateGateRun', () => {
   });
 });
 
+// A green PR check must still say when main itself is red, or a broken main goes unnoticed.
+describe('formatInheritedWarnings', () => {
+  it('warns once per gate that main already fails, with its count', () => {
+    const base = report({
+      knip: ran(['a :: exports :: x', 'b :: exports :: y']),
+      'format:check': ran(['c.ts :: unformatted']),
+    });
+    expect(formatInheritedWarnings(compareGateReports(base, base))).toEqual([
+      '::warning title=main is failing format:check::main already has 1 format:check finding(s). They are inherited, not caused by this pull request.',
+      '::warning title=main is failing knip::main already has 2 knip finding(s). They are inherited, not caused by this pull request.',
+    ]);
+  });
+
+  it('stays silent when main is clean', () => {
+    expect(formatInheritedWarnings(compareGateReports(report(), report()))).toEqual([]);
+  });
+
+  it('counts only findings still present on head, not ones the pull request fixed', () => {
+    const base = report({ knip: ran(['a :: exports :: x', 'b :: exports :: y']) });
+    const head = report({ knip: ran(['a :: exports :: x']) });
+    expect(formatInheritedWarnings(compareGateReports(base, head))).toEqual([
+      '::warning title=main is failing knip::main already has 1 knip finding(s). They are inherited, not caused by this pull request.',
+    ]);
+  });
+});
+
 describe('formatSummary', () => {
   it('lists introduced findings and counts inherited ones per gate', () => {
     const summary = formatSummary(
@@ -247,7 +278,9 @@ describe('compare-quality-gates CLI', () => {
   it('exits 0 on a red base with nothing new and 1 once head adds a finding', () => {
     const inherited = report({ knip: ran(['old :: exports :: a']) });
     withReports(inherited, inherited, (paths) => {
-      expect(runCli(...paths).status).toBe(0);
+      const run = runCli(...paths);
+      expect(run.status).toBe(0);
+      expect(run.stdout).toContain('::warning title=main is failing knip::');
     });
     withReports(
       inherited,

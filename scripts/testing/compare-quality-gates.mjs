@@ -102,6 +102,16 @@ export function formatSummary(comparison) {
   ].join('\n\n');
 }
 
+/** GitHub annotations naming each gate main already fails, so a green PR check still shows it. */
+export function formatInheritedWarnings(comparison) {
+  return comparison.gates
+    .filter((gate) => gate.inherited > 0)
+    .map(
+      (gate) =>
+        `::warning title=main is failing ${gate.gate}::main already has ${gate.inherited} ${gate.gate} finding(s). They are inherited, not caused by this pull request.`,
+    );
+}
+
 function publishSummary(summary) {
   console.log(summary);
   if (process.env.GITHUB_STEP_SUMMARY) {
@@ -122,6 +132,7 @@ function main() {
   }
   const comparison = compareGateReports(readJson(args[0]), readJson(args[1]));
   publishSummary(formatSummary(comparison));
+  for (const warning of formatInheritedWarnings(comparison)) console.log(warning);
   if (comparison.failed) {
     console.error('The pull request introduces quality-gate findings, or a gate run is invalid.');
     process.exitCode = 1;

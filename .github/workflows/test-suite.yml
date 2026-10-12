@@ -104,9 +104,9 @@ jobs:
             "$(cat reports/head-suite-report/exit-code.txt)"
 
   # Pull requests are judged on the findings they add (compare-pull-request-gates below); main itself
-  # is held to every gate absolutely, so inherited debt stays visible here.
+  # is held to every gate absolutely, on each push and nightly, so a red main stays visible here.
   deterministic-quality-gates:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'schedule'
     name: Deterministic quality gates
     runs-on: ubuntu-latest
     timeout-minutes: 10
