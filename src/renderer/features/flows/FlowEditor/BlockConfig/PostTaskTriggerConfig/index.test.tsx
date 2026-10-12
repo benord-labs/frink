@@ -36,6 +36,7 @@ const DELETE_INPUT = z.strictObject({ id: z.string() });
 type StoredBinding = {
   id: string;
   triggerType: string;
+  projectId: string | null;
   isActive: boolean;
   lastError: string | null;
 };
@@ -93,9 +94,13 @@ function renderEditor(config: FlowNode['config'], bindings: StoredBinding[] = []
   );
 }
 
-const existingBinding = (lastError: string | null): StoredBinding => ({
+const existingBinding = (
+  lastError: string | null,
+  projectId: string | null = 'project-1',
+): StoredBinding => ({
   id: 'binding-1',
   triggerType: 'post_task_trigger',
+  projectId,
   isActive: true,
   lastError,
 });
@@ -174,5 +179,22 @@ describe('PostTaskTriggerConfig binding payload', () => {
       triggerStates: ['all'],
       filterBySource: undefined,
     });
+  });
+});
+
+describe('PostTaskTriggerConfig project-less binding warning (sc-3299)', () => {
+  const NO_PROJECT_WARNING = /has no project, so it will never fire/;
+
+  it.each([null, '', '   '])('warns when the binding project is %j', async (projectId) => {
+    renderEditor({}, [existingBinding(null, projectId)]);
+
+    expect(await screen.findByText(NO_PROJECT_WARNING)).toBeInTheDocument();
+  });
+
+  it('stays quiet when the binding has a project', async () => {
+    renderEditor({}, [existingBinding(null)]);
+
+    expect(await screen.findByLabelText('Automation active')).toBeInTheDocument();
+    expect(screen.queryByText(NO_PROJECT_WARNING)).not.toBeInTheDocument();
   });
 });
