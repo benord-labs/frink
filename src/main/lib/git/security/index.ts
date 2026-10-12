@@ -9,16 +9,6 @@
  * See path-validation.ts header for the full threat model.
  */
 
-export {
-  gitCheckoutFile,
-  gitCheckoutFiles,
-  gitStageAll,
-  gitStageFile,
-  gitStageFiles,
-  gitSwitchBranch,
-  gitUnstageAll,
-  gitUnstageFile,
-  gitUnstageFiles,
-} from './git-commands';
+export { gitSwitchBranch } from './git-commands';
 
 export { secureFs } from './secure-fs';

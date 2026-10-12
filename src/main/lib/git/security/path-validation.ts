@@ -122,12 +122,3 @@ export function getProjectIdByPath(projectPath: string): string {
   }
   return project.id;
 }
-
-/**
- * Validates a path for git commands. Lighter check that allows root.
- *
- * @throws PathValidationError if path is invalid
- */
-export function assertValidGitPath(filePath: string): void {
-  validateRelativePath(filePath, { allowRoot: true });
-}

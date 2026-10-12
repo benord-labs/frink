@@ -18,17 +18,13 @@ vi.mock('simple-git', () => ({
 }));
 
 vi.mock('./utils/parse-status', () => ({
-  GIT_LOG_FORMAT: '--format=%H',
   parseGitStatus: parseGitStatusMock,
-  parseGitLog: vi.fn(() => []),
-  parseNameStatus: vi.fn(() => []),
 }));
 
 vi.mock('./security', () => ({
   secureFs: {
     stat: statMock,
     readFileBuffer: readFileBufferMock,
-    readFile: vi.fn(),
   },
 }));
 
@@ -333,52 +329,5 @@ describe('createStatusRouter.getWorkingFileLineChanges', () => {
 
     expect(result).toEqual({ content: null });
     expect(showMock).toHaveBeenCalledWith(['HEAD:src/existing.ts']);
-  });
-
-  it('normalizes file path in getCommitFileDiff', async () => {
-    rawMock.mockResolvedValue('diff --git a/src/a.ts b/src/a.ts');
-    const { createStatusRouter } = await import('./status');
-    const caller = createStatusRouter().createCaller({ getWindow: () => null });
-
-    await caller.getCommitFileDiff({
-      worktreePath: '/repo',
-      commitHash: 'abcdef1234567',
-      filePath: '/repo/src/a.ts',
-    });
-
-    expect(rawMock).toHaveBeenCalledWith([
-      'diff',
-      'abcdef1234567^',
-      'abcdef1234567',
-      '--',
-      'src/a.ts',
-    ]);
-  });
-
-  it('accepts caret-style HEAD refs in getCommitFileDiff', async () => {
-    rawMock.mockResolvedValue('diff --git a/src/a.ts b/src/a.ts');
-    const { createStatusRouter } = await import('./status');
-    const caller = createStatusRouter().createCaller({ getWindow: () => null });
-
-    await caller.getCommitFileDiff({
-      worktreePath: '/repo',
-      commitHash: 'HEAD^2',
-      filePath: '/repo/src/a.ts',
-    });
-
-    expect(rawMock).toHaveBeenCalledWith(['diff', 'HEAD^2^', 'HEAD^2', '--', 'src/a.ts']);
-  });
-
-  it('rejects invalid commit hash format in getCommitFileDiff', async () => {
-    const { createStatusRouter } = await import('./status');
-    const caller = createStatusRouter().createCaller({ getWindow: () => null });
-
-    await expect(
-      caller.getCommitFileDiff({
-        worktreePath: '/repo',
-        commitHash: 'not a hash',
-        filePath: '/repo/src/a.ts',
-      }),
-    ).rejects.toThrow('Invalid commit hash format');
   });
 });

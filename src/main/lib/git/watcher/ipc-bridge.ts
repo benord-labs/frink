@@ -76,26 +76,13 @@ const EVENT_THROTTLE_MS = 500; // Minimum 500ms between events to renderer
  * Call this once during app initialization.
  */
 export function registerGitWatcherIPC(getWindow: () => BrowserWindow | null): void {
-  const forwardStatusChangeToRenderer = (
-    event: GitWatchEvent,
-    containsGitPointerChange: boolean,
-  ): void => {
+  const forwardStatusChangeToRenderer = (event: GitWatchEvent): void => {
     const win = getWindow();
     if (!win || win.isDestroyed()) return;
 
     const worktreePath = event.worktreePath;
     gitCache.invalidateStatus(worktreePath);
     gitCache.invalidateParsedDiff(worktreePath);
-    if (containsGitPointerChange) {
-      gitCache.invalidateAllFileContents(worktreePath);
-    } else {
-      for (const change of event.changes) {
-        if (isGitPointerRelatedPath(change.path)) continue;
-        const relativePath = path.relative(worktreePath, change.path).replace(BACKSLASH_RE, '/');
-        if (!relativePath || relativePath.startsWith('..')) continue;
-        gitCache.invalidateFileContentsByPath(worktreePath, relativePath);
-      }
-    }
     invalidateGitStatusCache(worktreePath);
     invalidateFileListCache(worktreePath);
 
@@ -175,7 +162,7 @@ export function registerGitWatcherIPC(getWindow: () => BrowserWindow | null): vo
             if (!pendingEvent) return;
             pendingEventByWorktree.delete(eventWorktreePath);
             lastEventTime.set(eventWorktreePath, Date.now());
-            forwardStatusChangeToRenderer(pendingEvent, hasGitPointerChange(pendingEvent.changes));
+            forwardStatusChangeToRenderer(pendingEvent);
           }, delay);
           pendingEventTimerByWorktree.set(eventWorktreePath, timer);
         }
@@ -185,7 +172,7 @@ export function registerGitWatcherIPC(getWindow: () => BrowserWindow | null): vo
         clearPendingEventForWorktree(eventWorktreePath);
       }
       lastEventTime.set(eventWorktreePath, now);
-      forwardStatusChangeToRenderer(event, containsGitPointerChange);
+      forwardStatusChangeToRenderer(event);
     });
 
     const subscription: WatcherSubscription = { ready, count: 1 };
