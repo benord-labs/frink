@@ -61,12 +61,12 @@ describe('logDroppedPendingWork', () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('dropping: shell, cron'));
   });
 
-  it('does not alert on a teardown the user asked for', () => {
-    for (const cause of ['user-pause', 'remote-stop', 'aborted', 'chat archived (batch)']) {
-      logDroppedPendingWork('c3', pendingWork, cause);
-    }
+  it('does not alert on a teardown the user or the agent asked for', () => {
+    // `wait-over` is the agent declaring its work done over a task that never reports itself so.
+    const causes = ['user-pause', 'remote-stop', 'aborted', 'chat archived (batch)', 'wait-over'];
+    for (const cause of causes) logDroppedPendingWork('c3', pendingWork, cause);
 
-    expect(warn).toHaveBeenCalledTimes(4);
+    expect(warn).toHaveBeenCalledTimes(5);
     expect(alert).not.toHaveBeenCalled();
   });
 

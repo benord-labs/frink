@@ -606,10 +606,15 @@ describe('a wait that is over', () => {
       await vi.advanceTimersByTimeAsync(1_000);
 
       expect(await arming.done).toEqual({ reason: 'work-finished', bursts: 1 });
+      // Nothing followed the close: this is the wedged CLI, told apart from a reap over late work.
       expect(captureMainMessage).toHaveBeenCalledWith(
         expect.stringContaining('never exited'),
         'warning',
-        expect.objectContaining({ surface: 'wake-pump-stand-down' }),
+        expect.objectContaining({
+          surface: 'wake-pump-stand-down',
+          burstsSinceClose: '0',
+          sinceLastBurstMs: expect.stringMatching(/^6000\d$/),
+        }),
       );
     } finally {
       vi.useRealTimers();
@@ -656,6 +661,78 @@ describe('a wait that is over', () => {
         'warning',
         expect.objectContaining({ surface: 'wake-pump-stand-down' }),
       );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  // A task's own frames are ambient, so the quiet clock that restarted when the burst opened is
+  // the only one running: work a burst launches after stdin closed is ended with the silence.
+  it('reaps work a burst launched after stdin closed, once that burst has gone quiet', async () => {
+    vi.useFakeTimers();
+    try {
+      const ch = channelQuery();
+      const session = createSession('reap-launched', () => ch.query);
+      const arming = armIdle(
+        session,
+        wakeCallbacks(newLog(), () => true),
+      );
+
+      ch.emit(resultMsg());
+      await vi.advanceTimersByTimeAsync(0);
+      expect(session.queue.closed).toBe(true);
+
+      ch.emit(msg('assistant'));
+      ch.emit(msg('system', { subtype: 'task_started', task_id: 'late' }));
+      ch.emit(resultMsg());
+      await vi.advanceTimersByTimeAsync(0);
+      expect(arming.isEnded()).toBe(false);
+
+      for (let i = 0; i < 7; i++) {
+        ch.emit(ambient()); // the launched task reporting progress
+        await vi.advanceTimersByTimeAsync(10_000);
+      }
+
+      expect(await arming.done).toEqual({ reason: 'work-finished', bursts: 2 });
+      expect(captureMainMessage).toHaveBeenCalledWith(
+        expect.stringContaining('never exited'),
+        'warning',
+        // Measured from the burst's first frame, not its result or the task's last heartbeat.
+        expect.objectContaining({
+          subChatId: 'reap-launched',
+          burstsSinceClose: '1',
+          sinceLastBurstMs: expect.stringMatching(/^6000\d$/),
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('holds the reap while the launched work reports back inside the quiet window', async () => {
+    vi.useFakeTimers();
+    try {
+      const ch = channelQuery();
+      const session = createSession('reap-reported', () => ch.query);
+      const arming = armIdle(
+        session,
+        wakeCallbacks(newLog(), () => true),
+      );
+
+      ch.emit(resultMsg());
+      await vi.advanceTimersByTimeAsync(0);
+      ch.emit(msg('assistant'));
+      ch.emit(msg('system', { subtype: 'task_started', task_id: 'late' }));
+      ch.emit(resultMsg());
+      await vi.advanceTimersByTimeAsync(50_000);
+
+      // Its completion opens a burst of its own: the clock restarts and nothing ends it mid-burst.
+      ch.emit(msg('system', { subtype: 'task_notification', status: 'completed' }));
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(arming.isEnded()).toBe(false);
+
+      ch.emit(resultMsg());
+      ch.end();
+      expect(await arming.done).toEqual({ reason: 'work-finished', bursts: 3 });
     } finally {
       vi.useRealTimers();
     }

@@ -22,7 +22,7 @@
     }
   },
   "ignore": ["mobile/**"],
-  "ignoreBinaries": ["mkfifo", "node-gyp"],
+  "ignoreBinaries": ["mkfifo", "node-gyp", "ssh-keygen"],
   "ignoreIssues": {
     "src/renderer/features/agents/ui/agent-task-tools.tsx": ["exports"],
     "src/renderer/lib/hotkeys/shortcut-registry.ts": ["exports"]
