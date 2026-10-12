@@ -6,9 +6,10 @@ import {
   claimTask as realClaimTask,
   createTask,
   getPendingTaskIds as realGetPendingTaskIds,
+  getTaskById,
 } from './db/repos/tasks';
 import { freshDb, type TestDb } from './db/test-utils/fresh-db';
-import { TaskPoller, type TaskPollerDeps } from './task-poller';
+import { getTaskPoller, TaskPoller, type TaskPollerDeps } from './task-poller';
 
 // Shape of a node:sqlite failure (the live driver), e.g. SQLITE_BUSY.
 function sqliteBusyError(): Error {
@@ -270,5 +271,141 @@ describe('TaskPoller', () => {
 
     await vi.advanceTimersByTimeAsync(5000); // t=30s
     expect(deps.claimTask).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not query when poked before start', async () => {
+    poller.pokeNow();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(poller.isRunning()).toBe(false);
+    expect(deps.getPendingTaskIds).not.toHaveBeenCalled();
+  });
+
+  it('reports an empty poll without claiming', async () => {
+    const complete = vi.fn();
+    poller.on('poll:complete', complete);
+
+    await poller.start();
+
+    expect(complete).toHaveBeenCalledWith(0);
+    expect(deps.claimTask).not.toHaveBeenCalled();
+  });
+
+  it('asks for one pending task per poll and claims only that one', async () => {
+    const first = await createTask(db, { description: 'first', source: 'manual' });
+    // Task ids are time-based, and fake timers freeze the clock.
+    vi.advanceTimersByTime(1);
+    const second = await createTask(db, { description: 'second', source: 'manual' });
+
+    await poller.start();
+
+    expect(deps.getPendingTaskIds).toHaveBeenCalledWith(db, 1);
+    expect(deps.claimTask).toHaveBeenCalledTimes(1);
+    const statuses = [await getTaskById(db, first.id), await getTaskById(db, second.id)].map(
+      (task) => task?.status,
+    );
+    expect(statuses.toSorted()).toEqual(['pending', 'running']);
+  });
+
+  it('does not emit task:claimed when the claim is lost', async () => {
+    await createTask(db, { description: 'queued work', source: 'manual' });
+    deps.claimTask.mockResolvedValueOnce(null);
+    const claimed = vi.fn();
+    const onError = vi.fn();
+    poller.on('task:claimed', claimed);
+    poller.on('task:error', onError);
+
+    await poller.start();
+
+    expect(deps.claimTask).toHaveBeenCalledTimes(1);
+    expect(claimed).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('routes a throwing task:claimed listener to task:error without backing off', async () => {
+    const task = await createTask(db, { description: 'queued work', source: 'manual' });
+    const error = new Error('listener bug');
+    const onError = vi.fn();
+    poller.on('task:claimed', () => {
+      throw error;
+    });
+    poller.on('task:error', onError);
+
+    await poller.start();
+    expect(onError).toHaveBeenCalledWith(error, { id: task.id });
+
+    poller.pokeNow();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.getPendingTaskIds).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not start a second poll while a claim is still in flight', async () => {
+    await createTask(db, { description: 'queued work', source: 'manual' });
+    let release: (row: Awaited<ReturnType<typeof realClaimTask>>) => void = () => {};
+    deps.claimTask.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+
+    const starting = poller.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.claimTask).toHaveBeenCalledTimes(1);
+
+    poller.pokeNow();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.getPendingTaskIds).toHaveBeenCalledTimes(1);
+
+    release(null);
+    await starting;
+    poller.pokeNow();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.getPendingTaskIds).toHaveBeenCalledTimes(2);
+  });
+
+  it('hands every caller the same poller, so the executor hears what startup polls', () => {
+    expect(getTaskPoller()).toBe(getTaskPoller());
+  });
+
+  it('does not poll again when start is called on a running poller', async () => {
+    await poller.start();
+    await poller.start();
+
+    expect(deps.getPendingTaskIds).toHaveBeenCalledTimes(1);
+  });
+
+  it('polls on every interval tick until stopped', async () => {
+    await poller.start();
+
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(deps.getPendingTaskIds).toHaveBeenCalledTimes(2);
+
+    poller.stop();
+    expect(poller.isRunning()).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(15000);
+    expect(deps.getPendingTaskIds).toHaveBeenCalledTimes(2);
+  });
+
+  it('skips interval ticks and pokes while paused, and a poke does not unpause', async () => {
+    await poller.start();
+    poller.pause();
+
+    await vi.advanceTimersByTimeAsync(5000);
+    poller.pokeNow();
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(deps.getPendingTaskIds).toHaveBeenCalledTimes(1);
+  });
+
+  it('polls immediately on resume', async () => {
+    await poller.start();
+    poller.pause();
+
+    poller.resume();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(deps.getPendingTaskIds).toHaveBeenCalledTimes(2);
   });
 });
