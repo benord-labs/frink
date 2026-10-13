@@ -47,19 +47,27 @@ function selectOption(
   return CANCELLED;
 }
 
-async function isAllowed(
+/** How Frink's gate settled one call: no rule or person decided it when the result is unchecked. */
+type Verdict = 'allowed' | 'denied' | 'unchecked';
+
+/** The answer to the agent, and whether a rule or a person decided it. */
+export type PermissionAnswer = { response: RequestPermissionResponse; checked: boolean };
+
+async function verdictFor(
   requests: CodexApprovalRequest[],
   checkApproval: CodexApprovalCheck,
   turnOver: AbortSignal,
-): Promise<boolean> {
+): Promise<Verdict> {
+  if (requests.length === 0) return 'unchecked';
   // One answer covers the whole call, so the first question that is not allowed refuses all of it.
   for (const request of requests) {
     // No card opens for a turn that is over, even when it ended between two questions.
-    if (turnOver.aborted) return false;
+    if (turnOver.aborted) return 'denied';
     const outcome = await checkApproval(request);
-    if (outcome.allowed !== true) return false;
+    if (outcome.allowed === null) return 'unchecked';
+    if (!outcome.allowed) return 'denied';
   }
-  return requests.length > 0;
+  return 'allowed';
 }
 
 /**
@@ -71,13 +79,16 @@ export async function answerPermissionRequest(
   options: PermissionOption[],
   checkApproval: CodexApprovalCheck,
   turnOver: AbortSignal,
-): Promise<RequestPermissionResponse> {
-  let allowed = false;
+): Promise<PermissionAnswer> {
+  let verdict: Verdict = 'unchecked';
   try {
-    allowed = await isAllowed(requests, checkApproval, turnOver);
+    verdict = await verdictFor(requests, checkApproval, turnOver);
   } catch (error) {
     log.error('[ACP] Permission check failed; refusing', error);
   }
-  if (turnOver.aborted) return CANCELLED;
-  return selectOption(options, allowed ? ['allow_once', 'reject_once'] : ['reject_once']);
+  const checked = verdict !== 'unchecked';
+  if (turnOver.aborted) return { response: CANCELLED, checked };
+  const wanted: PermissionOptionKind[] =
+    verdict === 'allowed' ? ['allow_once', 'reject_once'] : ['reject_once'];
+  return { response: selectOption(options, wanted), checked };
 }
