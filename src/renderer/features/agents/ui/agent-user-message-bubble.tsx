@@ -329,6 +329,15 @@ export const AgentUserMessageBubble = memo(function AgentUserMessageBubble({
                   data-message-id={messageId}
                   data-part-index={0}
                   data-part-type="text"
+                  // A chip focused below the fold scrolls the clipped text; open the card instead.
+                  onFocus={
+                    isOverflowing
+                      ? (e) => {
+                          e.currentTarget.scrollTop = 0;
+                          setIsExpanded(true);
+                        }
+                      : undefined
+                  }
                 >
                   {/* Render command text inline-highlighted, then user text after */}
                   {commandName && commandText && (

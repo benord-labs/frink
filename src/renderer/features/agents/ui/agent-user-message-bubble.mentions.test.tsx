@@ -1,8 +1,9 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render } from '@testing-library/react';
 import { createStore, Provider } from 'jotai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { TooltipProvider } from '../../../components/ui/tooltip';
 import { chatMarkdownModeAtom } from '../atoms';
 import { AgentUserMessageBubble } from './agent-user-message-bubble';
 
@@ -13,12 +14,19 @@ vi.hoisted(() => {
   });
 });
 
+/** Mention chips are the bubble's only keyboard-focusable spans. */
+function chipLabels(container: HTMLElement): (string | null)[] {
+  return Array.from(container.querySelectorAll('span[tabindex="0"]'), (chip) => chip.textContent);
+}
+
 function renderWithMarkdownOn(textContent: string) {
   const store = createStore();
   store.set(chatMarkdownModeAtom, 'rendered');
   return render(
     <Provider store={store}>
-      <AgentUserMessageBubble messageId="m" textContent={textContent} />
+      <TooltipProvider>
+        <AgentUserMessageBubble messageId="m" textContent={textContent} />
+      </TooltipProvider>
     </Provider>,
   );
 }
@@ -33,7 +41,7 @@ describe('AgentUserMessageBubble mentions with markdown rendering on', () => {
       '@[file:local:.oxlintrc.json] fix the **lint** rule',
     );
 
-    expect(screen.getByTitle('local:.oxlintrc.json')).toHaveTextContent('.oxlintrc.json');
+    expect(chipLabels(container)).toStrictEqual(['.oxlintrc.json']);
     expect(container.querySelector('.prose strong')).toHaveTextContent('lint');
     expect(container).not.toHaveTextContent('@[');
   });
@@ -44,14 +52,14 @@ describe('AgentUserMessageBubble mentions with markdown rendering on', () => {
     );
 
     expect(container.querySelectorAll('.prose li')).toHaveLength(2);
-    expect(screen.getByTitle('local:src/a.ts')).toHaveTextContent('a.ts');
+    expect(chipLabels(container)).toStrictEqual(['a.ts', 'b.ts']);
     expect(container).not.toHaveTextContent('@[');
   });
 
   it('keeps a message without markdown on the plain mention view', () => {
     const { container } = renderWithMarkdownOn('@[file:local:.oxlintrc.json] how are you?');
 
-    expect(screen.getByTitle('local:.oxlintrc.json')).toHaveTextContent('.oxlintrc.json');
+    expect(chipLabels(container)).toStrictEqual(['.oxlintrc.json']);
     expect(container.querySelector('.prose')).toBeNull();
     expect(container).not.toHaveTextContent('@[');
   });

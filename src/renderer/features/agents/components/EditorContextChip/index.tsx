@@ -2,7 +2,10 @@ import type { CodeSelectionContext } from '../../lib/queue-utils';
 import { AgentFileItem } from '../../ui/agent-file-item';
 
 type EditorContextChipProps = {
-  selection: Pick<CodeSelectionContext, 'fileName' | 'startLine' | 'endLine'> | null | undefined;
+  selection:
+    | Pick<CodeSelectionContext, 'fileName' | 'filePath' | 'startLine' | 'endLine'>
+    | null
+    | undefined;
   /** Name of the open file that rides the next message; null when nothing from it is sent. */
   fileName: string | null | undefined;
   onRemoveSelection: () => void;
@@ -22,6 +25,7 @@ export function EditorContextChip({
     return (
       <AgentFileItem
         filename={selection.fileName}
+        path={selection.filePath}
         detail={`L${lines}`}
         removeLabel={`Remove code selection and file from context: ${selection.fileName} lines ${lines}`}
         onRemove={() => {

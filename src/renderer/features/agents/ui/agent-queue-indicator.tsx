@@ -170,18 +170,18 @@ const QueueItemRow = memo(function QueueItemRow({
               data-command-highlight={commandName}
             >
               <span className="sr-only">{`Command: ${commandName} — `}</span>
-              <RenderFileMentions text={commandText} />
+              <RenderFileMentions text={commandText} focusable={false} />
             </span>
             {commandText && cleanedText ? ' ' : null}
             {cleanedText ? (
               <span className="min-w-0 truncate">
-                <RenderFileMentions text={cleanedText} />
+                <RenderFileMentions text={cleanedText} focusable={false} />
               </span>
             ) : null}
           </>
         ) : (
           <span className="min-w-0 truncate">
-            <RenderFileMentions text={cleanedText ?? ''} />
+            <RenderFileMentions text={cleanedText ?? ''} focusable={false} />
           </span>
         )}
       </span>

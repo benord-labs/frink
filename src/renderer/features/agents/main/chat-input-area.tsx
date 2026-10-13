@@ -777,9 +777,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                         {files.map((f) => (
                           <AgentFileItem
                             key={f.id}
-                            id={f.id}
                             filename={f.filename}
-                            url={f.url || ''}
                             size={f.size}
                             isLoading={f.isLoading}
                             onRemove={() => onRemoveFile(f.id)}
@@ -800,7 +798,6 @@ export const ChatInputArea = memo(function ChatInputArea({
                             preview={dtc.preview}
                             filePath={dtc.filePath}
                             lineNumber={dtc.lineNumber}
-                            lineType={dtc.lineType}
                             onRemove={
                               onRemoveDiffTextContext
                                 ? () => onRemoveDiffTextContext(dtc.id)
