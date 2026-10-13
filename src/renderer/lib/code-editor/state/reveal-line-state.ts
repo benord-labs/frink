@@ -5,6 +5,20 @@ export type RevealLineDetail = {
   endColumn?: number;
 };
 
+/** Asks the editor to show a line of the file at this absolute path. */
+export function dispatchEditorRevealLine(
+  filePath: string,
+  lineNumber: number,
+  startColumn?: number,
+  endColumn?: number,
+): void {
+  window.dispatchEvent(
+    new CustomEvent<RevealLineDetail>('editor:reveal-line', {
+      detail: { filePath, lineNumber, startColumn, endColumn },
+    }),
+  );
+}
+
 type NormalizedRevealSelection = {
   clampedLine: number;
   startColumn: number;

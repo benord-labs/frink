@@ -1,4 +1,5 @@
 import path from 'path';
+import { buildOpenWorktreeFileInput } from '@/lib/worktree/open-worktree-file-in-editor';
 
 // Adapted from T3 Code's markdownLinks.ts and fileLinks.ts (MIT).
 
@@ -110,4 +111,38 @@ export function isFileNameLabel(label: string, target: FileLinkTarget): boolean 
   const name = own.path.replace(EDGE_SLASHES, '');
   const file = target.path.replace(EDGE_SLASHES, '');
   return name === '' || file === name || file.endsWith(`/${name}`);
+}
+
+/** Where a chat's file references point: its home folder and the folder it works in. */
+type FileLinkBase = {
+  home: string | undefined;
+  root: string | null | undefined;
+  isWorktreeContext: boolean;
+  chatId: string | null;
+};
+
+/** What opens a referenced file in the editor; null when it lies outside the chat's working folder. */
+export function fileLinkOpenInput(
+  file: string,
+  { home, root, isWorktreeContext, chatId }: FileLinkBase,
+) {
+  // A `~/` path starts at the home folder, so it waits for one; any other loses its `./` parts.
+  const filePath = file.startsWith('~/')
+    ? home && path.join(home, file.slice(2))
+    : path.normalize(file);
+  if (!chatId || !filePath) return null;
+  return buildOpenWorktreeFileInput({ filePath, worktreePath: root, isWorktreeContext, chatId });
+}
+
+export type FileLinkOpenInput = NonNullable<ReturnType<typeof fileLinkOpenInput>>;
+
+/** True for a path written with no `/`, `~/`, `./` or `../` in front: the only kind that may be shortened. */
+export function isBareRelativePath(file: string): boolean {
+  return !PATH_PREFIX.test(file);
+}
+
+/** The full path a shortened one stands for: the only project entry, file or folder, that ends with it. */
+export function findShortenedPath(file: string, entries: { path: string }[]): string | undefined {
+  const tails = entries.filter((entry) => entry.path.endsWith(`/${file}`));
+  return tails.length === 1 ? tails[0].path : undefined;
 }

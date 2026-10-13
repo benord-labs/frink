@@ -46,6 +46,24 @@ describe('buildOpenWorktreeFileInput', () => {
     });
   });
 
+  it('opens against the project itself for a chat that has no worktree', () => {
+    expect(
+      buildOpenWorktreeFileInput({
+        filePath: '/repo/project/src/index.ts',
+        worktreePath: '/repo/project',
+        isWorktreeContext: false,
+        chatId: 'chat-1',
+      }),
+    ).toEqual({
+      path: 'src/index.ts',
+      name: 'index.ts',
+      projectPath: '/repo/project',
+      isWorktreeContext: false,
+      sourceChatId: 'chat-1',
+      intent: 'pinned',
+    });
+  });
+
   it('rejects absolute file paths outside the worktree root', () => {
     expect(
       buildOpenWorktreeFileInput({

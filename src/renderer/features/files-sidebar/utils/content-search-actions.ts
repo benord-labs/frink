@@ -1,5 +1,5 @@
 import type { RefObject } from 'react';
-import { dispatchEditorRevealLine } from '../../layout/editor-reveal-line';
+import { dispatchEditorRevealLine } from '@/lib/code-editor/state';
 import type { FilesSidebarTab } from '../atoms';
 
 export function activateSearchTabAndFocus(

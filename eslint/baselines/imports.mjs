@@ -407,14 +407,6 @@ export const rendererImportWallBaseline = [
     ]
   },
   {
-    "name": "grandfather:src/renderer/features/files-sidebar/utils/content-search-actions.ts",
-    "pattern": "src/renderer/features/files-sidebar/utils/content-search-actions.ts",
-    "allowImportsFrom": [
-      "{renderer_base}",
-      "src/renderer/features/layout/**"
-    ]
-  },
-  {
     "name": "grandfather:src/renderer/features/flows/FlowEditor/BlockConfig/AgentConfig/index.tsx",
     "pattern": "src/renderer/features/flows/FlowEditor/BlockConfig/AgentConfig/index.tsx",
     "allowImportsFrom": [

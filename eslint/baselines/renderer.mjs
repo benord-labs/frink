@@ -404,8 +404,6 @@ export const rendererStructureBaseline = [
   "features/flows/flow-editor-escape-stack.ts",
   "features/integrations/types.ts",
   "features/layout/agents-layout.tsx",
-  "features/layout/editor-reveal-line.test.ts",
-  "features/layout/editor-reveal-line.ts",
   "features/layout/open-active-file-in-editor.test.ts",
   "features/layout/open-active-file-in-editor.ts",
   "features/onboarding/connect-account-shell.tsx",
