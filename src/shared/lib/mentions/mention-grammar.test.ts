@@ -46,6 +46,26 @@ describe('findMentionTokens', () => {
     ]);
   });
 
+  it.each(['src/app/[id]/page.tsx', 'app/[[...slug]]/page.tsx', 'src/[a]/[b].ts'])(
+    'keeps the paired brackets of the route path %s inside the token',
+    (path) => {
+      const text = `@[file:local:${path}] fix it`;
+
+      expect(findMentionTokens(text)).toStrictEqual([
+        { id: `file:local:${path}`, start: 0, end: text.indexOf(' fix') },
+      ]);
+    },
+  );
+
+  it.each([
+    ['@[file:local:notes[draft.md] summarise', ['file:local:notes[draft.md']],
+    ['@[file:local:notes[draft.md] is great] ok', ['file:local:notes[draft.md']],
+    ['@[file:a[b] @[file:c] d] e', ['file:a[b', 'file:c']],
+    ['@[file:notes[draft.md] see @[file:b.md] ok]', ['file:notes[draft.md', 'file:b.md']],
+  ])('ends an id with an unpaired bracket at the first closing bracket: %j', (text, ids) => {
+    expect(findMentionTokens(text).map(({ id }) => id)).toStrictEqual(ids);
+  });
+
   it('returns the same tokens when called twice in a row', () => {
     const text = 'a @[skill:x] b @[agent:y]';
     const first = findMentionTokens(text);

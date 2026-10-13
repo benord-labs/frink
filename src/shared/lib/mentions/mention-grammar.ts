@@ -15,8 +15,10 @@ export const MENTION_PREFIXES = {
 /** Strips characters that would break the `@[type:preview:payload]` mention grammar. */
 export const MENTION_PREVIEW_SANITIZE_REGEX = /[:[\]]/g;
 
-/** Source of the `@[id]` token pattern (group 1 is the id), for building a RegExp per scan. */
-export const MENTION_TOKEN_PATTERN_SRC = '@\\[([^\\]]+)\\]';
+/** Source of the `@[id]` token pattern (group 1 is the id), for building a RegExp per scan. An id
+ * without whitespace may hold paired brackets, as in `app/[id]`; any other id ends at its first `]`. */
+export const MENTION_TOKEN_PATTERN_SRC =
+  '@\\[((?:[^\\s\\[\\]]|\\[(?:[^\\s\\[\\]]|\\[[^\\s\\[\\]]*\\])*\\])+|[^\\]]+)\\]';
 
 export type MentionToken = {
   id: string;
