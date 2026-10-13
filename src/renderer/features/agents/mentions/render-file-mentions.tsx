@@ -24,14 +24,15 @@ const OriginalMCPIcon = iconifyComponent(mcpLogo);
 const ULTRATHINK_SPLIT_REGEX = /(ultrathink)/gi;
 const MULTIPLE_NEWLINES_REGEX = /\n{3,}/g;
 
-// Shared mention-chip styling (theme-adaptive subtle fill)
+// Shared mention-chip styling (theme-adaptive subtle fill). The label shares the baseline of the
+// text around the chip, and the icon is centred on the chip.
 const MENTION_CHIP_CLASS =
-  'inline-flex items-center gap-1 px-[6px] rounded-[6px] text-sm align-middle bg-black/4 dark:bg-white/8 text-foreground/80 select-none';
+  'inline-flex items-baseline gap-1 px-[6px] rounded-[6px] text-sm align-baseline bg-black/4 dark:bg-white/8 text-foreground/80 select-none [&>svg]:self-center';
 
 /**
  * Component to render a single file/folder/skill/agent/tool/quote/diff mention chip (matching canvas style)
  */
-function MentionChip({ mention }: { mention: ParsedMention }) {
+export function MentionChip({ mention }: { mention: ParsedMention }) {
   // Quote and diff mentions render as block cards
   if (mention.type === 'quote' || mention.type === 'pasted') {
     // Get a short title from the label

@@ -9,8 +9,10 @@ import { parseMarkdownIntoBlocks, Streamdown, type StreamdownProps } from 'strea
 import { isAllowedShellOpenExternalUrl } from '../../shared/shell-external-url';
 import { hashString } from '../lib/hash';
 import { useCodeTheme } from '../lib/hooks/use-code-theme';
+import { MENTION_ELEMENT, MENTION_REMARK_PLUGINS } from '../lib/mentions/remark-mentions';
 import { highlightCode } from '../lib/themes/shiki-theme-loader';
 import { cn } from '../lib/utils';
+import { MarkdownMention } from './MarkdownMention';
 import { MermaidBlock } from './MermaidBlock';
 
 // Extract the Components type from StreamdownProps
@@ -22,7 +24,34 @@ type StreamdownComponents = StreamdownProps['components'];
  * each render and defeats Streamdown/react-markdown's internal memoization.
  * @internal exported for unit tests that verify reference stability
  */
-export const REMARK_PLUGINS = [remarkGfm, remarkBreaks];
+export const REMARK_PLUGINS = [remarkGfm, remarkBreaks, ...MENTION_REMARK_PLUGINS];
+
+// Streamdown sanitises away unknown elements; this lets the mention element and its id through.
+const ALLOWED_TAGS = { [MENTION_ELEMENT]: ['dataMentionId'] };
+
+// Wrapper classes shared by ChatMarkdownRenderer and MemoizedMarkdown.
+const PROSE_CLASSES = [
+  'prose prose-sm max-w-none dark:prose-invert prose-code:before:content-none prose-code:after:content-none',
+  // Reset prose margins - we use our own compact Notion-like spacing
+  'prose-p:my-0 prose-ul:my-0 prose-ol:my-0 prose-li:my-0',
+  'prose-ul:pl-0 prose-ol:pl-0 prose-li:pl-0',
+  // Reset prose hr margins - we use our own
+  'prose-hr:my-0',
+  // Reset prose table margins - we use our own wrapper with margins
+  'prose-table:my-0',
+  // Fix for p inside li - make it inline so numbered list items don't break
+  '[&_li>p]:inline [&_li>p]:mb-0',
+  // Prevent horizontal overflow on mobile
+  'overflow-hidden wrap-break-word',
+  // Global spacing: elements before hr get extra bottom margin (for spacing above divider)
+  '[&_p:has(+hr)]:mb-6 [&_ul:has(+hr)]:mb-6 [&_ol:has(+hr)]:mb-6 [&_div:has(+hr)]:mb-6 [&_table:has(+hr)]:mb-6 [&_h1:has(+hr)]:mb-6 [&_h2:has(+hr)]:mb-6 [&_h3:has(+hr)]:mb-6 [&_blockquote:has(+hr)]:mb-6',
+  // Global spacing: elements after hr get extra top margin
+  '[&_hr+p]:mt-4 [&_hr+ul]:mt-4 [&_hr+ol]:mt-4',
+  // Global spacing: elements after code blocks get extra top margin
+  '[&_div+p]:mt-2 [&_div+ul]:mt-2 [&_div+ol]:mt-2',
+  // Global spacing: elements after tables get extra top margin
+  '[&_table+p]:mt-4 [&_table+ul]:mt-4 [&_table+ol]:mt-4',
+];
 
 // Regex patterns for emoji stripping - hoisted to module level for performance
 const EMOJI_EMOTICONS_REGEX = /[\u{1F600}-\u{1F64F}]/gu;
@@ -471,6 +500,7 @@ function buildStreamdownComponents(
     ),
     pre: ({ children }: { children?: React.ReactNode; [key: string]: unknown }) => <>{children}</>,
     code: createCodeComponent(codeTheme, size, sizeStyles[size], isStreaming),
+    [MENTION_ELEMENT]: MarkdownMention,
   };
   return builtComponents as unknown as StreamdownComponents;
 }
@@ -519,35 +549,12 @@ export const ChatMarkdownRenderer = memo(function ChatMarkdownRenderer({
   const components = getStreamdownComponents(size, codeTheme, isStreaming);
 
   return (
-    <div
-      className={cn(
-        'prose prose-sm max-w-none dark:prose-invert prose-code:before:content-none prose-code:after:content-none',
-        // Reset prose margins - we use our own compact Notion-like spacing
-        'prose-p:my-0 prose-ul:my-0 prose-ol:my-0 prose-li:my-0',
-        'prose-ul:pl-0 prose-ol:pl-0 prose-li:pl-0',
-        // Reset prose hr margins - we use our own
-        'prose-hr:my-0',
-        // Reset prose table margins - we use our own wrapper with margins
-        'prose-table:my-0',
-        // Fix for p inside li - make it inline so numbered list items don't break
-        '[&_li>p]:inline [&_li>p]:mb-0',
-        // Prevent horizontal overflow on mobile
-        'overflow-hidden wrap-break-word',
-        // Global spacing: elements before hr get extra bottom margin (for spacing above divider)
-        '[&_p:has(+hr)]:mb-6 [&_ul:has(+hr)]:mb-6 [&_ol:has(+hr)]:mb-6 [&_div:has(+hr)]:mb-6 [&_table:has(+hr)]:mb-6 [&_h1:has(+hr)]:mb-6 [&_h2:has(+hr)]:mb-6 [&_h3:has(+hr)]:mb-6 [&_blockquote:has(+hr)]:mb-6',
-        // Global spacing: elements after hr get extra top margin
-        '[&_hr+p]:mt-4 [&_hr+ul]:mt-4 [&_hr+ol]:mt-4',
-        // Global spacing: elements after code blocks get extra top margin
-        '[&_div+p]:mt-2 [&_div+ul]:mt-2 [&_div+ol]:mt-2',
-        // Global spacing: elements after tables get extra top margin
-        '[&_table+p]:mt-4 [&_table+ul]:mt-4 [&_table+ol]:mt-4',
-        className,
-      )}
-    >
+    <div className={cn(PROSE_CLASSES, className)}>
       <Streamdown
         mode="streaming"
         components={components}
         remarkPlugins={REMARK_PLUGINS}
+        allowedTags={ALLOWED_TAGS}
         isAnimating={isStreaming}
         parseIncompleteMarkdown={isStreaming}
         controls={false}
@@ -621,6 +628,7 @@ const MemoizedMarkdownBlock = memo(
         mode="static"
         components={components}
         remarkPlugins={REMARK_PLUGINS}
+        allowedTags={ALLOWED_TAGS}
         controls={false}
         skipHtml
       >
@@ -671,22 +679,7 @@ export const MemoizedMarkdown = memo(
     const blocks = useMemo(() => parseIntoBlocks(processedContent), [processedContent]);
 
     return (
-      <div
-        className={cn(
-          'prose prose-sm max-w-none dark:prose-invert prose-code:before:content-none prose-code:after:content-none',
-          'prose-p:my-0 prose-ul:my-0 prose-ol:my-0 prose-li:my-0',
-          'prose-ul:pl-0 prose-ol:pl-0 prose-li:pl-0',
-          'prose-hr:my-0',
-          'prose-table:my-0',
-          '[&_li>p]:inline [&_li>p]:mb-0',
-          'overflow-hidden wrap-break-word',
-          '[&_p:has(+hr)]:mb-6 [&_ul:has(+hr)]:mb-6 [&_ol:has(+hr)]:mb-6 [&_div:has(+hr)]:mb-6 [&_table:has(+hr)]:mb-6 [&_h1:has(+hr)]:mb-6 [&_h2:has(+hr)]:mb-6 [&_h3:has(+hr)]:mb-6 [&_blockquote:has(+hr)]:mb-6',
-          '[&_hr+p]:mt-4 [&_hr+ul]:mt-4 [&_hr+ol]:mt-4',
-          '[&_div+p]:mt-2 [&_div+ul]:mt-2 [&_div+ol]:mt-2',
-          '[&_table+p]:mt-4 [&_table+ul]:mt-4 [&_table+ol]:mt-4',
-          className,
-        )}
-      >
+      <div className={cn(PROSE_CLASSES, className)}>
         {blocks.map((block) => (
           <MemoizedMarkdownBlock
             key={`${id}-${block.key}`}
