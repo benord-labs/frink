@@ -1,4 +1,5 @@
 import { createMessageProvenance } from '../execution/message-provenance';
+import { takeComposerNotes } from '../execution/message-provenance/claude';
 import type { Query, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CodexAppServerClient } from '../../agent-runner/codex/app-server-client';
@@ -14,7 +15,10 @@ import { runTurn } from '../execution/claude-session-loop';
 import { steerActiveTurn } from './index';
 
 /** The part of a Codex `turn/steer` request these tests read. */
-type SteerRequest = { input: { type: string; text: string }[] };
+type SteerRequest = {
+  input: { type: string; text: string }[];
+  additionalContext?: Record<string, { kind: string; value: string }>;
+};
 
 const emitted: Array<{ msgId: string }> = [];
 vi.mock('./emitter', () => ({
@@ -110,7 +114,7 @@ describe('steerActiveTurn', () => {
     await done;
   });
 
-  it('tells the Claude turn what the steer’s context tokens mean', async () => {
+  it('queues what a Claude steer’s context tokens mean for the prompt hook', async () => {
     const { finish, done } = await startBusyTurn('c-context');
     const session = getSession('c-context');
     if (!session) throw new Error('expected a live session for c-context');
@@ -118,14 +122,15 @@ describe('steerActiveTurn', () => {
 
     await steerActiveTurn('c-context', { text: '@[file:editor:a.ts] use this' });
 
-    expect(pushSpy.mock.calls[0]?.[0].message.content).toBe(
-      '<system-reminder>\nThe user opened the file a.ts in the IDE. This may or may not be related to the current task.\n</system-reminder>\n\nuse this',
-    );
+    expect(pushSpy.mock.calls[0]?.[0].message.content).toBe('use this');
+    expect(takeComposerNotes(session)).toEqual([
+      'The user opened the file a.ts in the IDE. This may or may not be related to the current task.',
+    ]);
     finish();
     await done;
   });
 
-  it('steers Codex with the projected text while its marker keeps the raw text', async () => {
+  it('steers Codex with the typed text and its notes as host context, and a raw-text marker', async () => {
     const sent: SteerRequest[] = [];
     const markers: UIMessageChunk[] = [];
     const sendRequest = async (_method: string, params: SteerRequest) => sent.push(params);
@@ -143,15 +148,16 @@ describe('steerActiveTurn', () => {
     const raw = 'read @[file:local:src/a.ts] next';
     await expect(steerActiveTurn('codex-context', { text: raw })).resolves.toBe('delivered');
 
-    expect(sent).toMatchObject([
-      {
-        input: [
-          {
-            type: 'text',
-            text: expect.stringMatching(/<\/system-reminder>\n\nread src\/a\.ts next$/),
+    expect(sent).toEqual([
+      expect.objectContaining({
+        input: [{ type: 'text', text: 'read src/a.ts next' }],
+        additionalContext: {
+          frink_mentioned_paths_1: {
+            kind: 'application',
+            value: expect.stringMatching(/^The user @-mentioned src\/a\.ts\. /),
           },
-        ],
-      },
+        },
+      }),
     ]);
     expect(markers).toMatchObject([{ input: { text: raw } }]);
   });

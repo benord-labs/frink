@@ -13,9 +13,9 @@ import { buildClaudeUserMessage } from '../claude-input-queue';
 import { getSession } from '../claude-session-registry';
 import type { ClaudeTurnContext } from '../claude-turn-context';
 import { emitSteerMarker } from './emitter';
-import { registerClaudeDelivery } from '../execution/message-provenance/claude';
+import { queueComposerNotes, registerClaudeDelivery } from '../execution/message-provenance/claude';
 import { createMessageProvenance } from '../execution/message-provenance';
-import { projectComposerContext } from '../execution/prompt-prefix';
+import { codexComposerContext, projectComposerContext } from '../execution/prompt-prefix';
 
 /**
  * The steer's own trace in the transcript, rendered as a card INSIDE the running assistant message.
@@ -70,7 +70,7 @@ function hasOpenApproval(subChatId: string): boolean {
 }
 
 /** Push onto the live Claude session's input queue WITHOUT starting a turn. */
-function steerClaudeTurn(subChatId: string, message: SteerMessage): SteerOutcome {
+function steerClaudeTurn(subChatId: string, message: SteerMessage, notes: string[]): SteerOutcome {
   const session = getSession(subChatId);
   // `busy` covers a user turn AND a wake burst — in both the agent is genuinely working and will
   // reach another model invocation, which is steering's only precondition.
@@ -97,6 +97,7 @@ function steerClaudeTurn(subChatId: string, message: SteerMessage): SteerOutcome
       activeTurn,
     );
   }
+  queueComposerNotes(session, notes);
   session.queue.push(input);
   if (session.currentTurn) session.currentTurn.steered = true;
   return 'delivered';
@@ -151,8 +152,10 @@ export async function steerActiveTurn(
   // land on the turn this steer actually joined.
   const steeredTurn = getSession(subChatId)?.currentTurn ?? null;
   // Every steer is typed by a person. The transcript marker keeps the raw text to draw its chips.
-  const projected = { ...message, text: projectComposerContext(message.text) };
-  const claude = steerClaudeTurn(subChatId, projected);
+  const composer = projectComposerContext(message.text);
+  const projected = { ...message, text: composer.text };
+  const noteTexts = composer.notes.map((note) => note.text);
+  const claude = steerClaudeTurn(subChatId, projected, noteTexts);
   if (claude === 'delivered') {
     log.info(`[Steer] delivered into the running Claude turn for ${subChatId}`);
     if (steeredTurn) await markSteerInTranscript(subChatId, message.text, steeredTurn);
@@ -165,7 +168,11 @@ export async function steerActiveTurn(
   if (!message.imageParts?.length) {
     // Pinned BEFORE the turn/steer round trip, so the marker can only land on the turn that took it.
     const codexTurnId = getCodexLiveTurn(subChatId)?.turnId;
-    const codex = await steerCodexTurn(subChatId, projected.text);
+    const codex = await steerCodexTurn(
+      subChatId,
+      projected.text,
+      codexComposerContext(composer.notes),
+    );
     if (codex === 'delivered' && codexTurnId) {
       log.info(`[Steer] delivered into the running Codex turn for ${subChatId}`);
       // Pushed into the turn's own chunk queue: a Codex turn has no ClaudeTurnContext, so it cannot

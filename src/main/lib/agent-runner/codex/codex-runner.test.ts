@@ -487,6 +487,27 @@ describe('runCodexAgent', () => {
     await drain(gen);
   });
 
+  it('sends the message’s composer notes as native context beside the prompt', async () => {
+    const fake = startedFakeClient({
+      'config/read': { config: {} },
+      'thread/start': { thread: { id: 'th1' } },
+      'turn/start': { turn: { id: 'tn1' } },
+    });
+    const composerContext = {
+      frink_open_file_1: { kind: 'application', value: 'The user opened the file a.ts' },
+      frink_selection_1: { kind: 'untrusted', value: 'The user selected the lines 1 to 2' },
+    } as const;
+    const gen = runCodexAgent(params({ composerContext }));
+    await gen.next();
+    await gen.next();
+    expect(fake.sent.find((s) => s.method === 'turn/start')?.params).toMatchObject({
+      input: [{ type: 'text', text: 'do it' }],
+      additionalContext: composerContext,
+    });
+    fake.fire('turn/completed', { turn: { status: 'completed' } });
+    await drain(gen);
+  });
+
   it('yields a binary-missing error when codex is not installed', async () => {
     vi.mocked(resolveCodexBinary).mockReturnValue(null);
     const chunks = await drain(runCodexAgent(params()));

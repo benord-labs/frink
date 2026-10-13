@@ -6,6 +6,7 @@ import {
   findMentionTokens,
   OPEN_EDITOR_FILE_SOURCE,
 } from '../../../../../shared/lib/mentions/mention-grammar';
+import type { CodexContextEntry } from '../../../../../shared/lib/message-markers/message-provenance';
 import { type ParsedMention, parseMention } from '../../../../../shared/lib/mentions/parse-mention';
 import { wrapRemindersForPrompt } from '../../operator-reminders';
 import type { MessageDelivery } from '../message-provenance/origin';
@@ -14,8 +15,14 @@ import type { MessageDelivery } from '../message-provenance/origin';
 const SELECTION_LIMIT = 2000;
 const MAY_BE_UNRELATED = 'This may or may not be related to the current task.';
 
+/** A sentence for the model. A selection's body is text the user picked, which Frink cannot vouch for. */
+export type ComposerNote = { kind: 'open_file' | 'mentioned_paths' | 'selection'; text: string };
+
+/** A message as its provider reads it: the text for the prompt, the notes for its context channel. */
+type ComposerProjection = { text: string; notes: ComposerNote[] };
+
 /** What one token becomes: the text left in its place, and the note it adds, if any. */
-type Projection = { text: string; note?: string };
+type Projection = { text: string; note?: ComposerNote };
 
 function isOpenEditorFile(mention: ParsedMention): boolean {
   return mention.type === 'file' && mention.repository === OPEN_EDITOR_FILE_SOURCE;
@@ -53,7 +60,7 @@ function selectionNote(mention: ParsedMention, content: string): string | null {
     return `The user selected the following ${count} ${count === 1 ? 'line' : 'lines'} from the diff view${where}:\n${truncateSelection(content)}`;
   }
   if (mention.type === 'quote') {
-    return `The user selected the following text from an earlier message in this conversation:\n${content}`;
+    return `The user selected the following text from an earlier message in this conversation:\n${truncateSelection(content)}`;
   }
   return null;
 }
@@ -61,13 +68,15 @@ function selectionNote(mention: ParsedMention, content: string): string | null {
 function projectMention(mention: ParsedMention, pickedPaths: string[]): Projection | null {
   if (isOpenEditorFile(mention)) {
     if (pickedPaths.includes(mention.path)) return { text: '' };
-    const note = `The user opened the file ${notePath(mention.path)} in the IDE. ${MAY_BE_UNRELATED}`;
-    return { text: '', note };
+    const text = `The user opened the file ${notePath(mention.path)} in the IDE. ${MAY_BE_UNRELATED}`;
+    return { text: '', note: { kind: 'open_file', text } };
   }
   // A plain path: a leading `@` would make the Claude CLI attach the file itself.
-  if (isPicked(mention)) return { text: mention.path, note: pickedNote(pickedPaths) };
-  const note = mention.fullText ? selectionNote(mention, mention.fullText) : null;
-  return note ? { text: '', note } : null;
+  if (isPicked(mention)) {
+    return { text: mention.path, note: { kind: 'mentioned_paths', text: pickedNote(pickedPaths) } };
+  }
+  const text = mention.fullText ? selectionNote(mention, mention.fullText) : null;
+  return text ? { text: '', note: { kind: 'selection', text } } : null;
 }
 
 /** A person typed it, or retried a turn no task dispatched (a new chat's first message is sent so).
@@ -78,10 +87,10 @@ export function isPersonAuthored(delivery: MessageDelivery | undefined): boolean
   return origin?.source === 'person' || (retried && !delivery?.dispatchTaskId);
 }
 
-/** Says what the composer's file and selection tokens mean, in Claude Code's own sentences. Notes
- * lead unless the message opens with a slash command; `/compact` and other tokens stay as sent. */
-export function projectComposerContext(message: string): string {
-  if (isCompactCommand(message)) return message;
+/** Says what the composer's file and selection tokens mean, in Claude Code's own sentences. The
+ * notes go to the provider's own context channel; `/compact` and other tokens stay as sent. */
+export function projectComposerContext(message: string): ComposerProjection {
+  if (isCompactCommand(message)) return { text: message, notes: [] };
   const tokens = findMentionTokens(message).map((token) => ({
     ...token,
     mention: parseMention(token.id),
@@ -91,7 +100,7 @@ export function projectComposerContext(message: string): string {
       tokens.flatMap(({ mention }) => (mention && isPicked(mention) ? [mention.path] : [])),
     ),
   ];
-  const notes = new Set<string>();
+  const notes = new Map<string, ComposerNote>();
   let text = '';
   let cursor = 0;
   for (const { start, end, mention } of tokens) {
@@ -100,12 +109,27 @@ export function projectComposerContext(message: string): string {
     text += message.slice(cursor, start) + projection.text;
     // A removed token takes the space that separated it from the text after it.
     cursor = !projection.text && message[end] === ' ' ? end + 1 : end;
-    if (projection.note) notes.add(projection.note);
+    if (projection.note) notes.set(projection.note.text, projection.note);
   }
-  if (notes.size === 0) return message;
+  if (notes.size === 0) return { text: message, notes: [] };
   text += message.slice(cursor);
-  const reminders = wrapRemindersForPrompt([...notes]);
-  // The Claude CLI runs a slash command only from the start of the prompt.
-  if (SLASH_COMMAND_REGEX.test(message)) return `${text}\n\n${reminders}`;
-  return text.trim() ? `${reminders}\n\n${text}` : reminders;
+  // Inline when nothing was typed, so no prompt is empty, and when the tokens were all that kept a
+  // typed slash command off the start of the prompt, so the Claude CLI still does not run it.
+  const exposesCommand = SLASH_COMMAND_REGEX.test(text) && !SLASH_COMMAND_REGEX.test(message);
+  if (text.trim() && !exposesCommand) return { text, notes: [...notes.values()] };
+  const reminders = wrapRemindersForPrompt([...notes.keys()]);
+  return { text: text.trim() ? `${reminders}\n\n${text}` : reminders, notes: [] };
+}
+
+/** The notes as Codex host context. One entry each: Codex cuts every value at 1,000 tokens. */
+export function codexComposerContext(notes: ComposerNote[]) {
+  const counts = new Map<ComposerNote['kind'], number>();
+  return Object.fromEntries(
+    notes.map(({ kind, text }): [string, CodexContextEntry] => {
+      const index = (counts.get(kind) ?? 0) + 1;
+      counts.set(kind, index);
+      const trust = kind === 'selection' ? 'untrusted' : 'application';
+      return [`frink_${kind}_${index}`, { kind: trust, value: text }];
+    }),
+  );
 }

@@ -99,6 +99,8 @@ export interface ClaudeTurnContext {
   /** The Flow-run-ended notice, taken by the turn's first prompt hook so later fires skip it. */
   pendingFlowRunEnded?: { subChatId: string; runId: string; text: string };
   messageProvenance?: MessageProvenance;
+  /** What the turn's attached files and selections mean; queued for the prompt hook on push. */
+  composerNotes: string[];
   /** Whether this turn delegates Frink's residual `ask` decisions to Claude's native Auto Mode. */
   autoReviewTools: boolean;
   /** Auto may review THIS turn's plan-drafting phase (resolveAutoReviewModes). On the turn because
@@ -138,6 +140,7 @@ export function createClaudeTurnContext(): ClaudeTurnContext {
     setHasExplicitTaskSignal: () => {},
     deniedToolIdsWithMessages: new Map(),
     pendingReminders: [],
+    composerNotes: [],
     autoReviewTools: false,
     planAutoReview: false,
     isWakeBurst: false,

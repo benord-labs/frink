@@ -58,6 +58,24 @@ describe('codex live-turn registry', () => {
     );
   });
 
+  it('sends a steer’s composer notes as host context outside a Flow, and no context without any', async () => {
+    const sent: unknown[] = [];
+    setCodexLiveTurn('chat', {
+      client: fakeClient(async (_method, params) => sent.push(params)),
+      threadId: 'th',
+      turnId: 'tn',
+      pushChunk: () => {},
+      hasOpenApproval: () => false,
+      commandOutputs: new Map(),
+    });
+    const selection = { kind: 'untrusted', value: 'The user selected the lines 1 to 2' } as const;
+    await steerCodexTurn('chat', 'why?', { frink_selection_1: selection });
+    await steerCodexTurn('chat', 'plain');
+    expect(sent[0]).toMatchObject({ additionalContext: { frink_selection_1: selection } });
+    expect(sent[0]).not.toHaveProperty('additionalContext.frink_message');
+    expect(sent[1]).not.toHaveProperty('additionalContext');
+  });
+
   it('clears only when the entry still describes the same turn', () => {
     const client = fakeClient(async () => ({}));
     setCodexLiveTurn('s1', {

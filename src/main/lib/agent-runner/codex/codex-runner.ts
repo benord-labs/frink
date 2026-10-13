@@ -89,6 +89,7 @@ export type CodexRunnerParams = {
   freshThreadFallbackPrompt?: string;
   /** The Flow-run-ended notice for this turn's own prompt; `onAccepted` runs once turn/start does. */
   flowRunEnded?: { text: string; onAccepted: () => void };
+  composerContext?: Parameters<typeof codexTurnContext>[0]['composerContext'];
   cwd: string;
   /** Stable credential id -- part of the app-server registry key. */
   credentialId: string;
@@ -232,8 +233,7 @@ async function startTurn(
 ): Promise<string> {
   const { model, effort, serviceTier } = params;
   const rule = provenanceRule.beginTurn(client, threadId, Boolean(params.messageProvenance));
-  const { messageProvenance: record, flowRunEnded } = params;
-  const additionalContext = codexTurnContext(record, rule.carriesRule, flowRunEnded?.text);
+  const additionalContext = codexTurnContext(params, rule.carriesRule);
   const turn = await client.sendRequest<TurnStartResponse>('turn/start', {
     threadId,
     input: [{ type: 'text', text: prompt }],
