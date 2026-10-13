@@ -128,10 +128,8 @@ export function createFileIconElement(
   container.style.visibility = 'hidden';
   document.body.appendChild(container);
 
-  // Create React element
-  const iconElement = createElement(IconComponent, {
-    className: 'h-3 w-3 text-muted-foreground shrink-0',
-  });
+  // Unstyled: the mention chip sizes and colours its icon
+  const iconElement = createElement(IconComponent);
 
   const root = createRoot(container);
 
@@ -161,7 +159,6 @@ export function createFileIconElement(
     fallbackSvg.setAttribute('stroke-linecap', 'round');
     fallbackSvg.setAttribute('stroke-linejoin', 'round');
     fallbackSvg.setAttribute('aria-label', 'File icon');
-    fallbackSvg.className.baseVal = 'h-3 w-3 text-muted-foreground shrink-0';
 
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     path.setAttribute('d', 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z');
@@ -176,7 +173,6 @@ export function createFileIconElement(
 
   // Clone the SVG to avoid issues
   const clonedSvg = svgElement.cloneNode(true) as SVGSVGElement;
-  clonedSvg.setAttribute('class', 'h-3 w-3 text-muted-foreground shrink-0');
 
   return clonedSvg;
 }

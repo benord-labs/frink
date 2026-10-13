@@ -261,6 +261,19 @@ describe('AgentUserMessageBubble', () => {
     expect(text?.parentElement?.contains(toggle)).toBe(false);
   });
 
+  it('opens a collapsed card, scrolled back to its start, when focus moves into its text', () => {
+    overflowDetectionMock.mockReturnValue(true);
+    const { container } = render(<AgentUserMessageBubble messageId="long" textContent="long" />);
+    const text = container.querySelector<HTMLElement>('[data-message-id="long"]');
+    if (!text) throw new Error('The bubble did not draw its text');
+    text.scrollTop = 30;
+
+    fireEvent.focus(screen.getByTestId('raw-mention'));
+
+    expect(text.scrollTop).toBe(0);
+    expect(screen.getByRole('button', { name: 'Show less' })).toBeInTheDocument();
+  });
+
   it('reserves a right gutter on the shell only when endGutter is set', () => {
     const { container, rerender } = render(
       <AgentUserMessageBubble messageId="g1" textContent="text" endGutter />,

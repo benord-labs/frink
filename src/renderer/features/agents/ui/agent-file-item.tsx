@@ -1,94 +1,63 @@
 import { Button } from '@benord-labs/frink-primitives';
-import { FileCode, FileJson, FileText, X, Loader2 } from 'lucide-react';
-import { useState } from 'react';
+import { X, Loader2 } from 'lucide-react';
+import type { ComponentProps, ComponentType } from 'react';
+import { getFileIconByExtension } from '@/lib/mentions/agents-file-mention-icons';
+import { mentionChipClass } from '@/lib/mentions/mention-chip-class';
+import { cn } from '@/lib/utils';
+import { Tooltip, TooltipContent, TooltipTrigger } from '../../../components/ui/tooltip';
 import { formatFileSize } from '../../file-viewer/utils/file-utils';
 
-type AgentFileItemProps = {
-  id?: string;
+type AgentFileItemProps = Omit<ComponentProps<'span'>, 'children'> & {
   filename: string;
-  url?: string;
+  /** Full path, shown in the name's tooltip. */
+  path?: string;
+  /** Replaces the file-type icon, for attachments that are not files. */
+  icon?: ComponentType;
   size?: number;
-  /** Short muted suffix after the name, such as a line range. */
+  /** Short suffix after the name, such as a line range; shown in place of the size. */
   detail?: string;
   isLoading?: boolean;
   onRemove?: () => void;
-  /** Names the remove control and keeps it visible; without it the control shows on hover. */
+  /** Accessible name of the remove control; defaults to "Remove <filename>". */
   removeLabel?: string;
 };
 
-function getFileIcon(filename: string) {
-  const ext = filename.split('.').pop()?.toLowerCase();
-
-  // Code files
-  if (
-    [
-      'js',
-      'ts',
-      'jsx',
-      'tsx',
-      'py',
-      'rb',
-      'go',
-      'rs',
-      'java',
-      'kt',
-      'swift',
-      'c',
-      'cpp',
-      'h',
-      'hpp',
-      'cs',
-      'php',
-    ].includes(ext || '')
-  ) {
-    return FileCode;
-  }
-
-  // JSON/YAML/XML
-  if (['json', 'yaml', 'yml', 'xml'].includes(ext || '')) {
-    return FileJson;
-  }
-
-  return FileText;
-}
-
+/** An attachment as a mention badge: icon, name and an optional size or line range. */
 export function AgentFileItem({
-  id: _id,
   filename,
-  url: _url,
+  path,
+  icon,
   size,
   detail,
   isLoading = false,
   onRemove,
-  removeLabel,
+  removeLabel = `Remove ${filename}`,
+  className,
+  ...props
 }: AgentFileItemProps) {
-  const [isHovered, setIsHovered] = useState(false);
   // biome-ignore lint/style/useNamingConvention: Renders as a JSX component
-  const Icon = getFileIcon(filename);
+  const Icon = icon ?? getFileIconByExtension(filename);
+  const suffix = detail ?? (size === undefined ? undefined : formatFileSize(size));
+  const name = <span>{filename}</span>;
 
   return (
-    <div
-      className="relative flex items-center gap-1.5 px-2 py-1 bg-muted/50 rounded border border-border/50 max-w-[200px]"
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-      role="none"
-    >
-      {isLoading ? (
-        <Loader2 className="size-3.5 text-muted-foreground shrink-0 animate-spin" />
+    <span className={cn(mentionChipClass(), className)} {...props}>
+      {isLoading ? <Loader2 className="animate-spin" /> : <Icon />}
+      {path ? (
+        <Tooltip>
+          <TooltipTrigger asChild>{name}</TooltipTrigger>
+          <TooltipContent side="top" className="font-mono wrap-anywhere">
+            {path}
+          </TooltipContent>
+        </Tooltip>
       ) : (
-        <Icon className="size-3.5 text-muted-foreground shrink-0" />
+        name
       )}
-
-      <div className="flex flex-col min-w-0">
-        <span className="text-xs text-foreground truncate" title={filename}>
-          {filename}
+      {suffix && (
+        <span className="shrink-0 font-normal tabular-nums before:mr-1 before:content-['·']">
+          {suffix}
         </span>
-        {size !== undefined && (
-          <span className="text-[10px] text-muted-foreground">{formatFileSize(size)}</span>
-        )}
-      </div>
-      {detail && <span className="shrink-0 text-xs text-muted-foreground">{detail}</span>}
-
+      )}
       {onRemove && (
         <Button
           variant="ghost"
@@ -99,17 +68,11 @@ export function AgentFileItem({
             e.stopPropagation();
             onRemove();
           }}
-          className={
-            removeLabel
-              ? '-mr-1 size-4 shrink-0 rounded-sm text-muted-foreground hover:text-foreground'
-              : `absolute -top-1.5 -right-1.5 size-4 rounded-full bg-background border border-border
-                     transition-[opacity,transform] duration-150 ease-out active:scale-[0.97] z-10
-                     ${isHovered ? 'opacity-100' : 'opacity-0'}`
-          }
+          className="-mr-1 size-4 shrink-0 rounded-sm text-muted-foreground hover:text-foreground"
         >
           <X className="size-3" />
         </Button>
       )}
-    </div>
+    </span>
   );
 }

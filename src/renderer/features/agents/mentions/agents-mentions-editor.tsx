@@ -11,6 +11,7 @@ import {
 import { CMD_BLOCK_SERIALIZE_REGEX, encodeCommandBlock } from '@/lib/commands/command-block-format';
 import type { FileMentionOption } from '@/lib/mentions/agents-mentions-types';
 import { parseBriefingMentionLabel } from '@/lib/mentions/briefing-mention-from-id';
+import { mentionChipClass } from '@/lib/mentions/mention-chip-class';
 import { serializedMentionMatchEndIndex } from '@/lib/mentions/serialized-mention-scan-index';
 import {
   MENTION_PREFIXES,
@@ -90,17 +91,12 @@ function createMentionNode(option: FileMentionOption): HTMLSpanElement {
   span.setAttribute('contenteditable', 'false');
   span.setAttribute('data-mention-id', option.id);
   span.setAttribute('data-mention-type', option.type || 'file');
-  span.className =
-    'inline-flex items-center gap-1 px-[6px] py-px rounded-[4px] text-sm align-middle bg-black/4 dark:bg-white/8 text-foreground/80 [&.mention-selected]:bg-primary/70 [&.mention-selected]:text-primary-foreground';
-
-  // Create icon element (pass type for folder icon)
-  const iconElement = createFileIconElement(option.label, option.type);
-  span.appendChild(iconElement);
+  span.className = mentionChipClass();
+  span.title = option.path;
 
   const label = document.createElement('span');
   label.textContent = option.label;
-
-  span.appendChild(label);
+  span.append(createFileIconElement(option.label, option.type), label);
   return span;
 }
 
@@ -627,8 +623,7 @@ export const AgentsMentionsEditor = memo(
           // Clear all highlights when no selection
           const mentions = editorRef.current.querySelectorAll('[data-mention-id]');
           mentions.forEach((mention) => {
-            const mentionEl = mention as HTMLElement;
-            mentionEl.classList.remove('mention-selected');
+            mention.className = mentionChipClass();
           });
           return;
         }
@@ -649,14 +644,7 @@ export const AgentsMentionsEditor = memo(
         const mentions = editorRef.current.querySelectorAll('[data-mention-id]');
 
         mentions.forEach((mention) => {
-          const mentionEl = mention as HTMLElement;
-
-          // Check if mention is within selection range
-          if (range.intersectsNode(mentionEl)) {
-            mentionEl.classList.add('mention-selected');
-          } else {
-            mentionEl.classList.remove('mention-selected');
-          }
+          mention.className = mentionChipClass({ selected: range.intersectsNode(mention) });
         });
       };
 

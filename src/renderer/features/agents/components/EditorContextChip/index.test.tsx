@@ -2,11 +2,17 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { TooltipProvider } from '../../../../components/ui/tooltip';
 import { EditorContextChip } from './index';
 
 afterEach(cleanup);
 
-const selection = { fileName: 'send.ts', startLine: 279, endLine: 282 };
+const selection = {
+  fileName: 'send.ts',
+  filePath: '/repo/src/main/send.ts',
+  startLine: 279,
+  endLine: 282,
+};
 
 describe('EditorContextChip', () => {
   it('shows the attached file with a remove control that needs no hover', () => {
@@ -30,19 +36,22 @@ describe('EditorContextChip', () => {
     expect(onRemoveSelection).not.toHaveBeenCalled();
   });
 
-  it('shows a selection with its line range in place of the file, and removes both together', () => {
+  it('shows a selection with its line range and path in place of the file, and removes both together', () => {
     const onRemoveFile = vi.fn();
     const onRemoveSelection = vi.fn();
     render(
-      <EditorContextChip
-        selection={selection}
-        fileName="notes.md"
-        onRemoveSelection={onRemoveSelection}
-        onRemoveFile={onRemoveFile}
-      />,
+      <TooltipProvider>
+        <EditorContextChip
+          selection={selection}
+          fileName="notes.md"
+          onRemoveSelection={onRemoveSelection}
+          onRemoveFile={onRemoveFile}
+        />
+      </TooltipProvider>,
     );
 
-    expect(screen.getByText('send.ts')).toBeInTheDocument();
+    fireEvent.focus(screen.getByText('send.ts'));
+    expect(screen.getByRole('tooltip')).toHaveTextContent('/repo/src/main/send.ts');
     expect(screen.getByText('L279-282')).toBeInTheDocument();
     expect(screen.queryByText('notes.md')).not.toBeInTheDocument();
     fireEvent.click(

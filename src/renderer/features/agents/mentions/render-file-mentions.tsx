@@ -7,6 +7,8 @@ import {
 } from '../../../../shared/lib/mentions/mention-grammar';
 import { type ParsedMention, parseMention } from '../../../../shared/lib/mentions/parse-mention';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '../../../components/ui/hover-card';
+import { Tooltip, TooltipContent, TooltipTrigger } from '../../../components/ui/tooltip';
+import { mentionChipClass } from '../../../lib/mentions/mention-chip-class';
 import {
   FileText,
   Bot,
@@ -16,6 +18,7 @@ import {
   SquareDashedBottomCode,
   FolderOpen,
 } from 'lucide-react';
+import { AgentFileItem } from '../ui/agent-file-item';
 import { getFileIconByExtension } from './agents-file-mention';
 
 const OriginalMCPIcon = iconifyComponent(mcpLogo);
@@ -24,77 +27,33 @@ const OriginalMCPIcon = iconifyComponent(mcpLogo);
 const ULTRATHINK_SPLIT_REGEX = /(ultrathink)/gi;
 const MULTIPLE_NEWLINES_REGEX = /\n{3,}/g;
 
-// Shared mention-chip styling (theme-adaptive subtle fill). The label shares the baseline of the
-// text around the chip, and the icon is centred on the chip.
-const MENTION_CHIP_CLASS =
-  'inline-flex items-baseline gap-1 px-[6px] rounded-[6px] text-sm align-baseline bg-black/4 dark:bg-white/8 text-foreground/80 select-none [&>svg]:self-center';
+const MENTION_CHIP_CLASS = mentionChipClass({ className: 'select-none' });
 
-/**
- * Component to render a single file/folder/skill/agent/tool/quote/diff mention chip (matching canvas style)
- */
-export function MentionChip({ mention }: { mention: ParsedMention }) {
-  // Quote and diff mentions render as block cards
-  if (mention.type === 'quote' || mention.type === 'pasted') {
-    // Get a short title from the label
-    const title = mention.label.split('\n')[0]?.slice(0, 20) || mention.label.slice(0, 20);
-    const displayTitle = title.length < mention.label.length ? `${title}...` : title;
+/** Quote, diff, code and pasted mentions carry text that the chip previews on hover. */
+function isTextMention(mention: ParsedMention): boolean {
+  return (
+    mention.type === 'quote' ||
+    mention.type === 'diff' ||
+    mention.type === 'code' ||
+    mention.type === 'pasted'
+  );
+}
 
-    return (
-      <span className="inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-muted/50 cursor-default min-w-[120px] max-w-[200px] align-middle">
-        {/* Icon container */}
-        <span className="flex items-center justify-center size-8 rounded-md bg-muted shrink-0">
-          <SquareDashedText className="size-4 text-muted-foreground" />
-        </span>
-        {/* Text content */}
-        <span className="flex flex-col min-w-0">
-          <span className="text-sm font-medium text-foreground truncate">{displayTitle}</span>
-          <span className="text-xs text-muted-foreground">
-            {mention.type === 'pasted' ? 'Pasted Text' : 'Selected Text'}
-          </span>
-        </span>
-      </span>
-    );
-  }
-
-  if (mention.type === 'diff') {
-    const fileName = mention.path.split('/').pop() || mention.path;
-
-    return (
-      <span className="inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-muted/50 cursor-default min-w-[120px] max-w-[200px] align-middle">
-        {/* Icon container */}
-        <span className="flex items-center justify-center size-8 rounded-md bg-muted shrink-0">
-          <SquareDashedBottomCode className="size-4 text-muted-foreground" />
-        </span>
-        {/* Text content */}
-        <span className="flex flex-col min-w-0">
-          <span className="text-sm font-medium text-foreground truncate">{fileName}</span>
-          <span className="text-xs text-muted-foreground">
-            {mention.lineNumber ? `Line ${mention.lineNumber}` : 'Code selection'}
-          </span>
-        </span>
-      </span>
-    );
-  }
-
-  if (mention.type === 'code') {
-    return (
-      <span className="inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-muted/50 cursor-default min-w-[120px] max-w-[200px] align-middle">
-        <span className="flex items-center justify-center size-8 rounded-md bg-muted shrink-0">
-          <SquareDashedBottomCode className="size-4 text-muted-foreground" />
-        </span>
-        <span className="flex flex-col min-w-0">
-          <span className="text-sm font-medium text-foreground truncate">{mention.path}</span>
-          <span className="text-xs text-muted-foreground">Lines {mention.lineRange ?? '—'}</span>
-        </span>
-      </span>
-    );
-  }
+/** One mention as a badge; turn `focusable` off inside a control that takes focus itself. */
+export function MentionChip({
+  mention,
+  focusable = true,
+}: {
+  mention: ParsedMention;
+  focusable?: boolean;
+}) {
+  if (isTextMention(mention)) return <TextMentionChip mention={mention} />;
 
   if (mention.type === 'briefing') {
     const preview = mention.fullText?.slice(0, 100);
     const chip = (
       <span className={MENTION_CHIP_CLASS}>
-        <FileText className="h-3 w-3 text-muted-foreground shrink-0" />
+        <FileText />
         <span>{mention.label}</span>
       </span>
     );
@@ -126,26 +85,27 @@ export function MentionChip({ mention }: { mention: ParsedMention }) {
             ? FolderOpen
             : (getFileIconByExtension(mention.label) ?? Files);
 
-  const title =
-    mention.type === 'skill'
+  const isPath = mention.type === 'file' || mention.type === 'folder';
+  const tooltip = isPath
+    ? mention.path
+    : mention.type === 'skill'
       ? `Skill: ${mention.label}`
       : mention.type === 'agent'
         ? `Agent: ${mention.label}`
-        : mention.type === 'tool'
-          ? `MCP Tool: ${mention.path}`
-          : `${mention.repository}:${mention.path}`;
+        : `MCP Tool: ${mention.path}`;
 
   return (
-    <span className={MENTION_CHIP_CLASS} title={title}>
-      <Icon
-        className={
-          mention.type === 'tool'
-            ? 'h-3.5 w-3.5 text-muted-foreground shrink-0'
-            : 'h-3 w-3 text-muted-foreground shrink-0'
-        }
-      />
-      <span>{mention.label}</span>
-    </span>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className={MENTION_CHIP_CLASS} tabIndex={focusable ? 0 : undefined}>
+          <Icon />
+          <span>{mention.label}</span>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="top" className={isPath ? 'font-mono wrap-anywhere' : undefined}>
+        {tooltip}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -179,7 +139,7 @@ function renderTextWithUltrathink(text: string): React.ReactNode {
  * Hook to render text with file/folder mentions and ultrathink highlighting
  * Returns array of React nodes with mentions rendered as chips
  */
-function useRenderFileMentions(text: string): React.ReactNode[] {
+function useRenderFileMentions(text: string, focusable: boolean): React.ReactNode[] {
   return useMemo(() => {
     const nodes: React.ReactNode[] = [];
     let lastIndex = 0;
@@ -198,7 +158,9 @@ function useRenderFileMentions(text: string): React.ReactNode[] {
       const mention = parseMention(token.id);
 
       if (mention) {
-        nodes.push(<MentionChip key={`mention-${key++}`} mention={mention} />);
+        nodes.push(
+          <MentionChip key={`mention-${key++}`} mention={mention} focusable={focusable} />,
+        );
       } else {
         // Fallback: show as plain text if not a valid mention
         nodes.push(<span key={`unknown-${key++}`}>{text.slice(token.start, token.end)}</span>);
@@ -215,14 +177,22 @@ function useRenderFileMentions(text: string): React.ReactNode[] {
     }
 
     return nodes;
-  }, [text]);
+  }, [text, focusable]);
 }
 
 /**
  * Component to render text with file mentions
  */
-export function RenderFileMentions({ text, className }: { text: string; className?: string }) {
-  const nodes = useRenderFileMentions(text);
+export function RenderFileMentions({
+  text,
+  className,
+  focusable = true,
+}: {
+  text: string;
+  className?: string;
+  focusable?: boolean;
+}) {
+  const nodes = useRenderFileMentions(text, focusable);
   return <span className={className}>{nodes}</span>;
 }
 
@@ -271,58 +241,30 @@ export function extractTextMentions(text: string): {
   return { textMentions, cleanedText };
 }
 
-/**
- * Component to render a single text mention block (quote/diff)
- * Used for displaying above message bubbles, not inline
- */
-function TextMentionBlock({ mention }: { mention: ParsedMention }) {
-  if (
-    mention.type !== 'quote' &&
-    mention.type !== 'diff' &&
-    mention.type !== 'code' &&
-    mention.type !== 'pasted'
-  )
-    return null;
-
-  const displayTitle =
-    mention.type === 'quote'
-      ? mention.label.split('\n')[0]?.slice(0, 20) || mention.label.slice(0, 20)
-      : mention.path?.split('/').pop() || mention.path || 'Code';
-
-  const title = displayTitle.length < 20 ? displayTitle : `${displayTitle}...`;
-
-  const subtitle =
-    mention.type === 'quote'
-      ? 'Selected Text'
-      : mention.type === 'pasted'
-        ? 'Pasted Text'
-        : mention.type === 'code'
-          ? `Lines ${mention.lineRange ?? '—'}`
-          : mention.lineNumber
-            ? `Line ${mention.lineNumber}`
-            : 'Code selection';
+/** A quote, diff, code or pasted mention as the badge the composer strip shows, with a preview. */
+function TextMentionChip({ mention }: { mention: ParsedMention }) {
+  const isProse = mention.type === 'quote' || mention.type === 'pasted';
+  const lines = mention.lineRange ?? mention.lineNumber;
 
   return (
     <HoverCard openDelay={300} closeDelay={100}>
       <HoverCardTrigger asChild>
-        <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-muted/50 cursor-default min-w-[120px] max-w-[200px]">
-          <div className="flex items-center justify-center size-8 rounded-md bg-muted shrink-0">
-            {mention.type === 'quote' || mention.type === 'pasted' ? (
-              <SquareDashedText className="size-4 text-muted-foreground" />
-            ) : (
-              <SquareDashedBottomCode className="size-4 text-muted-foreground" />
-            )}
-          </div>
-          <div className="flex flex-col min-w-0">
-            <span className="text-sm font-medium text-foreground truncate">{title}</span>
-            <span className="text-xs text-muted-foreground">{subtitle}</span>
-          </div>
-        </div>
+        <AgentFileItem
+          filename={
+            isProse
+              ? mention.label.trim().split('\n')[0]
+              : mention.path.split('/').pop() || mention.path
+          }
+          icon={isProse ? SquareDashedText : undefined}
+          detail={lines ? `L${lines}` : undefined}
+          size={mention.type === 'pasted' ? mention.size : undefined}
+          className="max-w-48"
+        />
       </HoverCardTrigger>
       <HoverCardContent side="top" align="start" className="w-80 max-h-48 overflow-y-auto">
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            {mention.type === 'quote' || mention.type === 'pasted' ? (
+            {isProse ? (
               <SquareDashedText className="size-3" />
             ) : (
               <SquareDashedBottomCode className="size-3" />
@@ -348,15 +290,13 @@ function TextMentionBlock({ mention }: { mention: ParsedMention }) {
  * Component to render multiple text mention blocks
  */
 export function TextMentionBlocks({ mentions }: { mentions: ParsedMention[] }) {
-  const textMentions = mentions.filter(
-    (m) => m.type === 'quote' || m.type === 'diff' || m.type === 'code' || m.type === 'pasted',
-  );
+  const textMentions = mentions.filter(isTextMention);
   if (textMentions.length === 0) return null;
 
   return (
     <div className="flex flex-wrap gap-1.5">
       {textMentions.map((mention) => (
-        <TextMentionBlock
+        <TextMentionChip
           key={`${mention.type}-${mention.id}-${mention.label.slice(0, 20)}`}
           mention={mention}
         />
