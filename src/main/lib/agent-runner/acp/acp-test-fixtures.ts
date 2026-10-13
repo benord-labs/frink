@@ -1,6 +1,7 @@
 import {
   type AgentContext,
   agent,
+  type ContentBlock,
   ndJsonStream,
   type PermissionOption,
   PROTOCOL_VERSION,
@@ -10,12 +11,14 @@ import {
   type ToolCallUpdate,
 } from '@agentclientprotocol/sdk';
 import type { UIMessageChunk } from '../../claude/types';
+import type { AcpAgentRules } from './acp-permissions';
 import type { AcpAgentLaunch, AcpAgentProcess } from './acp-process';
 import type { AcpRunnerParams } from './index';
 
 type FakeTurn = {
   client: AgentContext;
   sessionId: string;
+  prompt: ContentBlock[];
   /** Settles when the client sends `session/cancel`. */
   cancelled: Promise<void>;
 };
@@ -48,7 +51,8 @@ export function fakeAcpAgent(script: FakeTurnScript, protocolVersion = PROTOCOL_
     })
     .onNotification('session/cancel', () => cancel())
     .onRequest('session/prompt', async ({ params, client }) => {
-      const response = await script({ client, sessionId: params.sessionId, cancelled });
+      const { sessionId, prompt } = params;
+      const response = await script({ client, sessionId, prompt, cancelled });
       return response ?? { stopReason: 'end_turn' };
     })
     .connect(ndJsonStream(toClient.writable, toAgent.readable));
@@ -76,10 +80,23 @@ export function fakeAcpAgent(script: FakeTurnScript, protocolVersion = PROTOCOL_
   };
 }
 
+/** Rules shaped like OpenCode's, which names each tool in the first title of its call. */
+export const TEST_RULES: AcpAgentRules = {
+  toolQuestions: {
+    bash: 'Bash',
+    read: 'Read',
+    write: 'Edit',
+    webfetch: 'WebFetch',
+    websearch: 'WebSearch',
+  },
+  ignoredInputKeys: ['directories', 'patterns', 'parentDir', 'numResults', 'provider'],
+  quietTools: ['read', 'grep', 'list'],
+};
+
 /** Runner params for a turn in which the permission gate denies whatever it is asked. */
 export function runnerParams(overrides: Partial<AcpRunnerParams> = {}): AcpRunnerParams {
   return {
-    launch: { command: 'fake-agent', args: ['acp'], env: {} },
+    launch: { command: 'fake-agent', args: ['acp'], env: {}, rules: TEST_RULES },
     cwd: '/workspace/project',
     prompt: 'hello',
     abortController: new AbortController(),
@@ -106,7 +123,7 @@ export async function collectChunks(
 }
 
 type RecordedMessage = { update: SessionUpdate } | { permission: ToolCallUpdate };
-type RecordedTurn = { messages: RecordedMessage[]; response: PromptResponse };
+export type RecordedTurn = { messages: RecordedMessage[]; response: PromptResponse };
 
 /** The three options OpenCode 1.19.0 offered on every recorded permission request. */
 export const RECORDED_OPTIONS: PermissionOption[] = [

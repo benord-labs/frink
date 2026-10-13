@@ -22,22 +22,65 @@ function mergeContent(
   return [...(known ?? []).filter((entry) => entry.type === 'diff'), ...update];
 }
 
-/** Folds one report about a tool call into what is known of it; ACP sends only changed fields. */
-export function rememberToolCall(
-  toolCalls: Map<string, ToolCallUpdate>,
+/** What is known of one tool call, beyond the fields of its latest report. */
+export type KnownToolCall = ToolCallUpdate & {
+  /** The title of the agent's first report on the call, which names the tool it runs. */
+  tool?: string;
+  /** The directory the call's own input says its command runs in. */
+  workdir?: string;
+};
+
+/** Where a report came from: a new call, a later report on it, or a permission request. */
+export type ReportSource = 'tool_call' | 'tool_call_update' | 'request';
+
+/** The keys of the call's input, or nothing when the input is not an object. */
+export function inputKeys(toolCall: ToolCallUpdate): string[] | undefined {
+  const input = keyedInputSchema.safeParse(toolCall.rawInput);
+  return input.success ? Object.keys(input.data) : undefined;
+}
+
+/** One string field of the call's input. */
+export function inputText(toolCall: ToolCallUpdate, key: string): string | undefined {
+  const input = z.object({ [key]: z.string() }).safeParse(toolCall.rawInput);
+  return input.success ? input.data[key] : undefined;
+}
+
+/** The input, tool and directory known of a call; an empty input says nothing new. */
+function rememberInput(
   update: ToolCallUpdate,
-): ToolCallUpdate {
-  const known = toolCalls.get(update.toolCallId);
-  const toolCall: ToolCallUpdate = {
+  known: Partial<KnownToolCall>,
+  source: ReportSource,
+): Pick<KnownToolCall, 'rawInput' | 'tool' | 'workdir'> {
+  const saysNothing = inputKeys(update)?.length === 0;
+  return {
+    rawInput: saysNothing ? known.rawInput : (update.rawInput ?? known.rawInput),
+    tool: known.tool ?? (source === 'request' ? undefined : (update.title ?? undefined)),
+    workdir: inputText(update, 'workdir') ?? known.workdir,
+  };
+}
+
+/**
+ * Folds one report about a tool call into what is known of it; ACP sends only changed fields.
+ * A new call on a known id starts over.
+ */
+export function rememberToolCall(
+  toolCalls: Map<string, KnownToolCall>,
+  update: ToolCallUpdate,
+  source: ReportSource = 'tool_call_update',
+): KnownToolCall {
+  const known = source === 'tool_call' ? undefined : toolCalls.get(update.toolCallId);
+  const toolCall: KnownToolCall = {
     toolCallId: update.toolCallId,
     title: update.title ?? known?.title,
     kind: update.kind ?? known?.kind,
     status: update.status ?? known?.status,
     content: mergeContent(known?.content, update.content),
     locations: update.locations?.length ? update.locations : known?.locations,
-    rawInput: update.rawInput ?? known?.rawInput,
+    ...rememberInput(update, known ?? {}, source),
   };
-  toolCalls.set(update.toolCallId, toolCall);
+  // A request's locations name what it asks about, such as a folder, not what the call touches.
+  const kept = source === 'request' ? { ...toolCall, locations: known?.locations } : toolCall;
+  toolCalls.set(update.toolCallId, kept);
   return toolCall;
 }
 
@@ -51,8 +94,7 @@ export function describesStepWithoutKind(update: ToolCallUpdate): boolean {
 
 /** True when the call says it runs a command, by its kind or by a `command` key in its input. */
 export function namesCommand(toolCall: ToolCallUpdate): boolean {
-  const input = keyedInputSchema.safeParse(toolCall.rawInput);
-  return toolCall.kind === 'execute' || (input.success && 'command' in input.data);
+  return toolCall.kind === 'execute' || inputKeys(toolCall)?.includes('command') === true;
 }
 
 /** The shell command in the call's own input when that is all the input holds. */

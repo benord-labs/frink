@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { UIMessageChunk } from '../../claude/types';
 import { startAcpAgentProcess } from './acp-process';
-import { collectChunks, textOf } from './acp-test-fixtures';
+import { collectChunks, TEST_RULES, textOf } from './acp-test-fixtures';
 import { runAcpAgent } from './index';
 
 /** Real child processes, and a grace period before a force-stop, need more than the default. */
@@ -42,6 +42,7 @@ function launch(script: string) {
     args: ['--input-type=module', '--eval', script],
     cwd: process.cwd(),
     env: process.env,
+    rules: TEST_RULES,
   };
 }
 
@@ -139,6 +140,22 @@ describe('startAcpAgentProcess', { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
     await expect.poll(() => isAlive(grandchild), SETTLE).toBe(false);
   });
 
+  it('force-stops at once, without a grace period, when given none', async () => {
+    const agent = startAcpAgentProcess(
+      launch(
+        `process.on('SIGTERM', () => {}); process.stderr.write('ready'); setInterval(() => {}, 1000);`,
+      ),
+    );
+    await expect.poll(() => agent.describeExit(), SETTLE).toBe('ready');
+    const started = Date.now();
+
+    await agent.dispose(0);
+
+    expect(agent.describeExit()).toContain('stopped by SIGKILL');
+    // Well under the grace period an ordinary stop gives the agent.
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
   it('stops a child that outlives an agent which has already exited', async () => {
     const agent = startAcpAgentProcess(
       launch(`
@@ -158,6 +175,18 @@ describe('startAcpAgentProcess', { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
     await agent.dispose();
 
     await expect.poll(() => isAlive(survivor), SETTLE).toBe(false);
+  });
+
+  it('describes an agent that exits with a long error by the last line of it alone', async () => {
+    const lastLine = 'x'.repeat(300);
+    const agent = startAcpAgentProcess(
+      launch(
+        `process.stderr.write('stack line\\n'.repeat(180) + '${lastLine}\\n'); process.exit(3);`,
+      ),
+    );
+    await agent.closed;
+    expect(agent.describeExit()).toBe(`exited with code 3: ${'x'.repeat(200)}`);
+    await agent.dispose();
   });
 
   it('describes an agent that exits by itself with its exit code and error output', async () => {

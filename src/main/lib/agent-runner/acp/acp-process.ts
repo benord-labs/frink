@@ -2,7 +2,9 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { Readable, Writable } from 'node:stream';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { ndJsonStream, type Stream } from '@agentclientprotocol/sdk';
+import log from 'electron-log';
 import { killProcessTree, processTreeGone, signalProcessTree } from '../process-settlement';
+import type { AcpAgentRules } from './acp-permissions';
 
 /** How to start one agent in ACP mode. The caller supplies it; nothing here knows any agent. */
 export type AcpAgentLaunch = {
@@ -10,6 +12,11 @@ export type AcpAgentLaunch = {
   args: string[];
   cwd: string;
   env: NodeJS.ProcessEnv;
+  rules: AcpAgentRules;
+  /** The folder the agent's shell gate reads the commands Frink allowed from. */
+  commandLedger?: string;
+  /** Removes what the launch set up, once the agent has stopped. */
+  cleanup?: () => Promise<void>;
 };
 
 export type AcpAgentProcess = {
@@ -19,11 +26,13 @@ export type AcpAgentProcess = {
   closed: Promise<void>;
   /** How the process ended and the last of its stderr, to explain a dropped connection. */
   describeExit: () => string;
-  /** Stops the agent's whole process group; settles once nothing is left of it. */
-  dispose: () => Promise<void>;
+  /** Stops the agent's whole process group, force-stopping it after `graceMs`; settles once it is gone. */
+  dispose: (graceMs?: number) => Promise<void>;
 };
 
 const STDERR_TAIL_CHARS = 2000;
+/** The most of the agent's last error line a person is shown; the whole tail goes to the log. */
+const SHOWN_STDERR_CHARS = 200;
 /** Time the agent gets to stop on its own before its process group is killed. */
 const STOP_GRACE_MS = 1500;
 const STOP_TIMEOUT_MS = 5000;
@@ -39,9 +48,13 @@ async function treeGoneWithin(child: ChildProcess, withinMs: number): Promise<bo
 }
 
 /** Asks the group to stop, then force-stops whatever is left, even after the agent itself exited. */
-async function stopProcessTree(child: ChildProcess, closed: Promise<void>): Promise<void> {
+async function stopProcessTree(
+  child: ChildProcess,
+  closed: Promise<void>,
+  graceMs: number,
+): Promise<void> {
   signalProcessTree(child, 'SIGTERM');
-  await treeGoneWithin(child, STOP_GRACE_MS);
+  await treeGoneWithin(child, graceMs);
   killProcessTree(child);
   if (!(await treeGoneWithin(child, STOP_TIMEOUT_MS))) {
     throw new Error('The agent process did not stop');
@@ -60,6 +73,7 @@ export function startAcpAgentProcess(launch: AcpAgentLaunch): AcpAgentProcess {
   });
   let stderrTail = '';
   let ending = '';
+  let stopped: Promise<void> | undefined;
   child.stderr.setEncoding('utf8').on('data', (text: string) => {
     stderrTail = (stderrTail + text).slice(-STDERR_TAIL_CHARS);
   });
@@ -67,7 +81,10 @@ export function startAcpAgentProcess(launch: AcpAgentLaunch): AcpAgentProcess {
     ending = signal ? `stopped by ${signal}` : `exited with code ${code}`;
   });
   const closed = new Promise<void>((resolve) => {
-    child.once('close', resolve);
+    child.once('close', () => {
+      if (!stopped && stderrTail) log.warn(`[ACP] Agent ${ending}; its error output:`, stderrTail);
+      resolve();
+    });
     child.once('error', (error) => {
       ending = `could not start: ${error.message}`;
       resolve();
@@ -78,11 +95,13 @@ export function startAcpAgentProcess(launch: AcpAgentLaunch): AcpAgentProcess {
 
   // SAFETY: a child's stdout yields bytes; Node types its web stream more loosely than the DOM's.
   const output = Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>;
-  let stopped: Promise<void> | undefined;
   return {
     stream: ndJsonStream(Writable.toWeb(child.stdin), output),
     closed,
-    describeExit: () => [ending, stderrTail.trim()].filter(Boolean).join(': '),
-    dispose: () => (stopped ??= stopProcessTree(child, closed)),
+    describeExit: () => {
+      const lastLine = stderrTail.trim().split('\n').at(-1)?.slice(0, SHOWN_STDERR_CHARS);
+      return [ending, lastLine].filter(Boolean).join(': ');
+    },
+    dispose: (graceMs = STOP_GRACE_MS) => (stopped ??= stopProcessTree(child, closed, graceMs)),
   };
 }
