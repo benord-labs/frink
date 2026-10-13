@@ -4,8 +4,11 @@ import log from 'electron-log';
 import { createThinkingEmitter } from '../../claude/thinking-emitter';
 import type { UIMessageChunk } from '../../claude/types';
 import { ChunkQueue } from '../codex/chunk-queue';
+import type { CodexApprovalCheck } from '../codex/codex-approvals';
 import { completeTurnChunks, makeChunkSink } from '../codex/codex-stream-chunks';
+import { answerPermissionRequest, approvalRequestsFor, CANCELLED } from './acp-permissions';
 import { type AcpAgentLaunch, type AcpAgentProcess, startAcpAgentProcess } from './acp-process';
+import { describesStepWithoutKind, rememberToolCall } from './acp-tool-calls';
 import { createAcpTurnState, mapPromptResponse, mapSessionUpdate } from './acp-updates';
 
 /** Starting an agent may include a first-run download; a prompt itself has no deadline. */
@@ -21,6 +24,8 @@ export type AcpRunnerParams = {
   cwd: string;
   prompt: string;
   abortController: AbortController;
+  /** Frink's permission gate. It must settle when the turn ends for any reason, not only a stop. */
+  checkApproval: CodexApprovalCheck;
 };
 
 /** Runs the ACP handshake and opens a session, closing the connection if that takes too long. */
@@ -80,10 +85,13 @@ export async function* runAcpAgent(
   const thinking = createThinkingEmitter();
   const emit = makeChunkSink(queue, openTextIds, thinking);
   const turn = createAcpTurnState();
+  // Aborted once the turn can take no more answers: the user stopped it, or the prompt settled.
+  const turnOver = new AbortController();
   const link: AgentLink = {};
   let sessionId: string | undefined;
   let turnEnded = Promise.resolve();
   const onAbort = () => {
+    turnOver.abort();
     queue.finish();
     if (!sessionId) link.connection?.close();
     else void link.connection?.agent.notify('session/cancel', { sessionId }).catch(() => {});
@@ -99,6 +107,26 @@ export async function* runAcpAgent(
         if (notification.sessionId !== sessionId) return;
         mapSessionUpdate(notification.update, turn).forEach(emit);
       })
+      .onRequest('session/request_permission', ({ params: request }) => {
+        if (request.sessionId !== sessionId || turnOver.signal.aborted) return CANCELLED;
+        // The request joins what earlier updates said: either may hold what the other leaves out.
+        const toolCall = rememberToolCall(turn.toolCalls, request.toolCall);
+        // An earlier report may describe another step: a request that describes one must name its kind.
+        const questions = describesStepWithoutKind(request.toolCall)
+          ? []
+          : approvalRequestsFor(toolCall);
+        if (questions.length === 0) {
+          log.warn(
+            `[ACP] Refused a ${toolCall.kind ?? 'tool'} call Frink cannot ask its rules about`,
+          );
+        }
+        return answerPermissionRequest(
+          questions,
+          request.options,
+          params.checkApproval,
+          turnOver.signal,
+        );
+      })
       .connect(link.agent.stream);
     link.connection = connection;
     sessionId = await openSession(connection, params.cwd);
@@ -112,7 +140,10 @@ export async function* runAcpAgent(
       .catch(async (error: Error) => {
         if (!signal.aborted) emit({ type: 'error', errorText: await failureText(error, link) });
       })
-      .finally(() => queue.finish());
+      .finally(() => {
+        turnOver.abort();
+        queue.finish();
+      });
     yield* queue.drain();
   } catch (error) {
     if (!signal.aborted && error instanceof Error) {
@@ -120,6 +151,7 @@ export async function* runAcpAgent(
     }
   } finally {
     signal.removeEventListener('abort', onAbort);
+    turnOver.abort();
     // Before the first yield: a reader that stops listening never resumes this generator.
     if (link.agent) {
       void stopAgent(link.agent, turnEnded).catch((error) =>

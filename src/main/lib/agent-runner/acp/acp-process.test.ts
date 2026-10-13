@@ -53,6 +53,7 @@ function runTurn(script: string): Promise<UIMessageChunk[]> {
       cwd,
       prompt: 'hello',
       abortController: new AbortController(),
+      checkApproval: async () => ({ allowed: false, message: 'not asked' }),
     }),
   );
 }

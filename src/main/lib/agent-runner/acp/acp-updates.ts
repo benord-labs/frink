@@ -1,6 +1,12 @@
-import type { PromptResponse, SessionUpdate, StopReason } from '@agentclientprotocol/sdk';
+import type {
+  PromptResponse,
+  SessionUpdate,
+  StopReason,
+  ToolCallUpdate,
+} from '@agentclientprotocol/sdk';
 import { z } from 'zod';
 import type { UIMessageChunk } from '../../claude/types';
+import { rememberToolCall } from './acp-tool-calls';
 
 /** Why a turn ended early, in the user's words; a normal or cancelled end needs no message. */
 const STOP_PROBLEMS = new Map<StopReason, string>([
@@ -15,12 +21,13 @@ const answerSchema = z.looseObject({});
 
 /** What one turn has streamed so far. */
 type AcpTurnState = {
+  toolCalls: Map<string, ToolCallUpdate>;
   openTextId: string | null;
   textRuns: number;
 };
 
 export function createAcpTurnState(): AcpTurnState {
-  return { openTextId: null, textRuns: 0 };
+  return { toolCalls: new Map(), openTextId: null, textRuns: 0 };
 }
 
 /** Ends the open text run, so text after a thought starts a new block below it. */
@@ -46,6 +53,11 @@ export function mapSessionUpdate(update: SessionUpdate, state: AcpTurnState): UI
         { type: 'reasoning-delta', id: 'thought', delta: update.content.text },
       ];
     }
+    case 'tool_call':
+    case 'tool_call_update':
+      // Kept for a permission request about the same call, which may leave out what this says.
+      rememberToolCall(state.toolCalls, update);
+      return [];
     case 'usage_update':
       return [
         {
