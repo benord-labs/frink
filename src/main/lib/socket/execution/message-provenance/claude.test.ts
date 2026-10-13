@@ -2,7 +2,13 @@ import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, it } from 'vitest';
 import { MESSAGE_PROVENANCE_RULE } from '../../../../../shared/lib/message-markers/message-provenance';
 import { buildClaudeUserMessage } from '../../claude-input-queue';
-import { consumeClaudeDelivery, pushClaudeTurnDelivery, registerClaudeDelivery } from './claude';
+import {
+  consumeClaudeDelivery,
+  pushClaudeTurnDelivery,
+  queueComposerNotes,
+  registerClaudeDelivery,
+  takeComposerNotes,
+} from './claude';
 import { createMessageProvenance } from './index';
 
 /** The record is the LAST element: the rule that may precede it names the tag in prose too. */
@@ -37,12 +43,12 @@ describe('defining the record on a session whose prompt predates the Flow', () =
 });
 
 describe('pushClaudeTurnDelivery', () => {
-  it('registers the turn record, pushes the prompt, and drops pending entries when the turn settles', async () => {
+  it('registers the turn record and notes, pushes the prompt, and drops both when the turn settles', async () => {
     let settle = () => {};
     const pushed: SDKUserMessage[] = [];
     const live = {
       ...session(),
-      currentTurn: { messageProvenance: record('flow') },
+      currentTurn: { messageProvenance: record('flow'), composerNotes: ['a note'] },
       queue: { push: (message: SDKUserMessage) => pushed.push(message) },
       turnSettled: new Promise<void>((resolve) => {
         settle = resolve;
@@ -52,9 +58,17 @@ describe('pushClaudeTurnDelivery', () => {
     pushClaudeTurnDelivery(live, message);
     expect(pushed).toEqual([message]);
     expect(live.pendingDeliveries).toHaveLength(1);
+    // A retried push queues the turn's notes again; the hook still gets each once.
+    pushClaudeTurnDelivery(live, message);
+    queueComposerNotes(live, ['a steer’s note']);
+    expect(takeComposerNotes(live)).toEqual(['a note', 'a steer’s note']);
+    expect(takeComposerNotes(live)).toEqual([]);
+
+    pushClaudeTurnDelivery(live, message);
     settle();
     await live.turnSettled;
     expect(live.pendingDeliveries).toEqual([]);
+    expect(takeComposerNotes(live)).toEqual([]);
   });
 });
 

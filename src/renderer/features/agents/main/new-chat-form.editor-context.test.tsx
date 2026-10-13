@@ -119,7 +119,7 @@ describe('NewChatForm editor context', () => {
 
     await waitFor(() => expect(createChat).toHaveBeenCalledOnce());
     expect(createChat.mock.calls[0][0].initialMessageParts).toEqual([
-      { type: 'text', text: '@[file:local:/repo/docs/notes.md] summarise this' },
+      { type: 'text', text: '@[file:editor:/repo/docs/notes.md] summarise this' },
     ]);
   });
 });

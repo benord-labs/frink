@@ -726,7 +726,7 @@ describe('useMessageSend', () => {
     >;
     type OpenFile = { name: string; path: string };
     const file: OpenFile = { name: 'notes.md', path: '/repo/docs/notes.md' };
-    const token = '@[file:local:/repo/docs/notes.md]';
+    const token = '@[file:editor:/repo/docs/notes.md]';
     const paste = {
       id: 'pasted_1',
       filePath: '/sessions/sub-1/pasted/pasted_1.txt',

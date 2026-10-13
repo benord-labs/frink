@@ -118,6 +118,9 @@ import { trackUserMessageDelivery } from './execution/claude-session/user-messag
 import {
   applyApprovedPlanContextToPrompt,
   formatPromptWithHistory,
+  codexComposerContext,
+  isPersonAuthored,
+  projectComposerContext,
 } from './execution/prompt-prefix';
 import type { MessageDelivery } from './execution/message-provenance/origin';
 import { provenanceForTurn, recordProvenanceResume } from './execution/message-provenance';
@@ -336,7 +339,11 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
   } = payload;
 
   // Markers persist for the renderer (hide the bubble, or draw it as a card) — never for the model.
-  const message = stripMessageMarkers(stripHiddenWakeMarker(rawMessage));
+  const unmarked = stripMessageMarkers(stripHiddenWakeMarker(rawMessage));
+  const composer = isPersonAuthored(payload.delivery)
+    ? projectComposerContext(unmarked)
+    : { text: unmarked, notes: [] };
+  const message = composer.text;
 
   if (continuity?.status === 'degraded') {
     log.warn(
@@ -863,6 +870,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
         for await (const chunk of runCodexAgent({
           prompt: codexFullPrompt,
           messageProvenance: provenance,
+          composerContext: codexComposerContext(composer.notes),
           freshThreadFallbackPrompt: codexFreshFallbackPrompt,
           ...(flowRunEnded && {
             flowRunEnded: {
@@ -1065,6 +1073,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
     turn.pendingReminders = turnReminders.reminders;
     turn.pendingFlowRunEnded = flowRunEnded && { ...flowRunEnded, subChatId };
     turn.messageProvenance = provenance;
+    turn.composerNotes = composer.notes.map((note) => note.text);
 
     const shouldResumeClaudeSession = Boolean(persistedSessionId);
     const delivery = trackUserMessageDelivery(subChatId, msgId, () => fullPrompt.length);

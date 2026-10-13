@@ -12,6 +12,10 @@ export const MENTION_PREFIXES = {
   BRIEFING: 'briefing:', // Flow briefing (format: briefing:<flowId>:<base64Name>:<base64Text>)
 } as const;
 
+/** A file token's second slot says where the file came from: `local` when the user picked it,
+ * this one for the file open in the editor, attached without the user picking it. */
+export const OPEN_EDITOR_FILE_SOURCE = 'editor';
+
 /** Strips characters that would break the `@[type:preview:payload]` mention grammar. */
 export const MENTION_PREVIEW_SANITIZE_REGEX = /[:[\]]/g;
 

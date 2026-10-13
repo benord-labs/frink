@@ -30,7 +30,7 @@ import {
 import type { validateToolPermission } from '../../streaming/pending-permission/validate-tool-permission';
 import { buildUserPromptSubmitReminderHook } from '../../operator-reminders';
 import { markFlowRunEndAnnounced } from '../../flow-signal/flow-run-ended';
-import { consumeClaudeDelivery } from '../message-provenance/claude';
+import { consumeClaudeDelivery, takeComposerNotes } from '../message-provenance/claude';
 import {
   denyPlanTransitionInWakeBurst,
   isPlanAutoDenyFloorActive,
@@ -89,10 +89,13 @@ export function buildClaudeSessionCallbacks(scope: ClaudeSessionScope, session: 
       session.current && turn?.messageProvenance
         ? consumeClaudeDelivery(session.current, input)
         : undefined;
+    // Last: the CLI caps a hook's context, and Frink's own reminders must stay inside the cap.
+    const notes = fromSdk && session.current ? takeComposerNotes(session.current) : [];
     const texts = [
       ...(ended ? [ended.text] : []),
       ...reminders,
       ...(provenance ? [provenance] : []),
+      ...notes,
     ];
     return texts.length ? buildUserPromptSubmitReminderHook(texts)() : {};
   };

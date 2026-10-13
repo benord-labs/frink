@@ -75,10 +75,29 @@ function sameOrigin(a: MessageProvenance, b: MessageProvenance): boolean {
   return a.source === b.source && a.kind === b.kind;
 }
 
-/** Register the turn's record for the hook, then hand the prompt to the CLI. */
+/** The part of a Claude session the composer-note queue reads. */
+type NoteSession = { turnSettled: Promise<void> | null };
+/** Composer notes for prompts already pushed to a session, waiting for its next prompt hook. */
+const pendingComposerNotes = new WeakMap<NoteSession, string[]>();
+
+/** Queue what a pushed prompt's attached files and selections mean; dropped with the busy span. */
+export function queueComposerNotes(session: NoteSession, notes: string[]): void {
+  if (notes.length === 0) return;
+  pendingComposerNotes.set(session, [...(pendingComposerNotes.get(session) ?? []), ...notes]);
+  void session.turnSettled?.then(() => pendingComposerNotes.delete(session));
+}
+
+/** Takes the queue whole, each note once: a retried push queues its notes again. */
+export function takeComposerNotes(session: NoteSession): string[] {
+  const notes = new Set(pendingComposerNotes.get(session));
+  pendingComposerNotes.delete(session);
+  return [...notes];
+}
+
+/** Register the turn's record and composer notes for the hook, then hand the prompt to the CLI. */
 export function pushClaudeTurnDelivery(
   session: ProvenanceSession & {
-    currentTurn: { messageProvenance?: MessageProvenance } | null;
+    currentTurn: { messageProvenance?: MessageProvenance; composerNotes: string[] } | null;
     queue: { push: (message: SDKUserMessage) => void };
     turnSettled: Promise<void> | null;
   },
@@ -87,6 +106,7 @@ export function pushClaudeTurnDelivery(
   const turn = session.currentTurn;
   if (turn?.messageProvenance)
     registerClaudeDelivery(session, message, turn.messageProvenance, turn);
+  if (turn) queueComposerNotes(session, turn.composerNotes);
   // Entries die with the busy span, so a later turn or wake burst can never match a stale one.
   void session.turnSettled?.then(() => {
     session.pendingDeliveries = [];

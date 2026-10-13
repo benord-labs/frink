@@ -37,6 +37,9 @@ export function renderMessageProvenance(record: MessageProvenance): string {
   return `<frink_message>${serializeMessageProvenance(record)}</frink_message>`;
 }
 
+/** One entry of Codex's host context: `application` reads as the host, `untrusted` as quoted text. */
+export type CodexContextEntry = { kind: 'application' | 'untrusted'; value: string };
+
 /** Codex native context. `withRule` defines the record on a thread that started without it. */
 export function codexMessageContext(record: MessageProvenance, withRule = false) {
   const application = (value: string) => ({ kind: 'application' as const, value });
@@ -46,11 +49,23 @@ export function codexMessageContext(record: MessageProvenance, withRule = false)
   };
 }
 
-/** A turn's whole Codex native context: its record, and any Flow-run-ended notice. */
-export function codexTurnContext(record?: MessageProvenance, withRule = false, runEnded?: string) {
+/** A turn's whole Codex native context: its record, any Flow-run-ended notice, and what the
+ * message's attached files and selections mean. */
+export function codexTurnContext(
+  turn: {
+    messageProvenance?: MessageProvenance;
+    flowRunEnded?: { text: string };
+    composerContext?: Record<string, CodexContextEntry>;
+  },
+  withRule = false,
+) {
+  const { messageProvenance: record, flowRunEnded } = turn;
   const context = {
     ...(record && codexMessageContext(record, withRule)),
-    ...(runEnded && { frink_flow_run_ended: { kind: 'application' as const, value: runEnded } }),
+    ...(flowRunEnded && {
+      frink_flow_run_ended: { kind: 'application' as const, value: flowRunEnded.text },
+    }),
+    ...turn.composerContext,
   };
   return Object.keys(context).length > 0 ? context : undefined;
 }

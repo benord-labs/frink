@@ -2,6 +2,7 @@ import { isCompactCommand } from '@/lib/commands/expand-slash-command';
 import {
   MENTION_PREFIXES,
   MENTION_PREVIEW_SANITIZE_REGEX,
+  OPEN_EDITOR_FILE_SOURCE,
 } from '../../../shared/lib/mentions/mention-grammar';
 import { encodeForMentionToken } from '../../../shared/lib/mentions/mention-token-codec';
 
@@ -58,12 +59,17 @@ export function attachedContextFile<T>(
   return selection || dismissed ? null : (file ?? null);
 }
 
+function fileToken(source: string, path: string): string {
+  return `@[${MENTION_PREFIXES.FILE}${source}:${path}]`;
+}
+
 /** Open-file token for a message; null for `/compact` (see isCompactCommand) and when `text`
- * already carries it, as an edited queued message does. */
+ * already carries that file, as an open-file token or one the user picked. */
 export function openFileMention(file: { path: string } | null, text: string): string | null {
   if (!file || isCompactCommand(text)) return null;
-  const token = `@[${MENTION_PREFIXES.FILE}local:${file.path}]`;
-  return text.includes(token) ? null : token;
+  const sources = [OPEN_EDITOR_FILE_SOURCE, 'local'];
+  if (sources.some((source) => text.includes(fileToken(source, file.path)))) return null;
+  return fileToken(OPEN_EDITOR_FILE_SOURCE, file.path);
 }
 
 /**
