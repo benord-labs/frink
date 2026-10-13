@@ -15,6 +15,7 @@ import {
   registerClaudeWarmSessionGuardTests,
   registerClaudeWarmSessionTests,
   registerCodexSessionCacheTests,
+  registerComposerContextTests,
   registerCustomNodeTransportTest,
   registerExecutorPermissionTests,
   registerFlowRunEndedTests,
@@ -1603,6 +1604,7 @@ describe('socket file permission edge cases', () => {
   registerOperatorReminderDeliveryTests({ basePayload, claudeQueryMock, handleRemoteExecute });
   describe('operator reminder delivery: the Flow run has ended (sc-4467)', () =>
     registerFlowRunEndedTests({ basePayload, claudeQueryMock, handleRemoteExecute }));
+  registerComposerContextTests({ basePayload, claudeQueryMock, handleRemoteExecute });
 
   it('aborts the turn when the drive-info read faults', async () => {
     // A recorded provenance fault is rethrown at admission, ahead of any provider work — see

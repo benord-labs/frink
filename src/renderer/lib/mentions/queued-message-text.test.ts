@@ -130,9 +130,9 @@ describe('attachedContextFile', () => {
 
 describe('openFileMention', () => {
   const file = { path: '/repo/notes.md' };
-  const token = '@[file:local:/repo/notes.md]';
+  const token = '@[file:editor:/repo/notes.md]';
 
-  it('builds the file token for an attached file', () => {
+  it('builds the open-file token for an attached file', () => {
     expect(openFileMention(file, 'hello')).toBe(token);
     expect(openFileMention(file, '')).toBe(token);
   });
@@ -147,6 +147,11 @@ describe('openFileMention', () => {
 
   it('skips a file the text already mentions, and only that file', () => {
     expect(openFileMention(file, `${token} hello`)).toBeNull();
-    expect(openFileMention(file, '@[file:local:/repo/other.md] hello')).toBe(token);
+    expect(openFileMention(file, '@[file:editor:/repo/other.md] hello')).toBe(token);
+  });
+
+  it('skips a file the user already picked from the @ menu', () => {
+    expect(openFileMention(file, 'read @[file:local:/repo/notes.md] first')).toBeNull();
+    expect(openFileMention(file, 'read @[file:local:/repo/other.md] first')).toBe(token);
   });
 });

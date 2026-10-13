@@ -8,4 +8,5 @@
  * dispatch.
  */
 export { applyApprovedPlanContextToPrompt } from './approved-plan-prompt';
+export { isPersonAuthored, projectComposerContext } from './composer-context';
 export { formatPromptWithHistory } from './prompt-history';

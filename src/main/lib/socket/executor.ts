@@ -118,6 +118,8 @@ import { trackUserMessageDelivery } from './execution/claude-session/user-messag
 import {
   applyApprovedPlanContextToPrompt,
   formatPromptWithHistory,
+  isPersonAuthored,
+  projectComposerContext,
 } from './execution/prompt-prefix';
 import type { MessageDelivery } from './execution/message-provenance/origin';
 import { provenanceForTurn, recordProvenanceResume } from './execution/message-provenance';
@@ -336,7 +338,8 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
   } = payload;
 
   // Markers persist for the renderer (hide the bubble, or draw it as a card) — never for the model.
-  const message = stripMessageMarkers(stripHiddenWakeMarker(rawMessage));
+  const unmarked = stripMessageMarkers(stripHiddenWakeMarker(rawMessage));
+  const message = isPersonAuthored(payload.delivery) ? projectComposerContext(unmarked) : unmarked;
 
   if (continuity?.status === 'degraded') {
     log.warn(

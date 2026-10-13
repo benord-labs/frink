@@ -15,6 +15,7 @@ import type { ClaudeTurnContext } from '../claude-turn-context';
 import { emitSteerMarker } from './emitter';
 import { registerClaudeDelivery } from '../execution/message-provenance/claude';
 import { createMessageProvenance } from '../execution/message-provenance';
+import { projectComposerContext } from '../execution/prompt-prefix';
 
 /**
  * The steer's own trace in the transcript, rendered as a card INSIDE the running assistant message.
@@ -149,7 +150,9 @@ export async function steerActiveTurn(
   // Pin the turn SYNCHRONOUSLY, before the push and before any await, so the marker can only ever
   // land on the turn this steer actually joined.
   const steeredTurn = getSession(subChatId)?.currentTurn ?? null;
-  const claude = steerClaudeTurn(subChatId, message);
+  // Every steer is typed by a person. The transcript marker keeps the raw text to draw its chips.
+  const projected = { ...message, text: projectComposerContext(message.text) };
+  const claude = steerClaudeTurn(subChatId, projected);
   if (claude === 'delivered') {
     log.info(`[Steer] delivered into the running Claude turn for ${subChatId}`);
     if (steeredTurn) await markSteerInTranscript(subChatId, message.text, steeredTurn);
@@ -162,7 +165,7 @@ export async function steerActiveTurn(
   if (!message.imageParts?.length) {
     // Pinned BEFORE the turn/steer round trip, so the marker can only land on the turn that took it.
     const codexTurnId = getCodexLiveTurn(subChatId)?.turnId;
-    const codex = await steerCodexTurn(subChatId, message.text);
+    const codex = await steerCodexTurn(subChatId, projected.text);
     if (codex === 'delivered' && codexTurnId) {
       log.info(`[Steer] delivered into the running Codex turn for ${subChatId}`);
       // Pushed into the turn's own chunk queue: a Codex turn has no ClaudeTurnContext, so it cannot
