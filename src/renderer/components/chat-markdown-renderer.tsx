@@ -6,7 +6,6 @@ import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 import { parseMarkdownIntoBlocks, Streamdown, type StreamdownProps } from 'streamdown';
-import { isAllowedShellOpenExternalUrl } from '../../shared/shell-external-url';
 import { hashString } from '../lib/hash';
 import { FILE_LINK_ELEMENT, remarkFileLinks } from '../lib/file-links/remark-file-links';
 import { useCodeTheme } from '../lib/hooks/use-code-theme';
@@ -14,6 +13,7 @@ import { MENTION_ELEMENT, MENTION_REMARK_PLUGINS } from '../lib/mentions/remark-
 import { highlightCode } from '../lib/themes/shiki-theme-loader';
 import { cn } from '../lib/utils';
 import { MarkdownFileLink } from './MarkdownFileLink';
+import { MarkdownLink } from './MarkdownLink';
 import { MarkdownMention } from './MarkdownMention';
 import { MermaidBlock } from './MermaidBlock';
 
@@ -434,21 +434,6 @@ function buildStreamdownComponents(
         {children}
       </li>
     ),
-    a: ({ href, children, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement>) => (
-      <a
-        href={href}
-        onClick={(e) => {
-          e.preventDefault();
-          if (href && isAllowedShellOpenExternalUrl(href)) {
-            void window.desktopApi.openExternal(href);
-          }
-        }}
-        className="text-blue-600 dark:text-blue-400 no-underline hover:underline hover:decoration-current underline-offset-2 decoration-1 transition-all duration-150 cursor-pointer focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-blue-500/30 focus-visible:rounded-sm"
-        {...props}
-      >
-        {children}
-      </a>
-    ),
     strong: ({ children, ...props }: { children?: React.ReactNode; [key: string]: unknown }) => (
       <strong className="font-medium text-foreground" {...props}>
         {children}
@@ -505,6 +490,7 @@ function buildStreamdownComponents(
     ),
     pre: ({ children }: { children?: React.ReactNode; [key: string]: unknown }) => <>{children}</>,
     code: createCodeComponent(codeTheme, size, sizeStyles[size], isStreaming),
+    a: MarkdownLink,
     [MENTION_ELEMENT]: MarkdownMention,
     [FILE_LINK_ELEMENT]: MarkdownFileLink,
   };
