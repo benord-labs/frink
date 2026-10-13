@@ -331,3 +331,67 @@ describe('the answer the agent receives', () => {
     expect(asked).toEqual([]);
   });
 });
+
+describe('an agent that acts without asking', () => {
+  const UNASKED =
+    'The agent did something without asking first, so Frink stopped it. The step shown above already ran.';
+  const write: ToolCallUpdate = {
+    toolCallId: 'w1',
+    kind: 'edit',
+    locations: [{ path: '/workspace/project/a.txt' }],
+  };
+
+  /** Errors from a turn in which the agent finishes `call`, asking about it first when `asks` is set. */
+  async function finishCall(call: ToolCallUpdate, asks: boolean) {
+    let sawCancel = false;
+    const fake = fakeAcpAgent(async ({ client, sessionId, cancelled }) => {
+      void cancelled.then(() => {
+        sawCancel = true;
+      });
+      if (asks) {
+        await client.request('session/request_permission', {
+          sessionId,
+          toolCall: call,
+          options: RECORDED_OPTIONS,
+        });
+      }
+      await client.notify('session/update', {
+        sessionId,
+        update: { sessionUpdate: 'tool_call_update', ...call, status: 'completed' },
+      });
+      // A turn the runner stopped ends on its cancel; any other ends here.
+      const stops = !asks && call.kind !== 'read' && call.kind !== 'search';
+      if (stops) await cancelled;
+      return { stopReason: stops ? 'cancelled' : 'end_turn' };
+    });
+    const { checkApproval } = gate(() => ({ allowed: true }));
+    const chunks = await collectChunks(runAcpAgent(runnerParams({ checkApproval }), fake.start));
+    const errors = chunks.flatMap((chunk) => (chunk.type === 'error' ? [chunk.errorText] : []));
+    return { errors, sawCancel };
+  }
+
+  it.each<[string, ToolCallUpdate]>([
+    ['a write', write],
+    ['a command', { toolCallId: 'c1', kind: 'execute', rawInput: { command: 'ls' } }],
+    ['a delete', { ...write, toolCallId: 'd1', kind: 'delete' }],
+    ['a fetch', { toolCallId: 'f1', kind: 'fetch', title: 'Fetch https://example.com' }],
+    ['a command with no kind', { toolCallId: 'n1', rawInput: { command: 'rm -rf build' } }],
+    ['a call of kind other', { toolCallId: 'o1', kind: 'other', title: 'mcp__tracker__create' }],
+  ])('stops the turn when %s finishes without a permission request', async (_, call) => {
+    const { errors, sawCancel } = await finishCall(call, false);
+
+    expect(errors).toEqual([UNASKED]);
+    expect(sawCancel).toBe(true);
+  });
+
+  it('lets a write it asked about finish', async () => {
+    expect(await finishCall(write, true)).toEqual({ errors: [], sawCancel: false });
+  });
+
+  it.each<[string, ToolCallUpdate]>([
+    ['a read', { ...write, toolCallId: 'r1', kind: 'read' }],
+    ['a search', { toolCallId: 's1', kind: 'search', rawInput: { pattern: 'TODO' } }],
+  ])('lets %s finish without asking', async (_, call) => {
+    expect(await finishCall(call, false)).toEqual({ errors: [], sawCancel: false });
+  });
+});
