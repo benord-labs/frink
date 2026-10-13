@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../components/ui/tooltip';
 import { formatFileSize } from '../../file-viewer/utils/file-utils';
 
-type AgentFileItemProps = Omit<ComponentProps<'span'>, 'children'> & {
+type AgentFileItemProps = Omit<ComponentProps<'button'>, 'children'> & {
   filename: string;
   /** Full path, shown in the name's tooltip. */
   path?: string;
@@ -17,10 +17,25 @@ type AgentFileItemProps = Omit<ComponentProps<'span'>, 'children'> & {
   /** Short suffix after the name, such as a line range; shown in place of the size. */
   detail?: string;
   isLoading?: boolean;
+  /** Draws the badge as a real button, for one that does something when pressed. */
+  asButton?: boolean;
+  /** Keeps the badge out of a selection drawn across it, so a copy takes none of it. */
+  skipSelection?: boolean;
   onRemove?: () => void;
   /** Accessible name of the remove control; defaults to "Remove <filename>". */
   removeLabel?: string;
 };
+
+/** The badge's own element: a real button when pressing it does something, else a span. */
+function Chip({ asButton, ...props }: ComponentProps<'button'> & { asButton: boolean }) {
+  return asButton ? <button type="button" {...props} /> : <span {...props} />;
+}
+
+// Chromium ends a copied line on leaving a box, even one that cannot be selected, unless the
+// last thing inside that box has no box of its own. Text held this way keeps the line whole.
+function BoxlessText({ children }: { children: string }) {
+  return <span className="contents">{children}</span>;
+}
 
 /** An attachment as a mention badge: icon, name and an optional size or line range. */
 export function AgentFileItem({
@@ -30,6 +45,8 @@ export function AgentFileItem({
   size,
   detail,
   isLoading = false,
+  asButton = false,
+  skipSelection = false,
   onRemove,
   removeLabel = `Remove ${filename}`,
   className,
@@ -38,10 +55,15 @@ export function AgentFileItem({
   // biome-ignore lint/style/useNamingConvention: Renders as a JSX component
   const Icon = icon ?? getFileIconByExtension(filename);
   const suffix = detail ?? (size === undefined ? undefined : formatFileSize(size));
-  const name = <span>{filename}</span>;
+  const text = (value: string) => (skipSelection ? <BoxlessText>{value}</BoxlessText> : value);
+  const name = <span>{text(filename)}</span>;
 
   return (
-    <span className={cn(mentionChipClass(), className)} {...props}>
+    <Chip
+      asButton={asButton}
+      className={cn(mentionChipClass(), skipSelection && 'select-none', className)}
+      {...props}
+    >
       {isLoading ? <Loader2 className="animate-spin" /> : <Icon />}
       {path ? (
         <Tooltip>
@@ -55,7 +77,7 @@ export function AgentFileItem({
       )}
       {suffix && (
         <span className="shrink-0 font-normal tabular-nums before:mr-1 before:content-['·']">
-          {suffix}
+          {text(suffix)}
         </span>
       )}
       {onRemove && (
@@ -73,6 +95,6 @@ export function AgentFileItem({
           <X className="size-3" />
         </Button>
       )}
-    </span>
+    </Chip>
   );
 }

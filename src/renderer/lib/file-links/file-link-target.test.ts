@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   type FileLinkTarget,
+  fileLinkOpenInput,
+  findShortenedPath,
   inlineCodeFileTarget,
+  isBareRelativePath,
   isFileNameLabel,
   parseFileLinkTarget,
 } from './file-link-target';
@@ -130,4 +133,109 @@ describe('isFileNameLabel', () => {
   ])('keeps %j as prose', (label, target) => {
     expect(isFileNameLabel(label, target)).toBe(false);
   });
+});
+
+describe('fileLinkOpenInput', () => {
+  const worktree = {
+    home: '/Users/sam',
+    root: '/Users/sam/.frink/worktrees/app/fix',
+    isWorktreeContext: true,
+    chatId: 'chat-1',
+  };
+  const project = { ...worktree, root: '/Users/sam/app', isWorktreeContext: false };
+
+  it('opens a file against the worktree of a chat that has one', () => {
+    expect(fileLinkOpenInput('src/a.ts', worktree)).toEqual({
+      path: 'src/a.ts',
+      name: 'a.ts',
+      projectPath: '/Users/sam/.frink/worktrees/app/fix',
+      isWorktreeContext: true,
+      sourceChatId: 'chat-1',
+      intent: 'pinned',
+    });
+  });
+
+  it('opens a file against the project itself for a chat that runs in it', () => {
+    expect(fileLinkOpenInput('src/a.ts', project)).toEqual({
+      path: 'src/a.ts',
+      name: 'a.ts',
+      projectPath: '/Users/sam/app',
+      isWorktreeContext: false,
+      sourceChatId: 'chat-1',
+      intent: 'pinned',
+    });
+  });
+
+  it.each([
+    ['/Users/sam/app/src/a.ts', 'src/a.ts'],
+    ['~/app/src/a.ts', 'src/a.ts'],
+    ['./src/./a.ts', 'src/a.ts'],
+    ['src/lib/../a.ts', 'src/a.ts'],
+  ])('reads %s as %s inside the working folder', (file, relative) => {
+    expect(fileLinkOpenInput(file, project)?.path).toBe(relative);
+  });
+
+  it.each([
+    '/Users/sam/other/src/a.ts',
+    '/Users/sam/app',
+    '~/notes/a.md',
+    '../other/a.ts',
+    'src/../../other/a.ts',
+  ])('does not open %s, which lies outside the working folder', (file) => {
+    expect(fileLinkOpenInput(file, project)).toBeNull();
+  });
+
+  it('does not join a home path to the working folder while the home folder is unknown', () => {
+    expect(fileLinkOpenInput('~/app/src/a.ts', { ...project, home: undefined })).toBeNull();
+  });
+
+  it.each([{ root: undefined }, { root: null }, { chatId: null }])(
+    'opens nothing without a working folder or a chat: %j',
+    (missing) => {
+      expect(fileLinkOpenInput('src/a.ts', { ...project, ...missing })).toBeNull();
+    },
+  );
+});
+
+describe('isBareRelativePath', () => {
+  it.each(['src/a.ts', 'admission/store.ts', 'src/lib/../a.ts', '.github/ci.yml'])(
+    'takes %s for a path that may be shortened',
+    (file) => {
+      expect(isBareRelativePath(file)).toBe(true);
+    },
+  );
+
+  it.each(['/Users/sam/app/src/a.ts', '~/app/src/a.ts', './src/a.ts', '../other/a.ts'])(
+    'takes %s for a path written in full',
+    (file) => {
+      expect(isBareRelativePath(file)).toBe(false);
+    },
+  );
+});
+
+describe('findShortenedPath', () => {
+  const entries = [
+    { path: 'src/main/lib/flows/admission/store.ts' },
+    { path: 'src/main/lib/flows/readmission/store.ts' },
+    { path: 'src/renderer/lib/store.ts' },
+    { path: 'apps/mobile/ios/App.xcodeproj' },
+    { path: 'src/gone.ts' },
+  ];
+
+  it('finds the one file whose path ends with a shortened path', () => {
+    expect(findShortenedPath('admission/store.ts', entries)).toBe(
+      'src/main/lib/flows/admission/store.ts',
+    );
+  });
+
+  it('finds the one folder whose path ends with a shortened path', () => {
+    expect(findShortenedPath('ios/App.xcodeproj', entries)).toBe('apps/mobile/ios/App.xcodeproj');
+  });
+
+  it.each(['store.ts', 'flows', 'mission/store.ts', 'src/gone.ts'])(
+    'finds nothing for %s, which no single longer path ends with',
+    (file) => {
+      expect(findShortenedPath(file, entries)).toBeUndefined();
+    },
+  );
 });

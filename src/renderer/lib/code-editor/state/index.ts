@@ -38,6 +38,7 @@ export { closesEditorOnEscape } from './close-on-escape';
 export { type CodeEditorLayout, getNextCodeEditorLayout } from './layout-cycle';
 export {
   consumePendingReveal,
+  dispatchEditorRevealLine,
   normalizeRevealSelection,
   type RevealLineDetail,
   shouldRevealNow,

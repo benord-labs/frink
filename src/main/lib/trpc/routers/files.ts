@@ -28,6 +28,7 @@ import { captureMainException } from '../../sentry/init';
 // reach any path the user could already open in a terminal. Operations that take a
 // project path plus a relative path still enforce containment within that project.
 import { publicProcedure, router } from '../index';
+import { findEntryType } from './entry-type';
 import { readEditorTextFile } from './read-text-file-bounded';
 import { findSymlinkEscape } from './symlink-escape';
 
@@ -1114,6 +1115,9 @@ export const filesRouter = router({
   symlinkEscape: publicProcedure
     .input(z.object({ projectPath: z.string(), filePath: z.string() }))
     .query(({ input }) => findSymlinkEscape(input.projectPath, input.filePath)),
+  entryType: publicProcedure
+    .input(z.object({ projectPath: z.string(), relativePath: z.string() }))
+    .query(({ input }) => findEntryType(input.projectPath, input.relativePath)),
 
   /**
    * Read image file as base64 data URL for display in the code editor panel.

@@ -56,6 +56,13 @@ vi.mock('../stores/message-store', () => ({
 const captureExceptionMock = vi.hoisted(() => vi.fn());
 vi.mock('@sentry/electron/renderer', () => ({ captureException: captureExceptionMock }));
 
+// `lib/trpc` wires its ipc client at import time, so the preload bridge must exist first.
+vi.hoisted(() => {
+  Object.assign(globalThis, {
+    electronTRPC: { onMessage: () => () => undefined, sendMessage: () => undefined },
+  });
+});
+
 vi.mock('./isolated-message-group', () => ({
   IsolatedMessageGroup: () => null,
 }));
