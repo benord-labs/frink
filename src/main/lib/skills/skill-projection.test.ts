@@ -409,8 +409,18 @@ describe('projectSkill (PCH-2)', () => {
       expect((await readMarker(agents)).hash).toBe(await dirHash(agents, exclude));
     });
 
+    /** Waits until a new write is stamped later than the marker, as any real edit is. */
+    const afterMarkerTime = async () => {
+      const markedAt = (await fs.stat(path.join(claudeTarget(), PROVENANCE_MARKER))).mtimeMs;
+      const probe = path.join(tmp, 'clock-probe');
+      // A coarse file clock can stamp the marker and the next write with the same time.
+      do await fs.writeFile(probe, '');
+      while ((await fs.stat(probe)).mtimeMs <= markedAt);
+    };
+
     /** Edit SKILL.md, then set its modification time back to before the projection. */
     const editSkillMdBackdated = async () => {
+      await afterMarkerTime();
       await editSkillMd();
       const past = new Date('2001-01-01T00:00:00Z');
       await fs.utimes(path.join(claudeTarget(), 'SKILL.md'), past, past);
