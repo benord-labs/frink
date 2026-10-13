@@ -31,7 +31,7 @@ const MENTION_CHIP_CLASS =
 /**
  * Component to render a single file/folder/skill/agent/tool/quote/diff mention chip (matching canvas style)
  */
-function MentionChip({ mention }: { mention: ParsedMention }) {
+export function MentionChip({ mention }: { mention: ParsedMention }) {
   // Quote and diff mentions render as block cards
   if (mention.type === 'quote' || mention.type === 'pasted') {
     // Get a short title from the label

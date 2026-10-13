@@ -2,10 +2,12 @@
 
 import { Button } from '@benord-labs/frink-primitives';
 import { ChevronDown, ChevronUp } from 'lucide-react';
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { formatAttachmentSummaryLabel } from '@/lib/agent-chat/format-attachment-summary';
+import { MentionChipContext } from '@/lib/mentions/mention-chip-context';
 import { extractTaskBubbleData } from '@/lib/tasks/format-task-message';
 import type { AnsweredQuestion } from '../../../../shared/lib/agent-questions/answered-questions';
+import { parseMention } from '../../../../shared/lib/mentions/parse-mention';
 import { isHiddenWakeMessage } from '../../../../shared/lib/message-markers/hidden-wake-marker';
 import { parseTriggerBubbleMessage } from '../../../../shared/lib/trigger-bubble-marker';
 import { ChatMarkdownRenderer } from '../../../components/chat-markdown-renderer';
@@ -15,7 +17,11 @@ import { cn } from '../../../lib/utils';
 import { parseSlashCommandDisplayParts } from '../commands/parse-slash-command-display';
 import { dataImageSrc } from '../lib/message-parts';
 import { agentsChatUserBubbleShellClass } from '../main/chat-composer-shell-classes';
-import { RenderFileMentions, TextMentionBlocks } from '../mentions/render-file-mentions';
+import {
+  MentionChip,
+  RenderFileMentions,
+  TextMentionBlocks,
+} from '../mentions/render-file-mentions';
 import { useSearchHighlight, useSearchQuery } from '../search';
 import { AnsweredQuestionsCard } from './AnsweredQuestionsCard';
 import { AgentImageItem } from './agent-image-item';
@@ -44,6 +50,12 @@ type AgentUserMessageBubbleProps = {
   /** Reserves the bubble's right edge for an overlaid control so text never runs under it. */
   endGutter?: boolean;
 };
+
+/** A mention in the rendered-markdown view draws as the same chip the plain view uses. */
+function renderMentionChip(id: string): ReactNode {
+  const mention = parseMention(id);
+  return mention && <MentionChip mention={mention} />;
+}
 
 // Helper function to highlight text in DOM using TreeWalker
 function highlightTextInDom(
@@ -327,10 +339,11 @@ export const AgentUserMessageBubble = memo(function AgentUserMessageBubble({
                   )}
                   {commandText && cleanedText ? ' ' : null}
                   {cleanedText &&
-                    (renderMarkdown ? (
-                      // Opt-in rendered view: @[file] chips/ultrathink chroma are dropped here
-                      // (quote/diff/code mentions are already extracted to TextMentionBlocks above).
-                      <ChatMarkdownRenderer content={cleanedText} size="sm" />
+                    (renderMarkdown && showToggle ? (
+                      // Mentions still draw as chips here, but ultrathink is not highlighted.
+                      <MentionChipContext.Provider value={renderMentionChip}>
+                        <ChatMarkdownRenderer content={cleanedText} size="sm" />
+                      </MentionChipContext.Provider>
                     ) : (
                       <RenderFileMentions text={cleanedText} />
                     ))}
