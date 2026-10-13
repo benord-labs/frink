@@ -1,9 +1,9 @@
 /** Main owns each chat's composer settings so every window and the phone drive it alike. Writes
  *  echo the confirmed values; repo calls are synchronous, so write → re-read → echo can't interleave. */
+import { aiProvider } from '../../../shared/lib/ai-providers';
 import {
   buildExecutionSettings,
   type ComposerSettings,
-  type ExecutionAccountKind,
   resolveComposerSettings,
 } from '../../../shared/lib/execution-settings';
 import type { ExecutionSettings } from '../../../shared/types/execution';
@@ -116,8 +116,8 @@ export function storedExecutionSettings(
   if (!chatId) return undefined;
   try {
     const settings = readComposerSettings(chatId);
-    const account: ExecutionAccountKind = credentialType === 'codex' ? 'codex' : 'claude-code';
-    return settings ? buildExecutionSettings(account, settings) : undefined;
+    const provider = aiProvider(credentialType);
+    return settings && provider ? buildExecutionSettings(provider.id, settings) : undefined;
   } catch (err) {
     log.warn('[chat-composer] Stored composer settings lookup failed:', err);
     return undefined;

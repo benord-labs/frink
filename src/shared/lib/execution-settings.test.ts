@@ -3,6 +3,7 @@ import {
   buildExecutionSettings,
   COMPOSER_DEFAULTS,
   type ComposerSettings,
+  type ExecutionAccountKind,
   resolveComposerSettings,
 } from './execution-settings';
 
@@ -62,6 +63,21 @@ describe('buildExecutionSettings', () => {
       'claude-opus-4-8',
     );
     expect(buildExecutionSettings('codex', settings({ modelId: SUPPORTED })).model).toBe(SUPPORTED);
+  });
+
+  it.each<[ExecutionAccountKind, string]>([
+    ['claude-code', 'sonnet'],
+    ['codex', 'anthropic/claude-sonnet-4-5'],
+    ['opencode', 'anthropic/claude-sonnet-4-5'],
+  ])('on %s, an agent-qualified id is sent as %s', (provider, model) => {
+    const modelId = 'anthropic/claude-sonnet-4-5';
+    expect(buildExecutionSettings(provider, settings({ modelId })).model).toBe(model);
+  });
+
+  it('passes an agent protocol model id raw, with no Claude thinking, 1M or Ultra fields', () => {
+    for (const modelId of ['anthropic/claude-sonnet-4-5', 'opus-4.7-1m-high', 'opus-5.5-ultra']) {
+      expect(buildExecutionSettings('opencode', settings({ modelId }))).toEqual({ model: modelId });
+    }
   });
 
   it('turns on the 1M beta only for a Claude 1M variant', () => {

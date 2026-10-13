@@ -27,8 +27,8 @@ import { getUrlParam } from '../../../lib/utils/url-params';
 import { newChatDraftKey, replaceDraftText } from './drafts';
 
 type SeedOptions = {
-  /** Whether the resolved execution account is a Codex account (coerces the seeded model id). */
-  isCodexAccount: boolean;
+  /** The resolved execution account's provider (coerces the seeded model id). */
+  providerId: string | null | undefined;
   /** The Codex account's catalog: a model it can't use seeds as its default instead. */
   codexCatalog?: CodexAccountCatalog | null;
   /** First sub-chat id, if present — seeds its mode before the tRPC query hydrates the store. */
@@ -65,7 +65,7 @@ export function seedNewChatNavigation(
   set: Setter,
   chatId: string,
   {
-    isCodexAccount,
+    providerId,
     codexCatalog = null,
     subChatId,
     autoModeEnabled = true,
@@ -84,11 +84,11 @@ export function seedNewChatNavigation(
   const rawModelId = getEffectiveModelIdForPane(get, filledPaneIndex);
   set(
     lastSelectedModelIdAtomFamily(chatId),
-    normalizeModelIdForExecutionAccount(isCodexAccount, rawModelId, codexCatalog),
+    normalizeModelIdForExecutionAccount(providerId, rawModelId, codexCatalog),
   );
   set(chatModeAtomFamily(chatId), effectiveChatMode);
   set(autoModePerChatAtomFamily(chatId), autoModeEnabled);
-  set(codexSpeedAtomFamily(chatId), isCodexAccount ? codexSpeed : 'standard');
+  set(codexSpeedAtomFamily(chatId), providerId === 'codex' ? codexSpeed : 'standard');
 
   if (subChatId) {
     useAgentSubChatStore.getState().updateSubChatMode(subChatId, effectiveChatMode, chatId);

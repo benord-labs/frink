@@ -9,7 +9,7 @@ import { CODEX_MODELS, normalizeModelIdForExecutionAccount } from '../../../../s
  * default waits while its catalog (`undefined`) loads, which starts only once the account is Codex.
  */
 export function useModelNormalization(
-  isCodexAccount: boolean,
+  providerId: string | null | undefined,
   lastSelectedModelId: string,
   setLastSelectedModelId: (id: string) => void,
   accountResolved = true,
@@ -24,15 +24,16 @@ export function useModelNormalization(
   useEffect(() => {
     if (!accountResolved) return;
     const currentModelId = lastSelectedModelIdRef.current;
-    const needsCodexDefault = isCodexAccount && !CODEX_MODELS.some((m) => m.id === currentModelId);
+    const needsCodexDefault =
+      providerId === 'codex' && !CODEX_MODELS.some((m) => m.id === currentModelId);
     if (needsCodexDefault && codexCatalogLoading) return;
     const next = normalizeModelIdForExecutionAccount(
-      isCodexAccount,
+      providerId,
       currentModelId,
       codexCatalogRef.current ?? null,
       { keepUnavailable: true },
     );
     if (next !== currentModelId) setLastSelectedModelId(next);
     // Only re-run when account type (or whether its catalog is loading) changes, NOT on model changes
-  }, [isCodexAccount, accountResolved, codexCatalogLoading, setLastSelectedModelId]);
+  }, [providerId, accountResolved, codexCatalogLoading, setLastSelectedModelId]);
 }

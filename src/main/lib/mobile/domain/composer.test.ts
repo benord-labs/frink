@@ -259,4 +259,24 @@ describe('phone composer', () => {
     await setMobileAccount({ type: 'setAccount', ...identity, accountId: 'acc-2' });
     expect(fixture.setDefault).toHaveBeenCalledWith({ id: 'acc-2' });
   });
+
+  it.each([
+    ['claude-code', 'claude', 'sonnet', ''],
+    ['codex', 'codex', CODEX_DEFAULT_MODEL_ID, ''],
+    [
+      'opencode',
+      'claude',
+      'anthropic/claude-sonnet-4-5',
+      'The selected provider or model does not support Auto Mode.',
+    ],
+  ])('on %s, sends provider %s and model %s', async (type, provider, modelId, autoReason) => {
+    fixture.resolved.mockResolvedValue({ ...claudeAccount, type });
+    fixture.read.mockReturnValue({ modelId: 'anthropic/claude-sonnet-4-5', autoMode: true });
+
+    const composer = await readMobileComposer({ type: 'composer', ...identity });
+
+    expect(composer.provider).toBe(provider);
+    expect(composer.settings.modelId).toBe(modelId);
+    expect(composer.autoUnavailableReason).toBe(autoReason);
+  });
 });

@@ -66,57 +66,59 @@ describe('supportsNativeAutoReview', () => {
 
 describe('normalizeModelIdForExecutionAccount', () => {
   it('maps an id from a retired provider to sonnet', () => {
-    expect(normalizeModelIdForExecutionAccount(false, 'cursor-auto')).toBe('sonnet');
+    expect(normalizeModelIdForExecutionAccount('claude-code', 'cursor-auto')).toBe('sonnet');
   });
 
   it('preserves valid Claude id', () => {
     const id = CLAUDE_MODEL_IDS[0];
-    expect(normalizeModelIdForExecutionAccount(false, id)).toBe(id);
+    expect(normalizeModelIdForExecutionAccount('claude-code', id)).toBe(id);
   });
 
   it('preserves Fable 5.1 picker ids for Claude Code account', () => {
-    expect(normalizeModelIdForExecutionAccount(false, 'fable-5.1')).toBe('fable-5.1');
-    expect(normalizeModelIdForExecutionAccount(false, 'fable-5.1-max')).toBe('fable-5.1-max');
+    expect(normalizeModelIdForExecutionAccount('claude-code', 'fable-5.1')).toBe('fable-5.1');
+    expect(normalizeModelIdForExecutionAccount('claude-code', 'fable-5.1-max')).toBe(
+      'fable-5.1-max',
+    );
   });
 
   it('preserves Fable 5 picker ids for Claude Code account (or falls back when gated)', () => {
-    expect(normalizeModelIdForExecutionAccount(false, 'fable-5')).toBe(
+    expect(normalizeModelIdForExecutionAccount('claude-code', 'fable-5')).toBe(
       LAUNCH_FLAGS.fable5 ? 'fable-5' : 'sonnet',
     );
-    expect(normalizeModelIdForExecutionAccount(false, 'fable-5-1m-max')).toBe(
+    expect(normalizeModelIdForExecutionAccount('claude-code', 'fable-5-1m-max')).toBe(
       LAUNCH_FLAGS.fable5 ? 'fable-5-1m-max' : 'sonnet',
     );
   });
 
   it('snaps a non-Codex id to the Codex default when a Codex account is active', () => {
-    expect(normalizeModelIdForExecutionAccount(true, 'sonnet')).toBe(CODEX_DEFAULT_MODEL_ID);
+    expect(normalizeModelIdForExecutionAccount('codex', 'sonnet')).toBe(CODEX_DEFAULT_MODEL_ID);
   });
 
   describe('with a free account catalog (no GPT-6 Astra)', () => {
     const free = { tiers: { 'gpt-6-luna': [], 'gpt-5.5': [] }, defaultSlug: 'gpt-6-luna' };
 
     it("snaps a non-Codex id to the account's default", () => {
-      expect(normalizeModelIdForExecutionAccount(true, 'sonnet', free)).toBe(
+      expect(normalizeModelIdForExecutionAccount('codex', 'sonnet', free)).toBe(
         'codex-gpt-6-luna-medium',
       );
     });
 
     it("snaps a model the account can't use, for a new chat", () => {
-      expect(normalizeModelIdForExecutionAccount(true, CODEX_DEFAULT_MODEL_ID, free)).toBe(
+      expect(normalizeModelIdForExecutionAccount('codex', CODEX_DEFAULT_MODEL_ID, free)).toBe(
         'codex-gpt-6-luna-medium',
       );
     });
 
     it("keeps a saved model the account can't use when asked to", () => {
       expect(
-        normalizeModelIdForExecutionAccount(true, CODEX_DEFAULT_MODEL_ID, free, {
+        normalizeModelIdForExecutionAccount('codex', CODEX_DEFAULT_MODEL_ID, free, {
           keepUnavailable: true,
         }),
       ).toBe(CODEX_DEFAULT_MODEL_ID);
     });
 
     it('keeps a model the account lists', () => {
-      expect(normalizeModelIdForExecutionAccount(true, 'codex-gpt-5.5-high', free)).toBe(
+      expect(normalizeModelIdForExecutionAccount('codex', 'codex-gpt-5.5-high', free)).toBe(
         'codex-gpt-5.5-high',
       );
     });
@@ -126,13 +128,24 @@ describe('normalizeModelIdForExecutionAccount', () => {
     const id = CODEX_MODELS[0]?.id;
     expect(id).toBeDefined();
     if (id === undefined) expect.fail('CODEX_MODELS[0].id must exist');
-    expect(normalizeModelIdForExecutionAccount(true, id)).toBe(id);
+    expect(normalizeModelIdForExecutionAccount('codex', id)).toBe(id);
   });
 
   it('snaps a codex-looking id that is not in the catalog to the codex default', () => {
     // Guards a future .startsWith('codex') slip: only catalog membership may preserve an id.
-    expect(normalizeModelIdForExecutionAccount(true, 'codex-not-a-real-model')).toBe(
+    expect(normalizeModelIdForExecutionAccount('codex', 'codex-not-a-real-model')).toBe(
       CODEX_DEFAULT_MODEL_ID,
+    );
+  });
+
+  it.each([
+    ['claude-code', 'sonnet'],
+    [null, 'sonnet'],
+    ['codex', CODEX_DEFAULT_MODEL_ID],
+    ['opencode', 'anthropic/claude-sonnet-4-5'],
+  ])('on %s, an agent-qualified id normalises to %s', (provider, expected) => {
+    expect(normalizeModelIdForExecutionAccount(provider, 'anthropic/claude-sonnet-4-5')).toBe(
+      expected,
     );
   });
 });
@@ -415,7 +428,9 @@ describe('Ultra', () => {
   });
 
   it('keeps an Ultra picker id through account normalization (a real catalog member)', () => {
-    expect(normalizeModelIdForExecutionAccount(false, 'opus-5.5-ultra')).toBe('opus-5.5-ultra');
+    expect(normalizeModelIdForExecutionAccount('claude-code', 'opus-5.5-ultra')).toBe(
+      'opus-5.5-ultra',
+    );
   });
 });
 

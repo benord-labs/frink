@@ -59,4 +59,19 @@ describe('storedExecutionSettings', () => {
     state.db = null;
     expect(storedExecutionSettings('c1', 'claude-code')).toBeUndefined();
   });
+
+  it.each([
+    ['claude-code', 'sonnet'],
+    [undefined, 'sonnet'],
+    ['codex', 'anthropic/claude-sonnet-4-5'],
+    ['opencode', 'anthropic/claude-sonnet-4-5'],
+  ])('sends an agent-qualified id on %s as %s', (credentialType, model) => {
+    updateComposerSettings('c1', { modelId: 'anthropic/claude-sonnet-4-5' });
+    expect(storedExecutionSettings('c1', credentialType)?.model).toBe(model);
+  });
+
+  it('builds nothing for a provider Frink does not know, rather than Claude settings', () => {
+    updateComposerSettings('c1', { modelId: 'opus-4.8-max' });
+    expect(storedExecutionSettings('c1', 'something-new')).toBeUndefined();
+  });
 });
