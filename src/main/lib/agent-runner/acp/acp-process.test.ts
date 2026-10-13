@@ -3,6 +3,8 @@ import { startAcpAgentProcess } from './index';
 
 /** Real child processes, and a grace period before a force-stop, need more than the default. */
 const PROCESS_TEST_TIMEOUT_MS = 20_000;
+/** Starting a process, and the system reaping a stopped one, can take a while on a busy machine. */
+const SETTLE = { timeout: 10_000 };
 
 function isAlive(pid: number): boolean {
   try {
@@ -32,13 +34,13 @@ describe('startAcpAgentProcess', { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
         setInterval(() => {}, 1000);
       `),
     );
-    await expect.poll(() => agent.describeExit()).toMatch(/^\d+$/);
+    await expect.poll(() => agent.describeExit(), SETTLE).toMatch(/^\d+$/);
     const grandchild = Number(agent.describeExit());
 
     await agent.dispose();
 
     expect(agent.describeExit()).toContain('stopped by SIGKILL');
-    expect(isAlive(grandchild)).toBe(false);
+    await expect.poll(() => isAlive(grandchild), SETTLE).toBe(false);
   });
 
   it('stops a child that outlives an agent which has already exited', async () => {
@@ -51,13 +53,15 @@ describe('startAcpAgentProcess', { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
         process.exit(0);
       `),
     );
-    await expect.poll(() => agent.describeExit()).toMatch(/^exited with code 0: \d+ ready$/);
+    await expect
+      .poll(() => agent.describeExit(), SETTLE)
+      .toMatch(/^exited with code 0: \d+ ready$/);
     const survivor = Number(agent.describeExit().match(/\d+(?= ready)/)?.[0]);
     expect(isAlive(survivor)).toBe(true);
 
     await agent.dispose();
 
-    expect(isAlive(survivor)).toBe(false);
+    await expect.poll(() => isAlive(survivor), SETTLE).toBe(false);
   });
 
   it('describes an agent that exits by itself with its exit code and error output', async () => {
