@@ -3,6 +3,11 @@ import { stat } from 'node:fs/promises';
 import os from 'node:os';
 import type { Readable } from 'node:stream';
 import type { HookInput } from '@anthropic-ai/claude-agent-sdk';
+import {
+  killProcessTree,
+  processTreeGone,
+  signalProcessTree,
+} from '../../agent-runner/process-settlement';
 import { resolveCommandShell } from '../../platform/command-shell';
 
 /** Claude's default `timeout` for a command hook. */
@@ -96,41 +101,9 @@ function spawnHook(
   return spawn(withProjectDir(run.command, run.projectRoot), args, options);
 }
 
-/** Signals the hook's whole process group, so a shell hook's children stop with it. */
-function signalTree(child: ChildProcess, signal: NodeJS.Signals): void {
-  if (child.pid === undefined) return;
-  if (process.platform === 'win32') {
-    // Windows has no process group to signal; taskkill ends the hook and its children.
-    const taskkill = spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
-      windowsHide: true,
-    });
-    taskkill.on('error', () => child.kill());
-    return;
-  }
-  try {
-    process.kill(-child.pid, signal);
-  } catch {
-    child.kill(signal);
-  }
-}
-
-function groupGone(child: ChildProcess): boolean {
-  try {
-    return child.pid === undefined || !process.kill(-child.pid, 0);
-  } catch {
-    return true;
-  }
-}
-
-function killTree(child: ChildProcess): void {
-  signalTree(child, 'SIGKILL');
-  // A descendant that left the group may still hold the pipes; stop waiting for it.
-  for (const stream of child.stdio) stream?.destroy();
-}
-
 function stopTree(child: ChildProcess): NodeJS.Timeout {
-  signalTree(child, 'SIGTERM');
-  return setTimeout(killTree, KILL_GRACE_MS, child).unref();
+  signalProcessTree(child, 'SIGTERM');
+  return setTimeout(killProcessTree, KILL_GRACE_MS, child).unref();
 }
 
 /** Keeps the start of a stream and reads on, so the hook never blocks on a full pipe. */
@@ -175,7 +148,7 @@ function collect(child: ChildProcess, run: HookCommandRun): Promise<HookCommandO
       clearTimeout(timer);
       run.signal.removeEventListener('abort', stop);
       // Keep the SIGKILL only while something in the group outlives the hook.
-      if (killTimer && groupGone(child)) clearTimeout(killTimer);
+      if (killTimer && processTreeGone(child)) clearTimeout(killTimer);
       resolve(outcome);
     };
     // Node reports a failed kill as a later `error`, which must not go unhandled.
