@@ -1,4 +1,8 @@
 import { memo, useEffect, useMemo, useRef } from 'react';
+import {
+  clearSearchHighlights,
+  highlightSearchText,
+} from '@/lib/agent-chat/search/highlight-search-text';
 import { MemoizedMarkdown } from '../../../components/chat-markdown-renderer';
 import { cn } from '../../../lib/utils';
 import { useSearchHighlight, useSearchQuery } from '../search';
@@ -223,83 +227,6 @@ function TextSegmentBody({
   return <MemoizedMarkdown content={content} id={id} size="sm" />;
 }
 
-// Helper function to highlight text in DOM using TreeWalker
-function highlightTextInDom(
-  container: HTMLElement,
-  searchText: string,
-  currentMatchIndex: number | null = null,
-) {
-  // Remove existing highlights first
-  const existingHighlights = container.querySelectorAll('.search-highlight');
-  existingHighlights.forEach((el) => {
-    const parent = el.parentNode;
-    if (parent) {
-      parent.replaceChild(document.createTextNode(el.textContent || ''), el);
-      parent.normalize();
-    }
-  });
-
-  if (!searchText) return;
-
-  const lowerSearch = searchText.toLowerCase();
-  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
-
-  const textNodes: Text[] = [];
-  let node: Text | null = walker.nextNode() as Text | null;
-  while (node) {
-    if (node.nodeValue?.toLowerCase().includes(lowerSearch)) {
-      textNodes.push(node);
-    }
-    node = walker.nextNode() as Text | null;
-  }
-
-  let matchCounter = 0;
-  for (const textNode of textNodes) {
-    const text = textNode.nodeValue || '';
-    const lowerText = text.toLowerCase();
-    let lastIndex = 0;
-    const fragments: (string | HTMLElement)[] = [];
-
-    let searchIndex = lowerText.indexOf(lowerSearch, lastIndex);
-    while (searchIndex !== -1) {
-      if (searchIndex > lastIndex) {
-        fragments.push(text.slice(lastIndex, searchIndex));
-      }
-
-      const mark = document.createElement('mark');
-      mark.className = 'search-highlight';
-      mark.textContent = text.slice(searchIndex, searchIndex + searchText.length);
-
-      if (currentMatchIndex !== null && matchCounter === currentMatchIndex) {
-        mark.classList.add('search-highlight-current');
-      }
-      matchCounter++;
-
-      fragments.push(mark);
-      lastIndex = searchIndex + searchText.length;
-      searchIndex = lowerText.indexOf(lowerSearch, lastIndex);
-    }
-
-    if (lastIndex < text.length) {
-      fragments.push(text.slice(lastIndex));
-    }
-
-    if (fragments.length > 0) {
-      const parent = textNode.parentNode;
-      if (parent) {
-        fragments.forEach((frag) => {
-          if (typeof frag === 'string') {
-            parent.insertBefore(document.createTextNode(frag), textNode);
-          } else {
-            parent.insertBefore(frag, textNode);
-          }
-        });
-        parent.removeChild(textNode);
-      }
-    }
-  }
-}
-
 // Inner component - pure render, no hooks that cause re-renders
 // Only re-renders when props change (text, styling props)
 const MemoizedTextPartInner = memo(
@@ -383,19 +310,14 @@ export const MemoizedTextPart = memo(
     useEffect(() => {
       if (!containerRef.current || isStreaming || !searchQuery) return;
 
-      highlightTextInDom(containerRef.current, searchQuery, currentMatchIndexInPart);
+      highlightSearchText(
+        containerRef.current,
+        searchQuery,
+        ({ index }) => index === currentMatchIndexInPart,
+      );
 
       return () => {
-        if (containerRef.current) {
-          const existingHighlights = containerRef.current.querySelectorAll('.search-highlight');
-          existingHighlights.forEach((el) => {
-            const parent = el.parentNode;
-            if (parent) {
-              parent.replaceChild(document.createTextNode(el.textContent || ''), el);
-              parent.normalize();
-            }
-          });
-        }
+        if (containerRef.current) clearSearchHighlights(containerRef.current);
       };
     }, [searchQuery, currentMatchIndexInPart, isStreaming]);
 
