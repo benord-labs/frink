@@ -4,6 +4,8 @@ import { type ReactElement, useState } from 'react';
 import { toast } from 'sonner';
 import { SettingsCard } from '@/components/settings/SettingsCard';
 import { cn } from '@/lib/utils';
+import { LAUNCH_FLAGS } from '../../../../../../shared/launch-flags';
+import { AI_PROVIDERS, selectableProviderIds } from '../../../../../../shared/lib/ai-providers';
 import {
   CLAUDE_MODEL_FAMILIES,
   CODEX_MODEL_FAMILIES,
@@ -12,15 +14,15 @@ import {
 import { hiddenModelsAtom } from '../../../../../lib/atoms';
 import { AccountsErrorBanner } from '../../../../ui/accounts-error-banner';
 import { Switch } from '../../../../ui/switch';
-import type { AccountType } from '../auth-flow-utils';
-import { PROVIDER_NAME, ProviderTile } from '../ProviderTile';
+import { ProviderTile } from '../ProviderTile';
 
 type Family = { id: string; name: string };
 
 const CATALOG = {
   'claude-code': CLAUDE_MODEL_FAMILIES,
   codex: CODEX_MODEL_FAMILIES,
-} satisfies Record<AccountType, readonly Family[]>;
+} satisfies Record<string, readonly Family[]>;
+type CatalogProvider = keyof typeof CATALOG;
 
 type Props = {
   /** When false, show full catalog (avoids empty flash while listAccounts is loading). */
@@ -56,9 +58,9 @@ function ProviderModels({
   hidden,
   onToggle,
 }: {
-  provider: AccountType;
+  provider: CatalogProvider;
   hidden: string[];
-  onToggle: (provider: AccountType, family: Family) => void;
+  onToggle: (provider: CatalogProvider, family: Family) => void;
 }): ReactElement {
   const { newest, older } = splitNewestFamilies(CATALOG[provider]);
   // Start open when the only models left on are older ones, so they can be seen.
@@ -75,7 +77,7 @@ function ProviderModels({
     <div className="pb-2">
       <div className="flex items-center gap-2.5 px-4 pt-4 pb-1">
         <ProviderTile type={provider} size="sm" />
-        <span className="text-sm font-medium text-foreground">{PROVIDER_NAME[provider]}</span>
+        <span className="text-sm font-medium text-foreground">{AI_PROVIDERS[provider].name}</span>
       </div>
       <ul>
         {newest.map(row)}
@@ -109,11 +111,13 @@ export function ModelsSection({
   const [hiddenModels, setHiddenModels] = useAtom(hiddenModelsAtom);
 
   // Until accounts load, show every provider rather than flashing an empty card.
-  const providers = (['claude-code', 'codex'] as const).filter(
-    (p) => !authGateReady || (p === 'codex' ? showCodexModels : showClaudeModels),
+  const providers = selectableProviderIds(LAUNCH_FLAGS).filter(
+    (p): p is CatalogProvider =>
+      Object.hasOwn(CATALOG, p) &&
+      (!authGateReady || (p === 'codex' ? showCodexModels : showClaudeModels)),
   );
 
-  const toggleModel = (provider: AccountType, family: Family) => {
+  const toggleModel = (provider: CatalogProvider, family: Family) => {
     if (hiddenModels.includes(family.id)) {
       setHiddenModels(hiddenModels.filter((id) => id !== family.id));
       return;
@@ -122,7 +126,7 @@ export function ModelsSection({
       (f) => f.id !== family.id && !hiddenModels.includes(f.id),
     );
     if (!othersOn) {
-      toast.info(`Keep at least one ${PROVIDER_NAME[provider]} model on.`);
+      toast.info(`Keep at least one ${AI_PROVIDERS[provider].name} model on.`);
       return;
     }
     setHiddenModels([...hiddenModels, family.id]);

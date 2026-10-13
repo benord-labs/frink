@@ -2,7 +2,6 @@ import { Button } from '@benord-labs/frink-primitives';
 import { useSetAtom } from 'jotai';
 import { type ReactElement, type ReactNode, useId } from 'react';
 import {
-  PROVIDER_NAME,
   ProviderMark,
   ProviderTile,
 } from '@/components/dialogs/settings-tabs/AgentsModelsTab/ProviderTile';
@@ -10,17 +9,20 @@ import { cn } from '@/lib/utils';
 import { isWindows } from '@/lib/utils/platform';
 import { LAUNCH_FLAGS } from '../../../../shared/launch-flags';
 import {
+  AI_PROVIDERS,
+  type AiProviderId,
+  selectableProviderIds,
+} from '../../../../shared/lib/ai-providers';
+import {
   agentsSettingsDialogActiveTabAtom,
   agentsSettingsDialogOpenAtom,
   type PendingAccountAuthState,
   pendingAccountAuthAtom,
 } from '../../../lib/atoms';
 
-type Provider = 'claude-code' | 'codex';
-
 type SignedOutAccount = {
   label: string;
-  type: Provider;
+  type: AiProviderId;
 };
 
 type Props = {
@@ -36,7 +38,7 @@ type StateProps = {
   account: SignedOutAccount | null;
   canSignIn: boolean;
   others: Provider[];
-  onConnect: (provider: Provider) => void;
+  onConnect: (provider: AiProviderId) => void;
   onReauth: () => void;
   onOpenSettings: () => void;
 };
@@ -50,26 +52,30 @@ const LINK_CLASS =
 
 const FOOTNOTE_CLASS = 'mt-5 text-center text-[13px] text-muted-foreground text-pretty';
 
+/** Sign-in copy for each provider that has a sign-in page here. */
 const PROVIDER_COPY = {
   'claude-code': {
     plan: 'Pro or Max plan, through Claude Code',
     switchTo: 'Or switch to your Claude plan',
   },
   codex: { plan: 'ChatGPT plan, through Codex', switchTo: 'Or switch to your ChatGPT plan' },
-} satisfies Record<Provider, { plan: string; switchTo: string }>;
+};
+type Provider = keyof typeof PROVIDER_COPY;
 
-const PROVIDER_NAMES = LAUNCH_FLAGS.codexAccounts ? 'Claude or OpenAI' : 'Claude';
+const SIGN_IN_PROVIDERS = selectableProviderIds(LAUNCH_FLAGS).filter((id): id is Provider =>
+  Object.hasOwn(PROVIDER_COPY, id),
+);
+const PROVIDER_NAMES = SIGN_IN_PROVIDERS.map((id) => AI_PROVIDERS[id].name).join(' or ');
 const WINDOWS_NOTE = `Signing in with ${PROVIDER_NAMES} needs macOS or Linux.`;
 
 /** Providers this device can sign in to. Passthrough sign-in is macOS/Linux only. */
 function signInProviders(): Provider[] {
   // The renderer-side platform helper: `process` isn't exposed under contextIsolation.
-  if (isWindows()) return [];
-  return LAUNCH_FLAGS.codexAccounts ? ['claude-code', 'codex'] : ['claude-code'];
+  return isWindows() ? [] : SIGN_IN_PROVIDERS;
 }
 
 /** Opens the provider's connect page through the App.tsx pendingAccountAuth gate. */
-function pendingAuth(provider: Provider, reauthLabel?: string): PendingAccountAuthState {
+function pendingAuth(provider: AiProviderId, reauthLabel?: string): PendingAccountAuthState {
   return {
     mode: reauthLabel ? 'reauth' : 'add',
     accountLabel: reauthLabel ?? '',
@@ -119,7 +125,7 @@ function ConnectButton({
     <Button
       size="sm"
       variant="secondary"
-      aria-label={`Connect ${PROVIDER_NAME[provider]}`}
+      aria-label={`Connect ${AI_PROVIDERS[provider].name}`}
       onClick={() => onConnect(provider)}
     >
       {children}
@@ -134,7 +140,7 @@ function ProviderRow({
   signedOut = false,
   action,
 }: {
-  type: Provider;
+  type: AiProviderId;
   name: string;
   detail: string;
   signedOut?: boolean;
@@ -162,7 +168,7 @@ function ProviderRow({
 function compactDetail({ account, canSignIn, others, onOpenSettings }: StateProps): ReactNode {
   if (account) {
     return others.length
-      ? `Sign back in, or switch to ${PROVIDER_NAME[others[0]]}.`
+      ? `Sign back in, or switch to ${AI_PROVIDERS[others[0]].name}.`
       : 'Sign back in to keep chatting.';
   }
   if (!canSignIn) return WINDOWS_NOTE;
@@ -199,7 +205,7 @@ function CompactCard(props: StateProps): ReactElement {
               {others.map((p) => (
                 <ConnectButton key={p} provider={p} onConnect={onConnect}>
                   <ProviderMark type={p} />
-                  {PROVIDER_NAME[p]}
+                  {AI_PROVIDERS[p].name}
                 </ConnectButton>
               ))}
             </>
@@ -223,7 +229,7 @@ function ProviderList({ account, others, onConnect, onReauth }: StateProps): Rea
         <ProviderRow
           type={account.type}
           name={account.label}
-          detail={`${PROVIDER_NAME[account.type]} · Signed out`}
+          detail={`${AI_PROVIDERS[account.type].name} · Signed out`}
           signedOut
           action={<ReauthButton onClick={onReauth} />}
         />
@@ -232,7 +238,7 @@ function ProviderList({ account, others, onConnect, onReauth }: StateProps): Rea
         <ProviderRow
           key={p}
           type={p}
-          name={PROVIDER_NAME[p]}
+          name={AI_PROVIDERS[p].name}
           detail={account ? PROVIDER_COPY[p].switchTo : PROVIDER_COPY[p].plan}
           action={
             <ConnectButton provider={p} onConnect={onConnect}>

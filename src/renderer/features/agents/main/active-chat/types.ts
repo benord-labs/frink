@@ -8,6 +8,7 @@ import type { SelectedTextContext } from '../../lib/queue-utils';
 import type { AgentsMentionsEditorHandle } from '../../mentions';
 import type { MessageTokenData } from '../../ui/agent-context-indicator';
 import type { IsolatedChatToolRegistry } from '../../ui/agent-tool-registry';
+import type { UnauthAccountForSend } from './utils';
 
 /**
  * Props that active-chat passes unchanged through every isolated-chat layer, shared so the
@@ -99,7 +100,7 @@ export type ChatViewInnerProps = {
   /** Refetch execution account after error (passed to composer retry control). */
   onRetryResolvedAccount?: () => void;
   /** When account exists but is not authenticated, surfaces the reconnect CTA. Null when no account is configured. */
-  unauthAccount?: { label: string; type: 'claude-code' | 'codex' } | null;
+  unauthAccount?: UnauthAccountForSend;
 };
 
 /**

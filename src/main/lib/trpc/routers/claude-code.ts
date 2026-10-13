@@ -66,12 +66,6 @@ const SELECTABLE_ACCOUNT_TYPE_SCOPE_WITH_NULL = sql`(${SELECTABLE_ACCOUNT_TYPE_S
 // Among unresolvable candidates prefer a passthrough row: getResolvedAccount heals it by re-probing.
 const HEALABLE_NEXT_RANK = inArray(claudeCodeCredentials.source, PASSTHROUGH_SOURCES);
 
-/** A row's provider while the account screens show only Claude and Codex; others stay hidden. */
-function shownProvider(type: string | null) {
-  const row = aiProvider(type);
-  if (row?.id === 'claude-code' || row?.id === 'codex') return { ...row, id: row.id };
-}
-
 /**
  * Authenticated when an api-key row has a non-null encrypted oauth_token, OR a passthrough row
  * (claude OR codex) has `needsReauthAt IS NULL`. Passthrough rows carry oauth_token = NULL by
@@ -115,7 +109,7 @@ function toResolvedAccount(
   row: typeof claudeCodeCredentials.$inferSelect,
   flags: { isProjectOverride: boolean; isBlocked: boolean; projectId: string | null },
 ) {
-  const provider = shownProvider(row.type);
+  const provider = aiProvider(row.type);
   if (!provider) return null;
   return {
     id: row.id,
@@ -728,7 +722,7 @@ export const claudeCodeRouter = router({
       .all();
 
     return accounts.flatMap((acc) => {
-      const provider = shownProvider(acc.type);
+      const provider = aiProvider(acc.type);
       if (!provider) return [];
       // Codex is passthrough (token-null), never an API key; only claude-code rows can be.
       let isApiKey = false;
@@ -1009,6 +1003,8 @@ export const claudeCodeRouter = router({
       // so the three selection reads can't drift). `type` resolves to 'codex' when a codex row
       // surfaces (flag on); codex passthrough is authenticated by needsReauthAt, not a token.
       const chat = input.chatId ? await getChatById(db, input.chatId) : null;
+      // A chat on a provider that is switched off here shows no login at all.
+      if (chat && !SELECTABLE_ACCOUNT_TYPES.some((id) => id === chat.provider)) return null;
       const scopedProjectId = (input.chatId ? chat?.projectId : input.projectId) ?? null;
       const projectOverride = scopedProjectId ? await getProjectAiAccount(scopedProjectId) : null;
       const pinned = chat ? await getChatAiAccount(db, chat) : projectOverride;

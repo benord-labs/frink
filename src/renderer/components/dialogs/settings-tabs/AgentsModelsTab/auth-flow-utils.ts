@@ -1,4 +1,6 @@
-export type AccountType = 'claude-code' | 'codex';
+import type { AiProviderId } from '../../../../../shared/lib/ai-providers';
+
+export type AccountType = AiProviderId;
 
 export type AccountAuthSelection = {
   id: string;

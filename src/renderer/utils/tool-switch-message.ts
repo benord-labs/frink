@@ -10,22 +10,20 @@
  */
 
 import { toast } from 'sonner';
+import { AI_PROVIDERS, type AiProviderId } from '../../shared/lib/ai-providers';
 
-type ToolType = 'claude-code' | 'codex';
-
-const TOOL_LABEL: Record<ToolType, string> = {
-  'claude-code': 'Claude',
-  codex: 'OpenAI',
-};
-
-const SWITCH_DESCRIPTION: Record<ToolType, string> = {
+// A provider without a checked sentence here (null) gets the caller's plain toast instead.
+const SWITCH_DESCRIPTION = {
   'claude-code':
     "Your MCP servers, skills, commands & agents came with you. Two things change: agent tool limits are now fully enforced (exact per-tool rules), and agent models reset to Claude's default.",
   // Codex runs through the app-server with the permission gate enforcing exact
   // per-tool rules, like Claude — so no advisory caveat.
   codex:
     "Your MCP servers, skills, commands & agents came with you. Two things change: agent tool limits are now fully enforced (exact per-tool rules), and agent models reset to OpenAI's default.",
-};
+  opencode: null,
+  copilot: null,
+  grok: null,
+} satisfies Record<AiProviderId, string | null>;
 
 /**
  * The at-switch toast title + description, or `null` when there is no tool change
@@ -34,16 +32,14 @@ const SWITCH_DESCRIPTION: Record<ToolType, string> = {
  * (Claude Code).
  */
 export function describeToolSwitch(
-  oldType: ToolType | null | undefined,
-  newType: ToolType | null | undefined,
+  oldType: AiProviderId | null | undefined,
+  newType: AiProviderId | null | undefined,
 ): { title: string; description: string } | null {
-  if (!newType) return null;
-  const from = oldType ?? 'claude-code';
-  if (from === newType) return null;
-  return {
-    title: `Now running on ${TOOL_LABEL[newType]}`,
-    description: SWITCH_DESCRIPTION[newType],
-  };
+  if (!newType || (oldType ?? 'claude-code') === newType) return null;
+  const description = SWITCH_DESCRIPTION[newType];
+  return description
+    ? { title: `Now running on ${AI_PROVIDERS[newType].name}`, description }
+    : null;
 }
 
 /**
@@ -53,8 +49,8 @@ export function describeToolSwitch(
  * toast shape stays identical.
  */
 export function notifyToolSwitch(
-  oldType: ToolType | null | undefined,
-  newType: ToolType | null | undefined,
+  oldType: AiProviderId | null | undefined,
+  newType: AiProviderId | null | undefined,
   fallback: string,
 ): void {
   const message = describeToolSwitch(oldType, newType);

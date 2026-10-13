@@ -14,7 +14,8 @@ import {
   type AccountType,
   shouldUseInlineCredentialEdit,
 } from '../auth-flow-utils';
-import { PROVIDER_NAME, ProviderTile } from '../ProviderTile';
+import { AI_PROVIDERS } from '../../../../../../shared/lib/ai-providers';
+import { ProviderTile } from '../ProviderTile';
 import { ApiKeyEditForm } from './ApiKeyEditForm';
 
 type Props = {
@@ -55,7 +56,7 @@ function accountDetail(account: Props['account'], type: AccountType, isApiKey: b
   else if (account.expectedEmail && account.expectedEmail !== account.label)
     detail = account.expectedEmail;
   else detail = 'Signed in on this computer';
-  return `${PROVIDER_NAME[type]} · ${detail}`;
+  return `${AI_PROVIDERS[type].name} · ${detail}`;
 }
 
 function AccountActionsMenu({
@@ -196,7 +197,7 @@ export const AccountRow = memo(function AccountRow({
   onCancelRename,
   renamePending = false,
 }: Props) {
-  const accountType: AccountType = account.type === 'codex' ? 'codex' : 'claude-code';
+  const accountType = account.type ?? 'claude-code';
   const isApiKeyAccount = shouldUseInlineCredentialEdit({
     isApiKey: account.isApiKey,
     type: accountType,
