@@ -33,7 +33,8 @@ function spawnNode(launch: ReturnType<typeof buildClaudeCredentialLaunch>, scrip
   });
 }
 
-const READ_FD3 = "process.stdout.write(require('fs').readFileSync('/dev/fd/3','utf8'))";
+// The pipe is a socket, which Linux cannot open by its /dev/fd path: read it as the CLI does.
+const READ_FD3 = "process.stdout.write(require('fs').readFileSync(3,'utf8'))";
 
 describe('buildClaudeCredentialLaunch', () => {
   it('injects nothing for a passthrough (keychain) account', () => {
