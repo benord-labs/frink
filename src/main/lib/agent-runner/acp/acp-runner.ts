@@ -9,7 +9,12 @@ import { completeTurnChunks, makeChunkSink } from '../codex/codex-stream-chunks'
 import { answerPermissionRequest, approvalRequestsFor, CANCELLED } from './acp-permissions';
 import { type AcpAgentLaunch, type AcpAgentProcess, startAcpAgentProcess } from './acp-process';
 import { describesStepWithoutKind, rememberToolCall } from './acp-tool-calls';
-import { createAcpTurnState, mapPromptResponse, mapSessionUpdate } from './acp-updates';
+import {
+  createAcpTurnState,
+  mapPromptResponse,
+  mapSessionUpdate,
+  mapToolCall,
+} from './acp-updates';
 
 /** Starting an agent may include a first-run download; a prompt itself has no deadline. */
 const START_DEADLINE_MS = 60_000;
@@ -107,9 +112,10 @@ export async function* runAcpAgent(
         if (notification.sessionId !== sessionId) return;
         mapSessionUpdate(notification.update, turn).forEach(emit);
       })
-      .onRequest('session/request_permission', ({ params: request }) => {
+      .onRequest('session/request_permission', async ({ params: request }) => {
         if (request.sessionId !== sessionId || turnOver.signal.aborted) return CANCELLED;
         // The request joins what earlier updates said: either may hold what the other leaves out.
+        mapToolCall(request.toolCall, turn).forEach(emit);
         const toolCall = rememberToolCall(turn.toolCalls, request.toolCall);
         // An earlier report may describe another step: a request that describes one must name its kind.
         const questions = describesStepWithoutKind(request.toolCall)
@@ -120,12 +126,16 @@ export async function* runAcpAgent(
             `[ACP] Refused a ${toolCall.kind ?? 'tool'} call Frink cannot ask its rules about`,
           );
         }
-        return answerPermissionRequest(
+        const answer = await answerPermissionRequest(
           questions,
           request.options,
           params.checkApproval,
           turnOver.signal,
         );
+        // A refusal no rule or person made is shown as Frink's, never as the user's.
+        if (answer.checked) turn.unchecked.delete(toolCall.toolCallId);
+        else turn.unchecked.add(toolCall.toolCallId);
+        return answer.response;
       })
       .connect(link.agent.stream);
     link.connection = connection;
