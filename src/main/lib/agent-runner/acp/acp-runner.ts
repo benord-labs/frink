@@ -10,6 +10,7 @@ import { answerPermissionRequest, approvalRequestsFor, CANCELLED } from './acp-p
 import { type AcpAgentLaunch, type AcpAgentProcess, startAcpAgentProcess } from './acp-process';
 import { describesStepWithoutKind, rememberToolCall } from './acp-tool-calls';
 import {
+  actedWithoutAsking,
   createAcpTurnState,
   mapPromptResponse,
   mapSessionUpdate,
@@ -22,9 +23,11 @@ const START_DEADLINE_MS = 60_000;
 const CANCEL_GRACE_MS = 2000;
 /** How long a dropped connection waits for the process to report why it ended. */
 const EXIT_REPORT_MS = 1000;
+const ACTED_UNASKED_TEXT =
+  'The agent did something without asking first, so Frink stopped it. The step shown above already ran.';
 
 export type AcpRunnerParams = {
-  /** The agent's ACP command line; it runs in `cwd`. */
+  /** The agent's ACP command line; it runs in `cwd` and must make the agent ask before it acts. */
   launch: Omit<AcpAgentLaunch, 'cwd'>;
   cwd: string;
   prompt: string;
@@ -42,7 +45,7 @@ async function openSession(connection: ClientConnection, cwd: string): Promise<s
   try {
     const initialized = await connection.agent.request('initialize', {
       protocolVersion: PROTOCOL_VERSION,
-      // Nothing is advertised: the agent uses its own file and terminal tools, which ask first.
+      // Nothing is advertised: the agent acts with its own tools, so its launch must make it ask.
       clientCapabilities: {},
     });
     if (initialized.protocolVersion !== PROTOCOL_VERSION) {
@@ -102,6 +105,13 @@ export async function* runAcpAgent(
     else void link.connection?.agent.notify('session/cancel', { sessionId }).catch(() => {});
   };
   signal.addEventListener('abort', onAbort, { once: true });
+  // An action that never reached Frink's gate ends the turn, so no further one follows it.
+  const stopActingUnasked = () => {
+    if (turnOver.signal.aborted) return;
+    log.warn('[ACP] The agent finished an action it never asked about; stopping the turn');
+    emit({ type: 'error', errorText: ACTED_UNASKED_TEXT });
+    onAbort();
+  };
 
   try {
     signal.throwIfAborted();
@@ -111,9 +121,11 @@ export async function* runAcpAgent(
       .onNotification('session/update', ({ params: notification }) => {
         if (notification.sessionId !== sessionId) return;
         mapSessionUpdate(notification.update, turn).forEach(emit);
+        if (actedWithoutAsking(notification.update, turn)) stopActingUnasked();
       })
       .onRequest('session/request_permission', async ({ params: request }) => {
         if (request.sessionId !== sessionId || turnOver.signal.aborted) return CANCELLED;
+        turn.asked.add(request.toolCall.toolCallId);
         // The request joins what earlier updates said: either may hold what the other leaves out.
         mapToolCall(request.toolCall, turn).forEach(emit);
         const toolCall = rememberToolCall(turn.toolCalls, request.toolCall);

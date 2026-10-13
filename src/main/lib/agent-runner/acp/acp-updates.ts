@@ -3,6 +3,7 @@ import type {
   SessionUpdate,
   StopReason,
   ToolCallUpdate,
+  ToolKind,
 } from '@agentclientprotocol/sdk';
 import { z } from 'zod';
 import type { UIMessageChunk } from '../../claude/types';
@@ -34,12 +35,33 @@ type AcpTurnState = {
   toolCalls: Map<string, ToolCallUpdate>;
   /** Calls Frink refused without asking, which the agent reports back as a user rejection. */
   unchecked: Set<string>;
+  /** Calls the agent asked permission for. */
+  asked: Set<string>;
   openTextId: string | null;
   textRuns: number;
 };
 
 export function createAcpTurnState(): AcpTurnState {
-  return { toolCalls: new Map(), unchecked: new Set(), openTextId: null, textRuns: 0 };
+  return {
+    toolCalls: new Map(),
+    unchecked: new Set(),
+    asked: new Set(),
+    openTextId: null,
+    textRuns: 0,
+  };
+}
+
+/** Kinds that only look; any other call, including one with no kind, is treated as acting. */
+const QUIET_KINDS = new Set<ToolKind>(['read', 'search', 'think', 'switch_mode']);
+
+/** True when a call that may change something has finished although the agent never asked about it. */
+export function actedWithoutAsking(update: SessionUpdate, state: AcpTurnState): boolean {
+  if (update.sessionUpdate !== 'tool_call' && update.sessionUpdate !== 'tool_call_update') {
+    return false;
+  }
+  const toolCall = state.toolCalls.get(update.toolCallId);
+  if (toolCall?.status !== 'completed' || state.asked.has(update.toolCallId)) return false;
+  return !toolCall.kind || !QUIET_KINDS.has(toolCall.kind);
 }
 
 /** Ends the open text run, so text after a thought or a tool card starts a new block below it. */
