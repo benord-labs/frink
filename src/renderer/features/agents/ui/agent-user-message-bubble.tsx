@@ -4,6 +4,10 @@ import { Button } from '@benord-labs/frink-primitives';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { memo, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { formatAttachmentSummaryLabel } from '@/lib/agent-chat/format-attachment-summary';
+import {
+  clearSearchHighlights,
+  highlightSearchText,
+} from '@/lib/agent-chat/search/highlight-search-text';
 import { MentionChipContext } from '@/lib/mentions/mention-chip-context';
 import { extractTaskBubbleData } from '@/lib/tasks/format-task-message';
 import type { AnsweredQuestion } from '../../../../shared/lib/agent-questions/answered-questions';
@@ -55,88 +59,6 @@ type AgentUserMessageBubbleProps = {
 function renderMentionChip(id: string): ReactNode {
   const mention = parseMention(id);
   return mention && <MentionChip mention={mention} />;
-}
-
-// Helper function to highlight text in DOM using TreeWalker
-function highlightTextInDom(
-  container: HTMLElement,
-  searchText: string,
-  currentOffset: number | null,
-  currentLength: number | null,
-) {
-  // Remove existing highlights first
-  const existingHighlights = container.querySelectorAll('.search-highlight');
-  existingHighlights.forEach((el) => {
-    const parent = el.parentNode;
-    if (parent) {
-      parent.replaceChild(document.createTextNode(el.textContent || ''), el);
-      parent.normalize();
-    }
-  });
-
-  if (!searchText) return;
-
-  const lowerSearch = searchText.toLowerCase();
-  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
-
-  const textNodes: Text[] = [];
-  let node: Text | null = walker.nextNode() as Text | null;
-  while (node) {
-    if (node.nodeValue?.toLowerCase().includes(lowerSearch)) {
-      textNodes.push(node);
-    }
-    node = walker.nextNode() as Text | null;
-  }
-
-  let globalOffset: number = 0;
-  for (const textNode of textNodes) {
-    const text = textNode.nodeValue || '';
-    const lowerText = text.toLowerCase();
-    let lastIndex: number = 0;
-    const fragments: (string | HTMLElement)[] = [];
-    let searchIndex: number = lowerText.indexOf(lowerSearch, lastIndex);
-
-    while (searchIndex !== -1) {
-      if (searchIndex > lastIndex) {
-        fragments.push(text.slice(lastIndex, searchIndex));
-      }
-
-      const mark = document.createElement('mark');
-      mark.className = 'search-highlight';
-      mark.textContent = text.slice(searchIndex, searchIndex + searchText.length);
-
-      if (currentOffset !== null && currentLength !== null) {
-        const matchStart = globalOffset + searchIndex;
-        if (matchStart === currentOffset) {
-          mark.classList.add('search-highlight-current');
-        }
-      }
-
-      fragments.push(mark);
-      lastIndex = searchIndex + searchText.length;
-      searchIndex = lowerText.indexOf(lowerSearch, lastIndex);
-    }
-
-    if (lastIndex < text.length) {
-      fragments.push(text.slice(lastIndex));
-    }
-
-    if (fragments.length > 0) {
-      const parent = textNode.parentNode;
-      if (parent) {
-        fragments.forEach((frag) => {
-          if (typeof frag === 'string') {
-            parent.insertBefore(document.createTextNode(frag), textNode);
-          } else {
-            parent.insertBefore(frag, textNode);
-          }
-        });
-        parent.removeChild(textNode);
-      }
-    }
-
-    globalOffset += text.length;
-  }
 }
 
 export const AgentUserMessageBubble = memo(function AgentUserMessageBubble({
@@ -222,26 +144,16 @@ export const AgentUserMessageBubble = memo(function AgentUserMessageBubble({
   useEffect(() => {
     if (!contentRef.current) return;
 
-    highlightTextInDom(
+    highlightSearchText(
       contentRef.current,
       searchQuery,
-      currentHighlight?.offset ?? null,
-      currentHighlight?.length ?? null,
+      ({ offset }) => offset === currentHighlight?.offset,
     );
 
     return () => {
-      if (contentRef.current) {
-        const existingHighlights = contentRef.current.querySelectorAll('.search-highlight');
-        existingHighlights.forEach((el) => {
-          const parent = el.parentNode;
-          if (parent) {
-            parent.replaceChild(document.createTextNode(el.textContent || ''), el);
-            parent.normalize();
-          }
-        });
-      }
+      if (contentRef.current) clearSearchHighlights(contentRef.current);
     };
-  }, [searchQuery, currentHighlight?.offset, currentHighlight?.length]);
+  }, [searchQuery, currentHighlight?.offset]);
 
   // When expanded, we need to re-check overflow after the content changes
   const isOverflowing = showGradient && !isExpanded;

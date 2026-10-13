@@ -8,10 +8,12 @@ import remarkGfm from 'remark-gfm';
 import { parseMarkdownIntoBlocks, Streamdown, type StreamdownProps } from 'streamdown';
 import { isAllowedShellOpenExternalUrl } from '../../shared/shell-external-url';
 import { hashString } from '../lib/hash';
+import { FILE_LINK_ELEMENT, remarkFileLinks } from '../lib/file-links/remark-file-links';
 import { useCodeTheme } from '../lib/hooks/use-code-theme';
 import { MENTION_ELEMENT, MENTION_REMARK_PLUGINS } from '../lib/mentions/remark-mentions';
 import { highlightCode } from '../lib/themes/shiki-theme-loader';
 import { cn } from '../lib/utils';
+import { MarkdownFileLink } from './MarkdownFileLink';
 import { MarkdownMention } from './MarkdownMention';
 import { MermaidBlock } from './MermaidBlock';
 
@@ -24,10 +26,13 @@ type StreamdownComponents = StreamdownProps['components'];
  * each render and defeats Streamdown/react-markdown's internal memoization.
  * @internal exported for unit tests that verify reference stability
  */
-export const REMARK_PLUGINS = [remarkGfm, remarkBreaks, ...MENTION_REMARK_PLUGINS];
+export const REMARK_PLUGINS = [remarkGfm, remarkBreaks, ...MENTION_REMARK_PLUGINS, remarkFileLinks];
 
-// Streamdown sanitises away unknown elements; this lets the mention element and its id through.
-const ALLOWED_TAGS = { [MENTION_ELEMENT]: ['dataMentionId'] };
+/** Lets our elements and their data through Streamdown's sanitising; exported for tests. */
+export const ALLOWED_TAGS = {
+  [MENTION_ELEMENT]: ['dataMentionId'],
+  [FILE_LINK_ELEMENT]: ['dataPath', 'dataLine', 'dataLabel'],
+};
 
 // Wrapper classes shared by ChatMarkdownRenderer and MemoizedMarkdown.
 const PROSE_CLASSES = [
@@ -501,6 +506,7 @@ function buildStreamdownComponents(
     pre: ({ children }: { children?: React.ReactNode; [key: string]: unknown }) => <>{children}</>,
     code: createCodeComponent(codeTheme, size, sizeStyles[size], isStreaming),
     [MENTION_ELEMENT]: MarkdownMention,
+    [FILE_LINK_ELEMENT]: MarkdownFileLink,
   };
   return builtComponents as unknown as StreamdownComponents;
 }

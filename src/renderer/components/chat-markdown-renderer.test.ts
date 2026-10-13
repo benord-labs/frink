@@ -2,6 +2,7 @@
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 import { describe, expect, it } from 'vitest';
+import { FILE_LINK_ELEMENT, remarkFileLinks } from '../lib/file-links/remark-file-links';
 import { MENTION_ELEMENT, MENTION_REMARK_PLUGINS } from '../lib/mentions/remark-mentions';
 import { getStreamdownComponents, REMARK_PLUGINS, stripEmojis } from './chat-markdown-renderer';
 
@@ -39,8 +40,13 @@ describe('stripEmojis', () => {
 // render-time win. If any of these break, the 73ms `Ct` regression is back.
 
 describe('REMARK_PLUGINS', () => {
-  it('contains remarkGfm, remarkBreaks and the mention plugins in order (GFM first so breaks extend it)', () => {
-    expect(REMARK_PLUGINS).toEqual([remarkGfm, remarkBreaks, ...MENTION_REMARK_PLUGINS]);
+  it('contains remarkGfm, remarkBreaks, the mention plugins and file links in order (GFM first so breaks extend it)', () => {
+    expect(REMARK_PLUGINS).toEqual([
+      remarkGfm,
+      remarkBreaks,
+      ...MENTION_REMARK_PLUGINS,
+      remarkFileLinks,
+    ]);
   });
 
   it('is a stable module-level reference across imports (not rebuilt per call)', () => {
@@ -119,6 +125,7 @@ describe('getStreamdownComponents cache', () => {
       'pre',
       'code',
       MENTION_ELEMENT,
+      FILE_LINK_ELEMENT,
     ];
     for (const tag of expectedTags) {
       expect(components, `missing component for <${tag}>`).toHaveProperty(tag);

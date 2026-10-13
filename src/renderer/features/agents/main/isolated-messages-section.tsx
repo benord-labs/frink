@@ -4,6 +4,7 @@ import { Button } from '@benord-labs/frink-primitives';
 import * as Sentry from '@sentry/electron/renderer';
 import { useAtomValue } from 'jotai';
 import { memo, useCallback, useEffect, useRef } from 'react';
+import { FileLinkBadgeProvider } from '../mentions/FileLinkBadge';
 import { userMessageIdsForSubChatAtomFamily } from '../stores/message-store';
 import type { IsolatedChatSharedProps } from './active-chat/types';
 import { areIsolatedChatSharedPropsEqual, IsolatedMessageGroup } from './isolated-message-group';
@@ -212,7 +213,7 @@ export const IsolatedMessagesSection = memo(function IsolatedMessagesSection({
   }, [hasOlderMessages, loadOlderMessages, chatContainerRef, isStreaming, handleLoadOlder]);
 
   return (
-    <>
+    <FileLinkBadgeProvider>
       {hasOlderMessages && (
         <div
           ref={loadMoreSentinelRef}
@@ -270,6 +271,6 @@ export const IsolatedMessagesSection = memo(function IsolatedMessagesSection({
           chatRetryTooltipText={chatRetryTooltipText}
         />
       ))}
-    </>
+    </FileLinkBadgeProvider>
   );
 }, areSectionPropsEqual);

@@ -21,6 +21,7 @@ export const RENDERER_LIB_DOMAINS = [
   'codex',
   'code-editor',
   'commands',
+  'file-links',
   'flow-rehearsal',
   'flows',
   'hooks',
