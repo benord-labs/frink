@@ -13,8 +13,8 @@ import {
   computeBriefingsHookLoading,
 } from '@/lib/mentions/agents-file-mention-search-helpers';
 import type { FileMentionOption } from '@/lib/mentions/agents-mentions-types';
-import { MENTION_PREFIXES } from '@/lib/mentions/agents-mentions-types';
-import { encodeForMentionToken } from '@/lib/mentions/briefing-base64';
+import { MENTION_PREFIXES } from '../../../../shared/lib/mentions/mention-grammar';
+import { encodeForMentionToken } from '../../../../shared/lib/mentions/mention-token-codec';
 import {
   Tooltip,
   TooltipContent,

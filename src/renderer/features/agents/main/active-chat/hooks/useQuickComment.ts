@@ -4,7 +4,10 @@ import { commandFetcher } from '@/lib/commands/command-fetcher';
 import { expandSlashCommand } from '@/lib/commands/expand-slash-command';
 import { isRunBusy } from '../../../../../lib/agent-chat/steer/run-busy';
 import type { TextSelectionSource } from '../../../context/text-selection-context';
-import { MENTION_PREFIXES, MENTION_PREVIEW_SANITIZE_REGEX } from '../../../mentions';
+import {
+  MENTION_PREFIXES,
+  MENTION_PREVIEW_SANITIZE_REGEX,
+} from '../../../../../../shared/lib/mentions/mention-grammar';
 import type { AgentsMentionsEditorHandle } from '../../../mentions/agents-mentions-editor';
 import { utf8ToBase64 } from '../utils';
 

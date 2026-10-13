@@ -31,6 +31,7 @@ import {
   normalizeModelIdForExecutionAccount,
 } from '../../../../shared/lib/models';
 import { codexModelsForAccount } from '../../../../shared/lib/codex-cli-models';
+import { MENTION_PREVIEW_SANITIZE_REGEX } from '../../../../shared/lib/mentions/mention-grammar';
 import type { ChatMode } from '../../../../shared/types/chat-mode';
 import { usePersistedToggle } from '../../../hooks/use-persisted-toggle';
 import {
@@ -83,7 +84,6 @@ import {
   AgentsFileMention,
   type AgentsMentionsEditorHandle,
   type FileMentionOption,
-  MENTION_PREVIEW_SANITIZE_REGEX,
 } from '../mentions';
 import { ActionsToolbar } from './ActionsToolbar';
 import { ChatInputContextBar } from './active-chat/components/ChatInputContextBar';

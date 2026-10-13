@@ -13,7 +13,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import { formatAttachmentSummaryLabel } from '@/lib/agent-chat/format-attachment-summary';
-import { encodeForMentionToken } from '@/lib/mentions/briefing-base64';
+import { encodeForMentionToken } from '../../../../shared/lib/mentions/mention-token-codec';
 
 // Mock trpc (pulled in by the agents-file-mention transitive dep, unused by the parser).
 vi.mock('../../../lib/trpc', () => ({
