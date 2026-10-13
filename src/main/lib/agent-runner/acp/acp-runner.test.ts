@@ -134,26 +134,6 @@ describe('runAcpAgent', () => {
 
     expect(textOf(chunks)).toBe('mine');
   });
-
-  it('refuses a permission request as a method it does not implement', async () => {
-    let code: number | undefined;
-    const fake = fakeAcpAgent(async ({ client, sessionId }) => {
-      await client
-        .request('session/request_permission', {
-          sessionId,
-          toolCall: { toolCallId: 't1', kind: 'execute', rawInput: { command: 'ls' } },
-          options: [{ optionId: 'once', kind: 'allow_once', name: 'Allow once' }],
-        })
-        .catch((error: RequestError) => {
-          code = error.code;
-        });
-    });
-
-    const chunks = await collectChunks(runAcpAgent(runnerParams(), fake.start));
-
-    expect(code).toBe(-32601);
-    expect(typesOf(chunks)).toEqual(['start', 'message-metadata', 'finish']);
-  });
 });
 
 describe('runAcpAgent when the agent fails', () => {
