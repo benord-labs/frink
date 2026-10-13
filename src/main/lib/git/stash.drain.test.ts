@@ -122,12 +122,14 @@ describe('applyRollbackStash serialization', () => {
 
   it('waits for an in-flight createRollbackStash on the same cwd before applying', async () => {
     const slow = deferred();
+    const reachedAdd = deferred();
     const callOrder: string[] = [];
 
     // create stash uses the temp-index env; its add -A blocks on `slow`.
     const tempEnvRaw = vi.fn(async (cmd: string[]) => {
       if (cmd[0] === 'add') {
         callOrder.push('create-add');
+        reachedAdd.resolve('');
         await slow.promise;
         return '';
       }
@@ -182,16 +184,8 @@ describe('applyRollbackStash serialization', () => {
     const cwd = '/tmp/repo-serialize';
     const createPromise = createRollbackStash(cwd, 'uuid-create');
 
-    // Drain ticks until create reaches its parked `add -A`. mkdtemp is real
-    // filesystem I/O so it takes a handful of macrotasks to thread through.
-    const waitFor = async (predicate: () => boolean, label: string) => {
-      for (let i = 0; i < 100; i += 1) {
-        if (predicate()) return;
-        await new Promise((r) => setImmediate(r));
-      }
-      throw new Error(`Timed out waiting for: ${label}; callOrder=${JSON.stringify(callOrder)}`);
-    };
-    await waitFor(() => callOrder.includes('create-add'), 'create-add');
+    // Create's temp-index setup does real filesystem I/O, so wait for it to park on `add -A`.
+    await reachedAdd.promise;
 
     // Now fire apply — it must queue behind the in-flight create.
     const applyPromise = applyRollbackStash(cwd, 'uuid-old');
