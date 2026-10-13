@@ -10,6 +10,7 @@ import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { eq } from 'drizzle-orm';
 import { app } from 'electron';
 import log from 'electron-log';
+import { aiProvider, runtimeFor } from '../../../shared/lib/ai-providers';
 import { resolveCodexCliModel } from '../../../shared/lib/codex-cli-models';
 import { stripHiddenWakeMarker } from '../../../shared/lib/message-markers/hidden-wake-marker';
 import { stripMessageMarkers } from '../../../shared/lib/message-markers/strip-message-markers';
@@ -674,7 +675,13 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       }
     }
 
-    const agentRuntime: 'codex' | 'claude' = storedCredential.type === 'codex' ? 'codex' : 'claude';
+    const agentRuntime = runtimeFor(storedCredential.type);
+    if (agentRuntime === undefined || agentRuntime === 'acp') {
+      const name = aiProvider(storedCredential.type)?.name ?? 'This AI provider';
+      const error = `${name} can't run chats in this version of Frink yet. Pick Claude or OpenAI for this chat.`;
+      sendRunErrorDirect({ chatId, subChatId, assistantMessageId: msgId, error });
+      return;
+    }
     const autoReviewRequested = settings?.autoReviewTools === true;
     const autoReviewSupported = isAutoReviewSupported(settings, storedCredential.type);
     const { nativeAutoReview, codexAutoReview, planAutoReview, autoReviewArmable } =

@@ -61,14 +61,25 @@ describe('shouldForwardTaskModel', () => {
 
 describe('toTaskAccountType', () => {
   // Regression guard: a codex credential must map to a codex account, NOT collapse to claude-code
-  // (which would drop the codex model in flows). NULL/legacy/unknown types fall back to claude-code.
+  // (which would drop the codex model in flows).
   it.each([
     ['codex', 'codex'],
     ['claude-code', 'claude-code'],
-    ['', 'claude-code'],
-    ['something-new', 'claude-code'],
   ] as const)('toTaskAccountType(%s) === %s', (credType, expected) => {
     expect(toTaskAccountType(credType)).toBe(expected);
+  });
+
+  it.each([
+    ['opencode', 'OpenCode'],
+    ['something-new', 'This AI provider'],
+    ['', 'This AI provider'],
+  ])('fails a Flow on "%s" for good instead of running it on Claude', (credType, name) => {
+    expect(() => toTaskAccountType(credType)).toThrow(
+      expect.objectContaining({
+        message: `${name} can't run Flows yet. Pick Claude or OpenAI for this project.`,
+        permanent: true,
+      }),
+    );
   });
 });
 

@@ -6,7 +6,7 @@ import {
   getSession as getClaudeSession,
 } from '../claude-session-registry';
 import { hasWakeHold, type WakeHold } from '../claude-wake-hold';
-import type { AgentRuntime } from '../runtime-gate';
+import type { AgentRuntime } from '../../../../shared/lib/ai-providers';
 import {
   createExecutionSettlementBarrier,
   type ExecutionSettlementBarrier,

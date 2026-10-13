@@ -15,6 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { BrowserWindow } from 'electron';
 import log from 'electron-log';
+import { AI_PROVIDERS } from '../../../shared/lib/ai-providers';
 import { buildHiddenWakeMessage } from '../../../shared/lib/message-markers/hidden-wake-marker';
 import { CLAUDE_MODEL_IDS } from '../../../shared/lib/models';
 import {
@@ -102,12 +103,6 @@ export function shouldForwardTaskModel(
   if (executionAccountType === 'codex') return model.startsWith('codex-');
   return CLAUDE_MODEL_IDS.includes(model);
 }
-
-/** User-facing provider name per account type (model-fallback messaging). */
-const PROVIDER_LABEL: Record<TaskExecutionAccountType, string> = {
-  'claude-code': 'Claude',
-  codex: 'OpenAI',
-};
 
 type TaskChatReadyPayload = TaskChatReadyData;
 
@@ -453,7 +448,7 @@ async function createChatForTask(task: DbTask): Promise<{
   }
   if (taskModel) {
     if (!shouldForwardTaskModel(taskModel, executionAccountType)) {
-      const providerLabel = PROVIDER_LABEL[executionAccountType];
+      const providerLabel = AI_PROVIDERS[executionAccountType].name;
       modelFallbackReason = `Configured model "${taskModel}" is not compatible with ${providerLabel} execution. Falling back to default ${providerLabel} model selection.`;
       // Codex forwards no model -> the executor's resolveCodexCliModel picks the default slug + effort.
       activeModel = 'account-default';
