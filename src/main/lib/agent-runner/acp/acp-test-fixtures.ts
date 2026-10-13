@@ -1,4 +1,5 @@
 import {
+  type AgentCapabilities,
   type AgentContext,
   agent,
   type ContentBlock,
@@ -7,6 +8,8 @@ import {
   PROTOCOL_VERSION,
   type PromptResponse,
   type RequestPermissionOutcome,
+  RequestError,
+  type SessionConfigOption,
   type SessionUpdate,
   type ToolCallUpdate,
 } from '@agentclientprotocol/sdk';
@@ -26,8 +29,18 @@ type FakeTurn = {
 /** Plays the agent's side of one prompt; returns the prompt response, `end_turn` by default. */
 type FakeTurnScript = (turn: FakeTurn) => Promise<PromptResponse | void>;
 
+type FakeAgentSetup = {
+  protocolVersion?: number;
+  agentCapabilities?: AgentCapabilities;
+  /** The session's settings, as opening it and changing one of them report them. */
+  configOptions?: SessionConfigOption[];
+  /** Answer `session/resume` with an error, as for a session the agent no longer has. */
+  resumeFails?: boolean;
+};
+
 /** A scripted ACP agent on the SDK's agent side, joined to the client by in-memory byte streams. */
-export function fakeAcpAgent(script: FakeTurnScript, protocolVersion = PROTOCOL_VERSION) {
+export function fakeAcpAgent(script: FakeTurnScript, setup: FakeAgentSetup = {}) {
+  const { protocolVersion = PROTOCOL_VERSION, agentCapabilities = {}, configOptions } = setup;
   const toAgent = new TransformStream<Uint8Array, Uint8Array>();
   let endOutput = () => {};
   const toClient = new TransformStream<Uint8Array, Uint8Array>({
@@ -44,10 +57,19 @@ export function fakeAcpAgent(script: FakeTurnScript, protocolVersion = PROTOCOL_
   let exit = '';
   let disposed = false;
   agent({ name: 'fake-agent' })
-    .onRequest('initialize', () => ({ protocolVersion, agentCapabilities: {} }))
+    .onRequest('initialize', () => ({ protocolVersion, agentCapabilities }))
     .onRequest('session/new', () => {
       requests.push('session/new');
-      return { sessionId: 'fake-session' };
+      return { sessionId: 'fake-session', configOptions };
+    })
+    .onRequest('session/resume', ({ params }) => {
+      requests.push(`session/resume ${params.sessionId}`);
+      if (setup.resumeFails) throw RequestError.resourceNotFound(params.sessionId);
+      return { configOptions };
+    })
+    .onRequest('session/set_config_option', ({ params }) => {
+      requests.push(`set ${params.configId}=${String(params.value)}`);
+      return { configOptions: configOptions ?? [] };
     })
     .onNotification('session/cancel', () => cancel())
     .onRequest('session/prompt', async ({ params, client }) => {
@@ -57,7 +79,7 @@ export function fakeAcpAgent(script: FakeTurnScript, protocolVersion = PROTOCOL_
     })
     .connect(ndJsonStream(toClient.writable, toAgent.readable));
   const process: AcpAgentProcess = {
-    stream: ndJsonStream(toAgent.writable, toClient.readable),
+    stdio: { input: toAgent.writable, output: toClient.readable },
     closed: Promise.resolve(),
     describeExit: () => exit,
     dispose: async () => {
@@ -97,6 +119,8 @@ export const TEST_RULES: AcpAgentRules = {
 export function runnerParams(overrides: Partial<AcpRunnerParams> = {}): AcpRunnerParams {
   return {
     launch: { command: 'fake-agent', args: ['acp'], env: {}, rules: TEST_RULES },
+    agentId: 'fake',
+    agentName: 'Fake Agent',
     cwd: '/workspace/project',
     prompt: 'hello',
     abortController: new AbortController(),

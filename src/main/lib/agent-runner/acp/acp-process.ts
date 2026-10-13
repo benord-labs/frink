@@ -1,8 +1,8 @@
 import { type ChildProcess, spawn } from 'node:child_process';
 import { Readable, Writable } from 'node:stream';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { ndJsonStream, type Stream } from '@agentclientprotocol/sdk';
 import log from 'electron-log';
+import { lowerChildPriority } from '../../platform/lower-child-priority';
 import { killProcessTree, processTreeGone, signalProcessTree } from '../process-settlement';
 import type { AcpAgentRules } from './acp-permissions';
 
@@ -20,8 +20,8 @@ export type AcpAgentLaunch = {
 };
 
 export type AcpAgentProcess = {
-  /** ACP messages over the agent's stdin and stdout. */
-  stream: Stream;
+  /** The agent's stdin and stdout, which carry its ACP messages. */
+  stdio: { input: WritableStream<Uint8Array>; output: ReadableStream<Uint8Array> };
   /** Settles once the process has ended and its output has been read, or it could not start. */
   closed: Promise<void>;
   /** How the process ended and the last of its stderr, to explain a dropped connection. */
@@ -37,6 +37,9 @@ const SHOWN_STDERR_CHARS = 200;
 const STOP_GRACE_MS = 1500;
 const STOP_TIMEOUT_MS = 5000;
 const STOP_POLL_MS = 25;
+
+/** Agents not yet stopped, so quitting Frink can stop them all. */
+const liveAgents = new Set<AcpAgentProcess>();
 
 async function treeGoneWithin(child: ChildProcess, withinMs: number): Promise<boolean> {
   const deadline = Date.now() + withinMs;
@@ -71,6 +74,7 @@ export function startAcpAgentProcess(launch: AcpAgentLaunch): AcpAgentProcess {
     detached: process.platform !== 'win32',
     windowsHide: true,
   });
+  lowerChildPriority(child.pid);
   let stderrTail = '';
   let ending = '';
   let stopped: Promise<void> | undefined;
@@ -95,13 +99,21 @@ export function startAcpAgentProcess(launch: AcpAgentLaunch): AcpAgentProcess {
 
   // SAFETY: a child's stdout yields bytes; Node types its web stream more loosely than the DOM's.
   const output = Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>;
-  return {
-    stream: ndJsonStream(Writable.toWeb(child.stdin), output),
+  const agent: AcpAgentProcess = {
+    stdio: { input: Writable.toWeb(child.stdin), output },
     closed,
     describeExit: () => {
       const lastLine = stderrTail.trim().split('\n').at(-1)?.slice(0, SHOWN_STDERR_CHARS);
       return [ending, lastLine].filter(Boolean).join(': ');
     },
-    dispose: (graceMs = STOP_GRACE_MS) => (stopped ??= stopProcessTree(child, closed, graceMs)),
+    dispose: (graceMs = STOP_GRACE_MS) =>
+      (stopped ??= stopProcessTree(child, closed, graceMs).finally(() => liveAgents.delete(agent))),
   };
+  liveAgents.add(agent);
+  return agent;
+}
+
+/** Stops every agent still running, for when Frink quits. */
+export async function disposeAllAcpAgents(): Promise<void> {
+  await Promise.allSettled([...liveAgents].map((agent) => agent.dispose()));
 }

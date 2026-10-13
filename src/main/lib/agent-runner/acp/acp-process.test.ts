@@ -1,8 +1,12 @@
+import { readdirSync, readFileSync } from 'node:fs';
+import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import type { UIMessageChunk } from '../../claude/types';
 import { startAcpAgentProcess } from './acp-process';
 import { collectChunks, TEST_RULES, textOf } from './acp-test-fixtures';
-import { runAcpAgent } from './index';
+import { disposeAllAcpAgents, runAcpAgent } from './index';
 
 /** Real child processes, and a grace period before a force-stop, need more than the default. */
 const PROCESS_TEST_TIMEOUT_MS = 20_000;
@@ -51,6 +55,8 @@ function runTurn(script: string): Promise<UIMessageChunk[]> {
   return collectChunks(
     runAcpAgent({
       launch: agentLaunch,
+      agentId: 'child',
+      agentName: 'Child Agent',
       cwd,
       prompt: 'hello',
       abortController: new AbortController(),
@@ -203,5 +209,53 @@ describe('startAcpAgentProcess', { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
     await agent.closed;
     expect(agent.describeExit()).toContain('could not start');
     await agent.dispose();
+  });
+});
+
+describe('disposeAllAcpAgents', { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
+  it('stops every agent still running, together with the children they started', async () => {
+    const agent = startAcpAgentProcess(
+      launch(`
+        import { spawn } from 'node:child_process';
+        const child = spawn(process.execPath, ['--eval', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+        process.stderr.write(String(child.pid));
+        setInterval(() => {}, 1000);
+      `),
+    );
+    await expect.poll(() => agent.describeExit(), SETTLE).toMatch(/^\d+$/);
+    const grandchild = Number(agent.describeExit());
+
+    await disposeAllAcpAgents();
+
+    expect(agent.describeExit()).toMatch(/^stopped by SIG/);
+    await expect.poll(() => isAlive(grandchild), SETTLE).toBe(false);
+  });
+
+  it('returns at once when no agent is running', async () => {
+    const first = await Promise.race([
+      disposeAllAcpAgents().then(() => 'returned'),
+      delay(0, 'waited'),
+    ]);
+
+    expect(first).toBe('returned');
+  });
+});
+
+describe('loading the protocol library', () => {
+  it('happens only when a turn starts, never on importing the runner', () => {
+    const folder = import.meta.dirname;
+    const sources = readdirSync(folder).filter(
+      (file) => file.endsWith('.ts') && !file.includes('test'),
+    );
+
+    for (const file of sources) {
+      const source = readFileSync(path.join(folder, file), 'utf8');
+      // Compiled as the app bundle compiles it: imports used only as types disappear.
+      const compiled = ts.transpileModule(source, {
+        compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ESNext },
+      }).outputText;
+      expect(compiled, file).not.toMatch(/from ['"]@agentclientprotocol\/sdk['"]/);
+    }
+    expect(sources).toContain('acp-runner.ts');
   });
 });

@@ -1,0 +1,175 @@
+import type { ContentBlock, SessionConfigOption } from '@agentclientprotocol/sdk';
+import { describe, expect, it } from 'vitest';
+import type { UIMessageChunk } from '../../claude/types';
+import { collectChunks, fakeAcpAgent, runnerParams } from './acp-test-fixtures';
+import { type AcpRunnerParams, rememberedModelOptions, runAcpAgent } from './index';
+
+const CAN_RESUME = { sessionCapabilities: { resume: {} } };
+
+/** A setting the session offers as a list, named after its category, such as `model`. */
+function select(category: string, values: string[]): SessionConfigOption {
+  return {
+    id: category,
+    name: category,
+    category,
+    type: 'select',
+    currentValue: values[0],
+    options: values.map((value) => ({ value, name: `Name of ${value}` })),
+  };
+}
+
+const SETTINGS = [select('model', ['open/one', 'open/two']), select('mode', ['build', 'plan'])];
+
+function errorsOf(chunks: UIMessageChunk[]) {
+  return chunks.filter((chunk) => chunk.type === 'error');
+}
+
+/** Runs one turn and records, in order, what the client asked the agent, the prompt included. */
+async function runTurn(
+  setup: Parameters<typeof fakeAcpAgent>[1],
+  overrides: Partial<AcpRunnerParams> = {},
+) {
+  let prompt: ContentBlock[] | undefined;
+  const fake = fakeAcpAgent(async (turn) => {
+    prompt = turn.prompt;
+    fake.requests.push('session/prompt');
+  }, setup);
+  const chunks = await collectChunks(runAcpAgent(runnerParams(overrides), fake.start));
+  return { chunks, prompt, requests: fake.requests };
+}
+
+describe('runAcpAgent continuing an earlier conversation', () => {
+  it('resumes the earlier session when the agent can', async () => {
+    const turn = await runTurn(
+      { agentCapabilities: CAN_RESUME },
+      { resumeSessionId: 'earlier', freshSessionFallbackPrompt: 'history and hello' },
+    );
+
+    expect(turn.requests).toEqual(['session/resume earlier', 'session/prompt']);
+    expect(turn.prompt).toEqual([{ type: 'text', text: 'hello' }]);
+    expect(turn.chunks).toContainEqual({
+      type: 'message-metadata',
+      messageMetadata: { sessionId: 'earlier' },
+    });
+  });
+
+  it('opens a new session with the fallback prompt when resuming fails', async () => {
+    const turn = await runTurn(
+      { agentCapabilities: CAN_RESUME, resumeFails: true },
+      { resumeSessionId: 'earlier', freshSessionFallbackPrompt: 'history and hello' },
+    );
+
+    expect(turn.requests).toEqual(['session/resume earlier', 'session/new', 'session/prompt']);
+    expect(turn.prompt).toEqual([{ type: 'text', text: 'history and hello' }]);
+    expect(errorsOf(turn.chunks)).toEqual([]);
+    expect(turn.chunks).toContainEqual({
+      type: 'message-metadata',
+      messageMetadata: { sessionId: 'fake-session' },
+    });
+  });
+
+  it.each<[string, string | undefined, string]>([
+    ['the fallback prompt', 'history and hello', 'history and hello'],
+    ['the prompt when there is no fallback', undefined, 'hello'],
+  ])(
+    'opens a new session with %s when the agent cannot resume',
+    async (_, freshSessionFallbackPrompt, sent) => {
+      const turn = await runTurn({}, { resumeSessionId: 'earlier', freshSessionFallbackPrompt });
+
+      expect(turn.requests).toEqual(['session/new', 'session/prompt']);
+      expect(turn.prompt).toEqual([{ type: 'text', text: sent }]);
+    },
+  );
+});
+
+describe('runAcpAgent session settings', () => {
+  it('sets the chosen mode and model before the prompt', async () => {
+    const turn = await runTurn({ configOptions: SETTINGS }, { model: 'open/two', mode: 'plan' });
+
+    expect(turn.requests).toEqual([
+      'session/new',
+      'set mode=plan',
+      'set model=open/two',
+      'session/prompt',
+    ]);
+    expect(errorsOf(turn.chunks)).toEqual([]);
+  });
+
+  it('sets nothing when no model or mode was chosen', async () => {
+    const turn = await runTurn({ configOptions: SETTINGS });
+
+    expect(turn.requests).toEqual(['session/new', 'session/prompt']);
+  });
+
+  it('sets the chosen mode on a resumed session from the settings its answer lists', async () => {
+    const turn = await runTurn(
+      { agentCapabilities: CAN_RESUME, configOptions: SETTINGS },
+      { resumeSessionId: 'earlier', mode: 'plan' },
+    );
+
+    expect(turn.requests).toEqual(['session/resume earlier', 'set mode=plan', 'session/prompt']);
+    expect(errorsOf(turn.chunks)).toEqual([]);
+  });
+
+  it.each<[string, Partial<AcpRunnerParams>, string]>([
+    [
+      'a model',
+      { model: 'open/three' },
+      'Fake Agent no longer offers open/three. Pick another model.',
+    ],
+    ['a mode', { mode: 'debug' }, 'Fake Agent has no debug mode.'],
+  ])('refuses %s the session does not list, before the prompt', async (_, chosen, errorText) => {
+    const turn = await runTurn({ configOptions: SETTINGS }, chosen);
+
+    expect(errorsOf(turn.chunks)).toEqual([{ type: 'error', errorText }]);
+    expect(turn.requests).toEqual(['session/new']);
+  });
+
+  it("remembers each agent's models, groups included, from the session it opened", async () => {
+    const grouped: SessionConfigOption = {
+      id: 'model',
+      name: 'Model',
+      category: 'model',
+      type: 'select',
+      currentValue: 'open/free',
+      options: [
+        { group: 'free', name: 'Free', options: [{ value: 'open/free', name: 'Free model' }] },
+      ],
+    };
+
+    await runTurn({ configOptions: SETTINGS }, { agentId: 'first' });
+    await runTurn({ configOptions: [grouped] }, { agentId: 'second' });
+
+    expect(rememberedModelOptions('first')).toEqual([
+      { id: 'open/one', name: 'Name of open/one' },
+      { id: 'open/two', name: 'Name of open/two' },
+    ]);
+    expect(rememberedModelOptions('second')).toEqual([{ id: 'open/free', name: 'Free model' }]);
+    expect(rememberedModelOptions('never-ran')).toBeUndefined();
+  });
+});
+
+describe('runAcpAgent with attached images', () => {
+  const images = [{ data: 'aGk=', mimeType: 'image/png' }];
+
+  it('sends each image as an image block after the text', async () => {
+    const turn = await runTurn(
+      { agentCapabilities: { promptCapabilities: { image: true } } },
+      { images },
+    );
+
+    expect(turn.prompt).toEqual([
+      { type: 'text', text: 'hello' },
+      { type: 'image', data: 'aGk=', mimeType: 'image/png' },
+    ]);
+  });
+
+  it('refuses images an agent cannot take, before opening a session', async () => {
+    const turn = await runTurn({}, { images });
+
+    expect(errorsOf(turn.chunks)).toEqual([
+      { type: 'error', errorText: "Fake Agent can't take images." },
+    ]);
+    expect(turn.requests).toEqual([]);
+  });
+});
