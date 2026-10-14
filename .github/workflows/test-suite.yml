@@ -290,3 +290,52 @@ jobs:
         env:
           FRINK_ACP_ADMISSION_BIN: ${{ runner.temp }}/oc/node_modules/.bin/opencode
         run: bun run test -- run src/main/lib/agent-runner/acp/agents/opencode-admission.test.ts
+
+  # Starts a real GitHub Copilot against a scripted model to prove it still asks Frink before it acts.
+  copilot-admission:
+    if: github.event_name != 'push'
+    name: GitHub Copilot admission (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Skip pull requests that leave the Copilot runner alone
+        id: scope
+        if: github.event_name == 'pull_request'
+        run: |
+          paths='^(src/main/lib/agent-runner/(copilot|acp|codex)/|src/main/lib/permissions/path-check\.ts$|package\.json$|bun\.lock$|src/shared/lib/ai-providers/|src/main/lib/socket/execution/copilot-turn/|\.github/workflows/test-suite\.yml$)'
+          if git diff --name-only "origin/${{ github.base_ref }}...HEAD" | grep -Eq "$paths"; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: oven-sh/setup-bun@v2
+        if: steps.scope.outputs.run != 'false'
+
+      - name: Install root dependencies
+        if: steps.scope.outputs.run != 'false'
+        run: bun install --frozen-lockfile
+
+      # Pull requests run the oldest version Frink accepts; scheduled runs the newest in that range.
+      - name: Install GitHub Copilot
+        if: steps.scope.outputs.run != 'false'
+        env:
+          COPILOT_SPEC: ${{ github.event_name == 'pull_request' && '@github/copilot@1.0.96' || '@github/copilot@~1.0.96' }}
+        run: npm install --prefix "$RUNNER_TEMP/cp" "$COPILOT_SPEC"
+
+      # Fails, rather than skips, when the install left no binary to test.
+      - name: Admission run
+        if: steps.scope.outputs.run != 'false'
+        env:
+          FRINK_COPILOT_ADMISSION_BIN: ${{ runner.temp }}/cp/node_modules/.bin/copilot
+          FRINK_COPILOT_ADMISSION_REQUIRED: '1'
+        run: bun run test -- run src/main/lib/agent-runner/copilot/copilot-admission.test.ts
