@@ -58,7 +58,13 @@ describe('tool cards for turns recorded from a real agent', () => {
   });
 
   it('says Frink could not check a call it refused without asking', async () => {
-    const { script } = replayTurn(RECORDED_OUTSIDE_DIRECTORY);
+    // The same turn, with a key in the request Frink's rules cannot judge.
+    const messages = RECORDED_OUTSIDE_DIRECTORY.messages.map((message) =>
+      'permission' in message
+        ? { permission: { ...message.permission, rawInput: { command: 'ls', env: {} } } }
+        : message,
+    );
+    const { script } = replayTurn({ ...RECORDED_OUTSIDE_DIRECTORY, messages });
 
     const chunks = await collectChunks(runAcpAgent(runnerParams(), fakeAcpAgent(script).start));
 

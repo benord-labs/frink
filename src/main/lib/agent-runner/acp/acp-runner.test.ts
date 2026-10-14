@@ -37,10 +37,41 @@ describe('runAcpAgent', () => {
       type: 'finish',
       messageMetadata: { sessionId: 'fake-session' },
     });
-    expect(fake.launches).toEqual([
-      { command: 'fake-agent', args: ['acp'], env: {}, cwd: '/workspace/project' },
-    ]);
+    expect(fake.launches).toEqual([{ ...runnerParams().launch, cwd: '/workspace/project' }]);
     await vi.waitFor(() => expect(fake.wasDisposed()).toBe(true));
+  });
+
+  it.each<[string, string]>([
+    ['/init', '\u200b/init'],
+    ['  /init now', '\u200b  /init now'],
+    ['run /init', 'run /init'],
+  ])(
+    "sends %j as %j, so text never runs as one of the agent's own commands",
+    async (prompt, sent) => {
+      let received: unknown;
+      const fake = fakeAcpAgent(async (turn) => {
+        received = turn.prompt;
+      });
+
+      await collectChunks(runAcpAgent(runnerParams({ prompt }), fake.start));
+
+      expect(received).toEqual([{ type: 'text', text: sent }]);
+    },
+  );
+
+  it('cleans up after its launch once the agent has stopped', async () => {
+    let stoppedFirst: boolean | undefined;
+    const fake = fakeAcpAgent(async () => {});
+    const launch = {
+      ...runnerParams().launch,
+      cleanup: async () => {
+        stoppedFirst = fake.wasDisposed();
+      },
+    };
+
+    await collectChunks(runAcpAgent(runnerParams({ launch }), fake.start));
+
+    await vi.waitFor(() => expect(stoppedFirst).toBe(true));
   });
 
   it('shows thought as one Thinking card that completes before the text after it', async () => {

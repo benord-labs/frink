@@ -3,12 +3,13 @@ import type {
   SessionUpdate,
   StopReason,
   ToolCallUpdate,
-  ToolKind,
 } from '@agentclientprotocol/sdk';
 import { z } from 'zod';
 import type { UIMessageChunk } from '../../claude/types';
 import {
+  type KnownToolCall,
   PATH_TOOL_BY_KIND,
+  type ReportSource,
   rememberToolCall,
   toolCallCommand,
   toolCallPaths,
@@ -31,12 +32,16 @@ const UNREADABLE_ANSWER = 'The agent sent a reply Frink could not read.';
 const answerSchema = z.looseObject({});
 
 /** What one turn has streamed so far. */
-type AcpTurnState = {
-  toolCalls: Map<string, ToolCallUpdate>;
+export type AcpTurnState = {
+  toolCalls: Map<string, KnownToolCall>;
   /** Calls Frink refused without asking, which the agent reports back as a user rejection. */
   unchecked: Set<string>;
   /** Calls the agent asked permission for. */
   asked: Set<string>;
+  /** Calls whose last answer was an allow, with the questions allowed for each. */
+  allowed: Map<string, Set<string>>;
+  /** How often each id was started as a new call, so an answer reaches only the call it was for. */
+  starts: Map<string, number>;
   openTextId: string | null;
   textRuns: number;
 };
@@ -46,22 +51,33 @@ export function createAcpTurnState(): AcpTurnState {
     toolCalls: new Map(),
     unchecked: new Set(),
     asked: new Set(),
+    allowed: new Map(),
+    starts: new Map(),
     openTextId: null,
     textRuns: 0,
   };
 }
 
-/** Kinds that only look; any other call, including one with no kind, is treated as acting. */
-const QUIET_KINDS = new Set<ToolKind>(['read', 'search', 'think', 'switch_mode']);
-
-/** True when a call that may change something has finished although the agent never asked about it. */
-export function actedWithoutAsking(update: SessionUpdate, state: AcpTurnState): boolean {
+/**
+ * The call a report shows acting without Frink's allow: it finished although no answer allowed it,
+ * or failed although it never asked. Only a quiet tool, named by its first title, may do either.
+ */
+export function unaskedAction(
+  update: SessionUpdate,
+  state: AcpTurnState,
+  quietTools: readonly string[],
+): KnownToolCall | undefined {
   if (update.sessionUpdate !== 'tool_call' && update.sessionUpdate !== 'tool_call_update') {
-    return false;
+    return undefined;
   }
   const toolCall = state.toolCalls.get(update.toolCallId);
-  if (toolCall?.status !== 'completed' || state.asked.has(update.toolCallId)) return false;
-  return !toolCall.kind || !QUIET_KINDS.has(toolCall.kind);
+  if (!toolCall || (toolCall.tool !== undefined && quietTools.includes(toolCall.tool))) {
+    return undefined;
+  }
+  const { status, toolCallId } = toolCall;
+  if (status === 'completed' && !state.allowed.has(toolCallId)) return toolCall;
+  if (status === 'failed' && !state.asked.has(toolCallId)) return toolCall;
+  return undefined;
 }
 
 /** Ends the open text run, so text after a thought or a tool card starts a new block below it. */
@@ -100,10 +116,21 @@ function toolCard(
 }
 
 /** Folds one report about a tool call into its card, ending any text that came before it. */
-export function mapToolCall(update: ToolCallUpdate, state: AcpTurnState): UIMessageChunk[] {
+export function mapToolCall(
+  update: ToolCallUpdate,
+  state: AcpTurnState,
+  source: ReportSource = 'tool_call_update',
+): UIMessageChunk[] {
   const chunks = endTextRun(state);
   const isFirstReport = !state.toolCalls.has(update.toolCallId);
-  const toolCall = rememberToolCall(state.toolCalls, update);
+  // A new call on a known id inherits no answer given to the call before it.
+  if (source === 'tool_call') {
+    for (const calls of [state.asked, state.allowed, state.unchecked]) {
+      calls.delete(update.toolCallId);
+    }
+    state.starts.set(update.toolCallId, (state.starts.get(update.toolCallId) ?? 0) + 1);
+  }
+  const toolCall = rememberToolCall(state.toolCalls, update, source);
   const { toolCallId } = toolCall;
   const card = toolCard(toolCall);
   if (isFirstReport) chunks.push({ type: 'tool-input-start', toolCallId, toolName: card.toolName });
@@ -140,7 +167,7 @@ export function mapSessionUpdate(update: SessionUpdate, state: AcpTurnState): UI
     }
     case 'tool_call':
     case 'tool_call_update':
-      return mapToolCall(update, state);
+      return mapToolCall(update, state, update.sessionUpdate);
     case 'usage_update':
       return [
         {
