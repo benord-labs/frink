@@ -4,7 +4,7 @@ This page takes you from a fresh install to your first chat. It takes a couple o
 
 ## What Frink is
 
-Frink runs AI coding agents (Claude Code, Codex CLI or, on macOS, OpenCode) on your machine, against your real folders. You can chat with one, run a few at once, or wire them into automated Flows. It's the same agent you'd run in a terminal, with a UI around it.
+Frink runs AI coding agents (Claude Code, Codex CLI or, on macOS, OpenCode or GitHub Copilot) on your machine, against your real folders. You can chat with one, run a few at once, or wire them into automated Flows. It's the same agent you'd run in a terminal, with a UI around it.
 
 ## First launch
 
@@ -14,13 +14,14 @@ After that you land in the app with no AI account connected. Connecting one is t
 
 ## 1. Connect an AI account
 
-Frink has no model of its own. It runs your Claude, Codex or OpenCode, so you connect an account before you can chat.
+Frink has no model of its own. It runs your Claude, Codex, OpenCode or GitHub Copilot, so you connect an account before you can chat.
 
-You'll need the matching CLI installed and logged in first: the `claude` CLI for Claude, the `codex` CLI for Codex. OpenCode only needs to be installed.
+You'll need the matching CLI installed and logged in first: the `claude` CLI for Claude, the `codex` CLI for Codex, the `copilot` CLI for GitHub Copilot. OpenCode only needs to be installed.
 
 - **Claude (recommended).** On the empty state, click **Connect** next to Claude. If you've already run `claude auth login` in your terminal, Frink hands that login to the agents it runs — there's no token to store, and the `claude` CLI keeps it fresh itself, so a token rotation can't knock out a running agent. On macOS you'll be asked for keychain access once, while connecting. Click **Always Allow**. Or click **Add it in Settings**, under the list, to paste an Anthropic key (`sk-ant-api…`) instead.
 - **Codex.** Run `codex login` in your terminal, then click **Connect** next to OpenAI on the empty state (or add a Codex account in Settings). Frink reads that login the same way, at chat-time, and stores no token.
 - **OpenCode (macOS).** Install it with `npm install -g opencode-ai@1.19`, then go to Settings → AI providers → **Add an account** → **Connect OpenCode**. It works with OpenCode's free models; run `opencode auth login` first to add your own AI provider. Frink stores no credential. Some chat features aren't in OpenCode chats yet: see [AI accounts](./ai-accounts.md#opencode-macos).
+- **GitHub Copilot (macOS).** Install it with `npm install -g @github/copilot`, run `copilot login`, then go to Settings → AI providers → **Add an account** → **Connect GitHub Copilot**. The free plan works. Frink stores no credential. Some chat features aren't in Copilot chats yet: see [AI accounts](./ai-accounts.md#github-copilot-macos).
 - **Windows.** Claude's terminal login is macOS and Linux only. On Windows, connect Claude with an Anthropic API key.
 
 For more on accounts (multiple logins, what gets stored, using more than one machine), see [AI accounts](./ai-accounts.md).
