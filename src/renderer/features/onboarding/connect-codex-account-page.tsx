@@ -1,6 +1,6 @@
 import openaiLogo from '@iconify-icons/ri/openai-fill';
 import { iconifyComponent } from '@/lib/utils/iconify-component';
-import { useConnectAccountFlow } from '../../hooks/useConnectAccountFlow';
+import { DETECTION_QUERY_OPTIONS, useConnectAccountFlow } from '../../hooks/useConnectAccountFlow';
 import { trpc } from '../../lib/trpc';
 import { ConnectAccountShell, connectFlowProps } from './connect-account-shell';
 
@@ -16,9 +16,10 @@ const CODEX_AUTH_COMMAND = 'codex login';
  * - One passthrough per machine (matches codex's single-source auth).
  */
 export function ConnectCodexAccountPage() {
-  const detectionQuery = trpc.claudeCode.detectCodexAccount.useQuery(undefined, {
-    refetchOnWindowFocus: true,
-  });
+  const detectionQuery = trpc.claudeCode.detectCodexAccount.useQuery(
+    undefined,
+    DETECTION_QUERY_OPTIONS,
+  );
   const connectMutation = trpc.claudeCode.connectCodexPassthrough.useMutation();
 
   const flow = useConnectAccountFlow({
