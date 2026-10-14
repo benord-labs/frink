@@ -38,7 +38,8 @@ type ChatActions = {
 
 type OpenChatInput = {
   taskId: string;
-  prompt: string;
+  /** Absent for a Flow task, whose prompt only the task executor may deliver. */
+  prompt?: string;
   chatId: string;
   resultSubChatId?: string;
   skipExistenceCheck?: boolean;
@@ -120,7 +121,7 @@ async function seedTaskPromptIfEmpty(
   fetchedSubChat: ResolvedWorkQueueSubChat | null | undefined,
   actions: ChatActions,
 ): Promise<boolean> {
-  if (!subChatId) return true;
+  if (!subChatId || !input.prompt) return true;
   try {
     const subChat =
       fetchedSubChat?.id === subChatId ? fetchedSubChat : await actions.getSubChat(subChatId);

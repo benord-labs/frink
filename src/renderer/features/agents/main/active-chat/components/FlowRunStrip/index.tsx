@@ -44,6 +44,8 @@ import { FlowRunMeta } from './FlowRunMeta';
 import { FlowSurfaceCard, StripAction } from './FlowSurfaceCard';
 import { StopRunButton } from './StopRunButton';
 
+export { FlowWaitingBar } from './FlowWaitingBar';
+
 type FlowRunStripProps = {
   subChatId: string;
   flowRunId: string;

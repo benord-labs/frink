@@ -9,6 +9,7 @@ import { FlowChatBottomSurface } from './index';
 vi.mock('../FlowRunStrip', () => ({
   FlowRunStrip: () => <div data-testid="flow-run-strip" />,
   FlowPausedBar: () => <div data-testid="flow-paused-bar" />,
+  FlowWaitingBar: () => <div data-testid="flow-waiting-bar" />,
 }));
 
 vi.mock('../ParkAnswerSurface', () => ({
@@ -113,5 +114,13 @@ describe('FlowChatBottomSurface', () => {
       expect(screen.getByTestId('question-card')).toBeInTheDocument();
       expect(screen.queryByTestId('park-answer-surface')).toBeNull();
     });
+  });
+
+  it('renders the waiting bar, not the running strip, for a step waiting to be started', () => {
+    renderSurface({ kind: 'waiting', flowRunId: 'run-1', taskId: 'task-1' });
+
+    expect(screen.getByTestId('flow-waiting-bar')).toBeInTheDocument();
+    expect(screen.queryByTestId('flow-run-strip')).toBeNull();
+    expect(screen.queryByTestId('composer')).toBeNull();
   });
 });

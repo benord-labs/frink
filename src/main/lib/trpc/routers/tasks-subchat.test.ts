@@ -1,14 +1,18 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RESTART_INTERRUPTION_REASON } from '../../../../shared/types/flow';
+import * as database from '../../db';
 import { setFlowRunStatus } from '../../db/repos/flow-runs';
+import { getFlowDriveInfoForSubChat } from '../../db/repos/tasks';
 import { chats, flowRuns, nodeRuns, subChats, type Task, tasks } from '../../db/schema';
 import { seedFlowRun, seedFlowStep } from '../../db/test-utils/flow-fixtures';
 import { freshDb, type TestDb } from '../../db/test-utils/fresh-db';
+import { router } from '../index';
 import {
   assertRecoveryStep,
   getTaskWithRunOutcome,
   stoppedTaskRecoveries,
+  taskSubChatProcedures,
   withStoppedTaskRecoveries,
 } from './tasks-subchat';
 
@@ -207,5 +211,66 @@ describe('stoppedTaskRecoveries for a run that failed on a later step', () => {
 
     const { kinds } = await stoppedTaskRecoveries(db, [row(done, 'done')]);
     expect(kinds.size).toBe(0);
+  });
+});
+
+describe('a Flow step waiting for the user to start it', () => {
+  const insertStep = (id: string, status: Task['status'], wait: boolean) =>
+    db
+      .insert(tasks)
+      .values({
+        id,
+        description: id,
+        source: 'flow',
+        flowRunId,
+        status,
+        result: { chatId: 'chat-1', subChatId: 'sub-1' },
+        triggerContext: wait ? { _config: { startMode: 'wait' } } : null,
+      })
+      .run();
+  const surface = () =>
+    router(taskSubChatProcedures)
+      .createCaller({ getWindow: () => null })
+      .getDrivingTaskForSubChat({ subChatId: 'sub-1', fallbackTaskId: null });
+
+  beforeEach(async () => {
+    vi.spyOn(database, 'getDatabase').mockReturnValue(db);
+    await setFlowRunStatus(db, flowRunId, 'paused');
+  });
+
+  it('reaches the chat surface, and keeps it after a newer sibling finishes', async () => {
+    insertStep('waiting', 'pending', true);
+    expect(await surface()).toMatchObject({
+      run: { id: flowRunId },
+      task: { id: 'waiting' },
+      waitingTaskId: 'waiting',
+    });
+
+    insertStep('sibling', 'done', false);
+    expect(await surface()).toMatchObject({ task: { id: 'waiting' }, waitingTaskId: 'waiting' });
+  });
+
+  it('yields to a newer sibling that is still working, and ends once started', async () => {
+    insertStep('waiting', 'pending', true);
+    insertStep('sibling', 'running', false);
+    expect(await surface()).toMatchObject({ task: { id: 'sibling' }, waitingTaskId: null });
+
+    db.delete(tasks).where(eq(tasks.id, 'sibling')).run();
+    db.update(tasks)
+      .set({ result: { chatId: 'chat-1', subChatId: 'sub-1', startMode: 'execute' } })
+      .where(eq(tasks.id, 'waiting'))
+      .run();
+    expect(await surface()).toMatchObject({ task: { id: 'waiting' }, waitingTaskId: null });
+  });
+
+  it('drives the sub-chat only once started, so no turn or teardown can act on it before', async () => {
+    insertStep('waiting', 'pending', true);
+    expect(await getFlowDriveInfoForSubChat(db, 'sub-1')).toMatchObject({ taskId: null });
+
+    db.update(tasks)
+      .set({ result: { chatId: 'chat-1', subChatId: 'sub-1', startMode: 'execute' } })
+      .where(eq(tasks.id, 'waiting'))
+      .run();
+    expect(await getFlowDriveInfoForSubChat(db, 'sub-1')).toMatchObject({ taskId: 'waiting' });
   });
 });

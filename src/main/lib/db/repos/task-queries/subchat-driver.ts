@@ -2,6 +2,7 @@ import { and, desc, eq, inArray, type SQL, sql } from 'drizzle-orm';
 import type { getDatabase } from '../../index';
 import { flowRuns, tasks } from '../../schema';
 import { chatLinkId, linkedFlowRunIds } from './linked-flow-runs';
+import { isWaitModeTask } from './work-queue-overview-filter';
 
 type Db = ReturnType<typeof getDatabase>;
 
@@ -16,6 +17,28 @@ export function latestFlowTaskForSubChatId(db: Db, subChatId: string | SQL) {
       .orderBy(desc(tasks.createdAt), desc(sql`tasks.rowid`))
       .limit(1)
   );
+}
+
+/** The newest step of `flowRunId` on the sub-chat that is still waiting for the user to start it. */
+export function waitingFlowTaskIdForSubChat(
+  db: Db,
+  subChatId: string,
+  flowRunId: string,
+): string | null {
+  const row = db
+    .select({ id: tasks.id })
+    .from(tasks)
+    .where(
+      and(
+        eq(tasks.flowRunId, flowRunId),
+        eq(chatLinkId(tasks.result, '$.subChatId'), subChatId),
+        isWaitModeTask,
+      ),
+    )
+    .orderBy(desc(tasks.createdAt), desc(sql`tasks.rowid`))
+    .limit(1)
+    .get();
+  return row?.id ?? null;
 }
 
 export function activeFlowRunForSubChatId(db: Db, subChatId: string | SQL) {

@@ -17,7 +17,7 @@ import { RESUME_PAUSED_WAKE_TEXT } from '../../../../../../lib/agent-chat/resume
 import { useSteerOrQueue } from '../../../../../../lib/agent-chat/steer';
 import { createQueueItem, generateQueueId } from '../../../../lib/queue-utils';
 import { useMessageQueueStore } from '../../../../stores/message-queue-store';
-import { FlowPausedBar, FlowRunStrip } from '../FlowRunStrip';
+import { FlowPausedBar, FlowRunStrip, FlowWaitingBar } from '../FlowRunStrip';
 import { ParkAnswerSurface } from '../ParkAnswerSurface';
 
 type Props = {
@@ -138,6 +138,18 @@ export const FlowChatBottomSurface = memo(function FlowChatBottomSurface({
           isTurnActive={isTurnActive}
           onSubmitAnswer={guardedSend}
           onResume={handleResume}
+          onStopTurn={onStopTurn}
+        />
+      ) : bottomSurface.kind === 'waiting' ? (
+        // Keyed by step, so the next waiting step never inherits an armed Stop or a finished Start.
+        <FlowWaitingBar
+          key={bottomSurface.taskId}
+          flowRunId={bottomSurface.flowRunId}
+          taskId={bottomSurface.taskId}
+          modelId={bottomSurface.modelId}
+          mode={bottomSurface.mode}
+          autoReviewTools={bottomSurface.autoReviewTools}
+          codexSpeed={bottomSurface.codexSpeed}
           onStopTurn={onStopTurn}
         />
       ) : bottomSurface.kind === 'park' ? null : (

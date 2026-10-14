@@ -238,6 +238,27 @@ export const tasksRouter = router({
       return task;
     }),
 
+  /** Starts a task held in wait; the executor then runs it in the chat it already has. */
+  startWaiting: publicProcedure
+    .input(z.object({ taskId: z.string().min(1) }))
+    .mutation(async ({ input }): Promise<Task> => {
+      const { transitionFlowRun } = await import('../../flows/admission/runtime');
+      const { startWaitingTaskCommand } = await import('../../flows/transitions');
+      const db = getDatabase();
+      const { task, reason } = await transitionFlowRun(() =>
+        startWaitingTaskCommand(db, input.taskId),
+      );
+      if (!task) {
+        throwTaskMutationReason(reason, {
+          notFound: 'Task not found',
+          invalidState: 'This step has already finished or been stopped.',
+          fallback: "Couldn't start this step",
+        });
+      }
+      getTaskPoller().pokeNow();
+      return task;
+    }),
+
   listPaginated: publicProcedure
     .input(
       z

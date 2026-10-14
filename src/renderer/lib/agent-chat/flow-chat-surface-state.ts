@@ -38,7 +38,13 @@ type ActiveRunRef = { id: string } | null | undefined;
  * mode — the task rows carry only what was dispatched.
  */
 type FlowChatSurfaceData =
-  | { run: ActiveRunRef; task: ParkedTask; subChatMode?: ChatMode | null }
+  | {
+      run: ActiveRunRef;
+      task: ParkedTask;
+      /** A step of the run waiting for the user to start it; the server decides it owns the surface. */
+      waitingTaskId?: string | null;
+      subChatMode?: ChatMode | null;
+    }
   | null
   | undefined;
 
@@ -143,13 +149,18 @@ export type FlowChatBottomSurface =
       autoReviewTools?: boolean;
       codexSpeed?: CodexSpeed;
     }
+  | ({ kind: 'waiting'; flowRunId: string; taskId: string } & ReturnType<typeof readTaskAgentInfo>)
   | { kind: 'park' };
 
 export function deriveFlowChatBottomSurface(data: FlowChatSurfaceData): FlowChatBottomSurface {
-  const { run, task, subChatMode } = data ?? {};
+  const { run, task, waitingTaskId, subChatMode } = data ?? {};
   // Liveness is a RUN fact, never a task fact: a live run passes through taskless windows where no
   // task row exists to carry it.
   if (!run) return { kind: 'composer' };
+  if (waitingTaskId) {
+    const info = readTaskAgentInfo(task, subChatMode);
+    return { kind: 'waiting', flowRunId: run.id, taskId: waitingTaskId, ...info };
+  }
   if (task?.status === 'needs_attention') {
     if (hasUserPauseMarker(task.result)) {
       return { kind: 'paused', flowRunId: run.id, ...readTaskAgentInfo(task, subChatMode) };

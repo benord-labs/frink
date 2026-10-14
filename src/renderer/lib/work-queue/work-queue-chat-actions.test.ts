@@ -232,3 +232,15 @@ describe('startWorkQueuePlanExecution', () => {
     expect(request.recoverPlan).not.toHaveBeenCalled();
   });
 });
+
+describe('openWorkQueueTaskChat for a Flow task', () => {
+  it('only navigates to its empty step chat, leaving the prompt to the task executor', async () => {
+    const open = actions();
+
+    await expect(
+      openWorkQueueTaskChat({ taskId: 'task-1', chatId: 'chat-1', resultSubChatId: 'sub-1' }, open),
+    ).resolves.toBe('sub-1');
+    expect(open.seedUserMessageIfEmpty).not.toHaveBeenCalled();
+    expect(open.navigate).toHaveBeenCalledWith('chat-1', 'sub-1');
+  });
+});

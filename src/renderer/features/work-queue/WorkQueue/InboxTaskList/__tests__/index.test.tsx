@@ -1,10 +1,20 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import type { Operation } from '@trpc/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
+import { renderWithTrpc } from '@/lib/test-utils/render-with-trpc';
 import type { Task } from '../../../types';
 import { makeTaskActions } from '../../test-fixtures';
 import { InboxTaskList } from '..';
+
+// `lib/trpc` wires its ipc client at import time, so the preload bridge must exist first.
+vi.hoisted(() => {
+  Object.assign(globalThis, {
+    electronTRPC: { onMessage: () => () => undefined, sendMessage: () => undefined },
+  });
+});
 
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {
@@ -160,5 +170,52 @@ describe('InboxTaskList', () => {
     expect(collapse).toHaveAttribute('aria-expanded', 'true');
     fireEvent.click(collapse);
     expect(screen.queryByText('Waiting task 7')).not.toBeInTheDocument();
+  });
+});
+
+const START_INPUT = z.object({ taskId: z.string() });
+const startWaiting = vi.fn<(input: z.infer<typeof START_INPUT>) => Promise<{ id: string }>>();
+
+async function answerStart(op: Operation): Promise<{ id: string }> {
+  if (op.path !== 'tasks.startWaiting') throw new Error(`Unexpected test operation: ${op.path}`);
+  return startWaiting(START_INPUT.parse(op.input));
+}
+
+describe('InboxTaskList for a waiting Flow step', () => {
+  // Starting the only waiting step empties the Inbox, so its row unmounts before the start returns.
+  it('starts the step in its own chat, then opens that chat even after its row is gone', async () => {
+    let finishStart = (_task: { id: string }) => {};
+    startWaiting.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishStart = resolve;
+        }),
+    );
+    const onOpenTask = vi.fn();
+    const onStartTask = vi.fn();
+    const task = makeTask({
+      flowRunId: 'run-1',
+      result: { chatId: 'chat-1', subChatId: 'sub-1' },
+    });
+    const list = (tasks: Task[]) => (
+      <InboxTaskList
+        tasks={tasks}
+        isLoading={false}
+        taskActions={makeTaskActions()}
+        onOpenTask={onOpenTask}
+        onStartTask={onStartTask}
+      />
+    );
+    const view = renderWithTrpc(list([task]), answerStart);
+
+    expect(screen.queryByRole('button', { name: 'Open chat' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
+    await waitFor(() => expect(startWaiting).toHaveBeenCalledExactlyOnceWith({ taskId: 'task-1' }));
+    view.rerender(list([]));
+    expect(screen.queryByRole('button', { name: 'Start task' })).toBeNull();
+
+    finishStart({ id: 'task-1' });
+    await waitFor(() => expect(onOpenTask).toHaveBeenCalledExactlyOnceWith(task));
+    expect(onStartTask).not.toHaveBeenCalled();
   });
 });

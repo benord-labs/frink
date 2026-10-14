@@ -13,6 +13,7 @@ import { taskResultSchema, type TaskResultRecord } from '../../../../shared/type
 import { getDatabase } from '../../db';
 import { getActiveFlowRunForSubChat, getFlowRun } from '../../db/repos/flow-runs';
 import { getSubChatMode } from '../../db/repos/sub-chats';
+import { waitingFlowTaskIdForSubChat } from '../../db/repos/task-queries/subchat-driver';
 import {
   getFlowChatForNodeRun,
   getLatestFlowTaskForSubChat,
@@ -29,6 +30,20 @@ type SurfaceTask = Omit<Task, 'result' | 'triggerContext'> & {
   result: TaskResultRecord | null;
   triggerContext: TaskResultRecord | null;
 };
+
+/** The run's step waiting to be started, when it owns the chat surface: it gives way only to a newer
+ * step of the run that is still live or parked, so a finished sibling never hides it. */
+function surfaceWaitingTaskId(
+  db: Db,
+  subChatId: string,
+  runId: string,
+  latestOfRun: Awaited<ReturnType<typeof getLatestFlowTaskForSubChat>>,
+): string | null {
+  const waiting = waitingFlowTaskIdForSubChat(db, subChatId, runId);
+  return waiting && (latestOfRun?.id === waiting || latestOfRun?.status === 'done')
+    ? waiting
+    : null;
+}
 
 function parseSurfaceTask(task: Task | null): SurfaceTask | null {
   if (!task) return null;
@@ -252,11 +267,14 @@ export const taskSubChatProcedures = {
       // tick of the strip, self-healing — rather than {run: null, task: a stale driver}.
       const run = await getActiveFlowRunForSubChat(db, input.subChatId);
       const latest = run ? await getLatestFlowTaskForSubChat(db, input.subChatId) : null;
-      const id = run ? (latest?.flowRunId === run.id ? latest.id : null) : input.fallbackTaskId;
+      const ofRun = run && latest?.flowRunId === run.id ? latest : null;
+      const waitingTaskId = run ? surfaceWaitingTaskId(db, input.subChatId, run.id, ofRun) : null;
+      const id = run ? (waitingTaskId ?? ofRun?.id) : input.fallbackTaskId;
       const task = id ? await getTaskById(db, id) : null;
       return {
         run,
         task: parseSurfaceTask(task),
+        waitingTaskId,
         subChatMode: await getSubChatMode(db, input.subChatId),
       };
     }),

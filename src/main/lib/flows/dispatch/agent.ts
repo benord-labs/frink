@@ -375,6 +375,8 @@ export const dispatchAgent: Dispatcher = async (ctx) => {
     flowRunId: ctx.flowRunId,
     nodeRunId: ctx.nodeRunId,
     triggerContext,
+    // A waiting step is never claimed, which is what stamps the chat link sub-chat readers key on.
+    result: configuredStartMode === 'wait' ? { chatId, subChatId } : undefined,
   });
 
   // Link the chat to this task so the sidebar marks it as a task (the icon + status badge key off

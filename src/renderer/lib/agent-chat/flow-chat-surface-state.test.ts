@@ -432,3 +432,37 @@ describe('getFlowSurfaceRefetchInterval', () => {
     }
   });
 });
+
+describe('a step waiting for the user to start it', () => {
+  const task = {
+    status: 'pending',
+    result: { chatId: 'chat-1', subChatId: 'sub-1' },
+    triggerContext: { Config: { startMode: 'wait', model: 'sonnet-5' } },
+  };
+  const waiting = (run: NonNullable<SurfaceData>['run']): SurfaceData => ({
+    run,
+    task,
+    waitingTaskId: 'task-1',
+    subChatMode: 'agent',
+  });
+
+  it('shows the waiting bar with the step readout, never the running strip', () => {
+    expect(deriveFlowChatBottomSurface(waiting(RUN))).toEqual({
+      kind: 'waiting',
+      flowRunId: 'run-1',
+      taskId: 'task-1',
+      modelId: 'sonnet-5',
+      mode: 'agent',
+    });
+  });
+
+  it('turns into the running strip once started, and the composer without a live run', () => {
+    const started = { ...task, result: { ...task.result, startMode: 'execute' } };
+    expect(surface(RUN, started)).toMatchObject({ kind: 'running', canPause: false });
+    expect(deriveFlowChatBottomSurface(waiting(null))).toEqual({ kind: 'composer' });
+  });
+
+  it('polls at the parked cadence', () => {
+    expect(getFlowSurfaceRefetchInterval(waiting(RUN))).toBe(5000);
+  });
+});

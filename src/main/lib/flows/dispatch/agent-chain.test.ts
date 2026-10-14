@@ -593,6 +593,18 @@ describe('agent node per-node mode + autoApprove', () => {
   });
 });
 
+describe('a Wait-mode agent step is linked to its chat when it is created', () => {
+  it.each([
+    ['wait', { chatId: 'chat-1', subChatId: 'sub-1' }],
+    ['plan', undefined],
+  ])('start mode %s gives the task result %j', async (startMode, result) => {
+    await seedStartTask({ startMode });
+    // SAFETY: agentCtx builds the part of the dispatch context the agent block reads.
+    await dispatchAgent(agentCtx({ previousOutput: AGENT_PREV_OUTPUT }) as never);
+    expect(h.createTask.mock.calls[0][1].result).toEqual(result);
+  });
+});
+
 // A deliberate re-dispatch (resume/retry paths) mints a FRESH node_run for a node that already
 // ran; the flag tells createChatForTask to set the renderer's alreadySent-dedup bypass, or the
 // re-dispatched prompt (already persisted in the reused chat) is swallowed and the run never

@@ -16,6 +16,7 @@ import {
   tasks,
 } from '../../db/schema';
 import { freshDb } from '../../db/test-utils/fresh-db';
+import * as taskPoller from '../../task-poller';
 import { PhoneSafeRefusal } from './task-refusals';
 import type { FlowRunRecoveries } from './tasks';
 
@@ -743,7 +744,12 @@ describe('tasksRouter status schema', () => {
       });
 
       expect(getTaskByIdMock).toHaveBeenCalledWith(expect.anything(), 'driver-needs-attention');
-      expect(result).toEqual({ run: LIVE_RUN, task: driving, subChatMode: null });
+      expect(result).toEqual({
+        run: LIVE_RUN,
+        task: driving,
+        waitingTaskId: null,
+        subChatMode: null,
+      });
     });
 
     it('surfaces a CANCELLED task of the live run (restart-interrupted keeps its composer)', async () => {
@@ -773,7 +779,12 @@ describe('tasksRouter status schema', () => {
         fallbackTaskId: 'pinned',
       });
 
-      expect(result).toEqual({ run: LIVE_RUN, task: cancelled, subChatMode: null });
+      expect(result).toEqual({
+        run: LIVE_RUN,
+        task: cancelled,
+        waitingTaskId: null,
+        subChatMode: null,
+      });
     });
 
     it('does NOT substitute the pinned task while a run is live (the taskless window)', async () => {
@@ -790,7 +801,7 @@ describe('tasksRouter status schema', () => {
         fallbackTaskId: 'pinned-done',
       });
 
-      expect(result).toEqual({ run: LIVE_RUN, task: null, subChatMode: null });
+      expect(result).toEqual({ run: LIVE_RUN, task: null, waitingTaskId: null, subChatMode: null });
       expect(getTaskByIdMock).not.toHaveBeenCalled();
     });
 
@@ -815,6 +826,7 @@ describe('tasksRouter status schema', () => {
       expect(result).toEqual({
         run: { id: 'run-2' },
         task: null,
+        waitingTaskId: null,
         subChatMode: null,
       });
       expect(getTaskByIdMock).not.toHaveBeenCalled();
@@ -852,7 +864,7 @@ describe('tasksRouter status schema', () => {
         fallbackTaskId: null,
       });
 
-      expect(result).toEqual({ run: null, task: null, subChatMode: null });
+      expect(result).toEqual({ run: null, task: null, waitingTaskId: null, subChatMode: null });
       expect(getTaskByIdMock).not.toHaveBeenCalled();
     });
 
@@ -875,7 +887,7 @@ describe('tasksRouter status schema', () => {
       });
 
       expect(getTaskByIdMock).toHaveBeenCalledWith(expect.anything(), 'driver-gone');
-      expect(result).toEqual({ run: LIVE_RUN, task: null, subChatMode: null });
+      expect(result).toEqual({ run: LIVE_RUN, task: null, waitingTaskId: null, subChatMode: null });
     });
 
     it('reports the chat’s LIVE mode alongside the task it was dispatched with', async () => {
@@ -904,7 +916,12 @@ describe('tasksRouter status schema', () => {
         fallbackTaskId: null,
       });
 
-      expect(result).toEqual({ run: LIVE_RUN, task: planTask, subChatMode: 'agent' });
+      expect(result).toEqual({
+        run: LIVE_RUN,
+        task: planTask,
+        waitingTaskId: null,
+        subChatMode: 'agent',
+      });
     });
   });
 
@@ -1061,6 +1078,26 @@ describe('tasksRouter status schema', () => {
     await caller.startExecution({ taskId: 'task-1' });
     expect(transitionFlowRunMock).not.toHaveBeenCalled();
     expect(startExecutionFromReviewDetailedMock).toHaveBeenCalled();
+  });
+
+  it('starts a waiting step under the run transition, then wakes the poller to claim it', async () => {
+    const pokeNow = vi.fn();
+    // SAFETY: starting a waiting step uses nothing on the poller but pokeNow.
+    vi.spyOn(taskPoller, 'getTaskPoller').mockReturnValue({ pokeNow } as never);
+    const { tasksRouter } = await import('./tasks');
+    const caller = tasksRouter.createCaller({ getWindow: () => null });
+    const started = { id: 'task-flow', status: 'pending' };
+    transitionFlowRunMock.mockResolvedValueOnce({ task: started });
+
+    await expect(caller.startWaiting({ taskId: 'task-flow' })).resolves.toEqual(started);
+    expect(pokeNow).toHaveBeenCalledOnce();
+
+    transitionFlowRunMock.mockResolvedValueOnce({ task: null, reason: 'invalid_state' });
+    await expect(caller.startWaiting({ taskId: 'task-flow' })).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: 'This step has already finished or been stopped.',
+    });
+    expect(pokeNow).toHaveBeenCalledOnce();
   });
 
   it('returns success=true when backend delete succeeds', async () => {

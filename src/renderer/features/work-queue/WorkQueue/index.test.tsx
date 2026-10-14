@@ -5,7 +5,7 @@ vi.mock('./QueuePauseControl', () => ({ QueuePauseControl: () => null }));
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeAll, describe, expect, it, type Mock, vi } from 'vitest';
 import { useAgentSubChatStore } from '../../agents/stores/sub-chat-store';
-import type { ConfirmedRecovery } from '../types';
+import type { ConfirmedRecovery, Task } from '../types';
 import { buildFailedRetryRow, reviewedPlanMessages } from './test-fixtures';
 
 const overviewLaneSpy = vi.fn();
@@ -1423,5 +1423,22 @@ describe('WorkQueue mapTask trigger context', () => {
     } finally {
       workQueueRows.pop();
     }
+  });
+  it('opens a Flow task chat without seeding its prompt, which only the task executor sends', async () => {
+    overviewLaneSpy.mockClear();
+    seedUserMessageIfEmptyMock.mockReset();
+    getChatQueryMock.mockResolvedValue({ id: 'chat-1', subChats: [{ id: 'subchat-1' }] });
+    getSubChatQueryMock.mockResolvedValue({ id: 'subchat-1', messages: [] });
+    const onNavigateToChat = vi.fn();
+    renderWorkQueue({ onNavigateToChat });
+    const queuedProps = getOverviewLaneProps<{
+      tasks: Task[];
+      onOpenChat: (task: Task, chatId: string) => Promise<string | undefined>;
+    }>('queued');
+
+    await queuedProps.onOpenChat({ ...queuedProps.tasks[0], flowRunId: 'run-1' }, 'chat-1');
+
+    expect(seedUserMessageIfEmptyMock).not.toHaveBeenCalled();
+    expect(onNavigateToChat).toHaveBeenCalledWith('chat-1');
   });
 });

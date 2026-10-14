@@ -385,7 +385,7 @@ export function WorkQueue({
     openWorkQueueTaskChat(
       {
         taskId: task.id,
-        prompt: buildTaskMessage(task),
+        prompt: task.flowRunId ? undefined : buildTaskMessage(task),
         chatId,
         resultSubChatId: task.result?.subChatId as string | undefined,
         ...options,

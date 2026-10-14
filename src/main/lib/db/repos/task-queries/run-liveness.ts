@@ -3,6 +3,7 @@ import { FLOW_DRIVING_STATUSES, SIGNAL_DEAD_RUN_STATUSES } from '../../../../../
 import type { getDatabase } from '../../index';
 import { flowRuns, tasks } from '../../schema';
 import { isSupersededAttempt } from './flow-collapse';
+import { isWaitModeTask } from './work-queue-overview-filter';
 
 function pausedFlowRun(flowRunId?: string): SQL | undefined {
   return flowRunId
@@ -31,6 +32,8 @@ export function drivingFlowTaskOnSubChat(
     eq(tasks.source, 'flow'),
     inArray(tasks.status, [...FLOW_DRIVING_STATUSES]),
     sql`json_extract(${tasks.result}, '$.subChatId') = ${subChatId}`,
+    // A step still waiting to be started drives nothing: no turn of it can be running.
+    not(isWaitModeTask),
     notExists(
       db
         .select({ id: flowRuns.id })
