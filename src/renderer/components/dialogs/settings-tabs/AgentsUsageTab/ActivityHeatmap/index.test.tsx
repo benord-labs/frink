@@ -52,6 +52,7 @@ describe('ActivityHeatmap', () => {
   it('says what the colours measure', () => {
     render(<ActivityHeatmap history={history()} />);
     expect(screen.getByText('Tokens per day')).toBeTruthy();
+    expect(screen.getByText('Claude and OpenAI only')).toBeTruthy();
   });
 
   it('hides the provider filter when only one provider has been used', () => {

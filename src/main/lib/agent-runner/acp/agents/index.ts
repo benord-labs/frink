@@ -26,7 +26,7 @@ export async function resolveAcpLaunch(
 export async function findAcpAgent(
   agentId: string,
   env?: Record<string, string>,
-): Promise<{ path: string; version: string } | { reason: string }> {
+): Promise<{ path: string; version: string } | { reason: string; missing?: true }> {
   const row = LAUNCH_ROWS.get(agentId);
   return row ? findRowBinary(row, env) : { reason: NO_ROW };
 }

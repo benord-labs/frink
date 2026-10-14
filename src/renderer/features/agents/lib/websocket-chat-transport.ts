@@ -568,6 +568,8 @@ export class WebSocketChatTransport implements ChatTransport<UIMessage> {
       }) ?? (() => {});
 
     // Handle extended chunk types
+    // Reason: existing chunk switch; agent support only names the provider on Claude's re-auth.
+    // fallow-ignore-next-line complexity
     const handleExtendedChunk = (chunk: ExtendedUIMessageChunk) => {
       if (chunk.type === 'start' || chunk.type === 'start-step') {
         appStore.set(pendingChatRetryAtomFamily(subChatId), null);
@@ -610,8 +612,7 @@ export class WebSocketChatTransport implements ChatTransport<UIMessage> {
         });
       }
 
-      // Auth errors: a `claude-passthrough` account goes to ConnectClaudeAccountPage in "reauth"
-      // mode; other sources surface the error in the stream and reconnect from Settings.
+      // Auth errors: Claude sign-ins reopen Claude's connect page; others reconnect from Settings.
       if (chunk.type === 'auth-error') {
         void (async () => {
           try {
@@ -624,6 +625,7 @@ export class WebSocketChatTransport implements ChatTransport<UIMessage> {
                 accountLabel: resolved.label,
                 mode: 'reauth',
                 returnToSettings: false,
+                provider: 'claude-code',
               });
             }
           } catch (err) {

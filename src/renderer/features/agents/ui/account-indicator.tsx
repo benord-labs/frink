@@ -239,6 +239,28 @@ function NewChatAccountRows({
   );
 }
 
+/** The provider row of a passthrough login (one Frink stores no token for), else undefined. */
+function passthroughRow(account: ShownAccount) {
+  const row = aiProvider(account.type);
+  return row && account.source === row.passthroughSource ? row : undefined;
+}
+
+/** What Reconnect brings back: "Claude Code login", "OpenAI login", or an installed agent's name. */
+function reconnectName(row: NonNullable<ReturnType<typeof passthroughRow>>): string {
+  if (row.runtime === 'acp') return row.name;
+  return `${row.id === 'claude-code' ? row.longName : row.name} login`;
+}
+
+/** Why a signed-out login needs action. */
+function signedOutText(account: ShownAccount): string {
+  const row = passthroughRow(account);
+  if (!row) return 'Not authenticated on this machine — open Settings to update the API key.';
+  if (row.runtime === 'acp') {
+    return `${row.name} is no longer installed on this computer. Click for the Reconnect option.`;
+  }
+  return `${reconnectName(row)} expired on this machine. Click for the Reconnect option.`;
+}
+
 /** The badge tooltip: the login, its provider and scope, and why a signed-out login needs action. */
 function AccountTooltipBody({
   account,
@@ -257,13 +279,7 @@ function AccountTooltipBody({
       <div className="text-muted-foreground">{providerLabel}</div>
       <div className="text-muted-foreground">{scope}</div>
       {!account.isAuthenticated && (
-        <div className="text-warning mt-1">
-          {account.source === 'claude-passthrough'
-            ? 'Claude Code login expired on this machine. Click for the Reconnect option.'
-            : account.source === 'codex-passthrough'
-              ? 'OpenAI login expired on this machine. Click for the Reconnect option.'
-              : 'Not authenticated on this machine — open Settings to update the API key.'}
-        </div>
+        <div className="text-warning mt-1">{signedOutText(account)}</div>
       )}
       <div className="text-muted-foreground mt-1.5 pt-1.5 border-t border-border/60">
         Click for menu. {hint}
@@ -275,10 +291,8 @@ function AccountTooltipBody({
 /** Re-runs the sign-in for an expired passthrough login; nothing for any other login. */
 function ReconnectItem({ account }: { account: ShownAccount }) {
   const setPendingAccountAuth = useSetAtom(pendingAccountAuthAtom);
-  const isPassthrough =
-    account.source === 'claude-passthrough' || account.source === 'codex-passthrough';
-  if (!isPassthrough || account.isAuthenticated) return null;
-  const isCodex = account.source === 'codex-passthrough';
+  const row = passthroughRow(account);
+  if (!row || account.isAuthenticated) return null;
   return (
     <DropdownMenuItem
       className="text-xs gap-2 text-foreground"
@@ -287,12 +301,12 @@ function ReconnectItem({ account }: { account: ShownAccount }) {
           mode: 'reauth',
           accountLabel: account.label,
           returnToSettings: false,
-          provider: isCodex ? 'codex' : undefined,
+          provider: row.id,
         })
       }
     >
       <RefreshCw className="h-3.5 w-3.5 shrink-0" aria-hidden />
-      <span>Reconnect {isCodex ? 'OpenAI' : 'Claude Code'} login</span>
+      <span>Reconnect {reconnectName(row)}</span>
     </DropdownMenuItem>
   );
 }

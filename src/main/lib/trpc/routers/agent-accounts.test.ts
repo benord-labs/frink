@@ -1,8 +1,9 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { findAcpAgent } from '../../agent-runner/acp';
+import type { DetectCodexAccountResult } from '../../credentials/detect-codex';
 import * as schema from '../../db/schema';
 import { freshDb, type TestDb } from '../../db/test-utils/fresh-db';
 import { createAgentAccountsRouter } from './agent-accounts';
@@ -13,16 +14,24 @@ const FAKE_OPENCODE = `#!/bin/sh
 `;
 
 const ON = { opencodeAccounts: true };
+const CODEX_ON = { codexAccounts: true };
+const CODEX_LOGIN = {
+  available: true,
+  email: 'me@openai.example',
+  sourcePath: 'codex-passthrough://local',
+};
 
 describe('agentAccounts', () => {
   let root = '';
   let db: TestDb;
   let env = { PATH: '', HOME: '', FAKE_VERSION: '' };
+  const detectCodex = vi.fn<() => Promise<DetectCodexAccountResult>>();
 
   const caller = (flags: Record<string, boolean> = ON, platform = 'darwin') =>
     createAgentAccountsRouter({
       db: () => db,
       findAgent: (type) => findAcpAgent(type, env),
+      detectCodex,
       rememberedModels: (type) =>
         type === 'opencode' ? [{ id: 'opencode/big-pickle', name: 'Big Pickle' }] : undefined,
       flags,
@@ -37,6 +46,7 @@ describe('agentAccounts', () => {
     await mkdir(bin);
     await writeFile(path.join(bin, 'opencode'), FAKE_OPENCODE, { mode: 0o755 });
     env = { PATH: bin, HOME: root, FAKE_VERSION: '1.19.4' };
+    detectCodex.mockReset().mockResolvedValue(CODEX_LOGIN);
   });
   afterEach(() => rm(root, { recursive: true, force: true }));
 
@@ -97,6 +107,7 @@ describe('agentAccounts', () => {
     await expect(caller().detect({ type: 'opencode' })).resolves.toEqual({
       available: false,
       reason: expect.stringContaining('npm install -g opencode-ai'),
+      missing: true,
     });
   });
 
@@ -104,7 +115,7 @@ describe('agentAccounts', () => {
     ['switched off', {}, 'darwin', 'opencode'],
     ['not checked on Windows', ON, 'win32', 'opencode'],
     ['Claude, which has its own sign-in', ON, 'darwin', 'claude-code'],
-    ['OpenAI, which has its own sign-in', { ...ON, codexAccounts: true }, 'darwin', 'codex'],
+    ['OpenAI, switched off', ON, 'darwin', 'codex'],
     ['unknown', ON, 'darwin', 'someday-agent'],
   ])('refuses an agent that is %s', async (_case, flags, platform, type) => {
     await expect(caller(flags, platform).detect({ type })).resolves.toMatchObject({
@@ -119,5 +130,48 @@ describe('agentAccounts', () => {
       { id: 'opencode/big-pickle', name: 'Big Pickle' },
     ]);
     await expect(caller().models({ type: 'copilot' })).resolves.toEqual([]);
+  });
+
+  it('finds the OpenAI login Codex keeps on this computer', async () => {
+    await expect(caller(CODEX_ON).detect({ type: 'codex' })).resolves.toEqual({
+      available: true,
+      email: 'me@openai.example',
+      sourcePath: 'codex-passthrough://local',
+    });
+    detectCodex.mockResolvedValue({ available: false, hint: 'Run `codex login`.' });
+    await expect(caller(CODEX_ON).detect({ type: 'codex' })).resolves.toEqual({
+      available: false,
+      reason: 'Run `codex login`.',
+    });
+  });
+
+  it('connects one OpenAI login per device, labelled by the user, with no stored token', async () => {
+    await caller(CODEX_ON).connect({ type: 'codex', accountLabel: 'My Codex' });
+    const [connected] = rows();
+    expect(connected).toMatchObject({
+      type: 'codex',
+      accountLabel: 'My Codex',
+      oauthToken: null,
+      source: 'codex-passthrough',
+      sourcePath: 'codex-passthrough://local',
+      expectedEmail: 'me@openai.example',
+      isDefault: true,
+    });
+
+    detectCodex.mockResolvedValue({ available: true, displayName: 'OpenAI' });
+    await expect(
+      caller(CODEX_ON).connect({ type: 'codex', accountLabel: 'Renamed' }),
+    ).resolves.toEqual({ accountId: connected?.id, status: 'updated' });
+    expect(rows()).toEqual([
+      expect.objectContaining({ accountLabel: 'Renamed', expectedEmail: null }),
+    ]);
+  });
+
+  it('refuses an OpenAI connect when Codex has no login here', async () => {
+    detectCodex.mockResolvedValue({ available: false });
+    await expect(caller(CODEX_ON).connect({ type: 'codex', accountLabel: 'x' })).rejects.toThrow(
+      /codex login/,
+    );
+    expect(rows()).toEqual([]);
   });
 });

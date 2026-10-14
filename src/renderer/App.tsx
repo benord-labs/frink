@@ -43,9 +43,9 @@ const AgentsLayout: LazyPage = lazy(() =>
 const ConnectClaudeAccountPage: LazyPage = lazy(() =>
   import('./features/onboarding').then((m) => ({ default: m.ConnectClaudeAccountPage })),
 );
-// ConnectCodexAccountPage used by Settings → Connect Codex (dark behind LAUNCH_FLAGS.codexAccounts).
-const ConnectCodexAccountPage: LazyPage = lazy(() =>
-  import('./features/onboarding').then((m) => ({ default: m.ConnectCodexAccountPage })),
+// ConnectAgentAccountPage connects every other provider that keeps its own sign-in.
+const ConnectAgentAccountPage = lazy(() =>
+  import('./features/onboarding').then((m) => ({ default: m.ConnectAgentAccountPage })),
 );
 
 // Loading fallback for lazy components.
@@ -214,15 +214,15 @@ function GlobalEventListeners() {
 const AppContent = memo(function AppContent() {
   const pendingAccountAuth = useAtomValue(pendingAccountAuthAtom);
 
-  // Show the Connect page when a passthrough connect/reauth flow is pending.
-  // The provider discriminator routes to Codex; absent/Claude is the default.
+  // Show the provider's Connect page when a passthrough connect/reauth flow is pending.
   if (pendingAccountAuth !== null) {
+    const { provider } = pendingAccountAuth;
     return (
       <Suspense fallback={<PageLoader />}>
-        {pendingAccountAuth.provider === 'codex' ? (
-          <ConnectCodexAccountPage />
-        ) : (
+        {provider === 'claude-code' ? (
           <ConnectClaudeAccountPage />
+        ) : (
+          <ConnectAgentAccountPage provider={provider} />
         )}
       </Suspense>
     );

@@ -230,10 +230,10 @@ export async function locateRowBinary(row: AcpLaunchRow, env?: Env): Promise<str
 export async function findRowBinary(
   row: AcpLaunchRow,
   startEnv?: Env,
-): Promise<{ path: string; version: string } | { reason: string }> {
+): Promise<{ path: string; version: string } | { reason: string; missing?: true }> {
   const env = startEnv ?? (await userEnv());
   const command = await locateBinary(row, env);
-  if (!command) return { reason: missingText(row) };
+  if (!command) return { reason: missingText(row), missing: true };
   const checked = await checkVersion(row, command, env, env.HOME ?? os.homedir());
   return 'version' in checked ? { path: command, version: checked.version } : checked;
 }

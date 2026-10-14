@@ -7,6 +7,7 @@ import {
   selectableProviderIds,
 } from '../../../../shared/lib/ai-providers';
 import { findAcpAgent, rememberedModelOptions } from '../../agent-runner/acp';
+import { detectCodexAccount } from '../../credentials/detect-codex';
 import { claudeCodeCredentials, getDatabase } from '../../db';
 import { createId } from '../../db/utils';
 import { publicProcedure, router } from '../index';
@@ -14,19 +15,42 @@ import { publicProcedure, router } from '../index';
 type AgentAccountsDeps = {
   db: () => ReturnType<typeof getDatabase>;
   findAgent: (type: string) => ReturnType<typeof findAcpAgent>;
+  detectCodex: typeof detectCodexAccount;
   rememberedModels: typeof rememberedModelOptions;
   flags: Partial<Record<keyof typeof LAUNCH_FLAGS, boolean>>;
   platform: string;
 };
 
 const NOT_AVAILABLE = "Frink can't connect this agent yet.";
+const NO_CODEX_LOGIN = 'No Codex login found. Run `codex login` and try again.';
 const typeInput = z.object({ type: z.string() });
 
-/** The provider row for an agent Frink runs from the user's own install, when it may be connected here. */
+type Detection =
+  | { available: true; version?: string; email?: string; displayName?: string; sourcePath?: string }
+  | { available: false; reason: string; missing?: true };
+
+/** The provider row for an agent that keeps its own sign-in, when it may be connected here. */
 function connectableAgent(type: string, deps: AgentAccountsDeps) {
   const row = aiProvider(type);
   const selectable = selectableProviderIds(deps.flags, deps.platform);
-  return row?.runtime === 'acp' && selectable.includes(row.id) ? row : undefined;
+  return row && row.runtime !== 'claude' && selectable.includes(row.id) ? row : undefined;
+}
+
+/** Whether the agent's own sign-in or install is usable here; reads no secret. */
+async function detectAgent(
+  row: NonNullable<ReturnType<typeof connectableAgent>>,
+  deps: AgentAccountsDeps,
+): Promise<Detection> {
+  if (row.runtime === 'codex') {
+    const { hint, ...login } = await deps.detectCodex();
+    return login.available
+      ? { ...login, available: true }
+      : { available: false, reason: hint ?? NO_CODEX_LOGIN };
+  }
+  const found = await deps.findAgent(row.id);
+  return 'reason' in found
+    ? { ...found, available: false }
+    : { available: true, version: found.version };
 }
 
 /** Finds and connects agents that keep their own sign-in, so Frink stores no credential for them. */
@@ -34,17 +58,16 @@ export function createAgentAccountsRouter(
   deps: AgentAccountsDeps = {
     db: getDatabase,
     findAgent: findAcpAgent,
+    detectCodex: detectCodexAccount,
     rememberedModels: rememberedModelOptions,
     flags: LAUNCH_FLAGS,
     platform: process.platform,
   },
 ) {
   return router({
-    detect: publicProcedure.input(typeInput).query(async ({ input }) => {
+    detect: publicProcedure.input(typeInput).query(async ({ input }): Promise<Detection> => {
       const row = connectableAgent(input.type, deps);
-      const found = row ? await deps.findAgent(row.id) : { reason: NOT_AVAILABLE };
-      if ('reason' in found) return { available: false, reason: found.reason };
-      return { available: true, version: found.version };
+      return row ? detectAgent(row, deps) : { available: false, reason: NOT_AVAILABLE };
     }),
 
     /** The models the agent listed in its last session this run; none until it has run once. */
@@ -58,8 +81,9 @@ export function createAgentAccountsRouter(
       .mutation(async ({ input }) => {
         const row = connectableAgent(input.type, deps);
         if (!row) throw new Error(NOT_AVAILABLE);
-        const found = await deps.findAgent(row.id);
-        if ('reason' in found) throw new Error(found.reason);
+        const found = await detectAgent(row, deps);
+        if (!found.available) throw new Error(found.reason);
+        const expectedEmail = found.email ?? null;
 
         const db = deps.db();
         const existing = db
@@ -70,7 +94,12 @@ export function createAgentAccountsRouter(
         if (existing) {
           // With no label given, the stored one stays.
           db.update(claudeCodeCredentials)
-            .set({ accountLabel: input.accountLabel, needsReauthAt: null, connectedAt: new Date() })
+            .set({
+              accountLabel: input.accountLabel,
+              expectedEmail,
+              needsReauthAt: null,
+              connectedAt: new Date(),
+            })
             .where(eq(claudeCodeCredentials.id, existing.id))
             .run();
           return { accountId: existing.id, status: 'updated' as const };
@@ -90,6 +119,8 @@ export function createAgentAccountsRouter(
             oauthToken: null,
             isDefault: firstAccount,
             source: row.passthroughSource,
+            sourcePath: found.sourcePath ?? null,
+            expectedEmail,
           })
           .run();
         return { accountId: id, status: 'created' as const };

@@ -7,7 +7,11 @@ import { createStore, Provider } from 'jotai';
 import { toast } from 'sonner';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LAUNCH_FLAGS } from '../../../../shared/launch-flags';
-import { activeOverlayAtom, agentsSettingsDialogActiveTabAtom } from '../../../lib/atoms';
+import {
+  activeOverlayAtom,
+  agentsSettingsDialogActiveTabAtom,
+  pendingAccountAuthAtom,
+} from '../../../lib/atoms';
 import { AccountIndicator, ContinueAfterUsageLimit } from './account-indicator';
 
 type ListAccount = {
@@ -540,5 +544,37 @@ describe('AccountIndicator', () => {
     } finally {
       Reflect.deleteProperty(window, 'desktopApi');
     }
+  });
+
+  it('says an OpenCode that is no longer installed was not found, and reconnects on its own page', async () => {
+    getResolvedAccountMock.mockReturnValue({
+      data: {
+        label: 'OpenCodeWork',
+        type: 'opencode' as const,
+        source: 'opencode-passthrough',
+        isProjectOverride: false,
+        isAuthenticated: false,
+      },
+      isLoading: false,
+    });
+    const store = createStore();
+    render(
+      <Provider store={store}>
+        <AccountIndicator chatId="chat-1" />
+      </Provider>,
+    );
+
+    expect(
+      screen.getByText(/OpenCode is no longer installed on this computer\./),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/API key/)).not.toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole('button', { name: /^AI accounts menu/ }));
+    await userEvent.setup().click(screen.getByRole('menuitem', { name: 'Reconnect OpenCode' }));
+    expect(store.get(pendingAccountAuthAtom)).toEqual({
+      mode: 'reauth',
+      accountLabel: 'OpenCodeWork',
+      returnToSettings: false,
+      provider: 'opencode',
+    });
   });
 });

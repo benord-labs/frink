@@ -1,4 +1,8 @@
-import type { AiProviderId } from '../../../../../shared/lib/ai-providers';
+import {
+  AI_PROVIDERS,
+  type AiProviderId,
+  selectableProviderIds,
+} from '../../../../../shared/lib/ai-providers';
 
 export type AccountType = AiProviderId;
 
@@ -17,42 +21,38 @@ export function shouldUseInlineCredentialEdit(account: {
   return Boolean(account.isApiKey);
 }
 
-/**
- * Which connect page a passthrough row routes to. A codex row (type `'codex'` or
- * source `'codex-passthrough'`) opens the Codex connect page; everything else
- * defaults to Claude. Returns `undefined` for the non-codex case so the field is
- * omitted (the App.tsx gate treats absent as Claude).
- */
-export function providerForAccount(account: {
-  type?: AccountType;
-  source?: string | null;
-}): 'codex' | undefined {
-  return account.type === 'codex' || account.source === 'codex-passthrough' ? 'codex' : undefined;
-}
-
 export function buildPendingReauthState(account: {
   id: string;
   label: string;
   type?: AccountType;
-  source?: string | null;
 }) {
   return {
     accountId: account.id,
     accountLabel: account.label,
     mode: 'reauth' as const,
     returnToSettings: true,
-    provider: providerForAccount(account),
+    provider: account.type ?? 'claude-code',
   };
 }
 
 /** No label: the connect page names the account after the login it detects. */
-export function buildPendingAddState(provider?: 'codex') {
-  return {
-    accountLabel: '',
-    mode: 'add' as const,
-    returnToSettings: true,
-    provider,
-  };
+export function buildPendingAddState(provider: AccountType) {
+  return { accountLabel: '', mode: 'add' as const, returnToSettings: true, provider };
+}
+
+/** Providers this device can still sign in to or connect, in table order. One login each. */
+export function signInProviders(
+  accounts: Array<{ source?: string | null }>,
+  flags: Parameters<typeof selectableProviderIds>[0],
+  platform: string | undefined,
+): AccountType[] {
+  const connected = new Set(accounts.map((account) => account.source));
+  return selectableProviderIds(flags, platform).filter(
+    // Claude's own sign-in needs macOS or Linux.
+    (id) =>
+      !connected.has(AI_PROVIDERS[id].passthroughSource) &&
+      !(id === 'claude-code' && platform === 'win32'),
+  );
 }
 
 /** "Claude API key", then "Claude API key 2"…: account names must be unique. */

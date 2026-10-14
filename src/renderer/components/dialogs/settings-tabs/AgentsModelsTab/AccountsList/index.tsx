@@ -2,7 +2,14 @@
 
 import { useSetAtom } from 'jotai';
 import { KeyRound, Plus } from 'lucide-react';
-import { type ComponentProps, type ReactElement, useCallback, useRef, useState } from 'react';
+import {
+  type ComponentProps,
+  Fragment,
+  type ReactElement,
+  useCallback,
+  useRef,
+  useState,
+} from 'react';
 import { toast } from 'sonner';
 import { SettingsCard } from '@/components/settings/SettingsCard';
 import { AccountsErrorBanner } from '@/components/ui/accounts-error-banner';
@@ -14,16 +21,18 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { notifyToolSwitch } from '@/utils/tool-switch-message';
 import { LAUNCH_FLAGS } from '../../../../../../shared/launch-flags';
+import { AI_PROVIDERS } from '../../../../../../shared/lib/ai-providers';
 import { agentsSettingsDialogOpenAtom, pendingAccountAuthAtom } from '../../../../../lib/atoms';
 import { trpc } from '../../../../../lib/trpc';
-import { isWindows } from '../../../../../lib/utils/platform';
 import { AccountRow } from '../AccountRow';
 import { AddAccountForm } from '../AddAccountForm';
 import {
   type AccountAuthSelection,
+  type AccountType,
   buildPendingAddState,
   nextApiKeyName,
   shouldUseInlineCredentialEdit,
+  signInProviders,
 } from '../auth-flow-utils';
 import { ProviderTile } from '../ProviderTile';
 
@@ -31,10 +40,6 @@ type Props = {
   onAuthenticate: (account: AccountAuthSelection) => void;
   accounts: Array<ComponentProps<typeof AccountRow>['account']>;
   refetchAccounts: () => Promise<unknown>;
-  /** This device already has its one Claude Code login, so the Add menu omits that choice. */
-  hasClaudePassthrough?: boolean;
-  /** This device already has its one Codex login, so the Add menu omits that choice. */
-  hasCodexPassthrough?: boolean;
   /** listAccounts failed after fetch; rows below may be stale cache. */
   accountsListFailed?: boolean;
 };
@@ -43,8 +48,6 @@ export function AccountsList({
   onAuthenticate,
   accounts,
   refetchAccounts,
-  hasClaudePassthrough,
-  hasCodexPassthrough,
   accountsListFailed = false,
 }: Props): ReactElement {
   const [showAddForm, setShowAddForm] = useState(false);
@@ -169,7 +172,7 @@ export function AccountsList({
     addAccountMutation.mutate({ label, token: apiKey, isApiKey: true });
   };
 
-  const startSignIn = (provider?: 'codex') => {
+  const startSignIn = (provider: AccountType) => {
     setPendingAccountAuth(buildPendingAddState(provider));
     setSettingsOpen(false);
   };
@@ -230,8 +233,7 @@ export function AccountsList({
         <AddAccountMenu
           triggerRef={addTriggerRef}
           withBorder={accounts.length > 0}
-          canSignInClaude={!isWindows() && !hasClaudePassthrough}
-          canSignInCodex={LAUNCH_FLAGS.codexAccounts && !hasCodexPassthrough}
+          signIns={signInProviders(accounts, LAUNCH_FLAGS, window.desktopApi?.platform)}
           onSignIn={startSignIn}
           onAddKey={() => setShowAddForm(true)}
         />
@@ -247,16 +249,14 @@ const ADD_ROW_CLASS =
 function AddAccountMenu({
   triggerRef,
   withBorder,
-  canSignInClaude,
-  canSignInCodex,
+  signIns,
   onSignIn,
   onAddKey,
 }: {
   triggerRef: React.RefObject<HTMLButtonElement | null>;
   withBorder: boolean;
-  canSignInClaude: boolean;
-  canSignInCodex: boolean;
-  onSignIn: (provider?: 'codex') => void;
+  signIns: AccountType[];
+  onSignIn: (provider: AccountType) => void;
   onAddKey: () => void;
 }): ReactElement {
   const trigger = (
@@ -264,7 +264,7 @@ function AddAccountMenu({
       ref={triggerRef}
       type="button"
       className={ADD_ROW_CLASS}
-      onClick={canSignInClaude || canSignInCodex ? undefined : onAddKey}
+      onClick={signIns.length > 0 ? undefined : onAddKey}
     >
       <span className="flex size-9 items-center justify-center rounded-[10px] border border-dashed border-border">
         <Plus className="size-4" aria-hidden />
@@ -272,28 +272,28 @@ function AddAccountMenu({
       Add an account
     </button>
   );
+  const addKey = (
+    <DropdownMenuItem onClick={onAddKey}>
+      <KeyRound className="size-4" aria-hidden />
+      Add a Claude API key
+    </DropdownMenuItem>
+  );
   return (
     <div className={withBorder ? 'border-t border-border/50' : undefined}>
-      {canSignInClaude || canSignInCodex ? (
+      {signIns.length > 0 ? (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-64">
-            {canSignInClaude ? (
-              <DropdownMenuItem onClick={() => onSignIn()}>
-                <ProviderTile type="claude-code" size="sm" />
-                Sign in with Claude
-              </DropdownMenuItem>
-            ) : null}
-            <DropdownMenuItem onClick={onAddKey}>
-              <KeyRound className="size-4" aria-hidden />
-              Add a Claude API key
-            </DropdownMenuItem>
-            {canSignInCodex ? (
-              <DropdownMenuItem onClick={() => onSignIn('codex')}>
-                <ProviderTile type="codex" size="sm" />
-                Sign in with OpenAI
-              </DropdownMenuItem>
-            ) : null}
+            {signIns.includes('claude-code') ? null : addKey}
+            {signIns.map((id) => (
+              <Fragment key={id}>
+                <DropdownMenuItem onClick={() => onSignIn(id)}>
+                  <ProviderTile type={id} size="sm" />
+                  {`${AI_PROVIDERS[id].runtime === 'acp' ? 'Connect' : 'Sign in with'} ${AI_PROVIDERS[id].name}`}
+                </DropdownMenuItem>
+                {id === 'claude-code' ? addKey : null}
+              </Fragment>
+            ))}
           </DropdownMenuContent>
         </DropdownMenu>
       ) : (
