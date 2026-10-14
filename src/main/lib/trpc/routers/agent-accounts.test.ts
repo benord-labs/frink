@@ -106,7 +106,7 @@ describe('agentAccounts', () => {
 
     await expect(caller().detect({ type: 'opencode' })).resolves.toEqual({
       available: false,
-      reason: expect.stringContaining('npm install -g opencode-ai'),
+      reason: expect.stringContaining('npm install -g opencode-ai@1.19'),
       missing: true,
     });
   });

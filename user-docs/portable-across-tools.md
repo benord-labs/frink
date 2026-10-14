@@ -12,7 +12,7 @@ Frink lets you move between coding tools — Claude, Codex, Cursor and more — 
 
 ## Switching tools
 
-Each chat stays on the tool it started with. A new chat uses its project's account (set in **Settings → AI providers**) or your default, Claude or Codex, and changing either only affects chats you start afterwards. To use a different signed-in login for just one new chat, pick it from the account menu at the top of the new-chat screen; that never changes either default. Nothing inside a chat changes its tool or login; its header shows which one it always uses. The one exception is a chat that hits its usage limit: **Retry with** another signed-in Claude login carries the same conversation on there (on that login's organisation), and the chat stays on it. To work in another tool, start a new chat. When you move to another tool, Frink sets it up with your config and tells you what came across and what changes. Your setup also reaches editors Frink doesn't run your chats through, Cursor included: it imports their config and writes yours back.
+Each chat stays on the tool it started with. A new chat uses its project's account (set in **Settings → AI providers**) or your default, Claude, Codex or OpenCode, and changing either only affects chats you start afterwards. To use a different signed-in login for just one new chat, pick it from the account menu at the top of the new-chat screen; that never changes either default. Nothing inside a chat changes its tool or login; its header shows which one it always uses. The one exception is a chat that hits its usage limit: **Retry with** another signed-in Claude login carries the same conversation on there (on that login's organisation), and the chat stays on it. To work in another tool, start a new chat. When you move to another tool, Frink sets it up with your config and tells you what came across and what changes. Your setup also reaches editors Frink doesn't run your chats through, Cursor included: it imports their config and writes yours back.
 
 ## What follows you
 
@@ -60,6 +60,8 @@ Say you built an agent called **Security Auditor** and told it *"only allowed to
 Frink tells you what changed when you switch tools. The agent itself (its name and instructions) always comes with you. Tool-specific settings — which model it runs on, and how tightly its rules are policed — translate to the closest thing the new tool offers: model names differ between tools, so on a new tool the agent starts on that tool's default model until you pick one.
 
 **Hooks** (like *"block dangerous commands"*) currently stay on the tool you set them up in — bringing them along is on the roadmap.
+
+**OpenCode** chats don't take your setup yet. MCP servers, commands, custom agents and hooks don't reach them, and Frink ignores your own OpenCode config files while it runs OpenCode, for safety. OpenCode still reads your instructions files (`AGENTS.md`, `CLAUDE.md`) and the skills in `~/.claude/skills`.
 
 And if a tool can't take a piece of your setup at all, Frink doesn't force it — that piece stays where you set it up, and works again the moment you switch back.
 

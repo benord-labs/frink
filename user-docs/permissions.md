@@ -144,7 +144,7 @@ The validator surfaces errors inline:
 
 ## What's always blocked (system deny list)
 
-No rule you write can open up these paths. This is a static deny list, not a sandbox — it applies where Frink gates and inspects: file writes/edits, Claude `Read`s, Codex command/patch/terminal input, and commands whose path arguments Frink's classifier resolves (a command it can't statically resolve — an unlisted binary, `git diff --no-index`, a path made relative by an earlier `cd` — falls back to the ordinary ask prompt instead of a hard deny). Not covered today: Codex file reads, MCP operation arguments, plus the `Glob`/`Grep` search tools on every provider. OS-level sandboxing to close these structurally is the planned follow-up. The list:
+No rule you write can open up these paths. This is a static deny list, not a sandbox — it applies where Frink gates and inspects: file writes/edits, Claude `Read`s, Codex command/patch/terminal input, and commands whose path arguments Frink's classifier resolves (a command it can't statically resolve — an unlisted binary, `git diff --no-index`, a path made relative by an earlier `cd` — falls back to the ordinary ask prompt instead of a hard deny). Not covered today: Codex file reads, OpenCode file reads inside the chat's folder, MCP operation arguments, plus the `Glob`/`Grep` search tools on every provider. OS-level sandboxing to close these structurally is the planned follow-up. The list:
 
 - `**/.ssh/**` — SSH keys + known_hosts
 - `**/.aws/**` — AWS credentials
@@ -202,6 +202,17 @@ Claude Auto is available only on Claude Sonnet and Opus models that Frink report
 Auto reviews tool requests in Plan mode too — both the **planning phase** (the reading and running the agent does to build its plan) and, when the plan is accepted, the implementing phase. So a Plan-mode chat or Flow with Auto on runs without stopping to ask you for eligible tools throughout. Auto is still **not** the same as approving the plan: the plan itself still stops for you unless the Flow step is set to **auto-approve** (that separate checkbox is what skips the plan review). Turning Auto on never auto-approves a plan.
 
 Two things worth knowing. First, if the provider's reviewer cannot run for a plan step — for example on an unsupported model — Auto fails safe: an unattended Flow denies the tool rather than silently allowing it, while an attended chat may show denials instead of prompts in that rare case. Second, for a Flow's Plan step that is set to auto-approve, you will see the readout above the input switch from **Plan** to **Agent** with **Auto on** beside it once the plan is accepted, and the implementing half is reviewed the same way — on every kind of plan card.
+
+## OpenCode
+
+OpenCode chats (macOS) use the same cards and the same rules as any other chat.
+
+- **OpenCode asks Frink before every command, file change, web fetch or web search**, and before it touches anything outside the chat's folder. Your rules decide; when none does, you get a card. A denial blocks that one action and OpenCode carries on.
+- **Reading and searching files in the chat's folder doesn't ask.** In a general chat that folder is your home folder. Opening a `.env` file asks first, but a search of the folder can still show lines from one.
+- **Frink also holds every command until its check has allowed it**, so no command runs that Frink didn't allow.
+- **If OpenCode ever finishes an action without asking, Frink stops the chat.**
+- **Frink ignores your OpenCode config files while it runs OpenCode, for safety**, and won't start OpenCode at all when an organisation, company sign-in or administrator sends it settings.
+- **Auto and hooks don't apply to OpenCode chats yet.**
 
 ## Agent tool limits
 

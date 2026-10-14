@@ -44,7 +44,7 @@ export const AI_PROVIDERS = {
     flag: 'opencodeAccounts',
     agentMode: 'build',
     planMode: 'plan',
-    installHint: 'npm install -g opencode-ai',
+    installHint: 'npm install -g opencode-ai@1.19',
     signInHint: 'opencode auth login',
   },
   copilot: {

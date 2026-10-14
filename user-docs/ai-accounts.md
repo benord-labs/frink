@@ -1,6 +1,6 @@
 # AI accounts
 
-Frink runs your chats through Claude (Anthropic, via Claude Code) or OpenAI (via Codex). If you're already signed into either one in your terminal, that's all Frink needs — it uses the same sign-in, as you. This guide covers how to connect, what Frink stores, and why things behave the way they do.
+Frink runs your chats through Claude (Anthropic, via Claude Code), OpenAI (via Codex) or, on macOS, OpenCode. If you're already signed into one in your terminal, that's all Frink needs — it uses the same sign-in, as you. This guide covers how to connect, what Frink stores, and why things behave the way they do.
 
 ## Connecting
 
@@ -12,6 +12,28 @@ Frink runs your chats through Claude (Anthropic, via Claude Code) or OpenAI (via
 That's it. **Frink never reads or stores your token.** It only checks that the sign-in exists; the `claude` or `codex` program Frink launches reads its own credential and refreshes it itself, exactly as it does in your terminal.
 
 Every AI account belongs to this computer — Claude and OpenAI sign-ins and API-key accounts alike.
+
+### OpenCode (macOS)
+
+OpenCode is a free, open-source coding agent that can use many AI providers, including free models. Frink runs the OpenCode you install yourself.
+
+1. Install OpenCode 1.19 in your terminal: `npm install -g opencode-ai@1.19`. Check it with `opencode --version`.
+2. Optional: run `opencode auth login` to add your own AI provider. Without it you get OpenCode's free models.
+3. In Frink, go to Settings → AI providers → **Add an account** → **Connect OpenCode**.
+
+**Frink stores no credential for OpenCode.** OpenCode keeps its own sign-ins, and Frink only checks that OpenCode is installed. The model picker shows "OpenCode default" until your first message, then the models OpenCode offers.
+
+What to know:
+
+- **Frink ignores your OpenCode config files while it runs OpenCode, for safety.** Your settings could let OpenCode act without asking, so Frink starts it with its own. Your sign-ins and your instructions files (`AGENTS.md`, `CLAUDE.md`) still apply.
+- **OpenCode asks Frink before every command, file change, web fetch or web search**, and you answer on the same cards as any other chat. Frink also holds each command until it has been allowed. Reading and searching files in the chat's folder doesn't ask (in a general chat that folder is your home folder). Opening a `.env` file asks first, but a search of the folder can still show lines from one. If OpenCode ever finishes an action without asking, Frink stops the chat. More in [Permissions](./permissions.md#opencode).
+- **Not in OpenCode chats yet:** Auto, Flows, MCP servers, Frink's own chat tools (such as building a Flow from a chat), adding to a running turn (a message you send waits for the turn to end; **Send now** stops the turn first), Debug mode and OpenCode's own slash commands. Plan mode uses OpenCode's own plan mode.
+- **OpenCode chats aren't counted in the Usage tab.** They also show up in OpenCode's own list of past sessions.
+- **macOS only for now.** Linux and Windows aren't supported yet.
+- **OpenCode 2 previews aren't supported yet.** Frink shows, for example, "Frink has checked OpenCode 1.19. You have 2.0.29, which Frink hasn't checked yet." To go back to 1.19:
+  1. Remove OpenCode 2 the way you installed it. If you used OpenCode's install script, delete `~/.opencode/bin/opencode`, or Frink keeps finding it.
+  2. Move OpenCode's data folder aside, because 1.19 can't open the one OpenCode 2 wrote: `mv ~/.local/share/opencode ~/.local/share/opencode-2-backup`. This hides your OpenCode 2 sessions and sign-ins (move the folder back if you return to OpenCode 2).
+  3. Install 1.19 with `npm install -g opencode-ai@1.19`, check that `opencode --version` shows 1.19, and run `opencode auth login` again if you use your own AI provider.
 
 ### API key
 
@@ -51,6 +73,7 @@ All of it lives on this machine and nothing leaves it — each machine connects 
 |---|---|
 | **Claude Code sign-in** | A pointer to the keychain entry. No token. |
 | **OpenAI sign-in** | A pointer to your local Codex sign-in. No token. |
+| **OpenCode** | A note that OpenCode is connected. No token. |
 | **API key** (Anthropic) | The encrypted token via Electron `safeStorage`. |
 
 Reconnecting an account never creates a duplicate: Frink updates the existing row in place, so your project assignments and default-account setting are kept.
@@ -83,3 +106,5 @@ Below that, the same tab shows how much of your Claude and OpenAI (ChatGPT) plan
 - **macOS denied keychain access** — open System Settings → Privacy & Security → Keychain and re-allow Frink, OR run `claude auth login` to refresh the entry. You'll only ever be asked about the one main entry, and only while connecting.
 - **"An account named X already exists"** when adding a new account — pick a different name, or disconnect the existing one first. Same-name accounts would collide unpredictably.
 - **Linux without a keyring** — Frink won't store a key or token it can't encrypt, so adding the account shows an error instead. Install GNOME Keyring or KWallet, relaunch Frink, then add the account again.
+- **"Frink has checked OpenCode 1.19. You have …"** — you have a different OpenCode, often a 2 preview. Follow the steps to go back to 1.19 under [OpenCode (macOS)](#opencode-macos), then try again.
+- **"Settings from an organisation, sign-in provider or administrator can change how OpenCode asks for permission"** — your OpenCode gets settings from an organisation account, a company sign-in or your administrator, so Frink can't be sure it will still ask before it acts. Sign out of the organisation account with `opencode console logout`, or use Claude or OpenAI on this computer.
