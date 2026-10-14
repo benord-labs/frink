@@ -9,6 +9,7 @@ import {
   AI_PROVIDERS,
   type AiProviderId,
   aiProvider,
+  isInstalledAgent,
   selectableProviderIds,
 } from '../../../../shared/lib/ai-providers';
 import {
@@ -247,7 +248,7 @@ function passthroughRow(account: ShownAccount) {
 
 /** What Reconnect brings back: "Claude Code login", "OpenAI login", or an installed agent's name. */
 function reconnectName(row: NonNullable<ReturnType<typeof passthroughRow>>): string {
-  if (row.runtime === 'acp') return row.name;
+  if (isInstalledAgent(row)) return row.name;
   return `${row.id === 'claude-code' ? row.longName : row.name} login`;
 }
 
@@ -255,7 +256,7 @@ function reconnectName(row: NonNullable<ReturnType<typeof passthroughRow>>): str
 function signedOutText(account: ShownAccount): string {
   const row = passthroughRow(account);
   if (!row) return 'Not authenticated on this machine — open Settings to update the API key.';
-  if (row.runtime === 'acp') {
+  if (isInstalledAgent(row)) {
     return `${row.name} is no longer installed on this computer. Click for the Reconnect option.`;
   }
   return `${reconnectName(row)} expired on this machine. Click for the Reconnect option.`;

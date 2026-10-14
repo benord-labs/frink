@@ -21,7 +21,6 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { notifyToolSwitch } from '@/utils/tool-switch-message';
 import { LAUNCH_FLAGS } from '../../../../../../shared/launch-flags';
-import { AI_PROVIDERS } from '../../../../../../shared/lib/ai-providers';
 import { agentsSettingsDialogOpenAtom, pendingAccountAuthAtom } from '../../../../../lib/atoms';
 import { trpc } from '../../../../../lib/trpc';
 import { AccountRow } from '../AccountRow';
@@ -29,6 +28,7 @@ import { AddAccountForm } from '../AddAccountForm';
 import {
   type AccountAuthSelection,
   type AccountType,
+  addAccountLabel,
   buildPendingAddState,
   nextApiKeyName,
   shouldUseInlineCredentialEdit,
@@ -289,7 +289,7 @@ function AddAccountMenu({
               <Fragment key={id}>
                 <DropdownMenuItem onClick={() => onSignIn(id)}>
                   <ProviderTile type={id} size="sm" />
-                  {`${AI_PROVIDERS[id].runtime === 'acp' ? 'Connect' : 'Sign in with'} ${AI_PROVIDERS[id].name}`}
+                  {addAccountLabel(id)}
                 </DropdownMenuItem>
                 {id === 'claude-code' ? addKey : null}
               </Fragment>

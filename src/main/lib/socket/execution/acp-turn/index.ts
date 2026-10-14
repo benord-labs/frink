@@ -6,8 +6,6 @@ import type { UIMessageChunk } from '../../../claude/types';
 import { wrapRemindersForPrompt } from '../../operator-reminders';
 import type { ExtractedImagePart } from '../../streaming/image-parts';
 
-type AcpProviderRow = Extract<NonNullable<ReturnType<typeof aiProvider>>, { runtime: 'acp' }>;
-
 type AcpTurnParams = {
   providerId: AiProviderId;
   projectPath: string;
@@ -29,7 +27,10 @@ type AcpTurnParams = {
 const DEFAULT_DEPS = { resolveAcpLaunch, runAcpAgent, rememberedModelOptions };
 
 /** The agent's own mode for the chat's mode, or why the agent cannot run in it. */
-function agentModeFor(row: AcpProviderRow, mode: ChatMode): string | undefined {
+export function agentModeFor(
+  row: { name: string; agentMode?: string; planMode?: string },
+  mode: ChatMode,
+): string | undefined {
   if (mode === 'debug') {
     throw new Error(`Debug mode isn't available for ${row.name} yet. Switch to Agent or Plan.`);
   }
@@ -38,7 +39,7 @@ function agentModeFor(row: AcpProviderRow, mode: ChatMode): string | undefined {
   throw new Error(`Plan mode isn't available for ${row.name} yet. Switch to Agent.`);
 }
 
-function withNotes(text: string, notes: string[]): string {
+export function withNotes(text: string, notes: string[]): string {
   return notes.length > 0 ? `${wrapRemindersForPrompt(notes)}\n\n${text}` : text;
 }
 

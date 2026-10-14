@@ -620,6 +620,7 @@ if (gotTheLock) {
       (await import('./lib/agent-runner/codex/app-server-registry')).disposeAllCodexAppServers();
       // Stop agents still running a turn, waiting so a stuck one is force-stopped before exit.
       await (await import('./lib/agent-runner/acp')).disposeAllAcpAgents();
+      await (await import('./lib/agent-runner/copilot')).disposeAllCopilotClients();
 
       // ── Phase 3: Close DB and flush analytics ──
       await cleanupGitWatchers();

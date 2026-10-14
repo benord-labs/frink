@@ -1,7 +1,7 @@
 import { LAUNCH_FLAGS } from '../../launch-flags';
 
-/** What drives a provider: the Claude SDK, Codex's app server, or the Agent Client Protocol. */
-export const AGENT_RUNTIMES = ['claude', 'codex', 'acp'] as const;
+/** What drives a provider: Claude's SDK, Codex's app server, ACP, or GitHub Copilot's SDK. */
+export const AGENT_RUNTIMES = ['claude', 'codex', 'acp', 'copilot'] as const;
 export type AgentRuntime = (typeof AGENT_RUNTIMES)[number];
 
 type LaunchFlagName = keyof typeof LAUNCH_FLAGS;
@@ -10,9 +10,10 @@ type LaunchFlags = Partial<Record<LaunchFlagName, boolean>>;
 type BaseRow = { name: string; longName: string; passthroughSource: string };
 type AiProviderRow =
   // On Claude and Codex the flag only hides the provider from pickers.
-  | (BaseRow & { runtime: 'claude' | 'codex'; flag?: LaunchFlagName })
+  | (BaseRow & { runtime: 'claude'; flag?: LaunchFlagName })
+  | (BaseRow & { runtime: 'codex'; flag?: LaunchFlagName })
   | (BaseRow & {
-      runtime: 'acp';
+      runtime: 'acp' | 'copilot';
       flag: LaunchFlagName;
       // The agent's own modes for Frink's Agent and Plan; both are sent every turn.
       agentMode?: string;
@@ -48,11 +49,12 @@ export const AI_PROVIDERS = {
     signInHint: 'opencode auth login',
   },
   copilot: {
-    runtime: 'acp',
+    runtime: 'copilot',
     name: 'GitHub Copilot',
     longName: 'GitHub Copilot CLI',
     passthroughSource: 'copilot-passthrough',
     flag: 'copilotAccounts',
+    planMode: 'plan',
     installHint: 'npm install -g @github/copilot',
     signInHint: 'copilot login',
   },
@@ -75,8 +77,8 @@ export const AI_PROVIDER_IDS =
   Object.keys(AI_PROVIDERS) as AiProviderId[];
 export const PASSTHROUGH_SOURCES = AI_PROVIDER_IDS.map((id) => AI_PROVIDERS[id].passthroughSource);
 
-/** Operating systems where ACP agents have been checked. */
-const ACP_PLATFORMS: readonly string[] = ['darwin'];
+/** Operating systems where installed agents have been checked. */
+const AGENT_PLATFORMS: readonly string[] = ['darwin'];
 
 function isAiProviderId(type: string): type is AiProviderId {
   return Object.hasOwn(AI_PROVIDERS, type);
@@ -90,8 +92,15 @@ export function aiProvider(
   return isAiProviderId(id) ? { ...AI_PROVIDERS[id], id } : undefined;
 }
 
-function acpRunnable(flag: LaunchFlagName, flags: LaunchFlags, platform?: string): boolean {
-  return flags[flag] === true && platform !== undefined && ACP_PLATFORMS.includes(platform);
+/** An agent run from the user's own install: it keeps its own sign-in and lists its own models. */
+export function isInstalledAgent<R extends { runtime: AgentRuntime }>(
+  row: R | undefined,
+): row is Exclude<R, { runtime: 'claude' | 'codex' }> {
+  return row !== undefined && row.runtime !== 'claude' && row.runtime !== 'codex';
+}
+
+function agentRunnable(flag: LaunchFlagName, flags: LaunchFlags, platform?: string): boolean {
+  return flags[flag] === true && platform !== undefined && AGENT_PLATFORMS.includes(platform);
 }
 
 /** The runtime that may run this account type here, or undefined when it may not run at all. */
@@ -101,8 +110,8 @@ export function runtimeFor(
   platform?: string,
 ): AgentRuntime | undefined {
   const row = aiProvider(type);
-  if (row?.runtime !== 'acp') return row?.runtime;
-  return acpRunnable(row.flag, flags, platform) ? 'acp' : undefined;
+  if (!isInstalledAgent(row)) return row?.runtime;
+  return agentRunnable(row.flag, flags, platform) ? row.runtime : undefined;
 }
 
 /** Providers a person may pick or connect, in table order. */
@@ -112,7 +121,7 @@ export function selectableProviderIds(
 ): AiProviderId[] {
   return AI_PROVIDER_IDS.filter((id) => {
     const row = AI_PROVIDERS[id];
-    if (row.runtime === 'acp') return acpRunnable(row.flag, flags, platform);
+    if (isInstalledAgent(row)) return agentRunnable(row.flag, flags, platform);
     return !('flag' in row) || flags[row.flag] === true;
   });
 }

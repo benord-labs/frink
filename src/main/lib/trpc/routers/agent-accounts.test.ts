@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { findAcpAgent } from '../../agent-runner/acp';
+import { findCopilotAgent } from '../../agent-runner/copilot';
 import type { DetectCodexAccountResult } from '../../credentials/detect-codex';
 import * as schema from '../../db/schema';
 import { freshDb, type TestDb } from '../../db/test-utils/fresh-db';
@@ -12,9 +13,13 @@ import { createAgentAccountsRouter } from './agent-accounts';
 const FAKE_OPENCODE = `#!/bin/sh
 [ "$1" = --version ] && printf '%s\\n' "$FAKE_VERSION"
 `;
+const FAKE_COPILOT = `#!/bin/sh
+[ "$1" = --version ] && printf 'GitHub Copilot CLI %s.\\n' "$FAKE_VERSION"
+`;
 
 const ON = { opencodeAccounts: true };
 const CODEX_ON = { codexAccounts: true };
+const COPILOT_ON = { copilotAccounts: true };
 const CODEX_LOGIN = {
   available: true,
   email: 'me@openai.example',
@@ -31,9 +36,11 @@ describe('agentAccounts', () => {
     createAgentAccountsRouter({
       db: () => db,
       findAgent: (type) => findAcpAgent(type, env),
+      findCopilot: () => findCopilotAgent(env),
       detectCodex,
       rememberedModels: (type) =>
         type === 'opencode' ? [{ id: 'opencode/big-pickle', name: 'Big Pickle' }] : undefined,
+      copilotModels: () => [{ id: 'gpt-5', name: 'GPT-5', effort: true }],
       flags,
       platform,
     }).createCaller({ getWindow: () => null });
@@ -45,6 +52,7 @@ describe('agentAccounts', () => {
     const bin = path.join(root, 'bin');
     await mkdir(bin);
     await writeFile(path.join(bin, 'opencode'), FAKE_OPENCODE, { mode: 0o755 });
+    await writeFile(path.join(bin, 'copilot'), FAKE_COPILOT, { mode: 0o755 });
     env = { PATH: bin, HOME: root, FAKE_VERSION: '1.19.4' };
     detectCodex.mockReset().mockResolvedValue(CODEX_LOGIN);
   });
@@ -116,6 +124,8 @@ describe('agentAccounts', () => {
     ['not checked on Windows', ON, 'win32', 'opencode'],
     ['Claude, which has its own sign-in', ON, 'darwin', 'claude-code'],
     ['OpenAI, switched off', ON, 'darwin', 'codex'],
+    ['GitHub Copilot, switched off', ON, 'darwin', 'copilot'],
+    ['GitHub Copilot, not checked on Linux', COPILOT_ON, 'linux', 'copilot'],
     ['unknown', ON, 'darwin', 'someday-agent'],
   ])('refuses an agent that is %s', async (_case, flags, platform, type) => {
     await expect(caller(flags, platform).detect({ type })).resolves.toMatchObject({
@@ -125,11 +135,47 @@ describe('agentAccounts', () => {
     expect(rows()).toEqual([]);
   });
 
+  it('finds and connects the GitHub Copilot CLI installed here, with no stored sign-in', async () => {
+    env.FAKE_VERSION = '1.0.97';
+    await expect(caller(COPILOT_ON).detect({ type: 'copilot' })).resolves.toEqual({
+      available: true,
+      version: '1.0.97',
+    });
+    await caller(COPILOT_ON).connect({ type: 'copilot' });
+    expect(rows()).toEqual([
+      expect.objectContaining({
+        type: 'copilot',
+        accountLabel: 'GitHub Copilot',
+        source: 'copilot-passthrough',
+        oauthToken: null,
+      }),
+    ]);
+  });
+
+  it('refuses a GitHub Copilot version Frink has not checked, in plain words', async () => {
+    env.FAKE_VERSION = '1.1.0';
+    const reason =
+      "Frink has checked GitHub Copilot 1.0.96 and later 1.0 releases. You have 1.1.0, which Frink hasn't checked yet.";
+
+    await expect(caller(COPILOT_ON).detect({ type: 'copilot' })).resolves.toEqual({
+      available: false,
+      reason,
+    });
+    await expect(caller(COPILOT_ON).connect({ type: 'copilot' })).rejects.toThrow(reason);
+    expect(rows()).toEqual([]);
+  });
+
   it('lists the models an agent offered in its last session, or none before it has run', async () => {
     await expect(caller().models({ type: 'opencode' })).resolves.toEqual([
       { id: 'opencode/big-pickle', name: 'Big Pickle' },
     ]);
-    await expect(caller().models({ type: 'copilot' })).resolves.toEqual([]);
+    await expect(caller().models({ type: 'grok' })).resolves.toEqual([]);
+  });
+
+  it("lists GitHub Copilot's models from its own last session", async () => {
+    await expect(caller().models({ type: 'copilot' })).resolves.toEqual([
+      { id: 'gpt-5', name: 'GPT-5' },
+    ]);
   });
 
   it('finds the OpenAI login Codex keeps on this computer', async () => {

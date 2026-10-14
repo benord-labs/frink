@@ -1,6 +1,10 @@
 import type { ReactElement } from 'react';
 import { aiProviderMark } from '@/components/AiProviderMark';
-import { AI_PROVIDERS, type AiProviderId } from '../../../../shared/lib/ai-providers';
+import {
+  AI_PROVIDERS,
+  type AiProviderId,
+  isInstalledAgent,
+} from '../../../../shared/lib/ai-providers';
 import { useConnectAccountFlow } from '../../../hooks/useConnectAccountFlow';
 import { trpc } from '../../../lib/trpc';
 import { ConnectAccountShell, connectFlowProps, TerminalCommand } from '../connect-account-shell';
@@ -32,7 +36,7 @@ export function ConnectAgentAccountPage({
   provider: Exclude<AiProviderId, 'claude-code'>;
 }): ReactElement {
   const row = AI_PROVIDERS[provider];
-  const isAgent = row.runtime === 'acp';
+  const isAgent = isInstalledAgent(row);
   const Mark = aiProviderMark(provider);
   const detectionQuery = trpc.agentAccounts.detect.useQuery(
     { type: provider },
@@ -71,7 +75,9 @@ export function ConnectAgentAccountPage({
       loginFoundNote={
         isAgent ? (
           <span className="block text-sm">
-            Free {row.name} models work right away. To use your own providers, run{' '}
+            {row.runtime === 'copilot'
+              ? `${row.name} needs you signed in. If you aren't yet, run `
+              : `Free ${row.name} models work right away. To use your own providers, run `}
             <TerminalCommand>{row.signInHint}</TerminalCommand> in Terminal.
           </span>
         ) : undefined

@@ -346,6 +346,7 @@ import { checkPermission } from '../permissions/v2/check';
 import { resumeParkedTaskInPlace } from '../tasks';
 import type { MessagePart } from './client';
 import type { startAcpTurn } from './execution/acp-turn';
+import type { startCopilotTurn } from './execution/copilot-turn';
 import type { PlanFallbackSend } from './executor';
 import { applyApprovedPlanContextToPrompt } from './execution/prompt-prefix/approved-plan-prompt';
 
@@ -2264,6 +2265,28 @@ describe('socket file permission edge cases', () => {
     );
   });
 
+  it('refuses a GitHub Copilot chat under the shipped flags, never starting Claude or Codex', async () => {
+    vi.mocked(getDefaultClaudeCodeToken).mockResolvedValueOnce({
+      token: null,
+      isApiKey: false,
+      type: 'copilot',
+      label: 'GitHub Copilot',
+      passthrough: true,
+    });
+    vi.mocked(runCodexAgent).mockClear();
+
+    await handleRemoteExecute({ ...basePayload, message: 'hello' });
+
+    expect(claudeQueryMock).not.toHaveBeenCalled();
+    expect(vi.mocked(runCodexAgent)).not.toHaveBeenCalled();
+    expect(vi.mocked(socketClient.sendErrorDirect)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error:
+          "GitHub Copilot can't run chats in this version of Frink yet. Pick Claude or OpenAI for this chat.",
+      }),
+    );
+  });
+
   it('streams an agent chat through its ACP turn and continues that session next turn', async () => {
     _resetExecutorStateForTests();
     vi.mocked(getDefaultClaudeCodeToken).mockResolvedValue({
@@ -2322,6 +2345,54 @@ describe('socket file permission edge cases', () => {
     );
     expect(turns[1]?.freshSessionFallbackPrompt).toContain('hello');
     expect(turns[1]?.freshSessionFallbackPrompt?.endsWith('again')).toBe(true);
+  });
+
+  it('streams a GitHub Copilot chat through its own turn and continues that session next turn', async () => {
+    _resetExecutorStateForTests();
+    vi.mocked(getDefaultClaudeCodeToken).mockResolvedValue({
+      token: null,
+      isApiKey: false,
+      type: 'copilot',
+      label: 'GitHub Copilot',
+      passthrough: true,
+    });
+    vi.mocked(runCodexAgent).mockClear();
+    const permissionCheck = vi.spyOn(codexPermissions, 'createCodexHostPermissionCheck');
+    const turns: Parameters<typeof startCopilotTurn>[0][] = [];
+    const acpTurn = vi.fn();
+    const deps = {
+      runtimeFor: (): 'copilot' => 'copilot',
+      startAcpTurn: acpTurn,
+      async *startCopilotTurn(
+        params: Parameters<typeof startCopilotTurn>[0],
+      ): AsyncGenerator<UIMessageChunk, void, undefined> {
+        turns.push(params);
+        yield { type: 'text-start', id: 't1' };
+        yield { type: 'text-delta', id: 't1', delta: 'done' };
+        yield { type: 'finish', messageMetadata: { sessionId: 'cp-session-1' } };
+      },
+    };
+
+    await handleRemoteExecute({ ...basePayload, message: 'hello', mode: 'plan' }, deps);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(claudeQueryMock).not.toHaveBeenCalled();
+    expect(vi.mocked(runCodexAgent)).not.toHaveBeenCalled();
+    expect(acpTurn).not.toHaveBeenCalled();
+    expect(turns[0]).toMatchObject({ mode: 'plan', resumeSessionId: undefined });
+    expect(permissionCheck).toHaveBeenCalledWith(
+      expect.objectContaining({ autoReview: false, frinkMcpInjected: false }),
+    );
+    expect(vi.mocked(socketClient.sendExecuteCompleteDirect)).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'cp-session-1' }),
+    );
+
+    await handleRemoteExecute(
+      { ...basePayload, message: 'again', sessionId: 'cp-session-1', history: [] },
+      deps,
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(turns[1]).toMatchObject({ mode: 'agent', resumeSessionId: 'cp-session-1' });
   });
 });
 

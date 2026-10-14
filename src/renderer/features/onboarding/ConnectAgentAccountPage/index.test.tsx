@@ -52,7 +52,11 @@ function createTestClient(detection: Detection, connectError?: string) {
   });
 }
 
-function renderPage(provider: 'codex' | 'opencode', detection: Detection, connectError?: string) {
+function renderPage(
+  provider: 'codex' | 'opencode' | 'copilot',
+  detection: Detection,
+  connectError?: string,
+) {
   const store = createStore();
   store.set(pendingAccountAuthAtom, { accountLabel: '', mode: 'add', provider });
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -93,14 +97,21 @@ describe('ConnectAgentAccountPage', () => {
     expect(screen.queryByRole('button', { name: 'Connect' })).not.toBeInTheDocument();
   });
 
-  it('connects an installed OpenCode and says how to add your own providers', async () => {
-    renderPage('opencode', { available: true, version: '1.19.2' });
+  it.each([
+    ['opencode', 'OpenCode', 'opencode auth login', /Free OpenCode models work right away/],
+    ['copilot', 'GitHub Copilot', 'copilot login', /GitHub Copilot needs you signed in/],
+  ] as const)(
+    'connects an installed %s and shows its own sign-in command',
+    async (type, name, signIn, note) => {
+      renderPage(type, { available: true, version: '1.19.2' });
 
-    expect(await screen.findByText('OpenCode 1.19.2 found.')).toBeInTheDocument();
-    expect(screen.getByText('opencode auth login')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Connect' }));
-    expect(connect).toHaveBeenCalledWith({ type: 'opencode', accountLabel: 'OpenCode' });
-  });
+      expect(await screen.findByText(`${name} 1.19.2 found.`)).toBeInTheDocument();
+      expect(screen.getByText(signIn)).toBeInTheDocument();
+      expect(screen.getByText(note)).toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', { name: 'Connect' }));
+      expect(connect).toHaveBeenCalledWith({ type, accountLabel: name });
+    },
+  );
 
   it('says OpenCode is not installed and shows the command that installs it', async () => {
     renderPage('opencode', {

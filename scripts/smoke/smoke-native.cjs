@@ -15,7 +15,6 @@
  *   FRINK_SMOKE_MODULES_ROOT=node_modules ELECTRON_RUN_AS_NODE=1 npx electron scripts/smoke-native.cjs).
  */
 const { existsSync, realpathSync } = require('node:fs');
-const { createRequire } = require('node:module');
 const { join, resolve } = require('node:path');
 const { pathToFileURL } = require('node:url');
 
@@ -70,20 +69,34 @@ function checkNodePty(root) {
   });
 }
 
-/** The protocol library is plain JavaScript, so a package build keeps it inside app.asar. */
+/** The agent libraries are plain JavaScript, so a package build keeps them inside app.asar. */
 function packedModulesRoot(root) {
   return root.replace('app.asar.unpacked', 'app.asar');
 }
 
-/** Import the ESM-only protocol library the way the main process does: a dynamic import. */
-async function checkAcpSdk(root) {
-  const packed = packedModulesRoot(realpathSync(root));
-  const entry = createRequire(join(packed, 'package.json')).resolve('@agentclientprotocol/sdk');
-  // Resolution climbs parent folders, so a copy outside the build must not pass for the packaged one.
-  if (!entry.startsWith(packed)) throw new Error(`ACP SDK resolved outside ${packed}: ${entry}`);
-  const { PROTOCOL_VERSION } = await import(pathToFileURL(entry).href);
+/** The packaged file a dynamic import of `name` loads: its `import` export, never the CommonJS one. */
+function packedEntry(root, name) {
+  const dir = join(packedModulesRoot(realpathSync(root)), name);
+  const target = require(join(dir, 'package.json')).exports['.'].import;
+  // The export is a path, or conditions whose `default` is the path.
+  return join(dir, target.default ?? target);
+}
+
+/** Import a packaged agent library the way the main process does: a dynamic import. */
+async function importPacked(root, name) {
+  const entry = packedEntry(root, name);
+  console.log(`[smoke-native] ${name} from ${entry}`);
+  return import(pathToFileURL(entry).href);
+}
+
+async function checkAgentSdks(root) {
+  const { PROTOCOL_VERSION } = await importPacked(root, '@agentclientprotocol/sdk');
   if (!Number.isInteger(PROTOCOL_VERSION)) throw new Error('ACP SDK has no PROTOCOL_VERSION');
-  console.log(`[smoke-native] ACP SDK OK from ${entry} (protocol ${PROTOCOL_VERSION})`);
+  console.log(`[smoke-native] ACP SDK OK (protocol ${PROTOCOL_VERSION})`);
+  // Its platform runtime and FFI module are left out of the build; the client must load without them.
+  const { CopilotClient } = await importPacked(root, '@github/copilot-sdk');
+  if (!CopilotClient) throw new Error('GitHub Copilot SDK has no CopilotClient');
+  console.log('[smoke-native] GitHub Copilot SDK OK');
 }
 
 /** Load the resolved native modules under the Electron ABI and exercise each. Throws on any failure. */
@@ -95,7 +108,7 @@ async function main() {
   console.log('[smoke-native] node:sqlite OK');
   await checkNodePty(root);
   console.log('[smoke-native] node-pty OK');
-  await checkAcpSdk(root);
+  await checkAgentSdks(root);
   console.log('[smoke-native] PASS');
 }
 
@@ -110,4 +123,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { packedModulesRoot, resolveModulesRoot };
+module.exports = { packedEntry, packedModulesRoot, resolveModulesRoot };

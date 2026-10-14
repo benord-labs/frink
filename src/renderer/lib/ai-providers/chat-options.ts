@@ -1,4 +1,4 @@
-import { type AiProviderId, aiProvider } from '../../../shared/lib/ai-providers';
+import { type AiProviderId, aiProvider, isInstalledAgent } from '../../../shared/lib/ai-providers';
 import {
   type CodexAccountCatalog,
   codexModelsForAccount,
@@ -78,7 +78,7 @@ export function providerModels(
 ): ProviderModels {
   const row = aiProvider(providerId);
   if (row?.runtime === 'codex') return codexModels(inputs);
-  if (row?.runtime !== 'acp') return claudeModels(inputs);
+  if (!isInstalledAgent(row)) return claudeModels(inputs);
   const listed = inputs.agentModels ?? [];
   const chosen = listed.find((m) => m.id === inputs.modelId);
   // An id the agent doesn't list is never sent, so the agent's own default runs.
@@ -99,7 +99,7 @@ export function unsupportedChatControls(
   providerId: string | null | undefined,
 ): UnsupportedChatControls {
   const row = aiProvider(providerId);
-  if (row?.runtime !== 'acp') return { modes: [], commands: [] };
+  if (!isInstalledAgent(row)) return { modes: [], commands: [] };
   const modes: ChatMode[] = row.planMode ? ['debug'] : ['plan', 'debug'];
   return { modes, commands: [...modes, 'compact'] };
 }

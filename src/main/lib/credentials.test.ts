@@ -608,6 +608,20 @@ describe('agent passthrough resolution — the installed agent is the sign-in', 
     expect(probeClaudePassthroughSourceMock).not.toHaveBeenCalled();
   });
 
+  it('resolves GitHub Copilot while its CLI is installed, without looking for a Claude login', async () => {
+    getMock.mockReturnValueOnce({ ...opencodeRow, type: 'copilot', source: 'copilot-passthrough' });
+    const { getClaudeCodeTokenById, passthroughDeps } = await import('./credentials');
+    const locateAgent = vi.fn(async () => '/usr/local/bin/copilot');
+    passthroughDeps.locateAgent = locateAgent;
+
+    await expect(getClaudeCodeTokenById('oc-1')).resolves.toMatchObject({
+      type: 'copilot',
+      passthrough: true,
+    });
+    expect(locateAgent).toHaveBeenCalledWith('copilot');
+    expect(probeClaudePassthroughSourceMock).not.toHaveBeenCalled();
+  });
+
   it('flags the row when the agent is no longer installed', async () => {
     getMock.mockReturnValueOnce(opencodeRow);
     const { getClaudeCodeTokenById, isResolvedCredential, passthroughDeps } =

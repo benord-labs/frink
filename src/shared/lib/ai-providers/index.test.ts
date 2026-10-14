@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AI_PROVIDERS, aiProvider, runtimeFor, selectableProviderIds } from '.';
+import { AI_PROVIDERS, aiProvider, isInstalledAgent, runtimeFor, selectableProviderIds } from '.';
 
 const ALL_ON = {
   codexAccounts: true,
@@ -13,11 +13,17 @@ describe('AI provider table', () => {
     ['claude-code', 'claude'],
     ['codex', 'codex'],
     ['opencode', 'acp'],
-    ['copilot', 'acp'],
+    ['copilot', 'copilot'],
     ['grok', 'acp'],
   ] as const)('%s runs on %s with every flag on', (id, runtime) => {
     expect(aiProvider(id)).toEqual({ ...AI_PROVIDERS[id], id });
     expect(runtimeFor(id, ALL_ON, 'darwin')).toBe(runtime);
+  });
+
+  it('counts every provider but Claude and OpenAI as an installed agent, whatever runs it', () => {
+    const agents = Object.values(AI_PROVIDERS).filter((row) => isInstalledAgent(row));
+    expect(agents.map((row) => row.name)).toEqual(['OpenCode', 'GitHub Copilot', 'Grok']);
+    expect(isInstalledAgent(aiProvider('unknown'))).toBe(false);
   });
 
   it('reads a missing type as Claude and an unknown type as no provider', () => {
@@ -52,6 +58,17 @@ describe('AI provider table', () => {
       'claude-code',
       'codex',
       'opencode',
+    ]);
+  });
+
+  it('runs GitHub Copilot on its own runtime only when its flag is on and this system is checked', () => {
+    expect(runtimeFor('copilot', {}, 'darwin')).toBeUndefined();
+    expect(runtimeFor('copilot', { copilotAccounts: true }, 'win32')).toBeUndefined();
+    expect(runtimeFor('copilot', { copilotAccounts: true }, 'darwin')).toBe('copilot');
+    expect(selectableProviderIds({ copilotAccounts: true }, 'linux')).toEqual(['claude-code']);
+    expect(selectableProviderIds({ copilotAccounts: true }, 'darwin')).toEqual([
+      'claude-code',
+      'copilot',
     ]);
   });
 
