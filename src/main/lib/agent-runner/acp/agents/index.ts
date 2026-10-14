@@ -25,9 +25,10 @@ export async function resolveAcpLaunch(
 /** The installed agent and its version; it runs the agent once to read the version. */
 export async function findAcpAgent(
   agentId: string,
+  env?: Record<string, string>,
 ): Promise<{ path: string; version: string } | { reason: string }> {
   const row = LAUNCH_ROWS.get(agentId);
-  return row ? findRowBinary(row) : { reason: NO_ROW };
+  return row ? findRowBinary(row, env) : { reason: NO_ROW };
 }
 
 /** Where the agent is installed, without running it. */

@@ -574,3 +574,51 @@ describe('getDefaultCredentialForType — single-provider plan-usage resolution'
     expect(orderBySpy.mock.calls[0]).toHaveLength(2);
   });
 });
+
+describe('agent passthrough resolution — the installed agent is the sign-in', () => {
+  const opencodeRow = {
+    id: 'oc-1',
+    type: 'opencode',
+    oauthToken: null,
+    accountLabel: null,
+    source: 'opencode-passthrough',
+    sourcePath: null,
+    expectedEmail: null,
+    needsReauthAt: null,
+  };
+
+  beforeEach(() => {
+    setSpy.mockClear();
+    getMock.mockReset();
+    probeClaudePassthroughSourceMock.mockReset();
+  });
+
+  it('resolves while the agent is installed, without looking for a Claude login', async () => {
+    getMock.mockReturnValueOnce(opencodeRow);
+    const { getClaudeCodeTokenById, passthroughDeps } = await import('./credentials');
+    passthroughDeps.locateAgent = async () => '/usr/local/bin/opencode';
+
+    await expect(getClaudeCodeTokenById('oc-1')).resolves.toEqual({
+      token: null,
+      label: 'OpenCode',
+      isApiKey: false,
+      type: 'opencode',
+      passthrough: true,
+    });
+    expect(probeClaudePassthroughSourceMock).not.toHaveBeenCalled();
+  });
+
+  it('flags the row when the agent is no longer installed', async () => {
+    getMock.mockReturnValueOnce(opencodeRow);
+    const { getClaudeCodeTokenById, isResolvedCredential, passthroughDeps } =
+      await import('./credentials');
+    const locateAgent = vi.fn(async () => undefined);
+    passthroughDeps.locateAgent = locateAgent;
+
+    expect(isResolvedCredential(await getClaudeCodeTokenById('oc-1'))).toBe(false);
+    expect(locateAgent).toHaveBeenCalledWith('opencode');
+    expect(setSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ needsReauthAt: expect.any(Date) }),
+    );
+  });
+});
