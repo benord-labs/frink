@@ -49,16 +49,20 @@ describe('AI provider table', () => {
     ]);
   });
 
-  it('ships OpenCode on macOS only and Copilot and Grok off', () => {
+  it('ships OpenCode and GitHub Copilot on macOS only, and Grok off', () => {
     expect(runtimeFor('opencode', undefined, 'darwin')).toBe('acp');
     expect(runtimeFor('opencode', undefined, 'linux')).toBeUndefined();
-    expect(runtimeFor('copilot', undefined, 'darwin')).toBeUndefined();
+    expect(runtimeFor('copilot', undefined, 'darwin')).toBe('copilot');
+    expect(runtimeFor('copilot', undefined, 'linux')).toBeUndefined();
+    expect(runtimeFor('copilot', undefined, 'win32')).toBeUndefined();
     expect(runtimeFor('grok', undefined, 'darwin')).toBeUndefined();
     expect(selectableProviderIds(undefined, 'darwin')).toEqual([
       'claude-code',
       'codex',
       'opencode',
+      'copilot',
     ]);
+    expect(selectableProviderIds(undefined, 'linux')).toEqual(['claude-code', 'codex']);
   });
 
   it('runs GitHub Copilot on its own runtime only when its flag is on and this system is checked', () => {

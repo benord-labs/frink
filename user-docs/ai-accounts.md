@@ -1,6 +1,6 @@
 # AI accounts
 
-Frink runs your chats through Claude (Anthropic, via Claude Code), OpenAI (via Codex) or, on macOS, OpenCode. If you're already signed into one in your terminal, that's all Frink needs — it uses the same sign-in, as you. This guide covers how to connect, what Frink stores, and why things behave the way they do.
+Frink runs your chats through Claude (Anthropic, via Claude Code), OpenAI (via Codex) or, on macOS, OpenCode or GitHub Copilot. If you're already signed into one in your terminal, that's all Frink needs — it uses the same sign-in, as you. This guide covers how to connect, what Frink stores, and why things behave the way they do.
 
 ## Connecting
 
@@ -34,6 +34,27 @@ What to know:
   1. Remove OpenCode 2 the way you installed it. If you used OpenCode's install script, delete `~/.opencode/bin/opencode`, or Frink keeps finding it.
   2. Move OpenCode's data folder aside, because 1.19 can't open the one OpenCode 2 wrote: `mv ~/.local/share/opencode ~/.local/share/opencode-2-backup`. This hides your OpenCode 2 sessions and sign-ins (move the folder back if you return to OpenCode 2).
   3. Install 1.19 with `npm install -g opencode-ai@1.19`, check that `opencode --version` shows 1.19, and run `opencode auth login` again if you use your own AI provider.
+
+### GitHub Copilot (macOS)
+
+GitHub Copilot is GitHub's coding agent. Frink runs the Copilot you install yourself, signed in with your own GitHub account, including the free plan.
+
+1. Install Copilot in your terminal: `npm install -g @github/copilot`. Check it with `copilot --version`.
+2. Sign in: run `copilot login` and finish in your browser.
+3. In Frink, go to Settings → AI providers → **Add an account** → **Connect GitHub Copilot**.
+
+**Frink stores no credential for GitHub Copilot.** Copilot keeps its own sign-in. Frink only checks that Copilot is installed, and that it's signed in each time a chat sends a message. The model picker shows "GitHub Copilot default" until your first message, then the models your plan offers. A free plan offers one model, Auto. Models that let you choose how hard they think show the effort slider.
+
+What to know:
+
+- **Frink has checked GitHub Copilot 1.0.96 and later 1.0 releases.** Copilot updates itself, so a newer release can stop working in Frink until Frink checks it. Frink tells you when that happens.
+- **Inside Frink, your own Copilot hooks, MCP servers and saved approvals don't apply, for safety.** They could let Copilot act without asking, so Frink starts Copilot with its own settings. Your sign-in still applies, and Copilot in your terminal is unchanged.
+- **GitHub Copilot asks Frink before every command, file change, web fetch or web search**, and before it reads anything outside the chat's folder. You answer on the same cards as any other chat. Reading and searching files in the chat's folder doesn't ask (in a general chat that folder is your home folder), and that includes `.env` files. If Copilot ever finishes an action without asking, Frink stops the chat. More in [Permissions](./permissions.md#github-copilot).
+- **Plan mode uses Copilot's own plan mode.** Copilot saves its plan to a file in Frink's own Copilot folder, and Frink lets that one file through without a question. You may still see a card when Copilot first writes or reads it. The plan shows as Copilot's reply, not as a plan card.
+- **Not in Copilot chats yet:** Auto, Flows, MCP servers, Frink's own chat tools (such as building a Flow from a chat), adding to a running turn (a message you send waits for the turn to end; **Send now** stops the turn first) and Debug mode.
+- **Organisation-managed and GitHub Enterprise Server accounts aren't supported yet.** Frink won't start Copilot when an organisation or your device manages its settings.
+- **Copilot chats use your Copilot plan, the same as in the terminal.** They aren't counted in the Usage tab.
+- **macOS only for now.** Linux and Windows aren't supported yet.
 
 ### API key
 
@@ -74,6 +95,7 @@ All of it lives on this machine and nothing leaves it — each machine connects 
 | **Claude Code sign-in** | A pointer to the keychain entry. No token. |
 | **OpenAI sign-in** | A pointer to your local Codex sign-in. No token. |
 | **OpenCode** | A note that OpenCode is connected. No token. |
+| **GitHub Copilot** | A note that GitHub Copilot is connected. No token. |
 | **API key** (Anthropic) | The encrypted token via Electron `safeStorage`. |
 
 Reconnecting an account never creates a duplicate: Frink updates the existing row in place, so your project assignments and default-account setting are kept.
@@ -108,3 +130,12 @@ Below that, the same tab shows how much of your Claude and OpenAI (ChatGPT) plan
 - **Linux without a keyring** — Frink won't store a key or token it can't encrypt, so adding the account shows an error instead. Install GNOME Keyring or KWallet, relaunch Frink, then add the account again.
 - **"Frink has checked OpenCode 1.19. You have …"** — you have a different OpenCode, often a 2 preview. Follow the steps to go back to 1.19 under [OpenCode (macOS)](#opencode-macos), then try again.
 - **"Settings from an organisation, sign-in provider or administrator can change how OpenCode asks for permission"** — your OpenCode gets settings from an organisation account, a company sign-in or your administrator, so Frink can't be sure it will still ask before it acts. Sign out of the organisation account with `opencode console logout`, or use Claude or OpenAI on this computer.
+- **"GitHub Copilot isn't signed in"** — run `copilot login` in Terminal, finish in your browser, then send your message again.
+- **"Frink can't find GitHub Copilot on this computer"** — install it with `npm install -g @github/copilot`, check that `copilot --version` works in Terminal, then try again.
+- **"Frink has checked GitHub Copilot 1.0.96 and later 1.0 releases. You have …"**, **"Frink has checked GitHub Copilot CLI 1.0.96 and later 1.0 releases. You have …"** or **"This GitHub Copilot release talks to apps in a way Frink doesn't support yet"** — your Copilot is a version Frink hasn't checked. If it's older, run `copilot update`. If it's newer (Copilot updates itself), use Claude, OpenAI or OpenCode until Frink is updated for it.
+- **"Frink couldn't tell which version of GitHub Copilot you have"** — run `copilot --version` in Terminal. If that fails too, install Copilot again.
+- **"Your organisation or device manages GitHub Copilot's settings, so Frink can't run it safely"** — those settings could let Copilot act without asking, so Frink won't start it. If you also have a personal GitHub account, switch Copilot to it (start `copilot` in Terminal and type `/user switch`), or use Claude or OpenAI on this computer.
+- **"Frink can't run GitHub Copilot for GitHub Enterprise Server accounts yet"** — sign in to Copilot with a github.com account instead, or use Claude or OpenAI.
+- **"GitHub Copilot didn't confirm Frink's safety settings"**, **"… stopped confirming Frink's safety settings"** or **"… started without asking before changes"** — Copilot didn't start the way Frink needs, so Frink stopped it before it could act on its own. Send your message again. If it keeps happening, update Copilot with `copilot update`, or use another provider.
+- **"GitHub Copilot couldn't turn Plan mode on or off as asked"** — your message wasn't sent. Send it again.
+- **"Frink can't check this tool yet, so it didn't run"** — Copilot tried a tool or option Frink doesn't know how to ask you about. Nothing ran, and Copilot usually tries another way.

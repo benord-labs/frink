@@ -23,14 +23,15 @@ export async function* startCopilotTurn(
   if (!resolved.ok) throw new Error(`${row.name} didn't start. ${resolved.reason}`);
   const fallback = params.freshSessionFallbackPrompt;
   // A model Copilot never listed (another provider's, or any before its first turn) is left out.
-  const listed = deps.rememberedCopilotModels()?.some(({ id }) => id === params.model);
+  const chosen = deps.rememberedCopilotModels()?.find(({ id }) => id === params.model);
   yield* deps.runCopilotAgent({
     launch: resolved.launch,
     cwd: params.projectPath,
     prompt: withNotes(params.prompt, params.composerNotes),
     freshSessionFallbackPrompt: fallback && withNotes(fallback, params.composerNotes),
     resumeSessionId: params.resumeSessionId,
-    model: listed ? params.model : undefined,
+    model: chosen && (chosen.familyId ?? chosen.id),
+    reasoningEffort: chosen?.effort,
     mode: mode === 'plan' ? mode : undefined,
     images: params.images.map(({ base64Data, mediaType }) => ({
       data: base64Data,
