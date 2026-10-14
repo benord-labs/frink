@@ -1,13 +1,17 @@
 import type {
   ClientConnection,
+  InitializeResponse,
   SessionConfigOption,
   SessionConfigSelectGroup,
   SessionConfigSelectOption,
 } from '@agentclientprotocol/sdk';
 import log from 'electron-log';
+import { z } from 'zod';
 
 /** Starting an agent may include a first-run download; a prompt itself has no deadline. */
 const START_DEADLINE_MS = 60_000;
+/** The JSON-RPC error of an agent that needs the user to sign in first. */
+export const SignInRequired = z.object({ code: z.literal(-32000) });
 
 /** What a turn asks of the session it runs in. */
 type AcpSessionInputs = {
@@ -24,6 +28,8 @@ type OpenedSession = {
   sessionId: string;
   /** The earlier session could not be continued, so the agent starts without its history. */
   lostHistory: boolean;
+  /** The version the agent reported, if any. */
+  agentVersion?: string;
 };
 
 type ModelOption = { id: string; name: string };
@@ -82,6 +88,7 @@ async function resumeOrCreate(
       });
       return { sessionId: resumeSessionId, options: resumed.configOptions, lostHistory: false };
     } catch (error) {
+      if (SignInRequired.safeParse(error).success) throw error;
       log.warn('[ACP] Could not continue the earlier session; starting a new one', error);
     }
   }
@@ -120,6 +127,18 @@ async function applyChoices(
   }
 }
 
+/** Keys under which agents that leave `agentInfo.version` empty report their version. */
+const VERSION_KEYS = ['version', 'agentVersion'];
+const VersionText = z.string().min(1);
+
+function reportedVersion({ agentInfo, _meta }: InitializeResponse): string | undefined {
+  if (agentInfo?.version) return agentInfo.version;
+  const values = [agentInfo?._meta, _meta].flatMap((meta) =>
+    VERSION_KEYS.map((key) => meta?.[key]),
+  );
+  return values.map((value) => VersionText.safeParse(value)).find(({ success }) => success)?.data;
+}
+
 /** Runs the ACP handshake and readies a session, closing the connection if that takes too long. */
 export async function openSession(
   connection: ClientConnection,
@@ -148,7 +167,7 @@ export async function openSession(
     const canResume = Boolean(capabilities?.sessionCapabilities?.resume);
     const { sessionId, options, lostHistory } = await resumeOrCreate(connection, inputs, canResume);
     await applyChoices(connection, sessionId, options ?? [], inputs);
-    return { sessionId, lostHistory };
+    return { sessionId, lostHistory, agentVersion: reportedVersion(initialized) };
   } finally {
     clearTimeout(deadline);
   }

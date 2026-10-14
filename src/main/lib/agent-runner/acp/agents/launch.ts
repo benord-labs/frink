@@ -43,6 +43,7 @@ export type AcpLaunchRow = {
   /** The checked versions: at least `floor`, below `below`. */
   versions: { floor: string; below: string };
   installHint: string;
+  signInHint: string;
   args: readonly string[];
   /** Inherited variables with this prefix are the agent's own settings, so they are dropped. */
   envPrefix: string;
@@ -296,7 +297,8 @@ export async function launchFromRow(
       await cleanup();
       return { ok: false, reason };
     }
-    const launch = { command, args: [...row.args], env: launchEnv, rules: row.rules };
+    const { rules, signInHint } = row;
+    const launch = { command, args: [...row.args], env: launchEnv, rules, signInHint };
     return { ok: true, launch: { ...launch, commandLedger: dirs.ledger, cleanup } };
   } catch (error) {
     await cleanup();

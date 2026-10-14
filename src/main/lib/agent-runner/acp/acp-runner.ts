@@ -9,7 +9,7 @@ import { completeTurnChunks, makeChunkSink } from '../codex/codex-stream-chunks'
 import { type CommandLedger, createCommandLedger } from './acp-command-ledger';
 import { answerPermissionRequest, CANCELLED, questionForTool } from './acp-permissions';
 import { type AcpAgentLaunch, type AcpAgentProcess, startAcpAgentProcess } from './acp-process';
-import { openSession } from './acp-session';
+import { openSession, SignInRequired } from './acp-session';
 import type { KnownToolCall } from './acp-tool-calls';
 import {
   createAcpTurnState,
@@ -26,6 +26,8 @@ export const ACTED_UNASKED_TEXT =
   'The agent did something without asking first, so Frink stopped it. The step shown above already ran.';
 const BLOCKED_COMMAND_TEXT =
   'Frink blocked a command the agent did not ask about and stopped this chat.';
+/** Agents' own commands that would let them act without asking. */
+const WIDENING_COMMAND = /^\/(?:allow-all|permissions|autopilot|yolo|always-approve)(?=\s|$)/i;
 
 export type AcpRunnerParams = {
   /** The agent's ACP command line; it runs in `cwd` and must make the agent ask before it acts. */
@@ -61,8 +63,23 @@ function loadAcpSdk(): Promise<AcpSdk> {
 
 type AgentLink = { agent?: AcpAgentProcess; connection?: ClientConnection };
 
-/** Why the turn failed: how the agent process ended when it did, else the error itself. */
-async function failureText(error: Error, { agent, connection }: AgentLink): Promise<string> {
+function signInText({ agentName, launch: { signInHint } }: AcpRunnerParams, said: string): string {
+  const ask = signInHint
+    ? `${agentName} needs you to sign in. Run \`${signInHint}\` in Terminal, then try again.`
+    : `${agentName} needs you to sign in with its own app first.`;
+  // The agent's own words are kept, in case it used the sign-in code for something else.
+  return /^authentication required\.?$/i.test(said.trim())
+    ? ask
+    : `${ask} (${agentName} said: ${said})`;
+}
+
+/** Why the turn failed: a sign-in, how the agent process ended, else the error itself. */
+async function failureText(
+  error: Error,
+  { agent, connection }: AgentLink,
+  params: AcpRunnerParams,
+): Promise<string> {
+  if (SignInRequired.safeParse(error).success) return signInText(params, error.message);
   // An agent's output closes a moment before its exit is reported, so wait for the reason.
   const waitMs = connection?.signal.aborted ? EXIT_REPORT_MS : 0;
   const ended = await Promise.race([
@@ -174,6 +191,11 @@ export async function* runAcpAgent(
     // Inside the try: a reader that stops at this chunk still gets the launch cleaned up.
     yield { type: 'start' };
     signal.throwIfAborted();
+    const widening = WIDENING_COMMAND.exec(params.prompt.trim())?.[0];
+    if (widening) {
+      const reason = 'it would let the agent act without asking you.';
+      throw new Error(`Frink doesn't send ${widening} to ${params.agentName}: ${reason}`);
+    }
     const { client, ndJsonStream, PROTOCOL_VERSION } = await loadAcpSdk();
     signal.throwIfAborted();
     link.agent = startAgent({ ...params.launch, cwd: params.cwd });
@@ -215,7 +237,7 @@ export async function* runAcpAgent(
       .catch(async (error: Error) => {
         // A turn that was stopped, by the user or for acting unasked, needs no further error.
         if (!turnOver.signal.aborted) {
-          emit({ type: 'error', errorText: await failureText(error, link) });
+          emit({ type: 'error', errorText: await failureText(error, link, params) });
         }
       })
       .finally(() => {
@@ -229,7 +251,7 @@ export async function* runAcpAgent(
     yield* queue.drain();
     const stopped = signal.aborted || turnOver.signal.aborted;
     if (!stopped && error instanceof Error) {
-      const text = await failureText(error, link);
+      const text = await failureText(error, link, params);
       // A stop for acting unasked can land while the text is read: its reason wins.
       yield { type: 'error', errorText: stopText ?? text };
     }

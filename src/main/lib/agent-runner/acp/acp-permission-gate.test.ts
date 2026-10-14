@@ -259,6 +259,78 @@ describe('the answer the agent receives', () => {
     expect(await ask(command, async () => DENIED, lastingOnly)).toEqual({ outcome: 'cancelled' });
   });
 
+  it.each<[string, PermissionOption[], { outcome: string }]>([
+    ...[
+      'allow_always',
+      'always_allow',
+      'allow_all',
+      'proceed_always',
+      'allow-all',
+      'allowAlways',
+    ].map((optionId): [string, PermissionOption[], { outcome: string }] => [
+      `the id ${optionId}`,
+      [
+        { optionId, kind: 'allow_once', name: 'Yes' },
+        { optionId: 'reject', kind: 'reject_once', name: 'Reject' },
+      ],
+      REJECT_ONCE,
+    ]),
+    ...[
+      "Allow and don't ask again",
+      "Yes, and don't ask me again",
+      'Do not ask again',
+      'Allow for this session',
+      'Never ask again',
+      'Remember this choice',
+      'Allow in this project',
+    ].map((name): [string, PermissionOption[], { outcome: string }] => [
+      `the name "${name}"`,
+      [
+        { optionId: 'yes', kind: 'allow_once', name },
+        { optionId: 'reject', kind: 'reject_once', name: 'Reject' },
+      ],
+      REJECT_ONCE,
+    ]),
+    [
+      'a name, with no refusal offered',
+      [{ optionId: 'yes', kind: 'allow_once', name: 'Allow all edits' }],
+      { outcome: 'cancelled' },
+    ],
+    [
+      'an id, skipping it for a real allow-once',
+      [
+        { optionId: 'always', kind: 'allow_once', name: 'Allow' },
+        { optionId: 'once', kind: 'allow_once', name: 'Allow once' },
+      ],
+      ALLOW_ONCE,
+    ],
+  ])('never allows once with an option that says it lasts, by %s', async (_, options, outcome) => {
+    expect(await ask(command, async () => ({ allowed: true }), options)).toEqual(outcome);
+  });
+
+  it.each<[string, string]>([
+    ['proceed_once', 'Yes, proceed'],
+    ['allow', 'Allow'],
+    ['allowOnce', 'Allow this time'],
+    ['ok', 'Allow edit'],
+  ])('allows once with a one-time option %s "%s"', async (optionId, name) => {
+    const options: PermissionOption[] = [{ optionId, kind: 'allow_once', name }];
+    expect(await ask(command, async () => ({ allowed: true }), options)).toEqual({
+      outcome: 'selected',
+      optionId,
+    });
+  });
+
+  it('refuses once with the agent own refusal, whatever it is called', async () => {
+    const options: PermissionOption[] = [
+      { optionId: 'no', kind: 'reject_once', name: 'No, and tell the agent what to do instead' },
+    ];
+    expect(await ask(command, async () => DENIED, options)).toEqual({
+      outcome: 'selected',
+      optionId: 'no',
+    });
+  });
+
   it('is a refusal when the gate throws or cannot answer', async () => {
     const throwing = async () => {
       throw new Error('gate unavailable');

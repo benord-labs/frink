@@ -54,6 +54,43 @@ describe('runAcpAgent', () => {
     },
   );
 
+  it.each<[string, string]>([
+    ['/yolo', '/yolo'],
+    ['  /Allow-All please', '/Allow-All'],
+    ['/permissions', '/permissions'],
+    ['/autopilot\non', '/autopilot'],
+    ['/always-approve', '/always-approve'],
+  ])(
+    'refuses %j before the prompt, as it would widen what the agent may do',
+    async (prompt, command) => {
+      let received: unknown;
+      const fake = fakeAcpAgent(async (turn) => {
+        received = turn.prompt;
+      });
+
+      const chunks = await collectChunks(runAcpAgent(runnerParams({ prompt }), fake.start));
+
+      expect(chunks.filter((chunk) => chunk.type === 'error')).toEqual([
+        {
+          type: 'error',
+          errorText: `Frink doesn't send ${command} to Fake Agent: it would let the agent act without asking you.`,
+        },
+      ]);
+      expect(received).toBeUndefined();
+    },
+  );
+
+  it.each(['/yolo-mode', 'please /yolo'])('sends %j, which widens nothing', async (prompt) => {
+    let received: unknown;
+    const fake = fakeAcpAgent(async (turn) => {
+      received = turn.prompt;
+    });
+
+    await collectChunks(runAcpAgent(runnerParams({ prompt }), fake.start));
+
+    expect(received).toBeDefined();
+  });
+
   it('cleans up after its launch once the agent has stopped', async () => {
     let stoppedFirst: boolean | undefined;
     const fake = fakeAcpAgent(async () => {});
@@ -197,7 +234,7 @@ describe('runAcpAgent when the agent fails', () => {
 
   it("shows the agent's own error while its process is still running", async () => {
     const fake = fakeAcpAgent(async () => {
-      throw new RequestError(-32000, 'Rate limit reached');
+      throw new RequestError(-32603, 'Rate limit reached');
     });
 
     const chunks = await collectChunks(

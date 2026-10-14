@@ -114,6 +114,7 @@ describe('resolveAcpLaunch for OpenCode', { timeout: 15_000 }, () => {
   it('starts the absolute binary in ACP mode with the profile, private folders and shell gate', async () => {
     const launch = await launched();
     expect(launch.command).toBe(path.join(bin, 'opencode'));
+    expect(launch.signInHint).toBe('opencode auth login');
     expect(launch.args).toEqual(['acp', '--pure', '--hostname', '127.0.0.1', '--port', '0']);
     const runDir = path.dirname(launch.commandLedger ?? '');
     expect(path.dirname(runDir)).toBe(runRoot);

@@ -1,11 +1,15 @@
-import type {
-  ContentBlock,
-  SessionConfigOption,
-  SessionUpdate,
-  ToolCall,
+import {
+  client,
+  type ContentBlock,
+  ndJsonStream,
+  PROTOCOL_VERSION,
+  type SessionConfigOption,
+  type SessionUpdate,
+  type ToolCall,
 } from '@agentclientprotocol/sdk';
 import { describe, expect, it, vi } from 'vitest';
 import type { UIMessageChunk } from '../../claude/types';
+import { openSession } from './acp-session';
 import { collectChunks, fakeAcpAgent, runnerParams } from './acp-test-fixtures';
 import { type AcpRunnerParams, rememberedModelOptions, runAcpAgent } from './index';
 
@@ -259,5 +263,73 @@ describe('runAcpAgent with attached images', () => {
       { type: 'error', errorText: "Fake Agent can't take images." },
     ]);
     expect(turn.requests).toEqual([]);
+  });
+});
+
+describe('runAcpAgent with an agent the user is not signed in to', () => {
+  const HINTED =
+    'Fake Agent needs you to sign in. Run `fake auth login` in Terminal, then try again.';
+  const launch = { ...runnerParams().launch, signInHint: 'fake auth login' };
+
+  it.each<[string, Parameters<typeof fakeAcpAgent>[1], Partial<AcpRunnerParams>]>([
+    ['starting', { signedOutOn: ['initialize'] }, {}],
+    ['opening a session', { signedOutOn: ['session/new'] }, {}],
+    [
+      'continuing a session',
+      { agentCapabilities: CAN_RESUME, signedOutOn: ['session/resume'] },
+      { resumeSessionId: 'earlier' },
+    ],
+    ['answering the prompt', { signedOutOn: ['session/prompt'] }, {}],
+  ])('says how to sign in when the agent asks for it while %s', async (_, setup, chosen) => {
+    const turn = await runTurn(setup, { ...chosen, launch });
+
+    expect(errorsOf(turn.chunks)).toEqual([{ type: 'error', errorText: HINTED }]);
+  });
+
+  it('keeps what the agent said when it sends the sign-in code with its own words', async () => {
+    const turn = await runTurn(
+      { signedOutOn: ['session/prompt'], signedOutMessage: 'Rate limit reached' },
+      { launch },
+    );
+
+    expect(errorsOf(turn.chunks)).toEqual([
+      { type: 'error', errorText: `${HINTED} (Fake Agent said: Rate limit reached)` },
+    ]);
+  });
+
+  it('points to the agent itself when its launch names no sign-in command', async () => {
+    const turn = await runTurn({ signedOutOn: ['session/new'] });
+
+    expect(errorsOf(turn.chunks)).toEqual([
+      { type: 'error', errorText: 'Fake Agent needs you to sign in with its own app first.' },
+    ]);
+  });
+});
+
+describe('openSession reading the agent version', () => {
+  async function versionFrom(
+    identity: NonNullable<Parameters<typeof fakeAcpAgent>[1]>['identity'],
+  ) {
+    const fake = fakeAcpAgent(async () => {}, { identity });
+    const { stdio } = fake.start({ ...runnerParams().launch, cwd: '/workspace/project' });
+    const connection = client({ name: 'test' }).connect(ndJsonStream(stdio.input, stdio.output));
+    const inputs = { ...runnerParams(), hasImages: false, onSessionId: () => {} };
+    const opened = await openSession(connection, PROTOCOL_VERSION, inputs);
+    connection.close();
+    return opened.agentVersion;
+  }
+  const info = { name: 'fake', version: '' };
+
+  it.each<[string, Parameters<typeof versionFrom>[0], string | undefined]>([
+    ['its agent info', { agentInfo: { name: 'fake', version: '1.2.3' } }, '1.2.3'],
+    [
+      'the extra data of its agent info',
+      { agentInfo: { ...info, _meta: { version: '2.0.0' } } },
+      '2.0.0',
+    ],
+    ['the extra data of the answer', { _meta: { agentVersion: '3.1.0' } }, '3.1.0'],
+    ['nowhere', { _meta: { version: 4 } }, undefined],
+  ])('takes the version from %s', async (_, identity, version) => {
+    expect(await versionFrom(identity)).toBe(version);
   });
 });
