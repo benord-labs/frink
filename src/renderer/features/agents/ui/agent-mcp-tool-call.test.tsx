@@ -236,3 +236,71 @@ describe('AgentMcpToolCall', () => {
     expect(container.innerHTML).toContain('&lt;script&gt;');
   });
 });
+
+describe('AgentMcpToolCall failure reason', () => {
+  const REASON =
+    'Signal not accepted: the linked task is pending (flow run paused), so nothing will act on this ' +
+    'signal and the flow will not advance on it. Do not call this tool again; report the outcome ' +
+    'to the user in your reply instead.';
+
+  function makeFailedPart(overrides: Partial<MessagePart> = {}): MessagePart {
+    return makePart({ state: 'output-error', output: undefined, errorText: REASON, ...overrides });
+  }
+
+  it('shows the reason as a destructive one-line preview when collapsed', () => {
+    render(<AgentMcpToolCall part={makeFailedPart()} mcpInfo={mcpInfo} chatStatus="ready" />);
+    const preview = screen.getByText(/^Signal not accepted: the linked task is pending/);
+    expect(preview).toHaveClass('text-destructive/80', 'truncate');
+    expect(preview).toHaveAttribute('title', formatOutputPreview(REASON));
+    expect(screen.getByText('error')).toBeInTheDocument();
+  });
+
+  it('shows the whole reason in the expanded body instead of the preview', () => {
+    render(<AgentMcpToolCall part={makeFailedPart()} mcpInfo={mcpInfo} chatStatus="ready" />);
+    fireEvent.click(screen.getByRole('button'));
+    expect(screen.getByText(REASON)).toBeInTheDocument();
+    expect(screen.getAllByText(/Signal not accepted/)).toHaveLength(1);
+  });
+
+  it('keeps the call output below the reason when both exist', () => {
+    highlightCodeMock.mockResolvedValue('<pre>highlighted</pre>');
+    render(
+      <AgentMcpToolCall
+        part={makeFailedPart({ output: { detail: 'partial result' } })}
+        mcpInfo={mcpInfo}
+        chatStatus="ready"
+      />,
+    );
+    fireEvent.click(screen.getByRole('button'));
+    const reason = screen.getByText(REASON);
+    expect(reason.nextElementSibling).toHaveTextContent('partial result');
+  });
+
+  it('is expandable when the reason is the only content', () => {
+    render(
+      <AgentMcpToolCall
+        part={makeFailedPart({ input: undefined })}
+        mcpInfo={mcpInfo}
+        chatStatus="ready"
+      />,
+    );
+    const button = screen.getByRole('button');
+    expect(button).toBeEnabled();
+    fireEvent.click(button);
+    expect(button).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText(REASON)).toBeInTheDocument();
+  });
+
+  it('keeps the muted output preview and no error label on success', () => {
+    highlightCodeMock.mockResolvedValue('<pre>highlighted</pre>');
+    render(
+      <AgentMcpToolCall
+        part={makePart({ output: { summary: 'all good here' } })}
+        mcpInfo={mcpInfo}
+        chatStatus="ready"
+      />,
+    );
+    expect(screen.getByText(/all good here/)).toHaveClass('text-muted-foreground/70');
+    expect(screen.queryByText('error')).toBeNull();
+  });
+});
