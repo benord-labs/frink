@@ -6,6 +6,7 @@ import picomatch from 'picomatch';
 import stableStringify from 'fast-json-stable-stringify';
 import { z } from 'zod';
 import { isPathWithinProject } from '../../permissions/path-check';
+import { envFileAsks } from '../env-file-reads';
 import type { CodexApprovalCheck } from '../codex/codex-approvals';
 import type { CodexApprovalRequest } from '../codex/codex-events';
 import type { CopilotToolRule, CopilotTools } from './copilot-tools';
@@ -102,7 +103,7 @@ function globRoot(pattern: JsonValue | undefined): string | undefined {
   return root || (parsed.data.startsWith('/') ? '/' : '.');
 }
 
-/** Reads ask only about folders and files outside the chat's folder; no path reads the folder. */
+/** Reads ask about anything outside the chat's folder, and about opening an env file in it. */
 function readQuestions(
   paths: JsonValue | undefined,
   cwd: string,
@@ -113,8 +114,12 @@ function readQuestions(
   if (!parsed.success || start === undefined) return undefined;
   const roots = [parsed.data ?? []].flat();
   return (roots.length > 0 ? roots : [cwd])
-    .map((file) => path.resolve(cwd, file, start))
-    .filter((file) => !isPathWithinProject(file, cwd))
+    .map((root) => path.resolve(cwd, root))
+    .flatMap((root) => {
+      const file = path.resolve(root, start);
+      if (!isPathWithinProject(file, cwd)) return [file];
+      return envFileAsks(path.relative(cwd, root)) ? [root] : [];
+    })
     .map((file) => ({ toolName: 'Read', input: { file_path: file } }));
 }
 
