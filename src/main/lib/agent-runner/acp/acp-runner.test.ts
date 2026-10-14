@@ -1,9 +1,4 @@
-import {
-  ndJsonStream,
-  RequestError,
-  type SessionUpdate,
-  type StopReason,
-} from '@agentclientprotocol/sdk';
+import { RequestError, type SessionUpdate, type StopReason } from '@agentclientprotocol/sdk';
 import { describe, expect, it, vi } from 'vitest';
 import type { UIMessageChunk } from '../../claude/types';
 import { collectChunks, fakeAcpAgent, runnerParams, says, textOf } from './acp-test-fixtures';
@@ -210,7 +205,10 @@ describe('runAcpAgent when the agent fails', () => {
     try {
       let disposed = false;
       const silent = () => ({
-        stream: ndJsonStream(new WritableStream<Uint8Array>(), new ReadableStream<Uint8Array>()),
+        stdio: {
+          input: new WritableStream<Uint8Array>(),
+          output: new ReadableStream<Uint8Array>(),
+        },
         closed: new Promise<void>(() => {}),
         describeExit: () => '',
         dispose: async () => {
@@ -235,7 +233,7 @@ describe('runAcpAgent when the agent fails', () => {
   });
 
   it('refuses an agent that speaks another protocol version before opening a session', async () => {
-    const fake = fakeAcpAgent(async () => {}, 2);
+    const fake = fakeAcpAgent(async () => {}, { protocolVersion: 2 });
 
     const chunks = await collectChunks(runAcpAgent(runnerParams(), fake.start));
 

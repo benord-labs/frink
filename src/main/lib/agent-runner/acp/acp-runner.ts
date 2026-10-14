@@ -1,10 +1,5 @@
 import { setTimeout as delay } from 'node:timers/promises';
-import {
-  client,
-  type ClientConnection,
-  PROTOCOL_VERSION,
-  type SessionUpdate,
-} from '@agentclientprotocol/sdk';
+import type { ClientConnection, ContentBlock, SessionUpdate } from '@agentclientprotocol/sdk';
 import log from 'electron-log';
 import { createThinkingEmitter } from '../../claude/thinking-emitter';
 import type { UIMessageChunk } from '../../claude/types';
@@ -14,6 +9,7 @@ import { completeTurnChunks, makeChunkSink } from '../codex/codex-stream-chunks'
 import { type CommandLedger, createCommandLedger } from './acp-command-ledger';
 import { answerPermissionRequest, CANCELLED, questionForTool } from './acp-permissions';
 import { type AcpAgentLaunch, type AcpAgentProcess, startAcpAgentProcess } from './acp-process';
+import { openSession } from './acp-session';
 import type { KnownToolCall } from './acp-tool-calls';
 import {
   createAcpTurnState,
@@ -22,8 +18,6 @@ import {
   unaskedAction,
 } from './acp-updates';
 
-/** Starting an agent may include a first-run download; a prompt itself has no deadline. */
-const START_DEADLINE_MS = 60_000;
 /** How long a cancelled agent gets to record the cancelled turn before it is stopped. */
 const CANCEL_GRACE_MS = 2000;
 /** How long a dropped connection waits for the process to report why it ended. */
@@ -36,35 +30,33 @@ const BLOCKED_COMMAND_TEXT =
 export type AcpRunnerParams = {
   /** The agent's ACP command line; it runs in `cwd` and must make the agent ask before it acts. */
   launch: Omit<AcpAgentLaunch, 'cwd'>;
+  /** The provider id; keys the models remembered for it. */
+  agentId: string;
+  /** The agent's name in messages, such as 'OpenCode'. */
+  agentName: string;
   cwd: string;
   prompt: string;
+  /** The agent's session from this chat's last turn, continued when the agent can. */
+  resumeSessionId?: string;
+  /** Sent instead of `prompt` when that session could not be continued, so history is not lost. */
+  freshSessionFallbackPrompt?: string;
+  /** A value the session lists under its `model` setting. */
+  model?: string;
+  /** A value the session lists under its `mode` setting, such as `plan`. */
+  mode?: string;
+  images?: { data: string; mimeType: string }[];
   abortController: AbortController;
   /** Frink's permission gate. It must settle when the turn ends for any reason, not only a stop. */
   checkApproval: CodexApprovalCheck;
 };
 
-/** Runs the ACP handshake and opens a session, closing the connection if that takes too long. */
-async function openSession(connection: ClientConnection, cwd: string): Promise<string> {
-  const deadline = setTimeout(
-    () => connection.close(new Error('The agent did not finish starting in time.')),
-    START_DEADLINE_MS,
-  );
-  try {
-    const initialized = await connection.agent.request('initialize', {
-      protocolVersion: PROTOCOL_VERSION,
-      // Nothing is advertised: the agent acts with its own tools, so its launch must make it ask.
-      clientCapabilities: {},
-    });
-    if (initialized.protocolVersion !== PROTOCOL_VERSION) {
-      throw new Error(
-        `The agent speaks ACP version ${initialized.protocolVersion}, not ${PROTOCOL_VERSION}.`,
-      );
-    }
-    const session = await connection.agent.request('session/new', { cwd, mcpServers: [] });
-    return session.sessionId;
-  } finally {
-    clearTimeout(deadline);
-  }
+type AcpSdk = typeof import('@agentclientprotocol/sdk');
+let acpSdk: Promise<AcpSdk> | undefined;
+
+/** The protocol library is ESM-only and the main bundle is CommonJS, so it loads on first use. */
+function loadAcpSdk(): Promise<AcpSdk> {
+  acpSdk ??= import('@agentclientprotocol/sdk');
+  return acpSdk;
 }
 
 type AgentLink = { agent?: AcpAgentProcess; connection?: ClientConnection };
@@ -112,6 +104,17 @@ function retiredCallId(update: SessionUpdate): string | undefined {
 /** Text that starts with `/` would run as one of the agent's own commands, not reach the model. */
 function promptText(text: string): string {
   return text.trimStart().startsWith('/') ? `\u200b${text}` : text;
+}
+
+/** The message, or its fallback when the earlier session was lost, then any attached images. */
+function promptBlocks(params: AcpRunnerParams, lostHistory: boolean): ContentBlock[] {
+  const text = lostHistory ? (params.freshSessionFallbackPrompt ?? params.prompt) : params.prompt;
+  const images = (params.images ?? []).map(({ data, mimeType }): ContentBlock => ({
+    type: 'image',
+    data,
+    mimeType,
+  }));
+  return [{ type: 'text', text: promptText(text) }, ...images];
 }
 
 /** Run a single turn against an agent speaking ACP over stdio and stream UI chunks. */
@@ -165,6 +168,8 @@ export async function* runAcpAgent(
 
   try {
     signal.throwIfAborted();
+    const { client, ndJsonStream, PROTOCOL_VERSION } = await loadAcpSdk();
+    signal.throwIfAborted();
     link.agent = startAgent({ ...params.launch, cwd: params.cwd });
     const connection = client({ name: 'frink' })
       // Registered first, so an update reaches the chat before the answer that ends its turn.
@@ -180,9 +185,13 @@ export async function* runAcpAgent(
         if (request.sessionId !== sessionId || turnOver.signal.aborted) return CANCELLED;
         return answerPermissionRequest(request, permissionTurn);
       })
-      .connect(link.agent.stream);
+      .connect(ndJsonStream(link.agent.stdio.input, link.agent.stdio.output));
     link.connection = connection;
-    sessionId = await openSession(connection, params.cwd);
+    const opened = await openSession(connection, PROTOCOL_VERSION, {
+      ...params,
+      hasImages: Boolean(params.images?.length),
+    });
+    sessionId = opened.sessionId;
     signal.throwIfAborted();
     yield { type: 'message-metadata', messageMetadata: { sessionId } };
     // Checked again: the reader may have stopped the turn while it held the chunk above.
@@ -190,7 +199,7 @@ export async function* runAcpAgent(
     turnEnded = connection.agent
       .request('session/prompt', {
         sessionId,
-        prompt: [{ type: 'text', text: promptText(params.prompt) }],
+        prompt: promptBlocks(params, opened.lostHistory),
       })
       .then((response) => mapPromptResponse(response).forEach(emit))
       .catch(async (error: Error) => {
