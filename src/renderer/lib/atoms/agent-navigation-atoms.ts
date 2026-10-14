@@ -44,6 +44,16 @@ export const agentsSettingsDialogOpenAtom = atom(
 
 export const flowsSelectedFlowIdAtom = atom<string | null>(null);
 
+/** One-shot request for the next opened flow editor to show this run; its Runs tab clears it. */
+export const flowsFocusRunAtom = atom<{ flowId: string; runId: string } | null>(null);
+
+/** Open a flow's editor on its Runs tab with one run selected. */
+export const openFlowRunAtom = atom(null, (_get, set, focus: { flowId: string; runId: string }) => {
+  set(flowsFocusRunAtom, focus);
+  set(flowsSelectedFlowIdAtom, focus.flowId);
+  set(activeOverlayAtom, 'flows');
+});
+
 /**
  * Flows is not an atomic destination. FlowsPage branches on the selection's truthiness, and both
  * the layout view policy and the sidebar need the same answer to frame it — so derive it once here

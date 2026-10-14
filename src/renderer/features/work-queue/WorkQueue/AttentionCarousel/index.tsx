@@ -10,6 +10,7 @@ import {
   Ban,
   ChevronLeft,
   ChevronRight,
+  CircleCheck,
   CircleDashed,
   CirclePause,
   CircleQuestionMark,
@@ -20,9 +21,13 @@ import {
   MessageCircleQuestionMark,
   TriangleAlert,
 } from 'lucide-react';
-import { createElement, memo, type ReactElement, type RefObject } from 'react';
+import { createElement, memo, type ReactElement, type ReactNode, type RefObject } from 'react';
 import { ActionMenu, type ActionMenuProps } from '@/features/work-queue/WorkQueue/ActionMenu';
 import { buildTriggerSummary } from '../../../../../shared/lib/trigger-summary';
+import type {
+  ApprovalActions,
+  AwaitingApproval,
+} from '../../../../lib/work-queue/approvals/use-work-queue-approvals';
 import type { Task } from '../../types';
 import { getWorkQueueTaskTitle } from '../../utils/task-presentation';
 
@@ -32,6 +37,8 @@ export type AttentionTaskActions = Omit<
 > & { onStartTask: NonNullable<ActionMenuProps['onStartTask']> };
 
 type Props = {
+  /** Runs waiting on an Approval step; they lead the spotlight, longest wait first. */
+  approvals?: { gates: AwaitingApproval[]; actions: ApprovalActions };
   tasks: Task[];
   onOpenTask: (task: Task) => void;
   onSelectTask: (taskId: string) => void;
@@ -227,7 +234,147 @@ function getTaskMetadata(task: Task): string | null {
   return metadata.length > 0 ? metadata.join(' · ') : null;
 }
 
+export const APPROVAL_COPY = {
+  compactLabel: 'Needs approval',
+  icon: CircleCheck,
+  label: 'Waiting for your approval',
+  rowState: 'warning',
+  tone: 'warning',
+} satisfies Omit<AttentionCopyTemplate, 'action'>;
+
+/** A lone gate reads as its own message; several gates in one run are answered from the run. */
+export function getApprovalTitle(gate: AwaitingApproval): string {
+  if (gate.nodeRunId === null) return `${gate.gateCount} approvals waiting`;
+  return gate.message ?? gate.flowName;
+}
+
+/** An absolute time stays true between renders, so the live region never re-announces it. */
+function formatWaitingSince(since: Date): string {
+  const today = since.toDateString() === new Date().toDateString();
+  return since.toLocaleString(
+    undefined,
+    today ? { timeStyle: 'short' } : { dateStyle: 'medium', timeStyle: 'short' },
+  );
+}
+
+type Spotlight = {
+  icon: LucideIcon;
+  label: string;
+  tone: AttentionTone;
+  title: string;
+  metadata: string | null;
+  /** Approvals keep their Flow name in view on narrow windows too. */
+  pinMetadata: boolean;
+  actions: ReactNode;
+  trailing: ReactNode;
+};
+
+function taskSpotlight(
+  task: Task,
+  onOpenTask: (task: Task) => void,
+  taskActions: AttentionTaskActions,
+  actionRef: RefObject<HTMLButtonElement | null>,
+): Spotlight {
+  const copy = getAttentionCopy(task);
+  return {
+    ...copy,
+    title: getWorkQueueTaskTitle(task),
+    metadata: getTaskMetadata(task),
+    pinMetadata: false,
+    actions: (
+      <>
+        <Button
+          ref={actionRef}
+          type="button"
+          variant="primary"
+          size="xs"
+          className="shrink-0 min-[600px]:h-7 min-[600px]:px-3 min-[600px]:text-sm"
+          onClick={() => onOpenTask(task)}
+        >
+          {copy.action}
+          <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+        </Button>
+        <span className="hidden min-w-0 truncate text-[11px] text-muted-foreground min-[600px]:block">
+          {copy.helper}
+        </span>
+      </>
+    ),
+    trailing: (
+      <ActionMenu
+        key={task.id}
+        {...taskActions}
+        task={task}
+        status={task.status as ActionMenuProps['status']}
+        chatId={task.result?.chatId ?? task.linkedChatId}
+      />
+    ),
+  };
+}
+
+/** Approve is offered only for a lone gate; Open run takes focus when the row is promoted. */
+function approvalSpotlight(
+  gate: AwaitingApproval,
+  actions: ApprovalActions,
+  actionRef: RefObject<HTMLButtonElement | null>,
+): Spotlight {
+  const pending = actions.pending.get(gate.flowRunId);
+  const title = getApprovalTitle(gate);
+  const waiting = `Waiting since ${formatWaitingSince(gate.waitingSince)}`;
+  return {
+    ...APPROVAL_COPY,
+    title,
+    metadata: [title === gate.flowName ? null : gate.flowName, gate.projectName, waiting]
+      .filter(Boolean)
+      .join(' · '),
+    pinMetadata: true,
+    actions: (
+      <div className="flex shrink-0 items-center gap-2">
+        {gate.nodeRunId !== null && (
+          <Button
+            type="button"
+            variant="primary"
+            size="xs"
+            className="min-[600px]:h-7 min-[600px]:px-3 min-[600px]:text-sm"
+            loading={pending === 'approve'}
+            disabled={pending !== undefined}
+            onClick={() => actions.approve(gate)}
+          >
+            Approve
+          </Button>
+        )}
+        <Button
+          ref={actionRef}
+          type="button"
+          variant={gate.nodeRunId === null ? 'primary' : 'secondary'}
+          size="xs"
+          className="min-[600px]:h-7 min-[600px]:px-3 min-[600px]:text-sm"
+          aria-label={`Open run of ${gate.flowName}`}
+          onClick={() => actions.openRun(gate)}
+        >
+          Open run
+          <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+        </Button>
+      </div>
+    ),
+    trailing: (
+      <Button
+        type="button"
+        variant="ghost"
+        size="xs"
+        className="text-muted-foreground"
+        loading={pending === 'cancel'}
+        disabled={pending !== undefined}
+        aria-label={`Cancel run of ${gate.flowName}`}
+        onClick={() => actions.cancel(gate)}
+      >
+        Cancel run
+      </Button>
+    ),
+  };
+}
+
 export const AttentionCarousel = memo(function AttentionCarousel({
+  approvals,
   tasks,
   onOpenTask,
   onSelectTask,
@@ -235,23 +382,31 @@ export const AttentionCarousel = memo(function AttentionCarousel({
   spotlightActionRef,
   taskActions,
 }: Props): ReactElement | null {
-  if (tasks.length === 0) return null;
+  const gates = approvals?.gates ?? [];
+  const itemIds = [...gates.map((gate) => gate.flowRunId), ...tasks.map((task) => task.id)];
+  if (itemIds.length === 0) return null;
 
-  const matchedIndex = tasks.findIndex((task) => task.id === selectedTaskId);
+  const matchedIndex = itemIds.indexOf(selectedTaskId);
   const selectedIndex = matchedIndex >= 0 ? matchedIndex : 0;
-  const task = tasks[selectedIndex];
-  const copy = getAttentionCopy(task);
-  const presentation = ATTENTION_TONE_STYLES[copy.tone];
-  const cornerIcon = createElement(copy.icon, {
+  const spotlight =
+    approvals && selectedIndex < gates.length
+      ? approvalSpotlight(gates[selectedIndex], approvals.actions, spotlightActionRef)
+      : taskSpotlight(
+          tasks[selectedIndex - gates.length],
+          onOpenTask,
+          taskActions,
+          spotlightActionRef,
+        );
+  const presentation = ATTENTION_TONE_STYLES[spotlight.tone];
+  const cornerIcon = createElement(spotlight.icon, {
     'aria-hidden': true,
     className: `h-3 w-3 min-[600px]:h-4 min-[600px]:w-4 ${presentation.iconClassName}`,
   });
-  const metadata = getTaskMetadata(task);
-  const hasMultipleTasks = tasks.length > 1;
+  const hasMultipleItems = itemIds.length > 1;
 
   const selectOffset = (offset: number) => {
-    const nextIndex = (selectedIndex + offset + tasks.length) % tasks.length;
-    onSelectTask(tasks[nextIndex].id);
+    const nextIndex = (selectedIndex + offset + itemIds.length) % itemIds.length;
+    onSelectTask(itemIds[nextIndex]);
   };
 
   return (
@@ -268,41 +423,24 @@ export const AttentionCarousel = memo(function AttentionCarousel({
             noDot
             className={`w-fit gap-1.5 text-[10px] min-[600px]:text-xs ${presentation.badgeClassName ?? ''}`}
           >
-            {copy.label}
+            {spotlight.label}
           </Badge>
           <span className="line-clamp-2 h-[2lh] text-[12px] font-semibold leading-snug text-foreground min-[600px]:text-base">
-            {getWorkQueueTaskTitle(task)}
+            {spotlight.title}
           </span>
-          {metadata && (
-            <span className="hidden text-[12px] text-muted-foreground min-[600px]:block">
-              {metadata}
+          {spotlight.metadata && (
+            <span
+              className={`text-[12px] text-muted-foreground ${spotlight.pinMetadata ? 'block' : 'hidden min-[600px]:block'}`}
+            >
+              {spotlight.metadata}
             </span>
           )}
         </div>
         <div className="flex items-center gap-3">
-          <Button
-            ref={spotlightActionRef}
-            type="button"
-            variant="primary"
-            size="xs"
-            className="shrink-0 min-[600px]:h-7 min-[600px]:px-3 min-[600px]:text-sm"
-            onClick={() => onOpenTask(task)}
-          >
-            {copy.action}
-            <ArrowRight className="h-3.5 w-3.5" aria-hidden />
-          </Button>
-          <span className="hidden min-w-0 truncate text-[11px] text-muted-foreground min-[600px]:block">
-            {copy.helper}
-          </span>
+          {spotlight.actions}
           <div className="ml-auto flex shrink-0 items-center gap-1">
-            <ActionMenu
-              key={task.id}
-              {...taskActions}
-              task={task}
-              status={task.status as ActionMenuProps['status']}
-              chatId={task.result?.chatId ?? task.linkedChatId}
-            />
-            {hasMultipleTasks && (
+            {spotlight.trailing}
+            {hasMultipleItems && (
               <>
                 <Button
                   type="button"
@@ -315,7 +453,7 @@ export const AttentionCarousel = memo(function AttentionCarousel({
                   <ChevronLeft className="h-3.5 w-3.5" aria-hidden />
                 </Button>
                 <span className="min-w-9 text-center text-[10px] tabular-nums text-muted-foreground">
-                  {selectedIndex + 1} / {tasks.length}
+                  {selectedIndex + 1} / {itemIds.length}
                 </span>
                 <Button
                   type="button"

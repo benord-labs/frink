@@ -41,6 +41,7 @@ import {
   updateFlow as updateFlowLocal,
 } from '../../../db/repos/flows';
 import { listNodeRunsForFlowRun } from '../../../db/repos/node-runs';
+import { listAwaitingApprovals } from '../../../db/repos/task-queries/work-queue-overview-filter';
 import {
   toDbBatchPlanTemplate,
   toDbBriefingStash,
@@ -77,6 +78,7 @@ export const flowsRouter = router({
   ...createFlowListProcedures(),
   ...createFlowCopyProcedures(),
   ...flowAdmissionQueueProcedures(),
+  workQueueApprovals: publicProcedureRaw.query(() => listAwaitingApprovals(getDatabase())),
   ...createFlowVersionProcedures(),
   get: publicProcedureRaw.input(z.object({ id: z.string().min(1) })).query(async ({ input }) => {
     const db = getDatabase();

@@ -31,6 +31,7 @@ import { useWindowEvent } from '../../../lib/hooks/use-window-event';
 import { createIdSelectionStore } from '../../../lib/tree-navigation';
 import { trpc, trpcClient } from '../../../lib/trpc';
 import { hasModifiedFiles } from '../../../lib/utils/git-status';
+import { useAwaitingApprovals } from '../../../lib/work-queue/approvals/use-work-queue-approvals';
 import { useWorkQueueExitAction } from '../../../lib/work-queue/use-work-queue-exit-action';
 import {
   agentsSidebarOpenAtom,
@@ -334,6 +335,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
         structuralSharing: true,
       },
     );
+    const approvalCount = useAwaitingApprovals().length;
     const { data: rawActiveTasksPage } = trpc.tasks.listPaginated.useQuery(
       {
         statuses: [...SIDEBAR_TRACKED_TASK_STATUSES],
@@ -455,7 +457,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
     const pendingReviewCount = (taskCounts?.planReady ?? 0) + (taskCounts?.done ?? 0);
     const runningTaskCount = taskCounts?.running ?? 0;
     const needsAttentionTaskCount =
-      (taskCounts?.needsAttention ?? 0) + (taskCounts?.interrupted ?? 0);
+      (taskCounts?.needsAttention ?? 0) + (taskCounts?.interrupted ?? 0) + approvalCount;
     const failedTaskCount = taskCounts?.failed ?? 0;
 
     // Live flow runs keep their chats `running`, never a premature "Done" (buildChatTaskStatusMap).
