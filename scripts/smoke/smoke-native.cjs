@@ -14,8 +14,10 @@
  * false-green a packaging break. Override with FRINK_SMOKE_MODULES_ROOT (e.g. on macOS:
  *   FRINK_SMOKE_MODULES_ROOT=node_modules ELECTRON_RUN_AS_NODE=1 npx electron scripts/smoke-native.cjs).
  */
-const { existsSync } = require('node:fs');
+const { existsSync, realpathSync } = require('node:fs');
+const { createRequire } = require('node:module');
 const { join, resolve } = require('node:path');
+const { pathToFileURL } = require('node:url');
 
 const PACKAGED = resolve('release/win-unpacked/resources/app.asar.unpacked/node_modules');
 
@@ -68,6 +70,22 @@ function checkNodePty(root) {
   });
 }
 
+/** The protocol library is plain JavaScript, so a package build keeps it inside app.asar. */
+function packedModulesRoot(root) {
+  return root.replace('app.asar.unpacked', 'app.asar');
+}
+
+/** Import the ESM-only protocol library the way the main process does: a dynamic import. */
+async function checkAcpSdk(root) {
+  const packed = packedModulesRoot(realpathSync(root));
+  const entry = createRequire(join(packed, 'package.json')).resolve('@agentclientprotocol/sdk');
+  // Resolution climbs parent folders, so a copy outside the build must not pass for the packaged one.
+  if (!entry.startsWith(packed)) throw new Error(`ACP SDK resolved outside ${packed}: ${entry}`);
+  const { PROTOCOL_VERSION } = await import(pathToFileURL(entry).href);
+  if (!Number.isInteger(PROTOCOL_VERSION)) throw new Error('ACP SDK has no PROTOCOL_VERSION');
+  console.log(`[smoke-native] ACP SDK OK from ${entry} (protocol ${PROTOCOL_VERSION})`);
+}
+
 /** Load the resolved native modules under the Electron ABI and exercise each. Throws on any failure. */
 async function main() {
   const root = resolveModulesRoot();
@@ -77,6 +95,7 @@ async function main() {
   console.log('[smoke-native] node:sqlite OK');
   await checkNodePty(root);
   console.log('[smoke-native] node-pty OK');
+  await checkAcpSdk(root);
   console.log('[smoke-native] PASS');
 }
 
@@ -91,4 +110,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { resolveModulesRoot };
+module.exports = { packedModulesRoot, resolveModulesRoot };

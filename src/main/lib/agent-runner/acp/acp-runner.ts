@@ -124,7 +124,6 @@ export async function* runAcpAgent(
 ): AsyncGenerator<UIMessageChunk, void, undefined> {
   const { signal } = params.abortController;
   const { rules, commandLedger } = params.launch;
-  yield { type: 'start' };
 
   const queue = new ChunkQueue();
   const openTextIds = new Set<string>();
@@ -167,6 +166,8 @@ export async function* runAcpAgent(
   };
 
   try {
+    // Inside the try: a reader that stops at this chunk still gets the launch cleaned up.
+    yield { type: 'start' };
     signal.throwIfAborted();
     const { client, ndJsonStream, PROTOCOL_VERSION } = await loadAcpSdk();
     signal.throwIfAborted();

@@ -319,6 +319,7 @@ vi.mock('./client', () => ({
 
 import { filterCanonicalPlanParts } from '../../../shared/plan-parts-filter';
 import { runCodexAgent } from '../agent-runner';
+import * as codexPermissions from '../agent-runner/codex/permissions';
 import { codexPlanUsage } from '../agent-runner/codex/usage';
 import { createTransformer, getBundledClaudeBinaryPath } from '../claude';
 import type { UIMessageChunk } from '../claude/types';
@@ -344,6 +345,7 @@ import * as toolValidation from '../permissions/tool-validation';
 import { checkPermission } from '../permissions/v2/check';
 import { resumeParkedTaskInPlace } from '../tasks';
 import type { MessagePart } from './client';
+import type { startAcpTurn } from './execution/acp-turn';
 import type { PlanFallbackSend } from './executor';
 import { applyApprovedPlanContextToPrompt } from './execution/prompt-prefix/approved-plan-prompt';
 
@@ -2260,6 +2262,66 @@ describe('socket file permission edge cases', () => {
           "OpenCode can't run chats in this version of Frink yet. Pick Claude or OpenAI for this chat.",
       }),
     );
+  });
+
+  it('streams an agent chat through its ACP turn and continues that session next turn', async () => {
+    _resetExecutorStateForTests();
+    vi.mocked(getDefaultClaudeCodeToken).mockResolvedValue({
+      token: null,
+      isApiKey: false,
+      type: 'opencode',
+      label: 'OpenCode',
+      passthrough: true,
+    });
+    vi.mocked(runCodexAgent).mockClear();
+    const permissionCheck = vi.spyOn(codexPermissions, 'createCodexHostPermissionCheck');
+    const turns: Parameters<typeof startAcpTurn>[0][] = [];
+    const deps = {
+      runtimeFor: (): 'acp' => 'acp',
+      async *startAcpTurn(
+        params: Parameters<typeof startAcpTurn>[0],
+      ): AsyncGenerator<UIMessageChunk, void, undefined> {
+        turns.push(params);
+        yield { type: 'text-start', id: 't1' };
+        yield { type: 'text-delta', id: 't1', delta: 'done' };
+        yield { type: 'finish', messageMetadata: { sessionId: 'oc-session-1' } };
+      },
+    };
+
+    await handleRemoteExecute({ ...basePayload, message: 'hello' }, deps);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(claudeQueryMock).not.toHaveBeenCalled();
+    expect(vi.mocked(runCodexAgent)).not.toHaveBeenCalled();
+    expect(turns[0]).toMatchObject({ providerId: 'opencode', mode: 'agent', prompt: 'hello' });
+    expect(turns[0]?.resumeSessionId).toBeUndefined();
+    expect(permissionCheck).toHaveBeenCalledWith(
+      expect.objectContaining({ autoReview: false, frinkMcpInjected: false }),
+    );
+    const streamed = vi.mocked(socketClient.sendStreamChunkDirect).mock.calls;
+    expect(streamed.map(([sent]) => sent.chunk)).toContainEqual(
+      expect.objectContaining({ type: 'text-delta', delta: 'done' }),
+    );
+    expect(vi.mocked(socketClient.sendExecuteCompleteDirect)).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'oc-session-1' }),
+    );
+
+    const history: typeof basePayload.history = [
+      { role: 'user', content: 'hello' },
+      { role: 'assistant', content: 'done' },
+    ];
+    await handleRemoteExecute(
+      { ...basePayload, message: 'again', sessionId: 'oc-session-1', history },
+      deps,
+    );
+
+    expect(turns[1]?.resumeSessionId).toBe('oc-session-1');
+    // The last mode is unknown on a resumed agent turn, so the plan-exit reminder goes first.
+    expect(turns[1]?.prompt).toMatch(
+      /^<system-reminder>\nPlan mode is not active[\s\S]*\n\nagain$/,
+    );
+    expect(turns[1]?.freshSessionFallbackPrompt).toContain('hello');
+    expect(turns[1]?.freshSessionFallbackPrompt?.endsWith('again')).toBe(true);
   });
 });
 

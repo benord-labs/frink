@@ -11,7 +11,7 @@ import { isAbsolute, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const require = createRequire(import.meta.url);
-const { resolveModulesRoot } = require('./smoke-native.cjs');
+const { packedModulesRoot, resolveModulesRoot } = require('./smoke-native.cjs');
 
 describe('resolveModulesRoot', () => {
   it('honours an explicit FRINK_SMOKE_MODULES_ROOT override even when a packaged build exists', () => {
@@ -40,5 +40,14 @@ describe('resolveModulesRoot', () => {
 
   it('falls back to dev node_modules with no override and no packaged build', () => {
     expect(resolveModulesRoot({}, false)).toBe(resolve('node_modules'));
+  });
+});
+
+describe('packedModulesRoot', () => {
+  it('looks for plain JavaScript in app.asar beside the unpacked native modules', () => {
+    expect(packedModulesRoot('/r/resources/app.asar.unpacked/node_modules')).toBe(
+      '/r/resources/app.asar/node_modules',
+    );
+    expect(packedModulesRoot('/repo/node_modules')).toBe('/repo/node_modules');
   });
 });

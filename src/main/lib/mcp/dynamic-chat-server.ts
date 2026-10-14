@@ -13,6 +13,7 @@ import { BrowserWindow } from 'electron';
 import log from 'electron-log';
 import { z } from 'zod';
 import { LAUNCH_FLAGS } from '../../../shared/launch-flags';
+import type { AgentRuntime } from '../../../shared/lib/ai-providers';
 import type { ChatMode } from '../../../shared/types/chat-mode';
 import { getDatabase } from '../db';
 import {
@@ -107,7 +108,7 @@ type ExecutionContext = {
    * the handler refuse a signal whose target can no longer consume it instead of answering ok. */
   signalTaskId?: string | null;
   /** A channel resolves only to a context of its token's runtime. */
-  runtime?: 'claude' | 'codex';
+  runtime?: AgentRuntime;
   /** Per-send Auto consent; never inherited across sends. */
   autoReviewTools?: boolean;
   planAutoDenyFloor?: () => boolean;
