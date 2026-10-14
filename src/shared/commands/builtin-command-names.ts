@@ -14,6 +14,5 @@ export const BUILTIN_COMMAND_NAMES = [
   'pr-comments',
   'release-notes',
   'security-review',
-  'commit',
   'worktree-setup',
 ] as const;

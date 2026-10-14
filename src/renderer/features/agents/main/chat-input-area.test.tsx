@@ -10,6 +10,8 @@ import { TooltipProvider } from '../../../components/ui/tooltip';
 import { CODEX_DEFAULT_MODEL_ID } from '../../../../shared/lib/codex-cli-models';
 import { writeComposerCache } from '../../../lib/atoms/atom-family-factory';
 import { appStore } from '../../../lib/jotai-store';
+import { encodeCommandBlock } from '../../../lib/commands/command-block-format';
+import { COMMAND_PROMPTS } from '../../../lib/commands/builtin-commands';
 import { renderWithTrpc } from '../../../lib/test-utils/render-with-trpc';
 import { trpc } from '../../../lib/trpc';
 import { chatModeAtomFamily, lastSelectedModelIdAtomFamily } from '../atoms';
@@ -181,26 +183,26 @@ describe('ChatInputArea on a free Codex account (its model/list has no GPT-6 Ast
   });
 });
 
+/** Places the caret after the editor's last text, as a typed `/` leaves it. */
+function caretAtEnd(root: HTMLElement) {
+  const range = document.createRange();
+  range.selectNodeContents(root.lastChild ?? root);
+  range.collapse(false);
+  window.getSelection()?.removeAllRanges();
+  window.getSelection()?.addRange(range);
+}
+
+async function openSlashMenu(props: ComponentProps<typeof ChatInputArea>, container: Element) {
+  const root = container.querySelector<HTMLElement>('[contenteditable="true"]');
+  if (!root) throw new Error('composer editor not found');
+  root.focus();
+  act(() => props.editorRef.current?.setValue('/'));
+  caretAtEnd(root);
+  fireEvent.input(root);
+  return screen.findByRole('listbox', { name: 'Slash commands' });
+}
+
 describe('ChatInputArea hides what the chat agent cannot do', () => {
-  /** Places the caret after the editor's last text, as a typed `/` leaves it. */
-  function caretAtEnd(root: HTMLElement) {
-    const range = document.createRange();
-    range.selectNodeContents(root.lastChild ?? root);
-    range.collapse(false);
-    window.getSelection()?.removeAllRanges();
-    window.getSelection()?.addRange(range);
-  }
-
-  async function openSlashMenu(props: ComponentProps<typeof ChatInputArea>, container: Element) {
-    const root = container.querySelector<HTMLElement>('[contenteditable="true"]');
-    if (!root) throw new Error('composer editor not found');
-    root.focus();
-    act(() => props.editorRef.current?.setValue('/'));
-    caretAtEnd(root);
-    fireEvent.input(root);
-    return screen.findByRole('listbox', { name: 'Slash commands' });
-  }
-
   it.each([
     { type: 'claude-code', supportsAll: true },
     { type: 'opencode', supportsAll: false },
@@ -270,5 +272,44 @@ describe('ChatInputArea hides what the chat agent cannot do', () => {
     await waitFor(() => expect(saves).toBe(1));
     await waitFor(() => expect(appStore.get(chatModeAtomFamily('chat-failing'))).toBe('debug'));
     expect(saves).toBe(1);
+  });
+});
+
+describe('ChatInputArea slash-menu picks', () => {
+  function renderClaudeComposer() {
+    const props = composerProps({ projectId: 'project-1' });
+    const account = { type: 'claude-code', label: 'Claude Code', isAuthenticated: true };
+    const view = renderWithTrpc(
+      <Provider store={appStore}>
+        <TooltipProvider>
+          <ChatInputArea {...props} />
+        </TooltipProvider>
+      </Provider>,
+      ({ path }) =>
+        path === 'claudeCode.getResolvedAccount' ? Promise.resolve(account) : new Promise(() => {}),
+    );
+    return { props, ...view };
+  }
+
+  it('inserts a prompt-based built-in as a command block and offers no /commit', async () => {
+    const { props, container } = renderClaudeComposer();
+    const menu = await openSlashMenu(props, container);
+    expect(within(menu).queryByText('/commit')).toBeNull();
+
+    fireEvent.mouseDown(within(menu).getByText('/review'));
+
+    expect(props.editorRef.current?.getValue()).toContain(
+      encodeCommandBlock('review', COMMAND_PROMPTS.review ?? ''),
+    );
+  });
+
+  it('switches mode for a mode built-in without inserting any text', async () => {
+    const { props, container } = renderClaudeComposer();
+    const menu = await openSlashMenu(props, container);
+
+    fireEvent.mouseDown(within(menu).getByText('/plan'));
+
+    await waitFor(() => expect(appStore.get(chatModeAtomFamily('chat-1'))).toBe('plan'));
+    expect(props.editorRef.current?.getValue()).not.toContain('[/cmd:');
   });
 });
