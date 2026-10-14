@@ -35,10 +35,14 @@ import type { CopilotTools } from './copilot-tools';
 
 /** How long a client gets to stop on its own before it is force-stopped. */
 const STOP_GRACE_MS = 1500;
+/** How often a running turn checks that Copilot still answers. */
+const PING_MS = 1000;
 // An organisation-required plugin being installed; this SDK release has no type for it yet.
 const MANAGED_PLUGIN_PROGRESS = 'session.managed_plugin_progress';
 const SETTINGS_LOST =
   "GitHub Copilot stopped confirming Frink's safety settings, so Frink stopped it. Any steps shown above already ran.";
+const COPILOT_STOPPED =
+  'GitHub Copilot stopped unexpectedly, so this turn ended. Any steps shown above already ran.';
 
 // The main agent is done, even while a command it left running waits; stopping the client ends it.
 const TURN_ENDS = new Set<SessionEvent['type']>([
@@ -56,7 +60,7 @@ export type CopilotTurnSession = CheckedSession & {
 
 /** The parts of a Copilot client one turn uses. */
 export type CopilotTurnClient = CopilotSessionHost<CopilotTurnSession> &
-  Pick<CopilotClient, 'start' | 'stop' | 'forceStop' | 'listModels'>;
+  Pick<CopilotClient, 'start' | 'stop' | 'forceStop' | 'ping' | 'listModels'>;
 
 type PreToolUseHandler = NonNullable<SessionHooks['onPreToolUse']>;
 /** A picker row: a model, or one effort of a model that offers a choice. */
@@ -203,6 +207,14 @@ class CopilotTurn {
     this.stop();
   }
 
+  // This SDK reports a lost connection to no public hook, so a failed ping is the sign.
+  watch(client: CopilotTurnClient): void {
+    const timer = setInterval(() => {
+      client.ping().catch(() => this.halt(COPILOT_STOPPED));
+    }, PING_MS);
+    this.over.signal.addEventListener('abort', () => clearInterval(timer), { once: true });
+  }
+
   // The client is then stopped gracefully: a force-stop leaves its background commands running.
   readonly stop = (): void => {
     this.end();
@@ -254,6 +266,9 @@ async function startTurn(turn: CopilotTurn, params: CopilotRunnerParams, deps: C
   turn.client = client;
   liveClients.add(client);
   await client.start();
+  // Opening a session would start a stopped client again.
+  if (turn.isOver) return;
+  turn.watch(client);
   const options = copilotSessionOptions({
     cwd: params.cwd,
     configDirectory: launch.configDirectory,

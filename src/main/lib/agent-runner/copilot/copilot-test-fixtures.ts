@@ -80,6 +80,8 @@ type FakeTurn = {
   message: MessageOptions;
   emit(event: SessionEvent): void;
   preToolUse(toolName: string, toolArgs: JsonValue): Promise<HookAnswer>;
+  /** The CLI process dies: its connection stops answering. */
+  crash(): void;
 };
 
 type FakeCopilotSetup = {
@@ -99,6 +101,8 @@ type FakeCopilotSetup = {
   turn?: (play: FakeTurn) => void | Promise<void>;
   /** The prompt is taken but Copilot never answers. */
   sendHangs?: boolean;
+  /** Copilot finishes starting once this settles. */
+  started?: Promise<void>;
   /** The client's graceful stop never finishes. */
   stopHangs?: boolean;
   models?: ModelInfo[];
@@ -113,6 +117,7 @@ export function fakeCopilotClient(setup: FakeCopilotSetup = {}) {
   const sent: MessageOptions[] = [];
   const calls: string[] = [];
   let mode: SessionMode = setup.mode ?? 'interactive';
+  let crashed = false;
   let lastConfig: SessionConfigBase | undefined;
   const report = (config: SessionConfigBase | undefined, data: ManagedSettingsResolvedData) =>
     config?.onEvent?.(managedReport(data));
@@ -129,6 +134,9 @@ export function fakeCopilotClient(setup: FakeCopilotSetup = {}) {
         },
         { sessionId: session.sessionId },
       ),
+    crash: () => {
+      crashed = true;
+    },
   };
   const session: CopilotTurnSession = {
     sessionId: 'copilot-session',
@@ -172,6 +180,7 @@ export function fakeCopilotClient(setup: FakeCopilotSetup = {}) {
   const client: CopilotTurnClient = {
     start: async () => {
       calls.push('start');
+      await setup.started;
     },
     stop: async () => {
       calls.push('stop');
@@ -180,6 +189,10 @@ export function fakeCopilotClient(setup: FakeCopilotSetup = {}) {
     },
     forceStop: async () => {
       calls.push('forceStop');
+    },
+    ping: async () => {
+      if (crashed) throw new Error('Connection is closed.');
+      return { message: 'pong', timestamp: new Date(0).toISOString() };
     },
     listModels: async () => setup.models ?? [],
     getStatus: async () => setup.status ?? { version: '1.0.97', protocolVersion: 3 },

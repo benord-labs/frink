@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import type { CopilotClientOptions, ProviderConfig } from '@github/copilot-sdk';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { UIMessageChunk } from '../../claude/types';
@@ -30,6 +31,8 @@ const SIGNED_OUT =
   "GitHub Copilot isn't signed in. Open Terminal, run `copilot login`, finish in your browser, then try again.";
 const MANAGED =
   "Your organisation or device manages GitHub Copilot's settings, so Frink can't run it safely.";
+const COPILOT_STOPPED =
+  'GitHub Copilot stopped unexpectedly, so this turn ended. Any steps shown above already ran.';
 const SETTINGS_LOST =
   "GitHub Copilot stopped confirming Frink's safety settings, so Frink stopped it. Any steps shown above already ran.";
 
@@ -389,6 +392,38 @@ describe('runCopilotAgent', () => {
 
     expect(typesOf(await chunks)).toEqual(['start', 'finish']);
     expect(created).toEqual([]);
+  });
+
+  it('opens no session for a turn stopped while Copilot starts, and stops the client', async () => {
+    let finishStarting = () => {};
+    const started = new Promise<void>((resolve) => (finishStarting = resolve));
+    const fake = fakeCopilotClient({ started });
+    const abortController = new AbortController();
+    const pending = run(fake, runnerParams({ abortController })).chunks;
+    await vi.waitFor(() => expect(fake.calls).toEqual(['start']));
+
+    abortController.abort();
+    expect(typesOf(await pending)).toEqual(['start', 'finish']);
+    finishStarting();
+    await delay(50);
+
+    expect(fake.opened).toEqual([]);
+    expect(fake.calls).toEqual(['start', 'forceStop', 'stop']);
+  });
+
+  it('ends the turn with an error when Copilot stops answering mid-turn', async () => {
+    const fake = fakeCopilotClient({
+      turn: ({ emit, crash }) => {
+        emit(says('Working'));
+        crash();
+      },
+    });
+
+    const result = await run(fake).chunks;
+
+    expect(errorsOf(result)).toEqual([COPILOT_STOPPED]);
+    expect(textOf(result)).toBe('Working');
+    await vi.waitFor(() => expect(fake.calls).toEqual(['start', 'abort', 'stop']));
   });
 
   it('force-stops a client that does not stop within a moment', async () => {

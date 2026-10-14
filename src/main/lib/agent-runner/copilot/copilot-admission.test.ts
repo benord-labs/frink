@@ -746,6 +746,28 @@ describe.runIf(BIN)('GitHub Copilot admission', () => {
     TURN_MS,
   );
 
+  it(
+    'kill the CLI mid-turn: the turn ends with an error',
+    async () => {
+      scripts.set('crash', [bash(`touch '${inProject('m-crash')}'`)]);
+      let killedAt = 0;
+      const result = await turn('crash', {
+        answer: async () => {
+          // Copilot is the only child of this test that runs headless.
+          execFileSync('/usr/bin/pkill', ['-KILL', '-P', String(process.pid), '-f', 'headless']);
+          killedAt = Date.now();
+          return ALLOW;
+        },
+      });
+      expect(result.errors).toEqual([
+        'GitHub Copilot stopped unexpectedly, so this turn ended. Any steps shown above already ran.',
+      ]);
+      expect(Date.now() - killedAt).toBeLessThan(5_000);
+      expect(existsSync(inProject('m-crash'))).toBe(false);
+    },
+    TURN_MS,
+  );
+
   it('loaded no hostile hook, server, language server or leftover setting', async () => {
     expect(await readdir(markers)).toEqual([]);
   });
