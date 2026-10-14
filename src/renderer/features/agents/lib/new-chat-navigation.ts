@@ -19,6 +19,7 @@ import {
   splitViewAtom,
 } from '../atoms';
 import { getEffectiveModelIdForPane } from '../hooks/use-effective-model-for-pane';
+import type { ChatMode } from '../../../../shared/types/chat-mode';
 import { getEffectiveChatModeForPane } from '../hooks/use-effective-plan-mode-for-pane';
 import { fillNewChatInSplitState, resolveFillPaneIndex } from '../main/new-chat-form.split-routing';
 import { useAgentSubChatStore } from '../stores/sub-chat-store';
@@ -37,6 +38,8 @@ type SeedOptions = {
   autoModeEnabled?: boolean;
   /** Staged Codex speed from New Chat; applied only on a Codex account. Defaults to standard. */
   codexSpeed?: CodexSpeed;
+  /** Modes the chat's agent has no equivalent for: a saved one seeds as Agent. */
+  hiddenModes?: readonly ChatMode[];
 };
 
 /** Toggles one New Chat form stages before its chat exists; `capture` freezes them at send, so a
@@ -70,6 +73,7 @@ export function seedNewChatNavigation(
     subChatId,
     autoModeEnabled = true,
     codexSpeed = 'standard',
+    hiddenModes,
   }: SeedOptions,
 ): void {
   set(selectedAgentChatIdAtom, chatId);
@@ -77,7 +81,8 @@ export function seedNewChatNavigation(
   // Snapshot the fill target before setSplitView mutates chatIds — seeding reads it.
   const prevSplit = get(splitViewAtom);
   const filledPaneIndex = resolveFillPaneIndex(prevSplit.chatIds, chatId);
-  const effectiveChatMode = getEffectiveChatModeForPane(get, filledPaneIndex);
+  const savedChatMode = getEffectiveChatModeForPane(get, filledPaneIndex);
+  const effectiveChatMode = hiddenModes?.includes(savedChatMode) ? 'agent' : savedChatMode;
 
   set(splitViewAtom, (prev: SplitViewState) => fillNewChatInSplitState(prev, chatId));
 

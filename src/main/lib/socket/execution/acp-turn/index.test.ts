@@ -21,6 +21,9 @@ function fakeDeps(result: LaunchResult = { ok: true, launch: LAUNCH }) {
     resolve,
     deps: {
       resolveAcpLaunch: resolve,
+      rememberedModelOptions: (_agentId: string) => [
+        { id: 'anthropic/claude-sonnet-4-5', name: 'Claude Sonnet 4.5' },
+      ],
       async *runAcpAgent(params: AcpRunnerParams): AsyncGenerator<UIMessageChunk, void, undefined> {
         runs.push(params);
         yield { type: 'start' };
@@ -153,5 +156,18 @@ describe('startAcpTurn', () => {
     const reminder = `<system-reminder>\n${note}\n</system-reminder>`;
     expect(runs[0]?.prompt).toBe(`${reminder}\n\nfix the bug`);
     expect(runs[0]?.freshSessionFallbackPrompt).toBe(`${reminder}\n\nhistory\n\nfix the bug`);
+  });
+
+  it("sends no model the agent hasn't listed, so it starts on its own default", async () => {
+    const { deps, runs } = fakeDeps();
+    await collect(startAcpTurn(turnParams({ model: 'sonnet' }), deps));
+    await collect(
+      startAcpTurn(turnParams({ model: 'anthropic/claude-sonnet-4-5' }), {
+        ...deps,
+        rememberedModelOptions: () => undefined,
+      }),
+    );
+
+    expect(runs.map((run) => run.model)).toEqual([undefined, undefined]);
   });
 });

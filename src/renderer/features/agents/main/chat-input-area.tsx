@@ -1,21 +1,9 @@
 /* eslint-disable max-lines, max-lines-per-function */
 
 import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai';
-import { memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { attachedContextFile } from '@/lib/mentions/queued-message-text';
 import { handlePasteEvent } from '@/lib/utils/paste-text';
-import {
-  codexModelsForAccount,
-  isCodexModelUnavailable,
-} from '../../../../shared/lib/codex-cli-models';
-import {
-  CLAUDE_CODE_MODELS,
-  CODEX_MODELS,
-  claudeModelToPickerItem,
-  codexModelToPickerItem,
-  isClaudeModelVisible,
-  isCodexModelVisible,
-} from '../../../../shared/lib/models';
 import type { ChatMode } from '../../../../shared/types/chat-mode';
 import {
   PromptInput,
@@ -23,11 +11,11 @@ import {
   PromptInputContextItems,
 } from '../../../components/ui/prompt-input';
 import { useComposerPlaceholder } from '../../../lib/agent-chat/use-composer-placeholder';
-import { useCodexAccountCatalog } from '../../../lib/codex/use-codex-account-catalog';
+import { unsupportedChatControls } from '../../../lib/ai-providers/chat-options';
+import { useProviderModels } from '../../../lib/ai-providers/use-provider-models';
 import {
   agentsSettingsDialogActiveTabAtom,
   agentsSettingsDialogOpenAtom,
-  hiddenModelsAtom,
 } from '../../../lib/atoms';
 import { wakeHoldAdoptedAtomFamily } from '../../../lib/stores/active-transport-registry';
 import { trpc } from '../../../lib/trpc';
@@ -73,31 +61,6 @@ import {
   COMPOSER_ACTION_ROW_CLASS,
   HIDE_CONTEXT_RING_TIER,
 } from './chat-composer-shell-classes';
-
-/**
- * Picker rows for one provider: filter the catalog by hidden families, map to picker items,
- * resolve the selected item (stored id → first visible → first in catalog). Called once per
- * provider (Claude / Codex) so the two share one implementation. Generic over the
- * picker-item type `P` so each provider keeps its own shape (e.g. Claude's carries `version`).
- */
-function useVisibleProviderModels<T extends { id: string }, P>(
-  all: readonly T[],
-  isVisible: (model: T, hiddenFamilyIds: string[]) => boolean,
-  toPickerItem: (model: T) => P,
-  hiddenFamilyIds: string[],
-  selectedId: string,
-): { items: P[]; selected: P } {
-  const visible = useMemo(
-    () => all.filter((m) => isVisible(m, hiddenFamilyIds)),
-    [all, isVisible, hiddenFamilyIds],
-  );
-  const items = useMemo(() => visible.map(toPickerItem), [visible, toPickerItem]);
-  const selected = useMemo(
-    () => toPickerItem(visible.find((m) => m.id === selectedId) ?? visible[0] ?? all[0]),
-    [visible, selectedId, all, toPickerItem],
-  );
-  return { items, selected };
-}
 
 type ChatInputAreaProps = ComposerForwardedProps & {
   // Diff text context from selected diff sidebar text
@@ -382,41 +345,30 @@ export const ChatInputArea = memo(function ChatInputArea({
   const [lastSelectedModelId, setLastSelectedModelId] = useAtom(
     lastSelectedModelIdAtomFamily(parentChatId),
   );
-  const hiddenModelFamilies = useAtomValue(hiddenModelsAtom);
-  const claudeModels = useVisibleProviderModels(
-    CLAUDE_CODE_MODELS,
-    isClaudeModelVisible,
-    claudeModelToPickerItem,
-    hiddenModelFamilies,
-    lastSelectedModelId,
-  );
-
   const { data: resolvedAccount, isSuccess: accountResolved } =
     trpc.claudeCode.getResolvedAccount.useQuery(
       { chatId: parentChatId },
       { enabled: !!parentChatId, staleTime: 30000 },
     );
-  const isCodexAccount = resolvedAccount?.type === 'codex';
-  const codexCatalog = useCodexAccountCatalog(isCodexAccount);
-  const codexAccountModels = useMemo(() => codexModelsForAccount(codexCatalog), [codexCatalog]);
-  const codexModels = useVisibleProviderModels(
-    codexAccountModels,
-    isCodexModelVisible,
-    codexModelToPickerItem,
-    hiddenModelFamilies,
-    lastSelectedModelId,
-  );
   // A saved model the account can't use stays selected and named, so the trigger shows what a send
   // would carry; the send itself is refused with a plain message.
-  const codexUnavailableModel = isCodexModelUnavailable(lastSelectedModelId, codexCatalog)
-    ? CODEX_MODELS.find((m) => m.id === lastSelectedModelId)
-    : undefined;
-  const codexSelected = codexUnavailableModel
-    ? codexModelToPickerItem(codexUnavailableModel)
-    : codexModels.selected;
+  const models = useProviderModels(resolvedAccount?.type, lastSelectedModelId, {
+    keepUnavailable: true,
+  });
+  const controls = unsupportedChatControls(resolvedAccount?.type);
+  const hiddenModes: ChatMode[] = projectId ? controls.modes : [...controls.modes, 'debug'];
   const composerPlaceholder = useComposerPlaceholder(parentChatId, isStreaming);
   const stopEndsBackgroundWork = useAtomValue(wakeHoldAdoptedAtomFamily(subChatId));
   const { chatMode, commitModeChange } = useChatMode(subChatId, parentChatId);
+  // A saved mode this agent has no equivalent for becomes Agent, once per chat: a failed save
+  // leaves the send refused in plain words rather than retrying.
+  const agentHidesMode = controls.modes.includes(chatMode);
+  const modeCorrectedForRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!agentHidesMode || modeCorrectedForRef.current === subChatId) return;
+    modeCorrectedForRef.current = subChatId;
+    commitModeChange('agent');
+  }, [agentHidesMode, commitModeChange, subChatId]);
 
   // Refs for draft saving
   const currentSubChatIdRef = useRef<string>(subChatId);
@@ -453,7 +405,7 @@ export const ChatInputArea = memo(function ChatInputArea({
     lastSelectedModelId,
     setLastSelectedModelId,
     accountResolved,
-    codexCatalog,
+    models.codexCatalog,
   );
 
   // Content change handler
@@ -613,10 +565,10 @@ export const ChatInputArea = memo(function ChatInputArea({
   }, []);
 
   const handleEditorShiftTab = useCallback(() => {
-    const cycle = projectId ? CHAT_MODE_CYCLE : CHAT_MODE_CYCLE.filter((m) => m !== 'debug');
+    const cycle = CHAT_MODE_CYCLE.filter((m) => !hiddenModes.includes(m));
     const idx = cycle.indexOf(chatMode);
     commitModeChange(cycle[(idx + 1) % cycle.length]);
-  }, [chatMode, commitModeChange, projectId]);
+  }, [chatMode, commitModeChange, hiddenModes]);
 
   const handleSlashSelect = useCallback(
     (command: SlashCommandOption) => {
@@ -865,7 +817,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                     onTooltipChange={setModeTooltip}
                     tooltipTimeoutRef={tooltipTimeoutRef}
                     hasShownTooltipRef={hasShownTooltipRef}
-                    disableDebugMode={!projectId}
+                    hiddenModes={hiddenModes}
                   />
 
                   <ChatAutoModeToggle
@@ -876,15 +828,16 @@ export const ChatInputArea = memo(function ChatInputArea({
                   />
 
                   <ModelSelector
-                    selectedModel={isCodexAccount ? codexSelected : claudeModels.selected}
-                    availableModels={isCodexAccount ? codexModels.items : claudeModels.items}
+                    selectedModel={models.selected}
+                    availableModels={models.items}
                     onModelChange={(m) => setLastSelectedModelId(m.id)}
-                    modelVariant={isCodexAccount ? 'codex' : 'claude'}
+                    modelVariant={models.variant}
                     isOpen={isModelDropdownOpen}
                     onOpenChange={setIsModelDropdownOpen}
                     onOpenModelSettings={openModelSettings}
                     chatId={parentChatId}
-                    unavailable={isCodexAccount && codexUnavailableModel !== undefined}
+                    unavailable={models.unavailable}
+                    hint={models.hint}
                   />
                 </div>
 
@@ -903,13 +856,15 @@ export const ChatInputArea = memo(function ChatInputArea({
                   />
 
                   {/* Context window indicator - click to compact */}
-                  <AgentContextIndicator
-                    className={HIDE_CONTEXT_RING_TIER}
-                    tokenData={messageTokenData}
-                    onCompact={onCompact}
-                    isCompacting={isCompacting}
-                    disabled={isStreaming}
-                  />
+                  {controls.commands.includes('compact') ? null : (
+                    <AgentContextIndicator
+                      className={HIDE_CONTEXT_RING_TIER}
+                      tokenData={messageTokenData}
+                      onCompact={onCompact}
+                      isCompacting={isCompacting}
+                      disabled={isStreaming}
+                    />
+                  )}
 
                   <ComposerAttachButton
                     label="Attach files"
@@ -1008,6 +963,7 @@ export const ChatInputArea = memo(function ChatInputArea({
         projectPath={projectPath}
         hasProject={Boolean(projectId)}
         chatMode={chatMode}
+        disabledCommands={controls.commands}
         onCreateCommand={commandEditor.openCreate}
         onEditCommand={commandEditor.openEdit}
         onForkCommand={commandEditor.handleFork}

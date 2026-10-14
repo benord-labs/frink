@@ -23,6 +23,8 @@ describe('agentAccounts', () => {
     createAgentAccountsRouter({
       db: () => db,
       findAgent: (type) => findAcpAgent(type, env),
+      rememberedModels: (type) =>
+        type === 'opencode' ? [{ id: 'opencode/big-pickle', name: 'Big Pickle' }] : undefined,
       flags,
       platform,
     }).createCaller({ getWindow: () => null });
@@ -110,5 +112,12 @@ describe('agentAccounts', () => {
     });
     await expect(caller(flags, platform).connect({ type })).rejects.toThrow();
     expect(rows()).toEqual([]);
+  });
+
+  it('lists the models an agent offered in its last session, or none before it has run', async () => {
+    await expect(caller().models({ type: 'opencode' })).resolves.toEqual([
+      { id: 'opencode/big-pickle', name: 'Big Pickle' },
+    ]);
+    await expect(caller().models({ type: 'copilot' })).resolves.toEqual([]);
   });
 });

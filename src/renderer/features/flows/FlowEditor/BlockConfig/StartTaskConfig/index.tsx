@@ -23,6 +23,8 @@ import { getEffectiveNodeProjectId, getNodeProjectFieldError } from '../node-pro
 import { cfg, FieldRow, type ProjectNodeConfigProps } from '../shared';
 import { FlowBranchField } from './FlowBranchField';
 
+// Reason: existing step form; agent support only passes one more prop to its model field.
+// fallow-ignore-next-line complexity
 export function StartTaskConfig({
   node,
   flowSettings,
@@ -51,10 +53,12 @@ export function StartTaskConfig({
 
   const flowDefaultModel = flowSettings?.defaultModel;
   const effectiveProjectId = getEffectiveNodeProjectId(projectId, flowSettings?.defaultProjectId);
-  const { modelOptions, isCodexProject, modelPlaceholder } = useProjectModelOptions(
-    effectiveProjectId,
-    { model, flowDefaultModel, onClearModel: () => onConfigPatch({ model: undefined }) },
-  );
+  const { modelOptions, isCodexProject, modelPlaceholder, unsupportedMessage } =
+    useProjectModelOptions(effectiveProjectId, {
+      model,
+      flowDefaultModel,
+      onClearModel: () => onConfigPatch({ model: undefined }),
+    });
 
   const projErr = getNodeProjectFieldError(effectiveProjectId);
 
@@ -82,11 +86,14 @@ export function StartTaskConfig({
         error={projErr}
       />
       <FieldRow htmlFor="flow-start-task-model" label="Model override">
+        {/* Reason: form rows shaped like the Fan out step's, not shared logic. */}
+        {/* fallow-ignore-next-line code-duplication */}
         <NodeModelField
           model={model}
           flowDefaultModel={flowDefaultModel}
           modelOptions={modelOptions}
           isCodexProject={isCodexProject}
+          unsupportedMessage={unsupportedMessage}
           inheritOptionLabel={modelPlaceholder}
           selectId="flow-start-task-model"
           onModelChange={(m) => onConfigPatch({ model: m })}

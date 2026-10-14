@@ -40,6 +40,8 @@ export const CHAT_MODE_CYCLE: ChatMode[] = ['agent', 'plan', 'debug'];
 export type UseEffectiveChatModeForPaneOptions = {
   /** When false, Shift+Tab cycle omits `debug` (matches chat-input without `projectId`). */
   hasProject: boolean;
+  /** Modes the chat's agent has no equivalent for: left out of the cycle and read as Agent. */
+  hiddenModes?: readonly ChatMode[];
 };
 
 export function useEffectiveChatModeForPane(
@@ -53,11 +55,14 @@ export function useEffectiveChatModeForPane(
   const isSplitActive = chatIds.length >= 2;
 
   const paneIndexForRead = splitPaneIndex === undefined ? null : splitPaneIndex;
+  const { hasProject, hiddenModes } = options;
   // Derive from subscribed atoms so the label always matches store state (avoids stale render).
-  const chatMode = useMemo(
+  const storedMode = useMemo(
     () => resolveEffectiveChatMode(paneIndexForRead, isSplitActive, globalChatMode, paneMap),
     [paneIndexForRead, isSplitActive, globalChatMode, paneMap],
   );
+  // A mode the chat's agent lacks reads as Agent; the stored choice returns on another provider.
+  const chatMode: ChatMode = hiddenModes?.includes(storedMode) ? 'agent' : storedMode;
 
   const setChatMode = useCallback(
     (value: ChatMode) => {
@@ -73,15 +78,16 @@ export function useEffectiveChatModeForPane(
   );
 
   /** Cycles modes; omits `debug` when `hasProject` is false (avoids stale closure via store.get). */
-  const { hasProject } = options;
   const cycleChatMode = useCallback(() => {
-    const cycle = hasProject ? CHAT_MODE_CYCLE : CHAT_MODE_CYCLE.filter((m) => m !== 'debug');
+    const cycle = CHAT_MODE_CYCLE.filter(
+      (m) => (hasProject || m !== 'debug') && !hiddenModes?.includes(m),
+    );
     const current = getEffectiveChatModeForPane(store.get, paneIndexForRead);
     const idx = cycle.indexOf(current);
     const safeIdx = idx >= 0 ? idx : 0;
     const next = cycle[(safeIdx + 1) % cycle.length];
     setChatMode(next);
-  }, [store, paneIndexForRead, setChatMode, hasProject]);
+  }, [store, paneIndexForRead, setChatMode, hasProject, hiddenModes]);
 
   return { chatMode, setChatMode, cycleChatMode };
 }

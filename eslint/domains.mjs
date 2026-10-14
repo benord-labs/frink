@@ -14,6 +14,8 @@
 /** First-level domains under src/renderer/lib/ (renderer-process logic, by concern). */
 export const RENDERER_LIB_DOMAINS = [
   'agent-chat',
+  // Per-provider chat options: each AI provider's models and the controls its chats offer.
+  'ai-providers',
   'analytics',
   'atoms',
   'audio',

@@ -125,6 +125,8 @@ function AgentModeField({
   );
 }
 
+// Reason: existing step form; agent support only passes one more prop to its model field.
+// fallow-ignore-next-line complexity
 export function AgentConfig({
   node,
   flowSettings,
@@ -178,10 +180,12 @@ export function AgentConfig({
     return found && isProjectRow(found) ? found.name : null;
   }, [flowDefaultProjectId, allProjects]);
 
-  const { modelOptions, isCodexProject, modelPlaceholder } = useProjectModelOptions(
-    effectiveProjectId,
-    { model, flowDefaultModel, onClearModel: () => onConfigPatch({ model: undefined }) },
-  );
+  const { modelOptions, isCodexProject, modelPlaceholder, unsupportedMessage } =
+    useProjectModelOptions(effectiveProjectId, {
+      model,
+      flowDefaultModel,
+      onClearModel: () => onConfigPatch({ model: undefined }),
+    });
 
   const instErr = instructions.trim() === '' ? 'Instructions are required to run this step.' : null;
 
@@ -355,6 +359,7 @@ export function AgentConfig({
           flowDefaultModel={flowDefaultModel}
           modelOptions={modelOptions}
           isCodexProject={isCodexProject}
+          unsupportedMessage={unsupportedMessage}
           inheritOptionLabel={modelPlaceholder}
           selectId="flow-agent-model"
           onModelChange={(m) => onConfigPatch({ model: m })}

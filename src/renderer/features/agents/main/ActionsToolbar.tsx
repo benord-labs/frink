@@ -2,6 +2,7 @@ import type { ReactElement } from 'react';
 import type { ChatMode } from '../../../../shared/types/chat-mode';
 import type { CodexSpeed } from '../../../../shared/types/execution';
 import { PromptInputActions } from '../../../components/ui/prompt-input';
+import type { ModelVariant } from '../../../lib/ai-providers/chat-options';
 import { AgentSendButton } from '../components/agent-send-button';
 import { StagedAutoModeToggle } from '../components/auto-mode-toggle';
 import { ComposerAttachButton } from '../components/ComposerAttachButton';
@@ -39,8 +40,10 @@ type Props = {
   selectedModel: ModelItem;
   availableModels: ModelItem[];
   onModelChange: (model: ModelItem) => void;
-  /** Selects the model list / grouping: Codex, or (default) Claude. */
-  modelVariant?: 'claude' | 'codex';
+  /** Selects the model list / grouping: Claude (default), Codex, or an agent's flat list. */
+  modelVariant?: ModelVariant;
+  /** A line under the model list, such as how to load an agent's models. */
+  modelHint?: string;
   isModelDropdownOpen: boolean;
   onModelDropdownOpenChange: (open: boolean) => void;
   onOpenModelSettings?: () => void;
@@ -51,8 +54,8 @@ type Props = {
   onAttachClick: () => void;
   onFileInputChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
 
-  // Debug mode gating
-  disableDebugMode?: boolean;
+  /** Modes this chat can't use (Debug without a project, or ones the agent lacks). */
+  hiddenModes?: readonly ChatMode[];
 
   // Send button props
   hasContent: boolean;
@@ -82,11 +85,12 @@ export function ActionsToolbar({
   isModelDropdownOpen,
   onModelDropdownOpenChange,
   onOpenModelSettings,
+  modelHint,
   fileInputRef,
   images,
   onAttachClick,
   onFileInputChange,
-  disableDebugMode,
+  hiddenModes,
   hasContent,
   isUploading,
   isSubmitting,
@@ -107,7 +111,7 @@ export function ActionsToolbar({
           onTooltipChange={onModeTooltipChange}
           tooltipTimeoutRef={tooltipTimeoutRef}
           hasShownTooltipRef={hasShownTooltipRef}
-          disableDebugMode={disableDebugMode}
+          hiddenModes={hiddenModes}
         />
 
         <StagedAutoModeToggle {...autoMode} />
@@ -121,6 +125,7 @@ export function ActionsToolbar({
           onOpenChange={onModelDropdownOpenChange}
           onOpenModelSettings={onOpenModelSettings}
           newChatSpeedRef={codexSpeedRef}
+          hint={modelHint}
         />
       </div>
 

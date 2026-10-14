@@ -22,7 +22,8 @@ export function useModelNormalization(
   const codexCatalogLoading = codexCatalog === undefined;
 
   useEffect(() => {
-    if (!accountResolved) return;
+    // A chat that resolves to no account (its provider switched off) keeps its id.
+    if (!accountResolved || providerId == null) return;
     const currentModelId = lastSelectedModelIdRef.current;
     const needsCodexDefault =
       providerId === 'codex' && !CODEX_MODELS.some((m) => m.id === currentModelId);

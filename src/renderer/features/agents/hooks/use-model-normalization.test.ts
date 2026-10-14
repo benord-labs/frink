@@ -194,4 +194,12 @@ describe('useModelNormalization', () => {
     renderHook(() => useModelNormalization(provider, model, setModel, true, null));
     expect(model).toBe(expected);
   });
+
+  it('keeps the stored id when the chat resolves to no account (its provider is switched off)', () => {
+    const setModel = vi.fn();
+    renderHook(() =>
+      useModelNormalization(undefined, 'anthropic/claude-sonnet-4-5', setModel, true),
+    );
+    expect(setModel).not.toHaveBeenCalled();
+  });
 });

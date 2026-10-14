@@ -12,6 +12,7 @@ import {
 import {
   agentsMobileViewModeAtom,
   autoModePerChatAtomFamily,
+  chatModeAtom,
   chatModeAtomFamily,
   justCreatedIdsAtom,
   lastSelectedModelIdAtom,
@@ -52,6 +53,18 @@ describe('seedNewChatNavigation', () => {
     expect(store.get(chatModeAtomFamily('chat-1'))).toBe('agent');
     expect(store.get(lastSelectedModelIdAtomFamily('chat-1'))).toBe('sonnet');
     expect(store.get(autoModePerChatAtomFamily('chat-1'))).toBe(true);
+  });
+
+  it('seeds Agent when the saved mode is one the chat agent hides', () => {
+    const store = freshStore();
+    store.set(chatModeAtom, 'debug');
+
+    seedNewChatNavigation(store.get, store.set, 'chat-hidden', {
+      providerId: 'opencode',
+      hiddenModes: ['debug'],
+    });
+
+    expect(store.get(chatModeAtomFamily('chat-hidden'))).toBe('agent');
   });
 
   it('copies a locally staged Auto opt-out to the created chat', () => {

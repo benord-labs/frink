@@ -1,6 +1,6 @@
 import { type AiProviderId, aiProvider } from '../../../../../shared/lib/ai-providers';
 import type { ChatMode } from '../../../../../shared/types/chat-mode';
-import { resolveAcpLaunch, runAcpAgent } from '../../../agent-runner/acp';
+import { rememberedModelOptions, resolveAcpLaunch, runAcpAgent } from '../../../agent-runner/acp';
 import type { CodexApprovalCheck } from '../../../agent-runner/codex/codex-approvals';
 import type { UIMessageChunk } from '../../../claude/types';
 import { wrapRemindersForPrompt } from '../../operator-reminders';
@@ -26,7 +26,7 @@ type AcpTurnParams = {
   checkApproval: CodexApprovalCheck;
 };
 
-const DEFAULT_DEPS = { resolveAcpLaunch, runAcpAgent };
+const DEFAULT_DEPS = { resolveAcpLaunch, runAcpAgent, rememberedModelOptions };
 
 /** The agent's own mode for the chat's mode, or why the agent cannot run in it. */
 function agentModeFor(row: AcpProviderRow, mode: ChatMode): string | undefined {
@@ -56,6 +56,8 @@ export async function* startAcpTurn(
   });
   if (!resolved.ok) throw new Error(`${row.name} didn't start. ${resolved.reason}`);
   const fallback = params.freshSessionFallbackPrompt;
+  // A model the agent never listed (another provider's, or any before its first turn) is left out.
+  const listed = deps.rememberedModelOptions(row.id)?.some(({ id }) => id === params.model);
   yield* deps.runAcpAgent({
     launch: resolved.launch,
     agentId: row.id,
@@ -64,7 +66,7 @@ export async function* startAcpTurn(
     prompt: withNotes(params.prompt, params.composerNotes),
     freshSessionFallbackPrompt: fallback && withNotes(fallback, params.composerNotes),
     resumeSessionId: params.resumeSessionId,
-    model: params.model,
+    model: listed ? params.model : undefined,
     mode,
     images: params.images.map(({ base64Data, mediaType }) => ({
       data: base64Data,
