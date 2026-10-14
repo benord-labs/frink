@@ -618,6 +618,8 @@ if (gotTheLock) {
 
       // Tear down any warm `codex app-server` processes (persistent across turns).
       (await import('./lib/agent-runner/codex/app-server-registry')).disposeAllCodexAppServers();
+      // Stop agents still running a turn, waiting so a stuck one is force-stopped before exit.
+      await (await import('./lib/agent-runner/acp')).disposeAllAcpAgents();
 
       // ── Phase 3: Close DB and flush analytics ──
       await cleanupGitWatchers();

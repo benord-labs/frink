@@ -10,6 +10,7 @@ import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { eq } from 'drizzle-orm';
 import { app } from 'electron';
 import log from 'electron-log';
+import { LAUNCH_FLAGS } from '../../../shared/launch-flags';
 import { aiProvider, runtimeFor } from '../../../shared/lib/ai-providers';
 import { resolveCodexCliModel } from '../../../shared/lib/codex-cli-models';
 import { stripHiddenWakeMarker } from '../../../shared/lib/message-markers/hidden-wake-marker';
@@ -114,6 +115,7 @@ import {
 import { runTurn as runClaudeTurn } from './execution/claude-session-loop';
 import * as flow from './execution/flow-resource-cleanup';
 import { deliverProviderConfig } from './execution/provider-delivery';
+import { startAcpTurn } from './execution/acp-turn';
 import { trackUserMessageDelivery } from './execution/claude-session/user-message-delivery';
 
 import {
@@ -320,7 +322,11 @@ export {
  * For general chats (empty projectId), executes in the home directory.
  */
 /** Image extracted from user message parts for Claude SDK */
-export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promise<void> {
+export async function handleRemoteExecute(
+  payload: ExecuteRequestPayload,
+  // Swapped by tests to run an agent the shipped flags keep off.
+  deps = { runtimeFor, startAcpTurn },
+): Promise<void> {
   const {
     chatId,
     subChatId,
@@ -675,8 +681,8 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       }
     }
 
-    const agentRuntime = runtimeFor(storedCredential.type);
-    if (agentRuntime === undefined || agentRuntime === 'acp') {
+    const agentRuntime = deps.runtimeFor(storedCredential.type, LAUNCH_FLAGS, process.platform);
+    if (agentRuntime === undefined) {
       const name = aiProvider(storedCredential.type)?.name ?? 'This AI provider';
       const error = `${name} can't run chats in this version of Frink yet. Pick Claude or OpenAI for this chat.`;
       sendRunErrorDirect({ chatId, subChatId, assistantMessageId: msgId, error });
@@ -734,22 +740,20 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
             signalTaskId,
           )
         : undefined;
-    // Native Codex/Claude resumes already own the transcript; shipping Frink history duplicates it.
-    const codexResumeThreadId =
-      agentRuntime === 'codex'
-        ? (getCodexSession(subChatId) ?? persistedSessionId ?? undefined)
-        : undefined;
-    const willReplayHistoryViaResume =
-      agentRuntime === 'codex'
-        ? Boolean(codexResumeThreadId)
-        : agentRuntime === 'claude' && Boolean(persistedSessionId);
-    const hasResumeSession = Boolean(codexResumeThreadId ?? persistedSessionId);
-    let fullPrompt = willReplayHistoryViaResume
-      ? message
-      : formatPromptWithHistory(message, history);
-    const agentSawPriorTurns = willReplayHistoryViaResume || (history?.length ?? 0) > 0;
+    // Native resumes already own the transcript; shipping Frink history duplicates it.
+    const resumeSessionId =
+      agentRuntime === 'claude'
+        ? undefined
+        : ((agentRuntime === 'codex' ? getCodexSession(subChatId) : undefined) ??
+          persistedSessionId ??
+          undefined);
+    const hasResumeSession = Boolean(resumeSessionId ?? persistedSessionId);
+    let fullPrompt = hasResumeSession ? message : formatPromptWithHistory(message, history);
+    const agentSawPriorTurns = hasResumeSession || (history?.length ?? 0) > 0;
     // Written once the provider accepts the turn: Claude's first prompt hook, Codex's turn/start.
+    // Flows do not run on agent-protocol agents yet, so they have no Flow run to be told about.
     const flowRunEnded =
+      agentRuntime !== 'acp' &&
       armed.endedFlowRunId &&
       isFlowRunEndedNoticeDue({
         subChatId,
@@ -785,17 +789,16 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       );
     }
 
-    let codexFreshThreadFallbackPrompt =
-      agentRuntime === 'codex' && codexResumeThreadId
-        ? fullPrompt.endsWith(message)
-          ? `${fullPrompt.slice(0, fullPrompt.length - message.length)}${formatPromptWithHistory(message, history)}`
-          : fullPrompt
-        : undefined;
+    let freshSessionFallbackPrompt = resumeSessionId
+      ? fullPrompt.endsWith(message)
+        ? `${fullPrompt.slice(0, fullPrompt.length - message.length)}${formatPromptWithHistory(message, history)}`
+        : fullPrompt
+      : undefined;
     if (sessionFlowBriefing && agentRuntime !== 'claude' && !hasResumeSession) {
       fullPrompt = `${renderFlowBriefingSection(sessionFlowBriefing)}\n\n---\n\n${fullPrompt}`;
     }
-    if (sessionFlowBriefing && codexFreshThreadFallbackPrompt !== undefined) {
-      codexFreshThreadFallbackPrompt = `${renderFlowBriefingSection(sessionFlowBriefing)}\n\n---\n\n${codexFreshThreadFallbackPrompt}`;
+    if (sessionFlowBriefing && freshSessionFallbackPrompt !== undefined) {
+      freshSessionFallbackPrompt = `${renderFlowBriefingSection(sessionFlowBriefing)}\n\n---\n\n${freshSessionFallbackPrompt}`;
     }
     const { dynamicChatMcpUrl } = workspace;
     // Independent of the dynamic-chat MCP mount (gated on 2+ projects): an unsignalled linked task
@@ -815,14 +818,17 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
         sendRunExecuteCompleteDirect(deferredPayload);
       });
     };
-    // Codex uses a persistent app-server; Manual and Auto retain the write sandbox.
-    if (storedCredential.type === 'codex') {
-      await deliverProviderConfig(project, projectPath, 'codex');
+    // Codex uses a persistent app-server; Manual and Auto retain the write sandbox. An ACP agent
+    // runs one process per turn; both share the permission check and the stream below.
+    if (agentRuntime !== 'claude') {
+      const isCodex = agentRuntime === 'codex';
+      const agentLabel = aiProvider(storedCredential.type)?.longName ?? agentRuntime;
+      if (isCodex) await deliverProviderConfig(project, projectPath, 'codex');
       await flowResources.prepareProviderExecution(prepareLinkedTaskForExecution);
 
       let codexFullPrompt = fullPrompt;
-      let codexFreshFallbackPrompt = codexFreshThreadFallbackPrompt;
-      if (imageParts.length > 0) {
+      let codexFreshFallbackPrompt = freshSessionFallbackPrompt;
+      if (isCodex && imageParts.length > 0) {
         const imagePaths = writeImagePartsToTempFiles(imageParts).join('\n');
         const imagePromptPrefix = `The user attached the following image(s). View them at these file paths:\n${imagePaths}\n\n`;
         codexFullPrompt = `${imagePromptPrefix}${codexFullPrompt}`;
@@ -831,18 +837,15 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
         }
       }
 
-      const codexDynamicChatMcpUrl = buildCodexDynamicChatMcpUrl({
-        baseUrl: dynamicChatMcpUrl,
-        subChatId,
-        projectPath,
-        hasSignalTask: Boolean(signalTaskId),
-      });
+      const codexDynamicChatMcpUrl = isCodex
+        ? buildCodexDynamicChatMcpUrl({
+            baseUrl: dynamicChatMcpUrl,
+            subChatId,
+            projectPath,
+            hasSignalTask: Boolean(signalTaskId),
+          })
+        : null;
       const frinkMcpInjected = codexDynamicChatMcpUrl !== null;
-      const codexMcpRuntime = await resolveFrinkMcpServers({
-        projectId,
-        projectPath,
-        dynamicChatMcpUrl: codexDynamicChatMcpUrl,
-      });
 
       // A card opened in this turn closes when the turn ends, even if the app-server just died.
       const turnDone = new AbortController();
@@ -853,7 +856,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
         permissionProjectPath,
         isFlowExecutionTurn,
         frinkMcpInjected,
-        autoReview: codexAutoReview,
+        autoReview: isCodex && codexAutoReview,
         executionSignal: AbortSignal.any([abortController.signal, turnDone.signal]),
         validateToolPermission,
       });
@@ -866,50 +869,76 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       // is the single conversion boundary that splits it into the slug, effort and service tier the
       // v2 app-server wants. A model the account can't use throws into the catch below.
       const codexId = storedCredential.label ?? 'codex-default';
-      const unbindCodex = flowResources.bindCodex(abortController, projectPath, codexId, subChatId);
+      const unbindCodex = isCodex
+        ? flowResources.bindCodex(abortController, projectPath, codexId, subChatId)
+        : () => {};
       try {
-        const codexCatalog = await codexCatalogForModel(settings?.model);
-        // After the read: a cancel during a first read must not start the turn.
-        flowResources.assertLive(abortController.signal, 'Codex');
-        const codexModel = resolveCodexCliModel(
-          settings?.model,
-          settings?.codexSpeed,
-          codexCatalog,
-        );
-        for await (const chunk of runCodexAgent({
-          prompt: codexFullPrompt,
-          messageProvenance: provenance,
-          composerContext: codexComposerContext(composer.notes),
-          freshThreadFallbackPrompt: codexFreshFallbackPrompt,
-          ...(flowRunEnded && {
-            flowRunEnded: {
-              text: flowRunEnded.text,
-              onAccepted: () => markFlowRunEndAnnounced(subChatId, flowRunEnded.runId),
-            },
-          }),
-          cwd: projectPath,
-          // Registry key component: stable per-account. label is the account identity
-          // (CredentialResult has no id); falls back to a constant so a label-less default still
-          // shares one warm server rather than spawning per turn.
-          credentialId: codexId,
-          // Registry key component: the dynamic Frink MCP URL is sub-chat-scoped, so a server
-          // spawned for one sub-chat must never be handed to another (its tools would resolve into
-          // the wrong chat's execution context).
-          sessionKey: subChatId,
-          env: process.env as Record<string, string>,
-          abortController,
-          mode,
-          model: codexModel.model,
-          effort: codexModel.effort,
-          serviceTier: codexModel.serviceTier,
-          resumeThreadId: codexResumeThreadId,
-          canonicalMcpServers: codexMcpRuntime.servers,
-          canonicalMcpEnvByServer: codexMcpRuntime.envByServer,
-          taskSignalEnabled: Boolean(signalTaskId),
-          hasOpenPermission: () => hasPendingPermissionRequest(subChatId),
-          checkApproval,
-          autoReview: codexAutoReview,
-        })) {
+        let stream: AsyncGenerator<UIMessageChunk, void, undefined>;
+        if (agentRuntime === 'acp') {
+          stream = deps.startAcpTurn({
+            providerId: storedCredential.type,
+            projectPath,
+            configRoot: workspace.projectConfigRoot,
+            prompt: fullPrompt,
+            freshSessionFallbackPrompt,
+            resumeSessionId,
+            model: settings?.model,
+            mode,
+            images: imageParts,
+            composerNotes: composer.notes.map((note) => note.text),
+            abortController,
+            checkApproval,
+          });
+        } else {
+          const codexCatalog = await codexCatalogForModel(settings?.model);
+          const codexMcpRuntime = await resolveFrinkMcpServers({
+            projectId,
+            projectPath,
+            dynamicChatMcpUrl: codexDynamicChatMcpUrl,
+          });
+          // After the reads: a cancel during either read must not start the turn.
+          flowResources.assertLive(abortController.signal, 'Codex');
+          const codexModel = resolveCodexCliModel(
+            settings?.model,
+            settings?.codexSpeed,
+            codexCatalog,
+          );
+          stream = runCodexAgent({
+            prompt: codexFullPrompt,
+            messageProvenance: provenance,
+            composerContext: codexComposerContext(composer.notes),
+            freshThreadFallbackPrompt: codexFreshFallbackPrompt,
+            ...(flowRunEnded && {
+              flowRunEnded: {
+                text: flowRunEnded.text,
+                onAccepted: () => markFlowRunEndAnnounced(subChatId, flowRunEnded.runId),
+              },
+            }),
+            cwd: projectPath,
+            // Registry key component: stable per-account. label is the account identity
+            // (CredentialResult has no id); falls back to a constant so a label-less default still
+            // shares one warm server rather than spawning per turn.
+            credentialId: codexId,
+            // Registry key component: the dynamic Frink MCP URL is sub-chat-scoped, so a server
+            // spawned for one sub-chat must never be handed to another (its tools would resolve into
+            // the wrong chat's execution context).
+            sessionKey: subChatId,
+            env: process.env as Record<string, string>,
+            abortController,
+            mode,
+            model: codexModel.model,
+            effort: codexModel.effort,
+            serviceTier: codexModel.serviceTier,
+            resumeThreadId: resumeSessionId,
+            canonicalMcpServers: codexMcpRuntime.servers,
+            canonicalMcpEnvByServer: codexMcpRuntime.envByServer,
+            taskSignalEnabled: Boolean(signalTaskId),
+            hasOpenPermission: () => hasPendingPermissionRequest(subChatId),
+            checkApproval,
+            autoReview: codexAutoReview,
+          });
+        }
+        for await (const chunk of stream) {
           if (abortController.signal.aborted) break;
           if ('messageMetadata' in chunk)
             codexMetadata = { ...codexMetadata, ...chunk.messageMetadata };
@@ -924,7 +953,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
             messageIndex: codexIdx++,
           });
         }
-        flowResources.assertLive(abortController.signal, 'Codex');
+        flowResources.assertLive(abortController.signal, agentLabel);
 
         completionHasProviderError = await disposeTrailingStreamErrorChunk(
           subChatId,
@@ -933,7 +962,9 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
         );
 
         const codexSessionId = codexMetadata.sessionId;
-        if (codexSessionId) setCodexSession(chatId, subChatId, codexSessionId, codexTurn);
+        if (isCodex && codexSessionId) {
+          setCodexSession(chatId, subChatId, codexSessionId, codexTurn);
+        }
         sendExecuteCompleteDeferred({
           chatId,
           subChatId,
@@ -942,12 +973,12 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
           metadata: codexMetadata,
           finalParts: buildFinalPartsForPersist(mode, codexChunks),
         });
-        log.info(`[Socket Executor] Codex execution complete for ${subChatId}`);
+        log.info(`[Socket Executor] ${agentLabel} execution complete for ${subChatId}`);
       } catch (err) {
         if (abortController.signal.aborted) throw err;
-        log.error('[Socket Executor] Codex execution failed', err);
+        log.error(`[Socket Executor] ${agentLabel} execution failed`, err);
         // This catch swallows the throw, so the outer catch's disposition never runs — without
-        // parking here a thrown Codex failure strands its flow task `running`.
+        // parking here a thrown failure strands its flow task `running`.
         await disposeFlowStreamError(
           subChatId,
           err instanceof Error ? err.message : String(err),
@@ -1623,7 +1654,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
       );
       const retryOptions: Record<string, unknown> = { ...sdkOptions };
       delete retryOptions.resume;
-      if (willReplayHistoryViaResume && fullPrompt.endsWith(message)) {
+      if (hasResumeSession && fullPrompt.endsWith(message)) {
         fullPrompt =
           fullPrompt.slice(0, fullPrompt.length - message.length) +
           formatPromptWithHistory(message, history);

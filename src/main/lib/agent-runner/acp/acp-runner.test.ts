@@ -69,6 +69,20 @@ describe('runAcpAgent', () => {
     await vi.waitFor(() => expect(stoppedFirst).toBe(true));
   });
 
+  it('cleans up its launch when stopped at the first chunk, before the agent starts', async () => {
+    const fake = fakeAcpAgent(async () => {});
+    const cleanup = vi.fn(async () => {});
+    const params = runnerParams({ launch: { ...runnerParams().launch, cleanup } });
+    const turn = runAcpAgent(params, fake.start);
+
+    expect((await turn.next()).value).toEqual({ type: 'start' });
+    params.abortController.abort();
+    await turn.return();
+
+    await vi.waitFor(() => expect(cleanup).toHaveBeenCalledOnce());
+    expect(fake.launches).toEqual([]);
+  });
+
   it('shows thought as one Thinking card that completes before the text after it', async () => {
     const fake = fakeAcpAgent(async ({ client, sessionId }) => {
       await client.notify('session/update', { sessionId, update: thought('Let me') });
@@ -257,17 +271,6 @@ describe('runAcpAgent when the agent fails', () => {
 });
 
 describe('runAcpAgent when the user stops the turn', () => {
-  it('starts no agent when the turn was stopped before it began', async () => {
-    const abortController = new AbortController();
-    abortController.abort();
-    const fake = fakeAcpAgent(async () => {});
-
-    const chunks = await collectChunks(runAcpAgent(runnerParams({ abortController }), fake.start));
-
-    expect(typesOf(chunks)).toEqual(['start', 'finish']);
-    expect(fake.launches).toEqual([]);
-  });
-
   it('stops an agent that is still starting, without an error', async () => {
     const abortController = new AbortController();
     const fake = fakeAcpAgent(async () => {});

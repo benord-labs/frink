@@ -9,6 +9,7 @@
  */
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import log from 'electron-log';
+import type { AgentRuntime } from '../../../../shared/lib/ai-providers';
 import { supportsNativeAutoReview } from '../../../../shared/lib/models';
 import { type ExecutionSettings, parseClaudeModel } from '../../../../shared/types/execution';
 import { REQUIRED_TOOLS } from '../../../../shared/types/permissions';
@@ -44,7 +45,7 @@ export function isAutoReviewSupported(
  * (plan→default→plan flip); `autoReviewArmable` = Claude-only (arming goes through setPermissionMode). */
 export function resolveAutoReviewModes(
   autoReviewSupported: boolean,
-  agentRuntime: 'claude' | 'codex',
+  agentRuntime: AgentRuntime,
   mode: string,
 ): {
   nativeAutoReview: boolean;

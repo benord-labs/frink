@@ -14,6 +14,8 @@ type AiProviderRow =
   | (BaseRow & {
       runtime: 'acp';
       flag: LaunchFlagName;
+      // The agent's own modes for Frink's Agent and Plan; both are sent every turn.
+      agentMode?: string;
       planMode?: string;
       installHint: string;
       signInHint: string;
@@ -40,6 +42,7 @@ export const AI_PROVIDERS = {
     longName: 'OpenCode',
     passthroughSource: 'opencode-passthrough',
     flag: 'opencodeAccounts',
+    agentMode: 'build',
     planMode: 'plan',
     installHint: 'npm install -g opencode-ai',
     signInHint: 'opencode auth login',
