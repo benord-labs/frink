@@ -44,7 +44,7 @@ export const LAUNCH_FLAGS = {
    */
   flowHtmlArtifacts: true,
   /** OpenCode as an AI provider, run through the Agent Client Protocol. */
-  opencodeAccounts: false,
+  opencodeAccounts: true,
   /** GitHub Copilot CLI as an AI provider. Nothing can start it yet, even with this on. */
   copilotAccounts: false,
   /** Grok Build as an AI provider. Nothing can start it yet, even with this on. */

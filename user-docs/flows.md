@@ -2,6 +2,8 @@
 
 Flows are visual automation pipelines that connect triggers, commands, agents, and logic into repeatable workflows. You build them in the Flow Editor by wiring blocks together, and they run on your machines whenever their trigger fires.
 
+Flow steps run on Claude or OpenAI. A project that uses OpenCode, or that uses your default account when that default is OpenCode, can't run Flows yet: pick Claude or OpenAI for that project.
+
 This guide covers how flows work, with particular emphasis on how data moves between blocks — the most common source of confusion.
 
 ## Anatomy of a flow

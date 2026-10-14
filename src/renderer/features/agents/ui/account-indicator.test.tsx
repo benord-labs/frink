@@ -6,7 +6,6 @@ import userEvent from '@testing-library/user-event';
 import { createStore, Provider } from 'jotai';
 import { toast } from 'sonner';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { LAUNCH_FLAGS } from '../../../../shared/launch-flags';
 import {
   activeOverlayAtom,
   agentsSettingsDialogActiveTabAtom,
@@ -519,7 +518,7 @@ describe('AccountIndicator', () => {
     });
   });
 
-  it('lists OpenCode logins in the new-chat picker on macOS only while OpenCode is on', async () => {
+  it('lists OpenCode logins in the new-chat picker on macOS', async () => {
     const [claudeRow] = snap.defaultListAccounts;
     snap.listAccountsData = [
       claudeRow,
@@ -538,9 +537,7 @@ describe('AccountIndicator', () => {
       );
       await userEvent.setup().click(screen.getByRole('button', { name: /^AI accounts menu/ }));
 
-      const shown = within(screen.getByRole('menu')).queryByText('OpenCodeWork');
-      if (LAUNCH_FLAGS.opencodeAccounts) expect(shown).toBeInTheDocument();
-      else expect(shown).not.toBeInTheDocument();
+      expect(within(screen.getByRole('menu')).getByText('OpenCodeWork')).toBeInTheDocument();
     } finally {
       Reflect.deleteProperty(window, 'desktopApi');
     }

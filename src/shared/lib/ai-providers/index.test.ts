@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { LAUNCH_FLAGS } from '../../launch-flags';
 import { AI_PROVIDERS, aiProvider, runtimeFor, selectableProviderIds } from '.';
 
 const ALL_ON = {
@@ -44,13 +43,16 @@ describe('AI provider table', () => {
     ]);
   });
 
-  it('uses the shipped flags when none are passed', () => {
-    expect(runtimeFor('opencode', undefined, 'darwin')).toBe(
-      LAUNCH_FLAGS.opencodeAccounts ? 'acp' : undefined,
-    );
-    expect(selectableProviderIds(undefined, 'darwin')).toEqual(
-      selectableProviderIds(LAUNCH_FLAGS, 'darwin'),
-    );
+  it('ships OpenCode on macOS only and Copilot and Grok off', () => {
+    expect(runtimeFor('opencode', undefined, 'darwin')).toBe('acp');
+    expect(runtimeFor('opencode', undefined, 'linux')).toBeUndefined();
+    expect(runtimeFor('copilot', undefined, 'darwin')).toBeUndefined();
+    expect(runtimeFor('grok', undefined, 'darwin')).toBeUndefined();
+    expect(selectableProviderIds(undefined, 'darwin')).toEqual([
+      'claude-code',
+      'codex',
+      'opencode',
+    ]);
   });
 
   it('never gates running Codex on its picker flag', () => {

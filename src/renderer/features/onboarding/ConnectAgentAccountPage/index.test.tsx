@@ -110,7 +110,7 @@ describe('ConnectAgentAccountPage', () => {
     });
 
     expect(await screen.findByText("OpenCode isn't installed.")).toBeInTheDocument();
-    expect(screen.getByText('npm install -g opencode-ai').tagName).toBe('CODE');
+    expect(screen.getByText('npm install -g opencode-ai@1.19').tagName).toBe('CODE');
     expect(screen.queryByText("Frink can't find OpenCode.")).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Check again/ })).toBeInTheDocument();
   });
