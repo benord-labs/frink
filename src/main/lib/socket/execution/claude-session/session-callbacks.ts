@@ -153,7 +153,7 @@ function createPreToolUseHook(scope: ClaudeSessionScope, activeTurn: ActiveTurn)
       if (submitted) return denyToolUse(submitted);
     }
 
-    const verdict = await judgeToolCall(scope, turn, toolName, finalInput);
+    const verdict = await judgeToolCall(scope, turn, toolName, finalInput, hookInput.cwd);
     if (verdict.allowed === null) {
       return preToolUseOutput(user, { updatedInput: user.updatedInput });
     }
@@ -168,6 +168,7 @@ async function judgeToolCall(
   turn: ClaudeTurnContext,
   toolName: string,
   toolInput: Parameters<typeof validateToolPermission>[1],
+  sessionCwd?: string,
 ): Promise<ToolVerdict> {
   if (toolName === 'mcp__frink_dynamic_chat__frink_register_node') return { allowed: true };
   if (!isClaudePermissionGatedTool(toolName) && !toolName.startsWith('mcp__')) {
@@ -190,6 +191,12 @@ async function judgeToolCall(
     permissionPathOverride,
     turn.execution.isFlowTurn,
     turn.autoReviewTools,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    scope.projectPath,
+    sessionCwd,
   );
 }
 

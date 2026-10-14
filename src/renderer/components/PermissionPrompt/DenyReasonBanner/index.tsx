@@ -23,5 +23,13 @@ export const DenyReasonBanner = memo(function DenyReasonBanner({ prompt }: DenyR
       </p>
     );
   }
+  if (prompt.reason === 'redirect-outside-project') {
+    return (
+      <p className="text-[10px] text-muted-foreground leading-relaxed">
+        Frink can't confirm this command's output stays inside this project, so it checks with you
+        first.
+      </p>
+    );
+  }
   return null;
 });
