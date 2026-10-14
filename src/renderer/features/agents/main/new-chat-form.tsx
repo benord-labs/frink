@@ -272,7 +272,7 @@ export function NewChatForm({
   // What the new chat will start on: the stored choice, or the account's default when the account
   // can't use it. The stored preference itself is kept for an account that can.
   const codexNewChatModelId = normalizeModelIdForExecutionAccount(
-    true,
+    'codex',
     lastSelectedModelId,
     codexCatalog,
   );
@@ -286,7 +286,7 @@ export function NewChatForm({
 
   // Normalize model selection when account type changes (Codex ↔ Claude)
   useModelNormalization(
-    isCodexAccount,
+    resolvedAccount?.type,
     lastSelectedModelId,
     setLastSelectedModelId,
     accountResolved,
@@ -391,7 +391,7 @@ export function NewChatForm({
 
       // Navigate + seed per-chat atoms (shared with the goal-first build flow).
       seedNewChatNavigation(appStore.get, appStore.set, data.id, {
-        isCodexAccount,
+        providerId: resolvedAccount?.type,
         codexCatalog,
         subChatId: data.subChats?.[0]?.id,
         autoModeEnabled: staging.pending.autoMode,

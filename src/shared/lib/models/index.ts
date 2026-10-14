@@ -1,5 +1,6 @@
 import { LAUNCH_FLAGS } from '../../launch-flags';
 import type { ClaudeSdkEffortLevel } from '../../types/execution';
+import { aiProvider } from '../ai-providers';
 import {
   CODEX_CLI_MODELS,
   type CodexAccountCatalog,
@@ -222,23 +223,22 @@ export function claudeModelToPickerItem(m: ClaudeCodeModel): ModelPickerItem & {
 export const CLAUDE_PICKER_MODELS = CLAUDE_CODE_MODELS.map(claudeModelToPickerItem);
 
 /**
- * Coerce a picker model id to one valid for the resolved execution account (Codex / Claude).
- * Shared by `useModelNormalization` and new-chat seeding — keep catalog rules in one place. An account
- * switch (e.g. Claude → Codex) leaves a stale cross-provider id that must snap to that provider's default.
- * A Codex id the account's `catalog` does not list snaps too, unless `keepUnavailable`: a saved chat
- * keeps its choice, and the send reports it rather than swapping it.
+ * Coerce a picker model id for the chat's provider. Claude and Codex snap a stale or unlisted id to
+ * their default (`keepUnavailable` keeps an unlisted Codex id); other agents keep their own ids.
  */
 export function normalizeModelIdForExecutionAccount(
-  isCodexAccount: boolean,
+  providerId: string | null | undefined,
   modelId: string,
   catalog: CodexAccountCatalog | null = null,
   { keepUnavailable = false }: { keepUnavailable?: boolean } = {},
 ): string {
-  if (isCodexAccount) {
+  const runtime = aiProvider(providerId)?.runtime;
+  if (runtime === 'codex') {
     const known = CODEX_MODELS.some((m) => m.id === modelId);
     const usable = keepUnavailable || !isCodexModelUnavailable(modelId, catalog);
     return known && usable ? modelId : codexDefaultModelIdForAccount(catalog);
   }
+  if (runtime !== 'claude') return modelId;
   if (!CLAUDE_MODEL_IDS.includes(modelId)) return CLAUDE_DEFAULT_MODEL;
   return modelId;
 }

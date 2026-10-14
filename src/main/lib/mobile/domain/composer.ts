@@ -99,14 +99,9 @@ export async function readMobileComposer(input: ComposerRequest): Promise<Mobile
   // Shown normalized (as the desktop picker does) but never stored normalized: flipping the
   // account back must not lose the other provider's choice.
   const catalog = provider === 'codex' ? ((await codexPlanUsage.get())?.catalog ?? null) : null;
-  const modelId = normalizeModelIdForExecutionAccount(
-    provider === 'codex',
-    stored.modelId,
-    catalog,
-    {
-      keepUnavailable: true,
-    },
-  );
+  const modelId = normalizeModelIdForExecutionAccount(account?.type, stored.modelId, catalog, {
+    keepUnavailable: true,
+  });
   const tiers = provider === 'codex' ? (catalog?.tiers ?? {}) : null;
   return {
     mode: (subChat.mode as MobileChatMode) ?? 'agent',
@@ -134,7 +129,7 @@ export async function readMobileComposer(input: ComposerRequest): Promise<Mobile
     autoUnavailableReason: getAutoModeUnavailableReason({
       accountResolved: true,
       isAuthenticated: account?.isAuthenticated,
-      accountType: account?.type === 'codex' ? 'codex' : account ? 'claude-code' : undefined,
+      accountType: account?.type,
       selectedModelId: modelId,
     }),
     codexSpeedCredits: {

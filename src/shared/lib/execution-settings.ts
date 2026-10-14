@@ -1,7 +1,7 @@
 /** A chat's composer settings and the one place both desktop and main turn them into the
  *  `ExecutionSettings` a send carries. */
 import type { CodexSpeed, ExecutionSettings } from '../types/execution';
-import type { AiProviderId } from './ai-providers';
+import { type AiProviderId, aiProvider } from './ai-providers';
 import { codexFastTierCredits } from './codex-cli-models';
 import {
   claudeModelRequires1M,
@@ -47,15 +47,14 @@ export function resolveComposerSettings(
 
 /**
  * Maps a picker model id to the execution `settings.model` string (Claude Code: opus|sonnet|haiku;
- * Codex: picker id forwarded RAW).
+ * Codex and every other agent: picker id forwarded RAW).
  */
 export function resolveExecutionModelCliString(
   accountType: ExecutionAccountKind,
   selectedModelId: string,
 ): string {
-  if (accountType === 'codex') {
-    // Forwarded RAW: resolveCodexCliModel is the single split point for slug + effort
-    // (docs/decisions model-id-execution-namespace).
+  if (aiProvider(accountType)?.runtime !== 'claude') {
+    // Forwarded raw: Codex splits slug and effort at the executor; other agents' ids are their own.
     return selectedModelId;
   }
   return getClaudeCliModel(selectedModelId);

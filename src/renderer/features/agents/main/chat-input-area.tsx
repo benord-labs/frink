@@ -449,7 +449,7 @@ export const ChatInputArea = memo(function ChatInputArea({
 
   // Normalize model selection when account type changes (Codex ↔ Claude)
   useModelNormalization(
-    isCodexAccount,
+    resolvedAccount?.type,
     lastSelectedModelId,
     setLastSelectedModelId,
     accountResolved,
