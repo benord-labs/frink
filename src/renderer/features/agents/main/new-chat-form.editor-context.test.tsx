@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { observable } from '@trpc/server/observable';
 import { createStore, Provider } from 'jotai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -11,6 +11,7 @@ import {
 } from '@/lib/code-editor/state';
 import type { CodexAccountCatalog } from '../../../../shared/lib/codex-cli-models';
 import { TooltipProvider } from '../../../components/ui/tooltip';
+import { COMMAND_PROMPTS } from '../../../lib/commands/builtin-commands';
 import { appStore } from '../../../lib/jotai-store';
 import { trpc } from '../../../lib/trpc';
 import { lastSelectedModelIdAtom, lastSelectedModelIdAtomFamily, NEW_CHAT_PANE } from '../atoms';
@@ -149,6 +150,30 @@ describe('NewChatForm on a free Codex account (its model/list has no GPT-6 Astra
       expect(appStore.get(lastSelectedModelIdAtomFamily('chat-free'))).toBe(
         'codex-gpt-6-luna-medium',
       ),
+    );
+  });
+});
+
+describe('NewChatForm slash-menu picks', () => {
+  it('inserts a prompt-based built-in as a command block and offers no /commit', async () => {
+    const { container } = renderNewChat();
+    const editor = container.querySelector<HTMLElement>('[contenteditable="true"]');
+    if (!editor) throw new Error('composer editor not found');
+    editor.focus();
+    editor.textContent = '/';
+    const range = document.createRange();
+    range.selectNodeContents(editor.lastChild ?? editor);
+    range.collapse(false);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+    fireEvent.input(editor);
+
+    const menu = await screen.findByRole('listbox', { name: 'Slash commands' });
+    expect(within(menu).queryByText('/commit')).toBeNull();
+    fireEvent.mouseDown(within(menu).getByText('/review'));
+
+    expect(screen.getByLabelText('Command: review')).toHaveTextContent(
+      COMMAND_PROMPTS.review ?? '',
     );
   });
 });

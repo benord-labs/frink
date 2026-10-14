@@ -24,10 +24,10 @@ import { runChatShortcutAction } from '../../../lib/work-queue/chat-owns-keyboar
 import { lastSelectedModelIdAtomFamily, splitViewAtom } from '../atoms';
 import {
   AgentsSlashCommand,
-  COMMAND_PROMPTS,
   LazyCommandEditorModal,
   SLASH_COMMAND_LISTBOX_ID,
   type SlashCommandOption,
+  slashCommandInsertText,
 } from '../commands';
 import { AttachedTask } from '../components/AttachedTask';
 import { AgentSendButton } from '../components/agent-send-button';
@@ -592,26 +592,12 @@ export const ChatInputArea = memo(function ChatInputArea({
             // Trigger context compaction
             onCompact();
             break;
-          // Prompt-based commands - insert into editor for user to review/send
-          case 'review':
-          case 'pr-comments':
-          case 'release-notes':
-          case 'security-review':
-          case 'commit': {
-            const prompt = COMMAND_PROMPTS[command.name as keyof typeof COMMAND_PROMPTS];
-            if (prompt) {
-              editorRef.current?.setCommandValue(command.name, prompt);
-            }
-            break;
-          }
         }
-        return;
       }
 
-      // Handle custom commands - insert as highlighted command block
-      if (command.prompt) {
-        editorRef.current?.setCommandValue(command.name, command.prompt);
-      }
+      // Prompt-based and custom commands - insert as highlighted command block
+      const text = slashCommandInsertText(command);
+      if (text) editorRef.current?.setCommandValue(command.name, text);
     },
     [commitModeChange, onCompact, editorRef, projectId],
   );

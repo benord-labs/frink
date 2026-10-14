@@ -10,8 +10,6 @@ export const COMMAND_PROMPTS: Partial<Record<BuiltinCommandAction['type'], strin
   'release-notes': 'Generate release notes summarizing the changes in this codebase.',
   'security-review':
     'Perform a security audit of the code in the current context. Identify vulnerabilities, security risks, and suggest fixes.',
-  commit:
-    'Закоммить это аккуратно, не трогая больше ничего. Сделай коммит только для staged изменений, не добавляй никакие другие файлы и не вноси дополнительных изменений.',
   'worktree-setup': `Create a worktree setup script for this project.
 
 Your task:
@@ -38,6 +36,16 @@ Example output for .frink/worktrees.json:
 
 Now analyze this project and create .frink/worktrees.json with the appropriate setup commands.`,
 };
+
+function isPromptCommandName(name: string): name is keyof typeof COMMAND_PROMPTS {
+  return Object.hasOwn(COMMAND_PROMPTS, name);
+}
+
+/** Text a slash-menu pick inserts into the editor: a built-in's canned prompt or a custom command's body. */
+export function slashCommandInsertText(command: SlashCommandOption): string | undefined {
+  if (command.category !== 'builtin') return command.prompt;
+  return isPromptCommandName(command.name) ? COMMAND_PROMPTS[command.name] : undefined;
+}
 
 /** Debug mode requires a project (ingest paths, logs). Omit from listings when absent. */
 export const BUILTIN_DEBUG_COMMAND_ID = 'builtin:debug' as const;
@@ -101,13 +109,6 @@ export const BUILTIN_SLASH_COMMANDS: SlashCommandOption[] = [
     name: 'security-review',
     command: '/security-review',
     description: 'Ask agent to perform a security audit',
-    category: 'builtin',
-  },
-  {
-    id: 'builtin:commit',
-    name: 'commit',
-    command: '/commit',
-    description: 'Commit staged changes carefully without touching anything else',
     category: 'builtin',
   },
   {

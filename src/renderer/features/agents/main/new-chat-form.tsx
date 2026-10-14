@@ -48,10 +48,10 @@ import {
 } from '../atoms';
 import {
   AgentsSlashCommand,
-  COMMAND_PROMPTS,
   LazyCommandEditorModal,
   SLASH_COMMAND_LISTBOX_ID,
   type SlashCommandOption,
+  slashCommandInsertText,
 } from '../commands';
 import { EditorContextChip } from '../components/EditorContextChip';
 import { NewChatFormHeader } from '../components/new-chat-form-header';
@@ -607,26 +607,12 @@ export function NewChatForm({
           case 'debug':
             if (selectedProject && chatMode !== 'debug') setChatMode('debug');
             break;
-          // Prompt-based commands - insert as highlighted command block
-          case 'review':
-          case 'pr-comments':
-          case 'release-notes':
-          case 'security-review':
-          case 'commit': {
-            const prompt = COMMAND_PROMPTS[command.name as keyof typeof COMMAND_PROMPTS];
-            if (prompt) {
-              editorRef.current?.setCommandValue(command.name, prompt);
-            }
-            break;
-          }
         }
-        return;
       }
 
-      // Handle custom commands - insert as highlighted command block
-      if (command.prompt) {
-        editorRef.current?.setCommandValue(command.name, command.prompt);
-      }
+      // Prompt-based and custom commands - insert as highlighted command block
+      const text = slashCommandInsertText(command);
+      if (text) editorRef.current?.setCommandValue(command.name, text);
     },
     [chatMode, setChatMode, editorHandlers, selectedProject],
   );
