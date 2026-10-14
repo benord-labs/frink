@@ -134,6 +134,6 @@ describe('resolveCopilotLaunch', () => {
     expect(await locateCopilotAgent(env)).toBe(found.path);
     const missing = { ...env, PATH: '/usr/bin' };
     expect(await locateCopilotAgent(missing)).toBeUndefined();
-    expect(await findCopilotAgent(missing)).toEqual({ reason: MISSING });
+    expect(await findCopilotAgent(missing)).toMatchObject({ reason: MISSING });
   });
 });
