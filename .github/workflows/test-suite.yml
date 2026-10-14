@@ -248,3 +248,45 @@ jobs:
       - name: Coverage floor
         if: ${{ !cancelled() }}
         run: node scripts/testing/check-coverage-floor.mjs coverage/coverage-summary.json
+
+  # Starts a real OpenCode against a scripted model to prove it still asks Frink before it acts.
+  acp-admission:
+    if: github.event_name != 'push'
+    name: OpenCode admission
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Skip pull requests that leave the ACP runner alone
+        id: scope
+        if: github.event_name == 'pull_request'
+        run: |
+          if git diff --name-only "origin/${{ github.base_ref }}...HEAD" | grep -q '^src/main/lib/agent-runner/acp/'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: oven-sh/setup-bun@v2
+        if: steps.scope.outputs.run != 'false'
+
+      - name: Install root dependencies
+        if: steps.scope.outputs.run != 'false'
+        run: bun install --frozen-lockfile
+
+      # Pull requests run the oldest version Frink accepts; scheduled runs the newest in that range.
+      - name: Install OpenCode
+        if: steps.scope.outputs.run != 'false'
+        env:
+          OPENCODE_SPEC: ${{ github.event_name == 'pull_request' && 'opencode-ai@1.19.0' || 'opencode-ai@~1.19.0' }}
+        run: npm install --prefix "$RUNNER_TEMP/oc" "$OPENCODE_SPEC"
+
+      - name: Admission run
+        if: steps.scope.outputs.run != 'false'
+        env:
+          FRINK_ACP_ADMISSION_BIN: ${{ runner.temp }}/oc/node_modules/.bin/opencode
+        run: bun run test -- run src/main/lib/agent-runner/acp/agents/opencode-admission.test.ts
