@@ -111,13 +111,39 @@ function approvalRequestsFor(
   return url ? [{ toolName: 'WebFetch', input: { url }, reason: toolCall.title ?? undefined }] : [];
 }
 
-/** The agent's own option of the first wanted kind it offered, else the cancelled outcome. */
+/** Words that say an option reaches beyond this call, whatever kind the agent gives it. */
+const LASTING_WORDS = new Set([
+  ...['always', 'all', 'every', 'forever', 'permanent', 'permanently', 'future', 'again', 'never'],
+  ...[
+    'session',
+    'project',
+    'workspace',
+    'folder',
+    'directory',
+    'remember',
+    'trust',
+    'rule',
+    'rules',
+  ],
+]);
+/** Splits ids such as `allowAlways` into words; other separators split on any non-letter. */
+const CAMEL_BREAK = /(?<=[a-z])(?=[A-Z])/g;
+
+function lasts({ optionId, name }: PermissionOption): boolean {
+  const words = `${optionId.replace(CAMEL_BREAK, ' ')} ${name}`.toLowerCase().split(/[^a-z]+/);
+  return words.some((word) => LASTING_WORDS.has(word));
+}
+
+/** The agent's own option of the first wanted kind it offered, else cancelled. */
 function selectOption(
   options: PermissionOption[],
   wanted: PermissionOptionKind[],
 ): RequestPermissionResponse {
+  // An allow that says it lasts is never picked; a refusal can only refuse more, so any will do.
   for (const kind of wanted) {
-    const option = options.find((candidate) => candidate.kind === kind);
+    const option = options.find(
+      (candidate) => candidate.kind === kind && !(kind === 'allow_once' && lasts(candidate)),
+    );
     if (option) return { outcome: { outcome: 'selected', optionId: option.optionId } };
   }
   return CANCELLED;

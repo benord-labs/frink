@@ -13,6 +13,8 @@ export type AcpAgentLaunch = {
   cwd: string;
   env: NodeJS.ProcessEnv;
   rules: AcpAgentRules;
+  /** The command that signs the user in to the agent, shown when the agent asks for a sign-in. */
+  signInHint?: string;
   /** The folder the agent's shell gate reads the commands Frink allowed from. */
   commandLedger?: string;
   /** Removes what the launch set up, once the agent has stopped. */

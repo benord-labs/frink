@@ -128,6 +128,7 @@ export const OPENCODE_LAUNCH: AcpLaunchRow = {
   fallbacks: ['.opencode/bin/opencode'],
   versions: { floor: '1.19.0', below: '1.20.0' },
   installHint: AI_PROVIDERS.opencode.installHint,
+  signInHint: AI_PROVIDERS.opencode.signInHint,
   args: ['acp', '--pure', '--hostname', '127.0.0.1', '--port', '0'],
   envPrefix: 'OPENCODE_',
   settings: openCodeSettings,

@@ -3,6 +3,7 @@ import {
   type AgentContext,
   agent,
   type ContentBlock,
+  type InitializeResponse,
   ndJsonStream,
   type PermissionOption,
   PROTOCOL_VERSION,
@@ -36,6 +37,12 @@ type FakeAgentSetup = {
   configOptions?: SessionConfigOption[];
   /** Answer `session/resume` with an error, as for a session the agent no longer has. */
   resumeFails?: boolean;
+  /** Requests answered with the sign-in error, as from an agent the user is not signed in to. */
+  signedOutOn?: string[];
+  /** The agent's own words with the sign-in code, when it uses that code for something else. */
+  signedOutMessage?: string;
+  /** What `initialize` reports about the agent itself. */
+  identity?: Pick<InitializeResponse, 'agentInfo' | '_meta'>;
   /** What the agent sends while answering `method`: before the answer, or a moment after. */
   reportsOn?: {
     method: 'session/new' | 'session/resume' | 'session/set_config_option';
@@ -69,15 +76,27 @@ export function fakeAcpAgent(script: FakeTurnScript, setup: FakeAgentSetup = {})
     if (reports.afterAnswer) setTimeout(() => void send(), 10);
     else await send();
   };
+  const signedIn = (method: string) => {
+    if (setup.signedOutOn?.includes(method)) {
+      throw setup.signedOutMessage
+        ? new RequestError(-32000, setup.signedOutMessage)
+        : RequestError.authRequired();
+    }
+  };
   agent({ name: 'fake-agent' })
-    .onRequest('initialize', () => ({ protocolVersion, agentCapabilities }))
+    .onRequest('initialize', () => {
+      signedIn('initialize');
+      return { protocolVersion, agentCapabilities, ...setup.identity };
+    })
     .onRequest('session/new', async ({ client }) => {
       requests.push('session/new');
+      signedIn('session/new');
       await report('session/new', client, 'fake-session');
       return { sessionId: 'fake-session', configOptions };
     })
     .onRequest('session/resume', async ({ params, client }) => {
       requests.push(`session/resume ${params.sessionId}`);
+      signedIn('session/resume');
       if (setup.resumeFails) throw RequestError.resourceNotFound(params.sessionId);
       await report('session/resume', client, params.sessionId);
       return { configOptions };
@@ -89,6 +108,7 @@ export function fakeAcpAgent(script: FakeTurnScript, setup: FakeAgentSetup = {})
     })
     .onNotification('session/cancel', () => cancel())
     .onRequest('session/prompt', async ({ params, client }) => {
+      signedIn('session/prompt');
       const { sessionId, prompt } = params;
       const response = await script({ client, sessionId, prompt, cancelled });
       return response ?? { stopReason: 'end_turn' };
