@@ -197,6 +197,15 @@ Auto changes who reviews an eligible request; it does not remove the surrounding
 
 Claude Auto is available only on Claude Sonnet and Opus models that Frink reports as supported. Codex uses its native auto-review while retaining the `workspace-write` sandbox and `on-request` approval policy.
 
+### Your own Auto Mode rules
+
+If you have taught Claude Code's Auto Mode which actions to allow or block, Frink's Claude chats and Flows follow the same rules. Frink reads the `autoMode` section of your own `~/.claude/settings.json`, as Claude Code does in the terminal; `autoMode` rules in a project's settings are never used, the same as in Claude Code. **Flow settings → Auto Mode** shows how many of your rules apply.
+
+- If a block list leaves out `"$defaults"`, Frink still keeps Claude's built-in block rules (force pushes, `curl | bash`, sending data out), because Flows run with nobody watching. Your allow rules and setup notes are used exactly as you wrote them.
+- A list Claude can't read, such as text where a list belongs, is skipped; your other lists still apply.
+- Changes reach newly started chats and every Flow run. A chat that is already running keeps the rules it started with.
+- Codex follows its own reviewer rules: the `[auto_review] policy` in your `~/.codex/config.toml`.
+
 ### Auto in Plan mode
 
 Auto reviews tool requests in Plan mode too — both the **planning phase** (the reading and running the agent does to build its plan) and, when the plan is accepted, the implementing phase. So a Plan-mode chat or Flow with Auto on runs without stopping to ask you for eligible tools throughout. Auto is still **not** the same as approving the plan: the plan itself still stops for you unless the Flow step is set to **auto-approve** (that separate checkbox is what skips the plan review). Turning Auto on never auto-approves a plan.

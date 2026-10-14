@@ -75,6 +75,7 @@ export function registerClaudeWarmSessionGuardTests(harness: WarmSessionGuardHar
     });
     registerPlanApprovalReuseTests(claudeQueryMock, send);
     registerAutoMemorySpawnTests(claudeQueryMock, send);
+    registerAutoModeRulesSpawnTest(claudeQueryMock, send);
 
     it('Ultra spawns with the ultracode setting at any effort, and toggling it applies live', async () => {
       const first = mockQuery(claudeQueryMock, answeringCli());
@@ -373,6 +374,33 @@ function registerAutoMemorySpawnTests(
       expect(inWorktree?.projectConfigRoot).toBe(repo);
     } finally {
       fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  });
+}
+
+/** The user's own Auto mode rules, which the chat's config dir hides, reach every chat's CLI. */
+function registerAutoModeRulesSpawnTest(
+  claudeQueryMock: WarmSessionGuardHarness['claudeQueryMock'],
+  send: Send,
+): void {
+  it("spawns with the user's own Auto mode rules beside their hooks", async () => {
+    const file = path.join(process.env.FRINK_HOME ?? '', '.claude', 'settings.json');
+    // The executor suite stubs fs.mkdirSync, so the fake home's folder is made through fs.promises.
+    await fs.promises.mkdir(path.dirname(file), { recursive: true });
+    const hooks = { Stop: [{ hooks: [{ type: 'command', command: 'notify' }] }] };
+    fs.writeFileSync(
+      file,
+      JSON.stringify({ hooks, autoMode: { soft_deny: ['Never drop tables'] } }),
+    );
+    try {
+      const spawned = await sendFromChatIn(claudeQueryMock, send, os.tmpdir());
+
+      expect(spawned?.settings).toMatchObject({
+        hooks,
+        autoMode: { soft_deny: ['$defaults', 'Never drop tables'] },
+      });
+    } finally {
+      fs.rmSync(file, { force: true });
     }
   });
 }

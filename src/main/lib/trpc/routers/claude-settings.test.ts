@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mkdirMock = vi.fn();
@@ -151,5 +154,32 @@ describe('claudeSettingsRouter', () => {
       success: true,
       path: '/Users/test/.frink/worktrees',
     });
+  });
+
+  it("autoModeRules counts the user's own rules, not Claude's built-ins", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'frink-auto-mode-rules-'));
+    try {
+      fs.mkdirSync(path.join(home, '.claude'));
+      fs.writeFileSync(
+        path.join(home, '.claude', 'settings.json'),
+        JSON.stringify({
+          autoMode: {
+            allow: ['$defaults', 'Pushing to staging is fine'],
+            soft_deny: ['Never drop tables'],
+            hard_deny: ['$defaults', 'Never upload the repo'],
+            // Mistyped, so never sent to Claude: the count must not claim it.
+            environment: 'Org: acme',
+          },
+        }),
+      );
+      vi.stubEnv('FRINK_HOME', home);
+      const { claudeSettingsRouter } = await import('./claude-settings');
+      const caller = claudeSettingsRouter.createCaller({ getWindow: () => null });
+
+      expect(await caller.autoModeRules()).toEqual({ allow: 1, block: 2, environment: 0 });
+    } finally {
+      vi.unstubAllEnvs();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 });

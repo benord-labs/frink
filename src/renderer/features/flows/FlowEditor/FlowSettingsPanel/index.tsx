@@ -17,6 +17,7 @@ import { cn } from '../../../../lib/utils';
 import { ModelSelector } from '../../../agents/components/model-selector';
 import { FlowProjectField } from '../BlockConfig/FlowProjectField';
 import { flowModelVariant, useFlowDefaultModelPicker } from '../hooks/flow-picker-models';
+import { AutoModeRulesNote } from './AutoModeRulesNote';
 import { BatchTriggerVariables } from './BatchTriggerVariables';
 import { BriefingStashControls } from './BriefingStashControls';
 import { FlowSpeedSettings } from './FlowSpeedSettings';
@@ -264,6 +265,7 @@ export function FlowSettingsPanel({
                 Let supported providers review eligible approval requests for Agent steps. Direct
                 command and custom-node steps are unaffected.
               </p>
+              <AutoModeRulesNote settings={settings} />
             </div>
             <Switch
               id="flow-settings-auto-mode"

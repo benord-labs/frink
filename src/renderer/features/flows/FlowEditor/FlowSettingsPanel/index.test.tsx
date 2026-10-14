@@ -51,3 +51,41 @@ describe('FlowSettingsPanel on a free Codex project', () => {
     expect(screen.getByRole('option', { name: 'GPT-6 Luna' })).toBeInTheDocument();
   });
 });
+
+describe('FlowSettingsPanel Auto Mode row', () => {
+  const renderPanel = (autoReviewTools: boolean | undefined, asked: string[] = []) =>
+    renderWithTrpc(
+      <FlowSettingsPanel
+        flowId="flow-1"
+        flowName="Nightly"
+        flowDescription={null}
+        isEnabled
+        agentInvocable={false}
+        settings={{ autoReviewTools }}
+        nodes={[]}
+        onSettingsChange={() => {}}
+        onClose={() => {}}
+      />,
+      ({ path }) => {
+        asked.push(path);
+        return path === 'claudeSettings.autoModeRules'
+          ? Promise.resolve({ allow: 0, block: 3, environment: 0 })
+          : new Promise(() => {});
+      },
+    );
+
+  // A Flow with Auto Mode off has no reviewer, so claiming the user's rules apply would mislead.
+  it("names the user's own rules only while the Flow's Auto Mode is on", async () => {
+    const { unmount } = renderPanel(undefined);
+    expect(await screen.findByText(/3 blocked\.$/)).toBeInTheDocument();
+    unmount();
+
+    const asked: string[] = [];
+    renderPanel(false, asked);
+    expect(screen.getByRole('switch', { name: 'Auto Mode' })).not.toBeChecked();
+    // The panel's other queries have gone out, so the rules query would have too.
+    await waitFor(() => expect(asked.length).toBeGreaterThan(0));
+    expect(asked).not.toContain('claudeSettings.autoModeRules');
+    expect(screen.queryByText(/Auto Mode rules you set/)).toBeNull();
+  });
+});
