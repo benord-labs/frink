@@ -42,7 +42,7 @@ const SIGNED_OUT =
   "GitHub Copilot isn't signed in. Open Terminal, run `copilot login`, finish in your browser, then try again.";
 const ENTERPRISE_SERVER =
   "Frink can't run GitHub Copilot for GitHub Enterprise Server accounts yet.";
-const MANAGED =
+export const MANAGED =
   "Your organisation or device manages GitHub Copilot's settings, so Frink can't run it safely.";
 const NOT_APPLIED =
   "GitHub Copilot didn't confirm Frink's safety settings, so Frink didn't start it.";

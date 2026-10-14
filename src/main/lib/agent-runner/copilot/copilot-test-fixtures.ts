@@ -1,12 +1,17 @@
 import type {
   GetAuthStatusResponse,
   GetStatusResponse,
+  JsonValue,
   ManagedSettingsResolvedData,
+  MessageOptions,
+  ModelInfo,
   PermissionMode,
   SessionConfigBase,
+  SessionEvent,
+  SessionHooks,
   SessionMode,
 } from '@github/copilot-sdk';
-import type { CheckedSession, CopilotSessionHost } from './copilot-session';
+import type { CopilotTurnClient, CopilotTurnSession } from './copilot-runner';
 
 /** What a session reports when only Frink's own policy applies. */
 export const CLIENT_ONLY_POLICY: ManagedSettingsResolvedData = {
@@ -18,6 +23,63 @@ export const CLIENT_ONLY_POLICY: ManagedSettingsResolvedData = {
   policyHelperManaged: false,
   serverManaged: false,
   source: 'client',
+};
+
+const EVENT_BASE = {
+  id: 'event',
+  parentId: null,
+  timestamp: new Date(0).toISOString(),
+  ephemeral: true,
+} satisfies Pick<SessionEvent, 'id' | 'parentId' | 'timestamp'> & { ephemeral: true };
+
+export const managedReport = (data: ManagedSettingsResolvedData): SessionEvent => ({
+  ...EVENT_BASE,
+  type: 'session.managed_settings_resolved',
+  data,
+});
+
+/** One piece of the agent's reply text. */
+export const says = (deltaContent: string, messageId = 'message-1'): SessionEvent => ({
+  ...EVENT_BASE,
+  type: 'assistant.message_delta',
+  data: { deltaContent, messageId },
+});
+
+export const thinks = (deltaContent: string): SessionEvent => ({
+  ...EVENT_BASE,
+  type: 'assistant.reasoning_delta',
+  data: { deltaContent, reasoningId: 'reasoning-1' },
+});
+
+export const toolStarts = (
+  toolCallId: string,
+  toolName: string,
+  args: JsonValue,
+): SessionEvent => ({
+  ...EVENT_BASE,
+  type: 'tool.execution_start',
+  data: { toolCallId, toolName, arguments: args },
+});
+
+export const toolEnds = (toolCallId: string, success: boolean, text = 'done'): SessionEvent => ({
+  ...EVENT_BASE,
+  type: 'tool.execution_complete',
+  data: success
+    ? { toolCallId, success, result: { content: text } }
+    : { toolCallId, success, error: { message: text } },
+});
+
+export const IDLE: SessionEvent = { ...EVENT_BASE, type: 'session.idle', data: {} };
+/** The main agent is done while a command it started still runs. */
+export const AGENT_IDLE: SessionEvent = { ...EVENT_BASE, type: 'assistant.idle', data: {} };
+
+type HookAnswer = Awaited<ReturnType<NonNullable<SessionHooks['onPreToolUse']>>>;
+
+/** One turn as the fake plays it: the prompt it got, and the events and hook calls it sends. */
+type FakeTurn = {
+  message: MessageOptions;
+  emit(event: SessionEvent): void;
+  preToolUse(toolName: string, toolArgs: JsonValue): Promise<HookAnswer>;
 };
 
 type FakeCopilotSetup = {
@@ -33,26 +95,43 @@ type FakeCopilotSetup = {
   /** The resume reports Frink's policy, then fails. */
   resumeFails?: boolean;
   planFails?: boolean;
+  /** Plays the turn after the prompt; by default the session goes idle at once. */
+  turn?: (play: FakeTurn) => void | Promise<void>;
+  /** The prompt is taken but Copilot never answers. */
+  sendHangs?: boolean;
+  /** The client's graceful stop never finishes. */
+  stopHangs?: boolean;
+  models?: ModelInfo[];
 };
 
 type OpenedSession = { how: 'create' | 'resume'; sessionId?: string; config: SessionConfigBase };
 
-/** A Copilot client double that records how each session was opened. */
+/** A Copilot client double that records how each session was opened and how it was stopped. */
 export function fakeCopilotClient(setup: FakeCopilotSetup = {}) {
   const opened: OpenedSession[] = [];
   let disconnects = 0;
+  const sent: MessageOptions[] = [];
+  const calls: string[] = [];
   let mode: SessionMode = setup.mode ?? 'interactive';
   let lastConfig: SessionConfigBase | undefined;
   const report = (config: SessionConfigBase | undefined, data: ManagedSettingsResolvedData) =>
-    config?.onEvent?.({
-      type: 'session.managed_settings_resolved',
-      data,
-      ephemeral: true,
-      id: 'managed-event',
-      parentId: null,
-      timestamp: new Date(0).toISOString(),
-    });
-  const session: CheckedSession = {
+    config?.onEvent?.(managedReport(data));
+  const play: Omit<FakeTurn, 'message'> = {
+    emit: (event) => lastConfig?.onEvent?.(event),
+    preToolUse: async (toolName, toolArgs) =>
+      lastConfig?.hooks?.onPreToolUse?.(
+        {
+          sessionId: session.sessionId,
+          timestamp: new Date(0),
+          workingDirectory: '',
+          toolName,
+          toolArgs,
+        },
+        { sessionId: session.sessionId },
+      ),
+  };
+  const session: CopilotTurnSession = {
+    sessionId: 'copilot-session',
     rpc: {
       permissions: {
         getMode: async () => {
@@ -72,20 +151,43 @@ export function fakeCopilotClient(setup: FakeCopilotSetup = {}) {
     disconnect: async () => {
       disconnects += 1;
     },
+    send: async (message) => {
+      sent.push(message);
+      if (setup.sendHangs) return new Promise<string>(() => {});
+      const turn = setup.turn ?? (({ emit }) => emit(IDLE));
+      void Promise.resolve().then(() => turn({ ...play, message }));
+      return 'sent-message';
+    },
+    abort: async () => {
+      calls.push('abort');
+    },
   };
-  const open = (config: SessionConfigBase) => {
+  const open = (config: SessionConfigBase, sessionId: string) => {
     lastConfig = config;
+    session.sessionId = sessionId;
     const data = setup.managed === undefined ? CLIENT_ONLY_POLICY : setup.managed;
     if (data) report(config, data);
     return session;
   };
-  const client: CopilotSessionHost<CheckedSession> = {
+  const client: CopilotTurnClient = {
+    start: async () => {
+      calls.push('start');
+    },
+    stop: async () => {
+      calls.push('stop');
+      if (setup.stopHangs) await new Promise(() => {});
+      return [];
+    },
+    forceStop: async () => {
+      calls.push('forceStop');
+    },
+    listModels: async () => setup.models ?? [],
     getStatus: async () => setup.status ?? { version: '1.0.97', protocolVersion: 3 },
     getAuthStatus: async () =>
       setup.auth ?? { isAuthenticated: true, authType: 'user', host: 'https://github.com' },
     createSession: async (config) => {
       opened.push({ how: 'create', config });
-      return open(config);
+      return open(config, 'copilot-session');
     },
     resumeSession: async (sessionId, config) => {
       opened.push({ how: 'resume', sessionId, config });
@@ -93,8 +195,8 @@ export function fakeCopilotClient(setup: FakeCopilotSetup = {}) {
         report(config, CLIENT_ONLY_POLICY);
         throw new Error('Session not found');
       }
-      return open(config);
+      return open(config, sessionId);
     },
   };
-  return { client, session, opened, disconnects: () => disconnects };
+  return { client, session, opened, sent, calls, play, disconnects: () => disconnects };
 }
