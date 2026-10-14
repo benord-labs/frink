@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -36,6 +36,7 @@ afterEach(() => {
   holds.clear();
   codexTurns.clear();
   vi.unstubAllEnvs();
+  vi.restoreAllMocks();
   rmSync(tmp, { recursive: true, force: true });
 });
 
@@ -48,6 +49,15 @@ describe('readCommandOutput', () => {
 
     expect(tail?.text).toBe('tick 1\ntick 2');
     expect(tail?.runningForMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('never reports a negative running time for a file born after the clock reads', async () => {
+    const path = join(tasksDir, 'b1.output');
+    writeFileSync(path, 'tick\n');
+    holdWith([{ id: 'b1', type: 'shell' }]);
+    vi.spyOn(Date, 'now').mockReturnValue(Math.floor(statSync(path).birthtimeMs) - 1);
+
+    expect((await readCommandOutput('sc1', 'b1'))?.runningForMs).toBe(0);
   });
 
   it('keeps only the last 8KB, starting on a whole line', async () => {
@@ -158,6 +168,14 @@ describe('readCommandOutput on a Codex chat', () => {
     });
 
     expect((await readCommandOutput('sc1', 'c1'))?.text).toBe(`…${'x'.repeat(8191)}`);
+  });
+
+  it('never reports a negative running time for a start stamped ahead of the clock', async () => {
+    codexTurns.set('sc1', {
+      commandOutputs: new Map([['c1', { startedAt: Date.now() + 1000, text: '', cut: false }]]),
+    });
+
+    expect((await readCommandOutput('sc1', 'c1'))?.runningForMs).toBe(0);
   });
 
   it('has nothing for a command the live turn is not running', async () => {
