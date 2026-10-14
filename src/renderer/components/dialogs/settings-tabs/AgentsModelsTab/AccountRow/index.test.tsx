@@ -4,6 +4,7 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { AiProviderId } from '../../../../../../shared/lib/ai-providers';
 import { AccountRow } from './index';
 
 // ApiKeyEditForm only renders in the (unused-here) `isEditing` credential path,
@@ -184,5 +185,23 @@ describe('AccountRow summary', () => {
     expect(screen.getByText('Claude · Needs an API key')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Add key' }));
     expect(onAuthenticate).toHaveBeenCalledWith(expect.objectContaining({ id: 'acc-1' }));
+  });
+
+  it.each<[AiProviderId, string]>([
+    ['codex', 'OpenAI'],
+    ['opencode', 'OpenCode'],
+  ])('names each %s login after its own provider, not Claude', (type, name) => {
+    render(
+      <AccountRow
+        account={makeAccount({ type })}
+        onSetDefault={vi.fn()}
+        onDelete={vi.fn()}
+        onAuthenticate={vi.fn()}
+        onRenameClick={vi.fn()}
+        onSaveRename={vi.fn()}
+        onCancelRename={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(`${name} · Signed in on this computer`)).toBeInTheDocument();
   });
 });

@@ -17,6 +17,7 @@ import { expandSlashCommand } from '@/lib/commands/expand-slash-command';
 import { buildQueuedMessageText } from '@/lib/mentions/queued-message-text';
 // SplitViewContainer moved to agents-content.tsx for top-level chat splitting
 import { buildAnswerMessage } from '../../../../shared/lib/agent-questions/answered-questions';
+import type { AiProviderId } from '../../../../shared/lib/ai-providers';
 import { buildHiddenWakeMessage } from '../../../../shared/lib/message-markers/hidden-wake-marker';
 import type { ChatMode } from '../../../../shared/types/chat-mode';
 import { usePrefersReducedMotion } from '../../../hooks/use-prefers-reduced-motion';
@@ -2058,7 +2059,7 @@ export const ChatView = memo(function ChatView({
   );
   // Assigned during render, not in an effect: child effects (first-message auto-generate) run
   // before a parent effect would, and must already see the resolved type.
-  const executionAccountTypeRef = useRef<'claude-code' | 'codex'>('claude-code');
+  const executionAccountTypeRef = useRef<AiProviderId>('claude-code');
   if (resolvedAccountForExecution?.type != null) {
     executionAccountTypeRef.current = resolvedAccountForExecution.type;
   }

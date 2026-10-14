@@ -6,6 +6,7 @@ import type { PastedTextFile } from '../../../hooks/use-pasted-text-files';
 import type { CodeSelectionContext, DiffTextContext } from '../../../lib/queue-utils';
 import { ChatInputArea } from '../../chat-input-area';
 import type { ComposerForwardedProps } from '../types';
+import type { UnauthAccountForSend } from '../utils';
 
 type Props = ComposerForwardedProps & {
   // Required here, optional on ChatInputArea — this surface always supplies them.
@@ -32,7 +33,7 @@ type Props = ComposerForwardedProps & {
   /** Refetch execution account (shown on error). */
   onRetryResolvedAccount?: () => void;
   /** Unauthenticated account info for the reconnect CTA. Null when no account is configured at all. */
-  unauthAccount?: { label: string; type: 'claude-code' | 'codex' } | null;
+  unauthAccount?: UnauthAccountForSend;
 };
 
 /** ChatInputSection — the composer, or an account state in its place, in ChatDock's stack.

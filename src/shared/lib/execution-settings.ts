@@ -1,6 +1,7 @@
 /** A chat's composer settings and the one place both desktop and main turn them into the
  *  `ExecutionSettings` a send carries. */
 import type { CodexSpeed, ExecutionSettings } from '../types/execution';
+import type { AiProviderId } from './ai-providers';
 import { codexFastTierCredits } from './codex-cli-models';
 import {
   claudeModelRequires1M,
@@ -11,7 +12,7 @@ import {
   supportsNativeAutoReview,
 } from './models';
 
-export type ExecutionAccountKind = 'claude-code' | 'codex';
+export type ExecutionAccountKind = AiProviderId;
 
 export type ComposerSettings = {
   /** Raw picker id (effort tier included). Never normalized on store: an account flip must not

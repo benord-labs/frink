@@ -43,7 +43,12 @@ import {
 } from '../../../lib/queue-utils';
 import type { AgentsMentionsEditorHandle } from '../../../mentions';
 import { useAgentSubChatStore } from '../../../stores/sub-chat-store';
-import { clearFlowRunEndedErrorSignal, showAccountNotReadyToast, utf8ToBase64 } from '../utils';
+import {
+  clearFlowRunEndedErrorSignal,
+  showAccountNotReadyToast,
+  type UnauthAccountForSend,
+  utf8ToBase64,
+} from '../utils';
 
 type SendMessagePart =
   | { type: 'text'; text: string }
@@ -103,7 +108,7 @@ type Props = {
   /** After getResolvedAccount succeeded for this chat — required before direct sends (not queued). */
   isResolvedExecutionAccountReady: boolean;
   /** Set when the resolved account exists but is not authenticated — used to route the toast action. */
-  unauthAccount?: { label: string; type: 'claude-code' | 'codex' } | null;
+  unauthAccount?: UnauthAccountForSend;
 };
 
 export function useMessageSend({

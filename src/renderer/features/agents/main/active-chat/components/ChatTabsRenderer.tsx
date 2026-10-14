@@ -9,7 +9,7 @@ import { agentChatStore } from '../../../stores/agent-chat-store';
 import type { SubChatMeta } from '../../../stores/sub-chat-store';
 import type { UseSubChatMessagesResult } from '../hooks/useSubChatMessages';
 import type { ChatViewInnerProps } from '../types';
-import { getFirstSubChatId } from '../utils';
+import { getFirstSubChatId, type UnauthAccountForSend } from '../utils';
 
 type Props = {
   /** The chat's one sub-chat, already checked to belong to `chatId` by the caller. */
@@ -46,7 +46,7 @@ type Props = {
   isErrorResolvedAccount?: boolean;
   onRetryResolvedAccount?: () => void;
   /** When account exists but is not authenticated, surfaces the reconnect CTA in the composer area. */
-  unauthAccount?: { label: string; type: 'claude-code' | 'codex' } | null;
+  unauthAccount?: UnauthAccountForSend;
   handleRestoreWorkspace: () => void;
   // biome-ignore lint/style/useNamingConvention: Renders as a component
   ChatViewInnerComponent: ComponentType<ChatViewInnerProps>;

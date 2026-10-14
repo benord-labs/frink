@@ -1,6 +1,4 @@
-import claudeLogo from '@iconify-icons/simple-icons/claude';
-import openaiLogo from '@iconify-icons/ri/openai-fill';
-import { iconifyComponent } from '@/lib/utils/iconify-component';
+import { aiProviderMark } from '@/components/AiProviderMark';
 /**
  * The read-only mode / model / auto-review readout carried by both flow bottom surfaces — what the
  * composer's selectors showed, restored now that a running or paused flow replaces the composer.
@@ -21,11 +19,6 @@ import type { CodexSpeed } from '../../../../../../../../shared/types/execution'
 import { MODE_CONFIG } from '../../../../../components/mode-selector';
 import { supportsNativeAutoReview } from '../../../../../lib/resolve-execution-model-cli';
 import { HIDE_CONTEXT_PILLS, HIDE_MODEL_TEXT, HIDE_PILL_TEXT } from '../FlowSurfaceCard';
-
-const ClaudeCodeIcon = iconifyComponent(claudeLogo);
-const CodexIcon = iconifyComponent(openaiLogo);
-
-const PROVIDER_ICON = { claude: ClaudeCodeIcon, codex: CodexIcon } as const;
 
 const META_PILL_CLASS =
   'inline-flex shrink-0 items-center gap-1 rounded-md border border-border/60 bg-muted/40 px-1.5 py-0.5 text-[11px] text-muted-foreground';
@@ -155,7 +148,7 @@ function modelPill(modelId: string | undefined) {
   const label = formatModelPickerLabel(resolved.item);
   return {
     key: 'model',
-    icon: PROVIDER_ICON[resolved.variant],
+    icon: aiProviderMark(resolved.variant === 'claude' ? 'claude-code' : resolved.variant),
     label,
     title: label,
     pillTier: HIDE_CONTEXT_PILLS,

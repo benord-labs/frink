@@ -1133,7 +1133,7 @@ describe('claudeCodeRouter — codex account-type recognition in the selection r
       expect(acc).toMatchObject({ type: 'codex', label: 'My Codex', isAuthenticated: false });
     });
 
-    it('names each account from the provider table and lists only Claude and Codex accounts', async () => {
+    it('names each account from the provider table and never lists an unknown type', async () => {
       const row = (id: string, type: string | null) => ({
         id,
         accountLabel: null,
@@ -1156,9 +1156,11 @@ describe('claudeCodeRouter — codex account-type recognition in the selection r
       const caller = claudeCodeRouter.createCaller({ getWindow: () => null });
 
       const accounts = await caller.listAccounts();
+      // The db mock ignores the selectable-provider scope, so the OpenCode row comes back here.
       expect(accounts.map(({ id, type, label }) => [id, type, label])).toEqual([
         ['legacy', 'claude-code', 'Claude'],
         ['cx', 'codex', 'OpenAI'],
+        ['oc', 'opencode', 'OpenCode'],
       ]);
     });
   });
@@ -1194,6 +1196,19 @@ describe('claudeCodeRouter — codex account-type recognition in the selection r
       const caller = claudeCodeRouter.createCaller({ getWindow: () => null });
 
       await expect(caller.getResolvedAccount({})).resolves.toMatchObject({ label });
+    });
+
+    it('shows no login for a chat whose provider is switched off', async () => {
+      getChatByIdMock.mockResolvedValueOnce({
+        id: 'chat-oc',
+        projectId: null,
+        provider: 'opencode',
+      });
+      selectGetMock.mockReturnValue({ id: 'oc-1', accountLabel: 'My OpenCode', type: 'opencode' });
+      const { claudeCodeRouter } = await import('./claude-code');
+      const caller = claudeCodeRouter.createCaller({ getWindow: () => null });
+
+      await expect(caller.getResolvedAccount({ chatId: 'chat-oc' })).resolves.toBeNull();
     });
   });
 

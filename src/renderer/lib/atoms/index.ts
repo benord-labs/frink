@@ -1,5 +1,6 @@
 import { atom } from 'jotai';
 import { atomWithStorage, RESET } from 'jotai/utils';
+import type { AiProviderId } from '../../../shared/lib/ai-providers';
 import { persistThinking } from './composer-persistence';
 
 export {
@@ -193,7 +194,7 @@ export type PendingAccountAuthState = {
   mode: 'add' | 'reauth';
   returnToSettings?: boolean;
   /** Which connect page to route to. Absent/undefined = Claude (backward-compatible). */
-  provider?: 'claude-code' | 'codex';
+  provider?: AiProviderId;
 };
 
 // Track pending Claude/Codex account connect/reconnect flow from Settings.

@@ -1,6 +1,4 @@
-import claudeLogo from '@iconify-icons/simple-icons/claude';
-import openaiLogo from '@iconify-icons/ri/openai-fill';
-import { iconifyComponent } from '@/lib/utils/iconify-component';
+import { aiProviderMark } from '@/components/AiProviderMark';
 import { Button } from '@benord-labs/frink-primitives';
 import { type CodexAccountTiers, codexTierCredits } from '../../../../shared/lib/codex-cli-models';
 import {
@@ -25,12 +23,7 @@ import {
 import { ModelPicker } from './ModelPicker';
 import { UltraWord } from './ModelPicker/UltraSwitch';
 
-const ClaudeCodeIcon = iconifyComponent(claudeLogo);
-const CodexIcon = iconifyComponent(openaiLogo);
-
-/** Provider → trigger icon, keyed by `modelVariant`. */
-const TRIGGER_ICON = { codex: CodexIcon, claude: ClaudeCodeIcon } as const;
-type TriggerIconType = (typeof TRIGGER_ICON)[keyof typeof TRIGGER_ICON];
+type TriggerIconType = ReturnType<typeof aiProviderMark>;
 
 export type ModelItem = {
   id: string;
@@ -239,7 +232,7 @@ export function ModelSelector({
   // Ultra is a mode: its word takes the animated chroma used for power keywords.
   const ultra = !isFlow && Boolean(selectedModel?.ultra);
   // biome-ignore lint/style/useNamingConvention: Renders as a component
-  const TriggerIcon = TRIGGER_ICON[modelVariant];
+  const TriggerIcon = aiProviderMark(modelVariant === 'claude' ? 'claude-code' : modelVariant);
 
   // Chat: the composer's model control (icon, name, muted tier, each shed in turn as it narrows);
   // the full label is its accessible name and hover title. Flow forms keep the labelled field.

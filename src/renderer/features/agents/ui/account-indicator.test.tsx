@@ -6,6 +6,7 @@ import userEvent from '@testing-library/user-event';
 import { createStore, Provider } from 'jotai';
 import { toast } from 'sonner';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { LAUNCH_FLAGS } from '../../../../shared/launch-flags';
 import { activeOverlayAtom, agentsSettingsDialogActiveTabAtom } from '../../../lib/atoms';
 import { AccountIndicator, ContinueAfterUsageLimit } from './account-indicator';
 
@@ -16,7 +17,7 @@ type ListAccount = {
   isAuthenticated: boolean;
   connectedAt: null;
   isApiKey: boolean;
-  type: 'claude-code' | 'codex';
+  type: string;
 };
 
 const snap = vi.hoisted(() => {
@@ -139,7 +140,7 @@ describe('AccountIndicator', () => {
       </Provider>,
     );
 
-    const trigger = screen.getByRole('button', { name: 'AI accounts menu, Slice, Claude Code' });
+    const trigger = screen.getByRole('button', { name: 'AI accounts menu, Slice, Claude' });
     await user.click(trigger);
 
     await user.click(screen.getByRole('menuitem', { name: /Manage accounts/i }));
@@ -193,7 +194,7 @@ describe('AccountIndicator', () => {
       await openMenu();
 
       const menu = screen.getByRole('menu');
-      expect(within(menu).getByText('Claude Code')).toBeInTheDocument();
+      expect(within(menu).getByText('Claude')).toBeInTheDocument();
       expect(within(menu).getByText('OpenAI')).toBeInTheDocument();
       const rows = within(menu)
         .getAllByRole('menuitem')
@@ -231,7 +232,7 @@ describe('AccountIndicator', () => {
 
       expect(
         screen.getByRole('button', {
-          name: 'AI accounts menu, Slice, Claude Code, project-specific default',
+          name: 'AI accounts menu, Slice, Claude, project-specific default',
         }),
       ).toBeInTheDocument();
       expect(screen.getByTestId('tooltip-content')).toHaveTextContent('Project-specific account');
@@ -280,7 +281,7 @@ describe('AccountIndicator', () => {
       </Provider>,
     );
 
-    await user.click(screen.getByRole('button', { name: 'AI accounts menu, Slice, Claude Code' }));
+    await user.click(screen.getByRole('button', { name: 'AI accounts menu, Slice, Claude' }));
     await user.click(screen.getByRole('menuitem', { name: /Manage accounts/i }));
 
     expect(store.get(agentsSettingsDialogActiveTabAtom)).toBe('models');
@@ -305,8 +306,8 @@ describe('AccountIndicator', () => {
     );
 
     // A chat's own account is not a project default, even when it matches the project's.
-    const trigger = screen.getByRole('button', { name: 'AI accounts menu, K-Claude, Claude Code' });
-    expect(trigger).toHaveTextContent(/K-Claude\s*-\s*Claude Code/);
+    const trigger = screen.getByRole('button', { name: 'AI accounts menu, K-Claude, Claude' });
+    expect(trigger).toHaveTextContent(/K-Claude\s*-\s*Claude$/);
     expect(trigger.textContent).not.toMatch(/·\s*project/i);
   });
 
@@ -322,7 +323,7 @@ describe('AccountIndicator', () => {
       </Provider>,
     );
 
-    const trigger = screen.getByRole('button', { name: 'AI accounts menu, Personal, Claude Code' });
+    const trigger = screen.getByRole('button', { name: 'AI accounts menu, Personal, Claude' });
     const [glyph, chevron] = trigger.querySelectorAll('svg');
     const label = trigger.firstElementChild?.nextElementSibling;
     if (!(label instanceof HTMLElement)) throw new Error('account label not rendered');
@@ -333,7 +334,7 @@ describe('AccountIndicator', () => {
     expect(glyph).not.toHaveClass('@max-[18.5rem]/pane-header:hidden');
     expect(label).toHaveClass('@max-[18.5rem]/pane-header:hidden');
     expect(chevron).toHaveClass('@max-[18.5rem]/pane-header:hidden');
-    expect(within(label).getByText(/- Claude Code/)).toHaveClass('@max-[26rem]/pane-header:hidden');
+    expect(within(label).getByText(/- Claude$/)).toHaveClass('@max-[26rem]/pane-header:hidden');
   });
 
   it('applies warning styles when the resolved account is not authenticated', () => {
@@ -353,7 +354,7 @@ describe('AccountIndicator', () => {
       </Provider>,
     );
 
-    const trigger = screen.getByRole('button', { name: 'AI accounts menu, Stale, Claude Code' });
+    const trigger = screen.getByRole('button', { name: 'AI accounts menu, Stale, Claude' });
     // AA text token + the persisting warning tint (asserted separately: the old /amber-500/
     // regex would pass vacuously off the bg class alone).
     expect(trigger.className).toMatch(/text-warning/);
@@ -497,7 +498,7 @@ describe('AccountIndicator', () => {
       renderAfterError(false, snap.defaultListAccounts, 'codex', null);
 
       const buttons = screen.getAllByRole('button').map((b) => b.textContent);
-      expect(buttons).toEqual(['Add an OpenAI login…']);
+      expect(buttons).toEqual(['Sign in to OpenAI…']);
     });
 
     it('stays hidden for errors other than a usage limit', () => {
@@ -505,5 +506,39 @@ describe('AccountIndicator', () => {
 
       expect(screen.queryByRole('button')).not.toBeInTheDocument();
     });
+
+    it('names no provider when the chat is on one Frink does not know', () => {
+      renderAfterError(false, snap.defaultListAccounts, 'someday-agent', null);
+
+      const buttons = screen.getAllByRole('button').map((b) => b.textContent);
+      expect(buttons).toEqual(['Add account…']);
+    });
+  });
+
+  it('lists OpenCode logins in the new-chat picker on macOS only while OpenCode is on', async () => {
+    const [claudeRow] = snap.defaultListAccounts;
+    snap.listAccountsData = [
+      claudeRow,
+      { ...claudeRow, id: 'acc-oc', label: 'OpenCodeWork', type: 'opencode', isDefault: false },
+    ];
+    getResolvedAccountMock.mockReturnValue({ data: claudeRow, isSuccess: true });
+    Object.defineProperty(window, 'desktopApi', {
+      value: { platform: 'darwin' },
+      configurable: true,
+    });
+    try {
+      render(
+        <Provider store={createStore()}>
+          <AccountIndicator projectId="proj-1" />
+        </Provider>,
+      );
+      await userEvent.setup().click(screen.getByRole('button', { name: /^AI accounts menu/ }));
+
+      const shown = within(screen.getByRole('menu')).queryByText('OpenCodeWork');
+      if (LAUNCH_FLAGS.opencodeAccounts) expect(shown).toBeInTheDocument();
+      else expect(shown).not.toBeInTheDocument();
+    } finally {
+      Reflect.deleteProperty(window, 'desktopApi');
+    }
   });
 });
