@@ -169,6 +169,7 @@ export const ChatHeader = memo(function ChatHeader({
               diffStats={diffStats}
               onOpenDiff={() => setIsDiffSidebarOpen(true)}
               showTerminal={canOpenTerminal}
+              devServersPath={gitContextPath}
               terminalOpen={isTerminalSidebarOpen}
               onToggleTerminal={() => setIsTerminalSidebarOpen(!isTerminalSidebarOpen)}
             />

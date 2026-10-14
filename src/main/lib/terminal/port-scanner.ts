@@ -1,283 +1,149 @@
 import { execFile } from 'node:child_process';
-import os from 'node:os';
-import { promisify } from 'node:util';
-import { pidtree } from 'pidtree';
+import path from 'node:path';
 
-const execFileAsync = promisify(execFile);
-
-// Regex constants
-const PORT_PARSE_REGEX = /^(?:\[([^\]]+)\]|([^:]+)):(\d+)$/;
-const NETSTAT_PARSE_REGEX = /^(?:\[([^\]]+)\]|([^:]+)):(\d+)$/;
+const EXEC_OPTIONS = { maxBuffer: 10 * 1024 * 1024, timeout: 5000 };
+const ADDRESS_PORT_REGEX = /^(?:\[([^\]]+)\]|(.+)):(\d+)$/;
 const WHITESPACE_SPLIT_REGEX = /\s+/;
-const EXE_SUFFIX_REGEX = /\.exe$/i;
+const SCRIPT_EXTENSION_REGEX = /\.(?:[cm]?[jt]s|py|rb)$/;
+const PS_LINE_REGEX = /^\s*(\d+)\s+(.*)$/;
 
-export type PortInfo = {
-  port: number;
+/** Well-known service ports that are never a project's dev server. */
+const IGNORED_PORTS = new Set([22, 80, 443, 5432, 3306, 6379, 27017]);
+/** Chrome DevTools (9222) and Node inspector (9229) debugger range. */
+const DEBUGGER_PORTS = { min: 9222, max: 9229 };
+/** macOS/IANA ephemeral range: OS-assigned helper sockets, not servers someone opens. */
+const EPHEMERAL_PORT_MIN = 49152;
+
+/** Runtimes whose first script argument names the real tool (`node …/.bin/vite` → vite). */
+const RUNTIME_REGEX = /^(?:node|bun|deno|ruby|python[\d.]*)$/i;
+const RUNTIME_SUBCOMMANDS = new Set(['run', 'x', 'exec']);
+/** Runtime flags whose next argument is their value, not the script (`node -r dotenv/config`). */
+const RUNTIME_VALUE_FLAGS = new Set([
+  '-r',
+  '--require',
+  '--import',
+  '--loader',
+  '-C',
+  '--env-file',
+]);
+/** Flags that run inline code, so there is no script to name. */
+const RUNTIME_EVAL_FLAGS = new Set(['-e', '--eval', '-p', '--print', '-c']);
+
+export type Listener = {
   pid: number;
+  command: string;
   address: string;
-  processName: string;
+  port: number;
 };
 
-// Cache for port lookups to avoid repeated expensive calls
-const portCache = new Map<string, { ports: PortInfo[]; timestamp: number }>();
-const PORT_CACHE_TTL = 2000; // 2 seconds - ports don't change that fast
-
-// Cache for process names
-const processNameCache = new Map<number, { name: string; timestamp: number }>();
-const PROCESS_NAME_CACHE_TTL = 10000; // 10 seconds
-
-/**
- * Get all child PIDs of a process (including the process itself)
- */
-export async function getProcessTree(pid: number): Promise<number[]> {
-  try {
-    return await pidtree(pid, { root: true });
-  } catch {
-    // Process may have exited
-    return [];
-  }
+/** Where Frink's own executables live: the `.app` bundle on macOS, else the install folder. */
+export function appRootOf(execPath: string): string {
+  const bundleEnd = execPath.indexOf('.app/');
+  return bundleEnd === -1 ? path.dirname(execPath) + path.sep : execPath.slice(0, bundleEnd + 5);
 }
 
-/**
- * Get listening TCP ports for a set of PIDs (async, cached)
- * Cross-platform implementation using lsof (macOS/Linux) or netstat (Windows)
- */
-export async function getListeningPortsForPids(pids: number[]): Promise<PortInfo[]> {
-  if (pids.length === 0) return [];
-
-  // Check cache first
-  const cacheKey = pids.sort().join(',');
-  const cached = portCache.get(cacheKey);
-  if (cached && Date.now() - cached.timestamp < PORT_CACHE_TTL) {
-    return cached.ports;
-  }
-
-  const platform = os.platform();
-  let ports: PortInfo[] = [];
-
-  if (platform === 'darwin' || platform === 'linux') {
-    ports = await getListeningPortsLsof(pids);
-  } else if (platform === 'win32') {
-    ports = await getListeningPortsWindows(pids);
-  }
-
-  // Update cache
-  portCache.set(cacheKey, { ports, timestamp: Date.now() });
-  return ports;
+export function isIgnoredPort(port: number): boolean {
+  return (
+    IGNORED_PORTS.has(port) ||
+    (port >= DEBUGGER_PORTS.min && port <= DEBUGGER_PORTS.max) ||
+    port >= EPHEMERAL_PORT_MIN
+  );
 }
 
-/**
- * macOS/Linux implementation using lsof (async)
- */
-async function getListeningPortsLsof(pids: number[]): Promise<PortInfo[]> {
-  try {
-    const pidArg = pids.join(',');
-    const pidSet = new Set(pids);
-    // -p: filter by PIDs
-    // -iTCP: only TCP connections
-    // -sTCP:LISTEN: only listening sockets
-    // -P: don't convert port numbers to names
-    // -n: don't resolve hostnames
-    // Note: lsof may ignore -p filter if PIDs don't exist or have no matches,
-    // so we must validate PIDs in the output against our requested set
-    const { stdout: output } = await execFileAsync(
-      'sh',
-      ['-c', `lsof -p ${pidArg} -iTCP -sTCP:LISTEN -P -n 2>/dev/null || true`],
-      { maxBuffer: 10 * 1024 * 1024, timeout: 5000 },
-    );
+const LOOPBACK_OR_WILDCARD = new Set(['*', '0.0.0.0', '::', '::1', 'localhost']);
 
-    if (!output.trim()) return [];
-
-    const ports: PortInfo[] = [];
-    const lines = output.trim().split('\n').slice(1);
-
-    for (const line of lines) {
-      if (!line.trim()) continue;
-
-      // Format: COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME
-      // Example: node 12345 user 23u IPv4 0x1234 0t0 TCP *:3000 (LISTEN)
-      const columns = line.split(WHITESPACE_SPLIT_REGEX);
-      if (columns.length < 10) continue;
-
-      const processName = columns[0];
-      const pid = Number.parseInt(columns[1], 10);
-
-      // CRITICAL: Verify the PID is in our requested set
-      // lsof ignores -p filter when PIDs don't exist, returning all TCP listeners
-      if (!pidSet.has(pid)) continue;
-
-      const name = columns[columns.length - 2]; // NAME column (e.g., *:3000), before (LISTEN)
-
-      // Parse address:port from NAME column
-      // Formats: *:3000, 127.0.0.1:3000, [::1]:3000, [::]:3000
-      const match = name.match(PORT_PARSE_REGEX);
-      if (match) {
-        const address = match[1] || match[2] || '*';
-        const port = Number.parseInt(match[3], 10);
-
-        if (port < 1 || port > 65535) continue;
-
-        ports.push({
-          port,
-          pid,
-          address: address === '*' ? '0.0.0.0' : address,
-          processName,
-        });
-      }
-    }
-
-    return ports;
-  } catch {
-    return [];
+/** Loopback and wildcard binds open as localhost; a bind to one specific address must use it. */
+export function toUrl(address: string, port: number): string {
+  if (LOOPBACK_OR_WILDCARD.has(address) || address.startsWith('127.')) {
+    return `http://localhost:${port}`;
   }
+  const host = address.includes(':') ? `[${address}]` : address;
+  return `http://${host}:${port}`;
 }
 
-/**
- * Windows implementation using netstat (async)
- */
-async function getListeningPortsWindows(pids: number[]): Promise<PortInfo[]> {
-  try {
-    const { stdout: output } = await execFileAsync('netstat', ['-ano'], {
-      maxBuffer: 10 * 1024 * 1024,
-      timeout: 5000,
-    });
-
-    const pidSet = new Set(pids);
-    const ports: PortInfo[] = [];
-    const processNames = new Map<number, string>();
-
-    // Collect unique PIDs first, then batch fetch names
-    const uniquePids = new Set<number>();
-    const parsedLines: Array<{
-      pid: number;
-      address: string;
-      port: number;
-    }> = [];
-
-    for (const line of output.split('\n')) {
-      if (!line.includes('LISTENING')) continue;
-
-      // Format: TCP 0.0.0.0:3000 0.0.0.0:0 LISTENING 12345
-      const columns = line.trim().split(WHITESPACE_SPLIT_REGEX);
-      if (columns.length < 5) continue;
-
-      const pid = Number.parseInt(columns[columns.length - 1], 10);
-      if (!pidSet.has(pid)) continue;
-
-      const localAddr = columns[1];
-      // Parse address:port - handles both IPv4 and IPv6
-      // IPv4: 0.0.0.0:3000
-      // IPv6: [::]:3000
-      const match = localAddr.match(NETSTAT_PARSE_REGEX);
-      if (match) {
-        const address = match[1] || match[2] || '0.0.0.0';
-        const port = Number.parseInt(match[3], 10);
-
-        if (port < 1 || port > 65535) continue;
-
-        uniquePids.add(pid);
-        parsedLines.push({ pid, address, port });
-      }
+/** Parses `lsof -F pcn` field output: `p<pid>`, `c<command>`, then `f<fd>`/`n<addr:port>` per socket. */
+export function parseLsofListeners(stdout: string): Listener[] {
+  const listeners: Listener[] = [];
+  let pid = 0;
+  let command = '';
+  for (const line of stdout.split('\n')) {
+    const field = line[0];
+    const value = line.slice(1);
+    if (field === 'p') {
+      pid = Number.parseInt(value, 10);
+      command = '';
+    } else if (field === 'c') {
+      command = value;
+    } else if (field === 'n' && pid > 0) {
+      const match = value.match(ADDRESS_PORT_REGEX);
+      if (!match) continue;
+      const port = Number.parseInt(match[3], 10);
+      if (port < 1 || port > 65535) continue;
+      listeners.push({ pid, command, address: match[1] ?? match[2], port });
     }
-
-    // Fetch process names in parallel
-    await Promise.all(
-      Array.from(uniquePids).map(async (pid) => {
-        const name = await getProcessNameWindowsAsync(pid);
-        processNames.set(pid, name);
-      }),
-    );
-
-    // Build final result
-    for (const { pid, address, port } of parsedLines) {
-      ports.push({
-        port,
-        pid,
-        address,
-        processName: processNames.get(pid) || 'unknown',
-      });
-    }
-
-    return ports;
-  } catch {
-    return [];
   }
+  return listeners;
 }
 
-/**
- * Get process name for a PID on Windows (async with cache)
- */
-async function getProcessNameWindowsAsync(pid: number): Promise<string> {
-  // Check cache first
-  const cached = processNameCache.get(pid);
-  if (cached && Date.now() - cached.timestamp < PROCESS_NAME_CACHE_TTL) {
-    return cached.name;
+/** Parses `lsof -a -d cwd -Fpn` output into pid → working folder. */
+export function parseLsofCwds(stdout: string): Map<number, string> {
+  const cwds = new Map<number, string>();
+  let pid = 0;
+  for (const line of stdout.split('\n')) {
+    if (line.startsWith('p')) pid = Number.parseInt(line.slice(1), 10);
+    else if (line.startsWith('n') && pid > 0) cwds.set(pid, line.slice(1));
   }
-
-  let name: string = 'unknown';
-  try {
-    const { stdout: output } = await execFileAsync(
-      'wmic',
-      ['process', 'where', `processid=${pid}`, 'get', 'name'],
-      { timeout: 2000 },
-    );
-    const lines = output.trim().split('\n');
-    if (lines.length >= 2) {
-      const parsedName = lines[1].trim();
-      name = parsedName.replace(EXE_SUFFIX_REGEX, '') || 'unknown';
-    }
-  } catch {
-    // wmic is deprecated, try PowerShell as fallback
-    try {
-      const { stdout: output } = await execFileAsync(
-        'powershell',
-        ['-Command', `(Get-Process -Id ${pid}).ProcessName`],
-        { timeout: 2000 },
-      );
-      name = output.trim() || 'unknown';
-    } catch {
-      // Ignore
-    }
-  }
-
-  // Update cache
-  processNameCache.set(pid, { name, timestamp: Date.now() });
-  return name;
+  return cwds;
 }
 
-/**
- * Get process name for a PID (cross-platform, async with cache)
- */
-async function _getProcessName(pid: number): Promise<string> {
-  // Check cache first
-  const cached = processNameCache.get(pid);
-  if (cached && Date.now() - cached.timestamp < PROCESS_NAME_CACHE_TTL) {
-    return cached.name;
+/** Parses `ps -o pid=,command=` output into pid → full command line. */
+export function parsePsCommands(stdout: string): Map<number, string> {
+  const commands = new Map<number, string>();
+  for (const line of stdout.split('\n')) {
+    const match = line.match(PS_LINE_REGEX);
+    if (match) commands.set(Number.parseInt(match[1], 10), match[2].trim());
   }
+  return commands;
+}
 
-  const platform = os.platform();
-  let name: string = 'unknown';
-
-  if (platform === 'win32') {
-    name = await getProcessNameWindowsAsync(pid);
-  } else {
-    // macOS/Linux
-    try {
-      const { stdout: output } = await execFileAsync(
-        'sh',
-        ['-c', `ps -p ${pid} -o comm= 2>/dev/null || true`],
-        { timeout: 2000 },
-      );
-      const parsedName = output.trim();
-      // On macOS, comm may be truncated. The full path can be gotten with -o command=
-      // but comm is usually sufficient for display purposes
-      name = parsedName || 'unknown';
-    } catch {
-      name = 'unknown';
+/** A short name for the server: the script a runtime runs, else the executable's name. */
+export function labelFromCommand(command: string, cwd?: string): string | null {
+  // ps joins argv with spaces, so a folder containing spaces would split a script path apart.
+  const relative = cwd && cwd !== '/' ? command.replaceAll(cwd, '.') : command;
+  const args = relative.trim().split(WHITESPACE_SPLIT_REGEX).filter(Boolean);
+  if (args.length === 0) return null;
+  const executable = path.basename(args[0]);
+  if (!RUNTIME_REGEX.test(executable)) return executable;
+  for (let i = 1; i < args.length; i++) {
+    const arg = args[i];
+    if (RUNTIME_EVAL_FLAGS.has(arg)) return executable;
+    if (RUNTIME_VALUE_FLAGS.has(arg)) i++;
+    else if (!arg.startsWith('-') && !RUNTIME_SUBCOMMANDS.has(arg)) {
+      return path.basename(arg).replace(SCRIPT_EXTENSION_REGEX, '');
     }
   }
+  return executable;
+}
 
-  // Update cache
-  processNameCache.set(pid, { name, timestamp: Date.now() });
-  return name;
+function run(file: string, args: string[]): Promise<string> {
+  // lsof exits 1 when some pids could not be read but still prints the rest, so keep stdout
+  // whatever the exit status; a missing binary simply yields no output.
+  return new Promise((resolve) => {
+    execFile(file, args, EXEC_OPTIONS, (_error, stdout) => resolve(stdout));
+  });
+}
+
+export async function listListeners(): Promise<Listener[]> {
+  if (process.platform === 'win32') return [];
+  return parseLsofListeners(await run('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN', '-F', 'pcn']));
+}
+
+export async function listCwds(pids: number[]): Promise<Map<number, string>> {
+  if (pids.length === 0) return new Map();
+  return parseLsofCwds(await run('lsof', ['-a', '-d', 'cwd', '-p', pids.join(','), '-F', 'pn']));
+}
+
+export async function listCommands(pids: number[]): Promise<Map<number, string>> {
+  if (pids.length === 0) return new Map();
+  return parsePsCommands(await run('ps', ['-o', 'pid=,command=', '-p', pids.join(',')]));
 }

@@ -5,6 +5,13 @@ import { cleanup, render } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PaneUtilityButtons } from './pane-utility-buttons';
 
+// `lib/trpc` wires its ipc client at import time, so the preload bridge must exist first.
+vi.hoisted(() => {
+  Object.assign(globalThis, {
+    electronTRPC: { onMessage: () => () => undefined, sendMessage: () => undefined },
+  });
+});
+
 vi.mock('./file-tree-toggle-button', () => ({
   FileTreeToggleButton: () => <button type="button" data-testid="file-tree-toggle" />,
 }));

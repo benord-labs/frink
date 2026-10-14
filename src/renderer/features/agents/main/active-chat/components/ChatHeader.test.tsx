@@ -301,4 +301,9 @@ describe('ChatHeader', () => {
       expect(rootClassName(container)).not.toContain('pt-7');
     });
   });
+
+  it("links the dev servers running from the chat's folder", () => {
+    const { container } = render(<ChatHeader {...baseProps()} gitContextPath="/tmp/ws" />);
+    expect(parsePaneUtilityProps(container)).toMatchObject({ devServersPath: '/tmp/ws' });
+  });
 });
