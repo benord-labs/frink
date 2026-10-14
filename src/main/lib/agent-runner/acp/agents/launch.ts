@@ -50,6 +50,15 @@ export type AcpLaunchRow = {
   settings: (context: LaunchContext) => Promise<LaunchSettings>;
 };
 
+/** What finding an installed agent and reading its version needs. */
+export type InstalledAgentRow = Pick<
+  AcpLaunchRow,
+  'name' | 'binary' | 'fallbacks' | 'versions' | 'installHint'
+> & {
+  /** Picks the version out of `--version` output as its first group; else the whole output is it. */
+  versionPattern?: RegExp;
+};
+
 export type AcpLaunchResult =
   | { ok: true; launch: Omit<AcpAgentLaunch, 'cwd'> }
   | { ok: false; reason: string };
@@ -71,7 +80,7 @@ const SETTINGS_TIMEOUT_MS = 15_000;
 const POSIX_SHELLS = new Set(['bash', 'zsh', 'sh', 'dash', 'ksh']);
 const sweptRunRoots = new Map<string, Promise<void>>();
 
-async function userEnv(): Promise<Env> {
+export async function userEnv(): Promise<Env> {
   await ensureLoginShellEnv();
   const loginEnv = getLoginShellEnvSync();
   if (loginEnv) return loginEnv;
@@ -97,7 +106,7 @@ async function firstProgram(candidates: string[]): Promise<string | undefined> {
 }
 
 /** The agent on absolute PATH entries, then its usual install places; never a relative entry. */
-async function locateBinary(row: AcpLaunchRow, env: Env): Promise<string | undefined> {
+async function locateBinary(row: InstalledAgentRow, env: Env): Promise<string | undefined> {
   const home = env.HOME ?? os.homedir();
   const onPath = (env.PATH ?? '')
     .split(path.delimiter)
@@ -123,8 +132,9 @@ function runCheck(file: string, args: readonly string[], env: Env, cwd: string, 
   });
 }
 
-function versionParts(text: string): number[] | undefined {
-  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(text.trim());
+function versionParts(text: string, pattern?: RegExp): number[] | undefined {
+  const version = pattern ? (pattern.exec(text)?.[1] ?? '') : text;
+  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version.trim());
   return match ? match.slice(1).map(Number) : undefined;
 }
 
@@ -135,7 +145,7 @@ function compareVersions(a: number[], b: number[]): number {
 
 /** The installed version when Frink has checked it, else why the agent may not start. */
 async function checkVersion(
-  row: AcpLaunchRow,
+  row: InstalledAgentRow,
   command: string,
   env: Env,
   cwd: string,
@@ -145,7 +155,7 @@ async function checkVersion(
     log.warn(`[ACP] ${row.name} --version failed`, error);
     return { stdout: '' };
   });
-  const version = versionParts(output.stdout);
+  const version = versionParts(output.stdout, row.versionPattern);
   const [floor, below] = [versionParts(row.versions.floor), versionParts(row.versions.below)];
   if (!version || !floor || !below) {
     return {
@@ -155,9 +165,11 @@ async function checkVersion(
   if (compareVersions(version, floor) >= 0 && compareVersions(version, below) < 0) {
     return { version: version.join('.') };
   }
-  const checked = `${row.name} ${floor.slice(0, 2).join('.')}`;
+  const minor = floor.slice(0, 2).join('.');
+  // A floor inside a minor is named in full, so an older patch of it is not called checked.
+  const checked = floor[2] ? `${floor.join('.')} and later ${minor} releases` : minor;
   return {
-    reason: `Frink has checked ${checked}. You have ${version.join('.')}, which Frink hasn't checked yet.`,
+    reason: `Frink has checked ${row.name} ${checked}. You have ${version.join('.')}, which Frink hasn't checked yet.`,
   };
 }
 
@@ -222,13 +234,16 @@ function withoutPrefix(env: Env, prefix: string): Env {
 }
 
 /** Where the agent is installed, without starting it. */
-export async function locateRowBinary(row: AcpLaunchRow, env?: Env): Promise<string | undefined> {
+export async function locateRowBinary(
+  row: InstalledAgentRow,
+  env?: Env,
+): Promise<string | undefined> {
   return locateBinary(row, env ?? (await userEnv()));
 }
 
 /** The installed agent and its version, when it is a version Frink has checked. */
 export async function findRowBinary(
-  row: AcpLaunchRow,
+  row: InstalledAgentRow,
   startEnv?: Env,
 ): Promise<{ path: string; version: string } | { reason: string; missing?: true }> {
   const env = startEnv ?? (await userEnv());
@@ -238,7 +253,7 @@ export async function findRowBinary(
   return 'version' in checked ? { path: command, version: checked.version } : checked;
 }
 
-function missingText(row: AcpLaunchRow): string {
+function missingText(row: InstalledAgentRow): string {
   return `Frink can't find ${row.name} on this computer. Install it with ${row.installHint}, then try again.`;
 }
 
