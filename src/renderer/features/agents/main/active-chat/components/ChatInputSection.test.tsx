@@ -61,7 +61,6 @@ function createProps(): ComponentProps<typeof ChatInputSection> {
     parentChatId: 'chat-1',
     teamId: undefined,
     repository: undefined,
-    sandboxId: undefined,
     projectPath: '/tmp/project',
     changedFiles: [],
     isMobile: false,

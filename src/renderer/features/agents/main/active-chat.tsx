@@ -1,5 +1,4 @@
 /* eslint-disable max-lines, max-lines-per-function */
-// e2b API routes are used instead of useSandboxManager for agents
 import { type Chat, useChat } from '@ai-sdk/react';
 import type { UIMessage } from 'ai';
 import { atom, useAtom, useAtomValue, useSetAtom, useStore } from 'jotai';
@@ -56,7 +55,6 @@ import { terminalSidebarOpenAtomFamily } from '../../terminal/atoms';
 import { TerminalBottomPanelGate } from '../../terminal/terminal-bottom-panel-gate';
 import type { AgentUserQuestionHandle } from '../AgentUserQuestion';
 import {
-  agentsPreviewSidebarOpenAtom,
   agentsSubChatUnseenChangesAtom,
   agentsUnseenChangesAtom,
   chatModeAtomFamily,
@@ -277,7 +275,6 @@ const ChatViewInner = memo(function ChatViewInner({
   sandboxSetupStatus = 'ready',
   sandboxSetupError,
   onRetrySetup,
-  sandboxId,
   projectPath,
   projectId,
   currentBranch,
@@ -1541,7 +1538,6 @@ const ChatViewInner = memo(function ChatViewInner({
               parentChatId={parentChatId}
               teamId={teamId}
               repository={repository}
-              sandboxId={sandboxId}
               projectPath={projectPath}
               projectId={projectId}
               changedFiles={changedFilesForSubChat}
@@ -1573,7 +1569,6 @@ export const ChatView = memo(function ChatView({
   selectedTeamImageUrl: _selectedTeamImageUrl,
   isMobileFullscreen = false,
   onBackToChats,
-  onOpenPreview,
   onOpenDiff,
   onOpenTerminal,
   splitPaneIndex,
@@ -1592,7 +1587,6 @@ export const ChatView = memo(function ChatView({
 
   // Check if any chat has unseen changes
   const hasAnyUnseenChanges = unseenChanges.size > 0;
-  const [isPreviewSidebarOpen, setIsPreviewSidebarOpen] = useAtom(agentsPreviewSidebarOpenAtom);
   // Per-chat diff sidebar state - each chat remembers its own open/close state
   const diffSidebarAtom = useMemo(() => diffSidebarOpenAtomFamily(chatId), [chatId]);
   const [isDiffSidebarOpen, setIsDiffSidebarOpen] = useAtom(diffSidebarAtom);
@@ -1707,9 +1701,6 @@ export const ChatView = memo(function ChatView({
 
   // Desktop: original project path for MCP config lookup
   const _originalProjectPath = (agentChat?.project?.path as string | undefined) ?? undefined;
-  // Fallback for web: use sandboxId
-  const sandboxId = agentChat?.sandboxId ?? null;
-  const sandboxUrl = sandboxId ? `https://3003-${sandboxId}.e2b.app` : null;
 
   // Get home path for general chats (no project context)
   const homePath = trpc.external.getHomePath.useQuery(undefined, { staleTime: 300_000 }).data;
@@ -1754,8 +1745,6 @@ export const ChatView = memo(function ChatView({
     projectResolved,
     homePath,
   ]);
-  // Desktop uses worktreePath, web uses sandboxUrl
-  const chatWorkingDir = effectiveCwd || sandboxUrl;
 
   // Listen for file changes from Claude Write/Edit tools and invalidate git status
   useFileChangeListener(worktreePath);
@@ -1785,12 +1774,8 @@ export const ChatView = memo(function ChatView({
     return () => cleanup?.();
   }, [worktreePath, chatId, trpcUtils, isSplitActive, effectiveActiveSubChatId]);
 
-  // Extract port, repository, and quick setup flag from meta
-  const meta = agentChat?.meta as {
-    sandboxConfig?: { port?: number };
-    repository?: string;
-    isQuickSetup?: boolean;
-  } | null;
+  // SAFETY: getAgentChat leaves meta untyped; repository, the one field read, is an "owner/repo" string or absent.
+  const meta = agentChat?.meta as { repository?: string } | null;
 
   // Parse repository string (e.g., "owner/repo") into object
   const repositoryString = meta?.repository;
@@ -1801,23 +1786,8 @@ export const ChatView = memo(function ChatView({
       })()
     : null;
 
-  // Track if we've already triggered sandbox setup for this chat
-  // Check if this is a quick setup (no preview available)
-  const isQuickSetup = meta?.isQuickSetup || !meta?.sandboxConfig?.port;
-  const previewPort = meta?.sandboxConfig?.port ?? 3000;
-
-  // Check if preview can be opened (sandbox with port exists and not quick setup)
-  const canOpenPreview = !!(sandboxId && !isQuickSetup && meta?.sandboxConfig?.port);
-
   // The diff sidebar reads the worktree; getParsedDiff has no other source.
   const canOpenDiff = !!worktreePath;
-
-  // Close preview sidebar if preview becomes unavailable
-  useEffect(() => {
-    if (!canOpenPreview && isPreviewSidebarOpen) {
-      setIsPreviewSidebarOpen(false);
-    }
-  }, [canOpenPreview, isPreviewSidebarOpen, setIsPreviewSidebarOpen]);
 
   // Note: We no longer forcibly close diff sidebar when canOpenDiff is false.
   // The sidebar render is guarded by canOpenDiff, so it naturally hides.
@@ -2067,9 +2037,8 @@ export const ChatView = memo(function ChatView({
   // Create or get Chat instance for a sub-chat
   const getOrCreateChat = useCallback(
     (subChatId: string, isWakeHeld: boolean): Chat<UIMessage> | null => {
-      // Desktop uses worktreePath, web uses sandboxUrl
       if (!agentChat) return null;
-      if (!chatWorkingDir) return null;
+      if (!effectiveCwd) return null;
 
       // Guard: prevent rendering sub-chats from a different parent chat.
       // During single-view chat transitions, the rendered sub-chat id may briefly be one
@@ -2186,7 +2155,7 @@ export const ChatView = memo(function ChatView({
     [
       effectiveActiveSubChatId,
       agentChat,
-      chatWorkingDir,
+      effectiveCwd,
       chatId,
       chatMode,
       isSplitActive,
@@ -2275,21 +2244,16 @@ export const ChatView = memo(function ChatView({
                 onToggleSidebar={onToggleSidebar}
                 splitPaneIndex={splitPaneIndex}
                 hasAnyUnseenChanges={hasAnyUnseenChanges}
-                isPreviewSidebarOpen={isPreviewSidebarOpen}
-                setIsPreviewSidebarOpen={setIsPreviewSidebarOpen}
                 isTerminalSidebarOpen={isTerminalSidebarOpen}
                 setIsTerminalSidebarOpen={setIsTerminalSidebarOpen}
                 setIsDiffSidebarOpen={setIsDiffSidebarOpen}
                 chatId={chatId}
                 gitContextPath={gitContextPath}
-                sandboxId={sandboxId ?? null}
-                canOpenPreview={canOpenPreview}
                 canOpenDiff={canOpenDiff}
                 diffStats={diffStats}
                 isArchived={isArchived}
                 taskId={agentChat?.taskId ?? null}
                 onBackToChats={onBackToChats ?? (() => {})}
-                onOpenPreview={onOpenPreview ?? (() => {})}
                 onOpenDiff={onOpenDiff ?? (() => {})}
                 onOpenTerminal={onOpenTerminal ?? (() => {})}
                 handleRestoreWorkspace={handleRestoreWorkspace}
@@ -2307,7 +2271,6 @@ export const ChatView = memo(function ChatView({
                   selectedTeamId={selectedTeamId}
                   repository={repository ? `${repository.owner}/${repository.name}` : undefined}
                   isMobileFullscreen={isMobileFullscreen}
-                  sandboxId={sandboxId ?? undefined}
                   projectPath={gitContextPath ?? undefined}
                   projectId={localProjectId ?? agentChat?.projectId ?? null}
                   currentBranch={
@@ -2344,7 +2307,7 @@ export const ChatView = memo(function ChatView({
             </div>
           </ChatAtmosphereSurface>
 
-          {/* All sidebars (Plan, Diff, Preview, Terminal, Details) */}
+          {/* All sidebars (Plan, Diff, Terminal, Details) */}
           <SidebarsSection
             isActive={isActive}
             isMobileFullscreen={isMobileFullscreen}
@@ -2354,13 +2317,6 @@ export const ChatView = memo(function ChatView({
             diffPanel={diffPanel}
             gitContextPath={gitContextPath}
             chatId={chatId}
-            sandboxId={sandboxId}
-            repository={repository}
-            canOpenPreview={canOpenPreview}
-            isPreviewSidebarOpen={isPreviewSidebarOpen}
-            setIsPreviewSidebarOpen={setIsPreviewSidebarOpen}
-            isQuickSetup={isQuickSetup}
-            previewPort={previewPort}
           />
         </div>
 

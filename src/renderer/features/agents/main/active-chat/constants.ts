@@ -18,10 +18,8 @@ export const STRINGS = {
   ROLLBACK: 'Rollback',
   EXPAND_STEPS: 'Expand',
   COLLAPSE_STEPS: 'Collapse',
-  PREVIEW_NOT_AVAILABLE: 'Preview not available',
 
   // UI text
-  SET_UP_REPOSITORY_FOR_PREVIEW: 'Set up this repository to enable live preview',
   NEW_CHAT: 'New Chat',
 
   // Step counts

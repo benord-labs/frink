@@ -96,8 +96,6 @@ export const api = {
           if (!result.data) return null;
           return {
             ...result.data,
-            // Desktop uses worktrees, not sandboxes
-            sandboxId: null,
             meta: null,
             // Map subChats to expected format
             subChats: result.data.subChats?.map((sc: AnyObj) => {
@@ -480,7 +478,6 @@ export const api = {
           repository?: string;
           query?: string;
           limit?: number;
-          sandboxId?: string;
           branch?: string;
           projectPath?: string;
         },

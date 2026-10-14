@@ -23,7 +23,6 @@ type Props = {
   selectedTeamId: string | null;
   repository?: string;
   isMobileFullscreen: boolean;
-  sandboxId?: string | null;
   projectPath?: string | null;
   /** UUID for @briefing mentions — prefer local equivalent when set (matches flow rows + execution routing) */
   projectId?: string | null;
@@ -63,7 +62,6 @@ export const ChatTabsRenderer = memo(function ChatTabsRenderer({
   selectedTeamId,
   repository,
   isMobileFullscreen,
-  sandboxId,
   projectPath,
   projectId,
   currentBranch,
@@ -160,7 +158,6 @@ export const ChatTabsRenderer = memo(function ChatTabsRenderer({
           repository={repository}
           streamId={agentChatStore.getStreamId(subChatId)}
           isMobile={isMobileFullscreen}
-          sandboxId={sandboxId || undefined}
           projectPath={projectPath || undefined}
           projectId={projectId}
           currentBranch={currentBranch}

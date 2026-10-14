@@ -2,6 +2,7 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { MobileChatHeader } from '../../../ui/mobile-chat-header';
 import { ChatHeader } from './ChatHeader';
 
 const capturedPaneUtility = vi.hoisted(() => ({
@@ -44,10 +45,6 @@ vi.mock('../../../components/pane-utility-buttons', () => ({
   },
 }));
 
-vi.mock('../../../components/preview-setup-hover-card', () => ({
-  PreviewSetupHoverCard: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-}));
-
 vi.mock('../../../ui/account-indicator', () => ({
   AccountIndicator: () => <span data-testid="account-indicator" />,
 }));
@@ -56,8 +53,15 @@ vi.mock('../../../ui/agents-header-controls', () => ({
   AgentsHeaderControls: () => <span data-testid="agents-header-controls" />,
 }));
 
+const mobileHeaderRender = vi.hoisted(() =>
+  vi.fn<(props: React.ComponentProps<typeof MobileChatHeader>) => void>(),
+);
+
 vi.mock('../../../ui/mobile-chat-header', () => ({
-  MobileChatHeader: () => <div data-testid="mobile-chat-header" />,
+  MobileChatHeader: (props: React.ComponentProps<typeof MobileChatHeader>) => {
+    mobileHeaderRender(props);
+    return <div data-testid="mobile-chat-header" />;
+  },
 }));
 
 const baseProps = (): React.ComponentProps<typeof ChatHeader> => ({
@@ -66,15 +70,11 @@ const baseProps = (): React.ComponentProps<typeof ChatHeader> => ({
   onToggleSidebar: vi.fn(),
   splitPaneIndex: undefined,
   hasAnyUnseenChanges: false,
-  isPreviewSidebarOpen: false,
-  setIsPreviewSidebarOpen: vi.fn(),
   isTerminalSidebarOpen: false,
   setIsTerminalSidebarOpen: vi.fn(),
   setIsDiffSidebarOpen: vi.fn(),
   chatId: 'chat-1',
   gitContextPath: null,
-  sandboxId: null,
-  canOpenPreview: false,
   canOpenDiff: false,
   diffStats: {
     fileCount: 0,
@@ -86,7 +86,6 @@ const baseProps = (): React.ComponentProps<typeof ChatHeader> => ({
   isArchived: false,
   taskId: null,
   onBackToChats: vi.fn(),
-  onOpenPreview: vi.fn(),
   onOpenDiff: vi.fn(),
   onOpenTerminal: vi.fn(),
   handleRestoreWorkspace: vi.fn(),
@@ -95,6 +94,7 @@ const baseProps = (): React.ComponentProps<typeof ChatHeader> => ({
 
 beforeEach(() => {
   capturedPaneUtility.onToggleTerminal = undefined;
+  mobileHeaderRender.mockClear();
 });
 
 afterEach(() => {
@@ -152,6 +152,24 @@ describe('ChatHeader', () => {
   it('does not render pane utilities on mobile fullscreen (desktop controls only)', () => {
     const { container } = render(<ChatHeader {...baseProps()} isMobileFullscreen />);
     expect(container.querySelector('[data-testid="pane-utility-buttons"]')).toBeNull();
+  });
+
+  // Every MobileChatHeader prop is optional, so typecheck cannot catch a dropped forward.
+  it('hands the mobile header its diff, terminal and restore controls', () => {
+    const props = baseProps();
+    render(
+      <ChatHeader {...props} isMobileFullscreen canOpenDiff gitContextPath="/tmp/ws" isArchived />,
+    );
+    expect(mobileHeaderRender).toHaveBeenLastCalledWith({
+      onBackToChats: props.onBackToChats,
+      onOpenDiff: props.onOpenDiff,
+      canOpenDiff: true,
+      diffStats: props.diffStats,
+      onOpenTerminal: props.onOpenTerminal,
+      canOpenTerminal: true,
+      isArchived: true,
+      onRestore: props.handleRestoreWorkspace,
+    });
   });
 
   it('passes showFileTree true in split view and false in single pane when workspace is set', () => {

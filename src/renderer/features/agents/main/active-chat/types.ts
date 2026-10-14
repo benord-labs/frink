@@ -65,7 +65,6 @@ export type ChatViewInnerProps = {
   sandboxSetupStatus?: 'cloning' | 'ready' | 'error';
   sandboxSetupError?: string;
   onRetrySetup?: () => void;
-  sandboxId?: string;
   projectPath?: string;
   /** UUID of the project this chat is associated with (used for @briefing mentions) */
   projectId?: string | null;
@@ -114,7 +113,6 @@ export type ChatViewProps = {
   selectedTeamImageUrl?: string;
   isMobileFullscreen?: boolean;
   onBackToChats?: () => void;
-  onOpenPreview?: () => void;
   onOpenDiff?: () => void;
   onOpenTerminal?: () => void;
   /** When in split view, the 0-based index of this pane. undefined = not in split view. */
@@ -149,7 +147,6 @@ export type ComposerForwardedProps = {
   parentChatId: string;
   teamId?: string;
   repository?: string;
-  sandboxId?: string;
   projectPath?: string;
   /** UUID of the project this chat is associated with (used for @briefing mentions) */
   projectId?: string | null;
