@@ -526,6 +526,16 @@ describe('getClaudeCodeTokenById — duplicate labels', () => {
     expect(isResolvedCredential(result)).toBe(false);
     expect(result.token).toBeNull();
   });
+
+  it('never reads a row of a provider Frink does not know as a Claude account', async () => {
+    getMock.mockReturnValueOnce(
+      row({ id: 'cred-new', type: 'someday-agent', source: 'api-key', oauthToken: 'c2stYW50' }),
+    );
+    const { getClaudeCodeTokenById, isResolvedCredential } = await import('./credentials');
+    const result = await getClaudeCodeTokenById('cred-new');
+    expect(isResolvedCredential(result)).toBe(false);
+    expect(result.token).toBeNull();
+  });
 });
 
 describe('getDefaultCredentialForType — single-provider plan-usage resolution', () => {

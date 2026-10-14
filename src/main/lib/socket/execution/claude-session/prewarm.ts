@@ -1,6 +1,7 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import log from 'electron-log';
+import { runtimeFor } from '../../../../../shared/lib/ai-providers';
 import type { ChatMode } from '../../../../../shared/types/chat-mode';
 import type { ExecutionSettings } from '../../../../../shared/types/execution';
 import { getBundledClaudeBinaryPath } from '../../../claude';
@@ -117,7 +118,9 @@ async function buildPrewarmSpec({ chatId, subChatId, mode: intent, settings }: P
   // A chat whose login was removed waits for the user's retry, never a default login.
   if (!owner.account) return 'login-removed';
   const credential = await getClaudeCodeTokenById(owner.account.id);
-  if (!isResolvedCredential(credential) || credential.type === 'codex') return 'not-claude';
+  if (!isResolvedCredential(credential) || runtimeFor(credential.type) !== 'claude') {
+    return 'not-claude';
+  }
   if (chat.taskId || (await getLatestFlowTaskForSubChat(db, subChatId))) return 'task-linked';
   const mode = intent ?? (subChat.mode as ChatMode);
   if (mode === 'debug') return 'debug';

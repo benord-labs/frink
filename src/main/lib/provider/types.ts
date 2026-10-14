@@ -8,8 +8,10 @@
  * (LSP-style negotiation); adding a 6th provider is a DATA ROW, not new code.
  */
 
-/** The big-5 coding CLIs Frink bridges config across. */
-export type ProviderType = 'claude-code' | 'cursor' | 'codex' | 'gemini' | 'opencode';
+import type { AiProviderId } from '../../../shared/lib/ai-providers';
+
+/** The coding CLIs Frink bridges config across: every AI provider Frink runs, plus two it does not. */
+export type ProviderType = AiProviderId | 'cursor' | 'gemini';
 
 /**
  * How a single capability category reaches a given provider.

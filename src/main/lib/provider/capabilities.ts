@@ -102,6 +102,8 @@ export const CAPABILITY_MAP: Record<ProviderType, CapabilityDescriptor> = {
   // TODO(PCH-8): unverified — descriptors are placeholders.
   gemini: UNVERIFIED_DESCRIPTOR,
   opencode: UNVERIFIED_DESCRIPTOR,
+  copilot: UNVERIFIED_DESCRIPTOR,
+  grok: UNVERIFIED_DESCRIPTOR,
 };
 
 /**

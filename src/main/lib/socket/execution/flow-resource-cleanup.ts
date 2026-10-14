@@ -7,7 +7,7 @@ import {
 import type { PendingContinuationResume } from '../../flows/admission/terminal-resume/continuation';
 import type { ClaudeSession } from '../claude-session-registry';
 import { releaseWakeHold } from '../claude-wake-hold';
-import type { AgentRuntime } from '../runtime-gate';
+import type { AgentRuntime } from '../../../../shared/lib/ai-providers';
 import { disposeClaudeSessionAndWait } from './claude-provider-cleanup';
 import { hasReusableWakeHoldRuntimeSlot } from './wake-hold-registry-view';
 

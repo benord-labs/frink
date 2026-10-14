@@ -2239,6 +2239,28 @@ describe('socket file permission edge cases', () => {
     const decisionCall = vi.mocked(checkPermission).mock.calls.find((c) => c[0]?.tool === 'Read');
     expect((decisionCall?.[0]?.input as Record<string, unknown>).file_path).toBe(externalFile);
   });
+
+  it('refuses a chat on a provider that cannot run here, never starting Claude or Codex', async () => {
+    vi.mocked(getDefaultClaudeCodeToken).mockResolvedValueOnce({
+      token: null,
+      isApiKey: false,
+      type: 'opencode',
+      label: 'OpenCode',
+      passthrough: true,
+    });
+    vi.mocked(runCodexAgent).mockClear();
+
+    await handleRemoteExecute({ ...basePayload, message: 'hello' });
+
+    expect(claudeQueryMock).not.toHaveBeenCalled();
+    expect(vi.mocked(runCodexAgent)).not.toHaveBeenCalled();
+    expect(vi.mocked(socketClient.sendErrorDirect)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error:
+          "OpenCode can't run chats in this version of Frink yet. Pick Claude or OpenAI for this chat.",
+      }),
+    );
+  });
 });
 
 describe('validateToolPermission — worktree canonical decision path', () => {

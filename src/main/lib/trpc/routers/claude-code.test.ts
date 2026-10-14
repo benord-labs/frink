@@ -23,8 +23,8 @@ const renameProjectAiAccountsByLabelMock = vi.fn().mockResolvedValue(undefined);
 const deleteProjectAiAccountsByLabelMock = vi.fn().mockResolvedValue(undefined);
 const openExternalMock = vi.fn();
 const detectCodexAccountMock = vi.fn();
-// Mutable so a per-test toggle of the dark-launch flag works — the router reads
-// LAUNCH_FLAGS.codexAccounts at call time, and it is the ONLY flag the router reads.
+// Mutable so a per-test toggle of codexAccounts works: the Codex connect guards read it at
+// call time. Flags missing here read as off.
 const launchFlagsMock = { codexAccounts: false };
 
 function mockAnthropicOAuthValidation401() {
@@ -352,7 +352,7 @@ describe('claudeCodeRouter project account ownership', () => {
     selectGetMock.mockReturnValue({
       id: 'cred-work',
       accountLabel: 'Work',
-      type: 'claude',
+      type: 'claude-code',
       oauthToken: 'oauth-token',
     });
 
@@ -401,7 +401,7 @@ describe('claudeCodeRouter project account ownership', () => {
     getProjectAiAccountMock.mockResolvedValue(null);
     selectGetMock.mockReturnValue({
       accountLabel: 'DefaultAcct',
-      type: 'claude',
+      type: 'claude-code',
       oauthToken: 'oauth',
       isDefault: true,
     });
@@ -527,7 +527,7 @@ describe('claudeCodeRouter project account ownership', () => {
     getProjectAiAccountMock.mockRejectedValueOnce(new Error('db read failed'));
     selectGetMock.mockReturnValue({
       accountLabel: 'Default',
-      type: 'claude',
+      type: 'claude-code',
       oauthToken: 'oauth-token',
       isDefault: true,
     });
@@ -1132,6 +1132,35 @@ describe('claudeCodeRouter — codex account-type recognition in the selection r
       const [acc] = await caller.listAccounts();
       expect(acc).toMatchObject({ type: 'codex', label: 'My Codex', isAuthenticated: false });
     });
+
+    it('names each account from the provider table and lists only Claude and Codex accounts', async () => {
+      const row = (id: string, type: string | null) => ({
+        id,
+        accountLabel: null,
+        type,
+        oauthToken: null,
+        source: 'api-key',
+        needsReauthAt: null,
+        isDefault: false,
+        connectedAt: null,
+        sourcePath: null,
+        expectedEmail: null,
+      });
+      selectAllMock.mockReturnValueOnce([
+        row('legacy', null),
+        row('cx', 'codex'),
+        row('oc', 'opencode'),
+        row('new', 'someday-agent'),
+      ]);
+      const { claudeCodeRouter } = await import('./claude-code');
+      const caller = claudeCodeRouter.createCaller({ getWindow: () => null });
+
+      const accounts = await caller.listAccounts();
+      expect(accounts.map(({ id, type, label }) => [id, type, label])).toEqual([
+        ['legacy', 'claude-code', 'Claude'],
+        ['cx', 'codex', 'OpenAI'],
+      ]);
+    });
   });
 
   describe('getResolvedAccount', () => {
@@ -1154,6 +1183,17 @@ describe('claudeCodeRouter — codex account-type recognition in the selection r
         isAuthenticated: true,
         label: 'My Codex',
       });
+    });
+
+    it.each([
+      ['codex', 'OpenAI'],
+      [null, 'Claude'],
+    ])('names an unlabelled default %s row from the provider table', async (type, label) => {
+      selectGetMock.mockReturnValueOnce({ accountLabel: null, type, isDefault: 1 });
+      const { claudeCodeRouter } = await import('./claude-code');
+      const caller = claudeCodeRouter.createCaller({ getWindow: () => null });
+
+      await expect(caller.getResolvedAccount({})).resolves.toMatchObject({ label });
     });
   });
 

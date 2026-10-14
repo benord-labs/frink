@@ -440,6 +440,16 @@ function registerSkipTests(claudeQueryMock: PrewarmHarness['claudeQueryMock'], s
         vi.mocked(getClaudeCodeTokenById).mockResolvedValueOnce({ ...credential, type: 'codex' }),
     ],
     [
+      'not-claude',
+      () =>
+        vi.mocked(getClaudeCodeTokenById).mockResolvedValueOnce({
+          ...credential,
+          token: null,
+          type: 'opencode',
+          passthrough: true,
+        }),
+    ],
+    [
       'login-removed',
       () =>
         vi

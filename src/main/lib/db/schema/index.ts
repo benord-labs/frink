@@ -1,6 +1,7 @@
 /* eslint-disable max-lines, max-lines-per-function */
 import { relations, sql } from 'drizzle-orm';
 import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import type { AiProviderId, PassthroughSource } from '../../../../shared/lib/ai-providers';
 import { CODEX_SPEEDS } from '../../../../shared/types/execution';
 import { createId } from '../utils';
 import { defineFlowRunAdmissions } from './flow-run-admissions';
@@ -129,17 +130,16 @@ export const subChatsRelations = relations(subChats, ({ one }) => ({
 }));
 
 // ============ AI ACCOUNT TYPES ============
-export type AIAccountType = 'claude-code' | 'codex';
-
+export type AIAccountType = AiProviderId;
 /**
  * Distinguishes how a credential row resolves its token at chat-time.
  * - `api-key`: encrypted token stored in `oauth_token`. Many rows allowed. Synced to Neon as encrypted blob.
  * - `claude-passthrough`: `oauth_token IS NULL`. Token resolved live from the keychain via `sourcePath`
  *   at every use. ONE row per machine. LOCAL-ONLY — never enqueued to `pendingAccountSyncs`.
- * - `codex-passthrough`: `oauth_token IS NULL`. The OpenAI Codex CLI owns its creds (OS keyring / `~/.codex`
- *   from `codex login`); Frink never stores an OpenAI key. Resolved live at spawn. LOCAL-ONLY.
+ * - other `*-passthrough`: `oauth_token IS NULL`. The provider's own CLI owns its login (`codex login`);
+ *   Frink never stores that provider's key. Resolved live at spawn. LOCAL-ONLY.
  */
-export type CredentialSource = 'api-key' | 'claude-passthrough' | 'codex-passthrough';
+export type CredentialSource = 'api-key' | PassthroughSource;
 
 // ============ AGENT-PROVIDER CREDENTIALS (AI ACCOUNTS) ============
 // SHARED across all coding-agent providers (Claude Code, OpenAI Codex). The table
@@ -152,7 +152,7 @@ export const claudeCodeCredentials = sqliteTable(
     id: text('id')
       .primaryKey()
       .$defaultFn(() => createId()),
-    type: text('type').notNull().default('claude-code'), // AIAccountType: 'claude-code' | 'codex'
+    type: text('type').notNull().default('claude-code'), // AIAccountType, or a non-AI row such as a GitHub token
     accountLabel: text('account_label'), // "Work", "Personal", etc. (nullable for migration compat)
     oauthToken: text('oauth_token'), // Encrypted with safeStorage; NULL for placeholder accounts synced from cloud OR for `claude-passthrough` rows
     connectedAt: integer('connected_at', { mode: 'timestamp' }).$defaultFn(() => new Date()),

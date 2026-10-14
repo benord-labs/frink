@@ -22,6 +22,7 @@
 import { tmpdir } from 'node:os';
 import { BrowserWindow } from 'electron';
 import log from 'electron-log';
+import { runtimeFor } from '../../../../../../shared/lib/ai-providers';
 import { stripMessageMarkers } from '../../../../../../shared/lib/message-markers/strip-message-markers';
 import { parseTriggerBubbleMessage } from '../../../../../../shared/lib/trigger-bubble-marker';
 import { BUILD_PROJECT_PLACEHOLDER, isManagedBuildPath } from '../../../../builds-path';
@@ -298,9 +299,9 @@ type ResolveChatNameInput = {
 async function resolveChatNameViaAi(input: ResolveChatNameInput): Promise<string | null> {
   const cwd = input.projectPath ?? tmpdir();
   const credential = await resolveCredentialForProject(input.projectId);
-  // `codex` is excluded on purpose: resolvable, but NOT a Claude account. claude-passthrough IS
-  // resolvable with a null token (the SDK reads the keychain), so token presence is the wrong gate.
-  if (credential && credential.type !== 'codex' && isResolvedCredential(credential)) {
+  // Other providers are excluded on purpose: resolvable, but NOT Claude accounts. claude-passthrough
+  // IS resolvable with a null token (the SDK reads the keychain), so token presence is the wrong gate.
+  if (credential && runtimeFor(credential.type) === 'claude' && isResolvedCredential(credential)) {
     return generateWithClaudeSdk(input.userMessage, credential, cwd);
   }
   return null;
@@ -313,10 +314,10 @@ async function resolveProjectNameViaAi(input: ResolveChatNameInput): Promise<str
   const credential = await resolveCredentialForProject(input.projectId);
   const prompt = projectNamePrompt(input.userMessage);
   let name: string | null = null;
-  // See resolveChatNameViaAi for why codex is excluded and token presence isn't the gate.
+  // See resolveChatNameViaAi for why other providers are excluded and token presence isn't the gate.
   // Keep the stronger model: the build-intent abstention (reply NONE on chit-chat) is the
   // load-bearing behavior of build-project-display-naming.
-  if (credential && credential.type !== 'codex' && isResolvedCredential(credential)) {
+  if (credential && runtimeFor(credential.type) === 'claude' && isResolvedCredential(credential)) {
     name = await generateWithClaudeSdk(input.userMessage, credential, cwd, prompt, 'sonnet');
   }
   return isAbstention(name) ? null : name;

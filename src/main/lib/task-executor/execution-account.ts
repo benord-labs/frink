@@ -1,3 +1,4 @@
+import { aiProvider } from '../../../shared/lib/ai-providers';
 import {
   getClaudeCodeTokenById,
   getDefaultClaudeCodeToken,
@@ -11,9 +12,14 @@ export type TaskExecutionAccountType = 'claude-code' | 'codex';
 
 type TaskAccount = { id: string; label: string | null } | null;
 
-/** Credential `type` → task execution account type (NULL/legacy/unknown → claude-code). */
-export const toTaskAccountType = (credType: string): TaskExecutionAccountType =>
-  credType === 'codex' ? 'codex' : 'claude-code';
+/** Credential `type` → task execution account type. Flows run only on Claude and Codex. */
+export function toTaskAccountType(credType: string): TaskExecutionAccountType {
+  const provider = aiProvider(credType);
+  if (provider?.id === 'claude-code' || provider?.id === 'codex') return provider.id;
+  const name = provider?.name ?? 'This AI provider';
+  const err = new Error(`${name} can't run Flows yet. Pick Claude or OpenAI for this project.`);
+  throw Object.assign(err, { permanent: true });
+}
 
 /** A continued chat runs on its own stamped account; a new chat is stamped from the project. */
 export async function resolveTaskAccount(
