@@ -32,7 +32,8 @@ export async function readCommandOutput(
   const codex = getCodexLiveTurn(subChatId)?.commandOutputs.get(commandId);
   if (codex) {
     return {
-      runningForMs: Date.now() - codex.startedAt,
+      // The start stamp is Codex's own, so it is clamped like a file's birth time.
+      runningForMs: Math.max(0, Date.now() - codex.startedAt),
       text: cleanOutputTail(codex.text, codex.cut),
     };
   }
@@ -105,8 +106,9 @@ async function readFileTail(path: string): Promise<CommandOutputTail | null> {
     const length = Math.min(stat.size, TAIL_BYTES);
     const { buffer } = await file.read(Buffer.alloc(length), 0, length, stat.size - length);
     return {
-      // Some filesystems report no birth time, as 0.
-      runningForMs: stat.birthtimeMs > 0 ? Date.now() - stat.birthtimeMs : null,
+      // Some filesystems report no birth time, as 0. A sub-millisecond birth time can sit just past
+      // the whole-millisecond clock, so a fresh file would otherwise look born in the future.
+      runningForMs: stat.birthtimeMs > 0 ? Math.max(0, Date.now() - stat.birthtimeMs) : null,
       text: cleanOutputTail(buffer.toString('utf8'), length < stat.size),
     };
   } finally {
