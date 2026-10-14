@@ -312,6 +312,7 @@ describe('resolveAcpLaunch for OpenCode', { timeout: 15_000 }, () => {
     expect(await findRowBinary(OPENCODE_LAUNCH, missing)).toEqual({
       reason:
         "Frink can't find OpenCode on this computer. Install it with npm install -g opencode-ai, then try again.",
+      missing: true,
     });
   });
 

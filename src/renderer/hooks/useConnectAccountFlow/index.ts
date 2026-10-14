@@ -24,9 +24,9 @@ type ConnectMutation<TInput> = {
 };
 
 type UseConnectAccountFlowParams<TDetection, TInput> = {
-  /** The provider's detection query result (Claude/Codex `detect*Account.useQuery(...)`). */
+  /** The provider's detection query result. */
   detectionQuery: DetectionQuery<TDetection>;
-  /** The provider's connect mutation result (Claude/Codex `connect*Passthrough.useMutation()`). */
+  /** The provider's connect mutation result. */
   connectMutation: ConnectMutation<TInput>;
   /** Maps the (validated, trimmed) label + flow context to the provider-specific mutation input. */
   buildConnectInput: (
@@ -55,7 +55,7 @@ export type ConnectAccountFlow<TDetection> = {
 };
 
 /**
- * Shared connect/reconnect flow for the Claude and Codex passthrough pages.
+ * Shared connect/reconnect flow for the Claude page and the page for every other provider.
  *
  * Owns the state + handlers both pages duplicated — flow state, account-label default,
  * the back/refresh/connect handlers, the `pendingAccountAuth`/settings/onboarding atom

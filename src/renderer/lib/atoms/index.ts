@@ -193,15 +193,12 @@ export type PendingAccountAuthState = {
   accountLabel: string;
   mode: 'add' | 'reauth';
   returnToSettings?: boolean;
-  /** Which connect page to route to. Absent/undefined = Claude (backward-compatible). */
-  provider?: AiProviderId;
+  /** The provider whose connect page opens. */
+  provider: AiProviderId;
 };
 
-// Track pending Claude/Codex account connect/reconnect flow from Settings.
-// null = normal app flow
-// { mode: 'add' } = brand-new passthrough connect
-// { mode: 'reauth' } = reconnect an existing passthrough (e.g. signed out of the CLI)
-// { provider: 'codex' } = route to the Codex connect page instead of Claude
+// A pending account connect or reconnect; null = normal app flow.
+// mode 'add' connects a new login, 'reauth' reconnects one that is signed out or missing.
 export const pendingAccountAuthAtom = atom<PendingAccountAuthState | null>(null);
 
 // ============================================

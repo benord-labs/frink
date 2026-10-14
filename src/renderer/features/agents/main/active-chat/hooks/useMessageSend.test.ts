@@ -394,6 +394,7 @@ describe('useMessageSend', () => {
       mode: 'add',
       accountLabel: '',
       returnToSettings: false,
+      provider: 'claude-code',
     });
   });
 
@@ -454,6 +455,7 @@ describe('useMessageSend', () => {
       mode: 'reauth',
       accountLabel: 'My Claude',
       returnToSettings: false,
+      provider: 'claude-code',
     });
   });
 

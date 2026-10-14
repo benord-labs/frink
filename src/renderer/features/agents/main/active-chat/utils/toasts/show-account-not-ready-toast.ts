@@ -37,9 +37,9 @@ export function showAccountNotReadyToast(
                 mode: 'reauth',
                 accountLabel: unauthAccount.label,
                 returnToSettings: false,
-                provider: unauthAccount.type === 'codex' ? 'codex' : undefined,
+                provider: unauthAccount.type,
               }
-            : { mode: 'add', accountLabel: '', returnToSettings: false },
+            : { mode: 'add', accountLabel: '', returnToSettings: false, provider: 'claude-code' },
         ),
     },
   });

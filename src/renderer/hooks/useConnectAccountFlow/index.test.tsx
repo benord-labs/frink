@@ -78,6 +78,7 @@ describe('useConnectAccountFlow', () => {
       accountLabel: 'Work Claude',
       mode: 'reauth',
       returnToSettings: true,
+      provider: 'claude-code',
     });
 
     expect(result.current.isReauthFlow).toBe(true);
@@ -105,6 +106,7 @@ describe('useConnectAccountFlow', () => {
     const { store, buildConnectInput, successMessage, result } = renderFlow({
       accountLabel: 'Personal',
       mode: 'add',
+      provider: 'claude-code',
     });
 
     expect(result.current.isReauthFlow).toBe(false);
@@ -131,6 +133,7 @@ describe('useConnectAccountFlow', () => {
       accountLabel: 'Work Claude',
       mode: 'reauth',
       returnToSettings: true,
+      provider: 'claude-code',
     });
 
     act(() => {
@@ -143,7 +146,11 @@ describe('useConnectAccountFlow', () => {
   });
 
   it('handleBack without returnToSettings: clears pending but does not open Settings', () => {
-    const { store, result } = renderFlow({ accountLabel: 'Personal', mode: 'add' });
+    const { store, result } = renderFlow({
+      accountLabel: 'Personal',
+      mode: 'add',
+      provider: 'claude-code',
+    });
 
     act(() => {
       result.current.handleBack();
@@ -159,6 +166,7 @@ describe('useConnectAccountFlow', () => {
       accountLabel: 'Work Claude',
       mode: 'reauth',
       returnToSettings: true,
+      provider: 'claude-code',
     };
     const { store, mutateAsync, result } = renderFlow(pending);
     mutateAsync.mockRejectedValueOnce(new Error('keychain locked'));
@@ -179,7 +187,11 @@ describe('useConnectAccountFlow', () => {
   });
 
   it('falls back to a generic message when the rejection is not an Error', async () => {
-    const { mutateAsync, result } = renderFlow({ accountLabel: 'Work', mode: 'add' });
+    const { mutateAsync, result } = renderFlow({
+      accountLabel: 'Work',
+      mode: 'add',
+      provider: 'claude-code',
+    });
     mutateAsync.mockRejectedValueOnce('socket hung up');
 
     await act(async () => {
@@ -194,7 +206,11 @@ describe('useConnectAccountFlow', () => {
     ['empty', ''],
     ['whitespace-only', '   '],
   ])('rejects a %s label without calling the mutation', async (_name, label) => {
-    const { store, mutateAsync, result } = renderFlow({ accountLabel: label, mode: 'add' });
+    const { store, mutateAsync, result } = renderFlow({
+      accountLabel: label,
+      mode: 'add',
+      provider: 'claude-code',
+    });
 
     await act(async () => {
       await result.current.handleConnect();
@@ -210,6 +226,7 @@ describe('useConnectAccountFlow', () => {
     const { mutateAsync, buildConnectInput, result } = renderFlow({
       accountLabel: '  Work Claude  ',
       mode: 'add',
+      provider: 'claude-code',
     });
 
     await act(async () => {
@@ -223,7 +240,11 @@ describe('useConnectAccountFlow', () => {
   });
 
   it('refresh clears a prior error and refetches detection', async () => {
-    const { mutateAsync, refetch, result } = renderFlow({ accountLabel: 'Work', mode: 'add' });
+    const { mutateAsync, refetch, result } = renderFlow({
+      accountLabel: 'Work',
+      mode: 'add',
+      provider: 'claude-code',
+    });
     mutateAsync.mockRejectedValueOnce(new Error('boom'));
 
     await act(async () => {

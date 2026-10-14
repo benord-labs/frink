@@ -63,7 +63,13 @@ describe('AccountsList', () => {
   });
 
   it('leaves out sign-ins this computer already has, then goes straight to the key form', () => {
-    renderList({ hasClaudePassthrough: true, hasCodexPassthrough: true });
+    const login = { isDefault: false, isAuthenticated: true, connectedAt: null };
+    renderList({
+      accounts: [
+        { ...login, id: 'a', label: 'Mine', type: 'claude-code', source: 'claude-passthrough' },
+        { ...login, id: 'b', label: 'Work', type: 'codex', source: 'codex-passthrough' },
+      ],
+    });
     expect(screen.queryByRole('button', { name: 'Sign in with Claude' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Sign in with OpenAI' })).not.toBeInTheDocument();
 

@@ -187,10 +187,10 @@ describe('AccountRow summary', () => {
     expect(onAuthenticate).toHaveBeenCalledWith(expect.objectContaining({ id: 'acc-1' }));
   });
 
-  it.each<[AiProviderId, string]>([
-    ['codex', 'OpenAI'],
-    ['opencode', 'OpenCode'],
-  ])('names each %s login after its own provider, not Claude', (type, name) => {
+  it.each<[AiProviderId, string, string]>([
+    ['codex', 'OpenAI · Signed in on this computer', 'Sign in again'],
+    ['opencode', 'OpenCode · Installed on this computer', 'Reconnect'],
+  ])('names each %s login after its own provider, not Claude', (type, detail, signIn) => {
     render(
       <AccountRow
         account={makeAccount({ type })}
@@ -202,6 +202,24 @@ describe('AccountRow summary', () => {
         onCancelRename={vi.fn()}
       />,
     );
-    expect(screen.getByText(`${name} · Signed in on this computer`)).toBeInTheDocument();
+    expect(screen.getByText(detail)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: signIn })).toBeInTheDocument();
+  });
+
+  it('says an agent that is no longer installed was not found and offers to reconnect it', () => {
+    render(
+      <AccountRow
+        account={makeAccount({ type: 'opencode', isAuthenticated: false })}
+        onSetDefault={vi.fn()}
+        onDelete={vi.fn()}
+        onAuthenticate={vi.fn()}
+        onRenameClick={vi.fn()}
+        onSaveRename={vi.fn()}
+        onCancelRename={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('OpenCode · Not found on this computer')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reconnect' })).toBeInTheDocument();
+    expect(screen.queryByText('Sign in again')).toBeNull();
   });
 });
