@@ -22,7 +22,7 @@ import {
 const CANCEL_GRACE_MS = 2000;
 /** How long a dropped connection waits for the process to report why it ended. */
 const EXIT_REPORT_MS = 1000;
-const ACTED_UNASKED_TEXT =
+export const ACTED_UNASKED_TEXT =
   'The agent did something without asking first, so Frink stopped it. The step shown above already ran.';
 const BLOCKED_COMMAND_TEXT =
   'Frink blocked a command the agent did not ask about and stopped this chat.';
