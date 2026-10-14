@@ -518,30 +518,33 @@ describe('AccountIndicator', () => {
     });
   });
 
-  it('lists OpenCode logins in the new-chat picker on macOS', async () => {
-    const [claudeRow] = snap.defaultListAccounts;
-    snap.listAccountsData = [
-      claudeRow,
-      { ...claudeRow, id: 'acc-oc', label: 'OpenCodeWork', type: 'opencode', isDefault: false },
-    ];
-    getResolvedAccountMock.mockReturnValue({ data: claudeRow, isSuccess: true });
-    Object.defineProperty(window, 'desktopApi', {
-      value: { platform: 'darwin' },
-      configurable: true,
-    });
-    try {
-      render(
-        <Provider store={createStore()}>
-          <AccountIndicator projectId="proj-1" />
-        </Provider>,
-      );
-      await userEvent.setup().click(screen.getByRole('button', { name: /^AI accounts menu/ }));
+  it.each(['opencode', 'copilot'])(
+    'lists %s logins in the new-chat picker on macOS',
+    async (type) => {
+      const [claudeRow] = snap.defaultListAccounts;
+      snap.listAccountsData = [
+        claudeRow,
+        { ...claudeRow, id: 'acc-agent', label: 'AgentWork', type, isDefault: false },
+      ];
+      getResolvedAccountMock.mockReturnValue({ data: claudeRow, isSuccess: true });
+      Object.defineProperty(window, 'desktopApi', {
+        value: { platform: 'darwin' },
+        configurable: true,
+      });
+      try {
+        render(
+          <Provider store={createStore()}>
+            <AccountIndicator projectId="proj-1" />
+          </Provider>,
+        );
+        await userEvent.setup().click(screen.getByRole('button', { name: /^AI accounts menu/ }));
 
-      expect(within(screen.getByRole('menu')).getByText('OpenCodeWork')).toBeInTheDocument();
-    } finally {
-      Reflect.deleteProperty(window, 'desktopApi');
-    }
-  });
+        expect(within(screen.getByRole('menu')).getByText('AgentWork')).toBeInTheDocument();
+      } finally {
+        Reflect.deleteProperty(window, 'desktopApi');
+      }
+    },
+  );
 
   it.each([
     ['opencode', 'OpenCode'],
