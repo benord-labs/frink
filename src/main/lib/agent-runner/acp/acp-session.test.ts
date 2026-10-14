@@ -1,5 +1,10 @@
-import type { ContentBlock, SessionConfigOption } from '@agentclientprotocol/sdk';
-import { describe, expect, it } from 'vitest';
+import type {
+  ContentBlock,
+  SessionConfigOption,
+  SessionUpdate,
+  ToolCall,
+} from '@agentclientprotocol/sdk';
+import { describe, expect, it, vi } from 'vitest';
 import type { UIMessageChunk } from '../../claude/types';
 import { collectChunks, fakeAcpAgent, runnerParams } from './acp-test-fixtures';
 import { type AcpRunnerParams, rememberedModelOptions, runAcpAgent } from './index';
@@ -146,6 +151,89 @@ describe('runAcpAgent session settings', () => {
     ]);
     expect(rememberedModelOptions('second')).toEqual([{ id: 'open/free', name: 'Free model' }]);
     expect(rememberedModelOptions('never-ran')).toBeUndefined();
+  });
+});
+
+describe('runAcpAgent while the session opens', () => {
+  const UNASKED =
+    'The agent did something without asking first, so Frink stopped it. The step shown above already ran.';
+  const ACTED: { update: SessionUpdate }[] = [
+    { update: { sessionUpdate: 'tool_call', toolCallId: 'c1', title: 'bash', kind: 'execute' } },
+    { update: { sessionUpdate: 'tool_call_update', toolCallId: 'c1', status: 'completed' } },
+  ];
+
+  it.each<[string, Parameters<typeof fakeAcpAgent>[1], Partial<AcpRunnerParams>]>([
+    ['opening a new session', { reportsOn: { method: 'session/new', messages: ACTED } }, {}],
+    [
+      'continuing the earlier session',
+      { agentCapabilities: CAN_RESUME, reportsOn: { method: 'session/resume', messages: ACTED } },
+      { resumeSessionId: 'earlier' },
+    ],
+    [
+      'opening a new session after the earlier one could not continue',
+      {
+        agentCapabilities: CAN_RESUME,
+        resumeFails: true,
+        reportsOn: { method: 'session/new', messages: ACTED },
+      },
+      { resumeSessionId: 'earlier' },
+    ],
+    [
+      'setting the chosen mode',
+      {
+        configOptions: SETTINGS,
+        reportsOn: { method: 'session/set_config_option', messages: ACTED },
+      },
+      { mode: 'plan' },
+    ],
+  ])('stops an agent that acts unasked while %s, sending no prompt', async (_, setup, chosen) => {
+    const turn = await runTurn(setup, chosen);
+
+    expect(errorsOf(turn.chunks)).toEqual([{ type: 'error', errorText: UNASKED }]);
+    expect(turn.requests).not.toContain('session/prompt');
+  });
+
+  it('sends no prompt when the agent acts unasked while the reader holds the session id', async () => {
+    const fake = fakeAcpAgent(
+      async () => {
+        fake.requests.push('session/prompt');
+      },
+      {
+        configOptions: SETTINGS,
+        reportsOn: { method: 'session/set_config_option', messages: ACTED, afterAnswer: true },
+      },
+    );
+
+    const chunks: UIMessageChunk[] = [];
+    for await (const chunk of runAcpAgent(runnerParams({ mode: 'plan' }), fake.start)) {
+      chunks.push(chunk);
+      if (chunk.type !== 'message-metadata') continue;
+      await vi.waitFor(() => expect(fake.wasDisposed()).toBe(true));
+    }
+
+    expect(errorsOf(chunks)).toEqual([{ type: 'error', errorText: UNASKED }]);
+    expect(fake.requests).not.toContain('session/prompt');
+  });
+
+  it('does not stop an agent that asked while the session opened, was refused, and failed', async () => {
+    const write: ToolCall = { toolCallId: 'w1', title: 'write', kind: 'edit', status: 'pending' };
+    const turn = await runTurn(
+      {
+        configOptions: SETTINGS,
+        reportsOn: {
+          method: 'session/set_config_option',
+          messages: [
+            { update: { sessionUpdate: 'tool_call', ...write } },
+            { permission: write },
+            { update: { sessionUpdate: 'tool_call_update', toolCallId: 'w1', status: 'failed' } },
+          ],
+        },
+      },
+      { mode: 'plan' },
+    );
+
+    expect(errorsOf(turn.chunks)).toEqual([]);
+    expect(turn.requests).toContain('session/prompt');
   });
 });
 

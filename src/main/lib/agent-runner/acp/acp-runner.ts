@@ -135,6 +135,10 @@ export async function* runAcpAgent(
   const turnOver = new AbortController();
   const link: AgentLink = {};
   let sessionId: string | undefined;
+  // While the session opens any session is this turn's, even one it could not continue.
+  const watches = (from: string) => sessionId === undefined || from === sessionId;
+  // Set when the turn is stopped for acting unasked, so a later failure cannot hide why.
+  let stopText: string | undefined;
   let turnEnded = Promise.resolve();
   const onAbort = () => {
     turnOver.abort();
@@ -150,6 +154,7 @@ export async function* runAcpAgent(
     const wasCommand =
       toolCall.kind === 'execute' || questionForTool(rules, toolCall.tool) === 'Bash';
     const errorText = ledger && wasCommand ? BLOCKED_COMMAND_TEXT : ACTED_UNASKED_TEXT;
+    stopText = errorText;
     emit({ type: 'error', errorText });
     onAbort();
     // Logged by the stop that follows the turn, which waits on the same promise.
@@ -175,7 +180,7 @@ export async function* runAcpAgent(
     const connection = client({ name: 'frink' })
       // Registered first, so an update reaches the chat before the answer that ends its turn.
       .onNotification('session/update', ({ params: { sessionId: from, update } }) => {
-        if (from !== sessionId) return;
+        if (!watches(from)) return;
         mapSessionUpdate(update, turn).forEach(emit);
         const retired = retiredCallId(update);
         if (retired !== undefined) void ledger?.release(retired);
@@ -183,7 +188,11 @@ export async function* runAcpAgent(
         if (acted) stopActingUnasked(acted);
       })
       .onRequest('session/request_permission', async ({ params: request }) => {
-        if (request.sessionId !== sessionId || turnOver.signal.aborted) return CANCELLED;
+        if (request.sessionId !== sessionId || turnOver.signal.aborted) {
+          // Refused while the session opens, the call still asked, so its failure is no stop.
+          if (watches(request.sessionId)) turn.asked.add(request.toolCall.toolCallId);
+          return CANCELLED;
+        }
         return answerPermissionRequest(request, permissionTurn);
       })
       .connect(ndJsonStream(link.agent.stdio.input, link.agent.stdio.output));
@@ -193,10 +202,10 @@ export async function* runAcpAgent(
       hasImages: Boolean(params.images?.length),
     });
     sessionId = opened.sessionId;
-    signal.throwIfAborted();
+    turnOver.signal.throwIfAborted();
     yield { type: 'message-metadata', messageMetadata: { sessionId } };
-    // Checked again: the reader may have stopped the turn while it held the chunk above.
-    signal.throwIfAborted();
+    // Checked again: the turn may have been stopped while the reader held the chunk above.
+    turnOver.signal.throwIfAborted();
     turnEnded = connection.agent
       .request('session/prompt', {
         sessionId,
@@ -215,8 +224,14 @@ export async function* runAcpAgent(
       });
     yield* queue.drain();
   } catch (error) {
-    if (!signal.aborted && error instanceof Error) {
-      yield { type: 'error', errorText: await failureText(error, link) };
+    // A turn stopped before its prompt keeps what was queued, its reason included.
+    queue.finish();
+    yield* queue.drain();
+    const stopped = signal.aborted || turnOver.signal.aborted;
+    if (!stopped && error instanceof Error) {
+      const text = await failureText(error, link);
+      // A stop for acting unasked can land while the text is read: its reason wins.
+      yield { type: 'error', errorText: stopText ?? text };
     }
   } finally {
     signal.removeEventListener('abort', onAbort);
