@@ -952,8 +952,11 @@ export async function handleRemoteExecute(
         }
         for await (const chunk of stream) {
           if (abortController.signal.aborted) break;
-          if ('messageMetadata' in chunk)
+          if ('messageMetadata' in chunk) {
+            const sessionId = chunk.messageMetadata?.sessionId;
+            if (sessionId && !codexMetadata.sessionId) persistEarlySessionId(subChatId, sessionId);
             codexMetadata = { ...codexMetadata, ...chunk.messageMetadata };
+          }
           codexChunks.push(chunk);
           applyChunkToParts(codexPartsState, chunk);
           sendRunStreamChunkDirect({
