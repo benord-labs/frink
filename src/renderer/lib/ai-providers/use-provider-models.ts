@@ -1,6 +1,6 @@
 import { useAtomValue } from 'jotai';
 import { useMemo } from 'react';
-import { aiProvider } from '../../../shared/lib/ai-providers';
+import { aiProvider, isInstalledAgent } from '../../../shared/lib/ai-providers';
 import { hiddenModelsAtom } from '../atoms';
 import { useCodexAccountCatalog } from '../codex/use-codex-account-catalog';
 import { trpc } from '../trpc';
@@ -21,7 +21,7 @@ export function useProviderModels(
   const { data: agentModels } = trpc.agentAccounts.models.useQuery(
     { type: row?.id ?? '' },
     {
-      enabled: row?.runtime === 'acp',
+      enabled: isInstalledAgent(row),
       refetchOnWindowFocus: true,
       refetchInterval: (query) => (query.state.data?.length ? false : AGENT_MODELS_POLL_MS),
     },

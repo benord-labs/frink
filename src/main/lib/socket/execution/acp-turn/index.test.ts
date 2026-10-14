@@ -116,8 +116,8 @@ describe('startAcpTurn', () => {
     const { deps, resolve } = fakeDeps();
 
     await expect(
-      collect(startAcpTurn(turnParams({ providerId: 'copilot', mode: 'plan' }), deps)),
-    ).rejects.toThrow("Plan mode isn't available for GitHub Copilot yet. Switch to Agent.");
+      collect(startAcpTurn(turnParams({ providerId: 'grok', mode: 'plan' }), deps)),
+    ).rejects.toThrow("Plan mode isn't available for Grok yet. Switch to Agent.");
     expect(resolve).not.toHaveBeenCalled();
   });
 

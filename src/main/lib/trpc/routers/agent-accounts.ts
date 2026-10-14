@@ -7,6 +7,7 @@ import {
   selectableProviderIds,
 } from '../../../../shared/lib/ai-providers';
 import { findAcpAgent, rememberedModelOptions } from '../../agent-runner/acp';
+import { findCopilotAgent, rememberedCopilotModels } from '../../agent-runner/copilot';
 import { detectCodexAccount } from '../../credentials/detect-codex';
 import { claudeCodeCredentials, getDatabase } from '../../db';
 import { createId } from '../../db/utils';
@@ -15,8 +16,10 @@ import { publicProcedure, router } from '../index';
 type AgentAccountsDeps = {
   db: () => ReturnType<typeof getDatabase>;
   findAgent: (type: string) => ReturnType<typeof findAcpAgent>;
+  findCopilot: typeof findCopilotAgent;
   detectCodex: typeof detectCodexAccount;
   rememberedModels: typeof rememberedModelOptions;
+  copilotModels: typeof rememberedCopilotModels;
   flags: Partial<Record<keyof typeof LAUNCH_FLAGS, boolean>>;
   platform: string;
 };
@@ -47,7 +50,7 @@ async function detectAgent(
       ? { ...login, available: true }
       : { available: false, reason: hint ?? NO_CODEX_LOGIN };
   }
-  const found = await deps.findAgent(row.id);
+  const found = row.runtime === 'copilot' ? await deps.findCopilot() : await deps.findAgent(row.id);
   return 'reason' in found
     ? { ...found, available: false }
     : { available: true, version: found.version };
@@ -58,8 +61,10 @@ export function createAgentAccountsRouter(
   deps: AgentAccountsDeps = {
     db: getDatabase,
     findAgent: findAcpAgent,
+    findCopilot: findCopilotAgent,
     detectCodex: detectCodexAccount,
     rememberedModels: rememberedModelOptions,
+    copilotModels: rememberedCopilotModels,
     flags: LAUNCH_FLAGS,
     platform: process.platform,
   },
@@ -71,9 +76,13 @@ export function createAgentAccountsRouter(
     }),
 
     /** The models the agent listed in its last session this run; none until it has run once. */
-    models: publicProcedure
-      .input(typeInput)
-      .query(({ input }) => deps.rememberedModels(input.type) ?? []),
+    models: publicProcedure.input(typeInput).query(({ input }) => {
+      const listed =
+        aiProvider(input.type)?.runtime === 'copilot'
+          ? deps.copilotModels()?.map(({ id, name }) => ({ id, name }))
+          : deps.rememberedModels(input.type);
+      return listed ?? [];
+    }),
 
     /** One row per agent on this computer; connecting again refreshes it. */
     connect: publicProcedure

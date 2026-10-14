@@ -190,6 +190,7 @@ describe('AccountRow summary', () => {
   it.each<[AiProviderId, string, string]>([
     ['codex', 'OpenAI · Signed in on this computer', 'Sign in again'],
     ['opencode', 'OpenCode · Installed on this computer', 'Reconnect'],
+    ['copilot', 'GitHub Copilot · Installed on this computer', 'Reconnect'],
   ])('names each %s login after its own provider, not Claude', (type, detail, signIn) => {
     render(
       <AccountRow
@@ -206,20 +207,26 @@ describe('AccountRow summary', () => {
     expect(screen.getByRole('button', { name: signIn })).toBeInTheDocument();
   });
 
-  it('says an agent that is no longer installed was not found and offers to reconnect it', () => {
-    render(
-      <AccountRow
-        account={makeAccount({ type: 'opencode', isAuthenticated: false })}
-        onSetDefault={vi.fn()}
-        onDelete={vi.fn()}
-        onAuthenticate={vi.fn()}
-        onRenameClick={vi.fn()}
-        onSaveRename={vi.fn()}
-        onCancelRename={vi.fn()}
-      />,
-    );
-    expect(screen.getByText('OpenCode · Not found on this computer')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Reconnect' })).toBeInTheDocument();
-    expect(screen.queryByText('Sign in again')).toBeNull();
-  });
+  it.each<[AiProviderId, string]>([
+    ['opencode', 'OpenCode'],
+    ['copilot', 'GitHub Copilot'],
+  ])(
+    'says a %s that is no longer installed was not found and offers to reconnect it',
+    (type, name) => {
+      render(
+        <AccountRow
+          account={makeAccount({ type, isAuthenticated: false })}
+          onSetDefault={vi.fn()}
+          onDelete={vi.fn()}
+          onAuthenticate={vi.fn()}
+          onRenameClick={vi.fn()}
+          onSaveRename={vi.fn()}
+          onCancelRename={vi.fn()}
+        />,
+      );
+      expect(screen.getByText(`${name} · Not found on this computer`)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Reconnect' })).toBeInTheDocument();
+      expect(screen.queryByText('Sign in again')).toBeNull();
+    },
+  );
 });

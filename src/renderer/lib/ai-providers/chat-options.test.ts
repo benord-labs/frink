@@ -86,6 +86,18 @@ describe('providerModels', () => {
     expect(result.selected).toEqual({ id: 'sonnet', name: 'OpenCode default' });
     expect(result.items).toEqual([result.selected, ...OPENCODE_MODELS]);
   });
+
+  it("lists GitHub Copilot's own models, never Claude's", () => {
+    const listed = [{ id: 'gpt-5', name: 'GPT-5' }];
+    expect(models('copilot', 'gpt-5', { agentModels: listed })).toMatchObject({
+      items: listed,
+      selected: listed[0],
+      variant: 'copilot',
+    });
+    expect(models('copilot', 'opus').items).toEqual([
+      { id: 'opus', name: 'GitHub Copilot default' },
+    ]);
+  });
 });
 
 describe('unsupportedChatControls', () => {
@@ -93,15 +105,15 @@ describe('unsupportedChatControls', () => {
     expect(unsupportedChatControls(provider)).toEqual({ modes: [], commands: [] });
   });
 
-  it('hides Debug and compacting for OpenCode, which keeps Plan', () => {
-    expect(unsupportedChatControls('opencode')).toEqual({
+  it.each(['opencode', 'copilot'])('hides Debug and compacting for %s, which keeps Plan', (id) => {
+    expect(unsupportedChatControls(id)).toEqual({
       modes: ['debug'],
       commands: ['debug', 'compact'],
     });
   });
 
   it('also hides Plan for an agent with no plan mode', () => {
-    expect(unsupportedChatControls('copilot')).toEqual({
+    expect(unsupportedChatControls('grok')).toEqual({
       modes: ['plan', 'debug'],
       commands: ['plan', 'debug', 'compact'],
     });

@@ -32,7 +32,10 @@ export async function findAcpAgent(
 }
 
 /** Where the agent is installed, without running it. */
-export async function locateAcpAgent(agentId: string): Promise<string | undefined> {
+export async function locateAcpAgent(
+  agentId: string,
+  env?: Record<string, string>,
+): Promise<string | undefined> {
   const row = LAUNCH_ROWS.get(agentId);
-  return row ? locateRowBinary(row) : undefined;
+  return row ? locateRowBinary(row, env) : undefined;
 }

@@ -14,7 +14,11 @@ import {
   type AccountType,
   shouldUseInlineCredentialEdit,
 } from '../auth-flow-utils';
-import { AI_PROVIDERS, type PassthroughSource } from '../../../../../../shared/lib/ai-providers';
+import {
+  AI_PROVIDERS,
+  isInstalledAgent,
+  type PassthroughSource,
+} from '../../../../../../shared/lib/ai-providers';
 import { ProviderTile } from '../ProviderTile';
 import { ApiKeyEditForm } from './ApiKeyEditForm';
 
@@ -50,7 +54,7 @@ type Props = {
 /** The one line under the name: which provider, and who is signed in or what is missing. */
 function accountDetail(account: Props['account'], type: AccountType, isApiKey: boolean): string {
   // An agent run from the user's own install has no sign-in of its own here.
-  const installed = AI_PROVIDERS[type].runtime === 'acp';
+  const installed = isInstalledAgent(AI_PROVIDERS[type]);
   let detail: string;
   if (isApiKey) detail = account.isAuthenticated ? 'API key' : 'Needs an API key';
   else if (!account.isAuthenticated)
@@ -207,7 +211,7 @@ export const AccountRow = memo(function AccountRow({
     type: accountType,
   });
   // An agent run from the user's own install has nothing to sign in to.
-  const signInLabel = AI_PROVIDERS[accountType].runtime === 'acp' ? 'Reconnect' : 'Sign in again';
+  const signInLabel = isInstalledAgent(AI_PROVIDERS[accountType]) ? 'Reconnect' : 'Sign in again';
   const actionsRef = useRef<HTMLButtonElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const [renameDraft, setRenameDraft] = useState(account.label);

@@ -1,6 +1,7 @@
 import {
   AI_PROVIDERS,
   type AiProviderId,
+  isInstalledAgent,
   selectableProviderIds,
 } from '../../../../../shared/lib/ai-providers';
 
@@ -53,6 +54,11 @@ export function signInProviders(
       !connected.has(AI_PROVIDERS[id].passthroughSource) &&
       !(id === 'claude-code' && platform === 'win32'),
   );
+}
+
+/** The add-account menu item: an installed agent is connected, a provider login is signed in to. */
+export function addAccountLabel(id: AccountType): string {
+  return `${isInstalledAgent(AI_PROVIDERS[id]) ? 'Connect' : 'Sign in with'} ${AI_PROVIDERS[id].name}`;
 }
 
 /** "Claude API key", then "Claude API key 2"…: account names must be unique. */

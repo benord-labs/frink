@@ -543,35 +543,43 @@ describe('AccountIndicator', () => {
     }
   });
 
-  it('says an OpenCode that is no longer installed was not found, and reconnects on its own page', async () => {
-    getResolvedAccountMock.mockReturnValue({
-      data: {
-        label: 'OpenCodeWork',
-        type: 'opencode' as const,
-        source: 'opencode-passthrough',
-        isProjectOverride: false,
-        isAuthenticated: false,
-      },
-      isLoading: false,
-    });
-    const store = createStore();
-    render(
-      <Provider store={store}>
-        <AccountIndicator chatId="chat-1" />
-      </Provider>,
-    );
+  it.each([
+    ['opencode', 'OpenCode'],
+    ['copilot', 'GitHub Copilot'],
+  ] as const)(
+    'says a %s that is no longer installed was not found, and reconnects on its own page',
+    async (type, name) => {
+      getResolvedAccountMock.mockReturnValue({
+        data: {
+          label: 'OpenCodeWork',
+          type,
+          source: `${type}-passthrough`,
+          isProjectOverride: false,
+          isAuthenticated: false,
+        },
+        isLoading: false,
+      });
+      const store = createStore();
+      render(
+        <Provider store={store}>
+          <AccountIndicator chatId="chat-1" />
+        </Provider>,
+      );
 
-    expect(
-      screen.getByText(/OpenCode is no longer installed on this computer\./),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/API key/)).not.toBeInTheDocument();
-    await userEvent.setup().click(screen.getByRole('button', { name: /^AI accounts menu/ }));
-    await userEvent.setup().click(screen.getByRole('menuitem', { name: 'Reconnect OpenCode' }));
-    expect(store.get(pendingAccountAuthAtom)).toEqual({
-      mode: 'reauth',
-      accountLabel: 'OpenCodeWork',
-      returnToSettings: false,
-      provider: 'opencode',
-    });
-  });
+      expect(
+        screen.getByText(
+          `${name} is no longer installed on this computer. Click for the Reconnect option.`,
+        ),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/API key/)).not.toBeInTheDocument();
+      await userEvent.setup().click(screen.getByRole('button', { name: /^AI accounts menu/ }));
+      await userEvent.setup().click(screen.getByRole('menuitem', { name: `Reconnect ${name}` }));
+      expect(store.get(pendingAccountAuthAtom)).toEqual({
+        mode: 'reauth',
+        accountLabel: 'OpenCodeWork',
+        returnToSettings: false,
+        provider: type,
+      });
+    },
+  );
 });

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  addAccountLabel,
   buildPendingAddState,
   buildPendingReauthState,
   nextApiKeyName,
@@ -100,5 +101,14 @@ describe('signInProviders', () => {
 
   it('keeps Claude sign-in when only a Claude API key is connected', () => {
     expect(signInProviders([{ source: 'api-key' }], {}, 'darwin')).toEqual(['claude-code']);
+  });
+});
+
+describe('addAccountLabel', () => {
+  it('connects an installed agent and signs in to a provider login', () => {
+    expect(addAccountLabel('copilot')).toBe('Connect GitHub Copilot');
+    expect(addAccountLabel('opencode')).toBe('Connect OpenCode');
+    expect(addAccountLabel('claude-code')).toBe('Sign in with Claude');
+    expect(addAccountLabel('codex')).toBe('Sign in with OpenAI');
   });
 });

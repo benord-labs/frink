@@ -116,6 +116,7 @@ import { runTurn as runClaudeTurn } from './execution/claude-session-loop';
 import * as flow from './execution/flow-resource-cleanup';
 import { deliverProviderConfig } from './execution/provider-delivery';
 import { startAcpTurn } from './execution/acp-turn';
+import { startCopilotTurn } from './execution/copilot-turn';
 import { trackUserMessageDelivery } from './execution/claude-session/user-message-delivery';
 
 import {
@@ -316,6 +317,8 @@ export {
   type PlanFallbackSend,
 } from './streaming/plan-fallback';
 
+const EXECUTE_DEPS = { runtimeFor, startAcpTurn, startCopilotTurn };
+
 /**
  * Handle incoming execution request from another machine.
  * Verifies we have the project locally, then executes Claude and streams results back.
@@ -325,8 +328,9 @@ export {
 export async function handleRemoteExecute(
   payload: ExecuteRequestPayload,
   // Swapped by tests to run an agent the shipped flags keep off.
-  deps = { runtimeFor, startAcpTurn },
+  overrides: Partial<typeof EXECUTE_DEPS> = {},
 ): Promise<void> {
+  const deps = { ...EXECUTE_DEPS, ...overrides };
   const {
     chatId,
     subChatId,
@@ -751,9 +755,9 @@ export async function handleRemoteExecute(
     let fullPrompt = hasResumeSession ? message : formatPromptWithHistory(message, history);
     const agentSawPriorTurns = hasResumeSession || (history?.length ?? 0) > 0;
     // Written once the provider accepts the turn: Claude's first prompt hook, Codex's turn/start.
-    // Flows do not run on agent-protocol agents yet, so they have no Flow run to be told about.
+    // Flows run only on Claude and Codex, so other agents have no Flow run to be told about.
     const flowRunEnded =
-      agentRuntime !== 'acp' &&
+      (agentRuntime === 'claude' || agentRuntime === 'codex') &&
       armed.endedFlowRunId &&
       isFlowRunEndedNoticeDue({
         subChatId,
@@ -818,8 +822,8 @@ export async function handleRemoteExecute(
         sendRunExecuteCompleteDirect(deferredPayload);
       });
     };
-    // Codex uses a persistent app-server; Manual and Auto retain the write sandbox. An ACP agent
-    // runs one process per turn; both share the permission check and the stream below.
+    // Codex uses a persistent app-server; Manual and Auto retain the write sandbox. ACP and Copilot
+    // agents run one process per turn; all share the permission check and the stream below.
     if (agentRuntime !== 'claude') {
       const isCodex = agentRuntime === 'codex';
       const agentLabel = aiProvider(storedCredential.type)?.longName ?? agentRuntime;
@@ -874,22 +878,30 @@ export async function handleRemoteExecute(
         : () => {};
       try {
         let stream: AsyncGenerator<UIMessageChunk, void, undefined>;
+        const agentTurn = {
+          projectPath,
+          prompt: fullPrompt,
+          freshSessionFallbackPrompt,
+          resumeSessionId,
+          model: settings?.model,
+          mode,
+          images: imageParts,
+          composerNotes: composer.notes.map((note) => note.text),
+          abortController,
+          checkApproval,
+        };
         if (agentRuntime === 'acp') {
           stream = deps.startAcpTurn({
+            ...agentTurn,
             providerId: storedCredential.type,
-            projectPath,
             configRoot: workspace.projectConfigRoot,
-            prompt: fullPrompt,
-            freshSessionFallbackPrompt,
-            resumeSessionId,
-            model: settings?.model,
-            mode,
-            images: imageParts,
-            composerNotes: composer.notes.map((note) => note.text),
-            abortController,
-            checkApproval,
           });
+        } else if (agentRuntime === 'copilot') {
+          stream = deps.startCopilotTurn(agentTurn);
         } else {
+          // A runtime added later fails to compile here instead of running as Codex.
+          const codexOnly: 'codex' = agentRuntime;
+          void codexOnly;
           const codexCatalog = await codexCatalogForModel(settings?.model);
           const codexMcpRuntime = await resolveFrinkMcpServers({
             projectId,

@@ -5,7 +5,7 @@
 
 import { useEffect, useRef } from 'react';
 import { trpc } from '@/lib/trpc';
-import { aiProvider } from '../../../../../shared/lib/ai-providers';
+import { aiProvider, isInstalledAgent } from '../../../../../shared/lib/ai-providers';
 import {
   CODEX_MODEL_OPTIONS,
   CLAUDE_MODEL_OPTIONS,
@@ -44,7 +44,7 @@ export function useProjectModelOptions(
   const agent = aiProvider(resolvedAccount?.type);
   // Flows can't run on an agent yet; its project shows why instead of model fields.
   const unsupportedMessage =
-    projectId && !isLoading && agent?.runtime === 'acp'
+    projectId && !isLoading && isInstalledAgent(agent)
       ? `This project uses ${agent.name}. Flows run on Claude or OpenAI for now.`
       : undefined;
   const executionKind: FlowProjectExecutionKind =

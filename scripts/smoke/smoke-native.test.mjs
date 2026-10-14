@@ -6,12 +6,13 @@
  * when it should test the packaged copy (or vice versa). The native load itself only
  * runs under Electron in CI; this is the one branch worth unit-pinning.
  */
+import { realpathSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { isAbsolute, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const require = createRequire(import.meta.url);
-const { packedModulesRoot, resolveModulesRoot } = require('./smoke-native.cjs');
+const { packedEntry, packedModulesRoot, resolveModulesRoot } = require('./smoke-native.cjs');
 
 describe('resolveModulesRoot', () => {
   it('honours an explicit FRINK_SMOKE_MODULES_ROOT override even when a packaged build exists', () => {
@@ -49,5 +50,17 @@ describe('packedModulesRoot', () => {
       '/r/resources/app.asar/node_modules',
     );
     expect(packedModulesRoot('/repo/node_modules')).toBe('/repo/node_modules');
+  });
+});
+
+describe('packedEntry', () => {
+  it('picks the ES module build the main process imports, not the CommonJS one', () => {
+    const root = realpathSync('node_modules');
+    expect(packedEntry(root, '@github/copilot-sdk')).toBe(
+      join(root, '@github/copilot-sdk/dist/index.js'),
+    );
+    expect(packedEntry(root, '@agentclientprotocol/sdk')).toBe(
+      join(root, '@agentclientprotocol/sdk/dist/acp.js'),
+    );
   });
 });

@@ -9,10 +9,12 @@ import {
   AI_PROVIDER_IDS,
   AI_PROVIDERS,
   aiProvider,
+  isInstalledAgent,
   PASSTHROUGH_SOURCES,
 } from '../../../shared/lib/ai-providers';
 import { isAnthropicApiKey } from '../../../shared/lib/anthropic-token';
 import { locateAcpAgent } from '../agent-runner/acp';
+import { locateCopilotAgent } from '../agent-runner/copilot';
 import { readClaudeUserConfig } from './detect';
 import { markRowNeedsReauth, markRowResolved } from './row-state';
 import { withCredentialRowOperation } from '../integrations/connection-lifecycle-operation';
@@ -95,7 +97,8 @@ function redactEmailForLog(email: string | null | undefined): string {
 /** Injection seam (anti-slop forbids module mocking in tests); production keeps the default. */
 export const passthroughDeps = {
   readLiveLogin: readClaudeUserConfig,
-  locateAgent: locateAcpAgent,
+  locateAgent: (type: string, env?: Record<string, string>) =>
+    type === 'copilot' ? locateCopilotAgent(env) : locateAcpAgent(type, env),
 };
 
 export function isPassthroughSource(source: string | null | undefined): boolean {
@@ -115,7 +118,7 @@ async function probeInstalledAgent(type: AIAccountType): Promise<LiveLoginProbe>
 
 /** Is the provider's own login present on this machine right now (presence only), and as whom? */
 async function probeLiveLogin(row: CredentialRow, type: AIAccountType): Promise<LiveLoginProbe> {
-  if (AI_PROVIDERS[type].runtime === 'acp') return probeInstalledAgent(type);
+  if (isInstalledAgent(AI_PROVIDERS[type])) return probeInstalledAgent(type);
   if (row.source !== 'codex-passthrough' && !row.sourcePath) {
     return { ok: false, transient: false, detail: 'missing sourcePath' };
   }
