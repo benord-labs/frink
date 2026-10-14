@@ -481,6 +481,33 @@ describe('agent models', () => {
     expect(onModelChange).toHaveBeenCalledWith(OPENCODE[1]);
   });
 
+  it("moves GitHub Copilot's effort for a model that offers it, and shows none for Auto", async () => {
+    const gpt = { name: 'GPT-5', familyId: 'gpt-5' };
+    const COPILOT: ModelItem[] = [
+      { ...gpt, id: 'gpt-5/low', effort: 'low', detail: 'Low' },
+      { ...gpt, id: 'gpt-5/medium', effort: 'medium', detail: 'Medium', effortDefault: true },
+      { ...gpt, id: 'gpt-5/high', effort: 'high', detail: 'High' },
+      { id: 'auto', name: 'Auto' },
+    ];
+    const { onModelChange } = renderPicker({
+      selectedModel: COPILOT[1],
+      availableModels: COPILOT,
+      modelVariant: 'copilot',
+    });
+    fireEvent.keyDown(await focusedSlider(), { key: 'ArrowRight' });
+    expect(onModelChange).toHaveBeenCalledWith(COPILOT[2]);
+    expect(screen.queryByRole('switch')).toBeNull();
+    cleanup();
+
+    renderPicker({
+      selectedModel: COPILOT[3],
+      availableModels: [COPILOT[3]],
+      modelVariant: 'copilot',
+    });
+    expect(trigger()).toHaveAccessibleName('Model: Auto');
+    expect(screen.queryByRole('slider')).toBeNull();
+  });
+
   it('shows how to load the list before the agent has listed any models', () => {
     const fallback = { id: 'sonnet', name: 'OpenCode default' };
     renderPicker({

@@ -1,8 +1,8 @@
-import { mkdtemp, realpath, rm } from 'node:fs/promises';
+import { link, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { JsonValue } from '@github/copilot-sdk';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { CodexApprovalCheck } from '../codex/codex-approvals';
 import type { ApprovalOutcome, CodexApprovalRequest } from '../codex/codex-events';
 import {
@@ -115,6 +115,17 @@ describe('questionsForCopilotTool', () => {
     );
   });
 
+  it('asks about a header that follows a lone carriage return, as Copilot reads it', () => {
+    const add = '*** Begin Patch\n*** Add File: a.txt\n+a\r*** Add File: /etc/b\n+b\n*** End Patch';
+    const update =
+      '*** Begin Patch\n*** Update File: a.txt\n@@\n-a\n+b\r*** Add File: /etc/b\n+b\n*** End Patch';
+    for (const patch of [add, update]) {
+      expect(questions('apply_patch', patch)).toEqual(
+        ask(edit(path.join(cwd, 'a.txt')), edit('/etc/b')),
+      );
+    }
+  });
+
   it.each([
     ['an unknown tool', 'lsp', { operation: 'hover', file: 'README.md' }],
     ['a name inherited from Object', 'toString', {}],
@@ -154,7 +165,9 @@ function hookInput(toolName: string, toolArgs: JsonValue): PreToolUseHookInput {
   return { sessionId: 's1', timestamp: new Date(0), workingDirectory: cwd, toolName, toolArgs };
 }
 
-function testGate(answer: (request: CodexApprovalRequest) => ApprovalOutcome) {
+type PlanFolder = Parameters<typeof createCopilotGate>[0]['plan'];
+
+function testGate(answer: (request: CodexApprovalRequest) => ApprovalOutcome, plan?: PlanFolder) {
   const asked: CodexApprovalRequest[] = [];
   const turn = new AbortController();
   const checkApproval: CodexApprovalCheck = async (request) => {
@@ -166,6 +179,7 @@ function testGate(answer: (request: CodexApprovalRequest) => ApprovalOutcome) {
     tools: COPILOT_TOOLS,
     checkApproval,
     turnOver: turn.signal,
+    plan,
   });
   const decide = (toolName: string, toolArgs: JsonValue): Promise<PreToolUseHookOutput> =>
     gate.onPreToolUse(hookInput(toolName, toolArgs));
@@ -344,5 +358,140 @@ describe('the stop on an unasked action', () => {
     gate.noteExecutionStart('a', 'lsp', { operation: 'hover' });
     expect(gate.actedUnasked('a', SUCCEEDED)).toBe(true);
     expect(gate.actedUnasked('unseen', SUCCEEDED)).toBe(true);
+  });
+});
+
+describe("the session's own plan file", () => {
+  let config = '';
+  let elsewhere = '';
+  let sessionId: string | undefined;
+  const planOf = (id: string) => path.join(config, 'session-state', id, 'plan.md');
+  const addPatch = (...files: string[]) =>
+    `*** Begin Patch\n${files.map((file) => `*** Add File: ${file}\n+# Plan\n`).join('')}*** End Patch`;
+  const planGate = () =>
+    testGate(() => ALLOW, { configDirectory: config, sessionId: () => sessionId });
+
+  /** The call is decided as it was before plan files were known: every question is asked. */
+  async function judgedAsBefore(toolName: string, toolArgs: JsonValue) {
+    const before = questions(toolName, toolArgs);
+    const { asked, decide } = planGate();
+    expect((await decide(toolName, toolArgs)).permissionDecision).toBe('allow');
+    expect(before.kind).toBe('ask');
+    expect(asked).toEqual('questions' in before ? before.questions : []);
+  }
+
+  beforeAll(async () => {
+    // Not resolved: Copilot is given the folder as Frink names it, links above it included.
+    config = await mkdtemp(path.join(os.tmpdir(), 'copilot config '));
+    elsewhere = await mkdtemp(path.join(os.tmpdir(), 'copilot elsewhere '));
+    for (const id of ['session-1', 'other']) {
+      await mkdir(path.join(config, 'session-state', id), { recursive: true });
+    }
+    await mkdir(path.join(elsewhere, 'session-1'));
+    await symlink(path.join(elsewhere, 'session-1'), path.join(config, 'session-state', 'linked'));
+  });
+  beforeEach(() => {
+    sessionId = 'session-1';
+  });
+  afterEach(() => rm(planOf('session-1'), { force: true }));
+  afterAll(async () => {
+    await rm(config, { recursive: true, force: true });
+    await rm(elsewhere, { recursive: true, force: true });
+  });
+
+  it('lets Copilot write it without a question, by patch, create or edit', async () => {
+    const { asked, decide } = planGate();
+    const file = planOf('session-1');
+    expect(await decide('apply_patch', addPatch(file))).toEqual({ permissionDecision: 'allow' });
+    expect(await decide('create', { path: file, file_text: '# Plan' })).toEqual({
+      permissionDecision: 'allow',
+    });
+    await writeFile(file, '# Plan\n');
+    const update = `*** Begin Patch\n*** Update File: ${file}\n@@\n-# Plan\n+# Plan 2\n*** End Patch`;
+    expect(await decide('apply_patch', update)).toEqual({ permissionDecision: 'allow' });
+    expect(await decide('edit', { path: file, old_str: 'Plan', new_str: 'Plan 2' })).toEqual({
+      permissionDecision: 'allow',
+    });
+    expect(asked).toEqual([]);
+  });
+
+  it('judges any other file in the folder, or a patch touching one more, as before', async () => {
+    const file = planOf('session-1');
+    await judgedAsBefore('create', { path: planOf('other'), file_text: 'x' });
+    await judgedAsBefore('create', { path: path.join(path.dirname(file), 'events.jsonl') });
+    await judgedAsBefore('create', { path: path.join(config, 'settings.json'), file_text: '{}' });
+    await judgedAsBefore('apply_patch', addPatch(file, path.join(cwd, 'a.txt')));
+    await judgedAsBefore('apply_patch', addPatch(file, planOf('other')));
+    await judgedAsBefore(
+      'apply_patch',
+      `*** Begin Patch\n*** Update File: ${file}\n*** Move to: ${outside}\n*** End Patch`,
+    );
+    for (const plan of [`Add File: ${file}\n+# Plan`, `Update File: ${file}\n@@\n+# Plan 2`]) {
+      const hidden = `*** ${plan}\r*** Add File: ${outside}\n+x`;
+      await judgedAsBefore('apply_patch', `*** Begin Patch\n${hidden}\n*** End Patch`);
+    }
+    await judgedAsBefore('view', { path: file });
+  });
+
+  it('judges the plan named any other way as before', async () => {
+    const file = planOf('session-1');
+    const spellings = [
+      path.relative(cwd, file),
+      `${config}/session-state/session-1/../session-1/plan.md`,
+      `${config}/session-state/./session-1/plan.md`,
+      `${config}//session-state/session-1/plan.md`,
+      `${file}/`,
+      path.join(config, 'session-state', 'session-1', 'PLAN.md'),
+      path.join(config, 'Session-State', 'session-1', 'plan.md'),
+    ];
+    for (const spelling of spellings) {
+      await judgedAsBefore('create', { path: spelling, file_text: 'x' });
+      await judgedAsBefore('apply_patch', addPatch(spelling));
+    }
+  });
+
+  it('judges the plan as before when its folder or the file itself leads elsewhere', async () => {
+    sessionId = 'linked';
+    await judgedAsBefore('apply_patch', addPatch(planOf('linked')));
+
+    sessionId = 'session-1';
+    const target = path.join(elsewhere, 'target.md');
+    await writeFile(target, 'keep');
+    await symlink(target, planOf('session-1'));
+    await judgedAsBefore('create', { path: planOf('session-1'), file_text: 'x' });
+    await rm(planOf('session-1'));
+    await link(target, planOf('session-1'));
+    await judgedAsBefore('create', { path: planOf('session-1'), file_text: 'x' });
+  });
+
+  it('judges the plan as before when the session folder is a link', async () => {
+    const linked = await mkdtemp(path.join(os.tmpdir(), 'copilot linked config '));
+    await mkdir(path.join(elsewhere, 'state', 'session-1'), { recursive: true });
+    await symlink(path.join(elsewhere, 'state'), path.join(linked, 'session-state'));
+    const file = path.join(linked, 'session-state', 'session-1', 'plan.md');
+    const { asked, decide } = testGate(() => ALLOW, {
+      configDirectory: linked,
+      sessionId: () => 'session-1',
+    });
+    expect((await decide('apply_patch', addPatch(file))).permissionDecision).toBe('allow');
+    expect(asked).toEqual([edit(file)]);
+    await rm(linked, { recursive: true, force: true });
+  });
+
+  it('judges a plan as before until a session is open, or for an id that is not a plain name', async () => {
+    sessionId = undefined;
+    await judgedAsBefore('apply_patch', addPatch(planOf('session-1')));
+    sessionId = 'x/../session-1';
+    await judgedAsBefore('apply_patch', addPatch(planOf('session-1')));
+  });
+
+  it('counts a plan write as allowed once, so a repeat it never saw trips the stop', async () => {
+    const { gate, decide } = planGate();
+    const patch = addPatch(planOf('session-1'));
+    await decide('apply_patch', patch);
+    gate.noteExecutionStart('a', 'apply_patch', patch);
+    gate.noteExecutionStart('b', 'apply_patch', patch);
+    expect(gate.actedUnasked('a', SUCCEEDED)).toBe(false);
+    expect(gate.actedUnasked('b', SUCCEEDED)).toBe(true);
   });
 });

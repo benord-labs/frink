@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { findAcpAgent } from '../../agent-runner/acp';
 import { findCopilotAgent } from '../../agent-runner/copilot';
+import type { PickerGroupFields } from '../../../../shared/lib/model-picker-label/groups';
 import type { DetectCodexAccountResult } from '../../credentials/detect-codex';
 import * as schema from '../../db/schema';
 import { freshDb, type TestDb } from '../../db/test-utils/fresh-db';
@@ -20,6 +21,10 @@ const FAKE_COPILOT = `#!/bin/sh
 const ON = { opencodeAccounts: true };
 const CODEX_ON = { codexAccounts: true };
 const COPILOT_ON = { copilotAccounts: true };
+const COPILOT_MODELS: PickerGroupFields[] = [
+  { id: 'gpt-5/medium', name: 'GPT-5', familyId: 'gpt-5', effort: 'medium', effortDefault: true },
+  { id: 'gpt-5/high', name: 'GPT-5', familyId: 'gpt-5', effort: 'high' },
+];
 const CODEX_LOGIN = {
   available: true,
   email: 'me@openai.example',
@@ -40,7 +45,7 @@ describe('agentAccounts', () => {
       detectCodex,
       rememberedModels: (type) =>
         type === 'opencode' ? [{ id: 'opencode/big-pickle', name: 'Big Pickle' }] : undefined,
-      copilotModels: () => [{ id: 'gpt-5', name: 'GPT-5', effort: true }],
+      copilotModels: () => COPILOT_MODELS,
       flags,
       platform,
     }).createCaller({ getWindow: () => null });
@@ -173,9 +178,7 @@ describe('agentAccounts', () => {
   });
 
   it("lists GitHub Copilot's models from its own last session", async () => {
-    await expect(caller().models({ type: 'copilot' })).resolves.toEqual([
-      { id: 'gpt-5', name: 'GPT-5' },
-    ]);
+    await expect(caller().models({ type: 'copilot' })).resolves.toEqual(COPILOT_MODELS);
   });
 
   it('finds the OpenAI login Codex keeps on this computer', async () => {

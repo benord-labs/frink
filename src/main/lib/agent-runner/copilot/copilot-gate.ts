@@ -1,3 +1,4 @@
+import { lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import type { JsonValue, SessionHooks } from '@github/copilot-sdk';
 import log from 'electron-log';
@@ -62,11 +63,12 @@ const editQuestion = (cwd: string, file: string): CodexApprovalRequest => ({
 });
 const callKey = (toolName: string, args: JsonValue | undefined) =>
   stableStringify([toolName, args]);
+const SESSION_ID = /^[\w-]+$/;
 
 /** Every file a patch names, or nothing when any header is one Frink cannot read. */
 function patchFiles(patch: string): string[] | undefined {
-  // Trimmed, because the patch tool still applies a header indented by spaces or tabs.
-  const lines = patch.split('\n').map((line) => line.trim());
+  // Split where the patch tool breaks lines, a lone \r included; trimmed, as it trims headers.
+  const lines = patch.split(/\r\n?|\n/).map((line) => line.trim());
   if (lines[0] !== '*** Begin Patch') return undefined;
   const files: string[] = [];
   for (const line of lines.filter((candidate) => candidate.startsWith('***'))) {
@@ -169,13 +171,37 @@ type GateOptions = {
   tools: CopilotTools;
   checkApproval: CodexApprovalCheck;
   turnOver: AbortSignal;
+  /** Where Copilot keeps the open session's plan, which it may write without a question. */
+  plan?: { configDirectory: string; sessionId: () => string | undefined };
 };
+
+/** True when an edit names only the open session's plan file, spelled exactly, as a plain file. */
+async function editsOwnPlan(toolArgs: JsonValue | undefined, plan: GateOptions['plan']) {
+  const sessionId = plan?.sessionId();
+  const call = toolCallSchema.safeParse(toolArgs);
+  if (!plan || !sessionId || !SESSION_ID.test(sessionId) || !call.success) return false;
+  const folder = path.join('session-state', sessionId);
+  const file = path.join(plan.configDirectory, folder, 'plan.md');
+  const named = call.data.kind === 'patch' ? patchFiles(call.data.patch) : [call.data.input.path];
+  if (!named?.every((name) => name === file)) return false;
+  try {
+    // No link on the way and no second name for the file, so the write lands nowhere else.
+    const [real, root, stat] = await Promise.all([
+      realpath(path.dirname(file)),
+      realpath(plan.configDirectory),
+      lstat(file).catch(() => undefined),
+    ]);
+    return real === path.join(root, folder) && (!stat || (stat.isFile() && stat.nlink === 1));
+  } catch {
+    return false;
+  }
+}
 
 /** Frink's answer for one call: refused, quiet, or allowed only when every question is. */
 async function judge(
   toolName: string,
   toolArgs: JsonValue | undefined,
-  { cwd, tools, checkApproval, turnOver }: GateOptions,
+  { cwd, tools, checkApproval, turnOver, plan }: GateOptions,
 ): Promise<PreToolUseHookOutput> {
   const verdict = questionsForCopilotTool(toolName, toolArgs, cwd, tools);
   if (verdict.kind === 'refuse') {
@@ -183,6 +209,9 @@ async function judge(
     return deny(verdict.reason);
   }
   if (verdict.kind === 'quiet') return ALLOW;
+  if (tools[toolName]?.question === 'Edit' && (await editsOwnPlan(toolArgs, plan))) {
+    return turnOver.aborted ? deny(TURN_OVER) : ALLOW;
+  }
   for (const question of verdict.questions) {
     const outcome = await checkApproval(question);
     if (turnOver.aborted) return deny(TURN_OVER);

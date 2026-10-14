@@ -79,7 +79,7 @@ export function createAgentAccountsRouter(
     models: publicProcedure.input(typeInput).query(({ input }) => {
       const listed =
         aiProvider(input.type)?.runtime === 'copilot'
-          ? deps.copilotModels()?.map(({ id, name }) => ({ id, name }))
+          ? deps.copilotModels()
           : deps.rememberedModels(input.type);
       return listed ?? [];
     }),

@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { CopilotRunnerParams, resolveCopilotLaunch } from '../../../agent-runner/copilot';
+import type {
+  CopilotRunnerParams,
+  rememberedCopilotModels,
+  resolveCopilotLaunch,
+} from '../../../agent-runner/copilot';
 import { COPILOT_TOOLS } from '../../../agent-runner/copilot';
 import type { UIMessageChunk } from '../../../claude/types';
 import { startCopilotTurn } from '.';
@@ -15,6 +19,14 @@ const LAUNCH = {
   versions: { floor: '1.0.96', below: '1.1.0' },
 };
 
+const GPT = { name: 'GPT-5.2', familyId: 'gpt-5.2' };
+// As Copilot lists them: one row per effort where the model offers a choice, else one row.
+const MODELS: NonNullable<ReturnType<typeof rememberedCopilotModels>> = [
+  { ...GPT, id: 'gpt-5.2/medium', effort: 'medium', effortDefault: true },
+  { ...GPT, id: 'gpt-5.2/high', effort: 'high' },
+  { id: 'auto', name: 'Auto' },
+];
+
 /** A launch that resolves to `result` and a Copilot that records what it was asked to run. */
 function fakeDeps(result: LaunchResult = { ok: true, launch: LAUNCH }) {
   const runs: CopilotRunnerParams[] = [];
@@ -24,7 +36,7 @@ function fakeDeps(result: LaunchResult = { ok: true, launch: LAUNCH }) {
     resolve,
     deps: {
       resolveCopilotLaunch: resolve,
-      rememberedCopilotModels: () => [{ id: 'gpt-5.2', name: 'GPT-5.2', effort: true }],
+      rememberedCopilotModels: () => MODELS,
       async *runCopilotAgent(
         params: CopilotRunnerParams,
       ): AsyncGenerator<UIMessageChunk, void, undefined> {
@@ -102,7 +114,7 @@ describe('startCopilotTurn', () => {
     await collect(
       startCopilotTurn(
         turnParams({
-          model: 'gpt-5.2',
+          model: 'gpt-5.2/medium',
           resumeSessionId: 'cp-session-0',
           freshSessionFallbackPrompt: 'earlier turns\n\nfix the bug',
           composerNotes: [note],
@@ -122,16 +134,32 @@ describe('startCopilotTurn', () => {
     });
   });
 
+  it('sends the chosen effort with its model, and none for a model without a choice', async () => {
+    const { deps, runs } = fakeDeps();
+    for (const model of ['gpt-5.2/medium', 'gpt-5.2/high', 'auto']) {
+      await collect(startCopilotTurn(turnParams({ model }), deps));
+    }
+
+    expect(runs.map(({ model, reasoningEffort }) => [model, reasoningEffort])).toEqual([
+      ['gpt-5.2', 'medium'],
+      ['gpt-5.2', 'high'],
+      ['auto', undefined],
+    ]);
+  });
+
   it("sends no model Copilot hasn't listed, so it starts on its own default", async () => {
     const { deps, runs } = fakeDeps();
     await collect(startCopilotTurn(turnParams({ model: 'sonnet' }), deps));
     await collect(
-      startCopilotTurn(turnParams({ model: 'gpt-5.2' }), {
+      startCopilotTurn(turnParams({ model: 'gpt-5.2/medium' }), {
         ...deps,
         rememberedCopilotModels: () => undefined,
       }),
     );
 
-    expect(runs.map((run) => run.model)).toEqual([undefined, undefined]);
+    expect(runs.map((run) => [run.model, run.reasoningEffort])).toEqual([
+      [undefined, undefined],
+      [undefined, undefined],
+    ]);
   });
 });

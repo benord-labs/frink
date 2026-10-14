@@ -3,12 +3,17 @@ import type {
   CopilotClient,
   CopilotClientOptions,
   MessageOptions,
+  ModelInfo,
   ProviderConfig,
   SessionConfig,
   SessionEvent,
   SessionHooks,
 } from '@github/copilot-sdk';
 import log from 'electron-log';
+import {
+  EFFORT_LABEL,
+  type PickerGroupFields,
+} from '../../../../shared/lib/model-picker-label/groups';
 import { createThinkingEmitter } from '../../claude/thinking-emitter';
 import type { UIMessageChunk } from '../../claude/types';
 import { ACTED_UNASKED_TEXT } from '../acp/acp-runner';
@@ -54,7 +59,8 @@ export type CopilotTurnClient = CopilotSessionHost<CopilotTurnSession> &
   Pick<CopilotClient, 'start' | 'stop' | 'forceStop' | 'listModels'>;
 
 type PreToolUseHandler = NonNullable<SessionHooks['onPreToolUse']>;
-type CopilotModel = { id: string; name: string; effort: boolean };
+/** A picker row: a model, or one effort of a model that offers a choice. */
+type CopilotModel = PickerGroupFields & { detail?: string };
 
 export type CopilotRunnerParams = {
   launch: {
@@ -101,12 +107,25 @@ export function rememberedCopilotModels(): CopilotModel[] | undefined {
   return rememberedModels;
 }
 
-async function rememberModels(client: CopilotTurnClient): Promise<void> {
-  rememberedModels = (await client.listModels()).map(({ id, name, capabilities }) => ({
-    id,
+/** One row per model, or per effort where it offers a choice, so a saved effort outlives a new default. */
+function modelRows(model: ModelInfo): CopilotModel[] {
+  const { id, name, capabilities, defaultReasoningEffort } = model;
+  // A free plan's model comes with no supports block at all.
+  const efforts = capabilities?.supports?.reasoningEffort ? model.supportedReasoningEfforts : [];
+  const known = (efforts ?? []).filter((effort) => Object.hasOwn(EFFORT_LABEL, effort));
+  if (known.length === 0) return [{ id, name }];
+  return known.map((effort) => ({
+    id: `${id}/${effort}`,
     name,
-    effort: capabilities.supports.reasoningEffort === true,
+    familyId: id,
+    effort,
+    detail: EFFORT_LABEL[effort],
+    ...(effort === defaultReasoningEffort && { effortDefault: true }),
   }));
+}
+
+async function rememberModels(client: CopilotTurnClient): Promise<void> {
+  rememberedModels = (await client.listModels()).flatMap(modelRows);
 }
 
 /** Stops the client, force-stopping it when it does not stop within a moment. */
@@ -160,6 +179,10 @@ class CopilotTurn {
       tools: params.launch.tools,
       checkApproval: params.checkApproval,
       turnOver: this.over.signal,
+      plan: {
+        configDirectory: params.launch.configDirectory,
+        sessionId: () => this.session?.sessionId,
+      },
     });
   }
 

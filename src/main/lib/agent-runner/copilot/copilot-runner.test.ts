@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { CopilotClientOptions, ProviderConfig } from '@github/copilot-sdk';
@@ -89,6 +89,8 @@ describe('runCopilotAgent', () => {
             supports: { vision: false, reasoningEffort: true },
             limits: { max_context_window_tokens: 1 },
           },
+          supportedReasoningEfforts: ['high', 'low', 'medium'],
+          defaultReasoningEffort: 'medium',
         },
       ],
       turn: ({ emit }) => {
@@ -98,7 +100,7 @@ describe('runCopilotAgent', () => {
       },
     });
 
-    const { chunks, created } = run(fake);
+    const { chunks, created } = run(fake, runnerParams({ model: 'gpt-5', reasoningEffort: 'low' }));
     const result = await chunks;
 
     expect(typesOf(result)).toEqual([
@@ -134,9 +136,58 @@ describe('runCopilotAgent', () => {
       },
     ]);
     expect(fake.sent).toEqual([{ prompt: 'hello', attachments: [] }]);
-    expect(fake.opened[0]?.config.configDirectory).toBe(path.join(root, 'config'));
+    expect(fake.opened[0]?.config).toMatchObject({
+      configDirectory: path.join(root, 'config'),
+      model: 'gpt-5',
+      reasoningEffort: 'low',
+    });
     await vi.waitFor(() => expect(fake.calls).toEqual(['start', 'stop']));
-    expect(rememberedCopilotModels()).toEqual([{ id: 'gpt-5', name: 'GPT-5', effort: true }]);
+    const tier = { name: 'GPT-5', familyId: 'gpt-5' };
+    expect(rememberedCopilotModels()).toEqual([
+      { ...tier, id: 'gpt-5/high', effort: 'high', detail: 'High' },
+      { ...tier, id: 'gpt-5/low', effort: 'low', detail: 'Low' },
+      { ...tier, id: 'gpt-5/medium', effort: 'medium', detail: 'Medium', effortDefault: true },
+    ]);
+  });
+
+  it("remembers a free plan's single model with no effort choice", async () => {
+    // As a free plan lists it: no supports block at all.
+    const auto = JSON.parse('{"id":"auto","name":"Auto","capabilities":{"limits":{}}}');
+    await run(fakeCopilotClient({ models: [auto] })).chunks;
+
+    await vi.waitFor(() =>
+      expect(rememberedCopilotModels()).toEqual([{ id: 'auto', name: 'Auto' }]),
+    );
+  });
+
+  it("lets Plan mode save this session's plan in Frink's folder without a card", async () => {
+    const config = path.join(root, 'config');
+    const plan = path.join(config, 'session-state', 'copilot-session', 'plan.md');
+    await mkdir(path.dirname(plan), { recursive: true });
+    const asked: string[] = [];
+    const answers: (string | undefined)[] = [];
+    const fake = fakeCopilotClient({
+      turn: async ({ emit, preToolUse }) => {
+        const patch = `*** Begin Patch\n*** Add File: ${plan}\n+# Plan\n*** End Patch`;
+        answers.push((await preToolUse('apply_patch', patch))?.permissionDecision);
+        answers.push(
+          (await preToolUse('create', { path: path.join(config, 'x') }))?.permissionDecision,
+        );
+        emit(IDLE);
+      },
+    });
+    const params = runnerParams({
+      mode: 'plan',
+      checkApproval: async (request) => {
+        asked.push(String(request.input.file_path));
+        return { allowed: false, message: 'no' };
+      },
+    });
+
+    await run(fake, params).chunks;
+
+    expect(answers).toEqual(['allow', 'deny']);
+    expect(asked).toEqual([path.join(config, 'x')]);
   });
 
   it('shows an allowed command as a card from start to finish', async () => {
