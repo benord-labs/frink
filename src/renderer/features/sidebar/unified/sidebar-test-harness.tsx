@@ -10,6 +10,7 @@
 import { cleanup, render } from '@testing-library/react';
 import type { Atom } from 'jotai';
 import { expect, vi } from 'vitest';
+import type { AwaitingApproval } from '../../../lib/work-queue/approvals/use-work-queue-approvals';
 import type { ChatSelectionChipProps } from './components/ChatSelection';
 import { makeSidebarComponentsMock } from './sidebar-components-test-harness';
 
@@ -256,9 +257,8 @@ export const trpcMock = {
         getResolvedAccount: { invalidate: vi.fn(), fetch: vi.fn(async () => null) },
       },
     }),
-    changes: {
-      getStatus: { useQuery: () => ({ data: null }) },
-    },
+    changes: { getStatus: { useQuery: () => ({ data: null }) } },
+    flows: { workQueueApprovals: { useQuery: () => ({ data: new Array<AwaitingApproval>() }) } },
     projects: {
       list: { useQuery: () => ({ data: hoisted.state.localProjectsData }) },
       delete: { useMutation: () => ({ mutateAsync: hoisted.projectsDeleteMutateAsyncMock }) },

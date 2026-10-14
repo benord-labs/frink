@@ -25,6 +25,7 @@ import {
 export type { TaskWithProjectRow } from './task-queries';
 import { drivingFlowTaskOnSubChat, retryableAttempt } from './task-queries/run-liveness';
 import { latestFlowTaskForSubChatId } from './task-queries/subchat-driver';
+import { isNotWaitingOnApproval } from './task-queries/work-queue-overview-filter';
 
 type Db = ReturnType<typeof getDatabase>;
 
@@ -393,7 +394,7 @@ export async function getTaskCounts(
   const scoped = opts.collapseByFlow
     ? base
         .leftJoin(flowRuns, eq(flowRuns.id, tasks.flowRunId))
-        .where(isFlowRepresentative)
+        .where(and(isFlowRepresentative, isNotWaitingOnApproval))
         .groupBy(effectiveStatusExpr)
     : base.groupBy(tasks.status);
   const rows = await scoped;

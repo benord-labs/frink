@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import * as approvalHooks from '../../../../../lib/work-queue/approvals/use-work-queue-approvals';
 import type { Task } from '../../../types';
 import { getAttentionCopy } from '../../AttentionCarousel';
 import { makeTaskActions } from '../../test-fixtures';
@@ -17,6 +18,16 @@ const { toastError } = vi.hoisted(() => {
 });
 vi.mock('sonner', () => ({ toast: { error: toastError } }));
 vi.mock('../../QueuePausedBanner', () => ({ QueuePausedBanner: () => null }));
+
+beforeEach(() => {
+  vi.spyOn(approvalHooks, 'useAwaitingApprovals').mockReturnValue([]);
+  vi.spyOn(approvalHooks, 'useApprovalActions').mockReturnValue({
+    approve: vi.fn(),
+    cancel: vi.fn(),
+    openRun: vi.fn(),
+    pending: new Map(),
+  });
+});
 
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {

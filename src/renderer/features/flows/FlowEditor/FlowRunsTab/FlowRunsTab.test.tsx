@@ -9,6 +9,8 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { flowsFocusRunAtom } from '../../../../lib/atoms';
+import { appStore } from '../../../../lib/jotai-store';
 
 const snap = vi.hoisted(() => ({
   runs: [] as Array<{ id: string }>,
@@ -80,6 +82,7 @@ function renderTab(props: { selectedBatchId?: string | null } = {}) {
 afterEach(() => {
   cleanup();
   snap.runs = [];
+  appStore.set(flowsFocusRunAtom, null);
 });
 
 describe('FlowRunsTab', () => {
@@ -125,5 +128,23 @@ describe('FlowRunsTab', () => {
     const emptyStateCopy = title.parentElement?.textContent ?? '';
     expect(emptyStateCopy).not.toMatch(/batch/i);
     expect(emptyStateCopy).toContain('Press Run to execute this flow');
+  });
+
+  it('shows a run opened from elsewhere, even one older than the loaded list, then forgets the request', () => {
+    snap.runs = [{ id: 'r-newest' }];
+    appStore.set(flowsFocusRunAtom, { flowId: 'flow-1', runId: 'r-old' });
+    renderTab({ selectedBatchId: 'b-1' });
+
+    expect(screen.getByTestId('run-detail')).toHaveAttribute('data-run-id', 'r-old');
+    expect(appStore.get(flowsFocusRunAtom)).toBeNull();
+  });
+
+  it("ignores another flow's run request but still clears it", () => {
+    snap.runs = [{ id: 'r-newest' }];
+    appStore.set(flowsFocusRunAtom, { flowId: 'flow-2', runId: 'r-other' });
+    renderTab();
+
+    expect(screen.getByTestId('run-detail')).toHaveAttribute('data-run-id', 'r-newest');
+    expect(appStore.get(flowsFocusRunAtom)).toBeNull();
   });
 });

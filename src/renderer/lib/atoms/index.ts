@@ -9,10 +9,12 @@ export {
   agentsSettingsDialogOpenAtom,
   exitTransientDestinationForNavigationAtom,
   flowEditorDirtyAtom,
+  flowsFocusRunAtom,
   flowsSelectedFlowIdAtom,
   focusAgentChatAtom,
   leaveOverlayStackForChatSurfaceAtom,
   navigateToAgentChatAtom,
+  openFlowRunAtom,
 } from './agent-navigation-atoms';
 // ============================================
 // RE-EXPORT FROM FEATURES/AGENTS/ATOMS (source of truth)

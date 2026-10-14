@@ -718,7 +718,7 @@ export function WorkQueue({
                   taskActions={commonTaskActions}
                   waitingTasks={waitingTasks}
                 />
-                {isEmpty && (
+                {isEmpty && overview.review === 0 && (
                   <EmptyState
                     onOpenSettings={() => {
                       setActiveOverlay('flows');

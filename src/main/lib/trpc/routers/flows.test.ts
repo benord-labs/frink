@@ -344,6 +344,13 @@ describe('flowsRouter (local)', () => {
       expect(kickStalledFlowAdmissionDrainMock).toHaveBeenCalledOnce();
     });
 
+    it('lists the runs waiting on an approval', async () => {
+      vi.mocked(getDatabase).mockReturnValueOnce(freshDb());
+      const caller = flowsRouter.createCaller({ getWindow: () => null });
+
+      await expect(caller.workQueueApprovals()).resolves.toEqual([]);
+    });
+
     it('returns only the authenticated user projection with the raw Flow DTO contract', async () => {
       queuedFlowAdmissionsMock.mockReturnValueOnce([
         {

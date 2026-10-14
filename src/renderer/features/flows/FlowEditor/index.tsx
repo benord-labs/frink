@@ -47,7 +47,7 @@ import { FLOW_BLOCK_TYPES } from '../../../../shared/types/flow';
 import { Kbd } from '../../../components/ui/kbd';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../components/ui/tooltip';
 import { useFlowCanvasExecution } from '../../../hooks/use-flow-canvas-execution';
-import { flowEditorDirtyAtom } from '../../../lib/atoms';
+import { flowEditorDirtyAtom, flowsFocusRunAtom } from '../../../lib/atoms';
 import { deleteFlowDraft, loadFlowDraft, saveFlowDraft } from '../../../lib/flow-drafts';
 import { clearRehearsal, ghostRunActiveAtom } from '../../../lib/flow-rehearsal';
 import { hasOpenDialogLayer } from '../../../lib/has-open-dialog-layer';
@@ -223,7 +223,9 @@ export function FlowEditor({ flowId, onBack }: FlowEditorProps): ReactElement {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [creatorOpen, setCreatorOpen] = useState(false);
   const [creatorMode, setCreatorMode] = useState<NodeCreatorMode | null>(null);
-  const [editorTab, setEditorTab] = useState<'editor' | 'runs'>('editor');
+  const [editorTab, setEditorTab] = useState<'editor' | 'runs'>(() =>
+    appStore.get(flowsFocusRunAtom)?.flowId === flowId ? 'runs' : 'editor',
+  );
   /** Stage detail open in the Runs tab's monitor pane. */
   const [monitorStageId, setMonitorStageId] = useState<string | null>(null);
   /** Explicit batch selection in the Runs tab (view state; null = follow the default). */

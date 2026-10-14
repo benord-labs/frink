@@ -6,9 +6,12 @@ import { BRAND_TILE_STYLE, ProviderIcon } from '../../../../components/ProviderI
 import type { Task } from '../../types';
 import { getWorkQueueTaskTitle } from '../../utils/task-presentation';
 
+/** The fields a row reads; an approval row supplies them without being a task. */
+type RowTask = Pick<Task, 'title' | 'description' | 'source' | 'projectName' | 'triggerContext'>;
+
 type Props = {
   actions?: ReactNode;
-  task: Task;
+  task: RowTask;
   state: ActivityRowState;
   trailing?: ReactNode;
   onActivate?: () => void;
@@ -51,7 +54,7 @@ const SOURCE_LABELS: Record<string, string> = {
   flow: 'Flow',
 };
 
-function taskSource(task: Task): string {
+function taskSource(task: RowTask): string {
   const source = (task.triggerContext?.source ?? task.source).trim().toLowerCase();
   return source === 'generic_webhook' ? 'webhook' : source;
 }
@@ -66,7 +69,7 @@ function sourceLabel(source: string): string {
     .join(' ');
 }
 
-function getTaskCopy(task: Task): { description: string; source: string; title: string } {
+function getTaskCopy(task: RowTask): { description: string; source: string; title: string } {
   const summary = task.triggerContext ? buildTriggerSummary(task.triggerContext) : null;
   const source = taskSource(task);
   const fallbackDescription = task.description?.trim() || '';
