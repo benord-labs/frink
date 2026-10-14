@@ -65,6 +65,7 @@
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
+    "@github/copilot-sdk": "1.0.16",
     "@iconify-icons/logos": "2.0.1",
     "@iconify-icons/ri": "2.0.0",
     "@iconify-icons/simple-icons": "2.0.4",
@@ -218,7 +219,10 @@
     "files": [
       "out/**/*",
       "!**/*.map",
-      "!node_modules/better-sqlite3/**"
+      "!node_modules/better-sqlite3/**",
+      "!node_modules/@github/copilot-sdk-*/**",
+      "!node_modules/koffi/**",
+      "!node_modules/@koromix/**"
     ],
     "extraResources": [
       {
