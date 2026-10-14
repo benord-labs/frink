@@ -837,6 +837,8 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
         dynamicChatMcpUrl: codexDynamicChatMcpUrl,
       });
 
+      // A card opened in this turn closes when the turn ends, even if the app-server just died.
+      const turnDone = new AbortController();
       const checkApproval = createCodexHostPermissionCheck({
         chatId,
         subChatId,
@@ -845,7 +847,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
         isFlowExecutionTurn,
         frinkMcpInjected,
         autoReview: codexAutoReview,
-        executionSignal: abortController.signal,
+        executionSignal: AbortSignal.any([abortController.signal, turnDone.signal]),
         validateToolPermission,
       });
 
@@ -951,6 +953,7 @@ export async function handleRemoteExecute(payload: ExecuteRequestPayload): Promi
           error: err instanceof Error ? err.message : String(err),
         });
       } finally {
+        turnDone.abort();
         unbindCodex();
       }
       if (!flowResources.admitted) {

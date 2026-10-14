@@ -1,6 +1,7 @@
 import os from 'node:os';
 import { expect, it, vi } from 'vitest';
 import type { UIMessageChunk } from '../../claude/types';
+import { listPendingPermissionRequests } from '../streaming/pending-permission';
 import { registerCustomNodePermissionTests } from './executor-custom-node-permissions';
 
 /** Registers Codex permission cases against the parent executor test harness. */
@@ -450,5 +451,31 @@ function registerCodexPathAndLifecycleTests({
       basePayload.subChatId,
       { kind: 'api-error', status: 401, message: 'API Error: 401 unauthorized' },
     );
+  });
+
+  it('closes an unanswered Codex permission card when its turn ends', async () => {
+    const { checkPermission } = await import('../../permissions/v2/check');
+    vi.mocked(getDefaultClaudeCodeToken).mockResolvedValueOnce(codexCredential);
+    // SAFETY: the seam consumes only decision/prompt; this is the dispatcher's ask shape.
+    vi.mocked(checkPermission).mockResolvedValueOnce({
+      decision: 'ask',
+      prompt: { reason: 'no-matching-rule' },
+    } as Awaited<ReturnType<typeof checkPermission>>);
+    vi.mocked(socketClient.sendPermissionRequest).mockImplementationOnce(() => {});
+    let approval: Promise<unknown> | undefined;
+    vi.mocked(runCodexAgent).mockImplementationOnce(async function* (options) {
+      // SAFETY: the executor reads only type, id and delta from a text-delta chunk.
+      yield { type: 'text-delta', id: 'codex-1', delta: 'Running tests' } as UIMessageChunk;
+      approval = options.checkApproval({ toolName: 'Bash', input: { command: 'npm test' } });
+      await vi.waitFor(() => expect(socketClient.sendPermissionRequest).toHaveBeenCalledOnce());
+      throw new Error('codex app-server connection closed');
+    });
+
+    await handleRemoteExecute({ ...basePayload, message: 'codex turn that dies on a card' });
+
+    const card = vi.mocked(socketClient.sendPermissionRequest).mock.calls[0]?.[0];
+    expect(card).toBeDefined();
+    expect(listPendingPermissionRequests()).not.toContainEqual(card);
+    await expect(approval).resolves.toMatchObject({ allowed: false });
   });
 }
