@@ -1,6 +1,7 @@
 import type { BrowserWindow } from 'electron';
 import { createGitRouter } from '../../git';
 import { router } from '../index';
+import { agentAccountsRouter } from './agent-accounts';
 import { agentsRouter } from './agents';
 import { analyticsRouter } from './analytics';
 import { chatsRouter } from './chats';
@@ -50,6 +51,7 @@ export function createAppRouter(_getWindow: () => BrowserWindow | null) {
     debug: debugRouter,
     skills: skillsRouter,
     agents: agentsRouter,
+    agentAccounts: agentAccountsRouter,
     analytics: analyticsRouter,
     hooks: hooksRouter,
     worktreeConfig: worktreeConfigRouter,

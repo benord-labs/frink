@@ -2,6 +2,7 @@ import { stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
+import { AI_PROVIDERS } from '../../../../../shared/lib/ai-providers';
 import type { AcpLaunchRow, LaunchCheck, LaunchContext } from './launch';
 
 /**
@@ -122,11 +123,11 @@ async function openCodeSettings(context: LaunchContext) {
 }
 
 export const OPENCODE_LAUNCH: AcpLaunchRow = {
-  name: 'OpenCode',
+  name: AI_PROVIDERS.opencode.name,
   binary: 'opencode',
   fallbacks: ['.opencode/bin/opencode'],
   versions: { floor: '1.19.0', below: '1.20.0' },
-  installHint: 'npm install -g opencode-ai',
+  installHint: AI_PROVIDERS.opencode.installHint,
   args: ['acp', '--pure', '--hostname', '127.0.0.1', '--port', '0'],
   envPrefix: 'OPENCODE_',
   settings: openCodeSettings,

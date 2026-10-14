@@ -12,6 +12,7 @@ import {
   PASSTHROUGH_SOURCES,
 } from '../../../shared/lib/ai-providers';
 import { isAnthropicApiKey } from '../../../shared/lib/anthropic-token';
+import { locateAcpAgent } from '../agent-runner/acp';
 import { readClaudeUserConfig } from './detect';
 import { markRowNeedsReauth, markRowResolved } from './row-state';
 import { withCredentialRowOperation } from '../integrations/connection-lifecycle-operation';
@@ -94,6 +95,7 @@ function redactEmailForLog(email: string | null | undefined): string {
 /** Injection seam (anti-slop forbids module mocking in tests); production keeps the default. */
 export const passthroughDeps = {
   readLiveLogin: readClaudeUserConfig,
+  locateAgent: locateAcpAgent,
 };
 
 export function isPassthroughSource(source: string | null | undefined): boolean {
@@ -105,8 +107,15 @@ type LiveLoginProbe =
   | { ok: true; email?: string | null; login?: string }
   | { ok: false; transient: boolean; detail: string };
 
+/** An agent keeps its own sign-in, so its row is live while the agent is installed. */
+async function probeInstalledAgent(type: AIAccountType): Promise<LiveLoginProbe> {
+  if (await passthroughDeps.locateAgent(type)) return { ok: true };
+  return { ok: false, transient: false, detail: 'agent not installed' };
+}
+
 /** Is the provider's own login present on this machine right now (presence only), and as whom? */
-async function probeLiveLogin(row: CredentialRow): Promise<LiveLoginProbe> {
+async function probeLiveLogin(row: CredentialRow, type: AIAccountType): Promise<LiveLoginProbe> {
+  if (AI_PROVIDERS[type].runtime === 'acp') return probeInstalledAgent(type);
   if (row.source !== 'codex-passthrough' && !row.sourcePath) {
     return { ok: false, transient: false, detail: 'missing sourcePath' };
   }
@@ -131,7 +140,7 @@ async function resolvePassthrough(
   row: CredentialRow,
   type: AIAccountType,
 ): Promise<CredentialResult> {
-  const probe = await probeLiveLogin(row);
+  const probe = await probeLiveLogin(row, type);
   if (!probe.ok) {
     if (probe.transient) {
       captureMainMessage('passthrough keychain probe denied or timed out', 'warning', {
