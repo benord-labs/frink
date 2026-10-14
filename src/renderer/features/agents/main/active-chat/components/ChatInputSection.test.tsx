@@ -1,8 +1,10 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { createStore, Provider } from 'jotai';
 import type { ComponentProps } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { pendingTerminalOutputAtomFamily } from '@/lib/terminal/pending-output';
 import { ChatInputSection } from './ChatInputSection';
 
 vi.mock('../../chat-input-area', () => ({
@@ -74,6 +76,26 @@ function createProps(): ComponentProps<typeof ChatInputSection> {
 }
 
 describe('ChatInputSection', () => {
+  it("takes its chat's terminal output as a chip", () => {
+    const store = createStore();
+    store.set(pendingTerminalOutputAtomFamily('chat-1'), {
+      text: 'FAIL',
+      label: 'Terminal 1 output',
+    });
+    const props = createProps();
+
+    render(
+      <Provider store={store}>
+        <ChatInputSection {...props} />
+      </Provider>,
+    );
+
+    expect(props.onAddPastedText).toHaveBeenCalledWith('FAIL', {
+      label: 'Terminal 1 output',
+      filename: expect.stringMatching(/^terminal_\d+\.txt$/),
+    });
+  });
+
   it('renders the input area', () => {
     const props = createProps();
 

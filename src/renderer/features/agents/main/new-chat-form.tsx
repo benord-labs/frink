@@ -22,6 +22,7 @@ import {
   pastedTextMention,
 } from '@/lib/mentions/queued-message-text';
 import type { TaskData } from '@/lib/tasks/format-task-message';
+import { useTerminalOutputIntake } from '@/lib/terminal/use-terminal-output-intake';
 import { normalizeModelIdForExecutionAccount } from '../../../../shared/lib/models';
 import { MENTION_PREVIEW_SANITIZE_REGEX } from '../../../../shared/lib/mentions/mention-grammar';
 import type { ChatMode } from '../../../../shared/types/chat-mode';
@@ -271,6 +272,7 @@ export function NewChatForm({
     resumeDraftPersistence,
     hasAttachments,
   } = useDraftManagement({ editorRef, setHasContent, draftKey });
+  useTerminalOutputIntake({ chatId: terminalId, addPastedText, editorRef });
 
   // Editor handlers (mentions, slash, paste, drag & drop)
   const editorHandlers = useEditorHandlers({

@@ -80,6 +80,7 @@ export function TerminalBottomPanel({
     splitPaneTerminalIds,
     keyboardFocusTerminalId,
     terminalKeyboardTargetId,
+    keyboardTargetTerminal,
     setTerminalKeyboardFocus,
   } = useTerminalManager({ chatId, skipKeyboardShortcut: true, skipAutoCreate: !autoCreate });
 
@@ -215,6 +216,8 @@ export function TerminalBottomPanel({
       {/* Header with tabs */}
       <TerminalPanelHeader
         orientation="bottom"
+        chatId={chatId}
+        targetTerminal={keyboardTargetTerminal}
         closePanel={closePanel}
         terminals={terminals}
         activeTerminalId={activeTerminalId}

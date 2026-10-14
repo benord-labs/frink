@@ -4,6 +4,7 @@ import { ChevronsRight } from 'lucide-react';
 import { Kbd } from '@/components/ui/kbd';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
+import { SendToChatButton } from './SendToChatButton';
 import { TerminalModeSwitcher } from './terminal-mode-switcher';
 import { TerminalTabs } from './terminal-tabs';
 import type { TerminalInstance } from './types';
@@ -11,6 +12,9 @@ import type { TerminalInstance } from './types';
 type TerminalPanelHeaderProps = {
   /** 'side' for right sidebar, 'bottom' for bottom panel */
   orientation: 'side' | 'bottom';
+  chatId: string;
+  /** The pane Send to chat reads (the one with keyboard focus). */
+  targetTerminal: TerminalInstance | null;
   closePanel: () => void;
   terminals: TerminalInstance[];
   activeTerminalId: string | null;
@@ -35,13 +39,15 @@ type TerminalPanelHeaderProps = {
 
 /**
  * Shared header for terminal sidebar and bottom panel.
- * Renders close button + mode switcher + tabs. Orientation controls:
+ * Renders close button + mode switcher + Send to chat + tabs. Orientation controls:
  * - icon rotation (bottom: 90deg, side: 0)
  * - tooltip side (bottom: top, side: bottom)
  * - padding (bottom: py-1, side: py-1.5)
  */
 export const TerminalPanelHeader = memo(function TerminalPanelHeader({
   orientation,
+  chatId,
+  targetTerminal,
   closePanel,
   terminals,
   activeTerminalId,
@@ -98,6 +104,8 @@ export const TerminalPanelHeader = memo(function TerminalPanelHeader({
 
       {/* Display mode switcher */}
       {!hideModeSwitcher && <TerminalModeSwitcher />}
+
+      <SendToChatButton chatId={chatId} terminal={targetTerminal} tooltipSide={tooltipSide} />
 
       {/* Terminal Tabs (+ split control sits beside + inside TerminalTabs) */}
       {terminals.length > 0 && (
