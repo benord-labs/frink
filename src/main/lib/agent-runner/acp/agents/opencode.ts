@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
 import { AI_PROVIDERS } from '../../../../../shared/lib/ai-providers';
+import { ENV_FILE_READS } from '../../env-file-reads';
 import type { AcpLaunchRow, LaunchCheck, LaunchContext } from './launch';
 
 /**
@@ -11,7 +12,7 @@ import type { AcpLaunchRow, LaunchCheck, LaunchContext } from './launch';
  */
 const PERMISSION = {
   '*': 'ask',
-  read: { '*': 'allow', '*.env': 'ask', '*.env.*': 'ask', '*.env.example': 'allow' },
+  read: ENV_FILE_READS,
   glob: 'allow',
   grep: 'allow',
   list: 'allow',

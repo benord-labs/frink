@@ -144,7 +144,7 @@ The validator surfaces errors inline:
 
 ## What's always blocked (system deny list)
 
-No rule you write can open up these paths. This is a static deny list, not a sandbox — it applies where Frink gates and inspects: file writes/edits, Claude `Read`s, Codex command/patch/terminal input, and commands whose path arguments Frink's classifier resolves (a command it can't statically resolve — an unlisted binary, `git diff --no-index`, a path made relative by an earlier `cd` — falls back to the ordinary ask prompt instead of a hard deny). Not covered today: Codex file reads, OpenCode and GitHub Copilot file reads inside the chat's folder, MCP operation arguments, plus the `Glob`/`Grep` search tools on every provider. OS-level sandboxing to close these structurally is the planned follow-up. The list:
+No rule you write can open up these paths. This is a static deny list, not a sandbox — it applies where Frink gates and inspects: file writes/edits, Claude `Read`s, Codex command/patch/terminal input, and commands whose path arguments Frink's classifier resolves (a command it can't statically resolve — an unlisted binary, `git diff --no-index`, a path made relative by an earlier `cd` — falls back to the ordinary ask prompt instead of a hard deny). Not covered today: Codex file reads, OpenCode and GitHub Copilot file reads inside the chat's folder (opening a `.env` file by name is covered; their searches are not), MCP operation arguments, plus the `Glob`/`Grep` search tools on every provider. OS-level sandboxing to close these structurally is the planned follow-up. The list:
 
 - `**/.ssh/**` — SSH keys + known_hosts
 - `**/.aws/**` — AWS credentials
@@ -208,7 +208,7 @@ Two things worth knowing. First, if the provider's reviewer cannot run for a pla
 OpenCode chats (macOS) use the same cards and the same rules as any other chat.
 
 - **OpenCode asks Frink before every command, file change, web fetch or web search**, and before it touches anything outside the chat's folder. Your rules decide; when none does, you get a card. A denial blocks that one action and OpenCode carries on.
-- **Reading and searching files in the chat's folder doesn't ask.** In a general chat that folder is your home folder. Opening a `.env` file asks first, but a search of the folder can still show lines from one.
+- **Reading and searching files in the chat's folder doesn't ask.** In a general chat that folder is your home folder. Opening a `.env` or `.env.something` file is refused by Frink's built-in deny list, with no card (`.env.example` opens freely). Opening another file whose name ends in `.env`, such as `prod.env`, asks first. A link with an ordinary name that points at a `.env` file isn't caught. Searching the folder doesn't ask, so a search can still show lines from a `.env` file.
 - **Frink also holds every command until its check has allowed it**, so no command runs that Frink didn't allow.
 - **If OpenCode ever finishes an action without asking, Frink stops the chat.**
 - **Frink ignores your OpenCode config files while it runs OpenCode, for safety**, and won't start OpenCode at all when an organisation, company sign-in or administrator sends it settings.
@@ -219,7 +219,7 @@ OpenCode chats (macOS) use the same cards and the same rules as any other chat.
 GitHub Copilot chats (macOS) use the same cards and the same rules as any other chat.
 
 - **Copilot asks Frink before every command, file change, web fetch or web search**, and before it reads anything outside the chat's folder. Your rules decide; when none does, you get a card. A denial blocks that one action and Copilot carries on. Helper agents that Copilot starts inside a chat ask the same way.
-- **Reading and searching files in the chat's folder doesn't ask**, and that includes `.env` files. In a general chat that folder is your home folder.
+- **Reading and searching files in the chat's folder doesn't ask.** In a general chat that folder is your home folder. Opening a `.env` or `.env.something` file is refused by Frink's built-in deny list, with no card (`.env.example` opens freely). Opening another file whose name ends in `.env`, such as `prod.env`, asks first. A link with an ordinary name that points at a `.env` file isn't caught. Searching the folder doesn't ask, so a search can still show lines from a `.env` file.
 - **Some of Copilot's own bookkeeping doesn't ask**: its notes for the chat, checking on a command it started, and handing work to its helper agents. None of these change your files.
 - **Copilot's plan file usually doesn't ask.** Copilot saves its plan in Frink's own Copilot folder, not in your project, and Frink lets only that one file through without a question, in any mode. You may still see a card when Copilot first writes or reads it.
 - **A tool or option Frink can't check is refused**, so it never runs without asking. Copilot is told and usually tries another way.

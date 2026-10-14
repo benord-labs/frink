@@ -74,6 +74,39 @@ describe('questionsForCopilotTool', () => {
     );
   });
 
+  it('asks Read before opening an env file in the folder, in any letter case, but not .env.example', () => {
+    const inFolder = (file: string) => read(path.join(cwd, file));
+    for (const file of [
+      '.env',
+      '.ENV',
+      '.env.local',
+      'Prod.Env',
+      'api/.env.local',
+      'a/b/.Env.Production',
+    ]) {
+      expect(questions('view', { path: file })).toEqual(ask(inFolder(file)));
+    }
+    expect(questions('view', { path: path.join(cwd, 'api/.env') })).toEqual(
+      ask(inFolder('api/.env')),
+    );
+    expect(questions('grep', { pattern: 'KEY', paths: '.env' })).toEqual(ask(inFolder('.env')));
+    expect(questions('rg', { pattern: 'KEY', paths: ['src', 'api/.env.production'] })).toEqual(
+      ask(inFolder('api/.env.production')),
+    );
+    for (const file of ['.env.example', 'api/.ENV.EXAMPLE', '.envrc', 'env.ts', 'environment.md']) {
+      expect(questions('view', { path: file })).toEqual(ask());
+    }
+    expect(questions('rg', { pattern: 'KEY', paths: ['src', '.env.example'] })).toEqual(ask());
+  });
+
+  it('does not judge search or glob wildcards for env files, only paths that are one', () => {
+    for (const glob of ['.env*', '*.env', '**/.env', 's*', 'config*', '*.production', '*']) {
+      expect(questions('glob', { pattern: glob })).toEqual(ask());
+      expect(questions('grep', { pattern: 'KEY', glob })).toEqual(ask());
+      expect(questions('rg', { pattern: 'KEY', glob, paths: 'src' })).toEqual(ask());
+    }
+  });
+
   it('lets quiet tools through with no question', () => {
     expect(questions('sql', { description: 'todo', query: 'select 1' })).toEqual({ kind: 'quiet' });
     expect(
