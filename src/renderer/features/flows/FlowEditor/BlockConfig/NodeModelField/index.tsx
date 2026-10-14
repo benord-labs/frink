@@ -19,6 +19,8 @@ type NodeModelFieldProps = {
   inheritOptionLabel: string;
   selectId?: string;
   onModelChange: (model: string | undefined) => void;
+  /** Why the project's provider can't run Flows; shown in place of the field. */
+  unsupportedMessage?: string;
 };
 
 export function NodeModelField({
@@ -29,6 +31,7 @@ export function NodeModelField({
   inheritOptionLabel,
   selectId,
   onModelChange,
+  unsupportedMessage,
 }: NodeModelFieldProps): ReactElement {
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
 
@@ -43,6 +46,9 @@ export function NodeModelField({
     return modelOptions.find((o) => o.value === id)?.label ?? id;
   }, [flowDefaultModel, modelOptions, inheritOptionLabel]);
 
+  if (unsupportedMessage) {
+    return <p className="text-sm text-muted-foreground">{unsupportedMessage}</p>;
+  }
   return (
     <NodeInheritableField
       value={model}

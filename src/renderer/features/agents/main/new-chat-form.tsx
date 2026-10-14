@@ -6,7 +6,8 @@ import { toast } from 'sonner';
 import { ChatAtmosphereSurface } from '@/components/ChatAtmosphereSurface';
 import { type NewChatTarget, shouldScaffoldNewProject } from '@/lib/agent-chat/new-chat-target';
 import { newChatTerminalId } from '@/lib/agent-chat/sentinel-ids';
-import { useCodexAccountCatalog } from '@/lib/codex/use-codex-account-catalog';
+import { unsupportedChatControls } from '@/lib/ai-providers/chat-options';
+import { useProviderModels } from '@/lib/ai-providers/use-provider-models';
 import {
   chatContextFileAtomFamily,
   chatContextFileDismissedAtomFamily,
@@ -21,23 +22,13 @@ import {
   pastedTextMention,
 } from '@/lib/mentions/queued-message-text';
 import type { TaskData } from '@/lib/tasks/format-task-message';
-import {
-  CLAUDE_CODE_MODELS,
-  CODEX_MODELS,
-  claudeModelToPickerItem,
-  codexModelToPickerItem,
-  isClaudeModelVisible,
-  isCodexModelVisible,
-  normalizeModelIdForExecutionAccount,
-} from '../../../../shared/lib/models';
-import { codexModelsForAccount } from '../../../../shared/lib/codex-cli-models';
+import { normalizeModelIdForExecutionAccount } from '../../../../shared/lib/models';
 import { MENTION_PREVIEW_SANITIZE_REGEX } from '../../../../shared/lib/mentions/mention-grammar';
 import type { ChatMode } from '../../../../shared/types/chat-mode';
 import { usePersistedToggle } from '../../../hooks/use-persisted-toggle';
 import {
   agentsSettingsDialogActiveTabAtom,
   agentsSettingsDialogOpenAtom,
-  hiddenModelsAtom,
   pendingAccountAuthAtom,
 } from '../../../lib/atoms';
 import { useNewChatAccount } from '../../../lib/hooks/use-new-chat-account';
@@ -190,8 +181,12 @@ export function NewChatForm({
 
   const setPendingAccountAuth = useSetAtom(pendingAccountAuthAtom);
 
+  const newChatAccount = useNewChatAccount(validatedProject?.id, accountGateRefetchInterval);
+  const { account: resolvedAccount, accountResolved, pickedAccountId } = newChatAccount;
+  const controls = unsupportedChatControls(resolvedAccount?.type);
   const { chatMode, setChatMode, cycleChatMode } = useEffectiveChatModeForPane(splitPaneIndex, {
     hasProject: Boolean(selectedProject),
+    hiddenModes: controls.modes,
   });
   const [staging] = useState(createNewChatStaging);
   const { workMode, setWorkMode } = useEffectiveWorkModeForPane(splitPaneIndex);
@@ -238,51 +233,11 @@ export function NewChatForm({
     }
   };
 
-  const newChatAccount = useNewChatAccount(validatedProject?.id, accountGateRefetchInterval);
-  const { account: resolvedAccount, accountResolved, pickedAccountId } = newChatAccount;
-  const isCodexAccount = resolvedAccount?.type === 'codex';
-
-  const hiddenModelFamilies = useAtomValue(hiddenModelsAtom);
   const { lastSelectedModelId, setLastSelectedModelId } = useEffectiveModelForPane(splitPaneIndex);
-  // Claude models: filter by visibility and map to picker items
-  const visibleClaudeModels = useMemo(
-    () => CLAUDE_CODE_MODELS.filter((m) => isClaudeModelVisible(m, hiddenModelFamilies)),
-    [hiddenModelFamilies],
-  );
-  const claudeModelsList = useMemo(
-    () => visibleClaudeModels.map(claudeModelToPickerItem),
-    [visibleClaudeModels],
-  );
-
-  // Codex models: those the signed-in account can use, filtered by visibility
-  const codexCatalog = useCodexAccountCatalog(isCodexAccount);
-  const visibleCodexModels = useMemo(
-    () =>
-      codexModelsForAccount(codexCatalog).filter((m) =>
-        isCodexModelVisible(m, hiddenModelFamilies),
-      ),
-    [codexCatalog, hiddenModelFamilies],
-  );
-  const codexModelsList = useMemo(
-    () => visibleCodexModels.map(codexModelToPickerItem),
-    [visibleCodexModels],
-  );
-
-  const modelsList = isCodexAccount ? codexModelsList : claudeModelsList;
-  // What the new chat will start on: the stored choice, or the account's default when the account
-  // can't use it. The stored preference itself is kept for an account that can.
-  const codexNewChatModelId = normalizeModelIdForExecutionAccount(
-    'codex',
-    lastSelectedModelId,
-    codexCatalog,
-  );
-  const selectedModel = isCodexAccount
-    ? codexModelToPickerItem(
-        visibleCodexModels.find((m) => m.id === codexNewChatModelId) ??
-          visibleCodexModels[0] ??
-          CODEX_MODELS[0],
-      )
-    : (claudeModelsList.find((m) => m.id === lastSelectedModelId) ?? claudeModelsList[0]);
+  // A new chat starts on the stored choice, or the account's default when the account can't use
+  // it. The stored preference itself is kept for an account that can.
+  const models = useProviderModels(resolvedAccount?.type, lastSelectedModelId);
+  const { codexCatalog } = models;
 
   // Normalize model selection when account type changes (Codex ↔ Claude)
   useModelNormalization(
@@ -396,6 +351,7 @@ export function NewChatForm({
         subChatId: data.subChats?.[0]?.id,
         autoModeEnabled: staging.pending.autoMode,
         codexSpeed: staging.pending.codexSpeed,
+        hiddenModes: controls.modes,
       });
 
       // Chat created — keep the scaffolded project and release the send guard.
@@ -847,19 +803,27 @@ export function NewChatForm({
                           onModeTooltipChange={setModeTooltip}
                           tooltipTimeoutRef={tooltipTimeoutRef}
                           hasShownTooltipRef={hasShownTooltipRef}
-                          disableDebugMode={!selectedProject}
+                          hiddenModes={
+                            selectedProject ? controls.modes : [...controls.modes, 'debug']
+                          }
                           autoMode={{
                             autoModeRef: staging.autoMode,
                             accountResolved,
                             account: resolvedAccount,
-                            selectedModelId: isCodexAccount
-                              ? codexNewChatModelId
-                              : lastSelectedModelId,
+                            selectedModelId:
+                              models.variant === 'codex'
+                                ? normalizeModelIdForExecutionAccount(
+                                    'codex',
+                                    lastSelectedModelId,
+                                    codexCatalog,
+                                  )
+                                : lastSelectedModelId,
                           }}
-                          selectedModel={selectedModel}
-                          availableModels={modelsList}
+                          selectedModel={models.selected}
+                          availableModels={models.items}
                           onModelChange={(model) => setLastSelectedModelId(model.id)}
-                          modelVariant={isCodexAccount ? 'codex' : 'claude'}
+                          modelVariant={models.variant}
+                          modelHint={models.hint}
                           isModelDropdownOpen={isModelDropdownOpen}
                           onModelDropdownOpenChange={setIsModelDropdownOpen}
                           onOpenModelSettings={handleOpenModelSettings}
@@ -928,6 +892,7 @@ export function NewChatForm({
                         projectPath={localProjectPath}
                         hasProject={Boolean(selectedProject)}
                         chatMode={chatMode}
+                        disabledCommands={controls.commands}
                         onCreateCommand={commandEditor.openCreate}
                         onEditCommand={commandEditor.openEdit}
                         onForkCommand={commandEditor.handleFork}

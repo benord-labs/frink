@@ -187,4 +187,24 @@ describe('useProjectModelOptions', () => {
     );
     expect(onClearModel).not.toHaveBeenCalled();
   });
+
+  it('says Flows run on Claude or OpenAI for an OpenCode project, keeping any saved model', () => {
+    querySnapshot.data = { type: 'opencode' };
+    const onClearModel = vi.fn();
+    const { result } = renderHook(() =>
+      useProjectModelOptions(PROJECT_ID, { model: 'codex-gpt-5.3-codex-high', onClearModel }),
+    );
+    expect(result.current.unsupportedMessage).toBe(
+      'This project uses OpenCode. Flows run on Claude or OpenAI for now.',
+    );
+    expect(onClearModel).not.toHaveBeenCalled();
+  });
+
+  it.each(['claude-code', 'codex'])('offers model fields on a %s project', (type) => {
+    querySnapshot.data = { type };
+    const { result } = renderHook(() =>
+      useProjectModelOptions(PROJECT_ID, { model: undefined, onClearModel: () => {} }),
+    );
+    expect(result.current.unsupportedMessage).toBeUndefined();
+  });
 });

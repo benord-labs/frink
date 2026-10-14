@@ -6,6 +6,7 @@ import {
   CODEX_ULTRAFAST_SPEED_MULTIPLIER,
 } from '../../../../../../shared/lib/codex-cli-models';
 import type { CodexSpeed } from '../../../../../../shared/types/execution';
+import type { ModelVariant } from '../../../../../lib/ai-providers/chat-options';
 import { extendedThinkingEnabledAtom } from '../../../../../lib/atoms';
 import { codexSpeedAtomFamily } from '../../../../../lib/atoms/codex-speed';
 import { cn } from '../../../../../lib/utils';
@@ -30,7 +31,7 @@ export function ProviderToggle({
   variant,
   speed,
 }: {
-  variant: 'claude' | 'codex';
+  variant: ModelVariant;
   speed: SpeedScope | undefined;
 }): ReactElement | null {
   if (variant === 'claude') return <ThinkingToggle />;

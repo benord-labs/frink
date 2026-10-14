@@ -454,3 +454,42 @@ describe('provider controls', () => {
     );
   });
 });
+
+describe('agent models', () => {
+  const OPENCODE: ModelItem[] = [
+    { id: 'opencode/big-pickle', name: 'Big Pickle' },
+    { id: 'anthropic/claude-sonnet-4-5', name: 'Claude Sonnet 4.5' },
+  ];
+
+  it("lists the agent's models flat, with no Thinking, effort or speed controls", () => {
+    const { onModelChange } = renderPicker({
+      selectedModel: OPENCODE[0],
+      availableModels: OPENCODE,
+      modelVariant: 'opencode',
+      chatId: 'chat-1',
+      onOpenModelSettings: vi.fn(),
+    });
+    expect(trigger()).toHaveAccessibleName('Model: Big Pickle');
+    expect(screen.getByRole('option', { name: 'Big Pickle' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    expect(screen.queryByRole('slider')).toBeNull();
+    expect(screen.queryByRole('switch')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Model visibility & accounts…' })).toBeNull();
+    fireEvent.click(screen.getByRole('option', { name: 'Claude Sonnet 4.5' }));
+    expect(onModelChange).toHaveBeenCalledWith(OPENCODE[1]);
+  });
+
+  it('shows how to load the list before the agent has listed any models', () => {
+    const fallback = { id: 'sonnet', name: 'OpenCode default' };
+    renderPicker({
+      selectedModel: fallback,
+      availableModels: [fallback],
+      modelVariant: 'opencode',
+      hint: "Send a message to load OpenCode's models.",
+    });
+    expect(trigger()).toHaveAccessibleName('Model: OpenCode default');
+    expect(screen.getByText("Send a message to load OpenCode's models.")).toBeVisible();
+  });
+});

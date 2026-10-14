@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { observable } from '@trpc/server/observable';
 import { Provider } from 'jotai';
 import type { ComponentProps } from 'react';
@@ -12,7 +12,7 @@ import { writeComposerCache } from '../../../lib/atoms/atom-family-factory';
 import { appStore } from '../../../lib/jotai-store';
 import { renderWithTrpc } from '../../../lib/test-utils/render-with-trpc';
 import { trpc } from '../../../lib/trpc';
-import { lastSelectedModelIdAtomFamily } from '../atoms';
+import { chatModeAtomFamily, lastSelectedModelIdAtomFamily } from '../atoms';
 import { ChatInputArea } from './chat-input-area';
 
 // `lib/trpc` wires its ipc client at import time, so the preload bridge must exist first.
@@ -178,5 +178,97 @@ describe('ChatInputArea on a free Codex account (its model/list has no GPT-6 Ast
     await waitFor(() =>
       expect(appStore.get(lastSelectedModelIdAtomFamily('chat-1'))).toBe(CODEX_DEFAULT_MODEL_ID),
     );
+  });
+});
+
+describe('ChatInputArea hides what the chat agent cannot do', () => {
+  /** Places the caret after the editor's last text, as a typed `/` leaves it. */
+  function caretAtEnd(root: HTMLElement) {
+    const range = document.createRange();
+    range.selectNodeContents(root.lastChild ?? root);
+    range.collapse(false);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+  }
+
+  async function openSlashMenu(props: ComponentProps<typeof ChatInputArea>, container: Element) {
+    const root = container.querySelector<HTMLElement>('[contenteditable="true"]');
+    if (!root) throw new Error('composer editor not found');
+    root.focus();
+    act(() => props.editorRef.current?.setValue('/'));
+    caretAtEnd(root);
+    fireEvent.input(root);
+    return screen.findByRole('listbox', { name: 'Slash commands' });
+  }
+
+  it.each([
+    { type: 'claude-code', supportsAll: true },
+    { type: 'opencode', supportsAll: false },
+  ])('$type: compact ring, /compact and /debug shown only when supported', async (c) => {
+    const props = composerProps({ projectId: 'project-1' });
+    const account = { type: c.type, label: c.type, isAuthenticated: true };
+    const { container } = renderWithTrpc(
+      <Provider store={appStore}>
+        <TooltipProvider>
+          <ChatInputArea {...props} />
+        </TooltipProvider>
+      </Provider>,
+      ({ path }) =>
+        path === 'claudeCode.getResolvedAccount' ? Promise.resolve(account) : new Promise(() => {}),
+    );
+    // The model trigger shows the agent's own default once the account resolves.
+    if (!c.supportsAll) await screen.findByRole('button', { name: /OpenCode default/ });
+
+    const ring = screen.queryByRole('button', { name: 'Compact context' });
+    expect(ring !== null).toBe(c.supportsAll);
+    const menu = await openSlashMenu(props, container);
+    expect(within(menu).getByText('/plan')).toBeInTheDocument();
+    expect(within(menu).queryByText('/compact') !== null).toBe(c.supportsAll);
+    expect(within(menu).queryByText('/debug') !== null).toBe(c.supportsAll);
+  });
+
+  it('switches a saved Debug to Agent once the chat agent turns out to have no Debug', async () => {
+    const props = composerProps({ projectId: 'project-1', parentChatId: 'chat-debug' });
+    appStore.set(chatModeAtomFamily('chat-debug'), 'debug');
+    const account = { type: 'opencode', label: 'OpenCode', isAuthenticated: true };
+    renderWithTrpc(
+      <Provider store={appStore}>
+        <TooltipProvider>
+          <ChatInputArea {...props} />
+        </TooltipProvider>
+      </Provider>,
+      ({ path }) =>
+        path === 'claudeCode.getResolvedAccount' ? Promise.resolve(account) : new Promise(() => {}),
+    );
+
+    await waitFor(() => expect(appStore.get(chatModeAtomFamily('chat-debug'))).toBe('agent'));
+  });
+
+  it('tries the switch to Agent once, even when saving it keeps failing', async () => {
+    const props = composerProps({
+      projectId: 'project-1',
+      parentChatId: 'chat-failing',
+      subChatId: 'sub-failing',
+    });
+    appStore.set(chatModeAtomFamily('chat-failing'), 'debug');
+    const account = { type: 'opencode', label: 'OpenCode', isAuthenticated: true };
+    let saves = 0;
+    renderWithTrpc(
+      <Provider store={appStore}>
+        <TooltipProvider>
+          <ChatInputArea {...props} />
+        </TooltipProvider>
+      </Provider>,
+      ({ path }) => {
+        if (path === 'claudeCode.getResolvedAccount') return Promise.resolve(account);
+        if (path !== 'chats.updateSubChatMode') return new Promise(() => {});
+        saves += 1;
+        return Promise.reject(new Error('The database is busy.'));
+      },
+    );
+
+    await waitFor(() => expect(saves).toBe(1));
+    await waitFor(() => expect(appStore.get(chatModeAtomFamily('chat-failing'))).toBe('debug'));
+    expect(saves).toBe(1);
   });
 });

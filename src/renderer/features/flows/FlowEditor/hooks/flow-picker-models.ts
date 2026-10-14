@@ -52,10 +52,10 @@ export function useFlowDefaultModelPicker(
   onClearModel: () => void,
 ) {
   const projectId = settings?.defaultProjectId ?? '';
-  const { isCodexProject } = useProjectModelOptions(projectId.trim() ? projectId : undefined, {
-    model: settings?.defaultModel,
-    onClearModel,
-  });
+  const { isCodexProject, unsupportedMessage } = useProjectModelOptions(
+    projectId.trim() ? projectId : undefined,
+    { model: settings?.defaultModel, onClearModel },
+  );
   const picker = useFlowModelPicker(isCodexProject, settings?.defaultModel?.trim() ?? '');
-  return { isCodexProject, ...picker };
+  return { isCodexProject, unsupportedMessage, ...picker };
 }

@@ -49,6 +49,8 @@ function normalizeDescription(value: string): string | null {
   return t.length === 0 ? null : t;
 }
 
+// Reason: existing panel; agent support adds one branch to show why its model field is hidden.
+// fallow-ignore-next-line complexity
 export function FlowSettingsPanel({
   flowId,
   flowName,
@@ -96,7 +98,7 @@ export function FlowSettingsPanel({
   });
 
   const projectId = settings?.defaultProjectId ?? '';
-  const { isCodexProject, availableModels, selectedPickerModel, staleModelId } =
+  const { isCodexProject, unsupportedMessage, availableModels, selectedPickerModel, staleModelId } =
     useFlowDefaultModelPicker(settings, () =>
       onSettingsChange(patch(settings, { defaultModel: undefined })),
     );
@@ -303,25 +305,38 @@ export function FlowSettingsPanel({
 
         {/* Default model */}
         <div className="grid gap-1.5">
-          <Label htmlFor="flow-settings-model" className="text-xs font-medium">
+          <Label
+            htmlFor={unsupportedMessage ? undefined : 'flow-settings-model'}
+            className="text-xs font-medium"
+          >
             Default model
           </Label>
-          <div className="min-w-0 w-full">
-            <ModelSelector
-              mode="flow"
-              flowInheritLabel="Agent default"
-              triggerId="flow-settings-model"
-              selectedModel={selectedPickerModel}
-              staleModelId={staleModelId}
-              availableModels={availableModels}
-              onModelChange={(m) => onSettingsChange(patch(settings, { defaultModel: m.id }))}
-              onClearModel={() => onSettingsChange(patch(settings, { defaultModel: undefined }))}
-              modelVariant={flowModelVariant(isCodexProject)}
-              isOpen={modelMenuOpen}
-              onOpenChange={setModelMenuOpen}
-            />
-          </div>
-          <p className="text-[11px] text-muted-foreground">Individual steps can override this.</p>
+          {unsupportedMessage ? (
+            <p className="text-sm text-muted-foreground">{unsupportedMessage}</p>
+          ) : (
+            <>
+              <div className="min-w-0 w-full">
+                <ModelSelector
+                  mode="flow"
+                  flowInheritLabel="Agent default"
+                  triggerId="flow-settings-model"
+                  selectedModel={selectedPickerModel}
+                  staleModelId={staleModelId}
+                  availableModels={availableModels}
+                  onModelChange={(m) => onSettingsChange(patch(settings, { defaultModel: m.id }))}
+                  onClearModel={() =>
+                    onSettingsChange(patch(settings, { defaultModel: undefined }))
+                  }
+                  modelVariant={flowModelVariant(isCodexProject)}
+                  isOpen={modelMenuOpen}
+                  onOpenChange={setModelMenuOpen}
+                />
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Individual steps can override this.
+              </p>
+            </>
+          )}
         </div>
 
         {/* Briefing */}

@@ -51,3 +51,33 @@ describe('FlowSettingsPanel on a free Codex project', () => {
     expect(screen.getByRole('option', { name: 'GPT-6 Luna' })).toBeInTheDocument();
   });
 });
+
+describe('FlowSettingsPanel on an OpenCode project', () => {
+  it('says Flows run on Claude or OpenAI, with no picker or step-override hint', async () => {
+    renderWithTrpc(
+      <FlowSettingsPanel
+        flowId="flow-1"
+        flowName="Nightly"
+        flowDescription={null}
+        isEnabled
+        agentInvocable={false}
+        settings={{ defaultProjectId: 'project-1' }}
+        nodes={[]}
+        onSettingsChange={() => {}}
+        onClose={() => {}}
+      />,
+      ({ path }) =>
+        path === 'claudeCode.getResolvedAccount'
+          ? Promise.resolve({ type: 'opencode', label: 'OpenCode', isAuthenticated: true })
+          : new Promise(() => {}),
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('This project uses OpenCode. Flows run on Claude or OpenAI for now.'),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.queryByRole('button', { name: 'Default model' })).toBeNull();
+    expect(screen.queryByText('Individual steps can override this.')).toBeNull();
+  });
+});

@@ -1,4 +1,5 @@
 import { aiProviderMark } from '@/components/AiProviderMark';
+import type { ModelVariant } from '@/lib/ai-providers/chat-options';
 import { Button } from '@benord-labs/frink-primitives';
 import { type CodexAccountTiers, codexTierCredits } from '../../../../shared/lib/codex-cli-models';
 import {
@@ -46,7 +47,7 @@ type ModelSelectorProps = {
   selectedModel: ModelItem | undefined;
   availableModels: readonly ModelItem[];
   onModelChange: (model: ModelItem) => void;
-  modelVariant?: 'claude' | 'codex';
+  modelVariant?: ModelVariant;
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   /** Opens full-page Settings on the AI providers tab (visibility, accounts). */
@@ -69,6 +70,8 @@ type ModelSelectorProps = {
   newChatSpeedRef?: { current: CodexSpeed };
   /** Chat: the selected model is one the signed-in account can't use; its send will be refused. */
   unavailable?: boolean;
+  /** A line under the list, such as how to load an agent's models. */
+  hint?: string;
 };
 
 /** Codex speed controls, or none for a model without a paid tier (incl. Claude) or with nowhere
@@ -195,8 +198,17 @@ function flowTriggerText(
   return formatTriggerLabel(selectedModel);
 }
 
+/** Model visibility settings cover Claude and OpenAI; an agent's list is its own. */
+function modelSettingsAction(variant: ModelVariant, open: (() => void) | undefined) {
+  return variant === 'claude' || variant === 'codex' ? open : undefined;
+}
+
+function PickerHint({ text }: { text: string | undefined }) {
+  return text ? <p className="px-2.5 pb-2 text-sm text-muted-foreground">{text}</p> : null;
+}
+
 /**
- * Model selector for Claude or Codex.
+ * Model selector for Claude, Codex, or an agent's own flat list.
  */
 export function ModelSelector({
   selectedModel,
@@ -215,6 +227,7 @@ export function ModelSelector({
   chatId,
   newChatSpeedRef,
   unavailable = false,
+  hint,
 }: ModelSelectorProps) {
   const isFlow = mode === 'flow';
   // Grey the Claude Extra High tier when the bundled CLI can't run `--effort xhigh` (< 2.1.173).
@@ -315,9 +328,10 @@ export function ModelSelector({
                 }
               : undefined
           }
-          onOpenModelSettings={onOpenModelSettings}
+          onOpenModelSettings={modelSettingsAction(modelVariant, onOpenModelSettings)}
           onClose={() => onOpenChange(false)}
         />
+        <PickerHint text={hint} />
       </PopoverContent>
     </Popover>
   );

@@ -44,3 +44,24 @@ describe('NodeModelField on a free Codex account', () => {
     expect(screen.getByRole('option', { name: 'GPT-5.5', selected: true })).toBeInTheDocument();
   });
 });
+
+describe('NodeModelField on a project whose agent cannot run Flows', () => {
+  it('shows the reason in place of the field', () => {
+    const message = 'This project uses OpenCode. Flows run on Claude or OpenAI for now.';
+    renderWithTrpc(
+      <NodeModelField
+        model=""
+        flowDefaultModel={undefined}
+        modelOptions={[]}
+        isCodexProject={false}
+        inheritOptionLabel="Flow default"
+        onModelChange={() => {}}
+        unsupportedMessage={message}
+      />,
+      () => new Promise(() => {}),
+    );
+
+    expect(screen.getByText(message)).toBeInTheDocument();
+    expect(screen.queryByRole('button')).toBeNull();
+  });
+});

@@ -6,7 +6,7 @@ import {
   aiProvider,
   selectableProviderIds,
 } from '../../../../shared/lib/ai-providers';
-import { findAcpAgent } from '../../agent-runner/acp';
+import { findAcpAgent, rememberedModelOptions } from '../../agent-runner/acp';
 import { claudeCodeCredentials, getDatabase } from '../../db';
 import { createId } from '../../db/utils';
 import { publicProcedure, router } from '../index';
@@ -14,6 +14,7 @@ import { publicProcedure, router } from '../index';
 type AgentAccountsDeps = {
   db: () => ReturnType<typeof getDatabase>;
   findAgent: (type: string) => ReturnType<typeof findAcpAgent>;
+  rememberedModels: typeof rememberedModelOptions;
   flags: Partial<Record<keyof typeof LAUNCH_FLAGS, boolean>>;
   platform: string;
 };
@@ -33,6 +34,7 @@ export function createAgentAccountsRouter(
   deps: AgentAccountsDeps = {
     db: getDatabase,
     findAgent: findAcpAgent,
+    rememberedModels: rememberedModelOptions,
     flags: LAUNCH_FLAGS,
     platform: process.platform,
   },
@@ -44,6 +46,11 @@ export function createAgentAccountsRouter(
       if ('reason' in found) return { available: false, reason: found.reason };
       return { available: true, version: found.version };
     }),
+
+    /** The models the agent listed in its last session this run; none until it has run once. */
+    models: publicProcedure
+      .input(typeInput)
+      .query(({ input }) => deps.rememberedModels(input.type) ?? []),
 
     /** One row per agent on this computer; connecting again refreshes it. */
     connect: publicProcedure
