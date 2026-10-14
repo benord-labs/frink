@@ -36,6 +36,12 @@ type FakeAgentSetup = {
   configOptions?: SessionConfigOption[];
   /** Answer `session/resume` with an error, as for a session the agent no longer has. */
   resumeFails?: boolean;
+  /** What the agent sends while answering `method`: before the answer, or a moment after. */
+  reportsOn?: {
+    method: 'session/new' | 'session/resume' | 'session/set_config_option';
+    messages: RecordedMessage[];
+    afterAnswer?: boolean;
+  };
 };
 
 /** A scripted ACP agent on the SDK's agent side, joined to the client by in-memory byte streams. */
@@ -56,19 +62,29 @@ export function fakeAcpAgent(script: FakeTurnScript, setup: FakeAgentSetup = {})
   });
   let exit = '';
   let disposed = false;
+  const report = async (method: string, client: AgentContext, sessionId: string) => {
+    const reports = setup.reportsOn;
+    if (reports?.method !== method) return;
+    const send = () => play(client, sessionId, reports.messages);
+    if (reports.afterAnswer) setTimeout(() => void send(), 10);
+    else await send();
+  };
   agent({ name: 'fake-agent' })
     .onRequest('initialize', () => ({ protocolVersion, agentCapabilities }))
-    .onRequest('session/new', () => {
+    .onRequest('session/new', async ({ client }) => {
       requests.push('session/new');
+      await report('session/new', client, 'fake-session');
       return { sessionId: 'fake-session', configOptions };
     })
-    .onRequest('session/resume', ({ params }) => {
+    .onRequest('session/resume', async ({ params, client }) => {
       requests.push(`session/resume ${params.sessionId}`);
       if (setup.resumeFails) throw RequestError.resourceNotFound(params.sessionId);
+      await report('session/resume', client, params.sessionId);
       return { configOptions };
     })
-    .onRequest('session/set_config_option', ({ params }) => {
+    .onRequest('session/set_config_option', async ({ params, client }) => {
       requests.push(`set ${params.configId}=${String(params.value)}`);
+      await report('session/set_config_option', client, params.sessionId);
       return { configOptions: configOptions ?? [] };
     })
     .onNotification('session/cancel', () => cancel())
@@ -156,22 +172,32 @@ export const RECORDED_OPTIONS: PermissionOption[] = [
   { optionId: 'reject', kind: 'reject_once', name: 'Reject' },
 ];
 
+/** Sends each message from the agent's side in order, collecting the client's permission answers. */
+async function play(
+  client: AgentContext,
+  sessionId: string,
+  messages: RecordedMessage[],
+  answers: RequestPermissionOutcome[] = [],
+): Promise<void> {
+  for (const message of messages) {
+    if ('update' in message) {
+      await client.notify('session/update', { sessionId, update: message.update });
+    } else {
+      const answer = await client.request('session/request_permission', {
+        sessionId,
+        toolCall: message.permission,
+        options: RECORDED_OPTIONS,
+      });
+      answers.push(answer.outcome);
+    }
+  }
+}
+
 /** Replays a recorded turn from the agent's side and collects the answers the client gave. */
 export function replayTurn(recorded: RecordedTurn) {
   const answers: RequestPermissionOutcome[] = [];
   const script: FakeTurnScript = async ({ client, sessionId }) => {
-    for (const message of recorded.messages) {
-      if ('update' in message) {
-        await client.notify('session/update', { sessionId, update: message.update });
-      } else {
-        const answer = await client.request('session/request_permission', {
-          sessionId,
-          toolCall: message.permission,
-          options: RECORDED_OPTIONS,
-        });
-        answers.push(answer.outcome);
-      }
-    }
+    await play(client, sessionId, recorded.messages, answers);
     return recorded.response;
   };
   return { script, answers };
