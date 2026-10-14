@@ -3,6 +3,10 @@
  * failures typed), the legacy name-only wrappers' swallow-to-[] contract, the
  * one-shot tool-call path, and `callServerTool` transport routing.
  */
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
@@ -36,6 +40,7 @@ vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => ({
     constructor(url: URL, options: unknown) {
       httpTransportMock(url, options);
     }
+    start = vi.fn().mockResolvedValue(undefined);
     close = closeMock;
   },
 }));
@@ -45,6 +50,8 @@ vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
     constructor(options: unknown) {
       stdioTransportMock(options);
     }
+    start = vi.fn().mockResolvedValue(undefined);
+    send = vi.fn().mockResolvedValue(undefined);
     close = closeMock;
   },
 }));
@@ -68,13 +75,14 @@ import {
   toolNames,
 } from '.';
 import { callMcpTool, callMcpToolStdio } from './call';
-import { callServerTool } from './resolve';
+import { callServerTool, probeServerTools } from './resolve';
 import {
   _resetMcpFailureCaptureForTests,
   MCP_CALL_TIMEOUT_MS,
   MCP_HTTP_CONNECT_TIMEOUT_MS,
   MCP_OPERATION_TIMEOUT_MS,
   MCP_STDIO_CONNECT_TIMEOUT_MS,
+  createStdioTransport,
   outerGuardMs,
 } from './transport';
 
@@ -95,7 +103,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   _resetMcpFailureCaptureForTests();
   _resetMcpPaginationCaptureForTests();
-  connectMock.mockResolvedValue(undefined);
+  // Like the real SDK: connect starts the transport, which is where stdio spawns.
+  connectMock.mockImplementation((transport: { start(): Promise<void> }) => transport.start());
 });
 
 /** Answer the login-shell resolver from a fake shell; `gate` holds the answer until released. */
@@ -328,6 +337,86 @@ describe('callServerTool transport routing', () => {
   });
 });
 
+// Unnormalized, execvp looks for a binary literally named
+// `npx -y @shortcut/mcp` and fails ENOENT.
+describe('stdio spawn shape normalization', () => {
+  // Exactly what `candidateToFrinkConfig` stores for the failing Cursor entries.
+  const cursorShortcut: FrinkMcpServerConfig = {
+    ...baseConfig,
+    name: 'shortcut',
+    command: 'npx -y @shortcut/mcp',
+  };
+  const cursorRailway: FrinkMcpServerConfig = {
+    ...baseConfig,
+    name: 'Railway',
+    command: 'npx -y @railway/mcp-server',
+  };
+
+  it('splits a Cursor whole-line command for the Settings tool probe', async () => {
+    listToolsMock.mockResolvedValue({ tools: [sampleTool] });
+    expect(await probeServerTools(cursorShortcut)).toEqual(['create_story']);
+    const spawn = stdioTransportMock.mock.calls[0][0];
+    expect({ command: spawn.command, args: spawn.args }).toEqual({
+      command: 'npx',
+      args: ['-y', '@shortcut/mcp'],
+    });
+    expect(spawn.env.npm_config_registry).toBe('https://registry.npmjs.org/');
+  });
+
+  it('splits a Cursor whole-line command for a flow tool call', async () => {
+    callToolMock.mockResolvedValue({ content: [] });
+    await callServerTool(cursorRailway, { env: { TOKEN: 't' } }, 'list', {});
+    const spawn = stdioTransportMock.mock.calls[0][0];
+    expect({ command: spawn.command, args: spawn.args }).toEqual({
+      command: 'npx',
+      args: ['-y', '@railway/mcp-server'],
+    });
+    expect(spawn.env.TOKEN).toBe('t');
+  });
+
+  it('keeps a quoted argument with spaces as one token', async () => {
+    listToolsMock.mockResolvedValue({ tools: [] });
+    await fetchMcpToolDescriptorsStdio({ command: 'node "/tmp/no such dir/s.js" --flag' });
+    const spawn = stdioTransportMock.mock.calls[0][0];
+    expect(spawn.command).toBe('node');
+    expect(spawn.args).toEqual(['/tmp/no such dir/s.js', '--flag']);
+  });
+
+  it('does not split an existing command path that contains spaces', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'My App '));
+    const server = path.join(dir, 'server bin');
+    fs.writeFileSync(server, '');
+    try {
+      listToolsMock.mockResolvedValue({ tools: [] });
+      await fetchMcpToolDescriptorsStdio({ command: server });
+      const spawn = stdioTransportMock.mock.calls[0][0];
+      expect(spawn.command).toBe(server);
+      expect(spawn.args).toEqual([]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('never turns a shell operator into a spawn', async () => {
+    listToolsMock.mockResolvedValue({ tools: [] });
+    await fetchMcpToolDescriptorsStdio({ command: 'npx foo | tee log' });
+    const spawn = stdioTransportMock.mock.calls[0][0];
+    expect(spawn.command).toBe('npx foo | tee log');
+    expect(spawn.args).toEqual([]);
+  });
+
+  it('keeps an explicit npm registry from the server env', async () => {
+    listToolsMock.mockResolvedValue({ tools: [] });
+    await fetchMcpToolDescriptorsStdio({
+      command: 'npx',
+      args: ['-y', 'srv'],
+      env: { npm_config_registry: 'https://npm.corp.example/' },
+    });
+    const spawn = stdioTransportMock.mock.calls[0][0];
+    expect(spawn.env.npm_config_registry).toBe('https://npm.corp.example/');
+  });
+});
+
 describe('timeout budgets', () => {
   it('hands each step its own budget to the SDK rather than racing it blind', async () => {
     listToolsMock.mockResolvedValue({ tools: [sampleTool] });
@@ -370,6 +459,16 @@ describe('timeout budgets', () => {
       reason: 'timeout',
       message: 'MCP error -32001: Request timed out',
     });
+  });
+
+  // The spawn-shape check runs inside start(), under the connect guard; a guard that fires
+  // first closes the transport, and the pending start must then never spawn a child.
+  it('never spawns when closed while the spawn-shape check is pending', async () => {
+    const transport = createStdioTransport({ command: 'npx -y @shortcut/mcp' });
+    const starting = transport.start();
+    await transport.close();
+    await starting;
+    expect(stdioTransportMock).not.toHaveBeenCalled();
   });
 
   it('lets a server that is slow to start finish, instead of killing it mid-warm', async () => {

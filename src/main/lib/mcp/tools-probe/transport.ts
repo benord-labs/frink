@@ -10,9 +10,10 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { RequestOptions } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
+import { ErrorCode, type JSONRPCMessage, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { getClaudeShellEnvironment } from '../../claude/env';
 import { CREDENTIAL_ENV_DENYLIST, omitEnvKeys } from '../../terminal/env';
+import { normalizeSpawnShapeAsync, withNpxRegistryDefault } from '../spawn-shape';
 
 /**
  * Budgets are per-purpose and SDK-owned (`docs/decisions/mcp-probe-budget.md`). A stdio
@@ -231,11 +232,47 @@ export type McpStdioServerSpec = {
  * Electron apps launched from Finder have a minimal PATH that excludes
  * user-installed tools. Sensitive env vars are filtered out.
  */
-export function createStdioTransport(config: McpStdioServerSpec): StdioClientTransport {
-  const safeEnv = omitEnvKeys(getClaudeShellEnvironment(), CREDENTIAL_ENV_DENYLIST);
-  return new StdioClientTransport({
-    command: config.command,
-    args: config.args,
-    env: { ...safeEnv, ...config.env },
-  });
+export function createStdioTransport(config: McpStdioServerSpec): Transport {
+  return new NormalizingStdioTransport(config);
+}
+
+/**
+ * Resolves the spawn shape inside `start()`, so its async path check runs under the connect
+ * guard that already covers `StdioClientTransport.start()` (mcp-probe-budget).
+ */
+class NormalizingStdioTransport implements Transport {
+  onclose?: () => void;
+  onerror?: (error: Error) => void;
+  onmessage?: Transport['onmessage'];
+  private inner: StdioClientTransport | null = null;
+  private closed = false;
+
+  constructor(private readonly config: McpStdioServerSpec) {}
+
+  async start(): Promise<void> {
+    const spawn = await normalizeSpawnShapeAsync(this.config.command, this.config.args ?? []);
+    // The connect guard may have fired and closed us while the path check was pending.
+    if (this.closed) return;
+    const safeEnv = omitEnvKeys(getClaudeShellEnvironment(), CREDENTIAL_ENV_DENYLIST);
+    const inner = new StdioClientTransport({
+      command: spawn.command,
+      args: spawn.args,
+      env: { ...safeEnv, ...withNpxRegistryDefault(spawn.command, this.config.env) },
+    });
+    inner.onclose = () => this.onclose?.();
+    inner.onerror = (error) => this.onerror?.(error);
+    inner.onmessage = (message) => this.onmessage?.(message);
+    this.inner = inner;
+    await inner.start();
+  }
+
+  async send(message: JSONRPCMessage): Promise<void> {
+    if (!this.inner) throw new Error('MCP stdio transport not started');
+    await this.inner.send(message);
+  }
+
+  async close(): Promise<void> {
+    this.closed = true;
+    await this.inner?.close();
+  }
 }
