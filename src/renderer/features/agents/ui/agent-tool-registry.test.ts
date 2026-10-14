@@ -84,6 +84,20 @@ describe('routing precedence', () => {
     expect('tool-frink_flows_start_batch' in AgentToolRegistry).toBe(true);
   });
 
+  it('names the secret a frink_request_secret call asks for, and its file', () => {
+    const partType = 'tool-mcp__frink_dynamic_chat__frink_request_secret';
+    const entry = AgentToolRegistry[resolveRegistryKey(partType)];
+    const input = { name: 'STRIPE_KEY', reason: 'Charge test cards' };
+
+    expect(entry?.title({ type: partType, state: 'input-available', input })).toBe(
+      'Asking for STRIPE_KEY',
+    );
+    expect(entry?.title({ type: partType, state: 'output-available', input })).toBe(
+      'Asked for STRIPE_KEY',
+    );
+    expect(entry?.subtitle?.({ type: partType, input })).toBe('.env');
+  });
+
   it('unregistered MCP tools fall through to parseMcpToolType (MCP card wins)', () => {
     const partType = 'tool-mcp__codebase__searchCode';
     const resolved = resolveRegistryKey(partType);

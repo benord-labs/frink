@@ -20,6 +20,7 @@ import { mobileRouter } from './mobile';
 import { permissionsRouter } from './permissions';
 import { pluginsRouter } from './plugins';
 import { projectsRouter } from './projects';
+import { secretRequestsRouter } from './secret-requests';
 import { skillsRouter } from './skills';
 import { socketRouter } from './socket';
 import { tasksRouter } from './tasks';
@@ -63,6 +64,7 @@ export function createAppRouter(_getWindow: () => BrowserWindow | null) {
     triggerRules: triggerRulesRouter,
     triggerSetup: triggerSetupRouter,
     triggerBindings: triggerBindingsRouter,
+    secretRequests: secretRequestsRouter,
     socket: socketRouter,
     usage: usageRouter,
     usageHistory: usageHistoryRouter,

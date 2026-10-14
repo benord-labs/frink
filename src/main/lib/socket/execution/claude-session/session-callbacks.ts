@@ -242,6 +242,25 @@ function createClaudeStopHook(
   return hook;
 }
 
+/** The eager `tasks.result` write for a frink_task_signal call. Skipped once a secret request parks
+ * the turn: the tool refuses that later signal, so recording it would clobber the park mid-turn. */
+async function recordEagerTaskSignal(
+  turn: NonNullable<ReturnType<ActiveTurn>>,
+  signalTaskId: string,
+  toolName: string,
+  toolInput: Parameters<CanUseTool>[1],
+  subChatId: string,
+) {
+  if ((await latestTaskSignalFor(turn.execution.executionContextId))?.secretRequest) return null;
+  return recordTaskSignalFromToolCall({
+    toolName,
+    toolInput,
+    signalTaskId,
+    planTerminalsLocked: turn.planTerminalsLocked,
+    subChatId,
+  });
+}
+
 /** Plan-mode denial, task-signal persistence, AskUserQuestion, and the MCP rule re-check.
  * Sub-agent allowlisting lives in the PreToolUse backstop: only a hook sees the calling agent. */
 function createCanUseTool(scope: ClaudeSessionScope, session: ClaudeSessionRef): CanUseTool {
@@ -254,13 +273,13 @@ function createCanUseTool(scope: ClaudeSessionScope, session: ClaudeSessionRef):
 
     const { execution } = turn;
     if (execution.taskSignalReady && execution.signalTaskId && toolName.startsWith('mcp__')) {
-      const signalDeny = await recordTaskSignalFromToolCall({
+      const signalDeny = await recordEagerTaskSignal(
+        turn,
+        execution.signalTaskId,
         toolName,
         toolInput,
-        signalTaskId: execution.signalTaskId,
-        planTerminalsLocked: turn.planTerminalsLocked,
         subChatId,
-      });
+      );
       if (signalDeny) return signalDeny;
     }
 

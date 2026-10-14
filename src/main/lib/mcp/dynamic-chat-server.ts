@@ -33,6 +33,7 @@ import {
   requestMoveChatApproval,
 } from '../socket/streaming/pending-permission/move-chat';
 import * as taskSignal from '../trpc/routers/frink-task-signal';
+import { handleRequestSecretToolCall as handleRequestSecret } from './secret-request';
 import * as toolCatalog from './dynamic-chat-tool-catalog';
 import {
   appendIdentityToEndpointUrl,
@@ -830,11 +831,10 @@ async function handleToolsCall(
     );
   }
 
-  if (name === 'frink_task_signal') {
-    if (!executionId || !ctx) {
-      return toolResult('frink_task_signal requires an active execution context.', true);
-    }
-    return handleTaskSignalToolCall(ctx, a);
+  if (name === 'frink_task_signal' || name === 'frink_request_secret') {
+    if (!executionId || !ctx) return toolResult(`${name} requires an active execution context.`, true);
+    const handler = name === 'frink_task_signal' ? handleTaskSignalToolCall : handleRequestSecret;
+    return handler(ctx, a);
   }
 
   const flowResult = dispatchFlowToolCall({
