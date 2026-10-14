@@ -6,6 +6,7 @@ import {
   claudeVersionSupportsXhigh,
   getBundledClaudeVersion,
 } from '../../claude';
+import { autoModeRuleCounts, readUserAutoModeRules } from '../../claude/auto-mode-rules';
 import {
   DEFAULT_WORKTREE_BASE_PATH,
   FRINK_WORKTREE_CONFIG_PATH,
@@ -62,6 +63,9 @@ export const claudeSettingsRouter = router({
       supportsUltra: claudeVersionSupportsUltra(version),
     };
   }),
+
+  /** How many Auto mode rules of the user's own Claude settings reach Claude chats, per kind. */
+  autoModeRules: publicProcedure.query(() => autoModeRuleCounts(readUserAutoModeRules())),
 
   /**
    * Get current worktree base path setting
