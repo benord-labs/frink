@@ -72,6 +72,11 @@ export const toolEnds = (toolCallId: string, success: boolean, text = 'done'): S
 export const IDLE: SessionEvent = { ...EVENT_BASE, type: 'session.idle', data: {} };
 /** The main agent is done while a command it started still runs. */
 export const AGENT_IDLE: SessionEvent = { ...EVENT_BASE, type: 'assistant.idle', data: {} };
+export const TASKS_CHANGED: SessionEvent = {
+  ...EVENT_BASE,
+  type: 'session.background_tasks_changed',
+  data: {},
+};
 
 type HookAnswer = Awaited<ReturnType<NonNullable<SessionHooks['onPreToolUse']>>>;
 
@@ -105,8 +110,25 @@ type FakeCopilotSetup = {
   started?: Promise<void>;
   /** The client's graceful stop never finishes. */
   stopHangs?: boolean;
+  /** Background commands the session lists until the client stops or crashes. */
+  commandPids?: number[];
+  /** The command listing answers only once this settles, even after the client stopped. */
+  listedLate?: Promise<void>;
   models?: ModelInfo[];
 };
+
+type TaskInfo = Awaited<ReturnType<CopilotTurnSession['rpc']['tasks']['list']>>['tasks'][number];
+
+const shellTask = (pid: number): TaskInfo => ({
+  type: 'shell',
+  id: `shell-${pid}`,
+  description: 'Background command',
+  status: 'running',
+  startedAt: new Date(0).toISOString(),
+  command: 'sleep',
+  attachmentMode: 'attached',
+  pid,
+});
 
 type OpenedSession = { how: 'create' | 'resume'; sessionId?: string; config: SessionConfigBase };
 
@@ -153,6 +175,13 @@ export function fakeCopilotClient(setup: FakeCopilotSetup = {}) {
           if (setup.planFails) throw new Error('mode change failed');
           mode = params.mode;
           return { status: 'applied', modelChanged: false };
+        },
+      },
+      tasks: {
+        list: async () => {
+          if (setup.listedLate) await setup.listedLate;
+          else if (crashed || calls.includes('stop')) throw new Error('Connection is closed.');
+          return { tasks: (setup.commandPids ?? []).map(shellTask) };
         },
       },
     },
