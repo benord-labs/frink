@@ -128,6 +128,35 @@ describe('locateCursorAgent', () => {
     );
     expect(await locateCursorAgent({ sdkRoot: path.join(root, 'none') })).toBeUndefined();
   });
+
+  it("finds the SDK installed with Frink's own packages when run from source", async () => {
+    expect(await locateCursorAgent({ app })).toBe(
+      path.join(process.cwd(), 'node_modules', '@cursor', 'sdk', 'dist', 'esm', 'index.js'),
+    );
+  });
+
+  it('finds the SDK shipped inside the built app, and refuses a missing or other copy', async () => {
+    const built = (name: string) => ({
+      ...app,
+      isPackaged: true,
+      getAppPath: () => path.join(root, name, 'Resources', 'app.asar'),
+    });
+    const shipped = (name: string) =>
+      path.join(root, name, 'Resources', 'app.asar', 'node_modules', '@cursor', 'sdk');
+    await writeFakeCursorSdk(shipped('built'), '1.0.37');
+    await writeFakeCursorSdk(shipped('built old'), '1.0.36');
+    const launch = (name: string) =>
+      resolveCursorLaunch({ chatKey: 'c1' }, { env: userEnv(), app: built(name) });
+
+    expect(await locateCursorAgent({ app: built('built') })).toBe(
+      path.join(shipped('built'), 'dist', 'esm', 'index.js'),
+    );
+    expect(await launch('built missing')).toEqual({ ok: false, reason: NO_SDK });
+    expect(await launch('built old')).toEqual({
+      ok: false,
+      reason: "Frink checked Cursor's SDK 1.0.37. This copy is 1.0.36.",
+    });
+  });
 });
 
 describe('findCursorAgent', () => {

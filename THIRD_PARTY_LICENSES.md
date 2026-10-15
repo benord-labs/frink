@@ -36,6 +36,20 @@ no OpenAI credentials and makes no model calls on its own account.
   (`scripts/binaries/download-claude-binary.mjs`) into `resources/bin/`, used under Anthropic's
   terms. Claude authenticates with the user's own Anthropic account; Frink stores no key.
 
+## Cursor SDK (`@cursor/sdk`)
+
+- **Source:** https://cursor.com
+- **Bundled:** the `@cursor/sdk` package inside the app, and its macOS platform package
+  (`@cursor/sdk-darwin-*`) in `Resources/node_modules/@cursor/`, as Cursor publishes them, under
+  Cursor's terms. Cursor signs in with the user's own Cursor account. The SDK's `LICENSE.md`
+  ships with it and reads:
+
+```text
+# Cursor SDK License
+
+© Anysphere Inc. All rights reserved. Use is subject to Cursor's [Terms of Service](https://cursor.com/terms-of-service).
+```
+
 ## T3 Code
 
 - **License:** MIT License (text below)
