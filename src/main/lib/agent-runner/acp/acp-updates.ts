@@ -6,6 +6,7 @@ import type {
 } from '@agentclientprotocol/sdk';
 import { z } from 'zod';
 import type { UIMessageChunk } from '../../claude/types';
+import { endTextRun } from '../codex/codex-stream-chunks';
 import {
   type KnownToolCall,
   PATH_TOOL_BY_KIND,
@@ -78,14 +79,6 @@ export function unaskedAction(
   if (status === 'completed' && !state.allowed.has(toolCallId)) return toolCall;
   if (status === 'failed' && !state.asked.has(toolCallId)) return toolCall;
   return undefined;
-}
-
-/** Ends the open text run, so text after a thought or a tool card starts a new block below it. */
-function endTextRun(state: AcpTurnState): UIMessageChunk[] {
-  if (state.openTextId === null) return [];
-  const id = state.openTextId;
-  state.openTextId = null;
-  return [{ type: 'text-end', id }];
 }
 
 function contentText(toolCall: ToolCallUpdate): string {
