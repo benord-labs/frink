@@ -36,6 +36,13 @@ export type AcpAgentRules = {
   ignoredInputKeys: readonly string[];
   /** Tools, by first title, that may finish without asking. */
   quietTools: readonly string[];
+  /** The agent's own input names, where they differ from OpenCode 1.19's. */
+  inputNames?: {
+    /** Its key for a file path. */
+    file?: string;
+    /** Its run requests may carry `workdir`, and this key set to the session folder when that is unset. */
+    sessionFolder?: string;
+  };
 };
 
 /** The agent's input key each question reads, and the key Frink's rules expect it under. */
@@ -68,7 +75,8 @@ function commandQuestion(command: string, toolCall: KnownToolCall, cwd: string) 
 function questionsByTool(toolCall: KnownToolCall, { rules, cwd }: QuestionContext) {
   const question = questionForTool(rules, toolCall.tool);
   if (!question) return [];
-  const [from, to] = QUESTION_INPUT[question];
+  const [named, to] = QUESTION_INPUT[question];
+  const from = to === 'file_path' ? (rules.inputNames?.file ?? named) : named;
   const value = inputText(toolCall, from);
   const ignored = new Set<string>([from, ...rules.ignoredInputKeys]);
   if (!value?.trim()) return [];
@@ -103,7 +111,8 @@ function approvalRequestsFor(
   context: QuestionContext,
 ): CodexApprovalRequest[] {
   if (toolCall.kind === 'other') return questionsByTool(toolCall, context);
-  const command = toolCallCommand(toolCall);
+  const key = context.rules.inputNames?.sessionFolder;
+  const command = toolCallCommand(toolCall, key ? { key, cwd: context.cwd } : undefined);
   // A command Frink cannot read exactly is refused, not judged on part of what would run.
   if (namesCommand(toolCall) && !command) return [];
   if (toolCall.kind !== 'fetch') return questionsByKind(toolCall, command, context.cwd);
