@@ -8,7 +8,7 @@ Frink lets you move between coding tools — Claude, Codex, Cursor and more — 
 - Frink keeps your setup in one place and hands each tool whatever it can use.
 - Tool-native plugins come in a different format on each tool, so one stays on the tool you set it up in — but the skills and servers it bundles still follow you. (Frink's own **Plugins** are a separate thing, and they follow you like everything else.)
 - Some tools enforce an agent's limits more strictly than others — limits apply in full on tools that can enforce them, and relax to the closest equivalent elsewhere.
-- Your direct API tokens stay encrypted on your machine; OAuth connections (Slack, Gmail, GitHub, …) are authorized through a secure broker. Either way, Frink never *silently* touches the files committed to your repo — the one exception is a skill you explicitly **Copy across** into a project, and it warns you first.
+- Your direct API tokens stay encrypted on your machine; OAuth connections (Slack, Gmail, GitHub, …) are authorized through a secure broker. Either way, Frink never _silently_ touches the files committed to your repo — the one exception is a skill you explicitly **Copy across** into a project, and it warns you first.
 
 ## Switching tools
 
@@ -16,22 +16,22 @@ Each chat stays on the tool it started with. A new chat uses its project's accou
 
 ## What follows you
 
-| Setup | Follows you? |
-|---|---|
-| MCP servers | Yes |
-| Skills | Yes |
-| Commands | Yes |
-| Custom agents | Yes |
-| Connected integrations | Yes (delivered as MCP) |
-| Tool limits | Yes — enforced where the tool can, relaxed to read-only where it can't |
-| Hooks | Not yet — on the roadmap |
-| Tool-native plugins | Stays per-tool |
+| Setup                  | Follows you?                                                           |
+| ---------------------- | ---------------------------------------------------------------------- |
+| MCP servers            | Yes                                                                    |
+| Skills                 | Yes                                                                    |
+| Commands               | Yes                                                                    |
+| Custom agents          | Yes                                                                    |
+| Connected integrations | Yes (delivered as MCP)                                                 |
+| Tool limits            | Yes — enforced where the tool can, relaxed to read-only where it can't |
+| Hooks                  | Yes, from Claude to Codex — the ones Codex can run                     |
+| Tool-native plugins    | Stays per-tool                                                         |
 
 When you switch which tool runs your work, Frink brings your **MCP servers**, **skills**, **commands**, and **custom agents** along, so the new tool is set up exactly like the old one. You don't re-add anything.
 
 For Codex, MCPs configured in Frink are supplied to each chat without copying credentials into Codex's own store. Existing Codex-only OAuth MCPs are not imported automatically yet; add them in **Settings → Plugins → MCP servers** once if you want Frink to own and deliver them across providers.
 
-One small thing about **your own skills**: they follow you as real files, but the first time the new tool's agent *reads* one it asks permission — they're yours, not first-party, so they go through your normal approval (allow once and you're set). Skills Frink ships don't prompt. More in [Permissions](permissions.md).
+One small thing about **your own skills**: they follow you as real files, but the first time the new tool's agent _reads_ one it asks permission — they're yours, not first-party, so they go through your normal approval (allow once and you're set). Skills Frink ships don't prompt. More in [Permissions](permissions.md).
 
 In **Settings → Skills & agents** (the **Skills** and **Agents** tabs), each skill or agent shows as **one row** (duplicate listings across tools collapse into a single entry). A row that **every tool you use can read** needs nothing from you, so it carries no badge. One that a tool here can't read yet shows an amber **Only in _tool_** (or **Not shared** when none of your tools can read it), with **Copy across…** in its menu, so you can see at a glance what still needs to come across. Open a row to see which tools can read it and to open each copy. Frink's own built-in assets (like the `frink-flows` skill) show a read-only **Built-in** badge — Frink manages them and restores them when it restarts.
 
@@ -44,22 +44,22 @@ When a skill or custom agent lives in only one tool — say a Cursor-only one th
 
 You choose two things: **where** (Global, so it follows you on this machine everywhere, or a specific project) and **how far** (**Portable** — readable by all your tools — or just the one tool). It's always a **copy** — the original stays where it is, and a hand-edited copy is never overwritten. Copying into a project may add files to that project's repo (if its `.claude`/`.cursor` isn't gitignored); Frink tells you when that happens.
 
-This explicit copy covers **skills and agents today** — commands use the same flow soon. (Agents are copied verbatim, except a few Claude-only fields like the model and tool list, which don't translate to Cursor and fall back to its defaults.) The one skills-only bit is the *at-chat-open* prompt above; the row-level **Copy across…** works for both. Everything else still *auto-follows* you when you switch tools, into machine-local config — that part already covers MCP servers, skills, commands, and agents, and never touches your repo.
+This explicit copy covers **skills and agents today** — commands use the same flow soon. (Agents are copied verbatim, except a few Claude-only fields like the model and tool list, which don't translate to Cursor and fall back to its defaults.) The one skills-only bit is the _at-chat-open_ prompt above; the row-level **Copy across…** works for both. Everything else still _auto-follows_ you when you switch tools, into machine-local config — that part already covers MCP servers, skills, commands, and agents, and never touches your repo.
 
-**Plugins are the one exception — and only their packaging.** Every tool has its own plugin format, so a plugin you set up in one tool can't be dropped into another. The *package* stays where you set it up; the useful parts inside it — its skills, servers, and commands — still follow you everywhere, as usual.
+**Plugins are the one exception — and only their packaging.** Every tool has its own plugin format, so a plugin you set up in one tool can't be dropped into another. The _package_ stays where you set it up; the useful parts inside it — its skills, servers, and commands — still follow you everywhere, as usual.
 
 Frink's own plugins (the ones you connect from **Settings → Plugins**, like Slack or Shortcut) are plugins like any other — Frink just ships them itself and takes care of the account sign-in and the triggers for you. That's why your connected account and its triggers come with you whichever tool you switch to. How much of the rest each tool can use varies, and every plugin's page says so under **Works in**.
 
 ## How strict your rules stay
 
-Say you built an agent called **Security Auditor** and told it *"only allowed to read files, never edit."*
+Say you built an agent called **Security Auditor** and told it _"only allowed to read files, never edit."_
 
 - On tools that can enforce that precisely, the limit carries over exactly.
 - On tools that only offer a coarser "read-only or not" switch, the fine-grained limit relaxes to the closest thing that tool understands.
 
 Frink tells you what changed when you switch tools. The agent itself (its name and instructions) always comes with you. Tool-specific settings — which model it runs on, and how tightly its rules are policed — translate to the closest thing the new tool offers: model names differ between tools, so on a new tool the agent starts on that tool's default model until you pick one.
 
-**Hooks** (like *"block dangerous commands"*) currently stay on the tool you set them up in — bringing them along is on the roadmap.
+**Hooks** (like _"block dangerous commands"_) you set up for Claude in your own settings, or in a project's `.claude/settings.local.json`, also run in Codex chats. Frink keeps its own copy in `~/.frink/hooks` and picks up any change you make to those files. Codex runs only command hooks, and only on the events it shares with Claude, so a hook for a Claude-only event (such as a notification) stays with Claude. A hook written for Claude's tool names may not act on Codex's (Codex calls file edits `apply_patch` and sub-agents `spawn_agent`). Hooks committed in a project stay with the project and are not copied.
 
 **OpenCode** chats don't take your setup yet. MCP servers, commands, custom agents and hooks don't reach them, and Frink ignores your own OpenCode config files while it runs OpenCode, for safety. OpenCode still reads your instructions files (`AGENTS.md`, `CLAUDE.md`) and the skills in `~/.claude/skills`.
 
@@ -70,7 +70,7 @@ And if a tool can't take a piece of your setup at all, Frink doesn't force it �
 ## What stays on your machine
 
 - **Credentials** — Direct API-token integrations (and your tool logins) are encrypted on your device and never leave it — not to the cloud, not to another machine. OAuth integrations (Slack, Gmail, GitHub, …) are authorized through a secure broker that holds their tokens server-side; those tokens are never written to your repo or synced to your other machines.
-- **Your repo** — Frink writes setup to your machine's own config, and never *silently* edits the `.claude/`, `.cursor/`, or similar files committed to your project, so your teammates aren't affected by your personal setup. The one time it writes there is when *you* explicitly **Copy across** a skill into a project — a deliberate choice it surfaces (and warns about if the files would land in your repo).
+- **Your repo** — Frink writes setup to your machine's own config, and never _silently_ edits the `.claude/`, `.cursor/`, or similar files committed to your project, so your teammates aren't affected by your personal setup. The one time it writes there is when _you_ explicitly **Copy across** a skill into a project — a deliberate choice it surfaces (and warns about if the files would land in your repo).
 
 ## FAQ
 
@@ -81,7 +81,7 @@ No. Frink moved them for you when you switched. Nothing to set up again.
 That tool enforces the agent's limits differently — the agent is the same, only the strictness changed. Frink tells you what shifts the moment you switch; see "How strict your rules stay" above.
 
 **Q: Will switching tools change my committed `.cursor` or `.claude` files?**
-No. Switching tools writes only machine-local config — your repo is untouched. The single exception is when *you* choose **Copy across → a project**: that deliberately copies the skill into that project (Frink warns you when those files would become part of its repo).
+No. Switching tools writes only machine-local config — your repo is untouched. The single exception is when _you_ choose **Copy across → a project**: that deliberately copies the skill into that project (Frink warns you when those files would become part of its repo).
 
 **Q: I uninstalled Frink — is my setup gone?**
 Your original tool configs are intact and your tokens stay in your operating system's keychain. Frink's own copy goes away, but you keep working.

@@ -53,6 +53,7 @@ import { stageContinuationResume } from '../flows/admission/terminal-resume/cont
 import { createRollbackStash } from '../git/stash';
 import { resolveFrinkMcpServers } from '../mcp/runtime';
 import type { createClaudeMcpConfigTransport } from '../mcp/runtime/mcp-config-transport';
+import { hooksForLaunch } from '../provider/hooks/store';
 import { captureMainMessage } from '../sentry/init';
 import {
   disposeCleanStreamEnd,
@@ -917,7 +918,10 @@ export async function handleRemoteExecute(
             projectPath,
             dynamicChatMcpUrl: codexDynamicChatMcpUrl,
           });
-          // After the reads: a cancel during either read must not start the turn.
+          // Claude-format hooks locate their scripts through CLAUDE_PROJECT_DIR, the main checkout.
+          const hookRoot = project ? permissionProjectPath : null;
+          const codexHooks = await hooksForLaunch('codex', hookRoot);
+          // After the reads: a cancel during any read must not start the turn.
           flowResources.assertLive(abortController.signal, 'Codex');
           const codexModel = resolveCodexCliModel(
             settings?.model,
@@ -944,7 +948,11 @@ export async function handleRemoteExecute(
             // spawned for one sub-chat must never be handed to another (its tools would resolve into
             // the wrong chat's execution context).
             sessionKey: subChatId,
-            env: process.env as Record<string, string>,
+            env: {
+              // SAFETY: the app-server spawn drops unset entries, so every value it reads is a string.
+              ...(process.env as Record<string, string>),
+              ...(hookRoot && { CLAUDE_PROJECT_DIR: hookRoot }),
+            },
             abortController,
             mode,
             model: codexModel.model,
@@ -954,6 +962,7 @@ export async function handleRemoteExecute(
             canonicalMcpServers: codexMcpRuntime.servers,
             canonicalMcpEnvByServer: codexMcpRuntime.envByServer,
             taskSignalEnabled: Boolean(signalTaskId),
+            userHooks: codexHooks.hooks,
             hasOpenPermission: () => hasPendingPermissionRequest(subChatId),
             checkApproval,
             autoReview: codexAutoReview,

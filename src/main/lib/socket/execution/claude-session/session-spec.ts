@@ -17,8 +17,9 @@ import { buildClaudeCredentialLaunch } from '../../../claude/credential-fd-spawn
 import { buildClaudeSdkThinkingPartial } from '../../../claude/sdk-thinking-options';
 import { resolveClaudeAutoMemorySettings } from '../../../claude/auto-memory';
 import { mergeChatMemoriesOnce } from '../../../claude/auto-memory/merge-chat-memories';
-import { readUserHookSettings, stageClaudeConfigDir } from '../../../claude/session-config-dir';
+import { stageClaudeConfigDir } from '../../../claude/session-config-dir';
 import type { CredentialResult } from '../../../credentials';
+import { hooksForLaunch } from '../../../provider/hooks/store';
 import {
   registerDebugSession,
   startIngestServer,
@@ -232,7 +233,8 @@ export async function buildClaudeSessionSpec(inputs: ClaudeSessionSpecInputs) {
 
   const shouldResumeClaudeSession = Boolean(persistedSessionId);
   const flagSettings = {
-    ...readUserHookSettings(),
+    // The user's hooks, which this chat's config dir hides; Claude loads the project's itself.
+    ...(await hooksForLaunch('claude-code', inputs.project ? inputs.permissionProjectPath : null)),
     // Auto-memory belongs to the project, as outside Frink, not to this chat's config dir.
     ...resolveClaudeAutoMemorySettings(projectPath),
     // Ultra: the CLI's `ultracode` orchestration, dropped on an older bundled CLI. Flow turns never

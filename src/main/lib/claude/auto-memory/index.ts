@@ -39,7 +39,7 @@ function isRegularFile(entry: string): boolean {
 }
 
 /** Nearest ancestor of `dir` (inclusive) holding a `.git` directory or file. */
-function findGitRoot(dir: string): string | null {
+export function findGitRoot(dir: string): string | null {
   for (let current = dir; ; current = path.dirname(current)) {
     if (isDirOrFile(path.join(current, '.git'))) return current;
     if (path.dirname(current) === current) return null;

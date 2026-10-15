@@ -113,8 +113,9 @@ export type CodexRunnerParams = {
   configArgs?: string[];
   /** Frink's project-filtered canonical MCP definitions. */
   canonicalMcpServers?: Record<string, unknown>;
-  /** Install the native Stop guard for a live Frink task. */
+  /** Install the native Stop guard for a live Frink task, beside the user's stored hooks. */
   taskSignalEnabled?: boolean;
+  userHooks?: Parameters<typeof buildCodexMcpBinding>[0]['userHooks'];
   /** MCP-specific stdio environment, excluding the inherited process environment. */
   canonicalMcpEnvByServer?: Record<string, Record<string, string>>;
   /** Request-scoped Codex config prepared after native MCP inspection. */
@@ -382,9 +383,9 @@ export async function* runCodexAgent(
   let runtimeParams: CodexRunnerParams;
   try {
     const binding = buildCodexMcpBinding({
+      ...params,
       canonicalServers: params.canonicalMcpServers ?? {},
       envByServer: params.canonicalMcpEnvByServer,
-      taskSignalEnabled: params.taskSignalEnabled,
     });
     runtimeParams = {
       ...params,
