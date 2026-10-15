@@ -11,6 +11,7 @@ import {
   useState,
 } from 'react';
 import { toast } from 'sonner';
+import { ProviderPreviewTag } from '@/components/ProviderPreviewTag';
 import { SettingsCard } from '@/components/settings/SettingsCard';
 import { AccountsErrorBanner } from '@/components/ui/accounts-error-banner';
 import {
@@ -283,13 +284,14 @@ function AddAccountMenu({
       {signIns.length > 0 ? (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-64">
+          <DropdownMenuContent align="start" className="w-72">
             {signIns.includes('claude-code') ? null : addKey}
             {signIns.map((id) => (
               <Fragment key={id}>
                 <DropdownMenuItem onClick={() => onSignIn(id)}>
                   <ProviderTile type={id} size="sm" />
                   {addAccountLabel(id)}
+                  <ProviderPreviewTag provider={id} />
                 </DropdownMenuItem>
                 {id === 'claude-code' ? addKey : null}
               </Fragment>

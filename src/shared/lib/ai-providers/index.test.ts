@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { AI_PROVIDERS, aiProvider, isInstalledAgent, runtimeFor, selectableProviderIds } from '.';
+import {
+  AI_PROVIDER_IDS,
+  AI_PROVIDERS,
+  aiProvider,
+  isInstalledAgent,
+  runtimeFor,
+  selectableProviderIds,
+} from '.';
 
 const ALL_ON = {
   codexAccounts: true,
@@ -26,6 +33,14 @@ describe('AI provider table', () => {
     const agents = Object.values(AI_PROVIDERS).filter((row) => isInstalledAgent(row));
     expect(agents.map((row) => row.name)).toEqual(['OpenCode', 'GitHub Copilot', 'Cursor', 'Grok']);
     expect(isInstalledAgent(aiProvider('unknown'))).toBe(false);
+  });
+
+  it('marks OpenCode, GitHub Copilot and Cursor as Preview, and nothing else', () => {
+    expect(AI_PROVIDER_IDS.filter((id) => aiProvider(id)?.preview)).toEqual([
+      'opencode',
+      'copilot',
+      'cursor',
+    ]);
   });
 
   it('reads a missing type as Claude and an unknown type as no provider', () => {

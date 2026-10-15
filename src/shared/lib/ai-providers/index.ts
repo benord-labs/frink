@@ -7,7 +7,13 @@ export type AgentRuntime = (typeof AGENT_RUNTIMES)[number];
 type LaunchFlagName = keyof typeof LAUNCH_FLAGS;
 type LaunchFlags = Partial<Record<LaunchFlagName, boolean>>;
 
-type BaseRow = { name: string; longName: string; passthroughSource: string };
+type BaseRow = {
+  name: string;
+  longName: string;
+  passthroughSource: string;
+  // Tagged Preview where people pick it: chats work, but some of Frink's features don't yet.
+  preview?: boolean;
+};
 type AiProviderRow =
   // On Claude and Codex the flag only hides the provider from pickers.
   | (BaseRow & { runtime: 'claude'; flag?: LaunchFlagName })
@@ -42,6 +48,7 @@ export const AI_PROVIDERS = {
     name: 'OpenCode',
     longName: 'OpenCode',
     passthroughSource: 'opencode-passthrough',
+    preview: true,
     flag: 'opencodeAccounts',
     agentMode: 'build',
     planMode: 'plan',
@@ -53,6 +60,7 @@ export const AI_PROVIDERS = {
     name: 'GitHub Copilot',
     longName: 'GitHub Copilot CLI',
     passthroughSource: 'copilot-passthrough',
+    preview: true,
     flag: 'copilotAccounts',
     planMode: 'plan',
     installHint: 'npm install -g @github/copilot',
@@ -63,6 +71,7 @@ export const AI_PROVIDERS = {
     name: 'Cursor',
     longName: 'Cursor',
     passthroughSource: 'cursor-passthrough',
+    preview: true,
     flag: 'cursorAccounts',
     planMode: 'plan',
     installHint: 'Sign in to Cursor from Frink. Cursor needs a paid plan.',

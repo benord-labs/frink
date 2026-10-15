@@ -2,6 +2,7 @@ import { Button } from '@benord-labs/frink-primitives';
 import { Loader2 } from 'lucide-react';
 import type { ReactElement } from 'react';
 import { aiProviderMark } from '@/components/AiProviderMark';
+import { ProviderPreviewTag } from '@/components/ProviderPreviewTag';
 import {
   AI_PROVIDERS,
   type AiProviderId,
@@ -124,6 +125,7 @@ export function ConnectAgentAccountPage({
       }
       providerIconBgClassName={isAgent ? 'bg-muted' : 'bg-foreground'}
       providerName={row.name}
+      providerTag={<ProviderPreviewTag provider={provider} />}
       authCommand={isAgent ? row.signInHint : 'codex login'}
       headerDescription={`${signInSource(row, isAgent)} No token is stored in Frink.`}
       foundTitle={found?.version ? `${row.name} ${found.version} found.` : undefined}

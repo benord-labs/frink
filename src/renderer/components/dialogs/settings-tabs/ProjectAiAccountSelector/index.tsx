@@ -3,6 +3,7 @@ import { toast } from 'sonner';
 import { SettingsCard } from '@/components/settings/SettingsCard';
 import { SettingsSection } from '@/components/settings/SettingsSection';
 import { notifyToolSwitch } from '@/utils/tool-switch-message';
+import { ProviderPreviewTag } from '../../../ProviderPreviewTag';
 import { AI_PROVIDERS } from '../../../../../shared/lib/ai-providers';
 import { trpc } from '../../../../lib/trpc';
 import { Label } from '../../../ui/label';
@@ -83,6 +84,7 @@ export function ProjectAiAccountSelector({ projectId }: ProjectAiAccountSelector
                         {AI_PROVIDERS[acc.type].name}
                         {!acc.isAuthenticated && ' · not signed in'}
                       </span>
+                      <ProviderPreviewTag provider={acc.type} />
                     </span>
                   </SelectItem>
                 ))}

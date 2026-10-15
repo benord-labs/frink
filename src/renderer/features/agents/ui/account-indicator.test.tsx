@@ -518,9 +518,13 @@ describe('AccountIndicator', () => {
     });
   });
 
-  it.each(['opencode', 'copilot'])(
-    'lists %s logins in the new-chat picker on macOS',
-    async (type) => {
+  it.each([
+    ['opencode', 'OpenCode'],
+    ['copilot', 'GitHub Copilot'],
+    ['cursor', 'Cursor'],
+  ])(
+    'lists %s logins in the new-chat picker on macOS, under a heading tagged Preview',
+    async (type, name) => {
       const [claudeRow] = snap.defaultListAccounts;
       snap.listAccountsData = [
         claudeRow,
@@ -539,7 +543,10 @@ describe('AccountIndicator', () => {
         );
         await userEvent.setup().click(screen.getByRole('button', { name: /^AI accounts menu/ }));
 
-        expect(within(screen.getByRole('menu')).getByText('AgentWork')).toBeInTheDocument();
+        const menu = screen.getByRole('menu');
+        expect(within(menu).getByText('AgentWork')).toBeInTheDocument();
+        expect(within(menu).getByText(name)).toHaveTextContent('Preview');
+        expect(within(menu).getByText('Claude')).not.toHaveTextContent('Preview');
       } finally {
         Reflect.deleteProperty(window, 'desktopApi');
       }

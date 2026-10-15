@@ -1,4 +1,5 @@
 import { aiProviderMark } from '@/components/AiProviderMark';
+import { ProviderPreviewTag } from '@/components/ProviderPreviewTag';
 /* eslint-disable max-lines, max-lines-per-function */
 import { useSetAtom } from 'jotai';
 import { Check, ChevronDown, Plus, RefreshCw, Settings, User } from 'lucide-react';
@@ -226,8 +227,9 @@ function NewChatAccountRows({
       ) : (
         groups.map((group) => (
           <Fragment key={group.type}>
-            <DropdownMenuLabel className="text-[11px] font-normal text-muted-foreground leading-snug">
+            <DropdownMenuLabel className="flex items-center gap-1.5 text-xs font-normal text-muted-foreground leading-snug">
               {AI_PROVIDERS[group.type].name}
+              <ProviderPreviewTag provider={group.type} />
             </DropdownMenuLabel>
             {group.rows.map((a) => (
               <AccountRow key={a.id} row={a} isActive={a.id === activeId} onPick={onPick} />

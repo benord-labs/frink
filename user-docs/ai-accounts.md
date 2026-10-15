@@ -17,6 +17,8 @@ Every AI account belongs to this computer — Claude and OpenAI sign-ins and API
 
 OpenCode is a free, open-source coding agent that can use many AI providers, including free models. Frink runs the OpenCode you install yourself.
 
+**OpenCode is in preview**, so Frink shows a Preview tag next to it: chats work, but Flows, building a Flow from a chat, your MCP servers and your hooks don't work with it yet. More under "Not in OpenCode chats yet" below.
+
 1. Install OpenCode 1.19 in your terminal: `npm install -g opencode-ai@1.19`. Check it with `opencode --version`.
 2. Optional: run `opencode auth login` to add your own AI provider. Without it you get OpenCode's free models.
 3. In Frink, go to Settings → AI providers → **Add an account** → **Connect OpenCode**.
@@ -39,6 +41,8 @@ What to know:
 
 GitHub Copilot is GitHub's coding agent. Frink runs the Copilot you install yourself, signed in with your own GitHub account, including the free plan.
 
+**GitHub Copilot is in preview**, so Frink shows a Preview tag next to it: chats work, but Flows, building a Flow from a chat, your MCP servers and your hooks don't work with it yet. More under "Not in Copilot chats yet" below.
+
 1. Install Copilot in your terminal: `npm install -g @github/copilot`. Check it with `copilot --version`.
 2. Sign in: run `copilot login` and finish in your browser.
 3. In Frink, go to Settings → AI providers → **Add an account** → **Connect GitHub Copilot**.
@@ -59,6 +63,8 @@ What to know:
 ### Cursor (macOS)
 
 Cursor is the coding agent from the Cursor editor. Frink runs it with your own Cursor account, through Cursor's own toolkit, which comes with Frink, so there's nothing to install. **Cursor needs a paid Cursor plan to work in Frink.**
+
+**Cursor is in preview**, so Frink shows a Preview tag next to it: chats work, but Flows, building a Flow from a chat, your MCP servers and your hooks don't work with it yet. More under "Not in Cursor chats yet" below.
 
 1. In Frink, go to Settings → AI providers → **Add an account** → **Connect Cursor**.
 2. If Cursor isn't signed in on this computer, click **Sign in to Cursor**. Your browser opens Cursor's sign-in page (the button reads **Continue in your browser** while Frink waits). Finish there, and Frink checks again on its own.

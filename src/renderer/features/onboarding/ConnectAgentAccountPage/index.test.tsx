@@ -9,6 +9,7 @@ import { observable } from '@trpc/server/observable';
 import { createStore, Provider } from 'jotai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+import { TooltipProvider } from '../../../components/ui/tooltip';
 import { pendingAccountAuthAtom } from '../../../lib/atoms';
 import { trpc } from '../../../lib/trpc';
 import { ConnectAgentAccountPage } from './index';
@@ -77,7 +78,9 @@ function renderPage(
     <trpc.Provider client={createTestClient(detection, connectError)} queryClient={queryClient}>
       <QueryClientProvider client={queryClient}>
         <Provider store={store}>
-          <ConnectAgentAccountPage provider={provider} />
+          <TooltipProvider>
+            <ConnectAgentAccountPage provider={provider} />
+          </TooltipProvider>
         </Provider>
       </QueryClientProvider>
     </trpc.Provider>,
@@ -101,6 +104,16 @@ describe('ConnectAgentAccountPage', () => {
 
     expect(connect).toHaveBeenCalledWith({ type: 'codex', accountLabel: 'me@openai.example' });
     expect(store.get(pendingAccountAuthAtom)).toBeNull();
+  });
+
+  it.each([
+    ['codex', 'Connect OpenAI Account'],
+    ['opencode', 'Connect OpenCode AccountPreview'],
+    ['copilot', 'Connect GitHub Copilot AccountPreview'],
+    ['cursor', 'Connect Cursor AccountPreview'],
+  ] as const)('titles the %s page, tagged Preview only for an installed agent', (type, title) => {
+    renderPage(type, { available: true });
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe(title);
   });
 
   it('shows the codex login steps and the reason when OpenAI has no login here', async () => {
