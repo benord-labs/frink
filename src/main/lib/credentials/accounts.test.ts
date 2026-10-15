@@ -1,7 +1,8 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as cursor from '../agent-runner/cursor';
 import { passthroughDeps } from './accounts';
 
 describe('passthroughDeps.locateAgent', () => {
@@ -24,9 +25,9 @@ describe('passthroughDeps.locateAgent', () => {
     );
   });
 
-  it("finds Cursor's SDK where Frink keeps it, without starting it", async () => {
-    await expect(passthroughDeps.locateAgent('cursor')).resolves.toMatch(
-      /@cursor\/sdk\/dist\/esm\/index\.js$/,
-    );
+  it('finds Cursor through its SDK lookup, without starting it', async () => {
+    const locate = vi.spyOn(cursor, 'locateCursorAgent').mockResolvedValue('/sdk/index.js');
+    await expect(passthroughDeps.locateAgent('cursor')).resolves.toBe('/sdk/index.js');
+    expect(locate).toHaveBeenCalledWith();
   });
 });

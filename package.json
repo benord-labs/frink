@@ -24,15 +24,16 @@
     "package:win": "electron-builder --win",
     "package:linux": "electron-builder --linux",
     "dist": "electron-builder",
-    "release": "bun --env-file=.env scripts/publish/assert-release-env.mjs && rm -rf release && bun run claude:download && bun run codex:download && SENTRY_UPLOAD=1 bun run build && bun --env-file=.env run package:mac && bun --env-file=.env scripts/publish/upload-to-r2.mjs",
+    "release": "bun --env-file=.env scripts/publish/assert-release-env.mjs && rm -rf release && bun run claude:download && bun run codex:download && bun run cursor:stage && SENTRY_UPLOAD=1 bun run build && bun --env-file=.env run package:mac && bun --env-file=.env scripts/publish/upload-to-r2.mjs",
     "claude:download": "node scripts/binaries/download-claude-binary.mjs",
     "claude:download:all": "node scripts/binaries/download-claude-binary.mjs --all",
     "codex:build": "node scripts/binaries/build-codex-frink.mjs",
     "codex:patch": "node scripts/binaries/codex-patch-workspace.mjs",
     "codex:download": "node scripts/binaries/download-codex-binary.mjs",
+    "cursor:stage": "node scripts/binaries/stage-cursor-platform.mjs",
     "electron:download": "node scripts/binaries/ensure-electron-binary.mjs",
     "kill:worktree-electron": "node scripts/dev/kill-worktree-electron.mjs",
-    "release:dev": "rm -rf release && bun run claude:download && bun run codex:download && bun run build && bun --env-file=.env run package:mac && rm -rf node_modules && bun i",
+    "release:dev": "rm -rf release && bun run claude:download && bun run codex:download && bun run cursor:stage && bun run build && bun --env-file=.env run package:mac && rm -rf node_modules && bun i",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
@@ -61,6 +62,7 @@
     "@anthropic-ai/claude-agent-sdk": "^0.3.278",
     "@anthropic-ai/sdk": "^0.127.0",
     "@benord-labs/frink-primitives": "^0.10.8",
+    "@cursor/sdk": "1.0.37",
     "@dagrejs/dagre": "^3.1.1",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
@@ -161,7 +163,6 @@
   "devDependencies": {
     "@aws-sdk/client-s3": "^3.1137.0",
     "@aws-sdk/lib-storage": "^3.1137.0",
-    "@cursor/sdk": "1.0.37",
     "@sentry/vite-plugin": "^5.4.0",
     "@tailwindcss/postcss": "^4.3.3",
     "@tailwindcss/typography": "^0.5.20",
@@ -221,6 +222,7 @@
       "!**/*.map",
       "!node_modules/better-sqlite3/**",
       "!node_modules/@github/copilot-sdk-*/**",
+      "!node_modules/@cursor/sdk-*/**",
       "!node_modules/koffi/**",
       "!node_modules/@koromix/**"
     ],
@@ -351,6 +353,12 @@
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
+      "extraResources": [
+        {
+          "from": "resources/cursor-sdk/darwin-${arch}",
+          "to": "node_modules/@cursor/sdk-darwin-${arch}"
+        }
+      ],
       "notarize": true
     },
     "publish": {

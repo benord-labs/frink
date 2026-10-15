@@ -14,8 +14,10 @@
  * false-green a packaging break. Override with FRINK_SMOKE_MODULES_ROOT (e.g. on macOS:
  *   FRINK_SMOKE_MODULES_ROOT=node_modules ELECTRON_RUN_AS_NODE=1 npx electron scripts/smoke-native.cjs).
  */
-const { existsSync, realpathSync } = require('node:fs');
-const { join, resolve } = require('node:path');
+const { spawnSync } = require('node:child_process');
+const { existsSync, mkdtempSync, realpathSync, rmSync } = require('node:fs');
+const { tmpdir } = require('node:os');
+const { dirname, join, resolve } = require('node:path');
 const { pathToFileURL } = require('node:url');
 
 const PACKAGED = resolve('release/win-unpacked/resources/app.asar.unpacked/node_modules');
@@ -99,6 +101,52 @@ async function checkAgentSdks(root) {
   console.log('[smoke-native] GitHub Copilot SDK OK');
 }
 
+const CURSOR_HOST = '--cursor-host';
+
+/** In Electron's main process: start the packaged Cursor host as a utility process, print its first message. */
+async function printCursorHostAnswer(resources) {
+  const { app, utilityProcess } = require('electron');
+  await app.whenReady();
+  const sdkEntry = packedEntry(join(resources, 'app.asar.unpacked', 'node_modules'), '@cursor/sdk');
+  const host = utilityProcess.fork(join(resources, 'cursor', 'cursor-host.mjs'), [sdkEntry], {
+    env: { HOME: process.env.HOME, PATH: process.env.PATH },
+    cwd: process.env.HOME,
+  });
+  const answer = await new Promise((res) => {
+    setTimeout(() => res({ type: 'error', text: 'no answer in 60s' }), 60_000).unref();
+    host.once('message', res);
+    host.once('exit', (code) => res({ type: 'error', text: `the host exited with ${code}` }));
+  });
+  host.kill();
+  console.log(JSON.stringify(answer));
+}
+
+/** Start this script again as Electron's main process, under a temp HOME, for the host's answer. */
+function cursorHostAnswer(resources) {
+  const home = mkdtempSync(join(tmpdir(), 'frink-smoke-cursor-'));
+  const env = { ...process.env, HOME: home };
+  delete env.ELECTRON_RUN_AS_NODE;
+  delete env.CURSOR_API_KEY;
+  const child = spawnSync(process.execPath, [__filename, CURSOR_HOST, resources], {
+    env,
+    encoding: 'utf8',
+    timeout: 90_000,
+  });
+  rmSync(home, { recursive: true, force: true });
+  return { answer: JSON.parse(child.stdout.trim().split('\n').at(-1) || '{}'), log: child.stderr };
+}
+
+/** Cursor's platform package sits where its SDK looks, and the host answers signed out. */
+function checkCursorHost(resources) {
+  const platform = join(resources, 'node_modules', '@cursor', `sdk-darwin-${process.arch}`);
+  if (!existsSync(join(platform, 'bin', 'cursorsandbox'))) throw new Error(`no ${platform}`);
+  const { answer, log } = cursorHostAnswer(resources);
+  if (answer.type !== 'auth' || answer.status === 'logged-in') {
+    throw new Error(`Cursor host answered ${JSON.stringify(answer)}: ${log}`);
+  }
+  console.log(`[smoke-native] Cursor host OK (utility process, ${answer.status})`);
+}
+
 /** Load the resolved native modules under the Electron ABI and exercise each. Throws on any failure. */
 async function main() {
   const root = resolveModulesRoot();
@@ -109,12 +157,18 @@ async function main() {
   await checkNodePty(root);
   console.log('[smoke-native] node-pty OK');
   await checkAgentSdks(root);
+  if (process.platform === 'darwin' && root.includes('/Contents/Resources/')) {
+    checkCursorHost(dirname(dirname(root)));
+  } else console.log('[smoke-native] Cursor host skipped: it ships only in a macOS package');
   console.log('[smoke-native] PASS');
 }
 
 // Only run when invoked as the entry; importing the module (tests) just exposes the pure resolver.
-if (require.main === module) {
-  main()
+// Electron's main process loads this file through its default app, so it is not require.main there.
+const hostAt = process.argv.indexOf(CURSOR_HOST);
+if (require.main === module || hostAt > 0) {
+  const run = hostAt > 0 ? () => printCursorHostAnswer(process.argv[hostAt + 1]) : main;
+  run()
     .then(() => process.exit(0))
     .catch((err) => {
       console.error('[smoke-native] FAIL');

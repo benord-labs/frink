@@ -1,5 +1,4 @@
 import { readFile } from 'node:fs/promises';
-import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { app, shell } from 'electron';
@@ -55,15 +54,11 @@ const CHECKED_NOT: CursorAgentCheck = {
   reason: "Frink couldn't reach Cursor. Try again in a moment.",
 };
 const packageSchema = z.object({ name: z.literal('@cursor/sdk'), version: z.string() });
-const nodeRequire = createRequire(import.meta.url);
+type SdkDeps = Pick<CursorLaunchDeps, 'sdkRoot' | 'app'>;
 
-function installedSdkRoot(): string | undefined {
-  try {
-    return path.resolve(nodeRequire.resolve('@cursor/sdk'), '..', '..', '..');
-  } catch {
-    return undefined;
-  }
-}
+// Frink's own packages, which a built app keeps in its archive, where Electron reads them.
+const installedSdkRoot = (paths: Pick<AppPaths, 'getAppPath'>) =>
+  path.join(paths.getAppPath(), 'node_modules', '@cursor', 'sdk');
 
 const readVersion = (root: string) =>
   readFile(path.join(root, 'package.json'), 'utf8')
@@ -71,9 +66,10 @@ const readVersion = (root: string) =>
     .catch(() => undefined);
 
 /** The SDK's module entry when the copy found is the tested version, or why it can't be used. */
-async function checkedSdk(root = installedSdkRoot()): Promise<SdkCheck> {
-  const version = root && (await readVersion(root));
-  if (!root || !version) return { ok: false, reason: NO_SDK };
+async function checkedSdk(deps: SdkDeps): Promise<SdkCheck> {
+  const root = deps.sdkRoot ?? installedSdkRoot(deps.app ?? app);
+  const version = await readVersion(root);
+  if (!version) return { ok: false, reason: NO_SDK };
   if (version !== CURSOR_ROW.sdk.version) {
     return {
       ok: false,
@@ -92,7 +88,7 @@ export async function resolveCursorLaunch(
   deps: CursorLaunchDeps = {},
 ): Promise<{ ok: true; launch: CursorRunnerParams['launch'] } | { ok: false; reason: string }> {
   if (!CHAT_KEY.test(input.chatKey)) return { ok: false, reason: BAD_CHAT };
-  const sdk = await checkedSdk(deps.sdkRoot);
+  const sdk = await checkedSdk(deps);
   if (!sdk.ok) return sdk;
   const paths = deps.app ?? app;
   const env = deps.env ?? (await userEnv());
@@ -167,7 +163,7 @@ const turnedDown = (message: CursorHostMessage) =>
 async function realHomeHost(
   deps: CursorLaunchDeps,
 ): Promise<{ ok: true; input: HostInput } | { ok: false; reason: string }> {
-  const sdk = await checkedSdk(deps.sdkRoot);
+  const sdk = await checkedSdk(deps);
   if (!sdk.ok) return sdk;
   const env = deps.env ?? (await userEnv());
   const home = env.HOME || os.homedir();
@@ -241,7 +237,7 @@ async function startSignIn(
 }
 
 /** Where the SDK's entry is, without starting it. */
-export async function locateCursorAgent(deps: Pick<CursorLaunchDeps, 'sdkRoot'> = {}) {
-  const sdk = await checkedSdk(deps.sdkRoot);
+export async function locateCursorAgent(deps: SdkDeps = {}) {
+  const sdk = await checkedSdk(deps);
   return sdk.ok ? sdk.entry : undefined;
 }
