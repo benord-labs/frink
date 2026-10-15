@@ -8,7 +8,7 @@ import type {
 import type { RecoveryKind } from '@frink/shared/types/flow-run/resume';
 import { taskStatus, type Status } from '../../lib/status';
 
-export type QueueSectionKey = 'needsYou' | 'running' | 'review' | 'upNext';
+export type QueueSectionKey = 'needsYou' | 'running' | 'review';
 export type QueueTarget =
   | {
       screen: 'Chat';
@@ -56,7 +56,6 @@ const SOURCE: Record<QueueSectionKey, MobileQueueSection> = {
   needsYou: 'attention',
   running: 'running',
   review: 'attention',
-  upNext: 'inbox',
 };
 
 const KIND_WORD = { chat: 'Chat', flow: 'Flow', inbox: '' } as const;
@@ -64,8 +63,6 @@ const QUESTION: Status = { word: 'Question', tone: 'attention', glyph: 'awaiting
 const PERMISSION: Status = { word: 'Approval', tone: 'attention', glyph: 'awaiting' };
 // Finished work is calm: the section already says "Ready for review".
 const READY: Status = { word: 'Ready', tone: 'quiet', glyph: 'done' };
-// Not "Up next" again under the Up next header.
-const QUEUED: Status = { ...taskStatus('pending'), word: 'Queued' };
 
 /** In the Queue amber means "needs you"; only a failure keeps its red. */
 function needsYouStatus(status: string): Status {
@@ -244,24 +241,19 @@ export function queueSections(data: MobileOverview): QueueSection[] {
   const running = bySection('running')
     .map((item) => itemRow(item, taskStatus('running'), progress(item.summary)))
     .sort(newestFirst);
-  const upNext = bySection('inbox')
-    .map((item) => itemRow(item, QUEUED, item.chatId ? null : item.summary))
-    .sort(newestFirst);
   // Unsent attention rows can't be told apart, so both attention sections count what was sent;
   // expanding pages in the whole attention list, which makes both exact.
   const totals: Record<QueueSectionKey, number> = {
     needsYou: needsYou.length,
     running: data.counts.running,
     review: review.length,
-    upNext: data.counts.inbox,
   };
   const titles = {
     needsYou: 'Needs you',
     running: 'Running',
     review: 'Ready for review',
-    upNext: 'Up next',
   };
-  const rows = { needsYou, running, review, upNext };
+  const rows = { needsYou, running, review };
   return (Object.keys(titles) as QueueSectionKey[])
     .filter((key) => rows[key].length > 0)
     .map((key) => ({

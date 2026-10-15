@@ -39,7 +39,7 @@ function busyOverview() {
   };
 }
 
-test('shows what needs you, what is running, what is ready and what is next', async ({ page }) => {
+test('shows what needs you, what is running and what is ready', async ({ page }) => {
   await openQueue(page);
   await expect(row(page, 'question:question-1')).toContainText(
     'Should I switch the CI cache to the lockfile hash?',
@@ -47,7 +47,7 @@ test('shows what needs you, what is running, what is ready and what is next', as
   // Decisions lead, then tasks newest first; finished work waits in its own calm section.
   const needsYou = ['question:question-1', 'permission:perm-1', 'task-plan', 'task-failed'];
   const rows = page.locator('[data-testid^="queue-row-"]');
-  await expect(rows).toHaveCount(8);
+  await expect(rows).toHaveCount(7);
   expect(
     (await rows.evaluateAll((nodes) => nodes.map((node) => node.dataset.testid))).slice(0, 4),
   ).toEqual(needsYou.map((key) => `queue-row-${key}`));
@@ -57,9 +57,8 @@ test('shows what needs you, what is running, what is ready and what is next', as
   await expect(row(page, 'task-run-flow')).toContainText('Flow · design-system · Step 2 of 4');
   await expect(row(page, 'task-run-chat')).toContainText('Chat · frink');
   await expect(row(page, 'task-done')).toContainText('Ready');
-  await expect(row(page, 'task-inbox')).toContainText('Queued');
   await expect(row(page, 'task-plan')).not.toContainText('Plan is ready');
-  for (const title of ['Needs you', 'Running', 'Ready for review', 'Up next'])
+  for (const title of ['Needs you', 'Running', 'Ready for review'])
     await expect(page.getByRole('heading', { name: new RegExp(`^${title}`) })).toBeVisible();
   // Question + permission + plan ready + failed, and the finished task the phone can complete.
   await page.getByRole('link', { name: /back/i }).click();
@@ -68,7 +67,7 @@ test('shows what needs you, what is running, what is ready and what is next', as
   await expect(page.getByText("Benji's MacBook Pro")).toBeVisible();
   await shot(page, 'sections');
   await page.mouse.wheel(0, 600);
-  await expect(row(page, 'task-inbox')).toBeInViewport();
+  await expect(row(page, 'task-done')).toBeInViewport();
   await shot(page, 'sections-bottom');
   await page.emulateMedia({ colorScheme: 'light' });
   await page.mouse.wheel(0, -600);
@@ -117,7 +116,7 @@ test('says you are all caught up when nothing is waiting', async ({ page }) => {
     queue: [],
     questions: [],
     permissions: [],
-    counts: { attention: 0, running: 0, inbox: 0 },
+    counts: { attention: 0, running: 0 },
   };
   await openQueue(page, { data: { overview } });
   await expect(page.getByText('You’re all caught up')).toBeVisible();
@@ -221,7 +220,7 @@ async function swipeOpen(page: Page, key: string, label: string) {
 }
 
 const sent = (state: Awaited<ReturnType<typeof openApp>>) =>
-  state.requests.filter((r) => ['completeTask', 'continueTask', 'startTask'].includes(r.type));
+  state.requests.filter((r) => ['completeTask', 'continueTask'].includes(r.type));
 
 test('swiping a task offers the desktop’s actions and sends the chosen one', async ({ page }) => {
   const state = await openQueue(page, { data: { overview: recoveryOverview() } });
@@ -256,21 +255,9 @@ test('swiping a task offers the desktop’s actions and sends the chosen one', a
   );
   await page.screenshot({ path: 'test-results/sc4143-swipe-complete-dark.png' });
   await complete.click();
-  // Let the row finish closing: the next row's scroll would cut its animation short.
-  await page.waitForTimeout(500);
-  const start = await swipeOpen(
-    page,
-    'task-inbox',
-    'Start task: Summarise yesterday’s support emails',
-  );
-  await page.screenshot({ path: 'test-results/sc4143-swipe-start-dark.png' });
-  await start.click();
   await expect
     .poll(() => sent(state).slice(2))
-    .toEqual([
-      { type: 'completeTask', id: 'task-done' },
-      { type: 'startTask', id: 'task-inbox' },
-    ]);
+    .toEqual([{ type: 'completeTask', id: 'task-done' }]);
 });
 
 test('a Flow Retry that may repeat side effects asks first, then pins the step', async ({
@@ -315,10 +302,10 @@ test('decisions, a failed Flow and running work have no swipe actions', async ({
   await expect(page.getByRole('button', { name: /^Continue task: / })).toBeAttached();
   for (const key of ['question:question-1', 'task-failed', 'task-run-flow', 'task-plan'])
     await expect(row(page, key)).toBeVisible();
-  // Only the parked, finished and inbox tasks carry actions.
+  // Only the parked and finished tasks carry actions.
   await expect(
-    page.getByRole('button', { name: /^(Start task|Continue task|Retry task|Mark complete): / }),
-  ).toHaveCount(4);
+    page.getByRole('button', { name: /^(Continue task|Retry task|Mark complete): / }),
+  ).toHaveCount(3);
 });
 
 test('an action the computer refuses explains why', async ({ page }) => {

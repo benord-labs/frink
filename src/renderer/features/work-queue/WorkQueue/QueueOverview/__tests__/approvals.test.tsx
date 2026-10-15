@@ -55,7 +55,6 @@ function overview(
     runningCount: runningTasks.length,
     runningTasks,
     taskActions: makeTaskActions(),
-    waitingTasks: [],
   };
   return <QueueOverview {...props} />;
 }

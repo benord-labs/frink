@@ -13,20 +13,17 @@ const historyTaskListSpy = vi.fn();
 const {
   retryTaskMutateMock,
   retryTaskMutationErrorMessageMock,
-  createChatMutationErrorMessageMock,
   overviewCountsMock,
   paginatedLoadingMock,
 } = vi.hoisted(() => ({
   retryTaskMutateMock: vi.fn(),
   retryTaskMutationErrorMessageMock: vi.fn<() => string | null>(() => null),
-  createChatMutationErrorMessageMock: vi.fn<() => string | null>(() => null),
-  overviewCountsMock: vi.fn(() => ({ inbox: 1, queued: 0, review: 1, running: 0 })),
+  overviewCountsMock: vi.fn(() => ({ queued: 0, review: 1, running: 0 })),
   paginatedLoadingMock: vi.fn<() => boolean>(() => false),
 }));
 const {
   getSubChatQueryMock,
   getChatQueryMock,
-  seedUserMessageIfEmptyMock,
   toastErrorMock,
   toastSuccessMock,
   setAtomMock,
@@ -38,10 +35,7 @@ const {
   storeGetMock,
   storeSetMock,
   startExecutionMutateAsyncMock,
-  updateTaskStatusMutateMock,
-  updateTaskStatusMutateAsyncMock,
   completeTaskMutateMock,
-  createChatMutateMock,
   deleteMutateMock,
   cancelMutateMock,
   deleteMatchingMutateAsyncMock,
@@ -50,7 +44,6 @@ const {
   trpcClientTasksListPaginatedQueryMock,
   deleteMutationSuccessValueMock,
   deleteMutationErrorMessageMock,
-  updateTaskStatusMutationErrorMessageMock,
   workQueueRows,
   overviewOnlyTaskIds,
   paginatedResponseCache,
@@ -88,7 +81,6 @@ const {
   return {
     getSubChatQueryMock: vi.fn(),
     getChatQueryMock: vi.fn(),
-    seedUserMessageIfEmptyMock: vi.fn(),
     toastErrorMock: vi.fn(),
     toastSuccessMock: vi.fn(),
     setAtomMock: vi.fn(),
@@ -100,10 +92,7 @@ const {
     storeGetMock: vi.fn<(...args: unknown[]) => unknown>(() => 'workqueue'),
     storeSetMock: vi.fn(),
     startExecutionMutateAsyncMock: vi.fn(),
-    updateTaskStatusMutateMock: vi.fn(),
-    updateTaskStatusMutateAsyncMock: vi.fn(),
     completeTaskMutateMock: vi.fn(),
-    createChatMutateMock: vi.fn(),
     deleteMutateMock: vi.fn(),
     cancelMutateMock: vi.fn(),
     deleteMatchingMutateAsyncMock: vi.fn(),
@@ -112,50 +101,14 @@ const {
     trpcClientTasksListPaginatedQueryMock: vi.fn(),
     deleteMutationSuccessValueMock: vi.fn(() => ({ success: true })),
     deleteMutationErrorMessageMock: vi.fn<() => string | null>(() => null),
-    updateTaskStatusMutationErrorMessageMock: vi.fn<() => string | null>(() => null),
     workQueueRows: [
       makeRow({
         id: 'task-1',
         title: 'Email: No subject',
+        status: 'needs_attention',
         source: 'gmail',
         createdAt: at('00'),
-        triggerContext: makeTriggerContext(at('00'), { startMode: 'wait', model: 'opus' }, ''),
-      }),
-      makeRow({
-        id: 'task-worktree-false',
-        title: 'Trigger task no worktree',
-        description: 'Configured no worktree',
-        source: 'gmail',
-        createdAt: at('01'),
-        projectName: 'Project 1',
-        projectId: 'project-1',
-        triggerContext: makeTriggerContext(at('01'), {
-          startMode: 'wait',
-          startInWorktree: false,
-        }),
-      }),
-      makeRow({
-        id: 'task-worktree-legacy',
-        title: 'Legacy trigger task',
-        description: 'Legacy default',
-        source: 'gmail',
-        createdAt: at('02'),
-        projectName: 'Project 2',
-        projectId: 'project-2',
-        triggerContext: makeTriggerContext(at('02'), { start_mode: 'wait' }),
-      }),
-      makeRow({
-        id: 'task-worktree-snake',
-        title: 'Trigger task legacy snake case',
-        description: 'Configured no worktree using legacy key',
-        source: 'gmail',
-        createdAt: at('03'),
-        projectName: 'Project 3',
-        projectId: 'project-3',
-        triggerContext: makeTriggerContext(at('03'), {
-          startMode: 'wait',
-          start_in_worktree: false,
-        }),
+        triggerContext: makeTriggerContext(at('00'), { model: 'opus' }, ''),
       }),
       makeRow({
         id: 'task-no-trigger',
@@ -188,7 +141,6 @@ const {
     >(),
     overviewRefetchMocks: {
       attention: vi.fn(async () => undefined),
-      inbox: vi.fn(async () => undefined),
       running: vi.fn(async () => undefined),
     },
   };
@@ -244,7 +196,6 @@ vi.mock('./QueueOverview', () => ({
     attentionTasks: Array<{ status: string }>;
     runningTasks: Array<{ status: string }>;
     taskActions: Record<string, unknown>;
-    waitingTasks: Array<{ status: string }>;
   }) => {
     const observeLane = (laneKey: string, tasks: Array<{ status: string }>) =>
       overviewLaneSpy({ ...props.taskActions, laneKey, tasks });
@@ -267,7 +218,6 @@ vi.mock('./QueueOverview', () => ({
       props.attentionTasks.filter((task) => task.status === 'done'),
     );
     observeLane('running', props.runningTasks);
-    observeLane('queued', props.waitingTasks);
     return null;
   },
 }));
@@ -324,7 +274,7 @@ vi.mock('../../../lib/trpc', () => ({
       listPaginated: {
         useQuery: (input?: {
           statuses?: string[];
-          workQueueSection?: 'attention' | 'inbox' | 'running';
+          workQueueSection?: 'attention' | 'running';
           limit?: number;
           cursor?: { createdAt: string; id: string } | null;
         }) => {
@@ -351,10 +301,7 @@ vi.mock('../../../lib/trpc', () => ({
                     'failed',
                     'done',
                   ].includes(status);
-                if (input.workQueueSection === 'running') return status === 'running';
-                return (
-                  row.status === 'pending' && JSON.stringify(row.triggerContext).includes('wait')
-                );
+                return status === 'running';
               })
             : statuses.length > 0
               ? allRows.filter((row) => statuses.includes(row.status))
@@ -447,52 +394,6 @@ vi.mock('../../../lib/trpc', () => ({
           isPending: false,
         }),
       },
-      updateStatus: {
-        useMutation: (options?: {
-          onSuccess?: (
-            data: unknown,
-            variables: { taskId: string; status: string; result?: Record<string, unknown> },
-          ) => void;
-          onError?: (error: Error) => void;
-        }) => ({
-          mutate: (
-            variables: { taskId: string; status: string; result?: Record<string, unknown> },
-            mutateOptions?: {
-              onSuccess?: (
-                data: unknown,
-                variables: { taskId: string; status: string; result?: Record<string, unknown> },
-              ) => void;
-              onError?: (error: Error) => void;
-            },
-          ) => {
-            updateTaskStatusMutateMock(variables, mutateOptions);
-            const errorMessage = updateTaskStatusMutationErrorMessageMock();
-            if (typeof errorMessage === 'string') {
-              const error = new Error(errorMessage);
-              mutateOptions?.onError?.(error);
-              options?.onError?.(error);
-              return;
-            }
-            options?.onSuccess?.(undefined, variables);
-            mutateOptions?.onSuccess?.(undefined, variables);
-          },
-          mutateAsync: async (variables: {
-            taskId: string;
-            status: string;
-            result?: Record<string, unknown>;
-          }) => {
-            try {
-              const result = await updateTaskStatusMutateAsyncMock(variables);
-              options?.onSuccess?.(result, variables);
-              return result;
-            } catch (error) {
-              options?.onError?.(error as Error);
-              throw error;
-            }
-          },
-          isPending: false,
-        }),
-      },
       recover: {
         useMutation: (options?: {
           onSuccess?: (data: { ok: true }, variables: { taskId: string; kind: string }) => void;
@@ -520,28 +421,6 @@ vi.mock('../../../lib/trpc', () => ({
         }),
       },
     },
-    chats: {
-      create: {
-        useMutation: (options?: {
-          onSuccess?: (
-            chat: { id: string },
-            variables: Record<string, unknown>,
-          ) => void | Promise<void>;
-          onError?: (error: Error, variables: Record<string, unknown>) => void;
-        }) => ({
-          mutate: (variables: Record<string, unknown>) => {
-            createChatMutateMock(variables);
-            const errorMessage = createChatMutationErrorMessageMock();
-            if (typeof errorMessage === 'string') {
-              options?.onError?.(new Error(errorMessage), variables);
-              return;
-            }
-            void options?.onSuccess?.({ id: 'chat-created' }, variables);
-          },
-          isPending: false,
-        }),
-      },
-    },
   },
   trpcClient: {
     tasks: {
@@ -550,7 +429,6 @@ vi.mock('../../../lib/trpc', () => ({
     chats: {
       getSubChat: { query: getSubChatQueryMock },
       get: { query: getChatQueryMock },
-      seedUserMessageIfEmpty: { mutate: seedUserMessageIfEmptyMock },
     },
   },
 }));
@@ -570,17 +448,14 @@ beforeAll(async () => {
 afterEach(() => {
   cleanup();
   trpcClientTasksListPaginatedQueryMock.mockReset();
-  updateTaskStatusMutateMock.mockReset();
-  updateTaskStatusMutationErrorMessageMock.mockReset();
   retryTaskMutateMock.mockReset();
   retryTaskMutationErrorMessageMock.mockReset();
-  createChatMutationErrorMessageMock.mockReset();
   deleteMatchingMutateAsyncMock.mockReset();
   toastSuccessMock.mockReset();
   paginatedLoadingMock.mockReset();
   paginatedLoadingMock.mockReturnValue(false);
   overviewCountsMock.mockReset();
-  overviewCountsMock.mockReturnValue({ inbox: 1, queued: 0, review: 1, running: 0 });
+  overviewCountsMock.mockReturnValue({ queued: 0, review: 1, running: 0 });
   defaultWorkQueueProps.onRequestClose.mockReset();
   defaultWorkQueueProps.onNavigateToChat.mockReset();
   storeGetMock.mockReset();
@@ -623,13 +498,13 @@ describe('WorkQueue mapTask trigger context', () => {
   it('keeps queued admissions and completed history out of the empty state', () => {
     const originalRows = workQueueRows.splice(0);
     try {
-      overviewCountsMock.mockReturnValue({ inbox: 0, queued: 1, review: 0, running: 0 });
+      overviewCountsMock.mockReturnValue({ queued: 1, review: 0, running: 0 });
       renderWorkQueue();
       expect(screen.queryByText('empty')).not.toBeInTheDocument();
 
       cleanup();
       paginatedResponseCache.clear();
-      overviewCountsMock.mockReturnValue({ inbox: 0, queued: 0, review: 0, running: 0 });
+      overviewCountsMock.mockReturnValue({ queued: 0, review: 0, running: 0 });
       workQueueRows.push({
         ...originalRows[0],
         id: 'history-only',
@@ -728,10 +603,10 @@ describe('WorkQueue mapTask trigger context', () => {
   it('passes trigger context objects to Overview lanes', () => {
     overviewLaneSpy.mockClear();
     renderWorkQueue();
-    const queuedProps = getOverviewLaneProps<{
+    const attentionProps = getOverviewLaneProps<{
       tasks?: Array<{ triggerContext?: { source?: string } | null }>;
-    }>('queued');
-    expect(queuedProps.tasks?.[0]?.triggerContext?.source).toBe('gmail');
+    }>('needs-attention');
+    expect(attentionProps.tasks?.[0]?.triggerContext?.source).toBe('gmail');
     expect(screen.getByRole('banner')).toHaveClass(
       'drag-region',
       'flex-wrap',
@@ -760,37 +635,30 @@ describe('WorkQueue mapTask trigger context', () => {
   });
   it('gates stale task outcomes by live navigation ownership', async () => {
     overviewLaneSpy.mockClear();
-    seedUserMessageIfEmptyMock.mockReset();
     const onNavigateToChat = vi.fn();
     getChatQueryMock.mockResolvedValue({ id: 'chat-1', subChats: [{ id: 'subchat-1' }] });
     getSubChatQueryMock.mockResolvedValue({ id: 'subchat-1', messages: [] });
-    seedUserMessageIfEmptyMock.mockResolvedValue(undefined);
     const view = renderWorkQueue({ onNavigateToChat });
-    const queuedProps = getOverviewLaneProps<{
+    const attentionProps = getOverviewLaneProps<{
       tasks: Array<Record<string, unknown>>;
       onOpenChat: (task: unknown, chatId: string) => Promise<void>;
-    }>('queued');
-    await queuedProps.onOpenChat(queuedProps.tasks[0], 'chat-1');
-    expect(seedUserMessageIfEmptyMock).toHaveBeenCalledTimes(1);
-    const payload = seedUserMessageIfEmptyMock.mock.calls[0][0] as {
-      message: { parts: Array<{ text: string }> };
-    };
-    expect(payload.message.parts[0]?.text).toContain('Email rule');
+    }>('needs-attention');
+    // Open chat only navigates, even into an empty sub-chat: there is no write to send.
+    await attentionProps.onOpenChat(attentionProps.tasks[0], 'chat-1');
     expect(onNavigateToChat).toHaveBeenCalledWith('chat-1');
+    expect(useAgentSubChatStore.getState().activeSubChatId).toBe('subchat-1');
     expect(defaultWorkQueueProps.onRequestClose).not.toHaveBeenCalled();
     let resolveLookup: (chat: unknown) => void = () => undefined;
     getChatQueryMock.mockReturnValueOnce(new Promise((resolve) => (resolveLookup = resolve)));
-    const staleOpen = queuedProps.onOpenChat(queuedProps.tasks[0], 'chat-stale');
+    const staleOpen = attentionProps.onOpenChat(attentionProps.tasks[0], 'chat-stale');
     view.unmount();
     overviewLaneSpy.mockClear();
     const freshView = renderWorkQueue({ onNavigateToChat });
-    const freshQueuedProps = getOverviewLaneProps<typeof queuedProps>('queued');
-    await freshQueuedProps.onOpenChat(freshQueuedProps.tasks[0], 'chat-stale');
-    const writesAfterFreshOpen = seedUserMessageIfEmptyMock.mock.calls.length;
+    const freshAttentionProps = getOverviewLaneProps<typeof attentionProps>('needs-attention');
+    await freshAttentionProps.onOpenChat(freshAttentionProps.tasks[0], 'chat-stale');
     const stateAfterFreshOpen = useAgentSubChatStore.getState();
     resolveLookup({ id: 'chat-stale', subChats: [{ id: 'subchat-stale' }] });
     await staleOpen;
-    expect(seedUserMessageIfEmptyMock).toHaveBeenCalledTimes(writesAfterFreshOpen);
     expect(onNavigateToChat).toHaveBeenCalledTimes(2);
     expect(useAgentSubChatStore.getState()).toEqual(stateAfterFreshOpen);
     freshView.unmount();
@@ -799,7 +667,6 @@ describe('WorkQueue mapTask trigger context', () => {
     onNavigateToChat.mockClear();
     setAtomMock.mockReset();
     toastErrorMock.mockReset();
-    seedUserMessageIfEmptyMock.mockReset();
     startExecutionMutateAsyncMock.mockReset();
     getChatQueryMock.mockResolvedValue({ id: 'chat-review-missing' });
     getSubChatQueryMock.mockResolvedValue({
@@ -849,11 +716,11 @@ describe('WorkQueue mapTask trigger context', () => {
     toastErrorMock.mockReset();
     getChatQueryMock.mockRejectedValue(makeNotFoundError());
     renderWorkQueue();
-    const queuedProps = getOverviewLaneProps<{
+    const attentionProps = getOverviewLaneProps<{
       tasks: Array<Record<string, unknown>>;
       onOpenChat: (task: unknown, chatId: string) => Promise<void>;
-    }>('queued');
-    await queuedProps.onOpenChat(queuedProps.tasks[0], 'chat-missing');
+    }>('needs-attention');
+    await attentionProps.onOpenChat(attentionProps.tasks[0], 'chat-missing');
     expect(getSubChatQueryMock).not.toHaveBeenCalled();
     expect(toastErrorMock).toHaveBeenCalledWith(
       'This chat was deleted',
@@ -891,11 +758,11 @@ describe('WorkQueue mapTask trigger context', () => {
     setAtomMock.mockReset();
     getChatQueryMock.mockRejectedValue(new Error('network down'));
     renderWorkQueue();
-    const queuedProps = getOverviewLaneProps<{
+    const attentionProps = getOverviewLaneProps<{
       tasks: Array<Record<string, unknown>>;
       onOpenChat: (task: unknown, chatId: string) => Promise<void>;
-    }>('queued');
-    await queuedProps.onOpenChat(queuedProps.tasks[0], 'chat-network-error');
+    }>('needs-attention');
+    await attentionProps.onOpenChat(attentionProps.tasks[0], 'chat-network-error');
     expect(getSubChatQueryMock).not.toHaveBeenCalled();
     expect(toastErrorMock).toHaveBeenCalledWith(
       "Couldn't verify this chat right now",
@@ -913,8 +780,10 @@ describe('WorkQueue mapTask trigger context', () => {
     deleteMutationErrorMessageMock.mockReturnValue(null);
     deleteMutationSuccessValueMock.mockReturnValue({ success: false });
     renderWorkQueue();
-    const queuedProps = getOverviewLaneProps<{ onDelete: (taskId: string) => void }>('queued');
-    queuedProps.onDelete('task-1');
+    const attentionProps = getOverviewLaneProps<{ onDelete: (taskId: string) => void }>(
+      'needs-attention',
+    );
+    attentionProps.onDelete('task-1');
     expect(deleteMutateMock).toHaveBeenCalledWith('task-1');
     expect(toastErrorMock).toHaveBeenCalledWith(
       'Could not delete task',
@@ -931,12 +800,13 @@ describe('WorkQueue mapTask trigger context', () => {
     deleteMutationErrorMessageMock.mockReturnValue(null);
     deleteMutationSuccessValueMock.mockReturnValue({ success: true });
     renderWorkQueue();
-    const queuedProps = getOverviewLaneProps<{ onDelete: (taskId: string) => void }>('queued');
-    queuedProps.onDelete('task-1');
+    const attentionProps = getOverviewLaneProps<{ onDelete: (taskId: string) => void }>(
+      'needs-attention',
+    );
+    attentionProps.onDelete('task-1');
     expect(deleteMutateMock).toHaveBeenCalledWith('task-1');
     expect(overviewRefetchMocks.attention).toHaveBeenCalledTimes(1);
     expect(overviewRefetchMocks.running).toHaveBeenCalledTimes(1);
-    expect(overviewRefetchMocks.inbox).toHaveBeenCalledTimes(1);
     expect(listCountsInvalidateMock).toHaveBeenCalledTimes(1);
   });
   it('shows toast when delete mutation errors', () => {
@@ -946,199 +816,24 @@ describe('WorkQueue mapTask trigger context', () => {
     deleteMutationSuccessValueMock.mockReturnValue({ success: true });
     deleteMutationErrorMessageMock.mockReturnValue('backend exploded');
     renderWorkQueue();
-    const queuedProps = getOverviewLaneProps<{ onDelete: (taskId: string) => void }>('queued');
-    queuedProps.onDelete('task-1');
+    const attentionProps = getOverviewLaneProps<{ onDelete: (taskId: string) => void }>(
+      'needs-attention',
+    );
+    attentionProps.onDelete('task-1');
     expect(deleteMutateMock).toHaveBeenCalledWith('task-1');
     expect(toastErrorMock).toHaveBeenCalledWith(
       'Could not delete task',
       expect.objectContaining({ description: 'backend exploded' }),
     );
   });
-  it('creates queued task chat in execute mode from Start task', async () => {
-    overviewLaneSpy.mockClear();
-    createChatMutateMock.mockReset();
-    updateTaskStatusMutateAsyncMock.mockReset();
-    storeSetMock.mockReset();
-    setAtomMock.mockReset();
-    const onNavigateToChat = vi.fn();
-    overviewOnlyTaskIds.add('task-1');
-    renderWorkQueue({ onNavigateToChat });
-    const queuedProps = getOverviewLaneProps<{
-      onStartTask: (taskId: string, mode: 'agent' | 'plan') => void;
-    }>('queued');
-    queuedProps.onStartTask('task-1', 'agent');
-    expect(createChatMutateMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        taskId: 'task-1',
-        mode: 'agent',
-        useWorktree: false,
-      }),
-    );
-    expect(updateTaskStatusMutateAsyncMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        taskId: 'task-1',
-        status: 'running',
-        result: expect.objectContaining({
-          chatId: 'chat-created',
-          startMode: 'execute',
-          skipReview: true,
-          requestedModel: 'opus',
-          activeModel: 'opus',
-        }),
-      }),
-    );
-    expect(storeSetMock).toHaveBeenCalledWith(expect.anything(), 'agent');
-    expect(storeSetMock).toHaveBeenCalledWith(expect.anything(), 'opus');
-    await waitFor(() => expect(onNavigateToChat).toHaveBeenCalledWith('chat-created'));
-    expect(defaultWorkQueueProps.onRequestClose).not.toHaveBeenCalled();
-    expectCalledBefore(storeSetMock, onNavigateToChat);
-  });
-  it('runs no onSuccess side effects when queued create-chat fails', () => {
-    overviewLaneSpy.mockClear();
-    createChatMutateMock.mockReset();
-    updateTaskStatusMutateAsyncMock.mockReset();
-    storeSetMock.mockReset();
-    setAtomMock.mockReset();
-    createChatMutationErrorMessageMock.mockReturnValue('create failed');
-    renderWorkQueue();
-    const queuedProps = getOverviewLaneProps<{
-      onStartTask: (taskId: string, mode: 'agent' | 'plan') => void;
-    }>('queued');
-    queuedProps.onStartTask('task-1', 'agent');
-    expect(createChatMutateMock).toHaveBeenCalledWith(
-      expect.objectContaining({ taskId: 'task-1', mode: 'agent' }),
-    );
-    expect(updateTaskStatusMutateAsyncMock).not.toHaveBeenCalled();
-    expect(storeSetMock).not.toHaveBeenCalled();
-    expect(setAtomMock).not.toHaveBeenCalled();
-  });
-  it('creates queued task chat in plan mode from secondary action', () => {
-    overviewLaneSpy.mockClear();
-    createChatMutateMock.mockReset();
-    updateTaskStatusMutateAsyncMock.mockReset();
-    storeSetMock.mockReset();
-    setAtomMock.mockReset();
-    renderWorkQueue();
-    const queuedProps = getOverviewLaneProps<{
-      onStartTask: (taskId: string, mode: 'agent' | 'plan') => void;
-    }>('queued');
-    queuedProps.onStartTask('task-1', 'plan');
-    expect(createChatMutateMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        taskId: 'task-1',
-        mode: 'plan',
-        useWorktree: false,
-      }),
-    );
-    expect(updateTaskStatusMutateAsyncMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        taskId: 'task-1',
-        status: 'running',
-        result: expect.objectContaining({
-          chatId: 'chat-created',
-          startMode: 'plan',
-          skipReview: false,
-        }),
-      }),
-    );
-    expect(storeSetMock).toHaveBeenCalledWith(expect.anything(), 'plan');
-  });
-  it('uses trigger-configured worktree default for queued starts', () => {
-    overviewLaneSpy.mockClear();
-    createChatMutateMock.mockReset();
-    renderWorkQueue();
-    const queuedProps = getOverviewLaneProps<{
-      onStartTask: (taskId: string, mode: 'agent' | 'plan') => void;
-    }>('queued');
-    queuedProps.onStartTask('task-worktree-false', 'agent');
-    expect(createChatMutateMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        taskId: 'task-worktree-false',
-        useWorktree: false,
-      }),
-    );
-  });
-  it('falls back to project-based worktree default for legacy trigger tasks', () => {
-    overviewLaneSpy.mockClear();
-    createChatMutateMock.mockReset();
-    renderWorkQueue();
-    const queuedProps = getOverviewLaneProps<{
-      onStartTask: (taskId: string, mode: 'agent' | 'plan') => void;
-    }>('queued');
-    queuedProps.onStartTask('task-worktree-legacy', 'agent');
-    expect(createChatMutateMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        taskId: 'task-worktree-legacy',
-        useWorktree: true,
-      }),
-    );
-  });
-  it('honors legacy snake-case trigger worktree config', () => {
-    overviewLaneSpy.mockClear();
-    createChatMutateMock.mockReset();
-    renderWorkQueue();
-    const queuedProps = getOverviewLaneProps<{
-      onStartTask: (taskId: string, mode: 'agent' | 'plan') => void;
-    }>('queued');
-    queuedProps.onStartTask('task-worktree-snake', 'agent');
-    expect(createChatMutateMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        taskId: 'task-worktree-snake',
-        useWorktree: false,
-      }),
-    );
-  });
-  it('keeps default behavior for actionable tasks without trigger context', () => {
-    overviewLaneSpy.mockClear();
-    createChatMutateMock.mockReset();
-    updateTaskStatusMutateAsyncMock.mockReset();
-    storeSetMock.mockReset();
-    setAtomMock.mockReset();
-    renderWorkQueue();
-    const needsAttentionProps = getOverviewLaneProps<{
-      onStartTask: (taskId: string, mode: 'agent' | 'plan') => void;
-    }>('needs-attention');
-    needsAttentionProps.onStartTask('task-no-trigger', 'agent');
-    expect(createChatMutateMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        taskId: 'task-no-trigger',
-        mode: 'agent',
-      }),
-    );
-    expect(updateTaskStatusMutateAsyncMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        taskId: 'task-no-trigger',
-        result: expect.objectContaining({
-          startMode: 'execute',
-          skipReview: true,
-        }),
-      }),
-    );
-    expect(storeSetMock).toHaveBeenCalledWith(expect.anything(), 'agent');
-    expect(storeSetMock).not.toHaveBeenCalledWith(expect.anything(), 'opus');
-  });
-  it('never sends trigger start-mode enum values to chats.create', () => {
-    overviewLaneSpy.mockClear();
-    createChatMutateMock.mockReset();
-    renderWorkQueue();
-    const queuedProps = getOverviewLaneProps<{
-      onStartTask: (taskId: string, mode: 'agent' | 'plan') => void;
-    }>('queued');
-    queuedProps.onStartTask('task-1', 'agent');
-    queuedProps.onStartTask('task-1', 'plan');
-    const sentModes = createChatMutateMock.mock.calls.map(
-      ([input]) => (input as { mode?: string }).mode,
-    );
-    expect(sentModes).toEqual(expect.arrayContaining(['agent', 'plan']));
-    expect(sentModes).not.toContain('execute');
-    expect(sentModes).not.toContain('wait');
-  });
-  it('exposes queued and attention task actions through Overview lanes', () => {
+  it('exposes attention task actions through Overview lanes', () => {
     overviewLaneSpy.mockClear();
     renderWorkQueue();
 
     expect(
-      getOverviewLaneProps<{ tasks: Array<{ id: string }> }>('queued').tasks.map((task) => task.id),
+      getOverviewLaneProps<{ tasks: Array<{ id: string }> }>('needs-attention').tasks.map(
+        (task) => task.id,
+      ),
     ).toContain('task-1');
     expect(
       getOverviewLaneProps<{ tasks: Array<{ id: string }> }>('review').tasks.map((task) => task.id),
@@ -1153,7 +848,6 @@ describe('WorkQueue mapTask trigger context', () => {
     "recovers %s failed Overview task with the row's recovery kind",
     (_, flowRunId, kind) => {
       overviewLaneSpy.mockClear();
-      updateTaskStatusMutateMock.mockReset();
       retryTaskMutateMock.mockReset();
       const failedRow = {
         ...buildFailedRetryRow('task-failed-retry', '2026-03-10T01:20:00.000Z'),
@@ -1178,9 +872,8 @@ describe('WorkQueue mapTask trigger context', () => {
       }
     },
   );
-  it('keeps waiting Overview rows deduplicated while repeated retries await refetch', () => {
+  it('keeps Overview rows deduplicated while repeated retries await refetch', () => {
     overviewLaneSpy.mockClear();
-    updateTaskStatusMutateMock.mockReset();
     const failedRow = buildFailedRetryRow(
       'task-failed-retry-spam',
       '2026-03-10T01:21:00.000Z',
@@ -1194,12 +887,12 @@ describe('WorkQueue mapTask trigger context', () => {
       }>('failed');
       failedProps.onRetryTask('task-failed-retry-spam');
       failedProps.onRetryTask('task-failed-retry-spam');
-      const queuedProps = getOverviewLaneProps<{
+      const attentionProps = getOverviewLaneProps<{
         tasks: Array<{ id: string; status: string }>;
-      }>('queued');
-      const copies = queuedProps.tasks.filter((task) => task.id === 'task-1');
+      }>('needs-attention');
+      const copies = attentionProps.tasks.filter((task) => task.id === 'task-1');
       expect(copies).toHaveLength(1);
-      expect(copies[0]?.status).toBe('pending');
+      expect(copies[0]?.status).toBe('needs_attention');
       expect(retryTaskMutateMock).toHaveBeenCalledTimes(2);
     } finally {
       workQueueRows.pop();
@@ -1233,7 +926,6 @@ describe('WorkQueue mapTask trigger context', () => {
       );
       expect(overviewRefetchMocks.attention).toHaveBeenCalledTimes(1);
       expect(overviewRefetchMocks.running).toHaveBeenCalledTimes(1);
-      expect(overviewRefetchMocks.inbox).toHaveBeenCalledTimes(1);
       expect(listCountsInvalidateMock).toHaveBeenCalledTimes(1);
     } finally {
       workQueueRows.pop();
@@ -1245,9 +937,11 @@ describe('WorkQueue mapTask trigger context', () => {
     deleteMutationErrorMessageMock.mockReturnValue(null);
     deleteMutationSuccessValueMock.mockReturnValue({ success: true });
     renderWorkQueue();
-    const queuedProps = getOverviewLaneProps<{ onDelete: (taskId: string) => void }>('queued');
-    queuedProps.onDelete('task-1');
-    queuedProps.onDelete('task-1');
+    const attentionProps = getOverviewLaneProps<{ onDelete: (taskId: string) => void }>(
+      'needs-attention',
+    );
+    attentionProps.onDelete('task-1');
+    attentionProps.onDelete('task-1');
     expect(deleteMutateMock).toHaveBeenCalledTimes(2);
     expect(deleteMutateMock).toHaveBeenNthCalledWith(1, 'task-1');
     expect(deleteMutateMock).toHaveBeenNthCalledWith(2, 'task-1');
@@ -1283,7 +977,6 @@ describe('WorkQueue mapTask trigger context', () => {
       expect(cancelMutateMock).toHaveBeenCalledWith('task-needs-attention-order');
       expect(overviewRefetchMocks.attention).toHaveBeenCalledTimes(2);
       expect(overviewRefetchMocks.running).toHaveBeenCalledTimes(2);
-      expect(overviewRefetchMocks.inbox).toHaveBeenCalledTimes(2);
     } finally {
       workQueueRows.pop();
     }
@@ -1419,7 +1112,6 @@ describe('WorkQueue mapTask trigger context', () => {
       expect(cancelMutateMock).toHaveBeenCalledWith('task-needs-attention-1');
       expect(overviewRefetchMocks.attention).toHaveBeenCalledTimes(2);
       expect(overviewRefetchMocks.running).toHaveBeenCalledTimes(2);
-      expect(overviewRefetchMocks.inbox).toHaveBeenCalledTimes(2);
     } finally {
       workQueueRows.pop();
     }

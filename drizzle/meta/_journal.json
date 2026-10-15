@@ -449,6 +449,13 @@
       "when": 1791100000000,
       "tag": "0113_tasks_project_status_completed_idx",
       "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "6",
+      "when": 1791200000000,
+      "tag": "0114_cancel_wait_mode_tasks",
+      "breakpoints": true
     }
   ]
 }

@@ -60,20 +60,12 @@ describe('QueueOverview', () => {
         agentSignal: { state: 'awaiting_input', summary: 'Choose a region.' },
       },
     });
-    render(
+    const { container } = render(
       <QueueOverview
         interruptedRuns={null}
         queuedAdmissions={queuedAdmissionsStub}
         attentionTasks={[reviewTask, questionTask]}
         runningTasks={[makeTask()]}
-        waitingTasks={[
-          makeTask({
-            id: 'task-waiting',
-            title: 'Ready for pickup',
-            status: 'pending',
-            result: null,
-          }),
-        ]}
         queuedCount={1}
         reviewCount={2}
         runningCount={1}
@@ -87,13 +79,13 @@ describe('QueueOverview', () => {
     const otherSummary = screen.getByRole('button', { name: 'Other tasks needing attention 1' });
     const other = otherSummary.closest('details');
     const queued = screen.getByRole('region', { name: 'Queued to run' });
-    const inbox = screen.getByRole('region', { name: 'Inbox, ready to start' });
 
     expect(progress.compareDocumentPosition(attention)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(attention.compareDocumentPosition(running)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(running.compareDocumentPosition(otherSummary)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(otherSummary.compareDocumentPosition(queued)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-    expect(queued.compareDocumentPosition(inbox)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(container.lastElementChild).toContainElement(queued);
+    expect(screen.queryByText(/Inbox/)).not.toBeInTheDocument();
     expect(other?.open).toBe(false);
 
     fireEvent.click(otherSummary);
@@ -124,9 +116,6 @@ describe('QueueOverview', () => {
       screen.getByRole('button', { name: 'Other tasks needing attention 1' }).closest('details')
         ?.open,
     ).toBe(false);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
-    expect(taskActions.onStartTask).toHaveBeenCalledWith('task-waiting', 'agent');
   });
 
   it('opens a running task through the shared Work Queue chat handler', () => {
@@ -139,7 +128,6 @@ describe('QueueOverview', () => {
         queuedAdmissions={queuedAdmissionsStub}
         attentionTasks={[]}
         runningTasks={[task]}
-        waitingTasks={[]}
         queuedCount={0}
         reviewCount={0}
         runningCount={1}
@@ -185,7 +173,6 @@ describe('QueueOverview', () => {
         queuedAdmissions={queuedAdmissionsStub}
         attentionTasks={attentionTasks}
         runningTasks={[]}
-        waitingTasks={[]}
         queuedCount={0}
         reviewCount={attentionTasks.length}
         runningCount={0}
@@ -223,7 +210,6 @@ describe('QueueOverview', () => {
         queuedAdmissions={queuedAdmissionsStub}
         attentionTasks={[]}
         runningTasks={[task]}
-        waitingTasks={[]}
         queuedCount={0}
         reviewCount={0}
         runningCount={1}
@@ -240,7 +226,6 @@ describe('QueueOverview', () => {
 
   it('loads older rows within the selected Overview lane', () => {
     const attentionLoad = vi.fn(async () => undefined);
-    const inboxLoad = vi.fn(async () => undefined);
     const runningLoad = vi.fn(async () => undefined);
     render(
       <QueueOverview
@@ -249,11 +234,9 @@ describe('QueueOverview', () => {
         attentionTasks={[makeTask({ id: 'review', status: 'plan_ready' })]}
         pagination={{
           attention: { canLoadMore: true, isLoadingMore: false, loadMore: attentionLoad },
-          inbox: { canLoadMore: true, isLoadingMore: false, loadMore: inboxLoad },
           running: { canLoadMore: true, isLoadingMore: false, loadMore: runningLoad },
         }}
         runningTasks={[makeTask()]}
-        waitingTasks={[makeTask({ id: 'waiting', status: 'pending', result: null })]}
         queuedCount={0}
         reviewCount={1}
         runningCount={1}
@@ -263,9 +246,7 @@ describe('QueueOverview', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Load older attention tasks' }));
     fireEvent.click(screen.getByRole('button', { name: 'Load older running tasks' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Load older Inbox tasks' }));
     expect(attentionLoad).toHaveBeenCalledOnce();
     expect(runningLoad).toHaveBeenCalledOnce();
-    expect(inboxLoad).toHaveBeenCalledOnce();
   });
 });

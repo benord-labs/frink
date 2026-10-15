@@ -17,7 +17,7 @@ import type { UIMessage } from 'ai';
 import { useSetAtom, useStore } from 'jotai';
 import { useEffect } from 'react';
 import { parseTriggerBubbleMessage } from '../../../../shared/lib/trigger-bubble-marker';
-import { type ResolvedTaskStartMode, toChatMode } from '../../../../shared/lib/trigger-rule-config';
+import { toChatMode } from '../../../../shared/lib/trigger-rule-config';
 import {
   isTaskChatReadyData,
   type TaskChatReadyData,
@@ -97,7 +97,7 @@ export function useTaskIpcHandler() {
       if (!isTaskChatReadyData(data)) return;
 
       const { chatId, subChatId } = data;
-      const mode = toChatMode(data.startMode as ResolvedTaskStartMode);
+      const mode = toChatMode(data.startMode);
 
       // data.headless == Boolean(task.flowRunId) — the flow-only signal (data.taskId is NOT
       // flow-only). Mark unconditionally, even when the Chat already exists: it heals a Chat

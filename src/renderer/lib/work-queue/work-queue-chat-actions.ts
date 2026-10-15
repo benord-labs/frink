@@ -26,10 +26,6 @@ type ChatActions = {
   ownsNavigation: () => boolean;
   getChat: (chatId: string) => Promise<unknown>;
   getSubChat: (id: string) => Promise<ResolvedWorkQueueSubChat | null>;
-  seedUserMessageIfEmpty: (input: {
-    id: string;
-    message: { id: string; role: 'user'; parts: [{ type: 'text'; text: string }] };
-  }) => Promise<unknown>;
   navigate: (chatId: string, subChatId?: string) => boolean;
   isNotFoundError: (error: unknown) => boolean;
   onMissingChat: () => void;
@@ -37,8 +33,6 @@ type ChatActions = {
 };
 
 type OpenChatInput = {
-  taskId: string;
-  prompt: string;
   chatId: string;
   resultSubChatId?: string;
   skipExistenceCheck?: boolean;
@@ -114,33 +108,6 @@ function findWorkQueuePlanApproval(rawMessages: unknown): WorkQueuePlanApproval 
   return null;
 }
 
-async function seedTaskPromptIfEmpty(
-  input: OpenChatInput,
-  subChatId: string | undefined,
-  fetchedSubChat: ResolvedWorkQueueSubChat | null | undefined,
-  actions: ChatActions,
-): Promise<boolean> {
-  if (!subChatId) return true;
-  try {
-    const subChat =
-      fetchedSubChat?.id === subChatId ? fetchedSubChat : await actions.getSubChat(subChatId);
-    if (!actions.ownsNavigation()) return false;
-    if (parseWorkQueueMessages(subChat?.messages)?.length !== 0) return true;
-    await actions.seedUserMessageIfEmpty({
-      id: subChatId,
-      message: {
-        id: `msg-task-${input.taskId}`,
-        role: 'user',
-        parts: [{ type: 'text', text: input.prompt }],
-      },
-    });
-    return actions.ownsNavigation();
-  } catch {
-    // A failed sub-chat recovery must not block opening a verified parent chat.
-    return true;
-  }
-}
-
 async function lookupChat(chatId: string, actions: ChatActions): Promise<ChatLookupResult> {
   try {
     const chat = await actions.getChat(chatId);
@@ -196,14 +163,13 @@ export async function openWorkQueueTaskChat(
     }
     preloadedChat = lookup.chat;
   }
-  const { subChatId, fetchedSubChat } = await resolveSubChat(
+  const { subChatId } = await resolveSubChat(
     input.chatId,
     input.resultSubChatId,
     preloadedChat,
     actions,
   );
   if (!actions.ownsNavigation()) return undefined;
-  if (!(await seedTaskPromptIfEmpty(input, subChatId, fetchedSubChat, actions))) return undefined;
   return actions.navigate(input.chatId, subChatId) ? subChatId : undefined;
 }
 

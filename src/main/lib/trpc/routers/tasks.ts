@@ -50,7 +50,7 @@ import {
 export { type FlowRunRecoveries, recoverTask } from './tasks-recovery';
 
 const taskSourceSchema = z.string().min(1).max(50);
-const workQueueSectionSchema = z.enum(['attention', 'inbox', 'running']);
+const workQueueSectionSchema = z.enum(['attention', 'running']);
 /** PERSISTED statuses — the only values a mutation may write to tasks.status. */
 const taskStatusSchema = z.enum([
   'pending',

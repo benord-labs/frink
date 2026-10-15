@@ -3,7 +3,6 @@ import { getDatabase } from '../../../../db';
 import { withSubChatLock } from '../../../../db/repos/sub-chat-mutex';
 import {
   getSubChatById as getSubChatByIdLocal,
-  seedUserMessageIfEmpty as seedUserMessageIfEmptyLocal,
   updateSubChatMode as updateSubChatModeLocal,
   updateSubChatSession as updateSubChatSessionLocal,
 } from '../../../../db/repos/sub-chats';
@@ -12,31 +11,12 @@ import { publicProcedure, router } from '../../../index';
 import { renameChatHierarchy } from '../helpers';
 import { mapSubChatResponse } from './map-sub-chat-response';
 
-const seedUserMessageSchema = z
-  .object({
-    id: z.string().min(1),
-    role: z.literal('user'),
-    parts: z
-      .array(z.object({ type: z.literal('text'), text: z.string().trim().min(1) }).strict())
-      .length(1),
-  })
-  .strict();
-
 /**
  * Phase 1 local-first migration: sub-chat updates write to local SQLite directly.
  * There is deliberately no wholesale "replace messages" mutation: a renderer-supplied array is a
  * stale read by the time it lands and would overwrite concurrent stream chunks (sc-3290).
  */
 export const subChatUpdateRouter = router({
-  seedUserMessageIfEmpty: publicProcedure
-    .input(z.object({ id: z.string().min(1), message: seedUserMessageSchema }).strict())
-    .mutation(async ({ input }) => {
-      const result = await seedUserMessageIfEmptyLocal(getDatabase(), input.id, input.message);
-      return {
-        seeded: result.seeded,
-        subChat: result.subChat ? mapSubChatResponse(result.subChat) : null,
-      };
-    }),
   updateSubChatSession: publicProcedure
     .input(z.object({ id: z.string(), sessionId: z.string().nullable() }))
     .mutation(async ({ input }) => {

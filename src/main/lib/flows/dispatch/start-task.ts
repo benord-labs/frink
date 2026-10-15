@@ -4,6 +4,8 @@
  */
 
 import { z } from 'zod';
+import { startTaskWaitError } from '../../../../shared/lib/flows/graph/start-task-rules';
+import { formatFlowNodeLabel } from '../../../../shared/lib/validate-flow-graph';
 import type { NodeOutput } from '../../../../shared/types/flow';
 import { getDatabase } from '../../db';
 import { getOrCreateFlowChat } from '../../db/repos/chats';
@@ -96,6 +98,9 @@ function inheritedBases(
 }
 
 export const dispatchStartTask: Dispatcher = async (ctx) => {
+  // A version saved before wait mode was removed still holds it; it must not run unconfirmed.
+  const waitError = startTaskWaitError(ctx.node, formatFlowNodeLabel);
+  if (waitError) return { type: 'error', message: waitError };
   const config = (ctx.node.config ?? {}) as StartTaskConfig;
   const variables = buildVariables({
     triggerContext: ctx.triggerContext,

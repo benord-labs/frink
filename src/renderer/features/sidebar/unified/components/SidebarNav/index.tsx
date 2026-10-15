@@ -41,7 +41,6 @@ import { getPaneReplaceMenuItemKey } from '../QuickActions/get-pane-replace-menu
 
 /* ── Work Queue status indicator ───────────────────────────────────── */
 type WorkQueueCounts = {
-  inboxTaskCount: number;
   pendingReviewCount: number;
   runningTaskCount: number;
   needsAttentionTaskCount: number;
@@ -49,7 +48,7 @@ type WorkQueueCounts = {
 };
 
 function workQueueAriaLabel(c: WorkQueueCounts): string {
-  return `Work Queue. Inbox ${c.inboxTaskCount} - Needs attention ${c.needsAttentionTaskCount} - Failed ${c.failedTaskCount} - Review ${c.pendingReviewCount} - Running ${c.runningTaskCount}. Click to open.`;
+  return `Work Queue. Needs attention ${c.needsAttentionTaskCount} - Failed ${c.failedTaskCount} - Review ${c.pendingReviewCount} - Running ${c.runningTaskCount}. Click to open.`;
 }
 
 function destinationAriaCurrent(isActive: boolean): 'page' | undefined {
@@ -62,13 +61,10 @@ type WorkQueueNotification = {
 };
 
 function getWorkQueueNotification(c: WorkQueueCounts): WorkQueueNotification | null {
-  const count =
-    c.inboxTaskCount + c.pendingReviewCount + c.needsAttentionTaskCount + c.failedTaskCount;
+  const count = c.pendingReviewCount + c.needsAttentionTaskCount + c.failedTaskCount;
   if (count === 0) return null;
   if (c.failedTaskCount > 0) return { count, level: 'error' };
-  if (c.needsAttentionTaskCount > 0 || c.inboxTaskCount > 0) {
-    return { count, level: 'warning' };
-  }
+  if (c.needsAttentionTaskCount > 0) return { count, level: 'warning' };
   return { count, level: 'review' };
 }
 
@@ -273,7 +269,6 @@ type SidebarNavProps = {
   isWorkQueueActive?: boolean;
   /** The Flows dashboard is showing. The flow editor is a takeover and never sets this. */
   isFlowsActive?: boolean;
-  inboxTaskCount: number;
   pendingReviewCount: number;
   runningTaskCount: number;
   needsAttentionTaskCount?: number;
@@ -390,7 +385,6 @@ function SidebarNavComponent({
   flowsTriggerRef,
   isWorkQueueActive = false,
   isFlowsActive = false,
-  inboxTaskCount,
   pendingReviewCount,
   runningTaskCount,
   needsAttentionTaskCount = 0,
@@ -400,7 +394,6 @@ function SidebarNavComponent({
   const showFlows = LAUNCH_FLAGS.flows;
   const showWorkQueue = LAUNCH_FLAGS.workQueue;
   const counts: WorkQueueCounts = {
-    inboxTaskCount,
     pendingReviewCount,
     runningTaskCount,
     needsAttentionTaskCount,

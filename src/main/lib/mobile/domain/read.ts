@@ -21,7 +21,7 @@ import { executionReady, mobileCallers, record, text } from './context';
 import { mobilePermissions, mobileQuestions, parkedQuestion } from './questions';
 import { mobileTaskActions } from './tasks';
 
-const sections = ['attention', 'inbox', 'running'] as const;
+const sections = ['attention', 'running'] as const;
 export async function readMobileOverview({
   limits = {},
   confirmsSideEffects,
@@ -96,12 +96,8 @@ export async function readMobileOverview({
     appVersion: app.getVersion(),
     queue,
     // The same section filter as the rows, so each total matches what "Show all" reveals.
-    counts: { attention: counts.review, inbox: counts.inbox, running: counts.running },
-    more: {
-      attention: pages[0].hasMore,
-      inbox: pages[1].hasMore,
-      running: pages[2].hasMore,
-    },
+    counts: { attention: counts.review, running: counts.running },
+    more: { attention: pages[0].hasMore, running: pages[1].hasMore },
     questions,
     permissions: mobilePermissions(),
     agents,

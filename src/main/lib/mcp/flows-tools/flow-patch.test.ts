@@ -439,6 +439,16 @@ describe('applyPatchOperations — graph-level validation after ops apply', () =
     expect(r.error).toMatch(/Graph validation failed/i);
     expect(r.error).toMatch(/defaultProjectId/i);
   });
+
+  it('refuses a Start Task set to wait and asks for Execute or Plan', () => {
+    const r = applyPatchOperations(MIN_VALID_GRAPH, [
+      { op: 'update_node', nodeId: 'nst', config: { startMode: 'wait' } },
+    ]);
+    expect(r.status).toBe('failure');
+    if (r.status !== 'failure') return;
+    expect(r.error).toMatch(/Graph validation failed after applying 1\/1 ops/i);
+    expect(r.error).toContain('choose Execute or Plan');
+  });
 });
 
 describe('applyPatchOperations — legacy error messages preserved', () => {

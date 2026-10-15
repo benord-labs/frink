@@ -14,7 +14,6 @@ import {
   effectiveStatusExpr,
   getWorkQueueSectionFilter,
   isFlowRepresentative,
-  isWaitModeTask,
   selectQueueTaskRows,
   type TaskListCursor,
   type TaskWithProjectRow,
@@ -351,16 +350,12 @@ export async function claimTask(db: Db, taskId: string, machineId: string): Prom
  * No machine predicate — this process is the only executor for this database.
  */
 export async function getPendingTaskIds(db: Db, limit = 25): Promise<{ id: string }[]> {
-  // SQL-level wait-mode filter: rows whose triggerContext._config.startMode
-  // is 'wait' must remain queued until manually started — they should not be
-  // claimed by the poller. Cloud poller endpoint enforced the same filter.
-  // Without it the executor claims a wait-mode task, throws
-  // "Wait-mode tasks must remain queued", and leaves the row stuck `running`
-  // until the next boot recovery sweep.
+  // Nothing pending is held for the removed "wait" mode: migration 0114 cancelled those tasks
+  // and agent dispatch refuses to create one (isRemovedWaitStartMode).
   return db
     .select({ id: tasks.id })
     .from(tasks)
-    .where(and(eq(tasks.status, 'pending'), drizzleSql`NOT ${isWaitModeTask}`))
+    .where(eq(tasks.status, 'pending'))
     .orderBy(tasks.createdAt)
     .limit(limit);
 }

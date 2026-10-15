@@ -4,11 +4,7 @@
  */
 
 export { effectiveStatusExpr, isFlowRepresentative } from './flow-collapse';
-export {
-  getWorkQueueSectionFilter,
-  isWaitModeTask,
-  type WorkQueueSection,
-} from './work-queue-overview-filter';
+export { getWorkQueueSectionFilter, type WorkQueueSection } from './work-queue-overview-filter';
 export {
   beforeQueueCursor,
   getQueueTaskRow,

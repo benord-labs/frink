@@ -32,6 +32,7 @@ import {
   findAgentProseOverflow,
   MAX_AGENT_PROSE_LENGTH,
 } from '../../../../shared/lib/flows/agent-prose-limit';
+import { isRemovedWaitStartMode } from '../../../../shared/lib/trigger-rule-config';
 import type { ChatMode } from '../../../../shared/types/chat-mode';
 import { type CodexSpeed, isCodexSpeed } from '../../../../shared/types/execution';
 import { getDatabase } from '../../db';
@@ -300,6 +301,13 @@ export const dispatchAgent: Dispatcher = async (ctx) => {
   // autoApprove stays keyed on the CONFIGURED mode even under a continuation seed — the graph's
   // review semantics (skipReview → `done` not `plan_ready`) are invariant under resume.
   const configuredStartMode = config.mode ? MODE_TO_START_MODE[config.mode] : stc.startMode;
+  // A Start Task run before "wait" was removed still passes it down; never run that unconfirmed.
+  if (isRemovedWaitStartMode(configuredStartMode)) {
+    return {
+      type: 'error',
+      message: 'This run started with Wait, which is no longer a start mode, so start a new run',
+    };
+  }
   const autoApproveSkipReview =
     configuredStartMode === 'plan' && config.autoApprove === true ? true : undefined;
   const flowFlags = flowExecutionFlags(ctx.parsedGraph.settings);

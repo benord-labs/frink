@@ -1,10 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   extractRawTriggerConfig,
-  isRuleAutoStartEnabled,
   resolveRuleCompletionSignal,
   resolveRuleStartInWorktree,
-  resolveRuleStartMode,
   resolveTaskCompletionSignal,
   resolveTaskExecutionMetadata,
   resolveTaskStartInWorktreeFromConfig,
@@ -13,22 +11,6 @@ import {
 } from './trigger-rule-config';
 
 describe('shared trigger-rule-config', () => {
-  it('resolves start mode from action config with execute default', () => {
-    expect(resolveRuleStartMode({ start_mode: 'plan' })).toBe('plan');
-    expect(resolveRuleStartMode({ start_mode: 'execute' })).toBe('execute');
-    expect(resolveRuleStartMode({ start_mode: 'wait' })).toBe('wait');
-    expect(resolveRuleStartMode({ start_mode: 'invalid' })).toBe('execute');
-    expect(resolveRuleStartMode({})).toBe('execute');
-    expect(resolveRuleStartMode(undefined)).toBe('execute');
-  });
-
-  it('maps start mode to auto-start flag', () => {
-    expect(isRuleAutoStartEnabled({ start_mode: 'execute' })).toBe(true);
-    expect(isRuleAutoStartEnabled({ start_mode: 'plan' })).toBe(false);
-    expect(isRuleAutoStartEnabled({ start_mode: 'wait' })).toBe(false);
-    expect(isRuleAutoStartEnabled(undefined)).toBe(true);
-  });
-
   it('resolves start_in_worktree with true default', () => {
     expect(resolveRuleStartInWorktree({ start_in_worktree: false })).toBe(false);
     expect(resolveRuleStartInWorktree({ start_in_worktree: true })).toBe(true);
@@ -108,17 +90,6 @@ describe('shared trigger-rule-config', () => {
     });
   });
 
-  it('throws for wait mode when throwOnWait is enabled', () => {
-    expect(() =>
-      resolveTaskExecutionMetadata(
-        {
-          startMode: 'wait',
-        },
-        { throwOnWait: true },
-      ),
-    ).toThrow('Wait-mode tasks must remain queued and should not be executed');
-  });
-
   it('maps resolved start mode to chats.create mode', () => {
     expect(toChatMode('execute')).toBe('agent');
     expect(toChatMode('plan')).toBe('plan');
@@ -143,13 +114,6 @@ describe('shared trigger-rule-config', () => {
     expect(resolveTaskExecutionMetadata({ startMode: 'execute', skipReview: false })).toEqual({
       startMode: 'execute',
       skipReview: false,
-    });
-  });
-
-  it('maps overrideMode debug to a debug start mode', () => {
-    expect(resolveTaskExecutionMetadata(undefined, { overrideMode: 'debug' })).toEqual({
-      startMode: 'debug',
-      skipReview: true,
     });
   });
 

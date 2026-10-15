@@ -14,11 +14,12 @@
  */
 
 import { isRetryableParkedResult } from '../../../shared/lib/task-retry-policy';
-import { type ResolvedTaskStartMode, toChatMode } from '../../../shared/lib/trigger-rule-config';
+import { toChatMode } from '../../../shared/lib/trigger-rule-config';
 import type { ChatMode } from '../../../shared/types/chat-mode';
 import { type CodexSpeed, isCodexSpeed } from '../../../shared/types/execution';
 import type { AgentUserQuestion } from '../../../shared/types/task-signal';
 import { taskResultSchema, type TaskResultRecord } from '../../../shared/types/task-result';
+import { triggerStartModeSchema } from '../../../shared/types/trigger-context';
 
 type ParkedTask =
   | {
@@ -91,9 +92,7 @@ function readTaskAgentInfo(
   const codexSpeed = config?.codexSpeed;
   return {
     modelId: typeof model === 'string' ? model : undefined,
-    mode:
-      liveMode ??
-      (typeof startMode === 'string' ? toChatMode(startMode as ResolvedTaskStartMode) : 'agent'),
+    mode: liveMode ?? toChatMode(triggerStartModeSchema.safeParse(startMode).data ?? 'execute'),
     autoReviewTools: typeof autoReviewTools === 'boolean' ? autoReviewTools : undefined,
     codexSpeed: isCodexSpeed(codexSpeed) ? codexSpeed : undefined,
   };

@@ -5,7 +5,7 @@
 
 import { Input } from '@benord-labs/frink-primitives';
 import type { ReactElement } from 'react';
-import { TRIGGER_START_MODES } from '../../../../../../shared/types/trigger-context';
+import { triggerStartModeSchema } from '../../../../../../shared/types/trigger-context';
 import { Checkbox } from '../../../../../components/ui/checkbox';
 import { Label } from '../../../../../components/ui/label';
 import {
@@ -43,11 +43,11 @@ export function StartTaskConfig({
   const projectId = typeof c.projectId === 'string' ? c.projectId : '';
   const label = typeof c.label === 'string' ? c.label : '';
   const model = typeof c.model === 'string' ? c.model : '';
+  // A saved mode the menu does not offer shows no choice, so picking either option replaces it.
   const startMode =
-    typeof c.startMode === 'string' &&
-    TRIGGER_START_MODES.includes(c.startMode as (typeof TRIGGER_START_MODES)[number])
-      ? c.startMode
-      : 'execute';
+    c.startMode === undefined
+      ? 'execute'
+      : (triggerStartModeSchema.safeParse(c.startMode).data ?? '');
   const startInWorktree = c.startInWorktree === true;
   const branch = typeof c.branch === 'string' ? c.branch : '';
 
@@ -119,7 +119,6 @@ export function StartTaskConfig({
           <SelectContent>
             <SelectItem value="execute">Execute</SelectItem>
             <SelectItem value="plan">Plan</SelectItem>
-            <SelectItem value="wait">Wait</SelectItem>
           </SelectContent>
         </Select>
       </FieldRow>

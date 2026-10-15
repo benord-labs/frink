@@ -30,6 +30,14 @@ import { executeMobileRequest } from './api';
 beforeEach(() => vi.clearAllMocks());
 
 describe('executeMobileRequest', () => {
+  it('still answers a phone built while the Queue had an Inbox', async () => {
+    fixture.overview.mockResolvedValueOnce({ queue: [] });
+    const limits = { attention: 1, running: 1, inbox: 1 };
+    await expect(executeMobileRequest({ type: 'overview', limits })).resolves.toEqual({
+      queue: [],
+    });
+  });
+
   it('passes list windows and search through to the reads', async () => {
     await executeMobileRequest({ type: 'overview', limits: { attention: 50 } });
     expect(fixture.overview).toHaveBeenCalledWith(
@@ -55,7 +63,7 @@ describe('executeMobileRequest', () => {
 
   it('routes each Queue task action to the task action handler', async () => {
     fixture.taskAction.mockResolvedValue({ ok: true });
-    for (const type of ['completeTask', 'continueTask', 'startTask'] as const) {
+    for (const type of ['completeTask', 'continueTask'] as const) {
       await expect(executeMobileRequest({ type, id: 'task' })).resolves.toEqual({ ok: true });
       expect(fixture.taskAction).toHaveBeenLastCalledWith({ type, id: 'task' });
     }

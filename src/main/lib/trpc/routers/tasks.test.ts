@@ -1268,7 +1268,7 @@ describe('tasksRouter status schema', () => {
     getTasksWithProjectPaginatedMock.mockResolvedValueOnce(rows);
 
     await expect(
-      caller.listPaginated({ workQueueSection: 'inbox', limit: 10, cursor }),
+      caller.listPaginated({ workQueueSection: 'running', limit: 10, cursor }),
     ).resolves.toEqual({
       ...rows,
       items: [{ id: 'task-2', status: 'pending', confirmSideEffects: false }],
@@ -1276,7 +1276,7 @@ describe('tasksRouter status schema', () => {
     expect(getTasksWithProjectPaginatedMock).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
-        workQueueSection: 'inbox',
+        workQueueSection: 'running',
         limit: 10,
         cursor,
       }),
@@ -1289,7 +1289,7 @@ describe('tasksRouter status schema', () => {
 
     for (const input of [
       { status: 'pending', statuses: ['running'] },
-      { status: 'pending', workQueueSection: 'inbox' },
+      { status: 'pending', workQueueSection: 'running' },
     ]) {
       await expect(caller.listPaginated({ ...input, limit: 10 } as never)).rejects.toThrow(
         AMBIGUOUS_LIST_FILTER_ERROR_REGEX,

@@ -52,9 +52,9 @@ vi.mock('../../../../../components/ui/dropdown-menu', () => {
 });
 
 const WORK_QUEUE_RUNNING_LABEL_REGEX =
-  /Work Queue\. Inbox 0 - Needs attention 0 - Failed 0 - Review 0 - Running 1\. Click to open\./;
+  /Work Queue\. Needs attention 0 - Failed 0 - Review 0 - Running 1\. Click to open\./;
 const WORK_QUEUE_EMPTY_LABEL_REGEX =
-  /Work Queue\. Inbox 0 - Needs attention 0 - Failed 0 - Review 0 - Running 0\. Click to open\./;
+  /Work Queue\. Needs attention 0 - Failed 0 - Review 0 - Running 0\. Click to open\./;
 afterEach(() => {
   vi.restoreAllMocks();
   launchFlags.flows = true;
@@ -71,7 +71,6 @@ function renderNav(overrides?: Partial<ComponentProps<typeof SidebarNav>>) {
       onFlows={vi.fn()}
       onPlugins={vi.fn()}
       onShowWorkQueue={vi.fn()}
-      inboxTaskCount={0}
       pendingReviewCount={0}
       runningTaskCount={0}
       needsAttentionTaskCount={0}
@@ -90,9 +89,9 @@ describe('SidebarNav work queue indicator', () => {
       level: 'review',
     },
     {
-      name: 'Inbox and attention work',
-      counts: { inboxTaskCount: 2, needsAttentionTaskCount: 1, pendingReviewCount: 3 },
-      count: '6',
+      name: 'attention work',
+      counts: { needsAttentionTaskCount: 1, pendingReviewCount: 3 },
+      count: '4',
       level: 'warning',
     },
     {
@@ -165,7 +164,7 @@ describe('SidebarNav flag gating (hide, not disable)', () => {
 
   it('hides the Work Queue row and leaks no badge/dot when the flag is off', () => {
     launchFlags.workQueue = false;
-    renderNav({ inboxTaskCount: 5, pendingReviewCount: 2, runningTaskCount: 1 });
+    renderNav({ pendingReviewCount: 5, runningTaskCount: 1 });
     expect(screen.queryByText('5')).toBeNull();
     expect(screen.queryByTestId('work-queue-notification')).toBeNull();
     expect(screen.getByRole('button', { name: 'Flows' })).toBeTruthy();
@@ -182,7 +181,6 @@ describe('SidebarNav flag gating (hide, not disable)', () => {
         onFlows={vi.fn()}
         onPlugins={vi.fn()}
         onShowWorkQueue={vi.fn()}
-        inboxTaskCount={0}
         pendingReviewCount={0}
         runningTaskCount={0}
       />,
