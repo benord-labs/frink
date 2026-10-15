@@ -1,3 +1,4 @@
+import { realpathSync } from 'node:fs';
 import { lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import type { JsonValue, SessionHooks } from '@github/copilot-sdk';
@@ -5,7 +6,7 @@ import log from 'electron-log';
 import picomatch from 'picomatch';
 import stableStringify from 'fast-json-stable-stringify';
 import { z } from 'zod';
-import { isPathWithinProject } from '../../permissions/path-check';
+import { isPathWithinProject, resolveToRealPath } from '../../permissions/path-check';
 import { envFileAsks } from '../env-file-reads';
 import type { CodexApprovalCheck } from '../codex/codex-approvals';
 import type { CodexApprovalRequest } from '../codex/codex-events';
@@ -89,6 +90,24 @@ function globRoot(pattern: JsonValue | undefined): string | undefined {
   return root || (parsed.data.startsWith('/') ? '/' : '.');
 }
 
+/** The real place behind a path, or undefined when nothing there can be opened. */
+function realOrMissing(file: string): string | undefined {
+  try {
+    return realpathSync.native(file);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Where the tool really opens a path: the system follows a link before a later .. climbs. */
+function openedPath(cwd: string, given: string, start: string): string | undefined {
+  if (path.isAbsolute(start)) return realOrMissing(start);
+  // Joined as text: path.resolve would drop the .. before the link is followed.
+  const root = realOrMissing(path.isAbsolute(given) ? given : `${cwd}/${given}`);
+  // A start that cannot open below the real root, as under a file, is judged as text there.
+  return root && (realOrMissing(`${root}/${start}`) ?? path.resolve(root, start));
+}
+
 /** Reads ask about anything outside the chat's folder, and about opening an env file in it. */
 function readQuestions(
   paths: JsonValue | undefined,
@@ -100,10 +119,14 @@ function readQuestions(
   if (!parsed.success || start === undefined) return undefined;
   const roots = [parsed.data ?? []].flat();
   return (roots.length > 0 ? roots : [cwd])
-    .map((root) => path.resolve(cwd, root))
-    .flatMap((root) => {
+    .flatMap((given) => {
+      const root = path.resolve(cwd, given);
       const file = path.resolve(root, start);
-      if (!isPathWithinProject(file, cwd)) return [file];
+      const opened = openedPath(cwd, given, start);
+      // A link can make the text and the real folder differ: a search opens one, a view the other.
+      const places = opened && opened !== resolveToRealPath(file) ? [file, opened] : [file];
+      const outside = places.filter((place) => !isPathWithinProject(place, cwd));
+      if (outside.length > 0) return outside;
       return envFileAsks(path.relative(cwd, root)) ? [root] : [];
     })
     .map((file) => ({ toolName: 'Read', input: { file_path: file } }));

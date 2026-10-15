@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -320,6 +320,7 @@ describe.runIf(BIN)('GitHub Copilot admission', () => {
     // A file the flag-like path names, so Copilot hands that path on to the search.
     await write(path.join(project, `--pre=${preScript}`), 'hello\n');
     await write(inOutside('secret.txt'), `${SECRET_TEXT}\n`);
+    await symlink(outside, inProject('linked'));
   }
 
   /** Wraps the real client: a stand-in sign-in answer, and a record of what the session reported. */
@@ -600,6 +601,24 @@ describe.runIf(BIN)('GitHub Copilot admission', () => {
         if (entry.asks) expect(result.questions).toEqual(entry.asks);
         expect(await entry.happened(result)).toBe(false);
         expectEveryStepAnswered(`deny-${id}`, entry);
+      },
+      TURN_MS,
+    );
+
+    it(
+      'asks before a search that climbs out through a link, and shows the model nothing',
+      async () => {
+        // Matches the secret without spelling it, so only a search result can show it.
+        const args = {
+          pattern: 'outside-secret-3d9[a]',
+          paths: ['linked/..'],
+          output_mode: 'content',
+        };
+        scripts.set('deny-link-climb', [{ name: 'grep', args }]);
+        const result = await turn('deny-link-climb');
+        expect(result.questions).toEqual(['Read']);
+        expect(modelSaw('deny-link-climb', 'Denied by the test')()).toBe(true);
+        expect(modelSaw('deny-link-climb', SECRET_TEXT)()).toBe(false);
       },
       TURN_MS,
     );
