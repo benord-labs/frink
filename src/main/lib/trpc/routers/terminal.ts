@@ -4,6 +4,7 @@ import { TRPCError } from '@trpc/server';
 import { observable } from '@trpc/server/observable';
 import { z } from 'zod';
 import { terminalManager } from '../../terminal/manager';
+import { type DevServerLink, watchDevServers } from '../../terminal/port-manager';
 import type { TerminalEvent } from '../../terminal/types';
 import { publicProcedure, router } from '../index';
 
@@ -200,4 +201,13 @@ export const terminalRouter = router({
       };
     });
   }),
+
+  /** Dev servers running from inside a chat's folder; sends the full list on subscribe and on change. */
+  devServers: publicProcedure
+    .input(z.object({ path: z.string().min(1) }))
+    .subscription(({ input }) => {
+      return observable<DevServerLink[]>((emit) =>
+        watchDevServers(input.path, (links) => emit.next(links)),
+      );
+    }),
 });

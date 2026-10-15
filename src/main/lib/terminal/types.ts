@@ -55,13 +55,3 @@ export type CreateSessionParams = {
 export type InternalCreateSessionParams = CreateSessionParams & {
   useFallbackShell?: boolean;
 };
-
-export type DetectedPort = {
-  port: number;
-  pid: number;
-  processName: string;
-  paneId: string;
-  workspaceId: string;
-  detectedAt: number;
-  address: string;
-};

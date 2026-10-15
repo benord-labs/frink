@@ -1,4 +1,5 @@
 import { Fragment, memo, type ReactNode } from 'react';
+import { DevServerLinks } from '../ui/DevServerLinks';
 import { DiffToggleButton } from './diff-toggle-button';
 import { FileTreeToggleButton } from './file-tree-toggle-button';
 import { TerminalToggleButton } from './terminal-toggle-button';
@@ -41,6 +42,9 @@ type PaneUtilityButtonsProps = {
   showTerminal: boolean;
   terminalOpen?: boolean;
   onToggleTerminal?: () => void;
+
+  /** Folder whose running dev servers are linked ahead of the buttons. */
+  devServersPath?: string | null;
 };
 
 /**
@@ -52,13 +56,14 @@ export const PaneUtilityButtons = memo(function PaneUtilityButtons({
   showFileTree,
   fileTreeOpen = false,
   hasModifiedFiles = false,
-  onToggleFileTree,
+  onToggleFileTree = NOOP,
   showDiff = false,
   diffStats,
   onOpenDiff,
   showTerminal,
   terminalOpen = false,
-  onToggleTerminal,
+  onToggleTerminal = NOOP,
+  devServersPath,
 }: PaneUtilityButtonsProps) {
   const hasAny = showFileTree || showDiff || showTerminal;
 
@@ -69,12 +74,13 @@ export const PaneUtilityButtons = memo(function PaneUtilityButtons({
 
   return (
     <div className="flex items-center gap-1">
+      <DevServerLinks path={devServersPath} />
       {showFileTree && (
         <Wrap>
           <FileTreeToggleButton
             isOpen={fileTreeOpen}
             hasModifiedFiles={hasModifiedFiles}
-            onToggle={onToggleFileTree ?? NOOP}
+            onToggle={onToggleFileTree}
           />
         </Wrap>
       )}
@@ -89,7 +95,7 @@ export const PaneUtilityButtons = memo(function PaneUtilityButtons({
       )}
       {showTerminal && (
         <Wrap>
-          <TerminalToggleButton isOpen={terminalOpen} onClick={onToggleTerminal ?? NOOP} />
+          <TerminalToggleButton isOpen={terminalOpen} onClick={onToggleTerminal} />
         </Wrap>
       )}
     </div>

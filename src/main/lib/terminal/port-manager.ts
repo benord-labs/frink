@@ -1,221 +1,193 @@
-import { EventEmitter } from 'node:events';
-import { getListeningPortsForPids, getProcessTree } from './port-scanner';
-import type { DetectedPort, TerminalSession } from './types';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import {
+  appRootOf,
+  isIgnoredPort,
+  labelFromCommand,
+  listCommands,
+  listCwds,
+  listListeners,
+  toUrl,
+} from './port-scanner';
 
-// How often to poll for port changes (in ms)
 const SCAN_INTERVAL_MS = 2500;
 
-// Ports to ignore (common system ports that are usually not dev servers)
-const IGNORED_PORTS = new Set([22, 80, 443, 5432, 3306, 6379, 27017]);
-
-type RegisteredSession = {
-  session: TerminalSession;
-  workspaceId: string;
+export type DevServer = {
+  pid: number;
+  port: number;
+  label: string;
+  url: string;
+  cwd: string;
+  /** Nearest folder above `cwd` holding a `.git` entry; null outside any repository. */
+  gitRoot: string | null;
 };
 
-class PortManager extends EventEmitter {
-  private ports = new Map<string, DetectedPort>();
-  private sessions = new Map<string, RegisteredSession>();
-  private scanInterval: ReturnType<typeof setInterval> | null = null;
-  private pendingHintScans = new Map<string, ReturnType<typeof setTimeout>>();
-  private isScanning = false;
+export type DevServerLink = Pick<DevServer, 'port' | 'label' | 'url'>;
 
-  constructor() {
-    super();
-    this.startPeriodicScan();
-  }
+type ServersListener = (servers: DevServer[]) => void;
 
-  /**
-   * Register a terminal session for port scanning
-   */
-  registerSession(session: TerminalSession, workspaceId: string): void {
-    this.sessions.set(session.paneId, { session, workspaceId });
-  }
+/** The system calls a scan makes; tests pass fakes instead of the real lsof/ps calls. */
+export type PortScanner = {
+  listListeners: typeof listListeners;
+  listCwds: typeof listCwds;
+  listCommands: typeof listCommands;
+};
 
-  /**
-   * Unregister a terminal session and remove its ports
-   */
-  unregisterSession(paneId: string): void {
-    this.sessions.delete(paneId);
-    this.removePortsForPane(paneId);
+const systemScanner: PortScanner = { listListeners, listCwds, listCommands };
 
-    // Cancel any pending hint scan for this pane
-    const pendingTimeout = this.pendingHintScans.get(paneId);
-    if (pendingTimeout) {
-      clearTimeout(pendingTimeout);
-      this.pendingHintScans.delete(paneId);
+function isInside(child: string, parent: string): boolean {
+  if (child === parent) return true;
+  return child.startsWith(parent.endsWith(path.sep) ? parent : parent + path.sep);
+}
+
+/** Servers running inside `chatPath`, except those in a repository nested below it. */
+export function devServersForPath(servers: DevServer[], chatPath: string): DevServer[] {
+  return servers.filter(
+    (server) =>
+      isInside(server.cwd, chatPath) &&
+      (server.gitRoot === null || isInside(chatPath, server.gitRoot)),
+  );
+}
+
+async function findGitRoot(cwd: string): Promise<string | null> {
+  let dir = cwd;
+  while (true) {
+    try {
+      await fs.stat(path.join(dir, '.git'));
+      return dir;
+    } catch {
+      const parent = path.dirname(dir);
+      if (parent === dir) return null;
+      dir = parent;
     }
   }
+}
 
-  /**
-   * Start periodic scanning of all registered sessions
-   */
-  private startPeriodicScan(): void {
-    if (this.scanInterval) return;
+/** Watches every listening TCP port on the machine while at least one chat is subscribed. */
+export class PortManager {
+  private listeners = new Set<ServersListener>();
+  private servers: DevServer[] = [];
+  private snapshotKey = '';
+  private scanInterval: ReturnType<typeof setInterval> | null = null;
+  private isScanning = false;
+  private gitRoots = new Map<string, string | null>();
 
-    this.scanInterval = setInterval(() => {
-      this.scanAllSessions().catch((_error) => {});
-    }, SCAN_INTERVAL_MS);
+  /** Listeners run from `appRoot` are Frink's own helpers; agent and terminal servers run outside it. */
+  constructor(
+    private readonly scanner: PortScanner = systemScanner,
+    private readonly appRoot: string = appRootOf(process.execPath),
+  ) {}
 
-    // Don't prevent Node from exiting
+  subscribe(listener: ServersListener): () => void {
+    this.listeners.add(listener);
+    if (this.listeners.size === 1) this.start();
+    return () => {
+      this.listeners.delete(listener);
+      if (this.listeners.size === 0) this.stop();
+    };
+  }
+
+  getServers(): DevServer[] {
+    return this.servers;
+  }
+
+  private start(): void {
+    void this.scan();
+    this.scanInterval = setInterval(() => void this.scan(), SCAN_INTERVAL_MS);
     this.scanInterval.unref();
   }
 
-  /**
-   * Stop periodic scanning
-   */
-  stopPeriodicScan(): void {
-    if (this.scanInterval) {
-      clearInterval(this.scanInterval);
-      this.scanInterval = null;
-    }
-
-    for (const timeout of this.pendingHintScans.values()) {
-      clearTimeout(timeout);
-    }
-    this.pendingHintScans.clear();
+  private stop(): void {
+    if (this.scanInterval) clearInterval(this.scanInterval);
+    this.scanInterval = null;
+    this.servers = [];
+    this.snapshotKey = '';
+    this.gitRoots.clear();
   }
 
-  /**
-   * Scan all registered sessions for ports
-   */
-  private async scanAllSessions(): Promise<void> {
+  async scan(): Promise<void> {
     if (this.isScanning) return;
     this.isScanning = true;
-
     try {
-      const panePortMap = new Map<string, { workspaceId: string; pids: number[] }>();
+      const listening = (await this.scanner.listListeners()).filter(
+        (listener) => !isIgnoredPort(listener.port),
+      );
+      const pids = [...new Set(listening.map((listener) => listener.pid))];
+      const [cwds, commands] = await Promise.all([
+        this.scanner.listCwds(pids),
+        this.scanner.listCommands(pids),
+      ]);
 
-      for (const [paneId, { session, workspaceId }] of this.sessions) {
-        if (!session.isAlive) continue;
-
-        try {
-          const pid = session.pty.pid;
-          const pids = await getProcessTree(pid);
-          if (pids.length > 0) {
-            panePortMap.set(paneId, { workspaceId, pids });
-          }
-        } catch {
-          // Session may have exited
-        }
+      const servers = new Map<string, DevServer>();
+      for (const listener of listening) {
+        const cwd = cwds.get(listener.pid);
+        const command = commands.get(listener.pid) ?? '';
+        // One link per address per folder: IPv4/IPv6 binds and processes sharing a socket collapse.
+        const url = toUrl(listener.address, listener.port);
+        const key = `${cwd}\0${url}`;
+        if (!cwd || command.startsWith(this.appRoot) || servers.has(key)) continue;
+        servers.set(key, {
+          pid: listener.pid,
+          port: listener.port,
+          label: labelFromCommand(command, cwd) || listener.command || 'server',
+          url,
+          cwd,
+          gitRoot: await this.gitRootFor(cwd),
+        });
       }
-
-      for (const [paneId, { workspaceId, pids }] of panePortMap) {
-        const portInfos = await getListeningPortsForPids(pids);
-        this.updatePortsForPane(paneId, workspaceId, portInfos);
-      }
-
-      for (const [key, port] of this.ports) {
-        if (!this.sessions.has(port.paneId)) {
-          this.ports.delete(key);
-          this.emit('port:remove', port);
-        }
-      }
+      this.publish([...servers.values()].sort((a, b) => a.port - b.port));
     } finally {
       this.isScanning = false;
     }
   }
 
-  /**
-   * Update ports for a specific pane, emitting add/remove events as needed
-   */
-  private updatePortsForPane(
-    paneId: string,
-    workspaceId: string,
-    portInfos: Array<{
-      port: number;
-      pid: number;
-      address: string;
-      processName: string;
-    }>,
-  ): void {
-    const now = Date.now();
-
-    const validPortInfos = portInfos.filter((info) => !IGNORED_PORTS.has(info.port));
-
-    const seenKeys = new Set<string>();
-
-    for (const info of validPortInfos) {
-      const key = this.makeKey(paneId, info.port);
-      seenKeys.add(key);
-
-      const existing = this.ports.get(key);
-      if (!existing) {
-        const detectedPort: DetectedPort = {
-          port: info.port,
-          pid: info.pid,
-          processName: info.processName,
-          paneId,
-          workspaceId,
-          detectedAt: now,
-          address: info.address,
-        };
-        this.ports.set(key, detectedPort);
-        this.emit('port:add', detectedPort);
-      } else if (existing.pid !== info.pid || existing.processName !== info.processName) {
-        const updatedPort: DetectedPort = {
-          ...existing,
-          pid: info.pid,
-          processName: info.processName,
-          address: info.address,
-        };
-        this.ports.set(key, updatedPort);
-        this.emit('port:remove', existing);
-        this.emit('port:add', updatedPort);
-      }
-    }
-
-    for (const [key, port] of this.ports) {
-      if (port.paneId === paneId && !seenKeys.has(key)) {
-        this.ports.delete(key);
-        this.emit('port:remove', port);
-      }
-    }
+  private async gitRootFor(cwd: string): Promise<string | null> {
+    const cached = this.gitRoots.get(cwd);
+    if (cached !== undefined) return cached;
+    const root = await findGitRoot(cwd);
+    this.gitRoots.set(cwd, root);
+    return root;
   }
 
-  private makeKey(paneId: string, port: number): string {
-    return `${paneId}:${port}`;
-  }
-
-  /**
-   * Remove all ports for a specific pane
-   */
-  removePortsForPane(paneId: string): void {
-    const portsToRemove: DetectedPort[] = [];
-
-    for (const [key, port] of this.ports) {
-      if (port.paneId === paneId) {
-        portsToRemove.push(port);
-        this.ports.delete(key);
-      }
-    }
-
-    for (const port of portsToRemove) {
-      this.emit('port:remove', port);
-    }
-  }
-
-  /**
-   * Get all detected ports
-   */
-  getAllPorts(): DetectedPort[] {
-    return Array.from(this.ports.values()).sort((a, b) => b.detectedAt - a.detectedAt);
-  }
-
-  /**
-   * Get ports for a specific workspace
-   */
-  getPortsByWorkspace(workspaceId: string): DetectedPort[] {
-    return this.getAllPorts().filter((p) => p.workspaceId === workspaceId);
-  }
-
-  /**
-   * Force an immediate scan of all sessions
-   * Useful for testing or when you know ports have changed
-   */
-  async forceScan(): Promise<void> {
-    await this.scanAllSessions();
+  private publish(servers: DevServer[]): void {
+    const key = JSON.stringify(servers);
+    if (this.listeners.size === 0 || key === this.snapshotKey) return;
+    this.snapshotKey = key;
+    this.servers = servers;
+    for (const listener of this.listeners) listener(servers);
   }
 }
 
-export const portManager = new PortManager();
+const portManager = new PortManager();
+
+/**
+ * Streams the links for one chat folder: the current list right away, then every change.
+ * Returns the unsubscribe.
+ */
+export function watchDevServers(
+  chatPath: string,
+  onLinks: (links: DevServerLink[]) => void,
+  manager: Pick<PortManager, 'subscribe' | 'getServers'> = portManager,
+): () => void {
+  let resolvedPath = path.resolve(chatPath);
+  const send = (servers: DevServer[]) => {
+    onLinks(
+      devServersForPath(servers, resolvedPath).map(({ port, label, url }) => ({
+        port,
+        label,
+        url,
+      })),
+    );
+  };
+  const unsubscribe = manager.subscribe(send);
+  // lsof reports resolved folders, so match against the real path behind any symlink.
+  // A folder that no longer exists keeps its given path and simply matches nothing.
+  void fs.realpath(resolvedPath).then(
+    (realPath) => {
+      resolvedPath = realPath;
+      send(manager.getServers());
+    },
+    () => send(manager.getServers()),
+  );
+  return unsubscribe;
+}
