@@ -135,56 +135,16 @@ type ActiveTaskLite = {
   linkedChatId?: string | null;
   flowRunStatus?: string | null;
   effectiveStatus?: string | null;
-  // Already on the tasks.listPaginated payload (the SELECT spreads the full task row); the sidebar
-  // just narrows it away. Read here for the park reason — no query change. See sc-848.
-  result?: { agentSignal?: { summary?: string; details?: string } } | null;
+  agentSignalSummary?: string | null;
 };
 
-/**
- * The shape the sidebar polls, declared once so the change check and the maps built from it cannot
- * drift apart when a field is added.
- */
+/** A task as the sidebar polls it (chats.listActiveChats), declared once for the maps built from it. */
 export type SidebarPolledTask = ActiveTaskLite & {
   id: string;
 };
 
-/** Every field below is a nullable string; an absent key and an explicit null both mean "unset". */
-type TaskFieldValue = string | null | undefined;
-
-/** An absent key and an explicit null both mean "unset" on this payload — never a real difference. */
-const sameOptional = (a: TaskFieldValue, b: TaskFieldValue): boolean => (a ?? null) === (b ?? null);
-
-/**
- * Every field the sidebar reads. `agentSignal` is here deliberately: a re-parked task can change
- * only its reason, and that reason drives the pill tooltip.
- */
-const TASK_FIELDS: ReadonlyArray<(task: SidebarPolledTask) => TaskFieldValue> = [
-  (task) => task.id,
-  (task) => task.status,
-  (task) => task.linkedChatId,
-  (task) => task.flowRunStatus,
-  (task) => task.effectiveStatus,
-  (task) => task.result?.agentSignal?.summary,
-  (task) => task.result?.agentSignal?.details,
-];
-
-/**
- * Compared by value, never by reference: pages past the first bypass the query cache, so unchanged
- * content still arrives as fresh objects and would churn every map and callback built from it.
- */
-export function sameSidebarTasks(
-  a: readonly SidebarPolledTask[],
-  b: readonly SidebarPolledTask[],
-): boolean {
-  if (a === b) return true;
-  if (a.length !== b.length) return false;
-  return a.every((task, index) =>
-    TASK_FIELDS.every((read) => sameOptional(read(task), read(b[index]))),
-  );
-}
-
-/** The reason an agent task parked (its frink_task_signal summary/details), shown on the pill tooltip. */
-export type ChatReason = { summary?: string; details?: string };
+/** The reason an agent task parked (its frink_task_signal summary), shown on the pill tooltip. */
+export type ChatReason = { summary?: string };
 
 /**
  * Chat ids with a live held question, keyed by each atom entry's `parentChatId` (the sidebar row).
@@ -236,7 +196,7 @@ export function buildChatTaskStatusMap(
 }
 
 /**
- * Build chatId → the agent reason ({summary, details}) of the SAME task that wins the pill in
+ * Build chatId → the agent reason ({summary}) of the SAME task that wins the pill in
  * {@link buildChatTaskStatusMap} (highest STATUS_PRIORITY, with the same done→running flow-run
  * substitution), so the pill tooltip shows the reason for the status it displays. Additive: read
  * alongside the status map, never mutating it. Only parked tasks (awaiting_input/blocked/partial)
@@ -253,8 +213,7 @@ export function buildChatReasonMap(tasks: ActiveTaskLite[]): Map<string, ChatRea
     const current = winnerPriority.get(task.linkedChatId);
     if (current !== undefined && priority <= current) continue;
     winnerPriority.set(task.linkedChatId, priority);
-    const signal = task.result?.agentSignal;
-    reasons.set(task.linkedChatId, { summary: signal?.summary, details: signal?.details });
+    reasons.set(task.linkedChatId, { summary: task.agentSignalSummary ?? undefined });
   }
   return reasons;
 }

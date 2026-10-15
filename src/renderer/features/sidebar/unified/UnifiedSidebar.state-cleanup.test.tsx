@@ -293,7 +293,7 @@ describe('UnifiedSidebar row-action identity', () => {
     const identities = () => ROW_BOUND_PROPS.map((k) => hoisted.capturedProjectsTreeProps?.[k]);
     render(<UnifiedSidebar />);
     const before = identities();
-    hoisted.state.activeTasksData = { items: [], hasMore: false, nextCursor: null };
+    hoisted.state.sidebarActivityData = { chats: [], tasks: [] };
     fireEvent.change(screen.getByTestId('sidebar-header'), { target: { value: 'x' } });
     const after = identities();
     ROW_BOUND_PROPS.forEach((key, i) => expect(after[i], key).toBe(before[i]));

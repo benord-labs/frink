@@ -37,6 +37,7 @@ async function settleApprovalAction(
 ): Promise<void> {
   await Promise.all([
     utils.flows.invalidate(),
+    utils.chats.listActiveChats.invalidate(),
     utils.tasks.listPaginated.invalidate(),
     utils.tasks.workQueueOverviewCounts.invalidate(),
     utils.tasks.listCounts.invalidate(),

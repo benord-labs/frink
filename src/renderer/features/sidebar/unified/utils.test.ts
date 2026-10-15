@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { FolderCursor, SidebarChatListItem, SidebarPolledTask } from './utils';
+import type { FolderCursor, SidebarChatListItem } from './utils';
 import {
   buildChatReasonMap,
   buildChatTaskStatusMap,
@@ -9,7 +9,6 @@ import {
   extractErrorMessage,
   mergeChatsById,
   normalizeCursor,
-  sameSidebarTasks,
 } from './utils';
 
 function makeChatItem(
@@ -340,15 +339,15 @@ describe('buildChatTaskStatusMap — flow-run-authoritative badge', () => {
 });
 
 describe('buildChatReasonMap — park reason of the winning task per chat', () => {
-  it('returns the agent summary + details for a parked task', () => {
+  it('returns the agent summary for a parked task', () => {
     const map = buildChatReasonMap([
       {
         status: 'needs_attention',
         linkedChatId: 'c1',
-        result: { agentSignal: { summary: 'Approve plan #143', details: 'the full plan' } },
+        agentSignalSummary: 'Approve plan #143',
       },
     ]);
-    expect(map.get('c1')).toEqual({ summary: 'Approve plan #143', details: 'the full plan' });
+    expect(map.get('c1')).toEqual({ summary: 'Approve plan #143' });
   });
 
   it('picks the highest-priority winning task (needs_attention over running)', () => {
@@ -356,12 +355,12 @@ describe('buildChatReasonMap — park reason of the winning task per chat', () =
       {
         status: 'running',
         linkedChatId: 'c1',
-        result: { agentSignal: { summary: 'still working' } },
+        agentSignalSummary: 'still working',
       },
       {
         status: 'needs_attention',
         linkedChatId: 'c1',
-        result: { agentSignal: { summary: 'the ask' } },
+        agentSignalSummary: 'the ask',
       },
     ]);
     expect(map.get('c1')?.summary).toBe('the ask');
@@ -373,27 +372,27 @@ describe('buildChatReasonMap — park reason of the winning task per chat', () =
         status: 'done',
         linkedChatId: 'c1',
         flowRunStatus: 'paused',
-        result: { agentSignal: { summary: 'done summary' } },
+        agentSignalSummary: 'done summary',
       },
       {
         status: 'plan_ready',
         linkedChatId: 'c1',
         flowRunStatus: 'paused',
-        result: { agentSignal: { summary: 'plan ask' } },
+        agentSignalSummary: 'plan ask',
       },
     ]);
     expect(map.get('c1')?.summary).toBe('plan ask');
   });
 
-  it('returns undefined summary/details when the winning task has no agentSignal', () => {
+  it('returns an undefined summary when the winning task has no agentSignal', () => {
     const map = buildChatReasonMap([{ status: 'running', linkedChatId: 'c1' }]);
-    expect(map.get('c1')).toEqual({ summary: undefined, details: undefined });
+    expect(map.get('c1')).toEqual({ summary: undefined });
   });
 
   it('ignores tasks with no linkedChatId or status', () => {
     const map = buildChatReasonMap([
-      { status: 'needs_attention', result: { agentSignal: { summary: 'x' } } },
-      { linkedChatId: 'c2', result: { agentSignal: { summary: 'y' } } },
+      { status: 'needs_attention', agentSignalSummary: 'x' },
+      { linkedChatId: 'c2', agentSignalSummary: 'y' },
     ]);
     expect(map.size).toBe(0);
   });
@@ -411,20 +410,17 @@ describe('failed-anchor wiring: status pill and reason map stay in agreement', (
         status: 'failed',
         linkedChatId: 'c1',
         flowRunStatus: 'paused',
-        result: { agentSignal: { summary: 'connect account', details: 'auth expired' } },
+        agentSignalSummary: 'connect account',
       },
       {
         status: 'done',
         linkedChatId: 'c1',
         flowRunStatus: 'paused',
-        result: { agentSignal: { summary: 'retry running' } },
+        agentSignalSummary: 'retry running',
       },
     ];
     expect(buildChatTaskStatusMap(tasks).get('c1')).toBe('failed');
-    expect(buildChatReasonMap(tasks).get('c1')).toEqual({
-      summary: 'connect account',
-      details: 'auth expired',
-    });
+    expect(buildChatReasonMap(tasks).get('c1')).toEqual({ summary: 'connect account' });
   });
 
   it('a live needs_attention sibling outranks a failed anchor in BOTH the pill and the reason', () => {
@@ -435,13 +431,13 @@ describe('failed-anchor wiring: status pill and reason map stay in agreement', (
         status: 'failed',
         linkedChatId: 'c1',
         flowRunStatus: 'paused',
-        result: { agentSignal: { summary: 'stale failure' } },
+        agentSignalSummary: 'stale failure',
       },
       {
         status: 'needs_attention',
         linkedChatId: 'c1',
         flowRunStatus: 'paused',
-        result: { agentSignal: { summary: 'approve plan' } },
+        agentSignalSummary: 'approve plan',
       },
     ];
     expect(buildChatTaskStatusMap(tasks).get('c1')).toBe('needs_attention');
@@ -456,13 +452,13 @@ describe('failed-anchor wiring: status pill and reason map stay in agreement', (
         status: 'failed',
         linkedChatId: 'c1',
         flowRunStatus: 'cancelled',
-        result: { agentSignal: { summary: 'first attempt failed' } },
+        agentSignalSummary: 'first attempt failed',
       },
       {
         status: 'done',
         linkedChatId: 'c1',
         flowRunStatus: 'cancelled',
-        result: { agentSignal: { summary: 'retry done' } },
+        agentSignalSummary: 'retry done',
       },
     ];
     expect(buildChatTaskStatusMap(tasks).get('c1')).toBe('cancelled');
@@ -477,14 +473,14 @@ describe('failed-anchor wiring: status pill and reason map stay in agreement', (
         linkedChatId: 'c1',
         flowRunStatus: 'running',
         effectiveStatus: 'running',
-        result: { agentSignal: { summary: 'retry running' } },
+        agentSignalSummary: 'retry running',
       },
       {
         status: 'failed',
         linkedChatId: 'c1',
         flowRunStatus: 'running',
         effectiveStatus: 'running',
-        result: { agentSignal: { summary: 'first attempt failed' } },
+        agentSignalSummary: 'first attempt failed',
       },
     ];
     expect(buildChatTaskStatusMap(tasks).get('c1')).toBe('running');
@@ -528,62 +524,6 @@ describe('buildPendingQuestionChatIds', () => {
 
   it('returns an empty set when nothing is held (the common idle case)', () => {
     expect(buildPendingQuestionChatIds(new Map()).size).toBe(0);
-  });
-});
-
-describe('sameSidebarTasks', () => {
-  const task = (overrides: Partial<SidebarPolledTask> = {}): SidebarPolledTask => ({
-    id: 'task-1',
-    status: 'running',
-    linkedChatId: 'chat-1',
-    flowRunStatus: null,
-    ...overrides,
-  });
-
-  it('treats a re-fetched list with identical content as unchanged', () => {
-    expect(sameSidebarTasks([task()], [task()])).toBe(true);
-  });
-
-  it('detects length and field changes', () => {
-    expect(sameSidebarTasks([task()], [])).toBe(false);
-    expect(sameSidebarTasks([task()], [task({ status: 'done' })])).toBe(false);
-    expect(sameSidebarTasks([task()], [task({ flowRunStatus: 'failed' })])).toBe(false);
-    expect(sameSidebarTasks([task()], [task({ effectiveStatus: 'running' })])).toBe(false);
-    expect(sameSidebarTasks([task()], [task({ linkedChatId: 'chat-2' })])).toBe(false);
-  });
-
-  /**
-   * Compared per index, so a reorder reads as changed. Safe only because listPaginated pages on a
-   * (createdAt, id) cursor; if ordering ever becomes unstable this is where it surfaces.
-   */
-  it('treats a reordered list as changed', () => {
-    const a = task({ id: 'task-1' });
-    const b = task({ id: 'task-2', linkedChatId: 'chat-2' });
-    expect(sameSidebarTasks([a, b], [b, a])).toBe(false);
-  });
-
-  // The sidebar narrows the payload with optional fields, so an absent key and an explicit null
-  // describe the same task. Treating them as different would re-mint the array on every poll.
-  it('treats an absent optional field and an explicit null as the same task', () => {
-    // Built raw, not via the fixture: the fixture supplies `flowRunStatus: null` for both sides,
-    // which would make this pass without comparing anything.
-    const withNull: SidebarPolledTask = { id: 't', status: 'running', flowRunStatus: null };
-    const withAbsent: SidebarPolledTask = { id: 't', status: 'running' };
-    expect(sameSidebarTasks([withNull], [withAbsent])).toBe(true);
-    expect(sameSidebarTasks([task({ result: null })], [task({})])).toBe(true);
-  });
-
-  it('handles an empty list on both sides', () => {
-    expect(sameSidebarTasks([], [])).toBe(true);
-  });
-
-  // A re-parked task can change only its reason; missing that would freeze the pill tooltip,
-  // because the reason map is rebuilt from this list and nothing else carries the signal.
-  it('detects an agentSignal change while every other field holds', () => {
-    const parked = task({ result: { agentSignal: { summary: 'waiting', details: 'on input' } } });
-    const reparked = task({ result: { agentSignal: { summary: 'blocked', details: 'on input' } } });
-    expect(sameSidebarTasks([parked], [reparked])).toBe(false);
-    expect(sameSidebarTasks([parked], [task({ ...parked })])).toBe(true);
   });
 });
 

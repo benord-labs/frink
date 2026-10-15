@@ -3,6 +3,7 @@ import type { FlowGraph } from '../../../../../shared/lib/validate-flow-graph';
 import { seedCompletedNodeRun, seedFlowRun } from '../../test-utils/flow-fixtures';
 import { freshDb, type TestDb } from '../../test-utils/fresh-db';
 import { createChat, linkChatToTask } from '../chats';
+import { setFlowRunStatus } from '../flow-runs';
 import { createTask, updateTaskStatus } from '../tasks';
 import { listSidebarActiveChats } from './sidebar-active-chats';
 
@@ -33,9 +34,9 @@ describe('listSidebarActiveChats', () => {
     await linkChatToTask(db, byLink.id, linkedTask.id);
     await taskFor(byResult.id);
 
-    const rows = await listSidebarActiveChats(db);
-    expect(rows.map((row) => row.chatId).sort()).toEqual([byLink.id, byResult.id].sort());
-    expect(rows[0]).toMatchObject({ projectId: null, batchId: null, hasLiveFlowRun: false });
+    const { chats } = await listSidebarActiveChats(db);
+    expect(chats.map((row) => row.chatId).sort()).toEqual([byLink.id, byResult.id].sort());
+    expect(chats[0]).toMatchObject({ projectId: null, batchId: null, hasLiveFlowRun: false });
   });
 
   it('leaves out finished tasks and archived or unknown chats', async () => {
@@ -45,7 +46,7 @@ describe('listSidebarActiveChats', () => {
     await taskFor(archived.id);
     await taskFor('not-a-local-chat');
 
-    expect(await listSidebarActiveChats(db)).toEqual([]);
+    expect(await listSidebarActiveChats(db)).toEqual({ chats: [], tasks: [] });
   });
 
   it('flags a chat driven only by a live flow run', async () => {
@@ -58,8 +59,42 @@ describe('listSidebarActiveChats', () => {
       outputs: { chatId: chat.id },
     });
 
-    expect(await listSidebarActiveChats(db)).toEqual([
+    expect((await listSidebarActiveChats(db)).chats).toEqual([
       { chatId: chat.id, projectId: null, batchId: null, hasLiveFlowRun: true },
     ]);
+  });
+
+  it('returns the tasks of each shown chat as lean status rows, with no page cap', async () => {
+    const chat = await createChat(db, { name: 'flow' });
+    const { flowRunId } = await seedFlowRun(db, GRAPH);
+    await setFlowRunStatus(db, flowRunId, 'completed');
+    const steps = Array.from({ length: 650 }, (_, index) => ({
+      description: `agent step ${index}`,
+      source: 'flow',
+      flowRunId,
+      result: { chatId: chat.id, agentSignal: { summary: `step ${index}`, details: 'long' } },
+    }));
+    for (const step of steps) await updateTaskStatus(db, (await createTask(db, step)).id, 'done');
+
+    const { tasks } = await listSidebarActiveChats(db);
+
+    expect(tasks).toHaveLength(650);
+    expect(tasks[0]).toEqual({
+      id: expect.any(String),
+      status: 'done',
+      linkedChatId: chat.id,
+      flowRunStatus: 'completed',
+      effectiveStatus: 'done',
+      agentSignalSummary: expect.stringMatching(/^step \d+$/),
+    });
+  });
+
+  it('leaves out tasks whose chat is archived, unknown or missing', async () => {
+    const archived = await createChat(db, { name: 'archived', archivedAt: new Date() });
+    await taskFor(archived.id);
+    await taskFor('not-a-local-chat');
+    await createTask(db, { description: 'no chat yet', source: 'manual' });
+
+    expect((await listSidebarActiveChats(db)).tasks).toEqual([]);
   });
 });

@@ -46,12 +46,10 @@ type WorkQueueCounts = {
   runningTaskCount: number;
   needsAttentionTaskCount: number;
   failedTaskCount: number;
-  activeTasksHasMore: boolean;
 };
 
 function workQueueAriaLabel(c: WorkQueueCounts): string {
-  const more = c.activeTasksHasMore ? ' - More tracked tasks available' : '';
-  return `Work Queue. Inbox ${c.inboxTaskCount} - Needs attention ${c.needsAttentionTaskCount} - Failed ${c.failedTaskCount} - Review ${c.pendingReviewCount} - Running ${c.runningTaskCount}${more}. Click to open.`;
+  return `Work Queue. Inbox ${c.inboxTaskCount} - Needs attention ${c.needsAttentionTaskCount} - Failed ${c.failedTaskCount} - Review ${c.pendingReviewCount} - Running ${c.runningTaskCount}. Click to open.`;
 }
 
 function destinationAriaCurrent(isActive: boolean): 'page' | undefined {
@@ -280,7 +278,6 @@ type SidebarNavProps = {
   runningTaskCount: number;
   needsAttentionTaskCount?: number;
   failedTaskCount?: number;
-  activeTasksHasMore?: boolean;
 };
 
 type DestinationNavRowsProps = {
@@ -398,7 +395,6 @@ function SidebarNavComponent({
   runningTaskCount,
   needsAttentionTaskCount = 0,
   failedTaskCount = 0,
-  activeTasksHasMore = false,
 }: SidebarNavProps): ReactElement {
   // Tier/cloud-gated destinations HIDE when disabled — a free user cannot enable them.
   const showFlows = LAUNCH_FLAGS.flows;
@@ -409,7 +405,6 @@ function SidebarNavComponent({
     runningTaskCount,
     needsAttentionTaskCount,
     failedTaskCount,
-    activeTasksHasMore,
   };
 
   return (

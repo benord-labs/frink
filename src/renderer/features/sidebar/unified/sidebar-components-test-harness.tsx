@@ -52,17 +52,15 @@ export function makeSidebarComponentsMock(captured: CapturedComponentProps) {
       runningTaskCount,
       needsAttentionTaskCount,
       failedTaskCount,
-      activeTasksHasMore,
     }: {
       inboxTaskCount: number;
       pendingReviewCount: number;
       runningTaskCount: number;
       needsAttentionTaskCount: number;
       failedTaskCount: number;
-      activeTasksHasMore?: boolean;
     }) => (
       <div data-testid="sidebar-nav-counts">
-        {`${inboxTaskCount}:${pendingReviewCount}:${runningTaskCount}:${needsAttentionTaskCount}:${failedTaskCount}:${activeTasksHasMore ? 'more' : 'none'}`}
+        {`${inboxTaskCount}:${pendingReviewCount}:${runningTaskCount}:${needsAttentionTaskCount}:${failedTaskCount}`}
       </div>
     ),
     SidebarFooter: ({ onToggleArchived }: { onToggleArchived?: () => void }) => (
