@@ -4,6 +4,7 @@ import {
   agent,
   type ContentBlock,
   type InitializeResponse,
+  type NewSessionRequest,
   ndJsonStream,
   type PermissionOption,
   PROTOCOL_VERSION,
@@ -63,6 +64,7 @@ export function fakeAcpAgent(script: FakeTurnScript, setup: FakeAgentSetup = {})
   });
   const launches: AcpAgentLaunch[] = [];
   const requests: string[] = [];
+  const opened: NewSessionRequest[] = [];
   let cancel = () => {};
   const cancelled = new Promise<void>((resolve) => {
     cancel = resolve;
@@ -88,8 +90,9 @@ export function fakeAcpAgent(script: FakeTurnScript, setup: FakeAgentSetup = {})
       signedIn('initialize');
       return { protocolVersion, agentCapabilities, ...setup.identity };
     })
-    .onRequest('session/new', async ({ client }) => {
+    .onRequest('session/new', async ({ client, params }) => {
       requests.push('session/new');
+      opened.push(params);
       signedIn('session/new');
       await report('session/new', client, 'fake-session');
       return { sessionId: 'fake-session', configOptions };
@@ -134,6 +137,8 @@ export function fakeAcpAgent(script: FakeTurnScript, setup: FakeAgentSetup = {})
     },
     launches,
     requests,
+    /** What each `session/new` was sent. */
+    opened,
     wasDisposed: () => disposed,
   };
 }

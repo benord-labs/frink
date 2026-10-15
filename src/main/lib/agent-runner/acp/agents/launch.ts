@@ -29,8 +29,12 @@ export type LaunchContext = {
 
 type CheckOutput = { stdout: string; stderr: string };
 
-/** A run of the agent before it starts, and whether what it printed lets the launch go ahead. */
-export type LaunchCheck = { args: readonly string[]; passes: (output: CheckOutput) => boolean };
+/** A run of the agent before it starts, whether its output lets the launch go ahead, and why not. */
+export type LaunchCheck = {
+  args: readonly string[];
+  passes: (output: CheckOutput) => boolean;
+  refusal?: string;
+};
 
 /** The agent's settings for one launch, and the checks that its effective settings still hold them. */
 type LaunchSettings = { env: Env; checks: readonly LaunchCheck[] };
@@ -216,11 +220,14 @@ async function checkSettings(
 ): Promise<string | undefined> {
   try {
     // One at a time: the agent's runs share its database, and none may outlive a refusal.
-    for (const { args, passes } of settings.checks) {
+    for (const { args, passes, refusal } of settings.checks) {
       if (passes(await runCheck(command, args, env, cwd, timeoutMs))) continue;
       // The settings themselves are never logged: they may hold the user's keys.
       log.warn(`[ACP] ${row.name}'s effective settings may change how it asks for permission`);
-      return `Settings from an organisation, sign-in provider or administrator can change how ${row.name} asks for permission, so Frink can't run it safely.`;
+      return (
+        refusal ??
+        `Settings from an organisation, sign-in provider or administrator can change how ${row.name} asks for permission, so Frink can't run it safely.`
+      );
     }
     return undefined;
   } catch (error) {

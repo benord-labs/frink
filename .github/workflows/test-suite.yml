@@ -291,6 +291,16 @@ jobs:
           FRINK_ACP_ADMISSION_BIN: ${{ runner.temp }}/oc/node_modules/.bin/opencode
         run: bun run test -- run src/main/lib/agent-runner/acp/agents/opencode-admission.test.ts
 
+      # OpenCode 2 is its own npm package; the same oldest and newest split applies.
+      - name: OpenCode 2 admission run
+        if: steps.scope.outputs.run != 'false'
+        env:
+          OPENCODE_SPEC: ${{ github.event_name == 'pull_request' && '@opencode/cli@2.0.29' || '@opencode/cli@~2.0.29' }}
+          FRINK_ACP_ADMISSION_BIN: ${{ runner.temp }}/oc2/node_modules/.bin/opencode
+        run: |
+          npm install --prefix "$RUNNER_TEMP/oc2" "$OPENCODE_SPEC"
+          bun run test -- run src/main/lib/agent-runner/acp/agents/opencode2-admission.test.ts
+
   # Starts a real GitHub Copilot against a scripted model to prove it still asks Frink before it acts.
   copilot-admission:
     if: github.event_name != 'push'

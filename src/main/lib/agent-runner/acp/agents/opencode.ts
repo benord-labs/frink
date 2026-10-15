@@ -10,7 +10,7 @@ import type { AcpLaunchRow, LaunchCheck, LaunchContext } from './launch';
  * Every tool asks, except tools that only read; environment files still ask. Each risky tool is
  * named so no merged setting can swap its answer. Subagents and questions never reach Frink.
  */
-const PERMISSION = {
+export const PERMISSION = {
   '*': 'ask',
   read: ENV_FILE_READS,
   glob: 'allow',
@@ -56,7 +56,7 @@ async function existing(files: string[]): Promise<string | undefined> {
 }
 
 /** The project's instructions, then the user's own, in the order OpenCode itself would read them. */
-async function instructionFiles({ projectRoot, userEnv }: LaunchContext): Promise<string[]> {
+export async function instructionFiles({ projectRoot, userEnv }: LaunchContext): Promise<string[]> {
   const home = userEnv.HOME ?? os.homedir();
   const configHome = userEnv.XDG_CONFIG_HOME ?? path.join(home, '.config');
   const files = await Promise.all([
@@ -70,7 +70,7 @@ async function instructionFiles({ projectRoot, userEnv }: LaunchContext): Promis
 }
 
 /** The user's own skill folders, which OpenCode no longer finds once its home is private. */
-async function skillPaths({ userEnv }: LaunchContext): Promise<string[]> {
+export async function skillPaths({ userEnv }: LaunchContext): Promise<string[]> {
   const home = userEnv.HOME ?? os.homedir();
   const folders = [path.join(home, '.claude', 'skills'), path.join(home, '.agents', 'skills')];
   const found = await Promise.all(folders.map((folder) => existing([folder])));

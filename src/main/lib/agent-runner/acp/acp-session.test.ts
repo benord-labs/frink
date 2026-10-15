@@ -92,6 +92,13 @@ describe('runAcpAgent continuing an earlier conversation', () => {
 });
 
 describe('runAcpAgent session settings', () => {
+  it('opens a session with only its folder, so the agent keeps no rules of its own', async () => {
+    const fake = fakeAcpAgent(async () => {});
+    await collectChunks(runAcpAgent(runnerParams(), fake.start));
+
+    expect(fake.opened).toEqual([{ cwd: '/workspace/project', mcpServers: [] }]);
+  });
+
   it('sets the chosen mode and model before the prompt', async () => {
     const turn = await runTurn({ configOptions: SETTINGS }, { model: 'open/two', mode: 'plan' });
 
