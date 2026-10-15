@@ -19,6 +19,7 @@ import {
   isInstalledAgent,
   type PassthroughSource,
 } from '../../../../../../shared/lib/ai-providers';
+import { ProviderPreviewTag } from '../../../../ProviderPreviewTag';
 import { ProviderTile } from '../ProviderTile';
 import { ApiKeyEditForm } from './ApiKeyEditForm';
 
@@ -231,7 +232,10 @@ export const AccountRow = memo(function AccountRow({
       <div className="flex items-center gap-3 px-4 py-3">
         <ProviderTile type={accountType} />
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium text-foreground">{account.label}</p>
+          <p className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+            <span className="truncate">{account.label}</span>
+            <ProviderPreviewTag provider={accountType} />
+          </p>
           <p
             className={cn(
               'truncate text-sm',

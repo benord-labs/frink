@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AiProviderId } from '../../../../../../shared/lib/ai-providers';
+import { TooltipProvider } from '../../../../ui/tooltip';
 import { AccountRow } from './index';
 
 // ApiKeyEditForm only renders in the (unused-here) `isEditing` credential path,
@@ -187,25 +188,33 @@ describe('AccountRow summary', () => {
     expect(onAuthenticate).toHaveBeenCalledWith(expect.objectContaining({ id: 'acc-1' }));
   });
 
-  it.each<[AiProviderId, string, string]>([
-    ['codex', 'OpenAI · Signed in on this computer', 'Sign in again'],
-    ['opencode', 'OpenCode · Installed on this computer', 'Reconnect'],
-    ['copilot', 'GitHub Copilot · Installed on this computer', 'Reconnect'],
-  ])('names each %s login after its own provider, not Claude', (type, detail, signIn) => {
-    render(
-      <AccountRow
-        account={makeAccount({ type })}
-        onSetDefault={vi.fn()}
-        onDelete={vi.fn()}
-        onAuthenticate={vi.fn()}
-        onRenameClick={vi.fn()}
-        onSaveRename={vi.fn()}
-        onCancelRename={vi.fn()}
-      />,
-    );
-    expect(screen.getByText(detail)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: signIn })).toBeInTheDocument();
-  });
+  it.each<[AiProviderId, string, boolean, string]>([
+    ['claude-code', 'Claude · Signed in on this computer', false, 'Sign in again'],
+    ['codex', 'OpenAI · Signed in on this computer', false, 'Sign in again'],
+    ['opencode', 'OpenCode · Installed on this computer', true, 'Reconnect'],
+    ['copilot', 'GitHub Copilot · Installed on this computer', true, 'Reconnect'],
+    ['cursor', 'Cursor · Installed on this computer', true, 'Reconnect'],
+  ])(
+    'names each %s login after its own provider (%s); Preview tag shown: %s',
+    (type, detail, preview, signIn) => {
+      render(
+        <TooltipProvider>
+          <AccountRow
+            account={makeAccount({ type })}
+            onSetDefault={vi.fn()}
+            onDelete={vi.fn()}
+            onAuthenticate={vi.fn()}
+            onRenameClick={vi.fn()}
+            onSaveRename={vi.fn()}
+            onCancelRename={vi.fn()}
+          />
+        </TooltipProvider>,
+      );
+      expect(screen.getByText(detail)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: signIn })).toBeInTheDocument();
+      expect(screen.queryByText('Preview') !== null).toBe(preview);
+    },
+  );
 
   it.each<[AiProviderId, string]>([
     ['opencode', 'OpenCode'],
@@ -214,15 +223,17 @@ describe('AccountRow summary', () => {
     'says a %s that is no longer installed was not found and offers to reconnect it',
     (type, name) => {
       render(
-        <AccountRow
-          account={makeAccount({ type, isAuthenticated: false })}
-          onSetDefault={vi.fn()}
-          onDelete={vi.fn()}
-          onAuthenticate={vi.fn()}
-          onRenameClick={vi.fn()}
-          onSaveRename={vi.fn()}
-          onCancelRename={vi.fn()}
-        />,
+        <TooltipProvider>
+          <AccountRow
+            account={makeAccount({ type, isAuthenticated: false })}
+            onSetDefault={vi.fn()}
+            onDelete={vi.fn()}
+            onAuthenticate={vi.fn()}
+            onRenameClick={vi.fn()}
+            onSaveRename={vi.fn()}
+            onCancelRename={vi.fn()}
+          />
+        </TooltipProvider>,
       );
       expect(screen.getByText(`${name} · Not found on this computer`)).toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Reconnect' })).toBeInTheDocument();

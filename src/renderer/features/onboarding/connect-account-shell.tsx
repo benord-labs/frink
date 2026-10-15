@@ -26,6 +26,8 @@ type ConnectAccountShellProps = {
   providerIconBgClassName: string;
   /** Human provider name used in the title/heading copy ("Claude" / "Codex"). */
   providerName: string;
+  /** Shown after the provider's name in the title, such as its Preview tag. */
+  providerTag?: ReactNode;
   /** CLI command shown in the "no login detected" instructions (e.g. `codex login`). */
   authCommand: string;
   /** Sub-heading line under the title (provider-specific token-storage reassurance). */
@@ -281,6 +283,7 @@ export function ConnectAccountShell({
   providerIcon,
   providerIconBgClassName,
   providerName,
+  providerTag,
   authCommand,
   headerDescription,
   loginFoundNote,
@@ -341,10 +344,11 @@ export function ConnectAccountShell({
             </div>
           </div>
           <div className="space-y-1">
-            <h1 className="text-base font-semibold tracking-tight">
+            <h1 className="flex items-center justify-center gap-2 text-base font-semibold tracking-tight">
               {isReauthFlow
                 ? `Reconnect ${providerName} Account`
                 : `Connect ${providerName} Account`}
+              {providerTag}
             </h1>
             <p className="text-sm text-muted-foreground">{headerDescription}</p>
           </div>

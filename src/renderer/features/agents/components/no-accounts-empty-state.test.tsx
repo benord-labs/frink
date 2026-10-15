@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createStore, Provider } from 'jotai';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -27,6 +27,7 @@ vi.mock('jotai', async () => {
   };
 });
 
+import { TooltipProvider } from '@/components/ui/tooltip';
 import { NoAccountsEmptyState } from './no-accounts-empty-state';
 
 const ALL = ['Claude', 'OpenAI', 'OpenCode', 'GitHub Copilot', 'Cursor'];
@@ -39,7 +40,9 @@ function renderEmptyState(props: Parameters<typeof NoAccountsEmptyState>[0] = {}
   const store = createStore();
   return render(
     <Provider store={store}>
-      <NoAccountsEmptyState {...props} />
+      <TooltipProvider>
+        <NoAccountsEmptyState {...props} />
+      </TooltipProvider>
     </Provider>,
   );
 }
@@ -76,6 +79,19 @@ describe('NoAccountsEmptyState', () => {
       screen.getByRole('button', { name: 'Add it in Settings' }).click();
       expect(setSettingsActiveTabMock).toHaveBeenCalledWith('models');
       expect(setSettingsOpenMock).toHaveBeenCalledWith(true);
+    });
+
+    it('tags only OpenCode, GitHub Copilot and Cursor as Preview, and says what that means', async () => {
+      renderEmptyState();
+      const tagged = screen
+        .getAllByRole('listitem')
+        .filter((row) => within(row).queryByText('Preview'))
+        .map((row) => within(row).getByRole('button').getAttribute('aria-label'));
+      expect(tagged).toEqual(['Connect OpenCode', 'Connect GitHub Copilot', 'Connect Cursor']);
+      fireEvent.focus(screen.getAllByText('Preview')[0]);
+      expect(await screen.findByRole('tooltip')).toHaveTextContent(
+        "In preview: chats work, but Flows, building a Flow from a chat, your MCP servers and your hooks don't work with it yet.",
+      );
     });
 
     it('on Linux offers only Claude and OpenAI: installed agents run on macOS only', () => {
@@ -115,9 +131,9 @@ describe('NoAccountsEmptyState', () => {
       expect(connectNames()).toEqual(['OpenAI']);
       await userEvent.setup().click(screen.getByRole('button', { name: 'More' }));
       expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
-        'Connect OpenCode',
-        'Connect GitHub Copilot',
-        'Connect Cursor',
+        'Connect OpenCodePreview',
+        'Connect GitHub CopilotPreview',
+        'Connect CursorPreview',
       ]);
     });
   });
@@ -132,8 +148,14 @@ describe('NoAccountsEmptyState', () => {
         within(menu)
           .getAllByRole('menuitem')
           .map((item) => item.textContent),
-      ).toEqual(['Connect OpenCode', 'Connect GitHub Copilot', 'Connect Cursor']);
-      await userEvent.setup().click(within(menu).getByRole('menuitem', { name: 'Connect Cursor' }));
+      ).toEqual([
+        'Connect OpenCodePreview',
+        'Connect GitHub CopilotPreview',
+        'Connect CursorPreview',
+      ]);
+      await userEvent
+        .setup()
+        .click(within(menu).getByRole('menuitem', { name: 'Connect Cursor Preview' }));
       expect(setPendingAccountAuthMock).toHaveBeenLastCalledWith(
         expect.objectContaining({ mode: 'add', provider: 'cursor' }),
       );

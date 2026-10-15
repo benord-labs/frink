@@ -9,6 +9,7 @@ import {
   ProviderMark,
   ProviderTile,
 } from '@/components/dialogs/settings-tabs/AgentsModelsTab/ProviderTile';
+import { ProviderPreviewTag } from '@/components/ProviderPreviewTag';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -149,11 +150,12 @@ function MoreProviders({
           More
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-64">
+      <DropdownMenuContent align="end" className="w-72">
         {providers.map((id) => (
           <DropdownMenuItem key={id} onClick={() => onConnect(id)}>
             <ProviderTile type={id} size="sm" />
             {addAccountLabel(id)}
+            <ProviderPreviewTag provider={id} />
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>
@@ -178,7 +180,10 @@ function ProviderRow({
     <li className="flex items-center gap-3 px-4 py-3.5">
       <ProviderTile type={type} />
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium text-foreground">{name}</p>
+        <p className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+          <span className="truncate">{name}</span>
+          <ProviderPreviewTag provider={type} />
+        </p>
         <p
           className={cn(
             'truncate text-[13px]',
