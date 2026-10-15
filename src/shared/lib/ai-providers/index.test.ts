@@ -52,18 +52,21 @@ describe('AI provider table', () => {
     ]);
   });
 
-  it('ships OpenCode and GitHub Copilot on macOS only, and Grok off', () => {
+  it('ships OpenCode, GitHub Copilot and Cursor on macOS only, and Grok off', () => {
     expect(runtimeFor('opencode', undefined, 'darwin')).toBe('acp');
     expect(runtimeFor('opencode', undefined, 'linux')).toBeUndefined();
     expect(runtimeFor('copilot', undefined, 'darwin')).toBe('copilot');
     expect(runtimeFor('copilot', undefined, 'linux')).toBeUndefined();
     expect(runtimeFor('copilot', undefined, 'win32')).toBeUndefined();
+    expect(runtimeFor('cursor', undefined, 'darwin')).toBe('cursor');
+    expect(runtimeFor('cursor', undefined, 'linux')).toBeUndefined();
     expect(runtimeFor('grok', undefined, 'darwin')).toBeUndefined();
     expect(selectableProviderIds(undefined, 'darwin')).toEqual([
       'claude-code',
       'codex',
       'opencode',
       'copilot',
+      'cursor',
     ]);
     expect(selectableProviderIds(undefined, 'linux')).toEqual(['claude-code', 'codex']);
   });
@@ -79,9 +82,8 @@ describe('AI provider table', () => {
     ]);
   });
 
-  it('keeps Cursor off as shipped, and runs it on macOS only once its flag is on', () => {
-    expect(runtimeFor('cursor', undefined, 'darwin')).toBeUndefined();
-    expect(selectableProviderIds(undefined, 'darwin')).not.toContain('cursor');
+  it('runs Cursor on its own runtime only when its flag is on and this system is checked', () => {
+    expect(runtimeFor('cursor', {}, 'darwin')).toBeUndefined();
     expect(runtimeFor('cursor', { cursorAccounts: true }, 'win32')).toBeUndefined();
     expect(runtimeFor('cursor', { cursorAccounts: true }, 'darwin')).toBe('cursor');
   });

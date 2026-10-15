@@ -43,14 +43,15 @@ const PLAN_REQUIRED =
   'Cursor needs a paid plan to work in Frink. Upgrade to Cursor Pro or higher, then try again.';
 const SIGNED_OUT =
   "Cursor isn't signed in. Choose Sign in to Cursor, finish in your browser, then try again.";
-const NO_SDK = "Frink can't find Cursor's SDK on this computer.";
 const SAVED_ROWS = [
   { id: 'default', name: 'Auto' },
   { id: 'gpt-x/low', name: 'GPT-X', familyId: 'gpt-x', effort: 'low', detail: 'Low' },
   { id: 'gpt-x/high', name: 'GPT-X', familyId: 'gpt-x', effort: 'high', detail: 'High' },
 ];
-const NO_RIPGREP =
+const MISSING =
   'Part of Cursor is missing from this copy of Frink. Reinstall Frink, then try again.';
+const MISMATCHED =
+  'This copy of Frink has the wrong version of Cursor. Reinstall Frink, then try again.';
 
 let root = '';
 let sdkRoot = '';
@@ -112,7 +113,7 @@ describe('resolveCursorLaunch', () => {
   it('starts the tested SDK through Frink’s host, with a private home and store per chat', async () => {
     const chatDir = path.join(userData, 'cursor', 'chats', 'c_1-A');
     const home = path.join(chatDir, 'home');
-    const env = userEnv({ CURSOR_API_KEY: 'kept', CURSOR_BACKEND_URL: 'http://127.0.0.1:1' });
+    const env = userEnv({ CURSOR_API_KEY: 'dropped', CURSOR_BACKEND_URL: 'http://127.0.0.1:1' });
     const platform = `sdk-${process.platform}-${process.arch}`;
     const ripgrep = path.join(path.dirname(sdkRoot), platform, 'bin', 'rg');
 
@@ -130,7 +131,8 @@ describe('resolveCursorLaunch', () => {
         hookVersions: ['1.0.0'],
       },
     });
-    expect(cursorHostEnv(env, home)).toMatchObject({ HOME: home, CURSOR_API_KEY: 'kept' });
+    expect(cursorHostEnv(env, home)).toMatchObject({ HOME: home });
+    expect(cursorHostEnv(env, home)).not.toHaveProperty('CURSOR_API_KEY');
     expect(cursorHostEnv(env, home)).not.toHaveProperty('CURSOR_BACKEND_URL');
   });
 
@@ -142,9 +144,9 @@ describe('resolveCursorLaunch', () => {
 
     expect(await resolve('c1', old)).toEqual({
       ok: false,
-      reason: "Frink checked Cursor's SDK 1.0.37. This copy is 1.0.36.",
+      reason: MISMATCHED,
     });
-    expect(await resolve('c1', path.join(root, 'none'))).toEqual({ ok: false, reason: NO_SDK });
+    expect(await resolve('c1', path.join(root, 'none'))).toEqual({ ok: false, reason: MISSING });
     for (const chatKey of ['../c1', 'a/b', '', '.']) {
       expect(await resolve(chatKey)).toEqual({
         ok: false,
@@ -197,11 +199,11 @@ describe('locateCursorAgent', () => {
       ok: true,
       launch: { ripgrep, env: { CURSOR_RIPGREP_PATH: ripgrep } },
     });
-    expect(await launch('built no rg')).toEqual({ ok: false, reason: NO_RIPGREP });
-    expect(await launch('built missing')).toEqual({ ok: false, reason: NO_SDK });
+    expect(await launch('built no rg')).toEqual({ ok: false, reason: MISSING });
+    expect(await launch('built missing')).toEqual({ ok: false, reason: MISSING });
     expect(await launch('built old')).toEqual({
       ok: false,
-      reason: "Frink checked Cursor's SDK 1.0.37. This copy is 1.0.36.",
+      reason: MISMATCHED,
     });
   });
 });
@@ -209,15 +211,10 @@ describe('locateCursorAgent', () => {
 describe('findCursorAgent', () => {
   it.each([
     ['signed in with a paid plan', {}, { status: 'ready' }],
-    [
-      'signed in only by the user’s own key',
-      { FAKE_AUTH: 'logged-out', CURSOR_API_KEY: 'k' },
-      { status: 'ready' },
-    ],
     ['signed out', { FAKE_AUTH: 'logged-out' }, { status: 'signed-out', reason: SIGNED_OUT }],
     [
-      'an empty key',
-      { FAKE_AUTH: 'logged-out', CURSOR_API_KEY: '' },
+      'signed out, whatever key the user set themselves',
+      { FAKE_AUTH: 'logged-out', CURSOR_API_KEY: 'k' },
       { status: 'signed-out', reason: SIGNED_OUT },
     ],
     [
@@ -272,7 +269,7 @@ describe('findCursorAgent', () => {
     };
     expect(
       await findCursorAgent({ ...deps({}, { sdkRoot: path.join(root, 'none') }), forkHost }),
-    ).toEqual({ status: 'missing', reason: NO_SDK });
+    ).toEqual({ status: 'missing', reason: MISSING });
     expect(forks).toBe(0);
   });
 });

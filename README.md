@@ -16,7 +16,7 @@
 <p align="center">
   Triggers from Linear, Jira, Shortcut, ClickUp, Sentry, PostHog, Vercel and more, plus any webhook or a schedule.<br/>
   Stuck agents wait in the Work Queue for your yes, on your Mac or from your iPhone (beta).<br/>
-  It runs on your machine with your own Claude Code or Codex login, or your own OpenCode or GitHub Copilot. No Frink account.
+  It runs on your machine with your own Claude Code or Codex login, or your own OpenCode, GitHub Copilot or Cursor. No Frink account.
 </p>
 
 <p align="center">
@@ -108,7 +108,7 @@ Every file the agent changes shows as a diff. Open it in the built-in editor, ch
 
 - **[Permissions](user-docs/permissions.md)** — every change and command passes a per-project gate first; `~/.ssh`, `~/.aws` and `.env` are blocked wherever Frink checks (the page lists what it doesn't cover yet).
 - **[Plugins & MCP](user-docs/mcp-servers.md)** — connect Linear, Shortcut, ClickUp, GitHub, Notion, Slack, Sentry, PostHog and more, as chat tools and Flow steps.
-- **[Your own AI sign-in](user-docs/ai-accounts.md)** — uses your existing Claude Code or Codex login, or the OpenCode or GitHub Copilot you installed (macOS). Frink never stores the token.
+- **[Your own AI sign-in](user-docs/ai-accounts.md)** — uses your existing Claude Code or Codex login, the OpenCode or GitHub Copilot you installed, or your Cursor sign-in (macOS). Frink never stores the token.
 - **Local-first** — chats, Flows, tasks and permissions live in SQLite on your machine. No account needed. Official builds send anonymous usage counts and crash reports: [everything Frink sends](user-docs/telemetry.md).
 
 ---
@@ -119,7 +119,8 @@ Every file the agent changes shows as a diff. Open it in the built-in editor, ch
   <a href="https://docs.anthropic.com/claude/docs/claude-code"><kbd><img src="https://www.google.com/s2/favicons?domain=anthropic.com&sz=64" alt="Claude Code logo" width="16" valign="middle" /> Claude Code</kbd></a> &nbsp;
   <a href="https://github.com/openai/codex"><kbd><img src="https://www.google.com/s2/favicons?domain=openai.com&sz=64" alt="Codex logo" width="16" valign="middle" /> Codex</kbd></a> &nbsp;
   <a href="https://opencode.ai"><kbd><img src="https://www.google.com/s2/favicons?domain=opencode.ai&sz=64" alt="OpenCode logo" width="16" valign="middle" /> OpenCode</kbd></a> &nbsp;
-  <a href="https://github.com/features/copilot/cli"><kbd><img src="https://www.google.com/s2/favicons?domain=github.com&sz=64" alt="GitHub Copilot logo" width="16" valign="middle" /> GitHub Copilot</kbd></a>
+  <a href="https://github.com/features/copilot/cli"><kbd><img src="https://www.google.com/s2/favicons?domain=github.com&sz=64" alt="GitHub Copilot logo" width="16" valign="middle" /> GitHub Copilot</kbd></a> &nbsp;
+  <a href="https://cursor.com"><kbd><img src="https://www.google.com/s2/favicons?domain=cursor.com&sz=64" alt="Cursor logo" width="16" valign="middle" /> Cursor</kbd></a>
 </p>
 
 Bring your own subscription or API key — Frink runs the agent, you keep the account.

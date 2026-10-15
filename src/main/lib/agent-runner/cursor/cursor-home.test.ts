@@ -215,13 +215,13 @@ describe('prepareCursorHome', () => {
 });
 
 describe('cursorHostEnv', () => {
-  it('drops every Cursor variable but the user’s key, and what changes how shells and Node start', () => {
+  it('drops every Cursor variable, the user’s key too, and what changes how shells and Node start', () => {
     const env = cursorHostEnv(
       {
         PATH: '/usr/bin',
         HOME: '/Users/me',
         SHELL: '/bin/zsh',
-        CURSOR_API_KEY: 'kept',
+        CURSOR_API_KEY: 'dropped',
         CURSOR_BACKEND_URL: 'https://example.com',
         CURSOR_NEW_SWITCH: '1',
         __CURSOR_SANDBOX_ENV_RESTORE: 'touch /tmp/x',
@@ -240,7 +240,6 @@ describe('cursorHostEnv', () => {
       PATH: '/usr/bin',
       HOME: '/private/home',
       SHELL: '/bin/zsh',
-      CURSOR_API_KEY: 'kept',
     });
   });
 

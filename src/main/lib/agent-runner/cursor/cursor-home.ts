@@ -43,6 +43,7 @@ const DROPPED_VARS = new Set([
   'SHELLOPTS',
   'BASHOPTS',
 ]);
+// CURSOR_API_KEY goes too: Frink uses only Cursor's own sign-in, which Sign in can replace.
 const DROPPED_PREFIX = /^(_*CURSOR_|BASH_FUNC_)/;
 const FOLDER_REFUSED = "Frink can't start Cursor from this folder.";
 const NOT_READY = "Frink couldn't prepare Cursor's safety check, so it didn't start it.";
@@ -54,7 +55,7 @@ const runChflags: Chflags = async (flag, paths) => {
 /** The user's login-shell env for Cursor's process, with HOME set to the chat's private folder. */
 export function cursorHostEnv(userEnv: Env, home: string) {
   const kept = Object.entries(userEnv).filter(
-    ([key]) => key === 'CURSOR_API_KEY' || (!DROPPED_PREFIX.test(key) && !DROPPED_VARS.has(key)),
+    ([key]) => !DROPPED_PREFIX.test(key) && !DROPPED_VARS.has(key),
   );
   const shell = userEnv.SHELL ?? '';
   const usable = path.isAbsolute(shell) && ['zsh', 'bash'].includes(path.basename(shell));

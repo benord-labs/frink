@@ -86,7 +86,8 @@ describe('startCursorTurn', () => {
   });
 
   it('shows why Cursor could not start, under its name', async () => {
-    const reason = "Frink can't find Cursor's SDK on this computer.";
+    const reason =
+      'Part of Cursor is missing from this copy of Frink. Reinstall Frink, then try again.';
     const { deps, runs } = fakeDeps({ ok: false, reason });
 
     await expect(collect(startCursorTurn(turnParams(), deps))).rejects.toThrow(

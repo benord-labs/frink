@@ -48,9 +48,11 @@ const CHAT_KEY = /^[A-Za-z0-9_-]+$/;
 const CHECK_MS = 30_000;
 // Cursor's own sign-in waits about this long for the browser before it gives up.
 const SIGN_IN_MS = 20 * 60_000;
-const NO_SDK = "Frink can't find Cursor's SDK on this computer.";
-const NO_RIPGREP =
+// Cursor ships inside Frink, so a missing or other version means a damaged install.
+const MISSING =
   'Part of Cursor is missing from this copy of Frink. Reinstall Frink, then try again.';
+const MISMATCHED =
+  'This copy of Frink has the wrong version of Cursor. Reinstall Frink, then try again.';
 const BAD_CHAT = "Frink can't start Cursor for this chat.";
 const CHECKED_NOT: CursorAgentCheck = {
   status: 'failed',
@@ -88,15 +90,13 @@ async function findRipgrep(sdkRoot: string): Promise<string | undefined> {
 async function checkedSdk(deps: SdkDeps): Promise<SdkCheck> {
   const root = deps.sdkRoot ?? installedSdkRoot(deps.app ?? app);
   const version = await readVersion(root);
-  if (!version) return { ok: false, reason: NO_SDK };
+  if (!version) return { ok: false, reason: MISSING };
   if (version !== CURSOR_ROW.sdk.version) {
-    return {
-      ok: false,
-      reason: `Frink checked Cursor's SDK ${CURSOR_ROW.sdk.version}. This copy is ${version}.`,
-    };
+    log.warn(`[Cursor] Found SDK ${version}; Frink checked ${CURSOR_ROW.sdk.version}`);
+    return { ok: false, reason: MISMATCHED };
   }
   const ripgrep = await findRipgrep(root);
-  if (!ripgrep) return { ok: false, reason: NO_RIPGREP };
+  if (!ripgrep) return { ok: false, reason: MISSING };
   return { ok: true, entry: path.join(root, 'dist', 'esm', 'index.js'), ripgrep };
 }
 

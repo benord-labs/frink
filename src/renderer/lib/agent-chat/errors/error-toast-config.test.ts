@@ -1,7 +1,11 @@
+// @vitest-environment happy-dom
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../trpc', () => ({ trpcClient: {} }));
 
+import { pendingAccountAuthAtom } from '../../atoms';
+import { appStore } from '../../jotai-store';
+import { trpcClient } from '../../trpc';
 import { ERROR_TOAST_CONFIG, shouldPersistChatRetry, toastDedupId } from './error-toast-config';
 
 // The flow-run decline categories must stay registered together: a missing registration
@@ -30,5 +34,28 @@ describe('MESSAGE_NOT_DELIVERED', () => {
   it('has its own toast copy and stays retryable', () => {
     expect(ERROR_TOAST_CONFIG.MESSAGE_NOT_DELIVERED?.title).toBe('Message not delivered');
     expect(shouldPersistChatRetry('MESSAGE_NOT_DELIVERED')).toBe(true);
+  });
+});
+
+describe('CURSOR_SIGNED_OUT', () => {
+  it("opens Cursor's connect page on its stored name, and keeps Retry", async () => {
+    const accounts = [
+      { type: 'codex', label: 'Codex' },
+      { type: 'cursor', label: 'Work' },
+    ];
+    Object.assign(trpcClient, { claudeCode: { listAccounts: { query: async () => accounts } } });
+    const config = ERROR_TOAST_CONFIG.CURSOR_SIGNED_OUT;
+    expect(config).toMatchObject({ title: "Cursor isn't signed in", action: { label: 'Sign in' } });
+
+    config?.action?.onClick();
+
+    await vi.waitFor(() => expect(appStore.get(pendingAccountAuthAtom)).not.toBeNull());
+    expect(appStore.get(pendingAccountAuthAtom)).toEqual({
+      mode: 'reauth',
+      accountLabel: 'Work',
+      returnToSettings: false,
+      provider: 'cursor',
+    });
+    expect(shouldPersistChatRetry('CURSOR_SIGNED_OUT')).toBe(true);
   });
 });

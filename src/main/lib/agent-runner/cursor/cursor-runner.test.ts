@@ -80,6 +80,11 @@ function run(fake: Fake, params = runnerParams(), recorder: Recorder = recording
 }
 
 const typesOf = (chunks: UIMessageChunk[]) => chunks.map((chunk) => chunk.type);
+const SIGNED_OUT_ERROR = {
+  type: 'error',
+  errorText: SIGNED_OUT,
+  debugInfo: { category: 'CURSOR_SIGNED_OUT' },
+};
 const errorsOf = (chunks: UIMessageChunk[]) =>
   chunks.flatMap((chunk) => (chunk.type === 'error' ? [chunk.errorText] : []));
 const lastLock = (recorder: Recorder) => recorder.calls.at(-1)?.[0];
@@ -237,8 +242,19 @@ describe('runCursorAgent', () => {
 
     const chunks = await run(fake);
 
-    expect(errorsOf(chunks)).toEqual([SIGNED_OUT]);
+    expect(chunks.filter((chunk) => chunk.type === 'error')).toEqual([SIGNED_OUT_ERROR]);
     expect(fake.received.map((message) => message.type)).not.toContain('start');
+  });
+
+  it('tags a key Cursor turns down mid-turn, so the chat offers Sign in', async () => {
+    const fake = fakeCursorHost({
+      turn: (play) =>
+        play.post({ type: 'error', text: 'Invalid API key', code: 'unauthenticated' }),
+    });
+
+    const chunks = await run(fake);
+
+    expect(chunks.filter((chunk) => chunk.type === 'error')).toEqual([SIGNED_OUT_ERROR]);
   });
 
   it('shows the paid-plan text when Cursor refuses the plan', async () => {
