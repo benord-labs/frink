@@ -42,6 +42,8 @@ export type AcpLaunchRow = {
   fallbacks: readonly string[];
   /** The checked versions: at least `floor`, below `below`. */
   versions: { floor: string; below: string };
+  /** Picks the version out of `--version` output as its first group; else the whole output is it. */
+  versionPattern?: RegExp;
   installHint: string;
   signInHint: string;
   args: readonly string[];
@@ -54,11 +56,8 @@ export type AcpLaunchRow = {
 /** What finding an installed agent and reading its version needs. */
 export type InstalledAgentRow = Pick<
   AcpLaunchRow,
-  'name' | 'binary' | 'fallbacks' | 'versions' | 'installHint'
-> & {
-  /** Picks the version out of `--version` output as its first group; else the whole output is it. */
-  versionPattern?: RegExp;
-};
+  'name' | 'binary' | 'fallbacks' | 'versions' | 'versionPattern' | 'installHint'
+>;
 
 export type AcpLaunchResult =
   | { ok: true; launch: Omit<AcpAgentLaunch, 'cwd'> }
@@ -169,8 +168,12 @@ async function checkVersion(
   const minor = floor.slice(0, 2).join('.');
   // A floor inside a minor is named in full, so an older patch of it is not called checked.
   const checked = floor[2] ? `${floor.join('.')} and later ${minor} releases` : minor;
+  const fix =
+    compareVersions(version, floor) < 0
+      ? `Update ${row.name}, then try again.`
+      : `To use ${row.name} in Frink now, go back to ${row.name} ${minor}.`;
   return {
-    reason: `Frink has checked ${row.name} ${checked}. You have ${version.join('.')}, which Frink hasn't checked yet.`,
+    reason: `Frink has checked ${row.name} ${checked}. You have ${version.join('.')}, which Frink hasn't checked yet. ${fix}`,
   };
 }
 

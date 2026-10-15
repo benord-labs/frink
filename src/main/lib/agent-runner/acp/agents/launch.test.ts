@@ -207,12 +207,20 @@ describe('resolveAcpLaunch for OpenCode', { timeout: 15_000 }, () => {
     if (result.ok) launches.push(result.launch);
   });
 
-  it('explains a version Frink has not checked, and one it cannot read', async () => {
-    expect(await resolve({ FAKE_VERSION: '1.20.0' })).toEqual({
+  it.each([
+    ['1.20.0', '1.20.0', 'To use OpenCode in Frink now, go back to OpenCode 1.19.'],
+    ['opencode v2.0.29', '2.0.29', 'To use OpenCode in Frink now, go back to OpenCode 1.19.'],
+    ['2.0.29', '2.0.29', 'To use OpenCode in Frink now, go back to OpenCode 1.19.'],
+    ['1.18.9', '1.18.9', 'Update OpenCode, then try again.'],
+  ])('names the unchecked version %s and how to fix it', async (printed, version, fix) => {
+    expect(await resolve({ FAKE_VERSION: printed })).toEqual({
       ok: false,
-      reason: "Frink has checked OpenCode 1.19. You have 1.20.0, which Frink hasn't checked yet.",
+      reason: `Frink has checked OpenCode 1.19. You have ${version}, which Frink hasn't checked yet. ${fix}`,
     });
-    expect(await resolve({ FAKE_VERSION: 'garbage' })).toEqual({
+  });
+
+  it.each(['garbage', ''])('explains a version it cannot read: %j', async (printed) => {
+    expect(await resolve({ FAKE_VERSION: printed })).toEqual({
       ok: false,
       reason: "Frink couldn't tell which version of OpenCode you have, so it didn't start it.",
     });
@@ -306,7 +314,8 @@ describe('resolveAcpLaunch for OpenCode', { timeout: 15_000 }, () => {
     expect(await findRowBinary(OPENCODE_LAUNCH, env)).toEqual(found);
     expect(await locateRowBinary(OPENCODE_LAUNCH, env)).toBe(found.path);
     expect(await findRowBinary(OPENCODE_LAUNCH, { ...env, FAKE_VERSION: '1.20.0' })).toEqual({
-      reason: "Frink has checked OpenCode 1.19. You have 1.20.0, which Frink hasn't checked yet.",
+      reason:
+        "Frink has checked OpenCode 1.19. You have 1.20.0, which Frink hasn't checked yet. To use OpenCode in Frink now, go back to OpenCode 1.19.",
     });
     const missing = { ...env, PATH: '/usr/bin' };
     expect(await locateRowBinary(OPENCODE_LAUNCH, missing)).toBeUndefined();

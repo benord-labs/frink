@@ -85,13 +85,16 @@ describe('resolveCopilotLaunch', () => {
   });
 
   it('explains a version Frink has not checked, and one it cannot read', async () => {
-    const refused = (version: string) => ({
+    const refused = (version: string, fix: string) => ({
       ok: false,
-      reason: `Frink has checked GitHub Copilot 1.0.96 and later 1.0 releases. You have ${version}, which Frink hasn't checked yet.`,
+      reason: `Frink has checked GitHub Copilot 1.0.96 and later 1.0 releases. You have ${version}, which Frink hasn't checked yet. ${fix}`,
     });
-    for (const version of ['1.1.0', '1.0.95']) {
+    for (const [version, fix] of [
+      ['1.1.0', 'To use GitHub Copilot in Frink now, go back to GitHub Copilot 1.0.'],
+      ['1.0.95', 'Update GitHub Copilot, then try again.'],
+    ]) {
       expect(await resolve({ FAKE_VERSION: `GitHub Copilot CLI ${version}.` })).toEqual(
-        refused(version),
+        refused(version, fix),
       );
     }
     expect(await resolve({ FAKE_VERSION: 'garbage' })).toEqual({

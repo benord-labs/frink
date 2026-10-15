@@ -104,7 +104,7 @@ describe('agentAccounts', () => {
   it('refuses a version Frink has not checked, in plain words', async () => {
     env.FAKE_VERSION = '1.20.0';
     const reason =
-      "Frink has checked OpenCode 1.19. You have 1.20.0, which Frink hasn't checked yet.";
+      "Frink has checked OpenCode 1.19. You have 1.20.0, which Frink hasn't checked yet. To use OpenCode in Frink now, go back to OpenCode 1.19.";
 
     await expect(caller().detect({ type: 'opencode' })).resolves.toEqual({
       available: false,
@@ -160,7 +160,7 @@ describe('agentAccounts', () => {
   it('refuses a GitHub Copilot version Frink has not checked, in plain words', async () => {
     env.FAKE_VERSION = '1.1.0';
     const reason =
-      "Frink has checked GitHub Copilot 1.0.96 and later 1.0 releases. You have 1.1.0, which Frink hasn't checked yet.";
+      "Frink has checked GitHub Copilot 1.0.96 and later 1.0 releases. You have 1.1.0, which Frink hasn't checked yet. To use GitHub Copilot in Frink now, go back to GitHub Copilot 1.0.";
 
     await expect(caller(COPILOT_ON).detect({ type: 'copilot' })).resolves.toEqual({
       available: false,
