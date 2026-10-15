@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { access, constants, readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { app, shell } from 'electron';
@@ -49,6 +49,8 @@ const CHECK_MS = 30_000;
 // Cursor's own sign-in waits about this long for the browser before it gives up.
 const SIGN_IN_MS = 20 * 60_000;
 const NO_SDK = "Frink can't find Cursor's SDK on this computer.";
+const NO_RIPGREP =
+  'Part of Cursor is missing from this copy of Frink. Reinstall Frink, then try again.';
 const BAD_CHAT = "Frink can't start Cursor for this chat.";
 const CHECKED_NOT: CursorAgentCheck = {
   status: 'failed',
@@ -66,6 +68,22 @@ const readVersion = (root: string) =>
     .then((text) => packageSchema.parse(JSON.parse(text)).version)
     .catch(() => undefined);
 
+const runnable = (file: string) =>
+  access(file, constants.X_OK).then(
+    () => true,
+    () => false,
+  );
+
+/** Cursor's ripgrep, in the platform package the SDK itself finds: the nearest one above it. */
+async function findRipgrep(sdkRoot: string): Promise<string | undefined> {
+  const platform = `sdk-${process.platform}-${process.arch}`;
+  for (let dir = path.dirname(sdkRoot); dir !== path.dirname(dir); dir = path.dirname(dir)) {
+    const rg = path.join(dir, 'node_modules', '@cursor', platform, 'bin', 'rg');
+    if (await runnable(rg)) return rg;
+  }
+  return undefined;
+}
+
 /** The SDK's module entry when the copy found is the tested version, or why it can't be used. */
 async function checkedSdk(deps: SdkDeps): Promise<SdkCheck> {
   const root = deps.sdkRoot ?? installedSdkRoot(deps.app ?? app);
@@ -77,9 +95,8 @@ async function checkedSdk(deps: SdkDeps): Promise<SdkCheck> {
       reason: `Frink checked Cursor's SDK ${CURSOR_ROW.sdk.version}. This copy is ${version}.`,
     };
   }
-  // The SDK's ripgrep ships in its platform package beside it.
-  const platform = `sdk-${process.platform}-${process.arch}`;
-  const ripgrep = path.join(root, '..', platform, 'bin', 'rg');
+  const ripgrep = await findRipgrep(root);
+  if (!ripgrep) return { ok: false, reason: NO_RIPGREP };
   return { ok: true, entry: path.join(root, 'dist', 'esm', 'index.js'), ripgrep };
 }
 

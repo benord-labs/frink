@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { SDKMessage } from '@cursor/sdk';
@@ -22,6 +22,7 @@ import { rememberedAgentModels } from '../agent-models';
 import type { CursorSdkMessage } from './cursor-events';
 import type { CursorRunnerParams, ForkHost } from './cursor-runner';
 import {
+  CURSOR_RIPGREP,
   FAKE_CURSOR_MODELS,
   nodeForkHost,
   recordingChflags,
@@ -48,6 +49,8 @@ const SAVED_ROWS = [
   { id: 'gpt-x/low', name: 'GPT-X', familyId: 'gpt-x', effort: 'low', detail: 'Low' },
   { id: 'gpt-x/high', name: 'GPT-X', familyId: 'gpt-x', effort: 'high', detail: 'High' },
 ];
+const NO_RIPGREP =
+  'Part of Cursor is missing from this copy of Frink. Reinstall Frink, then try again.';
 
 let root = '';
 let sdkRoot = '';
@@ -58,11 +61,13 @@ let chat = 0;
 beforeAll(async () => {
   // A space in the path, as in macOS's Application Support folder.
   root = await mkdtemp(path.join(os.tmpdir(), 'cursor launch '));
-  sdkRoot = path.join(root, 'sdk');
+  // Run from source: the SDK and its platform package share one node_modules.
+  sdkRoot = path.join(root, 'source', 'node_modules', '@cursor', 'sdk');
   userData = path.join(root, 'App Support');
   realHome = path.join(root, 'real home');
   await mkdir(realHome);
   await writeFakeCursorSdk(sdkRoot, '1.0.37');
+  await writeCursorRipgrep(path.join(root, 'source', 'node_modules'));
 });
 beforeEach(() => {
   vi.spyOn(database, 'getDatabase').mockReturnValue(freshDb());
@@ -72,6 +77,14 @@ afterEach(() => {
   return disposeAllCursorHosts();
 });
 afterAll(() => rm(root, { recursive: true, force: true }));
+
+/** Puts Cursor's platform package, with a working ripgrep, in a node_modules folder. */
+async function writeCursorRipgrep(nodeModules: string) {
+  const bin = path.join(nodeModules, '@cursor', `sdk-${process.platform}-${process.arch}`, 'bin');
+  await mkdir(bin, { recursive: true });
+  await symlink(CURSOR_RIPGREP, path.join(bin, 'rg'));
+  return path.join(bin, 'rg');
+}
 
 const app = { isPackaged: false, getAppPath: () => process.cwd(), getPath: () => userData };
 const userEnv = (extra: Record<string, string> = {}) => ({
@@ -161,22 +174,30 @@ describe('locateCursorAgent', () => {
     );
   });
 
-  it('finds the SDK shipped inside the built app, and refuses a missing or other copy', async () => {
+  it('finds the SDK inside the built app and its ripgrep outside it, and refuses a broken copy', async () => {
+    const resources = (name: string) => path.join(root, name, 'Contents', 'Resources');
+    // The SDK and its ripgrep are found from the app path alone.
     const built = (name: string) => ({
       ...app,
-      isPackaged: true,
-      getAppPath: () => path.join(root, name, 'Resources', 'app.asar'),
+      getAppPath: () => path.join(resources(name), 'app.asar'),
     });
     const shipped = (name: string) =>
-      path.join(root, name, 'Resources', 'app.asar', 'node_modules', '@cursor', 'sdk');
+      path.join(resources(name), 'app.asar', 'node_modules', '@cursor', 'sdk');
     await writeFakeCursorSdk(shipped('built'), '1.0.37');
+    await writeFakeCursorSdk(shipped('built no rg'), '1.0.37');
     await writeFakeCursorSdk(shipped('built old'), '1.0.36');
+    const ripgrep = await writeCursorRipgrep(path.join(resources('built'), 'node_modules'));
     const launch = (name: string) =>
       resolveCursorLaunch({ chatKey: 'c1' }, { env: userEnv(), app: built(name) });
 
     expect(await locateCursorAgent({ app: built('built') })).toBe(
       path.join(shipped('built'), 'dist', 'esm', 'index.js'),
     );
+    expect(await launch('built')).toMatchObject({
+      ok: true,
+      launch: { ripgrep, env: { CURSOR_RIPGREP_PATH: ripgrep } },
+    });
+    expect(await launch('built no rg')).toEqual({ ok: false, reason: NO_RIPGREP });
     expect(await launch('built missing')).toEqual({ ok: false, reason: NO_SDK });
     expect(await launch('built old')).toEqual({
       ok: false,
