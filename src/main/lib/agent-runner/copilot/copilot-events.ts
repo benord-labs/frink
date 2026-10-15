@@ -1,6 +1,7 @@
 import type { SessionEvent, ToolExecutionStartData } from '@github/copilot-sdk';
 import { z } from 'zod';
 import type { UIMessageChunk } from '../../claude/types';
+import { endTextRun } from '../codex/codex-stream-chunks';
 import { PATCH_TOOL, type PatchFile, readPatch } from './copilot-patch';
 
 /** Card for a tool Frink has no dedicated card for. */
@@ -39,14 +40,6 @@ export function createCopilotEventState(): CopilotEventState {
 /** The first card keeps the call's id; later ones use `#`, as `:` marks a part nested in a subagent. */
 const cardId = (toolCallId: string, index: number) =>
   index === 0 ? toolCallId : `${toolCallId}#${index}`;
-
-/** Ends the open text run, so text after a thought or a card starts a new block below it. */
-function endTextRun(state: CopilotEventState): UIMessageChunk[] {
-  if (state.openTextId === null) return [];
-  const id = state.openTextId;
-  state.openTextId = null;
-  return [{ type: 'text-end', id }];
-}
 
 /** The patch lines carrying `mark`, without it. */
 const marked = (lines: string[], mark: '+' | '-') =>

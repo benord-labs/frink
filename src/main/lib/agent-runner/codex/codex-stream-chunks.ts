@@ -2,6 +2,14 @@ import type { ThinkingEmitter } from '../../claude/thinking-emitter';
 import type { UIMessageChunk } from '../../claude/types';
 import type { ChunkQueue } from './chunk-queue';
 
+/** Ends the open text run, so text after a thought or a card starts a new block below it. */
+export function endTextRun(state: { openTextId: string | null }): UIMessageChunk[] {
+  if (state.openTextId === null) return [];
+  const id = state.openTextId;
+  state.openTextId = null;
+  return [{ type: 'text-end', id }];
+}
+
 function closeText(id: string, openTextIds: Set<string>): UIMessageChunk[] {
   return openTextIds.delete(id) ? [{ type: 'text-end', id }] : [];
 }

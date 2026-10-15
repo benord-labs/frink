@@ -24,7 +24,7 @@ export type CursorStreamTool = {
 
 /** Each tool Cursor may offer, as its run names it, mapped to its hook tool and input keys. */
 export const CURSOR_STREAM_TOOLS = {
-  shell: { tool: 'Shell', keys: { command: 'command' } },
+  shell: { tool: 'Shell', keys: { command: 'command', workingDirectory: 'cwd' } },
   read: { tool: 'Read', keys: { path: 'file_path' } },
   edit: { tool: 'Write', keys: { path: 'file_path' } },
   delete: { tool: 'Delete', keys: { path: 'file_path' } },
