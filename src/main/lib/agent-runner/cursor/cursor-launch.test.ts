@@ -17,9 +17,11 @@ import {
   locateCursorAgent,
   resolveCursorLaunch,
   runCursorAgent,
+  signInToCursor,
 } from './index';
 
-const PLAN_REQUIRED = "Cursor's SDK needs a paid Cursor plan (Pro or higher).";
+const PLAN_REQUIRED =
+  'Cursor needs a paid plan to work in Frink. Upgrade to Cursor Pro or higher, then try again.';
 const SIGNED_OUT =
   "Cursor isn't signed in. Choose Sign in to Cursor, finish in your browser, then try again.";
 const NO_SDK = "Frink can't find Cursor's SDK on this computer.";
@@ -39,7 +41,10 @@ beforeAll(async () => {
   await mkdir(realHome);
   await writeFakeCursorSdk(sdkRoot, '1.0.37');
 });
-afterEach(() => disposeAllCursorHosts());
+afterEach(() => {
+  vi.useRealTimers();
+  return disposeAllCursorHosts();
+});
 afterAll(() => rm(root, { recursive: true, force: true }));
 
 const app = { isPackaged: false, getAppPath: () => process.cwd(), getPath: () => userData };
@@ -137,6 +142,11 @@ describe('findCursorAgent', () => {
       { status: 'signed-out', reason: SIGNED_OUT },
     ],
     [
+      'a stored key Cursor turned down',
+      { FAKE_MODELS: 'unauthenticated' },
+      { status: 'signed-out', reason: SIGNED_OUT },
+    ],
+    [
       'on a free plan',
       { FAKE_MODELS: 'plan_required' },
       { status: 'plan-required', reason: PLAN_REQUIRED },
@@ -159,6 +169,16 @@ describe('findCursorAgent', () => {
     warn.mockRestore();
   });
 
+  it("checks with the user's real home, where Cursor keeps its own sign-in", async () => {
+    const forks: Parameters<ForkHost>[0][] = [];
+    const forkHost: ForkHost = (input, events) => {
+      forks.push(input);
+      return nodeForkHost(input, events);
+    };
+    await findCursorAgent({ ...deps(), forkHost });
+    expect(forks[0]).toMatchObject({ cwd: realHome, env: { HOME: realHome } });
+  });
+
   it('reports a missing SDK without starting anything', async () => {
     let forks = 0;
     const forkHost: ForkHost = (input, events) => {
@@ -169,6 +189,105 @@ describe('findCursorAgent', () => {
       await findCursorAgent({ ...deps({}, { sdkRoot: path.join(root, 'none') }), forkHost }),
     ).toEqual({ status: 'missing', reason: NO_SDK });
     expect(forks).toBe(0);
+  });
+});
+
+describe('signInToCursor', () => {
+  const PAGE = 'https://cursor.com/loginDeepControl?uuid=1';
+
+  /** Signs in through the real host and the stand-in SDK, recording what crossed and what opened. */
+  function signIn(extra: Record<string, string>) {
+    const opened: string[] = [];
+    const seen: unknown[] = [];
+    const forks: Parameters<ForkHost>[0][] = [];
+    const hosts: ReturnType<ForkHost>[] = [];
+    const forkHost: ForkHost = (input, events) => {
+      forks.push(input);
+      const host = nodeForkHost(input, {
+        ...events,
+        message: (message) => {
+          seen.push(message);
+          events.message(message);
+        },
+      });
+      hosts.push(host);
+      return host;
+    };
+    const openExternal = async (url: string) => void opened.push(url);
+    const signedIn = signInToCursor({ ...deps(extra), forkHost, openExternal });
+    return { signedIn, opened, seen, forks, hosts };
+  }
+
+  it("opens Cursor's own sign-in page with the user's real home, and never sees the key", async () => {
+    const { signedIn, opened, seen, forks } = signIn({
+      FAKE_AUTH: 'logged-out',
+      FAKE_LOGIN_URL: PAGE,
+    });
+
+    expect(await signedIn).toBe(true);
+    expect(opened).toEqual([PAGE]);
+    expect(forks).toEqual([expect.objectContaining({ cwd: realHome, env: expect.anything() })]);
+    expect(forks[0]?.env.HOME).toBe(realHome);
+    expect(JSON.stringify(seen)).not.toContain('secret-key');
+  });
+
+  it('makes no new key when Cursor is already signed in', async () => {
+    const { signedIn, opened, seen } = signIn({});
+
+    expect(await signedIn).toBe(true);
+    expect(opened).toEqual([]);
+    expect(seen).toEqual([
+      { type: 'auth', status: 'logged-in' },
+      { type: 'models', list: [{ id: 'default', displayName: 'Auto' }] },
+    ]);
+  });
+
+  it('signs in again when Cursor turns down the key it has stored', async () => {
+    const { signedIn, opened } = signIn({ FAKE_MODELS: 'unauthenticated', FAKE_LOGIN_URL: PAGE });
+
+    expect(await signedIn).toBe(true);
+    expect(opened).toEqual([PAGE]);
+  });
+
+  it('reports a sign-in that failed, and opens only secure web pages', async () => {
+    expect(await signIn({ FAKE_AUTH: 'logged-out', FAKE_LOGIN: 'fail' }).signedIn).toBe(false);
+
+    const odd = signIn({ FAKE_AUTH: 'logged-out', FAKE_LOGIN_URL: 'file:///etc/hosts' });
+    await odd.signedIn;
+    expect(odd.opened).toEqual([]);
+  });
+
+  it('runs one sign-in at a time, so a second click makes no second key', async () => {
+    const first = signIn({ FAKE_AUTH: 'logged-out', FAKE_LOGIN_URL: PAGE });
+    const second = signIn({ FAKE_AUTH: 'logged-out', FAKE_LOGIN_URL: PAGE });
+
+    expect(await Promise.all([first.signedIn, second.signedIn])).toEqual([true, true]);
+    expect(first.forks.length + second.forks.length).toBe(1);
+  });
+
+  it('opens the waiting page again when asked a second time', async () => {
+    const first = signIn({ FAKE_AUTH: 'logged-out', FAKE_LOGIN_URL: PAGE, FAKE_LOGIN: 'wait' });
+    await vi.waitFor(() => expect(first.opened).toEqual([PAGE]));
+    const again = signIn({});
+
+    expect(again.opened).toEqual([PAGE]);
+    expect(again.forks).toEqual([]);
+    first.hosts[0]?.kill();
+    expect(await again.signedIn).toBe(false);
+  });
+
+  it('answers in plain words when the host cannot start, and leaves no timer behind', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const forkHost: ForkHost = () => {
+      throw new Error('spawn EACCES /private/raw/path');
+    };
+
+    expect(await findCursorAgent({ ...deps(), forkHost })).toEqual({
+      status: 'failed',
+      reason: "Frink couldn't reach Cursor. Try again in a moment.",
+    });
+    expect(await signInToCursor({ ...deps(), forkHost })).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
 
@@ -200,9 +319,8 @@ describe('the Cursor host', () => {
         },
       };
     };
-    const launch = await launchFor(extra);
     const params: CursorRunnerParams = {
-      launch,
+      launch: overrides.launch ?? (await launchFor(extra)),
       cwd: root,
       prompt: 'hello',
       abortController: new AbortController(),
@@ -213,7 +331,7 @@ describe('the Cursor host', () => {
       runCursorAgent(params, { forkHost, chflags: recordingChflags().chflags }),
     );
     await disposeAllCursorHosts();
-    return { chunks, order, seen: JSON.parse(textOf(chunks) || '{}') };
+    return { chunks, order, launch: params.launch, seen: JSON.parse(textOf(chunks) || '{}') };
   }
 
   const errorsOf = (chunks: UIMessageChunk[]) =>
@@ -242,16 +360,24 @@ describe('the Cursor host', () => {
     expect(chunks.at(-1)).toEqual({ type: 'finish', messageMetadata: { sessionId: 'agent-new' } });
   });
 
-  it('passes Plan mode and images, and continues an earlier agent', async () => {
+  it('passes Plan mode and images, and continues an earlier agent in its folder', async () => {
+    const { launch } = await hostTurn();
     const images = [{ data: 'aGk=', mimeType: 'image/png' }];
-    const { chunks, seen } = await hostTurn({ mode: 'plan', images, resumeSessionId: 'agent-7' });
+    const { chunks, seen } = await hostTurn({
+      launch,
+      mode: 'plan',
+      images,
+      resumeSessionId: 'agent-7',
+    });
 
     expect(seen).toMatchObject({ text: 'hello', images: 1, mode: 'plan' });
     expect(chunks.at(-1)).toEqual({ type: 'finish', messageMetadata: { sessionId: 'agent-7' } });
   });
 
   it('sends the chat so far to a new agent when the earlier one is gone', async () => {
+    const { launch } = await hostTurn();
     const { chunks, seen } = await hostTurn({
+      launch,
       resumeSessionId: 'gone',
       freshSessionFallbackPrompt: 'history then hello',
     });

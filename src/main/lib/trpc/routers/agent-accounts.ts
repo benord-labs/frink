@@ -9,6 +9,7 @@ import {
 import { findAcpAgent } from '../../agent-runner/acp';
 import { rememberedAgentModels } from '../../agent-runner/agent-models';
 import { findCopilotAgent } from '../../agent-runner/copilot';
+import { findCursorAgent, signInToCursor } from '../../agent-runner/cursor';
 import { detectCodexAccount } from '../../credentials/detect-codex';
 import { claudeCodeCredentials, getDatabase } from '../../db';
 import { createId } from '../../db/utils';
@@ -18,6 +19,8 @@ type AgentAccountsDeps = {
   db: () => ReturnType<typeof getDatabase>;
   findAgent: (type: string) => ReturnType<typeof findAcpAgent>;
   findCopilot: typeof findCopilotAgent;
+  findCursor: typeof findCursorAgent;
+  signInCursor: typeof signInToCursor;
   detectCodex: typeof detectCodexAccount;
   rememberedModels: typeof rememberedAgentModels;
   flags: Partial<Record<keyof typeof LAUNCH_FLAGS, boolean>>;
@@ -26,11 +29,13 @@ type AgentAccountsDeps = {
 
 const NOT_AVAILABLE = "Frink can't connect this agent yet.";
 const NO_CODEX_LOGIN = 'No Codex login found. Run `codex login` and try again.';
+const SIGN_IN_UNFINISHED = "Cursor's sign-in didn't finish. Try again.";
 const typeInput = z.object({ type: z.string() });
 
 type Detection =
   | { available: true; version?: string; email?: string; displayName?: string; sourcePath?: string }
-  | { available: false; reason: string; missing?: true };
+  // Only a signed-out Cursor offers Sign in, since each sign-in makes a new key.
+  | { available: false; reason: string; missing?: true; signedOut?: true };
 
 /** The provider row for an agent that keeps its own sign-in, when it may be connected here. */
 function connectableAgent(type: string, deps: AgentAccountsDeps) {
@@ -50,6 +55,15 @@ async function detectAgent(
       ? { ...login, available: true }
       : { available: false, reason: hint ?? NO_CODEX_LOGIN };
   }
+  if (row.runtime === 'cursor') {
+    const check = await deps.findCursor();
+    if (check.status === 'ready') return { available: true };
+    return {
+      available: false,
+      reason: check.reason,
+      signedOut: check.status === 'signed-out' || undefined,
+    };
+  }
   const found = row.runtime === 'copilot' ? await deps.findCopilot() : await deps.findAgent(row.id);
   return 'reason' in found
     ? { ...found, available: false }
@@ -62,6 +76,8 @@ export function createAgentAccountsRouter(
     db: getDatabase,
     findAgent: findAcpAgent,
     findCopilot: findCopilotAgent,
+    findCursor: findCursorAgent,
+    signInCursor: signInToCursor,
     detectCodex: detectCodexAccount,
     rememberedModels: rememberedAgentModels,
     flags: LAUNCH_FLAGS,
@@ -72,6 +88,12 @@ export function createAgentAccountsRouter(
     detect: publicProcedure.input(typeInput).query(async ({ input }): Promise<Detection> => {
       const row = connectableAgent(input.type, deps);
       return row ? detectAgent(row, deps) : { available: false, reason: NOT_AVAILABLE };
+    }),
+
+    /** Starts Cursor's own sign-in in the browser; Cursor keeps the key it makes. */
+    signIn: publicProcedure.input(typeInput).mutation(async ({ input }) => {
+      if (connectableAgent(input.type, deps)?.runtime !== 'cursor') throw new Error(NOT_AVAILABLE);
+      if (!(await deps.signInCursor())) throw new Error(SIGN_IN_UNFINISHED);
     }),
 
     /** The models the agent last reported on this computer; none before its first session. */

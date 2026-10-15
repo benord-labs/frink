@@ -4,7 +4,12 @@ export { type CursorHookAnswer, createCursorGate } from './cursor-gate';
 export { openGateSocket } from './cursor-gate-socket';
 export { CURSOR_TOOL_NAMES } from './cursor-tools';
 export { cursorHostEnv, prepareCursorHome } from './cursor-home';
-export { findCursorAgent, locateCursorAgent, resolveCursorLaunch } from './cursor-launch';
+export {
+  findCursorAgent,
+  locateCursorAgent,
+  resolveCursorLaunch,
+  signInToCursor,
+} from './cursor-launch';
 export {
   type CursorRunnerParams,
   cursorAgentOptions,

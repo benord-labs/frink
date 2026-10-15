@@ -1,7 +1,7 @@
 import { LAUNCH_FLAGS } from '../../launch-flags';
 
-/** What drives a provider: Claude's SDK, Codex's app server, ACP, or GitHub Copilot's SDK. */
-export const AGENT_RUNTIMES = ['claude', 'codex', 'acp', 'copilot'] as const;
+/** What drives a provider: Claude's SDK, Codex's app server, ACP, or Copilot's or Cursor's SDK. */
+export const AGENT_RUNTIMES = ['claude', 'codex', 'acp', 'copilot', 'cursor'] as const;
 export type AgentRuntime = (typeof AGENT_RUNTIMES)[number];
 
 type LaunchFlagName = keyof typeof LAUNCH_FLAGS;
@@ -13,7 +13,7 @@ type AiProviderRow =
   | (BaseRow & { runtime: 'claude'; flag?: LaunchFlagName })
   | (BaseRow & { runtime: 'codex'; flag?: LaunchFlagName })
   | (BaseRow & {
-      runtime: 'acp' | 'copilot';
+      runtime: 'acp' | 'copilot' | 'cursor';
       flag: LaunchFlagName;
       // The agent's own modes for Frink's Agent and Plan; both are sent every turn.
       agentMode?: string;
@@ -57,6 +57,16 @@ export const AI_PROVIDERS = {
     planMode: 'plan',
     installHint: 'npm install -g @github/copilot',
     signInHint: 'copilot login',
+  },
+  cursor: {
+    runtime: 'cursor',
+    name: 'Cursor',
+    longName: 'Cursor',
+    passthroughSource: 'cursor-passthrough',
+    flag: 'cursorAccounts',
+    planMode: 'plan',
+    installHint: 'Sign in to Cursor from Frink. Cursor needs a paid plan.',
+    signInHint: 'Sign in to Cursor',
   },
   grok: {
     runtime: 'acp',

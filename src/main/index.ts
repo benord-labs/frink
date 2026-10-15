@@ -621,6 +621,7 @@ if (gotTheLock) {
       // Stop agents still running a turn, waiting so a stuck one is force-stopped before exit.
       await (await import('./lib/agent-runner/acp')).disposeAllAcpAgents();
       await (await import('./lib/agent-runner/copilot')).disposeAllCopilotClients();
+      await (await import('./lib/agent-runner/cursor')).disposeAllCursorHosts();
 
       // ── Phase 3: Close DB and flush analytics ──
       await cleanupGitWatchers();

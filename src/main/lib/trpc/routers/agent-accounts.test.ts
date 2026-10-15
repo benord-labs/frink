@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { findAcpAgent } from '../../agent-runner/acp';
 import { findCopilotAgent } from '../../agent-runner/copilot';
+import type { findCursorAgent, signInToCursor } from '../../agent-runner/cursor';
 import type { PickerGroupFields } from '../../../../shared/lib/model-picker-label/groups';
 import type { DetectCodexAccountResult } from '../../credentials/detect-codex';
 import * as schema from '../../db/schema';
@@ -21,6 +22,13 @@ const FAKE_COPILOT = `#!/bin/sh
 const ON = { opencodeAccounts: true };
 const CODEX_ON = { codexAccounts: true };
 const COPILOT_ON = { copilotAccounts: true };
+const CURSOR_ON = { cursorAccounts: true };
+const SIGNED_OUT =
+  "Cursor isn't signed in. Choose Sign in to Cursor, finish in your browser, then try again.";
+const PAID_PLAN =
+  'Cursor needs a paid plan to work in Frink. Upgrade to Cursor Pro or higher, then try again.';
+const NO_SDK = "Frink can't find Cursor's SDK on this computer.";
+const NOT_AVAILABLE = "Frink can't connect this agent yet.";
 const COPILOT_MODELS: PickerGroupFields[] = [
   { id: 'gpt-5/medium', name: 'GPT-5', familyId: 'gpt-5', effort: 'medium', effortDefault: true },
   { id: 'gpt-5/high', name: 'GPT-5', familyId: 'gpt-5', effort: 'high' },
@@ -40,12 +48,16 @@ describe('agentAccounts', () => {
   let db: TestDb;
   let env = { PATH: '', HOME: '', FAKE_VERSION: '' };
   const detectCodex = vi.fn<() => Promise<DetectCodexAccountResult>>();
+  const findCursor = vi.fn<typeof findCursorAgent>();
+  const signInCursor = vi.fn<typeof signInToCursor>();
 
   const caller = (flags: Record<string, boolean> = ON, platform = 'darwin') =>
     createAgentAccountsRouter({
       db: () => db,
       findAgent: (type) => findAcpAgent(type, env),
       findCopilot: () => findCopilotAgent(env),
+      findCursor,
+      signInCursor,
       detectCodex,
       rememberedModels: (type) => REMEMBERED.get(type) ?? [],
       flags,
@@ -62,6 +74,8 @@ describe('agentAccounts', () => {
     await writeFile(path.join(bin, 'copilot'), FAKE_COPILOT, { mode: 0o755 });
     env = { PATH: bin, HOME: root, FAKE_VERSION: '1.19.4' };
     detectCodex.mockReset().mockResolvedValue(CODEX_LOGIN);
+    findCursor.mockReset().mockResolvedValue({ status: 'ready' });
+    signInCursor.mockReset().mockResolvedValue(true);
   });
   afterEach(() => rm(root, { recursive: true, force: true }));
 
@@ -133,6 +147,8 @@ describe('agentAccounts', () => {
     ['OpenAI, switched off', ON, 'darwin', 'codex'],
     ['GitHub Copilot, switched off', ON, 'darwin', 'copilot'],
     ['GitHub Copilot, not checked on Linux', COPILOT_ON, 'linux', 'copilot'],
+    ['Cursor, switched off as shipped', ON, 'darwin', 'cursor'],
+    ['Cursor, not checked on Linux', CURSOR_ON, 'linux', 'cursor'],
     ['unknown', ON, 'darwin', 'someday-agent'],
   ])('refuses an agent that is %s', async (_case, flags, platform, type) => {
     await expect(caller(flags, platform).detect({ type })).resolves.toMatchObject({
@@ -170,6 +186,58 @@ describe('agentAccounts', () => {
     });
     await expect(caller(COPILOT_ON).connect({ type: 'copilot' })).rejects.toThrow(reason);
     expect(rows()).toEqual([]);
+  });
+
+  it.each([
+    ['signed in', { status: 'ready' }, { available: true }],
+    [
+      'signed out, so it offers Sign in',
+      { status: 'signed-out', reason: SIGNED_OUT },
+      { available: false, reason: SIGNED_OUT, signedOut: true },
+    ],
+    [
+      'on a free plan',
+      { status: 'plan-required', reason: PAID_PLAN },
+      { available: false, reason: PAID_PLAN },
+    ],
+    [
+      'without its SDK',
+      { status: 'missing', reason: NO_SDK },
+      { available: false, reason: NO_SDK },
+    ],
+  ] as const)('reports Cursor %s', async (_case, check, expected) => {
+    findCursor.mockResolvedValue(check);
+    await expect(caller(CURSOR_ON).detect({ type: 'cursor' })).resolves.toEqual(expected);
+  });
+
+  it('connects one Cursor per device once it is signed in, with no stored sign-in', async () => {
+    findCursor.mockResolvedValue({ status: 'signed-out', reason: SIGNED_OUT });
+    await expect(caller(CURSOR_ON).connect({ type: 'cursor' })).rejects.toThrow(SIGNED_OUT);
+    expect(rows()).toEqual([]);
+
+    findCursor.mockResolvedValue({ status: 'ready' });
+    await caller(CURSOR_ON).connect({ type: 'cursor' });
+    expect(rows()).toEqual([
+      expect.objectContaining({
+        type: 'cursor',
+        accountLabel: 'Cursor',
+        source: 'cursor-passthrough',
+        oauthToken: null,
+      }),
+    ]);
+  });
+
+  it("signs in through Cursor's own sign-in, for Cursor only, and says only whether it finished", async () => {
+    await expect(caller(CURSOR_ON).signIn({ type: 'cursor' })).resolves.toBeUndefined();
+    signInCursor.mockResolvedValue(false);
+    await expect(caller(CURSOR_ON).signIn({ type: 'cursor' })).rejects.toThrow(
+      "Cursor's sign-in didn't finish. Try again.",
+    );
+    await expect(
+      caller({ ...CURSOR_ON, ...COPILOT_ON }).signIn({ type: 'copilot' }),
+    ).rejects.toThrow(NOT_AVAILABLE);
+    await expect(caller().signIn({ type: 'cursor' })).rejects.toThrow(NOT_AVAILABLE);
+    expect(signInCursor).toHaveBeenCalledTimes(2);
   });
 
   it('lists the models each agent last reported, or none before it has run', async () => {

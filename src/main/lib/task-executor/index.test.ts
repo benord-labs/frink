@@ -72,6 +72,7 @@ describe('toTaskAccountType', () => {
   it.each([
     ['opencode', 'OpenCode'],
     ['copilot', 'GitHub Copilot'],
+    ['cursor', 'Cursor'],
     ['something-new', 'This AI provider'],
     ['', 'This AI provider'],
   ])('fails a Flow on "%s" for good instead of running it on Claude', (credType, name) => {

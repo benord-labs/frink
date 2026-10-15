@@ -117,6 +117,7 @@ import * as flow from './execution/flow-resource-cleanup';
 import { deliverProviderConfig } from './execution/provider-delivery';
 import { startAcpTurn } from './execution/acp-turn';
 import { startCopilotTurn } from './execution/copilot-turn';
+import { startCursorTurn } from './execution/cursor-turn';
 import { trackUserMessageDelivery } from './execution/claude-session/user-message-delivery';
 
 import {
@@ -319,14 +320,13 @@ export {
   type PlanFallbackSend,
 } from './streaming/plan-fallback';
 
-const EXECUTE_DEPS = { runtimeFor, startAcpTurn, startCopilotTurn };
+const EXECUTE_DEPS = { runtimeFor, startAcpTurn, startCopilotTurn, startCursorTurn };
 
 /**
  * Handle incoming execution request from another machine.
  * Verifies we have the project locally, then executes Claude and streams results back.
  * For general chats (empty projectId), executes in the home directory.
  */
-/** Image extracted from user message parts for Claude SDK */
 export async function handleRemoteExecute(
   payload: ExecuteRequestPayload,
   // Swapped by tests to run an agent the shipped flags keep off.
@@ -830,8 +830,7 @@ export async function handleRemoteExecute(
         sendRunExecuteCompleteDirect(deferredPayload);
       });
     };
-    // Codex uses a persistent app-server; Manual and Auto retain the write sandbox. ACP and Copilot
-    // agents run one process per turn; all share the permission check and the stream below.
+    // Codex keeps a warm app-server and its write sandbox; other agents run one process a turn.
     if (agentRuntime !== 'claude') {
       const isCodex = agentRuntime === 'codex';
       const agentLabel = aiProvider(storedCredential.type)?.longName ?? agentRuntime;
@@ -906,6 +905,8 @@ export async function handleRemoteExecute(
           });
         } else if (agentRuntime === 'copilot') {
           stream = deps.startCopilotTurn(agentTurn);
+        } else if (agentRuntime === 'cursor') {
+          stream = deps.startCursorTurn({ ...agentTurn, chatKey: subChatId });
         } else {
           // A runtime added later fails to compile here instead of running as Codex.
           const codexOnly: 'codex' = agentRuntime;

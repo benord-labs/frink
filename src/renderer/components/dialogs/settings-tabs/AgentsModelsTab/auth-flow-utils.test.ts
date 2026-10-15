@@ -97,6 +97,10 @@ describe('signInProviders', () => {
       'codex',
     ]);
     expect(signInProviders([], ON, 'win32')).toEqual(['codex']);
+    expect(signInProviders([], { cursorAccounts: true }, 'darwin')).toEqual([
+      'claude-code',
+      'cursor',
+    ]);
   });
 
   it('keeps Claude sign-in when only a Claude API key is connected', () => {
@@ -108,6 +112,7 @@ describe('addAccountLabel', () => {
   it('connects an installed agent and signs in to a provider login', () => {
     expect(addAccountLabel('copilot')).toBe('Connect GitHub Copilot');
     expect(addAccountLabel('opencode')).toBe('Connect OpenCode');
+    expect(addAccountLabel('cursor')).toBe('Connect Cursor');
     expect(addAccountLabel('claude-code')).toBe('Sign in with Claude');
     expect(addAccountLabel('codex')).toBe('Sign in with OpenAI');
   });

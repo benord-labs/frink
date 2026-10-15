@@ -12,7 +12,7 @@ function renderMark(provider: string | null) {
 }
 
 describe('aiProviderMark', () => {
-  it.each(['claude-code', 'codex', 'opencode', 'copilot'])(
+  it.each(['claude-code', 'codex', 'opencode', 'copilot', 'cursor'])(
     'draws the %s brand mark',
     (provider) => {
       const container = renderMark(provider);

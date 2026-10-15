@@ -11,6 +11,7 @@ const TILE_CLASS = {
   codex: 'bg-white text-black shadow-[inset_0_0_0_1px_rgb(0_0_0/0.12)]',
   opencode: NEUTRAL_TILE,
   copilot: NEUTRAL_TILE,
+  cursor: NEUTRAL_TILE,
   grok: NEUTRAL_TILE,
 } satisfies Record<AccountType, string>;
 
