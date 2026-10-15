@@ -103,7 +103,8 @@ export const ERROR_TOAST_CONFIG: Record<
 
 /** Opens Cursor's connect page on its stored row, so Reconnect keeps the user's name for it. */
 async function openCursorSignIn(): Promise<void> {
-  const accounts = await trpcClient.claudeCode.listAccounts.query();
+  // Without the list the page still opens, naming the account from Cursor's own check.
+  const accounts = await trpcClient.claudeCode.listAccounts.query().catch(() => []);
   appStore.set(pendingAccountAuthAtom, {
     mode: 'reauth',
     accountLabel: accounts.find((account) => account.type === 'cursor')?.label ?? '',

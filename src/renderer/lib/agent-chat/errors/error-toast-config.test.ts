@@ -58,4 +58,18 @@ describe('CURSOR_SIGNED_OUT', () => {
     });
     expect(shouldPersistChatRetry('CURSOR_SIGNED_OUT')).toBe(true);
   });
+
+  it("still opens Cursor's connect page when the account list can't be read", async () => {
+    appStore.set(pendingAccountAuthAtom, null);
+    const query = async () => Promise.reject(new Error('database busy'));
+    Object.assign(trpcClient, { claudeCode: { listAccounts: { query } } });
+
+    ERROR_TOAST_CONFIG.CURSOR_SIGNED_OUT?.action?.onClick();
+
+    await vi.waitFor(() => expect(appStore.get(pendingAccountAuthAtom)).not.toBeNull());
+    expect(appStore.get(pendingAccountAuthAtom)).toMatchObject({
+      accountLabel: '',
+      provider: 'cursor',
+    });
+  });
 });
