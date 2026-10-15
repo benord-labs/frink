@@ -106,10 +106,10 @@ export function providerModels(
   if (!isInstalledAgent(row)) return claudeModels(inputs);
   const reported = inputs.agentModels ?? [];
   const { offered, row: runs } = modelRowFor(reported, inputs.modelId);
-  // Copilot runs the saved effort, else the model's default, else its own: then no tier shows.
-  const copilotRow = runs ?? (offered && { id: inputs.modelId, name: offered.name });
-  const chosen =
-    row.runtime === 'copilot' ? copilotRow : reported.find((m) => m.id === inputs.modelId);
+  const byEffort = row.runtime === 'copilot' || row.runtime === 'cursor';
+  // These run the saved effort, else the model's default, else their own: then no tier shows.
+  const effortRow = runs ?? (offered && { id: inputs.modelId, name: offered.name });
+  const chosen = byEffort ? effortRow : reported.find((m) => m.id === inputs.modelId);
   // A chat already set to a switched-off model keeps it.
   const kept = chosen && agentModelKey(row.id, chosen);
   const visible = reported.filter((m) => {
@@ -126,7 +126,7 @@ export function providerModels(
     variant: row.id,
     unavailable: false,
     hint: listed.length > 0 ? undefined : `Send a message to load ${row.name}'s models.`,
-    refusesModel: agentRefusesModel(reported, inputs.modelId, row.runtime === 'copilot'),
+    refusesModel: agentRefusesModel(reported, inputs.modelId, byEffort),
   };
 }
 

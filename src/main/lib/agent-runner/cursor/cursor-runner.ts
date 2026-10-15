@@ -2,6 +2,7 @@ import { once } from 'node:events';
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import type { SDKModel } from '@cursor/sdk';
 import { utilityProcess } from 'electron';
 import log from 'electron-log';
 import { createThinkingEmitter } from '../../claude/thinking-emitter';
@@ -19,6 +20,7 @@ import {
 import { createCursorGate } from './cursor-gate';
 import { openGateSocket } from './cursor-gate-socket';
 import { prepareCursorHome } from './cursor-home';
+import { saveCursorModels } from './cursor-models';
 
 /** How long the host gets to exit on its own before it is killed. */
 const STOP_GRACE_MS = 1500;
@@ -68,7 +70,7 @@ export type CursorHostRequest =
 export type CursorHostMessage =
   | { type: 'auth'; status: string }
   | { type: 'agent'; agentId: string; resumed: boolean }
-  | { type: 'models'; list: { id: string; displayName: string }[] }
+  | { type: 'models'; list: SDKModel[] }
   | { type: 'sdk'; message: CursorSdkMessage }
   | { type: 'result'; status: 'finished' | 'error' | 'cancelled'; error?: RunError }
   | { type: 'error'; text: string; code?: string }
@@ -227,6 +229,8 @@ class CursorTurn {
       { hostPath: launch.hostPath, sdkEntry: launch.sdkEntry, env: launch.env, cwd },
       {
         message: (message) => {
+          // Saved even once the turn has ended, as the list is not part of the turn.
+          if (message.type === 'models') return saveCursorModels(message.list);
           try {
             this.onMessage(message);
           } catch (error) {

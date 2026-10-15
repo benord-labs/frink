@@ -30,6 +30,8 @@ async function start(request) {
   post({ type: 'agent', agentId: agent.agentId, resumed });
   const sendOptions = request.mode ? { mode: request.mode } : undefined;
   run = await agent.send({ ...request.message, text: promptText(request, resumed) }, sendOptions);
+  // Refreshes Frink's saved model list without holding up the turn; a failed listing changes nothing.
+  listModels().catch(() => {});
   for await (const message of run.stream()) post({ type: 'sdk', message });
   const { status, error } = await run.wait();
   post({ type: 'result', status, error: error && { message: error.message, code: error.code } });
@@ -37,7 +39,10 @@ async function start(request) {
 
 async function listModels() {
   const list = await sdk.Cursor.models.list();
-  post({ type: 'models', list: list.map(({ id, displayName }) => ({ id, displayName })) });
+  const models = list.map(({ id, displayName, parameters, variants }) => {
+    return { id, displayName, parameters, variants };
+  });
+  post({ type: 'models', list: models });
 }
 
 // Cursor's own sign-in: Cursor stores the key it makes, and the key never leaves this process.

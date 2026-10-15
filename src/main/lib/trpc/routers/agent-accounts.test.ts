@@ -33,9 +33,14 @@ const COPILOT_MODELS: PickerGroupFields[] = [
   { id: 'gpt-5/medium', name: 'GPT-5', familyId: 'gpt-5', effort: 'medium', effortDefault: true },
   { id: 'gpt-5/high', name: 'GPT-5', familyId: 'gpt-5', effort: 'high' },
 ];
+const CURSOR_MODELS: PickerGroupFields[] = [
+  { id: 'default', name: 'Auto' },
+  { id: 'gpt-x/high', name: 'GPT-X', familyId: 'gpt-x', effort: 'high', effortDefault: true },
+];
 const REMEMBERED = new Map<string, PickerGroupFields[]>([
   ['opencode', [{ id: 'opencode/big-pickle', name: 'Big Pickle' }]],
   ['copilot', COPILOT_MODELS],
+  ['cursor', CURSOR_MODELS],
 ]);
 const CODEX_LOGIN = {
   available: true,
@@ -245,6 +250,7 @@ describe('agentAccounts', () => {
       { id: 'opencode/big-pickle', name: 'Big Pickle' },
     ]);
     await expect(caller().models({ type: 'copilot' })).resolves.toEqual(COPILOT_MODELS);
+    await expect(caller().models({ type: 'cursor' })).resolves.toEqual(CURSOR_MODELS);
     await expect(caller().models({ type: 'grok' })).resolves.toEqual([]);
   });
 
