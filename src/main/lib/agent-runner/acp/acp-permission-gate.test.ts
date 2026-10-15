@@ -634,10 +634,13 @@ describe('an agent that acts without asking', () => {
 
 describe('questions about the tool a call runs, named by its first title', () => {
   /** Plays a turn whose gate allows everything; returns what it was asked and the answers. */
-  async function playAllowed(messages: RecordedTurn['messages']) {
+  async function playAllowed(messages: RecordedTurn['messages'], rules = TEST_RULES) {
     const { asked, checkApproval } = gate(() => ({ allowed: true }));
     const { script, answers } = replayTurn({ messages, response: { stopReason: 'end_turn' } });
-    await collectChunks(runAcpAgent(runnerParams({ checkApproval }), fakeAcpAgent(script).start));
+    const launch = { ...runnerParams().launch, rules };
+    await collectChunks(
+      runAcpAgent(runnerParams({ checkApproval, launch }), fakeAcpAgent(script).start),
+    );
     return { asked, answers };
   }
 
@@ -809,6 +812,91 @@ describe('questions about the tool a call runs, named by its first title', () =>
     expect(asked).toEqual([]);
     expect(answers).toEqual([REJECT_ONCE]);
   });
+
+  /** Rules for an agent that names a file `path` and fills `cwd` with the session folder. */
+  const NAMED_RULES = { ...TEST_RULES, inputNames: { file: 'path', sessionFolder: 'cwd' } };
+
+  it('reads the file of an edit under the name the agent gives it', async () => {
+    const { asked } = await playAllowed(
+      [
+        started('w1', 'write', 'edit'),
+        {
+          permission: {
+            toolCallId: 'w1',
+            title: 'a.txt',
+            kind: 'other',
+            rawInput: { path: '/b/a.txt' },
+          },
+        },
+      ],
+      NAMED_RULES,
+    );
+
+    expect(asked).toEqual([
+      { toolName: 'Edit', input: { file_path: '/b/a.txt' }, reason: 'a.txt' },
+    ]);
+  });
+
+  it.each<[string, Record<string, string>, string]>([
+    [
+      'the session folder it fills in',
+      { command: 'touch m', cwd: '/workspace/project/' },
+      'touch m',
+    ],
+    [
+      'its own folder',
+      { command: 'touch m', workdir: '/else where' },
+      "cd '/else where' && touch m",
+    ],
+  ])('asks about a run request that names %s', async (_, rawInput, question) => {
+    const { asked, answers } = await playAllowed(
+      [
+        started('c1', 'echo', 'execute'),
+        { permission: { toolCallId: 'c1', kind: 'execute', rawInput } },
+      ],
+      NAMED_RULES,
+    );
+
+    expect(asked.map((request) => request.input)).toEqual([{ command: question }]);
+    expect(answers).toEqual([ALLOW_ONCE]);
+  });
+
+  it.each<[string, RecordedTurn['messages']]>([
+    [
+      'names its file under both keys',
+      [
+        started('w1', 'write', 'edit'),
+        {
+          permission: {
+            toolCallId: 'w1',
+            kind: 'other',
+            rawInput: { path: '/b/a.txt', filepath: '/b/c.txt' },
+          },
+        },
+      ],
+    ],
+    [
+      'puts another folder under the session folder key',
+      [
+        started('c1', 'echo', 'execute'),
+        {
+          permission: {
+            toolCallId: 'c1',
+            kind: 'execute',
+            rawInput: { command: 'touch m', cwd: '/else where' },
+          },
+        },
+      ],
+    ],
+  ])(
+    'refuses without asking a call that %s, under rules naming their own keys',
+    async (_, messages) => {
+      const { asked, answers } = await playAllowed(messages, NAMED_RULES);
+
+      expect(asked).toEqual([]);
+      expect(answers).toEqual([REJECT_ONCE]);
+    },
+  );
 });
 
 describe('commands Frink allowed', () => {

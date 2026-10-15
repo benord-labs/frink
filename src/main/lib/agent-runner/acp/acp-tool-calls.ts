@@ -1,4 +1,5 @@
 import type { ToolCallContent, ToolCallUpdate, ToolKind } from '@agentclientprotocol/sdk';
+import path from 'node:path';
 import { z } from 'zod';
 
 /** The ACP tool kinds that act on one file, as the tool names Frink's rules and cards use. */
@@ -97,9 +98,25 @@ export function namesCommand(toolCall: ToolCallUpdate): boolean {
   return toolCall.kind === 'execute' || inputKeys(toolCall)?.includes('command') === true;
 }
 
-/** The shell command in the call's own input when that is all the input holds. */
-export function toolCallCommand(toolCall: ToolCallUpdate): string | undefined {
-  const parsed = commandInputSchema.safeParse(toolCall.rawInput);
+/** For agents whose run requests name a folder: `workdir`, or `key` set to the session folder `cwd`. */
+type RequestFolder = { key: string; cwd: string };
+
+/** The shell command in the call's own input when that is all it holds, beside any `folder` allowed. */
+export function toolCallCommand(
+  toolCall: ToolCallUpdate,
+  folder?: RequestFolder,
+): string | undefined {
+  const schema = folder
+    ? commandInputSchema.extend({
+        workdir: z.string().optional(),
+        // The agent fills this key with the session folder itself; any other folder is refused.
+        [folder.key]: z
+          .string()
+          .refine((dir) => path.resolve(folder.cwd, dir) === path.resolve(folder.cwd))
+          .optional(),
+      })
+    : commandInputSchema;
+  const parsed = schema.safeParse(toolCall.rawInput);
   return parsed.success ? parsed.data.command : undefined;
 }
 
