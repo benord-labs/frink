@@ -78,14 +78,28 @@ describe('FileLinkBadge', () => {
   });
 
   it("keeps a link's own words and shows the badge after them", () => {
-    const { container } = render(
+    render(
       <TooltipProvider>
         <FileLinkBadge reference={{ path: '/Users/x/handler.ts', label: 'the handler' }} />
       </TooltipProvider>,
     );
 
-    expect(container.firstChild).toHaveTextContent(/^the handler$/);
-    expect(badgeNamed('handler.ts').previousSibling).toBe(container.firstChild);
+    expect(badgeNamed('handler.ts').previousSibling).toHaveTextContent(/^the handler$/);
+  });
+
+  // `sr-only` is absolutely positioned. Without a positioned box of the badge's own, a capped
+  // scroller around the badge (a plan card) leaves it unclipped and the transcript grows to reach it.
+  it('keeps the hidden written text inside a positioned box of its own', () => {
+    render(
+      <TooltipProvider>
+        <FileLinkBadge reference={{ path: 'src/a.ts', line: 12, label: 'src/a.ts:12' }} />
+      </TooltipProvider>,
+    );
+
+    const standIn = screen.getByText('src/a.ts:12');
+    expect(standIn).toHaveClass('sr-only');
+    expect(standIn.parentElement).toHaveClass('relative');
+    expect(standIn.parentElement).toContainElement(badgeNamed('a.ts'));
   });
 
   it('is a focusable span, not a link or a button, when the file cannot be opened', () => {
@@ -479,7 +493,7 @@ describe('file badges in a chat transcript', () => {
     fireEvent.blur(badgeNamed('a.ts', transcript));
     fireEvent.focus(badgeNamed('a.md', transcript));
     expect(tooltip()).toHaveTextContent(/^~\/notes\/a\.md$/);
-    expect(transcript.getByText(/and notes/)).toBeInTheDocument();
+    expect(badgeNamed('a.md', transcript).closest('p')).toHaveTextContent(/ and notes/);
 
     fireEvent.click(screen.getByRole('button', { expanded: false }));
     fireEvent.click(screen.getByRole('button', { name: 'Open content' }));
