@@ -20,9 +20,9 @@ import { prepareCursorHome } from './cursor-home';
 
 /** How long the host gets to exit on its own before it is killed. */
 const STOP_GRACE_MS = 1500;
-const SIGNED_OUT =
+export const SIGNED_OUT =
   "Cursor isn't signed in. Choose Sign in to Cursor, finish in your browser, then try again.";
-const PLAN_REQUIRED = "Cursor's SDK needs a paid Cursor plan (Pro or higher).";
+export const PLAN_REQUIRED = "Cursor's SDK needs a paid Cursor plan (Pro or higher).";
 const NOT_LOADED = "Cursor didn't load Frink's safety check, so Frink stopped it.";
 const CURSOR_STOPPED =
   'Cursor stopped unexpectedly, so this turn ended. Any steps shown above already ran.';
@@ -41,7 +41,7 @@ export type HostAgentOptions = {
 type CursorUserMessage = { text: string; images?: { data: string; mimeType: string }[] };
 type RunError = { message: string; code?: string };
 
-/** What Frink sends the host: one start once it reports a sign-in, then cancel on stop. */
+/** What Frink sends the host once it reports a sign-in: a turn or a model list, then cancel. */
 export type CursorHostRequest =
   | {
       type: 'start';
@@ -52,6 +52,7 @@ export type CursorHostRequest =
       /** Sent instead of the message's text when the earlier agent cannot be resumed. */
       fallbackText?: string;
     }
+  | { type: 'models' }
   | { type: 'cancel' };
 
 /** What the host posts back, the SDK's own messages wrapped in `sdk`. */
@@ -98,7 +99,7 @@ export type CursorRunnerDeps = {
   chflags?: (flag: 'uchg' | 'nouchg', paths: string[]) => Promise<void>;
 };
 
-const forkUtilityHost: ForkHost = ({ hostPath, sdkEntry, env, cwd }, events) => {
+export const forkUtilityHost: ForkHost = ({ hostPath, sdkEntry, env, cwd }, events) => {
   const child = utilityProcess.fork(hostPath, [sdkEntry], {
     env,
     cwd,

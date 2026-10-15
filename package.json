@@ -161,6 +161,7 @@
   "devDependencies": {
     "@aws-sdk/client-s3": "^3.1137.0",
     "@aws-sdk/lib-storage": "^3.1137.0",
+    "@cursor/sdk": "1.0.37",
     "@sentry/vite-plugin": "^5.4.0",
     "@tailwindcss/postcss": "^4.3.3",
     "@tailwindcss/typography": "^0.5.20",
@@ -309,6 +310,10 @@
       {
         "from": "resources/custom-nodes/managed-bootstrap.mjs",
         "to": "custom-nodes/managed-bootstrap.mjs"
+      },
+      {
+        "from": "resources/cursor/cursor-host.mjs",
+        "to": "cursor/cursor-host.mjs"
       },
       {
         "from": "assets/skills",

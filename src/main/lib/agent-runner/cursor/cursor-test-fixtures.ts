@@ -1,4 +1,5 @@
-import { chmod, lstat, readFile } from 'node:fs/promises';
+import { fork } from 'node:child_process';
+import { chmod, lstat, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { request } from 'node:http';
 import path from 'node:path';
 import { z } from 'zod';
@@ -151,6 +152,7 @@ export function fakeCursorHost(setup: FakeHostSetup = {}) {
           if (play) void setup.onCancel(play);
           return;
         }
+        if (message.type !== 'start') return;
         const resumed = Boolean(message.resumeAgentId) && !setup.resumeFails;
         const agentId = resumed && message.resumeAgentId ? message.resumeAgentId : 'agent-1';
         events.message({ type: 'agent', agentId, resumed });
@@ -173,4 +175,74 @@ export function fakeCursorHost(setup: FakeHostSetup = {}) {
     };
   };
   return { forkHost, received, forks, kills: () => kills, exited: () => gone };
+}
+
+/** Starts the host file under Node; Frink itself starts it as an Electron utility process. */
+export const nodeForkHost: ForkHost = ({ hostPath, sdkEntry, env, cwd }, events) => {
+  const child = fork(hostPath, [sdkEntry], { env, cwd, stdio: 'ignore' });
+  // SAFETY: the host is Frink's own file and posts only CursorHostMessage values.
+  child.on('message', (message) => events.message(message as CursorHostMessage));
+  child.once('exit', events.exit);
+  child.on('error', events.exit);
+  return { send: (request) => void child.send(request), kill: () => void child.kill() };
+};
+
+// Stands in for Cursor's SDK: FAKE_AUTH and FAKE_MODELS steer it, and each turn asks the gate first.
+const FAKE_SDK = `import { readFileSync } from 'node:fs';
+import { request } from 'node:http';
+import path from 'node:path';
+export class JsonlLocalAgentStore { constructor(dir) { this.dir = dir; } }
+export const Cursor = {
+  auth: { status: async () => ({ status: process.env.FAKE_AUTH ?? 'logged-in' }) },
+  models: { list: async () => {
+    if (process.env.FAKE_MODELS) throw Object.assign(new Error('No plan'), { code: process.env.FAKE_MODELS });
+    return [{ id: 'default', displayName: 'Auto', parameters: [] }];
+  } },
+};
+const ids = { agent_id: 'a', run_id: 'r' };
+function canary() {
+  const hooks = JSON.parse(readFileSync(path.join(process.env.HOME, '.cursor', 'hooks.json'), 'utf8'));
+  const socketPath = path.join(path.dirname(hooks.hooks.beforeSubmitPrompt[0].command), 'g.sock');
+  return new Promise((resolve) => {
+    const req = request({ socketPath, path: '/hook', method: 'POST' }, (res) => res.resume().on('end', resolve));
+    req.end(JSON.stringify({ hook_event_name: 'beforeSubmitPrompt', cursor_version: '1.0.0' }));
+  });
+}
+function agent(agentId, options) {
+  return {
+    agentId,
+    close() {},
+    async send(message, sendOptions) {
+      if (message.text === 'refuse') throw Object.assign(new Error('No plan'), { code: 'plan_required' });
+      const seen = { text: message.text, images: message.images?.length ?? 0, mode: sendOptions?.mode,
+        tools: options.tools, local: { ...options.local, store: options.local.store instanceof JsonlLocalAgentStore } };
+      return {
+        cancel: async () => {},
+        wait: async () => ({ status: 'finished' }),
+        async *stream() {
+          yield { type: 'status', status: 'RUNNING', ...ids };
+          await canary();
+          yield { type: 'assistant', ...ids, message: { role: 'assistant', content: [{ type: 'text', text: JSON.stringify(seen) }] } };
+        },
+      };
+    },
+  };
+}
+export const Agent = {
+  create: async (options) => agent('agent-new', options),
+  resume: async (agentId, options) => {
+    if (agentId === 'gone') throw new Error('Agent not found');
+    return agent(agentId, options);
+  },
+};
+`;
+
+/** Writes a stand-in SDK package where Frink looks for Cursor's, at the given version. */
+export async function writeFakeCursorSdk(root: string, version: string): Promise<void> {
+  await mkdir(path.join(root, 'dist', 'esm'), { recursive: true });
+  await writeFile(
+    path.join(root, 'package.json'),
+    JSON.stringify({ name: '@cursor/sdk', version }),
+  );
+  await writeFile(path.join(root, 'dist', 'esm', 'index.js'), FAKE_SDK);
 }

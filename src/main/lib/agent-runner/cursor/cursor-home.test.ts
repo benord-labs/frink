@@ -224,6 +224,7 @@ describe('cursorHostEnv', () => {
         CURSOR_API_KEY: 'kept',
         CURSOR_BACKEND_URL: 'https://example.com',
         CURSOR_NEW_SWITCH: '1',
+        __CURSOR_SANDBOX_ENV_RESTORE: 'touch /tmp/x',
         ELECTRON_RUN_AS_NODE: '1',
         NODE_OPTIONS: '--require x',
         ZDOTDIR: '/tmp/z',
@@ -338,6 +339,18 @@ describe.runIf(process.platform === 'darwin' && REAL_BINARIES.every((file) => ex
       async (shell) => {
         expect(await prepareLocked()).toMatchObject({ ok: true });
         expect(await runShell(shell, 'echo "$HOME"')).toEqual({ code: 0, stdout: `${realHome}\n` });
+      },
+    );
+
+    it.each(['.bash_login', '.profile'])(
+      'gives the agent’s bash commands the user’s %s when there is no .bash_profile',
+      async (file) => {
+        await writeFile(path.join(realHome, file), 'export MARK=from-the-user\n');
+        expect(await prepareLocked()).toMatchObject({ ok: true });
+        expect(await runShell('/bin/bash', 'echo "$MARK"')).toEqual({
+          code: 0,
+          stdout: 'from-the-user\n',
+        });
       },
     );
 
