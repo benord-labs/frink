@@ -5,7 +5,7 @@
 import { Button, Input } from '@benord-labs/frink-primitives';
 import type { inferRouterOutputs } from '@trpc/server';
 import { useSetAtom } from 'jotai';
-import { GitBranch, Loader2, Play, Search, Zap } from 'lucide-react';
+import { Loader2, Search } from 'lucide-react';
 import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import type { AppRouter } from '../../../../main/lib/trpc/routers';
@@ -27,10 +27,10 @@ import { groupFlowsIntoSections } from '../../../lib/flows/flow-list-sections';
 import { hasOpenDialogLayer } from '../../../lib/has-open-dialog-layer';
 import { isEditableKeyboardTarget } from '../../../lib/is-editable-keyboard-target';
 import { trpc } from '../../../lib/trpc';
-import { cn } from '../../../lib/utils';
 import { isDesktopApp } from '../../../lib/utils/platform';
 import { flowRunDisplayStatus } from '../../../../shared/lib/flows/run-display-status';
 import { shouldPollFlowAdmission } from '../FlowEditor/FlowRunStatusIcon';
+import { FirstFlowEmptyState } from './FirstFlowEmptyState';
 import { FlowListSkeleton } from './FlowListSkeleton';
 import { FlowListTable } from './FlowListTable';
 import { FlowSortControl, type FlowSortOrder } from './FlowSortControl';
@@ -60,9 +60,10 @@ const isFlowRunLive = (status: string | null | undefined): boolean =>
 
 type FlowsListProps = {
   onCreateClick: () => void;
+  onOpenChat: (chatId: string) => void;
 };
 
-export function FlowsList({ onCreateClick }: FlowsListProps): ReactElement {
+export function FlowsList({ onCreateClick, onOpenChat }: FlowsListProps): ReactElement {
   const setSelectedFlowId = useSetAtom(flowsSelectedFlowIdAtom);
   const utils = trpc.useUtils();
   const {
@@ -230,41 +231,8 @@ export function FlowsList({ onCreateClick }: FlowsListProps): ReactElement {
         </div>
       )}
 
-      {/* Empty state — no flows at all */}
       {rawList.length === 0 && (
-        <div className="flex flex-1 items-center justify-center p-4">
-          <div
-            className={cn(
-              'group flex w-full max-w-sm flex-col items-center rounded-xl border-2 border-dashed border-border/45 p-10 text-center',
-              'transition-all duration-300 hover:border-border/60 hover:bg-muted/15',
-            )}
-          >
-            <div className="flex justify-center mb-5 isolate">
-              <div className="bg-card size-10 grid place-items-center rounded-xl relative left-2 top-1 -rotate-6 shadow-md ring-1 ring-border/60 group-hover:-translate-x-4 group-hover:-rotate-12 group-hover:-translate-y-0.5 transition-all duration-300">
-                <GitBranch className="h-5 w-5 text-muted-foreground" />
-              </div>
-              <div className="bg-card size-10 grid place-items-center rounded-xl relative z-10 shadow-md ring-1 ring-border/60 group-hover:-translate-y-1 transition-all duration-300">
-                <Zap className="h-5 w-5 text-muted-foreground" />
-              </div>
-              <div className="bg-card size-10 grid place-items-center rounded-xl relative right-2 top-1 rotate-6 shadow-md ring-1 ring-border/60 group-hover:translate-x-4 group-hover:rotate-12 group-hover:-translate-y-0.5 transition-all duration-300">
-                <Play className="h-5 w-5 text-muted-foreground" />
-              </div>
-            </div>
-            <p className="text-base font-medium">No flows yet</p>
-            <p className="text-sm text-muted-foreground mt-1 mb-4 max-w-[220px]">
-              Automate tasks with a sequence of steps triggered by events.
-            </p>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={onCreateClick}
-              className="shadow-xs"
-            >
-              Create your first flow
-            </Button>
-          </div>
-        </div>
+        <FirstFlowEmptyState onCreateClick={onCreateClick} onOpenChat={onOpenChat} />
       )}
 
       {/* No search results */}

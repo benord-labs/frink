@@ -40,7 +40,7 @@ function renderPage(
   const { container } = render(
     <TooltipProvider>
       <Provider store={appStore}>
-        <FlowsPage onClose={onClose} sidebarTrigger={options.trigger} />
+        <FlowsPage onClose={onClose} onOpenChat={vi.fn()} sidebarTrigger={options.trigger} />
       </Provider>
     </TooltipProvider>,
   );

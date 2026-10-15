@@ -25,11 +25,12 @@ import { FlowsList } from '../FlowsList';
 
 type FlowsPageProps = {
   onClose: () => void;
+  onOpenChat: (chatId: string) => void;
   /** Sidebar-reopen affordance, rendered ahead of the title. Absent while the sidebar is open. */
   sidebarTrigger?: ReactNode;
 };
 
-export function FlowsPage({ onClose, sidebarTrigger }: FlowsPageProps): ReactElement {
+export function FlowsPage({ onClose, onOpenChat, sidebarTrigger }: FlowsPageProps): ReactElement {
   const [selectedFlowId, setSelectedFlowId] = useAtom(flowsSelectedFlowIdAtom);
   const [createOpen, setCreateOpen] = useState(false);
   const { data: flows } = trpc.flows.list.useQuery(undefined);
@@ -142,7 +143,7 @@ export function FlowsPage({ onClose, sidebarTrigger }: FlowsPageProps): ReactEle
         </div>
       </header>
       <div className="flex min-h-0 flex-1 flex-col pt-4">
-        <FlowsList onCreateClick={() => setCreateOpen(true)} />
+        <FlowsList onCreateClick={() => setCreateOpen(true)} onOpenChat={onOpenChat} />
       </div>
 
       <CreateFlowDialog open={createOpen} onOpenChange={setCreateOpen} onCreated={handleCreated} />
