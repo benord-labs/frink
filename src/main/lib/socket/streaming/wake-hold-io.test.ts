@@ -16,12 +16,12 @@ const MONITOR_WAIT = {
   waitingOn: [{ id: 'm1', label: 'Monitor', description: 'Watch deploys', stoppable: false }],
 };
 
-function ioWithSpy() {
+function ioWithSpy(build = buildWakeHoldIo) {
   const sendWakeHoldChanged = vi.fn();
   const sendExecuteCompleteDirect = vi.fn();
   const sendStreamChunkDirect = vi.fn();
   const sendStreamSettledDirect = vi.fn();
-  const io = buildWakeHoldIo({
+  const io = build({
     chatId: 'c1',
     subChatId: 'sc1',
     buildFinalParts: (): MessagePart[] => [],
@@ -173,5 +173,24 @@ describe('buildWakeHoldIo — setHeld frames', () => {
       streamEpoch,
       terminalDurability: { durability: 'non-durable' },
     });
+  });
+});
+
+describe('buildWakeHoldIo — live work', () => {
+  it('reports a held wait as live work until every hold retracts, stale ones included', async () => {
+    // Fresh modules: earlier tests here leave holds set in the module-level registry.
+    vi.resetModules();
+    const { isWorkActive } = await import('../../power/work-activity');
+    const { buildWakeHoldIo: build } = await import('./wake-hold-io');
+    const stale = ioWithSpy(build).io;
+    const successor = ioWithSpy(build).io;
+    stale.setHeld(true, MONITOR_WAIT);
+    successor.setHeld(true, MONITOR_WAIT);
+    expect(isWorkActive()).toBe(true);
+
+    stale.setHeld(false);
+    expect(isWorkActive()).toBe(true);
+    successor.setHeld(false);
+    expect(isWorkActive()).toBe(false);
   });
 });

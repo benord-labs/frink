@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import type { BrowserWindow } from 'electron';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   LoginShellEnvResolver,
   REFRESH_MIN_INTERVAL_MS,
@@ -8,6 +8,7 @@ import {
   type ShellOutcome,
   setLoginShellEnvResolver,
 } from '../lib/platform/login-shell-env';
+import { setKeepAwakeService } from '../lib/power';
 import { windowManager } from './window-manager';
 
 /** The parts of a BrowserWindow the manager touches: an id and its events. */
@@ -17,6 +18,17 @@ function fakeWindow(id: number): BrowserWindow {
 }
 
 const realPlatform = process.platform;
+const startKeepAwake = vi.fn();
+
+beforeEach(() => {
+  startKeepAwake.mockClear();
+  setKeepAwakeService({
+    start: startKeepAwake,
+    stop: vi.fn(),
+    isEnabled: () => true,
+    setEnabled: (enabled) => enabled,
+  });
+});
 
 afterEach(() => {
   Object.defineProperty(process, 'platform', { value: realPlatform, configurable: true });
@@ -47,6 +59,13 @@ describe('windowManager', () => {
 
     expect(spawnShell).toHaveBeenCalledTimes(2);
     expect(process.env.PATH).toBe('/new/bin:/usr/bin');
+    windowManager.unregister(window);
+  });
+
+  it('starts keeping the Mac awake once the first window exists', () => {
+    const window = fakeWindow(5692);
+    windowManager.register(window);
+    expect(startKeepAwake).toHaveBeenCalledTimes(1);
     windowManager.unregister(window);
   });
 });

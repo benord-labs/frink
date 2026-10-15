@@ -78,6 +78,8 @@ export const MAIN_LIB_DOMAINS = [
   'mobile',
   'permissions',
   'platform',
+  // Keeps the Mac awake while agents, background waits or Flow nodes are working.
+  'power',
   // Project creation and GitHub cloning: insert-or-adopt by path, one clone per repo.
   'projects',
   'provider',

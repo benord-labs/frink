@@ -20,6 +20,7 @@ import { mcpRouter } from './mcp';
 import { mobileRouter } from './mobile';
 import { permissionsRouter } from './permissions';
 import { pluginsRouter } from './plugins';
+import { powerRouter } from './power';
 import { projectsRouter } from './projects';
 import { skillsRouter } from './skills';
 import { socketRouter } from './socket';
@@ -60,6 +61,7 @@ export function createAppRouter(_getWindow: () => BrowserWindow | null) {
     mobile: mobileRouter,
     permissions: permissionsRouter,
     plugins: pluginsRouter,
+    power: powerRouter,
     tasks: tasksRouter,
     integrations: integrationsRouter,
     triggerRules: triggerRulesRouter,

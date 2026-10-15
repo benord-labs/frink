@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { getRuntimeTopologySnapshot } from '../../diagnostics/provider-topology';
+import { isWorkActive } from '../../power/work-activity';
 import {
   _clearActiveExecutionsForTests,
   deleteActiveExecution,
@@ -77,5 +78,21 @@ describe('listSubChatIdsForChat', () => {
 
     expect(listSubChatIdsForChat('c1')).toEqual(['sub-a', 'sub-b']);
     expect(listSubChatIdsForChat('c3')).toEqual([]);
+  });
+});
+
+// Claude, Codex and ACP turns all register through executor.ts's one setActiveExecution call, before
+// provider dispatch, so this covers every provider; no runner keeps work outside this registry.
+describe('live work reporting', () => {
+  it('reports agent turns as live work from the first start until the last one ends', () => {
+    expect(isWorkActive()).toBe(false);
+    setActiveExecution('sub-a', new AbortController());
+    setActiveExecution('sub-b', new AbortController());
+    expect(isWorkActive()).toBe(true);
+
+    deleteActiveExecution('sub-a');
+    expect(isWorkActive()).toBe(true);
+    deleteActiveExecution('sub-b');
+    expect(isWorkActive()).toBe(false);
   });
 });
