@@ -120,6 +120,7 @@
     "fast-json-stable-stringify": "^2.1.0",
     "gray-matter": "^4.0.3",
     "hono": "^4.13.8",
+    "ignore": "^7.0.12",
     "isomorphic-dompurify": "^4.3.0",
     "jotai": "^2.20.3",
     "jsonc-parser": "^3.3.1",

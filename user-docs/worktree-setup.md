@@ -1,10 +1,10 @@
 # Worktree setup
 
-When a chat runs in a **worktree** (an isolated git checkout so an agent can work without touching your main branch), Frink can run setup commands right after creating it — installing dependencies, copying env files, whatever your project needs to be immediately usable.
+When a chat runs in a **worktree** (an isolated git checkout so an agent can work without touching your main branch), Frink copies in the local files git doesn't track, like your `.env`, and can run setup commands right after creating it — installing dependencies, whatever else your project needs to be immediately usable.
 
 Get a chat into worktree mode with the **Local / Worktree** switcher next to the project picker, under the message box, when starting a new chat with a project selected.
 
-Setup commands are configured per project. There's no setup by default: an unconfigured project just gets an empty worktree.
+Setup commands are configured per project and none run by default. Your `.env` files are copied into every new worktree even with no configuration — see [Files copied automatically](#files-copied-automatically).
 
 ## Two different `.frink` paths
 
@@ -21,14 +21,11 @@ This page is about the first one.
 
 Open **Settings → Projects → your project**. Under **Worktrees → Setup commands**, type each command into the empty last row; they run in order in the new worktree, right after it's created. Each row runs as its own command, so a `cd` in one row doesn't carry to the next — press **Shift+Enter** to put several lines in one row when they need to run together. Changes save automatically when you leave a field or press Enter.
 
-Use `$ROOT_WORKTREE_PATH` to reference the main checkout — the usual case is copying env files that git won't track:
+Use `$ROOT_WORKTREE_PATH` to reference the main checkout. You don't need a command to copy `.env` files: Frink does that for you.
 
 ```json
 {
-  "setup-worktree": [
-    "bun install",
-    "cp $ROOT_WORKTREE_PATH/.env .env"
-  ]
+  "setup-worktree": ["bun install"]
 }
 ```
 
@@ -39,6 +36,21 @@ Settings saves this to `.frink/worktrees.json` at your project root, changing on
 If no config file is found, worktree creation is silent — no commands run, nothing is reported as missing. If the file exists but can't be read, setup is skipped and Frink logs that "couldn't read" message; Settings shows it too.
 
 **Windows:** setup commands run through Git Bash (the one bundled with Git for Windows), so POSIX syntax like `cp` and `$VAR` works as shown above. If Git Bash isn't found next to your git install, commands silently fall back to `cmd.exe`, where that syntax doesn't run as written.
+
+## Files copied automatically
+
+A new worktree only has the files git tracks. Before any setup command runs, Frink copies in the files from your main checkout that git ignores and the worktree needs:
+
+- **By default:** every `.env` file git ignores, at any depth — `.env`, `.env.local`, `apps/web/.env.local` and so on. Templates (`.env.example`, `.env.sample`, `.env.template`) are left out, since they're usually tracked anyway.
+- **With a `.worktreeinclude` file** at the root of your repo: exactly the files it lists, instead of the default. It uses `.gitignore` syntax, including `!` to leave a file out. Claude Code and other tools read the same file. If you add one, list your `.env` files in it too, because it replaces the default.
+
+Only files git ignores are copied: tracked files are already in the worktree. A file the worktree already has is never overwritten, and files are copied rather than linked, so an agent's edits never reach your main checkout. Frink skips any file over 5 MB, and stops at 1,000 files or 50 MB in total.
+
+A pattern without a slash, like `settings.json`, doesn't reach inside a folder git ignores as a whole (such as `.vscode/`); write the path instead, like `.vscode/settings.json`. This keeps folders like `node_modules` from being scanned.
+
+**Settings → Projects → your project → Worktrees** lists exactly the files the next worktree will get. Turn the switch next to that list off if you don't want them copied, for example when your `.env` holds production keys that agents shouldn't use. The switch is saved on your computer only, in your repository's local git settings, so it never reaches anyone you share the project with. It covers every Frink project in that repository.
+
+Frink also skips any file the new worktree itself doesn't ignore. That happens when your main checkout ignores it through a change to `.gitignore` you haven't committed: without the skip, the file would show up as a new file in the worktree, and an agent could commit it.
 
 ## Claude settings and hooks come from the main checkout
 
