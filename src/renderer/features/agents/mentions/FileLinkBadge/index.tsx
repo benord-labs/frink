@@ -23,8 +23,10 @@ type FileLinkBadgeProps = {
 export function FileLinkBadge({ reference, onOpen }: FileLinkBadgeProps) {
   const { label } = reference;
   const isName = isFileNameLabel(label, reference);
+  // `relative` anchors the absolutely positioned stand-in here: inside a capped scroller (a plan
+  // card) it is then clipped, rather than stretching the transcript to its unclipped position.
   return (
-    <>
+    <span className="relative">
       {/* The text the badge stands in for stays in the page unseen, for chat search and for copying;
           a ring marks the badge while the current search match sits inside that text. */}
       {isName ? (
@@ -55,7 +57,7 @@ export function FileLinkBadge({ reference, onOpen }: FileLinkBadgeProps) {
           {path.normalize(reference.path)}
         </TooltipContent>
       </Tooltip>
-    </>
+    </span>
   );
 }
 
