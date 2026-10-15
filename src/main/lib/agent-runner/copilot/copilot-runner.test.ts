@@ -1,3 +1,5 @@
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -19,6 +21,7 @@ import {
   IDLE,
   managedReport,
   says,
+  TASKS_CHANGED,
   thinks,
   toolEnds,
   toolStarts,
@@ -354,6 +357,52 @@ describe('runCopilotAgent', () => {
 
     expect(textOf(result)).toBe('Started the server');
     await vi.waitFor(() => expect(fake.calls).toEqual(['start', 'stop']));
+  });
+
+  it('ends a command the turn left running that ignores the stop', async () => {
+    const command = spawn('/bin/sh', ['-c', "trap '' TERM HUP; sleep 30"], { detached: true });
+    const exited = once(command, 'exit');
+    const fake = fakeCopilotClient({
+      commandPids: [command.pid ?? 0],
+      turn: ({ emit }) => emit(AGENT_IDLE),
+    });
+
+    await run(fake).chunks;
+
+    expect(await exited).toEqual([null, 'SIGKILL']);
+    expect(fake.calls).toEqual(['start', 'stop']);
+  });
+
+  it('ends a command Copilot lists only after it was stopped', async () => {
+    const command = spawn('/bin/sh', ['-c', "trap '' TERM HUP; sleep 30"], { detached: true });
+    const exited = once(command, 'exit');
+    let answer = () => {};
+    const fake = fakeCopilotClient({
+      commandPids: [command.pid ?? 0],
+      listedLate: new Promise((resolve) => (answer = resolve)),
+      turn: ({ emit }) => emit(AGENT_IDLE),
+    });
+
+    await run(fake).chunks;
+    await vi.waitFor(() => expect(fake.calls).toEqual(['start', 'stop']), { timeout: 5000 });
+    answer();
+
+    expect(await exited).toEqual([null, 'SIGKILL']);
+  });
+
+  it('ends a command it noted while the turn ran, after Copilot itself died', async () => {
+    const command = spawn('/bin/sh', ['-c', "trap '' TERM HUP; sleep 30"], { detached: true });
+    const exited = once(command, 'exit');
+    const fake = fakeCopilotClient({
+      commandPids: [command.pid ?? 0],
+      turn: ({ emit, crash }) => {
+        emit(TASKS_CHANGED);
+        crash();
+      },
+    });
+
+    expect(errorsOf(await run(fake).chunks)).toEqual([COPILOT_STOPPED]);
+    expect(await exited).toEqual([null, 'SIGKILL']);
   });
 
   it('continues the earlier session when Copilot still has it', async () => {

@@ -2,6 +2,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import type {
   CopilotClient,
   CopilotClientOptions,
+  CopilotSession,
   MessageOptions,
   ModelInfo,
   ProviderConfig,
@@ -53,6 +54,7 @@ const TURN_ENDS = new Set<SessionEvent['type']>([
 
 /** The parts of a Copilot session one turn uses. */
 export type CopilotTurnSession = CheckedSession & {
+  rpc: { tasks: Pick<CopilotSession['rpc']['tasks'], 'list'> };
   sessionId: string;
   send(options: MessageOptions): Promise<string>;
   abort(): Promise<void>;
@@ -98,7 +100,7 @@ export type CopilotRunnerDeps = {
 
 type CopilotSdk = typeof import('@github/copilot-sdk');
 let copilotSdk: Promise<CopilotSdk> | undefined;
-const liveClients = new Set<CopilotTurnClient>();
+const liveClients = new Map<CopilotTurnClient, CopilotTurn>();
 
 function loadCopilotSdk(): Promise<CopilotSdk> {
   copilotSdk ??= import('@github/copilot-sdk');
@@ -156,8 +158,18 @@ function chooseModel(rows: AgentModel[], picked: string | undefined): ModelChoic
   return { model, reasoningEffort: row?.effort };
 }
 
-/** Stops the client, force-stopping it when it does not stop within a moment. */
-async function closeClient(client: CopilotTurnClient): Promise<void> {
+/** Signals a command's whole process group; false once nothing is left in it. */
+function signalGroup(pid: number, signal: NodeJS.Signals | 0): boolean {
+  try {
+    return process.kill(-pid, signal);
+  } catch {
+    return false;
+  }
+}
+
+/** Stops the client, then ends what the turn's commands left running, even if it ignores that. */
+async function closeClient(client: CopilotTurnClient, turn: CopilotTurn): Promise<void> {
+  await Promise.race([turn.noteCommands(), delay(STOP_GRACE_MS, undefined, { ref: false })]);
   try {
     const stopped = client.stop().then(
       () => true,
@@ -167,13 +179,14 @@ async function closeClient(client: CopilotTurnClient): Promise<void> {
       await client.forceStop();
     }
   } finally {
+    turn.endGroups();
     liveClients.delete(client);
   }
 }
 
 /** Stops every client still running, for when Frink quits. */
 export async function disposeAllCopilotClients(): Promise<void> {
-  await Promise.allSettled([...liveClients].map(closeClient));
+  await Promise.allSettled([...liveClients].map(([client, turn]) => closeClient(client, turn)));
 }
 
 function messageFor(params: CopilotRunnerParams, lostHistory: boolean): MessageOptions {
@@ -200,6 +213,12 @@ class CopilotTurn {
   readonly gate: ReturnType<typeof createCopilotGate>;
   client?: CopilotTurnClient;
   session?: CopilotTurnSession;
+  // Noted while each command runs: Copilot drops a quick one, or dies, before the turn ends.
+  private readonly commandGroups = new Set<number>();
+  // Emptied groups, never noted again: Copilot still lists them, but their ids may be reused.
+  private readonly endedGroups = new Set<number>();
+  // Set once Copilot is stopped, so a command listed after that is ended at once.
+  private released = false;
 
   constructor(params: CopilotRunnerParams) {
     this.gate = createCopilotGate({
@@ -235,8 +254,36 @@ class CopilotTurn {
   watch(client: CopilotTurnClient): void {
     const timer = setInterval(() => {
       client.ping().catch(() => this.halt(COPILOT_STOPPED));
+      this.liveGroups();
     }, PING_MS);
     this.over.signal.addEventListener('abort', () => clearInterval(timer), { once: true });
+  }
+
+  /** Notes the process group of every command Copilot lists now. */
+  async noteCommands(): Promise<void> {
+    const listed = await this.session?.rpc.tasks.list().catch(() => undefined);
+    for (const task of listed?.tasks ?? []) {
+      // A finished command's id may already name another program, so only running ones count.
+      if (task.type !== 'shell' || task.status !== 'running' || !task.pid) continue;
+      if (!this.endedGroups.has(task.pid)) this.commandGroups.add(task.pid);
+    }
+    if (this.released) this.endGroups();
+  }
+
+  /** Ends every noted group that still has a process, now and for any listed later. */
+  endGroups(): void {
+    this.released = true;
+    for (const pid of this.liveGroups()) signalGroup(pid, 'SIGKILL');
+  }
+
+  /** The noted groups with a process left; checked every tick to drop emptied ones at once. */
+  liveGroups(): number[] {
+    for (const pid of this.commandGroups) {
+      if (signalGroup(pid, 0)) continue;
+      this.commandGroups.delete(pid);
+      this.endedGroups.add(pid);
+    }
+    return [...this.commandGroups];
   }
 
   // The client is then stopped gracefully: a force-stop leaves its background commands running.
@@ -256,6 +303,7 @@ class CopilotTurn {
       if (problem) this.halt(problem === MANAGED ? MANAGED : SETTINGS_LOST);
       return;
     }
+    if (event.type === 'session.background_tasks_changed') void this.noteCommands();
     if (event.type === 'tool.execution_start') {
       const { toolCallId, toolName, arguments: args } = event.data;
       this.gate.noteExecutionStart(toolCallId, toolName, args);
@@ -288,7 +336,7 @@ async function startTurn(turn: CopilotTurn, params: CopilotRunnerParams, deps: C
     workingDirectory: params.cwd,
   });
   turn.client = client;
-  liveClients.add(client);
+  liveClients.set(client, turn);
   await client.start();
   // Opening a session would start a stopped client again.
   if (turn.isOver) return;
@@ -349,7 +397,9 @@ export async function* runCopilotAgent(
     turn.end();
     // Before the first yield: a reader that stops listening never resumes this generator.
     if (turn.client) {
-      void closeClient(turn.client).catch((error) => log.warn('[Copilot] Did not stop', error));
+      void closeClient(turn.client, turn).catch((error) =>
+        log.warn('[Copilot] Did not stop', error),
+      );
     }
     yield* completeTurnChunks(turn.thinking, turn.openTextIds);
     const sessionId = turn.session?.sessionId;

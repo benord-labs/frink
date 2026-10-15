@@ -34,6 +34,8 @@ const BIN = process.env.FRINK_COPILOT_ADMISSION_BIN;
 const REQUIRED = process.env.FRINK_COPILOT_ADMISSION_REQUIRED === '1';
 const TURN_MS = 90_000;
 const SECRET_TEXT = 'outside-secret-3d9a';
+const COPILOT_STOPPED_TEXT =
+  'GitHub Copilot stopped unexpectedly, so this turn ended. Any steps shown above already ran.';
 const PATCH_MODEL = 'gpt-5.2-codex';
 const LOGIN_SHELL_MARKER = 'FRINK_LOGIN_SHELL_MARKER';
 
@@ -139,7 +141,7 @@ function running(pattern: string): boolean {
   }
 }
 
-/** Children of a parent whose command line has `pattern`, each with every process under it. */
+/** Processes under a parent whose command line has `pattern`, at any depth; others are left alone. */
 function processTrees(parent: number, pattern?: string): number[] {
   let found = '';
   try {
@@ -151,7 +153,7 @@ function processTrees(parent: number, pattern?: string): number[] {
   return found
     .split('\n')
     .filter(Boolean)
-    .flatMap((pid) => [Number(pid), ...processTrees(Number(pid))]);
+    .flatMap((pid) => [Number(pid), ...processTrees(Number(pid), pattern)]);
 }
 
 it('ran against a real GitHub Copilot wherever admission is required', () => {
@@ -773,21 +775,59 @@ describe.runIf(BIN)('GitHub Copilot admission', () => {
     TURN_MS + 60_000,
   );
 
-  it.each([
-    ['allowed', 'sleep 86421', {}],
-    [
-      'unasked',
-      'sleep 86422',
-      { gateWrapper: () => async () => ({ permissionDecision: 'allow' }) },
-    ],
-  ] satisfies [string, string, TurnSetup][])(
-    'an %s background command does not outlive the turn',
-    async (name, command, setup) => {
-      scripts.set(`background-${name}`, [bash(command, { mode: 'async' })]);
-      const result = await turn(`background-${name}`, { ...setup, answer: async () => ALLOW });
-      expect(result.errors).toEqual(name === 'unasked' ? [ACTED_UNASKED_TEXT] : []);
+  // Copilot is this test's only headless child; an npm install runs the real CLI under it.
+  const killCopilot = () => {
+    for (const pid of processTrees(process.pid, 'headless')) process.kill(pid, 'SIGKILL');
+  };
+
+  /** Allows every step, doing `act` while the second one is asked about. */
+  const atSecondAsk = (act: (abortController: AbortController) => void): TurnSetup => {
+    let asks = 0;
+    return {
+      answer: async (abortController) => {
+        if (++asks === 2) act(abortController);
+        return ALLOW;
+      },
+    };
+  };
+  const stopTurn = (abortController: AbortController) => abortController.abort();
+  const DEAF = "trap '' TERM HUP;";
+
+  it.each<{ name: string; command: string; mode?: string; setup?: TurnSetup; errors?: string[] }>([
+    { name: 'allowed', command: 'sleep 86421' },
+    {
+      name: 'unasked',
+      command: 'sleep 86422',
+      setup: { gateWrapper: () => async () => ({ permissionDecision: 'allow' }) },
+      errors: [ACTED_UNASKED_TEXT],
+    },
+    { name: 'turn stopped', command: 'sleep 86423', setup: atSecondAsk(stopTurn) },
+    { name: 'ignores SIGTERM', command: `${DEAF} sleep 86424` },
+    {
+      name: 'ignores SIGTERM, turn stopped',
+      command: `${DEAF} sleep 86425`,
+      setup: atSecondAsk(stopTurn),
+    },
+    {
+      name: 'left behind by a finished command',
+      command: `(${DEAF} sleep 86426) >/dev/null 2>&1 &`,
+      mode: 'sync',
+    },
+    {
+      name: 'ignores SIGTERM, Copilot killed',
+      command: `${DEAF} sleep 86427`,
+      setup: atSecondAsk(killCopilot),
+      errors: [COPILOT_STOPPED_TEXT],
+    },
+  ])(
+    'a background command does not outlive the turn: $name',
+    async ({ name, command, mode = 'async', setup, errors = [] }) => {
+      const id = `background-${name.toLowerCase().replace(/[^a-z]+/g, '-')}`;
+      scripts.set(id, [bash(command, { mode }), bash('true')]);
+      const result = await turn(id, { answer: async () => ALLOW, ...setup });
+      expect(result.errors).toEqual(errors);
       await delay(3000);
-      expect(running(command)).toBe(false);
+      expect(running(/sleep \d+/.exec(command)?.[0] ?? command)).toBe(false);
     },
     TURN_MS,
   );
@@ -799,15 +839,12 @@ describe.runIf(BIN)('GitHub Copilot admission', () => {
       let killedAt = 0;
       const result = await turn('crash', {
         answer: async () => {
-          // Copilot is this test's only headless child; an npm install runs the real CLI under it.
-          for (const pid of processTrees(process.pid, 'headless')) process.kill(pid, 'SIGKILL');
+          killCopilot();
           killedAt = Date.now();
           return ALLOW;
         },
       });
-      expect(result.errors).toEqual([
-        'GitHub Copilot stopped unexpectedly, so this turn ended. Any steps shown above already ran.',
-      ]);
+      expect(result.errors).toEqual([COPILOT_STOPPED_TEXT]);
       expect(Date.now() - killedAt).toBeLessThan(5_000);
       expect(existsSync(inProject('m-crash'))).toBe(false);
     },
