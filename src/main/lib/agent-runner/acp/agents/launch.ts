@@ -85,16 +85,25 @@ const MAX_CHECK_OUTPUT_CHARS = 1024 * 1024;
 /** Shells the agent treats as POSIX, so it calls the gate with `-c <command>`. */
 const POSIX_SHELLS = new Set(['bash', 'zsh', 'sh', 'dash', 'ksh']);
 const sweptRunRoots = new Map<string, Promise<void>>();
+/** Desktop-session variables a login shell never sets; keyrings and their unlock prompts need them. */
+const SESSION_VARS = new Set([
+  'DBUS_SESSION_BUS_ADDRESS',
+  'XDG_RUNTIME_DIR',
+  'DISPLAY',
+  'WAYLAND_DISPLAY',
+]);
 
 export async function userEnv(): Promise<Env> {
   await ensureLoginShellEnv();
   const loginEnv = getLoginShellEnvSync();
-  if (loginEnv) return loginEnv;
-  return Object.fromEntries(
+  const launchEnv = Object.fromEntries(
     Object.entries(process.env).flatMap(([key, value]) =>
       value === undefined ? [] : [[key, value]],
     ),
   );
+  if (!loginEnv) return launchEnv;
+  const session = Object.entries(launchEnv).filter(([key]) => SESSION_VARS.has(key));
+  return { ...Object.fromEntries(session), ...loginEnv };
 }
 
 async function isProgram(file: string): Promise<boolean> {

@@ -1,7 +1,8 @@
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { LoginShellEnvResolver, setLoginShellEnvResolver } from '../../platform/login-shell-env';
 import { COPILOT_TOOLS, findCopilotAgent, locateCopilotAgent, resolveCopilotLaunch } from './index';
 
 /** Stands in for the Copilot CLI: prints its version line, but only to a stripped environment. */
@@ -128,6 +129,28 @@ describe('resolveCopilotLaunch', () => {
     await symlink(loader, path.join(npmBin, 'copilot'));
     const result = await resolve({ PATH: `${npmBin}${path.delimiter}/usr/bin` });
     expect(result).toMatchObject({ ok: true, launch: { command: path.join(npmBin, 'copilot') } });
+  });
+
+  it("reaches the keyring through the desktop session's variables", async () => {
+    const session = {
+      DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/1000/bus',
+      XDG_RUNTIME_DIR: '/run/user/1000',
+    };
+    // The login shell's PATH is written back to the process, so it is restored after.
+    for (const [key, value] of Object.entries({ ...session, PATH: '/usr/bin:/bin' }))
+      vi.stubEnv(key, value);
+    const resolver = new LoginShellEnvResolver({
+      spawnShell: async () => ({ ok: true, env: userEnv() }),
+      extendPath: (current) => current ?? '',
+    });
+    setLoginShellEnvResolver(resolver);
+    try {
+      const result = await resolveCopilotLaunch({ configDirectory });
+      expect(result).toMatchObject({ ok: true, launch: { env: session } });
+    } finally {
+      resolver.reset();
+      vi.unstubAllEnvs();
+    }
   });
 
   it('finds the installed CLI and its version with the same stripped environment', async () => {
