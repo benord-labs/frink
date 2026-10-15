@@ -20,7 +20,7 @@ type RunStatusRowProps = {
   /** Optional hint after the state; the first thing to go when the pane narrows. */
   detail?: ReactNode;
   /** Ghost buttons, each an icon + a text <span>; below the icon tier only the icon shows. */
-  children: ReactNode;
+  children?: ReactNode;
   /** The visible card, for overlays that anchor to the whole row. */
   cardRef?: Ref<HTMLDivElement>;
 };
