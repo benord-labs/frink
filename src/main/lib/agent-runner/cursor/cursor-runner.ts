@@ -87,6 +87,8 @@ type CursorLaunch = {
   home: string;
   storeDir: string;
   realHome: string;
+  /** The ripgrep Cursor's search runs, so Frink's gate can ask it what a search walks. */
+  ripgrep: string;
   tools: readonly string[];
   hookVersions: readonly string[];
 };
@@ -175,11 +177,12 @@ class CursorTurn {
     private readonly params: CursorRunnerParams,
     private readonly deps: CursorRunnerDeps,
   ) {
-    const { home, realHome, hookVersions } = params.launch;
+    const { home, realHome, ripgrep, hookVersions } = params.launch;
     this.gate = createCursorGate({
       cwd: params.cwd,
       home,
       realHome,
+      ripgrep,
       hookVersions,
       checkApproval: params.checkApproval,
       turnOver: this.over.signal,

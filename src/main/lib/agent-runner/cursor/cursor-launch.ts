@@ -28,7 +28,7 @@ export type CursorLaunchDeps = {
   forkHost?: ForkHost;
   openExternal?: (url: string) => Promise<void>;
 };
-type SdkCheck = { ok: true; entry: string } | { ok: false; reason: string };
+type SdkCheck = { ok: true; entry: string; ripgrep: string } | { ok: false; reason: string };
 export type CursorAgentCheck =
   | { status: 'ready' }
   | { status: 'missing' | 'signed-out' | 'plan-required' | 'failed'; reason: string };
@@ -80,7 +80,10 @@ async function checkedSdk(root = installedSdkRoot()): Promise<SdkCheck> {
       reason: `Frink checked Cursor's SDK ${CURSOR_ROW.sdk.version}. This copy is ${version}.`,
     };
   }
-  return { ok: true, entry: path.join(root, 'dist', 'esm', 'index.js') };
+  // The SDK's ripgrep ships in its platform package beside it.
+  const platform = `sdk-${process.platform}-${process.arch}`;
+  const ripgrep = path.join(root, '..', platform, 'bin', 'rg');
+  return { ok: true, entry: path.join(root, 'dist', 'esm', 'index.js'), ripgrep };
 }
 
 /** Prepares one turn's launch, checked before every turn so a changed install is caught. */
@@ -100,10 +103,12 @@ export async function resolveCursorLaunch(
     launch: {
       sdkEntry: sdk.entry,
       hostPath: resolveElectronResourcePath(paths, HOST),
-      env: cursorHostEnv(env, home),
+      // Cursor searches with the same ripgrep Frink's gate asks.
+      env: { ...cursorHostEnv(env, home), CURSOR_RIPGREP_PATH: sdk.ripgrep },
       home,
       storeDir: path.join(chat, 'store'),
       realHome: env.HOME || os.homedir(),
+      ripgrep: sdk.ripgrep,
       tools: CURSOR_ROW.tools,
       hookVersions: CURSOR_ROW.hookVersions,
     },

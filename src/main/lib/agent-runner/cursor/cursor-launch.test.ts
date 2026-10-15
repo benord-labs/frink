@@ -74,16 +74,19 @@ describe('resolveCursorLaunch', () => {
     const chatDir = path.join(userData, 'cursor', 'chats', 'c_1-A');
     const home = path.join(chatDir, 'home');
     const env = userEnv({ CURSOR_API_KEY: 'kept', CURSOR_BACKEND_URL: 'http://127.0.0.1:1' });
+    const platform = `sdk-${process.platform}-${process.arch}`;
+    const ripgrep = path.join(path.dirname(sdkRoot), platform, 'bin', 'rg');
 
     expect(await resolveCursorLaunch({ chatKey: 'c_1-A' }, { env, app, sdkRoot })).toEqual({
       ok: true,
       launch: {
         sdkEntry: path.join(sdkRoot, 'dist', 'esm', 'index.js'),
         hostPath: path.join(process.cwd(), 'resources', 'cursor', 'cursor-host.mjs'),
-        env: cursorHostEnv(env, home),
+        env: { ...cursorHostEnv(env, home), CURSOR_RIPGREP_PATH: ripgrep },
         home,
         storeDir: path.join(chatDir, 'store'),
         realHome,
+        ripgrep,
         tools: CURSOR_TOOL_NAMES,
         hookVersions: ['1.0.0'],
       },
