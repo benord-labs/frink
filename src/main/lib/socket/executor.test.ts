@@ -20,6 +20,7 @@ import {
   registerExecutorPermissionTests,
   registerFlowRunEndedTests,
   registerOperatorReminderDeliveryTests,
+  registerUndeliveredMessageTests,
   registerValidateToolPermissionTests,
 } from './test-suites';
 
@@ -1608,6 +1609,8 @@ describe('socket file permission edge cases', () => {
   describe('operator reminder delivery: the Flow run has ended (sc-4467)', () =>
     registerFlowRunEndedTests({ basePayload, claudeQueryMock, handleRemoteExecute }));
   registerComposerContextTests({ basePayload, claudeQueryMock, handleRemoteExecute });
+  describe('a message whose turn ended before the provider took it', () =>
+    registerUndeliveredMessageTests({ basePayload, claudeQueryMock, handleRemoteExecute }));
 
   it('aborts the turn when the drive-info read faults', async () => {
     // A recorded provenance fault is rethrown at admission, ahead of any provider work — see

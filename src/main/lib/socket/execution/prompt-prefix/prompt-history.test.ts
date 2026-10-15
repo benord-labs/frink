@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatPromptWithHistory } from './prompt-history';
+import { formatPromptWithHistory, replaceCarriedWithHistory } from './prompt-history';
 
 const history = [
   { role: 'user' as const, content: 'earlier question' },
@@ -61,5 +61,26 @@ describe('formatPromptWithHistory', () => {
     expect(out.length).toBeLessThan(200_000 + 500);
     expect(out).toContain('aEND');
     expect(out).toContain('Earlier conversation omitted');
+  });
+});
+
+describe('replaceCarriedWithHistory', () => {
+  const carried = 'a note and an earlier message\n\ndo the thing';
+
+  it('puts the transcript in place of what a resume would have carried', () => {
+    const out = replaceCarriedWithHistory(
+      `a prefix\n\n${carried}`,
+      carried,
+      'do the thing',
+      history,
+    );
+    expect(out.startsWith('a prefix\n\n<conversation_history>')).toBe(true);
+    expect(out).not.toContain('a note and an earlier message');
+    expect(out.endsWith('do the thing')).toBe(true);
+  });
+
+  it('keeps the prompt whole when there is no transcript to seed from', () => {
+    expect(replaceCarriedWithHistory(carried, carried, 'do the thing', [])).toBe(carried);
+    expect(replaceCarriedWithHistory(carried, carried, 'do the thing', undefined)).toBe(carried);
   });
 });

@@ -93,7 +93,7 @@ export function stopHookQuery(opts: {
   return handle;
 }
 
-type SubmitHookInput = { hook_event_name: 'UserPromptSubmit'; source: 'sdk'; prompt: string };
+type SubmitHookInput = { hook_event_name: 'UserPromptSubmit'; source: string; prompt: string };
 type SubmitHookOutput = { hookSpecificOutput?: { additionalContext?: string } };
 type SubmitHook = (input: SubmitHookInput) => Promise<SubmitHookOutput>;
 /** The part of one claudeQuery call that carries the hooks the executor registered. */
@@ -110,10 +110,11 @@ export type ClaudeQueryCall = {
 export async function userPromptSubmitReminder(
   call: ClaudeQueryCall,
   prompt = '',
+  source = 'sdk',
 ): Promise<string | undefined> {
   const hook = call.options?.hooks?.UserPromptSubmit?.[0]?.hooks?.[0];
   if (!hook) return undefined;
-  const out = await hook({ hook_event_name: 'UserPromptSubmit', source: 'sdk', prompt });
+  const out = await hook({ hook_event_name: 'UserPromptSubmit', source, prompt });
   return out.hookSpecificOutput?.additionalContext;
 }
 
