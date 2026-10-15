@@ -139,7 +139,8 @@ function cursorHostAnswer(resources) {
 /** Cursor's platform package sits where its SDK looks, and the host answers signed out. */
 function checkCursorHost(resources) {
   const platform = join(resources, 'node_modules', '@cursor', `sdk-darwin-${process.arch}`);
-  if (!existsSync(join(platform, 'bin', 'cursorsandbox'))) throw new Error(`no ${platform}`);
+  const missing = ['cursorsandbox', 'rg'].find((bin) => !existsSync(join(platform, 'bin', bin)));
+  if (missing) throw new Error(`no ${missing} in ${platform}`);
   const { answer, log } = cursorHostAnswer(resources);
   if (answer.type !== 'auth' || answer.status === 'logged-in') {
     throw new Error(`Cursor host answered ${JSON.stringify(answer)}: ${log}`);
