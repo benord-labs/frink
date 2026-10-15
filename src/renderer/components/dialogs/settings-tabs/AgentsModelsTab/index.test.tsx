@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { getDefaultStore } from 'jotai';
 import { toast } from 'sonner';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { LAUNCH_FLAGS } from '../../../../../shared/launch-flags';
 import { hiddenModelsAtom } from '../../../../lib/atoms';
 import { AgentsModelsTab } from './index';
 
@@ -17,7 +18,7 @@ const listAccountsQuery = vi.hoisted(() => ({
     // raw string the tab narrows via `(a.type as string) === 'codex'`.
     | Array<{
         id: string;
-        type: 'claude-code' | 'codex' | 'opencode' | 'copilot';
+        type: 'claude-code' | 'codex' | 'opencode' | 'copilot' | 'cursor';
         isAuthenticated: boolean;
       }>
     | undefined,
@@ -258,7 +259,7 @@ describe('AgentsModelsTab installed agents', () => {
   const START_CHAT = 'Start a chat with OpenCode to see its models here.';
   const store = getDefaultStore();
 
-  function signedIn(...types: Array<'claude-code' | 'opencode' | 'copilot'>) {
+  function signedIn(...types: Array<'claude-code' | 'opencode' | 'copilot' | 'cursor'>) {
     listAccountsQuery.data = types.map((type) => ({ id: type, type, isAuthenticated: true }));
     listAccountsQuery.isSuccess = true;
     listAccountsQuery.isFetched = true;
@@ -299,6 +300,21 @@ describe('AgentsModelsTab installed agents', () => {
     ]);
     await userEvent.setup().click(screen.getByRole('switch', { name: 'Show GPT-X' }));
     expect(store.get(hiddenModelsAtom)).toEqual(['copilot:gpt-x']);
+  });
+
+  it('gives Cursor one switch per model from the list it last gave, once Cursor is on', () => {
+    signedIn('cursor');
+    const gpt = { name: 'GPT-X', familyId: 'gpt-x' };
+    const listed = [
+      { id: 'default', name: 'Auto' },
+      { ...gpt, id: 'gpt-x/low' },
+      { ...gpt, id: 'gpt-x/high' },
+    ];
+    agentModels.set('cursor', { data: listed, isPending: false });
+    render(<AgentsModelsTab />);
+
+    const switches = screen.queryAllByRole('switch').map((s) => s.getAttribute('aria-label'));
+    expect(switches).toEqual(LAUNCH_FLAGS.cursorAccounts ? ['Show Auto', 'Show GPT-X'] : []);
   });
 
   it('keeps the last GitHub Copilot model on', async () => {

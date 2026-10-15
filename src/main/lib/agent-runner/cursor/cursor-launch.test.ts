@@ -3,12 +3,30 @@ import os from 'node:os';
 import path from 'node:path';
 import type { SDKMessage } from '@cursor/sdk';
 import log from 'electron-log';
-import { afterAll, afterEach, beforeAll, describe, expect, expectTypeOf, it, vi } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  expectTypeOf,
+  it,
+  vi,
+} from 'vitest';
 import type { UIMessageChunk } from '../../claude/types';
+import * as database from '../../db';
+import { freshDb } from '../../db/test-utils/fresh-db';
 import { collectChunks, textOf } from '../acp/acp-test-fixtures';
+import { rememberedAgentModels } from '../agent-models';
 import type { CursorSdkMessage } from './cursor-events';
 import type { CursorRunnerParams, ForkHost } from './cursor-runner';
-import { nodeForkHost, recordingChflags, writeFakeCursorSdk } from './cursor-test-fixtures';
+import {
+  FAKE_CURSOR_MODELS,
+  nodeForkHost,
+  recordingChflags,
+  writeFakeCursorSdk,
+} from './cursor-test-fixtures';
 import {
   CURSOR_TOOL_NAMES,
   cursorHostEnv,
@@ -25,6 +43,11 @@ const PLAN_REQUIRED =
 const SIGNED_OUT =
   "Cursor isn't signed in. Choose Sign in to Cursor, finish in your browser, then try again.";
 const NO_SDK = "Frink can't find Cursor's SDK on this computer.";
+const SAVED_ROWS = [
+  { id: 'default', name: 'Auto' },
+  { id: 'gpt-x/low', name: 'GPT-X', familyId: 'gpt-x', effort: 'low', detail: 'Low' },
+  { id: 'gpt-x/high', name: 'GPT-X', familyId: 'gpt-x', effort: 'high', detail: 'High' },
+];
 
 let root = '';
 let sdkRoot = '';
@@ -40,6 +63,9 @@ beforeAll(async () => {
   realHome = path.join(root, 'real home');
   await mkdir(realHome);
   await writeFakeCursorSdk(sdkRoot, '1.0.37');
+});
+beforeEach(() => {
+  vi.spyOn(database, 'getDatabase').mockReturnValue(freshDb());
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -201,6 +227,12 @@ describe('findCursorAgent', () => {
     warn.mockRestore();
   });
 
+  it('saves the models Cursor lists while it checks, for the picker and Settings', async () => {
+    expect(await findCursorAgent(deps())).toEqual({ status: 'ready' });
+    expect(rememberedAgentModels('cursor')).toMatchObject(SAVED_ROWS);
+    expect(rememberedAgentModels('cursor')[2]).toMatchObject({ effortDefault: true });
+  });
+
   it("checks with the user's real home, where Cursor keeps its own sign-in", async () => {
     const forks: Parameters<ForkHost>[0][] = [];
     const forkHost: ForkHost = (input, events) => {
@@ -270,7 +302,7 @@ describe('signInToCursor', () => {
     expect(opened).toEqual([]);
     expect(seen).toEqual([
       { type: 'auth', status: 'logged-in' },
-      { type: 'models', list: [{ id: 'default', displayName: 'Auto' }] },
+      { type: 'models', list: FAKE_CURSOR_MODELS },
     ]);
   });
 
@@ -373,7 +405,7 @@ describe('the Cursor host', () => {
     const { chunks, order, seen } = await hostTurn();
 
     expect(errorsOf(chunks)).toEqual([]);
-    expect(order).toEqual([
+    expect(order.filter((type) => type !== 'models')).toEqual([
       'auth',
       'send start',
       'agent',
@@ -386,6 +418,7 @@ describe('the Cursor host', () => {
     expect(seen).toEqual({
       text: 'hello',
       images: 0,
+      model: { id: 'default' },
       tools: CURSOR_TOOL_NAMES,
       local: { cwd: root, settingSources: ['user'], store: true },
     });
@@ -429,5 +462,22 @@ describe('the Cursor host', () => {
     const { chunks } = await hostTurn({ prompt: 'refuse' });
 
     expect(errorsOf(chunks)).toEqual([PLAN_REQUIRED]);
+  });
+
+  it('sends the chosen model, then saves the models Cursor lists after the turn starts', async () => {
+    const model = { id: 'gpt-x', params: [{ id: 'reasoning_effort', value: 'low' }] };
+    const { order, seen } = await hostTurn({ model });
+
+    expect(seen).toMatchObject({ model });
+    expect(order.indexOf('models')).toBeGreaterThan(order.indexOf('send start'));
+    expect(rememberedAgentModels('cursor')).toMatchObject(SAVED_ROWS);
+  });
+
+  it('never waits on the model list to stream the turn', async () => {
+    const { chunks, order } = await hostTurn({}, { FAKE_MODELS: 'hang' });
+
+    expect(errorsOf(chunks)).toEqual([]);
+    expect(textOf(chunks)).toContain('hello');
+    expect(order).not.toContain('models');
   });
 });

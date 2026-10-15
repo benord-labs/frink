@@ -1,7 +1,10 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CursorRunnerParams, resolveCursorLaunch } from '../../../agent-runner/cursor';
 import { CURSOR_TOOL_NAMES } from '../../../agent-runner/cursor';
 import type { UIMessageChunk } from '../../../claude/types';
+import * as database from '../../../db';
+import { setPreference } from '../../../db/repos/composer-settings';
+import { freshDb } from '../../../db/test-utils/fresh-db';
 import { startCursorTurn } from '.';
 
 type LaunchResult = Awaited<ReturnType<typeof resolveCursorLaunch>>;
@@ -60,7 +63,18 @@ async function collect(stream: AsyncGenerator<UIMessageChunk, void, undefined>) 
   return chunks;
 }
 
+const OPUS = { name: 'Claude Opus 5.5', familyId: 'claude-opus-5-5' };
+const SAVED = [
+  { id: 'default', name: 'Auto' },
+  { ...OPUS, id: 'claude-opus-5-5/low', effort: 'low', params: [{ id: 'effort', value: 'low' }] },
+  { ...OPUS, id: 'claude-opus-5-5/max', effort: 'max', params: [{ id: 'effort', value: 'max' }] },
+];
+
 describe('startCursorTurn', () => {
+  beforeEach(() => {
+    vi.spyOn(database, 'getDatabase').mockReturnValue(freshDb());
+  });
+
   it("runs the chat's own launch in the chat folder and streams what Cursor sends", async () => {
     const { deps, runs, resolve } = fakeDeps();
     const chunks = await collect(startCursorTurn(turnParams(), deps));
@@ -121,5 +135,25 @@ describe('startCursorTurn', () => {
       images: [{ data: 'aGk=', mimeType: 'image/png' }],
     });
     expect(runs[0]?.model).toBeUndefined();
+  });
+
+  it('sends the model and effort looked up in the list Cursor last gave', async () => {
+    setPreference(database.getDatabase(), 'agentModels.cursor', SAVED);
+    const { deps, runs } = fakeDeps();
+    await collect(startCursorTurn(turnParams({ model: 'claude-opus-5-5/max' }), deps));
+    expect(runs[0]?.model).toEqual({
+      id: 'claude-opus-5-5',
+      params: [{ id: 'effort', value: 'max' }],
+    });
+  });
+
+  it('refuses a model Cursor no longer lists before starting anything', async () => {
+    setPreference(database.getDatabase(), 'agentModels.cursor', SAVED);
+    const { deps, runs, resolve } = fakeDeps();
+    await expect(
+      collect(startCursorTurn(turnParams({ model: 'grok-3/high' }), deps)),
+    ).rejects.toThrow('Cursor no longer offers grok-3. Pick another model.');
+    expect(resolve).not.toHaveBeenCalled();
+    expect(runs).toEqual([]);
   });
 });

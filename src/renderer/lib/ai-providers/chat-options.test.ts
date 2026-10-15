@@ -3,6 +3,7 @@ import {
   CODEX_DEFAULT_MODEL_ID,
   type CodexAccountCatalog,
 } from '../../../shared/lib/codex-cli-models';
+import type { PickerGroupFields } from '../../../shared/lib/model-picker-label/groups';
 import {
   AGENT_DEFAULT_MODEL_ID,
   CLAUDE_PICKER_MODELS,
@@ -19,6 +20,12 @@ const COPILOT_MODELS = [
   { ...GPT_5, id: 'gpt-5/low', effort: 'low' as const },
   { ...GPT_5, id: 'gpt-5/high', effort: 'high' as const },
   { id: 'auto', name: 'Auto' },
+];
+const OPUS = { name: 'Claude Opus 5.5', familyId: 'claude-opus-5-5' };
+const CURSOR_MODELS: PickerGroupFields[] = [
+  { id: 'default', name: 'Auto' },
+  { ...OPUS, id: 'claude-opus-5-5/low', effort: 'low' },
+  { ...OPUS, id: 'claude-opus-5-5/medium', effort: 'medium', effortDefault: true },
 ];
 const FREE_CODEX: CodexAccountCatalog = {
   tiers: { 'gpt-6-luna': [], 'gpt-5.5': [] },
@@ -201,6 +208,24 @@ describe('providerModels', () => {
     expect(result.selected).toEqual(COPILOT_MODELS[1]);
   });
 
+  it("lists Cursor's own models, Auto first, showing a saved model at the effort its turn runs", () => {
+    expect(models('cursor', 'claude-opus-5-5', { agentModels: CURSOR_MODELS })).toMatchObject({
+      items: CURSOR_MODELS,
+      selected: CURSOR_MODELS[2],
+      variant: 'cursor',
+      refusesModel: false,
+    });
+    expect(models('cursor', 'default', { agentModels: CURSOR_MODELS }).selected).toEqual(
+      CURSOR_MODELS[0],
+    );
+  });
+
+  it('refuses a saved Cursor model only once Cursor no longer lists it, whatever the effort', () => {
+    const listed = { agentModels: CURSOR_MODELS };
+    expect(models('cursor', 'claude-opus-5-5/max', listed).refusesModel).toBe(false);
+    expect(models('cursor', 'grok-3/high', listed).refusesModel).toBe(true);
+  });
+
   it('hides a model only for the agent that lists it', () => {
     const hiddenFamilies = agentModelFamilies('copilot', [
       ...COPILOT_MODELS,
@@ -221,6 +246,10 @@ describe('agentModelFamilies', () => {
     expect(agentModelFamilies('copilot', COPILOT_MODELS)).toEqual([
       { id: 'copilot:gpt-5', name: 'GPT-5' },
       { id: 'copilot:auto', name: 'Auto' },
+    ]);
+    expect(agentModelFamilies('cursor', CURSOR_MODELS)).toEqual([
+      { id: 'cursor:default', name: 'Auto' },
+      { id: 'cursor:claude-opus-5-5', name: 'Claude Opus 5.5' },
     ]);
   });
 });

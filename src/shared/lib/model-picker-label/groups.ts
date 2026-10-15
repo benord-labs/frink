@@ -117,7 +117,7 @@ export function pickInWindow<T extends PickerGroupFields>(
   );
 }
 
-const isEffortKey = (value: string): value is ClaudeSdkEffortLevel =>
+export const isEffortKey = (value: string): value is ClaudeSdkEffortLevel =>
   Object.hasOwn(EFFORT_LABEL, value);
 
 /** The model and effort a picker id such as `gpt-6/high` names, a listed row of that model if any,
@@ -135,8 +135,8 @@ export function modelRowFor<T extends PickerGroupFields>(rows: readonly T[], pic
   return { model, effort, offered: offered.at(0), row };
 }
 
-/** Whether an installed agent's turn refuses a saved picker id, matching as that turn does: by model
- *  and effort when `byEffort` (Copilot), else exactly. Claude and Codex ids are dropped, not refused. */
+/** Whether an installed agent's turn refuses a saved picker id: by model and effort when `byEffort`
+ *  (Copilot, Cursor), else exactly. Claude and Codex ids are dropped, not refused. */
 export function agentRefusesModel(
   rows: readonly PickerGroupFields[],
   picked: string,

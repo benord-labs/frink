@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { resolveElectronResourcePath } from '../../platform/electron-resource-path';
 import { userEnv } from '../acp/agents/launch';
 import { cursorHostEnv } from './cursor-home';
+import { saveCursorModels } from './cursor-models';
 import {
   type CursorHostMessage,
   type CursorHostRequest,
@@ -182,8 +183,10 @@ export async function findCursorAgent(deps: CursorLaunchDeps = {}): Promise<Curs
   return talkToHost(deps.forkHost ?? forkUtilityHost, host.input, give, (message, talk) => {
     if (turnedDown(message)) talk.settle({ status: 'signed-out', reason: SIGNED_OUT });
     else if (message.type === 'auth') talk.send({ type: 'models' });
-    else if (message.type === 'models') talk.settle({ status: 'ready' });
-    else if (message.type === 'error' && message.code === 'plan_required') {
+    else if (message.type === 'models') {
+      saveCursorModels(message.list);
+      talk.settle({ status: 'ready' });
+    } else if (message.type === 'error' && message.code === 'plan_required') {
       talk.settle({ status: 'plan-required', reason: PLAN_REQUIRED });
     } else if (message.type === 'error') talk.fail(message.text);
   });

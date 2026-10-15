@@ -4,7 +4,11 @@ import { getDatabase } from '../db';
 import { getPreference, setPreference } from '../db/repos/composer-settings';
 
 /** A picker row an installed agent reported: a model, or one effort of a model. */
-export type AgentModel = PickerGroupFields & { detail?: string };
+export type AgentModel = PickerGroupFields & {
+  detail?: string;
+  /** The model parameters a turn sends for this row, for agents that take them. */
+  params?: { id: string; value: string }[];
+};
 
 const key = (agentId: string) => `agentModels.${agentId}`;
 

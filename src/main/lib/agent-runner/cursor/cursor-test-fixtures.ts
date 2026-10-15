@@ -196,11 +196,29 @@ export const nodeForkHost: ForkHost = ({ hostPath, sdkEntry, env, cwd }, events)
   return { send: (request) => void child.send(request), kill: () => void child.kill() };
 };
 
+/** The models the stand-in SDK lists: Auto and one model with an effort choice. */
+export const FAKE_CURSOR_MODELS = [
+  { id: 'default', displayName: 'Auto', parameters: [] },
+  {
+    id: 'gpt-x',
+    displayName: 'GPT-X',
+    parameters: [{ id: 'reasoning_effort', values: [{ value: 'low' }, { value: 'high' }] }],
+    variants: [
+      {
+        params: [{ id: 'reasoning_effort', value: 'high' }],
+        displayName: 'GPT-X',
+        isDefault: true,
+      },
+    ],
+  },
+];
+
 // Stands in for Cursor's SDK: FAKE_AUTH and FAKE_MODELS steer it, and each turn asks the gate first.
 const FAKE_SDK = `import { readFileSync } from 'node:fs';
 import { request } from 'node:http';
 import path from 'node:path';
 export class JsonlLocalAgentStore { constructor(dir) { this.dir = dir; } }
+const FAKE_MODELS = ${JSON.stringify(FAKE_CURSOR_MODELS)};
 export const Cursor = {
   auth: {
     status: async () => ({ status: process.env.FAKE_AUTH ?? 'logged-in' }),
@@ -212,8 +230,9 @@ export const Cursor = {
     },
   },
   models: { list: async () => {
+    if (process.env.FAKE_MODELS === 'hang') return new Promise(() => {});
     if (process.env.FAKE_MODELS) throw Object.assign(new Error('No plan'), { code: process.env.FAKE_MODELS });
-    return [{ id: 'default', displayName: 'Auto', parameters: [] }];
+    return FAKE_MODELS;
   } },
 };
 const ids = { agent_id: 'a', run_id: 'r' };
@@ -232,7 +251,7 @@ function agent(agentId, options) {
     async send(message, sendOptions) {
       if (message.text === 'refuse') throw Object.assign(new Error('No plan'), { code: 'plan_required' });
       const seen = { text: message.text, images: message.images?.length ?? 0, mode: sendOptions?.mode,
-        tools: options.tools, local: { ...options.local, store: options.local.store instanceof JsonlLocalAgentStore } };
+        model: options.model, tools: options.tools, local: { ...options.local, store: options.local.store instanceof JsonlLocalAgentStore } };
       return {
         cancel: async () => {},
         wait: async () => ({ status: 'finished' }),
