@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { parseMention } from '../../../shared/lib/mentions/parse-mention';
 import {
   attachedContextFile,
   buildQueuedMessageText,
@@ -56,6 +57,23 @@ describe('buildQueuedMessageText', () => {
 
     // Brackets are stripped so the token cannot terminate early; `|` separates the path.
     expect(text).toBe('@[pasted:6000:Build a cron flow...|/s/pasted/p_1.txt]');
+  });
+
+  it('carries a terminal chip label through to the parsed mention', () => {
+    const text = buildQueuedMessageText(
+      item({
+        message: '',
+        pastedTexts: [
+          { size: 9, preview: 'Terminal 1 output', filePath: '/s/pasted/terminal_1.txt' },
+        ],
+      }),
+    );
+
+    expect(parseMention(text.slice(2, -1))).toMatchObject({
+      type: 'pasted',
+      label: 'Terminal 1 output',
+      path: '/s/pasted/terminal_1.txt',
+    });
   });
 
   it('keeps a path that contains colons intact after the | separator', () => {

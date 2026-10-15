@@ -6,6 +6,7 @@ import { ResizableSidebar } from '@/components/ui/resizable-sidebar';
 import { cn } from '@/lib/utils';
 import { InsetGlassSidebarShell } from '../sidebar/inset-glass-sidebar-shell';
 import { terminalDisplayModeAtom, terminalSidebarWidthAtom } from './atoms';
+import { SendToChatButton } from './SendToChatButton';
 import { TerminalContent } from './terminal-content';
 import { TerminalPanelHeader } from './terminal-panel-header';
 import { TerminalTabs } from './terminal-tabs';
@@ -64,6 +65,7 @@ export function TerminalSidebar({
     splitPaneTerminalIds,
     keyboardFocusTerminalId,
     terminalKeyboardTargetId,
+    keyboardTargetTerminal,
     setTerminalKeyboardFocus,
   } = useTerminalManager({ chatId });
 
@@ -96,6 +98,8 @@ export function TerminalSidebar({
 
   // Shared header props (used by desktop sidebar; mobile has its own header)
   const headerProps = {
+    chatId,
+    targetTerminal: keyboardTargetTerminal,
     closePanel,
     terminals,
     activeTerminalId,
@@ -166,6 +170,20 @@ export function TerminalSidebar({
                 onCloseSplitGroup={closeSplitGroup}
               />
             )}
+          </div>
+
+          <div
+            style={{
+              // @ts-expect-error - WebKit-specific property
+              // biome-ignore lint/style/useNamingConvention: WebKit CSS property name
+              WebkitAppRegion: 'no-drag',
+            }}
+          >
+            <SendToChatButton
+              chatId={chatId}
+              terminal={keyboardTargetTerminal}
+              onSent={handleMobileClose}
+            />
           </div>
         </div>
 

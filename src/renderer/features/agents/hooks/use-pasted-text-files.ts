@@ -13,9 +13,12 @@ export type PastedTextFile = {
 /** A chip restored from a draft or a queued item; the queue does not keep `createdAt`. */
 type RestorablePastedText = Omit<PastedTextFile, 'createdAt'> & { createdAt?: Date };
 
+/** `label` names the chip instead of the text's opening words; `filename` names the saved file. */
+export type PastedTextOptions = { label?: string; filename?: string };
+
 type UsePastedTextFilesReturn = {
   pastedTexts: PastedTextFile[];
-  addPastedText: (text: string) => Promise<void>;
+  addPastedText: (text: string, options?: PastedTextOptions) => Promise<void>;
   removePastedText: (id: string) => void;
   clearPastedTexts: () => void;
   setPastedTextsFromDraft: (drafts: RestorablePastedText[]) => void;
@@ -32,11 +35,12 @@ export function usePastedTextFiles(subChatId: string): UsePastedTextFilesReturn 
   const writePastedTextMutation = trpc.files.writePastedText.useMutation();
 
   const addPastedText = useCallback(
-    async (text: string) => {
+    async (text: string, options?: PastedTextOptions) => {
       try {
         const result = await writePastedTextMutation.mutateAsync({
           subChatId,
           text,
+          filename: options?.filename,
         });
 
         // Create preview from first 50 chars, replace newlines with spaces
@@ -46,7 +50,7 @@ export function usePastedTextFiles(subChatId: string): UsePastedTextFilesReturn 
           filePath: result.filePath,
           filename: result.filename,
           size: result.size,
-          preview: preview.length < text.length ? `${preview}...` : preview,
+          preview: options?.label ?? (preview.length < text.length ? `${preview}...` : preview),
           createdAt: new Date(),
         };
 

@@ -7,6 +7,10 @@ import { useTheme } from 'next-themes';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import type { Terminal as XTerm } from 'xterm';
+import {
+  registerTerminalInstance,
+  unregisterTerminalInstance,
+} from '@/lib/terminal/terminal-instances';
 import { activePaletteAtom } from '@/lib/themes/palette/theme-atoms';
 import { getTerminalTheme } from '@/lib/themes/terminal-theme';
 import { trpc } from '@/lib/trpc';
@@ -217,6 +221,7 @@ function TerminalInner({
     });
 
     xtermRef.current = xterm;
+    registerTerminalInstance(paneId, xterm);
     fitAddonRef.current = fitAddon;
     serializeAddonRef.current = serializeAddon;
     isExitedRef.current = false;
@@ -392,6 +397,7 @@ function TerminalInner({
 
       // Detach instead of kill - keeps session alive for reattach
       detachRef.current({ paneId, serializedState });
+      unregisterTerminalInstance(paneId);
       xterm.dispose();
       xtermRef.current = null;
       fitAddonRef.current = null;

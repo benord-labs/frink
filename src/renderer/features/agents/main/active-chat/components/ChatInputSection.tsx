@@ -1,8 +1,9 @@
 import { Button } from '@benord-labs/frink-primitives';
 import type { ReactNode } from 'react';
 import { memo } from 'react';
+import { useTerminalOutputIntake } from '@/lib/terminal/use-terminal-output-intake';
 import { NoAccountsEmptyState } from '../../../components/no-accounts-empty-state';
-import type { PastedTextFile } from '../../../hooks/use-pasted-text-files';
+import type { PastedTextFile, PastedTextOptions } from '../../../hooks/use-pasted-text-files';
 import type { CodeSelectionContext, DiffTextContext } from '../../../lib/queue-utils';
 import { ChatInputArea } from '../../chat-input-area';
 import type { ComposerForwardedProps } from '../types';
@@ -18,7 +19,7 @@ type Props = ComposerForwardedProps & {
   activeFileDismissed: boolean;
   onDismissActiveFile: () => void;
   pastedTexts: PastedTextFile[];
-  onAddPastedText: (text: string) => Promise<void>;
+  onAddPastedText: (text: string, options?: PastedTextOptions) => Promise<void>;
   onRemovePastedText: (id: string) => void;
   isMobile: boolean;
   queueLength: number;
@@ -84,6 +85,8 @@ export const ChatInputSection = memo(function ChatInputSection({
   onRetryResolvedAccount,
   unauthAccount = null,
 }: Props): ReactNode {
+  useTerminalOutputIntake({ chatId: parentChatId, addPastedText: onAddPastedText, editorRef });
+
   // Full composer width, like NoAccountsEmptyState's compact card: the transcript scrolls under it.
   const composerCardClass =
     'w-full rounded-2xl composer-slot-surface border border-border glass-float text-center shadow-xs ring-1 ring-inset ring-foreground/4 space-y-3 p-5';

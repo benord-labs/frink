@@ -36,6 +36,8 @@ export const RENDERER_LIB_DOMAINS = [
   'sentry',
   'stores',
   'tasks',
+  // A terminal pane's output on its way to the chat composer.
+  'terminal',
   'test-utils',
   'themes',
   'tree-navigation',

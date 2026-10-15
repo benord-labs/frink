@@ -11,6 +11,8 @@ import {
 } from '@/lib/code-editor/state';
 import type { CodexAccountCatalog } from '../../../../shared/lib/codex-cli-models';
 import { TooltipProvider } from '../../../components/ui/tooltip';
+import { newChatTerminalId } from '@/lib/agent-chat/sentinel-ids';
+import { pendingTerminalOutputAtomFamily } from '@/lib/terminal/pending-output';
 import { appStore } from '../../../lib/jotai-store';
 import { trpc } from '../../../lib/trpc';
 import { lastSelectedModelIdAtom, lastSelectedModelIdAtomFamily, NEW_CHAT_PANE } from '../atoms';
@@ -44,6 +46,8 @@ function answerFor(path: string, answers: TestAnswers) {
       return answers.codexCatalog;
     case 'chats.create':
       return answers.createdChat;
+    case 'files.writePastedText':
+      return { filePath: '/s/pasted/terminal_1.txt', filename: 'terminal_1.txt', size: 4 };
     default:
       return undefined;
   }
@@ -74,6 +78,8 @@ function createTestClient(answers: TestAnswers = {}) {
 afterEach(() => {
   cleanup();
   createChat.mockReset();
+  // Unmounting saves the composer's draft; a chip left there would ride the next test's send.
+  localStorage.clear();
 });
 
 const notes = { name: 'notes.md', path: '/repo/docs/notes.md' };
@@ -106,6 +112,20 @@ describe('NewChatForm editor context', () => {
 
     expect(store.get(chatContextFileDismissedAtomFamily(NEW_CHAT_PANE))).toBe(true);
     expect(screen.queryByText('notes.md')).not.toBeInTheDocument();
+  });
+
+  // Keyed by the form's terminal id, not its draft key: outside split view the two differ.
+  it("puts its terminal's output in the composer as a labelled chip", async () => {
+    const store = createStore();
+    store.set(pendingTerminalOutputAtomFamily(newChatTerminalId()), {
+      text: 'FAIL',
+      label: 'Terminal 1 output',
+    });
+
+    renderNewChat(store);
+
+    expect(await screen.findByText('Terminal 1 output')).toBeInTheDocument();
+    expect(store.get(pendingTerminalOutputAtomFamily(newChatTerminalId()))).toBeNull();
   });
 
   it('sends the file it shows with the first message', async () => {
