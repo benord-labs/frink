@@ -22,6 +22,7 @@
 import * as nodeFs from 'node:fs';
 import * as nodeOs from 'node:os';
 import * as nodePath from 'node:path';
+import { isProcessRelative } from '../path-check';
 
 /**
  * System-denied path patterns (glob format).
@@ -209,7 +210,7 @@ export function isSystemDeniedPath(path: string, projectRoot?: string): boolean 
  *      auto-allow must never bypass it.
  */
 export function isAutoAllowedPath(absolutePath: string, allowedRoot: string): boolean {
-  if (!absolutePath || !allowedRoot) return false;
+  if (!absolutePath || !allowedRoot || isProcessRelative(absolutePath)) return false;
 
   // 1. Normalize the input path (resolves `../`, redundant separators).
   const resolved = nodePath.resolve(absolutePath);

@@ -26,6 +26,8 @@ type AiProviderRow =
       planMode?: string;
       installHint: string;
       signInHint: string;
+      // Operating systems this agent has been checked on.
+      platforms: readonly string[];
     });
 
 /** Every AI provider Frink knows. An account type outside this table never runs. */
@@ -54,6 +56,7 @@ export const AI_PROVIDERS = {
     planMode: 'plan',
     installHint: 'npm install -g opencode-ai@1.19',
     signInHint: 'opencode auth login',
+    platforms: ['darwin', 'linux'],
   },
   copilot: {
     runtime: 'copilot',
@@ -65,6 +68,7 @@ export const AI_PROVIDERS = {
     planMode: 'plan',
     installHint: 'npm install -g @github/copilot',
     signInHint: 'copilot login',
+    platforms: ['darwin', 'linux'],
   },
   cursor: {
     runtime: 'cursor',
@@ -76,6 +80,7 @@ export const AI_PROVIDERS = {
     planMode: 'plan',
     installHint: 'Sign in to Cursor from Frink. Cursor needs a paid plan.',
     signInHint: 'Sign in to Cursor',
+    platforms: ['darwin', 'linux'],
   },
   grok: {
     runtime: 'acp',
@@ -85,6 +90,7 @@ export const AI_PROVIDERS = {
     flag: 'grokAccounts',
     installHint: 'curl -fsSL https://x.ai/cli/install.sh | bash',
     signInHint: 'grok login',
+    platforms: ['darwin'],
   },
 } as const satisfies Record<string, AiProviderRow>;
 
@@ -95,9 +101,6 @@ export const AI_PROVIDER_IDS =
   // SAFETY: Object.keys of a literal object with no other keys.
   Object.keys(AI_PROVIDERS) as AiProviderId[];
 export const PASSTHROUGH_SOURCES = AI_PROVIDER_IDS.map((id) => AI_PROVIDERS[id].passthroughSource);
-
-/** Operating systems where installed agents have been checked. */
-const AGENT_PLATFORMS: readonly string[] = ['darwin'];
 
 function isAiProviderId(type: string): type is AiProviderId {
   return Object.hasOwn(AI_PROVIDERS, type);
@@ -118,8 +121,12 @@ export function isInstalledAgent<R extends { runtime: AgentRuntime }>(
   return row !== undefined && row.runtime !== 'claude' && row.runtime !== 'codex';
 }
 
-function agentRunnable(flag: LaunchFlagName, flags: LaunchFlags, platform?: string): boolean {
-  return flags[flag] === true && platform !== undefined && AGENT_PLATFORMS.includes(platform);
+export function agentRunnable(
+  row: { flag: LaunchFlagName; platforms: readonly string[] },
+  flags: LaunchFlags,
+  platform?: string,
+): boolean {
+  return flags[row.flag] === true && platform !== undefined && row.platforms.includes(platform);
 }
 
 /** The runtime that may run this account type here, or undefined when it may not run at all. */
@@ -130,7 +137,7 @@ export function runtimeFor(
 ): AgentRuntime | undefined {
   const row = aiProvider(type);
   if (!isInstalledAgent(row)) return row?.runtime;
-  return agentRunnable(row.flag, flags, platform) ? row.runtime : undefined;
+  return agentRunnable(row, flags, platform) ? row.runtime : undefined;
 }
 
 /** Providers a person may pick or connect, in table order. */
@@ -140,7 +147,7 @@ export function selectableProviderIds(
 ): AiProviderId[] {
   return AI_PROVIDER_IDS.filter((id) => {
     const row = AI_PROVIDERS[id];
-    if (isInstalledAgent(row)) return agentRunnable(row.flag, flags, platform);
+    if (isInstalledAgent(row)) return agentRunnable(row, flags, platform);
     return !('flag' in row) || flags[row.flag] === true;
   });
 }

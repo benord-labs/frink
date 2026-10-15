@@ -1,4 +1,4 @@
-import { access, constants, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { app, shell } from 'electron';
@@ -6,7 +6,7 @@ import log from 'electron-log';
 import { z } from 'zod';
 import { resolveElectronResourcePath } from '../../platform/electron-resource-path';
 import { userEnv } from '../acp/agents/launch';
-import { cursorHostEnv } from './cursor-home';
+import { cursorHostEnv, findCurl, NEEDS_CURL, runnable, userDirsOf } from './cursor-home';
 import { saveCursorModels } from './cursor-models';
 import {
   type CursorHostMessage,
@@ -17,7 +17,7 @@ import {
   PLAN_REQUIRED,
   SIGNED_OUT,
 } from './cursor-runner';
-import { CURSOR_TOOL_NAMES } from './cursor-tools';
+import { CURSOR_TOOL_NAMES, cursorRipgrepIn } from './cursor-tools';
 
 type Env = Record<string, string>;
 type AppPaths = { isPackaged: boolean; getAppPath(): string; getPath(name: 'userData'): string };
@@ -27,6 +27,7 @@ export type CursorLaunchDeps = {
   sdkRoot?: string;
   forkHost?: ForkHost;
   openExternal?: (url: string) => Promise<void>;
+  curlDirs?: string[];
 };
 type SdkCheck = { ok: true; entry: string; ripgrep: string } | { ok: false; reason: string };
 export type CursorAgentCheck =
@@ -70,17 +71,10 @@ const readVersion = (root: string) =>
     .then((text) => packageSchema.parse(JSON.parse(text)).version)
     .catch(() => undefined);
 
-const runnable = (file: string) =>
-  access(file, constants.X_OK).then(
-    () => true,
-    () => false,
-  );
-
 /** Cursor's ripgrep, in the platform package the SDK itself finds: the nearest one above it. */
 async function findRipgrep(sdkRoot: string): Promise<string | undefined> {
-  const platform = `sdk-${process.platform}-${process.arch}`;
   for (let dir = path.dirname(sdkRoot); dir !== path.dirname(dir); dir = path.dirname(dir)) {
-    const rg = path.join(dir, 'node_modules', '@cursor', platform, 'bin', 'rg');
+    const rg = cursorRipgrepIn(dir);
     if (await runnable(rg)) return rg;
   }
   return undefined;
@@ -122,6 +116,7 @@ export async function resolveCursorLaunch(
       home,
       storeDir: path.join(chat, 'store'),
       realHome: env.HOME || os.homedir(),
+      userDirs: userDirsOf(env),
       ripgrep: sdk.ripgrep,
       tools: CURSOR_ROW.tools,
       hookVersions: CURSOR_ROW.hookVersions,
@@ -196,6 +191,7 @@ async function realHomeHost(
 export async function findCursorAgent(deps: CursorLaunchDeps = {}): Promise<CursorAgentCheck> {
   const host = await realHomeHost(deps);
   if (!host.ok) return { status: 'missing', reason: host.reason };
+  if (!(await findCurl(deps.curlDirs))) return { status: 'missing', reason: NEEDS_CURL };
   const give = { failure: CHECKED_NOT, ms: CHECK_MS, what: 'Could not check Cursor' };
   return talkToHost(deps.forkHost ?? forkUtilityHost, host.input, give, (message, talk) => {
     if (turnedDown(message)) talk.settle({ status: 'signed-out', reason: SIGNED_OUT });

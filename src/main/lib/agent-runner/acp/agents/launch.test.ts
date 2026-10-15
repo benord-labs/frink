@@ -1,11 +1,18 @@
 import { access, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { LoginShellEnvResolver, setLoginShellEnvResolver } from '../../../platform/login-shell-env';
 import type { AcpAgentLaunch } from '../acp-process';
 import { findAcpAgent, locateAcpAgent, resolveAcpLaunch } from '../index';
 import { LAUNCH_ROWS } from './index';
-import { type AcpLaunchRow, findRowBinary, launchFromRows, locateRowBinary } from './launch';
+import {
+  type AcpLaunchRow,
+  findRowBinary,
+  launchFromRows,
+  locateRowBinary,
+  userEnv,
+} from './launch';
 import { OPENCODE_LAUNCH } from './opencode';
 
 /** Stands in for OpenCode: prints a version, its accounts, and the effective settings with a change. */
@@ -174,6 +181,26 @@ describe('resolveAcpLaunch for OpenCode', { timeout: 15_000 }, () => {
     expect(script).toContain(`export XDG_CONFIG_HOME='${path.join(home, 'my config')}'`);
     expect(script).toContain('unset OPENCODE_CONFIG_CONTENT');
   });
+
+  it.each([
+    ['darwin', 'zsh'],
+    ['linux', 'bash'],
+  ])(
+    'runs a fish user’s commands on %s in %s, the shell OpenCode picks',
+    async (platform, shell) => {
+      const fish = path.join(bin, 'fish');
+      await writeFile(fish, '#!/bin/sh\n', { mode: 0o755 });
+      const real = process.platform;
+      Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+      try {
+        const gate = configOf(await launched({ SHELL: fish })).shell;
+        expect(path.basename(gate)).toBe(shell);
+        expect(await readFile(gate, 'utf8')).toMatch(new RegExp(`exec '/\\S*/${shell}' -c "\\$2"`));
+      } finally {
+        Object.defineProperty(process, 'platform', { value: real, configurable: true });
+      }
+    },
+  );
 
   it('follows the project instructions, then the user’s own, as OpenCode would', async () => {
     const other = path.join(root, 'config root');
@@ -457,5 +484,43 @@ describe('resolveAcpLaunch for OpenCode', { timeout: 15_000 }, () => {
       expect(await findAcpAgent(id)).toEqual({ reason: "Frink can't start this agent yet." });
       expect(await locateAcpAgent(id)).toBeUndefined();
     }
+  });
+});
+
+describe('userEnv', () => {
+  const desktop = {
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/1000/bus',
+    XDG_RUNTIME_DIR: '/run/user/1000',
+    DISPLAY: ':0',
+    WAYLAND_DISPLAY: 'wayland-0',
+  };
+
+  async function loginShellPrints(env: Record<string, string>) {
+    const resolver = new LoginShellEnvResolver({
+      spawnShell: async () => ({ ok: true, env }),
+      extendPath: (current) => current ?? '',
+    });
+    setLoginShellEnvResolver(resolver);
+    await resolver.resolve();
+  }
+
+  beforeEach(() => vi.stubEnv('PATH', '/usr/bin:/bin'));
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("keeps the desktop session's keyring connection, which a login shell never sets", async () => {
+    for (const [key, value] of Object.entries(desktop)) vi.stubEnv(key, value);
+    await loginShellPrints({ PATH: '/login/bin', HOME: '/home/someone' });
+    expect(await userEnv()).toEqual({
+      ...desktop,
+      PATH: '/login/bin:/usr/bin:/bin',
+      HOME: '/home/someone',
+    });
+  });
+
+  it("prefers the login shell's own value, and adds nothing the session lacks", async () => {
+    for (const key of Object.keys(desktop)) vi.stubEnv(key, undefined);
+    vi.stubEnv('DISPLAY', ':0');
+    await loginShellPrints({ PATH: '/login/bin', DISPLAY: ':1' });
+    expect(await userEnv()).toEqual({ PATH: '/login/bin:/usr/bin:/bin', DISPLAY: ':1' });
   });
 });

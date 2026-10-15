@@ -2,7 +2,6 @@ import { spawn } from 'node:child_process';
 import { constants, existsSync } from 'node:fs';
 import {
   access,
-  chmod,
   lstat,
   mkdir,
   mkdtemp,
@@ -16,39 +15,46 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { type HomeLock, modeLock, userDirsOf } from './cursor-home';
+import { recordingLock } from './cursor-test-fixtures';
 import { cursorHostEnv, openGateSocket, prepareCursorHome } from './index';
 
-type Flag = 'uchg' | 'nouchg';
+type Env = Record<string, string>;
 type Prepared = Awaited<ReturnType<typeof prepareCursorHome>>;
 
 const FOLDER_REFUSED = "Frink can't start Cursor from this folder.";
 const NOT_READY = "Frink couldn't prepare Cursor's safety check, so it didn't start it.";
-const REAL_BINARIES = ['/usr/bin/chflags', '/bin/zsh', '/bin/bash', '/usr/bin/curl'];
+const NEEDS_CURL =
+  "Cursor in Frink needs curl. Install curl with your system's software installer, then try again.";
+const DARWIN = process.platform === 'darwin';
+const REAL_BINARIES = ['/bin/bash', '/usr/bin/curl', ...(DARWIN ? ['/usr/bin/chflags'] : [])];
+const SHELLS = ['/bin/zsh', '/bin/bash'].filter((shell) => existsSync(shell));
+/** Each lock run for real here: the platform's own, and on macOS Linux's write-bit lock too. */
+const REAL_LOCKS: Array<[name: string, lock: HomeLock | undefined, refused: string]> = DARWIN
+  ? [
+      ['chflags', undefined, 'EPERM'],
+      ['write-bit', modeLock, 'EACCES'],
+    ]
+  : [['write-bit', undefined, 'EACCES']];
 
 let root = '';
 let home = '';
 let realHome = '';
 let gateDir = '';
-let calls: Array<[Flag, string[]]> = [];
+let recorder = recordingLock();
 let unlocks: Array<() => Promise<void>> = [];
 
-/** Stands in for chflags where it is missing: a lock removes write permission, an unlock restores it. */
-async function fakeChflags(flag: Flag, paths: string[]) {
-  calls.push([flag, paths]);
-  for (const file of paths) {
-    const info = await lstat(file);
-    if (info.isSymbolicLink()) continue;
-    await chmod(file, flag === 'uchg' ? info.mode & 0o555 : info.mode | 0o200);
-  }
-}
-
 async function prepare(
-  input: { gateDir?: string; socketPath?: string } = {},
-  deps: Parameters<typeof prepareCursorHome>[1] = { chflags: fakeChflags },
+  input: { gateDir?: string; socketPath?: string; userDirs?: Env } = {},
+  deps: Parameters<typeof prepareCursorHome>[1] = { lock: recorder.lock },
 ): Promise<Prepared> {
   const dir = input.gateDir ?? gateDir;
   const socketPath = input.socketPath ?? path.join(dir, 'g.sock');
-  const result = await prepareCursorHome({ home, realHome, gateDir: dir, socketPath }, deps);
+  const userDirs = input.userDirs ?? {};
+  const result = await prepareCursorHome(
+    { home, realHome, userDirs, gateDir: dir, socketPath },
+    deps,
+  );
   if (result.ok) unlocks.push(result.unlock);
   return result;
 }
@@ -68,7 +74,7 @@ beforeEach(async () => {
   realHome = path.join(root, 'real');
   gateDir = path.join(root, 'gate');
   for (const dir of [realHome, gateDir]) await mkdir(dir);
-  calls = [];
+  recorder = recordingLock();
   unlocks = [];
 });
 afterEach(async () => {
@@ -158,11 +164,11 @@ describe('prepareCursorHome', () => {
     ['a shell file is rewritten', '.zshenv', (file: string) => writeFile(file, allow)],
   ])('refuses the turn, unlocked, when %s before the lock', async (_, name, tamper) => {
     const file = path.join(name === 'gate' ? gateDir : home, name);
-    const tampering = async (flag: Flag, paths: string[]) => {
-      if (flag === 'uchg') await tamper(file);
-      await fakeChflags(flag, paths);
+    const tampering: HomeLock = async (on, paths) => {
+      if (on) await tamper(file);
+      await recorder.lock(on, paths);
     };
-    expect(await prepare({}, { chflags: tampering })).toEqual({ ok: false, reason: NOT_READY });
+    expect(await prepare({}, { lock: tampering })).toEqual({ ok: false, reason: NOT_READY });
     expect(await writable(home)).toBe(true);
     expect(await writable(path.join(cursorDir(), 'hooks.json'))).toBe(true);
   });
@@ -189,12 +195,35 @@ describe('prepareCursorHome', () => {
     expect(await prepare({ gateDir: spaced })).toEqual({ ok: false, reason: FOLDER_REFUSED });
     const long = path.join(gateDir, 'x'.repeat(100), 'g.sock');
     expect(await prepare({ socketPath: long })).toEqual({ ok: false, reason: FOLDER_REFUSED });
-    expect(calls).toEqual([]);
+    expect(recorder.calls).toEqual([]);
+  });
+
+  it('runs the first curl found in the system folders, never one from PATH', async () => {
+    const [none, notRunnable, found] = ['none', 'not runnable', 'found'].map((name) =>
+      path.join(root, name),
+    );
+    await mkdir(notRunnable);
+    await mkdir(found);
+    await writeFile(path.join(notRunnable, 'curl'), '', { mode: 0o600 });
+    await writeFile(path.join(found, 'curl'), '', { mode: 0o700 });
+    const curlDirs = [none, notRunnable, found];
+    expect(await prepare({}, { lock: recorder.lock, curlDirs })).toMatchObject({ ok: true });
+    const wrapper = await readFile(path.join(gateDir, 'gate'), 'utf8');
+    expect(wrapper).toContain(`\nexec ${path.join(found, 'curl')} -q -s --fail --unix-socket `);
+  });
+
+  it('asks for curl, and starts nothing, when no system folder has it', async () => {
+    const curlDirs = [path.join(root, 'none')];
+    expect(await prepare({}, { lock: recorder.lock, curlDirs })).toEqual({
+      ok: false,
+      reason: NEEDS_CURL,
+    });
+    expect(recorder.calls).toEqual([]);
   });
 
   it('locks the wrapper, its folder, the home, .cursor, the hook and shell files; unlocks once', async () => {
     const result = await prepare();
-    const locked = calls.filter(([flag]) => flag === 'uchg').flatMap(([, paths]) => paths);
+    const locked = recorder.calls.filter(([on]) => on).flatMap(([, paths]) => paths);
     expect([...locked].sort()).toEqual(
       [
         gateDir,
@@ -207,10 +236,51 @@ describe('prepareCursorHome', () => {
         path.join(home, '.profile'),
       ].sort(),
     );
-    calls = [];
+    recorder.calls.length = 0;
     if (result.ok) await Promise.all([result.unlock(), result.unlock()]);
-    expect(calls.map(([flag]) => flag)).toEqual(['nouchg']);
+    expect(recorder.calls.map(([on]) => on)).toEqual([false]);
     expect(await writable(home)).toBe(true);
+  });
+
+  it.each(['gate', '.cursor', 'hooks.json', '.zshenv', '.bash_profile'])(
+    'refuses the turn, unlocked, when the lock leaves %s writable',
+    async (name) => {
+      const skipped = (file: string) => path.basename(file) === name;
+      const leaky: HomeLock = (on, paths) =>
+        recorder.lock(on, on ? paths.filter((file) => !skipped(file)) : paths);
+      expect(await prepare({}, { lock: leaky })).toEqual({ ok: false, reason: NOT_READY });
+      expect(await writable(home)).toBe(true);
+    },
+  );
+});
+
+describe('modeLock', () => {
+  it('locks a file and a folder for their owner and unlocks them, never through a link', async () => {
+    const file = path.join(root, 'file');
+    const link = path.join(root, 'link');
+    await writeFile(file, 'x', { mode: 0o600 });
+    await symlink(file, link);
+
+    await modeLock(true, [link, gateDir]);
+    expect(await writable(file)).toBe(true);
+    expect(await writable(gateDir)).toBe(false);
+    await expect(writeFile(path.join(gateDir, 'new'), 'x')).rejects.toMatchObject({
+      code: 'EACCES',
+    });
+
+    await modeLock(true, [file]);
+    expect((await lstat(file)).mode & 0o777).toBe(0o400);
+    await modeLock(false, [file, gateDir]);
+    expect((await lstat(file)).mode & 0o777).toBe(0o600);
+    expect(await writable(gateDir)).toBe(true);
+  });
+
+  it('still unlocks every other path when one of them fails', async () => {
+    await modeLock(true, [gateDir]);
+    await expect(modeLock(false, [path.join(root, 'missing'), gateDir])).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
+    expect(await writable(gateDir)).toBe(true);
   });
 });
 
@@ -243,13 +313,42 @@ describe('cursorHostEnv', () => {
     });
   });
 
-  it('uses the user’s shell only when it is zsh or bash', () => {
-    const shell = (SHELL?: string) => cursorHostEnv(SHELL ? { SHELL } : {}, '/h').SHELL;
+  it.each<[NodeJS.Platform, string]>([
+    ['darwin', '/bin/zsh'],
+    ['linux', '/bin/bash'],
+  ])('on %s, uses the user’s shell only when it is zsh or bash, else %s', (platform, stock) => {
+    const shell = (SHELL?: string) => cursorHostEnv(SHELL ? { SHELL } : {}, '/h', platform).SHELL;
     expect(shell('/opt/homebrew/bin/bash')).toBe('/opt/homebrew/bin/bash');
     expect(shell('/usr/local/bin/zsh')).toBe('/usr/local/bin/zsh');
-    expect(shell('/opt/homebrew/bin/fish')).toBe('/bin/zsh');
-    expect(shell('zsh')).toBe('/bin/zsh');
-    expect(shell()).toBe('/bin/zsh');
+    expect(shell('/opt/homebrew/bin/fish')).toBe(stock);
+    expect(shell('zsh')).toBe(stock);
+    expect(shell()).toBe(stock);
+  });
+
+  it('on Linux, holds back the XDG folders a system zshenv can point ZDOTDIR into', () => {
+    const userEnv = {
+      PATH: '/usr/bin',
+      XDG_CONFIG_HOME: '/home/me/.config',
+      XDG_DATA_HOME: '/home/me/.local/share',
+      XDG_STATE_HOME: '',
+      XDG_CACHE_HOME: '/home/me/.cache',
+      XDG_RUNTIME_DIR: '/run/user/1000',
+    };
+    const held = {
+      XDG_CONFIG_HOME: '/home/me/.config',
+      XDG_DATA_HOME: '/home/me/.local/share',
+      XDG_STATE_HOME: '',
+      XDG_CACHE_HOME: '/home/me/.cache',
+    };
+    expect(cursorHostEnv(userEnv, '/h', 'linux')).toEqual({
+      PATH: '/usr/bin',
+      XDG_RUNTIME_DIR: '/run/user/1000',
+      HOME: '/h',
+      SHELL: '/bin/bash',
+    });
+    expect(userDirsOf(userEnv, 'linux')).toEqual(held);
+    expect(cursorHostEnv(userEnv, '/h', 'darwin')).toMatchObject(held);
+    expect(userDirsOf(userEnv, 'darwin')).toEqual({});
   });
 });
 
@@ -260,16 +359,24 @@ const hostileEnv = () => ({
   PS4: `$(echo traced >> ${path.join(root, 'traced')})`,
 });
 
+type ShellRun = { input?: string; userDirs?: Env; platform?: NodeJS.Platform; flags?: string };
+
 /** Runs a command the way Cursor runs a hook: `$SHELL -lc <command>`, the hook body on stdin. */
 function runShell(
   shell: string,
   command: string,
-  input = '',
+  { input = '', userDirs = {}, platform = process.platform, flags = '-lc' }: ShellRun = {},
 ): Promise<{ code: number | null; stdout: string }> {
-  const userEnv = { ...hostileEnv(), PATH: '/usr/bin:/bin', SHELL: shell, CURL_HOME: realHome };
-  const env = cursorHostEnv(userEnv, home);
+  const userEnv = {
+    ...hostileEnv(),
+    ...userDirs,
+    PATH: '/usr/bin:/bin',
+    SHELL: shell,
+    CURL_HOME: realHome,
+  };
+  const env = cursorHostEnv(userEnv, home, platform);
   return new Promise((resolve, reject) => {
-    const child = spawn(shell, ['-lc', command], { env, cwd: root });
+    const child = spawn(shell, [flags, command], { env, cwd: root });
     let stdout = '';
     child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
     child.on('error', reject);
@@ -278,11 +385,12 @@ function runShell(
   });
 }
 
-describe.runIf(process.platform === 'darwin' && REAL_BINARIES.every((file) => existsSync(file)))(
-  'the hook with real shells and locks',
-  () => {
+describe.runIf(REAL_BINARIES.every((file) => existsSync(file))).each(REAL_LOCKS)(
+  'the hook with real shells and the %s lock',
+  (_, lock, refused) => {
     const ANSWER = { permission: 'deny', user_message: 'Frink answered.' };
     const BODY = JSON.stringify({ hook_event_name: 'preToolUse', tool_name: 'Shell' });
+    const allow = `echo '{"permission":"allow"}'`;
     let gate: Awaited<ReturnType<typeof openGateSocket>> | undefined;
     let bodies: string[] = [];
 
@@ -300,13 +408,13 @@ describe.runIf(process.platform === 'darwin' && REAL_BINARIES.every((file) => ex
     });
 
     const wrapper = () => path.join(gateDir, 'gate');
-    const prepareLocked = () => prepare({ socketPath: gate?.socketPath }, {});
+    const hostile = () => `function ${wrapper()} { ${allow}; }\n${allow}\n`;
+    const prepareLocked = (userDirs: Env = {}) =>
+      prepare({ socketPath: gate?.socketPath, userDirs }, { lock });
 
-    it.each(['/bin/zsh', '/bin/bash'])(
+    it.each(SHELLS)(
       'asks the gate through a %s login shell, whatever the user’s own files print',
       async (shell) => {
-        const allow = `echo '{"permission":"allow"}'`;
-        const hostile = `function ${wrapper()} { ${allow}; }\n${allow}\n`;
         for (const file of [
           '.zshenv',
           '.zprofile',
@@ -315,7 +423,7 @@ describe.runIf(process.platform === 'darwin' && REAL_BINARIES.every((file) => ex
           '.bash_profile',
           '.profile',
         ]) {
-          await writeFile(path.join(realHome, file), hostile);
+          await writeFile(path.join(realHome, file), hostile());
         }
         await writeFile(
           path.join(realHome, '.curlrc'),
@@ -324,7 +432,7 @@ describe.runIf(process.platform === 'darwin' && REAL_BINARIES.every((file) => ex
         expect(await prepareLocked()).toMatchObject({ ok: true });
 
         // The gate folder is locked by now, so this also proves the socket still takes calls.
-        expect(await runShell(shell, wrapper(), BODY)).toEqual({
+        expect(await runShell(shell, wrapper(), { input: BODY })).toEqual({
           code: 0,
           stdout: JSON.stringify(ANSWER),
         });
@@ -333,13 +441,36 @@ describe.runIf(process.platform === 'darwin' && REAL_BINARIES.every((file) => ex
       },
     );
 
-    it.each(['/bin/zsh', '/bin/bash'])(
-      'gives the agent’s %s commands the real home',
-      async (shell) => {
-        expect(await prepareLocked()).toMatchObject({ ok: true });
-        expect(await runShell(shell, 'echo "$HOME"')).toEqual({ code: 0, stdout: `${realHome}\n` });
+    it.runIf(existsSync('/bin/zsh'))(
+      'on Linux, keeps the hook’s zsh out of the user’s files when a system zshenv moves ZDOTDIR',
+      async () => {
+        const config = path.join(realHome, 'my config');
+        await mkdir(path.join(config, 'zsh'), { recursive: true });
+        await writeFile(path.join(config, 'zsh', '.zshenv'), hostile());
+        expect(await prepareLocked({ XDG_CONFIG_HOME: config })).toMatchObject({ ok: true });
+
+        // The line some Linux systems ship in /etc/zsh/zshenv, run before any of the user's files.
+        const systemZshenv = `export ZDOTDIR="\${XDG_CONFIG_HOME:-$HOME/.config}/zsh"; exec /bin/zsh -lc ${wrapper()}`;
+        const run: ShellRun = {
+          input: BODY,
+          userDirs: { XDG_CONFIG_HOME: config },
+          platform: 'linux',
+        };
+        expect(await runShell('/bin/zsh', systemZshenv, { ...run, flags: '-fc' })).toEqual({
+          code: 0,
+          stdout: JSON.stringify(ANSWER),
+        });
+        expect(await runShell('/bin/bash', 'echo "$XDG_CONFIG_HOME"', run)).toEqual({
+          code: 0,
+          stdout: `${config}\n`,
+        });
       },
     );
+
+    it.each(SHELLS)('gives the agent’s %s commands the real home', async (shell) => {
+      expect(await prepareLocked()).toMatchObject({ ok: true });
+      expect(await runShell(shell, 'echo "$HOME"')).toEqual({ code: 0, stdout: `${realHome}\n` });
+    });
 
     it.each(['.bash_login', '.profile'])(
       'gives the agent’s bash commands the user’s %s when there is no .bash_profile',
@@ -357,27 +488,32 @@ describe.runIf(process.platform === 'darwin' && REAL_BINARIES.every((file) => ex
       const prepared = await prepareLocked();
       if (prepared.ok) await prepared.unlock();
       await rm(path.join(gateDir, 'g.sock'));
-      const result = await runShell('/bin/zsh', wrapper(), BODY);
+      const result = await runShell('/bin/bash', wrapper(), { input: BODY });
       expect(result.stdout).toBe('');
       expect(result.code).not.toBe(0);
     });
 
-    it('blocks writes to every file the hook depends on until unlocked', async () => {
+    it('blocks writes to every file the hook depends on, and removing one, until unlocked', async () => {
       const result = await prepareLocked();
       const targets = [
         path.join(home, '.zshenv'),
         path.join(home, '.zprofile'),
+        path.join(home, '.zlogin'),
+        path.join(home, '.curlrc'),
         path.join(cursorDir(), 'hooks.json'),
         path.join(cursorDir(), 'mcp.json'),
         wrapper(),
       ];
       for (const file of targets) {
         await expect(writeFile(file, 'echo tampered'), file).rejects.toMatchObject({
-          code: 'EPERM',
+          code: refused,
         });
       }
+      const profile = path.join(home, '.bash_profile');
+      await expect(rm(profile)).rejects.toMatchObject({ code: refused });
       if (result.ok) await result.unlock();
       for (const file of targets) await writeFile(file, 'echo tampered');
+      await rm(profile);
     });
   },
 );

@@ -401,7 +401,13 @@
       "icon": "build/icons",
       "category": "Development",
       "maintainer": "Benji Norval <noreply@frink.dev>",
-      "syncDesktopName": true
+      "syncDesktopName": true,
+      "extraResources": [
+        {
+          "from": "node_modules/@cursor/sdk-linux-${arch}",
+          "to": "node_modules/@cursor/sdk-linux-${arch}"
+        }
+      ]
     },
     "toolsets": {
       "appimage": "1.0.3"

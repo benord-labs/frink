@@ -92,6 +92,17 @@ describe('agentAccounts', () => {
     });
   });
 
+  it.each([
+    ['opencode', ON, '1.19.4'],
+    ['copilot', COPILOT_ON, '1.0.97'],
+  ])('finds an installed %s on Linux too', async (type, flags, version) => {
+    env.FAKE_VERSION = version;
+    await expect(caller(flags, 'linux').detect({ type })).resolves.toEqual({
+      available: true,
+      version,
+    });
+  });
+
   it('connects one OpenCode per device, with no stored sign-in', async () => {
     await db.insert(schema.claudeCodeCredentials).values({ id: 'claude', isDefault: true });
 
@@ -152,9 +163,9 @@ describe('agentAccounts', () => {
     ['Claude, which has its own sign-in', ON, 'darwin', 'claude-code'],
     ['OpenAI, switched off', ON, 'darwin', 'codex'],
     ['GitHub Copilot, switched off', ON, 'darwin', 'copilot'],
-    ['GitHub Copilot, not checked on Linux', COPILOT_ON, 'linux', 'copilot'],
+    ['GitHub Copilot, not checked on Windows', COPILOT_ON, 'win32', 'copilot'],
     ['Cursor, switched off', ON, 'darwin', 'cursor'],
-    ['Cursor, not checked on Linux', CURSOR_ON, 'linux', 'cursor'],
+    ['Cursor, not checked on Windows', CURSOR_ON, 'win32', 'cursor'],
     ['unknown', ON, 'darwin', 'someday-agent'],
   ])('refuses an agent that is %s', async (_case, flags, platform, type) => {
     await expect(caller(flags, platform).detect({ type })).resolves.toMatchObject({
@@ -214,6 +225,12 @@ describe('agentAccounts', () => {
   ] as const)('reports Cursor %s', async (_case, check, expected) => {
     findCursor.mockResolvedValue(check);
     await expect(caller(CURSOR_ON).detect({ type: 'cursor' })).resolves.toEqual(expected);
+  });
+
+  it('finds a signed-in Cursor on Linux too', async () => {
+    await expect(caller(CURSOR_ON, 'linux').detect({ type: 'cursor' })).resolves.toEqual({
+      available: true,
+    });
   });
 
   it('connects one Cursor per device once it is signed in, with no stored sign-in', async () => {

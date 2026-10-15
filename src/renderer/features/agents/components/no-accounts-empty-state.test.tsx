@@ -94,10 +94,10 @@ describe('NoAccountsEmptyState', () => {
       );
     });
 
-    it('on Linux offers only Claude and OpenAI: installed agents run on macOS only', () => {
+    it('on Linux offers every provider, as on macOS', () => {
       onPlatform('linux');
       renderEmptyState();
-      expect(connectNames()).toEqual(['Claude', 'OpenAI']);
+      expect(connectNames()).toEqual(ALL);
     });
 
     it('on Windows replaces every sign-in with an API key button and says why', () => {
@@ -161,11 +161,16 @@ describe('NoAccountsEmptyState', () => {
       );
     });
 
-    it('has no More button when every provider fits', () => {
+    it('on Linux connects OpenCode, GitHub Copilot and Cursor from More', async () => {
       onPlatform('linux');
       renderEmptyState({ compact: true });
       expect(connectNames()).toEqual(['Claude', 'OpenAI']);
-      expect(screen.queryByRole('button', { name: 'More' })).not.toBeInTheDocument();
+      await userEvent.setup().click(screen.getByRole('button', { name: 'More' }));
+      expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
+        'Connect OpenCodePreview',
+        'Connect GitHub CopilotPreview',
+        'Connect CursorPreview',
+      ]);
     });
 
     // The transcript scrolls under the composer slot, so a card narrower than the composer column

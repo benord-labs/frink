@@ -322,13 +322,18 @@ jobs:
         run: |
           test -d release/${{ matrix.unpacked }}/resources/app.asar.unpacked/node_modules || { echo "::error::packaged app.asar.unpacked/node_modules missing — packaging drift"; exit 1; }
 
+      - name: Install the Linux launch smoke tools
+        if: runner.os == 'Linux'
+        timeout-minutes: 5
+        run: sudo apt-get update -q && sudo apt-get install -y -q xvfb xdotool fuse3
+
       - name: Smoke — packaged native modules load under Electron ABI
         timeout-minutes: 3
-        run: npx electron scripts/smoke/smoke-native.cjs
+        # The Cursor host check starts Electron's main process, which on Linux needs the Xvfb display.
+        run: ${{ runner.os == 'Linux' && 'xvfb-run -a ' || '' }}npx electron scripts/smoke/smoke-native.cjs
         env:
-          # Run Electron's bundled Node (Electron ABI) with NO GUI/Chromium — a full GUI Electron
-          # process hangs forever on a headless CI runner (Windows has no interactive desktop, and
-          # we skip Linux's xvfb need entirely by never opening a window).
+          # Run Electron's bundled Node (Electron ABI) with NO GUI/Chromium for the module loads — a
+          # full GUI Electron process hangs forever on a headless CI runner.
           ELECTRON_RUN_AS_NODE: '1'
           # Pin the packaged root so a missing/empty packaged copy FAILS the smoke rather than
           # silently falling back to dev node_modules (postinstall already rebuilt that to the
@@ -362,6 +367,10 @@ jobs:
           dpkg-deb -c release/*.deb | grep -E '^-rwx.*/resources/bin/codex$' || { echo "::error::.deb ships a non-executable codex"; exit 1; }
           (cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE"/release/*.AppImage --appimage-extract >/dev/null)
           test -x "$RUNNER_TEMP/squashfs-root/resources/bin/codex" || { echo "::error::AppImage ships a non-executable codex"; exit 1; }
+          # And the ripgrep Cursor searches with.
+          RG="resources/node_modules/@cursor/sdk-${{ matrix.platformKey }}/bin/rg"
+          dpkg-deb -c release/*.deb | grep -E "^-rwx.*/$RG\$" || { echo "::error::.deb ships no executable Cursor rg"; exit 1; }
+          test -x "$RUNNER_TEMP/squashfs-root/$RG" || { echo "::error::AppImage ships no executable Cursor rg"; exit 1; }
 
       - name: Assert Linux release names and binary arch
         if: runner.os == 'Linux'
@@ -377,7 +386,8 @@ jobs:
           esac
           for f in $FILES; do test -f "release/$f" || { echo "::error::release/$f missing"; exit 1; }; done
           UNPACKED="release/${{ matrix.unpacked }}"
-          for bin in "$UNPACKED/frink" "$UNPACKED/resources/bin/codex" "$UNPACKED/resources/bin/claude"; do
+          CURSOR_RG="$UNPACKED/resources/node_modules/@cursor/sdk-${{ matrix.platformKey }}/bin/rg"
+          for bin in "$UNPACKED/frink" "$UNPACKED/resources/bin/codex" "$UNPACKED/resources/bin/claude" "$CURSOR_RG"; do
             INFO="$(file -L "$bin")"
             echo "$INFO"
             [[ "$INFO" == *"$ELF"* ]] || { echo "::error::$bin is not $ELF"; exit 1; }
@@ -432,11 +442,6 @@ jobs:
           done
           kill "$MOUNT_PID" || true
           [ "$MOUNTED" = 1 ] || { echo "::error::AppImage did not mount without libfuse2"; exit 1; }
-
-      - name: Install the Linux launch smoke tools
-        if: runner.os == 'Linux'
-        timeout-minutes: 5
-        run: sudo apt-get update -q && sudo apt-get install -y -q xvfb xdotool fuse3
 
       - name: Smoke — launch the deb and the AppImage under Xvfb
         if: runner.os == 'Linux'

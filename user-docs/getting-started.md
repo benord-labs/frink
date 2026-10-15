@@ -4,7 +4,7 @@ This page takes you from a fresh install to your first chat. It takes a couple o
 
 ## What Frink is
 
-Frink runs AI coding agents (Claude Code, Codex CLI or, on macOS, OpenCode, GitHub Copilot or Cursor) on your machine, against your real folders. You can chat with one, run a few at once, or wire them into automated Flows. It's the same agent you'd run in a terminal, with a UI around it.
+Frink runs AI coding agents (Claude Code, Codex CLI, OpenCode, GitHub Copilot or Cursor) on your machine, against your real folders. You can chat with one, run a few at once, or wire them into automated Flows. It's the same agent you'd run in a terminal, with a UI around it.
 
 ## First launch
 
@@ -20,9 +20,9 @@ You'll need the matching CLI installed and logged in first: the `claude` CLI for
 
 - **Claude (recommended).** On the empty state, click **Connect** next to Claude. If you've already run `claude auth login` in your terminal, Frink hands that login to the agents it runs — there's no token to store, and the `claude` CLI keeps it fresh itself, so a token rotation can't knock out a running agent. On macOS you'll be asked for keychain access once, while connecting. Click **Always Allow**. Or click **Add it in Settings**, under the list, to paste an Anthropic key (`sk-ant-api…`) instead.
 - **Codex.** Run `codex login` in your terminal, then click **Connect** next to OpenAI on the empty state (or add a Codex account in Settings). Frink reads that login the same way, at chat-time, and stores no token.
-- **OpenCode (macOS).** Install it with `npm install -g opencode-ai@1.19`, then go to Settings → AI providers → **Add an account** → **Connect OpenCode**. It works with OpenCode's free models; run `opencode auth login` first to add your own AI provider. Frink stores no credential. Some chat features aren't in OpenCode chats yet: see [AI accounts](./ai-accounts.md#opencode-macos).
-- **GitHub Copilot (macOS).** Install it with `npm install -g @github/copilot`, run `copilot login`, then go to Settings → AI providers → **Add an account** → **Connect GitHub Copilot**. The free plan works. Frink stores no credential. Some chat features aren't in Copilot chats yet: see [AI accounts](./ai-accounts.md#github-copilot-macos).
-- **Cursor (macOS).** Go to Settings → AI providers → **Add an account** → **Connect Cursor**, click **Sign in to Cursor** if asked and finish in your browser. Cursor needs a paid Cursor plan. Frink stores no Cursor key. Some chat features aren't in Cursor chats yet: see [AI accounts](./ai-accounts.md#cursor-macos).
+- **OpenCode (macOS and Linux).** Install it with `npm install -g opencode-ai@1.19`, then go to Settings → AI providers → **Add an account** → **Connect OpenCode**. It works with OpenCode's free models; run `opencode auth login` first to add your own AI provider. Frink stores no credential. Some chat features aren't in OpenCode chats yet: see [AI accounts](./ai-accounts.md#opencode-macos-and-linux).
+- **GitHub Copilot (macOS and Linux).** Install it with `npm install -g @github/copilot`, run `copilot login`, then go to Settings → AI providers → **Add an account** → **Connect GitHub Copilot**. The free plan works. Frink stores no credential. Some chat features aren't in Copilot chats yet: see [AI accounts](./ai-accounts.md#github-copilot-macos-and-linux).
+- **Cursor (macOS and Linux).** Go to Settings → AI providers → **Add an account** → **Connect Cursor**, click **Sign in to Cursor** if asked and finish in your browser. Cursor needs a paid Cursor plan. Frink stores no Cursor key. Some chat features aren't in Cursor chats yet: see [AI accounts](./ai-accounts.md#cursor-macos-and-linux).
 - **Windows.** Claude's terminal login is macOS and Linux only. On Windows, connect Claude with an Anthropic API key.
 
 For more on accounts (multiple logins, what gets stored, using more than one machine), see [AI accounts](./ai-accounts.md).

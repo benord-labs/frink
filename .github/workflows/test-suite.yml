@@ -21,6 +21,8 @@ permissions:
 # Runners are dedicated 4-vCPU boxes; the config's maxWorkers: 2 is sized for a loaded dev machine.
 env:
   VITEST_MAX_WORKERS: 3
+  # Changes that can alter whether an installed agent asks before it acts; both admission jobs run on them.
+  ADMISSION_PATHS: '^(src/main/lib/agent-runner/(copilot|acp|codex|process-settlement)/|src/main/lib/agent-runner/(path-questions|env-file-reads)\.ts$|src/main/lib/permissions/|src/main/lib/platform/login-shell-env\.ts$|package\.json$|bun\.lock$|src/shared/lib/ai-providers/|src/main/lib/socket/execution/copilot-turn/|\.github/workflows/test-suite\.yml$)'
 
 jobs:
   pull-request-suite:
@@ -41,6 +43,10 @@ jobs:
           persist-credentials: false
 
       - uses: oven-sh/setup-bun@v2
+
+      # Tests that start a real zsh skip where it is missing.
+      - name: Install zsh
+        run: sudo apt-get update -q && sudo apt-get install -y -q zsh
 
       - name: Install root dependencies
         run: bun install --frozen-lockfile
@@ -252,20 +258,26 @@ jobs:
   # Starts a real OpenCode against a scripted model to prove it still asks Frink before it acts.
   acp-admission:
     if: github.event_name != 'push'
-    name: OpenCode admission
-    runs-on: ubuntu-latest
+    name: OpenCode admission (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+    env:
+      FRINK_ACP_ADMISSION_REQUIRED: '1'
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Skip pull requests that leave the ACP runner alone
+      - name: Skip pull requests that leave the agent admission alone
         id: scope
         if: github.event_name == 'pull_request'
         run: |
-          if git diff --name-only "origin/${{ github.base_ref }}...HEAD" | grep -q '^src/main/lib/agent-runner/acp/'; then
+          if git diff --name-only "origin/${{ github.base_ref }}...HEAD" | grep -Eq "$ADMISSION_PATHS"; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
@@ -277,6 +289,11 @@ jobs:
       - name: Install root dependencies
         if: steps.scope.outputs.run != 'false'
         run: bun install --frozen-lockfile
+
+      # A real zsh and fish for the login-shell cases.
+      - name: Install zsh and fish
+        if: steps.scope.outputs.run != 'false'
+        run: sudo apt-get update -q && sudo apt-get install -y -q zsh fish
 
       # Pull requests run the oldest version Frink accepts; scheduled runs the newest in that range.
       - name: Install OpenCode
@@ -310,7 +327,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest]
+        os: [macos-latest, ubuntu-latest, ubuntu-24.04-arm]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -321,8 +338,7 @@ jobs:
         id: scope
         if: github.event_name == 'pull_request'
         run: |
-          paths='^(src/main/lib/agent-runner/(copilot|acp|codex)/|src/main/lib/permissions/path-check\.ts$|package\.json$|bun\.lock$|src/shared/lib/ai-providers/|src/main/lib/socket/execution/copilot-turn/|\.github/workflows/test-suite\.yml$)'
-          if git diff --name-only "origin/${{ github.base_ref }}...HEAD" | grep -Eq "$paths"; then
+          if git diff --name-only "origin/${{ github.base_ref }}...HEAD" | grep -Eq "$ADMISSION_PATHS"; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"

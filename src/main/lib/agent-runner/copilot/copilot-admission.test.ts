@@ -226,7 +226,7 @@ describe.runIf(BIN)('GitHub Copilot admission', () => {
       PATH: pathDirs.join(path.delimiter),
       HOME: home,
       LANG: 'en_US.UTF-8',
-      SHELL: '/bin/zsh',
+      SHELL: process.platform === 'darwin' ? '/bin/zsh' : '/bin/bash',
       XDG_CONFIG_HOME: path.join(home, '.config'),
       XDG_DATA_HOME: path.join(home, '.local', 'share'),
       XDG_STATE_HOME: path.join(home, '.local', 'state'),

@@ -1,3 +1,17 @@
+import path from 'node:path';
+
+/** The ripgrep Cursor's search runs, as the SDK's platform package installs it under one folder. */
+export function cursorRipgrepIn(dir: string): string {
+  return path.join(
+    dir,
+    'node_modules',
+    '@cursor',
+    `sdk-${process.platform}-${process.arch}`,
+    'bin',
+    'rg',
+  );
+}
+
 /** How Frink's gate reads one tool in Cursor's pre-tool hook; any other tool is refused. */
 export type CursorToolRule = {
   question?: 'Bash' | 'Edit' | 'Read';

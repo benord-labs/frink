@@ -127,7 +127,9 @@ function cursorHostAnswer(resources) {
   const env = { ...process.env, HOME: home };
   delete env.ELECTRON_RUN_AS_NODE;
   delete env.CURSOR_API_KEY;
-  const child = spawnSync(process.execPath, [__filename, CURSOR_HOST, resources], {
+  // A dev Electron's chrome-sandbox is not setuid; the Linux launch smoke proves the packaged sandbox.
+  const flags = process.platform === 'linux' ? ['--no-sandbox'] : [];
+  const child = spawnSync(process.execPath, [...flags, __filename, CURSOR_HOST, resources], {
     env,
     encoding: 'utf8',
     timeout: 90_000,
@@ -136,11 +138,24 @@ function cursorHostAnswer(resources) {
   return { answer: JSON.parse(child.stdout.trim().split('\n').at(-1) || '{}'), log: child.stderr };
 }
 
+/** The packaged Cursor platform package beside `root`, or null where none ships (Windows, dev trees). */
+function cursorPlatformDir(root, platform = process.platform, arch = process.arch) {
+  if (platform === 'win32' || !root.endsWith(join('app.asar.unpacked', 'node_modules')))
+    return null;
+  return join(dirname(dirname(root)), 'node_modules', '@cursor', `sdk-${platform}-${arch}`);
+}
+
+/** rg is present and both shell parsers load: without them the SDK quietly stops analysing commands. */
+function checkCursorPlatform(dir) {
+  if (!existsSync(join(dir, 'bin', 'rg'))) throw new Error(`no rg in ${dir}`);
+  for (const parser of ['tree-sitter', 'tree-sitter-bash']) {
+    process.dlopen({ exports: {} }, join(dir, 'vendor', parser, 'binding.node'));
+  }
+}
+
 /** Cursor's platform package sits where its SDK looks, and the host answers signed out. */
-function checkCursorHost(resources) {
-  const platform = join(resources, 'node_modules', '@cursor', `sdk-darwin-${process.arch}`);
-  const missing = ['cursorsandbox', 'rg'].find((bin) => !existsSync(join(platform, 'bin', bin)));
-  if (missing) throw new Error(`no ${missing} in ${platform}`);
+function checkCursorHost(resources, platformDir) {
+  checkCursorPlatform(platformDir);
   const { answer, log } = cursorHostAnswer(resources);
   if (answer.type !== 'auth' || answer.status === 'logged-in') {
     throw new Error(`Cursor host answered ${JSON.stringify(answer)}: ${log}`);
@@ -158,9 +173,9 @@ async function main() {
   await checkNodePty(root);
   console.log('[smoke-native] node-pty OK');
   await checkAgentSdks(root);
-  if (process.platform === 'darwin' && root.includes('/Contents/Resources/')) {
-    checkCursorHost(dirname(dirname(root)));
-  } else console.log('[smoke-native] Cursor host skipped: it ships only in a macOS package');
+  const cursor = cursorPlatformDir(root);
+  if (cursor) checkCursorHost(dirname(dirname(root)), cursor);
+  else console.log('[smoke-native] Cursor host skipped: it ships only in a macOS or Linux package');
   console.log('[smoke-native] PASS');
 }
 
@@ -178,4 +193,10 @@ if (require.main === module || hostAt > 0) {
     });
 }
 
-module.exports = { packedEntry, packedModulesRoot, resolveModulesRoot };
+module.exports = {
+  checkCursorPlatform,
+  cursorPlatformDir,
+  packedEntry,
+  packedModulesRoot,
+  resolveModulesRoot,
+};

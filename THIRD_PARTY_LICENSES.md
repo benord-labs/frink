@@ -39,10 +39,10 @@ no OpenAI credentials and makes no model calls on its own account.
 ## Cursor SDK (`@cursor/sdk`)
 
 - **Source:** https://cursor.com
-- **Bundled:** the `@cursor/sdk` package inside the app, and its macOS platform package
-  (`@cursor/sdk-darwin-*`) in `Resources/node_modules/@cursor/`, as Cursor publishes them, under
-  Cursor's terms. Cursor signs in with the user's own Cursor account. The SDK's `LICENSE.md`
-  ships with it and reads:
+- **Bundled:** the `@cursor/sdk` package inside the app, and its macOS and Linux platform packages
+  (`@cursor/sdk-darwin-*`, `@cursor/sdk-linux-*`) in the app's `resources/node_modules/@cursor/`, as
+  Cursor publishes them, under Cursor's terms. Cursor signs in with the user's own Cursor account. The
+  SDK's `LICENSE.md` ships with it and reads:
 
 ```text
 # Cursor SDK License

@@ -25,7 +25,7 @@ import {
   CURSOR_RIPGREP,
   FAKE_CURSOR_MODELS,
   nodeForkHost,
-  recordingChflags,
+  recordingLock,
   writeFakeCursorSdk,
 } from './cursor-test-fixtures';
 import {
@@ -52,6 +52,8 @@ const MISSING =
   'Part of Cursor is missing from this copy of Frink. Reinstall Frink, then try again.';
 const MISMATCHED =
   'This copy of Frink has the wrong version of Cursor. Reinstall Frink, then try again.';
+const NEEDS_CURL =
+  "Cursor in Frink needs curl. Install curl with your system's software installer, then try again.";
 
 let root = '';
 let sdkRoot = '';
@@ -126,6 +128,7 @@ describe('resolveCursorLaunch', () => {
         home,
         storeDir: path.join(chatDir, 'store'),
         realHome,
+        userDirs: {},
         ripgrep,
         tools: CURSOR_TOOL_NAMES,
         hookVersions: ['1.0.0'],
@@ -272,6 +275,20 @@ describe('findCursorAgent', () => {
     ).toEqual({ status: 'missing', reason: MISSING });
     expect(forks).toBe(0);
   });
+
+  it('asks for curl without starting anything when no system folder has it', async () => {
+    let forks = 0;
+    const forkHost: ForkHost = (input, events) => {
+      forks += 1;
+      return nodeForkHost(input, events);
+    };
+    const curlDirs = [path.join(root, 'no curl')];
+    expect(await findCursorAgent({ ...deps(), forkHost, curlDirs })).toEqual({
+      status: 'missing',
+      reason: NEEDS_CURL,
+    });
+    expect(forks).toBe(0);
+  });
 });
 
 describe('signInToCursor', () => {
@@ -410,7 +427,7 @@ describe('the Cursor host', () => {
       ...overrides,
     };
     const chunks = await collectChunks(
-      runCursorAgent(params, { forkHost, chflags: recordingChflags().chflags }),
+      runCursorAgent(params, { forkHost, lock: recordingLock().lock }),
     );
     await disposeAllCursorHosts();
     return { chunks, order, launch: params.launch, seen: JSON.parse(textOf(chunks) || '{}') };

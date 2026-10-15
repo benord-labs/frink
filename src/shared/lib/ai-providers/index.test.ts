@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AI_PROVIDER_IDS,
   AI_PROVIDERS,
+  agentRunnable,
   aiProvider,
   isInstalledAgent,
   runtimeFor,
@@ -67,14 +68,16 @@ describe('AI provider table', () => {
     ]);
   });
 
-  it('ships OpenCode, GitHub Copilot and Cursor on macOS only, and Grok off', () => {
+  it('ships OpenCode, GitHub Copilot and Cursor on macOS and Linux, and Grok off', () => {
     expect(runtimeFor('opencode', undefined, 'darwin')).toBe('acp');
-    expect(runtimeFor('opencode', undefined, 'linux')).toBeUndefined();
+    expect(runtimeFor('opencode', undefined, 'linux')).toBe('acp');
+    expect(runtimeFor('opencode', undefined, 'win32')).toBeUndefined();
     expect(runtimeFor('copilot', undefined, 'darwin')).toBe('copilot');
-    expect(runtimeFor('copilot', undefined, 'linux')).toBeUndefined();
+    expect(runtimeFor('copilot', undefined, 'linux')).toBe('copilot');
     expect(runtimeFor('copilot', undefined, 'win32')).toBeUndefined();
     expect(runtimeFor('cursor', undefined, 'darwin')).toBe('cursor');
-    expect(runtimeFor('cursor', undefined, 'linux')).toBeUndefined();
+    expect(runtimeFor('cursor', undefined, 'linux')).toBe('cursor');
+    expect(runtimeFor('cursor', undefined, 'win32')).toBeUndefined();
     expect(runtimeFor('grok', undefined, 'darwin')).toBeUndefined();
     expect(selectableProviderIds(undefined, 'darwin')).toEqual([
       'claude-code',
@@ -83,14 +86,32 @@ describe('AI provider table', () => {
       'copilot',
       'cursor',
     ]);
-    expect(selectableProviderIds(undefined, 'linux')).toEqual(['claude-code', 'codex']);
+    expect(selectableProviderIds(undefined, 'linux')).toEqual([
+      'claude-code',
+      'codex',
+      'opencode',
+      'copilot',
+      'cursor',
+    ]);
+  });
+
+  it('turns each installed agent on per operating system from its own row', () => {
+    const openCodeOnLinux = { ...AI_PROVIDERS.opencode, platforms: ['darwin', 'linux'] };
+    expect(agentRunnable(openCodeOnLinux, ALL_ON, 'linux')).toBe(true);
+    expect(agentRunnable(AI_PROVIDERS.grok, ALL_ON, 'linux')).toBe(false);
+    expect(agentRunnable(AI_PROVIDERS.grok, ALL_ON, 'darwin')).toBe(true);
+    expect(agentRunnable(openCodeOnLinux, {}, 'linux')).toBe(false);
+    expect(agentRunnable(openCodeOnLinux, ALL_ON)).toBe(false);
   });
 
   it('runs GitHub Copilot on its own runtime only when its flag is on and this system is checked', () => {
     expect(runtimeFor('copilot', {}, 'darwin')).toBeUndefined();
     expect(runtimeFor('copilot', { copilotAccounts: true }, 'win32')).toBeUndefined();
     expect(runtimeFor('copilot', { copilotAccounts: true }, 'darwin')).toBe('copilot');
-    expect(selectableProviderIds({ copilotAccounts: true }, 'linux')).toEqual(['claude-code']);
+    expect(selectableProviderIds({ copilotAccounts: true }, 'linux')).toEqual([
+      'claude-code',
+      'copilot',
+    ]);
     expect(selectableProviderIds({ copilotAccounts: true }, 'darwin')).toEqual([
       'claude-code',
       'copilot',
@@ -101,6 +122,7 @@ describe('AI provider table', () => {
     expect(runtimeFor('cursor', {}, 'darwin')).toBeUndefined();
     expect(runtimeFor('cursor', { cursorAccounts: true }, 'win32')).toBeUndefined();
     expect(runtimeFor('cursor', { cursorAccounts: true }, 'darwin')).toBe('cursor');
+    expect(runtimeFor('cursor', { cursorAccounts: true }, 'linux')).toBe('cursor');
   });
 
   it('never gates running Codex on its picker flag', () => {
