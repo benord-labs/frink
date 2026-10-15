@@ -81,11 +81,41 @@ function renderTab(saved: { enabled: boolean }, server: TestServer = {}) {
   return {
     save,
     heldRead,
-    keepAwake: () => screen.getByRole('switch', { name: /Keep this Mac awake/ }),
+    keepAwake: () => screen.getByRole('switch', { name: /awake while agents are working/ }),
   };
 }
 
-afterEach(cleanup);
+function onPlatform(platform: string) {
+  Object.defineProperty(window, 'desktopApi', { value: { platform }, configurable: true });
+}
+
+afterEach(() => {
+  cleanup();
+  Reflect.deleteProperty(window, 'desktopApi');
+});
+
+describe('AgentsPreferencesTab — keep awake copy', () => {
+  it('names the Mac and its lid and low-battery limits on macOS', () => {
+    onPlatform('darwin');
+    renderTab({ enabled: true });
+
+    expect(
+      screen.getByRole('switch', { name: 'Keep this Mac awake while agents are working' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/turns off when the battery is low/)).toBeInTheDocument();
+  });
+
+  it.each(['win32', 'linux'])('names the computer with no battery promise on %s', (platform) => {
+    onPlatform(platform);
+    renderTab({ enabled: true });
+
+    expect(
+      screen.getByRole('switch', { name: 'Keep this computer awake while agents are working' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Stops your computer from going to sleep/)).toBeInTheDocument();
+    expect(screen.queryByText(/Mac|battery|lid/)).not.toBeInTheDocument();
+  });
+});
 
 describe('AgentsPreferencesTab — keep awake', () => {
   it('shows the saved value and saves a switch-off', async () => {
