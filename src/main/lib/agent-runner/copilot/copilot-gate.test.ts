@@ -194,6 +194,66 @@ describe('questionsForCopilotTool', () => {
   });
 });
 
+describe('a search that goes through a link', () => {
+  let base = '';
+  let project = '';
+  const search = (toolName: string, toolArgs: JsonValue) =>
+    questionsForCopilotTool(toolName, toolArgs, project, COPILOT_TOOLS);
+
+  beforeAll(async () => {
+    base = await realpath(await mkdtemp(path.join(os.tmpdir(), 'copilot links ')));
+    project = path.join(base, 'the project');
+    const elsewhere = path.join(base, 'elsewhere');
+    await mkdir(path.join(project, 'sub', 'deeper'), { recursive: true });
+    await mkdir(elsewhere);
+    await symlink(elsewhere, path.join(project, 'linked'));
+    await symlink(elsewhere, path.join(project, 'sub', 'nested-link'));
+    await symlink(path.join(project, 'sub', 'deeper'), path.join(project, 'inner-link'));
+    for (const folder of [base, project]) await writeFile(path.join(folder, 'secret.txt'), 'x');
+  });
+  afterAll(() => rm(base, { recursive: true, force: true }));
+
+  it('asks Read for the real folder when a .. after a link climbs out of the project', () => {
+    const climbs: [string, Record<string, JsonValue>, string][] = [
+      ['grep', { pattern: 'x', paths: ['linked/..'] }, base],
+      ['rg', { pattern: 'x', paths: `${project}/linked/..` }, base],
+      ['rg', { pattern: 'x', paths: ['sub/nested-link/..'] }, base],
+      ['glob', { pattern: 'linked/../*' }, base],
+      ['glob', { pattern: 'linked/../**/*', paths: ['.'] }, base],
+      ['glob', { pattern: '**/*', paths: ['linked/..'] }, base],
+      ['grep', { pattern: 'x', paths: ['linked/../secret.txt'] }, path.join(base, 'secret.txt')],
+      ['glob', { pattern: 'a/*', paths: 'linked/../secret.txt' }, path.join(base, 'secret.txt/a')],
+    ];
+    for (const [toolName, args, folder] of climbs) {
+      expect(search(toolName, args)).toEqual(ask(read(folder)));
+    }
+    // The text names a different outside folder, which a view would open, so both are asked.
+    expect(search('grep', { pattern: 'x', paths: ['linked/../..'] })).toEqual(
+      ask(read(base), read(path.dirname(base))),
+    );
+  });
+
+  it('asks about the folder a view opens by its text when a link leads back in', async () => {
+    const away = path.join(base, 'away');
+    await mkdir(away);
+    await symlink(path.join(project, 'sub'), path.join(away, 'back-in'));
+    const file = `${away}/back-in/../secret.txt`;
+    expect(search('view', { path: file })).toEqual(ask(read(path.join(away, 'secret.txt'))));
+  });
+
+  it('stays quiet when the real folder is still in the project or does not exist', () => {
+    const stays: [string, Record<string, JsonValue>][] = [
+      ['grep', { pattern: 'x', paths: ['.'] }],
+      ['grep', { pattern: 'x' }],
+      ['rg', { pattern: 'x', paths: ['sub'] }],
+      ['grep', { pattern: 'x', paths: ['nope/..'] }],
+      ['grep', { pattern: 'x', paths: ['inner-link/..'] }],
+      ['glob', { pattern: 'inner-link/../*' }],
+    ];
+    for (const [toolName, args] of stays) expect(search(toolName, args)).toEqual(ask());
+  });
+});
+
 function hookInput(toolName: string, toolArgs: JsonValue): PreToolUseHookInput {
   return { sessionId: 's1', timestamp: new Date(0), workingDirectory: cwd, toolName, toolArgs };
 }
