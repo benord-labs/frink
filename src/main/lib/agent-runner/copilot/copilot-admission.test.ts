@@ -134,6 +134,21 @@ function running(pattern: string): boolean {
   }
 }
 
+/** Children of a parent whose command line has `pattern`, each with every process under it. */
+function processTrees(parent: number, pattern?: string): number[] {
+  let found = '';
+  try {
+    const match = pattern ? ['-f', pattern] : [];
+    found = execFileSync('/usr/bin/pgrep', ['-P', String(parent), ...match]).toString();
+  } catch {
+    return [];
+  }
+  return found
+    .split('\n')
+    .filter(Boolean)
+    .flatMap((pid) => [Number(pid), ...processTrees(Number(pid))]);
+}
+
 it('ran against a real GitHub Copilot wherever admission is required', () => {
   expect({ required: REQUIRED, bin: BIN ?? null }).not.toEqual({ required: true, bin: null });
 });
@@ -157,8 +172,9 @@ describe.runIf(BIN)('GitHub Copilot admission', () => {
   const touchMarker = (name: string) => `touch '${mark(name)}'`;
 
   beforeAll(async () => {
-    // Spaces in every path, as in macOS's Application Support folder.
-    root = await mkdtemp(path.join(os.tmpdir(), 'copilot admission '));
+    // Spaces in every path, as in macOS's Application Support folder. The real path, so macOS's
+    // linked /var temp folder is judged as Linux's /tmp is.
+    root = realpathSync(await mkdtemp(path.join(os.tmpdir(), 'copilot admission ')));
     home = path.join(root, 'home');
     project = path.join(root, 'the project');
     outside = path.join(root, 'outside');
@@ -301,6 +317,8 @@ describe.runIf(BIN)('GitHub Copilot admission', () => {
     await writeJson(path.join(configDirectory, 'hooks', 'evil.json'), copilotHooks('leftover'));
 
     await write(preScript, `#!/bin/sh\n${touchMarker('grep-pre')}\n`);
+    // A file the flag-like path names, so Copilot hands that path on to the search.
+    await write(path.join(project, `--pre=${preScript}`), 'hello\n');
     await write(inOutside('secret.txt'), `${SECRET_TEXT}\n`);
   }
 
@@ -520,8 +538,7 @@ describe.runIf(BIN)('GitHub Copilot admission', () => {
       ...preArgs.map((args, index) => ({
         id: `grep-pre-${index}`,
         steps: [{ name: 'grep', args: { output_mode: 'content', ...args } }],
-        // A path that is not plainly inside the project asks to read it.
-        asks: index === 3 ? ['Read'] : [],
+        asks: [],
         happened: made(mark('grep-pre')),
       })),
       {
@@ -753,8 +770,8 @@ describe.runIf(BIN)('GitHub Copilot admission', () => {
       let killedAt = 0;
       const result = await turn('crash', {
         answer: async () => {
-          // Copilot is the only child of this test that runs headless.
-          execFileSync('/usr/bin/pkill', ['-KILL', '-P', String(process.pid), '-f', 'headless']);
+          // Copilot is this test's only headless child; an npm install runs the real CLI under it.
+          for (const pid of processTrees(process.pid, 'headless')) process.kill(pid, 'SIGKILL');
           killedAt = Date.now();
           return ALLOW;
         },
