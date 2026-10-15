@@ -61,8 +61,8 @@ export const listRouter = router({
     return countChatsByProject(getDatabase());
   }),
 
-  // Active chats with their folder and batch, loaded in the sidebar or not, so a collapsed folder can
-  // show their activity. Status still comes from the task poll; this read only places chats.
+  // Active chats with their folder, batch and task statuses, loaded in the sidebar or not: the
+  // sidebar's one source for row status pills and collapsed-folder activity.
   listActiveChats: publicProcedure.query(async () => listSidebarActiveChats(getDatabase())),
 
   // The chats open in panes, so each keeps a sidebar row even when older than the loaded pages.

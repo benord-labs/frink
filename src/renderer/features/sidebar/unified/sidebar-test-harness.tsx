@@ -13,6 +13,7 @@ import { expect, vi } from 'vitest';
 import type { AwaitingApproval } from '../../../lib/work-queue/approvals/use-work-queue-approvals';
 import type { ChatSelectionChipProps } from './components/ChatSelection';
 import { makeSidebarComponentsMock } from './sidebar-components-test-harness';
+import type { ActiveFolderChat } from './utils';
 
 /** Type-only: erased at build, so it does not re-enter the jotai mock factory. */
 type AnyAtom = Atom<unknown>;
@@ -24,7 +25,7 @@ type ActiveTaskStub = {
 };
 /** Always empty in these suites; named so the mock hands back a contract rather than a dictionary. */
 type LocalProjectStub = { id: string; name: string; path: string; gitRemoteUrl?: string | null };
-type SidebarActivityStub = { chats: never[]; tasks: ActiveTaskStub[] };
+type SidebarActivityStub = { chats: ActiveFolderChat[]; tasks: ActiveTaskStub[] };
 const NO_SIDEBAR_ACTIVITY: SidebarActivityStub = { chats: [], tasks: [] };
 
 const state = {
