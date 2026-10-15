@@ -13,7 +13,7 @@ import { startAcpAgentProcess } from '../acp-process';
 import { runAcpAgent } from '../acp-runner';
 import { collectChunks } from '../acp-test-fixtures';
 import { resolveAcpLaunch } from '../index';
-import { launchFromRow } from './launch';
+import { launchFromRows } from './launch';
 import { OPENCODE_LAUNCH } from './opencode';
 
 /**
@@ -514,7 +514,7 @@ describe.runIf(BIN)('OpenCode admission', () => {
           return { ...settings, env };
         },
       };
-      const result = await launchFromRow(row, project, { runRoot, env: userEnv() });
+      const result = await launchFromRows([row], project, { runRoot, env: userEnv() });
       expect(result).toEqual({ ok: false, reason: UNSAFE_SETTINGS });
     },
     TURN_MS,

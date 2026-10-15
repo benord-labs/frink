@@ -43,7 +43,7 @@ export async function resolveCopilotLaunch(
   options: { env?: Env; configDirectory?: string } = {},
 ): Promise<CopilotLaunchResult> {
   const env = await copilotEnv(options.env);
-  const found = await findRowBinary(COPILOT_ROW, env);
+  const found = await findRowBinary([COPILOT_ROW], env);
   if ('reason' in found) return { ok: false, reason: found.reason };
   const configDirectory =
     options.configDirectory ?? path.join(app.getPath('userData'), 'copilot', 'config');
@@ -62,7 +62,7 @@ export async function resolveCopilotLaunch(
 
 /** The installed CLI and its version; it runs the CLI once to read the version. */
 export async function findCopilotAgent(env?: Env) {
-  return findRowBinary(COPILOT_ROW, await copilotEnv(env));
+  return findRowBinary([COPILOT_ROW], await copilotEnv(env));
 }
 
 /** Where the CLI is installed, without running it. */

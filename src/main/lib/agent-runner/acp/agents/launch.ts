@@ -143,37 +143,48 @@ function compareVersions(a: number[], b: number[]): number {
   return differing === -1 ? 0 : (a[differing] ?? 0) - (b[differing] ?? 0);
 }
 
-/** The installed version when Frink has checked it, else why the agent may not start. */
-async function checkVersion(
-  row: InstalledAgentRow,
+function holds(version: number[], { floor, below }: InstalledAgentRow['versions']): boolean {
+  const [low, high] = [versionParts(floor), versionParts(below)];
+  return (
+    !!low && !!high && compareVersions(version, low) >= 0 && compareVersions(version, high) < 0
+  );
+}
+
+/** The row whose checked versions hold the installed one, else why the agent may not start. */
+async function checkVersion<Row extends InstalledAgentRow>(
+  rows: readonly Row[],
   command: string,
   env: Env,
   cwd: string,
   timeoutMs = VERSION_TIMEOUT_MS,
-): Promise<{ version: string } | { reason: string }> {
+): Promise<{ row: Row; version: string } | { reason: string }> {
+  const { name, versionPattern } = rows[0];
   const output = await runCheck(command, ['--version'], env, cwd, timeoutMs).catch((error) => {
-    log.warn(`[ACP] ${row.name} --version failed`, error);
+    log.warn(`[ACP] ${name} --version failed`, error);
     return { stdout: '' };
   });
-  const version = versionParts(output.stdout, row.versionPattern);
-  const [floor, below] = [versionParts(row.versions.floor), versionParts(row.versions.below)];
-  if (!version || !floor || !below) {
+  const version = versionParts(output.stdout, versionPattern);
+  if (!version) {
     return {
-      reason: `Frink couldn't tell which version of ${row.name} you have, so it didn't start it.`,
+      reason: `Frink couldn't tell which version of ${name} you have, so it didn't start it.`,
     };
   }
-  if (compareVersions(version, floor) >= 0 && compareVersions(version, below) < 0) {
-    return { version: version.join('.') };
-  }
-  const minor = floor.slice(0, 2).join('.');
+  const row = rows.find((candidate) => holds(version, candidate.versions));
+  if (row) return { row, version: version.join('.') };
+  const floors = rows.map((candidate) => versionParts(candidate.versions.floor) ?? []);
   // A floor inside a minor is named in full, so an older patch of it is not called checked.
-  const checked = floor[2] ? `${floor.join('.')} and later ${minor} releases` : minor;
+  const checked = floors.map((floor) => {
+    const minor = floor.slice(0, 2).join('.');
+    return floor[2] ? `${floor.join('.')} and later ${minor} releases` : minor;
+  });
+  const newest = floors[floors.length - 1];
   const fix =
-    compareVersions(version, floor) < 0
-      ? `Update ${row.name}, then try again.`
-      : `To use ${row.name} in Frink now, go back to ${row.name} ${minor}.`;
+    compareVersions(version, newest) < 0
+      ? `Update ${name}, then try again.`
+      : `To use ${name} in Frink now, go back to ${name} ${newest.slice(0, 2).join('.')}.`;
+  const list = new Intl.ListFormat('en', { type: 'conjunction' }).format(checked);
   return {
-    reason: `Frink has checked ${row.name} ${checked}. You have ${version.join('.')}, which Frink hasn't checked yet. ${fix}`,
+    reason: `Frink has checked ${name} ${list}. You have ${version.join('.')}, which Frink hasn't checked yet. ${fix}`,
   };
 }
 
@@ -245,15 +256,15 @@ export async function locateRowBinary(
   return locateBinary(row, env ?? (await userEnv()));
 }
 
-/** The installed agent and its version, when it is a version Frink has checked. */
+/** The installed agent and its version, when one of its rows holds that version. */
 export async function findRowBinary(
-  row: InstalledAgentRow,
+  rows: readonly InstalledAgentRow[],
   startEnv?: Env,
 ): Promise<{ path: string; version: string } | { reason: string; missing?: true }> {
   const env = startEnv ?? (await userEnv());
-  const command = await locateBinary(row, env);
-  if (!command) return { reason: missingText(row), missing: true };
-  const checked = await checkVersion(row, command, env, env.HOME ?? os.homedir());
+  const command = await locateBinary(rows[0], env);
+  if (!command) return { reason: missingText(rows[0]), missing: true };
+  const checked = await checkVersion(rows, command, env, env.HOME ?? os.homedir());
   return 'version' in checked ? { path: command, version: checked.version } : checked;
 }
 
@@ -261,15 +272,21 @@ function missingText(row: InstalledAgentRow): string {
   return `Frink can't find ${row.name} on this computer. Install it with ${row.installHint}, then try again.`;
 }
 
-/** Prepares one launch of the row's agent, refusing when it cannot be made to ask before it acts. */
-export async function launchFromRow(
-  row: AcpLaunchRow,
+/** Prepares one launch with the row for the installed version, refusing when it cannot ask first. */
+export async function launchFromRows(
+  rows: readonly AcpLaunchRow[],
   cwd: string,
   options: LaunchOptions = {},
 ): Promise<AcpLaunchResult> {
   const env = options.env ?? (await userEnv());
-  const command = await locateBinary(row, env);
-  if (!command) return { ok: false, reason: missingText(row) };
+  const command = await locateBinary(rows[0], env);
+  if (!command) return { ok: false, reason: missingText(rows[0]) };
+  const timeout = options.checkTimeoutMs;
+  // The version picks the row, so no row's settings, files or checks exist before it is read.
+  const versionEnv = withoutPrefix(env, rows[0].envPrefix);
+  const picked = await checkVersion(rows, command, versionEnv, cwd, timeout);
+  if ('reason' in picked) return { ok: false, reason: picked.reason };
+  const { row } = picked;
   const runRoot = options.runRoot ?? path.join(app.getPath('userData'), 'acp', 'run');
   const dirs = await createRunDir(runRoot);
   const cleanup = () => rm(dirs.root, { recursive: true, force: true });
@@ -290,12 +307,7 @@ export async function launchFromRow(
     const script = commandGateScript({ realShell: shell, ledgerDir: dirs.ledger, restore });
     await writeFile(shellGate, script, { mode: 0o700 });
     const launchEnv = { ...withoutPrefix(env, row.envPrefix), ...settings.env };
-    const timeout = options.checkTimeoutMs;
-    const [version, refusal] = await Promise.all([
-      checkVersion(row, command, launchEnv, cwd, timeout),
-      checkSettings(row, command, settings, launchEnv, cwd, timeout),
-    ]);
-    const reason = 'reason' in version ? version.reason : refusal;
+    const reason = await checkSettings(row, command, settings, launchEnv, cwd, timeout);
     if (reason) {
       await cleanup();
       return { ok: false, reason };
