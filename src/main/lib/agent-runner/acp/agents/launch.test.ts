@@ -4,13 +4,14 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { AcpAgentLaunch } from '../acp-process';
 import { findAcpAgent, locateAcpAgent, resolveAcpLaunch } from '../index';
-import { findRowBinary, locateRowBinary } from './launch';
+import { LAUNCH_ROWS } from './index';
+import { type AcpLaunchRow, findRowBinary, launchFromRows, locateRowBinary } from './launch';
 import { OPENCODE_LAUNCH } from './opencode';
 
 /** Stands in for OpenCode: prints a version, its accounts, and the effective settings with a change. */
 const FAKE_OPENCODE = `#!/bin/sh
 case "$1" in
-  --version) printf '%s\\n' "$FAKE_VERSION" ;;
+  --version) printf '%s\\n' "$FAKE_VERSION"; echo run >> "\${FAKE_LOG:-/dev/null}" ;;
   console) printf '%s\\n' "$FAKE_ORGS" >&2 ;;
   debug) exec '${process.execPath}' "$(dirname "$0")/fake-settings.mjs" ;;
 esac
@@ -311,19 +312,109 @@ describe('resolveAcpLaunch for OpenCode', { timeout: 15_000 }, () => {
   it('finds the installed agent and its version without starting a launch', async () => {
     const env = userEnv();
     const found = { path: path.join(bin, 'opencode'), version: '1.19.0' };
-    expect(await findRowBinary(OPENCODE_LAUNCH, env)).toEqual(found);
+    expect(await findRowBinary([OPENCODE_LAUNCH], env)).toEqual(found);
     expect(await locateRowBinary(OPENCODE_LAUNCH, env)).toBe(found.path);
-    expect(await findRowBinary(OPENCODE_LAUNCH, { ...env, FAKE_VERSION: '1.20.0' })).toEqual({
+    expect(await findRowBinary([OPENCODE_LAUNCH], { ...env, FAKE_VERSION: '1.20.0' })).toEqual({
       reason:
         "Frink has checked OpenCode 1.19. You have 1.20.0, which Frink hasn't checked yet. To use OpenCode in Frink now, go back to OpenCode 1.19.",
     });
     const missing = { ...env, PATH: '/usr/bin' };
     expect(await locateRowBinary(OPENCODE_LAUNCH, missing)).toBeUndefined();
-    expect(await findRowBinary(OPENCODE_LAUNCH, missing)).toEqual({
+    expect(await findRowBinary([OPENCODE_LAUNCH], missing)).toEqual({
       reason:
         "Frink can't find OpenCode on this computer. Install it with npm install -g opencode-ai@1.19, then try again.",
       missing: true,
     });
+  });
+
+  /** Two versions of one agent; each records when its settings are built and its check runs. */
+  function versionRows(ran: string[]): AcpLaunchRow[] {
+    const row = (floor: string, below: string): AcpLaunchRow => ({
+      ...OPENCODE_LAUNCH,
+      versions: { floor, below },
+      settings: async (context) => {
+        ran.push(`${floor} settings`);
+        const { env } = await OPENCODE_LAUNCH.settings(context);
+        const passes = () => {
+          ran.push(`${floor} check`);
+          return true;
+        };
+        return { env, checks: [{ args: ['console', 'orgs'], passes }] };
+      },
+    });
+    return [row('1.19.0', '1.20.0'), row('2.0.29', '2.1.0')];
+  }
+
+  it.each([
+    ['1.19.4', '1.19.0'],
+    ['opencode v2.0.29', '2.0.29'],
+    ['2.0.31', '2.0.29'],
+  ])(
+    'starts version %s with the row that holds it, reading the version once',
+    async (printed, floor) => {
+      const ran: string[] = [];
+      const log = path.join(root, 'version runs');
+      const env = userEnv({ FAKE_VERSION: printed, FAKE_LOG: log });
+      const result = await launchFromRows(versionRows(ran), project, { runRoot, env });
+      if (result.ok) launches.push(result.launch);
+      expect(result.ok).toBe(true);
+      expect(ran).toEqual([`${floor} settings`, `${floor} check`]);
+      expect(await readFile(log, 'utf8')).toBe('run\n');
+    },
+  );
+
+  it.each([
+    ['2.1.0', 'To use OpenCode in Frink now, go back to OpenCode 2.0.'],
+    ['1.20.0', 'Update OpenCode, then try again.'],
+    ['1.18.9', 'Update OpenCode, then try again.'],
+  ])(
+    'names every checked version when no row holds %s, before any settings',
+    async (version, fix) => {
+      const ran: string[] = [];
+      const env = userEnv({ FAKE_VERSION: version });
+      expect(await launchFromRows(versionRows(ran), project, { runRoot, env })).toEqual({
+        ok: false,
+        reason: `Frink has checked OpenCode 1.19 and 2.0.29 and later 2.0 releases. You have ${version}, which Frink hasn't checked yet. ${fix}`,
+      });
+      expect(ran).toEqual([]);
+      await expect(access(runRoot)).rejects.toThrow();
+    },
+  );
+
+  it('finds a version any row holds', async () => {
+    const env = userEnv({ FAKE_VERSION: '2.0.30' });
+    expect(await findRowBinary(versionRows([]), env)).toEqual({
+      path: path.join(bin, 'opencode'),
+      version: '2.0.30',
+    });
+  });
+
+  it('starts every version of an agent from the same install, read the same way', () => {
+    const shared = ({
+      name,
+      binary,
+      fallbacks,
+      versionPattern,
+      installHint,
+      envPrefix,
+    }: AcpLaunchRow) => ({ name, binary, fallbacks, versionPattern, installHint, envPrefix });
+    for (const rows of LAUNCH_ROWS.values()) {
+      for (const row of rows) expect(shared(row)).toEqual(shared(rows[0]));
+    }
+  });
+
+  it("lists an agent's checked versions oldest first, with no version in two rows", () => {
+    const rank = (version: string) => {
+      expect(version).toMatch(/^\d+\.\d+\.\d+$/);
+      return version.split('.').reduce((total, part) => total * 1000 + Number(part), 0);
+    };
+    for (const rows of LAUNCH_ROWS.values()) {
+      rows.forEach(({ versions }, index) => {
+        expect(rank(versions.floor)).toBeLessThan(rank(versions.below));
+        if (index)
+          expect(rank(rows[index - 1].versions.below)).toBeLessThanOrEqual(rank(versions.floor));
+      });
+    }
   });
 
   it('refuses an agent it has no launch for', async () => {
