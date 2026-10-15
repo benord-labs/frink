@@ -67,7 +67,7 @@ import { useEffectiveChatModeForPane } from '../hooks/use-effective-plan-mode-fo
 import { useEffectiveProjectForPane } from '../hooks/use-effective-project-for-pane';
 import { useEffectiveWorkModeForPane } from '../hooks/use-effective-work-mode-for-pane';
 import { useFocusInputOnEnter } from '../hooks/use-focus-input-on-enter';
-import { useModelNormalization } from '../hooks/use-model-normalization';
+import { useModelNormalization, useNewAgentChatModel } from '../hooks/use-model-normalization';
 import { useToggleFocusOnCmdEsc } from '../hooks/use-toggle-focus-on-cmd-esc';
 import { newChatDraftKey } from '../lib/drafts';
 import { createNewChatStaging, seedNewChatNavigation } from '../lib/new-chat-navigation';
@@ -236,10 +236,10 @@ export function NewChatForm({
 
   const { lastSelectedModelId, setLastSelectedModelId } = useEffectiveModelForPane(splitPaneIndex);
   // A new chat starts on the stored choice, or the account's default when the account can't use
-  // it. The stored preference itself is kept for an account that can.
+  // it. For an installed agent, the stored choice is replaced only when the agent would refuse it.
   const models = useProviderModels(resolvedAccount?.type, lastSelectedModelId);
   const { codexCatalog } = models;
-
+  useNewAgentChatModel(models, lastSelectedModelId, setLastSelectedModelId);
   // Normalize model selection when account type changes (Codex ↔ Claude)
   useModelNormalization(
     resolvedAccount?.type,

@@ -4,8 +4,13 @@ import {
   codexModelsForAccount,
   isCodexModelUnavailable,
 } from '../../../shared/lib/codex-cli-models';
-import type { PickerGroupFields } from '../../../shared/lib/model-picker-label/groups';
 import {
+  agentRefusesModel,
+  modelRowFor,
+  type PickerGroupFields,
+} from '../../../shared/lib/model-picker-label/groups';
+import {
+  AGENT_DEFAULT_MODEL_ID,
   CLAUDE_CODE_MODELS,
   CODEX_MODELS,
   claudeModelToPickerItem,
@@ -28,6 +33,8 @@ type ProviderModels = {
   unavailable: boolean;
   /** Shown under an agent's list before the agent has said which models it offers. */
   hint?: string;
+  /** Agents only: the agent's turn refuses the saved model, so a new chat starts on its default. */
+  refusesModel?: boolean;
 };
 
 type ProviderModelInputs = {
@@ -80,15 +87,20 @@ export function providerModels(
   if (row?.runtime === 'codex') return codexModels(inputs);
   if (!isInstalledAgent(row)) return claudeModels(inputs);
   const listed = inputs.agentModels ?? [];
-  const chosen = listed.find((m) => m.id === inputs.modelId);
-  // An id the agent doesn't list is never sent, so the agent's own default runs.
-  const fallback = { id: inputs.modelId, name: `${row.name} default` };
+  const { offered, row: runs } = modelRowFor(listed, inputs.modelId);
+  // Copilot runs the saved effort, else the model's default, else its own: then no tier shows.
+  const copilotRow = runs ?? (offered && { id: inputs.modelId, name: offered.name });
+  const chosen =
+    row.runtime === 'copilot' ? copilotRow : listed.find((m) => m.id === inputs.modelId);
+  // The turn refuses a model the agent no longer offers; this row sends none.
+  const fallback = { id: AGENT_DEFAULT_MODEL_ID, name: `${row.name} default` };
   return {
     items: chosen ? [...listed] : [fallback, ...listed],
     selected: chosen ?? fallback,
     variant: row.id,
     unavailable: false,
     hint: listed.length > 0 ? undefined : `Send a message to load ${row.name}'s models.`,
+    refusesModel: agentRefusesModel(listed, inputs.modelId, row.runtime === 'copilot'),
   };
 }
 

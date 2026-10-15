@@ -1,6 +1,10 @@
 import { useEffect, useRef } from 'react';
 import type { CodexAccountCatalog } from '../../../../shared/lib/codex-cli-models';
-import { CODEX_MODELS, normalizeModelIdForExecutionAccount } from '../../../../shared/lib/models';
+import {
+  AGENT_DEFAULT_MODEL_ID,
+  CODEX_MODELS,
+  normalizeModelIdForExecutionAccount,
+} from '../../../../shared/lib/models';
 
 /**
  * Reads the model id via ref, not reactively: split-view panes on different account types would
@@ -37,4 +41,16 @@ export function useModelNormalization(
     if (next !== currentModelId) setLastSelectedModelId(next);
     // Only re-run when account type (or whether its catalog is loading) changes, NOT on model changes
   }, [providerId, accountResolved, codexCatalogLoading, setLastSelectedModelId]);
+}
+
+/** A new agent chat drops a saved model its agent's turn would refuse, for the agent's default. */
+export function useNewAgentChatModel(
+  models: { refusesModel?: boolean },
+  modelId: string,
+  setModelId: (id: string) => void,
+): void {
+  const refused = models.refusesModel === true;
+  useEffect(() => {
+    if (refused) setModelId(AGENT_DEFAULT_MODEL_ID);
+  }, [refused, modelId, setModelId]);
 }

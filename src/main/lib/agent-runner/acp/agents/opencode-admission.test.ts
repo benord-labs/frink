@@ -6,8 +6,10 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { CodexApprovalRequest } from '../../codex/codex-events';
+import * as database from '../../../db';
+import { freshDb } from '../../../db/test-utils/fresh-db';
 import { startAcpAgentProcess } from '../acp-process';
 import { runAcpAgent } from '../acp-runner';
 import { collectChunks } from '../acp-test-fixtures';
@@ -15,6 +17,8 @@ import { resolveAcpLaunch } from '../index';
 import { listen, markerModule, type Step, startScriptedModel } from './admission-model';
 import { launchFromRows } from './launch';
 import { OPENCODE_LAUNCH } from './opencode';
+
+vi.spyOn(database, 'getDatabase').mockReturnValue(freshDb());
 
 /**
  * Admission run against a real OpenCode install, named by FRINK_ACP_ADMISSION_BIN. A scripted model

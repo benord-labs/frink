@@ -3,7 +3,11 @@ import {
   CODEX_DEFAULT_MODEL_ID,
   type CodexAccountCatalog,
 } from '../../../shared/lib/codex-cli-models';
-import { CLAUDE_PICKER_MODELS, CODEX_MODELS } from '../../../shared/lib/models';
+import {
+  AGENT_DEFAULT_MODEL_ID,
+  CLAUDE_PICKER_MODELS,
+  CODEX_MODELS,
+} from '../../../shared/lib/models';
 import { providerModels, unsupportedChatControls } from './chat-options';
 
 const OPENCODE_MODELS = [
@@ -69,6 +73,7 @@ describe('providerModels', () => {
       variant: 'opencode',
       unavailable: false,
       hint: "Send a message to load OpenCode's models.",
+      refusesModel: false,
     });
   });
 
@@ -95,8 +100,52 @@ describe('providerModels', () => {
       variant: 'copilot',
     });
     expect(models('copilot', 'opus').items).toEqual([
-      { id: 'opus', name: 'GitHub Copilot default' },
+      { id: 'sonnet', name: 'GitHub Copilot default' },
     ]);
+  });
+
+  it.each(['gpt-5', 'gpt-5/xhigh'])(
+    "shows Copilot's %s as the model's default effort, which the turn runs",
+    (id) => {
+      const tier = { name: 'GPT-5', familyId: 'gpt-5' };
+      const listed = [
+        { ...tier, id: 'gpt-5/low', effort: 'low' as const },
+        { ...tier, id: 'gpt-5/medium', effort: 'medium' as const, effortDefault: true as const },
+      ];
+      expect(models('copilot', id, { agentModels: listed }).selected).toEqual(listed[1]);
+    },
+  );
+
+  it('names a Copilot model with several efforts and no default, not the agent default', () => {
+    const tier = { name: 'GPT-X', familyId: 'gpt-x' };
+    const listed = [
+      { ...tier, id: 'gpt-x/low', effort: 'low' as const },
+      { ...tier, id: 'gpt-x/high', effort: 'high' as const },
+    ];
+    const result = models('copilot', 'gpt-x', { agentModels: listed });
+    expect(result.selected).toEqual({ id: 'gpt-x', name: 'GPT-X' });
+    expect(result.items).toEqual(listed);
+    expect(result.refusesModel).toBe(false);
+  });
+
+  it("refuses another agent's model only once the agent's saved list lacks it", () => {
+    const foreign = OPENCODE_MODELS[1].id;
+    const listed = [{ id: 'gpt-5', name: 'GPT-5' }];
+    for (const agentModels of [undefined, []]) {
+      const result = models('copilot', foreign, { agentModels });
+      expect(result.selected).toEqual({
+        id: AGENT_DEFAULT_MODEL_ID,
+        name: 'GitHub Copilot default',
+      });
+      expect(result.refusesModel).toBe(false);
+    }
+    expect(models('copilot', foreign, { agentModels: listed }).refusesModel).toBe(true);
+  });
+
+  it("never refuses Claude's model on an agent chat: the turn leaves it out", () => {
+    const result = models('opencode', 'opus', { agentModels: OPENCODE_MODELS });
+    expect(result.selected).toEqual({ id: AGENT_DEFAULT_MODEL_ID, name: 'OpenCode default' });
+    expect(result.refusesModel).toBe(false);
   });
 });
 
