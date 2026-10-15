@@ -6,6 +6,9 @@ const ADDRESS_PORT_REGEX = /^(?:\[([^\]]+)\]|(.+)):(\d+)$/;
 const WHITESPACE_SPLIT_REGEX = /\s+/;
 const SCRIPT_EXTENSION_REGEX = /\.(?:[cm]?[jt]s|py|rb)$/;
 const PS_LINE_REGEX = /^\s*(\d+)\s+(.*)$/;
+const PS_PARENT_LINE_REGEX = /^\s*(\d+)\s+(\d+)\s+(.*)$/;
+/** An unpackaged Electron keeps the stock binary name; packaged apps rename theirs. */
+const DEV_ELECTRON_NAME_REGEX = /^electron$/i;
 
 /** Well-known service ports that are never a project's dev server. */
 const IGNORED_PORTS = new Set([22, 80, 443, 5432, 3306, 6379, 27017]);
@@ -106,6 +109,30 @@ export function parsePsCommands(stdout: string): Map<number, string> {
   return commands;
 }
 
+/** Parses `ps -A -o pid=,ppid=,comm=` into every ancestor of an unpackaged Electron: the dev
+ *  servers behind a desktop window, whose pages break in a browser without Electron's preload. */
+export function parseElectronAncestors(stdout: string): Set<number> {
+  const parentOf = new Map<number, number>();
+  const electrons: number[] = [];
+  for (const line of stdout.split('\n')) {
+    const match = line.match(PS_PARENT_LINE_REGEX);
+    if (!match) continue;
+    const pid = Number.parseInt(match[1], 10);
+    parentOf.set(pid, Number.parseInt(match[2], 10));
+    if (DEV_ELECTRON_NAME_REGEX.test(path.basename(match[3].trim()))) electrons.push(pid);
+  }
+  const ancestors = new Set<number>();
+  for (const electron of electrons) {
+    let pid = parentOf.get(electron);
+    // pid 1 parents every process; a pid already seen means the rest of its chain is in the set.
+    while (pid !== undefined && pid > 1 && !ancestors.has(pid)) {
+      ancestors.add(pid);
+      pid = parentOf.get(pid);
+    }
+  }
+  return ancestors;
+}
+
 /** A short name for the server: the script a runtime runs, else the executable's name. */
 export function labelFromCommand(command: string, cwd?: string): string | null {
   // ps joins argv with spaces, so a folder containing spaces would split a script path apart.
@@ -146,4 +173,9 @@ export async function listCwds(pids: number[]): Promise<Map<number, string>> {
 export async function listCommands(pids: number[]): Promise<Map<number, string>> {
   if (pids.length === 0) return new Map();
   return parsePsCommands(await run('ps', ['-o', 'pid=,command=', '-p', pids.join(',')]));
+}
+
+export async function listElectronAncestors(pids: number[]): Promise<Set<number>> {
+  if (pids.length === 0) return new Set();
+  return parseElectronAncestors(await run('ps', ['-A', '-o', 'pid=,ppid=,comm=']));
 }

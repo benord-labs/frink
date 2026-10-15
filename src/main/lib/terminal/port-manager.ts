@@ -6,6 +6,7 @@ import {
   labelFromCommand,
   listCommands,
   listCwds,
+  listElectronAncestors,
   listListeners,
   toUrl,
 } from './port-scanner';
@@ -31,9 +32,15 @@ export type PortScanner = {
   listListeners: typeof listListeners;
   listCwds: typeof listCwds;
   listCommands: typeof listCommands;
+  listElectronAncestors: typeof listElectronAncestors;
 };
 
-const systemScanner: PortScanner = { listListeners, listCwds, listCommands };
+const systemScanner: PortScanner = {
+  listListeners,
+  listCwds,
+  listCommands,
+  listElectronAncestors,
+};
 
 function isInside(child: string, parent: string): boolean {
   if (child === parent) return true;
@@ -109,9 +116,13 @@ export class PortManager {
     if (this.isScanning) return;
     this.isScanning = true;
     try {
-      const listening = (await this.scanner.listListeners()).filter(
+      const open = (await this.scanner.listListeners()).filter(
         (listener) => !isIgnoredPort(listener.port),
       );
+      const desktopRenderers = await this.scanner.listElectronAncestors(
+        open.map((listener) => listener.pid),
+      );
+      const listening = open.filter((listener) => !desktopRenderers.has(listener.pid));
       const pids = [...new Set(listening.map((listener) => listener.pid))];
       const [cwds, commands] = await Promise.all([
         this.scanner.listCwds(pids),
