@@ -5,7 +5,6 @@ import userEvent from '@testing-library/user-event';
 import { getDefaultStore } from 'jotai';
 import { toast } from 'sonner';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { LAUNCH_FLAGS } from '../../../../../shared/launch-flags';
 import { hiddenModelsAtom } from '../../../../lib/atoms';
 import { AgentsModelsTab } from './index';
 
@@ -302,7 +301,7 @@ describe('AgentsModelsTab installed agents', () => {
     expect(store.get(hiddenModelsAtom)).toEqual(['copilot:gpt-x']);
   });
 
-  it('gives Cursor one switch per model from the list it last gave, once Cursor is on', () => {
+  it('gives Cursor one switch per model from the list it last gave', () => {
     signedIn('cursor');
     const gpt = { name: 'GPT-X', familyId: 'gpt-x' };
     const listed = [
@@ -313,8 +312,10 @@ describe('AgentsModelsTab installed agents', () => {
     agentModels.set('cursor', { data: listed, isPending: false });
     render(<AgentsModelsTab />);
 
-    const switches = screen.queryAllByRole('switch').map((s) => s.getAttribute('aria-label'));
-    expect(switches).toEqual(LAUNCH_FLAGS.cursorAccounts ? ['Show Auto', 'Show GPT-X'] : []);
+    expect(screen.getAllByRole('switch').map((s) => s.getAttribute('aria-label'))).toEqual([
+      'Show Auto',
+      'Show GPT-X',
+    ]);
   });
 
   it('keeps the last GitHub Copilot model on', async () => {

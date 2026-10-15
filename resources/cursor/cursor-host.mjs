@@ -73,9 +73,7 @@ else process.on('message', onRequest).on('disconnect', () => process.exit(0));
 
 try {
   sdk = await import(pathToFileURL(process.argv.at(-1)).href);
-  // Runs sign in with the user's own key first, so it counts as signed in.
-  const status = process.env.CURSOR_API_KEY ? 'logged-in' : (await sdk.Cursor.auth.status()).status;
-  post({ type: 'auth', status });
+  post({ type: 'auth', status: (await sdk.Cursor.auth.status()).status });
 } catch (error) {
   fail(error);
 }

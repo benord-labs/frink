@@ -48,7 +48,7 @@ export const LAUNCH_FLAGS = {
   /** GitHub Copilot as an AI provider, run through GitHub's Copilot SDK. */
   copilotAccounts: true,
   /** Cursor as an AI provider, run through Cursor's own SDK. */
-  cursorAccounts: false,
+  cursorAccounts: true,
   /** Grok Build as an AI provider. Nothing can start it yet, even with this on. */
   grokAccounts: false,
 } as const;

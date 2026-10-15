@@ -144,7 +144,7 @@ The validator surfaces errors inline:
 
 ## What's always blocked (system deny list)
 
-No rule you write can open up these paths. This is a static deny list, not a sandbox — it applies where Frink gates and inspects: file writes/edits, Claude `Read`s, Codex command/patch/terminal input, and commands whose path arguments Frink's classifier resolves (a command it can't statically resolve — an unlisted binary, `git diff --no-index`, a path made relative by an earlier `cd` — falls back to the ordinary ask prompt instead of a hard deny). Not covered today: Codex file reads, OpenCode and GitHub Copilot file reads inside the chat's folder (opening a `.env` file by name is covered; their searches are not), MCP operation arguments, plus the `Glob`/`Grep` search tools on every provider. OS-level sandboxing to close these structurally is the planned follow-up. The list:
+No rule you write can open up these paths. This is a static deny list, not a sandbox — it applies where Frink gates and inspects: file writes/edits, Claude `Read`s, Codex command/patch/terminal input, and commands whose path arguments Frink's classifier resolves (a command it can't statically resolve — an unlisted binary, `git diff --no-index`, a path made relative by an earlier `cd` — falls back to the ordinary ask prompt instead of a hard deny). Not covered today: Codex file reads, OpenCode, GitHub Copilot and Cursor file reads inside the chat's folder (opening a `.env` file by name is covered; their searches are not), MCP operation arguments, plus the `Glob`/`Grep` search tools on every provider. OS-level sandboxing to close these structurally is the planned follow-up. The list:
 
 - `**/.ssh/**` — SSH keys + known_hosts
 - `**/.aws/**` — AWS credentials
@@ -226,6 +226,20 @@ GitHub Copilot chats (macOS) use the same cards and the same rules as any other 
 - **If Copilot ever finishes an action without asking, Frink stops the chat.**
 - **Your own Copilot hooks, MCP servers and saved approvals don't apply inside Frink, for safety**, and Frink won't start Copilot at all when an organisation or your device manages its settings.
 - **Auto and Frink's hooks don't apply to Copilot chats yet.**
+
+## Cursor
+
+Cursor chats (macOS) use the same cards and the same rules as any other chat.
+
+- **Cursor asks Frink before every command and file change**, and before it reads anything outside the chat's folder. Your rules decide; when none does, you get a card. A denial blocks that one action and Cursor carries on.
+- **Reading and searching files in the chat's folder doesn't ask.** In a general chat that folder is your home folder. In a general chat, a search of your whole home folder is refused, because it holds your Cursor sign-in; search a folder inside it instead. Opening a `.env` or `.env.something` file is refused by Frink's built-in deny list, with no card (`.env.example` opens freely). Opening another file whose name ends in `.env`, such as `prod.env`, asks first. A link with an ordinary name that points at a `.env` file isn't caught. A search whose file filter can match a `.env` file, such as `*.env` or `.env*`, asks first too, but a filter where one `*` covers the whole of `.env`, such as `*.local` (which can match `.env.local`), isn't caught. Listing file names doesn't ask. A search with no filter, or with one that only leaves files out such as `!node_modules`, doesn't ask, so it can still show lines from a `.env` file.
+- **Some of Cursor's own bookkeeping doesn't ask**: files it keeps for the chat in Frink's own Cursor folder, such as an image you paste, and its to-do list. None of these change your files.
+- **Cursor only searches for text inside the chat's folder.** A text search of a folder outside it is refused. When a text search would follow a link that leads outside the folder, Frink asks about each place the link leads, and refuses the search if it can't work that out in time.
+- **Cursor's file and search tools never read or change Cursor's own settings folder or your Cursor sign-in.** A command that touches them asks like any other command. A path Cursor would rewrite before opening it, such as one starting with `~` or `file:`, is refused too.
+- **A tool or option Frink can't check is refused**, so it never runs without asking. Web fetch, web search and helper agents aren't offered to Cursor at all for now.
+- **If Cursor ever finishes an action without asking, or doesn't load Frink's check, Frink stops the chat.**
+- **Your own Cursor hooks, MCP servers, rules and skills, and the project's `AGENTS.md` and `.cursor/rules`, don't apply inside Frink, for safety.**
+- **Auto and Frink's hooks don't apply to Cursor chats yet.**
 
 ## Agent tool limits
 

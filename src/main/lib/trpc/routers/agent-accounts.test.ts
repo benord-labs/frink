@@ -27,7 +27,8 @@ const SIGNED_OUT =
   "Cursor isn't signed in. Choose Sign in to Cursor, finish in your browser, then try again.";
 const PAID_PLAN =
   'Cursor needs a paid plan to work in Frink. Upgrade to Cursor Pro or higher, then try again.';
-const NO_SDK = "Frink can't find Cursor's SDK on this computer.";
+const NO_SDK =
+  'Part of Cursor is missing from this copy of Frink. Reinstall Frink, then try again.';
 const NOT_AVAILABLE = "Frink can't connect this agent yet.";
 const COPILOT_MODELS: PickerGroupFields[] = [
   { id: 'gpt-5/medium', name: 'GPT-5', familyId: 'gpt-5', effort: 'medium', effortDefault: true },
@@ -152,7 +153,7 @@ describe('agentAccounts', () => {
     ['OpenAI, switched off', ON, 'darwin', 'codex'],
     ['GitHub Copilot, switched off', ON, 'darwin', 'copilot'],
     ['GitHub Copilot, not checked on Linux', COPILOT_ON, 'linux', 'copilot'],
-    ['Cursor, switched off as shipped', ON, 'darwin', 'cursor'],
+    ['Cursor, switched off', ON, 'darwin', 'cursor'],
     ['Cursor, not checked on Linux', CURSOR_ON, 'linux', 'cursor'],
     ['unknown', ON, 'darwin', 'someday-agent'],
   ])('refuses an agent that is %s', async (_case, flags, platform, type) => {

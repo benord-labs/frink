@@ -7,6 +7,8 @@
  * main/active-chat/utils/execution-error-classification.ts.
  */
 // biome-ignore-all lint/style/useNamingConvention: keys are the wire error categories main stamps on ErrorPayload — renaming them is a cross-process contract change, not a style fix.
+import { pendingAccountAuthAtom } from '../../atoms';
+import { appStore } from '../../jotai-store';
 import { trpcClient } from '../../trpc';
 
 export const ERROR_TOAST_CONFIG: Record<
@@ -86,12 +88,30 @@ export const ERROR_TOAST_CONFIG: Record<
       'Your message will continue this run — the agent picks up where it left off once the run is re-admitted.',
     toastId: 'flow-run-resuming',
   },
+  CURSOR_SIGNED_OUT: {
+    title: "Cursor isn't signed in",
+    description: 'Sign in to Cursor in your browser, then send your message again.',
+    action: { label: 'Sign in', onClick: () => void openCursorSignIn() },
+    toastId: 'cursor-signed-out',
+  },
   LOGIN_REMOVED: {
     title: "This chat's login was removed",
     description: 'Retry the chat with another login, or add one.',
     toastId: 'login-removed',
   },
 };
+
+/** Opens Cursor's connect page on its stored row, so Reconnect keeps the user's name for it. */
+async function openCursorSignIn(): Promise<void> {
+  // Without the list the page still opens, naming the account from Cursor's own check.
+  const accounts = await trpcClient.claudeCode.listAccounts.query().catch(() => []);
+  appStore.set(pendingAccountAuthAtom, {
+    mode: 'reauth',
+    accountLabel: accounts.find((account) => account.type === 'cursor')?.label ?? '',
+    returnToSettings: false,
+    provider: 'cursor',
+  });
+}
 
 /** Per-sub-chat dedup id for a category's toast: repeats replace, sibling chats don't collide. */
 export function toastDedupId(

@@ -1,6 +1,6 @@
 # AI accounts
 
-Frink runs your chats through Claude (Anthropic, via Claude Code), OpenAI (via Codex) or, on macOS, OpenCode or GitHub Copilot. If you're already signed into one in your terminal, that's all Frink needs — it uses the same sign-in, as you. This guide covers how to connect, what Frink stores, and why things behave the way they do.
+Frink runs your chats through Claude (Anthropic, via Claude Code), OpenAI (via Codex) or, on macOS, OpenCode, GitHub Copilot or Cursor. If you're already signed into one in your terminal, that's all Frink needs — it uses the same sign-in, as you. This guide covers how to connect, what Frink stores, and why things behave the way they do.
 
 ## Connecting
 
@@ -56,6 +56,29 @@ What to know:
 - **Copilot chats use your Copilot plan, the same as in the terminal.** They aren't counted in the Usage tab.
 - **macOS only for now.** Linux and Windows aren't supported yet.
 
+### Cursor (macOS)
+
+Cursor is the coding agent from the Cursor editor. Frink runs it with your own Cursor account, through Cursor's own toolkit, which comes with Frink, so there's nothing to install. **Cursor needs a paid Cursor plan to work in Frink.**
+
+1. In Frink, go to Settings → AI providers → **Add an account** → **Connect Cursor**.
+2. If Cursor isn't signed in on this computer, click **Sign in to Cursor**. Your browser opens Cursor's sign-in page (the button reads **Continue in your browser** while Frink waits). Finish there, and Frink checks again on its own.
+3. Click **Connect**.
+
+**Frink stores no Cursor key.** Cursor's sign-in creates a key named "Frink" for your Cursor account and keeps it in Cursor's own folder on this computer. Frink never reads it. It only checks that Cursor is signed in, and again each time a chat sends a message. The model picker starts on "Cursor default", which runs Auto, and shows Cursor's models once Cursor is connected. Frink refreshes the list each time a chat sends a message. Models that let you choose how hard they think show the effort slider.
+
+Frink uses only Cursor's own sign-in: a `CURSOR_API_KEY` set in your shell doesn't apply to Cursor in Frink.
+
+What to know:
+
+- **Inside Frink, your own Cursor hooks, MCP servers, rules and skills don't apply, and neither do the project's `AGENTS.md` and `.cursor/rules`, for safety.** They could let Cursor act without asking, so Frink starts Cursor with a settings folder of its own for each chat. Your sign-in still applies, and the Cursor editor is unchanged.
+- **Cursor asks Frink before every command and file change**, and before it reads anything outside the chat's folder. You answer on the same cards as any other chat. Reading and searching files in the chat's folder doesn't ask (in a general chat that folder is your home folder). In a general chat, a search of your whole home folder is refused, because it holds your Cursor sign-in; search a folder inside it instead. Opening a `.env` or `.env.something` file is refused by Frink's built-in deny list, with no card (`.env.example` opens freely). Opening another file whose name ends in `.env`, such as `prod.env`, asks first. A link with an ordinary name that points at a `.env` file isn't caught. A search whose file filter can match a `.env` file, such as `*.env` or `.env*`, asks first too, but a filter where one `*` covers the whole of `.env`, such as `*.local` (which can match `.env.local`), isn't caught. A search with no filter, or with one that only leaves files out such as `!node_modules`, doesn't ask, so it can still show lines from a `.env` file. Cursor's file and search tools never read or change Cursor's own settings folder or your Cursor sign-in; a command that touches them asks like any other command. Some of Cursor's own bookkeeping doesn't ask: files it keeps for the chat in Frink's own Cursor folder, such as an image you paste, and its to-do list. If Cursor ever finishes an action without asking, Frink stops the chat. More in [Permissions](./permissions.md#cursor).
+- **Cursor only searches for text inside the chat's folder.** A text search of a folder outside it is refused. When a text search would follow a link that leads outside the folder, Frink asks about each place the link leads, as it does for any read outside the folder. If Frink can't work out in time where a search's links lead, the search is refused.
+- **Web fetch, web search and helper agents are off for now.** Frink doesn't offer them to Cursor until it can check them before they run.
+- **Plan mode uses Cursor's own plan mode.** The plan shows as Cursor's reply, not as a plan card.
+- **Not in Cursor chats yet:** Auto, Flows, MCP servers, Frink's own chat tools (such as building a Flow from a chat), adding to a running turn (a message you send waits for the turn to end; **Send now** stops the turn first) and Debug mode.
+- **Cursor chats use your Cursor plan, the same as in Cursor.** They aren't counted in the Usage tab.
+- **macOS only for now.** Linux and Windows aren't supported yet.
+
 ### API key
 
 If you'd rather keep credentials inside Frink, paste an Anthropic API key (`sk-ant-api…`) under Settings → AI providers → **Add an account** → **Add a Claude API key**. The name is optional (it defaults to "Claude API key", then "Claude API key 2" and so on). The key is encrypted with `safeStorage` (macOS Keychain, libsecret on Linux) and stays on this machine. Paste it again on another machine to use it there.
@@ -67,7 +90,7 @@ You can have **as many API-key accounts as you want** — useful for separating 
 These are the things people notice and wonder about:
 
 - **Frink always runs as whoever is signed in right now.** If you switch accounts in your terminal (or with an account switcher), your next chat simply runs as the new account. Nothing to reconnect. The account's name in Frink stays whatever you called it (a Claude account also shows the email it last ran as, which updates with you).
-- **Signed out? Chats pause until you sign back in.** A new chat shows **Sign back in to keep chatting** (an open chat shows *your account* **was signed out**) and re-checks every few seconds. Run `claude auth login` or `codex login` and it clears on its own — you don't have to click anything (a **Sign in again** button is there too if you prefer, and the other provider is offered as a switch).
+- **Signed out? Chats pause until you sign back in.** A new chat shows **Sign back in to keep chatting** (an open chat shows _your account_ **was signed out**) and re-checks every few seconds. Run `claude auth login` or `codex login` and it clears on its own — you don't have to click anything (a **Sign in again** button is there too if you prefer, and the other provider is offered as a switch).
 - **Removing an account never moves its chats.** A chat keeps the account and provider it started with. If you remove that account, the chat stops with **This chat's login was removed** and offers **Retry with** another account of the same provider, or to add one.
 - **Rotation can't interrupt a running agent.** The agent holds the credential itself and refreshes it mid-run under the same lock your terminal uses. Earlier versions handed the agent a copy of the token taken at start time, so anything that rotated your credential — another terminal, another app — revoked that copy and every in-flight agent failed at once with a 401. That whole class of failure is gone.
 - **One sign-in per provider per machine.** This mirrors how `claude` and `codex` themselves work: one sign-in per user, not one per project. For Claude it has to be the main sign-in — `claude` also creates project-scoped sub-credentials when used inside specific folders, and Frink can't use those. If Frink reports no sign-in found, run a top-level `claude auth login`. To use a second Anthropic identity in the same Frink, add an API-key account.
@@ -90,13 +113,14 @@ If you hit a feature gap because of version skew, opening an issue with the `cla
 
 All of it lives on this machine and nothing leaves it — each machine connects on its own.
 
-| Account | What's stored |
-|---|---|
-| **Claude Code sign-in** | A pointer to the keychain entry. No token. |
-| **OpenAI sign-in** | A pointer to your local Codex sign-in. No token. |
-| **OpenCode** | A note that OpenCode is connected. No token. |
-| **GitHub Copilot** | A note that GitHub Copilot is connected. No token. |
-| **API key** (Anthropic) | The encrypted token via Electron `safeStorage`. |
+| Account                 | What's stored                                      |
+| ----------------------- | -------------------------------------------------- |
+| **Claude Code sign-in** | A pointer to the keychain entry. No token.         |
+| **OpenAI sign-in**      | A pointer to your local Codex sign-in. No token.   |
+| **OpenCode**            | A note that OpenCode is connected. No token.       |
+| **GitHub Copilot**      | A note that GitHub Copilot is connected. No token. |
+| **Cursor**              | A note that Cursor is connected. No key.           |
+| **API key** (Anthropic) | The encrypted token via Electron `safeStorage`.    |
 
 Reconnecting an account never creates a duplicate: Frink updates the existing row in place, so your project assignments and default-account setting are kept.
 
@@ -138,4 +162,15 @@ Below that, the same tab shows how much of your Claude and OpenAI (ChatGPT) plan
 - **"Frink can't run GitHub Copilot for GitHub Enterprise Server accounts yet"** — sign in to Copilot with a github.com account instead, or use Claude or OpenAI.
 - **"GitHub Copilot didn't confirm Frink's safety settings"**, **"… stopped confirming Frink's safety settings"** or **"… started without asking before changes"** — Copilot didn't start the way Frink needs, so Frink stopped it before it could act on its own. Send your message again. If it keeps happening, update Copilot with `copilot update`, or use another provider.
 - **"GitHub Copilot couldn't turn Plan mode on or off as asked"** — your message wasn't sent. Send it again.
-- **"Frink can't check this tool yet, so it didn't run"** — Copilot tried a tool or option Frink doesn't know how to ask you about. Nothing ran, and Copilot usually tries another way.
+- **"Frink can't check this tool yet, so it didn't run"** — Copilot or Cursor tried a tool or option Frink doesn't know how to ask you about. Nothing ran, and Copilot usually tries another way.
+- **"Cursor isn't signed in"** with **"Sign in to Cursor in your browser, then send your message again."** (in a chat) — click **Sign in** on that message to open the **Reconnect Cursor Account** page. It shows **"Cursor isn't signed in. Choose Sign in to Cursor, finish in your browser, then try again."**: click **Sign in to Cursor**, finish in your browser, click **Reconnect**, then send your message again. If the message has gone, start from Settings → AI providers → **Add an account** → **Connect Cursor** instead (the last button there reads **Connect**).
+- **"Cursor's sign-in didn't finish. Try again."** — Cursor's sign-in wasn't finished within about 20 minutes, or it failed. Click **Sign in to Cursor** again.
+- **"Cursor needs a paid plan to work in Frink. Upgrade to Cursor Pro or higher, then try again."** — Cursor's free plan can't run in Frink. Upgrade your Cursor plan, or use Claude, OpenAI, OpenCode or GitHub Copilot.
+- **"Frink couldn't reach Cursor. Try again in a moment."** — Cursor didn't answer while Frink checked it. Wait a moment, then click **Check again**.
+- **"Part of Cursor is missing from this copy of Frink. Reinstall Frink, then try again."** or **"This copy of Frink has the wrong version of Cursor. Reinstall Frink, then try again."** (a chat shows them after **"Cursor didn't start."**) — the copy of Cursor that comes with Frink is damaged. Download and install Frink again.
+- **"Cursor no longer offers [model]. Pick another model."** — Cursor has dropped the model this chat used. Pick another one in the model picker and send your message again.
+- **"Cursor didn't load Frink's safety check, so Frink stopped it."**, **"Frink couldn't prepare Cursor's safety check, so it didn't start it."**, **"Frink couldn't start Cursor, so this turn didn't run."**, **"Frink can't start Cursor from this folder."** or **"Frink can't start Cursor for this chat."** — Cursor didn't start the way Frink needs, so Frink stopped it before it could act on its own. Send your message again. If it keeps happening, use another provider.
+- **"Cursor changed how it asks Frink, so Frink stopped it."** — Cursor changed the way it checks with Frink before it acts, in a way Frink hasn't checked yet. Use another provider until Frink is updated for it.
+- **"Cursor stopped unexpectedly, so this turn ended. Any steps shown above already ran."** or **"Cursor ran into a problem and stopped this turn. Try again."** — send your message again.
+- **"The agent did something without asking first, so Frink stopped it. The step shown above already ran."** — the agent finished an action Frink hadn't allowed, so Frink stopped the chat. Check the step shown, then send your message again.
+- **"Frink can't check this path, so it didn't run"**, **"Cursor's search only looks inside the chat's folder, so Frink didn't run it"**, **"Frink couldn't check where this search's links lead, so it didn't run it. Try a smaller folder."**, **"Frink couldn't check this step, so it didn't run"**, **"Frink couldn't read Cursor's request, so it blocked it."** or **"This turn has ended, so Frink didn't run this step"** — Frink refused one Cursor step, so nothing ran, and told Cursor why. Cursor carries on with the rest of the turn.

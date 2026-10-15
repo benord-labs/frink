@@ -205,7 +205,9 @@ class CursorTurn {
   halt(text: string): void {
     if (this.isOver) return;
     log.warn(`[Cursor] Stopping the turn: ${text}`);
-    this.emit({ type: 'error', errorText: text });
+    // Tagged so the chat offers a button to Cursor's connect page.
+    const signIn = text === SIGNED_OUT ? { debugInfo: { category: 'CURSOR_SIGNED_OUT' } } : {};
+    this.emit({ type: 'error', errorText: text, ...signIn });
     this.end();
   }
 

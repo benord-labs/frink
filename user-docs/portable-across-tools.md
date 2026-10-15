@@ -12,7 +12,7 @@ Frink lets you move between coding tools — Claude, Codex, Cursor and more — 
 
 ## Switching tools
 
-Each chat stays on the tool it started with. A new chat uses its project's account (set in **Settings → AI providers**) or your default, Claude, Codex, OpenCode or GitHub Copilot, and changing either only affects chats you start afterwards. To use a different signed-in login for just one new chat, pick it from the account menu at the top of the new-chat screen; that never changes either default. Nothing inside a chat changes its tool or login; its header shows which one it always uses. The one exception is a chat that hits its usage limit: **Retry with** another signed-in Claude login carries the same conversation on there (on that login's organisation), and the chat stays on it. To work in another tool, start a new chat. When you move to another tool, Frink sets it up with your config and tells you what came across and what changes. Your setup also reaches editors Frink doesn't run your chats through, Cursor included: it imports their config and writes yours back.
+Each chat stays on the tool it started with. A new chat uses its project's account (set in **Settings → AI providers**) or your default, Claude, Codex, OpenCode, GitHub Copilot or Cursor, and changing either only affects chats you start afterwards. To use a different signed-in login for just one new chat, pick it from the account menu at the top of the new-chat screen; that never changes either default. Nothing inside a chat changes its tool or login; its header shows which one it always uses. The one exception is a chat that hits its usage limit: **Retry with** another signed-in Claude login carries the same conversation on there (on that login's organisation), and the chat stays on it. To work in another tool, start a new chat. When you move to another tool, Frink sets it up with your config and tells you what came across and what changes. Your setup also reaches editors such as the Cursor editor: Frink imports their config and writes yours back.
 
 ## What follows you
 
@@ -64,6 +64,8 @@ Frink tells you what changed when you switch tools. The agent itself (its name a
 **OpenCode** chats don't take your setup yet. MCP servers, commands, custom agents and hooks don't reach them, and Frink ignores your own OpenCode config files while it runs OpenCode, for safety. OpenCode still reads your instructions files (`AGENTS.md`, `CLAUDE.md`) and the skills in `~/.claude/skills`.
 
 **GitHub Copilot** chats don't take your setup yet either. MCP servers, commands, custom agents, skills and hooks don't reach them, and your own Copilot hooks, MCP servers and saved approvals don't apply inside Frink, for safety. Copilot in your terminal keeps all of them.
+
+**Cursor** chats don't take your setup yet either. MCP servers, commands, custom agents, skills, hooks and instructions files don't reach them, and your own Cursor hooks, MCP servers, rules and skills, and the project's `AGENTS.md` and `.cursor/rules`, don't apply inside Frink, for safety. The Cursor editor keeps all of them.
 
 And if a tool can't take a piece of your setup at all, Frink doesn't force it — that piece stays where you set it up, and works again the moment you switch back.
 
