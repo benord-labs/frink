@@ -5,6 +5,8 @@
  * Keyed by flow run rather than node run, so one cancel fans out to every in-flight node.
  */
 
+import { reportWork } from '../power/work-activity';
+
 const flowRunControllers = new Map<string, Set<AbortController>>();
 
 export function registerNodeAbort(flowRunId: string, controller: AbortController): void {
@@ -14,6 +16,7 @@ export function registerNodeAbort(flowRunId: string, controller: AbortController
     flowRunControllers.set(flowRunId, set);
   }
   set.add(controller);
+  reportWork('flow-nodes', true);
 }
 
 export function unregisterNodeAbort(flowRunId: string, controller: AbortController): void {
@@ -21,6 +24,7 @@ export function unregisterNodeAbort(flowRunId: string, controller: AbortControll
   if (!set) return;
   set.delete(controller);
   if (set.size === 0) flowRunControllers.delete(flowRunId);
+  reportWork('flow-nodes', flowRunControllers.size > 0);
 }
 
 export function abortFlowRun(flowRunId: string): number {
@@ -34,5 +38,6 @@ export function abortFlowRun(flowRunId: string): number {
     }
   }
   flowRunControllers.delete(flowRunId);
+  reportWork('flow-nodes', flowRunControllers.size > 0);
   return count;
 }

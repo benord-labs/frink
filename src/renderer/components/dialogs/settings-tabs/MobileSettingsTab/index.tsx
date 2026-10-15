@@ -160,8 +160,10 @@ export function MobileSettingsTab() {
                     id="mobile-enabled-hint"
                     className="max-w-prose text-xs leading-relaxed text-muted-foreground"
                   >
-                    Keep a Frink window open and this computer awake. Turning this off disconnects
-                    every phone and removes their access. You will need to pair again.
+                    Keep a Frink window open. This computer stays awake while agents work (Settings
+                    → Preferences); when nothing is running it may sleep and your phone can't reach
+                    it. Turning this off disconnects every phone and removes their access. You will
+                    need to pair again.
                   </p>
                   <p className="text-xs text-muted-foreground" role="status">
                     {!status.data.running

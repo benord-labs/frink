@@ -15,11 +15,15 @@ import type { TranscriptTerminalDurability } from '../../../../shared/types/assi
 import type { TaskSignalPayload } from '../../../../shared/types/task-signal';
 import type { WakeHoldChangedPayload } from '../../../../shared/types/wake-hold';
 import type { UIMessageChunk } from '../../claude/types';
+import { reportWork } from '../../power/work-activity';
 import type { WakeHoldIo } from '../claude-wake-hold';
 import type { ExecuteCompletePayload, MessagePart, StreamChunkPayload } from '../client';
 import { clearChunkCounter } from './assistant-chunk-checkpoint';
 import { emitBurstPlanCard } from './burst-chunks';
 import { finishHeldLiveStreams } from './live-stream';
+
+/** Waits the user sees as held, one entry per execution's IO so a stale hold can't clear its successor. */
+const heldWaits = new Set<WakeHoldIo>();
 
 /** The `./client` senders a burst needs, injected by the executor (see the module doc). */
 type BurstSenders = {
@@ -89,6 +93,9 @@ export function buildWakeHoldIo(params: {
       // Latch before any asynchronous completion can inspect it. `wakeBurst` identifies the
       // observer lane; it does not prove the wait still exists after Stop/reload retracted it.
       holdActive = held;
+      if (held) heldWaits.add(io);
+      else heldWaits.delete(io);
+      reportWork('background-waits', heldWaits.size > 0);
       if (!held) {
         for (const finished of finishHeldLiveStreams(subChatId)) {
           clearChunkCounter(subChatId, finished.assistantMessageId, finished.streamEpoch);

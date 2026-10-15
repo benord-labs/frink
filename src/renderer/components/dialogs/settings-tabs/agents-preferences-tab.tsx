@@ -31,6 +31,15 @@ export function AgentsPreferencesTab() {
   const [analyticsOptOut, setAnalyticsOptOut] = useAtom(analyticsOptOutAtom);
   const isNarrowScreen = useIsNarrowScreen();
   const [worktreePathInput, setWorktreePathInput] = useState('');
+  const utils = trpc.useUtils();
+  const { data: keepAwake } = trpc.power.keepAwakeWhileWorking.useQuery();
+  const setKeepAwakeMutation = trpc.power.setKeepAwakeWhileWorking.useMutation({
+    onMutate: ({ enabled }) => utils.power.keepAwakeWhileWorking.setData(undefined, { enabled }),
+    onError: (error) => {
+      toast.error(error.message);
+      void utils.power.keepAwakeWhileWorking.invalidate();
+    },
+  });
 
   const { data: worktreeBasePath, refetch: refetchWorktreeBasePath } =
     trpc.claudeSettings.getWorktreeBasePath.useQuery();
@@ -124,6 +133,26 @@ export function AgentsPreferencesTab() {
               <Switch
                 checked={promptCacheTimerEnabled}
                 onCheckedChange={setPromptCacheTimerEnabled}
+                className="shrink-0"
+              />
+            </div>
+
+            {/* Keep Awake */}
+            <div className="flex items-start justify-between gap-4 px-4 py-3">
+              <div className="flex flex-col gap-1 min-w-0">
+                <span className="text-sm font-medium text-foreground">
+                  Keep this Mac awake while agents are working
+                </span>
+                <span className="text-xs text-muted-foreground leading-relaxed">
+                  Stops your Mac from going to sleep while an agent is working, including chats
+                  waiting on background work. It still sleeps when you close the lid, and this turns
+                  off when the battery is low
+                </span>
+              </div>
+              <Switch
+                aria-label="Keep this Mac awake while agents are working"
+                checked={keepAwake?.enabled ?? true}
+                onCheckedChange={(enabled) => setKeepAwakeMutation.mutate({ enabled })}
                 className="shrink-0"
               />
             </div>

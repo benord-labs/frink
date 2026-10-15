@@ -3,6 +3,7 @@ import {
   registerActiveExecutionCountReader,
   registerOwnerlessExecutionCountReader,
 } from '../../diagnostics/provider-topology';
+import { reportWork } from '../../power/work-activity';
 
 /**
  * Live execution records, keyed by sub-chat: the abort controller every stop path reaches for,
@@ -56,6 +57,7 @@ export function setActiveExecution(
     streamEpoch: randomUUID(),
     ...presentation,
   });
+  reportWork('agent-turns', true);
 }
 
 /** Swap the provider controller without rotating the run epoch or losing presentation metadata. */
@@ -74,6 +76,7 @@ export function getActiveExecution(subChatId: string): ActiveExecutionRecord | u
 
 export function deleteActiveExecution(subChatId: string): void {
   activeExecutions.delete(subChatId);
+  reportWork('agent-turns', activeExecutions.size > 0);
 }
 
 export function hasActiveExecutions(): boolean {
@@ -161,4 +164,5 @@ export function _getActiveExecutionCountForTests(): number {
 /** Test-only: clear any seeded entries between tests. */
 export function _clearActiveExecutionsForTests(): void {
   activeExecutions.clear();
+  reportWork('agent-turns', false);
 }

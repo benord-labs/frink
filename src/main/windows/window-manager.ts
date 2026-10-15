@@ -1,5 +1,6 @@
 import { BrowserWindow } from 'electron';
 import { refreshLoginShellEnvInBackground } from '../lib/platform/login-shell-env';
+import { startKeepAwake } from '../lib/power';
 
 /**
  * Tracks the application's windows (Frink is single-window) for focus resolution and lookup.
@@ -31,6 +32,8 @@ class WindowManager {
     if (this.windows.size === 1) {
       this.focusedWindowId = electronId;
     }
+    // Idempotent; from here agent work can run, and keep-awake holds the Mac only while it does.
+    startKeepAwake();
   }
 
   /** Unregister a window */
