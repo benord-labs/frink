@@ -415,6 +415,13 @@ describe('isAutoAllowedPath — paste directory bypass (ticket 15)', () => {
     }
   });
 
+  it('rejects a link into /proc or /dev/fd, which each process reads its own way', () => {
+    if (!canSymlink) return;
+    const link = nodePath.join(pasteDir, 'fd.txt');
+    nodeFs.symlinkSync('/dev/fd/0', link);
+    expect(isAutoAllowedPath(link, pasteDir)).toBe(false);
+  });
+
   it('rejects when parent dir does not exist (ENOENT)', () => {
     const ghostPath = nodePath.join(pasteDir, 'no-such-subdir', 'file.txt');
     expect(isAutoAllowedPath(ghostPath, pasteDir)).toBe(false);

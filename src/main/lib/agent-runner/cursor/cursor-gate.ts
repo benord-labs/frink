@@ -5,7 +5,7 @@ import path from 'node:path';
 import log from 'electron-log';
 import stableStringify from 'fast-json-stable-stringify';
 import { z } from 'zod';
-import { isPathWithinProject } from '../../permissions/path-check';
+import { isPathWithinProject, isProcessRelative } from '../../permissions/path-check';
 import type { CodexApprovalCheck } from '../codex/codex-approvals';
 import type { CodexApprovalRequest } from '../codex/codex-events';
 import {
@@ -145,9 +145,11 @@ function holders(file: string): string[] {
   return [...ids, fileId('/')];
 }
 
-/** True when file is folder or inside it, however either is spelled; an error counts as inside. */
+/** True when file is folder or inside it, however either is spelled; an error or a
+ *  process-relative spelling, which Frink can't resolve as Cursor does, counts as inside. */
 function inside(file: string, folder: string): boolean {
   try {
+    if (isProcessRelative(file) || isProcessRelative(folder)) return true;
     if (isPathWithinProject(file, folder)) return true;
     return existsSync(folder) && holders(file).includes(fileId(folder));
   } catch {
@@ -207,7 +209,10 @@ function walkedFiles(
 async function stepsOut(file: string, root: string, open: string[]): Promise<string[]> {
   const out: string[] = [];
   const covered = (real: string) => [...open, ...out].some((folder) => within(real, folder));
-  if (covered(await realpath(file))) return out;
+  const real = await realpath(file);
+  // Only a link on the way can lead into /proc; the kept-files check refuses such a path.
+  if (real !== file && isProcessRelative(file)) return [file];
+  if (covered(real)) return out;
   let step = root;
   for (const part of path.relative(root, file).split(path.sep)) {
     step = path.join(step, part);
@@ -217,8 +222,10 @@ async function stepsOut(file: string, root: string, open: string[]): Promise<str
   return out;
 }
 
-/** A file removed since the listing can't be read by Cursor's search either, so it is skipped. */
-function skipGone(error: NodeJS.ErrnoException): string[] {
+/** A file removed since the listing can't be read by Cursor's search either, so it is skipped;
+ *  a process-relative one is kept, as Frink may not resolve what the agent's process does. */
+function skipGone(file: string, error: NodeJS.ErrnoException): string[] {
+  if (isProcessRelative(file)) return [file];
   if (error.code === 'ENOENT') return [];
   throw error;
 }
@@ -229,7 +236,7 @@ async function reachedFrom(files: string[], root: string, open: string[], deadli
   for (let at = 0; at < files.length; at += BATCH) {
     if (Date.now() > deadline) return undefined;
     const batch = files.slice(at, at + BATCH);
-    const steps = batch.map((file) => stepsOut(file, root, open).catch(skipGone));
+    const steps = batch.map((file) => stepsOut(file, root, open).catch((e) => skipGone(file, e)));
     reached.push(...(await Promise.all(steps)).flat());
   }
   return reached;
@@ -257,7 +264,9 @@ async function linkTargets(ripgrep: string, input: ToolInput, cwd: string) {
     return undefined;
   }
   const all = [...targets].sort();
-  return all.filter((target) => !all.some((other) => other !== target && within(target, other)));
+  // A process-relative path is never folded, so the kept-files check still refuses it.
+  const folded = (target: string) => all.some((other) => other !== target && within(target, other));
+  return all.filter((target) => isProcessRelative(target) || !folded(target));
 }
 
 /** A search's questions plus one Read per outside place its walk reaches through a link. */
