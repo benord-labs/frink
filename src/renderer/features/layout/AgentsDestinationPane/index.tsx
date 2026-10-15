@@ -15,6 +15,7 @@ type Props = {
   onCloseOverlay: () => void;
   onCloseSettings: () => void;
   onRequestWorkQueueClose: () => void;
+  /** Work Queue and Flows both use this to leave their page and show a chat. */
   onNavigateWorkQueueToChat: (chatId: string) => void;
   /**
    * Sidebar-reopen affordance state. `canToggle` must come from the layout view policy rather than
@@ -58,7 +59,11 @@ export function AgentsDestinationPane({
       <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
         <CodeEditorPanel />
         <ChatAtmosphereSurface className="bg-background">
-          <FlowsPage onClose={onCloseOverlay} sidebarTrigger={sidebarTrigger} />
+          <FlowsPage
+            onClose={onCloseOverlay}
+            onOpenChat={onNavigateWorkQueueToChat}
+            sidebarTrigger={sidebarTrigger}
+          />
         </ChatAtmosphereSurface>
       </div>
     );
