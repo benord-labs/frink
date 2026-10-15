@@ -81,11 +81,83 @@ describe('mapCopilotEvent', () => {
       { url: 'https://example.com' },
     ],
     ['any other tool', 'grep', { pattern: 'x' }, 'AgentTool', { description: 'grep' }],
-    ['a patch', 'apply_patch', '*** Begin Patch', 'AgentTool', { description: 'apply_patch' }],
+    [
+      'a patch naming no file',
+      'apply_patch',
+      '*** Begin Patch',
+      'AgentTool',
+      { description: 'apply_patch' },
+    ],
+    [
+      'a patch Frink cannot read',
+      'apply_patch',
+      '*** Begin Patch\n*** Chmod File: a.txt\n*** End Patch',
+      'AgentTool',
+      { description: 'apply_patch' },
+    ],
   ])('shows %s as its card', (_name, tool, args, toolName, input) => {
     expect(mapAll([toolStarts('call-1', tool, args)])).toEqual([
       { type: 'tool-input-start', toolCallId: 'call-1', toolName },
       { type: 'tool-input-available', toolCallId: 'call-1', toolName, input },
+    ]);
+  });
+
+  it('shows a card for every file a patch adds, changes or deletes, and completes them all', () => {
+    const patch = [
+      '*** Begin Patch',
+      '*** Add File: a.txt',
+      '+one',
+      '+two',
+      '*** Update File: /p/b.txt',
+      '@@ function b',
+      ' keep',
+      '-old',
+      '+new',
+      '*** Delete File: c.txt',
+      '*** End Patch',
+    ].join('\n');
+    const card = (toolCallId: string, toolName: string, input: Record<string, string>) => [
+      { type: 'tool-input-start', toolCallId, toolName },
+      { type: 'tool-input-available', toolCallId, toolName, input },
+    ];
+    expect(mapAll([toolStarts('call-1', 'apply_patch', patch), toolEnds('call-1', false)])).toEqual(
+      [
+        ...card('call-1', 'Write', { file_path: 'a.txt', content: 'one\ntwo' }),
+        ...card('call-1#1', 'Edit', {
+          file_path: '/p/b.txt',
+          old_string: 'old',
+          new_string: 'new',
+        }),
+        ...card('call-1#2', 'Delete', { file_path: 'c.txt' }),
+        ...['call-1', 'call-1#1', 'call-1#2'].map((toolCallId) => ({
+          type: 'tool-output-error',
+          toolCallId,
+          errorText: 'done',
+        })),
+      ],
+    );
+  });
+
+  it('shows a moved file as its old name deleted and its new name edited', () => {
+    const patch =
+      '*** Begin Patch\n*** Update File: a.txt\n*** Move to: b.txt\n@@\n-x\n+y\n*** End Patch';
+    expect(
+      mapAll([toolStarts('call-1', 'apply_patch', patch)]).filter(
+        (chunk) => chunk.type === 'tool-input-available',
+      ),
+    ).toEqual([
+      {
+        type: 'tool-input-available',
+        toolCallId: 'call-1',
+        toolName: 'Delete',
+        input: { file_path: 'a.txt' },
+      },
+      {
+        type: 'tool-input-available',
+        toolCallId: 'call-1#1',
+        toolName: 'Edit',
+        input: { file_path: 'b.txt', old_string: 'x', new_string: 'y' },
+      },
     ]);
   });
 

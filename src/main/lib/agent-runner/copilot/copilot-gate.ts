@@ -9,6 +9,7 @@ import { isPathWithinProject } from '../../permissions/path-check';
 import { envFileAsks } from '../env-file-reads';
 import type { CodexApprovalCheck } from '../codex/codex-approvals';
 import type { CodexApprovalRequest } from '../codex/codex-events';
+import { PATCH_TOOL, readPatch } from './copilot-patch';
 import type { CopilotToolRule, CopilotTools } from './copilot-tools';
 
 export type PreToolUseHookInput = Parameters<NonNullable<SessionHooks['onPreToolUse']>>[0];
@@ -27,7 +28,6 @@ const CANT_CHECK = "Frink can't check this tool yet, so it didn't run.";
 const NOT_CHECKED = "Frink couldn't check this step, so it didn't run.";
 const TURN_OVER = "This turn has ended, so Frink didn't run this step.";
 const REFUSE: CopilotQuestions = { kind: 'refuse', reason: CANT_CHECK };
-const PATCH_TOOL = 'apply_patch';
 
 type ToolInput = Record<string, JsonValue>;
 /** A tool's input: a patch for the patch tool, keyed values for every other tool. */
@@ -49,8 +49,6 @@ const QUESTION_INPUT = {
   WebSearch: ['query', 'query'],
 } as const;
 
-const PATCH_HEADER =
-  /^\*\*\* (?:Begin Patch|End Patch|End of File|(?:(?:Add|Update|Delete) File|Move to): (?!~)(\S.*))$/;
 const GLOB_CHARS = /[*?[\]{}()!]/;
 // A group holding a / or ~ can name any folder, wherever it sits.
 const GROUP_LEAVES = /[{(][^})]*[/~]/;
@@ -66,19 +64,7 @@ const callKey = (toolName: string, args: JsonValue | undefined) =>
   stableStringify([toolName, args]);
 const SESSION_ID = /^[\w-]+$/;
 
-/** Every file a patch names, or nothing when any header is one Frink cannot read. */
-function patchFiles(patch: string): string[] | undefined {
-  // Split where the patch tool breaks lines, a lone \r included; trimmed, as it trims headers.
-  const lines = patch.split(/\r\n?|\n/).map((line) => line.trim());
-  if (lines[0] !== '*** Begin Patch') return undefined;
-  const files: string[] = [];
-  for (const line of lines.filter((candidate) => candidate.startsWith('***'))) {
-    const header = PATCH_HEADER.exec(line);
-    if (!header) return undefined;
-    if (header[1]) files.push(header[1]);
-  }
-  return files.length > 0 ? files : undefined;
-}
+const patchFiles = (patch: string) => readPatch(patch)?.map((entry) => entry.file);
 
 function keysAllowed(args: ToolInput, rule: CopilotToolRule): boolean {
   if (rule.required?.some((key) => !Object.hasOwn(args, key))) return false;
