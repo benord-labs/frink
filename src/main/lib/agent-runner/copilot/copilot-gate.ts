@@ -1,15 +1,12 @@
-import { realpathSync } from 'node:fs';
 import { lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import type { JsonValue, SessionHooks } from '@github/copilot-sdk';
 import log from 'electron-log';
-import picomatch from 'picomatch';
 import stableStringify from 'fast-json-stable-stringify';
 import { z } from 'zod';
-import { isPathWithinProject, resolveToRealPath } from '../../permissions/path-check';
-import { envFileAsks } from '../env-file-reads';
 import type { CodexApprovalCheck } from '../codex/codex-approvals';
 import type { CodexApprovalRequest } from '../codex/codex-events';
+import { editQuestion, pathSchema, readQuestions, textSchema } from '../path-questions';
 import { PATCH_TOOL, readPatch } from './copilot-patch';
 import type { CopilotToolRule, CopilotTools } from './copilot-tools';
 
@@ -37,10 +34,6 @@ const toolCallSchema = z.union([
   z.string().transform((patch): ToolCall => ({ kind: 'patch', patch })),
   z.record(z.string(), z.json()).transform((input): ToolCall => ({ kind: 'input', input })),
 ]);
-const textSchema = z.string().trim().min(1);
-// Copilot reads a leading ~ as a folder name, not home, so such a path is refused.
-const pathSchema = textSchema.refine((file) => !file.startsWith('~'));
-const pathsSchema = z.union([pathSchema, z.array(pathSchema)]).optional();
 
 /** The agent's input key each single-value question reads, and the key Frink's rules expect. */
 const QUESTION_INPUT = {
@@ -50,17 +43,6 @@ const QUESTION_INPUT = {
   WebSearch: ['query', 'query'],
 } as const;
 
-const GLOB_CHARS = /[*?[\]{}()!]/;
-// A group holding a / or ~ can name any folder, wherever it sits.
-const GROUP_LEAVES = /[{(][^})]*[/~]/;
-// A segment that can stand for .., however it is spelled, steps out of the folder before it.
-const stepsUp = (segment: string) =>
-  segment.includes('..') || picomatch.isMatch('..', segment, { dot: true });
-
-const editQuestion = (cwd: string, file: string): CodexApprovalRequest => ({
-  toolName: 'Edit',
-  input: { file_path: path.resolve(cwd, file) },
-});
 const callKey = (toolName: string, args: JsonValue | undefined) =>
   stableStringify([toolName, args]);
 const SESSION_ID = /^[\w-]+$/;
@@ -76,62 +58,6 @@ function keysAllowed(args: ToolInput, rule: CopilotToolRule): boolean {
   });
 }
 
-/** The folder a glob starts from: the segments before its first wildcard. */
-function globRoot(pattern: JsonValue | undefined): string | undefined {
-  if (pattern === undefined) return '.';
-  const parsed = pathSchema.safeParse(pattern);
-  // A backslash is an escape to one glob reader and a folder break to another, so it is refused.
-  if (!parsed.success || GROUP_LEAVES.test(parsed.data) || parsed.data.includes('\\'))
-    return undefined;
-  const segments = parsed.data.split('/');
-  const wild = segments.findIndex((segment) => GLOB_CHARS.test(segment));
-  if (wild !== -1 && segments.slice(wild).some(stepsUp)) return undefined;
-  const root = segments.slice(0, wild === -1 ? undefined : wild).join('/');
-  return root || (parsed.data.startsWith('/') ? '/' : '.');
-}
-
-/** The real place behind a path, or undefined when nothing there can be opened. */
-function realOrMissing(file: string): string | undefined {
-  try {
-    return realpathSync.native(file);
-  } catch {
-    return undefined;
-  }
-}
-
-/** Where the tool really opens a path: the system follows a link before a later .. climbs. */
-function openedPath(cwd: string, given: string, start: string): string | undefined {
-  if (path.isAbsolute(start)) return realOrMissing(start);
-  // Joined as text: path.resolve would drop the .. before the link is followed.
-  const root = realOrMissing(path.isAbsolute(given) ? given : `${cwd}/${given}`);
-  // A start that cannot open below the real root, as under a file, is judged as text there.
-  return root && (realOrMissing(`${root}/${start}`) ?? path.resolve(root, start));
-}
-
-/** Reads ask about anything outside the chat's folder, and about opening an env file in it. */
-function readQuestions(
-  paths: JsonValue | undefined,
-  cwd: string,
-  pattern?: JsonValue,
-): CodexApprovalRequest[] | undefined {
-  const parsed = pathsSchema.safeParse(paths);
-  const start = globRoot(pattern);
-  if (!parsed.success || start === undefined) return undefined;
-  const roots = [parsed.data ?? []].flat();
-  return (roots.length > 0 ? roots : [cwd])
-    .flatMap((given) => {
-      const root = path.resolve(cwd, given);
-      const file = path.resolve(root, start);
-      const opened = openedPath(cwd, given, start);
-      // A link can make the text and the real folder differ: a search opens one, a view the other.
-      const places = opened && opened !== resolveToRealPath(file) ? [file, opened] : [file];
-      const outside = places.filter((place) => !isPathWithinProject(place, cwd));
-      if (outside.length > 0) return outside;
-      return envFileAsks(path.relative(cwd, root)) ? [root] : [];
-    })
-    .map((file) => ({ toolName: 'Read', input: { file_path: file } }));
-}
-
 function argQuestions(
   rule: CopilotToolRule & { question: NonNullable<CopilotToolRule['question']> },
   args: ToolInput,
@@ -139,7 +65,10 @@ function argQuestions(
 ): CodexApprovalRequest[] | undefined {
   const { question } = rule;
   if (question === 'Read') {
-    return readQuestions(args.path ?? args.paths, cwd, rule.glob ? args[rule.glob] : undefined);
+    const glob = rule.glob ? args[rule.glob] : undefined;
+    // A null or empty glob stands for none, as when it is left out.
+    const pattern = glob === null || glob === '' ? undefined : glob;
+    return readQuestions(args.path ?? args.paths, cwd, pattern, rule.namesOnly);
   }
   const [from, to] = QUESTION_INPUT[question];
   const value = (question === 'Edit' ? pathSchema : textSchema).safeParse(args[from]);

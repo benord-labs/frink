@@ -9,6 +9,8 @@ export type CopilotToolRule = {
   required?: readonly string[];
   /** An input key holding a path glob, judged from the folder it starts in. */
   glob?: string;
+  /** True for a tool that returns file names, not contents, so its glob opens no env file. */
+  namesOnly?: boolean;
 };
 
 export type CopilotTools = Readonly<Record<string, CopilotToolRule>>;
@@ -41,9 +43,9 @@ export const COPILOT_TOOLS = {
   edit: { question: 'Edit', keys: ['path', 'old_str', 'new_str'] },
   apply_patch: { question: 'Edit', keys: [] },
   view: { question: 'Read', keys: ['path', 'view_range', 'forceReadLargeFiles'] },
-  grep: { question: 'Read', keys: SEARCH_KEYS },
-  rg: { question: 'Read', keys: SEARCH_KEYS },
-  glob: { question: 'Read', keys: ['pattern', 'paths'], glob: 'pattern' },
+  grep: { question: 'Read', keys: SEARCH_KEYS, glob: 'glob' },
+  rg: { question: 'Read', keys: SEARCH_KEYS, glob: 'glob' },
+  glob: { question: 'Read', keys: ['pattern', 'paths'], glob: 'pattern', namesOnly: true },
   web_fetch: { question: 'WebFetch', keys: ['url', 'max_length', 'start_index', 'raw'] },
   web_search: { question: 'WebSearch', keys: ['query'] },
   sql: { keys: ['description', 'query', 'database'] },
