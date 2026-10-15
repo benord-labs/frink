@@ -1,4 +1,5 @@
 import { LAUNCH_FLAGS } from '../../launch-flags';
+import type { ChatMode } from '../../types/chat-mode';
 
 /** What drives a provider: Claude's SDK, Codex's app server, ACP, or Copilot's or Cursor's SDK. */
 export const AGENT_RUNTIMES = ['claude', 'codex', 'acp', 'copilot', 'cursor'] as const;
@@ -119,6 +120,25 @@ export function isInstalledAgent<R extends { runtime: AgentRuntime }>(
   row: R | undefined,
 ): row is Exclude<R, { runtime: 'claude' | 'codex' }> {
   return row !== undefined && row.runtime !== 'claude' && row.runtime !== 'codex';
+}
+
+/** Frink modes a provider has no equivalent for yet: never offered, and refused if sent. */
+export function unsupportedModes(type: string | null | undefined): ChatMode[] {
+  const row = aiProvider(type);
+  // Codex is sent no plan mode, so a Plan turn would edit files instead of planning.
+  if (row?.runtime === 'codex') return ['plan'];
+  if (!isInstalledAgent(row)) return [];
+  return row.planMode ? ['debug'] : ['plan', 'debug'];
+}
+
+/** Why a turn can't run in this mode on this provider, or null when it can. */
+export function unsupportedModeMessage(
+  type: string | null | undefined,
+  mode: ChatMode,
+): string | null {
+  const row = aiProvider(type);
+  if (!row || !unsupportedModes(type).includes(mode)) return null;
+  return `${mode === 'plan' ? 'Plan' : 'Debug'} mode isn't available for ${row.name} yet.`;
 }
 
 export function agentRunnable(

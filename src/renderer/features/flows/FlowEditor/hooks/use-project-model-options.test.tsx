@@ -213,4 +213,24 @@ describe('useProjectModelOptions', () => {
     );
     expect(result.current.unsupportedMessage).toBeUndefined();
   });
+
+  it.each([
+    ['codex', "Plan mode isn't available for OpenAI yet. Pick another mode."],
+    ['claude-code', null],
+  ])('says why a %s project cannot run Plan, or null when it can', (type, expected) => {
+    querySnapshot.data = { type };
+    const { result } = renderHook(() =>
+      useProjectModelOptions(PROJECT_ID, { model: undefined, onClearModel: () => {} }),
+    );
+    expect(result.current.planUnavailable).toBe(expected);
+  });
+
+  it('keeps Plan on offer while the project account is still loading', () => {
+    querySnapshot.data = { type: 'codex' };
+    querySnapshot.isLoading = true;
+    const { result } = renderHook(() =>
+      useProjectModelOptions(PROJECT_ID, { model: undefined, onClearModel: () => {} }),
+    );
+    expect(result.current.planUnavailable).toBeNull();
+  });
 });

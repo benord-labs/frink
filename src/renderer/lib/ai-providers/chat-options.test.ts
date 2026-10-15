@@ -255,8 +255,12 @@ describe('agentModelFamilies', () => {
 });
 
 describe('unsupportedChatControls', () => {
-  it.each(['claude-code', 'codex', undefined])('%s keeps every mode and command', (provider) => {
+  it.each(['claude-code', undefined])('%s keeps every mode and command', (provider) => {
     expect(unsupportedChatControls(provider)).toEqual({ modes: [], commands: [] });
+  });
+
+  it('hides Plan and its command for Codex, which keeps compacting', () => {
+    expect(unsupportedChatControls('codex')).toEqual({ modes: ['plan'], commands: ['plan'] });
   });
 
   it.each(['opencode', 'copilot'])('hides Debug and compacting for %s, which keeps Plan', (id) => {

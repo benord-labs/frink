@@ -15,7 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '../../../../../components/ui/select';
-import { useProjectModelOptions } from '../../hooks/use-project-model-options';
+import { planModeOption, useProjectModelOptions } from '../../hooks/use-project-model-options';
 import { AvailableVariables } from '../AvailableVariables';
 import { NodeModelField } from '../NodeModelField';
 import { NodeProjectRow } from '../NodeProjectRow';
@@ -53,7 +53,7 @@ export function StartTaskConfig({
 
   const flowDefaultModel = flowSettings?.defaultModel;
   const effectiveProjectId = getEffectiveNodeProjectId(projectId, flowSettings?.defaultProjectId);
-  const { modelOptions, isCodexProject, modelPlaceholder, unsupportedMessage } =
+  const { modelOptions, isCodexProject, modelPlaceholder, unsupportedMessage, planUnavailable } =
     useProjectModelOptions(effectiveProjectId, {
       model,
       flowDefaultModel,
@@ -61,6 +61,7 @@ export function StartTaskConfig({
     });
 
   const projErr = getNodeProjectFieldError(effectiveProjectId);
+  const plan = planModeOption(startMode, planUnavailable);
 
   return (
     <div className="space-y-4">
@@ -111,14 +112,14 @@ export function StartTaskConfig({
           placeholder="Flow: Agent task"
         />
       </FieldRow>
-      <FieldRow htmlFor="flow-start-task-mode" label="Start mode">
+      <FieldRow htmlFor="flow-start-task-mode" label="Start mode" error={plan.error}>
         <Select value={startMode} onValueChange={(v) => onConfigPatch({ startMode: v })}>
           <SelectTrigger id="flow-start-task-mode" className="w-full">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="execute">Execute</SelectItem>
-            <SelectItem value="plan">Plan</SelectItem>
+            {plan.offered ? <SelectItem value="plan">Plan</SelectItem> : null}
             <SelectItem value="wait">Wait</SelectItem>
           </SelectContent>
         </Select>

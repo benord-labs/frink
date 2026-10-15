@@ -1,4 +1,9 @@
-import { type AiProviderId, aiProvider, isInstalledAgent } from '../../../shared/lib/ai-providers';
+import {
+  type AiProviderId,
+  aiProvider,
+  isInstalledAgent,
+  unsupportedModes,
+} from '../../../shared/lib/ai-providers';
 import {
   type CodexAccountCatalog,
   codexModelsForAccount,
@@ -136,8 +141,7 @@ type UnsupportedChatControls = { modes: ChatMode[]; commands: string[] };
 export function unsupportedChatControls(
   providerId: string | null | undefined,
 ): UnsupportedChatControls {
-  const row = aiProvider(providerId);
-  if (!isInstalledAgent(row)) return { modes: [], commands: [] };
-  const modes: ChatMode[] = row.planMode ? ['debug'] : ['plan', 'debug'];
-  return { modes, commands: [...modes, 'compact'] };
+  const modes = unsupportedModes(providerId);
+  const commands = isInstalledAgent(aiProvider(providerId)) ? [...modes, 'compact'] : modes;
+  return { modes, commands };
 }

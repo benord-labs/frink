@@ -441,7 +441,7 @@ async function createChatForTask(task: DbTask): Promise<{
   const useWorktree = resolveTaskStartInWorktree(task);
   // Project routing is keyed by LOCAL project id (project_ai_accounts is local).
   const taskAccount = await resolveTaskAccount(localProjectId, existingChatId);
-  const executionAccountType = await resolveTaskAccountType(taskAccount);
+  const executionAccountType = await resolveTaskAccountType(taskAccount, executionOptions);
   if (executionOptions.configuredModel) {
     requestedModel = executionOptions.configuredModel;
     taskModel = executionOptions.configuredModel;

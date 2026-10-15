@@ -515,6 +515,16 @@ describe('runCodexAgent', () => {
     expect(getCodexAppServer).not.toHaveBeenCalled();
   });
 
+  // Codex is sent no plan mode, so a Plan turn would run with write access instead of planning.
+  it('refuses a Plan turn before starting Codex', async () => {
+    const chunks = await drain(runCodexAgent(params({ mode: 'plan' })));
+    expect(chunks).toEqual([
+      { type: 'error', errorText: "Plan mode isn't available for OpenAI yet. Switch to Agent." },
+      { type: 'finish' },
+    ]);
+    expect(getCodexAppServer).not.toHaveBeenCalled();
+  });
+
   it('starts a thread with the host-ask approval policy + workspace sandbox, then streams text', async () => {
     const fake = startedFakeClient();
 

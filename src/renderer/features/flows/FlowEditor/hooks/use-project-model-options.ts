@@ -1,11 +1,13 @@
-/**
- * Model field wiring for a flow node: Claude vs Codex options from the resolved project account,
- * the inherit-option label, and clearing a saved model that belongs to the other provider.
- */
+/** Model and mode wiring for a flow node: Claude vs Codex options from the project's account, the
+ * inherit-option label, clearing a saved model of the other provider, and why Plan can't run. */
 
 import { useEffect, useRef } from 'react';
 import { trpc } from '@/lib/trpc';
-import { aiProvider, isInstalledAgent } from '../../../../../shared/lib/ai-providers';
+import {
+  aiProvider,
+  isInstalledAgent,
+  unsupportedModeMessage,
+} from '../../../../../shared/lib/ai-providers';
 import {
   CODEX_MODEL_OPTIONS,
   CLAUDE_MODEL_OPTIONS,
@@ -19,6 +21,23 @@ import {
 /** Resolved account `type` → flow execution kind (NULL/legacy/unknown account → claude-code). */
 const accountTypeToExecutionKind = (type: string | undefined): FlowProjectExecutionKind =>
   type === 'codex' ? 'codex' : 'claude-code';
+
+/** Why a project on this account can't run Plan, with what to do instead; null when it can. */
+function planUnavailableFor(type: string | undefined): string | null {
+  const refusal = unsupportedModeMessage(type, 'plan');
+  return refusal && `${refusal} Pick another mode.`;
+}
+
+/** A Mode field offers no Plan where Plan can't run, unless the step is already saved as Plan:
+ * that stays selected, shows why it won't run, and has no auto-approve to set. */
+export function planModeOption(mode: string, planUnavailable: string | null) {
+  const savedAsPlan = mode === 'plan';
+  return {
+    offered: savedAsPlan || planUnavailable === null,
+    error: savedAsPlan ? planUnavailable : null,
+    autoApprove: savedAsPlan && planUnavailable === null,
+  };
+}
 
 type UseProjectModelOptionsConfig = {
   /** The saved id as stored: a node's model override, or the flow default in Flow settings. */
@@ -42,13 +61,14 @@ export function useProjectModelOptions(
   );
 
   const agent = aiProvider(resolvedAccount?.type);
+  const accountKnown = Boolean(projectId) && !isLoading;
   // Flows can't run on an agent yet; its project shows why instead of model fields.
   const unsupportedMessage =
-    projectId && !isLoading && isInstalledAgent(agent)
+    accountKnown && isInstalledAgent(agent)
       ? `This project uses ${agent.name}. Flows run on Claude or OpenAI for now.`
       : undefined;
   const executionKind: FlowProjectExecutionKind =
-    !projectId || isLoading || resolvedAccount == null || unsupportedMessage
+    !accountKnown || resolvedAccount == null || unsupportedMessage
       ? 'unknown'
       : accountTypeToExecutionKind(resolvedAccount.type);
 
@@ -59,6 +79,7 @@ export function useProjectModelOptions(
     (executionKind === 'unknown' && (catalogHint?.startsWith(CODEX_MODEL_PREFIX) ?? false));
 
   const modelOptions = isCodexProject ? CODEX_MODEL_OPTIONS : CLAUDE_MODEL_OPTIONS;
+  const planUnavailable = accountKnown ? planUnavailableFor(resolvedAccount?.type) : null;
 
   const modelPlaceholder = flowDefaultModel
     ? `Flow default (${modelOptions.find((o) => o.value === flowDefaultModel)?.label ?? flowDefaultModel})`
@@ -72,5 +93,5 @@ export function useProjectModelOptions(
     clearModelRef.current();
   }, [executionKind, model]);
 
-  return { modelOptions, isCodexProject, modelPlaceholder, unsupportedMessage };
+  return { modelOptions, isCodexProject, modelPlaceholder, unsupportedMessage, planUnavailable };
 }
