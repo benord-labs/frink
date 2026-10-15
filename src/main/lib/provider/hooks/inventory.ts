@@ -20,11 +20,12 @@ const GROUP_FIELDS = {
 } satisfies Record<keyof SdkGroup, z.ZodType>;
 
 // Groups stay loose and handlers unparsed: an unknown key must reach the classifier to be named.
+export const hookEventsSchema = z.record(z.string(), z.array(z.looseObject(GROUP_FIELDS)));
 const settingsSchema = z.object({
   disableAllHooks: z.boolean().optional(),
-  hooks: z.record(z.string(), z.array(z.looseObject(GROUP_FIELDS))).optional(),
+  hooks: hookEventsSchema.optional(),
 });
-type HookSettings = z.infer<typeof settingsSchema>;
+export type HookSettings = z.infer<typeof settingsSchema>;
 
 /** The three Claude settings files, lowest precedence first; a root that is the home lists once. */
 function hookSourceFiles(rootPath: string): Pick<HookSource, 'scope' | 'file'>[] {
@@ -42,7 +43,7 @@ function refuseProtoKey(key: string, value: unknown): unknown {
   return value;
 }
 
-async function readHookSettings(
+export async function readHookSettings(
   file: string,
 ): Promise<
   | { status: 'read'; settings: HookSettings }
