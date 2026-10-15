@@ -198,11 +198,6 @@ function flowTriggerText(
   return formatTriggerLabel(selectedModel);
 }
 
-/** Model visibility settings cover Claude and OpenAI; an agent's list is its own. */
-function modelSettingsAction(variant: ModelVariant, open: (() => void) | undefined) {
-  return variant === 'claude' || variant === 'codex' ? open : undefined;
-}
-
 function PickerHint({ text }: { text: string | undefined }) {
   return text ? <p className="px-2.5 pb-2 text-sm text-muted-foreground">{text}</p> : null;
 }
@@ -328,7 +323,7 @@ export function ModelSelector({
                 }
               : undefined
           }
-          onOpenModelSettings={modelSettingsAction(modelVariant, onOpenModelSettings)}
+          onOpenModelSettings={onOpenModelSettings}
           onClose={() => onOpenChange(false)}
         />
         <PickerHint text={hint} />
