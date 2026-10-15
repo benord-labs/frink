@@ -59,6 +59,7 @@ vi.mock('../../../../../lib/trpc', () => ({
         listCounts: { invalidate: invalidateListCounts },
         getById: { invalidate: invalidateGetById },
       },
+      chats: { listActiveChats: { invalidate: vi.fn() } },
     }),
     tasks: {
       markForReview: {
