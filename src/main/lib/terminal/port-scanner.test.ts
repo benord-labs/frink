@@ -3,6 +3,8 @@ import {
   appRootOf,
   isIgnoredPort,
   labelFromCommand,
+  listElectronAncestors,
+  parseElectronAncestors,
   parseLsofCwds,
   parseLsofListeners,
   parsePsCommands,
@@ -58,6 +60,34 @@ describe('parsePsCommands', () => {
         [900, 'next-server (v15.1.0)'],
       ]),
     );
+  });
+});
+
+describe('parseElectronAncestors', () => {
+  const app = '/Users/me/Personal and learning/app/node_modules/electron/dist/Electron.app';
+
+  it('collects every ancestor of an unpackaged Electron, however deep it was spawned', () => {
+    const stdout = [
+      '    1     0 /sbin/launchd',
+      '  500     1 /Applications/Ghostty.app/Contents/MacOS/ghostty',
+      '  510   500 -zsh',
+      '  600   510 node',
+      `  601   600 ${app}/Contents/MacOS/Electron`,
+      `  602   601 ${app}/Contents/Frameworks/Electron Helper (Renderer).app/Contents/MacOS/Electron Helper (Renderer)`,
+      '  700   510 node',
+      '  701   700 npm',
+      '  702   701 node',
+      '  703   702 /home/me/app/node_modules/electron/dist/electron',
+      '  800   510 node',
+      '  900     1 /Applications/Frink.app/Contents/MacOS/Frink',
+      '  901   900 /Applications/Frink.app/Contents/Frameworks/Frink Helper.app/Contents/MacOS/Frink Helper',
+    ].join('\n');
+    expect(parseElectronAncestors(stdout)).toEqual(new Set([600, 510, 500, 702, 701, 700]));
+  });
+
+  it('hides nothing when ps prints nothing', async () => {
+    expect(parseElectronAncestors('')).toEqual(new Set());
+    await expect(listElectronAncestors([])).resolves.toEqual(new Set());
   });
 });
 

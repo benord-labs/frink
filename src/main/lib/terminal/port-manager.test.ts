@@ -15,6 +15,7 @@ const scanner = {
   listListeners: vi.fn<PortScanner['listListeners']>(),
   listCwds: vi.fn<PortScanner['listCwds']>(),
   listCommands: vi.fn<PortScanner['listCommands']>(),
+  listElectronAncestors: vi.fn<PortScanner['listElectronAncestors']>(),
 };
 const APP_ROOT = '/Applications/Frink.app/';
 const RENDERER_HELPER = `${APP_ROOT}Contents/Frameworks/Frink Helper (Renderer).app/Contents/MacOS/Frink Helper (Renderer) --type=renderer`;
@@ -38,8 +39,12 @@ afterAll(() => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-function serve(listeners: Array<Listener & { cwd: string; commandLine?: string }>): void {
+function serve(
+  listeners: Array<Listener & { cwd: string; commandLine?: string }>,
+  electronAncestors: number[] = [],
+): void {
   scanner.listListeners.mockResolvedValue(listeners);
+  scanner.listElectronAncestors.mockResolvedValue(new Set(electronAncestors));
   scanner.listCwds.mockResolvedValue(new Map(listeners.map((l) => [l.pid, l.cwd])));
   scanner.listCommands.mockImplementation(async (pids) => {
     const commands = new Map<number, string>();
@@ -159,6 +164,13 @@ describe('portManager', () => {
     ]);
     await subscribe(onChange);
     expect(onChange.mock.calls[0][0].map((s: DevServer) => s.port)).toEqual([5173]);
+  });
+
+  it("hides a desktop app's renderer server and keeps a web server beside it", async () => {
+    const onChange = vi.fn();
+    serve([vite(worktree, 5173), vite(worktree, 5174)], [vite(worktree, 5173).pid]);
+    await subscribe(onChange);
+    expect(onChange.mock.calls[0][0].map((s: DevServer) => s.port)).toEqual([5174]);
   });
 
   it('keeps a server an agent or a Frink terminal started, which runs outside the app bundle', async () => {

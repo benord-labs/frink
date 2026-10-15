@@ -45,18 +45,29 @@ describe('DevServerLinksView', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it('opens the single running server in the browser', async () => {
+  it('opens the single running server from the preview menu', async () => {
     const { onOpen } = renderView([vite]);
-    await userEvent.setup().click(screen.getByRole('button', { name: 'vite · localhost:5174' }));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Preview in browser' }));
+    await user.click(screen.getByRole('menuitem', { name: 'vite localhost:5174' }));
     expect(onOpen).toHaveBeenCalledWith('http://localhost:5174');
   });
 
-  it('lists several servers in a menu', async () => {
+  it('lists several servers behind the same icon', async () => {
     const { onOpen } = renderView([next, vite]);
     const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: '2 servers' }));
-    expect(screen.getByRole('menuitem', { name: 'next · localhost:3000' })).toBeInTheDocument();
-    await user.click(screen.getByRole('menuitem', { name: 'vite · localhost:5174' }));
+    await user.click(screen.getByRole('button', { name: 'Preview in browser' }));
+    expect(screen.getByRole('menuitem', { name: 'next localhost:3000' })).toBeInTheDocument();
+    await user.click(screen.getByRole('menuitem', { name: 'vite localhost:5174' }));
+    expect(onOpen).toHaveBeenCalledWith('http://localhost:5174');
+  });
+
+  it('opens a server from the keyboard', async () => {
+    const { onOpen } = renderView([vite]);
+    const user = userEvent.setup();
+    screen.getByRole('button', { name: 'Preview in browser' }).focus();
+    await user.keyboard('{Enter}');
+    await user.keyboard('{Enter}');
     expect(onOpen).toHaveBeenCalledWith('http://localhost:5174');
   });
 
