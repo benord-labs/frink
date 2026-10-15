@@ -40,6 +40,7 @@ let resolvedAccount: { id: string; isBlocked: boolean } | null | undefined;
 vi.mock('../../../../../lib/trpc', () => ({
   trpc: {
     useUtils: () => ({
+      chats: { listActiveChats: { invalidate: vi.fn() } },
       tasks: {
         listPaginated: { invalidate: vi.fn() },
         listCounts: { invalidate: vi.fn() },

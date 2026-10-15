@@ -1074,24 +1074,18 @@ describe('CodebaseItem row-render isolation', () => {
   // whole list forever; a field compare must still let a genuinely changed reason through.
   it('ignores a re-derived reason map but forwards a changed reason', () => {
     const props = baseProps([makeChat({ id: CHAT_A }), makeChat({ id: CHAT_B })]);
-    const reason = new Map([[CHAT_A, { summary: 'waiting', details: 'on input' }]]);
+    const reason = new Map([[CHAT_A, { summary: 'waiting' }]]);
     const { rerender } = render(<CodebaseItem {...props} chatReasonByChatId={reason} />);
     const before = new Map(renderTally.rows);
 
     rerender(
-      <CodebaseItem
-        {...props}
-        chatReasonByChatId={new Map([[CHAT_A, { summary: 'waiting', details: 'on input' }]])}
-      />,
+      <CodebaseItem {...props} chatReasonByChatId={new Map([[CHAT_A, { summary: 'waiting' }]])} />,
     );
     expect(renderTally.rows.get(CHAT_A)).toBe(before.get(CHAT_A));
     expect(renderTally.rows.get(CHAT_B)).toBe(before.get(CHAT_B));
 
     rerender(
-      <CodebaseItem
-        {...props}
-        chatReasonByChatId={new Map([[CHAT_A, { summary: 'blocked', details: 'on input' }]])}
-      />,
+      <CodebaseItem {...props} chatReasonByChatId={new Map([[CHAT_A, { summary: 'blocked' }]])} />,
     );
     expect(renderTally.rows.get(CHAT_A)).toBe((before.get(CHAT_A) ?? 0) + 1);
   });

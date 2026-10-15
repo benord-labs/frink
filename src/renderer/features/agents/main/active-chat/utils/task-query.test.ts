@@ -15,12 +15,14 @@ describe('task query helpers', () => {
   });
 
   it('invalidates every task query, including the driving-task query the parked-question card reads', () => {
+    const activeChatsInvalidate = vi.fn();
     const listPaginatedInvalidate = vi.fn();
     const listCountsInvalidate = vi.fn();
     const byIdInvalidate = vi.fn();
     const drivingTaskInvalidate = vi.fn();
     const actionableTaskInvalidate = vi.fn();
     invalidateTaskQueries({
+      chats: { listActiveChats: { invalidate: activeChatsInvalidate } },
       tasks: {
         listPaginated: { invalidate: listPaginatedInvalidate },
         listCounts: { invalidate: listCountsInvalidate },
@@ -29,6 +31,7 @@ describe('task query helpers', () => {
         getActionableTaskForSubChat: { invalidate: actionableTaskInvalidate },
       },
     });
+    expect(activeChatsInvalidate).toHaveBeenCalledTimes(1);
     expect(listPaginatedInvalidate).toHaveBeenCalledTimes(1);
     expect(listCountsInvalidate).toHaveBeenCalledTimes(1);
     expect(byIdInvalidate).toHaveBeenCalledTimes(1);

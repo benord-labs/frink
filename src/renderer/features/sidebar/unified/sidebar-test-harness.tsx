@@ -13,6 +13,7 @@ import { expect, vi } from 'vitest';
 import type { AwaitingApproval } from '../../../lib/work-queue/approvals/use-work-queue-approvals';
 import type { ChatSelectionChipProps } from './components/ChatSelection';
 import { makeSidebarComponentsMock } from './sidebar-components-test-harness';
+import type { ActiveFolderChat } from './utils';
 
 /** Type-only: erased at build, so it does not re-enter the jotai mock factory. */
 type AnyAtom = Atom<unknown>;
@@ -24,12 +25,8 @@ type ActiveTaskStub = {
 };
 /** Always empty in these suites; named so the mock hands back a contract rather than a dictionary. */
 type LocalProjectStub = { id: string; name: string; path: string; gitRemoteUrl?: string | null };
-type CursorStub = { createdAt: string; id: string } | null;
-type ActiveTasksPageStub = {
-  items: ActiveTaskStub[];
-  hasMore: boolean;
-  nextCursor: CursorStub;
-};
+type SidebarActivityStub = { chats: ActiveFolderChat[]; tasks: ActiveTaskStub[] };
+const NO_SIDEBAR_ACTIVITY: SidebarActivityStub = { chats: [], tasks: [] };
 
 const state = {
   taskCountsData: {
@@ -42,11 +39,7 @@ const state = {
     interrupted: 0,
     total: 0,
   },
-  activeTasksData: {
-    items: [] as ActiveTaskStub[],
-    hasMore: false,
-    nextCursor: null as CursorStub,
-  } as ActiveTasksPageStub,
+  sidebarActivityData: NO_SIDEBAR_ACTIVITY,
   splitViewState: {
     splitView: { chatIds: [null], activePaneIndex: 0 },
     isSplitActive: false,
@@ -96,7 +89,7 @@ type MoveChatHandler = (chatId: string, target: string | null, source: string | 
 export const hoisted = {
   state,
   listCountsUseQueryMock: vi.fn(() => ({ data: state.taskCountsData })),
-  listPaginatedUseQueryMock: vi.fn(() => ({ data: state.activeTasksData })),
+  listActiveChatsUseQueryMock: vi.fn(() => ({ data: state.sidebarActivityData })),
   chatsListInvalidateMock: vi.fn(async () => undefined),
   chatsListCountsInvalidateMock: vi.fn(async () => undefined),
   chatsListCountsFetchMock: vi.fn(
@@ -137,13 +130,6 @@ export const hoisted = {
     }> => ({
       activeTasks: [],
       unresolvedTaskLinks: 0,
-    }),
-  ),
-  listPaginatedClientQueryMock: vi.fn<(input?: unknown) => Promise<ActiveTasksPageStub>>(
-    async () => ({
-      items: [],
-      hasMore: false,
-      nextCursor: null,
     }),
   ),
   chatsListByBatchFetchMock: vi.fn(async (_input?: unknown) => [] as Array<{ id: string }>),
@@ -246,10 +232,11 @@ export const trpcMock = {
         },
         get: { invalidate: hoisted.chatsGetInvalidateMock },
         listByIds: { invalidate: vi.fn(async () => undefined) },
+        listActiveChats: { invalidate: vi.fn(async () => undefined) },
         getSubChatMessages: { invalidate: hoisted.chatsGetSubChatMessagesInvalidateMock },
         listArchived: { invalidate: hoisted.chatsListArchivedInvalidateMock },
       },
-      tasks: { listPaginated: { invalidate: vi.fn() }, listCounts: { invalidate: vi.fn() } },
+      tasks: { listCounts: { invalidate: vi.fn() } },
       projects: {
         list: { invalidate: hoisted.projectsListInvalidateMock, setData: vi.fn() },
       },
@@ -267,7 +254,7 @@ export const trpcMock = {
     },
     chats: {
       listCounts: { useQuery: hoisted.chatsListCountsForSidebarQueryMock },
-      listActiveChats: { useQuery: () => ({ data: [] }) },
+      listActiveChats: { useQuery: hoisted.listActiveChatsUseQueryMock },
       getPendingPlanApprovals: { useQuery: hoisted.getPendingPlanApprovalsUseQueryMock },
       listArchived: { useQuery: () => ({ data: hoisted.archivedChatsData }) },
       listByFolder: { useQuery: () => ({ data: { chats: [], hasMore: false, nextCursor: null } }) },
@@ -285,12 +272,9 @@ export const trpcMock = {
     },
     tasks: {
       listCounts: { useQuery: hoisted.listCountsUseQueryMock },
-      listPaginated: { useQuery: hoisted.listPaginatedUseQueryMock },
     },
   },
-  trpcClient: {
-    tasks: { listPaginated: { query: hoisted.listPaginatedClientQueryMock } },
-  },
+  trpcClient: {},
 };
 
 export const agentChatStoreMock = {
@@ -391,8 +375,7 @@ export async function setupHarness() {
 export function resetHarness() {
   cleanup();
   hoisted.listCountsUseQueryMock.mockClear();
-  hoisted.listPaginatedUseQueryMock.mockClear();
-  hoisted.listPaginatedClientQueryMock.mockClear();
+  hoisted.listActiveChatsUseQueryMock.mockClear();
   hoisted.chatsListInvalidateMock.mockClear();
   hoisted.chatsListCountsInvalidateMock.mockClear();
   hoisted.chatsListCountsFetchMock.mockClear();
@@ -465,6 +448,7 @@ export function resetHarness() {
   hoisted.abortTaskChatStreamsBestEffortMock.mockReset();
   hoisted.cancelTasksBestEffortMock.mockReset();
   hoisted.cancelTasksBestEffortMock.mockResolvedValue({ failed: 0 });
+  hoisted.state.sidebarActivityData = NO_SIDEBAR_ACTIVITY;
   hoisted.state.localProjectsData = [];
   hoisted.state.persistedPendingPlanApprovals = [];
   hoisted.state.livePendingPlanApprovals = new Map();

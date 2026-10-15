@@ -20,7 +20,7 @@ function timestampsEqual(a: Date | null | undefined, b: Date | null | undefined)
 
 type ChatRowMemoProps = {
   chat: ChatItem;
-  reason?: { summary?: string; details?: string };
+  reason?: ChatReason;
 };
 
 /**
@@ -37,7 +37,6 @@ export function areChatRowMemoEqual<T extends ChatRowMemoProps>(
     if (prev[key] !== next[key]) return false;
   }
   if (prev.reason?.summary !== next.reason?.summary) return false;
-  if (prev.reason?.details !== next.reason?.details) return false;
   return areChatItemsSidebarEqual(prev.chat, next.chat);
 }
 
@@ -150,7 +149,7 @@ export function chatMapsEqualForCodebase<T>(
 
 /** The park reason is re-derived per poll, so it is compared by field, never by reference. */
 export const reasonsEqual = (a: ChatReason | undefined, b: ChatReason | undefined): boolean =>
-  a?.summary === b?.summary && a?.details === b?.details;
+  a?.summary === b?.summary;
 
 export function batchGroupsEqualForCodebase<T>(
   prev: Map<string, T> | undefined,

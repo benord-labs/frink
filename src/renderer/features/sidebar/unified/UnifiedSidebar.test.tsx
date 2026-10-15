@@ -182,11 +182,11 @@ describe('UnifiedSidebar task count freshness', () => {
       interrupted: 0,
       total: 6,
     };
-    hoisted.state.activeTasksData = { items: [{ id: 'task-1' }], hasMore: false, nextCursor: null };
+    hoisted.state.sidebarActivityData = { chats: [], tasks: [{ id: 'task-1' }] };
 
     const { rerender } = render(<UnifiedSidebar />);
     expect(screen.getByTestId('sidebar-dialogs').textContent).toBe('closed');
-    expect(screen.getByTestId('sidebar-nav-counts').textContent).toBe('1:2:3:0:0:none');
+    expect(screen.getByTestId('sidebar-nav-counts').textContent).toBe('1:2:3:0:0');
 
     hoisted.state.taskCountsData = {
       pending: 4,
@@ -198,18 +198,14 @@ describe('UnifiedSidebar task count freshness', () => {
       interrupted: 0,
       total: 5,
     };
-    hoisted.state.activeTasksData = {
-      items: [{ id: 'task-2' }, { id: 'task-3' }],
-      hasMore: false,
-      nextCursor: null,
-    };
+    hoisted.state.sidebarActivityData = { chats: [], tasks: [{ id: 'task-2' }, { id: 'task-3' }] };
     // Pass a new onChatSelect reference to bypass React.memo's equality check
     rerender(<UnifiedSidebar onChatSelect={() => {}} />);
 
     expect(screen.getByTestId('sidebar-dialogs').textContent).toBe('closed');
-    expect(screen.getByTestId('sidebar-nav-counts').textContent).toBe('4:0:1:2:0:none');
+    expect(screen.getByTestId('sidebar-nav-counts').textContent).toBe('4:0:1:2:0');
     expect(hoisted.listCountsUseQueryMock).toHaveBeenCalled();
-    expect(hoisted.listPaginatedUseQueryMock).toHaveBeenCalled();
+    expect(hoisted.listActiveChatsUseQueryMock).toHaveBeenCalled();
   });
 
   // Interrupted runs fold into the Needs Attention bucket, so they must contribute to the sidebar's
@@ -228,87 +224,7 @@ describe('UnifiedSidebar task count freshness', () => {
     };
     render(<UnifiedSidebar />);
     // position 4 = needsAttentionTaskCount = needsAttention(1) + interrupted(2) = 3
-    expect(screen.getByTestId('sidebar-nav-counts').textContent).toBe('0:0:0:3:0:none');
-  });
-
-  it('surfaces hasMore in footer when active-task page reports additional pages', async () => {
-    hoisted.state.taskCountsData = {
-      pending: 0,
-      planReady: 1,
-      done: 0,
-      running: 1,
-      needsAttention: 0,
-      failed: 0,
-      interrupted: 0,
-      total: 2,
-    };
-    hoisted.state.activeTasksData = {
-      items: [{ id: 'task-1' }],
-      hasMore: true,
-      nextCursor: null,
-    };
-
-    render(<UnifiedSidebar />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId('sidebar-nav-counts').textContent).toBe('0:1:1:0:0:more');
-    });
-  });
-
-  it('keeps hasMore true when pagination loop detects repeated cursor', async () => {
-    hoisted.state.taskCountsData = {
-      pending: 0,
-      planReady: 1,
-      done: 0,
-      running: 1,
-      needsAttention: 1,
-      failed: 0,
-      interrupted: 0,
-      total: 2,
-    };
-    hoisted.state.activeTasksData = {
-      items: [{ id: 'task-1' }],
-      hasMore: true,
-      nextCursor: { createdAt: '2026-03-09T09:00:00.000Z', id: 'cursor-1' },
-    };
-    hoisted.listPaginatedClientQueryMock.mockResolvedValueOnce({
-      items: [{ id: 'task-2' }],
-      hasMore: true,
-      nextCursor: { createdAt: '2026-03-09T09:00:00.000Z', id: 'cursor-1' },
-    });
-
-    render(<UnifiedSidebar />);
-
-    await waitFor(() => {
-      expect(hoisted.listPaginatedClientQueryMock).toHaveBeenCalledTimes(1);
-      expect(screen.getByTestId('sidebar-nav-counts').textContent).toBe('0:1:1:1:0:more');
-    });
-  });
-
-  it('falls back to first-page hasMore when follow-up page fetch fails', async () => {
-    hoisted.state.taskCountsData = {
-      pending: 0,
-      planReady: 1,
-      done: 0,
-      running: 1,
-      needsAttention: 0,
-      failed: 0,
-      interrupted: 0,
-      total: 2,
-    };
-    hoisted.state.activeTasksData = {
-      items: [{ id: 'task-1' }],
-      hasMore: false,
-      nextCursor: { createdAt: '2026-03-09T09:00:00.000Z', id: 'cursor-1' },
-    };
-    hoisted.listPaginatedClientQueryMock.mockRejectedValueOnce(new Error('network-fail'));
-
-    render(<UnifiedSidebar />);
-
-    await waitFor(() => {
-      expect(hoisted.listPaginatedClientQueryMock).toHaveBeenCalledTimes(1);
-      expect(screen.getByTestId('sidebar-nav-counts').textContent).toBe('0:1:1:0:0:none');
-    });
+    expect(screen.getByTestId('sidebar-nav-counts').textContent).toBe('0:0:0:3:0');
   });
 
   it('uses highest-priority task status per chat for sidebar row state', async () => {
@@ -322,16 +238,15 @@ describe('UnifiedSidebar task count freshness', () => {
       interrupted: 0,
       total: 5,
     };
-    hoisted.state.activeTasksData = {
-      items: [
+    hoisted.state.sidebarActivityData = {
+      chats: [],
+      tasks: [
         { id: 'task-1', status: 'pending', linkedChatId: 'chat-priority' },
         { id: 'task-2', status: 'running', linkedChatId: 'chat-priority' },
         { id: 'task-3', status: 'plan_ready', linkedChatId: 'chat-priority' },
         { id: 'task-4', status: 'failed', linkedChatId: 'chat-priority' },
         { id: 'task-5', status: 'needs_attention', linkedChatId: 'chat-priority' },
       ],
-      hasMore: false,
-      nextCursor: null,
     };
 
     render(<UnifiedSidebar />);
@@ -1931,7 +1846,7 @@ describe('UnifiedSidebar row-action identity', () => {
     const identities = () => ROW_BOUND_PROPS.map((k) => hoisted.capturedProjectsTreeProps?.[k]);
     render(<UnifiedSidebar />);
     const before = identities();
-    hoisted.state.activeTasksData = { items: [], hasMore: false, nextCursor: null };
+    hoisted.state.sidebarActivityData = { chats: [], tasks: [] };
     fireEvent.change(screen.getByTestId('sidebar-header'), { target: { value: 'x' } });
     const after = identities();
     ROW_BOUND_PROPS.forEach((key, i) => expect(after[i], key).toBe(before[i]));
