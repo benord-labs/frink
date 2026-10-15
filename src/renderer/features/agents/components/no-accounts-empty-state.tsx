@@ -2,17 +2,23 @@ import { Button } from '@benord-labs/frink-primitives';
 import { useSetAtom } from 'jotai';
 import { type ReactElement, type ReactNode, useId } from 'react';
 import {
+  addAccountLabel,
+  signInProviders,
+} from '@/components/dialogs/settings-tabs/AgentsModelsTab/auth-flow-utils';
+import {
   ProviderMark,
   ProviderTile,
 } from '@/components/dialogs/settings-tabs/AgentsModelsTab/ProviderTile';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import { isWindows } from '@/lib/utils/platform';
 import { LAUNCH_FLAGS } from '../../../../shared/launch-flags';
-import {
-  AI_PROVIDERS,
-  type AiProviderId,
-  selectableProviderIds,
-} from '../../../../shared/lib/ai-providers';
+import { AI_PROVIDERS, type AiProviderId } from '../../../../shared/lib/ai-providers';
 import {
   agentsSettingsDialogActiveTabAtom,
   agentsSettingsDialogOpenAtom,
@@ -37,7 +43,7 @@ type StateProps = {
   headingId: string;
   account: SignedOutAccount | null;
   canSignIn: boolean;
-  others: Provider[];
+  others: AiProviderId[];
   onConnect: (provider: AiProviderId) => void;
   onReauth: () => void;
   onOpenSettings: () => void;
@@ -52,26 +58,21 @@ const LINK_CLASS =
 
 const FOOTNOTE_CLASS = 'mt-5 text-center text-[13px] text-muted-foreground text-pretty';
 
-/** Sign-in copy for each provider that has a sign-in page here. */
-const PROVIDER_COPY = {
-  'claude-code': {
-    plan: 'Pro or Max plan, through Claude Code',
-    switchTo: 'Or switch to your Claude plan',
-  },
-  codex: { plan: 'ChatGPT plan, through Codex', switchTo: 'Or switch to your ChatGPT plan' },
-};
-type Provider = keyof typeof PROVIDER_COPY;
+/** What each provider runs on, in a few plain words. */
+const PROVIDER_PLAN = {
+  'claude-code': 'Pro or Max plan, through Claude Code',
+  codex: 'ChatGPT plan, through Codex',
+  opencode: 'Free models, or your own AI provider',
+  copilot: 'Any Copilot plan, including Free',
+  cursor: 'Cursor Pro plan or higher',
+  grok: 'Your Grok sign-in, through Grok Build',
+} satisfies Record<AiProviderId, string>;
 
-const SIGN_IN_PROVIDERS = selectableProviderIds(LAUNCH_FLAGS).filter((id): id is Provider =>
-  Object.hasOwn(PROVIDER_COPY, id),
-);
-const PROVIDER_NAMES = SIGN_IN_PROVIDERS.map((id) => AI_PROVIDERS[id].name).join(' or ');
-const WINDOWS_NOTE = `Signing in with ${PROVIDER_NAMES} needs macOS or Linux.`;
+const WINDOWS_NOTE = 'Signing in with your own account needs macOS or Linux.';
 
-/** Providers this device can sign in to. Passthrough sign-in is macOS/Linux only. */
-function signInProviders(): Provider[] {
-  // The renderer-side platform helper: `process` isn't exposed under contextIsolation.
-  return isWindows() ? [] : SIGN_IN_PROVIDERS;
+/** The same choices as Settings → Add an account. Passthrough sign-in is macOS/Linux only. */
+function connectableProviders(): AiProviderId[] {
+  return isWindows() ? [] : signInProviders([], LAUNCH_FLAGS, window.desktopApi?.platform);
 }
 
 /** Opens the provider's connect page through the App.tsx pendingAccountAuth gate. */
@@ -117,7 +118,7 @@ function ConnectButton({
   onConnect,
   children,
 }: {
-  provider: Provider;
+  provider: AiProviderId;
   onConnect: StateProps['onConnect'];
   children: ReactNode;
 }): ReactElement {
@@ -130,6 +131,33 @@ function ConnectButton({
     >
       {children}
     </Button>
+  );
+}
+
+/** Overflow for the compact card: the providers past its first buttons, as in Settings. */
+function MoreProviders({
+  providers,
+  onConnect,
+}: {
+  providers: AiProviderId[];
+  onConnect: StateProps['onConnect'];
+}): ReactElement {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button size="sm" variant="ghost">
+          More
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-64">
+        {providers.map((id) => (
+          <DropdownMenuItem key={id} onClick={() => onConnect(id)}>
+            <ProviderTile type={id} size="sm" />
+            {addAccountLabel(id)}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -183,6 +211,8 @@ function compactDetail({ account, canSignIn, others, onOpenSettings }: StateProp
 function CompactCard(props: StateProps): ReactElement {
   const { headingId, account, canSignIn, others, onConnect, onReauth, onOpenSettings } = props;
   const heading = account ? `${account.label} was signed out` : 'Connect an AI to keep chatting';
+  // Two actions at most, so the heading keeps its line; the rest sit under More.
+  const shown = others.slice(0, account ? 1 : 2);
   return (
     <section
       aria-labelledby={headingId}
@@ -202,12 +232,15 @@ function CompactCard(props: StateProps): ReactElement {
           {canSignIn ? (
             <>
               {account && <ReauthButton onClick={onReauth} />}
-              {others.map((p) => (
+              {shown.map((p) => (
                 <ConnectButton key={p} provider={p} onConnect={onConnect}>
                   <ProviderMark type={p} />
                   {AI_PROVIDERS[p].name}
                 </ConnectButton>
               ))}
+              {others.length > shown.length && (
+                <MoreProviders providers={others.slice(shown.length)} onConnect={onConnect} />
+              )}
             </>
           ) : (
             <SettingsButton account={account} onClick={onOpenSettings} />
@@ -239,7 +272,7 @@ function ProviderList({ account, others, onConnect, onReauth }: StateProps): Rea
           key={p}
           type={p}
           name={AI_PROVIDERS[p].name}
-          detail={account ? PROVIDER_COPY[p].switchTo : PROVIDER_COPY[p].plan}
+          detail={PROVIDER_PLAN[p]}
           action={
             <ConnectButton provider={p} onConnect={onConnect}>
               Connect
@@ -286,7 +319,7 @@ function FullLayout(props: StateProps): ReactElement {
       <p className="mt-3 text-center text-[15px] text-muted-foreground text-pretty">
         {account
           ? `${account.label} was signed out on this computer.`
-          : `Frink works through your own ${PROVIDER_NAMES} account.`}
+          : 'Frink works through your own AI account.'}
       </p>
       <div className="mx-auto mt-8 max-w-lg">
         {canSignIn ? (
@@ -306,13 +339,13 @@ function FullLayout(props: StateProps): ReactElement {
 }
 
 /** Stands in for the composer while no account can send: each provider's sign-in, or signing
- *  `existingAccount` back in with the other provider offered as a switch. */
+ *  `existingAccount` back in with the other providers offered as a switch. */
 export function NoAccountsEmptyState({ compact, existingAccount = null }: Props): ReactElement {
   const headingId = useId();
   const setPendingAccountAuth = useSetAtom(pendingAccountAuthAtom);
   const setSettingsOpen = useSetAtom(agentsSettingsDialogOpenAtom);
   const setSettingsActiveTab = useSetAtom(agentsSettingsDialogActiveTabAtom);
-  const providers = signInProviders();
+  const providers = connectableProviders();
   const props: StateProps = {
     headingId,
     account: existingAccount,
