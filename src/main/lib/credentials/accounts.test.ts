@@ -23,4 +23,10 @@ describe('passthroughDeps.locateAgent', () => {
       path.join(bin, 'opencode'),
     );
   });
+
+  it("finds Cursor's SDK where Frink keeps it, without starting it", async () => {
+    await expect(passthroughDeps.locateAgent('cursor')).resolves.toMatch(
+      /@cursor\/sdk\/dist\/esm\/index\.js$/,
+    );
+  });
 });

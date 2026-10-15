@@ -27,7 +27,9 @@ const ACTED_UNASKED =
   'The agent did something without asking first, so Frink stopped it. The step shown above already ran.';
 const SIGNED_OUT =
   "Cursor isn't signed in. Choose Sign in to Cursor, finish in your browser, then try again.";
-const PLAN_REQUIRED = "Cursor's SDK needs a paid Cursor plan (Pro or higher).";
+const PLAN_REQUIRED =
+  'Cursor needs a paid plan to work in Frink. Upgrade to Cursor Pro or higher, then try again.';
+const RUN_FAILED = 'Cursor ran into a problem and stopped this turn. Try again.';
 const NOT_LOADED = "Cursor didn't load Frink's safety check, so Frink stopped it.";
 const CHANGED = 'Cursor changed how it asks Frink, so Frink stopped it.';
 const TURN_OVER = "This turn has ended, so Frink didn't run this step.";
@@ -190,22 +192,43 @@ describe('runCursorAgent', () => {
     });
   });
 
-  it('continues an earlier agent, with the fallback prompt for when it is gone', async () => {
+  it('continues an earlier agent in its folder, with the fallback prompt for when it is gone', async () => {
+    const first = runnerParams();
+    await run(fakeCursorHost(), first);
     const fake = fakeCursorHost({ resumeFails: true });
-    const params = runnerParams({
-      resumeSessionId: 'agent-7',
+    const params = {
+      ...first,
+      resumeSessionId: 'agent-1',
       freshSessionFallbackPrompt: 'hello, with the chat so far',
-    });
+    };
 
     const chunks = await run(fake, params);
 
     expect(fake.received[0]).toMatchObject({
       type: 'start',
-      resumeAgentId: 'agent-7',
+      resumeAgentId: 'agent-1',
       fallbackText: 'hello, with the chat so far',
       message: { text: 'hello' },
     });
     expect(chunks.at(-1)).toEqual({ type: 'finish', messageMetadata: { sessionId: 'agent-1' } });
+  });
+
+  it('starts a new agent with the chat so far once the chat has moved to another folder', async () => {
+    const first = runnerParams();
+    await run(fakeCursorHost(), first);
+    const moved = path.join(root, 'moved');
+    const fake = fakeCursorHost();
+    const later = { resumeSessionId: 'agent-1', freshSessionFallbackPrompt: 'the chat so far' };
+
+    await run(fake, { ...first, ...later, cwd: moved });
+    await run(fake, { ...first, ...later, cwd: moved });
+
+    const [movedStart, nextStart] = fake.received.filter(({ type }) => type === 'start');
+    expect(movedStart).toMatchObject({
+      message: { text: 'the chat so far' },
+      resumeAgentId: undefined,
+    });
+    expect(nextStart).toMatchObject({ message: { text: 'hello' }, resumeAgentId: 'agent-1' });
   });
 
   it('ends with the sign-in text, and never starts an agent, when Cursor is signed out', async () => {
@@ -226,13 +249,16 @@ describe('runCursorAgent', () => {
     expect(errorsOf(await run(fake))).toEqual([PLAN_REQUIRED]);
   });
 
-  it("shows Cursor's own words when a run fails", async () => {
+  it.each([
+    [{ message: 'Model overloaded' }, RUN_FAILED],
+    [{ message: 'Invalid API key', code: 'unauthenticated' }, SIGNED_OUT],
+    [{ message: 'Not available', code: 'plan_required' }, PLAN_REQUIRED],
+  ])('shows a failed run %o in plain words', async (error, shown) => {
     const fake = fakeCursorHost({
-      turn: (play) =>
-        play.post({ type: 'result', status: 'error', error: { message: 'Model overloaded' } }),
+      turn: (play) => play.post({ type: 'result', status: 'error', error }),
     });
 
-    expect(errorsOf(await run(fake))).toEqual(['Model overloaded']);
+    expect(errorsOf(await run(fake))).toEqual([shown]);
   });
 
   it.each([

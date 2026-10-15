@@ -193,7 +193,15 @@ import { request } from 'node:http';
 import path from 'node:path';
 export class JsonlLocalAgentStore { constructor(dir) { this.dir = dir; } }
 export const Cursor = {
-  auth: { status: async () => ({ status: process.env.FAKE_AUTH ?? 'logged-in' }) },
+  auth: {
+    status: async () => ({ status: process.env.FAKE_AUTH ?? 'logged-in' }),
+    login: async ({ apiKeyName, openBrowser }) => {
+      if (apiKeyName !== 'Frink' || process.env.FAKE_LOGIN === 'fail') throw new Error('Login failed');
+      await openBrowser(process.env.FAKE_LOGIN_URL);
+      if (process.env.FAKE_LOGIN === 'wait') await new Promise(() => {});
+      return { apiKey: 'secret-key', apiKeyExpiresAtMs: 0 };
+    },
+  },
   models: { list: async () => {
     if (process.env.FAKE_MODELS) throw Object.assign(new Error('No plan'), { code: process.env.FAKE_MODELS });
     return [{ id: 'default', displayName: 'Auto', parameters: [] }];

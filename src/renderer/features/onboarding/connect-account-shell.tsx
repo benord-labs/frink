@@ -13,10 +13,11 @@ import type { ConnectAccountFlow, ConnectFlowState } from '../../hooks/useConnec
 import { BUTTON_SHADOW } from '../../lib/button-shadow';
 import { cn } from '../../lib/utils';
 
-const PRIMARY_CTA =
+export const PRIMARY_CTA =
   'w-full min-h-[44px] bg-primary text-primary-foreground rounded-lg text-sm font-medium transition-[background-color,transform] duration-150 hover:bg-primary/90 active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background';
 
-type NotFound = { title: string; detail?: ReactNode };
+/** Why no login was found; `action` replaces Check again with the one step that fixes it. */
+type NotFound = { title: string; detail?: ReactNode; action?: ReactNode };
 
 type ConnectAccountShellProps = {
   /** Provider brand glyph rendered beside the Frink logo in the header. */
@@ -134,6 +135,29 @@ function SignInSteps({ authCommand }: { authCommand: string }) {
   );
 }
 
+function RefreshButton({
+  label,
+  isRefreshing,
+  onRefresh,
+}: {
+  label: string;
+  isRefreshing: boolean;
+  onRefresh: () => void;
+}) {
+  return (
+    <Button onClick={onRefresh} disabled={isRefreshing} className={cn(PRIMARY_CTA, BUTTON_SHADOW)}>
+      {isRefreshing ? (
+        <Loader2 className="h-4 w-4 animate-spin" />
+      ) : (
+        <>
+          <RefreshCw className="h-4 w-4" aria-hidden="true" />
+          {label}
+        </>
+      )}
+    </Button>
+  );
+}
+
 function NoLoginPanel({
   providerName,
   authCommand,
@@ -166,20 +190,13 @@ function NoLoginPanel({
         {detectionHint && <p className="text-xs text-muted-foreground">{detectionHint}</p>}
       </div>
 
-      <Button
-        onClick={onRefresh}
-        disabled={isRefreshing}
-        className={cn(PRIMARY_CTA, BUTTON_SHADOW)}
-      >
-        {isRefreshing ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : (
-          <>
-            <RefreshCw className="h-4 w-4" aria-hidden="true" />
-            {notFound ? 'Check again' : 'Check for Login'}
-          </>
-        )}
-      </Button>
+      {notFound?.action ?? (
+        <RefreshButton
+          label={notFound ? 'Check again' : 'Check for Login'}
+          isRefreshing={isRefreshing}
+          onRefresh={onRefresh}
+        />
+      )}
     </div>
   );
 }

@@ -1,5 +1,5 @@
-// Runs Cursor's SDK for one Frink turn, in its own process with the private HOME Frink gave it.
-// Its only argument is the SDK's entry; it talks to Frink by message and exits only on cancel.
+// Runs Cursor's SDK in its own process, given the SDK's entry: a turn under a chat's private HOME,
+// or a check or sign-in under the user's own. It talks to Frink by message and exits on cancel.
 import { pathToFileURL } from 'node:url';
 
 const port = process.parentPort;
@@ -40,6 +40,13 @@ async function listModels() {
   post({ type: 'models', list: list.map(({ id, displayName }) => ({ id, displayName })) });
 }
 
+// Cursor's own sign-in: Cursor stores the key it makes, and the key never leaves this process.
+async function login() {
+  const openBrowser = (url) => post({ type: 'open', url });
+  await sdk.Cursor.auth.login({ apiKeyName: 'Frink', openBrowser });
+  post({ type: 'auth', status: 'logged-in' });
+}
+
 async function cancel() {
   await run?.cancel().catch(() => {});
   try {
@@ -49,9 +56,11 @@ async function cancel() {
   }
 }
 
+const requests = { start, models: listModels, login };
+
 function onRequest(request) {
   if (request.type === 'cancel') return void cancel();
-  void (request.type === 'start' ? start(request) : listModels()).catch(fail);
+  void requests[request.type](request).catch(fail);
 }
 
 if (port) port.on('message', (event) => onRequest(event.data));

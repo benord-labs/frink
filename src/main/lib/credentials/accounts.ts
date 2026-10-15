@@ -15,6 +15,7 @@ import {
 import { isAnthropicApiKey } from '../../../shared/lib/anthropic-token';
 import { locateAcpAgent } from '../agent-runner/acp';
 import { locateCopilotAgent } from '../agent-runner/copilot';
+import { locateCursorAgent } from '../agent-runner/cursor';
 import { readClaudeUserConfig } from './detect';
 import { markRowNeedsReauth, markRowResolved } from './row-state';
 import { withCredentialRowOperation } from '../integrations/connection-lifecycle-operation';
@@ -97,8 +98,10 @@ function redactEmailForLog(email: string | null | undefined): string {
 /** Injection seam (anti-slop forbids module mocking in tests); production keeps the default. */
 export const passthroughDeps = {
   readLiveLogin: readClaudeUserConfig,
-  locateAgent: (type: string, env?: Record<string, string>) =>
-    type === 'copilot' ? locateCopilotAgent(env) : locateAcpAgent(type, env),
+  locateAgent: (type: string, env?: Record<string, string>) => {
+    if (type === 'cursor') return locateCursorAgent();
+    return type === 'copilot' ? locateCopilotAgent(env) : locateAcpAgent(type, env);
+  },
 };
 
 export function isPassthroughSource(source: string | null | undefined): boolean {

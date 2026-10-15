@@ -1,6 +1,7 @@
 import type { IconProps } from '@iconify/react/offline';
 import openaiLogo from '@iconify-icons/ri/openai-fill';
 import claudeLogo from '@iconify-icons/simple-icons/claude';
+import cursorLogo from '@iconify-icons/simple-icons/cursor';
 import copilotLogo from '@iconify-icons/simple-icons/githubcopilot';
 import opencodeLogo from '@iconify-icons/simple-icons/opencode';
 import { Bot } from 'lucide-react';
@@ -21,6 +22,7 @@ const MARKS = {
   codex: iconifyComponent(openaiLogo),
   opencode: iconifyComponent(opencodeLogo),
   copilot: iconifyComponent(copilotLogo),
+  cursor: iconifyComponent(cursorLogo),
   grok: FallbackMark,
 } satisfies Record<AiProviderId, Mark>;
 

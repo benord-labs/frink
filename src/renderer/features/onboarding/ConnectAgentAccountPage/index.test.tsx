@@ -2,7 +2,7 @@
 
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { TRPCClientError } from '@trpc/client';
 import { observable } from '@trpc/server/observable';
@@ -22,12 +22,16 @@ vi.hoisted(() => {
 
 type Detection =
   | { available: true; version?: string; email?: string; displayName?: string }
-  | { available: false; reason: string; missing?: true };
+  | { available: false; reason: string; missing?: true; signedOut?: true };
 
 const CONNECT_INPUT = z.object({ type: z.string(), accountLabel: z.string() });
 const connect = vi.fn<(input: z.infer<typeof CONNECT_INPUT>) => void>();
+const detect = vi.fn();
+const signIn = vi.fn();
+const SIGNED_OUT =
+  "Cursor isn't signed in. Choose Sign in to Cursor, finish in your browser, then try again.";
 
-/** A real trpc client answering detection with `detection` and recording each connect. */
+/** A real trpc client answering detection with `detection` and recording each connect and sign-in. */
 function createTestClient(detection: Detection, connectError?: string) {
   return trpc.createClient({
     links: [
@@ -35,7 +39,16 @@ function createTestClient(detection: Detection, connectError?: string) {
         ({ op }) =>
           observable((observer) => {
             if (op.path === 'agentAccounts.detect') {
+              detect();
               observer.next({ result: { data: detection } });
+            } else if (op.path === 'agentAccounts.signIn') {
+              // A sign-in still waiting on the browser has no answer yet.
+              if (signIn(op.input) === 'wait') return;
+              if (connectError) {
+                observer.error(TRPCClientError.from(new Error(connectError)));
+                return;
+              }
+              observer.next({ result: { data: undefined } });
             } else if (op.path === 'agentAccounts.connect') {
               connect(CONNECT_INPUT.parse(op.input));
               if (connectError) {
@@ -53,7 +66,7 @@ function createTestClient(detection: Detection, connectError?: string) {
 }
 
 function renderPage(
-  provider: 'codex' | 'opencode' | 'copilot',
+  provider: 'codex' | 'opencode' | 'copilot' | 'cursor',
   detection: Detection,
   connectError?: string,
 ) {
@@ -75,6 +88,8 @@ function renderPage(
 afterEach(() => {
   cleanup();
   connect.mockReset();
+  detect.mockReset();
+  signIn.mockReset();
 });
 
 describe('ConnectAgentAccountPage', () => {
@@ -153,5 +168,64 @@ describe('ConnectAgentAccountPage', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('OpenCode went away');
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+  });
+
+  it('offers Sign in to Cursor while Cursor is signed out, then checks again once it finishes', async () => {
+    renderPage('cursor', { available: false, reason: SIGNED_OUT, signedOut: true });
+
+    expect(await screen.findByText("Cursor isn't signed in.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in to Cursor' }));
+
+    expect(signIn).toHaveBeenCalledWith({ type: 'cursor' });
+    await waitFor(() => expect(detect).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText(/Terminal/)).not.toBeInTheDocument();
+  });
+
+  it('opens the sign-in page again when clicked while it waits on the browser', async () => {
+    signIn.mockReturnValue('wait');
+    renderPage('cursor', { available: false, reason: SIGNED_OUT, signedOut: true });
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Sign in to Cursor' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Continue in your browser' }));
+
+    expect(signIn).toHaveBeenCalledTimes(2);
+  });
+
+  it("says why Cursor's sign-in did not finish", async () => {
+    const failed = "Cursor's sign-in didn't finish. Try again.";
+    renderPage('cursor', { available: false, reason: SIGNED_OUT, signedOut: true }, failed);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Sign in to Cursor' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(failed);
+  });
+
+  it.each([
+    [
+      'Cursor needs a paid plan to work in Frink. Upgrade to Cursor Pro or higher, then try again.',
+      'Cursor needs a paid plan to work in Frink.',
+    ],
+    [
+      "Frink can't find Cursor's SDK on this computer.",
+      "Frink can't find Cursor's SDK on this computer.",
+    ],
+  ])('shows why Cursor cannot connect, with no Sign in: %s', async (reason, title) => {
+    renderPage('cursor', { available: false, reason });
+
+    expect(await screen.findByText(title)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Sign in to Cursor' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Terminal/)).not.toBeInTheDocument();
+  });
+
+  it('connects a signed-in Cursor, with no Terminal step', async () => {
+    renderPage('cursor', { available: true });
+
+    expect(await screen.findByText('Cursor login found')).toBeInTheDocument();
+    expect(
+      screen.getByText('Uses your own Cursor sign-in. No token is stored in Frink.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Terminal/)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Connect' }));
+    expect(connect).toHaveBeenCalledWith({ type: 'cursor', accountLabel: 'Cursor' });
   });
 });

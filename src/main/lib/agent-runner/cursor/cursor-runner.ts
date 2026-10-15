@@ -1,4 +1,6 @@
 import { once } from 'node:events';
+import { readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { utilityProcess } from 'electron';
 import log from 'electron-log';
@@ -22,11 +24,17 @@ import { prepareCursorHome } from './cursor-home';
 const STOP_GRACE_MS = 1500;
 export const SIGNED_OUT =
   "Cursor isn't signed in. Choose Sign in to Cursor, finish in your browser, then try again.";
-export const PLAN_REQUIRED = "Cursor's SDK needs a paid Cursor plan (Pro or higher).";
+export const PLAN_REQUIRED =
+  'Cursor needs a paid plan to work in Frink. Upgrade to Cursor Pro or higher, then try again.';
 const NOT_LOADED = "Cursor didn't load Frink's safety check, so Frink stopped it.";
 const CURSOR_STOPPED =
   'Cursor stopped unexpectedly, so this turn ended. Any steps shown above already ran.';
-const RUN_FAILED = 'Cursor stopped this turn with an error.';
+const RUN_FAILED = 'Cursor ran into a problem and stopped this turn. Try again.';
+// Cursor's own error codes that have a plain cause and fix; any other code shows RUN_FAILED.
+const PLAIN_ERRORS = new Map([
+  ['plan_required', PLAN_REQUIRED],
+  ['unauthenticated', SIGNED_OUT],
+]);
 const NOT_STARTED = "Frink couldn't start Cursor, so this turn didn't run.";
 // Messages Cursor may send before it asks Frink's check about the prompt.
 const BEFORE_CANARY = new Set(['status', 'system']);
@@ -41,7 +49,7 @@ export type HostAgentOptions = {
 type CursorUserMessage = { text: string; images?: { data: string; mimeType: string }[] };
 type RunError = { message: string; code?: string };
 
-/** What Frink sends the host once it reports a sign-in: a turn or a model list, then cancel. */
+/** What Frink sends the host once it reports its sign-in: a turn, a model list or a sign-in. */
 export type CursorHostRequest =
   | {
       type: 'start';
@@ -53,6 +61,7 @@ export type CursorHostRequest =
       fallbackText?: string;
     }
   | { type: 'models' }
+  | { type: 'login' }
   | { type: 'cancel' };
 
 /** What the host posts back, the SDK's own messages wrapped in `sdk`. */
@@ -62,7 +71,9 @@ export type CursorHostMessage =
   | { type: 'models'; list: { id: string; displayName: string }[] }
   | { type: 'sdk'; message: CursorSdkMessage }
   | { type: 'result'; status: 'finished' | 'error' | 'cancelled'; error?: RunError }
-  | { type: 'error'; text: string; code?: string };
+  | { type: 'error'; text: string; code?: string }
+  /** A page of Cursor's own sign-in to open in the browser. */
+  | { type: 'open'; url: string };
 
 export type ForkHost = (
   input: { hostPath: string; sdkEntry: string; env: Record<string, string>; cwd: string },
@@ -130,8 +141,14 @@ export function cursorAgentOptions(input: {
   };
 }
 
-const errorText = (error: RunError | undefined) =>
-  error?.code === 'plan_required' ? PLAN_REQUIRED : (error?.message ?? RUN_FAILED);
+/** Cursor's error in plain words; its own text goes only to the log. */
+function errorText(error: RunError | undefined): string {
+  log.warn(`[Cursor] The run failed: ${error?.code ?? 'no code'} ${error?.message ?? ''}`);
+  return PLAIN_ERRORS.get(error?.code ?? '') ?? RUN_FAILED;
+}
+
+// Cursor recalls a chat only in the folder it began in, so each chat notes its agent's folder.
+const folderNote = (launch: CursorLaunch) => path.join(path.dirname(launch.storeDir), 'folder');
 
 /** One turn's stream, gate, private home and host process, and the ways the turn can end. */
 class CursorTurn {
@@ -147,6 +164,8 @@ class CursorTurn {
   });
   readonly gate: ReturnType<typeof createCursorGate>;
   agentId?: string;
+  private resumeId?: string;
+  private noted?: Promise<void>;
   private host?: ReturnType<ForkHost>;
   private readonly hostExited = new AbortController();
   private socket?: Awaited<ReturnType<typeof openGateSocket>>;
@@ -189,8 +208,10 @@ class CursorTurn {
   async begin(previous: Promise<void> | undefined): Promise<void> {
     await previous;
     if (this.isOver) return;
+    const { launch, cwd, resumeSessionId } = this.params;
+    const folder = await readFile(folderNote(launch), 'utf8').catch(() => undefined);
+    if (folder === cwd) this.resumeId = resumeSessionId;
     this.socket = await openGateSocket((body) => this.gate.answer(body));
-    const { launch, cwd } = this.params;
     const prepared = await prepareCursorHome(
       { home: launch.home, realHome: launch.realHome, ...this.socket },
       { chflags: this.deps.chflags },
@@ -219,18 +240,20 @@ class CursorTurn {
   }
 
   private start(): void {
-    const { params } = this;
-    const { launch, images } = params;
+    const { params, resumeId } = this;
+    const { launch, images, freshSessionFallbackPrompt: fallback } = params;
     const { storeDir, tools } = launch;
-    const message: CursorUserMessage = { text: params.prompt };
+    // A chat that moved folder gets a new agent, sent the chat so far.
+    const moved = params.resumeSessionId !== undefined && !resumeId;
+    const message: CursorUserMessage = { text: (moved && fallback) || params.prompt };
     if (images?.length) message.images = images;
     this.host?.send({
       type: 'start',
       options: cursorAgentOptions({ cwd: params.cwd, storeDir, tools, model: params.model }),
       message,
       mode: params.mode,
-      resumeAgentId: params.resumeSessionId,
-      fallbackText: params.resumeSessionId && params.freshSessionFallbackPrompt,
+      resumeAgentId: resumeId,
+      fallbackText: resumeId && fallback,
     });
   }
 
@@ -241,6 +264,9 @@ class CursorTurn {
         return message.status === 'logged-in' ? this.start() : this.halt(SIGNED_OUT);
       case 'agent':
         this.agentId = message.agentId;
+        this.noted = writeFile(folderNote(this.params.launch), this.params.cwd).catch((error) =>
+          log.warn("[Cursor] Could not note the chat's folder", error),
+        );
         return this.emit({
           type: 'message-metadata',
           messageMetadata: { sessionId: message.agentId },
@@ -278,6 +304,7 @@ class CursorTurn {
       }
     }
     try {
+      await this.noted;
       await this.unlock?.();
     } finally {
       await this.socket?.close();

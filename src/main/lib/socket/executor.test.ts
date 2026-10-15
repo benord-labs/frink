@@ -2401,6 +2401,7 @@ describe('socket file permission edge cases', () => {
   it.each([
     ['acp', 'opencode'],
     ['copilot', 'copilot'],
+    ['cursor', 'cursor'],
   ] as const)(
     'a %s turn stopped mid-way keeps its session, and the next message continues it',
     async (runtime, type) => {
@@ -2414,16 +2415,15 @@ describe('socket file permission edge cases', () => {
       });
       vi.mocked(updateSubChatSession).mockClear();
       const resumed: (string | undefined)[] = [];
-      async function* turn(params: {
-        resumeSessionId?: string;
-      }): AsyncGenerator<UIMessageChunk, void, undefined> {
+      async function* turn(params: { resumeSessionId?: string }): AsyncGenerator<UIMessageChunk> {
         resumed.push(params.resumeSessionId);
         yield { type: 'message-metadata', messageMetadata: { sessionId: 'stopped-session' } };
         yield { type: 'text-delta', id: 't1', delta: 'partial' };
         handleRemoteStop(basePayload);
         yield { type: 'text-delta', id: 't1', delta: 'dropped' };
       }
-      const deps = { runtimeFor: () => runtime, startAcpTurn: turn, startCopilotTurn: turn };
+      const turns = { startAcpTurn: turn, startCopilotTurn: turn, startCursorTurn: turn };
+      const deps = { runtimeFor: () => runtime, ...turns };
 
       await handleRemoteExecute({ ...basePayload, message: 'hello' }, deps);
       await new Promise((resolve) => setTimeout(resolve, 0));

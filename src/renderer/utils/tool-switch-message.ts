@@ -22,6 +22,7 @@ const SWITCH_DESCRIPTION = {
     "Your MCP servers, skills, commands & agents came with you. Two things change: agent tool limits are now fully enforced (exact per-tool rules), and agent models reset to OpenAI's default.",
   opencode: null,
   copilot: null,
+  cursor: null,
   grok: null,
 } satisfies Record<AiProviderId, string | null>;
 
