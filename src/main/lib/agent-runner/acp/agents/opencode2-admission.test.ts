@@ -126,7 +126,18 @@ function startKillable(launch: AcpAgentLaunch) {
   return { agent, kill };
 }
 
-describe.runIf(/^opencode v2\./m.test(installedVersion()))('OpenCode 2 admission', () => {
+const REQUIRED = process.env.FRINK_ACP_ADMISSION_REQUIRED === '1';
+const VERSION = installedVersion();
+const IS_V2 = /^opencode v2\./m.test(VERSION);
+
+it('ran against a real OpenCode 2 wherever admission is required', () => {
+  expect({ required: REQUIRED, ran: IS_V2, version: VERSION }).not.toMatchObject({
+    required: true,
+    ran: false,
+  });
+});
+
+describe.runIf(IS_V2)('OpenCode 2 admission', () => {
   let root = '';
   let home = '';
   let cleanHome = '';
