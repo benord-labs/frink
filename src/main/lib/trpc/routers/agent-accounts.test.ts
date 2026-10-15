@@ -25,6 +25,10 @@ const COPILOT_MODELS: PickerGroupFields[] = [
   { id: 'gpt-5/medium', name: 'GPT-5', familyId: 'gpt-5', effort: 'medium', effortDefault: true },
   { id: 'gpt-5/high', name: 'GPT-5', familyId: 'gpt-5', effort: 'high' },
 ];
+const REMEMBERED = new Map<string, PickerGroupFields[]>([
+  ['opencode', [{ id: 'opencode/big-pickle', name: 'Big Pickle' }]],
+  ['copilot', COPILOT_MODELS],
+]);
 const CODEX_LOGIN = {
   available: true,
   email: 'me@openai.example',
@@ -43,9 +47,7 @@ describe('agentAccounts', () => {
       findAgent: (type) => findAcpAgent(type, env),
       findCopilot: () => findCopilotAgent(env),
       detectCodex,
-      rememberedModels: (type) =>
-        type === 'opencode' ? [{ id: 'opencode/big-pickle', name: 'Big Pickle' }] : undefined,
-      copilotModels: () => COPILOT_MODELS,
+      rememberedModels: (type) => REMEMBERED.get(type) ?? [],
       flags,
       platform,
     }).createCaller({ getWindow: () => null });
@@ -170,15 +172,12 @@ describe('agentAccounts', () => {
     expect(rows()).toEqual([]);
   });
 
-  it('lists the models an agent offered in its last session, or none before it has run', async () => {
+  it('lists the models each agent last reported, or none before it has run', async () => {
     await expect(caller().models({ type: 'opencode' })).resolves.toEqual([
       { id: 'opencode/big-pickle', name: 'Big Pickle' },
     ]);
-    await expect(caller().models({ type: 'grok' })).resolves.toEqual([]);
-  });
-
-  it("lists GitHub Copilot's models from its own last session", async () => {
     await expect(caller().models({ type: 'copilot' })).resolves.toEqual(COPILOT_MODELS);
+    await expect(caller().models({ type: 'grok' })).resolves.toEqual([]);
   });
 
   it('finds the OpenAI login Codex keeps on this computer', async () => {

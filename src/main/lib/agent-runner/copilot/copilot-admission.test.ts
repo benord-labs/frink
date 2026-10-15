@@ -14,13 +14,17 @@ import {
   type ResumeSessionConfig,
   type SessionConfig,
 } from '@github/copilot-sdk';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { ACTED_UNASKED_TEXT } from '../acp/acp-runner';
 import { collectChunks } from '../acp/acp-test-fixtures';
 import type { CodexApprovalCheck } from '../codex/codex-approvals';
+import * as database from '../../db';
+import { freshDb } from '../../db/test-utils/fresh-db';
 import type { CopilotRunnerDeps } from './copilot-runner';
 import { type CopilotRunnerParams, resolveCopilotLaunch, runCopilotAgent } from './index';
+
+vi.spyOn(database, 'getDatabase').mockReturnValue(freshDb());
 
 /**
  * Admission run against a real GitHub Copilot CLI, named by FRINK_COPILOT_ADMISSION_BIN. A scripted

@@ -2,10 +2,16 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import type { CopilotClientOptions, ProviderConfig } from '@github/copilot-sdk';
+import type { CopilotClientOptions, ModelInfo, ProviderConfig } from '@github/copilot-sdk';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { agentRefusesModel } from '../../../../shared/lib/model-picker-label/groups';
 import type { UIMessageChunk } from '../../claude/types';
+import * as database from '../../db';
+import { setPreference } from '../../db/repos/composer-settings';
+import { freshDb } from '../../db/test-utils/fresh-db';
 import { collectChunks, textOf } from '../acp/acp-test-fixtures';
+import { rememberedAgentModels } from '../agent-models';
+import type { CopilotRunnerDeps } from './copilot-runner';
 import {
   AGENT_IDLE,
   CLIENT_ONLY_POLICY,
@@ -21,9 +27,10 @@ import {
   COPILOT_TOOLS,
   type CopilotRunnerParams,
   disposeAllCopilotClients,
-  rememberedCopilotModels,
   runCopilotAgent,
 } from './index';
+
+vi.spyOn(database, 'getDatabase').mockReturnValue(freshDb());
 
 const ACTED_UNASKED =
   'The agent did something without asking first, so Frink stopped it. The step shown above already ran.';
@@ -64,10 +71,11 @@ function runnerParams(overrides: Partial<CopilotRunnerParams> = {}): CopilotRunn
 
 type Fake = ReturnType<typeof fakeCopilotClient>;
 
-function run(fake: Fake, params = runnerParams()) {
+function run(fake: Fake, params = runnerParams(), deps: CopilotRunnerDeps = {}) {
   const created: CopilotClientOptions[] = [];
   const chunks = collectChunks(
     runCopilotAgent(params, {
+      ...deps,
       createClient: (options) => {
         created.push(options);
         return fake.client;
@@ -80,6 +88,17 @@ function run(fake: Fake, params = runnerParams()) {
 const typesOf = (chunks: UIMessageChunk[]) => chunks.map((chunk) => chunk.type);
 const errorsOf = (chunks: UIMessageChunk[]) =>
   chunks.flatMap((chunk) => (chunk.type === 'error' ? [chunk.errorText] : []));
+
+const GPT_5 = JSON.parse(
+  '{"id":"gpt-5","name":"GPT-5","capabilities":{"supports":{"reasoningEffort":true},"limits":{}},"supportedReasoningEfforts":["low","medium","high"],"defaultReasoningEffort":"medium"}',
+);
+const GPT_6 = JSON.parse('{"id":"gpt-6","name":"GPT-6","capabilities":{"limits":{}}}');
+const GPT_X = JSON.parse(
+  '{"id":"gpt-x","name":"GPT-X","capabilities":{"supports":{"reasoningEffort":true},"limits":{}},"supportedReasoningEfforts":["low","high"]}',
+);
+const GPT_OLD_REFUSED = 'GitHub Copilot no longer offers gpt-old. Pick another model.';
+const saveModels = (models: unknown[]) =>
+  setPreference(database.getDatabase(), 'agentModels.copilot', models);
 
 describe('runCopilotAgent', () => {
   it('streams a text turn between start and finish, then stops the client', async () => {
@@ -103,7 +122,7 @@ describe('runCopilotAgent', () => {
       },
     });
 
-    const { chunks, created } = run(fake, runnerParams({ model: 'gpt-5', reasoningEffort: 'low' }));
+    const { chunks, created } = run(fake, runnerParams({ model: 'gpt-5/low' }));
     const result = await chunks;
 
     expect(typesOf(result)).toEqual([
@@ -146,7 +165,7 @@ describe('runCopilotAgent', () => {
     });
     await vi.waitFor(() => expect(fake.calls).toEqual(['start', 'stop']));
     const tier = { name: 'GPT-5', familyId: 'gpt-5' };
-    expect(rememberedCopilotModels()).toEqual([
+    expect(rememberedAgentModels('copilot')).toEqual([
       { ...tier, id: 'gpt-5/high', effort: 'high', detail: 'High' },
       { ...tier, id: 'gpt-5/low', effort: 'low', detail: 'Low' },
       { ...tier, id: 'gpt-5/medium', effort: 'medium', detail: 'Medium', effortDefault: true },
@@ -159,8 +178,103 @@ describe('runCopilotAgent', () => {
     await run(fakeCopilotClient({ models: [auto] })).chunks;
 
     await vi.waitFor(() =>
-      expect(rememberedCopilotModels()).toEqual([{ id: 'auto', name: 'Auto' }]),
+      expect(rememberedAgentModels('copilot')).toEqual([{ id: 'auto', name: 'Auto' }]),
     );
+  });
+
+  it('refuses a saved model Copilot no longer lists, and keeps the new list', async () => {
+    const fake = fakeCopilotClient({ models: [GPT_6] });
+    const result = await run(fake, runnerParams({ model: 'gpt-old/high' })).chunks;
+
+    expect(errorsOf(result)).toEqual([GPT_OLD_REFUSED]);
+    expect(fake.sent).toEqual([]);
+    expect(rememberedAgentModels('copilot')).toEqual([{ id: 'gpt-6', name: 'GPT-6' }]);
+  });
+
+  it.each([
+    ['no effort', 'gpt-5'],
+    ['an effort Copilot no longer offers', 'gpt-5/xhigh'],
+  ])("runs a saved model with %s at the model's default effort", async (_, model) => {
+    const fake = fakeCopilotClient({ models: [GPT_5] });
+    const result = await run(fake, runnerParams({ model })).chunks;
+
+    expect(errorsOf(result)).toEqual([]);
+    expect(fake.opened[0]?.config).toMatchObject({ model: 'gpt-5', reasoningEffort: 'medium' });
+    expect(fake.sent).toHaveLength(1);
+  });
+
+  it.each([
+    ['gpt-5', false],
+    ['gpt-5/xhigh', false],
+    ['gpt-x', false],
+    ['gpt-6/high', false],
+    ['gpt-old', true],
+    ['anthropic/claude-sonnet-4-5', true],
+  ])('refuses %s exactly when the shared rule does (refused: %s)', async (model, refused) => {
+    const fake = fakeCopilotClient({ models: [GPT_5, GPT_6, GPT_X] });
+    const result = await run(fake, runnerParams({ model })).chunks;
+
+    expect(errorsOf(result).length > 0).toBe(refused);
+    expect(agentRefusesModel(rememberedAgentModels('copilot'), model, true)).toBe(refused);
+  });
+
+  it("runs a model offered at several efforts with no default at Copilot's own effort", async () => {
+    const fake = fakeCopilotClient({ models: [GPT_X] });
+    await run(fake, runnerParams({ model: 'gpt-x' })).chunks;
+
+    expect(fake.opened[0]?.config).toMatchObject({ model: 'gpt-x', reasoningEffort: undefined });
+    expect(fake.sent).toHaveLength(1);
+  });
+
+  it('checks the saved list when Copilot does not list its models in time', async () => {
+    saveModels([{ id: 'gpt-6', name: 'GPT-6' }]);
+    const fake = fakeCopilotClient();
+    fake.client.listModels = () => new Promise(() => {});
+    const result = await run(fake, runnerParams({ model: 'gpt-old' }), { listModelsMs: 10 }).chunks;
+
+    expect(errorsOf(result)).toEqual([GPT_OLD_REFUSED]);
+    expect(fake.sent).toEqual([]);
+  });
+
+  it('saves a list that arrives after the turn stopped waiting for it', async () => {
+    saveModels([{ id: 'gpt-old', name: 'GPT Old' }]);
+    const fake = fakeCopilotClient();
+    let answer: (models: ModelInfo[]) => void = () => {};
+    fake.client.listModels = () =>
+      new Promise((resolve) => {
+        answer = resolve;
+      });
+    const result = await run(fake, runnerParams({ model: 'gpt-old' }), { listModelsMs: 10 }).chunks;
+    expect(errorsOf(result)).toEqual([]);
+
+    answer([GPT_6]);
+    await vi.waitFor(() =>
+      expect(rememberedAgentModels('copilot')).toEqual([{ id: 'gpt-6', name: 'GPT-6' }]),
+    );
+  });
+
+  it('still refuses a dropped model when saving the new list fails', async () => {
+    vi.mocked(database.getDatabase).mockImplementationOnce(() => {
+      throw new Error('disk full');
+    });
+    const result = await run(
+      fakeCopilotClient({ models: [GPT_6] }),
+      runnerParams({ model: 'gpt-old' }),
+    ).chunks;
+
+    expect(errorsOf(result)).toEqual([GPT_OLD_REFUSED]);
+  });
+
+  it('sends the saved model when Copilot cannot list its models and none are saved', async () => {
+    saveModels([]);
+    const fake = fakeCopilotClient();
+    fake.client.listModels = async () => {
+      throw new Error('Not signed in');
+    };
+    await run(fake, runnerParams({ model: 'gpt-old/high' })).chunks;
+
+    expect(fake.opened[0]?.config).toMatchObject({ model: 'gpt-old', reasoningEffort: 'high' });
+    expect(fake.sent).toHaveLength(1);
   });
 
   it("lets Plan mode save this session's plan in Frink's folder without a card", async () => {

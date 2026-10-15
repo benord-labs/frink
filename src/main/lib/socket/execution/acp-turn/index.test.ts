@@ -1,6 +1,15 @@
+import type { SessionConfigOption } from '@agentclientprotocol/sdk';
 import { describe, expect, it, vi } from 'vitest';
-import type { AcpRunnerParams, resolveAcpLaunch } from '../../../agent-runner/acp';
+import {
+  type AcpRunnerParams,
+  type resolveAcpLaunch,
+  runAcpAgent,
+} from '../../../agent-runner/acp';
+import { fakeAcpAgent } from '../../../agent-runner/acp/acp-test-fixtures';
 import type { UIMessageChunk } from '../../../claude/types';
+import * as database from '../../../db';
+import { setPreference } from '../../../db/repos/composer-settings';
+import { freshDb } from '../../../db/test-utils/fresh-db';
 import { startAcpTurn } from '.';
 
 type LaunchResult = Awaited<ReturnType<typeof resolveAcpLaunch>>;
@@ -21,9 +30,6 @@ function fakeDeps(result: LaunchResult = { ok: true, launch: LAUNCH }) {
     resolve,
     deps: {
       resolveAcpLaunch: resolve,
-      rememberedModelOptions: (_agentId: string) => [
-        { id: 'anthropic/claude-sonnet-4-5', name: 'Claude Sonnet 4.5' },
-      ],
       async *runAcpAgent(params: AcpRunnerParams): AsyncGenerator<UIMessageChunk, void, undefined> {
         runs.push(params);
         yield { type: 'start' };
@@ -158,16 +164,41 @@ describe('startAcpTurn', () => {
     expect(runs[0]?.freshSessionFallbackPrompt).toBe(`${reminder}\n\nhistory\n\nfix the bug`);
   });
 
-  it("sends no model the agent hasn't listed, so it starts on its own default", async () => {
+  it('leaves out a Claude or OpenAI model the chat kept from another provider', async () => {
     const { deps, runs } = fakeDeps();
-    await collect(startAcpTurn(turnParams({ model: 'sonnet' }), deps));
-    await collect(
-      startAcpTurn(turnParams({ model: 'anthropic/claude-sonnet-4-5' }), {
-        ...deps,
-        rememberedModelOptions: () => undefined,
-      }),
-    );
+    for (const model of ['sonnet', 'codex-gpt-6-astra-low']) {
+      await collect(startAcpTurn(turnParams({ model }), deps));
+    }
 
     expect(runs.map((run) => run.model)).toEqual([undefined, undefined]);
+  });
+
+  it('refuses a model the agent dropped on every turn, not only the first', async () => {
+    vi.spyOn(database, 'getDatabase').mockReturnValue(freshDb());
+    setPreference(database.getDatabase(), 'agentModels.opencode', [
+      { id: 'open/old', name: 'Old' },
+    ]);
+    const select = (category: string, value: string): SessionConfigOption => ({
+      id: category,
+      name: category,
+      category,
+      type: 'select',
+      currentValue: value,
+      options: [{ value, name: value }],
+    });
+    const configOptions = [select('model', 'open/new'), select('mode', 'build')];
+    const deps = {
+      resolveAcpLaunch: async () => ({ ok: true as const, launch: LAUNCH }),
+      runAcpAgent: (params: AcpRunnerParams) =>
+        runAcpAgent(params, fakeAcpAgent(async () => {}, { configOptions }).start),
+    };
+    const errors: string[] = [];
+    for (const _turn of [1, 2]) {
+      const chunks = await collect(startAcpTurn(turnParams({ model: 'open/old' }), deps));
+      errors.push(...chunks.flatMap((chunk) => (chunk.type === 'error' ? [chunk.errorText] : [])));
+    }
+
+    const refusal = 'OpenCode no longer offers open/old. Pick another model.';
+    expect(errors).toEqual([refusal, refusal]);
   });
 });

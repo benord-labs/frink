@@ -1,11 +1,18 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import type {
-  CopilotRunnerParams,
-  rememberedCopilotModels,
-  resolveCopilotLaunch,
+import {
+  COPILOT_TOOLS,
+  type CopilotRunnerParams,
+  type resolveCopilotLaunch,
+  runCopilotAgent,
 } from '../../../agent-runner/copilot';
-import { COPILOT_TOOLS } from '../../../agent-runner/copilot';
+import { fakeCopilotClient } from '../../../agent-runner/copilot/copilot-test-fixtures';
 import type { UIMessageChunk } from '../../../claude/types';
+import * as database from '../../../db';
+import { setPreference } from '../../../db/repos/composer-settings';
+import { freshDb } from '../../../db/test-utils/fresh-db';
 import { startCopilotTurn } from '.';
 
 type LaunchResult = Awaited<ReturnType<typeof resolveCopilotLaunch>>;
@@ -19,14 +26,6 @@ const LAUNCH = {
   versions: { floor: '1.0.96', below: '1.1.0' },
 };
 
-const GPT = { name: 'GPT-5.2', familyId: 'gpt-5.2' };
-// As Copilot lists them: one row per effort where the model offers a choice, else one row.
-const MODELS: NonNullable<ReturnType<typeof rememberedCopilotModels>> = [
-  { ...GPT, id: 'gpt-5.2/medium', effort: 'medium', effortDefault: true },
-  { ...GPT, id: 'gpt-5.2/high', effort: 'high' },
-  { id: 'auto', name: 'Auto' },
-];
-
 /** A launch that resolves to `result` and a Copilot that records what it was asked to run. */
 function fakeDeps(result: LaunchResult = { ok: true, launch: LAUNCH }) {
   const runs: CopilotRunnerParams[] = [];
@@ -36,7 +35,6 @@ function fakeDeps(result: LaunchResult = { ok: true, launch: LAUNCH }) {
     resolve,
     deps: {
       resolveCopilotLaunch: resolve,
-      rememberedCopilotModels: () => MODELS,
       async *runCopilotAgent(
         params: CopilotRunnerParams,
       ): AsyncGenerator<UIMessageChunk, void, undefined> {
@@ -108,7 +106,7 @@ describe('startCopilotTurn', () => {
     expect(runs[0]?.mode).toBe('plan');
   });
 
-  it('passes a listed model, the session to continue, its fallback prompt, notes and images', async () => {
+  it("passes the chat's model as saved, the session to continue, its fallback prompt, notes and images", async () => {
     const { deps, runs } = fakeDeps();
     const note = 'The user opened the file src/a.ts in the IDE.';
     await collect(
@@ -126,7 +124,7 @@ describe('startCopilotTurn', () => {
 
     const reminder = `<system-reminder>\n${note}\n</system-reminder>`;
     expect(runs[0]).toMatchObject({
-      model: 'gpt-5.2',
+      model: 'gpt-5.2/medium',
       resumeSessionId: 'cp-session-0',
       prompt: `${reminder}\n\nfix the bug`,
       freshSessionFallbackPrompt: `${reminder}\n\nearlier turns\n\nfix the bug`,
@@ -134,32 +132,38 @@ describe('startCopilotTurn', () => {
     });
   });
 
-  it('sends the chosen effort with its model, and none for a model without a choice', async () => {
+  it('leaves out a Claude or OpenAI model the chat kept from another provider', async () => {
     const { deps, runs } = fakeDeps();
-    for (const model of ['gpt-5.2/medium', 'gpt-5.2/high', 'auto']) {
+    for (const model of ['sonnet', 'codex-gpt-6-astra-low']) {
       await collect(startCopilotTurn(turnParams({ model }), deps));
     }
 
-    expect(runs.map(({ model, reasoningEffort }) => [model, reasoningEffort])).toEqual([
-      ['gpt-5.2', 'medium'],
-      ['gpt-5.2', 'high'],
-      ['auto', undefined],
-    ]);
+    expect(runs.map((run) => run.model)).toEqual([undefined, undefined]);
   });
 
-  it("sends no model Copilot hasn't listed, so it starts on its own default", async () => {
-    const { deps, runs } = fakeDeps();
-    await collect(startCopilotTurn(turnParams({ model: 'sonnet' }), deps));
-    await collect(
-      startCopilotTurn(turnParams({ model: 'gpt-5.2/medium' }), {
-        ...deps,
-        rememberedCopilotModels: () => undefined,
+  it('refuses a model Copilot dropped on every turn, not only the first', async () => {
+    vi.spyOn(database, 'getDatabase').mockReturnValue(freshDb());
+    setPreference(database.getDatabase(), 'agentModels.copilot', [{ id: 'gpt-old', name: 'Old' }]);
+    const configDirectory = await mkdtemp(path.join(os.tmpdir(), 'copilot turn '));
+    const offered = JSON.parse('{"id":"gpt-6","name":"GPT-6","capabilities":{"limits":{}}}');
+    const deps = {
+      resolveCopilotLaunch: async () => ({
+        ok: true as const,
+        launch: { ...LAUNCH, configDirectory },
       }),
-    );
+      runCopilotAgent: (params: CopilotRunnerParams) =>
+        runCopilotAgent(params, {
+          createClient: () => fakeCopilotClient({ models: [offered] }).client,
+        }),
+    };
+    const errors: string[] = [];
+    for (const _turn of [1, 2]) {
+      const chunks = await collect(startCopilotTurn(turnParams({ model: 'gpt-old' }), deps));
+      errors.push(...chunks.flatMap((chunk) => (chunk.type === 'error' ? [chunk.errorText] : [])));
+    }
+    await rm(configDirectory, { recursive: true, force: true });
 
-    expect(runs.map((run) => [run.model, run.reasoningEffort])).toEqual([
-      [undefined, undefined],
-      [undefined, undefined],
-    ]);
+    const refusal = 'GitHub Copilot no longer offers gpt-old. Pick another model.';
+    expect(errors).toEqual([refusal, refusal]);
   });
 });

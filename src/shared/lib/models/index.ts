@@ -37,6 +37,13 @@ export const CLAUDE_MODEL_IDS = CLAUDE_CODE_MODELS.map((m) => m.id);
 
 /** Fallback Claude model when a selection is unknown or cross-provider (short alias, always valid). */
 const CLAUDE_DEFAULT_MODEL = 'sonnet';
+/** An agent chat on this id runs the agent's default: a turn never sends Claude's ids to an agent. */
+export const AGENT_DEFAULT_MODEL_ID = CLAUDE_DEFAULT_MODEL;
+const BUILT_IN_MODEL_IDS = new Set(
+  [...CLAUDE_CODE_MODELS_CATALOG, ...CODEX_CLI_MODELS].map(({ id }) => id),
+);
+/** A Claude or Codex picker id, which a turn on an installed agent leaves out. */
+export const isBuiltInModelId = (id: string): boolean => BUILT_IN_MODEL_IDS.has(id);
 
 /**
  * CLI values whose family uses adaptive thinking — derived from the catalog so the SDK thinking

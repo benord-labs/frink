@@ -1,6 +1,7 @@
 import { type AiProviderId, aiProvider } from '../../../../../shared/lib/ai-providers';
+import { isBuiltInModelId } from '../../../../../shared/lib/models';
 import type { ChatMode } from '../../../../../shared/types/chat-mode';
-import { rememberedModelOptions, resolveAcpLaunch, runAcpAgent } from '../../../agent-runner/acp';
+import { resolveAcpLaunch, runAcpAgent } from '../../../agent-runner/acp';
 import type { CodexApprovalCheck } from '../../../agent-runner/codex/codex-approvals';
 import type { UIMessageChunk } from '../../../claude/types';
 import { wrapRemindersForPrompt } from '../../operator-reminders';
@@ -24,7 +25,7 @@ type AcpTurnParams = {
   checkApproval: CodexApprovalCheck;
 };
 
-const DEFAULT_DEPS = { resolveAcpLaunch, runAcpAgent, rememberedModelOptions };
+const DEFAULT_DEPS = { resolveAcpLaunch, runAcpAgent };
 
 /** The agent's own mode for the chat's mode, or why the agent cannot run in it. */
 export function agentModeFor(
@@ -37,6 +38,11 @@ export function agentModeFor(
   if (mode === 'agent') return row.agentMode;
   if (row.planMode) return row.planMode;
   throw new Error(`Plan mode isn't available for ${row.name} yet. Switch to Agent.`);
+}
+
+/** The chat's model for an agent; a Claude or OpenAI model kept from another provider is left out. */
+export function agentModelFor(model: string | undefined): string | undefined {
+  return model && !isBuiltInModelId(model) ? model : undefined;
 }
 
 export function withNotes(text: string, notes: string[]): string {
@@ -57,8 +63,6 @@ export async function* startAcpTurn(
   });
   if (!resolved.ok) throw new Error(`${row.name} didn't start. ${resolved.reason}`);
   const fallback = params.freshSessionFallbackPrompt;
-  // A model the agent never listed (another provider's, or any before its first turn) is left out.
-  const listed = deps.rememberedModelOptions(row.id)?.some(({ id }) => id === params.model);
   yield* deps.runAcpAgent({
     launch: resolved.launch,
     agentId: row.id,
@@ -67,7 +71,7 @@ export async function* startAcpTurn(
     prompt: withNotes(params.prompt, params.composerNotes),
     freshSessionFallbackPrompt: fallback && withNotes(fallback, params.composerNotes),
     resumeSessionId: params.resumeSessionId,
-    model: listed ? params.model : undefined,
+    model: agentModelFor(params.model),
     mode,
     images: params.images.map(({ base64Data, mediaType }) => ({
       data: base64Data,

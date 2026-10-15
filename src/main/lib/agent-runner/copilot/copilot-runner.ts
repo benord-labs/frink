@@ -5,18 +5,16 @@ import type {
   MessageOptions,
   ModelInfo,
   ProviderConfig,
-  SessionConfig,
   SessionEvent,
   SessionHooks,
 } from '@github/copilot-sdk';
 import log from 'electron-log';
-import {
-  EFFORT_LABEL,
-  type PickerGroupFields,
-} from '../../../../shared/lib/model-picker-label/groups';
+import { EFFORT_LABEL, modelRowFor } from '../../../../shared/lib/model-picker-label/groups';
+import type { ClaudeSdkEffortLevel } from '../../../../shared/types/execution';
 import { createThinkingEmitter } from '../../claude/thinking-emitter';
 import type { UIMessageChunk } from '../../claude/types';
 import { ACTED_UNASKED_TEXT } from '../acp/acp-runner';
+import { type AgentModel, rememberAgentModels, rememberedAgentModels } from '../agent-models';
 import { ChunkQueue } from '../codex/chunk-queue';
 import type { CodexApprovalCheck } from '../codex/codex-approvals';
 import { completeTurnChunks, makeChunkSink } from '../codex/codex-stream-chunks';
@@ -37,6 +35,8 @@ import type { CopilotTools } from './copilot-tools';
 const STOP_GRACE_MS = 1500;
 /** How often a running turn checks that Copilot still answers. */
 const PING_MS = 1000;
+/** How long Copilot gets to list its models before the saved list stands in. */
+const LIST_MODELS_MS = 3000;
 // An organisation-required plugin being installed; this SDK release has no type for it yet.
 const MANAGED_PLUGIN_PROGRESS = 'session.managed_plugin_progress';
 const SETTINGS_LOST =
@@ -63,8 +63,6 @@ export type CopilotTurnClient = CopilotSessionHost<CopilotTurnSession> &
   Pick<CopilotClient, 'start' | 'stop' | 'forceStop' | 'ping' | 'listModels'>;
 
 type PreToolUseHandler = NonNullable<SessionHooks['onPreToolUse']>;
-/** A picker row: a model, or one effort of a model that offers a choice. */
-type CopilotModel = PickerGroupFields & { detail?: string };
 
 export type CopilotRunnerParams = {
   launch: {
@@ -80,8 +78,8 @@ export type CopilotRunnerParams = {
   /** Sent instead of `prompt` when the earlier session could not be continued. */
   freshSessionFallbackPrompt?: string;
   resumeSessionId?: string;
+  /** The chat's picker id, such as `gpt-6/high`, checked against the models Copilot offers. */
   model?: string;
-  reasoningEffort?: SessionConfig['reasoningEffort'];
   mode?: 'plan';
   images?: { data: string; mimeType: string }[];
   abortController: AbortController;
@@ -94,25 +92,21 @@ export type CopilotRunnerDeps = {
   provider?: ProviderConfig;
   /** Admission tests only: replaces Frink's answer to prove Copilot's own check holds alone. */
   gateWrapper?: (hook: PreToolUseHandler) => PreToolUseHandler;
+  /** Tests only: how long Copilot gets to list its models. */
+  listModelsMs?: number;
 };
 
 type CopilotSdk = typeof import('@github/copilot-sdk');
 let copilotSdk: Promise<CopilotSdk> | undefined;
 const liveClients = new Set<CopilotTurnClient>();
-let rememberedModels: CopilotModel[] | undefined;
 
 function loadCopilotSdk(): Promise<CopilotSdk> {
   copilotSdk ??= import('@github/copilot-sdk');
   return copilotSdk;
 }
 
-/** The models Copilot offered when a turn last opened, or nothing before the first turn. */
-export function rememberedCopilotModels(): CopilotModel[] | undefined {
-  return rememberedModels;
-}
-
 /** One row per model, or per effort where it offers a choice, so a saved effort outlives a new default. */
-function modelRows(model: ModelInfo): CopilotModel[] {
+function modelRows(model: ModelInfo): AgentModel[] {
   const { id, name, capabilities, defaultReasoningEffort } = model;
   // A free plan's model comes with no supports block at all.
   const efforts = capabilities?.supports?.reasoningEffort ? model.supportedReasoningEfforts : [];
@@ -128,8 +122,38 @@ function modelRows(model: ModelInfo): CopilotModel[] {
   }));
 }
 
-async function rememberModels(client: CopilotTurnClient): Promise<void> {
-  rememberedModels = (await client.listModels()).flatMap(modelRows);
+/** Copilot's models, saved for the picker whenever they arrive; none when it cannot list them. */
+async function listAndSaveModels(client: CopilotTurnClient): Promise<AgentModel[]> {
+  try {
+    const rows = (await client.listModels()).flatMap(modelRows);
+    rememberAgentModels('copilot', rows);
+    return rows;
+  } catch (error) {
+    log.warn('[Copilot] Could not list models', error);
+    return [];
+  }
+}
+
+/** The models Copilot offers now; the saved list when it cannot say in time. */
+async function offeredModels(client: CopilotTurnClient, waitMs: number): Promise<AgentModel[]> {
+  // A late answer is still saved, so a slow listing refreshes the list for the next turn.
+  const listing = listAndSaveModels(client);
+  const rows = await Promise.race([listing, delay(waitMs, [], { ref: false })]);
+  if (rows.length > 0) return rows;
+  log.warn('[Copilot] Got no models in time; checking the saved list');
+  return rememberedAgentModels('copilot');
+}
+
+type ModelChoice = { model?: string; reasoningEffort?: ClaudeSdkEffortLevel; refusal?: string };
+
+/** The model and effort for a picker id, or the refusal for a model Copilot no longer offers. */
+function chooseModel(rows: AgentModel[], picked: string | undefined): ModelChoice {
+  if (!picked) return {};
+  const { model, effort, offered, row } = modelRowFor(rows, picked);
+  // With no list at all, the model goes to Copilot unchecked.
+  if (rows.length === 0) return { model, reasoningEffort: effort };
+  if (!offered) return { refusal: `GitHub Copilot no longer offers ${model}. Pick another model.` };
+  return { model, reasoningEffort: row?.effort };
 }
 
 /** Stops the client, force-stopping it when it does not stop within a moment. */
@@ -269,14 +293,19 @@ async function startTurn(turn: CopilotTurn, params: CopilotRunnerParams, deps: C
   // Opening a session would start a stopped client again.
   if (turn.isOver) return;
   turn.watch(client);
+  // Copilot opens a session on any model name, so the choice is checked against its list instead.
+  const offered = await offeredModels(client, deps.listModelsMs ?? LIST_MODELS_MS);
+  const choice = chooseModel(offered, params.model);
+  if (turn.isOver) return;
+  if (choice.refusal) return turn.halt(choice.refusal);
   const options = copilotSessionOptions({
     cwd: params.cwd,
     configDirectory: launch.configDirectory,
     tools: launch.tools,
     gate: turn.gate,
     onEvent: turn.onEvent,
-    model: params.model,
-    reasoningEffort: params.reasoningEffort,
+    model: choice.model,
+    reasoningEffort: choice.reasoningEffort,
   });
   const opened = await openCheckedSession(client, {
     options: {
@@ -295,7 +324,6 @@ async function startTurn(turn: CopilotTurn, params: CopilotRunnerParams, deps: C
     type: 'message-metadata',
     messageMetadata: { sessionId: opened.session.sessionId },
   });
-  void rememberModels(client).catch((error) => log.warn('[Copilot] Could not list models', error));
   const lostHistory = Boolean(params.resumeSessionId) && !opened.resumed;
   await opened.session.send(messageFor(params, lostHistory));
 }

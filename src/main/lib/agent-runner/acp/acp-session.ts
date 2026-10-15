@@ -7,6 +7,7 @@ import type {
 } from '@agentclientprotocol/sdk';
 import log from 'electron-log';
 import { z } from 'zod';
+import { rememberAgentModels } from '../agent-models';
 
 /** Starting an agent may include a first-run download; a prompt itself has no deadline. */
 const START_DEADLINE_MS = 60_000;
@@ -31,15 +32,6 @@ type OpenedSession = {
   /** The version the agent reported, if any. */
   agentVersion?: string;
 };
-
-type ModelOption = { id: string; name: string };
-
-const modelOptionsByAgent = new Map<string, ModelOption[]>();
-
-/** The models an agent listed in the last session it opened, if it has opened one. */
-export function rememberedModelOptions(agentId: string): ModelOption[] | undefined {
-  return modelOptionsByAgent.get(agentId);
-}
 
 /** The values of the session's list setting of `category`, such as `model` or `mode`. */
 function listSetting(options: SessionConfigOption[], category: string) {
@@ -104,13 +96,11 @@ async function applyChoices(
   options: SessionConfigOption[],
   { agentId, agentName, mode, model }: AcpSessionInputs,
 ): Promise<void> {
-  const models = listSetting(options, 'model');
-  if (models) {
-    modelOptionsByAgent.set(
-      agentId,
-      models.values.map(({ value, name }) => ({ id: value, name })),
-    );
-  }
+  const listed = listSetting(options, 'model')?.values ?? [];
+  rememberAgentModels(
+    agentId,
+    listed.map(({ value, name }) => ({ id: value, name })),
+  );
   let current = options;
   // The mode first: switching it may also switch the model.
   if (mode) {

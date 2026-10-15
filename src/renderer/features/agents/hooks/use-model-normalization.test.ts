@@ -1,11 +1,15 @@
 // @vitest-environment happy-dom
 import { act, renderHook } from '@testing-library/react';
+import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import {
   CODEX_DEFAULT_MODEL_ID,
   type CodexAccountCatalog,
 } from '../../../../shared/lib/codex-cli-models';
-import { useModelNormalization } from './use-model-normalization';
+import type { PickerGroupFields } from '../../../../shared/lib/model-picker-label/groups';
+import { AGENT_DEFAULT_MODEL_ID } from '../../../../shared/lib/models';
+import { providerModels } from '../../../lib/ai-providers/chat-options';
+import { useModelNormalization, useNewAgentChatModel } from './use-model-normalization';
 
 describe('useModelNormalization', () => {
   it('resets a stale model ID to sonnet when switching to a Claude account', () => {
@@ -201,5 +205,59 @@ describe('useModelNormalization', () => {
       useModelNormalization(undefined, 'anthropic/claude-sonnet-4-5', setModel, true),
     );
     expect(setModel).not.toHaveBeenCalled();
+  });
+});
+
+describe('useNewAgentChatModel', () => {
+  const OPENCODE_ID = 'anthropic/claude-sonnet-4-5';
+  const OPENCODE = [{ id: OPENCODE_ID, name: 'Claude Sonnet 4.5' }];
+  type Props = { provider: string; agentModels?: PickerGroupFields[] };
+
+  // As the new-chat form wires it: one saved id shared by every provider.
+  function newChat(initial: string, initialProps: Props) {
+    return renderHook<string, Props>(
+      ({ provider, agentModels }) => {
+        const [modelId, setModelId] = useState(initial);
+        const inputs = { modelId, hiddenFamilies: [], codexCatalog: null, keepUnavailable: false };
+        const models = providerModels(provider, { ...inputs, agentModels });
+        useNewAgentChatModel(models, modelId, setModelId);
+        useModelNormalization(provider, modelId, setModelId);
+        return modelId;
+      },
+      { initialProps },
+    );
+  }
+
+  it("starts a new Copilot chat on Copilot's default once its saved list lacks OpenCode's model", () => {
+    const { result, rerender } = newChat(OPENCODE_ID, {
+      provider: 'opencode',
+      agentModels: OPENCODE,
+    });
+    expect(result.current).toBe(OPENCODE_ID);
+
+    rerender({ provider: 'copilot' });
+    expect(result.current).toBe(OPENCODE_ID);
+    rerender({ provider: 'copilot', agentModels: [] });
+    expect(result.current).toBe(OPENCODE_ID);
+    rerender({ provider: 'copilot', agentModels: [{ id: 'gpt-5', name: 'GPT-5' }] });
+    expect(result.current).toBe(AGENT_DEFAULT_MODEL_ID);
+  });
+
+  it('keeps a Copilot model offered at several efforts with no default', () => {
+    const tier = { name: 'GPT-X', familyId: 'gpt-x' };
+    const agentModels = [
+      { ...tier, id: 'gpt-x/low', effort: 'low' as const },
+      { ...tier, id: 'gpt-x/high', effort: 'high' as const },
+    ];
+    const { result } = newChat('gpt-x', { provider: 'copilot', agentModels });
+    expect(result.current).toBe('gpt-x');
+  });
+
+  it("keeps Claude's model through an OpenCode new chat, so switching back still has it", () => {
+    const { result, rerender } = newChat('opus', { provider: 'claude-code' });
+    rerender({ provider: 'opencode', agentModels: OPENCODE });
+    expect(result.current).toBe('opus');
+    rerender({ provider: 'claude-code' });
+    expect(result.current).toBe('opus');
   });
 });

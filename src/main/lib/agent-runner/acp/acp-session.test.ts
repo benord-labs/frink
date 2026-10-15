@@ -9,9 +9,14 @@ import {
 } from '@agentclientprotocol/sdk';
 import { describe, expect, it, vi } from 'vitest';
 import type { UIMessageChunk } from '../../claude/types';
+import * as database from '../../db';
+import { freshDb } from '../../db/test-utils/fresh-db';
+import { rememberedAgentModels } from '../agent-models';
 import { openSession } from './acp-session';
 import { collectChunks, fakeAcpAgent, runnerParams } from './acp-test-fixtures';
-import { type AcpRunnerParams, rememberedModelOptions, runAcpAgent } from './index';
+import { type AcpRunnerParams, runAcpAgent } from './index';
+
+vi.spyOn(database, 'getDatabase').mockReturnValue(freshDb());
 
 const CAN_RESUME = { sessionCapabilities: { resume: {} } };
 
@@ -155,13 +160,14 @@ describe('runAcpAgent session settings', () => {
 
     await runTurn({ configOptions: SETTINGS }, { agentId: 'first' });
     await runTurn({ configOptions: [grouped] }, { agentId: 'second' });
+    await runTurn({ configOptions: [select('mode', ['build'])] }, { agentId: 'no-models' });
 
-    expect(rememberedModelOptions('first')).toEqual([
+    expect(rememberedAgentModels('first')).toEqual([
       { id: 'open/one', name: 'Name of open/one' },
       { id: 'open/two', name: 'Name of open/two' },
     ]);
-    expect(rememberedModelOptions('second')).toEqual([{ id: 'open/free', name: 'Free model' }]);
-    expect(rememberedModelOptions('never-ran')).toBeUndefined();
+    expect(rememberedAgentModels('second')).toEqual([{ id: 'open/free', name: 'Free model' }]);
+    expect(rememberedAgentModels('no-models')).toEqual([]);
   });
 });
 

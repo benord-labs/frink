@@ -6,8 +6,9 @@ import {
   aiProvider,
   selectableProviderIds,
 } from '../../../../shared/lib/ai-providers';
-import { findAcpAgent, rememberedModelOptions } from '../../agent-runner/acp';
-import { findCopilotAgent, rememberedCopilotModels } from '../../agent-runner/copilot';
+import { findAcpAgent } from '../../agent-runner/acp';
+import { rememberedAgentModels } from '../../agent-runner/agent-models';
+import { findCopilotAgent } from '../../agent-runner/copilot';
 import { detectCodexAccount } from '../../credentials/detect-codex';
 import { claudeCodeCredentials, getDatabase } from '../../db';
 import { createId } from '../../db/utils';
@@ -18,8 +19,7 @@ type AgentAccountsDeps = {
   findAgent: (type: string) => ReturnType<typeof findAcpAgent>;
   findCopilot: typeof findCopilotAgent;
   detectCodex: typeof detectCodexAccount;
-  rememberedModels: typeof rememberedModelOptions;
-  copilotModels: typeof rememberedCopilotModels;
+  rememberedModels: typeof rememberedAgentModels;
   flags: Partial<Record<keyof typeof LAUNCH_FLAGS, boolean>>;
   platform: string;
 };
@@ -63,8 +63,7 @@ export function createAgentAccountsRouter(
     findAgent: findAcpAgent,
     findCopilot: findCopilotAgent,
     detectCodex: detectCodexAccount,
-    rememberedModels: rememberedModelOptions,
-    copilotModels: rememberedCopilotModels,
+    rememberedModels: rememberedAgentModels,
     flags: LAUNCH_FLAGS,
     platform: process.platform,
   },
@@ -75,14 +74,10 @@ export function createAgentAccountsRouter(
       return row ? detectAgent(row, deps) : { available: false, reason: NOT_AVAILABLE };
     }),
 
-    /** The models the agent listed in its last session this run; none until it has run once. */
-    models: publicProcedure.input(typeInput).query(({ input }) => {
-      const listed =
-        aiProvider(input.type)?.runtime === 'copilot'
-          ? deps.copilotModels()
-          : deps.rememberedModels(input.type);
-      return listed ?? [];
-    }),
+    /** The models the agent last reported on this computer; none before its first session. */
+    models: publicProcedure
+      .input(typeInput)
+      .query(({ input }) => deps.rememberedModels(input.type)),
 
     /** One row per agent on this computer; connecting again refreshes it. */
     connect: publicProcedure

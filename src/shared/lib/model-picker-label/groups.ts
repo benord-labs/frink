@@ -1,6 +1,7 @@
 /** Picker rows → family, context window and effort tier. Grouping reads structured keys
  *  (`effort`, `contextDefault`), never labels, so relabelling a tier cannot regroup it. */
 import type { ClaudeSdkEffortLevel } from '../../types/execution';
+import { isBuiltInModelId } from '../models';
 
 /** The fields grouping reads — structural so `src/shared` never imports the renderer's `ModelItem`. */
 export type PickerGroupFields = {
@@ -114,4 +115,33 @@ export function pickInWindow<T extends PickerGroupFields>(
     pool.find((t) => t.effortDefault) ??
     window.defaultTier
   );
+}
+
+const isEffortKey = (value: string): value is ClaudeSdkEffortLevel =>
+  Object.hasOwn(EFFORT_LABEL, value);
+
+/** The model and effort a picker id such as `gpt-6/high` names, a listed row of that model if any,
+ *  and the row it runs as: that effort, else the model's default effort or its only row. */
+export function modelRowFor<T extends PickerGroupFields>(rows: readonly T[], picked: string) {
+  const cut = picked.lastIndexOf('/');
+  const tail = picked.slice(cut + 1);
+  const effort = cut > 0 && isEffortKey(tail) ? tail : undefined;
+  const model = effort ? picked.slice(0, cut) : picked;
+  const offered = rows.filter((row) => (row.familyId ?? row.id) === model);
+  const row =
+    offered.find((r) => r.effort === effort) ??
+    offered.find((r) => r.effortDefault) ??
+    (offered.length === 1 ? offered[0] : undefined);
+  return { model, effort, offered: offered.at(0), row };
+}
+
+/** Whether an installed agent's turn refuses a saved picker id, matching as that turn does: by model
+ *  and effort when `byEffort` (Copilot), else exactly. Claude and Codex ids are dropped, not refused. */
+export function agentRefusesModel(
+  rows: readonly PickerGroupFields[],
+  picked: string,
+  byEffort: boolean,
+): boolean {
+  if (rows.length === 0 || isBuiltInModelId(picked)) return false;
+  return byEffort ? !modelRowFor(rows, picked).offered : !rows.some((row) => row.id === picked);
 }
