@@ -128,6 +128,8 @@ export const OPENCODE_LAUNCH: AcpLaunchRow = {
   binary: 'opencode',
   fallbacks: ['.opencode/bin/opencode'],
   versions: { floor: '1.19.0', below: '1.20.0' },
+  // 1.19 prints only the number; OpenCode 2 prints `opencode v2.0.29`.
+  versionPattern: /^(?:opencode v)?(\d+\.\d+\.\d+)$/m,
   installHint: AI_PROVIDERS.opencode.installHint,
   signInHint: AI_PROVIDERS.opencode.signInHint,
   args: ['acp', '--pure', '--hostname', '127.0.0.1', '--port', '0'],
