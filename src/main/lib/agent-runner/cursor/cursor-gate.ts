@@ -2,7 +2,6 @@ import { execFile } from 'node:child_process';
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
-import { promisify } from 'node:util';
 import log from 'electron-log';
 import stableStringify from 'fast-json-stable-stringify';
 import { z } from 'zod';
@@ -27,11 +26,13 @@ export type CursorHookAnswer =
 type ToolInput = Record<string, JsonValue>;
 /** A call's questions, or why it is refused; own names Cursor's own file, allowed quietly. */
 type CursorQuestions =
-  | { kind: 'ask'; questions: CodexApprovalRequest[]; own?: string }
+  | { kind: 'ask'; questions: CodexApprovalRequest[]; own?: string; links?: CodexApprovalRequest[] }
   | { kind: 'refuse'; reason: string };
 
 type Folders = { cwd: string; home: string; realHome: string };
 type GateOptions = Folders & {
+  /** The ripgrep Cursor's search runs, asked which files a search would walk. */
+  ripgrep: string;
   hookVersions: readonly string[];
   checkApproval: CodexApprovalCheck;
   turnOver: AbortSignal;
@@ -43,7 +44,14 @@ const CANT_PATH = "Frink can't check this path, so it didn't run.";
 const NOT_CHECKED = "Frink couldn't check this step, so it didn't run.";
 const TURN_OVER = "This turn has ended, so Frink didn't run this step.";
 const CHANGED = 'Cursor changed how it asks Frink, so Frink stopped it.';
-const LINKS_OUT = "This search would follow a link out of its folder, so Frink didn't run it.";
+const UNCHECKED_LINKS =
+  "Frink couldn't check where this search's links lead, so it didn't run it. Try a smaller folder.";
+const OUTSIDE_SEARCH =
+  "Cursor's search only looks inside the chat's folder, so Frink didn't run it.";
+// A link check that takes longer than this is refused rather than waited on.
+const CHECK_MS = 2000;
+// Files whose links are resolved at once, between checks of the time limit.
+const BATCH = 512;
 const REFUSE: CursorQuestions = { kind: 'refuse', reason: CANT_CHECK };
 const REFUSE_PATH: CursorQuestions = { kind: 'refuse', reason: CANT_PATH };
 const ALLOW: CursorHookAnswer = { permission: 'allow' };
@@ -147,46 +155,137 @@ function inside(file: string, folder: string): boolean {
   }
 }
 
+// A glob call reaches the hook as a Grep for nothing that returns file names only.
+const namesOnly = (input: ToolInput) =>
+  input.pattern === '' && input.output_mode === 'files_with_matches';
+/** True when file is folder or inside it, both real paths. */
+const within = (file: string, folder: string) => {
+  const rest = path.relative(folder, file);
+  return !path.isAbsolute(rest) && rest.split(path.sep)[0] !== '..';
+};
+/** True when file is, holds or sits in Cursor's private home or the user's own Cursor sign-in. */
+const touchesKept = (file: string, { home, realHome }: Folders) =>
+  [home, path.join(realHome, '.cursor')].some(
+    (folder) => inside(file, folder) || inside(folder, file),
+  );
+
 /** The files a file tool names, resolved in the chat's folder, and the questions it asks. */
 function fileQuestions(question: 'Edit' | 'Read', input: ToolInput, cwd: string) {
   if (question === 'Read') {
-    // A glob call reaches the hook as a Grep for nothing that returns file names only.
-    const namesOnly = input.pattern === '' && input.output_mode === 'files_with_matches';
     const files = readStarts(input.file_path, cwd, input.glob)?.map((start) => start.file);
-    return { files, questions: readQuestions(input.file_path, cwd, input.glob, namesOnly) };
+    return { files, questions: readQuestions(input.file_path, cwd, input.glob, namesOnly(input)) };
   }
   const file = pathSchema.safeParse(input.file_path);
   if (!file.success) return { files: undefined, questions: undefined };
   return { files: [path.resolve(cwd, file.data)], questions: [editQuestion(cwd, file.data)] };
 }
 
-/** True when a link under root leads outside it, through root if it is a link; Cursor's search follows links. */
-async function linksOut(root: string): Promise<boolean> {
-  if (!existsSync(root)) return false;
-  const found = await promisify(execFile)('/usr/bin/find', ['-H', root, '-type', 'l', '-print0'], {
-    maxBuffer: 64 * 1024 * 1024,
-  }).then(
-    ({ stdout }) => stdout.split('\0').filter(Boolean),
-    () => undefined,
-  );
-  if (!found) return true;
-  return found.some((link) => !isPathWithinProject(link, root));
+/** Every file ripgrep walks from root as Cursor's search does, through links; undefined on failure. */
+function walkedFiles(
+  ripgrep: string,
+  cwd: string,
+  root: string,
+  glob: string | undefined,
+  deadline: number,
+) {
+  const filter = glob === undefined ? [] : ['--iglob', glob];
+  // Cursor's search runs with a home of its own, so the user's global git ignore never applies.
+  const args = ['--files', '--hidden', '--follow', '--no-config', '--no-ignore-global', '--null'];
+  args.push(...filter, '--', path.relative(cwd, root) || '.');
+  const options = { cwd, timeout: Math.max(1, deadline - Date.now()), maxBuffer: 2 ** 26 };
+  return new Promise<string[] | undefined>((resolve) => {
+    execFile(ripgrep, args, { ...options, killSignal: 'SIGKILL' }, (error, stdout) => {
+      const files = stdout.split('\0').filter(Boolean);
+      // Like Cursor, a walk that skipped an unreadable or broken entry still counts.
+      const done = !error || error.code === 1 || (error.code === 2 && files.length > 0);
+      resolve(done ? files.map((file) => path.resolve(cwd, file)) : undefined);
+    });
+  });
 }
 
-/** True when a search could reach past its folders through a link. */
-async function searchLeaves(input: ToolInput | undefined, cwd: string): Promise<boolean> {
-  for (const { root } of readStarts(input?.file_path, cwd, input?.glob) ?? []) {
-    if (await linksOut(root)) return true;
+/** The real path of each step where file's path leaves the open folders and every earlier step. */
+async function stepsOut(file: string, root: string, open: string[]): Promise<string[]> {
+  const out: string[] = [];
+  const covered = (real: string) => [...open, ...out].some((folder) => within(real, folder));
+  if (covered(await realpath(file))) return out;
+  let step = root;
+  for (const part of path.relative(root, file).split(path.sep)) {
+    step = path.join(step, part);
+    const real = await realpath(step);
+    if (!covered(real)) out.push(real);
   }
-  return false;
+  return out;
+}
+
+/** A file removed since the listing can't be read by Cursor's search either, so it is skipped. */
+function skipGone(error: NodeJS.ErrnoException): string[] {
+  if (error.code === 'ENOENT') return [];
+  throw error;
+}
+
+/** The outside places the walked files reach, or undefined once the deadline passes. */
+async function reachedFrom(files: string[], root: string, open: string[], deadline: number) {
+  const reached: string[] = [];
+  for (let at = 0; at < files.length; at += BATCH) {
+    if (Date.now() > deadline) return undefined;
+    const batch = files.slice(at, at + BATCH);
+    const steps = batch.map((file) => stepsOut(file, root, open).catch(skipGone));
+    reached.push(...(await Promise.all(steps)).flat());
+  }
+  return reached;
+}
+
+/** The real folders and files a search reaches outside the chat's folder through links, nested
+ *  ones folded into their parent; undefined when the walk can't be checked in time. */
+async function linkTargets(ripgrep: string, input: ToolInput, cwd: string) {
+  const targets = new Set<string>();
+  const deadline = Date.now() + CHECK_MS;
+  // Cursor's search walks the named folders with the glob as given; a glob that isn't text can't be.
+  const starts = readStarts(input.file_path, cwd);
+  const glob = z.string().optional().safeParse(input.glob);
+  if (!starts || !glob.success) return undefined;
+  try {
+    for (const { root } of starts) {
+      if (!existsSync(root)) continue;
+      const files = await walkedFiles(ripgrep, cwd, root, glob.data, deadline);
+      const open = [await realpath(cwd), await realpath(root)];
+      const reached = files && (await reachedFrom(files, root, open, deadline));
+      if (!reached) return undefined;
+      for (const target of reached) targets.add(target);
+    }
+  } catch {
+    return undefined;
+  }
+  const all = [...targets].sort();
+  return all.filter((target) => !all.some((other) => other !== target && within(target, other)));
+}
+
+/** A search's questions plus one Read per outside place its walk reaches through a link. */
+async function withLinks(
+  verdict: CursorQuestions,
+  input: ToolInput,
+  opts: GateOptions,
+): Promise<CursorQuestions> {
+  if (verdict.kind === 'refuse' || namesOnly(input)) return verdict;
+  // Cursor searches the whole chat folder in place of a path outside it.
+  const starts = readStarts(input.file_path, opts.cwd) ?? [];
+  if (starts.some(({ root }) => !within(root, opts.cwd))) {
+    return { kind: 'refuse', reason: OUTSIDE_SEARCH };
+  }
+  const targets = await linkTargets(opts.ripgrep, input, opts.cwd);
+  if (!targets) return { kind: 'refuse', reason: UNCHECKED_LINKS };
+  if (targets.some((target) => touchesKept(target, opts))) return REFUSE_PATH;
+  const links = targets.map((file) => ({ toolName: 'Read', input: { file_path: file } }));
+  return { ...verdict, links };
 }
 
 /** The questions one Cursor hook call asks Frink's gate, or why it is refused. */
 function questionsForCursorTool(
   toolName: string,
   input: ToolInput | undefined,
-  { cwd, home, realHome }: Folders,
+  folders: Folders,
 ): CursorQuestions {
+  const { cwd, home } = folders;
   const rule = HOOK_TOOLS.get(toolName);
   if (!rule || !input || Object.keys(input).some((key) => !rule.keys.includes(key))) {
     return REFUSE;
@@ -206,10 +305,9 @@ function questionsForCursorTool(
     return { kind: 'ask', questions, own: files[0] };
   }
   // Cursor's private home and the user's own Cursor sign-in are never read or written.
-  const kept = [home, path.join(realHome, '.cursor')];
-  const touchesKept = (file: string) =>
-    kept.some((folder) => inside(file, folder) || inside(folder, file));
-  return files.some(touchesKept) ? REFUSE_PATH : { kind: 'ask', questions };
+  return files.some((file) => touchesKept(file, folders))
+    ? REFUSE_PATH
+    : { kind: 'ask', questions };
 }
 
 /** Decides each Cursor hook call and records its allows, so an unasked run stops the turn. */
@@ -227,7 +325,9 @@ export function createCursorGate(opts: GateOptions) {
     if (verdict.own !== undefined && !(await plainFile(verdict.own, opts.home))) {
       return deny(CANT_PATH);
     }
-    for (const question of verdict.own === undefined ? verdict.questions : []) {
+    // Link targets are asked but not recorded: the search itself is the step that runs.
+    const asked = verdict.own === undefined ? [...verdict.questions, ...(verdict.links ?? [])] : [];
+    for (const question of asked) {
       const outcome = await checkApproval(question);
       if (turnOver.aborted) return deny(TURN_OVER);
       if (outcome.allowed === false) return deny(outcome.message);
@@ -258,14 +358,12 @@ export function createCursorGate(opts: GateOptions) {
     if (hook.hook_event_name !== 'preToolUse') return deny(CANT_CHECK);
     const toolName = hook.tool_name ?? '';
     const verdict = questionsForCursorTool(toolName, hook.tool_input, opts);
-    if (
-      toolName === 'Grep' &&
-      verdict.kind === 'ask' &&
-      (await searchLeaves(hook.tool_input, opts.cwd))
-    ) {
-      return deny(LINKS_OUT);
-    }
-    const answer = await decide(verdict);
+    // Cursor's search follows links, so each outside place its walk reaches is asked too.
+    const searched =
+      toolName === 'Grep' && hook.tool_input
+        ? await withLinks(verdict, hook.tool_input, opts)
+        : verdict;
+    const answer = await decide(searched);
     const shell = shellSchema.safeParse(hook.tool_input);
     if (toolName === 'Shell' && id && answer === ALLOW && shell.success) {
       shells.set(id, shell.data.command);

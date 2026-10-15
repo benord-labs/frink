@@ -7,6 +7,15 @@ import type { JsonValue } from '../../../../shared/types/permissions';
 import type { CursorSdkMessage } from './cursor-events';
 import type { CursorHostMessage, CursorHostRequest, ForkHost } from './cursor-runner';
 
+/** The ripgrep Cursor's SDK ships for this computer, as the launch finds it beside the SDK. */
+export const CURSOR_RIPGREP = path.resolve(
+  'node_modules',
+  '@cursor',
+  `sdk-${process.platform}-${process.arch}`,
+  'bin',
+  'rg',
+);
+
 type Flag = 'uchg' | 'nouchg';
 type StartRequest = Extract<CursorHostRequest, { type: 'start' }>;
 

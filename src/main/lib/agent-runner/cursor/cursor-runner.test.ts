@@ -61,6 +61,7 @@ function runnerParams(overrides: Partial<CursorRunnerParams> = {}): CursorRunner
       home,
       storeDir: path.join(root, `chat ${chat}`, 'store'),
       realHome: path.join(root, 'real home'),
+      ripgrep: '/sdk-platform/bin/rg',
       tools: CURSOR_TOOL_NAMES,
       hookVersions: ['1.0.0'],
     },

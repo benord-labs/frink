@@ -1,10 +1,11 @@
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { CodexApprovalCheck } from '../codex/codex-approvals';
 import type { ApprovalOutcome, CodexApprovalRequest } from '../codex/codex-events';
 import type { JsonValue } from '../path-questions';
+import { CURSOR_RIPGREP } from './cursor-test-fixtures';
 import { CURSOR_TOOL_NAMES, type CursorHookAnswer, createCursorGate } from './index';
 
 let root = '';
@@ -91,7 +92,11 @@ const shellExec = (command: string, tool_use_id: string) => ({
 });
 const SUBMIT = { hook_event_name: 'beforeSubmitPrompt', cursor_version: VERSION, prompt: 'hi' };
 
-function testGate(answer: (request: CodexApprovalRequest) => ApprovalOutcome, folder = cwd) {
+function testGate(
+  answer: (request: CodexApprovalRequest) => ApprovalOutcome,
+  folder = cwd,
+  ripgrep = CURSOR_RIPGREP,
+) {
   const asked: CodexApprovalRequest[] = [];
   const stops: string[] = [];
   const turn = new AbortController();
@@ -103,6 +108,7 @@ function testGate(answer: (request: CodexApprovalRequest) => ApprovalOutcome, fo
     cwd: folder,
     home,
     realHome,
+    ripgrep,
     hookVersions: [VERSION],
     checkApproval,
     turnOver: turn.signal,
@@ -157,9 +163,10 @@ describe('the questions each recorded Cursor hook call asks', () => {
     expect(asked).toEqual([]);
   });
 
-  it('refuses a search that would follow a link out of the folder, and allows one that stays in', async () => {
+  it('asks before a search that would follow a link out of the folder, and not for one that stays in', async () => {
     const linked = path.join(root, 'work', 'linked chat');
     await mkdir(path.join(linked, 'src', 'lib'), { recursive: true });
+    await writeFile(path.join(linked, 'src', 'lib', 'a.ts'), 'key');
     await symlink(path.join(linked, 'src', 'lib'), path.join(linked, 'src', 'inner'));
     await symlink(outside, path.join(linked, 'outside link'));
     // A chain: chained/a leads to other, whose b leads outside; via is a link to other.
@@ -169,18 +176,27 @@ describe('the questions each recorded Cursor hook call asks', () => {
     await symlink(path.join(linked, 'other'), path.join(linked, 'chained', 'a'));
     await symlink(path.join(linked, 'other'), path.join(linked, 'via'));
     await symlink(linked, path.join(root, 'work', 'chat link'));
-    const { asked, decide } = testGate(() => ALLOW_ALL, linked);
-    const viaLink = testGate(() => ALLOW_ALL, path.join(root, 'work', 'chat link'));
-    const LINKS_OUT = "This search would follow a link out of its folder, so Frink didn't run it.";
+    const { asked, decide } = testGate(() => DENIED, linked);
+    const viaLink = testGate(() => DENIED, path.join(root, 'work', 'chat link'));
 
     for (const file_path of [linked, 'chained', 'via']) {
-      expect(await decide(pre('Grep', { pattern: 'key', file_path }))).toEqual(deny(LINKS_OUT));
+      expect(await decide(pre('Grep', { pattern: 'key', file_path }))).toEqual(
+        deny(DENIED.message),
+      );
     }
-    expect(await decide(pre('Grep', { pattern: 'key', glob: '**/*' }))).toEqual(deny(LINKS_OUT));
-    expect(await viaLink.decide(pre('Grep', { pattern: 'key' }))).toEqual(deny(LINKS_OUT));
+    expect(await decide(pre('Grep', { pattern: 'key', glob: '**/*' }))).toEqual(
+      deny(DENIED.message),
+    );
+    expect(await viaLink.decide(pre('Grep', { pattern: 'key' }))).toEqual(deny(DENIED.message));
     expect(await decide(pre('Grep', { pattern: 'key', file_path: 'src' }))).toEqual(ALLOW);
     expect(await decide(pre('Grep', { pattern: 'key', file_path: 'missing' }))).toEqual(ALLOW);
-    expect([...asked, ...viaLink.asked]).toEqual([]);
+    // The glob can open an env file, which is asked first and denied.
+    const envGlob = read(path.join(linked, '**/*'));
+    expect([...asked, ...viaLink.asked]).toEqual([
+      ...Array(3).fill(read(outside)),
+      envGlob,
+      read(outside),
+    ]);
   });
 
   it('asks Read for an env file in the folder, a read outside it, and a glob that steps up', async () => {
@@ -230,6 +246,192 @@ describe('the questions each recorded Cursor hook call asks', () => {
     expect(await decide(pre('Shell', { command: 'ls', cwd: outside }))).toEqual(deny(CANT_PATH));
     expect(asked).toEqual([bash('ls')]);
   });
+});
+
+describe('a search through links', () => {
+  const UNCHECKED =
+    "Frink couldn't check where this search's links lead, so it didn't run it. Try a smaller folder.";
+  let base = '';
+  let shared = '';
+
+  beforeAll(async () => {
+    base = path.join(root, 'links');
+    shared = path.join(base, 'shared');
+    await mkdir(path.join(shared, 'deep'), { recursive: true });
+    await writeFile(path.join(shared, 'deep', 'note.txt'), 'MARK');
+  });
+
+  /** A project with these links in it, each leading to a folder beside it that holds a file. */
+  async function project(name: string, links: Record<string, string>, files = {}) {
+    const dir = path.join(base, name);
+    await mkdir(dir, { recursive: true });
+    await writeFile(path.join(dir, 'in.txt'), 'MARK');
+    for (const [file, text] of Object.entries(files)) {
+      await mkdir(path.dirname(path.join(dir, file)), { recursive: true });
+      await writeFile(path.join(dir, file), String(text));
+    }
+    for (const [link, target] of Object.entries(links)) {
+      await mkdir(path.dirname(path.join(dir, link)), { recursive: true });
+      await mkdir(path.join(base, target), { recursive: true });
+      await writeFile(path.join(base, target, 'out.txt'), 'MARK');
+      await symlink(path.join(base, target), path.join(dir, link));
+    }
+    return dir;
+  }
+
+  it('asks nothing for a whole worktree whose outside links git ignores, unless a glob un-ignores them', async () => {
+    // A worktree's .git file names its folder in the main repo, whose info/exclude applies.
+    const gitDir = path.join(base, 'main repo', '.git');
+    await mkdir(path.join(gitDir, 'info'), { recursive: true });
+    await mkdir(path.join(gitDir, 'worktrees', 'wt'), { recursive: true });
+    await writeFile(path.join(gitDir, 'info', 'exclude'), '/.local/\n/docs/decisions\n');
+    await writeFile(path.join(gitDir, 'worktrees', 'wt', 'commondir'), '../..\n');
+    const wt = await project(
+      'wt',
+      {
+        '.local/tools': 'overlay a',
+        '.local/hooks': 'overlay a/hooks',
+        'docs/decisions': 'overlay b',
+        '.fallow': 'overlay b/fallow',
+        'cloned-projects': 'overlay c',
+      },
+      {
+        '.git': `gitdir: ${path.join(gitDir, 'worktrees', 'wt')}\n`,
+        '.gitignore': '.fallow\ncloned-projects\n',
+      },
+    );
+    const { asked, decide } = testGate(() => DENIED, wt);
+    expect(await decide(pre('Grep', { pattern: 'MARK' }))).toEqual(ALLOW);
+    expect(await decide(pre('Grep', { pattern: 'MARK', file_path: wt, glob: '*.txt' }))).toEqual(
+      ALLOW,
+    );
+    expect(asked).toEqual([]);
+    // A glob filter overrides ripgrep's ignore files, so these links are walked and asked.
+    const globbed = testGate(() => ALLOW_ALL, wt);
+    expect(await globbed.decide(pre('Grep', { pattern: 'MARK', glob: '**/*' }))).toEqual(ALLOW);
+    const overlays = ['overlay a', 'overlay b', 'overlay c'].map((t) => read(path.join(base, t)));
+    expect(globbed.asked).toEqual([read(path.join(wt, '**/*')), ...overlays]);
+  });
+
+  it('asks one Read for the real target of a link it walks, once per target, nested ones folded', async () => {
+    const dir = await project('open', {
+      open: 'target one',
+      again: 'target one',
+      'sub/nested': 'target one/inner',
+      file: 'target two',
+    });
+    const { asked, decide } = testGate(() => ALLOW_ALL, dir);
+    expect(await decide(pre('Grep', { pattern: 'MARK' }))).toEqual(ALLOW);
+    expect(asked).toEqual(['target one', 'target two'].map((t) => read(path.join(base, t))));
+  });
+
+  it('walks the whole searched folder when the glob only excludes or steps out', async () => {
+    const dir = await project('excluding', { ext: 'excluded target' });
+    for (const glob of ['!../x', '!{../a,b}']) {
+      const { asked, decide } = testGate(() => ALLOW_ALL, dir);
+      expect(await decide(pre('Grep', { pattern: 'MARK', glob }))).toEqual(ALLOW);
+      expect(asked).toContainEqual(read(path.join(base, 'excluded target')));
+    }
+  });
+
+  it('records no allow for a link target, so a later unasked read of it still trips', async () => {
+    const dir = await project('stale', { ext: 'stale target' });
+    const { gate, decide } = testGate(() => ALLOW_ALL, dir);
+    expect(await decide(pre('Grep', { pattern: 'MARK' }))).toEqual(ALLOW);
+    const target = path.join(base, 'stale target');
+    const ok = { status: 'success', value: {} };
+    expect(gate.actedUnasked({ name: 'read', args: { path: target }, result: ok })).toBe(true);
+  });
+
+  it('asks for an ignored link that a .ignore file un-ignores', async () => {
+    const dir = await project(
+      'unignored',
+      { hidden: 'hidden target', kept: 'kept target' },
+      { '.git/HEAD': '', '.gitignore': 'hidden\nkept\n', '.ignore': '!hidden\n' },
+    );
+    const { asked, decide } = testGate(() => DENIED, dir);
+    expect(await decide(pre('Grep', { pattern: 'MARK' }))).toEqual(deny(DENIED.message));
+    expect(asked).toEqual([read(path.join(base, 'hidden target'))]);
+  });
+
+  it('asks for a link only the user’s global git ignore hides, which Cursor’s search never reads', async () => {
+    const dir = await project('global', { hidden: 'global target' }, { '.git/HEAD': '' });
+    const config = path.join(base, 'config home');
+    await mkdir(path.join(config, 'git'), { recursive: true });
+    await writeFile(path.join(config, 'git', 'ignore'), 'hidden\n');
+    vi.stubEnv('HOME', config);
+    vi.stubEnv('XDG_CONFIG_HOME', config);
+    try {
+      const { asked, decide } = testGate(() => DENIED, dir);
+      expect(await decide(pre('Grep', { pattern: 'MARK' }))).toEqual(deny(DENIED.message));
+      expect(asked).toEqual([read(path.join(base, 'global target'))]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('asks for every place a chain of links reaches, and refuses one that reaches ~/.cursor', async () => {
+    const dir = await project('chain', { tools: 'chain first' });
+    const kept = await project('chain kept', { tools: 'kept first' });
+    await mkdir(path.join(base, 'chain second'));
+    await writeFile(path.join(base, 'chain second', 'key.txt'), 'MARK');
+    await symlink(path.join(base, 'chain second'), path.join(base, 'chain first', 'cfg'));
+    await writeFile(path.join(realHome, '.cursor', 'sdk', 'auth.json'), '{}');
+    await symlink(path.join(realHome, '.cursor'), path.join(base, 'kept first', 'cfg'));
+    const { asked, decide } = testGate(() => ALLOW_ALL, dir);
+    expect(await decide(pre('Grep', { pattern: 'MARK' }))).toEqual(ALLOW);
+    expect(asked).toEqual(['chain first', 'chain second'].map((t) => read(path.join(base, t))));
+    const second = testGate(() => ALLOW_ALL, kept);
+    expect(await second.decide(pre('Grep', { pattern: 'MARK' }))).toEqual(deny(CANT_PATH));
+    expect(second.asked).toEqual([]);
+  });
+
+  it('refuses a search of a path outside the folder, which Cursor would run over the folder', async () => {
+    const dir = await project('clamped', { linked: 'clamped target' });
+    const { asked, decide } = testGate(() => ALLOW_ALL, dir);
+    for (const file_path of [path.join(base, 'shared'), '../shared', path.join(base, 'nowhere')]) {
+      expect(await decide(pre('Grep', { pattern: 'MARK', file_path }))).toEqual(
+        deny("Cursor's search only looks inside the chat's folder, so Frink didn't run it."),
+      );
+    }
+    expect(asked).toEqual([]);
+  });
+
+  it('skips a listed file that is gone by the time its links are checked', async () => {
+    const dir = await project('gone', {});
+    const listing = path.join(base, 'gone rg');
+    await writeFile(listing, "#!/bin/sh\nprintf 'gone.txt\\0in.txt\\0'\n");
+    await chmod(listing, 0o755);
+    const { asked, decide } = testGate(() => DENIED, dir, listing);
+    expect(await decide(pre('Grep', { pattern: 'MARK' }))).toEqual(ALLOW);
+    expect(asked).toEqual([]);
+  });
+
+  it('asks nothing for a file listing, which returns names only', async () => {
+    const dir = await project('listing', { open: 'listed target' });
+    const { asked, decide } = testGate(() => DENIED, dir);
+    expect(await decide(pre('Grep', LISTING))).toEqual(ALLOW);
+    expect(await decide(pre('Grep', { ...LISTING, glob: '**/out.txt', file_path: dir }))).toEqual(
+      ALLOW,
+    );
+    expect(asked).toEqual([]);
+    // Names of the files that match a pattern still come from their contents.
+    const matching = { pattern: 'MARK', output_mode: 'files_with_matches' };
+    expect(await decide(pre('Grep', matching))).toEqual(deny(DENIED.message));
+    expect(asked).toEqual([read(path.join(base, 'listed target'))]);
+  });
+
+  it('refuses as before when ripgrep is missing or too slow', async () => {
+    const dir = await project('slow', {});
+    const slow = path.join(base, 'slow rg');
+    await writeFile(slow, '#!/bin/sh\nexec /bin/sleep 30\n');
+    await chmod(slow, 0o755);
+    for (const ripgrep of [path.join(base, 'no rg'), slow]) {
+      const { asked, decide } = testGate(() => ALLOW_ALL, dir, ripgrep);
+      expect(await decide(pre('Grep', { pattern: 'MARK' }))).toEqual(deny(UNCHECKED));
+      expect(asked).toEqual([]);
+    }
+  }, 10_000);
 });
 
 describe('the path rule', () => {
@@ -296,6 +498,8 @@ describe("Cursor's own files", () => {
     expect(await decide(pre('Write', { file_path: 'cursor/hooks.json', content: '{}' }))).toEqual(
       deny(CANT_PATH),
     );
+    await writeFile(path.join(realHome, '.cursor', 'sdk', 'auth.json'), '{}');
+    expect(await decide(pre('Grep', { pattern: 'key' }))).toEqual(deny(CANT_PATH));
     expect(asked).toEqual([]);
   });
 
@@ -450,6 +654,7 @@ describe('every other answer', () => {
       cwd,
       home,
       realHome,
+      ripgrep: CURSOR_RIPGREP,
       hookVersions: [VERSION],
       checkApproval: async () => ALLOW_ALL,
       turnOver: new AbortController().signal,
