@@ -336,7 +336,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
     const { data: searchCorpus } = trpc.chats.list.useQuery({}, { enabled: isSearchActive });
     const chats = useMemo(
       () =>
-        isSearchActive && searchCorpus
+        isSearchActive && Array.isArray(searchCorpus)
           ? mergeChatsById([...searchCorpus, ...loadedChats])
           : loadedChats,
       [isSearchActive, searchCorpus, loadedChats],

@@ -1548,11 +1548,14 @@ describe('UnifiedSidebar archived mode (sc-198)', () => {
     ['a string', 'not-an-array'],
     ['null', null],
     ['undefined', undefined],
-  ])('survives listArchived returning %s during hydration', (_label, payload) => {
+  ])('survives listArchived and chats.list returning %s during hydration', (_label, payload) => {
     hoisted.archivedChatsData = payload;
+    // SAFETY: the corpus field holds chat rows; this payload is the malformed value under test.
+    hoisted.searchCorpusData = payload as never;
 
     expect(() => {
       render(<UnifiedSidebar />);
+      fireEvent.change(screen.getByTestId('sidebar-header'), { target: { value: 'chat' } });
       fireEvent.click(screen.getByTestId('toggle-archived'));
     }).not.toThrow();
 
