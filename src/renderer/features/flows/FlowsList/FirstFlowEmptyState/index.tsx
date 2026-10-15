@@ -1,13 +1,44 @@
 import { Button } from '@benord-labs/frink-primitives';
-import { GitBranch, Play, Sparkles, Zap } from 'lucide-react';
-import type { ReactElement } from 'react';
+import { MessageSquare, type LucideIcon, Workflow } from 'lucide-react';
+import { type ReactElement, type ReactNode, useId } from 'react';
 import { toast } from 'sonner';
 import { useValidatedProject } from '../../../../hooks/use-validated-project';
 import { trpc } from '../../../../lib/trpc';
-import { cn } from '../../../../lib/utils';
 
 export const FIRST_FLOW_PROMPT =
   "Help me set up my first Flow. Ask me what I'd like to automate, suggest a simple flow that fits, then build it for me.";
+
+/** The same glass list as the "Connect an AI to get started" screen. */
+const LIST_CLASS =
+  'divide-y divide-border/60 overflow-hidden rounded-2xl border border-border glass-float shadow-xs ring-1 ring-inset ring-foreground/4';
+
+function OptionRow({
+  icon: Icon,
+  name,
+  detail,
+  action,
+}: {
+  icon: LucideIcon;
+  name: string;
+  detail: string;
+  action: ReactNode;
+}): ReactElement {
+  return (
+    <li className="flex items-center gap-3 px-4 py-3.5">
+      <span
+        aria-hidden
+        className="flex size-9 shrink-0 items-center justify-center rounded-[10px] bg-muted text-foreground shadow-[inset_0_0_0_1px_rgb(0_0_0/0.08)]"
+      >
+        <Icon className="size-5" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium text-foreground">{name}</p>
+        <p className="truncate text-sm text-muted-foreground">{detail}</p>
+      </div>
+      {action}
+    </li>
+  );
+}
 
 type Props = {
   onCreateClick: () => void;
@@ -17,6 +48,7 @@ type Props = {
 
 /** The Flows dashboard with no flows: hand the first flow to an agent, or start a blank one. */
 export function FirstFlowEmptyState({ onCreateClick, onOpenChat }: Props): ReactElement {
+  const headingId = useId();
   const { validatedProject } = useValidatedProject();
   const utils = trpc.useUtils();
   const createChat = trpc.chats.create.useMutation({
@@ -42,44 +74,50 @@ export function FirstFlowEmptyState({ onCreateClick, onOpenChat }: Props): React
     );
 
   return (
-    <div className="flex flex-1 items-center justify-center p-4">
-      <div
-        className={cn(
-          'group flex w-full max-w-sm flex-col items-center rounded-xl border-2 border-dashed border-border/45 p-10 text-center',
-          'transition-all duration-300 hover:border-border/60 hover:bg-muted/15',
-        )}
+    <section
+      aria-labelledby={headingId}
+      className="flex flex-1 flex-col items-center justify-center px-4 pb-16"
+    >
+      <h2
+        id={headingId}
+        className="text-center text-2xl font-medium tracking-tight text-balance text-foreground"
       >
-        <div className="flex justify-center mb-5 isolate">
-          <div className="glass-card size-10 grid place-items-center rounded-xl relative left-2 top-1 -rotate-6 shadow-md ring-1 ring-border/60 group-hover:-translate-x-4 group-hover:-rotate-12 group-hover:-translate-y-0.5 transition-all duration-300">
-            <GitBranch className="h-5 w-5 text-muted-foreground" />
-          </div>
-          <div className="glass-card size-10 grid place-items-center rounded-xl relative z-10 shadow-md ring-1 ring-border/60 group-hover:-translate-y-1 transition-all duration-300">
-            <Zap className="h-5 w-5 text-muted-foreground" />
-          </div>
-          <div className="glass-card size-10 grid place-items-center rounded-xl relative right-2 top-1 rotate-6 shadow-md ring-1 ring-border/60 group-hover:translate-x-4 group-hover:rotate-12 group-hover:-translate-y-0.5 transition-all duration-300">
-            <Play className="h-5 w-5 text-muted-foreground" />
-          </div>
-        </div>
-        <p className="text-base font-medium">No flows yet</p>
-        <p className="text-sm text-muted-foreground mt-1 mb-5 max-w-[260px]">
-          Flows run steps for you automatically: on a schedule, when something happens, or when you
-          ask.
-        </p>
-        <div className="flex w-full max-w-[260px] flex-col gap-2">
-          <Button type="button" loading={createChat.isPending} onClick={startChat}>
-            {createChat.isPending ? null : <Sparkles className="size-4" aria-hidden />}
-            Build my first flow with AI
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            disabled={createChat.isPending}
-            onClick={onCreateClick}
-          >
-            Start from scratch
-          </Button>
-        </div>
-      </div>
-    </div>
+        Automate your first task
+      </h2>
+      <p className="mt-3 text-center text-[15px] text-muted-foreground text-pretty">
+        Flows run steps for you on a schedule, when something happens, or when you ask.
+      </p>
+      <ul className={`mt-8 w-full max-w-lg ${LIST_CLASS}`}>
+        <OptionRow
+          icon={MessageSquare}
+          name="Build it with AI"
+          detail="Describe it and an agent sets it up"
+          action={
+            <Button
+              aria-label="Start building with AI"
+              loading={createChat.isPending}
+              onClick={startChat}
+            >
+              Start
+            </Button>
+          }
+        />
+        <OptionRow
+          icon={Workflow}
+          name="Start from scratch"
+          detail="Add a trigger and steps yourself"
+          action={
+            <Button
+              variant="secondary"
+              aria-label="Create a blank flow"
+              disabled={createChat.isPending}
+              onClick={onCreateClick}
+            >
+              Create
+            </Button>
+          }
+        />
+      </ul>
+    </section>
   );
 }
