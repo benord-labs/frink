@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { constants } from 'node:fs';
 import { access, mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
@@ -7,6 +7,7 @@ import path from 'node:path';
 import { app } from 'electron';
 import log from 'electron-log';
 import { ensureLoginShellEnv, getLoginShellEnvSync } from '../../../platform/login-shell-env';
+import { killProcessTree } from '../../process-settlement';
 import { commandGateScript } from '../acp-command-ledger';
 import type { AcpAgentRules } from '../acp-permissions';
 import type { AcpAgentLaunch } from '../acp-process';
@@ -76,6 +77,7 @@ export type LaunchOptions = {
 
 const VERSION_TIMEOUT_MS = 5_000;
 const SETTINGS_TIMEOUT_MS = 15_000;
+const MAX_CHECK_OUTPUT_CHARS = 1024 * 1024;
 /** Shells the agent treats as POSIX, so it calls the gate with `-c <command>`. */
 const POSIX_SHELLS = new Set(['bash', 'zsh', 'sh', 'dash', 'ksh']);
 const sweptRunRoots = new Map<string, Promise<void>>();
@@ -125,10 +127,25 @@ async function realShell(env: Env): Promise<string> {
 }
 
 function runCheck(file: string, args: readonly string[], env: Env, cwd: string, timeout: number) {
+  // Its own process group, so a timeout also stops what it started, like the CLI an npm loader runs.
+  const child = spawn(file, args, { cwd, env, detached: process.platform !== 'win32' });
+  const timer = setTimeout(killProcessTree, timeout, child);
+  const output = { stdout: '', stderr: '' };
+  // A broken program that prints without end is stopped rather than read into memory.
+  const keep = (name: keyof CheckOutput) => (text: string) => {
+    output[name] += text;
+    if (output.stdout.length + output.stderr.length > MAX_CHECK_OUTPUT_CHARS)
+      killProcessTree(child);
+  };
+  child.stdout.setEncoding('utf8').on('data', keep('stdout'));
+  child.stderr.setEncoding('utf8').on('data', keep('stderr'));
   return new Promise<CheckOutput>((resolve, reject) => {
-    execFile(file, args, { cwd, env, timeout, killSignal: 'SIGKILL' }, (error, stdout, stderr) =>
-      error ? reject(error) : resolve({ stdout, stderr }),
-    );
+    child.once('error', reject);
+    child.once('close', (code, signal) => {
+      clearTimeout(timer);
+      if (code === 0) resolve(output);
+      else reject(new Error(`${path.basename(file)} ${args.join(' ')} ended: ${signal ?? code}`));
+    });
   });
 }
 

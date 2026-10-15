@@ -55,6 +55,14 @@ const PROVEN_PERMISSION = {
   question: 'deny',
 };
 
+function isRunning(pid: number): boolean {
+  try {
+    return process.kill(pid, 0);
+  } catch {
+    return false;
+  }
+}
+
 // Each check starts Node, which can take seconds on a busy machine.
 describe('resolveAcpLaunch for OpenCode', { timeout: 15_000 }, () => {
   let root = '';
@@ -380,6 +388,29 @@ describe('resolveAcpLaunch for OpenCode', { timeout: 15_000 }, () => {
       await expect(access(runRoot)).rejects.toThrow();
     },
   );
+
+  it('stops a hung check and the program it started when its time is up', async () => {
+    const childPid = path.join(root, 'child pid');
+    // Like npm's loader, the check waits on the real program it started.
+    const hung = `#!/bin/sh\nsleep 30 &\necho $! > "${childPid}"\nwait\n`;
+    await writeFile(path.join(bin, 'opencode'), hung, { mode: 0o755 });
+    const options = { runRoot, env: userEnv(), checkTimeoutMs: 1000 };
+    expect(await launchFromRows([OPENCODE_LAUNCH], project, options)).toEqual({
+      ok: false,
+      reason: "Frink couldn't tell which version of OpenCode you have, so it didn't start it.",
+    });
+    const pid = Number(await readFile(childPid, 'utf8'));
+    await expect.poll(() => isRunning(pid)).toBe(false);
+  });
+
+  it('stops a check that prints without end long before its time is up', async () => {
+    await writeFile(path.join(bin, 'opencode'), '#!/bin/sh\nexec yes\n', { mode: 0o755 });
+    const options = { runRoot, env: userEnv(), checkTimeoutMs: 60_000 };
+    expect(await launchFromRows([OPENCODE_LAUNCH], project, options)).toEqual({
+      ok: false,
+      reason: "Frink couldn't tell which version of OpenCode you have, so it didn't start it.",
+    });
+  });
 
   it('finds a version any row holds', async () => {
     const env = userEnv({ FAKE_VERSION: '2.0.30' });
