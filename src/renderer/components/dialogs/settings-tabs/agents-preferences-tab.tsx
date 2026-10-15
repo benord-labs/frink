@@ -34,11 +34,13 @@ export function AgentsPreferencesTab() {
   const utils = trpc.useUtils();
   const { data: keepAwake } = trpc.power.keepAwakeWhileWorking.useQuery();
   const setKeepAwakeMutation = trpc.power.setKeepAwakeWhileWorking.useMutation({
-    onMutate: ({ enabled }) => utils.power.keepAwakeWhileWorking.setData(undefined, { enabled }),
-    onError: (error) => {
-      toast.error(error.message);
-      void utils.power.keepAwakeWhileWorking.invalidate();
+    onMutate: async ({ enabled }) => {
+      // An in-flight read would otherwise land after this and put the old value back.
+      await utils.power.keepAwakeWhileWorking.cancel();
+      utils.power.keepAwakeWhileWorking.setData(undefined, { enabled });
     },
+    onError: (error) => toast.error(error.message),
+    onSettled: () => utils.power.keepAwakeWhileWorking.invalidate(),
   });
 
   const { data: worktreeBasePath, refetch: refetchWorktreeBasePath } =
