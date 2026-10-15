@@ -16,6 +16,7 @@ const LAUNCH: CursorRunnerParams['launch'] = {
   home: '/tmp/frink/cursor/chats/chat-1/home',
   storeDir: '/tmp/frink/cursor/chats/chat-1/store',
   realHome: '/Users/me',
+  userDirs: {},
   ripgrep: '/sdk-darwin-arm64/bin/rg',
   tools: CURSOR_TOOL_NAMES,
   hookVersions: ['1.0.0'],

@@ -21,7 +21,7 @@ import {
   runCursorAgent,
 } from './index';
 
-// Signed-in admission run: the real launch, host, SDK and model on a maintainer's Mac, never in CI.
+// Signed-in admission run: the real launch, host, SDK and model on a maintainer's machine, never in CI.
 const ON = process.env.FRINK_CURSOR_ADMISSION === '1';
 const REQUIRED = process.env.FRINK_CURSOR_ADMISSION_REQUIRED === '1';
 const TURN_MS = 300_000;
@@ -74,8 +74,11 @@ type TurnSetup = {
 const DENY: Answer = async () => ({ allowed: false, message: 'Denied by the matrix' });
 const ALLOW: Answer = async () => ({ allowed: true });
 const q = (text: string) => `'${text.replaceAll("'", `'\\''`)}'`;
-const chflags = (flag: string, ...paths: string[]) =>
-  execFileSync('/usr/bin/chflags', [flag, ...paths]);
+/** Clears the turn's lock from these paths and everything under them, as the turn's own unlock would. */
+const unlockNow = (...paths: string[]) =>
+  process.platform === 'darwin'
+    ? execFileSync('/usr/bin/chflags', ['-R', 'nouchg', ...paths])
+    : execFileSync('/bin/chmod', ['-R', 'u+w', ...paths]);
 const running = (pattern: string) => {
   try {
     execFileSync('/usr/bin/pgrep', ['-f', pattern]);
@@ -310,7 +313,7 @@ describe.runIf(ON)('Cursor admission, signed in', () => {
     await disposeAllCursorHosts();
     if (running('sleep 317')) execFileSync('/usr/bin/pkill', ['-f', 'sleep 317']);
     if (root) {
-      execFileSync('/usr/bin/chflags', ['-R', 'nouchg', root]);
+      unlockNow(root);
       await rm(root, { recursive: true, force: true });
     }
   });
@@ -480,7 +483,7 @@ describe.runIf(ON)('Cursor admission, signed in', () => {
           if (gone || ['status', 'system'].includes(message.type)) return;
           gone = true;
           const gateDir = gateDirOf(home);
-          chflags('nouchg', gateDir);
+          unlockNow(gateDir);
           renameSync(path.join(gateDir, 'g.sock'), path.join(gateDir, 'gone.sock'));
         },
         prompt: `First write one short sentence about what you will do. ${STEPS}1) Run the shell command: touch down.txt 2) Create the file down2.txt containing hi.`,
@@ -505,7 +508,7 @@ describe.runIf(ON)('Cursor admission, signed in', () => {
         answer: ALLOW,
         beforeFork: (home) => {
           const hooks = path.join(home, '.cursor', 'hooks.json');
-          chflags('nouchg', hooks);
+          unlockNow(hooks);
           writeFileSync(hooks, '');
         },
         prompt: `${STEPS}1) Run the shell command: touch down.txt 2) Create the file down2.txt containing hi.`,

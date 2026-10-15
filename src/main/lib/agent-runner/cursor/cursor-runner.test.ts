@@ -1,5 +1,5 @@
 import { constants, existsSync } from 'node:fs';
-import { access, mkdtemp, rm } from 'node:fs/promises';
+import { access, mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -11,7 +11,7 @@ import {
   fakeCursorHost,
   type FakePlay,
   hookCall,
-  recordingChflags,
+  recordingLock,
   sdk,
 } from './cursor-test-fixtures';
 import {
@@ -47,7 +47,7 @@ afterAll(async () => {
 });
 
 type Fake = ReturnType<typeof fakeCursorHost>;
-type Recorder = ReturnType<typeof recordingChflags>;
+type Recorder = ReturnType<typeof recordingLock>;
 
 /** Each call gets a new chat folder, so turns of different tests never wait on each other. */
 function runnerParams(overrides: Partial<CursorRunnerParams> = {}): CursorRunnerParams {
@@ -61,6 +61,7 @@ function runnerParams(overrides: Partial<CursorRunnerParams> = {}): CursorRunner
       home,
       storeDir: path.join(root, `chat ${chat}`, 'store'),
       realHome: path.join(root, 'real home'),
+      userDirs: {},
       ripgrep: '/sdk-platform/bin/rg',
       tools: CURSOR_TOOL_NAMES,
       hookVersions: ['1.0.0'],
@@ -73,10 +74,8 @@ function runnerParams(overrides: Partial<CursorRunnerParams> = {}): CursorRunner
   };
 }
 
-function run(fake: Fake, params = runnerParams(), recorder: Recorder = recordingChflags()) {
-  return collectChunks(
-    runCursorAgent(params, { forkHost: fake.forkHost, chflags: recorder.chflags }),
-  );
+function run(fake: Fake, params = runnerParams(), recorder: Recorder = recordingLock()) {
+  return collectChunks(runCursorAgent(params, { forkHost: fake.forkHost, lock: recorder.lock }));
 }
 
 const typesOf = (chunks: UIMessageChunk[]) => chunks.map((chunk) => chunk.type);
@@ -282,7 +281,7 @@ describe('runCursorAgent', () => {
     ['a thought', sdk.thinks('hmm')],
     ['a tool call', sdk.runs('call-1', 'read', { path: '/x' })],
   ])("stops the turn when %s comes before Frink's check was seen", async (_name, message) => {
-    const recorder = recordingChflags();
+    const recorder = recordingLock();
     const fake = fakeCursorHost({
       turn: (play) => {
         play.sdk(sdk.status('RUNNING'));
@@ -317,24 +316,24 @@ describe('runCursorAgent', () => {
   });
 
   it('ends in plain words, and unlocks, when Cursor cannot be started', async () => {
-    const recorder = recordingChflags();
+    const recorder = recordingLock();
     const forkHost = () => {
       throw new Error('spawn ENOENT /private/var/folders/x/cursor-host.mjs');
     };
 
     const chunks = await collectChunks(
-      runCursorAgent(runnerParams(), { forkHost, chflags: recorder.chflags }),
+      runCursorAgent(runnerParams(), { forkHost, lock: recorder.lock }),
     );
 
     expect(errorsOf(chunks)).toEqual([NOT_STARTED]);
-    await vi.waitFor(() => expect(lastLock(recorder)).toBe('nouchg'));
+    await vi.waitFor(() => expect(lastLock(recorder)).toBe(false));
   });
 
   it.each([
     ['a command Frink never allowed', 'rm -rf build', ''],
     ['an allowed command in another folder', 'ls', '/elsewhere'],
   ])('stops the turn and the host after %s ran', async (_name, command, workingDirectory) => {
-    const recorder = recordingChflags();
+    const recorder = recordingLock();
     const fake = fakeCursorHost({
       turn: async (play) => {
         await play.hook(hookCall('beforeSubmitPrompt'));
@@ -351,7 +350,7 @@ describe('runCursorAgent', () => {
     expect(errorsOf(chunks)).toEqual([ACTED_UNASKED]);
     expect(fake.received.at(-1)).toEqual({ type: 'cancel' });
     await vi.waitFor(() => expect(fake.kills()).toBe(1), { timeout: 3000 });
-    await vi.waitFor(() => expect(lastLock(recorder)).toBe('nouchg'));
+    await vi.waitFor(() => expect(lastLock(recorder)).toBe(false));
   });
 
   it('stops an unasked rerun after the allowed run of the same command ended in an error', async () => {
@@ -368,7 +367,7 @@ describe('runCursorAgent', () => {
       onCancel: () => {},
     });
 
-    expect(errorsOf(await run(fake, runnerParams(), recordingChflags()))).toEqual([ACTED_UNASKED]);
+    expect(errorsOf(await run(fake, runnerParams(), recordingLock()))).toEqual([ACTED_UNASKED]);
   });
 
   it('stops once however many calls carry an untested hook version', async () => {
@@ -392,7 +391,7 @@ describe('runCursorAgent', () => {
   });
 
   it('on Stop, cancels the run, refuses late hook calls, then kills the host', async () => {
-    const recorder = recordingChflags();
+    const recorder = recordingLock();
     const late: unknown[] = [];
     const controller = new AbortController();
     const fake = fakeCursorHost({
@@ -415,7 +414,7 @@ describe('runCursorAgent', () => {
     await vi.waitFor(() => expect(late).toEqual([{ permission: 'deny', user_message: TURN_OVER }]));
     expect(fake.kills()).toBe(0);
     await vi.waitFor(() => expect(fake.kills()).toBe(1), { timeout: 3000 });
-    await vi.waitFor(() => expect(lastLock(recorder)).toBe('nouchg'));
+    await vi.waitFor(() => expect(lastLock(recorder)).toBe(false));
   });
 
   it("keeps the chat's home locked until a killed host has exited", async () => {
@@ -428,42 +427,51 @@ describe('runCursorAgent', () => {
       onCancel: () => {},
       exitAfterKillMs: 300,
     });
-    const recorder = recordingChflags();
+    const recorder = recordingLock();
     const unlockSawExit: boolean[] = [];
     const watched: Recorder = {
       ...recorder,
-      chflags: (flag, paths) => {
-        if (flag === 'nouchg') unlockSawExit.push(fake.exited());
-        return recorder.chflags(flag, paths);
+      lock: (on, paths) => {
+        if (!on) unlockSawExit.push(fake.exited());
+        return recorder.lock(on, paths);
       },
     };
 
     await run(fake, runnerParams({ abortController: controller }), watched);
 
     await vi.waitFor(() => expect(fake.kills()).toBe(1), { timeout: 3000 });
-    await vi.waitFor(() => expect(lastLock(recorder)).toBe('nouchg'), { timeout: 3000 });
+    await vi.waitFor(() => expect(lastLock(recorder)).toBe(false), { timeout: 3000 });
     expect(unlockSawExit.at(-1)).toBe(true);
   });
 
   it("unlocks the chat's home and removes the gate after a finished or failed turn", async () => {
     for (const turn of [finished, (play: FakePlay) => play.post({ type: 'error', text: 'boom' })]) {
-      const recorder = recordingChflags();
+      const recorder = recordingLock();
       const params = runnerParams();
       await run(fakeCursorHost({ turn }), params, recorder);
 
-      await vi.waitFor(() => expect(lastLock(recorder)).toBe('nouchg'));
-      const locked = recorder.calls.find(([flag]) => flag === 'uchg')?.[1] ?? [];
+      await vi.waitFor(() => expect(lastLock(recorder)).toBe(false));
+      const locked = recorder.calls.find(([on]) => on)?.[1] ?? [];
       const gateDir = path.dirname(locked[0]);
       await vi.waitFor(() => expect(existsSync(gateDir)).toBe(false));
       await access(path.join(params.launch.home, '.cursor', 'hooks.json'), constants.W_OK);
     }
   });
 
+  it("gives the agent's commands back the user's folders the host env leaves out", async () => {
+    const params = runnerParams();
+    params.launch.userDirs = { XDG_CONFIG_HOME: '/home/me/my config' };
+    await run(fakeCursorHost({ turn: finished }), params);
+
+    const profile = await readFile(path.join(params.launch.home, '.bash_profile'), 'utf8');
+    expect(profile).toContain("XDG_CONFIG_HOME='/home/me/my config'");
+  });
+
   it('closes the gate even when the home cannot be unlocked', async () => {
-    const recorder = recordingChflags();
-    const chflags: Recorder['chflags'] = async (flag, paths) => {
-      if (flag === 'nouchg' && lastLock(recorder) === 'uchg') throw new Error('Not permitted');
-      await recorder.chflags(flag, paths);
+    const recorder = recordingLock();
+    const lock: Recorder['lock'] = async (on, paths) => {
+      if (!on && lastLock(recorder)) throw new Error('Not permitted');
+      await recorder.lock(on, paths);
     };
     const plays: FakePlay[] = [];
     const fake = fakeCursorHost({
@@ -473,16 +481,16 @@ describe('runCursorAgent', () => {
       },
     });
 
-    await collectChunks(runCursorAgent(runnerParams(), { forkHost: fake.forkHost, chflags }));
+    await collectChunks(runCursorAgent(runnerParams(), { forkHost: fake.forkHost, lock }));
 
     await vi.waitFor(() => expect(plays[0].hook(hookCall('beforeSubmitPrompt'))).rejects.toThrow());
-    const locked = recorder.calls.find(([flag]) => flag === 'uchg')?.[1] ?? [];
-    await recorder.chflags('nouchg', locked);
+    const locked = recorder.calls.find(([on]) => on)?.[1] ?? [];
+    await recorder.lock(false, locked);
     await rm(path.dirname(locked[0]), { recursive: true, force: true });
   });
 
   it("starts a chat's next turn only once the last one has unlocked", async () => {
-    const recorder = recordingChflags();
+    const recorder = recordingLock();
     const first = runnerParams();
     const second = { ...runnerParams(), launch: first.launch };
     const fake = fakeCursorHost({ turn: () => {} });
@@ -500,7 +508,7 @@ describe('runCursorAgent', () => {
   });
 
   it('kills a live host and unlocks its home when Frink quits', async () => {
-    const recorder = recordingChflags();
+    const recorder = recordingLock();
     const fake = fakeCursorHost({ turn: () => {}, onCancel: () => {} });
     const chunks = run(fake, runnerParams(), recorder);
     await vi.waitFor(() => expect(fake.received).toHaveLength(1));
@@ -508,7 +516,7 @@ describe('runCursorAgent', () => {
     await disposeAllCursorHosts();
 
     expect(fake.kills()).toBe(1);
-    expect(lastLock(recorder)).toBe('nouchg');
+    expect(lastLock(recorder)).toBe(false);
     expect((await chunks).at(-1)?.type).toBe('finish');
   });
 });
