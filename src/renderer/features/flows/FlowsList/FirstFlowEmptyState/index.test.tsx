@@ -50,8 +50,8 @@ function renderEmptyState({ answerCreate }: { answerCreate: boolean }) {
   return { onCreateClick, onOpenChat, createCalls };
 }
 
-const aiButton = () => screen.getByRole('button', { name: 'Start building with AI' });
-const scratchButton = () => screen.getByRole('button', { name: 'Create a blank flow' });
+const aiButton = () => screen.getByRole('button', { name: 'Build with AI' });
+const scratchButton = () => screen.getByRole('button', { name: 'Start from scratch' });
 
 describe('FirstFlowEmptyState', () => {
   afterEach(cleanup);
