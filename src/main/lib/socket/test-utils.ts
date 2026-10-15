@@ -61,6 +61,7 @@ export function stopHookQuery(opts: {
     };
     handle.emitWake = () => {
       buffer.push({ type: 'system', subtype: 'task_notification' });
+      buffer.push({ type: 'system', subtype: 'init' });
       buffer.push({
         chunks: [{ type: 'text-delta', id: 'wake-text', delta: opts.wakeText ?? 'wake burst' }],
       });

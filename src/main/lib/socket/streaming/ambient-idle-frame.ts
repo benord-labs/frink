@@ -8,30 +8,29 @@
 
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 
-/**
- * System frames the harness emits BETWEEN turns without a model turn following (task status
- * patches, progress heartbeats, state flips). They never end in a `result`, so opening a wake
- * burst on one would leave the pump mid-"burst" indefinitely — and a takeover push would defer
- * against a result that never comes. Dropped while idle; a real wake (task_notification → new
- * turn, or a cron's meta prompt turn) always carries turn frames that DO end in a result.
- */
-const AMBIENT_IDLE_SUBTYPES = new Set([
-  'task_updated',
-  'task_progress',
-  'task_started',
-  'background_tasks_changed',
-  'session_state_changed',
-  'thinking_tokens',
-]);
+/** A model frame's Agent call: null for the main agent's own frames, undefined for non-model frames. */
+function modelFrameParent(m: SDKMessage): string | null | undefined {
+  if (m.type !== 'assistant' && m.type !== 'user' && m.type !== 'stream_event') return undefined;
+  return m.parent_tool_use_id ?? null;
+}
 
-/**
- * A user-stopped task's notification is ambient too: a stopped shell or workflow wakes no turn at
- * all, and a stopped subagent's reaction turn opens its burst with its own frames.
- */
-export function isAmbientIdleFrame(m: SDKMessage): boolean {
-  if (m.type !== 'system') return false;
-  if (m.subtype === 'task_notification') return m.status === 'stopped';
-  return AMBIENT_IDLE_SUBTYPES.has(m.subtype);
+/** Proof the MAIN agent started a turn: every turn opens with `init`, then root frames. A background
+ * subagent streams its own frames, task notifications and noise while the main agent idles. */
+export function isMainTurnStart(m: SDKMessage): boolean {
+  if (m.type === 'system') return m.subtype === 'init';
+  return m.type === 'result' || modelFrameParent(m) === null;
+}
+
+/** False for a subagent frame whose Agent call this turn never made (one launched earlier, still
+ * streaming). Records the calls each admitted frame makes, so a subagent's own subagents pass too. */
+export function admitTurnFrame(m: SDKMessage, ownToolIds: Set<string>): boolean {
+  const parent = modelFrameParent(m);
+  if (parent && !ownToolIds.has(parent)) return false;
+  if (m.type !== 'assistant') return true;
+  for (const block of m.message?.content ?? []) {
+    if (block.type === 'tool_use') ownToolIds.add(block.id);
+  }
+  return true;
 }
 
 /** The CLI's echo of a live setter: `setModel` answers with a `<local-command-stdout>` user frame

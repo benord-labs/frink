@@ -58,6 +58,8 @@ const msg = (type: string, extra: Record<string, unknown> = {}): SDKMessage =>
 const resultMsg = (extra: Record<string, unknown> = {}): SDKMessage =>
   msg('result', { subtype: 'success', total_cost_usd: 0, ...extra });
 
+const turnStart = (): SDKMessage => msg('system', { subtype: 'init' }); // every turn's first frame
+
 /** A `Query` the test feeds live — mirrors claude-session-registry.test.ts's channelQuery. */
 function channelQuery(): { query: Query; emit: (m: SDKMessage) => void; end: () => void } {
   const buffer: SDKMessage[] = [];
@@ -379,6 +381,7 @@ describe('claude-wake-hold — disposal identity guards (ABA)', () => {
 
     // Wake burst: a tool call whose PreToolUse denial (recorded on the burst's turn context by
     // the session's hook closures) never gets a tool_result from the SDK.
+    ch.emit(turnStart());
     ch.emit(msg('tool-input-available', { toolCallId: 'denied-1', toolName: 'Bash' }));
     await new Promise((r) => setTimeout(r, 0));
     held.currentTurn?.deniedToolIdsWithMessages.set('denied-1', 'Denied by policy.');
@@ -895,6 +898,7 @@ describe('claude-wake-hold — burst streaming', () => {
       io,
     });
 
+    ch.emit(turnStart());
     ch.emit(msg('text-delta', { delta: 'one ' }));
     ch.emit(msg('text-delta', { delta: 'two' }));
     await new Promise((r) => setTimeout(r, 0));
@@ -924,9 +928,11 @@ describe('claude-wake-hold — burst streaming', () => {
       io,
     });
 
+    ch.emit(turnStart());
     ch.emit(msg('text-delta', { delta: 'first wake' }));
     ch.emit(resultMsg());
     await new Promise((r) => setTimeout(r, 0));
+    ch.emit(turnStart());
     ch.emit(msg('text-delta', { delta: 'second wake' }));
     ch.emit(resultMsg());
     await new Promise((r) => setTimeout(r, 0));
@@ -978,12 +984,14 @@ describe('claude-wake-hold — burst streaming', () => {
       io,
     });
 
+    ch.emit(turnStart());
     ch.emit(msg('text-delta', { delta: 'waiting on the last agent' }));
     ch.emit(resultMsg());
     await new Promise((r) => setTimeout(r, 0));
     expect(held.queue.closed).toBe(true); // the wait ended — and the reader carried on anyway
 
     ch.emit(msg('system', { subtype: 'task_notification' }));
+    ch.emit(turnStart());
     ch.emit(msg('text-delta', { delta: 'all agents done — the full picture' }));
     ch.emit(resultMsg());
     await new Promise((r) => setTimeout(r, 0));
@@ -1526,6 +1534,7 @@ describe('claude-wake-hold — stand-down policy', () => {
 
   it('finalizes a burst the stream death cut short', async () => {
     const { ch, io } = armWith('sd9', stopHookWith(pendingWork), null);
+    ch.emit(turnStart());
     ch.emit(msg('text-start', { id: 'partial' }));
     ch.emit(msg('text-delta', { id: 'partial', delta: 'got this far' }));
     await new Promise((r) => setTimeout(r, 0));
@@ -1554,6 +1563,7 @@ describe('claude-wake-hold — stand-down policy', () => {
     await new Promise((r) => setTimeout(r, 0));
 
     ch.emit(msg('system', { subtype: 'task_notification' }));
+    ch.emit(turnStart());
     ch.emit(msg('text-start', { id: 'late' }));
     ch.emit(msg('text-delta', { id: 'late', delta: 'the compiled answer' }));
     await new Promise((r) => setTimeout(r, 0));
@@ -1587,6 +1597,7 @@ describe('claude-wake-hold — stand-down policy', () => {
       io,
     });
 
+    ch.emit(turnStart());
     ch.emit(msg('tool-input-available', { toolCallId: 'denied-cut-short', toolName: 'Bash' }));
     await new Promise((resolve) => setTimeout(resolve, 0));
     session.currentTurn?.deniedToolIdsWithMessages.set('denied-cut-short', 'Denied by policy.');

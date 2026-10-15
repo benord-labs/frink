@@ -25,13 +25,13 @@ import type { WakePumpCallbacks } from './wake-pump-types';
  * The drain's only bound, for a CLI that never exits after EOF. Not a wait ceiling: it arms only
  * once the wait is already over, restarts on every burst, and refuses to fire while one is open —
  * a burst parked on an approval or an unanswered question has no result frame, so it stays open.
- * It can still end a task launched after stdin closed, whose own frames are all ambient.
+ * It can still end a task or subagent launched after stdin closed: its frames start no main turn.
  */
 const REAP_QUIET_MS = 60_000;
 
 export interface WaitOverDrain {
   /** A burst opened after stdin closed — the frame the old stand-down window used to lose.
-   * Restarts the quiet deadline; ambient chatter never reaches here, so it cannot. */
+   * Restarts the quiet deadline; a frame that starts no main turn never reaches here. */
   noteBurst: (msg: SDKMessage) => void;
   /** The reader is gone — stop the reap. */
   cancel: () => void;
