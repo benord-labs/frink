@@ -1,6 +1,6 @@
 import { Button } from '@benord-labs/frink-primitives';
 import { useAtomValue } from 'jotai';
-import { ListTodo, PanelRight, Undo2 } from 'lucide-react';
+import { ListTodo, Undo2 } from 'lucide-react';
 import { memo } from 'react';
 import { Kbd } from '../../../../../components/ui/kbd';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../../../components/ui/tooltip';
@@ -8,7 +8,6 @@ import { cn } from '../../../../../lib/utils';
 import { isMacOS } from '../../../../../lib/utils/platform';
 import { splitViewActivePaneIndexAtom } from '../../../atoms';
 import { PaneUtilityButtons } from '../../../components/pane-utility-buttons';
-import { PreviewSetupHoverCard } from '../../../components/preview-setup-hover-card';
 import { useFileTreeToggle } from '../../../hooks/use-file-tree-toggle';
 import { AccountIndicator } from '../../../ui/account-indicator';
 import { AgentsHeaderControls } from '../../../ui/agents-header-controls';
@@ -33,8 +32,6 @@ type ChatHeaderProps = {
   /** When in split view, the 0-based pane index. undefined = not in split view. */
   splitPaneIndex?: number;
   hasAnyUnseenChanges: boolean;
-  isPreviewSidebarOpen: boolean;
-  setIsPreviewSidebarOpen: (open: boolean) => void;
   isTerminalSidebarOpen: boolean;
   setIsTerminalSidebarOpen: (open: boolean) => void;
   setIsDiffSidebarOpen: (open: boolean) => void;
@@ -42,8 +39,6 @@ type ChatHeaderProps = {
   // Chat info
   chatId: string;
   gitContextPath: string | null;
-  sandboxId: string | null;
-  canOpenPreview: boolean;
   canOpenDiff: boolean;
   diffStats: DiffStatsType;
   isArchived: boolean;
@@ -51,7 +46,6 @@ type ChatHeaderProps = {
 
   // Callbacks
   onBackToChats: () => void;
-  onOpenPreview: () => void;
   onOpenDiff: () => void;
   onOpenTerminal: () => void;
   handleRestoreWorkspace: () => void;
@@ -64,21 +58,16 @@ export const ChatHeader = memo(function ChatHeader({
   onToggleSidebar,
   splitPaneIndex,
   hasAnyUnseenChanges,
-  isPreviewSidebarOpen,
-  setIsPreviewSidebarOpen,
   isTerminalSidebarOpen,
   setIsTerminalSidebarOpen,
   setIsDiffSidebarOpen,
   chatId,
   gitContextPath,
-  sandboxId,
-  canOpenPreview,
   canOpenDiff,
   diffStats,
   isArchived,
   taskId,
   onBackToChats,
-  onOpenPreview,
   onOpenDiff,
   onOpenTerminal,
   handleRestoreWorkspace,
@@ -110,8 +99,6 @@ export const ChatHeader = memo(function ChatHeader({
           {isMobileFullscreen ? (
             <MobileChatHeader
               onBackToChats={onBackToChats}
-              onOpenPreview={onOpenPreview}
-              canOpenPreview={canOpenPreview}
               onOpenDiff={onOpenDiff}
               canOpenDiff={canOpenDiff}
               diffStats={diffStats}
@@ -174,42 +161,6 @@ export const ChatHeader = memo(function ChatHeader({
               onToggleTerminal={() => setIsTerminalSidebarOpen(!isTerminalSidebarOpen)}
             />
           )}
-          {/* Open Preview Button - shows when preview is closed (desktop only) */}
-          {!isMobileFullscreen &&
-            !isPreviewSidebarOpen &&
-            sandboxId &&
-            (canOpenPreview ? (
-              <Tooltip delayDuration={500}>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setIsPreviewSidebarOpen(true)}
-                    className="h-6 w-6 p-0 text-foreground shrink-0 rounded-md"
-                    aria-label="Open preview"
-                    iconOnly
-                  >
-                    <PanelRight className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Open preview</TooltipContent>
-              </Tooltip>
-            ) : (
-              <PreviewSetupHoverCard>
-                <span className="inline-flex">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled
-                    className="h-6 w-6 p-0 text-muted-foreground shrink-0 rounded-md cursor-not-allowed pointer-events-none"
-                    aria-label="Preview not available"
-                    iconOnly
-                  >
-                    <PanelRight className="h-4 w-4" />
-                  </Button>
-                </span>
-              </PreviewSetupHoverCard>
-            ))}
           {/* Restore Button - shows when viewing archived workspace (desktop only) */}
           {!isMobileFullscreen && isArchived && (
             <Tooltip delayDuration={500}>

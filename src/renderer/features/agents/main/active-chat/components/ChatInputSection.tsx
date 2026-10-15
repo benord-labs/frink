@@ -70,7 +70,6 @@ export const ChatInputSection = memo(function ChatInputSection({
   parentChatId,
   teamId,
   repository,
-  sandboxId,
   projectPath,
   projectId,
   changedFiles,
@@ -122,7 +121,6 @@ export const ChatInputSection = memo(function ChatInputSection({
       parentChatId={parentChatId}
       teamId={teamId}
       repository={repository}
-      sandboxId={sandboxId}
       projectPath={projectPath}
       projectId={projectId}
       changedFiles={changedFiles}
@@ -195,7 +193,6 @@ export const ChatInputSection = memo(function ChatInputSection({
       parentChatId={parentChatId}
       teamId={teamId}
       repository={repository}
-      sandboxId={sandboxId}
       projectPath={projectPath}
       projectId={projectId}
       changedFiles={changedFiles}

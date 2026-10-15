@@ -53,7 +53,6 @@ function shiftPaneMap<T>(
 
 import {
   agentsMobileViewModeAtom,
-  agentsPreviewSidebarOpenAtom,
   agentsSidebarOpenAtom,
   chatModeAtom,
   lastSelectedModelIdAtom,
@@ -77,7 +76,6 @@ import {
 import { HtmlArtifactChatView } from '../HtmlArtifactChatView';
 import { useSplitViewActions } from '../hooks/use-split-view';
 import { NewChatForm } from '../main/new-chat-form';
-import { AgentPreview } from './agent-preview';
 import { resolveChatProjectSync } from './chat-project-sync';
 import { EmptyPanePlaceholder } from './EmptyPanePlaceholder';
 import { PendingChatPlaceholder } from './PendingChatPlaceholder';
@@ -111,8 +109,6 @@ import {
 import { filesSidebarOpenAtom, splitPaneFileTreesAtom } from '../../files-sidebar/atoms';
 import { resolveEffectiveProjectPath } from '../../files-sidebar/utils/resolve-effective-project-path';
 
-const useIsAdmin = () => false;
-
 /** Project info returned by chats.get — carries the git fields needed for the project icon. */
 type ChatProject = {
   id: string;
@@ -128,7 +124,6 @@ export function AgentsContent() {
   const [selectedChatId, setSelectedChatId] = useAtom(selectedAgentChatIdAtom);
   const [selectedTeamId] = useAtom(selectedTeamIdAtom);
   const [sidebarOpen, setSidebarOpen] = useAtom(agentsSidebarOpenAtom);
-  const [, setPreviewSidebarOpen] = useAtom(agentsPreviewSidebarOpenAtom);
   const [mobileViewMode, setMobileViewMode] = useAtom(agentsMobileViewModeAtom);
   // Per-chat terminal sidebar state
   const terminalSidebarAtom = useMemo(
@@ -245,7 +240,6 @@ export function AgentsContent() {
   const newChatFormKeyRef = useRef(0);
   const isMobile = useIsMobile();
   const [isHydrated, setIsHydrated] = useState(false);
-  const isAdmin = useIsAdmin();
 
   const { data: teams } = api.teams.getUserTeams.useQuery();
   const selectedTeam =
@@ -673,9 +667,8 @@ export function AgentsContent() {
   useEffect(() => {
     if (isMobile && isHydrated) {
       setSidebarOpen(false);
-      setPreviewSidebarOpen(false);
     }
-  }, [isMobile, isHydrated, setSidebarOpen, setPreviewSidebarOpen]);
+  }, [isMobile, isHydrated, setSidebarOpen]);
 
   // On mobile: when chat is selected, switch to chat mode
   useEffect(() => {
@@ -694,17 +687,6 @@ export function AgentsContent() {
   }, [isMobile, mobileViewMode, terminalSidebarOpen, setMobileViewMode]);
 
   // Note: Cmd+E archive hotkey is handled in AgentsSidebar to share undo stack
-
-  // Check if chat has sandbox with port for preview
-  const chatMeta = chatData?.meta as
-    | {
-        sandboxConfig?: { port?: number };
-        isQuickSetup?: boolean;
-        repository?: string;
-      }
-    | undefined;
-  const isQuickSetup = chatMeta?.isQuickSetup === true;
-  const canShowPreview = !!(chatData?.sandboxId && !isQuickSetup && chatMeta?.sandboxConfig?.port);
 
   // The diff and terminal views both read the worktree (desktop only).
   const worktreePath = resolveEffectiveProjectPath({
@@ -761,18 +743,6 @@ export function AgentsContent() {
             isMobileFullscreen={true}
             onChatSelect={() => setMobileViewMode('chat')}
           />
-        ) : mobileViewMode === 'preview' &&
-          selectedChatId &&
-          canShowPreview &&
-          typeof chatMeta?.sandboxConfig?.port === 'number' ? (
-          // Preview Mode
-          <AgentPreview
-            chatId={selectedChatId}
-            sandboxId={chatData?.sandboxId ?? ''}
-            port={chatMeta.sandboxConfig.port}
-            isMobile={true}
-            onClose={() => setMobileViewMode('chat')}
-          />
         ) : mobileViewMode === 'diff' && selectedChatId && worktreePath ? (
           // Diff Mode - fullscreen diff view
           <DiffPanel
@@ -809,7 +779,6 @@ export function AgentsContent() {
                   setMobileViewMode('chats');
                   setSelectedChatId(null);
                 }}
-                onOpenPreview={canShowPreview ? () => setMobileViewMode('preview') : undefined}
                 onOpenDiff={canShowDiff ? () => setMobileViewMode('diff') : undefined}
                 onOpenTerminal={
                   canShowTerminal
@@ -836,82 +805,68 @@ export function AgentsContent() {
   }
 
   return (
-    <>
-      <div className="flex h-full">
-        {/* Main content */}
-        <div className="flex-1 min-h-0 min-w-0 overflow-hidden" style={MIN_WIDTH_350_STYLE}>
-          <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
-            {isSplitActive ? (
-              /* Split view: multiple ChatViews side-by-side */
-              <div
-                className={cn(
-                  'flex flex-col transition-all duration-200 overflow-hidden min-h-0',
-                  !isTopLayout && 'h-full',
-                )}
-                style={chatContainerStyle}
-              >
-                <SplitViewContainer
-                  panes={splitPanes}
-                  ratios={ratios}
-                  onRatiosChange={setRatios}
-                  gridRatios={gridRatios}
-                  onGridRatiosChange={setGridRatios}
-                  onRemovePane={handleRemovePane}
-                  onCloseSplit={handleCloseSplit}
-                  activePaneIndex={activePaneIndex}
-                  onSetActivePane={setActivePaneIndex}
-                  layout={layout}
-                  initialFileTreeOpen={filesSidebarOpen}
-                  onSwapPanes={swapPanes}
-                  paneZoomFactors={paneZoomFactors}
-                  onResetPaneZoomAt={resetPaneZoomAt}
-                />
-              </div>
-            ) : selectedChatId ? (
-              /* Single chat view */
-              <div
-                className={cn(
-                  'flex flex-col transition-all duration-200 overflow-hidden min-h-0',
-                  !isTopLayout && 'h-full',
-                )}
-                style={chatContainerStyle}
-              >
-                <HtmlArtifactChatView
-                  key={selectedChatId}
-                  chatId={selectedChatId}
-                  isSidebarOpen={sidebarOpen}
-                  onToggleSidebar={() => setSidebarOpen((prev) => !prev)}
-                  selectedTeamName={selectedTeam?.name}
-                  selectedTeamImageUrl={selectedTeam?.image_url}
-                />
-              </div>
-            ) : (
-              /* New chat form (default when no chat selected) */
-              <div
-                className={cn(
-                  'flex flex-col transition-all duration-200 overflow-hidden min-h-0',
-                  !isTopLayout && 'h-full',
-                )}
-                style={chatContainerStyle}
-              >
-                <NewChatForm key={`new-chat-${newChatFormKeyRef.current}`} />
-              </div>
-            )}
-          </div>
+    <div className="flex h-full">
+      {/* Main content */}
+      <div className="flex-1 min-h-0 min-w-0 overflow-hidden" style={MIN_WIDTH_350_STYLE}>
+        <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
+          {isSplitActive ? (
+            /* Split view: multiple ChatViews side-by-side */
+            <div
+              className={cn(
+                'flex flex-col transition-all duration-200 overflow-hidden min-h-0',
+                !isTopLayout && 'h-full',
+              )}
+              style={chatContainerStyle}
+            >
+              <SplitViewContainer
+                panes={splitPanes}
+                ratios={ratios}
+                onRatiosChange={setRatios}
+                gridRatios={gridRatios}
+                onGridRatiosChange={setGridRatios}
+                onRemovePane={handleRemovePane}
+                onCloseSplit={handleCloseSplit}
+                activePaneIndex={activePaneIndex}
+                onSetActivePane={setActivePaneIndex}
+                layout={layout}
+                initialFileTreeOpen={filesSidebarOpen}
+                onSwapPanes={swapPanes}
+                paneZoomFactors={paneZoomFactors}
+                onResetPaneZoomAt={resetPaneZoomAt}
+              />
+            </div>
+          ) : selectedChatId ? (
+            /* Single chat view */
+            <div
+              className={cn(
+                'flex flex-col transition-all duration-200 overflow-hidden min-h-0',
+                !isTopLayout && 'h-full',
+              )}
+              style={chatContainerStyle}
+            >
+              <HtmlArtifactChatView
+                key={selectedChatId}
+                chatId={selectedChatId}
+                isSidebarOpen={sidebarOpen}
+                onToggleSidebar={() => setSidebarOpen((prev) => !prev)}
+                selectedTeamName={selectedTeam?.name}
+                selectedTeamImageUrl={selectedTeam?.image_url}
+              />
+            </div>
+          ) : (
+            /* New chat form (default when no chat selected) */
+            <div
+              className={cn(
+                'flex flex-col transition-all duration-200 overflow-hidden min-h-0',
+                !isTopLayout && 'h-full',
+              )}
+              style={chatContainerStyle}
+            >
+              <NewChatForm key={`new-chat-${newChatFormKeyRef.current}`} />
+            </div>
+          )}
         </div>
       </div>
-
-      {/* Dev mode / Admin sandbox debugger */}
-      {(process.env.NODE_ENV === 'development' || isAdmin) && chatData?.sandboxId && (
-        <a
-          href={`https://codesandbox.io/p/devbox/${chatData.sandboxId}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="fixed bottom-4 right-4 z-50 bg-zinc-900 text-zinc-300 px-3 py-1.5 rounded-md text-xs font-mono opacity-70 hover:opacity-100 hover:bg-zinc-800 transition-all cursor-pointer"
-        >
-          sandbox: {chatData.sandboxId}
-        </a>
-      )}
-    </>
+    </div>
   );
 }

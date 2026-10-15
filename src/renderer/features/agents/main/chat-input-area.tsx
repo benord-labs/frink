@@ -101,7 +101,6 @@ function arePropsEqual(prevProps: ChatInputAreaProps, nextProps: ChatInputAreaPr
     prevProps.parentChatId !== nextProps.parentChatId ||
     prevProps.teamId !== nextProps.teamId ||
     prevProps.repository !== nextProps.repository ||
-    prevProps.sandboxId !== nextProps.sandboxId ||
     prevProps.projectPath !== nextProps.projectPath ||
     prevProps.projectId !== nextProps.projectId ||
     prevProps.isMobile !== nextProps.isMobile ||
@@ -278,7 +277,6 @@ export const ChatInputArea = memo(function ChatInputArea({
   parentChatId,
   teamId,
   repository,
-  sandboxId,
   projectPath,
   projectId,
   changedFiles,
@@ -924,9 +922,7 @@ export const ChatInputArea = memo(function ChatInputArea({
       {/* File mention dropdown */}
       {/* Desktop: use projectPath for local file search */}
       <AgentsFileMention
-        isOpen={
-          showMentionDropdown && (!!projectPath || !!repository || !!sandboxId || !!projectId)
-        }
+        isOpen={showMentionDropdown && (!!projectPath || !!repository || !!projectId)}
         onClose={() => {
           setShowMentionDropdown(false);
           // Reset subpage state when closing
@@ -941,7 +937,6 @@ export const ChatInputArea = memo(function ChatInputArea({
         position={mentionPosition}
         teamId={teamId}
         repository={repository}
-        sandboxId={sandboxId}
         projectPath={projectPath}
         projectId={projectId ?? undefined}
         changedFiles={changedFiles}

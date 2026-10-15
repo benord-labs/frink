@@ -22,31 +22,6 @@ export const previousAgentChatIdAtom = atom<string | null>(null);
 // Cleared when a workspace is selected or a draft is selected.
 export const showNewChatFormAtom = atom<boolean>(false);
 
-// Per-chat preview path (persisted)
-export const previewPathAtomFamily = createPersistedAtomFamily('agents:previewPaths', '/');
-
-// Per-chat viewport mode (persisted)
-export const viewportModeAtomFamily = createPersistedAtomFamily<'desktop' | 'mobile'>(
-  'agents:viewportModes',
-  'desktop',
-);
-
-// Per-chat preview scale (persisted)
-export const previewScaleAtomFamily = createPersistedAtomFamily('agents:previewScales', 100);
-
-// Mobile device dimensions storage - stores device settings per chatId
-type MobileDeviceSettings = {
-  width: number;
-  height: number;
-  preset: string;
-};
-
-// Per-chat mobile device settings (persisted)
-export const mobileDeviceAtomFamily = createPersistedAtomFamily<MobileDeviceSettings>(
-  'agents:mobileDevices',
-  { width: 393, height: 852, preset: 'iPhone 16' },
-);
-
 // Loading sub-chats: Map<subChatId, parentChatId>
 // Used to show loading indicators on tabs and sidebar
 // Set when generation starts, cleared when onFinish fires
@@ -184,21 +159,6 @@ export const agentsSidebarWidthAtom = atomWithStorage<number>(
   { getOnInit: true },
 );
 
-// Preview sidebar (right) width and open state
-export const agentsPreviewSidebarWidthAtom = atomWithStorage<number>(
-  'agents-preview-sidebar-width',
-  500,
-  undefined,
-  { getOnInit: true },
-);
-
-// Preview sidebar open state - window-scoped
-export const agentsPreviewSidebarOpenAtom = atomWithWindowStorage<boolean>(
-  'agents-preview-sidebar-open',
-  true,
-  { getOnInit: true },
-);
-
 // Diff sidebar (right) width (global - same width for all chats)
 export const agentsDiffSidebarWidthAtom = atomWithStorage<number>(
   'agents-diff-sidebar-width',
@@ -297,7 +257,7 @@ export const fileSearchDialogOpenAtom = atom<boolean>(false);
 export const agentsSubChatUnseenChangesAtom = atom<Set<string>>(new Set<string>());
 
 // Mobile view mode - chat (default, shows NewChatForm), chats list, preview, diff, or terminal
-export type AgentsMobileViewMode = 'chats' | 'chat' | 'preview' | 'diff' | 'terminal';
+export type AgentsMobileViewMode = 'chats' | 'chat' | 'diff' | 'terminal';
 export const agentsMobileViewModeAtom = atom<AgentsMobileViewMode>('chat');
 
 // Changed files per sub-chat for tracking edits/writes

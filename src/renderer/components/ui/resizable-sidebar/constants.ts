@@ -20,7 +20,7 @@ export const PANE_NARROW_PANEL_CLASS = [
   '@max-[22.5rem]/pane:w-full! @max-[22.5rem]/pane:min-w-0! @max-[22.5rem]/pane:visible',
   '@max-[22.5rem]/pane:[&>[data-resize-chrome]]:hidden',
 ].join(' ');
-// 34.5rem = the 320-350px panels (Terminal, Details, Diff, Preview) + the floor.
+// 34.5rem = the 320-350px panels (Terminal, Details, Diff) + the floor.
 export const PANE_WIDE_PANEL_CLASS = [
   '@min-[34.5rem]/pane:max-w-[calc(100%-12.5rem)]',
   '@max-[34.5rem]/pane:absolute @max-[34.5rem]/pane:inset-0 @max-[34.5rem]/pane:z-10',
