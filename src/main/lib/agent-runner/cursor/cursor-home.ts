@@ -43,7 +43,7 @@ const DROPPED_VARS = new Set([
   'SHELLOPTS',
   'BASHOPTS',
 ]);
-const DROPPED_PREFIX = /^(CURSOR_|BASH_FUNC_)/;
+const DROPPED_PREFIX = /^(_*CURSOR_|BASH_FUNC_)/;
 const FOLDER_REFUSED = "Frink can't start Cursor from this folder.";
 const NOT_READY = "Frink couldn't prepare Cursor's safety check, so it didn't start it.";
 
@@ -73,11 +73,12 @@ function hooksJson(gate: string): string {
 /** The hook's own shell stops at the guard; the agent's commands get the user's real home and files. */
 function shellFiles(realHome: string, gate: string) {
   const home = shellQuote(realHome);
-  const bash = (name: string) =>
-    `[ "$BASH_EXECUTION_STRING" = ${gate} ] && return\nexport HOME=${home}\n[ -f "$HOME/${name}" ] && . "$HOME/${name}"\n`;
+  // Like a bash login shell, it reads the first of the user's files that exists.
+  const bash = (names: string) =>
+    `[ "$BASH_EXECUTION_STRING" = ${gate} ] && return\nexport HOME=${home}\nfor f in ${names}; do [ -f "$HOME/$f" ] && { . "$HOME/$f"; break; }; done\n`;
   return {
     '.zshenv': `[[ "$ZSH_EXECUTION_STRING" == ${gate} ]] && return\nexport HOME=${home} ZDOTDIR=${home}\n[ -f "$HOME/.zshenv" ] && . "$HOME/.zshenv"\n`,
-    '.bash_profile': bash('.bash_profile'),
+    '.bash_profile': bash('.bash_profile .bash_login .profile'),
     '.profile': bash('.profile'),
   };
 }

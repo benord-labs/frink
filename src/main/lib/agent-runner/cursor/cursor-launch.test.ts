@@ -1,0 +1,275 @@
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import type { SDKMessage } from '@cursor/sdk';
+import log from 'electron-log';
+import { afterAll, afterEach, beforeAll, describe, expect, expectTypeOf, it, vi } from 'vitest';
+import type { UIMessageChunk } from '../../claude/types';
+import { collectChunks, textOf } from '../acp/acp-test-fixtures';
+import type { CursorSdkMessage } from './cursor-events';
+import type { CursorRunnerParams, ForkHost } from './cursor-runner';
+import { nodeForkHost, recordingChflags, writeFakeCursorSdk } from './cursor-test-fixtures';
+import {
+  CURSOR_TOOL_NAMES,
+  cursorHostEnv,
+  disposeAllCursorHosts,
+  findCursorAgent,
+  locateCursorAgent,
+  resolveCursorLaunch,
+  runCursorAgent,
+} from './index';
+
+const PLAN_REQUIRED = "Cursor's SDK needs a paid Cursor plan (Pro or higher).";
+const SIGNED_OUT =
+  "Cursor isn't signed in. Choose Sign in to Cursor, finish in your browser, then try again.";
+const NO_SDK = "Frink can't find Cursor's SDK on this computer.";
+
+let root = '';
+let sdkRoot = '';
+let userData = '';
+let realHome = '';
+let chat = 0;
+
+beforeAll(async () => {
+  // A space in the path, as in macOS's Application Support folder.
+  root = await mkdtemp(path.join(os.tmpdir(), 'cursor launch '));
+  sdkRoot = path.join(root, 'sdk');
+  userData = path.join(root, 'App Support');
+  realHome = path.join(root, 'real home');
+  await mkdir(realHome);
+  await writeFakeCursorSdk(sdkRoot, '1.0.37');
+});
+afterEach(() => disposeAllCursorHosts());
+afterAll(() => rm(root, { recursive: true, force: true }));
+
+const app = { isPackaged: false, getAppPath: () => process.cwd(), getPath: () => userData };
+const userEnv = (extra: Record<string, string> = {}) => ({
+  PATH: '/usr/bin:/bin',
+  HOME: realHome,
+  SHELL: '/bin/zsh',
+  ...extra,
+});
+const deps = (extra: Record<string, string> = {}, more: { sdkRoot?: string } = {}) => ({
+  env: userEnv(extra),
+  app,
+  sdkRoot,
+  forkHost: nodeForkHost,
+  ...more,
+});
+
+async function launchFor(extra: Record<string, string> = {}) {
+  chat += 1;
+  const result = await resolveCursorLaunch({ chatKey: `chat-${chat}` }, deps(extra));
+  if (!result.ok) throw new Error(result.reason);
+  return result.launch;
+}
+
+describe('resolveCursorLaunch', () => {
+  it('starts the tested SDK through Frink’s host, with a private home and store per chat', async () => {
+    const chatDir = path.join(userData, 'cursor', 'chats', 'c_1-A');
+    const home = path.join(chatDir, 'home');
+    const env = userEnv({ CURSOR_API_KEY: 'kept', CURSOR_BACKEND_URL: 'http://127.0.0.1:1' });
+
+    expect(await resolveCursorLaunch({ chatKey: 'c_1-A' }, { env, app, sdkRoot })).toEqual({
+      ok: true,
+      launch: {
+        sdkEntry: path.join(sdkRoot, 'dist', 'esm', 'index.js'),
+        hostPath: path.join(process.cwd(), 'resources', 'cursor', 'cursor-host.mjs'),
+        env: cursorHostEnv(env, home),
+        home,
+        storeDir: path.join(chatDir, 'store'),
+        realHome,
+        tools: CURSOR_TOOL_NAMES,
+        hookVersions: ['1.0.0'],
+      },
+    });
+    expect(cursorHostEnv(env, home)).toMatchObject({ HOME: home, CURSOR_API_KEY: 'kept' });
+    expect(cursorHostEnv(env, home)).not.toHaveProperty('CURSOR_BACKEND_URL');
+  });
+
+  it('refuses another SDK version, a missing SDK and a chat key that names another folder', async () => {
+    const old = path.join(root, 'old sdk');
+    await writeFakeCursorSdk(old, '1.0.36');
+    const resolve = (chatKey: string, from = sdkRoot) =>
+      resolveCursorLaunch({ chatKey }, { env: userEnv(), app, sdkRoot: from });
+
+    expect(await resolve('c1', old)).toEqual({
+      ok: false,
+      reason: "Frink checked Cursor's SDK 1.0.37. This copy is 1.0.36.",
+    });
+    expect(await resolve('c1', path.join(root, 'none'))).toEqual({ ok: false, reason: NO_SDK });
+    for (const chatKey of ['../c1', 'a/b', '', '.']) {
+      expect(await resolve(chatKey)).toEqual({
+        ok: false,
+        reason: "Frink can't start Cursor for this chat.",
+      });
+    }
+  });
+});
+
+describe('the pinned SDK', () => {
+  it('sends only messages Frink’s copy of their types describes', () => {
+    expectTypeOf<SDKMessage>().toExtend<CursorSdkMessage>();
+  });
+});
+
+describe('locateCursorAgent', () => {
+  it('names the SDK entry when the SDK is there, without starting it', async () => {
+    expect(await locateCursorAgent({ sdkRoot })).toBe(
+      path.join(sdkRoot, 'dist', 'esm', 'index.js'),
+    );
+    expect(await locateCursorAgent({ sdkRoot: path.join(root, 'none') })).toBeUndefined();
+  });
+});
+
+describe('findCursorAgent', () => {
+  it.each([
+    ['signed in with a paid plan', {}, { status: 'ready' }],
+    [
+      'signed in only by the user’s own key',
+      { FAKE_AUTH: 'logged-out', CURSOR_API_KEY: 'k' },
+      { status: 'ready' },
+    ],
+    ['signed out', { FAKE_AUTH: 'logged-out' }, { status: 'signed-out', reason: SIGNED_OUT }],
+    [
+      'an empty key',
+      { FAKE_AUTH: 'logged-out', CURSOR_API_KEY: '' },
+      { status: 'signed-out', reason: SIGNED_OUT },
+    ],
+    [
+      'on a free plan',
+      { FAKE_MODELS: 'plan_required' },
+      { status: 'plan-required', reason: PLAN_REQUIRED },
+    ],
+  ])('reports %s, with no warning', async (_name, extra, expected) => {
+    const warn = vi.spyOn(log, 'warn');
+    let done = () => {};
+    const exited = new Promise<void>((resolve) => (done = resolve));
+    const forkHost: ForkHost = (input, events) =>
+      nodeForkHost(input, {
+        ...events,
+        exit: () => {
+          events.exit();
+          done();
+        },
+      });
+    expect(await findCursorAgent({ ...deps(extra), forkHost })).toEqual(expected);
+    await exited;
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('reports a missing SDK without starting anything', async () => {
+    let forks = 0;
+    const forkHost: ForkHost = (input, events) => {
+      forks += 1;
+      return nodeForkHost(input, events);
+    };
+    expect(
+      await findCursorAgent({ ...deps({}, { sdkRoot: path.join(root, 'none') }), forkHost }),
+    ).toEqual({ status: 'missing', reason: NO_SDK });
+    expect(forks).toBe(0);
+  });
+});
+
+describe('the Cursor host', () => {
+  /** Runs one turn through the real host file and the stand-in SDK, recording what crossed the process. */
+  async function hostTurn(overrides: Partial<CursorRunnerParams> = {}, extra = {}) {
+    const order: string[] = [];
+    const forkHost: ForkHost = (input, events) => {
+      const host = nodeForkHost(input, {
+        message: (message) => {
+          order.push(message.type);
+          // Held back, so a host that exits on its own after its result shows up in the order.
+          if (message.type === 'result') setTimeout(() => events.message(message), 300);
+          else events.message(message);
+        },
+        exit: () => {
+          order.push('exit');
+          events.exit();
+        },
+      });
+      return {
+        send: (request) => {
+          order.push(`send ${request.type}`);
+          host.send(request);
+        },
+        kill: () => {
+          order.push('kill');
+          host.kill();
+        },
+      };
+    };
+    const launch = await launchFor(extra);
+    const params: CursorRunnerParams = {
+      launch,
+      cwd: root,
+      prompt: 'hello',
+      abortController: new AbortController(),
+      checkApproval: async () => ({ allowed: true }),
+      ...overrides,
+    };
+    const chunks = await collectChunks(
+      runCursorAgent(params, { forkHost, chflags: recordingChflags().chflags }),
+    );
+    await disposeAllCursorHosts();
+    return { chunks, order, seen: JSON.parse(textOf(chunks) || '{}') };
+  }
+
+  const errorsOf = (chunks: UIMessageChunk[]) =>
+    chunks.flatMap((chunk) => (chunk.type === 'error' ? [chunk.errorText] : []));
+
+  it('signs in once, runs the turn, and exits only when Frink cancels it', async () => {
+    const { chunks, order, seen } = await hostTurn();
+
+    expect(errorsOf(chunks)).toEqual([]);
+    expect(order).toEqual([
+      'auth',
+      'send start',
+      'agent',
+      'sdk',
+      'sdk',
+      'result',
+      'send cancel',
+      'exit',
+    ]);
+    expect(seen).toEqual({
+      text: 'hello',
+      images: 0,
+      tools: CURSOR_TOOL_NAMES,
+      local: { cwd: root, settingSources: ['user'], store: true },
+    });
+    expect(chunks.at(-1)).toEqual({ type: 'finish', messageMetadata: { sessionId: 'agent-new' } });
+  });
+
+  it('passes Plan mode and images, and continues an earlier agent', async () => {
+    const images = [{ data: 'aGk=', mimeType: 'image/png' }];
+    const { chunks, seen } = await hostTurn({ mode: 'plan', images, resumeSessionId: 'agent-7' });
+
+    expect(seen).toMatchObject({ text: 'hello', images: 1, mode: 'plan' });
+    expect(chunks.at(-1)).toEqual({ type: 'finish', messageMetadata: { sessionId: 'agent-7' } });
+  });
+
+  it('sends the chat so far to a new agent when the earlier one is gone', async () => {
+    const { chunks, seen } = await hostTurn({
+      resumeSessionId: 'gone',
+      freshSessionFallbackPrompt: 'history then hello',
+    });
+
+    expect(seen).toMatchObject({ text: 'history then hello' });
+    expect(chunks.at(-1)).toEqual({ type: 'finish', messageMetadata: { sessionId: 'agent-new' } });
+  });
+
+  it('ends with the sign-in text and starts nothing when Cursor is signed out', async () => {
+    const { chunks, order } = await hostTurn({}, { FAKE_AUTH: 'logged-out' });
+
+    expect(errorsOf(chunks)).toEqual([SIGNED_OUT]);
+    expect(order).not.toContain('send start');
+  });
+
+  it('shows the paid-plan text when Cursor refuses the turn', async () => {
+    const { chunks } = await hostTurn({ prompt: 'refuse' });
+
+    expect(errorsOf(chunks)).toEqual([PLAN_REQUIRED]);
+  });
+});

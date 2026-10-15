@@ -1,6 +1,8 @@
+import { execFile } from 'node:child_process';
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import log from 'electron-log';
 import stableStringify from 'fast-json-stable-stringify';
 import { z } from 'zod';
@@ -41,6 +43,7 @@ const CANT_PATH = "Frink can't check this path, so it didn't run.";
 const NOT_CHECKED = "Frink couldn't check this step, so it didn't run.";
 const TURN_OVER = "This turn has ended, so Frink didn't run this step.";
 const CHANGED = 'Cursor changed how it asks Frink, so Frink stopped it.';
+const LINKS_OUT = "This search would follow a link out of its folder, so Frink didn't run it.";
 const REFUSE: CursorQuestions = { kind: 'refuse', reason: CANT_CHECK };
 const REFUSE_PATH: CursorQuestions = { kind: 'refuse', reason: CANT_PATH };
 const ALLOW: CursorHookAnswer = { permission: 'allow' };
@@ -157,6 +160,27 @@ function fileQuestions(question: 'Edit' | 'Read', input: ToolInput, cwd: string)
   return { files: [path.resolve(cwd, file.data)], questions: [editQuestion(cwd, file.data)] };
 }
 
+/** True when a link under root leads outside it, through root if it is a link; Cursor's search follows links. */
+async function linksOut(root: string): Promise<boolean> {
+  if (!existsSync(root)) return false;
+  const found = await promisify(execFile)('/usr/bin/find', ['-H', root, '-type', 'l', '-print0'], {
+    maxBuffer: 64 * 1024 * 1024,
+  }).then(
+    ({ stdout }) => stdout.split('\0').filter(Boolean),
+    () => undefined,
+  );
+  if (!found) return true;
+  return found.some((link) => !isPathWithinProject(link, root));
+}
+
+/** True when a search could reach past its folders through a link. */
+async function searchLeaves(input: ToolInput | undefined, cwd: string): Promise<boolean> {
+  for (const { root } of readStarts(input?.file_path, cwd, input?.glob) ?? []) {
+    if (await linksOut(root)) return true;
+  }
+  return false;
+}
+
 /** The questions one Cursor hook call asks Frink's gate, or why it is refused. */
 function questionsForCursorTool(
   toolName: string,
@@ -233,7 +257,15 @@ export function createCursorGate(opts: GateOptions) {
     }
     if (hook.hook_event_name !== 'preToolUse') return deny(CANT_CHECK);
     const toolName = hook.tool_name ?? '';
-    const answer = await decide(questionsForCursorTool(toolName, hook.tool_input, opts));
+    const verdict = questionsForCursorTool(toolName, hook.tool_input, opts);
+    if (
+      toolName === 'Grep' &&
+      verdict.kind === 'ask' &&
+      (await searchLeaves(hook.tool_input, opts.cwd))
+    ) {
+      return deny(LINKS_OUT);
+    }
+    const answer = await decide(verdict);
     const shell = shellSchema.safeParse(hook.tool_input);
     if (toolName === 'Shell' && id && answer === ALLOW && shell.success) {
       shells.set(id, shell.data.command);

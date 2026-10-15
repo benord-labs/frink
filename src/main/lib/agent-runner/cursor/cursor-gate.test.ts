@@ -157,6 +157,32 @@ describe('the questions each recorded Cursor hook call asks', () => {
     expect(asked).toEqual([]);
   });
 
+  it('refuses a search that would follow a link out of the folder, and allows one that stays in', async () => {
+    const linked = path.join(root, 'work', 'linked chat');
+    await mkdir(path.join(linked, 'src', 'lib'), { recursive: true });
+    await symlink(path.join(linked, 'src', 'lib'), path.join(linked, 'src', 'inner'));
+    await symlink(outside, path.join(linked, 'outside link'));
+    // A chain: chained/a leads to other, whose b leads outside; via is a link to other.
+    await mkdir(path.join(linked, 'other'));
+    await mkdir(path.join(linked, 'chained'));
+    await symlink(outside, path.join(linked, 'other', 'b'));
+    await symlink(path.join(linked, 'other'), path.join(linked, 'chained', 'a'));
+    await symlink(path.join(linked, 'other'), path.join(linked, 'via'));
+    await symlink(linked, path.join(root, 'work', 'chat link'));
+    const { asked, decide } = testGate(() => ALLOW_ALL, linked);
+    const viaLink = testGate(() => ALLOW_ALL, path.join(root, 'work', 'chat link'));
+    const LINKS_OUT = "This search would follow a link out of its folder, so Frink didn't run it.";
+
+    for (const file_path of [linked, 'chained', 'via']) {
+      expect(await decide(pre('Grep', { pattern: 'key', file_path }))).toEqual(deny(LINKS_OUT));
+    }
+    expect(await decide(pre('Grep', { pattern: 'key', glob: '**/*' }))).toEqual(deny(LINKS_OUT));
+    expect(await viaLink.decide(pre('Grep', { pattern: 'key' }))).toEqual(deny(LINKS_OUT));
+    expect(await decide(pre('Grep', { pattern: 'key', file_path: 'src' }))).toEqual(ALLOW);
+    expect(await decide(pre('Grep', { pattern: 'key', file_path: 'missing' }))).toEqual(ALLOW);
+    expect([...asked, ...viaLink.asked]).toEqual([]);
+  });
+
   it('asks Read for an env file in the folder, a read outside it, and a glob that steps up', async () => {
     const { asked, decide } = testGate(() => DENIED);
     expect(await decide(pre('Read', { file_path: '.env' }))).toEqual(deny(DENIED.message));
