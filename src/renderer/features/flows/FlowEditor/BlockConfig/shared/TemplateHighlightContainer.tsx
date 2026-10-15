@@ -181,9 +181,10 @@ export function TemplateHighlightContainer({
       'aria-invalid': ariaInvalid ?? child.props['aria-invalid'],
       'aria-describedby':
         [ariaDescribedBy, child.props['aria-describedby']].filter(Boolean).join(' ') || undefined,
-      // Grows with its text, so long templates read in full instead of scrolling a small box.
+      // Grows in height with its text; inline-size containment keeps a long unbroken token from
+      // widening the panel, since content sizing would otherwise apply to the width too.
       className: cn(
-        'relative z-10 bg-transparent caret-foreground field-sizing-content min-h-24 max-h-[60vh]',
+        'relative z-10 bg-transparent caret-foreground field-sizing-content min-h-24 max-h-[60vh] [contain:inline-size]',
         child.props.className,
       ),
       onScroll: (e: React.UIEvent<HTMLTextAreaElement>) => {
