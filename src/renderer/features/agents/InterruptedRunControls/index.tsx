@@ -20,9 +20,10 @@ type InterruptedRunControlsProps = {
 /** A resume ticket (boot continuation, typed reply, or a Continue/Retry click) already owns the run and waits for a slot. */
 function QueuedResumeRow() {
   return (
-    <RunStatusRow dotClassName="bg-[hsl(var(--status-warning))]" label="Flow run interrupted">
-      <span className="px-2 text-xs text-muted-foreground">Queued to resume this step…</span>
-    </RunStatusRow>
+    <RunStatusRow
+      dotClassName="bg-[hsl(var(--status-warning))]"
+      label="Flow run interrupted — queued to resume this step…"
+    />
   );
 }
 

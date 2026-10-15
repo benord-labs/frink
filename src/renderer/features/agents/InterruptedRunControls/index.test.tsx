@@ -93,7 +93,10 @@ describe('InterruptedRunControls', () => {
   it('shows a waiting row with no button while a resume ticket is queued for a slot', () => {
     runData = { runId: 'r1', resumable: true, resumeMode: 'queued' };
     renderRow();
-    expect(screen.getByText(/Queued to resume/)).toBeInTheDocument();
+    // Part of the state line (which wraps on a narrow pane), not the fixed-width action slot.
+    expect(screen.getByRole('status')).toHaveTextContent(
+      /^Flow run interrupted — queued to resume this step…$/,
+    );
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
 
