@@ -29,6 +29,7 @@ import { usePendingPlanIds } from '../../../lib/hooks/use-sidebar-pending-plan-i
 import { useWindowEvent } from '../../../lib/hooks/use-window-event';
 import { createIdSelectionStore } from '../../../lib/tree-navigation';
 import { trpc } from '../../../lib/trpc';
+import { fuzzyFilter } from '../../../lib/utils/fuzzy-match';
 import { hasModifiedFiles } from '../../../lib/utils/git-status';
 import { useAwaitingApprovals } from '../../../lib/work-queue/approvals/use-work-queue-approvals';
 import { useWorkQueueExitAction } from '../../../lib/work-queue/use-work-queue-exit-action';
@@ -129,11 +130,15 @@ const NO_ARCHIVED_CHATS: Array<{ id: string; name: string | null }> = [];
 function isChatPinListLoadError(err: unknown): boolean {
   return err instanceof Error && (err as { code?: string }).code === CHAT_PIN_LIST_LOAD_ERROR;
 }
+function chatSearchText(chat: { name?: string | null; branch?: string | null }): string {
+  return `${chat.name ?? ''} ${chat.branch ?? ''}`;
+}
 const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps>(
   // Reason: pre-existing size; the audit misreads it as new whenever coverage data is supplied.
   // fallow-ignore-next-line complexity
   function UnifiedSidebar({ onToggleSidebar, isMobileFullscreen = false, onChatSelect }, ref) {
     const [searchQuery, setSearchQuery] = useState('');
+    const isSearchActive = searchQuery.trim().length > 0;
     const searchInputRef = useRef<HTMLInputElement>(null);
     const treeContainerRef = useRef<HTMLDivElement>(null);
     const { askDelete, confirmDialog } = useDeleteConfirm(STRINGS.UNTITLED_CHAT);
@@ -317,7 +322,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
       }
       return map;
     }, [rawBatchGroups]);
-    const chats = useMemo(
+    const loadedChats = useMemo(
       () =>
         mergeChatsById([
           // First, so a loaded row (patched locally on rename, pin and activity) wins.
@@ -327,7 +332,16 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
         ]),
       [openChats, folderChatsByKey, pinnedChatsByKey],
     );
-    const pendingPlanIds = usePendingPlanIds(chats, livePlanApprovals, TIMING);
+    // Search covers every chat, not only each folder's loaded pages; loaded rows still win.
+    const { data: searchCorpus } = trpc.chats.list.useQuery({}, { enabled: isSearchActive });
+    const chats = useMemo(
+      () =>
+        isSearchActive && Array.isArray(searchCorpus)
+          ? mergeChatsById([...searchCorpus, ...loadedChats])
+          : loadedChats,
+      [isSearchActive, searchCorpus, loadedChats],
+    );
+    const pendingPlanIds = usePendingPlanIds(loadedChats, livePlanApprovals, TIMING);
     const { data: rawArchivedChats } = trpc.chats.listArchived.useQuery(undefined);
     const archivedChats = Array.isArray(rawArchivedChats) ? rawArchivedChats : NO_ARCHIVED_CHATS;
     // Collapse per-flow so the sidebar work-queue badge numbers match the Work Queue's own counts.
@@ -478,24 +492,19 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
       pendingQuestions: pendingQuestionIds,
     });
 
-    // Filter by search
+    // Filter by search: a folder stays when it has matching chats or its own name matches.
     const filteredCodebases = useMemo(() => {
-      if (!searchQuery.trim()) return groupedCodebases;
-      const query = searchQuery.toLowerCase();
-      return groupedCodebases
-        .map((codebase) => ({
-          ...codebase,
-          chats: codebase.chats.filter(
-            (chat) =>
-              chat.name?.toLowerCase().includes(query) ||
-              chat.branch?.toLowerCase().includes(query),
-          ),
-        }))
-        .filter(
-          (codebase) =>
-            codebase.displayName.toLowerCase().includes(query) || codebase.chats.length > 0,
-        );
-    }, [groupedCodebases, searchQuery]);
+      if (!isSearchActive) return groupedCodebases;
+      const namedFolders = new Set(
+        fuzzyFilter(groupedCodebases, searchQuery, (codebase) => codebase.displayName),
+      );
+      return groupedCodebases.flatMap((codebase) => {
+        const matches = fuzzyFilter(codebase.chats, searchQuery, chatSearchText);
+        return matches.length > 0 || namedFolders.has(codebase)
+          ? [{ ...codebase, chats: matches }]
+          : [];
+      });
+    }, [groupedCodebases, searchQuery, isSearchActive]);
 
     // ========== Expansion State ==========
     const { isCodebaseExpanded, toggleCodebase, collapseAll } = useExpansionState();
@@ -1077,8 +1086,9 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
       (chatIds: Iterable<string>) => {
         const ids = [...chatIds];
         removeChatIdsFromSidebarMaps(setFolderChatsByKey, setPinnedChatsByKey, ids);
+        utilsRef.current.chats.list.setData({}, (prev) => prev?.filter((c) => !ids.includes(c.id)));
       },
-      // setState dispatchers are stable for the component lifetime.
+      // setState dispatchers and utilsRef are stable for the component lifetime.
       [],
     );
 
@@ -1674,7 +1684,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
               <ProjectsTree
                 filteredCodebases={filteredCodebases}
                 searchQuery={searchQuery}
-                isSearchActive={searchQuery.trim().length > 0}
+                isSearchActive={isSearchActive}
                 isCodebaseExpanded={isCodebaseExpanded}
                 toggleCodebase={toggleCodebase}
                 selectedChatId={selectedChatId}

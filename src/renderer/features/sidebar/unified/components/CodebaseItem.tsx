@@ -527,11 +527,6 @@ export const CodebaseItem = memo(function CodebaseItem({
                 </Button>
               </div>
             )}
-            {isSearchActive && totalChats > allChats.length && (
-              <div role="note" className="py-1 pl-9 text-[11px] text-muted-foreground/70">
-                Showing matches from loaded chats only. Load more to search older chats.
-              </div>
-            )}
           </fieldset>
         ) : totalChats > 0 && isLoadingMoreChats ? (
           <div className="py-1.5 pl-9 text-xs text-muted-foreground/70">Loading chats...</div>

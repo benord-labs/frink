@@ -241,3 +241,14 @@ describe('ProjectsTree row-render isolation (real DndContext)', () => {
     expect(dndHandlers.handleDragStart.mock.calls[0][0].active.id).toBe('chat-a');
   });
 });
+
+describe('ProjectsTree search', () => {
+  it('opens a collapsed folder that holds search matches', () => {
+    const collapsed = { ...pollProps([A]), isCodebaseExpanded: () => false };
+    const { rerenderTree } = renderTree(collapsed);
+    expect(screen.queryAllByText('Chat A')).toHaveLength(0);
+
+    rerenderTree({ ...collapsed, searchQuery: 'chat', isSearchActive: true });
+    expect(screen.queryAllByText('Chat A').length).toBeGreaterThan(0);
+  });
+});

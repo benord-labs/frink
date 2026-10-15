@@ -1548,11 +1548,14 @@ describe('UnifiedSidebar archived mode (sc-198)', () => {
     ['a string', 'not-an-array'],
     ['null', null],
     ['undefined', undefined],
-  ])('survives listArchived returning %s during hydration', (_label, payload) => {
+  ])('survives listArchived and chats.list returning %s during hydration', (_label, payload) => {
     hoisted.archivedChatsData = payload;
+    // SAFETY: the corpus field holds chat rows; this payload is the malformed value under test.
+    hoisted.searchCorpusData = payload as never;
 
     expect(() => {
       render(<UnifiedSidebar />);
+      fireEvent.change(screen.getByTestId('sidebar-header'), { target: { value: 'chat' } });
       fireEvent.click(screen.getByTestId('toggle-archived'));
     }).not.toThrow();
 
@@ -1907,5 +1910,90 @@ describe('UnifiedSidebar reveal active chat', () => {
 
     expect(hoisted.focusActiveItemMock).toHaveBeenCalledOnce();
     vi.unstubAllGlobals();
+  });
+});
+
+describe('UnifiedSidebar search', () => {
+  const chatRow = (id: string, name: string, pinnedAt: Date | null = null) => ({
+    id,
+    name,
+    projectId: null,
+    updatedAt: new Date('2026-01-01'),
+    branch: null,
+    pinnedAt,
+    worktreePath: null,
+    taskId: null,
+    batchId: null,
+  });
+  const search = (query: string) =>
+    fireEvent.change(screen.getByTestId('sidebar-header'), { target: { value: query } });
+  // SAFETY: the useGroupedProjects double captures the chat list UnifiedSidebar handed it.
+  const groupedChats = () => hoisted.capturedGroupedProjectsParams?.chats as Array<{ id: string }>;
+
+  it('matches chats by words in any order with a typo, and keeps folders matched by name', () => {
+    hoisted.groupedProjectsResult = [
+      {
+        displayName: 'frink',
+        chats: [chatRow('fix', 'Fix sidebar search'), chatRow('bill', 'Billing')],
+      },
+      { displayName: 'devkit', chats: [chatRow('ship', 'Ship gates')] },
+    ];
+    render(<UnifiedSidebar />);
+
+    search('serach sidebar');
+    // SAFETY: the ProjectsTree double captures the codebases UnifiedSidebar rendered.
+    const tree = () =>
+      hoisted.capturedProjectsTreeProps?.filteredCodebases as Array<{
+        displayName: string;
+        chats: Array<{ id: string }>;
+      }>;
+    expect(tree().map((c) => [c.displayName, c.chats.map((chat) => chat.id)])).toEqual([
+      ['frink', ['fix']],
+    ]);
+
+    search('devkt');
+    expect(tree().map((c) => [c.displayName, c.chats.length])).toEqual([['devkit', 0]]);
+  });
+
+  it('searches every chat while a query is active, not just the loaded pages', () => {
+    hoisted.searchCorpusData = [chatRow('old', 'Old chat')];
+    render(<UnifiedSidebar />);
+    expect(groupedChats()).toEqual([]);
+    expect(hoisted.chatsListUseQueryMock).toHaveBeenLastCalledWith({}, { enabled: false });
+
+    search('old');
+    expect(groupedChats().map((chat) => chat.id)).toEqual(['old']);
+    expect(hoisted.chatsListUseQueryMock).toHaveBeenLastCalledWith({}, { enabled: true });
+
+    search('');
+    expect(groupedChats()).toEqual([]);
+  });
+
+  it('keeps a loaded row over the stale search copy of the same chat', async () => {
+    const pinnedAt = new Date('2026-02-01');
+    hoisted.chatsListCountsForSidebarData = [{ projectId: null, count: 1 }];
+    hoisted.chatsListByFolderFetchMock.mockResolvedValue({
+      chats: [chatRow('chat-1', 'Pinned chat', pinnedAt)],
+      hasMore: false,
+      nextCursor: null,
+    });
+    hoisted.searchCorpusData = [chatRow('chat-1', 'Pinned chat')];
+    render(<UnifiedSidebar />);
+    await waitFor(() => expect(groupedChats()).toHaveLength(1));
+
+    search('pinned');
+    expect(groupedChats()).toEqual([expect.objectContaining({ id: 'chat-1', pinnedAt })]);
+  });
+
+  it('drops a deleted chat from the search corpus straight away', async () => {
+    const onChatDelete = captureChatAction('onChatDelete');
+    await answerConfirm(() => onChatDelete('chat-x'), 'confirm');
+
+    expect(hoisted.chatsListSetDataMock).toHaveBeenCalledWith({}, expect.any(Function));
+    // SAFETY: the second argument is the updater UnifiedSidebar passed to setData.
+    const update = hoisted.chatsListSetDataMock.mock.calls[0]?.[1] as (
+      prev: Array<{ id: string }> | undefined,
+    ) => Array<{ id: string }> | undefined;
+    expect(update([{ id: 'chat-x' }, { id: 'keep' }])).toEqual([{ id: 'keep' }]);
   });
 });

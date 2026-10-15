@@ -8,6 +8,7 @@ import { memo, type ReactElement, useRef, useState } from 'react';
 import { ConfirmDialog } from '../../../../../components/ui/confirm-dialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../../../components/ui/tooltip';
 import { cn } from '../../../../../lib/utils';
+import { fuzzyFilter } from '../../../../../lib/utils/fuzzy-match';
 import { STRINGS, TIMING } from '../../constants';
 
 const EMPTY_DELETING_IDS: ReadonlySet<string> = new Set();
@@ -31,10 +32,8 @@ function ArchivedChatsSectionComponent({
   onChatRestore,
   onChatDelete,
 }: ArchivedChatsSectionProps): ReactElement {
-  const query = searchQuery.trim().toLowerCase();
-  const visibleChats = query
-    ? archivedChats.filter((chat) => chat.name?.toLowerCase().includes(query))
-    : archivedChats;
+  const query = searchQuery.trim();
+  const visibleChats = fuzzyFilter(archivedChats, query, (chat) => chat.name ?? '');
 
   const rootRef = useRef<HTMLDivElement>(null);
   const [pendingDelete, setPendingDelete] = useState<{
