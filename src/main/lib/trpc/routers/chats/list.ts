@@ -49,7 +49,7 @@ export const listRouter = router({
         input.projectId === undefined
           ? await listAllChatsLocal(getDatabase())
           : await listChatsForProject(getDatabase(), input.projectId);
-      return rows.map(mapLocalChatResponse);
+      return withBatchIds(rows.map(mapLocalChatResponse));
     }),
 
   listArchived: publicProcedure.query(async () => {

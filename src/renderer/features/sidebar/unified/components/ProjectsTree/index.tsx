@@ -128,7 +128,9 @@ function ProjectsTreeComponent({
                   key={key}
                   codebaseKey={key}
                   codebase={codebase}
-                  isExpanded={isCodebaseExpanded(key)}
+                  isExpanded={
+                    (isSearchActive && codebase.chats.length > 0) || isCodebaseExpanded(key)
+                  }
                   toggleCodebase={toggleCodebase}
                   selectedChatId={selectedChatId}
                   onChatSelect={chatActions.onChatSelect}

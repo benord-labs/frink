@@ -73,6 +73,7 @@
     "@iconify-icons/simple-icons": "2.0.4",
     "@iconify-icons/vscode-icons": "2.0.6",
     "@iconify/react": "6.0.2",
+    "@leeoniya/ufuzzy": "1.0.19",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@monaco-editor/react": "^4.7.0",
     "@parcel/watcher": "^2.6.0",

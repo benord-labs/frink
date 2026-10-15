@@ -74,4 +74,9 @@ describe('sidebar batch grouping — end-to-end casing/wiring contract', () => {
     expect(rows.map((r) => r.id)).toEqual([chatId]);
     expect(rows[0].batchId).toBe(BATCH_ID);
   });
+
+  it('list (the sidebar search corpus) carries the same batchId as listByFolder', async () => {
+    const rows = await caller().list({});
+    expect(rows.find((r) => r.id === chatId)?.batchId).toBe(BATCH_ID);
+  });
 });

@@ -13,7 +13,7 @@ import { expect, vi } from 'vitest';
 import type { AwaitingApproval } from '../../../lib/work-queue/approvals/use-work-queue-approvals';
 import type { ChatSelectionChipProps } from './components/ChatSelection';
 import { makeSidebarComponentsMock } from './sidebar-components-test-harness';
-import type { ActiveFolderChat } from './utils';
+import type { ActiveFolderChat, SidebarChatListItem } from './utils';
 
 /** Type-only: erased at build, so it does not re-enter the jotai mock factory. */
 type AnyAtom = Atom<unknown>;
@@ -91,6 +91,13 @@ export const hoisted = {
   listCountsUseQueryMock: vi.fn(() => ({ data: state.taskCountsData })),
   listActiveChatsUseQueryMock: vi.fn(() => ({ data: state.sidebarActivityData })),
   chatsListInvalidateMock: vi.fn(async () => undefined),
+  chatsListSetDataMock: vi.fn(),
+  searchCorpusData: new Array<Partial<SidebarChatListItem>>(),
+  chatsListUseQueryMock: vi.fn(() => ({ data: hoisted.searchCorpusData })),
+  groupedProjectsResult: new Array<{
+    displayName: string;
+    chats: Partial<SidebarChatListItem>[];
+  }>(),
   chatsListCountsInvalidateMock: vi.fn(async () => undefined),
   chatsListCountsFetchMock: vi.fn(
     async () => [] as Array<{ projectId: string | null; count: number }>,
@@ -212,7 +219,10 @@ export const trpcMock = {
   trpc: {
     useUtils: () => ({
       chats: {
-        list: { invalidate: hoisted.chatsListInvalidateMock },
+        list: {
+          invalidate: hoisted.chatsListInvalidateMock,
+          setData: hoisted.chatsListSetDataMock,
+        },
         listCounts: {
           invalidate: hoisted.chatsListCountsInvalidateMock,
           fetch: hoisted.chatsListCountsFetchMock,
@@ -253,6 +263,7 @@ export const trpcMock = {
       createFolder: { useMutation: () => ({ mutateAsync: vi.fn(async () => ({})) }) },
     },
     chats: {
+      list: { useQuery: hoisted.chatsListUseQueryMock },
       listCounts: { useQuery: hoisted.chatsListCountsForSidebarQueryMock },
       listActiveChats: { useQuery: hoisted.listActiveChatsUseQueryMock },
       getPendingPlanApprovals: { useQuery: hoisted.getPendingPlanApprovalsUseQueryMock },
@@ -295,7 +306,7 @@ export const gitStatusMock = { hasModifiedFiles: () => false };
 export const groupedProjectsMock = {
   useGroupedProjects: (params: Record<string, unknown>) => {
     hoisted.capturedGroupedProjectsParams = params;
-    return [];
+    return hoisted.groupedProjectsResult;
   },
 };
 export const sidebarNavigationMock = {
@@ -432,6 +443,10 @@ export function resetHarness() {
   });
   hoisted.chatsListCountsForSidebarData = [];
   hoisted.chatsListCountsForSidebarQueryMock.mockClear();
+  hoisted.chatsListSetDataMock.mockClear();
+  hoisted.searchCorpusData = [];
+  hoisted.chatsListUseQueryMock.mockClear();
+  hoisted.groupedProjectsResult = [];
   hoisted.getPendingPlanApprovalsUseQueryMock.mockClear();
   hoisted.fillActivePaneMock.mockReset();
   hoisted.openChatInNewPaneMock.mockClear();
