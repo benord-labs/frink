@@ -32,6 +32,25 @@ const ask = (...asked: CodexApprovalRequest[]) => ({ kind: 'ask', questions: ask
 const bash = (command: string) => ({ toolName: 'Bash', input: { command } });
 const edit = (file: string) => ({ toolName: 'Edit', input: { file_path: file } });
 const read = (file: string) => ({ toolName: 'Read', input: { file_path: file } });
+const ENV_GLOBS = [
+  '*.env',
+  '.env*',
+  '**/.env',
+  '.env.prod*',
+  '.e?v',
+  '[.]env',
+  '{.env,a}',
+  '*.{env,ts}',
+  'config/.env',
+  '?env',
+  '.ENV',
+  'config*.env.local',
+  'api.env.d/*.json',
+  '.e*.x',
+  '*env.local',
+];
+// Filters that only leave files out; ripgrep never un-hides or un-ignores a file for one.
+const EXCLUSIONS = ['!node_modules', '!**/dist/**', '!*.md', '!{a,b}', '!../x', '!.env*'];
 
 describe('questionsForCopilotTool', () => {
   it('asks each tool the question its rule names, from calls the agent made', () => {
@@ -99,11 +118,39 @@ describe('questionsForCopilotTool', () => {
     expect(questions('rg', { pattern: 'KEY', paths: ['src', '.env.example'] })).toEqual(ask());
   });
 
-  it('does not judge search or glob wildcards for env files, only paths that are one', () => {
-    for (const glob of ['.env*', '*.env', '**/.env', 's*', 'config*', '*.production', '*']) {
+  it('asks Read before a search whose glob can open an env file, but not before a file listing', () => {
+    for (const glob of ENV_GLOBS) {
+      expect(questions('grep', { pattern: 'KEY', glob })).toEqual(ask(read(path.join(cwd, glob))));
+      expect(questions('rg', { pattern: 'KEY', glob, paths: 'src' })).toEqual(
+        ask(read(path.join(cwd, 'src', glob))),
+      );
       expect(questions('glob', { pattern: glob })).toEqual(ask());
+    }
+    for (const glob of ['*.ts', '**/*.{ts,tsx}', 'src/**/*.json', '.env.example']) {
+      expect(questions('grep', { pattern: 'KEY', glob })).toEqual(ask());
+    }
+    expect(questions('grep', { pattern: 'KEY', paths: 'src' })).toEqual(ask());
+    expect(questions('grep', { pattern: 'KEY', glob: '' })).toEqual(ask());
+    expect(questions('rg', { pattern: 'KEY', glob: null })).toEqual(ask());
+  });
+
+  it('reads a filter that only leaves files out as no filter, and judges the rest', () => {
+    for (const glob of EXCLUSIONS) {
       expect(questions('grep', { pattern: 'KEY', glob })).toEqual(ask());
       expect(questions('rg', { pattern: 'KEY', glob, paths: 'src' })).toEqual(ask());
+    }
+    expect(questions('rg', { pattern: 'KEY', glob: '{*.env,!x}' })).toEqual(
+      ask(read(path.join(cwd, '{*.env,!x}'))),
+    );
+    expect(questions('rg', { pattern: 'KEY', glob: '{*.ts,!x}' })).toEqual(ask());
+    expect(questions('rg', { pattern: 'KEY', glob: '!../../etc/*' })).toEqual(ask());
+    expect(questions('rg', { pattern: 'KEY', glob: '*.md', paths: 'Notes (2024)' })).toEqual(ask());
+    // picomatch reads !(x) as anything but x, .. included, so it is refused as a step out.
+    for (const glob of ['!(x)', '!(x)/../../etc/*']) {
+      expect(questions('grep', { pattern: 'KEY', glob })).toEqual({
+        kind: 'refuse',
+        reason: CANT_CHECK,
+      });
     }
   });
 
@@ -184,6 +231,10 @@ describe('questionsForCopilotTool', () => {
     ['a background task', 'task', { prompt: 'x', agent_type: 'explore', mode: 'background' }],
     ['a task that does not say it waits', 'task', { prompt: 'x', agent_type: 'explore' }],
     ['a glob with a backslash', 'glob', { pattern: 'C:\\Users\\*' }],
+    ['a search filter with a backslash', 'rg', { pattern: 'KEY', glob: '\\.env' }],
+    ['a read path with a stray space', 'view', { path: '.env.example ' }],
+    ['a search filter with a stray space', 'rg', { pattern: 'KEY', glob: '*.env.example ' }],
+    ['an edit path with a stray space', 'create', { path: ' a.txt', file_text: 'x' }],
     ['input that is not an object', 'bash', 'touch m.txt'],
     ['a patch with no file', 'apply_patch', '*** Begin Patch\n*** End Patch'],
     ['a patch with an unknown header', 'apply_patch', '*** Begin Patch\n*** Chmod File: a\n'],
