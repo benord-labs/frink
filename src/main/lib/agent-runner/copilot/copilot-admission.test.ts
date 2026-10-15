@@ -35,6 +35,7 @@ const REQUIRED = process.env.FRINK_COPILOT_ADMISSION_REQUIRED === '1';
 const TURN_MS = 90_000;
 const SECRET_TEXT = 'outside-secret-3d9a';
 const PATCH_MODEL = 'gpt-5.2-codex';
+const LOGIN_SHELL_MARKER = 'FRINK_LOGIN_SHELL_MARKER';
 
 type Answer = Awaited<ReturnType<CodexApprovalCheck>>;
 type Step = { name: string; args: Record<string, JsonValue> } | { name: string; input: string };
@@ -223,6 +224,7 @@ describe.runIf(BIN)('GitHub Copilot admission', () => {
       PATH: pathDirs.join(path.delimiter),
       HOME: home,
       LANG: 'en_US.UTF-8',
+      SHELL: '/bin/zsh',
       XDG_CONFIG_HOME: path.join(home, '.config'),
       XDG_DATA_HOME: path.join(home, '.local', 'share'),
       XDG_STATE_HOME: path.join(home, '.local', 'state'),
@@ -320,6 +322,9 @@ describe.runIf(BIN)('GitHub Copilot admission', () => {
     await writeJson(path.join(configDirectory, 'mcp-config.json'), mcp('leftover-mcp'));
     await writeJson(path.join(configDirectory, 'hooks', 'evil.json'), copilotHooks('leftover'));
 
+    for (const file of ['.zshenv', '.bashrc', '.profile']) {
+      await write(path.join(home, file), `export ${LOGIN_SHELL_MARKER}=1\n`);
+    }
     await write(preScript, `#!/bin/sh\n${touchMarker('grep-pre')}\n`);
     // A file the flag-like path names, so Copilot hands that path on to the search.
     await write(path.join(project, `--pre=${preScript}`), 'hello\n');
@@ -693,7 +698,7 @@ describe.runIf(BIN)('GitHub Copilot admission', () => {
     );
 
     it(
-      'gives commands none of the inherited approve-all switches',
+      'gives commands none of the inherited approve-all switches or login-shell variables',
       async () => {
         scripts.set('allow-env', [bash(`env > '${inProject('env.txt')}'`)]);
         const result = await turn('allow-env', { answer: async () => ALLOW });
@@ -703,6 +708,7 @@ describe.runIf(BIN)('GitHub Copilot admission', () => {
           .map((line) => line.split('=')[0]);
         expect(names).not.toContain('COPILOT_ALLOW_ALL');
         expect(names).not.toContain('COPILOT_NEW_ALLOW');
+        expect(names).not.toContain(LOGIN_SHELL_MARKER);
       },
       TURN_MS,
     );
