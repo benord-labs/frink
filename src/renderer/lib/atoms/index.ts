@@ -74,7 +74,7 @@ export const extendedThinkingEnabledAtom = atom(
   },
 );
 
-/** Hidden model family ids (`familyId`) — chat pickers filter; triggers/flows stay unfiltered. */
+/** Hidden model family ids (agents: `<providerId>:<familyId ?? id>`); flows stay unfiltered. */
 export const hiddenModelsAtom = atomWithStorage<string[]>('models:hidden', [], undefined, {
   getOnInit: true,
 });

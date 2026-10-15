@@ -8,11 +8,17 @@ import {
   CLAUDE_PICKER_MODELS,
   CODEX_MODELS,
 } from '../../../shared/lib/models';
-import { providerModels, unsupportedChatControls } from './chat-options';
+import { agentModelFamilies, providerModels, unsupportedChatControls } from './chat-options';
 
 const OPENCODE_MODELS = [
   { id: 'opencode/big-pickle', name: 'Big Pickle' },
   { id: 'anthropic/claude-sonnet-4-5', name: 'Claude Sonnet 4.5' },
+];
+const GPT_5 = { name: 'GPT-5', familyId: 'gpt-5' };
+const COPILOT_MODELS = [
+  { ...GPT_5, id: 'gpt-5/low', effort: 'low' as const },
+  { ...GPT_5, id: 'gpt-5/high', effort: 'high' as const },
+  { id: 'auto', name: 'Auto' },
 ];
 const FREE_CODEX: CodexAccountCatalog = {
   tiers: { 'gpt-6-luna': [], 'gpt-5.5': [] },
@@ -146,6 +152,76 @@ describe('providerModels', () => {
     const result = models('opencode', 'opus', { agentModels: OPENCODE_MODELS });
     expect(result.selected).toEqual({ id: AGENT_DEFAULT_MODEL_ID, name: 'OpenCode default' });
     expect(result.refusesModel).toBe(false);
+  });
+
+  it('leaves out an agent model switched off in Settings', () => {
+    const result = models('opencode', 'opencode/big-pickle', {
+      agentModels: OPENCODE_MODELS,
+      hiddenFamilies: ['opencode:anthropic/claude-sonnet-4-5'],
+    });
+    expect(result.items).toEqual([OPENCODE_MODELS[0]]);
+  });
+
+  it('leaves out every effort row of a switched-off Copilot model', () => {
+    const result = models('copilot', 'auto', {
+      agentModels: COPILOT_MODELS,
+      hiddenFamilies: ['copilot:gpt-5'],
+    });
+    expect(result.items).toEqual([COPILOT_MODELS[2]]);
+  });
+
+  it('starts a new chat on the last-picked model even when it is switched off', () => {
+    const result = models('opencode', 'opencode/big-pickle', {
+      agentModels: OPENCODE_MODELS,
+      hiddenFamilies: ['opencode:opencode/big-pickle'],
+      keepUnavailable: false,
+    });
+    expect(result.items).toEqual(OPENCODE_MODELS);
+    expect(result.selected).toEqual(OPENCODE_MODELS[0]);
+  });
+
+  it('lists every model when all of them are switched off', () => {
+    const result = models('opencode', 'gone', {
+      agentModels: OPENCODE_MODELS,
+      hiddenFamilies: agentModelFamilies('opencode', OPENCODE_MODELS).map((f) => f.id),
+    });
+    expect(result.items).toEqual([
+      { id: AGENT_DEFAULT_MODEL_ID, name: 'OpenCode default' },
+      ...OPENCODE_MODELS,
+    ]);
+    expect(result.hint).toBeUndefined();
+  });
+
+  it('keeps a switched-off model the chat is set to, with all its effort rows', () => {
+    const result = models('copilot', 'gpt-5/high', {
+      agentModels: COPILOT_MODELS,
+      hiddenFamilies: ['copilot:gpt-5', 'copilot:auto'],
+    });
+    expect(result.items).toEqual(COPILOT_MODELS.slice(0, 2));
+    expect(result.selected).toEqual(COPILOT_MODELS[1]);
+  });
+
+  it('hides a model only for the agent that lists it', () => {
+    const hiddenFamilies = agentModelFamilies('copilot', [
+      ...COPILOT_MODELS,
+      { id: 'opus-4.6', name: 'Opus 4.6' },
+    ]).map((f) => f.id);
+    const opencode = [OPENCODE_MODELS[0], { id: 'gpt-5', name: 'GPT-5' }];
+    expect(
+      models('opencode', opencode[0].id, { agentModels: opencode, hiddenFamilies }).items,
+    ).toEqual(opencode);
+    expect(models('claude-code', 'opus', { hiddenFamilies }).items).toHaveLength(
+      CLAUDE_PICKER_MODELS.length,
+    );
+  });
+});
+
+describe('agentModelFamilies', () => {
+  it('gives one switch per model, never one per effort', () => {
+    expect(agentModelFamilies('copilot', COPILOT_MODELS)).toEqual([
+      { id: 'copilot:gpt-5', name: 'GPT-5' },
+      { id: 'copilot:auto', name: 'Auto' },
+    ]);
   });
 });
 

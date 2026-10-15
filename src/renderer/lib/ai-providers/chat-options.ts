@@ -78,6 +78,24 @@ function codexModels(inputs: ProviderModelInputs): ProviderModels {
   };
 }
 
+/** An agent model's id in the hidden-models setting; a model's effort rows share it. */
+function agentModelKey(agentId: string, model: { id: string; familyId?: string }): string {
+  return `${agentId}:${model.familyId ?? model.id}`;
+}
+
+/** One switchable entry per model an agent lists, named after its first row. */
+export function agentModelFamilies(
+  agentId: string,
+  rows: readonly PickerGroupFields[],
+): { id: string; name: string }[] {
+  const names = new Map<string, string>();
+  for (const row of rows) {
+    const id = agentModelKey(agentId, row);
+    if (!names.has(id)) names.set(id, row.name);
+  }
+  return [...names].map(([id, name]) => ({ id, name }));
+}
+
 /** The picker rows and selection for a chat on `providerId`; agents list their own models flat. */
 export function providerModels(
   providerId: string | null | undefined,
@@ -86,12 +104,20 @@ export function providerModels(
   const row = aiProvider(providerId);
   if (row?.runtime === 'codex') return codexModels(inputs);
   if (!isInstalledAgent(row)) return claudeModels(inputs);
-  const listed = inputs.agentModels ?? [];
-  const { offered, row: runs } = modelRowFor(listed, inputs.modelId);
+  const reported = inputs.agentModels ?? [];
+  const { offered, row: runs } = modelRowFor(reported, inputs.modelId);
   // Copilot runs the saved effort, else the model's default, else its own: then no tier shows.
   const copilotRow = runs ?? (offered && { id: inputs.modelId, name: offered.name });
   const chosen =
-    row.runtime === 'copilot' ? copilotRow : listed.find((m) => m.id === inputs.modelId);
+    row.runtime === 'copilot' ? copilotRow : reported.find((m) => m.id === inputs.modelId);
+  // A chat already set to a switched-off model keeps it.
+  const kept = chosen && agentModelKey(row.id, chosen);
+  const visible = reported.filter((m) => {
+    const key = agentModelKey(row.id, m);
+    return key === kept || !inputs.hiddenFamilies.includes(key);
+  });
+  // The agent's list can change after the switches were set, so never let them empty it.
+  const listed = visible.length > 0 ? visible : reported;
   // The turn refuses a model the agent no longer offers; this row sends none.
   const fallback = { id: AGENT_DEFAULT_MODEL_ID, name: `${row.name} default` };
   return {
@@ -100,7 +126,7 @@ export function providerModels(
     variant: row.id,
     unavailable: false,
     hint: listed.length > 0 ? undefined : `Send a message to load ${row.name}'s models.`,
-    refusesModel: agentRefusesModel(listed, inputs.modelId, row.runtime === 'copilot'),
+    refusesModel: agentRefusesModel(reported, inputs.modelId, row.runtime === 'copilot'),
   };
 }
 

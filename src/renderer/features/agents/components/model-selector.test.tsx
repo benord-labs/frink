@@ -462,12 +462,13 @@ describe('agent models', () => {
   ];
 
   it("lists the agent's models flat, with no Thinking, effort or speed controls", () => {
+    const onOpenModelSettings = vi.fn();
     const { onModelChange } = renderPicker({
       selectedModel: OPENCODE[0],
       availableModels: OPENCODE,
       modelVariant: 'opencode',
       chatId: 'chat-1',
-      onOpenModelSettings: vi.fn(),
+      onOpenModelSettings,
     });
     expect(trigger()).toHaveAccessibleName('Model: Big Pickle');
     expect(screen.getByRole('option', { name: 'Big Pickle' })).toHaveAttribute(
@@ -476,9 +477,10 @@ describe('agent models', () => {
     );
     expect(screen.queryByRole('slider')).toBeNull();
     expect(screen.queryByRole('switch')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Model visibility & accounts…' })).toBeNull();
     fireEvent.click(screen.getByRole('option', { name: 'Claude Sonnet 4.5' }));
     expect(onModelChange).toHaveBeenCalledWith(OPENCODE[1]);
+    fireEvent.click(screen.getByRole('button', { name: 'Model visibility & accounts…' }));
+    expect(onOpenModelSettings).toHaveBeenCalled();
   });
 
   it("moves GitHub Copilot's effort for a model that offers it, and shows none for Auto", async () => {
