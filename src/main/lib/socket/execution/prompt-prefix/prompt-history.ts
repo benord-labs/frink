@@ -48,3 +48,15 @@ ${historyText}
 Continue the conversation. The user's latest message is:
 ${currentPrompt}`;
 }
+
+/** Rebuilds a resume prompt for a session that starts fresh after all: the transcript replaces
+ * `carried`, the tail a native resume would have sent. With no transcript it is kept whole. */
+export function replaceCarriedWithHistory(
+  prompt: string,
+  carried: string,
+  message: string,
+  history?: Array<{ role: 'user' | 'assistant'; content: string }>,
+): string {
+  if (!history?.length || !prompt.endsWith(carried)) return prompt;
+  return `${prompt.slice(0, prompt.length - carried.length)}${formatPromptWithHistory(message, history)}`;
+}

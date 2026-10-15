@@ -80,6 +80,7 @@ export function buildClaudeSessionCallbacks(scope: ClaudeSessionScope, session: 
     const reminders = turn?.pendingReminders ?? [];
     // Only a prompt Frink sent: a wake firing first must not take the turn's notice.
     const fromSdk = input.source === undefined || input.source === 'sdk';
+    if (fromSdk) turn?.onPromptAccepted?.();
     const ended = fromSdk ? turn?.pendingFlowRunEnded : undefined;
     if (ended && turn) {
       turn.pendingFlowRunEnded = undefined;

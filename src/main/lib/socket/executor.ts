@@ -122,9 +122,11 @@ import { trackUserMessageDelivery } from './execution/claude-session/user-messag
 import {
   applyApprovedPlanContextToPrompt,
   formatPromptWithHistory,
+  carryUndeliveredMessages,
   codexComposerContext,
   isPersonAuthored,
   projectComposerContext,
+  replaceCarriedWithHistory,
 } from './execution/prompt-prefix';
 import type { MessageDelivery } from './execution/message-provenance/origin';
 import { provenanceForTurn, recordProvenanceResume } from './execution/message-provenance';
@@ -535,6 +537,12 @@ export async function handleRemoteExecute(
     });
     executionAdmissionAcknowledged = true;
     payload.onExecutionStarted?.();
+    // Owed from registration on: only a registered run can be stopped before its prompt is taken.
+    const undelivered = carryUndeliveredMessages(
+      subChatId,
+      message,
+      isPersonAuthored(payload.delivery),
+    );
     executionStreamEpoch = getExecutionStreamEpoch(subChatId, msgId);
     if (!executionStreamEpoch) throw new Error('Active execution was registered without an epoch');
     recordLiveStreamStart({
@@ -752,7 +760,9 @@ export async function handleRemoteExecute(
           persistedSessionId ??
           undefined);
     const hasResumeSession = Boolean(resumeSessionId ?? persistedSessionId);
-    let fullPrompt = hasResumeSession ? message : formatPromptWithHistory(message, history);
+    let fullPrompt = hasResumeSession
+      ? undelivered.prompt
+      : formatPromptWithHistory(message, history);
     const agentSawPriorTurns = hasResumeSession || (history?.length ?? 0) > 0;
     // Written once the provider accepts the turn: Claude's first prompt hook, Codex's turn/start.
     // Flows run only on Claude and Codex, so other agents have no Flow run to be told about.
@@ -794,9 +804,7 @@ export async function handleRemoteExecute(
     }
 
     let freshSessionFallbackPrompt = resumeSessionId
-      ? fullPrompt.endsWith(message)
-        ? `${fullPrompt.slice(0, fullPrompt.length - message.length)}${formatPromptWithHistory(message, history)}`
-        : fullPrompt
+      ? replaceCarriedWithHistory(fullPrompt, undelivered.prompt, message, history)
       : undefined;
     if (sessionFlowBriefing && agentRuntime !== 'claude' && !hasResumeSession) {
       fullPrompt = `${renderFlowBriefingSection(sessionFlowBriefing)}\n\n---\n\n${fullPrompt}`;
@@ -952,6 +960,10 @@ export async function handleRemoteExecute(
         }
         for await (const chunk of stream) {
           if (abortController.signal.aborted) break;
+          // An agent that answers took the prompt; an error alone proves nothing.
+          if (USER_VISIBLE_CHUNK_TYPES.has(chunk.type) && !chunk.type.endsWith('error')) {
+            undelivered.accepted();
+          }
           if ('messageMetadata' in chunk) {
             const sessionId = chunk.messageMetadata?.sessionId;
             if (sessionId && !codexMetadata.sessionId) persistEarlySessionId(subChatId, sessionId);
@@ -1128,6 +1140,7 @@ export async function handleRemoteExecute(
     turn.nextMessageIndex = () => messageIndex++;
     turn.pendingReminders = turnReminders.reminders;
     turn.pendingFlowRunEnded = flowRunEnded && { ...flowRunEnded, subChatId };
+    turn.onPromptAccepted = undelivered.accepted;
     turn.messageProvenance = provenance;
     turn.composerNotes = composer.notes.map((note) => note.text);
 
@@ -1669,10 +1682,8 @@ export async function handleRemoteExecute(
       );
       const retryOptions: Record<string, unknown> = { ...sdkOptions };
       delete retryOptions.resume;
-      if (hasResumeSession && fullPrompt.endsWith(message)) {
-        fullPrompt =
-          fullPrompt.slice(0, fullPrompt.length - message.length) +
-          formatPromptWithHistory(message, history);
+      if (hasResumeSession) {
+        fullPrompt = replaceCarriedWithHistory(fullPrompt, undelivered.prompt, message, history);
       }
       await runClaudeQueryAttempt(retryOptions as typeof sdkOptions);
       log.info(

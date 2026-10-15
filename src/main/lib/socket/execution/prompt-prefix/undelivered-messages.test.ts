@@ -1,0 +1,91 @@
+import { beforeEach, describe, expect, it } from 'vitest';
+import { carryUndeliveredMessages, clearUndeliveredMessagesForTests } from './undelivered-messages';
+
+const send = (message: string, personAuthored = true, chat = 'sub-1') =>
+  carryUndeliveredMessages(chat, message, personAuthored);
+
+describe('carryUndeliveredMessages', () => {
+  beforeEach(() => clearUndeliveredMessagesForTests());
+
+  it('leaves a prompt alone when nothing earlier is owed', () => {
+    expect(send('restart the hub').prompt).toBe('restart the hub');
+  });
+
+  it('carries a message whose turn was stopped before the provider took it, as transcript', () => {
+    send('restart the hub');
+    const next = send('with latest code');
+
+    expect(next.prompt.startsWith('<conversation_history>\nHuman: restart the hub\n')).toBe(true);
+    expect(next.prompt.endsWith("The user's latest message is:\nwith latest code")).toBe(true);
+  });
+
+  it('stops carrying once the provider takes the prompt', () => {
+    send('restart the hub');
+    send('with latest code').accepted();
+
+    expect(send('thanks').prompt).toBe('thanks');
+  });
+
+  it('carries every stopped message, oldest first', () => {
+    send('first');
+    send('second');
+    const { prompt } = send('third');
+
+    expect(prompt.indexOf('Human: first')).toBeLessThan(prompt.indexOf('Human: second'));
+    expect(prompt.indexOf('Human: second')).toBeLessThan(prompt.indexOf('third'));
+  });
+
+  it("owes only a person's own message, but any turn carries what is owed", () => {
+    send('a Flow step prompt', false);
+    expect(send('hello').prompt).toBe('hello');
+
+    expect(send('next Flow step', false).prompt).toContain('Human: hello');
+  });
+
+  it('does not carry a message that a retry is sending again', () => {
+    send('restart the hub');
+    const retry = send('restart the hub');
+    expect(retry.prompt).toBe('restart the hub');
+
+    // Still owed until this retry is taken: a stopped retry is carried like the original.
+    expect(send('status?').prompt).toContain('Human: restart the hub');
+    send('restart the hub').accepted();
+    expect(send('thanks').prompt).not.toContain('restart the hub');
+  });
+
+  it('returns /compact bare and keeps what is owed for the next turn', () => {
+    send('restart the hub');
+    const compact = send('/compact keep the API decisions');
+    expect(compact.prompt).toBe('/compact keep the API decisions');
+    compact.accepted();
+
+    const next = send('continue');
+    expect(next.prompt).toContain('Human: restart the hub');
+    // A stopped command is not a message to relay.
+    expect(next.prompt).not.toContain('/compact');
+  });
+
+  it('keeps a newer send owed when an older turn is taken late', () => {
+    const older = send('first');
+    send('second');
+    older.accepted();
+
+    const { prompt } = send('third');
+    expect(prompt).toContain('Human: second');
+    expect(prompt).not.toContain('Human: first');
+  });
+
+  it('takes a prompt once, so a later prompt hook cannot clear a newer send', () => {
+    const first = send('ok');
+    first.accepted();
+    send('ok');
+    first.accepted();
+
+    expect(send('next').prompt).toContain('Human: ok');
+  });
+
+  it('keeps chats apart', () => {
+    send('restart the hub', true, 'sub-1');
+    expect(send('hello', true, 'sub-2').prompt).toBe('hello');
+  });
+});

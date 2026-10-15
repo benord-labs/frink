@@ -98,6 +98,8 @@ export interface ClaudeTurnContext {
   pendingReminders: string[];
   /** The Flow-run-ended notice, taken by the turn's first prompt hook so later fires skip it. */
   pendingFlowRunEnded?: { subChatId: string; runId: string; text: string };
+  /** Runs when the CLI takes this turn's own prompt (a prompt hook for a prompt Frink sent). */
+  onPromptAccepted?: () => void;
   messageProvenance?: MessageProvenance;
   /** What the turn's attached files and selections mean; queued for the prompt hook on push. */
   composerNotes: string[];

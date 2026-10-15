@@ -14,3 +14,4 @@ export {
 export { registerCustomNodeTransportTest } from './executor-custom-node-permissions';
 export { registerCodexSessionCacheTests } from './codex-session-cache';
 export { registerValidateToolPermissionTests } from './validate-tool-permission';
+export { registerUndeliveredMessageTests } from './undelivered-messages';
