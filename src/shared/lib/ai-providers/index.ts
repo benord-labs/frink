@@ -56,7 +56,7 @@ export const AI_PROVIDERS = {
     planMode: 'plan',
     installHint: 'npm install -g opencode-ai@1.19',
     signInHint: 'opencode auth login',
-    platforms: ['darwin'],
+    platforms: ['darwin', 'linux'],
   },
   copilot: {
     runtime: 'copilot',
@@ -68,7 +68,7 @@ export const AI_PROVIDERS = {
     planMode: 'plan',
     installHint: 'npm install -g @github/copilot',
     signInHint: 'copilot login',
-    platforms: ['darwin'],
+    platforms: ['darwin', 'linux'],
   },
   cursor: {
     runtime: 'cursor',

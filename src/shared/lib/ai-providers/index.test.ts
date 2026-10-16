@@ -68,11 +68,12 @@ describe('AI provider table', () => {
     ]);
   });
 
-  it('ships OpenCode, GitHub Copilot and Cursor on macOS only, and Grok off', () => {
+  it('ships OpenCode and GitHub Copilot on macOS and Linux, Cursor on macOS only, and Grok off', () => {
     expect(runtimeFor('opencode', undefined, 'darwin')).toBe('acp');
-    expect(runtimeFor('opencode', undefined, 'linux')).toBeUndefined();
+    expect(runtimeFor('opencode', undefined, 'linux')).toBe('acp');
+    expect(runtimeFor('opencode', undefined, 'win32')).toBeUndefined();
     expect(runtimeFor('copilot', undefined, 'darwin')).toBe('copilot');
-    expect(runtimeFor('copilot', undefined, 'linux')).toBeUndefined();
+    expect(runtimeFor('copilot', undefined, 'linux')).toBe('copilot');
     expect(runtimeFor('copilot', undefined, 'win32')).toBeUndefined();
     expect(runtimeFor('cursor', undefined, 'darwin')).toBe('cursor');
     expect(runtimeFor('cursor', undefined, 'linux')).toBeUndefined();
@@ -84,14 +85,19 @@ describe('AI provider table', () => {
       'copilot',
       'cursor',
     ]);
-    expect(selectableProviderIds(undefined, 'linux')).toEqual(['claude-code', 'codex']);
+    expect(selectableProviderIds(undefined, 'linux')).toEqual([
+      'claude-code',
+      'codex',
+      'opencode',
+      'copilot',
+    ]);
   });
 
   it('turns each installed agent on per operating system from its own row', () => {
     const openCodeOnLinux = { ...AI_PROVIDERS.opencode, platforms: ['darwin', 'linux'] };
     expect(agentRunnable(openCodeOnLinux, ALL_ON, 'linux')).toBe(true);
-    expect(agentRunnable(AI_PROVIDERS.copilot, ALL_ON, 'linux')).toBe(false);
-    expect(agentRunnable(AI_PROVIDERS.copilot, ALL_ON, 'darwin')).toBe(true);
+    expect(agentRunnable(AI_PROVIDERS.cursor, ALL_ON, 'linux')).toBe(false);
+    expect(agentRunnable(AI_PROVIDERS.cursor, ALL_ON, 'darwin')).toBe(true);
     expect(agentRunnable(openCodeOnLinux, {}, 'linux')).toBe(false);
     expect(agentRunnable(openCodeOnLinux, ALL_ON)).toBe(false);
   });
@@ -100,7 +106,10 @@ describe('AI provider table', () => {
     expect(runtimeFor('copilot', {}, 'darwin')).toBeUndefined();
     expect(runtimeFor('copilot', { copilotAccounts: true }, 'win32')).toBeUndefined();
     expect(runtimeFor('copilot', { copilotAccounts: true }, 'darwin')).toBe('copilot');
-    expect(selectableProviderIds({ copilotAccounts: true }, 'linux')).toEqual(['claude-code']);
+    expect(selectableProviderIds({ copilotAccounts: true }, 'linux')).toEqual([
+      'claude-code',
+      'copilot',
+    ]);
     expect(selectableProviderIds({ copilotAccounts: true }, 'darwin')).toEqual([
       'claude-code',
       'copilot',
