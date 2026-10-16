@@ -36,14 +36,23 @@ function folderChatsDeleteCopy(chatCount: number): ConfirmOptions {
   };
 }
 
+type DeletedGroup = { kind: 'batch' | 'run'; flow_name: string; running_count: number };
+
 /** Running flow runs are named in the one prompt rather than in a second prompt of their own. */
-function batchDeleteCopy(
-  chatCount: number,
-  batch: { flow_name: string; running_count: number },
-): ConfirmOptions {
+function batchDeleteCopy(chatCount: number, batch: DeletedGroup): ConfirmOptions {
   const running = batch.running_count;
+  const chats = `${chatCount} chat${plural(chatCount)}`;
+  if (batch.kind === 'run') {
+    return {
+      title: `Delete all ${chats} from the "${batch.flow_name}" run?`,
+      description:
+        running > 0
+          ? 'The run will stop and its results will be removed. This cannot be undone.'
+          : 'This cannot be undone.',
+    };
+  }
   return {
-    title: `Delete all ${chatCount} chat${plural(chatCount)} from batch "${batch.flow_name}"?`,
+    title: `Delete all ${chats} from batch "${batch.flow_name}"?`,
     description:
       running > 0
         ? `${running} running flow run${plural(running)} will be stopped and all results removed. This cannot be undone.`
@@ -58,10 +67,7 @@ export type DeleteConfirm = {
   ) => Promise<boolean>;
   project: (chatCount: number) => Promise<boolean>;
   folderChats: (chatCount: number) => Promise<boolean>;
-  batch: (
-    chatCount: number,
-    batch: { flow_name: string; running_count: number },
-  ) => Promise<boolean>;
+  batch: (chatCount: number, batch: DeletedGroup) => Promise<boolean>;
 };
 
 /**

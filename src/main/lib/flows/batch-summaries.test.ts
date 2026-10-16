@@ -3,7 +3,10 @@ import { createChat } from '../db/repos/chats';
 import { getOrCreateFlowRunByIdempotencyKey } from '../db/repos/flow-runs';
 import { createFlowVersion } from '../db/repos/flow-versions';
 import { createFlow } from '../db/repos/flows';
+import { setKv } from '../db/repos/flow-kv-state';
+import { createNodeRun } from '../db/repos/node-runs';
 import { createTask } from '../db/repos/tasks';
+import { seedCompletedNodeRun } from '../db/test-utils/flow-fixtures';
 import { freshDb, type TestDb } from '../db/test-utils/fresh-db';
 import { listSidebarBatchGroups } from './batch-summaries';
 
@@ -12,12 +15,14 @@ const GRAPH = { nodes: [], edges: [] };
 describe('listSidebarBatchGroups', () => {
   let db: TestDb;
   let versionId: string;
+  let flowId: string;
 
   beforeEach(async () => {
     db = freshDb();
     const flow = await createFlow(db, { name: 'Triage' });
     const version = await createFlowVersion(db, { flowId: flow.id, graph: GRAPH });
     versionId = version.id;
+    flowId = flow.id;
   });
 
   type RunStatus = 'running' | 'completed' | 'failed' | 'paused' | 'pending' | 'cancelled';
@@ -41,11 +46,12 @@ describe('listSidebarBatchGroups', () => {
     await seedRun('b1', 'running');
     await seedRun(null, 'running'); // not in a batch — must not appear
 
-    const groups = await listSidebarBatchGroups(db);
+    const groups = await listSidebarBatchGroups(db, ['b1']);
 
     expect(groups).toHaveLength(1);
     expect(groups[0]).toMatchObject({
       batch_id: 'b1',
+      kind: 'batch',
       flow_name: 'Triage',
       run_count: 3,
       completed_count: 1,
@@ -60,24 +66,24 @@ describe('listSidebarBatchGroups', () => {
     await seedRun('b1', 'completed');
     await seedRun('b2', 'running');
 
-    const groups = await listSidebarBatchGroups(db);
+    const groups = await listSidebarBatchGroups(db, ['b1', 'b2']);
 
     expect(groups.map((g) => g.batch_id).sort()).toEqual(['b1', 'b2']);
   });
 
-  it('returns [] when no run belongs to a batch', async () => {
-    await seedRun(null, 'completed');
-    await expect(listSidebarBatchGroups(db)).resolves.toEqual([]);
+  it('returns [] when no group is requested', async () => {
+    await seedRun('b1', 'completed');
+    await expect(listSidebarBatchGroups(db, [])).resolves.toEqual([]);
   });
 
-  it('orders by most-recent activity and truncates at the limit (the "20 most-active" contract)', async () => {
+  it('summarises only the requested groups, however many exist', async () => {
     await seedRun('older', 'completed', new Date('2026-01-01T00:00:00.000Z'));
     await seedRun('newer', 'running', new Date('2026-06-01T00:00:00.000Z'));
+    await seedRun('not-shown', 'running', new Date('2026-07-01T00:00:00.000Z'));
 
-    // limit=1 must keep the most-recently-active batch, not an arbitrary one.
-    const groups = await listSidebarBatchGroups(db, 1);
+    const groups = await listSidebarBatchGroups(db, ['older', 'newer']);
 
-    expect(groups.map((g) => g.batch_id)).toEqual(['newer']);
+    expect(groups.map((g) => g.batch_id).sort()).toEqual(['newer', 'older']);
   });
 
   it('counts paused/pending/cancelled runs in run_count but never in the broken-out counts', async () => {
@@ -90,7 +96,7 @@ describe('listSidebarBatchGroups', () => {
     await seedRun('b1', 'pending');
     await seedRun('b1', 'cancelled');
 
-    const [g] = await listSidebarBatchGroups(db);
+    const [g] = await listSidebarBatchGroups(db, ['b1']);
 
     expect(g).toMatchObject({
       batch_id: 'b1',
@@ -135,7 +141,7 @@ describe('listSidebarBatchGroups', () => {
     }); // linked only via tasks.result → counted
     await seedLinked('b2', 'failed', { chatId: 'gone' }); // a batch with no live chat → absent
 
-    const groups = await listSidebarBatchGroups(db);
+    const groups = await listSidebarBatchGroups(db, ['b1', 'b2']);
 
     expect(groups).toEqual([
       expect.objectContaining({
@@ -145,5 +151,80 @@ describe('listSidebarBatchGroups', () => {
         failed_count: 1,
       }),
     ]);
+  });
+
+  /** A live Fan Out run whose home chat precedes the loop; `currentIndex` is the loop's live item. */
+  async function seedFanOutRun(currentIndex: number) {
+    const home = await createChat(db, { name: 'home' });
+    const { run } = await getOrCreateFlowRunByIdempotencyKey(db, {
+      flowVersionId: versionId,
+      status: 'paused',
+      triggerContext: null,
+      idempotencyKey: null,
+      startedAt: new Date(),
+    });
+    const homeIds = { chatId: home.id };
+    await seedCompletedNodeRun(db, {
+      flowRunId: run.id,
+      nodeId: 'start',
+      blockType: 'start_task',
+      outputs: homeIds,
+    });
+    const fan = await seedCompletedNodeRun(db, {
+      flowRunId: run.id,
+      nodeId: 'fan',
+      blockType: 'fan_out',
+    });
+    await setKv(db, flowId, `_fanOut:${run.id}:fan`, { currentIndex });
+    const lane = (laneIndex: number) => ({
+      flowRunId: run.id,
+      laneIndex,
+      parentFanOutNodeRunId: fan.id,
+    });
+    return { runId: run.id, homeIds, lane };
+  }
+
+  it('summarises a Fan Out run by item: finished, failed on the latest attempt, and listed', async () => {
+    const { runId, lane } = await seedFanOutRun(3);
+    for (const laneIndex of [0, 1, 2, 3]) {
+      const archivedAt = laneIndex === 0 ? new Date() : null;
+      const chat = await createChat(db, { name: `item ${laneIndex}`, archivedAt });
+      await seedCompletedNodeRun(db, {
+        ...lane(laneIndex),
+        nodeId: 'item-start',
+        blockType: 'start_task',
+        outputs: { chatId: chat.id },
+      });
+    }
+    const draft = { nodeId: 'draft', blockType: 'agent' };
+    await createNodeRun(db, { ...lane(2), ...draft, status: 'failed' });
+    await seedCompletedNodeRun(db, { ...lane(2), ...draft }); // retried, so the failure is history
+    await createNodeRun(db, { ...lane(3), ...draft, status: 'failed' });
+
+    expect(await listSidebarBatchGroups(db, [runId])).toEqual([
+      expect.objectContaining({
+        batch_id: runId,
+        kind: 'run',
+        flow_name: 'Triage',
+        run_count: 3,
+        completed_count: 2,
+        failed_count: 1,
+        running_count: 1,
+      }),
+    ]);
+  });
+
+  it('makes no group for a Fan Out whose items reply in the home chat', async () => {
+    const { runId, homeIds, lane } = await seedFanOutRun(1);
+    for (const laneIndex of [0, 1]) {
+      await seedCompletedNodeRun(db, {
+        ...lane(laneIndex),
+        nodeId: 'reply',
+        blockType: 'chat_reply',
+        outputs: homeIds,
+      });
+    }
+
+    await expect(listSidebarBatchGroups(db, [runId])).resolves.toEqual([]);
   });
 });

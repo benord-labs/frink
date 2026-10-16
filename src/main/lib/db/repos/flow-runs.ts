@@ -1,7 +1,7 @@
-import { and, desc, eq, inArray, isNotNull, isNull, lt, ne, not, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, ne, not, or, sql } from 'drizzle-orm';
 import { union } from 'drizzle-orm/sqlite-core';
 import { FLOW_DRIVING_STATUSES, SIGNAL_DEAD_RUN_STATUSES } from '../../../../shared/types/flow';
-import { isPastFanOutLane } from '../../flows/fan-out-state';
+import { fanOutItemChatRunIds, isPastFanOutLane } from '../../flows/fan-out-state';
 import type { getDatabase } from '../index';
 import {
   type Chat,
@@ -270,58 +270,67 @@ export async function getActiveFlowRunForSubChat(
   return row ?? null;
 }
 
-/**
- * Map of chatId → batchId for every chat linked to a BATCHED flow_run, across all three
- * `CHAT_LINK_SOURCES` (incl. `tasks.result.$.chatId`, the only link a non-anchor branch chat in a
- * multi-agent batched run has). Powers sidebar batch grouping locally, replacing the cloud `batch_id`
- * LEFT JOIN. Bounded to batched runs (`batchId IS NOT NULL`, `flow_runs_batch_idx`); `selectDistinct`
- * dedupes the node_runs/tasks fan-out.
- *
- * A chat reused across batches (a worktree shared by successive batch runs) links to several batched
- * runs, so we resolve to the NEWEST run's batch (max createdAt, batchId as the tie-break) — the map
- * is then deterministic and stable across refetches, not last-row-wins on an unordered scan.
- */
+/** A group is keyed by its batch, or by the run itself when it is not batched. */
+const GROUP_KEY = { groupId: sql<string>`coalesce(${flowRuns.batchId}, ${flowRuns.id})` };
+
+/** Runs the sidebar folds into one group: batch members, and Fan Out runs that opened item chats. */
+async function listGroupedRunIds(db: Db): Promise<string[]> {
+  const rows = await union(
+    db.select({ id: flowRuns.id }).from(flowRuns).where(isNotNull(flowRuns.batchId)),
+    db.select({ id: sql<string>`flow_run_id` }).from(sql`(${fanOutItemChatRunIds})`),
+  );
+  return rows.map((row) => row.id);
+}
+
+/** chatId → sidebar group key (`batchId`, or the id of a Fan Out run that opened item chats). A chat
+ * linked to several grouped runs resolves to the NEWEST run's group, deterministic across refetches. */
 export async function getBatchIdByChatId(db: Db): Promise<Map<string, string>> {
-  const rows = await db
-    .selectDistinct({
-      ...CHAT_LINK_SOURCES,
-      batchId: flowRuns.batchId,
-      createdAt: flowRuns.createdAt,
-    })
-    .from(flowRuns)
-    .leftJoin(nodeRuns, eq(nodeRuns.flowRunId, flowRuns.id))
-    .leftJoin(tasks, eq(tasks.flowRunId, flowRuns.id))
-    .where(isNotNull(flowRuns.batchId));
-  const best = new Map<string, { batchId: string; at: number }>();
-  const consider = (chatId: string | null, batchId: string, at: number) => {
-    if (!chatId) return;
-    const cur = best.get(chatId);
-    if (!cur || at > cur.at || (at === cur.at && batchId > cur.batchId))
-      best.set(chatId, { batchId, at });
-  };
-  for (const r of rows) {
-    if (!r.batchId) continue;
-    const at = r.createdAt?.getTime() ?? 0;
-    consider(r.triggerChatId, r.batchId, at);
-    consider(r.nodeChatId, r.batchId, at);
-    consider(r.taskChatId, r.batchId, at);
+  const runIds = await listGroupedRunIds(db);
+  if (runIds.length === 0) return new Map();
+  const grouped = inArray(flowRuns.id, runIds);
+  const run = { ...GROUP_KEY, createdAt: flowRuns.createdAt };
+  const { triggerChatId, nodeChatId, taskChatId } = CHAT_LINK_SOURCES;
+  const rows = await union(
+    db
+      .select({ chatId: triggerChatId, ...run })
+      .from(flowRuns)
+      .where(grouped),
+    db
+      .select({ chatId: nodeChatId, ...run })
+      .from(flowRuns)
+      .innerJoin(nodeRuns, eq(nodeRuns.flowRunId, flowRuns.id))
+      .where(grouped),
+    db
+      .select({ chatId: taskChatId, ...run })
+      .from(flowRuns)
+      .innerJoin(tasks, eq(tasks.flowRunId, flowRuns.id))
+      .where(grouped),
+  );
+  const best = new Map<string, { groupId: string; at: number }>();
+  for (const { chatId, groupId, createdAt } of rows) {
+    const at = createdAt?.getTime() ?? 0;
+    const cur = chatId ? best.get(chatId) : undefined;
+    if (chatId && (!cur || at > cur.at || (at === cur.at && groupId > cur.groupId)))
+      best.set(chatId, { groupId, at });
   }
-  return new Map([...best].map(([chatId, v]) => [chatId, v.batchId]));
+  return new Map([...best].map(([chatId, v]) => [chatId, v.groupId]));
 }
 
 /**
- * Non-archived chats linked to any flow_run in a single batch — the inverse of `getBatchIdByChatId`
- * for one batch. Resolves chatIds via the same JSON-only link (no FK), then loads those chats.
- * Powers the sidebar's expand-on-demand `listByBatch` locally (replaces the cloud `getChatsByBatch`).
- * Lives here, not in the chats repo, because the chat↔run link is a flow-runs concern.
+ * Non-archived chats in one sidebar group — the inverse of `getBatchIdByChatId`. A batch lists its
+ * most recently active chats first; a Fan Out run lists its chats in the order the run opened them.
  */
-export async function listChatsByBatch(db: Db, batchId: string): Promise<Chat[]> {
+export async function listChatsByBatch(db: Db, groupId: string): Promise<Chat[]> {
+  const fanOutRun = await db
+    .select({ id: flowRuns.id })
+    .from(flowRuns)
+    .where(and(eq(flowRuns.id, groupId), isNull(flowRuns.batchId)));
   const linkRows = await db
     .selectDistinct(CHAT_LINK_SOURCES)
     .from(flowRuns)
     .leftJoin(nodeRuns, eq(nodeRuns.flowRunId, flowRuns.id))
     .leftJoin(tasks, eq(tasks.flowRunId, flowRuns.id))
-    .where(eq(flowRuns.batchId, batchId));
+    .where(fanOutRun.length > 0 ? eq(flowRuns.id, groupId) : eq(flowRuns.batchId, groupId));
   const ids = new Set<string>();
   for (const r of linkRows) {
     if (r.triggerChatId) ids.add(r.triggerChatId);
@@ -333,7 +342,11 @@ export async function listChatsByBatch(db: Db, batchId: string): Promise<Chat[]>
     .select()
     .from(chats)
     .where(and(inArray(chats.id, Array.from(ids)), isNull(chats.archivedAt)))
-    .orderBy(desc(chats.updatedAt), desc(chats.id));
+    .orderBy(
+      ...(fanOutRun.length > 0
+        ? [asc(chats.createdAt), asc(sql`chats.rowid`)]
+        : [desc(chats.updatedAt), desc(chats.id)]),
+    );
 }
 
 /** Earliest run of a batch — pins the flow version the whole batch executes against. */

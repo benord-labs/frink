@@ -140,6 +140,7 @@ const BATCH_NOT_IN_MAP = 'b2b3c4d5-e6f7-4892-b234-567890123456';
 function makeBatchSummary(batchId: string, flowName = 'Flow'): SidebarBatchGroup {
   return {
     batch_id: batchId,
+    kind: 'batch',
     flow_name: flowName,
     run_count: 2,
     completed_count: 1,

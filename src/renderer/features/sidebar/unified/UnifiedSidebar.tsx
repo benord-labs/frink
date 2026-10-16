@@ -1,6 +1,7 @@
 /* eslint-disable max-lines, max-lines-per-function */
 /** Unified chat sidebar with navigation, project tree, drag-and-drop, and footer controls. */
 
+import { keepPreviousData } from '@tanstack/react-query';
 import { useAtom, useAtomValue, useSetAtom } from 'jotai';
 import {
   forwardRef,
@@ -301,27 +302,6 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
     const chatCountByProjectRef = useRef(chatCountByProject);
     chatCountByProjectRef.current = chatCountByProject;
 
-    /**
-     * Batch group summaries — conditionally polled only when batches exist.
-     * Returns [] initially; once fetched, polls on the standard interval only when
-     * the last result was non-empty (avoids unnecessary queries for users without batches).
-     */
-    const { data: rawBatchGroups } = trpc.chats.listBatchGroups.useQuery(undefined, {
-      refetchInterval: (query) => {
-        const data = query.state.data;
-        const hasBatches = Array.isArray(data) && data.length > 0;
-        return hasBatches ? TIMING.CHAT_POLL_INTERVAL_MS : false;
-      },
-      structuralSharing: true,
-    });
-    const batchGroupsMap = useMemo(() => {
-      const map = new Map<string, SidebarBatchGroup>();
-      if (!Array.isArray(rawBatchGroups)) return map;
-      for (const group of rawBatchGroups) {
-        map.set(group.batch_id, group);
-      }
-      return map;
-    }, [rawBatchGroups]);
     const loadedChats = useMemo(
       () =>
         mergeChatsById([
@@ -361,6 +341,29 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
     });
     const activeTasks = sidebarActivity?.tasks ?? NO_ACTIVE_TASKS;
     const activeChats = sidebarActivity?.chats ?? NO_ACTIVE_CHATS;
+    // Group summaries for the groups on screen: loaded rows, and active chats beyond the loaded page.
+    const groupIds = useMemo(
+      () =>
+        [...new Set([...loadedChats, ...activeChats].flatMap((chat) => chat.batchId ?? []))].sort(),
+      [loadedChats, activeChats],
+    );
+    const { data: rawBatchGroups } = trpc.chats.listBatchGroups.useQuery(
+      { groupIds },
+      {
+        enabled: groupIds.length > 0,
+        refetchInterval: TIMING.CHAT_POLL_INTERVAL_MS,
+        placeholderData: keepPreviousData,
+        structuralSharing: true,
+      },
+    );
+    const batchGroupsMap = useMemo(() => {
+      const map = new Map<string, SidebarBatchGroup>();
+      if (!Array.isArray(rawBatchGroups)) return map;
+      for (const group of rawBatchGroups) {
+        map.set(group.batch_id, group);
+      }
+      return map;
+    }, [rawBatchGroups]);
     const utils = trpc.useUtils();
     /** tRPC `utils.*` procedure objects are new references most renders — callbacks that list them in deps churn and defeat CodebaseItem memo. */
     const utilsRef = useRef(utils);
