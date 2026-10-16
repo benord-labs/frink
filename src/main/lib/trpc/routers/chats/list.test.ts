@@ -183,12 +183,12 @@ describe('listRouter.listByIds', () => {
 describe('listRouter.listBatchGroups', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('returns the local flow_runs batch summaries verbatim', async () => {
+  it('returns the local flow_runs summaries for the requested groups verbatim', async () => {
     const groups = [{ batch_id: 'b1', flow_name: 'Triage', run_count: 3, completed_count: 1 }];
     listSidebarBatchGroupsMock.mockResolvedValue(groups);
 
-    await expect(caller().listBatchGroups()).resolves.toEqual(groups);
-    expect(listSidebarBatchGroupsMock).toHaveBeenCalledTimes(1);
+    await expect(caller().listBatchGroups({ groupIds: ['b1'] })).resolves.toEqual(groups);
+    expect(listSidebarBatchGroupsMock).toHaveBeenCalledWith(expect.anything(), ['b1']);
   });
 });
 

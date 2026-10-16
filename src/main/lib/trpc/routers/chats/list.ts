@@ -117,17 +117,19 @@ export const listRouter = router({
     }),
 
   /**
-   * Local: batch summaries aggregated from local flow_runs. Raw (no
+   * Local: summaries for the sidebar groups whose chats are loaded. Raw (no
    * caseConvert) — `SidebarBatchGroup` is snake_case end-to-end; the sidebar keys its group map on
    * `group.batch_id`, so camelCasing it would null the key and silently un-group every batch.
    */
-  listBatchGroups: publicProcedureRaw.query(async () => {
-    return listSidebarBatchGroups(getDatabase());
-  }),
+  listBatchGroups: publicProcedureRaw
+    .input(z.object({ groupIds: z.array(z.string().min(1)) }))
+    .query(async ({ input }) => {
+      return listSidebarBatchGroups(getDatabase(), input.groupIds);
+    }),
 
-  /** Local: chats in an expanded batch row, resolved via the flow_runs chat link. */
+  /** Local: chats in an expanded group row (a batch, or a Fan Out run), via the flow_runs chat link. */
   listByBatch: publicProcedure
-    .input(z.object({ batchId: z.string().uuid() }))
+    .input(z.object({ batchId: z.string().min(1) }))
     .query(async ({ input }) => {
       const rows = await listChatsByBatch(getDatabase(), input.batchId);
       return rows.map((row) => ({ ...mapLocalChatResponse(row), batchId: input.batchId }));

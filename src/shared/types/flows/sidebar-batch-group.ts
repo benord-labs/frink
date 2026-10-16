@@ -1,6 +1,10 @@
-/** Per-batch rollup row the chat sidebar groups its batch children under. */
+/**
+ * Rollup row the chat sidebar groups a Flow's chats under: a batch (`batch_id` is the batch; counts
+ * are runs) or a Fan Out run that opened item chats (`batch_id` is the run id; counts are items).
+ */
 export type SidebarBatchGroup = {
   batch_id: string;
+  kind: 'batch' | 'run';
   flow_name: string;
   run_count: number;
   completed_count: number;

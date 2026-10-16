@@ -1,5 +1,6 @@
 import { eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { fanOutItemChatRunIds } from '../../../flows/fan-out-state';
 import { nodeRuns, subChats } from '../../schema';
 import { getActiveFlowRunForSubChat, listChatIdsWithActiveFlowRun } from '../flow-runs';
 import { setKv } from '../flow-kv-state';
@@ -47,6 +48,14 @@ describe('linkedFlowRunIds', () => {
         .from(subChats),
     );
     expect(plan).toContain('SEARCH fo_kv USING INDEX flow_kv_state_uniq');
+    expect(plan).not.toMatch(/SCAN fo_/);
+  });
+
+  it('finds Fan Out runs that open item chats through the lane index, not a node_runs scan', () => {
+    const plan = queryPlan(
+      db.select({ id: sql`flow_run_id` }).from(sql`(${fanOutItemChatRunIds})`),
+    );
+    expect(plan).toContain('USING INDEX node_runs_parent_fan_out_idx');
     expect(plan).not.toMatch(/SCAN fo_/);
   });
 

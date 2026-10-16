@@ -6,12 +6,24 @@
  * same batch_id; first/last activity from min/max created_at.
  */
 
-import { and, desc, sql as drizzleSql, eq, isNotNull } from 'drizzle-orm';
+import {
+  and,
+  desc,
+  sql as drizzleSql,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  type SQLWrapper,
+} from 'drizzle-orm';
 import type { SidebarBatchGroup } from '../../../shared/types/flows/sidebar-batch-group';
 import type { BatchSummary } from '../../../shared/types/flows/flow-batch';
 import { getDatabase } from '../db';
 import { CHAT_LINK_SOURCES } from '../db/repos/flow-runs';
+import { isSupersededAttempt } from '../db/repos/task-queries/flow-collapse';
+import { chatLinkId } from '../db/repos/task-queries/linked-flow-runs';
 import { chats, flowRuns, flows, flowVersions, nodeRuns, tasks } from '../db/schema';
+import { isPastFanOutLane, opensFanOutItemChat } from './fan-out-state';
 
 const { triggerChatId, nodeChatId, taskChatId } = CHAT_LINK_SOURCES;
 
@@ -82,18 +94,25 @@ export async function listBatchSummaries(flowId: string, limit: number): Promise
   });
 }
 
-/**
- * Sidebar batch-group summaries — aggregates local flow_runs by batch_id across ALL flows
- * (the sidebar version of `listBatchSummaries`, which is scoped to one flow). Local-first
- * replacement for the cloud `getBatchGroupsForUser`: flow_runs are local-only, so the sidebar
- * reads them from local SQLite. Joins flow_versions→flows
- * for the display name; no user filter (single-user local DB, parity with the chats it groups,
- * which are also unfiltered). Counts only runs with a live chat (`RUN_HAS_LIVE_CHAT`). Returns up to
- * `limit` most-recently-active batches.
- */
+/** Summaries for the sidebar groups on screen: a batch aggregates its runs that still have a live
+ * chat (`RUN_HAS_LIVE_CHAT`), a Fan Out run aggregates its items. */
 export async function listSidebarBatchGroups(
   db: ReturnType<typeof getDatabase>,
-  limit = 20,
+  groupIds: string[],
+): Promise<SidebarBatchGroup[]> {
+  if (groupIds.length === 0) return [];
+  return [
+    ...(await listBatchGroupRows(db, groupIds)),
+    ...(await listFanOutRunGroupRows(db, groupIds)),
+  ];
+}
+
+const toIso = (seconds: number | null): string | null =>
+  seconds ? new Date(Number(seconds) * 1000).toISOString() : null;
+
+async function listBatchGroupRows(
+  db: ReturnType<typeof getDatabase>,
+  batchIds: string[],
 ): Promise<SidebarBatchGroup[]> {
   const rows = await db
     .select({
@@ -122,23 +141,74 @@ export async function listSidebarBatchGroups(
     .from(flowRuns)
     .innerJoin(flowVersions, eq(flowRuns.flowVersionId, flowVersions.id))
     .innerJoin(flows, eq(flowVersions.flowId, flows.id))
-    .where(and(isNotNull(flowRuns.batchId), RUN_HAS_LIVE_CHAT))
-    .groupBy(flowRuns.batchId)
-    .orderBy(desc(drizzleSql`max(${flowRuns.createdAt})`))
-    .limit(limit);
+    .where(and(inArray(flowRuns.batchId, batchIds), RUN_HAS_LIVE_CHAT))
+    .groupBy(flowRuns.batchId);
 
   return rows.flatMap((r) => {
     if (!r.batchId) return [];
     const group: SidebarBatchGroup = {
       batch_id: r.batchId,
+      kind: 'batch',
       flow_name: r.flowName,
       run_count: Number(r.runCount),
       completed_count: Number(r.completedCount),
       failed_count: Number(r.failedCount),
       running_count: Number(r.runningCount),
-      first_run_at: r.firstAt ? new Date(Number(r.firstAt) * 1000).toISOString() : null,
-      last_activity_at: r.lastAt ? new Date(Number(r.lastAt) * 1000).toISOString() : null,
+      first_run_at: toIso(r.firstAt),
+      last_activity_at: toIso(r.lastAt),
     };
     return [group];
   });
+}
+
+/** The Fan Out item `nodeRunId` ran in failed on its latest attempt (a retried failure is history). */
+const failedItem = (nodeRunId: SQLWrapper) => drizzleSql`EXISTS (SELECT 1 FROM node_runs fo_step
+  JOIN node_runs fo_try ON fo_try.flow_run_id = fo_step.flow_run_id
+    AND fo_try.parent_fan_out_node_run_id = fo_step.parent_fan_out_node_run_id
+    AND fo_try.lane_index = fo_step.lane_index
+  WHERE fo_step.id = ${nodeRunId} AND fo_try.status = 'failed'
+    AND NOT ${isSupersededAttempt(drizzleSql.raw('fo_try.id'))})`;
+
+/** One group per Fan Out run, counting the items whose chat is still listed. */
+async function listFanOutRunGroupRows(
+  db: ReturnType<typeof getDatabase>,
+  runIds: string[],
+): Promise<SidebarBatchGroup[]> {
+  const rows = await db
+    .select({
+      runId: flowRuns.id,
+      flowName: drizzleSql<string>`min(${flows.name})`,
+      live: drizzleSql<number>`max(${flowRuns.status} in ('pending', 'running', 'paused'))`,
+      createdAt: drizzleSql<number | null>`min(${flowRuns.createdAt})`,
+      items: drizzleSql<number>`count(DISTINCT ${chats.id})`,
+      finished: drizzleSql<number>`count(DISTINCT CASE WHEN ${isPastFanOutLane(nodeRuns.id)} THEN ${chats.id} END)`,
+      failed: drizzleSql<number>`count(DISTINCT CASE WHEN ${failedItem(nodeRuns.id)} THEN ${chats.id} END)`,
+    })
+    .from(nodeRuns)
+    .innerJoin(flowRuns, eq(flowRuns.id, nodeRuns.flowRunId))
+    .innerJoin(flowVersions, eq(flowRuns.flowVersionId, flowVersions.id))
+    .innerJoin(flows, eq(flowVersions.flowId, flows.id))
+    .innerJoin(
+      chats,
+      and(
+        eq(chats.id, chatLinkId(nodeRuns.nodeOutput, '$.outputs.chatId')),
+        isNull(chats.archivedAt),
+      ),
+    )
+    .where(
+      and(inArray(flowRuns.id, runIds), isNull(flowRuns.batchId), opensFanOutItemChat(nodeRuns.id)),
+    )
+    .groupBy(flowRuns.id);
+
+  return rows.map((r) => ({
+    batch_id: r.runId,
+    kind: 'run',
+    flow_name: r.flowName,
+    run_count: Number(r.items),
+    completed_count: Number(r.finished),
+    failed_count: Number(r.failed),
+    running_count: Number(r.live),
+    first_run_at: toIso(r.createdAt),
+    last_activity_at: toIso(r.createdAt),
+  }));
 }
