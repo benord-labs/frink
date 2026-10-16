@@ -2,7 +2,7 @@
   "name": "frink",
   "version": "0.3.0",
   "private": true,
-  "description": "Frink - Personal AI coding assistant with trigger-based automation",
+  "description": "Fine-tuned automation for everyone: chat with your own coding agents and run them as Flows",
   "license": "MIT",
   "author": {
     "name": "Benji Norval"
