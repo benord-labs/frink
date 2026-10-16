@@ -156,9 +156,9 @@ export async function hasActiveRunForFlow(db: Db, flowId: string): Promise<boole
  * `selectDistinct` (to dedupe the fan-out).
  */
 export const CHAT_LINK_SOURCES = {
-  triggerChatId: sql<string | null>`json_extract(${flowRuns.triggerContext}, '$.chatId')`,
-  nodeChatId: sql<string | null>`json_extract(${nodeRuns.nodeOutput}, '$.outputs.chatId')`,
-  taskChatId: sql<string | null>`json_extract(${tasks.result}, '$.chatId')`,
+  triggerChatId: chatLinkId(flowRuns.triggerContext, '$.chatId'),
+  nodeChatId: chatLinkId(nodeRuns.nodeOutput, '$.outputs.chatId'),
+  taskChatId: chatLinkId(tasks.result, '$.chatId'),
 } as const;
 
 /**

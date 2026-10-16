@@ -1,3 +1,4 @@
+import { eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createChat } from '../db/repos/chats';
 import { getOrCreateFlowRunByIdempotencyKey } from '../db/repos/flow-runs';
@@ -8,6 +9,7 @@ import { createNodeRun } from '../db/repos/node-runs';
 import { createTask } from '../db/repos/tasks';
 import { seedCompletedNodeRun } from '../db/test-utils/flow-fixtures';
 import { freshDb, type TestDb } from '../db/test-utils/fresh-db';
+import { nodeRuns } from '../db/schema';
 import { listSidebarBatchGroups } from './batch-summaries';
 
 const GRAPH = { nodes: [], edges: [] };
@@ -69,6 +71,34 @@ describe('listSidebarBatchGroups', () => {
     const groups = await listSidebarBatchGroups(db, ['b1', 'b2']);
 
     expect(groups.map((g) => g.batch_id).sort()).toEqual(['b1', 'b2']);
+  });
+
+  it('keeps summarising a batch when one of its steps saved malformed output', async () => {
+    const chat = await createChat(db, { name: 'branch' });
+    const { run } = await getOrCreateFlowRunByIdempotencyKey(db, {
+      flowVersionId: versionId,
+      status: 'running',
+      triggerContext: null,
+      idempotencyKey: null,
+      batchId: 'b1',
+      startedAt: new Date(),
+    });
+    const broken = await seedCompletedNodeRun(db, {
+      flowRunId: run.id,
+      nodeId: 'x',
+      blockType: 'agent',
+    });
+    db.run(sql`UPDATE ${nodeRuns} SET node_output = '{broken' WHERE ${eq(nodeRuns.id, broken.id)}`);
+    await createTask(db, {
+      description: 'branch',
+      source: 'flow',
+      flowRunId: run.id,
+      result: { chatId: chat.id },
+    });
+
+    await expect(listSidebarBatchGroups(db, ['b1'])).resolves.toEqual([
+      expect.objectContaining({ batch_id: 'b1', run_count: 1 }),
+    ]);
   });
 
   it('returns [] when no group is requested', async () => {
