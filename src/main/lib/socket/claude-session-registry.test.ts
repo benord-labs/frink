@@ -819,6 +819,7 @@ describe('armIdle', () => {
     expect(session.busy).toBe(true);
 
     ch.emit(msg('system', { subtype: 'task_notification' }));
+    ch.emit(msg('system', { subtype: 'init' }));
     ch.emit(msg('assistant'));
     ch.emit(resultMsg());
     await new Promise((r) => setTimeout(r, 0));
@@ -956,6 +957,7 @@ describe('armIdle', () => {
     const pump = armIdle(session, collectingCallbacks(log, 5));
 
     ch.emit(msg('system', { subtype: 'task_notification' }));
+    ch.emit(msg('system', { subtype: 'init' }));
     await new Promise((r) => setTimeout(r, 0)); // mid-burst
 
     const order: string[] = [];
@@ -1146,12 +1148,16 @@ describe('armIdle', () => {
     expect((await pump.done).reason).toBe('turn-taken-over');
   });
 
-  it('a task_notification at idle DOES open a burst (it precedes a real wake turn)', async () => {
+  // A notification alone proves nothing: a background subagent's own Bash calls send one too.
+  it('a task_notification at idle opens no burst; the wake turn opens on its init', async () => {
     const ch = channelQuery();
     const session = createSession('p9', () => ch.query);
     const log: BurstLog = { starts: 0, messages: [], ends: 0 };
     const pump = armIdle(session, collectingCallbacks(log, 5));
-    ch.emit(msg('system', { subtype: 'task_notification' }));
+    ch.emit(msg('system', { subtype: 'task_notification', status: 'completed' }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(log.starts).toBe(0);
+    ch.emit(msg('system', { subtype: 'init' }));
     ch.emit(msg('assistant'));
     ch.emit(resultMsg());
     await new Promise((r) => setTimeout(r, 0));
@@ -1211,7 +1217,7 @@ describe('armIdle', () => {
     const log: BurstLog = { starts: 0, messages: [], ends: 0 };
     const pump = armIdle(session, collectingCallbacks(log, 5));
 
-    ch.emit(msg('system', { subtype: 'task_notification' })); // burst opens
+    ch.emit(msg('system', { subtype: 'init' })); // burst opens
     await new Promise((r) => setTimeout(r, 0));
 
     const turnDone = pump.startTurn(userTurn('queued behind the burst'), () => {});

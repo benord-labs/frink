@@ -1,34 +1,58 @@
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, it } from 'vitest';
-import { isAmbientIdleFrame, isTurnBoundary } from './ambient-idle-frame';
+import { admitTurnFrame, isMainTurnStart, isTurnBoundary } from './ambient-idle-frame';
 
 const frame = (type: string, extra: Record<string, unknown> = {}): SDKMessage =>
   ({ type, ...extra }) as unknown as SDKMessage;
 
-describe('isAmbientIdleFrame', () => {
-  it('matches the between-turn system frames that never reach a result', () => {
-    expect(isAmbientIdleFrame(frame('system', { subtype: 'task_progress' }))).toBe(true);
-    expect(isAmbientIdleFrame(frame('system', { subtype: 'session_state_changed' }))).toBe(true);
+const agentCall = (id: string, parent?: string): SDKMessage =>
+  frame('assistant', {
+    message: { content: [{ type: 'tool_use', id, name: 'Agent' }] },
+    parent_tool_use_id: parent,
   });
 
-  it('leaves real turn frames alone', () => {
-    expect(isAmbientIdleFrame(frame('system', { subtype: 'init' }))).toBe(false);
-    expect(isAmbientIdleFrame(frame('assistant'))).toBe(false);
+describe('isMainTurnStart', () => {
+  it("matches the CLI's turn opener and the main agent's own frames", () => {
+    expect(isMainTurnStart(frame('system', { subtype: 'init' }))).toBe(true);
+    expect(isMainTurnStart(frame('assistant', { parent_tool_use_id: null }))).toBe(true);
+    expect(isMainTurnStart(frame('user'))).toBe(true);
+    expect(isMainTurnStart(frame('stream_event', { parent_tool_use_id: null }))).toBe(true);
+    expect(isMainTurnStart(frame('result', { subtype: 'success' }))).toBe(true);
   });
 
-  // A user stop of a shell or workflow emits exactly these two frames and no turn; a burst opened
-  // on either would wait forever for a result.
-  it('treats a task-set change and a stopped task as ambient', () => {
-    expect(isAmbientIdleFrame(frame('system', { subtype: 'background_tasks_changed' }))).toBe(true);
-    const stopped = { subtype: 'task_notification', status: 'stopped' };
-    expect(isAmbientIdleFrame(frame('system', stopped))).toBe(true);
-  });
-
-  it('still wakes on a task that finished by itself', () => {
-    for (const status of ['completed', 'failed']) {
-      const notification = { subtype: 'task_notification', status };
-      expect(isAmbientIdleFrame(frame('system', notification))).toBe(false);
+  // A background subagent streams these while the main agent idles; none of them is a main turn.
+  it("rejects a subagent's frames, task notifications and stream noise", () => {
+    expect(isMainTurnStart(frame('assistant', { parent_tool_use_id: 'toolu_agent' }))).toBe(false);
+    expect(isMainTurnStart(frame('user', { parent_tool_use_id: 'toolu_agent' }))).toBe(false);
+    for (const status of ['completed', 'failed', 'stopped']) {
+      expect(isMainTurnStart(frame('system', { subtype: 'task_notification', status }))).toBe(
+        false,
+      );
     }
+    expect(isMainTurnStart(frame('system', { subtype: 'task_progress' }))).toBe(false);
+    expect(isMainTurnStart(frame('rate_limit_event'))).toBe(false);
+    expect(isMainTurnStart(frame('tool_progress'))).toBe(false);
+  });
+});
+
+describe('admitTurnFrame', () => {
+  it("admits the main agent's frames and the subagents it launched in this turn", () => {
+    const own = new Set<string>();
+    expect(admitTurnFrame(agentCall('toolu_mine'), own)).toBe(true);
+    expect(admitTurnFrame(frame('user', { parent_tool_use_id: 'toolu_mine' }), own)).toBe(true);
+    // A subagent's own subagent belongs to this turn too.
+    const nested = agentCall('toolu_nested', 'toolu_mine');
+    expect(admitTurnFrame(nested, own)).toBe(true);
+    expect(admitTurnFrame(frame('user', { parent_tool_use_id: 'toolu_nested' }), own)).toBe(true);
+  });
+
+  // An earlier turn's background subagent, still streaming, would otherwise show its tool calls in
+  // the user's new reply as if the main agent had made them.
+  it('drops frames of a subagent launched before this turn', () => {
+    const own = new Set<string>();
+    const foreign = agentCall('toolu_inner', 'toolu_earlier');
+    expect(admitTurnFrame(foreign, own)).toBe(false);
+    expect(own.has('toolu_inner')).toBe(false);
   });
 });
 

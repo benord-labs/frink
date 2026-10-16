@@ -2,9 +2,10 @@ import type { SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import { failedResultError } from '../../claude/stream-classifiers';
 import type { ClaudeSession } from '../claude-session-registry';
 import {
-  isAmbientIdleFrame,
+  admitTurnFrame,
   isAnyResult,
   isIdleActivity,
+  isMainTurnStart,
   isSetterEcho,
   isTurnBoundary,
   noteSubagentTaskFrame,
@@ -34,6 +35,7 @@ type TurnSink = TurnTiming & {
   resolve: () => void;
   reject: (err: unknown) => void;
   onPushed?: () => void; // once, right after the message lands on the CLI input queue
+  ownToolIds: Set<string>; // tool calls this turn made; see admitTurnFrame
 };
 
 /** Awaited under busy right before a push; false (or a throw) ends the turn unpushed. */
@@ -196,7 +198,7 @@ export function runTurn(
   takeBusy(session);
   return new Promise<void>((resolve, reject) => {
     const path = beforePush ? 'warm' : 'fresh';
-    const sink: TurnSink = { onMessage, resolve, reject, onPushed, path };
+    const sink: TurnSink = { onMessage, resolve, reject, onPushed, path, ownToolIds: new Set() };
     loop.turn = sink;
     void pushTurn(session, sink, message, beforePush);
   });
@@ -285,6 +287,7 @@ export function armIdle(session: ClaudeSession, callbacks: WakePumpCallbacks): W
           resolve,
           reject,
           path: 'adopted',
+          ownToolIds: new Set(),
         };
         // Mid-burst: the push waits for the burst's `result` (the CLI serializes turns anyway —
         // pushing now would only widen the misattribution window). Idle: push immediately so the
@@ -355,15 +358,11 @@ function endArming(session: ClaudeSession, exit: WakePumpExit, turnError?: unkno
   arming.resolveDone(exit);
 }
 
-/**
- * Open a wake burst on the first frame after idle, and report whether the frame belongs to one.
- * False means ambient noise: it has no `result`, so opening a burst on it would leave the arming
- * mid-"burst" forever — and it must not keep the post-EOF reap at bay either, or a harness
- * chattering heartbeats would hold a wedged CLI open indefinitely.
- */
+/** Opens a wake burst only when the main agent starts a turn. A burst on any other frame would park
+ * the user's send until some unrelated `result`, and hold off the post-EOF reap. */
 function openWakeBurst(msg: SDKMessage, arming: IdleArming): boolean {
   if (arming.phase !== 'idle') return true;
-  if (isAmbientIdleFrame(msg)) return false;
+  if (!isMainTurnStart(msg)) return false;
   arming.drain?.noteBurst(msg);
   arming.phase = 'burst';
   arming.callbacks.onBurstStart();
@@ -467,6 +466,7 @@ async function dispatchFrame(session: ClaudeSession, frame: SDKMessage | null): 
   // Every frame is liveness: a single long burst (a wake turn running big tool calls) must keep
   // reading as attended, or the quiet-idle park sweep would park it mid-stream.
   session.lastActiveAt = Date.now();
+  if (loop.turn && !admitTurnFrame(frame, loop.turn.ownToolIds)) return;
   if (loop.turn) await consumeTurnFrame(session, frame);
   else if (loop.arming) await consumeWakeFrame(session, loop.arming, frame);
   // Idle, anything but a turn of the CLI's own is noise; that turn has no one to answer.
