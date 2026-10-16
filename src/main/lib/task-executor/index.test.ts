@@ -66,7 +66,7 @@ describe('toTaskAccountType', () => {
     ['codex', 'codex'],
     ['claude-code', 'claude-code'],
   ] as const)('toTaskAccountType(%s) === %s', (credType, expected) => {
-    expect(toTaskAccountType(credType)).toBe(expected);
+    expect(toTaskAccountType(credType, 'execute')).toBe(expected);
   });
 
   it.each([
@@ -76,12 +76,26 @@ describe('toTaskAccountType', () => {
     ['something-new', 'This AI provider'],
     ['', 'This AI provider'],
   ])('fails a Flow on "%s" for good instead of running it on Claude', (credType, name) => {
-    expect(() => toTaskAccountType(credType)).toThrow(
+    expect(() => toTaskAccountType(credType, 'plan')).toThrow(
       expect.objectContaining({
         message: `${name} can't run Flows yet. Pick Claude or OpenAI for this project.`,
         permanent: true,
       }),
     );
+  });
+
+  // Codex is sent no plan mode, so a Plan step would edit files before anyone approved a plan.
+  it('fails a Plan step on Codex for good instead of running it with write access', () => {
+    expect(() => toTaskAccountType('codex', 'plan')).toThrow(
+      expect.objectContaining({
+        message: "Plan mode isn't available for OpenAI yet. Pick another mode.",
+        permanent: true,
+      }),
+    );
+  });
+
+  it('runs a Plan step on Claude', () => {
+    expect(toTaskAccountType('claude-code', 'plan')).toBe('claude-code');
   });
 });
 

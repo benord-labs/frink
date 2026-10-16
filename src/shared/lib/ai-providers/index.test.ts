@@ -7,6 +7,8 @@ import {
   isInstalledAgent,
   runtimeFor,
   selectableProviderIds,
+  unsupportedModeMessage,
+  unsupportedModes,
 } from '.';
 
 const ALL_ON = {
@@ -125,5 +127,37 @@ describe('AI provider table', () => {
   it('never gates running Codex on its picker flag', () => {
     expect(runtimeFor('codex', {})).toBe('codex');
     expect(selectableProviderIds({})).toEqual(['claude-code']);
+  });
+});
+
+describe('unsupportedModes', () => {
+  it.each([
+    ['claude-code', []],
+    [undefined, []],
+    ['codex', ['plan']],
+    ['opencode', ['debug']],
+    ['copilot', ['debug']],
+    ['cursor', ['debug']],
+    ['grok', ['plan', 'debug']],
+    ['not-a-provider', []],
+  ] as const)('%s has no equivalent for %j', (id, modes) => {
+    expect(unsupportedModes(id)).toEqual(modes);
+  });
+
+  it('names the mode and provider a turn cannot run on', () => {
+    expect(unsupportedModeMessage('codex', 'plan')).toBe(
+      "Plan mode isn't available for OpenAI yet.",
+    );
+    expect(unsupportedModeMessage('grok', 'debug')).toBe(
+      "Debug mode isn't available for Grok yet.",
+    );
+  });
+
+  it.each([
+    ['codex', 'agent'],
+    ['claude-code', 'plan'],
+    ['opencode', 'plan'],
+  ] as const)('lets %s run %s', (id, mode) => {
+    expect(unsupportedModeMessage(id, mode)).toBeNull();
   });
 });

@@ -20,6 +20,7 @@
  */
 
 import log from 'electron-log';
+import { unsupportedModeMessage } from '../../../../shared/lib/ai-providers';
 import type {
   CodexReasoningEffort,
   CodexServiceTier,
@@ -36,7 +37,7 @@ import { getCodexCliMissingMessage, resolveCodexBinary } from './codex-binary';
 import { extractFileChangeItem, type FileChange, mapNotificationToChunks } from './codex-events';
 import { type CodexCommandOutputs, recordCodexCommandOutput } from './command-output';
 import { setCodexLiveTurn } from './codex-live-turn';
-import { completeTurnChunks, makeChunkSink } from './codex-stream-chunks';
+import { completeTurnChunks, makeChunkSink, registerCloseHandlers } from './codex-stream-chunks';
 import { buildCodexMcpBinding } from './mcp';
 import { buildCodexSkillRootsBinding } from './skill-roots';
 import {
@@ -173,31 +174,6 @@ function registerStreamHandlers(
       if (method === 'turn/completed' || (method === 'error' && !willRetry)) queue.finish();
     });
   }
-}
-
-/**
- * Wire connection-level close/error into the queue. These stay on the CLIENT (not the
- * thread subscription): vscode-jsonrpc Events are multi-listener, so every concurrent
- * turn on a shared client sees the same crash. Returns their disposers.
- */
-function registerCloseHandlers(
-  client: CodexAppServerClient,
-  queue: ChunkQueue,
-): Array<{ dispose: () => void }> {
-  return [
-    // A crash sends no turn/completed → surface it + end the turn so the generator can't
-    // hang holding a runtime slot (the registry evicts the dead client on the same close).
-    client.onClose(() => {
-      queue.push({ type: 'error', errorText: 'Codex app-server connection closed unexpectedly.' });
-      queue.finish();
-    }),
-    // A transport write/handler error may NOT close the connection (broken stdin pipe) — end anyway.
-    client.onError((err) => {
-      const detail = Array.isArray(err) && err[0] instanceof Error ? `: ${err[0].message}` : '';
-      queue.push({ type: 'error', errorText: `Codex app-server transport error${detail}.` });
-      queue.finish();
-    }),
-  ];
 }
 
 /** Start a fresh thread with the host-ask policy. Returns its id. */
@@ -369,6 +345,13 @@ export async function* runCodexAgent(
   params: CodexRunnerParams,
 ): AsyncGenerator<UIMessageChunk, void, undefined> {
   const { cwd, credentialId, abortController } = params;
+
+  const modeRefusal = params.mode && unsupportedModeMessage('codex', params.mode);
+  if (modeRefusal) {
+    yield { type: 'error', errorText: `${modeRefusal} Switch to Agent.` };
+    yield { type: 'finish' };
+    return;
+  }
 
   const binary = resolveCodexBinary();
   if (!binary) {

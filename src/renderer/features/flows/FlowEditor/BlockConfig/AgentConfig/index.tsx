@@ -34,7 +34,7 @@ import {
 } from '../../../../../features/agents/commands/agents-slash-command';
 import { trpc } from '../../../../../lib/trpc';
 import { cn } from '../../../../../lib/utils';
-import { useProjectModelOptions } from '../../hooks/use-project-model-options';
+import { planModeOption, useProjectModelOptions } from '../../hooks/use-project-model-options';
 import { useProjectPath } from '../../hooks/use-project-path';
 import { AvailableVariables } from '../AvailableVariables';
 import { NodeModelField } from '../NodeModelField';
@@ -63,21 +63,26 @@ type Props = UpstreamContextProps & {
 function AgentModeField({
   node,
   onConfigPatch,
+  planUnavailable,
 }: {
   node: FlowNode;
   onConfigPatch: Props['onConfigPatch'];
+  /** Why this project's provider can't run Plan; a step already saved as Plan shows it. */
+  planUnavailable: string | null;
 }): ReactElement {
   const config = cfg(node);
   // Per-node mode overrides the inherited Start Task mode for this node only. '' = inherit.
   const mode =
     config.mode === 'agent' || config.mode === 'plan' || config.mode === 'debug' ? config.mode : '';
   const autoApprove = config.autoApprove === true;
+  const plan = planModeOption(mode, planUnavailable);
   return (
     <>
       <FieldRow
         htmlFor="flow-agent-mode"
         label="Mode"
         hint="Plan pauses for your approval before acting. Debug investigates a bug with you (local runs only)."
+        error={plan.error}
       >
         <Select
           value={mode || 'inherit'}
@@ -89,12 +94,12 @@ function AgentModeField({
           <SelectContent>
             <SelectItem value="inherit">Inherit from Start Task</SelectItem>
             <SelectItem value="agent">Agent (execute)</SelectItem>
-            <SelectItem value="plan">Plan</SelectItem>
+            {plan.offered ? <SelectItem value="plan">Plan</SelectItem> : null}
             <SelectItem value="debug">Debug</SelectItem>
           </SelectContent>
         </Select>
       </FieldRow>
-      {mode === 'plan' ? (
+      {plan.autoApprove ? (
         <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2.5 gap-y-0.5 items-start">
           <Checkbox
             id="flow-agent-auto-approve"
@@ -180,7 +185,7 @@ export function AgentConfig({
     return found && isProjectRow(found) ? found.name : null;
   }, [flowDefaultProjectId, allProjects]);
 
-  const { modelOptions, isCodexProject, modelPlaceholder, unsupportedMessage } =
+  const { modelOptions, isCodexProject, modelPlaceholder, unsupportedMessage, planUnavailable } =
     useProjectModelOptions(effectiveProjectId, {
       model,
       flowDefaultModel,
@@ -370,7 +375,7 @@ export function AgentConfig({
           No project in Flow settings, so the model list may be limited.
         </p>
       )}
-      <AgentModeField node={node} onConfigPatch={onConfigPatch} />
+      <AgentModeField node={node} onConfigPatch={onConfigPatch} planUnavailable={planUnavailable} />
       <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2.5 gap-y-0.5 pt-1 items-start">
         <Checkbox
           id="flow-agent-fire-forget"
