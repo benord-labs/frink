@@ -11,7 +11,7 @@ Creates the task/chat and execution environment required before an \`agent\`.
 
 \`\`\`text
 { projectId?: string, label?: string, model?: string,
-  startMode?: "execute"|"plan"|"wait", startInWorktree?: boolean, branch?: string }
+  startMode?: "execute"|"plan", startInWorktree?: boolean, branch?: string }
 \`\`\`
 
 \`projectId\` accepts id/exact name/templates, otherwise flow \`defaultProjectId\`. Worktrees default off: set \`startInWorktree: true\` for branch chaining. \`branch\` is an existing branch to branch FROM, not the new worktree branch name.

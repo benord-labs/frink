@@ -17,7 +17,7 @@ const GRAPH: FlowGraph = {
   edges: [],
 };
 
-const listSection = (db: TestDb, section: 'attention' | 'inbox' | 'running', limit = 50) =>
+const listSection = (db: TestDb, section: 'attention' | 'running', limit = 50) =>
   listTasksWithProjectPaginated(db, { workQueueSection: section, limit });
 
 async function addTask(
@@ -35,47 +35,13 @@ async function addTask(
 }
 
 describe('Work Queue Overview section filter', () => {
-  it('recognizes every persisted wait-mode shape and keeps each out of executor pickup', async () => {
+  it('lists a pending task in no lane and leaves it to the poller', async () => {
     const db = freshDb();
-    const contexts = [
-      { _config: { startMode: 'wait' } },
-      { _config: { start_mode: 'wait' } },
-      { Config: { startMode: 'WAIT' } },
-      { Config: { start_mode: 'wait' } },
-    ];
-    const waits = await Promise.all(
-      contexts.map((context, index) => addTask(db, `wait-${index}`, context)),
-    );
-    const execute = await addTask(db, 'execute', { _config: { startMode: 'execute' } });
+    const pending = await addTask(db, 'pending', { _config: { startMode: 'execute' } });
 
-    const inboxIds = (await listSection(db, 'inbox')).items.map((task) => task.id);
-    expect(new Set(inboxIds)).toEqual(new Set(waits.map((task) => task.id)));
-    await expect(getPendingTaskIds(db)).resolves.toEqual([{ id: execute.id }]);
-  });
-
-  it('releases a started wait task carried on to pending, for the poller and the Overview alike', async () => {
-    const db = freshDb();
-    const carried = await addTask(db, 'carried-on', { _config: { startMode: 'wait' } });
-    await updateTaskStatus(db, carried.id, 'pending', {
-      result: { startMode: 'execute', retryMode: 'continue' },
-    });
-
-    await expect(listSection(db, 'inbox').then((page) => page.items)).resolves.toEqual([]);
-    await expect(getPendingTaskIds(db)).resolves.toEqual([{ id: carried.id }]);
-  });
-
-  it('puts a Flow wait task in Inbox before effective running classification', async () => {
-    const db = freshDb();
-    const { flowRunId } = await seedFlowRun(db, GRAPH);
-    const waiting = await addTask(db, 'flow-wait', { _config: { startMode: 'wait' } }, flowRunId);
-
-    await expect(
-      listSection(db, 'inbox').then((page) =>
-        page.items.map((task) => ({ id: task.id, effectiveStatus: task.effectiveStatus })),
-      ),
-    ).resolves.toEqual([{ id: waiting.id, effectiveStatus: 'running' }]);
-    await expect(listSection(db, 'running').then((page) => page.items)).resolves.toEqual([]);
-    await expect(getPendingTaskIds(db)).resolves.toEqual([]);
+    for (const section of ['attention', 'running'] as const)
+      await expect(listSection(db, section).then((page) => page.items)).resolves.toEqual([]);
+    await expect(getPendingTaskIds(db)).resolves.toEqual([{ id: pending.id }]);
   });
 
   it('filters attention before pagination so newer Running rows cannot hide review work', async () => {
@@ -168,7 +134,6 @@ describe('Work Queue Overview section filter', () => {
 
     await expect(listSection(db, 'attention').then((page) => page.items)).resolves.toEqual([]);
     await expect(listSection(db, 'running').then((page) => page.items)).resolves.toEqual([]);
-    await expect(listSection(db, 'inbox').then((page) => page.items)).resolves.toEqual([]);
   });
 
   it('rejects ambiguous section and status filters', async () => {

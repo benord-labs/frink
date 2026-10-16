@@ -12,7 +12,6 @@ export function makeTaskActions(
     onOpenChat: vi.fn(),
     onRetryTask: vi.fn(),
     onStartExecution: vi.fn(),
-    onStartTask: vi.fn(),
     ...overrides,
   };
 }

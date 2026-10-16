@@ -31,7 +31,7 @@ describe('resolveEffectiveAgentMode', () => {
     expect(resolveEffectiveAgentMode(chainGraph('plan', 3), 'a')).toBe('plan');
   });
 
-  it.each([['execute'], ['wait'], [undefined], ['nonsense']])(
+  it.each([['execute'], [undefined], ['nonsense']])(
     'collapses start_task mode %s to agent — none of these gate on a plan',
     (startMode) => {
       expect(resolveEffectiveAgentMode(chainGraph(startMode), 'a')).toBe('agent');

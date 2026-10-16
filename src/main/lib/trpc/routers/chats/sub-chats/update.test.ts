@@ -12,7 +12,6 @@ import { makeLocalSubChat } from '../test-factories';
 const getSubChatByIdLocalMock = vi.fn();
 const listSubChatsByChatMock = vi.fn();
 const renameSubChatLocalMock = vi.fn();
-const seedUserMessageIfEmptyLocalMock = vi.fn();
 const updateChatLocalMock = vi.fn();
 const updateSubChatModeLocalMock = vi.fn();
 const broadcastChatNameUpdatedMock = vi.fn();
@@ -25,7 +24,6 @@ vi.mock('../../../../db/repos/sub-chats', async (importOriginal) => ({
   getSubChatById: getSubChatByIdLocalMock,
   listSubChatsByChat: listSubChatsByChatMock,
   renameSubChat: renameSubChatLocalMock,
-  seedUserMessageIfEmpty: seedUserMessageIfEmptyLocalMock,
   updateSubChatMode: updateSubChatModeLocalMock,
 }));
 vi.mock('../../../../db/repos/chats', () => ({ updateChat: updateChatLocalMock }));
@@ -39,46 +37,6 @@ vi.mock('../helpers/name-generation-async', () => ({
 const hydrated = (overrides: Parameters<typeof makeLocalSubChat>[0]) => ({
   ...makeLocalSubChat(overrides),
   messages: [],
-});
-
-describe('subChatUpdateRouter.seedUserMessageIfEmpty', () => {
-  beforeEach(() => {
-    vi.resetAllMocks();
-  });
-
-  it('accepts only the narrow user-text payload and returns the seed outcome', async () => {
-    const subChat = hydrated({ id: 's1', chatId: 'c1' });
-    seedUserMessageIfEmptyLocalMock.mockResolvedValue({ seeded: true, subChat });
-    const { subChatUpdateRouter } = await import('./update');
-    const caller = subChatUpdateRouter.createCaller({ getWindow: () => null });
-    const message = {
-      id: 'msg-task-1',
-      role: 'user' as const,
-      parts: [{ type: 'text' as const, text: 'Prompt' }],
-    };
-
-    const result = await caller.seedUserMessageIfEmpty({ id: 's1', message });
-
-    expect(seedUserMessageIfEmptyLocalMock).toHaveBeenCalledWith(expect.anything(), 's1', message);
-    expect(result).toMatchObject({ seeded: true, subChat: { id: 's1', messages: '[]' } });
-  });
-
-  it.each([
-    ['assistant role', { id: 'm', role: 'assistant', parts: [{ type: 'text', text: 'x' }] }],
-    [
-      'extra metadata',
-      { id: 'm', role: 'user', parts: [{ type: 'text', text: 'x' }], metadata: {} },
-    ],
-    ['blank text', { id: 'm', role: 'user', parts: [{ type: 'text', text: ' ' }] }],
-  ])('rejects %s before reaching the repository', async (_name, message) => {
-    const { subChatUpdateRouter } = await import('./update');
-    const caller = subChatUpdateRouter.createCaller({ getWindow: () => null });
-
-    await expect(
-      caller.seedUserMessageIfEmpty({ id: 's1', message: message as never }),
-    ).rejects.toThrow();
-    expect(seedUserMessageIfEmptyLocalMock).not.toHaveBeenCalled();
-  });
 });
 
 describe('subChatUpdateRouter.updateSubChatMode', () => {

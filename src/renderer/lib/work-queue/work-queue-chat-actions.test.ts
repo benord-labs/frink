@@ -23,7 +23,6 @@ function actions(overrides: Record<string, unknown> = {}) {
     ownsNavigation: vi.fn(() => true),
     getChat: vi.fn(async () => ({ id: 'chat-1', subChats: [{ id: 'sub-1' }] })),
     getSubChat: vi.fn(async () => ({ id: 'sub-1', messages: [] })),
-    seedUserMessageIfEmpty: vi.fn(async () => ({ seeded: true })),
     navigate: vi.fn(() => true),
     isNotFoundError: vi.fn(() => false),
     onMissingChat: vi.fn(),
@@ -33,26 +32,29 @@ function actions(overrides: Record<string, unknown> = {}) {
 }
 
 describe('openWorkQueueTaskChat', () => {
-  it('does not let a stale caller seed after a fresh owner remounts', async () => {
+  it('opens an empty sub-chat by navigating to it', async () => {
+    const deps = actions();
+
+    await expect(openWorkQueueTaskChat({ chatId: 'chat-1' }, deps)).resolves.toBe('sub-1');
+
+    expect(deps.navigate).toHaveBeenCalledWith('chat-1', 'sub-1');
+  });
+
+  it('does not let a stale caller navigate after a fresh owner remounts', async () => {
     let resolveStale!: (chat: unknown) => void;
     let staleOwns = true;
     const stale = actions({
       ownsNavigation: () => staleOwns,
       getChat: () => new Promise((resolve) => (resolveStale = resolve)),
     });
-    const staleOpen = openWorkQueueTaskChat(
-      { taskId: 'task-1', prompt: 'prompt', chatId: 'chat-1' },
-      stale,
-    );
+    const staleOpen = openWorkQueueTaskChat({ chatId: 'chat-1' }, stale);
     staleOwns = false;
     const fresh = actions();
 
-    await openWorkQueueTaskChat({ taskId: 'task-1', prompt: 'prompt', chatId: 'chat-1' }, fresh);
+    await openWorkQueueTaskChat({ chatId: 'chat-1' }, fresh);
     resolveStale({ id: 'chat-1', subChats: [{ id: 'sub-1' }] });
     await staleOpen;
 
-    expect(fresh.seedUserMessageIfEmpty).toHaveBeenCalledTimes(1);
-    expect(stale.seedUserMessageIfEmpty).not.toHaveBeenCalled();
     expect(fresh.navigate).toHaveBeenCalledWith('chat-1', 'sub-1');
     expect(stale.navigate).not.toHaveBeenCalled();
   });

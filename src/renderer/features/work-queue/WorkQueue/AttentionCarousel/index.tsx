@@ -33,8 +33,8 @@ import { getWorkQueueTaskTitle } from '../../utils/task-presentation';
 
 export type AttentionTaskActions = Omit<
   ActionMenuProps,
-  'chatId' | 'onStartTask' | 'status' | 'task' | 'triggerClassName'
-> & { onStartTask: NonNullable<ActionMenuProps['onStartTask']> };
+  'chatId' | 'status' | 'task' | 'triggerClassName'
+>;
 
 type Props = {
   /** Runs waiting on an Approval step; they lead the spotlight, longest wait first. */

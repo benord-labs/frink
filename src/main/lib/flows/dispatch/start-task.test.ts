@@ -199,6 +199,21 @@ describe('local start_task → agent handoff', () => {
     expect(chat?.worktreePath).toBeNull();
   });
 
+  it('refuses a saved Start Task still set to wait before creating anything', async () => {
+    const res = await dispatchStartTask(
+      ctxFor({
+        node: { id: 'st', blockType: 'start_task', config: { projectId, startMode: 'wait' } },
+      }),
+    );
+
+    expect(res).toMatchObject({
+      type: 'error',
+      message: expect.stringContaining('choose Execute or Plan'),
+    });
+    expect(h.executeShellStep).not.toHaveBeenCalled();
+    expect(await listAllChats(db)).toEqual([]);
+  });
+
   it('a retry of a no-worktree start_task reuses its prior chat instead of orphaning one', async () => {
     // getOrCreateFlowChat's reuse lookup is worktree-keyed and finds nothing here, so a retry
     // must resolve the earlier chat through the completed node_run instead.

@@ -8,7 +8,6 @@ import {
 import { __resetSubChatLocks } from './sub-chat-mutex';
 import {
   appendHtmlArtifactMessage,
-  appendUserMessage,
   clearStreamIdIfCurrent,
   createSubChat,
   finalizeAssistantMessage,
@@ -20,7 +19,6 @@ import {
   pickOldestSubChat,
   resolveSendMode,
   type SubChatHydrated,
-  seedUserMessageIfEmpty,
   setStreamId,
   updateSubChatMessages,
   upsertAssistantMessage,
@@ -55,58 +53,6 @@ async function readPlanStatus(subChatId: string): Promise<string | undefined> {
   const part = hydrated?.messages[0]?.parts[0] as { input?: { status?: string } } | undefined;
   return part?.input?.status;
 }
-
-describe('seedUserMessageIfEmpty', () => {
-  beforeEach(() => {
-    db = freshDb();
-  });
-  afterEach(() => {
-    __resetSubChatLocks();
-  });
-
-  const message = (id: string) => ({
-    id,
-    role: 'user' as const,
-    parts: [{ type: 'text', text: id }],
-  });
-
-  it('lets exactly one concurrent seed initialize an empty sub-chat', async () => {
-    await db.insert(schema.chats).values({ id: 'chat-seed' });
-    const subChat = await createSubChat(db, { chatId: 'chat-seed', messages: '[]' });
-
-    const results = await Promise.all([
-      seedUserMessageIfEmpty(db, subChat.id, message('seed-a')),
-      seedUserMessageIfEmpty(db, subChat.id, message('seed-b')),
-    ]);
-
-    expect(results.map((result) => result.seeded).sort()).toEqual([false, true]);
-    const persisted = await getSubChatById(db, subChat.id);
-    expect(persisted?.messages).toHaveLength(1);
-  });
-
-  it('never replaces a message appended before the seed owns the lock', async () => {
-    await db.insert(schema.chats).values({ id: 'chat-existing' });
-    const subChat = await createSubChat(db, { chatId: 'chat-existing', messages: '[]' });
-    await appendUserMessage(db, subChat.id, message('live-message'));
-
-    const result = await seedUserMessageIfEmpty(db, subChat.id, message('stale-seed'));
-
-    expect(result.seeded).toBe(false);
-    expect((await getSubChatById(db, subChat.id))?.messages).toEqual([message('live-message')]);
-  });
-
-  it.each(['{"broken"', '{}'])('never treats malformed history %s as empty', async (raw) => {
-    await db.insert(schema.chats).values({ id: 'chat-malformed' });
-    const subChat = await createSubChat(db, { chatId: 'chat-malformed' });
-    const stored = { subChatId: subChat.id, seq: 0, message: raw };
-    await db.insert(schema.subChatMessages).values(stored);
-
-    const result = await seedUserMessageIfEmpty(db, subChat.id, message('stale-seed'));
-
-    expect(result.seeded).toBe(false);
-    expect(await db.select().from(schema.subChatMessages)).toEqual([stored]);
-  });
-});
 
 describe('messages write short-circuit', () => {
   beforeEach(async () => {
@@ -173,24 +119,6 @@ describe('messages write short-circuit', () => {
         0,
       );
       expect((await getSubChatById(db, subChat.id))?.updatedAt).not.toEqual(before);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('refuses a seed once the row already has messages, and skips writing', async () => {
-    vi.useFakeTimers({ toFake: ['Date'] });
-    try {
-      const subChat = await createSubChat(db, {
-        chatId: 'chat-revision',
-        messages: JSON.stringify([userMessage('existing')]),
-      });
-      const before = (await getSubChatById(db, subChat.id))?.updatedAt;
-      vi.advanceTimersByTime(60_000);
-
-      const refusedSeed = await seedUserMessageIfEmpty(db, subChat.id, userMessage('stale'));
-      expect(refusedSeed.seeded).toBe(false);
-      expect((await getSubChatById(db, subChat.id))?.updatedAt).toEqual(before);
     } finally {
       vi.useRealTimers();
     }

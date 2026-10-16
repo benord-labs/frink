@@ -1,18 +1,15 @@
-import { hostname } from 'node:os';
-import { eq } from 'drizzle-orm';
 import { assessRowRetry, taskMenuRecovery } from '../../../../shared/lib/task-recovery/menu-gate';
 import { assessTaskRetry } from '../../../../shared/lib/task-retry-policy';
 import type { RecoveryKind } from '../../../../shared/types/flow-run/resume';
 import type { MobileRequest, MobileTaskAction } from '../../../../shared/types/remote/mobile';
 import { getDatabase } from '../../db';
 import { getQueueTaskRow } from '../../db/repos/task-queries';
-import { claimTask, getTaskById, parseResultRecord } from '../../db/repos/tasks';
-import { chats, type Task } from '../../db/schema';
+import { getTaskById, parseResultRecord } from '../../db/repos/tasks';
+import type { Task } from '../../db/schema';
 import { withStoppedTaskRecoveries } from '../../trpc/routers/tasks-subchat';
 import { MobileApiError, mobileCallers, requireExecutionReady } from './context';
 
 type ActionTask = Pick<Task, 'status' | 'flowRunId' | 'result'> & {
-  linkedChatId: string | null;
   recoveryKind?: RecoveryKind;
   confirmSideEffects?: boolean;
 };
@@ -32,8 +29,8 @@ function flowRecovery(task: ActionTask, status: string, confirmsSideEffects: boo
   return kind;
 }
 
-/** The desktop Work Queue row menu's gates for Start task, Continue / Retry task and Mark complete.
- *  A Flow item starts through its run. `status` is the queue's display status. */
+/** The desktop Work Queue row menu's gates for Continue / Retry task and Mark complete. `status` is
+ *  the queue's display status. */
 export function mobileTaskActions(
   task: ActionTask,
   status: string = task.status,
@@ -41,13 +38,6 @@ export function mobileTaskActions(
 ) {
   const actions: MobileTaskAction[] = [];
   const chatTask = !task.flowRunId;
-  if (
-    chatTask &&
-    status === 'pending' &&
-    !task.linkedChatId &&
-    !parseResultRecord(task.result).chatId
-  )
-    actions.push('startTask');
   const recoverable = chatTask
     ? (status === 'failed' || status === 'needs_attention') &&
       assessTaskRetry({ status, result: task.result }).canRetry
@@ -58,13 +48,9 @@ export function mobileTaskActions(
 }
 
 async function readActionTask(id: string) {
-  const db = getDatabase();
-  const [task, linked] = await Promise.all([
-    getTaskById(db, id),
-    db.select({ id: chats.id }).from(chats).where(eq(chats.taskId, id)).limit(1),
-  ]);
+  const task = await getTaskById(getDatabase(), id);
   if (!task) throw new MobileApiError(404, 'This item no longer exists.');
-  return { ...task, linkedChatId: linked[0]?.id ?? null };
+  return task;
 }
 
 /** Runs a Queue row action after checking, on the computer, that the task still offers it. */
@@ -80,8 +66,7 @@ export async function runMobileTaskAction(request: TaskActionRequest): Promise<{
     return { ok: true };
   }
   requireExecutionReady();
-  if (request.type !== 'continueTask') await startTask(task);
-  else if (request.kind === 'retry') await retryTask(task.id);
+  if (request.kind === 'retry') await retryTask(task.id);
   else await continueTask(task.id, request.kind === undefined);
   return { ok: true };
 }
@@ -132,16 +117,4 @@ async function continueTask(taskId: string, legacy: boolean) {
     );
   }
   throw new MobileApiError(409, CHANGED);
-}
-
-/** Desktop's Start task: the task runs as an agent now, even if its trigger holds it until started.
- *  Dispatch runs on as the poller's does; a failure is recorded on the task for the Queue to show. */
-async function startTask(task: Task) {
-  const claimed = await claimTask(getDatabase(), task.id, hostname());
-  if (!claimed) throw new MobileApiError(409, CHANGED);
-  const { handleClaimedTask } = await import('../../task-executor');
-  void handleClaimedTask({
-    ...claimed,
-    result: { ...parseResultRecord(claimed.result), startMode: 'execute' },
-  }).catch(() => {});
 }

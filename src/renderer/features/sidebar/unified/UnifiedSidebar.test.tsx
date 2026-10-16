@@ -186,7 +186,7 @@ describe('UnifiedSidebar task count freshness', () => {
 
     const { rerender } = render(<UnifiedSidebar />);
     expect(screen.getByTestId('sidebar-dialogs').textContent).toBe('closed');
-    expect(screen.getByTestId('sidebar-nav-counts').textContent).toBe('1:2:3:0:0');
+    expect(screen.getByTestId('sidebar-nav-counts').textContent).toBe('2:3:0:0');
 
     hoisted.state.taskCountsData = {
       pending: 4,
@@ -203,14 +203,13 @@ describe('UnifiedSidebar task count freshness', () => {
     rerender(<UnifiedSidebar onChatSelect={() => {}} />);
 
     expect(screen.getByTestId('sidebar-dialogs').textContent).toBe('closed');
-    expect(screen.getByTestId('sidebar-nav-counts').textContent).toBe('4:0:1:2:0');
+    expect(screen.getByTestId('sidebar-nav-counts').textContent).toBe('0:1:2:0');
     expect(hoisted.listCountsUseQueryMock).toHaveBeenCalled();
     expect(hoisted.listActiveChatsUseQueryMock).toHaveBeenCalled();
   });
 
-  // Interrupted runs fold into the Needs Attention bucket, so they must contribute to the sidebar's
-  // needs-attention count (position 4) — else a restart-interrupted flow lights no alert outside the
-  // Work Queue.
+  // Interrupted runs count as needs-attention (position 3), else a restart-interrupted flow lights
+  // no alert outside the Work Queue.
   it('counts interrupted runs in the needs-attention indicator', () => {
     hoisted.state.taskCountsData = {
       pending: 0,
@@ -223,8 +222,8 @@ describe('UnifiedSidebar task count freshness', () => {
       total: 3,
     };
     render(<UnifiedSidebar />);
-    // position 4 = needsAttentionTaskCount = needsAttention(1) + interrupted(2) = 3
-    expect(screen.getByTestId('sidebar-nav-counts').textContent).toBe('0:0:0:3:0');
+    // position 3 = needsAttentionTaskCount = needsAttention(1) + interrupted(2) = 3
+    expect(screen.getByTestId('sidebar-nav-counts').textContent).toBe('0:0:3:0');
   });
 
   it('uses highest-priority task status per chat for sidebar row state', async () => {

@@ -31,7 +31,6 @@ export type ActionMenuProps = {
   onCancel: (id: string) => void;
   onDelete: (id: string) => void;
   onOpenChat: (task: Task, chatId: string) => void;
-  onStartTask?: (taskId: string, mode: 'agent' | 'plan') => void;
   /** Set when the user confirmed that exact recovery and step; else the row's current one runs. */
   onRetryTask?: (taskId: string, confirmed?: ConfirmedRecovery) => void;
   onMarkComplete?: (taskId: string) => void;

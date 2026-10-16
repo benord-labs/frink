@@ -19,7 +19,6 @@ import { AI_PROVIDERS } from '../../../shared/lib/ai-providers';
 import { buildHiddenWakeMessage } from '../../../shared/lib/message-markers/hidden-wake-marker';
 import { CLAUDE_MODEL_IDS } from '../../../shared/lib/models';
 import {
-  type ResolvedTaskStartMode,
   resolveTaskExecutionMetadata,
   resolveTaskStartInWorktreeFromConfig,
   toChatMode,
@@ -29,7 +28,10 @@ import type {
   TaskChatImageAttachment,
   TaskChatReadyData,
 } from '../../../shared/types/task-chat-ready';
-import { TRIGGER_START_MODES, type TriggerStartMode } from '../../../shared/types/trigger-context';
+import {
+  type TriggerStartMode,
+  triggerStartModeSchema,
+} from '../../../shared/types/trigger-context';
 import { getDatabase } from '../db';
 import { createChat, updateChat } from '../db/repos/chats';
 import { getProjectById as getLocalProjectById } from '../db/repos/projects';
@@ -143,14 +145,14 @@ export async function resolveSubChatIdForExistingChat(params: {
   chatId: string;
   existingSubChatId: string | null;
   executionMode: string | null | undefined;
-  startMode: ResolvedTaskStartMode;
-  resume?: { pinnedSubChatId: string; startMode: ResolvedTaskStartMode };
-}): Promise<{ subChatId: string; startMode: ResolvedTaskStartMode }> {
+  startMode: TriggerStartMode;
+  resume?: { pinnedSubChatId: string; startMode: TriggerStartMode };
+}): Promise<{ subChatId: string; startMode: TriggerStartMode }> {
   const { chatId, existingSubChatId, executionMode, startMode, resume } = params;
   // Align the reused sub-chat's persisted mode (`sub-chat-mode-ownership`) to the turn's mode.
   const reuseWithTaskMode = async (
     subChatId: string,
-  ): Promise<{ subChatId: string; startMode: ResolvedTaskStartMode }> => {
+  ): Promise<{ subChatId: string; startMode: TriggerStartMode }> => {
     const effectiveStartMode =
       resume && resume.pinnedSubChatId === subChatId ? resume.startMode : startMode;
     const mode = toChatMode(effectiveStartMode);
@@ -186,24 +188,13 @@ export async function resolveSubChatIdForExistingChat(params: {
  * config. Result wins so a re-claim runs the task in the mode it actually holds — a resumed
  * question-park keeps its mode (a reply never flips it; decision `flow-agent-node-mode`).
  */
-/** A persisted startMode value narrowed to the launchable modes ('wait' can't open a turn). */
-function extractConfigStartMode(value: unknown): Exclude<TriggerStartMode, 'wait'> | null {
-  return typeof value === 'string' &&
-    value !== 'wait' &&
-    TRIGGER_START_MODES.includes(value as TriggerStartMode)
-    ? (value as Exclude<TriggerStartMode, 'wait'>)
-    : null;
-}
-
-function extractResultStartMode(
-  result: DbTask['result'],
-): Exclude<TriggerStartMode, 'wait'> | null {
+function extractResultStartMode(result: DbTask['result']): TriggerStartMode | null {
   const parsed = taskResultSchema.safeParse(result);
-  return parsed.success ? extractConfigStartMode(parsed.data.startMode) : null;
+  return triggerStartModeSchema.safeParse(parsed.data?.startMode).data ?? null;
 }
 
 export function resolveTaskExecutionOptions(task: DbTask): {
-  startMode: Exclude<TriggerStartMode, 'wait'>;
+  startMode: TriggerStartMode;
   skipReview: boolean;
   configuredModel?: string;
 } {
@@ -211,9 +202,10 @@ export function resolveTaskExecutionOptions(task: DbTask): {
   // Fall back to raw _config extraction for non-webhook flow tasks (manual, schedule, post_task
   // triggers) whose trigger_context doesn't satisfy the full TriggerContext shape.
   const rawConfig = triggerContext?._config ?? extractTaskTriggerConfig(task.triggerContext);
-  // A persisted start mode is an explicit start, so it releases a task its trigger holds in wait.
+  // Migration 0114 cancelled every unstarted "wait" task and agent dispatch writes no new one, so a
+  // "wait" in _config here is on a task someone already started; its result.startMode wins.
   const resultStartMode = extractResultStartMode(task.result);
-  const metadata = resolveTaskExecutionMetadata(rawConfig, { throwOnWait: !resultStartMode });
+  const metadata = resolveTaskExecutionMetadata(rawConfig);
   const skipReview = rawConfig != null ? metadata.skipReview : false;
 
   return {
@@ -367,7 +359,7 @@ async function createChatForTask(task: DbTask): Promise<{
   subChatId: string;
   prompt: string;
   projectPath: string | null;
-  startMode: ResolvedTaskStartMode;
+  startMode: TriggerStartMode;
   skipReview: boolean;
   autoReviewTools?: boolean;
   codexSpeed?: CodexSpeed;
@@ -490,9 +482,9 @@ async function createChatForTask(task: DbTask): Promise<{
     chatId = existingChatId;
 
     const resumePinnedSubChatId = getFlowConfigField(rawFlowConfig, 'resumeSubChatId', isString);
-    const resumeStartMode = extractConfigStartMode(
+    const resumeStartMode = triggerStartModeSchema.safeParse(
       getFlowConfigField(rawFlowConfig, 'resumeStartMode', isString),
-    );
+    ).data;
     const resolved = await resolveSubChatIdForExistingChat({
       chatId,
       existingSubChatId,

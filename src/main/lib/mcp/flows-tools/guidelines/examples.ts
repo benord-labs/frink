@@ -3,12 +3,12 @@ export function getExamplesGuideline(): string {
 
 ## Condition → fan-out → HTML report
 
-Pass the following JSON as arguments to \`frink_flows_patch\`. Run in a selected project (or supply its discovered projectId). Commands use only printf/echo and make no external calls. Start Task creates the chat before the array is produced; its wait mode avoids starting a free-running agent. The condition checks the array before fan-out; the two contained branches share the HTML reply outside the container.
+Pass the following JSON as arguments to \`frink_flows_patch\`. Run in a selected project (or supply its discovered projectId). Commands use only printf/echo and make no external calls. Start Task creates the chat before the array is produced. The condition checks the array before fan-out; the two contained branches share the HTML reply outside the container.
 
 \`\`\`json
 {"name": "Fan-out report", "operations": [
   {"op":"add_node","node":{"id":"trigger","blockType":"manual_trigger"}},
-  {"op":"add_node","node":{"id":"chat","blockType":"start_task","config":{"label":"Fan-out report","startMode":"wait"}}},
+  {"op":"add_node","node":{"id":"chat","blockType":"start_task","config":{"label":"Fan-out report"}}},
   {"op":"add_node","node":{"id":"items","blockType":"run_command","config":{"command":"printf '{\\"items\\":[\\"alpha\\",\\"beta\\"],\\"count\\":2}' ","expectedOutputs":{"items":{"type":"array"},"count":{"type":"number"}}}}},
   {"op":"add_node","node":{"id":"fan","blockType":"fan_out","config":{"arrayField":"items","mode":"sequential"}}},
   {"op":"add_node","node":{"id":"review","blockType":"run_command","parentId":"fan","config":{"command":"echo {{loop.currentItem}}"}}},

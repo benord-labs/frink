@@ -81,6 +81,18 @@ describe('describeFlowRunBlockers', () => {
     );
   });
 
+  it('blocks the run for a saved flow whose Start Task is still set to wait', () => {
+    const graph: FlowGraph = {
+      nodes: [
+        { id: 't', blockType: 'webhook_trigger', config: { integrationId: 'i', eventType: 'e' } },
+        { id: 'st', blockType: 'start_task', config: { projectId: 'p1', startMode: 'wait' } },
+      ],
+      edges: [{ id: 'e', source: 't', target: 'st' }],
+    };
+
+    expect(describeFlowRunBlockers(graph)).toContain('choose Execute or Plan');
+  });
+
   it('returns null for a flow whose custom node declares no inputs', () => {
     expect(describeFlowRunBlockers(graphWith({}))).toBeNull();
   });

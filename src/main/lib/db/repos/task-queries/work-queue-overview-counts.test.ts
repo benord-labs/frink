@@ -61,7 +61,6 @@ describe('getWorkQueueOverviewCounts', () => {
     await addQueuedAdmission(db, second.id);
 
     await expect(getWorkQueueOverviewCounts(db)).resolves.toEqual({
-      inbox: 0,
       queued: 2,
       review: 0,
       running: 0,
@@ -89,7 +88,6 @@ describe('getWorkQueueOverviewCounts', () => {
     await setFlowRunStatus(db, review.id, 'failed');
 
     await expect(getWorkQueueOverviewCounts(db)).resolves.toEqual({
-      inbox: 0,
       queued: 1,
       review: 1,
       running: 0,
@@ -101,15 +99,10 @@ describe('getWorkQueueOverviewCounts', () => {
     ).resolves.toEqual([reviewTask.id]);
   });
 
-  it('counts manual-wait Inbox tasks separately from machine admission', async () => {
-    await createTask(db, {
-      description: 'Wait for pickup',
-      source: 'manual',
-      triggerContext: { _config: { startMode: 'wait' } },
-    });
+  it('leaves a pending task out of every count until the poller starts it', async () => {
+    await createTask(db, { description: 'Not started yet', source: 'manual' });
 
     await expect(getWorkQueueOverviewCounts(db)).resolves.toEqual({
-      inbox: 1,
       queued: 0,
       review: 0,
       running: 0,

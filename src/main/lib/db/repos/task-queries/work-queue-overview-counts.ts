@@ -11,7 +11,6 @@ import {
 type Db = ReturnType<typeof getDatabase>;
 
 export type WorkQueueOverviewCounts = {
-  inbox: number;
   queued: number;
   review: number;
   running: number;
@@ -41,18 +40,15 @@ export async function getWorkQueueOverviewCounts(db: Db): Promise<WorkQueueOverv
     .where(and(isFlowRepresentative, isNotQueuedForAdmission, isNotWaitingOnApproval))
     .groupBy(workQueueOverviewSectionExpr);
 
-  let inbox = 0;
   let review = 0;
   let running = 0;
   for (const row of taskRows) {
     const count = Number(row.count);
     if (row.section === 'attention') review += count;
-    if (row.section === 'inbox') inbox += count;
     if (row.section === 'running') running += count;
   }
 
   return {
-    inbox,
     queued: Number(queuedRow?.count ?? 0),
     review,
     running,

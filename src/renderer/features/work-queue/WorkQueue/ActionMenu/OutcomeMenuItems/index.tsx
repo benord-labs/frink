@@ -41,14 +41,14 @@ export function OutcomeMenuItems({
         tone="success"
       />
       <MenuAction
-        show={canCancelTask(task, status)}
+        show={canCancelTask(status)}
         icon={X}
         label="Cancel"
         onSelect={() => onCancel(task.id)}
         disabled={isLoading}
       />
       <MenuAction
-        show={canDeleteTask(task, status)}
+        show={canDeleteTask(status)}
         icon={Trash2}
         label="Delete"
         onSelect={() => onDelete(task.id)}

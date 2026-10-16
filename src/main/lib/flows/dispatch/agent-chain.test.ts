@@ -591,6 +591,20 @@ describe('agent node per-node mode + autoApprove', () => {
     expect(cfg.startMode).toBe('plan'); // inherited from start_task
     expect(cfg.skipReview).toBe(true);
   });
+
+  it.each(['wait', 'WAIT'])(
+    'refuses a %s mode inherited from a Start Task run before its removal',
+    async (startMode) => {
+      await seedStartTask({ startMode });
+      // SAFETY: dispatchAgent reads only the context fields agentCtx fills.
+      const res = await dispatchAgent(agentCtx({ previousOutput: AGENT_PREV_OUTPUT }) as never);
+      expect(res).toMatchObject({
+        type: 'error',
+        message: expect.stringContaining('start a new run'),
+      });
+      expect(h.createTask).not.toHaveBeenCalled();
+    },
+  );
 });
 
 // A deliberate re-dispatch (resume/retry paths) mints a FRESH node_run for a node that already

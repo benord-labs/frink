@@ -47,20 +47,18 @@ export function makeSidebarComponentsMock(captured: CapturedComponentProps) {
       return <div data-testid="sidebar-dialogs">{props.showWorkQueue ? 'open' : 'closed'}</div>;
     },
     SidebarNav: ({
-      inboxTaskCount,
       pendingReviewCount,
       runningTaskCount,
       needsAttentionTaskCount,
       failedTaskCount,
     }: {
-      inboxTaskCount: number;
       pendingReviewCount: number;
       runningTaskCount: number;
       needsAttentionTaskCount: number;
       failedTaskCount: number;
     }) => (
       <div data-testid="sidebar-nav-counts">
-        {`${inboxTaskCount}:${pendingReviewCount}:${runningTaskCount}:${needsAttentionTaskCount}:${failedTaskCount}`}
+        {`${pendingReviewCount}:${runningTaskCount}:${needsAttentionTaskCount}:${failedTaskCount}`}
       </div>
     ),
     SidebarFooter: ({ onToggleArchived }: { onToggleArchived?: () => void }) => (

@@ -11,19 +11,6 @@ const DEFAULT_COMPLETION_SIGNAL: TriggerCompletionSignal = 'agent_finish';
 
 type RawTriggerConfig = TriggerContext['_config'] | TaskResultRecord;
 
-export function resolveRuleStartMode(
-  actionConfig: Record<string, unknown> | undefined,
-): TriggerStartMode {
-  const startMode = actionConfig?.start_mode;
-  if (
-    typeof startMode === 'string' &&
-    TRIGGER_START_MODES.includes(startMode as TriggerStartMode)
-  ) {
-    return startMode as TriggerStartMode;
-  }
-  return TRIGGER_START_MODES[0];
-}
-
 export function resolveRuleStartInWorktree(
   actionConfig: Record<string, unknown> | undefined,
 ): boolean {
@@ -57,25 +44,22 @@ export function resolveTaskStartInWorktreePreference(
   return Boolean(projectId);
 }
 
-export function isRuleAutoStartEnabled(actionConfig: Record<string, unknown> | undefined): boolean {
-  return resolveRuleStartMode(actionConfig) === 'execute';
-}
-
-export type ResolvedTaskStartMode = Exclude<TriggerStartMode, 'wait'>;
 // Mirrors ChatMode ('agent'|'plan'|'debug'). Kept as a local literal (not an import from
 // src/shared/types/chat-mode) so the vercel `_shared` sync stays self-contained.
 export type ChatStartMode = 'agent' | 'plan' | 'debug';
 
-type ResolveTaskExecutionMetadataOptions = {
-  overrideMode?: ChatStartMode;
-  throwOnWait?: boolean;
-};
+/** The removed "wait" start mode in any letter case, matching the rows the old poller held. */
+export function isRemovedWaitStartMode(mode: string | undefined): boolean {
+  return mode?.toLowerCase() === 'wait';
+}
 
 function readConfigStartMode(config: RawTriggerConfig | undefined): TriggerStartMode | undefined {
   if (!config || typeof config !== 'object') return undefined;
   const configRecord = config as Record<string, unknown>;
   const rawMode = configRecord.startMode ?? configRecord.start_mode;
   if (typeof rawMode !== 'string') return undefined;
+  // A saved "wait" reads as unset: migration 0114 cancelled every task held by it, and Start Task
+  // and agent dispatch refuse to create another (isRemovedWaitStartMode).
   return TRIGGER_START_MODES.includes(rawMode as TriggerStartMode)
     ? (rawMode as TriggerStartMode)
     : undefined;
@@ -122,26 +106,12 @@ function readConfigCompletionSignal(
     : undefined;
 }
 
-export function resolveTaskExecutionMetadata(
-  config: RawTriggerConfig | undefined,
-  options?: ResolveTaskExecutionMetadataOptions,
-): {
-  startMode: ResolvedTaskStartMode;
+export function resolveTaskExecutionMetadata(config: RawTriggerConfig | undefined): {
+  startMode: TriggerStartMode;
   skipReview: boolean;
   configuredModel?: string;
 } {
-  const modeFromOverride: ResolvedTaskStartMode =
-    options?.overrideMode === 'plan'
-      ? 'plan'
-      : options?.overrideMode === 'debug'
-        ? 'debug'
-        : 'execute';
-  const requestedStartMode = options?.overrideMode ? modeFromOverride : readConfigStartMode(config);
-  if (requestedStartMode === 'wait' && options?.throwOnWait) {
-    throw new Error('Wait-mode tasks must remain queued and should not be executed');
-  }
-  const startMode: ResolvedTaskStartMode =
-    requestedStartMode === 'plan' ? 'plan' : requestedStartMode === 'debug' ? 'debug' : 'execute';
+  const startMode = readConfigStartMode(config) ?? 'execute';
   const configuredModel = readConfiguredModel(config);
   // An explicit `_config.skipReview` (set by a flow agent node's autoApprove) wins over the derived
   // default. Default: only plan mode pauses for review; execute/debug auto-complete.
@@ -159,7 +129,7 @@ export function resolveTaskCompletionSignal(
   return readConfigCompletionSignal(config) ?? DEFAULT_COMPLETION_SIGNAL;
 }
 
-export function toChatMode(startMode: ResolvedTaskStartMode): ChatStartMode {
+export function toChatMode(startMode: TriggerStartMode): ChatStartMode {
   return startMode === 'plan' ? 'plan' : startMode === 'debug' ? 'debug' : 'agent';
 }
 

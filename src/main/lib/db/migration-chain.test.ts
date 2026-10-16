@@ -2,7 +2,9 @@ import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { isFlowAdmissionIntentV1 } from '../../../shared/lib/flow-admission';
+import { beginTerminalRelease } from '../flows/admission/recovery-store';
 import { NodeSqliteDatabase } from './node-sqlite-driver';
+import { getPendingTaskIds } from './repos/tasks';
 import { freshDb } from './test-utils/fresh-db';
 
 type JournalEntry = {
@@ -82,6 +84,12 @@ function count(sqlite: NodeSqliteDatabase, fromClause: string): number {
   // SAFETY: callers pass literal table names from this file, never user input.
   const row = sqlite.prepare(`SELECT count(*) AS n FROM ${fromClause}`).get() as { n: number };
   return row.n;
+}
+
+function keyed<V>(sqlite: NodeSqliteDatabase, select: string): Record<string, V> {
+  // SAFETY: callers' literal queries project a TEXT key column `k` and a value column `v` of type V.
+  const rows = sqlite.prepare(select).all() as Array<{ k: string; v: V }>;
+  return Object.fromEntries(rows.map((row) => [row.k, row.v]));
 }
 
 /** Two accounts' rows in one database — the shape a real install reached before the drop. */
@@ -712,6 +720,106 @@ describe('database migration chain', () => {
       const intents: unknown[] = rows.map((row) => JSON.parse(row.intent_json));
       expect(intents).toEqual([resume, { ...resume, flow_run_id: 'run-2' }]);
       expect(intents.every(isFlowAdmissionIntentV1)).toBe(true);
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it('cancels tasks never started from wait mode and stops their live runs, once', async () => {
+    const db = freshDb();
+    const sqlite = db.$client;
+    const waitConfig = (key: string) => JSON.stringify({ _config: { [key]: 'wait' } });
+    try {
+      sqlite.exec(`
+        INSERT INTO flows (id, name) VALUES ('flow-1', 'F');
+        INSERT INTO flow_versions (id, flow_id, version_number, graph) VALUES ('ver-1', 'flow-1', 1, '{}');
+        INSERT INTO flow_runs (id, flow_version_id, status, started_at) VALUES
+          ('run-wait', 'ver-1', 'paused', 1), ('run-queued', 'ver-1', 'paused', 1),
+          ('run-started', 'ver-1', 'paused', 1), ('run-other', 'ver-1', 'paused', 1);
+        INSERT INTO node_runs (id, flow_run_id, node_id, block_type, status) VALUES
+          ('nr-start', 'run-wait', 'start', 'start_task', 'completed'),
+          ('nr-wait', 'run-wait', 'agent', 'agent', 'awaiting_input'),
+          ('nr-queued', 'run-queued', 'agent', 'agent', 'awaiting_input'),
+          ('nr-started', 'run-started', 'agent', 'agent', 'awaiting_input'),
+          ('nr-other', 'run-other', 'agent', 'agent', 'awaiting_input');
+        INSERT INTO flow_run_admissions
+          (flow_run_id, state, priority_class, intent_version, intent_json, requested_at) VALUES
+          ('run-wait', 'active', 'start', 1, '{}', 1), ('run-queued', 'queued', 'resume', 1, '{}', 1),
+          ('run-started', 'active', 'start', 1, '{}', 1), ('run-other', 'active', 'start', 1, '{}', 1);
+      `);
+      const insertTask = sqlite.prepare(
+        "INSERT INTO tasks (id, description, source, result, trigger_context, flow_run_id, node_run_id, created_at) VALUES (?, 'd', 'flow', ?, ?, ?, ?, 1)",
+      );
+      const linked = JSON.stringify({ chatId: 'c1', agentSignal: 'done' });
+      insertTask.run('task-wait', linked, waitConfig('startMode'), 'run-wait', 'nr-wait');
+      insertTask.run('task-queued', null, waitConfig('start_mode'), 'run-queued', 'nr-queued');
+      const upperWait = JSON.stringify({ _config: { startMode: 'WAIT' } });
+      insertTask.run('task-unlinked', null, upperWait, null, null);
+      const started = JSON.stringify({ startMode: 'execute' });
+      insertTask.run('task-started', started, waitConfig('startMode'), 'run-started', 'nr-started');
+      const execute = JSON.stringify({ _config: { startMode: 'execute' } });
+      insertTask.run('task-plain', null, execute, 'run-other', 'nr-other');
+      const history = JSON.stringify({ _config: { startMode: 'wait', model: 'm1' } });
+      insertTask.run('task-history', null, history, null, null);
+      sqlite.exec("UPDATE tasks SET status = 'completed' WHERE id = 'task-history'");
+
+      const migration = readFileSync(join(drizzleDir, '0114_cancel_wait_mode_tasks.sql'), 'utf-8');
+      sqlite.exec(migration);
+      const changes = () => keyed<number>(sqlite, "SELECT 'n' AS k, total_changes() AS v").n;
+      const afterFirst = changes();
+      sqlite.exec(migration);
+      expect(changes()).toBe(afterFirst);
+
+      expect(keyed(sqlite, 'SELECT id AS k, status AS v FROM flow_runs')).toEqual({
+        'run-wait': 'cancelled',
+        'run-queued': 'cancelled',
+        'run-started': 'paused',
+        'run-other': 'paused',
+      });
+      expect(keyed(sqlite, 'SELECT id AS k, status AS v FROM node_runs')).toEqual({
+        'nr-start': 'completed',
+        'nr-wait': 'cancelled',
+        'nr-queued': 'cancelled',
+        'nr-started': 'awaiting_input',
+        'nr-other': 'awaiting_input',
+      });
+      expect(keyed(sqlite, 'SELECT id AS k, status AS v FROM tasks')).toEqual({
+        'task-wait': 'cancelled',
+        'task-queued': 'cancelled',
+        'task-unlinked': 'cancelled',
+        'task-started': 'pending',
+        'task-plain': 'pending',
+        'task-history': 'completed',
+      });
+      const contexts = keyed<string>(sqlite, 'SELECT id AS k, trigger_context AS v FROM tasks');
+      expect(JSON.parse(contexts['task-history'])).toEqual({ _config: { model: 'm1' } });
+      expect(JSON.parse(contexts['task-plain'])).toEqual({ _config: { startMode: 'execute' } });
+      expect(count(sqlite, "tasks WHERE trigger_context LIKE '%wait%'")).toBe(0);
+      expect(count(sqlite, "flow_runs WHERE status = 'cancelled' AND completed_at > 0")).toBe(2);
+      expect(count(sqlite, "tasks WHERE status = 'cancelled' AND completed_at > 0")).toBe(3);
+      const results = keyed<string>(sqlite, 'SELECT id AS k, result AS v FROM tasks');
+      expect(JSON.parse(results['task-wait'])).toEqual({ chatId: 'c1', cancelled: true });
+      expect(JSON.parse(results['task-started'])).toEqual({ startMode: 'execute' });
+      const claimable = (await getPendingTaskIds(db)).map((row) => row.id).sort();
+      expect(claimable).toEqual(['task-plain', 'task-started']);
+
+      const admissions = 'SELECT flow_run_id AS k, state AS v FROM flow_run_admissions';
+      expect(keyed(sqlite, admissions)).toEqual({
+        'run-wait': 'active',
+        'run-queued': 'cancelled',
+        'run-started': 'active',
+        'run-other': 'active',
+      });
+      expect(
+        count(sqlite, "flow_run_admissions WHERE state = 'cancelled' AND settled_at > 0"),
+      ).toBe(1);
+      // Startup admission recovery releases a cancelled run's slot and keeps a paused run's.
+      const tickets = keyed<number>(
+        sqlite,
+        'SELECT flow_run_id AS k, ticket AS v FROM flow_run_admissions',
+      );
+      expect(beginTerminalRelease(db, tickets['run-wait'])?.outcome).toBe('cancelled');
+      expect(beginTerminalRelease(db, tickets['run-other'])).toBeNull();
     } finally {
       sqlite.close();
     }

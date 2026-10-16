@@ -12,8 +12,6 @@ import {
 import { buildRetryContinuationPrompt, buildTaskPrompt } from './task-prompt';
 import { toTaskAccountType } from './execution-account';
 
-const WAIT_MODE_ERROR_REGEX = /must remain queued/i;
-
 describe('assertReuseWorktreeHasPath', () => {
   it('throws when reuseWorktree is true but worktreePath is null', () => {
     expect(() => assertReuseWorktreeHasPath(true, null)).toThrow(
@@ -175,51 +173,13 @@ describe('resolveTaskExecutionOptions', () => {
   it('falls back to trigger config when result has no valid startMode', () => {
     const taskWithJunkResult: DbTask = {
       ...baseTask,
-      result: { startMode: 'wait', chatId: 'c1' },
+      result: { startMode: 'nonsense', chatId: 'c1' },
       triggerContext: {
         _config: { startMode: 'plan' },
       },
     };
 
     expect(resolveTaskExecutionOptions(taskWithJunkResult).startMode).toBe('plan');
-  });
-
-  it('throws when wait-mode task reaches executor', () => {
-    const taskWithWaitMode: DbTask = {
-      ...baseTask,
-      triggerContext: {
-        source: 'shortcut',
-        sourceAccountId: 'acc-1',
-        sourceAccountName: 'Shortcut',
-        triggerRuleId: 'rule-1',
-        triggerRuleName: 'Rule',
-        eventType: 'story_assigned',
-        triggeredBy: {},
-        timestamp: new Date().toISOString(),
-        fullContent: {},
-        autoStart: false,
-        _config: {
-          startMode: 'wait',
-          model: 'sonnet',
-        },
-      },
-    };
-
-    expect(() => resolveTaskExecutionOptions(taskWithWaitMode)).toThrow(WAIT_MODE_ERROR_REGEX);
-  });
-
-  it('runs a wait-mode task that was explicitly started with a mode', () => {
-    const started: DbTask = {
-      ...baseTask,
-      result: { startMode: 'execute' },
-      triggerContext: { _config: { startMode: 'wait', model: 'sonnet' } },
-    };
-
-    expect(resolveTaskExecutionOptions(started)).toEqual({
-      startMode: 'execute',
-      skipReview: true,
-      configuredModel: 'sonnet',
-    });
   });
 });
 

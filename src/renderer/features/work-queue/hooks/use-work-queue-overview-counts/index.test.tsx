@@ -31,16 +31,16 @@ describe('useWorkQueueOverviewCounts', () => {
 
   it('uses the visible admissions as the queued count', () => {
     overviewUseQueryMock.mockReturnValue({
-      data: { inbox: 3, queued: 12, review: 9, running: 4 },
+      data: { queued: 12, review: 9, running: 4 },
       isLoading: false,
     });
     admissionsUseQueryMock.mockReturnValue({ data: [{ ticket: 1 }], isLoading: false });
 
     const { result } = renderHook(() =>
-      useWorkQueueOverviewCounts({ inbox: 0, queued: 0, review: 1, running: 0 }),
+      useWorkQueueOverviewCounts({ queued: 0, review: 1, running: 0 }),
     );
 
-    expect(result.current).toEqual({ inbox: 3, queued: 1, review: 9, running: 4 });
+    expect(result.current).toEqual({ queued: 1, review: 9, running: 4 });
     expect(overviewUseQueryMock).toHaveBeenCalledWith(undefined, {
       refetchInterval: 5000,
       structuralSharing: true,
@@ -57,10 +57,10 @@ describe('useWorkQueueOverviewCounts', () => {
     admissionsUseQueryMock.mockReturnValue({ data: undefined, isLoading: true });
 
     const { result } = renderHook(() =>
-      useWorkQueueOverviewCounts({ inbox: 4, queued: 3, review: 2, running: 1 }),
+      useWorkQueueOverviewCounts({ queued: 3, review: 2, running: 1 }),
     );
 
-    expect(result.current).toEqual({ inbox: 4, queued: 3, review: 2, running: 1 });
+    expect(result.current).toEqual({ queued: 3, review: 2, running: 1 });
   });
 
   it('counts each run waiting on an approval as review work', () => {
@@ -71,7 +71,7 @@ describe('useWorkQueueOverviewCounts', () => {
     });
 
     const { result } = renderHook(() =>
-      useWorkQueueOverviewCounts({ inbox: 0, queued: 0, review: 1, running: 0 }),
+      useWorkQueueOverviewCounts({ queued: 0, review: 1, running: 0 }),
     );
 
     expect(result.current.review).toBe(3);

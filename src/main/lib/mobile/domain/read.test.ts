@@ -45,7 +45,7 @@ beforeEach(() => {
   fixture.db = db;
   fixture.pending.mockReturnValue([]);
   fixture.list.mockResolvedValue({ items: [], hasMore: false });
-  fixture.counts.mockResolvedValue({ review: 0, inbox: 0, running: 0, queued: 0 });
+  fixture.counts.mockResolvedValue({ review: 0, running: 0, queued: 0 });
   fixture.activity.mockReturnValue('idle');
   fixture.agents.mockResolvedValue({ running: 0, needsYou: 0 });
   fixture.questions.mockImplementation(async (chatId: string, subChatId: string) => [
@@ -167,7 +167,7 @@ describe('mobile chat list', () => {
 
 describe('mobile overview', () => {
   it('windows each section and reports server counts, more and item activity', async () => {
-    fixture.counts.mockResolvedValue({ review: 45, inbox: 2, running: 1, queued: 7 });
+    fixture.counts.mockResolvedValue({ review: 45, running: 1, queued: 7 });
     const task = {
       description: 'Review',
       result: null,
@@ -214,13 +214,12 @@ describe('mobile overview', () => {
     const result = await readMobileOverview({ limits: { attention: 50 } });
     expect(fixture.list.mock.calls.map(([input]) => input)).toEqual([
       { workQueueSection: 'attention', collapseByFlow: true, limit: 50 },
-      { workQueueSection: 'inbox', collapseByFlow: true, limit: 20 },
       { workQueueSection: 'running', collapseByFlow: true, limit: 20 },
     ]);
     expect(result).toMatchObject({
       appVersion: '9.9.9',
-      counts: { attention: 45, inbox: 2, running: 1 },
-      more: { attention: true, inbox: false, running: false },
+      counts: { attention: 45, running: 1 },
+      more: { attention: true, running: false },
       queue: [
         {
           id: 'done',

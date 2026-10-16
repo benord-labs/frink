@@ -1,6 +1,6 @@
 {
-  "generatedAt": "content-9a40af765b18",
-  "version": "content-9a40af765b18",
+  "generatedAt": "content-1775a109be03",
+  "version": "content-1775a109be03",
   "files": {
     "SKILL.md": {
       "sha256": "862a86c23fd6e128e3bcfef81f8b602bbb9ebed65d10640162efecbd5f83153b",
@@ -11,8 +11,8 @@
       "bytes": 6150
     },
     "references/blocks-actions.md": {
-      "sha256": "7d2b6a8be2b4e209e176544a5ec24863c567878d46874ff6945494c9055defcb",
-      "bytes": 7893
+      "sha256": "389bd2a72ac2d522011db233d42d7bac7bf0754590c1411fbaea1e00d9efa141",
+      "bytes": 7886
     },
     "references/blocks-logic.md": {
       "sha256": "019822f0d145fe708ff421093eb3e2a89952c4192c4abc506d399b36fb1cf08c",
@@ -27,8 +27,8 @@
       "bytes": 5982
     },
     "references/examples.md": {
-      "sha256": "662c87d3b90b9e239f1a5ee80f4dba1060dc401c5f9af3cdb3ec9c5b872c8916",
-      "bytes": 5618
+      "sha256": "b73f1c2b5403d447177ae3648c2cb079d63abe6832cb26d43286cf27d177841d",
+      "bytes": 5547
     },
     "references/inspecting-runs.md": {
       "sha256": "7bbf808807329f86dccaab83a7cc89cfab960be863ebb177fe98295b0016ad70",

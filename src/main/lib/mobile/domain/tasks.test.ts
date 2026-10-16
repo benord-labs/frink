@@ -1,4 +1,3 @@
-import { eq } from 'drizzle-orm';
 import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RESTART_INTERRUPTION_REASON } from '../../../../shared/types/flow';
@@ -14,7 +13,6 @@ const fixture = vi.hoisted(() => ({
   ready: vi.fn(),
   carryOn: vi.fn(),
   recover: vi.fn(async () => {}),
-  handleClaimed: vi.fn(async () => {}),
 }));
 vi.mock('./context', async () => ({
   MobileApiError: (await import('./errors')).MobileApiError,
@@ -23,7 +21,6 @@ vi.mock('./context', async () => ({
 }));
 vi.mock('../../db', () => ({ getDatabase: () => fixture.db }));
 vi.mock('../../flows/rerun', () => ({ carryOnFlowTask: fixture.carryOn }));
-vi.mock('../../task-executor', () => ({ handleClaimedTask: fixture.handleClaimed }));
 import { mobileTaskActions, runMobileTaskAction } from './tasks';
 
 let db: TestDb;
@@ -39,15 +36,11 @@ const task = (status: string, extra: Partial<Parameters<typeof mobileTaskActions
   status,
   flowRunId: null,
   result: null,
-  linkedChatId: null,
   ...extra,
 });
 
 describe('mobile task actions', () => {
   it('uses the desktop row menu gates', () => {
-    expect(mobileTaskActions(task('pending'))).toEqual(['startTask']);
-    expect(mobileTaskActions(task('pending', { linkedChatId: 'chat' }))).toEqual([]);
-    expect(mobileTaskActions(task('pending', { result: { chatId: 'chat' } }))).toEqual([]);
     expect(mobileTaskActions(task('failed'))).toEqual(['continueTask']);
     expect(mobileTaskActions(task('done'))).toEqual(['completeTask']);
     // A parked question waits for the user's answer, so only a usage-limit park can carry on.
@@ -59,7 +52,14 @@ describe('mobile task actions', () => {
     expect(
       mobileTaskActions(task('failed', { result: { dispatchErrorCode: 'MISSING_PAT' } })),
     ).toEqual([]);
-    for (const status of ['running', 'plan_ready', 'completed', 'cancelled', 'interrupted'])
+    for (const status of [
+      'pending',
+      'running',
+      'plan_ready',
+      'completed',
+      'cancelled',
+      'interrupted',
+    ])
       expect(mobileTaskActions(task(status))).toEqual([]);
     // A Flow's item starts through its run, and is accepted from the row.
     const flow = { flowRunId: 'run', result: { usageLimit: true } };
@@ -106,8 +106,9 @@ describe('mobile task actions', () => {
   it('accepts only the named requests with an id', () => {
     const pinned = { type: 'continueTask', id: 'task', kind: 'retry', recoveryNodeRunId: 'step' };
     expect(mobileRequestSchema.safeParse(pinned).success).toBe(true);
-    for (const type of ['completeTask', 'continueTask', 'startTask'])
+    for (const type of ['completeTask', 'continueTask'])
       expect(mobileRequestSchema.safeParse({ type, id: 'task' }).success).toBe(true);
+    expect(mobileRequestSchema.safeParse({ type: 'startTask', id: 'task' }).success).toBe(false);
     expect(mobileRequestSchema.safeParse({ type: 'completeTask', id: '' }).success).toBe(false);
     expect(mobileRequestSchema.safeParse({ type: 'retryTask', id: 'task' }).success).toBe(false);
     for (const kind of ['continue', 'retry']) {
@@ -134,9 +135,9 @@ describe('mobile task actions', () => {
     await expect(
       runMobileTaskAction({ type: 'completeTask', id: 'running' }),
     ).rejects.toMatchObject({ status: 409 });
-    await expect(runMobileTaskAction({ type: 'startTask', id: 'missing' })).rejects.toMatchObject({
-      status: 404,
-    });
+    await expect(
+      runMobileTaskAction({ type: 'completeTask', id: 'missing' }),
+    ).rejects.toMatchObject({ status: 404 });
     expect(fixture.complete).not.toHaveBeenCalled();
   });
 
@@ -198,37 +199,15 @@ describe('mobile task actions', () => {
     expect(fixture.recover).not.toHaveBeenCalled();
   });
 
-  it('starts a waiting task once, as an agent, through the task executor', async () => {
-    await seed('inbox', 'pending');
-    await runMobileTaskAction({ type: 'startTask', id: 'inbox' });
-    expect(fixture.handleClaimed).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'inbox', status: 'running', result: { startMode: 'execute' } }),
-    );
-    // The claim moved it out of pending, so a second tap is refused.
-    await expect(runMobileTaskAction({ type: 'startTask', id: 'inbox' })).rejects.toMatchObject({
-      status: 409,
-    });
-    expect(fixture.handleClaimed).toHaveBeenCalledTimes(1);
-  });
-
-  it('does not start a pending task that already has a chat', async () => {
-    await seed('linked', 'pending');
-    await db.insert(chats).values({ id: 'chat', taskId: 'linked' });
-    await expect(runMobileTaskAction({ type: 'startTask', id: 'linked' })).rejects.toMatchObject({
-      status: 409,
-    });
-    expect((await db.select().from(tasks).where(eq(tasks.id, 'linked')))[0].status).toBe('pending');
-  });
-
-  it('needs Frink open on the computer to carry on or start', async () => {
-    await seed('inbox', 'pending');
+  it('needs Frink open on the computer to carry on', async () => {
+    await seed('failed', 'failed');
     fixture.ready.mockImplementationOnce(() => {
       throw new Error('Open Frink on your computer to continue.');
     });
-    await expect(runMobileTaskAction({ type: 'startTask', id: 'inbox' })).rejects.toThrow(
+    await expect(runMobileTaskAction({ type: 'continueTask', id: 'failed' })).rejects.toThrow(
       'Open Frink',
     );
-    expect(fixture.handleClaimed).not.toHaveBeenCalled();
+    expect(fixture.carryOn).not.toHaveBeenCalled();
   });
 });
 

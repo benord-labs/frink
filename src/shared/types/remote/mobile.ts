@@ -17,6 +17,7 @@ export const mobileRequestSchema = z.discriminatedUnion('type', [
       .object({
         attention: listLimit.optional(),
         running: listLimit.optional(),
+        // Phones built while the Queue had an Inbox still send this; nothing is listed for it.
         inbox: listLimit.optional(),
       })
       .strict()
@@ -40,7 +41,6 @@ export const mobileRequestSchema = z.discriminatedUnion('type', [
     kind: recoveryKindSchema.optional(),
     recoveryNodeRunId: id.optional(),
   }),
-  z.object({ type: z.literal('startTask'), id }),
   z.object({
     type: z.literal('resumeNode'),
     runId: id,
@@ -162,9 +162,9 @@ export type MobileQueueItem = {
   /** The Flow step `continueTask` recovers through; the request pins it. */
   recoveryNodeRunId?: string;
 };
-export type MobileTaskAction = 'startTask' | 'continueTask' | 'completeTask';
+export type MobileTaskAction = 'continueTask' | 'completeTask';
 /** @public Read by the mobile app. */
-export type MobileQueueSection = 'attention' | 'inbox' | 'running';
+export type MobileQueueSection = 'attention' | 'running';
 /** Chats counted once each: needing the user wins over running. */
 export type MobileAgentCounts = { running: number; needsYou: number };
 export type MobileOverview = {
@@ -354,7 +354,6 @@ export type MobileResponses = {
   cancelRun: { ok: true };
   completeTask: { ok: true };
   continueTask: { ok: true };
-  startTask: { ok: true };
   resumeNode: { ok: true };
   chats: MobilePage<MobileChatSummary>;
   /** Most recently active first. */
