@@ -338,6 +338,34 @@ describe('buildChatTaskStatusMap — flow-run-authoritative badge', () => {
   });
 });
 
+describe('buildChatTaskStatusMap — finished Fan Out items', () => {
+  const pastItem = { linkedChatId: 'item', flowRunStatus: 'paused', chatLive: false } as const;
+
+  it('reads done once the loop has moved past the item, while the run continues', () => {
+    expect(buildChatTaskStatusMap([{ ...pastItem, status: 'done' }]).get('item')).toBe('done');
+  });
+
+  it('reads done when the finished item retried a failed attempt', () => {
+    const map = buildChatTaskStatusMap([
+      { ...pastItem, status: 'failed', effectiveStatus: 'running' },
+      { ...pastItem, status: 'done', effectiveStatus: 'running' },
+    ]);
+    expect(map.get('item')).toBe('done');
+  });
+
+  it('keeps a chat that still drives the run reading running', () => {
+    const map = buildChatTaskStatusMap([
+      { status: 'done', linkedChatId: 'home', flowRunStatus: 'paused', chatLive: true },
+    ]);
+    expect(map.get('home')).toBe('running');
+  });
+
+  it('lets a terminal run outcome still win', () => {
+    const map = buildChatTaskStatusMap([{ ...pastItem, status: 'done', flowRunStatus: 'failed' }]);
+    expect(map.get('item')).toBe('failed');
+  });
+});
+
 describe('buildChatReasonMap — park reason of the winning task per chat', () => {
   it('returns the agent summary for a parked task', () => {
     const map = buildChatReasonMap([
