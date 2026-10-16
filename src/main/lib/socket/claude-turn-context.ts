@@ -398,7 +398,7 @@ export async function emitInlinePlanCard(params: {
       });
     }
     log.info(
-      `[Socket Executor] Claude plan mode: emitted frink-plan inline at ExitPlanMode for ${subChatId} (planPath=${planPath})`,
+      `[Socket Executor] Claude plan mode: emitted frink-plan card for ${subChatId} (planPath=${planPath})`,
     );
     return messageIndex;
   } catch (err) {

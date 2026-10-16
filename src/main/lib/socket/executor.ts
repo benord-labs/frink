@@ -99,6 +99,7 @@ import { armWakePump, hasWakeHold, releaseWakeHold, takeWakeHold } from './claud
 import {
   type MessagePart,
   sendExecuteCompleteDirect,
+  sendMessage,
   sendSubChatModeChange,
   sendWakeHoldChanged,
 } from './client';
@@ -1472,6 +1473,7 @@ export async function handleRemoteExecute(
             planFilePath = planWritePathFromInput(c.input, projectPath, subChatId) ?? planFilePath;
           }
           let planEmittedPostStream = false;
+          const submitted = turn.submittedPlan;
           const emitFromPlanFile = async (path: string, planText?: string): Promise<boolean> => {
             const advancedIndex = await emitInlinePlanCard({
               chatId,
@@ -1482,15 +1484,14 @@ export async function handleRemoteExecute(
               collectedChunks,
               messageIndex,
               flowDriven: isFlowDrivenExecution,
-              autoApproved: flowPlanAutoApprove,
+              autoApproved: flowPlanAutoApprove && (planCompletedByExitPlanMode || !!submitted),
               send: sendRunStreamChunkDirect,
             });
             if (advancedIndex === null) return false;
             messageIndex = advancedIndex;
-            flipToAgentModeForAutoApprove();
+            if (planCompletedByExitPlanMode || submitted) flipToAgentModeForAutoApprove();
             return true;
           };
-          const submitted = turn.submittedPlan;
           if (submitted)
             planEmittedPostStream = await emitFromPlanFile(submitted.path, submitted.text);
           for (const path of submitted ? [] : new Set([planFilePath, lastPlanFilePathInStream])) {
@@ -1653,7 +1654,8 @@ export async function handleRemoteExecute(
             chatId,
             subChatId,
             flowDriven: isFlowDrivenExecution,
-            planAutoApprove: flowPlanAutoApprove,
+            planAutoApproval:
+              flowPlanAutoApprove && mode === 'plan' ? { projectId, settings, signalTaskId } : null,
             nextMessageIndex: turn.nextMessageIndex,
             buildFinalParts: (chunks) => buildFinalPartsForPersist(mode, chunks),
             // Injected, not imported there: see the wake-hold-io module doc (import cycle).
@@ -1662,6 +1664,7 @@ export async function handleRemoteExecute(
               sendExecuteCompleteDirect: sendRunExecuteCompleteDirect,
               sendStreamSettledDirect: sendRunStreamSettledDirect,
               sendWakeHoldChanged,
+              sendMessage,
             },
             clearPendingApprovals,
             getLatestTaskSignal: chatServer.getLatestTaskSignal,

@@ -295,6 +295,7 @@ vi.mock('./client', () => ({
   sendStreamSettledDirect: vi.fn(),
   sendStreamChunkDirect: vi.fn(),
   sendSubChatModeChange: vi.fn(),
+  sendMessage: vi.fn(),
   sendWakeHoldChanged: vi.fn(),
 }));
 

@@ -1179,6 +1179,28 @@ Done.
       expect(fs.promises.readFile).toHaveBeenCalledWith(`${sessionPlansDir}/plan.md`, 'utf8');
     });
 
+    it('cards an auto-approve draft that was never submitted without approving it or leaving plan mode', async () => {
+      const { getFlowDriveInfoForSubChat } = await import('../db/repos/tasks');
+      // SAFETY: flow-signal arming reads only these three fields of the drive info.
+      vi.mocked(getFlowDriveInfoForSubChat).mockResolvedValueOnce({
+        active: true,
+        autoApprovePlan: true,
+        taskId: 'flow-task-draft-1',
+      } as never);
+      vi.spyOn(fs.promises, 'readFile').mockResolvedValue(validPlanContent);
+      queueTurn([writePlanChunk('write-draft-1')]);
+
+      await handleRemoteExecute({ ...basePayload, message: 'carry on' });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const card = (await finalPartsOfLastComplete()).find(
+        (part) => part.type === 'tool-frink-plan',
+      );
+      expect(card?.input).toMatchObject({ status: 'awaiting_approval' });
+      const { sendSubChatModeChange } = await import('./client');
+      expect(vi.mocked(sendSubChatModeChange)).not.toHaveBeenCalled();
+    });
+
     it('renders the plan file the CLI names and never scans the dir, even with a newer decoy', async () => {
       mockPlansDir({ 'newer-decoy.md': 9000 });
       vi.spyOn(fs.promises, 'readFile').mockResolvedValue(validPlanContent);

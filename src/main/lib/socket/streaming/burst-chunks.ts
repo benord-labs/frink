@@ -78,12 +78,8 @@ export function burstPlanSubmissionAttempt(
  * ExitPlanMode), so this needs none of the foreground stream's plan bookkeeping — see decision
  * `flow-quiet-wait-handling`.
  *
- * Emits at most one card per wait, for a plan belonging to that wait:
- * - `planAlreadySubmitted` — the halt denies a re-attempted ExitPlanMode, which lands back here.
- * - `waitStartedMs` — the session plans dir outlives the turn that wrote it, so an attempt that
- *   produced no plan of its own would otherwise resolve a previous turn's.
- * - `planAutoApprove` — no human approver exists, and its Auto grant must be armed in the
- *   foreground (sc-2340).
+ * One card per wait (`planAlreadySubmitted`), for a plan written during it (`waitStartedMs`). An
+ * auto-approve node's card is approved and its text returned for the caller's approval turn.
  *
  * `onSubmitted` raises the halt, so it fires only once a card actually reached the transcript.
  */
@@ -103,32 +99,37 @@ export async function emitBurstPlanCard(params: {
   nextMessageIndex: () => number;
   streamChunk: (msgId: string, chunk: UIMessageChunk, parts: MessagePart[], index: number) => void;
   onSubmitted: () => void;
-}): Promise<void> {
+}): Promise<string | null> {
   const { chatId, subChatId, msgId, chunks, nextMessageIndex, streamChunk } = params;
-  if (params.planAutoApprove || params.planAlreadySubmitted) return;
+  if (params.planAlreadySubmitted) return null;
   if (!burstPlanSubmissionAttempt(chunks, params.startIndex, params.deniedToolIdsWithMessages)) {
-    return;
+    return null;
   }
   const planPath = await resolveLatestSessionPlanFile(subChatId);
   if (!planPath || !(await isPlanFromThisWait(planPath, params.waitStartedMs))) {
     log.warn(`[Socket Executor] Wake burst submitted no plan of its own for ${subChatId}`);
-    return;
+    return null;
   }
+  // One read feeds the card and the approval: what is approved is exactly what was carded.
+  const planText = (await fs.promises.readFile(planPath, 'utf8').catch(() => '')).trim();
   const emitted = await emitInlinePlanCard({
     chatId,
     subChatId,
     assistantMessageId: msgId,
     planPath,
+    planText,
     collectedChunks: chunks,
     // The burst owns the stream index: emitInlinePlanCard advances a LOCAL counter, and the
     // renderer drops any chunk at or below its per-message high-water mark, so replaying that
     // counter here would silently discard the card. Its return value is ignored for the same reason.
     messageIndex: 0,
     flowDriven: params.flowDriven,
-    autoApproved: false,
+    autoApproved: params.planAutoApprove,
     send: ({ chunk, parts }) => streamChunk(msgId, chunk, parts, nextMessageIndex()),
   });
-  if (emitted !== null) params.onSubmitted();
+  if (emitted === null) return null;
+  params.onSubmitted();
+  return params.planAutoApprove ? planText : null;
 }
 
 /** Whether `planPath` was written during this wait rather than carried over from an earlier turn.
