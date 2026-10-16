@@ -175,6 +175,26 @@ describe('resolveAcpLaunch for OpenCode', { timeout: 15_000 }, () => {
     expect(script).toContain('unset OPENCODE_CONFIG_CONTENT');
   });
 
+  it.each([
+    ['darwin', 'zsh'],
+    ['linux', 'bash'],
+  ])(
+    'runs a fish user’s commands on %s in %s, the shell OpenCode picks',
+    async (platform, shell) => {
+      const fish = path.join(bin, 'fish');
+      await writeFile(fish, '#!/bin/sh\n', { mode: 0o755 });
+      const real = process.platform;
+      Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+      try {
+        const gate = configOf(await launched({ SHELL: fish })).shell;
+        expect(path.basename(gate)).toBe(shell);
+        expect(await readFile(gate, 'utf8')).toMatch(new RegExp(`exec '/\\S*/${shell}' -c "\\$2"`));
+      } finally {
+        Object.defineProperty(process, 'platform', { value: real, configurable: true });
+      }
+    },
+  );
+
   it('follows the project instructions, then the user’s own, as OpenCode would', async () => {
     const other = path.join(root, 'config root');
     await mkdir(other);
