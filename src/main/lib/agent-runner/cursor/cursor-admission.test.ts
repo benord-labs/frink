@@ -280,9 +280,7 @@ async function expectHeld(t: Turn, f: Fixture) {
     }
     // The gate's rule: no working folder, or an absolute one inside the project.
     const dir: unknown = call.name === 'shell' ? Object(call.args).workingDirectory : undefined;
-    const inside =
-      typeof dir === 'string' && path.isAbsolute(dir) && isPathWithinProject(dir, f.project);
-    const ok = dir === undefined || dir === '' || inside;
+    const ok = dir === undefined || dir === '' || inProject(String(dir), f.project);
     expect(ok, `shell.workingDirectory ${String(dir)}`).toBe(true);
   }
 }
@@ -304,6 +302,10 @@ const bashWith = (question: CodexApprovalRequest, text: string) =>
   question.toolName === 'Bash' && String(question.input.command).includes(text);
 const askedBash = (t: Turn, text: string) => t.asked.some((question) => bashWith(question, text));
 
+/** Whether a path the model sent is absolute and inside the project. */
+const inProject = (text: string, project: string) =>
+  path.isAbsolute(text) && isPathWithinProject(text, project);
+
 /** Whether a shell question is exactly the planted command, so a longer one is never allowed. */
 const isPlanted = (question: CodexApprovalRequest, command: string) =>
   question.toolName === 'Bash' && String(question.input.command).trim() === command;
@@ -316,7 +318,7 @@ const plantedOnly =
     const ok =
       question.toolName === 'Bash'
         ? commands.some((command) => isPlanted(question, command))
-        : typeof file === 'string' && path.isAbsolute(file) && isPathWithinProject(file, f.project);
+        : inProject(String(file), f.project);
     return ok ? { allowed: true } : { allowed: false, message: 'No' };
   };
 
