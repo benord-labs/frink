@@ -1,4 +1,4 @@
-import { access, constants, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { app, shell } from 'electron';
@@ -6,7 +6,7 @@ import log from 'electron-log';
 import { z } from 'zod';
 import { resolveElectronResourcePath } from '../../platform/electron-resource-path';
 import { userEnv } from '../acp/agents/launch';
-import { cursorHostEnv, userDirsOf } from './cursor-home';
+import { cursorHostEnv, findCurl, NEEDS_CURL, runnable, userDirsOf } from './cursor-home';
 import { saveCursorModels } from './cursor-models';
 import {
   type CursorHostMessage,
@@ -27,6 +27,7 @@ export type CursorLaunchDeps = {
   sdkRoot?: string;
   forkHost?: ForkHost;
   openExternal?: (url: string) => Promise<void>;
+  curlDirs?: string[];
 };
 type SdkCheck = { ok: true; entry: string; ripgrep: string } | { ok: false; reason: string };
 export type CursorAgentCheck =
@@ -69,12 +70,6 @@ const readVersion = (root: string) =>
   readFile(path.join(root, 'package.json'), 'utf8')
     .then((text) => packageSchema.parse(JSON.parse(text)).version)
     .catch(() => undefined);
-
-const runnable = (file: string) =>
-  access(file, constants.X_OK).then(
-    () => true,
-    () => false,
-  );
 
 /** Cursor's ripgrep, in the platform package the SDK itself finds: the nearest one above it. */
 async function findRipgrep(sdkRoot: string): Promise<string | undefined> {
@@ -196,6 +191,7 @@ async function realHomeHost(
 export async function findCursorAgent(deps: CursorLaunchDeps = {}): Promise<CursorAgentCheck> {
   const host = await realHomeHost(deps);
   if (!host.ok) return { status: 'missing', reason: host.reason };
+  if (!(await findCurl(deps.curlDirs))) return { status: 'missing', reason: NEEDS_CURL };
   const give = { failure: CHECKED_NOT, ms: CHECK_MS, what: 'Could not check Cursor' };
   return talkToHost(deps.forkHost ?? forkUtilityHost, host.input, give, (message, talk) => {
     if (turnedDown(message)) talk.settle({ status: 'signed-out', reason: SIGNED_OUT });

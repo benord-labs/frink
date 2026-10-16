@@ -24,6 +24,8 @@ type Prepared = Awaited<ReturnType<typeof prepareCursorHome>>;
 
 const FOLDER_REFUSED = "Frink can't start Cursor from this folder.";
 const NOT_READY = "Frink couldn't prepare Cursor's safety check, so it didn't start it.";
+const NEEDS_CURL =
+  "Cursor in Frink needs curl. Install curl with your system's software installer, then try again.";
 const DARWIN = process.platform === 'darwin';
 const REAL_BINARIES = ['/bin/bash', '/usr/bin/curl', ...(DARWIN ? ['/usr/bin/chflags'] : [])];
 const SHELLS = ['/bin/zsh', '/bin/bash'].filter((shell) => existsSync(shell));
@@ -193,6 +195,29 @@ describe('prepareCursorHome', () => {
     expect(await prepare({ gateDir: spaced })).toEqual({ ok: false, reason: FOLDER_REFUSED });
     const long = path.join(gateDir, 'x'.repeat(100), 'g.sock');
     expect(await prepare({ socketPath: long })).toEqual({ ok: false, reason: FOLDER_REFUSED });
+    expect(recorder.calls).toEqual([]);
+  });
+
+  it('runs the first curl found in the system folders, never one from PATH', async () => {
+    const [none, notRunnable, found] = ['none', 'not runnable', 'found'].map((name) =>
+      path.join(root, name),
+    );
+    await mkdir(notRunnable);
+    await mkdir(found);
+    await writeFile(path.join(notRunnable, 'curl'), '', { mode: 0o600 });
+    await writeFile(path.join(found, 'curl'), '', { mode: 0o700 });
+    const curlDirs = [none, notRunnable, found];
+    expect(await prepare({}, { lock: recorder.lock, curlDirs })).toMatchObject({ ok: true });
+    const wrapper = await readFile(path.join(gateDir, 'gate'), 'utf8');
+    expect(wrapper).toContain(`\nexec ${path.join(found, 'curl')} -q -s --fail --unix-socket `);
+  });
+
+  it('asks for curl, and starts nothing, when no system folder has it', async () => {
+    const curlDirs = [path.join(root, 'none')];
+    expect(await prepare({}, { lock: recorder.lock, curlDirs })).toEqual({
+      ok: false,
+      reason: NEEDS_CURL,
+    });
     expect(recorder.calls).toEqual([]);
   });
 

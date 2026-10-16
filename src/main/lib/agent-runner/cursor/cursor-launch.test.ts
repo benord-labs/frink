@@ -52,6 +52,8 @@ const MISSING =
   'Part of Cursor is missing from this copy of Frink. Reinstall Frink, then try again.';
 const MISMATCHED =
   'This copy of Frink has the wrong version of Cursor. Reinstall Frink, then try again.';
+const NEEDS_CURL =
+  "Cursor in Frink needs curl. Install curl with your system's software installer, then try again.";
 
 let root = '';
 let sdkRoot = '';
@@ -271,6 +273,20 @@ describe('findCursorAgent', () => {
     expect(
       await findCursorAgent({ ...deps({}, { sdkRoot: path.join(root, 'none') }), forkHost }),
     ).toEqual({ status: 'missing', reason: MISSING });
+    expect(forks).toBe(0);
+  });
+
+  it('asks for curl without starting anything when no system folder has it', async () => {
+    let forks = 0;
+    const forkHost: ForkHost = (input, events) => {
+      forks += 1;
+      return nodeForkHost(input, events);
+    };
+    const curlDirs = [path.join(root, 'no curl')];
+    expect(await findCursorAgent({ ...deps(), forkHost, curlDirs })).toEqual({
+      status: 'missing',
+      reason: NEEDS_CURL,
+    });
     expect(forks).toBe(0);
   });
 });
