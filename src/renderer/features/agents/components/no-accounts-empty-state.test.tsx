@@ -94,10 +94,10 @@ describe('NoAccountsEmptyState', () => {
       );
     });
 
-    it('on Linux offers every provider but Cursor, which runs on macOS only', () => {
+    it('on Linux offers every provider, as on macOS', () => {
       onPlatform('linux');
       renderEmptyState();
-      expect(connectNames()).toEqual(['Claude', 'OpenAI', 'OpenCode', 'GitHub Copilot']);
+      expect(connectNames()).toEqual(ALL);
     });
 
     it('on Windows replaces every sign-in with an API key button and says why', () => {
@@ -161,7 +161,7 @@ describe('NoAccountsEmptyState', () => {
       );
     });
 
-    it('on Linux connects OpenCode and GitHub Copilot from More, without Cursor', async () => {
+    it('on Linux connects OpenCode, GitHub Copilot and Cursor from More', async () => {
       onPlatform('linux');
       renderEmptyState({ compact: true });
       expect(connectNames()).toEqual(['Claude', 'OpenAI']);
@@ -169,6 +169,7 @@ describe('NoAccountsEmptyState', () => {
       expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
         'Connect OpenCodePreview',
         'Connect GitHub CopilotPreview',
+        'Connect CursorPreview',
       ]);
     });
 
