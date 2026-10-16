@@ -99,7 +99,11 @@ const stdioSpawnSpecSchema = z.object({
  * `claude-tools-cache.ts`. Token rotation is handled by an explicit
  * invalidate call in `saveTokensToClaudeJson` (`mcp-auth.ts`).
  */
-async function probeServerTools(name: string, serverConfig: McpServerConfig): Promise<string[]> {
+async function probeServerTools(
+  name: string,
+  projectPath: string | null,
+  serverConfig: McpServerConfig,
+): Promise<string[]> {
   try {
     // HTTP transport
     if (serverConfig.url) {
@@ -109,7 +113,8 @@ async function probeServerTools(name: string, serverConfig: McpServerConfig): Pr
     // Stdio transport
     const spec = stdioSpawnSpecSchema.safeParse(serverConfig);
     if (!spec.success) return [];
-    return toolNames(await fetchMcpToolDescriptorsStdio(spec.data, name));
+    const cwd = projectPath ?? undefined;
+    return toolNames(await fetchMcpToolDescriptorsStdio({ ...spec.data, cwd }, name));
   } catch {
     return [];
   }
@@ -136,7 +141,7 @@ async function fetchToolsForServer(
   const inFlight = probingTools.get(probeKey);
   if (inFlight) return inFlight;
 
-  const probe = probeServerTools(name, serverConfig)
+  const probe = probeServerTools(name, projectPath, serverConfig)
     .then((tools) => {
       writeClaudeToolsCache(cacheKey, tools, fingerprint);
       return tools;
