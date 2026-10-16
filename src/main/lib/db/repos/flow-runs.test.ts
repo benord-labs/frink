@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { FlowGraph } from '../../../../shared/lib/validate-flow-graph';
 import { chats, flowRunAdmissions, flowRuns, nodeRuns } from '../schema';
@@ -1575,6 +1575,23 @@ describe('batch ↔ chat linkage (sidebar grouping)', () => {
 
     it('groups the home chat and every item chat under the run', async () => {
       const { runId, chatIds } = await seedFanOutRun(null);
+
+      const map = await getBatchIdByChatId(db);
+
+      expect(chatIds.map((id) => map.get(id))).toEqual([runId, runId, runId]);
+      expect((await listChatsByBatch(db, runId)).map((r) => r.id)).toEqual(chatIds);
+    });
+
+    it('still groups the run when one of its steps saved malformed output', async () => {
+      const { runId, chatIds } = await seedFanOutRun(null);
+      const broken = await seedCompletedNodeRun(db, {
+        flowRunId: runId,
+        nodeId: 'x',
+        blockType: 'agent',
+      });
+      db.run(
+        sql`UPDATE ${nodeRuns} SET node_output = '{broken' WHERE ${eq(nodeRuns.id, broken.id)}`,
+      );
 
       const map = await getBatchIdByChatId(db);
 
