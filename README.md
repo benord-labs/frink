@@ -130,12 +130,12 @@ Bring your own subscription or API key — Frink runs the agent, you keep the ac
 ## Install
 
 - **[Download from frink.dev](https://frink.dev/download)**
-- Or grab a build directly: [macOS Apple Silicon](https://pub-c942ee0fa0a549ef8d66096bd831507b.r2.dev/Frink-0.3.0-arm64.dmg) · [macOS Intel](https://pub-c942ee0fa0a549ef8d66096bd831507b.r2.dev/Frink-0.3.0.dmg)
+- Or grab a build directly: [macOS Apple Silicon](https://pub-c942ee0fa0a549ef8d66096bd831507b.r2.dev/Frink-0.4.0-arm64.dmg) · [macOS Intel](https://pub-c942ee0fa0a549ef8d66096bd831507b.r2.dev/Frink-0.4.0.dmg)
 - Or build from source — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ### Linux (x64 and arm64)
 
-Download the AppImage or the `.deb` from [frink.dev/download](https://frink.dev/download), or directly: x64 [AppImage](https://pub-c942ee0fa0a549ef8d66096bd831507b.r2.dev/Frink-0.3.0.AppImage) · [.deb](https://pub-c942ee0fa0a549ef8d66096bd831507b.r2.dev/frink_0.3.0_amd64.deb), arm64 [AppImage](https://pub-c942ee0fa0a549ef8d66096bd831507b.r2.dev/Frink-0.3.0-arm64.AppImage) · [.deb](https://pub-c942ee0fa0a549ef8d66096bd831507b.r2.dev/frink_0.3.0_arm64.deb). Both update themselves.
+Download the AppImage or the `.deb` from [frink.dev/download](https://frink.dev/download), or directly: x64 [AppImage](https://pub-c942ee0fa0a549ef8d66096bd831507b.r2.dev/Frink-0.4.0.AppImage) · [.deb](https://pub-c942ee0fa0a549ef8d66096bd831507b.r2.dev/frink_0.4.0_amd64.deb), arm64 [AppImage](https://pub-c942ee0fa0a549ef8d66096bd831507b.r2.dev/Frink-0.4.0-arm64.AppImage) · [.deb](https://pub-c942ee0fa0a549ef8d66096bd831507b.r2.dev/frink_0.4.0_arm64.deb). Both update themselves.
 
 - **AppImage** (any distro): `chmod +x Frink-X.Y.Z.AppImage && ./Frink-X.Y.Z.AppImage`, with `X.Y.Z` the version you downloaded. It does not need libfuse2: it mounts itself with `fusermount3` from the `fuse3` package. If it will not start, install `fuse3` or start it with `--appimage-extract-and-run`. Keep it in a folder you can write to, such as `~/Applications`, so updates can replace it.
 - **.deb** (Debian/Ubuntu): `sudo apt install ./frink_X.Y.Z_amd64.deb` (`_arm64.deb` on arm64). Updates ask for your password in a system prompt.
