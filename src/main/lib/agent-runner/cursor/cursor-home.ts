@@ -206,7 +206,7 @@ export async function prepareCursorHome(
   const hooksFile = path.join(cursorDir, 'hooks.json');
   const auth = path.join(cursorDir, 'sdk', 'auth.json');
   // `-q` must come first: curl then reads no .curlrc from any folder.
-  const wrapper = `#!/bin/sh\nexec ${curl} -q -s --fail --unix-socket ${shellQuote(socketPath)} -H 'content-type: application/json' --data-binary @- http://frink/hook\n`;
+  const wrapper = `#!/bin/sh\nexec ${shellQuote(curl)} -q -s --fail --unix-socket ${shellQuote(socketPath)} -H 'content-type: application/json' --data-binary @- http://frink/hook\n`;
   const shells = Object.entries(shellFiles(realHome, userDirs, gate)).map(
     ([name, text]): Written => [path.join(home, name), text, 0o600],
   );

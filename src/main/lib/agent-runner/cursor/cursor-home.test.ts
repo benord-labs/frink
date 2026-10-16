@@ -199,7 +199,8 @@ describe('prepareCursorHome', () => {
   });
 
   it('runs the first curl found in the system folders, never one from PATH', async () => {
-    const [none, notRunnable, found] = ['none', 'not runnable', 'found'].map((name) =>
+    // A space in the found folder proves the wrapper quotes the path it runs.
+    const [none, notRunnable, found] = ['none', 'not runnable', 'found curl'].map((name) =>
       path.join(root, name),
     );
     await mkdir(notRunnable);
@@ -209,7 +210,7 @@ describe('prepareCursorHome', () => {
     const curlDirs = [none, notRunnable, found];
     expect(await prepare({}, { lock: recorder.lock, curlDirs })).toMatchObject({ ok: true });
     const wrapper = await readFile(path.join(gateDir, 'gate'), 'utf8');
-    expect(wrapper).toContain(`\nexec ${path.join(found, 'curl')} -q -s --fail --unix-socket `);
+    expect(wrapper).toContain(`\nexec '${path.join(found, 'curl')}' -q -s --fail --unix-socket `);
   });
 
   it('asks for curl, and starts nothing, when no system folder has it', async () => {
