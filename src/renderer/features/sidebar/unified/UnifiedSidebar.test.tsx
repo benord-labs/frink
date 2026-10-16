@@ -12,6 +12,7 @@ import {
   setupHarness,
 } from './sidebar-test-harness';
 import { UnifiedSidebar } from './UnifiedSidebar';
+import type { SidebarBatchGroup } from '../../../../shared/types/flows/sidebar-batch-group';
 
 // Every mock delegates to the shared harness so this suite can be split across files.
 vi.mock('jotai', async (importOriginal) =>
@@ -538,20 +539,10 @@ describe('UnifiedSidebar move-chat parity', () => {
 });
 
 describe('UnifiedSidebar handleDeleteBatch', () => {
-  type SidebarBatchGroup = {
-    batch_id: string;
-    flow_name: string;
-    run_count: number;
-    completed_count: number;
-    failed_count: number;
-    running_count: number;
-    first_run_at: string | null;
-    last_activity_at: string | null;
-  };
-
   function makeBatchSummary(overrides: Partial<SidebarBatchGroup> = {}): SidebarBatchGroup {
     return {
       batch_id: 'batch-uuid-001',
+      kind: 'batch',
       flow_name: 'Test Flow',
       run_count: 5,
       completed_count: 5,
@@ -598,6 +589,15 @@ describe('UnifiedSidebar handleDeleteBatch', () => {
     );
     expect(asked).toContain('Delete all 1 chat from batch "Test Flow"?');
     expect(asked).toContain('1 running flow run will be stopped');
+  });
+
+  it('names the Fan Out run, not a batch, when deleting a run group', async () => {
+    hoisted.chatsListByBatchFetchMock.mockResolvedValueOnce([{ id: 'chat-1' }]);
+    const onDeleteBatch = getOnDeleteBatch();
+    const summary = makeBatchSummary({ kind: 'run', flow_name: 'List outreach', running_count: 1 });
+    const asked = await answerConfirm(() => onDeleteBatch('run-1', summary), 'cancel');
+    expect(asked).toContain('Delete all 1 chat from the "List outreach" run?');
+    expect(asked).toContain('The run will stop');
   });
 
   it('asks once for a batch with running runs, then deletes on confirm', async () => {

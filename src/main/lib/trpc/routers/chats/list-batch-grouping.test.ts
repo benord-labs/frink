@@ -57,8 +57,10 @@ describe('sidebar batch grouping — end-to-end casing/wiring contract', () => {
   });
 
   it('listBatchGroups (snake batch_id) and listByFolder (camel batchId) agree on the key', async () => {
-    const groups = await caller().listBatchGroups();
     const folder = await caller().listByFolder({ projectIds: null, limit: 30 });
+    const groups = await caller().listBatchGroups({
+      groupIds: folder.chats.flatMap((c) => c.batchId ?? []),
+    });
 
     // The group key the renderer reads must survive un-camelCased (publicProcedureRaw)...
     expect(groups).toHaveLength(1);
