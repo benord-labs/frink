@@ -169,6 +169,12 @@ describe('fetchMcpToolDescriptors / fetchMcpToolDescriptorsStdio', () => {
     expect(stdioTransportMock.mock.calls[0][0].cwd).toBe(os.tmpdir());
   });
 
+  it("spawns a project's stdio server in that project's folder", async () => {
+    listToolsMock.mockResolvedValue({ tools: [] });
+    await fetchMcpToolDescriptorsStdio({ command: 'node', args: ['./server.js'], cwd: '/proj/app' });
+    expect(stdioTransportMock.mock.calls[0][0].cwd).toBe('/proj/app');
+  });
+
   it('reports a server with zero tools as ok — an empty list is a success, not a failure', async () => {
     listToolsMock.mockResolvedValue({ tools: [] });
     expect(await fetchMcpToolDescriptors('https://mcp.example')).toEqual({ ok: true, tools: [] });

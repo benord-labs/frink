@@ -224,6 +224,8 @@ export type McpStdioServerSpec = {
   command: string;
   args?: string[];
   env?: Record<string, string>;
+  /** The owning project's folder, where its relative paths resolve; global servers omit it. */
+  cwd?: string;
 };
 
 /**
@@ -238,7 +240,7 @@ export function createStdioTransport(config: McpStdioServerSpec): StdioClientTra
     command: config.command,
     args: config.args,
     env: { ...safeEnv, ...config.env },
-    // Outside every project: a child listening on a port in a project folder reads as its dev server.
-    cwd: os.tmpdir(),
+    // Outside every project otherwise: a child listening in a project folder reads as its dev server.
+    cwd: config.cwd ?? os.tmpdir(),
   });
 }
