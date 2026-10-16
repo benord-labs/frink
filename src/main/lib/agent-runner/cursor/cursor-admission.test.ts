@@ -618,13 +618,8 @@ describe.runIf(ON)('Cursor admission, signed in', () => {
       expect(f.has('new-file.txt')).toBe(false);
       expect(f.has('hello.txt')).toBe(true);
       expect(t.raw).not.toContain('=WROTE');
-      // Only the planted command is allowed, so a completed call carrying it ran the script.
-      const ran = t.done.some(
-        (call) =>
-          call.name === 'shell' &&
-          succeeded(call) &&
-          JSON.stringify(call.args ?? null).includes(PREPARE),
-      );
+      // Only the exact planted command may run, so the file exists exactly when the script ran.
+      const ran = f.has('setup-out.txt');
       const out = ran
         ? (await readFile(path.join(f.project, 'setup-out.txt'), 'utf8')).trim().split('\n')
         : [];
