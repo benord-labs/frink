@@ -826,8 +826,10 @@ describe.runIf(BIN)('GitHub Copilot admission', () => {
       scripts.set(id, [bash(command, { mode }), bash('true')]);
       const result = await turn(id, { answer: async () => ALLOW, ...setup });
       expect(result.errors).toEqual(errors);
-      await delay(3000);
-      expect(running(/sleep \d+/.exec(command)?.[0] ?? command)).toBe(false);
+      // A command that ignores SIGTERM is killed after a grace period; slow runners need longer.
+      await expect
+        .poll(() => running(/sleep \d+/.exec(command)?.[0] ?? command), { timeout: 10_000 })
+        .toBe(false);
     },
     TURN_MS,
   );
