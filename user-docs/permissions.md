@@ -205,7 +205,7 @@ Two things worth knowing. First, if the provider's reviewer cannot run for a pla
 
 ## OpenCode
 
-OpenCode chats (macOS) use the same cards and the same rules as any other chat.
+OpenCode chats (macOS and Linux) use the same cards and the same rules as any other chat.
 
 - **OpenCode asks Frink before every command, file change, web fetch or web search**, and before it touches anything outside the chat's folder. Your rules decide; when none does, you get a card. A denial blocks that one action and OpenCode carries on.
 - **Reading and searching files in the chat's folder doesn't ask.** In a general chat that folder is your home folder. Opening a `.env` or `.env.something` file is refused by Frink's built-in deny list, with no card (`.env.example` opens freely). Opening another file whose name ends in `.env`, such as `prod.env`, asks first. A link with an ordinary name that points at a `.env` file isn't caught. Searching the folder doesn't ask, so a search can still show lines from a `.env` file.
@@ -216,7 +216,7 @@ OpenCode chats (macOS) use the same cards and the same rules as any other chat.
 
 ## GitHub Copilot
 
-GitHub Copilot chats (macOS) use the same cards and the same rules as any other chat.
+GitHub Copilot chats (macOS and Linux) use the same cards and the same rules as any other chat.
 
 - **Copilot asks Frink before every command, file change, web fetch or web search**, and before it reads anything outside the chat's folder. Your rules decide; when none does, you get a card. A denial blocks that one action and Copilot carries on. Helper agents that Copilot starts inside a chat ask the same way.
 - **Reading and searching files in the chat's folder doesn't ask.** In a general chat that folder is your home folder. Opening a `.env` or `.env.something` file is refused by Frink's built-in deny list, with no card (`.env.example` opens freely). Opening another file whose name ends in `.env`, such as `prod.env`, asks first. A link with an ordinary name that points at a `.env` file isn't caught. A search whose file filter can match a `.env` file, such as `*.env` or `.env*`, asks first too, but a filter where one `*` covers the whole of `.env`, such as `*.local` (which can match `.env.local`), isn't caught. Listing file names doesn't ask. A search with no filter, or with one that only leaves files out such as `!node_modules`, doesn't ask, so it can still show lines from a `.env` file.

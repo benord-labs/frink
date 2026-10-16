@@ -92,6 +92,17 @@ describe('agentAccounts', () => {
     });
   });
 
+  it.each([
+    ['opencode', ON, '1.19.4'],
+    ['copilot', COPILOT_ON, '1.0.97'],
+  ])('finds an installed %s on Linux too', async (type, flags, version) => {
+    env.FAKE_VERSION = version;
+    await expect(caller(flags, 'linux').detect({ type })).resolves.toEqual({
+      available: true,
+      version,
+    });
+  });
+
   it('connects one OpenCode per device, with no stored sign-in', async () => {
     await db.insert(schema.claudeCodeCredentials).values({ id: 'claude', isDefault: true });
 
@@ -152,7 +163,7 @@ describe('agentAccounts', () => {
     ['Claude, which has its own sign-in', ON, 'darwin', 'claude-code'],
     ['OpenAI, switched off', ON, 'darwin', 'codex'],
     ['GitHub Copilot, switched off', ON, 'darwin', 'copilot'],
-    ['GitHub Copilot, not checked on Linux', COPILOT_ON, 'linux', 'copilot'],
+    ['GitHub Copilot, not checked on Windows', COPILOT_ON, 'win32', 'copilot'],
     ['Cursor, switched off', ON, 'darwin', 'cursor'],
     ['Cursor, not checked on Linux', CURSOR_ON, 'linux', 'cursor'],
     ['unknown', ON, 'darwin', 'someday-agent'],
