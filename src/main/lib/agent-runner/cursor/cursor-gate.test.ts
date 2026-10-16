@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, open, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -279,6 +279,14 @@ describe('a search through links', () => {
     return dir;
   }
 
+  /** A stand-in for ripgrep that lists these files, relative to the searched folder. */
+  async function listing(name: string, files: string[]) {
+    const script = path.join(base, `${name} rg`);
+    await writeFile(script, `#!/bin/sh\nprintf '${files.map((file) => `${file}\\0`).join('')}'\n`);
+    await chmod(script, 0o755);
+    return script;
+  }
+
   it('asks nothing for a whole worktree whose outside links git ignores, unless a glob un-ignores them', async () => {
     // A worktree's .git file names its folder in the main repo, whose info/exclude applies.
     const gitDir = path.join(base, 'main repo', '.git');
@@ -399,10 +407,8 @@ describe('a search through links', () => {
 
   it('skips a listed file that is gone by the time its links are checked', async () => {
     const dir = await project('gone', {});
-    const listing = path.join(base, 'gone rg');
-    await writeFile(listing, "#!/bin/sh\nprintf 'gone.txt\\0in.txt\\0'\n");
-    await chmod(listing, 0o755);
-    const { asked, decide } = testGate(() => DENIED, dir, listing);
+    const ripgrep = await listing('gone', ['gone.txt', 'in.txt']);
+    const { asked, decide } = testGate(() => DENIED, dir, ripgrep);
     expect(await decide(pre('Grep', { pattern: 'MARK' }))).toEqual(ALLOW);
     expect(asked).toEqual([]);
   });
@@ -432,6 +438,38 @@ describe('a search through links', () => {
       expect(asked).toEqual([]);
     }
   }, 10_000);
+
+  it.runIf(process.platform === 'linux')('refuses a walk through a link into /proc', async () => {
+    const dir = await project('proc', {});
+    await symlink(`/proc/self/root${shared}`, path.join(dir, 'proc'));
+    const { asked, decide } = testGate(() => ALLOW_ALL, dir);
+    expect(await decide(pre('Grep', { pattern: 'MARK' }))).toEqual(deny(CANT_PATH));
+    expect(asked).toEqual([]);
+  });
+
+  it('refuses a walk through a /proc link that Frink itself resolves to nothing', async () => {
+    const dir = await project('cwd', {});
+    await symlink('/proc/self/cwd/..', path.join(dir, 'up'));
+    const ripgrep = await listing('cwd', ['up/sibling/secret.txt']);
+    const { asked, decide } = testGate(() => ALLOW_ALL, dir, ripgrep);
+    expect(await decide(pre('Grep', { pattern: 'MARK' }))).toEqual(deny(CANT_PATH));
+    expect(asked).toEqual([]);
+  });
+
+  it('refuses a walk into /dev/fd even when another link reaches a folder above it', async () => {
+    const dir = await project('fd', {});
+    await symlink('/dev/fd', path.join(dir, 'fds'));
+    await symlink(base, path.join(dir, 'above'));
+    const opened = await open(path.join(dir, 'in.txt'));
+    try {
+      const ripgrep = await listing('fd', [`fds/${opened.fd}`, 'above/shared/deep/note.txt']);
+      const { asked, decide } = testGate(() => ALLOW_ALL, dir, ripgrep);
+      expect(await decide(pre('Grep', { pattern: 'MARK' }))).toEqual(deny(CANT_PATH));
+      expect(asked).toEqual([]);
+    } finally {
+      await opened.close();
+    }
+  });
 });
 
 describe('the path rule', () => {
@@ -519,6 +557,29 @@ describe("Cursor's own files", () => {
     ]) {
       expect(await decide(pre('Write', { file_path: file, content: '' }))).toEqual(deny(CANT_PATH));
     }
+    expect(asked).toEqual([]);
+  });
+
+  // Each process reads these its own way, so Frink refuses them rather than judge them.
+  it('refuses every process-relative spelling of them', async () => {
+    const { asked, decide } = testGate(() => ALLOW_ALL);
+    const auth = path.join(realHome, '.cursor', 'sdk', 'auth.json');
+    await writeFile(auth, '{}');
+    const opened = await open(auth);
+    try {
+      for (const file of [
+        `/proc/self/root${auth}`,
+        `/proc/self/fd/${opened.fd}`,
+        `/dev/fd/${opened.fd}`,
+        `/DEV/fd/${opened.fd}`,
+      ]) {
+        expect(await decide(pre('Read', { file_path: file }))).toEqual(deny(CANT_PATH));
+      }
+    } finally {
+      await opened.close();
+    }
+    const zshenv = `/proc/self/root${path.join(home, '.zshenv')}`;
+    expect(await decide(pre('Write', { file_path: zshenv, content: '' }))).toEqual(deny(CANT_PATH));
     expect(asked).toEqual([]);
   });
 
