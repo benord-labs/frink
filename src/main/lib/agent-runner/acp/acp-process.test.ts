@@ -166,16 +166,16 @@ describe('startAcpAgentProcess', { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
     const agent = startAcpAgentProcess(
       launch(`
         import { spawn } from 'node:child_process';
-        const ignoresStop = "process.on('SIGTERM', () => {}); process.stderr.write(' ready'); setInterval(() => {}, 1000)";
-        const child = spawn(process.execPath, ['--eval', ignoresStop], { stdio: ['ignore', 'ignore', 'inherit'] });
-        process.stderr.write(String(child.pid));
+        // The child names itself in one write, so its output can't interleave with the agent's.
+        const ignoresStop = "process.on('SIGTERM', () => {}); process.stderr.write('ready ' + process.pid); setInterval(() => {}, 1000)";
+        spawn(process.execPath, ['--eval', ignoresStop], { stdio: ['ignore', 'ignore', 'inherit'] });
         process.exit(0);
       `),
     );
     await expect
       .poll(() => agent.describeExit(), SETTLE)
-      .toMatch(/^exited with code 0: \d+ ready$/);
-    const survivor = Number(agent.describeExit().match(/\d+(?= ready)/)?.[0]);
+      .toMatch(/^exited with code 0: ready \d+$/);
+    const survivor = Number(agent.describeExit().match(/(?<=ready )\d+/)?.[0]);
     expect(isAlive(survivor)).toBe(true);
 
     await agent.dispose();
