@@ -24,7 +24,7 @@ export type HomeLock = (on: boolean, paths: string[]) => Promise<void>;
 type Written = [file: string, text: string, mode: number];
 
 /** Cursor runs the hook as an unquoted shell command, so its path must need no quoting. */
-const PLAIN_PATH = /^[A-Za-z0-9._/-]+$/;
+export const PLAIN_PATH = /^[A-Za-z0-9._/-]+$/;
 /** macOS caps a socket path at 104 bytes, the closing NUL included. */
 const MAX_SOCKET_PATH_BYTES = 103;
 /** Folders the sweep keeps; every file is rewritten each turn. */
@@ -52,6 +52,24 @@ const XDG_HOMES = new Set(['XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME',
 const DROPPED_PREFIX = /^(_*CURSOR_|BASH_FUNC_)/;
 const FOLDER_REFUSED = "Frink can't start Cursor from this folder.";
 const NOT_READY = "Frink couldn't prepare Cursor's safety check, so it didn't start it.";
+/** Folders only the system can write to, never PATH, so no other program can stand in for curl. */
+const CURL_DIRS = ['/usr/bin', '/bin', '/run/current-system/sw/bin'];
+export const NEEDS_CURL =
+  "Cursor in Frink needs curl. Install curl with your system's software installer, then try again.";
+
+export const runnable = (file: string) =>
+  access(file, constants.X_OK).then(
+    () => true,
+    () => false,
+  );
+
+/** The curl the hook's wrapper runs, when the system has one. */
+export async function findCurl(dirs = CURL_DIRS) {
+  for (const curl of dirs.map((dir) => path.join(dir, 'curl'))) {
+    if (await runnable(curl)) return curl;
+  }
+  return undefined;
+}
 
 const chflagsLock: HomeLock = async (on, paths) => {
   await promisify(execFile)('/usr/bin/chflags', ['-h', on ? 'uchg' : 'nouchg', ...paths]);
@@ -174,19 +192,21 @@ async function readsBack(written: Written[], gate: string, auth: string, locked:
 /** Rebuilds the chat's private home with only Frink's hook, then locks what the hook depends on. */
 export async function prepareCursorHome(
   input: { home: string; realHome: string; userDirs: Env; gateDir: string; socketPath: string },
-  deps: { lock?: HomeLock } = {},
+  deps: { lock?: HomeLock; curlDirs?: string[] } = {},
 ): Promise<{ ok: true; unlock(): Promise<void> } | { ok: false; reason: string }> {
   const { home, realHome, userDirs, gateDir, socketPath } = input;
   if (!PLAIN_PATH.test(gateDir) || Buffer.byteLength(socketPath) > MAX_SOCKET_PATH_BYTES) {
     return { ok: false, reason: FOLDER_REFUSED };
   }
+  const curl = await findCurl(deps.curlDirs);
+  if (!curl) return { ok: false, reason: NEEDS_CURL };
   const lock = deps.lock ?? (process.platform === 'darwin' ? chflagsLock : modeLock);
   const cursorDir = path.join(home, '.cursor');
   const gate = path.join(gateDir, 'gate');
   const hooksFile = path.join(cursorDir, 'hooks.json');
   const auth = path.join(cursorDir, 'sdk', 'auth.json');
   // `-q` must come first: curl then reads no .curlrc from any folder.
-  const wrapper = `#!/bin/sh\nexec /usr/bin/curl -q -s --fail --unix-socket ${shellQuote(socketPath)} -H 'content-type: application/json' --data-binary @- http://frink/hook\n`;
+  const wrapper = `#!/bin/sh\nexec ${shellQuote(curl)} -q -s --fail --unix-socket ${shellQuote(socketPath)} -H 'content-type: application/json' --data-binary @- http://frink/hook\n`;
   const shells = Object.entries(shellFiles(realHome, userDirs, gate)).map(
     ([name, text]): Written => [path.join(home, name), text, 0o600],
   );

@@ -1,8 +1,10 @@
 import { chmod, lstat, stat } from 'node:fs/promises';
 import { request } from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { JsonValue } from '../../../../shared/types/permissions';
+import { gateParent } from './cursor-gate-socket';
 import { openGateSocket } from './index';
 
 type Gate = Awaited<ReturnType<typeof openGateSocket>>;
@@ -91,4 +93,31 @@ describe('openGateSocket', () => {
     await gate.close();
     await expect(lstat(gate.gateDir)).rejects.toMatchObject({ code: 'ENOENT' });
   });
+});
+
+describe('gateParent', () => {
+  const RUNTIME = '/run/user/1000';
+
+  it('on Linux, uses the per-user runtime folder, as some systems mount /tmp so nothing runs from it', () => {
+    expect(gateParent({ XDG_RUNTIME_DIR: RUNTIME }, 'linux')).toBe(RUNTIME);
+    for (const runtime of [undefined, '', 'run/user/1000', '/run/user/my folder']) {
+      expect(gateParent({ XDG_RUNTIME_DIR: runtime }, 'linux')).toBe(os.tmpdir());
+    }
+  });
+
+  it('on macOS, keeps the temp folder', () => {
+    expect(gateParent({ XDG_RUNTIME_DIR: RUNTIME }, 'darwin')).toBe(os.tmpdir());
+  });
+
+  it.runIf(process.platform === 'linux' && process.env.XDG_RUNTIME_DIR)(
+    'on this Linux machine, listens in the runtime folder',
+    async () => {
+      const gate = await openGateSocket(async () => ({ continue: true }));
+      try {
+        expect(path.dirname(gate.gateDir)).toBe(process.env.XDG_RUNTIME_DIR);
+      } finally {
+        await gate.close();
+      }
+    },
+  );
 });

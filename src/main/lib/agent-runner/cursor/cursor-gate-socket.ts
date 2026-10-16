@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type Server } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import type { JsonValue } from '../../../../shared/types/permissions';
+import { PLAIN_PATH } from './cursor-home';
 
 const MAX_BODY_BYTES = 1024 * 1024;
 // The gate gets the body as sent, so it can refuse keys a JSON parse would drop.
@@ -36,9 +37,16 @@ async function closeGate(server: Server, gateDir: string) {
   await rm(gateDir, { recursive: true, force: true });
 }
 
+/** On Linux, the user's own runtime folder, as some systems let nothing run from /tmp. */
+export function gateParent(env: NodeJS.ProcessEnv = process.env, platform = process.platform) {
+  const runtime = env.XDG_RUNTIME_DIR ?? '';
+  const usable = platform === 'linux' && path.isAbsolute(runtime) && PLAIN_PATH.test(runtime);
+  return usable ? runtime : os.tmpdir();
+}
+
 /** Listens for one turn's hook calls in a fresh private folder; unlock the folder before `close`. */
 export async function openGateSocket(answer: GateAnswer) {
-  const gateDir = await mkdtemp(path.join(os.tmpdir(), 'fcg-'));
+  const gateDir = await mkdtemp(path.join(gateParent(), 'fcg-'));
   const socketPath = path.join(gateDir, 'g.sock');
   const server = createServer((req, res) => {
     void reply(req, answer).then((body) => {
