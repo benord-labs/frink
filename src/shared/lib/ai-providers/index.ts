@@ -81,7 +81,7 @@ export const AI_PROVIDERS = {
     planMode: 'plan',
     installHint: 'Sign in to Cursor from Frink. Cursor needs a paid plan.',
     signInHint: 'Sign in to Cursor',
-    platforms: ['darwin'],
+    platforms: ['darwin', 'linux'],
   },
   grok: {
     runtime: 'acp',

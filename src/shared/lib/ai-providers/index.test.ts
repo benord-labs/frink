@@ -70,7 +70,7 @@ describe('AI provider table', () => {
     ]);
   });
 
-  it('ships OpenCode and GitHub Copilot on macOS and Linux, Cursor on macOS only, and Grok off', () => {
+  it('ships OpenCode, GitHub Copilot and Cursor on macOS and Linux, and Grok off', () => {
     expect(runtimeFor('opencode', undefined, 'darwin')).toBe('acp');
     expect(runtimeFor('opencode', undefined, 'linux')).toBe('acp');
     expect(runtimeFor('opencode', undefined, 'win32')).toBeUndefined();
@@ -78,7 +78,8 @@ describe('AI provider table', () => {
     expect(runtimeFor('copilot', undefined, 'linux')).toBe('copilot');
     expect(runtimeFor('copilot', undefined, 'win32')).toBeUndefined();
     expect(runtimeFor('cursor', undefined, 'darwin')).toBe('cursor');
-    expect(runtimeFor('cursor', undefined, 'linux')).toBeUndefined();
+    expect(runtimeFor('cursor', undefined, 'linux')).toBe('cursor');
+    expect(runtimeFor('cursor', undefined, 'win32')).toBeUndefined();
     expect(runtimeFor('grok', undefined, 'darwin')).toBeUndefined();
     expect(selectableProviderIds(undefined, 'darwin')).toEqual([
       'claude-code',
@@ -92,14 +93,15 @@ describe('AI provider table', () => {
       'codex',
       'opencode',
       'copilot',
+      'cursor',
     ]);
   });
 
   it('turns each installed agent on per operating system from its own row', () => {
     const openCodeOnLinux = { ...AI_PROVIDERS.opencode, platforms: ['darwin', 'linux'] };
     expect(agentRunnable(openCodeOnLinux, ALL_ON, 'linux')).toBe(true);
-    expect(agentRunnable(AI_PROVIDERS.cursor, ALL_ON, 'linux')).toBe(false);
-    expect(agentRunnable(AI_PROVIDERS.cursor, ALL_ON, 'darwin')).toBe(true);
+    expect(agentRunnable(AI_PROVIDERS.grok, ALL_ON, 'linux')).toBe(false);
+    expect(agentRunnable(AI_PROVIDERS.grok, ALL_ON, 'darwin')).toBe(true);
     expect(agentRunnable(openCodeOnLinux, {}, 'linux')).toBe(false);
     expect(agentRunnable(openCodeOnLinux, ALL_ON)).toBe(false);
   });
@@ -122,6 +124,7 @@ describe('AI provider table', () => {
     expect(runtimeFor('cursor', {}, 'darwin')).toBeUndefined();
     expect(runtimeFor('cursor', { cursorAccounts: true }, 'win32')).toBeUndefined();
     expect(runtimeFor('cursor', { cursorAccounts: true }, 'darwin')).toBe('cursor');
+    expect(runtimeFor('cursor', { cursorAccounts: true }, 'linux')).toBe('cursor');
   });
 
   it('never gates running Codex on its picker flag', () => {

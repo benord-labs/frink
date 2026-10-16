@@ -108,7 +108,7 @@ Every file the agent changes shows as a diff. Open it in the built-in editor, ch
 
 - **[Permissions](user-docs/permissions.md)** — every change and command passes a per-project gate first; `~/.ssh`, `~/.aws` and `.env` are blocked wherever Frink checks (the page lists what it doesn't cover yet).
 - **[Plugins & MCP](user-docs/mcp-servers.md)** — connect Linear, Shortcut, ClickUp, GitHub, Notion, Slack, Sentry, PostHog and more, as chat tools and Flow steps.
-- **[Your own AI sign-in](user-docs/ai-accounts.md)** — uses your existing Claude Code or Codex login, the OpenCode or GitHub Copilot you installed, or on macOS your Cursor sign-in. Frink never stores the token.
+- **[Your own AI sign-in](user-docs/ai-accounts.md)** — uses your existing Claude Code or Codex login, the OpenCode or GitHub Copilot you installed, or your Cursor sign-in. Frink never stores the token.
 - **Local-first** — chats, Flows, tasks and permissions live in SQLite on your machine. No account needed. Official builds send anonymous usage counts and crash reports: [everything Frink sends](user-docs/telemetry.md).
 
 ---

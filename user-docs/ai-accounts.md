@@ -1,6 +1,6 @@
 # AI accounts
 
-Frink runs your chats through Claude (Anthropic, via Claude Code), OpenAI (via Codex), OpenCode, GitHub Copilot or, on macOS, Cursor. If you're already signed into one in your terminal, that's all Frink needs — it uses the same sign-in, as you. This guide covers how to connect, what Frink stores, and why things behave the way they do.
+Frink runs your chats through Claude (Anthropic, via Claude Code), OpenAI (via Codex), OpenCode, GitHub Copilot or Cursor. If you're already signed into one in your terminal, that's all Frink needs — it uses the same sign-in, as you. This guide covers how to connect, what Frink stores, and why things behave the way they do.
 
 ## Connecting
 
@@ -62,7 +62,7 @@ What to know:
 - **macOS and Linux for now.** Windows isn't supported yet.
 - **On Linux, if Frink says Copilot isn't signed in after `copilot login`**, make sure your keyring (GNOME Keyring or KWallet) is unlocked, or set `COPILOT_GITHUB_TOKEN` in your shell profile, then try again.
 
-### Cursor (macOS)
+### Cursor (macOS and Linux)
 
 Cursor is the coding agent from the Cursor editor. Frink runs it with your own Cursor account, through Cursor's own toolkit, which comes with Frink, so there's nothing to install. **Cursor needs a paid Cursor plan to work in Frink.**
 
@@ -85,7 +85,8 @@ What to know:
 - **Plan mode uses Cursor's own plan mode.** The plan shows as Cursor's reply, not as a plan card.
 - **Not in Cursor chats yet:** Auto, Flows, MCP servers, Frink's own chat tools (such as building a Flow from a chat), adding to a running turn (a message you send waits for the turn to end; **Send now** stops the turn first) and Debug mode.
 - **Cursor chats use your Cursor plan, the same as in Cursor.** They aren't counted in the Usage tab.
-- **macOS only for now.** Linux and Windows aren't supported yet.
+- **macOS and Linux for now.** Windows isn't supported yet.
+- **On Linux, Cursor needs curl**, which Frink uses for Cursor's safety check. Most Linux systems already have it. If Frink says "Cursor in Frink needs curl", install curl with your system's software installer, then try again.
 
 ### API key
 
