@@ -1,6 +1,6 @@
 {
   "name": "frink",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "Fine-tuned automation for everyone: chat with your own coding agents and run them as Flows",
   "license": "MIT",
