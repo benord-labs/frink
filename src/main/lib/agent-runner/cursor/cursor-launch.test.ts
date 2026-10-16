@@ -25,7 +25,7 @@ import {
   CURSOR_RIPGREP,
   FAKE_CURSOR_MODELS,
   nodeForkHost,
-  recordingChflags,
+  recordingLock,
   writeFakeCursorSdk,
 } from './cursor-test-fixtures';
 import {
@@ -126,6 +126,7 @@ describe('resolveCursorLaunch', () => {
         home,
         storeDir: path.join(chatDir, 'store'),
         realHome,
+        userDirs: {},
         ripgrep,
         tools: CURSOR_TOOL_NAMES,
         hookVersions: ['1.0.0'],
@@ -410,7 +411,7 @@ describe('the Cursor host', () => {
       ...overrides,
     };
     const chunks = await collectChunks(
-      runCursorAgent(params, { forkHost, chflags: recordingChflags().chflags }),
+      runCursorAgent(params, { forkHost, lock: recordingLock().lock }),
     );
     await disposeAllCursorHosts();
     return { chunks, order, launch: params.launch, seen: JSON.parse(textOf(chunks) || '{}') };

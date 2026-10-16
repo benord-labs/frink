@@ -19,7 +19,7 @@ import {
 } from './cursor-events';
 import { createCursorGate } from './cursor-gate';
 import { openGateSocket } from './cursor-gate-socket';
-import { prepareCursorHome } from './cursor-home';
+import { type HomeLock, prepareCursorHome } from './cursor-home';
 import { saveCursorModels } from './cursor-models';
 
 /** How long the host gets to exit on its own before it is killed. */
@@ -89,6 +89,8 @@ type CursorLaunch = {
   home: string;
   storeDir: string;
   realHome: string;
+  /** The user's XDG folders the host env leaves out, given back to the agent's commands. */
+  userDirs: Record<string, string>;
   /** The ripgrep Cursor's search runs, so Frink's gate can ask it what a search walks. */
   ripgrep: string;
   tools: readonly string[];
@@ -111,7 +113,7 @@ export type CursorRunnerParams = {
 
 export type CursorRunnerDeps = {
   forkHost?: ForkHost;
-  chflags?: (flag: 'uchg' | 'nouchg', paths: string[]) => Promise<void>;
+  lock?: HomeLock;
 };
 
 export const forkUtilityHost: ForkHost = ({ hostPath, sdkEntry, env, cwd }, events) => {
@@ -192,10 +194,6 @@ class CursorTurn {
     });
   }
 
-  get isOver(): boolean {
-    return this.over.signal.aborted;
-  }
-
   readonly end = (): void => {
     this.over.abort();
     this.queue.finish();
@@ -203,7 +201,7 @@ class CursorTurn {
 
   /** Ends the turn with an error; safe to call again once it has ended. */
   halt(text: string): void {
-    if (this.isOver) return;
+    if (this.over.signal.aborted) return;
     log.warn(`[Cursor] Stopping the turn: ${text}`);
     // Tagged so the chat offers a button to Cursor's connect page.
     const signIn = text === SIGNED_OUT ? { debugInfo: { category: 'CURSOR_SIGNED_OUT' } } : {};
@@ -214,18 +212,18 @@ class CursorTurn {
   /** Opens the gate, prepares and locks the private home, then starts the host. */
   async begin(previous: Promise<void> | undefined): Promise<void> {
     await previous;
-    if (this.isOver) return;
+    if (this.over.signal.aborted) return;
     const { launch, cwd, resumeSessionId } = this.params;
     const folder = await readFile(folderNote(launch), 'utf8').catch(() => undefined);
     if (folder === cwd) this.resumeId = resumeSessionId;
     this.socket = await openGateSocket((body) => this.gate.answer(body));
     const prepared = await prepareCursorHome(
-      { home: launch.home, realHome: launch.realHome, ...this.socket },
-      { chflags: this.deps.chflags },
+      { home: launch.home, realHome: launch.realHome, userDirs: launch.userDirs, ...this.socket },
+      { lock: this.deps.lock },
     );
     if (!prepared.ok) return this.halt(prepared.reason);
     this.unlock = prepared.unlock;
-    if (this.isOver) return;
+    if (this.over.signal.aborted) return;
     const forkHost = this.deps.forkHost ?? forkUtilityHost;
     this.host = forkHost(
       { hostPath: launch.hostPath, sdkEntry: launch.sdkEntry, env: launch.env, cwd },
@@ -267,7 +265,7 @@ class CursorTurn {
   }
 
   private onMessage(message: CursorHostMessage): void {
-    if (this.isOver) return;
+    if (this.over.signal.aborted) return;
     switch (message.type) {
       case 'auth':
         return message.status === 'logged-in' ? this.start() : this.halt(SIGNED_OUT);

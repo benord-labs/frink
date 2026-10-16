@@ -62,7 +62,7 @@ function parseEnvOutput(output: string, delimiter: string): ShellEnv {
 }
 
 /** The shell every install of the platform has, whatever $SHELL says. */
-function stockShell(platformId: NodeJS.Platform): string {
+export function stockShell(platformId: NodeJS.Platform): string {
   return platformId === 'darwin' ? '/bin/zsh' : '/bin/bash';
 }
 

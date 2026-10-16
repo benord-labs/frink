@@ -1,37 +1,27 @@
 import { fork } from 'node:child_process';
-import { chmod, lstat, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { request } from 'node:http';
 import path from 'node:path';
 import { z } from 'zod';
 import type { JsonValue } from '../../../../shared/types/permissions';
 import type { CursorSdkMessage } from './cursor-events';
+import { type HomeLock, modeLock } from './cursor-home';
 import type { CursorHostMessage, CursorHostRequest, ForkHost } from './cursor-runner';
+import { cursorRipgrepIn } from './cursor-tools';
 
 /** The ripgrep Cursor's SDK ships for this computer, as the launch finds it beside the SDK. */
-export const CURSOR_RIPGREP = path.resolve(
-  'node_modules',
-  '@cursor',
-  `sdk-${process.platform}-${process.arch}`,
-  'bin',
-  'rg',
-);
+export const CURSOR_RIPGREP = cursorRipgrepIn(path.resolve());
 
-type Flag = 'uchg' | 'nouchg';
 type StartRequest = Extract<CursorHostRequest, { type: 'start' }>;
 
-/** Stands in for chflags: a lock removes write permission and an unlock restores it. */
-export function recordingChflags() {
-  const calls: Array<[Flag, string[]]> = [];
-  const chflags = async (flag: Flag, paths: string[]) => {
-    calls.push([flag, paths]);
-    for (const file of paths) {
-      const info = await lstat(file);
-      if (!info.isSymbolicLink()) {
-        await chmod(file, flag === 'uchg' ? info.mode & 0o555 : info.mode | 0o200);
-      }
-    }
+/** Records each lock and unlock, then applies the real write-bit lock. */
+export function recordingLock() {
+  const calls: Array<[on: boolean, paths: string[]]> = [];
+  const lock: HomeLock = async (on, paths) => {
+    calls.push([on, paths]);
+    await modeLock(on, paths);
   };
-  return { chflags, calls };
+  return { lock, calls };
 }
 
 const IDS = { agent_id: 'agent-1', run_id: 'run-1' };
