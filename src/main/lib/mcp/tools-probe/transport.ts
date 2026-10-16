@@ -4,6 +4,7 @@
  * stdio), typed failure classification, and one connect-operate-close
  * lifecycle under per-step timeout budgets.
  */
+import os from 'node:os';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { captureMainMessage } from '../../sentry/init';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -237,5 +238,7 @@ export function createStdioTransport(config: McpStdioServerSpec): StdioClientTra
     command: config.command,
     args: config.args,
     env: { ...safeEnv, ...config.env },
+    // Outside every project: a child listening on a port in a project folder reads as its dev server.
+    cwd: os.tmpdir(),
   });
 }

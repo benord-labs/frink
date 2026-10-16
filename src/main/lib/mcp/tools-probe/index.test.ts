@@ -57,6 +57,7 @@ vi.mock('../claude-tools-cache', () => ({ refreshClaudeToolsCache: vi.fn() }));
 
 vi.mock('../../sentry/init', () => ({ captureMainMessage: captureMainMessageMock }));
 
+import os from 'node:os';
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { LoginShellEnvResolver, setLoginShellEnvResolver } from '../../platform/login-shell-env';
 import type { FrinkMcpServerConfig } from '../types';
@@ -160,6 +161,12 @@ describe('fetchMcpToolDescriptors / fetchMcpToolDescriptorsStdio', () => {
     expect(spawn.env.FOO).toBe('1');
     expect(spawn.env.PATH).toBe('/usr/bin');
     expect(spawn.env.ANTHROPIC_API_KEY).toBeUndefined();
+  });
+
+  it('spawns stdio servers outside every project folder', async () => {
+    listToolsMock.mockResolvedValue({ tools: [] });
+    await fetchMcpToolDescriptorsStdio({ command: 'npx' });
+    expect(stdioTransportMock.mock.calls[0][0].cwd).toBe(os.tmpdir());
   });
 
   it('reports a server with zero tools as ok — an empty list is a success, not a failure', async () => {
