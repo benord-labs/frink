@@ -119,7 +119,7 @@ export type PermissionPresentation = CustomNodeRegistrationPresentation;
 export type PromptData = {
   tool: string;
   input: unknown;
-  reason: 'no-matching-rule' | 'over-50-subcommands' | 'rule:ask';
+  reason: 'no-matching-rule' | 'over-50-subcommands' | 'redirect-outside-project' | 'rule:ask';
   matchedRule?: string;
   matchedTier?: PermissionTier;
   suggestedRules?: string[];

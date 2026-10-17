@@ -51,7 +51,7 @@ const pre = (fields: Omit<PreToolUseHookSpecificOutput, 'hookEventName'>): SyncH
 });
 
 /** Frink's gate on a turn whose bound hooks are the ones given; the rules answer as scripted. */
-function gate(hooks: HookRegistration[] | undefined, rules: () => Verdict) {
+function gate(hooks: HookRegistration[] | undefined, rules: () => Verdict, projectPath = '/work') {
   const turn = createClaudeTurnContext();
   if (hooks) {
     // Hooks get a constructed environment, never the test process's own.
@@ -70,7 +70,7 @@ function gate(hooks: HookRegistration[] | undefined, rules: () => Verdict) {
     chatId: 'chat',
     subChatId: 'sub',
     project: null,
-    projectPath: '/work',
+    projectPath,
     permissionProjectPath: '/work',
     agents: {},
     validateToolPermission: validate,
@@ -208,5 +208,16 @@ describe("the user's PreToolUse hooks inside Frink's gate", () => {
       permissionDecisionReason: `${ASKED} Its reason: check this`,
     });
     expect(validate).not.toHaveBeenCalled();
+  });
+});
+
+describe("Frink's gate in a worktree chat", () => {
+  it('judges against the project and passes the folder the agent runs in', async () => {
+    const { run, validate } = gate(undefined, allowRule, '/work-tree');
+    await run(bash);
+    expect(validate.mock.calls[0][2]).toBe('/work');
+    expect(validate.mock.calls[0][13]).toBe('/work-tree');
+    // The session's own folder from the hook input, which follows an earlier `cd`.
+    expect(validate.mock.calls[0][14]).toBe('/work');
   });
 });

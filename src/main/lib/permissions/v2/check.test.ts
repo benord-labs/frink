@@ -379,3 +379,31 @@ describe('checkPermission — a store with no rules and a store that cannot be r
     expect(r).toEqual({ decision: 'deny', reason: { kind: 'db:unavailable' } });
   });
 });
+
+describe('checkPermission — Bash output redirects', () => {
+  const echoAllowed = async () => ({
+    policy: noRules,
+    project: { ...noRules, allow: ['Bash(echo:*)'] },
+    user: noRules,
+  });
+
+  it('hands the execution folder and the command cwd to the redirect check', async () => {
+    setDocsLoader(echoAllowed);
+    const worktree = '/home/user/worktrees/project/one';
+    const intoWorktree = { command: `echo x > ${worktree}/out.txt` };
+    expect(
+      await checkPermission({
+        ...baseReq({ tool: 'Bash', input: intoWorktree }),
+        executionPath: worktree,
+      }),
+    ).toEqual({ decision: 'allow' });
+    expect(await checkPermission(baseReq({ tool: 'Bash', input: intoWorktree }))).toMatchObject({
+      decision: 'ask',
+    });
+    const fromHome = { ...baseReq({ tool: 'Bash', input: { command: 'echo x >> .zshrc' } }) };
+    expect(await checkPermission({ ...fromHome, commandCwd: nodeOs.homedir() })).toMatchObject({
+      decision: 'ask',
+      prompt: { reason: 'redirect-outside-project' },
+    });
+  });
+});

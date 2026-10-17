@@ -1,3 +1,4 @@
+import os from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
 import { validateRuleString } from '../../../../shared/lib/validate-rule';
 import { checkBash } from './check-bash';
@@ -983,6 +984,195 @@ describe('checkBash — sc-3416 edge cases', () => {
       expect(after.decision).toBe('ask');
       if (after.decision !== 'ask') continue;
       expect(after.prompt.suggestedRules ?? []).not.toContain(rule);
+    }
+  });
+});
+
+describe('checkBash — an output redirect outside the project', () => {
+  const projectRules = (allow: string[], deny: string[] = [], ask: string[] = []) => ({
+    policy: noRules,
+    project: { allow, deny, ask },
+    user: noRules,
+  });
+  const echoAllowed = projectRules(['Bash(echo:*)']);
+  const run = (command: string, docs = echoAllowed, projectRoot = root, executionRoot?: string) =>
+    checkBash({ command }, docs, projectRoot, executionRoot);
+
+  it('asks when an allowed command writes outside the project', () => {
+    for (const command of [
+      'echo x >> ~/.zshrc',
+      'echo x > /home/user/other-project/src/index.ts',
+      'echo x > ~/Library/LaunchAgents/a.plist',
+    ]) {
+      expect(run(command), command).toMatchObject({
+        decision: 'ask',
+        prompt: { reason: 'redirect-outside-project', suggestedRules: [`Bash(${command})`] },
+      });
+    }
+  });
+
+  it('keeps allowing writes inside the project, to /dev/null and to other descriptors', () => {
+    for (const command of ['echo x > out.txt', 'echo x 2>&1', 'echo x > /dev/null 2>&1']) {
+      expect(run(command), command).toEqual({ decision: 'allow' });
+    }
+  });
+
+  it('counts the folder the agent runs in as inside the project', () => {
+    const worktree = '/home/user/worktrees/project/one';
+    expect(run(`echo x > ${worktree}/out.txt`, echoAllowed, root, worktree)).toEqual({
+      decision: 'allow',
+    });
+    expect(run(`echo x > ${worktree}/out.txt`)).toMatchObject({ decision: 'ask' });
+  });
+
+  it('offers the exact rule on a first card, and that rule then allows the command', () => {
+    const command = 'echo x >> ~/.zshrc';
+    const first = checkBash({ command }, EMPTY_DOCS, root);
+    expect(first).toMatchObject({
+      decision: 'ask',
+      prompt: { reason: 'redirect-outside-project', suggestedRules: [`Bash(${command})`] },
+    });
+    expect(run(command, projectRules([`Bash(${command})`]))).toEqual({ decision: 'allow' });
+    expect(run('echo y >> ~/.zshrc', projectRules([`Bash(${command})`]))).toMatchObject({
+      decision: 'ask',
+    });
+  });
+
+  it('honours a deny rule naming the whole command', () => {
+    const command = 'echo x >> ~/.zshrc';
+    expect(run(command, projectRules(['Bash(echo:*)'], [`Bash(${command})`]))).toMatchObject({
+      decision: 'deny',
+      reason: { kind: 'rule:deny', rule: `Bash(${command})` },
+    });
+  });
+
+  it('keeps a matched ask rule as the reason', () => {
+    expect(run('echo x >> ~/.zshrc', projectRules([], [], ['Bash(echo:*)']))).toMatchObject({
+      decision: 'ask',
+      prompt: { reason: 'rule:ask', matchedRule: 'Bash(echo:*)' },
+    });
+  });
+
+  it('a two-token exact rule or a tool-wide allow no longer covers the redirect', () => {
+    const exactEcho = projectRules(['Bash(echo x)']);
+    expect(run('echo x', exactEcho)).toEqual({ decision: 'allow' });
+    expect(run('echo x >> ~/.zshrc', exactEcho)).toMatchObject({ decision: 'ask' });
+    expect(run('echo x >> ~/.zshrc', projectRules(['Bash']))).toMatchObject({ decision: 'ask' });
+  });
+
+  it('a heredoc written outside the project asks and offers no rule', () => {
+    expect(run('cat > ~/notes.md << EOF\nhi\nEOF', projectRules(['Bash(cat:*)']))).toMatchObject({
+      decision: 'ask',
+      prompt: { suggestedRules: [] },
+    });
+  });
+
+  it('asks for `>|` and `<>` aimed outside the project', () => {
+    expect(run('echo x >| ~/.zshrc')).toMatchObject({ decision: 'ask' });
+    expect(run('echo x 1<> ~/.zshrc')).toMatchObject({ decision: 'ask' });
+  });
+
+  it('leaves the escaping sub out of the over-50 suggestions', () => {
+    const cmd = [...Array(51).fill('true'), 'echo x >> ~/.zshrc'].join(' ; ');
+    expect(run(cmd, EMPTY_DOCS)).toMatchObject({ prompt: { suggestedRules: ['Bash(true:*)'] } });
+  });
+
+  it('a matched ask rule outranks an exact allow of the whole command in another scope', () => {
+    const docs = {
+      policy: noRules,
+      project: { ...noRules, ask: ['Bash(echo:*)'] },
+      user: { ...noRules, allow: ['Bash(echo x >> ~/.zshrc)'] },
+    };
+    expect(run('echo x >> ~/.zshrc', docs)).toMatchObject({
+      decision: 'ask',
+      prompt: { reason: 'rule:ask', matchedRule: 'Bash(echo:*)' },
+    });
+  });
+
+  it('an exact deny naming the whole command wins over a prefix ask rule', () => {
+    const command = 'echo x >> ~/.zshrc';
+    expect(run(command, projectRules([], [`Bash(${command})`], ['Bash(echo:*)']))).toMatchObject({
+      decision: 'deny',
+      reason: { kind: 'rule:deny', rule: `Bash(${command})` },
+    });
+  });
+
+  it('an exact ask rule naming the whole command still asks under a prefix allow', () => {
+    const command = 'echo x >> ~/.zshrc';
+    expect(run(command, projectRules(['Bash(echo:*)'], [], [`Bash(${command})`]))).toMatchObject({
+      decision: 'ask',
+      prompt: { reason: 'rule:ask', matchedRule: `Bash(${command})` },
+    });
+  });
+
+  it('resolves a relative target against the folder a Codex command runs in', () => {
+    const toZshrc = { command: 'echo x >> .zshrc' };
+    expect(checkBash(toZshrc, echoAllowed, root, undefined, os.homedir())).toMatchObject({
+      decision: 'ask',
+    });
+    const upOne = { command: 'echo x > ../out.txt' };
+    expect(checkBash(upOne, echoAllowed, root, undefined, `${root}/packages/app`)).toEqual({
+      decision: 'allow',
+    });
+  });
+
+  it('names the redirect as the reason even when an earlier part asks first', () => {
+    expect(
+      checkBash({ command: 'npm run x && echo y >> ~/.zshrc' }, EMPTY_DOCS, root),
+    ).toMatchObject({
+      decision: 'ask',
+      prompt: { reason: 'redirect-outside-project' },
+    });
+  });
+
+  it('ignores a cwd the model puts in the tool input', () => {
+    const spoofed = { command: 'echo x >> ../.zshrc', cwd: '/tmp/frink/deep' };
+    expect(checkBash(spoofed, echoAllowed, root)).toMatchObject({ decision: 'ask' });
+  });
+
+  // Known gaps, pinned so a change to them is deliberate.
+  it('still allows a home-rooted chat writing to home', () => {
+    expect(run('echo x >> .zshrc', echoAllowed, os.homedir())).toEqual({ decision: 'allow' });
+  });
+
+  it('asks for a file redirect another part of the command can run before or alongside', () => {
+    const rules = projectRules(
+      ['ln', 'mv', 'cp', 'echo', 'mkdir', 'sh', 'tar', 'unzip', 'git', 'python3', 'cd', 'pushd']
+        .concat(['npm test', 'tail', 'ls', 'grep', 'cat'])
+        .map((base) => `Bash(${base}:*)`),
+    );
+    for (const command of [
+      'ln -s ~/.zshrc /tmp/frink-link && echo x >> /tmp/frink-link',
+      'ln -s ~/.zshrc /tmp/frink-link && echo y >> /private/tmp/frink-link',
+      'ln -s ~/.zshrc && echo x >> .zshrc',
+      'ln -s -t links ~/.zshrc && echo x >> links/.zshrc',
+      'mv /tmp/staged.lnk out.txt && echo x >> out.txt',
+      'tar -xf a.tar && echo x > x/.zshrc',
+      'unzip a.zip && echo x > x/.zshrc',
+      'git checkout links && echo x > x/.zshrc',
+      'python3 make_links.py; echo x > x/.zshrc',
+      'sh -c "ln -s ~/.zshrc l" && echo x >> l',
+      'echo x >> out | ln -s ~/.zshrc out',
+      'echo y >> out & ln -s ~/.zshrc out',
+      'ln -s ~/.zshrc out & echo y >> out',
+      'cd ~ && echo x >> .zshrc',
+      'pushd ~ && echo x >> .zshrc',
+      'cd packages/x && npm test > out.log',
+      'cat() ( ln -s ~/.zshrc f ); cat; echo x > f',
+      'echo $(ln -s ~/.zshrc f) && echo x > f',
+    ]) {
+      expect(run(command, rules), command).toMatchObject({ decision: 'ask' });
+    }
+    for (const command of [
+      'mkdir -p dist && echo x > dist/out.txt',
+      'npm test > /tmp/frink-test.log 2>&1; tail -50 /tmp/frink-test.log',
+      'ls | grep x > out.txt',
+      'echo x > out.txt && ln -s a b',
+      'ln -s a b > ln.log',
+      'ls src/*.ts && echo x > out.txt',
+      'cd packages/x && npm test > /dev/null',
+    ]) {
+      expect(run(command, rules), command).toEqual({ decision: 'allow' });
     }
   });
 });
