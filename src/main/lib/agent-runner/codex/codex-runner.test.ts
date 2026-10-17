@@ -594,6 +594,50 @@ describe('runCodexAgent', () => {
     expect(chunks.filter((c) => c.type === 'error')).toEqual([]);
   });
 
+  it('streams a context compaction as the compact line, live then settled', async () => {
+    const item = { type: 'contextCompaction', id: 'cmp-1' };
+    const { chunks } = await withTurn({}, (fake) => {
+      fake.fire('item/started', { item });
+      fake.fire('item/completed', { item });
+    });
+
+    expect(chunks.filter((c) => c.type === 'data-compact')).toEqual([
+      { type: 'data-compact', id: 'cmp-1', transient: true, data: { state: 'input-streaming' } },
+      { type: 'data-compact', id: 'cmp-1', data: { state: 'output-available', trigger: 'auto' } },
+    ]);
+  });
+
+  it('settles a compaction as failed when the error that ended it arrives, not on a retried one', async () => {
+    const { chunks } = await withTurn({}, (fake) => {
+      fake.fire('item/started', { item: { type: 'contextCompaction', id: 'cmp-1' } });
+      fake.fire('error', { error: { message: 'stream dropped' }, willRetry: true });
+      fake.fire('error', { error: { message: 'context window exceeded' } });
+    });
+
+    const tail = chunks.filter((c) => c.type === 'data-compact' || c.type === 'error').slice(1);
+    expect(tail).toEqual([
+      { type: 'data-compact', id: 'cmp-1', data: { state: 'output-error' } },
+      { type: 'error', errorText: 'context window exceeded' },
+    ]);
+    // A failed Flow turn is recognised by its trailing error, so the failure line must precede it.
+    const closing = new Set(['finish', 'finish-step', 'text-end']);
+    expect(chunks.filter((c) => !closing.has(c.type)).at(-1)?.type).toBe('error');
+  });
+
+  it.each([
+    ['the connection closes', (fake: ReturnType<typeof makeFakeClient>) => fake.fireClose()],
+    ['the transport errors', (fake: ReturnType<typeof makeFakeClient>) => fake.fireError([])],
+  ])('settles a compaction as failed when %s while it is open', async (_name, breakConnection) => {
+    const { chunks } = await withTurn({}, (fake) => {
+      fake.fire('item/started', { item: { type: 'contextCompaction', id: 'cmp-1' } });
+      breakConnection(fake);
+    });
+
+    const tail = chunks.filter((c) => c.type === 'data-compact' || c.type === 'error').slice(1);
+    expect(tail.map((c) => c.type)).toEqual(['data-compact', 'error']);
+    expect(tail[0]).toEqual({ type: 'data-compact', id: 'cmp-1', data: { state: 'output-error' } });
+  });
+
   it('closes a block the provider left open when the turn aborts mid-text (sweep still fires)', async () => {
     const fake = startedFakeClient();
     const abortController = new AbortController();
@@ -700,6 +744,22 @@ describe('runCodexAgent', () => {
     };
     expect(await textEnds(a)).toEqual([{ type: 'text-end', id: 'i' }]);
     expect(await textEnds(b)).toEqual([{ type: 'text-end', id: 'i' }]);
+  });
+
+  it('two concurrent turns keep a failed compaction to the turn it ran in', async () => {
+    // Split view: one pane's turn is compacting when the other pane's turn errors.
+    const { fake, a, b } = await twoConcurrentTurns();
+    const item = { type: 'contextCompaction', id: 'cmp-1' };
+
+    fake.fireTo('th1', 'item/started', { item });
+    fake.fireTo('th2', 'error', { error: { message: 'boom' } });
+    fake.fireTo('th1', 'item/completed', { item });
+    fake.fireTo('th1', 'turn/completed', { turn: { status: 'completed' } });
+
+    const compactStates = async (gen: AsyncGenerator<UIMessageChunk, void>) =>
+      (await drain(gen)).flatMap((c) => (c.type === 'data-compact' ? [c.data.state] : []));
+    expect(await compactStates(a)).toEqual(['input-streaming', 'output-available']);
+    expect(await compactStates(b)).toEqual([]);
   });
 
   it("starts every thread ephemeral so it never lands in the user's Codex history", async () => {
