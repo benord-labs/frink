@@ -4,7 +4,7 @@
 # MUST source this file instead of redeclaring.
 
 # macOS-only: QA_USER_DATA below is the mac Electron userData path, and the
-# whole QA rig (keychain-encrypted secrets, qavis host) lives on the mac.
+# whole QA rig (keychain-encrypted secrets, the QA host) lives on the mac.
 if [ "$(uname)" != "Darwin" ]; then
   echo "scripts/qa is macOS-only (userData path + keychain)." >&2
   exit 1

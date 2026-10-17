@@ -488,7 +488,7 @@ describe('createTaskStopHook', () => {
 
   it('drops every dead follower but leaves unrelated live work waiting', async () => {
     // The reported shape: three abandoned followers stacked up beside one real command.
-    const real = shell('qavis1', 'qavis qa --diff origin/main');
+    const real = shell('build1', 'bun run build --watch');
     const pending = await pendingAfter([
       follower('t1', 'gone1'),
       follower('t2', 'gone2'),

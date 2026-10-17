@@ -2,8 +2,8 @@
 # Seeds the QA app's state: wipes its profile, then writes the fixture workspace.
 # Runs before EVERY boot (base baseline, head, compare relaunch) and is
 # idempotent: wipes the QA profile and seeds the deterministic fixture
-# workspace. A broken fixture fails HERE, in seconds, as qavis `uncertain`
-# with the reason in seed-output.txt — not after a full drive. Launch and the
+# workspace. A broken fixture fails HERE, in seconds, with the reason on
+# stderr — not after a full drive. Launch and the
 # run lock stay in boot.sh: the lock must span the app's lifetime, and a lock
 # taken in this short-lived script would release before boot.
 set -euo pipefail
