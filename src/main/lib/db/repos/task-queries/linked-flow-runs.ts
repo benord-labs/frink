@@ -1,5 +1,6 @@
-import { eq, inArray, type SQL, sql } from 'drizzle-orm';
+import { and, eq, inArray, not, type SQL, type SQLWrapper, sql } from 'drizzle-orm';
 import { type AnySQLiteColumn, union } from 'drizzle-orm/sqlite-core';
+import { isPastFanOutLane } from '../../../flows/fan-out-state';
 import type { getDatabase } from '../../index';
 import { flowRuns, nodeRuns, tasks } from '../../schema';
 
@@ -15,12 +16,18 @@ export function chatLinkId(column: AnySQLiteColumn, path: ChatLinkPath): SQL<str
   >`(CASE WHEN json_valid(${column}) THEN json_extract(${column}, ${sql.raw(`'${path}'`)}) END)`;
 }
 
+/** With `currentLanesOnly`, a link made inside a finished Fan Out item no longer counts. */
+function currentLaneFilter(currentLanesOnly: boolean, nodeRunId: SQLWrapper): SQL | undefined {
+  return currentLanesOnly ? not(isPastFanOutLane(nodeRunId)) : undefined;
+}
+
 /** Flow runs linked through the trigger, a node's outputs, or a task's result (a branch chat's only
  * link), as a UNION of index lookups. `ids` may be an outer column for correlated projections. */
 export function linkedFlowRunIds(
   db: Db,
   key: 'chatId' | 'subChatId',
   ids: string[] | string | SQL,
+  { currentLanesOnly = false }: { currentLanesOnly?: boolean } = {},
 ) {
   const matches = (expr: SQL<string | null>) =>
     Array.isArray(ids) ? inArray(expr, ids) : eq(expr, ids);
@@ -32,10 +39,20 @@ export function linkedFlowRunIds(
     db
       .select({ id: sql<string>`${nodeRuns.flowRunId}` })
       .from(nodeRuns)
-      .where(matches(chatLinkId(nodeRuns.nodeOutput, `$.outputs.${key}`))),
+      .where(
+        and(
+          matches(chatLinkId(nodeRuns.nodeOutput, `$.outputs.${key}`)),
+          currentLaneFilter(currentLanesOnly, nodeRuns.id),
+        ),
+      ),
     db
       .select({ id: sql<string>`${tasks.flowRunId}` })
       .from(tasks)
-      .where(matches(chatLinkId(tasks.result, `$.${key}`))),
+      .where(
+        and(
+          matches(chatLinkId(tasks.result, `$.${key}`)),
+          currentLaneFilter(currentLanesOnly, tasks.nodeRunId),
+        ),
+      ),
   );
 }

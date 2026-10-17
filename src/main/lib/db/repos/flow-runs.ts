@@ -1,5 +1,7 @@
-import { and, desc, eq, inArray, isNotNull, isNull, lt, ne, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, isNull, lt, ne, not, or, sql } from 'drizzle-orm';
+import { union } from 'drizzle-orm/sqlite-core';
 import { FLOW_DRIVING_STATUSES, SIGNAL_DEAD_RUN_STATUSES } from '../../../../shared/types/flow';
+import { isPastFanOutLane } from '../../flows/fan-out-state';
 import type { getDatabase } from '../index';
 import {
   type Chat,
@@ -12,7 +14,7 @@ import {
   tasks,
 } from '../schema';
 import type { TaskStatus } from './tasks';
-import { linkedFlowRunIds } from './task-queries/linked-flow-runs';
+import { chatLinkId, linkedFlowRunIds } from './task-queries/linked-flow-runs';
 import {
   activeFlowRunForSubChatId,
   newestFlowRunForSubChatId,
@@ -147,8 +149,8 @@ export async function hasActiveRunForFlow(db: Db, flowId: string): Promise<boole
 
 /**
  * The chat-id projection for each of the THREE chat↔run JSON link sources (no FK). Centralised so the
- * readers that resolve a chat FROM a run (listChatIdsWithActiveFlowRun, getBatchIdByChatId,
- * listChatsByBatch) cannot drift on which sources they cover. The third source is load-bearing: in a
+ * readers that resolve a chat FROM a run (getBatchIdByChatId, listChatsByBatch) cannot drift on
+ * which sources they cover. The third source is load-bearing: in a
  * multi-agent run, `linkChatToTask` is first-agent-wins, so a NON-anchor (branch) chat's only link is
  * `tasks.result.$.chatId`. Selecting these requires `leftJoin(nodeRuns)` + `leftJoin(tasks)` +
  * `selectDistinct` (to dedupe the fan-out).
@@ -218,22 +220,27 @@ export async function getLatestFlowRunForChat(db: Db, chatId: string): Promise<F
  * the first agent task exists, or while a non-agent node runs) where no tracked task drives it.
  * Resolves the chat via every link source so a gap is covered: trigger_context.$.chatId,
  * node_output.$.outputs.chatId, AND tasks.result.$.chatId (a run's completed/done task still
- * carries it). selectDistinct + a Set dedupe the leftJoin fan-out.
+ * carries it). A link made inside a Fan Out item the loop has moved past does not count.
  */
 export async function listChatIdsWithActiveFlowRun(db: Db): Promise<string[]> {
-  const rows = await db
-    .selectDistinct(CHAT_LINK_SOURCES)
-    .from(flowRuns)
-    .leftJoin(nodeRuns, eq(nodeRuns.flowRunId, flowRuns.id))
-    .leftJoin(tasks, eq(tasks.flowRunId, flowRuns.id))
-    .where(inArray(flowRuns.status, ['pending', 'running', 'paused']));
-  const chatIds = new Set<string>();
-  for (const r of rows) {
-    if (r.triggerChatId) chatIds.add(r.triggerChatId);
-    if (r.nodeChatId) chatIds.add(r.nodeChatId);
-    if (r.taskChatId) chatIds.add(r.taskChatId);
-  }
-  return Array.from(chatIds);
+  const live = inArray(flowRuns.status, ['pending', 'running', 'paused']);
+  const rows = await union(
+    db
+      .select({ chatId: chatLinkId(flowRuns.triggerContext, '$.chatId') })
+      .from(flowRuns)
+      .where(live),
+    db
+      .select({ chatId: chatLinkId(nodeRuns.nodeOutput, '$.outputs.chatId') })
+      .from(nodeRuns)
+      .innerJoin(flowRuns, eq(flowRuns.id, nodeRuns.flowRunId))
+      .where(and(live, not(isPastFanOutLane(nodeRuns.id)))),
+    db
+      .select({ chatId: chatLinkId(tasks.result, '$.chatId') })
+      .from(tasks)
+      .innerJoin(flowRuns, eq(flowRuns.id, tasks.flowRunId))
+      .where(and(live, not(isPastFanOutLane(tasks.nodeRunId)))),
+  );
+  return rows.flatMap((row) => (row.chatId ? [row.chatId] : []));
 }
 
 /** The live run driving a sub-chat. */
@@ -249,7 +256,8 @@ export type ActiveFlowRunRef = { id: string };
  * Same three JSON link sources as `CHAT_LINK_SOURCES`, sub-chat-scoped: `node_output` spans the run's
  * whole life (every agent node hard-requires an upstream start_task that emits subChatId), and
  * `tasks.result` keeps this a SUPERSET of `getFlowDriveInfoForSubChat` — a narrower set would resolve
- * a driving task with no run and hand the composer back from the other side. Newest by createdAt, so
+ * a driving task with no run and hand the composer back from the other side. A Fan Out item the loop
+ * has moved past is no longer driven, so its chat gets the composer back. Newest by createdAt, so
  * a flow chat reused across runs reports the CURRENT run, never the previous one. Sub-chat-scoped,
  * not chat-scoped: a user-added sub-chat on a flow chat must keep its composer.
  */

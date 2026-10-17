@@ -4,6 +4,7 @@ import { seedCompletedNodeRun, seedFlowRun } from '../../test-utils/flow-fixture
 import { freshDb, type TestDb } from '../../test-utils/fresh-db';
 import { createChat, linkChatToTask } from '../chats';
 import { setFlowRunStatus } from '../flow-runs';
+import { setKv } from '../flow-kv-state';
 import { createTask, updateTaskStatus } from '../tasks';
 import { listSidebarActiveChats } from './sidebar-active-chats';
 
@@ -86,7 +87,45 @@ describe('listSidebarActiveChats', () => {
       flowRunStatus: 'completed',
       effectiveStatus: 'done',
       agentSignalSummary: expect.stringMatching(/^step \d+$/),
+      chatLive: false,
     });
+  });
+
+  it('marks a Fan Out item the loop has moved past as no longer live', async () => {
+    const [past, current] = [
+      await createChat(db, { name: 'item 0' }),
+      await createChat(db, { name: 'item 1' }),
+    ];
+    const { flowId, flowRunId } = await seedFlowRun(db, GRAPH);
+    const fan = await seedCompletedNodeRun(db, { flowRunId, nodeId: 'fan', blockType: 'fan_out' });
+    for (const [laneIndex, chat] of [past, current].entries()) {
+      const lane = { flowRunId, laneIndex, parentFanOutNodeRunId: fan.id };
+      await seedCompletedNodeRun(db, {
+        ...lane,
+        nodeId: 'st',
+        blockType: 'start_task',
+        outputs: { chatId: chat.id },
+      });
+      const draft = await seedCompletedNodeRun(db, { ...lane, nodeId: 'a', blockType: 'agent' });
+      const task = await createTask(db, {
+        description: 'draft',
+        source: 'flow',
+        flowRunId,
+        nodeRunId: draft.id,
+        result: { chatId: chat.id },
+      });
+      await updateTaskStatus(db, task.id, 'done');
+    }
+    await setKv(db, flowId, `_fanOut:${flowRunId}:fan`, { currentIndex: 1 });
+
+    const { tasks } = await listSidebarActiveChats(db);
+
+    expect(tasks.map((row) => [row.linkedChatId, row.chatLive]).sort()).toEqual(
+      [
+        [past.id, false],
+        [current.id, true],
+      ].sort(),
+    );
   });
 
   it('leaves out tasks whose chat is archived, unknown or missing', async () => {
