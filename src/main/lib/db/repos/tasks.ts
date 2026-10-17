@@ -294,12 +294,21 @@ export async function updateTaskResult(
   db: Db,
   taskId: string,
   result: unknown,
-  options: { expectStatuses?: readonly TaskStatus[] } = {},
+  options: {
+    expectStatuses?: readonly TaskStatus[];
+    /** Matches no row whose signal parks a secret request, in the same UPDATE as the write. */
+    keepSecretPark?: boolean;
+  } = {},
 ): Promise<Task | null> {
+  const noSecretPark = drizzleSql`json_extract(${tasks.result}, '$.agentSignal.secretRequest') IS NULL`;
   const [row] = await db
     .update(tasks)
     .set({ result: result == null ? null : taskResultSchema.parse(result) })
-    .where(casWhere(taskId, options))
+    .where(
+      options.keepSecretPark
+        ? and(casWhere(taskId, options), noSecretPark)
+        : casWhere(taskId, options),
+    )
     .returning();
   return row ?? null;
 }

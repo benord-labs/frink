@@ -5,6 +5,7 @@ import {
   FileCode2,
   FolderSearch,
   GitBranch,
+  KeyRound,
   List,
   ListTodo,
   Minimize2,
@@ -692,6 +693,16 @@ const agentToolRegistryDefinition = {
       return isPending ? 'Requesting project switch' : 'Project switch requested';
     },
     subtitle: (part) => getStringValue(part.input, 'project_id'),
+    variant: 'simple',
+  },
+  'tool-frink_request_secret': {
+    icon: KeyRound,
+    title: (part) => {
+      const isPending = part.state !== 'output-available' && part.state !== 'output-error';
+      const name = getStringValue(part.input, 'name');
+      return isPending ? `Asking for ${name}` : `Asked for ${name}`;
+    },
+    subtitle: (part) => getStringValue(part.input, 'file') || '.env',
     variant: 'simple',
   },
 
