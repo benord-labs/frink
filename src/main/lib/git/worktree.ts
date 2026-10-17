@@ -22,6 +22,7 @@ import {
   rollbackCreatedWorktree,
 } from './worktree/index';
 import { awaitWorktreeSetup, detectWorktreeConfig, startWorktreeSetup } from './worktree-config';
+import { copyWorktreeIncludes } from './worktree/include';
 import { generateWorktreeFolderName } from './worktree-naming';
 
 export { configureWorktreeHooks, isFrinkManagedWorktree } from './worktree/index';
@@ -116,6 +117,56 @@ export function generateBranchName(): string {
   return `${name}-${suffix}`;
 }
 
+/** Resolves to a commit hash, which avoids Windows escaping issues with `^{commit}`. */
+async function resolveStartPointCommit(mainRepoPath: string, startPoint: string): Promise<string> {
+  const git = simpleGit(mainRepoPath);
+  try {
+    return (await git.revparse([`${startPoint}^{commit}`])).trim();
+  } catch {
+    // Fallback to local branch if origin/branch doesn't exist
+    const localBranch = startPoint.replace(ORIGIN_PREFIX_REGEX, '');
+    try {
+      return (await git.revparse([`${localBranch}^{commit}`])).trim();
+    } catch {
+      return (await git.revparse([startPoint])).trim();
+    }
+  }
+}
+
+/** The error createWorktree reports, with plain guidance for git lock and LFS failures. */
+export function createWorktreeError(errorMessage: string, usesLfs: boolean): Error {
+  const lowerError = errorMessage.toLowerCase();
+
+  const isLockError =
+    lowerError.includes('could not lock') ||
+    lowerError.includes('unable to lock') ||
+    (lowerError.includes('.lock') && lowerError.includes('file exists'));
+
+  if (isLockError) {
+    return new Error(
+      `Failed to create worktree: The git repository is locked by another process. ` +
+        `This usually happens when another git operation is in progress, or a previous operation crashed. ` +
+        `Please wait for the other operation to complete, or manually remove the lock file ` +
+        `(e.g., .git/config.lock or .git/index.lock) if you're sure no git operations are running.`,
+    );
+  }
+
+  const isLfsError =
+    lowerError.includes('git-lfs') ||
+    lowerError.includes('filter-process') ||
+    lowerError.includes('smudge filter') ||
+    (lowerError.includes('lfs') && lowerError.includes('not')) ||
+    (lowerError.includes('lfs') && usesLfs);
+
+  if (isLfsError) {
+    return new Error(
+      `Failed to create worktree: This repository uses Git LFS, but git-lfs was not found or failed. ` +
+        `Please install git-lfs (e.g., 'brew install git-lfs') and run 'git lfs install'.`,
+    );
+  }
+  return new Error(`Failed to create worktree: ${errorMessage}`);
+}
+
 export async function createWorktree(
   mainRepoPath: string,
   branch: string,
@@ -140,21 +191,7 @@ export async function createWorktree(
       }
     }
 
-    // Resolve startPoint to commit hash to avoid Windows escaping issues with ^{commit}
-    const git = simpleGit(mainRepoPath);
-    let commitHash: string;
-    try {
-      commitHash = (await git.revparse([`${startPoint}^{commit}`])).trim();
-    } catch {
-      // Fallback to local branch if origin/branch doesn't exist
-      const localBranch = startPoint.replace(ORIGIN_PREFIX_REGEX, '');
-      try {
-        commitHash = (await git.revparse([`${localBranch}^{commit}`])).trim();
-      } catch {
-        commitHash = (await git.revparse([startPoint])).trim();
-      }
-    }
-
+    const commitHash = await resolveStartPointCommit(mainRepoPath, startPoint);
     const branchPreExisted = await branchExists(mainRepoPath, branch, env);
     try {
       await addWorktree(mainRepoPath, worktreePath, branch, commitHash, env);
@@ -181,38 +218,12 @@ export async function createWorktree(
       throw error;
     }
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    const lowerError = errorMessage.toLowerCase();
-
-    const isLockError =
-      lowerError.includes('could not lock') ||
-      lowerError.includes('unable to lock') ||
-      (lowerError.includes('.lock') && lowerError.includes('file exists'));
-
-    if (isLockError) {
-      throw new Error(
-        `Failed to create worktree: The git repository is locked by another process. ` +
-          `This usually happens when another git operation is in progress, or a previous operation crashed. ` +
-          `Please wait for the other operation to complete, or manually remove the lock file ` +
-          `(e.g., .git/config.lock or .git/index.lock) if you're sure no git operations are running.`,
-      );
-    }
-
-    const isLfsError =
-      lowerError.includes('git-lfs') ||
-      lowerError.includes('filter-process') ||
-      lowerError.includes('smudge filter') ||
-      (lowerError.includes('lfs') && lowerError.includes('not')) ||
-      (lowerError.includes('lfs') && usesLfs);
-
-    if (isLfsError) {
-      throw new Error(
-        `Failed to create worktree: This repository uses Git LFS, but git-lfs was not found or failed. ` +
-          `Please install git-lfs (e.g., 'brew install git-lfs') and run 'git lfs install'.`,
-      );
-    }
-    throw new Error(`Failed to create worktree: ${errorMessage}`);
+    throw createWorktreeError(error instanceof Error ? error.message : String(error), usesLfs);
   }
+
+  // Outside the rollback block: a file that fails to copy must never cost the user the worktree.
+  // Awaited so the files are there before setup commands and the first agent turn.
+  await copyWorktreeIncludes(mainRepoPath, worktreePath);
 }
 
 /** Local branch names we never delete after worktree removal (safety). */

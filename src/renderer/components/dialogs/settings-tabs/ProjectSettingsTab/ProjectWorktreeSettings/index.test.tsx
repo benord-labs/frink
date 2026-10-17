@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Operation } from '@trpc/client';
 import { getQueryKey } from '@trpc/react-query';
@@ -20,6 +20,22 @@ vi.hoisted(() => {
 
 type StoredConfig = { 'setup-worktree'?: string[]; 'worktree-base-path'?: string };
 type ConfigAnswer = { config: StoredConfig | null; path: string };
+type IncludePreview = {
+  source: 'worktreeinclude' | 'default';
+  files: string[];
+  skipped: { path: string; reason: 'too-large' | 'symlink' }[];
+  overLimit: number;
+  enabled: boolean;
+};
+const EMPTY_PREVIEW: IncludePreview = {
+  source: 'default',
+  files: [],
+  skipped: [],
+  overLimit: 0,
+  enabled: true,
+};
+const TOGGLE_INPUT = z.object({ projectId: z.string(), enabled: z.boolean() });
+const setIncludeEnabled = vi.fn<(input: z.infer<typeof TOGGLE_INPUT>) => void>();
 type Backend = {
   stored: StoredConfig;
   /** Pending means "home directory not known yet", where every path verdict is 'unknown'. */
@@ -28,6 +44,7 @@ type Backend = {
   /** Each save waits for this before landing, so a test can hold one in flight. */
   saveGate: Promise<void>;
   saveErrors: Error[];
+  preview: IncludePreview;
 };
 
 const SAVE_INPUT = z.object({
@@ -45,6 +62,7 @@ const backend: Backend = {
   loadConfig: () => Promise.resolve({ config: backend.stored, path: '' }),
   saveGate: Promise.resolve(),
   saveErrors: [],
+  preview: EMPTY_PREVIEW,
 };
 
 /** Merges a save into the stored file the way the main-process router does. */
@@ -57,8 +75,17 @@ async function applySave(input: z.infer<typeof SAVE_INPUT>): Promise<null> {
 }
 
 /** Answers the worktree procedures in-process, the way the main-process routers would. */
-function answer(op: Operation): Promise<ConfigAnswer | string | null> {
+function answer(
+  op: Operation,
+): Promise<ConfigAnswer | IncludePreview | { enabled: boolean } | string | null> {
   if (op.path === 'worktreeConfig.get') return backend.loadConfig();
+  if (op.path === 'worktreeConfig.includePreview') return Promise.resolve(backend.preview);
+  if (op.path === 'worktreeConfig.setIncludeEnabled') {
+    const input = TOGGLE_INPUT.parse(op.input);
+    setIncludeEnabled(input);
+    backend.preview = { ...backend.preview, enabled: input.enabled };
+    return Promise.resolve({ enabled: input.enabled });
+  }
   if (op.path === 'external.getHomePath') return backend.homeDir;
   if (op.path === 'claudeSettings.getWorktreeBasePath') {
     return Promise.resolve({ config: null, path: '/Users/benji/.frink/worktrees' });
@@ -85,11 +112,13 @@ const lastSave = () => saveConfig.mock.lastCall?.[0];
 
 beforeEach(() => {
   saveConfig.mockReset();
+  setIncludeEnabled.mockReset();
   backend.stored = {};
   backend.homeDir = Promise.resolve('/Users/benji');
   backend.loadConfig = () => Promise.resolve({ config: backend.stored, path: '' });
   backend.saveGate = Promise.resolve();
   backend.saveErrors = [];
+  backend.preview = EMPTY_PREVIEW;
 });
 
 afterEach(cleanup);
@@ -494,5 +523,62 @@ describe('ProjectWorktreeSettings', () => {
     await waitFor(() =>
       expect(location()).toHaveAttribute('placeholder', '/Users/benji/.frink/worktrees'),
     );
+  });
+
+  describe('files copied into each new worktree', () => {
+    const filesSection = () =>
+      screen.getByRole('region', { name: 'Files copied into each new worktree' });
+
+    it('lists the .env files the default copies', async () => {
+      backend.preview = { ...EMPTY_PREVIEW, files: ['.env', 'apps/web/.env.local'] };
+      renderSettings();
+
+      await waitFor(() => expect(filesSection()).toHaveTextContent('apps/web/.env.local'));
+      expect(filesSection()).toHaveTextContent("Your .env files, which git doesn't keep.");
+      expect(
+        within(filesSection())
+          .getAllByRole('listitem')
+          .map((li) => li.textContent),
+      ).toEqual(['.env', 'apps/web/.env.local']);
+    });
+
+    it('names .worktreeinclude as the source and explains skipped files', async () => {
+      backend.preview = {
+        source: 'worktreeinclude',
+        files: ['config/local.json'],
+        skipped: [{ path: 'data/dump.sql', reason: 'too-large' }],
+        overLimit: 2,
+        enabled: true,
+      };
+      renderSettings();
+
+      await waitFor(() =>
+        expect(filesSection()).toHaveTextContent('Using .worktreeinclude from this repository.'),
+      );
+      expect(filesSection()).toHaveTextContent('data/dump.sql (too large to copy)');
+      expect(filesSection()).toHaveTextContent('2 more files are over the copy limit');
+    });
+
+    it('says when there is nothing to copy', async () => {
+      renderSettings();
+
+      await waitFor(() => expect(filesSection()).toHaveTextContent('Nothing to copy right now.'));
+    });
+
+    it('turns copying off with the switch and says new worktrees start without the files', async () => {
+      backend.preview = { ...EMPTY_PREVIEW, files: ['.env'] };
+      const user = userEvent.setup();
+      renderSettings();
+      const toggle = () =>
+        screen.getByRole('switch', { name: 'Copy these files into each new worktree' });
+      await waitFor(() => expect(toggle()).toBeEnabled());
+      expect(toggle()).toBeChecked();
+
+      await user.click(toggle());
+
+      expect(setIncludeEnabled).toHaveBeenCalledWith({ projectId: 'project-1', enabled: false });
+      await waitFor(() => expect(toggle()).not.toBeChecked());
+      expect(filesSection()).toHaveTextContent('Off: new worktrees start without these files.');
+    });
   });
 });
