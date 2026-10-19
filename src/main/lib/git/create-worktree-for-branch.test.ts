@@ -4,7 +4,7 @@
  */
 
 import { execSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -16,7 +16,7 @@ vi.mock('../worktree/base-path-config', () => ({
   resolveWorktreeBasePath: vi.fn(),
 }));
 
-import { createWorktreeForBranch, generateBranchName } from './worktree';
+import { createWorktreeError, createWorktreeForBranch, generateBranchName } from './worktree';
 
 /** Matches createWorktreeForBranch / chat branch naming (no flow/ prefix, no slashes). */
 const FLOW_LOCAL_BRANCH_RE = /^[a-z]+-[a-z]+-[0-9a-f]{6}$/;
@@ -53,6 +53,27 @@ describe('generateBranchName', () => {
       seen.add(name);
     }
     expect(seen.size).toBeGreaterThan(30);
+  });
+});
+
+// Users only see this message when worktree creation fails, so each git failure keeps its own guidance.
+describe('createWorktreeError', () => {
+  it('explains a git lock held by another process', () => {
+    const error = createWorktreeError("fatal: Unable to lock '.git/index.lock'", false);
+    expect(error.message).toContain('locked by another process');
+  });
+
+  it('explains a missing or failing git-lfs, from the message or because the repo uses LFS', () => {
+    expect(createWorktreeError('smudge filter lfs failed', false).message).toContain(
+      'uses Git LFS',
+    );
+    expect(createWorktreeError('lfs object missing', true).message).toContain('uses Git LFS');
+  });
+
+  it('passes any other failure through with its own text', () => {
+    expect(createWorktreeError('invalid reference: nope', false).message).toBe(
+      'Failed to create worktree: invalid reference: nope',
+    );
   });
 });
 
@@ -106,6 +127,31 @@ describe.skipIf(!canInitGit)('createWorktreeForBranch (git integration)', () => 
     expect(result.success).toBe(true);
     expect(result.baseBranch).toBe('main');
     expect(result.branch).toMatch(FLOW_LOCAL_BRANCH_RE);
+  });
+
+  it('copies the ignored .env in before setup commands run, with no worktree config', async () => {
+    const wtBase = mkdtempSync(join(tmpdir(), 'frink-wt-flow-base-'));
+    createdDirs.push(wtBase);
+    vi.mocked(resolveWorktreeBasePath).mockResolvedValue(wtBase);
+
+    const repo = initGitRepoWithBaseBranch('unused-side-branch');
+    createdDirs.push(repo);
+    writeFileSync(join(repo, '.gitignore'), '.env\n');
+    execSync('git add .gitignore && git commit -m ignore', { cwd: repo, stdio: 'pipe' });
+    writeFileSync(join(repo, '.env'), 'API_KEY=local\n');
+
+    const plain = await createWorktreeForBranch(repo, 'envcopy', undefined);
+    expect(plain.success).toBe(true);
+    expect(readFileSync(join(plain.worktreePath ?? '', '.env'), 'utf8')).toBe('API_KEY=local\n');
+
+    mkdirSync(join(repo, '.frink'), { recursive: true });
+    writeFileSync(
+      join(repo, '.frink', 'worktrees.json'),
+      JSON.stringify({ 'setup-worktree': ['test -f .env'] }),
+    );
+    const withSetup = await createWorktreeForBranch(repo, 'envsetup', undefined);
+    expect(withSetup.error).toBeUndefined();
+    expect(withSetup.success).toBe(true);
   });
 
   // The failure result carries no worktreePath, so nothing downstream could find the directory

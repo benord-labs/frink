@@ -23,16 +23,15 @@ The goal is to reproduce the EXACT same working state as the original repo in th
 Rules:
 - Use only "setup-worktree" key (works on all platforms)
 - Install dependencies using the project's package manager (check for bun.lockb, pnpm-lock.yaml, yarn.lock, package-lock.json)
-- Copy ALL real env files that exist (.env, .env.local, .env.development, etc) - NOT example files
+- Don't copy .env files: Frink copies them into each new worktree automatically
+- If a worktree needs other gitignored files (local config, certificates), list them in a .worktreeinclude file at the repo root (gitignore syntax) instead of copying them with a command. A .worktreeinclude replaces the automatic .env copy, so list the .env files in it too
 - Use $ROOT_WORKTREE_PATH to reference the main repo path
 - Don't include build steps unless absolutely necessary for the project to work
 
 Example output for .frink/worktrees.json:
 {
   "setup-worktree": [
-    "bun install",
-    "cp $ROOT_WORKTREE_PATH/.env .env",
-    "cp $ROOT_WORKTREE_PATH/.env.local .env.local"
+    "bun install"
   ]
 }
 
