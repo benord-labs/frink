@@ -11,6 +11,7 @@ import {
   getOrCreateFlowChat,
   hasOtherChatsSharingWorktree,
   listAllArchivedChats,
+  listPinnedChatsForProjects,
   pageChatsForProjects,
 } from './chats';
 import * as projectAiAccountsRepo from './project-ai-accounts';
@@ -180,6 +181,27 @@ describe('pageChatsForProjects', () => {
 describe('countChatsByProject', () => {
   beforeEach(() => {
     db = freshDb();
+  });
+
+  it('flowCount is exactly what hideFlowChats leaves out of the page and pinned list', async () => {
+    const pinnedAt = at('2026-01-01T00:00:00.000Z');
+    await seed({ id: 'mine', projectId: null });
+    await seed({ id: 'flow', projectId: null, taskId: 'task-1' });
+    await seed({ id: 'flow-pinned', projectId: null, taskId: 'task-2', pinnedAt });
+    await seed({ id: 'mine-pinned', projectId: null, pinnedAt });
+
+    const [general] = await countChatsByProject(db);
+    const page = await pageChatsForProjects(db, {
+      projectIds: [null],
+      limit: 10,
+      hideFlowChats: true,
+    });
+    const pinned = await listPinnedChatsForProjects(db, [null], true);
+
+    expect(general).toMatchObject({ count: 4, flowCount: 2 });
+    expect(page.map((r) => r.id).sort()).toEqual(['mine', 'mine-pinned']);
+    expect(pinned.map((r) => r.id)).toEqual(['mine-pinned']);
+    expect(await listPinnedChatsForProjects(db, [null])).toHaveLength(2);
   });
 
   it('aggregates counts per project including the null (general) bucket', async () => {

@@ -79,6 +79,16 @@ export const hiddenModelsAtom = atomWithStorage<string[]>('models:hidden', [], u
   getOnInit: true,
 });
 
+/** The chat sidebar leaves out chats a Flow opened, keeping the ones the user started. */
+export const hideFlowChatsAtom = atomWithStorage<boolean>(
+  'sidebar:hide-flow-chats',
+  false,
+  undefined,
+  {
+    getOnInit: true,
+  },
+);
+
 // Preferences - Sound Notifications
 // When enabled, play a sound when agent completes work (if not viewing the chat)
 export const soundNotificationsEnabledAtom = atomWithStorage<boolean>(

@@ -91,9 +91,9 @@ describe('resolveSidebarFolderKeyForProjectId', () => {
 describe('buildChatCountByProjectMap / computeChatCountByFolderKey', () => {
   it('aggregates folder counts from listCounts rows', () => {
     const raw = [
-      { projectId: 'p1', count: 2 },
-      { projectId: 'p2', count: 3 },
-      { projectId: null, count: 1 },
+      { projectId: 'p1', count: 2, flowCount: 0 },
+      { projectId: 'p2', count: 3, flowCount: 0 },
+      { projectId: null, count: 1, flowCount: 0 },
     ];
     const map = buildChatCountByProjectMap(raw);
     expect(map.get('p1')).toBe(2);
@@ -106,6 +106,17 @@ describe('buildChatCountByProjectMap / computeChatCountByFolderKey', () => {
     const byFolder = computeChatCountByFolderKey(folderDescriptors, map, SIDEBAR_GENERAL_COUNT_KEY);
     expect(byFolder['folder-a']).toBe(5);
     expect(byFolder[GENERAL]).toBe(1);
+  });
+
+  it('counts only chats the user started while Flow chats are hidden', () => {
+    const raw = [
+      { projectId: 'p1', count: 5, flowCount: 3 },
+      { projectId: null, count: 2, flowCount: 2 },
+    ];
+    const map = buildChatCountByProjectMap(raw, true);
+    expect(map.get('p1')).toBe(2);
+    expect(map.get(SIDEBAR_GENERAL_COUNT_KEY)).toBe(0);
+    expect(buildChatCountByProjectMap(raw).get('p1')).toBe(5);
   });
 });
 
@@ -298,8 +309,8 @@ describe('refetchListCountsAndSyncFolderSnapshots', () => {
   it('refetches counts and aligns snapshots for loaded folders only', async () => {
     const invalidate = vi.fn(async () => undefined);
     const fetch = vi.fn(async () => [
-      { projectId: 'p1', count: 10 },
-      { projectId: null, count: 0 },
+      { projectId: 'p1', count: 10, flowCount: 4 },
+      { projectId: null, count: 0, flowCount: 0 },
     ]);
     const setSnapshot = vi.fn((fn: (p: Record<string, number>) => Record<string, number>) =>
       fn({ folderA: 5 }),
@@ -313,15 +324,37 @@ describe('refetchListCountsAndSyncFolderSnapshots', () => {
       ],
       setSnapshot as Dispatch<SetStateAction<Record<string, number>>>,
       SIDEBAR_GENERAL_COUNT_KEY,
+      false,
     );
 
     expect(invalidate).toHaveBeenCalledTimes(1);
     expect(fetch).toHaveBeenCalledTimes(1);
+    // SAFETY: the helper always hands setFolderCountSnapshotByKey an updater function.
     const updater = setSnapshot.mock.calls[0][0] as (
       p: Record<string, number>,
     ) => Record<string, number>;
     const next = updater({ folderA: 5 });
     expect(next.folderA).toBe(10);
+  });
+
+  it('snapshots only the chats the Flow-chat filter keeps', async () => {
+    const fetch = vi.fn(async () => [{ projectId: 'p1', count: 10, flowCount: 4 }]);
+    const setSnapshot = vi.fn();
+
+    // SAFETY: the helper only ever calls this setter, which the double records.
+    await refetchListCountsAndSyncFolderSnapshots(
+      { chats: { listCounts: { invalidate: vi.fn(async () => undefined), fetch } } },
+      [{ key: 'folderA', projectIds: ['p1'] }],
+      setSnapshot as Dispatch<SetStateAction<Record<string, number>>>,
+      SIDEBAR_GENERAL_COUNT_KEY,
+      true,
+    );
+
+    // SAFETY: the helper always hands setFolderCountSnapshotByKey an updater function.
+    const updater = setSnapshot.mock.calls[0][0] as (
+      p: Record<string, number>,
+    ) => Record<string, number>;
+    expect(updater({ folderA: 10 }).folderA).toBe(6);
   });
 });
 

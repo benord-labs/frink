@@ -38,6 +38,10 @@ describe('listSidebarActiveChats', () => {
     const { chats } = await listSidebarActiveChats(db);
     expect(chats.map((row) => row.chatId).sort()).toEqual([byLink.id, byResult.id].sort());
     expect(chats[0]).toMatchObject({ projectId: null, batchId: null, hasLiveFlowRun: false });
+    // task_id marks the chat a Flow opened, so the sidebar's Flow-chat filter can hide it.
+    const taskIdByChat = new Map(chats.map((row) => [row.chatId, row.taskId]));
+    expect(taskIdByChat.get(byLink.id)).toBe(linkedTask.id);
+    expect(taskIdByChat.get(byResult.id)).toBeNull();
   });
 
   it('leaves out finished tasks and archived or unknown chats', async () => {
@@ -61,7 +65,7 @@ describe('listSidebarActiveChats', () => {
     });
 
     expect((await listSidebarActiveChats(db)).chats).toEqual([
-      { chatId: chat.id, projectId: null, batchId: null, hasLiveFlowRun: true },
+      { chatId: chat.id, projectId: null, taskId: null, batchId: null, hasLiveFlowRun: true },
     ]);
   });
 

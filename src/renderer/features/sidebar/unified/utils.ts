@@ -295,6 +295,8 @@ const IDLE_CHAT = {
 export type ActiveFolderChat = {
   chatId: string;
   projectId: string | null;
+  /** Set when a Flow opened the chat. */
+  taskId?: string | null;
   batchId: string | null;
   hasLiveFlowRun: boolean;
 };
@@ -319,9 +321,12 @@ export function groupActiveChatsByFolder(
 export function buildSidebarActivityMaps(
   tasks: SidebarPolledTask[],
   activeChats: readonly ActiveFolderChat[],
+  hideFlowChats = false,
 ): [Map<string, SidebarTaskStatus>, Map<FolderKey, ActiveFolderChat[]>] {
   const liveFlowChatIds = activeChats.flatMap((chat) => (chat.hasLiveFlowRun ? [chat.chatId] : []));
-  return [buildChatTaskStatusMap(tasks, liveFlowChatIds), groupActiveChatsByFolder(activeChats)];
+  // A hidden Flow chat must not light its collapsed folder: expanding it would show nothing there.
+  const folderChats = hideFlowChats ? activeChats.filter((chat) => !chat.taskId) : activeChats;
+  return [buildChatTaskStatusMap(tasks, liveFlowChatIds), groupActiveChatsByFolder(folderChats)];
 }
 
 /** Active chats for one sidebar folder: its project ids, or the general bucket. */

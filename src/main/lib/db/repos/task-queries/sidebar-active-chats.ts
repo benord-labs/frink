@@ -10,6 +10,7 @@ type Db = ReturnType<typeof getDatabase>;
 type SidebarActiveChat = {
   chatId: string;
   projectId: string | null;
+  taskId: string | null;
   batchId: string | null;
   hasLiveFlowRun: boolean;
 };
@@ -63,7 +64,7 @@ export async function listSidebarActiveChats(db: Db): Promise<SidebarActivity> {
   if (candidateIds.size === 0) return { chats: [], tasks: [] };
   const [rows, batchByChatId] = await Promise.all([
     db
-      .select({ chatId: chats.id, projectId: chats.projectId })
+      .select({ chatId: chats.id, projectId: chats.projectId, taskId: chats.taskId })
       .from(chats)
       .where(and(inArray(chats.id, [...candidateIds]), isNull(chats.archivedAt))),
     getBatchIdByChatId(db),

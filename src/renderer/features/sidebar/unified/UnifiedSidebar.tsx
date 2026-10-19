@@ -17,7 +17,7 @@ import {
 import { toast } from 'sonner';
 import type { SidebarBatchGroup } from '../../../../shared/types/flows/sidebar-batch-group';
 import { useSettingsNavigation } from '../../../hooks/useSettingsNavigation';
-import { activeOverlayAtom } from '../../../lib/atoms';
+import { activeOverlayAtom, hideFlowChatsAtom } from '../../../lib/atoms';
 import {
   exitDestinationForSidebarNavigationAtom,
   flowsDashboardActiveAtom,
@@ -80,6 +80,7 @@ import {
   applyForkInsertToSidebarMaps,
   applyOpenChatActivityToSidebarMaps,
   applyPinToggleToSidebarMaps,
+  buildChatCountByProjectMap,
   computeFolderSnapshot,
   forkMutationResultToSidebarItem,
   invalidateBatchViews,
@@ -240,6 +241,11 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
     const pendingQuestions = useAtomValue(pendingUserQuestionsAtom);
     const [isFilesSidebarOpen, setIsFilesSidebarOpen] = useAtom(filesSidebarOpenAtom);
     const selectedProject = useAtomValue(selectedProjectAtom);
+    const hideFlowChats = useAtomValue(hideFlowChatsAtom);
+    const hideFlowChatsRef = useRef(hideFlowChats);
+    hideFlowChatsRef.current = hideFlowChats;
+    /** Bumped on every filter flip, so a fetch begun under an earlier flip is dropped. */
+    const filterGenerationRef = useRef(0);
     const chatIds = useAtomValue(splitViewChatIdsAtom);
     const splitViewChatIdsRef = useRef(chatIds);
     splitViewChatIdsRef.current = chatIds;
@@ -290,17 +296,12 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
       refetchInterval: TIMING.CHAT_POLL_INTERVAL_MS,
       structuralSharing: true,
     });
-    const chatCountByProject = useMemo(() => {
-      const map = new Map<string, number>();
-      const counts = Array.isArray(rawChatCounts) ? rawChatCounts : [];
-      for (const item of counts) {
-        const key = item.projectId ?? SIDEBAR_GENERAL_COUNT_KEY;
-        map.set(key, item.count);
-      }
-      return map;
-    }, [rawChatCounts]);
-    const chatCountByProjectRef = useRef(chatCountByProject);
-    chatCountByProjectRef.current = chatCountByProject;
+    const chatCountByProject = useMemo(
+      () => buildChatCountByProjectMap(rawChatCounts, hideFlowChats),
+      [rawChatCounts, hideFlowChats],
+    );
+    const rawChatCountsRef = useRef(rawChatCounts);
+    rawChatCountsRef.current = rawChatCounts;
 
     const loadedChats = useMemo(
       () =>
@@ -314,16 +315,17 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
     );
     // Search covers every chat, not only each folder's loaded pages; loaded rows still win.
     const { data: searchCorpus } = trpc.chats.list.useQuery({}, { enabled: isSearchActive });
-    const chats = useMemo(
-      () =>
-        isSearchActive && Array.isArray(searchCorpus)
-          ? mergeChatsById([...searchCorpus, ...loadedChats])
-          : loadedChats,
-      [isSearchActive, searchCorpus, loadedChats],
-    );
+    const chats = useMemo(() => {
+      if (!isSearchActive || !Array.isArray(searchCorpus)) return loadedChats;
+      const corpus = hideFlowChats ? searchCorpus.filter((chat) => !chat.taskId) : searchCorpus;
+      return mergeChatsById([...corpus, ...loadedChats]);
+    }, [isSearchActive, searchCorpus, loadedChats, hideFlowChats]);
     const pendingPlanIds = usePendingPlanIds(loadedChats, livePlanApprovals, TIMING);
     const { data: rawArchivedChats } = trpc.chats.listArchived.useQuery(undefined);
-    const archivedChats = Array.isArray(rawArchivedChats) ? rawArchivedChats : NO_ARCHIVED_CHATS;
+    const archivedChats = useMemo(() => {
+      if (!Array.isArray(rawArchivedChats)) return NO_ARCHIVED_CHATS;
+      return hideFlowChats ? rawArchivedChats.filter((chat) => !chat.taskId) : rawArchivedChats;
+    }, [rawArchivedChats, hideFlowChats]);
     // Collapse per-flow so the sidebar work-queue badge numbers match the Work Queue's own counts.
     const { data: taskCounts } = trpc.tasks.listCounts.useQuery(
       { collapseByFlow: true },
@@ -388,8 +390,8 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
 
     // Live flow runs keep their chats `running`, never a premature "Done" (buildChatTaskStatusMap).
     const [chatTaskStatusByChatId, activeChatsByFolder] = useMemo(
-      () => buildSidebarActivityMaps(activeTasks, activeChats),
-      [activeTasks, activeChats],
+      () => buildSidebarActivityMaps(activeTasks, activeChats, hideFlowChats),
+      [activeTasks, activeChats, hideFlowChats],
     );
     // The park reason of the task that wins each chat's pill, for its tooltip (buildChatReasonMap).
     const chatReasonByChatId = useMemo(() => buildChatReasonMap(activeTasks), [activeTasks]);
@@ -553,6 +555,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
     // eslint-disable-next-line react-hooks/exhaustive-deps -- refs + setters only; see comment above
     const fetchFolderPage = useCallback(async (folder: FolderDescriptor, reset: boolean) => {
       const folderKey = folder.key;
+      const generation = filterGenerationRef.current;
       setFolderLoadingByKey((prev) => ({ ...prev, [folderKey]: true }));
       try {
         const cursor = reset
@@ -567,7 +570,10 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
           projectIds: folder.projectIds,
           limit: PAGINATION.FOLDER_CHAT_PAGE_SIZE,
           cursor,
+          hideFlowChats: hideFlowChatsRef.current,
         });
+        // The filter flipped mid-fetch: this page belongs to a list the reset already dropped.
+        if (generation !== filterGenerationRef.current) return;
 
         setFolderChatsByKey((prev) => {
           const existing = reset ? [] : (prev[folderKey] ?? []);
@@ -589,15 +595,21 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
           setFolderCountSnapshotByKey((prev) => ({ ...prev, [folderKey]: snapshot }));
         }
       } finally {
-        setFolderLoadingByKey((prev) => ({ ...prev, [folderKey]: false }));
+        // A flip's reset already cleared this flag, and a newer fetch may have set it again.
+        if (generation === filterGenerationRef.current) {
+          setFolderLoadingByKey((prev) => ({ ...prev, [folderKey]: false }));
+        }
       }
     }, []);
 
     const fetchPinnedForFolder = useCallback(async (folder: FolderDescriptor) => {
+      const generation = filterGenerationRef.current;
       try {
         const result = await utilsRef.current.chats.listPinned.fetch({
           projectIds: folder.projectIds,
+          hideFlowChats: hideFlowChatsRef.current,
         });
+        if (generation !== filterGenerationRef.current) return;
         setPinnedChatsByKey((prev) => ({ ...prev, [folder.key]: result }));
       } catch (err) {
         // Display-only: avoid stale PINNED rows. Bulk delete / project delete use
@@ -621,6 +633,15 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
         description: detail && detail !== fallback ? detail : undefined,
       });
     }, []);
+
+    // Flipping the Flow-chat filter starts every folder's pages over under the new filter.
+    const lastHideFlowChatsRef = useRef(hideFlowChats);
+    useEffect(() => {
+      if (lastHideFlowChatsRef.current === hideFlowChats) return;
+      lastHideFlowChatsRef.current = hideFlowChats;
+      filterGenerationRef.current += 1;
+      resetFolderPaginationState();
+    }, [hideFlowChats, resetFolderPaginationState]);
 
     // Load initial page for each folder with chats.
     useEffect(() => {
@@ -755,6 +776,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
             folderDescriptors,
             setFolderCountSnapshotByKey,
             SIDEBAR_GENERAL_COUNT_KEY,
+            hideFlowChatsRef.current,
           );
         } catch (refetchErr) {
           toast.warning(`${warningTitle}; refreshing sidebar`, {
@@ -1405,7 +1427,9 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
 
     const handleProjectDelete = useCallback(
       async (projectId: string) => {
-        if (!(await askDelete.project(chatCountByProjectRef.current.get(projectId) ?? 0))) return;
+        // Deleting a project deletes every chat in it, hidden Flow chats included.
+        const chatCount = buildChatCountByProjectMap(rawChatCountsRef.current).get(projectId) ?? 0;
+        if (!(await askDelete.project(chatCount))) return;
         try {
           const { allChats: projectChats } = await fetchAllChatsForFolder([projectId]);
           const chatIds = projectChats.map((chat) => chat.id);
