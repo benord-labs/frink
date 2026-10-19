@@ -13,7 +13,7 @@ import {
   getLinearPaneOuterCorners,
   type PaneCorners,
 } from './grid-helpers';
-import { PaneBackButton } from './PaneBackButton';
+import { PaneHistoryNav } from './PaneHistoryNav';
 import { PaneHeader } from './PaneHeader';
 import { PaneDropSection } from './pane-reorder-dnd';
 import { SplitPaneFileTreeSidebar } from './SplitPaneFileTreeSidebar';
@@ -182,7 +182,7 @@ export const SplitPane = memo(function SplitPane(props: SplitPaneProps) {
         label={pane.label}
         totalPanes={totalPanes}
         onActivate={onSetActive}
-        backButton={<PaneBackButton chatId={pane.id} paneIndex={index} />}
+        historyNav={<PaneHistoryNav chatId={pane.id} paneIndex={index} />}
         onClose={onClose}
         onMoveLeft={onSwapPanes ? () => onSwapPanes(index, index - 1) : undefined}
         onMoveRight={onSwapPanes ? () => onSwapPanes(index, index + 1) : undefined}

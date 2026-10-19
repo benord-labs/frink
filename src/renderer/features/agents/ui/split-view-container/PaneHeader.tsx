@@ -138,7 +138,7 @@ export function PaneHeader({
   onResetPaneZoom,
   totalPanes,
   onActivate,
-  backButton,
+  historyNav,
   className,
 }: {
   paneNumber: number;
@@ -164,8 +164,8 @@ export function PaneHeader({
   totalPanes?: number;
   /** When provided, clicking the header activates this pane (avoids activating when clicking content). */
   onActivate?: () => void;
-  /** Shown before the pane label: returns the pane to the chat it showed before. */
-  backButton?: ReactNode;
+  /** Shown before the pane label: Back/Forward through the chats this pane has shown. */
+  historyNav?: ReactNode;
   /** Merged onto the header bar, e.g. the pane's rounded top corners. */
   className?: string;
 }) {
@@ -209,7 +209,7 @@ export function PaneHeader({
       <div className="flex items-center gap-1.5 min-w-0 flex-1">
         {/* Drag handle - outside activate button to avoid nested buttons */}
         {paneReorderIndex !== undefined && <PaneReorderHandleButton paneIndex={paneReorderIndex} />}
-        {backButton}
+        {historyNav}
         {onActivate ? (
           <Button
             variant="ghost"

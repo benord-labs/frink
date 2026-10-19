@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { createStore } from 'jotai';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { paneHistoryAtom } from '@/lib/atoms/pane-history';
+import { type PaneNavDirection, paneHistoryAtom } from '@/lib/atoms/pane-history';
 import {
   getDefaultRatios,
   NEW_CHAT_PANE,
@@ -27,8 +27,8 @@ function seedStore(chatIds: (string | null)[], activePaneIndex = 0) {
     store,
     show: (chatId: string, paneIndex?: number) =>
       store.set(showChatInPaneAtom, { chatId, paneIndex }),
-    back: (chatId: string, paneIndex: number) =>
-      store.set(showChatInPaneAtom, { chatId, paneIndex, goingBack: true }),
+    step: (direction: PaneNavDirection, chatId: string, paneIndex: number) =>
+      store.set(showChatInPaneAtom, { chatId, paneIndex, direction }),
     chatIds: () => store.get(splitViewAtom).chatIds,
     history: () => store.get(paneHistoryAtom),
   };
@@ -43,29 +43,67 @@ describe('showChatInPaneAtom', () => {
     const pane = seedStore(['a', 'b', 'c', 'd'], 1);
     pane.show('x');
     expect(pane.chatIds()).toEqual(['a', 'x', 'c', 'd']);
-    expect(pane.history()).toEqual({ x: ['b'] });
+    expect(pane.history()).toEqual({ x: { back: ['b'], forward: [] } });
   });
 
-  it('steps Back through several peeks to the chat the pane was watching', () => {
+  it('steps Back through several peeks, then Forward again', () => {
     const pane = seedStore(['a', 'watched'], 1);
     pane.show('peek-1');
     pane.show('peek-2');
-    expect(pane.history()).toEqual({ 'peek-2': ['watched', 'peek-1'] });
+    expect(pane.history()).toEqual({ 'peek-2': { back: ['watched', 'peek-1'], forward: [] } });
 
-    pane.back('peek-1', 1);
-    expect(pane.history()).toEqual({ 'peek-1': ['watched'] });
-    pane.back('watched', 1);
+    pane.step('back', 'peek-1', 1);
+    expect(pane.history()).toEqual({ 'peek-1': { back: ['watched'], forward: ['peek-2'] } });
+    pane.step('back', 'watched', 1);
     expect(pane.chatIds()).toEqual(['a', 'watched']);
-    expect(pane.history()).toEqual({});
+    expect(pane.history()).toEqual({ watched: { back: [], forward: ['peek-2', 'peek-1'] } });
+
+    pane.step('forward', 'peek-1', 1);
+    expect(pane.history()).toEqual({ 'peek-1': { back: ['watched'], forward: ['peek-2'] } });
+    pane.step('forward', 'peek-2', 1);
+    expect(pane.chatIds()).toEqual(['a', 'peek-2']);
+    expect(pane.history()).toEqual({ 'peek-2': { back: ['watched', 'peek-1'], forward: [] } });
   });
 
-  it('going back to an older chat drops the newer ones it skipped', () => {
+  it('stepping past chats keeps them reachable from the other direction', () => {
     const pane = seedStore(['a', 'watched'], 1);
     pane.show('peek-1');
     pane.show('peek-2');
-    pane.back('watched', 1);
-    expect(pane.chatIds()).toEqual(['a', 'watched']);
-    expect(pane.history()).toEqual({});
+    pane.step('back', 'watched', 1);
+    expect(pane.history()).toEqual({ watched: { back: [], forward: ['peek-2', 'peek-1'] } });
+    pane.step('forward', 'peek-2', 1);
+    expect(pane.history()).toEqual({ 'peek-2': { back: ['watched', 'peek-1'], forward: [] } });
+  });
+
+  it('opening a new chat after going back clears Forward', () => {
+    const pane = seedStore(['a', 'watched'], 1);
+    pane.show('peek');
+    pane.step('back', 'watched', 1);
+    pane.show('other');
+    expect(pane.history()).toEqual({ other: { back: ['watched'], forward: [] } });
+  });
+
+  it('keeps Forward when a click only focuses a chat already open in another pane', () => {
+    const pane = seedStore(['a', 'watched'], 1);
+    pane.show('peek');
+    pane.step('back', 'watched', 1);
+    pane.show('a');
+    expect(pane.store.get(splitViewAtom).activePaneIndex).toBe(0);
+    expect(pane.history()).toEqual({ watched: { back: [], forward: ['peek'] } });
+  });
+
+  it('keeps the nearest five and never lists a chat in both directions', () => {
+    const pane = seedStore(['a', 'c0'], 1);
+    for (const id of ['c1', 'c2', 'c3', 'c4', 'c5', 'c6']) pane.show(id);
+    for (const id of ['c5', 'c4', 'c3', 'c2']) pane.step('back', id, 1);
+    expect(pane.history()).toEqual({ c2: { back: ['c1'], forward: ['c6', 'c5', 'c4', 'c3'] } });
+
+    pane.step('back', 'c1', 1);
+    pane.step('forward', 'c2', 1);
+    const { back, forward } = pane.history().c2 ?? { back: [], forward: [] };
+    expect(back).toEqual(['c1']);
+    expect(forward).toEqual(['c6', 'c5', 'c4', 'c3']);
+    expect(back.filter((id) => forward.includes(id))).toEqual([]);
   });
 
   it('shows the chat in the given pane and makes that pane active', () => {
@@ -93,14 +131,16 @@ describe('showChatInPaneAtom', () => {
     expect(pane.history()).toEqual({});
   });
 
-  it('never lists the shown chat in its own history, and keeps the latest five', () => {
+  it('never lists the shown chat in its own history, and keeps the nearest five', () => {
     const pane = seedStore(['a', 'start'], 1);
     pane.show('x');
     pane.show('start');
-    expect(pane.history()).toEqual({ start: ['x'] });
+    expect(pane.history()).toEqual({ start: { back: ['x'], forward: [] } });
 
     for (const id of ['c1', 'c2', 'c3', 'c4', 'c5']) pane.show(id);
-    expect(pane.history()).toEqual({ c5: ['start', 'c1', 'c2', 'c3', 'c4'] });
+    expect(pane.history()).toEqual({
+      c5: { back: ['start', 'c1', 'c2', 'c3', 'c4'], forward: [] },
+    });
   });
 
   it('ignores a pane index outside the split', () => {
@@ -117,7 +157,7 @@ describe('pane history pruning', () => {
     pane.show('x');
     pane.store.set(swapAllPaneStateAtom, { from: 0, to: 1 });
     expect(pane.chatIds()).toEqual(['x', 'a']);
-    expect(pane.history()).toEqual({ x: ['b'] });
+    expect(pane.history()).toEqual({ x: { back: ['b'], forward: [] } });
   });
 
   it('keeps the same history object on writes that drop nothing, like pane resizes', () => {
