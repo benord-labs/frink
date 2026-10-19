@@ -51,6 +51,8 @@ const PATHLESS_ARGS = new Map([
       'multiline',
       'sort',
       'sortAscending',
+      'outputMode',
+      'type',
     ].concat(['context', 'contextBefore', 'contextAfter']),
   ],
 ]);
