@@ -107,7 +107,7 @@ const EXTENSION_ICONS = new Map(
   }),
 );
 
-function resolveFileIcon(filename: string): IconifyIcon | undefined {
+export function resolveFileIcon(filename: string): IconifyIcon | undefined {
   const basename = filename.toLowerCase().replace(/\\/g, '/').split('/').pop() ?? '';
   if (isImagePath(filename)) return imageIcon;
   if (basename.startsWith('.env.')) return dotenvIcon;

@@ -4,10 +4,24 @@ import { iconifyComponent } from '@/lib/utils/iconify-component';
 import { keepPreviousData } from '@tanstack/react-query';
 import { useAtomValue } from 'jotai';
 import { ChevronRight, FileText, Bot, Files, Loader2, ToolCase, FolderOpen } from 'lucide-react';
-import { createElement, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { createPortal, flushSync } from 'react-dom';
-import { createRoot } from 'react-dom/client';
-import { getFileIconByExtension } from '@/lib/mentions/agents-file-mention-icons';
+// @ts-expect-error - untyped lucide per-icon module
+import { __iconData as botData } from 'lucide-react/dist/esm/icons/bot.mjs';
+// @ts-expect-error - untyped lucide per-icon module
+import { __iconData as fileTextData } from 'lucide-react/dist/esm/icons/file-text.mjs';
+// @ts-expect-error - untyped lucide per-icon module
+import { __iconData as filesData } from 'lucide-react/dist/esm/icons/files.mjs';
+// @ts-expect-error - untyped lucide per-icon module
+import { __iconData as folderOpenData } from 'lucide-react/dist/esm/icons/folder-open.mjs';
+// @ts-expect-error - untyped lucide per-icon module
+import { __iconData as toolCaseData } from 'lucide-react/dist/esm/icons/tool-case.mjs';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { getFileIconByExtension, resolveFileIcon } from '@/lib/mentions/agents-file-mention-icons';
+import {
+  iconifySvgMarkup,
+  lucideSvgMarkup,
+  mentionIconElement,
+} from '@/lib/mentions/mention-icon-svg';
 import {
   isGlobalSearchNonFileSubpage as checkGlobalSearchNonFileSubpage,
   computeBriefingsHookLoading,
@@ -99,81 +113,28 @@ function formatToolName(toolName: string): string {
     .trim();
 }
 
-// Create SVG icon element in DOM based on file extension or type
+// Files (and categories, which never become chips) take their icon from the filename instead.
+const ICON_MARKUP_BY_TYPE = {
+  file: undefined,
+  category: undefined,
+  skill: lucideSvgMarkup(toolCaseData),
+  agent: lucideSvgMarkup(botData),
+  briefing: lucideSvgMarkup(fileTextData),
+  folder: lucideSvgMarkup(folderOpenData),
+  tool: iconifySvgMarkup(mcpLogo),
+} satisfies Record<NonNullable<FileMentionOption['type']>, string | undefined>;
+const FILES_ICON_MARKUP = lucideSvgMarkup(filesData);
+
+/** Builds the chip icon from icon data, so it draws even when the editor value is set mid-commit. */
 export function createFileIconElement(
   filename: string,
-  type?: 'file' | 'folder' | 'skill' | 'agent' | 'category' | 'tool' | 'briefing',
+  type?: FileMentionOption['type'],
 ): SVGSVGElement {
-  // biome-ignore lint/style/useNamingConvention: component type variable
-  const IconComponent =
-    type === 'skill'
-      ? ToolCase
-      : type === 'agent'
-        ? Bot
-        : type === 'tool'
-          ? ToolIcon
-          : type === 'briefing'
-            ? FileText
-            : type === 'folder'
-              ? FolderOpen
-              : (getFileIconByExtension(filename) ?? Files);
-  // Note: "category" type will use the default file icon based on filename, which is fine since
-  // categories won't be inserted as mentions in the editor (they navigate to subpages)
-
-  // Create a temporary container
-  const container = document.createElement('div');
-  container.style.display = 'none';
-  container.style.position = 'absolute';
-  container.style.visibility = 'hidden';
-  document.body.appendChild(container);
-
-  // Unstyled: the mention chip sizes and colours its icon
-  const iconElement = createElement(IconComponent);
-
-  const root = createRoot(container);
-
-  // Render synchronously using flushSync
-  flushSync(() => {
-    root.render(iconElement);
-  });
-
-  // Extract the SVG element
-  const svgElement = container.querySelector('svg');
-
-  // Clean up
-  root.unmount();
-  if (container.parentNode) {
-    document.body.removeChild(container);
-  }
-
-  if (!svgElement || !(svgElement instanceof SVGSVGElement)) {
-    // Fallback: create a simple file icon
-    const fallbackSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    fallbackSvg.setAttribute('width', '12');
-    fallbackSvg.setAttribute('height', '12');
-    fallbackSvg.setAttribute('viewBox', '0 0 24 24');
-    fallbackSvg.setAttribute('fill', 'none');
-    fallbackSvg.setAttribute('stroke', 'currentColor');
-    fallbackSvg.setAttribute('stroke-width', '2');
-    fallbackSvg.setAttribute('stroke-linecap', 'round');
-    fallbackSvg.setAttribute('stroke-linejoin', 'round');
-    fallbackSvg.setAttribute('aria-label', 'File icon');
-
-    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    path.setAttribute('d', 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z');
-    fallbackSvg.appendChild(path);
-
-    const polyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
-    polyline.setAttribute('points', '14 2 14 8 20 8');
-    fallbackSvg.appendChild(polyline);
-
-    return fallbackSvg;
-  }
-
-  // Clone the SVG to avoid issues
-  const clonedSvg = svgElement.cloneNode(true) as SVGSVGElement;
-
-  return clonedSvg;
+  const typeMarkup = type ? ICON_MARKUP_BY_TYPE[type] : undefined;
+  const fileIcon = resolveFileIcon(filename);
+  return mentionIconElement(
+    typeMarkup ?? (fileIcon ? iconifySvgMarkup(fileIcon) : FILES_ICON_MARKUP),
+  );
 }
 
 // Folder icon component for consistency with file icons
