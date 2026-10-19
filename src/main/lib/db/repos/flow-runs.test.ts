@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { FlowGraph } from '../../../../shared/lib/validate-flow-graph';
 import { chats, flowRunAdmissions, flowRuns, nodeRuns } from '../schema';
@@ -1529,6 +1529,82 @@ describe('batch ↔ chat linkage (sidebar grouping)', () => {
     it('returns [] for a batch with no linked chats', async () => {
       await seedRunWithChat({ batchId: 'b1', chatName: 'A' });
       await expect(listChatsByBatch(db, 'unknown-batch')).resolves.toEqual([]);
+    });
+  });
+
+  describe('a Fan Out run that opens a chat per item', () => {
+    /** Home chat before the loop, then one chat per item; `batchId` makes it a batch member. */
+    async function seedFanOutRun(batchId: string | null) {
+      const home = await createChat(db, { name: 'home' });
+      const items = [
+        await createChat(db, { name: 'item 0' }),
+        await createChat(db, { name: 'item 1' }),
+      ];
+      const { run } = await getOrCreateFlowRunByIdempotencyKey(db, {
+        flowVersionId: versionId,
+        status: 'paused',
+        triggerContext: null,
+        idempotencyKey: null,
+        batchId,
+        startedAt: new Date(),
+      });
+      const flowRunId = run.id;
+      await seedCompletedNodeRun(db, {
+        flowRunId,
+        nodeId: 'st',
+        blockType: 'start_task',
+        outputs: { chatId: home.id },
+      });
+      const fan = await seedCompletedNodeRun(db, {
+        flowRunId,
+        nodeId: 'fan',
+        blockType: 'fan_out',
+      });
+      for (const [laneIndex, item] of items.entries()) {
+        await seedCompletedNodeRun(db, {
+          flowRunId,
+          laneIndex,
+          parentFanOutNodeRunId: fan.id,
+          nodeId: 'item-start',
+          blockType: 'start_task',
+          outputs: { chatId: item.id },
+        });
+      }
+      return { runId: run.id, chatIds: [home.id, ...items.map((item) => item.id)] };
+    }
+
+    it('groups the home chat and every item chat under the run', async () => {
+      const { runId, chatIds } = await seedFanOutRun(null);
+
+      const map = await getBatchIdByChatId(db);
+
+      expect(chatIds.map((id) => map.get(id))).toEqual([runId, runId, runId]);
+      expect((await listChatsByBatch(db, runId)).map((r) => r.id)).toEqual(chatIds);
+    });
+
+    it('still groups the run when one of its steps saved malformed output', async () => {
+      const { runId, chatIds } = await seedFanOutRun(null);
+      const broken = await seedCompletedNodeRun(db, {
+        flowRunId: runId,
+        nodeId: 'x',
+        blockType: 'agent',
+      });
+      db.run(
+        sql`UPDATE ${nodeRuns} SET node_output = '{broken' WHERE ${eq(nodeRuns.id, broken.id)}`,
+      );
+
+      const map = await getBatchIdByChatId(db);
+
+      expect(chatIds.map((id) => map.get(id))).toEqual([runId, runId, runId]);
+      expect((await listChatsByBatch(db, runId)).map((r) => r.id)).toEqual(chatIds);
+    });
+
+    it('leaves a Fan Out inside a batch in the batch group', async () => {
+      const { chatIds } = await seedFanOutRun('b1');
+
+      const map = await getBatchIdByChatId(db);
+
+      expect(chatIds.map((id) => map.get(id))).toEqual(['b1', 'b1', 'b1']);
     });
   });
 
