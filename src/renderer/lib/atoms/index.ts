@@ -116,6 +116,20 @@ export const promptCacheTimerEnabledAtom = atomWithStorage<boolean>(
   { getOnInit: true },
 );
 
+// Preferences - Chat markdown formatting, one switch per bubble role so toggling one never moves the other
+export const chatMarkdownAssistantAtom = atomWithStorage<boolean>(
+  'preferences:chat-markdown-assistant',
+  true,
+  undefined,
+  { getOnInit: true },
+);
+export const chatMarkdownUserAtom = atomWithStorage<boolean>(
+  'preferences:chat-markdown-user',
+  false,
+  undefined,
+  { getOnInit: true },
+);
+
 // Preferences - Analytics Opt-out
 // When true, user has opted out of analytics tracking
 export const analyticsOptOutAtom = atomWithStorage<boolean>(
