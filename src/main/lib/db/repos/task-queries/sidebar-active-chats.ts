@@ -22,6 +22,8 @@ type SidebarTaskStatusRow = {
   flowRunStatus: string | null;
   effectiveStatus: string;
   agentSignalSummary: string | null;
+  /** The linked chat still drives a live run; false for a Fan Out item the loop has moved past. */
+  chatLive: boolean;
 };
 
 export type SidebarActivity = { chats: SidebarActiveChat[]; tasks: SidebarTaskStatusRow[] };
@@ -72,6 +74,6 @@ export async function listSidebarActiveChats(db: Db): Promise<SidebarActivity> {
       batchId: batchByChatId.get(row.chatId) ?? null,
       hasLiveFlowRun: liveFlowChatIds.has(row.chatId),
     })),
-    tasks: taskRows,
+    tasks: taskRows.map((row) => ({ ...row, chatLive: liveFlowChatIds.has(row.linkedChatId) })),
   };
 }

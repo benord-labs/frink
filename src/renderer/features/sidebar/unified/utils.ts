@@ -125,6 +125,8 @@ function flowAwareStatus(task: ActiveTaskLite): SidebarTaskStatus {
     if (task.flowRunStatus === 'completed') return 'done';
     if (task.flowRunStatus === 'cancelled') return 'cancelled';
     if (task.flowRunStatus === 'failed') return 'failed';
+    // A finished Fan Out item's chat no longer drives the run, so its outcome is its own.
+    if (task.chatLive === false) return 'done';
     if (status === 'done') return 'running';
   }
   return status !== 'pending' && task.effectiveStatus === 'running' ? 'running' : status;
@@ -136,6 +138,7 @@ type ActiveTaskLite = {
   flowRunStatus?: string | null;
   effectiveStatus?: string | null;
   agentSignalSummary?: string | null;
+  chatLive?: boolean;
 };
 
 /** A task as the sidebar polls it (chats.listActiveChats), declared once for the maps built from it. */

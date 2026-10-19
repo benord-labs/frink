@@ -10,7 +10,7 @@
  * when emitting node_started events.
  */
 
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, type SQL, type SQLWrapper, sql } from 'drizzle-orm';
 import type { FanOutBranch } from '../../../shared/lib/compute-fan-out-body-chain';
 import type { NodeOutput } from '../../../shared/types/flow';
 import { getDatabase } from '../db';
@@ -38,8 +38,25 @@ export type FanOutBodyMemberEntry = {
   flowId: string;
 };
 
+const STATE_KEY_PREFIX = '_fanOut:';
+
 const stateKey = (flowRunId: string, fanOutNodeId: string): string =>
-  `_fanOut:${flowRunId}:${fanOutNodeId}`;
+  `${STATE_KEY_PREFIX}${flowRunId}:${fanOutNodeId}`;
+
+/**
+ * True when `nodeRunId` ran in a Fan Out item the loop has already moved past: only the item at
+ * `currentIndex` is live, and the state row is deleted after the last item. Sequential mode only.
+ */
+export function isPastFanOutLane(nodeRunId: SQLWrapper): SQL<boolean> {
+  return sql<boolean>`EXISTS (SELECT 1 FROM node_runs fo_lane
+    JOIN node_runs fo_fan ON fo_fan.id = fo_lane.parent_fan_out_node_run_id
+    JOIN flow_runs fo_run ON fo_run.id = fo_lane.flow_run_id
+    JOIN flow_versions fo_ver ON fo_ver.id = fo_run.flow_version_id
+    WHERE fo_lane.id = ${nodeRunId} AND NOT EXISTS (SELECT 1 FROM flow_kv_state fo_kv
+      WHERE fo_kv.flow_id = fo_ver.flow_id
+        AND fo_kv.key = ${STATE_KEY_PREFIX} || fo_lane.flow_run_id || ':' || fo_fan.node_id
+        AND json_extract(fo_kv.value, '$.currentIndex') = fo_lane.lane_index))`;
+}
 
 const memberKey = (flowRunId: string, chainNodeId: string): string =>
   `_fanOutBodyMember:${flowRunId}:${chainNodeId}`;
