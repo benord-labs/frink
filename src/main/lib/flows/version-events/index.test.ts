@@ -2,6 +2,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FlowGraph } from '../../../../shared/lib/validate-flow-graph';
+import * as analytics from '../../analytics';
 import { FlowVersionConflictError } from '../../db/repos/flow-versions';
 import { createFlow } from '../../db/repos/flows';
 import { freshDb, type TestDb } from '../../db/test-utils/fresh-db';
@@ -10,6 +11,8 @@ import {
   type FlowVersionCommittedEvent,
   subscribeFlowVersionCommitted,
 } from './index';
+
+const trackFlowCreated = vi.spyOn(analytics, 'trackFlowCreated');
 
 const graph = (instructions: string): FlowGraph => ({
   nodes: [
@@ -126,5 +129,26 @@ describe('commitFlowVersion', () => {
     await commitFlowVersion(db, { flowId, graph: graph('one') }, 'agent');
 
     expect(events).toEqual([]);
+  });
+});
+
+describe('flow_created usage count', () => {
+  let db: TestDb;
+  let flowId: string;
+
+  beforeEach(async () => {
+    db = freshDb();
+    flowId = (await createFlow(db, { name: 'F' })).id;
+    trackFlowCreated.mockClear();
+  });
+
+  it('counts a Flow once, on its first saved version, with how it starts and who saved it', async () => {
+    await commitFlowVersion(db, { flowId, graph: graph('one') }, 'ui');
+    await commitFlowVersion(db, { flowId, graph: graph('one') }, 'ui');
+    await commitFlowVersion(db, { flowId, graph: graph('two') }, 'agent');
+
+    expect(trackFlowCreated.mock.calls).toEqual([
+      [{ id: flowId, triggerType: 'manual', createdBy: 'ui' }],
+    ]);
   });
 });

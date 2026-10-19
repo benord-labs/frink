@@ -6,6 +6,8 @@ import type { AnalyticsHost } from '.';
 
 const capture = vi.fn();
 const message = { workspaceId: 'chat-1', messageLength: 5, mode: 'agent' as const };
+const flow = { id: 'flow-1', triggerType: 'schedule', createdBy: 'ui' } as const;
+const flowRun = { flowId: 'flow-1', outcome: 'completed', stepCount: 3, batchSize: 1 } as const;
 let userData: string;
 
 const installIdFile = () => join(userData, '.install_id');
@@ -53,6 +55,8 @@ describe('main-process analytics', () => {
 
     analytics.setOptOut(true);
     analytics.trackMessageSent(message);
+    analytics.trackFlowCreated(flow);
+    analytics.trackFlowRunCompleted(flowRun);
     await analytics.shutdown();
 
     expect(capture).not.toHaveBeenCalled();
@@ -112,6 +116,8 @@ describe('main-process analytics', () => {
     analytics.trackWorkspaceArchived('chat-1');
     analytics.trackWorkspaceDeleted('chat-1');
     analytics.trackPRCreated({ workspaceId: 'chat-1', prNumber: 7 });
+    analytics.trackFlowCreated(flow);
+    analytics.trackFlowRunCompleted(flowRun);
 
     const sentWithEveryEvent = [
       'source',
@@ -131,6 +137,8 @@ describe('main-process analytics', () => {
       ['workspace_archived', ['workspace_id']],
       ['workspace_deleted', ['workspace_id']],
       ['pr_created', ['workspace_id', 'pr_number']],
+      ['flow_created', ['flow_id', 'trigger_type', 'created_by']],
+      ['flow_run_completed', ['flow_id', 'outcome', 'step_count', 'batch_size']],
     ]);
   });
 

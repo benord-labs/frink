@@ -242,3 +242,33 @@ export function trackPRCreated(data: { workspaceId: string; prNumber: number }) 
     pr_number: data.prNumber,
   });
 }
+
+export type FlowTriggerKind = 'manual' | 'schedule' | 'webhook' | 'post_task' | 'none';
+
+/** Track a Flow's first saved version, or a copy of a Flow */
+export function trackFlowCreated(flow: {
+  id: string;
+  triggerType: FlowTriggerKind;
+  createdBy: 'ui' | 'agent' | 'copy';
+}) {
+  capture('flow_created', {
+    flow_id: flow.id,
+    trigger_type: flow.triggerType,
+    created_by: flow.createdBy,
+  });
+}
+
+/** Track a Flow run, or a whole batch, reaching a terminal state */
+export function trackFlowRunCompleted(run: {
+  flowId: string;
+  outcome: 'completed' | 'failed' | 'cancelled';
+  stepCount: number;
+  batchSize: number;
+}) {
+  capture('flow_run_completed', {
+    flow_id: run.flowId,
+    outcome: run.outcome,
+    step_count: run.stepCount,
+    batch_size: run.batchSize,
+  });
+}

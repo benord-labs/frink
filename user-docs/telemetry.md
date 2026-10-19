@@ -17,6 +17,10 @@ These go to PostHog and answer questions like "how many installs opened Frink th
 | `workspace_archived`, `workspace_deleted` | You archive or delete a chat | The chat's local id |
 | `message_sent` | You send a message | The chat's local id, the message's length in characters, and the chat mode |
 | `pr_created` | A chat's reply links a new GitHub pull request | The chat's local id and the pull request number |
+| `flow_created` | You first save a new Flow, an agent saves one for you, or you copy one | The Flow's local id, how it starts (manual, schedule, webhook, post-task, or none yet), and whether you, an agent or a copy made it |
+| `flow_run_completed` | A Flow run, or a whole batch, finishes | The Flow's local id, how it ended (completed, failed or cancelled), how many steps the Flow has, and how many runs the batch held (1 for a single run) |
+
+A batch counts as one `flow_run_completed`, not one per item; a cancelled batch is reported as failed. Running the same run again (Rerun, Carry on or Retry) is counted once while Frink stays open. Runs that end while Frink is starting up, before your preference has loaded, are not counted, so Flow numbers are a minimum.
 
 Every event also carries the Frink version, your operating system and chip architecture, and the Electron and Node versions inside the app.
 
