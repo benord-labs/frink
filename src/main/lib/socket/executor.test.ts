@@ -4212,12 +4212,12 @@ describe('Claude MCP runtime loading', () => {
 
   afterEach(() => {
     delete process.env.EXA_API_KEY;
-    delete process.env.QAVIS_ARGV_SECRET_CANARY;
+    delete process.env.ARGV_SECRET_CANARY;
   });
 
   it('includes env_var MCP when required key exists in process env', async () => {
     process.env.EXA_API_KEY = 'exa-secret';
-    process.env.QAVIS_ARGV_SECRET_CANARY = 'ambient-secret-canary';
+    process.env.ARGV_SECRET_CANARY = 'ambient-secret-canary';
     vi.mocked(getGlobalMcpServers).mockImplementation(async () => ({
       exa: {
         name: 'exa',

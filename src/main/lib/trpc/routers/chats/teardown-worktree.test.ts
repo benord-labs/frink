@@ -436,17 +436,17 @@ describe('recoverOrphanedWorktrees', () => {
   });
 
   it('never removes a registered project root when Frink runs from a linked worktree', async () => {
-    await createProject(db, { name: 'P', path: '/repo/qavis-checkout' });
+    await createProject(db, { name: 'P', path: '/repo/other-checkout' });
     listWorktreesMock.mockResolvedValue([
       wt('/repo', { isMain: true }),
-      wt('/repo/qavis-checkout'),
+      wt('/repo/other-checkout'),
       wt('/repo/wt-orphan', { branch: 'bo' }),
     ]);
 
     const { removed, skipped } = await recoverOrphanedWorktrees(db, '');
 
     expect(removeWorktreeMock).toHaveBeenCalledTimes(1);
-    expect(removeWorktreeMock).toHaveBeenCalledWith('/repo/qavis-checkout', '/repo/wt-orphan', {
+    expect(removeWorktreeMock).toHaveBeenCalledWith('/repo/other-checkout', '/repo/wt-orphan', {
       branch: 'bo',
     });
     expect(removed).toBe(1);

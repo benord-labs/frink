@@ -154,7 +154,7 @@ describe('QA rig home isolation', () => {
   );
 
   it("puts the app's main log in the run's evidence bundle, and says when it could not", () => {
-    expect(boot).toContain('QA_LOG_DIR="${QAVIS_EVIDENCE_DIR:-$QA_USER_DATA/logs}"');
+    expect(boot).toContain('QA_LOG_DIR="${FRINK_QA_EVIDENCE_DIR:-$QA_USER_DATA/logs}"');
     expect(boot).toContain('FRINK_LOG_DIR="$QA_LOG_DIR"');
     // Announced, so a run that silently fell back cannot pass for one that captured the log.
     expect(boot).toMatch(/echo .*FRINK_LOG_DIR=\$QA_LOG_DIR/);

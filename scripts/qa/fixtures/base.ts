@@ -25,8 +25,8 @@ export const FIXTURE_LONG_CHAT_ID = 'qa-fixture-chat-long';
 export const FIXTURE_LONG_SUB_CHAT_ID = 'qa-fixture-subchat-long';
 export const FIXTURE_LONG_CHAT_NAME = 'Long transcript';
 export const FIXTURE_TASK_ID = 'qa-fixture-task-1';
-export const FIXTURE_HISTORY_COMPLETED_ID = 'qavis-history-completed';
-export const FIXTURE_HISTORY_CANCELLED_ID = 'qavis-history-cancelled';
+export const FIXTURE_HISTORY_COMPLETED_ID = 'qa-history-completed';
+export const FIXTURE_HISTORY_CANCELLED_ID = 'qa-history-cancelled';
 export const FIXTURE_ACCOUNT_ID = 'qa-fixture-account-1';
 /** An empty file in the rig home that stands in for the Claude login the account's probe looks for. */
 export const FIXTURE_CLAUDE_SOURCE_MARKER = 'qa-claude-login-marker';
