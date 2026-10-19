@@ -139,6 +139,13 @@ describe('startCursorTurn', () => {
     expect(runs[0]?.model).toBeUndefined();
   });
 
+  it('keeps a typed slash command first, with its notes after it', async () => {
+    const { deps, runs } = fakeDeps();
+    const note = 'The user opened the file src/a.ts in the IDE.';
+    await collect(startCursorTurn(turnParams({ prompt: '/review', composerNotes: [note] }), deps));
+    expect(runs[0]?.prompt).toBe(`/review\n\n<system-reminder>\n${note}\n</system-reminder>`);
+  });
+
   it('sends the model and effort looked up in the list Cursor last gave', async () => {
     setPreference(database.getDatabase(), 'agentModels.cursor', SAVED);
     const { deps, runs } = fakeDeps();

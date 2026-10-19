@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { encodeCommandBlock } from './command-block-format';
-import { expandSlashCommand, isCompactCommand } from './expand-slash-command';
+import { expandSlashCommand, isCompactCommand, startsWithCommand } from './expand-slash-command';
 
 /**
  * Callers rely on expansion never throwing and never losing the user's input:
@@ -142,5 +142,19 @@ describe('isCompactCommand', () => {
     expect(isCompactCommand('/review')).toBe(false);
     expect(isCompactCommand('/plan')).toBe(false);
     expect(isCompactCommand('')).toBe(false);
+  });
+});
+
+describe('startsWithCommand', () => {
+  it('matches a leading command name the provider would run, with or without arguments', () => {
+    for (const text of ['/clear', '/review the diff', '/skill_x args', '/plugin:cmd', '/2fa']) {
+      expect(startsWithCommand(text)).toBe(true);
+    }
+  });
+
+  it('leaves a message that only starts with a path or a bare slash to the model', () => {
+    for (const text of ['/src/a.ts is broken', '/api/users returns 500', '/', '/ hi', ' /clear']) {
+      expect(startsWithCommand(text)).toBe(false);
+    }
   });
 });

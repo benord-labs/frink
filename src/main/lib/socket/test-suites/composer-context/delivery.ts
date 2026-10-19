@@ -20,7 +20,6 @@ import type { OperatorReminderHarness } from '../operator-reminders/delivery';
 
 const OPEN_FILE_NOTE =
   'The user opened the file a.ts in the IDE. This may or may not be related to the current task.';
-const INLINE_NOTE = `<system-reminder>\n${OPEN_FILE_NOTE}\n</system-reminder>`;
 const PERSON: MessageOrigin = { source: 'person', kind: 'message' };
 const SKILL_NOTE =
   'The user\'s message names the skill "deploy". If they are asking you to run it, run that skill with any arguments they gave (in Claude Code, with the Skill tool). If they only mention it, do not run it. If no skill by that name is available to you, say so.';
@@ -138,6 +137,39 @@ export function registerComposerContextTests(h: OperatorReminderHarness): void {
     registerOriginTests();
     registerAttachmentTests();
     registerSteerTest();
+    registerLocalCommandTest();
+  });
+}
+
+function registerLocalCommandTest(): void {
+  it('drops a Claude local command’s notes when its turn settles, so the next turn lacks them', async () => {
+    const subChatId = randomUUID();
+    const prompts: string[] = [];
+    const fired: Array<string | undefined> = [];
+    mockQuery(harness.claudeQueryMock, async function* ({ prompt, options }) {
+      // `/clear` runs inside the CLI: no model call, so its prompt hook never fires.
+      prompts.push(textOf((await prompt.next()).value));
+      yield* TURN_END;
+      prompts.push(textOf((await prompt.next()).value));
+      fired.push(await userPromptSubmitReminder({ options }, prompts[1]));
+      yield* TURN_END;
+      await never();
+    });
+    const send = (message: string, sessionId?: string) =>
+      harness.handleRemoteExecute({
+        ...harness.basePayload,
+        subChatId,
+        message,
+        sessionId,
+        delivery: { messageOrigin: PERSON },
+      });
+
+    await send('@[file:editor:a.ts] /clear');
+    await send('hi', 'sess-held');
+
+    expect(harness.claudeQueryMock).toHaveBeenCalledOnce();
+    expect(prompts).toEqual(['/clear', 'hi']);
+    expect(fired).toEqual([undefined]);
   });
 }
 
@@ -203,11 +235,11 @@ function registerOriginTests(): void {
   });
 
   it.each(providers)(
-    'keeps the context in the prompt, ahead of a slash command, for %s',
+    'leaves a typed slash command first for %s, with its context on the channel',
     async (_provider, deliver) => {
-      expect(await deliver('@[file:editor:a.ts] /review', PERSON)).toEqual({
-        prompt: `${INLINE_NOTE}\n\n/review`,
-        notes: [],
+      expect(await deliver('@[file:editor:a.ts] /skill x', PERSON)).toEqual({
+        prompt: '/skill x',
+        notes: [OPEN_FILE_NOTE],
       });
     },
   );

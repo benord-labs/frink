@@ -278,10 +278,25 @@ describe('projectComposerContext: notes that stay in the prompt', () => {
     });
   });
 
-  it('keeps the notes ahead of a slash command the tokens kept off the start', () => {
+  it('leaves a slash command first once its tokens are removed, with its notes beside it', () => {
     expect(projectComposerContext('@[file:editor:a.ts] /review')).toEqual({
-      text: `${reminder(opened('a.ts').text)}\n\n/review`,
-      notes: [],
+      text: '/review',
+      notes: [opened('a.ts')],
+    });
+    expect(projectComposerContext('@[file:editor:a.ts] /skill x')).toEqual({
+      text: '/skill x',
+      notes: [opened('a.ts')],
+    });
+  });
+
+  it('leaves a slash command first behind every token the composer put ahead of it', () => {
+    const code = codeToken('a.ts', '1-2', 'x');
+    expect(projectComposerContext(`@[file:editor:a.ts] ${code} /review`)).toEqual({
+      text: '/review',
+      notes: [
+        opened('a.ts'),
+        selected(`The user selected the lines 1 to 2 from a.ts:\nx\n\n${HEDGE}`),
+      ],
     });
   });
 
