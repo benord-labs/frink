@@ -20,6 +20,8 @@ export type AnalyticsHost = {
   userDataDir: string;
   version: string;
   key: string | undefined;
+  /** FRINK_DISABLE_USAGE_ANALYTICS as set for this launch */
+  disableUsageAnalytics: string | undefined;
   createClient: (key: string) => AnalyticsClient;
 };
 
@@ -41,6 +43,7 @@ function electronHost(): AnalyticsHost {
     userDataDir: app.getPath('userData'),
     version: app.getVersion(),
     key: import.meta.env.MAIN_VITE_POSTHOG_KEY,
+    disableUsageAnalytics: process.env.FRINK_DISABLE_USAGE_ANALYTICS,
     createClient: (key) =>
       new PostHog(key, {
         host: import.meta.env.MAIN_VITE_POSTHOG_HOST || 'https://us.i.posthog.com',
@@ -109,12 +112,19 @@ export function setOptOut(optedOut: boolean) {
   trackAppOpened(active);
 }
 
+/** True when the launch environment switches usage analytics off ('0' and 'false' leave it on). */
+function disabledForLaunch(value: string | undefined): boolean {
+  return !!value && value !== '0' && value !== 'false';
+}
+
 /**
- * Initialize PostHog for main process. Unpackaged builds and builds without a key
- * get no session, so they send nothing.
+ * Initialize PostHog for main process. Unpackaged builds, builds without a key and
+ * launches with FRINK_DISABLE_USAGE_ANALYTICS set get no session, so they send nothing.
  */
 export function initAnalytics(host: AnalyticsHost = electronHost()) {
-  if (session || !host.isPackaged || !host.key) return;
+  if (session || !host.isPackaged || !host.key || disabledForLaunch(host.disableUsageAnalytics)) {
+    return;
+  }
 
   session = {
     host,

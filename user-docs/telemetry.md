@@ -30,6 +30,8 @@ Your IP address reaches PostHog as it does any server you connect to. Frink send
 
 Open **Settings → Preferences → Privacy** and switch off **Share Usage Analytics**. From that moment Frink records no usage events, and it sends none at launch while the switch is off. If the switch was off before Frink ever sent an event, no install ID is created.
 
+A script that starts Frink, such as Frink's own automated tests, can set the environment variable `FRINK_DISABLE_USAGE_ANALYTICS=1` on that launch. The launch then sends no usage events and creates no install ID, whatever the switch says, so test runs are never counted as installs. It does not turn crash reports off.
+
 ## Crash reports
 
 When Frink itself hits an error or crashes, an official build sends a report to Sentry: the error and its stack trace, the Frink version, details of your system such as its operating system and memory, and a short trail of what the app was doing (screen changes, clicks and internal calls, with values reduced to their type).
