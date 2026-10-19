@@ -635,15 +635,13 @@ describe('mobile chat actions', () => {
 
   // The steer marker keeps the raw composer text (steering/index.ts), so it carries tokens too.
   it('shows a steer’s attached files and selections by name, never as tokens or base64', () => {
-    const text = '@[file:editor:a.ts] @[code:a.ts:1-2:x:eA==] use this';
+    const text = 'use @[file:editor:a.ts] like @[code:a.ts:1-2:x:eA==] does';
     const steer = { type: 'tool-Steer', toolName: 'Steer', input: { text } };
     const messages = mergeMobileTranscript([{ id: 'a', role: 'assistant', parts: [steer] }], {
       streams: [],
       terminals: [],
     });
-    expect(messages[0].parts).toEqual([
-      { type: 'steer', text: 'a.ts use this\nAttached: a.ts L1-2' },
-    ]);
+    expect(messages[0].parts).toEqual([{ type: 'steer', text: 'use a.ts like a.ts L1-2 does' }]);
   });
 
   it('uses each message owning stream when classifying unfinished tools', () => {

@@ -28,9 +28,8 @@ function projectToken(id: string): TokenProjection | null {
   return { attachment: label || 'Attachment' };
 }
 
-/** A user's message as the phone shows it: mention tokens become names and attachment chips, never
- * raw tokens or the base64 a selection carries. */
-export function projectMentions(body: string): MobileMessagePart[] {
+/** Replaces each token with its name; `lift` takes attachments out of the text into `names`. */
+function rewriteMentions(body: string, lift: boolean) {
   const names: string[] = [];
   let text = '';
   let cursor = 0;
@@ -38,8 +37,8 @@ export function projectMentions(body: string): MobileMessagePart[] {
     const projection = projectToken(id);
     if (!projection) continue;
     text += body.slice(cursor, start);
-    if ('inline' in projection) {
-      text += projection.inline;
+    if ('inline' in projection || !lift) {
+      text += 'inline' in projection ? projection.inline : projection.attachment;
       cursor = end;
     } else {
       names.push(projection.attachment);
@@ -47,17 +46,18 @@ export function projectMentions(body: string): MobileMessagePart[] {
       cursor = body[end] === ' ' ? end + 1 : end;
     }
   }
-  text = (text + body.slice(cursor)).trim();
+  return { text: (text + body.slice(cursor)).trim(), names };
+}
+
+/** A user's message as the phone shows it: mention tokens become names and attachment chips, never
+ * raw tokens or the base64 a selection carries. */
+export function projectMentions(body: string): MobileMessagePart[] {
+  const { text, names } = rewriteMentions(body, true);
   const chips = names.map((name) => ({ type: 'attachment', kind: 'file', name }) as const);
   return text ? [...chips, { type: 'text', text }] : chips;
 }
 
-/** A user's text as one plain note, for places the phone has no room for chips (a steer). */
+/** A user's text as one plain note with every name where it was typed, for a steer (no chips). */
 export function projectMentionsAsText(body: string): string {
-  const parts = projectMentions(body);
-  const prose = parts.flatMap((part) => (part.type === 'text' ? [part.text] : []));
-  const attached = parts.flatMap((part) =>
-    part.type === 'attachment' ? [`Attached: ${part.name}`] : [],
-  );
-  return [...prose, ...attached].join('\n');
+  return rewriteMentions(body, false).text;
 }
