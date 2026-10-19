@@ -2,8 +2,9 @@
 /**
  * Split view write actions only — does not subscribe to `splitViewAtom` (no re-render on layout/ratios).
  */
-import { useAtomValue, useSetAtom } from 'jotai';
+import { atom, useAtomValue, useSetAtom } from 'jotai';
 import { useCallback } from 'react';
+import { paneHistoryAtom } from '../../../lib/atoms/pane-history';
 import {
   addPaneRatio,
   getDefaultGridRatios,
@@ -30,6 +31,36 @@ export const MAX_PANES = 4;
 export function canOpenChatInNewPane(chatIds: (string | null)[]): boolean {
   return chatIds.length < MAX_PANES || chatIds.some(isFillablePane);
 }
+
+const MAX_PANE_HISTORY = 5;
+
+type ShowChatInPane = { chatId: string; paneIndex?: number; goingBack?: boolean };
+
+/** Show a chat in a pane (default: active), pushing the replaced chat onto the pane's Back history;
+ *  `goingBack` drops it and anything newer instead. A chat already in a pane is just focused. */
+export const showChatInPaneAtom = atom(
+  null,
+  (get, set, { chatId, paneIndex, goingBack = false }: ShowChatInPane) => {
+    const prev = get(splitViewAtom);
+    const existingIdx = prev.chatIds.indexOf(chatId);
+    if (existingIdx !== -1) {
+      set(splitViewAtom, { ...prev, activePaneIndex: existingIdx });
+      return;
+    }
+    const index = paneIndex ?? prev.activePaneIndex;
+    if (index < 0 || index >= prev.chatIds.length) return;
+
+    const replaced = prev.chatIds[index] ?? null;
+    const behind = replaced === null ? [] : (get(paneHistoryAtom)[replaced] ?? []);
+    let pushed = behind;
+    if (goingBack) pushed = behind.slice(0, Math.max(0, behind.indexOf(chatId)));
+    else if (replaced !== null && !isFillablePane(replaced)) pushed = [...behind, replaced];
+    const history = pushed.filter((id) => id !== chatId).slice(-MAX_PANE_HISTORY);
+    const chatIds = prev.chatIds.map((id, i) => (i === index ? chatId : id));
+    set(splitViewAtom, { ...prev, chatIds, activePaneIndex: index });
+    if (history.length > 0) set(paneHistoryAtom, (h) => ({ ...h, [chatId]: history }));
+  },
+);
 
 const PANE_ZOOM_STEP = 0.1;
 const PANE_ZOOM_MIN = 0.5;
@@ -152,28 +183,11 @@ export function useSplitViewActions() {
   const addNewChatPane = useCallback(() => addPane(true), [addPane]);
 
   /** Show a chat in the active pane, replacing whatever it holds — even when another pane is an
-   *  empty / new-chat placeholder. A chat already open in some pane is focused, not duplicated. */
+   *  empty / new-chat placeholder — and remember the replaced chat for the pane's Back button. */
+  const showChatInPane = useSetAtom(showChatInPaneAtom);
   const fillActivePane = useCallback(
-    (chatId: string) => {
-      setSplitView((prev: SplitViewState) => {
-        const existingIdx = prev.chatIds.indexOf(chatId);
-        if (existingIdx !== -1) {
-          return existingIdx === prev.activePaneIndex
-            ? prev
-            : { ...prev, activePaneIndex: existingIdx };
-        }
-
-        const activeIdx = prev.activePaneIndex;
-        if (activeIdx >= 0 && activeIdx < prev.chatIds.length) {
-          const newChatIds = [...prev.chatIds];
-          newChatIds[activeIdx] = chatId;
-          return { ...prev, chatIds: newChatIds };
-        }
-
-        return prev;
-      });
-    },
-    [setSplitView],
+    (chatId: string) => showChatInPane({ chatId }),
+    [showChatInPane],
   );
 
   /** Set which pane is active (receives sidebar clicks). */
