@@ -23,7 +23,7 @@ import { realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import log from 'electron-log';
-import { sanitizeError } from './detect';
+import { type DetectionFailure, sanitizeError } from './detect';
 import { probeDarwinKeychainItem } from './keychain-probe';
 
 export const CODEX_KEYCHAIN_SERVICE = 'Codex Auth';
@@ -39,6 +39,8 @@ export type DetectCodexAccountResult = {
   sourcePath?: string;
   /** Short user-facing reason when `available === false`. Never contains tokens. */
   hint?: string;
+  /** Why no login was found, as a category for usage counts. */
+  failure?: DetectionFailure;
 };
 
 /** $CODEX_HOME or ~/.codex (per codex-rs `find_codex_home`). Never overridden. */
@@ -114,7 +116,8 @@ export async function detectCodexAccount(): Promise<DetectCodexAccountResult> {
     const authFile = join(codexHome, 'auth.json');
 
     if (!existsSync(authFile)) {
-      if (process.platform !== 'darwin') return { available: false, hint: NO_LOGIN_HINT };
+      if (process.platform !== 'darwin')
+        return { available: false, failure: 'not_signed_in', hint: NO_LOGIN_HINT };
       const probe = await probeDarwinKeychainItem(
         CODEX_KEYCHAIN_SERVICE,
         await codexKeyringAccount(codexHome),
@@ -122,7 +125,7 @@ export async function detectCodexAccount(): Promise<DetectCodexAccountResult> {
       // 'denied' (locked keychain, probe timeout) says nothing about the login, so it is
       // not reported as logged out. Credential resolution still holds a send while it lasts.
       if ('error' in probe && probe.error !== 'denied') {
-        return { available: false, hint: NO_LOGIN_HINT };
+        return { available: false, failure: 'not_signed_in', hint: NO_LOGIN_HINT };
       }
       return { available: true, displayName: 'OpenAI', sourcePath: 'codex-passthrough://local' };
     }
@@ -131,6 +134,7 @@ export async function detectCodexAccount(): Promise<DetectCodexAccountResult> {
     if (!parsed) {
       return {
         available: false,
+        failure: 'detection_error',
         hint: 'Codex credentials are present but unreadable. Re-run `codex login`.',
       };
     }
@@ -145,6 +149,7 @@ export async function detectCodexAccount(): Promise<DetectCodexAccountResult> {
     log.error('[detect-codex] detectCodexAccount failed:', sanitizeError(error));
     return {
       available: false,
+      failure: 'detection_error',
       hint: 'Failed to read Codex credentials. See logs for details.',
     };
   }

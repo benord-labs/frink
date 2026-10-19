@@ -4,6 +4,7 @@ import { act, renderHook } from '@testing-library/react';
 import { createStore, Provider } from 'jotai';
 import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as analytics from '../../lib/analytics';
 import {
   agentsSettingsDialogActiveTabAtom,
   agentsSettingsDialogOpenAtom,
@@ -28,6 +29,10 @@ vi.mock('../../lib/trpc', () => ({
 }));
 
 vi.mock('sonner', () => ({ toast: { success: toastSuccess, error: vi.fn() } }));
+
+const trackAccountConnectCancelled = vi
+  .spyOn(analytics, 'trackAccountConnectCancelled')
+  .mockReturnValue(undefined);
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -59,6 +64,7 @@ function renderFlow(pending: PendingAccountAuthState | null) {
   const view = renderHook(
     () =>
       useConnectAccountFlow({
+        provider: 'codex',
         detectionQuery: { data: { available: true }, isLoading: false, refetch },
         connectMutation: { mutateAsync },
         buildConnectInput,
@@ -100,6 +106,7 @@ describe('useConnectAccountFlow', () => {
     expect(store.get(agentsSettingsDialogOpenAtom)).toBe(true);
     expect(successMessage).toHaveBeenCalledWith(true);
     expect(toastSuccess).toHaveBeenCalledWith('Account reconnected');
+    expect(trackAccountConnectCancelled).not.toHaveBeenCalled();
   });
 
   it('add-mode success without returnToSettings: connects but leaves the Settings dialog shut', async () => {
@@ -158,6 +165,31 @@ describe('useConnectAccountFlow', () => {
 
     expect(store.get(pendingAccountAuthAtom)).toBeNull();
     expect(store.get(agentsSettingsDialogOpenAtom)).toBe(false);
+    expect(trackAccountConnectCancelled).toHaveBeenCalledWith('codex');
+  });
+
+  it('Back while a connect is in flight does not report a cancelled connect', async () => {
+    const { mutateAsync, result } = renderFlow({
+      accountLabel: 'Personal',
+      mode: 'add',
+      provider: 'codex',
+    });
+    let finishConnect: () => void = () => {};
+    mutateAsync.mockReturnValueOnce(new Promise<void>((resolve) => (finishConnect = resolve)));
+
+    let connecting: Promise<void> = Promise.resolve();
+    act(() => {
+      connecting = result.current.handleConnect();
+    });
+    act(() => {
+      result.current.handleBack();
+    });
+    await act(async () => {
+      finishConnect();
+      await connecting;
+    });
+
+    expect(trackAccountConnectCancelled).not.toHaveBeenCalled();
   });
 
   it('failed connect surfaces the error and performs none of the success side-effects', async () => {

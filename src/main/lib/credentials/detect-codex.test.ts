@@ -194,6 +194,7 @@ describe('detectCodexAccount', () => {
 
     expect(result.available).toBe(false);
     expect(result.hint).toMatch(/re-run `codex login`/i);
+    expect(result.failure).toBe('detection_error');
   });
 
   it('returns a safe failure hint (no detail leak) when auth.json cannot be read', async () => {
@@ -206,6 +207,7 @@ describe('detectCodexAccount', () => {
 
     expect(result.available).toBe(false);
     expect(result.hint).toMatch(/failed to read codex credentials/i);
+    expect(result.failure).toBe('detection_error');
     expect(JSON.stringify(result)).not.toMatch(/EISDIR|auth\.json/i);
   });
 
@@ -261,6 +263,7 @@ describe('detectCodexAccount', () => {
 
     expect(result.available).toBe(false);
     expect(result.hint).toMatch(/codex login/i);
+    expect(result.failure).toBe('not_signed_in');
   });
 
   it('refuses a malformed auth.json even when a keychain login also exists, without probing it', async () => {
@@ -284,6 +287,7 @@ describe('detectCodexAccount', () => {
 
     expect(result.available).toBe(false);
     expect(result.hint).toMatch(/codex login/i);
+    expect(result.failure).toBe('not_signed_in');
     // Linux without a file must not shell out to the macOS `security` tool.
     expect(securityMock).not.toHaveBeenCalled();
     expect(execFileSyncMock).not.toHaveBeenCalled();

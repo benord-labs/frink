@@ -1112,3 +1112,82 @@ describe('claudeCodeRouter — codex account-type recognition in the selection r
     });
   });
 });
+
+describe('claudeCodeRouter usage counts for account connects', () => {
+  let analytics: typeof import('../../analytics');
+
+  beforeEach(async () => {
+    analytics = await import('../../analytics');
+    vi.spyOn(analytics, 'trackAccountConnect');
+    vi.spyOn(analytics, 'trackDetectionFailure');
+    vi.clearAllMocks();
+    selectGetMock.mockReset().mockReturnValue(undefined);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => '' }),
+    );
+  });
+
+  it('reports a failed Claude detection by its category', async () => {
+    detectClaudeAccountMock.mockReturnValueOnce({
+      available: false,
+      failure: 'access_denied',
+      hint: 'macOS denied keychain access for Frink.',
+    });
+    const { claudeCodeRouter } = await import('./claude-code');
+
+    await claudeCodeRouter.createCaller({ getWindow: () => null }).detectClaudeAccount();
+
+    expect(analytics.trackDetectionFailure).toHaveBeenCalledWith('claude-code', 'access_denied');
+  });
+
+  it('counts a Claude Code login connect as passthrough', async () => {
+    const { claudeCodeRouter } = await import('./claude-code');
+
+    await expect(
+      claudeCodeRouter.createCaller({ getWindow: () => null }).connectClaudePassthrough({
+        accountLabel: 'Personal',
+        sourcePath: 'darwin-keychain://Claude%20Code-credentials',
+      }),
+    ).resolves.toMatchObject({ status: 'created' });
+    expect(analytics.trackAccountConnect).toHaveBeenCalledWith(
+      { provider: 'claude-code', kind: 'passthrough' },
+      expect.any(Function),
+    );
+  });
+
+  // The win32 refusal is an unsupported platform, so it must stay outside the counted connect
+  it('counts no failed connect when Windows refuses a Claude Code login', async () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    try {
+      const { claudeCodeRouter } = await import('./claude-code');
+
+      await expect(
+        claudeCodeRouter.createCaller({ getWindow: () => null }).connectClaudePassthrough({
+          accountLabel: 'Personal',
+          sourcePath: 'darwin-keychain://Claude%20Code-credentials',
+        }),
+      ).rejects.toThrow(/not supported on Windows/);
+      expect(analytics.trackAccountConnect).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+    }
+  });
+
+  it.each([
+    [{ isApiKey: true }, 'api_key'],
+    [{}, 'token'],
+  ])('counts a pasted Claude key %o as %s', async (pasted, kind) => {
+    const { claudeCodeRouter } = await import('./claude-code');
+
+    await claudeCodeRouter
+      .createCaller({ getWindow: () => null })
+      .addAccount({ label: 'Work', token: 'sk-ant-pasted', ...pasted });
+
+    expect(analytics.trackAccountConnect).toHaveBeenCalledWith(
+      { provider: 'claude-code', kind },
+      expect.any(Function),
+    );
+  });
+});

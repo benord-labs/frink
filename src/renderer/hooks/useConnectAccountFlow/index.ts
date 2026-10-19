@@ -1,6 +1,8 @@
 import { useAtom, useSetAtom } from 'jotai';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
+import type { AiProviderId } from '../../../shared/lib/ai-providers';
+import { trackAccountConnectCancelled } from '../../lib/analytics';
 import {
   agentsSettingsDialogActiveTabAtom,
   agentsSettingsDialogOpenAtom,
@@ -24,6 +26,8 @@ type ConnectMutation<TInput> = {
 };
 
 type UseConnectAccountFlowParams<TDetection, TInput> = {
+  /** The provider being connected, reported when the page is left without connecting. */
+  provider: AiProviderId;
   /** The provider's detection query result. */
   detectionQuery: DetectionQuery<TDetection>;
   /** The provider's connect mutation result. */
@@ -64,6 +68,7 @@ export type ConnectAccountFlow<TDetection> = {
  * and (for Claude) an extra pre-connect guard — all passed in via params.
  */
 export function useConnectAccountFlow<TDetection, TInput>({
+  provider,
   detectionQuery,
   connectMutation,
   buildConnectInput,
@@ -101,6 +106,8 @@ export function useConnectAccountFlow<TDetection, TInput>({
   };
 
   const handleBack = () => {
+    // A connect still in flight reports its own outcome from main
+    if (flowState !== 'connecting') trackAccountConnectCancelled(provider);
     setPendingAccountAuth(null);
     returnToSettingsIfRequested();
     setAnthropicOnboardingCompleted(true);
