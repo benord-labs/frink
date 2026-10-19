@@ -12,7 +12,7 @@ const MAX_PATHS_PER_CHECK = 2000;
 type CheckIgnore = (worktreePath: string, relPaths: string[]) => Promise<Set<string> | null>;
 
 /** One `git check-ignore` for the whole batch; it honours the index, so tracked files never match. */
-const runGitCheckIgnore: CheckIgnore = (worktreePath, relPaths) =>
+export const runGitCheckIgnore: CheckIgnore = (worktreePath, relPaths) =>
   new Promise((resolve) => {
     const child = execFile(
       'git',
