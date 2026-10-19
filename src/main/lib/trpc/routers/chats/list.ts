@@ -86,6 +86,7 @@ export const listRouter = router({
           })
           .nullable()
           .optional(),
+        hideFlowChats: z.boolean().default(false),
       }),
     )
     .query(async ({ input }) => {
@@ -98,6 +99,7 @@ export const listRouter = router({
         projectIds,
         limit: input.limit + 1,
         cursor,
+        hideFlowChats: input.hideFlowChats,
       });
 
       const hasMore = rows.length > input.limit;
@@ -136,10 +138,15 @@ export const listRouter = router({
     }),
 
   listPinned: publicProcedure
-    .input(z.object({ projectIds: z.array(z.string()).nullable() }))
+    .input(
+      z.object({
+        projectIds: z.array(z.string()).nullable(),
+        hideFlowChats: z.boolean().default(false),
+      }),
+    )
     .query(async ({ input }) => {
       const projectIds = input.projectIds === null ? [null] : input.projectIds;
-      const rows = await listPinnedChatsForProjects(getDatabase(), projectIds);
+      const rows = await listPinnedChatsForProjects(getDatabase(), projectIds, input.hideFlowChats);
       return withBatchIds(rows.map(mapLocalChatResponse));
     }),
 });

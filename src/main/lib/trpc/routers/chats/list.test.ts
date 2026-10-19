@@ -38,6 +38,7 @@ vi.mock('../../../flows/batch-summaries', () => ({
   listSidebarBatchGroups: listSidebarBatchGroupsMock,
 }));
 
+import * as chatsRepo from '../../../db/repos/chats';
 import { listRouter } from './list';
 
 type GetChatById = typeof import('../../../db/repos/chats').getChatById;
@@ -116,6 +117,16 @@ describe('listRouter.listByFolder', () => {
       expect.anything(),
       expect.objectContaining({ projectIds: ['p1', 'p2'] }),
     );
+  });
+
+  it('passes the Flow-chat filter through to the repo, off unless asked', async () => {
+    pageChatsForProjectsMock.mockResolvedValue([]);
+
+    await caller().listByFolder({ projectIds: null, limit: 30 });
+    await caller().listByFolder({ projectIds: null, limit: 30, hideFlowChats: true });
+
+    const filters = pageChatsForProjectsMock.mock.calls.map(([, args]) => args.hideFlowChats);
+    expect(filters).toEqual([false, true]);
   });
 
   it('converts the serialized cursor (ISO string) into a Date before querying', async () => {
@@ -254,5 +265,20 @@ describe('listRouter.listArchived', () => {
     listAllArchivedChatsMock.mockResolvedValue([]);
 
     await expect(caller().listArchived()).resolves.toEqual([]);
+  });
+});
+
+describe('listRouter.listPinned', () => {
+  it('passes the Flow-chat filter through to the repo, off unless asked', async () => {
+    const listPinned = vi.mocked(chatsRepo.listPinnedChatsForProjects);
+    listPinned.mockResolvedValue([]);
+
+    await caller().listPinned({ projectIds: null });
+    await caller().listPinned({ projectIds: ['p1'], hideFlowChats: true });
+
+    expect(listPinned.mock.calls.map(([, ids, hide]) => [ids, hide])).toEqual([
+      [[null], false],
+      [['p1'], true],
+    ]);
   });
 });

@@ -13,6 +13,7 @@ import { useLogoDodge } from '@/hooks/use-logo-dodge';
 import { SidebarHeaderWithSearch } from '../../../components/SidebarHeaderWithSearch';
 import { SIDEBAR_PANEL_SEARCH_INPUT_CLASS } from '../../../panel-search-input-class';
 import { STRINGS } from '../../constants';
+import { FlowChatsFilterButton } from './FlowChatsFilterButton';
 import { FrinkLogo } from './FrinkLogo';
 
 /** Padding from viewport edge so the dodging logo stays fully visible. */
@@ -205,6 +206,7 @@ export function SidebarHeader({
       searchQuery={searchQuery}
       onSearchChange={onSearchChange}
       searchInputRef={searchInputRef}
+      searchAccessory={<FlowChatsFilterButton />}
       onClose={onToggleSidebar}
       closeTooltipLabel={STRINGS.CLOSE_SIDEBAR}
       closeShortcutId="toggle-sidebar"

@@ -12,7 +12,7 @@ import { mergeChatsById } from '../utils';
 
 export const SIDEBAR_GENERAL_COUNT_KEY = '__general__';
 
-type ListCountsRow = { projectId: string | null; count: number };
+type ListCountsRow = { projectId: string | null; count: number; flowCount: number };
 
 type SidebarFolderDescriptor = {
   key: string;
@@ -31,7 +31,7 @@ type TrpcUtilsLike = {
   chats: {
     listCounts: {
       invalidate: () => Promise<unknown>;
-      fetch: () => Promise<unknown>;
+      fetch: () => Promise<readonly ListCountsRow[]>;
     };
   };
 };
@@ -64,12 +64,15 @@ export function resolveSidebarFolderKeyForProjectId(
   return null;
 }
 
-export function buildChatCountByProjectMap(raw: unknown): Map<string, number> {
+/** Chats per project; `hideFlowChats` counts only the ones the sidebar lists under that filter. */
+export function buildChatCountByProjectMap(
+  raw: readonly ListCountsRow[] | undefined,
+  hideFlowChats = false,
+): Map<string, number> {
   const map = new Map<string, number>();
-  const counts = Array.isArray(raw) ? raw : [];
-  for (const item of counts as ListCountsRow[]) {
+  for (const item of Array.isArray(raw) ? raw : []) {
     const key = item.projectId ?? SIDEBAR_GENERAL_COUNT_KEY;
-    map.set(key, item.count);
+    map.set(key, hideFlowChats ? item.count - item.flowCount : item.count);
   }
   return map;
 }
@@ -125,10 +128,11 @@ export async function refetchListCountsAndSyncFolderSnapshots(
   folderDescriptors: SidebarFolderDescriptor[],
   setFolderCountSnapshotByKey: Dispatch<SetStateAction<Record<string, number>>>,
   generalCountKey: string,
+  hideFlowChats: boolean,
 ): Promise<void> {
   await utils.chats.listCounts.invalidate();
   const raw = await utils.chats.listCounts.fetch();
-  const chatCountByProject = buildChatCountByProjectMap(raw);
+  const chatCountByProject = buildChatCountByProjectMap(raw, hideFlowChats);
   const folderCounts = computeChatCountByFolderKey(
     folderDescriptors,
     chatCountByProject,

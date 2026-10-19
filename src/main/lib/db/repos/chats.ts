@@ -83,16 +83,21 @@ export async function listAllArchivedChats(db: Db): Promise<Chat[]> {
  * `pageChatsForProjects`. The sidebar derives its folder header count from here and its rows from
  * there; the count-drift self-heal assumes they can only diverge transiently, so a permanent
  * filter mismatch would leave the header count and the rows silently out of sync.
+ * `flowCount` (chats a Flow opened) is what `hideFlowChats` drops from those pages.
  */
 export async function countChatsByProject(
   db: Db,
-): Promise<Array<{ projectId: string | null; count: number }>> {
+): Promise<Array<{ projectId: string | null; count: number; flowCount: number }>> {
   const rows = await db
-    .select({ projectId: chats.projectId, count: sql<number>`count(*)` })
+    .select({
+      projectId: chats.projectId,
+      count: sql<number>`count(*)`,
+      flowCount: sql<number>`count(${chats.taskId})`,
+    })
     .from(chats)
     .where(isNull(chats.archivedAt))
     .groupBy(chats.projectId);
-  return rows.map((r) => ({ projectId: r.projectId, count: Number(r.count) }));
+  return rows.map((r) => ({ ...r, count: Number(r.count), flowCount: Number(r.flowCount) }));
 }
 
 /** True when another chat, ACTIVE OR ARCHIVED (archive is undoable), still references this worktree.
@@ -323,26 +328,26 @@ export async function unarchiveChat(db: Db, id: string): Promise<Chat | null> {
  */
 export type PageCursor = { updatedAt: Date; id: string };
 
+/** Chats in these folders (null = general), not archived, and optionally not opened by a Flow. */
+function folderChatsWhere(projectIds: readonly (string | null)[], hideFlowChats: boolean) {
+  const ids = projectIds.filter((p): p is string => p !== null);
+  const general = projectIds.includes(null) ? isNull(chats.projectId) : undefined;
+  const inFolder = ids.length > 0 ? or(inArray(chats.projectId, ids), general) : general;
+  // A chat a Flow opened carries its task id; a chat the user starts never does.
+  return and(inFolder, isNull(chats.archivedAt), hideFlowChats ? isNull(chats.taskId) : undefined);
+}
+
 export async function pageChatsForProjects(
   db: Db,
   args: {
     projectIds: readonly (string | null)[];
     limit: number;
     cursor?: PageCursor;
+    hideFlowChats?: boolean;
   },
 ): Promise<Chat[]> {
-  const { projectIds, limit, cursor } = args;
+  const { projectIds, limit, cursor, hideFlowChats = false } = args;
   if (projectIds.length === 0) return [];
-
-  const idList = projectIds.filter((p): p is string => p !== null);
-  const includeNull = projectIds.some((p) => p === null);
-
-  const projectClause = (() => {
-    if (idList.length > 0 && includeNull)
-      return or(inArray(chats.projectId, idList), isNull(chats.projectId));
-    if (idList.length > 0) return inArray(chats.projectId, idList);
-    return isNull(chats.projectId);
-  })();
 
   const cursorClause = cursor
     ? or(
@@ -354,7 +359,7 @@ export async function pageChatsForProjects(
   return db
     .select()
     .from(chats)
-    .where(and(projectClause, isNull(chats.archivedAt), cursorClause))
+    .where(and(folderChatsWhere(projectIds, hideFlowChats), cursorClause))
     .orderBy(desc(chats.updatedAt), desc(chats.id))
     .limit(limit);
 }
@@ -363,23 +368,13 @@ export async function pageChatsForProjects(
 export async function listPinnedChatsForProjects(
   db: Db,
   projectIds: readonly (string | null)[],
+  hideFlowChats = false,
 ): Promise<Chat[]> {
   if (projectIds.length === 0) return [];
-
-  const idList = projectIds.filter((p): p is string => p !== null);
-  const includeNull = projectIds.some((p) => p === null);
-
-  const projectClause = (() => {
-    if (idList.length > 0 && includeNull)
-      return or(inArray(chats.projectId, idList), isNull(chats.projectId));
-    if (idList.length > 0) return inArray(chats.projectId, idList);
-    return isNull(chats.projectId);
-  })();
-
   return db
     .select()
     .from(chats)
-    .where(and(projectClause, isNotNull(chats.pinnedAt), isNull(chats.archivedAt)))
+    .where(and(folderChatsWhere(projectIds, hideFlowChats), isNotNull(chats.pinnedAt)))
     .orderBy(desc(chats.pinnedAt))
     .limit(100);
 }

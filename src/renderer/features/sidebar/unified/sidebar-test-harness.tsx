@@ -182,6 +182,8 @@ export const hoisted = {
 /** activeOverlayAtom's identity and value for the jotai mock; a null value is the chat destination. */
 type OverlayStub = { atom: AnyAtom | null; value: null | 'workqueue' | 'settings' | 'flows' };
 export const overlayStub: OverlayStub = { atom: null, value: null };
+type FlowFilterStub = { atom: AnyAtom | null; hide: boolean };
+export const flowFilterStub: FlowFilterStub = { atom: null, hide: false };
 
 /** Real atom identities, resolved in `setupHarness` so the jotai mock can match on them. */
 export const atomRefs = {
@@ -198,18 +200,15 @@ export const makeJotaiMock = (actual: typeof import('jotai')) => ({
       ? [overlayStub.value, vi.fn()]
       : [null, hoisted.setSelectedChatIdMock],
   useAtomValue: (a: unknown) => {
-    if (a === atomRefs.splitViewChatIdsAtom) {
-      return hoisted.state.splitViewState.splitView.chatIds;
-    }
+    if (a === flowFilterStub.atom) return flowFilterStub.hide;
+    if (a === atomRefs.splitViewChatIdsAtom) return hoisted.state.splitViewState.splitView.chatIds;
     if (a === atomRefs.splitViewActivePaneIndexAtom) {
       return hoisted.state.splitViewState.splitView.activePaneIndex;
     }
     if (a === atomRefs.splitViewQuickActionsChromeAtom) {
       return hoisted.state.splitViewQuickActionsChrome;
     }
-    if (a === atomRefs.pendingPlanApprovalsAtom) {
-      return hoisted.state.livePendingPlanApprovals;
-    }
+    if (a === atomRefs.pendingPlanApprovalsAtom) return hoisted.state.livePendingPlanApprovals;
     return new Map();
   },
   useSetAtom: () => vi.fn(),
@@ -379,12 +378,14 @@ export async function setupHarness() {
   atomRefs.splitViewQuickActionsChromeAtom = atoms.splitViewQuickActionsChromeAtom;
   atomRefs.pendingPlanApprovalsAtom = atoms.pendingPlanApprovalsAtom;
   overlayStub.atom = (await import('../../../lib/atoms')).activeOverlayAtom;
+  flowFilterStub.atom = (await import('../../../lib/atoms')).hideFlowChatsAtom;
   SidebarUnderTest = (await import('./UnifiedSidebar')).UnifiedSidebar;
 }
 
 /** `afterEach` body: unmounts and returns every mock to its default. */
 export function resetHarness() {
   cleanup();
+  flowFilterStub.hide = false;
   hoisted.listCountsUseQueryMock.mockClear();
   hoisted.listActiveChatsUseQueryMock.mockClear();
   hoisted.chatsListInvalidateMock.mockClear();

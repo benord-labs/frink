@@ -5,7 +5,7 @@
 
 import { Button, Input } from '@benord-labs/frink-primitives';
 import { PanelLeftClose, Search, X } from 'lucide-react';
-import type { ReactElement } from 'react';
+import type { ReactElement, ReactNode } from 'react';
 import { memo } from 'react';
 import { Kbd } from '@/components/ui/kbd';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -25,6 +25,8 @@ type SidebarHeaderWithSearchProps = {
   closeTooltipLabel: string;
   closeShortcutId?: ShortcutActionId;
   showClearInInput?: boolean;
+  /** Controls after the search field, before close (e.g. a list filter). */
+  searchAccessory?: ReactNode;
   /** Merged onto the search input (e.g. frosted panel variant). */
   searchInputClassName?: string;
   /** Merged onto the outer header wrapper. */
@@ -42,6 +44,7 @@ function SidebarHeaderWithSearchComponent({
   closeTooltipLabel,
   closeShortcutId,
   showClearInInput = false,
+  searchAccessory,
   searchInputClassName,
   className,
 }: SidebarHeaderWithSearchProps): ReactElement {
@@ -92,6 +95,9 @@ function SidebarHeaderWithSearchComponent({
             </Button>
           )}
         </div>
+        {searchAccessory && (
+          <div className={cn('flex shrink-0', centerBrandRow && 'mt-2')}>{searchAccessory}</div>
+        )}
         {onClose && (
           <Tooltip delayDuration={TOOLTIP_DELAY_MS}>
             <TooltipTrigger asChild>
