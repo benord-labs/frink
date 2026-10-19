@@ -21,6 +21,7 @@ async function launch(overrides: Partial<AnalyticsHost> = {}) {
     userDataDir: userData,
     version: '1.2.3',
     key: 'phc_test',
+    disableUsageAnalytics: undefined,
     createClient: () => ({ capture, shutdown: async () => {} }),
     ...overrides,
   });
@@ -160,5 +161,40 @@ describe('main-process analytics', () => {
     analytics.setOptOut(false);
 
     expect(capture).not.toHaveBeenCalled();
+  });
+
+  it('sends nothing, and creates no install id, from a launch that switched usage analytics off', async () => {
+    const analytics = await launch({ disableUsageAnalytics: '1' });
+
+    analytics.setOptOut(false);
+    analytics.trackMessageSent(message);
+    await analytics.shutdown();
+
+    expect(capture).not.toHaveBeenCalled();
+    expect(existsSync(installIdFile())).toBe(false);
+  });
+
+  it('keeps the saved install id through a launch that switched usage analytics off', async () => {
+    const firstLaunch = await launch();
+    firstLaunch.setOptOut(false);
+    await firstLaunch.shutdown();
+    const savedId = readFileSync(installIdFile(), 'utf8');
+    const switchedOff = await launch({ disableUsageAnalytics: '1' });
+    switchedOff.setOptOut(false);
+    await switchedOff.shutdown();
+    const nextLaunch = await launch();
+    nextLaunch.setOptOut(false);
+
+    expect(sentEvents()).toEqual(['desktop_opened', 'first_launch', 'desktop_opened']);
+    expect(sentIds()).toEqual([savedId]);
+    expect(readFileSync(installIdFile(), 'utf8')).toBe(savedId);
+  });
+
+  it.each(['', '0', 'false'])('sends as usual when the off switch is %j', async (value) => {
+    const analytics = await launch({ disableUsageAnalytics: value });
+
+    analytics.setOptOut(false);
+
+    expect(sentEvents()).toEqual(['desktop_opened', 'first_launch']);
   });
 });

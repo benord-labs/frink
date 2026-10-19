@@ -34,7 +34,8 @@ launch() {
   local dir="$OUT/$label"
   rm -rf "$dir"
   mkdir -p "$dir/home"
-  HOME="$dir/home" FRINK_LOG_DIR="$dir" setsid "$@" >"$dir/stdout.log" 2>"$dir/stderr.log" &
+  # A CI launch is not an install, so keep it out of the usage counts.
+  HOME="$dir/home" FRINK_LOG_DIR="$dir" FRINK_DISABLE_USAGE_ANALYTICS=1 setsid "$@" >"$dir/stdout.log" 2>"$dir/stderr.log" &
   APP_SID=$!
   local mapped=0
   timeout 90 xdotool search --sync --onlyvisible --name '^Frink' >/dev/null && mapped=1
