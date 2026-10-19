@@ -96,6 +96,9 @@ const config = {
       }),
       ...sentryPlugins(),
     ],
+    // Preload events reach Sentry through the main process, so the main DSN decides whether
+    // preload reports at all. Expose only that var on top of the preload defaults.
+    envPrefix: ['PRELOAD_VITE_', 'VITE_', 'MAIN_VITE_SENTRY_'],
     build: {
       sourcemap: 'hidden',
       lib: {

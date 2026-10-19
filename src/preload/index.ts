@@ -13,22 +13,9 @@ import type {
 } from '../shared/types/permissions';
 import type { TaskChatReadyData } from '../shared/types/task-chat-ready';
 import { type ArtifactPreviewApi, artifactPreviewApi } from './artifact-preview';
+import { initPreloadSentry } from './sentry';
 
-// Only initialize Sentry in production to avoid IPC errors in dev mode.
-// Preload runs in an isolated context but uses the renderer SDK; events
-// flow back to the main process via IPC.
-if (process.env.NODE_ENV === 'production' && process.env.MAIN_VITE_SENTRY_DSN) {
-  void Promise.all([import('@sentry/electron/renderer'), import('../shared/sentry/scrubber')]).then(
-    ([Sentry, { beforeBreadcrumb, beforeSend }]) => {
-      Sentry.init({
-        dsn: process.env.MAIN_VITE_SENTRY_DSN,
-        defaultIntegrations: false,
-        beforeSend: (event) => beforeSend(event),
-        beforeBreadcrumb: (breadcrumb) => beforeBreadcrumb(breadcrumb),
-      });
-    },
-  );
-}
+void initPreloadSentry();
 
 // Isolated QA boots wipe the profile; pre-seeding the welcome flag lands the driver on
 // the feature shell. The literal must match STORAGE_KEY in renderer WelcomeSplash (no cross-process import).
