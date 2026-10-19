@@ -97,6 +97,31 @@ describe('UnifiedSidebar Flow-chat filter', () => {
     });
   });
 
+  it('drops a page fetched before a flip, even once the filter flips back', async () => {
+    type FolderPage = { chats: Array<{ id: string; projectId: null; updatedAt: Date }> };
+    setFolderCounts(null, 1, 0);
+    let resolveStale!: (page: FolderPage & { hasMore: false; nextCursor: null }) => void;
+    hoisted.chatsListByFolderFetchMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveStale = resolve;
+      }),
+    );
+    const { rerender } = render(<UnifiedSidebar />);
+
+    flowFilterStub.hide = true;
+    rerender(<UnifiedSidebar onChatSelect={() => {}} />);
+    flowFilterStub.hide = false;
+    rerender(<UnifiedSidebar />);
+    await act(async () => {
+      const stale = { id: 'stale', projectId: null, updatedAt: new Date() };
+      resolveStale({ chats: [stale], hasMore: false, nextCursor: null });
+    });
+
+    // SAFETY: the useGroupedProjects double captures the chat list UnifiedSidebar handed it.
+    const chats = hoisted.capturedGroupedProjectsParams?.chats as Array<{ id: string }>;
+    expect(chats.map((chat) => chat.id)).not.toContain('stale');
+  });
+
   it('still counts hidden Flow chats when confirming a project delete', async () => {
     flowFilterStub.hide = true;
     setFolderCounts('local-p1', 3, 2);

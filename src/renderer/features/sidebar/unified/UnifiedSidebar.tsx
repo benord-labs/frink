@@ -244,6 +244,8 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
     const hideFlowChats = useAtomValue(hideFlowChatsAtom);
     const hideFlowChatsRef = useRef(hideFlowChats);
     hideFlowChatsRef.current = hideFlowChats;
+    /** Bumped on every filter flip, so a fetch begun under an earlier flip is dropped. */
+    const filterGenerationRef = useRef(0);
     const chatIds = useAtomValue(splitViewChatIdsAtom);
     const splitViewChatIdsRef = useRef(chatIds);
     splitViewChatIdsRef.current = chatIds;
@@ -553,7 +555,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
     // eslint-disable-next-line react-hooks/exhaustive-deps -- refs + setters only; see comment above
     const fetchFolderPage = useCallback(async (folder: FolderDescriptor, reset: boolean) => {
       const folderKey = folder.key;
-      const hideFlowChatsAtStart = hideFlowChatsRef.current;
+      const generation = filterGenerationRef.current;
       setFolderLoadingByKey((prev) => ({ ...prev, [folderKey]: true }));
       try {
         const cursor = reset
@@ -568,10 +570,10 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
           projectIds: folder.projectIds,
           limit: PAGINATION.FOLDER_CHAT_PAGE_SIZE,
           cursor,
-          hideFlowChats: hideFlowChatsAtStart,
+          hideFlowChats: hideFlowChatsRef.current,
         });
         // The filter flipped mid-fetch: this page belongs to a list the reset already dropped.
-        if (hideFlowChatsAtStart !== hideFlowChatsRef.current) return;
+        if (generation !== filterGenerationRef.current) return;
 
         setFolderChatsByKey((prev) => {
           const existing = reset ? [] : (prev[folderKey] ?? []);
@@ -593,18 +595,21 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
           setFolderCountSnapshotByKey((prev) => ({ ...prev, [folderKey]: snapshot }));
         }
       } finally {
-        setFolderLoadingByKey((prev) => ({ ...prev, [folderKey]: false }));
+        // A flip's reset already cleared this flag, and a newer fetch may have set it again.
+        if (generation === filterGenerationRef.current) {
+          setFolderLoadingByKey((prev) => ({ ...prev, [folderKey]: false }));
+        }
       }
     }, []);
 
     const fetchPinnedForFolder = useCallback(async (folder: FolderDescriptor) => {
-      const hideFlowChatsAtStart = hideFlowChatsRef.current;
+      const generation = filterGenerationRef.current;
       try {
         const result = await utilsRef.current.chats.listPinned.fetch({
           projectIds: folder.projectIds,
-          hideFlowChats: hideFlowChatsAtStart,
+          hideFlowChats: hideFlowChatsRef.current,
         });
-        if (hideFlowChatsAtStart !== hideFlowChatsRef.current) return;
+        if (generation !== filterGenerationRef.current) return;
         setPinnedChatsByKey((prev) => ({ ...prev, [folder.key]: result }));
       } catch (err) {
         // Display-only: avoid stale PINNED rows. Bulk delete / project delete use
@@ -634,6 +639,7 @@ const UnifiedSidebarInner = forwardRef<UnifiedSidebarHandle, UnifiedSidebarProps
     useEffect(() => {
       if (lastHideFlowChatsRef.current === hideFlowChats) return;
       lastHideFlowChatsRef.current = hideFlowChats;
+      filterGenerationRef.current += 1;
       resetFolderPaginationState();
     }, [hideFlowChats, resetFolderPaginationState]);
 
