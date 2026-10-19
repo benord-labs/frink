@@ -4,7 +4,11 @@
  */
 import { atom, useAtomValue, useSetAtom } from 'jotai';
 import { useCallback } from 'react';
-import { paneHistoryAtom } from '../../../lib/atoms/pane-history';
+import {
+  nextPaneHistory,
+  type PaneNavDirection,
+  paneHistoryAtom,
+} from '../../../lib/atoms/pane-history';
 import {
   addPaneRatio,
   getDefaultGridRatios,
@@ -32,15 +36,13 @@ export function canOpenChatInNewPane(chatIds: (string | null)[]): boolean {
   return chatIds.length < MAX_PANES || chatIds.some(isFillablePane);
 }
 
-const MAX_PANE_HISTORY = 5;
+type ShowChatInPane = { chatId: string; paneIndex?: number; direction?: PaneNavDirection };
 
-type ShowChatInPane = { chatId: string; paneIndex?: number; goingBack?: boolean };
-
-/** Show a chat in a pane (default: active), pushing the replaced chat onto the pane's Back history;
- *  `goingBack` drops it and anything newer instead. A chat already in a pane is just focused. */
+/** Show a chat in a pane (default: active) and update that pane's Back/Forward history; `direction`
+ *  steps through the history instead of opening a new chat. A chat already in a pane is focused. */
 export const showChatInPaneAtom = atom(
   null,
-  (get, set, { chatId, paneIndex, goingBack = false }: ShowChatInPane) => {
+  (get, set, { chatId, paneIndex, direction }: ShowChatInPane) => {
     const prev = get(splitViewAtom);
     const existingIdx = prev.chatIds.indexOf(chatId);
     if (existingIdx !== -1) {
@@ -51,14 +53,14 @@ export const showChatInPaneAtom = atom(
     if (index < 0 || index >= prev.chatIds.length) return;
 
     const replaced = prev.chatIds[index] ?? null;
-    const behind = replaced === null ? [] : (get(paneHistoryAtom)[replaced] ?? []);
-    let pushed = behind;
-    if (goingBack) pushed = behind.slice(0, Math.max(0, behind.indexOf(chatId)));
-    else if (replaced !== null && !isFillablePane(replaced)) pushed = [...behind, replaced];
-    const history = pushed.filter((id) => id !== chatId).slice(-MAX_PANE_HISTORY);
+    const current = replaced !== null && !isFillablePane(replaced) ? replaced : null;
+    const entry = current ? get(paneHistoryAtom)[current] : undefined;
+    const history = nextPaneHistory(entry, current, chatId, direction);
     const chatIds = prev.chatIds.map((id, i) => (i === index ? chatId : id));
     set(splitViewAtom, { ...prev, chatIds, activePaneIndex: index });
-    if (history.length > 0) set(paneHistoryAtom, (h) => ({ ...h, [chatId]: history }));
+    if (history.back.length > 0 || history.forward.length > 0) {
+      set(paneHistoryAtom, (h) => ({ ...h, [chatId]: history }));
+    }
   },
 );
 
