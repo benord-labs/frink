@@ -7,19 +7,31 @@ import { onExecuteRequest, onStop, sendPermissionResponse } from '../../socket';
 import { handleRemoteExecute, handleRemoteStop } from '../../socket/executor';
 import { registerAttachmentProtocol } from '../attachments-protocol';
 
+const step = async (label: string, run: () => void | Promise<void>) => {
+  try {
+    await run();
+  } catch (err) {
+    log.warn(`[Main] ${label} failed:`, err);
+  }
+};
+
+/** Advance batch stages and count finished runs on run-terminal events; each starts on its own. */
+export async function startRunTerminalListeners(): Promise<void> {
+  await step('flows batch advance listener start', async () => {
+    const { startBatchAdvanceListener } = await import('../batch-dispatch');
+    startBatchAdvanceListener();
+  });
+  await step('flows usage telemetry listener start', async () => {
+    const { startFlowRunTelemetry } = await import('../usage-telemetry');
+    startFlowRunTelemetry();
+  });
+}
+
 /**
  * Boot recovery sweeps + local background loops, run once from the ready path; every step is best-effort and only logs on failure.
- * Order matters: the batch listener precedes the flow/task recovery sweep + task-completion watcher so no terminal event fires unobserved, and the worktree sweep follows them so in-flight-on-boot work has settled.
+ * Order matters: the run-terminal listeners precede the flow/task recovery sweep + task-completion watcher so no terminal event fires unobserved, and the worktree sweep follows them so in-flight-on-boot work has settled.
  */
 export async function runStartupRecoveryAndLoops(): Promise<void> {
-  const step = async (label: string, run: () => void | Promise<void>) => {
-    try {
-      await run();
-    } catch (err) {
-      log.warn(`[Main] ${label} failed:`, err);
-    }
-  };
-
   // Local turn dispatch plus the renderer's approve/deny return path. Registered before any
   // window exists so an early permission answer always finds a listener.
   await step('local dispatch listeners register', () => {
@@ -44,11 +56,7 @@ export async function runStartupRecoveryAndLoops(): Promise<void> {
     );
   });
 
-  // Advance batch stages on run-terminal events.
-  await step('flows batch advance listener start', async () => {
-    const { startBatchAdvanceListener } = await import('../batch-dispatch');
-    startBatchAdvanceListener();
-  });
+  await startRunTerminalListeners();
 
   // A question still HELD when the process died parks first: the sweeps below would otherwise
   // cancel its run and boot carry-on would resume the agent without it.

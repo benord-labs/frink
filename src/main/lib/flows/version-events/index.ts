@@ -1,8 +1,11 @@
 // Version commits get their own bus: `flowEventBus` feeds run sound/badge listeners.
 
+import { trackFlowCreated } from '../../analytics';
 import type { getDatabase } from '../../db';
+import { normalizeFlowGraph } from '../../../../shared/lib/validate-flow-graph';
 import { createFlowVersionWithResult } from '../../db/repos/flow-versions';
 import type { FlowVersion } from '../../db/schema';
+import { flowTriggerKind } from '../usage-telemetry';
 
 type Db = ReturnType<typeof getDatabase>;
 
@@ -59,6 +62,13 @@ export async function commitFlowVersion(
   const { row, inserted } = await createFlowVersionWithResult(db, input);
   if (inserted) {
     announce({ flowId: row.flowId, versionNumber: row.versionNumber, source });
+  }
+  if (inserted && row.versionNumber === 1) {
+    trackFlowCreated({
+      id: row.flowId,
+      triggerType: flowTriggerKind(normalizeFlowGraph(row.graph)),
+      createdBy: source,
+    });
   }
   return row;
 }
