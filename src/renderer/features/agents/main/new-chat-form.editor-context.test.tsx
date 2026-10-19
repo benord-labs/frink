@@ -8,7 +8,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   chatContextFileAtomFamily,
   chatContextFileDismissedAtomFamily,
+  codeSelectionContextAtomFamily,
 } from '@/lib/code-editor/state';
+import { codeSelectionMention } from '@/lib/mentions/queued-message-text';
 import type { CodexAccountCatalog } from '../../../../shared/lib/codex-cli-models';
 import { TooltipProvider } from '../../../components/ui/tooltip';
 import { newChatTerminalId } from '@/lib/agent-chat/sentinel-ids';
@@ -140,6 +142,34 @@ describe('NewChatForm editor context', () => {
     await waitFor(() => expect(createChat).toHaveBeenCalledOnce());
     expect(createChat.mock.calls[0][0].initialMessageParts).toEqual([
       { type: 'text', text: '@[file:editor:/repo/docs/notes.md] summarise this' },
+    ]);
+  });
+
+  it('sends a code selection with the first message, in the shared token format', async () => {
+    const selection = {
+      id: 'sel-1',
+      text: 'const ü = 1;',
+      filePath: '/repo/a b.ts',
+      fileName: 'a b.ts',
+      language: 'typescript',
+      startLine: 3,
+      endLine: 4,
+      preview: 'const ü = 1;',
+      createdAt: new Date(0),
+    };
+    const store = createStore();
+    store.set(codeSelectionContextAtomFamily(NEW_CHAT_PANE), selection);
+    const { container } = renderNewChat(store);
+    const editor = container.querySelector<HTMLElement>('[contenteditable="true"]');
+    if (!editor) throw new Error('composer editor not found');
+    editor.textContent = 'explain this';
+    fireEvent.input(editor);
+
+    fireEvent.keyDown(editor, { key: 'Enter' });
+
+    await waitFor(() => expect(createChat).toHaveBeenCalledOnce());
+    expect(createChat.mock.calls[0][0].initialMessageParts).toEqual([
+      { type: 'text', text: `${codeSelectionMention(selection)} explain this` },
     ]);
   });
 });
