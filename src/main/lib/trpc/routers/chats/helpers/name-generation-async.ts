@@ -23,6 +23,10 @@ import { tmpdir } from 'node:os';
 import { BrowserWindow } from 'electron';
 import log from 'electron-log';
 import { runtimeFor } from '../../../../../../shared/lib/ai-providers';
+import {
+  mentionsToPlainText,
+  type PlainTextMessage,
+} from '../../../../../../shared/lib/mentions/mentions-to-plain-text';
 import { stripMessageMarkers } from '../../../../../../shared/lib/message-markers/strip-message-markers';
 import { parseTriggerBubbleMessage } from '../../../../../../shared/lib/trigger-bubble-marker';
 import { BUILD_PROJECT_PLACEHOLDER, isManagedBuildPath } from '../../../../builds-path';
@@ -74,15 +78,15 @@ function normalizeName(name: string | null | undefined): string {
 }
 
 /**
- * Derive the text to name from. Trigger-bubble messages carry a richer subject
- * in their marker, so prefer that over the raw prompt.
+ * Derive the text to name from: the user's own words, with mention tokens read as labels.
+ * Trigger-bubble messages carry a richer subject in their marker, so prefer that over the raw prompt.
  */
-function deriveNameSource(rawUserMessage: string): string {
+function deriveNameSource(rawUserMessage: string): PlainTextMessage {
   const { triggerData, fullPrompt } = parseTriggerBubbleMessage(rawUserMessage);
-  if (triggerData) {
-    return triggerData.title || fullPrompt;
+  if (triggerData?.title) {
+    return { text: triggerData.title, labels: [] };
   }
-  return stripMessageMarkers(rawUserMessage);
+  return mentionsToPlainText(triggerData ? fullPrompt : stripMessageMarkers(rawUserMessage));
 }
 
 function buildPrompt(userMessage: string): string {
@@ -163,10 +167,12 @@ export async function maybeNameBuildProjectFromMessage(
     if (!project || project.name !== BUILD_PROJECT_PLACEHOLDER) return;
     if (!isManagedBuildPath(project.path, frinkUserHome())) return;
 
+    // Runs on later messages too (shouldReattemptProjectName), so this can be a marked
+    // question-answer / trigger message — the naming prompt must see prose only.
+    const prose = mentionsToPlainText(stripMessageMarkers(userMessage)).text;
+    if (!prose) return;
     const resolved = await resolveProjectNameViaAi({
-      // Runs on later messages too (shouldReattemptProjectName), so this can be a marked
-      // question-answer / trigger message — the naming prompt must see prose only.
-      userMessage: stripMessageMarkers(userMessage),
+      userMessage: prose,
       projectId,
       projectPath: project.path,
     });
@@ -353,17 +359,21 @@ export async function autoNameSubChat(input: AutoNameSubChatInput): Promise<void
   });
   if (!existing || normalizeName(existing.name).length > 0) return;
 
-  const messageForName = deriveNameSource(input.rawUserMessage);
+  const { text: messageForName, labels } = deriveNameSource(input.rawUserMessage);
+  // A message of attachments alone is named from what it attached; the model would see nothing.
+  const attachmentsOnly = messageForName.length === 0 && labels.length > 0;
 
   let resolvedName: string | null = null;
-  try {
-    resolvedName = await resolveChatNameViaAi({
-      userMessage: messageForName,
-      projectId: input.projectId,
-      projectPath: input.projectPath,
-    });
-  } catch (err) {
-    log.warn('[chat-name] generation failed', err);
+  if (!attachmentsOnly) {
+    try {
+      resolvedName = await resolveChatNameViaAi({
+        userMessage: messageForName,
+        projectId: input.projectId,
+        projectPath: input.projectPath,
+      });
+    } catch (err) {
+      log.warn('[chat-name] generation failed', err);
+    }
   }
 
   // Always settle on a non-null name so the renderer's loading shimmer clears.
@@ -373,7 +383,7 @@ export async function autoNameSubChat(input: AutoNameSubChatInput): Promise<void
   // fallback), can still yield a single word.
   const finalName =
     resolvedName == null
-      ? getFallbackName(messageForName)
+      ? getFallbackName(attachmentsOnly ? labels.join(', ') : messageForName)
       : isMultiWord(resolvedName)
         ? resolvedName
         : tidyToTitle(messageForName) || resolvedName;
