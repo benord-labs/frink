@@ -8,6 +8,8 @@ type EditorContextChipProps = {
     | undefined;
   /** Name of the open file that rides the next message; null when nothing from it is sent. */
   fileName: string | null | undefined;
+  /** Full path of that open file, shown in the badge's tooltip. */
+  filePath?: string | null;
   onRemoveSelection: () => void;
   onRemoveFile: () => void;
 };
@@ -17,6 +19,7 @@ type EditorContextChipProps = {
 export function EditorContextChip({
   selection,
   fileName,
+  filePath,
   onRemoveSelection,
   onRemoveFile,
 }: EditorContextChipProps) {
@@ -39,6 +42,7 @@ export function EditorContextChip({
   return (
     <AgentFileItem
       filename={fileName}
+      path={filePath ?? undefined}
       removeLabel={`Remove ${fileName} from context`}
       onRemove={onRemoveFile}
     />
