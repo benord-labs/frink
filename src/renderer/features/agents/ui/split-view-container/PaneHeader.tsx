@@ -1,6 +1,6 @@
 import { Button } from '@benord-labs/frink-primitives';
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp } from 'lucide-react';
-import { type MouseEvent, useCallback } from 'react';
+import { type MouseEvent, type ReactNode, useCallback } from 'react';
 import { Kbd } from '../../../../components/ui/kbd';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../../components/ui/tooltip';
 import { getPaneColor } from '../../../../lib/pane-colors';
@@ -138,6 +138,7 @@ export function PaneHeader({
   onResetPaneZoom,
   totalPanes,
   onActivate,
+  backButton,
   className,
 }: {
   paneNumber: number;
@@ -163,6 +164,8 @@ export function PaneHeader({
   totalPanes?: number;
   /** When provided, clicking the header activates this pane (avoids activating when clicking content). */
   onActivate?: () => void;
+  /** Shown before the pane label: returns the pane to the chat it showed before. */
+  backButton?: ReactNode;
   /** Merged onto the header bar, e.g. the pane's rounded top corners. */
   className?: string;
 }) {
@@ -206,6 +209,7 @@ export function PaneHeader({
       <div className="flex items-center gap-1.5 min-w-0 flex-1">
         {/* Drag handle - outside activate button to avoid nested buttons */}
         {paneReorderIndex !== undefined && <PaneReorderHandleButton paneIndex={paneReorderIndex} />}
+        {backButton}
         {onActivate ? (
           <Button
             variant="ghost"

@@ -9,6 +9,7 @@ import {
   createPersistedAtomFamily,
   createRuntimeAtomFamily,
 } from '../../../lib/atoms/atom-family-factory';
+import { paneHistoryAtom, pruneUnshownPaneHistory } from '../../../lib/atoms/pane-history';
 import { atomWithWindowStorage } from '../../../lib/window-storage';
 import { splitPaneFileTreesAtom, UNSEEDED_SPLIT_PANE_FILE_TREES } from '../../files-sidebar/atoms';
 
@@ -806,9 +807,11 @@ export const splitViewAtom = atom(
     });
     // Per-pane file trees live for one split session; ending it here (even while Settings hides the
     // split view) lets the next split seed afresh.
-    if (get(splitViewAtom).chatIds.length < 2) {
+    const { chatIds } = get(splitViewAtom);
+    if (chatIds.length < 2) {
       set(splitPaneFileTreesAtom, UNSEEDED_SPLIT_PANE_FILE_TREES);
     }
+    set(paneHistoryAtom, (history) => pruneUnshownPaneHistory(history, chatIds));
   },
 );
 
