@@ -1,6 +1,6 @@
 import { eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { fanOutItemChatRunIds } from '../../../flows/fan-out-state';
+import { fanOutItemChatRunIds } from '../../../flows/fan-out/sql';
 import { nodeRuns, subChats } from '../../schema';
 import { getActiveFlowRunForSubChat, listChatIdsWithActiveFlowRun } from '../flow-runs';
 import { setKv } from '../flow-kv-state';
