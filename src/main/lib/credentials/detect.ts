@@ -30,7 +30,16 @@ type DetectClaudeAccountResult = {
   sourcePath?: string;
   /** Short user-facing reason when `available === false`. Never contains tokens. */
   hint?: string;
+  /** Why no login was found, as a category for usage counts. */
+  failure?: DetectionFailure;
 };
+
+/** `unsupported` is a platform Frink cannot connect on yet, which is not a failed attempt. */
+export type DetectionFailure =
+  | 'not_signed_in'
+  | 'access_denied'
+  | 'detection_error'
+  | 'unsupported';
 
 const CLAUDE_KEYCHAIN_SERVICE_PREFIX = 'Claude Code';
 const LEGACY_KEYCHAIN_SERVICE = 'Claude Code-credentials';
@@ -187,6 +196,7 @@ function detectMacOS(): DetectClaudeAccountResult {
   if (canonicalProbe === 'denied') {
     return {
       available: false,
+      failure: 'access_denied',
       hint: 'macOS denied keychain access for Frink. Re-allow access in System Settings → Privacy & Security → Keychain, or run `claude auth login` if no entry exists yet.',
     };
   }
@@ -198,6 +208,7 @@ function detectMacOS(): DetectClaudeAccountResult {
   // agent can never use. `claude auth login` is the only real fix.
   return {
     available: false,
+    failure: 'not_signed_in',
     hint: 'No Claude Code login found in the macOS Keychain. Run `claude auth login` and try again.',
   };
 }
@@ -217,6 +228,7 @@ function detectLinux(): DetectClaudeAccountResult {
 
   return {
     available: false,
+    failure: 'not_signed_in',
     hint: 'No Claude Code login found at ~/.claude/.credentials.json. Run `claude auth login` and try again.',
   };
 }
@@ -228,11 +240,13 @@ function detectWindows(): DetectClaudeAccountResult {
   if (existsSync(CLAUDE_CONFIG_FILE_WINDOWS)) {
     return {
       available: false,
+      failure: 'unsupported',
       hint: 'Claude passthrough on Windows is not supported yet. Use an API key instead.',
     };
   }
   return {
     available: false,
+    failure: 'unsupported',
     hint: 'Claude passthrough on Windows is not supported yet. Use an API key instead.',
   };
 }
@@ -247,12 +261,14 @@ export function detectClaudeAccount(): DetectClaudeAccountResult {
     if (process.platform === 'win32') return detectWindows();
     return {
       available: false,
+      failure: 'unsupported',
       hint: `Unsupported platform: ${process.platform}.`,
     };
   } catch (error) {
     log.error('[detect] detectClaudeAccount failed:', sanitizeError(error));
     return {
       available: false,
+      failure: 'detection_error',
       hint: 'Failed to read system credentials. See logs for details.',
     };
   }

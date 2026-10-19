@@ -10,8 +10,10 @@ import { createStore, Provider } from 'jotai';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { TooltipProvider } from '../../../components/ui/tooltip';
+import * as analytics from '../../../lib/analytics';
 import { pendingAccountAuthAtom } from '../../../lib/atoms';
 import { trpc } from '../../../lib/trpc';
+import { ConnectClaudeAccountPage } from '../connect-claude-account-page';
 import { ConnectAgentAccountPage } from './index';
 
 // `lib/trpc` wires its ipc client at import time, so the preload bridge must exist first.
@@ -20,6 +22,8 @@ vi.hoisted(() => {
     electronTRPC: { onMessage: () => () => undefined, sendMessage: () => undefined },
   });
 });
+
+const cancelled = vi.spyOn(analytics, 'trackAccountConnectCancelled').mockReturnValue(undefined);
 
 type Detection =
   | { available: true; version?: string; email?: string; displayName?: string }
@@ -93,9 +97,19 @@ afterEach(() => {
   connect.mockReset();
   detect.mockReset();
   signIn.mockReset();
+  cancelled.mockClear();
 });
 
 describe('ConnectAgentAccountPage', () => {
+  it('reports leaving without connecting as a cancelled connect of this agent', async () => {
+    const store = renderPage('cursor', { available: false, reason: SIGNED_OUT, signedOut: true });
+
+    await userEvent.click((await screen.findAllByRole('button', { name: 'Back' }))[0]);
+
+    expect(cancelled).toHaveBeenCalledExactlyOnceWith('cursor');
+    expect(store.get(pendingAccountAuthAtom)).toBeNull();
+  });
+
   it('connects the OpenAI login Codex keeps, named after its email', async () => {
     const store = renderPage('codex', { available: true, email: 'me@openai.example' });
 
@@ -240,5 +254,47 @@ describe('ConnectAgentAccountPage', () => {
     expect(screen.queryByText(/Terminal/)).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Connect' }));
     expect(connect).toHaveBeenCalledWith({ type: 'cursor', accountLabel: 'Cursor' });
+  });
+});
+
+describe('ConnectClaudeAccountPage', () => {
+  /** A real trpc client that finds no Claude Code login on this computer. */
+  const noClaudeLogin = () =>
+    trpc.createClient({
+      links: [
+        () =>
+          ({ op }) =>
+            observable((observer) => {
+              if (op.path !== 'claudeCode.detectClaudeAccount') {
+                throw new Error(`Unexpected test operation: ${op.path}`);
+              }
+              observer.next({
+                result: { data: { available: false, failure: 'not_signed_in', hint: 'No login.' } },
+              });
+              observer.complete();
+            }),
+      ],
+    });
+
+  it('reports leaving without connecting as a cancelled Claude Code connect', async () => {
+    const store = createStore();
+    store.set(pendingAccountAuthAtom, { accountLabel: '', mode: 'add', provider: 'claude-code' });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <trpc.Provider client={noClaudeLogin()} queryClient={queryClient}>
+        <QueryClientProvider client={queryClient}>
+          <Provider store={store}>
+            <TooltipProvider>
+              <ConnectClaudeAccountPage />
+            </TooltipProvider>
+          </Provider>
+        </QueryClientProvider>
+      </trpc.Provider>,
+    );
+
+    await userEvent.click((await screen.findAllByRole('button', { name: 'Back' }))[0]);
+
+    expect(cancelled).toHaveBeenCalledExactlyOnceWith('claude-code');
+    expect(store.get(pendingAccountAuthAtom)).toBeNull();
   });
 });

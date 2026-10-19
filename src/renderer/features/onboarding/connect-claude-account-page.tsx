@@ -24,6 +24,7 @@ export function ConnectClaudeAccountPage() {
   const connectMutation = trpc.claudeCode.connectClaudePassthrough.useMutation();
 
   const flow = useConnectAccountFlow({
+    provider: 'claude-code',
     detectionQuery,
     connectMutation,
     buildConnectInput: (accountLabel, { detection, isReauthFlow }) => {

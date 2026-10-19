@@ -8,7 +8,12 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { app } from 'electron';
 import { PostHog } from 'posthog-node';
-import type { MessageSentEvent } from '../../../shared/types/analytics';
+import type { AiProviderId } from '../../../shared/lib/ai-providers';
+import type {
+  AccountConnectFailReason,
+  AccountConnectKind,
+  MessageSentEvent,
+} from '../../../shared/types/analytics';
 
 const INSTALL_ID_FILE = '.install_id';
 
@@ -36,6 +41,8 @@ let userOptedOut: boolean = true;
 let appOpenTracked: boolean = false;
 let install: Install | null = null;
 let installSaved: Promise<void> = Promise.resolve();
+// Detection is refetched on every window focus, so each failure is counted once per launch
+const reportedConnectFailures = new Set<string>();
 
 function electronHost(): AnalyticsHost {
   return {
@@ -241,4 +248,60 @@ export function trackPRCreated(data: { workspaceId: string; prNumber: number }) 
     workspace_id: data.workspaceId,
     pr_number: data.prNumber,
   });
+}
+
+/**
+ * Track an agent account connected, or reconnected, by provider and how it signs in
+ */
+export function trackAccountConnected(account: {
+  provider: AiProviderId;
+  kind: AccountConnectKind;
+  reconnect: boolean;
+}) {
+  capture('account_connected', {
+    provider: account.provider,
+    kind: account.kind,
+    reconnect: account.reconnect,
+  });
+}
+
+/**
+ * Track why an agent account could not be connected, once per provider and reason per launch
+ */
+export function trackAccountConnectFailed(failure: {
+  provider: AiProviderId;
+  reason: AccountConnectFailReason;
+}) {
+  const key = `${failure.provider}:${failure.reason}`;
+  if (!activeSession() || reportedConnectFailures.has(key)) return;
+  reportedConnectFailures.add(key);
+  capture('account_connect_failed', {
+    provider: failure.provider,
+    reason: failure.reason,
+  });
+}
+
+/** Track a failed detection; a platform Frink cannot connect on yet is not a failed attempt. */
+export function trackDetectionFailure(
+  provider: AiProviderId,
+  failure: AccountConnectFailReason | 'unsupported' | undefined,
+) {
+  if (failure && failure !== 'unsupported')
+    trackAccountConnectFailed({ provider, reason: failure });
+}
+
+/** Run a connect and track its outcome; a thrown connect counts as `unknown`. */
+export async function trackAccountConnect<T extends { status: 'created' | 'updated' }>(
+  account: { provider: AiProviderId; kind: AccountConnectKind },
+  connect: () => T | Promise<T>,
+): Promise<T> {
+  let result: T;
+  try {
+    result = await connect();
+  } catch (error) {
+    trackAccountConnectFailed({ provider: account.provider, reason: 'unknown' });
+    throw error;
+  }
+  trackAccountConnected({ ...account, reconnect: result.status === 'updated' });
+  return result;
 }

@@ -11,6 +11,7 @@ import {
   selectableProviderIds,
 } from '../../../../shared/lib/ai-providers';
 import { isAnthropicApiKey } from '../../../../shared/lib/anthropic-token';
+import { trackAccountConnect, trackDetectionFailure } from '../../analytics';
 import { getClaudeShellEnvironment } from '../../claude';
 import { ensureLoginShellEnv } from '../../platform/login-shell-env';
 import { runClaudeOAuthBrowser } from '../../claude-oauth-browser';
@@ -378,10 +379,6 @@ export const claudeCodeRouter = router({
       return { success: true };
     }),
 
-  // `getSystemToken` and `importSystemToken` were removed in the claude-passthrough
-  // rewrite. Use `detectClaudeAccount` + `connectClaudePassthrough` instead — they
-  // read the keychain live at chat-time rather than snapshotting.
-
   /**
    * Detect a usable Claude Code login on this machine without retaining the token.
    * Triggers the macOS TCC keychain prompt the first time it runs — deliberately, so the
@@ -390,7 +387,9 @@ export const claudeCodeRouter = router({
    * the spawned CLI can only read that one entry.
    */
   detectClaudeAccount: publicProcedure.query(async () => {
-    return detectClaudeAccount();
+    const detection = detectClaudeAccount();
+    trackDetectionFailure('claude-code', detection.failure);
+    return detection;
   }),
 
   /**
@@ -478,118 +477,112 @@ export const claudeCodeRouter = router({
       // insert — the second transaction sees the first's row and re-routes to
       // the UPDATE branch. drizzle's `db.transaction(cb)` invokes `cb` with a
       // tx handle (we ignore it) and returns `cb`'s value directly.
-      const txResult = db.transaction(() => {
-        const existingPassthrough = db
-          .select()
-          .from(claudeCodeCredentials)
-          .where(eq(claudeCodeCredentials.source, 'claude-passthrough'))
-          .get();
-
-        if (existingPassthrough && existingPassthrough.sourcePath !== input.sourcePath) {
-          const currentLabel = existingPassthrough.accountLabel || 'Claude Code';
-          throw new Error(
-            `Already connected to "${currentLabel}". Disconnect it first to switch to a different Claude login.`,
-          );
-        }
-
-        const isFirstAccount =
-          !existingPassthrough &&
-          !db
-            .select({ id: claudeCodeCredentials.id })
+      const connectRow = () =>
+        db.transaction(() => {
+          const existingPassthrough = db
+            .select()
             .from(claudeCodeCredentials)
-            .where(LOCAL_DEFAULT_ACCOUNT_SCOPE)
+            .where(eq(claudeCodeCredentials.source, 'claude-passthrough'))
+            .get();
+
+          if (existingPassthrough && existingPassthrough.sourcePath !== input.sourcePath) {
+            const currentLabel = existingPassthrough.accountLabel || 'Claude Code';
+            throw new Error(
+              `Already connected to "${currentLabel}". Disconnect it first to switch to a different Claude login.`,
+            );
+          }
+
+          const isFirstAccount =
+            !existingPassthrough &&
+            !db
+              .select({ id: claudeCodeCredentials.id })
+              .from(claudeCodeCredentials)
+              .where(LOCAL_DEFAULT_ACCOUNT_SCOPE)
+              .limit(1)
+              .get();
+
+          if (existingPassthrough) {
+            // Outside a reauth, updating would silently rename the one Claude Code login on this
+            // device when the user meant to add one, so refuse; a reauth refreshes it in place.
+            if (!input.reauth) {
+              const currentLabel = existingPassthrough.accountLabel || 'Claude Code';
+              throw new Error(
+                `You already have a Claude Code login connected on this device as "${currentLabel}". ` +
+                  `Edit that account from Settings → AI providers if you want to rename it. ` +
+                  `Only one Claude Code login per device is supported.`,
+              );
+            }
+            db.update(claudeCodeCredentials)
+              .set({
+                accountLabel: input.accountLabel,
+                expectedEmail,
+                needsReauthAt: null,
+                connectedAt: new Date(),
+              })
+              .where(eq(claudeCodeCredentials.id, existingPassthrough.id))
+              .run();
+            retireRetainedSessions('credential-change');
+            return { accountId: existingPassthrough.id, status: 'updated' as const };
+          }
+
+          // A same-label hit means two rows for one logical account — reject, unless `input.reauth`
+          // says the user is deliberately re-authing that row, which converts it in place.
+          const labelCollision = db
+            .select()
+            .from(claudeCodeCredentials)
+            .where(
+              and(eq(claudeCodeCredentials.accountLabel, input.accountLabel), CLAUDE_ACCOUNT_SCOPE),
+            )
             .limit(1)
             .get();
 
-        if (existingPassthrough) {
-          // Bug #F: a passthrough already exists for this machine's keychain
-          // entry. In NON-reauth mode the user thinks they're adding a NEW
-          // account — silently UPDATEing the existing row's label is a hidden
-          // rename, not an add. Reject so they understand the constraint
-          // (one Claude Code login per device) and can edit the existing row
-          // instead.
-          //
-          // In reauth mode (e.g. user clicked "Reconnect" on the existing
-          // row's label), refresh metadata in place — that's the intent.
-          if (!input.reauth) {
-            const currentLabel = existingPassthrough.accountLabel || 'Claude Code';
-            throw new Error(
-              `You already have a Claude Code login connected on this device as "${currentLabel}". ` +
-                `Edit that account from Settings → AI providers if you want to rename it. ` +
-                `Only one Claude Code login per device is supported.`,
-            );
+          if (labelCollision) {
+            if (!input.reauth) {
+              throw new Error(
+                `An account named "${input.accountLabel}" already exists. Use a different label, or disconnect the existing account first.`,
+              );
+            }
+
+            // Convert in place. Same id (preserves cloud sync linkage),
+            // same isDefault flag. Token cleared (passthrough resolves live).
+            db.update(claudeCodeCredentials)
+              .set({
+                source: 'claude-passthrough',
+                sourcePath: input.sourcePath,
+                expectedEmail,
+                oauthToken: null,
+                needsReauthAt: null,
+                connectedAt: new Date(),
+              })
+              .where(eq(claudeCodeCredentials.id, labelCollision.id))
+              .run();
+            retireRetainedSessions('credential-change');
+            return { accountId: labelCollision.id, status: 'updated' as const };
           }
-          db.update(claudeCodeCredentials)
-            .set({
+
+          if (isFirstAccount) {
+            clearLocalAccountDefaults();
+          }
+
+          const id = createId();
+          db.insert(claudeCodeCredentials)
+            .values({
+              id,
+              type: 'claude-code',
               accountLabel: input.accountLabel,
-              expectedEmail,
-              needsReauthAt: null,
+              oauthToken: null,
               connectedAt: new Date(),
-            })
-            .where(eq(claudeCodeCredentials.id, existingPassthrough.id))
-            .run();
-          retireRetainedSessions('credential-change');
-          return { accountId: existingPassthrough.id, status: 'updated' as const };
-        }
-
-        // A same-label hit means two rows for one logical account — reject, unless `input.reauth`
-        // says the user is deliberately re-authing that row, which converts it in place.
-        const labelCollision = db
-          .select()
-          .from(claudeCodeCredentials)
-          .where(
-            and(eq(claudeCodeCredentials.accountLabel, input.accountLabel), CLAUDE_ACCOUNT_SCOPE),
-          )
-          .limit(1)
-          .get();
-
-        if (labelCollision) {
-          if (!input.reauth) {
-            throw new Error(
-              `An account named "${input.accountLabel}" already exists. Use a different label, or disconnect the existing account first.`,
-            );
-          }
-
-          // Convert in place. Same id (preserves cloud sync linkage),
-          // same isDefault flag. Token cleared (passthrough resolves live).
-          db.update(claudeCodeCredentials)
-            .set({
+              isDefault: isFirstAccount,
               source: 'claude-passthrough',
               sourcePath: input.sourcePath,
               expectedEmail,
-              oauthToken: null,
-              needsReauthAt: null,
-              connectedAt: new Date(),
             })
-            .where(eq(claudeCodeCredentials.id, labelCollision.id))
             .run();
-          retireRetainedSessions('credential-change');
-          return { accountId: labelCollision.id, status: 'updated' as const };
-        }
 
-        if (isFirstAccount) {
-          clearLocalAccountDefaults();
-        }
+          return { accountId: id, status: 'created' as const };
+        });
 
-        const id = createId();
-        db.insert(claudeCodeCredentials)
-          .values({
-            id,
-            type: 'claude-code',
-            accountLabel: input.accountLabel,
-            oauthToken: null,
-            connectedAt: new Date(),
-            isDefault: isFirstAccount,
-            source: 'claude-passthrough',
-            sourcePath: input.sourcePath,
-            expectedEmail,
-          })
-          .run();
-
-        return { accountId: id, status: 'created' as const };
-      });
-
-      return txResult;
+      return trackAccountConnect({ provider: 'claude-code', kind: 'passthrough' }, connectRow);
     }),
 
   /**
@@ -683,47 +676,48 @@ export const claudeCodeRouter = router({
         type: z.literal('claude-code').optional(),
       }),
     )
-    .mutation(async ({ input }) => {
-      const db = getDatabase();
+    .mutation(({ input }) =>
+      trackAccountConnect(
+        { provider: 'claude-code', kind: input.isApiKey ? 'api_key' : 'token' },
+        async () => {
+          const db = getDatabase();
 
-      // Check if label already exists
-      const existing = db
-        .select()
-        .from(claudeCodeCredentials)
-        .where(and(eq(claudeCodeCredentials.accountLabel, input.label), CLAUDE_ACCOUNT_SCOPE))
-        .get();
+          const existing = db
+            .select()
+            .from(claudeCodeCredentials)
+            .where(and(eq(claudeCodeCredentials.accountLabel, input.label), CLAUDE_ACCOUNT_SCOPE))
+            .get();
 
-      if (existing) {
-        throw new Error(`Account "${input.label}" already exists`);
-      }
+          if (existing) {
+            throw new Error(`Account "${input.label}" already exists`);
+          }
 
-      const accountType = (input.type ?? 'claude-code') as AIAccountType;
-      const trimmedToken = input.token.trim();
+          const accountType = (input.type ?? 'claude-code') as AIAccountType;
+          const trimmedToken = input.token.trim();
 
-      // Validate the token before storing
-      await assertValidAccountToken(trimmedToken);
+          await assertValidAccountToken(trimmedToken);
 
-      // If this is the first account, make it default. Count ALL local providers (incl codex)
-      // so an api-key add after a default codex isn't falsely "first" → no second default.
-      const firstAccount = db
-        .select()
-        .from(claudeCodeCredentials)
-        .where(sql`${LOCAL_DEFAULT_ACCOUNT_SCOPE}`)
-        .limit(1)
-        .get();
-      const isFirstAccount = !firstAccount;
+          // If this is the first account, make it default. Count ALL local providers (incl codex)
+          // so an api-key add after a default codex isn't falsely "first" → no second default.
+          const firstAccount = db
+            .select()
+            .from(claudeCodeCredentials)
+            .where(sql`${LOCAL_DEFAULT_ACCOUNT_SCOPE}`)
+            .limit(1)
+            .get();
+          const isFirstAccount = !firstAccount;
 
-      const id = storeAccountToken(
-        input.label,
-        trimmedToken,
-        input.setAsDefault || isFirstAccount,
-        accountType,
-      );
+          const id = storeAccountToken(
+            input.label,
+            trimmedToken,
+            input.setAsDefault || isFirstAccount,
+            accountType,
+          );
 
-      // Fire-and-forget: sync account metadata to Neon
-
-      return { success: true, id };
-    }),
+          return { success: true, id, status: 'created' as const };
+        },
+      ),
+    ),
 
   /**
    * Set an account as the default

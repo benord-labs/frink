@@ -12,6 +12,8 @@ These go to PostHog and answer questions like "how many installs opened Frink th
 | --- | --- | --- |
 | `desktop_opened` | Frink starts | Whether this is the install's first launch |
 | `first_launch` | The first launch only | Nothing extra |
+| `account_connected` | You connect or reconnect an AI account | Which agent it is (such as Claude Code or Codex), how it connects (the agent's own sign-in, an API key or a token), and whether it was a reconnect |
+| `account_connect_failed` | Frink can't connect an AI account, or you leave the connect page without connecting | Which agent it is, and one of these reasons: not installed, not signed in, access denied, couldn't read the sign-in, cancelled, or unknown. Each agent sends each reason at most once per launch |
 | `project_opened` | You add or open a project | The project's local id, and whether it has a git remote (yes or no) |
 | `workspace_created` | A chat is created in a project | The chat's and project's local ids, and whether it uses a worktree |
 | `workspace_archived`, `workspace_deleted` | You archive or delete a chat | The chat's local id |
@@ -22,7 +24,7 @@ Every event also carries the Frink version, your operating system and chip archi
 
 **What identifies you:** a random install ID. Frink generates it the first time it sends an event and keeps it in its app data folder. It is not built from your computer, your name, your email or your AI account, so it tells one install apart from another and nothing more. The local ids above are ids Frink made up for its own database, built from the time the item was created and a few random characters.
 
-**What is never sent:** prompts, messages, replies, code, file names or paths, repository names or URLs, branch names, and anything about your AI provider account.
+**What is never sent:** prompts, messages, replies, code, file names or paths, repository names or URLs, branch names, or error messages. About your AI accounts, Frink sends only which agent you connect, how it connects and why a connect failed, as listed above: never your email, account name, token or key.
 
 Your IP address reaches PostHog as it does any server you connect to. Frink sends events with location lookup turned off.
 
