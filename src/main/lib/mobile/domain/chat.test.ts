@@ -633,6 +633,19 @@ describe('mobile chat actions', () => {
     expect(messages[0].parts).toEqual([{ type: 'steer', text: 'Use pnpm' }]);
   });
 
+  // The steer marker keeps the raw composer text (steering/index.ts), so it carries tokens too.
+  it('shows a steer’s attached files and selections by name, never as tokens or base64', () => {
+    const text = '@[file:editor:a.ts] @[code:a.ts:1-2:x:eA==] use this';
+    const steer = { type: 'tool-Steer', toolName: 'Steer', input: { text } };
+    const messages = mergeMobileTranscript([{ id: 'a', role: 'assistant', parts: [steer] }], {
+      streams: [],
+      terminals: [],
+    });
+    expect(messages[0].parts).toEqual([
+      { type: 'steer', text: 'a.ts use this\nAttached: a.ts L1-2' },
+    ]);
+  });
+
   it('uses each message owning stream when classifying unfinished tools', () => {
     const parts = [{ type: 'tool-Bash', toolCallId: 'call', state: 'input-available' }];
     const history = ['past', 'settled', 'failed', 'active', 'held'].map((id) => ({
@@ -848,6 +861,43 @@ describe('mobile attachments', () => {
           { type: 'text', text: 'look at these' },
           { type: 'attachment', kind: 'image', name: 'Image' },
         ],
+      },
+    ]);
+  });
+
+  it('names files and lifts selections out of a user message on the phone', () => {
+    const history = [
+      {
+        id: 'user-1',
+        role: 'user',
+        parts: [{ type: 'text', text: '@[file:editor:a.ts] @[code:a.ts:1-2:x:eA==] why?' }],
+      },
+    ];
+
+    expect(mergeMobileTranscript(history, { streams: [], terminals: [] })).toEqual([
+      {
+        id: 'user-1',
+        role: 'user',
+        text: 'a.ts why?',
+        parts: [
+          { type: 'attachment', kind: 'file', name: 'a.ts L1-2' },
+          { type: 'text', text: 'a.ts why?' },
+        ],
+      },
+    ]);
+  });
+
+  it('leaves a token an agent wrote in its reply as written, as the desktop does', () => {
+    const history = [
+      { id: 'a-1', role: 'assistant', parts: [{ type: 'text', text: 'Write @[file:r:x.ts]' }] },
+    ];
+
+    expect(mergeMobileTranscript(history, { streams: [], terminals: [] })).toEqual([
+      {
+        id: 'a-1',
+        role: 'assistant',
+        text: 'Write @[file:r:x.ts]',
+        parts: [{ type: 'text', text: 'Write @[file:r:x.ts]' }],
       },
     ]);
   });
