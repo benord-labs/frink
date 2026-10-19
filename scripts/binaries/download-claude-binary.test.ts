@@ -3,11 +3,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { REQUIRED_CLAUDE_BINARY_ENV } from './binary-capabilities.mjs';
+import { ADVISORY_CLAUDE_BINARY_ENV, REQUIRED_CLAUDE_BINARY_ENV } from './binary-capabilities.mjs';
 import { downloadPlatform } from './download-claude-binary.mjs';
 
 const PLATFORM = 'darwin-arm64';
-const GOOD = `bin ${REQUIRED_CLAUDE_BINARY_ENV.join(' ')} bin`;
+const AUTH_ONLY = `bin ${REQUIRED_CLAUDE_BINARY_ENV.join(' ')} bin`;
+const GOOD = `${AUTH_ONLY} ${ADVISORY_CLAUDE_BINARY_ENV.join(' ')} bin`;
 const sha = (contents: string) => crypto.createHash('sha256').update(contents).digest('hex');
 const manifestFor = (contents: string) => ({
   platforms: { [PLATFORM]: { checksum: sha(contents), size: contents.length } },
@@ -29,8 +30,11 @@ const serving = (contents: string) =>
 const stagingLeft = (binDir: string) =>
   fs.readdirSync(binDir).filter((entry) => entry.includes('.staging-'));
 
+const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
 afterEach(() => {
   for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+  warn.mockClear();
 });
 
 vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -89,6 +93,28 @@ describe('downloadPlatform', () => {
     expect(ok).toBe(false);
     expect(fs.readFileSync(target, 'utf8')).toBe('old build');
     expect(stagingLeft(binDir)).toEqual([]);
+  });
+
+  it('installs a download that only lacks the Bash-first steer opt-out, with a warning', async () => {
+    const { binDir, target } = binDirWith('old build');
+
+    const ok = await downloadPlatform('2.1.284', PLATFORM, manifestFor(AUTH_ONLY), {
+      binDir,
+      download: serving(AUTH_ONLY),
+    });
+
+    expect(ok).toBe(true);
+    expect(fs.readFileSync(target, 'utf8')).toBe(AUTH_ONLY);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('CLAUDE_CODE_THRIFTY_SONIC'));
+  });
+
+  it('stays quiet about the steer opt-out when the download still reads it', async () => {
+    const { binDir } = binDirWith();
+    await downloadPlatform('2.1.284', PLATFORM, manifestFor(GOOD), {
+      binDir,
+      download: serving(GOOD),
+    });
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it.skipIf(process.platform === 'win32')(

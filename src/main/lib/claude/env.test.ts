@@ -96,6 +96,23 @@ describe('buildClaudeEnv', () => {
     expect(env.HOME).toBeUndefined();
   });
 
+  // '' is what `export CLAUDE_CODE_THRIFTY_SONIC=` leaves; Claude reads it as unset and keeps the steer.
+  it.each([
+    { exported: undefined, spawned: '0' },
+    { exported: '', spawned: '0' },
+    { exported: '1', spawned: '1' },
+  ])(
+    'spawns Claude with the Bash-first steer flag $spawned when the login shell exports $exported',
+    async ({ exported, spawned }) => {
+      vi.stubEnv('CLAUDE_CODE_THRIFTY_SONIC', undefined);
+      const shell: ShellEnv = { HOME: '/mock/home', USER: 'testuser', PATH: '/mock/bin' };
+      if (exported !== undefined) shell.CLAUDE_CODE_THRIFTY_SONIC = exported;
+      await resolveShellAs(shell);
+
+      expect(buildClaudeEnv().CLAUDE_CODE_THRIFTY_SONIC).toBe(spawned);
+    },
+  );
+
   it('keys a spawn built before the SDK writes its variables into process.env like one built after', () => {
     vi.stubEnv('CLAUDE_AGENT_SDK_VERSION', undefined);
     vi.stubEnv('NoDefaultCurrentDirectoryInExePath', undefined);
