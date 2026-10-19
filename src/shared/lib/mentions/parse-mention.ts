@@ -1,4 +1,4 @@
-import { MENTION_PREFIXES } from './mention-grammar';
+import { MENTION_PREFIXES, OPEN_EDITOR_FILE_SOURCE } from './mention-grammar';
 import { decodeFromMentionToken } from './mention-token-codec';
 
 export type ParsedMention = {
@@ -155,4 +155,9 @@ const MENTION_PARSERS: ReadonlyArray<readonly [prefix: string, parse: MentionPar
 export function parseMention(id: string): ParsedMention | null {
   const parser = MENTION_PARSERS.find(([prefix]) => id.startsWith(prefix));
   return parser ? parser[1](id) : null;
+}
+
+/** The file open in the editor, attached without the user picking it. */
+export function isOpenEditorFile(mention: ParsedMention): boolean {
+  return mention.type === 'file' && mention.repository === OPEN_EDITOR_FILE_SOURCE;
 }

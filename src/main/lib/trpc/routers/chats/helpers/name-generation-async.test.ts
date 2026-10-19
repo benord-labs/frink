@@ -67,6 +67,7 @@ vi.mock('electron-log', () => ({
 // pulls @sentry/electron into this suite.
 vi.mock('../../../../sentry', () => ({ captureContained: mocks.captureContained }));
 
+import { encodeForMentionToken } from '../../../../../../shared/lib/mentions/mention-token-codec';
 import {
   autoNameSubChat,
   maybeNameBuildProjectFromMessage,
@@ -377,6 +378,97 @@ describe('autoNameSubChat', () => {
     // AI failed → deterministic fallback runs over the parsed subject, not the raw marker.
     expect(mocks.renameSubChatLocal).toHaveBeenCalledWith(expect.anything(), 's1', 'Fix login bug');
   });
+
+  describe('mention tokens', () => {
+    const enc = encodeForMentionToken;
+    const TOKENS = [
+      '@[file:local:src/auth/login.ts]',
+      '@[file:editor:src/a.ts]',
+      '@[folder:local:src/components]',
+      '@[skill:frink-flows]',
+      '@[agent:Explore]',
+      '@[tool:mcp__figma__get_design]',
+      `@[quote:Use strict mode:${enc('Use strict mode everywhere')}]`,
+      `@[diff:src/app.tsx:42:const a = 1;:${enc('const a = 1;')}]`,
+      `@[code:a.ts:13-26:const x:${enc('const x = 1;')}]`,
+      '@[pasted:120:ERROR boom|/tmp/pasted.txt]',
+      `@[briefing:flow1:${enc('Spec')}:${enc('Follow the spec.')}]`,
+    ];
+
+    function aiFails(): void {
+      mocks.getProjectAiAccount.mockResolvedValue(null);
+      mocks.getDefaultClaudeCodeToken.mockResolvedValue({
+        token: null,
+        type: 'claude-code',
+        isApiKey: false,
+        label: null,
+      });
+    }
+
+    it('names from the typed sentence, not the open editor file token', async () => {
+      aiFails();
+
+      await autoNameSubChat({
+        ...baseInput,
+        rawUserMessage: '@[file:editor:src/a.ts] fix the login bug',
+      });
+
+      expect(mocks.renameSubChatLocal).toHaveBeenCalledWith(
+        expect.anything(),
+        's1',
+        'fix the login bug',
+      );
+    });
+
+    it.each(TOKENS)('never puts a raw token in the fallback title: %s', async (token) => {
+      aiFails();
+
+      await autoNameSubChat({ ...baseInput, rawUserMessage: `${token} fix the login bug` });
+
+      const name = String(mocks.renameSubChatLocal.mock.calls[0]?.[2]);
+      expect(name).toContain('fix the login bug');
+      expect(name).not.toContain('@[');
+    });
+
+    it('sends the model the typed sentence, not a 5 kB code selection', async () => {
+      mocks.getProjectAiAccount.mockResolvedValue(null);
+      mocks.getDefaultClaudeCodeToken.mockResolvedValue({
+        token: 'default-token',
+        type: 'claude-code',
+        isApiKey: false,
+        label: 'default',
+      });
+      sdkYields('Explain Selected Code');
+      const payload = enc('const value = 1;\n'.repeat(300));
+
+      await autoNameSubChat({
+        ...baseInput,
+        rawUserMessage: `@[code:a.ts:1-300:const value:${payload}] explain this`,
+      });
+
+      const prompt = String(mocks.sdkQuery.mock.calls[0]?.[0]?.prompt);
+      expect(prompt).toContain('User message: "explain this"');
+      expect(prompt).not.toContain(payload.slice(0, 40));
+      expect(mocks.renameSubChatLocal).toHaveBeenCalledWith(
+        expect.anything(),
+        's1',
+        'Explain Selected Code',
+      );
+    });
+
+    it('names a message of attachments alone from their labels, without asking the model', async () => {
+      const code = `@[code:a.ts:13-26:const x:${enc('const x = 1;')}]`;
+
+      await autoNameSubChat({ ...baseInput, rawUserMessage: `@[file:editor:src/a.ts] ${code}` });
+
+      expect(mocks.sdkQuery).not.toHaveBeenCalled();
+      expect(mocks.renameSubChatLocal).toHaveBeenCalledWith(
+        expect.anything(),
+        's1',
+        'a.ts, a.ts L13-26',
+      );
+    });
+  });
 });
 
 describe('maybeNameBuildProjectFromMessage', () => {
@@ -457,6 +549,29 @@ describe('maybeNameBuildProjectFromMessage', () => {
     await maybeNameBuildProjectFromMessage('proj1', 'build me a todo list');
 
     expect(mocks.renameProjectIfPlaceholder).not.toHaveBeenCalled();
+  });
+
+  it('keeps the placeholder without asking the model when the message is only attachments', async () => {
+    mocks.getProjectById.mockResolvedValue(placeholderBuild);
+
+    const code = `@[code:a.ts:13-26:const x:${encodeForMentionToken('const x = 1;')}]`;
+    await maybeNameBuildProjectFromMessage('proj1', `@[file:editor:src/a.ts] ${code}`);
+
+    expect(mocks.sdkQuery).not.toHaveBeenCalled();
+    expect(mocks.renameProjectIfPlaceholder).not.toHaveBeenCalled();
+  });
+
+  it('asks the model about the typed words, with picked files read as their names', async () => {
+    sdkYields('Todo App');
+    mocks.getProjectById.mockResolvedValue(placeholderBuild);
+
+    await maybeNameBuildProjectFromMessage(
+      'proj1',
+      '@[file:editor:src/a.ts] build a todo app like @[file:local:docs/spec.md]',
+    );
+
+    const prompt = String(mocks.sdkQuery.mock.calls[0]?.[0]?.prompt);
+    expect(prompt).toContain('User message: "build a todo app like spec.md"');
   });
 
   it('dedups a display-name collision → "X 2"', async () => {
