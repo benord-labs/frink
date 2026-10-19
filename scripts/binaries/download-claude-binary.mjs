@@ -12,7 +12,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { findMissingLiterals, REQUIRED_CLAUDE_BINARY_ENV } from './binary-capabilities.mjs';
+import {
+  ADVISORY_CLAUDE_BINARY_ENV,
+  findMissingLiterals,
+  REQUIRED_CLAUDE_BINARY_ENV,
+} from './binary-capabilities.mjs';
 import { downloadToFile, fetchUrl, sha256File } from './http-download.mjs';
 import { installStaged, stagingPath, sweepStaging, writeFileAtomic } from './install-file.mjs';
 
@@ -165,11 +169,21 @@ export async function downloadPlatform(
 }
 
 /**
- * Reject (and delete) a binary missing an env var Frink's auth model depends on. Shared by the
- * cached and freshly-downloaded paths so a stale cache can never smuggle an unsupported binary in.
+ * Reject (and delete) a binary missing an env var Frink's auth model depends on; only warn for an
+ * advisory one. Shared by the cached and freshly-downloaded paths so a stale cache can never
+ * smuggle an unsupported binary in.
  */
 function rejectIfMissingCapability(targetPath) {
-  const missing = findMissingLiterals(targetPath, REQUIRED_CLAUDE_BINARY_ENV);
+  const absent = findMissingLiterals(targetPath, [
+    ...REQUIRED_CLAUDE_BINARY_ENV,
+    ...ADVISORY_CLAUDE_BINARY_ENV,
+  ]);
+  if (absent.includes('CLAUDE_CODE_THRIFTY_SONIC')) {
+    console.warn(`  Warning: Claude no longer reads CLAUDE_CODE_THRIFTY_SONIC.`);
+    console.warn(`    Agents may edit files through Bash again, which Frink's changed-files`);
+    console.warn(`    view cannot see. Revisit the opt-out in the Claude session env.`);
+  }
+  const missing = absent.filter((name) => REQUIRED_CLAUDE_BINARY_ENV.includes(name));
   if (missing.length === 0) return true;
   console.error(`  Missing capability: ${missing.join(', ')}`);
   if (missing.includes('CLAUDE_SECURESTORAGE_CONFIG_DIR')) {
