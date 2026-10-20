@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm';
 import log from 'electron-log';
 import { z } from 'zod';
 import { WORK_QUEUE_SOURCE } from '../../../../../shared/lib/message-markers/person-authored';
-import { trackWorkspaceCreated } from '../../../analytics';
+import { trackMessageSent, trackWorkspaceCreated } from '../../../analytics';
 import { getDatabase } from '../../../db';
 import {
   createChat as createChatLocal,
@@ -273,6 +273,16 @@ export const createRouter = router({
           });
         }
 
+        // A Work Queue task's opening text came from outside, so the person sent nothing yet
+        if (initialMessages.length > 0 && !input.initialMessageSource) {
+          trackMessageSent({
+            workspaceId: subChat.id,
+            messageLength:
+              extractInitialMessageText({ ...input, taskTitle: undefined })?.length ?? 0,
+            mode: input.mode,
+            startsChat: true,
+          });
+        }
         if (initialMessageText) {
           void autoNameSubChat({
             chatId: chat.id,

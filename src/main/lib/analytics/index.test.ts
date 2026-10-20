@@ -5,7 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AnalyticsHost } from '.';
 
 const capture = vi.fn();
-const message = { workspaceId: 'chat-1', messageLength: 5, mode: 'agent' as const };
+const message = {
+  workspaceId: 'chat-1',
+  messageLength: 5,
+  mode: 'agent' as const,
+  startsChat: false,
+};
 const flow = { id: 'flow-1', triggerType: 'schedule', createdBy: 'ui' } as const;
 const flowRun = { flowId: 'flow-1', outcome: 'completed', stepCount: 3, batchSize: 1 } as const;
 let userData: string;
@@ -13,6 +18,12 @@ let userData: string;
 const installIdFile = () => join(userData, '.install_id');
 const sentEvents = () => capture.mock.calls.map(([sent]) => sent.event);
 const sentIds = () => [...new Set(capture.mock.calls.map(([sent]) => sent.distinctId))];
+
+/** Announces a finished chat reply on the same module copy the launched analytics listens to. */
+async function finishReply(subChatId: string) {
+  const completions = await import('../socket/streaming/live-stream/completion-events');
+  completions.publishSessionCompletion({ chatId: 'chat-1', subChatId });
+}
 
 /** Loads a fresh copy of the module, as a new app launch would, in an official build by default. */
 async function launch(overrides: Partial<AnalyticsHost> = {}) {
@@ -55,6 +66,7 @@ describe('main-process analytics', () => {
 
     analytics.setOptOut(true);
     analytics.trackMessageSent(message);
+    await finishReply('chat-1');
     analytics.trackFlowCreated(flow);
     analytics.trackFlowRunCompleted(flowRun);
     await analytics.shutdown();
@@ -103,7 +115,33 @@ describe('main-process analytics', () => {
       workspace_id: 'chat-1',
       message_length: 5,
       mode: 'agent',
+      starts_chat: false,
     });
+  });
+
+  it('counts the message that starts a chat, later messages and each finished reply', async () => {
+    const analytics = await launch();
+    analytics.setOptOut(false);
+    capture.mockClear();
+
+    analytics.trackMessageSent({ ...message, startsChat: true });
+    await finishReply('chat-1');
+    analytics.trackMessageSent(message);
+    await finishReply('chat-1');
+
+    expect(sentEvents()).toEqual([
+      'message_sent',
+      'reply_finished',
+      'message_sent',
+      'reply_finished',
+    ]);
+    expect(capture.mock.calls.map(([{ properties }]) => properties.starts_chat)).toEqual([
+      true,
+      undefined,
+      false,
+      undefined,
+    ]);
+    expect(capture.mock.calls[1][0].properties.workspace_id).toBe('chat-1');
   });
 
   it('sends only the published properties with each event', async () => {
@@ -118,6 +156,8 @@ describe('main-process analytics', () => {
     analytics.trackPRCreated({ workspaceId: 'chat-1', prNumber: 7 });
     analytics.trackFlowCreated(flow);
     analytics.trackFlowRunCompleted(flowRun);
+    analytics.trackMessageSent(message);
+    await finishReply('chat-1');
 
     const sentWithEveryEvent = [
       'source',
@@ -139,6 +179,8 @@ describe('main-process analytics', () => {
       ['pr_created', ['workspace_id', 'pr_number']],
       ['flow_created', ['flow_id', 'trigger_type', 'created_by']],
       ['flow_run_completed', ['flow_id', 'outcome', 'step_count', 'batch_size']],
+      ['message_sent', ['workspace_id', 'message_length', 'mode', 'starts_chat']],
+      ['reply_finished', ['workspace_id']],
     ]);
   });
 

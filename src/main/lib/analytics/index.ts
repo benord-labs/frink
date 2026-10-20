@@ -9,6 +9,7 @@ import * as path from 'node:path';
 import { app } from 'electron';
 import { PostHog } from 'posthog-node';
 import type { MessageSentEvent } from '../../../shared/types/analytics';
+import { subscribeSessionCompletions } from '../socket/streaming/live-stream/completion-events';
 
 const INSTALL_ID_FILE = '.install_id';
 
@@ -131,6 +132,7 @@ export function initAnalytics(host: AnalyticsHost = electronHost()) {
     client: host.createClient(host.key),
     savedInstallId: readSavedInstallId(host.userDataDir),
   };
+  subscribeSessionCompletions(({ subChatId }) => trackReplyFinished(subChatId));
 }
 
 /**
@@ -179,14 +181,20 @@ function trackAppOpened(active: Session) {
   }
 }
 
-/**
- * Track a message sent from the UI, as reported by the renderer through the analytics router
- */
-export function trackMessageSent(event: MessageSentEvent) {
+/** Track a message sent: the one a chat is created with from `chats.create`, the rest from the renderer */
+export function trackMessageSent(event: MessageSentEvent & { startsChat: boolean }) {
   capture('message_sent', {
     workspace_id: event.workspaceId,
     message_length: event.messageLength,
     mode: event.mode,
+    starts_chat: event.startsChat,
+  });
+}
+
+/** Track a chat reply that finished; stopped replies and Flow turns publish no completion */
+function trackReplyFinished(subChatId: string) {
+  capture('reply_finished', {
+    workspace_id: subChatId,
   });
 }
 
