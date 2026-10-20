@@ -11,10 +11,11 @@ import type { ClaudeQueryInput, OperatorReminderHarness } from '../operator-remi
 
 const STOPPED = 'restart the hub';
 const CARRIED = `<conversation_history>\nHuman: ${STOPPED}\n</conversation_history>`;
-const TURN_END = [
-  { chunks: [{ type: 'finish', messageMetadata: { sessionId: 'sess-resumed' } }] },
+const turnEnd = (sessionId: string) => [
+  { chunks: [{ type: 'finish', messageMetadata: { sessionId } }] },
   { type: 'result' },
 ];
+const TURN_END = turnEnd('sess-resumed');
 /** The chat transcript a turn that starts fresh is seeded from: it already holds the stopped bubble. */
 const HISTORY = [
   { role: 'assistant' as const, content: 'earlier answer' },
@@ -29,19 +30,33 @@ type AgentTurn = { prompt: string; freshSessionFallbackPrompt?: string };
 type AgentRuntime = (typeof AGENT_RUNTIMES)[number];
 type Script = (turn: AgentTurn) => AsyncGenerator<UIMessageChunk, void, undefined>;
 
-/** An agent turn that answers and finishes. */
-async function* answers(): AsyncGenerator<UIMessageChunk, void, undefined> {
-  yield REPLY;
-  yield { type: 'finish', messageMetadata: { sessionId: 'agent-session' } };
-}
+/** An agent turn that answers and finishes on `sessionId`. */
+const answersOn = (sessionId: string) =>
+  async function* (): AsyncGenerator<UIMessageChunk, void, undefined> {
+    yield REPLY;
+    yield { type: 'finish', messageMetadata: { sessionId } };
+  };
+const answers = answersOn('agent-session');
+/** The transcript of a chat a slash command is typed into, on a session that starts fresh. */
+const CHAT = [
+  { role: 'user' as const, content: 'first question', personAuthored: true as const },
+  { role: 'assistant' as const, content: 'first answer' },
+  { role: 'user' as const, content: 'second question', personAuthored: true as const },
+];
+const AFTER_REVIEW = [
+  ...CHAT,
+  { role: 'user' as const, content: '/review', personAuthored: true as const },
+  { role: 'assistant' as const, content: 'review notes' },
+];
 type Overrides = Parameters<OperatorReminderHarness['handleRemoteExecute']>[1];
 type Execution = ReturnType<OperatorReminderHarness['handleRemoteExecute']>;
+type Payload = OperatorReminderHarness['basePayload'];
 
 /** Runs each agent turn through the next script, keeping what the agent was sent. */
 function scriptAgentTurns(
   runtime: AgentRuntime,
   scripts: Script[],
-  execute: (message: string, overrides: Overrides) => Execution,
+  execute: (message: string, overrides: Overrides, turn: Partial<Payload>) => Execution,
 ) {
   vi.mocked(getDefaultClaudeCodeToken).mockResolvedValue({
     token: null,
@@ -67,7 +82,7 @@ function scriptAgentTurns(
     }
   }
   const overrides = { runtimeFor: () => runtime, startAcpTurn: next, startCopilotTurn: next };
-  const send = (message: string) => execute(message, overrides);
+  const send = (message: string, turn: Partial<Payload> = {}) => execute(message, overrides, turn);
   return { sent, send, overrides };
 }
 
@@ -91,15 +106,15 @@ export function registerUndeliveredMessageTests({
     };
   });
 
-  /** One CLI that reads its prompt, takes it through the prompt hook and ends the turn. A local
-   * command, such as `/clear`, runs without the prompt hook ever firing. */
-  const mockClaudeTurn = (localCommand = false) =>
+  /** One CLI that reads its prompt, takes it through the prompt hook and ends the turn on
+   * `sessionId`. A local command, such as `/clear`, runs without the prompt hook ever firing. */
+  const mockClaudeTurn = (sessionId = 'sess-resumed', localCommand = false) =>
     claudeQueryMock.mockImplementationOnce(async function* (input: ClaudeQueryInput) {
       const queued = await input.prompt[Symbol.asyncIterator]().next();
       const text = String(queued.value?.message.content);
       prompts.push(text);
       if (!localCommand) await userPromptSubmitReminder(input, text);
-      yield* TURN_END;
+      yield* turnEnd(sessionId);
     });
 
   /** A turn the user stops while Frink is still preparing it, before any agent sees the prompt. */
@@ -131,7 +146,7 @@ export function registerUndeliveredMessageTests({
 
   it('Claude: a /clear, even after a mention, forgets a stopped message for the cleared session', async () => {
     await stoppedWhilePreparing(payload);
-    mockClaudeTurn(true);
+    mockClaudeTurn('sess-resumed', true);
     mockClaudeTurn();
     await handleRemoteExecute({ ...payload, message: '@[file:editor:a.ts] /clear' });
     await handleRemoteExecute({ ...payload, message: 'hi' });
@@ -146,15 +161,14 @@ export function registerUndeliveredMessageTests({
     expect(prompts[0]).toContain(CARRIED);
   });
 
-  it('Claude: a /clear behind a fresh transcript is text, so the stopped message stays owed', async () => {
+  it('Claude: a /clear on a fresh session goes out bare and runs, so the stopped message is not carried', async () => {
     await stoppedWhilePreparing(payload);
     mockClaudeTurn();
     mockClaudeTurn();
     const fresh = { ...payload, sessionId: undefined, history: HISTORY };
     await handleRemoteExecute({ ...fresh, message: '/clear' });
     await handleRemoteExecute({ ...payload, message: 'hi' });
-    expect(prompts[0]).toContain('Continue the conversation');
-    expect(prompts[1]).toContain(CARRIED);
+    expect(prompts).toEqual(['/clear', 'hi']);
   });
 
   it('Claude: a wake firing the prompt hook is not the CLI taking the message', async () => {
@@ -188,9 +202,9 @@ export function registerUndeliveredMessageTests({
   });
 
   const agentScripts = (runtime: AgentRuntime, scripts: Script[]) =>
-    scriptAgentTurns(runtime, scripts, (message, overrides) =>
+    scriptAgentTurns(runtime, scripts, (message, overrides, turn) =>
       handleRemoteExecute(
-        { ...payload, message, history: HISTORY, sessionId: 'agent-session' },
+        { ...payload, message, history: HISTORY, sessionId: 'agent-session', ...turn },
         overrides,
       ),
     );
@@ -248,6 +262,182 @@ export function registerUndeliveredMessageTests({
       expect(sent[1].prompt).toContain(CARRIED);
       expect(sent[2].prompt).not.toContain(STOPPED);
       expect(sent[2].prompt).not.toContain('with latest code');
+    },
+  );
+
+  registerFreshCommandTests({
+    claudeQueryMock,
+    handleRemoteExecute,
+    current: () => ({ payload, prompts }),
+    mockClaudeTurn,
+    agentScripts,
+  });
+}
+
+type FreshCommandFixture = Pick<
+  OperatorReminderHarness,
+  'claudeQueryMock' | 'handleRemoteExecute'
+> & {
+  current: () => { payload: Payload; prompts: string[] };
+  mockClaudeTurn: (sessionId?: string, localCommand?: boolean) => void;
+  agentScripts: (
+    runtime: AgentRuntime,
+    scripts: Script[],
+  ) => { sent: AgentTurn[]; send: (message: string, turn?: Partial<Payload>) => Promise<void> };
+};
+
+/** A slash command on a session that starts fresh goes out bare, and the transcript it went out
+ * without reaches the next turn on the new session. */
+function registerFreshCommandTests({
+  claudeQueryMock,
+  handleRemoteExecute,
+  current,
+  mockClaudeTurn,
+  agentScripts,
+}: FreshCommandFixture): void {
+  let payload: Payload;
+  let prompts: string[];
+  beforeEach(() => {
+    ({ payload, prompts } = current());
+  });
+
+  it('Claude: a command on a fresh session goes out bare, and the next turn reads the chat', async () => {
+    mockClaudeTurn('sess-new');
+    mockClaudeTurn('sess-new');
+    mockClaudeTurn('sess-new');
+    await handleRemoteExecute({
+      ...payload,
+      sessionId: undefined,
+      message: '/review',
+      history: CHAT,
+    });
+    const next = { ...payload, sessionId: 'sess-new', history: AFTER_REVIEW };
+    await handleRemoteExecute({ ...next, message: 'fix it' });
+    await handleRemoteExecute({ ...next, message: 'thanks' });
+
+    expect(prompts[0]).toBe('/review');
+    expect(timesIn(prompts[1], '<conversation_history>')).toBe(1);
+    expect(prompts[1]).toContain('Human: first question');
+    expect(prompts[1]).toContain('Human: second question');
+    expect(prompts[1]).not.toContain('review notes');
+    expect(prompts[1].endsWith('fix it')).toBe(true);
+    expect(prompts[2]).toBe('thanks');
+  });
+
+  it('Claude: a command retried fresh after a failed resume goes out bare, and the next turn reads the chat', async () => {
+    // biome-ignore lint/correctness/useYield: intentional — throw on first next() like production SDK
+    claudeQueryMock.mockImplementationOnce(async function* () {
+      throw new Error(
+        'Claude Code returned an error result: No conversation found with session ID: stale-cmd',
+      );
+    });
+    mockClaudeTurn('sess-retry');
+    mockClaudeTurn('sess-retry');
+    await handleRemoteExecute({
+      ...payload,
+      sessionId: 'stale-cmd',
+      message: '/review',
+      history: CHAT,
+    });
+    await handleRemoteExecute({
+      ...payload,
+      sessionId: 'sess-retry',
+      message: 'fix it',
+      history: AFTER_REVIEW,
+    });
+
+    expect(prompts[0]).toBe('/review');
+    expect(timesIn(prompts[1], '<conversation_history>')).toBe(1);
+    expect(prompts[1]).toContain('Human: second question');
+  });
+
+  it('Claude: a failed resume on the replay turn seeds the whole chat once, not the replay inside it', async () => {
+    mockClaudeTurn('sess-new');
+    // biome-ignore lint/correctness/useYield: intentional — throw on first next() like production SDK
+    claudeQueryMock.mockImplementationOnce(async function* () {
+      throw new Error(
+        'Claude Code returned an error result: No conversation found with session ID: sess-new',
+      );
+    });
+    mockClaudeTurn('sess-retry');
+    await handleRemoteExecute({
+      ...payload,
+      sessionId: undefined,
+      message: '/review',
+      history: CHAT,
+    });
+    await handleRemoteExecute({
+      ...payload,
+      sessionId: 'sess-new',
+      message: 'fix it',
+      history: AFTER_REVIEW,
+    });
+
+    expect(timesIn(prompts[1], '<conversation_history>')).toBe(1);
+    expect(prompts[1]).toContain('Assistant: review notes');
+    expect(prompts[1].endsWith('fix it')).toBe(true);
+  });
+
+  it('Claude: a command that resumed its session owes nothing', async () => {
+    mockClaudeTurn();
+    mockClaudeTurn();
+    await handleRemoteExecute({ ...payload, message: '/review', history: CHAT });
+    await handleRemoteExecute({ ...payload, message: 'fix it', history: AFTER_REVIEW });
+
+    expect(prompts).toEqual(['/review', 'fix it']);
+  });
+
+  it('Claude: /clear after a fresh command owes nothing, though no prompt hook takes it', async () => {
+    mockClaudeTurn('sess-new');
+    mockClaudeTurn('sess-newer', true);
+    mockClaudeTurn('sess-newer');
+    await handleRemoteExecute({
+      ...payload,
+      sessionId: undefined,
+      message: '/review',
+      history: CHAT,
+    });
+    await handleRemoteExecute({
+      ...payload,
+      sessionId: 'sess-new',
+      message: '/clear',
+      history: CHAT,
+    });
+    await handleRemoteExecute({
+      ...payload,
+      sessionId: 'sess-newer',
+      message: 'hi',
+      history: CHAT,
+    });
+
+    expect(prompts).toEqual(['/review', '/clear', 'hi']);
+  });
+
+  it.each(AGENT_RUNTIMES)(
+    '%s: a slash-shaped message on a session the agent lost is seeded like any other, owing nothing',
+    async (runtime) => {
+      const { sent, send } = agentScripts(runtime, [answersOn('agent-new'), answers]);
+
+      await send('/review', { history: CHAT });
+      await send('fix it', { history: AFTER_REVIEW, sessionId: 'agent-new' });
+
+      expect(sent[0].freshSessionFallbackPrompt).toContain('Human: second question');
+      expect(sent[0].freshSessionFallbackPrompt?.endsWith('/review')).toBe(true);
+      expect(sent[1].prompt).not.toContain('<conversation_history>');
+      expect(sent[1].prompt.endsWith('fix it')).toBe(true);
+    },
+  );
+
+  it.each(AGENT_RUNTIMES)(
+    '%s: a command that resumed its session owes nothing',
+    async (runtime) => {
+      const { sent, send } = agentScripts(runtime, [answers, answers]);
+
+      await send('/review', { history: CHAT });
+      await send('fix it', { history: AFTER_REVIEW });
+
+      expect(sent[1].prompt).not.toContain('<conversation_history>');
+      expect(sent[1].prompt.endsWith('fix it')).toBe(true);
     },
   );
 }

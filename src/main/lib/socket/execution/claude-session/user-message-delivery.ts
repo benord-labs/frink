@@ -13,9 +13,10 @@ export function trackUserMessageDelivery(
   let pushed = false;
   return {
     /** The `onPushed` callback for one turn registration: an adopted arming, a claimed idle
-     * session, or a fresh spawn. */
-    onPushed: (adopted: boolean, claimed: boolean) => () => {
+     * session, or a fresh spawn. `andThen` runs once the CLI has the prompt. */
+    onPushed: (adopted: boolean, claimed: boolean, andThen?: () => void) => () => {
       pushed = true;
+      andThen?.();
       const path = adopted ? 'adopted' : claimed ? 'warm' : 'fresh';
       log.info('[Socket Executor] user turn pushed', {
         subChatId,

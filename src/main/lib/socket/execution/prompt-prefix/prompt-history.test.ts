@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { formatPromptWithHistory, replaceCarriedWithHistory } from './prompt-history';
+import {
+  carriesHistory,
+  formatPromptWithHistory,
+  keepsCommandFirst,
+  replaceCarriedWithHistory,
+} from './prompt-history';
 
 const history = [
   { role: 'user' as const, content: 'earlier question' },
@@ -14,17 +19,25 @@ describe('formatPromptWithHistory', () => {
     expect(out.endsWith('do the thing')).toBe(true);
   });
 
-  it('returns /compact bare so it stays at prompt position 0', () => {
-    // The transcript wrapper would push the command off position 0 and the provider would never
-    // dispatch it — and the history it carries is what compaction is about to discard anyway.
+  it('returns a slash command bare so it stays at prompt position 0', () => {
     expect(formatPromptWithHistory('/compact', history)).toBe('/compact');
     expect(formatPromptWithHistory('/compact keep the API decisions', history)).toBe(
       '/compact keep the API decisions',
     );
+    expect(formatPromptWithHistory('/review', history)).toBe('/review');
+    expect(formatPromptWithHistory('/my-skill src/a.ts', history)).toBe('/my-skill src/a.ts');
   });
 
-  it('still wraps a prompt that only mentions the command', () => {
+  it('wraps any command but /compact where the runtime runs no typed commands', () => {
+    expect(formatPromptWithHistory('/review', history, false)).toContain('<conversation_history>');
+    expect(formatPromptWithHistory('/compact', history, false)).toBe('/compact');
+  });
+
+  it('still wraps a prompt that only mentions a command or starts with a path', () => {
     expect(formatPromptWithHistory('please run /compact', history)).toContain(
+      '<conversation_history>',
+    );
+    expect(formatPromptWithHistory('/src/a.ts is broken', history)).toContain(
       '<conversation_history>',
     );
   });
@@ -108,21 +121,40 @@ describe('formatPromptWithHistory', () => {
 
 describe('replaceCarriedWithHistory', () => {
   const carried = 'a note and an earlier message\n\ndo the thing';
+  const fresh = formatPromptWithHistory('do the thing', history);
 
-  it('puts the transcript in place of what a resume would have carried', () => {
-    const out = replaceCarriedWithHistory(
-      `a prefix\n\n${carried}`,
-      carried,
-      'do the thing',
-      history,
-    );
+  it('puts the fresh prompt in place of what a resume would have carried', () => {
+    const out = replaceCarriedWithHistory(`a prefix\n\n${carried}`, carried, fresh, history);
     expect(out.startsWith('a prefix\n\n<conversation_history>')).toBe(true);
     expect(out).not.toContain('a note and an earlier message');
     expect(out.endsWith('do the thing')).toBe(true);
   });
 
+  it('keeps a slash command bare in place of what a resume would have carried', () => {
+    expect(replaceCarriedWithHistory('/review', '/review', '/review', history)).toBe('/review');
+  });
+
   it('keeps the prompt whole when there is no transcript to seed from', () => {
     expect(replaceCarriedWithHistory(carried, carried, 'do the thing', [])).toBe(carried);
     expect(replaceCarriedWithHistory(carried, carried, 'do the thing', undefined)).toBe(carried);
+  });
+});
+
+describe('carriesHistory', () => {
+  it('is true only for a message that is not a command, with a transcript to carry', () => {
+    expect(carriesHistory('do the thing', history)).toBe(true);
+    expect(carriesHistory('do the thing', [])).toBe(false);
+    expect(carriesHistory('do the thing', undefined)).toBe(false);
+    expect(carriesHistory('/review', history)).toBe(false);
+    expect(carriesHistory('/review', history, false)).toBe(true);
+  });
+});
+
+describe('keepsCommandFirst', () => {
+  it('keeps /compact first everywhere and other commands only where typed commands run', () => {
+    expect(keepsCommandFirst('/compact', false)).toBe(true);
+    expect(keepsCommandFirst('/review', true)).toBe(true);
+    expect(keepsCommandFirst('/review', false)).toBe(false);
+    expect(keepsCommandFirst('/src/a.ts is broken', true)).toBe(false);
   });
 });
