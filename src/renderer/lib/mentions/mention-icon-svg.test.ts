@@ -60,13 +60,14 @@ describe('mention icon svg', () => {
 
   it('renames only id declarations and references, not other values equal to an id', () => {
     const body =
-      '<linearGradient id="g.1"/><path class="g.1" data-id="g.1" fill="url(#g.1)"/><use href="#g.1"/>' +
+      '<linearGradient id="g.1"/><path class="g.1" data-id="g.1" stroke="#g.1" fill="url(#g.1)"/><use href="#g.1"/>' +
       `<rect fill="url('#g.1')"/><circle fill='url("#g.1")'/><use xlink:href='#g.1'/>`;
     const svg = mentionIconElement(iconifySvgMarkup({ width: 16, height: 16, body }));
     const id = svg.querySelector('linearGradient')?.id;
     expect(id).toMatch(/^g\.1-m\d+$/);
     expect(svg.querySelector('path')?.getAttribute('class')).toBe('g.1');
     expect(svg.querySelector('path')?.getAttribute('data-id')).toBe('g.1');
+    expect(svg.querySelector('path')?.getAttribute('stroke')).toBe('#g.1');
     expect(svg.querySelector('path')?.getAttribute('fill')).toBe(`url(#${id})`);
     expect(svg.querySelector('rect')?.getAttribute('fill')).toBe(`url('#${id}')`);
     expect(svg.querySelector('circle')?.getAttribute('fill')).toBe(`url("#${id}")`);
