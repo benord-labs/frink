@@ -25,6 +25,7 @@ import {
   removeRunDir,
   resolveBaseCommit,
   type SideResult,
+  settledValues,
   type ShotOptions,
 } from './component-shot/lib';
 
@@ -199,14 +200,6 @@ export async function main(argv: string[]): Promise<number> {
   const out = options.out ? resolve(options.out) : mkdtempSync(join(tmpdir(), 'component-shot-'));
   mkdirSync(out, { recursive: true });
   clearPreviousShots(out);
-  const runDir = mkdtempSync(join(tmpdir(), 'frink-component-shot-'));
-  const baseTree = join(runDir, 'base-tree');
-  const onSignal = () => {
-    removeRunDir(runDir, nodeModulesLinks);
-    process.exit(130);
-  };
-  process.once('SIGINT', onSignal).once('SIGTERM', onSignal);
-
   console.log(`before: ${options.base} merge-base ${base.slice(0, 10)}`);
   console.log(`after:  working tree on ${head.slice(0, 10)}`);
   if (base === head)
@@ -219,16 +212,26 @@ export async function main(argv: string[]): Promise<number> {
   }
 
   const browser = await launchBrowser();
+  const runDir = mkdtempSync(join(tmpdir(), 'frink-component-shot-'));
+  const baseTree = join(runDir, 'base-tree');
+  const onSignal = () => {
+    removeRunDir(runDir, nodeModulesLinks);
+    process.exit(130);
+  };
+  process.once('SIGINT', onSignal).once('SIGTERM', onSignal);
   try {
     const baseHasModule = existsAtCommit(REPO, base, options.modulePath);
     if (baseHasModule) extractBaseTree(base, baseTree, runDir);
     const absent: SideResult = { missing: [], absent: true };
-    const [before, after] = await Promise.all([
-      baseHasModule
-        ? shootSide(browser, join(runDir, 'base'), baseTree, join(out, 'before.png'), options)
-        : absent,
-      shootSide(browser, join(runDir, 'head'), REPO, join(out, 'after.png'), options),
-    ]);
+    // Both sides finish before the finally below closes the browser and deletes their folders.
+    const [before, after] = settledValues(
+      await Promise.allSettled([
+        baseHasModule
+          ? shootSide(browser, join(runDir, 'base'), baseTree, join(out, 'before.png'), options)
+          : absent,
+        shootSide(browser, join(runDir, 'head'), REPO, join(out, 'after.png'), options),
+      ]),
+    );
     const report = finishShots({ before, after, ...options, base });
     for (const line of report.lines) console.log(line);
     if (report.missing.length) {

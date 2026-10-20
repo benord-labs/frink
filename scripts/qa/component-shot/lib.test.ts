@@ -17,6 +17,7 @@ import {
   parseShotArgs,
   removeRunDir,
   resolveBaseCommit,
+  settledValues,
 } from './lib';
 
 const REPO = '/repo';
@@ -265,5 +266,25 @@ describe('finishShots', () => {
     expect(() =>
       finishShots({ before: { missing: [], error: 'old' }, after: shot('a'), ...names }),
     ).toThrow('before: old');
+  });
+});
+
+describe('settledValues', () => {
+  it('returns every value in order when all sides succeeded', async () => {
+    expect(settledValues(await Promise.allSettled([Promise.resolve('before'), 'after']))).toEqual([
+      'before',
+      'after',
+    ]);
+  });
+
+  it('rethrows the first failure only after the other side has finished', async () => {
+    let otherFinished = false;
+    const slow = new Promise((resolve) => setTimeout(resolve, 20)).then(() => {
+      otherFinished = true;
+    });
+    const results = await Promise.allSettled([Promise.reject(new Error('timed out')), slow]);
+    expect(otherFinished).toBe(true);
+    expect(() => settledValues(results)).toThrow('timed out');
+    expect(() => settledValues([{ status: 'rejected', reason: 'plain' }])).toThrow('plain');
   });
 });

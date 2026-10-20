@@ -122,7 +122,8 @@ export function linkNodeModules(nodeModules: string, dir: string): string {
 /** Drops the node_modules links before deleting, so the repo's real node_modules is never touched. */
 export function removeRunDir(runDir: string, links: string[]): void {
   for (const link of links.splice(0)) unlinkSync(link);
-  rmSync(runDir, { recursive: true, force: true });
+  // Retries ride out a Vite cache write that lands mid-delete (ENOTEMPTY) when a signal stops a run.
+  rmSync(runDir, { recursive: true, force: true, maxRetries: 3 });
 }
 
 /** A skipped before shot must not leave an earlier run's before.png looking current. */
@@ -174,4 +175,13 @@ export function finishShots({ before, after, exportName, modulePath, base }: Sho
   ];
   if (missing.length) return { lines, missing, code: EXIT_UNANSWERED };
   return { lines, missing, code: before.absent ? EXIT_ABSENT_AT_BASE : 0 };
+}
+
+/** The values of settled promises, or the first rejection rethrown once all of them have finished. */
+export function settledValues<T>(results: PromiseSettledResult<T>[]): T[] {
+  const rejected = results.find((result) => result.status === 'rejected');
+  if (rejected) {
+    throw rejected.reason instanceof Error ? rejected.reason : new Error(String(rejected.reason));
+  }
+  return results.flatMap((result) => (result.status === 'fulfilled' ? [result.value] : []));
 }
