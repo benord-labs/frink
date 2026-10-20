@@ -46,7 +46,8 @@ async function stepsForRun(db: Db, flowRunId: string | undefined): Promise<numbe
 
 /**
  * Counts each run once, and a batch once in place of its member runs. A rerun re-terminalizes the
- * same run or batch, so the ids already counted this session are skipped.
+ * same run or batch, so the ids already counted this session are skipped. An id whose reads fail
+ * is released, so a later terminal event can still count it.
  */
 export function startFlowRunTelemetry(
   db: Db = getDatabase(),
@@ -54,28 +55,41 @@ export function startFlowRunTelemetry(
 ): () => void {
   const counted = new Set<string>();
 
+  const readOrRelease = async <T>(id: string, read: () => Promise<T>): Promise<T> => {
+    try {
+      return await read();
+    } catch (err) {
+      counted.delete(id);
+      throw err;
+    }
+  };
+
   const report = async (event: FlowExecutionEvent): Promise<void> => {
+    const { flowRunId, batchId } = event;
     const outcome = runOutcome(event.eventType);
-    if (outcome && event.flowRunId && !event.batchId && !counted.has(event.flowRunId)) {
-      counted.add(event.flowRunId);
-      const stepCount = await stepsForRun(db, event.flowRunId);
+    if (outcome && flowRunId && !batchId && !counted.has(flowRunId)) {
+      counted.add(flowRunId);
+      const stepCount = await readOrRelease(flowRunId, () => stepsForRun(db, flowRunId));
       track({ flowId: event.flowId, outcome, stepCount, batchSize: 1 });
       return;
     }
-    if (event.eventType !== 'batch_completed' || !event.batchId || counted.has(event.batchId)) {
+    if (event.eventType !== 'batch_completed' || !batchId || counted.has(batchId)) {
       return;
     }
-    counted.add(event.batchId);
-    const earliest = await getEarliestRunForBatch(db, event.batchId);
-    const [members] = await db
-      .select({ n: count() })
-      .from(flowRuns)
-      .where(eq(flowRuns.batchId, event.batchId));
+    counted.add(batchId);
+    const { stepCount, batchSize } = await readOrRelease(batchId, async () => {
+      const earliest = await getEarliestRunForBatch(db, batchId);
+      const [members] = await db
+        .select({ n: count() })
+        .from(flowRuns)
+        .where(eq(flowRuns.batchId, batchId));
+      return { stepCount: await stepsForRun(db, earliest?.id), batchSize: members?.n ?? 0 };
+    });
     track({
       flowId: event.flowId,
       outcome: event.runStatus === 'completed' ? 'completed' : 'failed',
-      stepCount: await stepsForRun(db, earliest?.id),
-      batchSize: members?.n ?? 0,
+      stepCount,
+      batchSize,
     });
   };
 
