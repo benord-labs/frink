@@ -86,6 +86,8 @@ function nodeUpdateDetail(op: Extract<PatchOperation, { op: 'update_node' }>): s
   if (op.label !== undefined) details.push('Step label');
   if (op.config !== undefined) details.push(describeFlowNodeConfigChange(op.config));
   if (op.position !== undefined) details.push('Canvas position');
+  if (op.size !== undefined)
+    details.push(op.size === null ? 'Container size cleared' : 'Container size');
   return details.length > 0 ? details.join(' · ') : undefined;
 }
 
