@@ -2,7 +2,7 @@
   "name": "frink",
   "version": "0.4.0",
   "private": true,
-  "description": "Fine-tuned automation for everyone: chat with your own coding agents and run them as Flows",
+  "description": "Desktop-first, open-source (MIT) application for running parallel agents, and multi-step custom workflows triggered by schedules, webhooks or events from tools like Linear and Sentry, across your already-used providers.",
   "license": "MIT",
   "author": {
     "name": "Benji Norval"

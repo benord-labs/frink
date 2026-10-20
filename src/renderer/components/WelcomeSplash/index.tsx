@@ -170,8 +170,8 @@ function WelcomeHero({ exiting, onDismiss }: { exiting: boolean; onDismiss: () =
         <h1 className="text-balance text-[2.75rem] font-medium leading-none tracking-tight">
           Welcome to Frink
         </h1>
-        <p className="mx-auto mt-4 max-w-md text-base leading-relaxed text-muted-foreground text-pretty">
-          Fine-tuned automations, for everyone.
+        <p className="mx-auto mt-4 max-w-md text-base leading-relaxed text-muted-foreground text-balance">
+          Run AI agents side by side, and workflows that start on their own.
         </p>
       </Rise>
       <Rise reduced={reducedMotion} delay={0.45} className="mt-9 flex flex-col items-center gap-4">
