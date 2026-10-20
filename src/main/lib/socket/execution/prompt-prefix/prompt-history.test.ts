@@ -29,6 +29,31 @@ describe('formatPromptWithHistory', () => {
     );
   });
 
+  it('recaps the tokens of a person’s turns and replays every other turn as stored', () => {
+    const selection = `@[quote:p:${Buffer.from('x'.repeat(5000)).toString('base64')}]`;
+    const out = formatPromptWithHistory('next', [
+      { role: 'user', content: `${selection} why @[file:local:a.ts]?`, personAuthored: true },
+      { role: 'assistant', content: 'see @[file:local:b.ts]' },
+      { role: 'user', content: 'Flow step: read @[file:local:c.ts]' },
+    ]);
+    expect(out).toContain(
+      `Human: [quoted an earlier message:\n${'x'.repeat(2000)}\n... (truncated)] why a.ts?`,
+    );
+    expect(out).not.toContain(selection);
+    expect(out).toContain('Assistant: see @[file:local:b.ts]');
+    expect(out).toContain('Human: Flow step: read @[file:local:c.ts]');
+  });
+
+  it('recaps before the budget cut, so a large selection cannot push out earlier turns', () => {
+    const selection = `@[quote:p:${Buffer.from('x'.repeat(300_000)).toString('base64')}]`;
+    const out = formatPromptWithHistory('next', [
+      { role: 'user', content: 'the first question' },
+      { role: 'user', content: `${selection} explain`, personAuthored: true },
+    ]);
+    expect(out).toContain('Human: the first question');
+    expect(out).not.toContain('Earlier conversation omitted');
+  });
+
   it('returns the prompt unchanged when there is no history', () => {
     expect(formatPromptWithHistory('do the thing', [])).toBe('do the thing');
     expect(formatPromptWithHistory('do the thing', undefined)).toBe('do the thing');

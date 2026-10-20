@@ -6,18 +6,8 @@ export type ParsedMention = {
   label: string;
   path: string;
   repository: string;
-  type:
-    | 'file'
-    | 'folder'
-    | 'skill'
-    | 'agent'
-    | 'tool'
-    | 'quote'
-    | 'diff'
-    | 'code'
-    | 'pasted'
-    | 'briefing';
-  // Extra data for quote/diff/code/pasted/briefing mentions
+  type: 'file' | 'folder' | 'skill' | 'agent' | 'tool' | 'quote' | 'diff' | 'code' | 'pasted';
+  // Extra data for quote/diff/code/pasted mentions
   fullText?: string;
   lineNumber?: number;
   /** For code: fileName and line range (e.g. "13-26") */
@@ -125,19 +115,6 @@ function parsePastedMention(id: string): ParsedMention | null {
   return { id, label, path, repository: '', type: 'pasted', fullText: label, size };
 }
 
-/** `briefing:<flowId>:<base64 name>:<base64 text>` */
-function parseBriefingMention(id: string): ParsedMention | null {
-  const content = id.slice(MENTION_PREFIXES.BRIEFING.length);
-  const colonIdx = content.indexOf(':');
-  if (colonIdx === -1) return null;
-  const afterFlowId = content.slice(colonIdx + 1);
-  const secondColonIdx = afterFlowId.indexOf(':');
-  if (secondColonIdx === -1) return null;
-  const label = decodeFromMentionToken(afterFlowId.slice(0, secondColonIdx)) || 'Briefing';
-  const fullText = decodeFromMentionToken(afterFlowId.slice(secondColonIdx + 1));
-  return { id, label, path: '', repository: '', type: 'briefing', fullText };
-}
-
 const MENTION_PARSERS: ReadonlyArray<readonly [prefix: string, parse: MentionParser]> = [
   [MENTION_PREFIXES.FILE, (id) => parseFileOrFolderMention(id, 'file')],
   [MENTION_PREFIXES.FOLDER, (id) => parseFileOrFolderMention(id, 'folder')],
@@ -148,7 +125,6 @@ const MENTION_PARSERS: ReadonlyArray<readonly [prefix: string, parse: MentionPar
   [MENTION_PREFIXES.DIFF, parseDiffMention],
   [MENTION_PREFIXES.CODE, parseCodeMention],
   [MENTION_PREFIXES.PASTED, parsePastedMention],
-  [MENTION_PREFIXES.BRIEFING, parseBriefingMention],
 ];
 
 /** Parses the id of an `@[id]` mention token; null when its kind or shape is not recognised. */

@@ -17,7 +17,7 @@ import { stripHiddenWakeMarker } from '../../../shared/lib/message-markers/hidde
 import { stripMessageMarkers } from '../../../shared/lib/message-markers/strip-message-markers';
 import { isUserAbortErrorMessage } from '../../../shared/lib/user-abort-error';
 import type { ChatMode } from '../../../shared/types/chat-mode';
-import type { ExecutionSettings } from '../../../shared/types/execution';
+import type { ConversationTurn, ExecutionSettings } from '../../../shared/types/execution';
 import { runCodexAgent } from '../agent-runner';
 import { createCodexHostPermissionCheck } from '../agent-runner/codex/permissions';
 import { buildCodexDynamicChatMcpUrl } from '../agent-runner/codex/spawn-args';
@@ -278,7 +278,7 @@ type ExecuteRequestPayload = {
   userMessageParts?: MessagePart[];
   mode: ChatMode;
   /** Conversation history for context */
-  history?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  history?: ConversationTurn[];
   /** Execution settings from the requesting machine (validated by socket server) */
   settings?: ExecutionSettings;
   /** Assistant message ID (provided by server for new architecture) */
@@ -355,7 +355,7 @@ export async function handleRemoteExecute(
 
   // Markers persist for the renderer (hide the bubble, or draw it as a card) — never for the model.
   const unmarked = stripMessageMarkers(stripHiddenWakeMarker(rawMessage));
-  const composer = isPersonAuthored(payload.delivery)
+  const composer = isPersonAuthored(payload.delivery, rawMessage)
     ? projectComposerContext(unmarked)
     : { text: unmarked, notes: [] };
   const message = composer.text;
@@ -542,8 +542,8 @@ export async function handleRemoteExecute(
     // Owed from registration on: only a registered run can be stopped before its prompt is taken.
     const undelivered = carryUndeliveredMessages(
       subChatId,
-      message,
-      isPersonAuthored(payload.delivery),
+      { raw: unmarked, prompt: message },
+      isPersonAuthored(payload.delivery, rawMessage),
     );
     executionStreamEpoch = getExecutionStreamEpoch(subChatId, msgId);
     if (!executionStreamEpoch) throw new Error('Active execution was registered without an epoch');

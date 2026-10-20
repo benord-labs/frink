@@ -9,7 +9,6 @@ export const MENTION_PREFIXES = {
   DIFF: 'diff:', // Selected text from diff sidebar
   CODE: 'code:', // Selected lines from the code editor
   PASTED: 'pasted:', // Large pasted text saved as files
-  BRIEFING: 'briefing:', // Flow briefing (format: briefing:<flowId>:<base64Name>:<base64Text>)
 } as const;
 
 /** A file token's second slot says where the file came from: `local` when the user picked it,

@@ -43,7 +43,7 @@ describe('decodeFromMentionToken', () => {
     expect(decodeFromMentionToken(encodeForMentionToken(original))).toBe(original);
   });
 
-  it('decodes multiline briefing text correctly', () => {
+  it('decodes multiline markdown correctly', () => {
     const text = '# Spec\n\nAlways use TypeScript.\n- Step 1\n- Step 2';
     expect(decodeFromMentionToken(encodeForMentionToken(text))).toBe(text);
   });

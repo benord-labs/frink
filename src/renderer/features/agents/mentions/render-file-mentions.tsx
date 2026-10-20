@@ -10,7 +10,6 @@ import { HoverCard, HoverCardContent, HoverCardTrigger } from '../../../componen
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../components/ui/tooltip';
 import { mentionChipClass } from '../../../lib/mentions/mention-chip-class';
 import {
-  FileText,
   Bot,
   Files,
   ToolCase,
@@ -48,30 +47,6 @@ export function MentionChip({
   focusable?: boolean;
 }) {
   if (isTextMention(mention)) return <TextMentionChip mention={mention} />;
-
-  if (mention.type === 'briefing') {
-    const preview = mention.fullText?.slice(0, 100);
-    const chip = (
-      <span className={MENTION_CHIP_CLASS}>
-        <FileText />
-        <span>{mention.label}</span>
-      </span>
-    );
-
-    if (!preview) return chip;
-
-    return (
-      <HoverCard openDelay={400}>
-        <HoverCardTrigger asChild>{chip}</HoverCardTrigger>
-        <HoverCardContent side="top" align="start" className="w-80 p-3">
-          <p className="text-xs font-medium text-foreground mb-1">{mention.label}</p>
-          <p className="text-xs text-muted-foreground whitespace-pre-line line-clamp-6">
-            {preview}
-          </p>
-        </HoverCardContent>
-      </HoverCard>
-    );
-  }
 
   // biome-ignore lint/style/useNamingConvention: component type variable
   const Icon =

@@ -66,7 +66,6 @@ export type ChatViewInnerProps = {
   sandboxSetupError?: string;
   onRetrySetup?: () => void;
   projectPath?: string;
-  /** UUID of the project this chat is associated with (used for @briefing mentions) */
   projectId?: string | null;
   /** Current git branch when chat has a workspace (for subtle context bar under input) */
   currentBranch?: string | null;
@@ -148,7 +147,6 @@ export type ComposerForwardedProps = {
   teamId?: string;
   repository?: string;
   projectPath?: string;
-  /** UUID of the project this chat is associated with (used for @briefing mentions) */
   projectId?: string | null;
   changedFiles: SubChatFileChange[];
   firstQueueItemId?: string;
