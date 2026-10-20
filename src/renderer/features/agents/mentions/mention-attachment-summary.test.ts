@@ -13,6 +13,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import { formatAttachmentSummaryLabel } from '@/lib/agent-chat/format-attachment-summary';
+import { codeSelectionMention } from '@/lib/mentions/queued-message-text';
 import { encodeForMentionToken } from '../../../../shared/lib/mentions/mention-token-codec';
 
 // Mock trpc (pulled in by the agents-file-mention transitive dep, unused by the parser).
@@ -67,6 +68,29 @@ describe('mention token -> attachment summary label', () => {
 
     expect(labelFor(codeToken('src/i18n.ts', 1, 1, gnarly))).toBe('Using code selection');
     expect(labelFor(quoteToken(gnarly))).toBe('Using selected text');
+  });
+
+  it('parses the real code-selection producer back to the selection it was built from', () => {
+    // The tokens above are hand-built mirrors; this one comes from the builder every send path calls.
+    const text = 'const a: Item[] = [];\n// ü ✓';
+    const token = codeSelectionMention({
+      fileName: '50% C:x [draft].ts',
+      startLine: 3,
+      endLine: 4,
+      text,
+    });
+
+    const { textMentions, cleanedText } = extractTextMentions(`${token} explain`);
+
+    expect(cleanedText).toBe('explain');
+    expect(textMentions).toEqual([
+      expect.objectContaining({
+        type: 'code',
+        path: '50% C:x [draft].ts',
+        lineRange: '3-4',
+        fullText: text,
+      }),
+    ]);
   });
 
   it('labels a Windows drive-letter diff path, whose colons split the token oddly', () => {

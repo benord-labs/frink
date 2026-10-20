@@ -38,7 +38,7 @@ export function codeSelectionMention(code: CodeSelectionMentionSource): string {
     MENTION_PREVIEW_SANITIZE_REGEX,
     '',
   );
-  return `@[code:${encodeURIComponent(code.fileName)}:${code.startLine}-${code.endLine}:${shown}:${encodeForMentionToken(code.text)}]`;
+  return `@[${MENTION_PREFIXES.CODE}${encodeURIComponent(code.fileName)}:${code.startLine}-${code.endLine}:${shown}:${encodeForMentionToken(code.text)}]`;
 }
 
 /** Pasted-text token (`pasted:size:preview|path`): `|` separates the path because paths can

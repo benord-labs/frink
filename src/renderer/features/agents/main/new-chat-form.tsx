@@ -18,13 +18,13 @@ import { commandFetcher } from '@/lib/commands/command-fetcher';
 import { expandSlashCommand } from '@/lib/commands/expand-slash-command';
 import {
   attachedContextFile,
+  codeSelectionMention,
   openFileMention,
   pastedTextMention,
 } from '@/lib/mentions/queued-message-text';
 import type { TaskData } from '@/lib/tasks/format-task-message';
 import { useTerminalOutputIntake } from '@/lib/terminal/use-terminal-output-intake';
 import { normalizeModelIdForExecutionAccount } from '../../../../shared/lib/models';
-import { MENTION_PREVIEW_SANITIZE_REGEX } from '../../../../shared/lib/mentions/mention-grammar';
 import type { ChatMode } from '../../../../shared/types/chat-mode';
 import { usePersistedToggle } from '../../../hooks/use-persisted-toggle';
 import {
@@ -85,7 +85,6 @@ import {
   ACCOUNT_NOT_READY_TOAST_MESSAGE_START_CHAT,
   showAccountNotReadyToast,
   type UnauthAccountForSend,
-  utf8ToBase64,
 } from './active-chat/utils';
 import { EditorSection } from './EditorSection';
 import { LIMITS, STRINGS } from './new-chat-form-constants';
@@ -450,15 +449,8 @@ export function NewChatForm({
         },
       }));
 
-    // Add code selection as mention (same format as active-chat useMessageSend)
-    // Encode fileName so colons (e.g. Windows drive) don't break delimiter-based parsing
     let mentionPrefix = '';
-    if (codeSelectionContext) {
-      const preview = codeSelectionContext.preview.replace(MENTION_PREVIEW_SANITIZE_REGEX, '');
-      const encodedText = utf8ToBase64(codeSelectionContext.text);
-      const safeFileName = encodeURIComponent(codeSelectionContext.fileName);
-      mentionPrefix = `@[code:${safeFileName}:${codeSelectionContext.startLine}-${codeSelectionContext.endLine}:${preview}:${encodedText}] `;
-    }
+    if (codeSelectionContext) mentionPrefix = `${codeSelectionMention(codeSelectionContext)} `;
     const fileMention = openFileMention(attachedFile, message);
     if (fileMention) mentionPrefix += `${fileMention} `;
 
