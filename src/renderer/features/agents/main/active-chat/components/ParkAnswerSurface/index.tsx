@@ -53,7 +53,8 @@ export const ParkAnswerSurface = memo(function ParkAnswerSurface({
   const questionRef = useRef<AgentUserQuestionHandle | null>(null);
 
   const surface = deriveParkSurfaceState(task);
-  if (suppressed || surface.kind === 'none' || !task) {
+  // FlowChatBottomSurface renders the secret form in the composer slot itself.
+  if (suppressed || surface.kind === 'none' || surface.kind === 'secret' || !task) {
     return null;
   }
   // The free-text reply box is load-bearing only where the composer is hidden (flow chats — the

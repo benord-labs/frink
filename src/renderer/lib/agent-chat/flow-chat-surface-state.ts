@@ -17,7 +17,7 @@ import { isRetryableParkedResult } from '../../../shared/lib/task-retry-policy';
 import { type ResolvedTaskStartMode, toChatMode } from '../../../shared/lib/trigger-rule-config';
 import type { ChatMode } from '../../../shared/types/chat-mode';
 import { type CodexSpeed, isCodexSpeed } from '../../../shared/types/execution';
-import type { AgentUserQuestion } from '../../../shared/types/task-signal';
+import type { AgentUserQuestion, SecretRequest } from '../../../shared/types/task-signal';
 import { taskResultSchema, type TaskResultRecord } from '../../../shared/types/task-result';
 
 type ParkedTask =
@@ -52,6 +52,7 @@ const DEFAULT_PARK_ASK = 'The agent needs your input to continue.';
 
 export type ParkSurfaceState =
   | { kind: 'none' }
+  | { kind: 'secret'; request: SecretRequest }
   | { kind: 'questions'; questions: AgentUserQuestion[] }
   | { kind: 'reply'; summary: string };
 
@@ -100,8 +101,8 @@ function readTaskAgentInfo(
 }
 
 /**
- * Which park answer surface a parked driving task should render: structured `questions` get the
- * clickable card; every OTHER user-input park gets a summary + free-text reply box, so no park is
+ * Which park answer surface a parked driving task should render: a secret request gets the secret
+ * form, structured `questions` get the clickable card; every OTHER user-input park gets a summary + free-text reply box, so no park is
  * ever left without an in-chat answer affordance. Two carve-outs return `none`: transient parks
  * (usage limit / API error — TaskControls owns their Continue / Retry) and user-pause parks
  * (the paused bar owns those).
@@ -115,8 +116,17 @@ export function deriveParkSurfaceState(task: ParkedTask): ParkSurfaceState {
     return { kind: 'none' };
   }
   const agentSignal = record?.agentSignal as
-    | { state?: string; summary?: string; questions?: AgentUserQuestion[] }
+    | {
+        state?: string;
+        summary?: string;
+        questions?: AgentUserQuestion[];
+        secretRequest?: SecretRequest;
+      }
     | undefined;
+  // The secret form, never a free-text box: a typed reply would put the secret in the chat.
+  if (agentSignal?.state === 'awaiting_input' && agentSignal.secretRequest) {
+    return { kind: 'secret', request: agentSignal.secretRequest };
+  }
   if (agentSignal?.state === 'awaiting_input' && agentSignal.questions?.length) {
     return { kind: 'questions', questions: agentSignal.questions };
   }

@@ -33,6 +33,26 @@ export type AgentUserQuestion = {
   multiSelect: boolean;
 };
 
+/** How git treats an env file: `none` when the folder is not in a repo. */
+export type SecretGitState = 'ignored' | 'untracked' | 'tracked' | 'none';
+
+/** A secret the agent asked the user to type into Frink's form. Never holds the value itself. */
+export type SecretRequest = {
+  id: string;
+  /** The env variable name, e.g. `STRIPE_SECRET_KEY`. */
+  name: string;
+  /** The chat whose agent asked; its answer is sent there. */
+  chatId: string;
+  /** The env file, relative to `cwd`. */
+  file: string;
+  /** The chat folder the agent ran in when it asked. */
+  cwd: string;
+  reason: string;
+  /** Whether the file already set `name` when the agent asked. */
+  replaces: boolean;
+  git: SecretGitState;
+};
+
 export type TaskSignalPayload = {
   state: TaskSignalState;
   summary: string;
@@ -40,5 +60,7 @@ export type TaskSignalPayload = {
   verification?: Record<string, unknown>;
   /** Optional clickable choices for the user. Only honored when `state === 'awaiting_input'`. */
   questions?: AgentUserQuestion[];
+  /** Set only by `frink_request_secret`, never by `frink_task_signal`: the park shows the secret form. */
+  secretRequest?: SecretRequest;
   at?: string;
 };

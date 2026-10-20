@@ -10,4 +10,11 @@ describe('getRuntimeBaseTools', () => {
     expect(hasTaskSignal(true)).toBe(true);
     expect(hasTaskSignal(false)).toBe(false);
   });
+
+  it('offers frink_request_secret to every turn, task or not', () => {
+    for (const enabled of [true, false]) {
+      const names = getRuntimeBaseTools(enabled).map((tool) => tool.name);
+      expect(names).toContain('frink_request_secret');
+    }
+  });
 });
