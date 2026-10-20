@@ -16,6 +16,7 @@ import {
   MENTION_PREFIXES,
   MENTION_TOKEN_PATTERN_SRC,
 } from '../../../../shared/lib/mentions/mention-grammar';
+import { pathLabel } from '../../../../shared/lib/mentions/parse-mention';
 import { cn } from '../../../lib/utils';
 import { createFileIconElement } from './agents-file-mention';
 
@@ -257,7 +258,7 @@ function buildMentionsInto(
         const type = parts[0] as 'file' | 'folder';
         const repo = parts[1];
         const path = parts.slice(2).join(':');
-        const name = path.split('/').pop() || path;
+        const name = pathLabel(path);
         option = { id, label: name, path, repository: repo, type };
       }
     }
@@ -547,7 +548,7 @@ export const AgentsMentionsEditor = memo(
           const type = parts[0] as 'file' | 'folder';
           const repo = parts[1];
           const path = parts.slice(2).join(':');
-          const name = path.split('/').pop() || path;
+          const name = pathLabel(path);
           return { id, label: name, path, repository: repo, type };
         }
       }

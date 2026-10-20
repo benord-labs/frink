@@ -20,6 +20,12 @@ type MentionParser = (id: string) => ParsedMention | null;
 
 const UNDERSCORE_GLOBAL_REGEX = /_/g;
 const WORD_BOUNDARY_CAPITALIZE_REGEX = /\b\w/g;
+const PATH_SEPARATOR_REGEX = /[\\/]/;
+
+/** The last segment of a `/` or `\` path, or the whole path when it ends in a separator. */
+export function pathLabel(path: string): string {
+  return path.split(PATH_SEPARATOR_REGEX).pop() || path;
+}
 
 /** The decoded base64 part (empty when it does not decode), or the preview when there is none. */
 function decodeFullText(encodedText: string, preview: string): string {
@@ -31,7 +37,7 @@ function parseFileOrFolderMention(id: string, type: 'file' | 'folder'): ParsedMe
   const parts = id.split(':');
   if (parts.length < 3) return null;
   const path = parts.slice(2).join(':');
-  return { id, label: path.split('/').pop() || path, path, repository: parts[1], type };
+  return { id, label: pathLabel(path), path, repository: parts[1], type };
 }
 
 /** `skill:<name>` */
@@ -77,7 +83,7 @@ function parseDiffMention(id: string): ParsedMention | null {
   if (parts.length < 3) return null;
   const path = parts[0];
   const lineNumber = parseInt(parts[1], 10) || undefined;
-  const fileName = path.split('/').pop() || path;
+  const fileName = pathLabel(path);
   const label = lineNumber ? `${fileName}:${lineNumber}` : fileName;
   const fullText = decodeFullText(parts.slice(3).join(':'), parts[2]);
   return { id, label, path, repository: '', type: 'diff', fullText, lineNumber };

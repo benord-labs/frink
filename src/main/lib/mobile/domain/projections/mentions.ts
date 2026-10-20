@@ -2,7 +2,11 @@ import {
   findMentionTokens,
   MENTION_PREFIXES,
 } from '../../../../../shared/lib/mentions/mention-grammar';
-import { type ParsedMention, parseMention } from '../../../../../shared/lib/mentions/parse-mention';
+import {
+  type ParsedMention,
+  parseMention,
+  pathLabel,
+} from '../../../../../shared/lib/mentions/parse-mention';
 import type { MobileMessagePart, MobileTextRun } from '../../../../../shared/types/remote/mobile';
 
 type Attachment = Extract<MobileMessagePart, { type: 'attachment' }>;
@@ -32,7 +36,7 @@ function attachment(mention: ParsedMention | null): Attachment {
     const chip: Attachment = {
       type: 'attachment',
       kind: 'file',
-      name: mention.path.split('/').pop() || 'Attachment',
+      name: pathLabel(mention.path) || 'Attachment',
     };
     if (lines) chip.detail = `L${lines}`;
     return chip;

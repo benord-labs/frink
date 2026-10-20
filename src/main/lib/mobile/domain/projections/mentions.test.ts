@@ -17,6 +17,7 @@ const text = (value: string) => ({ type: 'text', text: value });
 describe('projectMentions', () => {
   it.each([
     ['a picked file', '@[file:local:src/components/Button.tsx] tidy it', 'Button.tsx', 'file'],
+    ['a Windows file', '@[file:local:src\\components\\Button.tsx] tidy it', 'Button.tsx', 'file'],
     ['the open editor file', '@[file:editor:.oxlintrc.json] tidy it', '.oxlintrc.json', 'file'],
     ['a folder', '@[folder:local:src/lib] tidy it', 'lib', 'folder'],
     ['a skill', '@[skill:frink-flows] tidy it', 'frink-flows', 'skill'],
@@ -44,6 +45,11 @@ describe('projectMentions', () => {
     [
       'a diff selection, with its line',
       `@[diff:src/a.ts:12:export function:${PAYLOAD}] why?`,
+      lines('a.ts', 'L12'),
+    ],
+    [
+      'a diff selection in a Windows path',
+      `@[diff:src\\a.ts:12:export function:${PAYLOAD}] why?`,
       lines('a.ts', 'L12'),
     ],
     [

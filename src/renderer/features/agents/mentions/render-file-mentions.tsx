@@ -5,7 +5,11 @@ import {
   findMentionTokens,
   MENTION_PREFIXES,
 } from '../../../../shared/lib/mentions/mention-grammar';
-import { type ParsedMention, parseMention } from '../../../../shared/lib/mentions/parse-mention';
+import {
+  type ParsedMention,
+  parseMention,
+  pathLabel,
+} from '../../../../shared/lib/mentions/parse-mention';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '../../../components/ui/hover-card';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../components/ui/tooltip';
 import { mentionChipClass } from '../../../lib/mentions/mention-chip-class';
@@ -225,11 +229,7 @@ function TextMentionChip({ mention }: { mention: ParsedMention }) {
     <HoverCard openDelay={300} closeDelay={100}>
       <HoverCardTrigger asChild>
         <AgentFileItem
-          filename={
-            isProse
-              ? mention.label.trim().split('\n')[0]
-              : mention.path.split('/').pop() || mention.path
-          }
+          filename={isProse ? mention.label.trim().split('\n')[0] : pathLabel(mention.path)}
           icon={isProse ? SquareDashedText : undefined}
           detail={lines ? `L${lines}` : undefined}
           size={mention.type === 'pasted' ? mention.size : undefined}
