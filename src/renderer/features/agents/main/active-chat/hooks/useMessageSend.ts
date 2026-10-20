@@ -6,15 +6,13 @@ import { expandSlashCommand } from '@/lib/commands/expand-slash-command';
 import {
   attachedContextFile,
   codeSelectionMention,
+  diffMention,
   openFileMention,
   pastedTextMention,
+  quoteMention,
 } from '@/lib/mentions/queued-message-text';
 import { isRunBusy } from '../../../../../lib/agent-chat/steer/run-busy';
 import { isCompactCommand } from '../../../../../../shared/commands/expand-slash-command';
-import {
-  MENTION_PREFIXES,
-  MENTION_PREVIEW_SANITIZE_REGEX,
-} from '../../../../../../shared/lib/mentions/mention-grammar';
 import { stripHiddenWakeMarker } from '../../../../../../shared/lib/message-markers/hidden-wake-marker';
 import type { ChatMode } from '../../../../../../shared/types/chat-mode';
 import { getQueryClient } from '../../../../../contexts/TRPCProvider';
@@ -47,7 +45,6 @@ import {
   clearFlowRunEndedErrorSignal,
   showAccountNotReadyToast,
   type UnauthAccountForSend,
-  utf8ToBase64,
 } from '../utils';
 
 type SendMessagePart =
@@ -304,18 +301,8 @@ export function useMessageSend({
         fileMention ||
         currentPastedTexts.length > 0)
     ) {
-      const quoteMentions = currentTextContexts.map((tc) => {
-        const preview = tc.preview.replace(MENTION_PREVIEW_SANITIZE_REGEX, '');
-        const encodedText = utf8ToBase64(tc.text);
-        return `@[${MENTION_PREFIXES.QUOTE}${preview}:${encodedText}]`;
-      });
-
-      const diffMentions = currentDiffTextContexts.map((dtc) => {
-        const preview = dtc.preview.replace(MENTION_PREVIEW_SANITIZE_REGEX, '');
-        const encodedText = utf8ToBase64(dtc.text);
-        const lineNum = dtc.lineNumber || 0;
-        return `@[${MENTION_PREFIXES.DIFF}${dtc.filePath}:${lineNum}:${preview}:${encodedText}]`;
-      });
+      const quoteMentions = currentTextContexts.map(quoteMention);
+      const diffMentions = currentDiffTextContexts.map(diffMention);
 
       // Add code selection as mention token
       const codeMentions = currentCodeSelection ? [codeSelectionMention(currentCodeSelection)] : [];

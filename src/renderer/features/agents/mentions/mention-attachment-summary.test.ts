@@ -13,7 +13,11 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import { formatAttachmentSummaryLabel } from '@/lib/agent-chat/format-attachment-summary';
-import { codeSelectionMention } from '@/lib/mentions/queued-message-text';
+import {
+  codeSelectionMention,
+  diffMention,
+  quoteMention,
+} from '@/lib/mentions/queued-message-text';
 import { encodeForMentionToken } from '../../../../shared/lib/mentions/mention-token-codec';
 
 // Mock trpc (pulled in by the agents-file-mention transitive dep, unused by the parser).
@@ -90,6 +94,50 @@ describe('mention token -> attachment summary label', () => {
         lineRange: '3-4',
         fullText: text,
       }),
+    ]);
+  });
+
+  it('parses the real quote and diff producers back to the text they were built from', () => {
+    const text = '  const a: Item[] = [];\n// ü ✓ ';
+    const quote = quoteMention({ text });
+    const lined = diffMention({ text, filePath: 'src/app.ts', lineNumber: 12 });
+    const unlined = diffMention({ text, filePath: 'src/b.ts' });
+
+    const { textMentions, cleanedText } = extractTextMentions(
+      `${quote} ${lined} ${unlined} explain`,
+    );
+
+    expect(cleanedText.trim()).toBe('explain');
+    expect(textMentions).toEqual([
+      expect.objectContaining({ type: 'quote', label: 'const a Item = ; // ü ✓', fullText: text }),
+      expect.objectContaining({
+        type: 'diff',
+        path: 'src/app.ts',
+        lineNumber: 12,
+        fullText: text,
+      }),
+      expect.objectContaining({
+        type: 'diff',
+        path: 'src/b.ts',
+        lineNumber: undefined,
+        fullText: text,
+      }),
+    ]);
+  });
+
+  it.each([
+    ['a route segment in brackets', 'app/[id]/page.tsx', 'page.tsx:3'],
+    ['a Windows drive letter', 'C:\\repo\\src\\app.ts', 'app.ts:3'],
+  ])('keeps a diff of a path with %s whole', (_pathKind, filePath, label) => {
+    // A raw `]` closed the token early and a raw `:` shifted every field after the path.
+    const text = 'export default function Page() {}\r\n';
+    const token = diffMention({ text, filePath, lineNumber: 3 });
+
+    const { textMentions, cleanedText } = extractTextMentions(`${token} explain`);
+
+    expect(cleanedText).toBe('explain');
+    expect(textMentions).toEqual([
+      expect.objectContaining({ type: 'diff', path: filePath, label, fullText: text }),
     ]);
   });
 

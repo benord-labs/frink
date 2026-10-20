@@ -23,15 +23,6 @@ export {
 } from './toasts';
 
 /**
- * UTF-8 safe base64 encoding (btoa doesn't support Unicode)
- */
-export const utf8ToBase64 = (str: string): string => {
-  const bytes = new TextEncoder().encode(str);
-  const binString = Array.from(bytes, (byte) => String.fromCodePoint(byte)).join('');
-  return btoa(binString);
-};
-
-/**
  * Get the ID of the first sub-chat by creation date
  */
 export const getFirstSubChatId = (
