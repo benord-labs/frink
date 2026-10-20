@@ -182,7 +182,7 @@ export const SplitPane = memo(function SplitPane(props: SplitPaneProps) {
         label={pane.label}
         totalPanes={totalPanes}
         onActivate={onSetActive}
-        historyNav={<PaneHistoryNav chatId={pane.id} paneIndex={index} />}
+        historyMenuItems={<PaneHistoryNav chatId={pane.id} paneIndex={index} />}
         onClose={onClose}
         onMoveLeft={onSwapPanes ? () => onSwapPanes(index, index - 1) : undefined}
         onMoveRight={onSwapPanes ? () => onSwapPanes(index, index + 1) : undefined}
