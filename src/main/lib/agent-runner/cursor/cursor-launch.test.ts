@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { SDKMessage } from '@cursor/sdk';
@@ -29,6 +29,7 @@ import {
   writeFakeCursorSdk,
 } from './cursor-test-fixtures';
 import {
+  CURSOR_ROW,
   CURSOR_TOOL_NAMES,
   cursorHostEnv,
   disposeAllCursorHosts,
@@ -162,6 +163,13 @@ describe('resolveCursorLaunch', () => {
 describe('the pinned SDK', () => {
   it('sends only messages Frink’s copy of their types describes', () => {
     expectTypeOf<SDKMessage>().toExtend<CursorSdkMessage>();
+  });
+
+  it('is the version package.json installs, so a bump cannot reach users as a refusal', async () => {
+    const manifest = JSON.parse(await readFile(path.join(process.cwd(), 'package.json'), 'utf8'));
+    expect(manifest.devDependencies['@cursor/sdk'] ?? manifest.dependencies['@cursor/sdk']).toBe(
+      CURSOR_ROW.sdk.version,
+    );
   });
 });
 

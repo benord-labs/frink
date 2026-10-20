@@ -15,6 +15,7 @@ import {
   sdk,
 } from './cursor-test-fixtures';
 import {
+  CURSOR_SETTING_SOURCES,
   CURSOR_TOOL_NAMES,
   type CursorRunnerParams,
   cursorAgentOptions,
@@ -531,5 +532,13 @@ describe('cursorAgentOptions', () => {
       local: { cwd: '/p', settingSources: ['user'] },
       storeDir: '/s',
     });
+  });
+
+  it('loads exactly the setting sources routed as loaded', () => {
+    const options = cursorAgentOptions({ cwd: '/p', storeDir: '/s', tools: CURSOR_TOOL_NAMES });
+    const loaded = Object.entries(CURSOR_SETTING_SOURCES)
+      .filter(([, route]) => route === 'loaded')
+      .map(([source]) => source);
+    expect(options.local.settingSources).toEqual(loaded);
   });
 });
