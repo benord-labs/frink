@@ -65,6 +65,24 @@ describe('carryUndeliveredMessages', () => {
     expect(next.prompt).not.toContain('/compact');
   });
 
+  it('sends any slash command bare and never owes it, as a local command is never taken', () => {
+    send('restart the hub');
+    expect(send('/review the diff').prompt).toBe('/review the diff');
+    send('/clear');
+
+    const next = send('continue');
+    expect(next.prompt).toContain('Human: restart the hub');
+    expect(next.prompt).not.toContain('/review');
+    expect(next.prompt).not.toContain('/clear');
+  });
+
+  it('owes a message that only starts with a path, as the provider sends it to the model', () => {
+    send('restart the hub');
+    expect(send('/src/a.ts is broken').prompt).toContain('Human: restart the hub');
+
+    expect(send('continue').prompt).toContain('Human: /src/a.ts is broken');
+  });
+
   it('keeps a newer send owed when an older turn is taken late', () => {
     const older = send('first');
     send('second');

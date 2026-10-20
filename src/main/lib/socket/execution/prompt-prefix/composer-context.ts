@@ -1,7 +1,4 @@
-import {
-  isCompactCommand,
-  SLASH_COMMAND_REGEX,
-} from '../../../../../shared/commands/expand-slash-command';
+import { isCompactCommand } from '../../../../../shared/commands/expand-slash-command';
 import {
   findMentionTokens,
   OPEN_EDITOR_FILE_SOURCE,
@@ -219,10 +216,8 @@ export function projectComposerContext(message: string): ComposerProjection {
   if (isCompactCommand(message)) return { text: message, notes: [] };
   const { text, notes } = rewriteTokens(message, projectMention);
   if (notes.length === 0) return { text: message, notes: [] };
-  // Inline when nothing was typed, so no prompt is empty, and when the tokens were all that kept a
-  // typed slash command off the start of the prompt, so the Claude CLI still does not run it.
-  const exposesCommand = SLASH_COMMAND_REGEX.test(text) && !SLASH_COMMAND_REGEX.test(message);
-  if (text.trim() && !exposesCommand) return { text, notes };
+  // Inline only when nothing was typed, so no prompt is empty.
+  if (text.trim()) return { text, notes };
   const reminders = wrapRemindersForPrompt(notes.map((note) => note.text));
   return { text: text.trim() ? `${reminders}\n\n${text}` : reminders, notes: [] };
 }

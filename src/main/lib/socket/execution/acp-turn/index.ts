@@ -1,3 +1,4 @@
+import { startsWithCommand } from '../../../../../shared/commands/expand-slash-command';
 import { type AiProviderId, aiProvider } from '../../../../../shared/lib/ai-providers';
 import { isBuiltInModelId } from '../../../../../shared/lib/models';
 import type { ChatMode } from '../../../../../shared/types/chat-mode';
@@ -45,8 +46,11 @@ export function agentModelFor(model: string | undefined): string | undefined {
   return model && !isBuiltInModelId(model) ? model : undefined;
 }
 
+/** The notes in the prompt: after a leading slash command, so the command stays first. */
 export function withNotes(text: string, notes: string[]): string {
-  return notes.length > 0 ? `${wrapRemindersForPrompt(notes)}\n\n${text}` : text;
+  if (notes.length === 0) return text;
+  const reminders = wrapRemindersForPrompt(notes);
+  return startsWithCommand(text) ? `${text}\n\n${reminders}` : `${reminders}\n\n${text}`;
 }
 
 /** Runs one chat turn on an ACP agent, refusing in plain words when it cannot start. */

@@ -132,6 +132,13 @@ describe('startCopilotTurn', () => {
     });
   });
 
+  it('keeps a typed slash command first, with its notes after it', async () => {
+    const { deps, runs } = fakeDeps();
+    const note = 'The user opened the file src/a.ts in the IDE.';
+    await collect(startCopilotTurn(turnParams({ prompt: '/review', composerNotes: [note] }), deps));
+    expect(runs[0]?.prompt).toBe(`/review\n\n<system-reminder>\n${note}\n</system-reminder>`);
+  });
+
   it('leaves out a Claude or OpenAI model the chat kept from another provider', async () => {
     const { deps, runs } = fakeDeps();
     for (const model of ['sonnet', 'codex-gpt-6-astra-low']) {

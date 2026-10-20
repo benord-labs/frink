@@ -1,4 +1,4 @@
-import { isCompactCommand } from '../../../../../shared/commands/expand-slash-command';
+import { startsWithCommand } from '../../../../../shared/commands/expand-slash-command';
 import { formatPromptWithHistory } from './prompt-history';
 
 /** Sub-chat → a person's messages no provider turn took, so a resumed session never saw them.
@@ -10,7 +10,8 @@ export function clearUndeliveredMessagesForTests(): void {
 }
 
 /** Notes a person's message as owed until the provider takes its prompt (`accepted`), and returns
- * the prompt with what earlier stopped turns still owe as transcript. `/compact` goes out bare.
+ * the prompt with what earlier stopped turns still owe as transcript. A slash command goes out bare
+ * and is never owed: a Claude local command (`/clear`) never fires the prompt hook that takes it.
  * Owed messages are kept as typed, tokens and all, so their transcript can recap what was attached;
  * `prompt` is the message as this turn sends it. */
 export function carryUndeliveredMessages(
@@ -18,7 +19,7 @@ export function carryUndeliveredMessages(
   { raw, prompt }: { raw: string; prompt: string },
   personAuthored: boolean,
 ) {
-  const isCommand = isCompactCommand(raw);
+  const isCommand = startsWithCommand(prompt);
   const owed = undeliveredBySubChat.get(subChatId) ?? [];
   // A retry re-sends the same text, which then arrives as the prompt itself.
   const earlier = isCommand ? [] : owed.filter((sent) => sent !== raw);
