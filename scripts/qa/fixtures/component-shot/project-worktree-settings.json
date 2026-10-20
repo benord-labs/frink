@@ -1,0 +1,15 @@
+{
+  "worktreeConfig.get": {
+    "config": { "setup-worktree": ["bun install"] },
+    "path": "/Users/sam/code/acme-web/.frink/worktrees.json"
+  },
+  "claudeSettings.getWorktreeBasePath": { "config": null, "path": "/Users/sam/.frink/worktrees" },
+  "external.getHomePath": "/Users/sam",
+  "worktreeConfig.includePreview": {
+    "source": "default",
+    "files": [".env", ".env.local", "apps/api/.env"],
+    "skipped": [],
+    "overLimit": 0,
+    "enabled": true
+  }
+}
