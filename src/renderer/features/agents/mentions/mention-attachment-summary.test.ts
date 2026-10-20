@@ -128,6 +128,8 @@ describe('mention token -> attachment summary label', () => {
   it.each([
     ['a route segment in brackets', 'app/[id]/page.tsx', 'page.tsx:3'],
     ['a Windows drive letter', 'C:\\repo\\src\\app.ts', 'app.ts:3'],
+    ['a literal percent sign', 'docs/100%.md', '100%.md:3'],
+    ['a literal %XX sequence', 'docs/a%20b.md', 'a%20b.md:3'],
   ])('keeps a diff of a path with %s whole', (_pathKind, filePath, label) => {
     // A raw `]` closed the token early and a raw `:` shifted every field after the path.
     const text = 'export default function Page() {}\r\n';
