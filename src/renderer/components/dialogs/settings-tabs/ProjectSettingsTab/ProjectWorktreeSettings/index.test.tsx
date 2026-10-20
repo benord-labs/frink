@@ -550,7 +550,7 @@ describe('ProjectWorktreeSettings', () => {
       ).toEqual(['.env', 'apps/web/.env.local']);
       expect(within(filesSection()).getByRole('link', { name: 'Learn more' })).toHaveAttribute(
         'href',
-        expect.stringMatching(/user-docs\/worktree-setup\.md#worktrees-claude-makes-itself$/),
+        expect.stringMatching(/user-docs\/worktree-setup\.md#worktrees-an-agent-makes-itself$/),
       );
     });
 

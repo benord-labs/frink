@@ -5,9 +5,9 @@ import { cn } from '@/lib/utils';
 
 const HEADING_ID = 'project-worktree-files-to-copy';
 
-/** The `.env` default is Frink's own; worktrees Claude makes itself only read `.worktreeinclude`. */
-const CLAUDE_WORKTREES_DOCS_URL =
-  'https://github.com/benord-labs/frink/blob/main/user-docs/worktree-setup.md#worktrees-claude-makes-itself';
+/** The `.env` default is Frink's own; no agent copies `.env` into a worktree it makes itself. */
+const AGENT_WORKTREES_DOCS_URL =
+  'https://github.com/benord-labs/frink/blob/main/user-docs/worktree-setup.md#worktrees-an-agent-makes-itself';
 
 const SKIP_REASONS = {
   'too-large': 'too large to copy',
@@ -50,7 +50,7 @@ export function FilesToCopy({ projectId }: { projectId: string }) {
               <>
                 {' '}
                 <a
-                  href={CLAUDE_WORKTREES_DOCS_URL}
+                  href={AGENT_WORKTREES_DOCS_URL}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="underline hover:text-foreground"

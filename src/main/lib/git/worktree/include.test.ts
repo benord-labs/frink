@@ -130,7 +130,7 @@ describe.skipIf(!canInitGit)('resolveWorktreeIncludes (git integration)', () => 
     expect(plan.files).toEqual(['.envrc']);
   });
 
-  // The example in user-docs/worktree-setup.md "Worktrees Claude makes itself".
+  // The example in user-docs/worktree-setup.md "Worktrees an agent makes itself".
   it('copies the same .env files as the default with the documented .worktreeinclude', async () => {
     const repo = initRepo({
       gitignore: '.env\n.env.*\n',

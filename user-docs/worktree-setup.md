@@ -52,11 +52,16 @@ A pattern without a slash, like `settings.json`, doesn't reach inside a folder g
 
 Frink also skips any file the new worktree itself doesn't ignore. That happens when your main checkout ignores it through a change to `.gitignore` you haven't committed: without the skip, the file would show up as a new file in the worktree, and an agent could commit it.
 
-### Worktrees Claude makes itself
+### Worktrees an agent makes itself
 
-The `.env` copy above is something Frink does. Claude can also make a worktree on its own, for example when you ask it to work in a worktree or when it starts helper agents. Those worktrees only get the files listed in a `.worktreeinclude`, so without one they start with no `.env`.
+The `.env` copy above is something Frink does for the worktrees it makes. An agent can also make a worktree on its own partway through a chat, and no agent copies your `.env` files into it by default:
 
-To have your `.env` files there too, add a `.worktreeinclude` at the root of your repo that lists them:
+| Agent | Makes its own worktrees during a Frink chat | What it copies in |
+|---|---|---|
+| Claude | Yes: when you ask it to work in a worktree, or when it starts helper agents | Only the files listed in a `.worktreeinclude` |
+| Codex, Cursor, GitHub Copilot, OpenCode | No | Doesn't apply |
+
+So a worktree Claude makes starts with no `.env` unless your repo has a `.worktreeinclude`. To have your `.env` files there too, add one at the root of your repo that lists them:
 
 ```
 .env*
@@ -65,7 +70,7 @@ To have your `.env` files there too, add a `.worktreeinclude` at the root of you
 
 The second line leaves out folders named like `.env`, such as a Python virtual environment, which Frink's default skips too. Frink then copies the same list, since a `.worktreeinclude` replaces its default (see above).
 
-The switch in Settings only covers worktrees Frink makes. If your `.env` holds keys agents shouldn't use, leave it out of `.worktreeinclude` too, so Claude's own worktrees don't get it either. A `WorktreeCreate` hook replaces how Claude makes worktrees, and Claude then ignores `.worktreeinclude`, so a hook like that has to copy these files itself.
+The switch in Settings only covers worktrees Frink makes. If your `.env` holds keys agents shouldn't use, leave it out of `.worktreeinclude` too, so worktrees an agent makes don't get it either. A `WorktreeCreate` hook replaces how Claude makes worktrees, and Claude then ignores `.worktreeinclude`, so a hook like that has to copy these files itself.
 
 ## Claude settings and hooks come from the main checkout
 
