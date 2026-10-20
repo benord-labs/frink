@@ -130,6 +130,25 @@ describe.skipIf(!canInitGit)('resolveWorktreeIncludes (git integration)', () => 
     expect(plan.files).toEqual(['.envrc']);
   });
 
+  // The example in user-docs/worktree-setup.md "Worktrees Claude makes itself".
+  it('copies the same .env files as the default with the documented .worktreeinclude', async () => {
+    const repo = initRepo({
+      gitignore: '.env\n.env.*\n',
+      trackedFiles: ['apps/web/index.ts'],
+      include: '.env*\n!.env*/\n',
+      files: {
+        '.env.local': 'A=1\n',
+        'apps/web/.env': 'B=1\n',
+        '.env/bin/python': 'binary\n',
+      },
+    });
+
+    const plan = await resolveWorktreeIncludes(repo);
+
+    expect(plan.source).toBe('worktreeinclude');
+    expect(plan.files).toEqual(['.env.local', 'apps/web/.env']);
+  });
+
   it('uses .worktreeinclude instead of the default when the repo has one', async () => {
     const repo = initRepo({
       gitignore: '.env\nconfig/local.json\n',

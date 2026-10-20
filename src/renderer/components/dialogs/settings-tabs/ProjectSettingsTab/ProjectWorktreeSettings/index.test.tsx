@@ -540,6 +540,10 @@ describe('ProjectWorktreeSettings', () => {
           .getAllByRole('listitem')
           .map((li) => li.textContent),
       ).toEqual(['.env', 'apps/web/.env.local']);
+      expect(within(filesSection()).getByRole('link', { name: 'Learn more' })).toHaveAttribute(
+        'href',
+        expect.stringMatching(/user-docs\/worktree-setup\.md#worktrees-claude-makes-itself$/),
+      );
     });
 
     it('names .worktreeinclude as the source and explains skipped files', async () => {
@@ -557,6 +561,7 @@ describe('ProjectWorktreeSettings', () => {
       );
       expect(filesSection()).toHaveTextContent('data/dump.sql (too large to copy)');
       expect(filesSection()).toHaveTextContent('2 more files are over the copy limit');
+      expect(within(filesSection()).queryByRole('link', { name: 'Learn more' })).toBeNull();
     });
 
     it('says when there is nothing to copy', async () => {
@@ -579,6 +584,7 @@ describe('ProjectWorktreeSettings', () => {
       expect(setIncludeEnabled).toHaveBeenCalledWith({ projectId: 'project-1', enabled: false });
       await waitFor(() => expect(toggle()).not.toBeChecked());
       expect(filesSection()).toHaveTextContent('Off: new worktrees start without these files.');
+      expect(within(filesSection()).queryByRole('link', { name: 'Learn more' })).toBeNull();
     });
   });
 });

@@ -5,6 +5,10 @@ import { cn } from '@/lib/utils';
 
 const HEADING_ID = 'project-worktree-files-to-copy';
 
+/** The `.env` default is Frink's own; worktrees Claude makes itself only read `.worktreeinclude`. */
+const CLAUDE_WORKTREES_DOCS_URL =
+  'https://github.com/benord-labs/frink/blob/main/user-docs/worktree-setup.md#worktrees-claude-makes-itself';
+
 const SKIP_REASONS = {
   'too-large': 'too large to copy',
   symlink: 'linked file, not copied',
@@ -42,6 +46,19 @@ export function FilesToCopy({ projectId }: { projectId: string }) {
           </p>
           <p className="text-xs leading-relaxed text-muted-foreground">
             {sourceHint(data?.source, enabled)}
+            {enabled && data?.source !== 'worktreeinclude' && (
+              <>
+                {' '}
+                <a
+                  href={CLAUDE_WORKTREES_DOCS_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline hover:text-foreground"
+                >
+                  Learn more
+                </a>
+              </>
+            )}
           </p>
         </div>
         {data && (
