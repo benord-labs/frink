@@ -26,7 +26,7 @@ import {
 } from '../../search/chat-search-atoms';
 import { extractSearchableText, findMatches } from '../../search/chat-search-utils';
 import { TriggerBubble } from '../../ui/trigger-bubble';
-import { FileLinkBadge, FileLinkBadgeProvider } from '.';
+import { FileLinkBadge, FileLinkBadgeProvider, FileLinkScope } from '.';
 
 // `lib/trpc` wires its ipc client at import time, so the preload bridge must exist first.
 vi.hoisted(() => {
@@ -548,4 +548,168 @@ describe('file badges in a chat transcript', () => {
       });
     },
   );
+});
+
+const resolveInput = z.object({ projectPath: z.string(), names: z.array(z.string()) });
+
+type ScopedReply = {
+  /** The project file the lookup finds for each bare name; any other name matches none or several. */
+  files?: Record<string, string>;
+  isStreaming?: boolean;
+  store?: ReturnType<typeof createStore>;
+};
+
+/** One reply in chat `chat-1`, which works in `ROOT`: one markdown part per text (its text, a plan
+ * card's, …), all inside the reply's file-link scope. `showParts` re-renders it with other parts. */
+function renderScopedReply(
+  texts: string | string[],
+  { files = {}, isStreaming = false, store = createStore() }: ScopedReply = {},
+) {
+  const queries = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  queries.setQueryData(
+    getQueryKey(trpc.chats.get, { id: 'chat-1' }, 'query'),
+    { project: { path: ROOT } },
+    { updatedAt: 0 },
+  );
+  const reply = (parts: string[]) => (
+    <Provider store={store}>
+      <TooltipProvider>
+        <SearchHighlightProvider>
+          <CurrentChatWorktreeProvider worktreePath={null} chatId="chat-1">
+            <FileLinkBadgeProvider>
+              <FileLinkScope isStreaming={isStreaming}>
+                {parts.map((text, partIndex) => (
+                  <MemoizedTextPart
+                    key={text}
+                    text={text}
+                    messageId="m1"
+                    partIndex={partIndex}
+                    isFinalText
+                    visibleStepsCount={0}
+                    renderMarkdown
+                  />
+                ))}
+              </FileLinkScope>
+            </FileLinkBadgeProvider>
+          </CurrentChatWorktreeProvider>
+        </SearchHighlightProvider>
+      </TooltipProvider>
+    </Provider>
+  );
+  const asked: unknown[] = [];
+  const view = renderWithTrpc<string | Record<string, string | null>>(
+    reply([texts].flat()),
+    async (op) => {
+      if (op.path === 'external.getHomePath') return answerHomePath(op);
+      if (op.path !== 'files.resolveNames')
+        throw new Error(`Unexpected test operation: ${op.path}`);
+      const { names } = resolveInput.parse(op.input);
+      asked.push(op.input);
+      return Object.fromEntries(names.map((name) => [name, files[name] ?? null]));
+    },
+    queries,
+  );
+  return { ...view, asked, showParts: (parts: string[]) => view.rerender(reply(parts)) };
+}
+
+describe('bare file names in a reply', () => {
+  it('draws a badge for a name the project has one file of, and leaves the rest as code', async () => {
+    const { asked } = renderScopedReply('Edit `socket.ts`, then `index.ts` and `gone.ts`.', {
+      files: { 'socket.ts': 'src/main/socket.ts' },
+    });
+
+    const badge = await screen.findByRole('button', { name: 'socket.ts' });
+    fireEvent.focus(badge);
+    expect(screen.getByRole('tooltip')).toHaveTextContent(/^src\/main\/socket\.ts$/);
+    expect(screen.getAllByRole('button')).toHaveLength(1);
+    expect(screen.getByText('index.ts')).not.toHaveAttribute('aria-hidden');
+    expect(asked).toEqual([{ projectPath: ROOT, names: ['socket.ts', 'index.ts', 'gone.ts'] }]);
+  });
+
+  it('tells same-name files apart by their folders', async () => {
+    renderScopedReply('Changed `src/a/index.ts`.\n\nAnd `index.ts` too.', {
+      files: { 'index.ts': 'lib/b/index.ts' },
+    });
+
+    await waitFor(() =>
+      expect(screen.getAllByRole('button', { name: /index\.ts/ })).toHaveLength(2),
+    );
+    expect(screen.getAllByRole('button').map((badge) => badge.textContent)).toEqual([
+      'index.tssrc/a',
+      'index.tslib/b',
+    ]);
+  });
+
+  // A plan card is another markdown part of the same reply, so its badges join the same labels.
+  it('labels same-name files across the parts of one reply', async () => {
+    renderScopedReply(['Changed `src/a/index.ts`.', '## Plan\n\n1. Edit `index.ts`.'], {
+      files: { 'index.ts': 'lib/b/index.ts' },
+    });
+
+    await waitFor(() =>
+      expect(screen.getAllByRole('button').map((badge) => badge.textContent)).toEqual([
+        'index.tssrc/a',
+        'index.tslib/b',
+      ]),
+    );
+  });
+
+  it('drops the folders once the other same-name badge is gone', async () => {
+    const { showParts } = renderScopedReply(['Changed `src/a/index.ts`.', 'And `src/b/index.ts`.']);
+    await waitFor(() =>
+      expect(screen.getAllByRole('button').map((badge) => badge.textContent)).toEqual([
+        'index.tssrc/a',
+        'index.tssrc/b',
+      ]),
+    );
+
+    showParts(['Changed `src/a/index.ts`.']);
+
+    await waitFor(() =>
+      expect(screen.getAllByRole('button').map((badge) => badge.textContent)).toEqual(['index.ts']),
+    );
+  });
+
+  // The lookup refuses more than 200 names, which would leave every name in the reply as code.
+  it('looks up at most 200 names, and still places those', async () => {
+    const names = Array.from({ length: 201 }, (_, index) => `f${index}.ts`);
+    const { asked } = renderScopedReply(names.map((name) => `\`${name}\``).join(' '), {
+      files: { 'f0.ts': 'src/f0.ts', 'f200.ts': 'src/f200.ts' },
+    });
+
+    expect(await screen.findByRole('button', { name: 'f0.ts' })).toBeInTheDocument();
+    expect(asked).toEqual([{ projectPath: ROOT, names: names.slice(0, 200) }]);
+    expect(screen.queryByRole('button', { name: 'f200.ts' })).toBeNull();
+  });
+
+  it('looks nothing up while the reply is still streaming', () => {
+    const { asked } = renderScopedReply('Edit `socket.ts`.', {
+      files: { 'socket.ts': 'src/main/socket.ts' },
+      isStreaming: true,
+    });
+
+    expect(screen.queryByRole('button')).toBeNull();
+    expect(asked).toEqual([]);
+  });
+
+  it('highlights a chat search match again once a name becomes a badge', async () => {
+    const text = 'Edit `socket.ts` now.';
+    const matches = findMatches(
+      extractSearchableText([{ id: 'm1', role: 'assistant', parts: [{ type: 'text', text }] }]),
+      'socket',
+    );
+    const store = createStore();
+    store.set(chatSearchOpenAtom, true);
+    store.set(chatSearchQueryAtom, 'socket');
+    store.set(chatSearchMatchesAtom, matches);
+    store.set(chatSearchCurrentIndexAtom, 0);
+    const { container } = renderScopedReply(text, {
+      files: { 'socket.ts': 'src/main/socket.ts' },
+      store,
+    });
+
+    await screen.findByRole('button', { name: 'socket.ts' });
+    await waitFor(() => expect(container.querySelectorAll('mark')).toHaveLength(matches.length));
+    expect(container.querySelector('mark')?.closest('[data-search-stand-in]')).not.toBeNull();
+  });
 });
