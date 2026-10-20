@@ -2,7 +2,11 @@ import {
   findMentionTokens,
   MENTION_PREFIXES,
 } from '../../../../../shared/lib/mentions/mention-grammar';
-import { type ParsedMention, parseMention } from '../../../../../shared/lib/mentions/parse-mention';
+import {
+  type ParsedMention,
+  parseMention,
+  pathLabel,
+} from '../../../../../shared/lib/mentions/parse-mention';
 import type { MobileMessagePart, MobileTextRun } from '../../../../../shared/types/remote/mobile';
 
 type Attachment = Extract<MobileMessagePart, { type: 'attachment' }>;
@@ -10,7 +14,7 @@ type Attachment = Extract<MobileMessagePart, { type: 'attachment' }>;
 const KNOWN_PREFIXES: readonly string[] = Object.values(MENTION_PREFIXES);
 
 // As on the desktop: files, folders, skills, agents and tools are badges inside the sentence, while
-// selections, pastes and briefings sit beside it as attachments.
+// selections and pastes sit beside it as attachments.
 const BADGE_KINDS = new Map<string, NonNullable<MobileTextRun['mention']>>([
   [MENTION_PREFIXES.FILE, 'file'],
   [MENTION_PREFIXES.FOLDER, 'folder'],
@@ -32,7 +36,7 @@ function attachment(mention: ParsedMention | null): Attachment {
     const chip: Attachment = {
       type: 'attachment',
       kind: 'file',
-      name: mention.path.split('/').pop() || 'Attachment',
+      name: pathLabel(mention.path) || 'Attachment',
     };
     if (lines) chip.detail = `L${lines}`;
     return chip;

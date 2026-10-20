@@ -53,6 +53,20 @@ describe('parseMention', () => {
       });
     });
 
+    it.each([
+      ['file', 'src\\components\\Button.tsx', 'Button.tsx'],
+      ['folder', 'src\\lib', 'lib'],
+      ['folder', 'src\\lib\\', 'src\\lib\\'],
+    ] as const)('labels a Windows %s path %j as %j', (type, path, label) => {
+      expect(parseMention(`${type}:local:${path}`)).toStrictEqual({
+        id: `${type}:local:${path}`,
+        label,
+        path,
+        repository: 'local',
+        type,
+      });
+    });
+
     it('accepts an empty repository and path once both separators are present', () => {
       expect(parseMention('file::')).toStrictEqual({
         id: 'file::',
@@ -218,6 +232,22 @@ describe('parseMention', () => {
         type: 'diff',
         fullText: 'whole hunk',
         lineNumber: undefined,
+      });
+    });
+
+    it.each([
+      ['12', 'b.ts:12', 12],
+      ['0', 'b.ts', undefined],
+    ])('labels a Windows path on line %s by its file name', (line, label, lineNumber) => {
+      const id = `diff:src\\a\\b.ts:${line}:preview`;
+      expect(parseMention(id)).toStrictEqual({
+        id,
+        label,
+        path: 'src\\a\\b.ts',
+        repository: '',
+        type: 'diff',
+        fullText: 'preview',
+        lineNumber,
       });
     });
 

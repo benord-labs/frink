@@ -17,6 +17,7 @@ const text = (value: string) => ({ type: 'text', text: value });
 describe('projectMentions', () => {
   it.each([
     ['a picked file', '@[file:local:src/components/Button.tsx] tidy it', 'Button.tsx', 'file'],
+    ['a Windows file', '@[file:local:src\\components\\Button.tsx] tidy it', 'Button.tsx', 'file'],
     ['the open editor file', '@[file:editor:.oxlintrc.json] tidy it', '.oxlintrc.json', 'file'],
     ['a folder', '@[folder:local:src/lib] tidy it', 'lib', 'folder'],
     ['a skill', '@[skill:frink-flows] tidy it', 'frink-flows', 'skill'],
@@ -47,6 +48,11 @@ describe('projectMentions', () => {
       lines('a.ts', 'L12'),
     ],
     [
+      'a diff selection in a Windows path',
+      `@[diff:src\\a.ts:12:export function:${PAYLOAD}] why?`,
+      lines('a.ts', 'L12'),
+    ],
+    [
       'a diff selection on no line',
       `@[diff:src/a.ts:0:export function:${PAYLOAD}] why?`,
       chip('a.ts'),
@@ -58,11 +64,6 @@ describe('projectMentions', () => {
     ],
     ['a pasted file', '@[pasted:120:notes.pdf|/p/abc-notes.pdf] why?', chip('notes.pdf')],
     ['a pasted file with no name', '@[pasted:120:|/p/abc] why?', chip('Attachment')],
-    [
-      'a Flow briefing',
-      `@[briefing:flow-1:${encodeForMentionToken('Spec')}:${PAYLOAD}] why?`,
-      chip('Spec'),
-    ],
   ])('shows %s as an attachment chip', (_kind, body, attachment) => {
     expect(projectMentions(body)).toEqual([attachment, text('why?')]);
   });
