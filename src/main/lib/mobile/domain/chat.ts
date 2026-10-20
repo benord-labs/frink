@@ -78,9 +78,23 @@ function isImagePart(part: Record<string, unknown>): boolean {
 /** Text as the phone shows it. Mention tokens are the composer's, so only a user's text has them;
  * an agent that writes one is quoting it, and the desktop shows it as written too. */
 function textParts(body: string, role: string): MobileMessagePart[] {
-  if (role === 'user') return projectMentions(body);
+  // Markers go first, so the badge runs describe the text exactly as the phone shows it.
+  if (role === 'user') return projectMentions(stripMessageMarkers(stripHiddenWakeMarker(body)));
   const trimmed = body.trim();
   return trimmed ? [{ type: 'text', text: trimmed }] : [];
+}
+
+type TextPart = Extract<MobileMessagePart, { type: 'text' }>;
+
+/** Appends a part's text on a new line, keeping both parts' badge runs. */
+function appendText(into: TextPart, next: TextPart) {
+  if (into.runs || next.runs)
+    into.runs = [
+      ...(into.runs ?? [{ text: into.text }]),
+      { text: '\n' },
+      ...(next.runs ?? [{ text: next.text }]),
+    ];
+  into.text += `\n${next.text}`;
 }
 
 function toolPart(
@@ -121,7 +135,7 @@ function messagePartProjection(
   // Keyed on the tool name, not state: the marker's state reads 'unknown' once its stream expires.
   if (part.toolName === 'Steer') {
     const steered = projectMentionsAsText(text(record(part.input).text));
-    return steered ? [{ type: 'steer', text: steered }] : [];
+    return steered.text ? [{ type: 'steer', ...steered }] : [];
   }
   return toolPart(part, id, streamStatus);
 }
@@ -136,26 +150,30 @@ function messageProjection(value: unknown, streamStatus?: StreamStatus): MobileM
   const rawParts = filterCanonicalPlanParts(raw, extractCanonicalPlanTextForFilter(raw));
   const status = record(message.metadata).interruptedBy ? 'settled' : streamStatus;
   const { role } = message;
+  // The marker leads the message's first words; a user's projected text no longer carries it.
+  const firstWords = rawParts
+    .filter((part) => part.type === 'text')
+    .map((part) => text(record(part).text).trimStart())
+    .find(Boolean);
+  if (role === 'user' && isHiddenWakeMessage(firstWords ?? '')) return null;
   const parts: MobileMessagePart[] = [];
   rawParts.forEach((part, index) => {
     for (const projected of messagePartProjection(part, `${message.id}:${index}`, role, status)) {
       const previous = parts.at(-1);
-      if (projected.type === 'text' && previous?.type === 'text') {
-        previous.text += `\n${projected.text}`;
-      } else parts.push(projected);
+      if (projected.type === 'text' && previous?.type === 'text') appendText(previous, projected);
+      else parts.push(projected);
     }
   });
   const body = parts
     .filter((part) => part.type === 'text')
     .map((part) => part.text)
     .join('\n');
-  if (message.role === 'user' && isHiddenWakeMessage(body)) return null;
   return {
     id: message.id,
     role: message.role,
     text: stripMessageMarkers(stripHiddenWakeMarker(body)),
     parts: parts.map((part) =>
-      part.type === 'text'
+      part.type === 'text' && role !== 'user'
         ? { type: 'text', text: stripMessageMarkers(stripHiddenWakeMarker(part.text)) }
         : part,
     ),

@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // The type-check also follows src/shared's icon imports, and mobile CI installs no root
+    // packages, so they resolve from this app's own copy. Bundling needs no alias: Metro already
+    // resolves src/shared from mobile/node_modules.
+    "paths": {
+      "zod": ["./node_modules/zod"],
+      "tweetnacl": ["./node_modules/tweetnacl"],
+      "@iconify-icons/vscode-icons/*": ["./node_modules/@iconify-icons/vscode-icons/data.d.ts"],
+      "@frink/shared/*": ["../src/shared/*"]
+    }
+  }
+}

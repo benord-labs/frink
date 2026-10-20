@@ -2,62 +2,105 @@ import {
   findMentionTokens,
   MENTION_PREFIXES,
 } from '../../../../../shared/lib/mentions/mention-grammar';
-import { parseMention } from '../../../../../shared/lib/mentions/parse-mention';
-import type { MobileMessagePart } from '../../../../../shared/types/remote/mobile';
+import { type ParsedMention, parseMention } from '../../../../../shared/lib/mentions/parse-mention';
+import type { MobileMessagePart, MobileTextRun } from '../../../../../shared/types/remote/mobile';
+
+type Attachment = Extract<MobileMessagePart, { type: 'attachment' }>;
 
 const KNOWN_PREFIXES: readonly string[] = Object.values(MENTION_PREFIXES);
 
-// As on the desktop: files, folders, skills, agents and tools read as part of the sentence, while
+// As on the desktop: files, folders, skills, agents and tools are badges inside the sentence, while
 // selections, pastes and briefings sit beside it as attachments.
-const INLINE_PREFIXES: readonly string[] = [
-  MENTION_PREFIXES.FILE,
-  MENTION_PREFIXES.FOLDER,
-  MENTION_PREFIXES.SKILL,
-  MENTION_PREFIXES.AGENT,
-  MENTION_PREFIXES.TOOL,
-];
+const BADGE_KINDS = new Map<string, NonNullable<MobileTextRun['mention']>>([
+  [MENTION_PREFIXES.FILE, 'file'],
+  [MENTION_PREFIXES.FOLDER, 'folder'],
+  [MENTION_PREFIXES.SKILL, 'skill'],
+  [MENTION_PREFIXES.AGENT, 'agent'],
+  [MENTION_PREFIXES.TOOL, 'tool'],
+]);
 
-type TokenProjection = { inline: string } | { attachment: string };
-
-/** A token's readable form, or null to leave a token of unknown kind as the user wrote it. */
-function projectToken(id: string): TokenProjection | null {
-  const prefix = KNOWN_PREFIXES.find((known) => id.startsWith(known));
-  if (!prefix) return null;
-  const label = parseMention(id)?.label;
-  if (INLINE_PREFIXES.includes(prefix)) return { inline: label || id.slice(prefix.length) || id };
-  return { attachment: label || 'Attachment' };
+/** A selection as the desktop's chip: the file and its lines, or the first line of quoted words. */
+function attachment(mention: ParsedMention | null): Attachment {
+  if (mention?.type === 'quote')
+    return {
+      type: 'attachment',
+      kind: 'text',
+      name: mention.label.trim().split('\n')[0] || 'Quote',
+    };
+  if (mention?.type === 'code' || mention?.type === 'diff') {
+    const lines = mention.lineRange ?? mention.lineNumber;
+    const chip: Attachment = {
+      type: 'attachment',
+      kind: 'file',
+      name: mention.path.split('/').pop() || 'Attachment',
+    };
+    if (lines) chip.detail = `L${lines}`;
+    return chip;
+  }
+  return { type: 'attachment', kind: 'file', name: mention?.label || 'Attachment' };
 }
 
-/** Replaces each token with its name; `lift` takes attachments out of the text into `names`. */
+/** A token's badge or attachment, or null to leave a token of unknown kind as the user wrote it. */
+function projectToken(id: string): MobileTextRun | Attachment | null {
+  const prefix = KNOWN_PREFIXES.find((known) => id.startsWith(known));
+  if (!prefix) return null;
+  const mention = parseMention(id);
+  const badge = BADGE_KINDS.get(prefix);
+  if (badge) return { text: mention?.label || id.slice(prefix.length) || id, mention: badge };
+  return attachment(mention);
+}
+
+/** The text's ends trimmed, as the bubble shows it, without the runs the trim empties. */
+function trimRuns(runs: MobileTextRun[]) {
+  const first = runs[0];
+  if (first && !first.mention) first.text = first.text.trimStart();
+  const last = runs.at(-1);
+  if (last && !last.mention) last.text = last.text.trimEnd();
+  return runs.filter((run) => run.text);
+}
+
+/** The text as runs with every token replaced; `lift` takes attachments out of the text. */
 function rewriteMentions(body: string, lift: boolean) {
-  const names: string[] = [];
-  let text = '';
+  const runs: MobileTextRun[] = [];
+  const attachments: Attachment[] = [];
+  const write = (run: MobileTextRun) => {
+    const last = runs.at(-1);
+    if (!run.mention && last && !last.mention) last.text += run.text;
+    else if (run.text) runs.push(run);
+  };
   let cursor = 0;
   for (const { id, start, end } of findMentionTokens(body)) {
     const projection = projectToken(id);
     if (!projection) continue;
-    text += body.slice(cursor, start);
-    if ('inline' in projection || !lift) {
-      text += 'inline' in projection ? projection.inline : projection.attachment;
-      cursor = end;
-    } else {
-      names.push(projection.attachment);
+    write({ text: body.slice(cursor, start) });
+    cursor = end;
+    if (!('type' in projection)) write(projection);
+    else if (!lift) write({ text: [projection.name, projection.detail].filter(Boolean).join(' ') });
+    else {
+      attachments.push(projection);
       // A token lifted out of the text takes the space that separated it from the text after it.
-      cursor = body[end] === ' ' ? end + 1 : end;
+      if (body[end] === ' ') cursor = end + 1;
     }
   }
-  return { text: (text + body.slice(cursor)).trim(), names };
+  write({ text: body.slice(cursor) });
+  return { runs: trimRuns(runs), attachments };
 }
 
-/** A user's message as the phone shows it: mention tokens become names and attachment chips, never
- * raw tokens or the base64 a selection carries. */
+/** The runs' text, carrying the runs only when one of them is a badge. */
+function withRuns(runs: MobileTextRun[]) {
+  const text = runs.map((run) => run.text).join('');
+  return runs.some((run) => run.mention) ? { text, runs } : { text };
+}
+
+/** A user's message as the phone shows it: names as badges and selections as attachment chips,
+ * never raw tokens or the base64 a selection carries. */
 export function projectMentions(body: string): MobileMessagePart[] {
-  const { text, names } = rewriteMentions(body, true);
-  const chips = names.map((name) => ({ type: 'attachment', kind: 'file', name }) as const);
-  return text ? [...chips, { type: 'text', text }] : chips;
+  const { runs, attachments } = rewriteMentions(body, true);
+  const text = withRuns(runs);
+  return text.text ? [...attachments, { type: 'text', ...text }] : attachments;
 }
 
-/** A user's text as one plain note with every name where it was typed, for a steer (no chips). */
-export function projectMentionsAsText(body: string): string {
-  return rewriteMentions(body, false).text;
+/** A user's text as one note with every name where it was typed, for a steer (no chips). */
+export function projectMentionsAsText(body: string) {
+  return withRuns(rewriteMentions(body, false).runs);
 }

@@ -641,7 +641,17 @@ describe('mobile chat actions', () => {
       streams: [],
       terminals: [],
     });
-    expect(messages[0].parts).toEqual([{ type: 'steer', text: 'use a.ts like a.ts L1-2 does' }]);
+    expect(messages[0].parts).toEqual([
+      {
+        type: 'steer',
+        text: 'use a.ts like a.ts L1-2 does',
+        runs: [
+          { text: 'use ' },
+          { text: 'a.ts', mention: 'file' },
+          { text: ' like a.ts L1-2 does' },
+        ],
+      },
+    ]);
   });
 
   it('uses each message owning stream when classifying unfinished tools', () => {
@@ -878,11 +888,87 @@ describe('mobile attachments', () => {
         role: 'user',
         text: 'a.ts why?',
         parts: [
-          { type: 'attachment', kind: 'file', name: 'a.ts L1-2' },
-          { type: 'text', text: 'a.ts why?' },
+          { type: 'attachment', kind: 'file', name: 'a.ts', detail: 'L1-2' },
+          {
+            type: 'text',
+            text: 'a.ts why?',
+            runs: [{ text: 'a.ts', mention: 'file' }, { text: ' why?' }],
+          },
         ],
       },
     ]);
+  });
+
+  // The phone splits each text part at its runs, so they must join to exactly the text it shows.
+  it('keeps badge runs on the shown text through markers and merged text parts', () => {
+    const history = [
+      {
+        id: 'user-1',
+        role: 'user',
+        parts: [
+          { type: 'text', text: '<!--TASK_BUBBLE:{"id":"t"}--> @[skill:foo] first' },
+          { type: 'text', text: 'then @[agent:bot]' },
+          { type: 'file', mimeType: 'image/png', data: 'iVBOR' },
+          { type: 'text', text: '@[folder:local:src/lib]' },
+        ],
+      },
+    ];
+
+    const [message] = mergeMobileTranscript(history, { streams: [], terminals: [] });
+
+    expect(message.parts).toEqual([
+      {
+        type: 'text',
+        text: 'foo first\nthen bot',
+        runs: [
+          { text: 'foo', mention: 'skill' },
+          { text: ' first' },
+          { text: '\n' },
+          { text: 'then ' },
+          { text: 'bot', mention: 'agent' },
+        ],
+      },
+      { type: 'attachment', kind: 'image', name: 'Image' },
+      { type: 'text', text: 'lib', runs: [{ text: 'lib', mention: 'folder' }] },
+    ]);
+    for (const part of message.parts ?? [])
+      if (part.type === 'text') expect(part.runs?.map((run) => run.text).join('')).toBe(part.text);
+  });
+
+  it('still hides a wake message after leading whitespace or a blank text part', () => {
+    const wake = (parts: unknown[]) => [{ id: 'wake', role: 'user', parts }];
+    const marked = '<!--FRINK_HIDDEN_WAKE-->Continue';
+
+    expect(
+      mergeMobileTranscript(wake([{ type: 'text', text: `\n  ${marked}` }]), {
+        streams: [],
+        terminals: [],
+      }),
+    ).toEqual([]);
+    expect(
+      mergeMobileTranscript(
+        wake([
+          { type: 'text', text: ' ' },
+          { type: 'text', text: marked },
+        ]),
+        { streams: [], terminals: [] },
+      ),
+    ).toEqual([]);
+  });
+
+  it('still hides a wake message whose text follows an image', () => {
+    const history = [
+      {
+        id: 'wake',
+        role: 'user',
+        parts: [
+          { type: 'file', mimeType: 'image/png', data: 'iVBOR' },
+          { type: 'text', text: '<!--FRINK_HIDDEN_WAKE-->Continue @[skill:foo]' },
+        ],
+      },
+    ];
+
+    expect(mergeMobileTranscript(history, { streams: [], terminals: [] })).toEqual([]);
   });
 
   it('leaves a token an agent wrote in its reply as written, as the desktop does', () => {

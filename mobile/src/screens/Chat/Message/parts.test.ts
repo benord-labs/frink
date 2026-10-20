@@ -44,6 +44,25 @@ describe('contentGroups', () => {
     expect(copyText(groups)).toBe('Here is the plan.\n\n## Steps');
   });
 
+  it('keeps the badge runs of prose and steers, and copies their plain text', () => {
+    const runs = [{ text: 'a.ts', mention: 'file' as const }, { text: ' tidy it' }];
+    const message: MobileMessage = {
+      id: 'm',
+      role: 'user',
+      text: 'a.ts tidy it',
+      parts: [
+        { type: 'text', text: 'a.ts tidy it', runs },
+        { type: 'steer', text: 'a.ts tidy it', runs },
+      ],
+    };
+    const groups = contentGroups(message);
+    expect(groups).toEqual([
+      { type: 'text', text: 'a.ts tidy it', runs },
+      { type: 'steer', text: 'a.ts tidy it', runs },
+    ]);
+    expect(copyText(groups)).toBe('a.ts tidy it');
+  });
+
   it('falls back to the plain text when a message has no parts', () => {
     expect(contentGroups({ id: 'm', role: 'user', text: 'Hi' })).toEqual([
       { type: 'text', text: 'Hi' },
