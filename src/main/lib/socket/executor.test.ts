@@ -663,6 +663,39 @@ describe('socket file permission edge cases', () => {
     expect(socketClient.sendPermissionRequest).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['allow', { decision: 'allow' }],
+    ['deny', { decision: 'deny', reason: { kind: 'rule:deny', rule: 'Bash(rm:*)', tier: 'user' } }],
+  ] as const)(
+    'answers a Frink rule %s itself on an Auto turn, never abstaining to the reviewer',
+    async (expected, ruleResult) => {
+      // A rule's answer must reach Claude as an explicit decision: abstaining would hand it to the reviewer.
+      const { checkPermission } = await import('../permissions/v2/check');
+      vi.mocked(checkPermission).mockResolvedValueOnce(ruleResult);
+      let hookResult: Awaited<ReturnType<PreToolUseHook>> | undefined;
+      claudeQueryMock.mockImplementationOnce(async function* (queryInput: PreToolUseQueryInput) {
+        hookResult = await getPreToolUseHook(queryInput)(
+          {
+            hook_event_name: 'PreToolUse',
+            tool_name: 'Bash',
+            tool_input: { command: 'rm -rf build' },
+          },
+          `tool-auto-rule-${expected}`,
+        );
+        yield { type: 'result', chunks: [{ type: 'finish' }] };
+      });
+
+      await handleRemoteExecute({
+        ...basePayload,
+        message: 'clean the build',
+        settings: { model: 'sonnet', autoReviewTools: true },
+      });
+
+      expect(hookResult?.hookSpecificOutput?.permissionDecision).toBe(expected);
+      expect(socketClient.sendPermissionRequest).not.toHaveBeenCalled();
+    },
+  );
+
   registerCustomNodeTransportTest({
     basePayload,
     claudeQueryMock,

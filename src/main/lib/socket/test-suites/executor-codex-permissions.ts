@@ -310,34 +310,38 @@ function registerCodexBoundaryPermissionTests({
     expect(socketClient.sendPermissionRequest).not.toHaveBeenCalled();
   });
 
-  it('preserves an explicit Frink deny when Codex Auto is on', async () => {
-    const { checkPermission } = await import('../../permissions/v2/check');
-    vi.mocked(getDefaultClaudeCodeToken).mockResolvedValueOnce(codexCredential);
-    vi.mocked(checkPermission).mockResolvedValueOnce({
-      decision: 'deny',
-      reason: { kind: 'rule:deny', rule: 'Bash(rm:*)', tier: 'user' },
-    });
-    let approval: unknown;
-    vi.mocked(runCodexAgent).mockImplementationOnce(async function* (options) {
-      approval = await options.checkApproval({
-        toolName: 'Bash',
-        input: { command: 'rm -rf /' },
+  it.each([
+    ['allow', { decision: 'allow' }, { allowed: true }],
+    [
+      'deny',
+      { decision: 'deny', reason: { kind: 'rule:deny', rule: 'Bash(rm:*)', tier: 'user' } },
+      { allowed: false, message: expect.stringMatching(BASH_DENY_MESSAGE_RE) },
+    ],
+  ] as const)(
+    'answers an explicit Frink %s itself when Codex Auto is on, so Guardian never sees it',
+    async (_kind, ruleResult, expected) => {
+      const { checkPermission } = await import('../../permissions/v2/check');
+      vi.mocked(getDefaultClaudeCodeToken).mockResolvedValueOnce(codexCredential);
+      vi.mocked(checkPermission).mockResolvedValueOnce(ruleResult);
+      let approval: unknown;
+      vi.mocked(runCodexAgent).mockImplementationOnce(async function* (options) {
+        approval = await options.checkApproval({
+          toolName: 'Bash',
+          input: { command: 'rm -rf /' },
+        });
+        yield { type: 'finish' } as UIMessageChunk;
       });
-      yield { type: 'finish' } as UIMessageChunk;
-    });
 
-    await handleRemoteExecute({
-      ...basePayload,
-      message: 'codex explicit deny',
-      settings: { autoReviewTools: true },
-    });
+      await handleRemoteExecute({
+        ...basePayload,
+        message: 'codex explicit rule',
+        settings: { autoReviewTools: true },
+      });
 
-    expect(approval).toEqual({
-      allowed: false,
-      message: expect.stringMatching(BASH_DENY_MESSAGE_RE),
-    });
-    expect(socketClient.sendPermissionRequest).not.toHaveBeenCalled();
-  });
+      expect(approval).toEqual(expected);
+      expect(socketClient.sendPermissionRequest).not.toHaveBeenCalled();
+    },
+  );
 }
 
 function registerCodexPathAndLifecycleTests({
