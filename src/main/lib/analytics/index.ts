@@ -181,13 +181,13 @@ function trackAppOpened(active: Session) {
   }
 }
 
-/** Track a message sent into a chat: its first from `chats.create`, later ones from the renderer */
-export function trackMessageSent(event: MessageSentEvent & { firstInChat: boolean }) {
+/** Track a message sent: the one a chat is created with from `chats.create`, the rest from the renderer */
+export function trackMessageSent(event: MessageSentEvent & { startsChat: boolean }) {
   capture('message_sent', {
     workspace_id: event.workspaceId,
     message_length: event.messageLength,
     mode: event.mode,
-    first_in_chat: event.firstInChat,
+    starts_chat: event.startsChat,
   });
 }
 

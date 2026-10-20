@@ -111,7 +111,7 @@ describe('createRouter (local-first)', () => {
     expect(seededMessages[0]).not.toHaveProperty('metadata');
   });
 
-  it("counts the initial message as the chat's first", async () => {
+  it('counts the message a chat is created with as the one that starts it', async () => {
     createChatLocalMock.mockResolvedValue(makeLocalChat({ id: 'c1', name: 'Test' }));
     createSubChatLocalMock.mockResolvedValue(makeLocalSubChat({ id: 's1', chatId: 'c1' }));
 
@@ -124,18 +124,21 @@ describe('createRouter (local-first)', () => {
       workspaceId: 's1',
       messageLength: 'hello world'.length,
       mode: 'plan',
-      firstInChat: true,
+      startsChat: true,
     });
   });
 
-  it('counts no message for a chat created without one', async () => {
+  it.each([
+    { name: 'no message', taskTitle: undefined },
+    { name: 'only a linked task title', taskTitle: 'Fix the login page' },
+  ])('counts no message for a chat created with $name', async ({ taskTitle }) => {
     createChatLocalMock.mockResolvedValue(makeLocalChat({ id: 'c1', name: 'Test' }));
     createSubChatLocalMock.mockResolvedValue(makeLocalSubChat({ id: 's1', chatId: 'c1' }));
 
     const { createRouter } = await import('./create');
     const caller = createRouter.createCaller({ getWindow: () => null });
 
-    await caller.create({ ...baseInput, initialMessage: undefined, mode: 'agent' });
+    await caller.create({ ...baseInput, initialMessage: undefined, taskTitle, mode: 'agent' });
 
     expect(trackMessageSentMock).not.toHaveBeenCalled();
   });

@@ -15,8 +15,8 @@ These go to PostHog and answer questions like "how many installs opened Frink th
 | `project_opened` | You add or open a project | The project's local id, and whether it has a git remote (yes or no) |
 | `workspace_created` | A chat is created in a project | The chat's and project's local ids, and whether it uses a worktree |
 | `workspace_archived`, `workspace_deleted` | You archive or delete a chat | The chat's local id |
-| `message_sent` | You send a message, including the one that starts a chat | The chat's local id, the message's length in characters, the chat mode, and whether it is the chat's first message |
-| `reply_finished` | Your AI finishes a reply in a chat. A reply you stop, one that fails, and one inside a Flow run are not counted | The chat's local id |
+| `message_sent` | You send a message, including the one that starts a chat | The sub-chat's local id, the message's length in characters, the chat mode, and whether the message started the chat |
+| `reply_finished` | Your AI finishes a reply in a chat. A reply you stop, one that fails, and one inside a Flow run are not counted | The sub-chat's local id |
 | `pr_created` | A chat's reply links a new GitHub pull request | The chat's local id and the pull request number |
 | `flow_created` | You first save a new Flow, an agent saves one for you, or you copy one | The Flow's local id, how it starts (manual, schedule, webhook, post-task, or none yet), and whether you, an agent or a copy made it |
 | `flow_run_completed` | A Flow run, or a whole batch, finishes | The Flow's local id, how it ended (completed, failed or cancelled), how many steps the Flow has, and how many runs the batch held (1 for a single run) |

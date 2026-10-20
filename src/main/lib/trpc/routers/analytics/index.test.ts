@@ -14,7 +14,7 @@ it("records a renderer's report as a later message, never a chat's first", async
 
   await caller.messageSent(message);
 
-  expect(trackMessageSent).toHaveBeenCalledWith({ ...message, firstInChat: false });
+  expect(trackMessageSent).toHaveBeenCalledWith({ ...message, startsChat: false });
 });
 
 it.each([

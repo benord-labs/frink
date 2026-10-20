@@ -9,7 +9,7 @@ const message = {
   workspaceId: 'chat-1',
   messageLength: 5,
   mode: 'agent' as const,
-  firstInChat: false,
+  startsChat: false,
 };
 const flow = { id: 'flow-1', triggerType: 'schedule', createdBy: 'ui' } as const;
 const flowRun = { flowId: 'flow-1', outcome: 'completed', stepCount: 3, batchSize: 1 } as const;
@@ -115,16 +115,16 @@ describe('main-process analytics', () => {
       workspace_id: 'chat-1',
       message_length: 5,
       mode: 'agent',
-      first_in_chat: false,
+      starts_chat: false,
     });
   });
 
-  it("counts a chat's first message and each finished reply", async () => {
+  it('counts the message that starts a chat, later messages and each finished reply', async () => {
     const analytics = await launch();
     analytics.setOptOut(false);
     capture.mockClear();
 
-    analytics.trackMessageSent({ ...message, firstInChat: true });
+    analytics.trackMessageSent({ ...message, startsChat: true });
     await finishReply('chat-1');
     analytics.trackMessageSent(message);
     await finishReply('chat-1');
@@ -135,7 +135,7 @@ describe('main-process analytics', () => {
       'message_sent',
       'reply_finished',
     ]);
-    expect(capture.mock.calls.map(([{ properties }]) => properties.first_in_chat)).toEqual([
+    expect(capture.mock.calls.map(([{ properties }]) => properties.starts_chat)).toEqual([
       true,
       undefined,
       false,
@@ -179,7 +179,7 @@ describe('main-process analytics', () => {
       ['pr_created', ['workspace_id', 'pr_number']],
       ['flow_created', ['flow_id', 'trigger_type', 'created_by']],
       ['flow_run_completed', ['flow_id', 'outcome', 'step_count', 'batch_size']],
-      ['message_sent', ['workspace_id', 'message_length', 'mode', 'first_in_chat']],
+      ['message_sent', ['workspace_id', 'message_length', 'mode', 'starts_chat']],
       ['reply_finished', ['workspace_id']],
     ]);
   });
