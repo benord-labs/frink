@@ -1,4 +1,5 @@
 import type { UIMessage } from 'ai';
+import { z } from 'zod';
 import { stripHiddenWakeMarker } from '../../../../../shared/lib/message-markers/hidden-wake-marker';
 import {
   dispatchMetadataSchema,
@@ -121,8 +122,30 @@ function findCompactBoundary(messages: UIMessage[], current?: UIMessage) {
   return null;
 }
 
-/** One stored message as a replayed turn, flagged when a person wrote it; none when empty. */
-function historyTurn(role: 'user' | 'assistant', message: UIMessage, parts: HistoryPart[]) {
+const STEER_PART_TYPE = 'tool-Steer';
+const steerInputSchema = z.object({ text: z.string().trim().min(1) });
+
+/** A steer is a person's message the running turn took in, stored inside the assistant message. */
+function steerTurn(part: HistoryPart): ConversationTurn[] {
+  const input = steerInputSchema.safeParse(part.input);
+  return input.success ? [{ role: 'user', content: input.data.text, personAuthored: true }] : [];
+}
+
+/** One stored message as replayed turns, flagged when a person wrote them; none when empty. Each
+ * steer splits an assistant message and replays as the person's own turn. */
+function historyTurn(
+  role: 'user' | 'assistant',
+  message: UIMessage,
+  parts: HistoryPart[],
+): ConversationTurn[] {
+  const steerAt = role === 'assistant' ? parts.findIndex((p) => p.type === STEER_PART_TYPE) : -1;
+  if (steerAt >= 0) {
+    return [
+      ...historyTurn(role, message, parts.slice(0, steerAt)),
+      ...steerTurn(parts[steerAt]),
+      ...historyTurn(role, message, parts.slice(steerAt + 1)),
+    ];
+  }
   const raw = parts.flatMap((part) => partHistoryText(part) ?? []).join('\n');
   const content = stripMessageMarkers(stripHiddenWakeMarker(raw));
   if (!content) return [];
@@ -136,7 +159,8 @@ function historyTurn(role: 'user' | 'assistant', message: UIMessage, parts: Hist
 
 /**
  * The transcript a fresh session is seeded with (every message but the one being sent): text, any
- * plan in full, and one line per tool call, so a handoff keeps what was planned and done.
+ * plan in full, one line per tool call, and each steer as the person's turn, so a handoff keeps
+ * what was planned and done.
  * A compacted chat starts from its newest compaction's summary instead of re-inflating (sc-2281).
  */
 export function buildTurnHistory(messages: UIMessage[], current?: UIMessage): ConversationTurn[] {

@@ -44,6 +44,23 @@ describe('formatPromptWithHistory', () => {
     expect(out).toContain('Human: Flow step: read @[file:local:c.ts]');
   });
 
+  it('recaps a steer replayed as the person’s turn between two assistant turns', () => {
+    const preview = Buffer.from('const a = 1;').toString('base64');
+    const out = formatPromptWithHistory('next', [
+      { role: 'assistant', content: 'working on @[file:local:b.ts]' },
+      {
+        role: 'user',
+        content: `look at @[code:a.ts:3-4:preview:${preview}] then @[skill:deploy]`,
+        personAuthored: true,
+      },
+      { role: 'assistant', content: 'switching' },
+    ]);
+    expect(out).toContain(
+      'Assistant: working on @[file:local:b.ts]\n\nHuman: look at [selected lines 3-4 of a.ts:\nconst a = 1;] then [skill deploy]\n\nAssistant: switching',
+    );
+    expect(out).not.toContain(preview);
+  });
+
   it('recaps before the budget cut, so a large selection cannot push out earlier turns', () => {
     const selection = `@[quote:p:${Buffer.from('x'.repeat(300_000)).toString('base64')}]`;
     const out = formatPromptWithHistory('next', [
