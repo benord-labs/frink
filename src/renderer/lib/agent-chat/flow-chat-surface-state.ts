@@ -76,7 +76,6 @@ function readTaskAgentInfo(
 ): {
   modelId?: string;
   mode?: ChatMode;
-  autoReviewTools?: boolean;
   codexSpeed?: CodexSpeed;
 } {
   if (!task) return {};
@@ -84,17 +83,12 @@ function readTaskAgentInfo(
   const result = task.result ?? null;
   const model = config?.model ?? result?.model;
   const startMode = result?.startMode ?? config?.startMode;
-  // Auto consent comes from `Config`: tRPC transports what the flow dispatcher wrote at creation,
-  // so it reports what the FLOW asked for over the whole run. The chat's own seeded Auto setting is the
-  // value that actually governs each turn; the two agree unless a human has since changed it.
-  const autoReviewTools = config?.autoReviewTools;
   const codexSpeed = config?.codexSpeed;
   return {
     modelId: typeof model === 'string' ? model : undefined,
     mode:
       liveMode ??
       (typeof startMode === 'string' ? toChatMode(startMode as ResolvedTaskStartMode) : 'agent'),
-    autoReviewTools: typeof autoReviewTools === 'boolean' ? autoReviewTools : undefined,
     codexSpeed: isCodexSpeed(codexSpeed) ? codexSpeed : undefined,
   };
 }
@@ -132,7 +126,6 @@ export type FlowChatBottomSurface =
       canPause: boolean;
       modelId?: string;
       mode?: ChatMode;
-      autoReviewTools?: boolean;
       codexSpeed?: CodexSpeed;
     }
   | {
@@ -140,7 +133,6 @@ export type FlowChatBottomSurface =
       flowRunId: string;
       modelId?: string;
       mode?: ChatMode;
-      autoReviewTools?: boolean;
       codexSpeed?: CodexSpeed;
     }
   | { kind: 'park' };
@@ -176,6 +168,16 @@ export function deriveFlowChatBottomSurface(data: FlowChatSurfaceData): FlowChat
     canPause: task?.status === 'running',
     ...readTaskAgentInfo(task, subChatMode),
   };
+}
+
+/** The chat whose Auto switch a flow surface shows: only where a next message can follow, since a
+ * flip reaches that message alone and between steps the next dispatch resets it. */
+export function flowAutoSwitchChatId(
+  surface: FlowChatBottomSurface,
+  chatId: string | null,
+): string | null {
+  if (surface.kind === 'running') return surface.canPause ? chatId : null;
+  return surface.kind === 'composer' ? null : chatId;
 }
 
 /**

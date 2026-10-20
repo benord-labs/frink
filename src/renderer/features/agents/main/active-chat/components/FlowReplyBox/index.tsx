@@ -16,12 +16,14 @@
  */
 import { Button, Input } from '@benord-labs/frink-primitives';
 import { X } from 'lucide-react';
-import { memo, useState } from 'react';
+import { memo, type ReactNode, useState } from 'react';
 import { stripHiddenWakeMarker } from '../../../../../../../shared/lib/message-markers/hidden-wake-marker';
 import { agentsChatComposerShellClass } from '../../../chat-composer-shell-classes';
 import { type FlowSubmitKind, SubmitControl } from './SubmitControl';
 
 type FlowReplyBoxProps = {
+  /** Controls on a line of their own above the ask, as the run cards carry their readout. */
+  meta?: ReactNode;
   /** The agent's ask, rendered above the input. Omit where the surrounding row already says it. */
   summary?: string;
   placeholder?: string;
@@ -52,6 +54,7 @@ function isSubmitDisabled(disabled: boolean, text: string): boolean {
 }
 
 export const FlowReplyBox = memo(function FlowReplyBox({
+  meta,
   summary,
   placeholder = 'Reply to continue…',
   ariaLabel = 'Reply to the agent',
@@ -82,6 +85,7 @@ export const FlowReplyBox = memo(function FlowReplyBox({
 
   const row = (
     <>
+      <div className="mb-2 flex empty:hidden">{meta}</div>
       {summary ? (
         <p className="mb-2 text-sm text-muted-foreground" title={summary}>
           {summary}

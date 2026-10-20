@@ -6,15 +6,23 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { FlowChatBottomSurface as BottomSurfaceState } from '../../../../../../lib/agent-chat/flow-chat-surface-state';
 import { FlowChatBottomSurface } from './index';
 
+type AutoProps = { autoChatId?: string | null };
+
 vi.mock('../FlowRunStrip', () => ({
-  FlowRunStrip: () => <div data-testid="flow-run-strip" />,
-  FlowPausedBar: () => <div data-testid="flow-paused-bar" />,
+  FlowRunStrip: ({ autoChatId }: AutoProps) => (
+    <div data-testid="flow-run-strip" data-auto-chat-id={autoChatId ?? ''} />
+  ),
+  FlowPausedBar: ({ autoChatId }: AutoProps) => (
+    <div data-testid="flow-paused-bar" data-auto-chat-id={autoChatId ?? ''} />
+  ),
 }));
 
 vi.mock('../ParkAnswerSurface', () => ({
   // Honours `suppressed` like the real one, so the "two cards never stack" case is observable here.
-  ParkAnswerSurface: ({ suppressed }: { suppressed: boolean }) =>
-    suppressed ? null : <div data-testid="park-answer-surface" />,
+  ParkAnswerSurface: ({ suppressed, autoChatId }: AutoProps & { suppressed: boolean }) =>
+    suppressed ? null : (
+      <div data-testid="park-answer-surface" data-auto-chat-id={autoChatId ?? ''} />
+    ),
 }));
 
 vi.mock('../../../../stores/message-queue-store', () => ({
@@ -57,6 +65,34 @@ vi.mock('../../../../../../lib/agent-chat/steer', () => ({
 }));
 
 describe('FlowChatBottomSurface', () => {
+  // An Auto flip reaches only the next message, so the switch goes where one can follow.
+  describe('the Auto switch', () => {
+    const autoChatOf = (testId: string) => screen.getByTestId(testId).dataset.autoChatId;
+
+    it('reaches the running strip while its step is live', () => {
+      renderSurface({ kind: 'running', flowRunId: 'run-1', canPause: true });
+      expect(autoChatOf('flow-run-strip')).toBe('chat-1');
+    });
+
+    it('is withheld between steps, where the next dispatch resets it', () => {
+      renderSurface({ kind: 'running', flowRunId: 'run-1', canPause: false });
+      expect(autoChatOf('flow-run-strip')).toBe('');
+    });
+
+    it('reaches the paused bar and the park answer card', () => {
+      renderSurface({ kind: 'paused', flowRunId: 'run-1' });
+      expect(autoChatOf('flow-paused-bar')).toBe('chat-1');
+      cleanup();
+      renderSurface({ kind: 'park' });
+      expect(autoChatOf('park-answer-surface')).toBe('chat-1');
+    });
+
+    it('is withheld from an answer card shown above the composer, which has its own', () => {
+      renderSurface({ kind: 'composer' });
+      expect(autoChatOf('park-answer-surface')).toBe('');
+    });
+  });
+
   it('renders the composer for a terminal or non-flow chat', () => {
     renderSurface({ kind: 'composer' });
 
