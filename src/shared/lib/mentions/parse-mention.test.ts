@@ -256,9 +256,12 @@ describe('parseMention', () => {
       expect(parseMention(id)).toMatchObject({ path: 'app/[id]/page.tsx', label: 'page.tsx:3' });
     });
 
-    it('keeps a raw path from before paths were encoded when it is not valid URI encoding', () => {
-      const id = `diff:src/50%.ts:3:preview:${encodeForMentionToken('x')}`;
-      expect(parseMention(id)).toMatchObject({ path: 'src/50%.ts', label: '50%.ts:3' });
+    it.each([
+      ['src/50%.ts', 'src/50%.ts', '50%.ts:3'],
+      ['docs/100%25.md', 'docs/100%.md', '100%.md:3'],
+    ])('reads a raw path from before paths were encoded: %s', (raw, path, label) => {
+      const id = `diff:${raw}:3:preview:${encodeForMentionToken('x')}`;
+      expect(parseMention(id)).toMatchObject({ path, label });
     });
 
     it('treats a line that is not a number as no line', () => {

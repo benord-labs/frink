@@ -87,7 +87,8 @@ function decodePath(path: string): string {
 }
 
 /** `diff:<URI-encoded file path>:<line, 0 for none>:<preview>:<base64 text>` — older tokens carry
- * the path raw, which decodes to itself. */
+ * the path raw, kept as written unless it happens to be valid URI encoding (`docs/100%25.md`
+ * reads as `docs/100%.md`). */
 function parseDiffMention(id: string): ParsedMention | null {
   const parts = id.slice(MENTION_PREFIXES.DIFF.length).split(':');
   if (parts.length < 3) return null;
