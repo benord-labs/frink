@@ -48,7 +48,7 @@ function projectToken(id: string): MobileTextRun | Attachment | null {
   const badge = BADGE_KINDS.get(prefix);
   if (badge) {
     // A token with nothing to name shows its kind ("Skill"), never a fragment like "editor:".
-    const name = mention ? mention.label.trim() : id.slice(prefix.length);
+    const name = (mention ? mention.label : id.slice(prefix.length)).trim();
     return { text: name || badge[0].toUpperCase() + badge.slice(1), mention: badge };
   }
   return attachment(mention);

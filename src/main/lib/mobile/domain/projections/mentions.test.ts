@@ -123,6 +123,8 @@ describe('projectMentions', () => {
     ['an empty payload', '@[skill:]', 'Skill', 'skill'],
     ['a blank payload', '@[skill: ]', 'Skill', 'skill'],
     ['a file token with no slots', '@[file:]', 'File', 'file'],
+    ['a file token with one blank slot', '@[file: ]', 'File', 'file'],
+    ['a folder token with one blank slot', '@[folder: ]', 'Folder', 'folder'],
     ['a file token with one slot', '@[file:editor]', 'editor', 'file'],
     ['a folder whose name ends in a colon', '@[folder:a:b:]', 'b:', 'folder'],
   ])('names %s readably', (_case, token, name, mention) => {
