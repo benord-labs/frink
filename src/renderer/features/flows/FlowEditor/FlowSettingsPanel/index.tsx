@@ -10,7 +10,6 @@ import { toast } from 'sonner';
 import type { FlowNode } from '../../../../../shared/lib/validate-flow-graph';
 import type { FlowSettings } from '../../../../../shared/types/flow';
 import { Label } from '../../../../components/ui/label';
-import { Switch } from '../../../../components/ui/switch';
 import { useBriefFocusHighlight } from '../../../../hooks/use-brief-focus-highlight';
 import { trpc } from '../../../../lib/trpc';
 import { cn } from '../../../../lib/utils';
@@ -22,6 +21,7 @@ import { BriefingStashControls } from './BriefingStashControls';
 import { FlowSpeedSettings } from './FlowSpeedSettings';
 import { patch } from './patch';
 import { PriorityQueueSetting } from './PriorityQueueSetting';
+import { SettingSwitchRow } from './SettingSwitchRow';
 
 type Props = {
   flowId: string;
@@ -114,7 +114,7 @@ export function FlowSettingsPanel({
             <h2 className="text-sm font-semibold leading-tight" id="flow-settings-title">
               Flow settings
             </h2>
-            <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
+            <p className="mt-1 text-sm leading-snug text-muted-foreground">
               Default project and model. Start mode and worktree are set on each Start Task block.
             </p>
           </div>
@@ -158,7 +158,7 @@ export function FlowSettingsPanel({
             className="min-h-[72px] resize-y border-border/40 bg-background/30 text-sm dark:bg-background/20"
             disabled={updateMetaMutation.isPending}
           />
-          <p className="text-[11px] text-muted-foreground">Saved when you leave this field.</p>
+          <p className="text-sm text-muted-foreground">Saved when you leave this field.</p>
         </div>
 
         <div
@@ -167,58 +167,39 @@ export function FlowSettingsPanel({
             'bg-muted/25 dark:bg-muted/15',
           )}
         >
-          <div className="flex items-center justify-between gap-3">
-            <div className="grid min-w-0 flex-1 gap-0.5">
-              <Label htmlFor="flow-settings-enabled" className="text-xs font-medium">
-                Flow enabled
-              </Label>
-              <p className="text-[11px] text-muted-foreground">
-                When off, triggers and new runs are blocked. You can still edit the flow.
-              </p>
-            </div>
-            <Switch
-              id="flow-settings-enabled"
-              checked={optimisticEnabled}
-              disabled={updateMetaMutation.isPending}
-              onCheckedChange={(checked) => {
-                if (checked === optimisticEnabled) return;
-                setOptimisticEnabled(checked);
-                updateMetaMutation.mutate(
-                  // biome-ignore lint/style/useNamingConvention: DB field name
-                  { id: flowId, is_enabled: checked },
-                  { onError: () => setOptimisticEnabled(!checked) },
-                );
-              }}
-            />
-          </div>
+          <SettingSwitchRow
+            id="flow-settings-enabled"
+            label="Flow enabled"
+            description="When off, triggers and new runs are blocked. You can still edit the flow."
+            checked={optimisticEnabled}
+            disabled={updateMetaMutation.isPending}
+            onCheckedChange={(checked) => {
+              if (checked === optimisticEnabled) return;
+              setOptimisticEnabled(checked);
+              updateMetaMutation.mutate(
+                // biome-ignore lint/style/useNamingConvention: DB field name
+                { id: flowId, is_enabled: checked },
+                { onError: () => setOptimisticEnabled(!checked) },
+              );
+            }}
+          />
 
-          <div className="flex items-center justify-between gap-3">
-            <div className="grid min-w-0 flex-1 gap-0.5">
-              <Label htmlFor="flow-settings-agent-invocable" className="text-xs font-medium">
-                Allow agents to run this flow
-              </Label>
-              <p className="text-[11px] text-muted-foreground">
-                When on, agents can start this flow without asking. When off, an agent must ask you
-                each time — you approve in chat, so you never need to come back here. Triggers,
-                schedules and runs you start yourself are never affected, and turning this off does
-                not stop runs already in flight; disable the flow for that.
-              </p>
-            </div>
-            <Switch
-              id="flow-settings-agent-invocable"
-              checked={optimisticAgentInvocable}
-              disabled={updateMetaMutation.isPending}
-              onCheckedChange={(checked) => {
-                if (checked === optimisticAgentInvocable) return;
-                setOptimisticAgentInvocable(checked);
-                updateMetaMutation.mutate(
-                  // biome-ignore lint/style/useNamingConvention: DB field name
-                  { id: flowId, agent_invocable: checked },
-                  { onError: () => setOptimisticAgentInvocable(!checked) },
-                );
-              }}
-            />
-          </div>
+          <SettingSwitchRow
+            id="flow-settings-agent-invocable"
+            label="Allow agents to run this flow"
+            description="When on, agents can start this flow without asking. When off, an agent must ask you each time — you approve in chat, so you never need to come back here. Triggers, schedules and runs you start yourself are never affected, and turning this off does not stop runs already in flight; disable the flow for that."
+            checked={optimisticAgentInvocable}
+            disabled={updateMetaMutation.isPending}
+            onCheckedChange={(checked) => {
+              if (checked === optimisticAgentInvocable) return;
+              setOptimisticAgentInvocable(checked);
+              updateMetaMutation.mutate(
+                // biome-ignore lint/style/useNamingConvention: DB field name
+                { id: flowId, agent_invocable: checked },
+                { onError: () => setOptimisticAgentInvocable(!checked) },
+              );
+            }}
+          />
 
           <PriorityQueueSetting
             settings={settings}
@@ -227,62 +208,35 @@ export function FlowSettingsPanel({
             onSettingsChange={onSettingsChange}
           />
 
-          <div className="flex items-center justify-between gap-3">
-            <div className="grid min-w-0 flex-1 gap-0.5">
-              <Label htmlFor="flow-settings-pause-on-failure" className="text-xs font-medium">
-                Pause on failure
-              </Label>
-              <p className="text-[11px] text-muted-foreground">
-                When on, a node failure pauses the run instead of terminating it. You can retry or
-                skip the failed step to continue.
-              </p>
-            </div>
-            <Switch
-              id="flow-settings-pause-on-failure"
-              checked={settings?.pauseOnFailure === true}
-              onCheckedChange={(checked) =>
-                onSettingsChange(patch(settings, { pauseOnFailure: checked || undefined }))
-              }
-            />
-          </div>
+          <SettingSwitchRow
+            id="flow-settings-pause-on-failure"
+            label="Pause on failure"
+            description="When on, a node failure pauses the run instead of terminating it. You can retry or skip the failed step to continue."
+            checked={settings?.pauseOnFailure === true}
+            onCheckedChange={(checked) =>
+              onSettingsChange(patch(settings, { pauseOnFailure: checked || undefined }))
+            }
+          />
 
-          <div className="flex items-center justify-between gap-3">
-            <div className="grid min-w-0 flex-1 gap-0.5">
-              <Label htmlFor="flow-settings-auto-accept" className="text-xs font-medium">
-                Auto-accept completed runs
-              </Label>
-              <p className="text-[11px] text-muted-foreground">
-                When on, a successful run marks its tasks completed immediately. When off, finished
-                work waits in Ready for review until you accept it.
-              </p>
-            </div>
-            <Switch
-              id="flow-settings-auto-accept"
-              checked={settings?.autoAcceptCompletedRuns === true}
-              onCheckedChange={(checked) =>
-                onSettingsChange(patch(settings, { autoAcceptCompletedRuns: checked || undefined }))
-              }
-            />
-          </div>
+          <SettingSwitchRow
+            id="flow-settings-auto-accept"
+            label="Auto-accept completed runs"
+            description="When on, a successful run marks its tasks completed immediately. When off, finished work waits in Ready for review until you accept it."
+            checked={settings?.autoAcceptCompletedRuns === true}
+            onCheckedChange={(checked) =>
+              onSettingsChange(patch(settings, { autoAcceptCompletedRuns: checked || undefined }))
+            }
+          />
 
-          <div className="flex items-center justify-between gap-3">
-            <div className="grid min-w-0 flex-1 gap-0.5">
-              <Label htmlFor="flow-settings-auto-mode" className="text-xs font-medium">
-                Auto Mode
-              </Label>
-              <p className="text-[11px] text-muted-foreground">
-                Let supported providers review eligible approval requests for Agent steps. Direct
-                command and custom-node steps are unaffected.
-              </p>
-            </div>
-            <Switch
-              id="flow-settings-auto-mode"
-              checked={settings?.autoReviewTools !== false}
-              onCheckedChange={(checked) =>
-                onSettingsChange(patch(settings, { autoReviewTools: checked }))
-              }
-            />
-          </div>
+          <SettingSwitchRow
+            id="flow-settings-auto-mode"
+            label="Auto Mode"
+            description="Let supported providers review eligible approval requests for Agent steps. Direct command and custom-node steps are unaffected."
+            checked={settings?.autoReviewTools !== false}
+            onCheckedChange={(checked) =>
+              onSettingsChange(patch(settings, { autoReviewTools: checked }))
+            }
+          />
 
           <FlowSpeedSettings
             settings={settings}
@@ -306,7 +260,7 @@ export function FlowSettingsPanel({
               onSettingsChange(patch(settings, { defaultProjectId: id || undefined }))
             }
           />
-          <p className="text-[11px] text-muted-foreground">
+          <p className="text-sm text-muted-foreground">
             All steps in this flow run in this project unless individually overridden.
           </p>
         </div>
@@ -340,9 +294,7 @@ export function FlowSettingsPanel({
                   onOpenChange={setModelMenuOpen}
                 />
               </div>
-              <p className="text-[11px] text-muted-foreground">
-                Individual steps can override this.
-              </p>
+              <p className="text-sm text-muted-foreground">Individual steps can override this.</p>
             </>
           )}
         </div>
@@ -397,7 +349,7 @@ function BriefingSection({
             Briefing
           </Label>
           {isActive && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+            <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-1.5 py-0.5 text-xs font-medium text-primary">
               <FileText className="h-2.5 w-2.5" aria-hidden />
               Active
             </span>
@@ -417,7 +369,7 @@ function BriefingSection({
               variant="ghost"
               size="sm"
               onClick={() => onSettingsChange(patch(settings, { briefing: undefined }))}
-              className="h-auto px-1 py-0 text-[11px] text-muted-foreground hover:text-destructive"
+              className="h-auto px-1 py-0 text-xs text-muted-foreground hover:text-destructive"
               aria-label="Clear briefing"
             >
               Clear
@@ -437,11 +389,16 @@ function BriefingSection({
         rows={5}
         className="min-h-[120px] resize-y border-border/40 bg-background/30 font-mono text-sm dark:bg-background/20"
       />
-      <p className="text-[11px] text-muted-foreground flex items-center justify-between">
+      <p className="flex items-baseline justify-between gap-3 text-sm text-muted-foreground">
         <span>
           Shared with every agent in the flow via the system prompt — sent once, not per message.
         </span>
-        <span className={charsRemaining < 500 ? 'text-warning' : ''}>
+        <span
+          className={cn(
+            'shrink-0 whitespace-nowrap text-xs tabular-nums',
+            charsRemaining < 500 && 'text-warning',
+          )}
+        >
           {charsRemaining.toLocaleString()} chars left
         </span>
       </p>
