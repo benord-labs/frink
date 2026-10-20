@@ -1,6 +1,6 @@
 /**
  * Workspace context under the chat input: folder first, then worktree and branch. One line at every
- * width: git controls that no longer fit move behind an ellipsis and stay the same pickers there.
+ * width: once the git controls no longer fit, both move behind one ellipsis as the same pickers.
  */
 
 import { useAtomValue } from 'jotai';
@@ -152,7 +152,7 @@ type ContextRowProps = {
   className?: string;
 };
 
-/** The row itself: folder, then the git chips that fit, then the ellipsis holding the rest. */
+/** The row itself: folder, cache timer, then the git chips inline or all behind the ellipsis. */
 function ContextRow({
   folder,
   promptCacheExpiresAt,
@@ -161,38 +161,33 @@ function ContextRow({
   className,
 }: ContextRowProps) {
   const { containerRef, moreRef, setItemRef, visibleFrom } = overflow;
+  // All or nothing: a lone chip beside the ellipsis reads as a half-collapsed row.
+  const collapsed = visibleFrom > 0;
   return (
     <section
       aria-label="Workspace context"
       data-testid="chat-input-branch-bar"
       className={cn(
         // The composer above already ends in pb-2, so the row's own space goes below it.
-        '@container/context-row flex w-full min-w-0 items-center gap-x-2 overflow-hidden px-3 pt-0.5 pb-2 text-xs text-muted-foreground',
+        'flex w-full min-w-0 items-center gap-x-2 overflow-hidden px-3 pt-0.5 pb-2 text-xs text-muted-foreground',
         className,
       )}
     >
       {folder ? <FolderChip folder={folder} /> : null}
-      {/* Reference, not a control: narrow rows (split panes) drop it rather than crowd the chips. */}
-      <PromptCacheTimer
-        expiresAt={promptCacheExpiresAt}
-        className="@max-[26rem]/context-row:hidden"
-      />
+      <PromptCacheTimer expiresAt={promptCacheExpiresAt} />
       <div
         ref={containerRef}
         className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-x-2"
       >
-        {gitItems.slice(visibleFrom).map((item, index) => (
-          <div
-            key={item.key}
-            ref={setItemRef(visibleFrom + index)}
-            className="min-w-0 max-w-[14rem] shrink-0"
-          >
-            {item.node}
-          </div>
-        ))}
-        {visibleFrom > 0 ? (
-          <ContextOverflowMenu ref={moreRef} rows={gitItems.slice(0, visibleFrom)} />
-        ) : null}
+        {collapsed ? (
+          <ContextOverflowMenu ref={moreRef} rows={gitItems} />
+        ) : (
+          gitItems.map((item, index) => (
+            <div key={item.key} ref={setItemRef(index)} className="min-w-0 max-w-[14rem] shrink-0">
+              {item.node}
+            </div>
+          ))
+        )}
       </div>
     </section>
   );
@@ -261,8 +256,8 @@ export const ChatInputContextBar = memo(function ChatInputContextBar({
     [worktreePath, chatId, locked, worktrees, isWorktreesLoading, isWorktreesError],
   );
 
-  // Worktree overflows before branch. The key names everything that changes a chip's width: labels,
-  // which control renders in each slot, and the worktree query both worktree controls label from.
+  // The key names everything that changes a chip's width: labels, which control renders in each
+  // slot, and the worktree query both worktree controls label from.
   const overflow = usePriorityOverflow(
     (worktree.node ? 1 : 0) + (branch ? 1 : 0),
     GAP_PX,
