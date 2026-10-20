@@ -45,6 +45,8 @@ type Backend = {
   saveGate: Promise<void>;
   saveErrors: Error[];
   preview: IncludePreview;
+  /** Set to make the preview query fail. */
+  previewError: Error | null;
 };
 
 const SAVE_INPUT = z.object({
@@ -63,6 +65,7 @@ const backend: Backend = {
   saveGate: Promise.resolve(),
   saveErrors: [],
   preview: EMPTY_PREVIEW,
+  previewError: null,
 };
 
 /** Merges a save into the stored file the way the main-process router does. */
@@ -79,7 +82,11 @@ function answer(
   op: Operation,
 ): Promise<ConfigAnswer | IncludePreview | { enabled: boolean } | string | null> {
   if (op.path === 'worktreeConfig.get') return backend.loadConfig();
-  if (op.path === 'worktreeConfig.includePreview') return Promise.resolve(backend.preview);
+  if (op.path === 'worktreeConfig.includePreview') {
+    return backend.previewError
+      ? Promise.reject(backend.previewError)
+      : Promise.resolve(backend.preview);
+  }
   if (op.path === 'worktreeConfig.setIncludeEnabled') {
     const input = TOGGLE_INPUT.parse(op.input);
     setIncludeEnabled(input);
@@ -119,6 +126,7 @@ beforeEach(() => {
   backend.saveGate = Promise.resolve();
   backend.saveErrors = [];
   backend.preview = EMPTY_PREVIEW;
+  backend.previewError = null;
 });
 
 afterEach(cleanup);
@@ -561,6 +569,16 @@ describe('ProjectWorktreeSettings', () => {
       );
       expect(filesSection()).toHaveTextContent('data/dump.sql (too large to copy)');
       expect(filesSection()).toHaveTextContent('2 more files are over the copy limit');
+      expect(within(filesSection()).queryByRole('link', { name: 'Learn more' })).toBeNull();
+    });
+
+    it("offers no docs link when it couldn't check which files get copied", async () => {
+      backend.previewError = new Error('not a git repository');
+      renderSettings();
+
+      await waitFor(() =>
+        expect(filesSection()).toHaveTextContent("Couldn't check which files get copied."),
+      );
       expect(within(filesSection()).queryByRole('link', { name: 'Learn more' })).toBeNull();
     });
 

@@ -46,7 +46,7 @@ export function FilesToCopy({ projectId }: { projectId: string }) {
           </p>
           <p className="text-xs leading-relaxed text-muted-foreground">
             {sourceHint(data?.source, enabled)}
-            {enabled && data?.source !== 'worktreeinclude' && (
+            {enabled && data?.source === 'default' && (
               <>
                 {' '}
                 <a
