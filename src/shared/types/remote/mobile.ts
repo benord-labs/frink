@@ -249,17 +249,24 @@ export type MobileChatSummary = MobileChat & {
 };
 export type MobileProject = { id: string; name: string; lastActiveAt: string | null };
 export type MobilePage<T> = { items: T[]; hasMore: boolean };
+/** A stretch of the user's words; `mention` marks a name the desktop draws as a badge. A part's runs
+ * join to its `text`, which a phone without badges shows as it is. */
+export type MobileTextRun = {
+  text: string;
+  mention?: 'file' | 'folder' | 'skill' | 'agent' | 'tool';
+};
 export type MobileMessagePart =
-  | { type: 'text'; text: string }
+  | { type: 'text'; text: string; runs?: MobileTextRun[] }
   | {
       type: 'tool';
       id: string;
       name: string;
       state: 'running' | 'completed' | 'failed' | 'interrupted' | 'unknown';
     }
-  | { type: 'attachment'; kind: 'image' | 'file'; name: string }
+  /** `text` is selected prose (a quote); `detail` is a code or diff selection's line range. */
+  | { type: 'attachment'; kind: 'image' | 'file' | 'text'; name: string; detail?: string }
   /** A message the user steered into the running turn. */
-  | { type: 'steer'; text: string }
+  | { type: 'steer'; text: string; runs?: MobileTextRun[] }
   /** A plan Frink wrote for review, as markdown. */
   | { type: 'plan'; id: string; text: string };
 export type MobileMessage = {

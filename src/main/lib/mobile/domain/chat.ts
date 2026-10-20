@@ -47,6 +47,7 @@ import {
 } from './context';
 import { mobilePermissions, mobileQuestions } from './questions';
 import { resolveMobileAttachments } from './attachments';
+import { projectMentions, projectMentionsAsText } from './projections';
 
 type StreamStatus = 'active' | 'held' | 'settling' | 'settled' | 'error';
 type ToolState = Extract<MobileMessagePart, { type: 'tool' }>['state'];
@@ -67,19 +68,6 @@ function toolState(part: Record<string, unknown>, streamStatus?: StreamStatus): 
   return (streamStatus && unfinishedToolStates[streamStatus]) || 'unknown';
 }
 
-// `@[pasted:<size>:<name>|<path>]` — a desktop large paste or a phone file attachment.
-const PASTED_MENTION = /@\[pasted:\d+:([^|\]]*)\|[^\]]*\]\s?/g;
-
-/** Pulls pasted-file mentions out of text so the phone shows them as attachments, not tokens. */
-function splitPastedMentions(body: string): { text: string; names: string[] } {
-  const names: string[] = [];
-  const text = body.replace(PASTED_MENTION, (_match, name: string) => {
-    names.push(name || 'Attachment');
-    return '';
-  });
-  return { text: text.trim(), names };
-}
-
 function isImagePart(part: Record<string, unknown>): boolean {
   if (part.type === 'data-image') return true;
   return (
@@ -87,11 +75,26 @@ function isImagePart(part: Record<string, unknown>): boolean {
   );
 }
 
-/** Text as the phone shows it: pasted-file mentions become attachment chips. */
-function textParts(body: string): MobileMessagePart[] {
-  const { text: remaining, names } = splitPastedMentions(body);
-  const chips = names.map((name) => ({ type: 'attachment', kind: 'file', name }) as const);
-  return remaining ? [...chips, { type: 'text', text: remaining }] : chips;
+/** Text as the phone shows it. Mention tokens are the composer's, so only a user's text has them;
+ * an agent that writes one is quoting it, and the desktop shows it as written too. */
+function textParts(body: string, role: string): MobileMessagePart[] {
+  // Markers go first, so the badge runs describe the text exactly as the phone shows it.
+  if (role === 'user') return projectMentions(stripMessageMarkers(stripHiddenWakeMarker(body)));
+  const trimmed = body.trim();
+  return trimmed ? [{ type: 'text', text: trimmed }] : [];
+}
+
+type TextPart = Extract<MobileMessagePart, { type: 'text' }>;
+
+/** Appends a part's text on a new line, keeping both parts' badge runs. */
+function appendText(into: TextPart, next: TextPart) {
+  if (into.runs || next.runs)
+    into.runs = [
+      ...(into.runs ?? [{ text: into.text }]),
+      { text: '\n' },
+      ...(next.runs ?? [{ text: next.text }]),
+    ];
+  into.text += `\n${next.text}`;
 }
 
 function toolPart(
@@ -114,12 +117,14 @@ function toolPart(
 function messagePartProjection(
   value: unknown,
   id: string,
+  role: string,
   streamStatus?: StreamStatus,
 ): MobileMessagePart[] {
   const part = record(value);
   if (isImagePart(part)) return [{ type: 'attachment', kind: 'image', name: 'Image' }];
-  if (part.type === 'text') return textParts(text(part.text));
-  if (part.type === SUBAGENT_TEXT_PART_TYPE) return textParts(text(record(part.input).text));
+  if (part.type === 'text') return textParts(text(part.text), role);
+  if (part.type === SUBAGENT_TEXT_PART_TYPE)
+    return textParts(text(record(part.input).text), 'assistant');
   if (typeof part.type !== 'string') return [];
   if (isFrinkPlanMessagePartType(part.type)) {
     const plan = record(part.input);
@@ -129,8 +134,8 @@ function messagePartProjection(
   if (!part.type.startsWith('tool-')) return [];
   // Keyed on the tool name, not state: the marker's state reads 'unknown' once its stream expires.
   if (part.toolName === 'Steer') {
-    const steered = text(record(part.input).text).trim();
-    return steered ? [{ type: 'steer', text: steered }] : [];
+    const steered = projectMentionsAsText(text(record(part.input).text));
+    return steered.text ? [{ type: 'steer', ...steered }] : [];
   }
   return toolPart(part, id, streamStatus);
 }
@@ -144,26 +149,31 @@ function messageProjection(value: unknown, streamStatus?: StreamStatus): MobileM
   // As desktop shows it: plan markdown the agent also wrote as prose appears once, in the plan.
   const rawParts = filterCanonicalPlanParts(raw, extractCanonicalPlanTextForFilter(raw));
   const status = record(message.metadata).interruptedBy ? 'settled' : streamStatus;
+  const { role } = message;
+  // The marker leads the message's first words; a user's projected text no longer carries it.
+  const firstWords = rawParts
+    .filter((part) => part.type === 'text')
+    .map((part) => text(record(part).text).trimStart())
+    .find(Boolean);
+  if (role === 'user' && isHiddenWakeMessage(firstWords ?? '')) return null;
   const parts: MobileMessagePart[] = [];
   rawParts.forEach((part, index) => {
-    for (const projected of messagePartProjection(part, `${message.id}:${index}`, status)) {
+    for (const projected of messagePartProjection(part, `${message.id}:${index}`, role, status)) {
       const previous = parts.at(-1);
-      if (projected.type === 'text' && previous?.type === 'text') {
-        previous.text += `\n${projected.text}`;
-      } else parts.push(projected);
+      if (projected.type === 'text' && previous?.type === 'text') appendText(previous, projected);
+      else parts.push(projected);
     }
   });
   const body = parts
     .filter((part) => part.type === 'text')
     .map((part) => part.text)
     .join('\n');
-  if (message.role === 'user' && isHiddenWakeMessage(body)) return null;
   return {
     id: message.id,
     role: message.role,
     text: stripMessageMarkers(stripHiddenWakeMarker(body)),
     parts: parts.map((part) =>
-      part.type === 'text'
+      part.type === 'text' && role !== 'user'
         ? { type: 'text', text: stripMessageMarkers(stripHiddenWakeMarker(part.text)) }
         : part,
     ),
