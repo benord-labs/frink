@@ -17,11 +17,11 @@ const LINE_BREAK_PATTERN = /\r?\n/;
 const WHITESPACE_PATTERN = /\s+/;
 const EXPECTED_MANIFEST = Object.freeze({
   upstream: 'https://github.com/openai/codex',
-  version: 'rust-v0.155.1',
-  tagObject: '4e21628f9ec9ee656650cd2b62ef92225725b5ac',
-  commit: 'be2951ea34f0d295ed0becf97079f92fa5f6950e',
-  sourceArchiveSha256: 'b9e18d40d322586913e94d6747f3f934922c4f5130eb5a349ba019c57b83dad8',
-  normalizedCargoLockSha256: 'df88a71b82843c6f092610fb07589f7a40032ddc25f50718354546ca541eb9b7',
+  version: 'rust-v0.162.1',
+  tagObject: '7a078f6bb4ce0dc2a81408b334ce52979d92c603',
+  commit: '092d3acd6bec3e3a14bdc7e7a2810ab628ab759d',
+  sourceArchiveSha256: 'e709bda93494c000a69d4c07a85a1975ce433f5541e737d1a5feddd399c97c60',
+  normalizedCargoLockSha256: '765110795bf3385d734bf1acfcae77660d29a6c678d5b77015d7ffe49f26e69f',
   rust: '1.95.0',
   patch: 'frink-host-tool-permission-v1.patch',
 });
