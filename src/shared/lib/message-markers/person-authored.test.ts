@@ -5,8 +5,10 @@ import { buildHiddenWakeMessage } from './hidden-wake-marker';
 import {
   dispatchMetadataSchema,
   FLOW_DISPATCH_SOURCE,
+  isMachineSource,
   isMachineText,
   isPersonAuthoredMessage,
+  WORK_QUEUE_SOURCE,
 } from './person-authored';
 
 describe('isMachineText', () => {
@@ -19,6 +21,15 @@ describe('isMachineText', () => {
   it('is false for typed text, including a dragged-in task', () => {
     expect(isMachineText('look at @[file:local:a.ts]')).toBe(false);
     expect(isMachineText('<!--TASK_BUBBLE:{}-->do it')).toBe(false);
+  });
+});
+
+describe('isMachineSource', () => {
+  it('is true only for a Flow dispatch or a Work Queue task’s stamp', () => {
+    expect(isMachineSource(FLOW_DISPATCH_SOURCE)).toBe(true);
+    expect(isMachineSource(WORK_QUEUE_SOURCE)).toBe(true);
+    expect(isMachineSource(undefined)).toBe(false);
+    expect(isMachineSource('work-queue-ish')).toBe(false);
   });
 });
 
@@ -46,6 +57,9 @@ describe('isPersonAuthoredMessage', () => {
       false,
     );
     expect(isPersonAuthoredMessage({ ...typed, metadata: { dispatchTaskId: 't1' } })).toBe(false);
+    expect(isPersonAuthoredMessage({ ...typed, metadata: { source: WORK_QUEUE_SOURCE } })).toBe(
+      false,
+    );
     expect(isPersonAuthoredMessage({ ...typed, text: buildHiddenWakeMessage('Go') })).toBe(false);
     expect(isPersonAuthoredMessage({ ...typed, role: 'assistant' })).toBe(false);
   });

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { WORK_QUEUE_SOURCE } from '../../../../../../shared/lib/message-markers/person-authored';
 import { getDatabase } from '../../../../db';
 import { withSubChatLock } from '../../../../db/repos/sub-chat-mutex';
 import {
@@ -19,6 +20,10 @@ const seedUserMessageSchema = z
     parts: z
       .array(z.object({ type: z.literal('text'), text: z.string().trim().min(1) }).strict())
       .length(1),
+    metadata: z
+      .object({ source: z.literal(WORK_QUEUE_SOURCE) })
+      .strict()
+      .optional(),
   })
   .strict();
 

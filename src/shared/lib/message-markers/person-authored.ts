@@ -7,6 +7,14 @@ import { isHiddenWakeMessage } from './hidden-wake-marker';
  * can tell it from a manual reply (only a manual reply to a parked flow plan approves it). */
 export const FLOW_DISPATCH_SOURCE = 'flow-dispatch' as const;
 
+/** Marks a Work Queue task's opening message, in its `metadata`: the task's text came from outside. */
+export const WORK_QUEUE_SOURCE = 'work-queue' as const;
+
+/** A message `source` that a flow or the Work Queue stamped, never a person. */
+export function isMachineSource(source: string | undefined): boolean {
+  return source === FLOW_DISPATCH_SOURCE || source === WORK_QUEUE_SOURCE;
+}
+
 /** What a stored user message's metadata says about who sent it; absent on a typed message. */
 export const dispatchMetadataSchema = z
   .object({ source: z.string().optional(), dispatchTaskId: z.string().optional() })
@@ -29,7 +37,7 @@ type AuthoredMessage = { role: string; metadata: DispatchMetadata; text: string 
 export function isPersonAuthoredMessage({ role, metadata, text }: AuthoredMessage): boolean {
   return (
     role === 'user' &&
-    metadata?.source !== FLOW_DISPATCH_SOURCE &&
+    !isMachineSource(metadata?.source) &&
     !metadata?.dispatchTaskId &&
     !isMachineText(text)
   );

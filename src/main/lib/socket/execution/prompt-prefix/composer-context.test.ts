@@ -391,6 +391,12 @@ describe('isPersonAuthored', () => {
     expect(isPersonAuthored(person, `${HIDDEN_WAKE_MARKER}Continue`)).toBe(false);
   });
 
+  it('is false for a Work Queue task’s opening, which is sent as a retry', () => {
+    const stamped = { messageOrigin: regenerate, messageSource: 'work-queue' };
+    expect(isPersonAuthored(stamped, 'Fix @[file:local:x.ts]')).toBe(false);
+    expect(isPersonAuthored({ messageOrigin: regenerate }, 'Fix @[file:local:x.ts]')).toBe(true);
+  });
+
   it('is false for flow, dispatch, wake, plan approval and unclassified sends', () => {
     for (const messageOrigin of [
       { source: 'flow', kind: 'message' },

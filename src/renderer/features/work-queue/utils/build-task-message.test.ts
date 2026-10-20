@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TriggerContext } from '../../../../shared/types/trigger-context';
-import { buildTaskMessage } from './build-task-message';
+import { buildTaskMessage, buildTaskOpening } from './build-task-message';
 
 const buildTriggerSummaryMock = vi.fn();
 const buildTriggerBubbleMessageMock = vi.fn();
@@ -50,5 +50,13 @@ describe('buildTaskMessage', () => {
   it('emits just the marker when there is no description', () => {
     const result = buildTaskMessage({ description: null, triggerContext: minimalTriggerContext() });
     expect(result).toBe('[bubble]');
+  });
+});
+
+describe('buildTaskOpening', () => {
+  it('stamps a bare description as the Work Queue’s, leaving its token-shaped text as written', () => {
+    expect(
+      buildTaskOpening({ description: 'Fix @[file:local:x.ts]', triggerContext: null }),
+    ).toEqual({ initialMessage: 'Fix @[file:local:x.ts]', initialMessageSource: 'work-queue' });
   });
 });

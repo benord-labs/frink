@@ -108,6 +108,26 @@ describe('createRouter (local-first)', () => {
     expect(seededMessages).toHaveLength(1);
     expect(seededMessages[0].role).toBe('user');
     expect(seededMessages[0].parts[0]).toEqual({ type: 'text', text: 'hello world' });
+    expect(seededMessages[0]).not.toHaveProperty('metadata');
+  });
+
+  it('stamps a Work Queue task’s initial message with its source', async () => {
+    createChatLocalMock.mockResolvedValue(makeLocalChat({ id: 'c1', name: 'Test' }));
+    createSubChatLocalMock.mockResolvedValue(makeLocalSubChat({ id: 's1', chatId: 'c1' }));
+
+    const { createRouter } = await import('./create');
+    const caller = createRouter.createCaller({ getWindow: () => null });
+
+    await caller.create({
+      ...baseInput,
+      initialMessage: 'Fix @[file:local:x.ts]',
+      initialMessageSource: 'work-queue',
+      mode: 'agent',
+    });
+
+    const [seeded] = JSON.parse(createSubChatLocalMock.mock.calls[0]?.[1].messages);
+    expect(seeded.metadata).toEqual({ source: 'work-queue' });
+    expect(seeded.parts[0]).toEqual({ type: 'text', text: 'Fix @[file:local:x.ts]' });
   });
 
   it('rejects an unresolvable projectId as typed NOT_FOUND, not INTERNAL_SERVER_ERROR', async () => {

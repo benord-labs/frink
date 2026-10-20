@@ -3,6 +3,7 @@ import { TRPCError } from '@trpc/server';
 import { eq } from 'drizzle-orm';
 import log from 'electron-log';
 import { z } from 'zod';
+import { WORK_QUEUE_SOURCE } from '../../../../../shared/lib/message-markers/person-authored';
 import { trackWorkspaceCreated } from '../../../analytics';
 import { getDatabase } from '../../../db';
 import {
@@ -51,6 +52,8 @@ export const createRouter = router({
         taskId: z.string().optional(),
         taskTitle: z.string().optional(),
         initialMessage: z.string().optional(),
+        /** Stamped on the initial message: a Work Queue task's text came from outside. */
+        initialMessageSource: z.literal(WORK_QUEUE_SOURCE).optional(),
         initialMessageParts: z
           .array(
             z.union([
@@ -142,6 +145,9 @@ export const createRouter = router({
         });
 
         // Initial message parts → wrapped as a single user message in the sub-chat's messages array.
+        const metadata = input.initialMessageSource
+          ? { metadata: { source: input.initialMessageSource } }
+          : {};
         const initialMessages: unknown[] = (() => {
           if (input.initialMessageParts && input.initialMessageParts.length > 0) {
             return [
@@ -149,6 +155,7 @@ export const createRouter = router({
                 id: `msg-${Date.now()}`,
                 role: 'user',
                 parts: input.initialMessageParts,
+                ...metadata,
               },
             ];
           }
@@ -158,6 +165,7 @@ export const createRouter = router({
                 id: `msg-${Date.now()}`,
                 role: 'user',
                 parts: [{ type: 'text', text: input.initialMessage }],
+                ...metadata,
               },
             ];
           }

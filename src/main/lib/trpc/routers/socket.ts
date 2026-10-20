@@ -58,6 +58,9 @@ const messageSchema = z.object({
       // object — unlike `messagePartSchema` above — is strict, so an unlisted key is dropped in
       // silence: that is how a picked answer reached the database as `{}`.
       answeredQuestions: z.array(z.object({ label: z.string(), answer: z.string() })).optional(),
+      // Who stamped the message (a Flow dispatch, a Work Queue task's opening): main reads it to
+      // tell machine text from a person's.
+      source: z.string().optional(),
     })
     .optional(),
 });

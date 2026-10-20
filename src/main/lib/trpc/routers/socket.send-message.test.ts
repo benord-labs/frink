@@ -221,6 +221,22 @@ describe('socketRouter.sendMessage sourceWebContentsId', () => {
     expect(sendMessageMock.mock.calls[0]?.[0].history).toEqual(history);
   });
 
+  it.each(['work-queue', 'flow-dispatch'])(
+    'the user message’s %s source stamp survives the input schema and reaches sendMessage',
+    async (source) => {
+      const caller = socketRouter.createCaller({ getWindow: () => null } satisfies Context);
+      const input = minimalSendMessageInput();
+
+      await caller.sendMessage({
+        ...input,
+        trigger: 'regenerate-message',
+        userMessage: { ...input.userMessage, metadata: { source } },
+      });
+
+      expect(sendMessageMock.mock.calls[0]?.[0].userMessage.metadata).toEqual({ source });
+    },
+  );
+
   it('settings.ultra survives the input schema and reaches sendMessage', async () => {
     const caller = socketRouter.createCaller({ getWindow: () => null } satisfies Context);
 

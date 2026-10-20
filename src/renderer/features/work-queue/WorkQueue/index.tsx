@@ -49,7 +49,7 @@ import { useAgentSubChatStore } from '../../agents/stores/sub-chat-store';
 import { useWorkQueueOverviewCounts } from '../hooks/use-work-queue-overview-counts';
 import { useWorkQueueOverviewPages } from '../hooks/use-work-queue-overview-pages';
 import type { ConfirmedRecovery, Task } from '../types';
-import { buildTaskMessage } from '../utils/build-task-message';
+import { buildTaskMessage, buildTaskOpening } from '../utils/build-task-message';
 import { dedupeRowsById } from '../utils/dedupe-rows-by-id';
 import { getOverviewTaskChatId } from '../utils/overview-task-groups';
 import { parseTriggerContext } from '../utils/trigger-context';
@@ -470,7 +470,6 @@ export function WorkQueue({
     const task = allTaskRows.find((t) => t.id === taskId);
     if (!task) return;
 
-    const message = buildTaskMessage(task);
     const triggerContext = parseTriggerContext(task.triggerContext);
     const startMetadata = resolveTaskExecutionMetadata(triggerContext?._config, {
       overrideMode: mode,
@@ -482,7 +481,7 @@ export function WorkQueue({
     );
 
     createChatMutation.mutate({
-      initialMessage: message,
+      ...buildTaskOpening(task),
       taskId: task.id,
       projectId: task.projectId || undefined,
       useWorktree,
