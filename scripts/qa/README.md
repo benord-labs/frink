@@ -34,3 +34,29 @@ bash scripts/qa/build.sh && bash scripts/qa/seed.sh && bash scripts/qa/boot.sh
 - `fixtures/background-work.ts` / `wake-background-chats.ts` — three seeded QA Fixture chats (long tests,
   a Workflow, three commands). After boot on the fake, `bun scripts/qa/wake-background-chats.ts` sends
   each its request so it holds live background work; that state is in memory, so wake after every boot.
+
+## Component before/after screenshots
+
+The rig runs one session at a time. To screenshot a single renderer component, use `component-shot.ts`
+instead: it takes no lock and needs no build, so parallel sessions can each run it, on macOS, Linux and Windows.
+
+```
+bun scripts/qa/component-shot.ts \
+  src/renderer/components/dialogs/settings-tabs/ProjectSettingsTab/ProjectWorktreeSettings/index.tsx \
+  ProjectWorktreeSettings --props '{"projectId":"p1"}' \
+  --trpc-fixture scripts/qa/fixtures/component-shot/project-worktree-settings.json
+```
+
+- It writes `before.png` (the commit your branch forked from `--base`, default `origin/main`) and `after.png`
+  (your working tree, uncommitted changes included) to `--out`, or to a temp folder it prints.
+- The base side is a read-only copy of that commit's sources in a temp folder, rendered with today's
+  `node_modules`; it never registers a git worktree. A warning names `package.json`/`bun.lock` if they changed.
+- `--trpc-fixture` is JSON keyed by procedure path (`"worktreeConfig.get": {...}`); each answer is returned
+  whatever the input, as plain JSON (no `Date` or `Map`). Other options: `--props-file`, `--width 780`,
+  `--scale 2`, `--theme dark|light`.
+- Exit codes: `0` both shots written; `2` the component called a procedure the fixture does not answer
+  (listed, so a loading state is never mistaken for the real one); `3` the component or export does not
+  exist at the base, so only `after.png` was written; `1` anything else.
+- It needs Google Chrome or Microsoft Edge installed, or a browser from `bunx playwright-core install chromium`.
+- It renders the component alone, with the app's providers but not its parents, custom themes or
+  `window.desktopApi`. For a whole screen, or behaviour that depends on parent components, use the rig.
