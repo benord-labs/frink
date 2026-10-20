@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, ne, not, or, sql } from 'drizzle-orm';
 import { union } from 'drizzle-orm/sqlite-core';
 import { FLOW_DRIVING_STATUSES, SIGNAL_DEAD_RUN_STATUSES } from '../../../../shared/types/flow';
-import { fanOutItemChatRunIds, isPastFanOutLane } from '../../flows/fan-out-state';
+import { fanOutItemChatRunIds, isPastFanOutLane } from '../../flows/fan-out/sql';
 import type { getDatabase } from '../index';
 import {
   type Chat,

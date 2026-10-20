@@ -1,6 +1,6 @@
 import { and, eq, inArray, not, type SQL, type SQLWrapper, sql } from 'drizzle-orm';
 import { type AnySQLiteColumn, union } from 'drizzle-orm/sqlite-core';
-import { isPastFanOutLane } from '../../../flows/fan-out-state';
+import { isPastFanOutLane } from '../../../flows/fan-out/sql';
 import type { getDatabase } from '../../index';
 import { flowRuns, nodeRuns, tasks } from '../../schema';
 
