@@ -58,11 +58,6 @@ describe('projectMentions', () => {
     ],
     ['a pasted file', '@[pasted:120:notes.pdf|/p/abc-notes.pdf] why?', chip('notes.pdf')],
     ['a pasted file with no name', '@[pasted:120:|/p/abc] why?', chip('Attachment')],
-    [
-      'a Flow briefing',
-      `@[briefing:flow-1:${encodeForMentionToken('Spec')}:${PAYLOAD}] why?`,
-      chip('Spec'),
-    ],
   ])('shows %s as an attachment chip', (_kind, body, attachment) => {
     expect(projectMentions(body)).toEqual([attachment, text('why?')]);
   });
@@ -107,6 +102,34 @@ describe('projectMentions', () => {
         runs: [{ text: 'see and ' }, { text: 'notes.md', mention: 'file' }],
       },
     ]);
+  });
+
+  it('names a token with an empty payload by its kind, never by a fragment of the token', () => {
+    const [part] = projectMentions(
+      'a @[file:editor:] @[folder:repo:] @[skill:] @[agent:] @[tool:mcp__srv__] b',
+    );
+    const runs = part.type === 'text' ? (part.runs ?? []) : [];
+    expect(runs.filter((run) => run.mention)).toEqual([
+      { text: 'File', mention: 'file' },
+      { text: 'Folder', mention: 'folder' },
+      { text: 'Skill', mention: 'skill' },
+      { text: 'Agent', mention: 'agent' },
+      { text: 'Tool', mention: 'tool' },
+    ]);
+    expect(runs.some((run) => run.text.endsWith(':'))).toBe(false);
+  });
+
+  it.each([
+    ['an empty payload', '@[skill:]', 'Skill', 'skill'],
+    ['a blank payload', '@[skill: ]', 'Skill', 'skill'],
+    ['a file token with no slots', '@[file:]', 'File', 'file'],
+    ['a file token with one slot', '@[file:editor]', 'editor', 'file'],
+    ['a folder whose name ends in a colon', '@[folder:a:b:]', 'b:', 'folder'],
+  ])('names %s readably', (_case, token, name, mention) => {
+    expect(projectMentionsAsText(`see ${token}`)).toEqual({
+      text: `see ${name}`,
+      runs: [{ text: 'see ' }, { text: name, mention }],
+    });
   });
 
   it('leaves a token of unknown kind as the user wrote it, with no badge runs', () => {

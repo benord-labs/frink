@@ -10,7 +10,7 @@ type Attachment = Extract<MobileMessagePart, { type: 'attachment' }>;
 const KNOWN_PREFIXES: readonly string[] = Object.values(MENTION_PREFIXES);
 
 // As on the desktop: files, folders, skills, agents and tools are badges inside the sentence, while
-// selections, pastes and briefings sit beside it as attachments.
+// selections and pastes sit beside it as attachments.
 const BADGE_KINDS = new Map<string, NonNullable<MobileTextRun['mention']>>([
   [MENTION_PREFIXES.FILE, 'file'],
   [MENTION_PREFIXES.FOLDER, 'folder'],
@@ -46,7 +46,11 @@ function projectToken(id: string): MobileTextRun | Attachment | null {
   if (!prefix) return null;
   const mention = parseMention(id);
   const badge = BADGE_KINDS.get(prefix);
-  if (badge) return { text: mention?.label || id.slice(prefix.length) || id, mention: badge };
+  if (badge) {
+    // A token with nothing to name shows its kind ("Skill"), never a fragment like "editor:".
+    const name = mention ? mention.label.trim() : id.slice(prefix.length);
+    return { text: name || badge[0].toUpperCase() + badge.slice(1), mention: badge };
+  }
   return attachment(mention);
 }
 
