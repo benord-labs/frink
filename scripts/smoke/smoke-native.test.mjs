@@ -128,7 +128,9 @@ describe('smoke-linux-launch.sh', () => {
   // The PostHog CI cohort is a fixed list from before this opt-out; a smoke launch that sends again counts as a real install.
   it('launches every packaged build with usage analytics off', () => {
     const script = readFileSync(new URL('./smoke-linux-launch.sh', import.meta.url), 'utf8');
-    const launches = script.split('\n').filter((line) => line.includes('setsid "$@"'));
+    const launches = script
+      .split('\n')
+      .filter((line) => /\bsetsid\b/.test(line) && !line.trimStart().startsWith('#'));
     expect(launches).not.toHaveLength(0);
     for (const line of launches) expect(line).toContain('FRINK_DISABLE_USAGE_ANALYTICS=1');
   });

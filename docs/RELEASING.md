@@ -72,10 +72,11 @@ Install and weekly-active counts for official builds are only meaningful with Po
   the person with that distinct ID in PostHog, and set `$internal_or_test_user` to `true` on it.
 - **CI launch tests (Linux launch smoke, before the analytics opt-out)**: a fixed list of 66 installs.
   Until the Linux launch smoke set `FRINK_DISABLE_USAGE_ANALYTICS=1` (2026-10-19), each build-desktop
-  run created a new install. The list does not grow. It was built from persons seen between
-  2026-10-07 and 2026-10-16 that are Linux only, have exactly three events (`desktop_opened`,
-  `first_launch`, `desktop_opened`) within 10 seconds, and fall inside a "launch the deb and the
-  AppImage" smoke step:
+  run created a new install. The list does not grow. It holds every person between the public
+  launch (2026-09-26) and that change (2026-10-19 21:14 UTC) that is Linux only and has exactly
+  three events, `desktop_opened`, `first_launch` and `desktop_opened`, within 10 seconds. All 66
+  were seen from 2026-10-07 to 2026-10-16, each inside a "launch the deb and the AppImage" smoke
+  step. This query returns exactly the 66:
 
   ```sql
   SELECT person_id
@@ -83,7 +84,8 @@ Install and weekly-active counts for official builds are only meaningful with Po
   WHERE timestamp >= '2026-09-26' AND timestamp < '2026-10-19 21:14:27'
   GROUP BY person_id
   HAVING any(properties.platform) = 'linux' AND uniq(properties.platform) = 1
-     AND count() = 3 AND countIf(event = 'first_launch') = 1
+     AND count() = 3 AND countIf(event = 'desktop_opened') = 2
+     AND countIf(event = 'first_launch') = 1
      AND dateDiff('second', min(timestamp), max(timestamp)) <= 10
   ```
 
