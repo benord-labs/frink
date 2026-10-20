@@ -230,6 +230,25 @@ function registerAttachmentTests(): void {
     },
   );
 
+  it.each(providers)(
+    'replays a steer to %s as the person’s recapped turn inside the assistant’s',
+    async (_provider, deliver) => {
+      const history: ConversationTurn[] = [
+        { role: 'assistant', content: 'deploying' },
+        {
+          role: 'user',
+          content: 'use @[skill:deploy] on @[file:local:a.ts]',
+          personAuthored: true,
+        },
+        { role: 'assistant', content: 'deployed' },
+      ];
+      const { prompt } = await deliver('and now?', PERSON, { history });
+      expect(prompt).toContain(
+        'Assistant: deploying\n\nHuman: use [skill deploy] on a.ts\n\nAssistant: deployed\n',
+      );
+    },
+  );
+
   it('leaves a triggered task’s opening message as written, though it is sent as a retry', async () => {
     const regenerate: MessageOrigin = { source: 'internal', kind: 'regenerate' };
     const message = `${TRIGGER_BUBBLE_MARKER}{"uiData":{}}-->\n\nRun @[file:local:deploy.sh]`;

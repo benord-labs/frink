@@ -93,6 +93,60 @@ describe('buildTurnHistory: who wrote each turn', () => {
   });
 });
 
+describe('buildTurnHistory: steers', () => {
+  const steer = (text: string) => ({ type: 'tool-Steer', input: { text } });
+  const steerText = 'look at @[file:local:a.ts] @[skill:deploy]\nand @[code:a.ts:3-4:preview:YQ==]';
+
+  it('replays a steer whole as the person’s turn, splitting the assistant message around it', () => {
+    const history = buildTurnHistory([
+      message('a1', 'assistant', [
+        { type: 'text', text: 'working' },
+        { type: 'tool-Read', input: { file_path: 'src/auth.ts' } },
+        steer(steerText),
+        { type: 'text', text: 'switching to a.ts' },
+      ]),
+    ]);
+
+    expect(history).toEqual([
+      { role: 'assistant', content: 'working\n[Read] src/auth.ts' },
+      { role: 'user', content: steerText, personAuthored: true },
+      { role: 'assistant', content: 'switching to a.ts' },
+    ]);
+  });
+
+  it('splits every steer, and leaves no empty turn around one', () => {
+    const history = buildTurnHistory([
+      message('a1', 'assistant', [steer('first'), { type: 'text', text: 'ok' }, steer('second')]),
+      message('a2', 'assistant', [
+        steer('  '),
+        { type: 'tool-Steer' },
+        { type: 'tool-Steer', input: { text: 42 } },
+      ]),
+    ]);
+
+    expect(history).toEqual([
+      { role: 'user', content: 'first', personAuthored: true },
+      { role: 'assistant', content: 'ok' },
+      { role: 'user', content: 'second', personAuthored: true },
+    ]);
+  });
+
+  it('splits a steer that follows a compaction boundary in the same message', () => {
+    const history = buildTurnHistory([
+      message('a1', 'assistant', [
+        { type: 'text', text: 'before' },
+        { type: 'data-compact', id: 'c', data: { state: 'output-available', summary: 'S' } },
+        steer('after the compaction'),
+      ]),
+    ]);
+
+    expect(history).toEqual([
+      { role: 'user', content: '[Earlier conversation was compacted. Summary:]\n\nS' },
+      { role: 'user', content: 'after the compaction', personAuthored: true },
+    ]);
+  });
+});
+
 describe('buildTurnHistory after compaction', () => {
   const compact = (data: Record<string, unknown>, id = 'compact-1') => ({
     type: 'data-compact',
