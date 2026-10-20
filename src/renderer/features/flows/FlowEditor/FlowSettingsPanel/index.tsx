@@ -221,6 +221,25 @@ export function FlowSettingsPanel({
 
           <div className="flex items-center justify-between gap-3">
             <div className="grid min-w-0 flex-1 gap-0.5">
+              <Label htmlFor="flow-settings-run-first" className="text-xs font-medium">
+                Run this flow first
+              </Label>
+              <p className="text-[11px] text-muted-foreground">
+                When other runs are waiting their turn, new runs of this flow start before them.
+                Runs already waiting keep their place, and nothing running is stopped.
+              </p>
+            </div>
+            <Switch
+              id="flow-settings-run-first"
+              checked={settings?.runFirst === true}
+              onCheckedChange={(checked) =>
+                onSettingsChange(patch(settings, { runFirst: checked || undefined }))
+              }
+            />
+          </div>
+
+          <div className="flex items-center justify-between gap-3">
+            <div className="grid min-w-0 flex-1 gap-0.5">
               <Label htmlFor="flow-settings-pause-on-failure" className="text-xs font-medium">
                 Pause on failure
               </Label>

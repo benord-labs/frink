@@ -81,3 +81,32 @@ describe('FlowSettingsPanel on an OpenCode project', () => {
     expect(screen.queryByText('Individual steps can override this.')).toBeNull();
   });
 });
+
+describe('FlowSettingsPanel run-first toggle', () => {
+  it('saves Run this flow first as runFirst and clears it when switched off', () => {
+    const onSettingsChange = vi.fn();
+    const props = {
+      flowId: 'flow-1',
+      flowName: 'Daily digest',
+      flowDescription: null,
+      isEnabled: true,
+      agentInvocable: false,
+      nodes: [],
+      onSettingsChange,
+      onClose: () => {},
+    };
+    const { rerender } = renderWithTrpc(
+      <FlowSettingsPanel {...props} settings={{}} />,
+      () => new Promise(() => {}),
+    );
+
+    fireEvent.click(screen.getByRole('switch', { name: 'Run this flow first' }));
+    expect(onSettingsChange).toHaveBeenLastCalledWith(expect.objectContaining({ runFirst: true }));
+
+    rerender(<FlowSettingsPanel {...props} settings={{ runFirst: true }} />);
+    const toggle = screen.getByRole('switch', { name: 'Run this flow first' });
+    expect(toggle).toBeChecked();
+    fireEvent.click(toggle);
+    expect(onSettingsChange.mock.lastCall?.[0]).not.toHaveProperty('runFirst', true);
+  });
+});

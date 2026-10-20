@@ -297,7 +297,8 @@
           "0110_chat_run_link_indexes.sql",
           "0111_sub_chat_messages.sql",
           "0112_resume_intent_continuation.sql",
-          "0113_tasks_project_status_completed_idx.sql"
+          "0113_tasks_project_status_completed_idx.sql",
+          "0114_flow_admission_run_first.sql"
         ]
       },
       {

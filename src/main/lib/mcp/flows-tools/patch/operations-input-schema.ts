@@ -88,7 +88,7 @@ export const PATCH_OPERATIONS_INPUT_SCHEMA = {
       settings: {
         type: 'object',
         description:
-          'Flow-level settings for update_settings op. Supports: defaultModel (string), defaultProjectId (UUID string), briefing (string, max 10000 chars — shared PRD/spec delivered once per session as a system prompt to every agent in the flow; do not reference it in instructions; set to "" to clear), pauseOnFailure (boolean — when true, flow pauses instead of terminating on node failure, allowing retry or skip from run history), maxBatchConcurrency (number 1–20 — per-stage concurrent BSR ceiling; defaults to the built-in dispatch ceiling of 5 and can only cap below that ceiling), batchTriggerSchema (array — declare expected {{trigger.*}} variables for manual_trigger batch flows so they appear as typed chips in the editor; each item: { key: string (valid JS identifier, max 64 chars), type: "string"|"number"|"boolean"|"object"|"array", description?: string, example?: string }; max 100 entries; merging keys from triggerContext at run time is best-effort, non-blocking, and only for supported trigger types — not guaranteed for every key).',
+          'Flow-level settings for update_settings op. Supports: defaultModel (string), defaultProjectId (UUID string), briefing (string, max 10000 chars — shared PRD/spec delivered once per session as a system prompt to every agent in the flow; do not reference it in instructions; set to "" to clear), pauseOnFailure (boolean — when true, flow pauses instead of terminating on node failure, allowing retry or skip from run history), runFirst (boolean — new runs start ahead of other waiting new runs; set it only when the user explicitly asks), maxBatchConcurrency (number 1–20 — per-stage concurrent BSR ceiling; defaults to the built-in dispatch ceiling of 5 and can only cap below that ceiling), batchTriggerSchema (array — declare expected {{trigger.*}} variables for manual_trigger batch flows so they appear as typed chips in the editor; each item: { key: string (valid JS identifier, max 64 chars), type: "string"|"number"|"boolean"|"object"|"array", description?: string, example?: string }; max 100 entries; merging keys from triggerContext at run time is best-effort, non-blocking, and only for supported trigger types — not guaranteed for every key).',
         properties: {
           defaultModel: { type: 'string' },
           defaultProjectId: { type: 'string' },
@@ -96,6 +96,11 @@ export const PATCH_OPERATIONS_INPUT_SCHEMA = {
             type: 'string',
             description:
               'Shared context (PRD, spec, checklist) delivered once per flow session as a system prompt to every agent in the flow — never repeated in each agent\'s message, and not referenced in instructions. Rendered against {{trigger.*}} only. Max 10,000 chars. Set to "" to clear.',
+          },
+          runFirst: {
+            type: 'boolean',
+            description:
+              'When true, new runs of this flow start ahead of other waiting new runs while the machine-wide Flow limit is full; resuming runs still go first. Leave unset unless the user explicitly asks for this flow to run ahead of other waiting runs.',
           },
           pauseOnFailure: {
             type: 'boolean',

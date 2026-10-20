@@ -19,6 +19,8 @@ export function flowAdmissionQueueProcedures() {
         is_batch_member: row.batchId !== null,
         priority_class: row.priorityClass,
         project_name: row.projectName,
+        requested_at: row.requestedAt,
+        run_first: row.runFirst,
         ticket: row.ticket,
         trigger_context: row.triggerContext,
       }));

@@ -413,11 +413,11 @@ Changes to the limit toggle and maximum stay in the settings panel until you cho
 
 When every slot is occupied, another Flow is accepted as **Queued** and starts automatically when capacity becomes available. Lowering the limit never interrupts active work; Frink drains down to the new maximum. Paused runs and runs waiting for approval or a question continue to hold their slot in this release. A queued run does not satisfy a DAG dependency—the successor remains pending until every predecessor actually completes.
 
-Open **Work Queue** to see waiting runs under **Queued to run**. Resumptions always stay ahead of fresh starts. Within either group, drag a row or use its keyboard-accessible **Move up** and **Move down** controls to change which run is admitted next. Reordering queued work never interrupts an active run.
+Open **Work Queue** to see waiting runs under **Queued to run**, in the order they will start: **Resuming** first, then **Starting first** (new runs of flows set to [run first](#runfirst)), then **Starting**. Within each group, drag a row or use its keyboard-accessible **Move up** and **Move down** controls to change which run is admitted next. While anything is starting first, the **Starting** group shows when its oldest run started waiting. Reordering queued work never interrupts an active run.
 
 To hold everything that is waiting, choose **Pause queue** in the Work Queue header. While the queue is paused, no queued run is admitted on this machine, resumptions included; each one stays in **Queued to run**, marked *On hold*, and you can still reorder or remove it. Runs that are already active keep going. The pause survives restarting Frink. A banner at the top of the Work Queue shows the queue is paused and holds the **Resume queue** button, which starts admitting queued runs again in their current order.
 
-Each row also has a **Remove from queue** control, which takes that work out of the queue rather than stopping anything already underway — if the run was admitted between the panel refreshing and your confirming, Frink reports that it already started and leaves it running. Removing a queued **Starting** row cancels a run that never began; its trigger details cannot be replayed, so re-run the flow to try again, and note that a removed start cannot currently be re-triggered under the same idempotency key. Removing a queued **Resuming** row leaves the finished run exactly as it is, back in **Attention** for a later retry. If the removed run is one member of a batch stage, it counts as a failed member, which can fail that stage and cancel the stages waiting on it.
+Each row also has a **Remove from queue** control, which takes that work out of the queue rather than stopping anything already underway — if the run was admitted between the panel refreshing and your confirming, Frink reports that it already started and leaves it running. Removing a queued **Starting** or **Starting first** row cancels a run that never began; its trigger details cannot be replayed, so re-run the flow to try again, and note that a removed start cannot currently be re-triggered under the same idempotency key. Removing a queued **Resuming** row leaves the finished run exactly as it is, back in **Attention** for a later retry. If the removed run is one member of a batch stage, it counts as a failed member, which can fail that stage and cancel the stages waiting on it.
 
 This outer limit is separate from a Flow's `maxBatchConcurrency`, fan-out limits, and node dispatch behavior. Those controls can further restrict a batch, but cannot raise the machine-wide limit.
 
@@ -570,6 +570,21 @@ frink_flows_patch({
 ```
 
 **Use case:** Running multiple flows in parallel and you want each batch to submit fewer runs at once so others aren't starved.
+
+### runFirst
+
+When **on**, every new run of this flow starts ahead of other waiting new runs while your machine is running as many flows as it allows. Resuming runs still go first, and nothing already running is stopped. It applies to runs started after you save the flow; runs already waiting keep their place. Useful for scheduled flows, such as a daily digest, that should not wait behind a long backlog.
+
+**Where to enable:** Flow Editor → open **Settings** (toolbar) → toggle **Run this flow first**.
+
+You can also set it via MCP:
+
+```
+frink_flows_patch({
+  flowId: "<id>",
+  operations: [{ op: "update_settings", settings: { runFirst: true } }]
+})
+```
 
 ### pauseOnFailure
 
