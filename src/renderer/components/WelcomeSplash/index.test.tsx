@@ -60,14 +60,16 @@ describe('WelcomeSplash — mark', () => {
 });
 
 describe('WelcomeSplash — copy', () => {
-  it('says what Frink is and which accounts it runs on', () => {
+  it('says what Frink is and that it runs with the tool you already use', () => {
     stubReducedMotion(true);
     render(<WelcomeSplash />);
     expect(screen.getByRole('heading', { level: 1, name: HEADLINE })).toBeInTheDocument();
     expect(
       screen.getByText('Run AI agents side by side, and workflows that start on their own.'),
     ).toBeInTheDocument();
-    expect(screen.getByText(/your own Claude or OpenAI account/)).toBeInTheDocument();
+    expect(
+      screen.getByText('Runs on your computer, with the AI coding tool you already use.'),
+    ).toBeInTheDocument();
   });
 });
 
