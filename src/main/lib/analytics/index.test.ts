@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,10 +14,13 @@ const message = {
 };
 const flow = { id: 'flow-1', triggerType: 'schedule', createdBy: 'ui' } as const;
 const flowRun = { flowId: 'flow-1', outcome: 'completed', stepCount: 3, batchSize: 1 } as const;
+const HOUR = 60 * 60 * 1000;
 let userData: string;
+let appEvents: EventEmitter;
 
 const installIdFile = () => join(userData, '.install_id');
 const sentEvents = () => capture.mock.calls.map(([sent]) => sent.event);
+const sentTriggers = () => capture.mock.calls.map(([sent]) => sent.properties.trigger);
 const sentIds = () => [...new Set(capture.mock.calls.map(([sent]) => sent.distinctId))];
 
 /** Announces a finished chat reply on the same module copy the launched analytics listens to. */
@@ -25,9 +29,23 @@ async function finishReply(subChatId: string) {
   completions.publishSessionCompletion({ chatId: 'chat-1', subChatId });
 }
 
+/** Leaves every Frink window unfocused for the given hours, then focuses one again. */
+function refocusAfter(hours: number) {
+  appEvents.emit('browser-window-blur');
+  vi.setSystemTime(Date.now() + hours * HOUR);
+  appEvents.emit('browser-window-focus');
+}
+
+/** Closes every window, then opens one again, as a Dock click on macOS does. */
+function reopenWindow() {
+  appEvents.emit('window-all-closed');
+  appEvents.emit('browser-window-created');
+}
+
 /** Loads a fresh copy of the module, as a new app launch would, in an official build by default. */
 async function launch(overrides: Partial<AnalyticsHost> = {}) {
   vi.resetModules();
+  appEvents = new EventEmitter();
   const analytics = await import('.');
   analytics.initAnalytics({
     isPackaged: true,
@@ -36,18 +54,21 @@ async function launch(overrides: Partial<AnalyticsHost> = {}) {
     key: 'phc_test',
     disableUsageAnalytics: undefined,
     createClient: () => ({ capture, shutdown: async () => {} }),
+    appEvents,
     ...overrides,
   });
   return analytics;
 }
 
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
   userData = mkdtempSync(join(tmpdir(), 'frink-analytics-'));
 });
 
 afterEach(() => {
   rmSync(userData, { recursive: true, force: true });
   capture.mockClear();
+  vi.useRealTimers();
 });
 
 describe('main-process analytics', () => {
@@ -55,6 +76,8 @@ describe('main-process analytics', () => {
     const analytics = await launch();
 
     analytics.trackMessageSent(message);
+    reopenWindow();
+    refocusAfter(5);
     await analytics.shutdown();
 
     expect(capture).not.toHaveBeenCalled();
@@ -69,6 +92,8 @@ describe('main-process analytics', () => {
     await finishReply('chat-1');
     analytics.trackFlowCreated(flow);
     analytics.trackFlowRunCompleted(flowRun);
+    reopenWindow();
+    refocusAfter(5);
     await analytics.shutdown();
 
     expect(capture).not.toHaveBeenCalled();
@@ -82,6 +107,7 @@ describe('main-process analytics', () => {
     analytics.setOptOut(false);
 
     expect(sentEvents()).toEqual(['desktop_opened', 'first_launch']);
+    expect(sentTriggers()[0]).toBe('launch');
   });
 
   it('reports the app open when a user opts back in', async () => {
@@ -117,6 +143,57 @@ describe('main-process analytics', () => {
       mode: 'agent',
       starts_chat: false,
     });
+  });
+
+  it('counts a Dock reopen and a return after hours away as app opens', async () => {
+    const analytics = await launch();
+    analytics.setOptOut(false);
+    capture.mockClear();
+
+    reopenWindow();
+    refocusAfter(4);
+
+    expect(sentEvents()).toEqual(['desktop_opened', 'desktop_opened']);
+    expect(sentTriggers()).toEqual(['window_reopened', 'returned_after_idle']);
+  });
+
+  it('counts no return for the first focus, a short blur or a second return within hours', async () => {
+    const analytics = await launch();
+    analytics.setOptOut(false);
+    capture.mockClear();
+
+    appEvents.emit('browser-window-focus');
+    refocusAfter(3.9);
+    refocusAfter(4);
+    appEvents.emit('browser-window-focus');
+    refocusAfter(3);
+
+    expect(sentTriggers()).toEqual(['returned_after_idle']);
+  });
+
+  it('counts a Dock reopen after hours away once, as a reopen', async () => {
+    const analytics = await launch();
+    analytics.setOptOut(false);
+    capture.mockClear();
+
+    appEvents.emit('browser-window-blur');
+    vi.setSystemTime(Date.now() + 5 * HOUR);
+    reopenWindow();
+    appEvents.emit('browser-window-focus');
+
+    expect(sentTriggers()).toEqual(['window_reopened']);
+  });
+
+  it('counts no reopen for a window opened while another is open', async () => {
+    const analytics = await launch();
+    analytics.setOptOut(false);
+    capture.mockClear();
+
+    appEvents.emit('browser-window-created');
+    reopenWindow();
+    appEvents.emit('browser-window-created');
+
+    expect(sentTriggers()).toEqual(['window_reopened']);
   });
 
   it('counts the message that starts a chat, later messages and each finished reply', async () => {
@@ -158,6 +235,8 @@ describe('main-process analytics', () => {
     analytics.trackFlowRunCompleted(flowRun);
     analytics.trackMessageSent(message);
     await finishReply('chat-1');
+    reopenWindow();
+    refocusAfter(5);
 
     const sentWithEveryEvent = [
       'source',
@@ -181,6 +260,8 @@ describe('main-process analytics', () => {
       ['flow_run_completed', ['flow_id', 'outcome', 'step_count', 'batch_size']],
       ['message_sent', ['workspace_id', 'message_length', 'mode', 'starts_chat']],
       ['reply_finished', ['workspace_id']],
+      ['desktop_opened', ['trigger']],
+      ['desktop_opened', ['trigger']],
     ]);
   });
 

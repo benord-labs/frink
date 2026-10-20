@@ -4,6 +4,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import type { EventEmitter } from 'node:events';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { app } from 'electron';
@@ -12,6 +13,7 @@ import type { MessageSentEvent } from '../../../shared/types/analytics';
 import { subscribeSessionCompletions } from '../socket/streaming/live-stream/completion-events';
 
 const INSTALL_ID_FILE = '.install_id';
+const RETURN_AFTER_MS = 4 * 60 * 60 * 1000;
 
 type AnalyticsClient = Pick<PostHog, 'capture' | 'shutdown'>;
 
@@ -24,6 +26,8 @@ export type AnalyticsHost = {
   /** FRINK_DISABLE_USAGE_ANALYTICS as set for this launch */
   disableUsageAnalytics: string | undefined;
   createClient: (key: string) => AnalyticsClient;
+  /** Electron's app-wide window events */
+  appEvents: Pick<EventEmitter, 'on'>;
 };
 
 type Session = { host: AnalyticsHost; client: AnalyticsClient; savedInstallId: string };
@@ -35,6 +39,9 @@ let session: Session | null = null;
 // Nothing is sent until the renderer reports the saved preference
 let userOptedOut: boolean = true;
 let appOpenTracked: boolean = false;
+// When Frink last lost focus; null until then and after every focus or reopen
+let unfocusedSince: number | null = null;
+let allWindowsClosed: boolean = false;
 let install: Install | null = null;
 let installSaved: Promise<void> = Promise.resolve();
 
@@ -52,6 +59,7 @@ function electronHost(): AnalyticsHost {
         flushAt: 20,
         flushInterval: 30000,
       }),
+    appEvents: app,
   };
 }
 
@@ -133,6 +141,11 @@ export function initAnalytics(host: AnalyticsHost = electronHost()) {
     savedInstallId: readSavedInstallId(host.userDataDir),
   };
   subscribeSessionCompletions(({ subChatId }) => trackReplyFinished(subChatId));
+  host.appEvents
+    .on('window-all-closed', onAllWindowsClosed)
+    .on('browser-window-created', onWindowCreated)
+    .on('browser-window-blur', onWindowBlurred)
+    .on('browser-window-focus', onWindowFocused);
 }
 
 /**
@@ -172,6 +185,7 @@ function trackAppOpened(active: Session) {
   const { firstLaunch } = getInstall(active);
 
   capture('desktop_opened', {
+    trigger: 'launch',
     first_launch: firstLaunch,
   });
 
@@ -179,6 +193,31 @@ function trackAppOpened(active: Session) {
     // also fire a separate first_launch event for funnel analysis
     capture('first_launch');
   }
+}
+
+/** On macOS closing every window keeps Frink running, so a new window after that is a reopen */
+function onAllWindowsClosed() {
+  allWindowsClosed = true;
+}
+
+function onWindowCreated() {
+  if (!allWindowsClosed) return;
+  allWindowsClosed = false;
+  // The reopened window's first focus is part of this open, not a return
+  unfocusedSince = null;
+  capture('desktop_opened', { trigger: 'window_reopened' });
+}
+
+function onWindowBlurred() {
+  unfocusedSince = Date.now();
+}
+
+/** Counts focus that comes back after hours with no Frink window focused */
+function onWindowFocused() {
+  if (unfocusedSince !== null && Date.now() - unfocusedSince >= RETURN_AFTER_MS) {
+    capture('desktop_opened', { trigger: 'returned_after_idle' });
+  }
+  unfocusedSince = null;
 }
 
 /** Track a message sent: the one a chat is created with from `chats.create`, the rest from the renderer */

@@ -10,7 +10,7 @@ These go to PostHog and answer questions like "how many installs opened Frink th
 
 | Event | When | What it carries |
 | --- | --- | --- |
-| `desktop_opened` | Frink starts | Whether this is the install's first launch |
+| `desktop_opened` | Frink starts, you reopen its window, or you come back to it after hours away | How it was opened: `launch` (Frink started), `window_reopened` (you clicked Frink in the Dock after closing its window) or `returned_after_idle` (you came back after 4 hours or more without Frink in front). A start also says whether this is the install's first launch |
 | `first_launch` | The first launch only | Nothing extra |
 | `project_opened` | You add or open a project | The project's local id, and whether it has a git remote (yes or no) |
 | `workspace_created` | A chat is created in a project | The chat's and project's local ids, and whether it uses a worktree |
@@ -20,6 +20,8 @@ These go to PostHog and answer questions like "how many installs opened Frink th
 | `pr_created` | A chat's reply links a new GitHub pull request | The chat's local id and the pull request number |
 | `flow_created` | You first save a new Flow, an agent saves one for you, or you copy one | The Flow's local id, how it starts (manual, schedule, webhook, post-task, or none yet), and whether you, an agent or a copy made it |
 | `flow_run_completed` | A Flow run, or a whole batch, finishes | The Flow's local id, how it ended (completed, failed or cancelled), how many steps the Flow has, and how many runs the batch held (1 for a single run) |
+
+A return after hours away is counted at most once every 4 hours. Reopening the window from the Dock only happens on a Mac: on Windows and Linux, closing the last window quits Frink, so opening it again counts as a start.
 
 A batch counts as one `flow_run_completed`, not one per item; a cancelled batch is reported as failed. Running the same run again (Rerun, Carry on or Retry) is counted once while Frink stays open. Runs that end while Frink is starting up, before your preference has loaded, are not counted, so Flow numbers are a minimum.
 
