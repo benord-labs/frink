@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { compareVersionQuad, parseVersionQuad } from '../../auto-updater';
+import { CLASSIFIER_FALLBACK_VERIFIED_CLI } from '../../socket/execution/claude-session/session-callbacks';
 import { claudeVersionSupportsUltra, claudeVersionSupportsXhigh } from '../bundled-claude-version';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../..');
@@ -68,5 +69,11 @@ describe('pinned Claude CLI', () => {
     expect(claudeVersionSupportsXhigh(PINNED_CLI)).toBe(true);
     expect(claudeVersionSupportsUltra(PINNED_CLI)).toBe(true);
     expect(meetsCatalogFloor(PINNED_CLI)).toBe(true);
+  });
+
+  it('is the CLI whose Auto review give-up wording Frink matches', () => {
+    // On a bump, re-run a classifier denial-limit probe, check the ask's reason still carries the
+    // matched wording, then move the constant.
+    expect(PINNED_CLI).toBe(CLASSIFIER_FALLBACK_VERIFIED_CLI);
   });
 });

@@ -9,6 +9,7 @@ import type {
 } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, it, vi } from 'vitest';
 import type { HookRegistration } from '../../../../../shared/types/hook-inventory';
+import { REQUIRED_TOOLS } from '../../../../../shared/types/permissions';
 import type { ClaudeSession } from '../../claude-session-registry';
 import { createClaudeTurnContext } from '../../claude-turn-context';
 import type { validateToolPermission } from '../../streaming/pending-permission/validate-tool-permission';
@@ -76,11 +77,13 @@ function gate(hooks: HookRegistration[] | undefined, rules: () => Verdict) {
     validateToolPermission: validate,
     abortSources: new Map<string, string>(),
   };
-  const run = buildClaudeSessionCallbacks(scope, session).hooks.PreToolUse[0].hooks[0];
+  const callbacks = buildClaudeSessionCallbacks(scope, session);
+  const run = callbacks.hooks.PreToolUse[0].hooks[0];
   return {
     turn,
     validate,
     run: (input: PreToolUseHookInput, during = signal) => run(input, 'tool-1', { signal: during }),
+    canUseTool: callbacks.canUseTool,
   };
 }
 
@@ -208,5 +211,164 @@ describe("the user's PreToolUse hooks inside Frink's gate", () => {
       permissionDecisionReason: `${ASKED} Its reason: check this`,
     });
     expect(validate).not.toHaveBeenCalled();
+  });
+});
+
+// What the bundled CLI sends once Auto's classifier stops classifying after repeated blocks.
+const GAVE_UP_IN_A_ROW =
+  '3 consecutive actions were blocked. Please review the transcript before continuing.\n\nLatest blocked action: The server-side auto mode classifier judged this action dangerous (it gave no explanation)';
+const GAVE_UP_THIS_SESSION =
+  '20 actions were blocked this session. Please review the transcript before continuing.';
+const USER_DENIED: Verdict = { allowed: false, message: 'User denied permission' };
+const asked = (decisionReason?: string) => ({
+  signal,
+  toolUseID: 'tool-1',
+  requestId: 'request-1',
+  decisionReason,
+});
+
+/** An Auto turn whose rules leave the call to Auto review, and whose card the user refuses. */
+function autoGate({ flow = false, rules }: { flow?: boolean; rules?: () => Verdict } = {}) {
+  const auto = gate(undefined, rules ?? (() => USER_DENIED));
+  auto.turn.autoReviewTools = true;
+  auto.turn.execution.isFlowTurn = flow;
+  if (!rules) {
+    auto.validate.mockImplementation(async (...args) =>
+      args[8] ? { allowed: null } : USER_DENIED,
+    );
+  }
+  return auto;
+}
+
+describe('a call Claude Auto review gave up on', () => {
+  it.each([
+    ['blocked in a row', GAVE_UP_IN_A_ROW],
+    ['blocked across the session', GAVE_UP_THIS_SESSION],
+  ])('goes to the permission card, never a blanket allow (%s)', async (_, reason) => {
+    const { canUseTool, validate } = autoGate();
+    expect(await canUseTool('Bash', { command: 'ls' }, asked(reason))).toEqual({
+      behavior: 'deny',
+      message: 'User denied permission',
+    });
+    expect(validate).toHaveBeenCalledTimes(1);
+    expect(validate.mock.calls[0].slice(7, 10)).toEqual([false, false, signal]);
+  });
+
+  it('goes to the card for an MCP call too, instead of allowing the undecided residual', async () => {
+    const { canUseTool, validate } = autoGate();
+    const call = await canUseTool('mcp__shortcut__stories-update', {}, asked(GAVE_UP_IN_A_ROW));
+    expect(call).toEqual({ behavior: 'deny', message: 'User denied permission' });
+    expect(validate.mock.calls[0][8]).toBe(false);
+  });
+
+  it("runs a call the user's own rules already allow, with no card", async () => {
+    const { canUseTool } = autoGate({ rules: allowRule });
+    expect(await canUseTool('Bash', { command: 'ls' }, asked(GAVE_UP_IN_A_ROW))).toEqual({
+      behavior: 'allow',
+      updatedInput: { command: 'ls' },
+    });
+  });
+
+  it('is refused on a flow turn, saying how to park, without opening a card', async () => {
+    const { canUseTool, validate } = autoGate({ flow: true });
+    const call = await canUseTool('Bash', { command: 'ls' }, asked(GAVE_UP_IN_A_ROW));
+    expect(call).toMatchObject({ behavior: 'deny' });
+    expect(call?.behavior === 'deny' && call.message).toContain('frink_task_signal');
+    expect(validate).not.toHaveBeenCalled();
+  });
+
+  it("keeps Frink's other checks after the user approves it on the card", async () => {
+    const { canUseTool, validate } = autoGate({ rules: allowRule });
+    const call = await canUseTool('mcp__shortcut__stories-update', {}, asked(GAVE_UP_IN_A_ROW));
+    expect(call).toEqual({ behavior: 'allow', updatedInput: {} });
+    // The card first, then the MCP rule re-check every call gets, rather than an outright allow.
+    expect(validate.mock.calls.map((args) => args[8])).toEqual([false, true]);
+  });
+
+  it('never refuses frink_task_signal, the way out its own refusal points the agent to', async () => {
+    const { canUseTool, validate } = autoGate({ flow: true });
+    const signalCall = { state: 'awaiting_input', summary: 'Approve this?' };
+    const call = await canUseTool(
+      'mcp__frink_dynamic_chat__frink_task_signal',
+      signalCall,
+      asked(GAVE_UP_IN_A_ROW),
+    );
+    expect(call).toEqual({ behavior: 'allow', updatedInput: signalCall });
+    expect(validate.mock.calls.map((args) => args[8])).toEqual([true]);
+  });
+
+  it.each([...REQUIRED_TOOLS])(
+    'never refuses %s, the agent machinery a plan or Flow step needs to finish',
+    async (tool) => {
+      const { canUseTool, validate, turn } = autoGate({ flow: true });
+      turn.planAutoReview = true;
+      expect(await canUseTool(tool, {}, asked(GAVE_UP_IN_A_ROW))).toEqual({
+        behavior: 'allow',
+        updatedInput: {},
+      });
+      expect(validate).not.toHaveBeenCalled();
+    },
+  );
+
+  it('is refused without a card while an auto-reviewed plan is being drafted', async () => {
+    const { canUseTool, validate, turn } = autoGate();
+    turn.planAutoReview = true;
+    const call = await canUseTool('Bash', { command: 'ls' }, asked(GAVE_UP_IN_A_ROW));
+    expect(call).toMatchObject({ behavior: 'deny' });
+    expect(validate).not.toHaveBeenCalled();
+  });
+
+  it('leaves any other call Auto review hands back allowed, as before', async () => {
+    const { canUseTool, validate } = autoGate();
+    expect(await canUseTool('Bash', { command: 'ls' }, asked('Bash wants to run ls'))).toEqual({
+      behavior: 'allow',
+      updatedInput: { command: 'ls' },
+    });
+    expect(validate).not.toHaveBeenCalled();
+  });
+
+  it('changes nothing on a turn without Auto', async () => {
+    const { canUseTool, validate, turn } = autoGate();
+    turn.autoReviewTools = false;
+    expect(await canUseTool('Bash', { command: 'ls' }, asked(GAVE_UP_IN_A_ROW))).toEqual({
+      behavior: 'allow',
+      updatedInput: { command: 'ls' },
+    });
+    expect(validate).not.toHaveBeenCalled();
+  });
+});
+
+describe("an MCP call reaching Claude's permission callback", () => {
+  const mcpCall = (rules: () => Verdict, tool = 'mcp__shortcut__stories-update') => {
+    const { canUseTool, validate, turn } = gate(undefined, rules);
+    return { validate, turn, ask: () => canUseTool(tool, {}, asked()) };
+  };
+
+  it('lets frink_register_node through without checking any rule', async () => {
+    const { ask, validate } = mcpCall(allowRule, 'mcp__frink_dynamic_chat__frink_register_node');
+    expect(await ask()).toEqual({ behavior: 'allow', updatedInput: {} });
+    expect(validate).not.toHaveBeenCalled();
+  });
+
+  it("re-checks the rules without a card, and follows a rule's answer", async () => {
+    const allows = mcpCall(allowRule);
+    expect(await allows.ask()).toEqual({ behavior: 'allow', updatedInput: {} });
+    expect(allows.validate.mock.calls[0][8]).toBe(true);
+    expect(await mcpCall(() => USER_DENIED).ask()).toEqual({
+      behavior: 'deny',
+      message: 'User denied permission',
+    });
+  });
+
+  it('allows a call no rule decides, except while an auto-reviewed plan is being drafted', async () => {
+    const undecided = (): Verdict => ({ allowed: null });
+    expect(await mcpCall(undecided).ask()).toEqual({ behavior: 'allow', updatedInput: {} });
+    const planning = mcpCall(undecided);
+    planning.turn.planAutoReview = true;
+    planning.turn.autoReviewTools = true;
+    expect(await planning.ask()).toEqual({
+      behavior: 'deny',
+      message: 'Provider review was not available',
+    });
   });
 });

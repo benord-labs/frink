@@ -1,8 +1,10 @@
 import type {
   CanUseTool,
+  PermissionResult,
   PreToolUseHookInput,
   UserPromptSubmitHookInput,
 } from '@anthropic-ai/claude-agent-sdk';
+import { REQUIRED_TOOLS } from '../../../../../shared/types/permissions';
 import { isClaudePermissionGatedTool, resolveToolPermissionPath } from '../../../permissions';
 import { createSubagentAllowlistHook } from '../../../permissions/subagent-allowlist-hook';
 import {
@@ -11,6 +13,7 @@ import {
   runPreToolUseHooks,
 } from '../../../provider/hooks/pre-tool-use';
 import { createTaskStopHook, type TaskStopHook } from '../../../task-stop-hook';
+import { isFrinkTaskSignalToolName } from '../../../trpc/routers/claude-task-signal-tool-name';
 import { turnOwesTerminalSignal } from '../../../trpc/routers/frink-task-signal';
 import {
   hasLatestTaskSignalFor,
@@ -63,6 +66,29 @@ type ToolVerdict = Awaited<ReturnType<typeof validateToolPermission>>;
 
 const NO_ACTIVE_TURN = 'No turn is active on this session; no tools may run.';
 const PLAN_SUBMITTED = 'Plan submitted — awaiting user approval; no tools may run.';
+const AUTO_REVIEW_GAVE_UP_WHILE_PLANNING =
+  "Claude's Auto review blocked several actions in a row, so this one needs a person, and this plan is being drafted with nobody set to approve tool calls. Carry on without it, or include it in the plan.";
+const AUTO_REVIEW_GAVE_UP_IN_FLOW =
+  "Claude's Auto review blocked several actions in a row, so this one needs a person, and this is an automated flow run where nobody may be watching. Either carry on without it, or park via frink_task_signal (state: awaiting_input) asking the user to approve it.";
+
+/** The CLI version whose wording below was checked: Auto's classifier gives up after repeated
+ * blocks and asks the host instead, saying only this in the ask's free-text reason. */
+export const CLASSIFIER_FALLBACK_VERIFIED_CLI = '2.1.301';
+const CLASSIFIER_FALLBACK_WORDING = [
+  'actions were blocked',
+  'Please review the transcript before continuing',
+];
+
+/** Never agent machinery a plan or flow step needs to finish, nor Frink's signal tool: the
+ * refusal's way out is parking through it. */
+function isClassifierFallbackAsk(toolName: string, decisionReason: string | undefined): boolean {
+  return (
+    decisionReason !== undefined &&
+    !REQUIRED_TOOLS.has(toolName) &&
+    !isFrinkTaskSignalToolName(toolName) &&
+    CLASSIFIER_FALLBACK_WORDING.every((part) => decisionReason.includes(part))
+  );
+}
 
 /** A session's SDK callbacks. Every per-turn read goes through the turn attached to the session
  * they were built for; with no turn attached, tools are denied and Stop allows. */
@@ -243,15 +269,26 @@ function createClaudeStopHook(
   return hook;
 }
 
-/** Plan-mode denial, task-signal persistence, AskUserQuestion, and the MCP rule re-check.
+/** Plan-mode denial, Auto review giving up, task-signal persistence, AskUserQuestion, and the MCP
+ * rule re-check.
  * Sub-agent allowlisting lives in the PreToolUse backstop: only a hook sees the calling agent. */
 function createCanUseTool(scope: ClaudeSessionScope, session: ClaudeSessionRef): CanUseTool {
-  const { chatId, subChatId, permissionProjectPath } = scope;
+  const { chatId, subChatId } = scope;
   return async (toolName, toolInput, options) => {
     const asking = session.current;
     if (!asking?.currentTurn) return { behavior: 'deny', message: NO_ACTIVE_TURN };
     const turn = asking.currentTurn;
     if (turn.planSubmissionHalt()) return { behavior: 'deny', message: PLAN_SUBMITTED };
+    if (turn.autoReviewTools && isClassifierFallbackAsk(toolName, options.decisionReason)) {
+      const refusal = await refuseUnlessPersonApproves(
+        scope,
+        turn,
+        toolName,
+        toolInput,
+        options.signal,
+      );
+      if (refusal) return refusal;
+    }
 
     const { execution } = turn;
     if (execution.taskSignalReady && execution.signalTaskId && toolName.startsWith('mcp__')) {
@@ -288,33 +325,7 @@ function createCanUseTool(scope: ClaudeSessionScope, session: ClaudeSessionRef):
       });
     }
 
-    // Registration is transport-only. Other MCP calls re-check v2 rules, never prompting: the
-    // PreToolUse hook owns the card, as only a hook's deny reason reaches the model (sc-1357).
-    if (toolName.startsWith('mcp__')) {
-      if (toolName === 'mcp__frink_dynamic_chat__frink_register_node') {
-        return { behavior: 'allow', updatedInput: toolInput };
-      }
-      const permResult = await scope.validateToolPermission(
-        toolName,
-        toolInput,
-        permissionProjectPath,
-        chatId,
-        subChatId,
-        undefined,
-        undefined,
-        execution.isFlowTurn,
-        true,
-      );
-      if (permResult.allowed === null) {
-        if (isPlanAutoDenyFloorActive(turn)) {
-          return { behavior: 'deny', message: 'Provider review was not available' };
-        }
-        return { behavior: 'allow', updatedInput: toolInput };
-      }
-      if (!permResult.allowed) return { behavior: 'deny', message: permResult.message };
-      // Fully resolved here: the plan-auto deny floor below is for the non-MCP ask bucket only.
-      return { behavior: 'allow', updatedInput: toolInput };
-    }
+    if (toolName.startsWith('mcp__')) return recheckMcpRules(scope, turn, toolName, toolInput);
 
     // Planning phase only: an abstained ask-bucket tool reaching here means the during-plan
     // reviewer is inactive, so it is denied rather than silently allowed.
@@ -325,7 +336,72 @@ function createCanUseTool(scope: ClaudeSessionScope, session: ClaudeSessionRef):
       toolName,
     );
     if (planDeny) return planDeny;
-    // Everything else is allowed: the PreToolUse hook already ran the permission checks.
+    // Everything else is allowed: the PreToolUse hook either decided it or left it to Auto review.
     return { behavior: 'allow', updatedInput: toolInput };
+  };
+}
+
+/** Registration is transport-only. Other MCP calls re-check v2 rules, never prompting: the
+ * PreToolUse hook owns the card, as only a hook's deny reason reaches the model. */
+async function recheckMcpRules(
+  scope: ClaudeSessionScope,
+  turn: ClaudeTurnContext,
+  toolName: string,
+  toolInput: Parameters<CanUseTool>[1],
+): Promise<PermissionResult> {
+  if (toolName === 'mcp__frink_dynamic_chat__frink_register_node') {
+    return { behavior: 'allow', updatedInput: toolInput };
+  }
+  const permResult = await scope.validateToolPermission(
+    toolName,
+    toolInput,
+    scope.permissionProjectPath,
+    scope.chatId,
+    scope.subChatId,
+    undefined,
+    undefined,
+    turn.execution.isFlowTurn,
+    true,
+  );
+  if (permResult.allowed === null) {
+    if (isPlanAutoDenyFloorActive(turn)) {
+      return { behavior: 'deny', message: 'Provider review was not available' };
+    }
+    return { behavior: 'allow', updatedInput: toolInput };
+  }
+  if (!permResult.allowed) return { behavior: 'deny', message: permResult.message };
+  // Fully resolved here: the plan-auto deny floor is for the non-MCP ask bucket only.
+  return { behavior: 'allow', updatedInput: toolInput };
+}
+
+/** A call Auto review gave up on needs a person: refused on a flow turn or while an auto-reviewed
+ * plan is drafted, else Frink's card. Null once approved, so the call meets Frink's other checks. */
+async function refuseUnlessPersonApproves(
+  scope: ClaudeSessionScope,
+  turn: ClaudeTurnContext,
+  toolName: string,
+  toolInput: Parameters<CanUseTool>[1],
+  signal: AbortSignal,
+): Promise<PermissionResult | null> {
+  if (turn.execution.isFlowTurn) return { behavior: 'deny', message: AUTO_REVIEW_GAVE_UP_IN_FLOW };
+  if (isPlanAutoDenyFloorActive(turn)) {
+    return { behavior: 'deny', message: AUTO_REVIEW_GAVE_UP_WHILE_PLANNING };
+  }
+  const verdict = await scope.validateToolPermission(
+    toolName,
+    toolInput,
+    scope.permissionProjectPath,
+    scope.chatId,
+    scope.subChatId,
+    `Tool: ${toolName}`,
+    resolveToolPermissionPath(toolName, toolInput, scope.projectPath, scope.permissionProjectPath),
+    false,
+    false,
+    signal,
+  );
+  if (verdict.allowed) return null;
+  return {
+    behavior: 'deny',
+    message: verdict.allowed === false ? verdict.message : 'Not approved',
   };
 }
