@@ -13,6 +13,8 @@ export type ShortcutActionId =
   | 'collapse-all-sidebar'
   | 'focus-sidebar'
   | 'toggle-archived'
+  | 'open-flows'
+  | 'open-work-queue'
   // Workspaces
   | 'new-workspace'
   | 'search-workspaces'

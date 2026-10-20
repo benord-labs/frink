@@ -9,6 +9,7 @@ import {
   flowsDashboardActiveAtom,
   flowsSelectedFlowIdAtom,
   focusAgentChatAtom,
+  openDestinationAtom,
   selectedAgentChatIdAtom,
 } from './agent-navigation-atoms';
 
@@ -335,5 +336,32 @@ describe('focusAgentChatAtom when Settings stands in for Flows', () => {
     expect(store.get(activeOverlayAtom)).toBeNull();
     store.set(agentsSettingsDialogOpenAtom, false);
     expect(store.get(activeOverlayAtom)).toBeNull();
+  });
+});
+
+describe('openDestinationAtom', () => {
+  it('replaces Settings and drops its return target', () => {
+    const store = createStore();
+    store.set(activeOverlayAtom, 'workqueue');
+    store.set(agentsSettingsDialogOpenAtom, true);
+
+    store.set(openDestinationAtom, 'flows');
+    expect(store.get(activeOverlayAtom)).toBe('flows');
+
+    store.set(agentsSettingsDialogOpenAtom, false);
+    expect(store.get(activeOverlayAtom)).toBe('flows');
+  });
+
+  it('never dismisses an open flow editor, even beneath Settings', () => {
+    const store = createStore();
+    store.set(activeOverlayAtom, 'flows');
+    store.set(flowsSelectedFlowIdAtom, 'flow-1');
+
+    store.set(openDestinationAtom, 'workqueue');
+    expect(store.get(flowEditorOpenAtom)).toBe(true);
+
+    store.set(agentsSettingsDialogOpenAtom, true);
+    store.set(openDestinationAtom, 'workqueue');
+    expect(store.get(activeOverlayAtom)).toBe('settings');
   });
 });

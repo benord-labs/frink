@@ -127,6 +127,11 @@ export const leaveOverlayStackForChatSurfaceAtom = atom(null, (get, set): boolea
   return true;
 });
 
+/** Open a full-page destination from anywhere, unless a flow editor would be dismissed. */
+export const openDestinationAtom = atom(null, (_get, set, destination: 'flows' | 'workqueue') => {
+  if (set(leaveOverlayStackForChatSurfaceAtom)) set(activeOverlayAtom, destination);
+});
+
 /**
  * Focus a user-requested chat without dismissing the Flows editor. Every other destination is a
  * transient stand-in for chat, so explicit chat focus exits it and consumes any Settings return

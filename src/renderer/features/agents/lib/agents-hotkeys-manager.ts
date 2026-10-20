@@ -4,9 +4,10 @@
  * Centralized keyboard shortcut handling
  */
 
+import { useSetAtom } from 'jotai';
 import * as React from 'react';
 import { useCallback, useMemo } from 'react';
-import type { CustomHotkeysConfig } from '../../../lib/atoms';
+import { type CustomHotkeysConfig, openDestinationAtom } from '../../../lib/atoms';
 import {
   ALL_SHORTCUT_ACTIONS,
   getResolvedHotkey,
@@ -69,6 +70,8 @@ const GLOBAL_HOTKEYS = new Set([
   'open-shortcuts',
   'toggle-sidebar',
   'open-settings',
+  'open-flows',
+  'open-work-queue',
   'toggle-chat-search',
   'undo-archive',
   'collapse-all-sidebar',
@@ -142,6 +145,7 @@ export function useAgentsHotkeys(
   options: UseAgentsHotkeysOptions = {},
 ) {
   const { enabled = true, preventDefault = true } = options;
+  const openDestination = useSetAtom(openDestinationAtom);
 
   const createActionContext = useCallback(
     (): AgentActionContext => ({
@@ -151,6 +155,7 @@ export function useAgentsHotkeys(
       setFilesSidebarOpen: config.setFilesSidebarOpen,
       setSettingsDialogOpen: config.setSettingsDialogOpen,
       setSettingsActiveTab: config.setSettingsActiveTab,
+      openDestination,
       setFileSearchDialogOpen: config.setFileSearchDialogOpen,
       activateFilesSidebarSearch: config.activateFilesSidebarSearch,
       activateActivePaneFileSearch: config.activateActivePaneFileSearch,
@@ -186,6 +191,7 @@ export function useAgentsHotkeys(
       config.setFilesSidebarOpen,
       config.setSettingsDialogOpen,
       config.setSettingsActiveTab,
+      openDestination,
       config.setFileSearchDialogOpen,
       config.activateFilesSidebarSearch,
       config.activateActivePaneFileSearch,

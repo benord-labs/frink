@@ -5,6 +5,7 @@
  */
 
 import { focusChatInput } from '../../../lib/focus-chat-input';
+import { DESTINATION_ACTIONS } from './destination-actions';
 import type {
   AgentActionContext,
   AgentActionDefinition,
@@ -520,7 +521,7 @@ export const AGENT_ACTIONS: Record<string, AgentActionDefinition> = {
   'toggle-files': toggleFilesAction,
   'file-search': fileSearchAction,
   'find-in-files': findInFilesAction,
-  ...Object.fromEntries(EVENT_ACTIONS.map((action) => [action.id, action])),
+  ...Object.fromEntries([...EVENT_ACTIONS, ...DESTINATION_ACTIONS].map((a) => [a.id, a])),
   'archive-agent': archiveAgentAction,
   'close-all-editor-files': closeAllEditorFilesAction,
   'toggle-editor-layout': toggleEditorLayoutAction,
