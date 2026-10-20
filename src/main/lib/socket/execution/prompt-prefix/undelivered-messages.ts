@@ -10,28 +10,30 @@ export function clearUndeliveredMessagesForTests(): void {
 }
 
 /** Notes a person's message as owed until the provider takes its prompt (`accepted`), and returns
- * the prompt with what earlier stopped turns still owe as transcript. `/compact` goes out bare. */
+ * the prompt with what earlier stopped turns still owe as transcript. `/compact` goes out bare.
+ * Owed messages are kept as typed, tokens and all, so their transcript can recap what was attached;
+ * `prompt` is the message as this turn sends it. */
 export function carryUndeliveredMessages(
   subChatId: string,
-  message: string,
+  { raw, prompt }: { raw: string; prompt: string },
   personAuthored: boolean,
 ) {
-  const isCommand = isCompactCommand(message);
+  const isCommand = isCompactCommand(raw);
   const owed = undeliveredBySubChat.get(subChatId) ?? [];
   // A retry re-sends the same text, which then arrives as the prompt itself.
-  const earlier = isCommand ? [] : owed.filter((sent) => sent !== message);
-  if (personAuthored && !isCommand) undeliveredBySubChat.set(subChatId, [...earlier, message]);
+  const earlier = isCommand ? [] : owed.filter((sent) => sent !== raw);
+  if (personAuthored && !isCommand) undeliveredBySubChat.set(subChatId, [...earlier, raw]);
   let taken = false;
   return {
     prompt: formatPromptWithHistory(
-      message,
-      earlier.map((content) => ({ role: 'user' as const, content })),
+      prompt,
+      earlier.map((content) => ({ role: 'user' as const, content, personAuthored: true as const })),
     ),
     // Once and by value: a later prompt hook, or a newer send's own message, must clear no more.
     accepted: () => {
       if (taken) return;
       taken = true;
-      const delivered = new Set([...earlier, message]);
+      const delivered = new Set([...earlier, raw]);
       const rest = (undeliveredBySubChat.get(subChatId) ?? []).filter(
         (sent) => !delivered.has(sent),
       );

@@ -209,6 +209,18 @@ describe('socketRouter.sendMessage sourceWebContentsId', () => {
     expect(sendMessageMock.mock.calls[0]?.[0]).toMatchObject({ dispatchTaskId: 'task-d1' });
   });
 
+  it('a history turn keeps its personAuthored flag through the input schema', async () => {
+    const caller = socketRouter.createCaller({ getWindow: () => null } satisfies Context);
+    const history = [
+      { role: 'user' as const, content: 'see @[file:local:a.ts]', personAuthored: true as const },
+      { role: 'user' as const, content: 'Flow step @[file:local:b.ts]' },
+    ];
+
+    await caller.sendMessage({ ...minimalSendMessageInput(), history });
+
+    expect(sendMessageMock.mock.calls[0]?.[0].history).toEqual(history);
+  });
+
   it('settings.ultra survives the input schema and reaches sendMessage', async () => {
     const caller = socketRouter.createCaller({ getWindow: () => null } satisfies Context);
 

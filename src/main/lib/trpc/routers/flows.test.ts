@@ -1238,20 +1238,6 @@ describe('flowsRouter (local)', () => {
     });
   });
 
-  describe('getBriefings', () => {
-    const projectId = '550e8400-e29b-41d4-a716-446655440099';
-
-    it('returns an empty array (cross-machine briefings deferred)', async () => {
-      const caller = flowsRouter.createCaller({ getWindow: () => null });
-      await expect(caller.getBriefings({ projectId })).resolves.toEqual([]);
-    });
-
-    it('returns an empty array when called with no input', async () => {
-      const caller = flowsRouter.createCaller({ getWindow: () => null });
-      await expect(caller.getBriefings()).resolves.toEqual([]);
-    });
-  });
-
   describe('createBatchPlanTemplate', () => {
     it('rejects when dependsOn references a stageNumber not present in the same stages array', async () => {
       const caller = flowsRouter.createCaller({ getWindow: () => null });

@@ -10,7 +10,6 @@ import {
 } from 'react';
 import { CMD_BLOCK_SERIALIZE_REGEX, encodeCommandBlock } from '@/lib/commands/command-block-format';
 import type { FileMentionOption } from '@/lib/mentions/agents-mentions-types';
-import { parseBriefingMentionLabel } from '@/lib/mentions/briefing-mention-from-id';
 import { mentionChipClass } from '@/lib/mentions/mention-chip-class';
 import { serializedMentionMatchEndIndex } from '@/lib/mentions/serialized-mention-scan-index';
 import {
@@ -283,10 +282,6 @@ function buildMentionsInto(
         .replace(/\b\w/g, (c) => c.toUpperCase())
         .trim();
       option = { id, label: displayName, path: toolPath, repository: '', type: 'tool' };
-    }
-    if (!option && id.startsWith(MENTION_PREFIXES.BRIEFING)) {
-      const label = parseBriefingMentionLabel(id) ?? 'Briefing';
-      option = { id, label, path: '', repository: '', type: 'briefing' };
     }
     if (option) {
       root.appendChild(createMentionNode(option));
@@ -574,10 +569,6 @@ export const AgentsMentionsEditor = memo(
           .replace(/\b\w/g, (c) => c.toUpperCase())
           .trim();
         return { id, label: displayName, path: toolPath, repository: '', type: 'tool' };
-      }
-      if (id.startsWith(MENTION_PREFIXES.BRIEFING)) {
-        const label = parseBriefingMentionLabel(id) ?? 'Briefing';
-        return { id, label, path: '', repository: '', type: 'briefing' };
       }
       return null;
     }, []);

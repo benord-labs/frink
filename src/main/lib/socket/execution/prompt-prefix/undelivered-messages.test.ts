@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { carryUndeliveredMessages, clearUndeliveredMessagesForTests } from './undelivered-messages';
 
 const send = (message: string, personAuthored = true, chat = 'sub-1') =>
-  carryUndeliveredMessages(chat, message, personAuthored);
+  carryUndeliveredMessages(chat, { raw: message, prompt: message }, personAuthored);
 
 describe('carryUndeliveredMessages', () => {
   beforeEach(() => clearUndeliveredMessagesForTests());
@@ -82,6 +82,30 @@ describe('carryUndeliveredMessages', () => {
     first.accepted();
 
     expect(send('next').prompt).toContain('Human: ok');
+  });
+
+  it('keeps an owed message as typed and carries its tokens as a recap', () => {
+    carryUndeliveredMessages(
+      'sub-1',
+      { raw: 'look at @[file:local:src/a.ts]', prompt: 'look at src/a.ts' },
+      true,
+    );
+    const next = carryUndeliveredMessages(
+      'sub-1',
+      { raw: 'and @[skill:deploy] it', prompt: 'and deploy it' },
+      true,
+    );
+
+    expect(next.prompt).toContain('Human: look at src/a.ts\n');
+    expect(next.prompt.endsWith("The user's latest message is:\nand deploy it")).toBe(true);
+    // A retry sends the raw text again, which still matches what is owed.
+    expect(
+      carryUndeliveredMessages(
+        'sub-1',
+        { raw: 'look at @[file:local:src/a.ts]', prompt: 'look at src/a.ts' },
+        true,
+      ).prompt,
+    ).not.toContain('Human: look at');
   });
 
   it('keeps chats apart', () => {

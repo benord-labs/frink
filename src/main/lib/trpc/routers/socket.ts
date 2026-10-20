@@ -143,6 +143,7 @@ export const socketRouter = router({
             z.object({
               role: z.enum(['user', 'assistant']),
               content: z.string(),
+              personAuthored: z.literal(true).optional(),
             }),
           )
           .optional(),

@@ -1,6 +1,15 @@
 /**
- * Agent execution settings and filesystem permission types shared by main, preload and renderer.
+ * Agent execution settings, replayed history and filesystem permission types shared by main,
+ * preload and renderer.
  */
+
+/** One earlier turn of a chat, replayed to a session that starts without it. `personAuthored` is
+ * set only when a person wrote the turn; a turn without it is replayed exactly as stored. */
+export type ConversationTurn = {
+  role: 'user' | 'assistant';
+  content: string;
+  personAuthored?: true;
+};
 
 // ============================================================================
 // Execution Settings (shared across socket client/executor)

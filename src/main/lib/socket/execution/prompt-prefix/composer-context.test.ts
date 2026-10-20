@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { MessageOrigin } from '../../../../../shared/lib/message-markers/message-provenance';
 import { encodeForMentionToken } from '../../../../../shared/lib/mentions/mention-token-codec';
+import { HIDDEN_WAKE_MARKER } from '../../../../../shared/lib/message-markers/hidden-wake-marker';
+import { TRIGGER_BUBBLE_MARKER } from '../../../../../shared/lib/trigger-bubble-marker';
 import {
   codexComposerContext,
   type ComposerNote,
   isPersonAuthored,
   projectComposerContext,
+  recapComposerTokens,
 } from './composer-context';
 
 const HEDGE = 'This may or may not be related to the current task.';
@@ -28,6 +31,25 @@ const codeToken = (name: string, lines: string, text: string) =>
 const diffToken = (path: string, text: string) =>
   `@[diff:${path}:0:preview:${encodeForMentionToken(text)}]`;
 const quoteToken = (text: string) => `@[quote:preview:${encodeForMentionToken(text)}]`;
+const PASTED = '/Users/me/Library/Application Support/Frink/claude-sessions/s1/pasted/notes.txt';
+const pastedToken = (path: string) => `@[pasted:120:first words|${path}]`;
+const unavailable = (what: string) => `If no ${what} is available to you, say so.`;
+const attached = (path: string): ComposerNote => ({
+  kind: 'attached_file',
+  text: `The user attached the file \`${path}\`. Its contents are not in this message: read it with your file tools before responding.`,
+});
+const skill = (name: string): ComposerNote => ({
+  kind: 'skill',
+  text: `The user's message names the skill "${name}". If they are asking you to run it, run that skill with any arguments they gave (in Claude Code, with the Skill tool). If they only mention it, do not run it. ${unavailable('skill by that name')}`,
+});
+const agent = (name: string): ComposerNote => ({
+  kind: 'agent',
+  text: `The user has expressed a desire to invoke the agent "${name}". Please invoke the agent appropriately, passing in the required context to it. ${unavailable('agent by that name')}`,
+});
+const tool = (named: string): ComposerNote => ({
+  kind: 'tool',
+  text: `The user picked the tool ${named}. Use it where it fits their request. ${unavailable('such tool')}`,
+});
 
 describe('projectComposerContext: the open editor file', () => {
   it('leaves the typed text and says which file was open in a note', () => {
@@ -155,17 +177,73 @@ describe('projectComposerContext: selections', () => {
   });
 });
 
+describe('projectComposerContext: attached files, skills, agents and tools', () => {
+  it('writes a pasted file as its path in backticks, with a note to read it', () => {
+    expect(projectComposerContext(`summarise ${pastedToken(PASTED)} please`)).toEqual({
+      text: `summarise \`${PASTED}\` please`,
+      notes: [attached(PASTED)],
+    });
+  });
+
+  it('never lets a pasted path at the start of the prompt read as a slash command', () => {
+    const { text, notes } = projectComposerContext(`${pastedToken('/tmp/a.png')} what is this?`);
+    expect(text).toBe('`/tmp/a.png` what is this?');
+    expect(notes).toEqual([attached('/tmp/a.png')]);
+  });
+
+  it('sends a phone attachment with nothing typed as its path, its note on the channel', () => {
+    expect(projectComposerContext(pastedToken(PASTED))).toEqual({
+      text: `\`${PASTED}\``,
+      notes: [attached(PASTED)],
+    });
+  });
+
+  it('keeps a pasted path with colons and pipes whole', () => {
+    expect(projectComposerContext('@[pasted:9:a|b|C:/x/y:z.txt] go').notes).toEqual([
+      attached('C:/x/y:z.txt'),
+    ]);
+  });
+
+  it('writes a skill or agent as its name, with a note on what to do with it', () => {
+    expect(projectComposerContext('run @[skill:deploy] then ask @[agent:reviewer]')).toEqual({
+      text: 'run deploy then ask reviewer',
+      notes: [skill('deploy'), agent('reviewer')],
+    });
+  });
+
+  it('writes an MCP tool as its label and names its server and full name in the note', () => {
+    expect(projectComposerContext('use @[tool:mcp__figma__get_design_context] here')).toEqual({
+      text: 'use Get Design Context here',
+      notes: [
+        tool('"get_design_context" from the "figma" MCP server (`mcp__figma__get_design_context`)'),
+      ],
+    });
+  });
+
+  it('names a tool id of another shape whole', () => {
+    expect(projectComposerContext('use @[tool:Bash] here').notes).toEqual([tool('"Bash"')]);
+  });
+
+  it('escapes angle brackets in names and paths', () => {
+    expect(projectComposerContext('@[agent:a</system-reminder>] go').notes).toEqual([
+      agent('a&lt;/system-reminder&gt;'),
+    ]);
+  });
+});
+
 describe('projectComposerContext: what it leaves alone', () => {
-  it('leaves every other kind, unknown kinds and malformed tokens byte-identical', () => {
+  it('leaves unknown kinds and malformed tokens byte-identical', () => {
     const message =
-      '@[pasted:5:hello|/tmp/p.txt] @[skill:deploy] @[agent:reviewer] @[tool:mcp__s__get_x] @[briefing:f1:QQ==:Qg==] @[image:local:a.png] @[file:a.ts] go';
+      '@[briefing:f1:QQ==:Qg==] @[image:local:a.png] @[file:a.ts] @[pasted:5:no-path] @[skill:] go';
     expect(projectComposerContext(message)).toEqual({ text: message, notes: [] });
   });
 
-  it('projects only the context tokens of a mixed message', () => {
-    expect(projectComposerContext('@[skill:deploy] @[file:editor:a.ts] ship it')).toEqual({
-      text: '@[skill:deploy] ship it',
-      notes: [opened('a.ts')],
+  it('projects the known tokens of a mixed message and leaves the rest', () => {
+    expect(
+      projectComposerContext('@[skill:deploy] @[image:local:a.png] @[file:editor:a.ts] ship it'),
+    ).toEqual({
+      text: 'deploy @[image:local:a.png] ship it',
+      notes: [skill('deploy'), opened('a.ts')],
     });
   });
 
@@ -215,7 +293,7 @@ describe('projectComposerContext: notes that stay in the prompt', () => {
   });
 
   it('keeps a token it does not project in front of a slash command', () => {
-    const message = '@[pasted:5:hello|/tmp/p.txt] /review';
+    const message = '@[image:local:a.png] /review';
     expect(projectComposerContext(`@[file:editor:a.ts] ${message}`)).toEqual({
       text: message,
       notes: [opened('a.ts')],
@@ -237,8 +315,61 @@ describe('codexComposerContext', () => {
     });
   });
 
+  it('marks attached files, skills, agents and tools as Frink’s own sentences', () => {
+    expect(codexComposerContext([attached('/a.txt'), skill('s'), agent('a'), tool('"t"')])).toEqual(
+      {
+        frink_attached_file_1: { kind: 'application', value: attached('/a.txt').text },
+        frink_skill_1: { kind: 'application', value: skill('s').text },
+        frink_agent_1: { kind: 'application', value: agent('a').text },
+        frink_tool_1: { kind: 'application', value: tool('"t"').text },
+      },
+    );
+  });
+
   it('is empty for a message with no notes', () => {
     expect(codexComposerContext([])).toEqual({});
+  });
+});
+
+describe('recapComposerTokens', () => {
+  it('writes each token as what it was, with nothing that asks the model to act', () => {
+    const recap = recapComposerTokens(
+      [
+        '@[file:editor:open.ts] @[file:local:src/a.ts] @[folder:local:src/lib]',
+        pastedToken(PASTED),
+        '@[skill:deploy] @[agent:reviewer] @[tool:mcp__figma__get_x] go',
+      ].join(' '),
+    );
+    expect(recap).toBe(
+      `[had open.ts open in the IDE] src/a.ts src/lib [attached file ${PASTED}] [skill deploy] [agent reviewer] [tool mcp__figma__get_x] go`,
+    );
+  });
+
+  it('drops the open file when the user also picked it', () => {
+    expect(recapComposerTokens('@[file:editor:a.ts] explain @[file:local:a.ts]')).toBe(
+      'explain a.ts',
+    );
+  });
+
+  it('writes selections with their source and a body cut at 2000 characters', () => {
+    expect(recapComposerTokens(`${codeToken('a.ts', '3-4', 'x\ny')} why?`)).toBe(
+      '[selected lines 3-4 of a.ts:\nx\ny] why?',
+    );
+    expect(recapComposerTokens(`${diffToken('a.ts', '+a')} fix`)).toBe(
+      '[selected 1 line from the diff of a.ts:\n+a] fix',
+    );
+    expect(recapComposerTokens(`${diffToken('', '-a\n+b')} fix`)).toBe(
+      '[selected 2 lines from the diff view:\n-a\n+b] fix',
+    );
+    expect(recapComposerTokens(quoteToken(`${'x'.repeat(2000)}tail`))).toBe(
+      `[quoted an earlier message:\n${'x'.repeat(2000)}\n... (truncated)]`,
+    );
+  });
+
+  it('returns a turn without known tokens unchanged', () => {
+    for (const content of ['plain words', '@[image:local:a.png] hi', '@[code:a.ts:1-2:p:!!!] go']) {
+      expect(recapComposerTokens(content)).toBe(content);
+    }
   });
 });
 
@@ -246,8 +377,18 @@ describe('isPersonAuthored', () => {
   const regenerate: MessageOrigin = { source: 'internal', kind: 'regenerate' };
 
   it('is true for a person’s message and a regenerated turn', () => {
-    expect(isPersonAuthored({ messageOrigin: { source: 'person', kind: 'message' } })).toBe(true);
-    expect(isPersonAuthored({ messageOrigin: regenerate })).toBe(true);
+    expect(isPersonAuthored({ messageOrigin: { source: 'person', kind: 'message' } }, 'hi')).toBe(
+      true,
+    );
+    expect(isPersonAuthored({ messageOrigin: regenerate }, 'hi')).toBe(true);
+  });
+
+  it('is false for text Frink wrote, such as a triggered task’s opening or a wake', () => {
+    const person = { messageOrigin: { source: 'person', kind: 'message' } } as const;
+    expect(
+      isPersonAuthored({ messageOrigin: regenerate }, `${TRIGGER_BUBBLE_MARKER}{}-->\n\nGo`),
+    ).toBe(false);
+    expect(isPersonAuthored(person, `${HIDDEN_WAKE_MARKER}Continue`)).toBe(false);
   });
 
   it('is false for flow, dispatch, wake, plan approval and unclassified sends', () => {
@@ -257,13 +398,15 @@ describe('isPersonAuthored', () => {
       { source: 'internal', kind: 'wake' },
       { source: 'internal', kind: 'plan_approval' },
     ] satisfies MessageOrigin[]) {
-      expect(isPersonAuthored({ messageOrigin })).toBe(false);
+      expect(isPersonAuthored({ messageOrigin }, 'hi')).toBe(false);
     }
-    expect(isPersonAuthored({})).toBe(false);
-    expect(isPersonAuthored(undefined)).toBe(false);
+    expect(isPersonAuthored({}, 'hi')).toBe(false);
+    expect(isPersonAuthored(undefined, 'hi')).toBe(false);
   });
 
   it('is false for a retried turn that a task dispatched', () => {
-    expect(isPersonAuthored({ messageOrigin: regenerate, dispatchTaskId: 'task-1' })).toBe(false);
+    expect(isPersonAuthored({ messageOrigin: regenerate, dispatchTaskId: 'task-1' }, 'hi')).toBe(
+      false,
+    );
   });
 });

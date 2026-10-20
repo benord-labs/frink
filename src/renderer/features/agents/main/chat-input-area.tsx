@@ -307,7 +307,6 @@ export const ChatInputArea = memo(function ChatInputArea({
   const [showingSkillsList, setShowingSkillsList] = useState(false);
   const [showingAgentsList, setShowingAgentsList] = useState(false);
   const [showingToolsList, setShowingToolsList] = useState(false);
-  const [showingBriefingsList, setShowingBriefingsList] = useState(false);
 
   // Slash command dropdown state
   const [showSlashDropdown, setShowSlashDropdown] = useState(false);
@@ -509,10 +508,6 @@ export const ChatInputArea = memo(function ChatInputArea({
           setShowingToolsList(true);
           return;
         }
-        if (mention.id === 'briefings') {
-          setShowingBriefingsList(true);
-          return;
-        }
       }
 
       // Otherwise: insert mention as normal
@@ -523,7 +518,6 @@ export const ChatInputArea = memo(function ChatInputArea({
       setShowingSkillsList(false);
       setShowingAgentsList(false);
       setShowingToolsList(false);
-      setShowingBriefingsList(false);
     },
     [editorRef],
   );
@@ -559,7 +553,6 @@ export const ChatInputArea = memo(function ChatInputArea({
     setShowingSkillsList(false);
     setShowingAgentsList(false);
     setShowingToolsList(false);
-    setShowingBriefingsList(false);
   }, []);
 
   const handleEditorShiftTab = useCallback(() => {
@@ -930,7 +923,6 @@ export const ChatInputArea = memo(function ChatInputArea({
           setShowingSkillsList(false);
           setShowingAgentsList(false);
           setShowingToolsList(false);
-          setShowingBriefingsList(false);
         }}
         onSelect={handleMentionSelect}
         searchText={mentionSearchText}
@@ -938,14 +930,12 @@ export const ChatInputArea = memo(function ChatInputArea({
         teamId={teamId}
         repository={repository}
         projectPath={projectPath}
-        projectId={projectId ?? undefined}
         changedFiles={changedFiles}
         // Subpage navigation state
         showingFilesList={showingFilesList}
         showingSkillsList={showingSkillsList}
         showingAgentsList={showingAgentsList}
         showingToolsList={showingToolsList}
-        showingBriefingsList={showingBriefingsList}
       />
 
       {/* Slash command dropdown */}
