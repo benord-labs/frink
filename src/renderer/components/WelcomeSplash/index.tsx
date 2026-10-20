@@ -5,7 +5,6 @@ import { memo, useEffect, useRef, useState } from 'react';
 import { usePrefersReducedMotion } from '@/hooks/use-prefers-reduced-motion';
 import { BUTTON_SHADOW } from '@/lib/button-shadow';
 import { cn } from '@/lib/utils';
-import { LAUNCH_FLAGS } from '../../../shared/launch-flags';
 import { Kbd } from '../ui/kbd';
 
 const STORAGE_KEY = 'frink:has-seen-welcome';
@@ -19,8 +18,6 @@ const MARK_PATHS = [
   'M350.3 166.97L244.64 229.85C237.67 234 233.44 241.34 233.46 249.24C233.59 291.18 233.7 333.12 233.84 375.04L149.69 426.42V219.37C149.69 204.69 157.5 191.03 170.37 183.19L350.3 73.59V166.97Z',
   'M350.3 199.41V285.79L260.18 340.79V263.8C260.18 257.46 263.57 251.57 269.15 248.22L350.3 199.41Z',
 ];
-
-const PROVIDER_NAMES = LAUNCH_FLAGS.codexAccounts ? 'Claude or OpenAI' : 'Claude';
 
 /** The Frink mark. Animated, it draws its outline once and fills in; otherwise it is solid. */
 function WelcomeMark({ animate }: { animate: boolean }) {
@@ -170,8 +167,8 @@ function WelcomeHero({ exiting, onDismiss }: { exiting: boolean; onDismiss: () =
         <h1 className="text-balance text-[2.75rem] font-medium leading-none tracking-tight">
           Welcome to Frink
         </h1>
-        <p className="mx-auto mt-4 max-w-md text-base leading-relaxed text-muted-foreground text-pretty">
-          Fine-tuned automations, for everyone.
+        <p className="mx-auto mt-4 max-w-md text-base leading-relaxed text-muted-foreground text-balance">
+          Run AI agents side by side, and workflows that start on their own.
         </p>
       </Rise>
       <Rise reduced={reducedMotion} delay={0.45} className="mt-9 flex flex-col items-center gap-4">
@@ -191,7 +188,7 @@ function WelcomeHero({ exiting, onDismiss }: { exiting: boolean; onDismiss: () =
         </p>
       </Rise>
       <p className="absolute inset-x-0 bottom-6 text-xs text-muted-foreground">
-        Runs on your machine, with your own {PROVIDER_NAMES} account.
+        Runs on your computer, with the AI coding tool you already use.
       </p>
     </div>
   );
