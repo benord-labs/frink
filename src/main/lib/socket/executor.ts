@@ -5,7 +5,6 @@
 import { createExecutionSenders } from './streaming/live-stream/execution-senders';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import path from 'node:path';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { eq } from 'drizzle-orm';
 import { app } from 'electron';
@@ -121,12 +120,12 @@ import { startAcpTurn } from './execution/acp-turn';
 import { startCopilotTurn } from './execution/copilot-turn';
 import { startCursorTurn } from './execution/cursor-turn';
 import { trackUserMessageDelivery } from './execution/claude-session/user-message-delivery';
-
 import {
   applyApprovedPlanContextToPrompt,
   formatPromptWithHistory,
   carryUndeliveredMessages,
   codexComposerContext,
+  forgetUndeliveredOnClear,
   isPersonAuthored,
   projectComposerContext,
   replaceCarriedWithHistory,
@@ -1319,6 +1318,7 @@ export async function handleRemoteExecute(
         // An aborted turn's session is already closing (bindTurnAbort); its late frames are dropped.
         if (abortController.signal.aborted) return;
         if (sdkMessage.type === 'result') claudeResultErrored = sdkMessage.is_error;
+        forgetUndeliveredOnClear(subChatId, fullPrompt, sdkMessage);
 
         // First live frame of a plan-auto turn: arm the during-plan reviewer (plan→default→plan flip)
         // before the model emits any tool. The query stays in 'plan' throughout — never 'auto'.

@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { carryUndeliveredMessages, clearUndeliveredMessagesForTests } from './undelivered-messages';
+import {
+  carryUndeliveredMessages,
+  clearUndeliveredMessagesForTests,
+  forgetUndeliveredOnClear,
+} from './undelivered-messages';
 
 const send = (message: string, personAuthored = true, chat = 'sub-1') =>
   carryUndeliveredMessages(chat, { raw: message, prompt: message }, personAuthored);
@@ -68,12 +72,33 @@ describe('carryUndeliveredMessages', () => {
   it('sends any slash command bare and never owes it, as a local command is never taken', () => {
     send('restart the hub');
     expect(send('/review the diff').prompt).toBe('/review the diff');
-    send('/clear');
+    send('/context');
 
     const next = send('continue');
     expect(next.prompt).toContain('Human: restart the hub');
     expect(next.prompt).not.toContain('/review');
-    expect(next.prompt).not.toContain('/clear');
+    expect(next.prompt).not.toContain('/context');
+  });
+
+  it('carries nothing from before a clear the CLI ran, and keeps what is owed otherwise', () => {
+    const ran = { type: 'result', is_error: false };
+    send('restart the hub');
+    forgetUndeliveredOnClear('sub-1', '/compact', ran);
+    forgetUndeliveredOnClear('sub-1', '/reset', { type: 'system' });
+    forgetUndeliveredOnClear('sub-1', '/reset', { type: 'result', is_error: true });
+    expect(send('status?').prompt).toContain('Human: restart the hub');
+
+    forgetUndeliveredOnClear('sub-1', '/reset', ran);
+    expect(send('hi').prompt).toBe('hi');
+  });
+
+  it('forgets only the cleared chat', () => {
+    send('restart the hub', true, 'sub-1');
+    send('deploy it', true, 'sub-2');
+    forgetUndeliveredOnClear('sub-1', '/clear', { type: 'result', is_error: false });
+
+    expect(send('hi', true, 'sub-1').prompt).toBe('hi');
+    expect(send('hi', true, 'sub-2').prompt).toContain('Human: deploy it');
   });
 
   it('owes a message that only starts with a path, as the provider sends it to the model', () => {

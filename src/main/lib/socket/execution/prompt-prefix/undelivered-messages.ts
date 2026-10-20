@@ -1,4 +1,7 @@
-import { startsWithCommand } from '../../../../../shared/commands/expand-slash-command';
+import {
+  isClearCommand,
+  startsWithCommand,
+} from '../../../../../shared/commands/expand-slash-command';
 import { formatPromptWithHistory } from './prompt-history';
 
 /** Sub-chat → a person's messages no provider turn took, so a resumed session never saw them.
@@ -9,9 +12,21 @@ export function clearUndeliveredMessagesForTests(): void {
   undeliveredBySubChat.clear();
 }
 
+/** After a Claude `/clear` ran (a clean `result`), the new conversation owes nothing from before it.
+ * Other agents send `/clear` to the model as text, so only the Claude turn calls this. */
+export function forgetUndeliveredOnClear(
+  subChatId: string,
+  prompt: string,
+  frame: { type: string; is_error?: boolean },
+): void {
+  if (frame.type === 'result' && !frame.is_error && isClearCommand(prompt)) {
+    undeliveredBySubChat.delete(subChatId);
+  }
+}
+
 /** Notes a person's message as owed until the provider takes its prompt (`accepted`), and returns
  * the prompt with what earlier stopped turns still owe as transcript. A slash command goes out bare
- * and is never owed: a Claude local command (`/clear`) never fires the prompt hook that takes it.
+ * and is never owed: a Claude local command never fires the prompt hook that takes it.
  * Owed messages are kept as typed, tokens and all, so their transcript can recap what was attached;
  * `prompt` is the message as this turn sends it. */
 export function carryUndeliveredMessages(

@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { encodeCommandBlock } from './command-block-format';
-import { expandSlashCommand, isCompactCommand, startsWithCommand } from './expand-slash-command';
+import {
+  expandSlashCommand,
+  isClearCommand,
+  isCompactCommand,
+  startsWithCommand,
+} from './expand-slash-command';
 
 /**
  * Callers rely on expansion never throwing and never losing the user's input:
@@ -142,6 +147,24 @@ describe('isCompactCommand', () => {
     expect(isCompactCommand('/review')).toBe(false);
     expect(isCompactCommand('/plan')).toBe(false);
     expect(isCompactCommand('')).toBe(false);
+  });
+});
+
+describe('isClearCommand', () => {
+  it('matches /clear and the aliases the Claude CLI gives it, with or without a name', () => {
+    expect(isClearCommand('/clear')).toBe(true);
+    expect(isClearCommand('/reset')).toBe(true);
+    expect(isClearCommand('/new')).toBe(true);
+    expect(isClearCommand('/clear wip')).toBe(true);
+  });
+
+  it('does not match other commands, other casing, or text ahead of the command', () => {
+    expect(isClearCommand('/compact')).toBe(false);
+    expect(isClearCommand('/clearance')).toBe(false);
+    expect(isClearCommand('/CLEAR')).toBe(false);
+    expect(isClearCommand(' /clear')).toBe(false);
+    expect(isClearCommand('clear')).toBe(false);
+    expect(isClearCommand('/src/a.ts is broken')).toBe(false);
   });
 });
 
