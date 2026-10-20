@@ -12,7 +12,10 @@
 import { memo, type ReactNode, useCallback } from 'react';
 import { buildHiddenWakeMessage } from '../../../../../../../shared/lib/message-markers/hidden-wake-marker';
 import type { TaskResultRecord } from '../../../../../../../shared/types/task-result';
-import type { FlowChatBottomSurface as BottomSurfaceState } from '../../../../../../lib/agent-chat/flow-chat-surface-state';
+import {
+  type FlowChatBottomSurface as BottomSurfaceState,
+  flowAutoSwitchChatId,
+} from '../../../../../../lib/agent-chat/flow-chat-surface-state';
 import { RESUME_PAUSED_WAKE_TEXT } from '../../../../../../lib/agent-chat/resume-wake-text';
 import { useSteerOrQueue } from '../../../../../../lib/agent-chat/steer';
 import { createQueueItem, generateQueueId } from '../../../../lib/queue-utils';
@@ -67,6 +70,7 @@ export const FlowChatBottomSurface = memo(function FlowChatBottomSurface({
   const cardOwnsComposerSlot = Boolean(questionCard) && bottomSurface.kind === 'composer';
   const addToQueue = useMessageQueueStore((s) => s.addToQueue);
   const steerOrQueue = useSteerOrQueue(subChatId);
+  const autoChatId = flowAutoSwitchChatId(bottomSurface, parentChatId);
 
   // Deliver a mid-run note INTO the running step. This is what steering unlocked: the note used to
   // be queue-only because a direct send supersedes (aborts) the in-flight turn via the executor's
@@ -105,6 +109,7 @@ export const FlowChatBottomSurface = memo(function FlowChatBottomSurface({
         subChatId={subChatId}
         parentChatId={parentChatId}
         suppressed={Boolean(questionCard)}
+        autoChatId={autoChatId}
         onSubmitAnswer={guardedSend}
       />
       {/* The slot. A flow surface replaces the whole composer child, account states included: the
@@ -121,7 +126,7 @@ export const FlowChatBottomSurface = memo(function FlowChatBottomSurface({
           canPause={bottomSurface.canPause}
           modelId={bottomSurface.modelId}
           mode={bottomSurface.mode}
-          autoReviewTools={bottomSurface.autoReviewTools}
+          autoChatId={autoChatId}
           codexSpeed={bottomSurface.codexSpeed}
           onAddNote={handleSteerNote}
           onStopTurn={onStopTurn}
@@ -133,7 +138,7 @@ export const FlowChatBottomSurface = memo(function FlowChatBottomSurface({
           subChatId={subChatId}
           modelId={bottomSurface.modelId}
           mode={bottomSurface.mode}
-          autoReviewTools={bottomSurface.autoReviewTools}
+          autoChatId={autoChatId}
           codexSpeed={bottomSurface.codexSpeed}
           isTurnActive={isTurnActive}
           onSubmitAnswer={guardedSend}

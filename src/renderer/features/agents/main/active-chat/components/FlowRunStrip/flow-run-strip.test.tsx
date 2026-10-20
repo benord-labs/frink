@@ -1,10 +1,11 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { createStore, Provider } from 'jotai';
+import { createStore, getDefaultStore, Provider } from 'jotai';
 import { toast } from 'sonner';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CodexSpeed } from '../../../../../../../shared/types/execution';
+import { autoModePerChatAtomFamily, lastSelectedModelIdAtomFamily } from '../../../../atoms';
 import { agentChatStore } from '../../../../stores/agent-chat-store';
 import { FlowPausedBar, FlowRunStrip } from './index';
 
@@ -50,7 +51,7 @@ function renderStrip(
     modelId?: string;
     mode?: 'agent' | 'plan' | 'debug';
     subChatId?: string;
-    autoReviewTools?: boolean;
+    autoChatId?: string;
     codexSpeed?: CodexSpeed;
   } = {},
 ) {
@@ -64,7 +65,7 @@ function renderStrip(
         canPause={overrides.canPause ?? true}
         modelId={overrides.modelId}
         mode={overrides.mode}
-        autoReviewTools={overrides.autoReviewTools}
+        autoChatId={overrides.autoChatId}
         codexSpeed={overrides.codexSpeed}
         onAddNote={onAddNote}
         onStopTurn={onStopTurn}
@@ -134,7 +135,7 @@ describe('FlowRunStrip', () => {
   // glyph, and an ✕ beside "Confirm stop" would read as "cancel the run" — so everything else
   // steps aside instead and the row becomes the question.
   it('sheds Pause while Stop is armed, keeping both confirm verbs fully worded', () => {
-    renderStrip({ modelId: 'opus-4.8-max', mode: 'agent', autoReviewTools: true });
+    renderStrip({ modelId: 'opus-4.8-max', mode: 'agent', autoChatId: 'chat1' });
     fireEvent.click(screen.getByText('Stop'));
 
     expect(screen.queryByRole('button', { name: 'Pause' })).toBeNull();
@@ -425,7 +426,7 @@ describe('FlowRunStrip', () => {
   // carries the overflow that clips the sentence itself. happy-dom resolves no container queries, so
   // the @max-* tiers are unobservable here and this structural check is what holds the line.
   it('makes the status the only flexible child of the live row', () => {
-    renderStrip({ modelId: 'opus-4.8-max', mode: 'agent', autoReviewTools: true });
+    renderStrip({ modelId: 'opus-4.8-max', mode: 'agent', autoChatId: 'chat1' });
     const row = stopActionGroup().parentElement as HTMLElement;
     const status = row.firstElementChild as HTMLElement;
 
@@ -440,7 +441,7 @@ describe('FlowRunStrip', () => {
   // The readout owns a line of its own, which would otherwise cost 24px of dead card in the taskless
   // windows between nodes where FlowRunMeta renders nothing at all.
   it('collapses the context line when there are no pills to show', () => {
-    renderStrip({ modelId: undefined, mode: undefined, autoReviewTools: undefined });
+    renderStrip({ modelId: undefined, mode: undefined });
     const row = stopActionGroup().parentElement as HTMLElement;
     const contextLine = row.previousElementSibling as HTMLElement;
 
@@ -495,12 +496,8 @@ describe('FlowRunStrip', () => {
         'the picker id is stale',
         { modelId: 'codex-gpt-5.3-codex-high', codexSpeed: 'fast' as const },
       ],
-      // KNOWN UNDER-REPORT, deliberate: a node that INHERITS its model writes no `model` into
-      // _config, so the provider is unknown here. An inheriting Codex node really is billing at the
-      // tier and shows nothing. Silence is the safe failure — the alternative is painting a credit
-      // cost onto a Claude run that is not being charged one. autoPill can resolve this because it
-      // may assume the Claude SDK default; a cost claim may not. Revisit if _config ever carries the
-      // resolved account type.
+      // Known under-report: a node that inherits its model writes none to _config, so a Fast Codex
+      // node shows nothing; silence beats claiming a cost on a run not being charged one.
       ['the node inherits its model', { codexSpeed: 'fast' as const }],
     ])('hides the pill when %s', (_label, over) => {
       renderStrip({ mode: 'agent', ...over });
@@ -508,61 +505,61 @@ describe('FlowRunStrip', () => {
     });
   });
 
-  describe('auto-mode readout', () => {
-    it('reads on when the flow requested auto and the node can honour it', () => {
-      renderStrip({ modelId: 'opus-4.8-max', mode: 'agent', autoReviewTools: true });
-      expect(screen.getByText('Auto on')).toBeInTheDocument();
+  describe('auto-mode switch', () => {
+    // The switch edits the chat's own Auto setting, the value the next message reads.
+    function renderWithAuto(
+      on: boolean,
+      chatModel = 'opus-4.8-max',
+      mode: 'agent' | 'plan' = 'agent',
+    ) {
+      store.set(autoModePerChatAtomFamily('chat1'), on);
+      store.set(lastSelectedModelIdAtomFamily('chat1'), chatModel);
+      renderStrip({ modelId: 'opus-4.8-max', mode, autoChatId: 'chat1' });
+    }
+    const autoSwitch = () => screen.queryByRole('button', { name: /^Auto Mode (on|off)/ });
+
+    it('shows the chat setting and flips it for the next message', () => {
+      renderWithAuto(true);
+      const button = screen.getByRole('button', { name: /^Auto Mode on/ });
+      expect(button).toHaveAttribute('aria-pressed', 'true');
+      expect(button).toHaveTextContent('Auto on');
+      expect(button).toHaveAccessibleName(/Applies from your next message/);
+
+      fireEvent.click(button);
+
+      expect(store.get(autoModePerChatAtomFamily('chat1'))).toBe(false);
+      expect(screen.getByRole('button', { name: /^Auto Mode off/ })).toHaveAttribute(
+        'aria-pressed',
+        'false',
+      );
     });
 
-    it('reads off when the flow turned auto off', () => {
-      renderStrip({ modelId: 'opus-4.8-max', mode: 'agent', autoReviewTools: false });
-      expect(screen.getByText('Auto off')).toBeInTheDocument();
+    it('reads off when the chat has Auto off', () => {
+      renderWithAuto(false);
+      expect(screen.getByRole('button', { name: /^Auto Mode off/ })).toHaveTextContent('Auto off');
     });
 
-    // Codex has its own native reviewer (approvalsReviewer auto_review), so gating the pill on
-    // "is this Claude?" would silently under-report every Codex node.
-    it('reads on for a Codex node', () => {
-      renderStrip({ modelId: 'codex-gpt-5.6-sol-high', mode: 'agent', autoReviewTools: true });
-      expect(screen.getByText('Auto on')).toBeInTheDocument();
+    // Codex has its own native reviewer, and Auto reviews the planning phase too.
+    it.each([
+      ['a Codex chat', 'codex-gpt-5.6-sol-high', 'agent'],
+      ['plan mode', 'opus-4.8-max', 'plan'],
+    ] as const)('is offered for %s', (_label, chatModel, mode) => {
+      renderWithAuto(true, chatModel, mode);
+      expect(autoSwitch()).toBeInTheDocument();
     });
 
-    // A node that inherits its model writes no `model` into _config; the executor still resolves
-    // auto through the SDK default, so the card must not treat "no model" as "no auto".
-    it('reads on for a node that inherits its model', () => {
-      renderStrip({ mode: 'agent', autoReviewTools: true });
-      expect(screen.getByText('Auto on')).toBeInTheDocument();
+    // Eligibility follows the model the next message sends, not the one this node was dispatched on.
+    it.each([
+      ['has no native reviewer', 'haiku'],
+      ['is an id the picker cannot resolve', 'retired-model-x'],
+    ])('is hidden when the chat model %s', (_label, chatModel) => {
+      renderWithAuto(true, chatModel);
+      expect(autoSwitch()).toBeNull();
     });
 
-    // Auto reviews the planning phase too, so plan mode is a live axis rather than a carve-out — and
-    // an unattended plan run is precisely where the reader needs the readout to speak.
-    it('reads on in plan mode, which auto now covers', () => {
-      renderStrip({ modelId: 'opus-4.8-max', mode: 'plan', autoReviewTools: true });
-      expect(screen.getByText('Auto on')).toBeInTheDocument();
-    });
-
-    // Match the exact pill copy, never /^Auto/ — a model label can itself contain "Auto", so a
-    // loose pattern reports the MODEL pill and the assertion stops testing anything.
-    const autoPill = () => screen.queryByText(/^Auto (on|off)$/);
-
-    // Where auto can never apply the pill says nothing rather than spending width on "unavailable".
-    it('says nothing for a model with no native reviewer', () => {
-      renderStrip({ modelId: 'haiku', mode: 'agent', autoReviewTools: true });
-      expect(autoPill()).toBeNull();
-    });
-
-    it('says nothing when the task carries no auto consent at all', () => {
+    it('is hidden when no step is live to take a flip', () => {
       renderStrip({ modelId: 'opus-4.8-max', mode: 'agent' });
-      expect(autoPill()).toBeNull();
-    });
-
-    // A stale or foreign id resolves to no variant, exactly like "no model set" — but they mean
-    // opposite things. Reading an unresolved id as Claude would feed the raw string to the Claude
-    // version check, which passes anything that is not `haiku`, and claim auto for a retired node.
-    // The model pill already hides here; the Auto pill hides with it.
-    it('says nothing for a model id it cannot resolve', () => {
-      renderStrip({ modelId: 'retired-model-x', mode: 'agent', autoReviewTools: false });
-      expect(autoPill()).toBeNull();
-      expect(screen.queryByText(/·/)).toBeNull(); // the model pill hides too
+      expect(autoSwitch()).toBeNull();
     });
   });
 });
@@ -579,6 +576,7 @@ describe('FlowPausedBar', () => {
       isTurnActive?: boolean;
       modelId?: string;
       mode?: 'agent' | 'plan' | 'debug';
+      autoChatId?: string;
       onResume?: () => boolean;
       onSubmitAnswer?: (text: string) => boolean;
     } = {},
@@ -602,6 +600,7 @@ describe('FlowPausedBar', () => {
         isTurnActive={props.isTurnActive}
         modelId={props.modelId}
         mode={props.mode}
+        autoChatId={overrides.autoChatId}
         onSubmitAnswer={props.onSubmitAnswer}
         onResume={props.onResume}
         onStopTurn={props.onStopTurn}
@@ -632,6 +631,17 @@ describe('FlowPausedBar', () => {
     renderBar({ modelId: 'sonnet-5', mode: 'plan' });
     expect(screen.getByText('Sonnet 5 · High')).toBeInTheDocument();
     expect(screen.getByText('Plan')).toBeInTheDocument();
+  });
+
+  // A paused flow resumes on your reply, so turning Auto off first lets you approve a blocked step.
+  it('offers the chat Auto switch beside the reply', () => {
+    getDefaultStore().set(autoModePerChatAtomFamily('chat-paused'), true);
+    getDefaultStore().set(lastSelectedModelIdAtomFamily('chat-paused'), 'opus-4.8-max');
+    renderBar({ modelId: 'opus-4.8-max', mode: 'agent', autoChatId: 'chat-paused' });
+
+    fireEvent.click(screen.getByRole('button', { name: /^Auto Mode on/ }));
+
+    expect(getDefaultStore().get(autoModePerChatAtomFamily('chat-paused'))).toBe(false);
   });
 
   it('offers a reply box that rides the follow-up pipe', () => {

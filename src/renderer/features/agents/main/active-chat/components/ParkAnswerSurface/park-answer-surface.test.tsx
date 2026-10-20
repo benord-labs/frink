@@ -1,8 +1,10 @@
 // @vitest-environment happy-dom
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { getDefaultStore } from 'jotai';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TaskResultRecord } from '../../../../../../../shared/types/task-result';
+import { autoModePerChatAtomFamily, lastSelectedModelIdAtomFamily } from '../../../../atoms';
 import { ParkAnswerSurface } from './index';
 
 // The driving task is resolved and polled by ActiveChat and passed in as a prop, so these tests
@@ -41,7 +43,7 @@ const parked = (
   };
 };
 
-function renderSurface(suppressed = false, sent = true) {
+function renderSurface(suppressed = false, sent = true, autoChatId: string | null = null) {
   const onSubmitAnswer = vi.fn((_text: string, _metadata?: Record<string, unknown>) => sent);
   render(
     <ParkAnswerSurface
@@ -49,6 +51,7 @@ function renderSurface(suppressed = false, sent = true) {
       subChatId="sub1"
       parentChatId="chat1"
       suppressed={suppressed}
+      autoChatId={autoChatId}
       onSubmitAnswer={onSubmitAnswer}
     />,
   );
@@ -186,5 +189,42 @@ describe('ParkAnswerSurface', () => {
     taskData = { ...parked('awaiting_input', QUESTIONS), flowRunId: null };
     renderSurface();
     expect(screen.getByText('Now')).toBeInTheDocument();
+  });
+
+  // Auto review can block a step the user wants to run; turning Auto off before replying routes the
+  // retry to the user's own permission card, so the switch rides on the card they answer.
+  describe('Auto switch', () => {
+    const autoSwitch = () => screen.queryByRole('button', { name: /^Auto Mode (on|off)/ });
+    beforeEach(() => {
+      getDefaultStore().set(autoModePerChatAtomFamily('chat-park'), true);
+      getDefaultStore().set(lastSelectedModelIdAtomFamily('chat-park'), 'opus-4.8-max');
+    });
+
+    it('sits inside the reply card, above the ask, and flips the chat setting', () => {
+      taskData = parked('blocked', undefined, 'Auto review blocked the push.');
+      renderSurface(false, true, 'chat-park');
+      const input = screen.getByPlaceholderText('Reply to continue…');
+      const button = screen.getByRole('button', { name: /^Auto Mode on/ });
+      expect(button.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+      fireEvent.click(button);
+
+      expect(getDefaultStore().get(autoModePerChatAtomFamily('chat-park'))).toBe(false);
+    });
+
+    it('renders once, above a structured questions card', () => {
+      taskData = parked('awaiting_input', QUESTIONS);
+      renderSurface(false, true, 'chat-park');
+      const [button, ...rest] = screen.getAllByRole('button', { name: /^Auto Mode/ });
+      expect(rest).toHaveLength(0);
+      const now = screen.getByText('Now');
+      expect(button.compareDocumentPosition(now) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it('is absent where the composer and its own switch are on screen', () => {
+      taskData = parked('blocked', undefined, 'Auto review blocked the push.');
+      renderSurface();
+      expect(autoSwitch()).toBeNull();
+    });
   });
 });

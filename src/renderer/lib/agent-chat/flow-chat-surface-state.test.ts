@@ -4,6 +4,7 @@ import {
   deriveFlowChatBottomSurface,
   deriveParkSurfaceState,
   getFlowSurfaceRefetchInterval,
+  flowAutoSwitchChatId,
 } from './flow-chat-surface-state';
 
 /** What a reply park resolves to when the agent signal carried no prose of its own. */
@@ -312,25 +313,6 @@ describe('running/paused readout carries the node model + mode', () => {
     ).toMatchObject({ modelId: 'opus-4.8-max', mode: 'plan' });
   });
 
-  // Auto consent rides the SAME `Config` the model and mode come from, so the readout reports the
-  // Flow's own setting for the whole run rather than a per-turn snapshot.
-  it('carries the flow’s auto-review consent from Config, on both surfaces', () => {
-    expect(
-      surface(RUN, {
-        status: 'running',
-        triggerContext: { Config: { model: 'opus-4.8-max', autoReviewTools: true } },
-        result: {},
-      }),
-    ).toMatchObject({ kind: 'running', autoReviewTools: true });
-    expect(
-      surface(RUN, {
-        status: 'needs_attention',
-        triggerContext: { Config: { autoReviewTools: false } },
-        result: { userPause: { at: 'x' } },
-      }),
-    ).toMatchObject({ kind: 'paused', autoReviewTools: false });
-  });
-
   it('carries the flow’s Codex speed from Config, on both surfaces', () => {
     expect(
       surface(RUN, {
@@ -352,25 +334,13 @@ describe('running/paused readout carries the node model + mode', () => {
     ).toMatchObject({ codexSpeed: undefined });
   });
 
-  it('reads auto-review consent from the canonical tRPC `Config` key', () => {
+  // The chat's own Auto setting is the one value every turn uses, so the flow's dispatch-time copy
+  // must not reach the readout, where it would go stale the moment someone flips the switch.
+  it('does not carry the flow’s Auto snapshot onto the surface', () => {
     expect(
       surface(RUN, {
         status: 'running',
-        triggerContext: { Config: { autoReviewTools: true } },
-        result: {},
-      }),
-    ).toMatchObject({ autoReviewTools: true });
-  });
-
-  // `undefined` means "this task predates the flag / is not flow-dispatched", which the card must
-  // be able to tell apart from an explicit `false` — one renders no pill, the other renders "off".
-  it('leaves auto-review undefined when the task names no consent', () => {
-    // toEqual, not a property read: the surface is a union whose composer member has no such key.
-    // An exact match also fails loudly if a defined value ever appears here.
-    expect(
-      surface(RUN, {
-        status: 'running',
-        triggerContext: { Config: { model: 'sonnet-5' } },
+        triggerContext: { Config: { model: 'sonnet-5', autoReviewTools: true } },
         result: {},
       }),
     ).toEqual({
@@ -380,6 +350,19 @@ describe('running/paused readout carries the node model + mode', () => {
       modelId: 'sonnet-5',
       mode: 'agent',
     });
+  });
+});
+
+// A flip reaches only the next message, so the switch goes where one can follow.
+describe('flowAutoSwitchChatId', () => {
+  it.each([
+    ['a running step', { kind: 'running', flowRunId: 'r', canPause: true }, 'chat-1'],
+    ['the gap between steps', { kind: 'running', flowRunId: 'r', canPause: false }, null],
+    ['a paused run', { kind: 'paused', flowRunId: 'r' }, 'chat-1'],
+    ['a park', { kind: 'park' }, 'chat-1'],
+    ['the composer, which has its own switch', { kind: 'composer' }, null],
+  ] as const)('for %s', (_label, surface, expected) => {
+    expect(flowAutoSwitchChatId(surface, 'chat-1')).toBe(expected);
   });
 });
 
