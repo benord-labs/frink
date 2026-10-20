@@ -1,19 +1,19 @@
 import { formatWaitingSince } from '../utils/format-time';
 
-export type AdmissionGroup = 'resume' | 'first' | 'start';
+export type AdmissionGroup = 'resume' | 'priority' | 'start';
 
 /** Top to bottom, in the order the queue starts them. */
-export const ADMISSION_GROUPS: readonly AdmissionGroup[] = ['resume', 'first', 'start'];
+export const ADMISSION_GROUPS: readonly AdmissionGroup[] = ['resume', 'priority', 'start'];
 
 export const ADMISSION_GROUP_LABELS = {
   resume: 'Resuming',
-  first: 'Starting first',
+  priority: 'Priority queue',
   start: 'Starting',
 } as const satisfies Record<AdmissionGroup, string>;
 
 const WAIT_COPY = {
   resume: { description: 'Waiting to resume', statusLabel: 'Queued to resume' },
-  first: { description: 'Waiting to start first', statusLabel: 'Queued to start first' },
+  priority: { description: 'Waiting in the priority queue', statusLabel: 'Queued with priority' },
   start: { description: 'Waiting to start', statusLabel: 'Queued to start' },
 } as const satisfies Record<AdmissionGroup, { description: string; statusLabel: string }>;
 
@@ -22,7 +22,7 @@ export function admissionGroup(row: {
   runFirst: boolean;
 }): AdmissionGroup {
   if (row.priorityClass === 'resume') return 'resume';
-  return row.runFirst ? 'first' : 'start';
+  return row.runFirst ? 'priority' : 'start';
 }
 
 /** A paused queue holds every row, resumes included; `null` (setting unknown) claims neither state. */

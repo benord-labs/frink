@@ -82,8 +82,8 @@ describe('FlowSettingsPanel on an OpenCode project', () => {
   });
 });
 
-describe('FlowSettingsPanel run-first toggle', () => {
-  it('saves Run this flow first as runFirst and clears it when switched off', () => {
+describe('FlowSettingsPanel priority queue toggle', () => {
+  it('saves Priority queue as runFirst and clears it when switched off', () => {
     const onSettingsChange = vi.fn();
     const props = {
       flowId: 'flow-1',
@@ -100,11 +100,11 @@ describe('FlowSettingsPanel run-first toggle', () => {
       () => new Promise(() => {}),
     );
 
-    fireEvent.click(screen.getByRole('switch', { name: 'Run this flow first' }));
+    fireEvent.click(screen.getByRole('switch', { name: 'Priority queue' }));
     expect(onSettingsChange).toHaveBeenLastCalledWith(expect.objectContaining({ runFirst: true }));
 
     rerender(<FlowSettingsPanel {...props} settings={{ runFirst: true }} />);
-    const toggle = screen.getByRole('switch', { name: 'Run this flow first' });
+    const toggle = screen.getByRole('switch', { name: 'Priority queue' });
     expect(toggle).toBeChecked();
     fireEvent.click(toggle);
     expect(onSettingsChange.mock.lastCall?.[0]).not.toHaveProperty('runFirst', true);

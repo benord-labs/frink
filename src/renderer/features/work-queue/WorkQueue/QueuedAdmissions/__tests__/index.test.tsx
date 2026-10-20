@@ -149,11 +149,11 @@ describe('QueuedAdmissions', () => {
       within(section)
         .getAllByRole('heading', { level: 4 })
         .map((h) => h.textContent),
-    ).toEqual(['Resuming', 'Starting first', 'Starting']);
-    expect(screen.getByText('Waiting to start first')).toBeInTheDocument();
+    ).toEqual(['Resuming', 'Priority queue', 'Starting']);
+    expect(screen.getByText('Waiting in the priority queue')).toBeInTheDocument();
     // Reorder stays inside the group, so the lone run-first row cannot move into the starts below.
     expect(
-      screen.getByRole('button', { name: 'Move Daily digest down, Starting first 1 of 1' }),
+      screen.getByRole('button', { name: 'Move Daily digest down, Priority queue 1 of 1' }),
     ).toBeDisabled();
     // The oldest start, not the first row, is the one held back longest.
     expect(section).toHaveTextContent(
@@ -161,10 +161,10 @@ describe('QueuedAdmissions', () => {
     );
   });
 
-  it('shows no waiting note while nothing is starting first', () => {
+  it('shows no waiting note while the priority queue is empty', () => {
     renderQueue();
 
-    expect(screen.queryByRole('heading', { name: 'Starting first' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Priority queue' })).not.toBeInTheDocument();
     expect(screen.queryByText(/Oldest waiting since/)).not.toBeInTheDocument();
   });
 

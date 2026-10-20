@@ -382,8 +382,8 @@ export const QueuedAdmissionsView = memo(function QueuedAdmissionsView({
       })),
     [rows],
   );
-  // Run-first starts can hold back other starts indefinitely, so say how long the oldest has waited.
-  const startsSkipped = groups.some(({ group, rows }) => group === 'first' && rows.length > 0);
+  // The priority queue can hold back other starts indefinitely, so say how long the oldest has waited.
+  const startsSkipped = groups.some(({ group, rows }) => group === 'priority' && rows.length > 0);
 
   const rootRef = useRef<HTMLDivElement>(null);
   const [pendingRemoval, setPendingRemoval] = useState<QueuedAdmission | null>(null);

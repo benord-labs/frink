@@ -29,7 +29,7 @@ function queuedRow(ticket: number, flowName: string) {
 }
 
 describe('QueuedAdmissions', () => {
-  it('groups a run-first start from the queue API under Starting first', async () => {
+  it('groups a run-first start from the queue API under Priority queue', async () => {
     renderWithTrpc(
       <TooltipProvider>
         <QueuedAdmissions />
@@ -43,8 +43,8 @@ describe('QueuedAdmissions', () => {
       },
     );
 
-    expect(await screen.findByRole('heading', { name: 'Starting first' })).toBeInTheDocument();
-    expect(screen.getByText('Waiting to start first')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Priority queue' })).toBeInTheDocument();
+    expect(screen.getByText('Waiting in the priority queue')).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Starting' })).not.toBeInTheDocument();
   });
 
@@ -68,12 +68,12 @@ describe('QueuedAdmissions', () => {
     );
 
     fireEvent.click(
-      await screen.findByRole('button', { name: 'Move Daily digest down, Starting first 1 of 2' }),
+      await screen.findByRole('button', { name: 'Move Daily digest down, Priority queue 1 of 2' }),
     );
 
     await waitFor(() => expect(moves).toEqual([{ ticket: 5, target_ticket: 6 }]));
     expect(
-      await screen.findByText('Daily digest moved to position 2 in Starting first.'),
+      await screen.findByText('Daily digest moved to position 2 in Priority queue.'),
     ).toHaveAttribute('aria-live', 'polite');
   });
 });

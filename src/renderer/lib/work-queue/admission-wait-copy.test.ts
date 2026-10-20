@@ -12,7 +12,7 @@ describe('admissionGroup', () => {
   it('keeps resumes in their own group whatever the run-first flag says', () => {
     expect(admissionGroup({ priorityClass: 'resume', runFirst: false })).toBe('resume');
     expect(admissionGroup({ priorityClass: 'resume', runFirst: true })).toBe('resume');
-    expect(admissionGroup({ priorityClass: 'start', runFirst: true })).toBe('first');
+    expect(admissionGroup({ priorityClass: 'start', runFirst: true })).toBe('priority');
     expect(admissionGroup({ priorityClass: 'start', runFirst: false })).toBe('start');
   });
 });
@@ -20,16 +20,16 @@ describe('admissionGroup', () => {
 describe('admissionWaitCopy', () => {
   it('names the group a waiting row belongs to', () => {
     expect(admissionWaitCopy('resume', false).statusLabel).toBe('Queued to resume');
-    expect(admissionWaitCopy('first', false)).toEqual({
-      description: 'Waiting to start first',
-      statusLabel: 'Queued to start first',
+    expect(admissionWaitCopy('priority', false)).toEqual({
+      description: 'Waiting in the priority queue',
+      statusLabel: 'Queued with priority',
     });
     expect(admissionWaitCopy('start', false).statusLabel).toBe('Queued to start');
   });
 
   it('says on hold while paused and claims nothing while the setting is unknown', () => {
-    expect(admissionWaitCopy('first', true).statusLabel).toBe('On hold');
-    expect(admissionWaitCopy('first', null).statusLabel).toBe('Queued');
+    expect(admissionWaitCopy('priority', true).statusLabel).toBe('On hold');
+    expect(admissionWaitCopy('priority', null).statusLabel).toBe('Queued');
   });
 });
 

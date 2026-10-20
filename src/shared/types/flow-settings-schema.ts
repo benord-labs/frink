@@ -42,7 +42,7 @@ export const flowSettingsShapeSchema = z.object({
     .boolean()
     .optional()
     .describe(
-      'When true, new runs of this flow start ahead of other waiting new runs while the machine-wide Flow limit is full. Resuming runs still go first and running work is never interrupted. Leave unset unless the user explicitly asks for this flow to run ahead of other waiting runs.',
+      'When true, new runs of this flow join the priority queue and start ahead of other waiting new runs while the machine-wide Flow limit is full. Resuming runs still go first and running work is never interrupted. Leave unset unless the user explicitly asks to put this flow in the priority queue.',
     ),
   pauseOnFailure: z
     .boolean()
