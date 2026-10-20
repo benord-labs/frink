@@ -1,6 +1,18 @@
 import { Button } from '@benord-labs/frink-primitives';
-import { SquareArrowDown, SquareArrowLeft, SquareArrowRight, SquareArrowUp } from 'lucide-react';
+import {
+  MoreHorizontal,
+  SquareArrowDown,
+  SquareArrowLeft,
+  SquareArrowRight,
+  SquareArrowUp,
+} from 'lucide-react';
 import { type MouseEvent, type ReactNode, useCallback } from 'react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '../../../../components/ui/dropdown-menu';
 import { Kbd } from '../../../../components/ui/kbd';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../../components/ui/tooltip';
 import { getPaneColor } from '../../../../lib/pane-colors';
@@ -9,7 +21,8 @@ import { isMacOS } from '../../../../lib/utils/platform';
 import { CompactPaneDigitBadge } from './pane-number-badge';
 import { PaneReorderHandleButton } from './pane-reorder-dnd';
 
-// Boxed arrows, so a move can't be read as the Back/Forward arrows or macOS ‹ › chevrons.
+type MoveDirection = 'left' | 'right' | 'up' | 'down';
+
 const MOVE_ICONS = {
   left: SquareArrowLeft,
   right: SquareArrowRight,
@@ -17,52 +30,87 @@ const MOVE_ICONS = {
   down: SquareArrowDown,
 } as const;
 
-/** Move-pane button for reorder (shared between left/up and right/down directions) */
-function ReorderPaneButton({
+/** One "Move <direction>" item in the pane menu, with its keyboard shortcut. */
+function MovePaneItem({
   direction,
-  paneNumber,
   disabled,
-  onClick,
+  onMove,
 }: {
-  direction: 'left' | 'right' | 'up' | 'down';
-  paneNumber: number;
+  direction: MoveDirection;
   disabled: boolean;
-  onClick: () => void;
+  onMove: () => void;
 }) {
   // biome-ignore lint/style/useNamingConvention: Renders as a component
   const Icon = MOVE_ICONS[direction];
-
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={disabled}
-          onClick={(e) => {
-            e.stopPropagation();
-            onClick();
-          }}
-          className={cn(
-            // A Compact pane keeps only the drag handle for reordering.
-            'text-xs p-2 rounded motion-reduce:transition-none @max-[30rem]/pane:hidden',
-            !disabled ? '' : 'text-muted-foreground/60 cursor-not-allowed',
-          )}
-          aria-label={`Move pane ${paneNumber} ${direction}`}
-          iconOnly
-        >
-          <Icon className="h-3.5 w-3.5" aria-hidden="true" />
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent side="bottom">
-        {`Move ${direction}`}
-        <Kbd
-          shortcutId={
-            direction === 'left' || direction === 'up' ? 'reorder-pane-left' : 'reorder-pane-right'
-          }
-        />
-      </TooltipContent>
-    </Tooltip>
+    <DropdownMenuItem disabled={disabled} onClick={(e) => e.stopPropagation()} onSelect={onMove}>
+      <Icon className="h-4 w-4 mr-2" aria-hidden="true" />
+      {`Move ${direction}`}
+      <Kbd
+        className="ml-auto pl-4"
+        shortcutId={
+          direction === 'left' || direction === 'up' ? 'reorder-pane-left' : 'reorder-pane-right'
+        }
+      />
+    </DropdownMenuItem>
+  );
+}
+
+/** The pane's ⋯ menu: Back/Forward through its history, then moving it along the split. */
+function PaneActionsMenu({
+  paneNumber,
+  historyMenuItems,
+  onMoveLeft,
+  onMoveRight,
+  canMoveLeft,
+  canMoveRight,
+  isVertical,
+}: {
+  paneNumber: number;
+  historyMenuItems?: ReactNode;
+  onMoveLeft?: () => void;
+  onMoveRight?: () => void;
+  canMoveLeft: boolean;
+  canMoveRight: boolean;
+  isVertical: boolean;
+}) {
+  return (
+    <DropdownMenu>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={(e) => e.stopPropagation()}
+              className="text-xs p-2 rounded motion-reduce:transition-none"
+              aria-label={`Pane ${paneNumber} actions`}
+              iconOnly
+            >
+              <MoreHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
+            </Button>
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">Pane actions</TooltipContent>
+      </Tooltip>
+      <DropdownMenuContent align="end" className="w-64">
+        {historyMenuItems}
+        {onMoveLeft && (
+          <MovePaneItem
+            direction={isVertical ? 'up' : 'left'}
+            disabled={!canMoveLeft}
+            onMove={onMoveLeft}
+          />
+        )}
+        {onMoveRight && (
+          <MovePaneItem
+            direction={isVertical ? 'down' : 'right'}
+            disabled={!canMoveRight}
+            onMove={onMoveRight}
+          />
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -139,7 +187,7 @@ export function PaneHeader({
   onResetPaneZoom,
   totalPanes,
   onActivate,
-  historyNav,
+  historyMenuItems,
   className,
 }: {
   paneNumber: number;
@@ -153,7 +201,7 @@ export function PaneHeader({
   onMoveRight?: () => void;
   canMoveLeft?: boolean;
   canMoveRight?: boolean;
-  /** Whether panes are stacked vertically (changes arrow direction labels) */
+  /** Whether panes are stacked vertically (the moves read up/down instead of left/right) */
   isVertical?: boolean;
   /** When set, render a drag handle wired to dnd-kit pane-reorder for this pane index. */
   paneReorderIndex?: number;
@@ -165,8 +213,8 @@ export function PaneHeader({
   totalPanes?: number;
   /** When provided, clicking the header activates this pane (avoids activating when clicking content). */
   onActivate?: () => void;
-  /** Shown before the pane label: Back/Forward through the chats this pane has shown. */
-  historyNav?: ReactNode;
+  /** First items of the pane menu: Back/Forward through the chats this pane has shown. */
+  historyMenuItems?: ReactNode;
   /** Merged onto the header bar, e.g. the pane's rounded top corners. */
   className?: string;
 }) {
@@ -210,7 +258,6 @@ export function PaneHeader({
       <div className="flex items-center gap-1.5 min-w-0 flex-1">
         {/* Drag handle - outside activate button to avoid nested buttons */}
         {paneReorderIndex !== undefined && <PaneReorderHandleButton paneIndex={paneReorderIndex} />}
-        {historyNav}
         {onActivate ? (
           <Button
             variant="ghost"
@@ -247,32 +294,16 @@ export function PaneHeader({
             <TooltipContent side="bottom">Reset zoom to 100%</TooltipContent>
           </Tooltip>
         )}
-        {zoomFactor !== undefined &&
-          zoomFactor !== 1 &&
-          onResetPaneZoom &&
-          (onMoveLeft ?? onMoveRight) && (
-            <div className="w-px h-3 bg-border/50 mx-0.5" aria-hidden="true" />
-          )}
-        {/* Pane reorder buttons */}
-        {onMoveLeft && (
-          <ReorderPaneButton
-            direction={isVertical ? 'up' : 'left'}
-            paneNumber={paneNumber}
-            disabled={!canMoveLeft}
-            onClick={onMoveLeft}
-          />
-        )}
-        {onMoveRight && (
-          <ReorderPaneButton
-            direction={isVertical ? 'down' : 'right'}
-            paneNumber={paneNumber}
-            disabled={!canMoveRight}
-            onClick={onMoveRight}
-          />
-        )}
-        {/* Separator between reorder and close button */}
         {(onMoveLeft || onMoveRight) && (
-          <div className="w-px h-3 bg-border/50 mx-0.5 @max-[30rem]/pane:hidden" />
+          <PaneActionsMenu
+            paneNumber={paneNumber}
+            historyMenuItems={historyMenuItems}
+            onMoveLeft={onMoveLeft}
+            onMoveRight={onMoveRight}
+            canMoveLeft={canMoveLeft}
+            canMoveRight={canMoveRight}
+            isVertical={isVertical}
+          />
         )}
         <Tooltip>
           <TooltipTrigger asChild>

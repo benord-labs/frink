@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, screen } from '@testing-library/react';
 import type { Operation } from '@trpc/client';
 import { createStore, Provider, useAtomValue } from 'jotai';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { TooltipProvider } from '@/components/ui/tooltip';
+import { DropdownMenu, DropdownMenuContent } from '@/components/ui/dropdown-menu';
 import { renderWithTrpc } from '@/lib/test-utils/render-with-trpc';
 import { getDefaultRatios, splitViewAtom, splitViewChatIdsAtom } from '../../../atoms';
 import { showChatInPaneAtom } from '../../../hooks/use-split-view-actions';
@@ -32,10 +32,20 @@ function listChats(chats: { id: string; name: string | null }[]) {
   };
 }
 
-/** The history controls of pane 1, following whichever chat that pane shows. */
-function SecondPaneNav() {
+/** Pane 1's open pane menu, holding its history items for whichever chat that pane shows. */
+function SecondPaneMenu() {
   const chatId = useAtomValue(splitViewChatIdsAtom)[1] ?? '';
-  return <PaneHistoryNav chatId={chatId} paneIndex={1} />;
+  return (
+    <DropdownMenu open>
+      <DropdownMenuContent>
+        <PaneHistoryNav chatId={chatId} paneIndex={1} />
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function expectDisabled(item: HTMLElement) {
+  expect(item).toHaveAttribute('aria-disabled', 'true');
 }
 
 /** A two-pane split where the sidebar has replaced `old` in pane 1 with each of `peeks` in turn. */
@@ -50,9 +60,7 @@ function renderAfterReplace(chats: { id: string; name: string | null }[], peeks 
   for (const chatId of peeks) store.set(showChatInPaneAtom, { chatId });
   renderWithTrpc(
     <Provider store={store}>
-      <TooltipProvider>
-        <SecondPaneNav />
-      </TooltipProvider>
+      <SecondPaneMenu />
     </Provider>,
     listChats(chats),
   );
@@ -68,21 +76,23 @@ afterEach(cleanup);
 describe('PaneHistoryNav', () => {
   it('goes Back to the replaced chat, then Forward again', async () => {
     const store = renderAfterReplace(OLD_AND_NEW);
-    const back = await screen.findByRole('button', { name: BACK_TO_OLD });
-    expect(screen.getByRole('button', { name: 'Forward' })).toBeDisabled();
+    const back = await screen.findByRole('menuitem', { name: BACK_TO_OLD });
+    expectDisabled(screen.getByRole('menuitem', { name: 'Forward' }));
 
     fireEvent.click(back);
     expect(store.get(splitViewAtom).chatIds).toEqual(['other', 'old']);
-    expect(await screen.findByRole('button', { name: 'Back' })).toBeDisabled();
+    expectDisabled(await screen.findByRole('menuitem', { name: 'Back' }));
 
-    fireEvent.click(screen.getByRole('button', { name: FORWARD_TO_NEW }));
+    fireEvent.click(screen.getByRole('menuitem', { name: FORWARD_TO_NEW }));
     expect(store.get(splitViewAtom).chatIds).toEqual(['other', 'new']);
-    expect(await screen.findByRole('button', { name: BACK_TO_OLD })).toBeEnabled();
+    expect(await screen.findByRole('menuitem', { name: BACK_TO_OLD })).not.toHaveAttribute(
+      'aria-disabled',
+    );
   });
 
   it('skips a newer earlier chat that was archived and offers the older one', async () => {
     const store = renderAfterReplace(OLD_AND_NEW, ['archived', 'new']);
-    fireEvent.click(await screen.findByRole('button', { name: BACK_TO_OLD }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: BACK_TO_OLD }));
     expect(store.get(splitViewAtom).chatIds).toEqual(['other', 'old']);
   });
 
@@ -93,21 +103,21 @@ describe('PaneHistoryNav', () => {
       </Provider>,
       listChats([]),
     );
-    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem')).not.toBeInTheDocument();
   });
 
   it('renders nothing once the earlier chat is open in another pane', async () => {
     const store = renderAfterReplace(OLD_AND_NEW);
-    await screen.findByRole('button', { name: BACK_TO_OLD });
+    await screen.findByRole('menuitem', { name: BACK_TO_OLD });
     act(() => {
       store.set(splitViewAtom, { ...store.get(splitViewAtom), chatIds: ['old', 'new'] });
     });
-    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem')).not.toBeInTheDocument();
   });
 
   it('renders nothing when the earlier chat was archived or deleted', async () => {
     renderAfterReplace([{ id: 'new', name: 'New chat' }]);
     await act(async () => {});
-    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem')).not.toBeInTheDocument();
   });
 });
