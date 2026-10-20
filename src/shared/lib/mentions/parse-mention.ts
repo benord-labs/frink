@@ -77,11 +77,21 @@ function parseQuoteMention(id: string): ParsedMention {
   return { id, label, path: '', repository: '', type: 'quote', fullText };
 }
 
-/** `diff:<file path>:<line, 0 for none>:<preview>:<base64 text>` */
+/** A URI-encoded path, or the path as written when it is not valid URI encoding. */
+function decodePath(path: string): string {
+  try {
+    return decodeURIComponent(path);
+  } catch {
+    return path;
+  }
+}
+
+/** `diff:<URI-encoded file path>:<line, 0 for none>:<preview>:<base64 text>` — older tokens carry
+ * the path raw, which decodes to itself. */
 function parseDiffMention(id: string): ParsedMention | null {
   const parts = id.slice(MENTION_PREFIXES.DIFF.length).split(':');
   if (parts.length < 3) return null;
-  const path = parts[0];
+  const path = decodePath(parts[0]);
   const lineNumber = parseInt(parts[1], 10) || undefined;
   const fileName = pathLabel(path);
   const label = lineNumber ? `${fileName}:${lineNumber}` : fileName;
@@ -94,12 +104,7 @@ function parseDiffMention(id: string): ParsedMention | null {
 function parseCodeMention(id: string): ParsedMention | null {
   const parts = id.slice(MENTION_PREFIXES.CODE.length).split(':');
   if (parts.length < 4) return null;
-  let path = parts[0];
-  try {
-    path = decodeURIComponent(path);
-  } catch {
-    // Not valid URI encoding: keep the name as written.
-  }
+  const path = decodePath(parts[0]);
   const lineRange = parts[1];
   const fullText = decodeFullText(parts[parts.length - 1], parts.slice(2, -1).join(':'));
   const label = `${path} L${lineRange}`;

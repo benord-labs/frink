@@ -251,6 +251,16 @@ describe('parseMention', () => {
       });
     });
 
+    it('decodes a URI-encoded path', () => {
+      const id = `diff:app%2F%5Bid%5D%2Fpage.tsx:3:preview:${encodeForMentionToken('x')}`;
+      expect(parseMention(id)).toMatchObject({ path: 'app/[id]/page.tsx', label: 'page.tsx:3' });
+    });
+
+    it('keeps a raw path from before paths were encoded when it is not valid URI encoding', () => {
+      const id = `diff:src/50%.ts:3:preview:${encodeForMentionToken('x')}`;
+      expect(parseMention(id)).toMatchObject({ path: 'src/50%.ts', label: '50%.ts:3' });
+    });
+
     it('treats a line that is not a number as no line', () => {
       expect(parseMention('diff:README.md:abc:preview')).toStrictEqual({
         id: 'diff:README.md:abc:preview',
