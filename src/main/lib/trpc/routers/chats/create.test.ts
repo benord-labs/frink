@@ -8,6 +8,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import * as analytics from '../../../analytics';
 import { makeLocalChat, makeLocalSubChat } from './test-factories';
 
 const createChatLocalMock = vi.fn();
@@ -16,7 +17,7 @@ const findChatByWorktreeLocalMock = vi.fn();
 const updateChatLocalMock = vi.fn();
 const projectsSelectMock = vi.fn();
 const autoNameSubChatMock = vi.fn();
-const trackWorkspaceCreatedMock = vi.fn();
+const trackMessageSentMock = vi.spyOn(analytics, 'trackMessageSent');
 const getAiAccountTypeMock = vi.fn();
 
 vi.mock('../../../db', () => ({
@@ -44,7 +45,6 @@ vi.mock('../../../db/repos/sub-chats', () => ({
 vi.mock('../../../db/schema', () => ({
   projects: { id: 'projects.id' },
 }));
-vi.mock('../../../analytics', () => ({ trackWorkspaceCreated: trackWorkspaceCreatedMock }));
 vi.mock('../../../git', () => ({
   createWorktreeForChat: vi.fn(),
   detectBaseBranch: vi.fn(),
@@ -111,6 +111,35 @@ describe('createRouter (local-first)', () => {
     expect(seededMessages[0]).not.toHaveProperty('metadata');
   });
 
+  it("counts the initial message as the chat's first", async () => {
+    createChatLocalMock.mockResolvedValue(makeLocalChat({ id: 'c1', name: 'Test' }));
+    createSubChatLocalMock.mockResolvedValue(makeLocalSubChat({ id: 's1', chatId: 'c1' }));
+
+    const { createRouter } = await import('./create');
+    const caller = createRouter.createCaller({ getWindow: () => null });
+
+    await caller.create({ ...baseInput, initialMessage: 'hello world', mode: 'plan' });
+
+    expect(trackMessageSentMock).toHaveBeenCalledExactlyOnceWith({
+      workspaceId: 's1',
+      messageLength: 'hello world'.length,
+      mode: 'plan',
+      firstInChat: true,
+    });
+  });
+
+  it('counts no message for a chat created without one', async () => {
+    createChatLocalMock.mockResolvedValue(makeLocalChat({ id: 'c1', name: 'Test' }));
+    createSubChatLocalMock.mockResolvedValue(makeLocalSubChat({ id: 's1', chatId: 'c1' }));
+
+    const { createRouter } = await import('./create');
+    const caller = createRouter.createCaller({ getWindow: () => null });
+
+    await caller.create({ ...baseInput, initialMessage: undefined, mode: 'agent' });
+
+    expect(trackMessageSentMock).not.toHaveBeenCalled();
+  });
+
   it('stamps a Work Queue task’s initial message with its source', async () => {
     createChatLocalMock.mockResolvedValue(makeLocalChat({ id: 'c1', name: 'Test' }));
     createSubChatLocalMock.mockResolvedValue(makeLocalSubChat({ id: 's1', chatId: 'c1' }));
@@ -128,6 +157,7 @@ describe('createRouter (local-first)', () => {
     const [seeded] = JSON.parse(createSubChatLocalMock.mock.calls[0]?.[1].messages);
     expect(seeded.metadata).toEqual({ source: 'work-queue' });
     expect(seeded.parts[0]).toEqual({ type: 'text', text: 'Fix @[file:local:x.ts]' });
+    expect(trackMessageSentMock).not.toHaveBeenCalled();
   });
 
   it('rejects an unresolvable projectId as typed NOT_FOUND, not INTERNAL_SERVER_ERROR', async () => {

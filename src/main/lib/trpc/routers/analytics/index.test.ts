@@ -1,4 +1,5 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
+import * as analytics from '../../../analytics';
 import { analyticsRouter } from '.';
 
 const caller = analyticsRouter.createCaller({ getWindow: () => null });
@@ -6,6 +7,14 @@ const message = { workspaceId: 'mg4x2k9qabcdefgh', messageLength: 5, mode: 'agen
 
 it('accepts a message report made of an id, a length and a mode', async () => {
   await expect(caller.messageSent(message)).resolves.toBeUndefined();
+});
+
+it("records a renderer's report as a later message, never a chat's first", async () => {
+  const trackMessageSent = vi.spyOn(analytics, 'trackMessageSent');
+
+  await caller.messageSent(message);
+
+  expect(trackMessageSent).toHaveBeenCalledWith({ ...message, firstInChat: false });
 });
 
 it.each([
