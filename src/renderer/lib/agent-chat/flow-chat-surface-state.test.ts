@@ -48,6 +48,27 @@ describe('deriveParkSurfaceState', () => {
     ).toEqual({ kind: 'none' });
   });
 
+  it('maps a secret request to the secret form, never the reply box', () => {
+    const secretRequest = {
+      id: 'req-1',
+      name: 'STRIPE_KEY',
+      file: '.env',
+      cwd: '/repo',
+      reason: 'Charge test cards',
+      replaces: false,
+      git: 'ignored',
+    };
+    const task = {
+      status: 'needs_attention',
+      result: {
+        agentSignal: { state: 'awaiting_input', summary: 'Needs STRIPE_KEY', secretRequest },
+      },
+    };
+
+    expect(deriveParkSurfaceState(task)).toEqual({ kind: 'secret', request: secretRequest });
+    expect(surface(RUN, task)).toEqual({ kind: 'park' });
+  });
+
   it('maps awaiting_input WITH questions to the card', () => {
     expect(deriveParkSurfaceState(parked('awaiting_input', QUESTIONS))).toEqual({
       kind: 'questions',

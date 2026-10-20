@@ -610,7 +610,7 @@ describe('recordLinkedTaskSignal', () => {
       expect.anything(),
       'task-xyz',
       expect.objectContaining({ agentSignal: signal }),
-      { expectStatuses: ['running', 'failed'] },
+      { expectStatuses: ['running', 'failed'], keepSecretPark: true },
     );
     expect(mockUpdateTaskStatus).not.toHaveBeenCalled();
     expect(mockBroadcastTaskSignalPersisted).not.toHaveBeenCalled();

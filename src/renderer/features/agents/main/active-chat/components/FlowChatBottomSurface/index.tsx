@@ -19,6 +19,7 @@ import { createQueueItem, generateQueueId } from '../../../../lib/queue-utils';
 import { useMessageQueueStore } from '../../../../stores/message-queue-store';
 import { FlowPausedBar, FlowRunStrip } from '../FlowRunStrip';
 import { ParkAnswerSurface } from '../ParkAnswerSurface';
+import { SecretRequestGate } from '../SecretRequestCard';
 
 type Props = {
   subChatId: string;
@@ -93,7 +94,7 @@ export const FlowChatBottomSurface = memo(function FlowChatBottomSurface({
     return guardedSend(buildHiddenWakeMessage(RESUME_PAUSED_WAKE_TEXT));
   }, [guardedSend]);
 
-  return (
+  const slot = (
     <>
       {/* Above the composer slot: the park answer surface, and the question card whenever a flow
           surface holds the slot the card would otherwise take. */}
@@ -144,5 +145,17 @@ export const FlowChatBottomSurface = memo(function FlowChatBottomSurface({
         children
       )}
     </>
+  );
+
+  // An open secret request takes this whole slot while no turn runs.
+  return (
+    <SecretRequestGate
+      subChatId={subChatId}
+      task={task}
+      isTurnActive={isTurnActive}
+      above={questionCard}
+    >
+      {slot}
+    </SecretRequestGate>
   );
 });
