@@ -71,6 +71,7 @@ type ChatInputAreaProps = ComposerForwardedProps & {
   onClearCodeSelection?: () => void;
   // Active file context (auto-included current file being viewed). Click to remove from context.
   activeFileName?: string | null;
+  activeFilePath?: string | null;
   /** When true, user clicked to remove — don't show indicator or include in send */
   activeFileDismissed?: boolean;
   onDismissActiveFile?: () => void;
@@ -91,53 +92,44 @@ type ChatInputAreaProps = ComposerForwardedProps & {
  * Custom comparison for memo to prevent re-renders from unstable array references.
  * Compares messages by length and last message id, changedFiles by length and paths.
  */
+/** Props compared by identity: primitives, refs (stable) and callbacks (memoized in the parent). */
+const IDENTITY_COMPARED_PROPS = [
+  'isStreaming',
+  'isCompacting',
+  'isUploading',
+  'subChatId',
+  'parentChatId',
+  'teamId',
+  'repository',
+  'projectPath',
+  'projectId',
+  'isMobile',
+  'queueLength',
+  'firstQueueItemId',
+  'activeFileDismissed',
+  'activeFileName',
+  'activeFilePath',
+  'editorRef',
+  'fileInputRef',
+  'onSend',
+  'onForceSend',
+  'onStop',
+  'onCompact',
+  'onAddAttachments',
+  'onRemoveImage',
+  'onRemoveFile',
+  'onRemoveTextContext',
+  'onAddPastedText',
+  'onRemovePastedText',
+  'onInputContentChange',
+  'onSendFromQueue',
+  'onDismissActiveFile',
+  'onClearCodeSelection',
+  'onRemoveDiffTextContext',
+] as const satisfies readonly (keyof ChatInputAreaProps)[];
+
 function arePropsEqual(prevProps: ChatInputAreaProps, nextProps: ChatInputAreaProps): boolean {
-  // Compare primitives and stable references first (fast path)
-  if (
-    prevProps.isStreaming !== nextProps.isStreaming ||
-    prevProps.isCompacting !== nextProps.isCompacting ||
-    prevProps.isUploading !== nextProps.isUploading ||
-    prevProps.subChatId !== nextProps.subChatId ||
-    prevProps.parentChatId !== nextProps.parentChatId ||
-    prevProps.teamId !== nextProps.teamId ||
-    prevProps.repository !== nextProps.repository ||
-    prevProps.projectPath !== nextProps.projectPath ||
-    prevProps.projectId !== nextProps.projectId ||
-    prevProps.isMobile !== nextProps.isMobile ||
-    prevProps.queueLength !== nextProps.queueLength ||
-    prevProps.firstQueueItemId !== nextProps.firstQueueItemId ||
-    prevProps.activeFileDismissed !== nextProps.activeFileDismissed ||
-    prevProps.activeFileName !== nextProps.activeFileName
-  ) {
-    return false;
-  }
-
-  // Compare refs by identity (they should be stable)
-  if (
-    prevProps.editorRef !== nextProps.editorRef ||
-    prevProps.fileInputRef !== nextProps.fileInputRef
-  ) {
-    return false;
-  }
-
-  // Compare callbacks by identity (they should be memoized in parent)
-  if (
-    prevProps.onSend !== nextProps.onSend ||
-    prevProps.onForceSend !== nextProps.onForceSend ||
-    prevProps.onStop !== nextProps.onStop ||
-    prevProps.onCompact !== nextProps.onCompact ||
-    prevProps.onAddAttachments !== nextProps.onAddAttachments ||
-    prevProps.onRemoveImage !== nextProps.onRemoveImage ||
-    prevProps.onRemoveFile !== nextProps.onRemoveFile ||
-    prevProps.onRemoveTextContext !== nextProps.onRemoveTextContext ||
-    prevProps.onAddPastedText !== nextProps.onAddPastedText ||
-    prevProps.onRemovePastedText !== nextProps.onRemovePastedText ||
-    prevProps.onInputContentChange !== nextProps.onInputContentChange ||
-    prevProps.onSendFromQueue !== nextProps.onSendFromQueue ||
-    prevProps.onDismissActiveFile !== nextProps.onDismissActiveFile ||
-    prevProps.onClearCodeSelection !== nextProps.onClearCodeSelection ||
-    prevProps.onRemoveDiffTextContext !== nextProps.onRemoveDiffTextContext
-  ) {
+  if (IDENTITY_COMPARED_PROPS.some((key) => prevProps[key] !== nextProps[key])) {
     return false;
   }
 
@@ -267,6 +259,7 @@ export const ChatInputArea = memo(function ChatInputArea({
   codeSelectionContext,
   onClearCodeSelection,
   activeFileName,
+  activeFilePath,
   activeFileDismissed = false,
   onDismissActiveFile,
   pastedTexts = [],
@@ -763,6 +756,7 @@ export const ChatInputArea = memo(function ChatInputArea({
                         <EditorContextChip
                           selection={codeSelectionContext}
                           fileName={attachedFileName}
+                          filePath={attachedFileName ? activeFilePath : null}
                           onRemoveSelection={() => onClearCodeSelection?.()}
                           onRemoveFile={() => onDismissActiveFile?.()}
                         />
