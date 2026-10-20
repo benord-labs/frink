@@ -2,6 +2,7 @@ import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { FlowAdmissionState } from '../../../../shared/lib/flow-admission';
 import type { getDatabase } from '../../db';
 import { flowRunAdmissions, flowRuns, flows, flowVersions, projects } from '../../db/schema';
+import { flowAdmissionResumeKey } from '../../db/schema/flow-run-admissions';
 import { FLOW_ADMISSION_QUEUE_ORDER_BY, FLOW_ADMISSION_QUEUE_ORDER_SQL } from './queue-order';
 
 type Db = ReturnType<typeof getDatabase>;
@@ -30,6 +31,8 @@ export type QueuedFlowAdmission = {
   flowName: string;
   priorityClass: 'resume' | 'start';
   projectName: string | null;
+  requestedAt: Date;
+  runFirst: boolean;
   ticket: number;
   /** The run's originating trigger payload, raw — the renderer validates and summarises it. */
   triggerContext: Record<string, unknown> | null;
@@ -104,7 +107,7 @@ export function admissionVisibilityForRuns(
 export function queuedRunsForFlows(db: Db, flowIds: string[]): Map<string, FlowAdmissionRun> {
   if (flowIds.length === 0) return new Map();
   // Pending starts already come from getLatestRunsForFlows. This supplemental lookup exists only
-  // for terminal resume runs, so use the queue index's priority prefix instead of scanning starts.
+  // for terminal resume runs, so seek the queue index's resume-key prefix instead of scanning starts.
   const rankedRuns = db
     .select({
       flowId: flowVersions.flowId,
@@ -121,7 +124,7 @@ export function queuedRunsForFlows(db: Db, flowIds: string[]): Map<string, FlowA
       and(
         inArray(flowVersions.flowId, flowIds),
         eq(flowRunAdmissions.state, 'queued'),
-        eq(flowRunAdmissions.priorityClass, 'resume'),
+        sql`${flowAdmissionResumeKey(flowRunAdmissions)} = 1`,
       ),
     )
     .as('ranked_queued_flow_runs');
@@ -146,6 +149,8 @@ export function queuedFlowAdmissions(db: Db): QueuedFlowAdmission[] {
       flowName: flows.name,
       priorityClass: flowRunAdmissions.priorityClass,
       projectName: projects.name,
+      requestedAt: flowRunAdmissions.requestedAt,
+      runFirst: flowRunAdmissions.runFirst,
       ticket: flowRunAdmissions.ticket,
       triggerContext: flowRuns.triggerContext,
     })

@@ -153,6 +153,36 @@ describe('atomic Flow start admission', () => {
     expect(replay.run.id).toBe(first.run.id);
     expect(db.select().from(flowRuns).all()).toEqual([first.run]);
   });
+  it('marks a start run-first from the version it admits, never from a newer one', async () => {
+    const db = freshDb();
+    const plainVersion = seedVersion(db);
+    db.insert(flowVersions)
+      .values({
+        id: 'version-run-first',
+        flowId: 'flow-start',
+        versionNumber: 2,
+        graph: { ...GRAPH, settings: { runFirst: true } },
+      })
+      .run();
+    const controller = new FlowAdmissionController(db);
+    const first = await controller.enqueueStart(startInput('version-run-first', 'first-start'));
+    const plain = await controller.enqueueStart(startInput(plainVersion, 'plain-start'));
+    db.update(flowRunAdmissions)
+      .set({ state: 'failed', settledAt: new Date('2026-08-01T10:00:00Z') })
+      .where(eq(flowRunAdmissions.ticket, plain.admission?.ticket ?? -1))
+      .run();
+
+    // The replay re-queues the run still pinned to the plain version, even though a newer
+    // version of the same flow now runs first.
+    const replay = await controller.enqueueStart(startInput('version-run-first', 'plain-start'));
+
+    expect(first.admission).toMatchObject({ priorityClass: 'start', runFirst: true });
+    expect(first.admission?.intentJson).not.toHaveProperty('runFirst');
+    expect(replay.run.flowVersionId).toBe(plainVersion);
+    expect(replay.admission?.ticket).toBeGreaterThan(plain.admission?.ticket ?? 0);
+    expect(replay.admission?.runFirst).toBe(false);
+  });
+
   it('re-enqueues only a replay that is still pending and proven unstarted', async () => {
     const db = freshDb();
     const flowVersionId = seedVersion(db);

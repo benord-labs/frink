@@ -11,6 +11,7 @@ const SETTINGS_LABELS: Record<string, string> = {
   defaultModel: 'Default model',
   defaultProjectId: 'Default project',
   briefing: 'Flow briefing',
+  runFirst: 'Priority queue',
   pauseOnFailure: 'Failure handling',
   maxBatchConcurrency: 'Batch concurrency',
   batchTriggerSchema: 'Batch trigger inputs',

@@ -22,6 +22,11 @@ export function flowAdmissionQueueOrderKey(table: {
   return sql`coalesce(${table.queueOrder}, ${table.ticket})`;
 }
 
+/** 1 for resumes, 0 for starts, so resumes claim first by value rather than by how the class is spelled. */
+export function flowAdmissionResumeKey(table: { priorityClass: AnySQLiteColumn }) {
+  return sql`(${table.priorityClass} = 'resume')`;
+}
+
 export function defineFlowRunAdmissions(flowRuns: FlowRunsTable) {
   return sqliteTable(
     'flow_run_admissions',
@@ -33,6 +38,7 @@ export function defineFlowRunAdmissions(flowRuns: FlowRunsTable) {
       state: text('state').$type<FlowAdmissionState>().notNull().default('queued'),
       priorityClass: text('priority_class').$type<FlowAdmissionPriorityClass>().notNull(),
       queueOrder: integer('queue_order'),
+      runFirst: integer('run_first', { mode: 'boolean' }).notNull().default(false),
       intentVersion: integer('intent_version').notNull(),
       intentJson: text('intent_json', { mode: 'json' }).notNull(),
       requestedAt: integer('requested_at', { mode: 'timestamp' })
@@ -52,8 +58,17 @@ export function defineFlowRunAdmissions(flowRuns: FlowRunsTable) {
         'flow_run_admissions_priority_check',
         sql`${table.priorityClass} IN ('start', 'resume')`,
       ),
+      check(
+        'flow_run_admissions_run_first_check',
+        sql`${table.runFirst} IN (0, 1) AND (${table.runFirst} = 0 OR ${table.priorityClass} = 'start')`,
+      ),
       index('flow_run_admissions_queue_idx')
-        .on(table.priorityClass, flowAdmissionQueueOrderKey(table), table.ticket)
+        .on(
+          sql`${flowAdmissionResumeKey(table)} desc`,
+          sql`${table.runFirst} desc`,
+          flowAdmissionQueueOrderKey(table),
+          table.ticket,
+        )
         .where(sql`${table.state} = 'queued'`),
       index('flow_run_admissions_occupied_idx')
         .on(table.state)

@@ -31,6 +31,7 @@ const SETTLED_ADMISSION_SQL = sql`${flowRunAdmissions.state} IN ('released', 'fa
 export type EnqueueFlowAdmissionInput = {
   intent: FlowAdmissionIntentV1;
   requestedAt?: Date;
+  runFirst?: boolean;
 };
 export type EnqueueFlowAdmissionResult = {
   admission: FlowRunAdmission;
@@ -73,6 +74,7 @@ export function enqueueFlowAdmission(
       intentVersion: input.intent.version,
       intentJson: input.intent,
       requestedAt: input.requestedAt ?? new Date(),
+      runFirst: input.runFirst === true,
     })
     .returning()
     .get();
@@ -253,7 +255,7 @@ export function claimEligibleAdmissions(
     .select()
     .from(flowRunAdmissions)
     .where(QUEUED_ADMISSION_SQL)
-    // Resumes stay ahead of starts; explicit user order falls back to immutable ticket FIFO.
+    // Resumes, then run-first starts, then other starts; user order falls back to ticket FIFO.
     .orderBy(...FLOW_ADMISSION_QUEUE_ORDER_BY)
     .limit(MAX_CANDIDATES_PER_TRANSACTION)
     .all();

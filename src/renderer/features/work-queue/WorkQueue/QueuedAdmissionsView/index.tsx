@@ -20,7 +20,14 @@ import { memo, type ReactElement, type Ref, useMemo, useRef, useState } from 're
 import type { TriggerContext } from '../../../../../shared/types/trigger-context';
 import { ConfirmDialog } from '../../../../components/ui/confirm-dialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../../components/ui/tooltip';
-import { admissionWaitCopy } from '../../../../lib/work-queue/admission-wait-copy';
+import {
+  ADMISSION_GROUP_LABELS,
+  ADMISSION_GROUPS,
+  admissionGroup,
+  admissionRemovalCopy,
+  admissionWaitCopy,
+  oldestWaitingNote,
+} from '../../../../lib/work-queue/admission-wait-copy';
 import { TriggerContentDialog } from '../ActionMenu/TriggerContentDialog';
 
 export type QueuedAdmission = {
@@ -29,6 +36,8 @@ export type QueuedAdmission = {
   isBatchMember: boolean;
   priorityClass: 'resume' | 'start';
   projectName: string | null;
+  requestedAt: Date;
+  runFirst: boolean;
   /** What the run is about (story name, batch item label); null when the trigger carries nothing readable. */
   subject: string | null;
   ticket: number;
@@ -228,17 +237,13 @@ const SortableAdmission = memo(function SortableAdmission({
   const previous = rows[index - 1];
   const next = rows[index + 1];
   const label = admission.flowName;
-  const waitCopy = admissionWaitCopy(admission.priorityClass, queuePaused);
+  const group = admissionGroup(admission);
+  const waitCopy = admissionWaitCopy(group, queuePaused);
   // Two rows routinely name the SAME flow — one flow queued twice, or two members of one batch — so
   // the flow name alone gives every control in this row an accessible name identical to another
   // row's. Every control appends the position the row already displays, plus the group that makes
-  // that position unique across the two lists.
-  const rowSuffix = `${admission.priorityClass === 'resume' ? 'Resuming' : 'Starting'} ${index + 1} of ${rows.length}`;
-  const preserveFocus = async (operation: () => Promise<void>) => {
-    const focused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    await operation();
-    if (focused?.isConnected) focused.focus();
-  };
+  // that position unique across the lists.
+  const rowSuffix = `${ADMISSION_GROUP_LABELS[group]} ${index + 1} of ${rows.length}`;
 
   return (
     <SortableActivityRow
@@ -283,6 +288,7 @@ const SortableAdmission = memo(function SortableAdmission({
 });
 
 function SortableAdmissionGroup({
+  detail,
   label,
   onMove,
   onRemoveRequest,
@@ -291,6 +297,7 @@ function SortableAdmissionGroup({
   rows,
   isMoving,
 }: {
+  detail?: string;
   label: string;
   onMove: SortableAdmissionProps['onMove'];
   onRemoveRequest: SortableAdmissionProps['onRemoveRequest'];
@@ -315,7 +322,10 @@ function SortableAdmissionGroup({
 
   return (
     <div>
-      <h4 className="mb-1.5 text-xs font-medium text-muted-foreground">{label}</h4>
+      <div className="mb-1.5 flex items-baseline justify-between gap-3 text-xs text-muted-foreground">
+        <h4 className="font-medium">{label}</h4>
+        {detail && <span>{detail}</span>}
+      </div>
       <DndContext sensors={sensors} modifiers={[restrictToVerticalAxis]} onDragEnd={handleDragEnd}>
         <SortableContext items={tickets} strategy={verticalListSortingStrategy}>
           <ol className="overflow-hidden">
@@ -337,18 +347,6 @@ function SortableAdmissionGroup({
       </DndContext>
     </div>
   );
-}
-
-/** Spells out what confirming actually destroys — the two priority classes differ sharply. */
-function removalDescription(admission: QueuedAdmission): string {
-  if (admission.priorityClass === 'resume') {
-    return 'The finished run stays as it is. It returns to your attention list, where you can retry it.';
-  }
-  const base =
-    "The queued run is cancelled. Its trigger details can't be replayed, so you'll need to run the flow again.";
-  return admission.isBatchMember
-    ? `${base} It also counts as one failed member of its batch stage, which can fail that stage and cancel the stages waiting on it.`
-    : base;
 }
 
 export type QueuedAdmissionsViewProps = {
@@ -376,13 +374,16 @@ export const QueuedAdmissionsView = memo(function QueuedAdmissionsView({
   queuePaused,
   rows,
 }: QueuedAdmissionsViewProps): ReactElement {
-  const [resumptions, starts] = useMemo(
-    () => [
-      rows.filter((row) => row.priorityClass === 'resume'),
-      rows.filter((row) => row.priorityClass === 'start'),
-    ],
+  const groups = useMemo(
+    () =>
+      ADMISSION_GROUPS.map((group) => ({
+        group,
+        rows: rows.filter((row) => admissionGroup(row) === group),
+      })),
     [rows],
   );
+  // The priority queue can hold back other starts indefinitely, so say how long the oldest has waited.
+  const startsSkipped = groups.some(({ group, rows }) => group === 'priority' && rows.length > 0);
 
   const rootRef = useRef<HTMLDivElement>(null);
   const [pendingRemoval, setPendingRemoval] = useState<QueuedAdmission | null>(null);
@@ -435,29 +436,24 @@ export const QueuedAdmissionsView = memo(function QueuedAdmissionsView({
           </h3>
           <p className="mt-1 text-xs text-muted-foreground">
             {queuePaused
-              ? 'On hold while the queue is paused. Reorder work within either group.'
-              : 'Resumes run first. Reorder work within either group.'}
+              ? 'On hold while the queue is paused. Reorder work within each group.'
+              : 'Runs start from the top. Reorder work within each group.'}
           </p>
         </div>
         <div className="space-y-4">
-          <SortableAdmissionGroup
-            label="Resuming"
-            rows={resumptions}
-            isMoving={moving}
-            onMove={onMove}
-            onRemoveRequest={requestRemoval}
-            onViewContent={requestView}
-            queuePaused={queuePaused}
-          />
-          <SortableAdmissionGroup
-            label="Starting"
-            rows={starts}
-            isMoving={moving}
-            onMove={onMove}
-            onRemoveRequest={requestRemoval}
-            onViewContent={requestView}
-            queuePaused={queuePaused}
-          />
+          {groups.map(({ group, rows: groupRows }) => (
+            <SortableAdmissionGroup
+              key={group}
+              detail={group === 'start' && startsSkipped ? oldestWaitingNote(groupRows) : undefined}
+              label={ADMISSION_GROUP_LABELS[group]}
+              rows={groupRows}
+              isMoving={moving}
+              onMove={onMove}
+              onRemoveRequest={requestRemoval}
+              onViewContent={requestView}
+              queuePaused={queuePaused}
+            />
+          ))}
         </div>
       </section>
     );
@@ -481,7 +477,7 @@ export const QueuedAdmissionsView = memo(function QueuedAdmissionsView({
           if (pendingRemoval) void confirmRemoval(pendingRemoval);
         }}
         title={`Remove "${pendingRemoval?.flowName ?? ''}" from the queue?`}
-        description={pendingRemoval ? removalDescription(pendingRemoval) : ''}
+        description={pendingRemoval ? admissionRemovalCopy(pendingRemoval) : ''}
         confirmLabel="Remove"
       />
       {viewing?.triggerContext && (

@@ -234,6 +234,15 @@ describe('applyPatchOperations — success path', () => {
     expect(r.graph.settings?.briefing).toBe('Always use TypeScript strict mode.');
   });
 
+  it('update_settings sets runFirst', () => {
+    const r = applyPatchOperations(MIN_VALID_GRAPH, [
+      { op: 'update_settings', settings: { runFirst: true } },
+    ]);
+    expect(r.status).toBe('success');
+    if (r.status !== 'success') return;
+    expect(r.graph.settings?.runFirst).toBe(true);
+  });
+
   it('update_settings clears briefing when set to undefined', () => {
     const withBriefing = { ...MIN_VALID_GRAPH, settings: { briefing: 'Old briefing' } };
     const r = applyPatchOperations(withBriefing, [

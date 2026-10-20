@@ -11,6 +11,7 @@ import {
   batchStages,
   type FlowRun,
   flowRuns,
+  flowVersions,
   type NewFlowRun,
 } from '../../db/schema';
 import { assertStageHasSlot, StageRunMovedError } from './batch-promotion';
@@ -60,6 +61,17 @@ function isProvenUnstarted(run: FlowRun): boolean {
 }
 
 const memberAttachmentsSchema = z.object({ attachments: z.array(z.unknown()) });
+const runFirstGraphSchema = z.object({ settings: z.object({ runFirst: z.literal(true) }) });
+
+/** Read from the version the run is pinned to, so a replayed start keeps that version's choice. */
+function versionRunsFirst(db: Db, flowVersionId: string): boolean {
+  const version = db
+    .select({ graph: flowVersions.graph })
+    .from(flowVersions)
+    .where(eq(flowVersions.id, flowVersionId))
+    .get();
+  return runFirstGraphSchema.safeParse(version?.graph).success;
+}
 
 /** Uploads append only while the member is pending, so this read is final for its run. */
 function withMemberAttachments(
@@ -170,6 +182,10 @@ export function enqueueFlowStart(db: Db, input: EnqueueFlowStartInput): EnqueueF
     flow_run_id: run.id,
     ...(batchStageRunId ? { batch_stage_run_id: batchStageRunId } : {}),
   };
-  const { admission } = enqueueFlowAdmission(db, { intent, requestedAt });
+  const { admission } = enqueueFlowAdmission(db, {
+    intent,
+    requestedAt,
+    runFirst: versionRunsFirst(db, run.flowVersionId),
+  });
   return { run, isReplay, admission };
 }

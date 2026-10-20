@@ -717,6 +717,61 @@ describe('database migration chain', () => {
     }
   });
 
+  it('adds the run-first lane without changing the order of anything already queued', () => {
+    const tag = '0114_flow_admission_run_first';
+    const oldOrder = 'priority_class, coalesce(queue_order, ticket), ticket';
+    const newOrder =
+      "(priority_class = 'resume') DESC, run_first DESC, coalesce(queue_order, ticket), ticket";
+    const queuedTickets = (sqlite: NodeSqliteDatabase, order: string) =>
+      // SAFETY: this projection returns the INTEGER ticket column only.
+      (
+        sqlite
+          .prepare(
+            `SELECT ticket FROM flow_run_admissions WHERE state = 'queued' ORDER BY ${order}`,
+          )
+          .all() as Array<{ ticket: number }>
+      ).map((row) => row.ticket);
+    const sqlite = new NodeSqliteDatabase(':memory:');
+    try {
+      sqlite.pragma('foreign_keys = ON');
+      for (const entry of readJournalEntries()) {
+        if (entry.tag === tag) break;
+        sqlite.exec(readFileSync(join(drizzleDir, `${entry.tag}.sql`), 'utf-8'));
+      }
+      sqlite.exec(`
+        INSERT INTO flows (id, name) VALUES ('flow-1', 'F');
+        INSERT INTO flow_versions (id, flow_id, version_number, graph) VALUES ('ver-1', 'flow-1', 1, '{}');
+        INSERT INTO flow_runs (id, flow_version_id, status) VALUES
+          ('run-1', 'ver-1', 'pending'), ('run-2', 'ver-1', 'failed'), ('run-3', 'ver-1', 'pending'),
+          ('run-4', 'ver-1', 'completed'), ('run-5', 'ver-1', 'pending');
+        INSERT INTO flow_run_admissions
+          (flow_run_id, state, priority_class, queue_order, intent_version, intent_json, requested_at) VALUES
+          ('run-1', 'queued', 'start', NULL, 1, '{}', 1),
+          ('run-2', 'queued', 'resume', NULL, 1, '{}', 2),
+          ('run-3', 'queued', 'start', 0, 1, '{}', 3),
+          ('run-4', 'released', 'start', NULL, 1, '{}', 4),
+          ('run-5', 'queued', 'start', NULL, 1, '{}', 5);
+        DELETE FROM flow_run_admissions WHERE flow_run_id = 'run-5';
+      `);
+      const before = queuedTickets(sqlite, oldOrder);
+
+      sqlite.exec(readFileSync(join(drizzleDir, `${tag}.sql`), 'utf-8'));
+
+      expect(queuedTickets(sqlite, newOrder)).toEqual(before);
+      expect(count(sqlite, 'flow_run_admissions WHERE run_first <> 0')).toBe(0);
+      const insert = sqlite.prepare(
+        "INSERT INTO flow_run_admissions (flow_run_id, priority_class, run_first, intent_version, intent_json, requested_at) VALUES ('run-5', ?, ?, 1, '{}', 6)",
+      );
+      expect(() => insert.run('resume', 1)).toThrow(/CHECK constraint/);
+      expect(() => insert.run('start', 2)).toThrow(/CHECK constraint/);
+      insert.run('start', 1);
+      // A table rebuild would reset AUTOINCREMENT and hand out the deleted ticket 5 again.
+      expect(count(sqlite, 'flow_run_admissions WHERE ticket = 6 AND run_first = 1')).toBe(1);
+    } finally {
+      sqlite.close();
+    }
+  });
+
   it('leaves no dropped column or table behind after the real migration runner', () => {
     const db = freshDb();
     try {

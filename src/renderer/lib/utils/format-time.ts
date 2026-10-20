@@ -77,3 +77,12 @@ export function formatDayLabel(day: string, withWeekday = false): string {
     month: 'short',
   });
 }
+
+/** An absolute time stays true between renders, so it never goes stale or re-announces itself. */
+export function formatWaitingSince(since: Date): string {
+  const today = since.toDateString() === new Date().toDateString();
+  return since.toLocaleString(
+    undefined,
+    today ? { timeStyle: 'short' } : { dateStyle: 'medium', timeStyle: 'short' },
+  );
+}

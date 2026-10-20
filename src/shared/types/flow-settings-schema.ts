@@ -38,6 +38,12 @@ export const flowSettingsShapeSchema = z.object({
     .describe(
       'Shared context (PRD, spec, checklist) delivered once per flow session as a system prompt to every agent in the flow — not repeated in each message, not referenced in instructions. Rendered against {{trigger.*}} only. Set via frink_flows_patch. ~2,500 tokens max.',
     ),
+  runFirst: z
+    .boolean()
+    .optional()
+    .describe(
+      'When true, new runs of this flow join the priority queue and start ahead of other waiting new runs while the machine-wide Flow limit is full. Resuming runs still go first and running work is never interrupted. Leave unset unless the user explicitly asks to put this flow in the priority queue.',
+    ),
   pauseOnFailure: z
     .boolean()
     .optional()
