@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { toast } from 'sonner';
+import { decodeUriPath } from '../../../shared/lib/path-normalization';
 
 /** Drag types used by IDEs (Cursor/VSCode) instead of standard "Files" */
 const IDE_FILE_DRAG_TYPES = ['resourceurls', 'codefiles', 'text/uri-list'];
@@ -27,11 +28,7 @@ export function fileUriOrPathToPath(entry: string): string {
     if (pathPart && !isAbsolutePath(pathPart)) {
       pathPart = `/${pathPart}`;
     }
-    try {
-      return decodeURIComponent(pathPart);
-    } catch {
-      return pathPart;
-    }
+    return decodeUriPath(pathPart);
   }
   return s;
 }
