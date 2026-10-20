@@ -197,6 +197,22 @@ function registerDisarmedTests({
     expect(firedReminders.get(claudeQueryMock.mock.calls[0][0])).toBeUndefined();
   });
 
+  it('omits the disarmed reminder on a fresh slash command, which goes out without the transcript', async () => {
+    mockPinnedTaskChat('task-dead-command', 'done');
+    mockClaudeFinishTurn('sess-reminder-command');
+
+    await handleRemoteExecute({
+      ...basePayload,
+      message: '/review',
+      history: [
+        { role: 'user' as const, content: 'do the task' },
+        { role: 'assistant' as const, content: 'done, signalling now' },
+      ],
+    });
+
+    expect(firedReminders.get(claudeQueryMock.mock.calls[0][0])).toBeUndefined();
+  });
+
   it('delivers the disarmed reminder via the hook regardless of an image attachment', async () => {
     // The hook channel is independent of prompt shape, so an image attachment (which switches
     // buildPromptForClaude to its async-iterable form) does not affect reminder delivery.

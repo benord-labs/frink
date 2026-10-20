@@ -23,6 +23,10 @@ describe('trackUserMessageDelivery (sc-3666)', () => {
     pushed.onPushed(false, true)();
     expect(() => pushed.assertDelivered(false, false)).not.toThrow();
 
+    const andThen = vi.fn();
+    trackUserMessageDelivery('sub-3', 'msg-3', () => 10).onPushed(false, false, andThen)();
+    expect(andThen).toHaveBeenCalledOnce();
+
     const aborted = trackUserMessageDelivery('sub-2', 'msg-2', () => 10);
     expect(() => aborted.assertDelivered(true, false)).not.toThrow();
   });
