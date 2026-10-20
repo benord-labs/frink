@@ -19,3 +19,12 @@ export function isRootLikePath(inputPath: string): boolean {
 export function isWindowsAbsolutePath(inputPath: string): boolean {
   return WINDOWS_ABSOLUTE_PATH_REGEX.test(inputPath) || inputPath.startsWith('\\\\');
 }
+
+/** A URI-encoded path, or the path as written when it is not valid URI encoding. */
+export function decodeUriPath(inputPath: string): string {
+  try {
+    return decodeURIComponent(inputPath);
+  } catch {
+    return inputPath;
+  }
+}
