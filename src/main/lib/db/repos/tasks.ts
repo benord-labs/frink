@@ -278,6 +278,8 @@ export function updateTaskStatus(
   return db.update(tasks).set(patch).where(casWhere(taskId, options)).returning().get() ?? null;
 }
 
+const NO_SECRET_PARK = drizzleSql`json_extract(${tasks.result}, '$.agentSignal.secretRequest') IS NULL`;
+
 function casWhere(taskId: string, options: { expectStatuses?: readonly TaskStatus[] }) {
   return options.expectStatuses
     ? and(eq(tasks.id, taskId), inArray(tasks.status, [...options.expectStatuses]))
@@ -294,13 +296,11 @@ export async function updateTaskResult(
   db: Db,
   taskId: string,
   result: unknown,
-  options: { expectStatuses?: readonly TaskStatus[] } = {},
+  options: { expectStatuses?: readonly TaskStatus[]; keepSecretPark?: boolean } = {},
 ): Promise<Task | null> {
-  const [row] = await db
-    .update(tasks)
-    .set({ result: result == null ? null : taskResultSchema.parse(result) })
-    .where(casWhere(taskId, options))
-    .returning();
+  const parsed = result == null ? null : taskResultSchema.parse(result);
+  const where = and(casWhere(taskId, options), options.keepSecretPark ? NO_SECRET_PARK : undefined);
+  const [row] = await db.update(tasks).set({ result: parsed }).where(where).returning();
   return row ?? null;
 }
 

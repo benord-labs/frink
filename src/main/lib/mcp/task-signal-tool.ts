@@ -2,7 +2,7 @@
  * record it on the execution context. */
 
 import log from 'electron-log';
-import type { TaskSignalPayload } from '../../../shared/types/task-signal';
+import type { SecretRequest, TaskSignalPayload } from '../../../shared/types/task-signal';
 import { getDatabase } from '../db';
 import { getFlowRun } from '../db/repos/flow-runs';
 import { getTaskById } from '../db/repos/tasks';
@@ -27,13 +27,20 @@ export type TaskSignalToolContext = {
 const DISARMED_MESSAGE =
   'No active task expects a lifecycle signal in this chat — the flow/task already completed. Do not call this tool again; just answer the user.';
 
+const SECRET_PARKED_MESSAGE =
+  'A secure secret request already parks this task. Do not signal again; end your turn.';
+
+/** `secretRequest` comes only from `frink_request_secret`, recorded with the signal in one step. */
 export async function handleTaskSignalToolCall(
   ctx: TaskSignalToolContext,
   args: Record<string, unknown>,
+  secretRequest?: SecretRequest,
 ): Promise<McpToolResult> {
   // Resumed sessions can carry the tool in their transcript even after it is hidden from
   // tools/list — refuse instead of recording a signal nothing will consume.
   if (!ctx.taskSignalEnabled) return toolResult(DISARMED_MESSAGE, true);
+  // A later signal would replace the park and drop the secret form the user is about to fill in.
+  if (ctx.latestTaskSignal?.secretRequest) return toolResult(SECRET_PARKED_MESSAGE, true);
   // Same parser as the canUseTool persist, so the two paths never disagree on a valid signal.
   const signal = parseTaskSignalInput(args);
   if (!signal) return toolResult('Invalid arguments: malformed frink_task_signal payload', true);
@@ -44,8 +51,12 @@ export async function handleTaskSignalToolCall(
     ctx.taskSignalEnabled = false;
     return toolResult(refusal, true);
   }
+  // Checked again after the await: a secret request in the same message may have parked meanwhile.
+  if (ctx.latestTaskSignal?.secretRequest) return toolResult(SECRET_PARKED_MESSAGE, true);
   // parseTaskSignalInput always stamps `at`; the `??` only satisfies its optional return type.
-  ctx.latestTaskSignal = { ...signal, at: signal.at ?? new Date().toISOString() };
+  const recorded: RecordedTaskSignal = { ...signal, at: signal.at ?? new Date().toISOString() };
+  if (secretRequest) recorded.secretRequest = secretRequest;
+  ctx.latestTaskSignal = recorded;
   // Accepted by a live target. The task transition — and any flow advance — applies when this
   // turn ends (flow-node-advance-timing), so this deliberately promises no advance.
   const body = { ok: true, accepted: true, appliesAt: 'turn-end', signal: ctx.latestTaskSignal };

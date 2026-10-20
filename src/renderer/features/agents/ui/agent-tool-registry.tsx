@@ -38,6 +38,7 @@ import { TERMINAL_TOOL_PART_STATES } from '../../../../shared/types/assistant-me
 import { pickPlanningStatusMessage } from '../../../lib/agent-chat/planning/planning-status-message';
 import { hasActiveTransport } from '../../../lib/stores/active-transport-registry';
 import type { MessagePart } from '../stores/message-store';
+import { SECRET_REQUEST_TOOL_ENTRY } from './secret-request-tool';
 import { STEER_TOOL_ENTRY } from './steer-card';
 import { FLOWS_TOOL_ENTRIES } from './tool-registry-flows';
 
@@ -413,8 +414,7 @@ const agentToolRegistryDefinition = {
     icon: SquareTerminal,
     title: (part) => {
       const isPending = part.state !== 'output-available' && part.state !== 'output-error';
-      const isInputStreaming = part.state === 'input-streaming';
-      if (isInputStreaming) return 'Generating command';
+      if (part.state === 'input-streaming') return 'Generating command';
       return isPending ? 'Running command' : 'Ran command';
     },
     subtitle: (part) => {
@@ -773,6 +773,7 @@ export const AgentToolRegistry: Record<string, ToolMeta> & { 'tool-planning': To
   ...agentToolRegistryDefinition,
   ...FLOWS_TOOL_ENTRIES,
   ...STEER_TOOL_ENTRY,
+  ...SECRET_REQUEST_TOOL_ENTRY,
 };
 
 /** Same reference as {@link AgentToolRegistry}, typed for isolated chat (requires `tool-planning`). */
