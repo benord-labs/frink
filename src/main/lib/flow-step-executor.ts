@@ -346,10 +346,15 @@ async function executeStartTask(
       ...string[],
     ];
     try {
-      const result = await createWorktreeWithMergedBases(projectPath, sanitizedName, baseBranches);
+      const result = await createWorktreeWithMergedBases(
+        projectPath,
+        sanitizedName,
+        baseBranches,
+        signal,
+      );
 
       if (!result.success && !('conflict' in result)) {
-        return stepFailure(result.error);
+        return { ...stepFailure(result.error), cancelled: signal.aborted };
       }
 
       if (!result.success && 'conflict' in result) {

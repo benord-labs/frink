@@ -4,7 +4,15 @@
  */
 
 import { execSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -17,6 +25,7 @@ vi.mock('../worktree/base-path-config', () => ({
 }));
 
 import { createWorktreeError, createWorktreeForBranch, generateBranchName } from './worktree';
+import { createWorktreeWithMergedBases } from './worktree-converge';
 
 /** Matches createWorktreeForBranch / chat branch naming (no flow/ prefix, no slashes). */
 const FLOW_LOCAL_BRANCH_RE = /^[a-z]+-[a-z]+-[0-9a-f]{6}$/;
@@ -183,3 +192,114 @@ describe.skipIf(!canInitGit)('createWorktreeForBranch (git integration)', () => 
     expect(branches.split('\n').filter((b) => FLOW_LOCAL_BRANCH_RE.test(b))).toHaveLength(0);
   });
 });
+
+function git(cmd: string, cwd: string): string {
+  return execSync(`git ${cmd}`, { cwd, stdio: 'pipe' }).toString();
+}
+
+function initRepo(dir: string): void {
+  const emptyTemplate = mkdtempSync(join(tmpdir(), 'frink-git-empty-template-'));
+  try {
+    execSync('git init -b main', {
+      cwd: dir,
+      stdio: 'pipe',
+      env: { ...process.env, GIT_TEMPLATE_DIR: emptyTemplate },
+    });
+  } finally {
+    rmSync(emptyTemplate, { recursive: true, force: true });
+  }
+  git('config user.email frink-test@local', dir);
+  git('config user.name "Frink Test"', dir);
+}
+
+/**
+ * A project clone whose origin has `dep-a` and `dep-b`, each adding its own file on top of main,
+ * so the two merge cleanly.
+ */
+function initProjectWithDependencyBranches(root: string): string {
+  const seed = join(root, 'seed');
+  mkdirSync(seed);
+  initRepo(seed);
+  writeFileSync(join(seed, 'README.md'), 'x\n');
+  git('add README.md', seed);
+  git('commit -m init', seed);
+  for (const dep of ['dep-a', 'dep-b']) {
+    git(`checkout -b ${dep} main`, seed);
+    writeFileSync(join(seed, `${dep}.txt`), `${dep}\n`);
+    git(`add ${dep}.txt`, seed);
+    git(`commit -m ${dep}`, seed);
+  }
+
+  const origin = join(root, 'origin.git');
+  git(`clone --bare ${seed} ${origin}`, root);
+  const project = join(root, 'project');
+  git(`clone ${origin} ${project}`, root);
+  git('config user.email frink-test@local', project);
+  git('config user.name "Frink Test"', project);
+  return project;
+}
+
+function writeSetupCommands(project: string, commands: string[]): void {
+  mkdirSync(join(project, '.frink'), { recursive: true });
+  writeFileSync(
+    join(project, '.frink', 'worktrees.json'),
+    JSON.stringify({ 'setup-worktree': commands }),
+  );
+}
+
+// Each case clones a repo, merges and spawns a login shell for setup: slow on a loaded machine.
+describe.skipIf(!canInitGit)(
+  'createWorktreeWithMergedBases setup (git integration)',
+  { timeout: 30_000 },
+  () => {
+    const createdDirs: string[] = [];
+
+    afterEach(() => {
+      while (createdDirs.length > 0) {
+        const d = createdDirs.pop();
+        if (d) rmSync(d, { recursive: true, force: true });
+      }
+      vi.mocked(resolveWorktreeBasePath).mockReset();
+    });
+
+    function setup() {
+      const root = mkdtempSync(join(tmpdir(), 'frink-converge-setup-'));
+      const wtBase = mkdtempSync(join(tmpdir(), 'frink-wt-converge-base-'));
+      createdDirs.push(root, wtBase);
+      vi.mocked(resolveWorktreeBasePath).mockResolvedValue(wtBase);
+      return { project: initProjectWithDependencyBranches(root), wtBase };
+    }
+
+    it('runs setup-worktree commands in the merged worktree', async () => {
+      const { project } = setup();
+      writeSetupCommands(project, ['touch .setup-ran']);
+
+      const result = await createWorktreeWithMergedBases(project, 'converge', ['dep-a', 'dep-b']);
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+      expect(result.mergedBranches).toEqual(['dep-b']);
+      expect(existsSync(join(result.worktreePath, '.setup-ran'))).toBe(true);
+      expect(existsSync(join(result.worktreePath, 'dep-a.txt'))).toBe(true);
+      expect(existsSync(join(result.worktreePath, 'dep-b.txt'))).toBe(true);
+    });
+
+    it('rolls the worktree and its merged branch back when setup fails', async () => {
+      const { project, wtBase } = setup();
+      writeSetupCommands(project, ['exit 3']);
+
+      const result = await createWorktreeWithMergedBases(project, 'converge', ['dep-a', 'dep-b']);
+
+      expect(result.success).toBe(false);
+      expect('error' in result && result.error).toContain('Worktree setup failed');
+      // Count entries rather than match the path: git prints /private/var for macOS's /var tmpdir.
+      const worktrees = git('worktree list --porcelain', project)
+        .split('\n')
+        .filter((l) => l.startsWith('worktree '));
+      expect(worktrees).toHaveLength(1);
+      expect(readdirSync(join(wtBase, 'converge'))).toHaveLength(0);
+      const branches = git("branch --format='%(refname:short)'", project).split('\n');
+      expect(branches.filter((b) => FLOW_LOCAL_BRANCH_RE.test(b))).toHaveLength(0);
+    });
+  },
+);

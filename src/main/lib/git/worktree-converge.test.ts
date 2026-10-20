@@ -2,6 +2,7 @@
  * Unit tests for worktree-converge.ts (sc-612 converging merge strategy).
  */
 
+import type { ExecFileOptions } from 'node:child_process';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Hoisted mocks set up before module imports
@@ -11,10 +12,12 @@ const buildChatWorktreePathMock = vi.hoisted(() => vi.fn());
 const createWorktreeMock = vi.hoisted(() => vi.fn());
 const generateBranchNameMock = vi.hoisted(() => vi.fn());
 const getGitEnvMock = vi.hoisted(() => vi.fn());
+const removeWorktreeMock = vi.hoisted(() => vi.fn());
 
 // Mock node:child_process at the callback level; real promisify wraps it into async.
 vi.mock('node:child_process', () => ({
   execFile: execFileMock,
+  exec: vi.fn(),
 }));
 
 vi.mock('./git-factory', () => ({
@@ -24,12 +27,16 @@ vi.mock('./worktree', () => ({
   buildChatWorktreePath: buildChatWorktreePathMock,
   createWorktree: createWorktreeMock,
   generateBranchName: generateBranchNameMock,
+  removeWorktree: removeWorktreeMock,
 }));
 vi.mock('./shell-env', () => ({
   getGitEnv: getGitEnvMock,
 }));
 
+import * as worktreeConfig from './worktree-config';
 import { createWorktreeWithMergedBases } from './worktree-converge';
+
+const awaitWorktreeSetupMock = vi.spyOn(worktreeConfig, 'awaitWorktreeSetup');
 
 const PROJECT_PATH = '/home/user/repo';
 const PROJECT_SLUG = 'myproject';
@@ -52,8 +59,26 @@ function setupCommonMocks() {
   generateBranchNameMock.mockReturnValue(BRANCH_NAME);
   buildChatWorktreePathMock.mockResolvedValue({ worktreePath: WORKTREE_PATH });
   createWorktreeMock.mockResolvedValue(undefined);
+  removeWorktreeMock.mockResolvedValue({ success: true });
+  awaitWorktreeSetupMock.mockResolvedValue(null);
   // withGitLock: run the operation inline
   withGitLockMock.mockImplementation((_path: string, fn: () => Promise<unknown>) => fn());
+}
+
+function mockCleanMergeGit() {
+  execFileMock.mockImplementation(
+    (_cmd: string, args: string[], _opts: ExecFileOptions, cb: CbFn) => {
+      if (isGitVersion(args)) {
+        cb(null, { stdout: 'git version 2.38.0', stderr: '' });
+        return;
+      }
+      if (isGitFetch(args) || isGitMergeTree(args) || isGitMerge(args)) {
+        cb(null, { stdout: '', stderr: '' });
+        return;
+      }
+      cb(new Error(`Unexpected git call: ${args.join(' ')}`));
+    },
+  );
 }
 
 describe('createWorktreeWithMergedBases', () => {
@@ -134,6 +159,8 @@ describe('createWorktreeWithMergedBases', () => {
     expect(result.conflictedFiles).toContain('src/index.ts');
     expect(result.conflictedFiles).toContain('src/utils.ts');
     expect(result.mergedBranches).toEqual([]);
+    expect(awaitWorktreeSetupMock).not.toHaveBeenCalled();
+    expect(removeWorktreeMock).not.toHaveBeenCalled();
   });
 
   it('3+ branches: first additional merges cleanly, later merge-tree conflict preserves prior mergedBranches', async () => {
@@ -220,6 +247,9 @@ describe('createWorktreeWithMergedBases', () => {
       expect(result.error).toContain('dependency_branch_not_found');
       expect(result.error).toContain('feat/ticket-1');
     }
+    expect(removeWorktreeMock).toHaveBeenCalledWith(PROJECT_PATH, WORKTREE_PATH, {
+      branch: BRANCH_NAME,
+    });
   });
 
   it('Git < 2.38 fallback: uses real merge + abort on conflict', async () => {
@@ -327,5 +357,133 @@ describe('createWorktreeWithMergedBases', () => {
     expect(result.conflictedFiles).toContain('src/race.ts');
     // Worktree must be left clean
     expect(mergeAbortCalled.value).toBe(true);
+    expect(awaitWorktreeSetupMock).not.toHaveBeenCalled();
+    expect(removeWorktreeMock).not.toHaveBeenCalled();
+  });
+
+  describe('setup-worktree commands', () => {
+    const BRANCHES: [string, string] = ['feat/ticket-2', 'feat/ticket-1'];
+
+    it('runs setup after the merges, with no git lock held', async () => {
+      mockCleanMergeGit();
+      let locksHeld = 0;
+      withGitLockMock.mockImplementation(async <T>(_path: string, fn: () => Promise<T>) => {
+        locksHeld += 1;
+        try {
+          return await fn();
+        } finally {
+          locksHeld -= 1;
+        }
+      });
+      let locksHeldDuringSetup = -1;
+      awaitWorktreeSetupMock.mockImplementation(async () => {
+        locksHeldDuringSetup = locksHeld;
+        return null;
+      });
+      const signal = new AbortController().signal;
+
+      const result = await createWorktreeWithMergedBases(
+        PROJECT_PATH,
+        PROJECT_SLUG,
+        BRANCHES,
+        signal,
+      );
+
+      expect(result.success).toBe(true);
+      expect(awaitWorktreeSetupMock).toHaveBeenCalledTimes(1);
+      expect(awaitWorktreeSetupMock).toHaveBeenCalledWith(WORKTREE_PATH, PROJECT_PATH, signal);
+      expect(locksHeldDuringSetup).toBe(0);
+      expect(removeWorktreeMock).not.toHaveBeenCalled();
+    });
+
+    it('rolls the worktree and branch back when setup fails', async () => {
+      mockCleanMergeGit();
+      awaitWorktreeSetupMock.mockResolvedValue('Worktree setup failed: bun install exited 1');
+
+      const result = await createWorktreeWithMergedBases(PROJECT_PATH, PROJECT_SLUG, BRANCHES);
+
+      expect(result).toEqual({
+        success: false,
+        error: 'Worktree setup failed: bun install exited 1',
+      });
+      expect(removeWorktreeMock).toHaveBeenCalledWith(PROJECT_PATH, WORKTREE_PATH, {
+        branch: BRANCH_NAME,
+      });
+    });
+
+    // With no setup commands configured, setup reports success without looking at the signal.
+    it('rolls back without running setup when the run was cancelled during the merges', async () => {
+      mockCleanMergeGit();
+      const controller = new AbortController();
+      controller.abort();
+
+      const result = await createWorktreeWithMergedBases(
+        PROJECT_PATH,
+        PROJECT_SLUG,
+        BRANCHES,
+        controller.signal,
+      );
+
+      expect(result).toEqual({ success: false, error: 'Cancelled' });
+      expect(awaitWorktreeSetupMock).not.toHaveBeenCalled();
+      expect(removeWorktreeMock).toHaveBeenCalledWith(PROJECT_PATH, WORKTREE_PATH, {
+        branch: BRANCH_NAME,
+      });
+    });
+
+    // The cancel lands after the last setup command finished, so setup itself reports success.
+    it('rolls back when the run is cancelled while setup is finishing', async () => {
+      mockCleanMergeGit();
+      const controller = new AbortController();
+      awaitWorktreeSetupMock.mockImplementation(async () => {
+        controller.abort();
+        return null;
+      });
+
+      const result = await createWorktreeWithMergedBases(
+        PROJECT_PATH,
+        PROJECT_SLUG,
+        BRANCHES,
+        controller.signal,
+      );
+
+      expect(result).toEqual({ success: false, error: 'Cancelled' });
+      expect(removeWorktreeMock).toHaveBeenCalledOnce();
+    });
+
+    // A cancelled run discards the conflict result, so no one would ever resolve that worktree.
+    it('rolls a conflict worktree back when the run was cancelled', async () => {
+      execFileMock.mockImplementation(
+        (_cmd: string, args: string[], _opts: ExecFileOptions, cb: CbFn) => {
+          if (isGitVersion(args)) {
+            cb(null, { stdout: 'git version 2.38.0', stderr: '' });
+            return;
+          }
+          if (isGitFetch(args)) {
+            cb(null, { stdout: '', stderr: '' });
+            return;
+          }
+          if (isGitMergeTree(args)) {
+            cb(Object.assign(new Error('conflicts'), { code: 1, stdout: 'abc\n' }));
+            return;
+          }
+          cb(new Error(`Unexpected git call: ${args.join(' ')}`));
+        },
+      );
+      const controller = new AbortController();
+      controller.abort();
+
+      const result = await createWorktreeWithMergedBases(
+        PROJECT_PATH,
+        PROJECT_SLUG,
+        BRANCHES,
+        controller.signal,
+      );
+
+      expect(result).toEqual({ success: false, error: 'Cancelled' });
+      expect(removeWorktreeMock).toHaveBeenCalledWith(PROJECT_PATH, WORKTREE_PATH, {
+        branch: BRANCH_NAME,
+      });
+    });
   });
 });

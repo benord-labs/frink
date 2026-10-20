@@ -17,7 +17,13 @@ import { promisify } from 'node:util';
 import log from 'electron-log';
 import { withGitLock } from './git-factory';
 import { getGitEnv } from './shell-env';
-import { buildChatWorktreePath, createWorktree, generateBranchName } from './worktree';
+import {
+  buildChatWorktreePath,
+  createWorktree,
+  generateBranchName,
+  removeWorktree,
+} from './worktree';
+import { awaitWorktreeSetup } from './worktree-config';
 
 const execFileAsync = promisify(execFile);
 
@@ -118,6 +124,7 @@ export type ConvMergeWorktreeResult =
  *   - withGitLock(projectPath) for git fetch + git worktree add (shared .git metadata)
  *   - withGitLock(projectPath) again to fetch all additional dependency branches (no nesting)
  *   - withGitLock(worktreePath) for merge-tree dry-runs and real merges (worktree-local only)
+ *   - no lock for setup-worktree commands, which run after a clean merge and can take minutes
  *
  * Conflict strategy:
  *   - Git >= 2.38: `git merge-tree --write-tree` for in-memory dry-run (no worktree state change).
@@ -127,6 +134,7 @@ export async function createWorktreeWithMergedBases(
   projectPath: string,
   projectSlug: string,
   baseBranches: [string, string, ...string[]],
+  signal?: AbortSignal,
 ): Promise<ConvMergeWorktreeResult> {
   const primaryBase = baseBranches[0];
   const additionalBases = baseBranches.slice(1);
@@ -172,6 +180,11 @@ export async function createWorktreeWithMergedBases(
     };
   }
 
+  const rollback = async (error: string): Promise<ConvMergeWorktreeResult> => {
+    await removeWorktree(projectPath, worktreePath, { branch: newBranchName });
+    return { success: false, error };
+  };
+
   // --- Phase 2: fetch all additional dependency branches under projectPath only (avoids
   // nesting projectPath lock inside worktreePath lock) ---
   try {
@@ -190,14 +203,13 @@ export async function createWorktreeWithMergedBases(
       }
     });
   } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error fetching dependency branches',
-    };
+    return rollback(
+      error instanceof Error ? error.message : 'Unknown error fetching dependency branches',
+    );
   }
 
   // --- Phase 3: validate/merge additional bases (serialized on worktreePath only) ---
-  return withGitLock(worktreePath, async () => {
+  const merged = await withGitLock(worktreePath, async (): Promise<ConvMergeWorktreeResult> => {
     const mergedBranches: string[] = [];
 
     for (const depBranch of additionalBases) {
@@ -336,4 +348,13 @@ export async function createWorktreeWithMergedBases(
       mergedBranches,
     };
   });
+  // A cancelled run discards this result, so nothing else would ever remove the worktree.
+  if (signal?.aborted) return rollback('Cancelled');
+  // A conflict keeps its worktree for the user to resolve, so it skips setup.
+  if (!merged.success) return merged;
+
+  const setupError = await awaitWorktreeSetup(worktreePath, projectPath, signal);
+  if (setupError) return rollback(setupError);
+  if (signal?.aborted) return rollback('Cancelled');
+  return merged;
 }
