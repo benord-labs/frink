@@ -58,6 +58,24 @@ describe('mention icon svg', () => {
     expect(fills).toEqual(firstIds.map((id) => `url(#${id})`));
   });
 
+  it('renames only id declarations and references, not other values equal to an id', () => {
+    const body =
+      '<linearGradient id="g.1"/><path class="g.1" data-id="g.1" fill="url(#g.1)"/><use href="#g.1"/>' +
+      `<rect fill="url('#g.1')"/><circle fill='url("#g.1")'/><use xlink:href='#g.1'/>`;
+    const svg = mentionIconElement(iconifySvgMarkup({ width: 16, height: 16, body }));
+    const id = svg.querySelector('linearGradient')?.id;
+    expect(id).toMatch(/^g\.1-m\d+$/);
+    expect(svg.querySelector('path')?.getAttribute('class')).toBe('g.1');
+    expect(svg.querySelector('path')?.getAttribute('data-id')).toBe('g.1');
+    expect(svg.querySelector('path')?.getAttribute('fill')).toBe(`url(#${id})`);
+    expect(svg.querySelector('rect')?.getAttribute('fill')).toBe(`url('#${id}')`);
+    expect(svg.querySelector('circle')?.getAttribute('fill')).toBe(`url("#${id}")`);
+    const hrefs = [...svg.querySelectorAll('use')].map(
+      (el) => el.outerHTML.match(/href="([^"]+)"/)?.[1],
+    );
+    expect(hrefs).toEqual([`#${id}`, `#${id}`]);
+  });
+
   // Ruby is the densest bundled icon (16 ids, 17 references incl. gradient-to-gradient hrefs).
   it('keeps every reference pointing at a renamed id in the same svg', () => {
     const svg = mentionIconElement(iconifySvgMarkup(rubyIcon));

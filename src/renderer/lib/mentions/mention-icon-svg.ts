@@ -1,8 +1,9 @@
 import type { IconifyIcon } from '@iconify/react/offline';
 import type { LucideIconData, LucideIconNode } from 'lucide-react';
+import { escapeRegExp } from '../../../shared/utils/escape-regexp';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
-const ID_ATTR_REGEX = /\bid="([^"]+)"/g;
+const ID_ATTR_REGEX = /\sid="([^"]+)"/g;
 const LUCIDE_SVG_ATTRS =
   'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"';
 
@@ -30,7 +31,9 @@ export function mentionIconElement(markup: string): SVGSVGElement {
   const suffix = `-m${++idSuffix}`;
   let unique = markup;
   for (const [, id] of markup.matchAll(ID_ATTR_REGEX)) {
-    unique = unique.replace(new RegExp(`(["#])${id}(["')])`, 'g'), `$1${id}${suffix}$2`);
+    // The declaration, or a `#id` reference closed by a quote or `)` (url(#id), url('#id'), href="#id").
+    const declarationOrReference = new RegExp(`(\\sid="|#)${escapeRegExp(id)}(?=["')])`, 'g');
+    unique = unique.replace(declarationOrReference, `$1${id}${suffix}`);
   }
   const template = document.createElement('template');
   template.innerHTML = unique;
