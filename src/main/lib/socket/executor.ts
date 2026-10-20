@@ -207,8 +207,7 @@ export const executionAbortSources = new Map<string, string>();
  * out of plan mode while resuming the SDK session, the persisted transcript still contains the
  * SDK's `<system-reminder>Plan mode is active</system-reminder>`. Without an exit reminder the
  * model parrots that stale state. We mirror Claude Code TUI's `plan_mode_exit` attachment by
- * detecting the transition here and delivering a one-shot exit reminder — via the UserPromptSubmit
- * hook on the Claude path, or a prompt prepend on Codex (see `operator-reminders.ts`).
+ * detecting the transition here and delivering a one-shot exit reminder (`operator-reminders.ts`).
  */
 const lastExecutedModeBySubChat = new Map<string, ChatMode>();
 
@@ -933,6 +932,7 @@ export async function handleRemoteExecute(
             prompt: codexFullPrompt,
             messageProvenance: provenance,
             composerContext: codexComposerContext(composer.notes),
+            operatorReminders: turnReminders.codexContext,
             freshThreadFallbackPrompt: codexFreshFallbackPrompt,
             ...(flowRunEnded && {
               flowRunEnded: {

@@ -5,6 +5,7 @@ import {
   buildUserPromptSubmitReminderHook,
   DEBUG_MODE_EXIT_REMINDER,
   PLAN_MODE_EXIT_REMINDER,
+  prepareTurnReminders,
   TASK_SIGNAL_DISARMED_REMINDER,
   wrapRemindersForPrompt,
 } from './operator-reminders';
@@ -150,10 +151,59 @@ describe('buildOperatorReminders', () => {
     });
     expect(reminders).toEqual([PLAN_MODE_EXIT_REMINDER, TASK_SIGNAL_DISARMED_REMINDER]);
   });
+
+  it('keys each reminder stably, so a reminder joining the set leaves the others unchanged', () => {
+    const disarmed = {
+      ...base,
+      hasResumeSession: true,
+      taskSignalDisarmed: true,
+      agentSawPriorTurns: true,
+    };
+    const alone = buildOperatorReminders({ ...disarmed, previousMode: 'agent' }).entries;
+    const stacked = buildOperatorReminders({ ...disarmed, previousMode: 'plan' }).entries;
+    expect(alone).toEqual([
+      { key: 'frink_task_signal_disarmed', text: TASK_SIGNAL_DISARMED_REMINDER },
+    ]);
+    expect(stacked).toEqual([
+      { key: 'frink_plan_mode_exit', text: PLAN_MODE_EXIT_REMINDER },
+      { key: 'frink_task_signal_disarmed', text: TASK_SIGNAL_DISARMED_REMINDER },
+    ]);
+  });
+});
+
+describe('prepareTurnReminders', () => {
+  const due = {
+    ...base,
+    previousMode: 'plan',
+    hasResumeSession: true,
+    subChatId: 'sc-1',
+    prompt: 'hi',
+  };
+
+  it('gives Codex its reminders as host context and leaves the prompt as typed', () => {
+    const turn = prepareTurnReminders({ ...due, agentRuntime: 'codex' });
+    expect(turn.prompt).toBe('hi');
+    expect(turn.codexContext).toEqual({
+      frink_plan_mode_exit: { kind: 'application', value: PLAN_MODE_EXIT_REMINDER },
+    });
+  });
+
+  it('leaves the Claude prompt as typed, its hook reads the reminders', () => {
+    const turn = prepareTurnReminders({ ...due, agentRuntime: 'claude' });
+    expect(turn.prompt).toBe('hi');
+    expect(turn.reminders).toEqual([PLAN_MODE_EXIT_REMINDER]);
+    expect(turn.codexContext).toEqual({});
+  });
+
+  it.each(['acp', 'copilot', 'cursor'])('prepends the reminders as text on %s', (agentRuntime) => {
+    const turn = prepareTurnReminders({ ...due, agentRuntime });
+    expect(turn.prompt).toBe(`${wrapRemindersForPrompt([PLAN_MODE_EXIT_REMINDER])}\n\nhi`);
+    expect(turn.codexContext).toEqual({});
+  });
 });
 
 describe('wrapRemindersForPrompt', () => {
-  it('wraps each reminder as a <system-reminder> block (Codex fallback)', () => {
+  it('wraps each reminder as a <system-reminder> block (text fallback)', () => {
     expect(wrapRemindersForPrompt(['alpha', 'beta'])).toBe(
       '<system-reminder>\nalpha\n</system-reminder>\n\n<system-reminder>\nbeta\n</system-reminder>',
     );
