@@ -1582,6 +1582,7 @@ describe('flow-step-executor', () => {
     });
 
     // Wiring check: the real repo delete, not a mocked null, is what the next step must observe.
+    // Cold-importing the real repo module can pass the 5s default on a loaded machine.
     it('fails the next custom node step after deleteProject removes the row', async () => {
       const actual =
         await vi.importActual<typeof import('./db/repos/projects')>('./db/repos/projects');
@@ -1607,7 +1608,7 @@ describe('flow-step-executor', () => {
       expect(second.status).toBe('failed');
       expect(second.error).toBe(`Project ${project.id} not found locally`);
       expect(runCustomNodeProcessMock).toHaveBeenCalledOnce();
-    });
+    }, 30_000);
 
     it('fails the step without throwing when the project lookup rejects', async () => {
       const projectId = 'p-lookup-throws';

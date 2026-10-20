@@ -33,6 +33,7 @@ vi.mock('./shell-env', () => ({
   getGitEnv: getGitEnvMock,
 }));
 
+import log from 'electron-log';
 import * as worktreeConfig from './worktree-config';
 import { createWorktreeWithMergedBases } from './worktree-converge';
 
@@ -409,6 +410,22 @@ describe('createWorktreeWithMergedBases', () => {
       expect(removeWorktreeMock).toHaveBeenCalledWith(PROJECT_PATH, WORKTREE_PATH, {
         branch: BRANCH_NAME,
       });
+    });
+
+    it('still reports the setup failure, and logs the leftover, when rollback cannot remove the worktree', async () => {
+      mockCleanMergeGit();
+      awaitWorktreeSetupMock.mockResolvedValue('Worktree setup failed: exit 3');
+      removeWorktreeMock.mockResolvedValue({ success: false, error: 'worktree is locked' });
+      const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+
+      const result = await createWorktreeWithMergedBases(PROJECT_PATH, PROJECT_SLUG, BRANCHES);
+
+      expect(result).toEqual({ success: false, error: 'Worktree setup failed: exit 3' });
+      expect(warn).toHaveBeenCalledWith('[worktree-converge] rollback left the worktree behind', {
+        worktreePath: WORKTREE_PATH,
+        removeError: 'worktree is locked',
+      });
+      warn.mockRestore();
     });
 
     // With no setup commands configured, setup reports success without looking at the signal.

@@ -181,7 +181,13 @@ export async function createWorktreeWithMergedBases(
   }
 
   const rollback = async (error: string): Promise<ConvMergeWorktreeResult> => {
-    await removeWorktree(projectPath, worktreePath, { branch: newBranchName });
+    const removed = await removeWorktree(projectPath, worktreePath, { branch: newBranchName });
+    if (!removed.success) {
+      log.warn('[worktree-converge] rollback left the worktree behind', {
+        worktreePath,
+        removeError: removed.error,
+      });
+    }
     return { success: false, error };
   };
 

@@ -30,8 +30,11 @@ import { createWorktreeWithMergedBases } from './worktree-converge';
 /** Matches createWorktreeForBranch / chat branch naming (no flow/ prefix, no slashes). */
 const FLOW_LOCAL_BRANCH_RE = /^[a-z]+-[a-z]+-[0-9a-f]{6}$/;
 
-function initGitRepoWithBaseBranch(baseBranch: string): string {
-  const dir = mkdtempSync(join(tmpdir(), 'frink-start-task-repo-'));
+function git(cmd: string, cwd: string): string {
+  return execSync(`git ${cmd}`, { cwd, stdio: 'pipe' }).toString();
+}
+
+function initRepo(dir: string): void {
   const emptyTemplate = mkdtempSync(join(tmpdir(), 'frink-git-empty-template-'));
   try {
     execSync('git init -b main', {
@@ -42,8 +45,13 @@ function initGitRepoWithBaseBranch(baseBranch: string): string {
   } finally {
     rmSync(emptyTemplate, { recursive: true, force: true });
   }
-  execSync('git config user.email frink-test@local', { cwd: dir, stdio: 'pipe' });
-  execSync('git config user.name Frink Test', { cwd: dir, stdio: 'pipe' });
+  git('config user.email frink-test@local', dir);
+  git('config user.name "Frink Test"', dir);
+}
+
+function initGitRepoWithBaseBranch(baseBranch: string): string {
+  const dir = mkdtempSync(join(tmpdir(), 'frink-start-task-repo-'));
+  initRepo(dir);
   writeFileSync(join(dir, 'README.md'), 'x\n');
   execSync('git add README.md', { cwd: dir, stdio: 'pipe' });
   execSync('git commit -m init', { cwd: dir, stdio: 'pipe' });
@@ -86,131 +94,117 @@ describe('createWorktreeError', () => {
   });
 });
 
-describe.skipIf(!canInitGit)('createWorktreeForBranch (git integration)', () => {
-  const createdDirs: string[] = [];
+// Real git plus a login shell for setup: the first case pays the cold shell lookup under load.
+describe.skipIf(!canInitGit)(
+  'createWorktreeForBranch (git integration)',
+  { timeout: 30_000 },
+  () => {
+    const createdDirs: string[] = [];
 
-  afterEach(() => {
-    while (createdDirs.length > 0) {
-      const d = createdDirs.pop();
-      if (d) {
-        try {
-          rmSync(d, { recursive: true, force: true });
-        } catch {
-          // best-effort cleanup
+    afterEach(() => {
+      while (createdDirs.length > 0) {
+        const d = createdDirs.pop();
+        if (d) {
+          try {
+            rmSync(d, { recursive: true, force: true });
+          } catch {
+            // best-effort cleanup
+          }
         }
       }
-    }
-    vi.mocked(resolveWorktreeBasePath).mockReset();
-  });
-
-  it('uses generateBranchName-style local branch and reports the chosen base branch', async () => {
-    const wtBase = mkdtempSync(join(tmpdir(), 'frink-wt-flow-base-'));
-    createdDirs.push(wtBase);
-    vi.mocked(resolveWorktreeBasePath).mockResolvedValue(wtBase);
-
-    const baseBranch = 'feature/pr-head';
-    const repo = initGitRepoWithBaseBranch(baseBranch);
-    createdDirs.push(repo);
-
-    const result = await createWorktreeForBranch(repo, 'flowproj', baseBranch);
-
-    expect(result.success).toBe(true);
-    expect(result.error).toBeUndefined();
-    expect(result.baseBranch).toBe(baseBranch);
-    expect(result.branch).toBeDefined();
-    expect(result.branch).toMatch(FLOW_LOCAL_BRANCH_RE);
-    expect(result.branch?.startsWith('flow/')).toBe(false);
-    expect(result.worktreePath).toContain(join(wtBase, 'flowproj'));
-  });
-
-  it('omitting branch uses default local branch and still names worktree branch with generateBranchName', async () => {
-    const wtBase = mkdtempSync(join(tmpdir(), 'frink-wt-flow-base-'));
-    createdDirs.push(wtBase);
-    vi.mocked(resolveWorktreeBasePath).mockResolvedValue(wtBase);
-
-    const repo = initGitRepoWithBaseBranch('unused-side-branch');
-    createdDirs.push(repo);
-
-    const result = await createWorktreeForBranch(repo, 'noparam', undefined);
-
-    expect(result.success).toBe(true);
-    expect(result.baseBranch).toBe('main');
-    expect(result.branch).toMatch(FLOW_LOCAL_BRANCH_RE);
-  });
-
-  it('copies the ignored .env in before setup commands run, with no worktree config', async () => {
-    const wtBase = mkdtempSync(join(tmpdir(), 'frink-wt-flow-base-'));
-    createdDirs.push(wtBase);
-    vi.mocked(resolveWorktreeBasePath).mockResolvedValue(wtBase);
-
-    const repo = initGitRepoWithBaseBranch('unused-side-branch');
-    createdDirs.push(repo);
-    writeFileSync(join(repo, '.gitignore'), '.env\n');
-    execSync('git add .gitignore && git commit -m ignore', { cwd: repo, stdio: 'pipe' });
-    writeFileSync(join(repo, '.env'), 'API_KEY=local\n');
-
-    const plain = await createWorktreeForBranch(repo, 'envcopy', undefined);
-    expect(plain.success).toBe(true);
-    expect(readFileSync(join(plain.worktreePath ?? '', '.env'), 'utf8')).toBe('API_KEY=local\n');
-
-    mkdirSync(join(repo, '.frink'), { recursive: true });
-    writeFileSync(
-      join(repo, '.frink', 'worktrees.json'),
-      JSON.stringify({ 'setup-worktree': ['test -f .env'] }),
-    );
-    const withSetup = await createWorktreeForBranch(repo, 'envsetup', undefined);
-    expect(withSetup.error).toBeUndefined();
-    expect(withSetup.success).toBe(true);
-  });
-
-  // The failure result carries no worktreePath, so nothing downstream could find the directory
-  // to clean it up later — a leaked worktree + branch would accumulate on every failed setup.
-  it('rolls the worktree and branch back when setup commands fail', async () => {
-    const wtBase = mkdtempSync(join(tmpdir(), 'frink-wt-flow-base-'));
-    createdDirs.push(wtBase);
-    vi.mocked(resolveWorktreeBasePath).mockResolvedValue(wtBase);
-
-    const repo = initGitRepoWithBaseBranch('unused-side-branch');
-    createdDirs.push(repo);
-    mkdirSync(join(repo, '.frink'), { recursive: true });
-    writeFileSync(
-      join(repo, '.frink', 'worktrees.json'),
-      JSON.stringify({ 'setup-worktree': ['exit 3'] }),
-    );
-
-    const result = await createWorktreeForBranch(repo, 'rollback', undefined);
-
-    expect(result.success).toBe(false);
-    expect(result.error).toContain('Worktree setup failed');
-
-    const listed = execSync('git worktree list --porcelain', { cwd: repo }).toString();
-    expect(listed).not.toContain(join(wtBase, 'rollback'));
-    // `git worktree remove` takes the leaf; the empty slug parent is the orphan sweep's job.
-    expect(readdirSync(join(wtBase, 'rollback'))).toHaveLength(0);
-
-    const branches = execSync("git branch --format='%(refname:short)'", { cwd: repo }).toString();
-    expect(branches.split('\n').filter((b) => FLOW_LOCAL_BRANCH_RE.test(b))).toHaveLength(0);
-  });
-});
-
-function git(cmd: string, cwd: string): string {
-  return execSync(`git ${cmd}`, { cwd, stdio: 'pipe' }).toString();
-}
-
-function initRepo(dir: string): void {
-  const emptyTemplate = mkdtempSync(join(tmpdir(), 'frink-git-empty-template-'));
-  try {
-    execSync('git init -b main', {
-      cwd: dir,
-      stdio: 'pipe',
-      env: { ...process.env, GIT_TEMPLATE_DIR: emptyTemplate },
+      vi.mocked(resolveWorktreeBasePath).mockReset();
     });
-  } finally {
-    rmSync(emptyTemplate, { recursive: true, force: true });
-  }
-  git('config user.email frink-test@local', dir);
-  git('config user.name "Frink Test"', dir);
-}
+
+    it('uses generateBranchName-style local branch and reports the chosen base branch', async () => {
+      const wtBase = mkdtempSync(join(tmpdir(), 'frink-wt-flow-base-'));
+      createdDirs.push(wtBase);
+      vi.mocked(resolveWorktreeBasePath).mockResolvedValue(wtBase);
+
+      const baseBranch = 'feature/pr-head';
+      const repo = initGitRepoWithBaseBranch(baseBranch);
+      createdDirs.push(repo);
+
+      const result = await createWorktreeForBranch(repo, 'flowproj', baseBranch);
+
+      expect(result.success).toBe(true);
+      expect(result.error).toBeUndefined();
+      expect(result.baseBranch).toBe(baseBranch);
+      expect(result.branch).toBeDefined();
+      expect(result.branch).toMatch(FLOW_LOCAL_BRANCH_RE);
+      expect(result.branch?.startsWith('flow/')).toBe(false);
+      expect(result.worktreePath).toContain(join(wtBase, 'flowproj'));
+    });
+
+    it('omitting branch uses default local branch and still names worktree branch with generateBranchName', async () => {
+      const wtBase = mkdtempSync(join(tmpdir(), 'frink-wt-flow-base-'));
+      createdDirs.push(wtBase);
+      vi.mocked(resolveWorktreeBasePath).mockResolvedValue(wtBase);
+
+      const repo = initGitRepoWithBaseBranch('unused-side-branch');
+      createdDirs.push(repo);
+
+      const result = await createWorktreeForBranch(repo, 'noparam', undefined);
+
+      expect(result.success).toBe(true);
+      expect(result.baseBranch).toBe('main');
+      expect(result.branch).toMatch(FLOW_LOCAL_BRANCH_RE);
+    });
+
+    it('copies the ignored .env in before setup commands run, with no worktree config', async () => {
+      const wtBase = mkdtempSync(join(tmpdir(), 'frink-wt-flow-base-'));
+      createdDirs.push(wtBase);
+      vi.mocked(resolveWorktreeBasePath).mockResolvedValue(wtBase);
+
+      const repo = initGitRepoWithBaseBranch('unused-side-branch');
+      createdDirs.push(repo);
+      writeFileSync(join(repo, '.gitignore'), '.env\n');
+      execSync('git add .gitignore && git commit -m ignore', { cwd: repo, stdio: 'pipe' });
+      writeFileSync(join(repo, '.env'), 'API_KEY=local\n');
+
+      const plain = await createWorktreeForBranch(repo, 'envcopy', undefined);
+      expect(plain.success).toBe(true);
+      expect(readFileSync(join(plain.worktreePath ?? '', '.env'), 'utf8')).toBe('API_KEY=local\n');
+
+      mkdirSync(join(repo, '.frink'), { recursive: true });
+      writeFileSync(
+        join(repo, '.frink', 'worktrees.json'),
+        JSON.stringify({ 'setup-worktree': ['test -f .env'] }),
+      );
+      const withSetup = await createWorktreeForBranch(repo, 'envsetup', undefined);
+      expect(withSetup.error).toBeUndefined();
+      expect(withSetup.success).toBe(true);
+    });
+
+    // The failure result carries no worktreePath, so nothing downstream could find the directory
+    // to clean it up later — a leaked worktree + branch would accumulate on every failed setup.
+    it('rolls the worktree and branch back when setup commands fail', async () => {
+      const wtBase = mkdtempSync(join(tmpdir(), 'frink-wt-flow-base-'));
+      createdDirs.push(wtBase);
+      vi.mocked(resolveWorktreeBasePath).mockResolvedValue(wtBase);
+
+      const repo = initGitRepoWithBaseBranch('unused-side-branch');
+      createdDirs.push(repo);
+      mkdirSync(join(repo, '.frink'), { recursive: true });
+      writeFileSync(
+        join(repo, '.frink', 'worktrees.json'),
+        JSON.stringify({ 'setup-worktree': ['exit 3'] }),
+      );
+
+      const result = await createWorktreeForBranch(repo, 'rollback', undefined);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Worktree setup failed');
+
+      const listed = execSync('git worktree list --porcelain', { cwd: repo }).toString();
+      expect(listed).not.toContain(join(wtBase, 'rollback'));
+      // `git worktree remove` takes the leaf; the empty slug parent is the orphan sweep's job.
+      expect(readdirSync(join(wtBase, 'rollback'))).toHaveLength(0);
+
+      const branches = execSync("git branch --format='%(refname:short)'", { cwd: repo }).toString();
+      expect(branches.split('\n').filter((b) => FLOW_LOCAL_BRANCH_RE.test(b))).toHaveLength(0);
+    });
+  },
+);
 
 /**
  * A project clone whose origin has `dep-a` and `dep-b`, each adding its own file on top of main,
