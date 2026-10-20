@@ -19,12 +19,15 @@ export function makeSidebarComponentsMock(captured: CapturedComponentProps) {
     SidebarHeader: ({
       searchQuery,
       onSearchChange,
+      showFlowChatsFilter,
     }: {
       searchQuery: string;
       onSearchChange: (query: string) => void;
+      showFlowChatsFilter: boolean;
     }) => (
       <input
         data-testid="sidebar-header"
+        data-flow-filter={String(showFlowChatsFilter)}
         value={searchQuery}
         onChange={(event) => onSearchChange(event.target.value)}
       />
