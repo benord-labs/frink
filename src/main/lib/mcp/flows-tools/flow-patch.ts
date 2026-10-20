@@ -18,11 +18,16 @@ import {
   flowGraphEdgeSchema,
   flowGraphNodeSchema,
 } from '../../../../shared/types/flow-graph-schema';
-import { isPlainObject } from '../../../../shared/lib/case-converter/is-transformable';
 import { agentProseGraphErrors } from '../../../../shared/lib/flows/agent-prose-limit';
 import { resetLayout } from '../../../../shared/lib/flows/canvas-layout';
 import type { FlowPatchReasonCode } from '../../../../shared/types/flows/flow-change-presentation';
 import { deepMergePatch } from './deep-merge-patch';
+import {
+  applyNodeUpdate,
+  buildAddedNode,
+  nestsFanOut,
+  sizeOnNonFanOutError,
+} from './patch/node-ops';
 
 const MAX_PATCH_OPERATIONS = 50;
 
@@ -55,6 +60,7 @@ const patchOpSchema = z.discriminatedUnion('op', [
       label: z.string().optional(),
       config: z.record(z.string(), z.unknown()).optional(),
       position: z.object({ x: z.number(), y: z.number() }).optional(),
+      size: flowGraphNodeSchema.shape.size.unwrap().nullable().optional(),
     })
     /** Reject blockType and other unknown keys so agents get an explicit Zod error, not silent no-op. */
     .strict(),
@@ -162,24 +168,9 @@ export type PatchResult =
       skipped: SkippedOp[];
     };
 
-/** Applies one `update_node` op in place; `config` deep-merges, `parentId: null` clears ownership. */
-function applyNodeUpdate(node: FlowNode, op: Extract<PatchOperation, { op: 'update_node' }>): void {
-  if (op.label !== undefined) node.label = op.label;
-  if (op.position !== undefined) node.position = { ...op.position };
-  if (op.parentId === null) delete node.parentId;
-  else if (op.parentId !== undefined) node.parentId = op.parentId;
-  if (op.config === undefined) return;
-  const base = isPlainObject(node.config) ? (node.config as Record<string, unknown>) : {};
-  node.config = deepMergePatch(base, op.config as Record<string, unknown>);
-}
-
 function nodeIdSet(nodes: FlowNode[]): Set<string> {
   return new Set(nodes.map((n) => n.id));
 }
-
-/** Mirrors the save-mode nesting rule, so one bad op fails instead of the whole batch. */
-const nestsFanOut = (blockType: string, parentId: unknown): boolean =>
-  blockType === 'fan_out' && typeof parentId === 'string';
 
 /**
  * Removes a node, the nodes it owns, and every edge touching them.
@@ -335,12 +326,14 @@ export function applyPatchOperations(graph: FlowGraph, operations: PatchOperatio
         } else if (nestsFanOut(node.blockType, op.parentId)) {
           opError = `${prefix}: Fan Out '${op.nodeId}' cannot sit inside another Fan Out`;
         } else {
-          applyNodeUpdate(node, op);
+          opError = sizeOnNonFanOutError(prefix, node, op.size);
+          if (opError === undefined) applyNodeUpdate(node, op);
         }
         break;
       }
       case 'add_node': {
         const { node: raw } = op;
+        const sizeError = sizeOnNonFanOutError(prefix, raw, raw.size);
         if (next.nodes.some((n) => n.id === raw.id)) {
           opError = `${prefix}: node id '${raw.id}' already exists — use update_node to modify`;
         } else if (nestsFanOut(raw.blockType, raw.parentId)) {
@@ -352,16 +345,10 @@ export function applyPatchOperations(graph: FlowGraph, operations: PatchOperatio
           // Mirrors the save-mode parentId rule, so one bad op fails instead of the whole batch.
           opError = `${prefix}: parentId '${raw.parentId}' is not an existing Fan Out in this flow`;
           opCode = 'stale-parent';
+        } else if (sizeError !== undefined) {
+          opError = sizeError;
         } else {
-          const added: FlowNode = {
-            id: raw.id,
-            blockType: raw.blockType,
-            ...(raw.parentId !== undefined ? { parentId: raw.parentId } : {}),
-            ...(raw.label !== undefined ? { label: raw.label } : {}),
-            ...(raw.config !== undefined ? { config: { ...raw.config } } : {}),
-            ...(raw.position !== undefined ? { position: { ...raw.position } } : {}),
-          };
-          next.nodes.push(added);
+          next.nodes.push(buildAddedNode(raw));
           // The id lives again, so no earlier absence may skip later ops on it.
           ctx.failedNodeIds.delete(raw.id);
           ctx.nodeRemovedByRemoveNodeOp.delete(raw.id);
