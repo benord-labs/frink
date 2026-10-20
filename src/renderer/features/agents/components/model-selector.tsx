@@ -17,6 +17,8 @@ import {
   COMPOSER_MODEL_DETAIL_CLASS,
   COMPOSER_MODEL_EFFORT_CLASS,
   COMPOSER_MODEL_LABEL_CLASS,
+  COMPOSER_MODEL_ULTRA_DETAIL_CLASS,
+  COMPOSER_MODEL_ULTRA_EFFORT_CLASS,
   COMPOSER_PLAIN_GLYPH_CLASS,
   COMPOSER_ULTRA_GLYPH_CLASS,
   COMPOSER_ULTRA_NAME_CLASS,
@@ -145,12 +147,14 @@ function ComposerTriggerLabel({
   effort?: ClaudeSdkEffortLevel;
   ultra: boolean;
 }) {
+  const detailClass = ultra ? COMPOSER_MODEL_ULTRA_DETAIL_CLASS : COMPOSER_MODEL_DETAIL_CLASS;
+  const effortClass = ultra ? COMPOSER_MODEL_ULTRA_EFFORT_CLASS : COMPOSER_MODEL_EFFORT_CLASS;
   return (
     <>
       <span className={COMPOSER_MODEL_LABEL_CLASS}>
         <span className={cn(ultra && COMPOSER_ULTRA_NAME_CLASS)}>{label}</span>
         {suffix ? (
-          <span className={cn('text-muted-foreground/70', COMPOSER_MODEL_DETAIL_CLASS)}>
+          <span className={cn('text-muted-foreground/70', detailClass)}>
             {ultra ? (
               <>
                 {suffix.slice(0, -ULTRA_LABEL_TAIL.length)}
@@ -163,13 +167,13 @@ function ComposerTriggerLabel({
           </span>
         ) : null}
         {suffix && effort ? (
-          <span className={cn('text-muted-foreground/70', COMPOSER_MODEL_EFFORT_CLASS)}>
+          <span className={cn('text-muted-foreground/70', effortClass)}>
             {' · '}
             {ultra ? <UltraWord>{EFFORT_TOKEN[effort]}</UltraWord> : EFFORT_TOKEN[effort]}
           </span>
         ) : null}
       </span>
-      <ChevronDown className={cn('h-3 w-3 shrink-0 opacity-50', COMPOSER_MODEL_DETAIL_CLASS)} />
+      <ChevronDown className={cn('h-3 w-3 shrink-0 opacity-50', detailClass)} />
     </>
   );
 }
