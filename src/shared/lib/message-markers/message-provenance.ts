@@ -49,13 +49,14 @@ export function codexMessageContext(record: MessageProvenance, withRule = false)
   };
 }
 
-/** A turn's whole Codex native context: its record, any Flow-run-ended notice, and what the
- * message's attached files and selections mean. */
+/** A turn's whole Codex native context: its record, any Flow-run-ended notice, what the message's
+ * attached files and selections mean, and Frink's operator reminders. */
 export function codexTurnContext(
   turn: {
     messageProvenance?: MessageProvenance;
     flowRunEnded?: { text: string };
     composerContext?: Record<string, CodexContextEntry>;
+    operatorReminders?: Record<string, CodexContextEntry>;
   },
   withRule = false,
 ) {
@@ -66,6 +67,7 @@ export function codexTurnContext(
       frink_flow_run_ended: { kind: 'application' as const, value: flowRunEnded.text },
     }),
     ...turn.composerContext,
+    ...turn.operatorReminders,
   };
   return Object.keys(context).length > 0 ? context : undefined;
 }

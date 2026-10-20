@@ -192,6 +192,7 @@ export function registerFlowRunEndedTests({
     const params = vi.mocked(runCodexAgent).mock.calls[0]?.[0];
     expect(params?.flowRunEnded?.text).toBe(FLOW_RUN_ENDED_NOTICE);
     expect(params?.prompt).not.toContain(FLOW_RUN_ENDED_NOTICE);
-    expect(params?.prompt).not.toContain('intentionally not available');
+    // The run-ended notice already says the signal tool is gone, so no disarmed entry joins it.
+    expect(params?.operatorReminders).toEqual({});
   });
 }

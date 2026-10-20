@@ -1449,41 +1449,6 @@ describe('socket file permission edge cases', () => {
     expect(vi.mocked(resumeParkedTaskInPlace)).not.toHaveBeenCalled();
   });
 
-  it('prepends the disarmed reminder to the prompt on the Codex path (no in-conversation system-prompt channel; sc-996)', async () => {
-    // Codex has no in-conversation system-prompt channel, so the reminder rides the prompt as
-    // <system-reminder> text (interim fallback) rather than the Claude UserPromptSubmit hook.
-    vi.mocked(getDefaultClaudeCodeToken).mockResolvedValueOnce({
-      token: null,
-      isApiKey: false,
-      type: 'codex',
-      label: 'codex-test',
-      passthrough: true,
-    });
-    vi.mocked(dynamicChatServer.getLatestTaskSignal).mockReturnValueOnce(undefined);
-    mockPinnedTaskChat('task-dead-codex', { status: 'done' });
-    vi.mocked(runCodexAgent).mockImplementationOnce(async function* () {
-      yield {
-        type: 'finish',
-        messageMetadata: { sessionId: 'sess-codex-reminder' },
-      } as UIMessageChunk;
-    });
-
-    await handleRemoteExecute({
-      ...basePayload,
-      message: 'codex follow-up on dead chat',
-      history: [
-        { role: 'user', content: 'do the task' },
-        { role: 'assistant', content: 'done' },
-      ],
-    });
-
-    const codexPrompt = vi.mocked(runCodexAgent).mock.calls[0]?.[0]?.prompt;
-    expect(codexPrompt).toContain('<system-reminder>');
-    expect(codexPrompt).toContain('intentionally not available');
-    // Codex does not use the Claude SDK hook path.
-    expect(claudeQueryMock).not.toHaveBeenCalled();
-  });
-
   describe('on a free Codex account (its model/list has no GPT-6 Astra)', () => {
     const codexCredential: Awaited<ReturnType<typeof getDefaultClaudeCodeToken>> = {
       token: null,
