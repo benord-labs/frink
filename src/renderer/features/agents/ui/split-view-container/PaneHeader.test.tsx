@@ -32,10 +32,10 @@ vi.mock('../../../../components/ui/kbd', () => ({
 }));
 
 vi.mock('lucide-react', () => ({
-  ChevronDown: () => <span data-testid="chevron-down" />,
-  ChevronLeft: () => <span data-testid="chevron-left" />,
-  ChevronRight: () => <span data-testid="chevron-right" />,
-  ChevronUp: () => <span data-testid="chevron-up" />,
+  SquareArrowDown: () => <span data-testid="square-arrow-down" />,
+  SquareArrowLeft: () => <span data-testid="square-arrow-left" />,
+  SquareArrowRight: () => <span data-testid="square-arrow-right" />,
+  SquareArrowUp: () => <span data-testid="square-arrow-up" />,
   GripVertical: () => <span data-testid="grip-vertical" />,
 }));
 
@@ -197,6 +197,63 @@ describe('PaneHeader', () => {
       expect(
         screen.getAllByTestId('tooltip-trigger')[0].querySelector('.truncate')?.className,
       ).not.toContain(COMPACT_HIDDEN);
+    });
+  });
+
+  describe('reorder buttons', () => {
+    it('uses boxed move arrows, not the chevrons macOS reads as Back/Forward', () => {
+      const { container } = render(
+        <PaneHeader
+          {...baseProps()}
+          canMoveLeft
+          canMoveRight
+          onMoveLeft={vi.fn()}
+          onMoveRight={vi.fn()}
+        />,
+      );
+
+      const left = screen.getByRole('button', { name: 'Move pane 1 left' });
+      const right = screen.getByRole('button', { name: 'Move pane 1 right' });
+      expect(left.querySelector('[data-testid="square-arrow-left"]')).not.toBeNull();
+      expect(right.querySelector('[data-testid="square-arrow-right"]')).not.toBeNull();
+      expect(container.querySelector('[data-testid^="chevron-"]')).toBeNull();
+    });
+
+    it('uses up/down move arrows in a stacked layout', () => {
+      render(
+        <PaneHeader
+          {...baseProps()}
+          isVertical
+          canMoveLeft
+          canMoveRight
+          onMoveLeft={vi.fn()}
+          onMoveRight={vi.fn()}
+        />,
+      );
+
+      expect(
+        screen
+          .getByRole('button', { name: 'Move pane 1 up' })
+          .querySelector('[data-testid="square-arrow-up"]'),
+      ).not.toBeNull();
+      expect(
+        screen
+          .getByRole('button', { name: 'Move pane 1 down' })
+          .querySelector('[data-testid="square-arrow-down"]'),
+      ).not.toBeNull();
+    });
+
+    it('disables the move at the end of the row and keeps its shortcut hint', async () => {
+      const onMoveLeft = vi.fn();
+      render(<PaneHeader {...baseProps()} canMoveLeft={false} onMoveLeft={onMoveLeft} />);
+
+      const left = screen.getByRole('button', { name: 'Move pane 1 left' });
+      expect(left).toHaveProperty('disabled', true);
+      expect(left.querySelector('[data-testid="square-arrow-left"]')).not.toBeNull();
+      await userEvent.click(left);
+      expect(onMoveLeft).not.toHaveBeenCalled();
+      expect(screen.getByText('Move left')).toBeDefined();
+      expect(screen.getByTestId('kbd-reorder-pane-left')).toBeDefined();
     });
   });
 

@@ -1,5 +1,5 @@
 import { Button } from '@benord-labs/frink-primitives';
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp } from 'lucide-react';
+import { SquareArrowDown, SquareArrowLeft, SquareArrowRight, SquareArrowUp } from 'lucide-react';
 import { type MouseEvent, type ReactNode, useCallback } from 'react';
 import { Kbd } from '../../../../components/ui/kbd';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../../components/ui/tooltip';
@@ -9,15 +9,16 @@ import { isMacOS } from '../../../../lib/utils/platform';
 import { CompactPaneDigitBadge } from './pane-number-badge';
 import { PaneReorderHandleButton } from './pane-reorder-dnd';
 
-const CHEVRON_ICONS = {
-  left: ChevronLeft,
-  right: ChevronRight,
-  up: ChevronUp,
-  down: ChevronDown,
+// Boxed arrows, so a move can't be read as the Back/Forward arrows or macOS ‹ › chevrons.
+const MOVE_ICONS = {
+  left: SquareArrowLeft,
+  right: SquareArrowRight,
+  up: SquareArrowUp,
+  down: SquareArrowDown,
 } as const;
 
-/** Arrow button for pane reorder (shared between left/up and right/down directions) */
-function ReorderArrowButton({
+/** Move-pane button for reorder (shared between left/up and right/down directions) */
+function ReorderPaneButton({
   direction,
   paneNumber,
   disabled,
@@ -29,7 +30,7 @@ function ReorderArrowButton({
   onClick: () => void;
 }) {
   // biome-ignore lint/style/useNamingConvention: Renders as a component
-  const Icon = CHEVRON_ICONS[direction];
+  const Icon = MOVE_ICONS[direction];
 
   return (
     <Tooltip>
@@ -252,9 +253,9 @@ export function PaneHeader({
           (onMoveLeft ?? onMoveRight) && (
             <div className="w-px h-3 bg-border/50 mx-0.5" aria-hidden="true" />
           )}
-        {/* Pane reorder arrow buttons */}
+        {/* Pane reorder buttons */}
         {onMoveLeft && (
-          <ReorderArrowButton
+          <ReorderPaneButton
             direction={isVertical ? 'up' : 'left'}
             paneNumber={paneNumber}
             disabled={!canMoveLeft}
@@ -262,7 +263,7 @@ export function PaneHeader({
           />
         )}
         {onMoveRight && (
-          <ReorderArrowButton
+          <ReorderPaneButton
             direction={isVertical ? 'down' : 'right'}
             paneNumber={paneNumber}
             disabled={!canMoveRight}
