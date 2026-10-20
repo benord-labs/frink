@@ -36,17 +36,10 @@ import { getFrinkSkillsDir } from '../frink-skills-dir';
 import { ensureDirExistsAsync } from '../fs-helpers';
 import { resolveElectronResourcePath } from '../platform/electron-resource-path';
 import { captureContained } from '../sentry';
-import { copyFiles, replaceDir, sha256 } from './skill-fs';
+import { type Baseline, copyFiles, readBaseline, replaceDir, sha256 } from './skill-fs';
 import { projectSkill } from './skill-projection';
 
 const SKILLS_TO_PROVISION: readonly string[] = ['frink-flows'];
-
-type BaselineFile = { sha256: string; bytes: number };
-type Baseline = {
-  generatedAt: string;
-  version: string;
-  files: Record<string, BaselineFile>;
-};
 
 export type ProvisionOutcome = {
   skill: string;
@@ -87,16 +80,6 @@ function baselinesEqual(a: Baseline, b: Baseline): boolean {
     canonicalStringify({ version: a.version, files: a.files }) ===
     canonicalStringify({ version: b.version, files: b.files })
   );
-}
-
-async function readBaseline(dir: string): Promise<Baseline | null> {
-  try {
-    const raw = await readFile(join(dir, '.baseline.json'), 'utf8');
-    return JSON.parse(raw) as Baseline;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    throw err;
-  }
 }
 
 /** Files in `dir` edited relative to `baseline`; missing files and content equal to the
