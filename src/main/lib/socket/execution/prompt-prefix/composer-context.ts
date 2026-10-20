@@ -7,7 +7,10 @@ import {
   OPEN_EDITOR_FILE_SOURCE,
 } from '../../../../../shared/lib/mentions/mention-grammar';
 import type { CodexContextEntry } from '../../../../../shared/lib/message-markers/message-provenance';
-import { isMachineText } from '../../../../../shared/lib/message-markers/person-authored';
+import {
+  isMachineSource,
+  isMachineText,
+} from '../../../../../shared/lib/message-markers/person-authored';
 import { type ParsedMention, parseMention } from '../../../../../shared/lib/mentions/parse-mention';
 import { wrapRemindersForPrompt } from '../../operator-reminders';
 import type { MessageDelivery } from '../message-provenance/origin';
@@ -202,12 +205,12 @@ function rewriteTokens(message: string, rewrite: TokenRewrite) {
 }
 
 /** A person typed it, or retried a turn no task dispatched (a new chat's first message is sent so).
- * Text Frink or a flow wrote can quote outside text that looks like a token. */
+ * Text Frink, a flow or a Work Queue task wrote can quote outside text that looks like a token. */
 export function isPersonAuthored(delivery: MessageDelivery | undefined, raw: string): boolean {
   const origin = delivery?.messageOrigin;
   const retried = origin?.source === 'internal' && origin.kind === 'regenerate';
   const person = origin?.source === 'person' || (retried && !delivery?.dispatchTaskId);
-  return person && !isMachineText(raw);
+  return person && !isMachineSource(delivery?.messageSource) && !isMachineText(raw);
 }
 
 /** Says what the composer's tokens mean, in notes for the provider's own context channel.

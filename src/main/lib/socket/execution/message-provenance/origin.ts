@@ -1,10 +1,16 @@
 import { z } from 'zod';
 import { isHiddenWakeMessage } from '../../../../../shared/lib/message-markers/hidden-wake-marker';
 import type { MessageOrigin } from '../../../../../shared/lib/message-markers/message-provenance';
+import { dispatchMetadataSchema } from '../../../../../shared/lib/message-markers/person-authored';
 import type { MessageSendPayload } from '../../client';
 
-/** What main knows about one send; never accepted from a renderer payload. */
-export type MessageDelivery = { messageOrigin?: MessageOrigin; dispatchTaskId?: string };
+/** What main knows about one send; never accepted from a renderer payload. `messageSource` is the
+ * stored message's own `metadata.source` stamp, such as a Work Queue task's opening. */
+export type MessageDelivery = {
+  messageOrigin?: MessageOrigin;
+  dispatchTaskId?: string;
+  messageSource?: string;
+};
 
 /** The marker a Flow dispatch stamps on its message; the declared metadata type does not carry it. */
 const flowDispatchMetadata = z.object({ source: z.literal('flow-dispatch') });
@@ -29,5 +35,6 @@ export function describeDelivery(
   return {
     messageOrigin: classifyMessageOrigin(payload, messageText),
     dispatchTaskId: payload.dispatchTaskId,
+    messageSource: dispatchMetadataSchema.safeParse(payload.userMessage.metadata).data?.source,
   };
 }

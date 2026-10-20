@@ -972,6 +972,7 @@ describe('WorkQueue mapTask trigger context', () => {
         taskId: 'task-1',
         mode: 'agent',
         useWorktree: false,
+        initialMessageSource: 'work-queue',
       }),
     );
     expect(updateTaskStatusMutateAsyncMock).toHaveBeenCalledWith(

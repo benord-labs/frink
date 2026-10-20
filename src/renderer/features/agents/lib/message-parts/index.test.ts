@@ -79,6 +79,7 @@ describe('buildTurnHistory: who wrote each turn', () => {
       user('u3', 'Task run', { dispatchTaskId: 'task-1' }),
       user('u4', `${HIDDEN_WAKE_MARKER}Continue`),
       user('u5', `${TRIGGER_BUBBLE_MARKER}{"uiData":{}}-->\n\nTriggered task`),
+      user('u6', 'Story: fix @[file:local:c.ts]', { source: 'work-queue' }),
       message('a1', 'assistant', [{ type: 'text', text: 'done' }]),
     ]);
 
@@ -88,6 +89,7 @@ describe('buildTurnHistory: who wrote each turn', () => {
       { role: 'user', content: 'Task run' },
       { role: 'user', content: 'Continue' },
       { role: 'user', content: 'Triggered task' },
+      { role: 'user', content: 'Story: fix @[file:local:c.ts]' },
       { role: 'assistant', content: 'done' },
     ]);
   });

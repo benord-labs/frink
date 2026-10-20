@@ -39,7 +39,12 @@ const credential = (type: 'codex' | 'opencode') =>
 type Delivered = { prompt: string; notes: string[] };
 
 /** Anything else one send carries, beside its text and origin. */
-type SendExtras = { dispatchTaskId?: string; sessionId?: string; history?: ConversationTurn[] };
+type SendExtras = {
+  dispatchTaskId?: string;
+  messageSource?: string;
+  sessionId?: string;
+  history?: ConversationTurn[];
+};
 
 let harness: OperatorReminderHarness;
 
@@ -53,7 +58,7 @@ function textOf(message: SDKUserMessage | undefined): string {
 async function claudeDelivery(
   message: string,
   messageOrigin: MessageOrigin,
-  { dispatchTaskId, ...extras }: SendExtras = {},
+  { dispatchTaskId, messageSource, ...extras }: SendExtras = {},
 ): Promise<Delivered> {
   const delivered: Delivered = { prompt: '', notes: [] };
   mockQuery(harness.claudeQueryMock, async function* ({ prompt: input, options }) {
@@ -68,7 +73,7 @@ async function claudeDelivery(
     subChatId: randomUUID(),
     message,
     ...extras,
-    delivery: { messageOrigin, dispatchTaskId },
+    delivery: { messageOrigin, dispatchTaskId, messageSource },
   });
   return delivered;
 }
@@ -183,6 +188,15 @@ function registerOriginTests(): void {
     const message = 'Webhook body: @[file:local:deploy.sh] quoted from upstream';
     const retry: MessageOrigin = { source: 'internal', kind: 'regenerate' };
     expect(await claudeDelivery(message, retry, { dispatchTaskId: 'task-1' })).toEqual({
+      prompt: message,
+      notes: [],
+    });
+  });
+
+  it('leaves a Work Queue task’s bare opening byte-identical, though it is sent as a retry', async () => {
+    const message = 'Shortcut story: fix @[file:local:deploy.sh] before release';
+    const retry: MessageOrigin = { source: 'internal', kind: 'regenerate' };
+    expect(await claudeDelivery(message, retry, { messageSource: 'work-queue' })).toEqual({
       prompt: message,
       notes: [],
     });
