@@ -11,6 +11,7 @@ import type {
 } from '@github/copilot-sdk';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
+  COPILOT_SESSION_OPTIONS,
   copilotSessionOptions,
   managedLayerProblem,
   openCheckedSession,
@@ -90,6 +91,21 @@ async function open(setup: FakeSetup, extra: { plan?: boolean; resumeSessionId?:
 }
 
 describe('copilotSessionOptions', () => {
+  it("sets exactly the options routed as set by Frink, plus the runner's provider", () => {
+    const routed = Object.entries(COPILOT_SESSION_OPTIONS)
+      .filter(([, route]) => route === 'frink-sets')
+      .map(([key]) => key)
+      .sort();
+    const set = Object.keys({ ...sessionOptions(), provider: undefined }).sort();
+    expect(set).toEqual(routed);
+  });
+
+  it('routes every Copilot session option as set by Frink or left at a reviewed default', () => {
+    for (const [option, route] of Object.entries(COPILOT_SESSION_OPTIONS)) {
+      expect(['frink-sets', 'default-reviewed'], option).toContain(route);
+    }
+  });
+
   it('opens new and resumed sessions with the same safety options', async () => {
     const fake = fakeCopilotClient();
     const input = { options: sessionOptions(), plan: false, versions: VERSIONS };

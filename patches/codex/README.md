@@ -7,6 +7,7 @@ Frink ships a Codex built from a pinned upstream tag with one patch applied on t
 | `manifest.json` | The upstream tag, its archive hash, the Rust toolchain, and the patch's SHA-256. |
 | `frink-host-tool-permission-v1.patch` | The patch. Generated — do not edit it by hand. |
 | `thread-item-variants.json` | The upstream `ThreadItem` variants Frink has classified. |
+| `config-surface.json` | The upstream config keys, feature flags and each feature's stage and default, each routed for Frink. |
 
 `scripts/binaries/build-codex-frink.mjs` verifies all of it and builds the binary
 (`bun run codex:build`).

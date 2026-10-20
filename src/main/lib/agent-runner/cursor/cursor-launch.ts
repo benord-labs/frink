@@ -35,7 +35,7 @@ export type CursorAgentCheck =
   | { status: 'missing' | 'signed-out' | 'plan-required' | 'failed'; reason: string };
 
 /** The one Cursor setup Frink has tested: its SDK version, hook protocol and offered tools. */
-const CURSOR_ROW = {
+export const CURSOR_ROW = {
   sdk: { version: '1.0.37' },
   hookVersions: ['1.0.0'],
   tools: CURSOR_TOOL_NAMES,
