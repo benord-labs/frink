@@ -13,6 +13,10 @@ import {
 import type { CodexSpeed } from '../../../../shared/types/execution';
 import { extendedThinkingEnabledAtom } from '../../../lib/atoms';
 import { codexSpeedAtomFamily } from '../../../lib/atoms/codex-speed';
+import {
+  COMPOSER_MODEL_ULTRA_DETAIL_CLASS,
+  COMPOSER_MODEL_ULTRA_EFFORT_CLASS,
+} from '../main/chat-composer-shell-classes';
 import { type ModelItem, ModelSelector } from './model-selector';
 
 const capabilities = vi.hoisted(() => ({ supportsXhigh: true, supportsUltra: true }));
@@ -125,6 +129,13 @@ describe('trigger label', () => {
       '@max-[19.5rem]/composer:chroma-text',
     );
     expect(within(trigger()).getByText('XH')).toHaveClass('chroma-text-animate');
+    // The longer Ultra label trades its full form for the effort token at its own, wider tier.
+    expect(within(trigger()).getByText('Ultra').parentElement).toHaveClass(
+      COMPOSER_MODEL_ULTRA_DETAIL_CLASS,
+    );
+    expect(within(trigger()).getByText('XH').parentElement).toHaveClass(
+      ...COMPOSER_MODEL_ULTRA_EFFORT_CLASS.split(' '),
+    );
     expect(trigger().querySelector('.chroma-fill.chroma-text-animate')).not.toBeNull();
   });
 
