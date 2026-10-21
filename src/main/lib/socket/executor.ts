@@ -124,7 +124,6 @@ import { trackUserMessageDelivery } from './execution/claude-session/user-messag
 
 import {
   applyApprovedPlanContextToPrompt,
-  formatPromptWithHistory,
   carryUndeliveredMessages,
   codexComposerContext,
   isPersonAuthored,
@@ -760,11 +759,12 @@ export async function handleRemoteExecute(
         : ((agentRuntime === 'codex' ? getCodexSession(subChatId) : undefined) ??
           persistedSessionId ??
           undefined);
-    const hasResumeSession = Boolean(resumeSessionId ?? persistedSessionId);
-    let fullPrompt = hasResumeSession
-      ? undelivered.prompt
-      : formatPromptWithHistory(message, history);
-    const agentSawPriorTurns = hasResumeSession || (history?.length ?? 0) > 0;
+    const continued = resumeSessionId ?? persistedSessionId;
+    const hasResumeSession = Boolean(continued);
+    // Only Claude runs a slash command typed as text; elsewhere it is a message like any other.
+    const seed = undelivered.promptsFor(continued, history, agentRuntime === 'claude');
+    let fullPrompt = hasResumeSession ? seed.carried : seed.fresh;
+    const agentSawPriorTurns = hasResumeSession || seed.freshCarriesHistory;
     // Written once the provider accepts the turn: Claude's first prompt hook, Codex's turn/start.
     // Flows run only on Claude and Codex, so other agents have no Flow run to be told about.
     const flowRunEnded =
@@ -805,7 +805,7 @@ export async function handleRemoteExecute(
     }
 
     let freshSessionFallbackPrompt = resumeSessionId
-      ? replaceCarriedWithHistory(fullPrompt, undelivered.prompt, message, history)
+      ? replaceCarriedWithHistory(fullPrompt, seed.carried, seed.fresh, history)
       : undefined;
     if (sessionFlowBriefing && agentRuntime !== 'claude' && !hasResumeSession) {
       fullPrompt = `${renderFlowBriefingSection(sessionFlowBriefing)}\n\n---\n\n${fullPrompt}`;
@@ -1418,7 +1418,7 @@ export async function handleRemoteExecute(
         onSetterRejected: claimed ? () => session.retire('setter-rejected') : undefined,
       });
       const warmPush = claimed ? takeover : undefined;
-      const onPushed = delivery.onPushed(adoptedPump !== undefined, claimed);
+      const onPushed = delivery.onPushed(adoptedPump !== undefined, claimed, undelivered.pushed);
       const turnDone = adoptedPump
         ? adoptedPump.startTurn(initialMessage, onSdkMessage, takeover, onPushed)
         : runClaudeTurn(session, initialMessage, onSdkMessage, warmPush, onPushed);
@@ -1696,7 +1696,7 @@ export async function handleRemoteExecute(
       const retryOptions: Record<string, unknown> = { ...sdkOptions };
       delete retryOptions.resume;
       if (hasResumeSession) {
-        fullPrompt = replaceCarriedWithHistory(fullPrompt, undelivered.prompt, message, history);
+        fullPrompt = replaceCarriedWithHistory(fullPrompt, seed.carried, seed.fresh, history);
       }
       await runClaudeQueryAttempt(retryOptions as typeof sdkOptions);
       log.info(
