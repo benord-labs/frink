@@ -19,7 +19,8 @@ export function useInAppSignIn<T>({
   const signIn = trpc.agentAccounts.signIn.useMutation();
   const [checking, setChecking] = useState(false);
   const [missed, setMissed] = useState(false);
-  const abandoned = useRef(false);
+  // Each start is a new attempt; Cancel and leaving the page end the current one.
+  const attempt = useRef(0);
   // The connect step runs after a wait, so it uses what the page holds by then (a typed label).
   const latest = useRef({ recheck, connect });
   useEffect(() => {
@@ -33,13 +34,13 @@ export function useInAppSignIn<T>({
   }, [signIn.isPending, client, type]);
   useEffect(
     () => () => {
-      abandoned.current = true;
+      attempt.current += 1;
     },
     [],
   );
 
   const start = () => {
-    abandoned.current = false;
+    const current = ++attempt.current;
     setMissed(false);
     signIn.mutate(
       { type },
@@ -47,7 +48,7 @@ export function useInAppSignIn<T>({
         onSuccess: async () => {
           setChecking(true);
           const login = await latest.current.recheck();
-          if (abandoned.current) return;
+          if (attempt.current !== current) return;
           if (login) await latest.current.connect(login);
           else setMissed(true);
           setChecking(false);
@@ -56,7 +57,7 @@ export function useInAppSignIn<T>({
     );
   };
   const cancel = () => {
-    abandoned.current = true;
+    attempt.current += 1;
     setChecking(false);
     signIn.reset();
   };

@@ -249,6 +249,27 @@ describe('ConnectClaudeAccountPage', () => {
     },
   );
 
+  it('connects nothing from a cancelled check when the person signs in again before it ends', async () => {
+    let firstLanded: (detection: Detection) => void = () => undefined;
+    renderPage(
+      NO_LOGIN,
+      new Promise<Detection>((resolve) => {
+        firstLanded = resolve;
+      }),
+      NO_LOGIN,
+    );
+    await startSignIn();
+    act(() => finishSignIn?.(true));
+    await waitFor(() => expect(callsTo('claudeCode.detectClaudeAccount')).toHaveLength(2));
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await startSignIn();
+
+    await act(async () => firstLanded(LOGIN));
+
+    expect(callsTo('claudeCode.connectClaudePassthrough')).toEqual([]);
+    expect(screen.getByText(/Finish signing in in your browser/)).toBeInTheDocument();
+  });
+
   it('stops the sign-in on Cancel and when the page closes', async () => {
     const { unmount } = renderPage(NO_LOGIN);
     await startSignIn();
