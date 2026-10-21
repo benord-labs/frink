@@ -28,8 +28,8 @@ type ConnectAccountShellProps = {
   providerName: string;
   /** Shown after the provider's name in the title, such as its Preview tag. */
   providerTag?: ReactNode;
-  /** CLI command shown in the "no login detected" instructions (e.g. `codex login`). */
-  authCommand: string;
+  /** Command shown in the "no login detected" steps when `notFound` gives none (e.g. `codex login`). */
+  authCommand?: string;
   /** Sub-heading line under the title (provider-specific token-storage reassurance). */
   headerDescription: ReactNode;
   /** Optional copy inside the "login found" panel (e.g. the macOS keychain prompt note). */
@@ -169,7 +169,7 @@ function NoLoginPanel({
   onRefresh,
 }: {
   providerName: string;
-  authCommand: string;
+  authCommand?: string;
   detectionHint?: string | null;
   notFound?: NotFound;
   isRefreshing: boolean;
@@ -184,11 +184,9 @@ function NoLoginPanel({
             {notFound?.title ?? `No ${providerName} login detected`}
           </p>
         </div>
-        {notFound ? (
-          notFound.detail && <p className="text-sm text-muted-foreground">{notFound.detail}</p>
-        ) : (
-          <SignInSteps authCommand={authCommand} />
-        )}
+        {notFound
+          ? notFound.detail && <p className="text-sm text-muted-foreground">{notFound.detail}</p>
+          : authCommand && <SignInSteps authCommand={authCommand} />}
         {detectionHint && <p className="text-xs text-muted-foreground">{detectionHint}</p>}
       </div>
 
@@ -262,7 +260,7 @@ export function connectFlowProps<TDetection>(flow: ConnectAccountFlow<TDetection
     accountLabel: flow.accountLabel,
     onAccountLabelChange: flow.setAccountLabel,
     onBack: flow.handleBack,
-    onConnect: flow.handleConnect,
+    onConnect: () => void flow.handleConnect(),
     onRefresh: flow.handleRefresh,
     onErrorDismiss: flow.dismissError,
   };
