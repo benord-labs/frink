@@ -10,7 +10,13 @@
  */
 
 import { TRPCError } from '@trpc/server';
-import type { FlowResumeSnapshot, RecoveryKind } from '../../../shared/types/flow-run/resume';
+import { PhoneSafeRefusal } from '../trpc/routers/task-refusals';
+import {
+  type FlowResumeSnapshot,
+  type RecoverOutcome,
+  type RecoveryKind,
+  recoverOutcomeFor,
+} from '../../../shared/types/flow-run/resume';
 import { type NodeOutput, RESUME_ACTIONABLE_NODE_STATUSES } from '../../../shared/types/flow';
 import { getDatabase } from '../db';
 import type { NodeRun } from '../db/schema';
@@ -165,11 +171,18 @@ export async function pauseFlowRunForSubChat(
   return { paused: true };
 }
 
-const REOPEN_DECLINED: Record<ReopenDeclined, string> = {
+/** A snapshot-checked action (the phone's) on a run without a slot cannot wait in the queue. */
+const needsComputer = () =>
+  new PhoneSafeRefusal({
+    code: 'PRECONDITION_FAILED',
+    message: 'This step is waiting for a free slot. Approve or skip it in Frink on your computer.',
+  });
+
+/** `no-slot` is no refusal: the resume queues to take the run's slot back. */
+const REOPEN_DECLINED = {
   'run-changed': 'Flow run changed while it was being resumed.',
   'node-changed': 'This Flow step has already changed.',
-  'no-slot': 'This paused Flow lost its place in the run queue. Cancel it and start it again.',
-};
+} as const satisfies Record<Exclude<ReopenDeclined, 'no-slot'>, string>;
 
 /** The Fan Out item and previous output a retried node was first dispatched with. */
 async function retryDispatchInput(
@@ -205,7 +218,7 @@ async function reopenForResume(
   action: ResumeAction,
   expectedSnapshot: FlowResumeSnapshot | undefined,
   kind: RecoveryKind | undefined,
-): Promise<RunFence> {
+): Promise<RunFence | 'no-slot'> {
   const db = getDatabase();
   const allowed: readonly string[] =
     action === 'approve' ? ['awaiting_input'] : RESUME_ACTIONABLE_NODE_STATUSES;
@@ -216,6 +229,7 @@ async function reopenForResume(
       : reopenPausedRunCommand(db, flowRunId, nodeRunId, allowed, expectedSnapshot),
   );
   if (fence === 'kind-changed') throw recoveryChangedError();
+  if (fence === 'no-slot') return fence;
   if (typeof fence === 'string') {
     throw new TRPCError({ code: 'PRECONDITION_FAILED', message: REOPEN_DECLINED[fence] });
   }
@@ -245,7 +259,7 @@ export async function resumeFlowRun(
   nodeRunId: string,
   expectedSnapshot?: FlowResumeSnapshot,
   kind?: RecoveryKind,
-): Promise<void> {
+): Promise<RecoverOutcome> {
   if (expectedSnapshot && action === 'retry') {
     throw new TRPCError({
       code: 'BAD_REQUEST',
@@ -292,6 +306,13 @@ export async function resumeFlowRun(
   // Read before the reopen so a failed read leaves the run paused, not `running` with nothing dispatched.
   const retry = retryNode ? await retryDispatchInput(ctx, nodeRun, retryNode) : undefined;
   const fence = await reopenForResume(flowRunId, nodeRunId, action, expectedSnapshot, kind);
+  if (fence === 'no-slot') {
+    // A queued action replays later, past the snapshot this click was checked against.
+    if (expectedSnapshot) throw needsComputer();
+    // The run gave its slot up while it waited: it takes one back, then this action runs in place.
+    const { requestParkedFlowResume } = await import('./admission/terminal-resume/parked-resume');
+    return recoverOutcomeFor(await requestParkedFlowResume({ flowRunId, nodeRunId, action, kind }));
+  }
 
   await withFlowResourceCleanup(flowRunId, async () => {
     if (retryNode) {
@@ -326,4 +347,5 @@ export async function resumeFlowRun(
       });
     }
   });
+  return 'resumed';
 }
