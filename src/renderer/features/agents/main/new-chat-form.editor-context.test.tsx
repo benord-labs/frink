@@ -17,7 +17,12 @@ import { newChatTerminalId } from '@/lib/agent-chat/sentinel-ids';
 import { pendingTerminalOutputAtomFamily } from '@/lib/terminal/pending-output';
 import { appStore } from '../../../lib/jotai-store';
 import { trpc } from '../../../lib/trpc';
-import { lastSelectedModelIdAtom, lastSelectedModelIdAtomFamily, NEW_CHAT_PANE } from '../atoms';
+import {
+  lastSelectedModelIdAtom,
+  lastSelectedModelIdAtomFamily,
+  NEW_CHAT_PANE,
+  selectedProjectAtom,
+} from '../atoms';
 import { NewChatForm } from './new-chat-form';
 
 // `lib/trpc` wires its ipc client at import time, so the preload bridge must exist first.
@@ -38,10 +43,14 @@ type TestAnswers = {
   createdChat?: { id: string; subChats: [] };
 };
 
+const repoProject = { id: 'project-1', name: 'repo', path: '/repo' };
+
 function answerFor(path: string, answers: TestAnswers) {
   switch (path) {
     case 'projects.scaffold':
       return { id: 'project-1', path: '/repo' };
+    case 'projects.list':
+      return [repoProject];
     case 'claudeCode.getResolvedAccount':
       return answers.account;
     case 'usage.getCodexAccountCatalog':
@@ -171,6 +180,27 @@ describe('NewChatForm editor context', () => {
     expect(createChat.mock.calls[0][0].initialMessageParts).toEqual([
       { type: 'text', text: `${codeSelectionMention(selection)} explain this` },
     ]);
+  });
+});
+
+describe('NewChatForm empty chat copy', () => {
+  it('greets a General chat with a task heading and a hint that does not promise files', async () => {
+    renderNewChat();
+
+    expect(await screen.findByRole('heading', { name: 'Hand Frink a task' })).toBeInTheDocument();
+    expect(screen.getByText('Describe a task in plain words.')).toBeInTheDocument();
+  });
+
+  it('tells a project chat that @ adds a file', async () => {
+    const store = createStore();
+    store.set(selectedProjectAtom, repoProject);
+
+    renderNewChat(store);
+
+    expect(await screen.findByRole('heading', { name: 'Hand Frink a task' })).toBeInTheDocument();
+    expect(
+      screen.getByText('Describe a task in plain words. Type @ to add a file.'),
+    ).toBeInTheDocument();
   });
 });
 

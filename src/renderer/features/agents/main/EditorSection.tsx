@@ -6,7 +6,7 @@ import { ContextItems } from '../components/context-items';
 import type { AgentsMentionsEditorHandle } from '../mentions';
 import { AgentsMentionsEditor } from '../mentions';
 import { agentsChatComposerShellClass } from './chat-composer-shell-classes';
-import { LIMITS, STRINGS } from './new-chat-form-constants';
+import { LIMITS } from './new-chat-form-constants';
 
 type Image = {
   id: string;
@@ -48,6 +48,7 @@ type Props = {
   onPaste: (e: React.ClipboardEvent) => void;
   onFocus: () => void;
   onBlur: () => void;
+  placeholder: string;
   /** ID of the active option in the slash command listbox (for aria-activedescendant). */
   slashActiveDescendantId?: string;
   /** ID of the slash command listbox element (for aria-controls). */
@@ -82,6 +83,7 @@ export function EditorSection({
   onPaste,
   onFocus,
   onBlur,
+  placeholder,
   slashActiveDescendantId,
   slashCommandListboxId,
   contextChip,
@@ -115,7 +117,7 @@ export function EditorSection({
         onContentChange={onContentChange}
         onSubmit={onSubmit}
         onShiftTab={onShiftTab}
-        placeholder={STRINGS.INPUT_PLACEHOLDER}
+        placeholder={placeholder}
         className={cn(
           'max-h-[240px] overflow-y-auto bg-transparent px-0.5 pb-1 pt-0.5',
           isMobileFullscreen ? 'min-h-[56px]' : 'min-h-[44px]',

@@ -3,24 +3,13 @@
  * All UI strings, magic numbers, and configuration values
  */
 
-const titles = [
-  'What are we building today?',
-  'Ship it mode: what is the mission?',
-  'What needs to happen next?',
-  'What should we tackle first?',
-  'What would make today a win?',
-  'What idea are we bringing to life?',
-  'What should we automate right now?',
-  'What are we cooking up today?',
-  'Where should we make progress first?',
-];
-
 export const STRINGS = {
   // Main title
-  TITLE: titles[Math.floor(Math.random() * titles.length)],
+  TITLE: 'Hand Frink a task',
 
-  // Placeholders
-  INPUT_PLACEHOLDER: 'Plan, @ for context, / for commands',
+  // Placeholders: `@` only finds files when the chat has a project.
+  INPUT_PLACEHOLDER_PROJECT: 'Describe a task in plain words. Type @ to add a file.',
+  INPUT_PLACEHOLDER_GENERAL: 'Describe a task in plain words.',
   BRANCH_SEARCH_PLACEHOLDER: 'Search branches...',
 
   // Buttons

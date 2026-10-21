@@ -688,14 +688,8 @@ export function NewChatForm({
 
           <div className="flex flex-1 items-center justify-center overflow-y-auto relative">
             <div className="@container/hero w-full max-w-2xl space-y-4 md:space-y-6 relative z-10 px-4">
-              {/*
-                When no authenticated account exists we show ONLY the empty state.
-                Showing the chat editor underneath is contradictory — the user can't
-                send anything until they connect. The "What needs to happen next?"
-                title is also hidden because the empty-state card has its own heading.
-                The top-left AccountIndicator separately surfaces the
-                unauthenticated row's amber warning state.
-              */}
+              {/* With no signed-in account only the empty-state card shows: nothing can be sent yet,
+                  and the card has its own heading in place of the page title. */}
               {accountResolved && (resolvedAccount === null || !resolvedAccount.isAuthenticated) ? (
                 <NoAccountsEmptyState
                   existingAccount={
@@ -786,6 +780,11 @@ export function NewChatForm({
                         onPaste={editorHandlers.handlePaste}
                         onFocus={() => editorHandlers.setIsFocused(true)}
                         onBlur={() => editorHandlers.setIsFocused(false)}
+                        placeholder={
+                          validatedProject
+                            ? STRINGS.INPUT_PLACEHOLDER_PROJECT
+                            : STRINGS.INPUT_PLACEHOLDER_GENERAL
+                        }
                       >
                         <ActionsToolbar
                           codexSpeedRef={staging.codexSpeed}
