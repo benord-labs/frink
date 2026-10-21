@@ -58,6 +58,8 @@ describe('agentAccounts', () => {
   const signInCursor = vi.fn<typeof signInToCursor>();
   const signInClaude = vi.fn<() => Promise<boolean>>();
   const cancelClaude = vi.fn();
+  const signInCodex = vi.fn<() => Promise<boolean>>();
+  const cancelCodex = vi.fn();
 
   const caller = (flags: Record<string, boolean> = ON, platform = 'darwin') =>
     createAgentAccountsRouter({
@@ -68,6 +70,8 @@ describe('agentAccounts', () => {
       signInCursor,
       signInClaude,
       cancelClaude,
+      signInCodex,
+      cancelCodex,
       detectCodex,
       rememberedModels: (type) => REMEMBERED.get(type) ?? [],
       flags,
@@ -88,6 +92,8 @@ describe('agentAccounts', () => {
     signInCursor.mockReset().mockResolvedValue(true);
     signInClaude.mockReset().mockResolvedValue(true);
     cancelClaude.mockReset();
+    signInCodex.mockReset().mockResolvedValue(true);
+    cancelCodex.mockReset();
   });
   afterEach(() => rm(root, { recursive: true, force: true }));
 
@@ -284,6 +290,25 @@ describe('agentAccounts', () => {
     expect(cancelClaude).not.toHaveBeenCalled();
     await caller().cancelSignIn({ type: 'claude-code' });
     expect(cancelClaude).toHaveBeenCalledOnce();
+    expect(cancelCodex).not.toHaveBeenCalled();
+    expect(rows()).toEqual([]);
+  });
+
+  it("signs in to ChatGPT through Codex's own sign-in on macOS and Linux, and cancels it", async () => {
+    await expect(caller(CODEX_ON).signIn({ type: 'codex' })).resolves.toBeUndefined();
+    signInCodex.mockResolvedValue(false);
+    await expect(caller(CODEX_ON, 'linux').signIn({ type: 'codex' })).rejects.toThrow(
+      "ChatGPT's sign-in didn't finish. Try again.",
+    );
+    await expect(caller(CODEX_ON, 'win32').signIn({ type: 'codex' })).rejects.toThrow(
+      NOT_AVAILABLE,
+    );
+    await expect(caller({}).signIn({ type: 'codex' })).rejects.toThrow(NOT_AVAILABLE);
+    expect(signInCodex).toHaveBeenCalledTimes(2);
+
+    await caller(CODEX_ON).cancelSignIn({ type: 'codex' });
+    expect(cancelCodex).toHaveBeenCalledOnce();
+    expect(cancelClaude).not.toHaveBeenCalled();
     expect(rows()).toEqual([]);
   });
 
@@ -302,10 +327,10 @@ describe('agentAccounts', () => {
       email: 'me@openai.example',
       sourcePath: 'codex-passthrough://local',
     });
-    detectCodex.mockResolvedValue({ available: false, hint: 'Run `codex login`.' });
+    detectCodex.mockResolvedValue({ available: false, hint: 'No login here.' });
     await expect(caller(CODEX_ON).detect({ type: 'codex' })).resolves.toEqual({
       available: false,
-      reason: 'Run `codex login`.',
+      reason: 'No login here.',
     });
   });
 
@@ -334,7 +359,7 @@ describe('agentAccounts', () => {
   it('refuses an OpenAI connect when Codex has no login here', async () => {
     detectCodex.mockResolvedValue({ available: false });
     await expect(caller(CODEX_ON).connect({ type: 'codex', accountLabel: 'x' })).rejects.toThrow(
-      /codex login/,
+      "Frink didn't find a ChatGPT login on this computer.",
     );
     expect(rows()).toEqual([]);
   });
