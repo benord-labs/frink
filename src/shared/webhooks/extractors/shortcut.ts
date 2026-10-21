@@ -8,6 +8,8 @@ type ShortcutAction = {
   owner_ids?: string[];
   label_ids?: number[];
   epic_id?: number | null;
+  name?: string;
+  app_url?: string;
 };
 
 type ShortcutReference = {
@@ -63,7 +65,6 @@ function detectEventType(payload: unknown): string | null {
 async function buildEventData(payload: unknown, ctx: ExtractorContext): Promise<WebhookEventData> {
   const p = payload as ShortcutPayload;
   const references = p.references || [];
-  const story = references.find((r) => r.entity_type === 'story');
   const project = references.find((r) => r.entity_type === 'project');
   const action = p.actions?.[0];
   const changes = action?.changes || {};
@@ -95,8 +96,9 @@ async function buildEventData(payload: unknown, ctx: ExtractorContext): Promise<
     externalUserId: p.member_id,
 
     storyId: p.primary_id,
-    storyName: story?.name || null,
-    storyUrl: story?.app_url || null,
+    // The primary story's own action, never a story reference: references can name a linked story.
+    storyName: action?.name || null,
+    storyUrl: action?.app_url || null,
     // Ids are strings: authored filter values are strings and the matcher compares strictly.
     projectId: project?.id != null ? String(project.id) : null,
     projectName: project?.name || null,

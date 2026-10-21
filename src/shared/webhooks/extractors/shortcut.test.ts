@@ -55,6 +55,23 @@ describe('shortcutExtractor.buildEventData', () => {
     expect(data.owner_ids).toEqual(['6126f7a4-d1e2-4b3a-9c2f-7d8e1c4b5a90']);
     expect(data.ownerIds).toEqual(data.owner_ids);
   });
+
+  it("reads the title and link from the primary story's own action, never a linked story", async () => {
+    const [action] = storyAssigned.actions;
+    const linked = { id: 9, entity_type: 'story', name: '[Follow-up] Other', app_url: 'u/9' };
+    const ctx = { integrationId: 'test', eventType: 'story_assigned', externalUserId: 'me_id' };
+    const withLink = { ...storyAssigned, references: [linked, ...storyAssigned.references] };
+    const unnamed = {
+      ...storyAssigned,
+      actions: [{ ...action, name: undefined, app_url: undefined }],
+    };
+
+    const data = await shortcutExtractor.buildEventData(withLink, ctx);
+    const bare = await shortcutExtractor.buildEventData(unnamed, ctx);
+
+    expect(data).toMatchObject({ storyName: action.name, storyUrl: action.app_url });
+    expect(bare).toMatchObject({ storyName: null, storyUrl: null });
+  });
 });
 
 // Owner-change direction: only an ADD is an assignment. A reassign reaches us as
