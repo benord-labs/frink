@@ -32,6 +32,7 @@ export function useNewChatAccount(
   return {
     account: picked ? { ...picked, isProjectOverride: false } : (resolved.data ?? null),
     accountResolved: resolved.isSuccess,
+    accountLoading: resolved.isPending,
     accounts,
     pickedAccountId: picked?.id,
     pickAccount: (accountId: string) => setPick({ projectId: scope, accountId }),
