@@ -2,7 +2,7 @@ import type { FlowSettings, RunFirstRow } from '../../types/flow-settings-schema
 
 /** Template paths stop at five segments, `trigger` included, so a deeper detail could never be read. */
 const MAX_DETAIL_SEGMENTS = 5;
-const DETAIL_SEGMENT = /^[A-Za-z0-9_-]+$/;
+const DETAIL_SEGMENT = /^[A-Za-z0-9_$-]+$/;
 const WRAPPED_IN_BRACES = /^\{\{\s*(.*?)\s*\}\}$/;
 
 export type ReadyRunFirstRow = { path: string; operator: RunFirstRow['operator']; value: string };

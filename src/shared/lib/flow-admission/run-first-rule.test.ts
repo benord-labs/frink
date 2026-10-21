@@ -18,6 +18,13 @@ describe('priorityQueueMode', () => {
 });
 
 describe('readyRunFirstRule', () => {
+  it('accepts a vendor key such as $current_url as a path segment', () => {
+    const row = { ...title('/pricing'), detail: 'trigger.payload.event.properties.$current_url' };
+    expect(readyRunFirstRule([row])?.[0]?.path).toBe(
+      'trigger.payload.event.properties.$current_url',
+    );
+  });
+
   it('accepts a detail as written in Available variables, braces included', () => {
     const rows = [{ ...title(' [Follow-up] '), detail: ' {{ trigger.story.title }} ' }];
     expect(readyRunFirstRule(rows)).toEqual([

@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { PROVIDERS } from '../../../../shared/integrations/providers';
+import { readyRunFirstRule } from '../../../../shared/lib/flow-admission/run-first-rule';
 import { runFirstDetails } from './run-first-details';
 
 const values = (details: ReturnType<typeof runFirstDetails>) =>
@@ -59,5 +61,20 @@ describe('runFirstDetails', () => {
       noDetails: true,
     });
     expect(runFirstDetails({ triggerBlockType: 'webhook_trigger' }).suggestions).toEqual([]);
+  });
+
+  it('only ever suggests a detail the rule can read, for every catalog event', () => {
+    const unreadable = PROVIDERS.flatMap((provider) =>
+      (provider.events ?? []).flatMap((event) =>
+        runFirstDetails({
+          triggerBlockType: 'webhook_trigger',
+          provider: provider.id,
+          eventType: event.id,
+        })
+          .suggestions.map((s) => s.value)
+          .filter((detail) => !readyRunFirstRule([{ detail, operator: 'equals', value: 'x' }])),
+      ),
+    );
+    expect(unreadable).toEqual([]);
   });
 });
