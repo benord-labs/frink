@@ -32,7 +32,7 @@ describe('signInToClaude', () => {
 
   const deps = (mode: string, extra: Record<string, string> = {}) => ({
     binaryPath: () => path.join(dir, 'claude'),
-    shellEnv: () => ({ PATH: process.env.PATH ?? '', OUT: dir, FAKE_MODE: mode, ...extra }),
+    baseEnv: () => ({ PATH: process.env.PATH ?? '', OUT: dir, FAKE_MODE: mode, ...extra }),
     app,
   });
   const read = (name: string) => readFile(path.join(dir, name), 'utf8');
@@ -55,6 +55,8 @@ describe('signInToClaude', () => {
         CLAUDE_CONFIG_DIR: '/tmp/somewhere-else',
         ANTHROPIC_API_KEY: 'exported-key',
         CLAUDE_CODE_OAUTH_TOKEN: 'exported-token',
+        CLAUDE_CODE_ENTRYPOINT: 'sdk-ts',
+        CLAUDE_CODE_ENABLE_TASKS: 'true',
       }),
     );
 
@@ -62,7 +64,13 @@ describe('signInToClaude', () => {
     expect(await read('args')).toBe('auth login --claudeai\n');
     const env = (await read('env')).split('\n');
     expect(env).toContain('CLAUDE_SECURESTORAGE_CONFIG_DIR=');
-    for (const key of ['CLAUDE_CONFIG_DIR', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN']) {
+    for (const key of [
+      'CLAUDE_CONFIG_DIR',
+      'ANTHROPIC_API_KEY',
+      'CLAUDE_CODE_OAUTH_TOKEN',
+      'CLAUDE_CODE_ENTRYPOINT',
+      'CLAUDE_CODE_ENABLE_TASKS',
+    ]) {
       expect(env.some((line) => line.startsWith(`${key}=`))).toBe(false);
     }
     expect(app.listenerCount('before-quit')).toBe(0);

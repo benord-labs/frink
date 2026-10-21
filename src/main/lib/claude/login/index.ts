@@ -2,7 +2,7 @@
 import { spawn } from 'node:child_process';
 import { app } from 'electron';
 import { killProcessTree } from '../../agent-runner/process-settlement';
-import { getBundledClaudeBinaryPath, getClaudeShellEnvironment } from '../env';
+import { buildClaudeEnv, getBundledClaudeBinaryPath } from '../env';
 
 const LOGIN_TIMEOUT_MS = 180_000;
 
@@ -10,14 +10,14 @@ type QuitListener = (event: 'before-quit', stop: () => void) => void;
 
 type ClaudeLoginDeps = {
   binaryPath: () => string;
-  shellEnv: () => Record<string, string>;
+  baseEnv: () => Record<string, string>;
   /** Frink's app, which says when it quits. */
   app: { on: QuitListener; off: QuitListener };
 };
 
 const DEFAULT_DEPS: ClaudeLoginDeps = {
   binaryPath: getBundledClaudeBinaryPath,
-  shellEnv: getClaudeShellEnvironment,
+  baseEnv: buildClaudeEnv,
   app,
 };
 
@@ -45,13 +45,15 @@ export function cancelClaudeSignIn(): void {
 }
 
 function startLogin(deps: ClaudeLoginDeps): Login {
-  // The login lands in the one store Frink's agents read, and no exported key or token steers it.
+  // The login lands in the one store Frink's agents read; no exported key, token or SDK session mark steers it.
   const {
     CLAUDE_CONFIG_DIR: _scoped,
     ANTHROPIC_API_KEY: _key,
     CLAUDE_CODE_OAUTH_TOKEN: _token,
+    CLAUDE_CODE_ENTRYPOINT: _entrypoint,
+    CLAUDE_CODE_ENABLE_TASKS: _tasks,
     ...env
-  } = deps.shellEnv();
+  } = deps.baseEnv();
   const child = spawn(deps.binaryPath(), ['auth', 'login', '--claudeai'], {
     env: { ...env, CLAUDE_SECURESTORAGE_CONFIG_DIR: '' },
     // stdin stays open and unwritten: Claude can end its browser callback when stdin closes.

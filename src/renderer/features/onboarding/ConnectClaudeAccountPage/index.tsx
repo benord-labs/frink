@@ -1,5 +1,5 @@
 import claudeLogo from '@iconify-icons/simple-icons/claude';
-import { useEffect, useRef, useState } from 'react';
+import { type InAppSignIn, useInAppSignIn } from '@/lib/ai-providers/use-in-app-sign-in';
 import { iconifyComponent } from '@/lib/utils/iconify-component';
 import { useConnectAccountFlow } from '../../../hooks/useConnectAccountFlow';
 import { trpc } from '../../../lib/trpc';
@@ -7,7 +7,6 @@ import { ConnectAccountShell, connectFlowProps } from '../connect-account-shell'
 import { SignInWaitingCard } from '../SignInWaitingCard';
 
 const ClaudeCodeIcon = iconifyComponent(claudeLogo);
-const CLAUDE = { type: 'claude-code' };
 
 /**
  * Connect a Claude Code login as a passthrough account.
@@ -19,14 +18,18 @@ const CLAUDE = { type: 'claude-code' };
  *   at spawn time.
  */
 export function ConnectClaudeAccountPage() {
-  const signIn = trpc.agentAccounts.signIn.useMutation();
-  // After the browser step ends, the page keeps waiting until the new login is checked.
-  const [checking, setChecking] = useState(false);
-  const [missed, setMissed] = useState(false);
-  const waiting = signIn.isPending || checking;
+  // Typed up front: its callbacks read the query and flow declared below it.
+  const signIn: InAppSignIn = useInAppSignIn({
+    type: 'claude-code',
+    recheck: async () => {
+      const { data } = await detectionQuery.refetch();
+      return data?.available ? data : null;
+    },
+    connect: (detection) => flow.handleConnect(detection),
+  });
   const detectionQuery = trpc.claudeCode.detectClaudeAccount.useQuery(undefined, {
     // Each check reads the keychain, so a sign-in still in progress is left alone.
-    refetchOnWindowFocus: !waiting,
+    refetchOnWindowFocus: !signIn.waiting,
   });
   const connectMutation = trpc.claudeCode.connectClaudePassthrough.useMutation();
 
@@ -60,32 +63,6 @@ export function ConnectClaudeAccountPage() {
   const { detection } = flow;
   const hasLogin = Boolean(detection?.available && detection.sourcePath);
 
-  const { client } = trpc.useUtils();
-  // Leaving the wait any way (Cancel, Back, closing the page) stops Claude's sign-in.
-  useEffect(() => {
-    if (!signIn.isPending) return;
-    return () => void client.agentAccounts.cancelSignIn.mutate(CLAUDE);
-  }, [signIn.isPending, client]);
-
-  // The connect step runs after a wait, so it uses the label typed by then.
-  const connectLatest = useRef(flow.handleConnect);
-  useEffect(() => {
-    connectLatest.current = flow.handleConnect;
-  });
-
-  const startSignIn = () => {
-    setMissed(false);
-    signIn.mutate(CLAUDE, {
-      onSuccess: async () => {
-        setChecking(true);
-        const { data } = await detectionQuery.refetch();
-        if (data?.available) await connectLatest.current(data);
-        else setMissed(true);
-        setChecking(false);
-      },
-    });
-  };
-
   return (
     <ConnectAccountShell
       providerIcon={<ClaudeCodeIcon className="w-6 h-6 text-white" />}
@@ -106,9 +83,9 @@ export function ConnectClaudeAccountPage() {
         action: (
           <SignInWaitingCard
             name="Claude"
-            state={waiting ? 'waiting' : signIn.isError || missed ? 'failed' : 'idle'}
-            onStart={startSignIn}
-            onCancel={signIn.reset}
+            state={signIn.state}
+            onStart={signIn.start}
+            onCancel={signIn.cancel}
           />
         ),
       }}
