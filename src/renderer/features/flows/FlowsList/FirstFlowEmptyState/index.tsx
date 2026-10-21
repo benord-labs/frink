@@ -1,8 +1,11 @@
 import { Button } from '@benord-labs/frink-primitives';
+import { useSetAtom } from 'jotai';
 import { GitBranch, Play, Zap } from 'lucide-react';
 import type { ReactElement } from 'react';
 import { toast } from 'sonner';
+import { seedNewChatPromptAtom } from '@/features/agents';
 import { useValidatedProject } from '../../../../hooks/use-validated-project';
+import { useNewChatAccount } from '../../../../lib/hooks/use-new-chat-account';
 import { trpc } from '../../../../lib/trpc';
 import { cn } from '../../../../lib/utils';
 
@@ -18,6 +21,8 @@ type Props = {
 /** The Flows dashboard with no flows: hand the first flow to an agent, or start a blank one. */
 export function FirstFlowEmptyState({ onCreateClick, onOpenChat }: Props): ReactElement {
   const { validatedProject } = useValidatedProject();
+  const { account, accountLoading, pickedAccountId } = useNewChatAccount(validatedProject?.id);
+  const seedNewChatPrompt = useSetAtom(seedNewChatPromptAtom);
   const utils = trpc.useUtils();
   const createChat = trpc.chats.create.useMutation({
     onSuccess: () => {
@@ -30,16 +35,20 @@ export function FirstFlowEmptyState({ onCreateClick, onOpenChat }: Props): React
 
   // Navigation rides the per-call callback, which never fires once Flows has unmounted, so a user
   // who already left is not pulled into the chat.
-  const startChat = () =>
+  const startChat = () => {
+    // Without a signed-in AI (or if the lookup failed) nothing would reply, so New Chat takes over.
+    if (!account?.isAuthenticated) return seedNewChatPrompt(FIRST_FLOW_PROMPT);
     createChat.mutate(
       {
         projectId: validatedProject?.id,
         projectPath: validatedProject?.path,
+        accountId: pickedAccountId,
         initialMessage: FIRST_FLOW_PROMPT,
         useWorktree: false,
       },
       { onSuccess: (chat) => onOpenChat(chat.id) },
     );
+  };
 
   return (
     <div className="flex flex-1 items-center justify-center p-4">
@@ -66,7 +75,7 @@ export function FirstFlowEmptyState({ onCreateClick, onOpenChat }: Props): React
           ask.
         </p>
         <div className="flex flex-wrap justify-center gap-2">
-          <Button size="sm" loading={createChat.isPending} onClick={startChat}>
+          <Button size="sm" loading={createChat.isPending || accountLoading} onClick={startChat}>
             Build with AI
           </Button>
           <Button
