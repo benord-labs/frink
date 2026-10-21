@@ -1,12 +1,13 @@
 import claudeLogo from '@iconify-icons/simple-icons/claude';
+import { useEffect, useRef, useState } from 'react';
 import { iconifyComponent } from '@/lib/utils/iconify-component';
-import { useConnectAccountFlow } from '../../hooks/useConnectAccountFlow';
-import { trpc } from '../../lib/trpc';
-import { ConnectAccountShell, connectFlowProps } from './connect-account-shell';
+import { useConnectAccountFlow } from '../../../hooks/useConnectAccountFlow';
+import { trpc } from '../../../lib/trpc';
+import { ConnectAccountShell, connectFlowProps } from '../connect-account-shell';
+import { SignInWaitingCard } from '../SignInWaitingCard';
 
 const ClaudeCodeIcon = iconifyComponent(claudeLogo);
-
-const CLAUDE_AUTH_COMMAND = 'claude auth login';
+const CLAUDE = { type: 'claude-code' };
 
 /**
  * Connect a Claude Code login as a passthrough account.
@@ -18,8 +19,14 @@ const CLAUDE_AUTH_COMMAND = 'claude auth login';
  *   at spawn time.
  */
 export function ConnectClaudeAccountPage() {
+  const signIn = trpc.agentAccounts.signIn.useMutation();
+  // After the browser step ends, the page keeps waiting until the new login is checked.
+  const [checking, setChecking] = useState(false);
+  const [missed, setMissed] = useState(false);
+  const waiting = signIn.isPending || checking;
   const detectionQuery = trpc.claudeCode.detectClaudeAccount.useQuery(undefined, {
-    refetchOnWindowFocus: true,
+    // Each check reads the keychain, so a sign-in still in progress is left alone.
+    refetchOnWindowFocus: !waiting,
   });
   const connectMutation = trpc.claudeCode.connectClaudePassthrough.useMutation();
 
@@ -33,7 +40,7 @@ export function ConnectClaudeAccountPage() {
       // click. Fail loud here rather than POST an empty sourcePath (the previous `as string`
       // cast asserted a guarantee the button state alone could not make).
       if (!sourcePath) {
-        throw new Error('No Claude Code login detected. Run `claude auth login`, then Refresh.');
+        throw new Error("Frink can't find your Claude login. Go back and sign in again.");
       }
       return {
         accountLabel,
@@ -53,12 +60,37 @@ export function ConnectClaudeAccountPage() {
   const { detection } = flow;
   const hasLogin = Boolean(detection?.available && detection.sourcePath);
 
+  const { client } = trpc.useUtils();
+  // Leaving the wait any way (Cancel, Back, closing the page) stops Claude's sign-in.
+  useEffect(() => {
+    if (!signIn.isPending) return;
+    return () => void client.agentAccounts.cancelSignIn.mutate(CLAUDE);
+  }, [signIn.isPending, client]);
+
+  // The connect step runs after a wait, so it uses the label typed by then.
+  const connectLatest = useRef(flow.handleConnect);
+  useEffect(() => {
+    connectLatest.current = flow.handleConnect;
+  });
+
+  const startSignIn = () => {
+    setMissed(false);
+    signIn.mutate(CLAUDE, {
+      onSuccess: async () => {
+        setChecking(true);
+        const { data } = await detectionQuery.refetch();
+        if (data?.available) await connectLatest.current(data);
+        else setMissed(true);
+        setChecking(false);
+      },
+    });
+  };
+
   return (
     <ConnectAccountShell
       providerIcon={<ClaudeCodeIcon className="w-6 h-6 text-white" />}
       providerIconBgClassName="bg-[#D97757]"
       providerName="Claude"
-      authCommand={CLAUDE_AUTH_COMMAND}
       headerDescription="Frink hands your agents your Claude Code login. Your Claude CLI keeps it fresh — Frink never reads or stores the token."
       loginFoundNote={
         <>
@@ -69,6 +101,17 @@ export function ConnectClaudeAccountPage() {
       detectionAvailable={hasLogin}
       detectionEmail={detection?.available ? detection.email : null}
       detectionHint={detection && !detection.available ? detection.hint : null}
+      notFound={{
+        title: 'Sign in to Claude',
+        action: (
+          <SignInWaitingCard
+            name="Claude"
+            state={waiting ? 'waiting' : signIn.isError || missed ? 'failed' : 'idle'}
+            onStart={startSignIn}
+            onCancel={signIn.reset}
+          />
+        ),
+      }}
       connectDisabled={!hasLogin}
       {...connectFlowProps(flow)}
     />
