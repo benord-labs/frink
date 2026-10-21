@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 
 import '@testing-library/jest-dom/vitest';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { focusManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { TRPCClientError } from '@trpc/client';
 import { observable } from '@trpc/server/observable';
@@ -27,8 +27,11 @@ type Detection =
 
 const CONNECT_INPUT = z.object({ type: z.string(), accountLabel: z.string() });
 const connect = vi.fn<(input: z.infer<typeof CONNECT_INPUT>) => void>();
-const detect = vi.fn();
+/** Answers detection; when it returns nothing the page's own `detection` is used. */
+const detect = vi.fn<() => Detection | undefined>();
 const signIn = vi.fn();
+const cancelSignIn = vi.fn();
+let finishSignIn: (() => void) | undefined;
 const SIGNED_OUT =
   "Cursor isn't signed in. Choose Sign in to Cursor, finish in your browser, then try again.";
 
@@ -40,11 +43,19 @@ function createTestClient(detection: Detection, connectError?: string) {
         ({ op }) =>
           observable((observer) => {
             if (op.path === 'agentAccounts.detect') {
-              detect();
-              observer.next({ result: { data: detection } });
+              observer.next({ result: { data: detect() ?? detection } });
+            } else if (op.path === 'agentAccounts.cancelSignIn') {
+              cancelSignIn(op.input);
+              observer.next({ result: { data: undefined } });
             } else if (op.path === 'agentAccounts.signIn') {
-              // A sign-in still waiting on the browser has no answer yet.
-              if (signIn(op.input) === 'wait') return;
+              // A sign-in still waiting on the browser has no answer until `finishSignIn`.
+              if (signIn(op.input) === 'wait') {
+                finishSignIn = () => {
+                  observer.next({ result: { data: undefined } });
+                  observer.complete();
+                };
+                return;
+              }
               if (connectError) {
                 observer.error(TRPCClientError.from(new Error(connectError)));
                 return;
@@ -93,7 +104,20 @@ afterEach(() => {
   connect.mockReset();
   detect.mockReset();
   signIn.mockReset();
+  cancelSignIn.mockReset();
+  finishSignIn = undefined;
 });
+
+const NO_OPENAI_LOGIN: Detection = {
+  available: false,
+  reason: "Frink didn't find a ChatGPT login on this computer.",
+};
+
+async function startChatGptSignIn() {
+  signIn.mockReturnValue('wait');
+  await userEvent.click(await screen.findByRole('button', { name: 'Sign in with ChatGPT' }));
+  return screen.findByText(/Finish signing in in your browser/);
+}
 
 describe('ConnectAgentAccountPage', () => {
   it('connects the OpenAI login Codex keeps, named after its email', async () => {
@@ -116,13 +140,65 @@ describe('ConnectAgentAccountPage', () => {
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe(title);
   });
 
-  it('shows the codex login steps and the reason when OpenAI has no login here', async () => {
-    renderPage('codex', { available: false, reason: 'Looked in ~/.codex but found no session.' });
+  it('offers Sign in with ChatGPT instead of Terminal steps when OpenAI has no login here', async () => {
+    renderPage('codex', NO_OPENAI_LOGIN);
 
-    expect(await screen.findByText('No OpenAI login detected')).toBeInTheDocument();
-    expect(screen.getByText('codex login')).toBeInTheDocument();
-    expect(screen.getByText('Looked in ~/.codex but found no session.')).toBeInTheDocument();
+    expect(await screen.findByText('Sign in to ChatGPT')).toBeInTheDocument();
+    expect(screen.getByText(NO_OPENAI_LOGIN.reason)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Sign in with ChatGPT' })).toBeInTheDocument();
+    expect(screen.queryByText(/Terminal|codex login/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Connect' })).not.toBeInTheDocument();
+  });
+
+  it('waits on the browser, then connects the new OpenAI login under its email', async () => {
+    const store = renderPage('codex', NO_OPENAI_LOGIN);
+
+    const waiting = await startChatGptSignIn();
+    expect(waiting.closest('[aria-live="polite"]')).not.toBeNull();
+    expect(signIn).toHaveBeenCalledWith({ type: 'codex' });
+    detect.mockReturnValue({ available: true, email: 'me@openai.example' });
+
+    act(() => finishSignIn?.());
+
+    await waitFor(() => expect(store.get(pendingAccountAuthAtom)).toBeNull());
+    expect(connect).toHaveBeenCalledWith({ type: 'codex', accountLabel: 'me@openai.example' });
+  });
+
+  it('says plainly when the ChatGPT sign-in did not finish', async () => {
+    renderPage('codex', NO_OPENAI_LOGIN, 'Raw failure text');
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Sign in with ChatGPT' }));
+
+    expect(await screen.findByText("Sign-in didn't finish. Try again.")).toBeInTheDocument();
+    expect(screen.queryByText('Raw failure text')).not.toBeInTheDocument();
+    expect(connect).not.toHaveBeenCalled();
+  });
+
+  it('stops the ChatGPT sign-in on Cancel, and checks nothing on window focus while it waits', async () => {
+    renderPage('codex', NO_OPENAI_LOGIN);
+    await startChatGptSignIn();
+    const checks = detect.mock.calls.length;
+
+    await act(async () => {
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+    });
+    expect(detect).toHaveBeenCalledTimes(checks);
+    focusManager.setFocused(undefined);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(await screen.findByRole('button', { name: 'Sign in with ChatGPT' })).toBeInTheDocument();
+    await waitFor(() => expect(cancelSignIn).toHaveBeenCalledWith({ type: 'codex' }));
+  });
+
+  it('stops the ChatGPT sign-in when the person leaves the page while it waits', async () => {
+    renderPage('codex', NO_OPENAI_LOGIN);
+    await startChatGptSignIn();
+
+    cleanup();
+
+    await waitFor(() => expect(cancelSignIn).toHaveBeenCalledWith({ type: 'codex' }));
+    expect(connect).not.toHaveBeenCalled();
   });
 
   it.each([

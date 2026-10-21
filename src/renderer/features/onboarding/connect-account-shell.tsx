@@ -28,15 +28,13 @@ type ConnectAccountShellProps = {
   providerName: string;
   /** Shown after the provider's name in the title, such as its Preview tag. */
   providerTag?: ReactNode;
-  /** Command shown in the "no login detected" steps when `notFound` gives none (e.g. `codex login`). */
-  authCommand?: string;
   /** Sub-heading line under the title (provider-specific token-storage reassurance). */
   headerDescription: ReactNode;
   /** Optional copy inside the "login found" panel (e.g. the macOS keychain prompt note). */
   loginFoundNote?: ReactNode;
   /** Heading of the "login found" panel when no email is known (default "<name> login found"). */
   foundTitle?: string;
-  /** Replaces the sign-in steps for an agent Frink finds as an installed program. */
+  /** What the "no login detected" panel says and offers instead of Check for Login. */
   notFound?: NotFound;
 
   /** Whether a usable login was detected on this machine. */
@@ -124,19 +122,6 @@ export function TerminalCommand({ children }: { children: string }) {
   return <code className="bg-muted px-1.5 py-0.5 rounded text-[11px] font-mono">{children}</code>;
 }
 
-/** How to sign in with the provider's own command line tool, then come back. */
-function SignInSteps({ authCommand }: { authCommand: string }) {
-  return (
-    <ol className="text-sm text-muted-foreground space-y-2 list-decimal list-inside">
-      <li>
-        Open Terminal and run: <TerminalCommand>{authCommand}</TerminalCommand>
-      </li>
-      <li>Complete the login in your browser</li>
-      <li>Return here and click refresh</li>
-    </ol>
-  );
-}
-
 function RefreshButton({
   label,
   isRefreshing,
@@ -162,14 +147,12 @@ function RefreshButton({
 
 function NoLoginPanel({
   providerName,
-  authCommand,
   detectionHint,
   notFound,
   isRefreshing,
   onRefresh,
 }: {
   providerName: string;
-  authCommand?: string;
   detectionHint?: string | null;
   notFound?: NotFound;
   isRefreshing: boolean;
@@ -184,9 +167,7 @@ function NoLoginPanel({
             {notFound?.title ?? `No ${providerName} login detected`}
           </p>
         </div>
-        {notFound
-          ? notFound.detail && <p className="text-sm text-muted-foreground">{notFound.detail}</p>
-          : authCommand && <SignInSteps authCommand={authCommand} />}
+        {notFound?.detail && <p className="text-sm text-muted-foreground">{notFound.detail}</p>}
         {detectionHint && <p className="text-xs text-muted-foreground">{detectionHint}</p>}
       </div>
 
@@ -282,7 +263,6 @@ export function ConnectAccountShell({
   providerIconBgClassName,
   providerName,
   providerTag,
-  authCommand,
   headerDescription,
   loginFoundNote,
   foundTitle,
@@ -388,7 +368,6 @@ export function ConnectAccountShell({
           {!isLoading && !detectionAvailable && flowState !== 'error' && (
             <NoLoginPanel
               providerName={providerName}
-              authCommand={authCommand}
               detectionHint={detectionHint}
               notFound={notFound}
               isRefreshing={isRefreshing}
