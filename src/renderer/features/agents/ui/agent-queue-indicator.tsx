@@ -14,6 +14,8 @@ import { CSS } from '@dnd-kit/utilities';
 import { ArrowUp, ChevronDown, Navigation, Pencil, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { startsWithCommand } from '../../../../shared/commands/expand-slash-command';
+import { findMentionTokens } from '../../../../shared/lib/mentions/mention-grammar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../components/ui/tooltip';
 import { cn } from '../../../lib/utils';
 import { parseSlashCommandDisplayParts } from '../commands/parse-slash-command-display';
@@ -46,6 +48,15 @@ type QueueItemRowProps = {
    * Anywhere else the button still sends — it just cannot claim to steer. */
   canSteer: boolean;
 };
+
+/** Claude never runs a steered command: it waits behind the live turn until that turn ends. */
+function isCommandItem(message: string): boolean {
+  const text = findMentionTokens(message).reduceRight(
+    (rest, token) => rest.slice(0, token.start) + rest.slice(token.end),
+    message,
+  );
+  return startsWithCommand(text.trimStart());
+}
 
 const QueueItemRow = memo(function QueueItemRow({
   item,
@@ -399,7 +410,7 @@ export const AgentQueueIndicator = memo(function AgentQueueIndicator({
                       onEdit={onEditItem}
                       isEditing={editingItemId === item.id}
                       inputHasContent={inputHasContent}
-                      canSteer={isStreaming && steerSupported}
+                      canSteer={isStreaming && steerSupported && !isCommandItem(item.message)}
                     />
                   ))}
                 </SortableContext>

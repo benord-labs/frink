@@ -49,7 +49,7 @@ import {
 } from '../atoms';
 import {
   AgentsSlashCommand,
-  COMMAND_PROMPTS,
+  insertPickedCommand,
   LazyCommandEditorModal,
   SLASH_COMMAND_LISTBOX_ID,
   type SlashCommandOption,
@@ -589,38 +589,21 @@ export function NewChatForm({
       editorRef.current?.clearSlashCommand();
       editorHandlers.handleCloseSlashTrigger();
 
-      // Handle builtin commands
+      // Mode switches act here; every other pick is written into the composer
       if (command.category === 'builtin') {
         switch (command.name) {
           case 'plan':
             if (chatMode !== 'plan') setChatMode('plan');
-            break;
+            return;
           case 'agent':
             if (chatMode !== 'agent') setChatMode('agent');
-            break;
+            return;
           case 'debug':
             if (selectedProject && chatMode !== 'debug') setChatMode('debug');
-            break;
-          // Prompt-based commands - insert as highlighted command block
-          case 'review':
-          case 'pr-comments':
-          case 'release-notes':
-          case 'security-review':
-          case 'commit': {
-            const prompt = COMMAND_PROMPTS[command.name as keyof typeof COMMAND_PROMPTS];
-            if (prompt) {
-              editorRef.current?.setCommandValue(command.name, prompt);
-            }
-            break;
-          }
+            return;
         }
-        return;
       }
-
-      // Handle custom commands - insert as highlighted command block
-      if (command.prompt) {
-        editorRef.current?.setCommandValue(command.name, command.prompt);
-      }
+      insertPickedCommand(editorRef.current, command);
     },
     [chatMode, setChatMode, editorHandlers, selectedProject],
   );

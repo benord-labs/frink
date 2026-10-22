@@ -106,6 +106,22 @@ describe('AgentQueueIndicator — edit affordance', () => {
     expect(screen.queryByRole('button', { name: 'Steer' })).toBeNull();
   });
 
+  // A steered command never runs: Claude holds it behind the live turn (e.g. a `/goal clear`).
+  it.each(['/goal clear', '@[file:editor:a.ts] /compact'])(
+    'keeps "Send now" for a queued command %j, even while streaming',
+    (message) => {
+      render(
+        <AgentQueueIndicator
+          queue={[{ ...baseItem, message }]}
+          onSendNow={vi.fn()}
+          inputHasContent={false}
+          isStreaming
+        />,
+      );
+      expect(screen.getByRole('button', { name: 'Send now' })).toBeInTheDocument();
+    },
+  );
+
   it('does NOT fire onEditItem when the pencil is clicked while disabled (inputHasContent)', () => {
     const onEdit = vi.fn();
     render(<AgentQueueIndicator queue={[baseItem]} onEditItem={onEdit} inputHasContent={true} />);

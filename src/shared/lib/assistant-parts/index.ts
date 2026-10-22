@@ -125,19 +125,19 @@ function applyQuestionResult<TPart extends AssistantPartShape>(
  * without it the card would exist only until the window reloads, and a compacted chat would look
  * untouched on the next open.
  */
-function applyCompaction(
+function applyDataPart(
   state: AssistantPartsState,
   chunk: { type: string; id?: string; transient?: boolean; data?: unknown },
 ): void {
   // Mirrors the SDK, which fires listeners for a transient data chunk but keeps no part for it.
   if (!chunk.id || chunk.transient) return;
-  const existing = state.parts.find((part) => part.type === 'data-compact' && part.id === chunk.id);
+  const existing = state.parts.find((part) => part.type === chunk.type && part.id === chunk.id);
   if (existing) {
     existing.data = chunk.data;
     return;
   }
   flushOpenText(state);
-  state.parts.push({ type: 'data-compact', id: chunk.id, data: chunk.data });
+  state.parts.push({ type: chunk.type, id: chunk.id, data: chunk.data });
 }
 
 /** Mutates one fresh-per-stream state in O(1) for the hot streaming path. */
@@ -172,7 +172,8 @@ export function applyAssistantChunkToParts<TPart extends AssistantPartShape>(
       applyQuestionResult(state, chunk);
       break;
     case 'data-compact':
-      applyCompaction(state, chunk);
+    case 'data-goal':
+      applyDataPart(state, chunk);
       break;
   }
 }

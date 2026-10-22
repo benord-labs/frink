@@ -142,6 +142,9 @@ export function unsupportedChatControls(
   providerId: string | null | undefined,
 ): UnsupportedChatControls {
   const modes = unsupportedModes(providerId);
-  const commands = isInstalledAgent(aiProvider(providerId)) ? [...modes, 'compact'] : modes;
+  const row = aiProvider(providerId);
+  const commands = isInstalledAgent(row) ? [...modes, 'compact'] : [...modes];
+  // `/goal` is Claude's own command; Frink cannot run another provider's goals yet.
+  if (row?.runtime !== 'claude') commands.push('goal');
   return { modes, commands };
 }

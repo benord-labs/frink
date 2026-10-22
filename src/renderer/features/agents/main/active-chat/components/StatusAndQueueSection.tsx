@@ -1,8 +1,13 @@
-import type { ReactElement } from 'react';
+import { useAtomValue } from 'jotai';
+import { type ReactElement, useMemo } from 'react';
 import { useUncommittedFiles } from '../../../../../lib/agent-chat/use-uncommitted-files';
+import { activeGoalAtom } from '../../../../../lib/commands/goal';
 import { trpc } from '../../../../../lib/trpc';
 import type { SubChatFileChange } from '../../../atoms';
 import type { AgentQueueItem } from '../../../lib/queue-utils';
+import { agentChatStore } from '../../../stores/agent-chat-store';
+import { messageAtomFamily, perSubChatMessageIdsAtomFamily } from '../../../stores/message-store';
+import { GoalCard } from '../../../ui/GoalCard';
 import { AgentQueueIndicator } from '../../../ui/agent-queue-indicator';
 import { SubChatStatusCard } from '../../../ui/sub-chat-status-card';
 
@@ -35,6 +40,36 @@ function useSteerSupported(parentChatId: string): boolean {
   return resolvedAccount?.type === 'claude-code' || resolvedAccount?.type === 'codex';
 }
 
+type StackedCardsInput = Pick<
+  Props,
+  'subChatId' | 'queue' | 'changedFilesForSubChat' | 'projectPath' | 'isStreaming'
+>;
+
+/** What the stacked cards show: changed files still uncommitted, and Claude's running goal. */
+function useStackedCards({
+  subChatId,
+  queue,
+  changedFilesForSubChat,
+  projectPath,
+  isStreaming,
+}: StackedCardsInput) {
+  const uncommittedFiles = useUncommittedFiles(changedFilesForSubChat, projectPath, isStreaming);
+  const goalAtom = useMemo(
+    () => activeGoalAtom(perSubChatMessageIdsAtomFamily(subChatId), messageAtomFamily),
+    [subChatId],
+  );
+  const goal = useAtomValue(goalAtom);
+  const cardAbove = queue.length > 0 || uncommittedFiles.length > 0;
+  return { uncommittedFiles, goal, cardAbove, stacked: cardAbove || goal !== null || undefined };
+}
+
+function clearGoal(subChatId: string): void {
+  void agentChatStore.get(subChatId)?.sendMessage({
+    role: 'user',
+    parts: [{ type: 'text', text: '/goal clear' }],
+  });
+}
+
 export function StatusAndQueueSection({
   queue,
   changedFilesForSubChat,
@@ -52,12 +87,17 @@ export function StatusAndQueueSection({
   handleStop,
 }: Props): ReactElement {
   const steerSupported = useSteerSupported(parentChatId);
-  const uncommittedFiles = useUncommittedFiles(changedFilesForSubChat, projectPath, isStreaming);
-  const hasCards = queue.length > 0 || uncommittedFiles.length > 0 || undefined;
+  const { uncommittedFiles, goal, cardAbove, stacked } = useStackedCards({
+    subChatId,
+    queue,
+    changedFilesForSubChat,
+    projectPath,
+    isStreaming,
+  });
 
   return (
     // `data-stacked-cards` squares the top of the surface below (`composer-slot-surface`).
-    <div className="px-2 relative z-10" data-stacked-cards={hasCards}>
+    <div className="px-2 relative z-10" data-stacked-cards={stacked}>
       {/* The glass cards sit flush on the surface below them (each drops its bottom border), never
           tucked under it: glass behind glass shows through as a denser band. */}
       {/* Same column as that surface, so card and surface share both edges. */}
@@ -86,6 +126,15 @@ export function StatusAndQueueSection({
             uncommittedFiles={uncommittedFiles}
             onStop={handleStop}
             hasQueueCardAbove={queue.length > 0}
+          />
+        )}
+        {/* Goal card - closest to the composer, whose next message continues the goal */}
+        {goal && (
+          <GoalCard
+            goal={goal}
+            isStreaming={isStreaming}
+            hasCardAbove={cardAbove}
+            onClear={() => clearGoal(subChatId)}
           />
         )}
       </div>
