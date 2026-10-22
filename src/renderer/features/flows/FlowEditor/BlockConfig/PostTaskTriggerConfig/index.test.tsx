@@ -7,6 +7,7 @@ import userEvent from '@testing-library/user-event';
 import { observable } from '@trpc/server/observable';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+import { TRIGGER_SCHEMAS } from '../../../../../../shared/lib/output-schemas';
 import type { FlowNode } from '../../../../../../shared/lib/validate-flow-graph';
 import { postTaskBindingConfigSchema } from '../../../../../../shared/types/flows/flow-trigger-binding-config';
 import { trpc } from '../../../../../lib/trpc';
@@ -179,6 +180,20 @@ describe('PostTaskTriggerConfig binding payload', () => {
       triggerStates: ['all'],
       filterBySource: undefined,
     });
+  });
+});
+
+// Catches the hint list drifting from what post-task runs save.
+describe('PostTaskTriggerConfig downstream context hints', () => {
+  it('lists exactly the fields TRIGGER_SCHEMAS says a post-task run saves', async () => {
+    renderEditor({});
+
+    for (const { key } of TRIGGER_SCHEMAS.post_task_trigger ?? []) {
+      expect(await screen.findByText(`{{trigger.${key}}}`)).toBeInTheDocument();
+    }
+    expect(screen.getAllByText(/^\{\{trigger\./)).toHaveLength(
+      TRIGGER_SCHEMAS.post_task_trigger?.length ?? 0,
+    );
   });
 });
 

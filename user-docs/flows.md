@@ -253,14 +253,16 @@ What's available depends on the trigger type:
 | `trigger.taskId` | UUID of the completed task |
 | `trigger.taskTitle` | Title of the completed task |
 | `trigger.taskStatus` | Final status |
-| `trigger.result` | Result summary |
-| `trigger.branch` | Git branch the task ran on |
-| `trigger.baseBranch` | Base branch the task branched from |
-| `trigger.worktreePath` | Absolute path to the task worktree |
-| `trigger.projectId` | UUID of the project |
-| `trigger.chatId` | Chat session ID |
-| `trigger.projectPath` | Main project directory path |
 | `trigger.source` | How the task was created |
+| `trigger.projectId` | UUID of the project |
+| `trigger.taskCompletedAt` | ISO time the task finished |
+| `trigger.result` | Summary the task's agent reported when it finished (not always present) |
+| `trigger.branch` | Git branch the task ran on (not always present) |
+| `trigger.baseBranch` | Base branch the task branched from (not always present) |
+| `trigger.worktreePath` | Absolute path to the task worktree (not always present) |
+| `trigger.chatId` | Chat session ID (not always present) |
+| `trigger.subChatId` | Chat tab the task ran in (not always present) |
+| `trigger.projectPath` | Main project directory path (not always present) |
 
 ### schedule_trigger
 

@@ -26,11 +26,13 @@ Config `{}`; bound at flow level to a project, fires on task completion. Carries
 | `taskStatus` | string | Final status of the task |
 | `source` | string | How the task was created (e.g. manual, flow, slack) |
 | `projectId` | string | UUID of the project the task belonged to |
-| `result` | string | Result summary from the task signal |
+| `taskCompletedAt` | string | ISO time the task finished |
+| `result` | string | Summary the task's agent reported when it finished |
 | `branch` | string | Git branch the task ran on |
 | `baseBranch` | string | Base branch the task branched from |
 | `worktreePath` | string | Absolute path to the task worktree |
-| `chatId` | string | Chat session ID of the triggering task |
+| `chatId` | string | Chat session ID of the completed task |
+| `subChatId` | string | Chat tab the completed task ran in |
 | `projectPath` | string | Main project directory path |
 
 
