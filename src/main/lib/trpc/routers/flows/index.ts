@@ -4,6 +4,7 @@
 
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
+import { flowDetailsSchema } from '../../../../../shared/types/flow-graph-schema';
 import {
   recoveryKindSchema,
   resumeRunInputSchema,
@@ -115,11 +116,9 @@ export const flowsRouter = router({
   ...flowAdmissionSettingsProcedures,
   create: publicProcedureRaw
     .input(
-      z.object({
-        name: z.string().trim().min(1).max(200),
-        description: z.string().trim().max(2000).nullable().optional(),
-        projectId: z.string().min(1).nullable().optional(),
-      }),
+      flowDetailsSchema
+        .partial({ description: true })
+        .extend({ projectId: z.string().min(1).nullable().optional() }),
     )
     .mutation(async ({ input }) => {
       const db = getDatabase();
@@ -133,10 +132,8 @@ export const flowsRouter = router({
 
   update: publicProcedureRaw
     .input(
-      z.object({
+      flowDetailsSchema.partial().extend({
         id: z.string().min(1),
-        name: z.string().trim().min(1).max(200).optional(),
-        description: z.string().trim().max(2000).nullable().optional(),
         is_enabled: z.boolean().optional(),
         agent_invocable: z.boolean().optional(),
       }),

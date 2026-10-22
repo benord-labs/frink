@@ -1,4 +1,5 @@
 import { flushSync } from 'react-dom';
+import { downloadFile } from '../../utils/download-file';
 import { isStockTheme, type Theme, uniqueThemeId } from '../palette/built-in-themes';
 import { snapshotStockHalf } from '../palette/stock-palette';
 import { freeThemeName, serializeThemeFile, type ThemeDefinition } from '../palette/theme-schema';
@@ -24,13 +25,7 @@ export function themeCopy(
 
 /** Saves `theme` as `<id>.json` through the download flow. */
 export function downloadThemeFile(theme: ThemeDefinition): void {
-  const blob = new Blob([serializeThemeFile(theme)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `${theme.id}.json`;
-  link.click();
-  URL.revokeObjectURL(url);
+  downloadFile(`${theme.id}.json`, serializeThemeFile(theme), 'application/json');
 }
 
 /** Runs a discrete theme or mode pick as one crossfade, unless motion is reduced. */

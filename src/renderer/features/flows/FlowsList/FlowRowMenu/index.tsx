@@ -8,12 +8,14 @@ import {
 } from '@benord-labs/frink-primitives';
 import * as Sentry from '@sentry/electron/renderer';
 import { TRPCClientError } from '@trpc/client';
-import { Copy, MoreHorizontal, Power, PowerOff, Square, Trash2 } from 'lucide-react';
+import { Copy, Download, MoreHorizontal, Power, PowerOff, Square, Trash2 } from 'lucide-react';
 import { type MutableRefObject, type ReactElement, useRef } from 'react';
 import { toast } from 'sonner';
+import { serializeFlowFile } from '../../../../../shared/lib/flows/flow-file';
 import type { FlowRunAdmissionSummary } from '../../../../../shared/types';
 import { trpc } from '../../../../lib/trpc';
 import { cn } from '../../../../lib/utils';
+import { downloadFile } from '../../../../lib/utils/download-file';
 
 type FlowRowMenuProps = {
   // biome-ignore-start lint/style/useNamingConvention: Flow list DTOs intentionally use API snake_case.
@@ -31,6 +33,8 @@ type FlowRowMenuProps = {
 
 const SAVED_ONLY_COPY_MESSAGE =
   'Copied the latest saved version; unsaved changes were not included.';
+const SAVED_ONLY_EXPORT_MESSAGE =
+  'Exported the latest saved version; unsaved changes were not included.';
 
 type CopyFlowArgs = {
   flow: { id: string; name: string };
@@ -56,6 +60,49 @@ async function copyFlow({ flow, hasDraft, inFlight, copy, refresh }: CopyFlowArg
   // The copy is committed; a failed list refresh must not read as a failed copy and invite a retry.
   toast.success(hasDraft ? SAVED_ONLY_COPY_MESSAGE : `Copied “${flow.name}”`);
   void refresh();
+}
+
+/** Downloads the saved flow as a file; fetched fresh so a stale cache is never written out. */
+async function exportFlowFile(
+  flowId: string,
+  hasDraft: boolean,
+  utils: ReturnType<typeof trpc.useUtils>,
+): Promise<void> {
+  try {
+    const [saved, projects] = await Promise.all([
+      utils.flows.get.fetch({ id: flowId }, { staleTime: 0 }),
+      utils.projects.list.fetch(),
+    ]);
+    downloadFile(`${saved.name}.json`, serializeFlowFile(saved, projects), 'application/json');
+  } catch (error) {
+    Sentry.captureException(error, { tags: { source: 'FlowRowMenu', action: 'export' } });
+    toast.error('Could not export flow');
+    return;
+  }
+  if (hasDraft) toast.info(SAVED_ONLY_EXPORT_MESSAGE);
+}
+
+/** A never-saved flow has nothing to export, so it gets no item. */
+function ExportFileItem({
+  flowId,
+  saved,
+  hasDraft,
+}: {
+  flowId: string;
+  saved: boolean;
+  hasDraft: boolean;
+}): ReactElement | null {
+  const utils = trpc.useUtils();
+  if (!saved) return null;
+  return (
+    <DropdownMenuItem
+      className="cursor-pointer text-xs"
+      onSelect={() => void exportFlowFile(flowId, hasDraft, utils)}
+    >
+      <Download className="h-3 w-3" aria-hidden />
+      Export file
+    </DropdownMenuItem>
+  );
 }
 
 /** Disabling only blocks new runs (start refuses a disabled flow), so a live run gets a caveat. */
@@ -175,6 +222,7 @@ export function FlowRowMenu({ flow, enabled, hasDraft, onDelete }: FlowRowMenuPr
           <Copy className="h-3 w-3" aria-hidden />
           {unsaved ? 'Save the flow to duplicate it' : 'Duplicate'}
         </DropdownMenuItem>
+        <ExportFileItem flowId={flow.id} saved={!unsaved} hasDraft={hasDraft} />
         <DropdownMenuItem
           className={cn('cursor-pointer text-xs', enabled && canStopRun && 'items-start')}
           disabled={updateMutation.isPending}

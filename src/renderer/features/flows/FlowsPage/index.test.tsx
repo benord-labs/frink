@@ -223,3 +223,14 @@ describe('FlowsPage close affordance', () => {
     expect(appStore.get(flowsSelectedFlowIdAtom)).toBeNull();
   });
 });
+
+describe('FlowsPage import', () => {
+  // A computer receiving its first flow has an empty list, so Import must not hide with New flow.
+  it('offers Import flow in the clickable header controls even with no flows yet', () => {
+    renderPage();
+
+    const importButton = screen.getByRole('button', { name: 'Import flow' });
+    expect(importButton.parentElement).toHaveClass('no-drag');
+    expect(screen.queryByRole('button', { name: 'New flow' })).not.toBeInTheDocument();
+  });
+});
