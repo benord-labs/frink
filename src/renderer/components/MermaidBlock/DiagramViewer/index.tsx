@@ -2,6 +2,7 @@ import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { Download, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react';
 import { TransformComponent, TransformWrapper, useControls } from 'react-zoom-pan-pinch';
 import { overlayGlass } from '@/lib/overlay-styles';
+import { downloadFile } from '@/lib/utils/download-file';
 import { Dialog, DialogPortal, DialogTitle } from '../../ui/dialog';
 import { DiagramButton } from '../DiagramButton';
 
@@ -9,15 +10,6 @@ type DiagramViewerProps = {
   svg: string;
   onClose: () => void;
 };
-
-function downloadSvg(svg: string): void {
-  const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = 'diagram.svg';
-  link.click();
-  URL.revokeObjectURL(url);
-}
 
 function ZoomControls() {
   const { zoomIn, zoomOut, resetTransform } = useControls();
@@ -53,7 +45,10 @@ export function DiagramViewer({ svg, onClose }: DiagramViewerProps) {
           <header className="flex items-center justify-between border-b border-border px-4 py-2">
             <DialogTitle className="text-sm font-medium">Diagram</DialogTitle>
             <div className="flex gap-1">
-              <DiagramButton label="Download as SVG" onClick={() => downloadSvg(svg)}>
+              <DiagramButton
+                label="Download as SVG"
+                onClick={() => downloadFile('diagram.svg', svg, 'image/svg+xml')}
+              >
                 <Download />
               </DiagramButton>
               <DiagramButton label="Close" onClick={onClose}>

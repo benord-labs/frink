@@ -7,6 +7,7 @@ import type { getDatabase } from '../index';
 import { type Flow, flows, flowTriggerBindings, flowVersions, type NewFlow } from '../schema';
 
 type Db = ReturnType<typeof getDatabase>;
+type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 
 const COPY_SUFFIX = ' (copy)';
 const MAX_FLOW_NAME_LENGTH = 200;
@@ -77,6 +78,25 @@ export async function updateFlow(
   return row ?? null;
 }
 
+/** Inserts a flow with `graph` as its version 1; a briefing gets a fresh batch id. */
+function insertFlowWithFirstVersion(tx: Tx, values: NewFlow, graph: GraphWithSettings): string {
+  applyCurrentBatchIdForBriefingTransition(graph, undefined, undefined);
+  const [flow] = tx.insert(flows).values(values).returning({ id: flows.id }).all();
+  tx.insert(flowVersions).values({ flowId: flow.id, versionNumber: 1, graph }).run();
+  return flow.id;
+}
+
+/** Saves a new flow and its first version together, so a failure leaves no empty flow behind. */
+export async function createFlowWithFirstVersion(
+  db: Db,
+  values: NewFlow,
+  graph: GraphWithSettings,
+): Promise<string> {
+  return db.transaction((tx) => insertFlowWithFirstVersion(tx, values, graph), {
+    behavior: 'immediate',
+  });
+}
+
 export async function copyFlow(db: Db, input: { sourceFlowId: string }): Promise<{ id: string }> {
   return db.transaction(
     (tx) => {
@@ -98,11 +118,10 @@ export async function copyFlow(db: Db, input: { sourceFlowId: string }): Promise
       if (!latestVersion) throw new FlowCopyNoSavedVersionError();
 
       const copiedGraph = structuredClone(latestVersion.graph) as GraphWithSettings;
-      applyCurrentBatchIdForBriefingTransition(copiedGraph, undefined, undefined);
       const now = new Date();
-      const copiedFlow = tx
-        .insert(flows)
-        .values({
+      const copiedFlowId = insertFlowWithFirstVersion(
+        tx,
+        {
           projectId: source.projectId,
           name: copiedFlowName(source.name),
           description: source.description,
@@ -111,13 +130,9 @@ export async function copyFlow(db: Db, input: { sourceFlowId: string }): Promise
           agentInvocable: source.agentInvocable,
           createdAt: now,
           updatedAt: now,
-        })
-        .returning({ id: flows.id })
-        .all()[0];
-
-      tx.insert(flowVersions)
-        .values({ flowId: copiedFlow.id, versionNumber: 1, graph: copiedGraph })
-        .run();
+        },
+        copiedGraph,
+      );
 
       const sourceBindings = tx
         .select()
@@ -136,7 +151,7 @@ export async function copyFlow(db: Db, input: { sourceFlowId: string }): Promise
         copiedScopes.add(scopeKey);
         tx.insert(flowTriggerBindings)
           .values({
-            flowId: copiedFlow.id,
+            flowId: copiedFlowId,
             projectId: binding.projectId,
             triggerType: binding.triggerType,
             config: structuredClone(binding.config),
@@ -149,7 +164,7 @@ export async function copyFlow(db: Db, input: { sourceFlowId: string }): Promise
           .run();
       }
 
-      return { id: copiedFlow.id };
+      return { id: copiedFlowId };
     },
     { behavior: 'immediate' },
   );
