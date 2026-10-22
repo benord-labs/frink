@@ -10,12 +10,10 @@ function renderSection(field: string, value: string | string[] = '') {
   render(
     <ConditionFiltersSection
       filters={[{ id: 'f1', field, operator: 'equals', value }]}
-      showFilters={true}
       availableFilterFields={[
         { id: 'repo_full_name', label: 'Repository' },
         { id: 'title', label: 'Title contains' },
       ]}
-      onShowFiltersToggle={vi.fn()}
       onAddFilter={vi.fn()}
       onUpdateFilter={onUpdateFilter}
       onRemoveFilter={vi.fn()}
@@ -63,12 +61,11 @@ describe('ConditionFiltersSection value input', () => {
 });
 
 describe('ConditionFiltersSection with field suggestions', () => {
-  it('names each field as free text with the suggestions, and has no header or add button unless asked', () => {
+  it('names each field as free text with the suggestions, and has no add button unless asked', () => {
     const onUpdateFilter = vi.fn();
     render(
       <ConditionFiltersSection
         filters={[{ id: '0', field: '', operator: 'contains', value: '' }]}
-        showFilters
         availableFilterFields={[]}
         fieldSuggestions={[{ value: 'trigger.story.title', label: 'Story title' }]}
         onUpdateFilter={onUpdateFilter}
@@ -85,7 +82,6 @@ describe('ConditionFiltersSection with field suggestions', () => {
       'label',
       'Story title',
     );
-    expect(screen.queryByText('Conditions (optional)')).toBeNull();
     expect(screen.queryByRole('button', { name: /Add/ })).toBeNull();
   });
 });

@@ -17,6 +17,7 @@ import {
   defaultWebhookAssignee,
   packWebhookTriggerConditions,
 } from '../../../../../../shared/lib/webhook-trigger-condition-pack';
+import { Label } from '../../../../../components/ui/label';
 import {
   Select,
   SelectContent,
@@ -94,6 +95,8 @@ export function WebhookTriggerConfig({ node, onPatchLabel, onPatchConfig }: Prop
   const [assigneeMode, setAssigneeMode] = useState<AssigneeMode>('me');
   const [filters, setFilters] = useState<ConditionFilter[]>([]);
   const [showFilters, setShowFilters] = useState(false);
+  // The stored conditions on screen, so this panel's own save echoing back is not re-parsed.
+  const shownKeyRef = useRef<string | null>(null);
   const setSettingsOpen = useSetAtom(agentsSettingsDialogOpenAtom);
   const setActiveSettingsTab = useSetAtom(agentsSettingsDialogActiveTabAtom);
 
@@ -122,13 +125,16 @@ export function WebhookTriggerConfig({ node, onPatchLabel, onPatchConfig }: Prop
   );
 
   useEffect(() => {
+    const storedKey = JSON.stringify([node.id, storedEventType, supportedProvider, conditionsObj]);
+    if (storedKey === shownKeyRef.current) return;
+    shownKeyRef.current = storedKey;
     setEventType(storedEventType);
     const parsed = parseConditions(conditionsObj, storedEventType, supportedProvider ?? '');
     setAssigneeMode(parsed.assigneeMode);
     setFromStatus(parsed.fromStatus);
     setToStatus(parsed.toStatus);
     setFilters(parsed.filters);
-    setShowFilters(parsed.filters.length > 0);
+    setShowFilters(parsed.filtersApply);
   }, [node.id, storedEventType, conditionsObj, supportedProvider]);
 
   const supportsStateTransition = STATE_TRANSITION_EVENTS.includes(eventType);
@@ -162,32 +168,38 @@ export function WebhookTriggerConfig({ node, onPatchLabel, onPatchConfig }: Prop
     [onPatchConfig],
   );
 
-  const commitFiltersAndPush = useCallback(
-    (newFilters: ConditionFilter[]) => {
-      setFilters(newFilters);
+  const pushConditions = useCallback(
+    (next: {
+      fromStatus: string;
+      toStatus: string;
+      assigneeMode: AssigneeMode;
+      filters: ConditionFilter[];
+    }) => {
+      const conditions = packConditions({ supportsStateTransition, supportsAssignee, ...next });
+      shownKeyRef.current = JSON.stringify([node.id, eventType, supportedProvider, conditions]);
       pushFullConfig({
         integrationId: integrationId || undefined,
         eventType: eventType || undefined,
-        conditions: packConditions({
-          supportsStateTransition,
-          supportsAssignee,
-          fromStatus,
-          toStatus,
-          assigneeMode,
-          filters: newFilters,
-        }),
+        conditions,
       });
     },
     [
+      node.id,
       integrationId,
       eventType,
+      supportedProvider,
       pushFullConfig,
       supportsStateTransition,
       supportsAssignee,
-      fromStatus,
-      toStatus,
-      assigneeMode,
     ],
+  );
+
+  const commitFiltersAndPush = useCallback(
+    (newFilters: ConditionFilter[]) => {
+      setFilters(newFilters);
+      pushConditions({ fromStatus, toStatus, assigneeMode, filters: newFilters });
+    },
+    [pushConditions, fromStatus, toStatus, assigneeMode],
   );
 
   const onIntegrationSelect = (id: string) => {
@@ -317,33 +329,11 @@ export function WebhookTriggerConfig({ node, onPatchLabel, onPatchConfig }: Prop
               toStatus={toStatus}
               onFromStatusChange={(v) => {
                 setFromStatus(v);
-                pushFullConfig({
-                  integrationId: integrationId || undefined,
-                  eventType: eventType || undefined,
-                  conditions: packConditions({
-                    supportsStateTransition,
-                    supportsAssignee,
-                    fromStatus: v,
-                    toStatus,
-                    assigneeMode,
-                    filters,
-                  }),
-                });
+                pushConditions({ fromStatus: v, toStatus, assigneeMode, filters });
               }}
               onToStatusChange={(v) => {
                 setToStatus(v);
-                pushFullConfig({
-                  integrationId: integrationId || undefined,
-                  eventType: eventType || undefined,
-                  conditions: packConditions({
-                    supportsStateTransition,
-                    supportsAssignee,
-                    fromStatus,
-                    toStatus: v,
-                    assigneeMode,
-                    filters,
-                  }),
-                });
+                pushConditions({ fromStatus, toStatus: v, assigneeMode, filters });
               }}
             />
           ) : null}
@@ -354,34 +344,30 @@ export function WebhookTriggerConfig({ node, onPatchLabel, onPatchConfig }: Prop
               supportsMe={Boolean(selected?.externalUserId)}
               onAssigneeModeChange={(m) => {
                 setAssigneeMode(m);
-                pushFullConfig({
-                  integrationId: integrationId || undefined,
-                  eventType: eventType || undefined,
-                  conditions: packConditions({
-                    supportsStateTransition,
-                    supportsAssignee,
-                    fromStatus,
-                    toStatus,
-                    assigneeMode: m,
-                    filters,
-                  }),
-                });
+                pushConditions({ fromStatus, toStatus, assigneeMode: m, filters });
               }}
               accountIdentifier={selected.accountIdentifier}
             />
           ) : null}
 
           <div className="flex items-center justify-between gap-2 rounded-md border border-border/60 px-3 py-2">
-            <span className="text-xs font-medium">Advanced filters</span>
-            <Switch checked={showFilters} onCheckedChange={setShowFilters} />
+            <Label htmlFor="flow-webhook-filters" className="text-xs font-medium">
+              Advanced filters
+            </Label>
+            <Switch
+              id="flow-webhook-filters"
+              checked={showFilters}
+              onCheckedChange={(on) => {
+                setShowFilters(on);
+                if (!on) commitFiltersAndPush([]);
+              }}
+            />
           </div>
 
           {showFilters ? (
             <ConditionFiltersSection
               filters={filters}
-              showFilters={showFilters}
               availableFilterFields={availableFilterFields}
-              onShowFiltersToggle={() => setShowFilters((s) => !s)}
               onAddFilter={addFilter}
               onUpdateFilter={updateFilter}
               onRemoveFilter={removeFilter}
