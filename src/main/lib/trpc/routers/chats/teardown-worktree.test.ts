@@ -88,6 +88,7 @@ beforeEach(() => {
   unpushedMock.mockResolvedValue(false);
   managedMock.mockResolvedValue(true);
   configureHooksMock.mockResolvedValue(undefined);
+  siblingMock.mockResolvedValue(false);
 });
 
 // Real temp dirs for on-disk worktree shapes — never the developer's real ~/.frink/worktrees.
@@ -273,6 +274,27 @@ describe('tearDownChatWorktree with the real sibling query', () => {
     expect(removeWorktreeMock).not.toHaveBeenCalled();
     expect(removed).toBe(0);
   });
+
+  it('boot recovery keeps a worktree a chat starts using after the referenced snapshot', async () => {
+    const project = await createProject(db, { name: 'P', path: '/repo' });
+    listWorktreesMock.mockResolvedValue([
+      wt('/repo', { isMain: true }),
+      wt('/repo/wt-race', { branch: 'br' }),
+      wt('/repo/wt-gone', { branch: 'bg' }),
+    ]);
+    managedMock.mockImplementation(async (path: string) => {
+      if (path === '/repo/wt-race') {
+        await createChat(db, { name: 'late', projectId: project.id, worktreePath: path });
+      }
+      return true;
+    });
+
+    const { removed, skipped } = await recoverOrphanedWorktrees(db);
+
+    expect(removeWorktreeMock.mock.calls).toEqual([['/repo', '/repo/wt-gone', { branch: 'bg' }]]);
+    expect(removed).toBe(1);
+    expect(skipped).toBe(1);
+  });
 });
 
 describe('removeProjectWorktrees', () => {
@@ -456,6 +478,17 @@ describe('recoverOrphanedWorktrees', () => {
     });
     expect(removed).toBe(1);
     expect(skipped).toBe(0);
+  });
+
+  it('keeps an unreferenced worktree when the pre-removal reference check cannot answer', async () => {
+    await createProject(db, { name: 'P', path: '/repo' });
+    listWorktreesMock.mockResolvedValue([wt('/repo', { isMain: true }), wt('/repo/wt-orphan')]);
+    siblingMock.mockRejectedValue(new Error('SQLITE_BUSY'));
+
+    const { removed, skipped } = await recoverOrphanedWorktrees(db);
+
+    expect(removeWorktreeMock).not.toHaveBeenCalled();
+    expect({ removed, skipped }).toEqual({ removed: 0, skipped: 1 });
   });
 
   it('is a no-op when there is no drift', async () => {

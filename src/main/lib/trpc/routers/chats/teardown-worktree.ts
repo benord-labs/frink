@@ -108,13 +108,10 @@ async function isWorktreeStillHeld(db: Db, chatId: string, worktreePath: string)
   try {
     return await hasOtherChatsSharingWorktree(db, chatId, worktreePath);
   } catch (error) {
-    log.warn(
-      '[removeProjectWorktrees] sibling check failed — skipping removal, boot recovery will reclaim',
-      {
-        worktreePath,
-        error,
-      },
-    );
+    log.warn('[worktree teardown] sibling check failed — skipping removal', {
+      worktreePath,
+      error,
+    });
     return true;
   }
 }
@@ -190,6 +187,11 @@ export async function recoverOrphanedWorktrees(
         (await hasUncommittedChanges(wt.path).catch(() => true)) ||
         (await hasUnpushedCommits(wt.path).catch(() => true));
       if (dirty) {
+        skipped += 1;
+        continue;
+      }
+      // The referenced set is a snapshot: a chat may have taken this worktree since it was read.
+      if (await isWorktreeStillHeld(db, '', wt.path)) {
         skipped += 1;
         continue;
       }
