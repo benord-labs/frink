@@ -29,6 +29,25 @@ describe('createTransformer', () => {
     expect(quoted.some((c) => c.type === 'error')).toBe(false);
   });
 
+  // The command's reply still renders as text; the card reads the goal from the data part.
+  it("emits a goal part alongside Claude's /goal reply", () => {
+    const chunks = collect(
+      createTransformer()({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          model: '<synthetic>',
+          content: [{ type: 'text', text: 'Goal set: tests pass' }],
+        },
+      }),
+    );
+
+    expect(chunks.find((c) => c.type === 'data-goal')).toMatchObject({
+      data: { state: 'active', objective: 'tests pass' },
+    });
+    expect(chunks.some((c) => c.type === 'text-delta')).toBe(true);
+  });
+
   it('emits start on first message', () => {
     const transform = createTransformer();
     const chunks = collect(transform({ type: 'system', subtype: 'init' }));

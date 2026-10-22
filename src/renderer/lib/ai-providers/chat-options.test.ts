@@ -259,21 +259,24 @@ describe('unsupportedChatControls', () => {
     expect(unsupportedChatControls(provider)).toEqual({ modes: [], commands: [] });
   });
 
-  it('hides Plan and its command for Codex, which keeps compacting', () => {
-    expect(unsupportedChatControls('codex')).toEqual({ modes: ['plan'], commands: ['plan'] });
+  it('hides Plan, its command and /goal for Codex, which keeps compacting', () => {
+    expect(unsupportedChatControls('codex')).toEqual({
+      modes: ['plan'],
+      commands: ['plan', 'goal'],
+    });
   });
 
   it.each(['opencode', 'copilot'])('hides Debug and compacting for %s, which keeps Plan', (id) => {
     expect(unsupportedChatControls(id)).toEqual({
       modes: ['debug'],
-      commands: ['debug', 'compact'],
+      commands: ['debug', 'compact', 'goal'],
     });
   });
 
   it('also hides Plan for an agent with no plan mode', () => {
     expect(unsupportedChatControls('grok')).toEqual({
       modes: ['plan', 'debug'],
-      commands: ['plan', 'debug', 'compact'],
+      commands: ['plan', 'debug', 'compact', 'goal'],
     });
   });
 });

@@ -3,7 +3,7 @@ import type { BuiltinCommandAction, SlashCommandOption } from '@/lib/commands/ty
 /**
  * Prompt texts for prompt-based slash commands
  */
-export const COMMAND_PROMPTS: Partial<Record<BuiltinCommandAction['type'], string>> = {
+const COMMAND_PROMPTS: Partial<Record<BuiltinCommandAction['type'], string>> = {
   review:
     'Please review the code in the current context and provide feedback on code quality, potential bugs, and improvements.',
   'pr-comments': 'Generate detailed PR review comments for the changes in the current context.',
@@ -67,6 +67,15 @@ export const BUILTIN_SLASH_COMMANDS: SlashCommandOption[] = [
     category: 'builtin',
   },
   {
+    id: 'builtin:goal',
+    name: 'goal',
+    command: '/goal',
+    description: 'Keep working until a goal you describe is met',
+    category: 'builtin',
+    argumentHint: 'what done looks like',
+    takesArguments: true,
+  },
+  {
     id: 'builtin:compact',
     name: 'compact',
     command: '/compact',
@@ -117,6 +126,41 @@ export const BUILTIN_SLASH_COMMANDS: SlashCommandOption[] = [
     category: 'builtin',
   },
 ];
+
+const PROMPT_COMMANDS: BuiltinCommandAction['type'][] = [
+  'review',
+  'pr-comments',
+  'release-notes',
+  'security-review',
+  'commit',
+];
+
+type CommandEditor = {
+  getValue: () => string;
+  setValue: (value: string) => void;
+  setCommandValue: (commandName: string, content: string) => void;
+};
+
+/** Writes a picked command into the composer: `/goal` as text the user finishes with what done looks
+ * like, a prompt-based built-in or a custom command as a highlighted block. */
+export function insertPickedCommand(
+  editor: CommandEditor | null,
+  command: SlashCommandOption,
+): void {
+  if (command.category === 'builtin' && command.name === 'goal') {
+    editor?.setValue(`/goal ${editor.getValue()}`);
+    return;
+  }
+  const builtin = PROMPT_COMMANDS.find((name) => name === command.name);
+  const prompt =
+    command.category === 'builtin' ? builtin && COMMAND_PROMPTS[builtin] : command.prompt;
+  if (prompt) editor?.setCommandValue(command.name, prompt);
+}
+
+/** A built-in with nothing to do in this mode: the mode's own switch, and `/goal` while planning. */
+export function hiddenInMode(name: string, mode: string): boolean {
+  return name === mode || (mode === 'plan' && name === 'goal');
+}
 
 export type BuiltinCommandsFilterContext = {
   hasProject: boolean;

@@ -24,7 +24,7 @@ import { runChatShortcutAction } from '../../../lib/work-queue/chat-owns-keyboar
 import { lastSelectedModelIdAtomFamily, splitViewAtom } from '../atoms';
 import {
   AgentsSlashCommand,
-  COMMAND_PROMPTS,
+  insertPickedCommand,
   LazyCommandEditorModal,
   SLASH_COMMAND_LISTBOX_ID,
   type SlashCommandOption,
@@ -560,42 +560,24 @@ export const ChatInputArea = memo(function ChatInputArea({
       editorRef.current?.clearSlashCommand();
       setShowSlashDropdown(false);
 
-      // Handle builtin commands
+      // Mode switches and compaction act here; every other pick is written into the composer
       if (command.category === 'builtin') {
         switch (command.name) {
           case 'plan':
             commitModeChange('plan');
-            break;
+            return;
           case 'agent':
             commitModeChange('agent');
-            break;
+            return;
           case 'debug':
             if (projectId) commitModeChange('debug');
-            break;
+            return;
           case 'compact':
-            // Trigger context compaction
             onCompact();
-            break;
-          // Prompt-based commands - insert into editor for user to review/send
-          case 'review':
-          case 'pr-comments':
-          case 'release-notes':
-          case 'security-review':
-          case 'commit': {
-            const prompt = COMMAND_PROMPTS[command.name as keyof typeof COMMAND_PROMPTS];
-            if (prompt) {
-              editorRef.current?.setCommandValue(command.name, prompt);
-            }
-            break;
-          }
+            return;
         }
-        return;
       }
-
-      // Handle custom commands - insert as highlighted command block
-      if (command.prompt) {
-        editorRef.current?.setCommandValue(command.name, command.prompt);
-      }
+      insertPickedCommand(editorRef.current, command);
     },
     [commitModeChange, onCompact, editorRef, projectId],
   );

@@ -5,7 +5,7 @@ import { Copy, Pencil, Plus, Loader2 } from 'lucide-react';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
-import { filterBuiltinCommands } from '@/lib/commands/builtin-commands';
+import { filterBuiltinCommands, hiddenInMode } from '@/lib/commands/builtin-commands';
 import { commandBadgeLabels } from '@/lib/commands/command-badge-labels';
 import type { SlashCommandOption } from '@/lib/commands/types';
 import { usePendingCommandArguments } from '@/lib/commands/use-pending-command-arguments';
@@ -245,9 +245,9 @@ export const AgentsSlashCommand = memo(function AgentsSlashCommand({
       hasProject: effectiveHasProject,
     });
 
-    // Hide the command matching the current mode
+    // Hide the current mode's own command, and any that cannot run in it
     if (chatMode !== undefined) {
-      builtinFiltered = builtinFiltered.filter((cmd) => cmd.name !== chatMode);
+      builtinFiltered = builtinFiltered.filter((cmd) => !hiddenInMode(cmd.name, chatMode));
     }
 
     // Filter out disabled commands

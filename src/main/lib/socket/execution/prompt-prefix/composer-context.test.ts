@@ -287,6 +287,11 @@ describe('projectComposerContext: notes that stay in the prompt', () => {
       text: '/skill x',
       notes: [opened('a.ts')],
     });
+    // Claude sets or clears a goal only when `/goal` leads the prompt, file open or not.
+    expect(projectComposerContext('@[file:editor:a.ts] /goal tests pass')).toEqual({
+      text: '/goal tests pass',
+      notes: [opened('a.ts')],
+    });
   });
 
   it('leaves a slash command first behind every token the composer put ahead of it', () => {

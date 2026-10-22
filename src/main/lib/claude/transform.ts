@@ -3,6 +3,7 @@ import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import log from 'electron-log';
 import { SUBAGENT_TEXT_TOOL_NAME } from '../../../shared/subagent-parts';
 import { createCompactionMapper, createContextUsageTracker } from './compaction';
+import { createGoalMapper } from './goal';
 import { usageLimitResultChunks } from './stream-classifiers';
 import { createThinkingEmitter } from './thinking-emitter';
 import type { MCPServer, MCPServerStatus, MessageMetadata, UIMessageChunk } from './types';
@@ -17,7 +18,6 @@ const MAX_PARTIAL_TOOL_INPUT_BYTES = 2 * 1024 * 1024;
 /** Above this, the salvage path emits truncated `_rawHead`/`_rawTail` instead of the full string. */
 const MAX_SALVAGE_RAW_BYTES = 64 * 1024;
 
-// Type definitions for incoming messages
 type BaseMessage = {
   type: string;
   parent_tool_use_id?: string;
@@ -191,8 +191,8 @@ export function createTransformer() {
    */
   const partialEmissions = new Set<string>();
 
-  // Session-scoped SDK state: compaction cards (status->boundary) and context-window occupancy
-  const mapCompaction = createCompactionMapper();
+  // Session-scoped SDK state: compaction and goal cards, and context-window occupancy
+  const [mapCompaction, mapGoal] = [createCompactionMapper(), createGoalMapper()];
   const contextUsage = createContextUsageTracker();
 
   const thinking = createThinkingEmitter();
@@ -278,7 +278,8 @@ export function createTransformer() {
   }
 
   return function* transform(msg: unknown): Generator<UIMessageChunk> {
-    contextUsage.observe(/* SAFETY: both callers feed raw SDK frames */ msg as SDKMessage);
+    const frame = /* SAFETY: both callers feed raw SDK frames */ msg as SDKMessage;
+    contextUsage.observe(frame);
     // Track parent_tool_use_id for nested tools.
     // Subagent messages always carry parent_tool_use_id; root messages never do.
     // Reset per turn-level message so root tools emitted after a subagent finishes
@@ -297,7 +298,6 @@ export function createTransformer() {
       currentParentToolUseId = hasParentToolUseId(msg) ? msg.parent_tool_use_id : null;
     }
 
-    // Emit start once
     if (!started) {
       started = true;
       startTime = Date.now();
@@ -305,7 +305,7 @@ export function createTransformer() {
       yield { type: 'start-step' };
     }
 
-    yield* mapCompaction(msg);
+    yield* [...mapCompaction(msg), ...mapGoal(frame)];
 
     // Reset thinking state on new message start to prevent memory leaks
     if (isStreamEventMessage(msg) && msg.event?.type === 'message_start') {
