@@ -9,7 +9,14 @@
  */
 
 import { execSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -113,5 +120,40 @@ describe('createRollbackStash concurrency', () => {
     // Cross-contamination check: A's ref must not exist in B's repo.
     expect(refExists(cwdB, `refs/checkpoints/${uuidA}`)).toBe(false);
     expect(refExists(cwdA, `refs/checkpoints/${uuidB}`)).toBe(false);
+  });
+
+  it('creates a checkpoint while another process holds index.lock', async () => {
+    const repo = initRepo();
+    const cwd = `${repo}-linked`;
+    const scratch = mkdtempSync(join(tmpdir(), 'stash-index-copy-'));
+    repos.push(repo, cwd, scratch);
+    execSync(`git worktree add -q "${cwd}"`, { cwd: repo });
+    // Stale stat data in the index for a file whose content is unchanged.
+    const future = new Date(Date.now() + 60_000);
+    utimesSync(join(cwd, 'seed.txt'), future, future);
+
+    const gitDir = execSync('git rev-parse --absolute-git-dir', { cwd }).toString().trim();
+    const indexPath = join(gitDir, 'index');
+    const lockPath = join(gitDir, 'index.lock');
+    writeFileSync(lockPath, 'held');
+    const indexBefore = readFileSync(indexPath);
+    const uuid = '88888888-8888-8888-8888-888888888888';
+
+    await createRollbackStash(cwd, uuid);
+
+    const ref = `refs/checkpoints/${uuid}`;
+    expect(refExists(cwd, ref)).toBe(true);
+    const payload = JSON.parse(execSync(`git show -s --format=%B ${ref}`, { cwd }).toString());
+    const indexCopy = join(scratch, 'index');
+    copyFileSync(indexPath, indexCopy);
+    const expectedIndexTree = execSync('git write-tree', {
+      cwd,
+      env: { ...process.env, GIT_INDEX_FILE: indexCopy },
+    })
+      .toString()
+      .trim();
+    expect(payload.indexTree).toBe(expectedIndexTree);
+    expect(readFileSync(lockPath, 'utf8')).toBe('held');
+    expect(readFileSync(indexPath).equals(indexBefore)).toBe(true);
   });
 });

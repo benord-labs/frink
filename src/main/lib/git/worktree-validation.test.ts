@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { gitAsTestUser } from '../test-utils/git-as-test-user';
 import { validateWorktreeForReuse } from './worktree-validation';
 
 describe('validateWorktreeForReuse — permanent vs transient classification', () => {
@@ -59,11 +60,16 @@ describe('validateWorktreeForReuse — permanent vs transient classification', (
     expect(result.valid === false && result.reason).toContain('rebase-merge');
   });
 
-  it('index.lock is invalid but transient', async () => {
-    const { worktree, gitDir } = await makeWorktreeShape();
+  it('a held index.lock does not block reuse', async () => {
+    const repo = join(root, 'repo');
+    const worktree = join(root, 'linked');
+    await mkdir(repo);
+    gitAsTestUser(repo, 'init', '-q');
+    gitAsTestUser(repo, 'commit', '-q', '--allow-empty', '-m', 'seed');
+    gitAsTestUser(repo, 'worktree', 'add', '-q', worktree);
+    const gitDir = gitAsTestUser(worktree, 'rev-parse', '--absolute-git-dir').toString().trim();
     await writeFile(join(gitDir, 'index.lock'), '');
-    const result = await validateWorktreeForReuse(worktree);
-    expect(result).toMatchObject({ valid: false, permanent: false });
-    expect(result.valid === false && result.reason).toContain('index.lock');
+
+    expect(await validateWorktreeForReuse(worktree)).toEqual({ valid: true });
   });
 });
