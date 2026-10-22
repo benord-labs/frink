@@ -2,7 +2,11 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { PASTED_FILE_MAX_BYTES } from '../../../../shared/pasted-file-limits';
+import { isAttachedFilePath } from '../../../../shared/lib/mentions/parse-mention';
+import {
+  PASTED_FILE_MAX_BYTES,
+  PASTED_FILE_TOO_LARGE,
+} from '../../../../shared/pasted-file-limits';
 import { copyIntoPasted, rehomePastedMentions, safeAttachmentName, writePastedText } from '.';
 
 const subChatId = 'mq7zk90vzeoypywd';
@@ -33,6 +37,15 @@ describe('pasted files', () => {
     expect(readFileSync(stored.filePath, 'utf-8')).toBe('%PDF-1.7');
   });
 
+  it('accepts a file of exactly the size limit, matching the "or smaller" wording', async () => {
+    const exact = join(source, 'exact.csv');
+    writeFileSync(exact, Buffer.alloc(PASTED_FILE_MAX_BYTES));
+
+    const stored = await copyIntoPasted({ subChatId, sourcePath: exact }, userData);
+
+    expect(stored.size).toBe(PASTED_FILE_MAX_BYTES);
+  });
+
   it('refuses folders, relative paths, oversize files and unsafe session ids', async () => {
     const folder = join(source, 'folder');
     mkdirSync(folder);
@@ -46,23 +59,30 @@ describe('pasted files', () => {
 
     await expect(attach(subChatId, folder)).rejects.toThrow("Folders can't be attached.");
     await expect(attach(subChatId, 'a.ts')).rejects.toThrow('absolute');
-    await expect(attach(subChatId, big)).rejects.toThrow('20 MB');
+    await expect(attach(subChatId, big)).rejects.toThrow(PASTED_FILE_TOO_LARGE);
     await expect(attach('__new_chat_0__', small)).rejects.toThrow('Invalid subChatId');
     await expect(attach('../escape', small)).rejects.toThrow('Invalid subChatId');
     expect(existsSync(join(userData, 'claude-sessions'))).toBe(false);
   });
 
-  it('writes pasted text and rejects a filename that leaves the folder', async () => {
-    const stored = await writePastedText(
-      { subChatId, text: 'hello', filename: 'terminal_1.txt' },
-      userData,
-    );
-    expect(readFileSync(stored.filePath, 'utf-8')).toBe('hello');
-    expect(stored).toMatchObject({ filename: 'terminal_1.txt', size: 5 });
+  it('names pasted text by its kind, never in the shape of an attached file', async () => {
+    const pasted = await writePastedText({ subChatId, text: 'hello' }, userData);
+    const terminal = await writePastedText({ subChatId, text: 'x', kind: 'terminal' }, userData);
 
-    await expect(
-      writePastedText({ subChatId, text: 'x', filename: '../x.txt' }, userData),
-    ).rejects.toThrow('Invalid filename');
+    expect(readFileSync(pasted.filePath, 'utf-8')).toBe('hello');
+    expect(pasted.filename).toMatch(/^pasted_\d+\.txt$/);
+    expect(terminal.filename).toMatch(/^terminal_\d+\.txt$/);
+    for (const { filePath } of [pasted, terminal]) {
+      expect(isAttachedFilePath(filePath)).toBe(false);
+    }
+  });
+
+  it('reports the size of pasted text in bytes', async () => {
+    const stored = await writePastedText({ subChatId, text: 'é'.repeat(10) }, userData);
+    expect(stored.size).toBe(20);
+  });
+
+  it('refuses pasted text for an unsafe session id', async () => {
     await expect(
       writePastedText({ subChatId: '__new_chat_0__', text: 'x' }, userData),
     ).rejects.toThrow('Invalid subChatId');
@@ -95,10 +115,9 @@ describe('pasted files', () => {
   });
 
   it('copies the pastes a message names into a replacement chat folder and repoints them', async () => {
-    const pdf = await writePastedText(
-      { subChatId, text: '%PDF', filename: '1a2b3c4d-report.pdf' },
-      userData,
-    );
+    const original = join(source, 'report.pdf');
+    writeFileSync(original, '%PDF');
+    const pdf = await copyIntoPasted({ subChatId, sourcePath: original }, userData);
     const elsewhere = join(source, 'notes.txt');
     writeFileSync(elsewhere, 'mine');
     const missing = join(dirname(pdf.filePath), '0f9e8d7c-gone.csv');
@@ -107,7 +126,7 @@ describe('pasted files', () => {
 
     const out = await rehomePastedMentions(text, { from: subChatId, to }, userData);
 
-    const copy = join(userData, 'claude-sessions', to, 'pasted', '1a2b3c4d-report.pdf');
+    const copy = join(userData, 'claude-sessions', to, 'pasted', pdf.filename);
     expect(readFileSync(copy, 'utf-8')).toBe('%PDF');
     expect(out).toBe(
       `@[pasted:4:report.pdf|${copy}] @[pasted:4:notes|${elsewhere}] @[pasted:1:gone.csv|${missing}] go`,

@@ -45,18 +45,18 @@ describe('usePastedTextFiles', () => {
     expect(result.current.pastedTextsRef.current).toHaveLength(1);
   });
 
-  it('names the chip by its label and the saved file by its filename when given', async () => {
+  it('names the chip by its label and passes the kind of the saved file when given', async () => {
     mutateAsync.mockResolvedValue({ filePath: '/s/pasted/t.txt', filename: 't.txt', size: 9 });
     const { result } = renderHook(() => usePastedTextFiles('sub-1'));
 
     await act(() =>
-      result.current.addPastedText('FAIL a.ts', { label: 'Terminal 1 output', filename: 't.txt' }),
+      result.current.addPastedText('FAIL a.ts', { label: 'Terminal 1 output', kind: 'terminal' }),
     );
 
     expect(mutateAsync).toHaveBeenCalledWith({
       subChatId: 'sub-1',
       text: 'FAIL a.ts',
-      filename: 't.txt',
+      kind: 'terminal',
     });
     expect(result.current.pastedTexts[0].preview).toBe('Terminal 1 output');
   });
