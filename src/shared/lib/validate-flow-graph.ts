@@ -32,6 +32,7 @@ import {
   HTTP_REQUEST_MAX_HEADERS_JSON_BYTES,
   HTTP_REQUEST_MAX_URL_LENGTH,
 } from './http-request-limits';
+import { unreadableWebhookFilterMessage } from './webhook-match';
 
 const MODEL_SLUG_RE = /^[a-z0-9.-]+$/;
 
@@ -419,20 +420,20 @@ export function validateGraph(
     }
   }
 
-  // A saved binding outlives the catalog: rename or drop the event and the flow still looks
-  // fine while nothing can ever match it. Warn (never error) so an existing graph still saves.
+  // A retired event or an unreadable filter leaves a trigger that looks fine but never fires.
+  // Warn (never error) so an existing graph still saves; filters go first for the editor banner.
   const webhookProvider = options?.webhookProvider
     ? getProviderById(options.webhookProvider)
     : undefined;
-  if (webhookProvider) {
-    for (const n of nodeById.values()) {
-      if (n.blockType !== 'webhook_trigger') continue;
-      const et = n.config?.eventType;
-      if (!et || webhookProvider.events.some((e) => e.id === et)) continue;
-      warnings.push(
-        `Trigger event '${String(et)}' no longer exists for ${webhookProvider.display_name} — pick an event`,
-      );
-    }
+  for (const n of nodeById.values()) {
+    if (n.blockType !== 'webhook_trigger') continue;
+    const badFilters = unreadableWebhookFilterMessage(formatFlowNodeLabel(n), n.config);
+    if (badFilters) warnings.unshift(badFilters);
+    const et = n.config?.eventType;
+    if (!webhookProvider || !et || webhookProvider.events.some((e) => e.id === et)) continue;
+    warnings.push(
+      `Trigger event '${String(et)}' no longer exists for ${webhookProvider.display_name} — pick an event`,
+    );
   }
 
   // Per-block config validation: only enforced at run time (mode='run').
