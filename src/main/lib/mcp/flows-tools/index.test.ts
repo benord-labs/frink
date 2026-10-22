@@ -1830,6 +1830,12 @@ describe('handleFlowsToolCall — frink_flows_patch webhook setup hint', () => {
       `Webhook trigger "Story moved" filter 1 (unknown operator 'regex') can't match any event, so this trigger will never start. Fix or remove it.`,
     ]);
   });
+
+  // Agents address nodes by id, so a blank label must not leave the hint naming nothing.
+  it('names a blank-labelled trigger by its node id', async () => {
+    const body = await patchWithTrigger({ label: '  ' }, 'wh-blank-label-session');
+    expect(body.webhookSetup[0]).toContain('Webhook trigger "n1" needs integrationId');
+  });
 });
 
 describe('handleFlowsToolCall — frink_flows_run webhook readiness hint', () => {

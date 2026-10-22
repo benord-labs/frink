@@ -856,7 +856,7 @@ function collectWebhookSetupHints(graph: FlowGraph): string[] {
   for (const node of graph.nodes) {
     if (node.blockType !== 'webhook_trigger') continue;
     const config = (node.config ?? {}) as Record<string, unknown>;
-    const label = node.label ?? node.id;
+    const label = node.label?.trim() || node.id;
     const iid = typeof config.integrationId === 'string' ? config.integrationId.trim() : '';
     const et = typeof config.eventType === 'string' ? config.eventType.trim() : '';
     if (!iid || !et) {
