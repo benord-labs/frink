@@ -1,10 +1,6 @@
 import { observable } from '@trpc/server/observable';
 import { z } from 'zod';
-import { flowSettingsSchema } from '../../../../../shared/types/flow';
-import {
-  flowGraphEdgeSchema,
-  flowGraphNodeSchema,
-} from '../../../../../shared/types/flow-graph-schema';
+import { flowGraphSchema } from '../../../../../shared/types/flow-graph-schema';
 import { getDatabase } from '../../../db';
 import { toDbFlowVersion } from '../../../flows/adapters';
 import {
@@ -14,12 +10,6 @@ import {
 } from '../../../flows/version-events';
 import { publicProcedureRaw } from '../../index';
 import { mapEngineError } from './run-actions';
-
-const flowGraphSchema = z.object({
-  nodes: z.array(flowGraphNodeSchema),
-  edges: z.array(flowGraphEdgeSchema),
-  settings: flowSettingsSchema,
-});
 
 export function createFlowVersionProcedures() {
   return {

@@ -22,6 +22,15 @@ Open a flow row's **⋯** menu and choose **Duplicate** to copy its latest saved
 
 Copies always start paused, even when the source flow is active. Agent invocation permission is preserved. Trigger-binding configuration is also preserved, but every copied binding starts inactive and must be explicitly reactivated before it can fire.
 
+## Moving a flow to another computer
+
+Open a flow row's **⋯** menu and choose **Export file** to save its latest saved version as a `.json` file. On the other computer, choose **Import flow** at the top of the Flows page and pick the file. The flow arrives as a new flow and opens in the editor.
+
+- **It starts turned off.** Nothing runs until you turn it on, and an agent must ask you before starting it.
+- **Projects are matched by name.** A step whose project isn't on this computer keeps the project's name and stops with an error until you add or pick one. Post-Task Trigger automations must be turned on again in the trigger step.
+- **Not included:** run history, earlier versions, unsaved edits, connected accounts, custom node packages (`~/.frink/nodes/`) and their credentials. Steps that need these are flagged in the editor.
+- **The file is plain text.** It holds everything the steps say, including commands, request headers and the briefing. Only import flows from people you trust: turning one on runs its commands on your computer.
+
 ## When a flow changes while you are editing it
 
 An agent (through `frink_flows_patch`) or another window can save a new version of a flow you have open. The editor hears about it straight away.

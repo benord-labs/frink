@@ -18,7 +18,7 @@ These go to PostHog and answer questions like "how many installs opened Frink th
 | `message_sent` | You send a message, including the one that starts a chat | The sub-chat's local id, the message's length in characters, the chat mode, and whether the message started the chat |
 | `reply_finished` | Your AI finishes a reply in a chat. A reply you stop, one that fails, and one inside a Flow run are not counted | The sub-chat's local id |
 | `pr_created` | A chat's reply links a new GitHub pull request | The chat's local id and the pull request number |
-| `flow_created` | You first save a new Flow, an agent saves one for you, or you copy one | The Flow's local id, how it starts (manual, schedule, webhook, post-task, or none yet), and whether you, an agent or a copy made it |
+| `flow_created` | You first save a new Flow, an agent saves one for you, or you copy or import one | The Flow's local id, how it starts (manual, schedule, webhook, post-task, or none yet), and whether you, an agent, a copy or an import made it |
 | `flow_run_completed` | A Flow run, or a whole batch, finishes | The Flow's local id, how it ended (completed, failed or cancelled), how many steps the Flow has, and how many runs the batch held (1 for a single run) |
 
 A return after hours away is counted at most once every 4 hours. Reopening the window from the Dock only happens on a Mac: on Windows and Linux, closing the last window quits Frink, so opening it again counts as a start.
