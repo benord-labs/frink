@@ -6,8 +6,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PLAN_APPROVAL_EXECUTION_TRIGGER_TEXT } from '../../../../shared/types/plan';
 import * as signalPersist from '../../trpc/routers/frink-task-signal-persist';
+import type { UIMessageChunk } from '../../claude/types';
 import type { MessagePart } from '../client';
 import { ChatBusyError, DuplicateMessageError } from '../execution/send-admission';
+import * as turnUsage from '../execution/turn-usage';
 import * as burstChunks from './burst-chunks';
 import {
   _clearLiveStreamRegistryForTests,
@@ -22,7 +24,11 @@ const MONITOR_WAIT = {
 
 type PlanAutoApproval = Parameters<typeof buildWakeHoldIo>[0]['planAutoApproval'];
 
-function ioWithSpy(build = buildWakeHoldIo, planAutoApproval: PlanAutoApproval = null) {
+function ioWithSpy(
+  build = buildWakeHoldIo,
+  planAutoApproval: PlanAutoApproval = null,
+  finalParts: MessagePart[] = [],
+) {
   const sendWakeHoldChanged = vi.fn();
   const sendExecuteCompleteDirect = vi.fn();
   const sendStreamChunkDirect = vi.fn();
@@ -31,7 +37,8 @@ function ioWithSpy(build = buildWakeHoldIo, planAutoApproval: PlanAutoApproval =
   const io = build({
     chatId: 'c1',
     subChatId: 'sc1',
-    buildFinalParts: (): MessagePart[] => [],
+    buildFinalParts: (): MessagePart[] => finalParts,
+    usageTaskId: 'task-1',
     flowDriven: false,
     planAutoApproval,
     nextMessageIndex: () => 0,
@@ -201,6 +208,45 @@ describe('buildWakeHoldIo — live work', () => {
     expect(isWorkActive()).toBe(true);
     successor.setHeld(false);
     expect(isWorkActive()).toBe(false);
+  });
+});
+
+describe('buildWakeHoldIo — burst context usage', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  // A node whose wait ends in a burst signals from that burst, so the burst — not the arming
+  // turn — holds the node's final occupancy; it must be on the row before the signal flips it.
+  it("re-stamps the burst's message with its last finish usage before completeBurst returns", async () => {
+    let stamped = false;
+    const stamp = vi.spyOn(turnUsage, 'stampTurnUsage').mockImplementation(async () => {
+      stamped = true;
+    });
+    const parts: MessagePart[] = [{ type: 'text', text: 'build passed' }];
+    const { io } = ioWithSpy(buildWakeHoldIo, null, parts);
+    const chunks: UIMessageChunk[] = [
+      { type: 'finish', messageMetadata: { contextTokens: 10 } },
+      { type: 'finish', messageMetadata: { contextTokens: 70_000 } },
+    ];
+
+    await io.completeBurst('assistant', chunks, true);
+
+    expect(stamped).toBe(true);
+    expect(stamp).toHaveBeenCalledWith(
+      'task-1',
+      'assistant',
+      { contextTokens: 70_000 },
+      parts,
+      true,
+    );
+  });
+
+  it('stamps nothing for an all-dropped burst', async () => {
+    const stamp = vi.spyOn(turnUsage, 'stampTurnUsage').mockResolvedValue();
+    const { io } = ioWithSpy();
+    await io.completeBurst('assistant', [{ type: 'finish' }], false);
+    expect(stamp).not.toHaveBeenCalled();
   });
 });
 

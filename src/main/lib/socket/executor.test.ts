@@ -20,6 +20,7 @@ import {
   registerExecutorPermissionTests,
   registerFlowRunEndedTests,
   registerOperatorReminderDeliveryTests,
+  registerTurnUsageStampTests,
   registerUndeliveredMessageTests,
   registerValidateToolPermissionTests,
 } from './test-suites';
@@ -2058,6 +2059,7 @@ describe('socket file permission edge cases', () => {
     );
   });
 
+  registerTurnUsageStampTests({ basePayload, claudeQueryMock, handleRemoteExecute });
   it('continues execution when heartbeat restart from resume result returns false', async () => {
     vi.mocked(getMultiProjectContext).mockResolvedValue({
       promptPrefix: '',

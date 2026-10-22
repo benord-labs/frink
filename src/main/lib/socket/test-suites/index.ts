@@ -15,3 +15,4 @@ export { registerCustomNodeTransportTest } from './executor-custom-node-permissi
 export { registerCodexSessionCacheTests } from './codex-session-cache';
 export { registerValidateToolPermissionTests } from './validate-tool-permission';
 export { registerUndeliveredMessageTests } from './undelivered-messages';
+export { registerTurnUsageStampTests } from './turn-usage';
