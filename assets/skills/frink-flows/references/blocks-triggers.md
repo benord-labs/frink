@@ -46,6 +46,7 @@ Config `{ cronExpression: string, timezone: string }`. Standard five-field cron,
 ## webhook_trigger
 
 Config `{ integrationId: string, eventType: string, conditions?: object }`.
+Optional `conditions.filters` is a list of `{ field, operator, value }`; operator is one of `equals`, `not_equals`, `contains`, `in_list`. Only `in_list` takes a list value; the others take text. A filter outside this shape blocks every event.
 First call `frink_flows_list_catalog({kind:"integrations"})`; choose a returned integration id and one of its `events[].id` values (not label). Those two fields are the complete binding; no separate trigger rule. Empty catalog/sign-out: ask the user to connect an integration, do not invent ids. The provider must deliver webhooks; endpoint generation/verification may still be needed in Settings → Plugins.
 
 Stored `eventType`/`fullContent` are aliased to `event`/`payload` at runtime. Prefer friendly provider aliases from `webhook-aliases.md`; unlisted providers use raw `trigger.payload.*`.

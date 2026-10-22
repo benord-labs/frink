@@ -1,14 +1,9 @@
 import { z } from 'zod';
 import { eventSupportsAssignee } from '../../../../shared/integrations/selectors';
+import { webhookFilterSchema } from '../../../../shared/lib/webhook-match';
 import { defaultWebhookAssignee } from '../../../../shared/lib/webhook-trigger-condition-pack';
 import { STATE_TRANSITION_EVENTS } from './constants';
 import type { AssigneeMode, ConditionFilter } from './types';
-
-const storedFilterSchema = z.object({
-  field: z.string(),
-  operator: z.enum(['equals', 'not_equals', 'contains', 'in_list']),
-  value: z.union([z.string(), z.array(z.string())]),
-});
 
 /** What a webhook_trigger node stores under `config.conditions`; a malformed field falls back to its default instead of failing the whole parse. */
 const storedConditionsSchema = z.object({
@@ -43,7 +38,7 @@ export function parseConditions(
 
   const filters: ConditionFilter[] = [];
   for (const entry of c.filters ?? []) {
-    const filter = storedFilterSchema.safeParse(entry);
+    const filter = webhookFilterSchema.safeParse(entry);
     if (filter.success) filters.push({ id: crypto.randomUUID(), ...filter.data });
   }
 

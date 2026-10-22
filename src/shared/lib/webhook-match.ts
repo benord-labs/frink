@@ -13,6 +13,7 @@
  */
 
 import { z } from 'zod';
+import type { FlowNode } from './validate-flow-graph';
 
 // Event data produced by a provider extractor and forwarded from the cloud.
 export type WebhookEventData = {
@@ -23,12 +24,61 @@ export type WebhookEventData = {
   [key: string]: unknown;
 };
 
+export const WEBHOOK_FILTER_OPERATORS = ['equals', 'not_equals', 'contains', 'in_list'] as const;
+
 /** A filter as the webhook-trigger editor persists it; anything else never matches. */
-const filterConditionSchema = z.object({
+export const webhookFilterSchema = z.object({
   field: z.string(),
-  operator: z.enum(['equals', 'not_equals', 'contains', 'in_list']),
+  operator: z.enum(WEBHOOK_FILTER_OPERATORS),
   value: z.union([z.string(), z.array(z.string())]),
 });
+
+type WebhookFilter = z.infer<typeof webhookFilterSchema>;
+
+const MAX_NAMED_FILTERS = 5;
+
+const storedFiltersSchema = z.object({ filters: z.unknown() });
+
+/** Why the matcher can never pass this stored filter, or null when it can. */
+function filterProblem(parsed: z.ZodSafeParseResult<WebhookFilter>): string | null {
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    const key = issue?.path[0];
+    if (key === 'operator') {
+      const op = z.string().safeParse(issue?.input);
+      return op.success ? `unknown operator '${op.data}'` : 'no operator';
+    }
+    if (key === 'value') return 'value must be text or a list of text';
+    if (key === 'field') return 'no field';
+    return 'not a filter';
+  }
+  const { operator, value } = parsed.data;
+  if (operator === 'in_list') {
+    if (!Array.isArray(value)) return 'in_list needs a list value';
+    return value.length > 0 ? null : 'in_list needs at least one value';
+  }
+  return Array.isArray(value) ? `${operator} needs a text value, not a list` : null;
+}
+
+/** A save-time warning naming the stored filters that block every event, or null when none do. */
+export function unreadableWebhookFilterMessage(
+  nodeLabel: string,
+  config: FlowNode['config'],
+): string | null {
+  const stored = storedFiltersSchema.safeParse(config?.conditions);
+  if (!stored.success || stored.data.filters === undefined) return null;
+  const list = z.array(z.unknown()).safeParse(stored.data.filters);
+  if (!list.success) {
+    return `Webhook trigger "${nodeLabel}" filters must be a list, so this trigger will never start. Fix or remove them.`;
+  }
+  const bad = list.data.flatMap((entry, i) => {
+    const problem = filterProblem(webhookFilterSchema.safeParse(entry, { reportInput: true }));
+    return problem ? [`filter ${i + 1} (${problem})`] : [];
+  });
+  if (bad.length === 0) return null;
+  const more = bad.length > MAX_NAMED_FILTERS ? ` and ${bad.length - MAX_NAMED_FILTERS} more` : '';
+  return `Webhook trigger "${nodeLabel}" ${bad.slice(0, MAX_NAMED_FILTERS).join(', ')}${more} can't match any event, so this trigger will never start. Fix or remove ${bad.length === 1 ? 'it' : 'them'}.`;
+}
 
 function isRepoFullNameField(field: string): boolean {
   return field === 'repo_full_name';
@@ -92,7 +142,7 @@ export function matchesConditions(
 
   // Custom filter conditions. A malformed persisted filter fails closed: it never matches.
   if ('filters' in conditions) {
-    const parsedFilters = z.array(filterConditionSchema).safeParse(conditions.filters);
+    const parsedFilters = z.array(webhookFilterSchema).safeParse(conditions.filters);
     if (!parsedFilters.success) return false;
     for (const filter of parsedFilters.data) {
       const actualValue = eventData[filter.field];

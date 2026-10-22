@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   extractFlowWebhookBindingFromGraph,
   matchesConditions,
+  unreadableWebhookFilterMessage,
+  type WebhookBinding,
   type WebhookEventData,
 } from './webhook-match';
 
@@ -196,5 +198,90 @@ describe('extractFlowWebhookBindingFromGraph', () => {
       conditions: {},
       actionConfig: {},
     });
+  });
+});
+
+describe('unreadableWebhookFilterMessage', () => {
+  const ok = { field: 'storyName', operator: 'contains', value: 'bug' };
+  const messageFor = (conditions: WebhookBinding['conditions']) =>
+    unreadableWebhookFilterMessage('W', { conditions });
+
+  it('names an unknown operator', () => {
+    expect(messageFor({ filters: [{ ...ok, operator: 'regex' }] })).toBe(
+      `Webhook trigger "W" filter 1 (unknown operator 'regex') can't match any event, so this trigger will never start. Fix or remove it.`,
+    );
+  });
+
+  it('names a value that is neither text nor a list of text', () => {
+    expect(messageFor({ filters: [{ ...ok, value: 5 }] })).toContain(
+      'filter 1 (value must be text or a list of text)',
+    );
+  });
+
+  it('flags filters that are not a list', () => {
+    for (const filters of [{ 0: ok }, 'storyName=bug']) {
+      expect(messageFor({ filters })).toBe(
+        'Webhook trigger "W" filters must be a list, so this trigger will never start. Fix or remove them.',
+      );
+    }
+  });
+
+  // The schema accepts these, but the matcher's operators can never pass them.
+  it('flags an operator paired with the wrong kind of value', () => {
+    expect(messageFor({ filters: [{ ...ok, value: ['bug'] }] })).toContain(
+      'filter 1 (contains needs a text value, not a list)',
+    );
+    expect(messageFor({ filters: [{ ...ok, operator: 'in_list' }] })).toContain(
+      'filter 1 (in_list needs a list value)',
+    );
+    expect(messageFor({ filters: [{ ...ok, operator: 'in_list', value: [] }] })).toContain(
+      'filter 1 (in_list needs at least one value)',
+    );
+  });
+
+  it('names only the bad filter in a list', () => {
+    expect(messageFor({ filters: [ok, { operator: 'equals', value: 'x' }, ok] })).toBe(
+      `Webhook trigger "W" filter 2 (no field) can't match any event, so this trigger will never start. Fix or remove it.`,
+    );
+    expect(messageFor({ filters: [{ field: 'f', value: 'x' }] })).toContain('(no operator)');
+  });
+
+  it('names at most five filters', () => {
+    const message = messageFor({ filters: Array(7).fill(null) });
+    expect(message).toContain('filter 5 (not a filter) and 2 more');
+    expect(message).not.toContain('filter 6');
+    expect(message).toContain('Fix or remove them.');
+  });
+
+  it('stays silent for valid, empty or absent filters', () => {
+    const valid = [ok, { field: 'labels', operator: 'in_list', value: ['a', 'b'] }];
+    expect(messageFor({ filters: valid })).toBeNull();
+    expect(messageFor({ filters: [] })).toBeNull();
+    expect(messageFor({ assignee: 'me' })).toBeNull();
+    expect(unreadableWebhookFilterMessage('W', undefined)).toBeNull();
+  });
+
+  // Agents add keys the editor never writes; the matcher ignores them, so no warning either.
+  it('does not flag a readable filter that carries extra keys', () => {
+    expect(messageFor({ filters: [{ ...ok, id: 'f1', caseSensitive: true }] })).toBeNull();
+    expect(matchesConditions({ filters: [{ ...ok, id: 'f1' }] }, event({ storyName: 'bug' }))).toBe(
+      true,
+    );
+  });
+
+  // The binding reads non-object conditions as {}, which matches every event.
+  it('does not flag conditions that are not an object', () => {
+    for (const conditions of [['x'], 'storyName=bug', null]) {
+      expect(unreadableWebhookFilterMessage('W', { conditions })).toBeNull();
+    }
+  });
+
+  it('agrees with the matcher: every flagged list blocks an event that a valid one lets through', () => {
+    const story = event({ storyName: 'bug report', labels: ['a'] });
+    expect(matchesConditions({ filters: [ok] }, story)).toBe(true);
+    for (const filters of [[{ ...ok, operator: 'regex' }], [{ ...ok, value: ['bug'] }], {}]) {
+      expect(messageFor({ filters })).not.toBeNull();
+      expect(matchesConditions({ filters }, story)).toBe(false);
+    }
   });
 });
