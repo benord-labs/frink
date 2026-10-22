@@ -43,9 +43,6 @@ let currentChatMode: ChatMode = 'agent';
 /** Mutable sub-chat row for init effect + revert guard */
 const subChatsState: Array<{ id: string; mode: ChatMode }> = [{ id: 'sub-1', mode: 'agent' }];
 
-/** The init effect seeds the shared atom only from the ACTIVE tab. */
-const activeState = { activeSubChatId: 'sub-1' as string | null };
-
 vi.mock('jotai', () => ({
   useAtom: vi.fn(() => [
     currentChatMode,
@@ -103,9 +100,6 @@ vi.mock('../../../stores/sub-chat-store', () => ({
       get subChatsById() {
         return Object.fromEntries(subChatsState.map((sc) => [sc.id, sc]));
       },
-      get activeSubChatId() {
-        return activeState.activeSubChatId;
-      },
       updateSubChatMode: updateSubChatModeMock,
     }),
   },
@@ -135,7 +129,6 @@ describe('useChatMode', () => {
     currentChatMode = 'agent';
     subChatsState.length = 0;
     subChatsState.push({ id: 'sub-1', mode: 'agent' });
-    activeState.activeSubChatId = 'sub-1';
     onErrorCapture.current = null;
     onSuccessCapture.current = null;
   });
@@ -401,37 +394,28 @@ describe('useChatMode', () => {
     });
   });
 
-  /**
-   * The mode atom is CHAT-scoped while this hook mounts once per open TAB/PANE. Only the
-   * sidebar-active tab may SEED the shared atom from its row at init: two tabs with disagreeing
-   * persisted modes would otherwise correct each other on every remount (the visible agent/plan
-   * flapping loop).
-   */
-  describe('background-tab initialization (multi-tab)', () => {
-    it('a background tab initializing does not stamp its row mode over the shared atom', () => {
-      subChatsState.push({ id: 'sub-bg', mode: 'plan' });
+  describe('initialization', () => {
+    it('seeds the chat atom from its row with no active sub-chat (split view)', () => {
+      subChatsState[0].mode = 'plan';
       renderHook(() => useChatMode('sub-1', 'chat-1'));
-      renderHook(() => useChatMode('sub-bg', 'chat-1'));
 
-      expect(currentChatMode).toBe('agent');
+      expect(currentChatMode).toBe('plan');
       expect(mutateMock).not.toHaveBeenCalled();
     });
 
-    it('switching to another ACTIVE sub-chat re-seeds the shared atom from its row', () => {
+    it('switching to another sub-chat re-seeds the chat atom from its row', () => {
       subChatsState.push({ id: 'sub-2', mode: 'plan' });
       const hook = renderHook(({ id }) => useChatMode(id, 'chat-1'), {
         initialProps: { id: 'sub-1' },
       });
 
-      activeState.activeSubChatId = 'sub-2';
       hook.rerender({ id: 'sub-2' });
 
       expect(currentChatMode).toBe('plan');
       expect(mutateMock).not.toHaveBeenCalled();
     });
 
-    it('a split pane still persists its own gesture (persistence is not active-tab gated)', () => {
-      activeState.activeSubChatId = 'somewhere-else';
+    it('a split pane persists its own gesture', () => {
       const pane = renderHook(() => useChatMode('sub-1', 'chat-1'));
 
       act(() => pane.result.current.commitModeChange('plan'));

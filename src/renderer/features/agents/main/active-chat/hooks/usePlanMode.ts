@@ -73,16 +73,10 @@ export const useChatMode = (subChatId: string, parentChatId: string) => {
   const { mutate: updateSubChatMode } = updateSubChatModeMutation;
 
   // Initialize mode from sub-chat metadata ONLY when switching sub-chats.
-  // The atom is CHAT-scoped but this hook mounts once per open tab, so only the ACTIVE tab may
-  // write its row's mode into the shared atom — a background tab initializing would stamp ITS
-  // mode over the visible one.
   useEffect(() => {
     if (subChatId && subChatId !== lastInitializedRef.current) {
-      const store = useAgentSubChatStore.getState();
-      const subChat = store.subChatsById[subChatId];
-      if (subChat?.mode && store.activeSubChatId === subChatId) {
-        setChatMode(subChat.mode);
-      }
+      const subChat = useAgentSubChatStore.getState().subChatsById[subChatId];
+      if (subChat?.mode) setChatMode(subChat.mode);
       lastInitializedRef.current = subChatId;
     }
   }, [subChatId, setChatMode]);
