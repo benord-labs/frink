@@ -1,6 +1,6 @@
-/** Worktree teardown: tri-state sibling safety, project-delete dedup, boot sweep, retry predicate. */
+/** Worktree teardown: tri-state sibling safety, git-only deletion, project-delete dedup, boot recovery, retry predicate. */
 
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -59,10 +59,8 @@ vi.mock('../../../db/repos/chats', async (orig) => ({
 
 import { isTransientWorktreeRemoveError } from '../../../git/worktree';
 import {
-  hasLiveGitLinkage,
   recoverOrphanedWorktrees,
   removeProjectWorktrees,
-  sweepOrphanWorktreeDirs,
   tearDownChatWorktree,
 } from './teardown-worktree';
 
@@ -92,10 +90,10 @@ beforeEach(() => {
   configureHooksMock.mockResolvedValue(undefined);
 });
 
-// Real temp dirs for the filesystem sweep — never the developer's real ~/.frink/worktrees.
+// Real temp dirs for on-disk worktree shapes — never the developer's real ~/.frink/worktrees.
 const tmpBases: string[] = [];
 const mkTmpBase = (): string => {
-  const base = mkdtempSync(join(tmpdir(), 'frink-wt-sweep-'));
+  const base = mkdtempSync(join(tmpdir(), 'frink-wt-'));
   tmpBases.push(base);
   return base;
 };
@@ -178,6 +176,33 @@ describe('tearDownChatWorktree', () => {
   });
 });
 
+// Frink deletes a worktree only through git: when git cannot remove one, the folder stays on disk.
+describe('tearDownChatWorktree when git cannot remove the worktree', () => {
+  it('leaves a worktree whose repo was moved on disk, uncommitted work included', async () => {
+    const project = await createProject(db, { name: 'P', path: '/repo' });
+    siblingMock.mockResolvedValue(false);
+    const base = mkTmpBase();
+    const dir = mkdirp(base, 'slug', 'wt');
+    writeFileSync(
+      join(dir, '.git'),
+      `gitdir: ${join(base, 'moved-repo', '.git', 'worktrees', 'wt')}\n`,
+    );
+    const work = join(mkdirp(dir, 'src'), 'uncommitted.ts');
+    writeFileSync(work, 'x');
+    removeWorktreeMock.mockResolvedValue({ success: false, error: 'fatal: not a git repository' });
+
+    const ok = await tearDownChatWorktree(db, {
+      id: 'c1',
+      worktreePath: dir,
+      branch: 'feat',
+      projectId: project.id,
+    });
+
+    expect(ok).toBe(false);
+    expect(existsSync(work)).toBe(true);
+  });
+});
+
 // sc-3292: the REAL sibling query must count an archived fork as a holder — removal is --force and
 // deletes the branch, so a wrong "no siblings" destroys the fork's unpushed work.
 describe('tearDownChatWorktree with the real sibling query', () => {
@@ -243,29 +268,10 @@ describe('tearDownChatWorktree with the real sibling query', () => {
     await createChat(db, { id: 'b', name: 'B', ...ref, archivedAt: archived });
     listWorktreesMock.mockResolvedValue([wt('/repo', { isMain: true }), wt('/repo/wt')]);
 
-    const { removed } = await recoverOrphanedWorktrees(db, '');
+    const { removed } = await recoverOrphanedWorktrees(db);
 
     expect(removeWorktreeMock).not.toHaveBeenCalled();
     expect(removed).toBe(0);
-  });
-
-  it('boot filesystem sweep spares a git-forgotten dir an archived fork still references', async () => {
-    const base = mkTmpBase();
-    const dir = mkdirp(base, 'slug', 'wt');
-    const project = await createProject(db, { name: 'P', path: '/repo' });
-    await createChat(db, {
-      id: 'b',
-      name: 'B',
-      projectId: project.id,
-      worktreePath: dir,
-      branch: 'feat',
-      archivedAt: archived,
-    });
-
-    const { orphaned } = await recoverOrphanedWorktrees(db, base);
-
-    expect(orphaned).toBe(0);
-    expect(existsSync(dir)).toBe(true);
   });
 });
 
@@ -320,7 +326,7 @@ describe('recoverOrphanedWorktrees', () => {
     await createProject(db, { name: 'P', path: '/repo' });
     listWorktreesMock.mockResolvedValue([wt('/repo', { isMain: true }), wt('/repo/revoked')]);
     managedMock.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
-    expect((await recoverOrphanedWorktrees(db, '')).skipped).toBe(1);
+    expect((await recoverOrphanedWorktrees(db)).skipped).toBe(1);
     expect(managedMock).toHaveBeenCalledTimes(2);
     expect(removeWorktreeMock).not.toHaveBeenCalled();
   });
@@ -332,9 +338,9 @@ describe('recoverOrphanedWorktrees', () => {
       wt('/repo/wt-active-in-owner-instance'),
     ]);
 
-    const result = await recoverOrphanedWorktrees(db, '');
+    const result = await recoverOrphanedWorktrees(db);
 
-    expect(result).toEqual({ pruned: 0, removed: 0, skipped: 0, orphaned: 0 });
+    expect(result).toEqual({ pruned: 0, removed: 0, skipped: 0 });
     expect(listWorktreesMock).not.toHaveBeenCalled();
     expect(pruneWorktreesMock).not.toHaveBeenCalled();
     expect(removeWorktreeMock).not.toHaveBeenCalled();
@@ -350,7 +356,7 @@ describe('recoverOrphanedWorktrees', () => {
       wt('/repo/wt-stale', { prunable: true, branch: 'bs' }), // dir gone → pruned, not removed
     ]);
 
-    const { pruned, removed, skipped, orphaned } = await recoverOrphanedWorktrees(db, '');
+    const { pruned, removed, skipped } = await recoverOrphanedWorktrees(db);
 
     expect(pruneWorktreesMock).toHaveBeenCalledWith('/repo');
     expect(removeWorktreeMock).toHaveBeenCalledTimes(1);
@@ -360,7 +366,6 @@ describe('recoverOrphanedWorktrees', () => {
     expect(pruned).toBe(1);
     expect(removed).toBe(1);
     expect(skipped).toBe(0);
-    expect(orphaned).toBe(0);
   });
 
   it('never removes a clean pushed manual worktree without Frink ownership', async () => {
@@ -371,9 +376,9 @@ describe('recoverOrphanedWorktrees', () => {
     ]);
     managedMock.mockResolvedValue(false);
 
-    const result = await recoverOrphanedWorktrees(db, '');
+    const result = await recoverOrphanedWorktrees(db);
 
-    expect(result).toEqual({ pruned: 0, removed: 0, skipped: 1, orphaned: 0 });
+    expect(result).toEqual({ pruned: 0, removed: 0, skipped: 1 });
     expect(managedMock).toHaveBeenCalledWith('/repo/manual-dev-worktree');
     expect(dirtyMock).not.toHaveBeenCalled();
     expect(unpushedMock).not.toHaveBeenCalled();
@@ -391,7 +396,7 @@ describe('recoverOrphanedWorktrees', () => {
     ]);
     configureHooksMock.mockRejectedValue(new Error('git config locked'));
 
-    const result = await recoverOrphanedWorktrees(db, '');
+    const result = await recoverOrphanedWorktrees(db);
 
     expect(result.removed).toBe(1);
     expect(removeWorktreeMock).toHaveBeenCalledWith('/repo', '/repo/wt-orphan', { branch: 'bo' });
@@ -409,14 +414,14 @@ describe('recoverOrphanedWorktrees', () => {
     ]);
     managedMock.mockRejectedValue(new Error('git config unavailable'));
 
-    const result = await recoverOrphanedWorktrees(db, '');
+    const result = await recoverOrphanedWorktrees(db);
 
     expect(captureContainedMock).toHaveBeenCalledWith(expect.any(Error), {
       surface: 'worktree-ownership',
       stage: 'startup-prefetch',
     });
 
-    expect(result).toEqual({ pruned: 0, removed: 0, skipped: 1, orphaned: 0 });
+    expect(result).toEqual({ pruned: 0, removed: 0, skipped: 1 });
     expect(dirtyMock).not.toHaveBeenCalled();
     expect(unpushedMock).not.toHaveBeenCalled();
     expect(removeWorktreeMock).not.toHaveBeenCalled();
@@ -428,7 +433,7 @@ describe('recoverOrphanedWorktrees', () => {
     // Unreferenced (no chat) but a merge-conflict / local-only worktree → must be left alone.
     dirtyMock.mockResolvedValue(true);
 
-    const { removed, skipped } = await recoverOrphanedWorktrees(db, '');
+    const { removed, skipped } = await recoverOrphanedWorktrees(db);
 
     expect(removeWorktreeMock).not.toHaveBeenCalled();
     expect(removed).toBe(0);
@@ -443,7 +448,7 @@ describe('recoverOrphanedWorktrees', () => {
       wt('/repo/wt-orphan', { branch: 'bo' }),
     ]);
 
-    const { removed, skipped } = await recoverOrphanedWorktrees(db, '');
+    const { removed, skipped } = await recoverOrphanedWorktrees(db);
 
     expect(removeWorktreeMock).toHaveBeenCalledTimes(1);
     expect(removeWorktreeMock).toHaveBeenCalledWith('/repo/other-checkout', '/repo/wt-orphan', {
@@ -458,148 +463,9 @@ describe('recoverOrphanedWorktrees', () => {
     await createChat(db, { name: 'k', projectId: project.id, worktreePath: '/repo/wt' });
     listWorktreesMock.mockResolvedValue([wt('/repo', { isMain: true }), wt('/repo/wt')]);
 
-    const { pruned, removed } = await recoverOrphanedWorktrees(db, '');
+    const { pruned, removed } = await recoverOrphanedWorktrees(db);
     expect(removeWorktreeMock).not.toHaveBeenCalled();
     expect(pruned).toBe(0);
     expect(removed).toBe(0);
   });
-
-  it('reclaims a git-forgotten orphan dir under the injected base and reports the count', async () => {
-    await createProject(db, { name: 'P', path: '/repo' });
-    listWorktreesMock.mockResolvedValue([]); // git no longer lists the leftover dir
-    const base = mkTmpBase();
-    mkdirp(base, 'frink', 'territorial-solstice', '.husky'); // the real bug shape: no .git
-
-    const { orphaned } = await recoverOrphanedWorktrees(db, base);
-
-    expect(orphaned).toBe(1);
-    expect(existsSync(join(base, 'frink', 'territorial-solstice'))).toBe(false);
-    expect(existsSync(join(base, 'frink'))).toBe(false); // emptied slug reclaimed too
-  });
-
-  it('skips the sweep entirely when given an unresolved base', async () => {
-    await createProject(db, { name: 'P', path: '/repo' });
-    const { orphaned } = await recoverOrphanedWorktrees(db, '');
-    expect(orphaned).toBe(0);
-  });
-
-  it('does not sweep a worktree git still lists, even with no .git on disk (knownGitPaths wiring)', async () => {
-    await createProject(db, { name: 'P', path: '/repo' });
-    const base = mkTmpBase();
-    const known = mkdirp(base, 'frink', 'known-wt'); // on disk, no .git, but git reports it
-    listWorktreesMock.mockResolvedValue([wt('/repo', { isMain: true }), wt(known)]);
-    dirtyMock.mockResolvedValue(true); // git loop skips it (dirty) → isolates the sweep's decision
-
-    const { orphaned, skipped } = await recoverOrphanedWorktrees(db, base);
-
-    expect(orphaned).toBe(0); // threaded into knownGitPaths → never swept
-    expect(skipped).toBe(1);
-    expect(existsSync(known)).toBe(true);
-  });
-});
-
-describe('hasLiveGitLinkage', () => {
-  it('keeps a worktree whose .git file points at an existing gitdir (clean-canyon shape)', () => {
-    const base = mkTmpBase();
-    const wt = mkdirp(base, 'wt');
-    const target = mkdirp(base, 'repo', '.git', 'worktrees', 'wt');
-    writeFileSync(join(wt, '.git'), `gitdir: ${target}\n`);
-    expect(hasLiveGitLinkage(wt)).toBe(true);
-  });
-
-  it('condemns a .git file whose gitdir target is gone (pruned-but-undeleted)', () => {
-    const base = mkTmpBase();
-    const wt = mkdirp(base, 'wt');
-    writeFileSync(join(wt, '.git'), `gitdir: ${join(base, 'repo', '.git', 'worktrees', 'gone')}\n`);
-    expect(hasLiveGitLinkage(wt)).toBe(false);
-  });
-
-  it('keeps a worktree whose .git file uses a relative gitdir (real git output shape)', () => {
-    const base = mkTmpBase();
-    const wt = mkdirp(base, 'slug', 'wt');
-    mkdirp(base, 'repo', '.git', 'worktrees', 'wt'); // target, reachable from wt via ../../
-    writeFileSync(join(wt, '.git'), 'gitdir: ../../repo/.git/worktrees/wt\n');
-    expect(hasLiveGitLinkage(wt)).toBe(true);
-  });
-
-  it('condemns a .git file with no gitdir line (truncated/garbage)', () => {
-    const base = mkTmpBase();
-    const wt = mkdirp(base, 'wt');
-    writeFileSync(join(wt, '.git'), 'this file is corrupt\n');
-    expect(hasLiveGitLinkage(wt)).toBe(false);
-  });
-
-  it('condemns a dead stub with no .git (territorial-solstice shape)', () => {
-    const base = mkTmpBase();
-    mkdirp(base, 'wt', '.husky');
-    expect(hasLiveGitLinkage(join(base, 'wt'))).toBe(false);
-  });
-
-  it('keeps a dir whose .git is a directory (embedded repo)', () => {
-    const base = mkTmpBase();
-    mkdirp(base, 'wt', '.git');
-    expect(hasLiveGitLinkage(join(base, 'wt'))).toBe(true);
-  });
-});
-
-describe('sweepOrphanWorktreeDirs', () => {
-  it('removes dead stubs, keeps live/known/referenced + config.json, rmdirs emptied slugs', async () => {
-    const base = mkTmpBase();
-    writeFileSync(join(base, 'config.json'), '{}'); // depth-1 file must survive
-    mkdirp(base, 'proj', 'orphan-stub', '.husky'); // no .git → remove
-    const live = mkdirp(base, 'proj', 'live-wt');
-    const target = mkdirp(mkTmpBase(), 'gitdir-target'); // outside base so the sweep can't touch it
-    writeFileSync(join(live, '.git'), `gitdir: ${target}\n`); // valid linkage → keep
-    mkdirp(base, 'proj', 'known-wt'); // in knownGitPaths → keep
-    mkdirp(base, 'proj', 'referenced-wt'); // referenced by a live chat → keep
-    mkdirp(base, 'gone-proj', 'lone-orphan'); // no .git → remove, then slug becomes empty
-
-    const known = new Set([join(base, 'proj', 'known-wt')]);
-    const referenced = new Set([join(base, 'proj', 'referenced-wt')]);
-    const removed = await sweepOrphanWorktreeDirs(base, known, referenced);
-
-    expect(removed).toBe(2);
-    expect(existsSync(join(base, 'config.json'))).toBe(true);
-    expect(existsSync(join(base, 'proj', 'orphan-stub'))).toBe(false);
-    expect(existsSync(join(base, 'proj', 'live-wt'))).toBe(true);
-    expect(existsSync(join(base, 'proj', 'known-wt'))).toBe(true);
-    expect(existsSync(join(base, 'proj', 'referenced-wt'))).toBe(true);
-    expect(existsSync(join(base, 'proj'))).toBe(true); // still holds live worktrees → kept
-    expect(existsSync(join(base, 'gone-proj'))).toBe(false); // emptied slug reclaimed
-  });
-
-  it('never removes an orphan-shaped dir a live chat still references', async () => {
-    const base = mkTmpBase();
-    const wt = join(base, 'proj', 'wt');
-    mkdirp(base, 'proj', 'wt', '.husky'); // dead-stub shape, but referenced
-    const removed = await sweepOrphanWorktreeDirs(base, new Set(), new Set([wt]));
-    expect(removed).toBe(0);
-    expect(existsSync(wt)).toBe(true);
-  });
-
-  it('is a no-op for an unresolved or missing base (never scans /)', async () => {
-    expect(await sweepOrphanWorktreeDirs('', new Set(), new Set())).toBe(0);
-    const missing = join(tmpdir(), 'frink-wt-sweep-does-not-exist-xyz');
-    expect(await sweepOrphanWorktreeDirs(missing, new Set(), new Set())).toBe(0);
-  });
-
-  // Root ignores POSIX perms and Windows has no equivalent → the EACCES can't be staged there.
-  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
-    'skips an unremovable orphan (EACCES) without aborting the rest of the batch',
-    async () => {
-      const base = mkTmpBase();
-      const lockedSlug = mkdirp(base, 'locked');
-      mkdirp(base, 'locked', 'orphan', '.husky'); // dead stub we make unremovable
-      mkdirp(base, 'open', 'orphan', '.husky'); // dead stub that must still be reclaimed
-      chmodSync(lockedSlug, 0o500); // r-x, no write → unlinking its child throws EACCES
-      try {
-        const removed = await sweepOrphanWorktreeDirs(base, new Set(), new Set());
-        expect(removed).toBe(1); // the reachable orphan is still reclaimed
-        expect(existsSync(join(base, 'open', 'orphan'))).toBe(false);
-        expect(existsSync(join(base, 'locked', 'orphan'))).toBe(true); // left for next boot
-      } finally {
-        chmodSync(lockedSlug, 0o700); // restore so afterEach cleanup can remove it
-      }
-    },
-  );
 });
