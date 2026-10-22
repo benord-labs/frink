@@ -71,6 +71,7 @@ import { useModelNormalization, useNewAgentChatModel } from '../hooks/use-model-
 import { useToggleFocusOnCmdEsc } from '../hooks/use-toggle-focus-on-cmd-esc';
 import { newChatDraftKey } from '../lib/drafts';
 import { createNewChatStaging, seedNewChatNavigation } from '../lib/new-chat-navigation';
+import { useNewChatSubChatId } from '../lib/new-chat-sub-chat-id';
 import { cleanupSentinelState } from '../lib/sentinel-cleanup';
 import {
   AgentsFileMention,
@@ -119,6 +120,7 @@ export function NewChatForm({
   /** Per-pane sentinel for terminal state — keyed so split-view panes don't collide */
   const terminalId = useMemo(() => newChatTerminalId(splitPaneIndex), [splitPaneIndex]);
   const draftKey = useMemo(() => newChatDraftKey(splitPaneIndex), [splitPaneIndex]);
+  const { subChatId, rotate: rotateSubChatId } = useNewChatSubChatId(draftKey);
 
   // Code selection and active file from editor (keyed by NEW_CHAT_PANE so selection is written when this pane is active)
   const codeSelectionContext = useAtomValue(codeSelectionContextAtomFamily(NEW_CHAT_PANE));
@@ -270,7 +272,7 @@ export function NewChatForm({
     beginSend,
     resumeDraftPersistence,
     hasAttachments,
-  } = useDraftManagement({ editorRef, setHasContent, draftKey });
+  } = useDraftManagement({ editorRef, setHasContent, draftKey, subChatId });
   useTerminalOutputIntake({ chatId: terminalId, addPastedText, editorRef });
 
   // Editor handlers (mentions, slash, paste, drag & drop)
@@ -337,6 +339,7 @@ export function NewChatForm({
       clearPastedTexts();
       taskAttachment.clearTask();
       clearCurrentDraft();
+      rotateSubChatId();
       newChatAccount.clearPick();
       appStore.set(newChatWorktreePathAtom, null);
       appStore.set(pendingNewChatTextAtom, null);
@@ -392,6 +395,7 @@ export function NewChatForm({
   const isSendingRef = useRef(false);
 
   const handleSend = useCallback(async () => {
+    if (isUploading) return; // a file still copying would miss the new chat
     // Prepend attached task message if present
     const taskToLink = taskAttachment.prependTaskMessage();
 
@@ -525,9 +529,12 @@ export function NewChatForm({
         workMode !== 'worktree' && selectedWorktreePath ? selectedWorktreePath : undefined,
       mode: chatMode,
       accountId: pickedAccountId,
+      subChatId,
     });
     // Editor, images, pasted texts, and attached task are cleared in onSuccess callback
   }, [
+    isUploading,
+    subChatId,
     taskAttachment,
     selectedProject,
     localProjectPath,

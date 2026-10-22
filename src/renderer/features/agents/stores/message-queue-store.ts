@@ -87,12 +87,13 @@ function without<T>(map: Record<string, T>, keys: string[]): Record<string, T> {
 
 type PersistedQueueState = Pick<MessageQueueState, 'queues' | 'editingItemIds' | 'chatIds'>;
 
-/** A restored image keeps only its inline data: its blob: url died with the old document. */
-function reviveItem(raw: AgentQueueItem): AgentQueueItem {
-  const { sendOnSettle: _settle, attachmentsLost: _lost, ...item } = raw;
+/** A restored image keeps only its inline data: its blob: url died with the old document. Older
+ * builds also queued non-image files as blob: urls alone; those cannot be sent any more. */
+function reviveItem(raw: AgentQueueItem & { files?: unknown[] }): AgentQueueItem {
+  const { sendOnSettle: _settle, attachmentsLost: _lost, files: oldFiles, ...item } = raw;
   const timestamp = new Date(raw.timestamp);
   const images = item.images?.map((img) => ({ ...img, url: '' }));
-  const lost = (item.files?.length ?? 0) > 0 || (item.images ?? []).some((img) => !img.base64Data);
+  const lost = (oldFiles?.length ?? 0) > 0 || (item.images ?? []).some((img) => !img.base64Data);
   return {
     ...item,
     images,
@@ -112,12 +113,7 @@ type EntryCheck = (entry: Record<string, unknown>) => boolean;
 
 /** The shape each attachment/context list must have for the send path to consume it unchanged. */
 const LIST_SHAPES: Record<
-  | 'images'
-  | 'files'
-  | 'textContexts'
-  | 'diffTextContexts'
-  | 'codeSelectionContexts'
-  | 'pastedTexts',
+  'images' | 'textContexts' | 'diffTextContexts' | 'codeSelectionContexts' | 'pastedTexts',
   EntryCheck
 > = {
   images: (e) =>
@@ -127,12 +123,6 @@ const LIST_SHAPES: Record<
     isOptional(e.url, isString) &&
     isOptional(e.base64Data, isString) &&
     isOptional(e.filename, isString),
-  files: (e) =>
-    isString(e.id) &&
-    isString(e.filename) &&
-    isString(e.url) &&
-    isOptional(e.mediaType, isString) &&
-    isOptional(e.size, isLineOrSize),
   textContexts: (e) => isString(e.id) && isString(e.text) && isString(e.sourceMessageId),
   diffTextContexts: (e) =>
     isString(e.id) &&

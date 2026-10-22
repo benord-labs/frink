@@ -312,29 +312,11 @@ export function QueueProcessor() {
               type: 'data-image';
               data: { url?: string; mediaType?: string; filename?: string; base64Data?: string };
             }
-          | {
-              type: 'data-file';
-              data: { url?: string; mediaType?: string; filename?: string; size?: number };
-            }
           | { type: 'text'; text: string }
         > = [
-          ...(item.images || []).map((img) => ({
+          ...(item.images || []).map(({ id: _id, ...data }) => ({
             type: 'data-image' as const,
-            data: {
-              url: img.url,
-              mediaType: img.mediaType,
-              filename: img.filename,
-              base64Data: img.base64Data,
-            },
-          })),
-          ...(item.files || []).map((f) => ({
-            type: 'data-file' as const,
-            data: {
-              url: f.url,
-              mediaType: f.mediaType,
-              filename: f.filename,
-              size: f.size,
-            },
+            data,
           })),
         ];
 

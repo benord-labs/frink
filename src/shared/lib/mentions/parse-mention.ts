@@ -28,6 +28,13 @@ export function pathLabel(path: string): string {
   return path.split(PATH_SEPARATOR_REGEX).pop() || path;
 }
 
+const ATTACHED_FILE_NAME_REGEX = /^[0-9a-f]{8}-./i;
+
+/** A file the user attached (saved to the chat's pasted folder as `<8 hex>-<name>`), not pasted text. */
+export function isAttachedFilePath(path: string): boolean {
+  return ATTACHED_FILE_NAME_REGEX.test(pathLabel(path));
+}
+
 /** The decoded base64 part (empty when it does not decode), or the preview when there is none. */
 function decodeFullText(encodedText: string, preview: string): string {
   return encodedText ? decodeFromMentionToken(encodedText) : preview;

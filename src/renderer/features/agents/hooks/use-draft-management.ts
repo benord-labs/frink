@@ -87,6 +87,7 @@ type PersistenceParams = RestoreTargets & {
   images: FullDraftData['images'];
   pastedTexts: PastedTextFile[];
   attachedTask: TaskData | null;
+  subChatId: string;
 };
 
 /**
@@ -178,11 +179,8 @@ function isJustRestored(
 
 /**
  * Writes the composer's current state to storage. Cancels the pending debounce UNCONDITIONALLY,
- * before the early-return — a timer armed late (content changing after `beginSend()`) can't outlive an early-returning unmount call and later fire unguarded once
- * resume flips `isSending` back false. No-ops before the first restore or while a send is in
- * flight. Attachments read from `params` — the LIVE props — not `latest`: `clearCurrentDraft`
- * wipes it pre-emptively before a send's outcome is known, and `onError` never clears live
- * attachment state, so on failure the two would disagree.
+ * so a timer armed after `beginSend()` cannot fire unguarded once resume clears `isSending`. No-ops
+ * before the first restore or mid-send. Attachments come from the LIVE `params`, not `latest`.
  */
 function flushDraft(key: string, state: StateRef, ignoreSending = false): void {
   cancelPendingSave(state);
@@ -194,10 +192,10 @@ function flushDraft(key: string, state: StateRef, ignoreSending = false): void {
     s.lastSeenWriteCount = writes;
     return;
   }
-  const { images: img, pastedTexts: pasted, attachedTask: task, editorRef } = s.params;
+  const { images: img, pastedTexts: pasted, attachedTask: task, editorRef, subChatId } = s.params;
   const text = editorRef.current?.getValue() ?? s.latest.text;
   s.latest = { text, images: img, pastedTexts: pasted, task };
-  writeDraft(key, { text, images: img, pastedTexts: pasted, task });
+  writeDraft(key, { text, images: img, pastedTexts: pasted, task, subChatId });
   s.lastWriteStamp = readDraftStamp(key);
   s.lastSeenWriteCount = writes + 1; // writeDraft above bumped exactly once, synchronously
 }
@@ -402,6 +400,7 @@ type Props = {
   setHasContent: (hasContent: boolean) => void;
   /** Stable per-pane storage slot — see `newChatDraftKey`. */
   draftKey: string;
+  subChatId: string;
 };
 
 type ReturnValue = Pick<
@@ -433,11 +432,12 @@ type ReturnValue = Pick<
  * Note the draft deliberately outlives its pane's TERMINAL state, which `cleanupSentinelState`
  * resets on navigation. Authored text is not scratch state.
  */
-export function useDraftManagement({ editorRef, setHasContent, draftKey }: Props): ReturnValue {
+export function useDraftManagement(props: Props): ReturnValue {
+  const { editorRef, setHasContent, draftKey, subChatId } = props;
   const focusEditor = useCallback(() => editorRef.current?.focus(), [editorRef]);
 
-  const fileUpload = useAgentsFileUpload();
-  const pasted = usePastedTextFiles(draftKey);
+  const pasted = usePastedTextFiles(subChatId);
+  const fileUpload = useAgentsFileUpload(pasted.addPastedFiles);
   const taskAttachment = useTaskAttachment({ editorRef, onDrop: focusEditor });
 
   const { images, handleAddAttachments, removeImage, clearImages, isUploading } = fileUpload;
@@ -451,6 +451,7 @@ export function useDraftManagement({ editorRef, setHasContent, draftKey }: Props
       images,
       pastedTexts,
       attachedTask: taskAttachment.attachedTask,
+      subChatId,
       setImagesFromDraft: fileUpload.setImagesFromDraft,
       setPastedTextsFromDraft: pasted.setPastedTextsFromDraft,
       setAttachedTask: taskAttachment.setAttachedTask,

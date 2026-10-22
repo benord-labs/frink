@@ -22,12 +22,12 @@ function placeCaret(el: HTMLElement): void {
   sel?.addRange(range);
 }
 
-function pasteEvent(text: string, target: HTMLElement) {
+function pasteEvent(text: string, target: HTMLElement, items: object[] = []) {
   const preventDefault = vi.fn();
   const event = {
     preventDefault,
     currentTarget: target,
-    clipboardData: { items: [], getData: (type: string) => (type === 'text/plain' ? text : '') },
+    clipboardData: { items, getData: (type: string) => (type === 'text/plain' ? text : '') },
   } as unknown as React.ClipboardEvent;
   return { event, preventDefault };
 }
@@ -44,6 +44,20 @@ describe('handlePasteEvent', () => {
 
   afterEach(() => {
     document.body.innerHTML = '';
+  });
+
+  it('hands a pasted file of any type to the attachment handler, not the editor', () => {
+    const pdf = new File(['%PDF'], 'report.pdf', { type: 'application/pdf' });
+    const attach = vi.fn();
+    const { event, preventDefault } = pasteEvent('report.pdf', input, [
+      { kind: 'file', type: 'application/pdf', getAsFile: () => pdf },
+    ]);
+
+    handlePasteEvent(event, attach);
+
+    expect(attach).toHaveBeenCalledWith([pdf]);
+    expect(preventDefault).toHaveBeenCalled();
+    expect(input.textContent).toBe('');
   });
 
   it('inserts a paste of exactly the 5,000-char threshold inline', () => {

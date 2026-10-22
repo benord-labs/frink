@@ -5,7 +5,7 @@
 
 import { FLOW_DISPATCH_SOURCE } from '../../../../shared/lib/message-markers/person-authored';
 import type { ApprovedPlanContext } from '../../../../shared/types/plan';
-import type { UploadedFile, UploadedImage } from '../hooks/use-agents-file-upload';
+import type { UploadedImage } from '../hooks/use-agents-file-upload';
 import { createTextPreview } from '@/lib/mentions/queued-message-text';
 
 type QueuedImage = {
@@ -14,14 +14,6 @@ type QueuedImage = {
   mediaType: string;
   filename?: string;
   base64Data?: string;
-};
-
-type QueuedFile = {
-  id: string;
-  url: string;
-  filename: string;
-  mediaType?: string;
-  size?: number;
 };
 
 // Text context selected from assistant messages
@@ -111,7 +103,6 @@ export type AgentQueueItem = {
   id: string;
   message: string; // Serialized value with @[id] tokens for mentions
   images?: QueuedImage[];
-  files?: QueuedFile[];
   textContexts?: QueuedTextContext[];
   diffTextContexts?: QueuedDiffTextContext[];
   codeSelectionContexts?: QueuedCodeSelectionContext[];
@@ -127,8 +118,8 @@ export type AgentQueueItem = {
   /** Queued only because main was finalizing a turn whose stream had closed: it goes out the
    * moment main settles, without the spacing between queued turns. */
   sendOnSettle?: true;
-  /** Restored after a reload without an attachment that was only a blob: url; held at the head,
-   * never sent partially (`message-queue-reload-persistence`). */
+  /** Restored after a reload without an attachment it can still send (an image with no inline
+   * data, or a file from before files were saved to disk); held at the head, never sent partially. */
   attachmentsLost?: true;
 };
 
@@ -166,7 +157,6 @@ export function createQueueItem(
   id: string,
   message: string,
   images?: QueuedImage[],
-  files?: QueuedFile[],
   textContexts?: QueuedTextContext[],
   diffTextContexts?: QueuedDiffTextContext[],
   codeSelectionContexts?: QueuedCodeSelectionContext[],
@@ -176,7 +166,6 @@ export function createQueueItem(
     id,
     message,
     images: images && images.length > 0 ? images : undefined,
-    files: files && files.length > 0 ? files : undefined,
     textContexts: textContexts && textContexts.length > 0 ? textContexts : undefined,
     diffTextContexts:
       diffTextContexts && diffTextContexts.length > 0 ? diffTextContexts : undefined,
@@ -200,17 +189,6 @@ export function toQueuedImage(img: UploadedImage): QueuedImage {
     mediaType: img.mediaType || 'image/png',
     filename: img.filename,
     base64Data: img.base64Data,
-  };
-}
-
-// Helper to convert UploadedFile to QueuedFile
-export function toQueuedFile(file: UploadedFile): QueuedFile {
-  return {
-    id: file.id,
-    url: file.url,
-    filename: file.filename,
-    mediaType: file.type,
-    size: file.size,
   };
 }
 

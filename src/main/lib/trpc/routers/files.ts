@@ -13,7 +13,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { app, BrowserWindow, shell } from 'electron';
+import { BrowserWindow, shell } from 'electron';
 import simpleGit from 'simple-git';
 import { z } from 'zod';
 import type { FileStatus } from '../../../../shared/changes-types';
@@ -22,6 +22,7 @@ import { isPdfPath, MAX_PDF_BYTES } from '../../../../shared/pdf-extensions';
 import { escapeRegExp } from '../../../../shared/utils/escape-regexp';
 import { PathValidationError, resolvePathInWorktree } from '../../git/security/path-validation';
 import { parseGitStatus } from '../../git/utils/parse-status';
+import { copyIntoPasted, writePastedText } from '../../claude/pasted-files';
 import { captureMainException } from '../../sentry/init';
 // NOTE: publicProcedure is appropriate here — this is Electron IPC (renderer→main),
 // not a web API. The user's own machine is the trust boundary: these procedures
@@ -1957,50 +1958,15 @@ export const filesRouter = router({
       return { success: true, newPath: newRelativePath };
     }),
 
-  /**
-   * Write pasted text to a file in the session's pasted directory
-   * Used for large text pastes that shouldn't be embedded inline
-   */
+  /** Large pastes, saved to the sub-chat's `pasted/` folder for the agent to read by path. */
   writePastedText: publicProcedure
-    .input(
-      z.object({
-        subChatId: z.string(),
-        text: z.string(),
-        filename: z.string().optional(),
-      }),
-    )
-    .mutation(async ({ input }) => {
-      const { subChatId, text, filename } = input;
+    .input(z.object({ subChatId: z.string(), text: z.string(), filename: z.string().optional() }))
+    .mutation(({ input }) => writePastedText(input)),
 
-      // Security: Validate inputs don't contain path traversal
-      if (subChatId.includes('..') || subChatId.includes('/') || subChatId.includes('\\')) {
-        throw new Error('Invalid subChatId');
-      }
-      if (
-        filename &&
-        (filename.includes('..') || filename.includes('/') || filename.includes('\\'))
-      ) {
-        throw new Error('Invalid filename');
-      }
-
-      // Create pasted directory in session folder
-      const sessionDir = join(app.getPath('userData'), 'claude-sessions', subChatId);
-      const pastedDir = join(sessionDir, 'pasted');
-      await mkdir(pastedDir, { recursive: true });
-
-      // Generate filename with timestamp
-      const finalFilename = filename || `pasted_${Date.now()}.txt`;
-      const filePath = join(pastedDir, finalFilename);
-
-      // Write file
-      await writeFile(filePath, text, 'utf-8');
-
-      return {
-        filePath,
-        filename: finalFilename,
-        size: text.length,
-      };
-    }),
+  /** A composer attachment, copied from its OS path into the sub-chat's `pasted/` folder. */
+  attachPastedFile: publicProcedure
+    .input(z.object({ subChatId: z.string(), sourcePath: z.string().min(1) }))
+    .mutation(({ input }) => copyIntoPasted(input)),
 
   /**
    * Read the project's tsconfig.json and resolve paths/baseUrl for Monaco.
