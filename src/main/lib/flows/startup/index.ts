@@ -27,6 +27,15 @@ export async function startRunTerminalListeners(): Promise<void> {
   });
 }
 
+/** Boot worktree recovery; logs the counts only when something changed. */
+export async function recoverWorktreesOnBoot(): Promise<void> {
+  const { recoverOrphanedWorktrees } = await import('../../trpc/routers/chats/teardown-worktree');
+  const { pruned, removed, skipped } = await recoverOrphanedWorktrees(getDatabase());
+  if ([pruned, removed, skipped].some((count) => count > 0)) {
+    log.info('[Main] recoverOrphanedWorktrees reclaimed', { pruned, removed, skipped });
+  }
+}
+
 /**
  * Boot recovery sweeps + local background loops, run once from the ready path; every step is best-effort and only logs on failure.
  * Order matters: the run-terminal listeners precede the flow/task recovery sweep + task-completion watcher so no terminal event fires unobserved, and the worktree sweep follows them so in-flight-on-boot work has settled.
@@ -85,19 +94,9 @@ export async function runStartupRecoveryAndLoops(): Promise<void> {
     await resumeSettledSlotTurns(getDatabase());
   });
 
-  // Worktree recovery sweep: prune stale git registrations + remove worktrees no active chat
-  // references (the guaranteed backstop for fire-and-forget teardown failures).
-  await step('recoverOrphanedWorktrees', async () => {
-    const { recoverOrphanedWorktrees } = await import('../../trpc/routers/chats/teardown-worktree');
-    const { resolveWorktreeBasePath } = await import('../../worktree/base-path-config');
-    const { pruned, removed, skipped, orphaned } = await recoverOrphanedWorktrees(
-      getDatabase(),
-      await resolveWorktreeBasePath(),
-    );
-    if ([pruned, removed, skipped, orphaned].some((count) => count > 0)) {
-      log.info('[Main] recoverOrphanedWorktrees reclaimed', { pruned, removed, skipped, orphaned });
-    }
-  });
+  // Worktree recovery: prune stale git registrations + remove worktrees no chat references
+  // (the backstop for teardown failures git still lists).
+  await step('recoverOrphanedWorktrees', recoverWorktreesOnBoot);
 
   // Custom protocol behind the frink-attachment:// URLs the renderer's <img src> consumes.
   await step('flows attachment protocol register', () => registerAttachmentProtocol());
