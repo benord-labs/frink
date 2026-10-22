@@ -413,7 +413,7 @@ Changes to the limit toggle and maximum stay in the settings panel until you cho
 
 When every slot is occupied, another Flow is accepted as **Queued** and starts automatically when capacity becomes available. Lowering the limit never interrupts active work; Frink drains down to the new maximum. Paused runs and runs waiting for approval or a question continue to hold their slot in this release. A queued run does not satisfy a DAG dependency—the successor remains pending until every predecessor actually completes.
 
-Open **Work Queue** to see waiting runs under **Queued to run**, in the order they will start: **Resuming** first, then the **Priority queue** (new runs of flows that use the [priority queue](#runfirst)), then **Starting**. Within each group, drag a row or use its keyboard-accessible **Move up** and **Move down** controls to change which run is admitted next. While the priority queue has runs, the **Starting** group shows when its oldest run started waiting. Reordering queued work never interrupts an active run.
+Open **Work Queue** to see waiting runs under **Queued to run**, in the order they will start: **Resuming** first, then the **Priority queue** (new runs that the [priority queue](#runfirst) setting puts first), then **Starting**. Within each group, drag a row or use its keyboard-accessible **Move up** and **Move down** controls to change which run is admitted next. While the priority queue has runs, the **Starting** group shows when its oldest run started waiting. Reordering queued work never interrupts an active run.
 
 To hold everything that is waiting, choose **Pause queue** in the Work Queue header. While the queue is paused, no queued run is admitted on this machine, resumptions included; each one stays in **Queued to run**, marked *On hold*, and you can still reorder or remove it. Runs that are already active keep going. The pause survives restarting Frink. A banner at the top of the Work Queue shows the queue is paused and holds the **Resume queue** button, which starts admitting queued runs again in their current order.
 
@@ -573,9 +573,13 @@ frink_flows_patch({
 
 ### runFirst
 
-When **on**, every new run of this flow joins the **priority queue** and starts ahead of other waiting new runs while your machine is running as many flows as it allows. Resuming runs still go first, and nothing already running is stopped. It applies to runs started after you save the flow; runs already waiting keep their place. Useful for scheduled flows, such as a daily digest, that should not wait behind a long backlog.
+**Priority queue** decides which new runs of this flow start ahead of other waiting new runs while your machine is running as many flows as it allows. Resuming runs still go first, nothing already running is stopped, and runs already waiting keep their place.
 
-**Where to enable:** Flow Editor → open **Settings** (toolbar) → toggle **Priority queue**.
+- **Off:** new runs wait in the normal queue.
+- **Every new run:** every new run joins the priority queue. Useful for scheduled flows, such as a daily digest, that should not wait behind a long backlog.
+- **Only runs that match:** a run joins the priority queue when its own trigger details match every row you add, for example `trigger.story.title` *contains* `[Follow-up]`. A detail is a trigger variable, named as in the **Available variables** panel; the box suggests the ones your trigger has. Text, numbers and true/false values can be checked; *equals* and *not equals* compare exactly, *contains* ignores case. A run is checked once, when it joins the queue. Until every row has a detail and a value, runs keep their normal place, and a run without the detail never matches. Runs you start with **Run** carry no details, so they never match; a scheduled flow can choose **Every new run** or **Off**. Anyone who can change a checked detail, such as a story's title, can move that run ahead; this changes queue order only.
+
+**Where to set it:** Flow Editor → open **Settings** (toolbar) → **Priority queue**.
 
 You can also set it via MCP:
 
@@ -583,6 +587,13 @@ You can also set it via MCP:
 frink_flows_patch({
   flowId: "<id>",
   operations: [{ op: "update_settings", settings: { runFirst: true } }]
+})
+
+frink_flows_patch({
+  flowId: "<id>",
+  operations: [{ op: "update_settings", settings: {
+    runFirstWhen: [{ detail: "trigger.story.title", operator: "contains", value: "[Follow-up]" }]
+  } }]
 })
 ```
 

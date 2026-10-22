@@ -92,6 +92,14 @@ function stepInto(current: PathValue, seg: string): PathLookup {
   return { found: true, value: (current as TemplateScope)[seg] };
 }
 
+const SCALAR_VALUE = z.union([z.string(), z.number(), z.boolean()]);
+
+/** Trimmed text of a string, number or boolean at a path; null for anything absent, empty or not a scalar. */
+export function resolveScalarText(obj: TemplateScope, path: string): string | null {
+  const scalar = SCALAR_VALUE.safeParse(lookupPath(obj, path)?.value);
+  return scalar.success ? String(scalar.data).trim() || null : null;
+}
+
 /** The string form a text template splices in: scalars as text, objects as JSON, nothing for null. */
 function resolvePath(obj: TemplateScope, path: string): ResolvedValue {
   const hit = lookupPath(obj, path);

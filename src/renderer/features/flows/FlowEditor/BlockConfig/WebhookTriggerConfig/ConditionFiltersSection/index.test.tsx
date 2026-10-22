@@ -61,3 +61,31 @@ describe('ConditionFiltersSection value input', () => {
     expect(screen.getAllByRole('combobox')).toHaveLength(2);
   });
 });
+
+describe('ConditionFiltersSection with field suggestions', () => {
+  it('names each field as free text with the suggestions, and has no header or add button unless asked', () => {
+    const onUpdateFilter = vi.fn();
+    render(
+      <ConditionFiltersSection
+        filters={[{ id: '0', field: '', operator: 'contains', value: '' }]}
+        showFilters
+        availableFilterFields={[]}
+        fieldSuggestions={[{ value: 'trigger.story.title', label: 'Story title' }]}
+        onUpdateFilter={onUpdateFilter}
+        onRemoveFilter={vi.fn()}
+      />,
+    );
+    const detail = screen.getByRole('combobox', { name: 'Detail' });
+
+    fireEvent.change(detail, { target: { value: 'trigger.story.title' } });
+
+    expect(onUpdateFilter).toHaveBeenCalledWith('0', { field: 'trigger.story.title' });
+    expect(detail).toHaveAttribute('placeholder', 'e.g. trigger.story.title');
+    expect(document.querySelector('option[value="trigger.story.title"]')).toHaveAttribute(
+      'label',
+      'Story title',
+    );
+    expect(screen.queryByText('Conditions (optional)')).toBeNull();
+    expect(screen.queryByRole('button', { name: /Add/ })).toBeNull();
+  });
+});

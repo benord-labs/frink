@@ -2,6 +2,7 @@
 
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderWithTrpc } from '@/lib/test-utils/render-with-trpc';
 import { FlowSettingsPanel } from '.';
@@ -83,7 +84,7 @@ describe('FlowSettingsPanel on an OpenCode project', () => {
 });
 
 describe('FlowSettingsPanel priority queue toggle', () => {
-  it('saves Priority queue as runFirst and clears it when switched off', () => {
+  it('saves Priority queue as runFirst and clears it when turned off', async () => {
     const onSettingsChange = vi.fn();
     const props = {
       flowId: 'flow-1',
@@ -100,13 +101,17 @@ describe('FlowSettingsPanel priority queue toggle', () => {
       () => new Promise(() => {}),
     );
 
-    fireEvent.click(screen.getByRole('switch', { name: 'Priority queue' }));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('combobox', { name: 'Priority queue' }));
+    await user.click(await screen.findByRole('option', { name: 'Every new run' }));
     expect(onSettingsChange).toHaveBeenLastCalledWith(expect.objectContaining({ runFirst: true }));
 
     rerender(<FlowSettingsPanel {...props} settings={{ runFirst: true }} />);
-    const toggle = screen.getByRole('switch', { name: 'Priority queue' });
-    expect(toggle).toBeChecked();
-    fireEvent.click(toggle);
+    expect(screen.getByRole('combobox', { name: 'Priority queue' })).toHaveTextContent(
+      'Every new run',
+    );
+    await user.click(screen.getByRole('combobox', { name: 'Priority queue' }));
+    await user.click(await screen.findByRole('option', { name: 'Off' }));
     expect(onSettingsChange.mock.lastCall?.[0]).not.toHaveProperty('runFirst', true);
   });
 });

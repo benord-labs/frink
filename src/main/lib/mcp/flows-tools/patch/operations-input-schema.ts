@@ -88,7 +88,7 @@ export const PATCH_OPERATIONS_INPUT_SCHEMA = {
       settings: {
         type: 'object',
         description:
-          'Flow-level settings for update_settings op. Supports: defaultModel (string), defaultProjectId (UUID string), briefing (string, max 10000 chars — shared PRD/spec delivered once per session as a system prompt to every agent in the flow; do not reference it in instructions; set to "" to clear), pauseOnFailure (boolean — when true, flow pauses instead of terminating on node failure, allowing retry or skip from run history), runFirst (boolean — puts new runs of this flow in the priority queue, ahead of other waiting new runs; set it only when the user explicitly asks), maxBatchConcurrency (number 1–20 — per-stage concurrent BSR ceiling; defaults to the built-in dispatch ceiling of 5 and can only cap below that ceiling), batchTriggerSchema (array — declare expected {{trigger.*}} variables for manual_trigger batch flows so they appear as typed chips in the editor; each item: { key: string (valid JS identifier, max 64 chars), type: "string"|"number"|"boolean"|"object"|"array", description?: string, example?: string }; max 100 entries; merging keys from triggerContext at run time is best-effort, non-blocking, and only for supported trigger types — not guaranteed for every key).',
+          'Flow-level settings for update_settings op. Supports: defaultModel (string), defaultProjectId (UUID string), briefing (string, max 10000 chars — shared PRD/spec delivered once per session as a system prompt to every agent in the flow; do not reference it in instructions; set to "" to clear), pauseOnFailure (boolean — when true, flow pauses instead of terminating on node failure, allowing retry or skip from run history), runFirst (boolean — puts new runs of this flow in the priority queue, ahead of other waiting new runs; set it only when the user explicitly asks), runFirstWhen (array of { detail, operator, value } rows — puts only runs whose trigger details match every row in the priority queue; set it only when the user explicitly asks), maxBatchConcurrency (number 1–20 — per-stage concurrent BSR ceiling; defaults to the built-in dispatch ceiling of 5 and can only cap below that ceiling), batchTriggerSchema (array — declare expected {{trigger.*}} variables for manual_trigger batch flows so they appear as typed chips in the editor; each item: { key: string (valid JS identifier, max 64 chars), type: "string"|"number"|"boolean"|"object"|"array", description?: string, example?: string }; max 100 entries; merging keys from triggerContext at run time is best-effort, non-blocking, and only for supported trigger types — not guaranteed for every key).',
         properties: {
           defaultModel: { type: 'string' },
           defaultProjectId: { type: 'string' },
@@ -100,7 +100,22 @@ export const PATCH_OPERATIONS_INPUT_SCHEMA = {
           runFirst: {
             type: 'boolean',
             description:
-              'When true, new runs of this flow join the priority queue and start ahead of other waiting new runs while the machine-wide Flow limit is full; resuming runs still go first. Leave unset unless the user explicitly asks to put this flow in the priority queue.',
+              'When true, new runs of this flow join the priority queue and start ahead of other waiting new runs while the machine-wide Flow limit is full; resuming runs still go first. Leave unset unless the user explicitly asks to put this flow in the priority queue. To put only some runs first, use runFirstWhen instead.',
+          },
+          runFirstWhen: {
+            type: 'array',
+            maxItems: 10,
+            description:
+              "Puts only some new runs in the priority queue: a run joins it when its own trigger details match every row. detail is a {{trigger.*}} variable path without braces (at most 5 segments, e.g. 'trigger.story.title' or 'trigger.payload.priority'); equals and not_equals compare exactly, contains ignores case. A rule with a blank row never matches. Ignored while runFirst is true. Leave unset unless the user explicitly asks.",
+            items: {
+              type: 'object',
+              properties: {
+                detail: { type: 'string', maxLength: 200 },
+                operator: { type: 'string', enum: ['equals', 'not_equals', 'contains'] },
+                value: { type: 'string', maxLength: 500 },
+              },
+              required: ['detail', 'operator', 'value'],
+            },
           },
           pauseOnFailure: {
             type: 'boolean',

@@ -87,6 +87,8 @@ export const TICKETING_TRIGGER_SAMPLES = {
           id: 4821,
           entity_type: 'story',
           action: 'update',
+          name: 'Checkout retries the failed card',
+          app_url: 'https://app.shortcut.com/frink/story/4821',
           story_type: 'feature',
           changes: {
             owner_ids: {
@@ -117,6 +119,8 @@ export const TICKETING_TRIGGER_SAMPLES = {
           id: 4821,
           entity_type: 'story',
           action: 'update',
+          name: 'Checkout retries the failed card',
+          app_url: 'https://app.shortcut.com/frink/story/4821',
           story_type: 'feature',
           changes: { workflow_state_id: { old: 500000010, new: 500000011 } },
         },

@@ -19,6 +19,19 @@ const batchTriggerSchemaItem = z.object({
 
 export type BatchTriggerSchemaItem = z.infer<typeof batchTriggerSchemaItem>;
 
+export const RUN_FIRST_RULE_MAX_ROWS = 10;
+
+export const runFirstOperatorSchema = z.enum(['equals', 'not_equals', 'contains']);
+
+/** One "Only runs that match" row, stored exactly as typed; admission ignores a rule with a blank row. */
+export const runFirstRowSchema = z.object({
+  detail: z.string().max(200),
+  operator: runFirstOperatorSchema,
+  value: z.string().max(500),
+});
+
+export type RunFirstRow = z.infer<typeof runFirstRowSchema>;
+
 export const flowSettingsShapeSchema = z.object({
   defaultModel: z
     .string()
@@ -43,6 +56,13 @@ export const flowSettingsShapeSchema = z.object({
     .optional()
     .describe(
       'When true, new runs of this flow join the priority queue and start ahead of other waiting new runs while the machine-wide Flow limit is full. Resuming runs still go first and running work is never interrupted. Leave unset unless the user explicitly asks to put this flow in the priority queue.',
+    ),
+  runFirstWhen: z
+    .array(runFirstRowSchema)
+    .max(RUN_FIRST_RULE_MAX_ROWS)
+    .optional()
+    .describe(
+      "Puts only some new runs in the priority queue: a run joins it when its own trigger details match every row, e.g. { detail: 'trigger.story.title', operator: 'contains', value: '[Follow-up]' }. detail is a {{trigger.*}} variable path without braces. Ignored while runFirst is true. Leave unset unless the user explicitly asks.",
     ),
   pauseOnFailure: z
     .boolean()
