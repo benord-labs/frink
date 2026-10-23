@@ -92,6 +92,8 @@ export async function validateToolPermission(
   trustedFrinkOwnedMcp?: boolean,
   mcpIdentity?: { server: string; tool: string },
   presentation?: PermissionPresentation,
+  executionPath?: string,
+  commandCwd?: string,
 ): Promise<{ allowed: true } | { allowed: false; message: string } | { allowed: null }> {
   if (!isValidPermissionPresentation(toolName, presentation)) {
     log.error('[executor] Rejected invalid permission presentation', { toolName });
@@ -137,6 +139,8 @@ export async function validateToolPermission(
     input: decisionInput,
     projectId: project?.id ?? '',
     projectPath,
+    executionPath,
+    commandCwd,
     sessionDirRoot,
     planDirRoot,
     trustedFrinkOwnedMcp,

@@ -5,6 +5,7 @@
  */
 
 import { type ParseEntry, parse } from 'shell-quote';
+import { z } from 'zod';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -27,6 +28,8 @@ export type SubCommand = {
    * source ticket claims).
    */
   hasExpansion: boolean;
+  /** Its output feeds the next part through `|`, so the two run at the same time. */
+  pipesOn: boolean;
 };
 
 export type Signature = {
@@ -187,8 +190,8 @@ function maskQuoted(raw: string): string {
  * single/double quote and backslash-escape state. When NOT inside quotes, splits
  * on `&&` `||` `;` `|` and a bare newline/CR (escaped newline = continuation).
  */
-function splitRaw(command: string): string[] {
-  const out: string[] = [];
+function splitRaw(command: string): { raw: string; pipesOn: boolean }[] {
+  const out: { raw: string; pipesOn: boolean }[] = [];
   let buf = '';
   let inSingle = false;
   let inDouble = false;
@@ -218,21 +221,21 @@ function splitRaw(command: string): string[] {
     if (!inSingle && !inDouble) {
       const next = command[i + 1];
       if ((ch === '&' && next === '&') || (ch === '|' && next === '|')) {
-        out.push(buf);
+        out.push({ raw: buf, pipesOn: false });
         buf = '';
         i++;
         continue;
       }
       if (ch === ';' || ch === '|' || ch === '\n' || ch === '\r') {
-        out.push(buf);
+        out.push({ raw: buf, pipesOn: ch === '|' });
         buf = '';
         continue;
       }
     }
     buf += ch;
   }
-  out.push(buf);
-  return out.map((s) => s.trim()).filter((s) => s.length > 0);
+  out.push({ raw: buf, pipesOn: false });
+  return out.map((c) => ({ ...c, raw: c.raw.trim() })).filter((c) => c.raw.length > 0);
 }
 
 type HeredocOpener = { start: number; end: number; delim: string; stripTabs: boolean };
@@ -467,6 +470,7 @@ function stripSafeEnvAssignments(tokens: ParseEntry[]): {
 
 const REDIRECT_OP_REGEX = /^(?:&?>>?|\d?>>?|\d?<|<<<?|&>|>&)$/;
 const FD_DIGIT_REGEX = /^\d$/;
+const READ_WRITE_TAIL = z.object({ op: z.literal('>') });
 
 /**
  * Strip redirection operators + their target tokens. shell-quote represents
@@ -491,9 +495,12 @@ function stripRedirections(tokens: ParseEntry[]): {
         fdPrefix = prev;
         rest.pop();
       }
+      // shell-quote reads the read-write open `<>` as `<` then `>`.
+      const readWrite = t.op === '<' && READ_WRITE_TAIL.safeParse(tokens[i + 1]).success;
+      if (readWrite) i++;
       const target = tokens[i + 1];
       const targetStr = typeof target === 'string' ? target : '';
-      redirections.push(`${fdPrefix}${t.op}${targetStr}`);
+      redirections.push(`${fdPrefix}${readWrite ? '<>' : t.op}${targetStr}`);
       if (target !== undefined) i++;
       continue;
     }
@@ -521,7 +528,7 @@ export function splitCommand(command: string): SubCommand[] {
   const cleaned = stripSafeHeredocSubstitutions(trimmed) ?? trimmed;
   const rawChunks = splitRaw(exciseHeredocBodies(cleaned));
   const subs: SubCommand[] = [];
-  for (const raw of rawChunks) {
+  for (const { raw, pipesOn } of rawChunks) {
     if (!raw || raw.startsWith('#')) continue;
     let tokens: ParseEntry[];
     try {
@@ -534,6 +541,7 @@ export function splitCommand(command: string): SubCommand[] {
         redirections: [],
         envAssignments: {},
         hasExpansion: true,
+        pipesOn,
       });
       continue;
     }
@@ -547,6 +555,7 @@ export function splitCommand(command: string): SubCommand[] {
       redirections,
       envAssignments,
       hasExpansion,
+      pipesOn,
     });
   }
   return subs;

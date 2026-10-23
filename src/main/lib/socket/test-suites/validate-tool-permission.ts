@@ -337,4 +337,28 @@ function registerPromptContextTests({ clientPermissionBridge }: PermissionBridge
     expect(msg).toContain('frink_task_signal');
     expect(msg).toContain('awaiting_input');
   });
+
+  it('passes the folder the agent runs in to checkPermission', async () => {
+    const { checkPermission } = await import('../../permissions/v2/check');
+    vi.mocked(checkPermission).mockClear();
+    await validateToolPermission(
+      'Bash',
+      { command: 'echo x > out.txt' },
+      '/proj',
+      'c1',
+      's1',
+      undefined,
+      undefined,
+      false,
+      false,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      '/proj-worktree',
+    );
+    expect(checkPermission).toHaveBeenCalledWith(
+      expect.objectContaining({ projectPath: '/proj', executionPath: '/proj-worktree' }),
+    );
+  });
 }

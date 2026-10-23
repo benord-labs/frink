@@ -514,3 +514,23 @@ describe('SAFE_ENV_VARS', () => {
     expect(SAFE_ENV_VARS.has('NODE_OPTIONS')).toBe(false);
   });
 });
+
+describe('stripRedirections — read-write open', () => {
+  it('records `<>` with its target instead of leaving the target as an argument', () => {
+    const [sub] = splitCommand('echo x 1<> ~/.zshrc');
+    expect(sub.redirections).toEqual(['1<>~/.zshrc']);
+    expect(sub.tokens).toEqual(['echo', 'x']);
+  });
+
+  it('still records a plain input redirect as `<`', () => {
+    const [sub] = splitCommand('wc -l < notes.txt');
+    expect(sub.redirections).toEqual(['<notes.txt']);
+  });
+});
+
+describe('splitCommand — pipes', () => {
+  it('marks a part whose output feeds the next part', () => {
+    const subs = splitCommand('ls | grep x > out.txt && echo done || true |& cat');
+    expect(subs.map((sub) => sub.pipesOn)).toEqual([true, false, false, true, false]);
+  });
+});
