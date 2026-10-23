@@ -26,6 +26,8 @@ export type WebhookTriggerFormState = {
   fromStatus: string;
   toStatus: string;
   filters: ConditionFilter[];
+  /** The matcher applies any stored filters but an empty list; one it cannot read blocks every event. */
+  filtersApply: boolean;
 };
 
 /** Parse stored webhook_trigger conditions back to the editor's form state. */
@@ -50,5 +52,8 @@ export function parseConditions(
     fromStatus: supportsStateTransition ? c.from_status || '' : '',
     toStatus: supportsStateTransition ? c.to_status || '' : '',
     filters,
+    filtersApply:
+      conditions.filters !== undefined &&
+      !(Array.isArray(conditions.filters) && conditions.filters.length === 0),
   };
 }
