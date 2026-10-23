@@ -321,6 +321,10 @@
         "to": "cursor/cursor-host.mjs"
       },
       {
+        "from": "resources/tray",
+        "to": "tray"
+      },
+      {
         "from": "assets/skills",
         "to": "assets/skills",
         "filter": [

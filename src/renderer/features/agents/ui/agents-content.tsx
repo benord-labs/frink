@@ -636,6 +636,8 @@ export function AgentsContent() {
     const chatIdFromUrl = searchParams.get('chat');
     if (chatIdFromUrl) {
       setSelectedChatId(chatIdFromUrl);
+    } else if (searchParams.get('newChat')) {
+      setSelectedChatId(null);
     }
   }, [searchParams, setSelectedChatId]);
 

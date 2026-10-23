@@ -1,5 +1,5 @@
 /* eslint-disable max-lines, max-lines-per-function */
-import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import { contextBridge, type IpcRendererEvent, ipcRenderer, webUtils } from 'electron';
 import { exposeElectronTRPC } from 'trpc-electron/main';
 import type { ShellOpenExternalResult } from '../shared/shell-external-url';
 import type { TranscriptTerminalDurability } from '../shared/types/assistant-message';
@@ -12,6 +12,7 @@ import type {
   SocketPermissionProjection,
 } from '../shared/types/permissions';
 import type { TaskChatReadyData } from '../shared/types/task-chat-ready';
+import type { TrayTarget } from '../shared/types/tray';
 import { type ArtifactPreviewApi, artifactPreviewApi } from './artifact-preview';
 import { initPreloadSentry } from './sentry';
 
@@ -238,6 +239,11 @@ contextBridge.exposeInMainWorld('desktopApi', {
     const handler = () => callback();
     ipcRenderer.on('shortcut:new-agent', handler);
     return () => ipcRenderer.removeListener('shortcut:new-agent', handler);
+  },
+  onTrayOpen: (callback: (target: TrayTarget) => void) => {
+    const handler = (_event: IpcRendererEvent, target: TrayTarget) => callback(target);
+    ipcRenderer.on('tray:open', handler);
+    return () => ipcRenderer.removeListener('tray:open', handler);
   },
 
   // File change events (from Claude Write/Edit tools)
@@ -659,6 +665,7 @@ export type DesktopApi = {
   ) => () => void;
   // Shortcuts
   onShortcutNewAgent: (callback: () => void) => () => void;
+  onTrayOpen: (callback: (target: TrayTarget) => void) => () => void;
   // Socket connection status events
   on: (channel: DesktopBroadcastChannel, callback: (data?: unknown) => void) => () => void;
   // File changes

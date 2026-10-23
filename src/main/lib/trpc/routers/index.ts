@@ -26,6 +26,7 @@ import { skillsRouter } from './skills';
 import { socketRouter } from './socket';
 import { tasksRouter } from './tasks';
 import { terminalRouter } from './terminal';
+import { trayRouter } from './tray';
 import { triggerBindingsRouter } from './trigger-bindings';
 import { triggerRulesRouter } from './trigger-rules';
 import { triggerSetupRouter } from './trigger-setup';
@@ -62,6 +63,7 @@ export function createAppRouter(_getWindow: () => BrowserWindow | null) {
     permissions: permissionsRouter,
     plugins: pluginsRouter,
     power: powerRouter,
+    tray: trayRouter,
     tasks: tasksRouter,
     integrations: integrationsRouter,
     triggerRules: triggerRulesRouter,
