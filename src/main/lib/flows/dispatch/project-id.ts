@@ -19,13 +19,7 @@ import type { DispatchContext } from './types';
 
 type TemplateContext = Parameters<typeof renderTemplate>[1];
 
-/** A node projectId worth using: a string with something in it once trimmed. */
-/**
- * A node projectId worth using: non-empty once trimmed, and short enough that renderTemplate
- * cannot clamp it. Without the cap an over-long template passes the unresolved-path check on its
- * full text and is then TRUNCATED during rendering, which can yield a different — but valid —
- * routing key instead of failing closed. A project id or name is never near this long.
- */
+/** A project id or name is never near this long: an over-long one is an authoring error, not a route. */
 const MAX_PROJECT_KEY_LENGTH = 512;
 /** Shared with other dispatchers needing "a string with something in it once trimmed". */
 export const NON_EMPTY_TEXT = z

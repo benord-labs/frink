@@ -138,7 +138,17 @@ function maskAnsiCStrings(command: string): string {
   return masked;
 }
 
+/** Callers classify each placeholder of one command in turn; masking it once keeps that linear. */
+let lastMasked: { command: string; masked: string } | undefined;
+
 function maskOpaqueShellSegments(command: string): string {
+  if (lastMasked?.command !== command) {
+    lastMasked = { command, masked: computeOpaqueShellMask(command) };
+  }
+  return lastMasked.masked;
+}
+
+function computeOpaqueShellMask(command: string): string {
   const withoutAnsiStrings = maskAnsiCStrings(command);
   const withoutBackticks = maskBacktickSubstitutions(withoutAnsiStrings);
   const masked = maskCommandSubstitutions(withoutBackticks);
