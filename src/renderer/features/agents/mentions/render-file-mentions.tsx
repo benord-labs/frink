@@ -6,6 +6,7 @@ import {
   MENTION_PREFIXES,
 } from '../../../../shared/lib/mentions/mention-grammar';
 import {
+  isAttachedFilePath,
   type ParsedMention,
   parseMention,
   pathLabel,
@@ -222,6 +223,9 @@ export function extractTextMentions(text: string): {
 
 /** A quote, diff, code or pasted mention as the badge the composer strip shows, with a preview. */
 function TextMentionChip({ mention }: { mention: ParsedMention }) {
+  if (mention.type === 'pasted' && isAttachedFilePath(mention.path)) {
+    return <AgentFileItem filename={mention.label} size={mention.size} className="max-w-48" />;
+  }
   const isProse = mention.type === 'quote' || mention.type === 'pasted';
   const lines = mention.lineRange ?? mention.lineNumber;
 

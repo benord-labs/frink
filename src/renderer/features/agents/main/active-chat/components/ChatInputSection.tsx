@@ -51,10 +51,8 @@ export const ChatInputSection = memo(function ChatInputSection({
   isStreaming,
   isCompacting,
   images,
-  files,
   onAddAttachments,
   onRemoveImage,
-  onRemoveFile,
   isUploading,
   textContexts,
   onRemoveTextContext,
@@ -105,10 +103,8 @@ export const ChatInputSection = memo(function ChatInputSection({
       isStreaming={isStreaming}
       isCompacting={isCompacting}
       images={images}
-      files={files}
       onAddAttachments={onAddAttachments}
       onRemoveImage={onRemoveImage}
-      onRemoveFile={onRemoveFile}
       isUploading={isUploading}
       textContexts={textContexts}
       onRemoveTextContext={onRemoveTextContext}
@@ -178,10 +174,8 @@ export const ChatInputSection = memo(function ChatInputSection({
       isStreaming={isStreaming}
       isCompacting={isCompacting}
       images={images}
-      files={files}
       onAddAttachments={onAddAttachments}
       onRemoveImage={onRemoveImage}
-      onRemoveFile={onRemoveFile}
       isUploading={isUploading}
       textContexts={textContexts}
       onRemoveTextContext={onRemoveTextContext}

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { encodeForMentionToken } from './mention-token-codec';
-import { parseMention } from './parse-mention';
+import { isAttachedFilePath, parseMention } from './parse-mention';
 
 // A payload that does not decode logs a warning by design; keep it out of the test log.
 beforeEach(() => {
@@ -431,5 +431,22 @@ describe('parseMention', () => {
     ])('rejects %j', (id) => {
       expect(parseMention(id)).toBeNull();
     });
+  });
+});
+
+describe('isAttachedFilePath', () => {
+  it.each([
+    '/u/claude-sessions/abc/pasted/1a2b3c4d-report.pdf',
+    'C:\\Users\\me\\claude-sessions\\abc\\pasted\\0f9e8d7c-data.csv',
+  ])('recognises an attached file at %s', (path) => {
+    expect(isAttachedFilePath(path)).toBe(true);
+  });
+
+  it.each([
+    '/u/claude-sessions/abc/pasted/pasted_1730000000000.txt',
+    '/u/claude-sessions/abc/pasted/terminal_1730000000000.txt',
+    '/u/pasted/1a2b3c4d-',
+  ])('treats %s as pasted text', (path) => {
+    expect(isAttachedFilePath(path)).toBe(false);
   });
 });

@@ -294,7 +294,7 @@ describe('AgentQueueIndicator — turn restored without its attachments', () => 
     ...baseItem,
     id: 'lost',
     message: 'see attached',
-    files: [{ id: 'f', url: '', filename: 'a.txt' }],
+    images: [{ id: 'i', url: '', mediaType: 'image/png' }],
     attachmentsLost: true,
   };
 

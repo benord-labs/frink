@@ -599,7 +599,6 @@ describe('QueueProcessor — multi-item queue drain', () => {
         'q-ctx',
         'do it',
         undefined,
-        undefined,
         [{ id: 't', text: 'quoted', sourceMessageId: 'm' }],
         [{ id: 'd', text: 'diff body', filePath: 'a.ts', lineNumber: 2 }],
         [
@@ -636,16 +635,9 @@ describe('QueueProcessor — multi-item queue drain', () => {
     });
 
     it('sends a paste-only item as its pasted mention, not an empty turn', async () => {
-      const item = createQueueItem(
-        'q-paste',
-        '',
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        [{ id: 'p', filePath: '/s/pasted/y.txt', filename: 'y.txt', size: 9000, preview: 'req' }],
-      );
+      const item = createQueueItem('q-paste', '', undefined, undefined, undefined, undefined, [
+        { id: 'p', filePath: '/s/pasted/y.txt', filename: 'y.txt', size: 9000, preview: 'req' },
+      ]);
       useMessageQueueStore.setState({ queues: { [SUB_CHAT_ID]: [item] } });
       useStreamingStatusStore.getState().setStatus(SUB_CHAT_ID, 'ready');
 

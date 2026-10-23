@@ -130,16 +130,9 @@ export function ActionsToolbar({
       </div>
 
       <div className="ml-auto flex shrink-0 items-center gap-0.5">
-        <input
-          type="file"
-          ref={fileInputRef}
-          hidden
-          accept="image/jpeg,image/png"
-          multiple
-          onChange={onFileInputChange}
-        />
+        <input type="file" ref={fileInputRef} hidden multiple onChange={onFileInputChange} />
         <ComposerAttachButton
-          label="Attach image"
+          label="Attach files"
           onClick={onAttachClick}
           disabled={images.length >= LIMITS.MAX_IMAGES}
         />

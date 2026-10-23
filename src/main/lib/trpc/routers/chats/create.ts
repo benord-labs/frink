@@ -12,7 +12,7 @@ import {
   updateChat as updateChatLocal,
 } from '../../../db/repos/chats';
 import { getAiAccountType } from '../../../db/repos/project-ai-accounts';
-import { createSubChat as createSubChatLocal } from '../../../db/repos/sub-chats';
+import { createSubChat as createSubChatLocal, getSubChatById } from '../../../db/repos/sub-chats';
 import { projects as projectsTable } from '../../../db/schema';
 import {
   createWorktreeForChat,
@@ -21,6 +21,7 @@ import {
   getDefaultBranch,
   sanitizeProjectName,
 } from '../../../git';
+import { isValidSubChatIdForSessionPaths } from '../../../claude/session-plan-paths';
 import { publicProcedure, router } from '../../index';
 import { extractInitialMessageText } from './helpers/message-text';
 import { autoNameSubChat, maybeNameBuildProjectFromMessage } from './helpers/name-generation-async';
@@ -32,6 +33,16 @@ async function assertAiAccount(db: ReturnType<typeof getDatabase>, accountId?: s
   if (accountId && !(await getAiAccountType(db, accountId))) {
     throw new TRPCError({ code: 'NOT_FOUND', message: 'Account not found' });
   }
+}
+
+/** The composer's own id for the first sub-chat (its pastes already sit in that folder), when usable. */
+async function claimSubChatId(db: ReturnType<typeof getDatabase>, subChatId?: string) {
+  if (!subChatId) return undefined;
+  if (isValidSubChatIdForSessionPaths(subChatId) && !(await getSubChatById(db, subChatId))) {
+    return subChatId;
+  }
+  log.warn('[chats.create] composer sub-chat id is unsafe or taken; minting a fresh one');
+  return undefined;
 }
 
 /**
@@ -76,6 +87,8 @@ export const createRouter = router({
         existingWorktreePath: z.string().optional(),
         mode: z.enum(['plan', 'agent', 'debug']).default('agent'),
         accountId: z.string().optional(),
+        /** Id for the first sub-chat, minted by the composer so its pastes land in its folder. */
+        subChatId: z.string().optional(),
       }),
     )
     .mutation(async ({ input }) => {
@@ -92,6 +105,7 @@ export const createRouter = router({
         const seededName = initialMessageText ? null : (input.name ?? null);
 
         const db = getDatabase();
+        const subChatId = await claimSubChatId(db, input.subChatId);
 
         // Phase 1 ship-blocker fix (commit a09131): the renderer holds CLOUD project IDs.
         // Local `projects.id` is `createId()`-generated and DOES NOT match cloud ids. A
@@ -172,12 +186,14 @@ export const createRouter = router({
           return [];
         })();
 
-        const subChat = await createSubChatLocal(db, {
+        const firstSubChat: Parameters<typeof createSubChatLocal>[1] = {
           chatId: chat.id,
           name: seededName,
           mode: input.mode,
           messages: JSON.stringify(initialMessages),
-        });
+        };
+        if (subChatId) firstSubChat.id = subChatId;
+        const subChat = await createSubChatLocal(db, firstSubChat);
 
         // Worktree creation (local git operation). Wrapped in try/catch so a worktree failure
         // doesn't undo the chat — the UI still navigates to the new chat with a fallback path.

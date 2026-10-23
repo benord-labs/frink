@@ -246,7 +246,7 @@ describe('message-queue-store — turns held for lost attachments', () => {
 });
 
 describe('reviveQueueState', () => {
-  const raw = (item: Partial<AgentQueueItem>) =>
+  const raw = (item: Partial<AgentQueueItem> & { files?: unknown[] }) =>
     JSON.parse(JSON.stringify({ ...createQueueItem('x', 'msg'), ...item }));
 
   it('normalises an item that was mid-send and drops a stale settle mark from any position', () => {
@@ -303,7 +303,10 @@ describe('reviveQueueState', () => {
   });
 
   it.each([
-    ['a file (blob url only)', { files: [{ id: 'f', url: 'blob:dead', filename: 'a.txt' }] }],
+    [
+      'a file queued by an older build (blob url only)',
+      { files: [{ id: 'f', url: 'blob:dead', filename: 'a.txt' }] },
+    ],
     [
       'an image without inline data',
       { images: [{ id: 'i', url: 'blob:x', mediaType: 'image/png' }] },
@@ -316,6 +319,7 @@ describe('reviveQueueState', () => {
     const state = reviveQueueState({ queues: { [SUB_A]: [raw(attachments)] } });
 
     expect(state.queues[SUB_A]?.[0]?.attachmentsLost).toBe(true);
+    expect(state.queues[SUB_A]?.[0]).not.toHaveProperty('files');
   });
 
   it('restores every well-formed context list unchanged', () => {
@@ -375,7 +379,6 @@ describe('reviveQueueState', () => {
       'images that are not an array',
       { queues: { [SUB_A]: [{ id: 'q', message: 'm', images: {} }] } },
     ],
-    ['files holding non-objects', { queues: { [SUB_A]: [{ id: 'q', message: 'm', files: [1] }] } }],
     [
       'text contexts that are not an array',
       { queues: { [SUB_A]: [{ id: 'q', message: 'm', textContexts: 'x' }] } },
@@ -408,16 +411,6 @@ describe('reviveQueueState', () => {
               message: 'm',
               images: [{ id: 'i', mediaType: 'image/png', base64Data: 'AA', filename: 3 }],
             },
-          ],
-        },
-      },
-    ],
-    [
-      'a file with a negative size',
-      {
-        queues: {
-          [SUB_A]: [
-            { id: 'q', message: 'm', files: [{ id: 'f', url: '', filename: 'a', size: -1 }] },
           ],
         },
       },

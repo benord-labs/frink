@@ -19,6 +19,7 @@ const projectsSelectMock = vi.fn();
 const autoNameSubChatMock = vi.fn();
 const trackMessageSentMock = vi.spyOn(analytics, 'trackMessageSent');
 const getAiAccountTypeMock = vi.fn();
+const getSubChatByIdMock = vi.fn();
 
 vi.mock('../../../db', () => ({
   getDatabase: () => ({
@@ -41,6 +42,7 @@ vi.mock('../../../db/repos/project-ai-accounts', () => ({
 }));
 vi.mock('../../../db/repos/sub-chats', () => ({
   createSubChat: createSubChatLocalMock,
+  getSubChatById: getSubChatByIdMock,
 }));
 vi.mock('../../../db/schema', () => ({
   projects: { id: 'projects.id' },
@@ -270,4 +272,35 @@ describe('createRouter (local-first)', () => {
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect(createChatLocalMock).not.toHaveBeenCalled();
   });
+
+  it('creates the first sub-chat under the id the composer minted for its pastes', async () => {
+    createChatLocalMock.mockResolvedValue(makeLocalChat({ id: 'c1', name: 'Test' }));
+    createSubChatLocalMock.mockResolvedValue(makeLocalSubChat({ id: 's1', chatId: 'c1' }));
+    getSubChatByIdMock.mockResolvedValue(null);
+    const subChatId = '0b9d3c2e-5f4a-4c1b-9e2d-7a6f8b1c3d4e';
+
+    const { createRouter } = await import('./create');
+    const caller = createRouter.createCaller({ getWindow: () => null });
+    await caller.create({ ...baseInput, subChatId });
+
+    expect(createSubChatLocalMock.mock.calls[0]?.[1]).toMatchObject({ id: subChatId });
+  });
+
+  it.each([
+    ['unsafe in a path', '__new_chat_0__', null],
+    ['already taken', '0b9d3c2e-5f4a-4c1b-9e2d-7a6f8b1c3d4e', makeLocalSubChat({ id: 'taken' })],
+  ])(
+    'mints a fresh sub-chat id when the composer id is %s',
+    async (_label, subChatId, existing) => {
+      createChatLocalMock.mockResolvedValue(makeLocalChat({ id: 'c1', name: 'Test' }));
+      createSubChatLocalMock.mockResolvedValue(makeLocalSubChat({ id: 's1', chatId: 'c1' }));
+      getSubChatByIdMock.mockResolvedValue(existing);
+
+      const { createRouter } = await import('./create');
+      const caller = createRouter.createCaller({ getWindow: () => null });
+      await caller.create({ ...baseInput, subChatId });
+
+      expect(createSubChatLocalMock.mock.calls[0]?.[1]).not.toHaveProperty('id');
+    },
+  );
 });
