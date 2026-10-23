@@ -135,6 +135,8 @@ async function gitWithIndexFile(cwd: string, indexFile: string, args: string[]):
   const { stdout } = await execWithShellEnv('git', ['-c', 'core.splitIndex=false', ...args], {
     cwd,
     env: { ...process.env, GIT_INDEX_FILE: indexFile, GIT_OPTIONAL_LOCKS: '0' },
+    // `add -A` into an empty index can print a warning per file, past execFile's 1 MiB default.
+    maxBuffer: 256 * 1024 * 1024,
   });
   return stdout.trim();
 }
