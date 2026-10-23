@@ -3,10 +3,14 @@ import { randomUUID } from 'node:crypto';
 import { copyFile, mkdir, stat, writeFile } from 'node:fs/promises';
 import { basename, isAbsolute, join } from 'node:path';
 import { app } from 'electron';
-import { PASTED_FILE_MAX_BYTES } from '../../../../shared/pasted-file-limits';
+import {
+  PASTED_FILE_MAX_BYTES,
+  PASTED_FILE_TOO_LARGE,
+} from '../../../../shared/pasted-file-limits';
 import { isValidSubChatIdForSessionPaths } from '../session-plan-paths';
 
 type StoredPastedFile = { filePath: string; filename: string; size: number };
+type PastedTextKind = 'pasted' | 'terminal';
 
 const MAX_NAME_BYTES = 200;
 const UNREADABLE = "Frink couldn't open this file. Check it still exists and try again.";
@@ -64,9 +68,7 @@ export async function copyIntoPasted(
     throw new Error(UNREADABLE);
   });
   if (!source.isFile()) throw new Error("Folders can't be attached.");
-  if (source.size > PASTED_FILE_MAX_BYTES) {
-    throw new Error(`Attachments must be under ${PASTED_FILE_MAX_BYTES / (1024 * 1024)} MB.`);
-  }
+  if (source.size > PASTED_FILE_MAX_BYTES) throw new Error(PASTED_FILE_TOO_LARGE);
   const filename = attachedFileName(basename(input.sourcePath));
   const filePath = join(await pastedDirFor(input.subChatId, userData), filename);
   await copyFile(input.sourcePath, filePath).catch(() => {
@@ -75,16 +77,13 @@ export async function copyIntoPasted(
   return { filePath, filename, size: source.size };
 }
 
+/** Names the file here, never from the caller, so a paste can't take an attached file's shape. */
 export async function writePastedText(
-  input: { subChatId: string; text: string; filename?: string },
+  input: { subChatId: string; text: string; kind?: PastedTextKind },
   userData?: string,
 ): Promise<StoredPastedFile> {
-  const { filename } = input;
-  if (filename && (filename.includes('..') || /[/\\]/.test(filename))) {
-    throw new Error('Invalid filename');
-  }
-  const finalFilename = filename || `pasted_${Date.now()}.txt`;
-  const filePath = join(await pastedDirFor(input.subChatId, userData), finalFilename);
+  const filename = `${input.kind ?? 'pasted'}_${Date.now()}.txt`;
+  const filePath = join(await pastedDirFor(input.subChatId, userData), filename);
   await writeFile(filePath, input.text, 'utf-8');
-  return { filePath, filename: finalFilename, size: input.text.length };
+  return { filePath, filename, size: Buffer.byteLength(input.text) };
 }

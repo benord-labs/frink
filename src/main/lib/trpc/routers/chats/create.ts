@@ -5,6 +5,7 @@ import log from 'electron-log';
 import { z } from 'zod';
 import { WORK_QUEUE_SOURCE } from '../../../../../shared/lib/message-markers/person-authored';
 import { trackMessageSent, trackWorkspaceCreated } from '../../../analytics';
+import { isValidSubChatIdForSessionPaths } from '../../../claude/session-plan-paths';
 import { getDatabase } from '../../../db';
 import {
   createChat as createChatLocal,
@@ -21,7 +22,6 @@ import {
   getDefaultBranch,
   sanitizeProjectName,
 } from '../../../git';
-import { isValidSubChatIdForSessionPaths } from '../../../claude/session-plan-paths';
 import { publicProcedure, router } from '../../index';
 import { extractInitialMessageText } from './helpers/message-text';
 import { autoNameSubChat, maybeNameBuildProjectFromMessage } from './helpers/name-generation-async';

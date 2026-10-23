@@ -1960,7 +1960,13 @@ export const filesRouter = router({
 
   /** Large pastes, saved to the sub-chat's `pasted/` folder for the agent to read by path. */
   writePastedText: publicProcedure
-    .input(z.object({ subChatId: z.string(), text: z.string(), filename: z.string().optional() }))
+    .input(
+      z.object({
+        subChatId: z.string(),
+        text: z.string(),
+        kind: z.enum(['pasted', 'terminal']).optional(),
+      }),
+    )
     .mutation(({ input }) => writePastedText(input)),
 
   /** A composer attachment, copied from its OS path into the sub-chat's `pasted/` folder. */

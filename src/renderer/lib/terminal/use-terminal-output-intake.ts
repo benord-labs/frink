@@ -6,7 +6,7 @@ import { pendingTerminalOutputAtomFamily } from './pending-output';
 type Params = {
   /** The chat whose terminal sends: the chat id, or the new-chat form's terminal id. */
   chatId: string;
-  addPastedText: (text: string, options: { label: string; filename: string }) => Promise<void>;
+  addPastedText: (text: string, options: { label: string; kind: 'terminal' }) => Promise<void>;
   editorRef: RefObject<{ focus: () => void } | null>;
 };
 
@@ -19,7 +19,7 @@ export function useTerminalOutputIntake({ chatId, addPastedText, editorRef }: Pa
   useEffect(() => {
     if (!pending) return;
     store.set(pendingAtom, null);
-    addPastedText(pending.text, { label: pending.label, filename: `terminal_${Date.now()}.txt` })
+    addPastedText(pending.text, { label: pending.label, kind: 'terminal' })
       .then(() => editorRef.current?.focus())
       .catch(() => toast.error("Couldn't add the terminal output"));
   }, [pending, pendingAtom, store, addPastedText, editorRef]);

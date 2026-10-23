@@ -32,7 +32,7 @@ describe('useTerminalOutputIntake', () => {
     expect(addPastedText).toHaveBeenCalledOnce();
     expect(addPastedText).toHaveBeenCalledWith(PENDING.text, {
       label: 'Terminal 1 output',
-      filename: expect.stringMatching(/^terminal_\d+\.txt$/),
+      kind: 'terminal',
     });
     expect(store.get(pendingTerminalOutputAtomFamily(CHAT))).toBeNull();
     await waitFor(() => expect(focusEditor).toHaveBeenCalledOnce());

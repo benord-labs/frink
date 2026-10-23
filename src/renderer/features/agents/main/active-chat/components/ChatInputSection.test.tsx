@@ -92,7 +92,7 @@ describe('ChatInputSection', () => {
 
     expect(props.onAddPastedText).toHaveBeenCalledWith('FAIL', {
       label: 'Terminal 1 output',
-      filename: expect.stringMatching(/^terminal_\d+\.txt$/),
+      kind: 'terminal',
     });
   });
 
