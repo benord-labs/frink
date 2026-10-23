@@ -14,7 +14,7 @@ import {
   tasks,
 } from '../schema';
 import type { TaskStatus } from './tasks';
-import { chatLinkId, linkedFlowRunIds } from './task-queries/linked-flow-runs';
+import { chatLinkId, linkedFlowRunIds, triggerChatOwnsRun } from './task-queries/linked-flow-runs';
 import {
   activeFlowRunForSubChatId,
   newestFlowRunForSubChatId,
@@ -156,7 +156,9 @@ export async function hasActiveRunForFlow(db: Db, flowId: string): Promise<boole
  * `selectDistinct` (to dedupe the fan-out).
  */
 export const CHAT_LINK_SOURCES = {
-  triggerChatId: chatLinkId(flowRuns.triggerContext, '$.chatId'),
+  triggerChatId: sql<
+    string | null
+  >`(CASE WHEN ${triggerChatOwnsRun} THEN ${chatLinkId(flowRuns.triggerContext, '$.chatId')} END)`,
   nodeChatId: chatLinkId(nodeRuns.nodeOutput, '$.outputs.chatId'),
   taskChatId: chatLinkId(tasks.result, '$.chatId'),
 } as const;
@@ -228,7 +230,7 @@ export async function listChatIdsWithActiveFlowRun(db: Db): Promise<string[]> {
     db
       .select({ chatId: chatLinkId(flowRuns.triggerContext, '$.chatId') })
       .from(flowRuns)
-      .where(live),
+      .where(and(live, triggerChatOwnsRun)),
     db
       .select({ chatId: chatLinkId(nodeRuns.nodeOutput, '$.outputs.chatId') })
       .from(nodeRuns)

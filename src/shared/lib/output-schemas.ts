@@ -11,6 +11,8 @@
  * **Authoritative runtime shapes** — what handlers actually write into `outputs` — live in
  * `src/main/lib/flows/dispatch/`. Update those handlers and this file together.
  */
+import { POST_TASK_TRIGGER_FIELDS } from './flow-triggers/post-task-fields';
+
 /**
  * Declares one output field produced by a custom node.
  * Defined here (shared) so both the Electron main process (discovery, cloud DTO)
@@ -59,6 +61,8 @@ export type TriggerFieldSchema = {
    * than confident-valid, since field names are provider-specific.
    */
   openEnded?: boolean;
+  /** False if some runs of this trigger leave the field out (omit to mean always present) */
+  guaranteed?: boolean;
 };
 /**
  * Output fields each block type writes to `outputs` when it completes.
@@ -396,23 +400,7 @@ export const OUTPUT_SCHEMAS: Record<string, OutputFieldSchema[]> = {
  * These come from `flow_runs.trigger_context`, not from block outputs.
  */
 export const TRIGGER_SCHEMAS: Record<string, TriggerFieldSchema[]> = {
-  post_task_trigger: [
-    { key: 'taskId', type: 'string', description: 'UUID of the completed task' },
-    { key: 'taskTitle', type: 'string', description: 'Title of the completed task' },
-    { key: 'taskStatus', type: 'string', description: 'Final status of the task' },
-    {
-      key: 'source',
-      type: 'string',
-      description: 'How the task was created (e.g. manual, flow, slack)',
-    },
-    { key: 'projectId', type: 'string', description: 'UUID of the project the task belonged to' },
-    { key: 'result', type: 'string', description: 'Result summary from the task signal' },
-    { key: 'branch', type: 'string', description: 'Git branch the task ran on' },
-    { key: 'baseBranch', type: 'string', description: 'Base branch the task branched from' },
-    { key: 'worktreePath', type: 'string', description: 'Absolute path to the task worktree' },
-    { key: 'chatId', type: 'string', description: 'Chat session ID of the triggering task' },
-    { key: 'projectPath', type: 'string', description: 'Main project directory path' },
-  ],
+  post_task_trigger: POST_TASK_TRIGGER_FIELDS,
   schedule_trigger: [
     {
       key: 'scheduledAt',
