@@ -122,6 +122,23 @@ describe('shellInterpolationContextAt', () => {
     );
   });
 
+  it('masks a long substitution-heavy command once, not once per placeholder', () => {
+    const command = (name: string) =>
+      `${'x=$(date)\n'.repeat(300)}${`y={{trigger.${name}}}\n`.repeat(800)}`;
+    const classify = (text: string, limit: number) => {
+      const started = performance.now();
+      for (const match of [...text.matchAll(/\{\{[^{}]+\}\}/g)].slice(0, limit)) {
+        expect(shellInterpolationContextAt(text, match.index, match[0].length)).toBe('bare');
+      }
+      return performance.now() - started;
+    };
+    classify('x=$(date) y={{trigger.warm}}', 1);
+    const one = classify(command('a'), 1);
+    const all = classify(command('b'), Infinity);
+    // Masked once, all 800 cost ~2x one (each still scans its own prefix); re-masking costs ~800x.
+    expect(all).toBeLessThan(one * 50);
+  }, 30_000);
+
   it('keeps an unclosed command substitution inside double quotes uncertain', () => {
     const command = `echo "$(whoami {{trigger.summary}} unfinished"`;
     const offset = command.indexOf('{{');

@@ -25,8 +25,6 @@ import {
 } from '../../../shared/lib/shell-template/quote-context';
 import { captureMainMessage } from '../sentry/init';
 
-/** Max template string length to prevent DoS via huge templates. */
-const MAX_TEMPLATE_LENGTH = 10000;
 const TEMPLATE_TEXT = z.string();
 
 /** Max JSON length for object/array leaves; refuse resolution above this (placeholder stays literal). */
@@ -45,7 +43,7 @@ const MAX_SHELL_RENDERED_OUTPUT = 256 * 1024;
 const SHELL_RENDER_LIMIT_COMMAND =
   "printf '%s\\n' 'Frink: rendered command exceeded the 256KB safety limit' >&2; exit 1";
 
-/** Cap for a ROUTING template, well under MAX_TEMPLATE_LENGTH so rendering can never truncate one. */
+/** Cap for a ROUTING template: an over-long branch or project key is an authoring error, not a route. */
 const MAX_ROUTING_KEY_LENGTH = 512;
 
 /** Max path depth to prevent excessively deep traversals. */
@@ -131,26 +129,18 @@ function textForm(current: PathValue): ResolvedValue {
 }
 
 /**
- * Shared template rendering core. Clamps length, warns on truncation, applies
- * `transformResolved` to each successfully resolved value.
+ * Shared template rendering core: renders the whole template and applies `transformResolved` to
+ * each successfully resolved value.
  */
 function renderTemplateWith(
   template: string,
   variables: Parameters<typeof resolvePath>[0],
   transformResolved: (value: string) => string,
-  maxTemplateLength = MAX_TEMPLATE_LENGTH,
   maxOutputBytes?: number,
 ): string | undefined {
   const parsedTemplate = TEMPLATE_TEXT.safeParse(template);
   if (!parsedTemplate.success) return '';
-  const truncated = parsedTemplate.data.length > maxTemplateLength;
-  const clamped = truncated ? parsedTemplate.data.slice(0, maxTemplateLength) : parsedTemplate.data;
-  if (truncated) {
-    log.warn('[template-utils] template truncated — placeholders may be split or incomplete', {
-      originalLength: parsedTemplate.data.length,
-      maxLength: maxTemplateLength,
-    });
-  }
+  const text = parsedTemplate.data;
   const chunks: string[] = [];
   let renderedBytes = 0;
   const append = (chunk: string): boolean => {
@@ -161,8 +151,8 @@ function renderTemplateWith(
   };
   const placeholders = /\{\{([^{}]+)\}\}/g;
   let cursor = 0;
-  for (let match = placeholders.exec(clamped); match; match = placeholders.exec(clamped)) {
-    if (!append(clamped.slice(cursor, match.index))) return undefined;
+  for (let match = placeholders.exec(text); match; match = placeholders.exec(text)) {
+    if (!append(text.slice(cursor, match.index))) return undefined;
     const path = match[1].trim();
     const resolved = renderedText(variables, path);
     if (!append(resolved === UNRENDERABLE ? `{{${path}}}` : transformResolved(resolved))) {
@@ -170,7 +160,7 @@ function renderTemplateWith(
     }
     cursor = match.index + match[0].length;
   }
-  return append(clamped.slice(cursor)) ? chunks.join('') : undefined;
+  return append(text.slice(cursor)) ? chunks.join('') : undefined;
 }
 
 /**
@@ -181,13 +171,13 @@ export function renderTemplateForJson(
   template: string,
   variables: Parameters<typeof resolvePath>[0],
 ): string {
-  const clamped = TEMPLATE_TEXT.catch('').parse(template).slice(0, MAX_TEMPLATE_LENGTH);
+  const text = TEMPLATE_TEXT.catch('').parse(template);
   const placeholders = /\{\{([^{}]+)\}\}/g;
   const chunks: string[] = [];
   let cursor = 0;
   let insideString = false;
-  for (let match = placeholders.exec(clamped); match; match = placeholders.exec(clamped)) {
-    const literal = clamped.slice(cursor, match.index);
+  for (let match = placeholders.exec(text); match; match = placeholders.exec(text)) {
+    const literal = text.slice(cursor, match.index);
     insideString = insideStringAfter(literal, insideString);
     chunks.push(literal);
     const path = match[1].trim();
@@ -195,7 +185,7 @@ export function renderTemplateForJson(
     chunks.push(resolved === undefined ? `{{${path}}}` : resolved);
     cursor = match.index + match[0].length;
   }
-  chunks.push(clamped.slice(cursor));
+  chunks.push(text.slice(cursor));
   return chunks.join('');
 }
 
@@ -211,8 +201,7 @@ const JSON_OBJECT = z.record(z.string(), JSON_VALUE);
 export function renderTemplateDeep(value: JsonValue, variables: TemplateScope): JsonValue {
   const text = TEMPLATE_TEXT.safeParse(value);
   if (text.success) {
-    // Verbatim when there is nothing to render, or when `renderTemplate`'s clamp would truncate it.
-    if (!text.data.includes('{{') || text.data.length > MAX_TEMPLATE_LENGTH) return text.data;
+    if (!text.data.includes('{{')) return text.data;
     const whole = WHOLE_PLACEHOLDER.exec(text.data);
     if (!whole) return renderTemplate(text.data, variables);
     const hit = lookupPath(variables, whole[1].trim());
@@ -290,7 +279,9 @@ export function findAbsentShellPlaceholder(
   template: string,
   variables: Parameters<typeof resolvePath>[0],
 ): string | undefined {
-  const text = TEMPLATE_TEXT.catch('').parse(template).slice(0, MAX_TEMPLATE_LENGTH);
+  const text = TEMPLATE_TEXT.catch('').parse(template);
+  // Over the cap renderTemplateForShell refuses the whole command, so there is nothing to check.
+  if (text.length > MAX_SHELL_RENDERED_OUTPUT) return undefined;
   return firstPlaceholderWhere(
     text,
     variables,
@@ -338,15 +329,14 @@ export function hasUnresolvedPlaceholder(
 }
 
 /**
- * Render `{{path.to.value}}`. Allowed roots only, prototype-pollution paths rejected, length-capped.
+ * Render `{{path.to.value}}`. Allowed roots only, prototype-pollution paths rejected, never truncated.
  * An ABSENT path renders empty, never its own literal text; guarantees pinned in template-utils.test.ts.
  */
 export function renderTemplate(
   template: string,
   variables: Parameters<typeof resolvePath>[0],
-  maxTemplateLength = MAX_TEMPLATE_LENGTH,
 ): string {
-  return renderTemplateWith(template, variables, (value) => value, maxTemplateLength) ?? '';
+  return renderTemplateWith(template, variables, (value) => value) ?? '';
 }
 
 /**
@@ -357,8 +347,7 @@ export function resolveRoutingTemplate(
   raw: string,
   variables: TemplateScope,
 ): { ok: true; value: string } | { ok: false; reason: string } {
-  // Length is an error, not a pass: beyond the cap renderTemplate TRUNCATES, which would yield a
-  // different — but valid — routing value. A branch or project key is never near this long.
+  // A branch or project key is never near this long, so length is an authoring error, not a route.
   if (raw.length > MAX_ROUTING_KEY_LENGTH) return { ok: false, reason: 'is too long' };
   // Stray double braces (`{{previous.branch`) or Handlebars triples (`{{{x}}}` -> `{main}`) are mistyped
   // templates that would route on their own text. Single braces are legal in a branch or project name.
@@ -375,15 +364,8 @@ export function renderTemplateWithinUtf8Limit(
   template: string,
   variables: Parameters<typeof resolvePath>[0],
   maxOutputBytes: number,
-  maxTemplateLength = MAX_TEMPLATE_LENGTH,
 ): string | undefined {
-  return renderTemplateWith(
-    template,
-    variables,
-    (value) => value,
-    maxTemplateLength,
-    maxOutputBytes,
-  );
+  return renderTemplateWith(template, variables, (value) => value, maxOutputBytes);
 }
 
 /**
@@ -411,14 +393,6 @@ export function renderTemplateForShell(
   variables: Record<string, unknown>,
 ): string {
   if (typeof template !== 'string') return '';
-  const truncated = template.length > MAX_TEMPLATE_LENGTH;
-  const clamped = truncated ? template.slice(0, MAX_TEMPLATE_LENGTH) : template;
-  if (truncated) {
-    log.warn('[template-utils] template truncated — placeholders may be split or incomplete', {
-      originalLength: template.length,
-      maxLength: MAX_TEMPLATE_LENGTH,
-    });
-  }
 
   const re = /\{\{([^{}]+)\}\}/g;
   let out = '';
@@ -450,11 +424,17 @@ export function renderTemplateForShell(
     return true;
   };
 
-  let m: RegExpExecArray | null = re.exec(clamped);
+  // Refuse before classifying: shell-context classification grows with length × placeholders.
+  if (template.length > MAX_SHELL_RENDERED_OUTPUT) {
+    warnCap();
+    return SHELL_RENDER_LIMIT_COMMAND;
+  }
+
+  let m: RegExpExecArray | null = re.exec(template);
   while (m !== null) {
     const match = m[0];
     const offset = m.index;
-    if (appendCapped(clamped.slice(last, offset))) {
+    if (appendCapped(template.slice(last, offset))) {
       return out;
     }
     const path = m[1].trim();
@@ -464,7 +444,7 @@ export function renderTemplateForShell(
         return out;
       }
     } else {
-      const context = shellInterpolationContextAt(clamped, offset, match.length);
+      const context = shellInterpolationContextAt(template, offset, match.length);
       const escaped = escapeShellValueForContext(resolved, context);
       if (escaped === null) {
         // EVERY placeholder stays literal here, absent ones included: the interpolation-safety
@@ -482,9 +462,9 @@ export function renderTemplateForShell(
       }
     }
     last = offset + match.length;
-    m = re.exec(clamped);
+    m = re.exec(template);
   }
-  if (appendCapped(clamped.slice(last))) {
+  if (appendCapped(template.slice(last))) {
     return out;
   }
   return out;

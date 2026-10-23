@@ -173,7 +173,6 @@ function renderChatReply(
     bodyHtmlTemplate,
     variables,
     HTML_ARTIFACT_MAX_BODY_BYTES,
-    bodyHtmlTemplate.length,
   );
   if (renderedBodyHtml === undefined) {
     return {

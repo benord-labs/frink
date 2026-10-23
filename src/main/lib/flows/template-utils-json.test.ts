@@ -12,6 +12,12 @@ const variables = {
 };
 
 describe('renderTemplateForJson', () => {
+  it('renders a document longer than 10,000 characters whole, so it still parses', () => {
+    const pad = 'x'.repeat(12_000);
+    const rendered = renderTemplateForJson(`{"pad": "${pad}", "n": {{previous.count}}}`, variables);
+    expect(JSON.parse(rendered)).toEqual({ pad, n: 3 });
+  });
+
   it('escapes a placeholder inside a string literal so the document still parses', () => {
     const rendered = renderTemplateForJson('{"label": "{{previous.text}}"}', variables);
     expect(JSON.parse(rendered)).toEqual({ label: 'say "hi"\nnow' });
@@ -79,12 +85,11 @@ describe('renderTemplateDeep', () => {
     });
   });
 
-  it('never truncates a leaf: long text passes byte-identical, with or without a placeholder', () => {
+  it('renders a long leaf whole: plain text passes byte-identical and a placeholder resolves', () => {
     const long = 'x'.repeat(12_000);
-    const withPlaceholder = `${long}{{previous.count}}`;
-    expect(renderTemplateDeep({ a: long, b: withPlaceholder }, variables)).toEqual({
+    expect(renderTemplateDeep({ a: long, b: `${long}{{previous.count}}` }, variables)).toEqual({
       a: long,
-      b: withPlaceholder,
+      b: `${long}3`,
     });
   });
 
