@@ -85,6 +85,51 @@ describe('activeGoal', () => {
   });
 });
 
+describe('activeGoal with background work', () => {
+  type Part = NonNullable<GoalMessage['parts']>[number];
+  const step: Part = { type: 'step-start' };
+  const goalPart: Part = { type: 'data-goal', data: set };
+  const stop = (deferred: boolean): Part => ({
+    type: 'data-goal',
+    data: { state: 'stopped', deferred },
+  });
+  /** A turn whose wake bursts have appended to it; the metadata stays the turn's own. */
+  const turn = (...parts: Part[]): Message => ({
+    id: `a${seq++}`,
+    role: 'assistant',
+    parts,
+    metadata: ENDED,
+  });
+
+  it('keeps a goal whose turn stopped while background work still ran', () => {
+    expect(goalOf([ask, turn(step, goalPart, stop(true))])).toEqual({ objective: 'tests pass' });
+  });
+
+  it('keeps the goal while a wake burst works on it', () => {
+    const waking = turn(step, goalPart, stop(true), step, { type: 'text' });
+    expect(goalOf([ask, waking])).toEqual({ objective: 'tests pass' });
+  });
+
+  it('ends the goal once a burst stops with nothing left running', () => {
+    expect(goalOf([ask, turn(step, goalPart, stop(true), step, stop(false))])).toBeNull();
+  });
+
+  it('keeps the goal through a message sent during the wait', () => {
+    expect(goalOf([turn(step, goalPart, stop(true)), ask, turn(step, stop(true))])).toEqual({
+      objective: 'tests pass',
+    });
+  });
+
+  it('does not bring back a met goal when a later turn waits on background work', () => {
+    expect(goalOf([turn(step, goalPart, stop(false)), ask, turn(step, stop(true))])).toBeNull();
+  });
+
+  it('does not bring back a met goal while a scheduled wake runs on that turn', () => {
+    const waking = turn(step, goalPart, stop(false), step, { type: 'text' });
+    expect(goalOf([ask, waking])).toBeNull();
+  });
+});
+
 describe('activeGoalAtom', () => {
   it('reads the chat from its message atoms and keeps its value while the goal is unchanged', () => {
     const store = createStore();

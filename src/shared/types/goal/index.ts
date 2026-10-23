@@ -7,4 +7,6 @@ export type GoalPartData =
       /** The evaluator's latest reason the goal is not met yet. */
       lastCheck?: string;
     }
-  | { state: 'cleared' };
+  | { state: 'cleared' }
+  /** One per turn end. `deferred`: background work was still running, so Claude skipped the check. */
+  | { state: 'stopped'; deferred: boolean };

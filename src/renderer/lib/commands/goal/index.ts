@@ -11,24 +11,37 @@ export type GoalMessage = {
   metadata?: { resultSubtype?: string; outputTokens?: number };
 };
 
+type GoalMessagePart = NonNullable<GoalMessage['parts']>[number];
+
 /** Claude's goal check blocks every clean stop until the goal is met, so such a turn ends one. */
 function endedModelTurn(message: GoalMessage): boolean {
   const meta = message.metadata;
+  const parts = message.parts ?? [];
   return (
     meta?.resultSubtype === 'success' &&
     (meta.outputTokens ?? 0) > 0 &&
-    !message.parts?.some((part) => part.type === 'data-compact')
+    !parts.some((part) => part.type === 'data-compact') &&
+    !stillWorking(parts)
   );
+}
+
+function goalData(part: GoalMessagePart): GoalPartData | null {
+  // SAFETY: only the main-process goal mapper writes `data-goal` parts.
+  return part.type === 'data-goal' ? (part.data as GoalPartData) : null;
+}
+
+/** A wake burst extends its turn's message and keeps the turn's metadata, so the newest stop
+ * decides: one that skipped the check for background work ends nothing, even while a burst runs. */
+function stillWorking(parts: GoalMessagePart[]): boolean {
+  const stop = parts.map(goalData).findLast((data) => data?.state === 'stopped');
+  return stop?.state === 'stopped' && stop.deferred;
 }
 
 /** A message's goal part, if any, and its checks of goals set earlier, newest first. */
 function goalParts(message: GoalMessage) {
-  const parts = (message.parts ?? []).flatMap((part) =>
-    // SAFETY: only the main-process goal mapper writes `data-goal` parts.
-    part.type === 'data-goal' ? [part.data as GoalPartData] : [],
-  );
+  const parts = (message.parts ?? []).flatMap((part) => goalData(part) ?? []);
   return {
-    goal: parts.findLast((part) => part.state !== 'checked'),
+    goal: parts.findLast((part) => part.state === 'active' || part.state === 'cleared'),
     checks: parts.flatMap((part) => (part.state === 'checked' ? [part] : [])).reverse(),
   };
 }
@@ -40,7 +53,7 @@ export function activeGoal(newestFirst: Iterable<GoalMessage | null>): ActiveGoa
     if (message?.role !== 'assistant') continue;
     const { goal, checks: newer } = goalParts(message);
     if (goal?.state === 'cleared' || endedModelTurn(message)) return null;
-    if (goal) return withCheck(goal, [...newer, ...checks]);
+    if (goal?.state === 'active') return withCheck(goal, [...newer, ...checks]);
     checks.push(...newer);
   }
   return null;
