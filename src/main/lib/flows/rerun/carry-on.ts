@@ -12,7 +12,8 @@ import { withRecoveryKind } from './recovery-kind';
 type Db = ReturnType<typeof getDatabase>;
 
 export type CarryOnFlowTaskResult =
-  | { ok: true; task: Task }
+  /** `queued`: the paused run had given its slot up and waits to take one back before it continues. */
+  | { ok: true; task: Task; queued?: boolean }
   | {
       ok: false;
       reason:
@@ -26,7 +27,8 @@ export type CarryOnFlowTaskResult =
 
 /**
  * Continue ONE failed/parked task by resuming its persisted session ({@link withRecoveryKind}
- * gates on it; a paused Flow also needs its original activation still active).
+ * gates on it). A paused Flow continues in place while it holds its slot; one that gave the slot up
+ * while it waited queues to take it back, and continues once that resume is claimed.
  */
 export async function carryOnFlowTask(db: Db, taskId: string): Promise<CarryOnFlowTaskResult> {
   const existing = await getTaskById(db, taskId);
@@ -62,9 +64,14 @@ export async function carryOnFlowTask(db: Db, taskId: string): Promise<CarryOnFl
       return { ok: false, reason: 'admission-required' };
     }
     const { hasActiveFlowAdmission } = await import('../admission/runtime');
-    if (!(await hasActiveFlowAdmission(flowRunId))) {
-      return { ok: false, reason: 'admission-required' };
-    }
-    return continueTask(flowRunId);
+    if (await hasActiveFlowAdmission(flowRunId)) return continueTask(flowRunId);
+    if (!existing.nodeRunId) return { ok: false, reason: 'admission-required' };
+    const { requestParkedFlowResume } = await import('../admission/terminal-resume/parked-resume');
+    const admission = await requestParkedFlowResume({
+      flowRunId,
+      nodeRunId: existing.nodeRunId,
+      kind: 'continue',
+    });
+    return { ok: true, task: existing, queued: admission.state === 'queued' };
   });
 }

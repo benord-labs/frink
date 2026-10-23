@@ -1,13 +1,18 @@
-import { and, asc, eq, gt, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, sql } from 'drizzle-orm';
 import log from 'electron-log';
 import type { FlowAdmissionState } from '../../../../shared/lib/flow-admission';
 import type { getDatabase } from '../../db';
 import { getFlowRun } from '../../db/repos/flow-runs';
-import { flowRunAdmissions, flowRuns } from '../../db/schema';
-import { captureFlowAdmissionException } from './activity';
+import { flowRunAdmissions, flowRuns, nodeRuns, tasks } from '../../db/schema';
+import { stepRecoveryKind } from '../rerun/recovery-kind';
+import { captureFlowAdmissionException, hasFlowResourceActivity } from './activity';
 import type { FlowAdmissionController } from './controller';
 import { admissionByTicket, type FlowRunAdmission, transitionAdmission } from './store';
-import { isTerminalResumeStatus } from './terminal-resume/resume-store';
+import {
+  isParkedNodeStatus,
+  isTerminalResumeStatus,
+  PARKED_NODE_STATUSES,
+} from './terminal-resume/resume-store';
 
 type Db = ReturnType<typeof getDatabase>;
 const DEFAULT_PAGE_SIZE = 100;
@@ -19,6 +24,9 @@ const LIVE_ADMISSION_STATES = new Set<FlowAdmissionState>([
   'active',
   'releasing',
 ]);
+const LIVE_NODE_STATUSES = ['pending', 'running'];
+const SETTLED_ADMISSION_STATES = new Set<FlowAdmissionState>(['released', 'failed', 'cancelled']);
+const LIVE_TASK_STATUSES = ['pending', 'running', 'plan_ready'];
 const STRANDED_RESUME_ERROR =
   'Resume claim was interrupted by a restart before dispatch; retry it manually';
 
@@ -71,14 +79,14 @@ export function recoveryAdmissions(
   };
 }
 
-/** A resume claim whose run is still terminal provably never promoted: promotion and claimed→active
- * commit in one transaction. Settle it so the slot frees, but never replay it — manual Retry owns it. */
+/** A resume claim whose run is still terminal or paused provably never promoted: promotion and
+ * claimed→active commit in one transaction. Settle it so the slot frees, but never replay it. */
 function dropStrandedResumeClaim(
   db: Db,
   row: FlowRunAdmission,
   runStatus: string | null,
 ): FlowRunAdmission {
-  if (!runStatus || !isTerminalResumeStatus(runStatus)) return row;
+  if (!runStatus || (!isTerminalResumeStatus(runStatus) && runStatus !== 'paused')) return row;
   const dropped = transitionAdmission(db, row.ticket, ['claimed'], {
     state: 'failed',
     error: STRANDED_RESUME_ERROR,
@@ -123,6 +131,86 @@ export function beginTerminalRelease(
       ? transitionAdmission(db, ticket, ['active'], { state: 'releasing', error: null })
       : admission;
   return releasing?.state === 'releasing' ? { releasing, outcome } : null;
+}
+
+/** Paused on one agent step whose applied `needs_attention` park a reply can continue, nothing else
+ * live. Synchronous, so the release re-reads it inside the admission transaction. */
+export function isReleasableHumanWait(db: Db, flowRunId: string): boolean {
+  const run = db
+    .select({ status: flowRuns.status, batchId: flowRuns.batchId })
+    .from(flowRuns)
+    .where(eq(flowRuns.id, flowRunId))
+    .get();
+  if (run?.status !== 'paused' || run.batchId !== null) return false;
+  const liveTask = db
+    .select({ id: tasks.id })
+    .from(tasks)
+    .where(and(eq(tasks.flowRunId, flowRunId), inArray(tasks.status, LIVE_TASK_STATUSES)))
+    .get();
+  if (liveTask) return false;
+  const unfinished = db
+    .select({ id: nodeRuns.id, status: nodeRuns.status, completedAt: nodeRuns.completedAt })
+    .from(nodeRuns)
+    .where(
+      and(
+        eq(nodeRuns.flowRunId, flowRunId),
+        inArray(nodeRuns.status, [...PARKED_NODE_STATUSES, ...LIVE_NODE_STATUSES]),
+      ),
+    )
+    .all();
+  const [parked] = unfinished;
+  if (unfinished.length !== 1 || !isParkedNodeStatus(parked.status)) return false;
+  const task = db
+    .select({ status: tasks.status, completedAt: tasks.completedAt })
+    .from(tasks)
+    .where(eq(tasks.nodeRunId, parked.id))
+    .orderBy(desc(tasks.createdAt))
+    .get();
+  if (task?.status !== 'needs_attention') return false;
+  // The watcher applies a park after the task settles: until then the node still holds the hand-off.
+  const applied =
+    parked.completedAt !== null &&
+    task.completedAt !== null &&
+    parked.completedAt >= task.completedAt;
+  return applied && stepRecoveryKind(db, parked.id) === 'continue';
+}
+
+/** Still paused on this step with no slot: none was ever held for it (newest admission settled), or
+ * a resume is waiting to take one back (`queued`). Null while the run still holds its slot. */
+export function slotlessPark(
+  db: Db,
+  flowRunId: string,
+  nodeRunId: string,
+): 'settled' | 'queued' | null {
+  const run = db
+    .select({ status: flowRuns.status })
+    .from(flowRuns)
+    .where(eq(flowRuns.id, flowRunId))
+    .get();
+  const node = db
+    .select({ status: nodeRuns.status })
+    .from(nodeRuns)
+    .where(and(eq(nodeRuns.id, nodeRunId), eq(nodeRuns.flowRunId, flowRunId)))
+    .get();
+  if (run?.status !== 'paused' || !node || !isParkedNodeStatus(node.status)) return null;
+  const latest = db
+    .select({ state: flowRunAdmissions.state })
+    .from(flowRunAdmissions)
+    .where(eq(flowRunAdmissions.flowRunId, flowRunId))
+    .orderBy(desc(flowRunAdmissions.ticket))
+    .get();
+  if (!latest) return null;
+  if (SETTLED_ADMISSION_STATES.has(latest.state)) return 'settled';
+  return latest.state === 'queued' || latest.state === 'claimed' ? 'queued' : null;
+}
+
+/** Frees the active slot of a run waiting only for a person, in one step: the wait and the absence
+ * of any live activity are read in this same transaction, so no release window exists. */
+export function releaseParkedSlot(db: Db, ticket: number): FlowRunAdmission | null {
+  const admission = admissionByTicket(db, ticket);
+  if (admission?.state !== 'active' || hasFlowResourceActivity(admission.flowRunId)) return null;
+  if (!isReleasableHumanWait(db, admission.flowRunId)) return null;
+  return transitionAdmission(db, ticket, ['active'], { state: 'released', settledAt: new Date() });
 }
 
 /** A `releasing` row at boot: its cleanup owner is dead and held only in-memory resources, so a paused

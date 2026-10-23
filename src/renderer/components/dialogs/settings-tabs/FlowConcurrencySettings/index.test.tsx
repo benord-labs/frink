@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
           concurrency_limit_enabled: boolean;
           max_concurrent_runs: number;
           occupied_runs: number;
+          held_by_waiting_runs: number;
           queued_runs: number;
           draining: boolean;
         }
@@ -60,6 +61,7 @@ describe('FlowConcurrencySettings', () => {
       concurrency_limit_enabled: true,
       max_concurrent_runs: 4,
       occupied_runs: 4,
+      held_by_waiting_runs: 0,
       queued_runs: 2,
       draining: true,
     };
@@ -69,10 +71,16 @@ describe('FlowConcurrencySettings', () => {
     mocks.mutation.isPending = false;
   });
 
+  it('names the slots held by runs waiting on the user', () => {
+    mocks.query.data = { ...mocks.query.data!, held_by_waiting_runs: 1 };
+    render(<FlowConcurrencySettings />);
+    expect(screen.getByText('4 / 4 · 1 waiting on you · draining · 2 queued')).toBeTruthy();
+  });
+
   it('keeps edits local until Save submits both settings, including the new maximum', () => {
     render(<FlowConcurrencySettings />);
     expect(screen.getByText('4 / 4 · draining · 2 queued')).toBeTruthy();
-    expect(screen.getByText(/Paused Flows and questions keep their slot/)).toBeTruthy();
+    expect(screen.getByText(/Runs waiting for your reply give up their slot/)).toBeTruthy();
     expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
     const maximum = screen.getByRole('spinbutton', { name: 'Maximum parallel runs' });
     expect(maximum.getAttribute('max')).toBe('100');
@@ -283,6 +291,7 @@ describe('FlowConcurrencySettings', () => {
       concurrency_limit_enabled: false,
       max_concurrent_runs: 7,
       occupied_runs: 3,
+      held_by_waiting_runs: 0,
       queued_runs: 0,
       draining: false,
     };
@@ -311,6 +320,7 @@ describe('FlowConcurrencySettings', () => {
       concurrency_limit_enabled: true,
       max_concurrent_runs: 6,
       occupied_runs: 4,
+      held_by_waiting_runs: 0,
       queued_runs: 2,
       draining: true,
     };

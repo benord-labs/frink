@@ -4,14 +4,21 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { createElement, type ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TooltipProvider } from '../../../../../components/ui/tooltip';
+import { toast } from 'sonner';
 import { TaskControls } from './TaskControls';
 
 const recoverMutate = vi.fn();
-let recoverOptions: { onError?: (error: { message?: string }) => void } | undefined;
+type RecoverOptions = {
+  onSuccess?: (data: { outcome: 'resumed' | 'queued' | 'already-queued' }) => void;
+  onError?: (error: { message?: string }) => void;
+};
+let recoverOptions: RecoverOptions | undefined;
 const invalidateActionable = vi.fn();
 const toastError = vi.fn();
 
 vi.mock('sonner', () => ({ toast: { error: (...args: unknown[]) => toastError(...args) } }));
+const toastInfo = vi.fn();
+Object.assign(toast, { info: toastInfo });
 
 let taskData: {
   id: string;
@@ -57,7 +64,7 @@ vi.mock('../../../../../lib/trpc', () => ({
         },
       },
       recover: {
-        useMutation: (options: { onError?: (error: { message?: string }) => void }) => {
+        useMutation: (options: RecoverOptions) => {
           recoverOptions = options;
           return { mutate: recoverMutate, isPending: false };
         },
@@ -214,6 +221,25 @@ describe('TaskControls', () => {
 
     expect(toastError).toHaveBeenCalledWith('Could not continue task', {
       description: 'This step can no longer be continued',
+    });
+    expect(invalidateActionable).toHaveBeenCalled();
+  });
+
+  // A paused run that gave its slot up waits to take one back, so the click says it is queued.
+  it('says a recovery is queued when its paused run waits for a free slot', () => {
+    taskData = {
+      id: 'task-parked',
+      status: 'failed',
+      result: { error: 'boom' },
+      recoveryKind: 'continue',
+    };
+    renderControls();
+
+    recoverOptions?.onSuccess?.({ outcome: 'resumed' });
+    expect(toastInfo).not.toHaveBeenCalled();
+    recoverOptions?.onSuccess?.({ outcome: 'queued' });
+    expect(toastInfo).toHaveBeenCalledWith('Queued to resume', {
+      description: 'It starts when a slot frees up.',
     });
     expect(invalidateActionable).toHaveBeenCalled();
   });

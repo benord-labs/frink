@@ -68,6 +68,9 @@ export async function unparkQuietIdleFlowRun(
   flowRunId: string,
 ): Promise<void> {
   forgetAdvancedTask(taskId);
+  // Without its slot the run stays paused: the next poll's advance takes one back first.
+  const { hasActiveFlowAdmission } = await import('./admission/runtime');
+  if (!(await hasActiveFlowAdmission(flowRunId))) return;
   const { setFlowRunStatus } = await import('../db/repos/flow-runs');
   await setFlowRunStatus(db, flowRunId, 'running', {}, 'paused');
 }
@@ -202,6 +205,21 @@ async function broadcastQuietParkUpdate(task: Task, status: string): Promise<voi
   });
 }
 
+/** A task that settled while its run held no slot (e.g. Mark complete): queue the run to take one
+ * back rather than advance without one; a resume already waiting advances it when claimed. */
+async function readmitReleasedPark(
+  db: ReturnType<typeof getDatabase>,
+  flowRunId: string,
+  nodeRunId: string,
+): Promise<boolean> {
+  const { slotlessPark } = await import('./admission/recovery-store');
+  const park = slotlessPark(db, flowRunId, nodeRunId);
+  if (park !== 'settled') return park === 'queued';
+  const { requestParkedFlowResume } = await import('./admission/terminal-resume/parked-resume');
+  await requestParkedFlowResume({ flowRunId, nodeRunId });
+  return true;
+}
+
 /** Exported for tests; production drives it via the interval in startTaskCompletionWatcher. */
 export async function tick(): Promise<void> {
   const db = getDatabase();
@@ -225,12 +243,18 @@ export async function tick(): Promise<void> {
 }
 
 /** Advance one terminal task's node under the row guard; evict the dedup entry when the row moved
- * under the snapshot (resumed mid-park) so its next terminal row advances afresh. */
-async function advanceTerminalTask(db: ReturnType<typeof getDatabase>, task: Task): Promise<void> {
+ * under the snapshot (resumed mid-park) so its next terminal row advances afresh. A run that gave up
+ * its slot while it waited takes one back first; its claim advances the node through here again. */
+export async function advanceTerminalTask(
+  db: ReturnType<typeof getDatabase>,
+  task: Task,
+): Promise<void> {
   const flowRunId = task.flowRunId;
   const nodeRunId = task.nodeRunId;
   if (!flowRunId || !nodeRunId) return;
   try {
+    if (task.status !== 'needs_attention' && (await readmitReleasedPark(db, flowRunId, nodeRunId)))
+      return;
     const output = mapTaskToNodeOutput(task);
     const { withFlowResourceCleanup } = await import('./admission/activity');
     const guard = { id: task.id, status: task.status, result: task.result };

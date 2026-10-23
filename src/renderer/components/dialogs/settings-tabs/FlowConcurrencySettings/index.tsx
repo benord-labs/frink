@@ -14,14 +14,19 @@ type AdmissionSettings = {
   concurrency_limit_enabled: boolean;
   max_concurrent_runs: number;
   occupied_runs: number;
+  held_by_waiting_runs: number;
   queued_runs: number;
   draining: boolean;
 };
 // biome-ignore-end lint/style/useNamingConvention: Flows keep their snake_case IPC contract.
 
 function formatCapacity(settings: AdmissionSettings): string {
-  if (!settings.concurrency_limit_enabled) return `${settings.occupied_runs} active · Unlimited`;
-  return `${settings.occupied_runs} / ${settings.max_concurrent_runs}${settings.draining ? ' · draining' : ''}`;
+  const waiting =
+    settings.held_by_waiting_runs > 0 ? ` · ${settings.held_by_waiting_runs} waiting on you` : '';
+  if (!settings.concurrency_limit_enabled) {
+    return `${settings.occupied_runs} active${waiting} · Unlimited`;
+  }
+  return `${settings.occupied_runs} / ${settings.max_concurrent_runs}${waiting}${settings.draining ? ' · draining' : ''}`;
 }
 
 function FlowConcurrencyControls({ settings }: { settings: AdmissionSettings }) {
@@ -56,8 +61,8 @@ function FlowConcurrencyControls({ settings }: { settings: AdmissionSettings }) 
                 className="max-w-prose text-xs leading-relaxed text-muted-foreground"
               >
                 Applies to this machine only. Regular chats do not count, and each Flow&apos;s batch
-                limit still applies separately. Paused Flows and questions keep their slot until the
-                run finishes or is cancelled.
+                limit still applies separately. Runs waiting for your reply give up their slot and
+                queue to resume when you answer. Approvals and plan reviews keep theirs.
               </p>
             </div>
             <Switch

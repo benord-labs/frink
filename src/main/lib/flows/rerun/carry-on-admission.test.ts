@@ -12,10 +12,15 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../admission/runtime', () => ({
   hasActiveFlowAdmission: mocks.hasActiveFlowAdmission,
+  // Loaded by the paused-run resume this suite observes.
+  registerParkedFlowResumeDispatcher: vi.fn(),
 }));
 
 import { setFlowAdmissionLifecycleHooks } from '../admission/activity';
+import * as parkedResume from '../admission/terminal-resume/parked-resume';
 import { carryOnFlowTask } from './carry-on';
+
+const requestParkedFlowResume = vi.spyOn(parkedResume, 'requestParkedFlowResume');
 
 const GRAPH: FlowGraph = {
   nodes: [{ id: 'agent', blockType: 'agent', config: { instructions: 'work' } }],
@@ -169,12 +174,27 @@ describe('carryOnFlowTask admission', () => {
     expect(await taskStatus()).toBe('needs_attention');
   });
 
-  it('refuses the continuation after the Flow admission is gone', async () => {
+  it('refuses the continuation of a step it cannot name once the Flow admission is gone', async () => {
     mocks.hasActiveFlowAdmission.mockResolvedValue(false);
 
     await expect(carryOnFlowTask(db, taskId)).resolves.toEqual({
       ok: false,
       reason: 'admission-required',
+    });
+    expect(requestParkedFlowResume).not.toHaveBeenCalled();
+    expect(await taskStatus()).toBe('needs_attention');
+  });
+
+  it('queues a paused Flow that gave its slot up, leaving the task parked until the claim', async () => {
+    mocks.hasActiveFlowAdmission.mockResolvedValue(false);
+    requestParkedFlowResume.mockResolvedValueOnce({ state: 'queued', created: true });
+    await db.update(tasks).set({ nodeRunId: 'nr-1' }).where(eq(tasks.id, taskId));
+
+    await expect(carryOnFlowTask(db, taskId)).resolves.toMatchObject({ ok: true, queued: true });
+    expect(requestParkedFlowResume).toHaveBeenCalledWith({
+      flowRunId,
+      nodeRunId: 'nr-1',
+      kind: 'continue',
     });
     expect(await taskStatus()).toBe('needs_attention');
   });
