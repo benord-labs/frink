@@ -154,8 +154,8 @@ export function computeDagreLayoutPositions(
 }
 
 /**
- * Fills `position` on nodes that lack it using the same dagre layout as the canvas.
- * Call before saving a flow version so run-history sorting has stable y/x.
+ * Fills `position` on nodes that lack it using the same dagre layout as the canvas,
+ * so a saved flow reopens in the same arrangement. `resetLayout` reuses it after clearing positions.
  */
 export function embedMissingPositionsFromDagre(graph: FlowGraph): FlowGraph {
   if (graph.nodes.length === 0) {

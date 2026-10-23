@@ -47,7 +47,7 @@ Registration is agent-mediated: the agent registers a simple node inline in one 
 
 ## Run history
 
-The **Run history** panel lists **executable steps**, not the trigger block — the trigger is what started the run; execution begins on the first connected block. Saving the flow stores **canvas positions** for every node (including auto-layout), so step order matches the diagram; older saved graphs without positions are ordered by walking **edges from the trigger** instead.
+The **Run history** panel lists **executable steps**, not the trigger block — the trigger is what started the run; execution begins on the first connected block. Steps are listed in the order they started during the run, whatever their position on the canvas. If a step is retried, each attempt gets its own row where it started, and each parallel lane of a Fan Out is listed separately in the same way.
 
 Deleting a flow is permanent: Frink stops its active work and removes the flow, its run history, and its work-queue tasks. Stashed briefings remain available.
 
