@@ -6,7 +6,7 @@
  * when it should test the packaged copy (or vice versa). The native load itself only
  * runs under Electron in CI; this is the one branch worth unit-pinning.
  */
-import { cpSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { cpSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import { isAbsolute, join, resolve } from 'node:path';
@@ -121,5 +121,17 @@ describe('checkCursorPlatform', () => {
     expect(() => checkCursorPlatform(partialCopy(['bin/rg', 'vendor/tree-sitter']))).toThrow(
       /tree-sitter-bash/,
     );
+  });
+});
+
+describe('smoke-linux-launch.sh', () => {
+  // The PostHog CI cohort is a fixed list from before this opt-out; a smoke launch that sends again counts as a real install.
+  it('launches every packaged build with usage analytics off', () => {
+    const script = readFileSync(new URL('./smoke-linux-launch.sh', import.meta.url), 'utf8');
+    const launches = script
+      .split('\n')
+      .filter((line) => /\bsetsid\b/.test(line) && !line.trimStart().startsWith('#'));
+    expect(launches).not.toHaveLength(0);
+    for (const line of launches) expect(line).toContain('FRINK_DISABLE_USAGE_ANALYTICS=1');
   });
 });
