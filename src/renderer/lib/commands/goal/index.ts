@@ -30,17 +30,11 @@ function goalData(part: GoalMessagePart): GoalPartData | null {
   return part.type === 'data-goal' ? (part.data as GoalPartData) : null;
 }
 
-function isStop(part: GoalMessagePart): boolean {
-  return goalData(part)?.state === 'stopped';
-}
-
 /** A wake burst extends its turn's message and keeps the turn's metadata, so the newest stop
- * decides: one that skipped the check for background work, or a burst begun since, ends nothing. */
+ * decides: one that skipped the check for background work ends nothing, even while a burst runs. */
 function stillWorking(parts: GoalMessagePart[]): boolean {
-  const last = parts.findLast((part) => part.type === 'step-start' || isStop(part));
-  const stop = last && goalData(last);
-  if (stop?.state === 'stopped') return stop.deferred;
-  return last !== undefined && parts.some(isStop);
+  const stop = parts.map(goalData).findLast((data) => data?.state === 'stopped');
+  return stop?.state === 'stopped' && stop.deferred;
 }
 
 /** A message's goal part, if any, and its checks of goals set earlier, newest first. */

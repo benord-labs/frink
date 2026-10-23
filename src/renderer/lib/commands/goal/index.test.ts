@@ -123,6 +123,11 @@ describe('activeGoal with background work', () => {
   it('does not bring back a met goal when a later turn waits on background work', () => {
     expect(goalOf([turn(step, goalPart, stop(false)), ask, turn(step, stop(true))])).toBeNull();
   });
+
+  it('does not bring back a met goal while a scheduled wake runs on that turn', () => {
+    const waking = turn(step, goalPart, stop(false), step, { type: 'text' });
+    expect(goalOf([ask, waking])).toBeNull();
+  });
 });
 
 describe('activeGoalAtom', () => {
