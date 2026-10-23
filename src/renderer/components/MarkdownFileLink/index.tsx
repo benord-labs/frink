@@ -1,5 +1,7 @@
-import { type ReactNode, useContext } from 'react';
+import { type ReactNode, useContext, useEffect } from 'react';
 import { FileLinkBadgeContext } from '../../lib/file-links/file-link-badge-context';
+import { FileLinkScopeContext } from '../../lib/file-links/file-link-scope';
+import { isBareFileName } from '../../lib/file-links/file-link-target';
 
 type MarkdownFileLinkProps = {
   children?: ReactNode;
@@ -8,7 +10,7 @@ type MarkdownFileLinkProps = {
   'data-label'?: string;
 };
 
-/** A file reference in rendered markdown: the surface's badge when it draws one, else the original markdown. */
+/** Renders the `frink-file` element of the markdown step, placing a bare name through the reply's scope. */
 export function MarkdownFileLink({
   children,
   'data-path': path = '',
@@ -16,5 +18,14 @@ export function MarkdownFileLink({
   'data-label': label = '',
 }: MarkdownFileLinkProps) {
   const renderBadge = useContext(FileLinkBadgeContext);
-  return renderBadge?.({ path, line: Number(line) || undefined, label }) ?? children;
+  const scope = useContext(FileLinkScopeContext);
+  const register = scope?.register;
+  useEffect(() => register?.(path), [register, path]);
+  const fileLine = Number(line) || undefined;
+  const resolved = isBareFileName(path) ? scope?.resolve(path) : undefined;
+  // A bare name with no line is a file only once its reply's lookup finds exactly one.
+  if (isBareFileName(path) && !fileLine && !resolved) return children;
+  const file = resolved ?? path;
+  const suffix = scope?.suffixFor(file);
+  return renderBadge?.({ path: file, line: fileLine, label, suffix }) ?? children;
 }
