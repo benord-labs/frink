@@ -1,8 +1,10 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { copyFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import log from 'electron-log';
 import simpleGit from 'simple-git';
+import { execWithShellEnv } from './shell-env';
 
 const APPLY_RETRIES = 3;
 const APPLY_RETRY_DELAY_MS = 200;
@@ -68,6 +70,7 @@ export async function drainInFlightRollbackStashes(timeoutMs = 3000): Promise<vo
 }
 
 async function createRollbackStashInner(cwd: string, sdkMessageUuid: string): Promise<void> {
+  let tempDir: string | undefined;
   try {
     const git = simpleGit(cwd);
 
@@ -75,28 +78,23 @@ async function createRollbackStashInner(cwd: string, sdkMessageUuid: string): Pr
     const isRepo = await git.checkIsRepo();
     if (!isRepo) return;
 
-    const indexTreeRaw = await git.raw(['write-tree']);
-    const indexTree = indexTreeRaw.trim();
+    // Read the index through a private copy: write-tree on the real index takes its lock,
+    // which fails any git command the next Flow step runs in this worktree.
+    tempDir = await mkdtemp(join(tmpdir(), 'checkpoint-index-'));
+    const indexCopyPath = join(tempDir, 'index-copy');
+    const realIndexPath = resolve(
+      cwd,
+      (await git.raw(['rev-parse', '--git-path', 'index'])).trim(),
+    );
+    if (existsSync(realIndexPath)) await copyFile(realIndexPath, indexCopyPath);
+    const indexTree = await gitWithIndexFile(cwd, indexCopyPath, ['write-tree']);
     if (!indexTree) {
       return;
     }
 
-    let worktreeTree: string = '';
-    let tempDir: string | undefined;
-    try {
-      tempDir = await mkdtemp(join(tmpdir(), 'checkpoint-index-'));
-      const tempIndexPath = join(tempDir, 'index');
-      const gitWithTempIndex = simpleGit(cwd).env({
-        GIT_INDEX_FILE: tempIndexPath,
-      });
-      await gitWithTempIndex.raw(['add', '-A']);
-      worktreeTree = (await gitWithTempIndex.raw(['write-tree'])).trim();
-    } finally {
-      if (tempDir) {
-        await rm(tempDir, { recursive: true, force: true });
-      }
-    }
-
+    const tempIndexPath = join(tempDir, 'index');
+    await gitWithIndexFile(cwd, tempIndexPath, ['add', '-A']);
+    const worktreeTree = await gitWithIndexFile(cwd, tempIndexPath, ['write-tree']);
     if (!worktreeTree) {
       return;
     }
@@ -125,7 +123,22 @@ async function createRollbackStashInner(cwd: string, sdkMessageUuid: string): Pr
     log.info(`[Rollback] Checkpoint created for ${sdkMessageUuid} in ${cwd}`);
   } catch (e) {
     log.error('[Rollback] Failed to create checkpoint', { cwd, sdkMessageUuid, error: e });
+  } finally {
+    if (tempDir) {
+      await rm(tempDir, { recursive: true, force: true });
+    }
   }
+}
+
+/** Runs git against `indexFile` instead of the worktree's index, keeping the caller's environment. */
+async function gitWithIndexFile(cwd: string, indexFile: string, args: string[]): Promise<string> {
+  const { stdout } = await execWithShellEnv('git', ['-c', 'core.splitIndex=false', ...args], {
+    cwd,
+    env: { ...process.env, GIT_INDEX_FILE: indexFile, GIT_OPTIONAL_LOCKS: '0' },
+    // `add -A` into an empty index can print a warning per file, past execFile's 1 MiB default.
+    maxBuffer: 256 * 1024 * 1024,
+  });
+  return stdout.trim();
 }
 
 function parseCheckpointTrees(message: string): {
