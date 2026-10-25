@@ -115,10 +115,14 @@ async function resolveChatRefs(ctx: {
   const chatId = sources.map((s) => readStr(s, 'chatId')).find(Boolean) ?? null;
   if (!chatId) return null;
 
-  const subChatId = sources.map((s) => readStr(s, 'subChatId')).find(Boolean) ?? null;
+  const subChatId =
+    sources
+      .filter((s) => readStr(s, 'chatId') === chatId)
+      .map((s) => readStr(s, 'subChatId'))
+      .find(Boolean) ?? null;
   if (subChatId) return { chatId, subChatId };
 
-  // No subChatId in any source — fall back to the chat's sub-chat.
+  // No source names a sub-chat of this chat — fall back to the chat's sub-chat.
   const subChat = await getSubChatForChat(db, chatId);
   return subChat ? { chatId, subChatId: subChat.id } : null;
 }

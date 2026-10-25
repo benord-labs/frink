@@ -173,6 +173,19 @@ describe('chat_reply upstream chat resolution', () => {
     expect(res).toMatchObject({ type: 'completed', output: { outputs: finished } });
   });
 
+  // Catches a reply pairing the Start Task's chat with a sub-chat from the finished task's chat.
+  it('never borrows a sub-chat recorded beside a different chat', async () => {
+    const upstream = await makeChat();
+    await seedStartTask({ chatId: upstream.chatId });
+    const finished = await makeChat();
+
+    const res = await dispatchChatReply(
+      crCtx({ triggerContext: { _frinkTrigger: 'post_task_trigger', ...finished } }),
+    );
+
+    expect(res).toMatchObject({ type: 'completed', output: { outputs: upstream } });
+  });
+
   it('falls back to the newest sub-chat when only chatId resolves (EC7)', async () => {
     const { chatId, subChatId } = await makeChat();
     // start_task surfaced chatId but no subChatId; no trigger / no predecessor sub.
