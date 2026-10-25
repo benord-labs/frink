@@ -24,7 +24,7 @@ export function SettingSwitchRow({
   return (
     <div className="flex items-start justify-between gap-3">
       <div className="grid min-w-0 flex-1 gap-0.5">
-        <Label htmlFor={id} className="text-sm font-medium">
+        <Label htmlFor={id} className="text-xs font-medium">
           {label}
         </Label>
         <p id={descriptionId} className="text-sm text-muted-foreground">
