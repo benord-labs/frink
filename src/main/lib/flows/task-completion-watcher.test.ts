@@ -15,6 +15,7 @@ vi.mock('../db', async (orig) => ({
 }));
 vi.mock('./dispatch', () => ({ dispatchNode: vi.fn() }));
 
+import * as advance from './advance';
 import { tick } from './task-completion-watcher';
 
 const GRAPH: FlowGraph = {
@@ -64,5 +65,32 @@ describe('task-completion-watcher — failed dispatch task fails the flow run', 
     const failedNode = await getNodeRun(db, node.id);
     expect(failedNode?.status).toBe('failed');
     expect(JSON.stringify(failedNode?.nodeOutput)).toContain('Worktree path does not exist');
+  });
+});
+
+describe('task-completion-watcher — finished nodes', () => {
+  it('leaves a finished task alone once its node has finished too', async () => {
+    const db = freshDb();
+    holder.db = db;
+    const { flowRunId } = await seedFlowRun(db, GRAPH);
+    const node = await createNodeRun(db, {
+      flowRunId,
+      nodeId: 'agent1',
+      blockType: 'agent',
+      status: 'completed',
+    });
+    const task = await createTask(db, {
+      description: 'flow agent turn',
+      source: 'flow',
+      flowRunId,
+      nodeRunId: node.id,
+    });
+    await updateTaskStatus(db, task.id, 'done');
+    const advanceSpy = vi.spyOn(advance, 'advanceFlowRun');
+
+    await tick();
+
+    expect(advanceSpy).not.toHaveBeenCalled();
+    advanceSpy.mockRestore();
   });
 });
