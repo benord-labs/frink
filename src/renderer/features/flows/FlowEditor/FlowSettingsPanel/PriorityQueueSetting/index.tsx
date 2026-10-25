@@ -138,7 +138,6 @@ export function PriorityQueueSetting({
             operator: row.operator,
             value: row.value,
           }))}
-          showFilters
           availableFilterFields={[]}
           fieldSuggestions={suggestions}
           addLabel="Add row"
