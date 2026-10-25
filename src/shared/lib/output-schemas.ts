@@ -142,8 +142,7 @@ export const OUTPUT_SCHEMAS: Record<string, OutputFieldSchema[]> = {
       key: 'mergedBranches',
       type: 'array',
       description:
-        'Dependency branches merged into the converging worktree (sc-612). Absent on single-branch runs; ' +
-        'the field may be omitted when not applicable. Available via {{previous.mergedBranches}}.',
+        'Dependency branches merged into the converging worktree. Absent on single-branch runs.',
       guaranteed: false,
     },
     {
