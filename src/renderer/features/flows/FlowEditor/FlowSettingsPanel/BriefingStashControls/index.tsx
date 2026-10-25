@@ -93,7 +93,7 @@ function StashNamePopover({
           variant="ghost"
           size="xs"
           disabled={disabled}
-          className="gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+          className="gap-1 text-xs text-muted-foreground hover:text-foreground"
           aria-label="Stash briefing"
         >
           <Archive className="h-3 w-3" aria-hidden />
@@ -168,17 +168,17 @@ function StashRow({
         >
           <div className="flex items-baseline gap-1.5 min-w-0">
             <span className="text-xs font-medium truncate">{stash.name}</span>
-            <span className="text-[10px] text-muted-foreground/60 shrink-0">
+            <span className="text-xs text-muted-foreground/60 shrink-0">
               {formatRelativeTime(stash.created_at)}
             </span>
           </div>
           {stash.source_flow_name && (
-            <div className="text-[10px] text-muted-foreground/60 truncate">
+            <div className="text-xs text-muted-foreground/60 truncate">
               from {stash.source_flow_name}
             </div>
           )}
           {stash.content_preview && (
-            <div className="mt-0.5 text-[10px] text-muted-foreground truncate">
+            <div className="mt-0.5 text-xs text-muted-foreground truncate">
               {stash.content_preview}
             </div>
           )}
@@ -324,7 +324,7 @@ export function BriefingStashControls({
               type="button"
               variant="ghost"
               size="xs"
-              className="gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+              className="gap-1 text-xs text-muted-foreground hover:text-foreground"
               aria-label="Restore a stashed briefing"
             >
               <RotateCcw className="h-3 w-3" aria-hidden />
@@ -334,9 +334,9 @@ export function BriefingStashControls({
           </PopoverTrigger>
           <PopoverContent className="w-72 p-1.5" align="end">
             {stashesLoading ? (
-              <p className="px-2 py-3 text-center text-[11px] text-muted-foreground">Loading…</p>
+              <p className="px-2 py-3 text-center text-sm text-muted-foreground">Loading…</p>
             ) : stashes.length === 0 ? (
-              <p className="px-2 py-3 text-center text-[11px] text-muted-foreground">
+              <p className="px-2 py-3 text-center text-sm text-muted-foreground">
                 No stashes yet — save a briefing to stash it.
               </p>
             ) : (

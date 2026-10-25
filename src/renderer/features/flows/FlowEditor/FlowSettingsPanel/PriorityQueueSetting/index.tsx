@@ -113,7 +113,7 @@ export function PriorityQueueSetting({
         <Label htmlFor="flow-settings-run-first" className="text-xs font-medium">
           Priority queue
         </Label>
-        <p className="text-[11px] text-muted-foreground">{hintFor(mode, rows, noDetails)}</p>
+        <p className="text-sm text-muted-foreground">{hintFor(mode, rows, noDetails)}</p>
       </div>
       <Select
         value={mode}
