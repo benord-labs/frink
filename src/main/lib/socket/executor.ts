@@ -119,6 +119,7 @@ import { deliverProviderConfig } from './execution/provider-delivery';
 import { startAcpTurn } from './execution/acp-turn';
 import { startCopilotTurn } from './execution/copilot-turn';
 import { startCursorTurn } from './execution/cursor-turn';
+import { lastFinishMetadata, stampTurnUsage } from './execution/turn-usage';
 import { trackUserMessageDelivery } from './execution/claude-session/user-message-delivery';
 import {
   applyApprovedPlanContextToPrompt,
@@ -1002,14 +1003,17 @@ export async function handleRemoteExecute(
         if (isCodex && codexSessionId) {
           setCodexSession(chatId, subChatId, codexSessionId, codexTurn);
         }
+        const codexFinalParts = buildFinalPartsForPersist(mode, codexChunks);
         sendExecuteCompleteDeferred({
           chatId,
           subChatId,
           assistantMessageId: msgId,
           sessionId: codexSessionId,
           metadata: codexMetadata,
-          finalParts: buildFinalPartsForPersist(mode, codexChunks),
+          finalParts: codexFinalParts,
         });
+        // No provider on this path reports compactions to Frink yet.
+        await stampTurnUsage(linkedTaskSignalTaskId, msgId, codexMetadata, codexFinalParts, false);
         log.info(`[Socket Executor] ${agentLabel} execution complete for ${subChatId}`);
       } catch (err) {
         if (abortController.signal.aborted) throw err;
@@ -1658,6 +1662,7 @@ export async function handleRemoteExecute(
               flowPlanAutoApprove && mode === 'plan' ? { projectId, settings, signalTaskId } : null,
             nextMessageIndex: turn.nextMessageIndex,
             buildFinalParts: (chunks) => buildFinalPartsForPersist(mode, chunks),
+            usageTaskId: signalTaskId,
             // Injected, not imported there: see the wake-hold-io module doc (import cycle).
             send: {
               sendStreamChunkDirect: sendRunStreamChunkDirect,
@@ -1799,22 +1804,14 @@ export async function handleRemoteExecute(
     delivery.assertDelivered(abortController.signal.aborted, shouldResumeClaudeSession);
 
     // 5. Extract metadata from finish chunk if present (use last: failed resume can leave an earlier `finish` before retry succeeds)
-    let finishChunk: UIMessageChunk | undefined;
-    for (let i = collectedChunks.length - 1; i >= 0; i--) {
-      const c = collectedChunks[i];
-      if (c.type === 'finish') {
-        finishChunk = c;
-        break;
-      }
-    }
-    const metadata =
-      finishChunk && 'messageMetadata' in finishChunk ? finishChunk.messageMetadata : undefined;
+    const metadata = lastFinishMetadata(collectedChunks);
 
     // 6a. Clean-stream park (usage limit / API error as the final text part) — awaited before any
     // IPC emit so the renderer's completion refetch reads the parked status.
     const finalParts = buildFinalPartsForPersist(mode, collectedChunks);
     completionHasProviderError =
       (await disposeCleanStreamEnd(subChatId, finalParts)) || claudeResultErrored;
+    await stampTurnUsage(linkedTaskSignalTaskId, msgId, metadata, finalParts, true);
     // Finalize the linked signal before session disposition, then snapshot the resulting hold state.
     // Reading hasWakeHold before this await races the async wake-pump arm and can publish a terminal
     // completion for an epoch that is about to stream another burst.

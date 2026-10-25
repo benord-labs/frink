@@ -30,6 +30,7 @@ import type {
   StreamChunkPayload,
 } from '../client';
 import { ChatBusyError, DuplicateMessageError } from '../execution/send-admission';
+import { lastFinishMetadata, stampTurnUsage } from '../execution/turn-usage';
 import { clearChunkCounter } from './assistant-chunk-checkpoint';
 import { emitBurstPlanCard } from './burst-chunks';
 import { finishHeldLiveStreams } from './live-stream';
@@ -118,6 +119,8 @@ export function buildWakeHoldIo(params: {
    * a plan card, and only the plan branch dedupes that card against the prose repeating it. Folding
    * as 'agent' shows that prose on reload above a card the live view had filtered out. */
   buildFinalParts: (chunks: UIMessageChunk[]) => MessagePart[];
+  /** The linked task each burst re-stamps with the message's context usage (turn-usage.ts). */
+  usageTaskId: string | null;
   /** Plan-card treatment for this execution: flow runs render differently. */
   flowDriven: boolean;
   /** Set only on an auto-approve node's plan turn, whose burst-finished plan Frink approves. */
@@ -152,14 +155,18 @@ export function buildWakeHoldIo(params: {
       // Awaited: the caller may be about to dispose the session, and an abandoned write would leave
       // this burst's text only in the CLI's own transcript.
       if (hadContent) {
+        const finalParts = buildFinalParts(chunks);
         await send.sendExecuteCompleteDirect({
           chatId,
           subChatId,
           assistantMessageId: msgId,
-          finalParts: buildFinalParts(chunks),
+          finalParts,
           wakeBurst: true,
           continuesWakeHold: holdActive,
         });
+        // Before the caller settles the burst's signal, which may flip the task terminal.
+        const metadata = lastFinishMetadata(chunks);
+        await stampTurnUsage(params.usageTaskId, msgId, metadata, finalParts, true);
       }
       const planText = approvedPlanText;
       approvedPlanText = null;

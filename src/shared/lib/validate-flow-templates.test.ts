@@ -1694,6 +1694,27 @@ describe('expectedOutputs on run_command', () => {
     expect(prev).toHaveLength(0);
   });
 
+  // A Lane Measure-style run_command reads these from the agent before it; undeclared, the patch
+  // that wires it would save with unknown-output-field warnings.
+  it('accepts {{previous.contextTokens}} and {{previous.compactions}} after an agent', () => {
+    const graph = makeGraph([
+      { id: 't', blockType: 'manual_trigger' },
+      { id: 'a', blockType: 'agent', config: { instructions: 'ship it' } },
+      {
+        id: 'm',
+        blockType: 'run_command',
+        config: {
+          command: 'echo {{previous.contextTokens}} {{previous.compactions}}',
+          projectId: 'p1',
+        },
+      },
+    ]);
+    const prev = validateFlowTemplateVariables(graph).filter((w) =>
+      w.placeholder.startsWith('{{previous.'),
+    );
+    expect(prev).toHaveLength(0);
+  });
+
   it('warns for undeclared {{previous.unknown}} when expectedOutputs is declared', () => {
     const graph = makeGraph([
       { id: 't', blockType: 'manual_trigger' },

@@ -52,6 +52,8 @@ A leading `/command` in instructions expands at save time. Discover names with `
 | `fireAndForget` | boolean | no | True when agent was launched in async fire-and-forget mode |
 | `taskStatus` | string | no | Task status when the node ended in a non-standard state (e.g. needs_attention when agent did not signal). Use {{previous.taskStatus}} to branch on this. |
 | `verification` | object | no | Structured verification result from the agent's frink_task_signal call — only present when the agent explicitly includes a verification object. Use dot notation: {{previous.verification.passed}} |
+| `contextTokens` | number | no | Tokens in the agent's context window after this node's turn. null when the provider reports no context usage (Cursor, Copilot). |
+| `compactions` | number | no | How many times the agent's context was compacted during this node, summed across turns if it paused and resumed. null when the provider cannot report compactions (currently every provider except Claude). |
 
 
 ## run_command
