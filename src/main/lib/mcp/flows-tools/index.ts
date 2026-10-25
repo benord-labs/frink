@@ -15,6 +15,7 @@ import { TRPCError } from '@trpc/server';
 import log from 'electron-log';
 import { z } from 'zod';
 import { type FlowGraph, validateGraph } from '../../../../shared/lib/validate-flow-graph';
+import { unreadableWebhookFilterMessage } from '../../../../shared/lib/webhook-match';
 import { refuseIfAwaitingConsent } from './gating/flow-invocation-consent';
 import { patchTemplateWarnings } from './patch-template-warnings';
 import {
@@ -848,19 +849,23 @@ export async function handleFlowsToolCall(
 // Handlers
 // ---------------------------------------------------------------------------
 
-/** Patch-time setup hints for webhook triggers left without a real integration binding (a
- * webhook_trigger fires only when config.integrationId + config.eventType are set). */
+/** Patch-time hints for webhook triggers that can never fire: no integrationId + eventType
+ * binding, or filters the matcher cannot read. */
 function collectWebhookSetupHints(graph: FlowGraph): string[] {
   const hints: string[] = [];
   for (const node of graph.nodes) {
     if (node.blockType !== 'webhook_trigger') continue;
     const config = (node.config ?? {}) as Record<string, unknown>;
+    const label = node.label?.trim() || node.id;
     const iid = typeof config.integrationId === 'string' ? config.integrationId.trim() : '';
     const et = typeof config.eventType === 'string' ? config.eventType.trim() : '';
-    if (iid && et) continue;
-    hints.push(
-      `Webhook trigger "${node.label ?? node.id}" needs integrationId + eventType — call frink_flows_list_catalog({ kind: 'integrations' }) to get valid values.`,
-    );
+    if (!iid || !et) {
+      hints.push(
+        `Webhook trigger "${label}" needs integrationId + eventType — call frink_flows_list_catalog({ kind: 'integrations' }) to get valid values.`,
+      );
+    }
+    const filterMessage = unreadableWebhookFilterMessage(label, node.config);
+    if (filterMessage) hints.push(filterMessage);
   }
   return hints;
 }
