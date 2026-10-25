@@ -116,11 +116,15 @@ function findCause(rawLines: string[]): string | undefined {
     .slice(header + 1)
     .filter((line) => indentOf(line) <= margin)
     .map((line) => line.trim());
+  const pythonCause = (line: string) => isCause(line) || BARE_PYTHON_EXCEPTION.test(line);
   if (atMargin.length === 0) {
     // A nested exception group draws its exceptions inside a `|` box; a cut-off traceback has none.
-    return lastCause(trimmed.slice(header + 1).filter((line) => line.startsWith('|')));
+    const boxed = trimmed
+      .slice(header + 1)
+      .filter((line) => line.startsWith('|'))
+      .map((line) => line.slice(1).trim());
+    return [...boxed].reverse().find(pythonCause);
   }
-  const pythonCause = (line: string) => isCause(line) || BARE_PYTHON_EXCEPTION.test(line);
   return [...atMargin].reverse().find(pythonCause) ?? atMargin.at(-1);
 }
 

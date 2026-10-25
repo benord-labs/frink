@@ -1286,7 +1286,10 @@ describe('flow-step-executor', () => {
         '  | ExceptionGroup: g (1 sub-exception)',
         '    | ValueError: x',
       ].join('\n');
-      expect(await errorFor(stderr)).toBe('| ValueError: x');
+      expect(await errorFor(stderr)).toBe('ValueError: x');
+      const bare =
+        'Traceback (most recent call last):\n  + Exception Group Traceback (most recent call last):\n    | ValueError\n';
+      expect(await errorFor(bare)).toBe('ValueError');
     });
 
     it('keeps the first line when a traceback is cut off before its exception', async () => {
