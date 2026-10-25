@@ -225,14 +225,39 @@ describe('requestParkedFlowResume', () => {
     expect(carryOnFlowTask).not.toHaveBeenCalled();
   });
 
-  it('leaves the run paused and its step untouched when the step does not continue', async () => {
+  // A failed resume that changed nothing must not keep the slot it took: nothing would release it.
+  it('leaves the run paused when the step does not continue, and gives the slot to the next run', async () => {
     const nodeRunId = seedReleasedPark('run-refused');
     carryOnFlowTask.mockResolvedValueOnce({ ok: false, reason: 'no-session' });
     await requestParkedFlowResume({ flowRunId: 'run-refused', nodeRunId });
-    await vi.waitFor(() => expect(carryOnFlowTask).toHaveBeenCalledOnce());
+    const next = await requestFlowStart({
+      flowVersionId: 'version-parked',
+      triggerContext: null,
+      idempotencyKey: 'after-refused-resume',
+      batchId: null,
+    });
+
+    await vi.waitFor(() =>
+      expect(startDispatcher).toHaveBeenCalledWith(next.run.id, expect.any(Number)),
+    );
     expect(runStatus('run-refused')).toBe('paused');
     expect(db.select().from(nodeRuns).where(eq(nodeRuns.id, nodeRunId)).get()?.status).toBe(
       'blocked',
+    );
+    expect(await liveAdmission('run-refused')).toBeNull();
+  });
+
+  it('keeps the slot when the failed resume had already started the step', async () => {
+    const nodeRunId = seedReleasedPark('run-started');
+    carryOnFlowTask.mockImplementationOnce(async () => {
+      db.update(tasks).set({ status: 'running' }).where(eq(tasks.id, 'run-started-task')).run();
+      throw new Error('session dropped after the task started');
+    });
+    await requestParkedFlowResume({ flowRunId: 'run-started', nodeRunId });
+
+    await vi.waitFor(() => expect(carryOnFlowTask).toHaveBeenCalledOnce());
+    await vi.waitFor(async () =>
+      expect(await liveAdmission('run-started')).toMatchObject({ state: 'active' }),
     );
   });
 });

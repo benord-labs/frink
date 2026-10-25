@@ -7,7 +7,12 @@ import { getDatabase } from '../../../db';
 import { tasks } from '../../../db/schema';
 import { readRunFence } from '../../transitions';
 import { captureFlowAdmissionException } from '../activity';
-import { registerTerminalFlowResumeDispatcher } from '../runtime';
+import { failUnusedParkedResume } from '../recovery-store';
+import {
+  drainFlowAdmissions,
+  registerTerminalFlowResumeDispatcher,
+  transitionFlowRun,
+} from '../runtime';
 import type { TerminalFlowResumeIntent } from './resume-store';
 
 type Db = ReturnType<typeof getDatabase>;
@@ -54,8 +59,21 @@ async function continueParkedStep(intent: TerminalFlowResumeIntent, ticket: numb
   await advanceTerminalTask(db, task);
 }
 
-/** Never throws: a failure leaves the run paused, and the claim's own activity release returns the
- * slot while the run still only waits for a person. */
+/** A failure that changed nothing gives the slot straight back; one that started work leaves it to
+ * the claim's activity release. */
+async function failParkedResume(
+  intent: TerminalFlowResumeIntent,
+  ticket: number,
+  message: string,
+): Promise<void> {
+  const db = getDatabase();
+  const failed = await transitionFlowRun(() =>
+    failUnusedParkedResume(db, ticket, intent.node_run_id, message),
+  );
+  if (failed) await drainFlowAdmissions();
+}
+
+/** Never throws: a failure leaves the run paused, as the claim found it. */
 async function dispatchParkedResume(
   intent: TerminalFlowResumeIntent,
   ticket: number,
@@ -69,6 +87,10 @@ async function dispatchParkedResume(
       ticket,
       error,
     });
+    const message = error instanceof Error ? error.message : String(error);
+    await failParkedResume(intent, ticket, message).catch((settleError) =>
+      captureFlowAdmissionException(settleError, 'parked-resume-settle'),
+    );
   }
 }
 

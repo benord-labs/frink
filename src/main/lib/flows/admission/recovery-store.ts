@@ -140,6 +140,15 @@ export function beginTerminalRelease(
   return releasing?.state === 'releasing' ? { releasing, outcome } : null;
 }
 
+function hasLiveTask(db: Db, flowRunId: string): boolean {
+  const live = db
+    .select({ id: tasks.id })
+    .from(tasks)
+    .where(and(eq(tasks.flowRunId, flowRunId), inArray(tasks.status, LIVE_TASK_STATUSES)))
+    .get();
+  return live !== undefined;
+}
+
 /** When the prompt cache of a run waiting only on a reply to one agent step goes cold (epoch ms);
  * null for any other run. Synchronous, so the release re-reads it in its transaction. */
 export function humanWaitColdAt(db: Db, flowRunId: string): number | null {
@@ -149,12 +158,7 @@ export function humanWaitColdAt(db: Db, flowRunId: string): number | null {
     .where(eq(flowRuns.id, flowRunId))
     .get();
   if (run?.status !== 'paused' || run.batchId !== null) return null;
-  const liveTask = db
-    .select({ id: tasks.id })
-    .from(tasks)
-    .where(and(eq(tasks.flowRunId, flowRunId), inArray(tasks.status, LIVE_TASK_STATUSES)))
-    .get();
-  if (liveTask) return null;
+  if (hasLiveTask(db, flowRunId)) return null;
   const unfinished = db
     .select({ id: nodeRuns.id, status: nodeRuns.status, completedAt: nodeRuns.completedAt })
     .from(nodeRuns)
@@ -182,13 +186,7 @@ export function humanWaitColdAt(db: Db, flowRunId: string): number | null {
   return Math.min(recorded?.turnUsage.promptCacheExpiresAt ?? latest, latest);
 }
 
-/** Still paused on this step with no slot: none was ever held for it (newest admission settled), or
- * a resume is waiting to take one back (`queued`). Null while the run still holds its slot. */
-export function slotlessPark(
-  db: Db,
-  flowRunId: string,
-  nodeRunId: string,
-): 'settled' | 'queued' | null {
+function isPausedOnParkedStep(db: Db, flowRunId: string, nodeRunId: string): boolean {
   const run = db
     .select({ status: flowRuns.status })
     .from(flowRuns)
@@ -199,7 +197,17 @@ export function slotlessPark(
     .from(nodeRuns)
     .where(and(eq(nodeRuns.id, nodeRunId), eq(nodeRuns.flowRunId, flowRunId)))
     .get();
-  if (run?.status !== 'paused' || !node || !isParkedNodeStatus(node.status)) return null;
+  return run?.status === 'paused' && node !== undefined && isParkedNodeStatus(node.status);
+}
+
+/** Still paused on this step with no slot: none was ever held for it (newest admission settled), or
+ * a resume is waiting to take one back (`queued`). Null while the run still holds its slot. */
+export function slotlessPark(
+  db: Db,
+  flowRunId: string,
+  nodeRunId: string,
+): 'settled' | 'queued' | null {
+  if (!isPausedOnParkedStep(db, flowRunId, nodeRunId)) return null;
   const latest = db
     .select({ state: flowRunAdmissions.state })
     .from(flowRunAdmissions)
@@ -230,6 +238,31 @@ export function releaseParkedSlot(
     settledAt: new Date(now),
   });
   return released ? { kind: 'released' } : null;
+}
+
+/** Gives back the slot of a paused run's resume that failed before changing anything: its step is
+ * still parked and nothing in the run is live, so the run is left as the click found it. */
+export function failUnusedParkedResume(
+  db: Db,
+  ticket: number,
+  nodeRunId: string,
+  error: string,
+): FlowRunAdmission | null {
+  const admission = admissionByTicket(db, ticket);
+  if (admission?.state !== 'active' || admission.priorityClass !== 'resume') return null;
+  const { flowRunId } = admission;
+  if (!isPausedOnParkedStep(db, flowRunId, nodeRunId)) return null;
+  const liveNode = db
+    .select({ id: nodeRuns.id })
+    .from(nodeRuns)
+    .where(and(eq(nodeRuns.flowRunId, flowRunId), inArray(nodeRuns.status, LIVE_NODE_STATUSES)))
+    .get();
+  if (liveNode || hasLiveTask(db, flowRunId)) return null;
+  return transitionAdmission(db, ticket, ['active'], {
+    state: 'failed',
+    error,
+    settledAt: new Date(),
+  });
 }
 
 /** A `releasing` row at boot: its cleanup owner is dead and held only in-memory resources, so a paused

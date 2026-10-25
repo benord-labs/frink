@@ -94,11 +94,17 @@ import { truncateNodeOutput } from './truncate-node-output';
 
 export { resetRegisterNodeCount } from './register-node';
 
-/** Only a run that queued names the slots held by runs waiting on the user. */
+/** Only a run that queued names the slots held by runs waiting on the user. The run exists already,
+ * so a failed count drops the note rather than report a failed launch that a retry would repeat. */
 async function slotsHeldByWaitingRuns(run: DbFlowRun): Promise<number> {
   if (run.started_at !== null) return 0;
-  const { getFlowAdmissionSettings } = await import('../../flows/admission/runtime');
-  return (await getFlowAdmissionSettings()).held_by_waiting_runs;
+  try {
+    const { getFlowAdmissionSettings } = await import('../../flows/admission/runtime');
+    return (await getFlowAdmissionSettings()).held_by_waiting_runs;
+  } catch (error) {
+    log.warn('[Flows MCP] could not count slots held by waiting runs', { error });
+    return 0;
+  }
 }
 
 // ---------------------------------------------------------------------------
