@@ -254,12 +254,25 @@ describe('tasksRouter status schema', () => {
       carryOnFlowTaskMock.mockResolvedValueOnce({
         ok: true,
         task: { id: 'task-queued' },
-        queued: true,
+        outcome: 'queued',
       });
 
       await expect(
         (await caller()).recover({ taskId: 'task-queued', kind: 'continue' }),
       ).resolves.toEqual({ ok: true, outcome: 'queued' });
+    });
+
+    it('reports a repeat Continue as already queued', async () => {
+      seed({ id: 'task-repeat', flowRunId: null });
+      carryOnFlowTaskMock.mockResolvedValueOnce({
+        ok: true,
+        task: { id: 'task-repeat' },
+        outcome: 'already-queued',
+      });
+
+      await expect(
+        (await caller()).recover({ taskId: 'task-repeat', kind: 'continue' }),
+      ).resolves.toEqual({ ok: true, outcome: 'already-queued' });
     });
 
     it("maps Continue's refusals to their messages", async () => {

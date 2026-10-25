@@ -186,12 +186,37 @@ describe('carryOnFlowTask admission', () => {
     expect(await taskStatus()).toBe('needs_attention');
   });
 
+  it('reports a repeat Continue as merged into the resume already waiting', async () => {
+    mocks.hasActiveFlowAdmission.mockResolvedValue(false);
+    requestParkedFlowResume.mockResolvedValueOnce({ state: 'queued', created: false });
+    await db.update(tasks).set({ nodeRunId: 'nr-1' }).where(eq(tasks.id, taskId));
+
+    await expect(carryOnFlowTask(db, taskId)).resolves.toMatchObject({
+      ok: true,
+      outcome: 'already-queued',
+    });
+  });
+
+  it('reports a repeat Continue that lands on a resume already running as resumed', async () => {
+    mocks.hasActiveFlowAdmission.mockResolvedValue(false);
+    requestParkedFlowResume.mockResolvedValueOnce({ state: 'active', created: false });
+    await db.update(tasks).set({ nodeRunId: 'nr-1' }).where(eq(tasks.id, taskId));
+
+    await expect(carryOnFlowTask(db, taskId)).resolves.toMatchObject({
+      ok: true,
+      outcome: 'resumed',
+    });
+  });
+
   it('queues a paused Flow that gave its slot up, leaving the task parked until the claim', async () => {
     mocks.hasActiveFlowAdmission.mockResolvedValue(false);
     requestParkedFlowResume.mockResolvedValueOnce({ state: 'queued', created: true });
     await db.update(tasks).set({ nodeRunId: 'nr-1' }).where(eq(tasks.id, taskId));
 
-    await expect(carryOnFlowTask(db, taskId)).resolves.toMatchObject({ ok: true, queued: true });
+    await expect(carryOnFlowTask(db, taskId)).resolves.toMatchObject({
+      ok: true,
+      outcome: 'queued',
+    });
     expect(requestParkedFlowResume).toHaveBeenCalledWith({
       flowRunId,
       nodeRunId: 'nr-1',

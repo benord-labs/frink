@@ -94,15 +94,23 @@ export function hasFlowResourceActivity(flowRunId: string): boolean {
 
 /** Re-checks the run's slot for `ticket` once the clock passes `at`; a later call for the run
  * replaces this one. Boot recovery reconciles every held slot, so a restart re-arms it. */
-export function scheduleFlowReconcile(flowRunId: string, ticket: number, at: number): void {
+export function scheduleFlowReconcile(
+  flowRunId: string,
+  ticket: number,
+  at: number,
+  retrying = false,
+): void {
   clearTimeout(scheduledReconciles.get(flowRunId));
   const timer = setTimeout(
     () => {
-      if (Date.now() < at) return scheduleFlowReconcile(flowRunId, ticket, at);
+      if (Date.now() < at) return scheduleFlowReconcile(flowRunId, ticket, at, retrying);
       scheduledReconciles.delete(flowRunId);
       void lifecycleHooks?.reconcileTicket(flowRunId, ticket).catch((error) => {
         log.error('[Flow Admission] Scheduled reconciliation failed', { flowRunId, error });
-        captureFlowAdmissionException(error, 'scheduled-reconcile');
+        // Reported once; a failed check retries rather than hold the slot until a restart.
+        if (!retrying) captureFlowAdmissionException(error, 'scheduled-reconcile');
+        if (scheduledReconciles.has(flowRunId)) return;
+        scheduleFlowReconcile(flowRunId, ticket, Date.now() + MAX_SCHEDULE_STEP_MS, true);
       });
     },
     Math.min(Math.max(0, at - Date.now()) + SCHEDULE_MARGIN_MS, MAX_SCHEDULE_STEP_MS),

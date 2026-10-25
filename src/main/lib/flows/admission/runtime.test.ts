@@ -635,6 +635,24 @@ describe('Flow admission runtime recovery', () => {
       expect(admissionOf(warm.run.id)).toMatchObject({ state: 'released' });
     });
 
+    it('retries a check that failed at the cold time, reporting the failure once', async () => {
+      const { warm } = await parkWarmAheadOfAStart();
+      const locked = new Error('database is locked');
+      vi.spyOn(controller, 'getLiveForRun')
+        .mockRejectedValueOnce(locked)
+        .mockRejectedValueOnce(locked);
+      const reported = () =>
+        mocks.capture.mock.calls.filter(([, ctx]) => ctx?.stage === 'scheduled-reconcile').length;
+      await vi.advanceTimersByTimeAsync(COLD_AT - Date.now() + 1_000);
+      expect(reported()).toBe(1);
+      await vi.advanceTimersByTimeAsync(61_000);
+      expect(admissionOf(warm.run.id)).toMatchObject({ state: 'active' });
+      expect(reported()).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(61_000);
+      expect(admissionOf(warm.run.id)).toMatchObject({ state: 'released' });
+    });
+
     it('keeps one check per run: a later schedule replaces the earlier one', async () => {
       const { warm } = await parkWarmAheadOfAStart();
       const ticket = admissionOf(warm.run.id)!.ticket;

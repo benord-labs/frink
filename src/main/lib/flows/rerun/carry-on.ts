@@ -1,5 +1,6 @@
 /** Continue: resume a failed attempt's session in place instead of re-running the step. */
 
+import { type RecoverOutcome, recoverOutcomeFor } from '../../../../shared/types/flow-run/resume';
 import type { getDatabase } from '../../db';
 import { getFlowRun } from '../../db/repos/flow-runs';
 import { isTaskChatArchived } from '../../db/repos/task-queries/chat-archive-tasks';
@@ -12,8 +13,8 @@ import { withRecoveryKind } from './recovery-kind';
 type Db = ReturnType<typeof getDatabase>;
 
 export type CarryOnFlowTaskResult =
-  /** `queued`: the paused run had given its slot up and waits to take one back before it continues. */
-  | { ok: true; task: Task; queued?: boolean }
+  /** `outcome`: set when the paused run had given its slot up and queued to take one back. */
+  | { ok: true; task: Task; outcome?: RecoverOutcome }
   | {
       ok: false;
       reason:
@@ -72,6 +73,8 @@ export async function carryOnFlowTask(db: Db, taskId: string): Promise<CarryOnFl
       nodeRunId: existing.nodeRunId,
       kind: 'continue',
     });
-    return { ok: true, task: existing, queued: admission.state === 'queued' };
+    // Only a resume still waiting for a slot is queued; one already running has resumed the step.
+    const outcome = admission.state === 'queued' ? recoverOutcomeFor(admission) : 'resumed';
+    return { ok: true, task: existing, outcome };
   });
 }

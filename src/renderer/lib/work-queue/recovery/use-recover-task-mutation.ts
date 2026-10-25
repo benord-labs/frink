@@ -1,5 +1,6 @@
 import { toast } from 'sonner';
 import { trpc } from '../../trpc';
+import { recoveryWaitToast } from '../admission-wait-copy';
 
 type RecoverOptions = NonNullable<Parameters<typeof trpc.tasks.recover.useMutation>[0]>;
 
@@ -8,9 +9,8 @@ export function useRecoverTaskMutation(options: RecoverOptions = {}) {
   return trpc.tasks.recover.useMutation({
     ...options,
     onSuccess: (...args) => {
-      if (args[0].outcome === 'queued') {
-        toast.info('Queued to resume', { description: 'It starts when a slot frees up.' });
-      }
+      const title = recoveryWaitToast(args[0].outcome);
+      if (title) toast.info(title, { description: 'It starts when a slot frees up.' });
       return options.onSuccess?.(...args);
     },
   });

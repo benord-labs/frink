@@ -229,7 +229,11 @@ describe('requestParkedFlowResume', () => {
   it('leaves the run paused when the step does not continue, and gives the slot to the next run', async () => {
     const nodeRunId = seedReleasedPark('run-refused');
     carryOnFlowTask.mockResolvedValueOnce({ ok: false, reason: 'no-session' });
-    await requestParkedFlowResume({ flowRunId: 'run-refused', nodeRunId });
+    // The click reports ok or the step-changed refusal, depending on which settles first.
+    const click = requestParkedFlowResume({ flowRunId: 'run-refused', nodeRunId }).then(
+      () => 'ok',
+      (error: { code?: string }) => error.code,
+    );
     const next = await requestFlowStart({
       flowVersionId: 'version-parked',
       triggerContext: null,
@@ -245,6 +249,7 @@ describe('requestParkedFlowResume', () => {
       'blocked',
     );
     expect(await liveAdmission('run-refused')).toBeNull();
+    expect(['ok', 'PRECONDITION_FAILED']).toContain(await click);
   });
 
   it('keeps the slot when the failed resume had already started the step', async () => {

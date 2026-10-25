@@ -78,7 +78,7 @@ export async function listInterruptedRuns(
 async function continueTask(db: Db, taskId: string): Promise<RecoverOutcome> {
   const { carryOnFlowTask } = await import('../../flows/rerun');
   const res = await carryOnFlowTask(db, taskId);
-  if (res.ok) return res.queued ? 'queued' : 'resumed';
+  if (res.ok) return res.outcome ?? 'resumed';
   if (res.reason !== 'no-session') throwCarryOnReason(res.reason);
   const { recoveryChangedError } = await import('../../flows/rerun/recovery-kind');
   throw recoveryChangedError();
