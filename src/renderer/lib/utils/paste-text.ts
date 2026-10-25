@@ -22,7 +22,7 @@ export type AddPastedTextFn = (text: string) => Promise<void>;
  * Also accounts for existing content to prevent total size from exceeding limit.
  *
  * @param text - The text to insert
- * @param editableElement - The contentEditable element to dispatch input event to
+ * @param editableElement - The contentEditable element being pasted into
  */
 function insertTextAtCursor(text: string, editableElement: Element): void {
   // Check existing content size to prevent exceeding total limit
@@ -57,22 +57,12 @@ function insertTextAtCursor(text: string, editableElement: Element): void {
     }
   }
 
-  // Insert synchronously - the text is already truncated to a safe size
-  const selection = window.getSelection();
-  if (selection && selection.rangeCount > 0) {
-    const range = selection.getRangeAt(0);
-    range.deleteContents();
-    const textNode = document.createTextNode(textToInsert);
-    range.insertNode(textNode);
-    // Move cursor to end of inserted text
-    range.setStartAfter(textNode);
-    range.setEndAfter(textNode);
-    selection.removeAllRanges();
-    selection.addRange(range);
-    // Trigger input event on the contentEditable element for editor to update state
-    const inputEvent = new Event('input', { bubbles: true });
-    editableElement.dispatchEvent(inputEvent);
-  }
+  // A native editing command, so Cmd+Z undoes the paste on its own (a direct DOM write is invisible
+  // to the undo stack) and the editor gets a real input event. Escaped, the text stays literal.
+  const html = Object.assign(document.createElement('div'), {
+    textContent: textToInsert,
+  }).innerHTML;
+  document.execCommand('insertHTML', false, html);
 }
 
 /** The write is async, so focus may have moved: keep the fallback in the input that was pasted
