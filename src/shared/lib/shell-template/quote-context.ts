@@ -76,7 +76,7 @@ function findCommandSubstitutionEnd(command: string, start: number): number | nu
   return null;
 }
 
-/** Blanks every closed `$( … )` outside single quotes, in one left-to-right pass. */
+/** Blanks every closed `$( … )` outside single quotes; an unclosed one cuts the text there. */
 function maskCommandSubstitutions(command: string): string {
   const scanner = new QuoteScanner(command);
   let searchFrom = 0;
@@ -88,10 +88,8 @@ function maskCommandSubstitutions(command: string): string {
       continue;
     }
     const end = findCommandSubstitutionEnd(command, start + 2);
-    if (end === null) {
-      searchFrom = start + 2;
-      continue;
-    }
+    // Nothing after an unclosed substitution can be classified, so fail closed rather than rescan.
+    if (end === null) return scanner.masked().slice(0, start);
     scanner.blank(start, end);
     searchFrom = end;
   }

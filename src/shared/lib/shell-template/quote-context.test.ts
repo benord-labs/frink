@@ -142,6 +142,7 @@ describe('shellInterpolationContextAt — masked ranges and boundaries', () => {
     ['a trailing backslash after a placeholder inside "', '"{{a}}\\', 'uncertain'],
     ['a placeholder after an unquoted heredoc', 'cat <<EOF {{a}}', 'uncertain'],
     ['a placeholder ending where the heredoc cut starts', 'echo {{a}}<<X', 'bare'],
+    ['a placeholder inside an unclosed $( after a quoted one', "'$(' $({{a}}", 'uncertain'],
   ])('classifies %s', (_name, command, expected) => {
     expect(shellInterpolationContextAt(command, command.indexOf('{{a}}'), '{{a}}'.length)).toBe(
       expected,
@@ -210,5 +211,13 @@ describe('shellInterpolationContextAt — cost stays linear in command length', 
       classifyPlaceholders(command('x=$(date)\n', `h${trial}`), 1),
     );
     expect(heavy).toBeLessThan(plain * 20);
+  }, 30_000);
+
+  it('stops at an unclosed substitution instead of rescanning for every later one', () => {
+    const command = (body: string, name: string) => `${body.repeat(20_000)}echo {{t.${name}}}`;
+    classifyPlaceholders(command('$( ', 'warm').slice(-2_000), Infinity);
+    const plain = fastestMs((trial) => classifyPlaceholders(command('x  ', `p${trial}`), 1));
+    const unclosed = fastestMs((trial) => classifyPlaceholders(command('$( ', `u${trial}`), 1));
+    expect(unclosed).toBeLessThan(plain * 20);
   }, 30_000);
 });
