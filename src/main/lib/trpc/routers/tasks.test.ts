@@ -207,7 +207,7 @@ describe('tasksRouter status schema', () => {
     const caller = async () =>
       (await import('./tasks')).tasksRouter.createCaller({ getWindow: () => null });
     const flowRuns = {
-      retryPausedStep: vi.fn<FlowRunRecoveries['retryPausedStep']>(async () => {}),
+      retryPausedStep: vi.fn<FlowRunRecoveries['retryPausedStep']>(async () => 'resumed'),
       readmitRun: vi.fn<FlowRunRecoveries['readmitRun']>(async () => ({
         state: 'active',
         created: true,
@@ -244,9 +244,35 @@ describe('tasksRouter status schema', () => {
 
       await expect(
         (await caller()).recover({ taskId: 'task-3', kind: 'continue' }),
-      ).resolves.toEqual({ ok: true });
+      ).resolves.toEqual({ ok: true, outcome: 'resumed' });
       expect(carryOnFlowTaskMock).toHaveBeenCalledWith(expect.anything(), 'task-3');
       expect(retryTaskDetailedMock).not.toHaveBeenCalled();
+    });
+
+    it('reports a Continue queued behind the cap for a paused run that gave its slot up', async () => {
+      seed({ id: 'task-queued', flowRunId: null });
+      carryOnFlowTaskMock.mockResolvedValueOnce({
+        ok: true,
+        task: { id: 'task-queued' },
+        outcome: 'queued',
+      });
+
+      await expect(
+        (await caller()).recover({ taskId: 'task-queued', kind: 'continue' }),
+      ).resolves.toEqual({ ok: true, outcome: 'queued' });
+    });
+
+    it('reports a repeat Continue as already queued', async () => {
+      seed({ id: 'task-repeat', flowRunId: null });
+      carryOnFlowTaskMock.mockResolvedValueOnce({
+        ok: true,
+        task: { id: 'task-repeat' },
+        outcome: 'already-queued',
+      });
+
+      await expect(
+        (await caller()).recover({ taskId: 'task-repeat', kind: 'continue' }),
+      ).resolves.toEqual({ ok: true, outcome: 'already-queued' });
     });
 
     it("maps Continue's refusals to their messages", async () => {
@@ -281,7 +307,7 @@ describe('tasksRouter status schema', () => {
         (await caller()).recover({ taskId: 'task-1', kind: 'continue' }),
       ).rejects.toMatchObject({
         code: 'PRECONDITION_FAILED',
-        message: expect.stringMatching(/Cancel it and start it again/),
+        message: expect.stringMatching(/no longer paused/),
       });
 
       carryOnFlowTaskMock.mockResolvedValueOnce({ ok: false, reason: 'chat-archived' });
@@ -645,7 +671,7 @@ describe('tasksRouter status schema', () => {
         status: 'cancelled',
       }));
       const flowRuns = {
-        retryPausedStep: vi.fn<FlowRunRecoveries['retryPausedStep']>(async () => {}),
+        retryPausedStep: vi.fn<FlowRunRecoveries['retryPausedStep']>(async () => 'resumed'),
         readmitRun: vi.fn<FlowRunRecoveries['readmitRun']>(async () => ({
           state: 'queued',
           created: true,

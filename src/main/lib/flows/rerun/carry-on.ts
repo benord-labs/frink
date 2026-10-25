@@ -1,5 +1,6 @@
 /** Continue: resume a failed attempt's session in place instead of re-running the step. */
 
+import { type RecoverOutcome, recoverOutcomeFor } from '../../../../shared/types/flow-run/resume';
 import type { getDatabase } from '../../db';
 import { getFlowRun } from '../../db/repos/flow-runs';
 import { isTaskChatArchived } from '../../db/repos/task-queries/chat-archive-tasks';
@@ -12,7 +13,8 @@ import { withRecoveryKind } from './recovery-kind';
 type Db = ReturnType<typeof getDatabase>;
 
 export type CarryOnFlowTaskResult =
-  | { ok: true; task: Task }
+  /** `outcome`: set when the paused run had given its slot up and queued to take one back. */
+  | { ok: true; task: Task; outcome?: RecoverOutcome }
   | {
       ok: false;
       reason:
@@ -26,7 +28,8 @@ export type CarryOnFlowTaskResult =
 
 /**
  * Continue ONE failed/parked task by resuming its persisted session ({@link withRecoveryKind}
- * gates on it; a paused Flow also needs its original activation still active).
+ * gates on it). A paused Flow continues in place while it holds its slot; one that gave the slot up
+ * while it waited queues to take it back, and continues once that resume is claimed.
  */
 export async function carryOnFlowTask(db: Db, taskId: string): Promise<CarryOnFlowTaskResult> {
   const existing = await getTaskById(db, taskId);
@@ -62,9 +65,16 @@ export async function carryOnFlowTask(db: Db, taskId: string): Promise<CarryOnFl
       return { ok: false, reason: 'admission-required' };
     }
     const { hasActiveFlowAdmission } = await import('../admission/runtime');
-    if (!(await hasActiveFlowAdmission(flowRunId))) {
-      return { ok: false, reason: 'admission-required' };
-    }
-    return continueTask(flowRunId);
+    if (await hasActiveFlowAdmission(flowRunId)) return continueTask(flowRunId);
+    if (!existing.nodeRunId) return { ok: false, reason: 'admission-required' };
+    const { requestParkedFlowResume } = await import('../admission/terminal-resume/parked-resume');
+    const admission = await requestParkedFlowResume({
+      flowRunId,
+      nodeRunId: existing.nodeRunId,
+      kind: 'continue',
+    });
+    // Only a resume still waiting for a slot is queued; one already running has resumed the step.
+    const outcome = admission.state === 'queued' ? recoverOutcomeFor(admission) : 'resumed';
+    return { ok: true, task: existing, outcome };
   });
 }

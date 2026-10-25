@@ -19,6 +19,7 @@ import {
 import {
   captureFlowAdmissionException,
   hasFlowResourceActivity,
+  scheduleFlowReconcile,
   setFlowAdmissionLifecycleHooks,
   settleStageAfterUnpromotedRetry,
   withFlowResourceCleanup,
@@ -30,8 +31,10 @@ import {
   beginTerminalRelease,
   outcomeForRunStatus,
   recoverReleasingAdmission,
+  releaseParkedSlot,
 } from './recovery-store';
 import type { FlowRunAdmission } from './store';
+import { type FlowAdmissionSettings, readFlowAdmissionSettings } from './visibility';
 import {
   fireStagedContinuationResume,
   type PendingContinuationResume,
@@ -49,6 +52,7 @@ let controller: FlowAdmissionController | null = null;
 type AdmittedDispatcher<T> = (admitted: T, ticket: number) => Promise<void>;
 let dispatchStartedFlow: AdmittedDispatcher<string> | null = null;
 let dispatchResumedFlow: AdmittedDispatcher<TerminalFlowResumeIntent> | null = null;
+let dispatchParkedFlow: AdmittedDispatcher<TerminalFlowResumeIntent> | null = null;
 
 const admissionController = (): FlowAdmissionController =>
   (controller ??= new FlowAdmissionController(getDatabase()));
@@ -150,28 +154,34 @@ async function executeStartedAdmission(flowRunId: string, ticket: number): Promi
 }
 
 async function executeResumedAdmission(flowRunId: string, ticket: number): Promise<void> {
-  if (!dispatchResumedFlow) throw new Error('Flow admission resume dispatcher is not registered');
   const [live, run] = await Promise.all([
     admissionController().getLiveForRun(flowRunId),
     getFlowRun(getDatabase(), flowRunId),
   ]);
-  if (!isDispatchableStartedAdmission(live, ticket, run?.status)) {
+  // A paused run's resume only re-took its slot, so the run stays paused until its step picks up.
+  const parked = run?.status === 'paused';
+  if (!isDispatchableStartedAdmission(live, ticket, parked ? 'running' : run?.status)) {
     await releaseNonDispatchableStartedAdmission(flowRunId, ticket, live, run?.status);
     return;
   }
   const intent = terminalFlowResumeIntent(live?.intentJson);
   if (!intent) throw new Error(`Flow admission ${ticket} has no terminal resume node reference`);
-  await dispatchResumedFlow(intent, ticket);
+  const dispatch = parked ? dispatchParkedFlow : dispatchResumedFlow;
+  if (!dispatch) throw new Error('Flow admission resume dispatcher is not registered');
+  await dispatch(intent, ticket);
 }
 
 export function registerFlowAdmissionStartDispatcher(dispatcher: AdmittedDispatcher<string>): void {
   dispatchStartedFlow = dispatcher;
 }
 
+/** `parked`: runs the step of a paused run whose resume took its slot back; it must never throw. */
 export function registerTerminalFlowResumeDispatcher(
   dispatcher: AdmittedDispatcher<TerminalFlowResumeIntent>,
+  parked = false,
 ): void {
-  dispatchResumedFlow = dispatcher;
+  if (parked) dispatchParkedFlow = dispatcher;
+  else dispatchResumedFlow = dispatcher;
 }
 
 async function dispatchClaim(ticket: number): Promise<void> {
@@ -237,29 +247,10 @@ export function kickStalledFlowAdmissionDrain(): void {
   drainer.kickIfStalled();
 }
 
-export type FlowAdmissionSettings = {
-  queue_paused: boolean;
-  concurrency_limit_enabled: boolean;
-  max_concurrent_runs: number;
-  occupied_runs: number;
-  queued_runs: number;
-  draining: boolean;
-};
+export type { FlowAdmissionSettings } from './visibility';
 
-const toFlowAdmissionSettings = (
-  snapshot: Awaited<ReturnType<FlowAdmissionController['getSnapshot']>>,
-): FlowAdmissionSettings => ({
-  queue_paused: snapshot.config.queuePaused,
-  concurrency_limit_enabled: snapshot.config.concurrencyLimitEnabled,
-  max_concurrent_runs: snapshot.config.maxConcurrentRuns,
-  occupied_runs: snapshot.occupied,
-  queued_runs: snapshot.counts.queued,
-  draining: snapshot.draining,
-});
-
-export async function getFlowAdmissionSettings(): Promise<FlowAdmissionSettings> {
-  return toFlowAdmissionSettings(await admissionController().getSnapshot());
-}
+export const getFlowAdmissionSettings = (): Promise<FlowAdmissionSettings> =>
+  readFlowAdmissionSettings(admissionController(), getDatabase());
 
 export async function updateFlowAdmissionSettings(
   patch: FlowAdmissionConfigPatch,
@@ -355,8 +346,10 @@ export async function hasActiveFlowAdmission(flowRunId: string): Promise<boolean
 }
 
 /** A recovery clicked while the run still holds its slot is staged behind it; false: enqueue it. */
-export const stageResumeBehindHeldAdmission = (pending: PendingContinuationResume) =>
-  stageBehindHeldAdmission(pending, continuationOps);
+export const stageResumeBehindHeldAdmission = (
+  pending: PendingContinuationResume,
+  behindRelease = false,
+) => stageBehindHeldAdmission(pending, continuationOps, behindRelease);
 
 export async function requestFlowAdmissionRelease(
   flowRunId: string,
@@ -395,11 +388,14 @@ async function settleTerminalAdmission(
     continuationOps,
   );
   if (!settled) return;
-  // The settle is the release; the drain only re-fills the freed slot and captures and retries itself.
-  await drainFlowAdmissions().catch((error) => {
+  await drainAfterRelease(flowRunId);
+}
+
+/** A release frees a slot; the drain only re-fills it and captures and retries itself. */
+const drainAfterRelease = (flowRunId: string) =>
+  drainFlowAdmissions().catch((error) => {
     log.warn('[FlowAdmission] drain after settle failed', { flowRunId, error });
   });
-}
 
 async function reconcileFlowAdmission(
   flowRunId: string,
@@ -415,14 +411,18 @@ async function reconcileFlowAdmission(
     await retainReleaseFailure(live, 'Flow run is missing');
     return;
   }
-  // In 0.0.10, one admission covers the whole top-level Flow run, including durable pauses. Only a
-  // terminal run may release after every activity owner reports successful cleanup.
+  // A terminal run, or one paused only on a person, releases once every activity owner settles.
   if (cleanupError !== undefined) {
     await retainReleaseFailure(live, cleanupError);
     return;
   }
-  // Stale-read fast path only: the terminal decision is re-made inside the transaction below.
-  if (!outcomeForRunStatus(run.status)) return;
+  // Stale-read fast paths only: each decision is re-made inside its transaction below.
+  if (!outcomeForRunStatus(run.status)) {
+    const parked = await transitionFlowRun(() => releaseParkedSlot(db, live.ticket));
+    if (parked?.kind === 'released') await drainAfterRelease(flowRunId);
+    if (parked?.kind === 'warm') scheduleFlowReconcile(flowRunId, live.ticket, parked.coldAt);
+    return;
+  }
   const release = await transitionFlowRun(() => beginTerminalRelease(db, live.ticket));
   if (release) await settleTerminalAdmission(release.releasing, flowRunId, release.outcome);
 }
@@ -495,5 +495,6 @@ setFlowAdmissionLifecycleHooks({
       await fireStagedContinuationResume(flowRunId, continuationOps, cleanupError);
     }
   },
+  reconcileTicket: (flowRunId, ticket) => reconcileFlowAdmission(flowRunId, undefined, ticket),
   requestRelease: requestFlowAdmissionRelease,
 });

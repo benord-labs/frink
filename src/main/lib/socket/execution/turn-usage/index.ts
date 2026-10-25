@@ -44,7 +44,7 @@ function settledCompactionCount(parts: readonly { type: string }[]): number {
 export async function stampTurnUsage(
   taskId: string | null | undefined,
   messageId: string,
-  metadata: Pick<AssistantMessageMetadata, 'contextTokens'> | undefined,
+  metadata: Pick<AssistantMessageMetadata, 'contextTokens' | 'promptCacheExpiresAt'> | undefined,
   finalParts: readonly { type: string }[],
   reportsCompactions: boolean,
 ): Promise<void> {
@@ -53,6 +53,8 @@ export async function stampTurnUsage(
   // No value means "keep the last known occupancy", so an unreported turn adds nothing.
   const tokens = contextTokensSchema.safeParse(metadata?.contextTokens);
   if (tokens.success) patch.contextTokens = tokens.data;
+  // Unlike occupancy, an unreported expiry is unknown, never the last turn's.
+  patch.promptCacheExpiresAt = metadata?.promptCacheExpiresAt ?? null;
   if (reportsCompactions) {
     patch.compactionsByMessage = { [messageId]: settledCompactionCount(finalParts) };
   }

@@ -1,3 +1,4 @@
+import type { RecoverOutcome } from '../../../shared/types/flow-run/resume';
 import { formatWaitingSince } from '../utils/format-time';
 
 export type AdmissionGroup = 'resume' | 'priority' | 'start';
@@ -57,4 +58,10 @@ export function oldestWaitingNote(rows: readonly { requestedAt: Date }[]): strin
   // Manual moves break arrival order, so the oldest row is not necessarily the first one.
   const oldest = Math.min(...rows.map((row) => row.requestedAt.getTime()));
   return `Oldest waiting since ${formatWaitingSince(new Date(oldest))}`;
+}
+
+/** The toast for a recovery that waits for a slot; a repeat click says its first one still waits. */
+export function recoveryWaitToast(outcome: RecoverOutcome): string | null {
+  if (outcome === 'queued') return 'Queued to resume';
+  return outcome === 'already-queued' ? 'Already queued to resume' : null;
 }

@@ -305,6 +305,15 @@ describe('mobile chat actions', () => {
     });
   });
 
+  it('accepts a reply that queues a paused Flow to take its slot back', async () => {
+    fixture.send.mockRejectedValueOnce(
+      Object.assign(new Error('internal task details'), { category: 'FLOW_RUN_RESUMING' }),
+    );
+    await expect(
+      sendMobileMessage({ ...identity, requestId: 'request', text: 'hi' }),
+    ).resolves.toEqual({ ok: true });
+  });
+
   it('rechecks the driving Flow after admission wait and rejects a taskless running interval', async () => {
     fixture.getDriving.mockResolvedValue({
       task: null,

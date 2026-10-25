@@ -558,6 +558,7 @@ describe('local-only dispatch with unresolved machineId', () => {
     });
     activity.setFlowAdmissionLifecycleHooks({
       reconcile: vi.fn(async () => {}),
+      reconcileTicket: vi.fn(async () => {}),
       requestRelease: vi.fn(async () => {}),
     });
     await handleRemoteExecute({ ...basePayload, message: 'restart without credentials' });
@@ -581,6 +582,7 @@ describe('local-only dispatch with unresolved machineId', () => {
     } as Awaited<ReturnType<typeof getTaskById>>);
     activity.setFlowAdmissionLifecycleHooks({
       reconcile: vi.fn(async () => {}),
+      reconcileTicket: vi.fn(async () => {}),
       requestRelease: vi.fn(async () => {}),
     });
     setActiveFlowTaskForChat(basePayload.chatId, 'stale-flow-task');
@@ -709,6 +711,7 @@ describe('local-only dispatch with unresolved machineId', () => {
     const activity = await import('../flows/admission/activity');
     activity.setFlowAdmissionLifecycleHooks({
       reconcile: vi.fn(async () => {}),
+      reconcileTicket: vi.fn(async () => {}),
       requestRelease: vi.fn(async () => {}),
     });
     // SAFETY: the executor reads only chat.taskId and account from this row.

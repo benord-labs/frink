@@ -7,6 +7,7 @@ import {
   type RecoverOutcome,
   type RecoveryKind,
   recoverInterruptedInputSchema,
+  recoverOutcomeFor,
 } from '../../../../shared/types/flow-run/resume';
 import { getDatabase } from '../../db';
 import { getFlowRun } from '../../db/repos/flow-runs';
@@ -74,10 +75,10 @@ export async function listInterruptedRuns(
 }
 
 /** Continues the stopped session; carryOnFlowTask re-checks the kind itself (`no-session`). */
-async function continueTask(db: Db, taskId: string): Promise<void> {
+async function continueTask(db: Db, taskId: string): Promise<RecoverOutcome> {
   const { carryOnFlowTask } = await import('../../flows/rerun');
   const res = await carryOnFlowTask(db, taskId);
-  if (res.ok) return;
+  if (res.ok) return res.outcome ?? 'resumed';
   if (res.reason !== 'no-session') throwCarryOnReason(res.reason);
   const { recoveryChangedError } = await import('../../flows/rerun/recovery-kind');
   throw recoveryChangedError();
@@ -101,14 +102,18 @@ async function restartTask(db: Db, task: Task): Promise<void> {
 
 /** A Flow task's run-level recoveries; each re-checks `kind`. Injectable, so tests pass fakes. */
 export type FlowRunRecoveries = {
-  retryPausedStep: (runId: string, nodeRunId: string, kind: RecoveryKind) => Promise<void>;
+  retryPausedStep: (
+    runId: string,
+    nodeRunId: string,
+    kind: RecoveryKind,
+  ) => Promise<RecoverOutcome>;
   readmitRun: (db: Db, run: FlowRun, kind: RecoveryKind) => Promise<TerminalResumeAdmission>;
 };
 
 const flowRunRecoveries: FlowRunRecoveries = {
   retryPausedStep: async (runId, nodeRunId, kind) => {
     const { resumeFlowRun } = await import('../../flows/resume');
-    await resumeFlowRun(runId, 'retry', nodeRunId, undefined, kind);
+    return resumeFlowRun(runId, 'retry', nodeRunId, undefined, kind);
   },
   readmitRun: async (db, run, kind) => {
     const { retryRunFromLastNode } = await import('./flows/run-actions');
@@ -126,17 +131,10 @@ async function recoverFlowTask(
 ): Promise<RecoverOutcome> {
   // sourceId is the node_run the task was minted for.
   if (run?.status === 'paused' && task.sourceId) {
-    await flowRuns.retryPausedStep(run.id, task.sourceId, kind);
-    return 'resumed';
+    return flowRuns.retryPausedStep(run.id, task.sourceId, kind);
   }
   if (!run) throw new TRPCError({ code: 'NOT_FOUND', message: 'Flow run not found' });
-  return admissionOutcome(await flowRuns.readmitRun(db, run, kind));
-}
-
-/** A re-admitted run's outcome: merged into a live resume, waiting behind the cap, or running. */
-function admissionOutcome({ state, created }: TerminalResumeAdmission): RecoverOutcome {
-  if (!created) return 'already-queued';
-  return state === 'queued' ? 'queued' : 'resumed';
+  return recoverOutcomeFor(await flowRuns.readmitRun(db, run, kind));
 }
 
 /**
@@ -153,8 +151,7 @@ export async function recoverTask(
   if (!task) throw new TRPCError({ code: 'NOT_FOUND', message: 'Task not found' });
   const run = task.flowRunId ? await getFlowRun(db, task.flowRunId) : null;
   if (kind === 'continue' && (!task.flowRunId || run?.status === 'paused')) {
-    await continueTask(db, taskId);
-    return 'resumed';
+    return continueTask(db, taskId);
   }
   if (task.flowRunId) return recoverFlowTask(db, task, run, kind, flowRuns);
   await restartTask(db, task);
@@ -168,10 +165,10 @@ export const taskRecoveryProcedures = {
    */
   recover: publicProcedure
     .input(recoverTaskInputSchema)
-    .mutation(async ({ input }): Promise<{ ok: true }> => {
+    .mutation(async ({ input }): Promise<{ ok: true; outcome: RecoverOutcome }> => {
       await assertRecoveryStep(getDatabase(), input.taskId, input.recoveryNodeRunId);
-      await recoverTask(getDatabase(), input.taskId, input.kind);
-      return { ok: true };
+      const outcome = await recoverTask(getDatabase(), input.taskId, input.kind);
+      return { ok: true, outcome };
     }),
 
   /** Every restart-interrupted run, for the Work Queue's Continue all. */

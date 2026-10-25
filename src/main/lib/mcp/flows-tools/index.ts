@@ -94,6 +94,19 @@ import { truncateNodeOutput } from './truncate-node-output';
 
 export { resetRegisterNodeCount } from './register-node';
 
+/** Only a run that queued names the slots held by runs waiting on the user. The run exists already,
+ * so a failed count drops the note rather than report a failed launch that a retry would repeat. */
+async function slotsHeldByWaitingRuns(run: DbFlowRun): Promise<number> {
+  if (run.started_at !== null) return 0;
+  try {
+    const { getFlowAdmissionSettings } = await import('../../flows/admission/runtime');
+    return (await getFlowAdmissionSettings()).held_by_waiting_runs;
+  } catch (error) {
+    log.warn('[Flows MCP] could not count slots held by waiting runs', { error });
+    return 0;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Argument schemas (Zod)
 // ---------------------------------------------------------------------------
@@ -1294,7 +1307,7 @@ async function handleRun(
       triggerContext: triggerContext ?? null,
     })) as DbFlowRun & { flowRunId?: string; batchId?: string | null };
 
-    const launchResult = buildFlowRunLaunchResult(flowId, run);
+    const launchResult = buildFlowRunLaunchResult(flowId, run, await slotsHeldByWaitingRuns(run));
     if (!launchResult.isError) recordRunSuccess(sessionKey);
     return toolResult(JSON.stringify(launchResult.body, null, 2), launchResult.isError);
   } catch (err) {

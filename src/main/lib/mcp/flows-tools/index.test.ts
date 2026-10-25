@@ -1097,6 +1097,26 @@ describe('handleFlowsToolCall — frink_flows_run', () => {
     expect(result?.content[0].text).toMatch(/Flow not found[\s\S]*published version/);
   });
 
+  // The run is already queued: a failed count must not report a failed launch the agent would retry.
+  it('reports a queued run even when the waiting-run count cannot be read', async () => {
+    const { handleFlowsToolCall, resetFlowsRunCount } = await getModule();
+    resetFlowsRunCount();
+    mockInvocableGetFlow();
+    const runtime = await import('../../flows/admission/runtime');
+    const settings = vi
+      .spyOn(runtime, 'getFlowAdmissionSettings')
+      .mockRejectedValueOnce(new Error('database is locked'));
+    state.startFlowRun.mockResolvedValue({ id: 'run-queued', status: 'pending', started_at: null });
+
+    const result = await handleFlowsToolCall('frink_flows_run', { flowId: runFlowId });
+
+    expect(settings).toHaveBeenCalledOnce();
+    expect(result?.isError).toBe(false);
+    expect(result?.content[0].text).toContain('"status": "queued"');
+    settings.mockRestore();
+    resetFlowsRunCount();
+  });
+
   it('rate limits independently from patch (5 runs per session)', async () => {
     const { handleFlowsToolCall, resetFlowsRunCount, resetFlowsPatchCount } = await getModule();
     resetFlowsRunCount();

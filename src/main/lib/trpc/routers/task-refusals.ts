@@ -53,7 +53,7 @@ export function throwCarryOnReason(
     ],
     'admission-required': [
       'PRECONDITION_FAILED',
-      'This paused Flow lost its place in the run queue. Cancel it and start it again.',
+      'This Flow run is no longer paused. Use Continue or Retry from the Queue to pick it back up.',
       true,
     ],
     superseded: [

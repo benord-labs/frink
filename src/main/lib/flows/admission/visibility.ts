@@ -1,8 +1,10 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { FlowAdmissionState } from '../../../../shared/lib/flow-admission';
 import type { getDatabase } from '../../db';
+import { listHumanWaitFlowRunIds } from '../../db/repos/node-runs';
 import { flowRunAdmissions, flowRuns, flows, flowVersions, projects } from '../../db/schema';
 import { flowAdmissionResumeKey } from '../../db/schema/flow-run-admissions';
+import type { FlowAdmissionController } from './controller';
 import { FLOW_ADMISSION_QUEUE_ORDER_BY, FLOW_ADMISSION_QUEUE_ORDER_SQL } from './queue-order';
 
 type Db = ReturnType<typeof getDatabase>;
@@ -176,4 +178,56 @@ export function queuedAdmissionRun(db: Db, ticket: number): { flowRunId: string 
       .where(and(eq(flowRunAdmissions.ticket, ticket), eq(flowRunAdmissions.state, 'queued')))
       .get() ?? null
   );
+}
+
+/** Slots held by paused runs someone must act on: approvals, plan reviews, retries, warm replies. */
+export async function countSlotsHeldByHumanWaits(db: Db): Promise<number> {
+  const held = db
+    .select({ flowRunId: flowRunAdmissions.flowRunId })
+    .from(flowRunAdmissions)
+    .innerJoin(flowRuns, eq(flowRuns.id, flowRunAdmissions.flowRunId))
+    .where(
+      and(
+        inArray(flowRunAdmissions.state, ['claimed', 'active', 'releasing']),
+        eq(flowRuns.status, 'paused'),
+      ),
+    )
+    .all();
+  return (
+    await listHumanWaitFlowRunIds(
+      db,
+      held.map((row) => row.flowRunId),
+    )
+  ).size;
+}
+
+export type FlowAdmissionSettings = {
+  queue_paused: boolean;
+  concurrency_limit_enabled: boolean;
+  max_concurrent_runs: number;
+  occupied_runs: number;
+  /** Occupied slots whose run is paused waiting for a person. */
+  held_by_waiting_runs: number;
+  queued_runs: number;
+  draining: boolean;
+};
+
+/** The machine-wide admission settings and occupancy the Settings panel and MCP launches read. */
+export async function readFlowAdmissionSettings(
+  controller: Pick<FlowAdmissionController, 'getSnapshot'>,
+  db: ReturnType<typeof getDatabase>,
+): Promise<FlowAdmissionSettings> {
+  const [snapshot, heldByWaitingRuns] = await Promise.all([
+    controller.getSnapshot(),
+    countSlotsHeldByHumanWaits(db),
+  ]);
+  return {
+    queue_paused: snapshot.config.queuePaused,
+    concurrency_limit_enabled: snapshot.config.concurrencyLimitEnabled,
+    max_concurrent_runs: snapshot.config.maxConcurrentRuns,
+    occupied_runs: snapshot.occupied,
+    held_by_waiting_runs: heldByWaitingRuns,
+    queued_runs: snapshot.counts.queued,
+    draining: snapshot.draining,
+  };
 }

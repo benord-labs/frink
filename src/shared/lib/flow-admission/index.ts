@@ -37,7 +37,12 @@ export type FlowAdmissionIntentV1 = {
   batch_stage_run_id?: string;
   /** The recovery a terminal resume was admitted as; its claim refuses a step that changed. */
   recovery_kind?: RecoveryKind;
+  /** The Runs-panel action a paused run's resume replays once it holds a slot again. */
+  resume_action?: FlowResumeTicketAction;
 };
+
+export type FlowResumeTicketAction = 'approve' | 'skip' | 'retry';
+const RESUME_TICKET_ACTIONS: readonly unknown[] = ['approve', 'skip', 'retry'];
 
 const INTENT_V1_KEYS = new Set([
   'version',
@@ -49,6 +54,7 @@ const INTENT_V1_KEYS = new Set([
   'message_id',
   'batch_stage_run_id',
   'recovery_kind',
+  'resume_action',
 ]);
 
 const isOptionalId = (value: unknown): value is string | undefined =>
@@ -89,6 +95,11 @@ export function isFlowAdmissionIntentV1(value: unknown): value is FlowAdmissionI
   const candidate = value as Record<string, unknown>;
   if (Object.keys(candidate).some((key) => !INTENT_V1_KEYS.has(key))) return false;
   if (!recoveryKindSchema.optional().safeParse(candidate.recovery_kind).success) return false;
+  if (
+    candidate.resume_action !== undefined &&
+    !RESUME_TICKET_ACTIONS.includes(candidate.resume_action)
+  )
+    return false;
   return (
     hasIntentHeader(candidate) && hasValidOptionalIds(candidate) && hasValidReferences(candidate)
   );

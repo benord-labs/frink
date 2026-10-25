@@ -119,6 +119,17 @@ describe('stampTurnUsage — across one node', () => {
     expect(await usage()).toEqual({ contextTokens: 90_000, compactions: 0 });
   });
 
+  // A wake burst refreshes the cache after the arming turn; a turn that reports no expiry (a pure
+  // cache read, Codex) must not leave the older one to free the slot early.
+  it("keeps only the newest turn's cache expiry", async () => {
+    await stampTurnUsage(taskId, 'm1', { promptCacheExpiresAt: 1_000 }, [], true);
+    expect((await result()).turnUsage).toMatchObject({ promptCacheExpiresAt: 1_000 });
+    await stampTurnUsage(taskId, 'm2', { promptCacheExpiresAt: 2_000 }, [], true);
+    expect((await result()).turnUsage).toMatchObject({ promptCacheExpiresAt: 2_000 });
+    await stampTurnUsage(taskId, 'm3', { contextTokens: 5 }, [], false);
+    expect((await result()).turnUsage).not.toHaveProperty('promptCacheExpiresAt');
+  });
+
   // A burst can end before its un-park of a quiet-idle park lands; the signal that supersedes the
   // park keeps the result, so the burst's usage must already be on it.
   it('stamps a row still parked when its burst ends', async () => {
